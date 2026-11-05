@@ -78,6 +78,7 @@ private:
         FlowNodeID holder;
         BuiltinID builtin { };
         LayoutID layout { };
+        uint8_t kindOfObjects { 0 };
         bool holdsLostBuiltins { false };
         bool holdsUnseen { false };
     };

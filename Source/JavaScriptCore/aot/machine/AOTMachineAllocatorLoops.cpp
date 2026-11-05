@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTMachineCallsOnWays.h"
 #include <algorithm>
 #include <bit>
 #include <cstring>
@@ -264,7 +265,23 @@ static void findLoopsWhoseHeadsAreNotJudged(Allocator& allocator)
     }
 }
 
-static NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator& allocator, const Operation* value, const Block* block, const BlockPlace& place, Position from)
+static ALWAYS_INLINE uint32_t passOverReadsAheadOfOnlyWayOn(const Allocator& allocator, const Operation* value, const Block* block, Position endOfBlock, uint32_t use)
+{
+    if (block->numSuccessors() != 1)
+        return use;
+    const Liveness& liveness = allocator.m_liveness;
+    const Order& order = allocator.m_order;
+    const BlockPlace& target = order.places()[block->successor(0).block()->index()];
+    Position endOfWhatIsOutOfReach = target.head;
+    if (!use || liveness.use(use).position >= endOfWhatIsOutOfReach)
+        return use;
+    const Loop* const loops = order.loops().data();
+    for (uint32_t loop = target.loop; loop != noLoop && loops[loop].begin >= endOfBlock; loop = loops[loop].parent)
+        endOfWhatIsOutOfReach = loops[loop].begin;
+    return allocator.findReadFromAmongLaterReads(value, use, endOfWhatIsOutOfReach);
+}
+
+NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator& allocator, const Operation* value, const Block* block, const BlockPlace& place, Position from, uint32_t use)
 {
     const Liveness& liveness = allocator.m_liveness;
     const Order& order = allocator.m_order;
@@ -272,7 +289,7 @@ static NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator&
     const ValueFacts& facts = liveness.of(value);
     const Position definition = facts.definition;
     ASSERT(definition != noPosition && definition <= from && !facts.has(ValueFlag::IsKeptForCollector));
-    uint32_t use = allocator.findReadFrom(value, from);
+    ASSERT(use == allocator.findReadFrom(value, from));
     if (use && liveness.use(use).position < head + 2 * (block->size() + 1))
         return false;
 
@@ -292,6 +309,9 @@ static NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator&
         if (head >= liveness.of(loop, order).endOfLastExitingBlock)
             startOfReadsBehindLoop = loop.end;
     }
+    const uint32_t firstReadBehindBlock = use;
+    use = passOverReadsAheadOfOnlyWayOn(allocator, value, block, head + 2 * (block->size() + 1), use);
+    const bool hasPassedOverReads = use != firstReadBehindBlock;
     if (use && startOfReadsBehindLoop == noPosition && liveness.use(use).greatestHeadOfBlockPassedOnEveryPath >= head)
         return false;
 
@@ -337,7 +357,7 @@ static NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator&
         if (use == firstInDoubt)
             return isDead;
     }
-    if (block == allocator.m_block) {
+    if (block == allocator.m_block && !hasPassedOverReads) {
         if (firstReadsNotKnownOutOfReach.isEmpty()) {
             const uint32_t numberOfOperations = allocator.m_order.mostOperations();
             firstReadsNotKnownOutOfReach.growWithoutInitializing(allocator.m_arena, numberOfOperations);
@@ -356,7 +376,7 @@ bool Allocator::isDeadOnEveryPathFrom(const Operation* value, const Block* block
     const BlockPlace& place = m_order.of(block);
     if (place.isRare())
         return false;
-    return isDeadOnEveryPathFromBlockOutsideRareRegions(*this, value, block, place, from);
+    return isDeadOnEveryPathFromBlockOutsideRareRegions(*this, value, block, place, from, findReadFrom(value, from));
 }
 
 } } } // namespace JSC::AOT::Machine

@@ -358,36 +358,14 @@ function checkInstancesThatAreEntries(model: TableModel, problems: Problems): vo
   }
 }
 
-function checkTypesOfNamesDefinedOnNewInstances(model: TableModel, problems: Problems): void {
+function checkNamesDefinedOnNewInstances(model: TableModel, problems: Problems): void {
   for (const builtinClass of model.classes) {
-    const { token, namesDefinedOnNewInstances, typesOfNamesDefinedOnNewInstances, namesMadeByStaticMembers } =
-      builtinClass;
-    const isListed = (name: ModelName): boolean => namesDefinedOnNewInstances?.includes(name) ?? false;
-    const { parent } = builtinClass;
+    const { token, namesDefinedOnNewInstances, parent } = builtinClass;
     if (namesDefinedOnNewInstances !== null && parent !== null && parent.namesDefinedOnNewInstances === null) {
       problems.add(
         null,
         `the class ${token} lists the own names of its instances, and ${parent.token} above it does not, so the list says nothing`,
       );
-    }
-    for (const { name, type } of typesOfNamesDefinedOnNewInstances) {
-      if (!isListed(name))
-        problems.add(
-          null,
-          `the class ${token} gives ${name.text} a type, and namesDefinedOnNewInstances does not list it`,
-        );
-      if (type.isAnything || type.hasAnyObject || type.hasAnyFunction || type.hasPlainData || type.parts.length > 0) {
-        problems.add(null, `the class ${token} gives ${name.text} a type that is not made of primitives alone`);
-      }
-    }
-    for (const { name } of namesMadeByStaticMembers) {
-      if (!isListed(name))
-        problems.add(
-          null,
-          `the class ${token} says what makes ${name.text}, and namesDefinedOnNewInstances does not list it`,
-        );
-      if (builtinClass.constructor === null)
-        problems.add(null, `the class ${token} says which static member makes ${name.text}, and it has no constructor`);
     }
     if (builtinClass.constructorOnlyReadsPrototypeOfNewTarget && builtinClass.constructor === null) {
       problems.add(null, `the class ${token} says what its constructor reads, and it has none`);
@@ -732,6 +710,7 @@ function needsText(role: OperandRole): boolean {
     case "ReadAsCharacters":
       return true;
     case "Locale":
+    case "MayReplaceLocale":
     case "ContentKey":
     case "ReplacesContents":
     case "MembersAreOnlyInspected":
@@ -1513,7 +1492,7 @@ export function checkModel(model: TableModel, schema: Schema, problems: Problems
   checkInheritance(model, problems);
   checkClosureInstances(model, problems);
   checkInstancesThatAreEntries(model, problems);
-  checkTypesOfNamesDefinedOnNewInstances(model, problems);
+  checkNamesDefinedOnNewInstances(model, problems);
   checkPristineTests(model, problems);
   checkInstanceTests(model, problems);
   checkSameObjects(model, problems);

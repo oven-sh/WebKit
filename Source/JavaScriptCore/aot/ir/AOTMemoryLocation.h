@@ -271,12 +271,20 @@ public:
 
     friend constexpr bool operator==(const LocationMasks& first, const LocationMasks& second)
     {
-        return first.m_heaps == second.m_heaps && (!first.containsAny(indexedHeaps) || first.m_masks == second.m_masks);
+        return first.m_heaps == second.m_heaps && (!first.containsAny(indexedHeaps) || first.hasMasksOf(second));
     }
 
 private:
     static_assert(numberOfHeaps <= 32);
     static constexpr uint32_t bitsOf(AbstractHeapSet heaps) { return static_cast<uint32_t>(heaps.toRaw()); }
+
+    constexpr bool hasMasksOf(const LocationMasks& other) const
+    {
+        uint64_t difference = 0;
+        for (unsigned index = 0; index < numberOfIndexedHeaps; ++index)
+            difference |= m_masks[index] ^ other.m_masks[index];
+        return !difference;
+    }
 
     std::array<uint64_t, numberOfIndexedHeaps> m_masks { };
     uint32_t m_heaps { 0 };

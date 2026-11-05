@@ -167,6 +167,10 @@ static constexpr OpcodeSet boxings { Opcode::Box };
 
 Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, const Type& type)
 {
+    if (operand.representation == Representation::JSValue)
+        return operand.as<Boxed>();
+    if (operand.representation == Representation::Cell)
+        return boxCell(operand.as<CellPointer>());
     BlockFrequency frequency = context.block() ? generator().code().at(context.block()).frequency : BlockFrequency::Normal;
     SetForScope boxesByStub(m_boxesNumbersByStub, frequency != BlockFrequency::Normal);
     SetForScope placeThatBoxesByStub(m_placeThatBoxesByStub, frequency == BlockFrequency::Rare ? Place::RareBlock : frequency == BlockFrequency::Unlikely ? Place::UnlikelyBlock : Place::Anywhere);

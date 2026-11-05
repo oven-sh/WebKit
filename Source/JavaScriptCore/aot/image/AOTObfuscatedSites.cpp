@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBodyFactsForTables.h"
 #include "AOTBuildContext.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkedFunctions.h"
@@ -60,7 +59,7 @@ static TextRange appendNameOfObfuscatedFrame(Vector<uint8_t>& names, const Typed
     return { offset, static_cast<uint32_t>(names.size()) - offset };
 }
 
-static Vector<TextRange> encodeObfuscatedFrameNames(const LinkedFunctions& functions, const Typed::Program& program, std::span<const WrittenTailCall> placesOfTailCalls, const ParallelLoops& loops, Vector<uint8_t>& names)
+static Vector<TextRange> encodeObfuscatedFrameNames(const LinkedFunctions& functions, const Typed::Program& program, const ParallelLoops& loops, Vector<uint8_t>& names)
 {
     FastBitVector isFrameName(program.strings.size());
     forEachIndexInParallel(loops, static_cast<unsigned>(functions.size()), [&](unsigned position) {
@@ -70,10 +69,6 @@ static Vector<TextRange> encodeObfuscatedFrameNames(const LinkedFunctions& funct
                 isFrameName.atomicSetAndCheck(name.index(), true);
         }
     });
-    for (const WrittenTailCall& place : placesOfTailCalls) {
-        if (StringID name = program.at(place.function).name)
-            isFrameName.atomicSetAndCheck(name.index(), true);
-    }
 
     Vector<TextRange> rangeByString(program.strings.size());
     isFrameName.forEachSetBit([&](size_t string) {
@@ -105,30 +100,15 @@ static void appendObfuscatedSiteRecords(Vector<ObfuscatedSiteRecord>& records, u
     }
 }
 
-ObfuscatedSites collectObfuscatedSites(const LinkedFunctions& functions, const Typed::Program& program, BuildContext& context, std::span<const WrittenTailCall> placesOfTailCalls)
+ObfuscatedSites collectObfuscatedSites(const LinkedFunctions& functions, const Typed::Program& program, BuildContext& context)
 {
     const ParallelLoops& loops = context.parallelLoops();
     ObfuscatedSites result;
-    Vector<TextRange> rangeByString = encodeObfuscatedFrameNames(functions, program, placesOfTailCalls, loops, result.names);
+    Vector<TextRange> rangeByString = encodeObfuscatedFrameNames(functions, program, loops, result.names);
     result.records = collectInParallel<ObfuscatedSiteRecord>(loops, static_cast<unsigned>(functions.size()), [&](unsigned position, Vector<ObfuscatedSiteRecord>& records) {
         appendObfuscatedSiteRecords(records, position, functions[position], program, rangeByString);
     });
-    uint32_t numberInFrames = static_cast<uint32_t>(functions.size());
-    for (const WrittenTailCall& place : placesOfTailCalls) {
-        const Typed::Function& function = program.at(place.function);
-        result.records.append(ObfuscatedSiteRecord {
-            .function = numberInFrames++,
-            .site = 0,
-            .location = { function.module.index(), place.position },
-            .name = function.name ? rangeByString[function.name.index()] : TextRange { },
-        });
-    }
     return result;
-}
-
-ObfuscatedSites collectObfuscatedSites(const LinkedFunctions& functions, const Typed::Program& program, BuildContext& context)
-{
-    return collectObfuscatedSites(functions, program, context, { });
 }
 
 } } // namespace JSC::AOT

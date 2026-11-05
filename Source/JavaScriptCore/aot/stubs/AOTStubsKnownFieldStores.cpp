@@ -108,7 +108,6 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), offset);
     jit.and32(TrustedImm32(SlotData::maxOffset), offset);
     Jump isAbsent = jit.branchTest64(CCallHelpers::Zero, slot);
-    isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, flagsOfField, TrustedImm32(fieldIsStoredOnce)));
     jit.store64(value, slot);
     returnAfterStoring(jit, object, value);
 
@@ -149,7 +148,7 @@ static void generatePutKnownFieldAcceptingAnyNumber(StubAssembler& jit, SlotRepr
     const GPRReg structure = jit.allocateScratch(slotPayloadRegister);
     const FPRReg number = CCallHelpers::fpTempRegister;
     const BaseIndex slot(object, offset, CCallHelpers::TimesOne);
-    constexpr uint32_t flagsOfUnusualFields = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand | fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldIsStoredOnce;
+    constexpr uint32_t flagsOfUnusualFields = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand | fieldIsOutOfLine | fieldMayExistWithoutStorage;
     JumpList isLeftToStubForAnyField;
 
     isLeftToStubForAnyField.append(jit.branchIfNotNumber(value));
@@ -234,11 +233,6 @@ void generatePutKnownField(StubAssembler& jit)
     computeFieldAddress(jit, registers.field, false, hasNoStorage);
     RELEASE_ASSERT(hasNoStorage.empty());
     Label hasAddress = jit.label();
-    Jump isNotStoredOnce = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsStoredOnce));
-    JumpList slotIsEmpty;
-    branchOnFieldPresence(jit, registers.field, registers.scratch, goesByName, slotIsEmpty);
-    slotIsEmpty.link(&jit);
-    isNotStoredOnce.link(&jit);
     auto emitRememberingOfKind = [&](GPRReg) {
         JumpList isNotRemembered;
         const GPRReg nameOfField = registers.field.representation;
@@ -312,7 +306,7 @@ void generatePutKnownField(StubAssembler& jit)
     loadStructure(jit, object, structure);
     jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), record);
     jit.addPtr(name, record);
-    goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(flagsLeftToRunTime | fieldIsOutOfLine | fieldIsStoredOnce)));
+    goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(flagsLeftToRunTime | fieldIsOutOfLine)));
     jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), registers.field.slotData);
     computeFieldAddress(jit, registers.field, false, hasNoStorage);
     jit.jump().linkTo(createsField, &jit);

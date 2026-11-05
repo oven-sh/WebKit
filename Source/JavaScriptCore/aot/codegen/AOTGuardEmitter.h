@@ -22,16 +22,13 @@ public:
     void generateIsSlotFilled(const ValueContext&);
     void generateHasNoExtraProperties(const ValueContext&);
     void generateHasNoFieldOutsideSlot(const ValueContext&);
-    void generateHasBirthFieldsFilled(const ValueContext&);
     void generateHasKeyOrder(const ValueContext&);
     void generateIsNotFrozen(const ValueContext&);
     void generateHasLayoutPrototype(const ValueContext&);
     void generateBelongsToInstance(const ValueContext& value) { defineTest(value, belongsToInstance(in<CellPointer>(value->objectOperand()))); }
     void generateIsPristine(const ValueContext&);
     void generateHasArrayStorage(const ValueContext&);
-    void generateIsInBounds(const ValueContext&);
     void generateIsElementPresent(const ValueContext&);
-    void generateIsInsideView(const ValueContext&);
     void generateIsNotThenable(const ValueContext&);
     void generateAreMembersUnchanged(const ValueContext&);
     void defineWhetherDeclaredMemberIsFound(const ValueContext&);

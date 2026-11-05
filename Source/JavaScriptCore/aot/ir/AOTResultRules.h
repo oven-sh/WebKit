@@ -39,9 +39,7 @@ public:
     virtual TypeID readByNameOffObjectsOf(TypeLevel, LayoutID, PropertyKeyID) const { return { }; }
     virtual LayoutID classAbove(LayoutID) const { return { }; }
     virtual TypeID property(TypeLevel, ObjectID, PropertyKeyID) const = 0;
-    virtual TypeID ownProperty(TypeLevel, ObjectID, PropertyKeyID) const { return { }; }
     virtual TypeID contents(TypeLevel, ObjectID, ContentsSlot) const = 0;
-    virtual TypeID awaited(TypeLevel, ObjectID) const { return { }; }
     virtual TypeID result(TypeLevel, FunctionID, uint32_t resultIndex) const = 0;
     virtual TypeID resultOfBodyThatNeverSuspends(TypeLevel, FunctionID) const { return { }; }
     virtual TypeID entryParameter(TypeLevel, FunctionID, uint32_t entryParameterIndex) const = 0;
@@ -68,7 +66,8 @@ struct TypingContext {
     TypeLevel level { TypeLevel::Proven };
 
     ALWAYS_INLINE Type at(TypeID id) const { return types.at(id); }
-    TypeID typeIDOf(const DeclaredType&) const;
+    ALWAYS_INLINE TypeID typeIDOf(const DeclaredType& declared) const { return level == TypeLevel::Expected ? declared.expected().predicted() : typeIDOfSlowCase(declared); }
+    TypeID typeIDOfSlowCase(const DeclaredType&) const;
     TypingContext atLevel(TypeLevel newLevel) const { return { program, types, positions, newLevel }; }
     TypingContext expecting() const { return atLevel(TypeLevel::Expected); }
 };
@@ -126,14 +125,14 @@ inline constexpr OpcodeSet opcodesThatMayHaveSeveralResults = []() consteval {
 }();
 
 inline constexpr OpcodeSet opcodesWithCountedResults = []() consteval {
-    OpcodeSet opcodes { Opcode::CallDirect };
+    OpcodeSet opcodes { Opcode::CallDirect, Opcode::CallTable };
     for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
         if (resultRuleOf(static_cast<Opcode>(index)) == ResultRule::Results)
             opcodes.add(static_cast<Opcode>(index));
     }
     return opcodes;
 }();
-static_assert((opcodesWithCountedResults | opcodesThatMayHaveSeveralResults) == opcodesThatMayHaveSeveralResults);
+
 
 template<typename Operation>
 ALWAYS_INLINE std::optional<uint32_t> numberOfResultsOf(const Program& program, const Operation& operation)
@@ -246,6 +245,7 @@ bool describesBagOfOptions(const TypeArena&, TypeID written);
 
 const OpcodeSet& opcodesWithRequiredOperandTypes();
 template<typename Operation> TypeID requiredTypeOfOperand(const TypingContext&, const Operation& user, uint32_t operandIndex);
+template<typename Operation> TypeID requiredTypeOfDeclaredOperand(const TypingContext&, const Operation& user, uint32_t operandIndex);
 TypeID declaredEntryTypeOf(const TypingContext&, FunctionID callee, unsigned entryParameterIndex);
 
 } } } // namespace JSC::AOT::Typed

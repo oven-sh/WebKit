@@ -16,12 +16,15 @@
 #include "JSCInlines.h"
 #include <algorithm>
 #include <bit>
+#include <mutex>
 #include <span>
 #include <tuple>
 #include <utility>
 #include <wtf/FastMalloc.h>
 #include <wtf/MathExtras.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/ThreadSpecific.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/StringHasherInlines.h>
@@ -65,6 +68,8 @@ Identifier enginePrivateName(VM& vm, const String& text)
     return name;
 }
 
+static void createPlaceForNamesAskedForLately();
+
 ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image, ProgramIdentifiers* ofVM)
     : m_vm(vm)
     , m_image(image)
@@ -79,6 +84,7 @@ ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image, ProgramIdenti
     , m_symbols(createSymbols(ofVM ? minNumberOfSymbolPlaces : std::max(minNumberOfSymbolPlaces, WTF::roundUpToPowerOfTwo(static_cast<uint32_t>(image.programTables().identifiersOfEngineSymbols().size()) * 2 + 2))))
 {
     RELEASE_ASSERT(&image == Image::current());
+    createPlaceForNamesAskedForLately();
     AtomStringTable::setReadOnlyAtomLookup(findAtom);
 }
 
@@ -271,7 +277,7 @@ std::optional<uint32_t> ProgramIdentifiers::numberOfText(const Image& image, Str
     });
 }
 
-struct alignas(64) NameAskedForLately {
+struct NameAskedForLately {
     static constexpr size_t maxLength = 48;
     static constexpr uint32_t mark = 1u << 31;
 
@@ -282,7 +288,16 @@ struct alignas(64) NameAskedForLately {
 };
 static_assert(sizeof(NameAskedForLately) == 64);
 using NamesAskedForLately = std::array<NameAskedForLately, 2>;
-static constinit thread_local std::array<NamesAskedForLately, 16> t_namesAskedForLately { };
+using NamesAskedForLatelyOnThread = std::array<NamesAskedForLately, 16>;
+static LazyNeverDestroyed<ThreadSpecific<NamesAskedForLatelyOnThread, CanBeGCThread::True>> s_namesAskedForLately;
+
+static void createPlaceForNamesAskedForLately()
+{
+    static std::once_flag once;
+    std::call_once(once, [] {
+        s_namesAskedForLately.construct();
+    });
+}
 
 static ALWAYS_INLINE AtomStringImpl* noteNameAskedFor(NamesAskedForLately& lately, AtomStringImpl* atom, unsigned hash, StringView characters)
 {
@@ -307,7 +322,8 @@ AtomStringImpl* ProgramIdentifiers::findAtom(StringView characters, unsigned has
     if (!image || characters.isEmpty()) [[unlikely]]
         return findAtomSlow(characters, hash);
     ASSERT(!(hash & NameAskedForLately::mark));
-    NamesAskedForLately& lately = t_namesAskedForLately[hash % t_namesAskedForLately.size()];
+    NamesAskedForLatelyOnThread& onThread = *s_namesAskedForLately.get();
+    NamesAskedForLately& lately = onThread[hash % onThread.size()];
     for (const NameAskedForLately& name : lately) {
         if (name.hashAndMark != (hash | NameAskedForLately::mark))
             continue;

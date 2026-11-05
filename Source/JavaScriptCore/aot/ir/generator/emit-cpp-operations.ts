@@ -369,6 +369,17 @@ function operationsHeader(schema: Schema): string[] {
     const inOrder = [...uses.values()].sort((left, right) => left.number - right.number);
     return `OperandUses ${setText("OperandUse", inOrder)}`;
   };
+  const unitedOverOperands =
+    (type: string, enumName: string, membersOf: (operand: Operand) => readonly Member[]) => (entry: Entry) => {
+      const united = new Map<string, Member>();
+      for (const operand of operandsOf(entry)) {
+        for (const member of membersOf(operand)) united.set(member.name, member);
+      }
+      const inOrder = [...united.values()].sort((left, right) => left.number - right.number);
+      return `${type} ${setText(enumName, inOrder)}`;
+    };
+  const usesOfOperands = unitedOverOperands("OperandUses", "OperandUse", operand => operand.uses.uses);
+  const protocolsOfOperands = unitedOverOperands("Protocols", "Protocol", operand => operand.uses.protocols);
   const flagMask = (flags: readonly Flag[]) => `0x${((1 << flags.length) - 1).toString(16)}`;
   const fixedTargets = (entry: Entry) =>
     entry.targets.some(target => target.isVariadic) ? "std::nullopt" : String(entry.targets.length);
@@ -399,6 +410,8 @@ function operationsHeader(schema: Schema): string[] {
       noteOnUsesOfNamedOperands,
       ...forOperations(schema, lookup("OperandUses", "usesOfNamedOperandsOf", usesOfNamedOperands, "OperandUses { }")),
     ],
+    both(schema, lookup("OperandUses", "usesOfOperandsOf", usesOfOperands, "OperandUses { }")),
+    both(schema, lookup("Protocols", "protocolsOfOperandsOf", protocolsOfOperands, "Protocols { }")),
     both(
       schema,
       lookup("uint16_t", "declaredFlagsOf", entry => flagMask(entry.flags), "0x0"),

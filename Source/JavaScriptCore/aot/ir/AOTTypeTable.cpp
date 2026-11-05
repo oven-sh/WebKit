@@ -42,45 +42,7 @@ static_assert(std::endian::native == std::endian::little);
 static_assert(sizeof(ClassPart) == wordsPerClassPartInTypeTable * sizeof(uint32_t) && alignof(ClassPart) == alignof(uint32_t));
 static_assert(offsetof(ClassPart, writtenContents) == sizeof(uint32_t));
 
-static constexpr uint64_t addToInternedHash(uint64_t hash, uint64_t bits)
-{
-    hash = (hash ^ bits) * 0x9e3779b97f4a7c15ull;
-    return hash ^ hash >> 32;
-}
-
-static constexpr uint64_t addToInternedHash(uint64_t hash, uint32_t first, uint32_t second)
-{
-    return addToInternedHash(hash, static_cast<uint64_t>(first) << 32 | second);
-}
-
-static constexpr uint32_t finishInternedHash(uint64_t hash)
-{
-    return static_cast<uint32_t>(addToInternedHash(hash, 0));
-}
-
 static constexpr uint32_t shardOfInternedHash(uint32_t hash) { return hash >> (32 - bitsOfShardInInternedTable); }
-
-uint32_t hashOf(const TypeParts& parts)
-{
-    uint64_t flags = parts.primitives
-        | static_cast<uint64_t>(parts.seeds.toRaw()) << 16
-        | static_cast<uint64_t>(parts.anyObject) << 32
-        | static_cast<uint64_t>(parts.anyFunction) << 33
-        | (parts.opaque ? static_cast<uint64_t>(*parts.opaque) + 1 : 0) << 34;
-    uint64_t hash = addToInternedHash(0, flags);
-    if (!parts.integers.isEmpty()) {
-        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.minimum));
-        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.maximum));
-    }
-    if (!parts.boundsOfFractions.isEmpty()) {
-        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.minimum));
-        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.maximum));
-    }
-    hash = addToInternedHash(hash, parts.environment.bits(), parts.stringLiterals.bits());
-    hash = addToInternedHash(hash, parts.symbolLiterals.bits(), parts.objects.bits());
-    hash = addToInternedHash(hash, parts.unnamedLayouts.bits(), parts.unnamedClasses.bits());
-    return finishInternedHash(hash);
-}
 
 uint32_t hashOf(std::span<const uint32_t> words)
 {
@@ -94,7 +56,7 @@ uint32_t hashOf(const PropertyKey& key)
 {
     uint64_t hash = addToInternedHash(0, static_cast<uint32_t>(key.kind), key.symbol ? static_cast<uint32_t>(*key.symbol) + 1 : 0);
     hash = addToInternedHash(hash, key.text.bits(), key.owner.bits());
-    hash = addToInternedHash(hash, key.module.bits(), key.site.bits());
+    hash = addToInternedHash(hash, key.module.bits());
     hash = addToInternedHash(hash, key.callNumber ? static_cast<uint64_t>(*key.callNumber) + 1 : 0);
     return finishInternedHash(hash);
 }
@@ -127,21 +89,6 @@ static uint8_t locationBitOfKeyInTypeTable(const Program& program, const Propert
         hash = addBytesToInternedHash(hash, program.string(program.at(key.module).path));
     return static_cast<uint8_t>(finishInternedHash(hash) % numberOfLocationBitsOfKeys);
 }
-
-static constexpr uint32_t log2OfFirstInternedSegment = 8;
-static constexpr uint32_t sizeOfFirstInternedSegment = 1u << log2OfFirstInternedSegment;
-
-static constexpr uint32_t internedSegmentOf(uint32_t position)
-{
-    return static_cast<uint32_t>(std::bit_width(position + sizeOfFirstInternedSegment)) - 1 - log2OfFirstInternedSegment;
-}
-
-static constexpr uint32_t firstPositionOfInternedSegment(uint32_t segment)
-{
-    return (sizeOfFirstInternedSegment << segment) - sizeOfFirstInternedSegment;
-}
-
-static constexpr uint32_t numberOfInternedSegments = internedSegmentOf(largestIDPosition) + 1;
 
 static_assert(!internedSegmentOf(0) && !internedSegmentOf(sizeOfFirstInternedSegment - 1) && internedSegmentOf(sizeOfFirstInternedSegment) == 1);
 static_assert(firstPositionOfInternedSegment(1) == sizeOfFirstInternedSegment && internedSegmentOf(firstPositionOfInternedSegment(2) - 1) == 1);
@@ -869,9 +816,11 @@ void TypeTable::freeze()
     });
     m_classParts.freeOutgrownSlots();
     m_propertyKeys.freeOutgrownSlots();
-    m_propertyKeysOnceFrozen = Vector<const PropertyKey*>(m_propertyKeys.size(), [&](size_t position) {
-        return &m_propertyKeys.at(static_cast<uint32_t>(position));
-    });
+    m_numberOfPropertyKeysOnceFrozen = m_propertyKeys.size();
+    for (uint32_t segment = 0; segment < numberOfInternedSegments && firstPositionOfInternedSegment(segment) < m_numberOfPropertyKeysOnceFrozen; ++segment) {
+        uint32_t firstPosition = firstPositionOfInternedSegment(segment);
+        m_addressesOfPositionZeroInKeySegments[segment] = reinterpret_cast<uintptr_t>(&m_propertyKeys.at(firstPosition)) - static_cast<uintptr_t>(firstPosition) * sizeof(PropertyKey);
+    }
     m_layoutSets.freeze();
     m_objectSets.freeze();
     m_stringSets.freeze();
@@ -884,7 +833,7 @@ size_t TypeTable::sizeInBytes() const
     size_t size = sizeof(TypeTable) + m_partOfClassAlone.capacity() * sizeof(ClassPart) + (m_typeOfWireIndex.capacity() + m_typesOfLiteralStrings.capacity()) * sizeof(TypeID) + m_locationBitsOfKeys.capacity() * sizeof(uint8_t);
     if (m_objects)
         size += sizeof(ObjectTable) + static_cast<size_t>(m_objects->size()) * sizeof(ObjectRecord);
-    size += m_types.sizeInBytes() + m_typesOnceFrozen.capacity() * sizeof(const Type*) + m_classParts.sizeInBytes() + m_propertyKeys.sizeInBytes() + m_propertyKeysOnceFrozen.capacity() * sizeof(const PropertyKey*);
+    size += m_types.sizeInBytes() + m_typesOnceFrozen.capacity() * sizeof(const Type*) + m_classParts.sizeInBytes() + m_propertyKeys.sizeInBytes();
     size += m_layoutSets.sizeInBytes() + m_objectSets.sizeInBytes() + m_stringSets.sizeInBytes() + m_keySets.sizeInBytes();
     if (m_sharedAnswers)
         size += m_sharedAnswers->sizeInBytes();

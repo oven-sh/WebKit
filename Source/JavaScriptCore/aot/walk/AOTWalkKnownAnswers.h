@@ -36,6 +36,22 @@ public:
         ++m_size;
         return true;
     }
+    ALWAYS_INLINE void addInPlaceOfNeighbor(uint32_t number)
+    {
+        uint32_t word = number / bitsOfWord;
+        if (!m_size || word < m_firstWord || word - m_firstWord >= m_words.size()) {
+            addWhereWordIsMissing(number);
+            return;
+        }
+        uint64_t held = m_words[word - m_firstWord];
+        uint64_t bit = 1ull << number % bitsOfWord;
+        if (held & bit)
+            return;
+        uint64_t bitOfNeighbor = 1ull << (number ^ 1) % bitsOfWord;
+        m_words.mutableAt(word - m_firstWord) = (held | bit) & ~bitOfNeighbor;
+        if (!(held & bitOfNeighbor))
+            ++m_size;
+    }
     bool remove(uint32_t number)
     {
         if (!contains(number))
@@ -363,10 +379,10 @@ public:
         if (!m_table)
             return;
         uint32_t ifTrue = m_table->numberOutcomesOf(condition);
+        ASSERT(ifTrue & 1);
         if (!m_held)
             m_held = makeUniqueWithoutFastMallocCheck<Held>();
-        if (m_held->outcomes.add(ifTrue - !isTrue))
-            m_held->outcomes.remove(ifTrue - isTrue);
+        m_held->outcomes.addInPlaceOfNeighbor(ifTrue - !isTrue);
     }
     std::optional<bool> outcomeOf(Reference condition) const;
     void noteConversion(Reference value, Representation wanted, Reference converted, bool endsAtSuspension);

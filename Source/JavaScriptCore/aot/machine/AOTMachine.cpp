@@ -16,24 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-RegisterMask maskOf(const RegisterSet& set)
-{
-    static_assert(sizeof(RegisterBitSet) == sizeof(RegisterBitSet::WordType));
-    return set.toScalarRegisterSet().bitsForDebugging();
-}
-
-RegisterSet registerSetOf(RegisterMask mask)
-{
-    [[maybe_unused]] constexpr RegisterMask everyRegister = ~RegisterMask { 0 } >> (63 - Reg::maxIndex());
-    ASSERT(!(mask & ~everyRegister));
-
-    RegisterSet result;
-    forEachRegister(mask, [&](Reg reg) {
-        result.add(reg, IgnoreVectors);
-    });
-    return result;
-}
-
 static bool machineCoreCountsChildrenAtThisRead(const Operation* operation)
 {
     return !operation->useCount() && operation->owner() && countsChildrenAtFirstUse(operation->opcode());
@@ -46,6 +28,8 @@ void Operation::countChildrenAtFirstUse()
         ASSERT(operation->m_owner && countsChildrenAtFirstUse(operation->m_opcode));
         uint16_t flagsOfChildren = operation->m_opcode == Trunc ? 0 : static_cast<uint16_t>(OperationFlag::UpperHalfIsRead);
         Operation* childReadFirst = nullptr;
+        Operation* secondChildReadFirst = nullptr;
+        Operation* thirdChildReadFirst = nullptr;
         for (Operation* child : std::span<Operation* const>(operation->m_children, operation->m_auxiliary)) {
             child->m_flags |= flagsOfChildren;
             if (child->m_useCount) {
@@ -56,12 +40,27 @@ void Operation::countChildrenAtFirstUse()
             child->m_useCount = 1;
             if (!child->m_owner || !countsChildrenAtFirstUse(child->m_opcode))
                 continue;
-            if (childReadFirst) [[unlikely]]
-                childReadFirst->countChildrenAtFirstUseWithWorklist();
+            if (childReadFirst) [[unlikely]] {
+                if (secondChildReadFirst)
+                    thirdChildReadFirst = child;
+                else
+                    secondChildReadFirst = child;
+                continue;
+            }
             childReadFirst = child;
         }
+        if (secondChildReadFirst) [[unlikely]]
+            return countChildrenOfSeveralAtFirstUse(childReadFirst, secondChildReadFirst, thirdChildReadFirst);
         operation = childReadFirst;
     } while (operation);
+}
+
+NEVER_INLINE void Operation::countChildrenOfSeveralAtFirstUse(Operation* first, Operation* second, Operation* thirdOrNull)
+{
+    first->countChildrenAtFirstUseWithWorklist();
+    second->countChildrenAtFirstUseWithWorklist();
+    if (thirdOrNull)
+        thirdOrNull->countChildrenAtFirstUseWithWorklist();
 }
 
 NEVER_INLINE void Operation::countChildrenAtFirstUseWithWorklist()
@@ -105,13 +104,8 @@ void Operation::loseUse()
     }
 }
 
-void ResultConstraints::assign(std::span<const ValueRep> reps)
+void ResultConstraints::appendNoneOrSeveral(std::span<const ValueRep> reps)
 {
-    m_reps.clear();
-    if (reps.size() == 1) [[likely]] {
-        m_reps.appendWithinCapacity(reps.front());
-        return;
-    }
     m_reps.reserve(*m_arena, static_cast<uint32_t>(reps.size()));
     for (const ValueRep& rep : reps)
         m_reps.appendWithinCapacity(rep);
@@ -123,22 +117,6 @@ NEVER_INLINE void PatchOperation::growStorageOfOperands()
     uint32_t capacity = std::max(firstCapacityOfOperands, m_operands.capacity() * 2);
     m_operands.reserve(arena, capacity);
     m_constraints.reserve(arena, capacity);
-}
-
-void PatchOperation::append(Operation* value, const ValueRep& rep)
-{
-    ASSERT(value->type().isNumeric());
-    ASSERT(rep.isAny() || rep.kind() == ValueRep::SomeRegister || rep.kind() == ValueRep::SomeLateRegister || rep.kind() == ValueRep::Register || rep.kind() == ValueRep::StackArgument);
-    ASSERT(m_opcode != Check || !m_operands.isEmpty() || rep.kind() == ValueRep::ColdAny);
-    RELEASE_ASSERT(value->hasNoPosition() || value->owner() != m_owner || value->opcode() == Phi || value->indexInBlock() < m_indexInBlock);
-
-    if (m_operands.size() == m_operands.capacity()) [[unlikely]]
-        growStorageOfOperands();
-    m_operands.appendWithinCapacity(value);
-    m_constraints.appendWithinCapacity(rep);
-
-    if (m_owner)
-        value->gainUse();
 }
 
 void PatchOperation::markChildAsLetGoByCallee(unsigned child)
@@ -156,15 +134,29 @@ void PatchOperation::leaveOperandsWhereTheyLie()
         if (constraint.kind() == ValueRep::SomeRegister || constraint.kind() == ValueRep::SomeLateRegister || constraint.kind() == ValueRep::WarmAny)
             return;
     }
-    for (unsigned child = 0; child < m_operands.size(); ++child) {
-        ValueRep& constraint = m_constraints[child];
-        if (!constraint.isGPR() || (m_operands[child]->hasNoPosition() && !m_operands[child]->isConstant()))
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    const uint32_t numberOfOperands = m_operands.size();
+    Operation* const* const operands = m_operands.begin();
+    ValueRep* const constraints = m_constraints.begin();
+    Reg* registers = nullptr;
+    for (uint32_t child = 0; child < numberOfOperands; ++child) {
+        ValueRep& constraint = constraints[child];
+        bool isLeftWhereItLies = constraint.isGPR() && (!operands[child]->hasNoPosition() || operands[child]->isConstant());
+        if (!registers) {
+            if (!isLeftWhereItLies)
+                continue;
+            m_registersToBringOperandsTo.growWithoutInitializing(m_procedure.arena(), numberOfOperands);
+            registers = m_registersToBringOperandsTo.begin();
+            std::fill_n(registers, child, Reg());
+        }
+        if (!isLeftWhereItLies) {
+            registers[child] = Reg();
             continue;
-        if (m_registersToBringOperandsTo.isEmpty())
-            m_registersToBringOperandsTo.fill(m_procedure.arena(), m_operands.size(), Reg());
-        m_registersToBringOperandsTo[child] = constraint.reg();
+        }
+        registers[child] = constraint.reg();
         constraint = ValueRep::ColdAny;
     }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 void PatchOperation::setReads(std::span<const AbstractHeap* const> heaps)
@@ -200,11 +192,6 @@ RegisterMask PatchOperation::lateClobberedOnSuccessor(unsigned successorIndex) c
             return clobber.mask;
     }
     return 0;
-}
-
-void Block::appendSuccessor(Edge edge)
-{
-    appendSuccessorInline(edge);
 }
 
 void Block::setSuccessors(Edge target)
@@ -247,18 +234,7 @@ void Procedure::fail(FailureKind kind, const Operation* operation)
 
 Block* Procedure::addBlock()
 {
-    static_assert(std::is_trivially_destructible_v<Block>);
-    static_assert(alignof(Block) >= alignof(Edge) && alignof(Edge) >= alignof(Operation*) && !(sizeof(Block) % alignof(Edge)));
-    constexpr size_t bytesOfSuccessors = Block::firstCapacityOfSuccessors * sizeof(Edge);
-    constexpr size_t bytesOfOperations = Block::firstCapacityOfOperations * sizeof(Operation*);
-    constexpr size_t bytesOfUpsilons = Block::firstCapacityOfUpsilons * sizeof(Operation*);
-    uintptr_t memory = reinterpret_cast<uintptr_t>(m_arena.allocate(sizeof(Block) + bytesOfSuccessors + bytesOfOperations + bytesOfUpsilons, alignof(Block)));
-    Block* block = new (NotNull, reinterpret_cast<void*>(memory)) Block(*this, m_blocks.size());
-    block->m_successors.adoptStorage(reinterpret_cast<Edge*>(memory + sizeof(Block)), Block::firstCapacityOfSuccessors);
-    block->m_operations.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors), Block::firstCapacityOfOperations);
-    block->m_upsilons.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors + bytesOfOperations), Block::firstCapacityOfUpsilons);
-    m_blocks.append(m_arena, block);
-    return block;
+    return addBlockInline();
 }
 
 Block* Procedure::addEntrypoint(uint16_t id)

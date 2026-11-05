@@ -82,16 +82,17 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
 
 void RepresentationEmitter::generate(const ValueContext& value)
 {
-    if (generator().isCarriedBoxed(value->valueOperand())) [[unlikely]] {
+    ValueID converted = value->valueOperand();
+    if (generator().isCarriedBoxed(converted)) [[unlikely]] {
         RELEASE_ASSERT(value.opcode() == Opcode::Box && value.representation() == Representation::JSValue);
-        define(value, get(value->valueOperand()));
+        define(value, get(converted));
         return;
     }
     if (ValueID sum = generator().sumBoxedBy(value.value())) [[unlikely]] {
         define(value, emitter<OperatorEmitter>().boxedSum(sum));
         return;
     }
-    define(value, convert(value, value.opcode(), get(value->valueOperand()), typeOf(value.id()), value.representation()));
+    define(value, convert(value, value.opcode(), get(converted), typeOf(value.id()), value.representation()));
 }
 
 } } } // namespace JSC::AOT::Typed

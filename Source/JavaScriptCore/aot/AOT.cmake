@@ -226,6 +226,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTDriverTests.cpp
     aot/tests/AOTEnforcedFieldsText.cpp
     aot/tests/AOTEngineHookTests.cpp
+    aot/tests/AOTExportsThatStayInCompiledCodeTests.cpp
     aot/tests/AOTExtensionTests.cpp
     aot/tests/AOTFFIStubTests.cpp
     aot/tests/AOTFactsTestCommands.cpp

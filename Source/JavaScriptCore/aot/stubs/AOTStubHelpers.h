@@ -87,6 +87,14 @@ void decodeStructureID(CCallHelpers&, GPRReg idAndResult);
 void loadStructure(StubAssembler&, GPRReg cell, GPRReg result);
 void extractBits(StubAssembler&, GPRReg source, unsigned shift, unsigned width, GPRReg result);
 void loadShapeWord(StubAssembler&, GPRReg cell, GPRReg result);
+void loadShapeWordAsIndex(StubAssembler&, GPRReg cell, GPRReg result);
+int32_t offsetOfRowsByShapeIndex(StubAssembler&);
+bool loadsShapeAsHalfword(StubAssembler&);
+void loadShapeWordWithMark(StubAssembler&, GPRReg cell, GPRReg result);
+void setMarkOfCell(StubAssembler&, GPRReg cell, GPRReg scratch);
+void setFlagThatFieldHasLeft(StubAssembler&, GPRReg cell, GPRReg scratch);
+Jump branchIfCellBearsMark(StubAssembler&, GPRReg cell);
+Jump branchUnlessCellBearsMark(StubAssembler&, GPRReg cell);
 JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
 inline JumpList branchIfNotCompiledObject(StubAssembler& jit, GPRReg cell) { return branchIfNotCompiledObjectOfThisImage(jit, cell); }
 void loadCellVM(StubAssembler&, GPRReg cellAndResult);

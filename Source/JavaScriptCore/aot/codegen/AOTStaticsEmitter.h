@@ -17,8 +17,7 @@ public:
 
     TypedPointer addressOf(VariableID);
     Operand loadVariable(VariableID);
-    Operand loadEncodedVariable(VariableID);
-    void storeVariable(VariableID, Operand, const Type& storedType);
+    void storeVariable(VariableID, Operand);
     TypedPointer addressOfStaticField(VariableID);
     bool holdsStaticField(VariableID) const;
     void storeStaticField(VariableID, Boxed);

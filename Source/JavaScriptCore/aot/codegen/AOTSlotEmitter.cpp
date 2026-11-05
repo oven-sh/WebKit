@@ -15,6 +15,7 @@
 #include "AOTPureOperations.h"
 #include "AOTRepresentation.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTShapeTestEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsAllocation.h"
 #include "AOTStubsPropertyKeys.h"
@@ -93,11 +94,10 @@ void SlotEmitter::storeBits(TypedPointer pointer, SlotRepresentation slot, LValu
 Operand SlotEmitter::load(TypedPointer pointer, SlotRepresentation slot)
 {
     const SlotTraits& traits = traitsOf(slot);
-    Representation representation = Typed::representationOf(slot);
     if (traits.valueKind == SlotValueKind::Float)
         return Number(m_out.floatToDouble(m_out.loadFloat(pointer)));
     if (traits.valueKind == SlotValueKind::Double)
-        return Operand(representation, m_out.loadDouble(pointer));
+        return Operand(Typed::representationOf(slot), m_out.loadDouble(pointer));
 
     LValue bits;
     if (traits.valueKind == SlotValueKind::SignedInteger && traits.width < sizeof(int32_t))
@@ -598,19 +598,36 @@ bool SlotEmitter::holdsRawValueFromBirthInSomeMember(LayoutSetID receivers, Prop
 {
     return m_generator.inputs().types.at(receivers).anyOf([&](LayoutID layout) {
         std::optional<FieldIndex> field = m_plan.slots().findField(m_program, layout, key);
-        return field && m_facts.field({ layout, *field }).facts.contains(FieldFact::HoldsRawValueFromBirth);
+        return field && m_plan.layout(layout).holdsRawValueFromBirth(*field);
     });
 }
 
-void SlotEmitter::markCellIfMarkerIsStored(CellPointer cell, ValueID stored)
+void SlotEmitter::markCellIfMarkerIsStored(CellPointer cell, ValueID stored, LayoutSetID possible)
 {
     const Type& type = typeOf(stored);
     if (!type.mayBeUndefinedOrNull())
         return;
     auto mark = [&] {
-        CodeGenerator::InitializationScope scope(generator());
-        Word32 flags = loadByte(cell, m_heaps.JSCell_typeInfoFlags);
-        m_out.store32As8(bitOr(flags, word32(TypeInfoPerCellBit)).value(), cell.value(), m_heaps.JSCell_typeInfoFlags);
+        ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
+        Vector<LayoutID, 8> bearers;
+        if (possible) {
+            for (LayoutID member : membersOf(m_generator.inputs().types, possible)) {
+                if (m_plan.layout(member).mayBearMark)
+                    bearers.append(member);
+            }
+        }
+        if (!possible || bearers.size() == membersOf(m_generator.inputs().types, possible).size()) {
+            shapes.setMark(cell);
+            return;
+        }
+        LBasicBlock mayBearIt = newBlock();
+        LBasicBlock behind = newBlock();
+        ScopeFork fork = m_out.forkScope();
+        shapes.branchOnShapeIn(cell, types().layoutSets().ofSorted(bearers.span()), types().at(types().forLayoutSet(possible)), { normalEdge(mayBearIt), normalEdge(behind) });
+        m_out.appendToArm(mayBearIt, fork);
+        shapes.setMark(cell);
+        m_out.jump(behind);
+        m_out.appendToJoin(behind, fork);
     };
     if (type.isUndefinedOrNull()) {
         mark();
@@ -637,7 +654,7 @@ void SlotEmitter::storeSlot(CellPointer cell, const PlacedSlot& slot, const Memo
 
 void SlotEmitter::store(TypedPointer pointer, SlotRepresentation slot, Operand operand, const Type& storedType)
 {
-    if (slot == SlotRepresentation::OptionalInt32 && storedType.isInteger()) {
+    if (storeLooksAtType(slot) && storedType.isInteger()) {
         m_out.store32(m_out.castToInt32(operand.as<OptionalInteger>().value()), pointer);
         return;
     }

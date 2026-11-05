@@ -40,17 +40,88 @@ struct Function : FunctionRecord {
     Wire::SourceLocation locationAt(uint32_t position) const;
     Wire::SourceLocation declarationLocation() const;
 
-    unsigned numberOfEntryParameters() const;
+    ALWAYS_INLINE unsigned numberOfEntryParametersOfKind(EntryParameter kind) const
+    {
+        switch (kind) {
+        case EntryParameter::Capture:
+            return captures.size();
+        case EntryParameter::Parameter:
+            return parameters.size();
+        case EntryParameter::This:
+        case EntryParameter::Callee:
+        case EntryParameter::NewTarget:
+        case EntryParameter::ArgumentCount:
+        case EntryParameter::HiddenRest:
+            return flags.containsAll(presentWithOf(kind)) ? 1 : 0;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    ALWAYS_INLINE unsigned numberOfEntryParametersBefore(EntryParameter kind) const
+    {
+        unsigned count = 0;
+        for (EntryParameter earlierKind : allMembersOf<EntryParameter>) {
+            if (earlierKind == kind)
+                break;
+            count += numberOfEntryParametersOfKind(earlierKind);
+        }
+        return count;
+    }
+    ALWAYS_INLINE unsigned numberOfEntryParameters() const
+    {
+        unsigned count = 0;
+        for (EntryParameter kind : allMembersOf<EntryParameter>)
+            count += numberOfEntryParametersOfKind(kind);
+        return count;
+    }
     std::optional<unsigned> thisParameterIndex() const;
     std::optional<unsigned> calleeParameterIndex() const;
     std::optional<unsigned> newTargetParameterIndex() const;
     std::optional<unsigned> argumentCountParameterIndex() const;
-    unsigned firstParameterIndex() const;
+    ALWAYS_INLINE unsigned firstParameterIndex() const { return numberOfEntryParametersBefore(EntryParameter::Parameter); }
     std::optional<unsigned> hiddenRestParameterIndex() const;
-    unsigned numberOfPositionalParameters() const;
+    ALWAYS_INLINE unsigned numberOfPositionalParameters() const
+    {
+        unsigned numberOfRestParameters = has(FunctionFlags::HasRestParameter);
+        RELEASE_ASSERT(parameters.size() >= numberOfRestParameters);
+        return parameters.size() - numberOfRestParameters;
+    }
 
-    EntryParameter entryParameterKind(unsigned entryParameterIndex) const;
-    const DeclaredType* declaredEntryParameter(unsigned entryParameterIndex) const LIFETIME_BOUND;
+    ALWAYS_INLINE EntryParameter entryParameterKind(unsigned entryParameterIndex) const
+    {
+        unsigned end = 0;
+        for (EntryParameter kind : allMembersOf<EntryParameter>) {
+            end += numberOfEntryParametersOfKind(kind);
+            if (entryParameterIndex < end)
+                return kind;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    ALWAYS_INLINE const DeclaredType* declaredEntryParameter(unsigned entryParameterIndex) const LIFETIME_BOUND
+    {
+        unsigned first = 0;
+        for (EntryParameter kind : allMembersOf<EntryParameter>) {
+            unsigned end = first + numberOfEntryParametersOfKind(kind);
+            if (entryParameterIndex >= end) {
+                first = end;
+                continue;
+            }
+            switch (kind) {
+            case EntryParameter::Capture:
+                return &captures[entryParameterIndex - first];
+            case EntryParameter::This:
+                return &thisType;
+            case EntryParameter::Parameter:
+                return &parameters[entryParameterIndex - first];
+            case EntryParameter::Callee:
+            case EntryParameter::NewTarget:
+            case EntryParameter::ArgumentCount:
+            case EntryParameter::HiddenRest:
+                return nullptr;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
 };
 
 OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function&);

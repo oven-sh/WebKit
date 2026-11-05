@@ -10,26 +10,18 @@
 
 #include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
-#include "AOTOperatorForms.h"
 #include "AOTRepresentationRules.h"
 #include "AOTTypeArena.h"
 #include "JSGlobalObjectFunctions.h"
 #include <array>
 #include <cmath>
-#include <cstdlib>
-#include <limits>
 
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-bool isTakenAsItIsByFormNumbers(const Type&);
-
-static constexpr OpcodeSet arithmeticInNumberOperators { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow, Opcode::Negate, Opcode::Increment, Opcode::Decrement };
+static constexpr OpcodeSet arithmeticInNumberOperators { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow };
 static constexpr OpcodeSet opcodesOfNumberOperators = arithmeticInNumberOperators | allBitwiseOperators | allEqualities | allRelations
-    | OpcodeSet { Opcode::DirectEval, Opcode::LogicalNot, Opcode::ToBoolean };
-
-static constexpr uint16_t primitivesThatDirectEvalHandsBack = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnySymbol | Primitive::BigInt;
+    | OpcodeSet { Opcode::LogicalNot, Opcode::ToBoolean };
 
 namespace {
 
@@ -41,11 +33,6 @@ struct OperandInNumberOperators {
 };
 
 using OperandsInNumberOperators = std::array<OperandInNumberOperators, 2>;
-
-struct IntegerInPlaceOfNumber {
-    std::optional<bool> answer;
-    int64_t bound { 0 };
-};
 
 } // anonymous namespace
 
@@ -98,21 +85,6 @@ static Origin originInFrontOfNumberOperator(Walker& walker, const BodyValue& val
     return origin;
 }
 
-static bool bindWhatDirectEvalHandsBack(Walker& walker, const BodyValue& evaluation)
-{
-    if (!walker.has(Mechanism::Folding))
-        return false;
-    Reference text = walker.referenceOf(evaluation.textOperand());
-    TypeID id = text && text.isRecord() ? walker.typeOf(text) : TypeID();
-    if (!id)
-        return false;
-    Type type = walker.types().at(id);
-    if (type.isNever() || !type.hasOnlyPrimitives(primitivesThatDirectEvalHandsBack))
-        return false;
-    walker.bind(evaluation.id(), text);
-    return true;
-}
-
 static bool bindWhatIsNegatedTwice(Walker& walker, const BodyValue& negation)
 {
     if (!walker.has(Mechanism::Folding))
@@ -129,34 +101,6 @@ static bool bindWhatIsNegatedTwice(Walker& walker, const BodyValue& negation)
         return false;
     walker.bind(negation.id(), negatedTwice);
     return true;
-}
-
-static Reference constantWhereRangesLeaveOneInteger(Walker& walker, Opcode opcode, const OperandsInNumberOperators& operands)
-{
-    if (numberOfNamedOperandsOf(opcode) != 2 || (!operands[0].known && !operands[1].known))
-        return { };
-    if (!operands[0].type.isNumberLike() || !operands[1].type.isNumberLike())
-        return { };
-    OperatorTypes types { walker.typeOf(operands[0].reference), walker.typeOf(operands[1].reference) };
-    Type result = walker.types().at(chooseOperatorForm(walker.program(), walker.types(), opcode, types).result);
-    return result.isInteger() && result.integers.isSingleValue() ? integerInNumberForms(walker, result.integers.minimum) : Reference();
-}
-
-static std::optional<int64_t> constantAddedToSubtrahend(Walker& walker, const OperandsInNumberOperators& operands)
-{
-    if (!operands[1].type.isInt32())
-        return std::nullopt;
-    const BodyIndex& index = walker.currentBodyIndex();
-    ValueID sum = index.valueBehindCasts(operands[0].written);
-    if (!sum || index.isParameter(sum) || index.opcodeOf(sum) != Opcode::Add)
-        return std::nullopt;
-    BodyValue addition = index.value(sum);
-    if (index.valueBehindCasts(addition.operand(0)) != index.valueBehindCasts(operands[1].written))
-        return std::nullopt;
-    std::optional<int64_t> addend = integerKnownInNumberForms(walker, walker.referenceOf(addition.operand(1)));
-    if (!addend || std::abs(*addend) > std::numeric_limits<int32_t>::max())
-        return std::nullopt;
-    return addend;
 }
 
 static Reference valueThatArithmeticGives(Walker& walker, Opcode opcode, const OperandsInNumberOperators& operands)
@@ -178,8 +122,6 @@ static Reference valueThatArithmeticGives(Walker& walker, Opcode opcode, const O
             return left.reference;
         if (isNegativeZeroInNumberOperators(right.known) && left.type.isInteger())
             return left.reference;
-        if (std::optional<int64_t> addend = constantAddedToSubtrahend(walker, operands))
-            return integerInNumberForms(walker, *addend);
         return { };
     case Opcode::Mul:
         for (uint32_t side = 0; side < 2; ++side) {
@@ -200,51 +142,14 @@ static Reference valueThatArithmeticGives(Walker& walker, Opcode opcode, const O
     }
 }
 
-static ValueID recordBehindNamesInNumberOperators(const Code& code, ValueID record)
-{
-    while (opcodesThatGiveSameValue.contains(code.at(record).opcode))
-        record = code.at(record).operand(0);
-    return record;
-}
-
-static ValueID numberThatWasTruncatedInNumberOperators(Walker& walker, ValueID number)
-{
-    const BodyIndex& index = walker.currentBodyIndex();
-    ValueID written = index.valueBehindCasts(number);
-    if (!written || index.isParameter(written) || index.opcodeOf(written) != Opcode::Call)
-        return { };
-    Reference built = walker.referenceOf(written);
-    if (!built.isValue())
-        return { };
-    const Operation& record = walker.code().at(recordBehindNamesInNumberOperators(walker.code(), built.id()));
-    if (record.opcode != Opcode::CallInline || record.inlineBuiltin() != InlineBuiltin::MathTrunc || record.numberOfVariadicOperands() != 1)
-        return { };
-    auto arguments = index.value(written).as<Opcode::Call>().argumentsOperands();
-    if (!arguments.size())
-        return { };
-    ValueID truncated = *arguments.begin();
-    Reference taken = walker.referenceOf(truncated);
-    if (!taken || !taken.isValue() || recordBehindNamesInNumberOperators(walker.code(), taken.id()) != recordBehindNamesInNumberOperators(walker.code(), record.variadicOperands()[0]))
-        return { };
-    TypeID type = walker.typeOf(taken);
-    return type && walker.types().at(type).isNumber() ? truncated : ValueID();
-}
-
 static Reference buildSimplerOperandOfBitOperator(Walker& walker, Origin origin, ValueID written)
 {
     InputsOfTypedOperation inputs(walker, nullptr);
-    ValueID number = written;
-    while (true) {
-        if (std::optional<DivisionAsWritten> quotient = findQuotientOfIntegers(walker, number, inputs))
-            return buildDivisionOfIntegers(walker, origin, walker.referenceOf(quotient->dividend), walker.referenceOf(quotient->divisor), QuotientRounding::ToInt32);
-        if (std::optional<WholeRemainder> remainder = findWholeRemainder(walker, number, inputs))
-            return buildWholeRemainder(walker, origin, *remainder);
-        ValueID truncated = numberThatWasTruncatedInNumberOperators(walker, number);
-        if (!truncated)
-            break;
-        number = truncated;
-    }
-    return number == written ? Reference() : walker.referenceOf(number);
+    if (std::optional<DivisionAsWritten> quotient = findQuotientOfIntegers(walker, written, inputs))
+        return buildDivisionOfIntegers(walker, origin, walker.referenceOf(quotient->dividend), walker.referenceOf(quotient->divisor), QuotientRounding::ToInt32);
+    if (std::optional<WholeRemainder> remainder = findWholeRemainder(walker, written, inputs))
+        return buildWholeRemainder(walker, origin, *remainder);
+    return { };
 }
 
 static bool isIdentityElementOfBitOperator(Opcode opcode, uint32_t operandIndex, int32_t bits)
@@ -264,13 +169,11 @@ static bool isIdentityElementOfBitOperator(Opcode opcode, uint32_t operandIndex,
     }
 }
 
-static Reference buildConversionInNumberOperators(Walker& walker, Opcode conversion, Reference number, bool givesOnlyLowestBits, Origin origin)
+static Reference buildConversionInNumberOperators(Walker& walker, Opcode conversion, Reference number, Origin origin)
 {
     Draft draft(conversion, origin);
     walker.chooseConservativeFields(draft);
     draft.setValueOperand(number);
-    if (givesOnlyLowestBits)
-        draft.setGivesOnlyLowestBits(true);
     return walker.build(WTF::move(draft));
 }
 
@@ -281,14 +184,14 @@ static Reference buildBitsOfNumberInNumberOperators(Walker& walker, Opcode conve
     if (type.isInteger() && type.integers.isSubsetOf(leftAsTheyAre) && walker.has(Mechanism::Folding))
         return number;
     if (conversion == Opcode::ToUint32 && !type.isInteger()) {
-        number = buildConversionInNumberOperators(walker, Opcode::ToInt32, number, false, origin);
+        number = buildConversionInNumberOperators(walker, Opcode::ToInt32, number, origin);
         if (!number)
             return { };
     }
-    return buildConversionInNumberOperators(walker, conversion, number, false, origin);
+    return buildConversionInNumberOperators(walker, conversion, number, origin);
 }
 
-static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Origin origin, std::span<Reference> operands)
+static bool convertOperandsOfBitOperatorOnce(Walker& walker, Origin origin, std::span<Reference> operands)
 {
     if (!walker.isInLoop())
         return false;
@@ -311,8 +214,7 @@ static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Orig
             operands[operandIndex] = { };
             continue;
         }
-        bool isMasked = opcode == Opcode::BitAnd && isMaskOfLowestBitsOfInt32(types.at(walker.typeOf(operands[1 - operandIndex]))) && walker.representationOf(number) != Representation::JSValue;
-        operands[operandIndex] = buildConversionInNumberOperators(walker, Opcode::ToInt32, number, isMasked, origin);
+        operands[operandIndex] = buildConversionInNumberOperators(walker, Opcode::ToInt32, number, origin);
     }
     return hasConverted;
 }
@@ -339,11 +241,6 @@ static bool buildBitOperator(Walker& walker, const BodyValue& value, OperandsInN
         operand.known = primitiveKnownInNumberForms(walker, simpler);
     }
 
-    if (walker.has(Mechanism::Folding)) {
-        if (Reference constant = constantWhereRangesLeaveOneInteger(walker, opcode, operands))
-            return bindInNumberOperators(walker, value, constant);
-    }
-
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperands && numberOfOperands == 2; ++operandIndex) {
         const OperandInNumberOperators& other = operands[1 - operandIndex];
         PrimitiveKnownToFolding known = operands[operandIndex].known;
@@ -353,103 +250,12 @@ static bool buildBitOperator(Walker& walker, const BodyValue& value, OperandsInN
             return bindInNumberOperators(walker, value, buildBitsOfNumberInNumberOperators(walker, opcode == Opcode::URShift ? Opcode::ToUint32 : Opcode::ToInt32, other.reference, origin));
     }
 
-    if (opcode == Opcode::BitNot && !takesOtherOperands) {
-        const BodyIndex& index = walker.currentBodyIndex();
-        ValueID inner = index.valueBehindCasts(operands[0].written);
-        if (inner && !index.isParameter(inner) && index.opcodeOf(inner) == Opcode::BitNot) {
-            Reference inverted = walker.referenceOf(index.value(inner).valueOperand());
-            TypeID type = inverted && inverted.isRecord() ? walker.typeOf(inverted) : TypeID();
-            if (type && walker.types().at(type).isNumber())
-                return bindInNumberOperators(walker, value, buildBitsOfNumberInNumberOperators(walker, Opcode::ToInt32, inverted, origin));
-        }
-    }
-
     std::array<Reference, 2> taken { operands[0].reference, operands[1].reference };
     std::span<Reference> takenByOperator = std::span(taken).first(numberOfOperands);
-    takesOtherOperands |= convertOperandsOfBitOperatorOnce(walker, opcode, origin, takenByOperator);
+    takesOtherOperands |= convertOperandsOfBitOperatorOnce(walker, origin, takenByOperator);
     if (!takesOtherOperands)
         return false;
     return buildOnOperandsInNumberOperators(walker, value, takenByOperator);
-}
-
-static constexpr OpcodeSet opcodesBetweenRemainderAndBranchInNumberOperators { Opcode::StrictEq, Opcode::Eq, Opcode::ToBoolean, Opcode::LogicalNot };
-
-static ValueID remainderFoundZeroOnEdgeInNumberOperators(const BodyIndex& index, const BodyTerminator& branch, uint32_t targetIndex)
-{
-    if (!branch.isConditionalBranch())
-        return { };
-    bool holds = !targetIndex;
-    ValueID condition = index.valueBehindCasts(branch.operand(0));
-    while (condition && !index.isParameter(condition) && index.opcodeOf(condition) == Opcode::LogicalNot) {
-        holds = !holds;
-        condition = index.valueBehindCasts(index.value(condition).valueOperand());
-    }
-    if (!condition || index.isParameter(condition))
-        return { };
-
-    BodyValue test = index.value(condition);
-    ValueID tested;
-    if (test.opcode() == Opcode::ToBoolean && !holds)
-        tested = test.valueOperand();
-    else if ((test.opcode() == Opcode::StrictEq || test.opcode() == Opcode::Eq) && holds) {
-        for (uint32_t side = 0; side < 2; ++side) {
-            ValueID other = test.operand(1 - side);
-            if (other && !index.isParameter(other) && index.opcodeOf(other) == Opcode::Integer && !index.value(other).as<Opcode::Integer>().integer())
-                tested = test.operand(side);
-        }
-    }
-    tested = tested ? index.valueBehindCasts(tested) : ValueID();
-    return tested && !index.isParameter(tested) && index.opcodeOf(tested) == Opcode::Mod ? tested : ValueID();
-}
-
-static bool standsBehindTestThatRemainderIsZero(Walker& walker, const BodyValue& quotient)
-{
-    const BodyIndex& index = walker.currentBodyIndex();
-    ValueID dividend = index.valueBehindCasts(quotient.operand(0));
-    ValueID divisor = index.valueBehindCasts(quotient.operand(1));
-    auto dividesTheSame = [&](ValueID remainder) {
-        if (!remainder)
-            return false;
-        BodyValue written = index.value(remainder);
-        return index.valueBehindCasts(written.operand(0)) == dividend && index.valueBehindCasts(written.operand(1)) == divisor;
-    };
-
-    BlockID block = index.blockOf(quotient.id());
-    if (std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(block)) {
-        if (dividesTheSame(remainderFoundZeroOnEdgeInNumberOperators(index, index.terminator(edge->from), edge->targetIndex)))
-            return true;
-    }
-
-    std::optional<BodyUser> firstMention = index.firstUser(dividend);
-    if (!firstMention || firstMention->kind != BodyUseKind::Operand || index.opcodeOf(firstMention->value) != Opcode::Mod || !dividesTheSame(firstMention->value))
-        return false;
-    ValueID remainder = firstMention->value;
-    std::optional<BodyUser> user = index.firstUser(remainder);
-    while (user && user->kind == BodyUseKind::Operand && opcodesBetweenRemainderAndBranchInNumberOperators.contains(index.opcodeOf(user->value)))
-        user = index.onlyUser(user->value);
-    if (!user || user->kind != BodyUseKind::TerminatorOperand)
-        return false;
-
-    BodyTerminator branch = index.terminator(user->block);
-    if (!branch.isConditionalBranch())
-        return false;
-    uint32_t targetIndex = 0;
-    for (BodyTarget target : branch.targets()) {
-        if (remainderFoundZeroOnEdgeInNumberOperators(index, branch, targetIndex++) != remainder)
-            continue;
-        BlockID whereZero = target.block();
-        return index.numberOfIncomingEdges(whereZero) == 1 && !index.isEnteredByHandlerEdge(whereZero) && index.dominates(whereZero, block);
-    }
-    return false;
-}
-
-static bool buildDivisionWithoutRemainder(Walker& walker, const BodyValue& quotient, const OperandsInNumberOperators& operands)
-{
-    if (!operands[0].type.isInt32() || !operands[1].type.isInt32() || operands[1].type.integers.minimum <= 0)
-        return false;
-    if (!standsBehindTestThatRemainderIsZero(walker, quotient))
-        return false;
-    return bindInNumberOperators(walker, quotient, buildDivisionOfIntegers(walker, walker.originOf(quotient), operands[0].reference, operands[1].reference, QuotientRounding::ToInt32));
 }
 
 static bool buildComparisonOfWholeRemainders(Walker& walker, const BodyValue& comparison, const OperandsInNumberOperators& operands)
@@ -489,87 +295,6 @@ static bool buildComparisonOfWholeRemainders(Walker& walker, const BodyValue& co
     draft.setOperand(0, compared[0]);
     draft.setOperand(1, compared[1]);
     return bindInNumberOperators(walker, comparison, buildComparisonWhereDivisorsAreNotZero(walker, WTF::move(draft), divisorsThatMayBeZero.span()));
-}
-
-static bool buildLooseEqualityWithTextThatIsNoNumber(Walker& walker, const BodyValue& equality, const OperandsInNumberOperators& operands)
-{
-    if (equality.opcode() != Opcode::Eq || operandsNarrowedBehindTestInNumberForms(walker, equality.id()) != std::optional<uint32_t>(0))
-        return false;
-    for (uint32_t textIndex = 0; textIndex < 2; ++textIndex) {
-        const OperandInNumberOperators& text = operands[textIndex];
-        const OperandInNumberOperators& subject = operands[1 - textIndex];
-        if (!text.known.isText() || liesInThread(text.known.asText()))
-            continue;
-        if (!subject.type.hasObjects() || !subject.type.isJavaScriptValue() || subject.type.mayBeUnspecified() || subject.type.primitives & Primitive::Absent)
-            continue;
-        Vector<char16_t> buffer;
-        if (!std::isnan(jsToNumber(walker.types().viewOf(text.known.asText(), buffer))))
-            continue;
-        if (walker.has(Mechanism::Guesses) && walker.opensGuesses() && findExpectation(walker, subject.written).type)
-            return false;
-
-        Draft written = walker.draftOf(equality);
-        Draft draft(Opcode::ValueLooselyEqualsLiteral, written.origin());
-        walker.chooseConservativeFields(draft);
-        draft.setValueOperand(subject.reference);
-        draft.setLiteral(text.known.asText());
-        draft.expected = written.expected;
-        draft.inputValueGiven = equality.id();
-        return bindInNumberOperators(walker, equality, walker.build(WTF::move(draft)));
-    }
-    return false;
-}
-
-static bool relationAsksForLesserOnLeft(Opcode relation)
-{
-    return relation == Opcode::Less || relation == Opcode::LessEq;
-}
-
-static Opcode relationWithSidesSwapped(Opcode relation)
-{
-    switch (relation) {
-    case Opcode::Less:
-        return Opcode::Greater;
-    case Opcode::LessEq:
-        return Opcode::GreaterEq;
-    case Opcode::Greater:
-        return Opcode::Less;
-    case Opcode::GreaterEq:
-        return Opcode::LessEq;
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
-static IntegerInPlaceOfNumber integerInPlaceOfNumber(Opcode relationOfInteger, double number)
-{
-    if (std::isnan(number))
-        return { false, 0 };
-    bool roundsUp = relationOfInteger == Opcode::Less || relationOfInteger == Opcode::GreaterEq;
-    double rounded = roundsUp ? std::ceil(number) : std::floor(number);
-    static_assert(static_cast<double>(maxTrackedInteger + 1) == 0x1p62);
-    if (rounded >= 0x1p62)
-        return { relationAsksForLesserOnLeft(relationOfInteger), 0 };
-    if (rounded <= -0x1p62)
-        return { !relationAsksForLesserOnLeft(relationOfInteger), 0 };
-    return { std::nullopt, static_cast<int64_t>(rounded) };
-}
-
-static bool buildRelationWithIntegerInPlaceOfNumber(Walker& walker, const BodyValue& relation, const OperandsInNumberOperators& operands)
-{
-    for (uint32_t numberIndex = 0; numberIndex < 2; ++numberIndex) {
-        PrimitiveKnownToFolding number = operands[numberIndex].known;
-        if (number.kind() != PrimitiveKnownToFolding::Kind::Number || isTrackedInteger(number.asNumber()) || !operands[1 - numberIndex].type.isInteger())
-            continue;
-        Opcode relationOfInteger = numberIndex ? relation.opcode() : relationWithSidesSwapped(relation.opcode());
-        IntegerInPlaceOfNumber integer = integerInPlaceOfNumber(relationOfInteger, number.asNumber());
-        if (integer.answer)
-            return bindInNumberOperators(walker, relation, booleanInNumberForms(walker, *integer.answer));
-        std::array<Reference, 2> compared { operands[0].reference, operands[1].reference };
-        compared[numberIndex] = integerInNumberForms(walker, integer.bound);
-        return buildOnOperandsInNumberOperators(walker, relation, compared);
-    }
-    return false;
 }
 
 static bool standsInFrontOfLoopAroundInNumberOperators(Walker& walker, const BodyValue& user, Reference reference)
@@ -641,134 +366,14 @@ static bool buildRelationWithNumberRoundedInFrontOfLoop(Walker& walker, const Bo
     return false;
 }
 
-static bool buildRelationOnNumberLikes(Walker& walker, const BodyValue& relation, const InputsOfTypedOperation& inputs)
-{
-    std::array<bool, 2> isConverted { };
-    for (uint32_t operandIndex = 0; operandIndex < 2; ++operandIndex) {
-        TypeID id = inputs.typeOf(relation.operand(operandIndex));
-        if (!id || isNeverType(id))
-            return false;
-        Type type = walker.types().at(id);
-        if (!type.isNumberLike())
-            return false;
-        isConverted[operandIndex] = !isTakenAsItIsByFormNumbers(type);
-    }
-    if (!isConverted[0] && !isConverted[1])
-        return false;
-    std::optional<uint32_t> narrowed = operandsNarrowedBehindTestInNumberForms(walker, relation.id());
-    if (!narrowed || (isConverted[0] && *narrowed & 1) || (isConverted[1] && *narrowed & 2))
-        return false;
-    if (inputs.areOnlyTypes())
-        return true;
-
-    Origin origin = originInFrontOfNumberOperator(walker, relation);
-    std::array<Reference, 2> compared;
-    for (uint32_t operandIndex = 0; operandIndex < 2; ++operandIndex) {
-        compared[operandIndex] = walker.referenceOf(relation.operand(operandIndex));
-        if (isConverted[operandIndex])
-            compared[operandIndex] = buildOperatorInNumberForms(walker, Opcode::ToNumber, compared[operandIndex], { }, origin);
-    }
-    return buildOnOperandsInNumberOperators(walker, relation, compared);
-}
-
-static bool buildSumOnIntegersInPlaceOfNumbers(Walker& walker, const BodyValue& sum, const OperandsInNumberOperators& operands)
-{
-    Opcode opcode = sum.opcode();
-    uint32_t numberOfOperands = numberOfNamedOperandsOf(opcode);
-    InputsOfTypedOperation inputs(walker, nullptr);
-    Origin origin = originInFrontOfNumberOperator(walker, sum);
-
-    std::array<Reference, 2> taken { operands[0].reference, operands[1].reference };
-    bool takesOtherOperands = false;
-    for (uint32_t side = 0; side < numberOfOperands; ++side) {
-        if (Reference codeUnit = integerThatCharCodeIsKnownToBe(walker, sum, operands[side].written)) {
-            taken[side] = codeUnit;
-            takesOtherOperands = true;
-            continue;
-        }
-        bool zeroesAreAlike = (opcode == Opcode::Add || (opcode == Opcode::Sub && side == 1)) && operands[1 - side].type.isInteger();
-        std::optional<WholeRemainder> remainder = zeroesAreAlike ? findWholeRemainder(walker, operands[side].written, inputs) : std::nullopt;
-        if (!remainder || remainder->mayBeNaN)
-            continue;
-        taken[side] = buildWholeRemainder(walker, origin, *remainder);
-        takesOtherOperands = true;
-    }
-    return takesOtherOperands && buildOnOperandsInNumberOperators(walker, sum, std::span<const Reference>(taken).first(numberOfOperands));
-}
-
-static bool buildStepBehindLastReadOfItsNumber(Walker& walker, const BodyValue& step, const OperandsInNumberOperators& operands)
-{
-    if (!walker.isInLoop())
-        return false;
-    Opcode opcode = step.opcode();
-    uint32_t steppedOperand = 0;
-    if (opcode != Opcode::Increment && opcode != Opcode::Decrement) {
-        if (opcode != Opcode::Add && opcode != Opcode::Sub)
-            return false;
-        if (opcode == Opcode::Add && operands[0].reference.isConstant())
-            steppedOperand = 1;
-        if (!operands[1 - steppedOperand].reference.isConstant())
-            return false;
-    }
-
-    const OperandInNumberOperators& stepped = operands[steppedOperand];
-    Representation form = walker.representationOf(stepped.reference);
-    if (!stepped.reference.isValue() || !integerRepresentations.contains(form))
-        return false;
-    Draft asWritten = walker.draftOf(step);
-    walker.chooseConservativeFields(asWritten);
-    if (formAllowedForTypedOperator(walker, asWritten) != OperatorForm::Integers)
-        return false;
-    asWritten.setForm(OperatorForm::Integers);
-    if (resultRepresentationOf(walker, asWritten, walker.resultTypeOf(asWritten)) != form)
-        return false;
-
-    const BodyIndex& index = walker.currentBodyIndex();
-    BodyBlock block = index.block(index.blockOf(step.id()));
-    uint32_t placeOfReader = step.id().index() + 1 - block.firstValue().index();
-    if (index.hasOneUse(stepped.written) || placeOfReader >= walker.endOfStretchBeingWalked() || placeOfReader >= block.numberOfValues())
-        return false;
-    if (block.hasHandler())
-        return false;
-    BodyValue reader = index.value(ValueID(step.id().index() + 1));
-    if (opcodesThatStateTypes.contains(reader.opcode()))
-        return false;
-    bool namesStep = false;
-    reader.forEachOperand([&](ValueID operand, uint32_t) {
-        namesStep |= operand == step.id();
-    });
-    if (namesStep)
-        return false;
-    BodyLiveness liveness;
-    liveness.compute(index);
-    if (liveness.lastUse(stepped.written) != reader.id())
-        return false;
-    auto typeOfInput = [&](ValueID input) {
-        return walker.typeOf(walker.referenceOf(input));
-    };
-    TypedForm formOfReader = typedFormOf(walker, reader, TypesOfInputs(typeOfInput));
-    walker.takeFormAskedAhead();
-    if (formOfReader != TypedForm::Built)
-        return false;
-
-    walker.walkStretch(block.id(), placeOfReader, placeOfReader + 1);
-    if (walker.isUnreachable() || walker.hasFailed())
-        return true;
-    return bindInNumberOperators(walker, step, buildInAllowedFormInNumberForms(walker, walker.draftOf(step)));
-}
-
 static_assert(opcodesThatBuildNumberFormTakes == (opcodesOfNumberOperators));
 
-bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
     if (!opcodesOfNumberOperators.contains(opcode) || !hasMechanismsOfNumberForms(walker))
         return false;
-    if (inputs.areOnlyTypes())
-        return allRelations.contains(opcode) && buildRelationOnNumberLikes(walker, value, inputs);
 
-    if (opcode == Opcode::DirectEval)
-        return bindWhatDirectEvalHandsBack(walker, value);
     if (opcode == Opcode::LogicalNot)
         return bindWhatIsNegatedTwice(walker, value);
 
@@ -787,37 +392,28 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value, const I
     if (arithmeticInNumberOperators.contains(opcode) && walker.has(Mechanism::Folding)) {
         if (Reference given = valueThatArithmeticGives(walker, opcode, operands))
             return bindInNumberOperators(walker, value, given);
-        if (Reference constant = constantWhereRangesLeaveOneInteger(walker, opcode, operands))
-            return bindInNumberOperators(walker, value, constant);
     }
     if (opcode == Opcode::Pow && operands[0].type.isNumber() && isKnownIntegerInNumberOperators(operands[1].known, 2))
         return bindInNumberOperators(walker, value, buildOperatorInNumberForms(walker, Opcode::Mul, operands[0].reference, operands[0].reference, walker.originOf(value)));
 
     if (allBitwiseOperators.contains(opcode))
         return buildBitOperator(walker, value, operands);
-    if (opcode == Opcode::Div)
-        return buildDivisionWithoutRemainder(walker, value, operands);
     if (opcode == Opcode::Mod)
         return buildNumberRemainderWithItsTest(walker, value);
 
+    InputsOfTypedOperation inputs(walker, nullptr);
     if (allEqualities.contains(opcode)) {
         if (buildComparisonOfWholeRemainders(walker, value, operands))
             return true;
-        if (buildComparisonByCodeUnit(walker, value, inputs))
-            return true;
-        return buildLooseEqualityWithTextThatIsNoNumber(walker, value, operands);
+        return buildComparisonByCodeUnit(walker, value, inputs);
     }
 
     if (allRelations.contains(opcode)) {
-        if (buildRelationWithIntegerInPlaceOfNumber(walker, value, operands))
-            return true;
         if (buildRelationWithNumberRoundedInFrontOfLoop(walker, value, operands))
             return true;
         if (buildComparisonOfWholeRemainders(walker, value, operands))
             return true;
-        if (buildComparisonByCodeUnit(walker, value, inputs))
-            return true;
-        return buildRelationOnNumberLikes(walker, value, inputs);
+        return buildComparisonByCodeUnit(walker, value, inputs);
     }
 
     if (opcode == Opcode::ToBoolean) {
@@ -828,9 +424,7 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value, const I
         return buildOnOperandsInNumberOperators(walker, value, singleElementSpan(integer));
     }
 
-    if (buildSumOnIntegersInPlaceOfNumbers(walker, value, operands))
-        return true;
-    return buildStepBehindLastReadOfItsNumber(walker, value, operands);
+    return false;
 }
 
 } } } // namespace JSC::AOT::Typed

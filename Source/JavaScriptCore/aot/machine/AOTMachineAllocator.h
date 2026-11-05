@@ -13,6 +13,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
+enum class KindOfHeadBeingFixed : uint8_t;
+
 class Allocator {
     WTF_MAKE_NONCOPYABLE(Allocator);
 public:
@@ -72,8 +74,11 @@ public:
         bool noWayLeadsToNextRead;
         if (nextUse) {
             noWayLeadsToNextRead = positionOfNext >= m_endOfWhatWaysLeadToFromBlock;
-            if (!noWayLeadsToNextRead && m_everyReadBehindBlockCounts && next->greatestHeadOfBlockPassedOnEveryPath >= m_headOfBlock)
-                return;
+            if (!noWayLeadsToNextRead && m_everyReadBehindBlockCounts) {
+                const Use* read = uses + findReadFromAmongLaterReads(value, nextUse, m_beginOfWaysOnFromBlock);
+                if (read->position < m_endOfWhatWaysLeadToFromBlock && read->greatestHeadOfBlockPassedOnEveryPath >= m_headOfBlock)
+                    return;
+            }
             rangeGoesOn = true;
         } else {
             rangeGoesOn = static_cast<Position>(facts.lastUse + 1) > position + 1;
@@ -205,6 +210,15 @@ public:
         return use;
     }
     uint32_t findReadFromInList(const Operation* value, Position) const;
+    ALWAYS_INLINE uint32_t findReadFromAmongLaterReads(const Operation* value, uint32_t use, Position position) const
+    {
+        const Use* const uses = m_uses;
+        for (unsigned stepsLeft = 64; uses[use].position < position; use = uses[use].next) {
+            if (!--stepsLeft) [[unlikely]]
+                return findReadFromInList(value, position);
+        }
+        return use;
+    }
     ALWAYS_INLINE bool isLiveBehind(const Operation* value, Position position) const
     {
         Position lastUse = m_valueFacts[value->index()].lastUse;
@@ -298,7 +312,6 @@ public:
         return (candidates & ~m_bound) || canDropSomeRegisterForFree(candidates);
     }
     bool canDropSomeRegisterForFree(RegisterMask candidates) const;
-    Reg chooseVictim(Bank, RegisterMask allowed) const;
     void evict(Reg);
     ALWAYS_INLINE Reg ensureInRegister(Operation* value, RegisterMask allowed, Reg preferred = Reg())
     {
@@ -333,20 +346,19 @@ public:
     bool passThroughBlockThatOnlyJumps(Block*);
     void enterBlock(Block*);
     void leaveBlock(Block*);
-    bool edgeFixesHead(const Block* from, const Edge&) const;
     void fixHeadOf(Block* target, Block* from);
+    void fixHeadOf(Block* target, Block* from, const BlockPlace& placeOfTarget, KindOfHeadBeingFixed);
     void appendEdgeMoves(Block* from, unsigned successorIndex, const Snapshot& endOfFrom);
     bool frameMayChangeOnEdge(const Block* from, const Block* target);
     Block* splitEdge(Block* from, unsigned successorIndex, const Snapshot& endOfFrom);
     Position findFirstReadFromHeadOf(const Block*, const Operation* value);
     bool listsRegistersAtHeadOf(const Block* block) const { return m_proc.traits().checksAllocation || m_order.of(block).isRare() || m_allocation.isHeadOfFramedPart(block); }
+    ArenaVector<std::span<const RegisterBinding>>& registersAtHeads() { return m_allocation.m_registersAtHead; }
     Snapshot takeSnapshot();
     void restore(const Snapshot&);
-    Operation* incomingValueOf(const Operation* phi, const Block* from) const;
     void noteHintsOfHead(const Block* target);
     bool hasBackEdgeOutsideRareRegions(const Loop&) const;
     const Block* immediateDominatorOf(const Block*);
-    const Block* lastBlockOnEveryPathToBoth(const Block*, const Block*);
     struct OperandTakenBack {
         Reg reg;
         Operation* value { nullptr };
@@ -360,11 +372,16 @@ public:
     bool isKeptThroughLoopAround(Reg, const Operation* value, Position) const;
     bool isKeptThroughLoopAround(const Operation* value, Position position) const { return position < m_endOfLastLoopThatKeepsValueMadeAgain && isKeptThroughLoopAround(m_hints[value->index()], value, position); }
     bool isDeadOnEveryPathFrom(const Operation* value, const Block*, Position from);
+    ALWAYS_INLINE Position beginOfWaysOnFrom(const Block* block, Position endOfBlock) const
+    {
+        if (block->numSuccessors() != 1)
+            return endOfBlock;
+        return std::max(endOfBlock, m_order.headOf(block->successor(0).block()));
+    }
 
     void allocatePatch(PatchOperation*);
     void placeFixedOperands(PatchOperation*, std::span<Location> locationsOfOperands, RegisterMask& locked);
     void vacate(RegisterMask clobbered, Position behind);
-    void placeResults(PatchOperation*, std::span<Location> locationsOfResults, RegisterMask locked);
     RegisterMask takeScratchRegisters(Bank, unsigned count, RegisterMask& locked);
     void releaseDeadValue(PatchOperation*);
     void releaseChildrenLetGoByCallee(PatchOperation*, std::span<const Location> locationsOfOperands, Position early, RegisterMask locked);
@@ -402,8 +419,8 @@ public:
         const Block* blockOfStore = value->endsBlock() ? value->owner()->successor(0).block() : value->owner();
         return !m_allocation.isInFramedPart(blockOfStore) && !m_order.of(blockOfStore).isRare();
     }
-    bool spillHoldsValueIn(const Block* block, const Operation* value) const { return m_allocation.isSpilled(value) && !(isAheadOfFramedPart(block) && isStoredAtHeadsOfFramedPart(value)); }
-    bool spillHoldsValueAtHeadOf(const Block* block, const Operation* value) const { return m_allocation.isSpilled(value) && !(headIsAheadOfFramedPart(block) && isStoredAtHeadsOfFramedPart(value)); }
+    ALWAYS_INLINE bool spillHoldsValueIn(const Block* block, const Operation* value) const { return m_allocation.isSpilled(value) && !(isAheadOfFramedPart(block) && isStoredAtHeadsOfFramedPart(value)); }
+    ALWAYS_INLINE bool spillHoldsValueAtHeadOf(const Block* block, const Operation* value) const { return m_allocation.isSpilled(value) && !(headIsAheadOfFramedPart(block) && isStoredAtHeadsOfFramedPart(value)); }
     RegisterMask calleeSavesThatMayBeTaken() const
     {
         if (m_isAheadOfFramedPart)
@@ -448,6 +465,7 @@ public:
     BitSpan m_isAskedWhetherFramedPartLeadsTo;
     BitSpan m_framedPartLeadsTo;
     ArenaVector<const Block*> m_immediateDominators;
+    const uint32_t* m_numbersOfDominators { nullptr };
     ArenaVector<uint32_t> m_nearestDominatorsWithCall[numberOfBanks];
     struct NumbersOfDominatedBlocks {
         uint32_t first { 0 };
@@ -469,6 +487,7 @@ public:
     bool m_everyReadBehindBlockCounts { false };
     Position m_beginOfLoopAroundBlock { 0 };
     Position m_endOfWhatWaysLeadToFromBlock { noPosition };
+    Position m_beginOfWaysOnFromBlock { 0 };
     bool m_somePatchWithResultHasEndedBlock { false };
     Position m_lastDefinitionOfArgumentRegister { 0 };
     uint32_t m_rareRegion { noRareRegion };

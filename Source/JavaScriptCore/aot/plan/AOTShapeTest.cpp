@@ -755,7 +755,7 @@ static OptionSet<ObjectMutation> mutationsRuledOutForShapeTest(const Program& pr
     const LinkedLayout& layout = linked.layout(id);
     if (layout.reachesUnseenCode)
         return { };
-    OptionSet<ObjectMutation> ruledOut { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript };
+    OptionSet<ObjectMutation> ruledOut;
     constexpr std::pair<LayoutChange, ObjectMutation> mutationsOfChanges[] {
         { LayoutChange::IsFrozen, ObjectMutation::ChangeIntegrity },
         { LayoutChange::GainsProperty, ObjectMutation::AddProperty },
@@ -808,6 +808,7 @@ ShapeTable computeShapeTable(const Program& program, const LinkTables& linked, c
     }
 
     RELEASE_ASSERT(parts.shapes.size() - 1 <= compiledObjectShapeBit);
+    RELEASE_ASSERT(parts.shapes.size() - 1 <= maxNumberOfShapes);
     return ShapeTable(WTF::move(parts));
 }
 

@@ -39,7 +39,8 @@ public:
     MembersUnderKey(const Program&, PropertyKeyID);
 
     BuiltinID findOwnMember(BuiltinID holder) const;
-    bool isClosedKey(BuiltinID holder) const;
+    enum class NamesOpenedForTestRun : bool { MayLieOnHolder, AreAbsent };
+    bool isClosedKey(BuiltinID holder, NamesOpenedForTestRun = NamesOpenedForTestRun::MayLieOnHolder) const;
     bool isLockedLocation(BuiltinID holder) const;
 
 private:

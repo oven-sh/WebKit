@@ -81,7 +81,8 @@ public:
     Condition isHole(const ArrayStorageForm&, Operand rawElement);
     Operand rawHole(const ArrayStorageForm&);
     Boxed boxRawElement(const ArrayStorageForm&, Operand rawElement);
-    Operand convertRawElement(const ArrayStorageForm&, Operand rawElement, Representation, const Type& result);
+    Operand convertRawElement(const OperationContext&, const ArrayStorageForm&, Operand rawElement, Representation, TypeID result);
+    void stopUnlessElementIsOf(const OperationContext&, Boxed element, TypeID proven);
     Operand convertInt32Element(Word32, Representation);
     Operand absentElement(const OperationContext&, Representation);
     void storeRawElement(const ArrayStorageForm&, const ArrayElements&, Integer index, Operand rawElement);

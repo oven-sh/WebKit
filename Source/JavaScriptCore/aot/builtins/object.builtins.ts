@@ -239,7 +239,7 @@ export default b.declarations(
         uses: { object: [b.runs("OwnKeys", "OwnValues"), b.contentsStoredIn(b.nativeMemory)] },
         implementation: b.inline("ObjectEntries"),
       },
-      freeze: integrityChange("Frozen", b.inline("ObjectFreeze", { otherwise: b.hostCall })),
+      freeze: integrityChange("Frozen", b.hostCall),
       fromEntries: {
         args: { iterable: b.any },
         returns: b.object.unaliased,

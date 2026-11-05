@@ -12,7 +12,7 @@
 # CALLEE-NOT: MarkEnvironmentEscaped
 # CALLEE-NOT: ReleaseEnvironment
 # RUN(PLAN): plan layouts mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
-# PLAN: layout L0 Environment {{*}}escaped-at=
+# PLAN: layout L0 Environment size=16 handed-back link-at=8
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="sum"}] ownFieldCount=1
 module m0 path="main.js" displayPath="main.js" body=f0

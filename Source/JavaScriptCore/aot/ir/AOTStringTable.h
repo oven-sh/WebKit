@@ -54,7 +54,6 @@ public:
     size_t size() const { return m_strings.size(); }
     std::span<const uint8_t> operator[](StringID id) const { return m_strings[id.index()]; }
     StringID emptyString() const { return m_emptyString; }
-    StringID comma() const { return m_comma; }
     StringID textOfUndefined() const { return m_textOfUndefined; }
     StringID textOfNull() const { return m_textOfNull; }
     StringID textOf(bool value) const { return value ? m_textOfTrue : m_textOfFalse; }
@@ -117,7 +116,6 @@ private:
     CodeUnitSet m_internedCodeUnits { };
     std::array<Shard, numberOfShards> m_shards;
     StringID m_emptyString;
-    StringID m_comma;
     StringID m_textOfUndefined;
     StringID m_textOfNull;
     StringID m_textOfTrue;

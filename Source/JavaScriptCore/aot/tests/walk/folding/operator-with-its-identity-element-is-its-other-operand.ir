@@ -18,25 +18,18 @@
 # function integerPlusZero(v) { if (!isInt32(v)) return v; return v + 0; } an integer type holds no -0
 # RUN(INTEGER): walk f3 mechanisms=none+Folding+TypedOperations+UnboxedNumbers
 # INTEGER-NOT: = Add
-# function distance(v) { if (!isInt32(v)) return v; return (v + 8) - v; }
-# RUN(DISTANCE): walk f4 mechanisms=none+Folding+TypedOperations+UnboxedNumbers
-# DISTANCE-NOT: = Sub
-# function distanceOfNumber(x) { if (typeof x !== "number") return x; return (x + 8) - x; } beyond 2 ** 53 the sum is rounded, and of NaN nothing is left
-# RUN(ROUNDED): walk f5 mechanisms=none+Folding+TypedOperations+UnboxedNumbers
-# ROUNDED-LABEL: code f5:Body
-# ROUNDED: = Sub
+# function twice(x) { return !!(typeof x === "number"); }
+# RUN(TWICE): walk f4 mechanisms=none+Folding+TypedOperations+UnboxedNumbers
+# TWICE-NOT: = LogicalNot
+# function once(x) { return !(typeof x === "number"); }
+# RUN(ONCE): walk f5 mechanisms=none+Folding+TypedOperations+UnboxedNumbers
+# ONCE-LABEL: code f5:Body
+# ONCE: = LogicalNot
 # function square(x) { if (typeof x !== "number") return x; return x ** 2; }
 # RUN(SQUARE): walk f6 mechanisms=none+Folding+TypedOperations+UnboxedNumbers
 # SQUARE-LABEL: code f6:Body
 # SQUARE: = Mul
 # SQUARE-NOT: = Pow
-# function twice(x) { return !!(typeof x === "number"); }
-# RUN(TWICE): walk f7 mechanisms=none+Folding+TypedOperations+UnboxedNumbers
-# TWICE-NOT: = LogicalNot
-# function once(x) { return !(typeof x === "number"); }
-# RUN(ONCE): walk f8 mechanisms=none+Folding+TypedOperations+UnboxedNumbers
-# ONCE-LABEL: code f8:Body
-# ONCE: = LogicalNot
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -50,10 +43,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v5 = NewClosure function=f4
     v6 = NewClosure function=f5
     v7 = NewClosure function=f6
-    v8 = NewClosure function=f7
-    v9 = NewClosure function=f8
-    v10 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9
-    Return v10
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return v8
 }
 function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -93,29 +84,18 @@ function f3 name="integerPlusZero" module=m0 length=1 thisType={type=anything} p
   b2(v5):
     Return v5
 }
-function f4 name="distance" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = TypeTest v0 testedType=i32
-    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-  b1(v2):
-    v3 = Integer integer=8
-    v4 = Add v2, v3
-    v5 = Sub v4, v2
-    Return v5
-  b2(v6):
-    Return v6
-}
-function f5 name="distanceOfNumber" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = TypeTest v0 testedType=number
-    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
-  b1(v2):
-    v3 = Integer integer=8
-    v4 = Add v2, v3
-    v5 = Sub v4, v2
-    Return v5
-  b2(v6):
-    Return v6
+    v2 = LogicalNot v1
+    v3 = LogicalNot v2
+    Return v3
+}
+function f5 name="once" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    v2 = LogicalNot v1
+    Return v2
 }
 function f6 name="square" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -127,17 +107,4 @@ function f6 name="square" module=m0 length=1 thisType={type=anything} parameters
     Return v4
   b2(v5):
     Return v5
-}
-function f7 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = TypeTest v0 testedType=number
-    v2 = LogicalNot v1
-    v3 = LogicalNot v2
-    Return v3
-}
-function f8 name="once" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = TypeTest v0 testedType=number
-    v2 = LogicalNot v1
-    Return v2
 }

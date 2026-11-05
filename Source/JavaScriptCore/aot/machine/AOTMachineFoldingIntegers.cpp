@@ -68,7 +68,7 @@ static IntegerRange computeIntegerRange(const Operation* operation, unsigned lev
     IntegerRange widest = widestIntegerRangeOf(type);
     unsigned widthInBits = 8 * sizeOf(type);
 
-    auto rangeOfChild = [&](unsigned index) {
+    auto rangeOfChild = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
         const Operation* child = operation->child(index);
         if (!levelsOfChildren && !child->hasInt())
             return widestIntegerRangeOf(child->type());

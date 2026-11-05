@@ -20,7 +20,7 @@ export const scalarKinds = [
 ] as const;
 export type ScalarKind = (typeof scalarKinds)[number];
 
-export const placedWordKinds = ["Request", "StaticsOffset", "OrderWord"] as const;
+export const placedWordKinds = ["OrderWord"] as const;
 export type PlacedWordKind = (typeof placedWordKinds)[number];
 
 export const generatedEnumNames = [

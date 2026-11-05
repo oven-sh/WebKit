@@ -235,14 +235,20 @@ void TablePart::setTableRange(ProgramTableIndex index, uint32_t offset, uint32_t
 
 static Vector<SharedBytesOfTablePart> findSharedBytesOfTablePart(const auto& appended)
 {
-    Vector<std::pair<uint32_t, uint32_t>> handedOutAgain;
+    Vector<uint64_t> handedOutAgain;
     for (const auto& handedOut : appended.values()) {
-        if (handedOut.size() > 1)
-            handedOutAgain.appendVector(handedOut);
+        if (handedOut.size() <= 1)
+            continue;
+        for (auto [offset, size] : handedOut)
+            handedOutAgain.append(static_cast<uint64_t>(offset) << 32 | size);
     }
-    AOT::sortInLine(handedOutAgain);
+    radixSortKeepingEqualKeysInOrder<64>(handedOutAgain, [](uint64_t offsetAndSize) {
+        return offsetAndSize;
+    });
     Vector<SharedBytesOfTablePart> shared;
-    for (auto [offset, size] : handedOutAgain) {
+    for (uint64_t offsetAndSize : handedOutAgain) {
+        uint32_t offset = static_cast<uint32_t>(offsetAndSize >> 32);
+        uint32_t size = static_cast<uint32_t>(offsetAndSize);
         if (!size)
             continue;
         if (!shared.isEmpty() && shared.last().offset == offset)
@@ -260,7 +266,9 @@ static void applyLinksOfTablePart(TablePartID id, std::span<uint8_t> bytes, std:
 {
     for (unsigned target = 0; target < numberOfTableParts; ++target) {
         Vector<uint32_t>& links = linksByTarget[target];
-        AOT::sortInLine(links);
+        radixSortKeepingEqualKeysInOrder<32>(links, [](uint32_t offsetOfWord) {
+            return offsetOfWord;
+        });
         auto report = [&](ASCIILiteral rule, uint32_t offsetOfWord) {
             reportBrokenRuleOfTables(build, rule, { }, { }, makeString("the word at "_s, offsetOfWord, " of "_s, nameOfTablePartInMessage(id), " is linked to "_s, nameOfTablePartInMessage(static_cast<TablePartID>(target))));
         };

@@ -158,6 +158,42 @@ static ALWAYS_INLINE void passReadsOfUpsilonsBetweenBlocks(Allocator& allocator,
     }
 }
 
+static ALWAYS_INLINE void enterRareRegionBetweenBlocks(Allocator& allocator, uint32_t region)
+{
+    ASSERT(!allocator.isInRareRegion());
+    ASSERT(allocator.m_valuesSavedInRareRegion.isEmpty());
+    allocator.m_rareRegion = region;
+    allocator.m_endOfRareRegion = 0;
+}
+
+static ALWAYS_INLINE void leaveRareRegionBetweenBlocks(Allocator& allocator)
+{
+    ASSERT(allocator.isInRareRegion());
+    Allocator::ValueState* const states = allocator.m_values.begin();
+    for (const Operation* value : allocator.m_valuesSavedInRareRegion)
+        states[value->index()].saveInRareRegion = noSpill;
+    allocator.m_valuesSavedInRareRegion.clear();
+    allocator.m_rareRegion = noRareRegion;
+}
+
+static ALWAYS_INLINE bool isDeadOnEveryPathFromHeadBetweenBlocks(Allocator& allocator, const ValueFacts& facts, const Operation* value, const Block* block, const BlockPlace& place, Position endOfWhatWaysLeadTo, uint32_t firstRead, Position positionOfFirstRead)
+{
+    ASSERT(!place.isRare());
+    ASSERT(&facts == &allocator.m_valueFacts[value->index()]);
+    ASSERT(endOfWhatWaysLeadTo == allocator.m_liveness.endOfWhatWaysLeadToFrom(block));
+    ASSERT(firstRead == allocator.findReadFrom(value, place.head) && positionOfFirstRead == allocator.m_uses[firstRead].position);
+    ASSERT(!firstRead || positionOfFirstRead >= allocator.m_order.endOf(block));
+    const Position definition = facts.definition;
+    if (definition == noPosition || definition > place.head || facts.has(ValueFlag::IsKeptForCollector))
+        return false;
+    if (endOfWhatWaysLeadTo != noPosition && (!firstRead || positionOfFirstRead >= endOfWhatWaysLeadTo))
+        return true;
+    const std::span<const Loop> loops = allocator.m_order.loops();
+    if (place.loop != noLoop && !place.isLoopHead && definition < loops.data()[place.loop].begin)
+        return false;
+    return isDeadOnEveryPathFromBlockOutsideRareRegions(allocator, value, block, place, place.head, firstRead);
+}
+
 static ALWAYS_INLINE bool headBehindEdgesIsFixedByEdge(const ValueFacts* factsOfValues, const Block* block, const BlockPlace& place)
 {
     if (place.predecessors.size() != 1)
@@ -229,26 +265,31 @@ static NEVER_INLINE const Block* findBlockThatFixesHead(const Allocator& allocat
     return headIsAheadOfFramedPart && firstFromOutsideFramedPart ? firstFromOutsideFramedPart : place.predecessors.front();
 }
 
-static const Block* findBlockThatDominatesBoth(const Allocator& allocator, const Block* left, const Block* right)
-{
-    while (left != right) {
-        if (!left || !right)
-            return nullptr;
-        const Block*& lower = allocator.m_order.of(left).orderIndex > allocator.m_order.of(right).orderIndex ? left : right;
-        lower = allocator.m_immediateDominators[lower->index()];
-    }
-    return left;
-}
-
 static bool isSideEntranceOfLoop(const Order& order, const BlockPlace& place)
 {
-    uint32_t loop = place.isLoopHead ? order.loops()[place.loop].parent : place.loop;
+    const Loop* const loops = order.loops().data();
+    uint32_t loop = place.isLoopHead ? loops[place.loop].parent : place.loop;
     if (loop == noLoop)
         return false;
     if (place.predecessors.empty())
         return true;
-    const Loop& around = order.loops()[loop];
-    return order.of(place.predecessors.front()).orderIndex < around.firstBlock || order.of(place.predecessors.back()).orderIndex >= around.endBlock;
+    const Loop& around = loops[loop];
+    Block* const* const predecessors = place.predecessors.data();
+    return order.of(predecessors[0]).orderIndex < around.firstBlock || order.of(predecessors[place.predecessors.size() - 1]).orderIndex >= around.endBlock;
+}
+
+static bool someLoopHasSideEntrance(const Order& order, Block* const* blocks, const BlockPlace* places)
+{
+    for (const Loop& loop : order.loops()) {
+        if (loop.parent != noLoop)
+            continue;
+        for (uint32_t index = loop.firstBlock; index < loop.endBlock; ++index) {
+            ASSERT(places[blocks[index]->index()].loop != noLoop);
+            if (isSideEntranceOfLoop(order, places[blocks[index]->index()]))
+                return true;
+        }
+    }
+    return false;
 }
 
 struct WaysFurtherUpToDominators {
@@ -434,20 +475,14 @@ static ALWAYS_INLINE uint32_t findNumberOfDominatorOfJoin(WalksUpToDominators& w
     return findNumberOfDominatorTheLongWay<pass>(walks, number, place);
 }
 
-struct FirstPassOverDominators {
-    uint32_t numberOfJoins;
-    bool needsAnotherPass;
-};
-
 template<PassOverDominators pass>
-static ALWAYS_INLINE FirstPassOverDominators findDominatorsInFirstPass(WalksUpToDominators& walks, const Order& order, std::span<Block* const> blocksInOrder, const Block** dominators, uint32_t* numbersOfJoins)
+static ALWAYS_INLINE uint32_t findDominatorsInFirstPass(WalksUpToDominators& walks, std::span<Block* const> blocksInOrder, const Block** dominators, uint32_t* numbersOfJoins)
 {
     Block* const* const blocks = blocksInOrder.data();
     const uint32_t numberOfBlocks = static_cast<uint32_t>(blocksInOrder.size());
     const BlockPlace* const places = walks.places;
     uint32_t* const numbersOfDominators = walks.numbersOfDominators;
     uint32_t numberOfJoins = 0;
-    bool needsAnotherPass = false;
     for (uint32_t number = 1; number <= numberOfBlocks; ++number) {
         const uint32_t indexOfBlock = blocks[number - 1]->index();
         const BlockPlace& place = places[indexOfBlock];
@@ -464,17 +499,15 @@ static ALWAYS_INLINE FirstPassOverDominators findDominatorsInFirstPass(WalksUpTo
             if (dominator)
                 dominators[indexOfBlock] = blocks[dominator - 1];
         }
-        if (!needsAnotherPass && place.loop != noLoop)
-            needsAnotherPass = isSideEntranceOfLoop(order, place);
     }
-    return { numberOfJoins, needsAnotherPass };
+    return numberOfJoins;
 }
 
-static NEVER_INLINE FirstPassOverDominators findDominatorsInFirstPassWithLongWalks(WalksUpToDominators& walks, Arena& arena, const Order& order, std::span<Block* const> blocksInOrder, const Block** dominators, uint32_t* numbersOfJoins)
+static NEVER_INLINE uint32_t findDominatorsInFirstPassWithLongWalks(WalksUpToDominators& walks, Arena& arena, std::span<Block* const> blocksInOrder, const Block** dominators, uint32_t* numbersOfJoins)
 {
     WaysFurtherUpToDominators waysFurtherUp { arena, static_cast<uint32_t>(blocksInOrder.size()) };
     walks.waysFurtherUp = &waysFurtherUp;
-    return findDominatorsInFirstPass<PassOverDominators::FirstWithLongWalks>(walks, order, blocksInOrder, dominators, numbersOfJoins);
+    return findDominatorsInFirstPass<PassOverDominators::FirstWithLongWalks>(walks, blocksInOrder, dominators, numbersOfJoins);
 }
 
 static NEVER_INLINE void findImmediateDominatorsOfOrderedBlocks(Allocator& allocator)
@@ -491,11 +524,13 @@ static NEVER_INLINE void findImmediateDominatorsOfOrderedBlocks(Allocator& alloc
     const BlockPlace* const places = order.places();
     const Block** const dominators = allocator.m_immediateDominators.begin();
     uint32_t* const numbersOfDominators = arena.allocateArray<uint32_t>(numberOfBlocks + 1);
+    allocator.m_numbersOfDominators = numbersOfDominators;
     WalksUpToDominators walks { places, numbersOfDominators, arena.createSpan<uint32_t>(numberOfBlocks + 1).data(), 0 };
     uint32_t* const numbersOfJoins = arena.allocateArray<uint32_t>(numberOfBlocks);
-    auto [numberOfJoins, needsAnotherPass] = numberOfBlocks <= mostBlocksOfProcedureWithShortWalks
-        ? findDominatorsInFirstPass<PassOverDominators::FirstWithShortWalks>(walks, order, blocksInOrder, dominators, numbersOfJoins)
-        : findDominatorsInFirstPassWithLongWalks(walks, arena, order, blocksInOrder, dominators, numbersOfJoins);
+    const uint32_t numberOfJoins = numberOfBlocks <= mostBlocksOfProcedureWithShortWalks
+        ? findDominatorsInFirstPass<PassOverDominators::FirstWithShortWalks>(walks, blocksInOrder, dominators, numbersOfJoins)
+        : findDominatorsInFirstPassWithLongWalks(walks, arena, blocksInOrder, dominators, numbersOfJoins);
+    bool needsAnotherPass = someLoopHasSideEntrance(order, blocks, places);
     while (needsAnotherPass) {
         needsAnotherPass = false;
         for (uint32_t join = 0; join < numberOfJoins; ++join) {
@@ -746,68 +781,34 @@ static bool rareRegionsAloneReadBehindHead(Allocator& allocator, const Operation
     return isRead;
 }
 
-static uint32_t findPlaceOfBlockAtPosition(const Order& order, Position position, uint32_t placeAhead)
-{
-    Block* const* const blocks = order.blocksInOrder().data();
-    const uint32_t numberOfBlocks = static_cast<uint32_t>(order.blocksInOrder().size());
-    const BlockPlace* const places = order.places();
-    auto standsBehindPosition = [&](uint32_t place) ALWAYS_INLINE_LAMBDA {
-        return places[blocks[place]->index()].head > position;
-    };
-    ASSERT(placeAhead < numberOfBlocks && !standsBehindPosition(placeAhead));
-
-    uint32_t low = placeAhead;
-    uint32_t high = numberOfBlocks;
-    for (uint32_t step = 1; step < numberOfBlocks - low; step *= 2) {
-        if (standsBehindPosition(low + step)) {
-            high = low + step;
-            break;
-        }
-        low += step;
-    }
-    while (high - low > 1) {
-        uint32_t middle = low + (high - low) / 2;
-        if (standsBehindPosition(middle))
-            high = middle;
-        else
-            low = middle;
-    }
-    return low;
-}
-
 static NEVER_INLINE void numberDominatedBlocksByPlaceInOrder(Allocator& allocator)
 {
-    const Order& order = allocator.m_order;
-    Block* const* const blocks = order.blocksInOrder().data();
-    const uint32_t numberOfBlocks = static_cast<uint32_t>(order.blocksInOrder().size());
-    const BlockPlace* const places = order.places();
-    const Block* const* const dominators = allocator.m_immediateDominators.begin();
+    const uint32_t numberOfBlocks = static_cast<uint32_t>(allocator.m_order.blocksInOrder().size());
+    const uint32_t* const numbersOfDominators = allocator.m_numbersOfDominators;
     allocator.m_numbersOfDominatedBlocks.fill(allocator.m_arena, numberOfBlocks, Allocator::NumbersOfDominatedBlocks { });
     Allocator::NumbersOfDominatedBlocks* const numbers = allocator.m_numbersOfDominatedBlocks.begin();
-    constexpr uint32_t noBlockAbove = UINT32_MAX;
-    uint32_t* const placesOfBlocksAbove = allocator.m_arena.allocateArray<uint32_t>(numberOfBlocks);
+    uint32_t* const numbersOfBlocksAbove = allocator.m_arena.allocateArray<uint32_t>(numberOfBlocks);
 
     for (uint32_t place = numberOfBlocks; place--;) {
         uint32_t size = ++numbers[place].last;
-        const Block* dominator = dominators[blocks[place]->index()];
-        uint32_t placeAbove = dominator ? places[dominator->index()].orderIndex : noBlockAbove;
-        if (placeAbove >= place)
-            placeAbove = noBlockAbove;
-        else
-            numbers[placeAbove].last += size;
-        placesOfBlocksAbove[place] = placeAbove;
+        uint32_t numberAbove = numbersOfDominators[place + 1];
+        ASSERT(numberAbove == (allocator.m_immediateDominators[allocator.m_order.blocksInOrder()[place]->index()] ? allocator.m_order.of(allocator.m_immediateDominators[allocator.m_order.blocksInOrder()[place]->index()]).orderIndex + 1 : 0));
+        if (numberAbove > place)
+            numberAbove = 0;
+        else if (numberAbove)
+            numbers[numberAbove - 1].last += size;
+        numbersOfBlocksAbove[place] = numberAbove;
     }
-    uint32_t* const nextNumbersBelow = allocator.m_arena.allocateArray<uint32_t>(numberOfBlocks);
-    uint32_t nextNumberOfRoot = 1;
+    uint32_t* const nextNumbersBelow = allocator.m_arena.allocateArray<uint32_t>(numberOfBlocks + 1);
+    nextNumbersBelow[0] = 1;
     for (uint32_t place = 0; place < numberOfBlocks; ++place) {
         Allocator::NumbersOfDominatedBlocks& own = numbers[place];
-        uint32_t placeAbove = placesOfBlocksAbove[place];
-        uint32_t& next = placeAbove != noBlockAbove ? nextNumbersBelow[placeAbove] : nextNumberOfRoot;
+        uint32_t& next = nextNumbersBelow[numbersOfBlocksAbove[place]];
         uint32_t size = own.last;
         own.first = next;
         own.last = next + size - 1;
         next += size;
-        nextNumbersBelow[place] = own.first + 1;
+        nextNumbersBelow[place + 1] = own.first + 1;
     }
 }
 
@@ -858,8 +859,7 @@ static NEVER_INLINE uint32_t findNearestDominatorWithCall(Allocator& allocator, 
     constexpr uint32_t isNotAsked = UINT32_MAX - 1;
     const Order& order = allocator.m_order;
     Block* const* const blocks = order.blocksInOrder().data();
-    const BlockPlace* const places = order.places();
-    const Block* const* const dominators = allocator.m_immediateDominators.begin();
+    const uint32_t* const numbersOfDominators = allocator.m_numbersOfDominators;
     ArenaVector<uint32_t>& list = allocator.m_nearestDominatorsWithCall[static_cast<unsigned>(bank)];
     if (list.isEmpty())
         list.fill(allocator.m_arena, static_cast<uint32_t>(order.blocksInOrder().size()), isNotAsked);
@@ -879,8 +879,7 @@ static NEVER_INLINE uint32_t findNearestDominatorWithCall(Allocator& allocator, 
             answer = place;
             break;
         }
-        const Block* dominator = dominators[block->index()];
-        uint32_t placeOfDominator = dominator ? places[dominator->index()].orderIndex : UINT32_MAX;
+        uint32_t placeOfDominator = numbersOfDominators[place + 1] - 1;
         if (placeOfDominator >= place) {
             answer = UINT32_MAX;
             break;
@@ -948,13 +947,12 @@ static bool headOfLoopAroundHoldsValueIn(const Allocator& allocator, const Block
     return false;
 }
 
-static NEVER_INLINE bool headLetsGoOfSpilledValue(Allocator& allocator, const Block* target, const BlockPlace& place, const Operation* value, RegisterMask held)
+static NEVER_INLINE bool headLetsGoOfSpilledValue(Allocator& allocator, const Block* target, const BlockPlace& place, const Operation* value, RegisterMask held, bool isExpectedFurtherOn)
 {
+    ASSERT(isExpectedFurtherOn == (allocator.m_hints[value->index()] && (held & maskOf(allocator.m_hints[value->index()]))));
     if (allocator.headIsAheadOfFramedPart(target) && allocator.isStoredAtHeadsOfFramedPart(value))
         return false;
 
-    const Reg hint = allocator.m_hints[value->index()];
-    const bool isExpectedFurtherOn = hint && (held & maskOf(hint));
     if (!isExpectedFurtherOn && rareRegionsAloneReadBehindHead(allocator, value, place.head))
         return true;
     return !place.isLoopHead && !(held & allocator.m_file.calleeSaved)
@@ -1048,11 +1046,11 @@ bool Allocator::passThroughBlockThatOnlyJumps(Block* blockAsked)
 
         bool changesRareRegion = m_rareRegion != place.rareRegion;
         if (changesRareRegion && isInRareRegion())
-            leaveRareRegion();
-        if (listsRegistersAtHeadOf(block))
+            leaveRareRegionBetweenBlocks(*this);
+        if (place.entersRareRegion || m_proc.traits().checksAllocation)
             registersAtHeads[block->index()] = listBindingsAtHead(*this, HeadThatListsRegisters { block, m_allocation.spillsOfValues(), headIsAheadOfFramedPart(block) }, end.bindings);
         if (changesRareRegion && place.isRare())
-            enterRareRegion(place.rareRegion);
+            enterRareRegionBetweenBlocks(*this, place.rareRegion);
 
         m_position = place.head + 2;
         ASSERT(m_position == m_order.earlyPositionOf(block, 0));
@@ -1075,27 +1073,31 @@ enum class WhatReadsSayAtHead : uint8_t {
 };
 
 struct HeadBeingEntered {
+    const Allocator& allocator;
     const Use* uses;
     const ValueFacts* factsOfValues;
     Allocator::ValueState* states;
     Position head;
     Position endOfReadsThatSpeakForValue;
     Position endOfReadsThatCount;
+    Position beginOfWaysOn;
 };
 
 static ALWAYS_INLINE HeadBeingEntered describeHeadBeingEntered(Allocator& allocator, bool blockIsRare)
 {
     return {
+        allocator,
         allocator.m_uses,
         allocator.m_valueFacts,
         allocator.m_values.begin(),
         allocator.m_headOfBlock,
         blockIsRare ? noPosition : allocator.m_endOfBlock,
         allocator.m_everyReadBehindBlockCounts ? allocator.m_endOfWhatWaysLeadToFromBlock : 0,
+        allocator.m_beginOfWaysOnFromBlock,
     };
 }
 
-static ALWAYS_INLINE WhatReadsSayAtHead askReadsAtHeadBeingEntered(const HeadBeingEntered& head, const Operation* value, const Allocator::ValueState& state)
+static ALWAYS_INLINE WhatReadsSayAtHead askReadsAtHeadBeingEntered(const HeadBeingEntered& head, const Operation* value, const Allocator::ValueState& state, uint32_t& firstRead)
 {
     const Use* const uses = head.uses;
     uint32_t use = state.nextUse;
@@ -1106,7 +1108,11 @@ static ALWAYS_INLINE WhatReadsSayAtHead askReadsAtHeadBeingEntered(const HeadBei
             position = uses[use].position;
         } while (position < head.head);
     }
-    if (position < head.endOfReadsThatSpeakForValue || (position < head.endOfReadsThatCount && uses[use].greatestHeadOfBlockPassedOnEveryPath >= head.head))
+    firstRead = use;
+    if (position < head.endOfReadsThatSpeakForValue)
+        return WhatReadsSayAtHead::ValueIsLive;
+    const uint32_t readOnWaysOn = head.allocator.findReadFromAmongLaterReads(value, use, head.beginOfWaysOn);
+    if (uses[readOnWaysOn].position < head.endOfReadsThatCount && uses[readOnWaysOn].greatestHeadOfBlockPassedOnEveryPath >= head.head)
         return WhatReadsSayAtHead::ValueIsLive;
     if (!use) {
         Position lastUse = head.factsOfValues[value->index()].lastUse;
@@ -1138,25 +1144,28 @@ static NEVER_INLINE void noteCalleeSavesAtHeadBeingEntered(Allocator& allocator,
     });
 }
 
-static NEVER_INLINE void listRegistersAtHeadBeingEntered(Allocator& allocator, const Block* block, const BlockPlace& place, const Allocator::Snapshot& taken, RegisterMask registersHeld, ArenaVector<std::span<const RegisterBinding>>& registersAtHeads)
+template<bool edgeHasFixedHead>
+static NEVER_INLINE void listRegistersAtHeadBeingEntered(Allocator& allocator, const Block* block, const BlockPlace& place, const Allocator::Snapshot& taken, RegisterMask registersHeld)
 {
     if (RegisterMask registersToNote = calleeSavesToNoteAtHeadBeingEntered(allocator, registersHeld)) [[unlikely]]
         noteCalleeSavesAtHeadBeingEntered(allocator, registersToNote);
 
-    const HeadThatListsRegisters headThatLists { block, allocator.m_allocation.spillsOfValues(), false };
-    const RegisterBinding* const first = taken.bindings.data();
-    const RegisterBinding* const limit = first + taken.bindings.size();
-    bool snapshotMatchesHead = static_cast<size_t>(std::popcount(registersHeld)) == taken.bindings.size();
-    for (const RegisterBinding* binding = first; snapshotMatchesHead && binding != limit; ++binding)
-        snapshotMatchesHead = isListedAtHead(allocator, headThatLists, binding->value);
-    registersAtHeads[block->index()] = snapshotMatchesHead ? taken.bindings : listRegistersAtHead(allocator, headThatLists);
+    if (edgeHasFixedHead || place.entersRareRegion || allocator.m_proc.traits().checksAllocation) {
+        const HeadThatListsRegisters headThatLists { block, allocator.m_allocation.spillsOfValues(), false };
+        const RegisterBinding* const first = taken.bindings.data();
+        const RegisterBinding* const limit = first + taken.bindings.size();
+        bool snapshotMatchesHead = static_cast<size_t>(std::popcount(registersHeld)) == taken.bindings.size();
+        for (const RegisterBinding* binding = first; snapshotMatchesHead && binding != limit; ++binding)
+            snapshotMatchesHead = isListedAtHead(allocator, headThatLists, binding->value);
+        allocator.registersAtHeads()[block->index()] = snapshotMatchesHead ? taken.bindings : listRegistersAtHead(allocator, headThatLists);
+    }
 
     if (allocator.m_rareRegion != place.rareRegion)
-        allocator.enterRareRegion(place.rareRegion);
+        enterRareRegionBetweenBlocks(allocator, place.rareRegion);
 }
 
-template<bool registersAreAsTaken>
-static ALWAYS_INLINE void finishEnteringPlainBlock(Allocator& allocator, const Block* block, const BlockPlace& place, bool blockIsRare, const Allocator::Snapshot& taken, RegisterMask registersHeld, ArenaVector<std::span<const RegisterBinding>>& registersAtHeads)
+template<bool registersAreAsTaken, bool edgeHasFixedHead>
+static ALWAYS_INLINE void finishEnteringPlainBlock(Allocator& allocator, const Block* block, const BlockPlace& place, bool blockIsRare, const Allocator::Snapshot& taken, RegisterMask registersHeld)
 {
     if constexpr (registersAreAsTaken)
         registersHeld = allocator.m_bound;
@@ -1164,13 +1173,14 @@ static ALWAYS_INLINE void finishEnteringPlainBlock(Allocator& allocator, const B
         unbindRegistersBetweenBlocks(allocator, others);
 
     if (blockIsRare || allocator.m_proc.traits().checksAllocation)
-        return listRegistersAtHeadBeingEntered(allocator, block, place, taken, registersHeld, registersAtHeads);
-    if (RegisterMask registersToNote = calleeSavesToNoteAtHeadBeingEntered(allocator, registersHeld)) [[unlikely]]
+        return listRegistersAtHeadBeingEntered<edgeHasFixedHead>(allocator, block, place, taken, registersHeld);
+    ASSERT(!allocator.m_isAheadOfFramedPart && !allocator.isInRareRegion());
+    if (RegisterMask registersToNote = registersHeld & allocator.m_file.calleeSaved & ~allocator.m_calleeSavesTakenOutsideRareRegions) [[unlikely]]
         return noteCalleeSavesAtHeadBeingEntered(allocator, registersToNote);
 }
 
 template<bool registersAreAsTaken, bool predecessorEndsInPatch, bool blockIsRare>
-static NEVER_INLINE void enterPlainBlockBehindOnePredecessor(Allocator& allocator, const Block* block, const BlockPlace& place, const Allocator::Snapshot& taken, const Operation* endOfPredecessor, ArenaVector<std::span<const RegisterBinding>>& registersAtHeads)
+static NEVER_INLINE void enterPlainBlockBehindOnePredecessor(Allocator& allocator, const Block* block, const BlockPlace& place, const Allocator::Snapshot& taken, const Operation* endOfPredecessor)
 {
     ASSERT(blockIsRare == place.isRare() && predecessorEndsInPatch == (endOfPredecessor->opcode() == Patch));
     const bool blockHasResultsOfPatch = predecessorEndsInPatch && endOfPredecessor->owner()->successor(0).block() == block;
@@ -1195,8 +1205,9 @@ static NEVER_INLINE void enterPlainBlockBehindOnePredecessor(Allocator& allocato
     const RegisterBinding* const limit = binding + taken.bindings.size();
     while (binding != limit) {
         const HeadBeingEntered head = describeHeadBeingEntered(allocator, blockIsRare);
+        uint32_t firstRead = 0;
         do {
-            WhatReadsSayAtHead said = askReadsAtHeadBeingEntered(head, binding->value, head.states[binding->value->index()]);
+            WhatReadsSayAtHead said = askReadsAtHeadBeingEntered(head, binding->value, head.states[binding->value->index()], firstRead);
             if (said == WhatReadsSayAtHead::WaysOnDecide && !blockIsRare)
                 break;
             settle(head, *binding, said != WhatReadsSayAtHead::ValueIsDead);
@@ -1204,33 +1215,36 @@ static NEVER_INLINE void enterPlainBlockBehindOnePredecessor(Allocator& allocato
         if constexpr (!blockIsRare) {
             if (binding == limit)
                 break;
-            bool isLive = !allocator.isDeadOnEveryPathFrom(binding->value, block, allocator.m_headOfBlock);
+            const Operation* value = binding->value;
+            bool isLive = !isDeadOnEveryPathFromHeadBetweenBlocks(allocator, head.factsOfValues[value->index()], value, block, place, allocator.m_endOfWhatWaysLeadToFromBlock, firstRead, head.uses[firstRead].position);
             settle(describeHeadBeingEntered(allocator, blockIsRare), *binding, isLive);
             ++binding;
         }
     }
-    finishEnteringPlainBlock<registersAreAsTaken>(allocator, block, place, blockIsRare, taken, registersHeld, registersAtHeads);
+    finishEnteringPlainBlock<registersAreAsTaken, false>(allocator, block, place, blockIsRare, taken, registersHeld);
 }
 
-static NEVER_INLINE void enterPlainBlockWhoseHeadIsFixed(Allocator& allocator, const Block* block, const BlockPlace& place, const Allocator::Snapshot& taken, ArenaVector<std::span<const RegisterBinding>>& registersAtHeads)
+static NEVER_INLINE void enterPlainBlockWhoseHeadIsFixed(Allocator& allocator, const Block* block, const BlockPlace& place, const Allocator::Snapshot& taken)
 {
     Allocator::ValueState* const states = allocator.m_values.begin();
     for (const RegisterBinding& binding : taken.bindings)
         holdValueAtHeadBeingEntered(allocator, states, binding.reg, binding.value);
-    finishEnteringPlainBlock<false>(allocator, block, place, place.isRare(), taken, taken.registers, registersAtHeads);
+    finishEnteringPlainBlock<false, true>(allocator, block, place, place.isRare(), taken, taken.registers);
 }
 
-static NEVER_INLINE void leaveRareRegionAndEnterBlock(Allocator& allocator, Block* block)
+static NEVER_INLINE void enterBlockThatTakesNoRegisters(Allocator& allocator, const BlockPlace& place)
 {
-    allocator.leaveRareRegion();
-    allocator.enterBlock(block);
+    allocator.m_blockWhoseEndRegistersHold = nullptr;
+    unbindRegistersBetweenBlocks(allocator, allocator.m_bound);
+    if (allocator.m_rareRegion != place.rareRegion)
+        enterRareRegionBetweenBlocks(allocator, place.rareRegion);
 }
 
 void Allocator::enterBlock(Block* block)
 {
     const BlockPlace& placeOfBlock = m_order.places()[block->index()];
     if (isInRareRegion() && m_rareRegion != placeOfBlock.rareRegion)
-        return leaveRareRegionAndEnterBlock(*this, block);
+        leaveRareRegionBetweenBlocks(*this);
 
     const bool mayBePlain = !block->isEntry() && !block->isLandingPad() && !m_allocation.hasFramedPart()
         && (m_operandsTakenBackAtHeads.isEmpty() || !m_operandsTakenBackAtHeads[block->index()].value);
@@ -1238,7 +1252,7 @@ void Allocator::enterBlock(Block* block)
         const Snapshot& taken = m_heads[block->index()];
         if (taken.isSet) {
             m_blockWhoseEndRegistersHold = nullptr;
-            return enterPlainBlockWhoseHeadIsFixed(*this, block, placeOfBlock, taken, m_allocation.m_registersAtHead);
+            return enterPlainBlockWhoseHeadIsFixed(*this, block, placeOfBlock, taken);
         }
     } else if (mayBePlain && block->phis().empty() && placeOfBlock.head >= m_endOfLastLoopThatKeepsValueMadeAgain) {
         const Block* predecessor = placeOfBlock.predecessors.data()[0];
@@ -1249,27 +1263,27 @@ void Allocator::enterBlock(Block* block)
             const bool blockIsRare = placeOfBlock.isRare();
             const bool registersAreAsTaken = predecessor == m_blockWhoseEndRegistersHold;
             m_blockWhoseEndRegistersHold = nullptr;
-            ArenaVector<std::span<const RegisterBinding>>& registersAtHeads = m_allocation.m_registersAtHead;
             if (registersAreAsTaken) {
                 if (!predecessorEndsInPatch) {
                     if (!blockIsRare)
-                        return enterPlainBlockBehindOnePredecessor<true, false, false>(*this, block, placeOfBlock, taken, endOfPredecessor, registersAtHeads);
-                    return enterPlainBlockBehindOnePredecessor<true, false, true>(*this, block, placeOfBlock, taken, endOfPredecessor, registersAtHeads);
+                        return enterPlainBlockBehindOnePredecessor<true, false, false>(*this, block, placeOfBlock, taken, endOfPredecessor);
+                    return enterPlainBlockBehindOnePredecessor<true, false, true>(*this, block, placeOfBlock, taken, endOfPredecessor);
                 }
                 if (!blockIsRare)
-                    return enterPlainBlockBehindOnePredecessor<true, true, false>(*this, block, placeOfBlock, taken, endOfPredecessor, registersAtHeads);
-                return enterPlainBlockBehindOnePredecessor<true, true, true>(*this, block, placeOfBlock, taken, endOfPredecessor, registersAtHeads);
+                    return enterPlainBlockBehindOnePredecessor<true, true, false>(*this, block, placeOfBlock, taken, endOfPredecessor);
+                return enterPlainBlockBehindOnePredecessor<true, true, true>(*this, block, placeOfBlock, taken, endOfPredecessor);
             }
             if (!predecessorEndsInPatch) {
                 if (!blockIsRare)
-                    return enterPlainBlockBehindOnePredecessor<false, false, false>(*this, block, placeOfBlock, taken, endOfPredecessor, registersAtHeads);
-                return enterPlainBlockBehindOnePredecessor<false, false, true>(*this, block, placeOfBlock, taken, endOfPredecessor, registersAtHeads);
+                    return enterPlainBlockBehindOnePredecessor<false, false, false>(*this, block, placeOfBlock, taken, endOfPredecessor);
+                return enterPlainBlockBehindOnePredecessor<false, false, true>(*this, block, placeOfBlock, taken, endOfPredecessor);
             }
             if (!blockIsRare)
-                return enterPlainBlockBehindOnePredecessor<false, true, false>(*this, block, placeOfBlock, taken, endOfPredecessor, registersAtHeads);
-            return enterPlainBlockBehindOnePredecessor<false, true, true>(*this, block, placeOfBlock, taken, endOfPredecessor, registersAtHeads);
+                return enterPlainBlockBehindOnePredecessor<false, true, false>(*this, block, placeOfBlock, taken, endOfPredecessor);
+            return enterPlainBlockBehindOnePredecessor<false, true, true>(*this, block, placeOfBlock, taken, endOfPredecessor);
         }
-    }
+    } else if ((block->isEntry() || block->isLandingPad()) && !m_allocation.hasFramedPart() && (m_operandsTakenBackAtHeads.isEmpty() || !m_operandsTakenBackAtHeads[block->index()].value))
+        return enterBlockThatTakesNoRegisters(*this, placeOfBlock);
 
     auto enterTheLongWay = [this](Block* block, const BlockPlace& place, ArenaVector<std::span<const RegisterBinding>>& registersAtHeads) NEVER_INLINE {
         const Position head = place.head;
@@ -1331,13 +1345,19 @@ void Allocator::enterBlock(Block* block)
             const Position endOfBlock = m_endOfBlock;
             const bool everyReadCounts = m_everyReadBehindBlockCounts;
             const Position endOfWhatWaysLeadTo = m_endOfWhatWaysLeadToFromBlock;
+            const Position beginOfWaysOn = m_beginOfWaysOnFromBlock;
             auto isLiveAtHead = [&](const Operation* value, const ValueState& state) ALWAYS_INLINE_LAMBDA -> bool {
                 uint32_t use = state.nextUse;
                 while (uses[use].position < head)
                     use = uses[use].next;
                 if (use) [[likely]] {
-                    if (blockIsRare || uses[use].position < endOfBlock || (everyReadCounts && uses[use].position < endOfWhatWaysLeadTo && uses[use].greatestHeadOfBlockPassedOnEveryPath >= head))
+                    if (blockIsRare || uses[use].position < endOfBlock)
                         return true;
+                    if (everyReadCounts) {
+                        const uint32_t readOnWaysOn = findReadFromAmongLaterReads(value, use, beginOfWaysOn);
+                        if (uses[readOnWaysOn].position < endOfWhatWaysLeadTo && uses[readOnWaysOn].greatestHeadOfBlockPassedOnEveryPath >= head)
+                            return true;
+                    }
                 } else {
                     Position lastUse = factsOfValues[value->index()].lastUse;
                     if (lastUse == noPosition || lastUse <= head)
@@ -1398,6 +1418,7 @@ struct HeadBeingFixed {
     const BlockPlace* place;
     Position head;
     Position end;
+    Position beginOfWaysOn;
     Position limitOfDefinitions;
     bool everyReadBehindTargetCounts;
     bool mayHoldWhatIsMadeAgain;
@@ -1422,11 +1443,12 @@ static ALWAYS_INLINE HeadBeingFixed describeHeadBeingFixed(Allocator& allocator,
     head.head = place.head;
     head.end = place.head + 2 * (target->size() + 1);
     ASSERT(head.end == order.endOf(target));
+    head.beginOfWaysOn = allocator.beginOfWaysOnFrom(target, head.end);
     head.limitOfDefinitions = findLimitOfDefinitionsReachingHead(allocator, target, from);
     constexpr bool isOfAnyKind = kind == KindOfHeadBeingFixed::Any;
     head.isRare = kind == KindOfHeadBeingFixed::PlainButRare || (isOfAnyKind && place.isRare());
     head.startsLoop = isOfAnyKind && place.isLoopHead;
-    head.everyReadBehindTargetCounts = !head.isRare && !head.startsLoop && (place.loop == noLoop || place.head < allocator.m_liveness.of(order.loops()[place.loop], order).endOfLastExitingBlock);
+    head.everyReadBehindTargetCounts = !head.isRare && !head.startsLoop && (place.loop == noLoop || place.head < allocator.m_liveness.of(order.loops().data()[place.loop], order).endOfLastExitingBlock);
     head.patchThatEndsFrom = isOfAnyKind && endOfFrom->opcode() == Patch ? endOfFrom : nullptr;
     head.edgeLacksPatchResults = isOfAnyKind && from->successor(0).block() != target;
     head.someValueMadeAgainIsKept = isOfAnyKind && place.head < allocator.m_endOfLastLoopThatKeepsValueMadeAgain;
@@ -1455,8 +1477,13 @@ static ALWAYS_INLINE bool isLiveAtHeadBeingFixed(Allocator& allocator, const Hea
     const bool headIsRare = head.isRare;
     uint32_t use = findReadFromBetweenBlocks(allocator, head.uses, head.states[index].nextUse, value, head.head);
     if (use) [[likely]] {
-        if (headIsRare || head.uses[use].position < head.end || (head.everyReadBehindTargetCounts && head.uses[use].greatestHeadOfBlockPassedOnEveryPath >= head.head))
+        if (headIsRare || head.uses[use].position < head.end)
             return true;
+        if (head.everyReadBehindTargetCounts) {
+            const uint32_t readOnWaysOn = allocator.findReadFromAmongLaterReads(value, use, head.beginOfWaysOn);
+            if (readOnWaysOn && head.uses[readOnWaysOn].greatestHeadOfBlockPassedOnEveryPath >= head.head)
+                return true;
+        }
     } else {
         Position lastUse = facts.lastUse;
         if (lastUse == noPosition || lastUse <= head.head)
@@ -1464,7 +1491,7 @@ static ALWAYS_INLINE bool isLiveAtHeadBeingFixed(Allocator& allocator, const Hea
         if (headIsRare)
             return true;
     }
-    return !allocator.isDeadOnEveryPathFrom(value, head.target, head.head);
+    return !isDeadOnEveryPathFromHeadBetweenBlocks(allocator, facts, value, head.target, *head.place, allocator.m_liveness.endOfWhatWaysLeadToFrom(head.target), use, head.uses[use].position);
 }
 
 static NEVER_INLINE void keepValueInOneRegisterAtHead(Allocator& allocator, const ValueFacts& facts, RegisterMask held)
@@ -1512,9 +1539,15 @@ static ALWAYS_INLINE RegisterMask dropWhatHeadBeingFixedDoesNotHold(Allocator& a
             continue;
         }
         const RegisterMask held = state.registers;
-        if (!head.isRare && spillsOfValues[index] != noSpill && headLetsGoOfSpilledValue(allocator, head.target, *head.place, value, held)) {
-            unbindAllBetweenBlocks(allocator, state);
-            continue;
+        if (!head.isRare && spillsOfValues[index] != noSpill) {
+            const Reg hint = allocator.m_hints[index];
+            const bool isExpectedFurtherOn = hint && (held & maskOf(hint));
+            ASSERT(head.startsLoop == head.place->isLoopHead);
+            const bool headMayLetGo = !isExpectedFurtherOn || (!head.startsLoop && !(held & allocator.m_file.calleeSaved));
+            if (headMayLetGo && headLetsGoOfSpilledValue(allocator, head.target, *head.place, value, held, isExpectedFurtherOn)) {
+                unbindAllBetweenBlocks(allocator, state);
+                continue;
+            }
         }
         if (held & (held - 1)) [[unlikely]]
             keepValueInOneRegisterAtHead(allocator, head.factsOfValues[index], held);
@@ -1575,14 +1608,17 @@ static ALWAYS_INLINE void setHeadAndNoteItsHints(Allocator& allocator, const Blo
     }
 }
 
+template<KindOfHeadBeingFixed kind>
 static NEVER_INLINE void fixPlainHeadBetweenBlocks(Allocator& allocator, Block* target, const Block* from, const BlockPlace& place)
 {
+    static_assert(kind == KindOfHeadBeingFixed::Plain || kind == KindOfHeadBeingFixed::PlainButRare);
     ASSERT(from == allocator.m_block);
-    const HeadBeingFixed head = describeHeadBeingFixed<KindOfHeadBeingFixed::Plain>(allocator, target, from, place);
+    ASSERT(target->phis().empty() && !allocator.isInRareRegion());
+    const HeadBeingFixed head = describeHeadBeingFixed<kind>(allocator, target, from, place);
     Operation* valuesMadeAgain[64];
-    RegisterMask registersOfValuesMadeAgain = dropWhatHeadBeingFixedDoesNotHold<KindOfHeadBeingFixed::Plain>(allocator, head, valuesMadeAgain);
+    RegisterMask registersOfValuesMadeAgain = dropWhatHeadBeingFixedDoesNotHold<kind>(allocator, head, valuesMadeAgain);
     bindValuesMadeAgainAtHead(allocator, registersOfValuesMadeAgain & ~allocator.m_bound, valuesMadeAgain);
-    setHeadAndNoteItsHints<KindOfHeadBeingFixed::Plain>(allocator, target, from, place);
+    setHeadAndNoteItsHints<kind>(allocator, target, from, place);
     serveEdgesThatWaitedForHead(allocator, target);
 }
 
@@ -1599,9 +1635,10 @@ static ALWAYS_INLINE bool registersHoldWhatHeadExpects(const Allocator& allocato
     return true;
 }
 
-static ALWAYS_INLINE KindOfHeadBeingFixed findKindOfHeadToFix(const Allocator& allocator, const Block* target, const Block* from, const BlockPlace& place)
+static ALWAYS_INLINE KindOfHeadBeingFixed findKindOfHeadToFix(const Allocator& allocator, bool hasFramedPart, const Block* target, const Block* from, const BlockPlace& place)
 {
-    if (allocator.m_allocation.hasFramedPart() || place.isLoopHead || from->last()->opcode() == Patch || place.head < allocator.m_endOfLastLoopThatKeepsValueMadeAgain)
+    ASSERT(hasFramedPart == allocator.m_allocation.hasFramedPart());
+    if (hasFramedPart || place.isLoopHead || from->last()->opcode() == Patch || place.head < allocator.m_endOfLastLoopThatKeepsValueMadeAgain)
         return KindOfHeadBeingFixed::Any;
     if (place.isRare())
         return KindOfHeadBeingFixed::PlainButRare;
@@ -1768,8 +1805,9 @@ void Allocator::leaveBlock(Block* from)
 
         someSuccessorTakesRegisters = true;
         ASSERT(end.isSet || registersMatchEndOfBlock);
+        ASSERT(!target->isEntry());
         const BlockPlace& placeOfTarget = places[target->index()];
-        if (target->isEntry() || !headBehindEdgesIsFixedByEdge(m_valueFacts, target, placeOfTarget)) {
+        if (!headBehindEdgesIsFixedByEdge(m_valueFacts, target, placeOfTarget)) {
             if (!end.isSet)
                 takeSnapshotBetweenBlocks(*this, end);
             continue;
@@ -1790,26 +1828,28 @@ void Allocator::leaveBlock(Block* from)
                 continue;
             }
 
-            const KindOfHeadBeingFixed kind = findKindOfHeadToFix(*this, target, from, placeOfTarget);
+            const KindOfHeadBeingFixed kind = findKindOfHeadToFix(*this, hasFramedPart, target, from, placeOfTarget);
             const bool headIsPlain = kind == KindOfHeadBeingFixed::Plain;
-            const bool edgeIsServedWithHead = headIsPlain || headIsFixedTogetherWithMovesOfEdge(kind, from);
+            const bool headIsPlainButRare = kind == KindOfHeadBeingFixed::PlainButRare && target->phis().empty() && !isInRareRegion();
+            const bool edgeIsServedWithHead = headIsPlain || headIsPlainButRare || headIsFixedTogetherWithMovesOfEdge(kind, from);
             if (!end.isSet && !(edgeIsServedWithHead && successorIndex + 1 == numberOfSuccessors))
                 takeSnapshotBetweenBlocks(*this, end);
             registersMatchEndOfBlock = false;
             if (headIsPlain)
-                fixPlainHeadBetweenBlocks(*this, target, from, placeOfTarget);
+                fixPlainHeadBetweenBlocks<KindOfHeadBeingFixed::Plain>(*this, target, from, placeOfTarget);
+            else if (headIsPlainButRare)
+                fixPlainHeadBetweenBlocks<KindOfHeadBeingFixed::PlainButRare>(*this, target, from, placeOfTarget);
             else
-                fixHeadOf(target, from);
+                fixHeadOf(target, from, placeOfTarget, kind);
             if (m_proc.failure()) [[unlikely]]
                 return;
             if (edgeIsServedWithHead)
                 continue;
-        } else if (!end.isSet) {
-            if (hasFramedPart)
+        } else if (hasFramedPart) {
+            if (!end.isSet)
                 takeSnapshotBetweenBlocks(*this, end);
-            else if (registersHoldWhatHeadExpects(*this, target, head.bindings))
-                continue;
-        }
+        } else if (registersMatchEndOfBlock && registersHoldWhatHeadExpects(*this, target, head.bindings))
+            continue;
 
         appendEdgeMoves(from, successorIndex, end);
         if (m_proc.failure()) [[unlikely]]
@@ -1819,14 +1859,9 @@ void Allocator::leaveBlock(Block* from)
         m_blockWhoseEndRegistersHold = from;
 }
 
-bool Allocator::edgeFixesHead(const Block* from, const Edge& edge) const
+void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPlace& placeOfTarget, KindOfHeadBeingFixed kindOfHead)
 {
-    const Block* target = edge.block();
-    return headIsFixedByEdge(*this, target) && findBlockThatFixesHead(*this, target, m_order.of(target)) == from;
-}
-
-void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge)
-{
+    ASSERT(&placeOfTarget == &m_order.of(targetOfEdge) && kindOfHead == findKindOfHeadToFix(*this, m_allocation.hasFramedPart(), targetOfEdge, blockOfEdge, placeOfTarget));
     auto fixHeadOfKind = [this]<KindOfHeadBeingFixed kind>(Block* target, Block* from, const BlockPlace& place, ArenaVector<Reg>& registersAtDefinitions, ArenaVector<SpillFacts>& factsOfSpills, ArenaVector<BlockSteps>& stepsOfBlocks, ArenaVector<Step>& allSteps) NEVER_INLINE {
         constexpr bool isOfAnyKind = kind == KindOfHeadBeingFixed::Any;
         const HeadBeingFixed head = describeHeadBeingFixed<kind>(*this, target, from, place);
@@ -1846,7 +1881,8 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge)
         ValueState* const states = head.states;
         const Reg* const hints = m_hints.begin();
         const RegisterMask calleeSavedRegisters = m_file.calleeSaved;
-        const RegisterMask calleeSavesStillToNote = calleeSavesStillToNoteBetweenBlocks(*this);
+        ASSERT(kind != KindOfHeadBeingFixed::PlainButForPhis || (!m_isAheadOfFramedPart && !isInRareRegion()));
+        const RegisterMask calleeSavesStillToNote = kind == KindOfHeadBeingFixed::PlainButForPhis ? calleeSavedRegisters & ~m_calleeSavesTakenOutsideRareRegions : calleeSavesStillToNoteBetweenBlocks(*this);
 
         Reg registersOfDyingValuesInLine[mostPhisListedInLine];
         Reg* registersOfDyingValues = registersOfDyingValuesInLine;
@@ -2021,7 +2057,15 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge)
                         for (SpillIndex candidate : { spillsHandedToPhis[index].first, spillsHandedToPhis[index].second }) {
                             if (candidate == noSpill)
                                 break;
-                            bool liesApart = std::ranges::none_of(phisInSpill(candidate), [&](const Operation* other) {
+                            PhisInSpill& phisInCandidate = phisInSpill(candidate);
+                            Operation** endOfPhisNotYetDead = phisInCandidate.begin();
+                            for (Operation* other : phisInCandidate) {
+                                const Position lastUse = factsOfValues[other->index()].lastUse;
+                                if (lastUse == noPosition || lastUse >= m_headOfBlock)
+                                    *endOfPhisNotYetDead++ = other;
+                            }
+                            phisInCandidate.shrink(static_cast<uint32_t>(endOfPhisNotYetDead - phisInCandidate.begin()));
+                            bool liesApart = std::ranges::none_of(phisInCandidate, [&](const Operation* other) {
                                 return other->owner() == target || (isLiveAtHeadBeingFixed<kind>(*this, head, other) && isReadOnSomeWayFromHeadOf(other, target));
                             });
                             if (liesApart) {
@@ -2085,12 +2129,11 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge)
         }
     };
 
-    const BlockPlace& placeOfTarget = m_order.places()[targetOfEdge->index()];
     ArenaVector<Reg>& registersAtDefinitions = m_allocation.m_registerAtDefinition;
     ArenaVector<SpillFacts>& factsOfSpills = m_allocation.m_spills;
     ArenaVector<BlockSteps>& stepsOfBlocks = m_allocation.m_blocks;
     ArenaVector<Step>& allSteps = m_allocation.m_steps;
-    switch (findKindOfHeadToFix(*this, targetOfEdge, blockOfEdge, placeOfTarget)) {
+    switch (kindOfHead) {
     case KindOfHeadBeingFixed::Plain:
     case KindOfHeadBeingFixed::PlainButForPhis:
         return fixHeadOfKind.operator()<KindOfHeadBeingFixed::PlainButForPhis>(targetOfEdge, blockOfEdge, placeOfTarget, registersAtDefinitions, factsOfSpills, stepsOfBlocks, allSteps);
@@ -2141,8 +2184,9 @@ static NEVER_INLINE Location findPlaceOutsideRegistersAtEndOf(Allocator& allocat
         return Location::immediate();
     if (facts.definition > allocator.m_order.earlyPositionOf(from, from->size() - 1))
         return Location();
-    if (allocator.spillHoldsValueIn(from, value))
-        return Location::spill(allocator.m_allocation.spillOf(value));
+    const SpillIndex spill = allocator.m_allocation.spillOf(value);
+    if (spill != noSpill && !(allocator.isAheadOfFramedPart(from) && allocator.isStoredAtHeadsOfFramedPart(value)))
+        return Location::spill(spill);
     if (!isServedLate) {
         SpillIndex save = allocator.stateOf(value).saveInRareRegion;
         if (save != noSpill && wasSavedOnWayThroughRareRegion(allocator, from, value))
@@ -2153,12 +2197,12 @@ static NEVER_INLINE Location findPlaceOutsideRegistersAtEndOf(Allocator& allocat
                 return Location::spill(held.save);
         }
     }
-    if (!allocator.m_allocation.isSpilled(value))
+    if (spill == noSpill)
         return Location();
     if (headMayDoWithoutDeadValue && allocator.isDeadOnEveryPathFrom(value, from, allocator.m_order.endOf(from)))
         return Location();
     allocator.giveUpFramedPartForReadOfSpill();
-    return Location::spill(allocator.m_allocation.spillOf(value));
+    return Location::spill(spill);
 }
 
 void Allocator::appendEdgeMoves(Block* blockOfEdge, unsigned indexOfEdge, const Snapshot& endOfBlockOfEdge)
@@ -2389,13 +2433,6 @@ const Block* Allocator::immediateDominatorOf(const Block* block)
     return m_immediateDominators[block->index()];
 }
 
-const Block* Allocator::lastBlockOnEveryPathToBoth(const Block* left, const Block* right)
-{
-    if (m_immediateDominators.isEmpty())
-        findImmediateDominatorsOfOrderedBlocks(*this);
-    return findBlockThatDominatesBoth(*this, left, right);
-}
-
 bool Allocator::hasBackEdgeOutsideRareRegions(const Loop& loop) const
 {
     const Block* head = m_order.blocksInOrder()[loop.firstBlock];
@@ -2466,16 +2503,6 @@ void Allocator::noteOperandTakenBack(const Operation* sum, OperandTakenBack oper
     m_operandTakenBackByBranch = operand.value;
     if (otherOperand.isRegister())
         m_registersReadOnWayToFailingSuccessor = maskOf(otherOperand.reg());
-}
-
-Operation* Allocator::incomingValueOf(const Operation* phi, const Block* from) const
-{
-    std::span<Operation* const> upsilons = from->upsilons();
-    for (size_t index = upsilons.size(); index--;) {
-        if (upsilons[index]->phi() == phi)
-            return upsilons[index]->valueHandedOn();
-    }
-    return nullptr;
 }
 
 } } } // namespace JSC::AOT::Machine

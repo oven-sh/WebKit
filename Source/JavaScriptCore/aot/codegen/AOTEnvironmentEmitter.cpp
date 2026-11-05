@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
 #include "AOTClosuresLent.h"
 #include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
@@ -45,21 +46,33 @@ void EnvironmentEmitter::generateGetCapture(const ValueContext& value)
     define(value, closureCapture(in<CellPointer>(value->closureOperand()), value->function(), value->index()));
 }
 
-TypedPointer EnvironmentEmitter::escapeMarkOf(ValueID environment)
+TypedPointer EnvironmentEmitter::byteWithEscapeMarkOf(ValueID environment)
 {
-    std::optional<uint32_t> isEscapedOffset = m_plan.layout(typeOf(environment).environment).isEscapedOffset;
-    RELEASE_ASSERT(isEscapedOffset);
-    return m_out.address(m_heaps.collectorState, in<CellPointer>(environment).value(), *isEscapedOffset);
+    RELEASE_ASSERT(m_plan.layout(typeOf(environment).environment).cellsAreHandedBack);
+    return m_out.address(m_heaps.collectorState, in<CellPointer>(environment).value(), offsetOfEnvironmentShapeHighByte);
+}
+
+void EnvironmentEmitter::markEscaped(ValueID environment)
+{
+    uint32_t shape = m_plan.environmentAllocation(typeOf(environment).environment).shape;
+    m_out.store32As8(m_out.constInt32(highByteOfEnvironmentShape(shape) | environmentIsEscapedBit), byteWithEscapeMarkOf(environment));
+}
+
+TypedPointer EnvironmentEmitter::linkToNextCellHandedBack(CellPointer cell, LayoutID layout)
+{
+    const PlannedLayout& planned = m_plan.layout(layout);
+    RELEASE_ASSERT(planned.cellsAreHandedBack);
+    return m_out.address(m_heaps.entire(AbstractHeap::EnvironmentFields), cell.value(), planned.offsetOfLinkToNextCellHandedBack);
 }
 
 void EnvironmentEmitter::generateMarkEnvironmentEscaped(const ValueContext& value)
 {
-    m_out.store32As8(m_out.constInt32(1), escapeMarkOf(value->environmentOperand()));
+    markEscaped(value->environmentOperand());
 }
 
 void EnvironmentEmitter::markEnvironmentsThatClosureKeeps(const ValueContext& closure)
 {
-    if (findLoanOfClosure(m_program, generator().facts(), m_code, closure.valueID()).loan == LoanOfClosure::ToFunctionEntered)
+    if (findLoanOfClosure(m_program, generator().facts(), m_code, closure.valueID()).loan != LoanOfClosure::None)
         return;
     for (ValueID capture : closure->capturesOperands()) {
         if (!capture || m_code.isConstant(capture))
@@ -71,8 +84,8 @@ void EnvironmentEmitter::markEnvironmentsThatClosureKeeps(const ValueContext& cl
         if (!environment)
             continue;
         const PlannedLayout& planned = m_plan.layout(environment);
-        if (planned.isEscapedOffset && !planned.liesOnlyInFrames)
-            m_out.store32As8(m_out.constInt32(1), escapeMarkOf(capture));
+        if (planned.cellsAreHandedBack && !planned.liesOnlyInFrames)
+            markEscaped(capture);
     }
 }
 
@@ -83,10 +96,13 @@ void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
 
     ValueID environment = value->environmentOperand();
     LayoutID layout = typeOf(environment).environment;
-    Word32 isEscaped(m_out.load8ZeroExt32(escapeMarkOf(environment)));
-    ifElse(equal(isEscaped, word32(0)), [&] {
+    Word32 byteWithEscapeMark(m_out.load8ZeroExt32(byteWithEscapeMarkOf(environment)));
+    ifElse(hasNoBits(byteWithEscapeMark, environmentIsEscapedBit), [&] {
+        Machine::DeclaredAccessesSuspension writesToCellThatNobodyHolds(m_out);
         CellPointer cell = in<CellPointer>(environment);
-        m_out.store64(cell.value(), emitter<StaticsEmitter>().wordOfEnvironmentHandedBack(layout));
+        TypedPointer head = emitter<StaticsEmitter>().wordOfEnvironmentHandedBack(layout);
+        m_out.store64(add(Integer(m_out.load64(head)), integer(tagOfLinkBetweenEnvironmentsHandedBack)).value(), linkToNextCellHandedBack(cell, layout));
+        m_out.store64(cell.value(), head);
     }, [] { });
 }
 

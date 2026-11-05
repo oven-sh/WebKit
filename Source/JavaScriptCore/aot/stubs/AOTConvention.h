@@ -81,7 +81,8 @@ struct ClosureRequest {
 #else
     static constexpr unsigned maxNumberOfCaptures = 2;
 #endif
-    static constexpr unsigned maxSlimClosureCaptures = 4;
+    static constexpr unsigned maxSlimClosureCaptures = 8;
+    static constexpr unsigned maxSlimClosureCapturesInRegisters = 4;
     static constexpr bool canEncode(uint32_t function, unsigned executable, uint32_t allocation)
     {
         return function <= ClosureWord::functionMask && executable < 1u << (isSlimBit - executableShift) && allocation < 1u << (countShift - allocationShift);

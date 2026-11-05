@@ -610,6 +610,7 @@ static NEVER_INLINE JSObject* tryCopyCompiledObjectWithout(Instance* instance, J
     Object* copy = Object::tryCreateCopyOfFields(vm, source);
     if (!copy)
         return nullptr;
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     for (uint32_t number : excluded.identifiers) {
         DeletePropertySlot slot;

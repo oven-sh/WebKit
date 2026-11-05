@@ -13,6 +13,7 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTClosure.h"
 #include "AOTConvention.h"
+#include "AOTEnvironment.h"
 #include "AOTInstance.h"
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
@@ -33,7 +34,9 @@
 #include "JSSetInlines.h"
 #include "MarkedBlockCage.h"
 #include "ObjectConstructor.h"
+#include <algorithm>
 #include <wtf/DataLog.h>
+#include <wtf/HashMap.h>
 #include <wtf/WTFProcess.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -73,6 +76,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance
     DeferTerminationForAWhile deferTermination(vm);
     ObjectModel& objects = *instance->state->objects;
     uint64_t captures[] = { first, second, third, fourth };
+    static_assert(std::size(captures) == ClosureRequest::maxSlimClosureCapturesInRegisters && ClosureRequest::maxNumberOfCaptures <= std::size(captures));
     RELEASE_ASSERT(ClosureRequest::countOf(request) <= (ClosureRequest::isSlim(request) ? ClosureRequest::maxSlimClosureCaptures : ClosureRequest::maxNumberOfCaptures));
     JSCell* cell;
     auto word = [&](ptrdiff_t offset) -> uint64_t& {
@@ -81,7 +85,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance
     if (ClosureRequest::isSlim(request)) {
         cell = SlimClosure::createForCompiledCode(vm, objects.closures.slimClosureStructure(kindOfClosureNumber(ClosureRequest::closureNumberOf(request))), SlimClosure::allocationSize(ClosureRequest::countOf(request)));
         for (unsigned slot = 0; slot < ClosureRequest::countOf(request); ++slot)
-            word(SlimClosure::offsetOfCaptures() + slot * sizeof(uint64_t)) = captures[slot];
+            word(SlimClosure::offsetOfCaptures() + slot * sizeof(uint64_t)) = slot < std::size(captures) ? captures[slot] : static_cast<uint64_t>(JSValue::encode(JSValue()));
         WTF::storeStoreFence();
         word(SlimClosure::offsetOfWord()) = instance->functionTables.closureWords[ClosureRequest::closureNumberOf(request)];
         WTF::storeStoreFence();
@@ -99,22 +103,115 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance
     OPERATION_RETURN(scope, cell);
 }
 
+static void markEscapedIfEnvironment(JSValue held)
+{
+    if (held && held.isCell() && held.asCell()->type() == CompiledEnvironmentType)
+        uncheckedDowncast<Environment>(held.asCell())->markEscaped();
+}
+
+static bool liesInFrame(JSValue held)
+{
+    return held && held.isCell() && static_cast<uint8_t>(held.asCell()->cellState()) == frameCellState;
+}
+
+namespace {
+
+struct ClosureInFrame {
+    static_assert(SlimClosure::offsetOfCaptures() == SlimClosure::offsetOfWord() + static_cast<ptrdiff_t>(sizeof(uint64_t)) && Closure::offsetOfCaptures() == Closure::offsetOfEntry() + static_cast<ptrdiff_t>(sizeof(uint64_t)));
+
+    explicit ClosureInFrame(JSCell* closure)
+        : cell(closure)
+        , words(reinterpret_cast<const uint64_t*>(closure))
+        , isFull(closure->type() == CompiledClosureType)
+        , placeOfClosureWord((isFull ? Closure::offsetOfEntry() : SlimClosure::offsetOfWord()) / sizeof(uint64_t))
+        , closureNumber(ClosureWord::closureNumberOf(words[placeOfClosureWord]))
+        , counts(captureCountsOfClosureNumber(closureNumber))
+    {
+        RELEASE_ASSERT(isFull || closure->type() == SlimClosureType);
+        RELEASE_ASSERT(counts.references <= counts.captures && counts.captures <= (isFull ? Closure::maxNumberOfCaptures : ClosureRequest::maxSlimClosureCaptures));
+    }
+
+    std::span<const uint64_t> captures() const { return { words + placeOfClosureWord + 1, counts.captures }; }
+    bool holdsClosureOfFrame() const
+    {
+        return std::ranges::any_of(captures().first(counts.references), [](uint64_t reference) {
+            return liesInFrame(JSValue::decode(reference));
+        });
+    }
+
+    JSCell* cell;
+    const uint64_t* words;
+    bool isFull;
+    size_t placeOfClosureWord;
+    uint32_t closureNumber;
+    CaptureCounts counts;
+};
+
+} // anonymous namespace
+
+static JSCell* makeRoomInHeapFor(VM& vm, Instance* instance, const ClosureInFrame& closure)
+{
+    if (closure.isFull)
+        return Closure::createForCompiledCode(vm, closure.cell->structure(), Closure::allocationSize(closure.counts.captures));
+    return SlimClosure::createForCompiledCode(vm, instance->state->objects->closures.slimClosureStructure(kindOfClosureNumber(closure.closureNumber)), SlimClosure::allocationSize(closure.counts.captures));
+}
+
+static void copyToHeap(const ClosureInFrame& closure, JSCell* room, NOESCAPE const Invocable<JSCell*(JSCell*)> auto& copyInHeapOf)
+{
+    uint64_t* target = reinterpret_cast<uint64_t*>(room);
+    for (size_t place = 1; place < closure.placeOfClosureWord; ++place)
+        target[place] = closure.words[place];
+    std::span<const uint64_t> captures = closure.captures();
+    for (unsigned slot = 0; slot < captures.size(); ++slot) {
+        uint64_t word = captures[slot];
+        if (slot < closure.counts.references) {
+            JSValue held = JSValue::decode(word);
+            if (liesInFrame(held))
+                word = std::bit_cast<uint64_t>(copyInHeapOf(held.asCell()));
+            else
+                markEscapedIfEnvironment(held);
+        }
+        target[closure.placeOfClosureWord + 1 + slot] = word;
+    }
+    WTF::storeStoreFence();
+    target[closure.placeOfClosureWord] = closure.words[closure.placeOfClosureWord];
+    WTF::storeStoreFence();
+}
+
+static JSCell* moveToHeap(VM& vm, Instance* instance, JSCell* closureInFrame)
+{
+    ClosureInFrame closure(closureInFrame);
+    if (!closure.holdsClosureOfFrame()) [[likely]] {
+        JSCell* room = makeRoomInHeapFor(vm, instance, closure);
+        copyToHeap(closure, room, [](JSCell*) -> JSCell* {
+            RELEASE_ASSERT_NOT_REACHED();
+        });
+        return room;
+    }
+
+    DeferGC deferGC(vm);
+    UncheckedKeyHashMap<JSCell*, JSCell*> rooms;
+    Vector<JSCell*, 8> found;
+    auto copyInHeapOf = [&](JSCell* inFrame) {
+        auto added = rooms.add(inFrame, nullptr);
+        if (added.isNewEntry) {
+            added.iterator->value = makeRoomInHeapFor(vm, instance, ClosureInFrame(inFrame));
+            found.append(inFrame);
+        }
+        return added.iterator->value;
+    };
+    JSCell* moved = copyInHeapOf(closureInFrame);
+    for (size_t index = 0; index < found.size(); ++index) {
+        JSCell* inFrame = found[index];
+        copyToHeap(ClosureInFrame(inFrame), rooms.get(inFrame), copyInHeapOf);
+    }
+    return moved;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Instance* instance, JSCell* closureInFrame))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTMoveClosureToHeap);
-    const uint64_t* source = reinterpret_cast<const uint64_t*>(closureInFrame);
-    uint64_t closureWord = source[SlimClosure::offsetOfWord() / sizeof(uint64_t)];
-    uint32_t closureNumber = ClosureWord::closureNumberOf(closureWord);
-    unsigned count = captureCountsOfClosureNumber(closureNumber).captures;
-    RELEASE_ASSERT(count <= ClosureRequest::maxSlimClosureCaptures);
-    JSCell* cell = SlimClosure::createForCompiledCode(vm, instance->state->objects->closures.slimClosureStructure(kindOfClosureNumber(closureNumber)), SlimClosure::allocationSize(count));
-    uint64_t* target = reinterpret_cast<uint64_t*>(cell);
-    for (unsigned slot = 0; slot < count; ++slot)
-        target[SlimClosure::offsetOfCaptures() / sizeof(uint64_t) + slot] = source[SlimClosure::offsetOfCaptures() / sizeof(uint64_t) + slot];
-    WTF::storeStoreFence();
-    target[SlimClosure::offsetOfWord() / sizeof(uint64_t)] = closureWord;
-    WTF::storeStoreFence();
-    OPERATION_RETURN(scope, cell);
+    OPERATION_RETURN(scope, moveToHeap(vm, instance, closureInFrame));
 }
 
 #define AOT_DEFINE_NEW_COLLECTION(operation, name, structureOfRealm) \
@@ -131,11 +228,6 @@ AOT_DEFINE_NEW_COLLECTION(operationAOTNewSet, Set, setStructure)
 #undef AOT_DEFINE_NEW_COLLECTION
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBarrierSlow, void, (Instance* instance, JSCell* cell))
-{
-    instance->vm->writeBarrierSlowPath(cell);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBarrierSlowPreservingRegisters, void, (Instance* instance, JSCell* cell))
 {
     instance->vm->writeBarrierSlowPath(cell);
 }

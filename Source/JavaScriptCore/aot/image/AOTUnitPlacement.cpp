@@ -139,13 +139,16 @@ private:
     {
         for (size_t first = 0; first < numberOfUnits();) {
             RunOfUnits run = findRun(first);
-            Vector<CopyableUse, 8> usesByReach(usesOfRun(run));
+            std::span<const CopyableUse> usesByReach = usesOfRun(run);
+            Vector<CopyableUse, 8> sortedUses;
             if (usesByReach.size() > 1) {
-                AOT::stableSortInLine(usesByReach, [](const CopyableUse& a, const CopyableUse& b) {
+                sortedUses.append(usesByReach);
+                AOT::stableSortInLine(sortedUses, [](const CopyableUse& a, const CopyableUse& b) {
                     if (a.reach != b.reach)
                         return a.reach > b.reach;
                     return std::tie(a.copyable, a.firstSite, a.lastSite) < std::tie(b.copyable, b.firstSite, b.lastSite);
                 });
+                usesByReach = sortedUses.span();
             }
             bool didPlaceCopy;
             do {

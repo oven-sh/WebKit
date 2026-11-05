@@ -25,7 +25,6 @@ public:
     void generateJSONAppendBoolean(const ValueContext&);
     void generateJSONAppendInteger(const ValueContext& value) { appendNumber(value, true); }
     void generateJSONAppendNumber(const ValueContext& value) { appendNumber(value, false); }
-    void generateJSONAppendDate(const ValueContext&);
     void generateJSONAppendString(const ValueContext&);
     void generateJSONAppendValue(const ValueContext&);
     void generateJSONAppendObject(const ValueContext&);

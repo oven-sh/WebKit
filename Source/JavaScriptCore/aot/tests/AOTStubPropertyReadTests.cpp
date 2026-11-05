@@ -1033,7 +1033,7 @@ static void testInstructionsOfReadsOfFiledFields()
         { SlotRepresentation::OptionalDouble, jsDoubleNumber(0.5), 76 },
         { SlotRepresentation::OptionalDouble, jsNumber(7), 76 },
         { SlotRepresentation::Boolean, jsBoolean(true), 71 },
-        { SlotRepresentation::OptionalBoolean, jsBoolean(true), 73 },
+        { SlotRepresentation::OptionalBoolean, jsBoolean(true), 75 },
     };
     bool isWithinBudget = true;
     for (const Read& read : readsByRepresentation) {

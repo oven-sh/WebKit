@@ -17,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-static constexpr int64_t bitFoldLowWord = 0xffffffffll;
 static constexpr int bitFoldLeastCostOfLowWord = std::numeric_limits<int>::min() / 2;
 
 static int32_t bitFoldWidth(Type type)
@@ -60,24 +59,11 @@ static Operation* bitFoldMaskWithImmediate(Builder& builder, Type type, Operatio
     return builder.binary(BitAnd, value, builder.constantOfType(type, bits));
 }
 
-static Operation* foldMachineBitAnd(Builder& builder, Type type, Operation* left, Operation* right)
+Operation* foldMachineBitAndOfBoundedValue(Builder& builder, Type type, Operation* left, Operation* right)
 {
-    if (left == right)
-        return left;
-    if (!right->hasInt())
-        return nullptr;
-
     int64_t mask = right->asInt();
-    if (left->hasInt())
-        return builder.constantOfType(type, left->asInt() & mask);
-    if (!mask)
-        return right;
-    if (mask == -1)
-        return left;
-
     Opcode leftOpcode = left->opcode();
-    if (!hasFoldTrait(leftOpcode, FoldTrait::BoundsIntegerRange))
-        return nullptr;
+    ASSERT(left != right && !left->hasInt() && mask && mask != -1 && hasFoldTrait(leftOpcode, FoldTrait::BoundsIntegerRange));
     if (leftOpcode == ZExt32 && (mask & bitFoldLowWord) == bitFoldLowWord)
         return left;
 
@@ -104,50 +90,15 @@ static Operation* foldMachineBitAnd(Builder& builder, Type type, Operation* left
     return nullptr;
 }
 
-static Operation* foldMachineBitOr(Builder& builder, Type type, Operation* left, Operation* right)
+Operation* foldMachineBitOrOfBoundedValue(Builder& builder, Type type, Operation* left, Operation* right)
 {
-    if (left == right)
-        return left;
-    if (!right->hasInt())
-        return nullptr;
-
     int64_t bits = right->asInt();
-    if (left->hasInt())
-        return builder.constantOfType(type, left->asInt() | bits);
-    if (!bits)
-        return left;
-    if (bits == -1)
-        return right;
-    if (!hasFoldTrait(left->opcode(), FoldTrait::BoundsIntegerRange))
-        return nullptr;
+    ASSERT(left != right && !left->hasInt() && bits && bits != -1 && hasFoldTrait(left->opcode(), FoldTrait::BoundsIntegerRange));
     if (!(bitFoldPossibleBits(left) & ~static_cast<uint64_t>(bits)))
         return right;
 
     if (left->opcode() == BitOr && left->child(1)->hasInt())
         return builder.binary(BitOr, left->child(0), builder.constantOfType(type, left->child(1)->asInt() | bits));
-
-    return nullptr;
-}
-
-static Operation* foldMachineBitXor(Builder& builder, Type type, Operation* left, Operation* right)
-{
-    if (left == right)
-        return builder.constantOfType(type, 0);
-    if (!right->hasInt())
-        return nullptr;
-
-    int64_t bits = right->asInt();
-    if (left->hasInt())
-        return builder.constantOfType(type, left->asInt() ^ bits);
-    if (!bits)
-        return left;
-
-    Opcode leftOpcode = left->opcode();
-    if (bits == 1 && isComparison(leftOpcode) && leftOpcode != EqualOrUnordered && left->child(0)->type().isInt())
-        return builder.binary(invertedComparison(leftOpcode), left->child(0), left->child(1));
-
-    if (leftOpcode == BitXor && left->child(1)->hasInt())
-        return builder.binary(BitXor, left->child(0), builder.constantOfType(type, left->child(1)->asInt() ^ bits));
 
     return nullptr;
 }
@@ -246,17 +197,8 @@ static Operation* foldMachineBitCount(Builder& builder, Opcode opcode, Type type
     return nullptr;
 }
 
-Operation* foldBitwise(Builder& builder, Opcode opcode, Type type, Operation* left, Operation* rightOrNull)
+Operation* foldMachineShiftOrBitCount(Builder& builder, Opcode opcode, Type type, Operation* left, Operation* rightOrNull)
 {
-    if (!type.isInt())
-        return nullptr;
-
-    if (opcode == BitAnd)
-        return foldMachineBitAnd(builder, type, left, rightOrNull);
-    if (opcode == BitOr)
-        return foldMachineBitOr(builder, type, left, rightOrNull);
-    if (opcode == BitXor)
-        return foldMachineBitXor(builder, type, left, rightOrNull);
     if (opcode == Shl || opcode == SShr || opcode == ZShr)
         return foldMachineShift(builder, opcode, type, left, rightOrNull);
     if (opcode == Clz || opcode == PopCount)
@@ -288,55 +230,6 @@ static Operation* foldMachineNarrowSignExtension(Builder& builder, Opcode opcode
         if (!(mask & signBit))
             return builder.binary(BitAnd, operand->child(0), builder.const32(mask & bitsRead));
     }
-
-    return nullptr;
-}
-
-static Operation* foldMachineSignExtension32(Builder& builder, Operation* operand)
-{
-    if (operand->hasInt32())
-        return builder.const64(operand->asInt32());
-
-    if (operand->opcode() == Trunc) {
-        Operation* wide = operand->child(0);
-        if (IntegerRange { std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() }.contains(rangeOf(wide)))
-            return wide;
-    }
-
-    if (rangeOf(operand).min >= 0)
-        return builder.unary(ZExt32, operand);
-
-    return nullptr;
-}
-
-static Operation* foldMachineZeroExtension32(Builder& builder, Operation* operand)
-{
-    if (operand->hasInt32())
-        return builder.const64(static_cast<uint32_t>(operand->asInt32()));
-
-    if (operand->opcode() == Trunc) {
-        Operation* wide = operand->child(0);
-        if (IntegerRange { 0, bitFoldLowWord }.contains(rangeOf(wide)))
-            return wide;
-    }
-
-    return nullptr;
-}
-
-static Operation* foldMachineTruncation(Builder& builder, Operation* operand)
-{
-    if (operand->hasInt64())
-        return builder.const32(static_cast<int32_t>(operand->asInt64()));
-
-    Opcode opcode = operand->opcode();
-    if (opcode == SExt32 || opcode == ZExt32)
-        return operand->child(0);
-
-    if ((opcode == Add || opcode == Sub || opcode == BitOr || opcode == BitXor) && operand->child(1)->hasInt64() && !(operand->child(1)->asInt64() & bitFoldLowWord))
-        return builder.unary(Trunc, operand->child(0));
-
-    if (opcode == BitAnd && operand->child(1)->hasInt64() && (operand->child(1)->asInt64() & bitFoldLowWord) == bitFoldLowWord)
-        return builder.unary(Trunc, operand->child(0));
 
     return nullptr;
 }
@@ -462,16 +355,10 @@ static Operation* foldMachineBitwiseCast(Builder& builder, Type result, Operatio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Operation* foldConversion(Builder& builder, Opcode opcode, Type result, Operation* operand)
+Operation* foldConversionOtherThanOfWords(Builder& builder, Opcode opcode, Type result, Operation* operand)
 {
     if (opcode == SExt8 || opcode == SExt16)
         return foldMachineNarrowSignExtension(builder, opcode, operand);
-    if (opcode == SExt32)
-        return foldMachineSignExtension32(builder, operand);
-    if (opcode == ZExt32)
-        return foldMachineZeroExtension32(builder, operand);
-    if (opcode == Trunc)
-        return foldMachineTruncation(builder, operand);
     if (opcode == IToD)
         return foldMachineIntegerToDouble(builder, operand);
     if (opcode == BitwiseCast)

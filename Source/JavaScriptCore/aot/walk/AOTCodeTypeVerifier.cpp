@@ -62,9 +62,7 @@ public:
     TypeID readByNameOffObjectsOf(TypeLevel level, LayoutID layout, PropertyKeyID key) const final { return m_positionsOfWalk.readByNameOffObjectsOf(level, layout, key); }
     LayoutID classAbove(LayoutID classLayout) const final { return m_positionsOfWalk.classAbove(classLayout); }
     TypeID property(TypeLevel level, ObjectID object, PropertyKeyID key) const final { return m_positionsOfWalk.property(level, object, key); }
-    TypeID ownProperty(TypeLevel level, ObjectID object, PropertyKeyID key) const final { return m_positionsOfWalk.ownProperty(level, object, key); }
     TypeID contents(TypeLevel level, ObjectID object, ContentsSlot slot) const final { return m_positionsOfWalk.contents(level, object, slot); }
-    TypeID awaited(TypeLevel level, ObjectID object) const final { return m_positionsOfWalk.awaited(level, object); }
     TypeID result(TypeLevel level, FunctionID function, uint32_t resultIndex) const final { return m_positionsOfWalk.result(level, function, resultIndex); }
     TypeID resultOfBodyThatNeverSuspends(TypeLevel level, FunctionID function) const final { return m_positionsOfWalk.resultOfBodyThatNeverSuspends(level, function); }
     TypeID entryParameter(TypeLevel level, FunctionID function, uint32_t entryParameterIndex) const final { return m_positionsOfWalk.entryParameter(level, function, entryParameterIndex); }

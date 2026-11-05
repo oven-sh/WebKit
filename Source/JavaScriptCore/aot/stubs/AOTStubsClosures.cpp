@@ -30,8 +30,8 @@ namespace JSC { namespace AOT {
 
 using Saves = OperationCall::Saves;
 
-static_assert(ClosureRequest::maxSlimClosureCaptures == 4);
-static_assert(ClosureRequest::maxNumberOfCaptures <= ClosureRequest::maxSlimClosureCaptures);
+static_assert(ClosureRequest::maxSlimClosureCapturesInRegisters == 4);
+static_assert(ClosureRequest::maxNumberOfCaptures <= ClosureRequest::maxSlimClosureCapturesInRegisters && ClosureRequest::maxSlimClosureCapturesInRegisters <= ClosureRequest::maxSlimClosureCaptures);
 static_assert(frameCellState > tautologicalThreshold);
 
 struct ClosureRegisters {
@@ -48,6 +48,11 @@ static constexpr GPRReg captureGPR(unsigned slot)
 
 static_assert(captureGPR(0) == operationArgumentGPR(2) && captureGPR(1) == operationArgumentGPR(3) && captureGPR(2) == operationArgumentGPR(4) && captureGPR(3) == operationArgumentGPR(5));
 
+static constexpr unsigned numberOfCapturesInRegisters(StubKey key)
+{
+    return std::min(key.count(), ClosureRequest::maxSlimClosureCapturesInRegisters);
+}
+
 static ClosureRegisters allocateClosureRegisters(StubAssembler& jit)
 {
     return { jit.result(), jit.operand(0), jit.allocateScratch(scratchBesideShortStubImmediate), jit.allocateScratch(StubRegister::T13) };
@@ -63,7 +68,7 @@ static StubSignature closureRequestSignature(unsigned numberOfCaptures)
 
 static void storeCaptures(StubAssembler& jit, GPRReg cell, ptrdiff_t offsetOfCaptures)
 {
-    const unsigned numberOfCaptures = jit.key().count();
+    const unsigned numberOfCaptures = numberOfCapturesInRegisters(jit.key());
     auto addressOf = [&](unsigned slot) { return Address(cell, offsetOfCaptures + slot * sizeof(uint64_t)); };
     for (unsigned slot = 0; slot + 1 < numberOfCaptures; slot += 2)
         jit.storePair64(captureGPR(slot), captureGPR(slot + 1), addressOf(slot));
@@ -92,6 +97,18 @@ static void initializeFunctionObjectFields(StubAssembler& jit, const ClosureRegi
     loadClosureWord(jit, request, index, scratch);
     jit.store64(index, Address(cell, offsetOfClosureEntry));
     storeCaptures(jit, cell, offsetOfClosureCaptures);
+}
+
+static void initializeSlimClosure(StubAssembler& jit, const ClosureRegisters& registers)
+{
+    const auto [cell, function, word, header] = registers;
+    static_assert(offsetOfSlimClosureWord == sizeof(uint64_t));
+
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
+    jit.load64(BaseIndex(word, function, CCallHelpers::TimesEight), word);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + jit.key().form() * sizeof(uint64_t)), header);
+    jit.storePair64(header, word, Address(cell));
+    storeCaptures(jit, cell, offsetOfSlimClosureCaptures);
 }
 
 static void createClosureInOperation(StubAssembler& jit, GPRReg request, uint64_t restOfRequest, GPRReg wholeRequest)
@@ -129,34 +146,51 @@ void generateNewClosure(StubAssembler& jit)
 
 StubSignature signatureOfNewSlimClosure(StubKey key)
 {
-    return closureRequestSignature(key.count()).withResultIn(key.operandRegister());
+    return closureRequestSignature(numberOfCapturesInRegisters(key)).withResultIn(key.operandRegister());
 }
 
 void generateNewSlimClosure(StubAssembler& jit)
 {
-    const auto [cell, function, allocator, header] = allocateClosureRegisters(jit);
-    const GPRReg word = allocator;
+    const ClosureRegisters registers = allocateClosureRegisters(jit);
+    const auto [cell, function, allocator, header] = registers;
     const unsigned kind = jit.key().form();
     const unsigned count = jit.key().count();
     const unsigned allocatorIndex = (count + 1) / 2;
     static_assert((ClosureRequest::maxSlimClosureCaptures + 1) / 2 < ClosureWords::numberOfSlimClosureAllocators);
-    static_assert(offsetOfSlimClosureWord == sizeof(uint64_t));
+    static_assert(MarkedSpace::sizeStep * ClosureWords::numberOfSlimClosureAllocators <= MarkedSpace::preciseCutoff);
 
     JumpList slow;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.slimClosureAllocators) + allocatorIndex * sizeof(void*)), allocator);
     AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, header, slow, MarkedSpace::sizeStep * (allocatorIndex + 1));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
-    jit.load64(BaseIndex(word, function, CCallHelpers::TimesEight), word);
-    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind * sizeof(uint64_t)), header);
-    jit.storePair64(header, word, Address(cell));
-    storeCaptures(jit, cell, offsetOfSlimClosureCaptures);
-    fenceAfterAllocation(jit);
+    initializeSlimClosure(jit, registers);
+    if (count == numberOfCapturesInRegisters(jit.key()))
+        fenceAfterAllocation(jit);
     jit.returnToCaller();
 
     emitLateRefill(jit, refill, slow);
     slow.link(&jit);
     uint64_t restOfRequest = static_cast<uint64_t>(kind) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift;
     createClosureInOperation(jit, function, restOfRequest, allocator);
+}
+
+StubSignature signatureOfNewSlimClosureInFrame(StubKey key)
+{
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister) });
+    signature.addOperand(signature.firstResult);
+    for (unsigned slot = 0; slot < numberOfCapturesInRegisters(key); ++slot)
+        signature.addOperand(captureGPR(slot));
+    return signature;
+}
+
+void generateNewSlimClosureInFrame(StubAssembler& jit)
+{
+    const ClosureRegisters registers = allocateClosureRegisters(jit);
+    const auto [cell, function, word, header] = registers;
+    RELEASE_ASSERT(cell == jit.operand(1) && noOverlap(cell, function, word, header, captureGPR(0), captureGPR(1), captureGPR(2), captureGPR(3), instanceGPR));
+
+    initializeSlimClosure(jit, registers);
+    jit.store8(TrustedImm32(frameCellState), Address(cell, JSCell::cellStateOffset()));
+    jit.returnToCaller();
 }
 
 StubSignature signatureOfMakeClosureOfField(StubKey)

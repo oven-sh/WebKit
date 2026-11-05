@@ -29,6 +29,7 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 struct CallGenerator {
+    void operator()(CCallHelpers& jit, const Machine::PatchParameters& params) const { generate(jit, params); }
     void generate(CCallHelpers&, const Machine::PatchParameters&) const;
     ArgumentMoves moveArguments(CCallHelpers&, const Machine::PatchParameters&) const;
     ArgumentMoves bringOperands(const Machine::PatchParameters&) const;
@@ -46,13 +47,15 @@ struct CallGenerator {
     std::optional<NumberedImmediate> numberedImmediate;
     OptionalIndex site;
     OptionalIndex firstRead;
-    std::optional<ThrowSite> throwSite;
-    std::optional<OperationCall> preservingCall;
+    const ThrowSite* throwSite;
+    const OperationCall* preservingCall;
     std::optional<StubKey> keyWhereNoRegisterIsKept;
     std::optional<StubKey> keyWhereNoFPRIsKept;
+    Machine::RegisterMask receiversWithVariant;
 };
 
 static_assert(std::is_trivially_destructible_v<CallGenerator>);
+static_assert(std::is_trivially_destructible_v<ThrowSite> && std::is_trivially_destructible_v<OperationCall>);
 
 struct ReturnTraits {
     LType wordType;
@@ -102,7 +105,8 @@ ArgumentMoves CallGenerator::bringOperands(const Machine::PatchParameters& param
 {
     ArgumentMoves moves;
     Machine::PatchOperation* call = params.value();
-    unsigned numberOfChildren = call->numChildren();
+    std::span<Machine::Operation* const> operands = call->operands();
+    unsigned numberOfChildren = call->numberOfOperands();
     unsigned firstRep = params.size() - numberOfChildren;
     for (unsigned i = 0; i < numberOfChildren; ++i) {
         Reg destination = call->registerToBringOperandTo(i);
@@ -114,7 +118,7 @@ ArgumentMoves CallGenerator::bringOperands(const Machine::PatchParameters& param
                 appendArgumentMove(moves, destination.gpr(), ArgumentSource::Register, rep.gpr());
             continue;
         }
-        bool isNarrow = call->child(i)->type() == Machine::Int32;
+        bool isNarrow = operands[i]->type() == Machine::Int32;
         if (rep.isConstant()) {
             appendArgumentMove(moves, destination.gpr(), ArgumentSource::Constant, isNarrow ? static_cast<uint32_t>(rep.value()) : static_cast<uint64_t>(rep.value()));
             continue;
@@ -196,7 +200,6 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
     StubKey called = key;
-    ArgumentMoves moves;
     if (preservingCall) {
         Machine::RegisterMask live = registersToKeepAcrossCCall(params);
         if (signature.firstResult)
@@ -207,9 +210,8 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
         bool savesFPRs = holdsFPR(live) || call.returns == OperationCall::Returns::Double;
         call.saves = savesFPRs ? OperationCall::Saves::CallerSavedRegisters : OperationCall::Saves::CallerSavedGPRs;
         called = callOperationPreservingRegisters(call);
-        moves = moveArguments(jit, params);
-    } else
-        moves = bringOperands(params);
+    }
+    ArgumentMoves moves = preservingCall ? moveArguments(jit, params) : bringOperands(params);
     if (keyWhereNoRegisterIsKept || keyWhereNoFPRIsKept) {
         Machine::RegisterMask kept = registersToKeepAcrossCCall(params);
         if (resultIsInAnyRegister)
@@ -227,8 +229,9 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
         bool resultComesFirst = signature.result != StubResult::None && signature.result != StubResult::Flags;
         GPRReg receiver = params[resultComesFirst ? 1 : 0].gpr();
         GPRReg receiverOfStub = signature.operands[0].gpr();
-        if (std::optional<StubKey> variant = receiver == receiverOfStub ? std::nullopt : tryWithOperandRegister(called, receiver))
-            called = *variant;
+        bool hasVariant = receiver != receiverOfStub && (called == key ? !!(receiversWithVariant & Machine::maskOf(Reg(receiver))) : exists(called.withOperandRegister(receiver)));
+        if (hasVariant)
+            called = called.withOperandRegister(receiver);
         else {
             RELEASE_ASSERT(receiver == receiverOfStub || descriptorOf(called.family()).operandRegisters == OperandRegisterChoice::AlternateReceivers);
             jit.move(receiver, receiverOfStub);
@@ -349,6 +352,7 @@ struct StubCallShape {
     Machine::RegisterMask lateClobbered { 0 };
     Machine::RegisterMask earlyClobbered { 0 };
     Machine::RegisterMask operandRegisters { 0 };
+    Machine::RegisterMask receiversWithVariant { 0 };
     RegisterSet resultRegisters;
     std::optional<StubKey> keyWhereNoRegisterIsKept;
     std::optional<StubKey> keyWhereNoFPRIsKept;
@@ -358,7 +362,11 @@ struct StubCallShape {
     bool receiverIsInAnyRegister { false };
     bool resultIsInAnyRegister { false };
     bool hasEffects { false };
+    bool effectsArePure { false };
+    uint8_t traitsOfLastCall { 0 };
+    const RememberedPatchEffects* patchEffectsOfLastCall { nullptr };
     Effects effects;
+    Effects effectsOfLastOperation;
 };
 
 namespace {
@@ -372,13 +380,26 @@ struct StubCallTraits {
     static constexpr unsigned numberOfOperandsShift = 8;
 };
 
-constexpr unsigned stubCallShapeCacheBits = 9;
+constexpr unsigned stubCallShapeCacheBits = 11;
 
 } // anonymous namespace
 
 struct StubCallShapeCache {
-    std::array<StubCallShape, 1 << stubCallShapeCacheBits> shapes;
+    ~StubCallShapeCache()
+    {
+        for (StubCallShape* shape : shapes) {
+            if (shape)
+                fastFree(shape);
+        }
+    }
+
+    std::array<StubCallShape*, 1 << stubCallShapeCacheBits> shapes { };
+    RegisterSet clobberedByThrowSites;
+    uint64_t catalogOfThrowSites { 0 };
+    bool knowsThrowSites { false };
 };
+
+static_assert(std::is_trivially_destructible_v<StubCallShape>);
 
 static void fillStubCallShape(StubCallShape& shape, const StubCatalog& catalog, StubKey key, StubKey boundKey, std::optional<uint32_t> immediate, uint32_t traits)
 {
@@ -398,6 +419,7 @@ static void fillStubCallShape(StubCallShape& shape, const StubCatalog& catalog, 
     shape.receiverIsInAnyRegister = !neverReturns && !namesSiteOrOperand && boundKey == key && acceptsAnyReceiverRegister(key, signature, numberOfOperands);
     shape.resultIsInAnyRegister = returns && !namesSiteOrOperand && boundKey == key && returnsInAnyRegister(key, signature, numberOfOperands);
     shape.operandRegisters = Machine::maskOf(RegisterSet::fromIterable(operandRegistersOf(choice)));
+    shape.receiversWithVariant = shape.receiverIsInAnyRegister && exists(key.withOperandRegister(operandRegistersOf(choice).front())) ? shape.operandRegisters : 0;
     shape.numberOfOperandRegisters = static_cast<uint8_t>(operandRegistersOf(choice).size());
     shape.resultRegisters = { };
     if (shape.resultIsInAnyRegister) {
@@ -428,9 +450,23 @@ static void fillStubCallShape(StubCallShape& shape, const StubCatalog& catalog, 
     shape.keyWhereNoRegisterIsKept = formThatDiffers(CallerFrame::KeepsNoRegisters);
     shape.keyWhereNoFPRIsKept = formThatDiffers(CallerFrame::KeepsNoFPRs);
     shape.hasEffects = false;
+    shape.patchEffectsOfLastCall = nullptr;
 }
 
-static StubCallShape& shapeOfStubCall(StubCallShapeCache& cache, const StubCatalog& catalog, StubKey key, std::optional<uint32_t> immediate, uint32_t traits)
+static NEVER_INLINE StubCallShape& fillSlotOfStubCallShape(StubCallShape*& slot, const StubCatalog& catalog, StubKey key, StubKey boundKey, StubKey cachedBoundKey, std::optional<uint32_t> immediate, uint32_t traits)
+{
+    if (!slot)
+        slot = new (NotNull, fastMalloc(sizeof(StubCallShape))) StubCallShape;
+    StubCallShape& shape = *slot;
+    fillStubCallShape(shape, catalog, key, boundKey, immediate, traits);
+    shape.catalogIdentifier = catalog.identifier();
+    shape.key = key;
+    shape.boundKey = cachedBoundKey;
+    shape.traits = traits;
+    return shape;
+}
+
+static ALWAYS_INLINE StubCallShape& shapeOfStubCall(StubCallShapeCache& cache, const StubCatalog& catalog, StubKey key, std::optional<uint32_t> immediate, uint32_t traits)
 {
     StubKey boundKey = boundKeyOf(catalog, key, immediate);
     StubKey cachedBoundKey = boundKey;
@@ -441,16 +477,33 @@ static StubCallShape& shapeOfStubCall(StubCallShapeCache& cache, const StubCatal
     }
 
     uint64_t hash = (key.bits() ^ std::rotl(cachedBoundKey.bits(), 29) ^ traits) * 0x9E3779B97F4A7C15ull;
-    StubCallShape& shape = cache.shapes[hash >> (64 - stubCallShapeCacheBits)];
-    if (shape.key == key && shape.boundKey == cachedBoundKey && shape.traits == traits && shape.catalogIdentifier == catalog.identifier()) [[likely]]
-        return shape;
+    StubCallShape*& slot = cache.shapes[hash >> (64 - stubCallShapeCacheBits)];
+    if (StubCallShape* shape = slot; shape && shape->key == key && shape->boundKey == cachedBoundKey && shape->traits == traits && shape->catalogIdentifier == catalog.identifier()) [[likely]]
+        return *shape;
+    return fillSlotOfStubCallShape(slot, catalog, key, boundKey, cachedBoundKey, immediate, traits);
+}
 
-    fillStubCallShape(shape, catalog, key, boundKey, immediate, traits);
-    shape.catalogIdentifier = catalog.identifier();
-    shape.key = key;
-    shape.boundKey = cachedBoundKey;
-    shape.traits = traits;
-    return shape;
+struct RememberedPatchEffects {
+    Effects effects;
+    uint8_t traits { 0 };
+    bool isFilled { false };
+    Machine::Effects patchEffects;
+};
+
+namespace {
+
+constexpr uint8_t callFollowsThrowInTraits = 1 << 5;
+constexpr uint8_t callReadsNoMemoryInTraits = 1 << 6;
+constexpr uint8_t callIsOfEntryInTraits = 1 << 7;
+
+} // anonymous namespace
+
+static_assert(static_cast<unsigned>(ArgumentBufferAccess::ReadsAndWrites) < 4 && static_cast<unsigned>(ArgumentBufferAccess::Reads) < 4 && static_cast<unsigned>(ArgumentBufferAccess::None) < 4);
+static_assert(static_cast<unsigned>(RuntimeCallEmitter::CellConversions::WhateverEffectsSay) == 2);
+
+static uint8_t traitsOfPatchEffects(ArgumentBufferAccess access, bool accessesCollectorState, RuntimeCallEmitter::CellConversions conversions)
+{
+    return static_cast<uint8_t>(static_cast<unsigned>(access) | (accessesCollectorState ? 4 : 0) | static_cast<unsigned>(conversions) << 3);
 }
 
 struct PatchEffectsMemo {
@@ -458,11 +511,13 @@ struct PatchEffectsMemo {
     static constexpr size_t numberOfEntries = 1 << numberOfBits;
     static constexpr size_t maxProbes = 8;
 
-    struct Entry {
-        Effects effects;
+    using Entry = RememberedPatchEffects;
+
+    struct CallPatchpointSeen {
+        Effects effectsOfCallee;
+        Effects effectsOfOperation;
         uint8_t traits { 0 };
-        bool isFilled { false };
-        Machine::Effects patchEffects;
+        const Entry* patchEffects { nullptr };
     };
 
     ~PatchEffectsMemo()
@@ -483,6 +538,7 @@ struct PatchEffectsMemo {
     }
 
     std::array<Entry, numberOfEntries> entries;
+    std::array<CallPatchpointSeen, 4> lastCallPatchpoints;
     Vector<Machine::HeapIndex*> lists;
 };
 
@@ -647,19 +703,18 @@ StubCallResult RuntimeCallEmitter::emitEntryCall(const OperationContext* context
 {
     OperationCall::FirstArgument first = firstArgumentOf(entry);
     CallRequestWithOwnOptions request;
-    fillEntryRequest(request, entry, options);
+    fillEntryRequest(request, entry, first, options);
     RELEASE_ASSERT(context || first != OperationCall::FirstArgument::None || request.key == tailCallOperation(first));
     placeArguments(request, arguments, first);
     return emitCall(context, request);
 }
 
-void RuntimeCallEmitter::fillEntryRequest(CallRequestWithOwnOptions& request, AOT::Entry entry, const CallOptions& callerOptions) const
+void RuntimeCallEmitter::fillEntryRequest(CallRequestWithOwnOptions& request, AOT::Entry entry, OperationCall::FirstArgument first, const CallOptions& callerOptions) const
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
     RELEASE_ASSERT(operation);
     RuntimeSignature signature = signatureOf(*operation);
     OperationCall::Returns returns = returnsOf(signature.result);
-    OperationCall::FirstArgument first = firstArgumentOf(entry);
     m_records.totals.entriesUsed.set(static_cast<size_t>(entry));
 
     request.ownOptions = callerOptions;
@@ -668,6 +723,7 @@ void RuntimeCallEmitter::fillEntryRequest(CallRequestWithOwnOptions& request, AO
     request.operationResult = returnTraitsOf(returns).result;
     request.ownEffects = AOT::effectsOf(entry);
     request.effectsOfCallee = &request.ownEffects;
+    request.shapeKnowsCallee = true;
     request.argumentBufferAccess = argumentBufferAccessOf(*operation);
     request.entry = entry;
     if (entry == AOT::Entry::operationAOTStopAtNativeResult || entry == AOT::Entry::operationAOTStopAtFalseProof) {
@@ -774,7 +830,14 @@ StubCallShapeCache& RuntimeCallEmitter::stubCallShapes() const
     return *m_stubCallShapes;
 }
 
-void RuntimeCallEmitter::fillRequest(CallRequest& request, StubKey key, std::span<const LValue> operands, const CallOptions& options, std::optional<BranchTargets> targets, std::optional<Origin> firstRead) const
+PatchEffectsMemo& RuntimeCallEmitter::patchEffectsMemo()
+{
+    if (!m_patchEffectsMemo) [[unlikely]]
+        m_patchEffectsMemo = &m_proc.arena().objectKeptAcrossResets<PatchEffectsMemo>();
+    return *m_patchEffectsMemo;
+}
+
+ALWAYS_INLINE void RuntimeCallEmitter::fillRequest(CallRequest& request, StubKey key, std::span<const LValue> operands, const CallOptions& options, std::optional<BranchTargets> targets, std::optional<Origin> firstRead) const
 {
     const StubCatalog& catalog = inputs().stubCatalog;
     uint32_t traits = (targets ? 0 : StubCallTraits::returns)
@@ -784,10 +847,10 @@ void RuntimeCallEmitter::fillRequest(CallRequest& request, StubKey key, std::spa
     StubCallShape& shape = shapeOfStubCall(stubCallShapes(), catalog, key, options.immediate, traits);
     if (!shape.hasEffects) [[unlikely]] {
         shape.effects = catalog.effectsOf(boundKeyOf(catalog, key, options.immediate));
+        shape.effectsArePure = shape.effects.isPure();
         shape.hasEffects = true;
     }
-    const StubSignature& signature = shape.signature;
-    RELEASE_ASSERT(operands.size() == signature.numberOfOperands);
+    RELEASE_ASSERT(operands.size() == shape.signature.numberOfOperands);
     request.key = key;
     request.options = &options;
     request.end = targets ? CallEnd::BranchesOnFlags : CallEnd::Returns;
@@ -795,10 +858,10 @@ void RuntimeCallEmitter::fillRequest(CallRequest& request, StubKey key, std::spa
     request.firstRead = firstRead;
     request.effectsOfCallee = &shape.effects;
     request.shape = &shape;
+    request.shapeKnowsCallee = true;
     RELEASE_ASSERT(!options.pureFunction || !options.writesArgumentBuffer);
     request.argumentBufferAccess = options.pureFunction ? ArgumentBufferAccess::None : options.writesArgumentBuffer ? ArgumentBufferAccess::ReadsAndWrites : ArgumentBufferAccess::Reads;
-    for (size_t i = 0; i < operands.size(); ++i)
-        request.operands.append({ operands[i], Machine::ValueRep::reg(signature.operands[i]) });
+    request.operandsOfStub = operands;
 }
 
 StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, const CallRequest& request)
@@ -809,7 +872,8 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     bool returns = request.end == CallEnd::Returns;
     bool branchesOnFlags = request.end == CallEnd::BranchesOnFlags;
     bool neverReturns = request.end == CallEnd::NeverReturns;
-    const StubCallShape* shape = request.shape;
+    bool isCallOfStub = !!request.shape;
+    StubCallShape* shape = request.shape;
     if (!shape) {
         uint32_t traits = static_cast<uint32_t>(request.operationResult)
             | (neverReturns ? StubCallTraits::neverReturns : 0)
@@ -820,8 +884,9 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
             | static_cast<uint32_t>(request.operands.size()) << StubCallTraits::numberOfOperandsShift;
         shape = &shapeOfStubCall(stubCallShapes(), inputs().stubCatalog, key, options.immediate, traits);
     }
-    const StubSignature signature = shape->signature;
-    RELEASE_ASSERT(!branchesOnFlags || signature.result == StubResult::Flags);
+    const StubSignature* signature = &shape->signature;
+    StubResult resultKind = signature->result;
+    RELEASE_ASSERT(!branchesOnFlags || resultKind == StubResult::Flags);
 
     std::optional<Effects> effectsOfCalleeSayingLess;
     if (m_options.rowThatSaysLess) [[unlikely]] {
@@ -834,33 +899,65 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     }
     const Effects& effectsOfCallee = effectsOfCalleeSayingLess ? *effectsOfCalleeSayingLess : *request.effectsOfCallee;
     bool calleeMayCollect = effectsOfCallee.mayCollect;
-    Effects effects = context ? effectsOfCall(*context, effectsOfCallee) : effectsOfCallee;
-    if (options.pureFunction && !options.pureFunction->dependsOnMemory)
-        effects.reads = { };
+    bool checksEffectsAtRunTime = AOT::hasFlag(m_options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime);
+    bool shapeKnowsCallee = request.shapeKnowsCallee && !effectsOfCalleeSayingLess;
+    CellConversions conversions = options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay;
+    bool readsNoMemory = options.pureFunction && !options.pureFunction->dependsOnMemory;
+    const Effects* effectsOfOperation = nullptr;
+    if (context && !(isCallOfStub && shapeKnowsCallee ? shape->effectsArePure : effectsOfCallee.isPure()))
+        effectsOfOperation = &effectsOf(*context);
+    bool remembersEffects = effectsOfOperation && shapeKnowsCallee && !checksEffectsAtRunTime;
+    uint8_t traitsOfCall = static_cast<uint8_t>(traitsOfPatchEffects(request.argumentBufferAccess, options.accessesCollectorState, conversions)
+        | (options.followsThrow ? callFollowsThrowInTraits : 0)
+        | (readsNoMemory ? callReadsNoMemoryInTraits : 0)
+        | (isCallOfStub ? 0 : callIsOfEntryInTraits));
+    const RememberedPatchEffects* knownEffects = nullptr;
+    if (remembersEffects && shape->patchEffectsOfLastCall && shape->traitsOfLastCall == traitsOfCall && shape->effectsOfLastOperation == *effectsOfOperation)
+        knownEffects = shape->patchEffectsOfLastCall;
+    std::optional<Effects> computedEffects;
+    if (!knownEffects) {
+        computedEffects.emplace(effectsOfOperation ? effectsOfCall(*context, effectsOfCallee) : effectsOfCallee);
+        if (readsNoMemory)
+            computedEffects->reads = { };
+    }
+    const Effects* effects = knownEffects ? &knownEffects->effects : &*computedEffects;
+    bool mayThrow = effects->mayThrow;
+    bool mayExitSideways = effects->mayExitSideways();
+    bool mayCollect = knownEffects ? calleeMayCollect && effectsOfOperation->mayCollect : effects->mayCollect;
     bool mayFailToAllocate = context && returns && calleeMayCollect && !options.pureFunction && !options.followsThrow && functionHasHandlers();
-    bool hasSite = effects.mayExitSideways() || options.capturesStackTrace || mayFailToAllocate;
-    RELEASE_ASSERT(context || (!hasSite && (!effects.mayCollect || options.followsThrow)));
-    RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
+    bool hasSite = mayExitSideways || options.capturesStackTrace || mayFailToAllocate;
+    RELEASE_ASSERT(context || (!hasSite && (!mayCollect || options.followsThrow)));
+    RELEASE_ASSERT(!generator().isInitializingCell() || (!mayCollect && !mayThrow));
 
-    RELEASE_ASSERT(!options.returnsWord32 || signature.result == StubResult::GPR);
-    LType type = options.returnsWord32 ? Machine::Int32 : typeOfResult(signature.result);
-    RELEASE_ASSERT(!options.pureFunction || (returns && !effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState));
-    bool mayBeShared = options.pureFunction && signature.result != StubResult::TwoGPRs;
+    RELEASE_ASSERT(!options.returnsWord32 || resultKind == StubResult::GPR);
+    LType type = options.returnsWord32 ? Machine::Int32 : typeOfResult(resultKind);
+    RELEASE_ASSERT(!options.pureFunction || (returns && !mayExitSideways && !mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState));
+    bool mayBeShared = options.pureFunction && resultKind != StubResult::TwoGPRs;
+    std::span<const LValue> operandsOfStub = request.operandsOfStub;
     if (mayBeShared) {
-        Vector<LValue, 8> values;
-        for (const PlacedOperand& operand : request.operands)
-            values.append(operand.value);
-        if (LValue known = m_out.findPurePatch(*options.pureFunction, type, values.span()))
-            return resultOfCall(signature.result, known);
+        LValue known = nullptr;
+        if (isCallOfStub)
+            known = m_out.findPurePatch(*options.pureFunction, type, operandsOfStub);
+        else {
+            Vector<LValue, 8> values;
+            for (const PlacedOperand& operand : request.operands)
+                values.append(operand.value);
+            known = m_out.findPurePatch(*options.pureFunction, type, values.span());
+        }
+        if (known)
+            return resultOfCall(resultKind, known);
     }
 
     std::optional<WatchOfEffects> watch;
-    if (AOT::hasFlag(m_options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime) && context && context->valueID() && returns && request.entry != AOT::Entry::operationAOTStopAtFalseEffects) [[unlikely]] {
+    std::optional<StubSignature> signatureKeptAcrossWatch;
+    if (checksEffectsAtRunTime && context && context->valueID() && returns && request.entry != AOT::Entry::operationAOTStopAtFalseEffects) [[unlikely]] {
         static_assert(numberOfEnumerators<Opcode> <= firstRowOfRuntimeOperationsInEffectsNet - firstRowOfOperationsInEffectsNet);
         static_assert(numberOfEntries <= firstRowOfStubsInEffectsNet - firstRowOfRuntimeOperationsInEffectsNet);
         static_assert(numberOfStubFamilies <= firstRowOfBuiltinsInEffectsNet - firstRowOfStubsInEffectsNet);
         unsigned rowOfCallee = request.entry ? firstRowOfRuntimeOperationsInEffectsNet + static_cast<unsigned>(*request.entry) : firstRowOfStubsInEffectsNet + static_cast<unsigned>(key.family());
-        beginWatchOfEffects(*context, effects, EntersCompiledCode::No, (firstRowOfOperationsInEffectsNet + static_cast<unsigned>(operationAt(context->valueID()).opcode)) | rowOfCallee << 16, watch.emplace());
+        signatureKeptAcrossWatch = *signature;
+        signature = &*signatureKeptAcrossWatch;
+        beginWatchOfEffects(*context, *effects, EntersCompiledCode::No, (firstRowOfOperationsInEffectsNet + static_cast<unsigned>(operationAt(context->valueID()).opcode)) | rowOfCallee << 16, watch.emplace());
     }
 
     Machine::PatchOperation* patchpoint = m_out.patchpoint(type);
@@ -870,10 +967,15 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     bool receiverIsInAnyRegister = shape->receiverIsInAnyRegister;
     bool resultIsInAnyRegister = shape->resultIsInAnyRegister;
-    for (const PlacedOperand& operand : request.operands)
-        patchpoint->append(operand.value, receiverIsInAnyRegister ? Machine::ValueRep(Machine::ValueRep::SomeRegister) : operand.rep);
-    auto liesSomewhere = [](const PlacedOperand& operand) { return !operand.value->hasNoPosition(); };
-    bool operandsLeaveRegisterForResult = !resultIsInAnyRegister || static_cast<size_t>(std::ranges::count_if(request.operands, liesSomewhere)) <= shape->numberOfOperandRegisters;
+    if (isCallOfStub) {
+        for (size_t i = 0; i < operandsOfStub.size(); ++i)
+            patchpoint->append(operandsOfStub[i], receiverIsInAnyRegister ? Machine::ValueRep(Machine::ValueRep::SomeRegister) : Machine::ValueRep::reg(signature->operands[i]));
+    } else {
+        for (const PlacedOperand& operand : request.operands)
+            patchpoint->append(operand.value, receiverIsInAnyRegister ? Machine::ValueRep(Machine::ValueRep::SomeRegister) : operand.rep);
+    }
+    auto liesSomewhere = [](const Machine::Operation* operand) { return !operand->hasNoPosition(); };
+    bool operandsLeaveRegisterForResult = !resultIsInAnyRegister || static_cast<size_t>(std::ranges::count_if(patchpoint->operands(), liesSomewhere)) <= shape->numberOfOperandRegisters;
     patchpoint->setBringsOperandsToTheirRegisters(!receiverIsInAnyRegister && operandsLeaveRegisterForResult && !request.preservingCall && !request.firstRead && !options.throwSite);
     Machine::RegisterMask additionalClobbers = request.preservingCall ? Machine::maskOf(request.additionalClobbers) : 0;
     ASSERT(request.preservingCall || request.additionalClobbers.isEmpty());
@@ -883,16 +985,24 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         patchpoint->clobberLate(shape->lateClobbered | additionalClobbers);
         patchpoint->clobberEarly(shape->earlyClobbered);
     } else {
-        setResultConstraints(patchpoint, signature);
+        setResultConstraints(patchpoint, *signature);
         patchpoint->clobberLate(shape->lateClobbered | additionalClobbers);
         patchpoint->clobberEarly(shape->earlyClobbered | (receiverIsInAnyRegister ? additionalClobbers & ~shape->operandRegisters : 0));
     }
-    std::optional<StubKey> keyWhereNoRegisterIsKept = shape->keyWhereNoRegisterIsKept;
-    std::optional<StubKey> keyWhereNoFPRIsKept = shape->keyWhereNoFPRIsKept;
 
-    bool mayThrow = effects.mayThrow;
-    effects.mayCollect |= options.followsThrow;
-    applyEffects(patchpoint, effects, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay);
+    if (knownEffects) {
+        RELEASE_ASSERT(!generator().isInitializingCell() || (!knownEffects->effects.mayCollect && !mayThrow));
+        patchpoint->effects = knownEffects->patchEffects;
+        patchpoint->effects.terminal = !returns;
+    } else {
+        computedEffects->mayCollect |= options.followsThrow;
+        const RememberedPatchEffects* appliedEffects = applyEffectsThroughMemo(patchpoint, *computedEffects, request.argumentBufferAccess, options.accessesCollectorState, conversions);
+        if (remembersEffects && appliedEffects && (isCallOfStub || shape->boundKey.immediate() == options.immediate)) {
+            shape->effectsOfLastOperation = *effectsOfOperation;
+            shape->traitsOfLastCall = traitsOfCall;
+            shape->patchEffectsOfLastCall = appliedEffects;
+        }
+    }
     if (options.pureFunction) {
         patchpoint->effects.exitsSideways = false;
         patchpoint->pureFunction = *options.pureFunction;
@@ -906,10 +1016,9 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         site = { addSite(*context, options) };
     }
 
-    CallGenerator callGenerator { &m_records, key, signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, options.throwSite, request.preservingCall, keyWhereNoRegisterIsKept, keyWhereNoFPRIsKept };
-    patchpoint->setGenerator([callGenerator](CCallHelpers& jit, const Machine::PatchParameters& params) {
-        callGenerator.generate(jit, params);
-    });
+    const ThrowSite* throwSite = options.throwSite ? m_proc.arena().create<ThrowSite>(*options.throwSite) : nullptr;
+    const OperationCall* preservingCall = request.preservingCall ? m_proc.arena().create<OperationCall>(*request.preservingCall) : nullptr;
+    patchpoint->setGenerator(CallGenerator { &m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoRegisterIsKept, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant });
     if (mayBeShared)
         m_out.recordPurePatch(patchpoint);
 
@@ -917,15 +1026,15 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         m_out.appendSuccessor(request.targets->notTaken);
         m_out.appendSuccessor(request.targets->taken);
     }
-    if ((mayThrow || mayFailToAllocate) && site)
+    if ((mayThrow || mayFailToAllocate) && site && ExceptionEmitter::unwindsWithinFunction(*context))
         emitter<ExceptionEmitter>().attachLandingPad(*context, patchpoint, *site, returns);
     if (neverReturns)
         m_out.appendTo(newBlock());
     if (!returns)
         return { };
-    StubCallResult result = resultOfCall(signature.result, patchpoint);
+    StubCallResult result = resultOfCall(resultKind, patchpoint);
     if (watch && watch->isSet()) [[unlikely]]
-        endWatchOfEffects(*context, *watch, signature.result == StubResult::GPR || signature.result == StubResult::FPR ? patchpoint : nullptr);
+        endWatchOfEffects(*context, *watch, resultKind == StubResult::GPR || resultKind == StubResult::FPR ? patchpoint : nullptr);
     return result;
 }
 
@@ -1176,19 +1285,44 @@ LValue RuntimeCallEmitter::callStubThatReads(StubKey key, std::span<const LValue
     effectsOfCallee.reads = effectsOfCallee.reads.intersectedWith(read);
     RELEASE_ASSERT(!effectsOfCallee.reads.isEmpty());
     request.effectsOfCallee = &effectsOfCallee;
+    request.shapeKnowsCallee = false;
     return emitCall(nullptr, request).first;
 }
 
 Machine::PatchOperation* RuntimeCallEmitter::createCallPatchpoint(const OperationContext& context, const CallPatchpointRequest& request)
 {
-    Effects effects = effectsOfCall(context, request.effects);
-    if (!effects.mayThrowOtherThanStackOverflow() && !emitter<ExceptionEmitter>().unwindsWithinFunction(context))
-        effects.mayThrow = false;
+    bool unwindsWithinFunction = ExceptionEmitter::unwindsWithinFunction(context);
+    uint8_t traits = traitsOfPatchEffects(request.argumentBufferAccess, false, CellConversions::AsEffectsSay);
+    const Effects* effectsOfOperation = request.effects.isPure() ? nullptr : &effectsOf(context);
+    PatchEffectsMemo::CallPatchpointSeen* seen = nullptr;
+    const RememberedPatchEffects* knownEffects = nullptr;
+    if (effectsOfOperation) {
+        seen = &patchEffectsMemo().lastCallPatchpoints[(unwindsWithinFunction ? 1 : 0) | (effectsOfOperation->mayThrowByRule() ? 2 : 0)];
+        if (seen->patchEffects && seen->traits == traits && seen->effectsOfOperation == *effectsOfOperation && seen->effectsOfCallee == request.effects)
+            knownEffects = seen->patchEffects;
+    }
+    std::optional<Effects> computedEffects;
+    if (!knownEffects) {
+        computedEffects.emplace(effectsOfCall(context, request.effects));
+        if (!computedEffects->mayThrowOtherThanStackOverflow() && !unwindsWithinFunction)
+            computedEffects->mayThrow = false;
+    }
 
     Machine::PatchOperation* patchpoint = request.holdsUniqueRecord ? m_out.patchpointWithUniqueRecord(request.resultType) : m_out.patchpoint(request.resultType);
     patchpoint->clobberEarly(request.earlyClobbered);
     patchpoint->clobberLate(request.lateClobbered);
-    applyEffects(patchpoint, effects, request.argumentBufferAccess);
+    if (knownEffects) {
+        RELEASE_ASSERT(!generator().isInitializingCell() || (!knownEffects->effects.mayCollect && !knownEffects->effects.mayThrow));
+        patchpoint->effects = knownEffects->patchEffects;
+    } else {
+        const RememberedPatchEffects* appliedEffects = applyEffectsThroughMemo(patchpoint, *computedEffects, request.argumentBufferAccess, false, CellConversions::AsEffectsSay);
+        if (seen && appliedEffects) {
+            seen->effectsOfCallee = request.effects;
+            seen->effectsOfOperation = *effectsOfOperation;
+            seen->traits = traits;
+            seen->patchEffects = appliedEffects;
+        }
+    }
     patchpoint->setRunsWithoutFrame(request.runsWithoutFrame);
     patchpoint->effects.terminal = request.neverReturns;
     return patchpoint;
@@ -1196,23 +1330,50 @@ Machine::PatchOperation* RuntimeCallEmitter::createCallPatchpoint(const Operatio
 
 void RuntimeCallEmitter::finishCallPatchpoint(const OperationContext& context, Machine::PatchOperation* patchpoint, uint32_t site, const CallPatchpointRequest& request)
 {
-    if (request.effects.mayThrow || request.effects.mayCollect)
+    if ((request.effects.mayThrow || request.effects.mayCollect) && ExceptionEmitter::unwindsWithinFunction(context))
         emitter<ExceptionEmitter>().attachLandingPad(context, patchpoint, site, !request.neverReturns);
     if (request.neverReturns)
         m_out.appendTo(newBlock());
 }
 
-RegisterSet RuntimeCallEmitter::registersClobberedByCalls() const
+void RuntimeCallEmitter::findRegistersClobberedByCalls() const
 {
     RegisterSet clobbered = registersClobberedByCompiledCalls();
     clobbered.merge(RegisterSet::macroClobberedGPRs());
-    return clobbered;
+    m_registersClobberedByCalls = clobbered;
 }
+
+RegisterSet RuntimeCallEmitter::registersThatThrowSitesClobber() const
+{
+    StubCallShapeCache& cache = stubCallShapes();
+    const StubCatalog& catalog = inputs().stubCatalog;
+    if (!cache.knowsThrowSites || cache.catalogOfThrowSites != catalog.identifier()) [[unlikely]] {
+        cache.clobberedByThrowSites = registersClobberedByThrowSites(catalog);
+        cache.catalogOfThrowSites = catalog.identifier();
+        cache.knowsThrowSites = true;
+    }
+    return cache.clobberedByThrowSites;
+}
+
+namespace {
+
+constexpr uint8_t noCallSiteKind = UINT8_MAX;
+
+constexpr std::array<uint8_t, 16> callSiteKindsByColumns = [] {
+    std::array<uint8_t, 16> kinds { };
+    for (unsigned columns = 0; columns < kinds.size(); ++columns) {
+        std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = !!(columns & 1), .isTailCall = !!(columns & 2), .isInsideCallee = !!(columns & 4), .namesBuiltin = !!(columns & 8) });
+        kinds[columns] = kind ? static_cast<uint8_t>(*kind) : noCallSiteKind;
+    }
+    return kinds;
+}();
+
+} // anonymous namespace
 
 RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context, const CallOptions& options)
 {
     Origin origin = options.origin.value_or(context.origin());
-    const Operation* operation = context.valueID() ? &operationAt(context.valueID()) : nullptr;
+    const Operation* operation = context.valueID() ? static_cast<const Operation*>(&context.instruction()) : nullptr;
     BuiltinID calledBuiltin = options.calledBuiltin;
     if (!calledBuiltin && operation && Operation::opcodesWithCalledBuiltin.contains(operation->opcode))
         calledBuiltin = operation->calledBuiltin();
@@ -1225,14 +1386,20 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
         calledBuiltin = { };
     bool standsForCallee = calledBuiltin ? origin.isTailCall || options.isTailCall : origin.isTailCall && !options.isTailCall && !options.constructs;
     bool isInsideCallee = options.callerHasLeft || (standsForCallee && (calledBuiltin || !operation || !runsBeforeCalleeOf(operation->opcode)));
-    std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall || options.callerHasLeft, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });
-    RELEASE_ASSERT(kind);
-    return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin, .constructedCallee = options.constructedCallee, .callsOwnFunctionObject = options.callsOwnFunctionObject, .keptCalleePlusOne = options.keptCalleePlusOne };
+    bool isTailCall = options.isTailCall || origin.isTailCall || options.callerHasLeft;
+    uint8_t kind = callSiteKindsByColumns[(options.constructs ? 1 : 0) | (isTailCall ? 2 : 0) | (isInsideCallee ? 4 : 0) | (calledBuiltin ? 8 : 0)];
+    RELEASE_ASSERT(kind != noCallSiteKind);
+    return { .origin = origin, .kind = static_cast<CallSiteKind>(kind), .calledBuiltin = calledBuiltin, .constructedCallee = options.constructedCallee, .callsOwnFunctionObject = options.callsOwnFunctionObject, .keptCalleePlusOne = options.keptCalleePlusOne };
 }
 
 uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const CallOptions& options)
 {
-    uint32_t number = m_records.sites.addSite(recordedSiteOf(context, options));
+    return addRecordedSite(context, recordedSiteOf(context, options));
+}
+
+uint32_t RuntimeCallEmitter::addRecordedSite(const OperationContext& context, const RecordedSite& site)
+{
+    uint32_t number = m_records.sites.addSite(site);
     uint64_t numbersInUse = uint64_t { number } + 1;
     if (numbersInUse <= build().limit(LimitID::SitesPerFunction))
         return number;
@@ -1289,17 +1456,21 @@ bool RuntimeCallEmitter::mayConvertCells(const Effects& effects)
 
 void RuntimeCallEmitter::applyEffects(Machine::PatchOperation* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions)
 {
+    applyEffectsThroughMemo(patchpoint, effects, access, accessesCollectorState, conversions);
+}
+
+const RememberedPatchEffects* RuntimeCallEmitter::applyEffectsThroughMemo(Machine::PatchOperation* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions)
+{
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
 
     bool isTerminal = patchpoint->effects.terminal;
-    uint8_t traits = static_cast<uint8_t>(static_cast<unsigned>(access) | (accessesCollectorState ? 4 : 0) | static_cast<unsigned>(conversions) << 3);
-    if (!m_patchEffectsMemo) [[unlikely]]
-        m_patchEffectsMemo = &m_proc.arena().objectKeptAcrossResets<PatchEffectsMemo>();
-    PatchEffectsMemo::Entry* known = findPatchEffects(*m_patchEffectsMemo, effects, traits);
+    uint8_t traits = traitsOfPatchEffects(access, accessesCollectorState, conversions);
+    PatchEffectsMemo& memo = patchEffectsMemo();
+    PatchEffectsMemo::Entry* known = findPatchEffects(memo, effects, traits);
     if (known && known->isFilled) [[likely]] {
         patchpoint->effects = known->patchEffects;
         patchpoint->effects.terminal = isTerminal;
-        return;
+        return known;
     }
     computeEffects(patchpoint, effects, access, accessesCollectorState, conversions);
     if (known) {
@@ -1307,11 +1478,12 @@ void RuntimeCallEmitter::applyEffects(Machine::PatchOperation* patchpoint, const
         known->traits = traits;
         known->patchEffects = patchpoint->effects;
         known->patchEffects.terminal = false;
-        known->patchEffects.reads = m_patchEffectsMemo->keep(patchpoint->effects.reads);
-        known->patchEffects.writes = m_patchEffectsMemo->keep(patchpoint->effects.writes);
+        known->patchEffects.reads = memo.keep(patchpoint->effects.reads);
+        known->patchEffects.writes = memo.keep(patchpoint->effects.writes);
         known->isFilled = true;
     }
     patchpoint->effects.terminal = isTerminal;
+    return known;
 }
 
 void RuntimeCallEmitter::computeEffects(Machine::PatchOperation* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions)

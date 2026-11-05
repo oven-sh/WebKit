@@ -66,8 +66,6 @@ private:
     CellPointer receiverOf(const InlineCall& call) { return in<CellPointer>(call.receiver()); }
     Operand resultFromRawElement(const InlineCall&, const ArrayStorageForm&, Operand rawElement);
     Operand undefinedResult(const InlineCall&);
-    const ArrayStorageForm* provenFormOf(const InlineCall&);
-    const ArrayStorageForm* provenFormOfArgument(const InlineCall&, ValueID list);
     TypeID elementTypeOf(const InlineCall&, TypeLevel);
     ArrayStorageFormList candidateFormsOf(const InlineCall&);
     ElementAccessEmitter::FirstForm firstCandidateFormOf(const InlineCall&);

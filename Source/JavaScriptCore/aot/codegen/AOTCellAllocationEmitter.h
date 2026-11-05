@@ -58,13 +58,6 @@ private:
     void zeroBody(CellPointer, const MentionedAllocation&);
     LValue slotOfFrameCell(const OperationContext&, size_t size);
 
-    struct SlotOfLoans {
-        uint32_t numberAmongLoans { 0 };
-        size_t size { 0 };
-        Machine::StackSlot* slot { nullptr };
-    };
-    Vector<SlotOfLoans, 4> m_slotsOfLoans;
-
     struct SlotOfClosuresLent {
         size_t size { 0 };
         Machine::StackSlot* slot { nullptr };

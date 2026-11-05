@@ -121,7 +121,7 @@ static void resolveIndexOfAddress(const Liveness& liveness, AddressForm& form, c
     }
 }
 
-AddressForm Encoder::resolveAddress(const Operation* access, LeafCursor& leaves)
+AddressForm Encoder::resolveAddressSlowCase(const Operation* access, LeafCursor& leaves)
 {
     RELEASE_ASSERT(isMemoryAccess(access->opcode()));
     const Operation* address = access->children().back();
@@ -164,30 +164,6 @@ AddressForm Encoder::resolveScaledSum(const Operation* sum, LeafCursor& leaves)
 
     RELEASE_ASSERT(isEncodableScaledSum(form.shift, form.extension));
     return form;
-}
-
-MacroAssembler::Address Encoder::addressOf(Location memory) const
-{
-    switch (memory.kind()) {
-    case Location::Spill:
-        RELEASE_ASSERT(m_frameIsSetUp);
-        return m_frame.addressInFrame(m_frame.offsetFromFPOf(memory.spillIndex()));
-
-    case Location::Outgoing:
-        RELEASE_ASSERT(m_frameIsSetUp);
-        ASSERT(memory.offsetFromSP() < m_frame.bytesBelowFrameRecord());
-        return MacroAssembler::Address(MacroAssembler::stackPointerRegister, safeCast<int32_t>(memory.offsetFromSP()));
-
-    case Location::InstanceWord:
-        return MacroAssembler::Address(instanceGPR, memory.offsetInInstance());
-
-    case Location::None:
-    case Location::Register:
-    case Location::SlotBytes:
-    case Location::Immediate:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 std::pair<GPRReg, bool> Encoder::referenceOf(const Operation* access, const AddressForm& address) const

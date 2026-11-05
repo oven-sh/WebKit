@@ -49,6 +49,7 @@ public:
     BlockEdge edgeToCreation(LBasicBlock creates, bool isExpectedToCreate);
 
     bool mayCreateListedField(const FieldAccess&) const;
+    bool nextStoreWritesOrderWordAtOnce(const ValueContext&) const;
     bool tryPutSlotOrAddByStub(const ValueContext&, CellPointer, const FieldAccess&, Operand stored);
     uint64_t granuleBitsWithFieldsBehind(const FieldAccess&) const;
     void markCellIfMarkerReplacesRawValue(CellPointer, const FieldAccess&, ValueID stored);

@@ -50,7 +50,11 @@ function readThrough(fields: string): Read {
 }
 
 const readOwnFields = readThrough("");
-const readFieldWords = readThrough("fieldWords().");
+
+function readFieldWordsOf(entry: Entry): Read {
+  if (entry.isTerminator) return readThrough("fieldWords().");
+  return readThrough(wireFlagsOf(entry).length > 0 ? "fieldWordsBehindFlagsWord()." : "fieldWordsBehindHead().");
+}
 
 function refuse(location: Location, subject: string, kind: Kind): never {
   throw new SchemaError(location, `${subject}: no cursor over a body reads ${kindText(kind)}`);
@@ -296,7 +300,8 @@ function gettersOfParameters(
     const { type, engineDefault } = shapeOf(first, isOptional, isOnWire);
     const answers = users.map(({ entry, part }) => {
       const offset = offsets.get(part);
-      return { entry, value: offset === undefined ? engineDefault : valueOnWire(part, offset, readFieldWords) };
+      const value = offset === undefined ? engineDefault : valueOnWire(part, offset, readFieldWordsOf(entry));
+      return { entry, value };
     });
     return { name: getterNameOf(first), type, answers, location: first.location };
   });
@@ -307,7 +312,7 @@ function gettersOfFlags(entries: readonly Entry[]): NamedGetter[] {
     const { name, location } = users[0].part;
     const answers = users.map(({ entry, part }) => ({
       entry,
-      value: entry.isWire && !part.isEngine ? flagOnWire(part) : "false",
+      value: entry.isWire && !part.isEngine ? `flagsWord() & 1 << ${part.bit}` : "false",
     }));
     return { name, type: "bool", answers, location };
   });
@@ -336,7 +341,7 @@ function getterByName(cursor: Cursor, getter: NamedGetter): string[] {
   const inFunction = indentation.repeat(2);
   const cases = answers.map(({ entry, value }) => ({ label: entry.name, body: [`return ${value};`] }));
   return [
-    `${indentation}${getter.type} ${getter.name}() const`,
+    `${indentation}${cursor.isTerminator ? "" : "ALWAYS_INLINE "}${getter.type} ${getter.name}() const`,
     `${indentation}{`,
     `${inFunction}switch (${cursor.tag}) {`,
     ...groupedCases(cursor.enumName, cases, inFunction),

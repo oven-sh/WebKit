@@ -21,6 +21,7 @@ namespace JSC { namespace AOT {
 static_assert(sizeof(PackedSlot) == sizeof(uint64_t));
 static_assert(!Slot::offsetOfStructureID() && Slot::offsetOfPayload() == sizeof(uint64_t));
 static_assert(gprOf(slotNameRegister) == countGPR && noOverlap(gprOf(slotNameRegister), thisGPR, calleeGPR, gprOf(closureWordRegister)));
+static_assert(descriptorOf(StubFamily::CallMethodByIdLending).numberOfForms == numberOfSetsOfLentArguments);
 
 StubSignature signatureOfCallMethodById(StubKey)
 {
@@ -29,9 +30,12 @@ StubSignature signatureOfCallMethodById(StubKey)
     return signature;
 }
 
-void generateCallMethodById(StubAssembler& jit)
+StubSignature signatureOfCallMethodByIdLending(StubKey key) { return signatureOfCallMethodById(key); }
+
+static void emitCallMethodById(StubAssembler& jit, unsigned lentArguments)
 {
     const unsigned count = jit.key().count();
+    const StubKey callsValue = callValueLending(count, lentArguments);
     const CallRegisters registers = CallRegisters::allocate(jit);
     const GPRReg name = jit.immediate();
     const GPRReg key = registers.word;
@@ -65,6 +69,8 @@ void generateCallMethodById(StubAssembler& jit)
     isNotInPlaceOfCall.append(jit.branch64(CCallHelpers::NotEqual, calleeGPR, Address(place, OBJECT_OFFSETOF(AccessTable::Call, callee))));
     jit.load64(Address(place, OBJECT_OFFSETOF(AccessTable::Call, closureWord)), code);
 #endif
+    if (lentArguments)
+        jit.linkToStub(branchUnlessWordBorrows(jit, code, spare, lentArguments), callsValue);
     jit.move(TrustedImm32(count), countGPR);
     toCodeAddress(jit, code, place, StackIsTested::Yes);
     jit.farJump(code, JSEntryPtrTag);
@@ -74,7 +80,7 @@ void generateCallMethodById(StubAssembler& jit)
     loadWordBehindKeyInAccessTable(jit, inTable, OBJECT_OFFSETOF(AccessTable::Read, keyOfOwnValue), calleeGPR, spare, isNoOwnValue);
     jit.load64(BaseIndex(thisGPR, calleeGPR, CCallHelpers::TimesOne), calleeGPR);
     readsByStub.append(jit.branchTest64(CCallHelpers::Zero, calleeGPR));
-    jit.jumpToStub(callValue(count));
+    jit.jumpToStub(callsValue);
 
     isNoOwnValue.link(&jit);
     loadWordBehindKeyInAccessTable(jit, inTable, OBJECT_OFFSETOF(AccessTable::Read, keyOfOtherAnswer), calleeGPR, spare, isNotInAccessTable);
@@ -86,18 +92,18 @@ void generateCallMethodById(StubAssembler& jit)
     filesNothing.append(jit.branch64(CCallHelpers::LessThan, registers.word, registers.scratch));
     fileCallInAccessTable(jit, { thisGPR, name, spare, place }, count, calleeGPR, registers.word);
     filesNothing.link(&jit);
-    jit.jumpToStub(callValue(count));
+    jit.jumpToStub(callsValue);
 
     hasForm.link(&jit);
     readByFormOfAnswerInAccessTable(jit, thisGPR, calleeGPR, place, calleeGPR, readsByStub, readsByStub, [&] {
-        jit.jumpToStub(callValue(count));
+        jit.jumpToStub(callsValue);
     });
 
     isNotInAccessTable.link(&jit);
     readsByStub.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
     jit.load32(Address(thisGPR, JSCell::structureIDOffset()), key);
     readByFrontTable(jit, { thisGPR, name, key, spare, place, secondSpare, ReceiverOfFrontProbe::IsCompiledObject, false }, calleeGPR, readsByStub, [&] {
-        jit.jumpToStub(callValue(count));
+        jit.jumpToStub(callsValue);
     });
 
     readsByStub.link(&jit);
@@ -113,7 +119,17 @@ void generateCallMethodById(StubAssembler& jit)
         jit.move(GPRInfo::returnValueGPR, calleeGPR);
     });
     jit.emitFunctionEpilogue();
-    jit.jumpToStub(callValue(count));
+    jit.jumpToStub(callsValue);
+}
+
+void generateCallMethodById(StubAssembler& jit)
+{
+    emitCallMethodById(jit, 0);
+}
+
+void generateCallMethodByIdLending(StubAssembler& jit)
+{
+    emitCallMethodById(jit, jit.key().form() + 1);
 }
 
 void generateTryGetSuperById(StubAssembler& jit)

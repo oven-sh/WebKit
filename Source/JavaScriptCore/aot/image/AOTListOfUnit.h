@@ -66,7 +66,7 @@ public:
         if constexpr (std::is_trivially_copyable_v<T>) {
             if (size > inlineCapacity && other.capacity() > otherInlineCapacity) {
                 RELEASE_ASSERT(size <= maxCapacity);
-                m_buffer = other.releaseBuffer().leakSpan().data();
+                m_buffer = takeBufferOf(other);
                 m_size = m_capacity = static_cast<uint32_t>(size);
                 return;
             }
@@ -159,14 +159,20 @@ public:
         }
         append(T(value));
     }
-    void append(T&& value)
+    ALWAYS_INLINE void append(T&& value)
     {
-        if (m_size == capacity()) {
-            T moved(WTF::move(value));
-            makeRoomFor(size() + 1);
-            new (NotNull, end()) T(WTF::move(moved));
-        } else
-            new (NotNull, end()) T(WTF::move(value));
+        if (m_size == capacity()) [[unlikely]] {
+            appendToFullList(WTF::move(value));
+            return;
+        }
+        new (NotNull, end()) T(WTF::move(value));
+        ++m_size;
+    }
+    template<typename... Arguments>
+    ALWAYS_INLINE void appendWithinCapacity(Arguments&&... arguments)
+    {
+        RELEASE_ASSERT(m_size < capacity());
+        new (NotNull, end()) T { std::forward<Arguments>(arguments)... };
         ++m_size;
     }
     template<typename U, size_t extent>
@@ -198,7 +204,8 @@ public:
         RELEASE_ASSERT(newSize >= m_size);
         makeRoomFor(newSize);
         if constexpr (!std::is_trivially_default_constructible_v<T>) {
-            for (T* place = end(); place != begin() + newSize; ++place)
+            T* newEnd = begin() + newSize;
+            for (T* place = end(); place != newEnd; ++place)
                 new (NotNull, place) T();
         }
         m_size = static_cast<uint32_t>(newSize);
@@ -245,7 +252,20 @@ public:
         return result;
     }
 
-    friend bool operator==(const ListOfUnit& a, const ListOfUnit& b) { return std::ranges::equal(a.span(), b.span()); }
+    friend bool operator==(const ListOfUnit& a, const ListOfUnit& b)
+    {
+        if (a.m_size != b.m_size)
+            return false;
+        if (a.m_size > mostElementsComparedOneByOne)
+            return std::ranges::equal(a.span(), b.span());
+        const T* elementsOfA = a.begin();
+        const T* elementsOfB = b.begin();
+        for (uint32_t index = 0; index < a.m_size; ++index) {
+            if (!(elementsOfA[index] == elementsOfB[index]))
+                return false;
+        }
+        return true;
+    }
     template<size_t otherInlineCapacity>
     friend bool operator==(const ListOfUnit& a, const Vector<T, otherInlineCapacity>& b) { return std::ranges::equal(a.span(), b.span()); }
 
@@ -257,12 +277,19 @@ private:
     static constexpr uint32_t liesInBlockBit = 1u << 31;
     static constexpr uint32_t maxCapacity = liesInBlockBit - 1;
     static constexpr size_t leastCapacityOnHeap = 16;
+    static constexpr uint32_t mostElementsComparedOneByOne = 8;
 
     static void moveAsBytes(T* to, T* from, size_t count)
     {
         static_assert(holdsListsOfUnit<T> || (std::is_trivially_move_constructible_v<T> && std::is_trivially_destructible_v<T>));
         if (count)
             memcpy(static_cast<void*>(to), from, count * sizeof(T));
+    }
+
+    static void moveWholeInlineRoomAsBytes(T* to, T* from)
+    {
+        static_assert(holdsListsOfUnit<T> || (std::is_trivially_move_constructible_v<T> && std::is_trivially_destructible_v<T>));
+        memcpy(static_cast<void*>(to), from, inlineCapacity * sizeof(T));
     }
 
     static void destroy(T* begin, T* end)
@@ -273,15 +300,37 @@ private:
         }
     }
 
+    template<size_t otherInlineCapacity>
+    static T* takeBufferOf(Vector<T, otherInlineCapacity>& other)
+    {
+        using ReleasedBuffer = decltype(other.releaseBuffer());
+        alignas(ReleasedBuffer) std::byte neverDestroyed[sizeof(ReleasedBuffer)];
+        return (new (NotNull, neverDestroyed) ReleasedBuffer(other.releaseBuffer()))->leakSpan().data();
+    }
+
     void takeFrom(ListOfUnit& other)
     {
-        m_buffer = std::exchange(other.m_buffer, nullptr);
-        m_size = std::exchange(other.m_size, 0);
-        m_capacity = std::exchange(other.m_capacity, 0);
+        T* buffer = other.m_buffer;
+        uint32_t size = other.m_size;
+        uint32_t capacity = other.m_capacity;
+        other.m_buffer = nullptr;
+        other.m_size = 0;
+        other.m_capacity = 0;
+        m_buffer = buffer;
+        m_size = size;
+        m_capacity = capacity;
         if constexpr (!!inlineCapacity) {
-            if (!m_buffer)
-                moveAsBytes(InlineRoom::inlineRoom(), other.InlineRoom::inlineRoom(), m_size);
+            if (!buffer && size)
+                moveWholeInlineRoomAsBytes(InlineRoom::inlineRoom(), other.InlineRoom::inlineRoom());
         }
+    }
+
+    NEVER_INLINE void appendToFullList(T&& value)
+    {
+        T moved(WTF::move(value));
+        makeRoomFor(size() + 1);
+        new (NotNull, end()) T(WTF::move(moved));
+        ++m_size;
     }
 
     void release()
@@ -294,10 +343,15 @@ private:
         m_capacity = 0;
     }
 
-    void makeRoomFor(size_t newSize)
+    ALWAYS_INLINE void makeRoomFor(size_t newSize)
     {
         if (newSize > capacity())
-            moveToHeap(std::max({ newSize, leastCapacityOnHeap, std::min<size_t>(2 * capacity(), maxCapacity) }));
+            moveToLargerRoomOnHeap(newSize);
+    }
+
+    NEVER_INLINE void moveToLargerRoomOnHeap(size_t newSize)
+    {
+        moveToHeap(std::max({ newSize, leastCapacityOnHeap, std::min<size_t>(2 * capacity(), maxCapacity) }));
     }
 
     void moveToHeap(size_t newCapacity)
@@ -397,12 +451,12 @@ private:
     static bool staysWhereItLies(const ListOfUnit<T, inlineCapacity>& list)
     {
         size_t size = list.size() * sizeof(T);
-        return list.liesOnHeap() && size > mostBytesBesideOthers && list.capacity() * sizeof(T) - size <= size / 8;
+        return size > mostBytesBesideOthers && list.liesOnHeap() && list.capacity() * sizeof(T) - size <= size / 8;
     }
 
     struct Measurer {
         template<typename T, size_t inlineCapacity>
-        void operator()(ListOfUnit<T, inlineCapacity>& list)
+        ALWAYS_INLINE void operator()(ListOfUnit<T, inlineCapacity>& list)
         {
             if (list.needsRoomInBlock() && !staysWhereItLies(list))
                 m_offset = placeFor<T>(m_offset) + list.size() * sizeof(T);
@@ -417,21 +471,28 @@ private:
 
     struct Mover {
         template<typename T, size_t inlineCapacity>
-        void operator()(ListOfUnit<T, inlineCapacity>& list)
+        ALWAYS_INLINE void operator()(ListOfUnit<T, inlineCapacity>& list)
         {
-            if (staysWhereItLies(list)) {
-                size_t size = list.capacity() * sizeof(T);
-                m_blocks.addBlock(reinterpret_cast<uint8_t*>(list.leaveMemoryToBlocks()), size);
-            } else if (list.needsRoomInBlock()) {
-                m_offset = placeFor<T>(m_offset);
-                list.moveToBlock(reinterpret_cast<T*>(m_room + m_offset));
-                m_offset += list.size() * sizeof(T);
-            } else if (list.liesOnHeap())
-                list.moveFromHeapIntoItself();
+            if (list.liesOnHeap())
+                moveFromHeap(list);
             if constexpr (holdsListsOfUnit<T>) {
                 for (T& element : list)
                     forEachListOfUnitIn(element, *this);
             }
+        }
+
+        template<typename T, size_t inlineCapacity>
+        void moveFromHeap(ListOfUnit<T, inlineCapacity>& list)
+        {
+            if (staysWhereItLies(list)) {
+                size_t size = list.capacity() * sizeof(T);
+                m_blocks.addBlock(reinterpret_cast<uint8_t*>(list.leaveMemoryToBlocks()), size);
+            } else if (list.size() > inlineCapacity) {
+                m_offset = placeFor<T>(m_offset);
+                list.moveToBlock(reinterpret_cast<T*>(m_room + m_offset));
+                m_offset += list.size() * sizeof(T);
+            } else
+                list.moveFromHeapIntoItself();
         }
 
         BlocksOfUnits& m_blocks;

@@ -22,7 +22,7 @@ struct ProgramFile {
     enum class Kind : uint8_t { Bytes, Text };
 
     Kind kind { Kind::Text };
-    Vector<uint8_t> bytes;
+    Program::OwnedBytes bytes;
     String text;
 };
 

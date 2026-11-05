@@ -681,7 +681,13 @@ Boxed OperatorEmitter::sumOfBoxedNumbers(ArithmeticOperator op, Operand left, co
     m_out.appendToArm(numberCase, fork);
     bool oneAloneWasAsked = left.is<Boxed>() != right.is<Boxed>();
     auto numberIn = [&](Operand operand, const Type& type) {
-        return oneAloneWasAsked && operand.is<Boxed>() && type.isNumber() ? unboxDouble(operand.as<Boxed>()) : asNumber(operand, type);
+        if (!oneAloneWasAsked || !operand.is<Boxed>())
+            return asNumber(operand, type);
+        if (type.isNumber())
+            return unboxDouble(operand.as<Boxed>());
+        Type rest = type;
+        rest.primitives = (type.primitives & ~Primitive::Integer) | Primitive::Double;
+        return asNumber(operand, rest);
     };
     Number leftNumber = numberIn(left, leftType);
     join.add(conversions.boxNumberByStub(arithmeticOnNumbers(op, leftNumber, numberIn(right, rightType))));

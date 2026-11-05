@@ -72,14 +72,17 @@ public:
     size_t mostReferences() const { return m_firstReadSites.size() + m_returnSites.size() + m_faultingAccesses.size() + m_pollSites.size(); }
     bool isAtEnd() const { return std::min(std::min(m_offsetOfFirstReadSite, m_offsetOfReturnSite), std::min(m_offsetOfFaultingAccess, m_offsetOfPollSite)) == atEnd; }
 
-    SiteReference takeNext()
+    SiteReference takeNextUnlessAtEnd()
     {
-        if (m_offsetOfFirstReadSite <= std::min(m_offsetOfReturnSite, std::min(m_offsetOfFaultingAccess, m_offsetOfPollSite))) {
+        uint64_t offsetOfFaultingAccessOrPollSite = std::min(m_offsetOfFaultingAccess, m_offsetOfPollSite);
+        if (m_offsetOfFirstReadSite <= std::min(m_offsetOfReturnSite, offsetOfFaultingAccessOrPollSite)) {
+            if (m_offsetOfFirstReadSite == atEnd)
+                return { nullptr };
             FirstReadSite& site = m_firstReadSites[m_nextFirstReadSite++];
             findNextFirstReadSite();
             return { &site.site, true };
         }
-        if (m_offsetOfReturnSite <= std::min(m_offsetOfFaultingAccess, m_offsetOfPollSite)) {
+        if (m_offsetOfReturnSite <= offsetOfFaultingAccessOrPollSite) {
             ReturnSite& site = m_returnSites[m_nextReturnSite++];
             findNextReturnSite();
             return { &site.site.bits };
@@ -144,6 +147,8 @@ struct PlaceAmongPositions {
     size_t nextAdjustment { unknown };
     uint64_t beginOfStretch { 0 };
     uint64_t endOfStretch { 0 };
+    uint64_t offsetOfNextAdjustment { 0 };
+    uint32_t offsetOfAdjustment { 0 };
     uint32_t lineOfStretch { 0 };
     uint32_t originOfColumns { 0 };
     uint32_t columnAtOrigin { 0 };
@@ -237,11 +242,18 @@ static void collectFaultingAccesses(const DescribedUnit& described, CodeRecords&
 {
     TrapRecords& traps = records.traps;
     Vector<Machine::LinkedTrappingAccess> trappingAccesses;
-    Machine::describeTrappingAccesses(procedure, linkBuffer, trappingAccesses);
+    if (!procedure.trappingAccesses().empty())
+        Machine::describeTrappingAccesses(procedure, linkBuffer, trappingAccesses);
 
     AOT::sortInLine(traps.trapSites, { }, &TrapSite::value);
     accesses.reserveInitialCapacity(trappingAccesses.size() + traps.callThrowSites.size());
+    std::span<const CallThrowSite> callThrowSites = traps.callThrowSites.span();
+    auto codeOffsetOfCallThatThrows = [&](const CallThrowSite& site) {
+        return body.returnSites[site.returnSite].offset - static_cast<uint32_t>(sizeOfNearCall);
+    };
     for (const Machine::LinkedTrappingAccess& access : trappingAccesses) {
+        for (; !callThrowSites.empty() && codeOffsetOfCallThatThrows(callThrowSites.front()) < access.codeOffset; callThrowSites = callThrowSites.subspan(1))
+            accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(callThrowSites.front()), OptionalIndex { }, callThrowSites.front().words, callThrowSites.front().wordsThatAreMentions);
         ValueID value = valueOfOrigin(access.origin);
         auto site = std::ranges::lower_bound(traps.trapSites, value, { }, &TrapSite::value);
         if (site == traps.trapSites.end() || site->value != value) {
@@ -255,11 +267,12 @@ static void collectFaultingAccesses(const DescribedUnit& described, CodeRecords&
 #endif
         Vector<uint32_t, 3> words = throwSiteWords(site->throwSite, access.referenceIsNarrow ? Representation::Cell32 : site->representation, static_cast<unsigned>(access.reference));
         uint8_t wordsThatAreMentions = mentionsAmongThrowSiteWords(site->throwSite, words.size());
-        accesses.append({ access.codeOffset, OptionalIndex { site->callSite }, WTF::move(words), wordsThatAreMentions });
+        accesses.appendWithinCapacity(access.codeOffset, OptionalIndex { site->callSite }, WTF::move(words), wordsThatAreMentions);
     }
-    for (const CallThrowSite& site : traps.callThrowSites)
-        accesses.append({ body.returnSites[site.returnSite].offset - static_cast<uint32_t>(sizeOfNearCall), { }, site.words, site.wordsThatAreMentions });
-    AOT::sortInLine(accesses, { }, &FaultingAccess::codeOffset);
+    for (const CallThrowSite& site : callThrowSites)
+        accesses.appendWithinCapacity(codeOffsetOfCallThatThrows(site), OptionalIndex { }, site.words, site.wordsThatAreMentions);
+    if (accesses.size() > 1)
+        AOT::sortInLine(accesses, { }, &FaultingAccess::codeOffset);
 }
 
 static std::optional<LineColumn> positionOfImplementedBuiltin(StackTraceBuiltinKind kind)
@@ -335,15 +348,28 @@ static size_t findFirstBehindPosition(std::span<const T> ascending, uint32_t pos
         do {
             --index;
         } while (index > limit && liesBehind(index - 1));
-        if (index && liesBehind(index - 1))
-            return searchBetween(0, index - 1);
+        if (index && liesBehind(index - 1)) {
+            size_t end = index - 1;
+            size_t step = mostLinearSteps;
+            while (end > step && liesBehind(end - step)) {
+                end -= step;
+                step *= 2;
+            }
+            return searchBetween(end > step ? end - step + 1 : 0, end);
+        }
         return index;
     }
     size_t limit = std::min(ascending.size(), index + mostLinearSteps);
     while (index < limit && !liesBehind(index))
         ++index;
-    if (index == limit)
-        return searchBetween(limit, ascending.size());
+    if (index == limit) {
+        size_t step = mostLinearSteps;
+        while (ascending.size() - index > step && !liesBehind(index + step)) {
+            index += step + 1;
+            step *= 2;
+        }
+        return searchBetween(index, std::min(ascending.size(), index + step));
+    }
     return index;
 }
 
@@ -362,14 +388,18 @@ static NEVER_INLINE LineColumn lineColumnInOtherStretch(const Program& program, 
     uint32_t lineStart = hasLine ? lineStarts[line] : 0;
 
     std::span<const ColumnAdjustment> adjustments = positions.columnAdjustments.span();
-    place.nextAdjustment = findFirstBehindPosition(adjustments, position, place.nextAdjustment, &ColumnAdjustment::offset);
-    uint32_t offsetOfAdjustment = place.nextAdjustment ? adjustments[place.nextAdjustment - 1].offset : 0;
+    if (position < place.offsetOfAdjustment || position >= place.offsetOfNextAdjustment) {
+        place.nextAdjustment = findFirstBehindPosition(adjustments, position, place.nextAdjustment, &ColumnAdjustment::offset);
+        place.offsetOfAdjustment = place.nextAdjustment ? adjustments[place.nextAdjustment - 1].offset : 0;
+        place.offsetOfNextAdjustment = place.nextAdjustment < adjustments.size() ? adjustments[place.nextAdjustment].offset : endOfPositions;
+    }
+    uint32_t offsetOfAdjustment = place.offsetOfAdjustment;
     bool isAdjusted = place.nextAdjustment && (!hasLine || offsetOfAdjustment > lineStart);
     if (!isAdjusted && !hasLine)
         return { 1, 1 };
 
     place.beginOfStretch = std::max(lineStart, offsetOfAdjustment);
-    place.endOfStretch = std::min<uint64_t>(place.nextLine < lineStarts.size() ? lineStarts[place.nextLine] : endOfPositions, place.nextAdjustment < adjustments.size() ? adjustments[place.nextAdjustment].offset : endOfPositions);
+    place.endOfStretch = std::min<uint64_t>(place.nextLine < lineStarts.size() ? lineStarts[place.nextLine] : endOfPositions, place.offsetOfNextAdjustment);
     if (isAdjusted) {
         const ColumnAdjustment& adjustment = adjustments[place.nextAdjustment - 1];
         place.lineOfStretch = adjustment.line + 1;
@@ -490,7 +520,7 @@ static void describeCalleeOfSite(const RecordedSite& site, uint32_t number, cons
     sites.calleesOfSites.append({ number, field != records.fieldsOfCallees.end() ? CalleeOfSite::inEnvironmentInFrame(word, *field->value) : CalleeOfSite::inFrame(word) });
 }
 
-static void describeSitesInOrder(const DescribedUnit& described, const CodeRecords& records, LinkBuffer& linkBuffer, SiteReferencesInOrder& references, DescribedCallees& callees, bool describesCalleesOfSites, SiteDescription& sites)
+static void describeSitesInOrder(const DescribedUnit& described, const CodeRecords& records, LinkBuffer& linkBuffer, SiteReferencesInOrder references, DescribedCallees& callees, bool describesCalleesOfSites, SiteDescription& sites)
 {
     const Program& program = described.program;
     const Vector<RecordedSite>& recorded = records.sites.positions;
@@ -499,14 +529,14 @@ static void describeSitesInOrder(const DescribedUnit& described, const CodeRecor
 
     sites.positions.reserveInitialCapacity(1 + numberOfSitesWithoutCode + references.mostReferences());
     const Function& outermost = *shownFunctions[0].owner;
-    sites.positions.append(positionIn(program, shownFunctions[0], outermost.position, 0));
+    sites.positions.appendWithinCapacity(positionIn(program, shownFunctions[0], outermost.position, 0));
     if (isDefaultConstructor(program, outermost))
         sites.positions[0].column = startOfBuiltinFunction.column;
 
     uint32_t numberOfSites = 0;
-    auto addSite = [&](const RecordedSite& site) {
+    auto addSite = [&](const RecordedSite& site) ALWAYS_INLINE_LAMBDA {
         uint32_t number = ++numberOfSites;
-        sites.positions.append(describePosition(program, shownFunctions, site));
+        sites.positions.appendWithinCapacity(describePosition(program, shownFunctions, site));
         if (number > numberOfSitesWithoutCode && site.kind != CallSiteKind::Plain)
             sites.flaggedSites.append({ number, site.kind, site.calledBuiltin });
         if (site.constructedCallee)
@@ -528,8 +558,7 @@ static void describeSitesInOrder(const DescribedUnit& described, const CodeRecor
     };
 
     Vector<const SiteLandingPad*> landingPads = findLandingPadsOfSites(records.exceptions, recorded.size());
-    while (!references.isAtEnd()) {
-        SiteReference reference = references.takeNext();
+    for (SiteReference reference = references.takeNextUnlessAtEnd(); reference.site; reference = references.takeNextUnlessAtEnd()) {
         uint32_t recordedNumber = *reference.site;
         RELEASE_ASSERT(recordedNumber && recordedNumber <= recorded.size());
         const RecordedSite& record = recorded[recordedNumber - 1];
@@ -550,32 +579,33 @@ static void describeSitesInOrder(const DescribedUnit& described, const CodeRecor
     }
 }
 
-static Vector<AOT::InlineFrame> describeInlineFrames(const Program& program, const Code& code, const SiteRecords& sites, DescribedCallees& callees)
+static void describeInlineFrames(const Program& program, const Code& code, const SiteRecords& sites, DescribedCallees& callees, decltype(SiteDescription::inlineFrames)& inlineFrames)
 {
     std::span<const InlineFrame> frames = code.inlineFrames();
     const Vector<uint32_t>& inlineCallSites = sites.inlineCallSites;
     RELEASE_ASSERT(inlineCallSites.size() == frames.size());
-    Vector<AOT::InlineFrame> inlineFrames;
     if (frames.size() <= 1)
-        return inlineFrames;
+        return;
     inlineFrames.reserveInitialCapacity(frames.size());
-    inlineFrames.append({ 0, 0, 0, false, false });
+    inlineFrames.appendWithinCapacity(AOT::InlineFrame { 0, 0, 0, false, false });
     for (size_t index = 1; index < frames.size(); ++index) {
         const InlineFrame& frame = frames[index];
         CodeRole roleShown = program.at(frame.callee).isCoroutine() ? CodeRole::CoroutineBody : CodeRole::Body;
-        inlineFrames.append({ frame.parent, inlineCallSites[index], callees.indexOf(frame.callee, roleShown), frame.isTailCall, frame.isConstruction, frame.calledBuiltin });
+        inlineFrames.appendWithinCapacity(AOT::InlineFrame { frame.parent, inlineCallSites[index], callees.indexOf(frame.callee, roleShown), frame.isTailCall, frame.isConstruction, frame.calledBuiltin });
     }
-    return inlineFrames;
 }
 
 static void describeSites(const DescribedUnit& described, CodeRecords& records, EmittedCode& emitted, CodeBody& body, SiteDescription& sites)
 {
     LinkBuffer& linkBuffer = emitted.buffer.linkBuffer();
     sites.numberOfSitesWithoutCode = records.sites.numberOfSitesWithoutCode;
-    sites.frameMapWords = WTF::move(records.frameMaps.words);
+    if (!records.frameMaps.words.isEmpty())
+        sites.frameMapWords = WTF::move(records.frameMaps.words);
     collectFaultingAccesses(described, records, emitted.procedure, linkBuffer, body, sites.faultingAccesses);
-    sites.pollSites = WTF::move(records.traps.pollSites);
-    AOT::sortInLine(sites.pollSites, { }, &PollSite::offset);
+    if (!records.traps.pollSites.isEmpty()) {
+        sites.pollSites = WTF::move(records.traps.pollSites);
+        AOT::sortInLine(sites.pollSites, { }, &PollSite::offset);
+    }
 
     SiteReferencesInOrder references(body, sites);
     size_t numberOfFrames = described.code.inlineFrames().size();
@@ -588,7 +618,7 @@ static void describeSites(const DescribedUnit& described, CodeRecords& records, 
         sites.positions.shrink(1);
         return;
     }
-    sites.inlineFrames = describeInlineFrames(described.program, described.code, records.sites, callees);
+    describeInlineFrames(described.program, described.code, records.sites, callees, sites.inlineFrames);
 }
 
 static Vector<CodeEntry, 1> describeEntriesOfUnit(const CodeRecords& records, const Machine::Procedure& procedure, LinkBuffer& linkBuffer)
@@ -616,13 +646,14 @@ static void describeBody(CodeRecords& records, EmittedCode& emitted, CodeBody& b
     LinkBuffer& linkBuffer = emitted.buffer.linkBuffer();
     body.relocations = WTF::move(emitted.relocations);
     records.stubCalls.describeCalls(body.relocations.span(), body, &linkBuffer);
-    records.mentions.moveTo(body);
-    std::span<const uint8_t> bytes = emitted.buffer.bytes();
-    body.bytes.reserveInitialCapacity(bytes.size());
-    body.bytes.append(bytes);
+    if (!records.mentions.isEmpty())
+        records.mentions.moveTo(body);
+    body.bytes = emitted.buffer.takeBytes();
     body.entries = describeEntriesOfUnit(records, emitted.procedure, linkBuffer);
-    Machine::describeConstants(emitted.procedure, body.constants);
-    Machine::describeJumpTables(emitted.procedure, linkBuffer, body.jumpTables);
+    if (!emitted.procedure.constantData().empty())
+        Machine::describeConstants(emitted.procedure, body.constants);
+    if (!emitted.procedure.jumpTables().empty())
+        Machine::describeJumpTables(emitted.procedure, linkBuffer, body.jumpTables);
 }
 
 static void describeFrameOfUnit(const CodeRecords& records, EmittedCode& emitted, FrameDescription& frame)
@@ -640,7 +671,8 @@ static void describeFrameOfUnit(const CodeRecords& records, EmittedCode& emitted
     frame.stackUsedAtCalls = records.frame.stackUsedAtCalls;
     frame.isEnteredWithoutStackCheck = emitted.stackChecks.isEnteredWithoutStackCheck;
     frame.isProvenToFitOnStack = emitted.stackChecks.isProvenToFitOnStack;
-    frame.prologueChecks = linkStackChecks(linkBuffer, records);
+    if (!records.traps.stackChecks.isEmpty())
+        frame.prologueChecks = linkStackChecks(linkBuffer, records);
     if (!frame.hasFrameRecord) {
         for (const PrologueCheck& check : frame.prologueChecks) {
             RELEASE_ASSERT(frame.frameRanges.isEmpty() || frame.frameRanges.last().end <= check.callOffset);

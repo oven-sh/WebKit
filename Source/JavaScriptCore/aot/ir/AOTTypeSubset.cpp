@@ -120,29 +120,18 @@ static bool areLayoutsSubset(TypeReader reader, LayoutSetID layouts, LayoutSetID
     });
 }
 
-static bool isCopiedFromSomeMember(const ObjectTable& objects, ObjectID copy, const SetView<ObjectID, ObjectSetID>& forms)
-{
-    for (ObjectID form = objects.at(copy).sharedForm; form; form = objects.at(form).sharedForm) {
-        if (forms.contains(form))
-            return true;
-    }
-    return false;
-}
-
 static bool areNamedObjectsSubset(TypeReader reader, const Type& type, const Type& of)
 {
     if (isInternedSetSubset(reader, type.objects, of.objects))
         return true;
-    bool namesCopies = type.traitsOfNamed.contains(ObjectTrait::IsOfInstance);
-    if (!of.hasUnknown() && !namesCopies)
+    if (!of.hasUnknown())
         return false;
 
-    const ObjectTable& objects = reader.objects();
     auto named = reader.at(type.objects);
     auto namedByHolder = membersToCompare(reader, of.objects);
     bool allAreInside = true;
     forEachAddedMember(named.untyped(), namedByHolder.untyped(), [&](uint32_t member) {
-        allAreInside = allAreInside && ((namesCopies && isCopiedFromSomeMember(objects, ObjectID(member), namedByHolder)) || surelyFitsUnknownOf(reader, ObjectID(member), of));
+        allAreInside = allAreInside && surelyFitsUnknownOf(reader, ObjectID(member), of);
     });
     return allAreInside;
 }
@@ -265,15 +254,9 @@ static bool namedObjectsMayBeSameObject(TypeReader reader, ObjectSetID a, Object
     if (!a || !b)
         return false;
 
-    const ObjectTable& objects = reader.objects();
-    auto namedByFirst = reader.at(a);
-    auto namedBySecond = reader.at(b);
-    ObjectSetAliasIndex index(reader, namedBySecond);
-    bool secondNamesAlias = namedByFirst.anyOf([&](ObjectID first) {
+    ObjectSetAliasIndex index(reader, reader.at(b));
+    return reader.at(a).anyOf([&](ObjectID first) {
         return index.namesAliasOf(first);
-    });
-    return secondNamesAlias || namedBySecond.anyOfWithin(objects.firstObjectOfInstances(), objects.size(), [&](ObjectID second) {
-        return namedByFirst.contains(objects.at(second).sharedForm);
     });
 }
 

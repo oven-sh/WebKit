@@ -50,6 +50,7 @@ struct ModuleData {
         NeedsLink = 1 << 3,
         ReachesUncompiledCode = 1 << 4,
         HasDynamicStarExport = 1 << 5,
+        ExportsStayInCompiledCode = 1 << 5,
         IsEntryPoint = 1 << 6,
         KeepsError = 1 << 7,
         HasDeferredRequest = 1 << 8,
@@ -100,7 +101,8 @@ struct ModuleData {
     bool isSimple() const { return has(Flag::IsSimple); }
     bool needsLink() const { return has(Flag::NeedsLink); }
     bool reachesUncompiledCode() const { return has(Flag::ReachesUncompiledCode); }
-    bool hasDynamicStarExport() const { return has(Flag::HasDynamicStarExport); }
+    bool hasDynamicStarExport() const { return kind != ModuleKind::CommonJs && has(Flag::HasDynamicStarExport); }
+    bool exportsStayInCompiledCode() const { return kind == ModuleKind::CommonJs && has(Flag::ExportsStayInCompiledCode); }
     bool isEntryPoint() const { return has(Flag::IsEntryPoint); }
     bool keepsError() const { return has(Flag::KeepsError); }
     bool hasDeferredRequest() const { return kind != ModuleKind::CommonJs && has(Flag::HasDeferredRequest); }

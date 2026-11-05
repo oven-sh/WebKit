@@ -16,6 +16,7 @@
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include <algorithm>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <wtf/BitVector.h>
@@ -34,6 +35,8 @@ struct SideTableScratch {
     Vector<uint8_t> frameRanges;
     Vector<uint8_t> handlers;
     Vector<std::pair<uint32_t, uint32_t>, 8> constructedCallees;
+    Vector<uint8_t> stream;
+    Vector<uint8_t> roomForPositions;
 };
 
 struct HashedFrameMaps {
@@ -66,6 +69,49 @@ static void collectOffsetsAskedForFrame(Vector<uint32_t, 32>& offsets, const Com
         std::ranges::sort(offsets);
 }
 
+static bool eachListOfOffsetsAskedForFrameIsInOrder(const CompiledCode& code)
+{
+    return std::ranges::is_sorted(code.body.returnSites, { }, &ReturnSite::offset)
+        && std::ranges::is_sorted(code.sites.faultingAccesses, { }, &FaultingAccess::codeOffset)
+        && std::ranges::is_sorted(code.sites.pollSites, { }, &PollSite::returnOffset);
+}
+
+static void forEachOffsetAskedForFrameInOrder(Vector<uint32_t, 32>& offsets, const CompiledCode& code, const Invocable<void(uint32_t)> auto& functor)
+{
+    if (!eachListOfOffsetsAskedForFrameIsInOrder(code)) {
+        collectOffsetsAskedForFrame(offsets, code);
+        for (uint32_t offset : offsets)
+            functor(offset);
+        return;
+    }
+    constexpr uint64_t none = std::numeric_limits<uint64_t>::max();
+    auto offsetInFrontOf = [](uint32_t returnOffset) -> uint64_t {
+        RELEASE_ASSERT(returnOffset);
+        return returnOffset - 1;
+    };
+    const ReturnSite* site = code.body.returnSites.begin();
+    const ReturnSite* endOfSites = code.body.returnSites.end();
+    const FaultingAccess* access = code.sites.faultingAccesses.begin();
+    const FaultingAccess* endOfAccesses = code.sites.faultingAccesses.end();
+    const PollSite* poll = code.sites.pollSites.begin();
+    const PollSite* endOfPolls = code.sites.pollSites.end();
+    uint64_t offsetOfSite = site != endOfSites ? offsetInFrontOf(site->offset) : none;
+    uint64_t offsetOfAccess = access != endOfAccesses ? access->codeOffset : none;
+    uint64_t offsetOfPoll = poll != endOfPolls ? offsetInFrontOf(poll->returnOffset()) : none;
+    for (;;) {
+        uint64_t offset = std::min(std::min(offsetOfSite, offsetOfAccess), offsetOfPoll);
+        if (offset == none)
+            return;
+        functor(static_cast<uint32_t>(offset));
+        if (offset == offsetOfSite)
+            offsetOfSite = ++site != endOfSites ? offsetInFrontOf(site->offset) : none;
+        else if (offset == offsetOfAccess)
+            offsetOfAccess = ++access != endOfAccesses ? access->codeOffset : none;
+        else
+            offsetOfPoll = ++poll != endOfPolls ? offsetInFrontOf(poll->returnOffset()) : none;
+    }
+}
+
 static void encodeFrameRanges(SideTableScratch& scratch, const CompiledCode& code)
 {
     Vector<uint8_t>& bytes = scratch.frameRanges;
@@ -76,25 +122,25 @@ static void encodeFrameRanges(SideTableScratch& scratch, const CompiledCode& cod
     ranges.shrink(0);
     ranges.append(code.frame.frameRanges.span());
     AOT::sortInLine(ranges, { }, &CodeRange::begin);
-    size_t nextRange = 0;
+    const CodeRange* nextRange = ranges.span().data();
+    const CodeRange* endOfRanges = nextRange + ranges.size();
     uint32_t endOfRangesPassed = 0;
     auto hasFrameAt = [&](uint32_t offset) {
-        for (; nextRange < ranges.size() && ranges[nextRange].begin <= offset; ++nextRange)
-            endOfRangesPassed = std::max(endOfRangesPassed, ranges[nextRange].end);
+        for (; nextRange != endOfRanges && nextRange->begin <= offset; ++nextRange)
+            endOfRangesPassed = std::max(endOfRangesPassed, nextRange->end);
         return offset < endOfRangesPassed;
     };
     bool hasFrame = false;
     uint32_t previousChange = 0;
     uint32_t endOfLastUnitAsked = 0;
-    collectOffsetsAskedForFrame(scratch.offsetsAskedForFrame, code);
-    for (uint32_t offset : scratch.offsetsAskedForFrame) {
+    forEachOffsetAskedForFrameInOrder(scratch.offsetsAskedForFrame, code, [&](uint32_t offset) ALWAYS_INLINE_LAMBDA {
         if (hasFrameAt(offset) != hasFrame) {
             SideTableParts::appendFrameChange(bytes, previousChange, endOfLastUnitAsked);
             previousChange = endOfLastUnitAsked;
             hasFrame = !hasFrame;
         }
         endOfLastUnitAsked = (offset / codeOffsetUnit + 1) * codeOffsetUnit;
-    }
+    });
 }
 
 static uint64_t hashFrameMapWords(std::span<const uint32_t> words)
@@ -218,14 +264,17 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
                 .constructedCallees = scratch.constructedCallees.span(),
                 .callSites = callSites[position].span(),
             };
-            SideTableParts::append(streams[position], inputs);
+            scratch.stream.shrink(0);
+            SideTableParts::append(scratch.stream, inputs);
+            streams[position].reserveInitialCapacity(scratch.stream.size());
+            streams[position].append(scratch.stream.span());
             result.flags[position] = inputs.flags();
             if (!hasPositions)
                 continue;
             bool beginsGroup = !(position % PositionIndex::functionsBetween);
             if (beginsGroup)
                 placesInChunks[position / PositionIndex::functionsBetween] = static_cast<uint32_t>(positions.size());
-            encodePositions(positions, sites, callSites[position].span().data(), beginsGroup ? OwnPosition { } : OwnPosition::of(functions[position - 1].sites));
+            encodePositions(positions, scratch.roomForPositions, sites, beginsGroup ? OwnPosition { } : OwnPosition::of(functions[position - 1].sites));
         }
     });
 

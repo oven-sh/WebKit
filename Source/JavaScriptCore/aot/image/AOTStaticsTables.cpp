@@ -100,7 +100,7 @@ void nameVariablesThatHeapSnapshotsShow(const TableInputs& inputs, const Gathere
             return isVariableOfStaticsNamed(planned, id, names, mentions);
         case Typed::VariableStorage::ClosureTable: {
             FunctionID function = planned.function || id.index() >= program.variables.size() ? planned.function : program.at(id).function;
-            return function && inputs.plan.hasClosureCell(function);
+            return function && inputs.plan.hasClosureCell(function) && isClosureCellNamed(function, names, mentions);
         }
         }
         RELEASE_ASSERT_NOT_REACHED();

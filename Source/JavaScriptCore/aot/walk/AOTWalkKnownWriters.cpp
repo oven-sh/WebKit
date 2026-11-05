@@ -29,16 +29,16 @@ static_assert(perObjectHeaps.containsAll(heapsOfObjectsJudgedInKnownWriters));
 static_assert(!perObjectHeaps.contains(AbstractHeap::MemberGuards));
 
 static constexpr OptionSet<FactOfCell> factsOfCellKnownInKnownWriters {
-    FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed
+    FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark
 };
 
 static OptionSet<FactOfCell> factsOfCellEndedInKnownWriters(const LocationMasks& writes)
 {
     OptionSet<FactOfCell> ended = OptionSet<FactOfCell>::fromRaw(static_cast<OptionSet<FactOfCell>::StorageType>(~factsOfCellKnownInKnownWriters.toRaw()));
     if (writes.contains(AbstractHeap::ShapeWords))
-        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
+        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
     if (writes.contains(AbstractHeap::NamedProperties))
-        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
+        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
     if (writes.contains(AbstractHeap::OrderWords))
         ended.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
     if (writes.contains(AbstractHeap::PrototypeLinks))
@@ -58,8 +58,10 @@ void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<b
         return isWrittenOutsideObjects || !answer.holder || mayBeWritten(answer.holder);
     };
     m_answers.endWhatIsWritten(effects, endsAnswer);
-    if (!holdsNoRecord() && !effects.writes.isEmpty())
+    if (!holdsNoRecord() && !effects.writes.isEmpty()) {
         heldToWrite().endWhatIsWritten(effects, mayBeWritten, mayEndGuard);
+        noteKindsOfRecordsLeft();
+    }
 }
 
 void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard)>& mayEndGuard)
@@ -215,8 +217,6 @@ static bool makesNewCellInKnownWriters(const Operation& made)
 {
     Opcode opcode = made.opcode;
     if (resultRuleOf(opcode) != ResultRule::Allocation || boundToOf(opcode) == BoundTo::Site || made.traits().mayRunOtherCode())
-        return false;
-    if (opcode == Opcode::NewRegExp && made.isNeverToldApart())
         return false;
     uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
     for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
@@ -421,10 +421,8 @@ static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walke
     return { };
 }
 
-static bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
+static NEVER_INLINE bool writesFreshObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
 {
-    if (effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !walker.mayBeginTurnAgainInClosedCopy())
-        return false;
     Effects beside = effects;
     beside.writes.remove(perObjectHeaps);
     if (!beside.mayBeRunAgainUnseen())
@@ -436,21 +434,19 @@ static bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& 
     });
 }
 
+static ALWAYS_INLINE bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
+{
+    if (effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !walker.mayBeginTurnAgainInClosedCopy())
+        return false;
+    return writesFreshObjectsOfTurnAloneInKnownWriters(walker, draft, effects);
+}
+
 static constexpr AbstractHeapSet heapsEndedByWriterInKnownWriters = perObjectHeaps | AbstractHeapSet { AbstractHeap::MemberGuards };
 static constexpr uint64_t objectsOfAnyLayoutInKnownWriters = UINT64_MAX;
 
-void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
+static NEVER_INLINE void endWhatWriterWritesInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
 {
     WalkState& state = walker.state();
-    if (!writesObjectsOfTurnAloneInKnownWriters(walker, draft, effects))
-        state.noteWhatOperationDoes(effects);
-    if (draft.opcode == Opcode::ReleaseEnvironment)
-        state.noteSomethingWasDoneInTurn();
-    if (!walker.has(Mechanism::TypedOperations) || effects.mayRunOtherCode() || !effects.writes.containsAny(heapsEndedByWriterInKnownWriters) || state.isEmpty()) {
-        state.invalidate(effects);
-        return;
-    }
-
     Effects ended = effects;
     GuardsEndedInKnownWriters guards;
     if (effects.writes.contains(AbstractHeap::MemberGuards)) {
@@ -520,6 +516,38 @@ void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effe
             return !type || (bitsOfLayoutsOf(walker, type) & layoutsWritten);
         };
         state.invalidate(ended, mayBeWritten, mayEndGuard);
+    }
+}
+
+static void endWhatOperationWritesOrRunsInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
+{
+    WalkState& state = walker.state();
+    if (!writesObjectsOfTurnAloneInKnownWriters(walker, draft, effects))
+        state.noteWhatOperationDoes(effects);
+    if (draft.opcode == Opcode::ReleaseEnvironment)
+        state.noteSomethingWasDoneInTurn();
+    if (!walker.has(Mechanism::TypedOperations) || effects.mayRunOtherCode() || !effects.writes.containsAny(heapsEndedByWriterInKnownWriters) || state.isEmpty()) {
+        state.invalidate(effects);
+        return;
+    }
+    endWhatWriterWritesInKnownWriters(walker, draft, effects);
+}
+
+void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
+{
+    if ((draft.opcode != Opcode::PutSlot && draft.opcode != Opcode::PutSlotOrAdd) || testsItsOwnGuess(draft)
+        || !storeMaySetMarkOfCell(walker, membersOf(walker.types(), draft.receivers()), draft.key(), walker.typeOf(draft.valueOperand()))) {
+        endWhatOperationWritesOrRunsInKnownWriters(walker, draft, effects);
+        return;
+    }
+    Effects effectsWithMark = effects;
+    effectsWithMark.writes.add(AbstractHeap::NamedProperties);
+    endWhatOperationWritesOrRunsInKnownWriters(walker, draft, effectsWithMark);
+    const Code& code = walker.code();
+    for (Reference name = draft.objectOperand(); name.isValue(); name = Reference::value(code.at(name.id()).operand(0))) {
+        walker.state().endFactsOfCell(name, FactOfCell::BearsNoMark);
+        if (!opcodesThatGiveSameCell.contains(code.at(name.id()).opcode))
+            break;
     }
 }
 

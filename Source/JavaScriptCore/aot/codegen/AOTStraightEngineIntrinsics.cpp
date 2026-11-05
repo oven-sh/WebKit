@@ -62,7 +62,7 @@ static void generateIsGeneratorSuspendedAtStart(StraightEmitter& emitter, const 
 
 static bool takesBoxedValueOfIteratorResult(const PlacedSlot& slot)
 {
-    return slot.storage == SlotStorage::Inline && slot.representation == SlotRepresentation::JSValue && !slot.type && !slot.holdsAccessor;
+    return slot.storage == SlotStorage::Inline && slot.representation == SlotRepresentation::JSValue && !slot.typeInLayoutRecord() && !slot.holdsAccessor;
 }
 
 static bool staysEmptyInZeroedIteratorResult(const PlacedSlot& slot)
@@ -82,7 +82,7 @@ static void generateCreateIteratorResult(StraightEmitter& emitter, const BodyVal
 
     const PlannedLayout& planned = emitter.plan().layout(layout);
     std::optional<PlacedAllocation> placed = emitter.plan().allocation(program, layout, AllocationClassID(), fields);
-    bool hasStraightForm = placed && !placed->isBornUnfinished && !planned.isEscapedOffset;
+    bool hasStraightForm = placed && !placed->isBornUnfinished && !planned.cellsAreHandedBack;
     for (FieldIndex field = 0; hasStraightForm && field < planned.slots.size(); ++field) {
         const PlacedSlot& slot = planned.slots[field];
         if (field == *valueField || field == *doneField)

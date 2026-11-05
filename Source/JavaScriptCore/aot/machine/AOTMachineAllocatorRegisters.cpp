@@ -68,7 +68,16 @@ static bool registerFileHoldsOnlyCopy(const Allocator& allocator, Reg reg)
 
 static ALWAYS_INLINE bool canDropFromRegisterFileForFree(const Allocator& allocator, Reg reg)
 {
-    return classifyRegisterFileVictim(allocator, reg, allocator.nextUseOf(allocator.m_valueIn[reg.index()])) >= RegisterFileVictim::IsMadeAgain;
+    static_assert(RegisterFileVictim::IsMemberOfTuple < RegisterFileVictim::IsMadeAgain && RegisterFileVictim::NeedsStore < RegisterFileVictim::IsMadeAgain && RegisterFileVictim::LiesInMemory < RegisterFileVictim::IsMadeAgain);
+    static_assert(RegisterFileVictim::IsHeldTwice > RegisterFileVictim::IsMadeAgain && RegisterFileVictim::IsDead > RegisterFileVictim::IsMadeAgain);
+    const Operation* value = allocator.m_valueIn[reg.index()];
+    if (allocator.nextUseOf(value) == noPosition)
+        return true;
+    if (!value->type().isNumeric())
+        return false;
+    if (allocator.m_values[value->index()].registers & ~maskOf(reg))
+        return true;
+    return allocator.m_valueFacts[value->index()].has(ValueFlag::IsRematerialized);
 }
 
 static RegisterFileSearch searchRegisterFileForVictim(const Allocator& allocator, RegisterMask candidates)
@@ -104,10 +113,17 @@ static const Operation* currentOperationForRegisterFileFailure(const Allocator& 
     return index < block->size() ? block->at(index) : nullptr;
 }
 
-static bool rematerializedValueNamesFrame(const Operation* value)
+static bool someChildOfRematerializedValueNamesFrame(const Operation*);
+
+static ALWAYS_INLINE bool rematerializedValueNamesFrame(const Operation* value)
 {
     if (value->opcode() == FramePointer || value->opcode() == SlotBase)
         return true;
+    return value->numChildren() && someChildOfRematerializedValueNamesFrame(value);
+}
+
+static NEVER_INLINE bool someChildOfRematerializedValueNamesFrame(const Operation* value)
+{
     for (const Operation* child : value->children()) {
         if (rematerializedValueNamesFrame(child))
             return true;
@@ -153,7 +169,7 @@ bool Allocator::registerFileIsConsistent() const
 uint32_t Allocator::findReadFromInList(const Operation* value, Position position) const
 {
     if (m_listsOfReads.isEmpty())
-        m_listsOfReads.fill(m_arena, m_order.mostOperations(), std::span<const uint32_t> { });
+        m_listsOfReads.grow(m_arena, m_order.mostOperations());
     std::span<const uint32_t>& list = m_listsOfReads[value->index()];
     if (list.empty()) {
         size_t numberOfReads = 0;
@@ -227,12 +243,6 @@ bool Allocator::canDropSomeRegisterForFree(RegisterMask candidates) const
             return true;
     }
     return false;
-}
-
-Reg Allocator::chooseVictim(Bank bank, RegisterMask allowed) const
-{
-    RegisterFileSearch search = searchRegisterFileForVictim(*this, allowed & m_bound & m_file.allocatableIn(bank));
-    return search.dead ? lowestRegisterIn(search.dead) : search.victim;
 }
 
 void Allocator::evict(Reg reg)

@@ -139,26 +139,7 @@ static bool isAllocationWhoseStoresAreHeldBack(const BuiltinTable& builtins, con
     uint8_t& answerOfSchema = answersOfSchema[static_cast<unsigned>(opcode)];
     if (answerOfSchema == opcodeOfHeldBackAllocationIsNotLookedUp)
         answerOfSchema = isOpcodeOfAllocationWhoseStoresAreHeldBack(opcode) ? isOpcodeOfHeldBackAllocation : isNoOpcodeOfHeldBackAllocation;
-    if (answerOfSchema == isNoOpcodeOfHeldBackAllocation)
-        return false;
-    return !((opcode == Opcode::Data || opcode == Opcode::NewRegExp) && made.isNeverToldApart());
-}
-
-static bool isClosureWhoseStoresAreHeldBack(const Operation& made)
-{
-    if (made.opcode != Opcode::NewClosure || made.isHeldByClosureTable() || made.isMadeOnDemand())
-        return false;
-    switch (made.closureForm()) {
-    case ClosureForm::Full:
-    case ClosureForm::Slim:
-        break;
-    case ClosureForm::Deferred:
-    case ClosureForm::Singleton:
-        return false;
-    }
-
-    EffectTraits traits = made.traits();
-    return !traits.mayWriteWhatIsSeen() && !traits.mayRunOtherCode();
+    return answerOfSchema != isNoOpcodeOfHeldBackAllocation;
 }
 
 static constexpr uint8_t operandWrittenByHeldBackStoreIsNotLookedUp = 0;
@@ -167,13 +148,11 @@ static constexpr uint8_t firstOperandWrittenByHeldBackStore = 2;
 
 bool Sweep::isStoreIntoOwnObject(const Operation& operation, ValueID& object)
 {
-    bool isPlainStoreToClosure = operation.opcode == Opcode::PropSet && operation.isPlainStoreToClosure();
-
-    if (effectRuleOf(operation.opcode) == EffectRule::Access && accessOf(operation.opcode) == Access::Store && !isPlainStoreToClosure)
+    if (effectRuleOf(operation.opcode) == EffectRule::Access && accessOf(operation.opcode) == Access::Store)
         return false;
 
     EffectTraits traits = operation.traits();
-    if ((traits.mayThrowByRule() && !isPlainStoreToClosure) || traits.mayBeTerminated() || traits.mayRunOtherCode() || traits.mayWriteOutsideObjects())
+    if (traits.mayThrowByRule() || traits.mayBeTerminated() || traits.mayRunOtherCode() || traits.mayWriteOutsideObjects())
         return false;
 
     uint8_t& written = m_operandsWrittenByHeldBackStores[static_cast<unsigned>(operation.opcode)];
@@ -191,7 +170,7 @@ bool Sweep::isStoreIntoOwnObject(const Operation& operation, ValueID& object)
     const Operation& made = m_code->at(allocation);
     if (made.blockIndex == Operation::noBlock)
         return false;
-    if (isPlainStoreToClosure ? !isClosureWhoseStoresAreHeldBack(made) : !isAllocationWhoseStoresAreHeldBack(m_inputs->program.builtins(), made, m_opcodesOfAllocationsWhoseStoresAreHeldBack))
+    if (!isAllocationWhoseStoresAreHeldBack(m_inputs->program.builtins(), made, m_opcodesOfAllocationsWhoseStoresAreHeldBack))
         return false;
 
     object = allocation;

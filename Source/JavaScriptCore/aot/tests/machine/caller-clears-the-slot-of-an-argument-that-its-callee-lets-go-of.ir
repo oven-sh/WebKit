@@ -7,6 +7,7 @@
 # CHECK-LABEL: unit f6:Body
 # CHECK: reload s0 ->
 # CHECK-NEXT: clearSpill s0
+# REQUIRES(KEEPS): x86_64 unsanitized-code
 # RUN(KEEPS): allocate f7:Body mechanisms=none+DirectCalls
 # KEEPS-LABEL: unit f7:Body
 # KEEPS: reload s0 ->

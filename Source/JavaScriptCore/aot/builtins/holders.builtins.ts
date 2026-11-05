@@ -673,7 +673,7 @@ export default b.declarations(
       capability: "js",
       throws: true,
       runsOnlyOperandCode: true,
-      uses: { tag: [b.readAsLocale, b.runs("ToPrimitive")], options: optionBag(localeOptions) },
+      uses: { tag: [b.readAsLocale, b.runs("ToPrimitive")], options: [b.mayReplaceLocale, ...optionBag(localeOptions)] },
       implementation: b.hostCall,
     },
     proto: {

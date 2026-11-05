@@ -17,7 +17,7 @@ v(EnterHandlerOfJob, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoic
 v(EnterGeneratorFrame, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterGeneratorFrame)
 v(RestoreSavedFrameToStack, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RestoreSavedFrameToStack)
 
-v(StepAsyncGenerator, CalledByCode, (InAsyncFunction, InAsyncGenerator, AwaitedInAsyncFunction, AwaitedInAsyncGenerator), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepAsyncGenerator)
+v(StepAsyncGenerator, CalledByCode, (InAsyncFunction, InAsyncGenerator), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepAsyncGenerator)
 v(RunAsyncGeneratorStep, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
 v(StepAsyncIteratorInEngine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
 v(NewHeapFrame, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewHeapFrame)

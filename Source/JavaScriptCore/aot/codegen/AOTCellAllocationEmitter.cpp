@@ -298,21 +298,9 @@ LValue CellAllocationEmitter::slotOfFrameCell(const OperationContext& context, s
         m_slotsOfClosuresLent.append(SlotOfClosuresLent { size, slot, made.blockIndex, call });
         return m_out.slotBase(slot);
     }
-    uint32_t numberAmongLoans = made.opcode == Opcode::NewObject || made.opcode == Opcode::NewClosure ? made.numberAmongLoans() : 0;
-    if (!numberAmongLoans) {
-        LValue slot = m_out.lockedStackSlot(size);
-        slot->slot()->setIsDeadAtSuspensions(true);
-        return slot;
-    }
-
-    for (const SlotOfLoans& shared : m_slotsOfLoans) {
-        if (shared.numberAmongLoans == numberAmongLoans && shared.size == size)
-            return m_out.slotBase(shared.slot);
-    }
-    Machine::StackSlot* slot = m_proc.addStackSlot(size);
-    slot->setIsDeadAtSuspensions(true);
-    m_slotsOfLoans.append(SlotOfLoans { numberAmongLoans, size, slot });
-    return m_out.slotBase(slot);
+    LValue slot = m_out.lockedStackSlot(size);
+    slot->slot()->setIsDeadAtSuspensions(true);
+    return slot;
 }
 
 CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& context, size_t size)

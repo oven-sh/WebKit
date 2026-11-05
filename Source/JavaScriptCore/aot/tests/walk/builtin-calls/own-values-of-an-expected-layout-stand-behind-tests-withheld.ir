@@ -1,8 +1,0 @@
-# which keys an object has by now is a guess about its state. Without Guesses no test is opened, and the call stays
-# RUN: walk f1 mechanisms=all-Guesses
-# CHECK-LABEL: code f1:Body
-# CHECK-NOT: HasKeyOrder
-# CHECK: ObjectValues
-# RUN(NEVER): walk f1 mechanisms=all-Guesses
-# NEVER-NOT: = NewArray
-# PROGRAM-OF: own-values-of-an-expected-layout-stand-behind-tests.ir

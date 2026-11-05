@@ -44,7 +44,6 @@ static_assert(sizeof(LayoutSetData) == 16 && isImageRecord<LayoutSetData>);
 
 static constexpr uint16_t fieldIsOptional = 1u << 0;
 static constexpr uint16_t fieldIsOutOfLine = 1u << 1;
-static constexpr uint16_t fieldIsStoredOnce = 1u << 2;
 static constexpr uint16_t fieldIsNeverStoredWithOtherType = 1u << 3;
 static constexpr uint16_t fieldMayExistWithoutStorage = 1u << 4;
 static constexpr uint16_t fieldDeferredClosureCapturesObject = 1u << 5;
@@ -107,6 +106,7 @@ struct alignas(64) FieldExit {
     uint16_t extraPropertiesCellSize;
     uint16_t offsetOfExtraPropertiesWord;
     bool wasInSlot;
+    static constexpr uint8_t objectMayBearMark = 1;
     uint8_t widthOfSlot;
     bool isDefinition;
     uint8_t attributes;

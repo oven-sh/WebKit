@@ -14,6 +14,7 @@
 #include "AOTTypeTable.h"
 #include <algorithm>
 #include <optional>
+#include <span>
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -30,6 +31,19 @@ inline TypeID storedTypeOf(const AccessContext& context, LayoutSetID receivers, 
             taken = taken ? context.types.intersectionOf(taken, type) : type;
     }
     return taken;
+}
+inline TypeID typeHeldBySlotsOf(const AccessContext& context, std::span<const LayoutID> members, PropertyKeyID key)
+{
+    const SlotPlan& slots = context.plan.slots();
+    TypeID held;
+    for (LayoutID member : members) {
+        std::optional<FieldIndex> field = slots.findField(context.program, member, key);
+        TypeID type = field ? slots.slot(member, *field).type : TypeID();
+        if (!type)
+            return { };
+        held = held ? context.types.unionOf(held, type) : type;
+    }
+    return held;
 }
 inline TypeID testableStoredTypeOf(const AccessContext& context, TypeID stored, TypeID fieldType)
 {

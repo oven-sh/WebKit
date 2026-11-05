@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
+#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
@@ -22,6 +23,7 @@ bool verifyModulesNamedInBodies(const Program&, BuildContext&);
 
 bool isValidPropertyKey(const PropertyKey&);
 bool hoistsFunctionsIntoVariables(ModuleKind);
+BitVector variablesThatRunTimeMayFill(const Program&);
 
 class ProgramVerifier {
     WTF_MAKE_NONCOPYABLE(ProgramVerifier);

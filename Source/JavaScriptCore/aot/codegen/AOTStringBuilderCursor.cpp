@@ -112,8 +112,6 @@ uint32_t bytesTakenFromReservation(const TypeArena& types, Opcode cursorOperatio
     case Opcode::JSONAppendNumber:
     case Opcode::JSONAppendValue:
         return jsonNumberBytes;
-    case Opcode::JSONAppendDate:
-        return jsonDateBytes;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

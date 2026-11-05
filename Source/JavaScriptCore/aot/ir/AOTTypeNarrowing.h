@@ -30,13 +30,11 @@ TypeID narrowByNotNullish(TypeArena&, TypeID source, EdgeSide);
 TypeID narrowByIntegerCase(const TypingContext&, TypeID source, int64_t caseValue);
 TypeID narrowByStringCase(const TypingContext&, TypeID source, StringID caseValue);
 TypeID narrowByOtherwise(TypeArena&, TypeID source, std::span<const int64_t> cases);
-TypeID narrowByOtherwise(TypeArena&, TypeID source, std::span<const StringID> cases);
 TypeID narrowByShapeCase(const TypingContext&, TypeID source, LayoutSetID caseLayouts);
 TypeID narrowByOtherwise(const TypingContext&, TypeID source, std::span<const LayoutSetID> cases);
 
 enum class ReadOfEmptySlot : uint8_t { IsRuledOut, GivesUndefined };
 TypeID narrowHolderByFieldValue(const TypingContext&, TypeID holder, PropertyKeyID, TypeID read, ReadOfEmptySlot = ReadOfEmptySlot::IsRuledOut);
-bool narrowsHolderToNothing(const TypingContext&, TypeID holder, PropertyKeyID, TypeID read, ReadOfEmptySlot = ReadOfEmptySlot::IsRuledOut);
 
 TypeID narrowResultByOtherResult(const TypingContext&, Opcode producer, OperandTypes operandsOfProducer, uint32_t testedResult, uint32_t narrowedResult, TypeID source, EdgeSide);
 

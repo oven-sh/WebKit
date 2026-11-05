@@ -321,8 +321,6 @@ static bool mayBeCellNobodyDescribes(const ObjectRecord& record)
     case ObjectKind::EscapedOfClass:
     case ObjectKind::EscapedWithoutShape:
         return true;
-    case ObjectKind::Site:
-        return record.origin == SiteOrigin::BuiltinResult || record.has(ObjectTrait::HasNoShape);
     case ObjectKind::Unknown:
     case ObjectKind::Builtin:
     case ObjectKind::EscapedFunctionsOfHolder:
@@ -444,7 +442,6 @@ static bool mayBeOfClass(const BuiltinTable& builtins, const ObjectRecord& recor
     case ObjectKind::HostObject:
     case ObjectKind::EscapedOfClass:
     case ObjectKind::EscapedWithoutShape:
-    case ObjectKind::Site:
         return true;
     case ObjectKind::CoroutineResult:
     case ObjectKind::RestArray:
@@ -512,7 +509,6 @@ static bool distinctIDsOfKindAreDistinctObjects(ObjectKind kind)
     case ObjectKind::ConstructedObject:
     case ObjectKind::Namespace:
     case ObjectKind::ModuleBuiltin:
-    case ObjectKind::Site:
         return true;
     case ObjectKind::Unknown:
     case ObjectKind::EscapedOfClass:
@@ -551,7 +547,6 @@ static bool mayBeBuiltinUnderAnotherName(TypeReader reader, const ObjectRecord& 
     case ObjectKind::Instance:
     case ObjectKind::Prototype:
     case ObjectKind::EscapedOfLayout:
-    case ObjectKind::Site:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -633,12 +628,6 @@ bool mayBeSameObject(TypeReader reader, ObjectID first, ObjectID second)
     const ObjectTable& objects = reader.objects();
     const ObjectRecord& a = objects.at(first);
     const ObjectRecord& b = objects.at(second);
-    if (a.sharedForm || b.sharedForm) {
-        if (a.sharedForm == second || b.sharedForm == first)
-            return true;
-        if (objects.sharedFormOf(first) == objects.sharedFormOf(second))
-            return false;
-    }
     if (a.kind == b.kind && distinctIDsOfKindAreDistinctObjects(a.kind))
         return false;
     if ((b.has(ObjectTrait::IsMerged) && objects.mergedFormOf(first) == second) || (a.has(ObjectTrait::IsMerged) && objects.mergedFormOf(second) == first))
@@ -661,16 +650,10 @@ bool mayBeSameObject(TypeReader reader, ObjectID first, ObjectID second)
 
 static constexpr ObjectKinds kindsThatMayBeClosure = kindsWith(ObjectKind::Builtin) | kindsWith(ObjectKind::ModuleBuiltin) | kindsWith(ObjectKind::EscapedFunctionsOfHolder);
 static constexpr ObjectKinds kindsNeverComparedByShape = kindsWith(ObjectKind::Builtin) | kindsWith(ObjectKind::ModuleBuiltin) | kindsWith(ObjectKind::Closure) | kindsWith(ObjectKind::Prototype);
-static constexpr ObjectKinds kindsThatAreNeverSite = kindsNeverComparedByShape | kindsWith(ObjectKind::Site);
 
 static bool isFoundBesideMergedFormByShape(const ObjectRecord& record)
 {
     return record.has(ObjectTrait::HasLayout) && !(kindsWith(record.kind) & kindsNeverComparedByShape);
-}
-
-static bool isCopyToldByNumberAlone(const ObjectRecord& record)
-{
-    return record.sharedForm && !distinctIDsOfKindAreDistinctObjects(record.kind);
 }
 
 ObjectSetAliasIndex::ObjectSetAliasIndex(TypeReader reader, const SetView<ObjectID, ObjectSetID>& members)
@@ -679,7 +662,7 @@ ObjectSetAliasIndex::ObjectSetAliasIndex(TypeReader reader, const SetView<Object
 {
 }
 
-void ObjectSetAliasIndex::lookAtMembersButClosuresAndSites()
+void ObjectSetAliasIndex::lookAtMembersButClosures()
 {
     if (std::exchange(m_hasLookedAtMembers, true))
         return;
@@ -688,21 +671,8 @@ void ObjectSetAliasIndex::lookAtMembersButClosuresAndSites()
         lookAtMember(member);
         return false;
     };
-    static_assert(ObjectKind::Closure < ObjectKind::Site);
     m_members.anyOfWithin(0, objects.firstOf(ObjectKind::Closure), lookAt);
-    m_members.anyOfWithin(objects.endOf(ObjectKind::Closure), objects.firstOf(ObjectKind::Site), lookAt);
-    m_members.anyOfWithin(objects.firstObjectOfInstances(), objects.size(), lookAt);
-}
-
-void ObjectSetAliasIndex::lookAtSites()
-{
-    if (std::exchange(m_hasLookedAtSites, true))
-        return;
-    const ObjectTable& objects = m_reader.objects();
-    m_members.anyOfWithin(objects.firstOf(ObjectKind::Site), objects.endOf(ObjectKind::Site), [&](ObjectID member) {
-        lookAtMember(member);
-        return false;
-    });
+    m_members.anyOfWithin(objects.endOf(ObjectKind::Closure), objects.size(), lookAt);
 }
 
 void ObjectSetAliasIndex::lookAtMember(ObjectID member)
@@ -714,14 +684,9 @@ void ObjectSetAliasIndex::lookAtMember(ObjectID member)
         m_namesUnknown = true;
         return;
     }
-    if (isCopyToldByNumberAlone(record)) {
-        if (m_sharedFormsOfCopies.find(record.sharedForm.index()))
-            return;
-        m_sharedFormsOfCopies.at(record.sharedForm.index());
-    }
     if (!isFoundBesideMergedFormByShape(record)) {
         ObjectID merged = objects.mergedFormOf(member);
-        if (merged != member && merged != record.sharedForm)
+        if (merged != member)
             m_mergedForms.at(merged.index());
     } else
         ASSERT(objects.mergedFormOf(member) == member || objects.mergedFormOf(member) == objects.escapedOf(record.layout));
@@ -734,8 +699,7 @@ void ObjectSetAliasIndex::lookAtMember(ObjectID member)
         m_kindsOfBuiltins.at(record.payload) |= kindsWith(record.kind);
         return;
     case ObjectKind::Closure:
-        m_copiesOfClosures.append(member);
-        return;
+        RELEASE_ASSERT_NOT_REACHED();
     case ObjectKind::Prototype:
         notePrototype(member, record);
         return;
@@ -757,7 +721,6 @@ void ObjectSetAliasIndex::lookAtMember(ObjectID member)
     case ObjectKind::Namespace:
     case ObjectKind::Instance:
     case ObjectKind::EscapedOfLayout:
-    case ObjectKind::Site:
         break;
     }
     noteShapeOf(record);
@@ -766,15 +729,12 @@ void ObjectSetAliasIndex::lookAtMember(ObjectID member)
 void ObjectSetAliasIndex::noteShapeOf(const ObjectRecord& record)
 {
     ObjectKinds kind = kindsWith(record.kind);
-    bool isCopy = isCopyToldByNumberAlone(record);
     if (record.has(ObjectTrait::HasLayout)) {
         const ObjectTable& objects = m_reader.objects();
-        if (!isCopy) {
-            ObjectKinds& spread = m_layouts.at(record.layout.index()).kindsSpread[mayHaveLayoutBelowTheOneNamed(objects, record)];
-            if (spread & kind)
-                return;
-            spread |= kind;
-        }
+        ObjectKinds& spread = m_layouts.at(record.layout.index()).kindsSpread[mayHaveLayoutBelowTheOneNamed(objects, record)];
+        if (spread & kind)
+            return;
+        spread |= kind;
         anyPossibleLayoutOf(objects, *m_reader.program(), record, [&](LayoutID layout) {
             noteLayout(layout, record);
             return false;
@@ -783,34 +743,23 @@ void ObjectSetAliasIndex::noteShapeOf(const ObjectRecord& record)
     }
     if (!mayBeCellNobodyDescribes(record))
         return;
-    auto note = [&](CellsNobodyDescribes& cells) {
-        if (isCopy)
-            cells.copies.add(record.sharedForm);
-        else
-            cells.kinds |= kind;
-    };
     bool hasClass = record.has(ObjectTrait::HasClass);
     for (CellsNobodyDescribes& cells : m_cellsNobodyDescribes) {
         if (cells.example->has(ObjectTrait::HasClass) == hasClass && (!hasClass || cells.example->builtinClass == record.builtinClass)) {
-            note(cells);
+            cells.kinds |= kind;
             return;
         }
     }
-    m_cellsNobodyDescribes.append(CellsNobodyDescribes { &record, 0 });
-    note(m_cellsNobodyDescribes.last());
+    m_cellsNobodyDescribes.append(CellsNobodyDescribes { &record, kind });
 }
 
 void ObjectSetAliasIndex::noteLayout(LayoutID layout, const ObjectRecord& ofMember)
 {
     ObjectKinds kind = kindsWith(ofMember.kind);
     LayoutOfMembers& known = m_layouts.at(layout.index());
-    if (isCopyToldByNumberAlone(ofMember))
-        known.copies.add(ofMember.sharedForm);
-    else {
-        if (known.kinds & kind)
-            return;
-        known.kinds |= kind;
-    }
+    if (known.kinds & kind)
+        return;
+    known.kinds |= kind;
 
     const Program& program = *m_reader.program();
     if (!(m_kindsWithLayoutOfCellWithoutClass & kind) && mayBeMadeWithLayout(m_reader.builtins(), program, ObjectRecord { }, layout))
@@ -835,11 +784,7 @@ void ObjectSetAliasIndex::notePrototype(ObjectID member, const ObjectRecord& rec
         m_askedOneByOne.append(member);
         return;
     }
-    LayoutOfMembers& known = m_layouts.at(declared.index());
-    if (isCopyToldByNumberAlone(record))
-        known.copiesOfPrototypes.add(record.sharedForm);
-    else
-        known.isOfPrototype = true;
+    m_layouts.at(declared.index()).isOfPrototype = true;
     if (FunctionID constructor = program.at(declared).constructor)
         m_constructorsOfPrototypes.at(constructor.index());
 }
@@ -855,14 +800,14 @@ void ObjectSetAliasIndex::noteFunctionPrototype(const ObjectRecord& record)
         m_layouts.at(declared.index()).isOfPrototypeOfConstructor = true;
 }
 
-bool ObjectSetAliasIndex::namesPrototypeUnderAnotherName(ObjectID sharedForm, const ObjectRecord& prototype)
+bool ObjectSetAliasIndex::namesPrototypeUnderAnotherName(const ObjectRecord& prototype)
 {
     const Program& program = *m_reader.program();
     LayoutID declared = declaredLayoutOf(program, LayoutID(prototype.payload));
     if (!declared)
         return false;
     const LayoutOfMembers* ofMembers = m_layouts.find(declared.index());
-    if (ofMembers && (ofMembers->isOfPrototype || ofMembers->isOfPrototypeOfConstructor || ofMembers->copiesOfPrototypes.holdOtherThan(sharedForm)))
+    if (ofMembers && (ofMembers->isOfPrototype || ofMembers->isOfPrototypeOfConstructor))
         return true;
     FunctionID constructor = program.at(declared).constructor;
     return constructor && m_functionsOfFunctionPrototypes.find(constructor.index());
@@ -880,7 +825,7 @@ bool ObjectSetAliasIndex::namesPrototypeOfClassOf(FunctionID constructor)
     if (!declared)
         return false;
     const LayoutOfMembers* ofMembers = m_layouts.find(declared.index());
-    return ofMembers && (ofMembers->isOfPrototype || ofMembers->copiesOfPrototypes.holdOtherThan({ }));
+    return ofMembers && ofMembers->isOfPrototype;
 }
 
 bool ObjectSetAliasIndex::namesBuiltinThatMayBeClosureOf(FunctionID ofLibrary)
@@ -958,33 +903,31 @@ std::span<const ObjectID> ObjectSetAliasIndex::closuresOfLibrary()
             return false;
         };
         m_members.anyOfWithin(objects.firstOf(ObjectKind::Closure), objects.endOf(ObjectKind::Closure), listIfOfLibrary);
-        for (ObjectID copy : m_copiesOfClosures)
-            listIfOfLibrary(copy);
     }
     return m_closuresOfLibrary.span();
 }
 
-bool ObjectSetAliasIndex::namesObjectOfShape(ObjectID sharedForm, const ObjectRecord& record)
+bool ObjectSetAliasIndex::namesObjectOfShape(ObjectID object, const ObjectRecord& record)
 {
     const BuiltinTable& builtins = m_reader.builtins();
     ObjectKinds kind = kindsWith(record.kind);
     ObjectKinds compared = distinctIDsOfKindAreDistinctObjects(record.kind) ? ~kind : ~ObjectKinds(0);
     auto areCompared = [&](const CellsNobodyDescribes& cells) {
-        return cells.kinds & compared || cells.copies.holdOtherThan(sharedForm);
+        return cells.kinds & compared;
     };
 
     if (record.has(ObjectTrait::HasLayout)) {
         const ObjectTable& objects = m_reader.objects();
         const Program& program = *m_reader.program();
         bool mayLieBelow = mayHaveLayoutBelowTheOneNamed(objects, record);
-        ASSERT(distinctIDsOfKindAreDistinctObjects(record.kind) || sharedForm == objects.instanceOf(record.layout) || sharedForm == objects.escapedOf(record.layout));
+        ASSERT_UNUSED(object, distinctIDsOfKindAreDistinctObjects(record.kind) || object == objects.instanceOf(record.layout) || object == objects.escapedOf(record.layout));
         const LayoutOfMembers& known = m_layouts.at(record.layout.index());
         if (known.kindsAsked[mayLieBelow] & kind)
             return known.kindsWithAlias[mayLieBelow] & kind;
 
         bool hasAlias = anyPossibleLayoutOf(objects, program, record, [&](LayoutID layout) {
             const LayoutOfMembers* ofMembers = m_layouts.find(layout.index());
-            if (ofMembers && (ofMembers->kinds & compared || ofMembers->copies.holdOtherThan(sharedForm)))
+            if (ofMembers && ofMembers->kinds & compared)
                 return true;
             return std::ranges::any_of(m_cellsNobodyDescribes, [&](const CellsNobodyDescribes& cells) {
                 return areCompared(cells) && mayBeMadeWithLayout(builtins, program, *cells.example, layout);
@@ -1016,9 +959,8 @@ bool ObjectSetAliasIndex::namesAliasOf(ObjectID object)
     static thread_local size_t numberOfAnswersSinceCheck = 0;
     if (++numberOfAnswersSinceCheck >= 16 + m_members.size()) {
         numberOfAnswersSinceCheck = 0;
-        const ObjectTable& objects = m_reader.objects();
         RELEASE_ASSERT(answer == m_members.anyOf([&](ObjectID member) {
-            return objects.at(member).sharedForm != object && mayBeSameObject(m_reader, object, member);
+            return mayBeSameObject(m_reader, object, member);
         }));
     }
 #endif
@@ -1030,22 +972,18 @@ bool ObjectSetAliasIndex::answerFromWhatWasRead(ObjectID object)
     const ObjectTable& objects = m_reader.objects();
     auto mayBeThisObject = [&](ObjectID member) {
         ++m_numberOfPairsAsked;
-        return objects.at(member).sharedForm != object && mayBeSameObject(m_reader, object, member);
+        return mayBeSameObject(m_reader, object, member);
     };
     if (!m_reader.program() || object == ObjectTable::unknown())
         return m_members.anyOf(mayBeThisObject);
 
-    lookAtMembersButClosuresAndSites();
+    lookAtMembersButClosures();
     if (m_namesUnknown)
         return true;
     if (object.index() >= objects.firstOf(ObjectKind::Closure) && object.index() < objects.endOf(ObjectKind::Closure) && !(m_kinds & kindsThatMayBeClosure))
         return false;
-    if (object.index() >= objects.firstOf(ObjectKind::Site) && object.index() < objects.endOf(ObjectKind::Site) && !(m_kinds & ~kindsThatAreNeverSite))
-        return false;
 
     const ObjectRecord& record = objects.at(object);
-    if (m_members.contains(record.sharedForm))
-        return true;
     if (!isFoundBesideMergedFormByShape(record)) {
         ObjectID merged = objects.mergedFormOf(object);
         if (merged != object && m_members.contains(merged) && objects.at(merged).has(ObjectTrait::IsMerged))
@@ -1054,13 +992,9 @@ bool ObjectSetAliasIndex::answerFromWhatWasRead(ObjectID object)
         ASSERT(objects.mergedFormOf(object) == object || objects.mergedFormOf(object) == objects.escapedOf(record.layout));
     if (std::ranges::any_of(m_askedOneByOne, mayBeThisObject))
         return true;
-    if (record.has(ObjectTrait::IsMerged)) {
-        lookAtSites();
-        if (m_mergedForms.find(object.index()))
-            return true;
-    }
+    if (record.has(ObjectTrait::IsMerged) && m_mergedForms.find(object.index()))
+        return true;
 
-    ObjectID sharedForm = record.sharedForm ? record.sharedForm : object;
     switch (record.kind) {
     case ObjectKind::Builtin:
     case ObjectKind::ModuleBuiltin: {
@@ -1074,7 +1008,7 @@ bool ObjectSetAliasIndex::answerFromWhatWasRead(ObjectID object)
             return false;
         return m_kinds & kindsWith(ObjectKind::EscapedFunctionsOfHolder) || namesBuiltinThatMayBeClosureOf(FunctionID(record.payload));
     case ObjectKind::Prototype:
-        return namesPrototypeUnderAnotherName(sharedForm, record);
+        return namesPrototypeUnderAnotherName(record);
     case ObjectKind::HostObject: {
         BuiltinID holder = m_reader.builtins().hostObjects()[record.payload].holder;
         if (holder && m_kindsOfBuiltins.find(m_reader.builtins().canonicalID(holder).index()))
@@ -1100,18 +1034,15 @@ bool ObjectSetAliasIndex::answerFromWhatWasRead(ObjectID object)
     case ObjectKind::Instance:
     case ObjectKind::EscapedOfLayout:
         break;
-    case ObjectKind::Site:
-        return namesObjectOfShape(sharedForm, record);
     }
-    lookAtSites();
-    return namesObjectOfShape(sharedForm, record);
+    return namesObjectOfShape(object, record);
 }
 
 bool mayHaveLayoutOfRecord(const Program& program, const ObjectRecord& record)
 {
     if (record.layout)
         return program.at(record.layout).kind == LayoutKind::Record;
-    bool isMadeByNativeCode = record.kind == ObjectKind::ResultOfBuiltin || record.origin == SiteOrigin::BuiltinResult;
+    bool isMadeByNativeCode = record.kind == ObjectKind::ResultOfBuiltin || record.kind == ObjectKind::EscapedWithoutShape;
     return isMadeByNativeCode && record.has(ObjectTrait::HasNoShape);
 }
 

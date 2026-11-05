@@ -96,9 +96,9 @@ public:
     Position endOf(const Block* block) const { return of(block).head + 2 * (block->size() + 1); }
     Position endOfProcedure() const { return m_end; }
 
-    static void retarget(Block* from, unsigned successorIndex, Block* newTarget);
+    static inline void retarget(Block* from, unsigned successorIndex, Block* newTarget);
     static void replaceJumpWithBranch(Block* from, const Operation* phi, bool isInverted);
-    static Block* split(Block* from, unsigned successorIndex);
+    static Block* split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeToTarget);
     static Block* askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond);
     static void makePhiOfTruncationBehindJoin(Block* join, Operation* truncation);
     static void passJoinBy(Block* from, Block* target, Operation* phi, Operation* value);
@@ -127,6 +127,7 @@ private:
 
     Order() = default;
     JS_EXPORT_PRIVATE unsigned successorIndexOfPredecessorWithManySuccessors(const Block* target, Block* const* entry) const;
+    static void dropUpsilonsHandedTo(const Block* formerTarget, Block* from);
 
     ArenaVector<Block*> m_blocksInOrder;
     ArenaVector<Block*> m_blocksInLayout;
@@ -142,6 +143,33 @@ private:
     std::span<Block* const> m_predecessors;
     std::span<const uint32_t> m_successorIndexesOfPredecessors;
 };
+
+ALWAYS_INLINE void Order::retarget(Block* from, unsigned successorIndex, Block* newTarget)
+{
+    Edge& edge = from->m_successors[successorIndex];
+    Block* oldTarget = edge.m_block;
+    if (oldTarget == newTarget)
+        return;
+
+    if (newTarget->m_numberOfIncomingEdges) {
+        constexpr uint8_t passesNoEdgeBy = UINT8_MAX;
+        uint8_t classOfEdgePassedBy = passesNoEdgeBy;
+        for (const Edge& passedBy : oldTarget->successors()) {
+            if (passedBy.block() == newTarget)
+                classOfEdgePassedBy = std::min(classOfEdgePassedBy, static_cast<uint8_t>(passedBy.edgeClass()));
+        }
+        if (classOfEdgePassedBy != passesNoEdgeBy)
+            edge.m_class = std::max(edge.m_class, static_cast<EdgeClass>(classOfEdgePassedBy));
+    }
+
+    ASSERT(oldTarget->m_numberOfIncomingEdges);
+    --oldTarget->m_numberOfIncomingEdges;
+    edge.m_block = newTarget;
+    newTarget->didGainIncomingEdge();
+
+    if (!oldTarget->m_phis.isEmpty() && !from->m_upsilons.isEmpty())
+        dropUpsilonsHandedTo(oldTarget, from);
+}
 
 void threadJumps(Procedure&);
 void mergeIdenticalBlocks(Procedure&);

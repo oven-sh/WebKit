@@ -85,10 +85,7 @@ static OperationsGivenToEmitters lookAtOperationsGivenToEmitters(const Facts& fa
     bool looksForCollection = facts.effectsOnReturn(function).mayCollect || facts.effectsOnThrow(function).mayCollect;
     uint32_t numberOfBlocks = code.numberOfBlocks();
     for (uint32_t index = 0; index < numberOfBlocks; ++index) {
-        BlockID block(index);
-        if (!code.isReached(block))
-            continue;
-        std::span<const ValueID> values = code.valuesOf(block);
+        std::span<const ValueID> values = code.valuesOf(BlockID(index));
         operations.count += values.size();
         if (!looksForCollection)
             continue;
@@ -172,6 +169,7 @@ FunctionCodeGenerator::FunctionCodeGenerator(const CodeGenerationWorker& worker,
     : m_worker(worker)
     , m_inputs(inputs)
     , m_code(code)
+    , m_statistics(worker.build.statistics().countersOfCurrentThread())
     , m_relocations(m_jit, worker.build.assemblerPolicy())
     , m_records(inputs.stubCatalog, m_relocations, totals, &worker.arena.objectKeptAcrossResets<RememberedStubKeys>())
     , m_procedure(worker.arena, inputs.heaps.tree(), machineTraitsOf(worker.build, inputs, code))
@@ -207,7 +205,7 @@ bool FunctionCodeGenerator::appendOperations()
     RELEASE_ASSERT(m_records.frame.savesFrameOnSuspend <= m_procedure.traits().savesFrameOnSuspend);
     RELEASE_ASSERT(m_records.frame.readsCallerFrame == unitReadsCallerFrame);
 
-    build.statistics().count(StatisticID::OperationsEmitted, operations.count);
+    m_statistics.count(StatisticID::OperationsEmitted, operations.count);
     return true;
 }
 
@@ -261,7 +259,6 @@ std::optional<CompiledCode> FunctionCodeGenerator::runStraight(const BodyIndex& 
 CompiledCode FunctionCodeGenerator::emitCode()
 {
     BuildContext& build = m_worker.build;
-    Statistics& statistics = build.statistics();
 
     enterStepOfCodeGeneration("allocate"_s);
     if (m_stackChecks.stackCheck == StackCheck::CoveredByCallers && !m_records.frame.needsStackCheckForTailCalls)
@@ -275,17 +272,18 @@ CompiledCode FunctionCodeGenerator::emitCode()
         return { };
 
     const Machine::Allocation& allocation = m_procedure.allocation();
-    statistics.count(StatisticID::MachineOperationsAppended, m_procedure.numberOfOperations());
-    statistics.count(StatisticID::MachineOperationsScanned, countMachineOperationsInOrder(m_procedure.order()));
-    statistics.count(StatisticID::LoopsRotated, m_procedure.order().numberOfLoopsRotated());
-    statistics.count(StatisticID::MachineOperationsAllocated, allocation.numberOfOperationsAllocated());
-    statistics.count(StatisticID::ValuesSpilled, allocation.spills().size());
-    statistics.count(StatisticID::InnerPointersAcrossSafepoints, m_procedure.numberOfInnerPointersAcrossSafepoints());
+    m_statistics.count(StatisticID::MachineOperationsAppended, m_procedure.numberOfOperations());
+    m_statistics.count(StatisticID::MachineOperationsScanned, countMachineOperationsInOrder(m_procedure.order()));
+    m_statistics.count(StatisticID::LoopsRotated, m_procedure.order().numberOfLoopsRotated());
+    m_statistics.count(StatisticID::MachineOperationsAllocated, allocation.numberOfOperationsAllocated());
+    m_statistics.count(StatisticID::ValuesSpilled, allocation.spills().size());
+    m_statistics.count(StatisticID::InnerPointersAcrossSafepoints, m_procedure.numberOfInnerPointersAcrossSafepoints());
 
     enterStepOfCodeGeneration("encode"_s);
     readTagsFromInstance(m_jit);
     CCallHelpers::Jump fromFusedCallEntry = emitEntryPreambles(m_jit, m_inputs, m_code.unit(), m_records);
     CCallHelpers::Label bodyStart = m_jit.label();
+    m_relocations.reserveRoomFor(allocation.numberOfOperationsAllocated());
     Machine::generate(m_procedure, m_jit, m_relocations);
     if (m_straightEmitter && m_straightEmitter->hasFailed())
         return { };
@@ -302,10 +300,11 @@ CompiledCode FunctionCodeGenerator::emitCode()
         fromFusedCallEntry.linkTo(m_procedure.entrypointLabel(0), &m_jit);
     else if (holdsFusedCallEntry && isGuard)
         m_records.entries.append(RecordedEntry { fusedCallEntry, m_procedure.entrypointLabel(0) });
-    statistics.count(StatisticID::MachineOperationsEncoded, m_procedure.numberOfOperationsEncoded());
-    statistics.count(StatisticID::NullChecksFoldedIntoAccesses, m_procedure.numberOfTrapsTakenOver());
+    m_statistics.count(StatisticID::MachineOperationsEncoded, m_procedure.numberOfOperationsEncoded());
+    m_statistics.count(StatisticID::NullChecksFoldedIntoAccesses, m_procedure.numberOfTrapsTakenOver());
 
-    emitStackOverflowPaths(m_jit, m_records, m_stackChecks);
+    if (!m_stackChecks.pending.isEmpty())
+        emitStackOverflowPaths(m_jit, m_records, m_stackChecks);
     emitPadding(m_jit);
     m_jit.padBeforePatch();
 
@@ -323,7 +322,8 @@ CompiledCode FunctionCodeGenerator::emitCode()
     }
 
     CompiledCode compiled = describeCode(build, m_inputs, m_code, m_records, EmittedCode { buffer, m_procedure, m_stackChecks, WTF::move(*relocations) });
-    copyMadeTextsMentionedBy(compiled.body, m_worker.types);
+    if (m_worker.types.hasMadeTexts())
+        copyMadeTextsMentionedBy(compiled.body, m_worker.types);
     return compiled;
 }
 

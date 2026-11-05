@@ -499,8 +499,6 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->effectsNet.exercised = effectsNetExercised().data();
 
     State::create(*instance);
-    instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
-    instance->state->caches->addClearedEachCollection("last array looked at in vain"_s, asMutableByteSpan(instance->arrays.lastArrayLookedAtInVain));
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
@@ -1033,6 +1031,7 @@ void VMState::releaseImage(VM& vm)
     regExpMatchOutput = nullptr;
     propertyCaches = nullptr;
     functionTables = nullptr;
+    cyclesOfImports = nullptr;
     callSiteCache = nullptr;
     runtimeTable = nullptr;
     identifiers = nullptr;
@@ -1042,6 +1041,7 @@ void VMState::releaseImage(VM& vm)
 
     moduleRecordStructure.clear();
     stringBuilderStorageStructure.clear();
+    poisonedCellStructure.clear();
     image = nullptr;
     structureIDBase = 0;
     hasCompiledCode = false;

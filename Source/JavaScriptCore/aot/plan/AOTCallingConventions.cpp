@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosureWord.h"
 #include "AOTConvention.h"
 #include "AOTCoroutinePlan.h"
 #include "AOTFacts.h"
@@ -424,6 +425,20 @@ uint32_t CallingConventions::stackWordsReservedByCallersOf(const Program& progra
     return words;
 }
 
+static uint8_t argumentsThatEntryOnlyCalls(const Program& program, const Facts& facts, FunctionID id, const FunctionConvention& convention)
+{
+    static_assert(ClosureWord::numberOfBorrowedArguments == 2, "FunctionConvention::borrowedArguments has a bit for each");
+    const Function& function = program.at(id);
+    if (!convention.has(CodeRole::Body) || !convention.has(CodeRole::GenericCallEntry) || convention.takesArgumentsInBuffer || convention.callEntryTakesNewTarget || function.newTargetParameterIndex())
+        return 0;
+    uint8_t onlyCalled = 0;
+    for (unsigned argument = 0; argument < std::min<unsigned>(ClosureWord::numberOfBorrowedArguments, function.numberOfPositionalParameters()); ++argument) {
+        if (facts.linked().onlyCallsWhatArrivesAt(id, function.firstParameterIndex() + argument))
+            onlyCalled |= 1u << argument;
+    }
+    return onlyCalled;
+}
+
 GenericEntryPlan CallingConventions::genericEntry(CodeUnit unit) const
 {
     const FunctionConvention& convention = of(unit.function);
@@ -432,6 +447,7 @@ GenericEntryPlan CallingConventions::genericEntry(CodeUnit unit) const
     switch (unit.role) {
     case CodeRole::GenericCallEntry:
         plan.takesNewTarget = convention.callEntryTakesNewTarget;
+        plan.borrowedArguments = convention.borrowedArguments;
         if (convention.has(CodeRole::AllocatingConstructEntry))
             plan.constructEntry = { unit.function, CodeRole::AllocatingConstructEntry };
         else if (convention.has(CodeRole::GenericConstructEntry))
@@ -719,6 +735,7 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
         convention.numberOfResults = safeCast<uint16_t>(function.results.size());
         convention.firstResult = safeCast<uint32_t>(parts.formsOfResults.size());
         chooseRolesOfConvention(program, facts, id, bodiesWithModuleStart, layoutsMadeAsCompiledObjects, convention);
+        convention.borrowedArguments = argumentsThatEntryOnlyCalls(program, facts, id, convention);
 
         for (const DeclaredType& result : function.results)
             parts.formsOfResults.append(boxedFormOfDeclaredPosition(program, result));

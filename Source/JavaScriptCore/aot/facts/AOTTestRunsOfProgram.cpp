@@ -280,14 +280,35 @@ static UserDiagnostic reportOfExportInTestRunsOfProgram(const Program& program, 
     return diagnostic;
 }
 
+static bool isOpenedByStoresThatNobodyFollowedInTestRunsOfProgram(ReasonBuiltinStaysOpen reason)
+{
+    switch (reason) {
+    case ReasonBuiltinStaysOpen::HolderIsWrittenUnderAnyName:
+    case ReasonBuiltinStaysOpen::IsWrittenThroughLostBuiltins:
+    case ReasonBuiltinStaysOpen::IsSpelledThroughUnseen:
+    case ReasonBuiltinStaysOpen::HolderIsLetGoByProgram:
+        return true;
+    case ReasonBuiltinStaysOpen::None:
+    case ReasonBuiltinStaysOpen::NoLockIsLaid:
+    case ReasonBuiltinStaysOpen::IsOpenToDebugger:
+    case ReasonBuiltinStaysOpen::IsLeftOpenForTests:
+    case ReasonBuiltinStaysOpen::IsWrittenUnderItsName:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void finishFactsOfTestRun(const Program& program, BuildContext& build, FactTables& tables, Vector<VariableID>&& exportsSpiedOnThatWireLeavesShut)
 {
     if (!program.admitsReplacedBuiltins)
         return;
 
     for (const BuiltinLeftOpen& open : tables.builtinMembersLeftOpen) {
-        if (program.isLockLeftToProgram(open.member))
-            tables.builtinMembersThatTestsReplace.append(open.member);
+        if (!program.isLockLeftToProgram(open.member))
+            continue;
+        tables.builtinMembersThatTestsReplace.append(open.member);
+        if (isOpenedByStoresThatNobodyFollowedInTestRunsOfProgram(open.reason) && !program.builtins().has(BuiltinMark::MayBeAbsent, open.member))
+            tables.builtinMembersBehindWatch.set(open.member.index());
     }
     RELEASE_ASSERT(std::ranges::is_sorted(tables.builtinMembersThatTestsReplace));
     for (BuiltinID member : program.builtinsWhoseLockIsLeftToProgram()) {

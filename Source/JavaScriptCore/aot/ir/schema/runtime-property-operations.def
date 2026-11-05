@@ -22,10 +22,6 @@ runtime GetByValWithThis : EncodedJSValue (EncodedJSValue base, EncodedJSValue t
 runtime GetOwnProperty : EncodedJSValue (EncodedJSValue object, uint32_t key) ; unknownCode
 runtime GetWithProxyTrap : EncodedJSValue (EncodedJSValue* wordsOfAccess, EncodedJSValue trap) ; unknownCode
 runtime ValidateAnswerOfProxyTrap : EncodedJSValue (EncodedJSValue* wordsOfAccess, EncodedJSValue answer) ; unknownCode
-runtime ValidateAnswerOfGetTrap : void (EncodedJSValue target, EncodedJSValue property, EncodedJSValue answer) ; unknownCode
-runtime ValidateDenialOfHasTrap, ValidateConsentOfDeleteTrap : void (EncodedJSValue target, EncodedJSValue property) ; unknownCode
-runtime FinishStoreByTrap : void (EncodedJSValue target, EncodedJSValue property, EncodedJSValue value, EncodedJSValue answer, uint32_t isStrict) ; unknownCode
-runtime HasOwnByAnswerOfDescriptorTrap : size_t (EncodedJSValue target, EncodedJSValue property, EncodedJSValue answer) ; unknownCode
 runtime HasWithProxyTrap, FinishHasThroughProxy : size_t (EncodedJSValue* wordsOfAccess, EncodedJSValue trapOrAnswer) ; unknownCode
 runtime SetWithProxyTrap, FinishSetThroughProxy : void (EncodedJSValue* wordsOfAccess, EncodedJSValue trapOrAnswer) ; unknownCode
 
@@ -51,7 +47,7 @@ runtime MaterializeDeferredClosure : JSCell* (JSCell* object, uint32_t key) ; re
 runtime GetFieldOutsideSlot : EncodedJSValue (JSCell* object, uint32_t key) ; reads(all)
 
 runtime NewMap, NewSet : JSCell* () ; RuntimeAllocates
-runtime MapGet, MapFind, MapHas : EncodedJSValue (JSCell*, EncodedJSValue lookupKey) ; RuntimeCreatesString
+runtime MapGet, MapHas : EncodedJSValue (JSCell*, EncodedJSValue lookupKey) ; RuntimeCreatesString
 runtime MapSet : EncodedJSValue (JSCell* map, EncodedJSValue lookupKey, EncodedJSValue value) ; reads(all) writes(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime SetAdd : EncodedJSValue (JSCell* set, EncodedJSValue lookupKey) ; reads(all) writes(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime WeakMapSet : EncodedJSValue (JSCell* map, JSCell* lookupKey, EncodedJSValue value) ; reads(all) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) throws collects

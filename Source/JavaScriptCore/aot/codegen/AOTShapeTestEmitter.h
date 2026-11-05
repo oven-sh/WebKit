@@ -18,17 +18,38 @@ namespace JSC { namespace AOT { namespace Typed {
 
 struct ShapeTest;
 
+enum class MarkedObjects : uint8_t {
+    Pass,
+    MayBeRefused,
+    AreRefused,
+    AreAskedAgain,
+};
+
 class ShapeTestEmitter final : public OperationEmitter {
 public:
     explicit ShapeTestEmitter(CodeGenerator&);
 
     Word32 shapeWordOf(CellPointer);
+    Word32 shapeWordWithMarkOf(CellPointer);
+    Word32 shapeWordOf(CellPointer, LayoutSetID possible);
+    bool mayBearMark(LayoutSetID);
+    struct IndexByShape {
+        Integer index;
+        int32_t offset { 0 };
+    };
+    IndexByShape indexByShapeOf(CellPointer);
+    bool paysForMark(LayoutSetID tested, const Type& known);
+    Condition bearsMark(CellPointer);
+    Condition bearsNoMark(CellPointer);
+    void setMark(CellPointer);
+    void clearMark(CellPointer);
     Word32 orderWordOf(CellPointer);
     Word32 orderWordOfAnyCell(CellPointer);
 
-    Condition hasShapeIn(CellPointer, LayoutSetID tested, const Type& known);
+    Condition hasShapeIn(CellPointer, LayoutSetID tested, const Type& known, MarkedObjects = MarkedObjects::Pass);
+    bool lastTestRefusesMarkedObjects() const { return m_lastTestRefusesMarkedObjects; }
     Condition isShapeOf(Word32 shapeWord, LayoutID);
-    void branchOnShapeIn(CellPointer, LayoutSetID tested, const Type& known, BranchTargets);
+    void branchOnShapeIn(CellPointer, LayoutSetID tested, const Type& known, BranchTargets, MarkedObjects = MarkedObjects::Pass);
     void branchOnShapeAmongReceivers(const ValueContext& access, CellPointer, LayoutSetID tested, BranchTargets);
     void switchOnShape(CellPointer, std::span<const LayoutSetID> cases, std::span<const BlockEdge> targets, BlockEdge otherwise);
     bool hasOnlyCompiledObjects(const Type& known) const;
@@ -38,10 +59,11 @@ public:
 private:
     TypeReader typeReader() const;
     ShapeTest testOf(LayoutSetID tested) const;
-    Condition passes(CellPointer, LayoutSetID tested, const ShapeTest&);
+    enum class WordOfTest : bool { WithoutMark, AsItLies };
+    Condition passes(CellPointer, LayoutSetID tested, const ShapeTest&, WordOfTest = WordOfTest::WithoutMark);
     Condition passes(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);
     Condition passesRange(Word32 shapeWord, const ShapeTest&);
-    Condition passesBlockByte(CellPointer, const ShapeTest&);
+    Condition passesBlockByte(CellPointer, const ShapeTest&, WordOfTest);
     Condition passesBitSet(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);
     std::optional<Condition> passesBitSetThatHoldsEveryKnownShape(Word32 shapeWord, LayoutSetID tested, LayoutSetID known, std::span<const uint32_t> testedShapes, std::span<const uint32_t> knownShapes);
     struct BitSetConstant {
@@ -53,9 +75,14 @@ private:
 
     LayoutSetID m_setWhoseShapesAreKept;
     bool m_keptSetHoldsCompiledObjectsAlone { true };
+    bool m_lastTestRefusesMarkedObjects { false };
+    bool m_wordIsAskedForMark { true };
+    UncheckedKeyHashMap<LayoutSetID, bool> m_setsThatMayBearMark;
     ShapeTable::ShapeList m_shapesKept;
     UncheckedKeyHashMap<LayoutSetID, BitSetConstant> m_bitSetConstants;
     UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_bitSetsThatHoldEveryKnownShape;
+    mutable LayoutSetID m_setTestedLast;
+    mutable ShapeTest m_testOfSetTestedLast;
 };
 
 } } } // namespace JSC::AOT::Typed

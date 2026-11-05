@@ -256,6 +256,8 @@ void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, M
     auto scope = DECLARE_THROW_SCOPE(vm);
     String name = computedFunctionName(closure->realm(), key, kind);
     RETURN_IF_EXCEPTION(scope, void());
+    if (std::optional<FunctionID> function = functionOf(closure); function && !closure->getDirect(vm, vm.propertyNames->name) && initialNameProperty(sourceFunctionOf(*function)) == name)
+        return;
     CompiledCallee::reifyProperties(vm, closure);
     closure->putDirect(vm, vm.propertyNames->name, jsString(vm, name), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     if (isCompiledClosure(closure)) {

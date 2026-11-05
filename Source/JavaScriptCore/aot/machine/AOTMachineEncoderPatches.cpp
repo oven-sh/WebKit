@@ -21,36 +21,6 @@ static_assert(std::is_trivially_destructible_v<PatchParameters>);
 static constexpr uint32_t emptySharedLatePathSlot = UINT32_MAX;
 static constexpr size_t smallestNumberOfSharedLatePathSlots = 8;
 
-static ALWAYS_INLINE bool patchRepAnswersConstraint(const ValueRep& answer, const ValueRep& constraint)
-{
-    switch (constraint.kind()) {
-    case ValueRep::WarmAny:
-    case ValueRep::ColdAny:
-    case ValueRep::LateColdAny:
-        return true;
-    case ValueRep::SomeRegister:
-    case ValueRep::SomeEarlyRegister:
-    case ValueRep::SomeLateRegister:
-        return answer.isReg();
-    case ValueRep::Register:
-    case ValueRep::StackArgument:
-        return answer == constraint;
-    case ValueRep::Stack:
-    case ValueRep::Constant:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static ALWAYS_INLINE bool patchRegisterAnswersConstraint(const ValueRep& answer, const ValueRep& constraint)
-{
-    static_assert(ValueRep::WarmAny < ValueRep::Register && ValueRep::ColdAny < ValueRep::Register && ValueRep::LateColdAny < ValueRep::Register);
-    static_assert(ValueRep::SomeRegister < ValueRep::Register && ValueRep::SomeEarlyRegister < ValueRep::Register && ValueRep::SomeLateRegister < ValueRep::Register);
-    static_assert(ValueRep::StackArgument > ValueRep::Register && ValueRep::Stack > ValueRep::Register && ValueRep::Constant > ValueRep::Register);
-    ASSERT(answer.isReg());
-    return constraint.kind() < ValueRep::Register || answer == constraint;
-}
-
 static size_t firstSharedLatePathSlotOf(std::span<const uint32_t> slots, const PatchGenerator* generator)
 {
     ASSERT(hasOneBitSet(slots.size()));
@@ -126,7 +96,7 @@ static void restoreValueRepFromConstant(CCallHelpers& jit, int64_t bits, Reg des
     jit.move64ToDouble(scratch, destination.fpr());
 }
 
-static void clearFrameWordsInFrontOfSuspension(Encoder& encoder, const PatchOperation* suspension)
+void clearFrameWordsInFrontOfSuspension(Encoder& encoder, const PatchOperation* suspension)
 {
     const BitSpan& words = suspension->frameWordsClearedInFrontOfSuspension();
     if (!words.size())
@@ -150,21 +120,6 @@ static void clearFrameWordsInFrontOfSuspension(Encoder& encoder, const PatchOper
     }
 }
 
-void Encoder::encodePatch(const Step& step, PatchOperation* patch)
-{
-    ASSERT(patch->opcode() == Patch);
-    ASSERT(!patch->onlyKeepsChildrenAlive);
-    RELEASE_ASSERT(patch->generator());
-    RELEASE_ASSERT(m_frameIsSetUp || patch->runsWithoutFrame());
-
-    if (patch->isSuspension())
-        clearFrameWordsInFrontOfSuspension(*this, patch);
-
-    PatchParameters parameters(*this, patch);
-    fillParameters(parameters, step, patch);
-    patch->generator()->run(m_jit, parameters);
-}
-
 static std::span<MacroAssembler::Jump> oneJumpOfFailingCheck(Encoder& encoder, MacroAssembler::Jump jump)
 {
     ASSERT(jump.isSet());
@@ -176,7 +131,7 @@ static std::span<MacroAssembler::Jump> oneJumpOfFailingCheck(Encoder& encoder, M
 static std::span<MacroAssembler::Jump> jumpsOfFailingCheck(Encoder& encoder, const Step& step, const PatchOperation* check)
 {
 #if CPU(X86_64)
-    if (std::optional<MacroAssembler::RelationalCondition> condition = encoder.tryEmitFlagsOfPredicate(step))
+    if (std::optional<MacroAssembler::RelationalCondition> condition = encoder.tryEmitFlagsOfPredicate(step, check->child(0)))
         return oneJumpOfFailingCheck(encoder, encoder.m_jit.branchOnFlags(*condition));
 #endif
     LeafCursor leaves(step);
@@ -206,7 +161,7 @@ void Encoder::encodeCheck(const Step& step, PatchOperation* check)
         jumps = jumpsOfFailingCheck(*this, step, check);
 
     PatchParameters* parameters = new (NotNull, m_arena.allocate(sizeof(PatchParameters), alignof(PatchParameters))) PatchParameters(*this, check);
-    fillParameters(*parameters, step, check);
+    fillParameters<true>(*parameters, step, check);
 
     if (const SharedLatePath* shared = findSharedLatePath(check, parameters->m_reps)) {
         auto linkToSharedLatePath = [jumps, entry = shared->entry](CCallHelpers& jit) {
@@ -228,78 +183,6 @@ void Encoder::encodeCheck(const Step& step, PatchOperation* check)
         parameters->value()->generator()->run(jit, *parameters);
     };
     addLatePath(m_arena.create<LatePathOf<decltype(runGenerator)>>(runGenerator));
-}
-
-void Encoder::fillParameters(PatchParameters& parameters, const Step& step, PatchOperation* patch)
-{
-    RELEASE_ASSERT(step.patchAssignment != UINT32_MAX);
-    const PatchAssignment& assignment = m_allocation.patchAssignment(step.patchAssignment);
-    std::span<const Location> locations = assignment.locations;
-    std::span<Operation* const> operands = patch->operands();
-
-    unsigned numberOfResults = m_proc.resultCount(patch->type());
-    unsigned firstOperand = patch->opcode() == Check ? 1 : 0;
-    unsigned numberOfOperands = static_cast<unsigned>(operands.size()) - firstOperand;
-    RELEASE_ASSERT(locations.size() == numberOfResults + numberOfOperands);
-
-    if (size_t numberOfReps = locations.size()) {
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        ValueRep* reps = static_cast<ValueRep*>(m_arena.allocate(numberOfReps * sizeof(ValueRep), alignof(ValueRep)));
-        const Location* location = locations.data();
-        ValueRep* rep = reps;
-        static constexpr ValueRep someRegister { ValueRep::SomeRegister };
-        for (unsigned index = 0; index < numberOfResults; ++index, ++location, ++rep) {
-            const ValueRep& constraint = index < patch->resultConstraints.size() ? patch->resultConstraints[index] : someRegister;
-            if (location->isRegister()) {
-                new (NotNull, rep) ValueRep(location->reg());
-                RELEASE_ASSERT(patchRegisterAnswersConstraint(*rep, constraint));
-                continue;
-            }
-            new (NotNull, rep) ValueRep(repOf(*location, patch));
-            RELEASE_ASSERT(patchRepAnswersConstraint(*rep, constraint));
-        }
-        Operation* const* operand = operands.data() + firstOperand;
-        for (unsigned child = firstOperand; child < firstOperand + numberOfOperands; ++child, ++location, ++rep, ++operand) {
-            const ValueRep& constraint = patch->constraintOf(child);
-            if (location->isRegister()) {
-                new (NotNull, rep) ValueRep(location->reg());
-                RELEASE_ASSERT(patchRegisterAnswersConstraint(*rep, constraint));
-                continue;
-            }
-            new (NotNull, rep) ValueRep(repOf(*location, *operand));
-            RELEASE_ASSERT(patchRepAnswersConstraint(*rep, constraint));
-        }
-        parameters.m_reps = std::span<const ValueRep>(reps, numberOfReps);
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    }
-
-    std::span<GPRReg> gpScratch(parameters.m_gpScratch);
-    unsigned numberOfGPScratch = 0;
-    forEachRegister(assignment.gpScratch, [&](Reg reg) {
-        RELEASE_ASSERT(numberOfGPScratch < gpScratch.size());
-        gpScratch[numberOfGPScratch++] = reg.gpr();
-    });
-    RELEASE_ASSERT(numberOfGPScratch == patch->numGPScratchRegisters);
-
-    std::span<FPRReg> fpScratch(parameters.m_fpScratch);
-    unsigned numberOfFPScratch = 0;
-    forEachRegister(assignment.fpScratch, [&](Reg reg) {
-        RELEASE_ASSERT(numberOfFPScratch < fpScratch.size());
-        fpScratch[numberOfFPScratch++] = reg.fpr();
-    });
-    RELEASE_ASSERT(numberOfFPScratch == patch->numFPScratchRegisters);
-
-    parameters.m_usedRegisters = assignment.usedRegisters;
-    parameters.m_frameIsSetUp = m_frameIsSetUp;
-
-    if (!patch->endsBlock())
-        return;
-    const Block* block = patch->owner();
-    ASSERT(block == m_block);
-    std::span<MacroAssembler::Label*> labels = m_arena.createSpan<MacroAssembler::Label*>(block->numSuccessors());
-    for (unsigned index = 0; index < block->numSuccessors(); ++index)
-        labels[index] = labelOf(block->successor(index).block());
-    parameters.m_successorLabels = labels;
 }
 
 Encoder::SharedLatePath* Encoder::findSharedLatePath(PatchOperation* check, std::span<const ValueRep> reps)

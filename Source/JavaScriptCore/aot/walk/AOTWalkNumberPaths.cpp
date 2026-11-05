@@ -12,7 +12,6 @@
 #include "AOTIRProgram.h"
 #include "AOTLimits.h"
 #include "AOTOpcodeSets.h"
-#include "AOTOperatorForms.h"
 #include "AOTPlan.h"
 #include "AOTRepresentationRules.h"
 #include "AOTTypeArena.h"
@@ -29,10 +28,7 @@ Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 static constexpr OpcodeSet operatorsOfNumberPaths = allSums | allBitwiseOperators | allRelations | OpcodeSet { Opcode::Mul, Opcode::Negate, Opcode::StrictEq };
 static constexpr OpcodeSet operatorsThatGiveNumbersOnNumberPaths { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Negate, Opcode::Increment, Opcode::Decrement };
 static constexpr OpcodeSet operatorsCheckedOnIntegersInNumberPaths { Opcode::Mul, Opcode::Negate };
-static constexpr OpcodeSet operatorsThatMayStandAloneOnNumberPaths = operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative, OperatorKind::Bitwise });
 static constexpr OpcodeSet operatorsBesideOneNumber { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
-static constexpr OpcodeSet operatorsWithZeroAsIdentityInNumberPaths { Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };
-static constexpr OpcodeSet commutativeAmongOperatorsWithZeroAsIdentity { Opcode::BitOr, Opcode::BitXor };
 static constexpr OpcodeSet takersOfBoxesInNumberPaths { Opcode::PropSet, Opcode::PropDefine, Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::Call, Opcode::CallList, Opcode::Construct, Opcode::Strcat };
 static constexpr OpcodeSet callsAmongTakersOfBoxes { Opcode::Call, Opcode::CallList, Opcode::Construct };
 
@@ -115,40 +111,6 @@ static bool isTakenOnlyByOperatorsOfNumberPath(const BodyIndex& index, const Bod
     return false;
 }
 
-static bool loneOperatorPaysOnIntegers(Walker& walker, const BodyValue& operation, std::span<const TestOfNumber> tests)
-{
-    Opcode opcode = operation.opcode();
-    TypeArena& types = walker.types();
-    if (!hasOperatorForm(opcode) || !mayCallRuntime(opcode, OperatorForm::Numbers))
-        return false;
-    for (const TestOfNumber& test : tests) {
-        ExpectationOfValue expectation = findExpectation(walker, test.input);
-        if (!expectation.type || !types.at(types.withoutNullish(expectation.type)).isInt32())
-            return false;
-    }
-    auto typeBehindTests = [&](ValueID input) {
-        Reference reference = walker.referenceOf(input);
-        TypeID proven = walker.typeOf(reference);
-        return isTaggedNumber(walker, reference) ? types.intersectionOf(proven, TypeTable::int32) : proven;
-    };
-    TypesOfInputs behindTests(typeBehindTests);
-    OperatorForm onIntegers = formAllowedForTypedOperator(walker, opcode, operation, InputsOfTypedOperation(walker, &behindTests));
-    if (mayCallRuntime(opcode, onIntegers))
-        return false;
-
-    Draft onNumbers = walker.draftOf(operation);
-    if (walker.hasFailed())
-        return false;
-    walker.chooseConservativeFields(onNumbers);
-    onNumbers.setForm(OperatorForm::Numbers);
-    WantedRepresentations wanted = wantedRepresentationsOf(walker, onNumbers);
-    for (uint32_t operandIndex = 0; operandIndex < onNumbers.numberOfOperands(); ++operandIndex) {
-        if (isTaggedNumber(walker, onNumbers.operand(operandIndex)) && !hasRegister(wanted[operandIndex]))
-            return false;
-    }
-    return true;
-}
-
 static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, const BodyValue& firstOperator)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -198,8 +160,7 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, cons
             result.kind = KindOnNumberPath::Integer;
         else if (primitiveConstants.contains(opcode) || opcode == Opcode::ReleaseHint) {
         } else {
-            bool mayStandAlone = place == begin && operatorsThatMayStandAloneOnNumberPaths.contains(opcode);
-            if ((!operatorsOfNumberPaths.contains(opcode) && !mayStandAlone) || numberOfOperators == mostOperatorsOfNumberPath)
+            if (!operatorsOfNumberPaths.contains(opcode) || numberOfOperators == mostOperatorsOfNumberPath)
                 break;
             bool takesOperatorThatWaits = false;
             bool takesTaggedNumber = false;
@@ -243,7 +204,7 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, cons
                 mentionsOfResult = index.useCount(operation.id());
                 mentionsLeftOfAll += mentionsOfResult;
             } else {
-                if (!takesOperatorThatWaits && !(mayStandAlone && loneOperatorPaysOnIntegers(walker, operation, tests.span())))
+                if (!takesOperatorThatWaits)
                     break;
                 if (allBitwiseOperators.contains(opcode))
                     result.kind = KindOnNumberPath::Integer;
@@ -264,7 +225,7 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, cons
 
 static bool buildNumberPath(Walker& walker, const BodyValue& firstOperator)
 {
-    if (!operatorsOfNumberPaths.contains(firstOperator.opcode()) && !operatorsThatMayStandAloneOnNumberPaths.contains(firstOperator.opcode()))
+    if (!operatorsOfNumberPaths.contains(firstOperator.opcode()))
         return false;
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers) || walker.isUnreachable())
         return false;
@@ -284,7 +245,7 @@ static bool buildNumberPath(Walker& walker, const BodyValue& firstOperator)
     return walkStretchBehindTestsOfNumbers(walker, path->tests.span(), block, path->begin, path->end, BlockFrequency::Unlikely);
 }
 
-static_assert(opcodesThatBuildArmsInFrontOfTypedFormsTakes == (operatorsOfNumberPaths | operatorsThatMayStandAloneOnNumberPaths));
+static_assert(opcodesThatBuildArmsInFrontOfTypedFormsTakes == (operatorsOfNumberPaths));
 
 bool buildArmsInFrontOfTypedFormsOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
@@ -406,41 +367,6 @@ bool sumStaysBoxed(Walker& walker, const BodyValue& written, const Draft& sum)
     if (!boxedNumber)
         return false;
     return onlyUserTakesBoxInNumberPaths(walker, written, boxedNumber, walker.resultTypeOf(sum), otherArmIsClosed);
-}
-
-bool buildTruncationOfBoxedNumber(Walker& walker, const BodyValue& value)
-{
-    Opcode opcode = value.opcode();
-    if (!operatorsWithZeroAsIdentityInNumberPaths.contains(opcode) || !walker.has(Mechanism::UnboxedNumbers) || walker.isUnreachable())
-        return false;
-    static_assert(!OperandIndex::BitOr::left && OperandIndex::BitOr::right == 1 && !OperandIndex::URShift::left && OperandIndex::URShift::right == 1);
-    auto isZero = [&](Reference operand) {
-        Type type = walker.types().at(walker.typeOf(operand));
-        return type.isInteger() && type.integers == Range::one(0);
-    };
-    Reference left = walker.referenceOf(value.operand(0));
-    Reference right = walker.referenceOf(value.operand(1));
-    if (!left || !right)
-        return false;
-    Reference number;
-    if (isZero(right))
-        number = left;
-    else if (commutativeAmongOperatorsWithZeroAsIdentity.contains(opcode) && isZero(left))
-        number = right;
-    if (!number || !isTaggedNumber(walker, number))
-        return false;
-
-    Draft written = walker.draftOf(value);
-    if (walker.hasFailed())
-        return false;
-    Draft conversion(opcode == Opcode::URShift ? Opcode::ToUint32 : Opcode::ToInt32, written.origin());
-    conversion.expected = written.expected;
-    conversion.inputValueGiven = value.id();
-    walker.chooseConservativeFields(conversion);
-    conversion.setValueOperand(number);
-    Origin origin = conversion.origin();
-    walker.bind(value.id(), boxedUnlessNumbersAreUnboxed(walker, walker.build(WTF::move(conversion)), origin));
-    return true;
 }
 
 static_assert(opcodesThatBuildOperatorBesideOneNumberTakes == (operatorsBesideOneNumber));

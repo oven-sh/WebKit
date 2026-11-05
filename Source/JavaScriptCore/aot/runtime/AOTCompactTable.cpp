@@ -1534,8 +1534,6 @@ static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if constexpr (entry == Entry::operationAOTMapGet)
         OPERATION_RETURN(scope, JSValue::encode(found ? table->valueAt(*found) : jsUndefined()));
-    else if constexpr (entry == Entry::operationAOTMapFind)
-        OPERATION_RETURN(scope, JSValue::encode(found ? table->valueAt(*found) : JSValue()));
     else
         OPERATION_RETURN(scope, JSValue::encode(jsBoolean(!!found)));
 }
@@ -1552,20 +1550,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance* instance
         break;
     }
     [[clang::musttail]] return findInCollectionGeneric<Entry::operationAOTMapGet>(instance, map, lookupKey);
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTMapFind, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue lookupKey))
-{
-    JSValue value;
-    switch (tryFindSubstringQuickly(uncheckedDowncast<JSMap>(map), JSValue::decode(lookupKey), value)) {
-    case CompactTable::QuickLookup::Found:
-        return { JSValue::encode(value), nullptr };
-    case CompactTable::QuickLookup::Absent:
-        return { JSValue::encode(JSValue()), nullptr };
-    case CompactTable::QuickLookup::Unknown:
-        break;
-    }
-    [[clang::musttail]] return findInCollectionGeneric<Entry::operationAOTMapFind>(instance, map, lookupKey);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue lookupKey))

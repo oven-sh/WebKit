@@ -10,7 +10,6 @@
 
 #include "AOTStubDescriptor.h"
 #include "AOTStubRecording.h"
-#include "AOTStubsBarriers.h"
 #include "AOTStubsConstruct.h"
 #include "AOTStubsField.h"
 #include "AOTStubsObjectCopy.h"
@@ -35,8 +34,6 @@ std::span<const OperationPrelude> operationPreludes()
 {
     using namespace StubFamilyTokens;
     static constexpr OperationPrelude preludes[] = {
-        { Entry::operationAOTBarrierSlow, emitBarrierPrelude, NoEffects },
-        { Entry::operationAOTBarrierSlowPreservingRegisters, emitBarrierPrelude, NoEffects },
         { Entry::operationAOTAddressOfThrow, emitAddressOfThrowPrelude, NoEffects },
         { Entry::operationAOTCatch, emitCatchPrelude, writes(RuntimeState) },
         { Entry::operationAOTCatchException, emitCatchExceptionPrelude, writes(RuntimeState) },

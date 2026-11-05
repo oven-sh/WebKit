@@ -1,11 +1,12 @@
-# `watch` hands its scope to `note`, which is entered itself, and proposes to hand the cell back when it has done with it. On one way `note` makes a closure over the scope that it was handed: the callee sets the byte there, in front of the closure
+# `watch` hands its scope to `note`, which is entered itself, and proposes to hand the cell back when it has done with it. On one way `note` makes a closure over the scope that it was handed: the closure is the one argument of a call by value, so it lies in the frame of `note` and is left to the stub of the call, which marks the scope where it moves the closure to the heap: the code of `note` itself marks nothing.
 # function watch(start) { let seen = start; function note(keep) { seen++; if (keep) hold(() => seen); } note(false); note(true); return seen; }  sink(watch);
 # RUN: walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # CHECK-LABEL: code f2:Body
 # CHECK-NOT: MarkEnvironmentEscaped
 # CHECK: = NewClosure {{*}}function=f3
-# RUN(EMIT): emit f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
-# EMIT: Store8({{*}}collectorState
+# RUN(EMIT): bytes f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# EMIT: CallValueLending.First count 1
+# EMIT: NewSlimClosureInFrame.Plain count 1
 # RUN(NEVER): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # NEVER-NOT: ReleaseEnvironment
 # RUN(MAKER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls

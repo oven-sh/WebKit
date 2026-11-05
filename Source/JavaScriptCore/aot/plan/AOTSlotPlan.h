@@ -54,7 +54,8 @@ struct PlacedSlot {
     uint32_t width() const { return widthOf(representation); }
     uint32_t end() const { return offset + width(); }
     SlotData data() const { return SlotData::create(offset, representation); }
-    TypeID typeInLayoutRecord() const { return provenType ? provenType : type; }
+    TypeID typeInLayoutRecord() const { return typeOfRawValue ? typeOfRawValue : typeThatStoresAreHeldTo(); }
+    TypeID typeThatStoresAreHeldTo() const { return provenType ? provenType : type; }
     bool hasLocationOf(const PlacedSlot& other) const { return storage == other.storage && offset == other.offset && representation == other.representation; }
 
     SlotRepresentation representation { SlotRepresentation::JSValue };
@@ -71,6 +72,7 @@ struct PlacedSlot {
     FunctionID deferredFunction;
     TypeID type;
     TypeID provenType;
+    TypeID typeOfRawValue;
 };
 
 struct PlannedLayout {
@@ -86,11 +88,12 @@ struct PlannedLayout {
     LayoutStorage storage { LayoutStorage::None };
     bool isRecordAlone { false };
     bool liesOnlyInFrames { false };
+    bool cellsAreHandedBack { false };
     uint16_t numberOfRecordFields { 0 };
     uint32_t size { 0 };
     uint32_t extensionSize { 0 };
+    uint32_t offsetOfLinkToNextCellHandedBack { 0 };
     uint64_t granulesOfFirstExtension { 0 };
-    std::optional<uint32_t> isEscapedOffset;
     Vector<PlacedSlot> slots;
     Vector<PropertyKeyID> appendedKeys;
     Vector<uint16_t> placesOfAppendedKeys;
@@ -98,6 +101,7 @@ struct PlannedLayout {
     size_t findAppendedKey(PropertyKeyID) const;
     std::optional<FieldIndex> environmentOfDeferredClosures;
     BitVector fieldsThatHoldRawValuesFromBirth;
+    bool mayBearMark { false };
 };
 
 inline size_t PlannedLayout::findAppendedKey(PropertyKeyID key) const
@@ -163,7 +167,6 @@ enum class VariableStorage : uint8_t {
 
 enum class VariableEncoding : uint8_t {
     Plain,
-    UndefinedAsZero,
     FunctionAsZero,
 };
 
@@ -241,6 +244,12 @@ struct FieldAccessesOfSets {
     };
     std::array<Part, 64> parts;
 };
+
+bool fieldStaysInSlot(const Program&, const PlacedSlot&);
+class SlotPlan;
+struct LinkTables;
+Vector<FieldIndex, 8> fieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan&, LayoutID);
+bool constantListsFieldsHeldFilledInSlots(const Program&, const LinkTables&, const SlotPlan&, DataID);
 
 class SlotPlan {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SlotPlan);

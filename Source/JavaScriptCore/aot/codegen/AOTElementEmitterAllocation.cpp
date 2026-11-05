@@ -113,11 +113,15 @@ bool ArrayAllocationEmitter::isNumberOrMarker(ValueID element)
     return representationOf(element) == Representation::JSValue && !type.isNumber() && type.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
 }
 
+static const ArrayStorageForm& formAtAllocationOfStorageDeclared(ArrayStorage declared)
+{
+    return arrayStorageFormOf(hasArrayStorageForm(declared) ? declared : ArrayStorage::Contiguous);
+}
+
 const ArrayStorageForm& ArrayAllocationEmitter::formAtAllocation(const Type& array) const
 {
     TypeArena& arena = m_generator.inputs().types;
-    ArrayStorage declared = arrayStorageDeclaredBy(m_program, arena, arena.intern(array)).predicted();
-    return arrayStorageFormOf(hasArrayStorageForm(declared) ? declared : ArrayStorage::Contiguous);
+    return formAtAllocationOfStorageDeclared(arrayStorageDeclaredBy(m_program, arena, arena.intern(array)).predicted());
 }
 
 const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationContext& context, std::span<const ValueID> elements, const Type& array)
@@ -125,15 +129,15 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationCon
     return formOfLiteral(context, elements, array, ArrayStorage::Other);
 }
 
-const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationContext& context, std::span<const ValueID> elements, const Type& array, ArrayStorage named)
+const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationContext& context, std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray)
 {
-    if (const ArrayStorageForm* form = findFormOfLiteral(elements, array, named))
+    if (const ArrayStorageForm* form = findFormOfLiteral(elements, array, named, declaredByArray))
         return *form;
     generator().fail(context, InternalErrorKind::OpcodeWithoutCode, "an element is not proven to fit the storage that the array literal names"_s);
     return arrayStorageFormOf(ArrayStorage::Contiguous);
 }
 
-const ArrayStorageForm* ArrayAllocationEmitter::findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named)
+const ArrayStorageForm* ArrayAllocationEmitter::findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray)
 {
     bool isNeverMade = std::ranges::any_of(elements, [&](ValueID element) {
         return isNeverType(typeIDOf(element));
@@ -148,7 +152,7 @@ const ArrayStorageForm* ArrayAllocationEmitter::findFormOfLiteral(std::span<cons
         return fitsNamedStorage ? namedForm : nullptr;
     }
 
-    const ArrayStorageForm& form = formAtAllocation(array);
+    const ArrayStorageForm& form = declaredByArray ? formAtAllocationOfStorageDeclared(*declaredByArray) : formAtAllocation(array);
     bool canHoldElements = std::ranges::all_of(elements, [&](ValueID element) {
         return (form.element == Representation::Double && isNumberOrMarker(element)) || fitsStorageOfLiteral(types(), form.kind, typeIDOf(element));
     });
@@ -172,10 +176,12 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
     if (!value->holes().empty())
         return newLiteralWithHoles(value);
     std::span<const ValueID> elements = value->elementsOperands();
-    const ArrayStorageForm& form = formOfLiteral(value, elements, typeOf(value.id()), value->arrayStorage());
-    unsigned length = elements.size();
     TypeArena& arena = m_generator.inputs().types;
-    bool storageIsDeclared = hasArrayStorageForm(value->arrayStorage()) || hasArrayStorageForm(arrayStorageDeclaredBy(m_program, arena, typeIDOf(value.id())).predicted());
+    const ArrayStorage named = value->arrayStorage();
+    const ArrayStorage declared = hasArrayStorageForm(named) ? ArrayStorage::Other : arrayStorageDeclaredBy(m_program, arena, typeIDOf(value.id())).predicted();
+    const ArrayStorageForm& form = formOfLiteral(value, elements, typeOf(value.id()), named, &declared);
+    unsigned length = elements.size();
+    bool storageIsDeclared = hasArrayStorageForm(named) || hasArrayStorageForm(declared);
     const ArrayStorageForm& formAtSite = storageIsDeclared ? form : arrayStorageFormOf(ArrayStorage::Int32);
     std::optional<uint32_t> kindAtSite = kindOfEmptyArrayLiteralAtSite(value.value(), formAtSite);
     if (std::optional<Vector<uint32_t, 12>> site = kindAtSite ? modulesAndPositionsOf(value) : std::nullopt) {
@@ -504,7 +510,7 @@ CellPointer ArrayAllocationEmitter::newLiteralWithHoles(const ValueContext& valu
     join.add(newArray);
 
     m_out.appendTo(slowPath);
-    bool mustHaveForm = value->keepsLength() || hasArrayStorageForm(value->arrayStorage());
+    bool mustHaveForm = hasArrayStorageForm(value->arrayStorage());
     uint32_t flags = mustHaveForm ? NewArrayWithHolesFlag::mustHaveIndexingType : 0;
     CellPointer arrayOfHoles = callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), integer(length), word32(form.indexingType), word32(flags) }, { .isOnRarePath = true });
     ConversionEmitter& conversions = emitter<ConversionEmitter>();

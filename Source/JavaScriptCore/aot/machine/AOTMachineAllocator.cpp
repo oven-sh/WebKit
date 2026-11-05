@@ -10,6 +10,8 @@
 
 #include "AOTMachineCallsOnWays.h"
 #include <algorithm>
+#include <cstring>
+#include <memory>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -290,14 +292,47 @@ template<typename Functor>
 static ALWAYS_INLINE void forEachIndexOfListOfAllocator(uint32_t count, const Functor& functor)
 {
     uint32_t index = 0;
-    for (uint32_t endOfFours = count & ~3u; index < endOfFours; index += 4) {
+    for (uint32_t endOfEights = count & ~7u; index < endOfEights; index += 8) {
         functor(index);
         functor(index + 1);
         functor(index + 2);
         functor(index + 3);
+        functor(index + 4);
+        functor(index + 5);
+        functor(index + 6);
+        functor(index + 7);
     }
     for (; index < count; ++index)
         functor(index);
+}
+
+template<typename T>
+static ALWAYS_INLINE T* takeStorageOfListOfAllocator(uintptr_t& storage, ArenaVector<T>& list, uint32_t capacity)
+{
+    ASSERT(!(storage % alignof(T)));
+    T* first = reinterpret_cast<T*>(storage);
+    storage += static_cast<size_t>(capacity) * sizeof(T);
+    list.adoptStorage(first, capacity);
+    return first;
+}
+
+template<typename T>
+static ALWAYS_INLINE T* takeListOfAllocator(Arena& arena, uintptr_t& storage, ArenaVector<T>& list, uint32_t size)
+{
+    T* first = takeStorageOfListOfAllocator(storage, list, size);
+    list.growWithoutInitializing(arena, size);
+    return first;
+}
+
+static uint64_t smallestBitsOfPinnedConstants()
+{
+    static const uint64_t smallest = [] {
+        uint64_t smallestSoFar = UINT64_MAX;
+        for (uint64_t bits : bitsOfPinnedConstants())
+            smallestSoFar = std::min(smallestSoFar, bits);
+        return smallestSoFar;
+    }();
+    return smallest;
 }
 
 Allocation* allocateRegisters(Procedure& proc)
@@ -322,38 +357,54 @@ Allocator::Allocator(Procedure& proc, Allocation& allocation)
     std::fill_n(m_valueIn, numberOfRegisters, nullptr);
     std::fill_n(m_rematerializedValueKeptIn, numberOfRegisters, nullptr);
     std::fill_n(m_rematerializedValueIsKeptUntil, numberOfRegisters, 0);
-    uint64_t smallestPinnedConstant = UINT64_MAX;
-    for (uint64_t bits : bitsOfPinnedConstants())
-        smallestPinnedConstant = std::min(smallestPinnedConstant, bits);
-    m_smallestPinnedConstant = smallestPinnedConstant;
+    m_smallestPinnedConstant = smallestBitsOfPinnedConstants();
 
     Arena& arena = proc.arena();
-    uint32_t numberOfOperations = proc.numberOfOperations();
-    uint32_t numberOfBlocks = m_order.mostBlocks();
-    uint32_t mostOperations = m_order.mostOperations();
+    const uint32_t numberOfOperations = proc.numberOfOperations();
+    const uint32_t numberOfBlocks = m_order.mostBlocks();
+    const uint32_t mostOperations = m_order.mostOperations();
+    const uint32_t capacityOfPatchAssignments = numberOfOperations / 4 + 4;
+    const size_t numberOfWordsForBlocks = (static_cast<size_t>(numberOfBlocks) + 63) / 64;
+    const size_t numberOfWordsForRareRegions = (m_order.rareRegions().size() + 63) / 64;
 
-    m_values.growWithoutInitializing(arena, numberOfOperations);
-    ValueState* states = m_values.begin();
+    using BindingsAtHead = std::span<const RegisterBinding>;
+    static_assert(alignof(Step) == alignof(uint64_t) && alignof(PatchAssignment) == alignof(uint64_t));
+    static_assert(alignof(ValueState) == alignof(uint64_t) && alignof(Snapshot) == alignof(uint64_t) && alignof(BindingsAtHead) == alignof(uint64_t));
+    static_assert(alignof(BlockSteps) == alignof(SpillIndex) && alignof(SpillIndex) <= alignof(uint64_t) && alignof(Reg) == 1);
+    const size_t bytesLeftUnwritten = static_cast<size_t>(numberOfOperations) * sizeof(Step) + static_cast<size_t>(capacityOfPatchAssignments) * sizeof(PatchAssignment);
+    static_assert(!BlockSteps { }.begin && !BlockSteps { }.end && !BlockSteps { }.beginOfEdgeMoves && !BlockSteps { }.endOfEdgeMoves && sizeof(BlockSteps) == 5 * sizeof(uint32_t));
+    const size_t bytesCleared = static_cast<size_t>(numberOfOperations) * sizeof(ValueState) + static_cast<size_t>(numberOfBlocks) * (2 * sizeof(Snapshot) + sizeof(BindingsAtHead) + sizeof(BlockSteps)) + (numberOfWordsForBlocks + numberOfWordsForRareRegions) * sizeof(uint64_t);
+    const size_t bytesOfNarrowLists = static_cast<size_t>(mostOperations) * sizeof(SpillIndex) + (static_cast<size_t>(numberOfOperations) + mostOperations) * sizeof(Reg);
+    uintptr_t storage = reinterpret_cast<uintptr_t>(arena.allocate(bytesLeftUnwritten + bytesCleared + bytesOfNarrowLists, alignof(uint64_t)));
+
+    takeStorageOfListOfAllocator(storage, allocation.m_steps, numberOfOperations);
+    takeStorageOfListOfAllocator(storage, allocation.m_patchAssignments, capacityOfPatchAssignments);
+
+    memset(reinterpret_cast<void*>(storage), 0, bytesCleared);
+    ValueState* states = takeListOfAllocator(arena, storage, m_values, numberOfOperations);
+    takeListOfAllocator(arena, storage, m_heads, numberOfBlocks);
+    takeListOfAllocator(arena, storage, m_ends, numberOfBlocks);
+    takeListOfAllocator(arena, storage, allocation.m_registersAtHead, numberOfBlocks);
+    uint64_t* words = reinterpret_cast<uint64_t*>(storage);
+    storage += (numberOfWordsForBlocks + numberOfWordsForRareRegions) * sizeof(uint64_t);
+    m_hasPassedOnHintsOfPhis = BitSpan(std::span<uint64_t>(words, numberOfWordsForBlocks));
+    allocation.m_regionNeedsFrame = BitSpan(std::span<uint64_t>(words + numberOfWordsForBlocks, numberOfWordsForRareRegions));
+
+    BlockSteps* stepsOfBlocks = takeListOfAllocator(arena, storage, allocation.m_blocks, numberOfBlocks);
+    SpillIndex* spillsOfValues = takeListOfAllocator(arena, storage, allocation.m_spillOfValue, mostOperations);
+    Reg* registers = takeListOfAllocator(arena, storage, m_hints, numberOfOperations);
+    takeListOfAllocator(arena, storage, allocation.m_registerAtDefinition, mostOperations);
+    std::uninitialized_fill_n(spillsOfValues, mostOperations, noSpill);
+    std::uninitialized_fill_n(registers, static_cast<size_t>(numberOfOperations) + mostOperations, Reg());
+
     const ValueFacts* facts = m_valueFacts;
     forEachIndexOfListOfAllocator(numberOfOperations, [&](uint32_t index) ALWAYS_INLINE_LAMBDA {
-        new (NotNull, states + index) ValueState { 0, facts[index].firstUse, noSpill };
+        states[index].nextUse = facts[index].firstUse;
+        states[index].saveInRareRegion = noSpill;
     });
-    m_heads.grow(arena, numberOfBlocks);
-    m_ends.grow(arena, numberOfBlocks);
-    m_hints.fill(arena, numberOfOperations, Reg());
-    m_hasPassedOnHintsOfPhis = BitSpan::create(arena, numberOfBlocks);
-
-    allocation.m_steps.reserve(arena, numberOfOperations);
-    allocation.m_blocks.growWithoutInitializing(arena, numberOfBlocks);
-    BlockSteps* stepsOfBlocks = allocation.m_blocks.begin();
     forEachIndexOfListOfAllocator(numberOfBlocks, [&](uint32_t index) ALWAYS_INLINE_LAMBDA {
-        new (NotNull, stepsOfBlocks + index) BlockSteps;
+        stepsOfBlocks[index].terminator = BlockSteps { }.terminator;
     });
-    allocation.m_patchAssignments.reserve(arena, numberOfOperations / 4 + 4);
-    allocation.m_registersAtHead.grow(arena, numberOfBlocks);
-    allocation.m_spillOfValue.fill(arena, mostOperations, noSpill);
-    allocation.m_registerAtDefinition.fill(arena, mostOperations, Reg());
-    allocation.m_regionNeedsFrame = BitSpan::create(arena, m_order.rareRegions().size());
 }
 
 void Allocator::run()
@@ -425,7 +476,13 @@ void Allocator::run()
     if (!everyBlockIsKnownToNeedFrame()) {
         const BlockPlace* places = m_order.places();
         const BlockSteps* stepsOfBlocks = m_allocation.stepsOfBlocks();
-        for (Block* block : m_order.blocksInOrder()) {
+        std::span<Block* const> blocksToAsk = m_order.blocksInOrder();
+        if (m_allocation.needsFrameOutsideRareRegions() && (!hasFramedPart || m_allocation.needsFrameAheadOfFramedPart())) {
+            std::span<Block* const> blocksInLayout = m_order.blocksInLayout();
+            const size_t numberOfBlocksOutsideRareRegions = m_order.numberOfBlocksOutsideRareRegions();
+            blocksToAsk = m_proc.traits().fallsIntoWhatLiesBehind ? blocksInLayout.first(blocksInLayout.size() - numberOfBlocksOutsideRareRegions) : blocksInLayout.subspan(numberOfBlocksOutsideRareRegions);
+        }
+        for (Block* block : blocksToAsk) {
             uint32_t rareRegion = places[block->index()].rareRegion;
             bool isKnownToNeedFrame;
             if (rareRegion != noRareRegion)
@@ -467,7 +524,9 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
     if (allocation.hasFramedPart()) [[unlikely]] {
         standsInFramedPart = allocation.isInFramedPart(block);
         standsAheadOfFramedPart = !standsInFramedPart;
+        m_isAheadOfFramedPart = standsAheadOfFramedPart;
     }
+    ASSERT(m_isAheadOfFramedPart == standsAheadOfFramedPart);
 
     m_block = block;
     m_position = head;
@@ -483,7 +542,7 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
     m_everyReadBehindBlockCounts = everyReadBehindBlockCounts;
     m_beginOfLoopAroundBlock = beginOfLoopAroundBlock;
     m_endOfWhatWaysLeadToFromBlock = m_liveness.endOfWhatWaysLeadToFrom(block);
-    m_isAheadOfFramedPart = standsAheadOfFramedPart;
+    m_beginOfWaysOnFromBlock = beginOfWaysOnFrom(block, m_endOfBlock);
     m_operandTakenBackByBranch = nullptr;
     m_registersReadOnWayToFailingSuccessor = 0;
     steps.begin = allocation.m_steps.size();
@@ -600,16 +659,24 @@ NEVER_INLINE void Allocator::allocateArgumentRegister(Operation* operation)
     Location location;
     if (lastReader == operation) {
         const ValueFacts& facts = m_valueFacts[operation->index()];
-        unbindAll(operation);
-        if (!(facts.flags & flagsOfAllocatedValueThatAsksForMoreThanRegister) && (maskOf(reg) & m_file.allocatableIn(bankOf(operation->type())) & ~m_file.calleeSaved)) [[likely]] {
+        ValueState& state = stateOf(operation);
+        const bool asksForNoMoreThanItsRegister = !(facts.flags & flagsOfAllocatedValueThatAsksForMoreThanRegister) && (maskOf(reg) & m_file.allocatableIn(bankOf(operation->type())) & ~m_file.calleeSaved);
+        if (asksForNoMoreThanItsRegister && facts.lastUse != noPosition && state.registers == maskOf(reg)) [[likely]] {
             ASSERT(registerFileIsConsistent());
-            ASSERT(!m_valueIn[reg.index()]);
             m_allocation.m_registerAtDefinition[operation->index()] = reg;
-            if (facts.lastUse != noPosition)
-                bind(reg, operation);
             location = Location::reg(reg);
-        } else
-            location = defineResult(operation, maskOf(reg), 0, reg);
+        } else {
+            unbindAll(operation, state);
+            if (asksForNoMoreThanItsRegister) {
+                ASSERT(registerFileIsConsistent());
+                ASSERT(!m_valueIn[reg.index()]);
+                m_allocation.m_registerAtDefinition[operation->index()] = reg;
+                if (facts.lastUse != noPosition)
+                    bind(reg, operation);
+                location = Location::reg(reg);
+            } else
+                location = defineResult(operation, maskOf(reg), 0, reg);
+        }
     } else
         location = defineResult(operation, m_file.allocatableIn(bankOf(reg)), registersReservedAtAllocatedOperation(*this), Reg());
     if (m_proc.failure())
@@ -646,6 +713,7 @@ static NEVER_INLINE void allocateExtractBehindItsPatch(Allocator& allocator, Ope
 struct PlacesTakenByAllocatedLeaves {
     RegisterMask locked;
     bool hasMemoryOperand;
+    bool userHasNoFusedChild { false };
     const Operation* operationNotSearchedForFusedLoads;
 };
 
@@ -659,10 +727,12 @@ static ALWAYS_INLINE bool takeMemoryOperandForAllocatedLeaf(const Allocator& all
     ASSERT(!isLeafOfAddress(liveness, user, childIndex));
     if (!acceptsMemoryOperand(*user, childIndex))
         return false;
-    const ValueFacts* facts = allocator.m_valueFacts;
-    for (const Operation* sibling : user->children()) {
-        if (facts[sibling->index()].has(ValueFlag::IsFused) && (traitsOfAllocatedOpcodes.of[sibling->opcode()] & AllocatedOpcodeIsLoad))
-            return false;
+    if (!taken.userHasNoFusedChild) {
+        const ValueFacts* facts = allocator.m_valueFacts;
+        for (const Operation* sibling : user->children()) {
+            if (facts[sibling->index()].has(ValueFlag::IsFused) && (traitsOfAllocatedOpcodes.of[sibling->opcode()] & AllocatedOpcodeIsLoad))
+                return false;
+        }
     }
     if (isX86_64()) {
         if (const Operation* operation = taken.operationNotSearchedForFusedLoads) {
@@ -693,7 +763,7 @@ static NEVER_INLINE Location placeAllocatedLeafInRegisterOrMemory(Allocator& all
             if ((allocator.m_valueFacts[leaf->index()].lastUse <= allocator.m_position || !allocator.hasFreeRegister(bank, candidates)) && takeMemoryOperandForAllocatedLeaf(allocator, user, childIndex, taken))
                 return allocator.memoryLocationOf(leaf);
         }
-        reg = allocator.ensureInRegister(leaf, candidates, hintIfAmong(allocator.hintOf(leaf), candidates));
+        reg = allocator.bringIntoRegister(leaf, candidates, hintIfAmong(allocator.hintOf(leaf), candidates));
         if (!reg) {
             allocator.m_proc.fail(FailureKind::OutOfRegisters, user);
             return Location();
@@ -754,7 +824,7 @@ static ALWAYS_INLINE Location placeLeafOfAllocatedOperation(Allocator& allocator
         }
     } else if (leaf->opcode() == ArgumentReg)
         return Location::reg(leaf->argumentReg());
-    PlacesTakenByAllocatedLeaves taken { locked, hasMemoryOperand, nullptr };
+    PlacesTakenByAllocatedLeaves taken { locked, hasMemoryOperand, false, nullptr };
     Location location = leafHasNoPosition ? placeAllocatedLeafWithoutPosition(allocator, user, childIndex, leaf, taken) : placeAllocatedLeafInRegisterOrMemory(allocator, user, childIndex, leaf, taken);
     locked = taken.locked;
     hasMemoryOperand = taken.hasMemoryOperand;
@@ -1134,7 +1204,7 @@ ALWAYS_INLINE bool Allocator::allocateWithChildrenForLeaves(Operation* operation
             sources[index] = Location::reg(reg);
             return true;
         }
-        PlacesTakenByAllocatedLeaves taken { locked, hasMemoryOperand, nullptr };
+        PlacesTakenByAllocatedLeaves taken { locked, hasMemoryOperand, true, nullptr };
         sources[index] = placeAllocatedLeafOutsideRegisters(*this, user, index, leaf, true, taken, [] { });
         locked = taken.locked;
         hasMemoryOperand = taken.hasMemoryOperand;
@@ -1218,6 +1288,20 @@ void Allocator::allocateOperation(Operation* operation)
     allocateByKindOfOpcode<false>(operation);
 }
 
+static ALWAYS_INLINE void allocateBranchWithLeavesBelow(Allocator& allocator, Operation* branch, const Operation* user, Operation* const* children, unsigned numberOfChildren, unsigned firstChildThatTargetAloneJudges, bool hasMemoryOperand)
+{
+    const Position position = allocator.m_position;
+    PlacedLeavesOfAllocatedOperation placed;
+    placed.taken.locked = 0;
+    placed.taken.hasMemoryOperand = hasMemoryOperand;
+    unsigned fusedChildren = 0;
+    if (!placeLeavesOfAllocatedOperation(allocator, branch, user, children, numberOfChildren, firstChildThatTargetAloneJudges, fusedChildren, placed))
+        return;
+    for (unsigned index = 0, numberOfLeaves = placed.size; index < numberOfLeaves; ++index)
+        allocator.passUseReachedByWalk(placed.leaves[index], position);
+    allocator.appendExecute(branch, Location(), placed.sources);
+}
+
 NEVER_INLINE void Allocator::allocateBranch(Operation* branch)
 {
     ASSERT(branch->opcode() == Branch && branch->numChildren() == 1 && branch->type() == Void && branch == m_block->last());
@@ -1250,42 +1334,34 @@ NEVER_INLINE void Allocator::allocateBranch(Operation* branch)
         if (allocateWithChildrenForLeaves<1, kindOfAllocatedOperationHasNoResult>(branch, user, userIsFusedLoad)) [[likely]]
             return;
     }
-    allocateBranchWithAnyLeaves(branch);
+    allocateBranchWithLeavesBelow(*this, branch, user, inlineChildrenOfAllocatedOperation(user), numberOfLeaves, 0, isX86_64() && userIsFusedLoad);
 }
 
 NEVER_INLINE void Allocator::allocateBranchWithAnyLeaves(Operation* branch)
 {
-    const ValueFacts* const factsOfValues = m_valueFacts;
-    const Position position = m_position;
-    PlacedLeavesOfAllocatedOperation placed;
-    if (branch->owner()->numSuccessors() != 1) [[likely]] {
-        placed.taken.locked = 0;
-        placed.taken.hasMemoryOperand = false;
-        const Operation* user = branch;
-        Operation* const* children = inlineChildrenOfAllocatedOperation(branch);
-        unsigned numberOfChildren = 1;
-        unsigned firstChildThatTargetAloneJudges = 0;
-        const Operation* predicate = children[0];
-        const uint16_t flagsOfPredicate = factsOfValues[predicate->index()].flags;
-        if (flagsOfPredicate & bitOf(ValueFlag::IsFused)) {
-            const unsigned traitsOfPredicate = traitsOfAllocatedOpcodes.of[predicate->opcode()];
-            if (!(traitsOfPredicate & (AllocatedOpcodeGoesTheLongWay | AllocatedOpcodeMayJumpUnconditionally)) && !(flagsOfPredicate & flagsOfOperationWithLeavesOfItsOwn)) [[likely]] {
-                user = predicate;
-                children = inlineChildrenOfAllocatedOperation(predicate);
-                numberOfChildren = numberOfInlineChildrenOfAllocatedOperation(predicate);
-                if (traitsOfPredicate & AllocatedOpcodeIsFusedIntoAddresses)
-                    firstChildThatTargetAloneJudges = numberOfChildren;
-                if (isX86_64() && (traitsOfPredicate & AllocatedOpcodeIsLoad))
-                    placed.taken.hasMemoryOperand = true;
-            }
-        }
-        unsigned fusedChildren = 0;
-        if (!placeLeavesOfAllocatedOperation(*this, branch, user, children, numberOfChildren, firstChildThatTargetAloneJudges, fusedChildren, placed))
-            return;
-        for (unsigned index = 0, numberOfLeaves = placed.size; index < numberOfLeaves; ++index)
-            passUseReachedByWalk(placed.leaves[index], position);
+    if (branch->owner()->numSuccessors() == 1) {
+        appendExecute(branch, Location(), Location(), Location());
+        return;
     }
-    appendExecute(branch, Location(), placed.sources);
+    const Operation* user = branch;
+    Operation* const* children = inlineChildrenOfAllocatedOperation(branch);
+    unsigned numberOfChildren = 1;
+    unsigned firstChildThatTargetAloneJudges = 0;
+    bool hasMemoryOperand = false;
+    const Operation* predicate = children[0];
+    const uint16_t flagsOfPredicate = m_valueFacts[predicate->index()].flags;
+    if (flagsOfPredicate & bitOf(ValueFlag::IsFused)) {
+        const unsigned traitsOfPredicate = traitsOfAllocatedOpcodes.of[predicate->opcode()];
+        if (!(traitsOfPredicate & (AllocatedOpcodeGoesTheLongWay | AllocatedOpcodeMayJumpUnconditionally)) && !(flagsOfPredicate & flagsOfOperationWithLeavesOfItsOwn)) {
+            user = predicate;
+            children = inlineChildrenOfAllocatedOperation(predicate);
+            numberOfChildren = numberOfInlineChildrenOfAllocatedOperation(predicate);
+            if (traitsOfPredicate & AllocatedOpcodeIsFusedIntoAddresses)
+                firstChildThatTargetAloneJudges = numberOfChildren;
+            hasMemoryOperand = isX86_64() && (traitsOfPredicate & AllocatedOpcodeIsLoad);
+        }
+    }
+    allocateBranchWithLeavesBelow(*this, branch, user, children, numberOfChildren, firstChildThatTargetAloneJudges, hasMemoryOperand);
 }
 
 NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)

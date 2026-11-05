@@ -17,6 +17,7 @@ class Program;
 enum class LoanOfClosure : uint8_t {
     None,
     ToFunctionEntered,
+    LeftToStubOfCall,
 };
 
 struct ClosureLent {
@@ -25,6 +26,8 @@ struct ClosureLent {
 };
 
 ClosureLent findLoanOfClosure(const Program&, const Facts&, const Code&, ValueID closure);
+uint8_t argumentsLentBy(const Program&, const Facts&, const Code&, const Operation& call);
+bool mayCaptureClosuresOfFrames(const Facts&, const Code&);
 
 } } } // namespace JSC::AOT::Typed
 

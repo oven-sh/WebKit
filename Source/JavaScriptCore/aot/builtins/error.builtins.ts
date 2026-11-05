@@ -65,17 +65,6 @@ export default b.declarations(
   b.class("Error", {
     jsType: "ErrorInstanceType",
     namesDefinedOnNewInstances: ["message", "cause", "stack", "line", "column", "sourceURL", "originalLine", "originalColumn"],
-    typesOfNamesDefinedOnNewInstances: b.typesByName({
-      message: b.string,
-      stack: b.string,
-      line: b.f64,
-      column: b.f64,
-      sourceURL: b.string,
-      originalLine: b.f64,
-      originalColumn: b.f64,
-    }),
-    namesMadeByStaticMembers: { stack: "prepareStackTrace" },
-    namesReadToDescribeInstances: ["name", "message"],
     constructorOnlyReadsPrototypeOfNewTarget: true,
     types: [b.viewType("Error")],
     prototypeTable: b.staticTable("runtime/ErrorPrototype.cpp", "errorPrototypeTable"),

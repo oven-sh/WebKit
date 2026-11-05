@@ -130,11 +130,18 @@ bool spillPlaceIsWrittenBehindDefinitionAlone(const Procedure& proc, const Spill
     return facts.isPointerBesideNarrowReference || value->opcode() != Phi || proc.allocation().registerAtDefinitionOf(value).isSet();
 }
 
-static bool spillPlaceIsFreedLater(const SlotAssigner::Holder& a, const SlotAssigner::Holder& b)
+struct HalfWordsOfSpillPlace {
+    uint32_t wordOfBits;
+    uint64_t bits;
+};
+
+static HalfWordsOfSpillPlace halfWordsOfSpillPlace(uint32_t distance, SlotAssigner::Size size)
 {
-    if (a.end != b.end)
-        return a.end > b.end;
-    return a.distanceWithinPart > b.distanceWithinPart;
+    const uint32_t lastHalfWord = distance / bytesPerPlaceHalf - 1;
+    if (size == SlotAssigner::Half)
+        return { lastHalfWord / 64, uint64_t { 1 } << (lastHalfWord % 64) };
+    ASSERT(lastHalfWord % 2);
+    return { lastHalfWord / 64, uint64_t { 3 } << ((lastHalfWord - 1) % 64) };
 }
 
 static constexpr uint32_t makeHeldPlace(uint32_t distanceWithinPart, SlotAssigner::Part part, SlotAssigner::Size size)
@@ -173,7 +180,8 @@ void SlotAssigner::run()
     const bool savesFrame = m_proc.traits().savesFrameOnSuspend;
     RELEASE_ASSERT(savesFrame || m_allocation.suspensions().empty());
 
-    placeStackSlots();
+    if (!m_proc.stackSlots().empty())
+        placeStackSlots();
     sortSpillsByBegin();
     m_partOfSpill.growWithoutInitializing(m_arena, numberOfSpills);
     m_slots.m_distanceOfSpill.growWithoutInitializing(m_arena, numberOfSpills);
@@ -183,7 +191,9 @@ void SlotAssigner::run()
     Part* const partOfSpill = m_partOfSpill.begin();
     uint32_t* const distanceOfSpill = m_slots.m_distanceOfSpill.begin();
     uint32_t* const placesOfSpills = m_placesOfSpills;
-    for (SpillIndex spill : m_spillsByBegin) {
+    const uint64_t* const spillsByBegin = m_spillsByBegin;
+    for (uint32_t index = 0; index < numberOfSpills; ++index) {
+        const SpillIndex spill = indexInPlaceSortKey(spillsByBegin[index]);
         const SpillFacts& facts = factsOfSpills[spill];
         const SpillPlaceRange range = rangesOfSpillPlaces[spill];
         releasePlacesFreeAt(range.begin);
@@ -197,9 +207,17 @@ void SlotAssigner::run()
     }
 
     joinParts();
-    findWordsDeadAcrossSuspensions();
+    if (!m_allocation.suspensions().empty())
+        findWordsDeadAcrossSuspensions();
     if (isX86_64())
         bringBusyWordsNearEndsOfFrame();
+}
+
+static bool wordsLieInSeveralReaches(const SlotAssigner::FrameWords& words, uint32_t begin, uint32_t end)
+{
+    const uint32_t endOfHighWords = std::clamp(words.endOfReachOfFramePointer, begin, end);
+    const uint32_t beginOfLowWords = std::clamp(words.beginOfReachOfStackPointer, endOfHighWords, end);
+    return (begin < endOfHighWords) + (endOfHighWords < beginOfLowWords) + (beginOfLowWords < end) >= 2;
 }
 
 void SlotAssigner::bringBusyWordsNearEndsOfFrame()
@@ -219,18 +237,22 @@ void SlotAssigner::bringBusyWordsNearEndsOfFrame()
     words.newWordOf = m_arena.createSpan<uint32_t>(numberOfWords);
     for (uint32_t word = 0; word < numberOfWords; ++word)
         words.newWordOf[word] = word;
-    countAccessesToFrame(words);
 
     const uint32_t numberOfWordsKept = m_slots.numberOfWordsKeptAtSuspensions();
+    const bool wordsKeptMayMove = m_slots.m_firstWordClearedAtSetup >= m_slots.m_endOfWordsClearedAtSetup;
     uint32_t endOfWordsKeptThatMayMove = 0;
-    if (m_slots.m_firstWordClearedAtSetup >= m_slots.m_endOfWordsClearedAtSetup) {
+    if (wordsKeptMayMove) {
         uint32_t numberOfLowestWordsCleared = numberOfWordsKept % 2;
         for (const WordsClearedAtSuspension& cleared : m_slots.m_wordsClearedAtSuspension)
             numberOfLowestWordsCleared = std::max(numberOfLowestWordsCleared, cleared.numberOfLowestWords);
         endOfWordsKeptThatMayMove = numberOfWordsKept + numberOfWordsKept % 2 - numberOfLowestWordsCleared;
-        arrangeWordsOfPart(words, KeptAtSuspensions, 0, endOfWordsKeptThatMayMove);
     }
-    arrangeWordsOfPart(words, DeadAtSuspensions, numberOfWords - m_bytesOfPart[DeadAtSuspensions] / bytesPerPlaceWord, numberOfWords);
+    const uint32_t firstWordDeadAtSuspensions = numberOfWords - m_bytesOfPart[DeadAtSuspensions] / bytesPerPlaceWord;
+    if (wordsLieInSeveralReaches(words, 0, endOfWordsKeptThatMayMove) || wordsLieInSeveralReaches(words, firstWordDeadAtSuspensions, numberOfWords))
+        countAccessesToFrame(words);
+    if (wordsKeptMayMove)
+        arrangeWordsOfPart(words, KeptAtSuspensions, 0, endOfWordsKeptThatMayMove);
+    arrangeWordsOfPart(words, DeadAtSuspensions, firstWordDeadAtSuspensions, numberOfWords);
 
     bool movesWordsKept = false;
     for (uint32_t word = 0; word < numberOfWordsKept; ++word) {
@@ -251,19 +273,20 @@ void SlotAssigner::bringBusyWordsNearEndsOfFrame()
 
     if (!movesWordsKept)
         return;
-    auto moveBitsOfWordsKept = [&](BitSpan& bits) {
-        BitSpan moved = BitSpan::create(m_arena, numberOfWordsKept);
+    auto moveBitsOfWordsKept = [&](const BitSpan& bits) {
+        std::span<uint64_t> bitsOfMovedWords = m_arena.createSpan<uint64_t>((static_cast<size_t>(numberOfWordsKept) + 63) / 64);
+        BitSpan moved(bitsOfMovedWords);
         bits.forEachSetBit([&](size_t word) {
             RELEASE_ASSERT(word < numberOfWordsKept);
             moved.set(words.newWordOf[word]);
         });
-        bits = moved;
+        return bitsOfMovedWords;
     };
-    for (BitSpan& deadWords : m_slots.m_wordsDeadAcrossSuspension)
-        moveBitsOfWordsKept(deadWords);
+    for (std::span<uint64_t>& deadWords : m_slots.m_wordsDeadAcrossSuspension)
+        deadWords = moveBitsOfWordsKept(BitSpan(deadWords));
     for (WordsClearedAtSuspension& cleared : m_slots.m_wordsClearedAtSuspension) {
         if (cleared.others.size())
-            moveBitsOfWordsKept(cleared.others);
+            cleared.others = BitSpan(moveBitsOfWordsKept(cleared.others));
     }
 }
 
@@ -274,11 +297,33 @@ static constexpr uint64_t bitOfLocationInFrame = std::bit_cast<uint32_t>(Locatio
 static_assert(std::has_single_bit(bitOfLocationInFrame));
 static_assert(std::bit_cast<uint32_t>(Location::slotBytes(0)) & bitOfLocationInFrame);
 static_assert(!((std::bit_cast<uint32_t>(Location::spill(0)) | std::bit_cast<uint32_t>(Location::slotBytes(0))) & bitOfLocationInFrame << 1));
+static_assert(std::bit_cast<uint32_t>(Location::immediate()) & bitOfLocationInFrame);
 static constexpr uint64_t bitsOfPairWithLocationInFrame = bitOfLocationInFrame << 32 | bitOfLocationInFrame;
 
-static constexpr uint64_t pairMayHoldLocationInFrame(uint64_t pair)
+static constexpr uint64_t bitsOfPairWithoutBitAbove(uint64_t pair)
 {
-    return pair & ~(pair >> 1) & bitsOfPairWithLocationInFrame;
+    return pair & ~(pair >> 1);
+}
+
+static ALWAYS_INLINE bool loadPairsThatMayHoldLocationInFrame(const Step& step, uint64_t (&pairs)[3])
+{
+    memcpy(pairs, reinterpret_cast<const char*>(&step) + offsetof(Step, destination), sizeof(pairs));
+    return (pairs[0] | pairs[1] | pairs[2]) & bitsOfPairWithLocationInFrame;
+}
+
+template<typename Functor>
+static ALWAYS_INLINE void forEachStepInFours(std::span<const Step> steps, const Functor& functor)
+{
+    const Step* step = steps.data();
+    const Step* const end = step + steps.size();
+    for (const Step* const endOfFours = step + (steps.size() & ~static_cast<size_t>(3)); step != endOfFours; step += 4) {
+        functor(step[0]);
+        functor(step[1]);
+        functor(step[2]);
+        functor(step[3]);
+    }
+    for (; step != end; ++step)
+        functor(*step);
 }
 
 void SlotAssigner::countAccessesToFrame(FrameWords& words)
@@ -304,27 +349,23 @@ void SlotAssigner::countAccessesToFrame(FrameWords& words)
             note(Location::spill(spill));
     }
 
-    auto noteLocationsOf = [&](const Step& step) ALWAYS_INLINE_LAMBDA {
-        uint64_t pairs[3];
-        memcpy(pairs, reinterpret_cast<const char*>(&step) + offsetof(Step, destination), sizeof(pairs));
-        if (!((pairs[0] | pairs[1] | pairs[2]) & bitsOfPairWithLocationInFrame))
-            return;
-        const uint64_t firstPairMayCount = pairMayHoldLocationInFrame(pairs[0]);
-        const uint64_t secondPairMayCount = pairMayHoldLocationInFrame(pairs[1]);
-        const uint64_t thirdPairMayCount = pairMayHoldLocationInFrame(pairs[2]);
-        if (!(firstPairMayCount | secondPairMayCount | thirdPairMayCount))
+    auto noteLocationsIn = [&](const Step& step, const uint64_t (&pairs)[3]) ALWAYS_INLINE_LAMBDA {
+        const uint64_t firstPair = bitsOfPairWithoutBitAbove(pairs[0]);
+        const uint64_t secondPair = bitsOfPairWithoutBitAbove(pairs[1]);
+        const uint64_t thirdPair = bitsOfPairWithoutBitAbove(pairs[2]);
+        if (!((firstPair | secondPair | thirdPair) & bitsOfPairWithLocationInFrame))
             return;
         if (step.kind == StepKind::Execute && step.operation->opcode() == Extract)
             return;
-        if (firstPairMayCount) {
+        if (firstPair & bitsOfPairWithLocationInFrame) {
             note(step.destination);
             note(step.sources[0]);
         }
-        if (secondPairMayCount) {
+        if (secondPair & bitsOfPairWithLocationInFrame) {
             note(step.sources[1]);
             note(step.sources[2]);
         }
-        if (thirdPairMayCount) {
+        if (thirdPair & bitsOfPairWithLocationInFrame) {
             note(step.sources[3]);
             note(step.sources[4]);
         }
@@ -332,20 +373,27 @@ void SlotAssigner::countAccessesToFrame(FrameWords& words)
 
     std::span<const Step> steps = m_allocation.steps();
     if (m_proc.stackSlots().empty()) {
-        for (const Step& step : steps)
-            noteLocationsOf(step);
+        forEachStepInFours(steps, [&](const Step& step) ALWAYS_INLINE_LAMBDA {
+            uint64_t pairs[3];
+            if (loadPairsThatMayHoldLocationInFrame(step, pairs))
+                noteLocationsIn(step, pairs);
+        });
     } else {
-        for (const Step& step : steps) {
+        forEachStepInFours(steps, [&](const Step& step) ALWAYS_INLINE_LAMBDA {
+            ASSERT(step.kind != StepKind::Materialize || step.sources[0].isImmediate());
+            uint64_t pairs[3];
+            if (!loadPairsThatMayHoldLocationInFrame(step, pairs))
+                return;
             if (step.kind != StepKind::Materialize) {
-                noteLocationsOf(step);
-                continue;
+                noteLocationsIn(step, pairs);
+                return;
             }
             const Operation* operation = step.operation;
             while (operation->opcode() == Add && operation->hasNoPosition())
                 operation = operation->child(0);
             if (operation->opcode() == SlotBase)
                 ++numberOfAccessesToStackSlot[operation->slot()->index()];
-        }
+        });
     }
 
     ArenaVector<uint32_t> wordsEncodedAsIndex;
@@ -373,10 +421,10 @@ void SlotAssigner::countAccessesToFrame(FrameWords& words)
 void SlotAssigner::arrangeWordsOfPart(FrameWords& words, Part part, uint32_t begin, uint32_t end)
 {
     RELEASE_ASSERT(begin <= end && !(begin % 2));
+    if (!wordsLieInSeveralReaches(words, begin, end))
+        return;
     const uint32_t endOfHighWords = std::clamp(words.endOfReachOfFramePointer, begin, end);
     const uint32_t beginOfLowWords = std::clamp(words.beginOfReachOfStackPointer, endOfHighWords, end);
-    if ((begin < endOfHighWords) + (endOfHighWords < beginOfLowWords) + (beginOfLowWords < end) < 2)
-        return;
 
     struct StackSlotInPart {
         uint32_t numberOfWords;
@@ -556,30 +604,35 @@ void SlotAssigner::sortSpillsByBegin()
     SpillPlaceRange* const ranges = m_arena.allocateArray<SpillPlaceRange>(numberOfSpills);
     bool keysRise = true;
     bool keysByEndOfHoldRise = true;
+    Position previousBegin = 0;
+    Position previousEndOfHold = 0;
     for (SpillIndex spill = 0; spill < numberOfSpills; ++spill) {
         const SpillPlaceRange* range = new (NotNull, ranges + spill) SpillPlaceRange(rangeOfSpillPlace(m_proc, factsOfSpills[spill]));
         ASSERT(range->begin <= range->endOfFirstPart());
-        keys[spill] = makePlaceSortKey(range->begin, spill);
-        keysRise &= !spill || keys[spill - 1] < keys[spill];
-        keysByEndOfHold[spill] = makePlaceSortKey(range->endOfFirstPart(), spill);
-        keysByEndOfHoldRise &= !spill || keysByEndOfHold[spill - 1] < keysByEndOfHold[spill];
+        const Position begin = range->begin;
+        const Position endOfHold = range->endOfFirstPart();
+        keys[spill] = makePlaceSortKey(begin, spill);
+        keysRise &= previousBegin <= begin;
+        previousBegin = begin;
+        keysByEndOfHold[spill] = makePlaceSortKey(endOfHold, spill);
+        keysByEndOfHoldRise &= previousEndOfHold <= endOfHold;
+        previousEndOfHold = endOfHold;
     }
     m_rangesOfSpillPlaces = ranges;
     if (!keysRise)
         std::sort(keys, keys + numberOfSpills);
     if (!keysByEndOfHoldRise)
         std::sort(keysByEndOfHold, keysByEndOfHold + numberOfSpills);
+    m_spillsByBegin = keys;
+    m_numberOfSpills = numberOfSpills;
     m_spillsByEndOfHold = keysByEndOfHold;
+    m_endOfNextHold = positionInPlaceSortKey(keysByEndOfHold[0]);
     m_placesOfSpills = m_arena.allocateArray<uint32_t>(numberOfSpills);
-
-    m_spillsByBegin.reserve(m_arena, numberOfSpills);
-    for (uint32_t index = 0; index < numberOfSpills; ++index)
-        m_spillsByBegin.appendWithinCapacity(indexInPlaceSortKey(keys[index]));
 }
 
 ALWAYS_INLINE void SlotAssigner::releasePlacesFreeAt(Position position)
 {
-    if (m_nextSpillToLetGo < m_spillsByBegin.size() && positionInPlaceSortKey(m_spillsByEndOfHold[m_nextSpillToLetGo]) < position)
+    if (m_endOfNextHold < position)
         releasePlacesOfNextSpillsFreeAt(position);
 }
 
@@ -587,7 +640,7 @@ NEVER_INLINE void SlotAssigner::releasePlacesOfNextSpillsFreeAt(Position positio
 {
     uint64_t* const keys = m_spillsByEndOfHold;
     const uint32_t* const placesOfSpills = m_placesOfSpills;
-    const uint32_t numberOfSpills = m_spillsByBegin.size();
+    const uint32_t numberOfSpills = m_numberOfSpills;
     auto release = [&](uint32_t place) {
         m_freePlaces[partOfHeldPlace(place)][sizeOfHeldPlace(place)].append(m_arena, distanceOfHeldPlace(place));
     };
@@ -610,6 +663,7 @@ NEVER_INLINE void SlotAssigner::releasePlacesOfNextSpillsFreeAt(Position positio
         next = endOfEquals;
     } while (next < numberOfSpills && positionInPlaceSortKey(keys[next]) < position);
     m_nextSpillToLetGo = next;
+    m_endOfNextHold = next < numberOfSpills ? positionInPlaceSortKey(keys[next]) : noPosition;
 }
 
 ALWAYS_INLINE uint32_t SlotAssigner::takePlace(Part part, Size size, Position begin, Position endOfFirstPart, Position beginBehindGap, Position end)
@@ -639,6 +693,8 @@ ALWAYS_INLINE uint32_t SlotAssigner::takePlace(Part part, Size size, Position be
     };
 
     ArenaVector<uint32_t>& freePlaces = m_freePlaces[part][size];
+    if (taken.isEmpty() && !freePlaces.isEmpty())
+        return take(freePlaces.takeLast());
     for (uint32_t index = freePlaces.size(); index--;) {
         uint32_t distance = freePlaces[index];
         if (!isFreeFor(distance))
@@ -688,9 +744,6 @@ void SlotAssigner::joinParts()
 
 void SlotAssigner::findWordsDeadAcrossSuspensions()
 {
-    if (m_allocation.suspensions().empty())
-        return;
-
     std::span<const uint64_t> suspensions = sortSuspensionsForPlaces(m_proc);
     m_slots.m_wordsDeadAcrossSuspension.grow(m_arena, static_cast<uint32_t>(suspensions.size()));
     m_slots.m_wordsClearedAtSuspension.grow(m_arena, static_cast<uint32_t>(suspensions.size()));
@@ -722,9 +775,9 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
     std::span<const SpillFacts> spills = m_allocation.spills();
     m_holders.clear();
     uint32_t nextSpill = 0;
-    auto holdSpillsThatBeginInFrontOf = [&](Position position, Position early) {
-        for (; nextSpill < m_spillsByBegin.size(); ++nextSpill) {
-            SpillIndex spill = m_spillsByBegin[nextSpill];
+    auto holdSpillsThatBeginInFrontOf = [&](Position position, Position early) ALWAYS_INLINE_LAMBDA {
+        for (; nextSpill < m_numberOfSpills; ++nextSpill) {
+            SpillIndex spill = indexInPlaceSortKey(m_spillsByBegin[nextSpill]);
             if (m_partOfSpill[spill] != KeptAtSuspensions)
                 continue;
             const SpillPlaceRange range = m_rangesOfSpillPlaces[spill];
@@ -733,27 +786,21 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
             if (range.end < early)
                 continue;
             uint32_t distance = m_slots.m_distanceOfSpill[spill];
-            hold(wordHoldingPlace(distance));
-            m_holders.append(m_arena, Holder { range.end, distance, KeptAtSuspensions, sizeOfSpillPlace(spills[spill]), spillPlaceIsWrittenBehindDefinitionAlone(m_proc, spills[spill]), spill });
-            std::push_heap(m_holders.begin(), m_holders.end(), spillPlaceIsFreedLater);
+            uint32_t word = wordHoldingPlace(distance);
+            HalfWordsOfSpillPlace halfWords = halfWordsOfSpillPlace(distance, sizeOfSpillPlace(spills[spill]));
+            hold(word);
+            m_holders.append(m_arena, Holder { range.end, word, spill, halfWords.wordOfBits, halfWords.bits, spillPlaceIsWrittenBehindDefinitionAlone(m_proc, spills[spill]) });
         }
     };
 
     const uint32_t wordAboveFirstPart = numberOfWords;
     std::span<uint64_t> bitsOfStoredHalfWords = m_arena.createSpan<uint64_t>((2 * (numberOfWords + 1) + 63) / 64);
-    BitSpan storedHalfWords(bitsOfStoredHalfWords);
+    uint64_t* const storedHere = bitsOfStoredHalfWords.data();
     auto isStoredTo = [&](uint32_t word) {
-        return storedHalfWords.get(2 * word) && storedHalfWords.get(2 * word + 1);
+        return (storedHere[word / 32] >> (2 * word % 64) & 3) == 3;
     };
     auto noteStoreTo = [&](uint32_t word) {
-        storedHalfWords.set(2 * word);
-        storedHalfWords.set(2 * word + 1);
-    };
-    auto forEachHalfWordOfPlace = [](uint32_t distance, Size size, const auto& functor) {
-        uint32_t lastHalfWord = distance / bytesPerPlaceHalf - 1;
-        if (size == Word)
-            functor(lastHalfWord - 1);
-        functor(lastHalfWord);
+        storedHere[word / 32] |= uint64_t { 3 } << (2 * word % 64);
     };
 
     uint32_t firstWordClearedAtSetup = numberOfWords;
@@ -764,27 +811,27 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
     auto visitSuspension = [&](uint64_t key) {
         const Position late = positionInPlaceSortKey(key);
         const Position early = late - 1;
-        const BitSpan& spillsHeldHere = m_allocation.spillsHeldAt(indexInPlaceSortKey(key));
+        const BitSpan spillsHeldHere = m_allocation.spillsHeldAt(indexInPlaceSortKey(key));
 
         holdSpillsThatBeginInFrontOf(late, early);
-        while (!m_holders.isEmpty() && m_holders[0].end < early) {
-            std::pop_heap(m_holders.begin(), m_holders.end(), spillPlaceIsFreedLater);
-            letGo(wordHoldingPlace(m_holders.takeLast().distanceWithinPart));
-        }
-
-        for (const Holder& holder : m_holders) {
-            if (!spillsHeldHere.get(holder.spill)) {
-                letGo(wordHoldingPlace(holder.distanceWithinPart));
-                wordsNotHeldHere.append(m_arena, wordHoldingPlace(holder.distanceWithinPart));
+        Holder* const holders = m_holders.begin();
+        uint32_t numberOfSpillsHeld = m_holders.size();
+        for (uint32_t index = 0; index < numberOfSpillsHeld;) {
+            const Holder& holder = holders[index];
+            const uint32_t word = holder.word;
+            if (holder.end < early) {
+                letGo(word);
+                holders[index] = holders[--numberOfSpillsHeld];
                 continue;
             }
-            bool isStoredOnEveryPath = true;
-            forEachHalfWordOfPlace(holder.distanceWithinPart, holder.size, [&](uint32_t halfWord) {
-                isStoredOnEveryPath &= storedHalfWords.get(halfWord);
-            });
-            if (isStoredOnEveryPath)
+            ++index;
+            if (!spillsHeldHere.get(holder.spill)) {
+                letGo(word);
+                wordsNotHeldHere.append(m_arena, word);
                 continue;
-            uint32_t word = wordHoldingPlace(holder.distanceWithinPart);
+            }
+            if ((storedHere[holder.wordOfStoredBits] & holder.storedBits) == holder.storedBits)
+                continue;
             if (holder.isWrittenBehindDefinitionAlone && everyPathBeginsAtEntrypoint) {
                 letGo(word);
                 wordsHeldByRangeAlone.append(m_arena, word);
@@ -793,6 +840,7 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
             firstWordClearedAtSetup = std::min(firstWordClearedAtSetup, word);
             endOfWordsClearedAtSetup = std::max(endOfWordsClearedAtSetup, word + 1);
         }
+        m_holders.shrink(numberOfSpillsHeld);
 
         WordsClearedAtSuspension& cleared = m_slots.m_wordsClearedAtSuspension[indexInPlaceSortKey(key)];
         uint32_t numberOfLowestWordsHeldByNothing = numberOfWords % 2;
@@ -827,14 +875,15 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
         wordsHeldByRangeAlone.clear();
 
         holdSpillsThatBeginInFrontOf(late + 1, early);
-        m_slots.m_wordsDeadAcrossSuspension[indexInPlaceSortKey(key)] = BitSpan(m_arena.copySpan<uint64_t>(bitsOfDeadWords));
+        m_slots.m_wordsDeadAcrossSuspension[indexInPlaceSortKey(key)] = m_arena.copySpan<uint64_t>(bitsOfDeadWords);
         for (uint32_t wordHeldAgain : wordsNotHeldHere)
             hold(wordHeldAgain);
         wordsNotHeldHere.clear();
     };
 
     ArenaVector<uint64_t> stores;
-    for (SpillIndex spill : m_spillsByBegin) {
+    for (uint32_t index = 0; index < m_numberOfSpills; ++index) {
+        SpillIndex spill = indexInPlaceSortKey(m_spillsByBegin[index]);
         if (m_partOfSpill[spill] != KeptAtSuspensions)
             continue;
         if (Position position = positionOfStoreToSpillPlace(m_proc, spills[spill]); position != noPosition)
@@ -845,22 +894,20 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
     auto noteStoresInFrontOf = [&](Position position) {
         for (; nextStore < stores.size() && positionInPlaceSortKey(stores[nextStore]) < position; ++nextStore) {
             SpillIndex spill = indexInPlaceSortKey(stores[nextStore]);
-            forEachHalfWordOfPlace(m_slots.m_distanceOfSpill[spill], sizeOfSpillPlace(spills[spill]), [&](uint32_t halfWord) {
-                storedHalfWords.set(halfWord);
-            });
+            HalfWordsOfSpillPlace halfWords = halfWordsOfSpillPlace(m_slots.m_distanceOfSpill[spill], sizeOfSpillPlace(spills[spill]));
+            storedHere[halfWords.wordOfBits] |= halfWords.bits;
         }
     };
 
     const Order& order = m_proc.order();
     std::span<Block* const> blocks = order.blocksInOrder();
     const size_t numberOfWordsOfBits = bitsOfStoredHalfWords.size();
-    uint64_t* const storedHere = bitsOfStoredHalfWords.data();
     auto copyBitsOfStoredHalfWords = [&](uint64_t* to, const uint64_t* from) {
         to[0] = from[0];
         for (size_t wordOfBits = 1; wordOfBits < numberOfWordsOfBits; ++wordOfBits)
             to[wordOfBits] = from[wordOfBits];
     };
-    const uint64_t** const storedAtEndOfBlock = m_arena.allocateArray<const uint64_t*>(blocks.size());
+    const uint64_t** const storedAtEndOfBlock = m_arena.createSpan<const uint64_t*>(m_proc.numberOfBlocks()).data();
     Block* const* const blocksInOrder = blocks.data();
     const uint32_t numberOfBlocks = static_cast<uint32_t>(blocks.size());
     const BlockPlace* const places = order.places();
@@ -879,10 +926,10 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
             const BlockPlace& placeOfPlainBlock = places[plainBlock->index()];
             if (placeOfPlainBlock.predecessors.size() != 1 || nextSuspensionOrStore < placeOfPlainBlock.head + 2 * (plainBlock->size() + 1))
                 break;
-            const uint32_t indexOfPredecessor = places[(*placeOfPlainBlock.predecessors.data())->index()].orderIndex;
-            if (indexOfPredecessor >= index)
+            const uint64_t* storedAtEndOfPredecessor = storedAtEndOfBlock[(*placeOfPlainBlock.predecessors.data())->index()];
+            if (!storedAtEndOfPredecessor)
                 break;
-            storedAtEndOfBlock[index] = storedAtEndOfBlock[indexOfPredecessor];
+            storedAtEndOfBlock[plainBlock->index()] = storedAtEndOfPredecessor;
         }
 
         const Block* block = blocksInOrder[index];
@@ -892,10 +939,9 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
 
         const uint64_t* storedAtEndOfFirstPredecessor = nullptr;
         for (const Block* predecessor : predecessors) {
-            uint32_t indexOfPredecessor = places[predecessor->index()].orderIndex;
-            if (indexOfPredecessor >= index)
+            const uint64_t* storedAtEnd = storedAtEndOfBlock[predecessor->index()];
+            if (!storedAtEnd)
                 continue;
-            const uint64_t* storedAtEnd = storedAtEndOfBlock[indexOfPredecessor];
             if (!storedAtEndOfFirstPredecessor) {
                 storedAtEndOfFirstPredecessor = storedAtEnd;
                 copyBitsOfStoredHalfWords(storedHere, storedAtEnd);
@@ -925,17 +971,31 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
         for (size_t wordOfBits = 0; isAsAtEndOfFirstPredecessor && wordOfBits < numberOfWordsOfBits; ++wordOfBits)
             isAsAtEndOfFirstPredecessor = storedHere[wordOfBits] == storedAtEndOfFirstPredecessor[wordOfBits];
         if (isAsAtEndOfFirstPredecessor) {
-            storedAtEndOfBlock[index] = storedAtEndOfFirstPredecessor;
+            storedAtEndOfBlock[block->index()] = storedAtEndOfFirstPredecessor;
             continue;
         }
         uint64_t* storedAtEnd = static_cast<uint64_t*>(m_arena.allocate(numberOfWordsOfBits * sizeof(uint64_t), alignof(uint64_t)));
         copyBitsOfStoredHalfWords(storedAtEnd, storedHere);
-        storedAtEndOfBlock[index] = storedAtEnd;
+        storedAtEndOfBlock[block->index()] = storedAtEnd;
     }
 
     if (firstWordClearedAtSetup < endOfWordsClearedAtSetup) {
         m_slots.m_firstWordClearedAtSetup = firstWordClearedAtSetup;
         m_slots.m_endOfWordsClearedAtSetup = endOfWordsClearedAtSetup;
+    }
+}
+
+static void setBitsMovedUp(std::span<uint64_t> to, std::span<const uint64_t> from, uint32_t distance)
+{
+    const size_t wordsOfBits = distance / 64;
+    const uint32_t bitsWithinWord = distance % 64;
+    for (size_t index = 0; index < from.size(); ++index) {
+        const uint64_t bits = from[index];
+        if (!bits)
+            continue;
+        to[index + wordsOfBits] |= bits << bitsWithinWord;
+        if (bitsWithinWord && bits >> (64 - bitsWithinWord))
+            to[index + wordsOfBits + 1] |= bits >> (64 - bitsWithinWord);
     }
 }
 
@@ -961,12 +1021,9 @@ void SlotAssigner::publishDeadWords(Procedure& proc, unsigned numberOfCalleeSave
         wordsAlwaysDead.set(word);
 
     for (uint32_t index = 0; index < suspensions.size(); ++index) {
-        BitSpan deadWordsOfFrame(arena.copySpan<uint64_t>(bitsOfWordsAlwaysDead));
-        const BitSpan& deadWordsOfFirstPart = slots.wordsDeadAcross(index);
-        deadWordsOfFirstPart.forEachSetBit([&](size_t word) {
-            deadWordsOfFrame.set(firstWordKept + word);
-        });
-        suspensions[index]->m_frameWordsDeadAcrossSuspension = deadWordsOfFrame;
+        std::span<uint64_t> bitsOfDeadWordsOfFrame = arena.copySpan<uint64_t>(bitsOfWordsAlwaysDead);
+        setBitsMovedUp(bitsOfDeadWordsOfFrame, slots.wordsDeadAcross(index), firstWordKept);
+        suspensions[index]->m_frameWordsDeadAcrossSuspension = BitSpan(bitsOfDeadWordsOfFrame);
 
         const WordsClearedAtSuspension& cleared = slots.wordsClearedAt(index);
         RELEASE_ASSERT(cleared.numberOfLowestWords <= SavedFrame::maxClearedWords && cleared.numberOfLowestWords <= numberOfWordsKept + numberOfWordsKept % 2);

@@ -32,8 +32,8 @@ enum StateOfKnowledge {
     NumberAndOtherValue NumbersAndDivisorOne NumbersAndWholeDivisor NumbersAndDivisorWithFraction NumbersAndOtherDivisor
     NumbersAndConstantExponent NumbersAndConstantBase NumbersAndWholeExponent NumberWithFraction
     PassesTest FailsTest NeedsTest BranchOnTestedKinds BranchOnOtherKinds FreeName
-    ReadOnlyTree CopyOnWriteArray MadeOnce SlimOnHeap SlimInFrame FullOnHeap FullInFrame FullWithOwnStructure Singleton
-    LiteralComparedInPlace LiteralComparedByStub EmptyLiteral LengthOfSubject FlatSubject FieldInExtension FieldLeftOutByMakers ValueNeverFitsStorage
+    ReadOnlyTree CopyOnWriteArray SlimOnHeap SlimInFrame FullOnHeap FullInFrame FullWithOwnStructure Singleton
+    LiteralComparedInPlace LiteralComparedByStub EmptyLiteral LengthOfSubject FlatSubject FieldInExtension FieldLeftOutByMakers ValueNeverFitsStorage ValueAndItself
     BirthFieldsInCell ObjectInFrame CellInFrameFilledOnce PrototypeInTable PrototypeReadByName NameInCell
 }
 enum FunctionReferenceKind { Call Closure Constructor Dispatch }
@@ -60,15 +60,13 @@ enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
 enum OperandKind (wants: Representation) {
     Any(JSValue) Boolean(Boolean) Integer(Int64) Number(Double) String(Cell) PropertyKey(JSValue) Object(Cell) Callable(Cell) Array(Cell) Layout(Cell)
     Declared(Unchosen) Environment(Cell) EvalOperand(JSValue) Results(Void) Convertible(Unchosen)
-    | engine Guard(Void)
 }
 
 enum PayloadKind (isId: Bool, words: UInt32) {
     String(true, 1) PropertyKey(true, 1) Function(true, 1) Layout(true, 1) Field(false, 1) Variable(true, 1) Module(true, 1) ModuleFailure(true, 1)
     Type(true, 1) TypeSite(true, 1) EvalScope(true, 1) Data(true, 1) ExpectedResult(true, 1) Builtin(true, 1) Enum(false, 1) Flags(false, 1)
     Bool(false, 1) UInt32(false, 1) Int64(false, 2) Double(false, 2) External(false, 1) Record(false, 0) Variant(false, 0) List(false, 0)
-    | engine LayoutSet(true, 1) CalleeSet(true, 1) AccessSite(true, 1) AllocationSite(true, 1) AllocationClass(true, 1) FieldAccess(true, 1) Allocation(true, 1)
-    RegExpRecord(true, 1) SiteCache(true, 1) GlobalBinding(true, 1) GuardBit(true, 1) Request(false, 1) StaticsOffset(false, 1) OrderWord(false, 1) Origin(false, 2)
+    | engine LayoutSet(true, 1) CalleeSet(true, 1) AccessSite(true, 1) AllocationClass(true, 1) OrderWord(false, 1) Origin(false, 2)
     Opcode(false, 1)
 }
 
@@ -123,7 +121,7 @@ effects ReadsObjectGraph = reads(ObjectFields, ShapeWords, OrderWords, NamedProp
 opaque IteratorState Enumerator Exception ClassToken
 opaque Cursor KeyOrder engine directCallsOnly
 opaque StringBuilder engine
-opaque Guard Fact FlatString CodeAddress engine functionLocal
+opaque FlatString CodeAddress engine functionLocal
 opaque BuilderCursor ViewVector ArrayStoragePointer engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText
@@ -150,19 +148,14 @@ column fieldOfHolder : UInt32
 column interpreted : Interpretation
 column flow : ValueFlowEdgeClass
 column flowRule : FlowRule
-column flowsWithoutRule : Bool
 column boundTo : BoundTo
-column isUniqueInFunction : Bool
 column proves : Proof
 column relies : Proofs
-column guarded : Operand
 column branches : Branches
 column base : Operand
-column newTarget : Operand
 column runtime : RuntimeOperation
 column raises : ProgramEvent
 column accessClass : AccessClass
-column siteCaches : UInt32
 column replaces : Operations
 column exactlyOneOf : Parameters
 column requires : FunctionFlags
@@ -172,10 +165,6 @@ column allocatesAfterLastSafepoint : Bool
 column runsOwnerBarrier : Bool
 column remembersOwner : Bool
 column runsBeforeCallee : Bool
-column canStartRegion : Bool
-column canEndInteriorBlock : Bool
-column canEndHeadBlock : Bool
-column canEndBlockOfHead : Bool
 column hasKnownValueRule : Bool
 column hasOwnFoldingRule : Bool
 column writesOnlyItsAnswer : Bool

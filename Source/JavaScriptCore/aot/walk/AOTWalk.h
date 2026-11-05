@@ -16,6 +16,7 @@
 #include "AOTMechanisms.h"
 #include "AOTWalkLinks.h"
 #include "AOTWalkLoopsOverGeneratorsOfUnit.h"
+#include "AOTWalkGeneratorsInLoops.h"
 #include "AOTWalkCoroutineState.h"
 #include "AOTWalkState.h"
 #include <array>
@@ -28,6 +29,32 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 class Walker;
+
+class NamesOfWay {
+public:
+    Reference nameIn(uint32_t slot) const { return slot < m_words.size() ? Reference::fromBits(~m_words[slot]) : Reference(); }
+    void setNameIn(uint32_t slot, Reference name)
+    {
+        if (m_words.size() <= slot)
+            m_words.grow(0, slot + 1);
+        m_words.mutableAt(slot) = ~name.bits();
+    }
+    void clear() { m_words.clear(); }
+    void forEachSlotNamedOtherwiseBy(const NamesOfWay& other, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
+    {
+        const NamesOfWay& longer = m_words.size() < other.m_words.size() ? other : *this;
+        const NamesOfWay& shorter = &longer == this ? other : *this;
+        longer.m_words.forEachStretchNotSharedWith(shorter.m_words, [&](uint32_t begin, uint32_t end) {
+            for (uint32_t slot = begin; slot < end; ++slot) {
+                if (longer.nameIn(slot) != shorter.nameIn(slot))
+                    functor(slot);
+            }
+        });
+    }
+
+private:
+    SharedArray<uint32_t, 32> m_words;
+};
 
 bool buildDeferredDefinition(Walker&, const BodyValue&);
 OpcodeSet operationsThatMayKeepEnvironments();
@@ -71,12 +98,12 @@ bool buildTypedElementAccess(Walker&, const BodyValue&);
 bool buildTypedOperator(Walker&, const BodyValue&);
 bool buildTypedConstruction(Walker&, const BodyValue&);
 std::optional<uint32_t> positionOfTagAmongArguments(const Walker&, FunctionID constructor);
-bool buildObjectOfTaggedClassConstructor(Walker&, const BodyValue& allocation);
 bool everyReceiverKeepsFieldInSlotThatIsNeverEmpty(const Walker&, std::span<const LayoutID> receivers, PropertyKeyID);
 TypeID typeOfPairsThatStepsHandOut(Walker&, TypeID iterable);
 bool listsAreIteratedUnseen(Walker&);
 inline constexpr OpcodeSet opcodesThatOpenLoopOverIteratorThatEngineMakesTakes { Opcode::PropGet };
 AOT_LINK_OF_WALK(openLoopOverIteratorThatEngineMakes, opcodesThatOpenLoopOverIteratorThatEngineMakesTakes)
+AOT_LINK_OF_WALK(openTestOfListAtReadOfMethod, opcodesThatOpenLoopOverIteratorThatEngineMakesTakes)
 bool isListOfEntriesTakenApartAtOnce(Walker&, const BodyValue& call);
 bool buildTypedIteration(Walker&, const BodyValue&);
 bool replaceIteration(Walker&, const BodyValue&);
@@ -94,8 +121,6 @@ struct GuessCountedOnByLooks {
     TypeID expected;
 };
 bool buildFormOnShapes(Walker&, const BodyValue&, const InputsOfTypedOperation&);
-bool buildCheckThatTypesPass(Walker&, const BodyValue& check, const InputsOfTypedOperation&);
-std::optional<bool> answerOfRelationWithoutCompare(Walker&, const BodyValue& relation);
 bool mayAccessThroughSetOfLayouts(const Walker&, LayoutSetID);
 bool paysToFindOffsetByShape(const Walker&, std::span<const LayoutID> receivers, PropertyKeyID, bool isStore);
 TypeID typeOfObjectsMadeBy(const Walker&, FunctionID constructor);
@@ -108,10 +133,12 @@ Reference findCaptureAtHand(Walker&, FunctionID callee, uint32_t capture, Refere
 Reference valueOfStableBinding(Walker&, const BodyValue& read);
 Reference valueOfStableVariable(Walker&, VariableID, TypeID widest);
 void noteValueOfStableBinding(Walker&, VariableID, Reference value);
+Reference literalHeldByFilledVariable(Walker&, VariableID);
 void noteValueOfStableBinding(Walker&, Reference environment, FieldReference, Reference value);
 Reference objectOfVariablePutOff(Walker&, VariableID);
 void noteObjectOfVariablePutOff(Walker&, VariableID, Reference object);
 Reference findScopeOfClosureReadOffObjectInSight(const Walker&, FunctionID, Reference closure);
+bool isClosureLeftUnmade(const Walker&, Reference);
 Vector<Reference, 2> collectWhatCopyAloneHolds(Walker&, const BodyValue& call);
 void letGoWhatCopyHeld(Walker&, std::span<const Reference> held, Origin);
 FunctionID findLibraryFunctionBehindBuiltin(const Walker&, TypeID typeOfCallee);
@@ -231,6 +258,7 @@ bool callForwardedDirectly(Walker&, const BodyValue& call, const Draft& forwarde
 bool listOfSuperCallCanBeHandedOver(Walker&, const BodyValue& call, FunctionID constructor);
 bool callBuiltinForwarded(Walker&, const BodyValue& call, const Draft& forwarded);
 TailCallRequirement requirementOfTailCall(const Walker&, Reference call);
+bool calleeOfTailCallComesBack(const Walker&, FunctionID callee, std::span<const Reference> arguments);
 bool passOnOwnArgumentsByCount(Walker&, const BodyValue& call, const Draft& written, Reference callee, Reference thisValueOrNull, Reference arguments);
 
 Reference callSlowVersion(Walker&, const Draft& site, FunctionID callee, std::span<const Reference> entryArguments, bool isConstruction);
@@ -284,11 +312,17 @@ struct TextInStringBuilder {
     Reference builder;
     bool beganEmpty { false };
     bool liesInFrame { false };
-    Reference firstPart;
-    Reference endOfFirstPart;
     Reference stringOfState;
     Reference lengthOfState;
     BlockID blockOfState;
+};
+
+struct PlacesOfTextsInStringBuilders {
+    using Ends = HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    Ends endsByName;
+    Ends endsByLoopHead;
+    Vector<uint32_t> endsBeforeInSameLoop;
+    Vector<uint32_t, 4> endsByFrame;
 };
 
 class Walker {
@@ -372,16 +406,19 @@ public:
     {
         const Frame& frame = m_frames.last();
         Reference bound = frame.references[input.index()];
-        if ((frame.firstNarrowerName == noNarrowerName || !(frame.narrowedValues & Frame::bitOfNarrowedValue(bound))) && !m_numbersOfStates.newestCheckedNameOf(bound)) [[likely]]
+        if ((frame.firstNarrowerName == noNarrowerName || !(frame.narrowedValues & Frame::bitOfNarrowedValue(bound))) && !m_numbersOfStates.newestCheckedNameOf(bound) && (bound.isRecord() || bound)) [[likely]]
             return bound;
         return narrowestReferenceOf(input);
     }
-    Reference referenceBoundTo(ValueID input) const { return m_frames.last().references[input.index()]; }
+    Reference referenceBoundTo(ValueID input) const { return m_frames.last().lastNameOf(input); }
     ALWAYS_INLINE void bind(ValueID input, Reference reference)
     {
-        Reference& bound = m_frames.last().references[input.index()];
+        Frame& frame = m_frames.last();
+        Reference& bound = frame.references[input.index()];
         if (m_numberOfClosedArms) [[unlikely]]
             m_bindings.append(Binding { static_cast<uint32_t>(m_frames.size() - 1), input, bound });
+        if (frame.valuesBuiltTwice) [[unlikely]]
+            frame.valuesBuiltTwice->noteBoundOnWay(input, reference);
         bound = reference;
     }
     ALWAYS_INLINE TypeID typeOf(Reference reference) const
@@ -458,14 +495,12 @@ public:
     void jumpTo(BlockID next, std::span<const Reference> arguments = { });
     void branch(Reference condition, BlockID taken, BlockID notTaken);
     void switchOn(Reference subject, std::span<const int64_t> cases, std::span<const BlockID> targets, BlockID otherwise);
-    void switchOnTexts(Reference subject, std::span<const StringID> cases, std::span<const BlockID> targets, BlockID otherwise);
     Reference tryCallInline(TerminatorDraft&&, BlockID done, BlockID miss, const Effects* foundByCaller = nullptr);
     void continueIn(BlockID);
     Reference addParameter(BlockID, TypeID, Representation);
     Representation formOfParameter(TypeID, std::span<const Representation> arguments);
     void endWithReturn(std::span<const Reference>, Origin);
     void endWithThrow(Reference, Origin);
-    void endWithRethrow(Reference exception, Origin);
     void endAsUnreachable(Origin);
     void holdWhatBodyReadsOfItsOwnScope(const BodyValue& read, Reference environment, Reference found);
     void noteStoreIntoSlotStoredFirst(const BodyValue& store, Reference environment);
@@ -481,9 +516,11 @@ public:
     bool endArmWithReturnOf(BlockID inputBlock);
     bool endArmWithBranchOf(BlockID inputBlock);
     bool armsMayEndWithBranchBehind(const BodyValue& operation);
+    bool throwsPastCleanupOf(BodyBlock block) const { return throwsPastHandlerOf(block); }
     bool endArmWithBranchBehind(const BodyValue& operation);
     bool armsTakeBranchForProofOf(BlockID inputBlock, uint32_t begin, uint32_t end, Reference value, const BitVector& placesThatTypedRunKnowsBetter);
     uint32_t endOfStretchBeingWalked() const { return m_frames.last().endOfStretch; }
+    uint32_t beginOfStretchBeingWalked() const { return m_frames.last().beginOfStretch; }
     bool walksStretchInsideAnother() const { return m_frames.last().numberOfStretchesBeingWalked > 1 || isWalkingBlockForEachWay(m_frames.size() - 1); }
     struct PlaceTakenByEndOfBlock {
         BlockID block;
@@ -502,7 +539,6 @@ public:
         bool isDeclared { false };
         bool isHeld { false };
         bool isKnown { false };
-        bool admitsNoNumberOrBoolean { false };
     };
     RememberedExpectation& rememberedExpectationOf(ValueID);
     std::optional<RememberedExpectation> wholeExpectationKeptOf(ValueID parameter) const
@@ -538,6 +574,8 @@ public:
         StatisticID statistic;
         uint32_t amount;
     };
+    void stopAtMaker(Origin);
+    SetForScope<bool> makingObjectsOfConstant() { return SetForScope(m_isMakingObjectsOfConstant, true); }
     void count(StatisticID statistic, uint32_t amount = 1)
     {
         for (CountOfUnit& count : m_countsOfUnit) {
@@ -554,14 +592,17 @@ public:
     bool checksProofsOf(ProofSource source) const { return m_positionsWithoutProofs && (m_inputs.options.sourcesOfProofsChecked & bitOfSourceOfProofs(source)); }
     bool testsEveryPosition() const { return m_inputs.options.testsEveryPosition; }
     bool takesPositionsToLieInside() const { return m_inputs.options.takesPositionsToLieInside; }
+    bool takesCalleesToKeepNothing() const { return m_inputs.options.takesCalleesToKeepNothing; }
     void checkProof(Reference value, TypeID withoutProof, ProofSource, Origin);
     void checkProof(Reference value, TypeID proven, TypeID withoutProof, ProofSource, Origin);
     void checkProofOfCopy(Reference value, TypeID proven, ProofSource, Origin);
     Reference proveOrTrap(Reference value, TypeID tested, ProofSource, Origin);
     TypeID typeThatUnitMayTestFor(TypeID tested, bool mayBringClasses = true);
     void checkThatSlotTakes(Reference value, TypeID taken, Origin);
+    bool isReadOutOfSlot(Reference value, LayoutID, FieldIndex);
     void holdStoredValuesToSlots(const Draft&);
     void holdSlotsOfScopesThatLeaveAt(const Vector<SummaryScopeStoredFirst>&, uint32_t position, bool standsBehindOperationsOfBlock);
+    void holdVariablesStoredFirstWhereFunctionsAreUsed(std::span<const LinkedVariableStoredFirst> claims, std::span<const FunctionID> used, VariableID storedByOperation);
     void holdSlotStoredFirst(Reference environment, FieldReference, Reference found);
     bool makeTestOnTheWayAskInFull(Reference value, TypeID taken);
     void buildCheckOfProof(Reference value, TypeID proven, TypeID withoutProof, ProofSource, Origin, bool mayBringClasses = false);
@@ -578,6 +619,7 @@ public:
     void checkElementsRememberedOfList(Reference list, std::span<const Reference> elements, Origin);
     uint32_t numberOfProofsChecked(ProofSource source) const { return m_numbersOfProofsChecked[static_cast<unsigned>(source)]; }
     uint32_t numberOfProofsThatNoTestTells() const { return m_numberOfProofsThatNoTestTells; }
+    uint32_t numberOfFreshCellsLeftAloneAtReturns() const { return m_numberOfFreshCellsLeftAloneAtReturns; }
     class ClosedArm;
     class OpenArm;
     class ProofsHoldEverywhere;
@@ -644,7 +686,6 @@ public:
     TypingContext typing() const { return { program(), m_types, *m_positions, TypeLevel::Proven }; }
 
     bool hasTextsInStringBuilders() const { return !m_textsInStringBuilders.isEmpty(); }
-    bool edgeLeavesLoopBeingBuiltTwice(BlockID to) const { return leavesLoopBeingBuiltTwice(m_frames.size() - 1, to); }
     bool mayBeginTurnAgainInClosedCopy() const;
     bool looksCountOnTurnsThatBeginAgain(BlockID inputHead) const;
     bool layFrameForLookIntoCopy(FunctionID callee, const BodyIndex&);
@@ -661,11 +702,13 @@ public:
     bool hasURLsThatAreNeverMade() const { return m_hasURLsThatAreNeverMade; }
     void noteURLThatIsNeverMade() { m_hasURLsThatAreNeverMade = true; }
     Vector<TextInStringBuilder, 2>& textsInStringBuilders() { return m_textsInStringBuilders; }
+    size_t endOfTextsInStringBuildersNamedBy(ValueID);
+    Vector<uint32_t, 8> placesOfTextsInStringBuildersLeftOnEdge(BlockID from, BlockID to);
     size_t indexOfFrameOnTop() const { return m_frames.size() - 1; }
     BlockID inputBlockBeingWalked() const { return m_frames.last().block; }
     bool isLiveAtHeadOf(ValueID, BlockID inputBlock);
     void bindAnewAtEveryBlock(ValueID);
-    bool isBoundAnewAtEveryBlock(ValueID value) const { return m_frames.last().valuesBuiltTwice.contains(value); }
+    bool isBoundAnewAtEveryBlock(ValueID value) const { return m_frames.last().isBuiltTwice(value); }
 
 private:
     friend class ClosedArm;
@@ -684,7 +727,7 @@ private:
         Vector<Reference, 4> arguments;
         Vector<TypeID, 4> types;
         WalkState state;
-        Vector<std::pair<ValueID, Reference>, 2> names;
+        NamesOfWay names;
         bool isLedByClosedArm { false };
     };
 
@@ -759,10 +802,13 @@ private:
         FunctionID function;
         const Body* body { nullptr };
         const BodyIndex* index { nullptr };
+        std::span<const LinkedVariableStoredFirst> variablesStoredFirst;
         Vector<Reference> references;
         Vector<RememberedExpectation> expectations;
         UncheckedKeyHashMap<uint32_t, RememberedExpectation, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> wholeExpectations;
         uint32_t loopDepthAtCall { 0 };
+        // Of a copy in line: Code::numberOfValues() when the frame was laid. What stands behind it was built for the copy.
+        uint32_t numberOfValuesBuiltBefore { UINT32_MAX };
         TypeID typeExpectedOfAnswer;
         bool answerIsDeclared { false };
         ValueID valueHandedBack;
@@ -786,9 +832,11 @@ private:
         uint32_t endOfValues { 0 };
         uint32_t walkedUpTo { 0 };
         uint32_t endOfStretch { 0 };
+        uint32_t beginOfStretch { 0 };
         uint32_t numberOfStretchesBeingWalked { 0 };
         PlaceTakenByEndOfBlock placeTakenByEndOfBlockAskedLast;
         bool hasHandler { false };
+        BlockID handlerOfCodeBelow;
         static constexpr uint32_t notAskedYet = UINT32_MAX;
         mutable uint32_t numberOfFramesUpToHandlerBelow { notAskedYet };
         mutable CountOfFrame countAmongFramesOfFunction;
@@ -838,7 +886,103 @@ private:
         uint32_t firstValueLookedAt { 0 };
         Vector<TypeID> typesOfLooks;
         std::unique_ptr<KeptForBuild> looksKept;
-        Vector<ValueID, 4> valuesBuiltTwice;
+        struct ValuesBuiltTwice {
+            WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ValuesBuiltTwice);
+            struct Slot {
+                ValueID value;
+                uint32_t ordinal { 0 };
+                Reference onlyName;
+                bool hasSeveralNames { false };
+                void noteName(Reference name)
+                {
+                    hasSeveralNames |= onlyName && onlyName != name;
+                    onlyName = name;
+                }
+            };
+            struct NamesGivenForGood {
+                BlockID block;
+                Vector<ValueID, 4> values;
+            };
+            static constexpr uint32_t noSlot = UINT32_MAX;
+            uint32_t slotOf(ValueID value) const { return slotNumbers[value.index()] - 1; }
+            uint32_t ensureSlotOf(ValueID value)
+            {
+                uint32_t& slotNumber = slotNumbers[value.index()];
+                if (!slotNumber) {
+                    slots.append(Slot { value });
+                    slotNumber = static_cast<uint32_t>(slots.size());
+                }
+                return slotNumber - 1;
+            }
+            bool contains(ValueID value) const
+            {
+                uint32_t slot = slotOf(value);
+                return slot != noSlot && slots[slot].ordinal;
+            }
+            void remove(ValueID value) { slots[slotOf(value)].ordinal = 0; }
+            Reference nameOn(const NamesOfWay& names, ValueID value) const
+            {
+                uint32_t slot = slotOf(value);
+                return slot == noSlot ? Reference() : names.nameIn(slot);
+            }
+            void nameOtherwiseOn(NamesOfWay& names, ValueID value, Reference name)
+            {
+                uint32_t slot = slotOf(value);
+                names.setNameIn(slot, name);
+                slots[slot].hasSeveralNames = true;
+                boundOnWay.append(value);
+            }
+            void noteBoundOnWay(ValueID value, Reference name)
+            {
+                uint32_t slot = slotOf(value);
+                if (slot == noSlot)
+                    return;
+                boundOnWay.append(value);
+                if (name)
+                    slots[slot].noteName(name);
+                else if (namesOfWay.nameIn(slot))
+                    namesOfWay.setNameIn(slot, { });
+            }
+
+            Vector<Slot, 8> slots;
+            Vector<uint32_t> slotNumbers;
+            Vector<uint32_t, 8> slotsListedAnew;
+            Vector<std::pair<uint32_t, uint32_t>, 8> slotsByLastUse;
+            uint32_t numberOfListings { 0 };
+            NamesOfWay namesOfWay;
+            BlockID blockThatWayEnters;
+            Vector<ValueID, 8> boundOnWay;
+            Vector<NamesGivenForGood, 1> namesGivenForGood;
+        };
+        std::unique_ptr<ValuesBuiltTwice> valuesBuiltTwice;
+        ValuesBuiltTwice& ensureValuesBuiltTwice()
+        {
+            if (!valuesBuiltTwice) {
+                valuesBuiltTwice = makeUnique<ValuesBuiltTwice>();
+                valuesBuiltTwice->slotNumbers.fill(0, references.size());
+            }
+            return *valuesBuiltTwice;
+        }
+        bool isBuiltTwice(ValueID value) const { return valuesBuiltTwice && valuesBuiltTwice->contains(value); }
+        bool listAsBuiltTwice(ValueID value)
+        {
+            ValuesBuiltTwice& listed = ensureValuesBuiltTwice();
+            uint32_t slot = listed.ensureSlotOf(value);
+            if (listed.slots[slot].ordinal)
+                return false;
+            listed.slots[slot].ordinal = ++listed.numberOfListings;
+            listed.slotsListedAnew.append(slot);
+            if (Reference name = references[value.index()]) {
+                listed.boundOnWay.append(value);
+                listed.slots[slot].noteName(name);
+            }
+            return true;
+        }
+        Reference lastNameOf(ValueID value) const
+        {
+            Reference bound = references[value.index()];
+            return bound || !isBuiltTwice(value) ? bound : valuesBuiltTwice->nameOn(valuesBuiltTwice->namesOfWay, value);
+        }
         Vector<LoopID, 2> loopsBeingBuiltTwice;
         BlockID headOfTurnsWrittenOut;
         TurnsOfForInWrittenOut* turnsOfForIn { nullptr };
@@ -849,6 +993,7 @@ private:
         Vector<uint32_t> placesOfOpenLoops;
         std::optional<Vector<BlockID, 4>> handlerBlocks;
         Vector<InputBlock> blocks;
+        std::array<Reference, 2> booleansOfUnit { };
         Vector<StateOfHandler, 1> statesOfHandlers;
         HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placesOfStatesOfHandlers;
         size_t placeOfStateOfHandler(BlockID handler) const;
@@ -927,12 +1072,17 @@ private:
     void walkJump(const BodyTerminator&);
     void endWithSwitchOverOwnBlocks(TerminatorDraft&, std::span<const BlockID> targets, BlockID otherwise);
     void takeNarrowerNamesPast(std::span<const BlockID> blocksPassedBy);
-    void enterJoin(BlockID inputBlock);
+    void enterJoin(BlockID inputBlock, InputBlock&, const BodyBlock&);
     void enterLoopHead(BlockID inputBlock);
     void enterHandlerBlock(BlockID inputBlock);
 
     void takeEntryParameters();
     void checkProofsOfWhatIsStoredBy(const Draft&);
+    bool allocationHoldsWhatIsHeldFilled(const Draft& allocation);
+    void showThatLiteralHoldsWhatIsHeldFilled(const BodyValue& finishOrData);
+    void showThatMakersThatLeaveAtHoldWhatIsHeldFilled(const Vector<SummaryMakerThatEndsWhereItLeaves>&, uint32_t position, bool standsBehindOperationsOfBlock);
+    void showThatObjectHoldsWhatIsHeldFilled(Reference object, LayoutID);
+    void stopAtMakerUnless(Reference holds, Origin);
     void checkProofsOfOperandsOfDirectCall(const Draft&);
     void checkProofsOfWhatComesThroughFusedEntry();
     void checkProofThatSlotIsFilled(const Draft& read);
@@ -947,16 +1097,17 @@ private:
             standInOtherBlock(inputBlock);
     }
     void standInOtherBlock(BlockID inputBlock);
+    void standIn(Frame&, const BodyBlock&, InputBlock&);
     void noteStateAtHeadForHandler();
     void noteStateAtThrowForHandler(std::span<const Reference> thrown = { });
 
-    ALWAYS_INLINE InputBlock& inputBlock(size_t frameIndex, BlockID block)
+    ALWAYS_INLINE InputBlock& inputBlock(Frame& frame, BlockID block)
     {
-        Frame& frame = m_frames[frameIndex];
         if (frame.blocks.isEmpty()) [[unlikely]]
             frame.blocks.fill(InputBlock { }, frame.index->numberOfBlocks());
         return frame.blocks[block.index()];
     }
+    ALWAYS_INLINE InputBlock& inputBlock(size_t frameIndex, BlockID block) { return inputBlock(m_frames[frameIndex], block); }
     uint32_t addOpenEdge(size_t frameIndex, BlockID target);
     uint32_t addOpenEdge(InputBlock& target);
     Vector<uint32_t, 4> takeOpenEdges(BlockID inputBlock);
@@ -970,6 +1121,8 @@ private:
     bool walkUnitAgainWithLoopsThatMayDoAnything();
     bool looksAtLoopsAroundHaveCounted(const Draft&, const Effects&);
     Opcode m_opcodeBeingWalked { Opcode::Undefined };
+    ValueID m_valueBeingWalked;
+    bool m_isMakingObjectsOfConstant { false };
     void giveUpWalkOfUnit();
     struct LoopOfWalkGivenUp {
         FunctionID function;
@@ -1008,7 +1161,6 @@ private:
     std::optional<uint32_t> onlyTargetWhereAllComeToOnePlace(const BodyTerminator&) const;
     bool branchOnTestBelowNegations(const BodyTerminator&);
     std::optional<uint32_t> m_edgeOfCodeBeingLed;
-    bool endBlockWithCasesLeft(const BodyTerminator&);
     bool handlerInForceIgnoresWhatIsThrown() const;
     bool jumpToHandlerInPlaceOfThrow(const BodyTerminator&);
     void walkOperationsOf(BlockID inputBlock);
@@ -1019,6 +1171,7 @@ private:
     void noteEdgeCameRound(BlockID head);
     ValueID m_pollInFrontOfLoopBeingEntered;
     template<typename Functor> void forEachOpenLoopAround(uint32_t numberOfLoops, size_t firstFrame, const Functor&) const;
+    uint32_t numberOfOpenLoopsAround(size_t frameIndex, BlockID inputBlock) const;
     void leaveBlockOpenInFrontOfLoop(BlockID inputHead, BlockID head, std::span<const Reference> entering, const Effects& effectsOfLoop);
     void endBlocksInFrontOfLoops(size_t frameIndex, BlockID next);
     bool standsInFrontOfLoop(uint32_t indexOfLoop, Reference) const;
@@ -1089,12 +1242,57 @@ private:
         Vector<std::pair<uint32_t, IterationByIndex>, 2> asTheyEntered;
     };
     bool iterationsSteppedAtMayBeBuiltTwice(BlockID inputHead) const;
+    bool iterationsSteppedAtHandOverPositionsAlone(BlockID inputHead) const;
     IterationsSteppedAtHead takeIterationsSteppedAt(BlockID inputHead) const;
     void putBackIterationsSteppedAt(const IterationsSteppedAtHead&);
     void walkCopyOfLoop(BlockID inputHead, std::span<const Reference> entering);
     bool leavesLoopBeingBuiltTwice(size_t frameIndex, BlockID to) const;
-    void takeNamesOntoEdge(OpenEdge&, size_t frameIndex, BlockID to);
+    void takeNamesOntoEdge(OpenEdge&, size_t frameIndex);
+    void takeNamesOfWay(BlockID inputBlock, NamesOfWay&&);
+    void forgetNamesOfWay(Frame&);
+    bool isNamedByWaysInto(const Frame&, ValueID, BlockID inputBlock) const;
+    Reference nameBroughtByWay(const Frame&, ValueID) const;
+    ALWAYS_INLINE Reference referenceBoundIn(const Frame& frame, ValueID input) const
+    {
+        Reference bound = frame.references[input.index()];
+        if (!bound && frame.valuesBuiltTwice) [[unlikely]]
+            return nameBroughtByWay(frame, input);
+        return bound;
+    }
     bool isWithoutNameBehindLoopBuiltTwice(ValueID);
+    bool walkOperationOfGeneratorInLoop(const BodyValue&);
+    bool takeGeneratorForConsumer(const BodyValue& call);
+    bool openGeneratorTaken(const BodyValue& open);
+    bool closeGeneratorTaken(const BodyValue& close);
+    bool spreadGeneratorTaken(const BodyValue& spread);
+    bool walkYieldOfGeneratorInConsumer(const BodyValue& yield);
+    size_t placeOfGeneratorOnTop() const;
+    size_t placeOfGeneratorTaken(ValueID taker, ValueID iterable) const;
+    bool isBeingWalkedOtherThanAtYield(FunctionID) const;
+    bool leavesRegionOfIteration(size_t frameIndex, BlockID to) const;
+    bool stepGeneratorTakenOutsideLoops(const BodyValue& step);
+    void layFrameOfGenerator(FunctionID, uint32_t callPosition, uint32_t loopDepthAtCall, uint32_t numberOfCarriedValues);
+    Vector<Reference, 4> carriedValuesInFrame(size_t frameIndex) const;
+    Vector<Reference, 4> valuesThatLoopBringsRound(size_t frameIndex, BlockID inputHead) const;
+    void bindValuesThatLoopBringsRound(BlockID inputHead, std::span<const Reference> carried);
+    void moveFrame(size_t from, size_t to);
+    void forgetRegionOfIteration(size_t frameIndex, const GeneratorWalkedInConsumer&);
+    void walkHeadOfLoopBehindStep(BlockID inputHead, ValueID step, std::span<const Reference> carried, bool isDone, Reference handedOut);
+    Reference resumptionOfGenerator(Reference sent, ResumeMode, Origin);
+    void carryValuesRoundLoopOfGenerator(BlockID inputHead, BlockID head, Vector<Reference, 8>& entering, Vector<ValueID, 8>& parameters);
+    void appendCarriedValuesThatComeRound(BlockID head, Vector<Reference, 8>& arguments);
+    bool takeCarriedValuesOntoHandlerEdge(size_t frameIndex, Vector<std::pair<ValueID, Reference>, 2>& names);
+    void bindParametersOfHeadForHandlerOfStep(size_t frameIndex);
+    BlockID handlerOfCodeInForce(size_t numberOfFramesUpToHandler) const;
+    void noteCarriedValuesAtReturnOfGenerator();
+    Vector<Reference, 4> walkBodyOfGeneratorToItsEnd(size_t place, Origin originInFront);
+    bool walkGeneratorInPlaceOfLoop(BlockID inputHead, std::span<const TypeID> typesOfParameters, std::span<const Reference> entering);
+    void resumeGeneratorToLeave(size_t place, ResumeMode, bool dropsWhatIsThrown, Origin);
+    Vector<GeneratorTakenByConsumer, 1> m_generatorsTakenByConsumers;
+    Vector<GeneratorWalkedInConsumer, 1> m_generatorsWalkedInConsumers;
+    Vector<size_t, 1> m_resumptionsToLeave;
+    uint32_t m_numberOfFramesOverHandlersOfCode { 0 };
+    std::unique_ptr<KeptForBuild> m_keptByGeneratorsInLoops;
     bool isWalkingBlockForEachWay(size_t frameIndex) const;
     bool walkBlockApartFromClosedWays(BlockID inputBlock);
     bool letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<Frame::ReturnOfCopy* const> passing, std::span<Frame::ReturnOfCopy* const> closed);
@@ -1127,10 +1325,6 @@ private:
         return below != Frame::notAskedYet ? below : findFramesUpToHandlersBelow();
     }
     size_t findFramesUpToHandlersBelow() const;
-    std::optional<size_t> findTextHeldInFrame(size_t frameIndex, ValueID) const;
-    bool leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget, Vector<Reference, 4>& arguments, Vector<TypeID, 4>& types);
-    void bindTextsAtHeadOfHandlerBlock(BlockID inputBlock);
-    void appendPartsOfTextsOnEdgesInto(BlockID inputBlock, BlockID entered, std::span<const uint32_t> edges);
     Reference narrowOnEdge(BlockID from, uint32_t targetIndex, const BodyEdgeResult&);
     Reference booleanAskedByBranchOnEdge(BlockID from, uint32_t targetIndex, Reference value);
     void nameBooleansAskedByBranch(BlockID from, const BodyTerminator&, uint32_t targetIndex, BlockID to);
@@ -1159,12 +1353,12 @@ private:
     void noteNarrowerName(BlockID to, Reference value, Reference name);
     bool endBlockInAnotherWay(const BodyTerminator&);
     bool endBlockWithSwitchOverAlternatives(const BodyTerminator&);
-    bool endBlockWithSwitchOverTestsOfField(const BodyTerminator&);
     void endWithoutEdges(TerminatorDraft&);
 
     void walkReturn(const BodyTerminator&);
     void noteReturnOfCopy(const BodyTerminator&);
     void returnFromUnit(Reference returned);
+    void endLivesOfCellsThatHaveNotLeft(std::span<const Reference> handedBack, Origin, uint32_t numberOfValuesBuiltBefore);
     bool staysTailCall(Reference call) const;
     void noteDirectCallForStackTests(const Draft&);
     bool callsOfCopyAreCountedForStackTests(const BodyValue& call, FunctionID callee) const;
@@ -1184,6 +1378,10 @@ private:
         return { m_operandTypes.span() };
     }
     TypeID resultTypeOf(const Draft&, bool& listsOwnTypes);
+    TypeID resultTypeByStepsOf(const TypingContext&, const Draft&, uint32_t steps, bool& listsOwnTypes);
+    TypeID typeOfNarrowedDraft(const Draft&);
+    static std::array<uint32_t, numberOfOpcodes> findStepsOfBuildByOpcode();
+    ALWAYS_INLINE uint32_t stepsOfBuildOf(Opcode opcode) const { return m_stepsOfBuildByOpcode[static_cast<unsigned>(opcode)]; }
     ALWAYS_INLINE TypeID ownTypeOf(Reference reference) const { return reference && reference.isRecord() ? m_code.at(reference.id()).type : TypeID(); }
     ALWAYS_INLINE TypeID typeAsBuilt(Reference reference) const
     {
@@ -1221,6 +1419,7 @@ private:
     Arrivals& m_arrivals;
     const Mechanisms m_mechanismsOfBuild;
     Mechanisms m_mechanisms;
+    const std::array<uint32_t, numberOfOpcodes> m_stepsOfBuildByOpcode = findStepsOfBuildByOpcode();
     Code m_code;
     NumbersOfWalkStates m_numbersOfStates;
     AnswersOfWalk m_answersOfStates;
@@ -1248,6 +1447,7 @@ private:
     HashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_numbersOfListsOfNames;
     std::array<uint32_t, numberOfEnumerators<ProofSource>> m_numbersOfProofsChecked { };
     uint32_t m_numberOfProofsThatNoTestTells { 0 };
+    uint32_t m_numberOfFreshCellsLeftAloneAtReturns { 0 };
     HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_functionsInReachOfUnit;
     bool m_callIsAccountedFor { false };
     FunctionID m_calleeAccountedFor;
@@ -1266,6 +1466,8 @@ private:
     TypeID typeShownAtOnce(ValueID) const;
     TypeID computeTypeShown(ValueID);
     HashMap<uint32_t, TypeID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typesShown;
+    HashMap<uint32_t, TypeID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typesAsked;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_headsOfClosedLoops;
     ASCIILiteral m_failure;
     Vector<UserDiagnostic> m_reports;
     Origin m_origin { };
@@ -1305,6 +1507,7 @@ private:
     Vector<OpenLoop, 4> m_openLoops;
     Vector<uint32_t> m_placesOfLoopsBehindBlocks;
     uint32_t m_numberOfLoopsThatMayBeLeft { UINT32_MAX };
+    uint32_t m_numberOfLoopsAroundEdgeBeingLed { UINT32_MAX };
     uint32_t m_numberOfScopesWhereProofsHoldEverywhere { 0 };
     FormAskedAhead m_formAskedAhead;
     std::unique_ptr<KeptForBuild> m_keptByTypedAccesses;
@@ -1313,13 +1516,15 @@ private:
     EnvironmentCellsOfUnit m_environmentCellsOfUnit;
     std::unique_ptr<KeptForBuild> m_keptByStrings;
     std::unique_ptr<KeptForBuild> m_keptByPositionsInTexts;
-    BodyLiveness m_liveness;
+    mutable BodyLiveness m_liveness;
     uint32_t m_operationsCopiedAtWrittenCall { 0 };
     void noteClosuresThatAllocationAloneTakes(const BodyValue& allocation);
     Vector<Reference, 8> m_closuresThatAllocationAloneTakes;
     uint32_t m_numberOfCopiesBuiltForSize { 0 };
     bool m_isWalkingAccess { false };
     Vector<TextInStringBuilder, 2> m_textsInStringBuilders;
+    const PlacesOfTextsInStringBuilders& placesOfTextsInStringBuilders();
+    PlacesOfTextsInStringBuilders m_placesOfTextsInStringBuilders;
     bool m_hasURLsThatAreNeverMade { false };
 };
 
@@ -1415,14 +1620,16 @@ public:
     }
 
     bool areOnlyTypes() const { return m_typesAskedAbout; }
-    TypeID typeOf(ValueID input) const { return m_typesAskedAbout ? (*m_typesAskedAbout)(input) : m_walker.typeOf(m_walker.referenceOf(input)); }
+    ALWAYS_INLINE TypeID typeOf(ValueID input) const { return m_typesAskedAbout ? (*m_typesAskedAbout)(input) : m_walker.typeOf(m_walker.referenceOf(input)); }
 
 private:
     const Walker& m_walker;
     const TypesOfInputs* m_typesAskedAbout;
 };
 
-BuiltinID findConstantMemberFrom(const Program&, const Facts&, BuiltinID start, PropertyKeyID);
+enum class MembersBehindWatch : bool { AreOpen, AreAsBuilt };
+BuiltinID findConstantMemberFrom(const Program&, const Facts&, BuiltinID start, PropertyKeyID, MembersBehindWatch = MembersBehindWatch::AreOpen);
+void noteObjectPassedTestOfBeingAsMade(Walker&, Reference object, Reference test, uint32_t numberOfValuesInFrontOfTest);
 BuiltinID findConstantMemberOnceForBuild(const Walker&, BuiltinID start, PropertyKeyID);
 BuiltinID findConstantMemberReadOff(const Walker&, TypeID object, PropertyKeyID);
 BuiltinID findConstantMemberReadOff(Walker&, Reference object, PropertyKeyID);
@@ -1452,7 +1659,9 @@ std::optional<Effects> effectsOfCallByOneRowAhead(Walker&, const BodyValue& call
 bool testOfBodyHoldsPositionBelowLengthOfText(Walker&, const BodyIndex&, BlockID block, ValueID text, ValueID position);
 bool testOfBodyHoldsPositionOfCharacterReadBelowLength(Walker&, const BodyValue& read);
 TypeID typeOfReadInsideTextAhead(Walker&, const BodyIndex&, const BodyValue& call, const TypesOfInputs&);
-TypeID typeOfStepOverListAhead(Walker&, const BodyIndex&, const BodyValue& step);
+const Walker::IterationByIndex* findListSteppedByIndexAlone(Walker&, const BodyIndex&, const BodyValue& step);
+TypeID typeOfStepOverListAhead(Walker&, const BodyIndex&, const BodyValue& step, bool& countsOnRowInFront);
+std::optional<Effects> effectsOfStepOverListAhead(Walker&, const BodyIndex&, const BodyValue& step, bool& countsOnRowInFront);
 TypeID typeOfStepOverTextAhead(Walker&, const BodyIndex&, const BodyValue& step, const TypesOfInputs&);
 bool cellAnswersWhetherValueIsArray(const Walker&, TypeID asked);
 bool isLookAtCellInFrontOfIsArray(const Walker&, const BodyIndex&, const BodyValue& test);
@@ -1489,10 +1698,14 @@ PropertyKeyID keyOfAccessToSlot(const Program&, const BodyValue& access);
 ASCIILiteral whyAccessByNameHasNoTypedForm(Walker&, const BodyValue&, TypeID typeOfObject);
 void explainClosedAccess(Walker&, const BodyValue&, PrintStream&);
 Reference buildTestOfSlot(Walker&, const BodyValue& access, Reference object);
-Reference buildReadThatTestsShapeAndSlot(Walker&, const BodyValue& read, Reference object, TypeID guessed, bool expectsCell);
-Reference buildReadThatTestsShapeAndCell(Walker&, const BodyValue& read, Reference object, TypeID guessed, bool expectsCell);
-bool buildStoreThatTestsForItself(Walker&, const BodyValue& store, Reference object, TypeID guessed, bool expectsCell);
+Reference buildReadThatTestsShapeAndSlot(Walker&, const BodyValue& read, Reference object, TypeID guessed);
+Reference buildReadThatTestsShapeAndCell(Walker&, const BodyValue& read, Reference object, TypeID guessed);
+bool markOfCellAnswersForRead(Walker&, const BodyValue& read, TypeID typeOfObject);
+bool storeMaySetMarkOfCell(const Walker&, std::span<const LayoutID> receivers, PropertyKeyID, TypeID typeOfStored);
+bool typedStoreAheadMaySetMarkOfCell(Walker&, TypeID typeOfObject, PropertyKeyID, TypeID typeOfStored);
+bool buildStoreThatTestsForItself(Walker&, const BodyValue& store, Reference object, TypeID guessed);
 Reference readSlotFoundFilled(Walker&, const BodyValue& access, Reference object);
+Reference valueHeldOfFilledSlot(Walker&, const BodyValue& access, Reference object);
 TypeID typeFoundInFilledSlot(Walker&, const BodyValue& read, TypeID typeOfObject);
 TypeID typeSeenToArriveInFilledSlot(Walker&, const BodyValue& read, TypeID typeOfObject);
 TypeID typeTakenBySlotOfStore(Walker&, const BodyValue& store, TypeID typeOfObject);
@@ -1501,6 +1714,7 @@ void lookAtCellInFrontOfStores(Walker&, std::span<const ValueID> stores, Referen
 std::optional<uint32_t> findLikelyOrderWordInFrontOfStores(Walker&, ValueID firstOfStretch, std::span<const ValueID> stores, Reference object, TypeID typeOfObject = { });
 void testOrderWordInFrontOfStores(Walker&, ValueID firstStore, Reference object, uint32_t orderWord, NOESCAPE const ScopedLambda<void(Reference test)>& goOnWhereTestPasses);
 bool looksAtSlotOfObjectBeingMade(const Walker&, const BodyValue& access);
+bool isBeingMadeByBodyBeingRead(const Walker&, ValueID object);
 void noteThisAtEntry(Walker&, Reference thisValue);
 
 struct ExpectationOfValue {

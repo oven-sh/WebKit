@@ -114,11 +114,6 @@ void JSONWriteEmitter::appendNumber(const ValueContext& value, bool isInteger)
     }));
 }
 
-void JSONWriteEmitter::generateJSONAppendDate(const ValueContext& value)
-{
-    define(value, callLeaf<Pointer>(RuntimeOperation::JSONAppendDate, { cursorOf(value), in<Number>(value->valueOperand()) }));
-}
-
 void JSONWriteEmitter::generateJSONAppendString(const ValueContext& value)
 {
     define(value, callOperation<Pointer>(value, RuntimeOperation::JSONAppendString, { builderOf(value), cursorOf(value), in<CellPointer>(value->valueOperand()) }));

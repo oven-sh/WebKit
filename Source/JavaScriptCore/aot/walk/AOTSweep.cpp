@@ -25,7 +25,7 @@ static constexpr uint8_t leavesOwedErrorMarkOfSweep = static_cast<uint8_t>(Sweep
 static constexpr uint8_t pollsForNothingMarkOfSweep = static_cast<uint8_t>(SweepMark::PollsForNothing);
 static_assert(!OptionSet<SweepMark> { SweepMark::IsNeeded, SweepMark::ReleasesOperand, SweepMark::LaterBarrierCovers, SweepMark::LeavesOwedError, SweepMark::PollsForNothing, SweepMark::LaterFenceCovers, SweepMark::OwnerIsYoung }.containsAny(OptionSet<SweepMark>::fromRaw(passedByMarkOfSweep)));
 
-static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof };
+static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof, Opcode::EndLifeOfCell, Opcode::EnterBodyThatRunsOnce };
 
 static constexpr OpcodeSet operationsThatSweepKeepsForTheirOperand { Opcode::ReleaseHint, Opcode::MarkEnvironmentEscaped, Opcode::ReleaseEnvironment, Opcode::ClearFrameCell };
 static_assert(OperandIndex::ReleaseHint::value == OperandIndex::MarkEnvironmentEscaped::environment && OperandIndex::ReleaseHint::value == OperandIndex::ReleaseEnvironment::environment);

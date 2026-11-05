@@ -45,6 +45,7 @@ static constexpr SharedHeap sharedHeaps[] = {
     { &AOTHeaps::JSCell_header, { IRHeap::NamedProperties, IRHeap::PrototypeLinks, IRHeap::ArrayStorage } },
     { &AOTHeaps::JSObject_butterfly, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTObject_orderWord, { IRHeap::NamedProperties } },
+    { &AOTHeaps::AOTObject_shapeWord, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTSlimClosure_word, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },
     { &AOTHeaps::Structure_bitField, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },
     { &AOTHeaps::JSCell_typeInfoFlags, { IRHeap::StringStorage } },
@@ -217,6 +218,7 @@ void AOTHeaps::appendHeapsOfConvertedCells(HeapList& list, ConvertedCells cells)
         list.append(&JSNonArray_butterfly);
     }
     list.append(&AOTSlimClosure_word);
+    list.append(&AOTObject_shapeWord);
 }
 
 void AOTHeaps::appendHeapsWrittenByCollection(HeapList& list) const

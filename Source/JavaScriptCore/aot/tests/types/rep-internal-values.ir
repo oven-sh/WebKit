@@ -1,4 +1,4 @@
-# An opaque kind has its own representation: a cell, a raw word, or nothing for a guard or a fact. A cell that may be absent is a JSValue, a raw word stays one.
+# An opaque kind has its own representation: a cell or a raw word. A cell that may be absent is a JSValue, a raw word stays one.
 # The kinds that the wire cannot name are arguments, which count on behind the parameters.
 # RUN: rep opaque(FlatString) opaque(CodeAddress) opaque(ViewVector) absent|opaque(CodeAddress)
 # CHECK: t0: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
@@ -20,8 +20,6 @@
 # CHECK-NEXT: opaque(Cursor): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(KeyOrder): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(StringBuilder): Cell legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: opaque(Guard): Void legal [Void]
-# CHECK-NEXT: opaque(Fact): Void legal [Void]
 # CHECK-NEXT: opaque(FlatString): Cell legal [Cell, Cell32, JSValue]
 # CHECK-NEXT: opaque(CodeAddress): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(BuilderCursor): RawWord legal [RawWord]

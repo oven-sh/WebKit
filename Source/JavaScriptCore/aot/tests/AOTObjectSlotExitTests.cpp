@@ -208,14 +208,12 @@ static JSValue valueOfOtherTypeFor(LoadedProgram& program, const FieldData& fiel
         break;
     case 'b':
     case 'c':
-        if (field.slot.representation() == SlotRepresentation::JSValue) {
-            AOT_TEST_CHECK(program.state().objects->layouts.fieldAccepts(field, jsNumber(7)));
+        if (program.state().objects->layouts.fieldAccepts(field, jsNumber(7)))
             return { };
-        }
         other = jsNumber(7);
         break;
     }
-    AOT_TEST_CHECK(field.slot.representation() != SlotRepresentation::JSValue && !program.state().objects->layouts.fieldAccepts(field, other));
+    AOT_TEST_CHECK(!program.state().objects->layouts.fieldAccepts(field, other));
     return other;
 }
 
@@ -360,7 +358,7 @@ static void checkFieldsWithAbsentBitsAndExtraPropertiesWord(LoadedProgram& progr
     AOT_TEST_CHECK(layoutNamed(program, "Mutable"_s).extraPropertiesSlot());
     AOT_TEST_CHECK(checkEventOnEachField(program, "Mutable"_s, Event::Delete) == 4);
     AOT_TEST_CHECK(checkEventOnEachField(program, "Mutable"_s, Event::Redefinition) == 4);
-    AOT_TEST_CHECK(checkEventOnEachField(program, "Mutable"_s, Event::StoreOfOtherType) == 2);
+    AOT_TEST_CHECK(checkEventOnEachField(program, "Mutable"_s, Event::StoreOfOtherType) == 3);
 }
 
 static void checkFieldsWithAbsentBitsWithoutExtraPropertiesWord(LoadedProgram& program)
@@ -556,9 +554,8 @@ static void checkDefinitionsByNativeCode(LoadedProgram& program)
     PropertyWalk::putDirect(vm, object, name, jsNumber(2.5), noAttributes);
     AOT_TEST_CHECK(object->isInSlot(field) && hasDirectProperty(program, object, name, jsNumber(2.5), noAttributes));
 
-    AOT_TEST_CHECK(traitsOf(field.slot.representation()).hasNull);
     PropertyWalk::putDirect(vm, object, name, jsNull(), noAttributes);
-    AOT_TEST_CHECK(object->isInSlot(field) && hasDirectProperty(program, object, name, jsNull(), noAttributes));
+    AOT_TEST_CHECK(!object->isInSlot(field) && hasDirectProperty(program, object, name, jsNull(), noAttributes));
 
     JSValue text = valueOfOtherTypeFor(program, field);
     PropertyWalk::putDirect(vm, object, name, text, noAttributes);

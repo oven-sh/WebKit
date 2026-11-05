@@ -13,7 +13,6 @@
 #include "AOTConversionEmitter.h"
 #include "AOTElementEmitterAllocation.h"
 #include "AOTGuessedAccessEmitter.h"
-#include "AOTStubsArrayWords.h"
 #include "AOTStubsArrays.h"
 #include <ranges>
 #include <wtf/StdLibExtras.h>
@@ -204,8 +203,7 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
 void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement, LBasicBlock isBeyondVector)
 {
     LengthTest test = testLength(index, elements);
-    bool isExpectedToAppend = store.opcode() == Opcode::PutArrayElement && store->isExpectedToAppend();
-    if (hasOnlyExpectedArmInLine(store) && !isExpectedToAppend) {
+    if (hasOnlyExpectedArmInLine(store)) {
         branchUnless(test.isInside, isBeyondVector);
         replaceElement(store, form, elements, test.indexInside, rawElement);
         return;
@@ -213,10 +211,7 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
 
     LBasicBlock isBeyondLength = newBlock();
     LBasicBlock isWithinLength = newBlock();
-    if (isExpectedToAppend)
-        m_out.branch(test.isInside.value(), unlikelyEdge(isWithinLength), normalEdge(isBeyondLength));
-    else
-        m_out.branch(test.isInside.value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
+    m_out.branch(test.isInside.value(), normalEdge(isWithinLength), unlikelyEdge(isBeyondLength));
 
     m_out.appendTo(isBeyondLength);
     branchUnless(below(index, vectorLength(elements)), isBeyondVector);

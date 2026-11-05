@@ -190,9 +190,9 @@ aot/facts/AOTLinkPrototypes.cpp
 aot/facts/AOTLinkReach.cpp
 aot/facts/AOTLinkStrings.cpp
 aot/facts/AOTLinkTestRuns.cpp
-aot/facts/AOTLinkUnionEffects.cpp
 aot/facts/AOTLinkUnionTaggedMakers.cpp
 aot/facts/AOTLinkUnions.cpp
+aot/facts/AOTLocalesPassedAtCalls.cpp
 aot/facts/AOTScan.cpp
 aot/facts/AOTScanStrings.cpp
 aot/facts/AOTTestRunsOfProgram.cpp
@@ -421,6 +421,7 @@ aot/runtime/AOTModuleTable.cpp
 aot/runtime/AOTModules.cpp
 aot/runtime/AOTObjectCopyOperations.cpp
 aot/runtime/AOTOperatorOperations.cpp
+aot/runtime/AOTPoisonedCell.cpp
 aot/runtime/AOTProgramIdentifiers.cpp
 aot/runtime/AOTProgramStrings.cpp
 aot/runtime/AOTPropertyCaches.cpp
@@ -486,7 +487,6 @@ aot/walk/AOTSweepStores.cpp
 aot/walk/AOTWalk.cpp
 aot/walk/AOTWalkBirthsListed.cpp
 aot/walk/AOTWalkBranches.cpp
-aot/walk/AOTWalkBranchesSwitches.cpp
 aot/walk/AOTWalkBuiltins.cpp
 aot/walk/AOTWalkCalls.cpp
 aot/walk/AOTWalkCallsDoneInPlace.cpp
@@ -501,7 +501,6 @@ aot/walk/AOTWalkCoroutineLibraryQuestions.cpp
 aot/walk/AOTWalkCoroutinePositions.cpp
 aot/walk/AOTWalkCoroutinePromiseAll.cpp
 aot/walk/AOTWalkCoroutinePromises.cpp
-aot/walk/AOTWalkCoroutineStepsByHand.cpp
 aot/walk/AOTWalkCoroutineThenables.cpp
 aot/walk/AOTWalkCoroutines.cpp
 aot/walk/AOTWalkCountersOfLoops.cpp
@@ -515,6 +514,8 @@ aot/walk/AOTWalkExceptionsPolls.cpp
 aot/walk/AOTWalkFolding.cpp
 aot/walk/AOTWalkForIn.cpp
 aot/walk/AOTWalkForInKeys.cpp
+aot/walk/AOTWalkGeneratorStepsByHand.cpp
+aot/walk/AOTWalkGeneratorsInLoops.cpp
 aot/walk/AOTWalkGuesses.cpp
 aot/walk/AOTWalkHandlers.cpp
 aot/walk/AOTWalkInlining.cpp
@@ -543,7 +544,6 @@ aot/walk/AOTWalkLoopInvariants.cpp
 aot/walk/AOTWalkLoops.cpp
 aot/walk/AOTWalkLoopsBuiltTwice.cpp
 aot/walk/AOTWalkLoopsOverGenerators.cpp
-aot/walk/AOTWalkNarrowing.cpp
 aot/walk/AOTWalkNarrowingOfBranches.cpp
 aot/walk/AOTWalkNarrowingOfGuesses.cpp
 aot/walk/AOTWalkNotes.cpp
@@ -588,7 +588,6 @@ aot/walk/AOTWalkTailCallsForwarded.cpp
 aot/walk/AOTWalkTailCallsPastCleanups.cpp
 aot/walk/AOTWalkTestRuns.cpp
 aot/walk/AOTWalkTestsOfParameterGuards.cpp
-aot/walk/AOTWalkTestsOnFields.cpp
 aot/walk/AOTWalkTextBuilderCallees.cpp
 aot/walk/AOTWalkTextBuilderDefaults.cpp
 aot/walk/AOTWalkTextBuilderHandlers.cpp
@@ -596,7 +595,6 @@ aot/walk/AOTWalkTextBuilderParts.cpp
 aot/walk/AOTWalkTextBuilderPieces.cpp
 aot/walk/AOTWalkTextBuilderReads.cpp
 aot/walk/AOTWalkTextBuilderRows.cpp
-aot/walk/AOTWalkTextBuilderSpans.cpp
 aot/walk/AOTWalkTextBuilderWebs.cpp
 aot/walk/AOTWalkTextBuilders.cpp
 aot/walk/AOTWalkTextBuildersInFrame.cpp

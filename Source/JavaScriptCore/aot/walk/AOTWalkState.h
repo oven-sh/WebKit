@@ -96,9 +96,9 @@ public:
     }
     ALWAYS_INLINE uint32_t newestCheckedNameOf(Reference value) const
     {
-        if (!value.isRecord() || value.id().index() >= m_newestCheckedNames.size())
-            return 0;
-        return m_newestCheckedNames[value.id().index()];
+        static_assert(!static_cast<uint32_t>(Reference::Kind::Value) && static_cast<uint32_t>(Reference::Kind::Constant) == 1 && Reference::kindShift == 30);
+        uint32_t indexIfRecord = value.bits() & ~(1u << Reference::kindShift);
+        return indexIfRecord < m_newestCheckedNames.size() ? m_newestCheckedNames[indexIfRecord] : 0;
     }
     const CheckedName& checkedName(uint32_t number) const { return m_checkedNames[number]; }
 
@@ -138,6 +138,7 @@ enum class FactOfCell : uint8_t {
     IsLikelyAsAllocated = 1 << 4,
     IsLikelyAsConstructed = 1 << 5,
     NoExtraProperties = 1 << 6,
+    BearsNoMark = 1 << 7,
 };
 
 class WalkState {
@@ -150,6 +151,8 @@ public:
     {
         if (m_held)
             ++m_held->numberOfOwners;
+        else
+            m_marks.kinds &= programIsWhole;
         if (!other.m_answers.isEmpty())
             m_answers = other.m_answers;
     }
@@ -158,7 +161,7 @@ public:
         , m_marks(other.m_marks)
         , m_program(other.m_program)
     {
-        other.m_marks.hasCheckedNames = false;
+        other.m_marks.kinds &= programIsWhole;
         if (!other.m_answers.isEmpty())
             m_answers.swap(other.m_answers);
     }
@@ -168,52 +171,94 @@ public:
     {
         if (this == &other)
             return *this;
-        m_program = other.m_program;
+        if (other.m_marks.kinds & programIsWhole) [[likely]]
+            m_program.takeWhole(other.m_program);
+        else
+            m_program = other.m_program;
         if (m_held != other.m_held)
             shareWhatIsHeldBy(other);
         if (!m_answers.isEmpty() || !other.m_answers.isEmpty())
             m_answers = other.m_answers;
         m_marks = other.m_marks;
+        if (m_held != other.m_held)
+            m_marks.kinds &= programIsWhole;
+        if (!(m_marks.kinds & programIsWhole)) [[unlikely]]
+            noteWhetherProgramIsWhole();
         return *this;
     }
 
     ALWAYS_INLINE WalkState& operator=(WalkState&& other)
     {
-        m_program = other.m_program;
+        static_assert(std::bit_cast<uint64_t>(Marks { 0, programIsWhole }) == programIsWholeAmongMarks);
+        uint64_t marks = std::bit_cast<uint64_t>(m_marks);
+        uint64_t marksOfOther = std::bit_cast<uint64_t>(other.m_marks);
+        if (marksOfOther & programIsWholeAmongMarks) [[likely]] {
+            m_program.takeWhole(other.m_program);
+            m_marks = std::bit_cast<Marks>(marksOfOther);
+            other.m_marks = std::bit_cast<Marks>(marks | programIsWholeAmongMarks);
+        } else
+            takeMarksOfStateWithoutWholeProgram(other);
         std::swap(m_held, other.m_held);
         if (!m_answers.isEmpty() || !other.m_answers.isEmpty())
             m_answers.swap(other.m_answers);
-        std::swap(m_marks, other.m_marks);
         return *this;
     }
 
-    void setProgram(const Program& program) { m_program.program = &program; }
-    void setSlotPlan(const SlotPlan& slots) { m_program.slots = &slots; }
-    void setNumbers(NumbersOfWalkStates& numbers) { m_program.numbers = &numbers; }
+    void setProgram(const Program& program)
+    {
+        m_program.program = &program;
+        noteWhetherProgramIsWhole();
+    }
+    void setSlotPlan(const SlotPlan& slots)
+    {
+        m_program.slots = &slots;
+        noteWhetherProgramIsWhole();
+    }
+    void setNumbers(NumbersOfWalkStates& numbers)
+    {
+        m_program.numbers = &numbers;
+        noteWhetherProgramIsWhole();
+    }
     void setAnswers(AnswersOfWalk& answers) { m_answers.setTable(answers); }
     KnownAnswers& answers() { return m_answers; }
     const KnownAnswers& answers() const { return m_answers; }
 
     void noteShape(Reference object, TypeID proven)
     {
-        if (writesInPlace() || shapeOf(object) != proven)
+        if (writesInPlace() || shapeOf(object) != proven) {
             heldToWrite().noteShape(object, proven);
+            if (proven)
+                m_marks.kinds |= Kinds::shapes;
+        }
     }
-    TypeID shapeOf(Reference object) const { return m_held && m_held->m_numberOfShapes && m_held->mayHaveRecordOf(object) ? m_held->shapeOfHolderOf(object) : TypeID(); }
+    ALWAYS_INLINE TypeID shapeOf(Reference object) const { return mayHold(Kinds::shapes) && m_held->mayHaveRecordOf(object) ? m_held->shapeOfHolderOf(object) : TypeID(); }
 
     void noteFresh(Reference object)
     {
         if (writesInPlace() || !isFresh(object)) {
             heldToWrite().noteFresh(object);
+            m_marks.kinds |= Kinds::freshObjects;
             m_answers.holderIsFreshAgain(object);
         }
     }
-    bool isFresh(Reference object) const { return m_held && m_held->m_numberOfFreshHolders && m_held->mayHaveRecordOf(object) && m_held->holderIsFresh(object); }
-    bool holdsFreshObjects() const { return m_held && m_held->m_numberOfFreshHolders; }
+    bool isFresh(Reference object) const { return mayHold(Kinds::freshObjects) && m_held->mayHaveRecordOf(object) && m_held->holderIsFresh(object); }
+    bool holdsFreshObjects() const { return mayHold(Kinds::freshObjects) && m_held->m_numberOfFreshHolders; }
+    void forEachFreshObject(NOESCAPE const Invocable<void(Reference)> auto& functor) const
+    {
+        if (!holdsFreshObjects())
+            return;
+        for (uint32_t holder = 0; holder < m_held->m_holders.size(); ++holder) {
+            if (m_held->m_holders[holder].isFresh && !m_held->m_holders[holder].hasEnded)
+                functor(m_held->m_holders[holder].object);
+        }
+    }
     void markEscaped(Reference object)
     {
-        if (m_held && m_held->m_numberOfFreshHolders && m_held->mayHaveRecordOf(object) && (writesInPlace() || m_held->holderIsFresh(object)) && heldToWrite().letLeaveIfFresh(object))
+        if (mayHold(Kinds::freshObjects) && m_held->mayHaveRecordOf(object) && (writesInPlace() || m_held->holderIsFresh(object)) && heldToWrite().letLeaveIfFresh(object)) {
+            if (!m_held->m_numberOfFreshHolders)
+                m_marks.kinds &= ~Kinds::freshObjects;
             m_answers.holderHasLeft(object);
+        }
     }
     void letFreshObjectsLeave();
 
@@ -221,7 +266,7 @@ public:
     {
         RELEASE_ASSERT(m_program.numbers && !checkedNameOf(value));
         heldToWrite().m_checkedNames.add(m_program.numbers->addCheckedName(value, name));
-        m_marks.hasCheckedNames = true;
+        m_marks.kinds |= Kinds::checkedNames;
     }
     ALWAYS_INLINE Reference checkedNameOf(Reference value) const
     {
@@ -230,11 +275,7 @@ public:
         uint32_t newest = m_program.numbers->newestCheckedNameOf(value);
         return newest ? checkedNameHeldFrom(newest) : Reference();
     }
-    bool hasCheckedNames() const
-    {
-        ASSERT(m_marks.hasCheckedNames == (m_held && !m_held->m_checkedNames.isEmpty()));
-        return m_marks.hasCheckedNames;
-    }
+    bool hasCheckedNames() const { return mayHold(Kinds::checkedNames); }
 
     void noteEndOfDeadZone(VariableID variable)
     {
@@ -279,50 +320,71 @@ public:
 
     void noteFactsOfCell(Reference object, OptionSet<FactOfCell> facts)
     {
-        if (writesInPlace() || !factsOfCell(object).containsAll(facts))
+        if (writesInPlace() || !factsOfCell(object).containsAll(facts)) {
             heldToWrite().noteFactsOfCell(object, facts);
+            m_marks.kinds |= Kinds::factsOfCells;
+        }
     }
-    OptionSet<FactOfCell> factsOfCell(Reference object) const { return m_held && m_held->m_numberOfHoldersWithFactsOfCell && m_held->mayHaveRecordOf(object) ? m_held->factsOfCellOfHolderOf(object) : OptionSet<FactOfCell>(); }
+    OptionSet<FactOfCell> factsOfCell(Reference object) const { return mayHold(Kinds::factsOfCells) && m_held->mayHaveRecordOf(object) ? m_held->factsOfCellOfHolderOf(object) : OptionSet<FactOfCell>(); }
+    void endFactsOfCell(Reference object, OptionSet<FactOfCell> facts)
+    {
+        if (factsOfCell(object).containsAny(facts))
+            heldToWrite().endFactsOfCellOfHolderOf(object, facts);
+    }
     void noteOrderWord(Reference object, std::optional<uint32_t> orderWord)
     {
         bool isNoted = orderWord ? orderWordOf(object) == orderWord && factsOfCell(object).containsAll({ FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot }) : !factsOfCell(object).contains(FactOfCell::OrderWordIsKnown);
-        if (!isNoted)
+        if (!isNoted) {
             heldToWrite().noteOrderWord(object, orderWord);
+            m_marks.kinds |= Kinds::factsOfCells;
+        }
     }
-    std::optional<uint32_t> orderWordOf(Reference object) const { return m_held && m_held->m_numberOfHoldersWithFactsOfCell && m_held->mayHaveRecordOf(object) ? m_held->orderWordOf(object) : std::nullopt; }
+    std::optional<uint32_t> orderWordOf(Reference object) const { return mayHold(Kinds::factsOfCells) && m_held->mayHaveRecordOf(object) ? m_held->orderWordOf(object) : std::nullopt; }
 
     void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID key, Reference test)
     {
-        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfStores, Reference(), classLayout.index(), key.bits()), test))
+        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfStores, Reference(), classLayout.index(), key.bits()), test)) {
             heldToWrite().noteStoresPassAbove(classLayout, key, test);
+            m_marks.kinds |= Kinds::places;
+        }
     }
     bool storesPassAbove(LayoutID classLayout, PropertyKeyID key) const { return !!valueOfPlace(PlaceKind::GuardOfStores, Reference(), classLayout.index(), key.bits()); }
     void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test)
     {
-        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfReads, Reference(), classLayout.index(), key.bits()), test))
+        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfReads, Reference(), classLayout.index(), key.bits()), test)) {
             heldToWrite().noteGuardOfReadsHolds(classLayout, key, test);
+            m_marks.kinds |= Kinds::places;
+        }
     }
     bool guardOfReadsHolds(LayoutID classLayout, PropertyKeyID key) const { return !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), classLayout.index(), key.bits()); }
 
     void noteSlot(Reference object, FieldReference field, Reference value)
     {
-        if (writesInPlace() || !noteChangesNothing(slot(object, field), value))
+        if (writesInPlace() || !noteChangesNothing(slot(object, field), value)) {
             heldToWrite().noteSlot(m_program, object, field, value);
+            m_marks.kinds |= Kinds::places;
+        }
     }
     void noteVariable(VariableID variable, Reference value)
     {
-        if (writesInPlace() || !noteChangesNothing(this->variable(variable), value))
+        if (writesInPlace() || !noteChangesNothing(this->variable(variable), value)) {
             heldToWrite().noteVariable(m_program, variable, value);
+            m_marks.kinds |= Kinds::places;
+        }
     }
     void noteEnvironmentField(Reference environment, FieldReference field, Reference value)
     {
-        if (writesInPlace() || !noteChangesNothing(environmentField(environment, field), value))
+        if (writesInPlace() || !noteChangesNothing(environmentField(environment, field), value)) {
             heldToWrite().noteEnvironmentField(m_program, environment, field, value);
+            m_marks.kinds |= Kinds::places;
+        }
     }
     void noteElement(Reference object, Reference index, Reference value)
     {
-        if (writesInPlace() || !noteChangesNothing(element(object, index), value))
+        if (writesInPlace() || !noteChangesNothing(element(object, index), value)) {
             heldToWrite().noteElement(object, index, value);
+            m_marks.kinds |= Kinds::places;
+        }
     }
     Reference slot(Reference object, FieldReference field) const { return valueOfPlace(PlaceKind::Slot, object, field.layout.index(), field.field); }
     Reference variable(VariableID variable) const { return valueOfPlace(PlaceKind::Variable, Reference(), variable.index(), 0); }
@@ -363,7 +425,7 @@ public:
     }
     void clear()
     {
-        m_marks = { };
+        m_marks = { 0, m_marks.kinds & programIsWhole };
         if (m_held)
             dropWhatIsHeld();
         m_answers.clear();
@@ -380,6 +442,17 @@ private:
     static constexpr size_t placesThatLieInHeld = 9;
     static constexpr uint32_t recordsGoneThroughWithoutLists = 4096;
     static constexpr uint32_t timesGoneThroughForOneListing = 16;
+
+    struct Kinds {
+        static constexpr uint32_t checkedNames = 1u << 0;
+        static constexpr uint32_t shapes = 1u << 1;
+        static constexpr uint32_t freshObjects = 1u << 2;
+        static constexpr uint32_t places = 1u << 3;
+        static constexpr uint32_t factsOfCells = 1u << 4;
+        static constexpr uint32_t records = shapes | freshObjects | places | factsOfCells;
+    };
+    static constexpr uint32_t programIsWhole = 1u << 31;
+    static constexpr uint64_t programIsWholeAmongMarks = static_cast<uint64_t>(programIsWhole) << 32;
 
     enum class PlaceKind : uint8_t { Slot, Variable, EnvironmentField, Element, GuardOfStores, GuardOfReads };
     enum class LayoutsOfSlots : uint8_t { None, One, Several };
@@ -430,6 +503,13 @@ private:
                 numbers = other.numbers;
             return *this;
         }
+        void takeWhole(const ProgramOfState& other)
+        {
+            program = other.program;
+            slots = other.slots;
+            numbers = other.numbers;
+        }
+        bool isWhole() const { return program && slots && numbers; }
 
         const Program* program { nullptr };
         const SlotPlan* slots { nullptr };
@@ -454,6 +534,7 @@ private:
         void noteShape(Reference object, TypeID proven);
         void noteFresh(Reference object);
         void noteFactsOfCell(Reference object, OptionSet<FactOfCell>);
+        void endFactsOfCellOfHolderOf(Reference object, OptionSet<FactOfCell>);
         void noteOrderWord(Reference object, std::optional<uint32_t>);
         std::optional<uint32_t> orderWordOf(Reference object) const;
         void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID, Reference test);
@@ -626,7 +707,7 @@ private:
             heldToWrite().m_bindingsPastDeadZone.add(number);
     }
     Reference checkedNameHeldFrom(uint32_t place) const;
-    Reference valueOfPlace(PlaceKind kind, Reference base, uint32_t first, uint32_t second) const { return m_held && m_held->m_numberOfPlaces && m_held->mayHaveRecordOf(base) ? m_held->valueOfPlace(kind, base, first, second) : Reference(); }
+    Reference valueOfPlace(PlaceKind kind, Reference base, uint32_t first, uint32_t second) const { return mayHold(Kinds::places) && m_held->m_numberOfPlaces && m_held->mayHaveRecordOf(base) ? m_held->valueOfPlace(kind, base, first, second) : Reference(); }
     bool writesInPlace() const { return m_held && m_held->numberOfOwners == 1; }
     bool noteChangesNothing(Reference known, Reference value) const
     {
@@ -638,9 +719,50 @@ private:
     bool holdsNoRecord() const { return !m_held || m_held->holdsNoRecord(); }
     bool holdsNothing() const { return !m_held || (m_held->holdsNoRecord() && m_held->holdsNothingThatNoEffectEnds()); }
 
+    ALWAYS_INLINE bool mayHold(uint32_t kind) const
+    {
+        ASSERT(marksFitWhatIsHeld());
+        return m_marks.kinds & kind;
+    }
+    bool marksFitWhatIsHeld() const
+    {
+        if (!!(m_marks.kinds & programIsWhole) != m_program.isWhole())
+            return false;
+        if (!m_held)
+            return !(m_marks.kinds & ~programIsWhole);
+        return !!(m_marks.kinds & Kinds::checkedNames) == !m_held->m_checkedNames.isEmpty()
+            && (m_marks.kinds & Kinds::shapes || !m_held->m_numberOfShapes)
+            && (m_marks.kinds & Kinds::freshObjects || !m_held->m_numberOfFreshHolders)
+            && (m_marks.kinds & Kinds::places || !m_held->m_numberOfPlaces)
+            && (m_marks.kinds & Kinds::factsOfCells || !m_held->m_numberOfHoldersWithFactsOfCell);
+    }
+    void noteKindsOfRecordsLeft()
+    {
+        uint32_t kinds = m_marks.kinds & ~Kinds::records;
+        if (m_held) {
+            if (m_held->m_numberOfShapes)
+                kinds |= Kinds::shapes;
+            if (m_held->m_numberOfFreshHolders)
+                kinds |= Kinds::freshObjects;
+            if (m_held->m_numberOfPlaces)
+                kinds |= Kinds::places;
+            if (m_held->m_numberOfHoldersWithFactsOfCell)
+                kinds |= Kinds::factsOfCells;
+        }
+        m_marks.kinds = kinds;
+    }
+    void noteWhetherProgramIsWhole()
+    {
+        if (m_program.isWhole())
+            m_marks.kinds |= programIsWhole;
+        else
+            m_marks.kinds &= ~programIsWhole;
+    }
+    void takeMarksOfStateWithoutWholeProgram(WalkState&);
+
     struct Marks {
         uint32_t turnInWhichNothingWasDone { 0 };
-        bool hasCheckedNames { false };
+        uint32_t kinds { 0 };
     };
 
     Held* m_held { nullptr };

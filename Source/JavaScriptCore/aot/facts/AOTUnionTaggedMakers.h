@@ -15,7 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class BodyIndexTable;
 class LinkFlow;
 class Program;
 class ThinSummaries;
@@ -24,10 +23,9 @@ struct TaggedMaker {
     uint32_t family { 0 };
     FunctionID constructor;
     uint32_t tagParameter { 0 };
-    ValueID allocation;
 };
 
-Vector<TaggedMaker> findTaggedMakers(const Program&, const ThinSummaries&, const BodyIndexTable&, Mechanisms);
+Vector<TaggedMaker> findTaggedMakers(const Program&, const ThinSummaries&, Mechanisms);
 const TaggedMaker* findTaggedMaker(std::span<const TaggedMaker> ascendingByConstructor, FunctionID constructor);
 LayoutID layoutMadeWithTag(const TaggedFamily&, const LayoutTag&);
 void noteLayoutsMadeByTag(LinkFlow&, FunctionID reached);

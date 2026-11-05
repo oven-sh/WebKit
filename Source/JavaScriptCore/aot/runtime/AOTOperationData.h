@@ -358,9 +358,13 @@ static_assert(sizeof(DefinedAccessor) == 2 * sizeof(EncodedJSValue));
 struct DefinedMethodBits {
     uint32_t side : 1;
     uint32_t kind : 2;
-    uint32_t unused : 29;
+    uint32_t isUnderComputedKey : 1;
+    uint32_t index : 28;
 
-    static constexpr uint32_t encode(ClassSide side, MethodKind kind) { return static_cast<uint32_t>(side) | static_cast<uint32_t>(kind) << 1; }
+    static constexpr uint32_t encode(ClassSide side, MethodKind kind, bool isUnderComputedKey, uint32_t index)
+    {
+        return static_cast<uint32_t>(side) | static_cast<uint32_t>(kind) << 1 | static_cast<uint32_t>(isUnderComputedKey) << 3 | std::min<uint32_t>(index, (1u << 28) - 1) << 4;
+    }
     static DefinedMethodBits decode(uint32_t word) { return std::bit_cast<DefinedMethodBits>(word); }
 };
 static_assert(sizeof(DefinedMethodBits) == 4);
@@ -438,6 +442,9 @@ struct ThrowSiteWord {
 #endif
 
     uint32_t narrowA() const { return a == narrowNone ? none : a; }
+    static constexpr unsigned bitsOfSourceOfProof = 4;
+    static constexpr uint32_t maxPositionBesideSourceOfProof = (1u << (31 - bitsOfSourceOfProof)) - 1;
+    bool stopsAtFalseProof() const { return static_cast<ThrowKind>(kind) == ThrowKind::ErrorWithMessage && calleeIsReadFromReceiver; }
     bool isCallSite() const { return static_cast<ThrowKind>(kind) == ThrowKind::NotAFunction && static_cast<Typed::Representation>(representation) == Typed::Representation::Void; }
     bool differsOnlyInRegisterNumber(ThrowSiteWord other) const
     {

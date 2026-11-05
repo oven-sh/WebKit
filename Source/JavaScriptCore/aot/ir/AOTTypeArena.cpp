@@ -25,7 +25,8 @@ static constexpr uint32_t wordsPerClassPartInArena = 1 + mostContentsOfClass;
 static constexpr size_t fewestSlotsOfTypeArenaIndex = 64;
 static constexpr size_t fewestRecordsOfTypeArenaBuffer = 64;
 static constexpr size_t slotsOfTypeMemoUntilReset = 1 << 13;
-static constexpr size_t slotsOfTypesMade = 1 << 13;
+static constexpr size_t slotsOfTypesMade = slotsOfTypeMemoUntilReset / 2;
+static constexpr size_t slotsOfTypeMemoBesideTypesMade = slotsOfTypeMemoUntilReset - slotsOfTypesMade;
 static constexpr uint32_t largestEpochOfTypeMemo = (1u << (32 - bitsOfOperationInTypeMemo)) - 1;
 
 static_assert(std::endian::native == std::endian::little);
@@ -49,17 +50,22 @@ static std::optional<uint32_t> findInTypeTableOrAdd(Table& table, bool adds, uin
     return table.find(hash, record);
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 static std::optional<uint32_t> findInTypeArenaIndex(const Vector<uint32_t>& index, uint32_t hash, NOESCAPE const Invocable<bool(uint32_t)> auto& matches)
 {
     if (index.isEmpty())
         return std::nullopt;
+    const uint32_t* slots = index.span().data();
     size_t mask = index.size() - 1;
-    for (size_t slot = hash & mask; index[slot]; slot = (slot + 1) & mask) {
-        if (matches(index[slot] - 1))
-            return index[slot] - 1;
+    for (size_t slot = hash & mask; slots[slot]; slot = (slot + 1) & mask) {
+        if (matches(slots[slot] - 1))
+            return slots[slot] - 1;
     }
     return std::nullopt;
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 static void placeInTypeArenaIndex(Vector<uint32_t>& index, uint32_t hash, uint32_t position)
 {
@@ -275,7 +281,7 @@ static ALWAYS_INLINE void makeTypePartsCanonical(TypeParts& parts)
 TypeArena::TypeArena(TypeTable& table, ArenaKeeps keeps)
     : m_table(table)
     , m_keeps(keeps)
-    , m_keepsTypesMade(keeps == ArenaKeeps::UntilReset && table.isFrozen())
+
     , m_typesOfFrozenTable(table.m_typesOnceFrozen.span())
     , m_layoutSets(table.m_layoutSets, keeps)
     , m_objectSets(table.m_objectSets, keeps, this)
@@ -353,6 +359,7 @@ void TypeArena::reset()
         m_epoch = 0;
     }
     ++m_epoch;
+    m_keepsTypesMade = m_keeps == ArenaKeeps::UntilReset && m_table.isFrozen();
     forgetUnionsOfMany();
 }
 
@@ -518,6 +525,17 @@ TypeID TypeArena::intern(const TypeParts& parts)
     return internCanonical(canonical);
 }
 
+TypeID TypeArena::internPartsThatAreCanonical(const TypeParts& parts)
+{
+    Type canonical;
+    static_cast<TypeParts&>(canonical) = parts;
+#if ASSERT_ENABLED
+    makeTypePartsCanonical(canonical);
+    ASSERT(static_cast<const TypeParts&>(canonical) == parts && !tryMakeTypeOfCanonicalParts(canonical));
+#endif
+    return internCanonical(canonical);
+}
+
 template<typename SetID>
 struct SetsOfTypesBeingUnited {
     void take(SetID& set, SetID earlierState)
@@ -644,7 +662,26 @@ void TypeArena::forgetEarlierStates()
     m_keySets.untyped().forgetEarlierStates();
 }
 
-TypeID TypeArena::internCanonical(const Type& parts)
+NEVER_INLINE void TypeArena::addWhatNamedObjectsBring(Type& type) const
+{
+    TypeArena& arena = const_cast<TypeArena&>(*this);
+    ObjectSetSummary summary = summaryOf(type.objects);
+    type.layouts = arena.m_layoutSets.unionOf(type.unnamedLayouts, summary.layouts);
+    type.classes = addClassesOfNamedObjects(arena, type.unnamedClasses, summary.classes);
+    type.traitsOfNamed = summary.traits;
+}
+
+ALWAYS_INLINE void TypeArena::completeInPlace(Type& type) const
+{
+    type.layouts = type.unnamedLayouts;
+    type.classes = type.unnamedClasses;
+    type.traitsOfNamed = { };
+    if (type.objects)
+        addWhatNamedObjectsBring(type);
+    type.noteAnswersOfParts();
+}
+
+TypeID TypeArena::internCanonical(Type& parts)
 {
     ASSERT(m_keeps == ArenaKeeps::UntilReset || !(liesInThread(parts.stringLiterals) || liesInThread(parts.symbolLiterals) || liesInThread(parts.objects) || liesInThread(parts.unnamedLayouts) || liesInThread(parts.unnamedClasses)));
     uint32_t hash = hashOf(parts);
@@ -653,7 +690,8 @@ TypeID TypeArena::internCanonical(const Type& parts)
         return idAt<TypeID>(IDHome::Program, *position);
     if (typeArenaAddsToProgram(m_table, m_keeps)) {
         RELEASE_ASSERT(!m_table.takesNoAdditions());
-        return idAt<TypeID>(IDHome::Program, m_table.m_types.addAfterMiss(hash, complete(parts)));
+        completeInPlace(parts);
+        return idAt<TypeID>(IDHome::Program, m_table.m_types.addAfterMiss(hash, parts));
     }
     RELEASE_ASSERT(m_keeps == ArenaKeeps::UntilReset);
 
@@ -663,9 +701,9 @@ TypeID TypeArena::internCanonical(const Type& parts)
     if (known)
         return idAt<TypeID>(IDHome::Thread, *known);
 
-    Type type = complete(parts);
+    completeInPlace(parts);
     uint32_t position = static_cast<uint32_t>(m_types.size());
-    m_types.append(type);
+    m_types.append(parts);
     addToTypeArenaIndex(m_typeIndex, hash, position, [&](uint32_t earlier) {
         return hashOf(static_cast<const TypeParts&>(m_types[earlier]));
     });
@@ -676,19 +714,7 @@ Type TypeArena::complete(const TypeParts& canonical) const
 {
     Type type;
     static_cast<TypeParts&>(type) = canonical;
-    type.layouts = canonical.unnamedLayouts;
-    type.classes = canonical.unnamedClasses;
-    if (!canonical.objects) {
-        type.noteAnswersOfParts();
-        return type;
-    }
-
-    TypeArena& arena = const_cast<TypeArena&>(*this);
-    ObjectSetSummary summary = summaryOf(canonical.objects);
-    type.layouts = arena.m_layoutSets.unionOf(canonical.unnamedLayouts, summary.layouts);
-    type.classes = addClassesOfNamedObjects(arena, canonical.unnamedClasses, summary.classes);
-    type.traitsOfNamed = summary.traits;
-    type.noteAnswersOfParts();
+    completeInPlace(type);
     return type;
 }
 
@@ -773,18 +799,16 @@ void TypeArena::remember(Operation operation, uint32_t first, uint32_t second, u
 
 NEVER_INLINE void TypeArena::rememberInFirstMemoUntilReset(Operation operation, uint32_t first, uint32_t second, uint32_t result)
 {
-    m_memoUntilReset.fill(MemoEntry { }, slotsOfTypeMemoUntilReset);
+    m_memoUntilReset.fill(MemoEntry { }, m_keepsTypesMade ? slotsOfTypeMemoBesideTypesMade : slotsOfTypeMemoUntilReset);
     remember(operation, first, second, result);
 }
 
-void TypeArena::noteTypeMade(MakerOfType maker, uint32_t first, uint32_t second, TypeID made, bool internedNothingInThread)
+NEVER_INLINE bool TypeArena::makeRoomForTypesMade()
 {
     if (!m_keepsTypesMade)
-        return;
-    if (m_typesMade.isEmpty()) [[unlikely]]
-        m_typesMade.fill(MemoEntry { }, slotsOfTypesMade);
-    uint32_t makerWord = static_cast<uint32_t>(maker);
-    m_typesMade[slotInTypeMemo(makerWord, first, second, m_typesMade.size())] = { first, second, made.bits(), stampInTypeMemo(makerWord, internedNothingInThread ? 0 : m_epoch) };
+        return false;
+    m_typesMade.fill(MemoEntry { }, slotsOfTypesMade);
+    return true;
 }
 
 void TypeArena::rememberAnswer(uint8_t question, uint32_t first, uint32_t second, uint32_t answer)
@@ -1092,11 +1116,6 @@ StringID TypeArena::internText(std::span<const uint8_t> programString)
     text.firstByte = static_cast<uint32_t>(m_bytesOfTexts.size());
     m_bytesOfTexts.append(added.span());
     return addMadeText(text);
-}
-
-bool TypeArena::joinedTextIsSpelledAsItsPieces(StringID left, StringID right) const
-{
-    return !factsOf(left).endsWithLeadSurrogate || !factsOf(right).beginsWithTrailSurrogate;
 }
 
 StringID TypeArena::internJoinedTexts(StringID left, StringID right)

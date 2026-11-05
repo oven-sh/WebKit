@@ -93,7 +93,7 @@ static void buildPartInTextBuilderParts(Walker& walker, TextInStringBuilder& tex
     Draft part(form, origin);
     walker.chooseConservativeFields(part);
     part.setBuilderOperand(name);
-    bool liesInFrame = becomeOperationOfStringBuilderInFrame(walker, text, name, part, formInFrameInTextBuilderParts(form));
+    becomeOperationOfStringBuilderInFrame(walker, text, name, part, formInFrameInTextBuilderParts(form));
     if (walker.isUnreachable())
         return;
     if (constant)
@@ -103,9 +103,7 @@ static void buildPartInTextBuilderParts(Walker& walker, TextInStringBuilder& tex
 
     text.stringOfState = { };
     text.lengthOfState = { };
-    Reference cursor = walker.build(WTF::move(part));
-    if (liesInFrame && cursor)
-        noteCursorBehind(walker, text, cursor);
+    walker.build(WTF::move(part));
 }
 
 static void appendPartInTextBuilderParts(Walker& walker, TextInStringBuilder& text, Reference name, Reference part, Origin origin)

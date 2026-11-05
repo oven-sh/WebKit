@@ -1,0 +1,60 @@
+# a hammer has nicknames and a saw has none: the read through both is one operation on the slot, which gives undefined for the object without the field. It is no guess and no closed read
+# type Tool = {}  type Hammer = { name, nicknames }  type Saw = { name, blade }  type Rasp = { name, grit }  function nicknamesOf(t) { if (t is a Hammer or a Saw) return t.nicknames; return t; }
+# each of the three has a name that the others lack, or a test for one would pass another
+# the functions are handed to sink, so only the test gives a type
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlotOrUndefined {{*}}key="nicknames" receivers=[L1, L2] level=Proven
+# CHECK-NOT: = PropGet
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = GetSlotOrUndefined {{*}}key="nicknames" receivers=[L1, L2] level=Proven
+# a rasp is handed to code that nobody sees, which may lay anything into it: the read stays a read by name
+# RUN(GAINS): walk f2 mechanisms=none+TypedOperations
+# GAINS-LABEL: code f2:Body
+# GAINS: = PropGet {{*}}key="nicknames"
+# GAINS-NOT: GetSlotOrUndefined
+
+layout L0 name="Tool" module=m0 flags=[IsNeverAllocated]
+layout L1 name="Hammer" module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}, {key="nicknames" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Saw" module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}, {key="blade" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Rasp" module=m0 fields=[{key="name" declared={type=anything} flags=[IsRequired]}, {key="grit" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+variable g0 name="kept" module=m0 declared={type=anything}
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    v5 = String string="a"
+    v6 = NewObject -, v5, v5 layout=L1 fields=[0, 1]
+    PutModuleVariable v6 variable=g0
+    v8 = NewObject -, v5, v5 layout=L2 fields=[0, 1]
+    PutModuleVariable v8 variable=g0
+    v10 = NewObject -, v5, v5 layout=L3 fields=[0, 1]
+    v11 = Call v1, -, v10
+    Return v4
+}
+function f1 name="nicknamesOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L1|L2
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropGet v2 key="nicknames"
+    Return v3
+  b2(v4):
+    Return v4
+}
+function f2 name="nicknamesOfWhatIsOutOfSight" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L1|L3
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropGet v2 key="nicknames"
+    Return v3
+  b2(v4):
+    Return v4
+}

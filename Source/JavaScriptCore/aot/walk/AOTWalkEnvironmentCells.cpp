@@ -56,7 +56,7 @@ OpcodeSet operationsThatMayKeepEnvironments()
 static bool cellsAreHandedBackInEnvironmentCells(const Plan& plan, LayoutID layout)
 {
     const PlannedLayout& planned = plan.layout(layout);
-    return planned.isEscapedOffset && !planned.liesOnlyInFrames;
+    return planned.cellsAreHandedBack && !planned.liesOnlyInFrames;
 }
 
 static ValueID recordBehindNamesInEnvironmentCells(const Code& code, Reference reference)

@@ -53,20 +53,22 @@ private:
         SlotRepresentation representation { SlotRepresentation::JSValue };
     };
 
-    void clearBirthMark(CellPointer);
+    void clearBirthMark(CellPointer, const Type&);
     InitialFields collectInitialFields(LayoutID, std::span<const uint32_t> fields, std::span<const ValueID> values);
     CellPointer allocateCell(const ValueContext&, const MentionedAllocation&, const PlannedLayout&, AllocationStorage, ZeroedBy);
     CellPointer takeCellHandedBackOrAllocate(const ValueContext&, const MentionedAllocation&);
     bool initializesFrameObjectInStub(const ValueContext&, LayoutID);
     CellPointer allocateFrameCell(const ValueContext&, const MentionedAllocation&, const PlannedLayout&);
-    ZeroedBy whoZeroesBodyOfFreshCell(const ValueContext&, const MentionedAllocation&, const BitVector& isInitialField, AllocationStorage);
+    using EmptySlots = Vector<FieldIndex, 8>;
+    EmptySlots collectEmptySlots(LayoutID, const BitVector& isInitialField);
+    ZeroedBy whoZeroesBodyOfFreshCell(const ValueContext&, const MentionedAllocation&, std::span<const FieldIndex> emptySlots, AllocationStorage);
     template<typename Visitor> void forEachEmptySlot(LayoutID, const BitVector& isInitialField, const Visitor&);
     void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy, bool hasStateOfFrameCell);
     static Representation representationWantedBy(const InitialField&);
     bool isNarrowedWhereStored(const InitialField&) const;
     Operand takeForSlot(const InitialField&);
     void storeInitialFields(CellPointer, LayoutID, const InitialFields&);
-    void storeEmptySlots(CellPointer, LayoutID, const BitVector& isInitialField, ZeroedBy);
+    void storeEmptySlots(CellPointer, LayoutID, std::span<const FieldIndex> emptySlots, ZeroedBy);
     void storeFieldsInExtension(const ValueContext&, CellPointer, LayoutID, const InitialFields&);
     void storePrototype(const ValueContext&, CellPointer, ValueID prototype);
     bool looksAtPrototypeBeforeAllocating(const ValueContext&);

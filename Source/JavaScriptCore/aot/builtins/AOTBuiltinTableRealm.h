@@ -100,6 +100,7 @@ class WritesToBuiltinMembers {
 public:
     virtual ~WritesToBuiltinMembers() = default;
     virtual void willWrite(BuiltinID member, UniquedStringImpl* key) = 0;
+    virtual void willAddNameTo(BuiltinID holder) = 0;
 };
 
 JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr, std::span<const uint32_t> unlockedMembers = { }, bool reflectThrows = false, std::span<const Identifier> openedNames = { }, std::optional<std::span<const uint32_t>> namesTakenForAbsent = std::nullopt);

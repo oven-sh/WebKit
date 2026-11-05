@@ -39,6 +39,7 @@ class RegExpLiterals;
 class RuntimeCounts;
 class RuntimeTable;
 class VMPropertyCaches;
+struct CyclesOfImports;
 struct FormatPatternState;
 struct FunctionTables;
 struct Instance;
@@ -101,6 +102,7 @@ public:
     std::unique_ptr<VMPropertyCaches> propertyCaches;
     std::unique_ptr<CallSiteCache> callSiteCache;
     std::unique_ptr<FunctionTables> functionTables;
+    std::unique_ptr<CyclesOfImports> cyclesOfImports;
     std::unique_ptr<RegExpLiterals> regExpLiterals;
     std::unique_ptr<FormatPatternState, FormatPatternStateDeleter> formatPatternState;
     BitVector filesWithKnownFirstLoad;
@@ -137,6 +139,8 @@ public:
     UniqueArray<int> regExpMatchOutput;
     WriteBarrier<Structure> moduleRecordStructure;
     WriteBarrier<Structure> stringBuilderStorageStructure;
+    // Made by the first cell that is poisoned.
+    WriteBarrier<Structure> poisonedCellStructure;
     Lock instancesLock;
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
@@ -153,6 +157,7 @@ void VMState::visitAggregate(Visitor& visitor)
 {
     visitor.append(moduleRecordStructure);
     visitor.append(stringBuilderStorageStructure);
+    visitor.append(poisonedCellStructure);
 }
 
 } } // namespace JSC::AOT

@@ -18,10 +18,10 @@
 # PLAN: slot 1 "radius" JSValue Inline offset=[[second]]
 # PLAN: layout L3 CompiledObject
 # PLAN: slot 1 "scale" JSValue Inline offset=[[second]]
-# a field that one of the two lacks stays a read by name
+# a field that one of the two lacks is one operation too: a Square reads as an empty slot does
 # RUN(LACKS): walk f2 mechanisms=none+TypedOperations
 # LACKS-LABEL: code f2:Body
-# LACKS: = PropGet {{*}}key="radius"
+# LACKS: = GetSlotOrUndefined {{*}}key="radius" receivers=[L2, L3] level=Proven
 # RUN(STORE): walk f3 mechanisms=none+TypedOperations
 # STORE-LABEL: code f3:Body
 # STORE: PutSlot{{*}}key="scale" receivers=[L2, L3]

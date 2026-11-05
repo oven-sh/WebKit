@@ -95,13 +95,6 @@ bool declaresMember(const LayoutData& classLayout, ClassSide side, uint32_t key)
     });
 }
 
-static bool isStaticFieldInClassRecord(const LayoutData& classLayout, uint32_t key)
-{
-    return std::ranges::any_of(classLayout.staticFields(), [&](const FieldData& field) {
-        return field.name == key;
-    });
-}
-
 static BitOfClassGuard bitOfClassGuardWithNumber(const State& state, uint32_t bit)
 {
     if (bit == noClassGuardBit)
@@ -667,9 +660,24 @@ static bool hasParentNamedByClassRecord(VM& vm, State& state, const LayoutData& 
     return true;
 }
 
-static bool definesMemberOfClassRecord(State& state, const LayoutData& classLayout, ClassSide side, UniquedStringImpl* uid, JSCell* function)
+static const MethodData* findRowOfMemberInClassRecord(const LayoutData& classLayout, ClassSide side, uint32_t index, const JSCell* function)
+{
+    std::span<const MethodData> methods = methodsInClassRecord(classLayout, side);
+    size_t numberOnOtherSide = methodsInClassRecord(classLayout, side == ClassSide::Static ? ClassSide::Prototype : ClassSide::Static).size();
+    size_t lowest = index > numberOnOtherSide ? index - numberOnOtherSide : 0;
+    auto defined = functionOf(function);
+    for (size_t row = std::min<size_t>(static_cast<size_t>(index) + 1, methods.size()); row-- > lowest;) {
+        if (defined == FunctionID(methods[row].function))
+            return &methods[row];
+    }
+    return nullptr;
+}
+
+static bool definesMemberOfClassRecord(State& state, const LayoutData& classLayout, ClassSide side, uint32_t index, UniquedStringImpl* uid, JSCell* function)
 {
     std::optional<uint32_t> key = identifiersOf(state.instance).numberOf(uid);
+    if (const MethodData* row = findRowOfMemberInClassRecord(classLayout, side, index, function); row && key && isNamedInClassRecord(*row, *key))
+        return row->kind() == MethodKind::Method ? holdsMethodOfClassRecord(state, function, *row) : isMethodOfClassRecord(state, function, *row);
     bool recordNamesKey = key && declaresMember(classLayout, side, *key);
     return std::ranges::any_of(methodsInClassRecord(classLayout, side), [&](const MethodData& method) {
         bool isRowOfKey = recordNamesKey ? isNamedInClassRecord(method, *key) : !!(method.flags & methodHasComputedName);
@@ -843,12 +851,23 @@ void ClassTable::didChangeMember(const LayoutData& layout, ClassSide side, Uniqu
     if (side == ClassSide::Static && (uid == names.name.impl() || uid == names.length.impl()) && !hasStaticMethodNamed(layout, uid))
         return;
     std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
-    if (side == ClassSide::Static && key && isStaticFieldInClassRecord(layout, *key) && !declaresMember(layout, side, *key))
+    if (side == ClassSide::Static && key && m_state.objects->layouts.staticField(layout, *key) && !m_state.objects->layouts.staticMethod(layout, *key))
         return;
     endClassGuardsOfNameThatHaveBegun(m_state, layout, side, key);
 }
 
-void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid, JSObject* function)
+void ClassTable::holdDefinitionToNameInRecord(const LayoutData& layout, ClassSide side, uint32_t index, UniquedStringImpl* uid, const JSObject* function) const
+{
+    const MethodData* row = findRowOfMemberInClassRecord(layout, side, index, function);
+    if (!row || (row->flags & methodHasComputedName))
+        return;
+    if (std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid); !key || row->name != *key) {
+        dataLogLn("AOT: a member of the class of layout L", layout.index, " is defined under another key than its record names: the compiler has proven that it never happens. This is a bug in Bun.");
+        CRASH_WITH_INFO(layout.index, row->name);
+    }
+}
+
+void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide side, uint32_t index, JSObject* holder, UniquedStringImpl* uid, JSObject* function)
 {
     if (hasNoGuardLeft(layout))
         return;
@@ -861,7 +880,7 @@ void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide sid
         endClassGuard(m_state, layout, side);
         return;
     }
-    if (!definesMemberOfClassRecord(m_state, layout, side, uid, function)) {
+    if (!definesMemberOfClassRecord(m_state, layout, side, index, uid, function)) {
         endClassGuardsOfName(m_state, layout, side, identifiersOf(m_state.instance).numberOf(uid));
         return;
     }

@@ -42,8 +42,8 @@ private:
     CellPointer newLiteralAtSite(const ValueContext&, const ArrayStorageForm& seed, std::span<const uint32_t> site);
     CellPointer newArrayInForm(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
-    const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array, ArrayStorage named);
-    const ArrayStorageForm* findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named);
+    const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray = nullptr);
+    const ArrayStorageForm* findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray);
     CellPointer newDoubleLiteral(const OperationContext&, std::span<const Number> numbersOrMarkers, uint32_t isNumberMask);
     CellPointer callNewEmptyArray(const OperationContext&, EmptyArray);
     CellPointer callNewArrayWithLength(const OperationContext&, const ArrayStorageForm&, Integer lengthAndCapacity);

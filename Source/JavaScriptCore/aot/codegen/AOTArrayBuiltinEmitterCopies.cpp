@@ -76,8 +76,6 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
     Join<CellPointer> join(m_out);
     bool isExpectedToHoldDoubles = resultIsExpectedToHoldDoubles(call);
     auto knownFormOf = [&](ValueID list) -> const ArrayStorageForm* {
-        if (const ArrayStorageForm* proven = provenFormOfArgument(call, list))
-            return proven;
         ValueID written = definitionOf(list);
         const Operation& literal = operationAt(written);
         if (literal.opcode != Opcode::NewArray || literal.elementsOperands().empty() || !literal.holes().empty())

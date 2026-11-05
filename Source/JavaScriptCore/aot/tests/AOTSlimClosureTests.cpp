@@ -8,10 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTClosureTable.h"
+#include "AOTConvention.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObjectModel.h"
+#include "AOTOperationCallScope.h"
+#include "AOTSchemaRuntimeOperations.h"
 #include "AOTSlimClosure.h"
 #include "AOTVector.h"
 #include "AsyncFunctionPrototype.h"
@@ -20,6 +23,7 @@
 #include "DeletePropertySlot.h"
 #include "FunctionPrototype.h"
 #include "GetterSetter.h"
+#include "HeapCellInlines.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "ObjectPrototype.h"
@@ -47,6 +51,7 @@ static constexpr ASCIILiteral programText =
     "variable g0 name=\"arrow\" module=m0 declared={type=anything} initialization=Undefined\n"
     "variable g1 name=\"plain\" module=m0 declared={type=anything} initialization=Undefined\n"
     "variable g2 name=\"asyncArrow\" module=m0 declared={type=anything} initialization=Undefined\n"
+    "variable g3 name=\"holdsSeven\" module=m0 declared={type=anything} initialization=Undefined\n"
     "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
     "  b0():\n"
     "    v0 = Builtin builtin=GlobalThis\n"
@@ -78,6 +83,8 @@ static constexpr ASCIILiteral programText =
     "    v3 = Call v2, -, v1, v1 [isNeverInlined]\n"
     "    v4 = GetModuleVariable variable=g2\n"
     "    v5 = Call v4 [isNeverInlined]\n"
+    "    v6 = GetModuleVariable variable=g3\n"
+    "    v7 = Call v6 [isNeverInlined]\n"
     "    Return v5\n"
     "}\n"
     "function f5 name=\"create\" parameters=[{type=anything}] results=[{type=anything}] {\n"
@@ -89,7 +96,14 @@ static constexpr ASCIILiteral programText =
     "    PutModuleVariable v4 variable=g1\n"
     "    v6 = NewClosure v0 function=f3\n"
     "    PutModuleVariable v6 variable=g2\n"
+    "    v8 = NewClosure v0, v0, v0, v0, v0, v0, v0 function=f6\n"
+    "    PutModuleVariable v8 variable=g3\n"
     "    Return\n"
+    "}\n"
+    "function f6 name=\"holdsSeven\" kind=Arrow captures=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {\n"
+    "  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):\n"
+    "    v7 = Call v0, -, v1, v2, v3, v4, v5, v6\n"
+    "    Return v7\n"
     "}\n"_s;
 
 namespace {
@@ -287,6 +301,24 @@ static void testVisitDuringReify(LoadedProgram& program)
     AOT_TEST_CHECK(unfilledVisitor.values.isEmpty());
 }
 
+static void testWordsBehindRegistersAreEmptyUntilCodeFillsThem(LoadedProgram& program)
+{
+    FunctionID function = findSlimFunction(program, "holdsSeven"_s);
+    CaptureCounts counts = captureCountsOf(function);
+    AOT_TEST_CHECK(counts.references > ClosureRequest::maxSlimClosureCapturesInRegisters && counts.captures <= ClosureRequest::maxSlimClosureCaptures);
+    JSObject* captured = constructEmptyObject(program.realm());
+    uint64_t inRegister = static_cast<uint64_t>(JSValue::encode(captured));
+    uint64_t request = closureNumberOf(function) | static_cast<uint64_t>(functionKindData(function).slimClosureKind()) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(counts.captures) << ClosureRequest::countShift;
+    JSCell* closure = callOperationFromTest(program.vm(), operationAOTNewClosureSlow, &program.instance(), request, inRegister, inRegister, inRegister, inRegister);
+    AOT_TEST_CHECK(isSlim(asObject(closure)) && closure->cellSize() >= SlimClosure::allocationSize(counts.captures));
+
+    RecordingVisitor visitor;
+    AOT_TEST_CHECK(SlimClosure::tryVisitFields(uncheckedDowncast<SlimClosure>(closure), visitor));
+    AOT_TEST_CHECK(visitor.values.size() == counts.references);
+    for (unsigned slot = 0; slot < counts.references; ++slot)
+        AOT_TEST_CHECK(visitor.values[slot] == (slot < ClosureRequest::maxSlimClosureCapturesInRegisters ? JSValue(captured) : JSValue()));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<slimClosureTests, programText, body>;
 
@@ -299,6 +331,7 @@ std::span<const NativeTest> slimClosureTests()
         { "slim-closure/hooks-without-effect-keep-cell-slim"_s, withProgram<testHooksWithoutEffectKeepCellSlim> },
         { "slim-closure/has-instance"_s, withProgram<testHasInstance> },
         { "slim-closure/visit-during-reify"_s, withProgram<testVisitDuringReify>, noRawCaptures },
+        { "slim-closure/words-behind-the-registers-are-empty-until-code-fills-them"_s, withProgram<testWordsBehindRegistersAreEmptyUntilCodeFillsThem> },
     };
     return tests;
 }

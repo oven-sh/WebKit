@@ -30,7 +30,7 @@ inline const OpcodeSet& opcodesWithNaturalTypeRefinedByOperation() { return opco
 template<typename Operation> TypeID refineFixedNatural(const TypingContext&, const Operation&, OperandTypes, TypeID upperBound);
 
 TypeID tryTypeOfFieldRead(const TypingContext&, TypeID receiver, PropertyKeyID);
-TypeID tryTypeOfGlobalBindingRead(const TypingContext&, PropertyKeyID, bool mayBeShadowed, bool findsOwnProperty);
+TypeID tryTypeOfGlobalBindingRead(const TypingContext&, PropertyKeyID, bool mayBeShadowed);
 TypeID tryTypeOfSlotContents(const TypingContext&, LayoutSetID receivers, PropertyKeyID);
 TypeID typeOfSlotContentsInReceiver(const TypingContext&, TypeID contents, TypeID receiver, PropertyKeyID);
 TypeID tryTypeOfSetterInSlot(const TypingContext&, LayoutSetID receivers, PropertyKeyID);

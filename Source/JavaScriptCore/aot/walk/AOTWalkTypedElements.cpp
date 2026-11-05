@@ -20,6 +20,7 @@
 #include "AOTWalkKnown.h"
 #include "AOTWalkListReadsInLoops.h"
 #include "AOTWalkNumberForms.h"
+#include "AOTWalkNumberGuesses.h"
 #include "TypedArrayType.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -263,6 +264,25 @@ static bool onlyUserTakesUndefinedForNaNInTypedElements(Walker& walker, const Bo
     return built && walker.types().at(walker.typeOf(built)).isNumber();
 }
 
+static bool goOnOrBeginTurnAgainInTypedElements(Walker& walker, Reference test)
+{
+    if (!test)
+        return false;
+    BlockID passed = walker.addBlock();
+    BlockID failed = walker.addBlock(BlockFrequency::Rare);
+    walker.branch(test, passed, failed);
+    walker.continueIn(failed);
+    if (!walker.isUnreachable())
+        walker.beginTurnAgainInClosedCopy();
+    walker.continueIn(passed);
+    walker.noteGuessOpened();
+    return !walker.isUnreachable() && !walker.hasFailed();
+}
+
+static bool turnMayBeginAgainInTypedElements(const AccessOfTypedElements& access)
+{
+    return access.isOnlyAskedAbout ? access.walker.looksTakeFormsBehindLooksAsBuilt() : access.walker.standsInTurnThatLooksCountOn();
+}
 static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
@@ -293,7 +313,8 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     read.setIsInBounds(positionIsKnownToLieInsideList(walker, access.base, access.key));
     if (tested)
         nameKindOfListTestedInFrontOfLoop(read, *tested);
-    if (tested && read.isInBounds() && holdsOnlyNumbers(read.arrayStorage()) && onlyUserTakesUndefinedForNaNInTypedElements(walker, access.value))
+    bool leavesTurnAtHole = tested && turnMayBeginAgainInTypedElements(access) && holeLeavesTurnBehindRow(walker.currentBodyIndex(), access.value, *tested);
+    if (!leavesTurnAtHole && tested && read.isInBounds() && holdsOnlyNumbers(read.arrayStorage()) && onlyUserTakesUndefinedForNaNInTypedElements(walker, access.value))
         read.setReadsHoleAsNaN(true);
     if (tested)
         takeStorageAndLengthFromInFrontOfLoop(walker, read, *tested);
@@ -301,6 +322,14 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
         markBaseAsPassedInTypedElements(walker, access.base);
     bool givesNaNForHole = read.readsHoleAsNaN();
     Reference element = walker.build(WTF::move(read));
+    if (leavesTurnAtHole && element && walker.types().at(walker.typeOf(element)).primitives & Primitive::Undefined) {
+        Origin origin = walker.originOf(access.value);
+        origin.isTailCall = false;
+        Reference isNumber = buildTestOfNumber(walker, element, TypeTable::number, origin);
+        if (!goOnOrBeginTurnAgainInTypedElements(walker, isNumber))
+            return true;
+        element = buildProofOfNumber(walker, element, isNumber, origin);
+    }
     if (element && !givesNaNForHole && level == KnowledgeLevel::Proven && isArrayIndexInTypedElements(access.typeOfKey) && !freshObjectNamedInTypedElements(walker, access.base))
         walker.state().noteElement(access.base, access.key, element);
     walker.bind(access.value.id(), element);
@@ -330,9 +359,74 @@ static bool buildArrayStoreUnderAnyKeyOfTypedElements(const AccessOfTypedElement
     return true;
 }
 
+static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& access)
+{
+    Walker& walker = access.walker;
+    TypeArena& types = walker.types();
+    if (!isArrayIndexInTypedElements(access.typeOfKey) || !access.typeOfStored || !types.at(access.typeOfStored).isNumber())
+        return false;
+    std::optional<ListTestedInFrontOfLoop> tested = findListTestedInFrontOfLoop(walker, access.value);
+    if (!tested || !tested->isWritable || !holdsOnlyNumbers(tested->storage) || tested->admitsInt32Storage)
+        return false;
+
+    bool isInside = !access.isOnlyAskedAbout && positionIsKnownToLieInsideList(walker, access.base, access.key);
+    bool fits = canStoreWithoutConversion(types, tested->storage, access.typeOfStored);
+    if ((!isInside || !fits) && !turnMayBeginAgainInTypedElements(access))
+        return false;
+    Opcode opcode = tested->storage == ArrayStorage::Double ? Opcode::PutDoubleIndex : Opcode::PutContiguousIndex;
+    if (access.isOnlyAskedAbout)
+        return answerAheadOfTypedElements(access, opcode, KnowledgeLevel::Proven);
+
+    Origin origin = walker.originOf(access.value);
+    origin.isTailCall = false;
+    if (!isInside) {
+        Draft length(Opcode::GetArrayLength, origin);
+        walker.chooseConservativeFields(length);
+        length.setArrayOperand(tested->name);
+        Draft isBelowLength(Opcode::Less, origin);
+        walker.chooseConservativeFields(isBelowLength);
+        isBelowLength.setLeftOperand(access.key);
+        isBelowLength.setRightOperand(walker.build(WTF::move(length)));
+        if (!isBelowLength.rightOperand())
+            return true;
+        isBelowLength.setForm(formAllowedForTypedOperator(walker, isBelowLength));
+        if (!goOnOrBeginTurnAgainInTypedElements(walker, walker.build(WTF::move(isBelowLength))))
+            return true;
+    }
+    Reference stored = access.stored;
+    if (!fits && tested->storage == ArrayStorage::Int32) {
+        Reference isInt32 = buildTestOfNumber(walker, stored, TypeTable::int32, origin);
+        if (!goOnOrBeginTurnAgainInTypedElements(walker, isInt32))
+            return true;
+        stored = buildProofOfNumber(walker, stored, isInt32, origin);
+    } else if (!fits) {
+        Draft isItself(Opcode::StrictEq, origin);
+        walker.chooseConservativeFields(isItself);
+        isItself.setLeftOperand(stored);
+        isItself.setRightOperand(stored);
+        isItself.setForm(formAllowedForTypedOperator(walker, isItself));
+        if (!goOnOrBeginTurnAgainInTypedElements(walker, walker.build(WTF::move(isItself))))
+            return true;
+    }
+    if (!stored)
+        return true;
+
+    Draft put = draftOfTypedElements(walker, access.value, opcode);
+    put.setArrayOperand(access.base);
+    put.setPositionOperand(access.key);
+    put.setValueOperand(stored);
+    if (Reference pointer = storageOfListFromInFrontOfLoop(walker, *tested, origin))
+        put.setStorageOperand(pointer);
+    Reference store = walker.build(WTF::move(put));
+    noteStoredElementInTypedElements(walker, access.base, access.key, stored);
+    walker.bind(access.value.id(), store);
+    return true;
+}
 static bool buildArrayStoreOfTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
+    if (buildStoreBehindRowOfTypedElements(access))
+        return true;
     KnowledgeLevel level = levelOfArrayAccessOfTypedElements(access);
     if (level == KnowledgeLevel::Unknown)
         return buildArrayStoreUnderAnyKeyOfTypedElements(access);
@@ -393,14 +487,17 @@ static Reference lengthOfViewInTypedElements(const AccessOfTypedElements& access
     Reference built = walker.build(WTF::move(length));
     if (!built || !built.isValue() || walker.isUnreachable())
         return { };
-    noteKnown(walker, KnownNote::LengthOfList, access.base, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }), built.bits());
+    auto takeLength = [&] {
+        noteKnown(walker, KnownNote::LengthOfList, access.base, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }), built.bits());
+        return built;
+    };
     std::optional<uint32_t> loop = walker.innermostOpenLoop();
     if (loop && walker.standsInFrontOfOpenLoop(*loop, built))
-        return built;
+        return takeLength();
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID written = access.value.id();
     bool isNamedAgain = written.index() < index.numberOfValues() && index.value(written).words() == access.value.words() && index.useCount(access.value.objectOperand()) > 1;
-    return isNamedAgain ? built : Reference();
+    return isNamedAgain ? takeLength() : Reference();
 }
 
 static void nameStorageOfViewInTypedElements(const AccessOfTypedElements& written, Draft& access, TypedArrayType typedArrayType)
@@ -489,13 +586,15 @@ static ExpectedElements elementsExpectedByTypedElements(TypedArrayType typedArra
 
 static bool buildAccessByIndexOfTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType)
 {
-    if (!access.typeOfKey.isNumberWithoutFraction() || access.isOnlyAskedAbout)
+    bool keyIsIntegral = access.typeOfKey.isNumberWithoutFraction();
+    bool namesWhatIsExpected = access.typeOfKey.isNumber() && elementsExpectedByTypedElements(typedArrayType) != ExpectedElements::Anything;
+    if ((!keyIsIntegral && !namesWhatIsExpected) || access.isOnlyAskedAbout)
         return false;
 
     Walker& walker = access.walker;
     Draft draft = walker.draftOf(access.value);
     walker.chooseConservativeFields(draft);
-    draft.setKeyIsIntegral(true);
+    draft.setKeyIsIntegral(keyIsIntegral);
     draft.setExpectedElements(elementsExpectedByTypedElements(typedArrayType));
     markBaseAsPassedInTypedElements(walker, access.base);
     walker.bind(access.value.id(), walker.build(WTF::move(draft)));
@@ -742,6 +841,24 @@ bool buildTypedElementAccess(Walker& walker, const BodyValue& value, const Input
 bool buildTypedElementAccess(Walker& walker, const BodyValue& value)
 {
     return buildTypedElementAccess(walker, value, InputsOfTypedOperation(walker, nullptr));
+}
+
+bool buildAccessByIndexOffExpectedViewOfItsOpcodes(Walker& walker, const BodyValue& value)
+{
+    if (!walker.has(Mechanism::TypedOperations))
+        return false;
+    TypeID expected = findExpectation(walker, value.objectOperand()).type;
+    if (!expected)
+        return false;
+    BaseOfTypedElements base = classifyBaseOfTypedElements(walker, walker.types().withoutNullish(expected));
+    if (base.kind != KindOfBaseOfTypedElements::TypedArray || elementsExpectedByTypedElements(base.typedArrayType) == ExpectedElements::Anything)
+        return false;
+    Reference object = walker.referenceOf(value.objectOperand());
+    Reference key = walker.referenceOf(value.propertyOperand());
+    if (!object || !key)
+        return false;
+    AccessOfTypedElements access { walker, value, object, key, { }, walker.typeOf(object), walker.types().at(walker.typeOf(key)), { }, false };
+    return buildAccessByIndexOfTypedElements(access, base.typedArrayType);
 }
 
 } } } // namespace JSC::AOT::Typed

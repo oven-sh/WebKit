@@ -19,7 +19,6 @@ public:
     void generateArrayPush(const InlineCall&);
     void generateArrayIsArray(const InlineCall&);
     void generateArrayLength(const InlineCall&);
-    void generateArraySetLength(const InlineCall&);
 
 private:
     ElementAccessEmitter& elements() { return emitter<ElementAccessEmitter>(); }

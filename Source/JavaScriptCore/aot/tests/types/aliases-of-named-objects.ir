@@ -1,23 +1,14 @@
 # Which objects of one set another set names under another number. The other set is read once, and each object is answered from what was read:
-# no pair of objects is held side by side, however many members the sets have. A site, an instance, a constructed object and a merged form are found by the layouts that they may have,
+# no pair of objects is held side by side, however many members the sets have. An instance, a constructed object and a merged form are found by the layouts that they may have,
 # what nobody describes by its class, a built-in and the closure of the library that implements it by the entry and the function, a prototype object and the `prototype` of the constructor by the declared layout.
-# RUN: aliases site(f0,v0)|site(f0,v1)|site(f0,v2)|site(f0,v4)|site(f0,v6)|site(f0,v8)|site(f0,v10) instance(L0)|instance(L3)|escaped(L1)|constructed(f3) escaped(L0)|escaped(L2)|escaped(L3)|escaped(L4)|escaped(L5) instance(L1)|instance(L5)|constructed(f1)|constructed(f4) site(f0,v12)|site(f0,v13)|site(f0,v14)|site(f0,v15)|site(f0,v16) escaped(Array)|escaped(Map)|escapedWithoutShape(0)|escapedWithoutShape(1)|result(ArrayPrototypeMap,0) f5|f6|f7|builtin(ArrayPrototypePush) builtin(ArrayPrototypeMap)|escapedFunctions(ArrayPrototype)|f1 prototype(L0)|prototype(L3)|prototypeOf(f2) prototypeOf(f1)|prototypeOf(f4)|prototype(L1)
-# CHECK: t0 in t1 = [site(f0, v0), site(f0, v1), site(f0, v2), site(f0, v4), site(f0, v6)], 0 of 28 pairs asked
-# CHECK: t0 in t4 = -, 0 of 35 pairs asked
-# CHECK-NEXT: t0 in t5 = [site(f0, v10)], 0 of 35 pairs asked
-# CHECK: t1 in t0 = [constructed(f3), instance(L0), instance(L3), escaped(L1)], 0 of 28 pairs asked
-# CHECK: t1 in t3 = [instance(L0), instance(L3), escaped(L1)], 0 of 16 pairs asked
-# CHECK: t2 in t1 = [escaped(L0), escaped(L2), escaped(L3)], 0 of 20 pairs asked
-# CHECK: t2 in t4 = [escaped(L5)], 0 of 25 pairs asked
-# CHECK: t3 in t1 = [constructed(f1), constructed(f4), instance(L1)], 0 of 16 pairs asked
-# CHECK: t4 in t2 = [site(f0, v15), site(f0, v16)], 0 of 25 pairs asked
-# CHECK: t4 in t5 = [site(f0, v12), site(f0, v13), site(f0, v14), site(f0, v15), site(f0, v16)], 0 of 25 pairs asked
-# CHECK: t5 in t0 = [escaped(Map), escapedWithoutShape(0), escapedWithoutShape(1)], 0 of 35 pairs asked
-# CHECK: t5 in t4 = [result(ArrayPrototypeMap, 0), escaped(Array), escaped(Map), escapedWithoutShape(0), escapedWithoutShape(1)], 0 of 25 pairs asked
-# CHECK: t6 in t7 = [f5, f6], 0 of 12 pairs asked
-# CHECK: t7 in t6 = [builtin(ArrayPrototypeMap), escapedFunctions(ArrayPrototype)], 0 of 12 pairs asked
-# CHECK: t8 in t9 = [prototypeOf(f2), prototype(L0), prototype(L3)], 0 of 9 pairs asked
-# CHECK: t9 in t8 = [prototypeOf(f1), prototypeOf(f4), prototype(L1)], 0 of 9 pairs asked
+# RUN: aliases instance(L0)|instance(L3)|escaped(L1)|constructed(f3) escaped(L0)|escaped(L2)|escaped(L3)|escaped(L4)|escaped(L5) instance(L1)|instance(L5)|constructed(f1)|constructed(f4) escaped(Array)|escaped(Map)|escapedWithoutShape(0)|escapedWithoutShape(1)|result(ArrayPrototypeMap,0) f5|f6|f7|builtin(ArrayPrototypePush) builtin(ArrayPrototypeMap)|escapedFunctions(ArrayPrototype)|f1 prototype(L0)|prototype(L3)|prototypeOf(f2) prototypeOf(f1)|prototypeOf(f4)|prototype(L1)
+# CHECK: t0 in t2 = [instance(L0), instance(L3), escaped(L1)], 0 of 16 pairs asked
+# CHECK: t1 in t0 = [escaped(L0), escaped(L2), escaped(L3)], 0 of 20 pairs asked
+# CHECK: t2 in t0 = [constructed(f1), constructed(f4), instance(L1)], 0 of 16 pairs asked
+# CHECK: t4 in t5 = [f5, f6], 0 of 12 pairs asked
+# CHECK: t5 in t4 = [builtin(ArrayPrototypeMap), escapedFunctions(ArrayPrototype)], 0 of 12 pairs asked
+# CHECK: t6 in t7 = [prototypeOf(f2), prototype(L0), prototype(L3)], 0 of 9 pairs asked
+# CHECK: t7 in t6 = [prototypeOf(f1), prototypeOf(f4), prototype(L1)], 0 of 9 pairs asked
 # CHECK: in all 0 pairs asked about
 # CHECK-NEXT: the index answers as mayBeSameObject() does
 

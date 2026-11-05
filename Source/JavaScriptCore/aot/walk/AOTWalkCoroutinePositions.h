@@ -16,8 +16,6 @@ class ObjectTable;
 class TypeArena;
 struct LinkTables;
 
-FunctionID coroutineWhoseCallsAnswerWith(const ObjectTable&, ObjectID);
-TypeID awaitedOfObjectOfCoroutine(TypeArena&, const LinkTables& held, ObjectID);
 TypeID typeHeldOfResultOfCoroutine(const Walker&, FunctionID callee);
 TypeID typeOfPromiseExpectedToGive(Walker&, TypeID settledWith);
 

@@ -156,24 +156,27 @@ Closure* ClassTable::createClassObject(VM& vm, const LayoutData& classLayout)
 
 bool ClassTable::hasStaticMethodNamed(const LayoutData& classLayout, UniquedStringImpl* name) const
 {
-    std::optional<uint32_t> key = keyOf(m_state, name);
-    if (!key)
-        return false;
-    return std::ranges::any_of(classLayout.staticMethods(), [&](auto& method) {
-        return !(method.flags & methodHasComputedName) && method.name == *key;
-    });
+    std::optional<uint32_t> key = classLayout.staticMethods().empty() ? std::nullopt : keyOf(m_state, name);
+    return key && m_state.objects->layouts.staticMethod(classLayout, *key);
 }
 
 const FieldData* ClassTable::staticField(const LayoutData& classLayout, UniquedStringImpl* name) const
 {
-    std::span<const FieldData> fields = classLayout.staticFields();
-    std::optional<uint32_t> key = fields.empty() ? std::nullopt : keyOf(m_state, name);
-    if (!key)
-        return nullptr;
-    auto found = std::ranges::find_if(fields, [&](const FieldData& field) {
-        return field.name == *key;
-    });
-    return found == fields.end() ? nullptr : &*found;
+    std::optional<uint32_t> key = classLayout.staticFields().empty() ? std::nullopt : keyOf(m_state, name);
+    return key ? m_state.objects->layouts.staticField(classLayout, *key) : nullptr;
+}
+
+uint32_t& ClassTable::createdStaticFieldsEnd(const LayoutData& classLayout)
+{
+    if (m_createdStaticFieldsEnds.isEmpty())
+        m_createdStaticFieldsEnds.fill(0, m_tables.numberOfClasses());
+    return m_createdStaticFieldsEnds[m_tables.rankOfClass(classLayout.index)];
+}
+
+void ClassTable::didEmptyStaticFields(const LayoutData& classLayout)
+{
+    if (!m_createdStaticFieldsEnds.isEmpty())
+        m_createdStaticFieldsEnds[m_tables.rankOfClass(classLayout.index)] = 0;
 }
 
 JSValue ClassTable::readStaticField(const FieldData& field) const
@@ -1382,11 +1385,11 @@ bool tryCreate(Closure& classObject, UniquedStringImpl* uid, JSValue value)
     const LayoutData& classLayout = *classObject.classData();
     if (uid == classObject.vm().propertyNames->displayName.impl() || classes.hasStaticMethodNamed(classLayout, uid))
         return false;
-    std::span<const FieldData> fields = classLayout.staticFields();
-    for (const FieldData& other : fields.subspan(static_cast<size_t>(field - fields.data()))) {
-        if (classes.readStaticField(other))
-            return false;
-    }
+    uint32_t index = static_cast<uint32_t>(field - classLayout.staticFields().data());
+    uint32_t& end = classes.createdStaticFieldsEnd(classLayout);
+    if (index < end)
+        return false;
+    end = index + 1;
     classes.storeStaticField(*field, value);
     return true;
 }
@@ -1411,7 +1414,8 @@ void moveToProperties(VM& vm, Closure& classObject)
     ClassTable& classes = state.objects->classes;
     if (state.objects->closures.closureIfCreated(classes.functionOfOwnClosure(classObject)) != &classObject)
         return;
-    for (const FieldData& field : classObject.classData()->staticFields()) {
+    const LayoutData& classLayout = *classObject.classData();
+    for (const FieldData& field : classLayout.staticFields()) {
         JSValue value = classes.readStaticField(field);
         if (!value)
             continue;
@@ -1420,6 +1424,7 @@ void moveToProperties(VM& vm, Closure& classObject)
         didPutFieldInPlaceOfFunctionProperty(vm, classObject, name.impl());
         classes.storeStaticField(field, JSValue());
     }
+    classes.didEmptyStaticFields(classLayout);
 }
 
 } // namespace StaticFields

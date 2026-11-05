@@ -72,9 +72,7 @@ StubSignature signatureOfStepAsyncIteratorInEngine(StubKey)
 void generateStepAsyncGenerator(StubAssembler& jit)
 {
     using ResumeModeOfRequest = JSAsyncGenerator::AsyncGeneratorResumeMode;
-    const auto form = static_cast<StepConsumer>(jit.key().form());
-    const bool awaitsCall = form == StepConsumer::AsyncFunctionAwaitingCall || form == StepConsumer::AsyncGeneratorAwaitingCall;
-    const StepConsumer consumerKind = form == StepConsumer::AsyncFunction || form == StepConsumer::AsyncFunctionAwaitingCall ? StepConsumer::AsyncFunction : StepConsumer::AsyncGenerator;
+    const auto consumerKind = static_cast<StepConsumer>(jit.key().form());
     const GPRReg iterator = jit.operand(0);
     const GPRReg driver = jit.clobberOperand(1);
     const GPRReg value = jit.clobberOperand(2);
@@ -86,17 +84,12 @@ void generateStepAsyncGenerator(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(iterator, driver, value, siteWord, saved, word, other, consumer, instanceGPR));
 
     JumpList mayNotContinue;
-    jit.move(TrustedImm32((consumerKind == StepConsumer::AsyncGenerator ? consumerIsAsyncGenerator : 0) | (awaitsCall ? consumerOfStepAwaitsCall : 0)), consumer);
+    jit.move(TrustedImm32(consumerKind == StepConsumer::AsyncGenerator ? consumerIsAsyncGenerator : 0), consumer);
     emitBranchUnlessFrameMayContinue(jit, { InvalidGPRReg, InvalidGPRReg, word, other }, mayNotContinue);
     jit.or32(TrustedImm32(consumerMayContinue), consumer);
     mayNotContinue.link(&jit);
 
     JumpList stepsInEngine;
-    if (awaitsCall) {
-        Jump keepsNoAsyncContext = emitBranchIfTracksNoAsyncContext(jit, word);
-        jit.or32(TrustedImm32(consumerOfStepAwaitsPromise), consumer);
-        keepsNoAsyncContext.link(&jit);
-    }
     std::optional<AssemblyHelpers::FreeListRefill> refill;
     JumpList isNotAllocatedHere;
     if (consumerKind == StepConsumer::AsyncFunction) {
@@ -237,8 +230,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     emitGiveBackRightToContinue(jit, consumer, word);
     Jump isNotCell = jit.branchIfNotCell(result);
     Jump isNotSentinel = jit.branchIfNotType(result, SentinelType);
-    suspendsConsumer.append(jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerOfStepAwaitsPromise)));
-    needsOperation.append(jit.jump());
+    suspendsConsumer.append(jit.jump());
     isNotSentinel.link(&jit);
     isNotCell.link(&jit);
 
@@ -251,7 +243,6 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     jit.returnToCaller();
 
     finishesInEngine.link(&jit);
-    needsOperation.append(jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerOfStepAwaitsPromise)));
     emitAwaitYieldedValue(jit, { generator, result, word, other }, { sent, saved, word, other }, needsOperation);
     suspendsConsumer.append(jit.jump());
 

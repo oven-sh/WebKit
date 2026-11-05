@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTTypeArena.h"
-#include "AOTTypeNarrowing.h"
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -53,26 +52,6 @@ static bool planSwitchOnCodeUnitOfCharacter(Walker& walker, const BodyTerminator
     return true;
 }
 
-static std::optional<uint32_t> caseThatNeedsNoTest(Walker& walker, const BodyTerminator& terminator, Reference subject)
-{
-    TypeID id = walker.typeOf(subject);
-    if (!id || isNeverType(id))
-        return std::nullopt;
-    Type type = walker.types().at(id);
-    uint32_t numberOfCases = terminator.numberOfCases();
-    if (!type.isInteger() || type.integers.maximum - type.integers.minimum >= static_cast<int64_t>(numberOfCases))
-        return std::nullopt;
-
-    TypingContext typing = walker.typing();
-    if (!isNeverType(typeOfCaseResult(typing, terminator, id, numberOfCases)))
-        return std::nullopt;
-    for (uint32_t caseIndex = numberOfCases; caseIndex--;) {
-        if (!isNeverType(typeOfCaseResult(typing, terminator, id, caseIndex)))
-            return caseIndex;
-    }
-    return std::nullopt;
-}
-
 std::optional<SwitchOnNumbers> planSwitchOnNumbers(Walker& walker, const BodyTerminator& terminator)
 {
     if (!hasMechanismsOfNumberForms(walker) || !terminator.numberOfCases())
@@ -89,8 +68,6 @@ std::optional<SwitchOnNumbers> planSwitchOnNumbers(Walker& walker, const BodyTer
 
     planned.subject = integerToSwitchOnInPlaceOf(walker, terminator, subject);
     if (!planned.subject)
-        planned.caseLeftUntested = caseThatNeedsNoTest(walker, terminator, subject);
-    if (!planned.subject && !planned.caseLeftUntested)
         return std::nullopt;
     return planned;
 }

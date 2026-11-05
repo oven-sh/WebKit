@@ -8,8 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAccessEmitter.h"
-#include "AOTBarrierEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTRegExpFlags.h"
 #include "AOTStringEmitter.h"
@@ -48,37 +46,10 @@ Word32 RegExpBuiltinEmitter::flagsOf(CellPointer regExpObject)
     return Word32(m_out.load16ZeroExt32(fieldAt(regExpOf(regExpObject).value(), RegExp::offsetOfFlags())));
 }
 
-void RegExpBuiltinEmitter::storeLastIndex(CellPointer regExpObject, Boxed value, LBasicBlock ifNotWritable)
-{
-    LValue regExpAndFlags = m_out.load64(fieldAt(regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags()));
-    branchUnless(Condition(m_out.testIsZero64(regExpAndFlags, m_out.constInt64(RegExpObject::lastIndexIsNotWritableFlag))), ifNotWritable);
-    m_out.store64(value.value(), fieldAt(regExpObject.value(), RegExpObject::offsetOfLastIndex()));
-}
-
 void RegExpBuiltinEmitter::generateRegExpGetLastIndex(const InlineCall& call)
 {
     CellPointer regExpObject = cellOperand(call.receiver());
     finish(call, Boxed(m_out.load64(fieldAt(regExpObject.value(), RegExpObject::offsetOfLastIndex()))));
-}
-
-void RegExpBuiltinEmitter::generateRegExpSetLastIndex(const InlineCall& call)
-{
-    CellPointer regExpObject = cellOperand(call.receiver());
-    Boxed value = boxedOperand(call.context(), call.argument(0));
-    LBasicBlock notWritable = newBlock();
-    LBasicBlock continuation = newBlock();
-    storeLastIndex(regExpObject, value, notWritable);
-    ifElse(isNotCell(value), [] { }, [&] {
-        emitter<BarrierEmitter>().barrier(call.context(), regExpObject);
-    });
-    m_out.jump(continuation);
-
-    m_out.appendTo(notWritable);
-    emitter<AccessEmitter>().putById(call.context(), boxCell(regExpObject), m_program.keyOf(BuiltinNames::lastIndex), value, PutMode::Strict);
-    m_out.jump(continuation);
-
-    m_out.appendTo(continuation);
-    finishWithUndefined(call);
 }
 
 void RegExpBuiltinEmitter::generateNewRegExp(const InlineCall& call)

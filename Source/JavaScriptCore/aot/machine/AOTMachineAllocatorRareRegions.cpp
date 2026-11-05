@@ -144,7 +144,8 @@ void Allocator::giveUpFramedPartForReadOfSpill() const
 Location Allocator::memoryLocationOf(const Operation* value) const
 {
     SpillIndex spill = m_allocation.spillOf(value);
-    if (spillHoldsValueIn(m_block, value))
+    ASSERT(m_isAheadOfFramedPart == isAheadOfFramedPart(m_block));
+    if (spill != noSpill && (!m_isAheadOfFramedPart || spillHoldsValueIn(m_block, value)))
         return Location::spill(spill);
     SpillIndex save = m_values[value->index()].saveInRareRegion;
     if (save != noSpill && (spill == noSpill || wayHasSavedInRareRegion(m_block, value)))
@@ -185,14 +186,18 @@ void Allocator::prepareSuspension(PatchOperation* patch)
 
     const Position late = m_order.latePositionOf(patch);
     const RegisterMask registersThatCanHoldRoot = kept & ~written;
-    for (unsigned child = 0; child < patch->numberOfOperands(); ++child) {
-        if (patch->constraintOf(child).kind() != ValueRep::LateColdAny)
+    const unsigned numberOfOperands = patch->m_operands.size();
+    Operation* const* const operands = patch->m_operands.begin();
+    const ValueRep* const constraints = patch->m_constraints.begin();
+    for (unsigned child = 0; child < numberOfOperands; ++child) {
+        if (constraints[child].kind() != ValueRep::LateColdAny)
             continue;
-        Operation* root = patch->child(child);
-        if (root->hasNoPosition() || (stateOf(root).registers & registersThatCanHoldRoot))
+        Operation* root = operands[child];
+        const ValueState& state = stateOf(root);
+        if (root->hasNoPosition() || (state.registers & registersThatCanHoldRoot))
             continue;
 
-        if (stateOf(root).saveInRareRegion == noSpill && !m_allocation.isSpilled(root)) {
+        if (state.saveInRareRegion == noSpill && !m_allocation.isSpilled(root)) {
             if (isDefinedOutsideRareRegion(root))
                 saveInRareRegion(root, anyRegisterOf(root, ~RegisterMask { 0 }));
             else

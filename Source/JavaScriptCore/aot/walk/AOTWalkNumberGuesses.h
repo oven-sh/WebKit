@@ -30,14 +30,12 @@ uint32_t limitOfStretchOfNumbers(const Walker&, const BodyBlock&);
 Reference buildTestOfNumber(Walker&, Reference value, TypeID tested, Origin);
 Reference buildProofOfNumber(Walker&, Reference value, Reference test, Origin);
 
-inline constexpr OpcodeSet opcodesThatBuildArmsInFrontOfTypedFormsTakes = allSums | allBitwiseOperators | allRelations | OpcodeSet { Opcode::Mul, Opcode::Negate, Opcode::StrictEq }
-    | operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative, OperatorKind::Bitwise });
+inline constexpr OpcodeSet opcodesThatBuildArmsInFrontOfTypedFormsTakes = allSums | allBitwiseOperators | allRelations | OpcodeSet { Opcode::Mul, Opcode::Negate, Opcode::StrictEq };
 AOT_LINK_OF_WALK(buildArmsInFrontOfTypedForms, opcodesThatBuildArmsInFrontOfTypedFormsTakes)
 inline constexpr OpcodeSet opcodesThatBuildOperatorBesideOneNumberTakes { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
 AOT_LINK_OF_WALK(buildOperatorBesideOneNumber, opcodesThatBuildOperatorBesideOneNumberTakes)
 bool isTaggedNumber(Walker&, Reference);
 bool sumStaysBoxed(Walker&, const BodyValue& written, const Draft& sum);
-bool buildTruncationOfBoxedNumber(Walker&, const BodyValue&);
 
 } } } // namespace JSC::AOT::Typed
 

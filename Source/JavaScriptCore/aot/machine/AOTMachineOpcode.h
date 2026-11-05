@@ -49,6 +49,7 @@ public:
 
 private:
     TypeKind m_kind { Void };
+    [[maybe_unused]] uint8_t m_byteThatIsZero { 0 };
     uint16_t m_tupleIndex { 0 };
 };
 static_assert(sizeof(Type) == 4);
@@ -208,7 +209,10 @@ constexpr const OpcodeDescription& descriptionOf(Opcode opcode)
     return descriptionsOfOpcodes[opcode];
 }
 
-constexpr std::array<uint16_t, numberOfOpcodes> listTraitsOfOpcodes()
+inline constexpr unsigned sizeOfTableByOpcode = 1 << (8 * sizeof(Opcode));
+static_assert(numberOfOpcodes <= sizeOfTableByOpcode);
+
+constexpr std::array<uint16_t, sizeOfTableByOpcode> listTraitsOfOpcodes()
 {
     using namespace OpcodeTrait;
     return { {
@@ -217,7 +221,7 @@ constexpr std::array<uint16_t, numberOfOpcodes> listTraitsOfOpcodes()
 #undef AOT_LIST_TRAITS_OF_MACHINE_OPCODE
     } };
 }
-inline constexpr std::array<uint16_t, numberOfOpcodes> traitsOfOpcodes = listTraitsOfOpcodes();
+inline constexpr std::array<uint16_t, sizeOfTableByOpcode> traitsOfOpcodes = listTraitsOfOpcodes();
 
 constexpr bool hasTrait(Opcode opcode, uint16_t trait)
 {

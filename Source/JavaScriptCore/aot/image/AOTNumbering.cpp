@@ -84,8 +84,6 @@ static std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers
             return std::nullopt;
         return statics.moduleBuiltinCells[*place].offset;
     }
-    case NumberSpace::DataCell:
-        return placedOffsetAt(statics.dataCellOffsets, key[0]);
     case NumberSpace::DataStorage:
         return placedOffsetAt(statics.dataStorageOffsets, key[0]);
     case NumberSpace::RegExpLiteralCell: {
@@ -184,7 +182,6 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     case NumberSpace::ModuleValue:
     case NumberSpace::ModuleNamespace:
     case NumberSpace::ModuleBuiltinCell:
-    case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
@@ -242,7 +239,7 @@ ImageNumbers::ImageNumbers()
 
 ImageNumbers::~ImageNumbers() = default;
 
-std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<const uint32_t> key) const
+ALWAYS_INLINE std::optional<uint32_t> ImageNumbers::numberOfInLine(NumberSpace space, std::span<const uint32_t> key) const
 {
     if (key.empty() || (hasOneIDAsKey(space) && key.size() != 1))
         return std::nullopt;
@@ -290,7 +287,6 @@ std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<cons
     case NumberSpace::ModuleValue:
     case NumberSpace::ModuleNamespace:
     case NumberSpace::ModuleBuiltinCell:
-    case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::RegExpLiteralCell:
     case NumberSpace::TemplateObjectCell:
@@ -379,11 +375,47 @@ std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<const uint32_t> key) const
+{
+    return numberOfInLine(space, key);
+}
+
 std::optional<uint32_t> ImageNumbers::valueOf(const Mention& mention, std::span<const uint32_t> mentionWords, bool asInstanceWord) const
+{
+    if (asInstanceWord || mention.numberOfWords != 1)
+        return valueOfSlowCase(mention, mentionWords, asInstanceWord);
+
+    uint32_t id = mentionWords[mention.firstWord];
+    std::optional<uint32_t> number;
+    switch (mention.space) {
+    case NumberSpace::Name:
+        number = m_identifiers->numberOf(PropertyKeyID(id));
+        break;
+    case NumberSpace::NameOfText:
+    case NumberSpace::AtomOfComparedText:
+        number = m_identifiers->numberOfText(StringID(id));
+        break;
+    case NumberSpace::String:
+    case NumberSpace::ShownString:
+        if (m_namedStrings.get(id))
+            number = id;
+        break;
+    case NumberSpace::StringCell:
+        number = m_stringConstants->numberOf(StringID(id));
+        break;
+    default:
+        return valueOfSlowCase(mention, mentionWords, asInstanceWord);
+    }
+    if (!number)
+        return std::nullopt;
+    return *number + static_cast<uint32_t>(mention.addend);
+}
+
+std::optional<uint32_t> ImageNumbers::valueOfSlowCase(const Mention& mention, std::span<const uint32_t> mentionWords, bool asInstanceWord) const
 {
     std::span<const uint32_t> key = keyOf(mention, mentionWords);
     if (!asInstanceWord) {
-        std::optional<uint32_t> number = numberOf(mention.space, key);
+        std::optional<uint32_t> number = numberOfInLine(mention.space, key);
         if (!number)
             return std::nullopt;
         if (mention.space == NumberSpace::SiteCache)
@@ -453,7 +485,6 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += statics.moduleBuiltinCells.size();
     count += numberPlaced(statics.moduleValueOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.moduleNamespaceOffsets, PlacedStatics::noOffset);
-    count += numberPlaced(statics.dataCellOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.dataStorageOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.regExpLiteralCellOffsets, PlacedStatics::noOffset);
     count += numberPlaced(statics.templateObjectCellOffsets, PlacedStatics::noOffset);

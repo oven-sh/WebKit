@@ -50,16 +50,17 @@ void Object::copyFieldsOfSameLayout(VM& vm, const Object& source)
     ASSERT(&layout == &source.layout() && !source.hasKeyOrderOfItsOwn());
     Extension* extension = createCopyOf(vm, source.extension());
     gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
+    if (source.bearsMark())
+        setBearsMark(true);
     if (layout.hasExtension())
         setExtension(vm, extension);
     setOrderAndCount(source.orderWord() & orderAndCountMask);
     vm.writeBarrier(this);
 }
 
-enum class CopyOfWords : bool { FillsObject, MakesObject };
-static bool tryMakeClosuresForCopyOfWords(VM& vm, Object& source, CopyOfWords copy)
+static bool tryMakeClosuresForCopyOfWords(VM& vm, Object& source)
 {
-    const uint16_t flagsOfOtherFields = fieldIsPrivate | fieldIsBrand | fieldAttributeFlags | (copy == CopyOfWords::FillsObject ? fieldIsStoredOnce : 0);
+    constexpr uint16_t flagsOfOtherFields = fieldIsPrivate | fieldIsBrand | fieldAttributeFlags;
     for (const FieldData& field : source.layout().fields()) {
         if (field.flags & flagsOfOtherFields)
             return false;
@@ -74,18 +75,16 @@ ALWAYS_INLINE Object* Object::createCopyOfWords(VM& vm, const Object& source, St
     const LayoutData& layout = source.layout();
     Object* copy = new (NotNull, allocateCell<Object>(vm, layout.size)) Object(vm, structure);
     if (!layout.hasExtension()) {
-        copy->setPerCellBit(source.perCellBit());
         copy->at<uint32_t>(offsetOfOrderWord) = source.orderWord() & orderAndCountMask;
-        copy->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
+        copy->at<uint32_t>(offsetOfShapeWord) = source.shapeWordWithMark();
         gcSafeMemcpy(&copy->at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
         copy->JSCell::finishCreation(vm);
         vm.writeBarrier(copy);
         return copy;
     }
     zeroSpan(std::span { reinterpret_cast<uint8_t*>(copy) + sizeof(JSCell), layout.size - sizeof(JSCell) });
-    copy->setPerCellBit(source.perCellBit());
     copy->at<uint32_t>(offsetOfOrderWord) = unorderedOrderWord;
-    copy->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
+    copy->at<uint32_t>(offsetOfShapeWord) = source.shapeWordWithMark();
     copy->JSCell::finishCreation(vm);
     copy->copyFieldsOfSameLayout(vm, source);
     return copy;
@@ -228,7 +227,7 @@ NEVER_INLINE Object* Object::tryCreateCopyOfFieldsAndExtraProperties(VM& vm, con
     if (hasExtraProperties ? !layout.extraPropertiesSlot() || source.hasOutOfLineKeyOrder() : !structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
         return nullptr;
     DeferGC deferGC(vm);
-    if (!structure.isCopiedByWords() && !tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source), CopyOfWords::MakesObject))
+    if (!structure.isCopiedByWords() && !tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source)))
         return nullptr;
     if (!hasExtraProperties)
         return createCopyOfWords(vm, source, source.structure());
@@ -253,7 +252,7 @@ Object* Object::tryCreateCopyOfFields(VM& vm, const Object& source)
     if (source.hasFlagsInOrderWord() || !structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype)) [[unlikely]]
         return tryCreateCopyOfFieldsAndExtraProperties(vm, source);
     DeferGC deferGC(vm);
-    if (!structure.isCopiedByWords() && !tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source), CopyOfWords::MakesObject))
+    if (!structure.isCopiedByWords() && !tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source)))
         return nullptr;
     return createCopyOfWords(vm, source, source.structure());
 }
@@ -285,6 +284,8 @@ ALWAYS_INLINE bool Object::tryCopyWordsOfSameLayout(VM& vm, const Object& source
     std::optional<SlotData> extensionSlot = structure.extensionSlot();
     Extension* extension = extensionSlot ? createCopyOf(vm, reinterpret_cast<Extension*>(const_cast<uint8_t*>(extensionStorageOrNull(&source, *extensionSlot)))) : nullptr;
     gcSafeMemcpy(&at<uint64_t>(offsetOfFirstField), &source.at<uint64_t>(offsetOfFirstField), sizeOfFieldWords(layout));
+    if (source.bearsMark())
+        setBearsMark(true);
     if (extension) {
         if (extensionSlot->representation() == SlotRepresentation::Cell)
             at<Extension*>(extensionSlot->offset) = extension;
@@ -295,7 +296,7 @@ ALWAYS_INLINE bool Object::tryCopyWordsOfSameLayout(VM& vm, const Object& source
         ASSERT(source.structure()->typeInfoBlob() == structure.typeInfoBlob());
         setStructureIDDirectly(source.structureID());
         State& state = this->state();
-        if (const MappedCopy*& place = state.instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(orderAndShapeWords(), source.orderAndShapeWords(), 0)]; !place)
+        if (const MappedCopy*& place = state.instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(orderAndShapeWordsWithMark(), source.orderAndShapeWordsWithMark(), 0)]; !place)
             place = &state.objects->caches->assignmentPlans.copyOfNoSource();
     }
     at<uint32_t>(offsetOfOrderWord) = orderWordOfSource & orderAndCountMask;
@@ -316,7 +317,7 @@ bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
     DeferGC deferGC(vm);
     bool mayCopyWords = shapeWord() == source.shapeWord() && !countOf(orderWord());
     if (mayCopyWords && !compiledStructure().hasOnlyPlainSlots()) [[unlikely]]
-        mayCopyWords = tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source), CopyOfWords::FillsObject);
+        mayCopyWords = tryMakeClosuresForCopyOfWords(vm, const_cast<Object&>(source));
     if (mayCopyWords) {
         copyFieldsOfSameLayout(vm, source);
         if (countOf(orderWord()))
@@ -342,7 +343,7 @@ bool Object::tryDefineFields(VM& vm, std::span<UniquedStringImpl* const> names, 
     uint64_t granuleBits = 0;
     for (size_t i = 0; i < names.size(); ++i) {
         const FieldData* field = layouts.field(vm, layout, names[i]);
-        if (!field || field->flags & (fieldIsStoredOnce | fieldAttributeFlags) || field->slot.representation() == SlotRepresentation::DeferredClosure)
+        if (!field || field->flags & fieldAttributeFlags || field->slot.representation() == SlotRepresentation::DeferredClosure)
             return false;
         fields.append(field);
         if (!attributes.empty() && attributes[i]) {
@@ -1068,8 +1069,8 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     if (const MappedCopy*& place = placeOfCopyWithoutFrame(state, copy); place == &copy)
         place = nullptr;
     copy = { };
-    copy.targetWords = target.orderAndShapeWords();
-    copy.sourceWords = source.orderAndShapeWords();
+    copy.targetWords = target.orderAndShapeWordsWithMark();
+    copy.sourceWords = source.orderAndShapeWordsWithMark();
     copy.excludedRunNumberPlusOne = excludedRunNumberPlusOne;
     copy.state = MappedCopy::State::IsNotServed;
     uint32_t orderWordOfSource = source.orderWord();
@@ -1153,8 +1154,8 @@ static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object
     JSGlobalObject* realm = state.instance.globalObject;
     if (target.structure()->realm() != realm || source.structure()->realm() != realm)
         return RepeatedCopy::IsNotDone;
-    uint64_t targetWords = target.orderAndShapeWords();
-    uint64_t sourceWords = source.orderAndShapeWords();
+    uint64_t targetWords = target.orderAndShapeWordsWithMark();
+    uint64_t sourceWords = source.orderAndShapeWordsWithMark();
     MappedCopy& copy = state.objects->caches->assignmentPlans.mappedCopyAt(targetWords, sourceWords, excludedRunNumberPlusOne);
     bool isFirstCopy = !copy.isFor(targetWords, sourceWords, excludedRunNumberPlusOne);
     if (isFirstCopy && !tryDescribeMappedCopy(vm, state, copy, target, source, excludedRunNumberPlusOne))
@@ -1260,7 +1261,7 @@ std::optional<MappedCopy::MoveKind> moveKindOutOfOrdinaryObject(const RuntimeLay
 {
     using Kind = MappedCopy::MoveKind;
     const FieldData& to = *store.to;
-    if (store.from || !store.isDirect || to.holdsRawValueFromBirth || to.flags & (fieldIsStoredOnce | fieldAttributeFlags))
+    if (store.from || !store.isDirect || to.holdsRawValueFromBirth || to.flags & fieldAttributeFlags)
         return std::nullopt;
     switch (to.slot.representation()) {
     case SlotRepresentation::Int32:
@@ -1303,7 +1304,7 @@ static bool tryDescribeCopyOutOfOrdinaryObject(VM& vm, State& state, const Assig
     copy.granuleBitsFilled = plan.granuleBitsFilled;
     if (copy.granuleBitsFilled && !tryDescribeNewExtension(vm, copy, target))
         return false;
-    copy.targetWords = static_cast<uint64_t>(target.shapeWord()) << 32 | unorderedOrderWord;
+    copy.targetWords = static_cast<uint64_t>(target.shapeWordWithMark()) << 32 | unorderedOrderWord;
     copy.sourceWords = 0;
     copy.readsOrdinaryObject = true;
     copy.granuleBitsOfSource = UINT64_MAX;
@@ -1401,9 +1402,9 @@ static bool tryDescribeCopyFollowingPlan(VM& vm, State& state, const AssignmentP
     copy.orderWordAfter = plan.orderWordAfterRun;
     copy.structureOfTarget = plan.target;
     copy.structureOfSource = plan.source;
-    followed.targetWords = static_cast<uint64_t>(target.shapeWord()) << 32 | unorderedOrderWord;
+    followed.targetWords = static_cast<uint64_t>(target.shapeWordWithMark()) << 32 | unorderedOrderWord;
     if (source.compiledObject) {
-        copy.sourceWords = source.compiledObject->orderAndShapeWords();
+        copy.sourceWords = source.compiledObject->orderAndShapeWordsWithMark();
         copy.targetWords = followed.targetWords;
         copy.placeOfOwnedCopy = &placeOfCopyWithoutFrame(state, copy);
         copy.takesNoFrame = true;
@@ -1570,7 +1571,7 @@ static NEVER_INLINE void offerCopyWithoutFrame(VM& vm, State& state, AssignmentP
 static NEVER_INLINE RepeatedCopy runPlanAsBeforeAndOfferCopy(VM& vm, State& state, Object& to, AssignmentPlan& plan, const AssignmentSource& source, uint32_t excludedRunNumberPlusOne)
 {
     auto isForTarget = [&](const MappedCopy& copy) {
-        return (copy.followedPlan ? copy.followedPlan->targetWords : copy.targetWords) == to.orderAndShapeWords();
+        return (copy.followedPlan ? copy.followedPlan->targetWords : copy.targetWords) == to.orderAndShapeWordsWithMark();
     };
     if (const MappedCopy* copy = plan.copyWithoutFrame.get(); copy && !copy->granuleBitsFilled && isForTarget(*copy) && plan.runsAsBeforeOn(to, source, excludedRunNumberPlusOne) && tryCopyFollowingPlan(state.instance, *copy, &to, source.object)) {
         if (copy->placeOfOwnedCopy && *copy->placeOfOwnedCopy != copy) [[unlikely]]

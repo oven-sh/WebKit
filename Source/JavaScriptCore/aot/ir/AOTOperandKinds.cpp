@@ -50,13 +50,11 @@ static uint16_t primitivesOfOperandKind(OperandKind kind)
     case OperandKind::Array:
     case OperandKind::Layout:
     case OperandKind::Environment:
-    case OperandKind::Guard:
     case OperandKind::IteratorState:
     case OperandKind::Enumerator:
     case OperandKind::Exception:
     case OperandKind::ClassToken:
     case OperandKind::StringBuilder:
-    case OperandKind::Fact:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
     case OperandKind::BuilderCursor:
@@ -95,13 +93,11 @@ TypeID widestTypeOf(TypeArena& types, OperandKind kind)
     case OperandKind::EvalOperand:
     case OperandKind::Results:
     case OperandKind::Convertible:
-    case OperandKind::Guard:
     case OperandKind::IteratorState:
     case OperandKind::Enumerator:
     case OperandKind::Exception:
     case OperandKind::ClassToken:
     case OperandKind::StringBuilder:
-    case OperandKind::Fact:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
     case OperandKind::BuilderCursor:
@@ -164,13 +160,11 @@ static bool recordHasOperandKind(TypeArena& types, TypeID id, const Type& type, 
         return type.isJavaScriptValue() || operandIsEnvironment(type) || type.isOpaque(OpaqueKind::ClassToken);
     case OperandKind::Convertible:
         return !type.opaque || holdsCells(representationOf(*type.opaque));
-    case OperandKind::Guard:
     case OperandKind::IteratorState:
     case OperandKind::Enumerator:
     case OperandKind::Exception:
     case OperandKind::ClassToken:
     case OperandKind::StringBuilder:
-    case OperandKind::Fact:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
     case OperandKind::BuilderCursor:
@@ -229,9 +223,11 @@ static bool operandIsEnvironmentThatMayBeAbsent(const TypeArena& types, TypeID p
 
 static bool anyOperandTypeIsNever(OperandTypes proven)
 {
-    return std::ranges::any_of(proven.types, [](TypeID type) {
-        return isNeverType(type);
-    });
+    for (TypeID type : proven.types) {
+        if (isNeverType(type))
+            return true;
+    }
+    return false;
 }
 
 static bool operandPositionMayBeUnspecified(const TypingContext& context, TypeID known, const DeclaredType& declared)
@@ -349,8 +345,8 @@ static ALWAYS_INLINE bool everyOperandFitsAtAGlance(const TypingContext& context
         }
         if (kind != OperandKind::Declared)
             continue;
-        TypeID required = requiredTypeOfOperand(context, operation, operandIndex);
-        if (required && id != required && !types.isSubset(id, required))
+        TypeID required = requiredTypeOfDeclaredOperand(context, operation, operandIndex);
+        if (required && !types.isSubset(id, required))
             return false;
     }
     return true;
@@ -401,7 +397,7 @@ std::optional<IllTypedOperand> findIllTypedOperand(const TypingContext& context,
         if (kind != OperandKind::Declared)
             continue;
 
-        TypeID required = requiredTypeOfOperand(context, operation, operandIndex);
+        TypeID required = requiredTypeOfDeclaredOperand(context, operation, operandIndex);
         if (!required)
             continue;
         if (fit.mayBeUnspecified && storesIntoVariable)

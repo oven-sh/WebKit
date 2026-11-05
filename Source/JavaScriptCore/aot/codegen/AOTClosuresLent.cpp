@@ -8,14 +8,35 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosureWord.h"
 #include "AOTConvention.h"
 #include "AOTFacts.h"
 #include "AOTIRFunction.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
+#include "AOTStubsCompiledMethods.h"
+#include "AOTSweep.h"
+#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+static bool stubOfMethodEntersFunctionsThatOnlyCallFirstArgument(const Program& program, const Facts& facts, BuiltinID method)
+{
+    const BuiltinTable& table = program.builtins();
+    if (!compiledMethodOfArray(method) || table.boxedCallStubOf(method))
+        return false;
+    bool namesFunction = false;
+    for (const BuiltinOverload& overload : table.overloadsOf(method)) {
+        if (overload.mode != BuiltinCallMode::Call)
+            continue;
+        const RuntimeFunctionEntry* held = findRuntimeFunction(program, overload.libraryFunction());
+        if (!held || !held->function || !facts.linked().onlyCallsWhatArrivesAt(held->function, program.at(held->function).firstParameterIndex()))
+            return false;
+        namesFunction = true;
+    }
+    return namesFunction;
+}
 
 ClosureLent findLoanOfClosure(const Program& program, const Facts& facts, const Code& code, ValueID closure)
 {
@@ -39,25 +60,66 @@ ClosureLent findLoanOfClosure(const Program& program, const Facts& facts, const 
     if (!user)
         return { };
     const Operation& call = code.at(user);
+    if (call.opcode != Opcode::CallDirect && call.opcode != Opcode::Call && call.opcode != Opcode::NewClosure)
+        return { };
     const Terminator& end = code.at(made.block()).terminator;
     if (call.blockIndex != made.blockIndex || (end.kind == TerminatorKind::ReturnCall && end.callOperand() == user))
         return { };
-    uint32_t numberOfNamedOperands = call.numberOfNamedOperands();
-    uint32_t operandIndex = 0;
-    while (call.operand(operandIndex) != name)
-        ++operandIndex;
-    if (operandIndex < numberOfNamedOperands)
+    size_t numberOfPlaces = 0;
+    if (call.opcode == Opcode::Call)
+        numberOfPlaces = ClosureWord::numberOfBorrowedArguments;
+    else if (call.function().index() < facts.linked().functions.size())
+        numberOfPlaces = facts.linked().parametersOf(call.function()).size();
+    if (!numberOfPlaces)
         return { };
-    uint32_t position = operandIndex - numberOfNamedOperands;
+    std::span<const ValueID> arguments = call.opcode == Opcode::NewClosure ? call.capturesOperands() : call.argumentsOperands();
+    numberOfPlaces = std::min(numberOfPlaces, arguments.size());
+    uint32_t position = 0;
+    while (position < numberOfPlaces && arguments[position] != name)
+        ++position;
+    if (position == numberOfPlaces)
+        return { };
 
     switch (call.opcode) {
     case Opcode::CallDirect:
         if (returnsResultOfFunction(call.role()) && !call.numberOfBoundArguments() && facts.linked().onlyCallsWhatArrivesAt(call.function(), position))
             return { LoanOfClosure::ToFunctionEntered, user };
         return { };
+    case Opcode::Call:
+        if (form != ClosureForm::Slim || position >= ClosureWord::numberOfBorrowedArguments || call.numberOfVariadicOperands() > numberOfArgumentGPRs)
+            return { };
+        if (BuiltinID method = call.methodOfReceiverAsMade(); method && (position || !stubOfMethodEntersFunctionsThatOnlyCallFirstArgument(program, facts, method)))
+            return { };
+        return { LoanOfClosure::LeftToStubOfCall, user };
+    case Opcode::NewClosure: {
+        if (!facts.linked().onlyCallsWhatArrivesAt(call.function(), position))
+            return { };
+        ClosureLent holder = findLoanOfClosure(program, facts, code, user);
+        if (holder.loan == LoanOfClosure::None)
+            return { };
+        return { LoanOfClosure::ToFunctionEntered, holder.call };
+    }
     default:
         return { };
     }
+}
+
+uint8_t argumentsLentBy(const Program& program, const Facts& facts, const Code& code, const Operation& call)
+{
+    uint8_t lentArguments = 0;
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    for (unsigned index = 0; index < arguments.size() && index < ClosureWord::numberOfBorrowedArguments; ++index) {
+        if (!code.isConstant(arguments[index]) && findLoanOfClosure(program, facts, code, rootOfCellInSweptCode(code, arguments[index])).loan == LoanOfClosure::LeftToStubOfCall)
+            lentArguments |= 1u << index;
+    }
+    return lentArguments;
+}
+
+bool mayCaptureClosuresOfFrames(const Facts& facts, const Code& code)
+{
+    return std::ranges::any_of(code.inlineFrames(), [&](const InlineFrame& frame) {
+        return frame.callee && facts.linked().capturesWhatItOnlyCalls(frame.callee);
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

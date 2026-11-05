@@ -127,7 +127,7 @@ struct StubEnvironment {
     ZeroedStorage<VM> vm;
     std::array<void*, numberOfEntries> runtimeTable;
     void* stub;
-    std::array<uint64_t, 4> operands;
+    std::array<uint64_t, 5> operands;
     uint64_t immediate;
     std::array<uint64_t, markedFPRs.size()> numbers;
     uint64_t result;

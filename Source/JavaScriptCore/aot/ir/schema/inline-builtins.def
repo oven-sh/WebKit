@@ -17,13 +17,12 @@ inline ArrayIterator(IterationKind) ; Allocates ; family ArrayBuiltin ; optional
 inline ArrayPush ; GrowsArray ; family ArrayStorageBuiltin
 inline ArrayIsArray ; none ; family ArrayStorageBuiltin
 inline ArrayLength ; reads(ArrayStorage) ; family ArrayStorageBuiltin ; optionalSlowPath
-inline ArraySetLength ; GrowsArray ; family ArrayStorageBuiltin ; optionalSlowPath
 inline TypedArrayLength TypedArrayByteLength TypedArrayByteOffset ; reads(TypedArrayStorage) ; family ArrayBufferViewBuiltin
 inline TypedArrayWithLength ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
 inline TypedArraySet ; reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) ; family ArrayBufferViewBuiltin
 inline OwnPropertyKeys(OwnKeysKind) ObjectGetOwnPropertyDescriptor ; asOverload ; family OwnPropertyBuiltin
 inline ObjectHasOwn ObjectPropertyIsEnumerable ObjectValues ObjectEntries ; asOverload ; family OwnPropertyBuiltin ; optionalSlowPath
-inline ObjectCreate GetPrototypeOf(PrototypeQuery) SetPrototypeOf(PrototypeChange) CallObjectConstructor ObjectFreeze ObjectPrototypeToString ObjectAssign ; asOverload ; family ObjectBuiltin
+inline ObjectCreate GetPrototypeOf(PrototypeQuery) SetPrototypeOf(PrototypeChange) CallObjectConstructor ObjectPrototypeToString ObjectAssign ; asOverload ; family ObjectBuiltin
 inline ObjectIs ReturnThis ; none ; family ObjectBuiltin ; optionalSlowPath
 inline NewMap NewSet ; Allocates ; family HashTableBuiltin ; optionalSlowPath
 inline MapGet MapHas SetHas ; CreatesConstant ResolvesRopes reads(CollectionStorage, CollectionEntries) ; family HashTableBuiltin ; optionalSlowPath
@@ -58,6 +57,6 @@ inline StringLength ; none ; family StringBuiltin ; optionalSlowPath
 inline StringAt StringCharAt StringCharCodeAt StringCodePointAt StringSlice StringSubstring StringSubstr StringStartsWith StringEndsWith StringIncludes StringIndexOf StringLastIndexOf StringToLowerCase StringToUpperCase StringTrim StringTrimStart StringTrimEnd StringLocaleCompare StringConcat StringFromCharCode ; CreatesString ; family StringBuiltin ; optionalSlowPath
 inline NewRegExp ; asOverload ; family RegExpBuiltin
 inline StringMatch StringSearch ; asOverload ; family RegExpBuiltin ; optionalSlowPath
-inline RegExpExec RegExpTest RegExpFlags RegExpSource StringReplace(SearchValueKind) StringReplaceAll(SearchValueKind) StringSplit(SearchValueKind) RegExpFlag(RegExpFlags) RegExpGetLastIndex RegExpSetLastIndex ; asOverload ; family RegExpBuiltin ; optionalSlowPath
+inline RegExpExec RegExpTest RegExpFlags RegExpSource StringReplace(SearchValueKind) StringReplaceAll(SearchValueKind) StringSplit(SearchValueKind) RegExpFlag(RegExpFlags) RegExpGetLastIndex ; asOverload ; family RegExpBuiltin ; optionalSlowPath
 inline NewError(ErrorKind) ; asOverload ; family ErrorBuiltin
 inline FormatDateTime FormatNumber ; asOverload ; family IntlBuiltin

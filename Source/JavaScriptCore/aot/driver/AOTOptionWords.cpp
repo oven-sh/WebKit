@@ -143,6 +143,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::TestsEveryPosition:
     // A false bound on purpose, for the red control of that: isKnownToLieInsideList().
     case Wire::TestingSwitch::PositionsAreTakenToLieInside:
+    case Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded:
     case Wire::TestingSwitch::CheckEffectsAtRunTime:
     case Wire::TestingSwitch::RowSaysLess:
         return true;

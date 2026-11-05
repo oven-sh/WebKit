@@ -143,15 +143,10 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOfChecks, CountExecution) \
     v(OperationsOnProxies, FinishHasThroughProxy) \
     v(OperationsOnProxies, FinishSetThroughProxy) \
-    v(OperationsOnProxies, FinishStoreByTrap) \
     v(OperationsOnProxies, GetWithProxyTrap) \
-    v(OperationsOnProxies, HasOwnByAnswerOfDescriptorTrap) \
     v(OperationsOnProxies, HasWithProxyTrap) \
     v(OperationsOnProxies, SetWithProxyTrap) \
-    v(OperationsOnProxies, ValidateAnswerOfGetTrap) \
     v(OperationsOnProxies, ValidateAnswerOfProxyTrap) \
-    v(OperationsOnProxies, ValidateConsentOfDeleteTrap) \
-    v(OperationsOnProxies, ValidateDenialOfHasTrap) \
     v(OperationsOfJSONStringify, JSONAppendString) \
     v(OperationsOfJSONStringify, JSONAppendValue) \
     v(OperationsOfJSONStringify, JSONEnterWatchedLevel) \
@@ -220,7 +215,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnGlobalBindings, SetGlobalObjectBindingSloppy) \
     v(OperationsOnArgumentsObjects, CreateMappedArguments) \
     v(OperationsOnArgumentsObjects, CreateUnmappedArguments) \
-    v(OperationsOnArgumentsObjects, GetFromArguments) \
     v(OperationsOnArgumentsObjects, GetMappedArgument) \
     v(OperationsOnArgumentsObjects, SetMappedArgument) \
     v(OperationsOnAsyncIterators, AsyncIteratorStep) \
@@ -246,7 +240,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnPromises, RejectPromise) \
     v(OperationsOnPromises, ResolvePromise) \
     v(OperationsOnPromises, ResolvePromiseOrReturnResult) \
-    v(OperationsOnKeysOfParts, MapFind) \
     v(OperationsOnMapsAndSets, MapClear) \
     v(OperationsOnMapsAndSets, MapNext) \
     v(OperationsOnMapsAndSets, NewMap) \
@@ -433,7 +426,6 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
         return RemovableFeature::IntlCollation;
     case Entry::operationAOTRegExpExec:
     case Entry::operationAOTRegExpTest:
-    case Entry::operationAOTRegExpFind:
     case Entry::operationAOTRegExpTestBoxed:
     case Entry::operationAOTRegExpMatchLiteral:
     case Entry::operationAOTRegExpMatchLiteralWithoutObject:

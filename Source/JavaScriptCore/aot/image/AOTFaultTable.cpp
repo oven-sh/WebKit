@@ -168,9 +168,11 @@ void addFaultSites(Vector<CollectedSite>& sites, const CompiledCode& code, uint3
     }
 }
 
-uint32_t findMostFrequentWord(const ParallelLoops& loops, Vector<uint32_t>&& words)
+uint32_t findMostFrequentWord(Vector<uint32_t>&& words)
 {
-    parallelSort(loops, words.mutableSpan(), std::less<uint32_t> { });
+    radixSortKeepingEqualKeysInOrder<32>(words, [](uint32_t word) {
+        return word;
+    });
     uint32_t mostFrequentWord = 0;
     size_t highestCount = 0;
     for (size_t begin = 0; begin < words.size();) {
@@ -200,13 +202,16 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
         uint32_t previousOffset = block ? sites[block * faultSitesBetweenCheckpoints - 1].offset : 0;
         uint32_t offsetBeforeBlock = previousOffset;
         uint32_t nullChecksInBlock = 0;
-        steps[block].reserveInitialCapacity(sitesOf(block).size() * FaultStep::maxSize);
+        steps[block].grow(sitesOf(block).size() * FaultStep::maxSize);
+        uint8_t* firstStepByte = steps[block].mutableSpan().data();
+        WriterOfReservedBytes stepBytes(firstStepByte);
         for (const CollectedSite& site : sitesOf(block)) {
             RELEASE_ASSERT(site.offset > previousOffset);
-            site.stepFrom(previousOffset).append(steps[block]);
+            site.stepFrom(previousOffset).append(stepBytes);
             previousOffset = site.offset;
             nullChecksInBlock += site.isNullCheck();
         }
+        steps[block].shrink(stepBytes.end() - firstStepByte);
         checkpoints[block] = { offsetBeforeBlock, 0, nullChecksInBlock, 0, { 0, 0 } };
     });
     size_t sizeOfSteps = 0;
@@ -218,12 +223,6 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
         numberOfNullChecks += nullChecksInBlock;
     }
 
-    auto collectWords = [&](unsigned index) {
-        return collectInParallel<uint32_t>(loops, sites.size(), [&](unsigned site, Vector<uint32_t>& words) {
-            if (index < sites[site].numberOfWords)
-                words.append(sites[site].words[index]);
-        });
-    };
     auto collectSparseWords = [&](unsigned index, std::optional<uint32_t> omittedWord) {
         return collectInParallel<FaultSiteWord>(loops, numberOfBlocks, [&](unsigned block, Vector<FaultSiteWord>& words) {
             uint32_t nullCheck = checkpoints[block].firstNullCheck;
@@ -234,15 +233,35 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
             }
         });
     };
-    Vector<uint32_t> firstWords = collectWords(0);
-    sortAndRemoveDuplicates(loops, firstWords);
+    Vector<uint64_t> firstWordsWithNullChecks = collectInParallel<uint64_t>(loops, numberOfBlocks, [&](unsigned block, Vector<uint64_t>& words) {
+        uint32_t nullCheck = checkpoints[block].firstNullCheck;
+        for (const CollectedSite& site : sitesOf(block)) {
+            if (!site.isNullCheck())
+                continue;
+            RELEASE_ASSERT(site.numberOfWords);
+            words.append(static_cast<uint64_t>(site.words[0]) << 32 | nullCheck);
+            ++nullCheck;
+        }
+    });
+    radixSortKeepingEqualKeysInOrder<32>(firstWordsWithNullChecks, [](uint64_t wordWithNullCheck) {
+        return wordWithNullCheck >> 32;
+    });
+    Vector<uint32_t> firstWords;
+    for (uint64_t wordWithNullCheck : firstWordsWithNullChecks) {
+        uint32_t word = static_cast<uint32_t>(wordWithNullCheck >> 32);
+        if (firstWords.isEmpty() || firstWords.last() != word)
+            firstWords.append(word);
+    }
     for (size_t i = 0; i + 1 < firstWords.size(); ++i) {
         ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(firstWords[i]);
         if (word.isCallSite() && !word.registerNumber && word.differsOnlyInRegisterNumber(std::bit_cast<ThrowSiteWord>(firstWords[i + 1])))
             firstWords[i] = firstWords[i + 1];
     }
     removeRepeatedElements(firstWords);
-    uint32_t defaultSecondWord = findMostFrequentWord(loops, collectWords(1));
+    uint32_t defaultSecondWord = findMostFrequentWord(collectInParallel<uint32_t>(loops, sites.size(), [&](unsigned site, Vector<uint32_t>& words) {
+        if (sites[site].numberOfWords > 1)
+            words.append(sites[site].words[1]);
+    }));
     auto hasSecondWordOfItsOwn = [&](const CollectedSite& site) {
         return site.numberOfWords > 1 && site.words[1] != defaultSecondWord;
     };
@@ -295,17 +314,19 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
     });
     forEachIndexInParallel(loops, numberOfBlocks, [&](unsigned block) {
         memcpySpan(section.subspan(layout.stepsOffset + checkpoints[block].stepsPosition), steps[block].span());
+    });
+    forEachRangeOfIndicesInParallel(loops, firstWordsWithNullChecks.size(), [&](size_t first, size_t end) {
         uint8_t* wordNumbers = section.data() + layout.wordNumbersOffset;
-        uint32_t nullCheck = checkpoints[block].firstNullCheck;
-        for (const CollectedSite& site : sitesOf(block)) {
-            if (!site.isNullCheck())
-                continue;
-            size_t number = std::ranges::lower_bound(firstWords, site.words[0]) - firstWords.begin();
+        size_t number = std::ranges::lower_bound(firstWords, static_cast<uint32_t>(firstWordsWithNullChecks[first] >> 32)) - firstWords.begin();
+        for (size_t index = first; index < end; ++index) {
+            uint32_t word = static_cast<uint32_t>(firstWordsWithNullChecks[index] >> 32);
+            uint32_t nullCheck = static_cast<uint32_t>(firstWordsWithNullChecks[index]);
+            while (number < firstWords.size() && firstWords[number] < word)
+                ++number;
             if (layout.hasNarrowWordNumbers)
                 reinterpret_cast<uint16_t*>(wordNumbers)[nullCheck] = static_cast<uint16_t>(number);
             else
                 reinterpret_cast<uint32_t*>(wordNumbers)[nullCheck] = static_cast<uint32_t>(number);
-            ++nullCheck;
         }
     });
     return bytes;

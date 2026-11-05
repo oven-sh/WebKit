@@ -40,6 +40,16 @@ constexpr uint64_t mixBitsForIDSets(uint64_t bits)
     return bits ^ bits >> 33;
 }
 
+constexpr uint32_t hashOfMemoQuestion(uint32_t question, uint32_t first, uint32_t second)
+{
+    return first * 0x9e3779b1u + second * 0x85ebca77u + question * 0xc2b2ae3du;
+}
+
+constexpr size_t slotOfMemoHash(uint32_t hash, size_t numberOfSlots)
+{
+    return static_cast<size_t>(static_cast<uint64_t>(hash) * numberOfSlots >> 32);
+}
+
 enum class IDSetForm : uint8_t {
     ListsAndChunks,
     ChunksWithLazyList,
@@ -209,6 +219,8 @@ public:
     static constexpr size_t leastAnswersInGeneration = 1 << 14;
 
     std::optional<uint32_t> find(uint32_t question, uint32_t first, uint32_t second);
+    std::optional<uint32_t> findInRecentGeneration(uint32_t question, uint32_t first, uint32_t second);
+    std::optional<uint32_t> findInOlderGeneration(uint32_t question, uint32_t first, uint32_t second);
     JS_EXPORT_PRIVATE void add(uint32_t question, uint32_t first, uint32_t second, uint32_t answer);
     void keepEverything() { m_keepsEverything = true; }
     void clear()
@@ -228,7 +240,7 @@ private:
     };
 
     struct Generation {
-        const Entry* find(size_t hash, uint32_t questionPlusOne, uint32_t first, uint32_t second) const;
+        const Entry* find(uint32_t hash, uint32_t questionPlusOne, uint32_t first, uint32_t second) const;
         void add(const Entry&);
         void grow();
 
@@ -236,10 +248,7 @@ private:
         size_t size { 0 };
     };
 
-    static constexpr size_t hashOfQuestion(uint32_t questionPlusOne, uint32_t first, uint32_t second)
-    {
-        return static_cast<size_t>(mixBitsForIDSets((static_cast<uint64_t>(first) << 32 | second) + questionPlusOne * 0x9e3779b97f4a7c15ull) >> 32);
-    }
+    static constexpr uint32_t hashOfEntry(const Entry& entry) { return hashOfMemoQuestion(entry.questionPlusOne - 1, entry.first, entry.second); }
     JS_EXPORT_PRIVATE uint32_t moveToRecentGeneration(const Entry&);
 
     Generation m_recent;
@@ -253,25 +262,26 @@ private:
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-ALWAYS_INLINE const IDPairMemo::Entry* IDPairMemo::Generation::find(size_t hash, uint32_t questionPlusOne, uint32_t first, uint32_t second) const
+ALWAYS_INLINE const IDPairMemo::Entry* IDPairMemo::Generation::find(uint32_t hash, uint32_t questionPlusOne, uint32_t first, uint32_t second) const
 {
     if (slots.isEmpty())
         return nullptr;
     const Entry* entries = slots.span().data();
     size_t mask = slots.size() - 1;
-    for (size_t slot = hash & mask; entries[slot].questionPlusOne; slot = (slot + 1) & mask) {
+    for (size_t slot = slotOfMemoHash(hash, slots.size());; slot = (slot + 1) & mask) {
         const Entry& entry = entries[slot];
-        if (entry.first == first && entry.second == second && entry.questionPlusOne == questionPlusOne)
+        if (entry.questionPlusOne == questionPlusOne && entry.first == first && entry.second == second)
             return &entry;
+        if (!entry.questionPlusOne)
+            return nullptr;
     }
-    return nullptr;
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 ALWAYS_INLINE std::optional<uint32_t> IDPairMemo::find(uint32_t question, uint32_t first, uint32_t second)
 {
-    size_t hash = hashOfQuestion(question + 1, first, second);
+    uint32_t hash = hashOfMemoQuestion(question, first, second);
     uint32_t answer;
     if (const Entry* recent = m_recent.find(hash, question + 1, first, second))
         answer = recent->answer;
@@ -279,6 +289,31 @@ ALWAYS_INLINE std::optional<uint32_t> IDPairMemo::find(uint32_t question, uint32
         answer = moveToRecentGeneration(*older);
     else
         return std::nullopt;
+#if ASSERT_ENABLED || ASAN_ENABLED
+    if (!(++m_numberOfHits % 16))
+        return std::nullopt;
+#endif
+    return answer;
+}
+
+ALWAYS_INLINE std::optional<uint32_t> IDPairMemo::findInRecentGeneration(uint32_t question, uint32_t first, uint32_t second)
+{
+    const Entry* recent = m_recent.find(hashOfMemoQuestion(question, first, second), question + 1, first, second);
+    if (!recent)
+        return std::nullopt;
+#if ASSERT_ENABLED || ASAN_ENABLED
+    if (!(++m_numberOfHits % 16))
+        return std::nullopt;
+#endif
+    return recent->answer;
+}
+
+ALWAYS_INLINE std::optional<uint32_t> IDPairMemo::findInOlderGeneration(uint32_t question, uint32_t first, uint32_t second)
+{
+    const Entry* older = m_older.find(hashOfMemoQuestion(question, first, second), question + 1, first, second);
+    if (!older)
+        return std::nullopt;
+    uint32_t answer = moveToRecentGeneration(*older);
 #if ASSERT_ENABLED || ASAN_ENABLED
     if (!(++m_numberOfHits % 16))
         return std::nullopt;

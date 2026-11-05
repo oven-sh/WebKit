@@ -5,7 +5,7 @@
 # CHECK-NEXT: leaves-empty L0.2 "c"
 # RUN(LATER): summary f3
 # LATER: leaves-empty L0.1 "b"
-# LATER-NOT: leaves-empty L0.2 "c"
+# LATER-NEXT: leaves-empty L0.2 "c"
 # RUN(LINK): link fields mechanisms=all
 # LINK: field L0.0 "a" {{*}}filled
 # RUN(EMPTY): link fields mechanisms=all

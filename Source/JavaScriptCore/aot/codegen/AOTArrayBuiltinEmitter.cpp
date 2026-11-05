@@ -36,7 +36,7 @@ Operand ArrayBuiltinEmitter::resultFromRawElement(const InlineCall& call, const 
     Representation representation = resultRepresentationOf(call);
     if (representation == Representation::Void)
         return { };
-    return elements().convertRawElement(form, rawElement, representation, resultTypeOf(call));
+    return elements().convertRawElement(call.context(), form, rawElement, representation, resultTypeIDOf(call));
 }
 
 Operand ArrayBuiltinEmitter::undefinedResult(const InlineCall& call)
@@ -45,22 +45,6 @@ Operand ArrayBuiltinEmitter::undefinedResult(const InlineCall& call)
     if (representation == Representation::Void)
         return { };
     return elements().absentElement(call.context(), representation);
-}
-
-const ArrayStorageForm* ArrayBuiltinEmitter::provenFormOf(const InlineCall& call)
-{
-    return findArrayStorageForm(call.storageOfReceiver());
-}
-
-const ArrayStorageForm* ArrayBuiltinEmitter::provenFormOfArgument(const InlineCall& call, ValueID list)
-{
-    for (unsigned index = 0; index < call.numberOfArguments(); ++index) {
-        if (call.argument(index) != list)
-            continue;
-        if (const ArrayStorageForm* stamped = findArrayStorageForm(call.storageOfArgument(index)))
-            return stamped;
-    }
-    return nullptr;
 }
 
 TypeID ArrayBuiltinEmitter::elementTypeOf(const InlineCall& call, TypeLevel level)
@@ -72,8 +56,6 @@ TypeID ArrayBuiltinEmitter::elementTypeOf(const InlineCall& call, TypeLevel leve
 
 ArrayStorageFormList ArrayBuiltinEmitter::candidateFormsOf(const InlineCall& call)
 {
-    if (const ArrayStorageForm* proven = provenFormOf(call))
-        return { proven };
     TypeID contents = elementTypeOf(call, TypeLevel::Expected);
     const ArrayStorageForm& expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver()));
     bool expectsContents = !isNeverType(contents);
@@ -94,8 +76,6 @@ ElementAccessEmitter::FirstForm ArrayBuiltinEmitter::firstCandidateFormOf(const 
 
 void ArrayBuiltinEmitter::forEachFormOrMiss(const InlineCall& call, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>& functor)
 {
-    if (const ArrayStorageForm* proven = provenFormOf(call); proven && mask != IndexingShapeAndWritabilityMask)
-        return functor(*proven);
     ElementAccessEmitter::ShapeTest test = mask == IndexingShapeAndWritabilityMask ? &ElementAccessEmitter::hasWritableShape : &ElementAccessEmitter::hasShape;
     Word32 mode = elements().indexingMode(array, mask);
     elements().forEachFormByShape(mode, test, candidateFormsOf(call), missBlockOf(call), functor, firstCandidateFormOf(call));
@@ -335,16 +315,6 @@ Integer ArrayBuiltinEmitter::indexOfNumber(const InlineCall& call, CellPointer a
         m_out.appendTo(isNoInt32);
         join.add(integer(-1));
     };
-    const ArrayStorageForm* proven = provenFormOf(call);
-    if (proven && proven->kind == ArrayStorage::Double) {
-        searchDoubles();
-        return join.finish();
-    }
-    if (proven && proven->kind == ArrayStorage::Int32) {
-        searchIntegers();
-        return join.finish();
-    }
-
     Word32 shape = elements().indexingMode(array, arrayStorageTestMask);
     LBasicBlock holdsDoubles = newBlock();
     LBasicBlock holdsNoDoubles = newBlock();
@@ -376,8 +346,7 @@ Integer ArrayBuiltinEmitter::indexOfValueComparedByIdentity(const InlineCall& ca
         join.add(indexOfString(call, array, unboxCell(searched)));
         m_out.appendTo(isNotString);
     }
-    if (const ArrayStorageForm* proven = provenFormOf(call); !proven || proven->kind != form.kind)
-        missUnless(call, elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), form));
+    missUnless(call, elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), form));
     if (primitives & Primitive::Number)
         missUnless(call, logicalNot(isNumber(searched)));
     if (hole == HoleIs::Undefined && primitives & Primitive::Undefined)

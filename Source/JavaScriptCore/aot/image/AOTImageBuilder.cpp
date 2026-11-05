@@ -97,20 +97,23 @@ ResolvedCallees resolveCallees(const LinkedFunctions& functions, const Typed::Pl
     }
     result.firstCallee[functions.size()] = static_cast<uint32_t>(numberOfCallees);
     result.positions.fill(OptionalIndex { }, numberOfCallees);
-    forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
-        const CompiledCode& code = functions[position];
-        std::span<OptionalIndex> resolved = result.positions.mutableSpan().subspan(result.firstCallee[position], code.body.callees.size());
-        bool hasCalleeWithoutCode = false;
-        for (size_t index = 0; index < resolved.size(); ++index) {
-            CodeUnit callee = code.body.callees[index];
-            bool isFusedCallEntry = callee.role == Typed::CodeRole::GenericCallEntry && conventions.hasFusedCallEntry(callee.function);
-            if (std::optional<uint32_t> positionOfCallee = isFusedCallEntry ? std::nullopt : functions.positionOfUnit(callee, conventions.indexOf(callee)))
-                resolved[index] = { *positionOfCallee };
-            else
-                hasCalleeWithoutCode = true;
+    forEachRangeOfIndicesInParallel(context.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
+        for (size_t position = first; position < end; ++position) {
+            const CompiledCode& code = functions[position];
+            std::span<const CodeUnit> callees = code.body.callees.span();
+            std::span<OptionalIndex> resolved = result.positions.mutableSpan().subspan(result.firstCallee[position], callees.size());
+            bool hasCalleeWithoutCode = false;
+            for (size_t index = 0; index < resolved.size(); ++index) {
+                CodeUnit callee = callees[index];
+                bool isFusedCallEntry = callee.role == Typed::CodeRole::GenericCallEntry && conventions.hasFusedCallEntry(callee.function);
+                if (std::optional<uint32_t> positionOfCallee = isFusedCallEntry ? std::nullopt : functions.positionOfUnit(callee, conventions.indexOf(callee)))
+                    resolved[index] = { *positionOfCallee };
+                else
+                    hasCalleeWithoutCode = true;
+            }
+            if (hasCalleeWithoutCode)
+                reportCalleesWithoutCode(code, resolved, context);
         }
-        if (hasCalleeWithoutCode)
-            reportCalleesWithoutCode(code, resolved, context);
     });
     return result;
 }
@@ -162,13 +165,14 @@ static Vector<uint8_t> encodeSlotHandlers(const StubBlob& blob)
 static Vector<uint8_t> encodeNamesOfSites(const ImageNumbers& numbers)
 {
     const NumberedKeys& sites = numbers.siteCaches();
+    const IdentifierNumbering& identifiers = numbers.identifiers();
     std::span<const uint32_t> numbersOfSites = numbers.numbersOfSites();
     Vector<uint16_t> names(FillWith { }, numbersOfSites.back(), 0);
-    for (uint32_t place = 0; place < sites.size(); ++place) {
+    for (uint32_t place = 0, numberOfPlaces = sites.size(); place < numberOfPlaces; ++place) {
         std::span<const uint32_t> key = sites.keyAt(place);
         if (!ImageNumbers::isPlaceWithSiteAnswers(key))
             continue;
-        uint32_t name = numbers.numberOf(NumberSpace::Name, key.subspan(key.size() - 2, 1)).value();
+        uint32_t name = identifiers.numberOf(ImageNumbers::nameOfSite(key)).value();
         uint32_t number = numbersOfSites[place];
         names[number] = static_cast<uint16_t>(name);
         if (numbersOfSites[place + 1] - number == 2)
@@ -581,40 +585,42 @@ static void writeStrings(std::span<uint8_t> image, const TextRecords& text, cons
     std::span identifiersInImage = sectionIn<ImageIdentifierWord>(image, extent, ImageSection::Identifiers);
     for (size_t number = 0; number < text.identifiers.size(); ++number)
         identifiersInImage[number] = text.identifiers[number].inImage();
-    forEachIndexInParallel(loops, static_cast<unsigned>(text.strings.size()), [&](unsigned index) {
-        const ImageString& string = text.strings[index];
-        stringsInImage[index] = string.inImage(numbers.byString[index]);
-        if (!string.hasText())
-            return;
-        ImageLongString range = string.range(text.longStrings);
-        if (range.length < 2)
-            stringsInImage[index].bits |= ImageString::isShorterThanTwoFlag;
-        if (!string.hasHeader()) {
-            ImageListedString::write(listedStrings.subspan(numbers.byString[index]), range);
-            if (string.hasListedHash())
-                listedStrings[numbers.byString[index] + ImageListedString::numberOfWords(range)] = string.hashOrIdentifierNumber();
-            return;
+    forEachRangeOfIndicesInParallel(loops, text.strings.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            const ImageString& string = text.strings[index];
+            stringsInImage[index] = string.inImage(numbers.byString[index]);
+            if (!string.hasText())
+                continue;
+            ImageLongString range = string.range(text.longStrings);
+            if (range.length < 2)
+                stringsInImage[index].bits |= ImageString::isShorterThanTwoFlag;
+            if (!string.hasHeader()) {
+                ImageListedString::write(listedStrings.subspan(numbers.byString[index]), range);
+                if (string.hasListedHash())
+                    listedStrings[numbers.byString[index] + ImageListedString::numberOfWords(range)] = string.hashOrIdentifierNumber();
+                continue;
+            }
+            bool isIdentifier = string.hasIdentifierNumber();
+            uint32_t number = isIdentifier ? string.hashOrIdentifierNumber() : numbers.byString[index];
+            if (isIdentifier)
+                RELEASE_ASSERT(text.identifiers[number].kind() == PropertyKeyKind::Text && text.identifiers[number].text() == StringID(index));
+            uint32_t hash = isIdentifier ? text.identifiers[number].hashOrSymbol() : string.hashOrIdentifierNumber();
+            if (!numbers.hasRecords()) {
+                if (range.length || !isIdentifier)
+                    headers[number] = ImageStringHeader::create(static_cast<uint64_t>(extent[ImageSection::Text].offset) + range.offset, range.length, hash, string.is16Bit(), isIdentifier ? StringImpl::StringAtom : StringImpl::StringNormal);
+                continue;
+            }
+            if (!range.length)
+                continue;
+            uint32_t rangeOrIndex = numbers.listedWordIndexes[index] << ImageString::lengthBits;
+            if (ImageListedString::fitsOneWord(range))
+                ImageListedString::write(std::span { &rangeOrIndex, 1 }, range);
+            else {
+                std::span words = listedStrings.subspan(numbers.listedWordIndexes[index]);
+                ImageListedString::write(words, range);
+            }
+            records[number] = ImageStringRecord::create(rangeOrIndex, hash, string.is16Bit(), isIdentifier);
         }
-        bool isIdentifier = string.hasIdentifierNumber();
-        uint32_t number = isIdentifier ? string.hashOrIdentifierNumber() : numbers.byString[index];
-        if (isIdentifier)
-            RELEASE_ASSERT(text.identifiers[number].kind() == PropertyKeyKind::Text && text.identifiers[number].text() == StringID(index));
-        uint32_t hash = isIdentifier ? text.identifiers[number].hashOrSymbol() : string.hashOrIdentifierNumber();
-        if (!numbers.hasRecords()) {
-            if (range.length || !isIdentifier)
-                headers[number] = ImageStringHeader::create(static_cast<uint64_t>(extent[ImageSection::Text].offset) + range.offset, range.length, hash, string.is16Bit(), isIdentifier ? StringImpl::StringAtom : StringImpl::StringNormal);
-            return;
-        }
-        if (!range.length)
-            return;
-        uint32_t rangeOrIndex = numbers.listedWordIndexes[index] << ImageString::lengthBits;
-        if (ImageListedString::fitsOneWord(range))
-            ImageListedString::write(std::span { &rangeOrIndex, 1 }, range);
-        else {
-            std::span words = listedStrings.subspan(numbers.listedWordIndexes[index]);
-            ImageListedString::write(words, range);
-        }
-        records[number] = ImageStringRecord::create(rangeOrIndex, hash, string.is16Bit(), isIdentifier);
     });
 }
 
@@ -847,6 +853,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             StubOptions stubOptions = inputs.stubCatalog.options();
             stubOptions.maxNameInFieldTable = numbers.identifiers().countWithFieldTableColumn() - 1;
             StubPolicy stubPolicy = stubPolicyOf(inputs.plan.slots());
+            stubPolicy.shapesFitHalfword = inputs.plan.shapes().numberOfShapes() <= 1u << 16;
             const StubCatalog stubCatalogOfImage(stubOptions, WTF::move(stubPolicy));
             steps.didFinish("create stub catalog"_s);
             std::optional<CalledSharedCode> calledSharedCode = collectCalledSharedCode(functions, context);

@@ -136,7 +136,7 @@ void StraightEmitter::loadVariable(VariableID variable, GPRReg boxedResult)
 {
     PlannedVariable planned = plan().variable(variable);
     bool isBornAsFunction = planned.storage == VariableStorage::ClosureTable || planned.encoding == VariableEncoding::FunctionAsZero;
-    if (planned.encoding == VariableEncoding::UndefinedAsZero || planned.representation != SlotRepresentation::JSValue
+    if (planned.representation != SlotRepresentation::JSValue
         || plan().deferredDefinitions().findDeferred(variable) || (isBornAsFunction && !closureTableHoldsClosureInStraightForm(*this, planned.function))) {
         fail(Opcode::GetModuleVariable);
         return;
@@ -160,7 +160,7 @@ void StraightEmitter::loadVariable(VariableID variable, GPRReg boxedResult)
 void StraightEmitter::storeVariable(VariableID variable, GPRReg boxed)
 {
     PlannedVariable planned = plan().variable(variable);
-    if (!planned.hasWordInStatics() || planned.encoding == VariableEncoding::UndefinedAsZero || planned.representation != SlotRepresentation::JSValue) {
+    if (!planned.hasWordInStatics() || planned.representation != SlotRepresentation::JSValue) {
         fail(Opcode::PutModuleVariable);
         return;
     }

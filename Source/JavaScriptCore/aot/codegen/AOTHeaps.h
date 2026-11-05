@@ -38,7 +38,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTInstance_fixedFields, 0, ImmutablePermanentCell) \
     v(AOTInstance_fieldsFilledOnce, 0, FilledOnce) \
     v(AOTClosure_entry, offsetOfClosureEntry, Immutable) \
-    v(AOTObject_shapeWord, offsetOfShapeWord, Immutable) \
+    v(AOTObject_shapeNumber, offsetOfShapeWord, Immutable) \
     v(ArrayBuffer_shared, ArrayBuffer::offsetOfShared(), Immutable) \
     v(JSArrayBuffer_impl, JSArrayBuffer::offsetOfImpl(), ImmutableInnerPointer) \
     v(JSGlobalObject_nullSetterStrictFunction, JSGlobalObject::offsetOfNullSetterStrictFunction(), Immutable) \
@@ -64,6 +64,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTStackStringBuilder_fields, 0, Mutable, StringBuilderContents) \
     v(stringBuilderBytes, 0, Mutable, StringBuilderContents) \
     v(AOTObject_orderWord, offsetOfOrderWord, Mutable, OrderWords) \
+    v(AOTObject_shapeWord, offsetOfShapeWord, Mutable, ShapeWords) \
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, Mutable, ShapeWords) \
     v(AOTExtension_granuleBits, offsetOfExtensionGranuleBits, Mutable, ObjectFields) \
     v(AOTObject_hiddenWords, 0, Mutable, ObjectFields) \

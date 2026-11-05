@@ -127,7 +127,7 @@ static StructuralRead readEmptyFieldByFiledSlot(const Object& object, UniquedStr
 
 static JSValue readModuleNamespaceExport(Instance* instance, ModuleNamespace* namespaceObject, UniquedStringImpl* uid)
 {
-    if (Instance::owning(namespaceObject) != instance)
+    if (Instance::owning(namespaceObject) != instance || namespaceObject->isAnsweredByMock())
         return { };
     const Modules& modules = *instance->state->modules;
     ModuleID module = namespaceObject->module();

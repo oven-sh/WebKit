@@ -55,14 +55,29 @@ using RegisterMask = uint64_t;
 static_assert(Reg::maxIndex() < 64);
 
 constexpr RegisterMask maskOf(Reg reg) { return RegisterMask { 1 } << reg.index(); }
-JS_EXPORT_PRIVATE RegisterMask maskOf(const RegisterSet&);
-JS_EXPORT_PRIVATE RegisterSet registerSetOf(RegisterMask);
+inline RegisterMask maskOf(const RegisterSet& set)
+{
+    static_assert(sizeof(RegisterBitSet) == sizeof(RegisterBitSet::WordType));
+    return set.toScalarRegisterSet().bitsForDebugging();
+}
 
 template<typename Functor>
 void forEachRegister(RegisterMask mask, const Functor& functor)
 {
     for (; mask; mask &= mask - 1)
         functor(Reg::fromIndex(static_cast<unsigned>(std::countr_zero(mask))));
+}
+
+inline RegisterSet registerSetOf(RegisterMask mask)
+{
+    [[maybe_unused]] constexpr RegisterMask everyRegister = ~RegisterMask { 0 } >> (63 - Reg::maxIndex());
+    ASSERT(!(mask & ~everyRegister));
+
+    RegisterSet result;
+    forEachRegister(mask, [&](Reg reg) {
+        result.add(reg, IgnoreVectors);
+    });
+    return result;
 }
 
 class Origin {
@@ -306,14 +321,7 @@ public:
     unsigned useCount() const { return m_useCount; }
     ALWAYS_INLINE void gainUse()
     {
-        m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfIsRead);
-        if (m_useCount) {
-            if (m_useCount != std::numeric_limits<uint16_t>::max())
-                ++m_useCount;
-            return;
-        }
-        m_useCount = 1;
-        if (m_owner && countsChildrenAtFirstUse(m_opcode))
+        if (gainUseLeavingChildrenUncounted())
             countChildrenAtFirstUse();
     }
     JS_EXPORT_PRIVATE void loseUse();
@@ -427,8 +435,32 @@ protected:
     {
     }
 
+    Operation(Opcode opcode, Type type, Origin origin, uint32_t index, Block* owner, uint32_t indexInBlock, uint8_t numberOfChildren, Operation* first, Operation* second, Operation* third)
+        : m_opcode(opcode)
+        , m_auxiliary(numberOfChildren)
+        , m_type(type)
+        , m_index(index)
+        , m_origin(origin)
+        , m_owner(owner)
+        , m_indexInBlock(indexInBlock)
+        , m_children { first, second, third }
+    {
+    }
+
+    ALWAYS_INLINE bool gainUseLeavingChildrenUncounted()
+    {
+        m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfIsRead);
+        if (m_useCount) {
+            if (m_useCount != std::numeric_limits<uint16_t>::max())
+                ++m_useCount;
+            return false;
+        }
+        m_useCount = 1;
+        return m_owner && countsChildrenAtFirstUse(m_opcode);
+    }
     JS_EXPORT_PRIVATE void countChildrenAtFirstUse();
     void countChildrenAtFirstUseWithWorklist();
+    static void countChildrenOfSeveralAtFirstUse(Operation* first, Operation* second, Operation* thirdOrNull);
 
     union Payload {
         int64_t bits;
@@ -518,7 +550,16 @@ private:
     {
     }
 
-    JS_EXPORT_PRIVATE void assign(std::span<const ValueRep>);
+    void assign(std::span<const ValueRep> reps)
+    {
+        m_reps.clear();
+        if (reps.size() == 1) [[likely]] {
+            m_reps.appendWithinCapacity(reps.front());
+            return;
+        }
+        appendNoneOrSeveral(reps);
+    }
+    JS_EXPORT_PRIVATE void appendNoneOrSeveral(std::span<const ValueRep>);
 
     Arena* m_arena;
     ArenaVector<ValueRep> m_reps;
@@ -538,7 +579,7 @@ public:
     std::optional<PureFunction> pureFunction;
 
     void append(const ConstrainedValue& value) { append(value.value(), value.rep()); }
-    JS_EXPORT_PRIVATE void append(Operation*, const ValueRep&);
+    inline void append(Operation*, const ValueRep&);
     void appendSomeRegister(Operation* value) { append(value, ValueRep::SomeRegister); }
     template<typename VectorType>
     void appendVector(const VectorType& vector)
@@ -632,10 +673,12 @@ private:
     static constexpr size_t bytesOfFirstOperands = firstCapacityOfOperands * sizeof(Operation*);
     static constexpr size_t bytesOfFirstStorage = bytesOfFirstConstraints + bytesOfFirstOperands + sizeof(ValueRep);
 
+    static constexpr size_t bytesOfNewPatch() { return sizeof(PatchOperation) + bytesOfFirstStorage; }
+    static inline PatchOperation* createAt(void* memory, Procedure&, Opcode, Type, Origin);
     static inline PatchOperation* create(Procedure&, Opcode, Type, Origin);
     inline PatchOperation(Procedure&, Opcode, Type, Origin);
 
-    void growStorageOfOperands();
+    JS_EXPORT_PRIVATE void growStorageOfOperands();
 
     bool bit(Bit bit) const { return m_bits & bit; }
     void setBit(Bit bit, bool value) { m_bits = value ? m_bits | bit : m_bits & ~bit; }
@@ -657,6 +700,22 @@ private:
     uint8_t m_numberOfFrameWordsToClearAtFirstSuspension { 0 };
     uint16_t m_bits { 0 };
 };
+
+ALWAYS_INLINE void PatchOperation::append(Operation* value, const ValueRep& rep)
+{
+    ASSERT(value->type().isNumeric());
+    ASSERT(rep.isAny() || rep.kind() == ValueRep::SomeRegister || rep.kind() == ValueRep::SomeLateRegister || rep.kind() == ValueRep::Register || rep.kind() == ValueRep::StackArgument);
+    ASSERT(m_opcode != Check || !m_operands.isEmpty() || rep.kind() == ValueRep::ColdAny);
+    RELEASE_ASSERT(value->hasNoPosition() || value->owner() != m_owner || value->opcode() == Phi || value->indexInBlock() < m_indexInBlock);
+
+    if (m_operands.size() == m_operands.capacity()) [[unlikely]]
+        growStorageOfOperands();
+    m_operands.appendWithinCapacity(value);
+    m_constraints.appendWithinCapacity(rep);
+
+    if (m_owner)
+        value->gainUse();
+}
 
 inline unsigned Operation::numChildren() const
 {
@@ -746,7 +805,7 @@ public:
     unsigned numSuccessors() const { return m_successors.size(); }
     const Edge& successor(unsigned index) const { return m_successors[index]; }
     std::span<const Edge> successors() const { return m_successors.span(); }
-    JS_EXPORT_PRIVATE void appendSuccessor(Edge);
+    inline void appendSuccessor(Edge);
     JS_EXPORT_PRIVATE void setSuccessors(Edge);
     JS_EXPORT_PRIVATE void setSuccessors(Edge taken, Edge notTaken);
     JS_EXPORT_PRIVATE void clearSuccessors();
@@ -774,9 +833,11 @@ private:
     }
 
     static constexpr uint32_t firstCapacityOfOperations = 8;
+    static constexpr uint32_t firstCapacityOfPhis = 4;
     static constexpr uint32_t firstCapacityOfUpsilons = 2;
     static constexpr uint32_t firstCapacityOfSuccessors = 2;
 
+    template<bool hasRoom> inline void appendSuccessorWhereRoomIsKnown(Edge);
     inline void appendSuccessorInline(Edge);
     inline void setSuccessorsInline(Edge);
     inline void setSuccessorsInline(Edge taken, Edge notTaken);
@@ -989,6 +1050,7 @@ private:
         operation->m_index = m_operations.size();
         m_operations.append(m_arena, operation);
     }
+    inline Block* addBlockInline();
 
     struct ListOfHeapsWithItsSet {
         std::span<const AbstractHeap* const> list;
@@ -1035,6 +1097,22 @@ private:
     std::optional<Failure> m_failure;
 };
 
+ALWAYS_INLINE Block* Procedure::addBlockInline()
+{
+    static_assert(std::is_trivially_destructible_v<Block>);
+    static_assert(alignof(Block) >= alignof(Edge) && alignof(Edge) >= alignof(Operation*) && !(sizeof(Block) % alignof(Edge)));
+    constexpr size_t bytesOfSuccessors = Block::firstCapacityOfSuccessors * sizeof(Edge);
+    constexpr size_t bytesOfOperations = Block::firstCapacityOfOperations * sizeof(Operation*);
+    constexpr size_t bytesOfUpsilons = Block::firstCapacityOfUpsilons * sizeof(Operation*);
+    uintptr_t memory = reinterpret_cast<uintptr_t>(m_arena.allocate(sizeof(Block) + bytesOfSuccessors + bytesOfOperations + bytesOfUpsilons, alignof(Block)));
+    Block* block = new (NotNull, reinterpret_cast<void*>(memory)) Block(*this, m_blocks.size());
+    block->m_successors.adoptStorage(reinterpret_cast<Edge*>(memory + sizeof(Block)), Block::firstCapacityOfSuccessors);
+    block->m_operations.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors), Block::firstCapacityOfOperations);
+    block->m_upsilons.adoptStorage(reinterpret_cast<Operation**>(memory + sizeof(Block) + bytesOfSuccessors + bytesOfOperations), Block::firstCapacityOfUpsilons);
+    m_blocks.append(m_arena, block);
+    return block;
+}
+
 template<typename Functor>
 inline void PatchOperation::setGenerator(const Functor& functor)
 {
@@ -1057,22 +1135,31 @@ inline PatchOperation::PatchOperation(Procedure& procedure, Opcode opcode, Type 
         resultConstraints.m_reps.appendWithinCapacity(ValueRep::SomeRegister);
 }
 
-inline PatchOperation* PatchOperation::create(Procedure& procedure, Opcode opcode, Type type, Origin origin)
+inline PatchOperation* PatchOperation::createAt(void* memory, Procedure& procedure, Opcode opcode, Type type, Origin origin)
 {
     static_assert(std::is_trivially_destructible_v<PatchOperation>);
     static_assert(alignof(PatchOperation) >= alignof(ValueRep) && alignof(ValueRep) >= alignof(Operation*));
     static_assert(!(sizeof(PatchOperation) % alignof(ValueRep)) && !((bytesOfFirstConstraints + bytesOfFirstOperands) % alignof(ValueRep)));
-    return new (NotNull, procedure.arena().allocate(sizeof(PatchOperation) + bytesOfFirstStorage, alignof(PatchOperation))) PatchOperation(procedure, opcode, type, origin);
+    return new (NotNull, memory) PatchOperation(procedure, opcode, type, origin);
 }
 
-ALWAYS_INLINE void Block::appendSuccessorInline(Edge edge)
+inline PatchOperation* PatchOperation::create(Procedure& procedure, Opcode opcode, Type type, Origin origin)
+{
+    return createAt(procedure.arena().allocate(bytesOfNewPatch(), alignof(PatchOperation)), procedure, opcode, type, origin);
+}
+
+template<bool hasRoom>
+ALWAYS_INLINE void Block::appendSuccessorWhereRoomIsKnown(Edge edge)
 {
     Block* target = edge.block();
     RELEASE_ASSERT(target);
     ASSERT(&target->m_procedure == &m_procedure);
     uint32_t numberOfIncomingEdges = target->m_numberOfIncomingEdges;
     RELEASE_ASSERT(!target->m_isEntry && (!target->m_hasOnlyOnePredecessor || !numberOfIncomingEdges));
-    m_successors.append(m_procedure.arena(), edge);
+    if constexpr (hasRoom)
+        m_successors.appendWithinCapacity(edge);
+    else
+        m_successors.append(m_procedure.arena(), edge);
     target->m_numberOfIncomingEdges = numberOfIncomingEdges + 1;
     if (numberOfIncomingEdges) {
         target->m_singlePredecessor = nullptr;
@@ -1082,19 +1169,31 @@ ALWAYS_INLINE void Block::appendSuccessorInline(Edge edge)
     target->m_classOfSingleIncomingEdge = edge.edgeClass();
 }
 
+ALWAYS_INLINE void Block::appendSuccessorInline(Edge edge)
+{
+    appendSuccessorWhereRoomIsKnown<false>(edge);
+}
+
+ALWAYS_INLINE void Block::appendSuccessor(Edge edge)
+{
+    appendSuccessorInline(edge);
+}
+
 ALWAYS_INLINE void Block::setSuccessorsInline(Edge target)
 {
+    static_assert(firstCapacityOfSuccessors >= 1);
     if (!m_successors.isEmpty()) [[unlikely]]
         clearSuccessors();
-    appendSuccessorInline(target);
+    appendSuccessorWhereRoomIsKnown<true>(target);
 }
 
 ALWAYS_INLINE void Block::setSuccessorsInline(Edge taken, Edge notTaken)
 {
+    static_assert(firstCapacityOfSuccessors >= 2);
     if (!m_successors.isEmpty()) [[unlikely]]
         clearSuccessors();
-    appendSuccessorInline(taken);
-    appendSuccessorInline(notTaken);
+    appendSuccessorWhereRoomIsKnown<true>(taken);
+    appendSuccessorWhereRoomIsKnown<true>(notTaken);
 }
 
 class PatchParameters {

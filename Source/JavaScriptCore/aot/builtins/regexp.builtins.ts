@@ -349,7 +349,7 @@ export default b.declarations(
           capability: "none",
           throws: true,
           uses: { this: [b.writesContents("lastIndex")], value: [b.storedIn(b.slot("this", "lastIndex"))] },
-          implementation: b.inline("RegExpSetLastIndex"),
+          implementation: b.generic,
         },
       },
     },

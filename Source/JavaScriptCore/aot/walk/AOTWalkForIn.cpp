@@ -362,6 +362,22 @@ bool Walker::iterationsSteppedAtMayBeBuiltTwice(BlockID inputHead) const
     return true;
 }
 
+bool Walker::iterationsSteppedAtHandOverPositionsAlone(BlockID inputHead) const
+{
+    uint32_t numberInFront = m_numberOfIterationsInFrontOfTheirLoops;
+    for (size_t place = m_iterationsByIndex.size(); place-- && numberInFront;) {
+        const IterationByIndex& iteration = m_iterationsByIndex[place];
+        if (iteration.head || !iteration.inputHead)
+            continue;
+        --numberInFront;
+        if (iteration.inputHead != inputHead || iteration.inlineFrame != m_frames.last().inlineFrame)
+            continue;
+        if (iteration.mayGoByProtocol || iteration.table || iteration.count || !iteration.isDeadBehindLoop || iteration.otherForm != IterationByIndex::OtherForm::None)
+            return false;
+    }
+    return true;
+}
+
 Walker::IterationsSteppedAtHead Walker::takeIterationsSteppedAt(BlockID inputHead) const
 {
     IterationsSteppedAtHead taken;

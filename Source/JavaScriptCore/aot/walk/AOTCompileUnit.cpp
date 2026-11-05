@@ -49,6 +49,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .sourcesOfProofsChecked = sourcesOfProofsCheckedUnder(options.testing),
         .testsEveryPosition = AOT::hasFlag(options.testing, Wire::TestingSwitch::TestsEveryPosition),
         .takesPositionsToLieInside = AOT::hasFlag(options.testing, Wire::TestingSwitch::PositionsAreTakenToLieInside),
+        .takesCalleesToKeepNothing = AOT::hasFlag(options.testing, Wire::TestingSwitch::NoCalleeKeepsWhatItIsHanded),
         .writesBodiesStraight = AOT::hasFlag(options.testing, Wire::TestingSwitch::WritesBodiesStraight),
         .checksEffects = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime),
         .rowThatSaysLess = options.rowThatSaysLess,
@@ -79,7 +80,6 @@ static std::span<const uint32_t> arenaIDsInUnitMentionKey(NumberSpace space, std
     case NumberSpace::ModuleValue:
     case NumberSpace::ModuleNamespace:
     case NumberSpace::ModuleBuiltinCell:
-    case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:
     case NumberSpace::RegExpLiteralCell:
@@ -205,6 +205,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
         for (unsigned source = 0; source < numberOfEnumerators<ProofSource>; ++source)
             m_build.statistics().count(static_cast<StatisticID>(static_cast<unsigned>(StatisticID::ProofsCheckedOfEntryParameters) + source), m_walker->numberOfProofsChecked(static_cast<ProofSource>(source)));
         m_build.statistics().count(StatisticID::ProofsThatNoTestTells, m_walker->numberOfProofsThatNoTestTells());
+        m_build.statistics().count(StatisticID::FreshCellsLeftAloneAtReturns, m_walker->numberOfFreshCellsLeftAloneAtReturns());
     }
     RELEASE_ASSERT(code.unit() == unit);
     m_build.diagnostics().append(m_walker->takeReports());
@@ -259,6 +260,38 @@ static bool storesIntoPlaceWhoseTypeNamesSymbol(const WalkInputs& inputs, const 
     return found;
 }
 
+static bool entryBlockStoresVariablesInFrontOfTheirFirstReaders(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
+{
+    std::span<const LinkedVariableStoredFirst> claims = inputs.facts.linked().variablesStoredFirstIn(unit.function);
+    if (claims.empty())
+        return true;
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> stored;
+    Vector<FunctionID, 4> used;
+    bool isShown = true;
+    bool isEntryBlock = true;
+    auto look = [&](VariableID storedByOperation) {
+        for (FunctionID function : used) {
+            for (const LinkedVariableStoredFirst& claim : std::ranges::equal_range(claims, function, { }, &LinkedVariableStoredFirst::functionWhoseUseCounts))
+                isShown &= claim.variable == storedByOperation || stored.contains(claim.variable.index()) || inputs.plan.deferredDefinitions().findDeferred(claim.variable);
+        }
+    };
+    index.body().forEachBlock([&](BodyBlock block) {
+        for (BodyValue value : block.values()) {
+            listFunctionsUsedByOperation(inputs.program, index, value, used);
+            look(value.opcode() == Opcode::PutModuleVariable ? value.variable() : VariableID());
+            if (!isEntryBlock || value.opcode() != Opcode::PutModuleVariable)
+                continue;
+            ValueID made = index.valueBehindCasts(value.valueOperand());
+            if (made && (index.isParameter(made) || index.value(made).opcode() != Opcode::Absent))
+                stored.add(value.variable().index());
+        }
+        listFunctionsUsedBy(inputs.program, index, block.terminator(), true, true, VariableID(), used);
+        look(VariableID());
+        isEntryBlock = false;
+    });
+    return isShown;
+}
+
 static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputOperationsThatHandOn | OpcodeSet {
@@ -281,6 +314,8 @@ std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
 {
     const BodyIndex* index = m_inputs.walk.facts.bodies().find(unit.function);
     if (!index || !isWrittenStraight(m_inputs.walk, unit, *index) || !hasStraightForm(m_inputs.generation, unit, *index))
+        return std::nullopt;
+    if (!entryBlockStoresVariablesInFrontOfTheirFirstReaders(m_inputs.walk, unit, *index))
         return std::nullopt;
     Code& code = m_walker->code();
     code.reset(unit);

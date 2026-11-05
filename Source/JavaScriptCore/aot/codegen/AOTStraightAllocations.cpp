@@ -158,7 +158,20 @@ static void generateNewObject(StraightEmitter& emitter, const BodyValue& value)
     ValueID prototype = operation.prototypeOperand();
     std::span<const FieldIndex> fieldsAsWritten = operation.fields();
     std::span<const ValueID> valuesAsWritten = operation.valuesOperands();
-    if (fieldsAsWritten.size() != valuesAsWritten.size() || planned.isEscapedOffset || planned.liesOnlyInFrames) {
+    if (fieldsAsWritten.size() != valuesAsWritten.size() || planned.cellsAreHandedBack || planned.liesOnlyInFrames) {
+        emitter.fail(value);
+        return;
+    }
+
+    BitVector listedWithValue;
+    for (size_t place = 0; place < fieldsAsWritten.size(); ++place) {
+        if (valuesAsWritten[place] && (emitter.index().isParameter(valuesAsWritten[place]) || emitter.index().opcodeOf(valuesAsWritten[place]) != Opcode::Absent))
+            listedWithValue.set(fieldsAsWritten[place]);
+    }
+    bool listsWhatIsHeldFilled = std::ranges::all_of(fieldsHeldFilledInSlots(program, emitter.facts().linked(), plan.slots(), layout), [&](FieldIndex field) {
+        return listedWithValue.get(field);
+    });
+    if (!listsWhatIsHeldFilled) {
         emitter.fail(value);
         return;
     }

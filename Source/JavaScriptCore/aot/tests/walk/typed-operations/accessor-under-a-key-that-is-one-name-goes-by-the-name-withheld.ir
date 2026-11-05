@@ -1,7 +1,0 @@
-# the same program with typed operations withheld: the definition stays under its computed key
-# RUN: walk f1 mechanisms=none
-# CHECK-LABEL: code f1:Body
-# CHECK: DefineGetter
-# RUN(NEVER): walk f1 mechanisms=none
-# NEVER-NOT: DefineGetter {{*}}key="size"
-# PROGRAM-OF: accessor-under-a-key-that-is-one-name-goes-by-the-name.ir

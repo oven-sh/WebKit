@@ -87,8 +87,6 @@ bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const Inputs
     if (inputs.areOnlyTypes())
         return true;
 
-    if (form == OperatorForm::Numbers && buildTruncationOfBoxedNumber(walker, value))
-        return true;
     Draft draft = walker.draftOf(value);
     if (form == OperatorForm::Numbers) {
         prepareOperandsForFormNumbers(walker, draft);

@@ -882,8 +882,10 @@ void LooksAtLoops::lookAtBlock(BodyBlock block)
 {
     m_firstBound = noBound;
     m_blockLookedAt = block.id();
-    if (block.hasHandler()) {
+    bool hasHandler = block.hasHandler() && (isLookingAtCopy() || !m_walker.throwsPastCleanupOf(block));
+    if (block.hasHandler())
         doNotKeep();
+    if (hasHandler) {
         followEdge(block.handler(), nullptr, 0);
         m_nothingWasDoneInTurn = false;
     }
@@ -912,7 +914,7 @@ void LooksAtLoops::lookAtBlock(BodyBlock block)
         }
         if (m_takesEffectsOfCopiesFromTheirOperations)
             m_effects.merge(effectsOfTerminator(m_typing, terminator, collectOperandTypes(terminator.kind(), terminator, m_operandTypes)));
-    } else if (terminator.numberOfTargets() || block.hasHandler()) {
+    } else if (terminator.numberOfTargets() || hasHandler) {
         Effects ofTerminator = effectsOfTerminator(m_typing, terminator, collectOperandTypes(terminator.kind(), terminator, m_operandTypes));
         if (m_nothingWasDoneInTurn)
             m_nothingWasDoneInTurn = ofTerminator.mayBeRunAgainUnseen();
@@ -1208,6 +1210,10 @@ void LooksAtLoops::addEffectsOf(const BodyValue& operation, OperandTypes operand
         return;
     if (familyOf(opcode) == OperationFamily::Iteration && isPartOfIterationOverListLiteral(m_walker, index(), operation))
         return;
+    if (std::optional<Effects> ofStep = opcode == Opcode::IteratorResume && !isLookingAtCopy() ? effectsOfStepOverListAhead(m_walker, index(), operation, m_countsOnListsTestedInFront) : std::nullopt) {
+        m_effects.merge(*ofStep);
+        return;
+    }
     if (opcode == Opcode::Builtin && firstReadOfNamedBuiltinIsSeen(m_walker, operation))
         m_effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
     if (opcode == Opcode::ForInStep)
@@ -1554,7 +1560,7 @@ TypeID LooksAtLoops::typeOfResultAt(const BodyValue& operation)
         };
         if (TypeID unit = isLookingAtCopy() ? TypeID() : typeOfStepOverTextAhead(m_walker, index(), producer, TypesOfInputs(typeOfInput)))
             return unit;
-        if (TypeID element = isLookingAtCopy() ? TypeID() : typeOfStepOverListAhead(m_walker, index(), producer))
+        if (TypeID element = isLookingAtCopy() ? TypeID() : typeOfStepOverListAhead(m_walker, index(), producer, m_countsOnListsTestedInFront))
             return element;
     }
     OperandTypes operands = collectOperandTypes(producer.opcode(), producer, m_operandTypesOfOtherOperation);

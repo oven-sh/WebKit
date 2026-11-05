@@ -205,7 +205,7 @@ private:
 
     void indexHolders();
     void findLayoutsThatMayFindAnything();
-    bool mayFindAnything(const LinkType& subject);
+    bool mayFindAnything(const LinkType& subject) const;
     bool readsFixedPartOfClass(const LinkType& subject, PropertyKeyID, bool hasOtherReceiver);
     bool objectPrototypeNeverAnswers(PropertyKeyID);
     void addFunctionsAt(const LinkType& held, CodeFound&) const;
@@ -249,7 +249,8 @@ private:
     uint64_t layoutsWrittenByChange(FunctionID, const SummaryChange&);
     uint64_t layoutsChangedByRowsOf(FunctionID, const ThinSummary&, uint32_t call, const Effects& itself);
     void findLayoutsOfPlainObjects();
-    bool holdsOnlyPlainObjectsOfOneLayout(const LinkType&) const;
+    std::span<const LayoutID> layoutsNamedBy(const LinkType& type LIFETIME_BOUND) const LIFETIME_BOUND;
+    bool holdsOnlyPlainObjectsOfNamedLayouts(const LinkType&) const;
     bool listingOfKeysMayRunCode(FunctionID, const ThinSummary&) const;
     bool storeMayFindCode(LayoutID, PropertyKeyID) const;
     bool copyMayRunCode(FunctionID, const SummaryChange&) const;
@@ -261,6 +262,7 @@ private:
     void takeKnownEffectsOfFunction(FunctionID callee, WayInKnownEffects, EffectsOfComponentInKnownEffects& into) const;
     bool mergeKnownEffectsOfCodeOutside(const CodeEntered&, uint32_t component, WayInKnownEffects, EffectsOfComponentInKnownEffects&) const;
     void addEffectsOfOperatorsLeftApart(FunctionID, const ThinSummary&, EffectsOfComponentInKnownEffects&) const;
+    bool readMayMakeClosureOfField(const LinkType& subject, PropertyKeyID) const;
     void addEffectsOfAccessItself(FunctionID, const ThinSummary&, const SummaryAccess&, const LinkType& subject, PropertyKeyID, WayInKnownEffects, EffectsOfComponentInKnownEffects&);
     static std::optional<uint32_t> entryParameterAt(const ThinSummary&, uint32_t node);
     std::optional<LinkType> typeExpectedOfParameter(FunctionID, uint32_t entryParameter) const;
@@ -277,6 +279,7 @@ private:
     Vector<EffectsOfComponentInKnownEffects> m_knownEffectsOfSharedCalls;
     Vector<uint64_t> m_bitsOfLayouts;
     Vector<uint64_t> m_bitsOfFamilies;
+    BitVector m_variablesThatFirstReadMayFill;
     BitVector m_layoutsOfPlainObjects;
     Vector<LinkedEffectsGivenArguments> m_effectsGivenArguments;
 
@@ -443,7 +446,7 @@ void CalleeSummarizerForLinkEffects::findLayoutsThatMayFindAnything()
     });
 }
 
-bool CalleeSummarizerForLinkEffects::mayFindAnything(const LinkType& subject)
+bool CalleeSummarizerForLinkEffects::mayFindAnything(const LinkType& subject) const
 {
     switch (subject.objects) {
     case LinkType::Objects::None:
@@ -451,6 +454,10 @@ bool CalleeSummarizerForLinkEffects::mayFindAnything(const LinkType& subject)
     case LinkType::Objects::Layout:
     case LinkType::Objects::Prototype:
         return m_layoutsThatMayFindAnything.get(subject.layout.index());
+    case LinkType::Objects::Set:
+        return std::ranges::any_of(m_flow.layoutsOfSet(subject), [&](LayoutID member) {
+            return m_layoutsThatMayFindAnything.get(member.index());
+        });
     case LinkType::Objects::Prototypes:
     case LinkType::Objects::Family:
         return m_familiesThatMayFindAnything.get(subject.family.index());
@@ -485,6 +492,7 @@ void CalleeSummarizerForLinkEffects::addFunctionsAt(const LinkType& held, CodeFo
                 found.add(constructor);
         }
         break;
+    case LinkType::Functions::Set:
     case LinkType::Functions::Lost:
         found.mayBeLost = true;
         break;
@@ -574,6 +582,10 @@ void CalleeSummarizerForLinkEffects::findCodeBehindLookup(const LinkType& subjec
         return;
     case LinkType::Objects::Layout:
         lookInLayout(subject.layout, true, key, wanted, callsWhatIsFound, found);
+        return;
+    case LinkType::Objects::Set:
+        for (LayoutID member : m_flow.layoutsOfSet(subject))
+            lookInLayout(member, true, key, wanted, callsWhatIsFound, found);
         return;
     case LinkType::Objects::Prototype:
         lookInLayout(subject.layout, false, key, wanted, callsWhatIsFound, found);
@@ -899,8 +911,11 @@ Effects CalleeSummarizerForLinkEffects::effectsOfCallItself(FunctionID id, const
     case SummaryCall::Callee::Builtin:
         break;
     case SummaryCall::Callee::Name:
-        if (!typeAt(id, call.receiver).isNothing())
+        if (!typeAt(id, call.receiver).isNothing()) {
             effects = effectsOfLookupItself(SummaryAccess::Kind::Read, call.key);
+            if (call.key && readMayMakeClosureOfField(typeAt(id, call.receiver), call.key))
+                effects.writes.add(m_program, MemoryLocation::objectField(call.key));
+        }
         break;
     case SummaryCall::Callee::Value:
         effects.mayThrow = ThrowEffect(true);
@@ -910,6 +925,8 @@ Effects CalleeSummarizerForLinkEffects::effectsOfCallItself(FunctionID id, const
         CodeFound found;
         if (!addEffectsOfRows(builtin, id, summary, call, found, effects))
             return Effects::unknownCode();
+        if (standsForFirstReadOffHolder(m_program.builtins(), builtin, false))
+            effects.merge(declaredBoundInTable(Opcode::InitializeBuiltin));
     }
     if (call.passesList) {
         effects.mayThrow = ThrowEffect(true);

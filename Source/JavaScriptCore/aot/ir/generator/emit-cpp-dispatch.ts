@@ -5,12 +5,10 @@ import { cppEmitterClassName, cppGenerateFunctionName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 
 const entriesWithoutEmitter: ReadonlySet<string> = new Set(
-  `Convert Check Expect AssumeType Upcast NarrowByField NarrowByTest
+  `ValueLooselyEqualsLiteral
+   Convert Check Expect Upcast NarrowByField NarrowByTest
    AppendSpread IteratorOpen IteratorResume IteratorClose StepArrayIterator StepMapIterator StepSetIterator
-   CreateIteratorResult Await Yield InitialYield ReadScope EvaluateModule StringBuilderAppend
-   ReportMismatch
-   MayBindAnswersOfGetAndSetTraps MayBindAnswersOfHasTraps ValidateAnswerOfGetTrap ValidateDenialOfHasTrap ValidateConsentOfDeleteTrap
-   HasOwnByAnswerOfDescriptorTrap FinishStoreByTrap`.split(/\s+/),
+   CreateIteratorResult Await Yield InitialYield ReadScope EvaluateModule StringBuilderAppend`.split(/\s+/),
 );
 
 function requireNamesInSchema(

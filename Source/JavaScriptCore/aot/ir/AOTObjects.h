@@ -58,7 +58,6 @@ enum class ObjectKind : uint8_t {
     Instance,
     Prototype,
     EscapedOfLayout,
-    Site,
 };
 
 enum class ObjectTrait : uint16_t {
@@ -72,42 +71,24 @@ enum class ObjectTrait : uint16_t {
     IsMerged = 1 << 7,
     IsFoundByIdentity = 1 << 8,
     MayHaveLayoutBelow = 1 << 9,
-    IsOfInstance = 1 << 10,
-    IsPlainObjectOfRows = 1 << 11,
+    IsPlainObjectOfRows = 1 << 10,
 };
 
 inline constexpr OptionSet<ObjectTrait> traitsOfShape { ObjectTrait::HasLayout, ObjectTrait::HasClass, ObjectTrait::HasNoShape };
 inline constexpr OptionSet<ObjectTrait> traitsOfIdentity { ObjectTrait::IsClosure, ObjectTrait::IsBuiltin, ObjectTrait::IsOtherObject };
 
-enum class SiteOrigin : uint8_t { Operation, DataNode, BuiltinResult };
-
 enum class MakerOfShapelessObject : uint8_t { Host, OperationOrRow };
 
-enum class SiteTrait : uint8_t {
-    NamesPrototype = 1 << 0,
-    IsProxyFromNamedConstructor = 1 << 1,
-    IsDenseArrayLiteral = 1 << 2,
-    IsPairLiteral = 1 << 3,
-    IsAnswerOfCallWithOneArgumentAtMost = 1 << 4,
-    IsTemplateObject = 1 << 5,
-};
-
 struct ObjectRecord {
-    ObjectKind kind { ObjectKind::Site };
-    SiteOrigin origin { SiteOrigin::Operation };
+    ObjectKind kind { ObjectKind::Unknown };
     OptionSet<ObjectTrait> traits;
     uint32_t payload { 0 };
     LayoutID layout;
     BuiltinClassID builtinClass;
     uint32_t ordinal { 0 };
-    FunctionID owner;
     ModuleID module;
-    ObjectID sharedForm;
-    uint32_t instance { 0 };
-    OptionSet<SiteTrait> siteTraits;
 
     bool has(ObjectTrait trait) const { return traits.contains(trait); }
-    bool has(SiteTrait trait) const { return siteTraits.contains(trait); }
 };
 
 inline constexpr uint32_t ordinalOfGetterFunctionOfAccessor = 2;
@@ -117,24 +98,6 @@ inline bool isFunctionOfNativeAccessor(const ObjectRecord& record)
 {
     return record.kind == ObjectKind::ResultOfBuiltin && record.ordinal >= ordinalOfGetterFunctionOfAccessor;
 }
-
-struct ObjectSite {
-    ValueID value;
-    uint32_t ordinal { 0 };
-    SiteOrigin origin { SiteOrigin::Operation };
-    OptionSet<SiteTrait> traits;
-    LayoutID layout;
-    BuiltinClassID builtinClass;
-    bool mayHaveLayoutBelow { false };
-    DataID data;
-};
-
-struct ObjectOfInstance {
-    uint32_t instance { 0 };
-    ObjectID sharedForm;
-
-    friend constexpr auto operator<=>(const ObjectOfInstance&, const ObjectOfInstance&) = default;
-};
 
 bool callOrReadOfBuiltinIsEvent(const BuiltinTable&, BuiltinID canonical);
 bool rulesMeetBuiltinByName(const BuiltinTable&, BuiltinID canonical);
@@ -154,9 +117,6 @@ public:
     JS_EXPORT_PRIVATE ObjectTable(const BuiltinTable&, std::span<const FunctionInOrderOfObjects>, const ParallelLoops* = nullptr);
 
     JS_EXPORT_PRIVATE void addObjectsOfProgram(const Program&, const BitVector& modulesNamedByModuleBuiltins, const ParallelLoops&);
-    JS_EXPORT_PRIVATE void reserveSites(std::span<const uint32_t> numberOfSitesOfFunctions, const ParallelLoops&);
-    JS_EXPORT_PRIVATE void defineSites(FunctionID, std::span<const ObjectSite> sortedByValueAndOrdinal);
-    JS_EXPORT_PRIVATE ObjectID addObjectsOfInstances(std::span<const ObjectOfInstance> withoutRepeats);
 
     uint32_t size() const { return m_records.size(); }
     const ObjectRecord& at(ObjectID object) const { return m_records[object.index()]; }
@@ -194,31 +154,16 @@ public:
     ObjectID instanceOf(LayoutID layout) const { return ObjectID(m_first[indexOf(ObjectKind::Instance)] + m_placesOfLayouts[layout.index()]); }
     ObjectID prototypeOf(LayoutID layout) const { return ObjectID(m_first[indexOf(ObjectKind::Prototype)] + m_placesOfLayouts[layout.index()]); }
     ObjectID escapedOf(LayoutID layout) const { return ObjectID(m_first[indexOf(ObjectKind::EscapedOfLayout)] + m_placesOfLayouts[layout.index()]); }
-    JS_EXPORT_PRIVATE ObjectID siteObject(FunctionID, ValueID, uint32_t ordinal = 0) const;
-    std::span<const ObjectRecord> sitesOf(FunctionID function) const LIFETIME_BOUND
-    {
-        return m_records.span().subspan(m_firstSiteOfFunction[function.index()], m_firstSiteOfFunction[function.index() + 1] - m_firstSiteOfFunction[function.index()]);
-    }
 
     FunctionID closureFunction(ObjectID object) const { return at(object).kind == ObjectKind::Closure ? FunctionID(at(object).payload) : FunctionID(); }
     BuiltinID builtinOf(ObjectID object) const { return at(object).kind == ObjectKind::Builtin || at(object).kind == ObjectKind::ModuleBuiltin ? BuiltinID(at(object).payload) : BuiltinID(); }
-    ObjectID sharedFormOf(ObjectID object) const { return at(object).sharedForm ? at(object).sharedForm : object; }
     JS_EXPORT_PRIVATE ObjectID mergedFormOf(ObjectID) const;
-    ObjectID findObjectOfInstance(ObjectOfInstance wanted) const
-    {
-        for (uint32_t index = firstObjectOfInstances(); index < size(); ++index) {
-            if (m_records[index].instance == wanted.instance && m_records[index].sharedForm == wanted.sharedForm)
-                return ObjectID(index);
-        }
-        return { };
-    }
 
     uint32_t firstOf(ObjectKind kind) const { return m_first[indexOf(kind)]; }
     uint32_t endOf(ObjectKind kind) const { return m_first[indexOf(kind) + 1]; }
-    uint32_t firstObjectOfInstances() const { return m_first[numberOfKinds]; }
 
 private:
-    static constexpr unsigned numberOfKinds = static_cast<unsigned>(ObjectKind::Site) + 1;
+    static constexpr unsigned numberOfKinds = static_cast<unsigned>(ObjectKind::EscapedOfLayout) + 1;
     static constexpr unsigned indexOf(ObjectKind kind) { return static_cast<unsigned>(kind); }
     std::optional<MakerOfShapelessObject> makerOfShapelessObjectThatMerges(ObjectID) const;
 
@@ -236,10 +181,8 @@ private:
     Vector<uint32_t> m_placesWithCoroutinesFirst;
     Vector<uint32_t> m_placesWithRestArraysFirst;
     Vector<uint32_t> m_placesOfLayouts;
-    Vector<uint32_t> m_firstSiteOfFunction;
     Vector<ModuleBuiltin> m_moduleBuiltins;
     BitVector m_builtinFunctionsThatStayApart;
-    BitVector m_bodiesOfLibraryModules;
 };
 
 } } } // namespace JSC::AOT::Typed

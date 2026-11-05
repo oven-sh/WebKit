@@ -22,6 +22,7 @@
 #include "AOTStubsOperations.h"
 #include "BaselineJITRegisters.h"
 #include "CallFrame.h"
+#include "CellState.h"
 #include "FunctionExecutable.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
@@ -140,6 +141,16 @@ void loadClosureWordOfThisRealm(StubAssembler& jit, GPRReg closure, const CallRe
     appendUnlessOfThisRealm();
     jit.load64(Address(closure, offsetOfClosureEntry), registers.word);
     hasWord.link(&jit);
+}
+
+Jump branchUnlessWordBorrows(StubAssembler& jit, GPRReg word, GPRReg scratch, unsigned lentArguments)
+{
+    static_assert(ClosureWord::functionShift == 32 && ClosureWord::borrowsArgumentShift >= ClosureWord::functionShift);
+    ASSERT(lentArguments && !(lentArguments >> ClosureWord::numberOfBorrowedArguments) && word != scratch);
+    const TrustedImm32 borrowsAll(static_cast<int32_t>(lentArguments << (ClosureWord::borrowsArgumentShift - ClosureWord::functionShift)));
+    jit.urshift64(word, TrustedImm32(ClosureWord::functionShift), scratch);
+    jit.and32(borrowsAll, scratch);
+    return jit.branch32(CCallHelpers::NotEqual, scratch, borrowsAll);
 }
 
 void emitFillMissingArgumentRegisters(StubAssembler& jit, unsigned count)
@@ -421,10 +432,45 @@ static void preservingOperandsOfCall(StubAssembler& jit, const Functor& functor)
 #endif
 }
 
+static void emitMarkEnvironmentEscaped(StubAssembler& jit, GPRReg environment)
+{
+    const Address byteWithEscapeMark(environment, offsetOfEnvironmentShapeHighByte);
+#if CPU(X86_64)
+    jit.or8(TrustedImm32(environmentIsEscapedBit), byteWithEscapeMark);
+#else
+    const OwnedScratchRegister ownedScratch(jit);
+    const GPRReg byte = ownedScratch;
+    jit.load8(byteWithEscapeMark, byte);
+    jit.or32(TrustedImm32(environmentIsEscapedBit), byte);
+    jit.store8(byte, byteWithEscapeMark);
+#endif
+}
+
+static void emitMarkEnvironmentsThatLentClosureHolds(StubAssembler& jit, GPRReg closure, GPRReg captureCounts, GPRReg numberOfReferencesLeft, GPRReg held, JumpList& holdsClosureOfFrame)
+{
+    static_assert(CaptureCounts { 1, 0 }.encoded() == 1 && CaptureCounts { 14, 0 }.encoded() < 1 << 4);
+    ASSERT(noOverlap(closure, captureCounts, numberOfReferencesLeft, held));
+    jit.and32(TrustedImm32((1 << 4) - 1), captureCounts, numberOfReferencesLeft);
+    Jump holdsNoReference = jit.branchTest32(CCallHelpers::Zero, numberOfReferencesLeft);
+    Label previousReference = jit.label();
+    jit.sub32(TrustedImm32(1), numberOfReferencesLeft);
+    jit.load64(BaseIndex(closure, numberOfReferencesLeft, CCallHelpers::TimesEight, offsetOfSlimClosureCaptures), held);
+    JumpList isNoEnvironment;
+    isNoEnvironment.append(jit.branchIfNotCell(held));
+    isNoEnvironment.append(jit.branchTest64(CCallHelpers::Zero, held));
+    holdsClosureOfFrame.append(jit.branch8(CCallHelpers::Equal, Address(held, JSCell::cellStateOffset()), TrustedImm32(frameCellState)));
+    isNoEnvironment.append(jit.branchIfNotType(held, CompiledEnvironmentType));
+    emitMarkEnvironmentEscaped(jit, held);
+    isNoEnvironment.link(&jit);
+    jit.branchTest32(CCallHelpers::NonZero, numberOfReferencesLeft).linkTo(previousReference, &jit);
+    holdsNoReference.link(&jit);
+}
+
 static void emitCopyLentClosure(StubAssembler& jit, const CallRegisters& registers, GPRReg closure, JumpList& slow)
 {
     static_assert(CaptureCounts { 0, 1 }.encoded() == 1 << 4);
     static_assert(SlimClosure::allocationSize(0) == MarkedSpace::sizeStep && SlimClosure::allocationSize(2) == 2 * MarkedSpace::sizeStep);
+    static_assert((ClosureRequest::maxSlimClosureCaptures + 1) / 2 < ClosureWords::numberOfSlimClosureAllocators);
     const GPRReg cell = registers.word;
     const GPRReg allocator = registers.scratch;
     const GPRReg scratch = jit.clobberRegister(countGPR);
@@ -438,6 +484,7 @@ static void emitCopyLentClosure(StubAssembler& jit, const CallRegisters& registe
     loadProgramTable(jit, tables, ProgramTableIndex::closureCaptureCounts, scratch);
     jit.load8(BaseIndex(scratch, function, CCallHelpers::TimesOne), function);
     slow.append(jit.branch32(CCallHelpers::Equal, function, TrustedImm32(countsAreListed)));
+    emitMarkEnvironmentsThatLentClosureHolds(jit, closure, function, scratch, tables, slow);
     jit.add32(TrustedImm32(1 << 4), function);
     jit.urshift32(TrustedImm32(5), function);
     jit.getEffectiveAddress(BaseIndex(instanceGPR, function, CCallHelpers::TimesEight), allocator);
@@ -452,6 +499,7 @@ static void emitCopyLentClosure(StubAssembler& jit, const CallRegisters& registe
     jit.load64(BaseIndex(closure, offset, CCallHelpers::TimesOne), copied);
     jit.store64(copied, BaseIndex(cell, offset, CCallHelpers::TimesOne));
     jit.branchTest32(CCallHelpers::NonZero, offset).linkTo(previousWord, &jit);
+    jit.store8(TrustedImm32(static_cast<int32_t>(CellState::DefinitelyWhite)), Address(cell, JSCell::cellStateOffset()));
     fenceAfterAllocation(jit);
     jit.move(cell, closure);
 }
@@ -505,9 +553,7 @@ void generateCallValueLending(StubAssembler& jit)
 #else
     if (jit.options().hasOneInstance) {
         Jump notCommonCase = branchIfSlimClosureWordRefusesCount(jit, registers, count);
-        jit.urshift64(registers.word, TrustedImm32(ClosureWord::functionShift), registers.scratch);
-        jit.and32(borrowsAll, registers.scratch);
-        doesNotBorrow.append(jit.branch32(CCallHelpers::NotEqual, registers.scratch, borrowsAll));
+        doesNotBorrow.append(branchUnlessWordBorrows(jit, registers.word, registers.scratch, lentArguments));
         emitEnterCodeOfWord(jit, registers, count);
         notCommonCase.link(&jit);
     }

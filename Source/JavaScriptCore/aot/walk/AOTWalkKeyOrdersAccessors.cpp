@@ -330,7 +330,7 @@ static VariableID findVariableOfStaticFieldInKeyOrdersAccessors(Walker& walker, 
         return { };
     const Layout& record = program.at(classLayout);
     std::optional<uint32_t> field = record.findStaticField(key);
-    if (!field || std::ranges::any_of(record.staticFields, [](const StaticField& other) { return !other.key; }))
+    if (!field || record.hasStaticFieldWithComputedKey())
         return { };
     if (classHolderIsMadeWithName(program, ClassSide::Static, key))
         return { };

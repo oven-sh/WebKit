@@ -277,7 +277,7 @@ static void nameWhatDataTreeNames(const TableInputs& inputs, const Typed::DataNo
 void nameWhatDataTableNames(const TableInputs& inputs, const GatheredMentions& mentions, NamesOfTables& names)
 {
     BitVector data = findDataWithNodes(inputs.program, mentions.keys(NumberSpace::Request), [&](DataID id) {
-        return mentions.isMentioned(NumberSpace::DataCell, id.index()) || mentions.isMentioned(NumberSpace::DataStorage, id.index());
+        return mentions.isMentioned(NumberSpace::DataStorage, id.index());
     });
     DataObjectAllocationRowCache rows(inputs);
     for (size_t index : data) {
@@ -476,6 +476,8 @@ private:
         Typed::TypeReader types(m_encoder.program);
         if (slot.type && !Typed::includesData(types, types.at(slot.type), value))
             return false;
+        if (slot.provenType && !Typed::includesData(types, types.at(slot.provenType), value))
+            return false;
         if (!facts.slotType || !slot.type)
             return true;
         bool isUndefinedOrNull = value.is<Typed::DataNode::Undefined>() || value.is<Typed::DataNode::Null>();
@@ -607,7 +609,7 @@ private:
             if (!slot.hasStorage())
                 continue;
             const Typed::DataNode& value = object.members[index].value;
-            bool setsMarkOfCell = (value.is<Typed::DataNode::Undefined>() || value.is<Typed::DataNode::Null>()) && m_encoder.facts.field({ object.layout, field }).facts.contains(Typed::FieldFact::HoldsRawValueFromBirth);
+            bool setsMarkOfCell = (value.is<Typed::DataNode::Undefined>() || value.is<Typed::DataNode::Null>()) && layout.holdsRawValueFromBirth(field);
             if (slot.isOutOfLine() || setsMarkOfCell || !tryWriteDataInSlot(slot, bytesOf(slot), value, contents[nextWord++]))
                 return std::nullopt;
         }
@@ -668,7 +670,7 @@ void encodeDataTable(TableEncoder& encoder, FirstTableParts& firstParts)
     };
     BitVector data(program.data.size());
     for (uint32_t index = 0; index < program.data.size(); ++index) {
-        if (hasOffsetIn(statics.dataCellOffsets, DataID(index)) || hasOffsetIn(statics.dataStorageOffsets, DataID(index)))
+        if (hasOffsetIn(statics.dataStorageOffsets, DataID(index)))
             data.set(index);
     }
 

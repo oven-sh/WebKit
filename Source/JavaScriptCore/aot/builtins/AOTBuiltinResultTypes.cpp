@@ -283,28 +283,6 @@ bool rowsSpeakOfCallOnReceiver(const BuiltinTypeContext& context, BuiltinID buil
     return passed && table.canonicalID(passed) == table.canonicalID(entry.holder);
 }
 
-static bool takesElementOutOfListThatHoldsSome(const BuiltinTypeContext& context, const BuiltinResultQuery& query)
-{
-    if (!query.lengthOfReceiver || !query.operands.receiver)
-        return false;
-    const BuiltinTable& table = context.program.builtins();
-    const BuiltinOverload& overload = table.at(query.overload);
-    BuiltinID builtin = table.canonicalID(overload.builtin);
-    if (overload.mode != BuiltinCallMode::Call || (builtin != Builtins::ArrayPrototypePop && builtin != Builtins::ArrayPrototypeShift))
-        return false;
-
-    TypeArena& types = context.types;
-    Type length = types.at(query.lengthOfReceiver);
-    if (!length.isInteger() || length.integers.minimum < 1)
-        return false;
-    Type list = types.at(query.operands.receiver);
-    const ClassPart* part = list.isObject() ? singleBuiltinClassOf(types, list) : nullptr;
-    if (!part || part->builtinClass != BuiltinClasses::Array)
-        return false;
-    TypingContext typing { context.program, types, context.positions ? *context.positions : PositionTypes::knowingNothing(), context.level };
-    return !(types.at(typeOfContentsRead(typing, query.operands.receiver, ContentsSlot::Element)).primitives & Primitive::Undefined);
-}
-
 TypeID resultTypeOfBuiltinCallOnList(const BuiltinTypeContext& context, BuiltinOverloadID overload, const BuiltinOperandTypes& operands)
 {
     return hasNeverAmongBuiltinOperands(operands) ? TypeID(TypeTable::never) : resultTypeOfWholeBuiltinCall(context, overload, nullptr);
@@ -316,10 +294,8 @@ TypeID resultTypeOfBuiltinCall(const BuiltinTypeContext& context, const BuiltinR
         return TypeTable::never;
 
     switch (query.form) {
-    case BuiltinCallForm::Whole: {
-        TypeID result = resultTypeOfWholeBuiltinCall(context, query.overload, &query.operands);
-        return takesElementOutOfListThatHoldsSome(context, query) ? context.types.withoutPrimitives(result, Primitive::Undefined) : result;
-    }
+    case BuiltinCallForm::Whole:
+        return resultTypeOfWholeBuiltinCall(context, query.overload, &query.operands);
     case BuiltinCallForm::AnyReceiver: {
         const BuiltinOverload& overload = context.program.builtins().at(query.overload);
         return resultTypeOfReachableOverloads(context, overload.builtin, overload.mode, query.operands);

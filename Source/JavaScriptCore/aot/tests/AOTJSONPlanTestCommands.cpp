@@ -29,8 +29,6 @@ static ASCIILiteral nameOfRowInJSONPlanText(Opcode row)
         return "JSONAppendNumber"_s;
     case Opcode::JSONAppendString:
         return "JSONAppendString"_s;
-    case Opcode::JSONAppendDate:
-        return "JSONAppendDate"_s;
     default:
         return "JSONAppendValue"_s;
     }

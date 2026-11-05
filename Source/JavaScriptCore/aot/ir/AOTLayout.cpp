@@ -40,22 +40,50 @@ void Layout::indexFields()
     m_staticFieldsByKey.clear();
     if (staticFields.size() < minStaticFieldsToIndex)
         return;
-    m_staticFieldsByKey.fill(IndexedField { }, WTF::roundUpToPowerOfTwo(2 * staticFields.size()));
-    uint32_t mask = static_cast<uint32_t>(m_staticFieldsByKey.size()) - 1;
+    m_staticFieldsByKey.fill(IndexedField { }, staticFieldTableSize());
+    uint32_t mask = staticFieldTableSize() - 1;
     for (uint32_t i = 0; i < staticFields.size(); ++i) {
         PropertyKeyID key = staticFields[i].key;
-        if (!key)
-            continue;
-        for (uint32_t place = hashOf(key) & mask;; place = (place + 1) & mask) {
+        bool isInTable = false;
+        for (uint32_t place = hashOf(key) & mask; key; place = (place + 1) & mask) {
             IndexedField& indexed = m_staticFieldsByKey[place];
             if (indexed.key == key)
                 break;
             if (!indexed.key) {
                 indexed = { key, i };
+                isInTable = true;
                 break;
             }
         }
+        if (!isInTable)
+            m_staticFieldsByKey.append(IndexedField { key, i });
     }
+    std::ranges::stable_sort(m_staticFieldsByKey.mutableSpan().subspan(staticFieldTableSize()), { }, &IndexedField::key);
+}
+
+bool Layout::hasStaticFieldWithComputedKey() const
+{
+    RELEASE_ASSERT(m_indexedStaticFieldCount == staticFields.size());
+    if (m_staticFieldsByKey.isEmpty())
+        return std::ranges::any_of(staticFields, [](const StaticField& field) { return !field.key; });
+    std::span<const IndexedField> outside = staticFieldsOutsideTable();
+    return !outside.empty() && !outside.back().key;
+}
+
+Vector<uint32_t, 4> Layout::indexedStaticFieldsThatMayMatch(PropertyKeyID key) const
+{
+    Vector<uint32_t, 4> found;
+    if (std::optional<uint32_t> first = findStaticField(key))
+        found.append(*first);
+    std::span<const IndexedField> outside = staticFieldsOutsideTable();
+    for (PropertyKeyID wanted : { key, PropertyKeyID() }) {
+        for (const IndexedField& other : std::ranges::equal_range(outside, wanted, { }, &IndexedField::key))
+            found.append(other.field);
+        if (!key)
+            break;
+    }
+    std::ranges::sort(found);
+    return found;
 }
 
 std::optional<uint32_t> Layout::findStaticField(PropertyKeyID key) const
@@ -70,7 +98,7 @@ std::optional<uint32_t> Layout::findStaticField(PropertyKeyID key) const
         }
         return std::nullopt;
     }
-    uint32_t mask = static_cast<uint32_t>(m_staticFieldsByKey.size()) - 1;
+    uint32_t mask = staticFieldTableSize() - 1;
     for (uint32_t place = hashOf(key) & mask;; place = (place + 1) & mask) {
         const IndexedField& indexed = m_staticFieldsByKey[place];
         if (indexed.key == key)

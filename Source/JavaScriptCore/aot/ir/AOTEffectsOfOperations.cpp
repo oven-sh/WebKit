@@ -396,15 +396,9 @@ static bool mayBeFunctionUnderProtocol(const TypingContext& context, TypeID oper
 }
 
 template<typename Entry>
-static bool declaresProtocolOrUseOfOperand(Entry entry, OperandUses uses)
+static constexpr bool declaresProtocolOrUseOfOperand(Entry entry, OperandUses uses)
 {
-    uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(entry) + (hasVariadicOperand(entry) ? 1 : 0);
-    for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
-        const OperandInfo& info = operandInfoOf(entry, operandIndex);
-        if (!info.protocols.isEmpty() || info.uses.containsAny(uses))
-            return true;
-    }
-    return false;
+    return !protocolsOfOperandsOf(entry).isEmpty() || usesOfOperandsOf(entry).containsAny(uses);
 }
 
 namespace {
@@ -419,7 +413,7 @@ struct OpcodesByWhatOperandsDeclare {
 
 static const OpcodesByWhatOperandsDeclare& opcodesByWhatOperandsDeclare()
 {
-    static const OpcodesByWhatOperandsDeclare sorted = [] {
+    static constexpr OpcodesByWhatOperandsDeclare sorted = [] {
         constexpr OperandUses usesThatCall { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::PassesToUserCode };
         OpcodesByWhatOperandsDeclare result;
         result.haveEffectsOfRow = opcodesWithEffectsOfRowWhateverOperandsAre;
@@ -438,7 +432,7 @@ static const OpcodesByWhatOperandsDeclare& opcodesByWhatOperandsDeclare()
 
 static const TerminatorKindSet& terminatorKindsDeclaringCodeOfOperands()
 {
-    static const TerminatorKindSet kinds = [] {
+    static constexpr TerminatorKindSet kinds = [] {
         TerminatorKindSet result;
         for (TerminatorKind kind : allMembersOf<TerminatorKind>) {
             if (declaresProtocolOrUseOfOperand(kind, usesThatCallOperandForEffects))

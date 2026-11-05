@@ -258,19 +258,6 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
         }
     }
 
-    if (value.opcode() == Opcode::Eq && narrowsNothing && type.hasObjects() && type.isJavaScriptValue() && !type.mayBeUnspecified()) {
-        Vector<char16_t> buffer;
-        if (!std::isnan(jsToNumber(types.viewOf(text, buffer))))
-            return false;
-        Draft comparison(Opcode::ValueLooselyEqualsLiteral, origin);
-        walker.chooseConservativeFields(comparison);
-        comparison.setValueOperand(subject);
-        comparison.setLiteral(text);
-        if (Reference answer = walker.build(WTF::move(comparison)))
-            walker.bind(value.id(), answer);
-        return true;
-    }
-
     if (!narrowed || (*narrowed & ~(placeOfSubject ? 0u : 1u)))
         return false;
     if (!subject.isValue() || !type.isJavaScriptValue() || !(type.primitives & Primitive::AnyString))

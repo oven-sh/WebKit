@@ -128,7 +128,7 @@ struct FieldRecordIndex {
     static FieldRecordIndex create(const FieldData& field, uint16_t indexInLayoutRecord, const RuntimeType& type, uint32_t typeOfAnyValue)
     {
         RELEASE_ASSERT(indexInLayoutRecord <= indexMask);
-        constexpr uint16_t flagsBarringStore = fieldIsStoredOnce | fieldAttributeFlags;
+        constexpr uint16_t flagsBarringStore = fieldAttributeFlags;
         return { static_cast<uint16_t>(indexInLayoutRecord | (typeAcceptsWhatSlotHolds(field, type, typeOfAnyValue) && !(field.flags & flagsBarringStore) ? isStoredWithoutTypeTest : 0)) };
     }
 

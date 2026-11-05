@@ -176,9 +176,9 @@ struct MachineBuilderRulesOfOpcode {
     MachineBuilderLowering lowering;
 };
 
-static constexpr std::array<MachineBuilderRulesOfOpcode, numberOfOpcodes> machineBuilderRulesOfOpcodes = [] {
-    std::array<MachineBuilderRulesOfOpcode, numberOfOpcodes> rules { };
-    for (unsigned opcode = 0; opcode < numberOfOpcodes; ++opcode)
+static constexpr std::array<MachineBuilderRulesOfOpcode, sizeOfTableByOpcode> machineBuilderRulesOfOpcodes = [] {
+    std::array<MachineBuilderRulesOfOpcode, sizeOfTableByOpcode> rules { };
+    for (unsigned opcode = 0; opcode < sizeOfTableByOpcode; ++opcode)
         rules[opcode] = { machineBuilderFoldFamilyOf(static_cast<Opcode>(opcode)), machineBuilderKindOfResult(static_cast<Opcode>(opcode)), machineBuilderLoweringOf(static_cast<Opcode>(opcode)) };
     return rules;
 }();
@@ -289,7 +289,7 @@ struct MachineBuilderAddress {
     int32_t offset;
 };
 
-static MachineBuilderAddress machineBuilderAddressOf(Builder& builder, Operation* base, ptrdiff_t offset, bool mayChangeBase)
+static ALWAYS_INLINE MachineBuilderAddress machineBuilderAddressOf(Builder& builder, Operation* base, ptrdiff_t offset, bool mayChangeBase)
 {
     int64_t distance = offset;
     while (mayChangeBase && base->opcode() == Add && base->child(1)->hasInt64()) {
@@ -324,18 +324,30 @@ static MachineBuilderAddress machineBuilderAddressOf(Builder& builder, Operation
     return { base, static_cast<int32_t>(distance) };
 }
 
+static constexpr unsigned machineBuilderNumberOfSetsOfHeapTraits = 32;
+static_assert(static_cast<unsigned>(HeapTrait::Immutable) < machineBuilderNumberOfSetsOfHeapTraits && static_cast<unsigned>(HeapTrait::HoldsInnerPointer) < machineBuilderNumberOfSetsOfHeapTraits);
+static_assert(static_cast<unsigned>(HeapTrait::HoldsPermanentCell) < machineBuilderNumberOfSetsOfHeapTraits && static_cast<unsigned>(HeapTrait::IsFilledOnce) < machineBuilderNumberOfSetsOfHeapTraits);
+
+static constexpr std::array<uint16_t, machineBuilderNumberOfSetsOfHeapTraits> machineBuilderFlagsOfLoadsByHeapTraits = [] {
+    std::array<uint16_t, machineBuilderNumberOfSetsOfHeapTraits> flagsOfLoads { };
+    for (unsigned traits = 0; traits < machineBuilderNumberOfSetsOfHeapTraits; ++traits) {
+        uint16_t flags = 0;
+        if (traits & static_cast<unsigned>(HeapTrait::Immutable))
+            flags |= static_cast<uint16_t>(OperationFlag::ReadsImmutableHeap);
+        if (traits & static_cast<unsigned>(HeapTrait::HoldsInnerPointer))
+            flags |= static_cast<uint16_t>(OperationFlag::IsInnerPointer);
+        if (traits & static_cast<unsigned>(HeapTrait::HoldsPermanentCell))
+            flags |= static_cast<uint16_t>(OperationFlag::NamesPermanentCell);
+        if (traits & static_cast<unsigned>(HeapTrait::IsFilledOnce))
+            flags |= static_cast<uint16_t>(OperationFlag::ReadsWordFilledOnce);
+        flagsOfLoads[traits] = flags;
+    }
+    return flagsOfLoads;
+}();
+
 static uint16_t machineBuilderFlagsOfLoadFrom(const AbstractHeap& heap)
 {
-    uint16_t flags = 0;
-    if (heap.traits().contains(HeapTrait::Immutable))
-        flags |= static_cast<uint16_t>(OperationFlag::ReadsImmutableHeap);
-    if (heap.traits().contains(HeapTrait::HoldsInnerPointer))
-        flags |= static_cast<uint16_t>(OperationFlag::IsInnerPointer);
-    if (heap.traits().contains(HeapTrait::HoldsPermanentCell))
-        flags |= static_cast<uint16_t>(OperationFlag::NamesPermanentCell);
-    if (heap.traits().contains(HeapTrait::IsFilledOnce))
-        flags |= static_cast<uint16_t>(OperationFlag::ReadsWordFilledOnce);
-    return flags;
+    return machineBuilderFlagsOfLoadsByHeapTraits[heap.traits().toRaw() & (machineBuilderNumberOfSetsOfHeapTraits - 1)];
 }
 
 static bool machineBuilderCovers(const HeapTree& tree, const HeapSet& declared, HeapIndex heap)
@@ -354,16 +366,7 @@ static Edge machineBuilderUnconditionalEdge(Edge onlyWayLeft)
     return Edge(onlyWayLeft.block(), EdgeClass::Normal);
 }
 
-#if ASSERT_ENABLED
-static const Edge* machineBuilderEdgeBetween(const Block* from, const Block* to)
-{
-    for (const Edge& edge : from->successors()) {
-        if (edge.block() == to)
-            return &edge;
-    }
-    return nullptr;
-}
-#endif
+static_assert(alignof(Operation) <= Arena::alignmentOfCursor && alignof(PatchOperation) <= Arena::alignmentOfCursor);
 
 Builder::Builder(Procedure& procedure)
     : m_proc(procedure)
@@ -371,6 +374,29 @@ Builder::Builder(Procedure& procedure)
 {
 }
 
+ALWAYS_INLINE bool Builder::hasRoomToCreate(size_t bytes) const
+{
+    const Procedure& procedure = m_proc;
+    return procedure.m_operations.size() != procedure.m_operations.capacity() && procedure.m_arena.hasRoomFor(bytes);
+}
+
+ALWAYS_INLINE bool Builder::hasRoomToAppendTo(const Block* block, size_t bytes) const
+{
+    return block->m_operations.size() != block->m_operations.capacity() && hasRoomToCreate(bytes);
+}
+
+template<bool hasRoom>
+ALWAYS_INLINE void Builder::didCreate(Operation* operation)
+{
+    Procedure& procedure = m_proc;
+    operation->m_index = procedure.m_operations.size();
+    if constexpr (hasRoom)
+        procedure.m_operations.appendWithinCapacity(operation);
+    else
+        procedure.m_operations.append(procedure.m_arena, operation);
+}
+
+template<bool hasRoom>
 ALWAYS_INLINE void Builder::append(Operation* operation, bool mayEndBlock)
 {
     Block* block = m_block;
@@ -378,73 +404,112 @@ ALWAYS_INLINE void Builder::append(Operation* operation, bool mayEndBlock)
     block->m_lastOperationMayEndBlock = mayEndBlock;
     operation->m_owner = block;
     operation->m_indexInBlock = block->m_operations.size();
-    block->m_operations.append(m_proc.arena(), operation);
+    if constexpr (hasRoom)
+        block->m_operations.appendWithinCapacity(operation);
+    else
+        block->m_operations.append(m_proc.arena(), operation);
 }
 
-template<unsigned numberOfChildren, bool isComputation>
+template<unsigned numberOfChildren, KindOfAppendedOperation kind, bool hasRoom>
 ALWAYS_INLINE Operation* Builder::appendNewWithChildren(Opcode opcode, Type type, Operation* first, Operation* second, Operation* third)
 {
     static_assert(numberOfChildren <= Operation::maxInlineChildren);
-    Operation* result = m_proc.arena().create<Operation>(opcode, type, m_origin);
-    result->m_auxiliary = numberOfChildren;
-    result->m_children[0] = first;
-    result->m_children[1] = second;
-    result->m_children[2] = third;
-    m_proc.didCreate(result);
-    if constexpr (isComputation) {
-        ASSERT(countsChildrenAtFirstUse(opcode));
-        append(result, false);
+    Block* block = m_block;
+    RELEASE_ASSERT(block && block->mayBeAppendedTo());
+    Procedure& procedure = m_proc;
+    Arena& arena = procedure.m_arena;
+    void* memory = hasRoom ? arena.allocateWhereThereIsRoom(sizeof(Operation)) : arena.allocate(sizeof(Operation), alignof(Operation));
+    Operation* result = new (NotNull, memory) Operation(opcode, type, m_origin, procedure.m_operations.size(), block, block->m_operations.size(), static_cast<uint8_t>(numberOfChildren), first, second, third);
+    if constexpr (hasRoom) {
+        procedure.m_operations.appendWithinCapacity(result);
+        block->m_operations.appendWithinCapacity(result);
     } else {
-        append(result, opcode >= Patch);
-        if (!countsChildrenAtFirstUse(opcode)) {
-            if constexpr (numberOfChildren > 0)
-                first->gainUse();
-            if constexpr (numberOfChildren > 1)
-                second->gainUse();
-            if constexpr (numberOfChildren > 2)
-                third->gainUse();
-        }
+        procedure.m_operations.append(arena, result);
+        block->m_operations.append(arena, result);
+    }
+
+    bool readsChildrenAtOnce;
+    if constexpr (kind == KindOfAppendedOperation::Computation) {
+        ASSERT(countsChildrenAtFirstUse(opcode));
+        block->m_lastOperationMayEndBlock = false;
+        readsChildrenAtOnce = false;
+    } else if constexpr (kind == KindOfAppendedOperation::MemoryAccess) {
+        ASSERT(isMemoryAccess(opcode));
+        block->m_lastOperationMayEndBlock = false;
+        readsChildrenAtOnce = true;
+    } else {
+        block->m_lastOperationMayEndBlock = opcode >= Patch;
+        readsChildrenAtOnce = !countsChildrenAtFirstUse(opcode);
+    }
+    if (readsChildrenAtOnce) {
+        if constexpr (numberOfChildren > 0)
+            first->gainUse();
+        if constexpr (numberOfChildren > 1)
+            second->gainUse();
+        if constexpr (numberOfChildren > 2)
+            third->gainUse();
     }
     return result;
 }
 
 ALWAYS_INLINE Operation* Builder::appendNew(Opcode opcode, Type type)
 {
-    return appendNewWithChildren<0, false>(opcode, type, nullptr, nullptr, nullptr);
+    return appendNewWithChildren<0, KindOfAppendedOperation::Any, false>(opcode, type, nullptr, nullptr, nullptr);
 }
 
 ALWAYS_INLINE Operation* Builder::appendNew(Opcode opcode, Type type, Operation* child)
 {
-    return appendNewWithChildren<1, false>(opcode, type, child, nullptr, nullptr);
+    return appendNewWithChildren<1, KindOfAppendedOperation::Any, false>(opcode, type, child, nullptr, nullptr);
 }
 
 ALWAYS_INLINE Operation* Builder::appendNew(Opcode opcode, Type type, Operation* first, Operation* second)
 {
-    return appendNewWithChildren<2, false>(opcode, type, first, second, nullptr);
+    return appendNewWithChildren<2, KindOfAppendedOperation::Any, false>(opcode, type, first, second, nullptr);
+}
+
+ALWAYS_INLINE Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* child)
+{
+    return appendNewWithChildren<1, KindOfAppendedOperation::MemoryAccess, false>(opcode, type, child, nullptr, nullptr);
+}
+
+ALWAYS_INLINE Operation* Builder::appendNewMemoryAccess(Opcode opcode, Type type, Operation* first, Operation* second)
+{
+    return appendNewWithChildren<2, KindOfAppendedOperation::MemoryAccess, false>(opcode, type, first, second, nullptr);
 }
 
 ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* child)
 {
-    return appendNewWithChildren<1, true>(opcode, type, child, nullptr, nullptr);
+    return appendNewWithChildren<1, KindOfAppendedOperation::Computation, false>(opcode, type, child, nullptr, nullptr);
 }
 
 ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second)
 {
-    return appendNewWithChildren<2, true>(opcode, type, first, second, nullptr);
+    return appendNewWithChildren<2, KindOfAppendedOperation::Computation, false>(opcode, type, first, second, nullptr);
 }
 
 ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type, Operation* first, Operation* second, Operation* third)
 {
-    return appendNewWithChildren<3, true>(opcode, type, first, second, third);
+    return appendNewWithChildren<3, KindOfAppendedOperation::Computation, false>(opcode, type, first, second, third);
 }
 
-Operation* Builder::createNewWithoutPosition(Opcode opcode, Type type, uint64_t payload, uint32_t hash)
+template<bool hasRoom>
+ALWAYS_INLINE Operation* Builder::createNewWithoutPosition(Opcode opcode, Type type, uint64_t payload, uint32_t hash)
 {
-    Operation* result = m_proc.arena().create<Operation>(opcode, type, Origin());
+    Arena& arena = m_proc.m_arena;
+    void* memory = hasRoom ? arena.allocateWhereThereIsRoom(sizeof(Operation)) : arena.allocate(sizeof(Operation), alignof(Operation));
+    Operation* result = new (NotNull, memory) Operation(opcode, type, Origin());
     result->m_payload.bits = static_cast<int64_t>(payload);
-    m_proc.didCreate(result);
-    m_numbering.addWithoutPosition(result, payload, hash);
+    didCreate<hasRoom>(result);
+    if constexpr (hasRoom)
+        m_numbering.addWithoutPositionWhereThereIsRoom(result, payload, hash);
+    else
+        m_numbering.addWithoutPosition(result, payload, hash);
     return result;
+}
+
+NEVER_INLINE Operation* Builder::createNewWithoutPositionWhereRoomMayLack(Opcode opcode, Type type, uint64_t payload, uint32_t hash)
+{
+    return createNewWithoutPosition<false>(opcode, type, payload, hash);
 }
 
 ALWAYS_INLINE Operation* Builder::createWithoutPosition(Opcode opcode, Type type, uint64_t payload)
@@ -452,7 +517,9 @@ ALWAYS_INLINE Operation* Builder::createWithoutPosition(Opcode opcode, Type type
     uint32_t hash = Numbering::hashWithoutPosition(opcode, payload);
     if (Operation* existing = m_numbering.findWithoutPosition(opcode, payload, hash))
         return existing;
-    return createNewWithoutPosition(opcode, type, payload, hash);
+    if (!hasRoomToCreate(sizeof(Operation)) || !m_numbering.hasRoomWithoutPosition()) [[unlikely]]
+        return createNewWithoutPositionWhereRoomMayLack(opcode, type, payload, hash);
+    return createNewWithoutPosition<true>(opcode, type, payload, hash);
 }
 
 void Builder::noteInheritedFind(const Operation* operation)
@@ -461,6 +528,7 @@ void Builder::noteInheritedFind(const Operation* operation)
     if (index >= m_epochOfLastInheritedFind.size())
         m_epochOfLastInheritedFind.grow(m_proc.arena(), std::max(m_proc.numberOfOperations(), m_epochOfLastInheritedFind.size() * 2));
     m_epochOfLastInheritedFind[index] = m_scopeEpoch;
+    m_hasInheritedFindsInEpoch = true;
 }
 
 ALWAYS_INLINE Operation* Builder::noteIfInherited(const Numbering::Found& found)
@@ -485,69 +553,6 @@ ALWAYS_INLINE Type Builder::typeOfResult(Opcode opcode, Operation* first)
     TypeKind kind = machineBuilderRulesOfOpcodes[opcode].kindOfResult;
     RELEASE_ASSERT(kind != machineBuilderKindThatOpcodeDoesNotSay);
     return kind == machineBuilderKindOfFirstChild ? first->type() : Type(kind);
-}
-
-void Builder::appendTo(Block* block)
-{
-    ASSERT(block);
-    sealPendingPatch();
-    if (block == m_block)
-        return;
-    if (m_block)
-        m_numbering.switchBlocks(m_block, block);
-    m_block = block;
-}
-
-ScopeFork Builder::forkScope()
-{
-    sealPendingPatch();
-    return { m_numbering.mark(), m_block };
-}
-
-void Builder::appendToContinuation(Block* block)
-{
-    sealPendingPatch();
-    ASSERT(m_block->isTerminated());
-    ASSERT(block->numberOfIncomingEdges() <= 1);
-    if (block->numberOfIncomingEdges()) {
-        ASSERT(machineBuilderEdgeBetween(m_block, block));
-        block->m_hasOnlyOnePredecessor = true;
-        m_numbering.continueIn(m_block, block);
-    }
-    m_block = block;
-}
-
-void Builder::appendToArm(Block* block, const ScopeFork& fork)
-{
-    sealPendingPatch();
-    ASSERT(block->numberOfIncomingEdges() <= 1);
-    if (block->numberOfIncomingEdges()) {
-        ASSERT(machineBuilderEdgeBetween(fork.block, block));
-        block->m_hasOnlyOnePredecessor = true;
-    }
-    m_numbering.restore(fork.mark);
-    m_block = block;
-}
-
-void Builder::appendToJoin(Block* block, const ScopeFork& fork)
-{
-    sealPendingPatch();
-    m_numbering.restore(fork.mark);
-    m_block = block;
-}
-
-void Builder::appendToSuccessor(Block* block, const ScopeFork& fork)
-{
-    sealPendingPatch();
-    bool comesOutOfFork = fork.block && block->singlePredecessor() == fork.block && block->classOfSingleIncomingEdge() != EdgeClass::Rare;
-    if (!comesOutOfFork || block->isLandingPad() || !m_numbering.canRestore(fork.mark)) {
-        appendTo(block);
-        return;
-    }
-    block->m_hasOnlyOnePredecessor = true;
-    m_numbering.inheritScope(fork.mark);
-    ++m_scopeEpoch;
-    m_block = block;
 }
 
 Operation* Builder::duplicateInheritedFindIfFusable(Operation* operand)
@@ -672,10 +677,12 @@ Operation* Builder::binary(Opcode opcode, Operation* left, Operation* right)
     uint32_t hash = Numbering::hashOf(key);
     if (Operation* existing = findNumbered(key, hash))
         return existing;
-    Operation* ownLeft = duplicateIfFusable(left);
-    Operation* ownRight = duplicateIfFusable(right);
-    if (ownLeft != left || ownRight != right)
-        return binary(opcode, ownLeft, ownRight);
+    if (m_hasInheritedFindsInEpoch) [[unlikely]] {
+        Operation* ownLeft = duplicateIfFusable(left);
+        Operation* ownRight = duplicateIfFusable(right);
+        if (ownLeft != left || ownRight != right)
+            return binary(opcode, ownLeft, ownRight);
+    }
     MachineBuilderLowering lowering = machineBuilderRulesOfOpcodes[opcode].lowering;
     if (lowering != MachineBuilderLowering::Never && (lowering == MachineBuilderLowering::Always || !right->hasInt32())) [[unlikely]] {
         if (Operation* lowered = lowerForTarget(opcode, type, left, right))
@@ -940,7 +947,7 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
     if (Operation* ownBase = duplicateIfFusable(address.base); ownBase != address.base)
         return load(opcode, type, ownBase, address.offset, heap, trapping);
 
-    Operation* result = appendNew(opcode, type, address.base);
+    Operation* result = appendNewMemoryAccess(opcode, type, address.base);
     result->m_payload.memory.offset = address.offset;
     result->m_payload.memory.heap = heap.index();
     result->m_flags |= machineBuilderFlagsOfLoadFrom(heap);
@@ -967,7 +974,7 @@ Operation* Builder::store(Opcode opcode, Operation* value, Operation* base, ptrd
     MachineBuilderAddress address = machineBuilderAddressOf(*this, base, offset, true);
     Operation* ownValue = duplicateIfFusable(value);
     Operation* ownBase = duplicateIfFusable(address.base);
-    Operation* result = appendNew(opcode, Void, ownValue, ownBase);
+    Operation* result = appendNewMemoryAccess(opcode, Void, ownValue, ownBase);
     result->m_payload.memory.offset = address.offset;
     result->m_payload.memory.heap = heap.index();
     m_numbering.didWrite(heap.index());
@@ -996,7 +1003,7 @@ Operation* Builder::reload(Operation* load)
 Operation* Builder::appendLoadLike(const Operation* load, Operation* base)
 {
     constexpr uint16_t flagsOfHeap = static_cast<uint16_t>(OperationFlag::ReadsImmutableHeap) | static_cast<uint16_t>(OperationFlag::IsInnerPointer) | static_cast<uint16_t>(OperationFlag::NamesPermanentCell);
-    Operation* result = appendNew(load->opcode(), load->type(), base);
+    Operation* result = appendNewMemoryAccess(load->opcode(), load->type(), base);
     result->m_payload.memory.offset = load->offset();
     result->m_payload.memory.heap = load->heap();
     result->m_flags |= load->m_flags & flagsOfHeap;
@@ -1082,29 +1089,33 @@ void Builder::checkDeclaredAccess(const AbstractHeap& heap, bool isStore)
 Operation* Builder::phiIn(Block* block, Type type)
 {
     ASSERT(block && type.isNumeric());
-    Operation* result = m_proc.arena().create<Operation>(Phi, type, m_origin);
-    m_proc.didCreate(result);
-    result->m_owner = block;
-    result->m_indexInBlock = block->m_phis.size();
-    block->m_phis.append(m_proc.arena(), result);
+    Procedure& procedure = m_proc;
+    Arena& arena = procedure.m_arena;
+    Operation* result = arena.create<Operation>(Phi, type, m_origin, procedure.m_operations.size(), block, block->m_phis.size(), static_cast<uint8_t>(0), nullptr, nullptr, nullptr);
+    procedure.m_operations.append(arena, result);
+    if (!block->m_phis.capacity())
+        block->m_phis.adoptStorage(arena.allocateArray<Operation*>(Block::firstCapacityOfPhis), Block::firstCapacityOfPhis);
+    block->m_phis.append(arena, result);
     return result;
 }
 
-Operation* Builder::upsilon(Operation* value, Operation* phi)
+template<bool hasRoom>
+ALWAYS_INLINE Operation* Builder::appendUpsilon(Operation* value, Operation* phi)
 {
-    sealPendingPatch();
     Block* block = m_block;
     RELEASE_ASSERT(block && block->mayBeAppendedTo());
 
-    Operation* result = m_proc.arena().create<Operation>(Upsilon, Void, m_origin);
-    result->m_auxiliary = 1;
-    result->m_children[0] = value;
-    result->m_payload.phi = nullptr;
-    m_proc.didCreate(result);
-    result->m_owner = block;
-    result->m_indexInBlock = block->m_upsilons.size();
-    block->m_upsilons.append(m_proc.arena(), result);
-    value->gainUse();
+    Procedure& procedure = m_proc;
+    Arena& arena = procedure.m_arena;
+    void* memory = hasRoom ? arena.allocateWhereThereIsRoom(sizeof(Operation)) : arena.allocate(sizeof(Operation), alignof(Operation));
+    Operation* result = new (NotNull, memory) Operation(Upsilon, Void, m_origin, procedure.m_operations.size(), block, block->m_upsilons.size(), static_cast<uint8_t>(1), value, nullptr, nullptr);
+    if constexpr (hasRoom) {
+        procedure.m_operations.appendWithinCapacity(result);
+        block->m_upsilons.appendWithinCapacity(result);
+    } else {
+        procedure.m_operations.append(arena, result);
+        block->m_upsilons.append(arena, result);
+    }
 
     if (phi) {
         RELEASE_ASSERT(phi->opcode() == Phi && value->type() == phi->type());
@@ -1112,7 +1123,29 @@ Operation* Builder::upsilon(Operation* value, Operation* phi)
         if (!handsOnClearUpperHalf(value, phi))
             phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
     }
+    if (value->gainUseLeavingChildrenUncounted()) [[unlikely]]
+        return countChildrenOfValueHandedOn(value, result);
     return result;
+}
+
+NEVER_INLINE Operation* Builder::countChildrenOfValueHandedOn(Operation* value, Operation* upsilon)
+{
+    value->countChildrenAtFirstUse();
+    return upsilon;
+}
+
+NEVER_INLINE Operation* Builder::upsilonWhereRoomMayLack(Operation* value, Operation* phi)
+{
+    sealPendingPatch();
+    return appendUpsilon<false>(value, phi);
+}
+
+Operation* Builder::upsilon(Operation* value, Operation* phi)
+{
+    const Block* block = m_block;
+    if (m_pendingPatch || !block || block->m_upsilons.size() == block->m_upsilons.capacity() || !hasRoomToCreate(sizeof(Operation))) [[unlikely]]
+        return upsilonWhereRoomMayLack(value, phi);
+    return appendUpsilon<true>(value, phi);
 }
 
 Operation* Builder::upsilonOfCompletePhi(Operation* value, Operation* phi)
@@ -1133,21 +1166,37 @@ void Builder::setPhi(Operation* upsilon, Operation* phi)
 #if ASSERT_ENABLED
     const Block* block = upsilon->owner();
     if (block->isTerminated() && (block->last()->opcode() == Branch || block->last()->opcode() == Switch))
-        ASSERT(machineBuilderEdgeBetween(block, phi->owner()));
+        ASSERT(hasEdgeBetween(block, phi->owner()));
 #endif
     upsilon->m_payload.phi = phi;
     if (!handsOnClearUpperHalf(upsilon->child(0), phi))
         phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
 }
 
-PatchOperation* Builder::patch(Type type)
+template<bool hasRoom>
+ALWAYS_INLINE PatchOperation* Builder::appendPatch(Type type)
 {
-    sealPendingPatch();
-    PatchOperation* result = PatchOperation::create(m_proc, Patch, type, m_origin);
-    m_proc.didCreate(result);
-    append(result, true);
+    Procedure& procedure = m_proc;
+    void* memory = hasRoom ? procedure.m_arena.allocateWhereThereIsRoom(PatchOperation::bytesOfNewPatch()) : procedure.m_arena.allocate(PatchOperation::bytesOfNewPatch(), alignof(PatchOperation));
+    PatchOperation* result = PatchOperation::createAt(memory, procedure, Patch, type, m_origin);
+    didCreate<hasRoom>(result);
+    append<hasRoom>(result, true);
     m_pendingPatch = result;
     return result;
+}
+
+NEVER_INLINE PatchOperation* Builder::patchWhereRoomMayLack(Type type)
+{
+    sealPendingPatch();
+    return appendPatch<false>(type);
+}
+
+PatchOperation* Builder::patch(Type type)
+{
+    const Block* block = m_block;
+    if (m_pendingPatch || !block || !hasRoomToAppendTo(block, PatchOperation::bytesOfNewPatch())) [[unlikely]]
+        return patchWhereRoomMayLack(type);
+    return appendPatch<true>(type);
 }
 
 PatchOperation* Builder::check(Operation* predicate)
@@ -1170,8 +1219,8 @@ PatchOperation* Builder::check(Operation* predicate)
         return result;
     }
 
-    m_proc.didCreate(result);
-    append(result, false);
+    didCreate<false>(result);
+    append<false>(result, false);
     result->append(predicate, ValueRep::ColdAny);
     m_pendingPatch = result;
     return result;
@@ -1209,11 +1258,20 @@ void Builder::recordInPlaceOfPurePatch(const PureFunction& function, Operation* 
     m_numbering.addInPlaceOfPurePatch(machineBuilderKeyOfPurePatch(function, phi->type(), { }), phi);
 }
 
-void Builder::jump(Edge target)
+NEVER_INLINE void Builder::jumpWhereRoomMayLack(Edge target)
 {
     sealPendingPatch();
     appendNew(Jump, Void);
     m_block->setSuccessorsInline(target);
+}
+
+void Builder::jump(Edge target)
+{
+    Block* block = m_block;
+    if (m_pendingPatch || !block || !block->m_successors.isEmpty() || !hasRoomToAppendTo(block, sizeof(Operation))) [[unlikely]]
+        return jumpWhereRoomMayLack(target);
+    appendNewWithChildren<0, KindOfAppendedOperation::Any, true>(Jump, Void, nullptr, nullptr, nullptr);
+    block->appendSuccessorWhereRoomIsKnown<true>(target);
 }
 
 void Builder::branch(Operation* predicate, Edge whenNotZero, Edge whenZero)
@@ -1221,7 +1279,7 @@ void Builder::branch(Operation* predicate, Edge whenNotZero, Edge whenZero)
     ASSERT(predicate->type().isInt());
     sealPendingPatch();
 
-    SimplifiedPredicate simplified = simplifyPredicate(predicate);
+    SimplifiedPredicate simplified = peelPredicateInline(predicate);
     predicate = simplified.predicate;
     if (simplified.isInverted)
         std::swap(whenNotZero, whenZero);
@@ -1327,9 +1385,12 @@ void Builder::sealPatch()
 {
     PatchOperation* patch = std::exchange(m_pendingPatch, nullptr);
     ASSERT(!patch->effects.terminal || patch->owner()->last() == patch);
-    m_numbering.didWrite(patch->isSuspension() ? HeapSet::top() : patch->effects.writes);
-    if (patch->isSuspension())
+    if (patch->isSuspension()) [[unlikely]] {
+        m_numbering.didWrite(HeapSet::top());
         m_numbering.didSuspend();
+        return;
+    }
+    m_numbering.didWrite(patch->effects.writes);
 }
 
 } } } // namespace JSC::AOT::Machine

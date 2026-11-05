@@ -59,10 +59,18 @@ private:
     static bool areIdentical(const Block*, const Block*);
     static void takeBackReadsOf(const Block*);
     NEVER_INLINE void moveEdgesToBlocksThatStay(Block* from, const uint32_t* replacements);
+    NEVER_INLINE void findBlocksEnteredFromRareBlocks();
+    bool isEnteredFromRareBlock(uint32_t block)
+    {
+        if (!m_isEnteredFromRareBlock)
+            findBlocksEnteredFromRareBlocks();
+        return m_isEnteredFromRareBlock[block];
+    }
 
     Procedure& m_proc;
     Arena& m_arena;
     const bool* m_isSuccessorOfPatch { nullptr };
+    const bool* m_isEnteredFromRareBlock { nullptr };
     ArenaVector<uint32_t> m_usesWithinBlock;
 };
 
@@ -219,9 +227,9 @@ MachineBlockMerger::BlocksByPlace MachineBlockMerger::listBlocksByPlace()
         const Edge* edge = successors;
         for (; edge != end; ++edge) {
             const Block* successor = edge->block();
-            if (successor == block)
-                break;
             if (successor->numberOfIncomingEdges() < 2)
+                break;
+            if (successor == block)
                 break;
         }
         if (edge != end || block->isEntry() || !block->phis().empty())
@@ -457,6 +465,38 @@ void MachineBlockMerger::moveEdgesToBlocksThatStay(Block* from, const uint32_t* 
     }
 }
 
+void MachineBlockMerger::findBlocksEnteredFromRareBlocks()
+{
+    const uint32_t numberOfBlocks = m_proc.numberOfBlocks();
+    Block* const* blocks = m_proc.blocks().data();
+    bool* isReached = m_arena.allocateArray<bool>(numberOfBlocks);
+    uint32_t* reached = m_arena.allocateArray<uint32_t>(numberOfBlocks);
+    uint32_t numberReached = 0;
+    for (uint32_t index = 0; index < numberOfBlocks; ++index) {
+        isReached[index] = blocks[index]->isEntry();
+        if (isReached[index])
+            reached[numberReached++] = index;
+    }
+    for (uint32_t next = 0; next < numberReached; ++next) {
+        for (const Edge& edge : blocks[reached[next]]->successors()) {
+            uint32_t target = edge.block()->index();
+            if (edge.isRare() || isReached[target])
+                continue;
+            isReached[target] = true;
+            reached[numberReached++] = target;
+        }
+    }
+    bool* isEnteredFromRareBlock = m_arena.allocateArray<bool>(numberOfBlocks);
+    std::fill_n(isEnteredFromRareBlock, numberOfBlocks, false);
+    for (uint32_t index = 0; index < numberOfBlocks; ++index) {
+        if (isReached[index])
+            continue;
+        for (const Edge& edge : blocks[index]->successors())
+            isEnteredFromRareBlock[edge.block()->index()] = true;
+    }
+    m_isEnteredFromRareBlock = isEnteredFromRareBlock;
+}
+
 void MachineBlockMerger::run()
 {
     const uint32_t numberOfBlocks = m_proc.numberOfBlocks();
@@ -470,7 +510,7 @@ void MachineBlockMerger::run()
     const uint32_t* previousInPlace = byPlace.previousInPlace;
     const bool* isSuccessorOfPatch = m_isSuccessorOfPatch;
     auto mayMerge = [&](uint32_t index) ALWAYS_INLINE_LAMBDA {
-        return !isSuccessorOfPatch[index] || blocks[index]->isLandingPad();
+        return blocks[index]->isLandingPad() || (!isSuccessorOfPatch[index] && (blocks[index]->numSuccessors() || !isEnteredFromRareBlock(index)));
     };
 
     uint64_t* candidates = byPlace.storage;

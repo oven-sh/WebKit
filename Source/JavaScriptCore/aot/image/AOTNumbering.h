@@ -14,12 +14,14 @@
 #include "AOTInstanceLayout.h"
 #include "AOTOperationData.h"
 #include "AOTSlotPlan.h"
+#include "AOTSort.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include "JSExportMacros.h"
 #include "YarrFlags.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <memory>
 #include <optional>
 #include <span>
@@ -28,6 +30,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT {
 
@@ -95,7 +98,6 @@ enum class NumberSpace : uint8_t {
     ModuleValue,
     ModuleNamespace,
     ModuleBuiltinCell,
-    DataCell,
     DataStorage,
     DataElements,
     RegExpLiteralCell,
@@ -116,7 +118,7 @@ enum class NumberSpace : uint8_t {
     MethodSelector,
     RegExp,
 };
-inline constexpr unsigned numberOfNumberSpaces = 36;
+inline constexpr unsigned numberOfNumberSpaces = 35;
 static_assert(static_cast<unsigned>(NumberSpace::RegExp) + 1 == numberOfNumberSpaces);
 
 enum class GlobalBindingFlags : uint8_t {
@@ -204,15 +206,22 @@ public:
     JS_EXPORT_PRIVATE void moveTo(CodeBody&);
 
 private:
+    static constexpr size_t smallestTableSize = 64;
+
     template<size_t extent> uint32_t addKey(NumberSpace, std::span<const uint32_t, extent> key, int32_t addend);
     void growTable();
 
     Vector<Mention> m_mentions;
     Vector<uint32_t> m_words;
-    Vector<uint32_t> m_table;
+    Vector<uint32_t, smallestTableSize> m_table;
 };
 
-JS_EXPORT_PRIVATE std::span<const uint32_t> keyOf(const Mention&, std::span<const uint32_t> mentionWords);
+inline std::span<const uint32_t> keyOf(const Mention& mention, std::span<const uint32_t> mentionWords)
+{
+    if (mention.numberOfWords != Mention::longKey)
+        return mentionWords.subspan(mention.firstWord, mention.numberOfWords);
+    return mentionWords.subspan(mention.firstWord + 1, mentionWords[mention.firstWord]);
+}
 
 JS_EXPORT_PRIVATE void copyMadeTextsMentionedBy(CodeBody&, const Typed::TypeArena&);
 void internTextsMadeByFunctions(Typed::Program&, LinkedFunctions&, BuildContext&);
@@ -225,9 +234,58 @@ JS_EXPORT_PRIVATE AllocationKey decodeAllocationKey(std::span<const uint32_t> ke
 
 bool canBePropertyRun(const Typed::Program&, std::span<const uint32_t> keys);
 
+constexpr bool mayHaveUnitsBehind(NumberSpace space)
+{
+    switch (space) {
+    case NumberSpace::ClosureFunction:
+    case NumberSpace::ClosureCell:
+    case NumberSpace::ClassRank:
+    case NumberSpace::Request:
+    case NumberSpace::ModuleValue:
+    case NumberSpace::RequireEdge:
+    case NumberSpace::Allocation:
+    case NumberSpace::Variable:
+    case NumberSpace::CardOfVariable:
+    case NumberSpace::MethodSelector:
+        return true;
+    case NumberSpace::Name:
+    case NumberSpace::NameOfText:
+    case NumberSpace::String:
+    case NumberSpace::StringCell:
+    case NumberSpace::KeyCell:
+    case NumberSpace::BuiltinCell:
+    case NumberSpace::BigInt:
+    case NumberSpace::GlobalBinding:
+    case NumberSpace::SiteCache:
+    case NumberSpace::CardOfWord:
+    case NumberSpace::ModuleNamespace:
+    case NumberSpace::ModuleBuiltinCell:
+    case NumberSpace::DataStorage:
+    case NumberSpace::DataElements:
+    case NumberSpace::RegExpLiteralCell:
+    case NumberSpace::TemplateObjectCell:
+    case NumberSpace::ArrayProfile:
+    case NumberSpace::EnvironmentHandedBack:
+    case NumberSpace::ClassGuard:
+    case NumberSpace::PropertyRun:
+    case NumberSpace::AtomOfComparedText:
+    case NumberSpace::ShownString:
+    case NumberSpace::AtomOfString:
+    case NumberSpace::Type:
+    case NumberSpace::RegExp:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
 JS_EXPORT_PRIVATE void forEachUnitBehind(const Mention&, std::span<const uint32_t> mentionWords, const Typed::Program&, const Typed::Facts&, const Typed::Plan&, NOESCAPE const ScopedLambda<void(CodeUnit)>&);
 enum class MentionKind : uint8_t { Call, ClosureWord };
-JS_EXPORT_PRIVATE void forEachUnitBehind(const Mention&, std::span<const uint32_t> mentionWords, const Typed::Program&, const Typed::Facts&, const Typed::Plan&, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>&);
+JS_EXPORT_PRIVATE void forEachUnitBehindSlowCase(const Mention&, std::span<const uint32_t> mentionWords, const Typed::Program&, const Typed::Facts&, const Typed::Plan&, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>&);
+inline void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mentionWords, const Typed::Program& program, const Typed::Facts& facts, const Typed::Plan& plan, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>& functor)
+{
+    if (mayHaveUnitsBehind(mention.space))
+        forEachUnitBehindSlowCase(mention, mentionWords, program, facts, plan, functor);
+}
 
 class FunctionNumbers {
 public:
@@ -308,7 +366,6 @@ struct PlacedStatics {
     Vector<PlacedVariable> variables;
     Vector<uint32_t> moduleValueOffsets;
     Vector<uint32_t> moduleNamespaceOffsets;
-    Vector<uint32_t> dataCellOffsets;
     Vector<uint32_t> dataStorageOffsets;
     Vector<uint32_t> regExpLiteralCellOffsets;
     Vector<uint32_t> templateObjectCellOffsets;
@@ -402,8 +459,15 @@ public:
     std::span<const TypeID> typesNeededAtRunTime() const { return m_typesNeededAtRunTime.span(); }
     std::optional<uint32_t> placeOfType(TypeID type) const
     {
-        auto found = std::ranges::lower_bound(m_placesOfTypes, type.bits(), { }, &PlaceOfType::bits);
-        return found != m_placesOfTypes.end() && found->bits == type.bits() ? std::optional(found->place) : std::nullopt;
+        std::span<const PlaceOfType> slots = m_placesOfTypes.span();
+        if (slots.empty())
+            return std::nullopt;
+        for (size_t slot = firstSlotOfType(type.bits(), slots.size());; slot = (slot + 1) & (slots.size() - 1)) {
+            if (!slots[slot].placePlusOne)
+                return std::nullopt;
+            if (slots[slot].bits == type.bits())
+                return slots[slot].placePlusOne - 1;
+        }
     }
     void setOffsetsOfTypes(Vector<uint32_t>&& offsets) { m_offsetsOfTypes = WTF::move(offsets); }
     void setNodesOfData(Vector<uint32_t>&& nodes) { m_nodesOfData = WTF::move(nodes); }
@@ -413,8 +477,13 @@ private:
 
     struct PlaceOfType {
         uint32_t bits;
-        uint32_t place;
+        uint32_t placePlusOne;
     };
+
+    static size_t firstSlotOfType(uint32_t bits, size_t numberOfSlots) { return (bits * 0x9e3779b1u) >> std::countl_zero(static_cast<uint32_t>(numberOfSlots - 1)); }
+
+    std::optional<uint32_t> numberOfInLine(NumberSpace, std::span<const uint32_t> key) const;
+    std::optional<uint32_t> valueOfSlowCase(const Mention&, std::span<const uint32_t> mentionWords, bool asInstanceWord) const;
 
     FunctionNumbers m_functions;
     std::unique_ptr<IdentifierNumbering> m_identifiers;
@@ -499,7 +568,6 @@ constexpr bool hasOneIDAsKey(NumberSpace space)
     case NumberSpace::CardOfVariable:
     case NumberSpace::ModuleValue:
     case NumberSpace::ModuleNamespace:
-    case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:
     case NumberSpace::EnvironmentHandedBack:
@@ -563,6 +631,11 @@ inline bool isVariableOfStaticsNamed(const Typed::PlannedVariable& planned, Vari
         || mentions.isMentioned(NumberSpace::CardOfVariable, id.index());
 }
 
+inline bool isClosureCellNamed(FunctionID function, const NamesOfTables& tables, const GatheredMentions& mentions)
+{
+    return tables.functionsWithClosureCell.get(function.index()) || mentions.isMentioned(NumberSpace::ClosureCell, function.index());
+}
+
 struct ImageNumbersBuilder {
     const NumberingInputs& inputs;
     GatheredMentions& mentions;
@@ -583,6 +656,42 @@ struct ImageNumbersBuilder {
 void numberWhatStaticsWaitFor(const NumberingInputs&, GatheredMentions&, const NamesOfTables&, ImageNumbers&, BuildContext&, NOESCAPE const ScopedLambda<void()>& laneBesideNumbering = scopedLambda<void()>([] { }));
 void layOutStaticsOfMentions(const NumberingInputs&, GatheredMentions&, const NamesOfTables&, ImageNumbers&, BuildContext&);
 void numberMentions(const NumberingInputs&, GatheredMentions&, const NamesOfTables&, ImageNumbers&, BuildContext&);
+
+template<typename T>
+void sortByWordKeepingEqualElementsInOrder(std::span<T> list, const Invocable<uint64_t(const T&)> auto& wordOf)
+{
+    constexpr size_t fewestSortedByBytes = 256;
+    constexpr size_t numberOfBytes = sizeof(uint64_t);
+    if (list.size() < fewestSortedByBytes) {
+        AOT::stableSortInLine(list, { }, wordOf);
+        return;
+    }
+
+    std::array<std::array<uint32_t, 256>, numberOfBytes> places { };
+    for (const T& element : list) {
+        uint64_t word = wordOf(element);
+        for (size_t byte = 0; byte < numberOfBytes; ++byte)
+            ++places[byte][static_cast<uint8_t>(word >> (8 * byte))];
+    }
+
+    Vector<T> scratch;
+    scratch.grow(list.size());
+    std::span<T> from = list;
+    std::span<T> to = scratch.mutableSpan();
+    for (size_t byte = 0; byte < numberOfBytes; ++byte) {
+        std::array<uint32_t, 256>& placesOfByte = places[byte];
+        if (placesOfByte[static_cast<uint8_t>(wordOf(from[0]) >> (8 * byte))] == list.size())
+            continue;
+        uint32_t next = 0;
+        for (uint32_t& place : placesOfByte)
+            next += std::exchange(place, next);
+        for (const T& element : from)
+            to[placesOfByte[static_cast<uint8_t>(wordOf(element) >> (8 * byte))]++] = element;
+        std::swap(from, to);
+    }
+    if (from.data() != list.data())
+        std::ranges::copy(from, list.begin());
+}
 
 } } // namespace JSC::AOT
 

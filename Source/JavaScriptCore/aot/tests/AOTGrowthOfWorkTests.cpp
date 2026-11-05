@@ -331,6 +331,54 @@ static void testWalkGrowsAsIterationsInRowDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
+enum class ReadInRowForGrowthTests : uint8_t {
+    OfOneOfThreeElements,
+    OfElementOfItsOwn,
+};
+
+static String earlyReturnsInRowForGrowthTests(ReadInRowForGrowthTests kind, unsigned numberOfStatements)
+{
+    StringBuilder text;
+    text.append("layout L0 kind=Instance name=\"Item\" module=m0 constructor=f2 fields=[{key=\"skip\" declared={type=boolean} flags=[IsRequired]}, {key=\"weight\" declared={type=number} flags=[IsRequired]}] ownFieldCount=2\n"_s);
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0 namespaceLayout=L(m0)\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = NewClosure function=f1\n    v1 = NewClosure function=f2\n"_s);
+    text.append("    v2 = NewClass v1 layout=L0\n    v3 = FinishClass v2 layout=L0\n    v4 = Boolean\n    v5 = Integer integer=2\n    v6 = Construct v3, -, v4, v5\n"_s);
+    text.append("    v7 = Builtin builtin=JSON\n    v8 = PropGet v7 key=\"parse\"\n    v9 = String string=\"{}\"\n    v10 = Call v8, v7, v9 calleeKey=\"parse\"\n"_s);
+    text.append("    v11 = NewArray v6, v10, v6 contents=undefined|null|L0\n    v12 = Integer\n    Jump -> next b1(v12)\n"_s);
+    text.append("  b1(v13: number):\n    LoopHint\n    v15 = Integer integer=300\n    v16 = Less v13, v15\n    Branch v16 -> taken b2(), notTaken b3()\n"_s);
+    text.append("  b2():\n    v17 = Call v0, -, v11\n    v18 = Increment v13\n    Jump -> next b1(v18)\n  b3():\n    Return v13\n}\n"_s);
+    text.append("function f1 name=\"run\" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {\n"_s);
+    text.append("  b0(v0: undefined|null|Array<undefined|null|L0>):\n"_s);
+    unsigned value = 1;
+    unsigned block = 1;
+    Vector<unsigned> kept;
+    for (unsigned statement = 0; statement < numberOfStatements; ++statement) {
+        text.append("    v"_s, value, " = Integer integer="_s, kind == ReadInRowForGrowthTests::OfElementOfItsOwn ? statement : statement % 3, '\n');
+        text.append("    v"_s, value + 1, " = ElemGet v0, v"_s, value, "\n    v"_s, value + 2, " = PropGet v"_s, value + 1, " key=\"skip\"\n    v"_s, value + 3, " = ToBoolean v"_s, value + 2, '\n');
+        text.append("    Branch v"_s, value + 3, " -> taken b"_s, block, "(), notTaken b"_s, block + 1, "()\n  b"_s, block, "():\n    Return v"_s, value, "\n  b"_s, block + 1, "():\n"_s);
+        text.append("    v"_s, value + 4, " = PropGet v"_s, value + 1, " key=\"weight\"\n"_s);
+        kept.append(value + 4);
+        value += 5;
+        block += 2;
+    }
+    text.append("    v"_s, value, " = NewArray "_s);
+    for (unsigned place = 0; place < kept.size(); ++place)
+        text.append(place ? ", v"_s : "v"_s, kept[place]);
+    text.append(" contents=anything\n    Return v"_s, value, "\n}\n"_s);
+    text.append("function f2 name=\"Item\" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {\n"_s);
+    text.append("  b0(v0: anything, v1: boolean, v2: number):\n    v3 = GetConstructPrototype v0 layout=L0\n    v4 = NewObject v3 layout=L0\n    PropSet v4, v1 key=\"skip\"\n    PropSet v4, v2 key=\"weight\"\n    Return v4\n}\n"_s);
+    return text.toString();
+}
+
+template<ReadInRowForGrowthTests kind, unsigned numberOfStatements>
+static void testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo()
+{
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(earlyReturnsInRowForGrowthTests(kind, numberOfStatements), FunctionID(1u));
+    std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(earlyReturnsInRowForGrowthTests(kind, 4 * numberOfStatements), FunctionID(1u));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
 enum class StatementInRowForGrowthTests : uint8_t {
     TestThatLeaves,
     Loop,
@@ -658,6 +706,35 @@ static void testRunGrowsAsAwaitsBehindLongListDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
+static String classDefinedMemberByMemberForGrowthTests(unsigned numberOfMethods)
+{
+    StringBuilder text;
+    text.append("layout L0 kind=Instance name=\"Wide\" module=m0 constructor=f1\nmodule m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 name=\"main\" kind=Module results=[{type=anything}] {\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"begin\" [isFreeName]\n    v2 = Call v1, -\n"_s);
+    text.append("    v3 = NewClosure function=f1\n    v4 = NewClass v3 layout=L0\n"_s);
+    unsigned value = 5;
+    for (unsigned method = 0; method < numberOfMethods; ++method, value += 2) {
+        text.append("    v"_s, value, " = NewClosure function=f"_s, method + 3, '\n');
+        text.append("    DefineMethod v4, v"_s, value, " layout=L0 index="_s, method, " key=\"m"_s, method, "\"\n"_s);
+    }
+    text.append("    v"_s, value, " = FinishClass v4 layout=L0\n    v"_s, value + 1, " = NewClosure function=f2\n    v"_s, value + 2, " = Call v"_s, value + 1, ", -\n"_s);
+    text.append("    v"_s, value + 3, " = PropGet v0 key=\"end\" [isFreeName]\n    v"_s, value + 4, " = Call v"_s, value + 3, ", -, v"_s, value + 2, "\n    Return\n}\n"_s);
+    text.append("function f1 name=\"Wide\" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {\n"_s);
+    text.append("  b0(v0: anything):\n    v1 = GetConstructPrototype v0 layout=L0\n    v2 = NewObject v1 layout=L0\n    Return v2\n}\n"_s);
+    text.append("function f2 name=\"later\" module=m0 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Integer\n    Return v0\n}\n"_s);
+    for (unsigned method = 0; method < numberOfMethods; ++method)
+        text.append("function f"_s, method + 3, " module=m0 kind=Method thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Integer integer=1\n    Return v0\n}\n"_s);
+    return text.toString();
+}
+
+static void testRunGrowsAsMembersThatClassDefinesOneByOneDo()
+{
+    constexpr unsigned numberOfMethods = 1000;
+    std::optional<uint64_t> smaller = instructionsOfRunForGrowthTests(classDefinedMemberByMemberForGrowthTests(numberOfMethods));
+    std::optional<uint64_t> large = instructionsOfRunForGrowthTests(classDefinedMemberByMemberForGrowthTests(4 * numberOfMethods));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
+}
+
 static void testResumptionCostsWhatWasKeptHoweverLargeFrameIs()
 {
     constexpr unsigned numberOfClosures = 2000;
@@ -676,6 +753,8 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/the-facts-grow-as-the-classes-below-one-class-do"_s, testFactsGrowAsClassesBelowOneClassDo },
         { "growth-of-work/the-walk-grows-as-the-loops-in-a-row-do"_s, testWalkGrowsAsLoopsInRowDo },
         { "growth-of-work/the-walk-grows-as-the-loops-up-to-one-bound-do"_s, testWalkGrowsAsLoopsUpToOneBoundDo },
+        { "growth-of-work/the-walk-grows-as-the-early-returns-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfOneOfThreeElements, 1000> },
+        { "growth-of-work/the-walk-grows-as-the-early-returns-behind-guesses-of-their-own-that-each-leave-a-value-alive-do"_s, testWalkGrowsAsEarlyReturnsThatEachLeaveValueAliveDo<ReadInRowForGrowthTests::OfElementOfItsOwn, 150> },
         { "growth-of-work/the-liveness-of-a-body-grows-as-the-values-read-at-its-end-do"_s, testLivenessGrowsAsValuesReadAtEndDo<StatementInRowForGrowthTests::TestThatLeaves> },
         { "growth-of-work/the-liveness-of-a-body-grows-as-the-loops-that-values-live-across-do"_s, testLivenessGrowsAsValuesReadAtEndDo<StatementInRowForGrowthTests::Loop> },
         { "growth-of-work/the-liveness-of-a-body-grows-as-the-blocks-under-one-handler-do"_s, testLivenessGrowsAsValuesReadAtEndDo<StatementInRowForGrowthTests::UnderOneHandler> },
@@ -687,7 +766,8 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/a-run-grows-as-the-graphs-asked-for-in-one-job-do"_s, testRunGrowsAsGraphsAskedForInOneJobDo },
         { "growth-of-work/a-run-grows-as-the-graphs-of-several-levels-asked-for-in-one-job-do"_s, testRunGrowsAsGraphsOfSeveralLevelsAskedForInOneJobDo },
         { "growth-of-work/a-run-grows-as-the-awaits-behind-a-long-list-do"_s, testRunGrowsAsAwaitsBehindLongListDo },
-        { "growth-of-work/a-resumption-costs-what-was-kept-however-large-the-frame-is"_s, testResumptionCostsWhatWasKeptHoweverLargeFrameIs, "coroutine-bytes: emitCopyFrameToStack() clears every word that no suspension keeps, at every resumption: a call with K arguments ahead of K awaits costs the square of K. The clearing may not go (8 of 721 programs then hold an object for ever); the resumed frame has to be shorter"_s },
+        { "growth-of-work/a-run-grows-as-the-members-that-a-class-defines-one-by-one-do"_s, testRunGrowsAsMembersThatClassDefinesOneByOneDo },
+        { "growth-of-work/a-resumption-costs-what-was-kept-however-large-the-frame-is"_s, testResumptionCostsWhatWasKeptHoweverLargeFrameIs, "emitCopyFrameToStack() clears every word that no suspension keeps, at every resumption: a call with K arguments ahead of K awaits costs the square of K. The clearing may not go (8 of 721 programs then hold an object for ever); the resumed frame has to be shorter"_s },
     };
     return tests;
 }

@@ -8,10 +8,10 @@
 
 #if ENABLE(AOT)
 
-#include "AOTEffectsNet.h"
 #include "AOTCodeRecords.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTEffectsNet.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTEntryEmitter.h"
 #include "AOTHintEmitter.h"
@@ -89,6 +89,7 @@ GenerationResult CodeGenerator::run()
         return GenerationResult::Failed;
 
     m_values = allocateZeroedSpan<LValue>(m_proc.arena(), code().numberOfValues());
+    m_mayReleaseBehindLastReads = code().opcodesOfValues().contains(Opcode::ReleaseHint);
     orderBlocks();
     createBlocks();
     followNumbersOutOfBytes();
@@ -99,15 +100,16 @@ GenerationResult CodeGenerator::run()
     for (size_t position = 0; position < m_order.size(); ++position) {
         if (m_hasFailed)
             return GenerationResult::Failed;
-        BlockID block = m_order[position];
-        if (code().at(block).isLoopHead) {
+        BlockID id = m_order[position];
+        const Block& block = code().at(id);
+        if (block.isLoopHead) {
             if (std::optional<CountedLoop> loop = findCountedLoopAt(position))
                 layOutTurns(*loop);
             if (m_hasFailed)
                 return GenerationResult::Failed;
         }
-        generateBlock(block);
-        m_scopeAtEndOfBlock[block.index()] = m_out.forkScope();
+        generateBlock(id, block);
+        new (NotNull, &m_scopeAtEndOfBlock[id.index()]) ScopeFork(m_out.forkScope());
     }
     return m_hasFailed ? GenerationResult::Failed : GenerationResult::Generated;
 }
@@ -115,11 +117,6 @@ GenerationResult CodeGenerator::run()
 const Function& CodeGenerator::function() const
 {
     return program().at(unit().function);
-}
-
-MentionList& CodeGenerator::mentions()
-{
-    return m_records.mentions;
 }
 
 FormAtPlace CodeGenerator::sayFormNamedFor(const OperationContext& context, StateOfKnowledge state) const
@@ -181,27 +178,41 @@ bool CodeGenerator::isDeferredClosureSlow(const Operation& named) const
 
 void CodeGenerator::computeEffectsOf(const OperationContext& context) const
 {
-    TypingContext typing { program(), m_inputs.types, PositionTypes::knowingNothing() };
-    Vector<TypeID, 8> typesOfOperands;
-    for (ValueID operand : context.instruction().operands())
-        typesOfOperands.append(operand ? typeIDOf(operand) : TypeID());
-    OperandTypes operandTypes { typesOfOperands.span() };
+    std::span<const ValueID> operands = context.instruction().operands();
+    std::array<TypeID, 8> typesOfFewOperands;
+    Vector<TypeID> typesOfManyOperands;
+    std::span<TypeID> typesOfOperands(typesOfFewOperands);
+    if (operands.size() > typesOfFewOperands.size()) [[unlikely]] {
+        typesOfManyOperands.grow(operands.size());
+        typesOfOperands = typesOfManyOperands.mutableSpan();
+    }
+    for (size_t index = 0; index < operands.size(); ++index) {
+        ValueID operand = operands[index];
+        typesOfOperands[index] = operand ? typeIDOf(operand) : TypeID();
+    }
+    OperandTypes operandTypes { typesOfOperands.first(operands.size()) };
     if (!context.valueID()) {
-        context.m_effects = effectsOfTerminator(typing, static_cast<const TerminatorContext&>(context).terminator(), operandTypes);
+        new (NotNull, &context.m_effects) Effects(effectsOfTerminator(m_typing, static_cast<const TerminatorContext&>(context).terminator(), operandTypes));
+        context.m_hasEffects = true;
         return;
     }
 
     const Operation& operation = static_cast<const ValueContext&>(context).value();
-    Effects& effects = context.m_effects.emplace(Typed::effectsOf(typing, operation, operandTypes, operation.type));
+    Effects& effects = *new (NotNull, &context.m_effects) Effects(Typed::effectsOf(m_typing, operation, operandTypes, operation.type));
+    context.m_hasEffects = true;
     EffectTraits traits = operation.traits();
     if (!traits.mayThrow())
         effects.mayThrow = false;
     else if (!traits.mayThrowByRule())
         effects.mayThrow &= ThrowEffect::onlyForLackOfMemory();
-    effects.mayCollect &= traits.mayCollect();
-    effects.mayCallUnknownCode &= traits.mayCallUnknownCode();
-    effects.maySuspend &= traits.maySuspend();
-    effects.mayBeTerminated &= traits.mayBeTerminated();
+    if (!traits.mayCollect())
+        effects.mayCollect = false;
+    if (!traits.mayCallUnknownCode())
+        effects.mayCallUnknownCode = false;
+    if (!traits.maySuspend())
+        effects.maySuspend = false;
+    if (!traits.mayBeTerminated())
+        effects.mayBeTerminated = false;
     if (m_rowThatSaysLess) [[unlikely]]
         RowThatSaysLess::decode(m_rowThatSaysLess).cut(KindOfEffectsRow::Operation, static_cast<unsigned>(operation.opcode), effects);
 }
@@ -345,11 +356,8 @@ void CodeGenerator::orderBlocks()
         while (enter(step) || takeStep(step)) { }
     }
     m_order = order.last(numberOrdered);
-    for (BlockID block : m_order) {
-        BlockID& predecessor = m_singlePredecessors[block.index()];
-        if (predecessor == enteredOtherwise)
-            predecessor = BlockID();
-    }
+    for (const WayIntoBlock& way : m_waysIntoJoins)
+        m_singlePredecessors[way.to.index()] = BlockID();
 }
 
 void CodeGenerator::findDominators()
@@ -455,10 +463,8 @@ void CodeGenerator::numberDominatorTree()
     }
 }
 
-bool CodeGenerator::dominates(BlockID home, BlockID user)
+ALWAYS_INLINE bool CodeGenerator::dominates(BlockID home, BlockID user)
 {
-    if (home == m_onlyEntryBlock)
-        return true;
     if (m_dominatorsByPlace.empty()) {
         BlockID above = user;
         for (unsigned step = 0; step < longestWayUpSinglePredecessors; ++step) {
@@ -488,16 +494,7 @@ bool CodeGenerator::dominates(BlockID home, BlockID user)
     return m_subtreesByPlace[placeOfUser].first - subtreeOfHome.first < subtreeOfHome.size;
 }
 
-void CodeGenerator::createBlocks()
-{
-    m_blocks = allocateZeroedSpan<LBasicBlock>(m_proc.arena(), code().numberOfBlocks());
-    for (size_t position = 0; position < m_order.size(); ++position) {
-        if (!goesOnBehindJump(position))
-            m_blocks[m_order[position].index()] = m_out.newBlock();
-    }
-}
-
-bool CodeGenerator::goesOnBehindJump(size_t positionInOrder) const
+ALWAYS_INLINE bool CodeGenerator::goesOnBehindJump(size_t positionInOrder) const
 {
     if (!positionInOrder)
         return false;
@@ -512,6 +509,15 @@ bool CodeGenerator::goesOnBehindJump(size_t positionInOrder) const
     return std::ranges::none_of(block.parameters(), [&](ValueID parameter) {
         return code().isNeeded(parameter) && hasRegister(representationOf(parameter));
     });
+}
+
+void CodeGenerator::createBlocks()
+{
+    m_blocks = allocateZeroedSpan<LBasicBlock>(m_proc.arena(), code().numberOfBlocks());
+    for (size_t position = 0; position < m_order.size(); ++position) {
+        if (!goesOnBehindJump(position))
+            m_blocks[m_order[position].index()] = m_out.newBlock();
+    }
 }
 
 bool CodeGenerator::isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft) const
@@ -671,9 +677,233 @@ void CodeGenerator::followNumbersOutOfBytes()
     }
 }
 
-void CodeGenerator::generateBlock(BlockID id)
+ALWAYS_INLINE ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Terminator& terminator) const
 {
+    if (terminator.kind != TerminatorKind::Branch)
+        return { };
+    ValueID condition = terminator.conditionOperand();
+    const Operation& test = code().at(condition);
+    if (test.block() != id || branchesOf(test.opcode) != Branches::May || code().useCountOf(condition) != 1)
+        return { };
+    if (test.representation != Representation::Boolean || isNeverType(test.type))
+        return { };
+    return condition;
+}
+
+ALWAYS_INLINE bool CodeGenerator::isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const
+{
+    if ((call.opcode != Opcode::Call && call.opcode != Opcode::CallDirect) || index + 1 == valuesOfBlock.size())
+        return false;
+    const Operation& next = code().at(valuesOfBlock[index + 1]);
+    return next.opcode == Opcode::AwaitBySavingFrame && next.awaitedOperand() == valuesOfBlock[index];
+}
+
+static constexpr OpcodeSet sumsThatMayStayBoxed { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+
+ValueID CodeGenerator::sumBoxedBySlow(const Operation& box) const
+{
+    ValueID sum = box.valueOperand();
+    const Operation& operation = code().at(sum);
+    BlockID block = box.block();
+    if (!sumsThatMayStayBoxed.contains(operation.opcode) || operation.form() != OperatorForm::Numbers)
+        return { };
+    if (operation.block() != block || code().useCountOf(sum) != 1 || !code().releasesBehindLastReadsIn(block).empty())
+        return { };
+
+    bool someTermLiesBoxed = false;
+    auto isTerm = [&](ValueID id) {
+        const Operation& term = code().at(id);
+        if (code().isConstant(id))
+            return term.opcode == Opcode::Integer && isRepresentableAs<int32_t>(term.integer());
+        if (term.block() != block || code().useCountOf(id) != 1)
+            return false;
+        if (term.opcode == Opcode::IntegerToNumber)
+            return term.representation == Representation::Double && representationOf(term.valueOperand()) == Representation::Int32;
+        if (term.opcode != Opcode::Unbox || representationOf(term.valueOperand()) != Representation::JSValue)
+            return false;
+        const Type& boxed = typeOf(term.valueOperand());
+        if (!(term.representation == Representation::Double && boxed.isNumber()) && !(term.representation == Representation::OptionalDouble && boxed.isNumberOrNullish()))
+            return false;
+        someTermLiesBoxed = true;
+        return true;
+    };
+    bool isStep = operation.opcode == Opcode::Increment || operation.opcode == Opcode::Decrement;
+    bool hasTermsAlone = isStep ? isTerm(operation.valueOperand()) : isTerm(operation.leftOperand()) && isTerm(operation.rightOperand());
+    return hasTermsAlone && someTermLiesBoxed ? sum : ValueID();
+}
+
+bool CodeGenerator::waitsForBoxOfSum(ValueID id, const Operation& operation) const
+{
+    ValueID sum = id;
+    if (operation.opcode == Opcode::Unbox || operation.opcode == Opcode::IntegerToNumber)
+        sum = code().onlyUserOf(id);
+    else if (!sumsThatMayStayBoxed.contains(operation.opcode))
+        return false;
+    ValueID box = sum ? code().onlyUserOf(sum) : ValueID();
+    return box && sumBoxedBy(code().at(box)) == sum;
+}
+
+NEVER_INLINE void CodeGenerator::dispatchWatched(const ValueContext& context)
+{
+    uint32_t siteOfUser = FormsSaid::noSite;
+    if (m_notesForms)
+        siteOfUser = m_records.formsSaid.enter(context.id(), context.opcode(), context.block(), m_proc.numberOfOperations());
+    declareAccessesOf(context);
+
+    if (m_checksEffects) {
+        RuntimeCallEmitter::WatchOfEffects watch;
+        emitter<RuntimeCallEmitter>().beginWatchOfOperation(context, watch);
+        dispatch(context);
+        if (watch.isSet() && !m_hasFailed && currentBlockIsOpen() && !isNeverType(context->type))
+            emitter<RuntimeCallEmitter>().endWatchOfEffects(context, watch, nullptr);
+        else
+            emitter<RuntimeCallEmitter>().abandonWatchOfOperation(watch);
+    } else
+        dispatch(context);
+
+    if (m_notesForms)
+        m_records.formsSaid.leave(siteOfUser, m_proc.numberOfOperations());
+}
+
+ALWAYS_INLINE void CodeGenerator::generate(const ValueContext& context)
+{
+    const OperationContext* user = std::exchange(m_operation, &context);
+    Machine::Origin originOfUser = m_out.origin();
+    m_out.setOrigin(machineOriginOf(context.id()));
+    if (m_watchesOperations) [[unlikely]]
+        dispatchWatched(context);
+    else
+        dispatch(context);
+    m_out.setOrigin(originOfUser);
+    m_operation = user;
+    if (m_checksAllocation) [[unlikely]] {
+        if (user)
+            declareAccessesSlow(*user);
+        else
+            m_out.clearDeclaredAccesses();
+    }
+
+    size_t index = context.id().index();
+    if (m_values[index] || !hasRegister(context.representation())) [[likely]]
+        return;
+    if (m_hasFailed || m_definitionTaken || context.isBranchCondition() || context.returnCall() || isNeverType(context->type))
+        return;
+    RELEASE_ASSERT(hasResults(index));
+}
+
+ALWAYS_INLINE void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& operation, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind)
+{
+    if (!m_sumsOfIntegers.isEmpty() && addToSumOfIntegers(id)) [[unlikely]]
+        return;
+    if (isDeferredClosure(operation))
+        return;
+    if ((operation.representation == Representation::Double || operation.representation == Representation::OptionalDouble) && waitsForBoxOfSum(id, operation)) [[unlikely]]
+        return;
+    if (const PlacedSlot* scope = slotOfScopeReadInPlaceOfClosure(id, operation); scope && !operationsBehind.empty() && operationsBehind.front() == code().onlyUserOf(id)) {
+        m_closureReadForItsScope = id;
+        m_slotOfScopeOfClosureRead = scope;
+        return;
+    }
+    if (operation.traits().mayThrow())
+        m_isAheadOfWhatMayThrow = false;
+    ValueContext context(block, id, operation, handlerOf(block));
+    context.m_isAwaitedAtOnce = isAwaitedAtOnce;
+    context.m_operationsBehind = operationsBehind;
+    generate(context);
+}
+
+ALWAYS_INLINE void CodeGenerator::generateTerminator(BlockID id, const Block& block, bool generatesCondition)
+{
+    RELEASE_ASSERT(block.hasEnded() && !m_operation);
+    const Terminator& terminator = block.terminator;
+    m_isAheadOfWhatMayThrow = false;
+    TerminatorContext context(id, terminator, handlerOf(id));
+    context.m_generatesCondition = generatesCondition;
+
+    m_out.setOrigin(m_proc.traits().notesRangesOfOrigins ? machineOriginOf(terminator.kind) : Machine::Origin());
+
+    m_operation = &context;
+    declareAccessesOf(context);
+    dispatch(context);
+    m_operation = nullptr;
+    if (m_checksAllocation) [[unlikely]]
+        m_out.clearDeclaredAccesses();
+    RELEASE_ASSERT(m_hasFailed || currentBlockIsOpen() == m_nextBlockGoesOnHere);
+}
+
+void CodeGenerator::generateBranchCondition(const TerminatorContext& terminator, ValueID condition, BranchTargets targets)
+{
+    ValueContext context(terminator.block(), condition, code().at(condition), handlerOf(terminator.block()));
+    context.m_branchTargets = targets;
+    generate(context);
+    RELEASE_ASSERT(m_hasFailed || !currentBlockIsOpen());
+}
+
+std::optional<CodeGenerator::WaysOfTruth> CodeGenerator::waysOfTruthOf(const ValueContext& read) const
+{
+    BlockID id = read.block();
     const Block& block = code().at(id);
+    std::span<const ValueID> behind = read.operationsBehind();
+    if (block.isInLoop || m_headOfTurnsLaidOut || behind.size() != 1 || !code().releasesBehindLastReadsIn(id).empty())
+        return std::nullopt;
+    auto testOfEnd = [&](BlockID tested, const Block& ended) -> const Operation* {
+        ValueID test = testReadByBranchAlone(tested, ended.terminator);
+        return test && code().at(test).valueOperand() == read.id() ? &code().at(test) : nullptr;
+    };
+    auto wayAlong = [&](EdgeID along) -> std::optional<BlockEdge> {
+        const Edge& edge = code().at(along);
+        const Block& target = code().at(edge.to);
+        if (!edge.arguments().empty() || !target.parameters().empty() || target.isLoopHead)
+            return std::nullopt;
+        return BlockEdge(blockFor(edge.to), edgeClassLeadingTo(target.frequency));
+    };
+    auto asksFor = [&](const Operation& test, TypeID asked) {
+        TypeArena& types = inputs().types;
+        return test.opcode == Opcode::TypeTest && types.isSubset(test.testedType(), asked) && types.isSubset(asked, test.testedType());
+    };
+    static constexpr OpcodeSet tests { Opcode::ToBoolean, Opcode::TypeTest };
+    if (block.terminator.kind != TerminatorKind::Branch || !tests.contains(opcodeOf(behind[0])))
+        return std::nullopt;
+    const Operation* first = testOfEnd(id, block);
+    if (!first || block.terminator.conditionOperand() != behind[0])
+        return std::nullopt;
+    std::optional<BlockEdge> whereTrue = wayAlong(block.terminator.taken());
+    if (!whereTrue)
+        return std::nullopt;
+    if (first->opcode == Opcode::ToBoolean) {
+        std::optional<BlockEdge> whereFalse = wayAlong(block.terminator.notTaken());
+        if (first->form() != OperatorForm::Generic || code().useCountOf(read.id()) != 1 || !whereFalse)
+            return std::nullopt;
+        return WaysOfTruth { { *whereTrue, *whereFalse }, false };
+    }
+
+    BlockID others = code().at(block.terminator.notTaken()).to;
+    const Block& blockOfOthers = code().at(others);
+    if (!asksFor(*first, TypeTable::object) || code().useCountOf(read.id()) != 3 || m_singlePredecessors[others.index()] != id || code().valuesOf(others).size() != 1 || blockOfOthers.terminator.kind != TerminatorKind::Branch)
+        return std::nullopt;
+    const Operation* second = testOfEnd(others, blockOfOthers);
+    if (!second || !asksFor(*second, TypeTable::nullish))
+        return std::nullopt;
+    BlockID rest = code().at(blockOfOthers.terminator.notTaken()).to;
+    std::span<const ValueID> valuesOfRest = code().valuesOf(rest);
+    if (m_singlePredecessors[rest.index()] != others || valuesOfRest.empty() || opcodeOf(valuesOfRest[0]) != Opcode::ToBoolean || code().at(valuesOfRest[0]).valueOperand() != read.id())
+        return std::nullopt;
+    std::optional<BlockEdge> whereNothing = wayAlong(blockOfOthers.terminator.taken());
+    if (!whereNothing)
+        return std::nullopt;
+    return WaysOfTruth { { *whereTrue, *whereNothing }, true };
+}
+
+void CodeGenerator::generateReturnedCall(const TerminatorContext& terminator, ValueID call)
+{
+    ValueContext context(terminator.block(), call, code().at(call), handlerOf(terminator.block()));
+    context.m_returnCall = &terminator;
+    generate(context);
+    RELEASE_ASSERT(m_hasFailed || !currentBlockIsOpen());
+}
+
+void CodeGenerator::generateBlock(BlockID id, const Block& block)
+{
     std::span<const ValueID> values = code().valuesOf(id);
     m_blockOfCachedHandler = id;
     m_cachedHandler = handlerEdgeOf(id, block);
@@ -692,7 +922,9 @@ void CodeGenerator::generateBlock(BlockID id)
         RELEASE_ASSERT(!values.empty() && values.back() == owned);
         values = values.first(values.size() - 1);
     }
-    std::span<const ReleaseBehindLastRead> releases = code().releasesBehindLastReadsIn(id);
+    std::span<const ReleaseBehindLastRead> releases;
+    if (m_mayReleaseBehindLastReads) [[unlikely]]
+        releases = code().releasesBehindLastReadsIn(id);
     auto releaseBehind = [&](ValueID lastRead) {
         for (; !releases.empty() && (!releases.front().behind || (lastRead && releases.front().behind <= lastRead)); releases = releases.subspan(1))
             emitter<HintEmitter>().release(releases.front().released);
@@ -730,7 +962,8 @@ void CodeGenerator::generateBlock(BlockID id)
             m_out.unreachable();
         return;
     }
-    releaseBehind(values.empty() ? ValueID() : values.back());
+    if (!releases.empty()) [[unlikely]]
+        releaseBehind(values.empty() ? ValueID() : values.back());
     generateTerminator(id, block, testWaitsForBranch);
 }
 
@@ -752,11 +985,26 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
 {
     BlockID head = m_order[positionOfHead];
     const Block& blockOfHead = code().at(head);
-    if (blockOfHead.frequency != BlockFrequency::Normal || blockOfHead.handler || blockOfHead.subject || blockOfHead.isEntry || blockOfHead.isHandlerBlock() || !code().releasesBehindLastReadsIn(head).empty())
+    if (blockOfHead.frequency != BlockFrequency::Normal || code().handlerOf(head) || blockOfHead.subject || blockOfHead.isEntry || blockOfHead.isHandlerBlock() || !code().releasesBehindLastReadsIn(head).empty())
         return std::nullopt;
 
     CountedLoop loop { .positionOfHead = positionOfHead };
-    ValueID test = testReadByBranchAlone(head, blockOfHead.terminator);
+    BlockID asking = head;
+    size_t positionOfAsking = positionOfHead;
+    if (blockOfHead.terminator.kind == TerminatorKind::Jump) {
+        const Edge& behindPoll = code().at(blockOfHead.terminator.next());
+        if (!behindPoll.arguments().empty() || positionOfHead + 1 == m_order.size() || m_order[positionOfHead + 1] != behindPoll.to || m_singlePredecessors[behindPoll.to.index()] != head)
+            return std::nullopt;
+        asking = behindPoll.to;
+        ++positionOfAsking;
+        const Block& block = code().at(asking);
+        if (!block.isInLoop || block.isLoopHead || code().handlerOf(asking) || block.subject || block.isEntry || block.isHandlerBlock() || block.frequency != blockOfHead.frequency)
+            return std::nullopt;
+        if (!block.parameters().empty() || code().valuesOf(asking).size() != 1 || !code().releasesBehindLastReadsIn(asking).empty())
+            return std::nullopt;
+    }
+    const Block& blockThatAsks = code().at(asking);
+    ValueID test = testReadByBranchAlone(asking, blockThatAsks.terminator);
     if (!test)
         return std::nullopt;
     for (ValueID value : code().valuesOf(head)) {
@@ -782,13 +1030,13 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         return std::nullopt;
     if (std::ranges::any_of(parameters, [&](ValueID parameter) { return isCarriedBoxed(parameter); }))
         return std::nullopt;
-    const Edge& intoTurn = code().at(blockOfHead.terminator.taken());
-    if (!intoTurn.arguments().empty() || positionOfHead + 1 == m_order.size() || m_order[positionOfHead + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != head)
+    const Edge& intoTurn = code().at(blockThatAsks.terminator.taken());
+    if (!intoTurn.arguments().empty() || positionOfAsking + 1 == m_order.size() || m_order[positionOfAsking + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != asking)
         return std::nullopt;
 
-    unsigned numberOfPlaces = std::min<size_t>(placesLookedAtBehindHead, m_order.size() - positionOfHead - 1);
+    unsigned numberOfPlaces = std::min<size_t>(placesLookedAtBehindHead, m_order.size() - positionOfAsking - 1);
     auto blockAt = [&](unsigned place) {
-        return m_order[positionOfHead + 1 + place];
+        return m_order[positionOfAsking + 1 + place];
     };
     auto placeOf = [&](BlockID block) -> std::optional<unsigned> {
         for (unsigned place = 0; place < numberOfPlaces; ++place) {
@@ -809,7 +1057,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     };
     auto mayBelongToTurn = [&](BlockID id) {
         const Block& block = code().at(id);
-        if (!block.isInLoop || block.isLoopHead || block.handler || block.subject || block.isEntry || block.isHandlerBlock() || block.frequency != blockOfHead.frequency)
+        if (!block.isInLoop || block.isLoopHead || code().handlerOf(id) || block.subject || block.isEntry || block.isHandlerBlock() || block.frequency != blockOfHead.frequency)
             return false;
         if (!code().releasesBehindLastReadsIn(id).empty() || std::ranges::any_of(block.parameters(), [&](ValueID parameter) { return isCarriedBoxed(parameter); }))
             return false;
@@ -867,7 +1115,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         if (loop.turn.size() == mostBlocksInTurnLaidOut)
             return std::nullopt;
         loop.turn.append(blockAt(place));
-        loop.positionsOfTurn.append(positionOfHead + 1 + place);
+        loop.positionsOfTurn.append(positionOfAsking + 1 + place);
         for (ValueID value : code().valuesOf(blockAt(place))) {
             const Operation& operation = code().at(value);
             if (++numberOfOperations > mostOperationsInTurnLaidOut)
@@ -1273,173 +1521,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         m_values[parameters[index].index()] = phisOfWrittenHead[index];
 }
 
-ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Terminator& terminator) const
-{
-    if (terminator.kind != TerminatorKind::Branch)
-        return { };
-    ValueID condition = terminator.conditionOperand();
-    const Operation& test = code().at(condition);
-    if (test.block() != id || branchesOf(test.opcode) != Branches::May || code().useCountOf(condition) != 1)
-        return { };
-    if (test.representation != Representation::Boolean || isNeverType(test.type))
-        return { };
-    return condition;
-}
-
-bool CodeGenerator::isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const
-{
-    if ((call.opcode != Opcode::Call && call.opcode != Opcode::CallDirect) || index + 1 == valuesOfBlock.size())
-        return false;
-    const Operation& next = code().at(valuesOfBlock[index + 1]);
-    return next.opcode == Opcode::AwaitBySavingFrame && next.awaitedOperand() == valuesOfBlock[index];
-}
-
-static constexpr OpcodeSet sumsThatMayStayBoxed { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
-
-ValueID CodeGenerator::sumBoxedBy(const Operation& box) const
-{
-    if (box.opcode != Opcode::Box || box.representation != Representation::JSValue || m_followsNumbersOutOfBytes)
-        return { };
-    ValueID sum = box.valueOperand();
-    const Operation& operation = code().at(sum);
-    BlockID block = box.block();
-    if (!sumsThatMayStayBoxed.contains(operation.opcode) || operation.representation != Representation::Double || operation.form() != OperatorForm::Numbers)
-        return { };
-    if (operation.block() != block || code().useCountOf(sum) != 1 || !code().releasesBehindLastReadsIn(block).empty())
-        return { };
-
-    bool someTermLiesBoxed = false;
-    auto isTerm = [&](ValueID id) {
-        const Operation& term = code().at(id);
-        if (code().isConstant(id))
-            return term.opcode == Opcode::Integer && isRepresentableAs<int32_t>(term.integer());
-        if (term.block() != block || code().useCountOf(id) != 1 || term.representation != Representation::Double)
-            return false;
-        if (term.opcode == Opcode::IntegerToNumber)
-            return representationOf(term.valueOperand()) == Representation::Int32;
-        if (term.opcode != Opcode::Unbox || representationOf(term.valueOperand()) != Representation::JSValue || !typeOf(term.valueOperand()).isNumber())
-            return false;
-        someTermLiesBoxed = true;
-        return true;
-    };
-    bool isStep = operation.opcode == Opcode::Increment || operation.opcode == Opcode::Decrement;
-    bool hasTermsAlone = isStep ? isTerm(operation.valueOperand()) : isTerm(operation.leftOperand()) && isTerm(operation.rightOperand());
-    return hasTermsAlone && someTermLiesBoxed ? sum : ValueID();
-}
-
-bool CodeGenerator::waitsForBoxOfSum(ValueID id, const Operation& operation) const
-{
-    ValueID sum = id;
-    if (operation.opcode == Opcode::Unbox || operation.opcode == Opcode::IntegerToNumber)
-        sum = code().onlyUserOf(id);
-    else if (!sumsThatMayStayBoxed.contains(operation.opcode))
-        return false;
-    ValueID box = sum ? code().onlyUserOf(sum) : ValueID();
-    return box && sumBoxedBy(code().at(box)) == sum;
-}
-
-void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& operation, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind)
-{
-    if (!m_sumsOfIntegers.isEmpty() && addToSumOfIntegers(id)) [[unlikely]]
-        return;
-    if (isDeferredClosure(operation))
-        return;
-    if (operation.representation == Representation::Double && waitsForBoxOfSum(id, operation)) [[unlikely]]
-        return;
-    if (const PlacedSlot* scope = slotOfScopeReadInPlaceOfClosure(id, operation); scope && !operationsBehind.empty() && operationsBehind.front() == code().onlyUserOf(id)) {
-        m_closureReadForItsScope = id;
-        m_slotOfScopeOfClosureRead = scope;
-        return;
-    }
-    if (operation.traits().mayThrow())
-        m_isAheadOfWhatMayThrow = false;
-    ValueContext context(block, id, operation, handlerOf(block));
-    context.m_isAwaitedAtOnce = isAwaitedAtOnce;
-    context.m_operationsBehind = operationsBehind;
-    generate(context);
-}
-
-void CodeGenerator::dispatchWatched(const ValueContext& context)
-{
-    uint32_t siteOfUser = FormsSaid::noSite;
-    if (m_notesForms)
-        siteOfUser = m_records.formsSaid.enter(context.id(), context.opcode(), context.block(), m_proc.numberOfOperations());
-    declareAccessesOf(context);
-
-    if (m_checksEffects) {
-        RuntimeCallEmitter::WatchOfEffects watch;
-        emitter<RuntimeCallEmitter>().beginWatchOfOperation(context, watch);
-        dispatch(context);
-        if (watch.isSet() && !m_hasFailed && currentBlockIsOpen() && !isNeverType(context->type))
-            emitter<RuntimeCallEmitter>().endWatchOfEffects(context, watch, nullptr);
-        else
-            emitter<RuntimeCallEmitter>().abandonWatchOfOperation(watch);
-    } else
-        dispatch(context);
-
-    if (m_notesForms)
-        m_records.formsSaid.leave(siteOfUser, m_proc.numberOfOperations());
-}
-
-void CodeGenerator::generate(const ValueContext& context)
-{
-    const OperationContext* user = std::exchange(m_operation, &context);
-    Machine::Origin originOfUser = m_out.origin();
-    m_out.setOrigin(machineOriginOf(context.id()));
-    if (m_watchesOperations) [[unlikely]]
-        dispatchWatched(context);
-    else
-        dispatch(context);
-    m_out.setOrigin(originOfUser);
-    m_operation = user;
-    if (m_checksAllocation) [[unlikely]] {
-        if (user)
-            declareAccessesSlow(*user);
-        else
-            m_out.clearDeclaredAccesses();
-    }
-
-    if (m_hasFailed || m_definitionTaken || context.isBranchCondition() || context.returnCall() || isNeverType(context->type))
-        return;
-    size_t index = context.id().index();
-    RELEASE_ASSERT(!hasRegister(context.representation()) || m_values[index] || hasResults(index));
-}
-
-void CodeGenerator::generateTerminator(BlockID id, const Block& block, bool generatesCondition)
-{
-    RELEASE_ASSERT(block.hasEnded() && !m_operation);
-    const Terminator& terminator = block.terminator;
-    m_isAheadOfWhatMayThrow = false;
-    TerminatorContext context(id, terminator, handlerOf(id));
-    context.m_generatesCondition = generatesCondition;
-
-    m_out.setOrigin(m_proc.traits().notesRangesOfOrigins ? machineOriginOf(terminator.kind) : Machine::Origin());
-
-    m_operation = &context;
-    declareAccessesOf(context);
-    dispatch(context);
-    m_operation = nullptr;
-    if (m_checksAllocation) [[unlikely]]
-        m_out.clearDeclaredAccesses();
-    RELEASE_ASSERT(m_hasFailed || currentBlockIsOpen() == m_nextBlockGoesOnHere);
-}
-
-void CodeGenerator::generateBranchCondition(const TerminatorContext& terminator, ValueID condition, BranchTargets targets)
-{
-    ValueContext context(terminator.block(), condition, code().at(condition), handlerOf(terminator.block()));
-    context.m_branchTargets = targets;
-    generate(context);
-    RELEASE_ASSERT(m_hasFailed || !currentBlockIsOpen());
-}
-
-void CodeGenerator::generateReturnedCall(const TerminatorContext& terminator, ValueID call)
-{
-    ValueContext context(terminator.block(), call, code().at(call), handlerOf(terminator.block()));
-    context.m_returnCall = &terminator;
-    generate(context);
-    RELEASE_ASSERT(m_hasFailed || !currentBlockIsOpen());
-}
-
 void CodeGenerator::declareAccessesSlow(const OperationContext& context)
 {
     if (m_initializationDepth) {
@@ -1472,14 +1553,25 @@ BlockEdge CodeGenerator::edgeTo(const TerminatorContext& terminator, uint32_t ta
     const Edge& edge = code().at(terminator->edge(targetIndex));
     const Block& blockAtEnd = code().at(edge.to);
     if (leavesTurnLaidOut(edge.to)) [[unlikely]]
-        return BlockEdge(m_blockLeavingTurnLaidOut(), edgeClassLeadingTo(blockAtEnd.frequency));
+        return edgeLeavingTurnLaidOut(blockAtEnd);
+    BlockEdge target(blockFor(edge.to), edgeClassLeadingTo(blockAtEnd.frequency));
+    for (ValueID parameter : blockAtEnd.parameters()) {
+        if (m_values[parameter.index()])
+            return edgeThatPassesArguments(terminator, edge, declaredResults);
+    }
+    return target;
+}
+
+NEVER_INLINE BlockEdge CodeGenerator::edgeLeavingTurnLaidOut(const Block& blockAtEnd)
+{
+    return BlockEdge(m_blockLeavingTurnLaidOut(), edgeClassLeadingTo(blockAtEnd.frequency));
+}
+
+NEVER_INLINE BlockEdge CodeGenerator::edgeThatPassesArguments(const TerminatorContext& terminator, const Edge& edge, std::span<const Operand> declaredResults)
+{
+    const Block& blockAtEnd = code().at(edge.to);
     BlockEdge target(blockFor(edge.to), edgeClassLeadingTo(blockAtEnd.frequency));
     std::span<const ValueID> parameters = blockAtEnd.parameters();
-    bool passesSomething = false;
-    for (size_t index = 0; index < parameters.size() && !passesSomething; ++index)
-        passesSomething = m_values[parameters[index].index()];
-    if (!passesSomething)
-        return target;
     if (terminator.kind() == TerminatorKind::Jump) {
         passArguments(edge, parameters, declaredResults);
         return target;
@@ -1523,6 +1615,27 @@ void CodeGenerator::passHandlerArguments(const Edge& handler)
     passArguments(handler, code().at(handler.to).parameters(), { });
 }
 
+NEVER_INLINE void CodeGenerator::failToPassArgument(ValueID parameter, Representation found, Representation wanted)
+{
+    String forms = describeFormsOfGeneratedOperand(found, wanted);
+    if (m_operation)
+        fail(*m_operation, InternalErrorKind::UnsupportedConversion, forms);
+    else
+        fail(ValueContext(code().blockOf(parameter), parameter, code().at(parameter), nullptr), InternalErrorKind::UnsupportedConversion, forms);
+}
+
+ALWAYS_INLINE void CodeGenerator::passArgument(ValueID parameter, Operand argument)
+{
+    Representation representationOfParameter = isCarriedBoxed(parameter) ? Representation::JSValue : representationOf(parameter);
+    if (!isSameWord(argument.representation, representationOfParameter)) [[unlikely]] {
+        failToPassArgument(parameter, argument.representation, representationOfParameter);
+        return;
+    }
+    LValue phi = m_values[parameter.index()];
+    RELEASE_ASSERT(phi && phi->opcode() == Machine::Phi && argument.value && argument.value->type() == phi->type());
+    m_out.upsilon(argument.value, phi);
+}
+
 void CodeGenerator::passArguments(const Edge& edge, std::span<const ValueID> parameters, std::span<const Operand> declaredResults)
 {
     std::span<const ValueID> arguments = edge.arguments();
@@ -1553,55 +1666,24 @@ void CodeGenerator::passArguments(const Edge& edge, std::span<const ValueID> par
     }
 }
 
-void CodeGenerator::passArgument(ValueID parameter, Operand argument)
+Operand CodeGenerator::zeroInPlaceOfValueOfFailedCode(Representation representation)
 {
-    Representation representationOfParameter = isCarriedBoxed(parameter) ? Representation::JSValue : representationOf(parameter);
-    if (!isSameWord(argument.representation, representationOfParameter)) {
-        String forms = describeFormsOfGeneratedOperand(argument.representation, representationOfParameter);
-        if (m_operation)
-            fail(*m_operation, InternalErrorKind::UnsupportedConversion, forms);
-        else
-            fail(ValueContext(code().blockOf(parameter), parameter, code().at(parameter), nullptr), InternalErrorKind::UnsupportedConversion, forms);
-        return;
-    }
-    LValue phi = m_values[parameter.index()];
-    RELEASE_ASSERT(phi && phi->opcode() == Machine::Phi && argument.value && argument.value->type() == phi->type());
-    m_out.upsilon(argument.value, phi);
+    RELEASE_ASSERT(m_hasFailed);
+    return emitter<ConstantEmitter>().zeroOf(representation);
 }
 
-Operand CodeGenerator::get(ValueID id)
+Operand CodeGenerator::getNumberInFormKept(ValueID id, LValue lowered)
 {
-    return get(id, code().at(id));
-}
-
-Operand CodeGenerator::get(ValueID id, const Operation& operation)
-{
-    Representation representation = operation.representation;
-    RELEASE_ASSERT(representation != Representation::Unchosen);
-    if (representation == Representation::Void)
-        return { };
-    BlockID home = operation.block();
-    if (!home)
-        return makeConstant(id, operation);
-    if (BlockID user = blockBeingGenerated(); user && user != home && home != m_onlyEntryBlock && !isProvenToDominate(home, user))
-        verifyThatDefinitionDominates(id, user);
-    LValue lowered = m_values[id.index()];
-    if (!lowered && m_hasFailed) [[unlikely]]
-        return emitter<ConstantEmitter>().zeroOf(representation);
-    RELEASE_ASSERT(lowered);
-    if (m_carriesParametersBoxed && representation == Representation::Double && m_parametersCarriedBoxed.quickGet(id.index())) [[unlikely]]
+    if (m_carriesParametersBoxed && m_parametersCarriedBoxed.quickGet(id.index()))
         return { Representation::JSValue, lowered };
-    if (m_followsNumbersOutOfBytes && representation == Representation::Double) [[unlikely]] {
-        if (m_valuesHoldingAnyNaN.quickGet(id.index()))
-            return emitter<ConversionEmitter>().purified(Number(lowered));
-    }
-    return { representation, lowered };
+    if (m_followsNumbersOutOfBytes && m_valuesHoldingAnyNaN.quickGet(id.index()))
+        return emitter<ConversionEmitter>().purified(Number(lowered));
+    return { Representation::Double, lowered };
 }
 
-void CodeGenerator::verifyThatDefinitionDominates(ValueID id, BlockID user)
+void CodeGenerator::verifyThatDefinitionDominates(ValueID id, BlockID home, BlockID user)
 {
-    BlockID home = code().blockOf(id);
-    if (home && dominates(home, user)) [[likely]] {
+    if (dominates(home, user)) [[likely]] {
         if (m_userOfHomesProven != user) {
             m_userOfHomesProven = user;
             m_homesProven.fill(BlockID());
@@ -1641,15 +1723,8 @@ bool CodeGenerator::letsAnyNaNInto(ValueID parameter)
     return true;
 }
 
-Operand CodeGenerator::getIn(ValueID id, Representation wanted)
+Operand CodeGenerator::makeInWantedForm(ValueID id, const Operation& operation, Representation wanted)
 {
-    if (wanted == Representation::Void)
-        return { wanted, nullptr };
-
-    const Operation& operation = code().at(id);
-    if (isSameWord(operation.representation, wanted)) [[likely]]
-        return { wanted, get(id, operation).value };
-
     RELEASE_ASSERT(m_operation);
     bool canBeMadeInWantedForm = code().isConstant(id) && constantsInFormOfUses.contains(operation.opcode);
     if (canBeMadeInWantedForm) {
@@ -1698,26 +1773,6 @@ Operand CodeGenerator::makeConstant(ValueID id, const Operation& constant)
     }
     RELEASE_ASSERT(m_hasFailed);
     return emitter<ConstantEmitter>().zeroOf(constant.representation);
-}
-
-void CodeGenerator::defineValue(ValueID id, Representation representation, Operand operand)
-{
-    if (m_definitionTaken) [[unlikely]] {
-        *m_definitionTaken = operand;
-        return;
-    }
-    RELEASE_ASSERT(operand.representation == representation);
-    if (operand.representation == Representation::Void)
-        return;
-    LValue& lowered = m_values[id.index()];
-    RELEASE_ASSERT(!lowered && operand.value && operand.value->type() == machineTypeOf(operand.representation));
-    lowered = operand.value;
-}
-
-void CodeGenerator::define(const ValueContext& value, Operand result)
-{
-    RELEASE_ASSERT(!value.isBranchCondition());
-    defineValue(value.id(), value.representation(), result);
 }
 
 void CodeGenerator::defineTest(const ValueContext& value, Condition result)
@@ -1798,28 +1853,6 @@ void CodeGenerator::failAtLimit(LimitID limit, uint64_t needed, const Subject& s
 bool CodeGenerator::currentBlockIsOpen() const
 {
     return !m_out.m_block->isTerminated();
-}
-
-ValueID valueOwnedByTerminator(const Terminator& terminator)
-{
-    switch (terminator.kind) {
-    case TerminatorKind::TestAndBranch:
-        return terminator.conditionOperand();
-    case TerminatorKind::ReturnCall:
-        return terminator.callOperand();
-    case TerminatorKind::Jump:
-    case TerminatorKind::Branch:
-    case TerminatorKind::Switch:
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::Return:
-    case TerminatorKind::Throw:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::Unreachable:
-    case TerminatorKind::SwitchOnShape:
-    case TerminatorKind::TryCallInline:
-        return { };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 CodeGenerator::InitializationScope::InitializationScope(CodeGenerator& generator)

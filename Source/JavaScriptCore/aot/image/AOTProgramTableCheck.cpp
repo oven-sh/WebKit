@@ -1023,8 +1023,6 @@ static void checkObfuscationOfProgramTables(const JoinedTables& check)
     std::span<const ModuleData> modules = tables.modules();
     bool hasFunctionName = std::ranges::any_of(tables.functionNames(), [&](uint32_t name) {
         return name != emptyString;
-    }) || std::ranges::any_of(tables.functionNameRuns(), [&](const FunctionNameRunData& run) {
-        return run.name != emptyString;
     });
     bool hasDisplayPath = false;
     for (size_t index = 0; index < std::min<size_t>(modules.size(), check.program.modules.size()); ++index)

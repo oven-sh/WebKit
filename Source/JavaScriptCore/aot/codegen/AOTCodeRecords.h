@@ -20,6 +20,7 @@
 #include "AOTStubCalls.h"
 #include "CCallHelpers.h"
 #include "HandlerInfo.h"
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
@@ -81,7 +82,13 @@ struct SiteRecords {
 
     uint32_t addSite(const RecordedSite& site)
     {
-        positions.append(site);
+        if (positions.size() == positions.capacity()) [[unlikely]] {
+            RecordedSite added = site;
+            positions.reserveCapacity(std::max<size_t>(16, 2 * positions.capacity()));
+            positions.unsafeAppendWithoutCapacityCheck(added);
+            return positions.size();
+        }
+        positions.unsafeAppendWithoutCapacityCheck(site);
         return positions.size();
     }
 };
@@ -106,6 +113,7 @@ struct ThrowSite {
     bool calleeIsReadFromReceiver { false };
     bool aIsMention { false };
     bool bIsMention { false };
+    std::optional<ProofSource> sourceOfFalseProof { };
 };
 
 struct TrapSite {

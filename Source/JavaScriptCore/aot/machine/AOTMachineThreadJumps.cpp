@@ -11,6 +11,7 @@
 #include "AOTMachineFolding.h"
 #include "AOTMachineTestsOfPhis.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstring>
 #include <optional>
@@ -132,7 +133,6 @@ private:
     static ALWAYS_INLINE bool isEmptyJumpBlock(const Block*);
     static const Operation* incomingValue(const Operation* phi, const Block* from);
     static ALWAYS_INLINE SimplifiedPredicate simplifyPredicateOfBranch(Operation* predicate);
-    static ALWAYS_INLINE Opcode lowerOfComparisonAndItsInverse(Opcode);
 
     NEVER_INLINE void findLoopHeads();
     ALWAYS_INLINE bool isLoopHead(const Block*);
@@ -154,8 +154,9 @@ private:
     ALWAYS_INLINE void forwardEmptyJumpChain(Block*);
     NEVER_INLINE void forwardEmptyJumpChainFrom(Block*);
 
+    NEVER_INLINE void makeRoomForTestOfBranch();
     ALWAYS_INLINE void listTestOfBranch(uint32_t indexOfBlock, const Operation* branch);
-    NEVER_INLINE bool numberTests();
+    NEVER_INLINE bool numberTestsAskedTwice();
     static bool holdsNothingButItsTest(const Block*);
     NEVER_INLINE void findBlocksThatMayBypassTests(BitSpan isWalked, uint32_t* firstBlocksBelow);
     void passTestsThatWayHasDecided(Block* from);
@@ -190,9 +191,7 @@ private:
     uint32_t m_indexOfBlockInTurn { 0 };
     ArenaVector<TestOfBranch> m_testsOfBranches;
     bool m_testsOfBranchesAreInOrder { true };
-    TestOfBlock* m_numbersOfTestsOfBranches { nullptr };
     ArenaVector<TestOfBlock> m_testsOfBlocks;
-    ArenaVector<bool> m_testsAskedTwice;
     ArenaVector<Answer> m_answersOnWay;
 };
 
@@ -655,54 +654,49 @@ void JumpThreader::forwardEmptyJumpChainFrom(Block* first)
     }
 }
 
-ALWAYS_INLINE Opcode JumpThreader::lowerOfComparisonAndItsInverse(Opcode opcode)
+void JumpThreader::makeRoomForTestOfBranch()
 {
-    static_assert(Equal < NotEqual && LessThan < GreaterEqual && GreaterThan < LessEqual && Above < BelowEqual && Below < AboveEqual);
-    Opcode lower = opcode;
-    switch (opcode) {
-    case NotEqual:
-        lower = Equal;
-        break;
-    case GreaterEqual:
-        lower = LessThan;
-        break;
-    case LessEqual:
-        lower = GreaterThan;
-        break;
-    case BelowEqual:
-        lower = Above;
-        break;
-    case AboveEqual:
-        lower = Below;
-        break;
-    default:
-        break;
-    }
-    ASSERT(!isComparison(opcode) || opcode == EqualOrUnordered || lower == std::min(opcode, invertedComparison(opcode)));
-    return lower;
+    m_testsOfBranches.reserve(m_arena, m_testsOfBranches.capacity() * 2 + 4);
 }
 
 ALWAYS_INLINE void JumpThreader::listTestOfBranch(uint32_t indexOfBlock, const Operation* branch)
 {
+    static_assert(Equal < NotEqual && LessThan < GreaterEqual && GreaterThan < LessEqual && Above < BelowEqual && Below < AboveEqual);
+    static constexpr uint8_t goesByOperation = UINT8_MAX;
+    static_assert(numberOfOpcodes <= goesByOperation);
+    static constexpr std::array<uint8_t, numberOfOpcodes> lowerOpcodesOfTests = [] {
+        std::array<uint8_t, numberOfOpcodes> lowerOpcodes { };
+        for (unsigned number = 0; number < numberOfOpcodes; ++number)
+            lowerOpcodes[number] = isComparisonByNumber(static_cast<Opcode>(number)) || number == BitAnd ? static_cast<uint8_t>(number) : goesByOperation;
+        lowerOpcodes[NotEqual] = Equal;
+        lowerOpcodes[GreaterEqual] = LessThan;
+        lowerOpcodes[LessEqual] = GreaterThan;
+        lowerOpcodes[BelowEqual] = Above;
+        lowerOpcodes[AboveEqual] = Below;
+        return lowerOpcodes;
+    }();
+
     SimplifiedPredicate simplified = simplifyPredicateOfBranch(branch->child(0));
     const Operation* test = simplified.predicate;
     Opcode opcode = test->opcode();
     uint64_t operands = test->index();
     uint8_t opcodeOfTest = 0;
-    if (isComparisonByNumber(opcode) || opcode == BitAnd) {
-        Operation* const* children = test->children().data();
-        Opcode lower = lowerOfComparisonAndItsInverse(opcode);
+    if (uint8_t lower = lowerOpcodesOfTests[opcode]; lower != goesByOperation) {
+        ASSERT(!isComparison(opcode) || opcode == EqualOrUnordered || lower == std::min(opcode, invertedComparison(opcode)));
+        Operation* const* children = test->inlineChildren();
         if (lower != opcode && children[0]->type().isInt()) {
-            opcode = lower;
+            opcode = static_cast<Opcode>(lower);
             simplified.isInverted = !simplified.isInverted;
         }
         operands = static_cast<uint64_t>(children[0]->index()) << 32 | children[1]->index();
         opcodeOfTest = static_cast<uint8_t>(opcode + 1);
     }
-    new (NotNull, m_testsOfBranches.appendUninitialized(m_arena)) TestOfBranch { operands, indexOfBlock, opcodeOfTest, simplified.isInverted };
+    if (m_testsOfBranches.size() == m_testsOfBranches.capacity()) [[unlikely]]
+        makeRoomForTestOfBranch();
+    m_testsOfBranches.appendWithinCapacity(TestOfBranch { operands, indexOfBlock, opcodeOfTest, simplified.isInverted });
 }
 
-bool JumpThreader::numberTests()
+bool JumpThreader::numberTestsAskedTwice()
 {
     uint32_t numberOfBranches = m_testsOfBranches.size();
     if (numberOfBranches < 2)
@@ -714,40 +708,54 @@ bool JumpThreader::numberTests()
     unsigned shift = 64 - static_cast<unsigned>(std::countr_zero(numberOfPlaces));
     NumberedTest* table = m_arena.allocateArray<NumberedTest>(numberOfPlaces);
     std::memset(static_cast<void*>(table), 0, static_cast<size_t>(numberOfPlaces) * sizeof(NumberedTest));
-    m_testsAskedTwice.fill(m_arena, numberOfBranches + 1, false);
-    bool* testsAskedTwice = m_testsAskedTwice.begin();
-    TestOfBlock* numbers = m_arena.allocateArray<TestOfBlock>(numberOfBranches);
-    m_numbersOfTestsOfBranches = numbers;
     const TestOfBranch* tests = m_testsOfBranches.begin();
-    uint32_t numberOfTests = 0;
-    bool isSomeTestAskedTwice = false;
+    Block* const* blocks = m_proc.blocks().data();
+    uint8_t* flags = m_flags.begin();
+    TestOfBlock* testsOfBlocks = nullptr;
+    bool holdsSuchBlock = false;
     for (uint32_t branch = 0; branch < numberOfBranches; ++branch) {
         uint64_t operands = tests[branch].operands;
         uint32_t opcode = tests[branch].opcode;
         uint32_t place = static_cast<uint32_t>((operands ^ static_cast<uint64_t>(opcode) << 27) * 0x9e3779b97f4a7c15ull >> shift);
-        uint32_t number;
         for (;;) {
             NumberedTest& held = table[place];
-            number = held.number;
+            uint32_t number = held.number;
             if (!number) {
-                number = ++numberOfTests;
                 held.operands = operands;
                 held.opcode = opcode;
-                held.number = number;
+                held.number = branch + 1;
                 break;
             }
-            if (held.operands == operands && held.opcode == opcode) {
-                testsAskedTwice[number] = true;
-                isSomeTestAskedTwice = true;
-                break;
+            if (held.operands != operands || held.opcode != opcode) {
+                place = (place + 1) & mask;
+                continue;
             }
-            place = (place + 1) & mask;
+
+            if (!testsOfBlocks) [[unlikely]] {
+                m_testsOfBlocks.fill(m_arena, m_proc.numberOfBlocks(), TestOfBlock());
+                testsOfBlocks = m_testsOfBlocks.begin();
+            }
+            const TestOfBranch* const askedAgain = tests + branch;
+            const TestOfBranch* asked = tests + (number - 1);
+            if (testsOfBlocks[asked->block].number())
+                asked = askedAgain;
+            for (;; asked = askedAgain) {
+                uint32_t index = asked->block;
+                testsOfBlocks[index] = TestOfBlock(number, asked->isInverted);
+                Block* block = blocks[index];
+                if (holdsNothingButItsTest(block) && !isLoopHead(block) && (flags[index] & IsVisited)) {
+                    flags[index] |= HoldsNothingButItsTest;
+                    holdsSuchBlock = true;
+                }
+                if (asked == askedAgain)
+                    break;
+            }
+            break;
         }
-        numbers[branch] = TestOfBlock(number, tests[branch].isInverted);
     }
-    if (!isSomeTestAskedTwice)
+    if (!holdsSuchBlock)
         return false;
-    m_answersOnWay.fill(m_arena, numberOfTests + 1, Answer::Unknown);
+    m_answersOnWay.fill(m_arena, numberOfBranches + 1, Answer::Unknown);
     return true;
 }
 
@@ -825,33 +833,12 @@ void JumpThreader::findBlocksThatMayBypassTests(BitSpan isWalked, uint32_t* firs
 
 void JumpThreader::threadEdgesPastDecidedTests()
 {
-    if (!numberTests())
+    if (!numberTestsAskedTwice())
         return;
 
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
     Block* const* blocks = m_proc.blocks().data();
     uint8_t* flags = m_flags.begin();
-
-    m_testsOfBlocks.fill(m_arena, numberOfBlocks, TestOfBlock());
-    TestOfBlock* testsOfBlocks = m_testsOfBlocks.begin();
-    const TestOfBranch* tests = m_testsOfBranches.begin();
-    const TestOfBlock* numbers = m_numbersOfTestsOfBranches;
-    const bool* testsAskedTwice = m_testsAskedTwice.begin();
-    bool holdsSuchBlock = false;
-    for (uint32_t branch = 0, numberOfBranches = m_testsOfBranches.size(); branch < numberOfBranches; ++branch) {
-        TestOfBlock test = numbers[branch];
-        if (!testsAskedTwice[test.number()])
-            continue;
-        uint32_t index = tests[branch].block;
-        testsOfBlocks[index] = test;
-        Block* block = blocks[index];
-        if (!holdsNothingButItsTest(block) || isLoopHead(block) || !(flags[index] & IsVisited))
-            continue;
-        flags[index] |= HoldsNothingButItsTest;
-        holdsSuchBlock = true;
-    }
-    if (!holdsSuchBlock)
-        return;
 
     BitSpan isWalked = BitSpan::create(m_arena, numberOfBlocks);
     uint32_t* firstBlocksBelow = m_arena.allocateArray<uint32_t>(numberOfBlocks);
@@ -990,11 +977,13 @@ bool JumpThreader::mayRunForAnyValue(const Block* block)
 
 ALWAYS_INLINE bool JumpThreader::mayAskTestBehindNext(const Block* first)
 {
-    if (first->numSuccessors() != 2 || !first->upsilons().empty() || first->isEmpty() || first->last()->opcode() != Branch)
+    if (first->numSuccessors() != 2)
         return false;
     const Edge* ways = first->successors().data();
     bool firstWayIsLikely = ways[0].edgeClass() == EdgeClass::Normal;
     if (firstWayIsLikely == (ways[1].edgeClass() == EdgeClass::Normal))
+        return false;
+    if (!first->upsilons().empty() || first->isEmpty() || first->last()->opcode() != Branch)
         return false;
     unsigned leavingSuccessor = firstWayIsLikely ? 1 : 0;
 
@@ -1075,11 +1064,11 @@ void JumpThreader::run()
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
     m_flags.fill(m_arena, numberOfBlocks, 0);
+    m_testsOfBranches.reserve(m_arena, numberOfBlocks);
     Block* const* blocks = m_proc.blocks().data();
     for (uint32_t indexOfBlock = 0; indexOfBlock < numberOfBlocks; ++indexOfBlock) {
         Block* block = blocks[indexOfBlock];
         ASSERT(block->index() == indexOfBlock);
-        m_indexOfBlockInTurn = indexOfBlock;
         uint32_t size = block->size();
         if (!size)
             continue;
@@ -1090,11 +1079,12 @@ void JumpThreader::run()
                 if (m_flags[indexOfBlock] & (IsBeingForwarded | IsForwarded))
                     continue;
                 if (block->phis().empty() && !block->isLandingPad() && !block->isEntry()) {
+                    m_indexOfBlockInTurn = indexOfBlock;
                     forwardEmptyJumpChain(block);
                     continue;
                 }
             }
-            if (block->upsilons().size() == 1 && block->upsilons().data()[0]->child(0)->opcode() == Add) [[unlikely]]
+            if (block->upsilons().size() == 1 && block->upsilons().data()[0]->valueHandedOn()->opcode() == Add) [[unlikely]]
                 passTestOfUpperHalfBy(block);
         } else if (opcode == Branch) {
             if (block->numSuccessors() == 2)
@@ -1109,6 +1099,7 @@ void JumpThreader::run()
             Block* target = edge->block();
             if (mayThreadThrough(target)) [[unlikely]] {
                 unsigned index = static_cast<unsigned>(edge - successors);
+                m_indexOfBlockInTurn = indexOfBlock;
                 threadThroughJoin(block, index);
                 successors = block->successors().data();
                 end = successors + block->numSuccessors();
@@ -1122,6 +1113,7 @@ void JumpThreader::run()
             if (has(target, IsForwarded))
                 skipForwardedBlock(block, index, target);
             else if (isEmptyJumpBlock(target)) {
+                m_indexOfBlockInTurn = indexOfBlock;
                 forwardEmptyJumpChain(target);
                 skipEmptyJumpBlock(block, index);
             } else

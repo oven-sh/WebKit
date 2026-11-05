@@ -152,20 +152,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateUnmappedArguments, JSCell*, (Instance
     OPERATION_RETURN(scope, createArguments(instance, createArgumentSource(count, rest, parameters, Entry::operationAOTCreateUnmappedArguments)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetFromArguments, EncodedJSValue, (Instance* instance, JSCell* list, EncodedJSValue property))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetFromArguments);
-    JSArray* array = cellArgument<JSArray>(list, Entry::operationAOTGetFromArguments);
-    JSValue key = JSValue::decode(property);
-    if (auto index = key.tryGetAsUint32Index())
-        OPERATION_RETURN(scope, JSValue::encode(*index < array->length() ? array->getIndex(globalObject, *index) : jsUndefined()));
-    ClonedArguments* arguments = createArguments(instance, ArgumentsObjectSource { array->length(), array, nullptr, 0 });
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    auto propertyKey = key.toPropertyKey(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    OPERATION_RETURN(scope, JSValue::encode(arguments->get(globalObject, propertyKey)));
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateMappedArguments, JSCell*, (Instance* instance, JSCell* callee, uint32_t count, JSCell* rest, const EncodedJSValue* parameters))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCreateMappedArguments);

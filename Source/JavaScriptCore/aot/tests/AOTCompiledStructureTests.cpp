@@ -7,12 +7,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEnvironment.h"
+#include "AOTFunctionNames.h"
+#include "AOTFunctionTables.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationCallScope.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTSlimClosure.h"
 #include "AOTVector.h"
 #include "BrandedStructure.h"
 #include "HeapIterationScope.h"
@@ -22,6 +26,7 @@
 #include "StrongInlines.h"
 #include "WeakInlines.h"
 #include <array>
+#include <bit>
 #include <wtf/text/MakeString.h>
 
 #if ENABLE(WEBASSEMBLY)
@@ -204,6 +209,131 @@ static void testStructureOfEnvironments(LoadedProgram& program)
     AOT_TEST_CHECK(!compiledObjectStructureOrNull(structure) && !compiledLayoutOrNull(structure));
 }
 
+static Environment* allocateEnvironment(LoadedProgram& program)
+{
+    const ProgramTables& tables = program.state().tables;
+    uint32_t shape = shapeOfEnvironment(program);
+    for (uint32_t number = 0; number < tables.allocations().size(); ++number) {
+        if (tables.allocations()[number].shape == shape)
+            return uncheckedDowncast<Environment>(structures(program).allocate(program.vm(), number));
+    }
+    failNativeTest(__FILE__, __LINE__, "the image allocates an environment");
+}
+
+static NEVER_INLINE Weak<JSObject> storeNewObjectInFirstVariable(LoadedProgram& program, Environment* environment)
+{
+    JSObject* object = constructEmptyObject(program.realm());
+    environment->at<uint64_t>(offsetOfFirstEnvironmentVariable) = static_cast<uint64_t>(JSValue::encode(object));
+    program.vm().writeBarrier(environment, object);
+    return Weak<JSObject>(object);
+}
+
+static void testMarkInHeaderOfEnvironmentLeavesItsShape(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    uint32_t shape = shapeOfEnvironment(program);
+    Environment* environment = allocateEnvironment(program);
+    const EnvironmentData& layout = environment->layout();
+    uint64_t header = Environment::headerFor(environment->structure(), shape);
+    AOT_TEST_CHECK(layout.shape == shape && !environment->isEscaped() && environment->at<uint64_t>(0) == header);
+
+    environment->markEscaped();
+    AOT_TEST_CHECK(environment->isEscaped() && &environment->layout() == &layout);
+    AOT_TEST_CHECK(environment->at<uint64_t>(0) == (header | static_cast<uint64_t>(environmentIsEscapedBit) << 8 * offsetOfEnvironmentShapeHighByte));
+    AOT_TEST_CHECK(environment->at<uint8_t>(offsetOfEnvironmentShapeLowByte) == lowByteOfEnvironmentShape(shape));
+
+    Weak<JSObject> held = storeNewObjectInFirstVariable(program, environment);
+    vm.heap.collectSync(CollectionScope::Full);
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(held && environment->isEscaped() && &environment->layout() == &layout);
+    ensureStillAliveHere(environment);
+}
+
+static void testCollectorTakesLinkBetweenEnvironmentsForNoCell(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Environment* environment = allocateEnvironment(program);
+    constexpr uint64_t addressOfNoCell = 3 * MarkedBlock::atomSize;
+    for (uint64_t next : { static_cast<uint64_t>(0), addressOfNoCell }) {
+        environment->at<uint64_t>(offsetOfFirstEnvironmentVariable) = next + tagOfLinkBetweenEnvironmentsHandedBack;
+        vm.heap.collectSync(CollectionScope::Full);
+        AOT_TEST_CHECK(environment->at<uint64_t>(offsetOfFirstEnvironmentVariable) == next + tagOfLinkBetweenEnvironmentsHandedBack);
+    }
+    ensureStillAliveHere(environment);
+}
+
+static FunctionID slimFunctionNamed(LoadedProgram& program, ASCIILiteral name)
+{
+    const ProgramTables& tables = program.state().tables;
+    const uint64_t* closureWords = FunctionTables::of(program.vm()).words;
+    for (uint32_t index = tables.closureFunctions.first; index < tables.closureFunctions.end; ++index) {
+        FunctionID function(index);
+        if (closureWords[closureNumberOf(function)] && functionKindData(function).isSlim && writtenFunctionName(function) == name)
+            return function;
+    }
+    failNativeTest(__FILE__, __LINE__, name.characters());
+}
+
+static uint64_t headerOfSlimClosureInFrame(LoadedProgram& program, FunctionID function)
+{
+    return program.instance().slimClosureHeaders[functionKindData(function).slimClosureKind()] | static_cast<uint64_t>(frameCellState) << 8 * JSCell::cellStateOffset();
+}
+
+static void testClosureMovedToHeapMarksEnvironmentThatItHolds(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    FunctionID function = slimFunctionNamed(program, "increment"_s);
+    CaptureCounts counts = captureCountsOf(function);
+    AOT_TEST_CHECK(counts.references == 1 && counts.captures == 1);
+    Environment* environment = allocateEnvironment(program);
+    Environment* other = allocateEnvironment(program);
+    const EnvironmentData& layout = environment->layout();
+
+    alignas(16) std::array<uint64_t, 4> inFrame { headerOfSlimClosureInFrame(program, function), FunctionTables::of(vm).words[closureNumberOf(function)], std::bit_cast<uint64_t>(environment), std::bit_cast<uint64_t>(other) };
+    JSCell* moved = callOperationFromTest(vm, operationAOTMoveClosureToHeap, &program.instance(), reinterpret_cast<JSCell*>(inFrame.data()));
+    AOT_TEST_CHECK(moved->type() == SlimClosureType && moved->cellState() == CellState::DefinitelyWhite && uncheckedDowncast<SlimClosure>(moved)->function() == function);
+    AOT_TEST_CHECK(uncheckedDowncast<SlimClosure>(moved)->captures()[0] == inFrame[2]);
+    AOT_TEST_CHECK(environment->isEscaped() && &environment->layout() == &layout && !other->isEscaped());
+
+    JSObject* object = constructEmptyObject(program.realm());
+    uint8_t flagsOfObject = object->inlineTypeFlags();
+    for (JSValue held : { JSValue(object), JSValue(), jsUndefined(), jsNumber(7), jsNumber(0.5) }) {
+        inFrame[2] = static_cast<uint64_t>(JSValue::encode(held));
+        moved = callOperationFromTest(vm, operationAOTMoveClosureToHeap, &program.instance(), reinterpret_cast<JSCell*>(inFrame.data()));
+        AOT_TEST_CHECK(uncheckedDowncast<SlimClosure>(moved)->captures()[0] == inFrame[2]);
+    }
+    AOT_TEST_CHECK(object->inlineTypeFlags() == flagsOfObject && !other->isEscaped());
+}
+
+static void testClosureMovedToHeapTakesAlongClosuresOfFramesThatItHolds(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    FunctionID function = slimFunctionNamed(program, "increment"_s);
+    uint64_t header = headerOfSlimClosureInFrame(program, function);
+    uint64_t word = FunctionTables::of(vm).words[closureNumberOf(function)];
+    Environment* environment = allocateEnvironment(program);
+
+    constexpr size_t depth = 2000;
+    struct alignas(16) ClosureInFrame {
+        std::array<uint64_t, 4> words;
+    };
+    Vector<ClosureInFrame> inFrames(depth);
+    inFrames[0].words = { header, word, std::bit_cast<uint64_t>(environment), 0 };
+    for (size_t level = 1; level < depth; ++level)
+        inFrames[level].words = { header, word, std::bit_cast<uint64_t>(&inFrames[level - 1]), 0 };
+
+    JSCell* moved = callOperationFromTest(vm, operationAOTMoveClosureToHeap, &program.instance(), reinterpret_cast<JSCell*>(&inFrames[depth - 1]));
+    inFrames.fill(ClosureInFrame { });
+    vm.heap.collectSync(CollectionScope::Full);
+    JSCell* closure = moved;
+    for (size_t level = depth; --level;) {
+        AOT_TEST_CHECK(closure->type() == SlimClosureType && static_cast<uint8_t>(closure->cellState()) != frameCellState && uncheckedDowncast<SlimClosure>(closure)->function() == function);
+        closure = std::bit_cast<JSCell*>(uncheckedDowncast<SlimClosure>(closure)->captures()[0]);
+    }
+    AOT_TEST_CHECK(closure->type() == SlimClosureType && uncheckedDowncast<SlimClosure>(closure)->captures()[0] == std::bit_cast<uint64_t>(environment) && environment->isEscaped());
+    ensureStillAliveHere(moved);
+}
+
 static void testComponentsOfVariantAreIndependent(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -316,6 +446,10 @@ std::span<const NativeTest> compiledStructureTests()
         { "compiled-structures/usual-structure-is-created-in-its-space"_s, withProgram<testUsualStructureIsCreatedInItsSpace> },
         { "compiled-structures/words-compiled-code-reads"_s, withProgram<testWordsCompiledCodeReads> },
         { "compiled-structures/structure-of-environments"_s, withProgram<testStructureOfEnvironments> },
+        { "compiled-structures/mark-in-the-header-of-an-environment-leaves-its-shape"_s, withProgram<testMarkInHeaderOfEnvironmentLeavesItsShape> },
+        { "compiled-structures/collector-takes-a-link-between-environments-for-no-cell"_s, withProgram<testCollectorTakesLinkBetweenEnvironmentsForNoCell> },
+        { "compiled-structures/closure-moved-to-the-heap-marks-the-environment-that-it-holds"_s, withProgram<testClosureMovedToHeapMarksEnvironmentThatItHolds> },
+        { "compiled-structures/closure-moved-to-the-heap-takes-along-the-closures-of-frames-that-it-holds"_s, withProgram<testClosureMovedToHeapTakesAlongClosuresOfFramesThatItHolds> },
         { "compiled-structures/components-of-variant-are-independent"_s, withProgram<testComponentsOfVariantAreIndependent> },
         { "compiled-structures/variant-nobody-holds-lives-as-long-as-its-prototype"_s, withProgram<testVariantNobodyHoldsLivesAsLongAsItsPrototype> },
         { "compiled-structures/header-of-an-allocation-comes-without-a-cell"_s, withProgram<testHeaderOfAnAllocationComesWithoutACell> },

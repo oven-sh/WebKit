@@ -59,7 +59,7 @@ static constexpr GPRReg T13 = gprOf(StubRegister::T13);
 
 static constexpr std::array stepChecks { GeneratorStepCheck::IsUnmodifiedGenerator, GeneratorStepCheck::IsGenerator, GeneratorStepCheck::IsUnmodified, GeneratorStepCheck::None };
 static_assert(stepChecks.size() == descriptorOf(StubFamily::StepGenerator).numberOfForms);
-static constexpr std::array stepConsumers { StepConsumer::AsyncFunction, StepConsumer::AsyncGenerator, StepConsumer::AsyncFunctionAwaitingCall, StepConsumer::AsyncGeneratorAwaitingCall };
+static constexpr std::array stepConsumers { StepConsumer::AsyncFunction, StepConsumer::AsyncGenerator };
 static_assert(stepConsumers.size() == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
 
 static StubBlob buildBlob(const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
@@ -471,7 +471,7 @@ static void testMissingKeys()
 
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepGenerator).withForm(4)));
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::AwaitBySavingFrame).withForm(4)));
-    AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(4)));
+    AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(2)));
     AOT_TEST_CHECK(!exists(callHostFunctionWithoutBoxedCall(BoxedCallEntry::maxArgumentCount).withCount(BoxedCallEntry::maxArgumentCount + 1)));
 }
 

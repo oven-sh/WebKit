@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAccessEmitter.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
@@ -29,67 +28,6 @@ Operand ArrayStorageBuiltinEmitter::lengthResult(const InlineCall& call, Integer
 void ArrayStorageBuiltinEmitter::generateArrayLength(const InlineCall& call)
 {
     finishInlineCall(call, lengthResult(call, elements().arrayLength(in<CellPointer>(call.receiver()))));
-}
-
-void ArrayStorageBuiltinEmitter::generateArraySetLength(const InlineCall& call)
-{
-    static constexpr int64_t maxInlineClearedElements = 64;
-    RELEASE_ASSERT(call.numberOfArguments());
-    CellPointer array = in<CellPointer>(call.receiver());
-    ValueID argument = call.argument(0);
-    LBasicBlock slowPath = call.canMiss() ? missBlockOf(call) : newBlock();
-    LBasicBlock isShorter = newBlock();
-    LBasicBlock isNotShorter = newBlock();
-    LBasicBlock clearLoop = newBlock();
-    LBasicBlock clear = newBlock();
-    LBasicBlock setLength = newBlock();
-
-    Integer newLength = elements().indexOrElse(argument, false, slowPath);
-    Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
-    Condition hasForm;
-    for (const ArrayStorageForm& form : arrayStorageForms)
-        hasForm = logicalOr(hasForm, elements().hasWritableShape(mode, form));
-    branchUnless(hasForm, slowPath);
-    ArrayElements storage = elements().elementsOf(array);
-    Integer length = elements().publicLength(storage);
-    branch(below(newLength, length), { normalEdge(isShorter), normalEdge(isNotShorter) });
-
-    m_out.appendTo(isNotShorter);
-    branchUnless(belowOrEqual(newLength, elements().vectorLength(storage)), slowPath);
-    m_out.jump(setLength);
-
-    m_out.appendTo(isShorter);
-    branchUnless(belowOrEqual(sub(length, newLength), integer(maxInlineClearedElements)), slowPath);
-    Integer hole = integer(static_cast<int64_t>(arrayStorageForms.back().hole));
-    for (const ArrayStorageForm& form : std::span(arrayStorageForms).first(arrayStorageForms.size() - 1))
-        hole = select(elements().hasWritableShape(mode, form), static_cast<int64_t>(form.hole), hole);
-    ValueFromBlock firstCleared = m_out.anchor(newLength.value());
-    m_out.jump(clearLoop);
-
-    m_out.appendTo(clearLoop);
-    Integer index(m_out.phi(Machine::Int64, firstCleared));
-    branch(below(index, length), { normalEdge(clear), normalEdge(setLength) });
-
-    m_out.appendTo(clear);
-    m_out.store64(hole.value(), elements().elementOfUnknownForm(storage, index));
-    m_out.addIncomingToPhi(index.value(), m_out.anchor(add(index, integer(1)).value()));
-    m_out.jump(clearLoop);
-
-    m_out.appendTo(setLength);
-    elements().setPublicLength(storage, newLength);
-    if (!call.canMiss()) {
-        LBasicBlock continuation = newBlock();
-        m_out.jump(continuation);
-
-        m_out.appendTo(slowPath);
-        Boxed boxedLength = emitter<ConversionEmitter>().box(call.context(), get(argument), typeOf(argument));
-        emitter<AccessEmitter>().putById(call.context(), boxCell(array), m_program.keyOf(BuiltinNames::length), boxedLength, AccessEmitter::putModeOf(ECMAMode::Strict));
-        m_out.jump(continuation);
-
-        m_out.appendTo(continuation);
-    }
-    Representation representation = resultRepresentationOf(call);
-    finishInlineCall(call, representation == Representation::Void ? Operand() : elements().absentElement(call.context(), representation));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayPush(const InlineCall& call)

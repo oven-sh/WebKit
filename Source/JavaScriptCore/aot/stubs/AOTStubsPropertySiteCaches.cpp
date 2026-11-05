@@ -956,11 +956,15 @@ StubSignature signatureOfCallMethodAtSite(StubKey key)
     return signatureOf(callMethodById(key.count()));
 }
 
-void generateCallMethodAtSite(StubAssembler& jit)
+StubSignature signatureOfCallMethodAtSiteLending(StubKey key) { return signatureOfCallMethodAtSite(key); }
+
+static void emitCallMethodAtSite(StubAssembler& jit, unsigned lentArguments)
 {
+    static_assert(descriptorOf(StubFamily::CallMethodAtSiteLending).numberOfForms == numberOfSetsOfLentArguments);
     constexpr SiteUse use = SiteUse::Call;
     using Form = SiteAnswers::Form;
     const unsigned count = jit.key().count();
+    const StubKey callsValue = callValueLending(count, lentArguments);
     const CallRegisters registers = CallRegisters::allocate(jit);
     const GPRReg distance = jit.immediate();
     const GPRReg key = registers.word;
@@ -988,7 +992,7 @@ void generateCallMethodAtSite(StubAssembler& jit)
     jit.loadPtr(BaseIndex(cellCageBaseGPR, operandOfCommonForm, CCallHelpers::TimesEight, JSObject::butterflyOffset()), operandOfCommonForm);
     jit.load32SignedExtendTo64(answers.word(offsetOfSecondAnswer + OBJECT_OFFSETOF(SiteAnswers::Answer, operand)), index);
     jit.load64(BaseIndex(operandOfCommonForm, index, CCallHelpers::TimesEight), calleeGPR);
-    jit.jumpToStub(callValue(count));
+    jit.jumpToStub(callsValue);
 
     auto callValueOfOtherForm = [&](ptrdiff_t offsetOfAnswer) {
         JumpList differs;
@@ -997,19 +1001,19 @@ void generateCallMethodAtSite(StubAssembler& jit)
         Jump isNotInCell = branchUnlessForm(jit, use, calleeGPR, Form::OwnFieldInCell);
         jit.load64(BaseIndex(thisGPR, operand, CCallHelpers::TimesOne), calleeGPR);
         isNotAsked.append(jit.branchTest64(CCallHelpers::Zero, calleeGPR));
-        jit.jumpToStub(callValue(count));
+        jit.jumpToStub(callsValue);
 
         isNotInCell.link(&jit);
         Jump isNotAbove = branchUnlessForm(jit, use, calleeGPR, Form::ValueInWordOfCage);
         jit.load64(BaseIndex(cellCageBaseGPR, operand, CCallHelpers::TimesEight), calleeGPR);
-        jit.jumpToStub(callValue(count));
+        jit.jumpToStub(callsValue);
 
         isNotAbove.link(&jit);
         Jump isNotInStorage = branchUnlessForm(jit, use, calleeGPR, Form::OwnValueInStorage);
         jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), calleeGPR);
         jit.signExtend32ToPtr(operand, operand);
         jit.load64(BaseIndex(calleeGPR, operand, CCallHelpers::TimesEight), calleeGPR);
-        jit.jumpToStub(callValue(count));
+        jit.jumpToStub(callsValue);
 
         isNotInStorage.link(&jit);
         auto loadExtraProperties = [&] {
@@ -1023,14 +1027,14 @@ void generateCallMethodAtSite(StubAssembler& jit)
         jit.loadPtr(BaseIndex(cellCageBaseGPR, calleeGPR, CCallHelpers::TimesEight, JSObject::butterflyOffset()), calleeGPR);
         jit.signExtend32ToPtr(operand, operand);
         jit.load64(BaseIndex(calleeGPR, operand, CCallHelpers::TimesEight), calleeGPR);
-        jit.jumpToStub(callValue(count));
+        jit.jumpToStub(callsValue);
 
         isNotExtraValueInStorage.link(&jit);
         differs.append(branchUnlessForm(jit, use, calleeGPR, Form::ExtraValueInCell));
         loadExtraProperties();
         jit.add32(operand, calleeGPR);
         jit.load64(BaseIndex(cellCageBaseGPR, calleeGPR, CCallHelpers::TimesEight), calleeGPR);
-        jit.jumpToStub(callValue(count));
+        jit.jumpToStub(callsValue);
         differs.link(&jit);
     };
     hasOtherKey.link(&jit);
@@ -1041,7 +1045,17 @@ void generateCallMethodAtSite(StubAssembler& jit)
     countMissAtSite(jit, thisGPR, distance, key, place, use, NameAtSite::HasColumn);
     isNotAsked.link(&jit);
     loadNameOfSite(jit, distance, distance, key, NameAtSite::HasColumn);
-    jit.jumpToStub(callMethodById(count));
+    jit.jumpToStub(callMethodById(count, lentArguments));
+}
+
+void generateCallMethodAtSite(StubAssembler& jit)
+{
+    emitCallMethodAtSite(jit, 0);
+}
+
+void generateCallMethodAtSiteLending(StubAssembler& jit)
+{
+    emitCallMethodAtSite(jit, jit.key().form() + 1);
 }
 
 } } // namespace JSC::AOT

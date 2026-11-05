@@ -71,7 +71,6 @@ struct ExpectationForGuesses {
     TypeID type;
     bool isDeclared { false };
     bool isHeld { false };
-    bool admitsNoNumberOrBoolean { false };
 };
 
 struct TestOfGuess {
@@ -81,7 +80,6 @@ struct TestOfGuess {
     TypeID failingSideAsksFor;
     bool failingSideAsksForNothing { false };
     bool asksForElementOfNumbers { false };
-    bool expectsCell { false };
     bool admitsAllThatIsExpected { false };
     bool failingSideIsAsLikely { false };
     bool typedRunOpensGuesses { false };
@@ -736,7 +734,6 @@ static bool admitsNoNumberOrBooleanForGuesses(const TypeArena& types, TypeID exp
 static ExpectationForGuesses findWhatIsProvenOrExpectedForGuesses(Walker& walker, ValueID input, ValueID user)
 {
     ExpectationForGuesses proven { provenTypeOfInputForGuesses(walker, input), true };
-    proven.admitsNoNumberOrBoolean = admitsNoNumberOrBooleanForGuesses(walker.types(), proven.type);
     if (input >= user)
         return saysNothingForGuesses(walker.types(), proven.type) ? ExpectationForGuesses() : proven;
     if (saysNothingForGuesses(walker.types(), proven.type))
@@ -755,7 +752,7 @@ static ExpectationForGuesses findWhatIsProvenOrExpectedForGuesses(Walker& walker
     const ClassPart* expectedClass = expectedType.isObject() ? singleBuiltinClassOf(types, expectedType) : nullptr;
     if (!expectedClass || expectedClass->builtinClass != provenClass->builtinClass || !expectedClass->hasWrittenContents())
         return proven;
-    return { expectedObject, expected.isDeclared, expected.isHeld, expected.admitsNoNumberOrBoolean };
+    return { expectedObject, expected.isDeclared, expected.isHeld };
 }
 
 static ExpectationForGuesses findExpectationOfWhatArrivesForGuesses(Walker& walker, ValueID parameter)
@@ -763,7 +760,7 @@ static ExpectationForGuesses findExpectationOfWhatArrivesForGuesses(Walker& walk
     const BodyIndex& index = walker.currentBodyIndex();
     TypeArena& types = walker.types();
     BlockID block = index.blockOf(parameter);
-    ExpectationForGuesses joined { { }, true, false, true };
+    ExpectationForGuesses joined { { }, true };
     bool somethingComesRound = false;
     if (!index.isEnteredByHandlerEdge(block)) {
         uint32_t position = parameter.index() - index.block(block).parameter(0).index();
@@ -777,7 +774,6 @@ static ExpectationForGuesses findExpectationOfWhatArrivesForGuesses(Walker& walk
             ExpectationForGuesses arriving = argument ? findWhatIsProvenOrExpectedForGuesses(walker, argument, parameter) : ExpectationForGuesses();
             joined.isDeclared &= arriving.type && arriving.isDeclared;
             joined.isHeld |= arriving.isHeld;
-            joined.admitsNoNumberOrBoolean &= arriving.type && arriving.admitsNoNumberOrBoolean;
             if (arriving.type)
                 joined.type = joined.type ? joinOf(types, walker.facts().families(), joined.type, arriving.type) : arriving.type;
         }
@@ -898,7 +894,7 @@ static ExpectationForGuesses findWholeExpectationForGuesses(Walker& walker, Valu
     const BodyIndex& index = walker.currentBodyIndex();
     TypeArena& types = walker.types();
     auto keep = [&](ValueID parameter, const ExpectationForGuesses& whole) {
-        walker.keepWholeExpectationOf(parameter, { whole.type, whole.isDeclared, whole.isHeld, true, whole.admitsNoNumberOrBoolean });
+        walker.keepWholeExpectationOf(parameter, { whole.type, whole.isDeclared, whole.isHeld, true });
     };
     Vector<BodyEdgeResult, 8> proofs;
     ExpectationForGuesses whole;
@@ -913,7 +909,7 @@ static ExpectationForGuesses findWholeExpectationForGuesses(Walker& walker, Valu
             break;
         }
         if (std::optional<Walker::RememberedExpectation> kept = walker.wholeExpectationKeptOf(current)) {
-            whole = { kept->type, kept->isDeclared, kept->isHeld, kept->admitsNoNumberOrBoolean };
+            whole = { kept->type, kept->isDeclared, kept->isHeld };
             break;
         }
         std::optional<BodyEdgeResult> proof = findProofOfTypeTestForGuesses(index, current);
@@ -946,7 +942,6 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
     BodyValue definition = walker.asWalked(index.value(input));
     Opcode opcode = definition.opcode();
     ExpectationForGuesses expectation;
-    bool isJoinOfArrivals = false;
     ValueID behind;
     if (definition.isParameter()) {
         if (index.blockOf(input) == entryBlock) {
@@ -958,10 +953,8 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
             behind = tested;
         else {
             expectation = { definition.parameterType(), true };
-            if (saysNothingForGuesses(types, expectation.type)) {
+            if (saysNothingForGuesses(types, expectation.type))
                 expectation = findExpectationOfWhatArrivesForGuesses(walker, input);
-                isJoinOfArrivals = true;
-            }
         }
     } else if (opcode == Opcode::NarrowByTest)
         expectation = findWholeExpectationForGuesses(walker, input);
@@ -1010,7 +1003,6 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
     }
 
     if (!saysNothingForGuesses(types, expectation.type)) {
-        expectation.admitsNoNumberOrBoolean = (!isJoinOfArrivals || expectation.admitsNoNumberOrBoolean) && admitsNoNumberOrBooleanForGuesses(types, expectation.type);
         expectation.type = narrowedByNamesUsedForGuesses(walker, input, partThatOneTestTellsForGuesses(types, expectation.type));
         if (expectation.type && types.at(expectation.type).isUndefinedOrNull()) {
             if (ExpectationForGuesses byNames = expectationByNamesUsedForGuesses(walker, input); byNames.type)
@@ -1029,7 +1021,6 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
     }
     if (TypeID ofAnswer = walker.typeExpectedOfAnswerOfCopy(); ofAnswer && types.at(ofAnswer).hasObjects() && admitsNoNumberOrBooleanForGuesses(types, ofAnswer) && walker.copyHandsBack(input)) {
         ExpectationForGuesses stated { ofAnswer, walker.answerOfCopyIsDeclared() };
-        stated.admitsNoNumberOrBoolean = admitsNoNumberOrBooleanForGuesses(types, stated.type);
         stated.type = narrowedByNamesUsedForGuesses(walker, input, partThatOneTestTellsForGuesses(types, stated.type));
         return stated;
     }
@@ -1038,7 +1029,6 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
         ExpectationForGuesses stated { targetOfConvert(expecting, declared), !declared.isExpected() };
         if (saysNothingForGuesses(types, stated.type) || !types.at(stated.type).hasObjects() || !admitsNoNumberOrBooleanForGuesses(types, stated.type))
             continue;
-        stated.admitsNoNumberOrBoolean = true;
         stated.type = narrowedByNamesUsedForGuesses(walker, input, partThatOneTestTellsForGuesses(types, stated.type));
         return stated;
     }
@@ -1062,7 +1052,7 @@ static ExpectationForGuesses findExpectationForGuesses(Walker& walker, ValueID i
 {
     Walker::RememberedExpectation& remembered = walker.rememberedExpectationOf(input);
     if (remembered.isKnown)
-        return { remembered.type, remembered.isDeclared, remembered.isHeld, remembered.admitsNoNumberOrBoolean };
+        return { remembered.type, remembered.isDeclared, remembered.isHeld };
     ExpectationForGuesses expectation = findExpectationAnewForGuesses(walker, input);
     refineExpectationOfValue(walker, input, expectation.type, expectation.isDeclared);
     if (expectation.type && !holdsOnlyPrimitives(expectation.type) && walker.types().recordOf(expectation.type).traitsOfNamed.contains(ObjectTrait::IsClosure)) {
@@ -1073,7 +1063,7 @@ static ExpectationForGuesses findExpectationForGuesses(Walker& walker, ValueID i
         if (!mayBeTestedFor)
             expectation = { };
     }
-    remembered = { expectation.type, expectation.isDeclared, expectation.isHeld, true, expectation.admitsNoNumberOrBoolean };
+    remembered = { expectation.type, expectation.isDeclared, expectation.isHeld, true };
     if (Vector<ValueID, 16>* rememberedForLook = walker.expectationsRememberedForLook())
         rememberedForLook->append(input);
     return expectation;
@@ -1528,13 +1518,13 @@ static TypeID partThatHasNameAskedForGuesses(Walker& walker, TypeID expected, Pr
     return part ? part : expected;
 }
 
-static Reference buildTestOfGuess(Walker& walker, Reference value, const TestOfGuess& chosen, Origin origin)
+static Reference buildTestOfGuess(Walker& walker, Reference value, const TestOfGuess& chosen, Origin origin, bool refusesMarkedObjects = false)
 {
     if (chosen.layouts) {
         Draft test(Opcode::ShapeTest, origin);
         test.setObjectOperand(value);
         test.setLayouts(chosen.layouts);
-        test.setExpectsCell(chosen.expectsCell);
+        test.setRefusesMarkedObjects(refusesMarkedObjects);
         return walker.build(WTF::move(test));
     }
     Draft test(Opcode::TypeTest, origin);
@@ -2320,9 +2310,9 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         walker.continueIn(passed);
     };
 
-    auto buildTestWhereItMayStand = [&](Reference tested, const TestOfGuess& asked) {
+    auto buildTestWhereItMayStand = [&](Reference tested, const TestOfGuess& asked, bool refusesMarkedObjects = false) {
         Walker::InFrontOfTypedCopy inFront(walker, failingWayBeginsTurnAgain && walker.standsInFrontOfTypedCopy(tested));
-        return buildTestOfGuess(walker, tested, asked, origin);
+        return buildTestOfGuess(walker, tested, asked, origin, refusesMarkedObjects);
     };
     auto buildProofWhereTestWasAsked = [&](Reference tested, Reference test, const TestOfGuess& asked) {
         Walker::InFrontOfTypedCopy inFront(walker, lastTestIsAskedInFront);
@@ -2331,11 +2321,21 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
 
     Reference proven = value;
     if (!chosen.isPassedAlready) {
-        Reference test = buildTestWhereItMayStand(value, chosen);
+        Type known = walker.types().at(walker.typeOf(value));
+        bool isBeingMade = std::ranges::any_of(names, [&](ValueID name) {
+            return isBeingMadeByBodyBeingRead(walker, name);
+        });
+        bool refusesMarkedObjects = chosen.layouts && !isBeingMade && (!known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow));
+        uint32_t firstNewValue = walker.code().numberOfValues();
+        BlockID blockOfTest = walker.currentBlock();
+        Reference test = buildTestWhereItMayStand(value, chosen, refusesMarkedObjects);
         if (!test)
             return;
+        bool isAskedHere = test.isValue() && test.id().index() >= firstNewValue && walker.code().blockOf(test.id()) == blockOfTest;
         goOnWhereTestPasses(test);
         proven = buildProofWhereTestWasAsked(value, test, chosen);
+        if (refusesMarkedObjects && isAskedHere && proven && !walker.isUnreachable())
+            walker.state().noteFactsOfCell(proven, FactOfCell::BearsNoMark);
         if ((takesInBranch || failingWayBeginsTurnAgain) && proven && proven.isValue() && value.isValue() && !walker.isUnreachable()) {
             Reference last = value;
             while (Reference checked = walker.state().checkedNameOf(last))
@@ -2409,15 +2409,17 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
                 break;
             holder = *rested;
         }
-        Reference test = holder ? buildTestOfSlot(walker, walker.asWalked(index.value(look.access)), holder) : Reference();
-        if (!test)
-            break;
         bool asksForFilledSlot = index.opcodeOf(look.access) != Opcode::PrivateDefine;
-        goOnWhereTestPasses(test, asksForFilledSlot);
+        Reference loaded = holder && asksForFilledSlot && readsOutOfSlotsForGuesses.contains(index.opcodeOf(look.access)) ? valueHeldOfFilledSlot(walker, walker.asWalked(index.value(look.access)), holder) : Reference();
+        bool markAnswers = !loaded && numberOfTests && holder && walker.state().factsOfCell(holder).contains(FactOfCell::BearsNoMark) && markOfCellAnswersForRead(walker, walker.asWalked(index.value(look.access)), walker.typeOf(holder));
+        Reference test = holder && !loaded && !markAnswers ? buildTestOfSlot(walker, walker.asWalked(index.value(look.access)), holder) : Reference();
+        if (!test && !loaded && !markAnswers)
+            break;
+        if (test)
+            goOnWhereTestPasses(test, asksForFilledSlot);
         if (asksForFilledSlot) {
-            Reference loaded;
-            {
-                Walker::InFrontOfTypedCopy inFront(walker, lastTestIsAskedInFront);
+            if (!loaded) {
+                Walker::InFrontOfTypedCopy inFront(walker, test && lastTestIsAskedInFront);
                 loaded = readSlotFoundFilled(walker, walker.asWalked(index.value(look.access)), holder);
             }
             loadedByLooks.append({ look.access, loaded });
@@ -2428,9 +2430,11 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         } else
             noteSlotFoundEmpty(walker, index.value(look.access), holder);
     }
+    uint32_t numberOfValuesInFrontOfTestOfBeingAsMade = walker.code().numberOfValues();
     if (Reference test = stretch.looksWhetherValueIsAsMade && proven && !walker.isUnreachable() ? buildTestOfObjectAsMade(walker, proven, origin) : Reference()) {
         goOnWhereTestPasses(test);
         noteListAsMade(walker, proven);
+        noteObjectPassedTestOfBeingAsMade(walker, proven, test, numberOfValuesInFrontOfTestOfBeingAsMade);
     }
     if (walker.hasFailed())
         return;
@@ -2683,7 +2687,7 @@ static bool buildLoneReadOfGuess(Walker& walker, const BodyValue& operation, Ref
         return false;
     TypeID guessed = walker.types().intersectionOf(walker.typeOf(value), chosen.tested);
     branchAskedAbout.isAsked = false;
-    Reference read = looksAtSlot ? buildReadThatTestsShapeAndSlot(walker, operation, value, guessed, chosen.expectsCell) : buildReadThatTestsShapeAndCell(walker, operation, value, guessed, chosen.expectsCell);
+    Reference read = looksAtSlot ? buildReadThatTestsShapeAndSlot(walker, operation, value, guessed) : buildReadThatTestsShapeAndCell(walker, operation, value, guessed);
     if (!read)
         return false;
     walker.bind(operation.id(), read);
@@ -2703,7 +2707,7 @@ static bool buildLoneStoreOfGuess(Walker& walker, const BodyValue& operation, Re
     if (!looksAtOwnSlotAlone || !looksAtCellForItselfAlone || !testsOwnValueAlone || stretch.looksWhetherValueIsAsMade || stretch.orderWordAskedFor)
         return false;
     branchAskedAbout.isAsked = false;
-    if (!buildStoreThatTestsForItself(walker, operation, value, walker.types().intersectionOf(walker.typeOf(value), chosen.tested), chosen.expectsCell))
+    if (!buildStoreThatTestsForItself(walker, operation, value, walker.types().intersectionOf(walker.typeOf(value), chosen.tested)))
         return false;
     walker.noteGuessOpened();
     return true;
@@ -3204,7 +3208,6 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
         }
         if (stretch.numberOfTypedOperations < least)
             return buildAsOneOperationOrLeaveClosed();
-        chosen->expectsCell = expectation.admitsNoNumberOrBoolean;
         chosen->admitsAllThatIsExpected = testAdmitsAllThatIsExpectedForGuesses(walker, operation, operand, operandIndex, expectation.type, chosen->tested);
         if (const LinkedCallThatFindsBuiltin* found = callsOfValuesForGuesses.contains(operation.opcode()) ? walker.facts().held().findCallThatFindsBuiltin(walker.currentFunction(), operation.id()) : nullptr) {
             if (found->callee && chosen->tested == walker.types().forFunction(found->callee) && operand == operation.calleeOperand() && isTestableBuiltin(walker.program().builtins(), found->builtin)) {
@@ -3564,15 +3567,31 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
 }
 
 static constexpr size_t mostMembersToldApartInFrontOfLoop = 4;
-static constexpr OpcodeSet accessesToldApartInFrontOfLoop { Opcode::PropGet, Opcode::PropSet, Opcode::ElemGet, Opcode::ElemSet };
+static constexpr OpcodeSet accessesToldApartInFrontOfLoop { Opcode::PropGet, Opcode::PropSet, Opcode::ElemGet, Opcode::ElemSet, Opcode::Call };
 
 static Vector<TypeID, mostMembersToldApartInFrontOfLoop> membersOfSetForGuesses(Walker& walker, TypeID expected)
 {
     TypeArena& types = walker.types();
     TypeID objects = types.withOnlyObjects(expected);
     Type type = types.at(objects);
-    if (!type.hasObjects() || type.hasUnboundedUnknown() || type.hasOnlyClosures())
+    if (!type.hasObjects() || type.hasUnboundedUnknown())
         return { };
+    if (type.hasOnlyClosures()) {
+        Vector<FunctionID, mostMembersToldApartInFrontOfLoop> functions;
+        bool areFew = true;
+        forEachFunctionOf(types, type, scopedLambda<void(FunctionID)>([&](FunctionID function) {
+            if (functions.size() == mostMembersToldApartInFrontOfLoop)
+                areFew = false;
+            else
+                functions.append(function);
+        }));
+        if (!areFew || functions.size() < 2)
+            return { };
+        Vector<TypeID, mostMembersToldApartInFrontOfLoop> closures;
+        for (FunctionID function : functions)
+            closures.append(types.forFunction(function));
+        return closures;
+    }
     std::span<const ClassPart> classes = types.at(type.classes);
     std::span<const LayoutID> layouts = types.listOf(type.layouts);
     if (classes.size() + layouts.size() < 2 || classes.size() + layouts.size() > mostMembersToldApartInFrontOfLoop)
@@ -3614,7 +3633,7 @@ Vector<GuessInFrontOfLoop, 4> findMembersToldApartInFrontOfLoop(Walker& walker, 
         for (BodyValue operation : index.block(member).values()) {
             if (!accessesToldApartInFrontOfLoop.contains(operation.opcode()))
                 continue;
-            ValueID operand = operation.objectOperand();
+            ValueID operand = operation.opcode() == Opcode::Call ? operation.as<Opcode::Call>().calleeOperand() : operation.objectOperand();
             ValueID inFront = operand ? valueBehindCastsOfLoopForGuesses(index, operand, firstValueOfLoop) : ValueID();
             if (!inFront || inFront.index() >= firstValueOfLoop)
                 continue;

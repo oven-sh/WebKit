@@ -378,7 +378,7 @@ void IDPairMemo::Generation::add(const Entry& added)
     if ((size + 1) * 2 > slots.size())
         grow();
     size_t mask = slots.size() - 1;
-    size_t slot = hashOfQuestion(added.questionPlusOne, added.first, added.second) & mask;
+    size_t slot = slotOfMemoHash(hashOfEntry(added), slots.size());
     for (; slots[slot].questionPlusOne; slot = (slot + 1) & mask) {
         Entry& entry = slots[slot];
         if (entry.first != added.first || entry.second != added.second || entry.questionPlusOne != added.questionPlusOne)
@@ -406,7 +406,7 @@ void IDPairMemo::Generation::grow()
     for (const Entry& entry : former) {
         if (!entry.questionPlusOne)
             continue;
-        size_t slot = hashOfQuestion(entry.questionPlusOne, entry.first, entry.second) & mask;
+        size_t slot = slotOfMemoHash(hashOfEntry(entry), slots.size());
         while (slots[slot].questionPlusOne)
             slot = (slot + 1) & mask;
         slots[slot] = entry;

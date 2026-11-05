@@ -378,7 +378,6 @@ StubSignature signatureOfWeakMapHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakSetHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapGet(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapHas(StubKey) { return signatureOfLookup(); }
-StubSignature signatureOfMapFind(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfSetAdd(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapDelete(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfSetDelete(StubKey) { return signatureOfLookup(); }
@@ -386,7 +385,7 @@ StubSignature signatureOfMapSet(StubKey) { return StubSignature::withGPRResult({
 StubSignature signatureOfNewMap(StubKey) { return StubSignature::withGPRResult({ }); }
 StubSignature signatureOfNewSet(StubKey) { return StubSignature::withGPRResult({ }); }
 
-static void emitGet(StubAssembler& jit, JSValue whenAbsent, Entry operation)
+void generateMapGet(StubAssembler& jit)
 {
     const HashTableRegisters registers = HashTableRegisters::take(jit);
     HashTableExits exits;
@@ -394,15 +393,12 @@ static void emitGet(StubAssembler& jit, JSValue whenAbsent, Entry operation)
     if (hasFoundExit(exits))
         emitLoadValueOfCompactTable(jit, registers, exits);
     emitAtExit(jit, exits.absent, [&] {
-        returnConstant(jit, whenAbsent);
+        returnConstant(jit, jsUndefined());
     });
     emitAtExit(jit, exits.unknown, [&] {
-        emitCallTableOperation(jit, registers, operation, std::nullopt);
+        emitCallTableOperation(jit, registers, Entry::operationAOTMapGet, std::nullopt);
     });
 }
-
-void generateMapGet(StubAssembler& jit) { emitGet(jit, jsUndefined(), Entry::operationAOTMapGet); }
-void generateMapFind(StubAssembler& jit) { emitGet(jit, JSValue(), Entry::operationAOTMapFind); }
 
 void generateMapHas(StubAssembler& jit) { emitHas(jit, Entry::operationAOTMapHas); }
 void generateMapSet(StubAssembler& jit) { emitInsert(jit, CompactTableOwner::Map); }

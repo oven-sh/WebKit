@@ -16,6 +16,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Seconds.h>
+#include <wtf/Threading.h>
 
 namespace JSC { namespace AOT {
 
@@ -32,6 +33,31 @@ public:
     void count(StatisticID, uint64_t amount = 1);
     void addTime(Stage stage, Seconds time) { count(Wire::timeOf(stage), time.nanosecondsAs<uint64_t>()); }
     JS_EXPORT_PRIVATE Vector<uint64_t> values() const;
+
+    class CountersOfThread {
+    public:
+        ALWAYS_INLINE void count(StatisticID id, uint64_t amount = 1) const
+        {
+            if (!amount || id == StatisticID::None)
+                return;
+            unsigned index = static_cast<unsigned>(id);
+            RELEASE_ASSERT(index < numberOfStatistics);
+            m_statistics.m_counters[m_firstCounter + index].fetch_add(amount, std::memory_order_relaxed);
+        }
+
+    private:
+        friend class Statistics;
+
+        CountersOfThread(Statistics& statistics, unsigned firstCounter)
+            : m_statistics(statistics)
+            , m_firstCounter(firstCounter)
+        {
+        }
+
+        Statistics& m_statistics;
+        unsigned m_firstCounter;
+    };
+    CountersOfThread countersOfCurrentThread() { return { *this, Thread::currentSingleton().uid() % numberOfStripes * countersPerStripe }; }
 
 private:
     static constexpr unsigned numberOfStripes = 16;

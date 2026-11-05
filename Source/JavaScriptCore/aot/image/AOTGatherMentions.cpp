@@ -84,6 +84,18 @@ struct DistinctKeysOfRange {
     size_t numberOfWords { 0 };
 };
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+struct GatheredKey {
+    std::span<const uint32_t> words() const { return unsafeMakeSpan(sizeAndWords + 1, *sizeAndWords); }
+
+    uint64_t firstWords;
+    const uint32_t* sizeAndWords;
+};
+static_assert(sizeof(GatheredKey) == sizeof(std::span<const uint32_t>));
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 class MentionGatherer {
     WTF_MAKE_NONCOPYABLE(MentionGatherer);
 public:
@@ -129,7 +141,21 @@ private:
         return m_facts.runsAtMostOnce(function) && !m_facts.hasLoops(function) && code.sites.pollSites.isEmpty();
     }
 
-    void add(NumberSpace space, std::span<const uint32_t> key)
+    static constexpr bool impliesOtherMentions(NumberSpace space)
+    {
+        switch (space) {
+        case NumberSpace::CardOfVariable:
+        case NumberSpace::CardOfWord:
+        case NumberSpace::Request:
+        case NumberSpace::ClassGuard:
+        case NumberSpace::SiteCache:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    ALWAYS_INLINE void add(NumberSpace space, std::span<const uint32_t> key)
     {
         Vector<uint32_t>& words = m_chunk.wordsOf(space);
         if (hasOneIDAsKey(space)) {
@@ -143,15 +169,17 @@ private:
             }
             uint32_t& endOfIDs = m_chunk.endOfIDs[static_cast<unsigned>(space)];
             endOfIDs = std::max(endOfIDs, key[0] + 1);
+            words.append(key[0]);
         } else {
             words.append(static_cast<uint32_t>(key.size()));
             ++m_chunk.numberOfKeys[static_cast<unsigned>(space)];
+            words.append(key);
         }
-        words.append(key);
-        addImpliedMentions(space, key);
+        if (impliesOtherMentions(space))
+            addImpliedMentions(space, key);
     }
 
-    void addImpliedMentions(NumberSpace space, std::span<const uint32_t> key)
+    NEVER_INLINE void addImpliedMentions(NumberSpace space, std::span<const uint32_t> key)
     {
         switch (space) {
         case NumberSpace::CardOfVariable:
@@ -211,7 +239,6 @@ private:
         case NumberSpace::ModuleValue:
         case NumberSpace::ModuleNamespace:
         case NumberSpace::ModuleBuiltinCell:
-        case NumberSpace::DataCell:
         case NumberSpace::DataStorage:
         case NumberSpace::DataElements:
         case NumberSpace::RegExpLiteralCell:
@@ -261,9 +288,6 @@ private:
         switch (static_cast<Typed::DataEncoding>(dataAndEncoding[1])) {
         case Typed::DataEncoding::ReadOnlyTree:
             return;
-        case Typed::DataEncoding::MadeOnce:
-            add(NumberSpace::DataCell, data);
-            return;
         case Typed::DataEncoding::CopyOnWriteArray: {
             const auto* array = m_program.at(DataID(data[0])).root.tryAs<Typed::DataNode::Array>();
             if (!array)
@@ -273,13 +297,12 @@ private:
             return;
         }
         case Typed::DataEncoding::Unselected:
-        case Typed::DataEncoding::Expanded:
             break;
         }
         reportMalformedMention("the request for data names an encoding in which the data has no record"_s);
     }
 
-    void reportMalformedMention(ASCIILiteral rule)
+    NEVER_INLINE void reportMalformedMention(ASCIILiteral rule)
     {
         m_context.diagnostics().add(InternalError {
             .kind = InternalErrorKind::PlacementCheckFailed,
@@ -337,6 +360,13 @@ static GatheredMentions::ByID mergeGatheredIDs(NumberSpace space, std::span<cons
     return merged;
 }
 
+static uint64_t firstWordsOfGatheredKey(std::span<const uint32_t> key)
+{
+    uint64_t first = key.empty() ? 0 : key[0];
+    uint64_t second = key.size() < 2 ? 0 : key[1];
+    return first << 32 | second;
+}
+
 static NumberedKeys mergeGatheredKeys(NumberSpace space, std::span<const GatheredChunk> chunks, BuildContext& context)
 {
     const ParallelLoops& loops = context.parallelLoops();
@@ -351,30 +381,38 @@ static NumberedKeys mergeGatheredKeys(NumberSpace space, std::span<const Gathere
         merged.firstWord.append(0);
         return merged;
     }
-    if (!checkListSize(numberOfKeys, sizeof(std::span<const uint32_t>), context)) {
+    if (!checkListSize(numberOfKeys, sizeof(GatheredKey), context)) {
         merged.firstWord.append(0);
         return merged;
     }
 
-    Vector<std::span<const uint32_t>> keys;
+    Vector<GatheredKey> keys;
     keys.grow(numberOfKeys);
     forEachIndexInParallel(loops, static_cast<unsigned>(chunks.size()), [&](unsigned chunk) {
         size_t next = firstKeyOfChunk[chunk];
         std::span<const uint32_t> rest = chunks[chunk].wordsOf(space).span();
         while (!rest.empty()) {
             size_t sizeOfKey = rest[0];
-            keys[next++] = rest.subspan(1, sizeOfKey);
+            keys[next++] = { firstWordsOfGatheredKey(rest.subspan(1, sizeOfKey)), rest.data() };
             rest = rest.subspan(1 + sizeOfKey);
         }
     });
-    parallelSort(loops, keys.mutableSpan(), [](std::span<const uint32_t> first, std::span<const uint32_t> second) {
-        return std::ranges::lexicographical_compare(first, second);
+    sortByWordKeepingEqualElementsInOrder(keys.mutableSpan(), [](const GatheredKey& key) {
+        return key.firstWords;
     });
+    for (size_t first = 0, end = 0; first < numberOfKeys; first = end) {
+        for (end = first + 1; end < numberOfKeys && keys[end].firstWords == keys[first].firstWords; ++end) { }
+        if (end - first == 1)
+            continue;
+        parallelSort(loops, keys.mutableSpan().subspan(first, end - first), [](const GatheredKey& a, const GatheredKey& b) {
+            return std::ranges::lexicographical_compare(a.words(), b.words());
+        });
+    }
 
     auto forEachDistinctKeyInRange = [&](size_t first, size_t end, const auto& functor) {
         for (size_t index = first; index < end; ++index) {
-            if (!index || !std::ranges::equal(keys[index - 1], keys[index]))
-                functor(keys[index]);
+            if (!index || keys[index - 1].firstWords != keys[index].firstWords || !std::ranges::equal(keys[index - 1].words(), keys[index].words()))
+                functor(keys[index].words());
         }
     };
     Vector<DistinctKeysOfRange> ranges(numberOfRangesOfIndices(numberOfKeys));
@@ -449,14 +487,14 @@ GatheredMentions gatherMentions(const NumberingInputs& inputs, BuildContext& con
     const ParallelLoops& loops = context.parallelLoops();
     const LinkedFunctions& functions = inputs.functions;
 
-    ChunksOfIndices division = divideIntoChunks(static_cast<unsigned>(functions.size()));
-    Vector<GatheredChunk> chunks(division.size() + 1);
-    forEachIndexInParallel(loops, division.size(), [&](unsigned chunk) {
-        MentionGatherer gatherer(inputs.program, inputs.facts, context, chunks[chunk]);
-        for (unsigned index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index)
+    size_t numberOfChunksOfFunctions = numberOfRangesOfIndices(functions.size());
+    Vector<GatheredChunk> chunks(numberOfChunksOfFunctions + 1);
+    forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
+        MentionGatherer gatherer(inputs.program, inputs.facts, context, chunks[first / indicesInRangeOfLoop]);
+        for (size_t index = first; index < end; ++index)
             gatherer.gather(functions[index]);
     });
-    addClassGuardsUnderMethodTableRows(inputs.plan, chunks.span().first(division.size()), chunks.last());
+    addClassGuardsUnderMethodTableRows(inputs.plan, chunks.span().first(numberOfChunksOfFunctions), chunks.last());
     times.didFinish("gather"_s);
 
     GatheredMentions gathered;

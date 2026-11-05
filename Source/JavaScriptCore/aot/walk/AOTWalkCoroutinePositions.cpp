@@ -20,31 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-FunctionID coroutineWhoseCallsAnswerWith(const ObjectTable& objects, ObjectID object)
-{
-    if (!object)
-        return { };
-    const ObjectRecord& record = objects.at(object);
-    return record.kind == ObjectKind::CoroutineResult ? FunctionID(record.payload) : FunctionID();
-}
-
-static const LinkedCoroutine* findCoroutineInWalkCoroutinePositions(const ObjectTable& objects, const LinkTables& tables, ObjectID object)
-{
-    FunctionID function = coroutineWhoseCallsAnswerWith(objects, object);
-    return function ? tables.findCoroutine(function) : nullptr;
-}
-
-static TypeID unlessNeverInWalkCoroutinePositions(TypeID type)
-{
-    return type && !isNeverType(type) ? type : TypeID();
-}
-
-TypeID awaitedOfObjectOfCoroutine(TypeArena& types, const LinkTables& held, ObjectID object)
-{
-    const LinkedCoroutine* coroutine = findCoroutineInWalkCoroutinePositions(types.objects(), held, object);
-    return coroutine ? unlessNeverInWalkCoroutinePositions(coroutine->fulfilledWith) : TypeID();
-}
-
 TypeID typeHeldOfResultOfCoroutine(const Walker& walker, FunctionID callee)
 {
     if (!walker.facts().held().findCoroutine(callee) && !walker.facts().linked().findCoroutine(callee))

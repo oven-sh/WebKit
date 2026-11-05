@@ -58,6 +58,16 @@ Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation represe
     RELEASE_ASSERT(representation != Representation::Boolean);
     RELEASE_ASSERT(registerNumber < ThrowSiteWord::numberOfRegistersPerBank);
     RELEASE_ASSERT(!site.aIsMention || site.a != ThrowSiteWord::none);
+    if (site.sourceOfFalseProof) {
+        ThrowSite packed = site;
+        packed.sourceOfFalseProof = std::nullopt;
+        packed.calleeIsReadFromReceiver = true;
+        unsigned source = static_cast<unsigned>(*site.sourceOfFalseProof);
+        if (representation == Representation::Void)
+            return throwSiteWords(packed, representation, source);
+        packed.a = site.a << ThrowSiteWord::bitsOfSourceOfProof | source;
+        return throwSiteWords(packed, representation, registerNumber);
+    }
     bool hasWideA = site.aIsMention || (site.a > ThrowSiteWord::maxNarrowA && site.a != ThrowSiteWord::none);
     ThrowSiteWord word { };
     word.kind = static_cast<uint32_t>(site.kind);
@@ -149,7 +159,7 @@ static ThrowSite checkedThrowSite(const ThrowSite& site)
     std::optional<uint32_t> b = site.b == ThrowSiteWord::none ? std::nullopt : site.b;
     RELEASE_ASSERT(site.a == ThrowSiteWord::none ? !site.aIsMention : !(site.a >> 31));
     RELEASE_ASSERT(!(b.value_or(0) >> 31));
-    return { .kind = site.kind, .a = site.a, .b = b, .aIsMention = site.aIsMention, .bIsMention = b && site.bIsMention };
+    return { .kind = site.kind, .a = site.a, .b = b, .aIsMention = site.aIsMention, .bIsMention = b && site.bIsMention, .sourceOfFalseProof = site.sourceOfFalseProof };
 }
 
 static ThrowSite throwSiteWithName(MentionList& mentions, ThrowKind kind, StringID name)
@@ -166,7 +176,7 @@ static bool isCellOrNullish(const Type& type)
 
 ThrowEmitter::ThrowEmitter(CodeGenerator& generator)
     : OperationEmitter(generator)
-    , m_clobberedRegisters(registersClobberedByThrowSites(generator.inputs().program.stubCatalog))
+    , m_clobberedRegisters(generator.emitter<RuntimeCallEmitter>().registersThatThrowSitesClobber())
 {
 }
 
@@ -248,7 +258,7 @@ void ThrowEmitter::requireOrThrow(const OperationContext& context, Condition mus
     }
     operand = withoutUndefinedConstant(operand);
     bool operandNeedsConversion = operand && !canBeNamedByThrowWordsOf(operand->representation);
-    if (operandNeedsConversion || emitter<ExceptionEmitter>().unwindsWithinFunction(context)) {
+    if (operandNeedsConversion || ExceptionEmitter::unwindsWithinFunction(context)) {
         LBasicBlock fails = newBlock();
         LBasicBlock continuation = newBlock();
         ScopeFork fork = m_out.forkScope();
@@ -273,13 +283,13 @@ Machine::PatchGenerator* ThrowEmitter::generatorOfCheckedThrowSite(const Operati
 {
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
     RecordedSite position = calls.recordedSiteOf(context);
-    auto& generators = m_checkedThrowSites.add(computeHash(site.kind, site.a, site.b, representation, position.origin.position, position.origin.inlineFrame), Vector<CheckedThrowSite, 1>()).iterator->value;
+    auto& generators = m_checkedThrowSites.add(computeHash(site.kind, site.a, site.b, site.sourceOfFalseProof, representation, position.origin.position, position.origin.inlineFrame), Vector<CheckedThrowSite, 1>()).iterator->value;
     for (const CheckedThrowSite& known : generators) {
         if (known.site == site && known.representation == representation && known.position == position)
             return known.generator;
     }
 
-    Machine::PatchGenerator* generator = generatorOfThrowSite(m_proc, m_records, { site, representation, 0, calls.addSite(context) });
+    Machine::PatchGenerator* generator = generatorOfThrowSite(m_proc, m_records, { site, representation, 0, calls.addRecordedSite(context, position) });
     generators.append({ site, representation, position, generator });
     return generator;
 }
@@ -287,6 +297,29 @@ Machine::PatchGenerator* ThrowEmitter::generatorOfCheckedThrowSite(const Operati
 void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, StringID message, std::optional<uint32_t> throwPosition)
 {
     throwAt(context, throwSiteWithName(m_mentions, ThrowKind::ErrorWithMessage, message), std::nullopt, NewError { kind, throwPosition });
+}
+
+void ThrowEmitter::requireOrStopAtFalseProof(const OperationContext& context, Condition holds, std::optional<Boxed> found, ProofSource source)
+{
+    static_assert(numberOfEnumerators<ProofSource> <= 1u << ThrowSiteWord::bitsOfSourceOfProof && numberOfEnumerators<ProofSource> <= ThrowSiteWord::numberOfRegistersPerBank);
+    Origin origin = context.origin();
+    LBasicBlock stops = newBlock();
+    LBasicBlock continuation = newBlock();
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(holds.value(), normalEdge(continuation), rareEdge(stops));
+    m_out.appendToArm(stops, fork);
+    if (!generator().isInitializingCell() && origin.position <= ThrowSiteWord::maxPositionBesideSourceOfProof) {
+        throwAt(context, { .kind = ThrowKind::ErrorWithMessage, .a = origin.position, .b = std::nullopt, .sourceOfFalseProof = source }, found ? std::optional<Operand>(*found) : std::nullopt);
+        m_out.unreachable();
+        m_out.appendToArm(continuation, fork);
+        return;
+    }
+    FunctionID writtenIn = generator().code().inlineFrames()[origin.inlineFrame].callee;
+    m_out.suspendDeclaredAccesses();
+    callVoidOperation(context, RuntimeOperation::StopAtFalseProof, { found ? *found : Boxed(m_out.constInt64(JSValue::encode(JSValue()))), word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(origin.position)), word32(static_cast<int32_t>(source)) });
+    m_out.resumeDeclaredAccesses();
+    m_out.unreachable();
+    m_out.appendToArm(continuation, fork);
 }
 
 void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand operand, const Type& type, NullishAccess access, StringID name)
@@ -340,7 +373,7 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
 
 bool ThrowEmitter::canTrapAt(const OperationContext& context)
 {
-    if (!context.valueID() || emitter<ExceptionEmitter>().unwindsWithinFunction(context))
+    if (!context.valueID() || ExceptionEmitter::unwindsWithinFunction(context))
         return false;
     const Vector<TrapSite>& trapSites = m_records.traps.trapSites;
     return trapSites.isEmpty() || trapSites.last().value != context.valueID();

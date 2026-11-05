@@ -51,11 +51,6 @@ static ComparisonFoldOrderings comparisonFoldOrderingsAcceptedBy(Opcode opcode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool comparisonFoldIsUnsignedOrder(Opcode opcode)
-{
-    return opcode == Above || opcode == Below || opcode == AboveEqual || opcode == BelowEqual;
-}
-
 static Opcode comparisonFoldUnsignedOrderFor(Opcode opcode)
 {
     if (opcode == LessThan)
@@ -156,20 +151,27 @@ static Operation* comparisonFoldBooleanOfType(Builder& builder, Operation* boole
     return builder.unary(type == Int32 ? Trunc : ZExt32, boolean);
 }
 
-static Operation* foldMachineComparisonWithZeroOrOne(Builder& builder, Opcode opcode, Operation* left, Operation* right)
+Operation* foldMachineOrderWithZeroOrOne(Builder& builder, Opcode opcode, Operation* left, bool isZero, bool isOne)
 {
-    bool isZero = right->isInt(0);
-    bool isOne = right->isInt(1);
-    if (!isZero && !isOne)
-        return nullptr;
-
     if ((opcode == BelowEqual && isZero) || (opcode == Below && isOne))
         return builder.binary(Equal, left, builder.constantOfType(left->type(), 0));
     if ((opcode == Above && isZero) || (opcode == AboveEqual && isOne))
         return builder.binary(NotEqual, left, builder.constantOfType(left->type(), 0));
+    return nullptr;
+}
+
+static Operation* foldMachineComparisonWithZeroOrOne(Builder& builder, Opcode opcode, Operation* left, Operation* right)
+{
+    if (!right->hasInt())
+        return nullptr;
+    int64_t constant = right->asInt();
+    bool isZero = !constant;
+    bool isOne = constant == 1;
+    if (!isZero && !isOne)
+        return nullptr;
 
     if (opcode != Equal && opcode != NotEqual)
-        return nullptr;
+        return foldMachineOrderWithZeroOrOne(builder, opcode, left, isZero, isOne);
 
     if (isBoolean(left)) {
         if ((opcode == Equal) == isOne)
@@ -236,23 +238,11 @@ static Operation* foldMachineComparisonOfExtensions(Builder& builder, Opcode opc
     return builder.binary(opcode, comparisonFoldBitsBeforeExtension(builder, left), comparisonFoldBitsBeforeExtension(builder, right));
 }
 
-static ALWAYS_INLINE bool comparisonFoldEveryOrderingIsPossible(Opcode opcode, const Operation* left, const Operation* right)
+Operation* foldMachineComparisonOfBoundedIntegers(Builder& builder, Opcode opcode, Operation* left, Operation* right)
 {
-    if (hasFoldTrait(left->opcode(), FoldTrait::BoundsIntegerRange) || !right->hasInt())
-        return false;
-    int64_t constant = right->asInt();
-    if (comparisonFoldIsUnsignedOrder(opcode))
-        return constant && constant != -1;
-    IntegerRange widest = widestIntegerRangeOf(left->type());
-    return constant != widest.min && constant != widest.max;
-}
-
-static Operation* foldMachineComparisonOfIntegers(Builder& builder, Opcode opcode, Operation* left, Operation* right)
-{
-    if (!comparisonFoldEveryOrderingIsPossible(opcode, left, right)) {
-        if (Operation* answer = comparisonFoldAnswerFor(builder, opcode, comparisonFoldPossibleOrderingsOf(opcode, left, right)))
-            return answer;
-    }
+    ASSERT(!comparisonFoldEveryOrderingIsPossible(opcode, left, right));
+    if (Operation* answer = comparisonFoldAnswerFor(builder, opcode, comparisonFoldPossibleOrderingsOf(opcode, left, right)))
+        return answer;
     if (Operation* folded = foldMachineComparisonWithZeroOrOne(builder, opcode, left, right))
         return folded;
     return foldMachineComparisonOfExtensions(builder, opcode, left, right);
@@ -274,7 +264,7 @@ static ComparisonFoldOrdering comparisonFoldOrderingOfNumbers(double left, doubl
     return ComparisonFoldOrdering::Unordered;
 }
 
-static Operation* foldMachineComparisonOfNumbers(Builder& builder, Opcode opcode, Operation* left, Operation* right)
+Operation* foldMachineComparisonOfNumbers(Builder& builder, Opcode opcode, Operation* left, Operation* right)
 {
     ASSERT(!comparisonFoldIsUnsignedOrder(opcode));
     if (comparisonFoldIsUnsignedOrder(opcode) || !right->isConstant())
@@ -286,21 +276,6 @@ static Operation* foldMachineComparisonOfNumbers(Builder& builder, Opcode opcode
     if (!left->isConstant())
         return nullptr;
     return comparisonFoldAnswerFor(builder, opcode, comparisonFoldOrderingOfNumbers(comparisonFoldNumberOf(left), rightNumber));
-}
-
-Operation* foldComparison(Builder& builder, Opcode opcode, Operation* left, Operation* right)
-{
-    ASSERT(isComparison(opcode));
-    ASSERT(left->type() == right->type());
-
-    if (left->isConstant() && !right->isConstant())
-        return builder.binary(flippedComparison(opcode), right, left);
-
-    if (left->type().isFloat())
-        return foldMachineComparisonOfNumbers(builder, opcode, left, right);
-    if (!left->type().isInt() || opcode == EqualOrUnordered)
-        return nullptr;
-    return foldMachineComparisonOfIntegers(builder, opcode, left, right);
 }
 
 Operation* foldSelect(Builder& builder, Operation* predicate, Operation* whenNotZero, Operation* whenZero)
@@ -332,36 +307,14 @@ static_assert(countsChildrenAtFirstUse(Equal) && countsChildrenAtFirstUse(NotEqu
 
 SimplifiedPredicate peelPredicate(Operation* predicate)
 {
-    SimplifiedPredicate result { predicate };
-    for (;;) {
-        Operation* tested = result.predicate;
-        Opcode opcode = tested->opcode();
-
-        if ((opcode == Equal || opcode == NotEqual) && tested->child(1)->isInt(0)) {
-            if (opcode == Equal)
-                result.isInverted = !result.isInverted;
-            result.predicate = tested->child(0);
-            continue;
-        }
-
-        if (opcode == BitXor && tested->child(1)->isInt(1) && isBoolean(tested->child(0))) {
-            result.isInverted = !result.isInverted;
-            result.predicate = tested->child(0);
-            continue;
-        }
-
-        if (opcode == ZExt32 || opcode == SExt32 || (opcode == Trunc && isBoolean(tested->child(0)))) {
-            result.predicate = tested->child(0);
-            continue;
-        }
-
-        return result;
-    }
+    return peelPredicateInline(predicate);
 }
 
 static constexpr unsigned levelsSearchedByIsBoolean = 3;
 
-static bool isBooleanWithinLevels(const Operation* operation, unsigned levels)
+static bool isBooleanByChildrenWithinLevels(const Operation*, unsigned levels);
+
+static ALWAYS_INLINE bool isBooleanWithinLevels(const Operation* operation, unsigned levels)
 {
     Opcode opcode = operation->opcode();
     if (!hasFoldTrait(opcode, FoldTrait::MayBeBoolean))
@@ -372,8 +325,13 @@ static bool isBooleanWithinLevels(const Operation* operation, unsigned levels)
         return !operation->asInt() || operation->asInt() == 1;
     if (!levels)
         return false;
+    return isBooleanByChildrenWithinLevels(operation, levels);
+}
 
-    auto childIsBoolean = [&](unsigned index) {
+static bool isBooleanByChildrenWithinLevels(const Operation* operation, unsigned levels)
+{
+    Opcode opcode = operation->opcode();
+    auto childIsBoolean = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
         return isBooleanWithinLevels(operation->child(index), levels - 1);
     };
     if (opcode == BitAnd)

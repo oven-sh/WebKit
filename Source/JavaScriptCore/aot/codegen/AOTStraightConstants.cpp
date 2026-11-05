@@ -179,7 +179,7 @@ static bool tableOfImageHoldsDataInStraightForm(StraightEmitter& emitter, const 
 static void generateData(StraightEmitter& emitter, const BodyValue& value)
 {
     DataID data = value.data();
-    if (!tableOfImageHoldsDataInStraightForm(emitter, emitter.program().at(data).root)) {
+    if (!tableOfImageHoldsDataInStraightForm(emitter, emitter.program().at(data).root) || !constantListsFieldsHeldFilledInSlots(emitter.program(), emitter.facts().linked(), emitter.plan().slots(), data)) {
         emitter.fail(value);
         return;
     }
@@ -209,12 +209,27 @@ static bool closureIsHeldByTableInStraightForm(StraightEmitter& emitter, Functio
     return layout.has(LayoutFlags::IsConstructorFunction) && layout.constructor == function && emitter.facts().isEvaluatedAtMostOnce(constructed);
 }
 
+static void fillSlimClosureBehindRegistersInStraightForm(StraightEmitter& emitter, std::span<const ValueID> words)
+{
+    CCallHelpers& jit = emitter.jit();
+    GPRReg cell = emitter.resultOfCall();
+    GPRReg word = StraightEmitter::temporary(1);
+    for (size_t slot = ClosureRequest::maxSlimClosureCapturesInRegisters; slot < words.size(); ++slot) {
+        emitter.load(words[slot], word);
+        jit.store64(word, CCallHelpers::Address(cell, offsetOfSlimClosureCaptures + slot * sizeof(uint64_t)));
+    }
+    jit.storeFence();
+}
+
 static void callClosureStubInStraightForm(StraightEmitter& emitter, const BodyValue& value, StubKey stub, StraightArgument request, std::span<const ValueID> words)
 {
+    static_assert(ClosureRequest::maxNumberOfCaptures <= ClosureRequest::maxSlimClosureCapturesInRegisters);
     Vector<StraightArgument, 5> operands { request };
-    for (ValueID word : words)
+    for (ValueID word : words.first(std::min<size_t>(words.size(), ClosureRequest::maxSlimClosureCapturesInRegisters)))
         operands.append(StraightArgument(word));
     emitter.callStub(value.origin(), stub, operands.span(), { });
+    if (words.size() > ClosureRequest::maxSlimClosureCapturesInRegisters)
+        fillSlimClosureBehindRegistersInStraightForm(emitter, words);
     emitter.define(value);
 }
 

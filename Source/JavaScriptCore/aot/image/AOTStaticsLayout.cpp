@@ -208,7 +208,6 @@ private:
         };
         m_statics.moduleValueOffsets = withoutOffsets(m_program.modules.size());
         m_statics.moduleNamespaceOffsets = withoutOffsets(m_program.modules.size());
-        m_statics.dataCellOffsets = withoutOffsets(m_program.data.size());
         m_statics.dataStorageOffsets = withoutOffsets(m_program.data.size());
         m_statics.regExpLiteralCellOffsets = withoutOffsets(m_mentions.keys(NumberSpace::RegExpLiteralCell).size());
         m_statics.templateObjectCellOffsets = withoutOffsets(m_mentions.keys(NumberSpace::TemplateObjectCell).size());
@@ -422,7 +421,6 @@ private:
     bool placeData()
     {
         allocateRootForEach(m_mentions.byID(NumberSpace::DataStorage).isMentioned, m_statics.dataStorageOffsets);
-        allocateRootForEach(m_mentions.byID(NumberSpace::DataCell).isMentioned, m_statics.dataCellOffsets);
         return fitsWithin(m_limit);
     }
 

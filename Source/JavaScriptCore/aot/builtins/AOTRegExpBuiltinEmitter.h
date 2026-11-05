@@ -27,13 +27,11 @@ public:
     void generateStringSplit(const InlineCall&);
     void generateRegExpFlag(const InlineCall&);
     void generateRegExpGetLastIndex(const InlineCall&);
-    void generateRegExpSetLastIndex(const InlineCall&);
 
 private:
     TypedPointer fieldAt(LValue cell, ptrdiff_t offset);
     Pointer regExpOf(CellPointer regExpObject);
     Word32 flagsOf(CellPointer regExpObject);
-    void storeLastIndex(CellPointer regExpObject, Boxed value, LBasicBlock ifNotWritable);
 };
 
 static_assert(sizeof(RegExpBuiltinEmitter) == sizeof(BuiltinFamilyEmitter));

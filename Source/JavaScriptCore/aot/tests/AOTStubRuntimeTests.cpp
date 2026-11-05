@@ -682,6 +682,54 @@ static void testSlimClosures()
     run = runner.run(newSlimClosure(kind, 1), { function, capture });
     AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == request && run.recordedArguments[1] == capture);
     AOT_TEST_CHECK(run.result == fromOperation.address() && fromOperation.isUntouched());
+
+    constexpr uint64_t headerInFrame = header | static_cast<uint64_t>(frameCellState) << 8 * JSCell::cellStateOffset();
+    static_assert(headerInFrame != header && frameCellState == UINT8_MAX);
+    FakeCell inFrame;
+    run = runner.run(newSlimClosureInFrame(kind, 1), { function, inFrame.address(), capture });
+    AOT_TEST_CHECK(!run.calledOperation && run.result == inFrame.address());
+    AOT_TEST_CHECK(inFrame.words[0] == headerInFrame && inFrame.words[1] == closureWords[function] && inFrame.words[2] == capture && inFrame.words[3] == FakeCell::untouched);
+
+    FakeCell withTwoCaptures;
+    run = runner.run(newSlimClosureInFrame(kind, 2), { function, withTwoCaptures.address(), capture, ~capture });
+    AOT_TEST_CHECK(!run.calledOperation && run.result == withTwoCaptures.address());
+    AOT_TEST_CHECK(withTwoCaptures.words[0] == headerInFrame && withTwoCaptures.words[1] == closureWords[function] && withTwoCaptures.words[2] == capture && withTwoCaptures.words[3] == ~capture && withTwoCaptures.words[4] == FakeCell::untouched);
+}
+
+static void testSlimClosuresWithMoreCapturesThanRegisters()
+{
+    constexpr uint32_t function = 3;
+    constexpr uint64_t header = 0x0123456789abcdefULL;
+    constexpr std::array<uint64_t, ClosureRequest::maxSlimClosureCapturesInRegisters> captures { 0x5555666677778888ULL, 0x1111222233334444ULL, 0x9999aaaabbbbccccULL, 0xddddeeeeffff0000ULL };
+    constexpr unsigned kind = 1;
+    constexpr unsigned count = 7;
+    constexpr uint64_t request = function | static_cast<uint64_t>(kind) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift;
+    constexpr unsigned cellSize = 5 * MarkedSpace::sizeStep;
+    constexpr size_t firstCapture = offsetOfSlimClosureCaptures / sizeof(uint64_t);
+    static_assert(offsetOfSlimClosureCaptures + count * sizeof(uint64_t) <= cellSize && cellSize <= sizeof(FakeCell));
+    const std::array<uint64_t, 4> closureWords { 0, 0, 0, 0x1122334455667788ULL };
+
+    StubRunner runner;
+    runner.recordCallsOf(Entry::operationAOTNewClosureSlow);
+    FakeAllocator allocator { cellSize };
+    runner.instance().functionTables.closureWords = closureWords.data();
+    runner.instance().closures.slimClosureAllocators[4] = reinterpret_cast<LocalAllocator*>(&allocator);
+    runner.instance().slimClosureHeaders[kind] = header;
+
+    FakeCell cell;
+    allocator.makeRoomAt(cell.address(), cellSize);
+    StubRun run = runner.run(newSlimClosure(kind, count), { function, captures[0], captures[1], captures[2], captures[3] });
+    AOT_TEST_CHECK(!run.calledOperation && run.result == cell.address() && !allocator.hasRoom());
+    AOT_TEST_CHECK(cell.words[0] == header && cell.words[1] == closureWords[function]);
+    AOT_TEST_CHECK(std::ranges::equal(std::span(cell.words).subspan(firstCapture, captures.size()), captures));
+    AOT_TEST_CHECK(std::ranges::all_of(std::span(cell.words).subspan(firstCapture + captures.size()), [](uint64_t word) { return word == FakeCell::untouched; }));
+
+    FakeCell fromOperation;
+    runner.setResultOfRecordedOperation(fromOperation.address());
+    run = runner.run(newSlimClosure(kind, count), { function, captures[0], captures[1], captures[2], captures[3] });
+    AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == request);
+    AOT_TEST_CHECK(std::ranges::equal(std::span(run.recordedArguments).subspan(1), captures));
+    AOT_TEST_CHECK(run.result == fromOperation.address() && fromOperation.isUntouched());
 }
 
 static UGPRPair JIT_OPERATION_ATTRIBUTES recordTypedArrayRequest(Instance* instance, uint32_t type, double length)
@@ -1005,6 +1053,7 @@ std::span<const NativeTest> stubRuntimeTests()
         { "stubs/allocation-at-sites"_s, ImageTests::whenExecutable<testAllocationAtSites> },
         { "stubs/allocation-from-templates"_s, ImageTests::whenExecutable<testAllocationFromTemplates> },
         { "stubs/slim-closures"_s, ImageTests::whenExecutable<testSlimClosures> },
+        { "stubs/slim-closures-with-more-captures-than-registers"_s, ImageTests::whenExecutable<testSlimClosuresWithMoreCapturesThanRegisters> },
         { "stubs/typed-arrays-with-length"_s, ImageTests::whenExecutable<testTypedArraysWithLength> },
         { "stubs/created-fields-in-orders-of-the-image"_s, ImageTests::whenExecutable<testCreatedFieldsInOrdersOfImage> },
         { "stubs/created-fields-of-objects-with-extra-properties"_s, ImageTests::whenExecutable<testCreatedFieldsOfObjectsWithExtraProperties> },

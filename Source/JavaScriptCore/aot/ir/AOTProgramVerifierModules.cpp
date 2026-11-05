@@ -715,6 +715,14 @@ static bool hasValidStorage(const Program& program, const EvalBinding& binding)
     return binding.operand && layout.kind == LayoutKind::Environment && binding.field && *binding.field < layout.fields.size();
 }
 
+static bool slotTakesWhateverEvalStores(const Program& program, const EvalBinding& binding)
+{
+    if (!binding.layout)
+        return true;
+    const DeclaredType& declared = program.at(binding.layout).fields[*binding.field].declared;
+    return !declared.isEstablished() || TypeReader(program).at(declared.written()).isAnything();
+}
+
 static bool isValidEvalBinding(const Program& program, const EvalBinding& binding)
 {
     bool hasFunctions = binding.function || binding.setter;
@@ -730,15 +738,16 @@ static bool isValidEvalBinding(const Program& program, const EvalBinding& bindin
     case EvalBindingKind::This:
         return (binding.function || !binding.setter) && hasValidStorage(program, binding);
     case EvalBindingKind::Variable:
+    case EvalBindingKind::Arguments:
+    case EvalBindingKind::SimpleCatchParameter:
+        return !hasFunctions && hasValidStorage(program, binding) && slotTakesWhateverEvalStores(program, binding);
     case EvalBindingKind::Constant:
     case EvalBindingKind::FunctionName:
     case EvalBindingKind::NewTarget:
     case EvalBindingKind::HomeObject:
     case EvalBindingKind::ClassObject:
-    case EvalBindingKind::Arguments:
     case EvalBindingKind::WithObject:
     case EvalBindingKind::EvalVariables:
-    case EvalBindingKind::SimpleCatchParameter:
         return !hasFunctions && hasValidStorage(program, binding);
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -320,7 +320,7 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
     };
     auto jumpIfSlotHoldsValueAsMarker = [&](Label isAdmitted) {
         Jump isNeitherUndefinedNorNull = jit.branchIfNotOther(value, r.scratch);
-        Jump cellHasNoMark = jit.branchTest8(CCallHelpers::Zero, CCallHelpers::Address(r.field.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit));
+        Jump cellHasNoMark = branchUnlessCellBearsMark(jit, r.field.object);
         LayoutData layoutWithSuchField { };
         layoutWithSuchField.hasSlotWithUnusedMarkers = 1;
         static_assert(sizeof(LayoutData) % sizeof(uint32_t) == 0);

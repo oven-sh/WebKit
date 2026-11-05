@@ -21,6 +21,7 @@
 #include "AOTObject.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPoisonedCell.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeReporter.h"
@@ -370,16 +371,28 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtNativeResult, void, (Instanc
     StringPrintStream declared;
     printKindsOfNativeResult(declared, written.kinds);
     StringPrintStream answered;
-    printKindsOfNativeResult(answered, kindOfNativeResult(JSValue::decode(found)));
+    if (JSValue value = JSValue::decode(found); value.isObject() && written.kinds & WrittenNativeResult::objectKind)
+        answered.print("an object of a class that the row does not name: "_s, asObject(value)->classInfo()->className);
+    else
+        printKindsOfNativeResult(answered, kindOfNativeResult(value));
     dataLogLn("AOT: ", BuiltinTable::singleton().textOf(BuiltinID(written.builtin)), written.constructs ? " (construct)" : " (call)", " is declared as ", declared.toString(), ", and native code answered with something else: ", answered.toString(), ". This is a bug in Bun.");
     CRASH();
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*, EncodedJSValue encodedFound, uint32_t function, uint32_t position, uint32_t source))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* instance, JSCell* cell, uint32_t function, uint32_t position))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPoisonCell);
+    countEvent(vm, PoisonedCell::tryPoison(vm, cell, function, position) ? RuntimeCounterID::CellsPoisoned : RuntimeCounterID::CellsOfClassesThatAreNotPoisoned);
+}
+
+[[noreturn]] static void stopAtFalseProof(EncodedJSValue encodedFound, uint32_t function, uint32_t position, uint32_t source)
 {
     static constexpr std::array<ASCIILiteral, 10> names {
-        "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a container holds"_s, "the function that is called"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s,
+        "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a container holds"_s, "what a built-in or a call by value gives"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s,
     };
+    // The check has met a cell whose life was ended: where that cell was made says more than where it was met.
+    if (JSValue value = JSValue::decode(encodedFound); value && value.isCell() && value.asCell()->classInfo() == PoisonedCell::info())
+        PoisonedCell::stop(value.asCell());
     StringPrintStream found;
     constexpr uint32_t field = 2;
     if (!encodedFound)
@@ -390,6 +403,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*
         printKindsOfNativeResult(found, kindOfNativeResult(JSValue::decode(encodedFound)));
     dataLogLn("AOT: f", function, " at ", position, ": ", names[std::min<size_t>(source, names.size() - 1)], " is not of the type that the compiler has proven of it. It is: ", found.toString(), ". This is a bug in Bun.");
     CRASH();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*, EncodedJSValue encodedFound, uint32_t function, uint32_t position, uint32_t source))
+{
+    stopAtFalseProof(encodedFound, function, position, source);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnterBodyThatRunsOnce, void, (Instance* instance, uint32_t function))
@@ -674,12 +692,28 @@ static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObje
     instance->runtime.exceptions.thrownValue = JSValue::encode(error);
 }
 
+[[noreturn]] static void stopAtFalseProofNamedBy(const DecodedThrowSite& decoded, const uint64_t* registers, const uint32_t* returnAddress)
+{
+    bool namesValue = static_cast<Typed::Representation>(decoded.word.representation) != Typed::Representation::Void;
+    uint32_t source = namesValue ? decoded.a & ((1u << ThrowSiteWord::bitsOfSourceOfProof) - 1) : decoded.word.registerNumber;
+    uint32_t position = namesValue ? decoded.a >> ThrowSiteWord::bitsOfSourceOfProof : decoded.a;
+    const Image& image = *Image::current();
+    CodeLocation location = image.locate(returnAddress);
+    RELEASE_ASSERT(location.kind == CodeKind::Function);
+    FunctionID writtenIn = image.rootFunctionOf(location.function);
+    if (std::optional<CallSiteRecord> record = image.callSiteAt(location.function, location.offset); record && record->inlineFrame)
+        writtenIn = InlineFrameReader().at(image, location.function, record->inlineFrame).function;
+    stopAtFalseProof(namesValue ? registers[decoded.word.registerNumber] : 0, writtenIn.index(), position, source);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAtSite);
     if (static_cast<ThrowSiteSource>(source) == ThrowSiteSource::FaultSite)
         const_cast<uint64_t*>(registers)[static_cast<unsigned>(registerWrittenAtFaults)] = instance->state->registerBeforeFault;
     DecodedThrowSite decoded = decodeThrowSite(registers, site, static_cast<ThrowSiteSource>(source));
+    if (decoded.word.stopsAtFalseProof())
+        stopAtFalseProofNamedBy(decoded, registers, site);
     if (!needsExceptionForEveryThrow(*instance) && nearestHandlerIgnoresValue(vm, *instance, callFrame)) {
         instance->runtime.exceptions.thrownValue = JSValue::encode(jsUndefined());
         OPERATION_RETURN(scope);

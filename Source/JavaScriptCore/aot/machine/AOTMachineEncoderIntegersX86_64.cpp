@@ -118,7 +118,7 @@ static void withX86IntegerAddress(const X86IntegerOperand& operand, const Functo
     functor(MacroAssembler::BaseIndex(operand.gpr, operand.index, operand.scale, operand.offset));
 }
 
-static X86IntegerOperand takeX86IntegerOperandFromFusedLoad(Encoder& encoder, const Operation* load, LeafCursor& cursor)
+static NEVER_INLINE X86IntegerOperand takeX86IntegerOperandFromFusedLoad(Encoder& encoder, const Operation* load, LeafCursor& cursor)
 {
     RELEASE_ASSERT(isLoad(load->opcode()) && !load->traps() && !encoder.m_liveness.of(load).has(ValueFlag::TakesOverTrap));
     CCallHelpers& jit = encoder.m_jit;
@@ -159,10 +159,10 @@ static X86IntegerOperand takeX86IntegerOperandFromFusedLoad(Encoder& encoder, co
     return X86IntegerOperand::inRegister(scratchGPR);
 }
 
-static X86IntegerOperand takeX86IntegerOperand(Encoder& encoder, const Operation* user, unsigned childIndex, LeafCursor& cursor)
+static ALWAYS_INLINE X86IntegerOperand takeX86IntegerOperand(Encoder& encoder, const Operation* user, unsigned childIndex, LeafCursor& cursor)
 {
-    const Operation* child = user->child(childIndex);
-    if (encoder.m_liveness.isFused(child) && child->opcode() != Trunc)
+    const Operation* child = inlineChildWithoutCheck(user, childIndex);
+    if (encoder.isFused(child) && child->opcode() != Trunc)
         return takeX86IntegerOperandFromFusedLoad(encoder, child, cursor);
 
     Location location = cursor.take();
@@ -553,8 +553,8 @@ static void encodeX86IntegerExtension(Encoder& encoder, const Step& step, X86Int
 
 static void encodeX86IntegerMove(Encoder& encoder, const Step& step)
 {
-    const Operation* child = step.operation->child(0);
-    if (!encoder.m_liveness.isFused(child) && step.sources[0].isImmediate()) {
+    const Operation* child = inlineChildWithoutCheck(step.operation, 0);
+    if (!encoder.isFused(child) && step.sources[0].isImmediate()) {
         encoder.encodeMaterialize(child, step.destination.reg());
         return;
     }

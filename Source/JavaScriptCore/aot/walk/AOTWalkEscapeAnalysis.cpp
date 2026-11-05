@@ -130,8 +130,6 @@ static bool givesObjectThatNothingElseNames(const Operation& made)
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
-    if ((opcode == Opcode::Data || opcode == Opcode::NewRegExp) && made.isNeverToldApart())
-        return false;
 
     uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + hasVariadicOperand(opcode);
     for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
@@ -173,15 +171,18 @@ static void noteWhatNewObjectFillsIn(Walker& walker, Reference object, const Ope
 
     auto fields = made.fields();
     std::span<const ValueID> values = made.valuesOperands();
-    if (made.listsOnlyStoredValues() || fields.size() != values.size())
+    if (fields.size() != values.size())
         return;
     const Code& code = walker.code();
     for (size_t index = 0; index < fields.size(); ++index) {
         if (!values[index] || !walker.plan().slot(layout, fields[index]).hasStorage() || std::ranges::find(fillers, fields[index]) != fillers.end()
-            || walker.plan().slot(layout, fields[index]).representation == SlotRepresentation::DeferredClosure || walker.plan().layout(layout).environmentOfDeferredClosures == fields[index])
+            || walker.plan().layout(layout).environmentOfDeferredClosures == fields[index])
+            continue;
+        bool defersClosure = walker.plan().slot(layout, fields[index]).representation == SlotRepresentation::DeferredClosure;
+        if (defersClosure && !isClosureLeftUnmade(walker, Reference::value(values[index])))
             continue;
         FieldReference field { layout, fields[index] };
-        Reference value = valueHeldByFreshObject(code, values[index]);
+        Reference value = defersClosure ? Reference::value(values[index]) : valueHeldByFreshObject(code, values[index]);
         if (isEnvironment)
             walker.noteEnvironmentField(object, field, value);
         else
@@ -331,7 +332,7 @@ std::optional<Vector<PropertyOfFreshObject, 8>> propertiesOfFreshObject(Walker& 
     for (FieldIndex listed : made.fields()) {
         FieldReference field { layout, listed };
         Reference value = state.slot(object, field);
-        TypeID type = value ? walker.typeOf(value) : TypeID();
+        TypeID type = value && !isClosureLeftUnmade(walker, value) ? walker.typeOf(value) : TypeID();
         if (!type || (walker.types().at(type).primitives & Primitive::Absent))
             return std::nullopt;
         properties.append({ field, value });
@@ -721,6 +722,9 @@ void markEscapingOperands(Walker& walker, const Draft& draft, const Effects* fou
     uint32_t numberOfNamedOperands = draft.numberOfNamedOperands();
     bool someObjectHasLeft = false;
     for (const FreshOperandOfEscapeAnalysis& operand : freshOperands) {
+        // Wrong on purpose. No value shows it: Walker::endLivesOfCellsThatHaveNotLeft().
+        if (opcode == Opcode::CallDirect && operand.operandIndex >= numberOfNamedOperands && walker.takesCalleesToKeepNothing())
+            continue;
         if (!doesGenericOperation && !useLetsFreshObjectLeave(operandInfoOf(opcode, std::min(operand.operandIndex, numberOfNamedOperands)), runsOtherCode))
             continue;
         state.markEscaped(operand.object);

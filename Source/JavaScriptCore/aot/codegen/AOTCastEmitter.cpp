@@ -78,8 +78,11 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
     if (value->asksInFull())
         operand = Operand { Representation::JSValue, operand.value };
     const TypeTestPlan& plan = value->asksInFull() ? typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, value->testedType()) : planFor(source, value->testedType());
-    bool& passesChangedClosures = emitter<ClosureTestEmitter>().passesChangedClosures();
-    SetForScope passesChangedClosuresWhereFailureTraps(passesChangedClosures, passesChangedClosures || failingSideOfTypeTestTraps(generator().code(), value));
+    std::optional<SetForScope<bool>> passesChangedClosuresWhereFailureTraps;
+    if (!plan.cellTests.isEmpty()) {
+        bool& passesChangedClosures = emitter<ClosureTestEmitter>().passesChangedClosures();
+        passesChangedClosuresWhereFailureTraps.emplace(passesChangedClosures, passesChangedClosures || failingSideOfTypeTestTraps(generator().code(), value));
+    }
     if (!value.isBranchCondition()) {
         define(value, hasType(operand, plan));
         return;
@@ -103,19 +106,7 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
             return logicalOr(hasCellTypeIn(cell, { StringType, SymbolType }), isObjectCell(cell));
         }));
     }
-    LBasicBlock stops = newBlock();
-    LBasicBlock continuation = newBlock();
-    ScopeFork fork = m_out.forkScope();
-    m_out.branch(holds.value(), normalEdge(continuation), rareEdge(stops));
-
-    m_out.appendToArm(stops, fork);
-    static_assert(numberOfEnumerators<ProofSource> == 10);
-    FunctionID writtenIn = generator().code().inlineFrames()[value->inlineFrame].callee;
-    m_out.suspendDeclaredAccesses();
-    callVoidOperation(value, RuntimeOperation::StopAtFalseProof, { found, word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(value->position)), word32(static_cast<int32_t>(value->source())) });
-    m_out.resumeDeclaredAccesses();
-    m_out.unreachable();
-    m_out.appendToArm(continuation, fork);
+    emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, holds, isAnswerOfTest ? std::nullopt : std::optional(found), value->source());
 }
 
 } } } // namespace JSC::AOT::Typed

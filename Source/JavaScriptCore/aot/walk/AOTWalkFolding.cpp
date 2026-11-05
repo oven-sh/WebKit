@@ -527,8 +527,6 @@ static bool areOneClassObjectInFolding(Walker& walker, TypeID left, TypeID right
 
 static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const BodyValue& test)
 {
-    if (std::optional<bool> answer = answerOfRelationWithoutCompare(walker, test))
-        return answer;
     std::array<TypeID, 2> typesOfOperands;
     uint32_t numberOfOperands = 0;
     for (; numberOfOperands < typesOfOperands.size(); ++numberOfOperands) {
@@ -691,7 +689,7 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
     if (!field || holdsAccessorInFolding(walker, *field))
         return { };
     Reference held = walker.state().slot(object, *field);
-    return held ? unlessAbsentInFolding(walker, held) : Reference();
+    return held && !isClosureLeftUnmade(walker, held) ? unlessAbsentInFolding(walker, held) : Reference();
 }
 
 static Reference elementAnsweredByStateInFolding(Walker& walker, const BodyOperation<Opcode::ElemGet>& read)
@@ -794,12 +792,17 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
     if (!passed || walker.isUnreachable())
         return true;
 
+    bool holdsVariable = variable && walker.state().variable(variable) == checked;
+    if (Reference literal = variable ? literalHeldByFilledVariable(walker, variable) : Reference()) {
+        walker.bind(check.id(), literal);
+        passed = literal;
+    }
     if (variable)
         noteValueOfStableBinding(walker, variable, passed);
     if (environment)
         noteValueOfStableBinding(walker, environment, field, passed);
     WalkState& state = walker.state();
-    if (variable && state.variable(variable) == checked)
+    if (holdsVariable)
         state.noteVariable(variable, passed);
     if (environment && state.environmentField(environment, field) == checked)
         state.noteEnvironmentField(environment, field, passed);

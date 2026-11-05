@@ -19,7 +19,7 @@ void ResolvedCallEmitter::generateRegExpMatchLiteral(const ValueContext& value)
     RELEASE_ASSERT(!value.returnCall());
     ValueID regExp = value->regExpOperand();
     bool recordsMatch = m_facts.mayReadLegacyRegExpStatics();
-    if (value->guardOperand() || (!regExp && (value->regExpFlags().containsAny(flagsOfMatchesUsingObject) || recordsMatch))) {
+    if (!regExp && (value->regExpFlags().containsAny(flagsOfMatchesUsingObject) || recordsMatch)) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
         return;

@@ -143,7 +143,7 @@ bool TypeTextPrinter::isPrintedBefore(ObjectID a, ObjectID b) const
 {
     auto numbersOf = [&](const ObjectRecord& record) {
         bool standsBehindClosures = !writesIRText() || record.kind != ObjectKind::Closure;
-        return std::tuple(standsBehindClosures, record.kind, record.owner, record.payload, record.module, record.ordinal, record.has(ObjectTrait::IsOfInstance), record.instance);
+        return std::tuple(standsBehindClosures, record.kind, record.payload, record.module, record.ordinal);
     };
     return numbersOf(m_types.at(a)) < numbersOf(m_types.at(b));
 }
@@ -659,18 +659,7 @@ void TypeTextPrinter::printObject(ObjectID object)
     case ObjectKind::EscapedOfLayout:
         printForm("escaped"_s, IDPrefix::Layout, record.payload);
         break;
-    case ObjectKind::Site:
-        m_out.print("site("_s);
-        printID(IDPrefix::Function, record.owner.index());
-        m_out.print(", "_s);
-        printID(IDPrefix::Value, record.payload);
-        if (record.ordinal)
-            m_out.print(", "_s, record.ordinal);
-        m_out.print(")"_s);
-        break;
     }
-    if (record.has(ObjectTrait::IsOfInstance))
-        m_out.print("@"_s, record.instance);
 }
 
 void TypeTextPrinter::printLayoutSet(LayoutSetID set)

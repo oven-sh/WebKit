@@ -96,9 +96,6 @@ Representation representationOf(TypeReader types, TypeID id)
 Representation representationOf(OpaqueKind kind)
 {
     switch (kind) {
-    case OpaqueKind::Guard:
-    case OpaqueKind::Fact:
-        return Representation::Void;
     case OpaqueKind::IteratorState:
     case OpaqueKind::Enumerator:
     case OpaqueKind::Exception:
@@ -332,9 +329,7 @@ Representation representationWantedBy(OperandKind kind, const Type& operand)
     case OperandKind::Enumerator:
     case OperandKind::Exception:
     case OperandKind::ClassToken:
-    case OperandKind::Guard:
     case OperandKind::StringBuilder:
-    case OperandKind::Fact:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
     case OperandKind::BuilderCursor:

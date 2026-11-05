@@ -34,13 +34,14 @@ public:
     Operand loadSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord, const Type& loadedType);
     Operand loadSlotOrUndefined(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Operand loadSlotThatHoldsValue(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
+    static constexpr bool storeLooksAtType(SlotRepresentation slot) { return slot == SlotRepresentation::OptionalInt32; }
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord, const Type& storedType);
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord = nullptr);
     Condition isFilled(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Condition holdsValue(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Condition holdsDeclaredType(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     bool holdsRawValueFromBirthInSomeMember(LayoutSetID receivers, PropertyKeyID) const;
-    void markCellIfMarkerIsStored(CellPointer, ValueID stored);
+    void markCellIfMarkerIsStored(CellPointer, ValueID stored, LayoutSetID possible = { });
 
     Pointer extensionOf(CellPointer, const PlacedSlot& extensionWord);
     CellPointer extraPropertiesOf(CellPointer, const PlacedSlot& extraPropertiesWord, LBasicBlock hasNone);

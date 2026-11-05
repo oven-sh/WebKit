@@ -153,10 +153,6 @@ struct NumbersOfImageForModuleLists {
             return { };
         }
         const PlacedVariable& placed = variables[id.index()];
-        if (placed.plan.encoding == Typed::VariableEncoding::UndefinedAsZero) {
-            encoder.fail("VariableReadByTableHoldsUndefinedAsZero"_s, id);
-            return { };
-        }
         switch (placed.plan.storage) {
         case Typed::VariableStorage::Statics:
             if (!placed.hasWord) {
@@ -350,12 +346,20 @@ void hidePathsOfModules(Typed::Program& program, const Typed::Facts& facts, cons
 
 void internPiecesOfModulePaths(Typed::Program& program)
 {
+    std::span<const uint8_t> lastPathInPieces;
     for (const Typed::Module& module : program.modules) {
         if (!mayHavePathInPieces(module))
             continue;
-        forEachPieceOfModulePath(program.string(module.path), [&](std::span<const uint8_t> piece) {
-            program.strings.intern(piece);
+        std::span<const uint8_t> path = program.string(module.path);
+        size_t sizeInCommon = static_cast<size_t>(std::ranges::mismatch(path, lastPathInPieces).in1 - path.begin());
+        size_t endOfPiece = 0;
+        forEachPieceOfModulePath(path, [&](std::span<const uint8_t> piece) {
+            endOfPiece += piece.size();
+            if (endOfPiece > sizeInCommon || piece.back() != '/')
+                program.strings.intern(piece);
         });
+        if (endOfPiece)
+            lastPathInPieces = path;
     }
 }
 
@@ -580,6 +584,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
         { module.kind != ModuleKind::CommonJs && module.flags.contains(ModuleFlags::HasTopLevelAwait), Flag::HasTopLevelAwait },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::RunsAgain), Flag::RunsAgainAfterThrow },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsModuleToImports), Flag::IsModuleToImports },
+        { module.kind == ModuleKind::CommonJs && module.exportsVariable && inputs.facts.linked().exportsThatStayIn.get(module.exportsVariable.index()), Flag::ExportsStayInCompiledCode },
         { module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError), Flag::KeepsError },
         { isEntered && entry.bodyFunction() && entryOfModuleBodyLeadsToStart(inputs, module.body), Flag::EvaluatesItself },
         { hasValue, Flag::HasValue },

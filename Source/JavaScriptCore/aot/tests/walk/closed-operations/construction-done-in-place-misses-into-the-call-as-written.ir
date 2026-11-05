@@ -3,7 +3,7 @@
 # RUN: walk f2 f3 f5 mechanisms=none
 # CHECK-LABEL: code f2:Body
 # CHECK: b0([[target]]: {{*}}, [[list]]: {{*}}, [[newTarget]]:
-# CHECK: TryCallInline -, -, [[target]], [[list]], [[newTarget]] inlineBuiltin=ReflectConstruct {{*}}-> done [[done]](), miss [[miss]]()
+# CHECK: TryCallInline -, [[target]], [[list]], [[newTarget]] inlineBuiltin=ReflectConstruct {{*}}-> done [[done]](), miss [[miss]]()
 # CHECK: [[done]]([[constructed]]:
 # CHECK-NEXT: Jump -> next [[join]]([[constructed]])
 # CHECK: [[miss]]() frequency=Rare:

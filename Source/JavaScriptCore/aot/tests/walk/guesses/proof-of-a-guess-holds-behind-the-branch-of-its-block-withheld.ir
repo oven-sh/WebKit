@@ -1,8 +1,0 @@
-# the same function with guesses withheld: nothing is tested, each block is walked once, and both reads are closed
-# RUN: walk f1 mechanisms=all-ParameterGuards-Guesses-LoopInvariants
-# CHECK-LABEL: code f1:Body
-# CHECK-COUNT-2: = PropGet {{*}}key="flags"
-# CHECK-NOT: = PropGet {{*}}key="flags"
-# RUN(NEVER): walk f1 mechanisms=all-ParameterGuards-Guesses-LoopInvariants
-# NEVER-NOT: = ShapeTest
-# PROGRAM-OF: proof-of-a-guess-holds-behind-the-branch-of-its-block.ir

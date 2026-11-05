@@ -101,6 +101,8 @@ public:
     const FieldData* staticField(const LayoutData&, UniquedStringImpl*) const;
     JSValue readStaticField(const FieldData&) const;
     void storeStaticField(const FieldData&, JSValue);
+    uint32_t& createdStaticFieldsEnd(const LayoutData&);
+    void didEmptyStaticFields(const LayoutData&);
 
     JSObject* classPrototype(VM&, const LayoutData&);
     JSObject* classPrototypeOfInstances(VM&, const LayoutData&);
@@ -142,7 +144,8 @@ public:
     static bool leavesDefinitionToRecord(const LayoutData& classLayout) { return classLayout.createsMembersLazily && classLayout.createsClassObjectOnMutation && classLayout.classData().guardsHoldWhileClear; }
     void disarmMemberGuards(const LayoutData&);
     void didChangeMember(const LayoutData&, ClassSide, UniquedStringImpl*);
-    void didDefineMember(VM&, const LayoutData&, ClassSide, JSObject* holder, UniquedStringImpl*, JSObject* function);
+    void holdDefinitionToNameInRecord(const LayoutData&, ClassSide, uint32_t index, UniquedStringImpl*, const JSObject* function) const;
+    void didDefineMember(VM&, const LayoutData&, ClassSide, uint32_t index, JSObject* holder, UniquedStringImpl*, JSObject* function);
     class MemberDefinition {
         WTF_MAKE_NONCOPYABLE(MemberDefinition);
     public:
@@ -312,6 +315,7 @@ private:
     std::unique_ptr<ChainDependentOwner> m_ownerOfGuardsThatHangOnChains;
     ChainDependentOwnerID m_numberOfOwnerOfGuardsThatHangOnChains { };
     SetOfFieldRecords m_fieldsWhoseCreationEndsNoGuard;
+    Vector<uint32_t> m_createdStaticFieldsEnds;
     uint64_t m_numberOfWalksOverPrototypeHolders { 0 };
     unsigned m_numberOfOpenMethodTableUpdates { 0 };
     bool m_methodTableIsWritable { false };

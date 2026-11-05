@@ -183,10 +183,11 @@ static bool fitsIntegersForm(Opcode opcode, const OperandsOfForm& operands, cons
     return results && results->isSubsetOf(result.integers);
 }
 
-static OperatorForm chooseNumericForm(Opcode opcode, const OperandsOfForm& operands, const Type& result)
+template<typename ResultOfOperator>
+static OperatorForm chooseNumericForm(Opcode opcode, const OperandsOfForm& operands, const ResultOfOperator& result)
 {
     if (operands.areBoth(&Type::isInteger)) {
-        if (fitsIntegersForm(opcode, operands, result))
+        if (fitsIntegersForm(opcode, operands, result()))
             return OperatorForm::Integers;
         if (isLegalOperatorForm(opcode, OperatorForm::CheckedIntegers))
             return OperatorForm::CheckedIntegers;
@@ -195,7 +196,7 @@ static OperatorForm chooseNumericForm(Opcode opcode, const OperandsOfForm& opera
         return OperatorForm::Numbers;
     if (operands.areBoth(&OperandOfForm::isBigInt))
         return OperatorForm::BigInts;
-    if (operands.isEither(&Type::isNumber) && result.isNumber() && isLegalOperatorForm(opcode, OperatorForm::NumberAndValue))
+    if (operands.isEither(&Type::isNumber) && result().isNumber() && isLegalOperatorForm(opcode, OperatorForm::NumberAndValue))
         return OperatorForm::NumberAndValue;
     return OperatorForm::Generic;
 }
@@ -226,7 +227,8 @@ static OperatorForm chooseConcatenationForm(const Program& program, const Operan
     return OperatorForm::Generic;
 }
 
-static OperatorForm chooseAdditionForm(const Program& program, const OperandsOfForm& operands, const Type& result)
+template<typename ResultOfOperator>
+static OperatorForm chooseAdditionForm(const Program& program, const OperandsOfForm& operands, const ResultOfOperator& result)
 {
     OperatorForm numericForm = chooseNumericForm(Opcode::Add, operands, result);
     if (numericForm != OperatorForm::Generic)
@@ -245,9 +247,9 @@ static OperatorForm chooseBitwiseForm(Opcode opcode, const OperandsOfForm& opera
     return OperatorForm::Generic;
 }
 
-OperatorForm chooseArithmeticForm(const Program& program, const TypeArena& types, Opcode opcode, OperatorTypes operandTypes, TypeID result)
+template<typename ResultOfOperator>
+static OperatorForm chooseArithmeticFormBy(const Program& program, const TypeArena& types, Opcode opcode, OperatorTypes operandTypes, const ResultOfOperator& result)
 {
-    RELEASE_ASSERT(arithmeticOperatorsWithForm.contains(opcode) && result);
     checkOperandsOfForm(opcode, operandTypes);
     if (hasNeverAmongOperandsOfForm(operandTypes))
         return OperatorForm::Generic;
@@ -255,10 +257,17 @@ OperatorForm chooseArithmeticForm(const Program& program, const TypeArena& types
     OperandsOfForm operands = operandsOfForm(types, operandTypes);
     if (allBitwiseOperators.contains(opcode))
         return chooseBitwiseForm(opcode, operands);
-    Type resultType = types.at(result);
     if (opcode == Opcode::Add)
-        return chooseAdditionForm(program, operands, resultType);
-    return chooseNumericForm(opcode, operands, resultType);
+        return chooseAdditionForm(program, operands, result);
+    return chooseNumericForm(opcode, operands, result);
+}
+
+OperatorForm chooseArithmeticForm(const Program& program, const TypeArena& types, Opcode opcode, OperatorTypes operandTypes, TypeID result)
+{
+    RELEASE_ASSERT(arithmeticOperatorsWithForm.contains(opcode) && result);
+    return chooseArithmeticFormBy(program, types, opcode, operandTypes, [&] {
+        return types.at(result);
+    });
 }
 
 static OperatorForm chooseRelationForm(const OperandsOfForm& operands)
@@ -401,7 +410,11 @@ OperatorForm chooseFormOfOperator(const Program& program, TypeArena& types, Opco
         std::array<TypeID, 2> leftAndRight { operandTypes.left, operandTypes.right };
         std::span<const TypeID> typesByOperandIndex = std::span<const TypeID>(leftAndRight).first(numberOfNamedOperandsOf(opcode));
         TypingContext typing { program, types, PositionTypes::knowingNothing() };
-        OperatorForm form = chooseArithmeticForm(program, types, opcode, operandTypes, resultTypeOfOperator(typing, opcode, typesByOperandIndex));
+        OperatorForm form = chooseArithmeticFormBy(program, types, opcode, operandTypes, [&] {
+            TypeID result = resultTypeOfOperator(typing, opcode, typesByOperandIndex);
+            RELEASE_ASSERT(result);
+            return types.at(result);
+        });
         RELEASE_ASSERT(isLegalOperatorForm(opcode, form));
         return form;
     }

@@ -90,7 +90,6 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
     Operand loaded = emitter<StaticsEmitter>().loadVariable(variable);
     switch (planned.encoding) {
     case VariableEncoding::Plain:
-    case VariableEncoding::UndefinedAsZero:
         define(value, loaded);
         return;
     case VariableEncoding::FunctionAsZero: {
@@ -111,7 +110,7 @@ void BindingEmitter::generatePutModuleVariable(const ValueContext& value)
     VariableID variable = value->variable();
     switch (m_plan.variable(variable).storage) {
     case VariableStorage::Statics:
-        emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()), typeOf(value->valueOperand()));
+        emitter<StaticsEmitter>().storeVariable(variable, get(value->valueOperand()));
         return;
     case VariableStorage::ClosureTable:
         fail(value, InternalErrorKind::SlotAccessNotPlaced);

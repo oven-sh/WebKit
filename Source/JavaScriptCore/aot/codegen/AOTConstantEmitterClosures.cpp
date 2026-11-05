@@ -10,6 +10,7 @@
 
 #include "AOTBarrierEmitter.h"
 #include "AOTCellAllocationEmitter.h"
+#include "AOTCellFormat.h"
 #include "AOTClosure.h"
 #include "AOTClosureTestEmitter.h"
 #include "AOTClosuresLent.h"
@@ -45,13 +46,16 @@ static constexpr unsigned slimClosureAllocatorIndex(unsigned numberOfCaptures)
 
 static_assert(!slimClosureAllocatorIndex(0) && slimClosureAllocatorIndex(1) == 1 && slimClosureAllocatorIndex(2) == 1);
 static_assert(slimClosureAllocatorIndex(ClosureRequest::maxSlimClosureCaptures) < ClosureWords::numberOfSlimClosureAllocators);
-static_assert(ClosureRequest::maxNumberOfCaptures <= ClosureRequest::maxSlimClosureCaptures);
+static_assert(ClosureRequest::maxNumberOfCaptures <= ClosureRequest::maxSlimClosureCapturesInRegisters);
 static_assert(ClosureRequest::allocationShift == 32 && ClosureRequest::isSlimBit == 31 && ClosureRequest::executableShift >= ClosureWord::numberOfFunctionBits);
 static_assert(defaultLimitValue(LimitID::ClosureAllocationSites, hostArchitecture()) == 1u << (ClosureRequest::countShift - ClosureRequest::allocationShift));
 
-static void storeClosureCaptureWords(Output& out, CellPointer closure, std::span<const LValue> wordsBySlot, const Machine::IndexedAbstractHeap& captureWords)
+static constexpr int64_t stateOfFrameCellInHeader = static_cast<int64_t>(static_cast<uint64_t>(frameCellState) << 8 * JSCell::cellStateOffset());
+static_assert(frameCellState == UINT8_MAX && JSCell::cellStateOffset() == sizeof(uint64_t) - 1);
+
+static void storeClosureCaptureWords(Output& out, CellPointer closure, std::span<const LValue> wordsBySlot, const Machine::IndexedAbstractHeap& captureWords, size_t firstSlot = 0)
 {
-    for (size_t slot = 0; slot < wordsBySlot.size(); ++slot)
+    for (size_t slot = firstSlot; slot < wordsBySlot.size(); ++slot)
         out.store64(wordsBySlot[slot], out.address(closure.value(), captureWords[slot]));
 }
 
@@ -206,14 +210,25 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
         return callClosureStub(value, request, requestWord);
     }
 
-    m_out.noteForm(Form::Open, StateOfKnowledge::SlimInFrame);
     build().statistics().count(StatisticID::ClosuresInFrames);
     CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(value, SlimClosure::allocationSize(count));
+    Vector<LValue, 4> captureWords = captureWordsBySlot(value, request);
+    size_t numberOfWordsStored = 0;
+    if (generator().takesOpenForm(value, StateOfKnowledge::SlimInFrame)) {
+        CodeGenerator::InitializationScope scope(generator());
+        emitter<CellAllocationEmitter>().storeHeader(cell, bitOr(loadImmutable64(AOT_INSTANCE_OFFSET(slimClosureHeaders) + request.kind.slimClosureKind() * sizeof(uint64_t)), integer(stateOfFrameCellInHeader)));
+        storeField(cell, m_heaps.AOTSlimClosure_word, closureWordOf(request));
+    } else {
+        numberOfWordsStored = std::min<size_t>(count, ClosureRequest::maxSlimClosureCapturesInRegisters);
+        Vector<LValue, 6> operands;
+        operands.append(zeroExtended(numberOf(closureNumberMentionedBy(request))).value());
+        operands.append(cell.value());
+        operands.append(captureWords.span().first(numberOfWordsStored));
+        cell = CellPointer(callStub(value, newSlimClosureInFrame(request.kind.slimClosureKind(), count), operands.span()).first);
+    }
     {
         CodeGenerator::InitializationScope scope(generator());
-        emitter<CellAllocationEmitter>().storeHeader(cell, loadImmutable64(AOT_INSTANCE_OFFSET(slimClosureHeaders) + request.kind.slimClosureKind() * sizeof(uint64_t)));
-        storeCaptures(cell, request, m_heaps.AOTSlimClosure_captures);
-        storeField(cell, m_heaps.AOTSlimClosure_word, closureWordOf(request));
+        storeClosureCaptureWords(m_out, cell, captureWords.span(), m_heaps.AOTSlimClosure_captures, numberOfWordsStored);
     }
     if (value->storage() == AllocationStorage::Heap)
         emitter<BarrierEmitter>().fenceAfterInitialization(value);
@@ -243,10 +258,21 @@ CellPointer ConstantEmitter::callClosureStub(const ValueContext& value, const Ne
     if (!isSlim)
         word = bitOr(word, Integer(m_out.shl(zeroExtended(numberOf(request.allocation.mention)).value(), ClosureRequest::allocationShift)));
 
+    Vector<LValue, 4> captureWords = captureWordsBySlot(value, request);
+    size_t numberInRegisters = std::min<size_t>(count, ClosureRequest::maxSlimClosureCapturesInRegisters);
     Vector<LValue, 6> operands;
     operands.append(word.value());
-    operands.appendVector(captureWordsBySlot(request));
-    return CellPointer(callStub(value, isSlim ? AOT::newSlimClosure(request.kind.slimClosureKind(), count) : newClosure(count), operands.span()).first);
+    operands.append(captureWords.span().first(numberInRegisters));
+    CellPointer cell(callStub(value, isSlim ? AOT::newSlimClosure(request.kind.slimClosureKind(), count) : newClosure(count), operands.span()).first);
+    if (numberInRegisters == count)
+        return cell;
+
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        storeClosureCaptureWords(m_out, cell, captureWords.span(), m_heaps.AOTSlimClosure_captures, numberInRegisters);
+    }
+    emitter<BarrierEmitter>().fenceAfterInitialization(value);
+    return cell;
 }
 
 CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const NewClosureRequest& request)
@@ -255,7 +281,7 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
     CellAllocationEmitter& cellAllocation = emitter<CellAllocationEmitter>();
     unsigned structure = request.kind.closureStructure;
     unsigned executable = static_cast<unsigned>(FunctionTables::executableKind(request.kind));
-    Vector<LValue, 4> captureWords = captureWordsBySlot(request);
+    Vector<LValue, 4> captureWords = captureWordsBySlot(value, request);
     bool isOnHeap = false;
     CellPointer cell;
     switch (request.storage) {
@@ -271,8 +297,10 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
 
     {
         CodeGenerator::InitializationScope scope(generator());
-        if (!isOnHeap || structure)
-            cellAllocation.storeHeader(cell, loadImmutable64(AOT_INSTANCE_OFFSET(closures.closureHeaders) + structure * sizeof(uint64_t)));
+        if (!isOnHeap || structure) {
+            Integer header = loadImmutable64(AOT_INSTANCE_OFFSET(closures.closureHeaders) + structure * sizeof(uint64_t));
+            cellAllocation.storeHeader(cell, isOnHeap ? header : bitOr(header, integer(stateOfFrameCellInHeader)));
+        }
         storeField(cell, m_heaps.JSNonArray_butterfly, integer(0));
         storeField(cell, m_heaps.JSCallee_scope, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)));
         storeField(cell, m_heaps.JSFunction_executableOrRareData, loadImmutablePointer(AOT_INSTANCE_OFFSET(closures.executables) + executable * sizeof(JSCell*)));
@@ -290,7 +318,52 @@ Operand ConstantEmitter::captureOf(const NewClosureRequest& request, unsigned in
     return m_generator.getIn(request.captures[index], representationOfCapture(context, request.function, index));
 }
 
-Vector<LValue, 4> ConstantEmitter::captureWordsBySlot(const NewClosureRequest& request)
+bool ConstantEmitter::mayBeClosureOfFrame(ValueID captured)
+{
+    if (m_code.isConstant(captured))
+        return false;
+    if (!m_mayCaptureClosuresOfFrames)
+        m_mayCaptureClosuresOfFrames = mayCaptureClosuresOfFrames(generator().facts(), m_code);
+    if (!*m_mayCaptureClosuresOfFrames)
+        return false;
+    TypeID type = typeIDOf(captured);
+    return !type || (!holdsOnlyPrimitives(type) && types().overlap(type, TypeTable::function));
+}
+
+Operand ConstantEmitter::broughtToHeap(const ValueContext& value, ValueID captured, Operand capture)
+{
+    auto cellBroughtToHeap = [&](CellPointer cell) {
+        Word32 state(m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, cell.value(), JSCell::cellStateOffset())));
+        return either<CellPointer>(notEqual(state, word32(frameCellState)), [&] {
+            return cell;
+        }, [&] {
+            return callOperation<CellPointer>(value, RuntimeOperation::MoveClosureToHeap, { cell }, { .isOnRarePath = true });
+        });
+    };
+    bool mayBeAllZeros = !typeIDOf(captured) || (typeOf(captured).primitives & (Primitive::Absent | Primitive::Unspecified));
+    if (capture.is<CellPointer>()) {
+        CellPointer cell = capture.as<CellPointer>();
+        if (!mayBeAllZeros)
+            return cellBroughtToHeap(cell);
+        return selectByBranch<CellPointer>(isNotEmpty(boxCell(cell)), [&] {
+            return cellBroughtToHeap(cell);
+        }, [&] {
+            return cell;
+        });
+    }
+
+    Boxed boxed = capture.as<Boxed>();
+    Condition holdsCell = isCell(boxed);
+    if (mayBeAllZeros)
+        holdsCell = logicalAnd(holdsCell, isNotEmpty(boxed));
+    return selectByBranch<Boxed>(holdsCell, [&] {
+        return boxCell(cellBroughtToHeap(unboxCell(boxed)));
+    }, [&] {
+        return boxed;
+    });
+}
+
+Vector<LValue, 4> ConstantEmitter::captureWordsBySlot(const ValueContext& value, const NewClosureRequest& request)
 {
     unsigned count = request.captures.size();
     Vector<LValue, 4> words(FillWith { }, request.numberOfWords, nullptr);
@@ -298,17 +371,13 @@ Vector<LValue, 4> ConstantEmitter::captureWordsBySlot(const NewClosureRequest& r
         if (!closureHoldsWordForListedCapture(m_program, conventions(), request.function, i))
             continue;
         Operand capture = captureOf(request, i);
+        if (request.storage == AllocationStorage::Heap && mayBeClosureOfFrame(request.captures[i]))
+            capture = broughtToHeap(value, request.captures[i], capture);
         LType type = machineTypeOf(capture.representation);
         LValue word = type == Machine::Int32 ? m_out.zeroExtPtr(capture.value) : type == Machine::Double ? m_out.bitCast(capture.value, Machine::Int64) : capture.value;
         words[closureCaptureSlotOf(m_program, conventions(), request.function, i)] = word;
     }
     return words;
-}
-
-void ConstantEmitter::storeCaptures(CellPointer closure, const NewClosureRequest& request, const Machine::IndexedAbstractHeap& captureWords)
-{
-    RELEASE_ASSERT(request.storage == AllocationStorage::Frame);
-    storeClosureCaptureWords(m_out, closure, captureWordsBySlot(request).span(), captureWords);
 }
 
 uint32_t ConstantEmitter::closureNumberMentionedBy(const NewClosureRequest& request, int32_t addend)

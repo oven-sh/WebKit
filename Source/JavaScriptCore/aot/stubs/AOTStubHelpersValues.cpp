@@ -254,6 +254,68 @@ void extractBits(StubAssembler& jit, GPRReg source, unsigned shift, unsigned wid
 void loadShapeWord(StubAssembler& jit, GPRReg cell, GPRReg result)
 {
     jit.load32(Address(cell, offsetOfShapeWord), result);
+    jit.or32(TrustedImm32(shapeWordIsUnmarked), result);
+}
+
+bool loadsShapeAsHalfword(StubAssembler& jit)
+{
+    return isX86_64() && jit.bindingPolicy().shapesFitHalfword;
+}
+
+int32_t offsetOfRowsByShapeIndex(StubAssembler& jit)
+{
+    return loadsShapeAsHalfword(jit) ? -static_cast<int32_t>(sizeof(uint32_t) << 16) : 0;
+}
+
+void loadShapeWordAsIndex(StubAssembler& jit, GPRReg cell, GPRReg result)
+{
+    if (loadsShapeAsHalfword(jit)) {
+        jit.load16(Address(cell, offsetOfShapeWord), result);
+        return;
+    }
+    jit.load32SignedExtendTo64(Address(cell, offsetOfShapeWord), result);
+    jit.or64(TrustedImm32(shapeWordIsUnmarked), result);
+}
+
+void loadShapeWordWithMark(StubAssembler& jit, GPRReg cell, GPRReg result)
+{
+    jit.load32(Address(cell, offsetOfShapeWord), result);
+}
+
+void setFlagThatFieldHasLeft(StubAssembler& jit, GPRReg cell, GPRReg scratch)
+{
+    const Address flagsOfCell(cell, JSCell::typeInfoFlagsOffset());
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    jit.or8(TrustedImm32(TypeInfoPerCellBit), flagsOfCell);
+#else
+    jit.load8(flagsOfCell, scratch);
+    jit.or32(TrustedImm32(TypeInfoPerCellBit), scratch);
+    jit.store8(scratch, flagsOfCell);
+#endif
+}
+
+void setMarkOfCell(StubAssembler& jit, GPRReg cell, GPRReg scratch)
+{
+    const Address byteWithMark(cell, offsetOfByteWithMark);
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    jit.and8(TrustedImm32(static_cast<uint8_t>(~byteWithMarkIsUnmarked)), byteWithMark);
+#else
+    jit.load8(byteWithMark, scratch);
+    jit.and32(TrustedImm32(static_cast<uint8_t>(~byteWithMarkIsUnmarked)), scratch);
+    jit.store8(scratch, byteWithMark);
+#endif
+}
+
+Jump branchIfCellBearsMark(StubAssembler& jit, GPRReg cell)
+{
+    return jit.branchTest8(CCallHelpers::Zero, Address(cell, offsetOfByteWithMark), TrustedImm32(byteWithMarkIsUnmarked));
+}
+
+Jump branchUnlessCellBearsMark(StubAssembler& jit, GPRReg cell)
+{
+    return jit.branchTest8(CCallHelpers::NonZero, Address(cell, offsetOfByteWithMark), TrustedImm32(byteWithMarkIsUnmarked));
 }
 
 JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler& jit, GPRReg cell)

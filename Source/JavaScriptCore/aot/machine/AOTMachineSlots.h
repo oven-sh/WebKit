@@ -30,7 +30,7 @@ public:
 
     uint32_t numberOfWordsKeptAtSuspensions() const { return m_bytesKeptAtSuspensions / sizeof(uint64_t); }
 
-    const BitSpan& wordsDeadAcross(uint32_t suspension) const { return m_wordsDeadAcrossSuspension[suspension]; }
+    std::span<const uint64_t> wordsDeadAcross(uint32_t suspension) const { return m_wordsDeadAcrossSuspension[suspension]; }
 
     const WordsClearedAtSuspension& wordsClearedAt(uint32_t suspension) const { return m_wordsClearedAtSuspension[suspension]; }
 
@@ -45,7 +45,7 @@ private:
 
     ArenaVector<uint32_t> m_distanceOfSpill;
     ArenaVector<uint32_t> m_distanceOfStackSlot;
-    ArenaVector<BitSpan> m_wordsDeadAcrossSuspension;
+    ArenaVector<std::span<uint64_t>> m_wordsDeadAcrossSuspension;
     ArenaVector<WordsClearedAtSuspension> m_wordsClearedAtSuspension;
     uint32_t m_firstWordClearedAtSetup { 0 };
     uint32_t m_endOfWordsClearedAtSetup { 0 };
@@ -68,11 +68,11 @@ public:
 
     struct Holder {
         Position end;
-        uint32_t distanceWithinPart;
-        Part part;
-        Size size;
-        bool isWrittenBehindDefinitionAlone { false };
-        SpillIndex spill { noSpill };
+        uint32_t word;
+        SpillIndex spill;
+        uint32_t wordOfStoredBits;
+        uint64_t storedBits;
+        bool isWrittenBehindDefinitionAlone;
     };
 
     struct FrameWords {
@@ -98,10 +98,12 @@ public:
     Arena& m_arena;
     const Allocation& m_allocation;
     SlotAssignment& m_slots;
-    ArenaVector<SpillIndex> m_spillsByBegin;
+    const uint64_t* m_spillsByBegin { nullptr };
+    uint32_t m_numberOfSpills { 0 };
     const SpillPlaceRange* m_rangesOfSpillPlaces { nullptr };
     uint64_t* m_spillsByEndOfHold { nullptr };
     uint32_t m_nextSpillToLetGo { 0 };
+    Position m_endOfNextHold { noPosition };
     uint32_t* m_placesOfSpills { nullptr };
     ArenaVector<Holder> m_holders;
     ArenaVector<uint32_t> m_freePlaces[numberOfParts][numberOfSizes];

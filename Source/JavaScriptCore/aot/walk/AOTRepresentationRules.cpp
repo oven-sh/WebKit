@@ -78,9 +78,9 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::Narrowed:
         return RepresentationRule::Narrowed;
     case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::FinishObject: case Opcode::FinishClass:
-    case Opcode::Convert: case Opcode::Check: case Opcode::Expect: case Opcode::AssumeType: case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::NarrowByTest:
+    case Opcode::Convert: case Opcode::Check: case Opcode::Expect: case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::NarrowByTest:
         return RepresentationRule::Forwarding;
-    case Opcode::TypeTest: case Opcode::ReportMismatch: case Opcode::ReleaseHint: case Opcode::ClearFrameCell: case Opcode::CheckProof:
+    case Opcode::TypeTest: case Opcode::ReleaseHint: case Opcode::ClearFrameCell: case Opcode::EndLifeOfCell: case Opcode::CheckProof:
         return RepresentationRule::AsItIs;
     case Opcode::Add: case Opcode::Sub: case Opcode::Mul: case Opcode::Div: case Opcode::Mod: case Opcode::Pow: case Opcode::Negate: case Opcode::Increment: case Opcode::Decrement:
     case Opcode::BitAnd: case Opcode::BitOr: case Opcode::BitXor: case Opcode::LShift: case Opcode::RShift: case Opcode::URShift: case Opcode::BitNot:
@@ -90,7 +90,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::StringRange:
         return RepresentationRule::Truncation;
     case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::IsElementPresent: case Opcode::TryPutByValDirect:
-    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::IsInsideView:
+    case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
         return RepresentationRule::ElementAccess;
     case Opcode::ElemGet: case Opcode::ElemSet:
         return RepresentationRule::KeyedAccess;
@@ -136,11 +136,11 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::NewTemplateObject: case Opcode::Data:
     case Opcode::DirectEval: case Opcode::ScopeHasBinding: case Opcode::NewDictionary: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::AppendHole:
     case Opcode::HasLayoutPrototype: case Opcode::IsNotFrozen: case Opcode::HasNoExtraProperties: case Opcode::IsSlotFilled: case Opcode::AreMembersUnchanged: case Opcode::BeginMemberGuards:
-    case Opcode::HasBirthFieldsFilled: case Opcode::HasKeyOrder: case Opcode::HasNoFieldOutsideSlot:
+    case Opcode::HasKeyOrder: case Opcode::HasNoFieldOutsideSlot:
     case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding:
     case Opcode::PropHas: case Opcode::ElemHas: case Opcode::PropHasOwn: case Opcode::PropDelete: case Opcode::ElemDelete: case Opcode::ElemGetByKeyParts:
     case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype: case Opcode::ElemDefine:
-    case Opcode::ToObject: case Opcode::ToThis: case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ToIntegerOrInfinity:
+    case Opcode::ToObject: case Opcode::ToThis: case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::HasArrayStorage: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ToIntegerOrInfinity:
     case Opcode::IntegerBound: case Opcode::StringOrder: case Opcode::StringOrderToCharacter: case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral: case Opcode::LogicalNot:
     case Opcode::TypeOf: case Opcode::InstanceOf: case Opcode::HasInPrototypeChain: case Opcode::ToPropertyKey:
     case Opcode::Call: case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::Construct: case Opcode::GetConstructPrototype: case Opcode::CallList: case Opcode::ConstructList: case Opcode::NewArgumentList:
@@ -162,7 +162,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt:
     case Opcode::JSONHasStackSpace:
     case Opcode::StringBuilderReserve: case Opcode::StringBuilderCommit: case Opcode::JSONEnterWatchedLevel: case Opcode::JSONAppendKey: case Opcode::JSONAppendToken: case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger:
-    case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate: case Opcode::JSONAppendString: case Opcode::JSONAppendValue: case Opcode::JSONAppendObject:
+    case Opcode::JSONAppendNumber: case Opcode::JSONAppendString: case Opcode::JSONAppendValue: case Opcode::JSONAppendObject:
     case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderLength: case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish:
     case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack: case Opcode::StringBuilderCheckLength:
     case Opcode::StringBuilderAppendConstant: case Opcode::StringBuilderAppendInteger: case Opcode::StringBuilderAppendString: case Opcode::StringBuilderAppendStringRange:
@@ -187,8 +187,6 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::EvaluateRequiredModule: case Opcode::EnterBodyThatRunsOnce:
     case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy: case Opcode::AreLoaderFunctionsStored: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure:
     case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::CountExecution:
-    case Opcode::MayBindAnswersOfGetAndSetTraps: case Opcode::MayBindAnswersOfHasTraps: case Opcode::ValidateAnswerOfGetTrap: case Opcode::ValidateDenialOfHasTrap: case Opcode::ValidateConsentOfDeleteTrap:
-    case Opcode::HasOwnByAnswerOfDescriptorTrap: case Opcode::FinishStoreByTrap:
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField:
     case Opcode::GetCachedGetter:
         return RepresentationRule::BySchema;
@@ -227,6 +225,11 @@ static constexpr RepresentationRuleSet rulesThatTakeOperandsByKind {
     RepresentationRule::BySchema, RepresentationRule::BoxedResult, RepresentationRule::SlotRead, RepresentationRule::AccessorRead,
     RepresentationRule::Capture, RepresentationRule::ResultAt
 };
+static constexpr RepresentationRuleSet rulesThatTakeOperandsByKindWhereNotDeclared {
+    RepresentationRule::SlotStore, RepresentationRule::NewObject, RepresentationRule::PrivateDefinition, RepresentationRule::EnvironmentField,
+    RepresentationRule::Variable, RepresentationRule::NewClosure
+};
+static constexpr OpcodeSet operatorsThatTestInForms = allRelations | allEqualities | OpcodeSet { Opcode::ToBoolean };
 
 constinit const std::array<OperandsAreTaken, numberOfOpcodes> howOperandsAreTakenByOpcode = []() consteval {
     std::array<OperandsAreTaken, numberOfOpcodes> ways { };
@@ -237,6 +240,12 @@ constinit const std::array<OperandsAreTaken, numberOfOpcodes> howOperandsAreTake
             way = OperandsAreTaken::AsBuilt;
         else if (rulesThatTakeOperandsByKind.contains(rule))
             way = OperandsAreTaken::ByKind;
+        else if (rule == RepresentationRule::TestOfCellOrValue)
+            way = OperandsAreTaken::ByKindOrAsCell;
+        else if (rulesThatTakeOperandsByKindWhereNotDeclared.contains(rule))
+            way = OperandsAreTaken::ByKindWhereNotDeclared;
+        else if (rule == RepresentationRule::Operator)
+            way = OperandsAreTaken::ByFormOfOperator;
         ways[static_cast<unsigned>(opcode)] = way;
     }
     return ways;
@@ -309,7 +318,7 @@ public:
         m_variadicForm = representation;
     }
 
-    Representation wantedAt(uint32_t operandIndex) const
+    ALWAYS_INLINE Representation wantedAt(uint32_t operandIndex) const
     {
         if (!typeIDAt(operandIndex))
             return Representation::Unchosen;
@@ -323,7 +332,7 @@ public:
         return wanted;
     }
 
-    Representation resultAt(uint32_t resultIndex) const
+    ALWAYS_INLINE Representation resultAt(uint32_t resultIndex) const
     {
         if constexpr (HoldsOpcode<Subject>)
             return resultOfOperation(resultIndex);
@@ -346,7 +355,7 @@ public:
         return m_subject.form() == OperatorForm::Integers || m_subject.form() == OperatorForm::CheckedIntegers;
     }
 
-    bool resultFollowsFromType() const
+    ALWAYS_INLINE bool resultFollowsFromType() const
     {
         RepresentationRule rule = representationRuleInTable(opcode());
         ResultRule ruleOfSchema = resultRuleInTable(opcode());
@@ -370,7 +379,7 @@ public:
 
 private:
     static constexpr OpcodeSet binaryOperatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift };
-    static constexpr OpcodeSet testOperators = allRelations | allEqualities | OpcodeSet { Opcode::ToBoolean };
+    static constexpr OpcodeSet testOperators = operatorsThatTestInForms;
 
     static_assert(unknownResultsOf(Opcode::DestructureIterable) == UINT32_MAX && !unknownResultsOf(Opcode::ForInStep) && !unknownResultsOf(Opcode::Results));
 
@@ -697,8 +706,6 @@ private:
 
     Representation wantedByBuiltinCall(uint32_t operandIndex) const
     {
-        if (operandIndex == OperandIndex::CallBuiltin::lengthOfReceiver)
-            return Representation::Unchosen;
         std::optional<InlineBuiltin> builtin = inlineBuiltin();
         if (!builtin)
             return wantedByKind(operandIndex);
@@ -1020,7 +1027,7 @@ constexpr uint32_t mostNamedOperandsOfEntry = []() consteval {
 
 class FormsOfNamedOperands {
 public:
-    FormsOfNamedOperands(const Walker& walker, const DraftWords& draft)
+    ALWAYS_INLINE FormsOfNamedOperands(const Walker& walker, const DraftWords& draft)
     {
         uint32_t numberOfNamedOperands = draft.numberOfNamedOperands();
         std::span<const Reference> operands = draft.operands();
@@ -1162,6 +1169,23 @@ constinit const std::array<Representation, numberOfOpcodes> formsOfResultsByOpco
                 form = Representation::JSValue;
             else if (rule == RepresentationRule::AccessorRead)
                 form = Representation::Cell;
+        }
+        forms[static_cast<unsigned>(opcode)] = form;
+    }
+    return forms;
+}();
+
+constinit const std::array<Representation, numberOfOpcodes> formsOfResultsOfOperatorsByOpcode = []() consteval {
+    std::array<Representation, numberOfOpcodes> forms { };
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        Representation form = Representation::Unchosen;
+        if (representationRuleOf(opcode) == RepresentationRule::Operator && !opcodesThatMayHaveSeveralResults.contains(opcode) && !genericOperationOf(opcode)) {
+            if (operatorsThatTestInForms.contains(opcode))
+                form = Representation::Boolean;
+            else if (opcode == Opcode::ToString)
+                form = Representation::Cell;
+            else if (opcode == Opcode::URShift)
+                form = Representation::Int64;
         }
         forms[static_cast<unsigned>(opcode)] = form;
     }

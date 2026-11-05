@@ -72,10 +72,34 @@ WantedRepresentations wantedRepresentationsOf(Walker&, const Draft&);
 enum class OperandsAreTaken : uint8_t {
     AsBuilt,
     ByKind,
+    ByKindOrAsCell,
+    ByKindWhereNotDeclared,
+    ByFormOfOperator,
     ByRule,
 };
 extern const std::array<OperandsAreTaken, numberOfOpcodes> howOperandsAreTakenByOpcode;
 inline OperandsAreTaken howOperandsAreTakenBy(Opcode opcode) { return howOperandsAreTakenByOpcode[static_cast<unsigned>(opcode)]; }
+constexpr Representation formTakenByEveryOperandOf(OperatorForm form, bool isBitwise)
+{
+    switch (form) {
+    case OperatorForm::Generic:
+    case OperatorForm::NullableString:
+    case OperatorForm::MayBeString:
+    case OperatorForm::MayBeStringOrNumber:
+    case OperatorForm::NullableStrings:
+        return Representation::JSValue;
+    case OperatorForm::Integers:
+        return isBitwise ? Representation::Int32 : Representation::Unchosen;
+    case OperatorForm::Booleans:
+        return Representation::Boolean;
+    case OperatorForm::Strings:
+    case OperatorForm::BigInts:
+    case OperatorForm::String:
+        return Representation::Cell;
+    default:
+        return Representation::Unchosen;
+    }
+}
 inline constexpr uint64_t kindsTakenAsSchemaWants = []() consteval {
     uint64_t kinds = 0;
     for (OperandKind kind : { OperandKind::Any, OperandKind::Boolean, OperandKind::Number, OperandKind::String, OperandKind::PropertyKey, OperandKind::Object,
@@ -84,9 +108,9 @@ inline constexpr uint64_t kindsTakenAsSchemaWants = []() consteval {
     return kinds;
 }();
 static_assert(numberOfEnumerators<OperandKind> <= 64);
-inline Representation representationWantedByKind(TypeReader types, OperandKind kind, TypeID id)
+ALWAYS_INLINE Representation representationWantedByKind(TypeReader types, OperandKind kind, TypeID id)
 {
-    if (kind == OperandKind::Guard || kind == OperandKind::Results)
+    if (kind == OperandKind::Results)
         return Representation::Void;
     if (kind == OperandKind::Declared || kind == OperandKind::Convertible)
         return Representation::Unchosen;
@@ -112,6 +136,7 @@ Representation resultRepresentationOf(Walker&, const Draft&);
 Representation resultRepresentationOf(Walker&, const Draft&, TypeID proven);
 extern const std::array<Representation, numberOfOpcodes> formsOfResultsByOpcode;
 inline Representation formOfResultOfEvery(Opcode opcode) { return formsOfResultsByOpcode[static_cast<unsigned>(opcode)]; }
+extern const std::array<Representation, numberOfOpcodes> formsOfResultsOfOperatorsByOpcode;
 extern const OpcodeSet opcodesWhoseResultsHaveFormsOfTheirTypes;
 
 Representation representationStoredInSlot(const RepresentationContext&, PropertyKeyID, LayoutSetID receivers);

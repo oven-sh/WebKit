@@ -44,7 +44,7 @@ static bool lookupFindsNothingOnObjectsOfForThenables(const Program& program, co
     return link.findMember(program, id, ClassSide::Prototype, key).kind == MemberFound::Kind::Nothing;
 }
 
-bool isProvenToHaveNoThen(const Program& program, const Facts& facts, TypeArena& types, TypeID id)
+static bool isProvenToHaveNoThen(const Program& program, const Facts& facts, TypeArena& types, TypeID id)
 {
     if (!id || isNeverType(id))
         return false;

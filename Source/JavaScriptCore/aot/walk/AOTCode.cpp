@@ -26,10 +26,8 @@ static constexpr OpcodeSet opcodesThatTheWalkLowers {
 };
 
 static constexpr OpcodeSet opcodesWithoutEmitterByList = opcodesThatStateTypes | opcodesThatTheWalkLowers | OpcodeSet {
-    Opcode::ReportMismatch,
+    Opcode::ValueLooselyEqualsLiteral,
     Opcode::StringBuilderAppend,
-    Opcode::MayBindAnswersOfGetAndSetTraps, Opcode::MayBindAnswersOfHasTraps, Opcode::ValidateAnswerOfGetTrap, Opcode::ValidateDenialOfHasTrap, Opcode::ValidateConsentOfDeleteTrap,
-    Opcode::HasOwnByAnswerOfDescriptorTrap, Opcode::FinishStoreByTrap,
 };
 
 static_assert([]() consteval {
@@ -95,6 +93,8 @@ struct ShapeOfEntryInCode {
     uint16_t declaredFlags { 0 };
     uint8_t numberOfNamedOperands { 0 };
     bool hasVariadicOperand { false };
+    bool isNeverAppended { false };
+    bool hasWordOfStorage { false };
 };
 
 } // anonymous namespace
@@ -102,7 +102,7 @@ struct ShapeOfEntryInCode {
 static constexpr std::array<ShapeOfEntryInCode, numberOfOpcodes> shapesOfOperationsInCode = []() consteval {
     std::array<ShapeOfEntryInCode, numberOfOpcodes> shapes { };
     for (Opcode opcode : allMembersOf<Opcode>)
-        shapes[static_cast<unsigned>(opcode)] = { declaredFlagsOf(opcode), static_cast<uint8_t>(numberOfNamedOperandsOf(opcode)), hasVariadicOperand(opcode) };
+        shapes[static_cast<unsigned>(opcode)] = { declaredFlagsOf(opcode), static_cast<uint8_t>(numberOfNamedOperandsOf(opcode)), hasVariadicOperand(opcode), opcodesThatCodeNeverAppends.contains(opcode), !!PayloadWord::storage(opcode) };
     return shapes;
 }();
 
@@ -123,7 +123,7 @@ static ALWAYS_INLINE void checkShapeOfDraftForCode(Entry entry, const DraftWords
 
 static ALWAYS_INLINE bool allocatesInFrameOfUnit(const Draft& draft)
 {
-    return PayloadWord::storage(draft.opcode) && draft.storage() != AllocationStorage::Heap;
+    return shapesOfOperationsInCode[static_cast<unsigned>(draft.opcode)].hasWordOfStorage && draft.storage() != AllocationStorage::Heap;
 }
 
 static ALWAYS_INLINE ValueID appendRecordToCode(StableArray<Operation, 10>& operations, const Operation& operation)
@@ -161,8 +161,17 @@ ALWAYS_INLINE void Code::fill(Instruction& instruction, const DraftWords& draft)
         instruction.m_hasSideWords = true;
     }
 
-    for (uint32_t index = 0; index < numberOfPayloadWords; ++index)
-        payloadWords[index] = payload[index];
+    const uint32_t* wordsOfDraft = payload.data();
+    uint32_t wordsLeft = numberOfPayloadWords;
+    for (; wordsLeft >= 4; wordsLeft -= 4, payloadWords += 4, wordsOfDraft += 4)
+        memcpy(payloadWords, wordsOfDraft, 4 * sizeof(uint32_t));
+    if (wordsLeft & 2) {
+        memcpy(payloadWords, wordsOfDraft, 2 * sizeof(uint32_t));
+        payloadWords += 2;
+        wordsOfDraft += 2;
+    }
+    if (wordsLeft & 1)
+        *payloadWords = *wordsOfDraft;
     uint32_t numberOfRecords = m_operations.size();
     for (uint32_t index = 0; index < numberOfOperands; ++index) {
         Reference reference = operands[index];
@@ -304,12 +313,33 @@ BlockID Code::addBlock(BlockRole role, BlockFrequency frequency)
 {
     RELEASE_ASSERT(!m_isSwept);
     RELEASE_ASSERT(m_blocks.size() < Operation::noBlock);
-    Block block;
+    BlockID id(m_blocks.size());
+    Block& block = m_blocks.appendNew();
     block.role = role;
     block.frequency = frequency;
     if (block.isHandlerBlock())
         m_hasHandlers = true;
-    return BlockID(m_blocks.append(block));
+    return id;
+}
+
+BlockID Code::addBlockBehindEdge(EdgeID edgeID, BlockFrequency frequency, bool isInLoop)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    RELEASE_ASSERT(m_blocks.size() < Operation::noBlock);
+    Edge& edge = m_edges[checkedIndexInCode(edgeID, m_edges.size())];
+    RELEASE_ASSERT(edge.isOpen());
+    Block block;
+    block.frequency = frequency;
+    if (isInLoop) {
+        block.isInLoop = m_unit.role != CodeRole::SlowBody;
+        m_hasLoops = true;
+    }
+    block.m_firstEdgeIn = edgeID;
+    block.m_lastEdgeIn = edgeID;
+    edge.to = BlockID(m_blocks.append(block));
+    edge.m_arguments = nullptr;
+    edge.m_numberOfArguments = 0;
+    return edge.to;
 }
 
 void Code::setLoopMarks(BlockID blockID, bool isInLoop, bool isLoopHead)
@@ -320,6 +350,12 @@ void Code::setLoopMarks(BlockID blockID, bool isInLoop, bool isLoopHead)
     block.isLoopHead = isLoopHead;
     if (isInLoop || isLoopHead)
         m_hasLoops = true;
+}
+
+void Code::markMeetingOfStepWrittenByHand(BlockID blockID)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    m_blocks[checkedIndexInCode(blockID, m_blocks.size())].meetsStepWrittenByHand = true;
 }
 
 void Code::setSubject(BlockID blockID, ValueID subject)
@@ -380,7 +416,7 @@ ValueID Code::appendParameter(BlockID blockID, TypeID type, Representation repre
 ValueID Code::append(BlockID blockID, const Draft& draft, TypeID proven, EffectTraits traits)
 {
     RELEASE_ASSERT(!m_isSwept);
-    RELEASE_ASSERT(!opcodesThatCodeNeverAppends.contains(draft.opcode));
+    RELEASE_ASSERT(!shapesOfOperationsInCode[static_cast<unsigned>(draft.opcode)].isNeverAppended);
     RELEASE_ASSERT(draft.representation != Representation::Unchosen);
     checkShapeOfDraftForCode(draft.opcode, draft);
     Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
@@ -536,6 +572,59 @@ void Code::endWithBranch(BlockID blockID, ValueID condition, Origin origin)
     terminator.firstEdge = EdgeID(m_edges.append(edge));
     m_edges.append(edge);
     block.terminator = terminator;
+}
+
+ALWAYS_INLINE void Code::appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments)
+{
+    Block& entered = m_blocks[checkedIndexInCode(to, m_blocks.size())];
+    Edge edge;
+    edge.from = from;
+    edge.to = to;
+    edge.m_arguments = arguments.data();
+    edge.m_numberOfArguments = static_cast<uint32_t>(arguments.size());
+    EdgeID added(m_edges.append(edge));
+    if (!entered.m_firstEdgeIn)
+        entered.m_firstEdgeIn = added;
+    else
+        m_edges[entered.m_lastEdgeIn.index()].m_nextInto = added;
+    entered.m_lastEdgeIn = added;
+}
+
+void Code::endWithJump(BlockID blockID, Origin origin, BlockID to, std::span<const ValueID> arguments)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.hasEnded());
+    for (ValueID argument : arguments)
+        RELEASE_ASSERT(argument.index() < m_operations.size());
+
+    Terminator terminator;
+    copyOriginToRecordOfCode(terminator, origin, m_inlineFrames.size());
+    terminator.kind = TerminatorKind::Jump;
+    terminator.isSet = true;
+    terminator.numberOfEdges = 1;
+    terminator.firstEdge = EdgeID(m_edges.size());
+    block.terminator = terminator;
+    appendEdgeInto(blockID, to, m_sideWords.copy(arguments));
+}
+
+void Code::endWithBranch(BlockID blockID, ValueID condition, Origin origin, BlockID taken, BlockID notTaken)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.hasEnded());
+
+    Terminator terminator;
+    copyOriginToRecordOfCode(terminator, origin, m_inlineFrames.size());
+    terminator.m_words[0] = checkedIndexInCode(condition, m_operations.size());
+    terminator.m_numberOfInlineOperands = 1;
+    terminator.kind = TerminatorKind::Branch;
+    terminator.isSet = true;
+    terminator.numberOfEdges = 2;
+    terminator.firstEdge = EdgeID(m_edges.size());
+    block.terminator = terminator;
+    appendEdgeInto(blockID, taken, { });
+    appendEdgeInto(blockID, notTaken, { });
 }
 
 EdgeID Code::addHandlerEdge(BlockID blockID)

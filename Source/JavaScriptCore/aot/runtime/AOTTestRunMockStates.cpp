@@ -68,7 +68,7 @@ String Modules::describeMockState(ModuleID module)
     MockState state = mockState(module);
     ASCIILiteral kind = data(module).isOfLibrary() ? "library"_s : data(module).kind == ModuleKind::CommonJs ? "CommonJS"_s : data(module).isFaceOfFile() ? "face"_s : data(module).isESModuleOfProgram() ? "ES"_s : "other"_s;
     StringBuilder text;
-    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], m_filesWhoseOriginalRuns.get(module.index()) ? ", its original runs"_s : ""_s, isLeftToHost(module) ? ", left to the host)"_s : ")"_s);
+    text.append(kind, ' ', names[static_cast<size_t>(state)], " (body "_s, bodies[static_cast<size_t>(status(module)) - static_cast<size_t>(ModuleStatus::Unlinked)], m_filesWhoseOriginalRuns.get(module.index()) ? ", its original runs"_s : ""_s, isEvicted(module) ? ", left to the host)"_s : ")"_s);
     if (state == MockState::NoneOfThem) {
         LoadedModule* loaded = loadedIfExists(module);
         auto say = [&](bool isSet, ASCIILiteral what) {

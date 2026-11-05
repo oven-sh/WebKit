@@ -77,7 +77,6 @@ public:
     void generateStringOrderToCharacter(const ValueContext&);
     void generateStringEqualsLiteral(const ValueContext&);
     void generateValueEqualsLiteral(const ValueContext&);
-    void generateValueLooselyEqualsLiteral(const ValueContext&);
     void generateStringStartsWithLiteral(const ValueContext& value) { generateEndsLiteral(value, LiteralEnd::Start); }
     void generateStringEndsWithLiteral(const ValueContext& value) { generateEndsLiteral(value, LiteralEnd::End); }
     void generateStringIndexOfLiteral(const ValueContext& value) { generateFindLiteral(value, SearchDirection::Forward); }
@@ -126,9 +125,11 @@ public:
     AtomOfName atomOfName(uint32_t mentionOfName);
     void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets);
     void makeCellsHoldAtomOf(StringID);
+    void makeCellsHoldAtomOf(StringID, const String& text);
     Condition hasTextAt(const CharacterView&, Word32 offset, StringID);
     void branchOnTextAt(const CharacterView&, Word32 offset, StringID, BranchTargets);
     bool canCompareInline(StringID) const;
+    static bool canCompareInline(const String& text) { return text.length() <= maxLengthComparedInPlace; }
 
     Word32 find(const CharacterView& subject, const CharacterView& sought, Word32 position, SearchDirection);
     Word32 findCodeUnit(const CharacterView& subject, Word32 codeUnit, Word32 position, SearchDirection);
@@ -151,6 +152,8 @@ private:
     CellPointer substringBaseOf(CellPointer rope);
     Word32 loadCodeUnit(Pointer characters, Word32 index, bool is8Bit);
 
+    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, const String& text, BranchTargets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject);
+    void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, const String& text, BranchTargets);
     void generateEqualsLiteral(const ValueContext&, ComparedOperand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString = false);
     void generateEndsLiteral(const ValueContext&, LiteralEnd);
     void generateFindLiteral(const ValueContext&, SearchDirection);

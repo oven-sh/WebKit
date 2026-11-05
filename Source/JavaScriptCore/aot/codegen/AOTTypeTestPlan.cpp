@@ -17,6 +17,7 @@
 #include "AOTTypeTable.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <tuple>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -28,24 +29,39 @@ public:
     ObjectsUnderTypeTest() = default;
     ObjectsUnderTypeTest(TypeArena& arena, TypeID from, TypeID to)
         : m_arena(&arena)
-        , m_objects(arena.withOnlyObjects(from))
-        , m_wantedObjects(arena.withOnlyObjects(to))
+        , m_from(from)
+        , m_to(to)
     {
     }
 
-    bool areAllWanted(const Type& to) const { return m_arena ? m_arena->isSubset(m_objects, m_wantedObjects) : to.anyObject; }
-    bool mayBeWanted(const Type& to) const { return m_arena ? m_arena->overlap(m_objects, m_wantedObjects) : to.hasObjects(); }
+    bool areAllWanted(const Type& to) const { return m_arena ? m_arena->isSubset(objects(), wantedObjects()) : to.anyObject; }
+    bool mayBeWanted(const Type& to) const { return m_arena ? m_arena->overlap(objects(), wantedObjects()) : to.hasObjects(); }
 
-    bool mayBeCallable() const { return !m_arena || m_arena->overlap(TypeTable::function, m_objects); }
-    bool mayBeInstanceOf(BuiltinClassID builtinClass) const { return !m_arena || m_arena->overlap(m_arena->builtinClass(builtinClass), m_objects); }
-    bool mayBeClosureOf(FunctionID function) const { return !m_arena || m_arena->overlap(m_arena->forFunction(function), m_objects); }
-    bool mayBeBuiltin(BuiltinID builtin) const { return !m_arena || m_arena->overlap(m_arena->forBuiltin(builtin), m_objects); }
-    bool mayHaveLayoutIn(LayoutSetID layouts) const { return !m_arena || m_arena->overlap(m_arena->forLayoutSet(layouts), m_objects); }
+    bool mayBeCallable() const { return !m_arena || m_arena->overlap(TypeTable::function, objects()); }
+    bool mayBeInstanceOf(BuiltinClassID builtinClass) const { return !m_arena || m_arena->overlap(m_arena->builtinClass(builtinClass), objects()); }
+    bool mayBeClosureOf(FunctionID function) const { return !m_arena || m_arena->overlap(m_arena->forFunction(function), objects()); }
+    bool mayBeBuiltin(BuiltinID builtin) const { return !m_arena || m_arena->overlap(m_arena->forBuiltin(builtin), objects()); }
+    bool mayHaveLayoutIn(LayoutSetID layouts) const { return !m_arena || m_arena->overlap(m_arena->forLayoutSet(layouts), objects()); }
 
 private:
+    TypeID objects() const
+    {
+        if (!m_objects)
+            m_objects = m_arena->withOnlyObjects(m_from);
+        return m_objects;
+    }
+    TypeID wantedObjects() const
+    {
+        if (!m_wantedObjects)
+            m_wantedObjects = m_arena->withOnlyObjects(m_to);
+        return m_wantedObjects;
+    }
+
     TypeArena* m_arena { nullptr };
-    TypeID m_objects;
-    TypeID m_wantedObjects;
+    TypeID m_from;
+    TypeID m_to;
+    mutable TypeID m_objects;
+    mutable TypeID m_wantedObjects;
 };
 
 } // anonymous namespace
@@ -63,10 +79,10 @@ static void classifyPrimitivesForTypeTest(TypeTestPlan& plan, TypeReader reader,
     auto classify = [&](uint16_t primitive, bool passes) {
         (passes ? plan.passingPrimitives : plan.failingPrimitives) |= primitive;
     };
-    for (uint16_t primitive : { Primitive::Undefined, Primitive::Null, Primitive::False, Primitive::True, Primitive::BigInt, Primitive::Absent, Primitive::WholeNumber, Primitive::FractionalNumber }) {
-        if (from.primitives & primitive)
-            classify(primitive, to.primitives & primitive);
-    }
+    static constexpr uint16_t primitivesOfOneBit = Primitive::Undefined | Primitive::Null | Primitive::False | Primitive::True | Primitive::BigInt | Primitive::Absent | Primitive::WholeNumber | Primitive::FractionalNumber;
+    static_assert(std::popcount(primitivesOfOneBit) == 8);
+    plan.passingPrimitives |= from.primitives & primitivesOfOneBit & to.primitives;
+    plan.failingPrimitives |= from.primitives & primitivesOfOneBit & ~to.primitives;
     if (from.primitives & Primitive::Integer) {
         bool passes = (to.primitives & Primitive::Integer) && !from.integers.intersectWith(to.integers).isEmpty();
         classify(Primitive::Integer, passes);
@@ -118,9 +134,11 @@ static ObjectsVerdict objectsVerdictOfTypeTest(const ObjectsUnderTypeTest& teste
         return from.environment == to.environment && from.opaque == to.opaque ? ObjectsVerdict::AllPass : ObjectsVerdict::AllFail;
     if (!from.hasObjects())
         return ObjectsVerdict::DoNotOccur;
+    if (!to.hasObjects())
+        return ObjectsVerdict::AllFail;
     if (tested.areAllWanted(to))
         return ObjectsVerdict::AllPass;
-    if (!to.hasObjects() || !tested.mayBeWanted(to))
+    if (!tested.mayBeWanted(to))
         return ObjectsVerdict::AllFail;
     return ObjectsVerdict::NeedTest;
 }
@@ -280,7 +298,7 @@ static bool symbolComesEarlierInTypeTest(TypeReader reader, PropertyKeyID a, Pro
     if (firstHasStableNumber || secondHasStableNumber)
         return firstHasStableNumber && (!secondHasStableNumber || a < b);
     auto contentOf = [](const PropertyKey& key) {
-        return std::tie(key.kind, key.text, key.owner, key.symbol, key.module, key.callNumber, key.site);
+        return std::tie(key.kind, key.text, key.owner, key.symbol, key.module, key.callNumber);
     };
     return contentOf(reader.at(a)) < contentOf(reader.at(b));
 }

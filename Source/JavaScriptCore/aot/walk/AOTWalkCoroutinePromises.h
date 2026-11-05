@@ -14,7 +14,6 @@ namespace JSC { namespace AOT { namespace Typed {
 std::optional<CoroutineKind> kindOfSuspendingBody(Walker&, Reference& driver);
 Reference buildSuspensionInCoroutine(Walker&, Draft&& suspension);
 
-bool isProvenToHaveNoThen(const Program&, const Facts&, TypeArena&, TypeID);
 bool isProvenToHaveNoThen(Walker&, Reference);
 Reference buildTestForNoThen(Walker&, Reference value, Origin);
 

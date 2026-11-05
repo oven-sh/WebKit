@@ -1,0 +1,87 @@
+# If two classes that no declared family holds were lost where they meet, a call by name through the parameter would go by the value that is found through what is lost: the two methods would meet there, be lost themselves, and nobody would know their callers. If one of the two were forgotten, its method would be left out of the executable
+# class Circle { m() { return "c"; } }  class Square { m() { return true; } }  class Other { m() { return null; } }  function ask(s) { return s.m(); }  ask(new Circle()); ask(new Square()); new Other();
+# RUN: link functions layouts mechanisms=all
+# CHECK: function f2 callers-known
+# CHECK-NOT: one-callee
+# CHECK: function f3
+# CHECK: function f4 callers-known
+# CHECK-NOT: one-callee
+# CHECK: function f5
+# CHECK: function f6 unreached
+# CHECK: function f7 callers-known one-callee {{*}}result=true|string returns=
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# RUN(NEVER): link calls mechanisms=all
+# NEVER-NOT: call f7 v2
+
+layout L0 kind=Instance name="Circle" module=m0 constructor=f1
+layout L1 kind=Instance name="Square" module=m0 constructor=f3
+layout L2 kind=Instance name="Other" module=m0 constructor=f5
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f3
+    v6 = NewClass v5 layout=L1
+    v7 = NewClosure function=f4
+    DefineMethod v6, v7 layout=L1 key="m"
+    v9 = FinishClass v6 layout=L1
+    v10 = NewClosure function=f5
+    v11 = NewClass v10 layout=L2
+    v12 = NewClosure function=f6
+    DefineMethod v11, v12 layout=L2 key="m"
+    v14 = FinishClass v11 layout=L2
+    v15 = Construct v4
+    v16 = Construct v9
+    v17 = Construct v14
+    v18 = NewClosure function=f7
+    v19 = Call v18, -, v15 calleeName="ask"
+    v20 = Call v18, -, v16 calleeName="ask"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="Circle" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="c"
+    Return v0
+}
+function f3 name="Square" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f4 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}
+function f5 name="Other" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f6 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Null
+    Return v0
+}
+function f7 name="ask" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}

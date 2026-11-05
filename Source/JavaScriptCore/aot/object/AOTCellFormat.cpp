@@ -34,6 +34,7 @@ namespace JSC { namespace AOT {
 
 static_assert(sizeof(JSCell) == 8 && offsetOfShapeWord == 12);
 static_assert(offsetOfShapeWord + sizeof(uint32_t) <= MarkedBlock::atomSize);
+static_assert((tagOfLinkBetweenEnvironmentsHandedBack & JSValue::NotCellMask) && tagOfLinkBetweenEnvironmentsHandedBack < MarkedBlock::atomSize);
 
 enum class WordAtShapeOffset : uint8_t { Unlisted, ShapeWord, UpperHalfOfPointer, UpperHalfOfValue, UpperHalfOfClosureWord, BigIntHash, VectorLength, Zero, NotAValue };
 

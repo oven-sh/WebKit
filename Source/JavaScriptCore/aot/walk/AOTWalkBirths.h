@@ -17,7 +17,8 @@ AOT_LINK_OF_WALK(listStoresOfCopiedConstructor, opcodesThatListStoresOfCopiedCon
 
 bool storeLaysWhatSlotOfFreshObjectHolds(Walker&, Reference object, Reference held, Reference stored);
 
-bool lookMayFinishBirthOf(const Walker&, Reference object);
+bool lookMayFinishBirthOf(Walker&, Reference object);
+void finishBirthAtReturnOfClassConstructor(Walker&, Reference returned, Origin);
 
 struct StoresListedAtBirth {
     Vector<FieldIndex, 16> fields;

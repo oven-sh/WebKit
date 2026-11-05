@@ -36,7 +36,7 @@ Every boundary between two stages is text. So a bug gets a test at the stage tha
 | `walk/sweep/` | the sweep by itself, on Code that is written out: what goes and what stays, stores that wait for their object, handlers, barriers, hints, what is live at a suspension, and how often an operation is visited. No walk is run |
 | `machine/` | a unit's operations, allocation, frame and bytes as text: frames, polls, entries, calls, exceptions, code shape |
 | `image/` | what the flags, sections and tables of the image say to the run time |
-| `answers/` | programs that run in the shell and hold what they answer, and nothing else: no count, no shape of code. The shell runs the same text itself and compares. Bun's `test/aot/tools/answers-test-from-source.ts` makes such a file from a program |
+| `answers/` | programs that run in the shell and hold what they answer, and nothing else: no count, no shape of code. The shell runs the same text itself and compares. Bun's `test/aot/tools/answers-test-from-source.ts` makes such a file from a program: what it made lies in Bun's `test/aot/answers`, as the head and the program, and gets its records when it runs |
 | `host/`, `unit/` | the stand-in host's table of built-ins (no tests); native tests of the table of built-ins |
 
 ## Running
@@ -196,7 +196,9 @@ A line that begins with `# --` is a marker. Any marker but these is an error.
 ```
 
 Bun's `test/aot/tools/update-ir-tests.ts` rewrites the IR text from the source, and everything below `# -- generated:` from what the
-runs print. List the functions the test is about, and a library function (`role=Library`) only if the test is about it. In a source, print
+runs print. A test whose IR text is what that tool wrote lies in Bun's `test/aot/from-source/<the same folder>`, as its comments alone: Bun's
+`test/aot/engine/from-source-<n>.test.ts` have the IR text made by the front end under test and run it. It stays here where another test reads
+its records (`# PROGRAM-OF:`). List the functions the test is about, and a library function (`role=Library`) only if the test is about it. In a source, print
 strings: `console.log` of a value of unknown type keeps about 500 library functions reachable, which is 1.6 MB of IR text.
 `Tools/Scripts/aot/cut-ir-test.py --testaot <testaot> --write <file>` then takes out what rides along of the library and the program's own files do not
 reach, and proves the cut: the test passes, every `RUN` prints what it printed, and it fails with the function under test emptied.
@@ -295,7 +297,7 @@ a role the unit is the `Body`. The grammar is at the top of `AOTCodeParser.cpp`.
 - Records and blocks are numbered without a gap. So the text of swept Code parses only where the sweep dropped nothing.
 
 `ir/AOTTypeText.h` has the grammar of the types in Code text. It has more parts than the
-wire: named objects (`site(f0, v3)`, `instance(L2)`, `escaped(L2)`), and after a `?` the seeds that an `unknown` came from.
+wire: named objects (`instance(L2)`, `escaped(L2)`), and after a `?` the seeds that an `unknown` came from.
 
 ## IR text
 
@@ -399,9 +401,7 @@ every unit that the build compiles: entries and units of the library too.
   behind those of the parameters, in the text of `ir/AOTTypeText.h`: `fractional[0,5]`. It is one word, so it holds no blank.
 - `laws-of-types` holds every pair of those types to every law of the algebra. `find-field` and `layout-set` take layouts as arguments.
 - `aliases` prints, for each pair of those types, the objects of the first that the second names under another number, and how many pairs of
-  objects were held side by side for that. Then it holds `ObjectSetAliasIndex` against `mayBeSameObject()` over sets of the program's objects and
-  of their copies for instances, and with it `mayBeSameObject()` of two types and `membersWithAliasIn()` in an arena of a thread, across `reset()`. It
-  gives `f0` sites to name: `site(f0, v<2n>)` has `L<n>`, `v<2n + 1>` has `L<n>` or a layout below it, and five without a layout follow.
+  objects were held side by side for that. Then it holds `ObjectSetAliasIndex` against `mayBeSameObject()` over sets of the program's objects, and with it `mayBeSameObject()` of two types and `membersWithAliasIn()` in an arena of a thread, across `reset()`.
 
 **Scan and Link** (`AOTFactsTestCommands.cpp`). Both print what `computeFacts()` has left behind `Facts`. The top of each printer shows its lines.
 
@@ -459,10 +459,9 @@ every unit that the build compiles: entries and units of the library too.
   `access f1 v2 under symbol("depth")@m0:0` (an access under a computed key that can only be that one symbol: the walk builds it by the name),
   `field L0.1 "x" proven=number writers-known written-at-construction-alone` (`filled-by-accessors-alone`: only accessors that literals lay are seen to fill it), `variable g0 proven=f1 writers-known`, `capture f2.0 proven=L1 writers-known`,
   `member L0 Prototype 0 Method "size" function=f2 writers-known`, `layout L0 family=F1 changes=[GainsProperty]`, `layout L3 never-allocated changes=[]`, `layout L2 changes=[GainsProperty] filled-under-computed-keys` (`counts[word] = 1`), `layout L4 changes=[] heritage=L2` (`class Socket extends NetSocket`, written without a base: what arrives), `on-prototype L0 "width" getter=f4 setter=f5` (what a descriptor written in the body lays: expected), `family F1 [L0, L2]`.
-  `keys-never-listed`, at the end of the line of a layout: nothing ever sees in which order its objects got their keys. `closures-stay-as-made`, at the end of the line of a function: `LinkedFunction::closuresStayAsMade`.
   `only-given-undefined`, on the line of a field: its makers give it the constant undefined alone. `accessors L0.0 "total" getter=f2 setter=f3`, among the accesses: the one function that literals lay there as either half.
-  `summary f1` has `lists-keys-of n4, n7`: the objects on which an operation of the body runs OwnKeys or OwnValues.
   The parameters are the entry parameters: captures, `this`, the callee and the new target come in front of what is written.
+  `only-called`, at the end of the line of a parameter: `LinkedParameter::isOnlyCalled`. `captured` behind it: `isCapturedWhereOnlyCalled`: a closure that only calls it holds it, here or where it is handed on to.
   `coroutines`, one more word for a table: `coroutine f1 returned=L0`, under `link held`: `coroutine f1 fulfilled=L0 returned=L0`: `LinkedCoroutine`, a line for each coroutine that is reached. `never`: nothing ever arrives.
   In `summary`: `Contents returned of ClassInstance Promise` for what the body returns, whoever has the object.
   `catch f1 b3 caught=L0`, behind the functions: what was seen to arrive at the handler block beside whatever nobody knows. A guess in both readings. No line: nothing was seen.
@@ -481,6 +480,7 @@ every unit that the build compiles: entries and units of the library too.
   `shape 1 L0`, `unit f1:Body (JSValue, JSValue) -> (JSValue)`, `unit f1:GenericCallEntry -> f1:Body`,
   `unit f2:CoroutineBody (JSValue, JSValue) -> (JSValue) never-suspends` (an async function in which nothing suspends),
   behind the forms of a unit: ` covered-by-callers` (a unit that walks a body and makes no stack test), ` saves-registers-of-callers`, ` reserves=<stack words>`, ` ends-its-tail-calls` (of a Body),
+  ` ends-tail-calls-if-arguments-do=[1, 2]` (of a Body: the entry parameters at which what arrives is called last, by it or by whom it hands them on to last),
   `class L2 lazy-members prototype-first class-object-on-mutation guards-hold-while-clear members=[ByClassRecord, AtDefinition]` (the members in the order of `Facts::membersOf()`; no line for a class of which the plan says nothing).
 
 **Walk and Code** (`AOTWalkTestCommands.cpp`)

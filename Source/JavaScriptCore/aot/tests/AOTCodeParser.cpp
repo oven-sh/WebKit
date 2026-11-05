@@ -215,14 +215,7 @@ static void fillWordsOfDefaultValueInCodeText(const PayloadFieldInfo& info, Payl
     case PayloadKind::LayoutSet:
     case PayloadKind::CalleeSet:
     case PayloadKind::AccessSite:
-    case PayloadKind::AllocationSite:
     case PayloadKind::AllocationClass:
-    case PayloadKind::FieldAccess:
-    case PayloadKind::Allocation:
-    case PayloadKind::RegExpRecord:
-    case PayloadKind::SiteCache:
-    case PayloadKind::GlobalBinding:
-    case PayloadKind::GuardBit:
         std::ranges::fill(words, absentPayloadWord);
         return;
     case PayloadKind::External:
@@ -233,8 +226,6 @@ static void fillWordsOfDefaultValueInCodeText(const PayloadFieldInfo& info, Payl
     case PayloadKind::Flags:
     case PayloadKind::Bool:
     case PayloadKind::UInt32:
-    case PayloadKind::Request:
-    case PayloadKind::StaticsOffset:
     case PayloadKind::OrderWord:
     case PayloadKind::Opcode:
         std::ranges::fill(words, info.isOptional ? absentPayloadWord : 0u);
@@ -1171,20 +1162,11 @@ void CodeTextParser::parsePayloadValue(const PayloadFieldInfo& info, PayloadKind
         return;
     case PayloadKind::CalleeSet:
     case PayloadKind::AccessSite:
-    case PayloadKind::AllocationSite:
     case PayloadKind::AllocationClass:
-    case PayloadKind::FieldAccess:
-    case PayloadKind::Allocation:
-    case PayloadKind::RegExpRecord:
-    case PayloadKind::SiteCache:
-    case PayloadKind::GlobalBinding:
-    case PayloadKind::GuardBit:
         words[0] = accept(TokenKind::Minus) ? absentPayloadWord : parseUInt32("a number"_s);
         return;
     case PayloadKind::Field:
     case PayloadKind::UInt32:
-    case PayloadKind::Request:
-    case PayloadKind::StaticsOffset:
     case PayloadKind::OrderWord:
         words[0] = parseUInt32("a number"_s);
         return;

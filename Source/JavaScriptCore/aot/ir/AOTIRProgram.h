@@ -28,6 +28,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/Lock.h>
 #include <wtf/HashSet.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
@@ -69,11 +70,12 @@ public:
     bool testsReplaceBuiltins() const { return m_testsReplaceBuiltins; }
     std::span<const uint8_t> buffer() const { return m_bytes.borrowed; }
     void borrowBuffer(std::span<const uint8_t> bytes) { m_bytes.borrowed = bytes; }
-    bool ownsBuffer() const { return !m_bytes.owned.isEmpty(); }
+    bool ownsBuffer() const { return !!m_bytes.owned.sizeInBytes(); }
     std::span<const uint8_t> copyBorrowedBytes(std::span<const uint8_t>, const ParallelLoops&);
     void copyBorrowedWordsOfPositions(const ParallelLoops&);
     void setConstructionStarts(Vector<ConstructionStartInModule>&&);
-    void adoptBuffer(Vector<uint8_t>&&);
+    using OwnedBytes = MallocSpan<uint8_t, WTF::VectorBufferMalloc>;
+    void adoptBuffer(OwnedBytes&&);
 
     StringTable strings;
     TypeTable types;
@@ -170,8 +172,8 @@ public:
 private:
     struct Bytes {
         std::span<const uint8_t> borrowed;
-        Vector<uint8_t> owned;
-        Vector<uint32_t> wordsOfPositions;
+        OwnedBytes owned;
+        MallocSpan<uint32_t> wordsOfPositions;
     };
 
     struct DerivedTables {

@@ -7,11 +7,9 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBodyFactsForTables.h"
 #include "AOTImageForward.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
-#include <span>
 
 namespace JSC { namespace AOT {
 
@@ -22,7 +20,7 @@ struct ObfuscatedSites {
     Vector<uint8_t> names;
 };
 
-ObfuscatedSites collectObfuscatedSites(const LinkedFunctions&, const Typed::Program&, BuildContext&, std::span<const WrittenTailCall> = { });
+ObfuscatedSites collectObfuscatedSites(const LinkedFunctions&, const Typed::Program&, BuildContext&);
 
 } } // namespace JSC::AOT
 

@@ -182,11 +182,14 @@ bool CalleeSummarizerForLinkEffects::copyThatDefinesMayRunCode(FunctionID id, co
     LinkType source = typeAt(id, change.other);
     if (!mayBeObjectForLinkEffects(source))
         return false;
-    if (!holdsOnlyPlainObjectsOfOneLayout(source))
+    if (!holdsOnlyPlainObjectsOfNamedLayouts(source))
         return true;
     LinkType target = typeAt(id, change.subject);
-    bool targetIsOfOneLayout = target.objects == LinkType::Objects::Layout && target.functions == LinkType::Functions::None && !mayBeOtherCallableForLinkEffects(target);
-    return !targetIsOfOneLayout || !isFoundByShapeTest(m_program.at(target.layout));
+    std::span<const LayoutID> layoutsOfTarget = layoutsNamedBy(target);
+    bool targetIsOfNamedLayouts = !layoutsOfTarget.empty() && target.functions == LinkType::Functions::None && !mayBeOtherCallableForLinkEffects(target);
+    return !targetIsOfNamedLayouts || !std::ranges::all_of(layoutsOfTarget, [&](LayoutID layout) {
+        return isFoundByShapeTest(m_program.at(layout));
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

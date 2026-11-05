@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeGenerator.h"
+#include "AOTCodeRecords.h"
 #include "AOTInstance.h"
 #include "AOTNumbering.h"
 #include "AOTOperand.h"
@@ -26,7 +27,7 @@ protected:
         : m_proc(generator.procedure())
         , m_heaps(generator.heaps())
         , m_out(generator.out())
-        , m_mentions(generator.mentions())
+        , m_mentions(generator.records().mentions)
         , m_instance(generator.pinned().instance)
         , m_instancePrefix(generator.pinned().instancePrefix)
         , m_numberTag(generator.pinned().numberTag)

@@ -15,7 +15,6 @@ enum WellKnownSymbol {
 }
 record PropertyKey wire customText {
     kind: PropertyKeyKind text: String? owner: Layout? symbol: WellKnownSymbol? module: Module(Referrer)? callNumber: UInt32?
-    | engine site: AllocationSite?
 }
 
 flags Primitives abi { Undefined Null False True Number String Symbol BigInt Absent }
@@ -32,7 +31,7 @@ record Type wire customEngine customText {
 }
 record ClassPart wire customEngine {
     builtinClass: BuiltinClass contents: Span<Type>
-    | engine contentsAreProven: Bool arrayStorage: ArrayStorage provenPristine: PristineAspects
+    | engine arrayStorage: ArrayStorage provenPristine: PristineAspects
 }
 
 enum TypeSiteKind (logWord: Text) {

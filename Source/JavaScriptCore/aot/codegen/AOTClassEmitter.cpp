@@ -79,7 +79,7 @@ void ClassEmitter::generateDefineMethod(const ValueContext& value)
     CellPointer function = in<CellPointer>(value->functionOperand());
     PropertyKeyID key = value->key();
     Boxed property = key ? boxCell(emitter<ConstantEmitter>().keyConstant(value, key)) : in<Boxed>(value->computedKeyOperand());
-    Word32 sideAndKind = word32(DefinedMethodBits::encode(value->side(), value->methodKind()));
+    Word32 sideAndKind = word32(DefinedMethodBits::encode(value->side(), value->methodKind(), !key, value->index()));
     callVoidOperation(value, RuntimeOperation::DefineMethod, { classObject, property, function, sideAndKind });
 }
 

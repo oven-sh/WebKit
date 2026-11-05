@@ -21,7 +21,7 @@ constexpr StubKey callValueCell(unsigned count, CallPosition position = CallPosi
 constexpr StubKey callValueCellWithoutThis(unsigned count, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueCellWithoutThis).withCount(count).withForm(static_cast<uint8_t>(position)); }
 constexpr StubKey callValueFunctionOfEngine(unsigned count, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueFunctionOfEngine).withCount(count).withForm(static_cast<uint8_t>(position)); }
 constexpr unsigned numberOfSetsOfLentArguments = 3;
-constexpr StubKey callValueLending(unsigned count, unsigned lentArguments, CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueLending).withCount(count).withForm(static_cast<uint8_t>(lentArguments - 1 + numberOfSetsOfLentArguments * static_cast<unsigned>(position))); }
+constexpr StubKey callValueLending(unsigned count, unsigned lentArguments, CallPosition position = CallPosition::Ordinary) { return lentArguments ? StubKey(StubFamily::CallValueLending).withCount(count).withForm(static_cast<uint8_t>(lentArguments - 1 + numberOfSetsOfLentArguments * static_cast<unsigned>(position))) : callValue(count, position); }
 constexpr StubKey callValueWithCount(CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallValueWithCount).withForm(static_cast<uint8_t>(position)); }
 constexpr StubKey callCellWithCount(CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallCellWithCount).withForm(static_cast<uint8_t>(position)); }
 constexpr StubKey callNotClosureWithCount(CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallNotClosureWithCount).withForm(static_cast<uint8_t>(position)); }
@@ -63,6 +63,7 @@ StubSignature callConventionSignatureWithCount();
 ClosureHeaderBranches branchIfNotPlainClosureHeader(StubAssembler&, GPRReg structureID, GPRReg scratch);
 
 void loadClosureWordOfThisRealm(StubAssembler&, GPRReg closure, const CallRegisters&, JumpList& isNotClosureOfThisRealm);
+Jump branchUnlessWordBorrows(StubAssembler&, GPRReg word, GPRReg scratch, unsigned lentArguments);
 
 void emitFillMissingArgumentRegisters(StubAssembler&, unsigned count);
 void emitFillMissingArgumentRegisters(StubAssembler&, GPRReg count, GPRReg scratch);

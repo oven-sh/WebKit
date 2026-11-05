@@ -112,7 +112,6 @@ private:
         { "namespace"_s, ObjectKind::Namespace },
         { "instance"_s, ObjectKind::Instance },
         { "prototype"_s, ObjectKind::Prototype },
-        { "site"_s, ObjectKind::Site },
     };
 
     static std::optional<UnknownSeed> seedNamed(StringView);
@@ -715,15 +714,6 @@ ObjectID TypeTextParser::parseObjectOfKind(ObjectKind kind)
     case ObjectKind::Instance:
     case ObjectKind::Prototype:
         return objectOfLayout(kind, parseLayout());
-    case ObjectKind::Site: {
-        FunctionID function = parseFunction();
-        expectComma();
-        std::optional<uint32_t> value = parseID(IDPrefix::Value, static_cast<uint64_t>(ValueID::largestIndex) + 1, "value"_s);
-        uint32_t ordinal = acceptComma() ? parseNumber() : 0;
-        if (hasFailed() || !numberOf(kind))
-            return { };
-        return objects.siteObject(function, ValueID(*value), ordinal);
-    }
     case ObjectKind::Unknown:
         break;
     }
@@ -752,17 +742,7 @@ ObjectID TypeTextParser::parseNamedObject()
     }
     if (!object)
         fail(start, makeString("the build has no object "_s, m_text.substring(start, m_offset - start)));
-    if (hasFailed())
-        return { };
-
-    if (peek() != '@' || !isASCIIDigit(peek(1)))
-        return object;
-    unsigned startOfInstance = ++m_offset;
-    uint32_t instance = parseNumber();
-    ObjectID copy = hasFailed() ? ObjectID() : m_arena.objects().findObjectOfInstance({ instance, object });
-    if (!copy)
-        fail(startOfInstance, makeString("instance "_s, instance, " has no copy of the object"_s));
-    return copy;
+    return hasFailed() ? ObjectID() : object;
 }
 
 void TypeTextParser::parseSeeds(UnknownSeeds& seeds)

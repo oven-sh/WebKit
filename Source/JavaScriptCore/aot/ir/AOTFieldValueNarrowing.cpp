@@ -89,15 +89,6 @@ TypeID narrowHolderByFieldValue(const TypingContext& context, TypeID holder, Pro
     return narrowed ? narrowed : withoutNullish;
 }
 
-bool narrowsHolderToNothing(const TypingContext& context, TypeID holder, PropertyKeyID key, TypeID read, ReadOfEmptySlot emptySlot)
-{
-    if (!holder || !read || isNeverType(read))
-        return false;
-
-    TypeID withoutNullish = context.types.withoutNullish(holder);
-    return context.at(withoutNullish).hasOnlyLayouts() && !tryNarrowLayoutsOfHolderByFieldValue(context, withoutNullish, key, read, emptySlot);
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

@@ -21,6 +21,8 @@ ALWAYS_INLINE bool buildCoroutineOperation(Walker& walker, const BodyValue& valu
     return opcodesThatBuildCoroutineOperationTakes.contains(value.opcode()) && buildCoroutineOperationOfItsOpcodes(walker, value);
 }
 
+AOT_LINK_OF_WALK(answerFromStepWrittenByHand, opcodesThatAnswerFromStepWrittenByHandTakes)
+
 std::optional<Vector<Reference, 8>> layOutEntryOperandsOfCall(Walker&, const BodyValue& call, FunctionID callee, CodeUnit entered);
 
 FunctionID findCoroutineCalledBy(Walker&, const BodyValue& call);

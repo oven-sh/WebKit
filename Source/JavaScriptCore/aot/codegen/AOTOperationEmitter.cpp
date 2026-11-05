@@ -60,21 +60,20 @@ void OperationEmitter::defineNarrowed(const ValueContext& value, Operand operand
         define(value, Operand());
         return;
     }
+    if (operand.representation == value.representation()) [[likely]] {
+        define(value, operand);
+        return;
+    }
 
-    std::optional<ConversionPath> path = findConversion(types(), value->type, operand.representation, value.representation());
-    if (!path) {
+    ConversionInSteps path = findConversionInSteps(types(), value->type, operand.representation, value.representation());
+    if (!path.isFound) {
         fail(value, InternalErrorKind::UnsupportedConversion);
         return;
     }
     Type type = typeOf(value.id());
-    for (const ConversionStep& step : *path)
-        operand = emitter<RepresentationEmitter>().convert(value, step.opcode, operand, type, step.to);
+    for (uint8_t index = 0; index < path.numberOfSteps; ++index)
+        operand = emitter<RepresentationEmitter>().convert(value, path.steps[index].opcode, operand, type, path.steps[index].to);
     define(value, operand);
-}
-
-Boxed OperationEmitter::boxed(ValueID id) const
-{
-    return in<Boxed>(id);
 }
 
 Integer OperationEmitter::integerOf(ValueID id)
@@ -154,6 +153,14 @@ Type OperationEmitter::resultTypeOf(const InlineCall& call) const
         return typeOf(value->id());
     ValueID parameter = resultParameterOfInlineCall(m_code, *call.terminator());
     return parameter ? typeOf(parameter) : m_program.at(TypeTable::undefined);
+}
+
+TypeID OperationEmitter::resultTypeIDOf(const InlineCall& call) const
+{
+    if (const ValueContext* value = call.value())
+        return typeIDOf(value->id());
+    ValueID parameter = resultParameterOfInlineCall(m_code, *call.terminator());
+    return parameter ? typeIDOf(parameter) : TypeID(TypeTable::undefined);
 }
 
 bool OperationEmitter::resultIsRead(const InlineCall& call) const

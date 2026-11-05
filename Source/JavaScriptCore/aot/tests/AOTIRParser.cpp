@@ -118,7 +118,7 @@ std::unique_ptr<Program> TextParser::run()
 
     typeWordOfAnything();
 
-    m_program->adoptBuffer(m_builder.finish());
+    m_program->adoptBuffer(m_builder.finish().releaseBuffer());
     Reader reader(*m_program, m_build);
     if (!reader.run())
         return nullptr;

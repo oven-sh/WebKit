@@ -14,17 +14,8 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-static uint32_t describedOffsetOf(const LinkBuffer& linkBuffer, MacroAssembler::Label label)
+static void describeFrameRanges(const Procedure& procedure, const LinkBuffer& linkBuffer, decltype(FrameDescription::frameRanges)& ranges)
 {
-    RELEASE_ASSERT(label.isSet());
-    uint32_t offset = const_cast<LinkBuffer&>(linkBuffer).offsetOf(label);
-    RELEASE_ASSERT(offset <= linkBuffer.size(), offset, linkBuffer.size());
-    return offset;
-}
-
-static Vector<CodeRange, 1> describedFrameRangesOf(const Procedure& procedure, const LinkBuffer& linkBuffer)
-{
-    Vector<CodeRange, 1> ranges;
     uint32_t endOfPreviousRange = 0;
     for (const FrameRange& range : procedure.frameRanges()) {
         uint32_t begin = describedOffsetOf(linkBuffer, range.begin);
@@ -40,13 +31,10 @@ static Vector<CodeRange, 1> describedFrameRangesOf(const Procedure& procedure, c
         }
         ranges.append(CodeRange { begin, end });
     }
-    return ranges;
 }
 
-void describeConstants(const Procedure& procedure, decltype(CodeBody::constants)& constants)
+void describeListedConstants(const Procedure& procedure, decltype(CodeBody::constants)& constants)
 {
-    RELEASE_ASSERT(constants.isEmpty());
-
     std::span<const ConstantDataRecord> records = procedure.constantData();
     constants.reserveCapacity(records.size());
     for (const ConstantDataRecord& record : records) {
@@ -56,10 +44,8 @@ void describeConstants(const Procedure& procedure, decltype(CodeBody::constants)
     }
 }
 
-void describeJumpTables(const Procedure& procedure, const LinkBuffer& linkBuffer, decltype(CodeBody::jumpTables)& jumpTables)
+void describeListedJumpTables(const Procedure& procedure, const LinkBuffer& linkBuffer, decltype(CodeBody::jumpTables)& jumpTables)
 {
-    RELEASE_ASSERT(jumpTables.isEmpty());
-
     std::span<const JumpTableRecord> records = procedure.jumpTables();
     jumpTables.reserveCapacity(records.size());
     for (const JumpTableRecord& record : records) {
@@ -71,19 +57,13 @@ void describeJumpTables(const Procedure& procedure, const LinkBuffer& linkBuffer
     }
 }
 
-void describeEntries(const Procedure& procedure, const LinkBuffer& linkBuffer, Vector<CodeEntry, 1>& entries)
-{
-    std::span<const Entrypoint> entrypoints = procedure.entrypoints();
-    entries.reserveCapacity(entries.size() + entrypoints.size());
-    for (const Entrypoint& entrypoint : entrypoints)
-        entries.append(CodeEntry { describedOffsetOf(linkBuffer, entrypoint.label), entrypoint.id });
-}
-
 void describeFrame(const Procedure& procedure, const LinkBuffer& linkBuffer, FrameDescription& description)
 {
     RELEASE_ASSERT(!procedure.failure());
     const Frame& frame = procedure.frame();
-    Vector<CodeRange, 1> ranges = describedFrameRangesOf(procedure, linkBuffer);
+    decltype(FrameDescription::frameRanges)& ranges = description.frameRanges;
+    ranges.clear();
+    describeFrameRanges(procedure, linkBuffer, ranges);
 
     RELEASE_ASSERT(frame.hasFrame() || (ranges.isEmpty() && !frame.frameSize() && !frame.bytesDeadAtSuspensions()));
     RELEASE_ASSERT(!ranges.isEmpty() || !frame.numberOfCalleeSaves());
@@ -94,11 +74,13 @@ void describeFrame(const Procedure& procedure, const LinkBuffer& linkBuffer, Fra
     description.bytesAboveFrameRecord = 0;
     description.bytesDeadAtSuspensions = frame.bytesDeadAtSuspensions();
     description.hasFrameRecord = frame.hasFrameRecord();
-    description.calleeSaveRegisters = frame.calleeSaveRegisterAtOffsetList();
-    description.frameRanges = WTF::move(ranges);
+    if (frame.numberOfCalleeSaves())
+        description.calleeSaveRegisters = frame.calleeSaveRegisterAtOffsetList();
+    else
+        description.calleeSaveRegisters = { };
 }
 
-void describeTrappingAccesses(const Procedure& procedure, const LinkBuffer& linkBuffer, Vector<LinkedTrappingAccess>& accesses)
+void describeListedTrappingAccesses(const Procedure& procedure, const LinkBuffer& linkBuffer, Vector<LinkedTrappingAccess>& accesses)
 {
     std::span<const TrappingAccess> records = procedure.trappingAccesses();
     accesses.reserveCapacity(accesses.size() + records.size());

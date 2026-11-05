@@ -133,8 +133,8 @@ const OpcodeSet& opcodesWithRequiredOperandTypes()
     return opcodes;
 }
 
-template<typename Operation>
-TypeID requiredTypeOfOperand(const TypingContext& context, const Operation& user, uint32_t operandIndex)
+template<bool isKnownToBeDeclared, typename Operation>
+static ALWAYS_INLINE TypeID requiredTypeOfOperandInResultRules(const TypingContext& context, const Operation& user, uint32_t operandIndex)
 {
     Opcode opcode = opcodeOf(user);
     if (!opcodesWithRequiredOperandTypes().contains(opcode)) {
@@ -147,34 +147,36 @@ TypeID requiredTypeOfOperand(const TypingContext& context, const Operation& user
     TypingContext proven = context.atLevel(TypeLevel::Proven);
     if (opcode == Opcode::CreateIteratorResult)
         return requiredTypeOfIteratorResultField(proven, operandIndex);
-    if (operandKindOf(opcode, operandIndex) != OperandKind::Declared)
-        return { };
-
-    if (opcode == Opcode::PutModuleVariable)
-        return requiredTypeOfModuleVariable(proven, user.variable());
-    if (opcode == Opcode::PutEnvironmentField)
-        return requiredTypeOfEnvironmentField(proven, user.layout(), user.field());
-    if (opcode == Opcode::PrivateDefine)
-        return requiredTypeOfPrivateDefinition(proven, user.layout(), user.field());
-    if (opcode == Opcode::PutSlot || opcode == Opcode::PutSlotOrAdd)
-        return tryTypeAcceptedBySlots(proven, user.receivers(), user.key());
-    if (opcode == Opcode::NewArray)
-        return requiredTypeOfElementInStorage(user.arrayStorage());
-
-    if (opcode == Opcode::CallTable || opcode == Opcode::Results)
+    if (!isKnownToBeDeclared && operandKindOf(opcode, operandIndex) != OperandKind::Declared)
         return { };
 
     uint32_t variadicIndex = operandIndex - numberOfNamedOperandsOf(opcode);
-    if (opcode == Opcode::NewClosure)
-        return requiredTypeOfCapture(proven, user.function(), variadicIndex);
-    if (opcode == Opcode::NewObject) {
-        std::span<const uint32_t> fields = user.fields();
-        if (variadicIndex >= fields.size())
-            return { };
-        return requiredTypeOfInitialValue(proven, user.layout(), fields[variadicIndex]);
-    }
+    if (opcode != Opcode::CallDirect) {
+        if (opcode == Opcode::PutModuleVariable)
+            return requiredTypeOfModuleVariable(proven, user.variable());
+        if (opcode == Opcode::PutEnvironmentField)
+            return requiredTypeOfEnvironmentField(proven, user.layout(), user.field());
+        if (opcode == Opcode::PrivateDefine)
+            return requiredTypeOfPrivateDefinition(proven, user.layout(), user.field());
+        if (opcode == Opcode::PutSlot || opcode == Opcode::PutSlotOrAdd)
+            return tryTypeAcceptedBySlots(proven, user.receivers(), user.key());
+        if (opcode == Opcode::NewArray)
+            return requiredTypeOfElementInStorage(user.arrayStorage());
 
-    RELEASE_ASSERT(opcode == Opcode::CallDirect || opcode == Opcode::AwaitCallBySavingFrame);
+        if (opcode == Opcode::CallTable || opcode == Opcode::Results)
+            return { };
+
+        if (opcode == Opcode::NewClosure)
+            return requiredTypeOfCapture(proven, user.function(), variadicIndex);
+        if (opcode == Opcode::NewObject) {
+            std::span<const uint32_t> fields = user.fields();
+            if (variadicIndex >= fields.size())
+                return { };
+            return requiredTypeOfInitialValue(proven, user.layout(), fields[variadicIndex]);
+        }
+
+        RELEASE_ASSERT(opcode == Opcode::AwaitCallBySavingFrame);
+    }
     CodeRole role = user.role();
     if (!returnsResultOfFunction(role) && role != CodeRole::CoroutineBody)
         return { };
@@ -191,8 +193,23 @@ TypeID requiredTypeOfOperand(const TypingContext& context, const Operation& user
     return declaredEntryTypeOf(proven, function, variadicIndex);
 }
 
+template<typename Operation>
+TypeID requiredTypeOfOperand(const TypingContext& context, const Operation& user, uint32_t operandIndex)
+{
+    return requiredTypeOfOperandInResultRules<false>(context, user, operandIndex);
+}
+
+template<typename Operation>
+TypeID requiredTypeOfDeclaredOperand(const TypingContext& context, const Operation& user, uint32_t operandIndex)
+{
+    ASSERT(operandKindOf(opcodeOf(user), operandIndex) == OperandKind::Declared);
+    return requiredTypeOfOperandInResultRules<true>(context, user, operandIndex);
+}
+
 template TypeID requiredTypeOfOperand<Draft>(const TypingContext&, const Draft&, uint32_t);
 template TypeID requiredTypeOfOperand<Operation>(const TypingContext&, const Operation&, uint32_t);
+template TypeID requiredTypeOfDeclaredOperand<Draft>(const TypingContext&, const Draft&, uint32_t);
+template TypeID requiredTypeOfDeclaredOperand<Operation>(const TypingContext&, const Operation&, uint32_t);
 
 } } } // namespace JSC::AOT::Typed
 

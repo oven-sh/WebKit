@@ -19,6 +19,7 @@
 #include "AOTGuardEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTMemoryLocation.h"
+#include "AOTOperatorForms.h"
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
 #include "AOTShapeTestEmitter.h"
@@ -26,6 +27,9 @@
 #include "AOTSlotEmitter.h"
 #include "AOTStubsArrays.h"
 #include "AOTStubsElements.h"
+#include "AOTStubsValues.h"
+#include "AOTThrowEmitter.h"
+#include "AOTTruthinessEmitter.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestEmitter.h"
 #include "AOTTypedArrayKinds.h"
@@ -102,6 +106,9 @@ CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxe
 {
     Type known = typeOf(value->objectOperand());
     CellPointer cell = unboxCell(object);
+    MarkedObjects marked = value.opcode() == Opcode::GetSlot && value->isFilledWhereShapeFits() ? MarkedObjects::AreRefused : MarkedObjects::MayBeRefused;
+    if ((value.opcode() == Opcode::GetSlot || value.opcode() == Opcode::GetSlotOrUndefined) && value->receiverMayBeInBirth())
+        marked = MarkedObjects::Pass;
     if (known.primitives & ~cellPrimitives) {
         // The empty value has no tag bits, so it passes isCell.
         Condition isPresentCell = isCell(object);
@@ -109,7 +116,7 @@ CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxe
             isPresentCell = logicalAnd(isPresentCell, isNotEmpty(object));
         branchUnless(isPresentCell, failure);
     }
-    branchUnless(emitter<ShapeTestEmitter>().hasShapeIn(cell, receivers, known), failure);
+    branchUnless(emitter<ShapeTestEmitter>().hasShapeIn(cell, receivers, known, marked), failure);
     if (!hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known))
         branchUnless(emitter<GuardEmitter>().belongsToInstance(cell), failure);
     return cell;
@@ -151,6 +158,19 @@ Word32 GuessedAccessEmitter::indexOrElse(Boxed position, LBasicBlock failure)
     return unboxInt32(position);
 }
 
+Condition GuessedAccessEmitter::truthOfWhatSlotHolds(const ValueContext& read, Operand loaded, const Type& typeOfForm, const Type& held)
+{
+    Condition told = emitter<TruthinessEmitter>().isTruthy(read, loaded, held);
+    if (!AOT::hasFlag(generator().build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))
+        return told;
+    m_out.suspendDeclaredAccesses();
+    Boxed found = emitter<ConversionEmitter>().box(read, loaded, typeOfForm);
+    Condition asked(m_out.castToInt32(callStub(read, AOT::toBoolean(), { found.value() }).first));
+    emitter<ThrowEmitter>().requireOrStopAtFalseProof(read, Condition(m_out.equal(told.value(), asked.value())), found, ProofSource::Field);
+    m_out.resumeDeclaredAccesses();
+    return told;
+}
+
 void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
 {
     if (!isGuessedFormOf(value, Opcode::PropGet) || value.representation() != Representation::JSValue) {
@@ -174,37 +194,72 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     MemoryLocation location = MemoryLocation::objectField(key);
     bool readsEmptySlotAsUndefined = value.opcode() == Opcode::GetSlotOrUndefined || value.opcode() == Opcode::GetDeferredClosureSlotOrUndefined;
     LBasicBlock failure = newBlock();
-    Join<Boxed> join(m_out);
+
+    std::optional<CodeGenerator::WaysOfTruth> ways = slot.representation == SlotRepresentation::DeferredClosure ? std::nullopt : generator().waysOfTruthOf(value);
+    Type held;
+    if (ways) {
+        AccessContext context { m_program, WalkFacts(m_facts), m_plan, types(), m_id };
+        TypeID heldBySlots = typeHeldBySlotsOf(context, access.membersWithField.span(), key);
+        if (heldBySlots) {
+            held = types().at(heldBySlots);
+            held.primitives &= ~Primitive::Absent;
+        }
+        bool tellsTruth = heldBySlots && held.isJavaScriptValue()
+            && (ways->areOfObjectAndNothing ? !(held.primitives & ~Primitive::UndefinedOrNull) : chooseConversionForm(m_program, types(), Opcode::ToBoolean, types().intern(held)) != OperatorForm::Generic);
+        if (!tellsTruth)
+            ways = std::nullopt;
+    }
+    std::optional<Join<Boxed>> join;
+    if (!ways)
+        join.emplace(m_out);
 
     CellPointer cell = receiverOrElse(value, object, types().layoutSets().ofSorted(access.membersWithField.span()), failure);
+    bool receiverBearsNoMark = emitter<ShapeTestEmitter>().lastTestRefusesMarkedObjects();
     CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(cell, access);
     if (slot.representation == SlotRepresentation::DeferredClosure) {
         NarrowReference word(m_out.load32(slots.addressOf(base, slot, location, extensionWord)));
         branchUnless(above(word, NarrowReference(m_out.constInt32(absentDeferredClosure))), failure);
-        join.add(conversions.decode(word, types().at(TypeTable::cellOrMarker), Representation::JSValue).as<Boxed>());
+        join->add(conversions.decode(word, types().at(TypeTable::cellOrMarker), Representation::JSValue).as<Boxed>());
     } else if (value.opcode() == Opcode::GetSlot && value->holdsDeclaredType()) {
-        continueGuessedAccessIf(m_out, slots.holdsDeclaredType(base, slot, location, extensionWord), rareEdge(failure));
+        if (!value->isFilledWhereShapeFits() || !receiverBearsNoMark)
+            continueGuessedAccessIf(m_out, slots.holdsDeclaredType(base, slot, location, extensionWord), rareEdge(failure));
         Type loaded = types().at(slot.type ? slot.type : widestTypeOf(Typed::representationOf(slot.representation)));
         loaded.primitives &= ~(Primitive::UndefinedOrNull | Primitive::Absent);
-        join.add(conversions.box(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded));
+        if (ways) {
+            held.primitives &= ~Primitive::UndefinedOrNull;
+            branch(truthOfWhatSlotHolds(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded, held), ways->targets);
+        } else
+            join->add(conversions.box(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded));
     } else {
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
-        continueGuessedAccessIf(m_out, slots.holdsValue(base, slot, location, extensionWord), slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure));
-        Operand held = slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
-        join.add(conversions.box(value, held, types().at(widestTypeOf(held.representation))));
+        if (value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark)
+            continueGuessedAccessIf(m_out, slots.holdsValue(base, slot, location, extensionWord), slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure));
+        Operand loaded = slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
+        Type typeOfForm = types().at(widestTypeOf(loaded.representation));
+        if (ways)
+            branch(truthOfWhatSlotHolds(value, loaded, typeOfForm, held), ways->targets);
+        else
+            join->add(conversions.box(value, loaded, typeOfForm));
 
         if (slotIsEmpty) {
             m_out.appendTo(slotIsEmpty);
             branchUnless(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit | JSC::IsPristine), failure);
             if (!value->conditions().isEmpty())
                 branchUnless(emitter<GuardEmitter>().areMembersUnchanged(value->conditions()), failure);
-            join.add(undefined());
+            if (ways)
+                m_out.jump(ways->targets.notTaken);
+            else
+                join->add(undefined());
         }
     }
 
     m_out.appendTo(failure);
-    join.add(accesses.getById(value, object, key));
-    define(value, join.finish());
+    if (ways) {
+        define(value, accesses.getById(value, object, key));
+        return;
+    }
+    join->add(accesses.getById(value, object, key));
+    define(value, join->finish());
 }
 
 void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
@@ -266,9 +321,9 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
         continueGuessedAccessIf(m_out, slots.holdsValue(slotAccesses.baseOfSlot(cell, access), slot, location, extensionWord), rareEdge(failure));
     if (tested) {
         LBasicBlock fits = newBlock();
-        branchOnType(held.as<Boxed>(), typeTestPlanFor(storedTypeID, Representation::JSValue, tested), { normalEdge(fits), rareEdge(failure) });
+        branchOnType(held.as<Boxed>(), typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, tested), { normalEdge(fits), rareEdge(failure) });
         m_out.appendTo(fits);
-        storedTypeID = types().intersectionOf(storedTypeID, tested);
+        storedTypeID = tested;
     }
 
     Type storedType = types().at(storedTypeID);
@@ -400,11 +455,12 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
             continueGuessedAccessIf(m_out, test.isInside, rareEdge(outOfLine));
         Operand element = elements.loadRawElement(form, storage, test.indexInside);
         continueGuessedAccessIf(m_out, logicalNot(elements.isHole(form, element)), rareEdge(outOfLine));
-        join.add(elements.convertRawElement(form, element, representation, result));
+        join.add(elements.convertRawElement(value, form, element, representation, typeIDOf(value.id())));
     }, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
 
     m_out.appendTo(outOfLine);
     Boxed answer(callStub(value, testsForItself(value) ? arrayGetAtIndex(AOT::ArrayRead::OfAnyList) : arrayGetAtIndex(), { list.value(), index.value() }).first);
+    elements.stopUnlessElementIsOf(value, answer, typeIDOf(value.id()));
     join.add(emitter<ConversionEmitter>().unbox(answer, result, representation));
     define(value, join.finish());
 }

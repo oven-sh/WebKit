@@ -1,7 +1,0 @@
-# the same comparison with typed operations withheld, on which every rule of numbers leans: the equality is built as written. With unboxed numbers alone withheld the twin of this rule for texts still builds the form, under typed operations by themselves
-# RUN: walk f1 mechanisms=none
-# CHECK-LABEL: code f1:Body
-# CHECK: = Eq
-# RUN(NEVER): walk f1 mechanisms=none
-# NEVER-NOT: ValueLooselyEqualsLiteral
-# PROGRAM-OF: loose-equality-with-a-text-that-is-no-number-asks-for-that-text.ir

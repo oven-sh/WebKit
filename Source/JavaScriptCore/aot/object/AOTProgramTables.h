@@ -293,8 +293,6 @@ struct ProgramTables {
     std::optional<uint32_t> nameOfFunction(uint32_t function) const
     {
         uint32_t source = sourceFunctionOf(function);
-        if (source >= numberOfFunctions() - functionSources().size())
-            return std::prev(std::ranges::upper_bound(functionNameRuns(), source, { }, &FunctionNameRunData::firstFunction))->name;
         const uint32_t* group = functionNameGroups().data() + source / 32 * 2;
         if (!(group[0] >> source % 32 & 1))
             return std::nullopt;

@@ -21,7 +21,7 @@ enum CodeForm { Open Closed Generic }
 
 enum ImageVerdict {
     Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned AlreadyInUse LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
-    MalformedTables StampMismatch IdentityMismatch CodeAtFixedAddress OutsideItsSegments CannotReadExecutable TopByteOfAddressIgnored
+    MalformedTables StampMismatch IdentityMismatch CodeAtFixedAddress OutsideItsSegments CannotReadExecutable
 }
 flags AllocationEscapeReason {
     Returned Thrown StoredInUnknownMemory PassedToUnknownCode RetainedByCallee StoredInEscapingObject LeakedByContainer LimitReached
@@ -92,8 +92,8 @@ enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow KeepGoing }
-flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals AccessCounts Statistics }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes NobodyLooksAtNewInstances NativeCodeAnswersNullish WalksNothingAtCalls CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess }
+flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals AccessCounts Statistics Uses }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes NobodyLooksAtNewInstances NativeCodeAnswersNullish WalksNothingAtCalls CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess NoCalleeKeepsWhatItIsHanded }
 flags AdmittedCode { Inspector ReplacedBuiltins }
 flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FilesOfImageForCodeOutside }
 flags OutputOptions { Obfuscate SharesRealms RunsInSeveralRealms RunsInPlaceOfFiles }

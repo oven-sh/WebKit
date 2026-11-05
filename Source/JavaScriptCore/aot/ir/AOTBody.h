@@ -211,6 +211,7 @@ constexpr uint8_t hasFlagsWordOnWire(Opcode opcode) { return !!wireFlagsOf(opcod
 
 inline uint32_t numberOfFieldWords(Opcode, const uint32_t* fields);
 inline uint32_t numberOfFieldWords(TerminatorKind, const uint32_t* fields);
+inline uint32_t numberOfWordsBehindHead(Opcode, const uint32_t* words);
 
 class BodyValue {
 public:
@@ -242,13 +243,23 @@ public:
         bool hasFlags = hasFlagsWord();
         return { m_words + numberOfHeadWords + hasFlags, m_unit, hasFlags ? static_cast<uint16_t>(m_words[numberOfHeadWords]) : static_cast<uint16_t>(0) };
     }
+    ALWAYS_INLINE uint16_t flagsWord() const
+    {
+        ASSERT(hasFlagsWord());
+        return static_cast<uint16_t>(m_words[numberOfHeadWords]);
+    }
+    ALWAYS_INLINE BodyFields fieldWordsBehindFlagsWord() const { return { m_words + numberOfHeadWords + 1, m_unit, flagsWord() }; }
+    ALWAYS_INLINE BodyFields fieldWordsBehindHead() const
+    {
+        ASSERT(!m_isParameter && !hasFlagsWord());
+        return { m_words + numberOfHeadWords, m_unit, 0 };
+    }
 
     uint32_t sizeInWords() const
     {
         if (m_isParameter)
             return sizeof(Wire::ParameterHead) / sizeof(uint32_t);
-        uint32_t first = numberOfHeadWords + hasFlagsWord();
-        return first + numberOfFieldWords(opcode(), m_words + first) + hasSecondPosition();
+        return numberOfHeadWords + numberOfWordsBehindHead(opcode(), m_words + numberOfHeadWords) + hasSecondPosition();
     }
 
     uint32_t position() const
@@ -302,6 +313,7 @@ public:
     std::span<const ValueID> variadicOperands() const;
     template<typename Visitor> void forEachReference(Visitor&&) const;
 
+    uint32_t numberOfVariadicOperands() const { return static_cast<uint32_t>(variadicOperands().size()); }
     OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode(), operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(opcode(), operandIndex); }
 

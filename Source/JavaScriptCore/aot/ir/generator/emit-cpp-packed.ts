@@ -242,7 +242,7 @@ function structLines(record: PackedRecord): string[] {
     maxSize === null ? [] : [`static constexpr unsigned maxSize = ${maxSize};`],
     isComparable ? [equality] : [],
     [
-      "void append(Vector<uint8_t>& bytes) const",
+      "void append(auto& bytes) const",
       "{",
       ...indent([...words.flatMap(checksOf), ...guardedLines(words, "", appendLinesOf)]),
       "}",

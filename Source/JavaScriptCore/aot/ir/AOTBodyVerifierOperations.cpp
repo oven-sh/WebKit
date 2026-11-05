@@ -316,15 +316,13 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::IsCollectionIteratorClosedMark: case Opcode::MapNext: case Opcode::SetNext:
     case Opcode::KeyConstant: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::Parameter:
     case Opcode::CopyObjectAndDefine: case Opcode::CopyTwoObjects:
-    case Opcode::Expect: case Opcode::AssumeType: case Opcode::ReportMismatch: case Opcode::CallTable: case Opcode::BeginMemberGuards: case Opcode::ForInOpenCountingNames:
-    case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen:
-    case Opcode::HasLayoutPrototype: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsElementPresent:
-    case Opcode::IsInsideView: case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder:
+    case Opcode::Expect: case Opcode::CallTable: case Opcode::BeginMemberGuards: case Opcode::ForInOpenCountingNames:
+    case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::IsNotFrozen:
+    case Opcode::HasLayoutPrototype: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsElementPresent:
+    case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder:
     case Opcode::IsEnumeratorCurrent:
     case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetSlotSetter: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
     case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::PropHasOwn:
-    case Opcode::MayBindAnswersOfGetAndSetTraps: case Opcode::MayBindAnswersOfHasTraps:
-    case Opcode::ValidateAnswerOfGetTrap: case Opcode::ValidateDenialOfHasTrap: case Opcode::ValidateConsentOfDeleteTrap: case Opcode::HasOwnByAnswerOfDescriptorTrap: case Opcode::FinishStoreByTrap:
     case Opcode::TryCopyFields: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetCachedGetter:
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField:
     case Opcode::ElemGetByKeyParts:
@@ -351,7 +349,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt:
     case Opcode::JSONHasStackSpace:
     case Opcode::StringBuilderReserve: case Opcode::StringBuilderCommit: case Opcode::JSONEnterWatchedLevel: case Opcode::JSONAppendKey: case Opcode::JSONAppendToken: case Opcode::JSONAppendBoolean: case Opcode::JSONAppendInteger:
-    case Opcode::JSONAppendNumber: case Opcode::JSONAppendDate: case Opcode::JSONAppendString: case Opcode::JSONAppendValue: case Opcode::JSONAppendObject:
+    case Opcode::JSONAppendNumber: case Opcode::JSONAppendString: case Opcode::JSONAppendValue: case Opcode::JSONAppendObject:
     case Opcode::StringBuilderBegin: case Opcode::StringBuilderAppend: case Opcode::StringBuilderLength:
     case Opcode::StringBuilderToString: case Opcode::StringBuilderFinish: case Opcode::StringBuilderDiscard: case Opcode::StringBuilderCheckpoint: case Opcode::StringBuilderRollBack:
     case Opcode::StringBuilderCheckLength:
@@ -363,7 +361,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::StackStringBuilderAppendStringRange: case Opcode::StackStringBuilderAppendBoolean: case Opcode::StackStringBuilderAppendStringOrNullish: case Opcode::StackStringBuilderAppendValue:
     case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
-    case Opcode::Narrowed: case Opcode::ClearFrameCell: case Opcode::CheckProof:
+    case Opcode::Narrowed: case Opcode::ClearFrameCell: case Opcode::EndLifeOfCell: case Opcode::CheckProof:
         RELEASE_ASSERT_NOT_REACHED();
     }
     RELEASE_ASSERT_NOT_REACHED();

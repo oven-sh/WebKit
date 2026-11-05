@@ -28,9 +28,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr size_t minimumMentionTableSize = 64;
-static constexpr size_t fewestMentionsWithTable = 16;
-static_assert(2 * (fewestMentionsWithTable + 1) <= minimumMentionTableSize);
 static constexpr size_t fewestWordsOfSiteCacheKey = 4;
 
 static constexpr size_t numberOfAllocationKeyHeaderWords = 7;
@@ -43,7 +40,9 @@ static bool mentionWordIsNotThreadLocalID(uint32_t word)
     return Typed::homeOf(TypeID::fromBits(word)) != Typed::IDHome::Thread;
 }
 
-static bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::span<const uint32_t> key)
+static bool keyOfCardOfWordHasNoThreadLocalIDs(std::span<const uint32_t> key);
+
+static ALWAYS_INLINE bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::span<const uint32_t> key)
 {
     switch (space) {
     case NumberSpace::String:
@@ -61,7 +60,6 @@ static bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::span<const uin
     case NumberSpace::CardOfVariable:
     case NumberSpace::ModuleValue:
     case NumberSpace::ModuleNamespace:
-    case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:
     case NumberSpace::EnvironmentHandedBack:
@@ -78,7 +76,7 @@ static bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::span<const uin
     case NumberSpace::PropertyRun:
         return std::ranges::all_of(key, mentionWordIsNotThreadLocalID);
     case NumberSpace::CardOfWord:
-        return key.size() > 1 && key[0] < numberOfNumberSpaces && mentionKeyHasNoThreadLocalIDs(static_cast<NumberSpace>(key[0]), key.subspan(1));
+        return keyOfCardOfWordHasNoThreadLocalIDs(key);
     case NumberSpace::RequireEdge:
     case NumberSpace::ModuleBuiltinCell:
     case NumberSpace::RegExpLiteralCell:
@@ -91,6 +89,11 @@ static bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::span<const uin
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+static NEVER_INLINE bool keyOfCardOfWordHasNoThreadLocalIDs(std::span<const uint32_t> key)
+{
+    return key.size() > 1 && key[0] < numberOfNumberSpaces && mentionKeyHasNoThreadLocalIDs(static_cast<NumberSpace>(key[0]), key.subspan(1));
 }
 
 static bool requestMentionHasExpectedWordCount(RequestKind kind, size_t numberOfWords)
@@ -130,16 +133,11 @@ static void insertIntoMentionTable(std::span<uint32_t> table, uint32_t hash, uin
     table[place] = indexPlusOne;
 }
 
-std::span<const uint32_t> keyOf(const Mention& mention, std::span<const uint32_t> mentionWords)
-{
-    if (mention.numberOfWords != Mention::longKey)
-        return mentionWords.subspan(mention.firstWord, mention.numberOfWords);
-    return mentionWords.subspan(mention.firstWord + 1, mentionWords[mention.firstWord]);
-}
-
 NEVER_INLINE void MentionList::growTable()
 {
-    m_table.fill(0, std::max(minimumMentionTableSize, 2 * m_table.size()));
+    m_table.fill(0, std::max(smallestTableSize, 4 * m_table.size()));
+    m_mentions.reserveCapacity(m_table.size() / 2);
+    m_words.reserveCapacity(m_table.size());
     std::span<uint32_t> table = m_table.mutableSpan();
     std::span<const uint32_t> words = m_words.span();
     for (uint32_t index = 0; index < m_mentions.size(); ++index) {
@@ -152,6 +150,9 @@ template<size_t extent>
 ALWAYS_INLINE uint32_t MentionList::addKey(NumberSpace space, std::span<const uint32_t, extent> key, int32_t addend)
 {
     uint8_t numberOfWords = key.size() < Mention::longKey ? static_cast<uint8_t>(key.size()) : Mention::longKey;
+    if (2 * (m_mentions.size() + 1) > m_table.size())
+        growTable();
+
     std::span<const Mention> mentions = m_mentions.span();
     std::span<const uint32_t> words = m_words.span();
     auto hasKey = [&](const Mention& mention) ALWAYS_INLINE_LAMBDA {
@@ -168,24 +169,12 @@ ALWAYS_INLINE uint32_t MentionList::addKey(NumberSpace space, std::span<const ui
         return true;
     };
 
-    bool usesTable = mentions.size() >= fewestMentionsWithTable;
-    size_t place = 0;
-    if (usesTable) {
-        if (2 * (mentions.size() + 1) > m_table.size())
-            growTable();
-
-        std::span<const uint32_t> table = m_table.span();
-        size_t mask = table.size() - 1;
-        place = hashOfMentionKey(space, key, addend) & mask;
-        for (; table[place]; place = (place + 1) & mask) {
-            if (hasKey(mentions[table[place] - 1]))
-                return table[place] - 1;
-        }
-    } else {
-        for (size_t index = 0; index < mentions.size(); ++index) {
-            if (hasKey(mentions[index]))
-                return static_cast<uint32_t>(index);
-        }
+    std::span<const uint32_t> table = m_table.span();
+    size_t mask = table.size() - 1;
+    size_t place = hashOfMentionKey(space, key, addend) & mask;
+    for (; table[place]; place = (place + 1) & mask) {
+        if (hasKey(mentions[table[place] - 1]))
+            return table[place] - 1;
     }
 
     RELEASE_ASSERT(mentionKeyHasNoThreadLocalIDs(space, key));
@@ -194,8 +183,7 @@ ALWAYS_INLINE uint32_t MentionList::addKey(NumberSpace space, std::span<const ui
         m_words.append(static_cast<uint32_t>(key.size()));
     m_words.append(key);
     m_mentions.append(mention);
-    if (usesTable)
-        m_table[place] = static_cast<uint32_t>(m_mentions.size());
+    m_table[place] = static_cast<uint32_t>(m_mentions.size());
     return static_cast<uint32_t>(m_mentions.size()) - 1;
 }
 
@@ -285,7 +273,7 @@ void MentionList::moveTo(CodeBody& body)
     body.mentionWords = WTF::move(m_words);
 }
 
-static std::optional<size_t> placeOfTextInMentionKey(NumberSpace space, std::span<const uint32_t> key)
+static constexpr bool mentionKeyBeginsWithText(NumberSpace space)
 {
     switch (space) {
     case NumberSpace::String:
@@ -294,7 +282,17 @@ static std::optional<size_t> placeOfTextInMentionKey(NumberSpace space, std::spa
     case NumberSpace::AtomOfString:
     case NumberSpace::AtomOfComparedText:
     case NumberSpace::RegExp:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static std::optional<size_t> placeOfTextInMentionKey(NumberSpace space, std::span<const uint32_t> key)
+{
+    if (mentionKeyBeginsWithText(space))
         return 0;
+    switch (space) {
     case NumberSpace::RegExpLiteralCell:
         return key.size() == 4 ? std::optional<size_t>(2) : std::nullopt;
     case NumberSpace::CardOfWord: {
@@ -312,11 +310,17 @@ static void forEachMadeTextAmongMentions(CodeBody& body, NOESCAPE const Invocabl
 {
     std::span<uint32_t> words = body.mentionWords.mutableSpan();
     for (const Mention& mention : body.mentions) {
-        std::optional<size_t> place = placeOfTextInMentionKey(mention.space, keyOf(mention, words));
-        if (!place)
-            continue;
+        size_t place = 0;
+        if (!mentionKeyBeginsWithText(mention.space)) {
+            if (mention.space != NumberSpace::RegExpLiteralCell && mention.space != NumberSpace::CardOfWord)
+                continue;
+            std::optional<size_t> placeInKey = placeOfTextInMentionKey(mention.space, keyOf(mention, words));
+            if (!placeInKey)
+                continue;
+            place = *placeInKey;
+        }
         size_t firstWordOfKey = mention.numberOfWords == Mention::longKey ? mention.firstWord + 1 : mention.firstWord;
-        uint32_t& word = words[firstWordOfKey + *place];
+        uint32_t& word = words[firstWordOfKey + place];
         if (Typed::liesInThread(StringID::fromBits(word)))
             functor(word);
     }
@@ -398,16 +402,18 @@ void internTextsMadeByFunctions(Typed::Program& program, LinkedFunctions& functi
         strings[texts[place].number] = isTextBefore ? strings[texts[place - 1].number] : program.strings.internKept(bytes, fronts);
     }
 
-    forEachIndexInParallel(loops, static_cast<unsigned>(functions.size()), [&](unsigned index) {
-        CodeBody& body = functions[index].body;
-        if (body.endsOfMadeTexts.isEmpty())
-            return;
-        forEachMadeTextAmongMentions(body, [&](uint32_t& word) {
-            word = strings[numbersOfFirstTexts[index] + Typed::positionOf(StringID::fromBits(word))].bits();
-        });
-        body.bytesOfMadeTexts = { };
-        body.firstsOfMadeTexts = { };
-        body.endsOfMadeTexts = { };
+    forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            CodeBody& body = functions[index].body;
+            if (body.endsOfMadeTexts.isEmpty())
+                continue;
+            forEachMadeTextAmongMentions(body, [&](uint32_t& word) {
+                word = strings[numbersOfFirstTexts[index] + Typed::positionOf(StringID::fromBits(word))].bits();
+            });
+            body.bytesOfMadeTexts = { };
+            body.firstsOfMadeTexts = { };
+            body.endsOfMadeTexts = { };
+        }
     });
 }
 
@@ -443,16 +449,28 @@ void NumberedKeys::buildHashIndex(const ParallelLoops& loops)
     });
 }
 
+static ALWAYS_INLINE bool areSameNumberedKeys(std::span<const uint32_t> first, std::span<const uint32_t> second)
+{
+    if (first.size() != second.size())
+        return false;
+    for (size_t index = 0; index < first.size(); ++index) {
+        if (first[index] != second[index])
+            return false;
+    }
+    return true;
+}
+
 std::optional<uint32_t> NumberedKeys::find(std::span<const uint32_t> key) const
 {
     if (!hashSlots.isEmpty()) {
-        size_t mask = hashSlots.size() - 1;
-        unsigned shift = 64 - std::countr_zero(hashSlots.size());
+        std::span<const uint32_t> slots = hashSlots.span();
+        size_t mask = slots.size() - 1;
+        unsigned shift = 64 - std::countr_zero(slots.size());
         for (size_t slot = hashOfNumberedKey(key) >> shift;; slot = (slot + 1) & mask) {
-            uint32_t indexPlusOne = hashSlots[slot];
+            uint32_t indexPlusOne = slots[slot];
             if (!indexPlusOne)
                 return std::nullopt;
-            if (std::ranges::equal(keyAt(indexPlusOne - 1), key))
+            if (areSameNumberedKeys(keyAt(indexPlusOne - 1), key))
                 return indexPlusOne - 1;
         }
     }
@@ -485,7 +503,11 @@ public:
     }
 
     void addClosureOf(FunctionID) const;
-    void addClosureIfPlanned(FunctionID) const;
+    ALWAYS_INLINE void addClosureIfPlanned(FunctionID function) const
+    {
+        if (hasPlannedEntry(function))
+            addClosureOf(function);
+    }
     void addClass(LayoutID) const;
     void addModule(ModuleID) const;
     void addAllocation(std::span<const uint32_t> key) const;
@@ -543,12 +565,6 @@ void UnitsBehindMention::addClosureOf(FunctionID function) const
     addClass(m_program.at(function).constructedClass);
 }
 
-void UnitsBehindMention::addClosureIfPlanned(FunctionID function) const
-{
-    if (hasPlannedEntry(function))
-        addClosureOf(function);
-}
-
 void UnitsBehindMention::addModule(ModuleID module) const
 {
     const Typed::ModuleEvaluationPlan& evaluation = m_plan.moduleEvaluation();
@@ -600,7 +616,7 @@ void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mention
     }));
 }
 
-void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mentionWords, const Typed::Program& program, const Typed::Facts& facts, const Typed::Plan& plan, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>& functor)
+void forEachUnitBehindSlowCase(const Mention& mention, std::span<const uint32_t> mentionWords, const Typed::Program& program, const Typed::Facts& facts, const Typed::Plan& plan, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>& functor)
 {
     UnitsBehindMention units(program, facts, plan, functor);
     std::span<const uint32_t> key = keyOf(mention, mentionWords);
@@ -651,7 +667,6 @@ void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mention
     case NumberSpace::CardOfWord:
     case NumberSpace::ModuleNamespace:
     case NumberSpace::ModuleBuiltinCell:
-    case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:
     case NumberSpace::RegExpLiteralCell:

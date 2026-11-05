@@ -114,7 +114,10 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
     Draft store(Opcode::PutSlotOrAdd);
     store.setKey(operation.key());
     static_assert(declaredBoundOf(Opcode::PutSlot).writes.isSubsetOf(declaredBoundOf(Opcode::PutSlotOrAdd).writes));
-    return declaredEffectsOfOperation(walker.program(), Opcode::PutSlotOrAdd, store);
+    Effects effects = declaredEffectsOfOperation(walker.program(), Opcode::PutSlotOrAdd, store);
+    if (typedStoreAheadMaySetMarkOfCell(walker, types(operation.objectOperand()), operation.key(), types(operation.valueOperand())))
+        effects.writes.add(AbstractHeap::NamedProperties);
+    return effects;
 }
 
 bool maySuspendAsWritten(const BodyValue& operation)
@@ -162,6 +165,7 @@ void Walker::closeNewestLoop()
 {
     const OpenLoop& loop = m_openLoops.last();
     settleFateOfPoll(loop);
+    m_headsOfClosedLoops.add(loop.head.index());
     if (loop.frame < m_frames.size() && !m_frames[loop.frame].placesOfOpenLoops.isEmpty())
         m_frames[loop.frame].placesOfOpenLoops[loop.loop.index()] = 0;
     if (loop.blockInFront)
@@ -404,9 +408,11 @@ Reference Walker::buildInFrontOfOpenLoop(uint32_t indexOfLoop, Draft&& draft, co
     BlockID inFront = m_openLoops[indexOfLoop].blockInFront;
     if (!inFront || m_code.at(inFront).hasEnded())
         return { };
-    SetForScope blockInFront(m_block, inFront);
+    BlockID inside = std::exchange(m_block, inFront);
     SetForScope loopsThatMayBeLeft(m_numberOfLoopsThatMayBeLeft, indexOfLoop);
-    return build(WTF::move(draft), foundByCaller);
+    Reference built = build(WTF::move(draft), foundByCaller);
+    m_block = m_hasFailed ? BlockID() : inside;
+    return built;
 }
 
 std::optional<uint32_t> Walker::outermostLoopToMakeTextInFrontOf(std::span<const Reference> operands, const Effects& ofText) const
@@ -436,13 +442,25 @@ std::optional<uint32_t> Walker::outermostLoopToMakeTextInFrontOf(std::span<const
     return outermost;
 }
 
+uint32_t Walker::numberOfOpenLoopsAround(size_t frameIndex, BlockID inputBlock) const
+{
+    const BodyIndex& index = *m_frames[frameIndex].index;
+    uint32_t number = 0;
+    for (uint32_t place = 0; place < m_openLoops.size(); ++place) {
+        const OpenLoop& open = m_openLoops[place];
+        if (open.frame < frameIndex || (open.frame == frameIndex && index.isInLoop(inputBlock, open.loop)))
+            number = place + 1;
+    }
+    return number;
+}
+
 bool Walker::looksAtLoopsAroundHaveSeen(const Effects& effects) const
 {
     LocationMasks writes = effects.writes.without(heapsWhoseWritesNobodySees);
     if (writes.isEmpty() && !effects.mayRunOtherCode())
         return true;
     bool haveSeen = true;
-    forEachOpenLoopAround(std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft), 0, [&](uint32_t index) {
+    forEachOpenLoopAround(std::min({ static_cast<uint32_t>(m_openLoops.size()), m_numberOfLoopsThatMayBeLeft, m_numberOfLoopsAroundEdgeBeingLed }), 0, [&](uint32_t index) {
         const OpenLoop& loop = m_openLoops[index];
         if (loop.effects.mayRunOtherCode())
             return IterationStatus::Continue;

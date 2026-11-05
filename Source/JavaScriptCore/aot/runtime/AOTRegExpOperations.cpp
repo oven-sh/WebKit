@@ -82,45 +82,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpTest, size_t, (Instance* instance, JS
     OPERATION_RETURN(scope, testRegExp(globalObject, vm, cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpTest), cellArgument<JSString>(string, Entry::operationAOTRegExpTest)));
 }
 
-static bool findMatch(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* string)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto input = string->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    unsigned lastIndex = getRegExpObjectLastIndexAsUnsigned(globalObject, object, input);
-    RETURN_IF_EXCEPTION(scope, false);
-    RegExp* regExp = object->regExp();
-    bool globalOrSticky = regExp->globalOrSticky();
-    if (lastIndex == UINT_MAX && globalOrSticky) {
-        scope.release();
-        object->setLastIndex(globalObject, 0);
-        return false;
-    }
-    if (!globalOrSticky)
-        lastIndex = 0;
-    auto offsets = regExp->ovectorSpan();
-    int position = regExp->matchInline<Yarr::MatchFrom::VMThread>(globalObject, vm, input, lastIndex, offsets);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (position == -1) {
-        scope.release();
-        if (globalOrSticky)
-            object->setLastIndex(globalObject, 0);
-        return false;
-    }
-    MatchResult result(position, offsets[1]);
-    if (globalOrSticky)
-        object->setLastIndex(globalObject, result.end);
-    RETURN_IF_EXCEPTION(scope, false);
-    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, result, false);
-    return true;
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTRegExpFind, size_t, (Instance* instance, JSCell* regExp, JSCell* string))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpFind);
-    OPERATION_RETURN(scope, findMatch(globalObject, vm, cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpFind), cellArgument<JSString>(string, Entry::operationAOTRegExpFind)));
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTRegExpTestBoxed, EncodedJSValue, (Instance* instance, JSCell* regExp, JSCell* string))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpTestBoxed);

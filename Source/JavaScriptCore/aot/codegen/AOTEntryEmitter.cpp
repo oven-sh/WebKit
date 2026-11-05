@@ -179,10 +179,8 @@ static bool passesStackWordsInTailCall(const CodeGenerationInputs& inputs, const
 {
     for (uint32_t index = 0; index < code.numberOfBlocks(); ++index) {
         BlockID block(index);
-        if (!code.isReached(block))
-            continue;
         const Terminator& terminator = code.at(block).terminator;
-        if (terminator.kind == TerminatorKind::ReturnCall && stackWordsPassedBy(inputs, code.at(terminator.callOperand())))
+        if (terminator.kind == TerminatorKind::ReturnCall && code.isReached(block) && stackWordsPassedBy(inputs, code.at(terminator.callOperand())))
             return true;
     }
     return false;
@@ -276,7 +274,7 @@ static bool emitFusedCallEntry(CCallHelpers& jit, const CodeGenerationInputs& in
     const CallingConventions& conventions = inputs.plan.conventions();
     std::optional<Vector<CallEntryMove, 8>> planned = planCallEntryMoves(inputs.program, conventions, function);
     RELEASE_ASSERT(planned);
-    ptrdiff_t offsetOfCaptures = inputs.plan.functionKind(inputs.program, conventions.closureEntryOf(function)).isSlim ? offsetOfSlimClosureCaptures : offsetOfClosureCaptures;
+    std::optional<ptrdiff_t> offsetOfCaptures;
 
     Vector<PendingCallEntryMove, 8> pending;
     for (const CallEntryMove& move : *planned) {
@@ -294,9 +292,11 @@ static bool emitFusedCallEntry(CCallHelpers& jit, const CodeGenerationInputs& in
             next.source = argumentGPR(move.index);
             break;
         case CallEntryMove::Source::Capture:
+            if (!offsetOfCaptures)
+                offsetOfCaptures = inputs.plan.functionKind(inputs.program, conventions.closureEntryOf(function)).isSlim ? offsetOfSlimClosureCaptures : offsetOfClosureCaptures;
             next.kind = PendingCallEntryMove::Kind::Load;
             next.source = calleeGPR;
-            next.offset = static_cast<int32_t>(offsetOfCaptures + static_cast<ptrdiff_t>(move.index * sizeof(EncodedJSValue)));
+            next.offset = static_cast<int32_t>(*offsetOfCaptures + static_cast<ptrdiff_t>(move.index * sizeof(EncodedJSValue)));
             break;
         case CallEntryMove::Source::Undefined:
             next.kind = PendingCallEntryMove::Kind::Undefined;

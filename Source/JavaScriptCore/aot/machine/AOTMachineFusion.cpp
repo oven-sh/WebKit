@@ -223,7 +223,7 @@ static NEVER_INLINE bool fuseTruncationsBelowTest(ValueFacts* values, const Bloc
 
 static ALWAYS_INLINE bool fusionMayFuseAddress(const Operation* access, const Operation* address)
 {
-    return address->opcode() == Add && address->useCount() == 1 && address->owner() == access->owner();
+    return mayBeFusedAsAddress(address->opcode()) && address->useCount() == 1 && address->owner() == access->owner();
 }
 
 static ALWAYS_INLINE bool fusedLoadCanMoveBehind(const Operation* between)
@@ -805,7 +805,7 @@ static NEVER_INLINE bool fuseIntoOtherThanBranch(ValueFacts* values, Operation* 
 
 void BackwardScan::fuseInto(Operation* user)
 {
-    ValueFacts* values = m_liveness.m_values.begin();
+    ValueFacts* values = m_facts;
     if (user->opcode() == Branch)
         fuseIntoBranch(values, user, fusionChildrenOf(user)[0], *this);
     else

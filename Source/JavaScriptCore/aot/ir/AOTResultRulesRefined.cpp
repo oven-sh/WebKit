@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBody.h"
 #include "AOTCode.h"
 #include "AOTIRProgram.h"
 #include "AOTTypeNarrowing.h"
@@ -24,8 +25,19 @@ static_assert([] {
     return allHaveNaturalTypes;
 }());
 
+static bool hasTruthyAndFalsyPartsAtAGlance(const TypeArena& types, TypeID operand)
+{
+    constexpr uint16_t keptInFalsyPart = Primitive::UndefinedOrNull | Primitive::False;
+    if (holdsOnlyPrimitives(operand))
+        return primitivesInID(operand) & Primitive::True && primitivesInID(operand) & keptInFalsyPart;
+    const Type& type = types.recordOf(operand);
+    return type.isJavaScriptValue() && (type.hasObjects() || type.primitives & Primitive::True) && type.primitives & keptInFalsyPart;
+}
+
 static TypeID refinedTypeOfToBoolean(TypeArena& types, TypeID operand, TypeID upperBound)
 {
+    if (hasTruthyAndFalsyPartsAtAGlance(types, operand))
+        return upperBound;
     if (isNeverType(truthyPartOf(types, operand)))
         return TypeArena::fromPrimitives(Primitive::False);
     if (isNeverType(falsyPartOf(types, operand)))
@@ -244,6 +256,7 @@ TypeID refineFixedNatural(const TypingContext& context, const Operation& operati
 
 template TypeID refineFixedNatural<Draft>(const TypingContext&, const Draft&, OperandTypes, TypeID);
 template TypeID refineFixedNatural<Operation>(const TypingContext&, const Operation&, OperandTypes, TypeID);
+template TypeID refineFixedNatural<BodyValue>(const TypingContext&, const BodyValue&, OperandTypes, TypeID);
 
 } } } // namespace JSC::AOT::Typed
 

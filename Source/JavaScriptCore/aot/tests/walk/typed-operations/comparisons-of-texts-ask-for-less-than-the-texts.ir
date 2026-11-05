@@ -1,5 +1,5 @@
 # a length that is only asked for zero is asked of the cell, two relations on two texts share one order, a relation with one written character reads one code unit,
-# a row of comparisons of one subject with written texts shares its length, and a loose comparison with a text that is no number converts objects alone
+# and a row of comparisons of one subject with written texts shares its length
 # function isEmpty(s) { if (typeof s === "string") return [s.length === 0]; }
 # RUN: walk f1 mechanisms=none+TypedOperations
 # CHECK-LABEL: code f1:Body
@@ -31,22 +31,13 @@
 # ALONE-LABEL: code f6:Body
 # ALONE-NOT: = StringOrder
 # ALONE: = Less
-# function isName(x) { return [x == "abc"]; }
-# RUN(LOOSE): walk f7 mechanisms=none+TypedOperations
-# LOOSE-LABEL: code f7:Body
-# LOOSE: = ValueLooselyEqualsLiteral {{*}}literal="abc"
-# the number 1 equals the text "1": function isDigit(x) { return [x == "1"]; }
-# RUN(DIGIT): walk f8 mechanisms=none+TypedOperations
-# DIGIT-LABEL: code f8:Body
-# DIGIT-NOT: = ValueLooselyEqualsLiteral
-# DIGIT: = Eq
 # function below(s, n) { if (typeof s !== "string") return; let c = 0; for (let i = 0; i < n; i++) if (s < "a") c++; return c; }
-# RUN(LETTER): walk f9 mechanisms=none+TypedOperations
-# LETTER-LABEL: code f9:Body
+# RUN(LETTER): walk f7 mechanisms=none+TypedOperations
+# LETTER-LABEL: code f7:Body
 # LETTER: = StringOrderToCharacter {{*}}codeUnit=97
 # function verbs(s, n) { if (typeof s !== "string") return; let c = 0; for (let i = 0; i < n; i++) if (s === "get" || s === "put" || s === "post") c++; return c; }
-# RUN(VERBS): walk f10 mechanisms=none+TypedOperations
-# VERBS-LABEL: code f10:Body
+# RUN(VERBS): walk f8 mechanisms=none+TypedOperations
+# VERBS-LABEL: code f8:Body
 # behind "get" the length tells "put" apart from nothing: `e.kind === "num" .. e.kind === "add"` stays the comparison of two strings
 # VERBS-NOT: = GetStringLength
 # VERBS: = StrictEq {{*}}form=Strings
@@ -55,8 +46,8 @@
 # VERBS: [[length]]: {{*}} = GetStringLength
 # VERBS: = StringEqualsLiteral {{*}}, [[length]] literal="post"
 # outside a loop the characters in line do not pay: function verb(s) { if (typeof s === "string") { if (s === "get") return 1; if (s === "put") return 2; if (s < "a") return 3; } }
-# RUN(ONCE): walk f11 mechanisms=none+TypedOperations
-# ONCE-LABEL: code f11:Body
+# RUN(ONCE): walk f9 mechanisms=none+TypedOperations
+# ONCE-LABEL: code f9:Body
 # ONCE-NOT: = StringEqualsLiteral
 # ONCE-NOT: = StringOrderToCharacter
 # ONCE: Return
@@ -76,10 +67,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v8 = NewClosure function=f7
     v9 = NewClosure function=f8
     v10 = NewClosure function=f9
-    v11 = NewClosure function=f10
-    v12 = NewClosure function=f11
-    v13 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12
-    Return v13
+    v11 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10
+    Return v11
 }
 function f1 name="isEmpty" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -179,21 +168,7 @@ function f6 name="isBelow" module=m0 length=2 thisType={type=anything} parameter
     v8 = Undefined
     Return v8
 }
-function f7 name="isName" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = String string="abc"
-    v2 = Eq v0, v1
-    v3 = NewArray v2 contents=anything
-    Return v3
-}
-function f8 name="isDigit" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = String string="1"
-    v2 = Eq v0, v1
-    v3 = NewArray v2 contents=anything
-    Return v3
-}
-function f9 name="below" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f7 name="below" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b7()
@@ -221,7 +196,7 @@ function f9 name="below" module=m0 length=2 thisType={type=anything} parameters=
     v15 = Undefined
     Return v15
 }
-function f10 name="verbs" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f8 name="verbs" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b9()
@@ -257,7 +232,7 @@ function f10 name="verbs" module=m0 length=2 thisType={type=anything} parameters
     v19 = Undefined
     Return v19
 }
-function f11 name="verb" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f9 name="verb" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b7()

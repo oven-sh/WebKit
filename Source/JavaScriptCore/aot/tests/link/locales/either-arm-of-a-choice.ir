@@ -1,0 +1,31 @@
+# the operand is a parameter of a block, and every edge into the block brings it a written tag: both are asked for, at the call
+# (1).toLocaleString(globalThis.input ? "hu" : "ro");
+# RUN: locales
+# CHECK-COUNT-2: locale constant {{*}}NumberPrototypeToLocaleString at f0 v7
+# RUN(HU): locales
+# HU: locale constant "hu"
+# RUN(RO): locales
+# RO: locale constant "ro"
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = String string="hu"
+    Jump -> next b3(v3)
+  b2():
+    v4 = String string="ro"
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = PropGet v0 key="toLocaleString"
+    v7 = Call v6, v0, v5 calleeKey="toLocaleString"
+    Return v7
+}

@@ -23,8 +23,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet readsOfPlacesInNarrowingOfGuesses { Opcode::PropGet, Opcode::PrivateGet, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
-
 static bool saysNothingInNarrowingOfGuesses(const TypeArena& types, TypeID type)
 {
     if (!type || isNeverType(type))
@@ -74,57 +72,6 @@ static void meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(Walker&
     TypeID met = types.intersectionOf(found, parameters[*ofUnit].expected);
     if (!isNeverType(met) && types.at(met).hasObjects())
         found = met;
-}
-
-static TypeID typeHeldOfReadInNarrowingOfGuesses(Walker& walker, const BodyValue& read, TypeID receiver)
-{
-    Opcode opcode = read.opcode();
-    TypingContext typing { walker.program(), walker.types(), walker.heldPositions(), TypeLevel::Proven };
-    Draft draft(opcode);
-    draft.flags = static_cast<uint8_t>(read.flags());
-    copyFields(read, draft, [](ValueID operand) {
-        return Reference::value(operand);
-    });
-
-    std::optional<uint8_t> placeOfReceiver = receiverOf(opcode);
-    Vector<TypeID, 8> operandTypes;
-    operandTypes.fill(TypeID(), numberOfNamedOperandsOf(opcode) + read.variadicOperands().size());
-    read.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        Reference built = walker.referenceOf(operand);
-        bool isReceiver = placeOfReceiver && *placeOfReceiver == operandIndex;
-        operandTypes[operandIndex] = receiver && isReceiver ? receiver : built ? walker.typeOf(built) : TypeID(TypeTable::anything);
-    });
-    return resultTypeOf(typing, draft, OperandTypes { operandTypes.span() });
-}
-
-static TypeID objectsBesideWrittenNullInNarrowingOfGuesses(Walker& walker, ValueID input, const BodyValue& definition, bool& isDeclared)
-{
-    TypeArena& types = walker.types();
-    TypeID held;
-    if (definition.isParameter()) {
-        if (walker.currentBodyIndex().blockOf(input) == entryBlock)
-            held = typeSeenToArriveInNarrowingOfGuesses(walker, input.index());
-    } else if (readsOfPlacesInNarrowingOfGuesses.contains(definition.opcode())) {
-        TypeID receiver;
-        if (std::optional<uint8_t> place = receiverOf(definition.opcode())) {
-            ValueID object = definition.operand(*place);
-            Reference built = object ? walker.referenceOf(object) : Reference();
-            receiver = built ? walker.typeOf(built) : TypeID();
-            if (saysNothingInNarrowingOfGuesses(types, receiver))
-                receiver = object && object < input ? findExpectation(walker, object).type : TypeID();
-            if (!receiver)
-                return { };
-        }
-        held = typeHeldOfReadInNarrowingOfGuesses(walker, definition, receiver);
-    }
-    if (!saysNothingInNarrowingOfGuesses(types, held) && types.at(held).hasObjects())
-        return types.withOnlyObjects(held);
-
-    LayoutID only = walker.facts().layoutsByNames().findOnlyLayoutWithAll(walker.namesUsedOff(input));
-    if (!only)
-        return { };
-    isDeclared = false;
-    return types.forLayout(only);
 }
 
 static bool nameSpeaksForLayoutInNarrowingOfGuesses(const Walker& walker, PropertyKeyID key)
@@ -330,13 +277,8 @@ void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool
     if (!found)
         return;
 
-    if (types.at(found).hasOnlyPrimitives(Primitive::UndefinedOrNull)) {
-        if (!isDeclared || isNeverType(found))
-            return;
-        if (TypeID objects = objectsBesideWrittenNullInNarrowingOfGuesses(walker, input, definition, isDeclared))
-            found = types.unionOf(found, objects);
+    if (types.at(found).hasOnlyPrimitives(Primitive::UndefinedOrNull))
         return;
-    }
     if (walker.depthOfCopies()) {
         bool statesType = !definition.isParameter() && opcodesThatStateTypes.contains(definition.opcode());
         if (ValueID behindCasts = statesType ? index.valueBehindCasts(input) : input; index.isParameter(behindCasts) && index.blockOf(behindCasts) == entryBlock)

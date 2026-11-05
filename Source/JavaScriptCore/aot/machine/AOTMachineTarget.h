@@ -22,7 +22,11 @@ struct RegisterFile {
 };
 
 JS_EXPORT_PRIVATE RegisterFile registerFileFor(const ProcedureTraits&);
+#if CPU(X86_64)
+constexpr RegisterMask pinnedRegisters() { return maskOf(Reg(instanceGPR)) | maskOf(Reg(cellCageBaseGPR)); }
+#else
 JS_EXPORT_PRIVATE RegisterMask pinnedRegisters();
+#endif
 inline bool isPinned(Reg reg) { return pinnedRegisters() & maskOf(reg); }
 constexpr Bank bankOf(Reg reg) { return reg.isGPR() ? Bank::GP : Bank::FP; }
 
@@ -44,11 +48,245 @@ JS_EXPORT_PRIVATE std::optional<PinnedConstant> findPinnedConstant(uint64_t bits
 
 JS_EXPORT_PRIVATE std::span<const uint64_t> bitsOfPinnedConstants();
 
+#if CPU(X86_64)
+inline constexpr int64_t x86TargetMaxDistanceFromFrameAddress = int64_t { 1 } << 30;
+
+constexpr bool fitsX86TargetImmediate(int64_t value)
+{
+    return value == static_cast<int32_t>(value);
+}
+
+inline bool isX86TargetImmediate(const Operation& constant)
+{
+    return constant.hasInt() && fitsX86TargetImmediate(constant.asInt());
+}
+
+inline bool x86TargetAddressAcceptsBase(const Operation& access, const Operation& base)
+{
+    int64_t distance = access.offset();
+    if (base.opcode() == InstanceAddressOf)
+        return !distance;
+
+    const Operation* start = &base;
+    if (base.opcode() == Add) {
+        int64_t addend = base.child(1)->asInt64();
+        if (!fitsX86TargetImmediate(addend))
+            return false;
+        distance += addend;
+        start = base.child(0);
+        if (start->opcode() == ArgumentReg)
+            return fitsX86TargetImmediate(distance);
+    }
+    if (start->opcode() != FramePointer && start->opcode() != SlotBase)
+        return false;
+    return distance >= -x86TargetMaxDistanceFromFrameAddress && distance <= x86TargetMaxDistanceFromFrameAddress;
+}
+
+ALWAYS_INLINE bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operation& constant)
+{
+    if (!constant.hasNoPosition())
+        return false;
+
+    switch (user.opcode()) {
+    case Add:
+    case Sub:
+    case Mul:
+    case BitAnd:
+    case BitOr:
+    case BitXor:
+    case Equal:
+    case NotEqual:
+    case LessThan:
+    case GreaterThan:
+    case LessEqual:
+    case GreaterEqual:
+    case Above:
+    case Below:
+    case AboveEqual:
+    case BelowEqual:
+    case EqualOrUnordered:
+        return childIndex == 1 && isX86TargetImmediate(constant);
+
+    case Shl:
+    case SShr:
+    case ZShr:
+        return childIndex == 1 && constant.hasInt32();
+
+    case Load8Z:
+    case Load8S:
+    case Load16Z:
+    case Load16S:
+    case Load:
+        return x86TargetAddressAcceptsBase(user, constant);
+
+    case Store8:
+    case Store16:
+    case Store:
+        if (childIndex)
+            return x86TargetAddressAcceptsBase(user, constant);
+        return isX86TargetImmediate(constant);
+
+    case Check:
+        return !childIndex && constant.hasInt();
+
+    case Opaque:
+        return user.type().isInt() && constant.opcode() != SlotBase;
+
+    case Nop:
+    case Const32:
+    case Const64:
+    case ConstFloat:
+    case ConstDouble:
+    case FramePointer:
+    case SlotBase:
+    case AddressOf:
+    case NumberOf:
+    case InstanceAddressOf:
+    case ArgumentReg:
+    case MulHigh:
+    case UMulHigh:
+    case Div:
+    case UDiv:
+    case Mod:
+    case UMod:
+    case Neg:
+    case Clz:
+    case PopCount:
+    case Abs:
+    case Ceil:
+    case Floor:
+    case FTrunc:
+    case Sqrt:
+    case FMin:
+    case FMax:
+    case BitwiseCast:
+    case SExt8:
+    case SExt16:
+    case SExt32:
+    case ZExt32:
+    case Trunc:
+    case IToD:
+    case FloatToDouble:
+    case DoubleToFloat:
+    case Select:
+    case Fence:
+    case Phi:
+    case Upsilon:
+    case Extract:
+    case Patch:
+    case Jump:
+    case Branch:
+    case Switch:
+    case Return:
+    case Oops:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+#else
 JS_EXPORT_PRIVATE bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operation& constant);
+#endif
 
 JS_EXPORT_PRIVATE bool isEncodableBitImmediate(Width, int64_t bits);
 
+#if CPU(X86_64)
+ALWAYS_INLINE bool acceptsMemoryOperand(const Operation& user, unsigned childIndex)
+{
+    switch (user.opcode()) {
+    case Add:
+    case Sub:
+    case Mul:
+    case BitOr:
+    case BitXor:
+        return childIndex == 1;
+
+    case Div:
+        return childIndex == 1 && user.type().isFloat();
+
+    case BitAnd:
+        return true;
+
+    case Equal:
+    case NotEqual:
+    case LessThan:
+    case GreaterThan:
+    case LessEqual:
+    case GreaterEqual:
+    case Above:
+    case Below:
+    case AboveEqual:
+    case BelowEqual:
+    case EqualOrUnordered:
+        return childIndex == 1 || user.child(0)->type().isInt();
+
+    case Branch:
+    case Select:
+    case Check:
+    case Sqrt:
+    case BitwiseCast:
+    case SExt8:
+    case SExt16:
+    case SExt32:
+    case ZExt32:
+    case IToD:
+    case FloatToDouble:
+    case DoubleToFloat:
+        return !childIndex;
+
+    case Nop:
+    case Opaque:
+    case Const32:
+    case Const64:
+    case ConstFloat:
+    case ConstDouble:
+    case FramePointer:
+    case SlotBase:
+    case AddressOf:
+    case NumberOf:
+    case InstanceAddressOf:
+    case ArgumentReg:
+    case MulHigh:
+    case UMulHigh:
+    case UDiv:
+    case Mod:
+    case UMod:
+    case Neg:
+    case Shl:
+    case SShr:
+    case ZShr:
+    case Clz:
+    case PopCount:
+    case Abs:
+    case Ceil:
+    case Floor:
+    case FTrunc:
+    case FMin:
+    case FMax:
+    case Trunc:
+    case Load8Z:
+    case Load8S:
+    case Load16Z:
+    case Load16S:
+    case Load:
+    case Store8:
+    case Store16:
+    case Store:
+    case Fence:
+    case Phi:
+    case Upsilon:
+    case Extract:
+    case Patch:
+    case Jump:
+    case Switch:
+    case Return:
+    case Oops:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+#else
 JS_EXPORT_PRIVATE bool acceptsMemoryOperand(const Operation& user, unsigned childIndex);
+#endif
 
 JS_EXPORT_PRIVATE bool acceptsMemoryDestination(const Operation& computation);
 

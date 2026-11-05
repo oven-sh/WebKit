@@ -43,8 +43,8 @@ private:
             hash = (hash ^ bits) * 0x9e3779b97f4a7c15ull;
             return hash ^ hash >> 32;
         };
-        uint64_t smallParts = type.primitives | static_cast<uint64_t>(type.objects) << 16 | static_cast<uint64_t>(type.functions) << 19 | static_cast<uint64_t>(type.classes) << 21
-            | static_cast<uint64_t>(type.holdsUnseen) << 23 | static_cast<uint64_t>(type.holdsLostBuiltins) << 24
+        uint64_t smallParts = type.primitives | static_cast<uint64_t>(type.objects) << 16 | static_cast<uint64_t>(type.functions) << 19 | static_cast<uint64_t>(type.classes) << 22
+            | static_cast<uint64_t>(type.holdsUnseen) << 24 | static_cast<uint64_t>(type.holdsLostBuiltins) << 25
             | static_cast<uint64_t>(type.builtinClass.index()) << 32 | static_cast<uint64_t>(type.builtin.index()) << 48;
         uint64_t hash = mix(0, smallParts);
         hash = mix(hash, static_cast<uint64_t>(type.layout.bits()) << 32 | type.family.bits());

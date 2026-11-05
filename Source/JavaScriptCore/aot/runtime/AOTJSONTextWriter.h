@@ -22,9 +22,8 @@ namespace JSC { namespace AOT {
 
 inline constexpr unsigned maxJSONIntegerLength = 20;
 inline constexpr unsigned maxJSONNumberLength = numberToShortestStringBufferSize;
-inline constexpr unsigned maxJSONDateLength = maxISODateTimeLength + 2;
 
-static_assert(maxJSONIntegerLength <= jsonIntegerBytes && maxJSONNumberLength <= jsonNumberBytes && maxJSONDateLength <= jsonDateBytes);
+static_assert(maxJSONIntegerLength <= jsonIntegerBytes && maxJSONNumberLength <= jsonNumberBytes);
 
 inline constexpr char jsonDigitPairs[] =
     "0001020304050607080910111213141516171819"
@@ -103,16 +102,6 @@ ALWAYS_INLINE Latin1Character* appendJSONNumber(Latin1Character* cursor, double 
 
 constexpr size_t maxLengthOfEscapedJSONString(size_t length) { return 6 * length + 2; }
 Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* cursor, std::span<const Latin1Character>);
-
-ALWAYS_INLINE Latin1Character* appendJSONTimeValue(Latin1Character* cursor, double timeValue)
-{
-    if (!std::isfinite(timeValue)) [[unlikely]]
-        return appendJSONLiteral(cursor, "null"_s);
-    *cursor++ = '"';
-    cursor = writeISODateTime(cursor, timeValue);
-    *cursor++ = '"';
-    return cursor;
-}
 
 } } // namespace JSC::AOT
 

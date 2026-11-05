@@ -76,7 +76,12 @@ struct TextInOrder {
     uint32_t index;
     uint64_t afterHead;
 };
-static_assert(sizeof(TextInOrder) >= sizeof(MeasuredTextOfString) && sizeof(TextInOrder) >= sizeof(std::pair<uint64_t, uint32_t>) && sizeof(TextInOrder) >= sizeof(ImageString));
+
+struct TextWithPrefix {
+    uint64_t prefix;
+    uint32_t index;
+};
+static_assert(sizeof(TextInOrder) >= sizeof(MeasuredTextOfString) && sizeof(TextInOrder) >= sizeof(TextWithPrefix) && sizeof(TextInOrder) >= sizeof(ImageString));
 
 struct TextHeadRange {
     bool isEmpty() const { return !end; }
@@ -92,9 +97,10 @@ struct IndexOfTextHeads {
 
     const TextHeadRange* findRange(uint32_t head) const
     {
+        const TextHeadRange* ranges = headRanges.span().data();
         size_t mask = headRanges.size() - 1;
         for (size_t slot = static_cast<size_t>(head * 0x9e3779b97f4a7c15ULL >> headRangeShift);; slot = (slot + 1) & mask) {
-            const TextHeadRange& range = headRanges[slot];
+            const TextHeadRange& range = ranges[slot];
             if (range.isEmpty())
                 return nullptr;
             if (range.head == head)
@@ -176,16 +182,31 @@ DecodedString decodeForImage(std::span<const uint8_t> programString)
 
 static void sortTextsByPrefixThenBy(const ParallelLoops& loops, Vector<uint32_t>& list, const auto& prefixOf, const auto& isLess)
 {
-    Vector<std::pair<uint64_t, uint32_t>> withPrefixes;
+    Vector<TextWithPrefix> withPrefixes;
     withPrefixes.grow(list.size());
-    forEachIndexInParallel(loops, static_cast<unsigned>(list.size()), [&](unsigned place) {
-        withPrefixes[place] = { prefixOf(list[place]), list[place] };
+    forEachRangeOfIndicesInParallel(loops, list.size(), [&](size_t first, size_t end) {
+        for (size_t place = first; place < end; ++place)
+            withPrefixes[place] = { prefixOf(list[place]), list[place] };
     });
-    parallelSort(loops, withPrefixes.mutableSpan(), [&](const auto& a, const auto& b) {
-        return a.first != b.first ? a.first < b.first : isLess(a.second, b.second);
+    radixSortKeepingEqualKeysInOrder<64>(withPrefixes, [](const TextWithPrefix& text) {
+        return text.prefix;
     });
     for (size_t place = 0; place < list.size(); ++place)
-        list[place] = withPrefixes[place].second;
+        list[place] = withPrefixes[place].index;
+    std::span<const TextWithPrefix> inOrderOfPrefixes = withPrefixes.span();
+    forEachRangeOfIndicesInParallel(loops, inOrderOfPrefixes.size(), [&](size_t first, size_t end) {
+        size_t place = first;
+        while (place && place < end && inOrderOfPrefixes[place].prefix == inOrderOfPrefixes[place - 1].prefix)
+            ++place;
+        while (place < end) {
+            size_t endOfRun = place + 1;
+            while (endOfRun < inOrderOfPrefixes.size() && inOrderOfPrefixes[endOfRun].prefix == inOrderOfPrefixes[place].prefix)
+                ++endOfRun;
+            if (endOfRun - place > 1)
+                AOT::sortInLine(list.mutableSpan().subspan(place, endOfRun - place), isLess);
+            place = endOfRun;
+        }
+    });
 }
 
 static uint64_t prefixOfTextFrom(auto at, auto end)
@@ -221,6 +242,18 @@ static uint64_t prefixAfterTextHead(std::span<const uint8_t> text)
     return result;
 }
 
+static uint64_t prefixAfterTextHeadAt(std::span<const uint8_t> text, size_t at)
+{
+    size_t sizeOfRest = text.size() - at;
+    if (sizeOfRest >= textHeadSize + sizeof(uint64_t))
+        return std::byteswap(load64(text.data() + at + textHeadSize));
+    if (sizeOfRest == textHeadSize)
+        return 0;
+    if (text.size() < sizeof(uint64_t))
+        return prefixAfterTextHead(text.subspan(at));
+    return std::byteswap(load64(text.data() + text.size() - sizeof(uint64_t))) << (8 * (textHeadSize + sizeof(uint64_t) - sizeOfRest));
+}
+
 static constexpr size_t maxSizeOfTextBeginning = 2 * textHeadSize;
 static constexpr unsigned textBeginningSlotBits = 23;
 
@@ -232,7 +265,7 @@ static size_t slotOfTextBeginning(uint32_t head, uint64_t afterHead, size_t size
 
 static size_t slotOfTextHead(uint32_t head)
 {
-    return static_cast<size_t>((static_cast<uint64_t>(head) + 1) * 0x9e3779b97f4a7c15ULL >> (64 - textHeadSlotBits));
+    return static_cast<size_t>(head * 0x9e3779b97f4a7c15ULL >> (64 - textHeadSlotBits));
 }
 
 static bool endOrdersBefore(std::span<const uint8_t> a, std::span<const uint8_t> b, uint32_t indexOfA, uint32_t indexOfB)
@@ -259,8 +292,9 @@ static bool endOrdersBefore(std::span<const uint8_t> a, std::span<const uint8_t>
 static void shareTails(const ParallelLoops& loops, TextsOfStrings strings, const BitVector& hasText, const BitVector& isName, Vector<uint32_t>& holders)
 {
     Vector<uint32_t> byLastCharacters;
-    for (size_t index : hasText)
+    hasText.forEachSetBit([&](size_t index) {
         byLastCharacters.append(static_cast<uint32_t>(index));
+    });
     sortTextsByPrefixThenBy(loops, byLastCharacters, [&](uint32_t index) {
         auto text = strings[index];
         if (text.size() >= sizeof(uint64_t))
@@ -270,10 +304,12 @@ static void shareTails(const ParallelLoops& loops, TextsOfStrings strings, const
         return endOrdersBefore(strings[a], strings[b], a, b);
     });
     Vector<uint8_t> isTailOfNext(FillWith { }, byLastCharacters.size(), 0);
-    forEachIndexInParallel(loops, static_cast<unsigned>(byLastCharacters.size() - 1), [&](unsigned place) {
-        auto tail = strings[byLastCharacters[place]];
-        auto whole = strings[byLastCharacters[place + 1]];
-        isTailOfNext[place] = tail.size() <= whole.size() && equalSpans(tail, whole.last(tail.size()));
+    forEachRangeOfIndicesInParallel(loops, byLastCharacters.size() - 1, [&](size_t first, size_t end) {
+        for (size_t place = first; place < end; ++place) {
+            auto tail = strings[byLastCharacters[place]];
+            auto whole = strings[byLastCharacters[place + 1]];
+            isTailOfNext[place] = tail.size() <= whole.size() && equalSpans(tail, whole.last(tail.size()));
+        }
     });
     for (size_t place = byLastCharacters.size() - 1; place--;) {
         if (!isTailOfNext[place])
@@ -288,11 +324,21 @@ static void shareTails(const ParallelLoops& loops, TextsOfStrings strings, const
 static IndexOfTextHeads buildHeadIndex(const ParallelLoops& loops, TextsOfStrings strings, const BitVector& hasText, const Vector<uint32_t>& holders)
 {
     Vector<uint32_t> inOrder;
-    for (size_t bit : hasText) {
+    hasText.forEachSetBit([&](size_t bit) {
         uint32_t index = static_cast<uint32_t>(bit);
         if (holders[index] == index && strings[index].size() >= textHeadSize)
             inOrder.append(index);
-    }
+    });
+    Vector<uint64_t> lengthsAndNumbers(inOrder.size(), [&](size_t place) {
+        return static_cast<uint64_t>(std::numeric_limits<uint32_t>::max() - safeCast<uint32_t>(strings[inOrder[place]].size())) << 32 | inOrder[place];
+    });
+    radixSortKeepingEqualKeysInOrder<32>(lengthsAndNumbers, [](uint64_t lengthAndNumber) {
+        return lengthAndNumber >> 32;
+    });
+    Vector<uint32_t> fromLongest(lengthsAndNumbers.size(), [&](size_t place) {
+        return static_cast<uint32_t>(lengthsAndNumbers[place]);
+    });
+    lengthsAndNumbers = { };
     sortTextsByPrefixThenBy(loops, inOrder, [&](uint32_t index) {
         auto text = strings[index];
         if (text.size() >= sizeof(uint64_t))
@@ -374,31 +420,20 @@ static IndexOfTextHeads buildHeadIndex(const ParallelLoops& loops, TextsOfString
             result.mayBeHead[slotOfHead / 64] |= 1ull << slotOfHead % 64;
         }
     }
-    Vector<uint64_t> lengthsAndNumbers(inOrder.size(), [&](size_t position) {
-        return static_cast<uint64_t>(std::numeric_limits<uint32_t>::max() - result.textsInOrder[position].size) << 32 | inOrder[position];
-    });
-    parallelSort(loops, lengthsAndNumbers.mutableSpan(), std::less<uint64_t> { });
-    result.fromLongest = Vector<uint32_t>(lengthsAndNumbers.size(), [&](size_t place) {
-        return static_cast<uint32_t>(lengthsAndNumbers[place]);
-    });
+    result.fromLongest = WTF::move(fromLongest);
     return result;
 }
 
-static bool textOrdersBefore(std::span<const uint8_t> a, uint64_t afterHeadOfA, const TextInOrder& b, uint64_t& charactersCompared)
+static bool textOrdersBeforeTextWithSameRecordedCharacters(std::span<const uint8_t> a, const TextInOrder& b, uint64_t& charactersCompared)
 {
     constexpr size_t recordedSize = textHeadSize + sizeof(uint64_t);
     size_t shorterSize = std::min<size_t>(a.size(), b.size);
-    uint64_t difference = afterHeadOfA ^ b.afterHead;
-    size_t same = textHeadSize + (difference ? std::countl_zero(difference) / 8 : sizeof(uint64_t));
-    if (same < std::min(shorterSize, recordedSize)) {
-        charactersCompared += same;
-        return afterHeadOfA < b.afterHead;
-    }
     if (shorterSize <= recordedSize) {
         charactersCompared += shorterSize;
         return b.size > shorterSize;
     }
-    for (same = recordedSize; shorterSize - same >= sizeof(uint64_t); same += sizeof(uint64_t)) {
+    size_t same = recordedSize;
+    for (; shorterSize - same >= sizeof(uint64_t); same += sizeof(uint64_t)) {
         uint64_t wordOfA = load64(a.data() + same);
         uint64_t wordOfB = load64(b.characters + same);
         if (wordOfA != wordOfB) {
@@ -412,9 +447,8 @@ static bool textOrdersBefore(std::span<const uint8_t> a, uint64_t afterHeadOfA, 
     return same < b.size && (same == a.size() || a[same] < b.characters[same]);
 }
 
-static uint32_t findLastTextNotAfter(const IndexOfTextHeads& heads, const TextHeadRange& range, std::span<const uint8_t> rest, uint64_t afterHeadOfRest, uint64_t& charactersCompared)
+static uint32_t findLastTextNotAfter(const uint64_t* afterHeads, const TextInOrder* textsInOrder, const TextHeadRange& range, std::span<const uint8_t> rest, uint64_t afterHeadOfRest, uint64_t& charactersCompared)
 {
-    const uint64_t* afterHeads = heads.afterHeads.span().data();
     uint32_t low = range.begin;
     for (uint32_t count = range.end - range.begin; count;) {
         uint32_t half = count / 2;
@@ -432,7 +466,7 @@ static uint32_t findLastTextNotAfter(const IndexOfTextHeads& heads, const TextHe
         }
         while (low < high) {
             uint32_t middle = low + (high - low) / 2;
-            if (textOrdersBefore(rest, afterHeadOfRest, heads.textsInOrder[middle], charactersCompared))
+            if (textOrdersBeforeTextWithSameRecordedCharacters(rest, textsInOrder[middle], charactersCompared))
                 high = middle;
             else
                 low = middle + 1;
@@ -464,33 +498,44 @@ static void findInnerParts(const ParallelLoops& loops, TextsOfStrings strings, c
         uint64_t maxCharactersCompared = maxComparedCharactersPerCharacter * static_cast<uint64_t>(text.size());
         uint64_t charactersCompared = 0;
         const uint64_t* mayBeHead = heads.mayBeHead.span().data();
+        const uint64_t* mayBeBeginning = heads.mayBeBeginning.span().data();
+        const uint64_t* afterHeads = heads.afterHeads.span().data();
+        const TextInOrder* textsInOrder = heads.textsInOrder.span().data();
+        const uint32_t* longestHeads = heads.longestHeads.span().data();
         const uint8_t* characters = text.data();
-        size_t sizeOfText = text.size();
+        if (text.size() < textHeadSize)
+            return;
+        size_t endOfHeads = text.size() - textHeadSize + 1;
         size_t step = unitSize;
-        for (size_t at = 0; at + textHeadSize <= sizeOfText && charactersCompared <= maxCharactersCompared; at += step) {
-            uint32_t head = textHeadAt(characters + at);
-            size_t slotOfHead = slotOfTextHead(head);
-            if (!(mayBeHead[slotOfHead / 64] >> slotOfHead % 64 & 1))
-                continue;
+        for (size_t at = 0; charactersCompared <= maxCharactersCompared; at += step) {
+            uint32_t head = 0;
+            for (;; at += step) {
+                if (at >= endOfHeads)
+                    return;
+                head = textHeadAt(characters + at);
+                size_t slotOfHead = slotOfTextHead(head);
+                if (mayBeHead[slotOfHead / 64] >> slotOfHead % 64 & 1)
+                    break;
+            }
             const TextHeadRange* range = heads.findRange(head);
             if (!range)
                 continue;
-            auto rest = text.subspan(at);
-            uint64_t afterHeadOfRest = prefixAfterTextHead(rest);
+            std::span<const uint8_t> rest(characters + at, text.size() - at);
+            uint64_t afterHeadOfRest = prefixAfterTextHeadAt(text, at);
             bool mayStartWithText = range->sizesOfBeginnings & 1;
             for (uint32_t sizes = range->sizesOfBeginnings >> 1; sizes && !mayStartWithText; sizes &= sizes - 1) {
                 size_t size = textHeadSize + 1 + std::countr_zero(sizes);
                 if (size > rest.size())
                     break;
                 size_t slot = slotOfTextBeginning(head, afterHeadOfRest, size);
-                mayStartWithText = heads.mayBeBeginning[slot / 64] >> slot % 64 & 1;
+                mayStartWithText = mayBeBeginning[slot / 64] >> slot % 64 & 1;
             }
             if (!mayStartWithText)
                 continue;
             uint64_t find = (static_cast<uint64_t>(place) + 1) << 32 | at;
             bool restStartsWithCandidate = false;
-            for (uint32_t position = findLastTextNotAfter(heads, *range, rest, afterHeadOfRest, charactersCompared); position != IndexOfTextHeads::noText; position = heads.longestHeads[position]) {
-                const TextInOrder& candidate = heads.textsInOrder[position];
+            for (uint32_t position = findLastTextNotAfter(afterHeads, textsInOrder, *range, rest, afterHeadOfRest, charactersCompared); position != IndexOfTextHeads::noText; position = longestHeads[position]) {
+                const TextInOrder& candidate = textsInOrder[position];
                 if (candidate.size >= text.size())
                     continue;
                 if (!restStartsWithCandidate) {
@@ -507,17 +552,19 @@ static void findInnerParts(const ParallelLoops& loops, TextsOfStrings strings, c
             }
         }
     });
-    forEachIndexInParallel(loops, static_cast<unsigned>(heads.fromLongest.size()), [&](unsigned place) {
-        uint32_t part = heads.fromLongest[place];
-        uint32_t holder = part;
-        uint64_t gap = 0;
-        while (uint64_t find = leastFinds[holder]) {
-            uint32_t whole = heads.fromLongest[static_cast<uint32_t>(find >> 32) - 1];
-            gap += strings[whole].size() - static_cast<uint32_t>(find) - strings[holder].size();
-            holder = whole;
+    forEachRangeOfIndicesInParallel(loops, heads.fromLongest.size(), [&](size_t first, size_t end) {
+        for (size_t place = first; place < end; ++place) {
+            uint32_t part = heads.fromLongest[place];
+            uint32_t holder = part;
+            uint64_t gap = 0;
+            while (uint64_t find = leastFinds[holder]) {
+                uint32_t whole = heads.fromLongest[static_cast<uint32_t>(find >> 32) - 1];
+                gap += strings[whole].size() - static_cast<uint32_t>(find) - strings[holder].size();
+                holder = whole;
+            }
+            sharing.holders[part] = holder;
+            sharing.gaps[part] = safeCast<uint32_t>(gap);
         }
-        sharing.holders[part] = holder;
-        sharing.gaps[part] = safeCast<uint32_t>(gap);
     });
 }
 
@@ -561,10 +608,10 @@ static TextSharing shareText(const ParallelLoops& loops, std::span<const Measure
 
     for (size_t unitSize : { sizeof(uint8_t), sizeof(char16_t) }) {
         BitVector hasTextOfWidth(measured.size());
-        for (size_t index : hasText) {
+        hasText.forEachSetBit([&](size_t index) {
             if (measured[index].is16Bit() == (unitSize == sizeof(char16_t)))
                 hasTextOfWidth.quickSet(index);
-        }
+        });
         if (hasTextOfWidth.isEmpty())
             continue;
         Vector<uint32_t> fronts = shareFrontsOfKeptTexts(strings, numberOfStringsAsRead, hasTextOfWidth, isName, sharing);
@@ -574,13 +621,13 @@ static TextSharing shareText(const ParallelLoops& loops, std::span<const Measure
         times.didFinish("build the index of heads"_s);
         findInnerParts(loops, strings, isName, heads, unitSize, sharing);
         times.didFinish("find inner parts"_s);
-        for (size_t index : hasTextOfWidth) {
+        hasTextOfWidth.forEachSetBit([&](size_t index) {
             uint32_t holder = holders[index];
             if (holders[holder] == holder)
-                continue;
+                return;
             sharing.gaps[index] = sharing.gaps[holder];
             holders[index] = holders[holder];
-        }
+        });
         for (uint32_t index : fronts) {
             uint32_t holder = holders[index];
             sharing.gaps[index] += sharing.gaps[holder];

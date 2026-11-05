@@ -39,7 +39,6 @@ static_assert(!callsTypedBySummariesInResultRules.contains(Opcode::AwaitCallBySa
 
 static_assert(OperandIndex::Call::callee == OperandIndex::CallResolved::callee && OperandIndex::Call::callee == OperandIndex::CallList::callee);
 static_assert(OperandIndex::CallBuiltin::receiver == OperandIndex::CallInline::receiver && OperandIndex::CallBuiltin::receiver == OperandIndex::TryCallInline::receiver);
-static_assert(OperandIndex::CallBuiltin::lengthOfReceiver == OperandIndex::CallInline::lengthOfReceiver && OperandIndex::CallBuiltin::lengthOfReceiver == OperandIndex::TryCallInline::lengthOfReceiver);
 static_assert(OperandIndex::CallBuiltin::arguments == OperandIndex::CallInline::arguments && OperandIndex::CallBuiltin::arguments == OperandIndex::TryCallInline::arguments);
 
 inline TypeID typeHeldAtPositionInResultRules(ResultRules& rules, TypeID known, const DeclaredType& declared, UnknownSeed seed)
@@ -254,7 +253,7 @@ inline TypeID typeOfOverloadCallInResultRules(const TypingContext& context, Buil
     passed.receiver = operands[OperandIndex::CallBuiltin::receiver];
     for (uint32_t operandIndex = OperandIndex::CallBuiltin::arguments; operandIndex < operands.size(); ++operandIndex)
         passed.arguments.append(operands[operandIndex]);
-    return resultTypeOfBuiltinCall(builtinTypeContextOfResultRules(context), { overload, form, passed, operands[OperandIndex::CallBuiltin::lengthOfReceiver] });
+    return resultTypeOfBuiltinCall(builtinTypeContextOfResultRules(context), { overload, form, passed });
 }
 
 inline TypeID tryTypeOfBuiltinCalledByValueInResultRules(const TypingContext& context, Opcode opcode, OperandTypes operands)
@@ -503,8 +502,7 @@ TypeID ResultRules::declared(const Operation& operation, PropertyKeyID key)
         return typeOfSlotReadInResultRules(*this, opcode, operands[*receiverOf(opcode)], operation.receivers(), key, holdsDeclaredType);
     }
     if (opcode == Opcode::GetGlobalBinding) {
-        bool mayBeShadowed = operation.seesScriptBindings() && !operation.cannotBeShadowed();
-        return provenOrUnknown(tryTypeOfGlobalBindingRead(context, key, mayBeShadowed, operation.findsOwnProperty()), seedOfUnknownResultOf(opcode));
+        return provenOrUnknown(tryTypeOfGlobalBindingRead(context, key, operation.seesScriptBindings()), seedOfUnknownResultOf(opcode));
     }
 
     if (FlagMask::isFreeName(opcode) && operation.isFreeName() && context.level == TypeLevel::Proven) {

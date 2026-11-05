@@ -90,8 +90,8 @@ static void generateDefineMethod(StraightEmitter& emitter, const BodyValue& valu
     if (classRecordCreatesMemberInStraightForm(emitter, value))
         return;
     auto definition = value.as<Opcode::DefineMethod>();
-    StraightArgument sideAndKind = StraightArgument::word(DefinedMethodBits::encode(definition.side(), definition.methodKind()));
     PropertyKeyID key = definition.key();
+    StraightArgument sideAndKind = StraightArgument::word(DefinedMethodBits::encode(definition.side(), definition.methodKind(), !key, definition.index()));
     if (!key) {
         emitter.callOperation(value, RuntimeOperation::DefineMethod, { definition.classObjectOperand(), definition.computedKeyOperand(), definition.functionOperand(), sideAndKind });
         return;

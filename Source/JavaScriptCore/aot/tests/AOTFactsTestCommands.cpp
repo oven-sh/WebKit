@@ -683,6 +683,10 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         printer.print(fieldAt(printer.program(), field).key);
         out.println();
     }
+    for (const SummaryMakerThatEndsWhereItLeaves& maker : summary.makersThatEndWhereTheyLeave) {
+        out.print("  ends-where-it-leaves v"_s, maker.allocation.index(), " b"_s, maker.blockOfLeaving, " at "_s, maker.positionOfLeaving);
+        out.println();
+    }
     for (FieldReference field : summary.fieldsFilledAtEndAlone) {
         out.print("  fills-at-end "_s);
         printer.print(field.layout);
@@ -706,13 +710,6 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
             out.print(comma);
             printer.print(layout);
         }
-        out.println();
-    }
-    if (!summary.nodesWhoseKeysAreListed.isEmpty()) {
-        out.print("  lists-keys-of"_s);
-        CommaPrinter comma(", "_s, " "_s);
-        for (uint32_t node : summary.nodesWhoseKeysAreListed)
-            out.print(comma, "n"_s, node);
         out.println();
     }
     for (const SummaryDefinition& definition : summary.definitions) {
@@ -981,8 +978,6 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
             out.print(" in-queue-from-start"_s);
         if (function.everyCallerIsKnown && function.everyCallHasOneCallee && !function.isNamedInItsCycle)
             out.print(" takes-arrivals"_s);
-        if (function.closuresStayAsMade)
-            out.print(" closures-stay-as-made"_s);
         if (function.weightAsLeaf != LinkedFunction::notLeaf)
             out.print(" leaf="_s, function.weightAsLeaf);
         out.println();
@@ -999,6 +994,8 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
                 out.print(" stays-as-made"_s);
             if (linked.isOnlyCalled)
                 out.print(" only-called"_s);
+            if (linked.isCapturedWhereOnlyCalled)
+                out.print(" captured"_s);
             out.println();
         }
 
@@ -1200,10 +1197,6 @@ static void printLinkedMembers(IRPrinter& printer, const LinkTables& tables)
         printer.print(name.holder);
         out.print(" "_s);
         printer.print(name.key);
-        if (name.function) {
-            out.print(" function="_s);
-            printer.print(name.function);
-        }
         out.print("\n"_s);
     }
     for (const LinkedNameOnPrototype& name : tables.namesOnPrototypes) {
@@ -1252,8 +1245,6 @@ static void printLinkedLayouts(IRPrinter& printer, const LinkTables& tables)
             out.print(" redefined-by-literals-alone"_s);
         if (layout.isFilledUnderComputedKeys)
             out.print(" filled-under-computed-keys"_s);
-        if (!layout.keysMayBeListed && !layout.reachesUnseenCode)
-            out.print(" keys-never-listed"_s);
         if (layout.onlyOwnObjectsStandBelowPrototype)
             out.print(" own-objects-below"_s);
         if (layout.prototypeObjectIsSettledAheadOfEveryObject)
@@ -1826,6 +1817,74 @@ static void runRegExpTextsCommand(TestCommandContext& context)
         print(text.pattern, text.flags, text.isOneOfAllAtSomeCall);
 }
 
+static void runLocalesCommand(TestCommandContext& context)
+{
+    StagedBuild stage = context.stage();
+    const Facts* facts = stage.facts();
+    if (!facts)
+        return;
+    IRPrinter printer(context.out, stage.program());
+    for (const LocaleUse& use : facts->localeUses()) {
+        switch (use.kind) {
+        case LocaleUseKind::Unknown:
+            context.out.print("locale unknown"_s);
+            break;
+        case LocaleUseKind::HostDefault:
+            context.out.print("locale host-default"_s);
+            break;
+        case LocaleUseKind::Constant:
+            context.out.print("locale constant "_s);
+            printer.print(use.tag);
+            break;
+        }
+        if (use.builtin) {
+            context.out.print(" "_s);
+            printer.print(use.builtin);
+        }
+        if (!hasFunction(use.witness))
+            context.out.print(" nowhere"_s);
+        else {
+            context.out.print(" at f"_s, use.witness.function);
+            if (use.witness.value != Wire::none)
+                context.out.print(" v"_s, use.witness.value);
+        }
+        context.out.println();
+    }
+}
+
+static void runCausesCommand(TestCommandContext& context)
+{
+    StagedBuild stage = context.stage();
+    const Facts* facts = stage.facts();
+    if (!facts)
+        return;
+    IRPrinter printer(context.out, stage.program());
+    auto print = [&](const UnseenCodeRecord& record) {
+        if (record.builtin != Wire::none) {
+            context.out.print(" "_s);
+            printer.print(BuiltinID(record.builtin));
+        }
+        if (!hasFunction(record.witness))
+            context.out.print(" nowhere"_s);
+        else {
+            context.out.print(" at f"_s, record.witness.function);
+            if (record.witness.value != Wire::none)
+                context.out.print(" v"_s, record.witness.value);
+        }
+        context.out.println();
+    };
+    for (const UnseenCodeRecord& record : facts->unseenCode()) {
+        context.out.print("cause "_s, nameOf(record.cause));
+        print(record);
+    }
+    for (const UnseenCodeRecord& record : facts->loadsOfMachineCode()) {
+        context.out.print("machine-code"_s);
+        print(record);
+    }
+    context.out.println("unseen-code "_s, facts->unseenCodeCanRun() ? "can-run"_s : "cannot-run"_s);
+    context.out.println("unseen-scripts "_s, facts->unseenScriptsCanRun() ? "can-run"_s : "cannot-run"_s);
+}
+
 static void runClosureCommand(TestCommandContext& context)
 {
     printBreachesOfClosureOfLink(context.out, *context.program, context.build, context.mechanisms);
@@ -1839,6 +1898,8 @@ std::span<const TestCommand> factsTestCommands()
         { "locks"_s, runLocksCommand, ProgramOfCommand::AsWritten, ""_s },
         { "summary"_s, runSummaryCommand, ProgramOfCommand::AsWritten, "f.."_s },
         { "link"_s, runLinkCommand, ProgramOfCommand::AsWritten, "[functions|calls|accesses|fields|variables|captures|members|layouts|families|counts].. [oldest-first|scattered]"_s },
+        { "locales"_s, runLocalesCommand, ProgramOfCommand::AsWritten, ""_s },
+        { "causes"_s, runCausesCommand, ProgramOfCommand::AsWritten, ""_s },
         { "closure"_s, runClosureCommand, ProgramOfCommand::AsWritten, ""_s },
         { "facts"_s, runFactsCommand, ProgramOfCommand::AsWritten, "enforced [counts]"_s },
         { "regexp-texts"_s, runRegExpTextsCommand, ProgramOfCommand::AsWritten, "[hashes] [realms]"_s },

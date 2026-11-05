@@ -15,7 +15,12 @@
 #include <optional>
 #include <span>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+struct StubSignature;
+struct StubSummary;
+
+namespace Typed {
 
 struct ValueCall {
     Boxed callee;
@@ -106,29 +111,39 @@ private:
         LValue value;
     };
 
+    struct AnswersOfCalledStub {
+        const StubSummary* summary { nullptr };
+        Effects effects;
+    };
+
     static bool isUndefinedConstant(LValue);
     Boxed thisOrUndefined(ValueID);
     Vector<Boxed, 8> boxedOperands(std::span<const ValueID>);
 
     CodeUnit calleeOf(const ValueContext& callDirect) const;
+    const ArgumentLocations& ownLocations();
     PlacedArguments placeArguments(CodeUnit callee, const ArgumentLocations&, std::span<const Operand>);
     PlacedArguments placeConventionArguments(const ConventionCall&);
+    PlacedArguments placeConventionArguments(const ConventionCall&, const StubSignature&);
     static void emitClearOfReleasedRegisters(CCallHelpers&, const Machine::PatchParameters&);
     void callStartOfModule(const ValueContext&, CodeUnit start, const ArgumentLocations&);
 
-    Machine::PatchOperation* emitCall(const OperationContext&, const CallTarget&, const PlacedArguments&, std::span<const ArgumentLocation> results, const CallOptions&);
+    Machine::PatchOperation* emitCall(const OperationContext&, const CallTarget&, const PlacedArguments&, std::span<const ArgumentLocation> results, const CallOptions&, const AnswersOfCalledStub* = nullptr);
+    void defineResultOfCallByValue(const ValueContext&, Boxed result, const Type& callee);
     void defineResultsOfCall(const ValueContext&, std::span<const ArgumentLocation> results, Machine::PatchOperation*);
     void callThroughMethodTable(const ValueContext&, uint32_t placeOfSelector, std::span<const ValueID> receiverAndArguments);
     Operand resultOfCall(const ArgumentLocation&, LValue);
     void chooseStubThatCallsValue(ConventionCall&, LValue& countOperand, bool calleeIsCell);
 
-    void emitTailCall(const OperationContext&, const CallTarget&, const PlacedArguments&);
+    void emitTailCall(const OperationContext&, const CallTarget&, const PlacedArguments&, const ArgumentLocations* locationsOfCalledUnit = nullptr);
     Machine::PatchOperation* leaveAfterFrameTeardown(std::span<const Machine::ConstrainedValue> inRegisters, std::span<const StackWord>, const Invocable<void(CCallHelpers&)> auto& leave);
     void jumpAfterFrameTeardown(const CallTarget&, const PlacedArguments&);
     void callFromArgumentListFrame(const CallTarget&, const PlacedArguments&);
     void callAndReturnIfCalleeEndsItsTailCalls(const ValueContext&, const ValueCall&);
     void tailCallValue(const ValueContext&, const ValueCall&);
     bool hasStackWordsOfCaller(uint32_t numberOfWords) const;
+
+    std::optional<ArgumentLocations> m_ownLocations;
 };
 
 } } } // namespace JSC::AOT::Typed

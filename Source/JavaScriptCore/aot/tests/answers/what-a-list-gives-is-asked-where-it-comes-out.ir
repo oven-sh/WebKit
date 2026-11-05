@@ -1,4 +1,4 @@
-# const rows = [{ kept: id(1) }];
+# const rows = [{ kept: 1 }];
 # rows.push(id("text"));
 # function read(at) { const row = rows[at]; return row === undefined ? "none" : row.kept; }
 # print(read(0));
@@ -31,7 +31,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="id" [isFreeName]
     v4 = Integer integer=1
-    v5 = Call v3, -, v4 calleeName="id"
+    v5 = Integer integer=1
     v6 = NewObject -, v5 layout=L0 fields=[0]
     v7 = FinishObject v6
     v8 = NewArray v7 contents=anything

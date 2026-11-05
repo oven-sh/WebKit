@@ -16,6 +16,7 @@
 #include "AOTDiagnostics.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
+#include "AOTLocalesPassedAtCalls.h"
 #include "AOTObjects.h"
 #include "AOTOpcodeSets.h"
 #include "AOTRemovableFeature.h"
@@ -23,7 +24,6 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
-#include "IntlObject.h"
 #include <algorithm>
 #include <atomic>
 #include <memory>
@@ -68,9 +68,18 @@ static BuiltinID objectAnsweredByBindingInProgramFacts(const BuiltinTable& built
     return answered ? answered : canonical;
 }
 
+static bool standsEarlierInTextInProgramFacts(const Witness& witness, const Witness& other)
+{
+    if (!hasFunction(witness) || !hasFunction(other))
+        return hasFunction(witness);
+    if (witness.function == other.function)
+        return witness.value < other.value;
+    return std::tie(witness.location.module, witness.location.position, witness.function, witness.value) < std::tie(other.location.module, other.location.position, other.function, other.value);
+}
+
 static void keepLowerWitnessInProgramFacts(Witness& lowest, const Witness& candidate)
 {
-    if (isLowerWitness(candidate, lowest))
+    if (standsEarlierInTextInProgramFacts(candidate, lowest))
         lowest = candidate;
 }
 
@@ -94,7 +103,7 @@ static constexpr bool admitsUnknownJavaScriptInProgramFacts(UnseenCodeCause caus
 
 static constexpr bool admitsScriptsInProgramFacts(UnseenCodeCause cause)
 {
-    return admitsUnknownJavaScriptInProgramFacts(cause) && cause != UnseenCodeCause::EvaluatesText;
+    return admitsUnknownJavaScriptInProgramFacts(cause);
 }
 
 static bool isCodeOutsideImageInProgramFacts(const Module& module)
@@ -121,22 +130,12 @@ static const BuiltinCondition* optionThatRunsCodeInProgramFacts(const BuiltinTab
     return row && row->condition && row->condition->hasProperty ? row->condition : nullptr;
 }
 
-struct LocaleOperandInProgramFacts {
-    BuiltinID row;
-    BuiltinCallMode mode;
-    BuiltinOperand operand;
-
-    friend bool operator==(const LocaleOperandInProgramFacts&, const LocaleOperandInProgramFacts&) = default;
-};
-
 struct RowsOfProgramFacts {
     explicit RowsOfProgramFacts(const BuiltinTable&);
 
     static constexpr uint32_t bitOfArgument(size_t argument) { return 1u << std::min<size_t>(argument, 31); }
 
-    BitVector takeLocales;
     BitVector readLocalesWithoutDescription;
-    Vector<LocaleOperandInProgramFacts> localeOperands;
     BitVector startWorkers;
     uint32_t fileArguments { 0 };
     BuiltinID constructorOfURLs;
@@ -179,8 +178,7 @@ static constexpr bool readsDataOfLocalesInProgramFacts(RemovableFeature feature)
 }
 
 RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins)
-    : takeLocales(builtins.builtinCount())
-    , readLocalesWithoutDescription(builtins.builtinCount())
+    : readLocalesWithoutDescription(builtins.builtinCount())
     , startWorkers(builtins.builtinCount())
     , areEvents(builtins.builtinCount())
     , writeUnderKeysOfCalls(builtins.builtinCount())
@@ -191,11 +189,7 @@ RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins)
         if (row == entry && callOrReadOfBuiltinIsEvent(builtins, row))
             areEvents.quickSet(index);
 
-        auto noteParameter = [&](BuiltinCallMode mode, const BuiltinParameter& parameter) {
-            if (parameter.roles.contains(BuiltinOperandRole::Locale)) {
-                takeLocales.quickSet(row.index());
-                localeOperands.append(LocaleOperandInProgramFacts { row, mode, parameter.operand });
-            }
+        auto noteParameter = [&](const BuiltinParameter& parameter) {
             if (!parameter.roles.contains(BuiltinOperandRole::WorkerEntryPath))
                 return;
             startWorkers.quickSet(row.index());
@@ -217,16 +211,11 @@ RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins)
             if (std::ranges::any_of(overload.flow.propertyActions, writesUnderKeyOfCallInProgramFacts) || std::ranges::contains(overload.flow.propertyActions, BuiltinPropertyActionKind::ChangesPrototype, &BuiltinPropertyAction::kind))
                 writeUnderKeysOfCalls.quickSet(row.index());
             if (const BuiltinParameter* receiver = overload.receiver.get())
-                noteParameter(overload.mode, *receiver);
+                noteParameter(*receiver);
             for (const BuiltinParameter& parameter : overload.parameters)
-                noteParameter(overload.mode, parameter);
+                noteParameter(parameter);
         }
     }
-    AOT::sort(localeOperands, { }, [](const LocaleOperandInProgramFacts& localeOperand) {
-        BuiltinOperand operand = localeOperand.operand;
-        return std::tuple(localeOperand.row, localeOperand.mode, operand.kind(), operand.isReceiver() ? 0u : operand.argumentIndex());
-    });
-    removeRepeatedElements(localeOperands);
 
     BuiltinClassID classOfURLs = BuiltinClasses::URL;
     if (BuiltinID constructor = classOfURLs ? builtins.at(classOfURLs).constructor : BuiltinID())
@@ -235,13 +224,12 @@ RowsOfProgramFacts::RowsOfProgramFacts(const BuiltinTable& builtins)
 }
 
 struct FindingOfProgramFacts {
-    enum class Kind : uint8_t { UseOfBuiltin, ReadOfAnyMember, WriteOnBuiltin, PrototypeChangeOfBuiltin, NameStoredByRow, NameReadOffUnknownValue, ReadThatNoRowAnswers, KeysOfBuiltinListed, OptionThatRunsCode, UnseenCode, LocaleUse, WorkerEntry, WorkerStartWithoutName, URLThatStartsWorker, URLThatLeavesBody, NamedModule, LoaderHandedToText };
+    enum class Kind : uint8_t { UseOfBuiltin, ReadOfAnyMember, WriteOnBuiltin, PrototypeChangeOfBuiltin, NameStoredByRow, NameReadOffUnknownValue, ReadThatNoRowAnswers, KeysOfBuiltinListed, OptionThatRunsCode, UnseenCode, WorkerEntry, WorkerStartWithoutName, URLThatStartsWorker, URLThatLeavesBody, NamedModule, LoaderHandedToText, CallOfEvent };
 
     Kind kind { Kind::UseOfBuiltin };
     uint8_t detail { 0 };
     uint32_t subject { Wire::none };
     uint32_t key { Wire::none };
-    StringID tag;
     Witness witness { noWitness };
 };
 
@@ -352,8 +340,8 @@ private:
     bool isFollowed(ValueID value) const { return builtinAt(value) || originOfURL(value); }
     BodyValue valueBehindCasts(ValueID value) const { return m_index.value(m_index.valueBehindCasts(value)); }
 
-    void note(Finding::Kind kind, uint8_t detail, uint32_t subject, const Witness& witness, StringID tag = { }) { m_found.append(Finding { kind, detail, subject, Wire::none, tag, witness }); }
-    void noteWrite(BuiltinID holder, PropertyKeyID key, const BodyValue& place) { m_found.append(Finding { Finding::Kind::WriteOnBuiltin, 0, holder.index(), key ? key.index() : Wire::none, { }, witnessAt(place) }); }
+    void note(Finding::Kind kind, uint8_t detail, uint32_t subject, const Witness& witness) { m_found.append(Finding { kind, detail, subject, Wire::none, witness }); }
+    void noteWrite(BuiltinID holder, PropertyKeyID key, const BodyValue& place) { m_found.append(Finding { Finding::Kind::WriteOnBuiltin, 0, holder.index(), key ? key.index() : Wire::none, witnessAt(place) }); }
     void noteUse(BuiltinID builtin, BuiltinUse use, const auto& place) { note(Finding::Kind::UseOfBuiltin, static_cast<uint8_t>(OptionSet<BuiltinUse>(use).toRaw()), builtin.index(), witnessAt(place)); }
     void noteFate(ValueID, Fate, const auto& place);
     void handOn(ValueID from, ValueID to);
@@ -374,7 +362,6 @@ private:
     void accessMember(const BodyValue&, BuiltinID holder);
     void lookAtCall(const BodyValue&);
     void noteLoaderHandedToText(const BodyValue&);
-    void noteLocalesPassed(const BodyValue& call, BuiltinID row, BuiltinCallMode, bool spellsOutArguments);
     void noteStartOfWorker(const BodyValue& call, bool spellsOutArguments);
     bool listKeysOfLiteral(ValueID, Vector<PropertyKeyID, 4>&) const;
     bool mayPass(const BodyValue& call, const BuiltinCondition& option, bool spellsOutArguments) const;
@@ -384,7 +371,8 @@ private:
     BuiltinID memberFoundOn(BuiltinID holder, PropertyKeyID) const;
     bool tableRulesOutMemberFoundFrom(BuiltinID holder, PropertyKeyID) const;
     bool mayGoThroughOwnKeysOf(const BodyValue& user, uint32_t operandIndex) const;
-    bool rowOnlyInspects(BuiltinID callee, BuiltinCallMode, BuiltinOperand) const;
+    bool rowTakesEveryCallOn(const BuiltinOverload&, BuiltinID receiver) const;
+    bool rowOnlyInspects(BuiltinID callee, BuiltinCallMode, BuiltinOperand, BuiltinID receiver) const;
     Fate fateOf(const BodyValue& user, uint32_t operandIndex) const;
 
     NamesOfNumbersInProgramFacts& m_namesOfNumbers;
@@ -557,7 +545,7 @@ void BodyLookOfProgramFacts::accessMember(const BodyValue& value, BuiltinID hold
         note(Finding::Kind::KeysOfBuiltinListed, 0, holder.index(), witnessAt(value));
     if (!member) {
         if (opcode == Opcode::PropGet && key && m_builtins.at(m_builtins.rootOf(m_builtins.canonicalID(holder))).scope != BuiltinScope::Realm)
-            m_found.append(Finding { Finding::Kind::ReadThatNoRowAnswers, 1, holder.index(), key.index(), { }, witnessAt(value) });
+            m_found.append(Finding { Finding::Kind::ReadThatNoRowAnswers, 1, holder.index(), key.index(), witnessAt(value) });
         if (opcode == Opcode::PropGet && !tableRulesOutMemberFoundFrom(holder, key))
             note(Finding::Kind::ReadThatNoRowAnswers, 0, holder.index(), witnessAt(value));
         return;
@@ -570,7 +558,23 @@ void BodyLookOfProgramFacts::accessMember(const BodyValue& value, BuiltinID hold
         m_mayBeSomethingElse.set(value.id().index());
 }
 
-bool BodyLookOfProgramFacts::rowOnlyInspects(BuiltinID callee, BuiltinCallMode mode, BuiltinOperand position) const
+bool BodyLookOfProgramFacts::rowTakesEveryCallOn(const BuiltinOverload& overload, BuiltinID receiver) const
+{
+    auto takesWhateverIsPassed = [&](const BuiltinParameter& parameter) {
+        return !parameter.accepted || parameter.conversion != BuiltinConversion::None || m_builtins.at(parameter.accepted).isAnything();
+    };
+    const BuiltinParameter* taken = overload.receiver.get();
+    if (taken && !takesWhateverIsPassed(*taken)) {
+        bool acceptsReceiver = false;
+        for (const BuiltinTypePart& part : m_builtins.at(taken->accepted).parts)
+            acceptsReceiver |= receiver && part.kind == BuiltinTypePartKind::Builtin && m_builtins.canonicalID(part.builtin) == m_builtins.canonicalID(receiver);
+        if (!acceptsReceiver)
+            return false;
+    }
+    return std::ranges::all_of(overload.parameters, takesWhateverIsPassed);
+}
+
+bool BodyLookOfProgramFacts::rowOnlyInspects(BuiltinID callee, BuiltinCallMode mode, BuiltinOperand position, BuiltinID receiver) const
 {
     bool hasOverload = false;
     for (const BuiltinOverload& overload : m_builtins.overloadsOf(m_builtins.canonicalID(callee))) {
@@ -580,13 +584,12 @@ bool BodyLookOfProgramFacts::rowOnlyInspects(BuiltinID callee, BuiltinCallMode m
         if (overload.isUndeclared())
             return false;
         const BuiltinParameter* parameter = position.isReceiver() ? overload.receiver.get() : m_builtins.parameterFor(overload, position);
-        if (!parameter) {
-            if (position.isReceiver())
-                continue;
+        if (!parameter && !position.isReceiver())
             return false;
-        }
-        if (!(parameter->uses - OperandUses { OperandUse::Inspects }).isEmpty())
+        if (parameter && !(parameter->uses - OperandUses { OperandUse::Inspects }).isEmpty())
             return false;
+        if (rowTakesEveryCallOn(overload, receiver))
+            return true;
     }
     return hasOverload;
 }
@@ -634,50 +637,15 @@ BodyLookOfProgramFacts::Fate BodyLookOfProgramFacts::fateOf(const BodyValue& use
 
     uint32_t numberOfNamedOperands = numberOfNamedOperandsOf(opcode);
     BuiltinCallMode mode = isConstruction ? BuiltinCallMode::Construct : BuiltinCallMode::Call;
+    BuiltinID receiver = isConstruction ? BuiltinID() : builtinSurelyAt(user.operand(1));
     if (operandIndex == 1 && !isConstruction)
-        return rowOnlyInspects(callee, mode, BuiltinOperand::receiver()) ? Fate::IsInspected : Fate::IsLetGo;
+        return rowOnlyInspects(callee, mode, BuiltinOperand::receiver(), receiver) ? Fate::IsInspected : Fate::IsLetGo;
     if (operandIndex < numberOfNamedOperands || !callsThatSpellOutArgumentsInProgramFacts.contains(opcode))
         return Fate::IsLetGo;
     uint32_t argument = operandIndex - numberOfNamedOperands;
     if (argument > BuiltinOperand::maxArgumentIndex)
         return Fate::IsLetGo;
-    return rowOnlyInspects(callee, mode, BuiltinOperand::argument(argument)) ? Fate::IsInspected : Fate::IsLetGo;
-}
-
-void BodyLookOfProgramFacts::noteLocalesPassed(const BodyValue& call, BuiltinID row, BuiltinCallMode mode, bool spellsOutArguments)
-{
-    auto noteLocale = [&](LocaleUseKind kind, StringID tag = { }) {
-        note(Finding::Kind::LocaleUse, static_cast<uint8_t>(kind), row.index(), witnessAt(call), tag);
-    };
-    std::span<const ValueID> arguments = call.variadicOperands();
-    for (const LocaleOperandInProgramFacts& localeOperand : std::ranges::equal_range(m_rows.localeOperands, row, { }, &LocaleOperandInProgramFacts::row)) {
-        if (localeOperand.mode != mode)
-            continue;
-        if (!spellsOutArguments || localeOperand.operand.kind() != BuiltinOperand::Kind::Argument) {
-            noteLocale(LocaleUseKind::Unknown);
-            continue;
-        }
-        unsigned argument = localeOperand.operand.argumentIndex();
-        if (argument >= arguments.size()) {
-            noteLocale(LocaleUseKind::HostDefault);
-            continue;
-        }
-        BodyValue passed = valueBehindCasts(arguments[argument]);
-        if (passed.opcode() == Opcode::Undefined) {
-            noteLocale(LocaleUseKind::HostDefault);
-            continue;
-        }
-        if (passed.opcode() != Opcode::String) {
-            noteLocale(LocaleUseKind::Unknown);
-            continue;
-        }
-        StringID text = passed.as<Opcode::String>().string();
-        Vector<char16_t> buffer;
-        if (isStructurallyValidLanguageTag(m_program.strings.viewOf(text, buffer)))
-            noteLocale(LocaleUseKind::Constant, text);
-        else
-            noteLocale(LocaleUseKind::Unknown);
-    }
+    return rowOnlyInspects(callee, mode, BuiltinOperand::argument(argument), receiver) ? Fate::IsInspected : Fate::IsLetGo;
 }
 
 ValueID BodyLookOfProgramFacts::originOfURLOrOfItsText(ValueID value) const
@@ -803,7 +771,7 @@ void BodyLookOfProgramFacts::noteWritesOfRow(const BodyValue& call, BuiltinID ro
                 key = *spelled;
             }
             if (target)
-                m_found.append(Finding { Finding::Kind::WriteOnBuiltin, static_cast<uint8_t>(key ? 1 : 0), target.index(), key ? key.index() : Wire::none, { }, witnessAt(call) });
+                m_found.append(Finding { Finding::Kind::WriteOnBuiltin, static_cast<uint8_t>(key ? 1 : 0), target.index(), key ? key.index() : Wire::none, witnessAt(call) });
             else if (key)
                 note(Finding::Kind::NameStoredByRow, 0, key.index(), witnessAt(call));
             else
@@ -877,9 +845,9 @@ void BodyLookOfProgramFacts::lookAtCall(const BodyValue& call)
     Opcode opcode = call.opcode();
     bool isConstruction = constructionsInProgramFacts.contains(opcode);
     bool spellsOutArguments = callsThatSpellOutArgumentsInProgramFacts.contains(opcode);
+    if (m_rows.areEvents.quickGet(row.index()) || isLoaderOfMachineCodeInProgramFacts(m_builtins, row))
+        note(Finding::Kind::CallOfEvent, 0, row.index(), witnessAt(call));
 
-    if (m_rows.takeLocales.quickGet(row.index()))
-        noteLocalesPassed(call, row, isConstruction ? BuiltinCallMode::Construct : BuiltinCallMode::Call, spellsOutArguments);
     if (m_rows.startWorkers.quickGet(row.index()))
         noteStartOfWorker(call, spellsOutArguments);
     if (m_rows.writeUnderKeysOfCalls.quickGet(row.index()))
@@ -1815,7 +1783,7 @@ void WritesOnBuiltinsInProgramFacts::take(const FindingOfProgramFacts& finding)
     case Kind::ReadThatNoRowAnswers:
     case Kind::KeysOfBuiltinListed:
     case Kind::UnseenCode:
-    case Kind::LocaleUse:
+    case Kind::CallOfEvent:
     case Kind::WorkerEntry:
     case Kind::WorkerStartWithoutName:
     case Kind::URLThatStartsWorker:
@@ -1928,6 +1896,7 @@ public:
     void settle();
     void takeBuiltinsThatCameIntoReach(Vector<BuiltinID>&);
     bool hasRecordOfUnseenCode() const { return !m_program.unseenCode.isEmpty(); }
+    bool hostIsAskedForValueOfModule() const { return m_hostIsAskedForValueOfModule; }
     bool unseenCodeCanRun() const { return hasRecordThat(admitsUnknownJavaScriptInProgramFacts); }
     bool programLetsUnseenCodeRun() const
     {
@@ -1971,7 +1940,7 @@ private:
     bool standsInFront(const Witness& witness, const Witness& other) const
     {
         bool isOfProgram = standsInTextOfProgram(witness);
-        return isOfProgram != standsInTextOfProgram(other) ? isOfProgram : isLowerWitness(witness, other);
+        return isOfProgram != standsInTextOfProgram(other) ? isOfProgram : standsEarlierInTextInProgramFacts(witness, other);
     }
     void keepPlaceOf(BuiltinID canonical, Witness& kept, const Witness& candidate) const
     {
@@ -1982,7 +1951,8 @@ private:
     }
     void uniteUsesOfSameObject();
 
-    static void add(Vector<UnseenCodeRecord>&, UnseenCodeCause, BuiltinID, const Witness&);
+    void add(Vector<UnseenCodeRecord>&, UnseenCodeCause, BuiltinID, const Witness&) const;
+    void addAtCallsInTextOfProgram(Vector<UnseenCodeRecord>&, UnseenCodeCause, BuiltinID named, BuiltinID canonicalCallee) const;
     std::optional<UnseenCodeCause> causeOfLettingCodeIn(BuiltinID canonical) const;
     void listBuiltinsThatLetCodeIn();
     void listLoadsOfUnseenCode();
@@ -2076,10 +2046,11 @@ private:
     Vector<Witness> m_loadsOfProgramByName;
     BitVector m_bodiesBeingAsked;
     std::optional<bool> m_codeThatNobodyNamesMayLeave;
-    Vector<LocaleUse> m_localeUsesAtCalls;
+    Vector<Finding> m_callsOfEventsNamedInBodies;
     Vector<Witness> m_urlsThatLeaveBodies;
     Vector<Witness> m_startsWithoutName;
     bool m_loaderIsHandedToText { false };
+    bool m_hostIsAskedForValueOfModule { false };
     Witness m_whereConstructorOfWorkersIsLetGo { noWitness };
 };
 
@@ -2148,16 +2119,49 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
         noteObjectsMayExist(builtinClass);
 }
 
-void BuilderOfProgramFacts::add(Vector<UnseenCodeRecord>& records, UnseenCodeCause cause, BuiltinID builtin, const Witness& witness)
+void BuilderOfProgramFacts::add(Vector<UnseenCodeRecord>& records, UnseenCodeCause cause, BuiltinID builtin, const Witness& witness) const
 {
+    bool eachPlaceHasRecord = hasFlag(m_inputs.build.options().reports, Wire::ReportSet::Uses);
     uint32_t number = builtin ? builtin.index() : Wire::none;
-    auto found = std::ranges::find_if(records, [&](const UnseenCodeRecord& record) {
-        return record.cause == cause && record.builtin == number;
-    });
-    if (found == records.end())
-        records.append(UnseenCodeRecord { cause, number, witness });
-    else
-        keepLowerWitnessInProgramFacts(found->witness, witness);
+    for (UnseenCodeRecord& record : records) {
+        if (record.cause != cause || record.builtin != number)
+            continue;
+        if (!eachPlaceHasRecord) {
+            keepLowerWitnessInProgramFacts(record.witness, witness);
+            return;
+        }
+        if (!hasFunction(witness) || (record.witness.function == witness.function && record.witness.value == witness.value))
+            return;
+        if (!hasFunction(record.witness)) {
+            record.witness = witness;
+            return;
+        }
+    }
+    records.append(UnseenCodeRecord { cause, number, witness });
+}
+
+void BuilderOfProgramFacts::addAtCallsInTextOfProgram(Vector<UnseenCodeRecord>& records, UnseenCodeCause cause, BuiltinID named, BuiltinID canonicalCallee) const
+{
+    bool isCalledInTextOfProgram = false;
+    for (const LinkedCallOfBuiltin& listed : m_inputs.linked.lookups.callsOfBuiltinsAtSites) {
+        if (listed.row != canonicalCallee || !listed.caller || isLibraryCode(m_source, m_source.at(listed.caller)))
+            continue;
+        const BodyIndex* index = m_inputs.bodies.find(listed.caller);
+        if (!index || !listed.site || listed.site.index() >= index->numberOfValues() || index->isParameter(listed.site))
+            continue;
+        isCalledInTextOfProgram = true;
+        add(records, cause, named, Witness { listed.caller.index(), listed.site.index(), m_source.at(listed.caller).locationOf(index->value(listed.site)) });
+    }
+    for (const Finding& call : m_callsOfEventsNamedInBodies) {
+        if (call.subject != canonicalCallee.index() || !standsInTextOfProgram(call.witness))
+            continue;
+        isCalledInTextOfProgram = true;
+        add(records, cause, named, call.witness);
+    }
+    if (isCalledInTextOfProgram)
+        return;
+    const Witness& whereUsed = m_witnesses[canonicalCallee.index()];
+    add(records, cause, named, standsInTextOfProgram(whereUsed) ? whereUsed : noWitness);
 }
 
 void BuilderOfProgramFacts::noteStartWithoutName(const Witness& witness)
@@ -2229,8 +2233,8 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
             if (static_cast<UnseenCodeCause>(finding.detail) == UnseenCodeCause::LoadsModuleByName)
                 m_loadsOfProgramByName.append(finding.witness);
             break;
-        case Finding::Kind::LocaleUse:
-            m_localeUsesAtCalls.append(LocaleUse { static_cast<LocaleUseKind>(finding.detail), finding.tag, BuiltinID(finding.subject), finding.witness });
+        case Finding::Kind::CallOfEvent:
+            m_callsOfEventsNamedInBodies.append(finding);
             break;
         case Finding::Kind::WorkerEntry:
             m_program.workerEntries.append(WorkerEntry { StringID(finding.subject), false, !!finding.detail, finding.witness });
@@ -2437,6 +2441,7 @@ void BuilderOfProgramFacts::evaluate(ModuleID id, const Witness& witness)
     const Module& module = m_source.at(id);
     if (isCodeOutsideImageInProgramFacts(module) || module.flags.contains(ModuleFlags::IsChangedOnDiskByRun))
         add(m_program.unseenCode, UnseenCodeCause::ImportsUncompiledModule, { }, witness);
+    m_hostIsAskedForValueOfModule |= module.kind == ModuleKind::External && module.externalKind == ExternalKind::HostValue;
     BuiltinID object = module.runtimeModule ? m_builtins.namespaceOf(module.runtimeModule) : BuiltinID();
     bool fillsVariables = std::ranges::any_of(module.syntheticExports, [](const SyntheticExport& entry) {
         return !!entry.variable;
@@ -2615,7 +2620,7 @@ void BuilderOfProgramFacts::listBuiltinsThatLetCodeIn()
         if (!uses.containsAny(usesOfObjectItselfInProgramFacts) && !(readIsEvent && uses.contains(BuiltinUse::Read)))
             continue;
         if (std::optional<UnseenCodeCause> cause = causeOfLettingCodeIn(builtin))
-            add(m_program.unseenCode, *cause, builtin, standsInTextOfProgram(m_witnesses[index]) ? m_witnesses[index] : noWitness);
+            addAtCallsInTextOfProgram(m_program.unseenCode, *cause, builtin, builtin);
     }
 }
 
@@ -2636,7 +2641,7 @@ void BuilderOfProgramFacts::listLoadsOfMachineCode()
                 continue;
             uint32_t index = m_builtins.canonicalID(builtin).index();
             if (m_uses[index].containsAny(usesOfObjectItselfInProgramFacts))
-                add(m_program.loadsOfMachineCode, UnseenCodeCause::RunsMachineCode, loader.named, standsInTextOfProgram(m_witnesses[index]) ? m_witnesses[index] : noWitness);
+                addAtCallsInTextOfProgram(m_program.loadsOfMachineCode, UnseenCodeCause::RunsMachineCode, loader.named, BuiltinID(index));
         }
     }
 }
@@ -3413,30 +3418,44 @@ void BuilderOfProgramFacts::listLibraryCodeLacked()
 
 void BuilderOfProgramFacts::listLocaleUses()
 {
+    const UnseenCodeRecord* admitting = nullptr;
     for (const UnseenCodeRecord& record : m_program.unseenCode) {
-        if (!admitsUnknownJavaScriptInProgramFacts(record.cause))
-            continue;
-        m_tables.localeUses.append(LocaleUse { LocaleUseKind::Unknown, { }, record.builtin == Wire::none ? BuiltinID() : BuiltinID(record.builtin), record.witness });
+        if (admitsUnknownJavaScriptInProgramFacts(record.cause) && (!admitting || standsInFront(record.witness, admitting->witness)))
+            admitting = &record;
+    }
+    if (admitting) {
+        m_tables.localeUses.append(LocaleUse { LocaleUseKind::Unknown, { }, admitting->builtin == Wire::none ? BuiltinID() : BuiltinID(admitting->builtin), admitting->witness });
         return;
     }
 
-    Vector<LocaleUse> uses = WTF::move(m_localeUsesAtCalls);
-    BitVector rows = m_rows.takeLocales;
+    const LookupsPastProgramObjects& lookups = m_inputs.linked.lookups;
+    RowsThatTakeLocales takers(m_builtins);
+    LocalesPassedAtCalls passed = localesPassedAtCalls(m_source, m_inputs.bodies, takers, lookups.callsOfBuiltinsAtSites.span());
+    Vector<LocaleUse> uses = WTF::move(passed.uses);
+    bool someCallOfProgramPassesWhatNobodyKnows = std::ranges::any_of(uses, [&](const LocaleUse& use) {
+        return use.kind == LocaleUseKind::Unknown && standsInTextOfProgram(use.witness);
+    });
+    BitVector rows = WTF::move(takers.rows);
     rows.merge(m_rows.readLocalesWithoutDescription);
     for (size_t index : rows) {
-        bool callsAreSeen = !m_uses[index].contains(BuiltinUse::Escaped) && !m_isOutOfSight.quickGet(index) && !m_inputs.linked.lookups.builtinsCalled.get(index);
+        if (someCallOfProgramPassesWhatNobodyKnows)
+            break;
+        bool isCalled = m_uses[index].containsAny(callingUsesInProgramFacts) || lookups.builtinsCalled.get(index);
+        bool callsAreSeen = !m_uses[index].contains(BuiltinUse::Escaped) && !m_isOutOfSight.quickGet(index) && !passed.rowsCalledWhereNobodySeesOperands.get(index) && (!isCalled || passed.rowsWithCallsLookedAt.get(index));
         bool isCalledWithoutDescription = m_rows.readLocalesWithoutDescription.quickGet(index) && m_uses[index].containsAny(callingUsesInProgramFacts);
         if (!callsAreSeen || isCalledWithoutDescription)
             uses.append(LocaleUse { LocaleUseKind::Unknown, { }, BuiltinID(static_cast<uint32_t>(index)), m_witnesses[index] });
     }
 
     auto subjectOf = [](const LocaleUse& use) {
-        return std::tuple(use.kind, use.tag, use.builtin);
+        return std::tuple(use.kind, use.tag);
     };
     AOT::sort(uses, [&](const LocaleUse& a, const LocaleUse& b) {
         if (subjectOf(a) != subjectOf(b))
             return subjectOf(a) < subjectOf(b);
-        return isLowerWitness(a.witness, b.witness);
+        if (standsInFront(a.witness, b.witness) || standsInFront(b.witness, a.witness))
+            return standsInFront(a.witness, b.witness);
+        return a.builtin < b.builtin;
     });
     removeRepeatedElements(uses, [&](const LocaleUse& a, const LocaleUse& b) {
         return subjectOf(a) == subjectOf(b);
@@ -3594,16 +3613,21 @@ void BuilderOfProgramFacts::settle()
     }
     listBuiltinsThatLetCodeIn();
     listLoadsOfUnseenCode();
+    listLoadsOfMachineCode();
 
     if (m_eventsAreWithheld && !m_source.admitsInspector && !m_program.unseenCode.isEmpty()) {
+        bool unseenCodeRunsAlready = hasRecordThat(admitsUnknownJavaScriptInProgramFacts);
         m_eventsAreWithheld = false;
         for (size_t index : m_isLetGo)
             m_holdersToSpreadBelow.append(BuiltinID(static_cast<uint32_t>(index)));
         for (size_t index : m_isLookedThrough)
             m_holdersToLookThrough.append(BuiltinID(static_cast<uint32_t>(index)));
         lookThroughPrototypesOfClassesWithObjects();
-        listBuiltinsThatLetCodeIn();
-        listLoadsOfUnseenCode();
+        if (!unseenCodeRunsAlready) {
+            listBuiltinsThatLetCodeIn();
+            listLoadsOfUnseenCode();
+            listLoadsOfMachineCode();
+        }
     }
 
     if (hasRecordThat(admitsUnknownJavaScriptInProgramFacts) && !m_source.admitsInspector) {
@@ -3611,7 +3635,6 @@ void BuilderOfProgramFacts::settle()
         if (!std::exchange(m_objectsOfAnyClassMayExist, true))
             m_classesWithObjectsHaveGrown = true;
         lookThroughPrototypesOfClassesWithObjects();
-        listBuiltinsThatLetCodeIn();
     }
 }
 
@@ -3674,10 +3697,9 @@ void BuilderOfProgramFacts::run()
     }
     followModules();
     settle();
-    listLoadsOfMachineCode();
 
     auto orderOf = [](const UnseenCodeRecord& record) {
-        return std::tuple(record.cause, record.builtin);
+        return std::tuple(record.cause, record.builtin, record.witness.function, record.witness.value);
     };
     AOT::sort(m_program.unseenCode, { }, orderOf);
     AOT::sort(m_program.loadsOfMachineCode, { }, orderOf);
@@ -3826,6 +3848,11 @@ void BuiltinsInReach::noteLetGo(BuiltinID builtin)
     m_builder->noteLossOf(builtin);
 }
 
+void BuiltinsInReach::noteCalledAtSite(FunctionID caller, ValueID site, bool isConstruction, BuiltinID row)
+{
+    m_linked->lookups.callsOfBuiltinsAtSites.append(LinkedCallOfBuiltin { caller, site, row, isConstruction });
+}
+
 void BuiltinsInReach::noteCalledOutOfSight(BuiltinID builtin)
 {
     if (m_linked->lookups.builtinsCalledOutOfSight.set(builtin.index()))
@@ -3961,6 +3988,11 @@ LookupsPastProgramObjects BuiltinsInReach::takeLookups()
 bool BuiltinsInReach::loaderOfHostMayRun() const
 {
     return m_builder->hasRecordOfUnseenCode();
+}
+
+bool BuiltinsInReach::hostIsAskedForValueOfModule() const
+{
+    return m_builder->hostIsAskedForValueOfModule();
 }
 
 bool BuiltinsInReach::objectsMayHaveMethodCalledWithStartupLoads() const

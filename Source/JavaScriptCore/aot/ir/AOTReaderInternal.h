@@ -34,6 +34,7 @@ public:
     void setSchemaHashCheck(SchemaHashCheck check) { m_schemaHashCheck = check; }
     // In this order, one after another, each with loops of its own: header; strings; property keys; replaceable built-ins; WireTypeReader's makeObjects, computeFamilies, readTypes;
     bool run();
+    bool tablesHaveRoomFor(const Wire::Sections&);
 
     const Program& program() const { return m_program; }
     const BuiltinTable& builtins() const { return m_builtins; }
@@ -45,6 +46,7 @@ private:
     void readStrings();
     void readPropertyKeys();
     NumbersOfProgramRecords numbersOfRecords() const;
+    void forEachListReadIntoTableOfItsName(const Wire::Sections&, const auto& functor);
     void readProgramLists();
     void readLayouts();
     void finishProgram();

@@ -38,43 +38,14 @@ void StaticsEmitter::storeStaticField(VariableID id, Boxed stored)
     emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
 }
 
-Operand StaticsEmitter::loadEncodedVariable(VariableID id)
+Operand StaticsEmitter::loadVariable(VariableID id)
 {
     return emitter<SlotEmitter>().load(addressOf(id), m_plan.variable(id).representation);
 }
 
-Operand StaticsEmitter::loadVariable(VariableID id)
+void StaticsEmitter::storeVariable(VariableID id, Operand stored)
 {
     PlannedVariable variable = m_plan.variable(id);
-    SlotEmitter& slots = emitter<SlotEmitter>();
-    Operand loaded = loadEncodedVariable(id);
-    switch (variable.encoding) {
-    case VariableEncoding::Plain:
-    case VariableEncoding::FunctionAsZero:
-        return loaded;
-    case VariableEncoding::UndefinedAsZero:
-        RELEASE_ASSERT(representsAbsentAsZero(variable.representation));
-        return slots.absentAsUndefined(loaded, variable.representation);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void StaticsEmitter::storeVariable(VariableID id, Operand stored, const Type& storedType)
-{
-    PlannedVariable variable = m_plan.variable(id);
-    switch (variable.encoding) {
-    case VariableEncoding::Plain:
-    case VariableEncoding::FunctionAsZero:
-        break;
-    case VariableEncoding::UndefinedAsZero: {
-        if (!(storedType.primitives & Primitive::Undefined))
-            break;
-        Boxed boxed = stored.as<Boxed>();
-        Condition isUndefined = equal(boxed, undefined());
-        stored = select(isUndefined, boxedConstant(JSValue()), boxed);
-        break;
-    }
-    }
     emitter<SlotEmitter>().store(addressOf(id), variable.representation, stored);
     if (traitsOf(variable.representation).holdsCell)
         emitter<BarrierEmitter>().markCard(m_mentions.add(NumberSpace::CardOfVariable, id));
@@ -114,7 +85,7 @@ TypedPointer StaticsEmitter::countOfGuards(std::span<const ClassGuardKey> guards
 
 TypedPointer StaticsEmitter::wordOfEnvironmentHandedBack(LayoutID layout)
 {
-    RELEASE_ASSERT(m_plan.layout(layout).isEscapedOffset);
+    RELEASE_ASSERT(m_plan.layout(layout).cellsAreHandedBack);
     return instanceWord(m_heaps.collectorState, m_mentions.add(NumberSpace::EnvironmentHandedBack, layout));
 }
 

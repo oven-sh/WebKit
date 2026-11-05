@@ -1,20 +1,21 @@
 # type Shape = { kind: "circle"; r: number } | { kind: "square"; s: number } | { kind: "dot"; d: number } | { kind: "line"; l: number }: each layout is proven to hold one text under `kind`.
 # The members of the union are listed by that text once for the union and the name (Walker::findMembersByTag()), so no test and no case asks every member: there is no limit on the members.
 # f1 switch (x.kind) { case "circle": return x.r; case "square": return x.s; case "dot": return x.d; default: return x.l; }: a switch over the shape: nothing is read, no text is looked up
-# f2 if (x.kind === "circle") return x.r; if (x.kind === "square") return x.s; if (x.kind === "dot") return x.d; return x.l;: the block on the edge that is not taken compares next itself: the row is one switch too
-# f3 the same with a call of unseen code between the tests, so it is no row: each comparison is a test of the shape. A tag is written at birth alone: it is not read again behind the call.
+# f2 if (x.kind === "circle") return x.r; if (x.kind === "square") return x.s; if (x.kind === "dot") return x.d; return x.l;: each comparison is a test of the shape
+# f3 the same with a call of unseen code between the tests. A tag is written at birth alone: it is not read again behind the call.
 #    What the last test leaves is one layout: the last read has no test of its own
 # f0 calls each with each object, so nothing is copied into it here: with copies only what is left over arrives at a body
 # RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding
 # CHECK-LABEL: code f1:Body
-# CHECK: SwitchOnShape 
+# CHECK: SwitchOnShape
 # CHECK: = GetSlot {{*}}key="r" receivers=[L0] level=Proven
 # CHECK: = GetSlot {{*}}key="s" receivers=[L1] level=Proven
 # CHECK: = GetSlot {{*}}key="d" receivers=[L2] level=Proven
 # RUN(ROW): walk f2 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding
 # ROW-LABEL: code f2:Body
-# ROW: SwitchOnShape 
-# ROW: = GetSlot {{*}}key="r" receivers=[L0] level=Proven
+# ROW: = ShapeTest {{*}}layouts=[L0]
+# ROW: = ShapeTest {{*}}layouts=[L1]
+# ROW: = ShapeTest {{*}}layouts=[L2]
 # ROW: = GetSlot {{*}}key="l" receivers=[L3] level=Proven
 # RUN(CALLS): walk f3 mechanisms=none+TypedOperations+DirectCalls+Arrivals+Folding
 # CALLS-LABEL: code f3:Body

@@ -11,6 +11,7 @@
 #include "AOTArrayBuiltinEmitter.h"
 #include "AOTBuiltinCallEmitter.h"
 #include "AOTCallEmitter.h"
+#include "AOTClosuresLent.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTConvention.h"
@@ -39,11 +40,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(RowDisplacementTable::maxColumn <= FieldTableEntry::maxName);
 
-bool AccessEmitter::isSymbolOfRealm(PropertyKeyID key) const
-{
-    return !liesInThread(key) && m_program.at(key).kind == PropertyKeyKind::CreatedSymbol && !hasOneInstance();
-}
-
 Boxed AccessEmitter::cellOfKey(const OperationContext& context, PropertyKeyID key)
 {
     return boxCell(emitter<ConstantEmitter>().keyConstant(context, key));
@@ -51,7 +47,7 @@ Boxed AccessEmitter::cellOfKey(const OperationContext& context, PropertyKeyID ke
 
 bool AccessEmitter::comesAgain(const OperationContext& context) const
 {
-    return m_generator.isInLoop(context.block()) || !(m_facts.runsAtMostOnce(m_id) || m_program.at(m_id).isModuleBody());
+    return m_functionComesAgain || m_generator.isInLoop(context.block());
 }
 
 std::optional<Pointer> AccessEmitter::siteOf(const OperationContext& context, PropertyKeyID key, SlotAccess access)
@@ -72,7 +68,14 @@ std::optional<Pointer> AccessEmitter::siteOfStore(const OperationContext& contex
 
 std::optional<NumberedImmediate> AccessEmitter::answersOf(const OperationContext& context, PropertyKeyID key, SiteUse use)
 {
-    if (isSymbolOfRealm(key) || !comesAgain(context))
+    if (isSymbolOfRealm(key))
+        return std::nullopt;
+    return answersOfKeyThatIsNoSymbolOfRealm(context, key, use);
+}
+
+std::optional<NumberedImmediate> AccessEmitter::answersOfKeyThatIsNoSymbolOfRealm(const OperationContext& context, PropertyKeyID key, SiteUse use)
+{
+    if (!comesAgain(context))
         return std::nullopt;
     if (m_code.at(context.block()).frequency == BlockFrequency::Rare || (context.valueID() && testsItsOwnGuess(m_code.at(context.valueID()))))
         return std::nullopt;
@@ -90,19 +93,20 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
 {
     if (isSymbolOfRealm(key))
         return Boxed(callStub(context, getByIdOfSymbolOfRealm(), { receiver.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first);
-    CallOptions options { .numberedImmediate = NumberedImmediate { mentionOfName(key) } };
+    const NumberedImmediate mention { mentionOfName(key) };
     const bool hasColumn = m_plan.slots().hasColumn(key);
     const bool isLength = hasColumn && m_program.nameClassOf(key) == NameClass::Length;
-    if (std::optional<NumberedImmediate> answers = answersOf(context, key, SiteUse::Read)) {
+    if (std::optional<NumberedImmediate> answers = answersOfKeyThatIsNoSymbolOfRealm(context, key, SiteUse::Read)) {
         NameAtSite name = hasColumn ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
         ReceiverAtSite receiverIs = receiverID && typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
-        StubKey stub = m_program.nameClassOf(key) == NameClass::Length ? readLengthAtSite(name) : tryReadAtSiteOfNarrowField(m_plan.slots().narrowFormOf(key), receiverIs, name).value_or(readAtSite(receiverIs, name));
+        const bool namesLength = hasColumn ? isLength : m_program.nameClassOf(key) == NameClass::Length;
+        StubKey stub = namesLength ? readLengthAtSite(name) : tryReadAtSiteOfNarrowField(m_plan.slots().narrowFormOf(key), receiverIs, name).value_or(readAtSite(receiverIs, name));
         return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = *answers }).first);
     }
     if (isLength)
-        return Boxed(callStub(context, getLengthAtSite(), { receiver.value() }, options).first);
+        return Boxed(callStub(context, getLengthAtSite(), { receiver.value() }, { .numberedImmediate = mention }).first);
     StubKey stub = !hasColumn ? getByIdCheckingColumn() : m_plan.slots().narrowFormOf(key) == SlotRepresentation::JSValue ? AOT::getById() : getByIdAskingFieldTableFirst();
-    return Boxed(callStub(context, stub, { receiver.value() }, options).first);
+    return Boxed(callStub(context, stub, { receiver.value() }, { .numberedImmediate = mention }).first);
 }
 
 static RuntimeOperation storeOperationWithoutCachesFor(PutMode mode)
@@ -219,10 +223,14 @@ Boxed AccessEmitter::getNamedProperty(const ValueContext& value)
     ValueID receiverID = value->objectOperand();
     PropertyKeyID key = value->key();
     Boxed receiver = in<Boxed>(receiverID);
+    if (!m_generator.paysForCodeInLine(value.block())) {
+        m_out.noteForm(Form::Closed, StateOfKnowledge::Always);
+        return getById(value, receiver, key, receiverID);
+    }
     Type receiverType = typeOf(receiverID);
     bool receiversAreListed = value->receivers() || (receiverType.layouts && receiverType.hasOnlyLayouts());
     bool isLength = !liesInThread(key) && m_program.nameClassOf(key) == NameClass::Length;
-    bool asksSiteInLine = m_generator.paysForCodeInLine(value.block()) && receiverType.isObject() && receiversAreListed && !isLength;
+    bool asksSiteInLine = receiverType.isObject() && receiversAreListed && !isLength;
     if (std::optional<PlacedSlot> slot = asksSiteInLine ? findSlotInCellOfEveryReceiver(receiverType, key) : std::nullopt) {
         m_out.noteForm(Form::Open, StateOfKnowledge::Always, Place::Loop);
         return getMemberInSlotOrByName(value, receiver, *slot);
@@ -422,18 +430,7 @@ bool AccessEmitter::isReadOfMethodCalledNext(const ValueContext& read)
     if (behind.empty() || behind.front() != onlyUser)
         return false;
     std::span<const ValueID> arguments = call.argumentsOperands();
-    if (arguments.size() > numberOfArgumentGPRs)
-        return false;
-    for (ValueID argument : arguments) {
-        if (argument == read.id())
-            return false;
-        const Operation* made = &operationAt(argument);
-        if (made->opcode == Opcode::Box)
-            made = &operationAt(made->operand(0));
-        if (made->opcode == Opcode::NewClosure && made->isLent())
-            return false;
-    }
-    return true;
+    return arguments.size() <= numberOfArgumentGPRs && !std::ranges::contains(arguments, read.id());
 }
 
 ValueID AccessEmitter::findPatternLeftToCall(const ValueContext& read)
@@ -449,7 +446,7 @@ ValueID AccessEmitter::findPatternLeftToCall(const ValueContext& read)
         return { };
     ValueID made = operationAt(boxed).operand(0);
     const Operation& pattern = operationAt(made);
-    if (pattern.opcode != Opcode::NewRegExp || pattern.isNeverToldApart() || pattern.regExpFlags().contains(RegExpFlags::Sticky) || m_code.onlyUserOf(made) != boxed)
+    if (pattern.opcode != Opcode::NewRegExp || pattern.regExpFlags().contains(RegExpFlags::Sticky) || m_code.onlyUserOf(made) != boxed)
         return { };
     if (!std::ranges::contains(read.operationsBehind(), made) || !emitter<BuiltinCallEmitter>().canShareRegExpLiteral(pattern))
         return { };
@@ -521,7 +518,8 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
     ReadLeftToCall read = *std::exchange(m_readLeftToCall, std::nullopt);
     RELEASE_ASSERT(read.read == call->calleeOperand() && !call.returnCall());
     CallEmitter& calls = emitter<CallEmitter>();
-    if (!read.pattern && calls.tryCallThroughMethodTable(call, read.key))
+    const uint8_t lentArguments = argumentsLentBy(m_program, generator().facts(), m_code, call.value());
+    if (!read.pattern && !lentArguments && calls.tryCallThroughMethodTable(call, read.key))
         return true;
     Vector<LValue, 8> arguments;
     for (ValueID argument : call->argumentsOperands())
@@ -531,11 +529,11 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
     bool goesByClass = boxedCall && servesCallsByName(*boxedCall, count);
     std::optional<CompiledMethodOfArray> compiledMethod = !goesByClass && call->methodOfReceiverAsMade() && count <= maxArgumentCountOfCompiledMethodOfArray ? compiledMethodOfArray(call->methodOfReceiverAsMade()) : std::nullopt;
     std::optional<NumberedImmediate> answers = (!goesByClass || call->methodIsNamedByKeyAlone()) && !compiledMethod && m_plan.slots().hasColumn(read.key) ? answersOf(call, read.key, SiteUse::Call) : std::nullopt;
-    RELEASE_ASSERT(!read.pattern || goesByClass);
+    RELEASE_ASSERT((!read.pattern || goesByClass) && (!lentArguments || !goesByClass));
     StubKey byClass = !goesByClass ? StubKey() : read.pattern ? (answers ? callMethodOfBuiltinClassAtSiteWithSharedPattern(*boxedCall, count) : callMethodOfBuiltinClassWithSharedPattern(*boxedCall, count))
         : answers ? callMethodOfBuiltinClassAtSite(*boxedCall, count) : callMethodOfBuiltinClass(*boxedCall, count);
     ConventionCall conventionCall {
-        .stub = goesByClass ? byClass : compiledMethod ? callCompiledMethodOfArray(*compiledMethod, count) : answers ? callMethodAtSite(count) : callMethodById(count),
+        .stub = goesByClass ? byClass : compiledMethod ? callCompiledMethodOfArray(*compiledMethod, count, lentArguments) : answers ? callMethodAtSite(count, lentArguments) : callMethodById(count, lentArguments),
         .thisValue = in<Boxed>(call->thisValueOperand()).value(),
         .arguments = arguments.span(),
     };
@@ -570,13 +568,15 @@ void AccessEmitter::generatePropGet(const ValueContext& value)
         define(value, getFreeName(value));
         return;
     }
-    if (isReadOfMethodCalledNext(value)) {
+    ValueID onlyUser = m_code.onlyUserOf(value.id());
+    if (onlyUser && operationAt(onlyUser).opcode == Opcode::Call && isReadOfMethodCalledNext(value)) {
         m_out.noteForm(Form::Closed, StateOfKnowledge::Always);
         m_readLeftToCall = ReadLeftToCall { value.id(), value->key(), value.origin(), findPatternLeftToCall(value) };
         define(value, undefined());
         return;
     }
-    returnWhatMethodOfBuiltinClassGives(value);
+    if (m_code.at(value.block()).terminator.kind == TerminatorKind::ReturnCall)
+        returnWhatMethodOfBuiltinClassGives(value);
     define(value, getNamedProperty(value));
 }
 
@@ -735,10 +735,12 @@ void AccessEmitter::generateElemGet(const ValueContext& value)
         return;
     }
     StubKey stub = getByValCached();
-    if (key->isInteger || value->keyIsIntegral()) {
-        std::optional<AOT::ExpectedElements> expected = stubFormOfExpectedElements(value->expectedElements());
-        stub = expected ? getByValExpecting(key->isInteger, *expected) : AOT::getByVal(key->isInteger);
-    } else if (typeOf(value->objectOperand()).isObject() && typeOf(value->propertyOperand()).isString())
+    std::optional<AOT::ExpectedElements> expected = stubFormOfExpectedElements(value->expectedElements());
+    if (expected)
+        stub = getByValExpecting(key->isInteger, *expected);
+    else if (key->isInteger || value->keyIsIntegral())
+        stub = AOT::getByVal(key->isInteger);
+    else if (typeOf(value->objectOperand()).isObject() && typeOf(value->propertyOperand()).isString())
         stub = getByValCachedCells();
 
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
@@ -784,9 +786,9 @@ void AccessEmitter::generateElemSet(const ValueContext& value)
     if (!key)
         return;
     StubKey stub = putByValCached(putModeOf(value->mode()));
-    if (key->isInteger || value->keyIsIntegral()) {
+    std::optional<AOT::ExpectedElements> expected = stubFormOfExpectedElements(value->expectedElements());
+    if (expected || key->isInteger || value->keyIsIntegral()) {
         JSC::ECMAMode mode = forMode(value->mode(), JSC::ECMAMode::strict(), JSC::ECMAMode::sloppy());
-        std::optional<AOT::ExpectedElements> expected = stubFormOfExpectedElements(value->expectedElements());
         stub = expected ? putByValExpecting(key->isInteger, mode, *expected) : AOT::putByVal(key->isInteger, mode);
     }
     callStub(value, stub, { object.value(), key->value, stored.value() });

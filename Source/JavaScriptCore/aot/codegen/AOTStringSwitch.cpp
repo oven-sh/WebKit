@@ -189,7 +189,7 @@ private:
 
         CaseGroup narrowCases;
         for (const SwitchCase* switchCase : cases) {
-            m_strings.makeCellsHoldAtomOf(switchCase->string);
+            m_strings.makeCellsHoldAtomOf(switchCase->string, switchCase->text);
             if (switchCase->text.is8Bit())
                 narrowCases.append(switchCase);
         }
@@ -373,7 +373,7 @@ private:
     void compareSequentially(CellPointer string, const CharacterView& view, const CaseGroup& group, std::optional<DistinguishingWord> known = std::nullopt)
     {
         emitTestChain(group, [&](const SwitchCase& switchCase, BlockEdge next) {
-            if (!m_strings.canCompareInline(switchCase.string)) {
+            if (!StringEmitter::canCompareInline(switchCase.text)) {
                 compareByCall(string, switchCase, next);
                 return;
             }

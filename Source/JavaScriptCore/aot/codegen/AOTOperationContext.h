@@ -45,7 +45,10 @@ private:
     ValueID m_valueID;
     const Instruction& m_instruction;
     const Edge* m_handler;
-    mutable std::optional<Effects> m_effects;
+    mutable bool m_hasEffects { false };
+    union {
+        mutable Effects m_effects;
+    };
 };
 
 class TerminatorContext final : public OperationContext {

@@ -11,6 +11,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+struct LoopOverIterator {
+    ValueID step;
+    BlockID blockOfStep;
+    bool stepStandsInHeadOfLoop { false };
+};
+std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex&, ValueID open);
+void buildFirstReadsThatOpenOfGeneratorLeavesOut(Walker&, Origin);
+void buildFirstReadThatCloseOfGeneratorLeavesOut(Walker&, Origin);
 bool buildLoopOverGenerator(Walker&, const BodyValue&);
 bool engineAnswersForGenerators(Walker&);
 GeneratorStepCheck checkLeftToStepOf(Walker&, Reference generator);

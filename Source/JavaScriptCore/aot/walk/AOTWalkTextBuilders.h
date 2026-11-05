@@ -48,26 +48,22 @@ bool partHasFormOfItsOwnInStringBuilder(const Type&);
 StringID textOfKnownPartOfStringBuilder(Walker&, Reference part);
 
 bool edgeLeavesLoopOfTextInStringBuilder(Walker&, BlockID to);
-using TextsTakenOutOnEdge = Vector<std::pair<Reference, Reference>, 2>;
+struct TextsTakenOutOnEdge {
+    Vector<std::pair<Reference, Reference>, 2> strings;
+    Vector<ValueID, 2> names;
+};
 void takeTextsOutOfStringBuildersOnEdge(Walker&, BlockID to, BodyTarget, Vector<Reference, 8>& arguments, TextsTakenOutOnEdge&);
-void bringStringsInPlaceOfTexts(const TextsTakenOutOnEdge&, Vector<std::pair<ValueID, Reference>, 2>& namesOnEdge);
 void takeTextsOutOfStringBuildersAtEndOfWay(Walker&, const BodyTerminator&);
-Reference finishTextInStringBuilder(Walker&, TextInStringBuilder&, Reference name, Origin);
 void discardTextInStringBuilder(Walker&, TextInStringBuilder&, Reference name, Origin);
 
 bool readsTextWithoutString(Walker&, const BodyValue& reader, TextInStringBuilder&, Reference name);
 Reference truthOfTextInStringBuilder(Walker&, TextInStringBuilder&, Reference name, Origin);
-bool textStaysInStringBuilderOnEdge(Walker&, const TextInStringBuilder&, BlockID to, BodyTarget);
-bool mayKeepTextUnderHandlers(Walker&, BlockID inputHead, const GrowingText&);
 bool everyHandlerLetsTextGo(Walker&, const GrowingText&);
-void appendPartsRolledBackWhereTheyFail(Walker&, TextInStringBuilder&, Reference name, std::span<const Reference> parts, Origin);
 Reference primitivePartOfStringBuilder(Walker&, Opcode join, Reference part, Origin);
 bool convertPartsAndAppendToTextInStringBuilder(Walker&, const BodyValue& join, std::span<const Reference> parts);
-Reference lastPartOrFinishedText(Walker&, TextInStringBuilder&, Reference name, Origin);
 bool textBegunHereMayLieInFrame(Walker&, BlockID inputHead, const GrowingText&);
-bool becomeOperationOfStringBuilderInFrame(Walker&, TextInStringBuilder&, Reference name, Draft&, Opcode inFrame);
-void noteCursorBehind(Walker&, TextInStringBuilder&, Reference cursor);
-Reference finishTextInFrame(Walker&, TextInStringBuilder&, Reference name, Origin);
+void becomeOperationOfStringBuilderInFrame(Walker&, TextInStringBuilder&, Reference name, Draft&, Opcode inFrame);
+Reference finishTextInFrame(Walker&, Reference name, Origin);
 bool appendPieceWithoutCutting(Walker&, TextInStringBuilder&, Reference name, Reference part, Origin);
 bool appendResultOfBuiltinStraight(Walker&, TextInStringBuilder&, Reference name, Reference part, Origin);
 bool takePartsOfJoinReturnedByCopy(Walker&, ValueID operand, Vector<Reference, 8>& parts);

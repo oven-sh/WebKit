@@ -28,9 +28,9 @@ static OptionSet<FactOfCell> factsOfCellEndedInWalkState(const LocationMasks& wr
 {
     OptionSet<FactOfCell> ended;
     if (writes.contains(AbstractHeap::ShapeWords))
-        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
+        ended.add({ FactOfCell::NotFrozen, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
     if (writes.contains(AbstractHeap::NamedProperties))
-        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
+        ended.add({ FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed, FactOfCell::BearsNoMark });
     if (writes.contains(AbstractHeap::OrderWords))
         ended.add({ FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed });
     if (writes.contains(AbstractHeap::PrototypeLinks))
@@ -198,9 +198,19 @@ Reference WalkState::checkedNameHeldFrom(uint32_t place) const
     return { };
 }
 
+NEVER_INLINE void WalkState::takeMarksOfStateWithoutWholeProgram(WalkState& other)
+{
+    Marks marks = m_marks;
+    m_program = other.m_program;
+    m_marks = other.m_marks;
+    noteWhetherProgramIsWhole();
+    marks.kinds &= ~programIsWhole;
+    other.m_marks = marks;
+}
+
 void WalkState::dropWhatIsHeld()
 {
-    m_marks.hasCheckedNames = false;
+    m_marks.kinds &= programIsWhole;
     if (m_held->numberOfOwners == 1) {
         m_held->clear();
         return;
@@ -211,6 +221,7 @@ void WalkState::dropWhatIsHeld()
 
 void WalkState::dropAllRecords()
 {
+    m_marks.kinds &= ~Kinds::records;
     if (m_held->numberOfOwners == 1) {
         m_held->dropAllRecords();
         return;
@@ -232,8 +243,10 @@ void WalkState::endWhatIsWritten(const Effects& effects)
         endWhatIsNotFresh();
         return;
     }
-    if (writesInPlace() || m_held->restsOnHeapsAmong(effects.writes))
+    if (writesInPlace() || m_held->restsOnHeapsAmong(effects.writes)) {
         heldToWrite().endWhatIsWritten(effects);
+        noteKindsOfRecordsLeft();
+    }
 }
 
 void WalkState::endWhatIsNotFresh()
@@ -243,6 +256,7 @@ void WalkState::endWhatIsNotFresh()
         return;
     }
     heldToWrite().endWhatIsNotFresh();
+    noteKindsOfRecordsLeft();
 }
 
 uint8_t WalkState::Held::bitOf(const ProgramOfState& program, const MemoryLocation& location)
@@ -774,6 +788,12 @@ void WalkState::Held::noteFactsOfCell(Reference object, OptionSet<FactOfCell> fa
     m_factsOfCellReachedByEffects.add(facts);
     if (m_lists) [[unlikely]]
         listHolder(holder);
+}
+
+void WalkState::Held::endFactsOfCellOfHolderOf(Reference object, OptionSet<FactOfCell> ended)
+{
+    if (uint32_t holder = findHolder(object); holder != none)
+        endFactsOfCell(holder, ended);
 }
 
 OptionSet<FactOfCell> WalkState::Held::factsOfCellOfHolderOf(Reference object) const
@@ -1402,7 +1422,9 @@ void WalkState::meetWith(const WalkState& other)
         return;
     }
     heldToWrite().meetWith(*other.m_held);
-    m_marks.hasCheckedNames = !m_held->m_checkedNames.isEmpty();
+    noteKindsOfRecordsLeft();
+    if (m_held->m_checkedNames.isEmpty())
+        m_marks.kinds &= ~Kinds::checkedNames;
 }
 
 void WalkState::Held::meetWith(const Held& other)

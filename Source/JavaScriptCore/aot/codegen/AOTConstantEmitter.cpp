@@ -149,12 +149,10 @@ void ConstantEmitter::generateData(const ValueContext& value)
 {
     switch (value->encoding()) {
     case DataEncoding::Unselected:
-    case DataEncoding::Expanded:
         failAndDefineZero(value, InternalErrorKind::PlacedPayloadMissing);
         return;
     case DataEncoding::ReadOnlyTree:
     case DataEncoding::CopyOnWriteArray:
-    case DataEncoding::MadeOnce:
         break;
     }
     if (value->encoding() == DataEncoding::CopyOnWriteArray) {
@@ -163,21 +161,6 @@ void ConstantEmitter::generateData(const ValueContext& value)
     }
     DataID data = value->data();
     uint32_t request = mentionOfDataRequest(m_mentions, data, value->encoding());
-    if (value->encoding() == DataEncoding::MadeOnce) {
-        m_out.noteForm(Form::Open, StateOfKnowledge::MadeOnce);
-        uint32_t key[] { data.index() };
-        defineCell(value, cellNumberedBehindJoin(pureFunction(PureOperation::DataCell, data.index()), [&] {
-            TypedPointer cellWord = instanceWord(m_heaps.AOTInstance_constantCells, m_mentions.add(NumberSpace::DataCell, data));
-            return permanentCell(cellWord, false, [&] {
-                CellPointer cell = callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { numberOf(request) }, { .isOnRarePath = true });
-                mutatorFence();
-                m_out.store64(cell.value(), cellWord);
-                emitter<BarrierEmitter>().markCard(m_mentions.cardOfWord(NumberSpace::DataCell, key));
-                return cell;
-            });
-        }));
-        return;
-    }
     m_out.noteForm(Form::Runtime, StateOfKnowledge::ReadOnlyTree);
     defineCell(value, callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { numberOf(request) }));
 }
@@ -287,7 +270,7 @@ CellPointer ConstantEmitter::makeConstantAtSite(const OperationContext* context,
     return CellPointer(patch);
 }
 
-CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, StubKey stub, CallOptions options, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord)
+CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, StubKey stub, const CallOptions& options, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord)
 {
     auto callStubThatMakesCell = [&] {
         return CellPointer(callStub(context, stub, { }, options).first);
@@ -295,8 +278,10 @@ CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, Stu
     constexpr StateOfKnowledge always = StateOfKnowledge::Always;
     static_assert(formByLoopAlone(Opcode::KeyConstant, always, true).form == formByLoopAlone(Opcode::String, always, true).form && formByLoopAlone(Opcode::KeyConstant, always, false).form == formByLoopAlone(Opcode::String, always, false).form);
     static_assert(formByLoopAlone(Opcode::Builtin, always, true).form == formByLoopAlone(Opcode::String, always, true).form && formByLoopAlone(Opcode::Builtin, always, false).form == formByLoopAlone(Opcode::String, always, false).form);
+    constexpr FormAtPlace namedInLoops = formByLoopAlone(Opcode::String, always, true);
+    constexpr FormAtPlace namedOutsideLoops = formByLoopAlone(Opcode::String, always, false);
     bool standsInLoop = generator().isInLoop(context.block());
-    FormAtPlace named = formByLoopAlone(Opcode::String, always, standsInLoop);
+    FormAtPlace named = standsInLoop ? namedInLoops : namedOutsideLoops;
     bool runsOnce = !standsInLoop && (m_facts.runsAtMostOnce(m_id) || m_program.at(m_id).isModuleBody());
     bool standsInRareBlock = m_code.at(context.block()).frequency == BlockFrequency::Rare;
     bool standsInUnlikelyBlock = m_code.at(context.block()).frequency == BlockFrequency::Unlikely;

@@ -179,23 +179,6 @@ void ObjectBuiltinEmitter::generateCallObjectConstructor(const InlineCall& call)
     finish(call, objectOrMiss(call, call.argument(0)));
 }
 
-void ObjectBuiltinEmitter::generateObjectFreeze(const InlineCall& call)
-{
-    static_assert(orderWordHasExtraProperties < orderWordIsFrozen && orderWordIsFrozen < orderWordIsSealed && orderWordIsSealed < orderWordIsNotExtensible);
-    ValueID argument = call.argument(0);
-    const Type& type = typeOf(argument);
-    ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
-    Word32 frozen = word32(static_cast<int32_t>(orderWordIntegrityBits));
-    CellPointer cell = objectOrMiss(call, argument);
-    if (!shapeTests.hasOnlyCompiledObjects(type))
-        missUnless(call, shapeTests.hasShapeIn(cell, type.layouts, type));
-    missUnless(call, hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits));
-    Word32 word = shapeTests.orderWordOf(cell);
-    missUnless(call, below(word, word32(orderWordHasExtraProperties)));
-    storeField(cell, m_heaps.AOTObject_orderWord, bitOr(word, frozen));
-    finish(call, get(argument), type);
-}
-
 void ObjectBuiltinEmitter::generateObjectAssign(const InlineCall& call)
 {
     ValueID target = call.argument(0);

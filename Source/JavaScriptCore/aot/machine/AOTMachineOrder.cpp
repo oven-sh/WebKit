@@ -10,6 +10,7 @@
 
 #include "AOTMachineTarget.h"
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <type_traits>
@@ -23,38 +24,16 @@ static_assert(EdgeClass::Normal < EdgeClass::Unlikely && EdgeClass::Unlikely < E
 
 static constexpr uint32_t positionsOfBlockSplitLate = 4;
 
-void Order::retarget(Block* from, unsigned successorIndex, Block* newTarget)
+void Order::dropUpsilonsHandedTo(const Block* formerTarget, Block* from)
 {
-    Edge& edge = from->m_successors[successorIndex];
-    Block* oldTarget = edge.m_block;
-    if (oldTarget == newTarget)
-        return;
-
-    if (newTarget->m_numberOfIncomingEdges) {
-        std::optional<EdgeClass> classOfEdgePassedBy;
-        for (const Edge& passedBy : oldTarget->successors()) {
-            if (passedBy.block() == newTarget)
-                classOfEdgePassedBy = classOfEdgePassedBy ? std::min(*classOfEdgePassedBy, passedBy.edgeClass()) : passedBy.edgeClass();
-        }
-        if (classOfEdgePassedBy)
-            edge.m_class = std::max(edge.m_class, *classOfEdgePassedBy);
-    }
-
-    ASSERT(oldTarget->m_numberOfIncomingEdges);
-    --oldTarget->m_numberOfIncomingEdges;
-    edge.m_block = newTarget;
-    newTarget->didGainIncomingEdge();
-
-    if (oldTarget->m_phis.isEmpty() || from->m_upsilons.isEmpty())
-        return;
     for (const Edge& other : from->successors()) {
-        if (other.block() == oldTarget)
+        if (other.block() == formerTarget)
             return;
     }
     uint32_t numberKept = 0;
     for (Operation* upsilon : from->m_upsilons) {
         Operation* phi = upsilon->phi();
-        if (!phi || phi->owner() != oldTarget)
+        if (!phi || phi->owner() != formerTarget)
             from->m_upsilons[numberKept++] = upsilon;
     }
     from->m_upsilons.shrink(numberKept);
@@ -167,17 +146,16 @@ void Order::passJoinBy(Block* from, Block* target, Operation* phi, Operation* va
         handed->loseUse();
 }
 
-Block* Order::split(Block* from, unsigned successorIndex)
+Block* Order::split(Block* from, unsigned successorIndex, EdgeClass classOfEdgeToTarget)
 {
     ASSERT(from->isTerminated());
     Procedure& procedure = from->procedure();
     Arena& arena = procedure.arena();
-    const Edge edge = from->successor(successorIndex);
-    Block* target = edge.block();
+    Block* target = from->successor(successorIndex).block();
     ASSERT(!target->isLandingPad());
     Block* middle = procedure.addBlock();
 
-    auto append = [&](ArenaVector<Operation*>& list, Opcode opcode, Type type, Origin origin) {
+    auto append = [&](ArenaVector<Operation*>& list, Opcode opcode, Type type, Origin origin) ALWAYS_INLINE_LAMBDA {
         Operation* operation = arena.create<Operation>(opcode, type, origin);
         operation->m_owner = middle;
         operation->m_indexInBlock = list.size();
@@ -208,7 +186,7 @@ Block* Order::split(Block* from, unsigned successorIndex)
     }
 
     append(middle->m_operations, Jump, Void, from->last()->origin());
-    middle->appendSuccessorInline(Edge(target, edge.edgeClass()));
+    middle->appendSuccessorInline(Edge(target, classOfEdgeToTarget));
     return middle;
 }
 
@@ -460,7 +438,6 @@ private:
     uint32_t m_numberOfBlocksInPart[numberOfParts] { 0, 0, 0 };
 
     ArenaVector<ProgressThroughSuccessors> m_progressThroughManySuccessors;
-    size_t m_numberOfRootsLeft { 0 };
     uint32_t m_firstBlockInOrder { none };
     uint32_t m_firstRareBlock { none };
     const uint32_t* m_blocksOutsideRareRegions { nullptr };
@@ -483,8 +460,9 @@ void BlockOrderBuilder::findReachedBlocks()
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
     m_states.reserve(m_arena, numberOfBlocks + numberOfBlocks / 2 + 4);
-    m_states.fill(m_arena, numberOfBlocks, BlockState { });
+    m_states.growWithoutInitializing(m_arena, numberOfBlocks);
     BlockState* const states = m_states.begin();
+    std::memset(static_cast<void*>(states), 0, static_cast<size_t>(numberOfBlocks) * sizeof(BlockState));
 
     Block** const reachedBlocks = m_arena.allocateArray<Block*>(2 * static_cast<size_t>(numberOfBlocks));
     Block** const targetsOfUnlikelyEdges = reachedBlocks + numberOfBlocks;
@@ -502,6 +480,10 @@ void BlockOrderBuilder::findReachedBlocks()
         *endOfReachedBlocks++ = block;
     };
 
+    auto mayGetBlockOnEdgeTo = [](const Block* target) ALWAYS_INLINE_LAMBDA {
+        return target->numberOfIncomingEdges() >= 2 || !target->phis().empty();
+    };
+
     enum class Wave : uint8_t {
         Likely,
         Unlikely,
@@ -511,11 +493,16 @@ void BlockOrderBuilder::findReachedBlocks()
         constexpr Wave wave = decltype(constantOfWave)::value;
         while (nextBlockToTake != endOfReachedBlocks) {
             Block* block = *nextBlockToTake++;
-            if (!block->isTerminated()) [[unlikely]] {
-                everyBlockIsTerminated = false;
-                continue;
+            uint32_t size = block->size();
+            const Operation* last = size ? block->operations().data()[size - 1] : nullptr;
+            uint32_t flagsOfBlock = 0;
+            if (!last || !isTerminal(last->opcode())) [[unlikely]] {
+                if (!last || !last->endsBlock()) {
+                    everyBlockIsTerminated = false;
+                    continue;
+                }
+                flagsOfBlock = MayGetBlocksOnEdges;
             }
-            uint32_t flagsOfBlock = block->last()->opcode() == Patch ? MayGetBlocksOnEdges : 0;
 
             auto follow = [&](const Edge& edge) ALWAYS_INLINE_LAMBDA {
                 Block* target = edge.block();
@@ -564,14 +551,17 @@ void BlockOrderBuilder::findReachedBlocks()
             if (numberOfSuccessors == 1)
                 follow(edges[0]);
             else if (numberOfSuccessors == 2) {
-                flagsOfBlock = MayGetBlocksOnEdges;
                 follow(edges[0]);
                 follow(edges[1]);
+                flagsOfBlock &= HasRareEdge;
+                if (mayGetBlockOnEdgeTo(edges[0].block()) || mayGetBlockOnEdgeTo(edges[1].block()))
+                    flagsOfBlock |= MayGetBlocksOnEdges;
             } else if (numberOfSuccessors) [[unlikely]] {
                 flagsOfBlock = MayGetBlocksOnEdges;
                 for (unsigned successorIndex = 0; successorIndex < numberOfSuccessors; ++successorIndex)
                     follow(edges[successorIndex]);
-            }
+            } else
+                flagsOfBlock = 0;
 
             if (flagsOfBlock)
                 states[block->index()].flags |= flagsOfBlock;
@@ -668,53 +658,75 @@ void BlockOrderBuilder::findEdgesThatGetBlocks()
             stateOfTarget.flags |= IsEnteredThroughBlocksOnEdges;
     }
 
-    for (uint32_t index = 0; index < numberOfBlocks; ++index) {
-        if (!(states[index].flags & MayGetBlocksOnEdges))
-            continue;
+    enum class Successors : uint8_t {
+        One,
+        Two,
+        Many,
+    };
+    auto lookAtEdge = [&](auto constantOfSuccessors, const Block* from, BlockState& stateOfFrom, uint32_t index, const Edge* edges, unsigned successorIndex) ALWAYS_INLINE_LAMBDA {
+        constexpr Successors successors = decltype(constantOfSuccessors)::value;
+        const Edge& edge = edges[successorIndex];
+        const Block* target = edge.block();
+        uint32_t indexOfTarget = target->index();
+        const BlockState& stateOfTarget = states[indexOfTarget];
+        bool isJoin = stateOfTarget.numberOfPredecessors >= 2;
+        bool targetHasPhis = !target->phis().empty();
+        if (!isJoin && (successors == Successors::One || !targetHasPhis))
+            return;
+        if (target->isLandingPad())
+            return;
+
+        if (!isJoin) {
+            if (!successorIndex && from->last()->opcode() == Patch && from->last()->type().isTuple())
+                return;
+        } else if (!targetHasPhis) {
+            auto isOnlyEdgeToTarget = [&]() ALWAYS_INLINE_LAMBDA -> bool {
+                if constexpr (successors == Successors::Many)
+                    return hasOneOfManyEdgesTo(from, target);
+                else if constexpr (successors == Successors::One)
+                    return true;
+                else {
+                    if (edges[1 - successorIndex].block() != target) [[likely]]
+                        return true;
+                    return successorIndex && !m_edgesThatGetBlocks.isEmpty() && m_edgesThatGetBlocks.last().from == index;
+                }
+            };
+            uint32_t flagsOfTarget = stateOfTarget.flags;
+            bool targetIsRare = flagsOfTarget & IsRare;
+            if (edge.isRare() == targetIsRare && !(targetIsRare && (flagsOfTarget & IsEnteredThroughBlocksOnEdges))
+                && endsInTestWhoseEdgesMayStayUnsplit(from, stateOfFrom) && isOnlyEdgeToTarget()) {
+                ++m_numberOfUnsplitEdges;
+                stateOfFrom.flags |= HasUnsplitEdge;
+                return;
+            }
+        }
+
+        if constexpr (successors == Successors::Many)
+            --m_numberOfEdgesFromCountedBlock[indexOfTarget];
+        if (m_edgesThatGetBlocks.size() == m_edgesThatGetBlocks.capacity()) [[unlikely]]
+            makeRoomForEdgeThatGetsBlock();
+        m_edgesThatGetBlocks.appendWithinCapacity(EdgeThatGetsBlock { index, successorIndex });
+    };
+
+    BlockState* const endOfStates = states + numberOfBlocks;
+    for (BlockState* stateOfFrom = states; ; ++stateOfFrom) {
+        while (stateOfFrom != endOfStates && !(stateOfFrom->flags & MayGetBlocksOnEdges))
+            ++stateOfFrom;
+        if (stateOfFrom == endOfStates)
+            break;
+        uint32_t index = static_cast<uint32_t>(stateOfFrom - states);
         const Block* from = blocks[index];
         const Edge* const edges = from->successors().data();
         unsigned numberOfSuccessors = from->numSuccessors();
-        if (numberOfSuccessors > 2) [[unlikely]]
+        if (numberOfSuccessors == 2) [[likely]] {
+            lookAtEdge(std::integral_constant<Successors, Successors::Two> { }, from, *stateOfFrom, index, edges, 0);
+            lookAtEdge(std::integral_constant<Successors, Successors::Two> { }, from, *stateOfFrom, index, edges, 1);
+        } else if (numberOfSuccessors == 1)
+            lookAtEdge(std::integral_constant<Successors, Successors::One> { }, from, *stateOfFrom, index, edges, 0);
+        else if (numberOfSuccessors) {
             countEdgesOf(from);
-
-        for (unsigned successorIndex = 0; successorIndex < numberOfSuccessors; ++successorIndex) {
-            const Edge& edge = edges[successorIndex];
-            const Block* target = edge.block();
-            uint32_t indexOfTarget = target->index();
-            const BlockState& stateOfTarget = states[indexOfTarget];
-            bool isJoin = stateOfTarget.numberOfPredecessors >= 2;
-            bool targetHasPhis = !target->phis().empty();
-            if (!isJoin && (numberOfSuccessors < 2 || !targetHasPhis))
-                continue;
-            if (target->isLandingPad())
-                continue;
-
-            if (!isJoin) {
-                if (!successorIndex && from->last()->opcode() == Patch && from->last()->type().isTuple())
-                    continue;
-            } else if (!targetHasPhis) {
-                auto isOnlyEdgeToTarget = [&]() ALWAYS_INLINE_LAMBDA -> bool {
-                    if (numberOfSuccessors > 2) [[unlikely]]
-                        return hasOneOfManyEdgesTo(from, target);
-                    if (numberOfSuccessors < 2 || edges[1 - successorIndex].block() != target) [[likely]]
-                        return true;
-                    return successorIndex && !m_edgesThatGetBlocks.isEmpty() && m_edgesThatGetBlocks.last().from == index;
-                };
-                uint32_t flagsOfTarget = stateOfTarget.flags;
-                bool targetIsRare = flagsOfTarget & IsRare;
-                if (edge.isRare() == targetIsRare && !(targetIsRare && (flagsOfTarget & IsEnteredThroughBlocksOnEdges))
-                    && endsInTestWhoseEdgesMayStayUnsplit(from, states[index]) && isOnlyEdgeToTarget()) {
-                    ++m_numberOfUnsplitEdges;
-                    states[index].flags |= HasUnsplitEdge;
-                    continue;
-                }
-            }
-
-            if (numberOfSuccessors > 2) [[unlikely]]
-                --m_numberOfEdgesFromCountedBlock[indexOfTarget];
-            if (m_edgesThatGetBlocks.size() == m_edgesThatGetBlocks.capacity()) [[unlikely]]
-                makeRoomForEdgeThatGetsBlock();
-            m_edgesThatGetBlocks.appendWithinCapacity(EdgeThatGetsBlock { index, successorIndex });
+            for (unsigned successorIndex = 0; successorIndex < numberOfSuccessors; ++successorIndex)
+                lookAtEdge(std::integral_constant<Successors, Successors::Many> { }, from, *stateOfFrom, index, edges, successorIndex);
         }
     }
 }
@@ -729,7 +741,7 @@ void BlockOrderBuilder::splitEdges()
         Block* target = edge.block();
         bool targetIsRare = m_states[target->index()].flags & IsRare;
         uint32_t flagsOfFrom = m_states[listed.from].flags;
-        Block* middle = Order::split(from, listed.successorIndex);
+        [[maybe_unused]] Block* middle = Order::split(from, listed.successorIndex, edge.isRare() && targetIsRare ? EdgeClass::Normal : edge.edgeClass());
         ASSERT(middle->index() == m_states.size());
         BlockState stateOfMiddle;
         stateOfMiddle.numberOfPredecessors = 1;
@@ -745,11 +757,6 @@ void BlockOrderBuilder::splitEdges()
         m_states.append(m_arena, stateOfMiddle);
         ++numberOfBlocksIn(partOfMiddle);
         ++m_numberOfEdges;
-
-        if (edge.isRare() && targetIsRare) {
-            middle->clearSuccessors();
-            middle->appendSuccessor(Edge(target, EdgeClass::Normal));
-        }
     }
 }
 
@@ -863,9 +870,9 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
         state.blockAboveOnPath = current;
         current = index;
         stateOfCurrent = &state;
+        state.cycleHeader = none;
+        state.firstInCycle = none;
         if constexpr (staysWithinRareRegions) {
-            state.cycleHeader = none;
-            state.firstInCycle = none;
             if (block->isLandingPad()) [[unlikely]] {
                 flags |= IsRareLandingPad;
                 m_someRareBlockIsLandingPad = true;
@@ -1008,8 +1015,8 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
         }
     };
 
-    for (m_numberOfRootsLeft = numberOfRoots; m_numberOfRootsLeft;) {
-        Block* root = rootAt(--m_numberOfRootsLeft);
+    for (size_t numberOfRootsLeft = numberOfRoots; numberOfRootsLeft;) {
+        Block* root = rootAt(--numberOfRootsLeft);
         uint32_t indexOfRoot = root->index();
         BlockState& stateOfRoot = states[indexOfRoot];
         uint32_t flagsOfRoot = stateOfRoot.flags;
@@ -1049,31 +1056,33 @@ void BlockOrderBuilder::takeRareBlocksOutOfOrder()
     for (uint32_t index = m_firstBlockInOrder; index != none;) {
         BlockState& state = states[index];
         uint32_t flags = state.flags;
-        uint32_t next = state.next;
-        if (!(flags & IsRare)) {
+        if (flags & IsRare) {
+            do
+                index = states[index].next;
+            while (index != none && (states[index].flags & IsRare));
             *link = index;
-            link = &state.next;
-            blocksOutside[numberOutside] = index;
-            state.indexOutsideRareRegions = numberOutside;
-
-            uint32_t header = state.cycleHeader;
-            if (header != none) {
-                while (header != none && (states[header].flags & IsRare))
-                    header = states[header].cycleHeader;
-                state.cycleHeader = header;
-            }
-
-            if (flags & HasRareEdge) {
-                for (const Edge& edge : blocks[index]->successors()) {
-                    if (states[edge.block()->index()].flags & IsRare)
-                        *endOfEntries++ = EntryOfRareRegion { edge.block(), numberOutside };
-                }
-            }
-            ++numberOutside;
+            continue;
         }
-        index = next;
+        link = &state.next;
+        blocksOutside[numberOutside] = index;
+        state.indexOutsideRareRegions = numberOutside;
+
+        uint32_t header = state.cycleHeader;
+        if (header != none) {
+            while (header != none && (states[header].flags & IsRare))
+                header = states[header].cycleHeader;
+            state.cycleHeader = header;
+        }
+
+        if (flags & HasRareEdge) {
+            for (const Edge& edge : blocks[index]->successors()) {
+                if (edge.isRare() && (states[edge.block()->index()].flags & IsRare))
+                    *endOfEntries++ = EntryOfRareRegion { edge.block(), numberOutside };
+            }
+        }
+        ++numberOutside;
+        index = state.next;
     }
-    *link = none;
     RELEASE_ASSERT(numberOutside == numberOfBlocksOutside);
 
     m_blocksOutsideRareRegions = blocksOutside;
@@ -1172,22 +1181,26 @@ void BlockOrderBuilder::numberRareRegions()
 
     uint32_t numberOfRegionsWithoutRank = 0;
     uint32_t numberOfRareBlocks = 0;
+    uint32_t representativeOfBlockInFront = none;
+    uint32_t region = noRareRegion;
     for (uint32_t index = m_firstRareBlock; index != none;) {
         uint32_t next = states[index].next;
         uint32_t representative = representativeOf(states, index);
-        uint32_t region = places[representative].rareRegion;
-        if (region == noRareRegion) {
-            region = numberOfRegionsWithoutRank++;
-            places[representative].rareRegion = region;
+        if (representative != representativeOfBlockInFront) {
+            representativeOfBlockInFront = representative;
+            region = places[representative].rareRegion;
+            if (region == noRareRegion) {
+                region = numberOfRegionsWithoutRank++;
+                places[representative].rareRegion = region;
+            }
+            RegionPlan& plan = plans[region];
+            if (plan.firstBlock == none)
+                plan.firstBlock = index;
+            else
+                states[plan.lastBlock].next = index;
         }
         places[index].rareRegion = region;
-
-        RegionPlan& plan = plans[region];
-        if (plan.firstBlock == none)
-            plan.firstBlock = index;
-        else
-            states[plan.lastBlock].next = index;
-        plan.lastBlock = index;
+        plans[region].lastBlock = index;
         ++numberOfRareBlocks;
         index = next;
     }
@@ -1315,7 +1328,20 @@ void BlockOrderBuilder::placeBlocks()
     Block* const* const blocks = m_proc.blocks().data();
     Block** const blocksInOrder = m_blocksInOrder.begin();
     Block** const blocksInLayout = m_blocksInLayout.begin();
+    Block* const* const storage = m_predecessors.data();
 
+    auto listAsPredecessor = [&](Block* block, uint32_t orderIndex, const Edge& edge) ALWAYS_INLINE_LAMBDA -> Block* const* {
+        BlockPlace& placeOfTarget = places[edge.block()->index()];
+        Block* const* piece = placeOfTarget.predecessors.data();
+        size_t numberListed = placeOfTarget.predecessors.size();
+        placeOfTarget.predecessors = std::span<Block* const>(piece, numberListed + 1);
+        const_cast<Block**>(piece)[numberListed] = block;
+        if (placeOfTarget.orderIndex <= orderIndex) [[unlikely]]
+            noteEdgeLeadingBack(placeOfTarget, orderIndex);
+        return piece + numberListed;
+    };
+
+    static_assert(Block::notOrdered == UINT32_MAX);
     uint32_t numberOfBlocksPlaced = 0;
     uint64_t position = 0;
     for (uint32_t index = m_firstBlockInOrder; index != none;) {
@@ -1335,37 +1361,19 @@ void BlockOrderBuilder::placeBlocks()
             layoutIndex = m_nextIndexInUnlikelyPart++;
             place.layoutPart = UnlikelyPart;
         }
-        blocksInOrder[numberOfBlocksPlaced] = block;
+        uint32_t orderIndex = numberOfBlocksPlaced++;
+        blocksInOrder[orderIndex] = block;
         blocksInLayout[layoutIndex] = block;
-        place.orderIndex = numberOfBlocksPlaced++;
+        place.orderIndex = orderIndex;
         place.layoutIndex = layoutIndex;
         place.head = static_cast<Position>(position);
 
-        position += 2 * (static_cast<uint64_t>(block->size()) + 1);
-        if (flags & HasUnsplitEdge) [[unlikely]]
-            position += positionsOfBlockSplitLate * static_cast<uint64_t>(block->numSuccessors());
-    }
-    RELEASE_ASSERT(numberOfBlocksPlaced == numberOfBlocks);
-
-    RELEASE_ASSERT(position < noPosition);
-    m_end = static_cast<Position>(position);
-
-    auto listAsPredecessor = [&](Block* block, uint32_t orderIndex, const Edge& edge) ALWAYS_INLINE_LAMBDA -> Block* const* {
-        BlockPlace& placeOfTarget = places[edge.block()->index()];
-        Block* const* piece = placeOfTarget.predecessors.data();
-        size_t numberListed = placeOfTarget.predecessors.size();
-        placeOfTarget.predecessors = std::span<Block* const>(piece, numberListed + 1);
-        const_cast<Block**>(piece)[numberListed] = block;
-        if (placeOfTarget.orderIndex <= orderIndex) [[unlikely]]
-            noteEdgeLeadingBack(placeOfTarget, orderIndex);
-        return piece + numberListed;
-    };
-
-    Block* const* const storage = m_predecessors.data();
-    for (uint32_t orderIndex = 0; orderIndex < numberOfBlocks; ++orderIndex) {
-        Block* block = blocksInOrder[orderIndex];
         const Edge* edges = block->successors().data();
         unsigned numberOfSuccessors = block->numSuccessors();
+        position += 2 * (static_cast<uint64_t>(block->size()) + 1);
+        if (flags & HasUnsplitEdge) [[unlikely]]
+            position += positionsOfBlockSplitLate * static_cast<uint64_t>(numberOfSuccessors);
+
         if (numberOfSuccessors <= 2) [[likely]] {
             if (numberOfSuccessors) {
                 listAsPredecessor(block, orderIndex, edges[0]);
@@ -1377,6 +1385,10 @@ void BlockOrderBuilder::placeBlocks()
                 successorIndexes[listAsPredecessor(block, orderIndex, edges[successorIndex]) - storage] = successorIndex;
         }
     }
+    RELEASE_ASSERT(numberOfBlocksPlaced == numberOfBlocks);
+
+    RELEASE_ASSERT(position < noPosition);
+    m_end = static_cast<Position>(position);
 }
 
 void BlockOrderBuilder::rotateLoops(uint32_t& beginOfMovedBlocks, uint32_t& endOfMovedBlocks)
@@ -1626,12 +1638,8 @@ Block* Order::splitLate(Procedure& procedure, Block* from, unsigned successorInd
     Block* target = edge.block();
     ASSERT(isUnsplit(from, order.of(target)) && !order.of(from).isRare() && target->phis().empty());
 
-    Block* middle = split(from, successorIndex);
+    Block* middle = split(from, successorIndex, edge.isRare() && order.of(target).isRare() ? EdgeClass::Normal : edge.edgeClass());
     RELEASE_ASSERT(middle->index() < order.m_mostBlocks && middle->last()->index() < order.m_mostOperations);
-    if (edge.isRare() && order.of(target).isRare()) {
-        middle->clearSuccessors();
-        middle->appendSuccessor(Edge(target, EdgeClass::Normal));
-    }
 
     const BlockPlace& placeOfFrom = order.of(from);
     BlockPlace& place = *new (NotNull, &order.m_places[middle->index()]) BlockPlace();

@@ -136,17 +136,13 @@ void BuiltinCallEmitter::stopUnlessNativeResultIsAsWritten(const ValueContext& v
     if (!written.isJavaScriptValue() || written.primitives & (Primitive::Absent | Primitive::Unspecified))
         return;
     uint32_t kinds = written.hasObjects() ? Written::objectKind : 0;
-    uint16_t primitives = 0;
     for (auto [primitivesOfKind, kind] : kindsOfPrimitives) {
-        if (written.primitives & primitivesOfKind) {
+        if (written.primitives & primitivesOfKind)
             kinds |= kind;
-            primitives |= primitivesOfKind & Primitive::All;
-        }
     }
-    if (kinds == Written::everyKind)
+    TypeID tested = types().wholeKindsAndBuiltinClassesOf(typeIDOf(value.id()));
+    if (tested == TypeTable::anything)
         return;
-
-    TypeID tested = written.hasObjects() ? types().withPrimitives(TypeTable::object, primitives) : TypeArena::fromPrimitives(primitives);
     Condition isAsWritten = hasType(result, typeTestPlanFor(TypeTable::anything, Representation::JSValue, tested));
     LBasicBlock stops = newBlock();
     LBasicBlock continuation = newBlock();

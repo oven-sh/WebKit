@@ -149,6 +149,14 @@ public:
         (*this)[index] = value;
         return index;
     }
+    T& appendNew() LIFETIME_BOUND
+    {
+        uint32_t index = m_size;
+        if (index == m_capacity) [[unlikely]]
+            addSegment();
+        ++m_size;
+        return *new (NotNull, &(*this)[index]) T;
+    }
     void grow(uint32_t newSize, const T& fill)
     {
         while (m_size < newSize)
@@ -202,7 +210,18 @@ public:
         if (elements.empty())
             return { };
         uint32_t* words = allocate(static_cast<uint32_t>(elements.size()));
-        memcpy(words, elements.data(), elements.size_bytes());
+        uint32_t* to = words;
+        const T* from = elements.data();
+        size_t left = elements.size();
+        for (; left >= 4; left -= 4, to += 4, from += 4)
+            memcpy(to, from, 4 * sizeof(uint32_t));
+        if (left & 2) {
+            memcpy(to, from, 2 * sizeof(uint32_t));
+            to += 2;
+            from += 2;
+        }
+        if (left & 1)
+            memcpy(to, from, sizeof(uint32_t));
         return { reinterpret_cast<const T*>(words), elements.size() };
     }
 
@@ -573,6 +592,7 @@ struct Block {
     bool isInLoop { false };
     bool isLoopHead { false };
     bool isEntry { false };
+    bool meetsStepWrittenByHand { false };
 
     bool isHandlerBlock() const { return role != BlockRole::Ordinary; }
     bool hasEnded() const { return terminator.isSet; }
@@ -749,7 +769,7 @@ struct Draft : DraftWords {
         setOrigin(origin);
     }
 
-    void become(Opcode newOpcode)
+    ALWAYS_INLINE void become(Opcode newOpcode)
     {
         opcode = newOpcode;
         representation = Representation::Unchosen;
@@ -876,8 +896,10 @@ public:
     }
 
     BlockID addBlock(BlockRole = BlockRole::Ordinary, BlockFrequency = BlockFrequency::Normal);
+    BlockID addBlockBehindEdge(EdgeID, BlockFrequency, bool isInLoop);
     void setLoopMarks(BlockID, bool isInLoop, bool isLoopHead);
     void setSubject(BlockID, ValueID);
+    void markMeetingOfStepWrittenByHand(BlockID);
     void setParameters(BlockID, std::span<const ValueID>);
     ValueID appendParameter(BlockID, TypeID, Representation, Origin);
     void setTypeOfJoinParameter(ValueID, TypeID);
@@ -891,6 +913,8 @@ public:
     void end(BlockID, const TerminatorDraft&, uint32_t numberOfEdges);
     EdgeID endWithJump(BlockID, Origin);
     void endWithBranch(BlockID, ValueID condition, Origin);
+    void endWithJump(BlockID, Origin, BlockID to, std::span<const ValueID> arguments);
+    void endWithBranch(BlockID, ValueID condition, Origin, BlockID taken, BlockID notTaken);
     EdgeID addHandlerEdge(BlockID);
     void closeEdge(EdgeID, BlockID to, std::span<const ValueID> arguments);
     uint32_t addInlineFrame(const InlineFrame&);
@@ -906,6 +930,7 @@ private:
     friend class Sweep;
 
     void fill(Instruction&, const DraftWords&);
+    void appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments);
 
     CodeUnit m_unit;
     StableArray<Operation, 10> m_operations;

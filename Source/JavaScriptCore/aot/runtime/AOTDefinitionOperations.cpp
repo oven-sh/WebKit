@@ -535,6 +535,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance* instance, JS
     OPERATION_RETURN_IF_EXCEPTION(scope);
     JSObject* member = cellArgument<JSObject>(function, entry);
     MethodKind kind = static_cast<MethodKind>(bits.kind);
+    if (bits.isUnderComputedKey)
+        instance->state->objects->classes.holdDefinitionToNameInRecord(*classLayout, side, bits.index, key.impl(), member);
     {
         ClassTable::MemberDefinition definition(instance->state->objects->classes, *classLayout, side, key.impl());
         SetForScope prototypeBeingDefined(vm.aotState().classPrototypeBeingDefined, side == ClassSide::Prototype ? holder : nullptr);
@@ -542,7 +544,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineMethod, void, (Instance* instance, JS
             defineMethod(globalObject, holder, key, member, kind);
     }
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    instance->state->objects->classes.didDefineMember(vm, *classLayout, side, holder, key.impl(), member);
+    instance->state->objects->classes.didDefineMember(vm, *classLayout, side, bits.index, holder, key.impl(), member);
     OPERATION_RETURN(scope);
 }
 

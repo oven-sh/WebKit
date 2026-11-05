@@ -28,10 +28,12 @@ extern const OpcodeSet opcodesThatReplaceOperationTakes;
 AOT_LINK_OF_WALK(replaceOperation, opcodesThatReplaceOperationTakes)
 inline constexpr OpcodeSet opcodesThatBuildTypedJoinOfTextsTakes = operationsThatJoinTexts;
 AOT_LINK_OF_WALK(buildTypedJoinOfTexts, opcodesThatBuildTypedJoinOfTextsTakes)
-inline constexpr OpcodeSet opcodesThatBuildFormOnShapesTakes { Opcode::InstanceOf, Opcode::RequireObjectCoercible };
+inline constexpr OpcodeSet opcodesThatBuildFormOnShapesTakes { Opcode::InstanceOf };
 AOT_LINK_OF_WALK_WITH_INPUTS(buildFormOnShapes, opcodesThatBuildFormOnShapesTakes)
 inline constexpr OpcodeSet opcodesThatBuildInstanceOfBuiltinTakes { Opcode::InstanceOf };
 AOT_LINK_OF_WALK_WITH_INPUTS(buildInstanceOfBuiltin, opcodesThatBuildInstanceOfBuiltinTakes)
+inline constexpr OpcodeSet opcodesThatBuildAccessByIndexOffExpectedViewTakes { Opcode::ElemGet, Opcode::ElemSet };
+AOT_LINK_OF_WALK(buildAccessByIndexOffExpectedView, opcodesThatBuildAccessByIndexOffExpectedViewTakes)
 extern const OpcodeSet opcodesThatOpenGuessAtTakes;
 GuessOpened openGuessAtOfItsOpcodes(Walker&, const BodyValue&);
 ALWAYS_INLINE GuessOpened openGuessAt(Walker& walker, const BodyValue& value) { return opcodesThatOpenGuessAtTakes.contains(value.opcode()) ? openGuessAtOfItsOpcodes(walker, value) : GuessOpened::None; }

@@ -58,24 +58,36 @@ void CodeGenerator::dispatchOperation(const ValueContext& value)
     }
 }
 
-void CodeGenerator::dispatch(const ValueContext& value)
+const CodeGenerator::OperationDispatchers& CodeGenerator::operationDispatchers()
 {
-    using Dispatcher = void (*)(CodeGenerator&, const ValueContext&);
-    static constexpr auto dispatchers = []<size_t... opcodes>(std::index_sequence<opcodes...>) {
-        return std::array<Dispatcher, sizeof...(opcodes)> {
+    static constexpr OperationDispatchers dispatchers = []<size_t... opcodes>(std::index_sequence<opcodes...>) {
+        return OperationDispatchers {
             [](CodeGenerator& generator, const ValueContext& operation) {
                 generator.dispatchOperation<static_cast<Opcode>(opcodes)>(operation);
             }...
         };
     }(std::make_index_sequence<numberOfEnumerators<Opcode>>());
-    dispatchers[static_cast<size_t>(value.opcode())](*this, value);
+    return dispatchers;
 }
 
-void CodeGenerator::dispatch(const TerminatorContext& terminator)
+template<TerminatorKind kind>
+void CodeGenerator::dispatchTerminator(const TerminatorContext& terminator)
 {
-    switch (terminator.kind()) {
+    switch (kind) {
 #include "AOTSchemaTerminatorDispatch.inc"
     }
+}
+
+const CodeGenerator::TerminatorDispatchers& CodeGenerator::terminatorDispatchers()
+{
+    static constexpr TerminatorDispatchers dispatchers = []<size_t... kinds>(std::index_sequence<kinds...>) {
+        return TerminatorDispatchers {
+            [](CodeGenerator& generator, const TerminatorContext& terminator) {
+                generator.dispatchTerminator<static_cast<TerminatorKind>(kinds)>(terminator);
+            }...
+        };
+    }(std::make_index_sequence<numberOfEnumerators<TerminatorKind>>());
+    return dispatchers;
 }
 
 } } } // namespace JSC::AOT::Typed

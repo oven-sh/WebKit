@@ -45,7 +45,7 @@ static StubKey lookupStubFor(HashTableOwner owner, LookupAnswer answer, KeyCompa
 {
     switch (owner) {
     case HashTableOwner::Map:
-        return answer == LookupAnswer::IsPresent ? mapHas(comparison) : answer == LookupAnswer::Value ? mapGet(comparison) : mapFind(comparison);
+        return answer == LookupAnswer::IsPresent ? mapHas(comparison) : mapGet(comparison);
     case HashTableOwner::Set:
         return setHas(comparison);
     }
@@ -124,7 +124,6 @@ Operand HashTableBuiltinEmitter::lookUpByStub(const OperationContext& context, C
     case LookupAnswer::IsPresent:
         return unboxBoolean(found);
     case LookupAnswer::Value:
-    case LookupAnswer::ValueOrNothing:
         return found;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -150,8 +149,6 @@ void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owne
     case LookupAnswer::Value:
         finish(call, found.as<Boxed>());
         return;
-    case LookupAnswer::ValueOrNothing:
-        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

@@ -34,70 +34,6 @@ static TypedArrayType kindOfViewInNumberKeys(Walker& walker, TypeID base)
     return isTypedView(kind) ? kind : NotTypedArray;
 }
 
-static bool isNeverIndexOfView(const Type& key)
-{
-    if (key.isNever() || !key.hasOnlyPrimitives(Primitive::Integer | Primitive::FractionalNumber))
-        return false;
-    return !(key.primitives & Primitive::Integer) || key.integers.maximum < 0;
-}
-
-static bool buildAccessOutsideEveryViewInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
-{
-    Opcode opcode = value.opcode();
-    if (inputs.areOnlyTypes() || opcode == Opcode::ElemHas || !walker.has(Mechanism::Folding))
-        return false;
-    TypeID key = inputs.typeOf(value.propertyOperand());
-    if (!key || !isNeverIndexOfView(walker.types().at(key)) || kindOfViewInNumberKeys(walker, inputs.typeOf(value.objectOperand())) == NotTypedArray)
-        return false;
-    if (opcode == Opcode::ElemGet) {
-        walker.bind(value.id(), constantInNumberForms(walker, PrimitiveKnownToFolding::undefined()));
-        return true;
-    }
-    TypeID stored = inputs.typeOf(value.valueOperand());
-    return stored && !isNeverType(stored) && walker.types().at(stored).isNumberLike() && !isBigInt(kindOfViewInNumberKeys(walker, inputs.typeOf(value.objectOperand())));
-}
-
-static bool buildStoreOfNumberLikeInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
-{
-    if (value.opcode() != Opcode::ElemSet)
-        return false;
-    TypeID keyID = inputs.typeOf(value.propertyOperand());
-    TypeID storedID = inputs.typeOf(value.valueOperand());
-    if (!keyID || !storedID || isNeverType(storedID))
-        return false;
-    Type key = walker.types().at(keyID);
-    Type stored = walker.types().at(storedID);
-    if (!key.isNumber() || !stored.isNumberLike() || stored.isNumber())
-        return false;
-    TypedArrayType kind = kindOfViewInNumberKeys(walker, inputs.typeOf(value.objectOperand()));
-    if (kind == NotTypedArray || isBigInt(kind))
-        return false;
-    if (inputs.areOnlyTypes()) {
-        walker.noteFormAskedAhead(Opcode::PutTypedArrayElement, KnowledgeLevel::Proven);
-        return true;
-    }
-
-    Reference number = buildOperatorInNumberForms(walker, Opcode::ToNumber, walker.referenceOf(value.valueOperand()), { }, originInFrontOfAccessInNumberKeys(walker, value));
-    if (!number)
-        return true;
-    ECMAMode mode = value.mode();
-    Draft put = walker.draftOf(value);
-    ExpectedType expected = put.expected;
-    ValueID inputValueGiven = put.inputValueGiven;
-    put.become(Opcode::PutTypedArrayElement);
-    put.expected = expected;
-    put.inputValueGiven = inputValueGiven;
-    put.setViewOperand(walker.referenceOf(value.objectOperand()));
-    put.setPositionOperand(walker.referenceOf(value.propertyOperand()));
-    put.setValueOperand(number);
-    put.setTypedArrayType(kind);
-    put.setMode(mode);
-    put.setLevel(KnowledgeLevel::Proven);
-    put.setKeyIsIntegral(key.isNumberWithoutFraction());
-    walker.bind(value.id(), walker.build(WTF::move(put)));
-    return true;
-}
-
 static bool hasTypedFormUnderKeyInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs, TypeID key)
 {
     ValueID writtenKey = value.propertyOperand();
@@ -233,20 +169,16 @@ bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const
     if (!opcodesOfNumberKeys.contains(value.opcode()) || !hasMechanismsOfNumberForms(walker))
         return false;
     if (inputs.areOnlyTypes())
-        return buildStoreOfNumberLikeInNumberKeys(walker, value, inputs);
+        return false;
     if (buildViewAccessUnderNumberOrUndefinedInNumberKeys(walker, value, inputs))
         return true;
 
     TypeID key = inputs.typeOf(value.propertyOperand());
     if (!key || !walker.types().at(key).isNumber() || !inputs.typeOf(value.objectOperand()))
         return false;
-    if (buildAccessOutsideEveryViewInNumberKeys(walker, value, inputs))
-        return true;
     if (buildAccessUnderWholeRemainderInNumberKeys(walker, value, inputs))
         return true;
-    if (buildAccessUnderCodeUnitInNumberKeys(walker, value, inputs))
-        return true;
-    return buildStoreOfNumberLikeInNumberKeys(walker, value, inputs);
+    return buildAccessUnderCodeUnitInNumberKeys(walker, value, inputs);
 }
 
 } } } // namespace JSC::AOT::Typed

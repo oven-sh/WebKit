@@ -112,6 +112,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(deferredClosureProgramTests) \
     v(dictionaryAccessByNameProgramTests) \
     v(dictionaryExtraPropertiesTests) \
+    v(exportsThatStayInCompiledCodeTests) \
     v(extensionTests) \
     v(falseTypeProgramTests) \
     v(forInExpansionProgramTests) \

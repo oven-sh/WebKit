@@ -139,11 +139,12 @@ void TestRunsInLink::lookAtWhatHasSettled()
     }
     for (SpyOutOfSight& spy : m_spiesOutOfSight) {
         LinkType holder = m_flow.typeAt(spy.holder);
-        LayoutID layout = holder.objects == LinkType::Objects::Layout ? holder.layout : LayoutID();
-        if (holder.builtin == spy.builtin && layout == spy.layout && holder.holdsLostBuiltins == spy.holdsLostBuiltins && holder.holdsUnseen == spy.holdsUnseen)
+        LayoutID layout = holder.objects == LinkType::Objects::Layout || holder.objects == LinkType::Objects::Set ? holder.layout : LayoutID();
+        if (holder.builtin == spy.builtin && layout == spy.layout && static_cast<uint8_t>(holder.objects) == spy.kindOfObjects && holder.holdsLostBuiltins == spy.holdsLostBuiltins && holder.holdsUnseen == spy.holdsUnseen)
             continue;
         spy.builtin = holder.builtin;
         spy.layout = layout;
+        spy.kindOfObjects = static_cast<uint8_t>(holder.objects);
         spy.holdsLostBuiltins = holder.holdsLostBuiltins;
         spy.holdsUnseen = holder.holdsUnseen;
         noteHolderOfSpy(holder, { }, spy.caller, spy.site);
@@ -318,11 +319,13 @@ void TestRunsInLink::noteHolderOfSpy(const LinkType& holder, PropertyKeyID keyOr
         return;
     PropertyKeyID key = keyOrNull ? keyOrNull : keyWrittenAtSpy(caller, site);
     m_flow.noteWriteOn(holder, key, caller);
-    if (holder.objects != LinkType::Objects::Layout)
+    if (holder.objects != LinkType::Objects::Layout && holder.objects != LinkType::Objects::Set)
         return;
-    const Layout& layout = m_flow.program.at(holder.layout);
-    if (layout.kind == LayoutKind::ModuleNamespace && layout.namespaceOf)
-        noteSpyOnExports(layout.namespaceOf, key);
+    m_flow.forEachLayoutOf(holder, [&](LayoutID member) {
+        const Layout& layout = m_flow.program.at(member);
+        if (layout.kind == LayoutKind::ModuleNamespace && layout.namespaceOf)
+            noteSpyOnExports(layout.namespaceOf, key);
+    });
 }
 
 Vector<NameAddedByTests> TestRunsInLink::takeNamesAdded()

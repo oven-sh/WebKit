@@ -53,6 +53,8 @@ bool Walker::handlerInForceIgnoresWhatIsThrown() const
         return false;
 
     size_t frameIndex = numberOfFramesUpToHandlerInForce();
+    if (m_numberOfFramesOverHandlersOfCode && handlerOfCodeInForce(frameIndex))
+        return false;
     if (!frameIndex--)
         return false;
 
@@ -78,7 +80,7 @@ bool Walker::jumpToHandlerInPlaceOfThrow(const BodyTerminator&)
     Vector<Reference, 4> arguments;
     Vector<TypeID, 4> types;
     for (ValueID argument : target.arguments()) {
-        Reference reference = m_frames[frameIndex].references[argument.index()];
+        Reference reference = referenceBoundIn(m_frames[frameIndex], argument);
         TypeID type = ownTypeOf(reference);
         if (!type) {
             fail("a handler edge hands on a value that nothing was built for"_s);
@@ -97,6 +99,7 @@ bool Walker::jumpToHandlerInPlaceOfThrow(const BodyTerminator&)
     open.edge = m_code.at(from).terminator.next();
     open.arguments = WTF::move(arguments);
     open.types = WTF::move(types);
+    takeNamesOntoEdge(open, frameIndex);
     m_block = { };
     m_state.clear();
     return true;
@@ -149,6 +152,7 @@ bool Walker::enterBehindHeadOfHandlerBlock(BlockID inputBlock, std::span<const u
                 open.arguments.append(brought);
                 open.types.append(ownTypeOf(brought));
             }
+            takeNamesOntoEdge(open, m_frames.size() - 1);
             jumpedEdges.insert(0, place);
         }
     }

@@ -142,6 +142,15 @@ static Location memoryHomeOfPatchOperand(Allocator& allocator, Operation* value)
     return allocator.memoryLocationOf(value);
 }
 
+static ALWAYS_INLINE Location memoryHomeOfPatchOperandInLine(Allocator& allocator, Operation* value)
+{
+    if (spillHoldsValueWherePatchStands(allocator, value)) [[likely]] {
+        allocator.noteFrameUse();
+        return Location::spill(allocator.m_allocation.spillOf(value));
+    }
+    return memoryHomeOfPatchOperand(allocator, value);
+}
+
 static ALWAYS_INLINE bool patchOperandTakesRegister(ValueRep::Kind placedKind, const Operation* value, bool onlyKeepsChildrenAlive)
 {
     if (!patchOperandMayLieAnywhere(placedKind))
@@ -174,28 +183,55 @@ static bool patchKeepsRegistersBesideOperand(const Allocator& allocator, const P
     return static_cast<unsigned>(std::popcount(registers & ~unavailable)) >= numberTaken;
 }
 
-static NEVER_INLINE void moveValueOutOfRegistersVacatedForPatch(Allocator& allocator, Reg reg, Operation* value, RegisterMask held, RegisterMask unavailable, bool spillHoldsValue)
+static ALWAYS_INLINE void bindFreeRegisterNotedForPatch(Allocator& allocator, Reg reg, Operation* value, Allocator::ValueState& state)
+{
+    RegisterMask bit = maskOf(reg);
+    ASSERT(!allocator.m_valueIn[reg.index()] && !(allocator.m_bound & bit));
+    ASSERT(&allocator.stateOf(value) == &state);
+    ASSERT(!(bit & allocator.m_file.calleeSaved & ~allocator.m_allocation.usedCalleeSaves()));
+    allocator.m_valueIn[reg.index()] = value;
+    allocator.m_bound |= bit;
+    state.registers |= bit;
+}
+
+static NEVER_INLINE RegisterMask moveValueOutOfRegistersVacatedForPatch(Allocator& allocator, Reg reg, Operation* value, RegisterMask held, RegisterMask unavailable, bool spillHoldsValue)
 {
     Bank bank = bankOf(reg);
     RegisterMask allowed = allocator.m_file.allocatableIn(bank) & ~unavailable;
-    ASSERT(held && held == allocator.stateOf(value).registers);
-    bool staysReachable = value->hasNoPosition() || spillHoldsValue || allocator.stateOf(value).saveInRareRegion != noSpill;
+    Allocator::ValueState& state = allocator.stateOf(value);
+    ASSERT(held && held == state.registers);
+    bool staysReachable = value->hasNoPosition() || spillHoldsValue || state.saveInRareRegion != noSpill;
     ASSERT(staysReachable == (value->hasNoPosition() || liesInMemoryForPatchAllocation(allocator, value)));
     Reg target;
-    if (!staysReachable)
+    RegisterMask registersThatStayTaken = 0;
+    if (!staysReachable && allowed) {
         allowed &= ~allocator.m_file.calleeSaved | allocator.calleeSavesWorthTakingFor(value, bank, allocator.m_block);
-    if (!staysReachable && allowed && allocator.hasFreeRegister(bank, allowed))
-        target = allocator.takeRegister(bank, allowed, hintOfPatchResultAmong(allocator.hintOf(value), allowed));
+        if (allowed) {
+            const RegisterMask candidates = allocator.registersThatMayBeTaken(bank, allowed);
+            const RegisterMask freeRegisters = candidates & ~allocator.m_bound;
+            if (freeRegisters || allocator.canDropSomeRegisterForFree(candidates)) {
+                const Reg preferred = hintOfPatchResultAmong(allocator.hintOf(value), allowed);
+                target = allocator.chooseFreeRegisterWithoutNewCalleeSave(freeRegisters, preferred);
+                if (target)
+                    allocator.noteCalleeSaveUse(target);
+                else
+                    target = allocator.takeRegisterAfterSearch(bank, allowed, preferred);
+            } else
+                registersThatStayTaken = candidates;
+        }
+    }
     if (!target) {
         allocator.evict(reg);
-        return;
+        return registersThatStayTaken;
     }
 
     appendMoveForPatchAllocation(allocator, StepKind::Move, value, Location::reg(target), Location::reg(reg));
-    allocator.bind(target, value);
-    forEachRegister(held, [&](Reg holder) {
-        allocator.unbind(holder);
-    });
+    bindFreeRegisterNotedForPatch(allocator, target, value, state);
+    for (RegisterMask holders = held; holders; holders &= holders - 1)
+        allocator.m_valueIn[std::countr_zero(holders)] = nullptr;
+    allocator.m_bound &= ~held;
+    state.registers &= ~held;
+    return 0;
 }
 
 static ALWAYS_INLINE void vacateRegistersForPatchInLine(Allocator& allocator, RegisterMask registers, Position behind, RegisterMask unavailable)
@@ -221,7 +257,7 @@ static ALWAYS_INLINE void vacateRegistersForPatchInLine(Allocator& allocator, Re
             allocator.unbind(reg);
             continue;
         }
-        moveValueOutOfRegistersVacatedForPatch(allocator, reg, value, held, unavailable, spillHoldsValue);
+        unavailable |= moveValueOutOfRegistersVacatedForPatch(allocator, reg, value, held, unavailable, spillHoldsValue);
     }
 }
 
@@ -284,15 +320,18 @@ static bool extractsStandBehindPatch(const Allocator& allocator, PatchOperation*
     return allocator.m_order.of(successor).predecessors.size() == 1 && liveness.sunkInto(successor).empty();
 }
 
-static bool registersMatterBehindPatch(const PatchOperation* patch)
+static ALWAYS_INLINE bool someSuccessorIsNoLandingPad(const Block* block)
 {
-    if (!patch->endsBlock())
-        return true;
-    for (const Edge& edge : patch->owner()->successors()) {
+    for (const Edge& edge : block->successors()) {
         if (!edge.block()->isLandingPad())
             return true;
     }
     return false;
+}
+
+static bool registersMatterBehindPatch(const PatchOperation* patch)
+{
+    return !patch->endsBlock() || someSuccessorIsNoLandingPad(patch->owner());
 }
 
 static bool isReadOnlyByFixedPatchOperands(const Allocator& allocator, const PatchOperation* patch, const Operation* value, Position late)
@@ -317,6 +356,8 @@ static Location sourceOfFixedPatchOperand(Allocator& allocator, Operation* value
     if (value->hasNoPosition())
         return Location::immediate();
     allocator.noteFrameUse();
+    if (spillHoldsValueWherePatchStands(allocator, value)) [[likely]]
+        return Location::spill(allocator.m_allocation.spillOf(value));
     return allocator.memoryLocationOf(value);
 }
 
@@ -425,7 +466,13 @@ void finishResultsOfPatchThatEndedPredecessor(Allocator& allocator, Block* block
         return;
     if (!last->endsBlock() || predecessor->successor(0).block() != block)
         return;
-    finishResultsOfPatchThatEndedBlock(allocator, static_cast<PatchOperation*>(last), predecessor);
+    PatchOperation* patch = static_cast<PatchOperation*>(last);
+    if (!patch->type().isTuple()) {
+        const ValueFacts& facts = allocator.m_valueFacts[patch->index()];
+        if (facts.lastUse == noPosition || (!facts.has(ValueFlag::NeedsPointerBesideIt) && placedConstraintOfPatchResult(patch, 0).kind() != ValueRep::StackArgument))
+            return;
+    }
+    finishResultsOfPatchThatEndedBlock(allocator, patch, predecessor);
 }
 
 static NEVER_INLINE void keepValuesHandedOnBehindPatchInMemory(Allocator& allocator, const Block* block, Position late)
@@ -688,8 +735,41 @@ static ALWAYS_INLINE Reg takeRegisterForPatchResultWithFacts(Allocator& allocato
     return allocator.takeRegister(bank, allowed, hintOfPatchResultAmong(allocator.hintOf(value), allowed));
 }
 
+static ALWAYS_INLINE void bringOperandOfPatchToNamedRegister(Allocator& allocator, PatchOperation* patch, Operation* value, Reg reg, RegisterMask wanted, ArenaVector<Step>& steps)
+{
+    const Position early = allocator.m_position;
+
+    Operation* holder = allocator.m_valueIn[reg.index()];
+    if (holder && holder != value && !isReadOnlyByFixedPatchOperands(allocator, patch, holder, early + 1)) {
+        RegisterMask unavailable = wanted | patch->earlyClobberedMask() | patch->lateClobberedMask() | registersOfFixedPatchResults(patch);
+        vacateRegistersForPatch(allocator, maskOf(reg), std::max<Position>(early, 1) - 1, unavailable);
+    }
+
+    Allocator::ValueState& state = allocator.stateOf(value);
+    if (!(state.registers & maskOf(reg))) {
+        Location source = sourceOfFixedPatchOperand(allocator, value, wanted);
+        if (!source) [[unlikely]] {
+            allocator.m_pendingMoves.clear();
+            allocator.m_pendingMoves.append(allocator.m_arena, PendingMove { value, Location::reg(reg), source, widthOf(value->type()) });
+            resolveParallelMoves(allocator.m_arena, allocator.m_pendingMoves.span(), steps);
+        } else {
+            StepKind kind = source.isRegister() ? StepKind::Move : source.isImmediate() ? StepKind::Materialize : StepKind::Reload;
+            appendMoveForPatchAllocation(allocator, kind, value, Location::reg(reg), source);
+        }
+    }
+
+    holder = allocator.m_valueIn[reg.index()];
+    if (holder == value)
+        return;
+    if (holder)
+        allocator.unbind(reg);
+    if (!value->hasNoPosition())
+        bindFreeRegisterNotedForPatch(allocator, reg, value, state);
+}
+
 static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocator, PatchOperation* patch, Operation* const* wantedIn, RegisterMask wanted, const uint8_t* registersToFill, unsigned numberOfRegistersToFill, ArenaVector<Step>& steps)
 {
+    ASSERT(numberOfRegistersToFill > 1);
     const Position early = allocator.m_position;
 
     RegisterMask registersToClear = 0;
@@ -704,97 +784,81 @@ static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocat
         vacateRegistersForPatch(allocator, registersToClear, std::max<Position>(early, 1) - 1, unavailable);
     }
 
-    if (numberOfRegistersToFill == 1) {
-        const Reg reg = Reg::fromIndex(registersToFill[0]);
-        Operation* value = wantedIn[reg.index()];
-        if (!(allocator.stateOf(value).registers & maskOf(reg))) {
-            Location source = sourceOfFixedPatchOperand(allocator, value, wanted);
-            if (!source) [[unlikely]] {
-                allocator.m_pendingMoves.clear();
-                allocator.m_pendingMoves.append(allocator.m_arena, PendingMove { value, Location::reg(reg), source, widthOf(value->type()) });
-                resolveParallelMoves(allocator.m_arena, allocator.m_pendingMoves.span(), steps);
-            } else {
-                StepKind kind = source.isRegister() ? StepKind::Move : source.isImmediate() ? StepKind::Materialize : StepKind::Reload;
-                appendMoveForPatchAllocation(allocator, kind, value, Location::reg(reg), source);
+    RegisterMask filledFromRegisters = 0;
+    RegisterMask filledFromElsewhere = 0;
+    RegisterMask registersRead = 0;
+    alignas(Location) std::byte storageOfSources[64 * sizeof(Location)];
+    Location* const sourceInto = reinterpret_cast<Location*>(storageOfSources);
+    bool movesNeedResolver = false;
+    for (unsigned place = 0; place < numberOfRegistersToFill; ++place) {
+        const unsigned index = registersToFill[place];
+        const RegisterMask mask = RegisterMask { 1 } << index;
+        Operation* value = wantedIn[index];
+        if (allocator.stateOf(value).registers & mask)
+            continue;
+
+        Location source = sourceOfFixedPatchOperand(allocator, value, wanted);
+        if (source.isRegister()) {
+            RegisterMask maskOfSource = maskOf(source.reg());
+            movesNeedResolver |= !!(registersRead & maskOfSource);
+            registersRead |= maskOfSource;
+            filledFromRegisters |= mask;
+        } else {
+            movesNeedResolver |= !source;
+            for (RegisterMask earlier = filledFromElsewhere; earlier; earlier &= earlier - 1) {
+                unsigned indexOfEarlier = static_cast<unsigned>(std::countr_zero(earlier));
+                movesNeedResolver |= sourceInto[indexOfEarlier] == source && (!source.isImmediate() || wantedIn[indexOfEarlier] == value);
             }
+            filledFromElsewhere |= mask;
+        }
+        sourceInto[index] = source;
+    }
+
+    const RegisterMask filled = filledFromRegisters | filledFromElsewhere;
+    if (!movesNeedResolver && !(filled & registersRead)) {
+        for (RegisterMask remaining = filledFromRegisters; remaining; remaining &= remaining - 1) {
+            unsigned index = static_cast<unsigned>(std::countr_zero(remaining));
+            appendMoveForPatchAllocation(allocator, StepKind::Move, wantedIn[index], Location::reg(Reg::fromIndex(index)), sourceInto[index]);
+        }
+        for (RegisterMask remaining = filledFromElsewhere; remaining; remaining &= remaining - 1) {
+            unsigned index = static_cast<unsigned>(std::countr_zero(remaining));
+            appendMoveForPatchAllocation(allocator, sourceInto[index].isImmediate() ? StepKind::Materialize : StepKind::Reload, wantedIn[index], Location::reg(Reg::fromIndex(index)), sourceInto[index]);
         }
     } else {
-        RegisterMask filledFromRegisters = 0;
-        RegisterMask filledFromElsewhere = 0;
-        RegisterMask registersRead = 0;
-        alignas(Location) std::byte storageOfSources[64 * sizeof(Location)];
-        Location* const sourceInto = reinterpret_cast<Location*>(storageOfSources);
-        bool movesNeedResolver = false;
-        for (unsigned place = 0; place < numberOfRegistersToFill; ++place) {
-            const unsigned index = registersToFill[place];
-            const RegisterMask mask = RegisterMask { 1 } << index;
-            Operation* value = wantedIn[index];
-            if (allocator.stateOf(value).registers & mask)
-                continue;
-
-            Location source = sourceOfFixedPatchOperand(allocator, value, wanted);
-            if (source.isRegister()) {
-                RegisterMask maskOfSource = maskOf(source.reg());
-                movesNeedResolver |= !!(registersRead & maskOfSource);
-                registersRead |= maskOfSource;
-                filledFromRegisters |= mask;
-            } else {
-                movesNeedResolver |= !source;
-                for (RegisterMask earlier = filledFromElsewhere; earlier; earlier &= earlier - 1) {
-                    unsigned indexOfEarlier = static_cast<unsigned>(std::countr_zero(earlier));
-                    movesNeedResolver |= sourceInto[indexOfEarlier] == source && (!source.isImmediate() || wantedIn[indexOfEarlier] == value);
-                }
-                filledFromElsewhere |= mask;
+        uint8_t movesOutOfRegisters[64];
+        uint8_t movesFromElsewhere[64];
+        unsigned numberOutOfRegisters = 0;
+        unsigned numberFromElsewhere = 0;
+        if (!movesNeedResolver) {
+            for (RegisterMask ready = filledFromRegisters & ~registersRead; ready; ready &= ready - 1)
+                movesOutOfRegisters[numberOutOfRegisters++] = static_cast<uint8_t>(std::countr_zero(ready));
+            for (RegisterMask ready = filledFromElsewhere & ~registersRead; ready; ready &= ready - 1)
+                movesFromElsewhere[numberFromElsewhere++] = static_cast<uint8_t>(std::countr_zero(ready));
+            for (unsigned next = 0; next < numberOutOfRegisters; ++next) {
+                Reg freed = sourceInto[movesOutOfRegisters[next]].reg();
+                if (filledFromRegisters & maskOf(freed))
+                    movesOutOfRegisters[numberOutOfRegisters++] = static_cast<uint8_t>(freed.index());
+                else if (filledFromElsewhere & maskOf(freed))
+                    movesFromElsewhere[numberFromElsewhere++] = static_cast<uint8_t>(freed.index());
             }
-            sourceInto[index] = source;
         }
 
-        const RegisterMask filled = filledFromRegisters | filledFromElsewhere;
-        if (!movesNeedResolver && !(filled & registersRead)) {
-            for (RegisterMask remaining = filledFromRegisters; remaining; remaining &= remaining - 1) {
-                unsigned index = static_cast<unsigned>(std::countr_zero(remaining));
+        if (movesNeedResolver || numberOutOfRegisters + numberFromElsewhere != static_cast<unsigned>(std::popcount(filled))) {
+            allocator.m_pendingMoves.clear();
+            for (RegisterMask remaining = filled; remaining; remaining &= remaining - 1) {
+                Reg reg = Allocator::lowestRegisterIn(remaining);
+                Operation* value = wantedIn[reg.index()];
+                allocator.m_pendingMoves.append(allocator.m_arena, PendingMove { value, Location::reg(reg), sourceInto[reg.index()], widthOf(value->type()) });
+            }
+            resolveParallelMoves(allocator.m_arena, allocator.m_pendingMoves.span(), steps);
+        } else {
+            for (unsigned next = 0; next < numberOutOfRegisters; ++next) {
+                unsigned index = movesOutOfRegisters[next];
                 appendMoveForPatchAllocation(allocator, StepKind::Move, wantedIn[index], Location::reg(Reg::fromIndex(index)), sourceInto[index]);
             }
-            for (RegisterMask remaining = filledFromElsewhere; remaining; remaining &= remaining - 1) {
-                unsigned index = static_cast<unsigned>(std::countr_zero(remaining));
+            for (unsigned next = 0; next < numberFromElsewhere; ++next) {
+                unsigned index = movesFromElsewhere[next];
                 appendMoveForPatchAllocation(allocator, sourceInto[index].isImmediate() ? StepKind::Materialize : StepKind::Reload, wantedIn[index], Location::reg(Reg::fromIndex(index)), sourceInto[index]);
-            }
-        } else {
-            uint8_t movesOutOfRegisters[64];
-            uint8_t movesFromElsewhere[64];
-            unsigned numberOutOfRegisters = 0;
-            unsigned numberFromElsewhere = 0;
-            if (!movesNeedResolver) {
-                for (RegisterMask ready = filledFromRegisters & ~registersRead; ready; ready &= ready - 1)
-                    movesOutOfRegisters[numberOutOfRegisters++] = static_cast<uint8_t>(std::countr_zero(ready));
-                for (RegisterMask ready = filledFromElsewhere & ~registersRead; ready; ready &= ready - 1)
-                    movesFromElsewhere[numberFromElsewhere++] = static_cast<uint8_t>(std::countr_zero(ready));
-                for (unsigned next = 0; next < numberOutOfRegisters; ++next) {
-                    Reg freed = sourceInto[movesOutOfRegisters[next]].reg();
-                    if (filledFromRegisters & maskOf(freed))
-                        movesOutOfRegisters[numberOutOfRegisters++] = static_cast<uint8_t>(freed.index());
-                    else if (filledFromElsewhere & maskOf(freed))
-                        movesFromElsewhere[numberFromElsewhere++] = static_cast<uint8_t>(freed.index());
-                }
-            }
-
-            if (movesNeedResolver || numberOutOfRegisters + numberFromElsewhere != static_cast<unsigned>(std::popcount(filled))) {
-                allocator.m_pendingMoves.clear();
-                for (RegisterMask remaining = filled; remaining; remaining &= remaining - 1) {
-                    Reg reg = Allocator::lowestRegisterIn(remaining);
-                    Operation* value = wantedIn[reg.index()];
-                    allocator.m_pendingMoves.append(allocator.m_arena, PendingMove { value, Location::reg(reg), sourceInto[reg.index()], widthOf(value->type()) });
-                }
-                resolveParallelMoves(allocator.m_arena, allocator.m_pendingMoves.span(), steps);
-            } else {
-                for (unsigned next = 0; next < numberOutOfRegisters; ++next) {
-                    unsigned index = movesOutOfRegisters[next];
-                    appendMoveForPatchAllocation(allocator, StepKind::Move, wantedIn[index], Location::reg(Reg::fromIndex(index)), sourceInto[index]);
-                }
-                for (unsigned next = 0; next < numberFromElsewhere; ++next) {
-                    unsigned index = movesFromElsewhere[next];
-                    appendMoveForPatchAllocation(allocator, sourceInto[index].isImmediate() ? StepKind::Materialize : StepKind::Reload, wantedIn[index], Location::reg(Reg::fromIndex(index)), sourceInto[index]);
-                }
             }
         }
     }
@@ -808,20 +872,45 @@ static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocat
         if (holder)
             allocator.unbind(reg);
         if (!value->hasNoPosition())
-            allocator.bind(reg, value);
+            bindFreeRegisterNotedForPatch(allocator, reg, value, allocator.stateOf(value));
     }
+}
+
+static NEVER_INLINE bool childrenKeptAliveArePlacedAsConstrained(const PatchOperation* patch)
+{
+    std::span<Operation* const> operands = patch->operands();
+    for (unsigned child = 0; child < operands.size(); ++child) {
+        if (patch->constraintOf(child).kind() != ValueRep::ColdAny || (operands[child]->hasNoPosition() && !operands[child]->isConstant()))
+            return false;
+    }
+    return true;
 }
 
 void Allocator::allocatePatch(PatchOperation* patch)
 {
-    auto allocatePlainPatch = [&]() ALWAYS_INLINE_LAMBDA -> bool {
+    auto allocatePlainPatch = [&]<bool patchEndsBlock, bool someOperandMayBeBrought>() ALWAYS_INLINE_LAMBDA -> bool {
+        ASSERT(someOperandMayBeBrought || patch->m_registersToBringOperandsTo.isEmpty());
         const uint16_t bits = patch->m_bits;
         const Type type = patch->type();
         const unsigned numberOfResults = patch->resultConstraints.size();
-        if (patch->opcode() != Patch || type.isTuple() || numberOfResults != (type == Void ? 0u : 1u)
+        if (patch->opcode() != Patch || type.isTuple() || numberOfResults != (type.kind() == Void ? 0u : 1u)
             || (bits & (PatchOperation::IsSuspension | PatchOperation::ReleasesDeadValues))
-            || patch->onlyKeepsChildrenAlive || !patch->m_childrenLetGoByCallee.isEmpty()) [[unlikely]]
+            || !patch->m_childrenLetGoByCallee.isEmpty()) [[unlikely]]
             return false;
+        if (patch->onlyKeepsChildrenAlive && !childrenKeptAliveArePlacedAsConstrained(patch)) [[unlikely]]
+            return false;
+
+        enum : unsigned {
+            SomeOperandTakesRegister = 1 << 0,
+            SomeOperandMayLieAnywhere = 1 << 1,
+            SomeOperandIsPlacedInItsTurn = 1 << 2,
+            SomeOperandStaysInItsSpill = 1 << 3,
+            RegistersAreLostBehindPatch = 1 << 4,
+            PatchTakesRegistersBesideOperands = 1 << 5,
+        };
+        unsigned traitsOfPatch = 0;
+        if (patch->numGPScratchRegisters || patch->numFPScratchRegisters)
+            traitsOfPatch = PatchTakesRegistersBesideOperands;
 
         const RegisterMask allocatable = m_file.allocatableIn(Bank::GP) | m_file.allocatableIn(Bank::FP);
         ValueRep::Kind kindOfResult = ValueRep::SomeRegister;
@@ -833,7 +922,9 @@ void Allocator::allocatePatch(PatchOperation* patch)
                 fixedResults = maskOf(constraint.reg());
                 if (fixedResults & ~allocatable) [[unlikely]]
                     return false;
-            } else if (kindOfResult != ValueRep::SomeRegister && kindOfResult != ValueRep::SomeEarlyRegister) [[unlikely]]
+            } else if (kindOfResult == ValueRep::SomeEarlyRegister)
+                traitsOfPatch |= PatchTakesRegistersBesideOperands;
+            else if (kindOfResult != ValueRep::SomeRegister) [[unlikely]]
                 return false;
         }
 
@@ -851,21 +942,13 @@ void Allocator::allocatePatch(PatchOperation* patch)
             if (bits & PatchOperation::NeedsFrameRecord)
                 m_allocation.m_holdsPatchThatCountsOnFrameRecord = true;
             m_allocation.m_holdsPatchThatCountsOnStackCheck = true;
-        } else if (patch->effects.terminal && !patch->owner()->numSuccessors() && !(bits & PatchOperation::LeavesByReturning))
+        } else if (patchEndsBlock && !patch->owner()->numSuccessors() && !(bits & PatchOperation::LeavesByReturning))
             m_allocation.m_holdsPatchThatCountsOnStackCheck = true;
 
         Location* locations = nullptr;
         if (const unsigned numberOfLocations = numberOfResults + patch->m_operands.size())
             locations = m_arena.allocateArray<Location>(numberOfLocations);
 
-        enum : unsigned {
-            SomeOperandTakesRegister = 1 << 0,
-            SomeOperandMayLieAnywhere = 1 << 1,
-            SomeOperandIsPlacedInItsTurn = 1 << 2,
-            SomeOperandStaysInItsSpill = 1 << 3,
-            RegistersAreLostBehindPatch = 1 << 4,
-        };
-        unsigned traitsOfPatch = 0;
         RegisterMask registersNamedBesideWanted = 0;
         RegisterMask writtenForOperands = 0;
         Operation* wantedIn[64];
@@ -878,7 +961,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
             ASSERT(patch->m_constraints.size() == numberOfChildren);
             Operation* const* const children = patch->m_operands.begin();
             const ValueRep* const constraints = patch->m_constraints.begin();
-            const unsigned endOfOperandsBroughtToRegisters = std::min<unsigned>(patch->m_registersToBringOperandsTo.size(), numberOfChildren);
+            const unsigned endOfOperandsBroughtToRegisters = someOperandMayBeBrought ? std::min<unsigned>(patch->m_registersToBringOperandsTo.size(), numberOfChildren) : 0;
             const Reg* const registersToBringOperandsTo = patch->m_registersToBringOperandsTo.begin();
             Location* const placesOfOperands = locations + numberOfResults;
             const RegisterMask earlyClobbered = patch->m_earlyClobbered;
@@ -962,26 +1045,29 @@ void Allocator::allocatePatch(PatchOperation* patch)
         }
 
         RegisterMask written = patch->m_earlyClobbered | patch->m_lateClobbered;
-        if (patch->effects.terminal && !patch->m_successorClobbers.isEmpty()) {
+        if (patchEndsBlock && !patch->m_successorClobbers.isEmpty()) {
             const unsigned numberOfSuccessors = patch->owner()->numSuccessors();
             for (const auto& clobber : patch->m_successorClobbers) {
                 if (clobber.successorIndex < numberOfSuccessors)
                     written |= clobber.mask;
             }
         }
-        written &= ~m_file.calleeSavedClobberedAtSuspensions;
-        written |= fixedResults | wanted | registersNamedBesideWanted;
-        written &= m_file.calleeSaved;
-        if (written) [[unlikely]] {
-            forEachRegister(written, [&](Reg reg) {
-                noteCalleeSaveUse(reg);
-            });
-            if (isInRareRegion() && (written & ~m_calleeSavesTakenOutsideRareRegions))
-                m_allocation.m_needsFrameOutsideRareRegions = true;
+        const RegisterMask registersNamedByPatch = fixedResults | wanted | registersNamedBesideWanted;
+        if ((written | registersNamedByPatch) & m_file.calleeSaved) [[unlikely]] {
+            written &= ~m_file.calleeSavedClobberedAtSuspensions;
+            written |= registersNamedByPatch;
+            written &= m_file.calleeSaved;
+            if (written) {
+                forEachRegister(written, [&](Reg reg) {
+                    noteCalleeSaveUse(reg);
+                });
+                if (isInRareRegion() && (written & ~m_calleeSavesTakenOutsideRareRegions))
+                    m_allocation.m_needsFrameOutsideRareRegions = true;
+            }
         }
 
-        if (patch->effects.terminal) {
-            if (!registersMatterBehindPatch(patch))
+        if (patchEndsBlock) {
+            if (!someSuccessorIsNoLandingPad(patch->owner()))
                 traitsOfPatch |= RegistersAreLostBehindPatch;
             else if (!patch->owner()->upsilons().empty()) {
                 keepValuesHandedOnBehindPatchInMemory(*this, patch->owner(), m_position + 1);
@@ -992,7 +1078,10 @@ void Allocator::allocatePatch(PatchOperation* patch)
         }
 
         if (numberOfRegistersToFill) {
-            bringOperandsOfPatchToNamedRegisters(*this, patch, wantedIn, wanted, registersToFill, numberOfRegistersToFill, m_allocation.m_steps);
+            if (numberOfRegistersToFill == 1)
+                bringOperandOfPatchToNamedRegister(*this, patch, wantedIn[registersToFill[0]], Reg::fromIndex(registersToFill[0]), wanted, m_allocation.m_steps);
+            else
+                bringOperandsOfPatchToNamedRegisters(*this, patch, wantedIn, wanted, registersToFill, numberOfRegistersToFill, m_allocation.m_steps);
             if (m_proc.failure()) [[unlikely]]
                 return true;
         }
@@ -1002,8 +1091,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
         if (const unsigned numberOfChildren = patch->m_operands.size()) {
             Operation* const* const children = patch->m_operands.begin();
 
-            const bool bringsOperandsToTheirRegisters = patch->bringsOperandsToTheirRegisters();
-            if (bringsOperandsToTheirRegisters) {
+            if (someOperandMayBeBrought && patch->bringsOperandsToTheirRegisters()) {
                 if (numberOfRegistersToFill) {
                     const unsigned endOfOperandsBroughtToRegisters = std::min<unsigned>(patch->m_registersToBringOperandsTo.size(), numberOfChildren);
                     const Reg* const registersToBringOperandsTo = patch->m_registersToBringOperandsTo.begin();
@@ -1018,12 +1106,19 @@ void Allocator::allocatePatch(PatchOperation* patch)
             }
 
             if (traitsOfPatch & (SomeOperandTakesRegister | SomeOperandMayLieAnywhere)) {
-                const bool takesNothingBesideOperands = !patch->numGPScratchRegisters && !patch->numFPScratchRegisters && kindOfResult != ValueRep::SomeEarlyRegister;
+                const bool takesNothingBesideOperands = !(traitsOfPatch & PatchTakesRegistersBesideOperands);
 
                 bool operandsStayWhereTheyLie = !(traitsOfPatch & SomeOperandIsPlacedInItsTurn) && !numberOfRegistersToFill;
                 if (operandsStayWhereTheyLie && !takesNothingBesideOperands && (traitsOfPatch & SomeOperandMayLieAnywhere)) {
+                    const RegisterMask registersLeft = (~m_file.calleeSaved | calleeSavesThatMayBeTaken()) & ~(wanted | registersOfOperandsThatStay | patch->m_earlyClobbered | patch->m_lateClobbered | fixedResults);
                     for (Bank bank : { Bank::GP, Bank::FP }) {
-                        if ((registersOfOperandsThatStay & m_file.allocatableIn(bank)) && !patchKeepsRegistersBesideOperand(*this, patch, bank, wanted | registersOfOperandsThatStay, 0, false))
+                        const RegisterMask allocatableInBank = m_file.allocatableIn(bank);
+                        if (!(registersOfOperandsThatStay & allocatableInBank))
+                            continue;
+                        unsigned numberTaken = bank == Bank::GP ? patch->numGPScratchRegisters : patch->numFPScratchRegisters;
+                        if (kindOfResult == ValueRep::SomeEarlyRegister && bankOf(patch->type()) == bank)
+                            ++numberTaken;
+                        if (static_cast<unsigned>(std::popcount(allocatableInBank & registersLeft)) < numberTaken)
                             operandsStayWhereTheyLie = false;
                     }
                 }
@@ -1038,7 +1133,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
                     const ValueRep* const constraints = patch->m_constraints.begin();
                     Location* const placesOfOperands = locations + patch->resultConstraints.size();
                     const RegisterMask earlyClobbered = patch->m_earlyClobbered;
-                    const unsigned endOfOperandsBroughtToRegisters = std::min<unsigned>(patch->m_registersToBringOperandsTo.size(), numberOfChildren);
+                    const unsigned endOfOperandsBroughtToRegisters = someOperandMayBeBrought ? std::min<unsigned>(patch->m_registersToBringOperandsTo.size(), numberOfChildren) : 0;
                     const Reg* const registersToBringOperandsTo = patch->m_registersToBringOperandsTo.begin();
                     writtenForOperandsToldElsewhere = 0;
 
@@ -1114,22 +1209,27 @@ void Allocator::allocatePatch(PatchOperation* patch)
                     }
                 }
 
-                if (bringsOperandsToTheirRegisters)
+                if (someOperandMayBeBrought && patch->bringsOperandsToTheirRegisters())
                     patch->m_lateClobbered |= writtenForOperandsToldElsewhere & ~fixedResults;
             }
 
+            const Position position = m_position;
+            ValueState* const states = m_values.begin();
+            const ValueFacts* const factsOfValues = m_valueFacts;
             Operation* const* const endOfChildren = children + numberOfChildren;
             for (Operation* const* child = children; child != endOfChildren; ++child) {
                 Operation* value = *child;
-                if (m_valueFacts[value->index()].has(ValueFlag::IsFused)) [[unlikely]]
-                    passUsesOf(value, m_position);
+                const uint32_t index = value->index();
+                const ValueFacts& facts = factsOfValues[index];
+                if (facts.has(ValueFlag::IsFused)) [[unlikely]]
+                    passUsesOf(value, position);
                 else
-                    passUseReachedByWalk(value, m_position);
+                    passUseReachedByWalk(value, states[index], facts, position);
             }
         }
 
         const RegisterMask registersToVacate = ((patch->m_earlyClobbered | patch->m_lateClobbered) & allocatable) | fixedResults;
-        if (traitsOfPatch & RegistersAreLostBehindPatch) [[unlikely]] {
+        if (patchEndsBlock && (traitsOfPatch & RegistersAreLostBehindPatch)) [[unlikely]] {
             forEachRegister(m_bound, [&](Reg reg) {
                 unbind(reg);
             });
@@ -1138,20 +1238,23 @@ void Allocator::allocatePatch(PatchOperation* patch)
 
         const ValueFacts& factsOfResult = m_valueFacts[patch->index()];
         RegistersPatchTakesBesideOperands besideOperands;
-        if (patch->numGPScratchRegisters || patch->numFPScratchRegisters)
-            besideOperands = takeRegistersOfPatchBesideOperands(*this, patch, std::span<Location>(locations, patch->resultConstraints.size()), locked | registersToVacate);
-        else if (kindOfResult == ValueRep::SomeEarlyRegister) {
-            const Bank bank = bankOf(patch->type());
-            const RegisterMask allowed = m_file.allocatableIn(bank) & ~(locked | registersToVacate) & patch->registersOfResults();
-            Reg reg = takeRegisterForPatchResultWithFacts(*this, bank, allowed, patch, factsOfResult);
-            if (!reg) [[unlikely]] {
-                m_proc.fail(FailureKind::OutOfRegisters, patch);
-                return true;
+        if (traitsOfPatch & PatchTakesRegistersBesideOperands) {
+            if (patch->numGPScratchRegisters || patch->numFPScratchRegisters) {
+                besideOperands = takeRegistersOfPatchBesideOperands(*this, patch, std::span<Location>(locations, patch->resultConstraints.size()), locked | registersToVacate);
+                if (m_proc.failure()) [[unlikely]]
+                    return true;
+            } else {
+                ASSERT(kindOfResult == ValueRep::SomeEarlyRegister);
+                const Bank bank = bankOf(patch->type());
+                const RegisterMask allowed = m_file.allocatableIn(bank) & ~(locked | registersToVacate) & patch->registersOfResults();
+                Reg reg = takeRegisterForPatchResultWithFacts(*this, bank, allowed, patch, factsOfResult);
+                if (!reg) [[unlikely]] {
+                    m_proc.fail(FailureKind::OutOfRegisters, patch);
+                    return true;
+                }
+                besideOperands.earlyResults = maskOf(reg);
             }
-            besideOperands.earlyResults = maskOf(reg);
         }
-        if (m_proc.failure()) [[unlikely]]
-            return true;
 
         RegisterMask registerOfResult = 0;
         Location locationOfResult;
@@ -1161,22 +1264,26 @@ void Allocator::allocatePatch(PatchOperation* patch)
                 return besideOperands.gpScratch | besideOperands.fpScratch | besideOperands.earlyResults | heldLate | fixedResults;
             };
             Reg reg;
-            if (kindOfResult == ValueRep::Register)
+            if (kindOfResult == ValueRep::Register) {
                 reg = patch->resultConstraints[0].reg();
-            else if (kindOfResult == ValueRep::SomeRegister) {
-                const Bank bank = bankOf(patch->type());
-                reg = takeRegisterForPatchResultWithFacts(*this, bank, m_file.allocatableIn(bank) & ~registersTakenBesideResult() & ~patch->m_lateClobbered & patch->registersOfResults(), patch, factsOfResult);
-            } else if (besideOperands.earlyResults)
-                reg = lowestRegisterIn(besideOperands.earlyResults);
-            if (!reg) [[unlikely]] {
-                m_proc.fail(FailureKind::OutOfRegisters, patch);
-                return true;
+                registerOfResult = fixedResults;
+            } else {
+                if (kindOfResult == ValueRep::SomeRegister) {
+                    const Bank bank = bankOf(patch->type());
+                    reg = takeRegisterForPatchResultWithFacts(*this, bank, m_file.allocatableIn(bank) & ~registersTakenBesideResult() & ~patch->m_lateClobbered & patch->registersOfResults(), patch, factsOfResult);
+                } else if (besideOperands.earlyResults)
+                    reg = lowestRegisterIn(besideOperands.earlyResults);
+                if (!reg) [[unlikely]] {
+                    m_proc.fail(FailureKind::OutOfRegisters, patch);
+                    return true;
+                }
+                registerOfResult = maskOf(reg);
+                noteRegisterTakenForPatch(*this, reg);
             }
 
-            registerOfResult = maskOf(reg);
-            noteRegisterTakenForPatch(*this, reg);
+            ValueState& stateOfResult = stateOf(patch);
             m_allocation.m_registerAtDefinition[patch->index()] = reg;
-            stateOf(patch).nextUse = factsOfResult.firstUse;
+            stateOfResult.nextUse = factsOfResult.firstUse;
             locationOfResult = Location::reg(reg);
             locations[0] = locationOfResult;
             if (factsOfResult.lastUse != noPosition) {
@@ -1184,7 +1291,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
                 needsPointerBesideResult = flagsOfResult & bitOf(ValueFlag::NeedsPointerBesideIt);
                 if (m_bound & registerOfResult)
                     evict(reg);
-                bind(reg, patch);
+                bindFreeRegisterNotedForPatch(*this, reg, patch, stateOfResult);
                 bool isLostAtNextCall = false;
                 if (flagsOfResult & bitOf(ValueFlag::LivesAcrossCall)) {
                     const Bank bank = bankOf(patch->type());
@@ -1193,8 +1300,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
                 if ((flagsOfResult & (bitOf(ValueFlag::LivesIntoLandingPad) | bitOf(ValueFlag::LivesAcrossSuspension))) || isLostAtNextCall)
                     markSpilled(patch);
             }
-            if (m_proc.failure()) [[unlikely]]
-                return true;
         }
 
         const RegisterMask usedRegisters = m_bound | registerOfResult;
@@ -1210,7 +1315,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
         step.operation = patch;
         appendStep(step);
 
-        if (patch->effects.terminal) {
+        if (patchEndsBlock) {
             BlockSteps& steps = m_allocation.m_blocks[patch->owner()->index()];
             steps.end = indexOfStep;
             steps.terminator = indexOfStep;
@@ -1221,7 +1326,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
             appendStepsBehindPatchResult(*this, patch, locationOfResult);
         return true;
     };
-    if (allocatePlainPatch()) [[likely]]
+    if (patch->effects.terminal ? allocatePlainPatch.operator()<true, true>() : patch->m_registersToBringOperandsTo.isEmpty() ? allocatePlainPatch.operator()<false, false>() : allocatePlainPatch.operator()<false, true>()) [[likely]]
         return;
 
     const bool isCheck = patch->opcode() == Check;
@@ -1359,6 +1464,8 @@ void Allocator::allocatePatch(PatchOperation* patch)
     if (isCheck && !m_proc.failure())
         numberOfSources = placeLeavesOfCheckPredicate(*this, patch, sources, locked);
 
+    const RegisterMask forbiddenToLateOperands = patch->m_earlyClobbered | patch->m_lateClobbered | fixedResults;
+    const bool takesNothingEarlyBesideOperands = !patch->numGPScratchRegisters && !patch->numFPScratchRegisters && !hasEarlyResults;
     for (bool takesRegister : { true, false }) {
         if (!(takesRegister ? someOperandTakesRegister : someOperandMayLieAnywhere))
             continue;
@@ -1366,8 +1473,26 @@ void Allocator::allocatePatch(PatchOperation* patch)
             ValueRep::Kind kind = placedKindOfPatchOperandUnder(constraints[child].kind(), onlyKeepsChildrenAlive, isCheck);
             if (kind == ValueRep::Register || kind == ValueRep::StackArgument)
                 continue;
-            if (patchOperandTakesRegister(kind, children[child], onlyKeepsChildrenAlive) == takesRegister)
-                placeOperandOfPatchUnder(*this, patch, kind, children[child], placesOfOperands[child - firstChild], locked);
+            Operation* value = children[child];
+            if (patchOperandTakesRegister(kind, value, onlyKeepsChildrenAlive) != takesRegister)
+                continue;
+            Location& place = placesOfOperands[child - firstChild];
+            if (!takesRegister && !value->hasNoPosition()) {
+                const RegisterMask forbidden = kind == ValueRep::LateColdAny ? forbiddenToLateOperands : patch->m_earlyClobbered;
+                const RegisterMask held = stateOf(value).registers & m_file.allocatableIn(bankOf(value->type())) & ~forbidden;
+                if (!held) {
+                    if (kind != ValueRep::WarmAny) {
+                        place = memoryHomeOfPatchOperandInLine(*this, value);
+                        continue;
+                    }
+                } else if (kind != ValueRep::LateColdAny && takesNothingEarlyBesideOperands) {
+                    const Reg reg = lowestRegisterIn(held);
+                    place = Location::reg(reg);
+                    locked |= maskOf(reg);
+                    continue;
+                }
+            }
+            placeOperandOfPatchUnder(*this, patch, kind, value, place, locked);
         }
     }
     if (m_proc.failure()) [[unlikely]]
@@ -1393,7 +1518,7 @@ void Allocator::allocatePatch(PatchOperation* patch)
     if (someOperandIsReadLate) {
         for (unsigned child = firstChild; child < numberOfChildren; ++child) {
             Location location = placesOfOperands[child - firstChild];
-            if (patchOperandIsReadLate(placedKindOfPatchOperandUnder(constraints[child].kind(), onlyKeepsChildrenAlive, isCheck)) && location.isRegister())
+            if (location.isRegister() && patchOperandIsReadLate(placedKindOfPatchOperandUnder(constraints[child].kind(), onlyKeepsChildrenAlive, isCheck)))
                 heldLate |= maskOf(location.reg());
         }
     }
@@ -1591,11 +1716,6 @@ void Allocator::placeFixedOperands(PatchOperation* patch, std::span<Location> lo
 void Allocator::vacate(RegisterMask clobbered, Position behind)
 {
     vacateRegistersForPatch(*this, clobbered, behind, 0);
-}
-
-void Allocator::placeResults(PatchOperation* patch, std::span<Location> locationsOfResults, RegisterMask locked)
-{
-    placeResultsOfPatch(*this, patch, m_allocation.m_registerAtDefinition, registersOfFixedPatchResults(patch), locationsOfResults, locked);
 }
 
 RegisterMask Allocator::takeScratchRegisters(Bank bank, unsigned count, RegisterMask& locked)

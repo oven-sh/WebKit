@@ -16,6 +16,7 @@
 #include "AOTNameClass.h"
 #include "AOTResultRules.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeClosure.h"
 #include <algorithm>
@@ -110,6 +111,14 @@ static void chooseFormOfClosureInChoices(Walker& walker, Draft& closure)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool isClosureLeftUnmade(const Walker& walker, Reference reference)
+{
+    if (!reference || !reference.isValue())
+        return false;
+    const Operation& made = walker.code().at(reference.id());
+    return made.opcode == Opcode::NewClosure && made.closureForm() == ClosureForm::Deferred;
+}
+
 Reference findScopeOfClosureReadOffObjectInSight(const Walker& walker, FunctionID function, Reference closure)
 {
     const Code& code = walker.code();
@@ -118,6 +127,24 @@ Reference findScopeOfClosureReadOffObjectInSight(const Walker& walker, FunctionI
     const Operation& read = code.at(closure.id());
     if (read.opcode != Opcode::GetDeferredClosureSlot || walker.program().at(function).captures.size() != 1)
         return { };
+    auto findScopeOfClosureThatStateHolds = [&]() -> Reference {
+        if (!walker.has(Mechanism::Folding) || walker.checksProofs())
+            return { };
+        ValueID holder = rootOfCellInSweptCode(code, read.objectOperand());
+        if (code.isConstant(holder) || code.at(holder).opcode != Opcode::NewObject)
+            return { };
+        std::optional<FieldReference> field = findField(walker.program(), code.at(holder).layout(), read.key());
+        Reference unmade = field ? walker.state().slot(Reference::value(holder), *field) : Reference();
+        if (!isClosureLeftUnmade(walker, unmade))
+            return { };
+        const Operation& made = code.at(unmade.id());
+        if (made.function() != function || made.numberOfVariadicOperands() != 1)
+            return { };
+        ValueID scope = made.variadicOperands()[0];
+        return code.isConstant(scope) ? Reference::constant(scope) : Reference::value(scope);
+    };
+    if (Reference scope = findScopeOfClosureThatStateHolds())
+        return scope;
     auto findScopeReadBesideSlot = [&]() -> Reference {
         ValueID next(closure.id().index() + 1);
         if (next.index() >= code.numberOfValues() || code.isConstant(next))
@@ -360,7 +387,7 @@ static void chooseAllocationOfObjectInChoices(Walker& walker, Draft& allocation)
         return;
     }
     allocation.setStorage(AllocationStorage::Heap);
-    if (planned.isEscapedOffset)
+    if (planned.cellsAreHandedBack)
         noteEnvironmentThatUnitMakes(walker, allocation);
 
     size_t numberOfFields = allocation.fields().size();
@@ -701,6 +728,11 @@ static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array&
 
 static void chooseEncodingOfDataInChoices(Walker& walker, Draft& data)
 {
+    if (!constantListsFieldsHeldFilledInSlots(walker.program(), walker.facts().linked(), walker.plan().slots(), data.data())) {
+        walker.stopAtMaker(data.origin());
+        return;
+    }
+    SetForScope makingObjectsOfConstant = walker.makingObjectsOfConstant();
     const DataNode& root = walker.program().at(data.data()).root;
     if (const auto* array = root.tryAs<DataNode::Array>(); array && sharesStorageOfArrayInChoices(walker, *array)) {
         data.setEncoding(DataEncoding::CopyOnWriteArray);

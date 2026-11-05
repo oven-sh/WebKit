@@ -23,8 +23,8 @@ static_assert(InstanceLayout::reachAboveInstance <= reachOfInstanceWord && Insta
 // LinkBuffer's shouldPerformBranchCompaction must stay true: on ARM64 only its compaction loop picks the encoding of a jump that was linked inside the assembler, and a jump without an encoding is never linked.
 ImageLinkBuffer::ImageLinkBuffer(CCallHelpers& jit, LinkBuffer::Profile profile)
     : m_end(jit.label())
-    , m_storage(roundUpToMultipleOf<sizeof(uint32_t)>(std::max<size_t>(jit.m_assembler.codeSize(), sizeof(uint32_t))) / sizeof(uint32_t))
-    , m_linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(m_storage.mutableSpan().data()), m_storage.sizeInBytes(), profile)
+    , m_storage(roundUpToMultipleOf<sizeof(uint32_t)>(std::max<size_t>(jit.m_assembler.codeSize(), sizeof(uint32_t))))
+    , m_linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(m_storage.mutableSpan().data()), m_storage.size(), profile)
 {
     RELEASE_ASSERT(jit.policy().recordsProcessAddresses);
 }
@@ -40,7 +40,14 @@ void ImageLinkBuffer::finalize(bool dumpsDisassembly, ASCIILiteral name)
 std::span<uint8_t> ImageLinkBuffer::bytes()
 {
     RELEASE_ASSERT(m_didFinalize);
-    return asMutableByteSpan(m_storage.mutableSpan()).first(m_sizeOfCode);
+    return m_storage.mutableSpan().first(m_sizeOfCode);
+}
+
+Vector<uint8_t> ImageLinkBuffer::takeBytes()
+{
+    RELEASE_ASSERT(m_didFinalize);
+    m_storage.shrink(m_sizeOfCode);
+    return std::exchange(m_storage, { });
 }
 
 void emitPadding(CCallHelpers& jit)
@@ -57,7 +64,9 @@ RelocationRecorder::RelocationRecorder(CCallHelpers& jit, const AssemblerPolicy&
     : m_jit(jit)
 {
     RELEASE_ASSERT(policy.recordsProcessAddresses && !policy.blindsConstants);
-    jit.setPolicy(policy);
+    AssemblerPolicy policyOfCode = policy;
+    policyOfCode.recordsLinkedSites = false;
+    jit.setPolicy(policyOfCode);
 }
 
 void RelocationRecorder::moveAddress(CodeSymbol symbol, GPRReg dest, PCRelativeReach reach)
@@ -143,6 +152,84 @@ std::expected<RelocatableCode, LinkFailure> RelocationRecorder::finalize(LinkBuf
     return RelocatableCode { Vector<uint8_t>(buffer.bytes()), WTF::move(*relocations) };
 }
 
+namespace {
+
+#if CPU(X86_64)
+
+class OffsetsOfAscendingSites {
+public:
+    OffsetsOfAscendingSites(CCallHelpers& jit, ImageLinkBuffer& buffer)
+        : m_jumps(jit.m_assembler.takeLinkedJumps())
+        , m_start(CCallHelpers::Jump(AssemblerLabel(0)).label())
+    {
+        RELEASE_ASSERT(!buffer.linkBuffer().policy().recordsLinkedSites);
+        findNextShortJump();
+    }
+
+    ALWAYS_INLINE uint32_t offsetOf(CCallHelpers::Label site)
+    {
+        uint32_t emittedOffset = static_cast<uint32_t>(MacroAssembler::differenceBetween(m_start, site));
+        while (m_emittedEndOfNextShortJump <= emittedOffset) {
+            m_shift = m_shiftBehindNextShortJump;
+            ++m_nextJump;
+            findNextShortJump();
+        }
+        return emittedOffset - m_shift;
+    }
+
+private:
+    ALWAYS_INLINE void findNextShortJump()
+    {
+        std::span<const X86LinkedJump> jumps = m_jumps.span();
+        while (m_nextJump < jumps.size() && !jumps[m_nextJump].isShort)
+            ++m_nextJump;
+        if (m_nextJump == jumps.size()) {
+            m_emittedEndOfNextShortJump = std::numeric_limits<uint64_t>::max();
+            return;
+        }
+        const X86LinkedJump& jump = jumps[m_nextJump];
+        m_shiftBehindNextShortJump = m_shift + X86JumpShortener::savingsOf(jump.kind);
+        m_emittedEndOfNextShortJump = static_cast<uint64_t>(jump.from) + m_shiftBehindNextShortJump;
+    }
+
+    Vector<X86LinkedJump> m_jumps;
+    CCallHelpers::Label m_start;
+    size_t m_nextJump { 0 };
+    uint32_t m_shift { 0 };
+    uint32_t m_shiftBehindNextShortJump { 0 };
+    uint64_t m_emittedEndOfNextShortJump { 0 };
+};
+
+#else
+
+class OffsetsOfAscendingSites {
+public:
+    OffsetsOfAscendingSites(CCallHelpers&, ImageLinkBuffer& buffer)
+        : m_buffer(buffer)
+        , m_sizeOfCode(static_cast<uint32_t>(buffer.bytes().size()))
+    {
+    }
+
+    ALWAYS_INLINE uint32_t offsetOf(CCallHelpers::Label site)
+    {
+        uint32_t distanceToEnd = static_cast<uint32_t>(MacroAssembler::differenceBetween(site, m_buffer.end()));
+        if (m_isBehindLastShortenedJump)
+            return m_sizeOfCode - distanceToEnd;
+        uint32_t offset = m_buffer.linkBuffer().offsetOf(site);
+        m_isBehindLastShortenedJump = m_sizeOfCode - offset == distanceToEnd;
+        return offset;
+    }
+
+private:
+    ImageLinkBuffer& m_buffer;
+    uint32_t m_sizeOfCode;
+    bool m_isBehindLastShortenedJump { false };
+};
+
+#endif
+
+} // anonymous namespace
+
 std::expected<Vector<Relocation>, LinkFailure> RelocationRecorder::link(ImageLinkBuffer& buffer, BuildContext*)
 {
     LinkBuffer& linkBuffer = buffer.linkBuffer();
@@ -152,20 +239,16 @@ std::expected<Vector<Relocation>, LinkFailure> RelocationRecorder::link(ImageLin
     std::span<uint8_t> bytes = buffer.bytes();
     std::span<const PendingRelocation> pendingRelocations = m_pending.span();
     uint32_t previousOffset = 0;
-    uint32_t sizeOfCode = static_cast<uint32_t>(bytes.size());
-    bool isBehindLastShortenedJump = false;
+    OffsetsOfAscendingSites offsets(m_jit, buffer);
     Vector<Relocation> relocations(pendingRelocations.size(), [&](size_t index) {
         const PendingRelocation& pending = pendingRelocations[index];
-        uint32_t distanceToEnd = static_cast<uint32_t>(MacroAssembler::differenceBetween(pending.site, buffer.end()));
-        uint32_t offset = sizeOfCode - distanceToEnd;
-        if (!isBehindLastShortenedJump) {
-            offset = linkBuffer.offsetOf(pending.site);
-            isBehindLastShortenedJump = sizeOfCode - offset == distanceToEnd;
-        }
+        uint32_t offset = offsets.offsetOf(pending.site);
         ASSERT(offset == linkBuffer.offsetOf(pending.site));
         RELEASE_ASSERT(offset >= previousOffset);
         previousOffset = offset;
-        MacroAssembler::clearRelocation(pending.kind, bytes.subspan(offset, MacroAssembler::relocationSize(pending.kind)));
+        withKindAsConstant(pending.kind, [&](auto kind) ALWAYS_INLINE_LAMBDA {
+            MacroAssembler::clearRelocation(kind, bytes.subspan(offset, MacroAssembler::relocationSize(kind)));
+        });
         return Relocation { offset, pending.kind, pending.space, pending.entry, pending.symbol };
     });
 

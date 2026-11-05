@@ -19,10 +19,16 @@ constexpr unsigned numberOfCompiledMethodsOfArray = static_cast<unsigned>(Compil
 static_assert(numberOfCompiledMethodsOfArray == StubWords::numberOfCompiledMethodsOfArray);
 static_assert(descriptorOf(StubFamily::CallCompiledMethodOfArray).numberOfForms == numberOfCompiledMethodsOfArray);
 constexpr unsigned maxArgumentCountOfCompiledMethodOfArray = descriptorOf(StubFamily::CallCompiledMethodOfArray).maxCount;
+static_assert(descriptorOf(StubFamily::CallCompiledMethodOfArrayLending).numberOfForms == numberOfCompiledMethodsOfArray && descriptorOf(StubFamily::CallCompiledMethodOfArrayLending).maxCount == maxArgumentCountOfCompiledMethodOfArray);
+constexpr unsigned onlyFirstArgumentIsLent = 1;
 
 JS_EXPORT_PRIVATE std::optional<CompiledMethodOfArray> compiledMethodOfArray(BuiltinID builtin);
 
-constexpr StubKey callCompiledMethodOfArray(CompiledMethodOfArray method, unsigned count) { return StubKey(StubFamily::CallCompiledMethodOfArray).withForm(static_cast<uint8_t>(method)).withCount(count); }
+constexpr StubKey callCompiledMethodOfArray(CompiledMethodOfArray method, unsigned count, unsigned lentArguments = 0)
+{
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(!lentArguments || lentArguments == onlyFirstArgumentIsLent);
+    return StubKey(lentArguments ? StubFamily::CallCompiledMethodOfArrayLending : StubFamily::CallCompiledMethodOfArray).withForm(static_cast<uint8_t>(method)).withCount(count);
+}
 
 } } // namespace JSC::AOT
 

@@ -1,7 +1,0 @@
-# the same loop with unboxed numbers withheld: the step stands where it is written, in front of the read
-# RUN: walk f1 mechanisms=none+TypedOperations
-# CHECK-LABEL: code f1:Body
-# CHECK: isLoopHead=true
-# CHECK: = Increment
-# CHECK: = Add
-# PROGRAM-OF: step-of-a-counter-stands-behind-the-last-read-of-the-old-number.ir

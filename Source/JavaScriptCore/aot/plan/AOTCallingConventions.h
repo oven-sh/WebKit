@@ -40,6 +40,7 @@ struct FunctionConvention {
     bool takesArgumentsInBuffer : 1 { false };
     bool callEntryTakesNewTarget : 1 { false };
     bool coroutineNeverSuspends : 1 { false };
+    uint8_t borrowedArguments : 2 { 0 };
     uint16_t numberOfEntryParameters { 0 };
     uint16_t numberOfResults { 1 };
     uint32_t firstResult { 0 };

@@ -133,7 +133,6 @@ struct HandlerRecord {
 
 void encodeHandlers(Vector<uint8_t>& bytes, std::span<const SiteHandler>);
 std::optional<HandlerRecord> findHandler(std::span<const uint8_t> handlers, CallSiteIndex);
-bool catchesExceptions(const Image&, uint32_t function);
 
 static constexpr LineColumn superCallOfDefaultConstructor { 1, 28 };
 
@@ -159,6 +158,7 @@ struct OwnPosition {
 };
 
 void encodePositions(Vector<uint8_t>& stream, const SiteDescription&, const uint8_t* callSites, OwnPosition ofFunctionInFront);
+void encodePositions(Vector<uint8_t>& stream, Vector<uint8_t>& roomForPositions, const SiteDescription&, OwnPosition ofFunctionInFront);
 std::optional<SourcePosition> decodePosition(const Image&, uint32_t function, const uint8_t* entry, OwnPosition ofFunctionInFront, CallSiteIndex);
 void forgetRememberedPositions();
 

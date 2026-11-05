@@ -282,11 +282,9 @@ static MacroAssembler::RelationalCondition unsignedFormOfX86Condition(MacroAssem
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordInMemory(CCallHelpers& jit, const X86Comparison& comparison, Width width, MacroAssembler::RelationalCondition condition)
+static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordInMemory(CCallHelpers& jit, Test::Kind kind, const X86ComparedOperand& word, int64_t constant, Width width, MacroAssembler::RelationalCondition condition)
 {
-    const X86ComparedOperand& word = comparison.left;
-    ASSERT(word.isInMemory() && comparison.right.isConstant());
-    int64_t constant = comparison.right.constant;
+    ASSERT(word.isInMemory());
     X86Assembler& assembler = jit.m_assembler;
     bool isIndexed = word.index != InvalidGPRReg;
     bool isByte = word.load == Load8Z || word.load == Load8S;
@@ -294,7 +292,7 @@ static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordI
     bool extendsSign = word.load == Load8S || word.load == Load16S;
     unsigned numberOfBytes = isByte ? 1 : isHalf ? 2 : width == Width32 ? 4 : 8;
 
-    auto compareWith = [&](int32_t immediate) {
+    auto compareWith = [&](int32_t immediate) ALWAYS_INLINE_LAMBDA {
         if (isByte)
             isIndexed ? assembler.cmpb_im(immediate, word.offset, word.base, word.index, word.shift) : assembler.cmpb_im(immediate, word.offset, word.base);
         else if (isHalf)
@@ -305,7 +303,7 @@ static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordI
             isIndexed ? assembler.cmpq_im(immediate, word.offset, word.base, word.index, word.shift) : assembler.cmpq_im(immediate, word.offset, word.base);
     };
 
-    if (comparison.kind == Test::CompareIntegers) {
+    if (kind == Test::CompareIntegers) {
         if (isByte || isHalf) {
             int64_t least = extendsSign ? -128 : 0;
             int64_t most = isByte && !extendsSign ? 255 : 127;
@@ -318,7 +316,7 @@ static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordI
         return condition;
     }
 
-    ASSERT(comparison.kind == Test::TestBits);
+    ASSERT(kind == Test::TestBits);
     if (constant == -1) {
         compareWith(0);
         return condition;
@@ -384,7 +382,7 @@ static MacroAssembler::RelationalCondition emitFlagsOfX86Comparison(CCallHelpers
     if (right.isConstant() && width == Width64 && !isRepresentableAs<int32_t>(right.constant))
         bringX86ComparedIntegerIntoScratch(jit, width, right, left);
     if (left.isInMemory() && right.isConstant()) {
-        if (std::optional<MacroAssembler::RelationalCondition> conditionInPlace = tryEmitFlagsOfX86WordInMemory(jit, comparison, width, *condition))
+        if (std::optional<MacroAssembler::RelationalCondition> conditionInPlace = tryEmitFlagsOfX86WordInMemory(jit, comparison.kind, left, right.constant, width, *condition))
             return *conditionInPlace;
     }
     if (left.isInMemory() && !left.isWholeWordAtBase())
@@ -721,6 +719,28 @@ static ALWAYS_INLINE std::optional<MacroAssembler::RelationalCondition> tryEmitF
     return condition;
 }
 
+static ALWAYS_INLINE std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86RegisterAndMemory(Encoder& encoder, bool testsBits, Opcode relation, Width width, GPRReg left, Location right)
+{
+    ASSERT(right.isMemory());
+    if (testsBits && width == Width32)
+        return std::nullopt;
+
+    RELEASE_ASSERT(!testsBits || relation == Equal || relation == NotEqual);
+    RELEASE_ASSERT(width == Width32 || width == Width64);
+    std::optional<MacroAssembler::RelationalCondition> condition = conditionsOfX86Comparison(relation).ofIntegers;
+    RELEASE_ASSERT(condition);
+
+    CCallHelpers& jit = encoder.m_jit;
+    MacroAssembler::Address address = encoder.addressOf(right);
+    if (testsBits)
+        jit.testOnFlags64(address, left);
+    else if (width == Width32)
+        jit.compareOnFlags32(left, address);
+    else
+        jit.compareOnFlags64(left, address);
+    return condition;
+}
+
 static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86TestOfRegister(CCallHelpers& jit, const Test& test)
 {
     if (test.loadOnLeft || test.rightIsNumberOfBit || !test.left.isRegister())
@@ -747,8 +767,25 @@ static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86Insta
         form.offset = address.offset;
         X86ComparedOperand word = X86ComparedOperand::readBy(load->opcode(), form);
         word.offsetIsFilledLater = true;
-        return tryEmitFlagsOfX86WordInMemory(encoder.m_jit, X86Comparison { testsBits ? Test::TestBits : Test::CompareIntegers, relation, widthOfComparison, word, X86ComparedOperand::forConstant(constant), false }, width, *condition);
+        return tryEmitFlagsOfX86WordInMemory(encoder.m_jit, testsBits ? Test::TestBits : Test::CompareIntegers, word, constant, width, *condition);
     });
+}
+
+static ALWAYS_INLINE std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordAndConstant(Encoder& encoder, bool testsBits, Opcode relation, const Operation* load, const AddressForm& address, Location right, int64_t constant)
+{
+    ASSERT(address.kind != AddressForm::InstanceSymbol);
+    if (!right.isImmediate() || !load->type().isInt())
+        return std::nullopt;
+    Width width = widthOf(load->type());
+    if (testsBits && width == Width64 && isRepresentableAs<uint32_t>(constant))
+        width = Width32;
+    if (width == Width64 && !isRepresentableAs<int32_t>(constant))
+        return std::nullopt;
+    RELEASE_ASSERT(isLoad(load->opcode()) && !load->traps() && !encoder.factsOf(load).has(ValueFlag::TakesOverTrap));
+    RELEASE_ASSERT(!testsBits || relation == Equal || relation == NotEqual);
+    std::optional<MacroAssembler::RelationalCondition> condition = conditionsOfX86Comparison(relation).ofIntegers;
+    RELEASE_ASSERT(condition);
+    return tryEmitFlagsOfX86WordInMemory(encoder.m_jit, testsBits ? Test::TestBits : Test::CompareIntegers, X86ComparedOperand::readBy(load->opcode(), address), constant, width, *condition);
 }
 
 static MacroAssembler::RelationalCondition emitFlagsOfX86WordReadByFusedLoad(Encoder& encoder, bool testsBits, Opcode relation, const Operation* load, const AddressForm& address, Location right, int64_t constant)
@@ -756,16 +793,17 @@ static MacroAssembler::RelationalCondition emitFlagsOfX86WordReadByFusedLoad(Enc
     if (address.kind == AddressForm::InstanceSymbol) {
         if (std::optional<MacroAssembler::RelationalCondition> condition = tryEmitFlagsOfX86InstanceWord(encoder, testsBits, relation, widthOf(load->type()), load, address.symbol, right, constant))
             return *condition;
-    }
+    } else if (std::optional<MacroAssembler::RelationalCondition> condition = tryEmitFlagsOfX86WordAndConstant(encoder, testsBits, relation, load, address, right, constant))
+        return *condition;
     AllowMacroScratchRegisterUsage allowScratch(encoder.m_jit);
     X86ComparedOperand word = x86ComparedOperandReadByFusedLoad(encoder, load, address);
     return emitFlagsOfX86Comparison(encoder.m_jit, X86Comparison { testsBits ? Test::TestBits : Test::CompareIntegers, relation, widthOf(load->type()), word, x86ComparedOperandAt(encoder, right, constant), false });
 }
 
-std::optional<MacroAssembler::RelationalCondition> Encoder::tryEmitFlagsOfPredicate(const Step& step)
+std::optional<MacroAssembler::RelationalCondition> Encoder::tryEmitFlagsOfPredicate(const Step& step, const Operation* predicate)
 {
-    const Operation* predicate = childWithoutCheck(step.operation, 0);
-    if (!m_liveness.isFused(predicate)) {
+    ASSERT(predicate == childWithoutCheck(step.operation, 0));
+    if (!isFused(predicate)) {
         Location location = step.sources[0];
         if (!location.isRegister())
             return std::nullopt;
@@ -788,9 +826,9 @@ std::optional<MacroAssembler::RelationalCondition> Encoder::tryEmitFlagsOfPredic
         if (!isComparison(opcode))
             return std::nullopt;
         relation = opcode;
-        const Operation* compared = childWithoutCheck(predicate, 0);
-        if (compared->opcode() == BitAnd && m_liveness.isFused(compared)) {
-            RELEASE_ASSERT((opcode == Equal || opcode == NotEqual) && childWithoutCheck(predicate, 1)->isInt(0));
+        const Operation* compared = inlineChildWithoutCheck(predicate, 0);
+        if (compared->opcode() == BitAnd && isFused(compared)) {
+            RELEASE_ASSERT((opcode == Equal || opcode == NotEqual) && inlineChildWithoutCheck(predicate, 1)->isInt(0));
             fused = compared;
         } else {
             if (compared->type().isFloat())
@@ -799,12 +837,24 @@ std::optional<MacroAssembler::RelationalCondition> Encoder::tryEmitFlagsOfPredic
         }
     }
 
-    const Operation* left = childWithoutCheck(fused, 0);
-    const Operation* right = childWithoutCheck(fused, 1);
-    if (m_liveness.isFused(right))
-        return std::nullopt;
+    const Operation* left = inlineChildWithoutCheck(fused, 0);
+    const Operation* right = inlineChildWithoutCheck(fused, 1);
+    if (isFused(right)) {
+        if (isFused(left) || !isLoad(right->opcode()))
+            return std::nullopt;
+        LeafCursor cursor(step);
+        Location leftLocation = cursor.take();
+        AddressForm address = resolveAddress(right, cursor);
+        RELEASE_ASSERT(leftLocation);
+        int64_t constant = 0;
+        if (leftLocation.isImmediate()) {
+            RELEASE_ASSERT(left->hasInt());
+            constant = left->asInt();
+        }
+        return emitFlagsOfX86WordReadByFusedLoad(*this, testsBits, testsBits ? relation : flippedComparison(relation), right, address, leftLocation, constant);
+    }
 
-    if (m_liveness.isFused(left)) {
+    if (isFused(left)) {
         if (!isLoad(left->opcode()))
             return std::nullopt;
         LeafCursor cursor(step);
@@ -823,6 +873,8 @@ std::optional<MacroAssembler::RelationalCondition> Encoder::tryEmitFlagsOfPredic
     Location rightLocation = step.sources[1];
     if (!leftLocation.isRegister())
         return std::nullopt;
+    if (rightLocation.isMemory())
+        return tryEmitFlagsOfX86RegisterAndMemory(*this, testsBits, relation, widthOf(left->type()), leftLocation.gpr(), rightLocation);
     int64_t constant = 0;
     if (rightLocation.isImmediate()) {
         RELEASE_ASSERT(right->isConstant());

@@ -132,16 +132,26 @@ void CallEmitter::didEmitTailCall()
         m_records.frame.needsStackCheckForTailCalls = true;
 }
 
-void CallEmitter::emitTailCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed)
+const ArgumentLocations& CallEmitter::ownLocations()
+{
+    if (!m_ownLocations)
+        m_ownLocations = conventions().locationsOf(m_program, m_unit);
+    return *m_ownLocations;
+}
+
+void CallEmitter::emitTailCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed, const ArgumentLocations* locationsOfCalledUnit)
 {
     RELEASE_ASSERT(placed.onStack.size() <= placed.stackWordsToReserve);
-    ArgumentLocations own = conventions().locationsOf(m_program, m_unit);
+    const ArgumentLocations& own = ownLocations();
     if (!returnsNothing(own)) {
         bool returnsWhereCallerReturns = false;
         switch (target.kind) {
         case TargetKind::Function:
         case TargetKind::Address:
-            returnsWhereCallerReturns = hasCompatibleResults(conventions().locationsOf(m_program, target.calledUnit).results.span(), own.results.span());
+            if (locationsOfCalledUnit)
+                returnsWhereCallerReturns = hasCompatibleResults(locationsOfCalledUnit->results.span(), own.results.span());
+            else
+                returnsWhereCallerReturns = hasCompatibleResults(conventions().locationsOf(m_program, target.calledUnit).results.span(), own.results.span());
             break;
         case TargetKind::Stub: {
             const ArgumentLocation boxedResult { ArgumentLocation::Kind::GPR, GPRInfo::returnValueGPR, 0, Representation::JSValue };
@@ -342,7 +352,7 @@ void CallEmitter::requireForwardedCallCanBeMade(const ValueContext& value, Boxed
 
 void CallEmitter::callAndReturnIfCalleeEndsItsTailCalls(const ValueContext& value, const ValueCall& call)
 {
-    ArgumentLocations own = conventions().locationsOf(m_program, m_unit);
+    const ArgumentLocations& own = ownLocations();
     if (own.results.size() != 1 || own.results[0].representation != Representation::JSValue)
         return;
 
@@ -415,8 +425,7 @@ void CallEmitter::returnValues(const TerminatorContext&, std::span<const Operand
 
 void CallEmitter::returnValues(std::span<const Operand> operands)
 {
-    ArgumentLocations locations = conventions().locationsOf(m_program, m_unit);
-    std::span<const ArgumentLocation> results = locations.results.span();
+    std::span<const ArgumentLocation> results = ownLocations().results.span();
     bool spillsArgumentRegisters = conventions().spillsArgumentRegisters(m_unit);
     RELEASE_ASSERT(operands.size() == results.size());
     for (size_t i = 0; i < results.size(); ++i)

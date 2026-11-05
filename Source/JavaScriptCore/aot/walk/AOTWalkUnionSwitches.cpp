@@ -458,17 +458,6 @@ void Walker::switchOn(Reference subject, std::span<const int64_t> cases, std::sp
     endWithSwitchOverOwnBlocks(terminator, targets, otherwise);
 }
 
-void Walker::switchOnTexts(Reference subject, std::span<const StringID> cases, std::span<const BlockID> targets, BlockID otherwise)
-{
-    RELEASE_ASSERT(cases.size() == targets.size());
-    if (isUnreachable())
-        return;
-    TerminatorDraft terminator(TerminatorKind::SwitchString, m_origin);
-    terminator.setSubjectOperand(subject);
-    terminator.setStrings(cases);
-    endWithSwitchOverOwnBlocks(terminator, targets, otherwise);
-}
-
 void Walker::takeNarrowerNamesPast(std::span<const BlockID> blocksPassedBy)
 {
     size_t frameIndex = m_frames.size() - 1;

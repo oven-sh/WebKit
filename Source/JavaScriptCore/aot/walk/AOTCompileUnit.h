@@ -41,10 +41,11 @@ constexpr bool isEnforced(ProofSource source)
     case ProofSource::Variable:
     case ProofSource::Capture:
     case ProofSource::Contents:
-    case ProofSource::Callee:
+    case ProofSource::ResultOfOtherCall:
     case ProofSource::OtherOperation:
     case ProofSource::Test:
     case ProofSource::WhatIsRemembered:
+    case ProofSource::Lifetime:
         return false;
     }
     return false;
@@ -69,6 +70,8 @@ struct WalkOptions {
     uint16_t sourcesOfProofsChecked { 0 };
     bool testsEveryPosition { false };
     bool takesPositionsToLieInside { false };
+    // TestingSwitch::NoCalleeKeepsWhatItIsHanded. No option of a build.
+    bool takesCalleesToKeepNothing { false };
     bool writesBodiesStraight { false };
     bool checksEffects { false };
     uint32_t rowThatSaysLess { 0 };
@@ -87,6 +90,42 @@ struct WalkInputs {
 };
 
 WalkOptions walkOptionsOf(const BuildContext&);
+
+struct FunctionsNamedByFieldsOfOperation {
+    template<typename IDType, typename... Role>
+    void operator()(IDType id, Role...)
+    {
+        if constexpr (std::is_same_v<IDType, FunctionID>) {
+            if (id)
+                functions.append(id);
+        }
+    }
+    Vector<FunctionID, 4>& functions;
+};
+
+template<typename OperationOrTerminator>
+void listFunctionsUsedBy(const Program& program, const BodyIndex& index, const OperationOrTerminator& user, bool namesFunctionsInFields, bool usesOperands, VariableID variableRead, Vector<FunctionID, 4>& functions)
+{
+    functions.shrink(0);
+    if (namesFunctionsInFields)
+        user.forEachReference(FunctionsNamedByFieldsOfOperation { functions });
+    if (variableRead && program.at(variableRead).function)
+        functions.append(program.at(variableRead).function);
+    if (!usesOperands)
+        return;
+    user.forEachOperand([&](ValueID made, uint32_t) {
+        while (made && !index.isParameter(made) && inputOperationsThatHandOn.contains(index.value(made).opcode()))
+            made = index.value(made).operand(0);
+        if (made && !index.isParameter(made) && index.value(made).opcode() == Opcode::NewClosure)
+            functions.append(index.value(made).template as<Opcode::NewClosure>().function());
+    });
+}
+
+inline void listFunctionsUsedByOperation(const Program& program, const BodyIndex& index, const BodyValue& value, Vector<FunctionID, 4>& functions)
+{
+    Opcode opcode = value.opcode();
+    listFunctionsUsedBy(program, index, value, opcode != Opcode::NewClosure, !inputOperationsThatHandOn.contains(opcode), opcode == Opcode::GetModuleVariable ? value.variable() : VariableID(), functions);
+}
 
 struct CompileInputs {
     WalkInputs walk;

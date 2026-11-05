@@ -21,9 +21,11 @@ public:
     void markEnvironmentsThatClosureKeeps(const ValueContext& closure);
 
     Operand closureCapture(CellPointer closure, FunctionID, unsigned index);
+    TypedPointer linkToNextCellHandedBack(CellPointer, LayoutID);
 
 private:
-    TypedPointer escapeMarkOf(ValueID environment);
+    TypedPointer byteWithEscapeMarkOf(ValueID environment);
+    void markEscaped(ValueID environment);
 };
 
 } } } // namespace JSC::AOT::Typed

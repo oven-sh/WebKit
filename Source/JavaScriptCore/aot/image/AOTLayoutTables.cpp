@@ -221,7 +221,6 @@ static uint16_t flagsOfFieldInLayoutRecord(const FieldOfLayoutRecord& field, con
     const std::pair<bool, uint16_t> flags[] = {
         { !field.flags.contains(FieldFlags::IsRequired), fieldIsOptional },
         { slot.isOutOfLine(), fieldIsOutOfLine },
-        { facts.location.stores == Typed::StoreCount::AtMostOnce && canLeaveSlot(slot.representation), fieldIsStoredOnce },
         { slot.mayExistWithoutStorage, fieldMayExistWithoutStorage },
         { slot.deferredClosureCapturesObject, fieldDeferredClosureCapturesObject },
         { slot.deferredClosureCapturesEnvironment, fieldDeferredClosureCapturesEnvironment },
@@ -266,6 +265,8 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
     layoutData.hasOnlyPlainSlots = true;
     layoutData.isCopiedByWords = true;
     bool reachesUnseenCode = encoder.facts.linked().layout(id).reachesUnseenCode;
+    TypeID typeOfFieldInFront;
+    uint32_t offsetOfTypeOfFieldInFront = 0;
     for (FieldIndex index = 0; index < planned.numberOfFields(); ++index) {
         const Typed::PlacedSlot& slot = planned.slots[index];
         if (!slot.indexInLayoutRecord)
@@ -283,12 +284,16 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         FieldData data { };
         data.name = name;
         data.isFilledAtBirth = slot.isFilledAtBirth;
-        data.holdsRawValueFromBirth = facts.facts.contains(Typed::FieldFact::HoldsRawValueFromBirth);
+        data.holdsRawValueFromBirth = planned.holdsRawValueFromBirth(index);
         data.keepsStateOfBirth = fieldOfLayoutRecordKeepsStateOfBirth(program, field, facts, slot);
         data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull) && !slot.provenType;
         data.flags = flagsOfFieldInLayoutRecord(field, facts, slot);
         data.slot = slot.data();
-        data.type = encoder.typeOffset(type);
+        if (type != typeOfFieldInFront || !offsetOfTypeOfFieldInFront) {
+            typeOfFieldInFront = type;
+            offsetOfTypeOfFieldInFront = encoder.typeOffset(type);
+        }
+        data.type = offsetOfTypeOfFieldInFront;
         if (const Typed::LinkedAccessorsOfField* laid = slot.holdsAccessor ? encoder.facts.linked().findAccessorsExpectedIn(reference) : nullptr) {
             data.getterIsProven = laid->getterIsProven;
             data.setterIsProven = laid->setterIsProven;
@@ -312,7 +317,7 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         bool isNamedProto = field.key && program.at(field.key).kind == PropertyKeyKind::Text && program.nameClassOf(field.key) == NameClass::Proto;
         bool isCopiedByWords = !(data.flags & (fieldIsPrivate | fieldIsBrand | fieldAttributeFlags)) && slot.representation != SlotRepresentation::DeferredClosure && !isNamedProto;
         layoutData.isCopiedByWords &= isCopiedByWords;
-        layoutData.hasOnlyPlainSlots &= isCopiedByWords && !(data.flags & fieldIsStoredOnce);
+        layoutData.hasOnlyPlainSlots &= isCopiedByWords;
         layoutData.hasFieldsWithSymbolKeys |= field.key && Typed::isSymbolKind(program.at(field.key).kind);
         bool typeTakesUndefinedAndNull = !(Typed::Primitive::UndefinedOrNull & ~program.at(type).primitives);
         layoutData.hasSlotWithUnusedMarkers |= traitsOf(slot.representation).hasUndefined && !data.slotHoldsUndefinedAndNull && !typeTakesUndefinedAndNull;
@@ -769,15 +774,21 @@ static void setSortedLayoutTable(TableEncoder& encoder, ProgramTableIndex index,
 
 static void encodeParsedRecordFields(TableEncoder& encoder, std::span<const LayoutRecordParts> records)
 {
-    Vector<ParsedRecordFieldData> rows;
+    Vector<uint64_t> keys;
     for (size_t index = 0; index < records.size(); ++index) {
         uint32_t shape = records[index].shapeThatParsersMake;
         if (!shape)
             continue;
         for (const FieldData& field : encoder.firstParts->fieldsOfLayoutRecords[index].fields)
-            rows.append({ Number24(field.name), Number24(shape) });
+            keys.append(ParsedRecordFieldData { Number24(field.name), Number24(shape) }.key());
     }
-    setSortedLayoutTable(encoder, ProgramTableIndex::parsedRecordFields, rows, std::ranges::less { }, &ParsedRecordFieldData::key);
+    radixSortKeepingEqualKeysInOrder<48>(keys, [](uint64_t key) {
+        return key;
+    });
+    Vector<ParsedRecordFieldData> rows(keys.size(), [&](size_t index) {
+        return ParsedRecordFieldData { Number24(static_cast<uint32_t>(keys[index] >> 24)), Number24(static_cast<uint32_t>(keys[index]) & Number24::max) };
+    });
+    encoder.part.setTable(ProgramTableIndex::parsedRecordFields, rows);
 }
 
 static void encodeConstructorsOfLayouts(TableEncoder& encoder)

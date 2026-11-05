@@ -304,12 +304,6 @@ function declareClasses({ builder, sorted }: EntryContext): void {
       definesCharactersOnNewInstances: columns.definesCharactersOnNewInstances ?? false,
       namesDefinedOnNewInstances:
         columns.namesDefinedOnNewInstances?.map(text => builder.internComponent(text)) ?? null,
-      typesOfNamesDefinedOnNewInstances: [],
-      namesMadeByStaticMembers: Object.entries(columns.namesMadeByStaticMembers ?? {}).map(([name, member]) => ({
-        name: builder.internComponent(name),
-        member: builder.internComponent(member),
-      })),
-      namesReadToDescribeInstances: (columns.namesReadToDescribeInstances ?? []).map(text => builder.internComponent(text)),
       constructorOnlyReadsPrototypeOfNewTarget: columns.constructorOnlyReadsPrototypeOfNewTarget ?? false,
       constructorAdder: columns.constructorAdder === undefined ? null : builder.internComponent(columns.constructorAdder),
       slots: [],
@@ -1314,12 +1308,6 @@ export function buildClasses(
   const context: SlotContext = { builder, finished: new Set(), slotTypes: [] };
   for (const builtinClass of builder.classes) buildSlots(context, builtinClass, new Set());
   for (const { slot, spec, source } of context.slotTypes) slot.holds = types.intern(spec, null, source);
-  for (const builtinClass of builder.classes) {
-    const { declaration, source } = builder.writtenClassOf(builtinClass);
-    builtinClass.typesOfNamesDefinedOnNewInstances = Object.entries(
-      declaration.columns.typesOfNamesDefinedOnNewInstances ?? {},
-    ).map(([name, spec]) => ({ name: builder.internComponent(name), type: types.intern(spec, null, source) }));
-  }
   copyConstructorSignatures(builder);
   for (const builtinClass of builder.classes) builtinClass.types = buildTypeNames(builder, builtinClass);
 }

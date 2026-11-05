@@ -81,13 +81,6 @@ static RegisterMask roundUpCalleeSavesOfPlannedFrame(RegisterMask used)
 #endif
 }
 
-struct PlannedBlocksOfFramedPart {
-    BitSpan inFrame;
-    BitSpan setUpFrame;
-    BitSpan tearDownFrame;
-    BitSpan returnInPlaceOfJump;
-};
-
 bool plannedBlockOnlyReturns(const Procedure& proc, const Block* block)
 {
     if (block->last()->opcode() != Return)
@@ -111,23 +104,21 @@ bool plannedBlockOnlyReturns(const Procedure& proc, const Block* block)
     return true;
 }
 
-static std::optional<PlannedBlocksOfFramedPart> planBlocksOfFramedPart(Procedure& proc)
+static std::span<uint8_t> planBlocksOfFramedPart(Procedure& proc)
 {
     const Order& order = proc.order();
     const Allocation& allocation = proc.allocation();
     if (!allocation.hasFramedPart() || allocation.needsFrameAheadOfFramedPart() || proc.traits().setsUpFrameAtEntry())
-        return std::nullopt;
+        return { };
     if (allocation.writesMemoryAheadOfFramedPart()) {
         const uint64_t bytesOfSaves = WTF::roundUpToMultipleOf(stackAlignmentBytes(), static_cast<uint64_t>(std::popcount(allocation.usedCalleeSaves())) * plannedFrameWordSize);
         if (WTF::roundUpToMultipleOf(stackAlignmentBytes(), bytesOfSaves + proc.slots().bytesInAll() + proc.callArgAreaSizeInBytes()) > proc.largestFrameSetUpWithoutStackCheck())
-            return std::nullopt;
+            return { };
     }
 
-    Arena& arena = proc.arena();
-    const uint32_t numberOfBlocks = proc.numberOfBlocks();
     std::span<Block* const> blocksInOrder = order.blocksInOrder();
-    PlannedBlocksOfFramedPart blocks { BitSpan::create(arena, numberOfBlocks), BitSpan::create(arena, numberOfBlocks), BitSpan::create(arena, numberOfBlocks), BitSpan::create(arena, numberOfBlocks) };
-    BitSpan returnsForWaysInFrame = BitSpan::create(arena, numberOfBlocks);
+    std::span<uint8_t> frameAtBlocks = proc.arena().createSpan<uint8_t>(proc.numberOfBlocks());
+    uint8_t* const frameAt = frameAtBlocks.data();
 
     for (const Block* block : blocksInOrder) {
         const BlockPlace& place = order.of(block);
@@ -139,29 +130,31 @@ static std::optional<PlannedBlocksOfFramedPart> planBlocksOfFramedPart(Procedure
                 if (!allocation.isInFramedPart(predecessor))
                     continue;
                 returnsForWayInFrame = true;
-                returnsForWaysInFrame.set(block->index());
                 runsInFrame = true;
                 break;
             }
         }
         if (!runsInFrame)
             continue;
-        blocks.inFrame.set(block->index());
+        uint8_t frameHere = Frame::holdsSteps;
+        if (returnsForWayInFrame)
+            frameHere |= Frame::returnsForWaysInFrame;
         bool beginsFrameOfRareRegion = !isInFramedPart && !returnsForWayInFrame && place.entersRareRegion;
-        if (allocation.isHeadOfFramedPart(block) || beginsFrameOfRareRegion)
-            blocks.setUpFrame.set(block->index());
+        if ((isInFramedPart && allocation.headOfFramedPartAbove(block).block == block) || beginsFrameOfRareRegion)
+            frameHere |= Frame::isSetUpAtHead;
+        frameAt[block->index()] = frameHere;
     }
 
     auto isEnteredInFrame = [&](const Block* block) {
-        return blocks.inFrame.get(block->index()) && !blocks.setUpFrame.get(block->index());
+        return (frameAt[block->index()] & (Frame::holdsSteps | Frame::isSetUpAtHead)) == Frame::holdsSteps;
     };
     const bool addressInFrameMayLiveOn = !proc.stackSlots().empty();
     for (const Block* block : blocksInOrder) {
-        bool runsInFrame = blocks.inFrame.get(block->index());
+        bool runsInFrame = frameAt[block->index()] & Frame::holdsSteps;
         if (block->numSuccessors() != 1) {
             for (const Edge& edge : block->successors()) {
                 if (isEnteredInFrame(edge.block()) != runsInFrame)
-                    return std::nullopt;
+                    return { };
             }
             continue;
         }
@@ -169,18 +162,18 @@ static std::optional<PlannedBlocksOfFramedPart> planBlocksOfFramedPart(Procedure
         if (isEnteredInFrame(successor) == runsInFrame)
             continue;
         if (!block->last()->isUnconditionalJump())
-            return std::nullopt;
+            return { };
         if (runsInFrame) {
             if (addressInFrameMayLiveOn && allocation.isInFramedPart(block))
-                return std::nullopt;
-            blocks.tearDownFrame.set(block->index());
+                return { };
+            frameAt[block->index()] |= Frame::isTornDownAtEnd;
             continue;
         }
-        if (!returnsForWaysInFrame.get(successor->index()))
-            return std::nullopt;
-        blocks.returnInPlaceOfJump.set(block->index());
+        if (!(frameAt[successor->index()] & Frame::returnsForWaysInFrame))
+            return { };
+        frameAt[block->index()] |= Frame::returnsInPlaceOfJumpAtEnd;
     }
-    return blocks;
+    return frameAtBlocks;
 }
 
 static FrameCoverage chooseCoverageOfPlannedFrame(const Procedure& proc, bool hasFramedPart)
@@ -213,15 +206,9 @@ Frame* planFrame(Procedure& proc)
     const SlotAssignment& slots = proc.slots();
     const RegisterFile file = registerFileFor(traits);
 
-    Frame* frame = arena.create<Frame>();
-    std::optional<PlannedBlocksOfFramedPart> blocksOfFramedPart = planBlocksOfFramedPart(proc);
-    frame->m_coverage = chooseCoverageOfPlannedFrame(proc, !!blocksOfFramedPart);
-    if (blocksOfFramedPart) {
-        frame->m_blocksInFrame = blocksOfFramedPart->inFrame;
-        frame->m_blocksThatSetUpFrame = blocksOfFramedPart->setUpFrame;
-        frame->m_blocksThatTearDownFrame = blocksOfFramedPart->tearDownFrame;
-        frame->m_blocksThatReturnInPlaceOfJump = blocksOfFramedPart->returnInPlaceOfJump;
-    }
+    Frame* frame = allocation.usedCalleeSaves() ? arena.create<Frame>() : Frame::createWithoutCalleeSaves(arena);
+    frame->m_frameAtBlocks = planBlocksOfFramedPart(proc);
+    frame->m_coverage = chooseCoverageOfPlannedFrame(proc, !frame->m_frameAtBlocks.empty());
     frame->m_mutableRegisters = file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP);
 
     RegisterMask saves = allocation.usedCalleeSaves();
@@ -240,6 +227,7 @@ Frame* planFrame(Procedure& proc)
         break;
     }
 
+    ASSERT(!saves || allocation.usedCalleeSaves());
     const unsigned numberOfSaves = static_cast<unsigned>(std::popcount(saves));
     RELEASE_ASSERT(numberOfSaves <= ImageFrame::maxCalleeSavesStart);
     frame->m_calleeSaves = saves;
@@ -537,6 +525,15 @@ void Allocator::findFramedPart()
         }
     }
 
+    const Block* const* immediateDominators = nullptr;
+    auto dominatorOf = [&](const Block* block) ALWAYS_INLINE_LAMBDA -> const Block* {
+        if (!immediateDominators) [[unlikely]] {
+            immediateDominatorOf(block);
+            immediateDominators = m_immediateDominators.begin();
+        }
+        return immediateDominators[block->index()];
+    };
+
     const Block** const blocksAboveLoopsAndRareRegions = m_arena.createSpan<const Block*>(numberOfBlocks).data();
     for (size_t index = numberOfBlocksInOrder; index--;) {
         const Block* block = blocks[index];
@@ -549,13 +546,13 @@ void Allocator::findFramedPart()
             if (blockFollowsSetup) {
                 const Block* above = block;
                 while (above && !blocksAboveLoopsAndRareRegions[above->index()] && (placeOf(above).isRare() || placeOf(above).loop != noLoop))
-                    above = immediateDominatorOf(above);
+                    above = dominatorOf(above);
                 if (!above)
                     return;
                 const Block* endOfWay = above;
                 if (const Block* found = blocksAboveLoopsAndRareRegions[above->index()])
                     above = found;
-                for (const Block* passed = block; passed != endOfWay; passed = immediateDominatorOf(passed))
+                for (const Block* passed = block; passed != endOfWay; passed = dominatorOf(passed))
                     blocksAboveLoopsAndRareRegions[passed->index()] = above;
                 marks[above->index()] |= isHeadForWhatLiesBelow;
             }
@@ -580,10 +577,14 @@ void Allocator::findFramedPart()
         marks[block->index()] |= everyWayOnNeedsFrame;
     }
 
-    BitSpan isInFramedPart = BitSpan::create(m_arena, m_order.mostBlocks());
+    std::span<uint64_t> bitsOfFramedPart = m_arena.createSpan<uint64_t>((static_cast<size_t>(m_order.mostBlocks()) + 63) / 64);
+    BitSpan isInFramedPart(bitsOfFramedPart);
+    auto liesInFramedPart = [bits = bitsOfFramedPart.data()](const Block* block) ALWAYS_INLINE_LAMBDA -> bool {
+        return bits[block->index() / 64] >> (block->index() % 64) & 1;
+    };
     for (const Block* block : blocksInOrder) {
-        const Block* dominator = immediateDominatorOf(block);
-        if (dominator && isInFramedPart.get(dominator->index())) {
+        const Block* dominator = dominatorOf(block);
+        if (dominator && liesInFramedPart(dominator)) {
             isInFramedPart.set(block->index());
             continue;
         }
@@ -597,7 +598,7 @@ void Allocator::findFramedPart()
             if (!(marksOfBlock & followsSetup) && !needsFrame(block)) {
                 bool someWayLeavesPartUnused = false;
                 for (const Edge& edge : block->successors())
-                    someWayLeavesPartUnused |= !placeOf(edge.block()).isRare() && immediateDominatorOf(edge.block()) != block;
+                    someWayLeavesPartUnused |= !placeOf(edge.block()).isRare() && dominatorOf(edge.block()) != block;
                 if (someWayLeavesPartUnused)
                     continue;
             }
@@ -614,7 +615,7 @@ void Allocator::findFramedPart()
         const Block* block = blocksToVisit[--numberOfBlocksToVisit];
         someWayLeavesFunctionWithoutPassingHead = !placeOf(block).isRare() && blockLeavesFunctionAheadOfFrame(block);
         for (const Edge& edge : block->successors()) {
-            if (!isInFramedPart.get(edge.block()->index()))
+            if (!liesInFramedPart(edge.block()))
                 reach(isReachedWithoutPassingHead, edge.block());
         }
     }
@@ -629,7 +630,7 @@ void Allocator::findFramedPart()
         size_t end = index;
         do {
             const Block* block = blocks[end];
-            if (isInFramedPart.get(block->index()))
+            if (liesInFramedPart(block))
                 continue;
             comesBack |= placeOf(block).leavesRareRegion || placeOf(block).loop != noLoop;
             const FactsOfBlockAheadOfFrame& facts = factsOf(block);
@@ -646,13 +647,13 @@ void Allocator::findFramedPart()
 
     m_allocation.m_headAboveBlock.fill(m_arena, m_order.mostBlocks(), UINT32_MAX);
     for (const Block* block : blocksInOrder) {
-        if (!isInFramedPart.get(block->index()))
+        if (!liesInFramedPart(block))
             continue;
         if (marks[block->index()] & isHead) {
             m_allocation.m_headAboveBlock[block->index()] = m_allocation.m_headsOfFramedPart.size();
             m_allocation.m_headsOfFramedPart.append(m_arena, Allocation::HeadOfFramedPart { block });
         } else
-            m_allocation.m_headAboveBlock[block->index()] = m_allocation.m_headAboveBlock[immediateDominatorOf(block)->index()];
+            m_allocation.m_headAboveBlock[block->index()] = m_allocation.m_headAboveBlock[dominatorOf(block)->index()];
     }
     m_allocation.m_isInFramedPart = isInFramedPart;
     m_allocation.m_writesMemoryAheadOfFramedPart = writesMemoryOnWayToNeed;
@@ -711,7 +712,7 @@ void Allocator::settleFramedPart()
     auto isStoredAtHead = [&](Location location) {
         return location.isSpill() && spills[location.spillIndex()].isStoredAtHeadOfFramedPart;
     };
-    auto stepMayStandAhead = [&](const Step& step, const BlockPlace& place) {
+    auto stepMayStandAhead = [&](const Step& step, const BlockPlace& place) ALWAYS_INLINE_LAMBDA {
         if (someSpillIsStoredAtHead && stepNearFramedPartMayNameSpillBesideItsAssignment(step) && (isStoredAtHead(step.destination) || std::ranges::any_of(step.sources, isStoredAtHead)))
             return false;
         if (step.kind == StepKind::Execute && step.patchAssignment != UINT32_MAX) {
@@ -793,7 +794,7 @@ void Allocator::settleFramedPart()
         }
         return false;
     };
-    auto readsWhatIsSavedAbove = [&](const Block* block, const Step& step) {
+    auto readsWhatIsSavedAbove = [&](const Block* block, const Step& step) ALWAYS_INLINE_LAMBDA {
         if (stepNearFramedPartMayNameSpillBesideItsAssignment(step)) {
             for (Location source : step.sources) {
                 if (!isSavedAbove(block, source))

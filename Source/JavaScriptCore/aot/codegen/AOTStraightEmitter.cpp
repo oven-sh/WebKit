@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTCellFormat.h"
 #include "AOTModuleEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsArithmetic.h"
@@ -64,6 +65,8 @@ bool StraightEmitter::covers(const CodeGenerationInputs& inputs, CodeUnit unit, 
     OpcodeSet covered = opcodes;
     covered &= opcodesWithStraightForm();
     if (!(covered == opcodes))
+        return false;
+    if (opcodes.contains(Opcode::NewClosure) && inputs.facts.linked().capturesWhatItOnlyCalls(unit.function))
         return false;
 
     const CallingConventions& conventions = inputs.plan.conventions();
@@ -1049,14 +1052,15 @@ void StraightEmitter::takeParameters(const ArgumentLocations& locations)
         if (!declared.environment)
             continue;
         const PlannedLayout& planned = m_inputs.plan.layout(declared.environment);
-        if (!planned.isEscapedOffset || planned.liesOnlyInFrames)
+        if (!planned.cellsAreHandedBack || planned.liesOnlyInFrames)
             continue;
         GPRReg environment = takeResultRegister();
         m_jit->load64(addressOfSlot(parameter), environment);
         CCallHelpers::Jump isNoCell;
         if (declared.primitives)
             isNoCell = m_jit->branchIfNotCell(environment);
-        m_jit->store8(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(environment, static_cast<int32_t>(*planned.isEscapedOffset)));
+        uint32_t shape = m_inputs.plan.environmentAllocation(declared.environment).shape;
+        m_jit->store8(CCallHelpers::TrustedImm32(highByteOfEnvironmentShape(shape) | environmentIsEscapedBit), CCallHelpers::Address(environment, offsetOfEnvironmentShapeHighByte));
         if (isNoCell.isSet())
             isNoCell.link(m_jit);
     }
@@ -1097,9 +1101,9 @@ void StraightEmitter::generate(CCallHelpers& jit, const ArgumentLocations& locat
     m_index.body().forEachBlock([&](BodyBlock block) {
         if (m_hasFailed || isNeverEntered(block.id()) || block.id().index() < endOfImportChecks)
             return;
-        if (uint32_t numberOfChecks = countImportChecksFrom(block); numberOfChecks >= fewestImportChecksInList) {
-            generateImportChecks(block, numberOfChecks);
-            endOfImportChecks = block.id().index() + 2 * numberOfChecks;
+        if (Vector<ImportCheck, 8> checks = importChecksFrom(block); checks.size() >= fewestImportChecksInList) {
+            endOfImportChecks = block.id().index() + 2 * static_cast<uint32_t>(checks.size());
+            generateImportChecks(block, WTF::move(checks));
             return;
         }
         generateBlock(block);
@@ -1153,30 +1157,31 @@ std::optional<StraightEmitter::ImportCheck> StraightEmitter::importCheckIn(BodyB
     return ImportCheck { read.variable(), thrown.failure() };
 }
 
-uint32_t StraightEmitter::countImportChecksFrom(BodyBlock block) const
+Vector<StraightEmitter::ImportCheck, 8> StraightEmitter::importChecksFrom(BodyBlock block) const
 {
-    uint32_t count = 0;
-    while (importCheckIn(block)) {
-        ++count;
+    Vector<ImportCheck, 8> checks;
+    while (std::optional<ImportCheck> check = importCheckIn(block)) {
+        checks.append(*check);
         block = m_index.block(BlockID(block.id().index() + 2));
     }
-    return count;
+    return checks;
 }
 
-void StraightEmitter::generateImportChecks(BodyBlock first, uint32_t numberOfChecks)
+void StraightEmitter::generateImportChecks(BodyBlock first, Vector<ImportCheck, 8>&& checks)
 {
+    uint32_t numberOfChecks = static_cast<uint32_t>(checks.size());
     m_block = first;
     m_landingPadOfBlockPlusOne = 0;
     m_valueCopiedInRegister = { };
     m_labels[first.id().index()] = m_jit->label();
     ListOfImportChecks list;
     list.entry = static_cast<uint16_t>(firstEntryOfListOfImportChecks + m_listsOfImportChecks.size());
+    list.checks = WTF::move(checks);
     Origin origin;
     for (uint32_t index = 0; index < numberOfChecks; ++index) {
         BodyBlock block = m_index.block(BlockID(first.id().index() + 2 * index));
         m_blocksGenerated.quickSet(block.id().index());
         m_blocksGenerated.quickSet(block.id().index() + 1);
-        list.checks.append(*importCheckIn(block));
         if (!index)
             origin = m_index.value(m_index.block(BlockID(block.id().index() + 1)).firstValue()).origin();
     }

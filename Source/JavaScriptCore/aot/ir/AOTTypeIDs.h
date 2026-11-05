@@ -83,9 +83,15 @@ constexpr std::optional<TypeID> tryMakeTypeOfPrimitives(uint16_t primitives, Ran
         uint32_t bounds = (static_cast<uint32_t>(integers.minimum) & mask) | (static_cast<uint32_t>(integers.maximum) & mask) << smallBoundBits;
         return TypeID::fromBits(static_cast<uint32_t>(IDHome::SmallRange) << idHomeShift | bounds);
     }
+    if (integers == Range::full()) {
+        static_assert(minimumLandmarks.back() == Range::full().minimum && maximumLandmarks.back() == Range::full().maximum);
+        return TypeID::fromBits(primitives | static_cast<uint32_t>(minimumLandmarks.size() - 1) << minimumLandmarkShift | static_cast<uint32_t>(maximumLandmarks.size() - 1) << maximumLandmarkShift);
+    }
     auto minimum = landmarkIndexOf(minimumLandmarks, integers.minimum);
+    if (!minimum)
+        return std::nullopt;
     auto maximum = landmarkIndexOf(maximumLandmarks, integers.maximum);
-    if (!minimum || !maximum)
+    if (!maximum)
         return std::nullopt;
     return TypeID::fromBits(primitives | *minimum << minimumLandmarkShift | *maximum << maximumLandmarkShift);
 }

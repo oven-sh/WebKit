@@ -100,12 +100,6 @@ struct FunctionTraceRecord : FunctionTraceData {
     }
 };
 
-struct FunctionNameRunData {
-    uint32_t firstFunction;
-    uint32_t name;
-};
-static_assert(sizeof(FunctionNameRunData) == 8 && isImageRecord<FunctionNameRunData>);
-
 struct ImplementedBuiltinData {
     uint32_t function;
     uint32_t builtin;
@@ -190,24 +184,49 @@ using NamedCaptureList = Vector<std::pair<uint32_t, uint32_t>, 8>;
 
 class RecentNamedCaptureLists {
 public:
-    size_t size() const { return m_lists.size(); }
-    size_t find(const NamedCaptureList& list) const { return m_lists.find(list); }
+    size_t size() const { return m_placesFromLatest.size(); }
+    size_t find(const NamedCaptureList& list) const
+    {
+        uint32_t hash = hashOf(list);
+        return m_placesFromLatest.findIf([&](uint8_t place) {
+            return m_hashes[place] == hash && m_lists[place] == list;
+        });
+    }
     const NamedCaptureList& moveToFront(size_t index)
     {
-        NamedCaptureList list = WTF::move(m_lists[index]);
-        m_lists.removeAt(index);
-        m_lists.insert(0, WTF::move(list));
-        return m_lists[0];
+        uint8_t place = m_placesFromLatest[index];
+        m_placesFromLatest.removeAt(index);
+        m_placesFromLatest.insert(0, place);
+        return m_lists[place];
     }
     void add(const NamedCaptureList& list)
     {
-        if (m_lists.size() == 64)
-            m_lists.removeLast();
-        m_lists.insert(0, list);
+        uint8_t place = static_cast<uint8_t>(m_lists.size());
+        if (m_placesFromLatest.size() == mostLists) {
+            place = m_placesFromLatest.takeLast();
+            m_lists[place] = list;
+            m_hashes[place] = hashOf(list);
+        } else {
+            m_lists.append(list);
+            m_hashes.append(hashOf(list));
+        }
+        m_placesFromLatest.insert(0, place);
     }
 
 private:
+    static constexpr size_t mostLists = 64;
+
+    static uint32_t hashOf(const NamedCaptureList& list)
+    {
+        uint32_t hash = 0;
+        for (auto [slot, name] : list)
+            hash = (hash ^ slot ^ name) * 0x9e3779b1u;
+        return hash;
+    }
+
     Vector<NamedCaptureList> m_lists;
+    Vector<uint32_t, mostLists> m_hashes;
+    Vector<uint8_t, mostLists> m_placesFromLatest;
 };
 
 class NamedCapturesWriter {
@@ -315,7 +334,6 @@ bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
 #define FOR_EACH_AOT_FUNCTION_PROGRAM_TABLE(v) \
     v(functionNames, Number24) \
     v(functionNameGroups, uint32_t) \
-    v(functionNameRuns, FunctionNameRunData) \
     v(functionRecordNumbers, uint8_t) \
     v(functionRecords, FunctionRecordData) \
     v(functionRecordsByFunction, FunctionRecordByFunctionData) \

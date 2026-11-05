@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTPhaseTimes.h"
+#include "AOTSectionWriter.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
@@ -60,6 +61,8 @@ bool Reader::run()
 
     m_types.emplace(m_program, m_sections, m_build, m_externalBodies);
     if (!m_types->makeObjectsAndComputeFamilies())
+        return false;
+    if (!checkListSize(m_sections.layouts.size() + m_types->numberOfDerivedLayouts(), sizeof(Layout), m_build))
         return false;
     steps.didFinish("families of layouts beside objects and families of functions"_s);
     m_types->readTypes();
@@ -125,6 +128,8 @@ bool Reader::readHeader()
     if (!sections)
         return report({ .kind = InternalErrorKind::SectionOutOfBounds, .count = sections.error() });
     m_sections = *sections;
+    if (!tablesHaveRoomFor(m_sections))
+        return false;
     if (!m_program.ownsBuffer())
         m_sections.bytes = m_program.copyBorrowedBytes(m_sections.bytes, m_build.parallelLoops());
     return true;
@@ -189,19 +194,40 @@ NumbersOfProgramRecords Reader::numbersOfRecords() const
     return numbers;
 }
 
+void Reader::forEachListReadIntoTableOfItsName(const Wire::Sections& sections, const auto& functor)
+{
+    functor(sections.expectedResults, m_program.expectedResults);
+    functor(sections.variables, m_program.variables);
+    functor(sections.modules, m_program.modules);
+    functor(sections.moduleFailures, m_program.moduleFailures);
+    functor(sections.ambiguousExports, m_program.ambiguousExports);
+    functor(sections.sourceStamps, m_program.sourceStamps);
+    functor(sections.evalScopes, m_program.evalScopes);
+    functor(sections.data, m_program.data);
+    functor(sections.entries, m_program.entries);
+    functor(sections.runtimeFunctions, m_program.runtimeFunctions);
+    functor(sections.webAssemblyModules, m_program.webAssemblyModules);
+}
+
 void Reader::readProgramLists()
 {
-    readList(m_sections.expectedResults, m_program.expectedResults);
-    readList(m_sections.variables, m_program.variables);
-    readList(m_sections.modules, m_program.modules);
-    readList(m_sections.moduleFailures, m_program.moduleFailures);
-    readList(m_sections.ambiguousExports, m_program.ambiguousExports);
-    readList(m_sections.sourceStamps, m_program.sourceStamps);
-    readList(m_sections.evalScopes, m_program.evalScopes);
-    readList(m_sections.data, m_program.data);
-    readList(m_sections.entries, m_program.entries);
-    readList(m_sections.runtimeFunctions, m_program.runtimeFunctions);
-    readList(m_sections.webAssemblyModules, m_program.webAssemblyModules);
+    forEachListReadIntoTableOfItsName(m_sections, [&](auto records, auto& table) {
+        readList(records, table);
+    });
+}
+
+bool Reader::tablesHaveRoomFor(const Wire::Sections& sections)
+{
+    bool haveRoom = checkListSize(sections.strings.size(), sizeof(StringAsRead), m_build);
+    auto ask = [&]<typename Record, size_t inlineCapacity>(auto records, const Vector<Record, inlineCapacity>&) {
+        haveRoom = haveRoom && checkListSize(records.size(), sizeof(Record), m_build);
+    };
+    ask(sections.functions, m_program.functions);
+    ask(sections.typeSites, m_program.typeSites);
+    ask(sections.replaceableBuiltins, m_program.replaceableBuiltins);
+    ask(sections.openedNames, m_program.openedNames);
+    forEachListReadIntoTableOfItsName(sections, ask);
+    return haveRoom;
 }
 
 void Reader::readLayouts()

@@ -108,6 +108,8 @@ struct CodeBody {
 
 inline std::optional<uint32_t> CodeBody::offsetOfEntry(uint16_t id) const
 {
+    if (!entries.isEmpty() && entries.first().id == id)
+        return entries.first().offset;
     auto found = std::ranges::lower_bound(entries, id, { }, &CodeEntry::id);
     if (found == entries.end() || found->id != id)
         return std::nullopt;
@@ -306,6 +308,12 @@ constexpr uint32_t placeInCodeOf(Typed::CodeUnit unit, uint32_t unitIndex)
 }
 
 struct CompiledCode {
+    CompiledCode() = default;
+    CompiledCode(const CompiledCode&) = default;
+    CompiledCode(CompiledCode&&);
+    CompiledCode& operator=(const CompiledCode&) = default;
+    CompiledCode& operator=(CompiledCode&&) = default;
+
     Typed::CodeUnit unit;
     uint32_t unitIndex { UINT32_MAX };
     uint32_t placeInCode { UINT32_MAX };
@@ -322,7 +330,7 @@ struct CompiledCode {
     ListOfUnit<RangeOfCode> ranges;
 };
 
-void forEachListOfUnitIn(CompiledCode& code, auto& visit)
+void forEachListOfUnitWhateverItHoldsIn(CompiledCode& code, auto& visit)
 {
     auto visitEach = [&](auto&... lists) {
         (visit(lists), ...);
@@ -335,6 +343,28 @@ void forEachListOfUnitIn(CompiledCode& code, auto& visit)
     visitEach(code.bytesByForm, code.bytesOutsideOperations, code.ranges);
 }
 
+void forEachListOfUnitIn(CompiledCode& code, auto& visit)
+{
+    auto visitIfItHoldsAnything = [&](auto& list) {
+        if (!list.isEmpty() || list.liesOnHeap())
+            visit(list);
+    };
+    forEachListOfUnitWhateverItHoldsIn(code, visitIfItHoldsAnything);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+inline CompiledCode::CompiledCode(CompiledCode&& other)
+{
+    memcpy(static_cast<void*>(this), static_cast<const void*>(&other), sizeof(CompiledCode));
+    auto leaveEmpty = [](auto& list) {
+        new (NotNull, &list) std::remove_reference_t<decltype(list)>;
+    };
+    forEachListOfUnitWhateverItHoldsIn(other, leaveEmpty);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 struct CodeGenerationTotals {
     WTF::BitSet<numberOfEntries> entriesUsed;
 };
@@ -343,13 +373,18 @@ template<typename Functor>
 void forEachReturnAddress(const CompiledCode& code, const Functor& functor)
 {
     std::span<const PrologueCheck> prologueChecks = code.frame.prologueChecks.span();
-    for (const ReturnSite& site : code.body.returnSites) {
+    std::span<const ReturnSite> returnSites = code.body.returnSites.span();
+    while (!prologueChecks.empty() && !returnSites.empty()) {
+        const ReturnSite& site = returnSites.front();
+        returnSites = returnSites.subspan(1);
         while (!prologueChecks.empty() && prologueChecks.front().callOffset + sizeOfNearCall < site.offset)
             prologueChecks = prologueChecks.subspan(1);
         if (!prologueChecks.empty() && prologueChecks.front().callOffset + sizeOfNearCall == site.offset)
             continue;
         functor(site.offset, site.site);
     }
+    for (const ReturnSite& site : returnSites)
+        functor(site.offset, site.site);
     for (const FaultingAccess& access : code.sites.faultingAccesses)
         functor(access.codeOffset + static_cast<uint32_t>(sizeOfNearCall), access.callSite);
     for (const PollSite& poll : code.sites.pollSites)

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTFamilies.h"
@@ -64,7 +65,50 @@ bool goesByOneRowOnOperandAsMade(Walker& walker, const BodyValue& call, BuiltinI
     return reached.size() == 1 && !table.at(reached[0]).isUndeclared();
 }
 
-void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Reference value, TypeID tested)
+bool openTestOfListAtReadOfMethodOfItsOpcodes(Walker& walker, const BodyValue& read)
+{
+    if (read.isFreeName() || !walker.isInLoop() || walker.walksStretchInsideAnother() || walker.isUnreachable() || !walker.has(Mechanism::Inlining) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::EscapeAnalysis))
+        return false;
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    BuiltinID member = read.key() ? findOwnMember(program, table.at(BuiltinClasses::Array).prototype, read.key()) : BuiltinID();
+    if (!member || pristineTestOf(table, BuiltinClasses::Array) != PristineTest::MayPass)
+        return false;
+    TypeArena& types = walker.types();
+    if (!findLibraryFunctionsBehindBuiltin(walker, types.forBuiltin(table.canonicalID(member))).enteredByValue)
+        return false;
+
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(read.id()));
+    ValueID callID = index.onlyUsingValue(read.id());
+    if (!callID || index.isParameter(callID) || index.blockOf(callID) != block.id() || index.opcodeOf(callID) != Opcode::Call || callID.index() - block.firstValue().index() >= walker.endOfStretchBeingWalked())
+        return false;
+    BodyValue call = index.value(callID);
+    ValueID receiverID = read.objectOperand();
+    auto arguments = call.as<Opcode::Call>().argumentsOperands();
+    if (call.calleeOperand() != read.id() || call.thisValueOperand() != receiverID || arguments.empty())
+        return false;
+    ValueID handedOver = index.valueBehindCasts(arguments[0]);
+    if (!handedOver || index.isParameter(handedOver) || index.opcodeOf(handedOver) != Opcode::NewClosure)
+        return false;
+    if (walker.facts().linked().function(index.value(handedOver).function()).weightAsLeaf == LinkedFunction::notLeaf)
+        return false;
+    for (uint32_t number = read.id().index() + 1; number < callID.index(); ++number) {
+        ValueID user = index.onlyUsingValue(ValueID(number));
+        if (!user || callID < user)
+            return false;
+    }
+
+    Reference receiver = walker.referenceOf(receiverID);
+    TypeID proven = receiver && receiver.isValue() ? walker.typeOf(receiver) : TypeID();
+    TypeID lists = types.builtinClass(BuiltinClasses::Array);
+    if (!proven || isNeverType(proven) || !types.isSubset(proven, lists) || !singleBuiltinClassOf(types, types.at(proven)) || isListAsMade(walker, receiver) || receiverStaysAsMadeByLink(walker, read))
+        return false;
+    openGuessAtOperandTakenAsMade(walker, call, receiver, lists, read.id().index() - block.firstValue().index());
+    return true;
+}
+
+void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Reference value, TypeID tested, std::optional<uint32_t> firstPlace)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     BlockID inputBlock = index.blockOf(call.id());
@@ -90,11 +134,14 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         walker.continueIn(passed);
     };
 
-    Reference isOfClass = buildTypeTestForStrings(walker, value, tested, origin);
-    if (!isOfClass)
-        return;
-    goOnWhereTestPasses(isOfClass);
-    Reference proven = buildProofBehindTestForStrings(walker, value, isOfClass, OperandIndex::TypeTest::value, origin);
+    Reference proven = value;
+    if (!walker.types().isSubset(walker.typeOf(value), tested)) {
+        Reference isOfClass = buildTypeTestForStrings(walker, value, tested, origin);
+        if (!isOfClass)
+            return;
+        goOnWhereTestPasses(isOfClass);
+        proven = buildProofBehindTestForStrings(walker, value, isOfClass, OperandIndex::TypeTest::value, origin);
+    }
     if (Reference isAsMade = proven ? buildTestOfObjectAsMade(walker, proven, origin) : Reference()) {
         goOnWhereTestPasses(isAsMade);
         noteListAsMade(walker, proven);
@@ -107,7 +154,7 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
 
     Vector<ArmOfCallOnOperandAsMade, 2> arms;
     auto walkCallToEndOfArm = [&] {
-        walker.walkStretch(inputBlock, place, place + 1);
+        walker.walkStretch(inputBlock, firstPlace.value_or(place), place + 1);
         if (isReturnedAtOnce)
             walker.endArmWithReturnOf(inputBlock);
         if (walker.isUnreachable())

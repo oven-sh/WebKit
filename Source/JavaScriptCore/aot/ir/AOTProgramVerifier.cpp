@@ -12,6 +12,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTLayout.h"
 #include "AOTNameClass.h"
+#include "AOTOperationData.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringTable.h"
@@ -448,8 +449,7 @@ static bool namesBuiltinConstantAmongObjects(const Program& program, TypeID id)
         return record.kind == ObjectKind::Builtin && program.builtins().at(BuiltinID(record.payload)).kind == BuiltinKind::Constant;
     };
     SetView<ObjectID, ObjectSetID> named = program.types.at(program.at(id).objects);
-    return named.anyOfWithin(objects.firstOf(ObjectKind::Builtin), objects.endOf(ObjectKind::Builtin), isBuiltinConstant)
-        || (objects.firstObjectOfInstances() < objects.size() && named.anyOfWithin(objects.firstObjectOfInstances(), objects.size(), isBuiltinConstant));
+    return named.anyOfWithin(objects.firstOf(ObjectKind::Builtin), objects.endOf(ObjectKind::Builtin), isBuiltinConstant);
 }
 
 std::optional<InternalError> findTypeError(const Program& program, uint32_t position, RecordReferenceChecker checker, const AnswersForMembersOfVerifiedTypes& answers)
@@ -590,7 +590,7 @@ std::optional<InternalError> findFieldError(const Program& program, LayoutID id,
 
 bool isValidPropertyKey(const PropertyKey& key)
 {
-    bool hasCreationSite = key.module || key.callNumber || key.site;
+    bool hasCreationSite = key.module || key.callNumber;
     switch (key.kind) {
     case PropertyKeyKind::Text:
     case PropertyKeyKind::EnginePrivateName:
@@ -838,8 +838,36 @@ bool ProgramVerifier::isValidClass(LayoutID id, const Layout& layout) const
     });
 }
 
+BitVector variablesThatRunTimeMayFill(const Program& program)
+{
+    BitVector found(program.variables.size());
+    auto add = [&](VariableID variable) {
+        if (variable)
+            found.quickSet(variable.index());
+    };
+    for (const Module& module : program.modules) {
+        for (const SyntheticExport& entry : module.syntheticExports)
+            add(entry.variable);
+        add(module.exportsVariable);
+    }
+    for (const EvalScope& scope : program.evalScopes) {
+        for (const EvalBinding& binding : scope.bindings) {
+            if (isAssignableBinding(binding.kind) || binding.kind == EvalBindingKind::This)
+                add(binding.variable);
+        }
+    }
+    for (uint32_t index = 0; index < program.variables.size(); ++index) {
+        const Variable& variable = program.variables[index];
+        if (variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable }) || variable.owner)
+            found.quickSet(index);
+    }
+    return found;
+}
+
 void ProgramVerifier::verifyVariables()
 {
+    BitVector mayBeFilledByRunTime = variablesThatRunTimeMayFill(m_program);
+    TypeReader types(m_program);
     BitVector isStaticField(m_program.variables.size());
     for (const Layout& layout : m_program.layouts) {
         for (const StaticField& field : layout.staticFields)
@@ -862,6 +890,8 @@ void ProgramVerifier::verifyVariables()
                 return false;
         }
         if (variable.flags.contains(VariableFlags::OriginalMayRun) && !variable.flags.contains(VariableFlags::HoldsMock))
+            return false;
+        if (mayBeFilledByRunTime.quickGet(index) && variable.declared.isEstablished() && !types.at(variable.declared.written()).isAnything())
             return false;
         return !variable.owner || (m_program.at(variable.owner).kind == LayoutKind::Instance && isStaticField.quickGet(index));
     };

@@ -13,6 +13,7 @@
 #include "AOTInstance.h"
 #include "AOTStringTable.h"
 #include "AOTStubsBarriers.h"
+#include "AOTThrowEmitter.h"
 #include "AOTTypeArena.h"
 #include "CellState.h"
 #include "JSCell.h"
@@ -122,18 +123,8 @@ void BarrierEmitter::barrierAfterStore(const ValueContext& store, CellPointer ow
 
 void BarrierEmitter::stopIfCellIsOldAndNotRemembered(const ValueContext& store, CellPointer owner)
 {
-    LBasicBlock stops = newBlock();
-    LBasicBlock continuation = newBlock();
     LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, owner.value(), JSCell::cellStateOffset()));
-    ScopeFork fork = m_out.forkScope();
-    m_out.branch(m_out.notEqual(state, m_out.constInt32(static_cast<int32_t>(CellState::PossiblyBlack))), normalEdge(continuation), rareEdge(stops));
-    m_out.appendToArm(stops, fork);
-    FunctionID writtenIn = m_generator.code().inlineFrames()[store->inlineFrame].callee;
-    m_out.suspendDeclaredAccesses();
-    callVoidOperation(store, RuntimeOperation::StopAtFalseProof, { Boxed(m_out.constInt64(JSValue::encode(JSValue()))), word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(store->position)), word32(static_cast<int32_t>(ProofSource::WhatIsRemembered)) });
-    m_out.resumeDeclaredAccesses();
-    m_out.unreachable();
-    m_out.appendToArm(continuation, fork);
+    emitter<ThrowEmitter>().requireOrStopAtFalseProof(store, Condition(m_out.notEqual(state, m_out.constInt32(static_cast<int32_t>(CellState::PossiblyBlack)))), std::nullopt, ProofSource::WhatIsRemembered);
 }
 
 void BarrierEmitter::callBarrierStub(const OperationContext& context, StubKey key, std::initializer_list<LValue> operands, CallOptions options)

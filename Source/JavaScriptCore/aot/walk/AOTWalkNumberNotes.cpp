@@ -156,25 +156,6 @@ Reference buildOperatorInNumberForms(Walker& walker, Opcode opcode, Reference le
     return buildInAllowedFormInNumberForms(walker, WTF::move(draft));
 }
 
-std::optional<uint32_t> operandsNarrowedBehindTestInNumberForms(const Walker& walker, ValueID test)
-{
-    const BodyIndex& index = walker.currentBodyIndex();
-    if (index.isUnused(test))
-        return 0;
-    std::optional<BodyUser> user = index.onlyUser(test);
-    if (!user)
-        return std::nullopt;
-    if (user->kind != BodyUseKind::TerminatorOperand)
-        return 0;
-
-    uint32_t operands = 0;
-    for (BodyTarget target : index.terminator(user->block).targets()) {
-        for (uint32_t operandIndex : target.proofs())
-            operands |= 1u << (operandIndex & 31);
-    }
-    return operands;
-}
-
 void goOnWhereTestPassesInNumberForms(Walker& walker, Reference passes, BlockID otherwise)
 {
     BlockID next = walker.addBlock();

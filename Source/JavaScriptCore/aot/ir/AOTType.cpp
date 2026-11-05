@@ -78,35 +78,10 @@ TypeReader::TypeReader(const Program& program)
 {
 }
 
-std::span<const LayoutID> membersOf(TypeReader reader, LayoutSetID set)
-{
-    return reader.listOf(set);
-}
-
-std::span<const LayoutID> membersOf(TypeReader reader, const Type& type)
-{
-    return membersOf(reader, type.layouts);
-}
-
-std::span<const ClassPart> classPartsOf(TypeReader reader, const Type& type)
-{
-    if (!type.classes)
-        return { };
-    return reader.at(type.classes);
-}
-
 template<typename MemberID, typename SetID>
 static MemberID onlyMemberOfSetInType(SetID set)
 {
     return holdsOneMember(set) ? MemberID(positionOf(set)) : MemberID();
-}
-
-const ClassPart* singleBuiltinClassOf(TypeReader reader, const Type& type)
-{
-    if (!type.hasOnlyClassObjects())
-        return nullptr;
-    std::span<const ClassPart> parts = classPartsOf(reader, type);
-    return parts.size() == 1 ? &parts[0] : nullptr;
 }
 
 const ClassPart* findClassPart(TypeReader reader, const Type& type, BuiltinClassID builtinClass)
@@ -246,7 +221,7 @@ void forEachFunctionAmongClosuresOf(TypeReader reader, const Type& type, NOESCAP
     auto functionOf = [&](ObjectID object) {
         return objects.closureFunction(object);
     };
-    uint32_t end = type.traitsOfNamed.contains(ObjectTrait::IsOfInstance) ? objects.size() : objects.endOf(ObjectKind::Closure);
+    uint32_t end = objects.endOf(ObjectKind::Closure);
     forEachDistinctNameAmongObjectsOfType(named, end, functionOf, functor);
 }
 
@@ -255,7 +230,7 @@ void forEachBuiltinOf(TypeReader reader, const Type& type, NOESCAPE const Scoped
     if (!type.traitsOfNamed.contains(ObjectTrait::IsBuiltin))
         return;
     const ObjectTable& objects = reader.objects();
-    uint32_t end = type.traitsOfNamed.contains(ObjectTrait::IsOfInstance) ? objects.size() : objects.endOf(ObjectKind::ModuleBuiltin);
+    uint32_t end = objects.endOf(ObjectKind::ModuleBuiltin);
     forEachDistinctNameAmongObjectsOfType(reader.at(type.objects), end, [&](ObjectID object) {
         return objects.builtinOf(object);
     }, functor);
@@ -265,13 +240,7 @@ bool namesFunction(TypeReader reader, const Type& type, FunctionID function)
 {
     if (!function || !type.traitsOfNamed.contains(ObjectTrait::IsClosure))
         return false;
-    const ObjectTable& objects = reader.objects();
-    SetView<ObjectID, ObjectSetID> named = reader.at(type.objects);
-    if (named.contains(objects.closureOf(function)))
-        return true;
-    return type.traitsOfNamed.contains(ObjectTrait::IsOfInstance) && named.anyOf([&](ObjectID object) {
-        return objects.closureFunction(object) == function;
-    });
+    return reader.at(type.objects).contains(reader.objects().closureOf(function));
 }
 
 bool namesBuiltin(TypeReader reader, const Type& type, BuiltinID builtin)
@@ -284,7 +253,7 @@ bool namesBuiltin(TypeReader reader, const Type& type, BuiltinID builtin)
     SetView<ObjectID, ObjectSetID> named = reader.at(type.objects);
     if (named.contains(objects.objectOf(canonical)))
         return true;
-    if (builtins.at(canonical).scope != BuiltinScope::Module && !type.traitsOfNamed.contains(ObjectTrait::IsOfInstance))
+    if (builtins.at(canonical).scope != BuiltinScope::Module)
         return false;
     return named.anyOf([&](ObjectID object) {
         return objects.builtinOf(object) == canonical;

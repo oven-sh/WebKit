@@ -161,6 +161,7 @@ export const operandRoles = [
   "FunctionsAreOnlyNamed",
   "ProxiesArePrintedAsTheirTargets",
   "KeepsWhatCanBeReached",
+  "MayReplaceLocale",
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 
@@ -535,7 +536,6 @@ export const builtinMarks = [
   "EvaluatesTextInGlobalScope",
   "HoldsLoader",
   "IsSpy",
-  "IsNotEnumerable",
   "RunsWaitingJobs",
   "IsCalledWithoutStartupLoads",
   "InstancesHaveMethodCalledWithStartupLoads",
@@ -626,9 +626,6 @@ export interface ClassColumns {
   instancesAreEntries?: boolean;
   definesCharactersOnNewInstances?: boolean;
   namesDefinedOnNewInstances?: readonly string[];
-  typesOfNamesDefinedOnNewInstances?: Readonly<Record<string, TypeSpec>>;
-  namesMadeByStaticMembers?: Readonly<Record<string, string>>;
-  namesReadToDescribeInstances?: readonly string[];
   constructorOnlyReadsPrototypeOfNewTarget?: boolean;
   constructorAdder?: string;
   instanceCppClass?: CppClassRef;

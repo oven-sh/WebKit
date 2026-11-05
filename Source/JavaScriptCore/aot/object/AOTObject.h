@@ -133,9 +133,18 @@ public:
 
     template<typename T> T& at(uint32_t offset) const { return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(const_cast<Object*>(this)) + offset); }
     uint32_t orderWord() const { return at<uint32_t>(offsetOfOrderWord); }
-    uint32_t shapeWord() const { return at<uint32_t>(offsetOfShapeWord); }
+    uint32_t shapeWordWithMark() const { return at<uint32_t>(offsetOfShapeWord); }
+    uint64_t orderAndShapeWordsWithMark() const { return static_cast<uint64_t>(shapeWordWithMark()) << 32 | orderWord(); }
+    uint32_t shapeWord() const { return shapeWordWithoutMark(shapeWordWithMark()); }
     uint32_t shape() const { return shapeOf(shapeWord()); }
     uint64_t orderAndShapeWords() const { return static_cast<uint64_t>(shapeWord()) << 32 | orderWord(); }
+    bool bearsMark() const { return perCellBit() || !(shapeWordWithMark() & shapeWordIsUnmarked); }
+    void setIsInBirth(bool isInBirth) { at<uint32_t>(offsetOfShapeWord) = isInBirth && mayBearMark() ? shapeWordWithMark() & ~shapeWordIsUnmarked : shapeWord(); }
+    void setBearsMark(bool bearsMark)
+    {
+        setPerCellBit(bearsMark);
+        setIsInBirth(bearsMark);
+    }
     bool hasFlagsInOrderWord() const { return orderWord() & ~orderAndCountMask; }
     bool isFrozen() const { return orderWord() & orderWordIsFrozen; }
     bool isSealed() const { return orderWord() & orderWordIsSealed; }
@@ -191,6 +200,7 @@ public:
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;
+    bool mayBearMark() const;
     JS_EXPORT_PRIVATE void tryFinishBirth();
 
     enum class Integrity : uint8_t { NotExtensible, Sealed, Frozen };

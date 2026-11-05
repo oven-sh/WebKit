@@ -38,7 +38,7 @@ Program::Program(const BuiltinTable& builtins)
 
 Program::~Program() = default;
 
-void Program::adoptBuffer(Vector<uint8_t>&& bytes)
+void Program::adoptBuffer(OwnedBytes&& bytes)
 {
     m_bytes.owned = WTF::move(bytes);
     m_bytes.borrowed = m_bytes.owned.span();
@@ -48,7 +48,7 @@ std::span<const uint8_t> Program::copyBorrowedBytes(std::span<const uint8_t> byt
 {
     constexpr size_t chunkSize = 256 * KB;
     RELEASE_ASSERT(!ownsBuffer());
-    m_bytes.owned.grow(bytes.size());
+    m_bytes.owned = OwnedBytes::malloc(bytes.size());
     forEachIndexInParallel(loops, static_cast<unsigned>((bytes.size() + chunkSize - 1) / chunkSize), [&](unsigned chunk) {
         size_t offset = chunk * chunkSize;
         memcpySpan(m_bytes.owned.mutableSpan().subspan(offset), bytes.subspan(offset, std::min(chunkSize, bytes.size() - offset)));
@@ -64,7 +64,7 @@ void Program::copyBorrowedWordsOfPositions(const ParallelLoops& loops)
         const SourcePositions& positions = modules[index].positions;
         firstWords[index] = std::exchange(count, count + positions.lineStarts.size());
     }
-    m_bytes.wordsOfPositions.grow(count);
+    m_bytes.wordsOfPositions = MallocSpan<uint32_t>::malloc(count * sizeof(uint32_t));
     forEachIndexInParallel(loops, static_cast<unsigned>(modules.size()), [&](unsigned index) {
         SourcePositions& positions = modules[index].positions;
         std::span<uint32_t> copy = m_bytes.wordsOfPositions.mutableSpan().subspan(firstWords[index], positions.lineStarts.size());

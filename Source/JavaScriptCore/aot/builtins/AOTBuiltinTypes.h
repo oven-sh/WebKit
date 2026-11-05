@@ -78,7 +78,6 @@ struct BuiltinResultQuery {
     BuiltinOverloadID overload;
     BuiltinCallForm form { BuiltinCallForm::Whole };
     const BuiltinOperandTypes& operands;
-    TypeID lengthOfReceiver { };
 };
 
 Range computeResultRange(BuiltinRangeRule, std::span<const Range> operandRanges);

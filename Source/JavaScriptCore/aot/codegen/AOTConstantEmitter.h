@@ -86,7 +86,7 @@ private:
     CellPointer failWithoutCell(const OperationContext&, InternalErrorKind);
 
     TypedPointer builtinCellWord(BuiltinCellKey);
-    CellPointer cellMadeByStub(const OperationContext&, StubKey, CallOptions, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord);
+    CellPointer cellMadeByStub(const OperationContext&, StubKey, const CallOptions&, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord);
     const RegisterSet& registersLostAtSiteOf(ConstantAtSite);
     CellPointer newCopyOnWriteArray(const ValueContext&);
     CellPointer newCopyOnWriteArrayByStub(const ValueContext&);
@@ -98,12 +98,14 @@ private:
     CellPointer newClosureByStub(const ValueContext&, const NewClosureRequest&);
     CellPointer callClosureStub(const ValueContext&, const NewClosureRequest&, uint64_t requestWord);
     Operand captureOf(const NewClosureRequest&, unsigned index) const;
-    Vector<LValue, 4> captureWordsBySlot(const NewClosureRequest&);
-    void storeCaptures(CellPointer closure, const NewClosureRequest&, const Machine::IndexedAbstractHeap&);
+    bool mayBeClosureOfFrame(ValueID captured);
+    Operand broughtToHeap(const ValueContext&, ValueID captured, Operand);
+    Vector<LValue, 4> captureWordsBySlot(const ValueContext&, const NewClosureRequest&);
     uint32_t closureNumberMentionedBy(const NewClosureRequest&, int32_t addend = 0);
     Integer closureWordOf(const NewClosureRequest&);
 
     std::array<std::optional<RegisterSet>, static_cast<size_t>(ConstantAtSite::BuiltinCell) + 1> m_registersLostAtSites;
+    std::optional<bool> m_mayCaptureClosuresOfFrames;
 };
 
 CellPointer ConstantEmitter::permanentCell(TypedPointer cellWord, bool isNarrow, NOESCAPE const Invocable<CellPointer()> auto& create)

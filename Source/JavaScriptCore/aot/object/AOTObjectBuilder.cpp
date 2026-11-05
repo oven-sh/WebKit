@@ -120,7 +120,7 @@ bool ObjectBuilder::canBuildWithoutCompilerKnowledge(const LayoutData& layout)
     if (layout.isDerived || !layout.impossibleMutations().isEmpty())
         return false;
     return std::ranges::none_of(layout.fields(), [](const FieldData& field) {
-        return field.flags & (fieldIsStoredOnce | fieldIsNeverStoredWithOtherType | fieldIsNeverDeleted | fieldIsNeverRedefined);
+        return field.flags & (fieldIsNeverStoredWithOtherType | fieldIsNeverDeleted | fieldIsNeverRedefined);
     });
 }
 

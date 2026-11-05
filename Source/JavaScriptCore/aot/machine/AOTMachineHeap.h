@@ -38,6 +38,7 @@ public:
 
     unsigned size() const { return m_parents.size(); }
     HeapIndex parentOf(HeapIndex heap) const { return m_parents[heap]; }
+    std::span<const HeapIndex> parents() const LIFETIME_BOUND { return m_parents.span(); }
     ASCIILiteral nameOf(HeapIndex heap) const { return m_names[heap]; }
 
     bool isSameOrAbove(HeapIndex above, HeapIndex heap) const

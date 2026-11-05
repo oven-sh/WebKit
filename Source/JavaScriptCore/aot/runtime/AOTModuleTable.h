@@ -71,6 +71,7 @@ public:
     bool hasSourceStamps() const { return !m_tables->sourceStamps().empty(); }
     std::optional<uint64_t> sourceStamp(ModuleID) const;
     std::span<const NameOfStatementData> namesOfStatements(ModuleID) const;
+    bool listsNamesOfStatements() const { return !m_tables->namesOfStatements().empty(); }
     const ModuleFailureData& failure(ModuleFailureID) const;
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;
 
@@ -106,6 +107,25 @@ private:
 
     const ProgramTables* m_tables;
     std::span<const ModuleData> m_modules;
+};
+
+struct CyclesOfImports {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CyclesOfImports);
+
+    struct Member {
+        uint32_t module;
+        uint32_t cycle;
+        uint32_t place;
+    };
+
+    explicit CyclesOfImports(const ModuleTable&);
+
+    const Member* find(ModuleID) const;
+    std::span<const uint32_t> membersOf(uint32_t cycle) const LIFETIME_BOUND { return members.span().subspan(firstMemberOf[cycle], firstMemberOf[cycle + 1] - firstMemberOf[cycle]); }
+
+    Vector<Member> membersByModule;
+    Vector<uint32_t> members;
+    Vector<uint32_t> firstMemberOf;
 };
 
 inline size_t ModuleTable::checkedIndex(ModuleID module) const

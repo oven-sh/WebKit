@@ -1,6 +1,6 @@
-# If two layouts that meet in an array escaped, as in the first version, every object that is ever put into a list would lose the types of its fields. If the read through the lost value found the field of one of the two alone, a boolean would be taken for a string
+# If two layouts that meet in an array escaped, as in the first version, every object that is ever put into a list would lose the types of its fields. If the read through the set found the field of one of the two alone, a boolean would be taken for a string
 # const list = [{ x: "a", p: null }, { x: true, q: null }];  function take(e) { return e.x; }  take(list[0]);
-# No declared family holds both, so both become lost. Neither has escaped: every writer of their fields is still known, and each field under the shared name keeps its own type. The read through the lost value gives the join, and undefined, because a layout that joins later may lack the name. `list[2]` leaves the same summary, so undefined arrives at `take` too.
+# The two are a set: neither is lost, neither has escaped: every writer of their fields is still known, and each field under the shared name keeps its own type. The read through the set gives the join of the two fields and nothing else: both members have the name. `list[2]` leaves the same summary, so undefined arrives at `take` too.
 # RUN: summary f0
 # CHECK: edge Allocation L0 -> Contents Element of ClassInstance Array #7
 # CHECK: edge Allocation L1 -> Contents Element of ClassInstance Array #7
@@ -8,8 +8,8 @@
 # KEPT-NOT: Allocation L0 -> Unknown
 # KEPT-NOT: Allocation L1 -> Unknown
 # RUN(LINK): link functions fields layouts mechanisms=all
-# LINK: function f1 callers-known one-callee {{*}}result=undefined|true|string
-# LINK-NEXT: parameter 0 {{*}}proven=undefined|object
+# LINK: function f1 callers-known one-callee {{*}}result=true|string
+# LINK-NEXT: parameter 0 {{*}}proven=undefined|L0|L1
 # LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone
 # LINK: field L0.1 "p" proven=null writers-known written-at-construction-alone
 # LINK: field L1.0 "x" proven=true writers-known written-at-construction-alone

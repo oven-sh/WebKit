@@ -14,6 +14,7 @@
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
+#include <functional>
 #include <optional>
 #include <span>
 #include <utility>
@@ -21,10 +22,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet stringsMadeForReadersInTextBuilders { Opcode::StringBuilderToString, Opcode::StackStringBuilderToString };
-static constexpr OpcodeSet appendsOfStringsInTextBuilders { Opcode::StringBuilderAppendString, Opcode::StackStringBuilderAppendString };
-static_assert(accessesUnderComputedKeys == OpcodeSet { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine });
-static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property && OperandIndex::ElemGet::property == OperandIndex::ElemHas::property);
-static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemDelete::property && OperandIndex::ElemGet::property == OperandIndex::ElemDefine::property);
 
 static const NameOfGrowingText* findNameInTextBuilders(const GrowingText& web, ValueID value)
 {
@@ -72,7 +69,7 @@ bool isTextInStringBuilder(const Walker& walker, Reference reference)
 TextInStringBuilder* findTextNamedBy(Walker& walker, ValueID input)
 {
     Vector<TextInStringBuilder, 2>& texts = walker.textsInStringBuilders();
-    for (size_t place = texts.size(); place--;) {
+    for (size_t place = walker.endOfTextsInStringBuildersNamedBy(input); place--;) {
         if (texts[place].frameIndex < walker.indexOfFrameOnTop())
             break;
         if (findNameInTextBuilders(texts[place].web, input) && belongsToFrameOnTopInTextBuilders(walker, texts[place]))
@@ -158,11 +155,6 @@ static bool comesRoundLoopAroundAsStringInTextBuilders(Walker& walker, const Bod
     return false;
 }
 
-static bool passesQuestionsInTextBuilders(Walker& walker, BlockID inputHead, const GrowingText& web)
-{
-    return !web.standsUnderHandlers || mayKeepTextUnderHandlers(walker, inputHead, web);
-}
-
 static void bindNamesReadBehindLoopAnewInTextBuilders(Walker& walker, const BodyIndex& index, const GrowingText& web)
 {
     BodyLiveness liveness;
@@ -176,12 +168,9 @@ static void bindNamesReadBehindLoopAnewInTextBuilders(Walker& walker, const Body
         });
     };
     for (BlockID member : index.membersOf(loop)) {
-        BodyBlock block = index.block(member);
-        BodyTerminator terminator = block.terminator();
+        BodyTerminator terminator = index.terminator(member);
         for (BodyTarget target : terminator.targets())
             bindNamesLiveAtHeadOf(target.block());
-        if (block.hasHandler())
-            bindNamesLiveAtHeadOf(block.handler().block());
         ValueID returned = terminator.kind() == TerminatorKind::Return ? terminator.operand(0) : ValueID();
         if (returned && findNameInTextBuilders(web, returned))
             walker.bindAnewAtEveryBlock(returned);
@@ -208,10 +197,8 @@ static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIn
         Draft start(Opcode::StackStringBuilderStart, origin);
         walker.chooseConservativeFields(start);
         start.setBuilderOperand(begun.builder);
-        Reference cursor = walker.build(WTF::move(start));
-        if (!cursor)
+        if (!walker.build(WTF::move(start)))
             return nullptr;
-        noteCursorBehind(walker, begun, cursor);
     }
 
     begun.beganEmpty = textOfKnownPartOfStringBuilder(walker, enters) == walker.program().strings.emptyString();
@@ -219,12 +206,6 @@ static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIn
         appendPartsToStringBuilder(walker, begun, begun.builder, singleElementSpan(enters), origin);
         if (walker.isUnreachable())
             return nullptr;
-        ValueID last = walker.code().lastOperationOf(walker.currentBlock());
-        if (last && appendsOfStringsInTextBuilders.contains(walker.code().at(last).opcode) && Reference::value(walker.code().at(last).builderOperand()) == begun.builder) {
-            begun.firstPart = enters;
-            if (begun.liesInFrame)
-                begun.endOfFirstPart = Reference::value(last);
-        }
     }
     bindNamesReadBehindLoopAnewInTextBuilders(walker, index, begun.web);
     return &begun;
@@ -264,36 +245,15 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
         size_t placeOfWeb = webs.findIf([&](const GrowingText& candidate) {
             return candidate.parameterIndex == parameterIndex;
         });
-        GrowingText* web = placeOfWeb != notFound && passesQuestionsInTextBuilders(walker, inputHead, webs[placeOfWeb]) ? &webs[placeOfWeb] : nullptr;
+        GrowingText* web = placeOfWeb != notFound ? &webs[placeOfWeb] : nullptr;
 
         if (isTextInStringBuilder(walker, enters)) {
-            if (findTextNamedBy(walker, head.parameter(parameterIndex))) {
-                letEnterInBuilder(parameterIndex, enters);
-                continue;
-            }
-            TextInStringBuilder* before = findTextByRecordInTextBuilders(walker, enters);
-            if (!before) {
+            if (!findTextNamedBy(walker, head.parameter(parameterIndex))) {
                 walker.fail("a text enters a loop in a builder that nobody has begun"_s);
                 return;
             }
-            if (web && (!before->liesInFrame || textBegunHereMayLieInFrame(walker, inputHead, *web))) {
-                TextInStringBuilder text;
-                text.web = WTF::move(*web);
-                text.frameIndex = before->frameIndex;
-                text.builder = before->builder;
-                text.liesInFrame = before->liesInFrame;
-                text.firstPart = before->firstPart;
-                text.endOfFirstPart = before->endOfFirstPart;
-                walker.textsInStringBuilders().append(WTF::move(text));
-                bindNamesReadBehindLoopAnewInTextBuilders(walker, index, walker.textsInStringBuilders().last().web);
-                letEnterInBuilder(parameterIndex, enters);
-                continue;
-            }
-            enters = finishTextInStringBuilder(walker, *before, enters, origin);
-            if (!enters)
-                return;
-            entering[parameterIndex] = enters;
-            entryTypes[parameterIndex] = walker.code().at(enters.id()).type;
+            letEnterInBuilder(parameterIndex, enters);
+            continue;
         }
 
         if (!web || !enters || !enters.isRecord())
@@ -453,10 +413,6 @@ Reference stringOfTextInStringBuilder(Walker& walker, TextInStringBuilder& text,
 
 static void appendPartsBehindFrontInTextBuilders(Walker& walker, TextInStringBuilder& text, Reference name, const BodyValue& join, std::span<const Reference> parts, Origin origin)
 {
-    if (text.web.standsUnderHandlers) {
-        appendPartsRolledBackWhereTheyFail(walker, text, name, parts.subspan(1), origin);
-        return;
-    }
     Vector<ValueID, 8> operands;
     if (text.web.takesTextOfJSONStringify) {
         join.forEachOperand([&](ValueID operand, uint32_t) {
@@ -507,15 +463,13 @@ bool appendRowToTextInStringBuilder(Walker& walker, const BodyValue& join, Vecto
     return true;
 }
 
-bool handlerInForceReadsTextInStringBuilder(Walker&, const TextInStringBuilder&);
-
 template<typename Functor>
 static void forEachTextLeftOnEdgeInTextBuilders(Walker& walker, BlockID from, BlockID to, const Functor& functor)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     Vector<TextInStringBuilder, 2>& texts = walker.textsInStringBuilders();
     Vector<ValueID, 4> parametersOfHeadsSeen;
-    for (size_t place = texts.size(); place--;) {
+    for (uint32_t place : walker.placesOfTextsInStringBuildersLeftOnEdge(from, to)) {
         TextInStringBuilder& text = texts[place];
         if (!belongsToFrameOnTopInTextBuilders(walker, text))
             continue;
@@ -538,63 +492,23 @@ bool edgeLeavesLoopOfTextInStringBuilder(Walker& walker, BlockID to)
     return leaves;
 }
 
-static bool isFirstReadAsKeyInTextBuilders(const BodyIndex& index, ValueID text)
-{
-    while (true) {
-        std::optional<BodyUser> mention = index.firstUser(text);
-        if (!mention || mention->kind != BodyUseKind::Operand)
-            return false;
-        BodyValue user = index.value(mention->value);
-        if (accessesUnderComputedKeys.contains(user.opcode()))
-            return user.operand(OperandIndex::ElemGet::property) == text;
-        if (!opcodesThatStateTypes.contains(user.opcode()))
-            return false;
-        text = user.id();
-    }
-}
-
-static bool isLastReadAsKeyInTextBuilders(const BodyIndex& index, const BodyLiveness& liveness, ValueID text)
-{
-    ValueID last = liveness.lastUse(text);
-    if (last.index() >= index.numberOfValues() || index.isParameter(last))
-        return false;
-    BodyValue user = index.value(last);
-    if (accessesUnderComputedKeys.contains(user.opcode()))
-        return user.operand(OperandIndex::ElemGet::property) == text;
-    return opcodesThatStateTypes.contains(user.opcode()) && user.operand(0) == text && isFirstReadAsKeyInTextBuilders(index, user.id());
-}
-
-static Reference finishInTextBuilders(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin, bool isLikelyKey)
+static Reference finishInTextBuilders(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)
 {
     origin.isTailCall = false;
     text.stringOfState = { };
     text.lengthOfState = { };
-    if (handlerInForceReadsTextInStringBuilder(walker, text))
-        return stringOfTextInStringBuilder(walker, text, name, origin);
     if (text.liesInFrame)
-        return finishTextInFrame(walker, text, name, origin);
-    if (Reference string = lastPartOrFinishedText(walker, text, name, origin))
-        return string;
-    if (walker.isUnreachable())
-        return { };
+        return finishTextInFrame(walker, name, origin);
 
     Draft finish(Opcode::StringBuilderFinish, origin);
     walker.chooseConservativeFields(finish);
     finish.setBuilderOperand(name);
-    finish.setIsLikelyKey(isLikelyKey);
     return walker.build(WTF::move(finish));
-}
-
-Reference finishTextInStringBuilder(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)
-{
-    return finishInTextBuilders(walker, text, name, origin, false);
 }
 
 void discardTextInStringBuilder(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)
 {
     origin.isTailCall = false;
-    if (handlerInForceReadsTextInStringBuilder(walker, text))
-        return;
     Draft discard(text.liesInFrame ? Opcode::StackStringBuilderDiscard : Opcode::StringBuilderDiscard, origin);
     walker.chooseConservativeFields(discard);
     discard.setBuilderOperand(name);
@@ -605,7 +519,6 @@ void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget t
 {
     const BodyIndex& index = walker.currentBodyIndex();
     BlockID from = walker.inputBlockBeingWalked();
-    BodyBlock entered = index.block(to);
     BodyLiveness liveness;
     liveness.compute(index);
     Origin origin = walker.originOfOperation();
@@ -617,25 +530,19 @@ void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget t
     }
 
     forEachTextLeftOnEdgeInTextBuilders(walker, from, to, [&](TextInStringBuilder& text) {
-        if (textStaysInStringBuilderOnEdge(walker, text, to, target))
-            return IterationStatus::Continue;
-
         Vector<Reference, 2> records;
-        bool everyReaderTakesKey = true;
-        auto noteReader = [&](Reference record, bool takesKey) {
-            if (!isTextInStringBuilder(walker, record))
-                return;
-            if (!records.contains(record))
+        auto noteReader = [&](Reference record) {
+            if (isTextInStringBuilder(walker, record) && !records.contains(record))
                 records.append(record);
-            everyReaderTakesKey &= takesKey;
         };
         for (size_t place = 0; place < arguments.size(); ++place) {
             bool namesText = place < written.size() ? written[place] && findNameInTextBuilders(text.web, written[place]) : isTextInStringBuilder(walker, arguments[place]) && findTextByRecordInTextBuilders(walker, arguments[place]) == &text;
             if (namesText)
-                noteReader(arguments[place], place < entered.numberOfParameters() && isFirstReadAsKeyInTextBuilders(index, entered.parameter(static_cast<uint32_t>(place))));
+                noteReader(arguments[place]);
         }
         forEachNameLiveAtHeadInTextBuilders(liveness, text.web, to, [&](const NameOfGrowingText& name) {
-            noteReader(walker.referenceBoundTo(name.value), isLastReadAsKeyInTextBuilders(index, liveness, name.value));
+            noteReader(walker.referenceBoundTo(name.value));
+            taken.names.append(name.value);
         });
 
         if (records.isEmpty()) {
@@ -645,11 +552,11 @@ void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget t
             return walker.isUnreachable() ? IterationStatus::Done : IterationStatus::Continue;
         }
 
-        Reference string = finishInTextBuilders(walker, text, records.first(), origin, everyReaderTakesKey);
+        Reference string = finishInTextBuilders(walker, text, records.first(), origin);
         if (!string)
             return IterationStatus::Done;
         for (Reference record : records) {
-            taken.append({ record, string });
+            taken.strings.append({ record, string });
             for (Reference& argument : arguments) {
                 if (argument == record)
                     argument = string;
@@ -657,16 +564,6 @@ void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget t
         }
         return IterationStatus::Continue;
     });
-}
-
-void bringStringsInPlaceOfTexts(const TextsTakenOutOnEdge& taken, Vector<std::pair<ValueID, Reference>, 2>& namesOnEdge)
-{
-    for (auto& [value, reference] : namesOnEdge) {
-        for (auto [record, string] : taken) {
-            if (reference == record)
-                reference = string;
-        }
-    }
 }
 
 void takeTextsOutOfStringBuildersAtEndOfWay(Walker& walker, const BodyTerminator& terminator)
@@ -690,11 +587,61 @@ bool Walker::isLiveAtHeadOf(ValueID value, BlockID inputBlock)
     return m_liveness.isLiveAtHead(value, inputBlock);
 }
 
+const PlacesOfTextsInStringBuilders& Walker::placesOfTextsInStringBuilders()
+{
+    PlacesOfTextsInStringBuilders& places = m_placesOfTextsInStringBuilders;
+    for (uint32_t place = places.endsBeforeInSameLoop.size(); place < m_textsInStringBuilders.size(); ++place) {
+        const TextInStringBuilder& text = m_textsInStringBuilders[place];
+        uint64_t frame = static_cast<uint64_t>(text.frameIndex) << 32;
+        for (const NameOfGrowingText& name : text.web.names)
+            places.endsByName.set(frame | name.value.index(), place + 1);
+        uint32_t& endInSameLoop = places.endsByLoopHead.add(frame | text.web.loopHead.index(), 0).iterator->value;
+        places.endsBeforeInSameLoop.append(std::exchange(endInSameLoop, place + 1));
+        while (places.endsByFrame.size() <= text.frameIndex)
+            places.endsByFrame.append(0);
+        places.endsByFrame[text.frameIndex] = place + 1;
+    }
+    return places;
+}
+
+static constexpr size_t minTextsInStringBuildersToIndex = 8;
+
+size_t Walker::endOfTextsInStringBuildersNamedBy(ValueID name)
+{
+    if (m_textsInStringBuilders.size() < minTextsInStringBuildersToIndex)
+        return m_textsInStringBuilders.size();
+    const PlacesOfTextsInStringBuilders& places = placesOfTextsInStringBuilders();
+    size_t top = indexOfFrameOnTop();
+    uint32_t end = places.endsByName.get(static_cast<uint64_t>(top) << 32 | name.index());
+    auto endsOfFramesBelow = places.endsByFrame.span().first(std::min(top, places.endsByFrame.size()));
+    return std::ranges::any_of(endsOfFramesBelow, [&](uint32_t endOfFrameBelow) { return endOfFrameBelow > end; }) ? 0 : end;
+}
+
+Vector<uint32_t, 8> Walker::placesOfTextsInStringBuildersLeftOnEdge(BlockID from, BlockID to)
+{
+    Vector<uint32_t, 8> found;
+    const BodyIndex& index = currentBodyIndex();
+    LoopID innermost = index.loopOf(from);
+    if (!innermost || index.isInLoop(to, innermost))
+        return found;
+    if (m_textsInStringBuilders.size() < minTextsInStringBuildersToIndex) {
+        for (uint32_t place = m_textsInStringBuilders.size(); place--;)
+            found.append(place);
+        return found;
+    }
+    const PlacesOfTextsInStringBuilders& places = placesOfTextsInStringBuilders();
+    uint64_t frame = static_cast<uint64_t>(indexOfFrameOnTop()) << 32;
+    for (LoopID loop = innermost; loop && !index.isInLoop(to, loop); loop = index.loop(loop).parent) {
+        for (uint32_t end = places.endsByLoopHead.get(frame | index.loop(loop).head.index()); end; end = places.endsBeforeInSameLoop[end - 1])
+            found.append(end - 1);
+    }
+    std::ranges::sort(found, std::greater());
+    return found;
+}
+
 void Walker::bindAnewAtEveryBlock(ValueID value)
 {
-    Frame& frame = m_frames.last();
-    if (!frame.valuesBuiltTwice.contains(value))
-        frame.valuesBuiltTwice.append(value);
+    m_frames.last().listAsBuiltTwice(value);
 }
 
 } } } // namespace JSC::AOT::Typed

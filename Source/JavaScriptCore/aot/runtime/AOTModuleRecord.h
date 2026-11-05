@@ -75,7 +75,6 @@ public:
         m_loadGoneOnWithWhileRequestsWereListed = nullptr;
         return true;
     }
-    ModuleGraphLoadingState* loadThatWaitsFor(const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure);
     void didLoad();
     static void didFailToLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
@@ -103,7 +102,7 @@ public:
     bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
     void setHasRequestThatFindsNothing() { m_hasRequestThatFindsNothing = true; }
-    uint8_t willAskHostForRequest();
+    uint8_t willAskHostForRequest(const Identifier& key);
     static BitVector letAllImagesAskHost(JSGlobalObject*);
     static void restoreImagesThatAskHost(JSGlobalObject*, const BitVector& wereAsking);
     void didAskHostForRequest(uint8_t flagsBefore);
@@ -114,8 +113,6 @@ public:
     AbstractModuleRecord* recordOfRequest(JSGlobalObject*, const Identifier& key);
     bool holdTextOfRequest(JSPromise* fetched, AbstractModuleRecord* requested);
     void didRequestCompiledModule(const Identifier& key, ModuleID module) { m_compiledRequests.append({ key.impl(), module }); }
-    void leaveRequestToRoot(const Identifier& key) { m_requestsLeftToRoot.append(key.impl()); }
-    bool leavesRequestToRoot(const Identifier& key) const { return m_requestsLeftToRoot.contains(key.impl()); }
     unsigned innerModuleLinking(JSGlobalObject*, ModuleLinkingStack&, unsigned index, RefPtr<ScriptFetcher>);
     void execute(JSGlobalObject*, JSPromise* capability = nullptr);
     void executeAsync(JSGlobalObject*);
@@ -143,7 +140,6 @@ private:
     Vector<UniquedStringImpl*, 2> m_resolveSet;
     Vector<std::pair<UniquedStringImpl*, ModuleID>, 2> m_compiledRequests;
     unsigned m_nextCompiledRequest { 0 };
-    Vector<UniquedStringImpl*> m_requestsLeftToRoot;
     ModuleGraphLoadingState* m_loadGoneOnWithWhileRequestsWereListed { nullptr };
     uint32_t m_stepsBehindLoad { 0 };
     bool m_holdsStatus { false };

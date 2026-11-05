@@ -24,7 +24,7 @@
 # A typed store of compiled code passes no door of the run time. Where the unit itself does not show that the value lies within what the slot is held to, the value is asked in front of the store, in every build, and the failing side stops by name.
 # The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so an Other comes to a slot that is held to `Leaf | undefined` through a result, a variable and a slot of another object.
 # Without the check each of the three prints 14 and goes on. Nothing is copied in line: in a copy the walk sees the call itself, knows nothing of what it gives, and the store tests.
-# As a user builds, each of the three says "what a field holds is". Where a run adds testing=CheckProofsAtRunTime the check of the place that the value comes out of stops it first: "the result of a call is", "what a variable holds is".
+# As a user builds, the first two say "what a field holds is"; the third is stopped one store earlier, at the door of the carrier's own slot. Where a run adds testing=CheckProofsAtRunTime the check of the place that the value comes out of stops it first: "the result of a call is", "what a variable holds is".
 # OPTIONS: testing=UnseenCodeAnswersUndefined
 # RUN(TRUE): run-in-shell mechanisms=-Inlining globalThis.which = 0;
 # TRUE: went on
@@ -37,7 +37,7 @@
 # VARIABLE-NOT: went on
 # VARIABLE: crashed with
 # RUN(SLOT): run-in-shell mechanisms=-Inlining globalThis.which = 3;
-# SLOT: AOT: f{{*}} at {{*}}: what a field holds is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# SLOT: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that it never happens, and compiled code reads such objects without a look. This is a bug in Bun.
 # SLOT-NOT: went on
 # SLOT: crashed with
 

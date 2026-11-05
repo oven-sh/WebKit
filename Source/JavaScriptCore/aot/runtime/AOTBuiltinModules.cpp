@@ -72,7 +72,11 @@ JSValue evaluateEveryBuiltinModuleForTesting(JSGlobalObject* globalObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Instance* instance = Instance::of(globalObject);
     JSArray* asked = constructEmptyArray(globalObject, nullptr);
-    if (!instance || !instance->state || !asked)
+    if (scope.exception() || !asked) [[unlikely]] {
+        scope.clearException();
+        return jsUndefined();
+    }
+    if (!instance || !instance->state)
         return asked;
     Modules& modules = *instance->state->modules;
     for (unsigned index = 0; index < modules.table().size(); ++index) {

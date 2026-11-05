@@ -8,13 +8,10 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinIDs.h"
-#include "AOTBuiltinTable.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTFamilies.h"
 #include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
-#include "AOTOperatorForms.h"
 #include "AOTSweep.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
@@ -27,13 +24,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 bool joinIsLikelyKeyInWalkTexts(Walker&, ValueID join);
 
-using PartsInTextBuilderRows = Vector<Reference, 8>;
-
 static constexpr size_t mostPartsInTextBuilderRows = 32;
-static constexpr size_t mostElementsJoinedInTextBuilderRows = (mostPartsInTextBuilderRows + 1) / 2;
 static constexpr size_t mostRecordsLookedAtBehindText = 32;
 static constexpr size_t numberOfOperandsOfSumInTextBuilderRows = 2;
 
@@ -57,21 +50,6 @@ static bool hasTextByItselfInTextBuilderRows(const Walker& walker, Reference val
 {
     TypeID id = value ? walker.typeOf(value) : TypeID();
     return id && !isNeverType(id) && hasTextByItself(walker.types().at(id));
-}
-
-static Reference writtenTextInTextBuilderRows(Walker& walker, StringID text)
-{
-    Draft constant(Opcode::String);
-    constant.setString(text);
-    return walker.constant(WTF::move(constant));
-}
-
-static bool isEmptyTextInTextBuilderRows(const Walker& walker, Reference text)
-{
-    if (!text.isConstant())
-        return false;
-    const Operation& constant = walker.code().at(text.id());
-    return constant.opcode == Opcode::String && constant.string() == walker.program().strings.emptyString();
 }
 
 bool isReadByNoRecordSoFar(const Walker& walker, Reference made)
@@ -152,38 +130,6 @@ bool holdsPartsTakenOutOfTexts(const Walker& walker, const BodyValue& join, std:
         ++place;
     });
     return !standsAsWritten || place != parts.size();
-}
-
-static TypeID typeOfOperandInsideRowInTextBuilderRows(const Walker& walker, const BodyIndex& index, ValueID link, ValueID operand)
-{
-    if (!operand)
-        return { };
-    if (!(link < operand)) {
-        Reference built = walker.referenceOf(operand);
-        return built ? walker.typeOf(built) : TypeID();
-    }
-    BodyValue written = index.value(operand);
-    switch (written.opcode()) {
-    case Opcode::Integer:
-        return walker.types().integer(Range::one(written.as<Opcode::Integer>().integer()));
-    case Opcode::Double:
-        return walker.types().number(written.as<Opcode::Double>().number());
-    default:
-        return { };
-    }
-}
-
-bool mayStandInsideRowOfJoins(const Walker& walker, const BodyIndex& index, ValueID link, ValueID between)
-{
-    BodyValue operation = index.value(between);
-    Opcode opcode = operation.opcode();
-    if (!hasOperatorForm(opcode))
-        return false;
-    ValueID right = operation.operand(1);
-    OperatorTypes operands { typeOfOperandInsideRowInTextBuilderRows(walker, index, link, operation.operand(0)), typeOfOperandInsideRowInTextBuilderRows(walker, index, link, right) };
-    if (!operands.left || !!operands.right != !!right)
-        return false;
-    return chooseOperatorForm(walker.program(), walker.types(), opcode, operands).effects.isRemovableWhenUnused();
 }
 
 static constexpr TypeID typeOfPartGuessedBesideString = typeOfPrimitives(Primitive::NumberLike | Primitive::String);
@@ -392,170 +338,13 @@ bool guessThatConvertedPartOfTextInBuilderHasTextOfItsOpcodes(Walker& walker, co
     return guessThatOperandBesideStringHasTextOfItsOpcodes(walker, conversion);
 }
 
-static constexpr uint16_t primitivesJoinedWithoutCode = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnyString | Primitive::BigInt;
-static constexpr uint16_t primitivesJoinedAsTheirText = primitivesJoinedWithoutCode & ~Primitive::UndefinedOrNull;
-
-static BuiltinID findBuiltinCalledInTextBuilderRows(Walker& walker, const BodyValue& call)
-{
-    Reference callee = walker.referenceOf(call.calleeOperand());
-    if (!callee)
-        return { };
-    TypeArena& types = walker.types();
-    Type type = types.at(walker.typeOf(callee));
-    BuiltinID named = type.isObject() ? singleBuiltinOf(types, type) : BuiltinID();
-    if (!named) {
-        const BodyIndex& index = walker.currentBodyIndex();
-        ValueID read = index.valueBehindCasts(call.calleeOperand());
-        if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet || index.value(read).isFreeName())
-            return { };
-        Reference object = walker.referenceOf(index.value(read).objectOperand());
-        named = object ? findConstantMemberReadOff(walker, object, index.value(read).key()) : BuiltinID();
-    }
-    return named ? walker.program().builtins().canonicalID(named) : BuiltinID();
-}
-
-static bool collectTextsOfTemplateObjectInTextBuilderRows(const Walker& walker, Reference object, Vector<TemplateString, 8>& texts)
-{
-    if (!object || !object.isValue())
-        return false;
-    const Code& code = walker.code();
-    const Operation& made = code.at(rootOfCellInSweptCode(code, object.id()));
-    if (made.opcode != Opcode::NewTemplateObject)
-        return false;
-    for (TemplateString text : made.templateStrings())
-        texts.append(text);
-    return texts.size() <= mostElementsJoinedInTextBuilderRows;
-}
-
-static std::optional<Vector<Reference, 8>> elementsOfJoinedListInTextBuilderRows(Walker& walker, Reference list)
-{
-    if (isFreshListAsMade(walker, list)) {
-        std::optional<uint32_t> length = lengthOfFreshList(walker, list);
-        if (!length || *length > mostElementsJoinedInTextBuilderRows)
-            return std::nullopt;
-        return elementsOfFreshList(walker, list);
-    }
-    Vector<TemplateString, 8> texts;
-    if (!collectTextsOfTemplateObjectInTextBuilderRows(walker, list, texts))
-        return std::nullopt;
-    Vector<Reference, 8> elements;
-    for (TemplateString text : texts)
-        elements.append(text.cooked ? writtenTextInTextBuilderRows(walker, text.cooked) : walker.constant(Draft(Opcode::Undefined)));
-    return elements;
-}
-
-static bool takePartsOfJoinedListInTextBuilderRows(Walker& walker, const BodyValue& call, PartsInTextBuilderRows& parts)
-{
-    std::span<const ValueID> arguments = call.argumentsOperands();
-    Reference list = call.thisValueOperand() ? walker.referenceOf(call.thisValueOperand()) : Reference();
-    if (!list || arguments.size() > 1)
-        return false;
-    Reference separator = arguments.empty() ? Reference() : walker.referenceOf(arguments[0]);
-    bool isLeftOut = arguments.empty() || hasOnlyInTextBuilderRows(walker, separator, Primitive::Undefined);
-    if (!isLeftOut && !hasOnlyInTextBuilderRows(walker, separator, Primitive::AnyString))
-        return false;
-    std::optional<Vector<Reference, 8>> elements = elementsOfJoinedListInTextBuilderRows(walker, list);
-    if (!elements)
-        return false;
-    if (isLeftOut)
-        separator = writtenTextInTextBuilderRows(walker, walker.program().strings.comma());
-
-    bool separates = !isEmptyTextInTextBuilderRows(walker, separator);
-    for (size_t place = 0; place < elements->size(); ++place) {
-        if (place && separates)
-            parts.append(separator);
-        Reference element = elements->at(place);
-        if (hasOnlyInTextBuilderRows(walker, element, Primitive::UndefinedOrNull))
-            continue;
-        if (!hasOnlyInTextBuilderRows(walker, element, primitivesJoinedAsTheirText))
-            return false;
-        parts.append(element);
-    }
-    return true;
-}
-
-static bool takePartsOfRawTemplateInTextBuilderRows(Walker& walker, const BodyValue& call, PartsInTextBuilderRows& parts)
-{
-    std::span<const ValueID> arguments = call.argumentsOperands();
-    Vector<TemplateString, 8> texts;
-    if (arguments.empty() || !collectTextsOfTemplateObjectInTextBuilderRows(walker, walker.referenceOf(arguments[0]), texts))
-        return false;
-    StringID emptyString = walker.program().strings.emptyString();
-    for (size_t place = 0; place < texts.size(); ++place) {
-        if (texts[place].raw != emptyString)
-            parts.append(writtenTextInTextBuilderRows(walker, texts[place].raw));
-        if (place + 1 == texts.size() || place + 1 >= arguments.size())
-            continue;
-        Reference substitution = walker.referenceOf(arguments[place + 1]);
-        if (!hasOnlyInTextBuilderRows(walker, substitution, primitivesJoinedWithoutCode))
-            return false;
-        parts.append(substitution);
-    }
-    return true;
-}
-
-static bool takePartsOfConcatInTextBuilderRows(Walker& walker, const BodyValue& call, PartsInTextBuilderRows& parts)
-{
-    std::span<const ValueID> arguments = call.argumentsOperands();
-    Reference receiver = call.thisValueOperand() ? walker.referenceOf(call.thisValueOperand()) : Reference();
-    if (!hasOnlyInTextBuilderRows(walker, receiver, Primitive::AnyString) || arguments.size() >= mostPartsInTextBuilderRows)
-        return false;
-    parts.append(receiver);
-    for (ValueID argument : arguments) {
-        Reference part = walker.referenceOf(argument);
-        if (!hasOnlyInTextBuilderRows(walker, part, primitivesJoinedWithoutCode))
-            return false;
-        parts.append(part);
-    }
-    return true;
-}
-
-bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call)
-{
-    if (call.opcode() != Opcode::Call || !walker.has(Mechanism::TypedOperations) || walker.isUnreachable())
-        return false;
-    BuiltinID builtin = findBuiltinCalledInTextBuilderRows(walker, call);
-    if (!builtin)
-        return false;
-
-    const BuiltinTable& table = walker.program().builtins();
-    PartsInTextBuilderRows parts;
-    bool isJoin = false;
-    if (builtin == table.canonicalID(Builtins::ArrayPrototypeJoin))
-        isJoin = takePartsOfJoinedListInTextBuilderRows(walker, call, parts);
-    else if (builtin == table.canonicalID(Builtins::StringRaw))
-        isJoin = takePartsOfRawTemplateInTextBuilderRows(walker, call, parts);
-    else if (builtin == table.canonicalID(Builtins::StringPrototypeConcat))
-        isJoin = takePartsOfConcatInTextBuilderRows(walker, call, parts);
-    if (!isJoin || std::ranges::all_of(parts, [](Reference part) { return part.isConstant(); }))
-        return false;
-
-    Origin origin = walker.originOf(call);
-    origin.isTailCall = false;
-    if (parts.size() == 1 && hasOnlyInTextBuilderRows(walker, parts[0], Primitive::AnyString)) {
-        walker.bind(call.id(), parts[0]);
-        return true;
-    }
-    Draft joined(parts.size() == 1 ? Opcode::ToString : Opcode::Strcat, origin);
-    walker.chooseConservativeFields(joined);
-    joined.inputValueGiven = call.id();
-    if (parts.size() == 1) {
-        joined.setValueOperand(parts[0]);
-        joined.setForm(formAllowedForTypedOperator(walker, joined));
-    } else
-        joined.setPartsOperands(parts.span());
-    if (Reference text = walker.build(WTF::move(joined)))
-        walker.bind(call.id(), text);
-    return true;
-}
-
 bool buildCallOfBuiltinForTexts(Walker& walker, const BodyValue& call)
 {
     if (writeJSONTextOfCall(walker, call)) {
         walker.count(StatisticID::OwnKeyWalksExpanded);
         return true;
     }
-    return joinOfWhatIsInSight(walker, call);
+    return false;
 }
 
 } } } // namespace JSC::AOT::Typed

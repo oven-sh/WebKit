@@ -241,7 +241,9 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             function = behind.enteredByValue;
             enteredByValue = true;
             Reference handedOver = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
-            mayCopy = walker.isInLoop() && !walker.depthOfCopies() && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            Reference receiver = call.thisValueOperand() ? walker.referenceOf(call.thisValueOperand()) : Reference();
+            bool isListAsItWasMade = receiver && (isListAsMade(walker, receiver) || receiverStaysAsMadeByLink(walker, call));
+            mayCopy = walker.isInLoop() && (isListAsItWasMade || !walker.depthOfCopies()) && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
         } else if (!behind.named.isEmpty())
             function = findLibraryFunctionOfRowsReachedBy(walker, call);
         isFoundByRowsReached = function && !behind.enteredByValue;

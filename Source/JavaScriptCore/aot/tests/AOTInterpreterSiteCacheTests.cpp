@@ -300,10 +300,10 @@ static void testMarkerStoredByTextMarksCell(LoadedProgram& program)
             AOT_TEST_CHECK(!layouts.fieldAccepts(*field, marker));
 
             storeUntilNameIsFiled(program, stores, object, name, fitting);
-            AOT_TEST_CHECK(!object->perCellBit() && object->isInSlot(*field));
+            AOT_TEST_CHECK(!object->bearsMark() && object->isInSlot(*field));
 
             storeWith(program, stores, object, marker);
-            AOT_TEST_CHECK(object->perCellBit());
+            AOT_TEST_CHECK(object->bearsMark());
             AOT_TEST_CHECK(object->get(program.realm(), name) == marker);
         }
     }
@@ -323,7 +323,7 @@ static void testMarkerThatFieldNeverTakesLeavesSlot(LoadedProgram& program)
     storeUntilNameIsFiled(program, stores, object, note, jsNontrivialString(vm, "another note"_s));
     AOT_TEST_CHECK(object->isInSlot(*field));
 
-    object->setPerCellBit(true);
+    object->setBearsMark(true);
     storeWith(program, stores, object, jsNull());
     AOT_TEST_CHECK(!object->isInSlot(*field));
     AOT_TEST_CHECK(object->get(program.realm(), note) == jsNull());
@@ -383,11 +383,11 @@ static void testTextStoresIntoUnboxedSlots(LoadedProgram& program)
     };
     const Case cases[] = {
         { "ratio"_s, "((o, v) => { o.ratio = v; })"_s, "(o => o.ratio)"_s, SlotRepresentation::OptionalDouble,
-            { jsNumber(3.5), jsNumber(4), jsNumber(-1), negativeZero, notANumber, beyondInt32, jsNumber(std::numeric_limits<double>::infinity()), jsUndefined(), jsNull() },
-            { text, jsBoolean(true), jsBoolean(false), JSValue(program.realm()) } },
+            { jsNumber(3.5), jsNumber(4), jsNumber(-1), negativeZero, notANumber, beyondInt32, jsNumber(std::numeric_limits<double>::infinity()) },
+            { text, jsBoolean(true), jsBoolean(false), JSValue(program.realm()), jsUndefined(), jsNull() } },
         { "whole"_s, "((o, v) => { o.whole = v; })"_s, "(o => o.whole)"_s, SlotRepresentation::OptionalInt64,
-            { jsNumber(8), jsNumber(0), jsNumber(-1), jsNumber(std::numeric_limits<int32_t>::min()), jsNumber(std::numeric_limits<int32_t>::max()), beyondInt32, jsUndefined(), jsNull() },
-            { jsNumber(0.5), negativeZero, notANumber, jsNumber(std::numeric_limits<double>::infinity()), text, jsBoolean(true), JSValue(program.realm()) } },
+            { jsNumber(8), jsNumber(0), jsNumber(-1), jsNumber(std::numeric_limits<int32_t>::min()), jsNumber(std::numeric_limits<int32_t>::max()) },
+            { jsNumber(0.5), negativeZero, notANumber, jsNumber(std::numeric_limits<double>::infinity()), text, jsBoolean(true), JSValue(program.realm()), beyondInt32, jsUndefined(), jsNull() } },
     };
     for (const Case& testCase : cases) {
         Identifier name = Identifier::fromString(vm, testCase.name);

@@ -10,6 +10,8 @@
 #include "AOTMachineAllocation.h"
 #include "AOTMachineFrame.h"
 #include "AOTMachineSlots.h"
+#include "AllowMacroScratchRegisterUsage.h"
+#include <wtf/CheckedArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Machine {
 
@@ -52,7 +54,17 @@ inline Operation* childWithoutCheck(const Operation* operation, unsigned index)
     return operation->children().data()[index];
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+inline Operation* inlineChildWithoutCheck(const Operation* operation, unsigned index)
+{
+    ASSERT(index < operation->numberOfInlineChildren());
+    return operation->inlineChildren()[index];
+}
+
+inline Operation* addressChildWithoutCheck(const Operation* access)
+{
+    ASSERT(isMemoryAccess(access->opcode()) && access->numberOfInlineChildren());
+    return access->inlineChildren()[access->numberOfInlineChildren() - 1];
+}
 
 class LeafCursor {
 public:
@@ -65,6 +77,11 @@ public:
     {
         ASSERT(m_next < maxLeaves);
         return m_step.sources[m_next++];
+    }
+    Location peek() const
+    {
+        ASSERT(m_next < maxLeaves);
+        return m_step.sources[m_next];
     }
     unsigned numberTaken() const { return m_next; }
 
@@ -113,6 +130,18 @@ struct Test {
     bool rightIsNumberOfBit { false };
 };
 
+struct FrameAtBlock {
+    bool isEnteredInFrame() const { return runsInFrame && !isSetUpAtHead; }
+    bool isLeftInFrame() const { return runsInFrame && !isTornDownAtEnd; }
+
+    bool runsInFrame;
+    bool isSetUpAtHead;
+    bool isTornDownAtEnd;
+    bool returnsInPlaceOfJump;
+};
+
+enum class MemoryOfEncodedMove : bool { IsRead, IsWritten };
+
 inline constexpr unsigned minBytesOfTeardownSharedByReturns = isARM64() ? 12 : 8;
 
 class Encoder {
@@ -124,21 +153,61 @@ public:
     Procedure& procedure() { return m_proc; }
     const Frame& frame() const { return m_frame; }
     void addLatePath(LatePath* path) { m_latePaths.append(m_arena, PendingLatePath { path, m_frameIsSetUp, m_origin, m_operationOfOrigin }); }
-    bool fallsThroughTo(const Block* from, const Block* target) const
+
+    const BlockPlace& placeOf(const Block* block) const { return m_places[block->index()]; }
+    const BlockSteps& stepsOf(const Block* block) const { return m_stepsOfBlocks[block->index()]; }
+    const ValueFacts& factsOf(const Operation* operation) const { return m_valueFacts[operation->index()]; }
+    bool isFused(const Operation* operation) const { return factsOf(operation).has(ValueFlag::IsFused); }
+    bool isSpilled(const Operation* value) const { return m_spillsOfValues[value->index()] != noSpill; }
+
+    template<FrameCoverage coverage>
+    ALWAYS_INLINE FrameAtBlock frameAtBlockUnder(const Block* block, const BlockPlace& place) const
     {
-        if (from == m_block && blockEnteredThrough(target) != m_blockWrittenNext)
+        if constexpr (coverage == FrameCoverage::None)
+            return { false, false, false, false };
+        else if constexpr (coverage == FrameCoverage::WholeFunction)
+            return { true, block->isEntry(), false, false };
+        else if constexpr (coverage == FrameCoverage::RareRegions) {
+            bool runsInFrame = place.isRare() && m_allocation.needsFrameIn(place.rareRegion);
+            return { runsInFrame, runsInFrame && (block->isEntry() || place.entersRareRegion), runsInFrame && place.leavesRareRegion, false };
+        } else
+            return { m_frame.holdsStepsOf(block), m_frame.isSetUpAtHeadOf(block), m_frame.isTornDownAtEndOf(block), m_frame.returnsInPlaceOfJumpAtEndOf(block) };
+    }
+    ALWAYS_INLINE FrameAtBlock frameAtBlock(const Block* block, const BlockPlace& place) const
+    {
+        switch (m_coverage) {
+        case FrameCoverage::None:
+            return frameAtBlockUnder<FrameCoverage::None>(block, place);
+        case FrameCoverage::WholeFunction:
+            return frameAtBlockUnder<FrameCoverage::WholeFunction>(block, place);
+        case FrameCoverage::RareRegions:
+            return frameAtBlockUnder<FrameCoverage::RareRegions>(block, place);
+        case FrameCoverage::FramedPart:
+            return frameAtBlockUnder<FrameCoverage::FramedPart>(block, place);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    ALWAYS_INLINE FrameAtBlock frameAtBlock(const Block* block) const { return frameAtBlock(block, placeOf(block)); }
+
+    ALWAYS_INLINE bool fallsThroughTo(const Block* from, const Block* target) const
+    {
+        if (from != m_block) [[unlikely]]
+            return fallsThroughToSlowCase(from, target);
+        const Block* entered = blockEnteredThrough(target);
+        if (entered != m_blockWrittenNext || !entered)
             return false;
-        return fallsThroughToSlowCase(from, target);
+        return m_blockIsLeftInFrame == frameAtBlock(entered).isEnteredInFrame();
     }
     bool fallsThroughToSlowCase(const Block* from, const Block* target) const;
 
-    void encodeBlock(Block*);
+    template<FrameCoverage> void encodeBlocksUnder();
+    template<FrameCoverage> ALWAYS_INLINE void encodeBlockUnder(Block*);
     void encodeSteps(uint32_t begin, uint32_t end);
     void encodeExecute(const Step&);
     ALWAYS_INLINE void encodeExecuteInline(const Step&);
     void storeToSpillIfSpilled(const Operation* value)
     {
-        if (m_allocation.isSpilled(value)) [[unlikely]]
+        if (isSpilled(value)) [[unlikely]]
             storeToSpill(value);
     }
     void storeToSpill(const Operation*);
@@ -166,8 +235,15 @@ public:
     void placeColdCodeNearItsJumps();
     bool hasCode(const Block* block) const { return blockEnteredThrough(block) == block; }
     MacroAssembler::Label* labelOf(const Block* block) { return &m_labels[blockEnteredThrough(block)->index()]; }
-    void jumpTo(const Block*);
-    void addPendingJump(MacroAssembler::Jump jump, const Block* target)
+    ALWAYS_INLINE void jumpTo(const Block* target)
+    {
+        if (!m_frameIsSetUp && m_blocksThatOnlyReturnWithoutFrame.get(blockEnteredThrough(target)->index())) {
+            m_jit.ret();
+            return;
+        }
+        addPendingJump(m_jit.jump(), target);
+    }
+    ALWAYS_INLINE void addPendingJump(MacroAssembler::Jump jump, const Block* target)
     {
         if (!jump.isSet())
             return;
@@ -184,22 +260,58 @@ public:
     std::span<const GPRReg> findRegistersThatSetupPushes(const Block*);
     bool setupHasPushed(SpillIndex spill) const { return !m_spillsPushedAtSetup.isEmpty() && std::ranges::find(m_spillsPushedAtSetup.span(), spill) != m_spillsPushedAtSetup.span().end(); }
 
-    AddressForm resolveAddress(const Operation* access, LeafCursor&);
+    ALWAYS_INLINE AddressForm resolveAddress(const Operation* access, LeafCursor& leaves)
+    {
+        RELEASE_ASSERT(isMemoryAccess(access->opcode()));
+        if (isFused(addressChildWithoutCheck(access)) || !leaves.peek().isRegister()) [[unlikely]]
+            return resolveAddressSlowCase(access, leaves);
+
+        Reg base = leaves.take().reg();
+        RELEASE_ASSERT(base.isGPR());
+        AddressForm form;
+        form.base = base.gpr();
+        RELEASE_ASSERT(form.base != InvalidGPRReg);
+        form.offset = access->offset();
+        return form;
+    }
+    AddressForm resolveAddressSlowCase(const Operation* access, LeafCursor&);
     AddressForm resolveScaledSum(const Operation* sum, LeafCursor&);
-    MacroAssembler::Address addressOf(Location memory) const;
+    ALWAYS_INLINE MacroAssembler::Address addressOf(Location memory) const
+    {
+        switch (memory.kind()) {
+        case Location::Spill:
+            RELEASE_ASSERT(m_frameIsSetUp);
+            return m_frame.addressInFrame(m_frame.offsetFromFPOf(memory.spillIndex()));
+
+        case Location::Outgoing:
+            RELEASE_ASSERT(m_frameIsSetUp);
+            ASSERT(memory.offsetFromSP() < m_frame.bytesBelowFrameRecord());
+            return MacroAssembler::Address(MacroAssembler::stackPointerRegister, safeCast<int32_t>(memory.offsetFromSP()));
+
+        case Location::InstanceWord:
+            return MacroAssembler::Address(instanceGPR, memory.offsetInInstance());
+
+        case Location::None:
+        case Location::Register:
+        case Location::SlotBytes:
+        case Location::Immediate:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
     std::pair<GPRReg, bool> referenceOf(const Operation* access, const AddressForm&) const;
     void recordTrappingAccess(const Operation* access, const AddressForm&, MacroAssembler::Label instruction);
 
-    void encodeMove(const Step&);
-    void encodeReload(const Step&);
-    void encodeSave(const Step&);
+    ALWAYS_INLINE void encodeMove(const Step&);
+    ALWAYS_INLINE void encodeReload(const Step&);
+    ALWAYS_INLINE void encodeSave(const Step&);
     void encodeSwap(const Step&);
     void encodeClearSpill(const Step&);
     void encodeKeepPointer(const Step&);
     void encodeMaterialize(const Operation*, Reg destination);
     bool tryEncodePairOfMoves(const Step& first, const Step& second);
 
-    void encodePatch(const Step&, PatchOperation*);
+    ALWAYS_INLINE void encodePatch(const Step&, PatchOperation*);
     void encodeCheck(const Step&, PatchOperation*);
     ALWAYS_INLINE ValueRep repOf(Location location, const Operation* value) const
     {
@@ -225,7 +337,7 @@ public:
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
-    void fillParameters(PatchParameters&, const Step&, PatchOperation*);
+    template<bool isCheck> ALWAYS_INLINE void fillParameters(PatchParameters&, const Step&, PatchOperation*);
     struct SharedLatePath {
         PatchGenerator* generator;
         std::span<const ValueRep> reps;
@@ -234,8 +346,26 @@ public:
     };
     SharedLatePath* findSharedLatePath(PatchOperation*, std::span<const ValueRep>);
 
+    ALWAYS_INLINE void encodeTerminatorInline(Block* block, const Step& step)
+    {
+        ASSERT(step.kind == StepKind::Execute && step.operation == block->last());
+
+        if (step.operation->isUnconditionalJump()) {
+            const Block* target = block->successor(0).block();
+            if (!fallsThroughTo(block, target))
+                jumpTo(target);
+            return;
+        }
+        if (step.operation->opcode() == Branch) {
+            encodeBranch(block, step);
+            return;
+        }
+        encodeRareTerminator(block, step);
+    }
     void encodeTerminator(Block*, const Step&);
+    void encodeRareTerminator(Block*, const Step&);
     void encodeBranch(Block*, const Step&);
+    void encodeBranchOnTest(Block*, const Step&, const Operation* predicate);
     void encodeBranchOnOverflow(Block*, const Step&);
     void encodeSwitch(Block*, const Step&);
     void encodeSwitchThroughTable(Block*, GPRReg value, int64_t firstValue, uint64_t numberOfEntries);
@@ -246,7 +376,7 @@ public:
     MacroAssembler::JumpList branchOn(const Test&, bool whenItHolds);
 #if CPU(X86_64)
     MacroAssembler::Jump jumpOnIntegers(const Test&, bool whenItHolds);
-    std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfPredicate(const Step&);
+    std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfPredicate(const Step&, const Operation* predicate);
 #endif
     void encodeComparison(const Step&);
     void encodeSelect(const Step&);
@@ -276,6 +406,11 @@ public:
     const bool m_notesRangesOfOrigins;
     const bool m_hasSpills;
     const bool m_hasFramedPart;
+    const BlockPlace* const m_places;
+    const BlockSteps* const m_stepsOfBlocks;
+    const Step* const m_steps;
+    const SpillIndex* const m_spillsOfValues;
+    const ValueFacts* const m_valueFacts;
 
     UncheckedSpan<MacroAssembler::Label> m_labels;
     UncheckedSpan<const Block*> m_blocksEntered;
@@ -283,6 +418,7 @@ public:
     BitSpan m_blocksThatStoreResultOfPatchAtHead;
     UncheckedSpan<uint32_t> m_nextLayoutIndexWithCode;
     uint32_t m_numberOfBlocksWithCode { 0 };
+    uint32_t m_numberOfOperationsEncoded { 0 };
     struct PendingJump {
         MacroAssembler::Jump jump;
         const MacroAssembler::Label* label;
@@ -319,6 +455,248 @@ public:
     const Block* m_blockWithClearedScratchFPR { nullptr };
     unsigned m_offsetBehindClearedScratchFPR { 0 };
 };
+
+inline bool encodedMoveIsWide(Width width)
+{
+    RELEASE_ASSERT(width == Width32 || width == Width64);
+    return width == Width64;
+}
+
+inline void checkRegisterOfEncodedMove(Reg reg)
+{
+    RELEASE_ASSERT(reg);
+    RELEASE_ASSERT(!reg.isGPR() || reg.gpr() != secondScratchGPR);
+}
+
+inline void willWriteRegisterOfEncodedMove(CCallHelpers& jit, Reg destination)
+{
+    checkRegisterOfEncodedMove(destination);
+    if (destination.isGPR() && destination.gpr() == scratchGPR)
+        jit.scratchRegister();
+}
+
+ALWAYS_INLINE void checkMemoryOfEncodedMove(const Encoder& encoder, Location memory, Width width, MemoryOfEncodedMove access)
+{
+    switch (memory.kind()) {
+    case Location::Spill:
+        RELEASE_ASSERT(encoder.m_frameIsSetUp);
+        RELEASE_ASSERT(bytesForWidth(width) <= bytesForWidth(encoder.m_allocation.spills()[memory.spillIndex()].width));
+        return;
+    case Location::Outgoing:
+        RELEASE_ASSERT(encoder.m_frameIsSetUp);
+        return;
+    case Location::InstanceWord:
+        RELEASE_ASSERT(access == MemoryOfEncodedMove::IsRead);
+        return;
+    case Location::None:
+    case Location::Register:
+    case Location::SlotBytes:
+    case Location::Immediate:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+ALWAYS_INLINE void loadForEncodedMove(CCallHelpers& jit, MacroAssembler::Address source, Width width, Reg destination)
+{
+    bool isWide = encodedMoveIsWide(width);
+    willWriteRegisterOfEncodedMove(jit, destination);
+    if (destination.isGPR()) {
+        if (isWide)
+            jit.load64(source, destination.gpr());
+        else
+            jit.load32(source, destination.gpr());
+        return;
+    }
+    if (isWide)
+        jit.loadDouble(source, destination.fpr());
+    else
+        jit.loadFloat(source, destination.fpr());
+}
+
+ALWAYS_INLINE void storeForEncodedMove(CCallHelpers& jit, Reg source, Width width, MacroAssembler::Address destination)
+{
+    bool isWide = encodedMoveIsWide(width);
+    checkRegisterOfEncodedMove(source);
+    if (source.isGPR()) {
+        if (isWide)
+            jit.store64(source.gpr(), destination);
+        else
+            jit.store32(source.gpr(), destination);
+        return;
+    }
+    if (isWide)
+        jit.storeDouble(source.fpr(), destination);
+    else
+        jit.storeFloat(source.fpr(), destination);
+}
+
+ALWAYS_INLINE void Encoder::encodeMove(const Step& step)
+{
+    ASSERT(step.kind == StepKind::Move);
+    RELEASE_ASSERT(step.destination.isRegister() && step.sources[0].isRegister());
+    Reg source = step.sources[0].reg();
+    Reg destination = step.destination.reg();
+    checkRegisterOfEncodedMove(source);
+    RELEASE_ASSERT(bankOf(source) == bankOf(destination));
+    bool isWide = encodedMoveIsWide(step.width);
+    if (source == destination)
+        return;
+
+    AllowMacroScratchRegisterUsage allowScratch(m_jit);
+    willWriteRegisterOfEncodedMove(m_jit, destination);
+    if (destination.isFPR()) {
+        m_jit.moveDouble(source.fpr(), destination.fpr());
+        return;
+    }
+    if (isWide)
+        m_jit.move(source.gpr(), destination.gpr());
+    else
+        m_jit.zeroExtend32ToWord(source.gpr(), destination.gpr());
+}
+
+ALWAYS_INLINE void Encoder::encodeReload(const Step& step)
+{
+    ASSERT(step.kind == StepKind::Reload);
+    RELEASE_ASSERT(step.destination.isRegister());
+    checkMemoryOfEncodedMove(*this, step.sources[0], step.width, MemoryOfEncodedMove::IsRead);
+
+    AllowMacroScratchRegisterUsage allowScratch(m_jit);
+    loadForEncodedMove(m_jit, addressOf(step.sources[0]), step.width, step.destination.reg());
+}
+
+ALWAYS_INLINE void Encoder::encodeSave(const Step& step)
+{
+    ASSERT(step.kind == StepKind::Save);
+    RELEASE_ASSERT(step.sources[0].isRegister());
+    checkMemoryOfEncodedMove(*this, step.destination, step.width, MemoryOfEncodedMove::IsWritten);
+
+    AllowMacroScratchRegisterUsage allowScratch(m_jit);
+    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination));
+}
+
+ALWAYS_INLINE bool patchRepAnswersConstraint(const ValueRep& answer, const ValueRep& constraint)
+{
+    switch (constraint.kind()) {
+    case ValueRep::WarmAny:
+    case ValueRep::ColdAny:
+    case ValueRep::LateColdAny:
+        return true;
+    case ValueRep::SomeRegister:
+    case ValueRep::SomeEarlyRegister:
+    case ValueRep::SomeLateRegister:
+        return answer.isReg();
+    case ValueRep::Register:
+    case ValueRep::StackArgument:
+        return answer == constraint;
+    case ValueRep::Stack:
+    case ValueRep::Constant:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+ALWAYS_INLINE bool patchRegisterAnswersConstraint(const ValueRep& answer, const ValueRep& constraint)
+{
+    static_assert(ValueRep::WarmAny < ValueRep::Register && ValueRep::ColdAny < ValueRep::Register && ValueRep::LateColdAny < ValueRep::Register);
+    static_assert(ValueRep::SomeRegister < ValueRep::Register && ValueRep::SomeEarlyRegister < ValueRep::Register && ValueRep::SomeLateRegister < ValueRep::Register);
+    static_assert(ValueRep::StackArgument > ValueRep::Register && ValueRep::Stack > ValueRep::Register && ValueRep::Constant > ValueRep::Register);
+    ASSERT(answer.isReg());
+    return constraint.kind() < ValueRep::Register || answer == constraint;
+}
+
+void clearFrameWordsInFrontOfSuspension(Encoder&, const PatchOperation* suspension);
+
+template<bool isCheck>
+ALWAYS_INLINE void Encoder::fillParameters(PatchParameters& parameters, const Step& step, PatchOperation* patch)
+{
+    ASSERT(patch->opcode() == (isCheck ? Check : Patch));
+    RELEASE_ASSERT(step.patchAssignment != UINT32_MAX);
+    const PatchAssignment& assignment = m_allocation.patchAssignment(step.patchAssignment);
+    std::span<const Location> locations = assignment.locations;
+    std::span<Operation* const> operands = patch->operands();
+
+    unsigned numberOfResults = m_proc.resultCount(patch->type());
+    constexpr unsigned firstOperand = isCheck ? 1 : 0;
+    unsigned numberOfOperands = static_cast<unsigned>(operands.size()) - firstOperand;
+    RELEASE_ASSERT(locations.size() == numberOfResults + numberOfOperands);
+
+    if (size_t numberOfReps = locations.size()) {
+        ValueRep* reps = static_cast<ValueRep*>(m_arena.allocate(numberOfReps * sizeof(ValueRep), alignof(ValueRep)));
+        const Location* location = locations.data();
+        ValueRep* rep = reps;
+        static constexpr ValueRep someRegister { ValueRep::SomeRegister };
+        for (unsigned index = 0; index < numberOfResults; ++index, ++location, ++rep) {
+            const ValueRep& constraint = index < patch->resultConstraints.size() ? patch->resultConstraints[index] : someRegister;
+            if (location->isRegister()) {
+                new (NotNull, rep) ValueRep(location->reg());
+                RELEASE_ASSERT(patchRegisterAnswersConstraint(*rep, constraint));
+                continue;
+            }
+            new (NotNull, rep) ValueRep(repOf(*location, patch));
+            RELEASE_ASSERT(patchRepAnswersConstraint(*rep, constraint));
+        }
+        Operation* const* operand = operands.data() + firstOperand;
+        for (unsigned child = firstOperand; child < firstOperand + numberOfOperands; ++child, ++location, ++rep, ++operand) {
+            const ValueRep& constraint = patch->constraintOf(child);
+            if (location->isRegister()) {
+                new (NotNull, rep) ValueRep(location->reg());
+                RELEASE_ASSERT(patchRegisterAnswersConstraint(*rep, constraint));
+                continue;
+            }
+            new (NotNull, rep) ValueRep(repOf(*location, *operand));
+            RELEASE_ASSERT(patchRepAnswersConstraint(*rep, constraint));
+        }
+        parameters.m_reps = std::span<const ValueRep>(reps, numberOfReps);
+    }
+
+    std::span<GPRReg> gpScratch(parameters.m_gpScratch);
+    unsigned numberOfGPScratch = 0;
+    forEachRegister(assignment.gpScratch, [&](Reg reg) {
+        RELEASE_ASSERT(numberOfGPScratch < gpScratch.size());
+        gpScratch[numberOfGPScratch++] = reg.gpr();
+    });
+    RELEASE_ASSERT(numberOfGPScratch == patch->numGPScratchRegisters);
+
+    std::span<FPRReg> fpScratch(parameters.m_fpScratch);
+    unsigned numberOfFPScratch = 0;
+    forEachRegister(assignment.fpScratch, [&](Reg reg) {
+        RELEASE_ASSERT(numberOfFPScratch < fpScratch.size());
+        fpScratch[numberOfFPScratch++] = reg.fpr();
+    });
+    RELEASE_ASSERT(numberOfFPScratch == patch->numFPScratchRegisters);
+
+    parameters.m_usedRegisters = assignment.usedRegisters;
+    parameters.m_frameIsSetUp = m_frameIsSetUp;
+
+    if constexpr (!isCheck) {
+        if (!patch->effects.terminal)
+            return;
+        const Block* block = patch->owner();
+        ASSERT(block == m_block);
+        std::span<MacroAssembler::Label*> labels = m_arena.createSpan<MacroAssembler::Label*>(block->numSuccessors());
+        for (unsigned index = 0; index < block->numSuccessors(); ++index)
+            labels[index] = labelOf(block->successor(index).block());
+        parameters.m_successorLabels = labels;
+    }
+}
+
+ALWAYS_INLINE void Encoder::encodePatch(const Step& step, PatchOperation* patch)
+{
+    ASSERT(patch->opcode() == Patch);
+    ASSERT(!patch->onlyKeepsChildrenAlive);
+    RELEASE_ASSERT(patch->generator());
+    RELEASE_ASSERT(m_frameIsSetUp || patch->runsWithoutFrame());
+
+    if (patch->isSuspension())
+        clearFrameWordsInFrontOfSuspension(*this, patch);
+
+    PatchParameters parameters(*this, patch);
+    fillParameters<false>(parameters, step, patch);
+    patch->generator()->run(m_jit, parameters);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } } } // namespace JSC::AOT::Machine
 

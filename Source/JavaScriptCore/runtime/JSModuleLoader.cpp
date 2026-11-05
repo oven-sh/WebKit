@@ -1160,22 +1160,13 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii. Else,
                     // 2.d.iii.1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
-                    unsigned loadedModulesCountBefore = module->loadedModules().size();
                     bool useImportMap = true;
-                    ModuleGraphLoadingState* loadOfRequest = state;
 #if ENABLE(AOT)
                     auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic);
                     useImportMap = !compiled;
-                    uint8_t flagsBefore = compiled ? compiled->willAskHostForRequest() : 0;
-                    unsigned jobsUntilLoadHearsOfFailure = 0;
-                    if (compiled)
-                        loadOfRequest = compiled->loadThatWaitsFor(request.m_specifier, state, jobsUntilLoadHearsOfFailure);
-                    if (!loadOfRequest) {
-                        compiled->didAskHostForRequest(flagsBefore);
-                        continue;
-                    }
+                    uint8_t flagsBefore = compiled ? compiled->willAskHostForRequest(request.m_specifier) : 0;
 #endif
-                    JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, loadOfRequest, state->scriptFetcher(), useImportMap);
+                    JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, state, state->scriptFetcher(), useImportMap);
 #if ENABLE(AOT)
                     if (compiled)
                         compiled->didAskHostForRequest(flagsBefore);
@@ -1186,22 +1177,13 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii.2. NOTE: HostLoadImportedModule will call FinishLoadingImportedModule, which re-enters the graph loading process through ContinueModuleLoading.
                     //
-                    // If module.[[LoadedModules]] grew across the HostLoadImportedModule call, the requested
+                    // If module.[[LoadedModules]] contains the request after the HostLoadImportedModule call, the requested
                     // module was loaded synchronously, which means it was already loaded before. In that case
                     // there is no need to attach a ModuleGraphLoadingError reaction, so we skip it.
-                    bool needsErrorReaction = module->loadedModules().size() == loadedModulesCountBefore;
-                    ASSERT(module->loadedModules().size() <= loadedModulesCountBefore + 1);
-                    ASSERT(needsErrorReaction != module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() }));
-#if ENABLE(AOT)
-                    for (; needsErrorReaction && jobsUntilLoadHearsOfFailure; --jobsUntilLoadHearsOfFailure) {
-                        JSPromise* settledOneJobLater = JSPromise::create(vm, globalObject->promiseStructure());
-                        settledOneJobLater->markAsHandled();
-                        settledOneJobLater->pipeFrom(vm, promise);
-                        promise = settledOneJobLater;
-                    }
-#endif
+                    // Comparing sizes is not enough: a CommonJS file that runs during the call may require() a module that imports this one, which loads other requests of this module.
+                    bool needsErrorReaction = !module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() });
                     if (needsErrorReaction)
-                        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, loadOfRequest);
+                        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, state);
                     // 2.d.iv. If state.[[IsLoading]] is false, return UNUSED.
                     if (!state->isLoading())
                         break;

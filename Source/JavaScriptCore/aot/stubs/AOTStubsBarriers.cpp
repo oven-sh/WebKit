@@ -185,24 +185,6 @@ Label returnAfterStoring(StubAssembler& jit, GPRReg owner, GPRReg value)
     return storedCell;
 }
 
-static void returnIfFencedAndNotBlack(StubAssembler& jit, GPRReg owner)
-{
-    Jump isNotFenced = jit.branchTest8(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
-    jit.memoryFence();
-    Jump isBlack = jit.barrierBranchWithoutFence(owner, true);
-    jit.returnToCaller();
-
-    isNotFenced.link(&jit);
-    isBlack.link(&jit);
-}
-
-PreludeExit emitBarrierPrelude(StubAssembler& jit)
-{
-    if (jit.key().family() == StubFamily::CallOperationPreservingRegisters)
-        returnIfFencedAndNotBlack(jit, operationArgumentGPR(1));
-    return PreludeExit::CallsOperation;
-}
-
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

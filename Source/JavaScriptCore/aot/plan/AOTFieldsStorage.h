@@ -22,6 +22,7 @@ class Plan;
 class Program;
 
 void chooseStorageOfFields(Program&, const Facts&, BuildContext&, SlotPlanParts&);
+SlotRepresentation narrowFormOfSlotHeldToTypeForFields(const Program&, TypeID held, bool usesWideReferences);
 void checkStorageOfFields(const Program&, const Facts&, const Plan&, BuildContext&);
 
 bool hasTypedSlotsForFields(const Facts&);

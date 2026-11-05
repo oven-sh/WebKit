@@ -19,6 +19,7 @@
 #include <array>
 #include <bit>
 #include <wtf/ASCIICType.h>
+#include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
@@ -352,21 +353,35 @@ ProgramFile::Kind programKindOf(std::span<const uint8_t> bytes)
     return spanHasPrefix(bytes, std::span { magicBytes }) ? ProgramFile::Kind::Bytes : ProgramFile::Kind::Text;
 }
 
+static Program::OwnedBytes readInPieces(const String& path)
+{
+    constexpr size_t bytesInPiece = 1 * GB;
+    FileSystem::FileHandle file = FileSystem::openFile(path, FileSystem::FileOpenMode::Read);
+    Program::OwnedBytes bytes = Program::OwnedBytes::malloc(file.size().value_or(0));
+    for (std::span<uint8_t> rest = bytes.mutableSpan(); !rest.empty();) {
+        uint64_t numberRead = file.read(rest.first(std::min(rest.size(), bytesInPiece))).value_or(0);
+        if (!numberRead)
+            return { };
+        rest = rest.subspan(numberRead);
+    }
+    return bytes;
+}
+
 std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& errors)
 {
-    std::optional<Vector<uint8_t>> bytes = FileSystem::readEntireFile(path);
-    if (!bytes) {
+    Program::OwnedBytes bytes = readInPieces(path);
+    if (!bytes.sizeInBytes()) {
         errors.println("cannot read ", path);
         return std::nullopt;
     }
 
     ProgramFile file;
-    file.bytes = WTF::move(*bytes);
+    file.bytes = WTF::move(bytes);
     file.kind = programKindOf(file.bytes.span());
     if (file.kind == ProgramFile::Kind::Bytes)
         return file;
 
-    if (!StringImpl::isValidLength<char16_t>(file.bytes.size())) {
+    if (!StringImpl::isValidLength<char16_t>(file.bytes.sizeInBytes())) {
         errors.println(path, " is too large for IR text");
         return std::nullopt;
     }

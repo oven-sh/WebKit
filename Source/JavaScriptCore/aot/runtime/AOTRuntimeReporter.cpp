@@ -170,6 +170,7 @@ static constexpr ASCIILiteral kindOf(RuntimeCounterID counter)
         return "made:"_s;
     case RuntimeCounterID::ModulesForRequireCache:
     case RuntimeCounterID::ModulesForWhatHasRun:
+    case RuntimeCounterID::ModulesForCyclesThatWait:
     case RuntimeCounterID::LinksBelowRoots:
     case RuntimeCounterID::StacksOfThrows:
     case RuntimeCounterID::RunsBelowListedFrames:

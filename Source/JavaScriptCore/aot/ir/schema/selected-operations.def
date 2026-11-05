@@ -1,18 +1,16 @@
 enum StringRangeMethod { | engine Slice Substring Substr SingleIndex SingleRelativeIndex }
 enum RegExpMatchForm { | engine Test Exec Search Match }
 flags PropertyDescriptorFlags { | engine HasValue HasWritable IsWritable HasEnumerable IsEnumerable HasConfigurable IsConfigurable HasGet HasSet }
-flags FactsOfLists { | engine ReceiverKeepsStorage ReceiverStaysEmpty ElementsAreStrings ExpectsNoElements ExpectsAnything ExpectsInt32s ExpectsDoubles ExpectsValues SomeResultKeepsStorage ResultGetsNames }
-parameters ListStamp (engine storageOfReceiver: ArrayStorage, engine storageOfResult: ArrayStorage, engine storageOfFirstList: ArrayStorage, engine storageOfSecondList: ArrayStorage, engine storageOfThirdList: ArrayStorage, engine factsOfLists: FactsOfLists)
 
 family ObjectCreation Selected..Placed
-operation DefineOwnProperty (object: Any/inspects+returns+definesName+runs(OwnKeys), computedKey: PropertyKey/inspects, value?: Any/retains(object), getter?: Any/retains(object), setter?: Any/retains(object), descriptorFlags: PropertyDescriptorFlags, orderWordAfter?: OrderWord) [| engine objectIsNoPrototype] -> natural(same(object)) ; DefinesProperty UsesRuntime ResolvesRopes reads(Elements, ArrayStorage) writes(MemberGuards, Elements, ArrayStorage) ; replaces = CallBuiltin, NewObject, SetLiteralPrototype ; runtime = DefineOwnProperty ; form = Runtime
+operation DefineOwnProperty (object: Any/inspects+returns+definesName+runs(OwnKeys), computedKey: PropertyKey/inspects, value?: Any/retains(object), getter?: Any/retains(object), setter?: Any/retains(object), descriptorFlags: PropertyDescriptorFlags, orderWordAfter?: OrderWord) -> natural(same(object)) ; DefinesProperty UsesRuntime ResolvesRopes reads(Elements, ArrayStorage) writes(MemberGuards, Elements, ArrayStorage) ; replaces = CallBuiltin, NewObject, SetLiteralPrototype ; runtime = DefineOwnProperty ; form = Runtime
 operation DefineAccessors (object: Object/inspects+definesName, keys: List<PropertyKey>, getterMask: UInt32, enumerableMask: UInt32, functions...: Callable/retains(object)) -> none ; DefinesProperty ; replaces = DefineGetter, DefineSetter ; runtime = DefineAccessors ; form = Runtime
 
 family Operator Selected..Placed
 operation IntegerBound (number: Number/inspects, comparison: Opcode) [numberIsOnLeft] -> natural(integer) ; none ; form = Open
 
 family PromiseIntrinsic Selected..Placed
-operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: Any/retains(promise), guard?: Guard/inspects) -> none ; writes(PromiseState) ; relies = NotThenable ; guarded = value ; replaces = ReturnAsyncResult, ResolvePromise ; runsOwnerBarrier = true ; remembersOwner = true ; form = Open
+operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: Any/retains(promise)) -> none ; writes(PromiseState) ; relies = NotThenable ; replaces = ReturnAsyncResult, ResolvePromise ; runsOwnerBarrier = true ; remembersOwner = true ; form = Open
 
 family String Selected..Placed
 operation Substring (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string) ; CreatesString ; Prepared..Placed ; interpreted = Allocation ; replaces = CallBuiltin, ElemGet ; runtime = Substring ; hasOwnFoldingRule = true ; form = Closed
@@ -53,11 +51,11 @@ engine operation StackStringBuilderAppendValue (builder: StringBuilder/inspects,
 family ResolvedCall Selected..Placed
 operation ResolveCallTarget (callee: Any/inspects, argumentCount: UInt32) -> natural(CodeAddress) ; none ; form = Closed
 operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisValue?: Any/retains, arguments...: Any/retains, calleeKey?: PropertyKey, calleeName?: String, calledBuiltin?: Builtin, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; replaces = Call ; runsBeforeCallee = true ; form = Closed
-operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, guard?: Guard/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm, from Placed regExpRecord?: RegExpRecord) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; guarded = regExp ; replaces = CallBuiltin ; form = Closed
+operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; replaces = CallBuiltin ; form = Closed
 
 family InlineBuiltin Selected..Placed ; replaces = CallBuiltin
-operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, lengthOfReceiver?: Integer/inspects, arguments...: Any/retains+returns+calls, calleeName?: String, accessSite?: AccessSite, allocationSite?: AllocationSite, with ListStamp) [| engine isDoneInPlace] -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall ; formDependsOnLoop = true ; form = Closed
-terminator TryCallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, lengthOfReceiver?: Integer/inspects, arguments...: Any/retains+returns+calls, accessSite?: AccessSite, allocationSite?: AllocationSite, with ListStamp) -> done(declared(overload)), miss ; unknownCode by Inline ; accessClass = DirectCall
+operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, calleeName?: String, accessSite?: AccessSite) [| engine isDoneInPlace] -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall ; formDependsOnLoop = true ; form = Closed
+terminator TryCallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite) -> done(declared(overload)), miss ; unknownCode by Inline ; accessClass = DirectCall
 
 family Control Selected..Placed
-terminator TestAndBranch (condition: Boolean/inspects) -> taken(proof), notTaken(proof) ; none ; replaces = Branch ; canStartRegion = true ; canEndInteriorBlock = true ; canEndBlockOfHead = true
+terminator TestAndBranch (condition: Boolean/inspects) -> taken(proof), notTaken(proof) ; none ; replaces = Branch

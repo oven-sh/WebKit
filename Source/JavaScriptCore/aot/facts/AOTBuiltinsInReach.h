@@ -61,12 +61,14 @@ public:
     void noteCalled(BuiltinID);
     void noteLetGo(BuiltinID);
     void noteCalledOutOfSight(BuiltinID);
+    void noteCalledAtSite(FunctionID caller, ValueID site, bool isConstruction, BuiltinID row);
 
     void settle(Vector<BuiltinID>& cameIntoReach, Vector<BuiltinID>& cameOutOfSight);
     Vector<BuiltinID> takeMembersWrittenAfterAll() { return std::exchange(m_membersWrittenAfterAll, { }); }
 
     bool mayBeHandedWhatIsNoTextNumberOrBoolean(BuiltinID canonical) const;
     bool loaderOfHostMayRun() const;
+    bool hostIsAskedForValueOfModule() const;
     bool unseenCodeCanRun() const;
     bool objectsMayHaveMethodCalledWithStartupLoads() const;
 

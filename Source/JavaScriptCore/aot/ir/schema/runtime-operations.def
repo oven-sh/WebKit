@@ -57,7 +57,7 @@ runtime CopyObjectAndDefine : JSCell* (EncodedJSValue source, uint32_t firstName
 runtime TryCopyTwoObjects : JSCell* (EncodedJSValue first, EncodedJSValue second) ; reads(all) writes(ObjectFields, ShapeWords, OrderWords, NamedProperties, MemberGuards, AllocatorState, RuntimeState) collects
 runtime NewClosureSlow : JSCell* (uint64_t request, uint64_t, uint64_t, uint64_t, uint64_t) ; RuntimeAllocates
 runtime MoveClosureToHeap : JSCell* (JSCell* closureInFrame) ; RuntimeAllocates
-runtime BarrierSlow, BarrierSlowPreservingRegisters : void (JSCell* cell) ; reads(all) writes(RuntimeState)
+runtime BarrierSlow : void (JSCell* cell) ; reads(all) writes(RuntimeState)
 runtime RememberElement : void (JSCell* array, EncodedJSValue element) ; reads(all) writes(RuntimeState)
 
 runtime NewArray : JSCell* (uint32_t count, const EncodedJSValue* values) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
@@ -166,6 +166,7 @@ runtime NewRuntimeErrorWithName : JSCell* (uint32_t errorKind, uint32_t name) ; 
 runtime NewSuppressedError : JSCell* (EncodedJSValue error, EncodedJSValue suppressed) ; RuntimeAllocates
 runtime ThrowRuntimeError : void (uint32_t errorKind) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime StopAtNativeResult : void (EncodedJSValue found, uint32_t written) ; reads(all) writes(ExternalState)
+runtime PoisonCell : void (JSCell* cell, uint32_t function, uint32_t position) ; reads(all) writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements, AllocatorState, RuntimeState)
 runtime StopAtFalseProof : void (EncodedJSValue found, uint32_t function, uint32_t position, uint32_t source) ; reads(all) writes(ExternalState)
 runtime StopAtFalseEffects : void (uint32_t function, uint32_t position, uint32_t part, uint32_t rows, uint64_t differs) ; reads(all) writes(ExternalState)
 runtime DigestForEffectsNet : uint64_t (EncodedJSValue value, uint64_t lanes) ; reads(all) ; leaf
@@ -188,7 +189,6 @@ runtime NewTemplateObject : JSCell* (uint32_t request, uint32_t module, uint32_t
 
 runtime CreateUnmappedArguments : JSCell* (uint32_t count, JSCell* rest, const EncodedJSValue* parameters) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime CreateMappedArguments : JSCell* (JSCell* callee, uint32_t count, JSCell* rest, const EncodedJSValue* parameters) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
-runtime GetFromArguments : EncodedJSValue (JSCell* list, EncodedJSValue property) ; unknownCode
 runtime GetMappedArgument : EncodedJSValue (JSCell* arguments, uint32_t index) ; reads(all)
 runtime SetMappedArgument : void (JSCell* arguments, uint32_t index, EncodedJSValue value) ; reads(all) writes(Elements, RuntimeState)
 
@@ -207,7 +207,7 @@ runtime AreLoaderFunctionsStored : size_t () ; reads(ExternalState)
 runtime CountExecution : void (uint32_t module, uint32_t description, uint32_t counter) ; reads(ExternalState) writes(ExternalState)
 runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL) ; unknownCode
 runtime ThrowModuleFailure : void (uint32_t failure, uint32_t isForRequire) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
-runtime EnterBodyThatRunsOnce : void (uint32_t function) ; reads(ExternalState) writes(ExternalState)
+runtime EnterBodyThatRunsOnce : void (uint32_t function) ; reads(RuntimeState) writes(RuntimeState)
 runtime BeginModuleEvaluation : size_t (uint32_t module) ; unknownCode
 runtime StopLoadingBehindFile : size_t (uint32_t module) ; unknownCode
 runtime AbandonModuleEvaluation : void (uint32_t module, JSCell* exception) ; reads(all) writes(ExternalState, AllocatorState, RuntimeState) collects

@@ -124,7 +124,7 @@ struct PlanParts {
     BitVector globalNamesNeverStoredThroughBinding;
 
     bool hasOneInstance { false };
-    BitVector functionsThatEndTheirTailCalls;
+    FunctionsThatEndTheirTailCalls functionsThatEndTheirTailCalls;
 
     bool usesWideReferences { false };
 };
@@ -153,7 +153,7 @@ public:
     const CallingConventions& conventions() const { return m_parts.conventions; }
     void setMethodTable(MethodTablePlan&& methodTable) { m_parts.conventions.setMethodTable(WTF::move(methodTable)); }
     void setParameterGuards(std::span<const ParameterGuardPlan> guards) { m_parts.conventions.setParameterGuards(guards); }
-    void setFunctionsThatEndTheirTailCalls(BitVector&& functions) { m_parts.functionsThatEndTheirTailCalls = WTF::move(functions); }
+    void setFunctionsThatEndTheirTailCalls(FunctionsThatEndTheirTailCalls&& functions) { m_parts.functionsThatEndTheirTailCalls = WTF::move(functions); }
     void setTailCalls(TailCallPlan&& tailCalls) { m_parts.conventions.setTailCalls(WTF::move(tailCalls)); }
     void setStackTests(StackTestPlan&& stackTests) { m_parts.conventions.setStackTests(WTF::move(stackTests)); }
     void fuseCallEntriesThatOnlyMove(const Program& program, const ParallelLoops& loops) { m_parts.conventions.fuseCallEntriesThatOnlyMove(program, loops); }
@@ -206,7 +206,8 @@ public:
     GlobalNameUse globalName(PropertyKeyID key) const { return { !m_parts.globalNamesNeverStoredByName.get(key.index()), !m_parts.globalNamesNeverStoredThroughBinding.get(key.index()) }; }
 
     bool hasOneInstance() const { return m_parts.hasOneInstance; }
-    bool endsItsTailCalls(FunctionID id) const { return m_parts.functionsThatEndTheirTailCalls.get(id.index()); }
+    bool endsItsTailCalls(FunctionID id) const { return m_parts.functionsThatEndTheirTailCalls.whateverArrives.get(id.index()); }
+    uint64_t entryParametersThatMustEndTheirTailCalls(FunctionID id) const { return m_parts.functionsThatEndTheirTailCalls.entryParametersThatMustEndTheirs(id); }
 
 private:
     PlanParts m_parts;

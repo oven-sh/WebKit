@@ -45,11 +45,6 @@ struct BuiltinCachedGetterBinding {
     uint32_t offsetOfCachedValue { 0 };
 };
 
-struct BuiltinCustomGetterBinding {
-    BuiltinOverloadID overload { };
-    GetValueFunc::Ptr function { nullptr };
-};
-
 enum class BuiltinDirectValue : uint8_t {
     Realm,
     NativeObjectOfReceiver,
@@ -102,7 +97,6 @@ struct BuiltinBindingSet {
     std::span<const BuiltinClassBinding> classes { };
     void (*findInstanceStructures)(JSGlobalObject*, std::span<Structure*>) { nullptr };
     std::span<const BuiltinCachedGetterBinding> cachedGetters { };
-    std::span<const BuiltinCustomGetterBinding> customGetters { };
     std::span<const BuiltinDirectFunctionBinding> directFunctions { };
     std::span<const BuiltinNativeFunctionBinding> nativeFunctions { };
     std::span<const BuiltinHostNumberBinding> hostNumbers { };
@@ -154,14 +148,12 @@ public:
     static void forEachInstanceStructureOfHost(JSGlobalObject*, const ScopedLambda<void(const BuiltinClassBinding&, Structure*)>&);
     static std::optional<uint32_t> cachedValueOffsetOf(BuiltinOverloadID);
     static std::optional<uint32_t> cachedValueOffsetOf(const ClassInfo*, WTF::UniquedStringImpl* getterName);
-    static GetValueFunc::Ptr customGetterOf(BuiltinOverloadID);
     JS_EXPORT_PRIVATE static std::optional<uint16_t> hostNumberOf(BuiltinID);
     static std::optional<uint32_t> directFunctionNumberOf(BuiltinOverloadID);
     static std::optional<uint32_t> directFunctionNumberOf(BuiltinOverloadID, size_t argumentCount);
     static const BuiltinDirectFunctionBinding& directFunctionAt(uint32_t number);
     static std::span<const BuiltinDirectFunctionBinding> directFunctions();
     static std::optional<BuiltinNativeFunction> nativeFunctionOf(BuiltinID);
-    static std::optional<uint32_t> nativeFunctionNumberOf(BuiltinID);
     static std::span<const BuiltinNativeFunctionBinding> nativeFunctionsOfHost();
     static std::optional<LinkTimeConstant> linkTimeConstantOf(BuiltinID);
 };

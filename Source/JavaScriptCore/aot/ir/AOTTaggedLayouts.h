@@ -10,7 +10,6 @@
 #include "AOTID.h"
 #include "AOTVector.h"
 #include <span>
-#include <wtf/Variant.h>
 
 namespace JSC { namespace AOT {
 
@@ -20,7 +19,7 @@ namespace Typed {
 
 class Program;
 
-using LayoutTag = Variant<int64_t, StringID>;
+using LayoutTag = int64_t;
 
 struct TaggedLayout {
     Vector<LayoutTag, 1> tags;

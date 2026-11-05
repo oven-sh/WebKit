@@ -23,6 +23,12 @@ struct ScopeFork {
     Block* block { nullptr };
 };
 
+enum class KindOfAppendedOperation : uint8_t {
+    Computation,
+    MemoryAccess,
+    Any,
+};
+
 class Builder {
     WTF_MAKE_NONCOPYABLE(Builder);
 public:
@@ -33,14 +39,66 @@ public:
     void setOrigin(Origin origin) { m_origin = origin; }
     Origin origin() const { return m_origin; }
 
-    Block* newBlock() { return m_proc.addBlock(); }
+    Block* newBlock() { return m_proc.addBlockInline(); }
 
-    JS_EXPORT_PRIVATE void appendTo(Block*);
-    JS_EXPORT_PRIVATE void appendToContinuation(Block*);
-    JS_EXPORT_PRIVATE ScopeFork forkScope();
-    JS_EXPORT_PRIVATE void appendToArm(Block*, const ScopeFork&);
-    JS_EXPORT_PRIVATE void appendToJoin(Block*, const ScopeFork&);
-    JS_EXPORT_PRIVATE void appendToSuccessor(Block*, const ScopeFork&);
+    ALWAYS_INLINE void appendTo(Block* block)
+    {
+        ASSERT(block);
+        sealPendingPatch();
+        if (block == m_block)
+            return;
+        if (m_block)
+            m_numbering.switchBlocks(m_block, block);
+        m_block = block;
+    }
+    ALWAYS_INLINE void appendToContinuation(Block* block)
+    {
+        sealPendingPatch();
+        ASSERT(m_block->isTerminated());
+        ASSERT(block->numberOfIncomingEdges() <= 1);
+        if (block->numberOfIncomingEdges()) {
+            ASSERT(hasEdgeBetween(m_block, block));
+            block->m_hasOnlyOnePredecessor = true;
+            m_numbering.continueIn(m_block, block);
+        }
+        m_block = block;
+    }
+    ALWAYS_INLINE ScopeFork forkScope()
+    {
+        sealPendingPatch();
+        return { m_numbering.mark(), m_block };
+    }
+    ALWAYS_INLINE void appendToArm(Block* block, const ScopeFork& fork)
+    {
+        sealPendingPatch();
+        ASSERT(block->numberOfIncomingEdges() <= 1);
+        if (block->numberOfIncomingEdges()) {
+            ASSERT(hasEdgeBetween(fork.block, block));
+            block->m_hasOnlyOnePredecessor = true;
+        }
+        m_numbering.restore(fork.mark);
+        m_block = block;
+    }
+    ALWAYS_INLINE void appendToJoin(Block* block, const ScopeFork& fork)
+    {
+        sealPendingPatch();
+        m_numbering.restore(fork.mark);
+        m_block = block;
+    }
+    ALWAYS_INLINE void appendToSuccessor(Block* block, const ScopeFork& fork)
+    {
+        sealPendingPatch();
+        bool comesOutOfFork = fork.block && block->singlePredecessor() == fork.block && block->classOfSingleIncomingEdge() != EdgeClass::Rare;
+        if (!comesOutOfFork || block->isLandingPad() || !m_numbering.canRestore(fork.mark)) {
+            appendTo(block);
+            return;
+        }
+        block->m_hasOnlyOnePredecessor = true;
+        m_numbering.inheritScope(fork.mark);
+        ++m_scopeEpoch;
+        m_hasInheritedFindsInEpoch = false;
+        m_block = block;
+    }
 
     JS_EXPORT_PRIVATE Operation* const32(int32_t);
     JS_EXPORT_PRIVATE Operation* const64(int64_t);
@@ -131,29 +189,53 @@ private:
     Operation* duplicateInheritedFindIfFusable(Operation*);
     bool wasFoundInInheritedScope(const Operation* operation) const
     {
+        if (!m_hasInheritedFindsInEpoch) [[likely]]
+            return false;
         uint32_t index = operation->index();
         return index < m_epochOfLastInheritedFind.size() && m_epochOfLastInheritedFind[index] == m_scopeEpoch;
     }
     Operation* appendLoadLike(const Operation* load, Operation* base);
     void verifyInheritedLoad(Operation* load);
-    template<unsigned numberOfChildren, bool isComputation> Operation* appendNewWithChildren(Opcode, Type, Operation* first, Operation* second, Operation* third);
+    template<unsigned numberOfChildren, KindOfAppendedOperation, bool hasRoom> Operation* appendNewWithChildren(Opcode, Type, Operation* first, Operation* second, Operation* third);
     Operation* appendNew(Opcode, Type);
     Operation* appendNew(Opcode, Type, Operation*);
     Operation* appendNew(Opcode, Type, Operation*, Operation*);
+    Operation* appendNewMemoryAccess(Opcode, Type, Operation*);
+    Operation* appendNewMemoryAccess(Opcode, Type, Operation*, Operation*);
     Operation* appendNewComputation(Opcode, Type, Operation*);
     Operation* appendNewComputation(Opcode, Type, Operation*, Operation*);
     Operation* appendNewComputation(Opcode, Type, Operation*, Operation*, Operation*);
     Operation* createWithoutPosition(Opcode, Type, uint64_t payload);
-    Operation* createNewWithoutPosition(Opcode, Type, uint64_t payload, uint32_t hash);
+    template<bool hasRoom> Operation* createNewWithoutPosition(Opcode, Type, uint64_t payload, uint32_t hash);
+    Operation* createNewWithoutPositionWhereRoomMayLack(Opcode, Type, uint64_t payload, uint32_t hash);
     Operation* addWithoutPosition(Operation* base, int64_t constant);
     Operation* lowerForTarget(Opcode, Type, Operation*, Operation*);
-    void append(Operation*, bool mayEndBlock);
+    bool hasRoomToCreate(size_t bytes) const;
+    bool hasRoomToAppendTo(const Block*, size_t bytes) const;
+    template<bool hasRoom> void didCreate(Operation*);
+    template<bool hasRoom> void append(Operation*, bool mayEndBlock);
+    template<bool hasRoom> Operation* appendUpsilon(Operation* value, Operation* phi);
+    Operation* upsilonWhereRoomMayLack(Operation* value, Operation* phi);
+    static Operation* countChildrenOfValueHandedOn(Operation* value, Operation* upsilon);
+    template<bool hasRoom> PatchOperation* appendPatch(Type);
+    PatchOperation* patchWhereRoomMayLack(Type);
+    void jumpWhereRoomMayLack(Edge);
     void sealPendingPatch()
     {
         if (m_pendingPatch) [[unlikely]]
             sealPatch();
     }
-    void sealPatch();
+    JS_EXPORT_PRIVATE void sealPatch();
+#if ASSERT_ENABLED
+    static bool hasEdgeBetween(const Block* from, const Block* to)
+    {
+        for (const Edge& edge : from->successors()) {
+            if (edge.block() == to)
+                return true;
+        }
+        return false;
+    }
+#endif
 
     void checkAccess(const AbstractHeap& heap, bool isStore)
     {
@@ -165,6 +247,7 @@ private:
     Numbering m_numbering;
     ArenaVector<uint32_t> m_epochOfLastInheritedFind;
     uint32_t m_scopeEpoch { 0 };
+    bool m_hasInheritedFindsInEpoch { false };
     bool m_isDuplicating { false };
     bool m_isVerifyingInheritedLoad { false };
     HeapIndex m_heapWrittenByOtherThreads { rootHeapIndex };

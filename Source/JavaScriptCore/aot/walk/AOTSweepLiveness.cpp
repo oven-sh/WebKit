@@ -52,14 +52,13 @@ static LayoutID layoutOfSweptEnvironmentHandedBack(const SweepInputs& inputs, Ty
     if (!type || holdsOnlyPrimitives(type))
         return { };
     LayoutID environment = inputs.types.at(type).environment;
-    return environment && inputs.plan.layout(environment).isEscapedOffset ? environment : LayoutID();
+    return environment && inputs.plan.layout(environment).cellsAreHandedBack ? environment : LayoutID();
 }
 
 static ValueID valueNamedAnewBySweptOperation(const Operation& operation)
 {
     return opcodesThatGiveSameCell.contains(operation.opcode) ? operation.operand(0) : ValueID();
 }
-static constexpr OpcodeSet holdersOfSweptEnvironmentsInFrames { Opcode::NewObject, Opcode::NewClosure };
 
 static bool namesOnlyEnvironmentsMadeBySweptCode(const Code& code, std::span<const uint32_t> firstIncomingEdge, std::span<const EdgeID> incomingEdges, ValueID named)
 {
@@ -421,14 +420,15 @@ void Sweep::followIfHoldsEnvironmentInFrame(ValueID id)
 {
     const Code& code = *m_code;
     auto holdsWithoutSettingByte = [](const Operation& holder) ALWAYS_INLINE_LAMBDA {
-        bool liesInFrame = holdersOfSweptEnvironmentsInFrames.contains(holder.opcode) && holder.storage() != AllocationStorage::Heap;
-        return liesInFrame || holder.opcode == Opcode::Results;
+        bool mayLieInFrame = holder.opcode == Opcode::NewClosure || (holder.opcode == Opcode::NewObject && holder.storage() != AllocationStorage::Heap);
+        return mayLieInFrame || holder.opcode == Opcode::Results;
     };
-    if (!holdsWithoutSettingByte(code.at(id)))
+    ValueID cell = rootOfCellInSweptCode(code, id);
+    if (!holdsWithoutSettingByte(code.at(cell)))
         return;
 
     Vector<ValueID, 8> cellsOfFrameToLookInto;
-    cellsOfFrameToLookInto.append(id);
+    cellsOfFrameToLookInto.append(cell);
     while (!cellsOfFrameToLookInto.isEmpty()) {
         const Operation& holder = code.at(cellsOfFrameToLookInto.takeLast());
         if (!holdsWithoutSettingByte(holder))

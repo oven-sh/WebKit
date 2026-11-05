@@ -49,8 +49,9 @@ std::optional<CompiledMethodOfArray> compiledMethodOfArray(BuiltinID builtin)
 }
 
 StubSignature signatureOfCallCompiledMethodOfArray(StubKey key) { return signatureOf(callMethodById(key.count())); }
+StubSignature signatureOfCallCompiledMethodOfArrayLending(StubKey key) { return signatureOf(callMethodById(key.count())); }
 
-void generateCallCompiledMethodOfArray(StubAssembler& jit)
+static void emitCallCompiledMethodOfArray(StubAssembler& jit, unsigned lentArguments)
 {
     const unsigned count = jit.key().count();
     const CallRegisters registers = CallRegisters::allocate(jit);
@@ -64,12 +65,22 @@ void generateCallCompiledMethodOfArray(StubAssembler& jit)
     loadStructure(jit, thisGPR, registers.scratch);
     looksUp.append(branchIfNotOfThisRealm(jit, registers.scratch));
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs.wordsOfCompiledMethodsOfArray) + static_cast<ptrdiff_t>(jit.key().form() * sizeof(uint64_t))), registers.word);
-    looksUp.append(jit.branchTest64(CCallHelpers::Zero, registers.word));
+    looksUp.append(lentArguments ? branchUnlessWordBorrows(jit, registers.word, registers.scratch, lentArguments) : jit.branchTest64(CCallHelpers::Zero, registers.word));
     emitFillMissingArgumentRegisters(jit, count);
     jit.move(TrustedImm32(count), countGPR);
     toCodeAddress(jit, registers.word, registers.scratch, StackIsTested::No);
     jit.farJump(registers.word, JSEntryPtrTag);
-    jit.linkToStub(looksUp, callMethodById(count));
+    jit.linkToStub(looksUp, callMethodById(count, lentArguments));
+}
+
+void generateCallCompiledMethodOfArray(StubAssembler& jit)
+{
+    emitCallCompiledMethodOfArray(jit, 0);
+}
+
+void generateCallCompiledMethodOfArrayLending(StubAssembler& jit)
+{
+    emitCallCompiledMethodOfArray(jit, onlyFirstArgumentIsLent);
 }
 
 } } // namespace JSC::AOT

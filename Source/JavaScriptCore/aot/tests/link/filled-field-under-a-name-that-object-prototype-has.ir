@@ -1,13 +1,12 @@
 # an assignment asks the objects above, and a name there that has become read only refuses it: `Object.freeze(Object.prototype)`, which anybody may do at any time. Outside strict code nothing is thrown.
-# So `made.valueOf = 1` fills no field, and a read of it may find the function above. A definition asks nobody: a literal that lists the name has it. A name that Object.prototype lacks is filled by an assignment as ever
+# So `made.valueOf = 1` fills no field, and a read of it may find the function above. A definition asks nobody: a literal that lists the name has it. What is assigned behind a literal fills no field of a record, under whatever name: the literal is the store of "filled"
 # function assigned() { const made = {}; made.valueOf = 1; made.size = 2; return made; }   function listed() { return { valueOf: 1, size: 2 }; }
 # RUN: summary f1
 # CHECK: leaves-empty L0.0 "valueOf"
-# CHECK-NOT: leaves-empty L0.1 "size"
+# CHECK-NEXT: leaves-empty L0.1 "size"
 # RUN(LISTED): summary f2
 # LISTED-NOT: leaves-empty
 # RUN(LINK): link fields mechanisms=all
-# LINK: field L0.1 "size" {{*}}filled
 # LINK: field L1.0 "valueOf" {{*}}filled
 # RUN(EMPTY): link fields mechanisms=all
 # EMPTY-NOT: field L0.0 "valueOf" {{*}}filled

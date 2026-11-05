@@ -14,8 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t stringUseOfTextInFrameReadAsKey = 1;
-
 static constexpr OpcodeSet operationsThatGiveCursorsOfTextsInFrame = partsOfStackStringBuilder | OpcodeSet { Opcode::StackStringBuilderStart, Opcode::StackStringBuilderCursor };
 
 static_assert([] {
@@ -40,7 +38,7 @@ bool textBegunHereMayLieInFrame(Walker& walker, BlockID, const GrowingText& text
 {
     if (opcodesWithoutEmitter().contains(Opcode::StackStringBuilderBegin))
         return false;
-    if ((text.standsUnderHandlers && !everyHandlerLetsTextGo(walker, text)) || text.takesTextOfJSONStringify)
+    if (text.takesTextOfJSONStringify)
         return false;
     return walker.unit().role != CodeRole::CoroutineBody && !walker.program().at(walker.unit().function).isCoroutine();
 }
@@ -77,10 +75,10 @@ static Reference newestCursorOfTextInFrame(Walker& walker, Reference name, Origi
     return walker.build(WTF::move(read));
 }
 
-bool becomeOperationOfStringBuilderInFrame(Walker& walker, TextInStringBuilder& text, Reference name, Draft& draft, Opcode inFrame)
+void becomeOperationOfStringBuilderInFrame(Walker& walker, TextInStringBuilder& text, Reference name, Draft& draft, Opcode inFrame)
 {
     if (!text.liesInFrame)
-        return false;
+        return;
 
     Opcode drafted = draft.opcode;
     Reference value = OperandPosition::value(drafted) ? draft.valueOperand() : Reference();
@@ -88,7 +86,6 @@ bool becomeOperationOfStringBuilderInFrame(Walker& walker, TextInStringBuilder& 
     Reference start = OperandPosition::start(drafted) ? draft.startOperand() : Reference();
     Reference end = OperandPosition::end(drafted) ? draft.endOperand() : Reference();
     StringID constant = PayloadWord::string(drafted) ? draft.string() : StringID();
-    bool isLikelyKey = FlagMask::isLikelyKey(drafted) && draft.isLikelyKey();
     ExpectedType expected = draft.expected;
     ValueID inputValueGiven = draft.inputValueGiven;
 
@@ -113,49 +110,10 @@ bool becomeOperationOfStringBuilderInFrame(Walker& walker, TextInStringBuilder& 
         draft.setEndOperand(end);
     if (constant)
         draft.setString(constant);
-    if (inFrame == Opcode::StackStringBuilderFinish)
-        draft.setStringUse(isLikelyKey ? stringUseOfTextInFrameReadAsKey : 0);
-    return true;
 }
 
-void noteCursorBehind(Walker& walker, TextInStringBuilder& text, Reference cursor)
+Reference finishTextInFrame(Walker& walker, Reference name, Origin origin)
 {
-    if (!text.liesInFrame || !cursor || !cursor.isValue())
-        return;
-    const Code& code = walker.code();
-    const Operation& part = code.at(cursor.id());
-    if (part.opcode != Opcode::StackStringBuilderAppendString || code.at(part.cursorOperand()).opcode != Opcode::StackStringBuilderStart)
-        return;
-    ValueID first = part.valueOperand();
-    text.firstPart = code.isConstant(first) ? Reference::constant(first) : Reference::value(first);
-    text.endOfFirstPart = cursor;
-}
-
-Reference lastPartOrFinishedText(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)
-{
-    static constexpr OpcodeSet partsThatAlwaysHaveCharacters {
-        Opcode::StackStringBuilderAppendConstant, Opcode::StackStringBuilderAppendInteger, Opcode::StackStringBuilderAppendNumber, Opcode::StackStringBuilderAppendBoolean
-    };
-    if (!text.liesInFrame || !text.firstPart || !text.endOfFirstPart)
-        return { };
-    origin.isTailCall = false;
-    Reference cursor = newestCursorOfTextInFrame(walker, name, origin);
-    if (!cursor || partsThatAlwaysHaveCharacters.contains(walker.code().at(cursor.id()).opcode))
-        return { };
-
-    Draft finish(Opcode::StackStringBuilderFinish, origin);
-    finish.setBuilderOperand(name);
-    finish.setCursorOperand(cursor);
-    finish.setFirstPartOperand(text.firstPart);
-    finish.setEndOfFirstPartOperand(text.endOfFirstPart);
-    finish.setStringUse(0);
-    return walker.build(WTF::move(finish));
-}
-
-Reference finishTextInFrame(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)
-{
-    if (Reference string = lastPartOrFinishedText(walker, text, name, origin))
-        return string;
     origin.isTailCall = false;
     Reference cursor = newestCursorOfTextInFrame(walker, name, origin);
     if (!cursor)
@@ -163,7 +121,6 @@ Reference finishTextInFrame(Walker& walker, TextInStringBuilder& text, Reference
     Draft finish(Opcode::StackStringBuilderFinish, origin);
     finish.setBuilderOperand(name);
     finish.setCursorOperand(cursor);
-    finish.setStringUse(0);
     return walker.build(WTF::move(finish));
 }
 

@@ -197,6 +197,24 @@ static bool someWayKeepsNothing(const BodyOfMakerInEnvironmentsHandedBack& body,
     return false;
 }
 
+static constexpr bool collectorTakesLinkForNoCellIn(SlotRepresentation representation)
+{
+    SlotTraits traits = traitsOf(representation);
+    return traits.width == sizeof(uint64_t) && !traits.isNarrowReference;
+}
+static_assert(collectorTakesLinkForNoCellIn(SlotRepresentation::JSValue) && collectorTakesLinkForNoCellIn(SlotRepresentation::Cell) && collectorTakesLinkForNoCellIn(SlotRepresentation::OptionalDouble));
+static_assert(!collectorTakesLinkForNoCellIn(SlotRepresentation::Cell32) && !collectorTakesLinkForNoCellIn(SlotRepresentation::Int32));
+
+static const PlacedSlot* findSlotThatHoldsLinkWhileCellWaits(const PlannedLayout& planned)
+{
+    for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
+        const PlacedSlot& slot = planned.slots[field];
+        if (slot.storage == SlotStorage::Inline && !(slot.offset % sizeof(uint64_t)) && collectorTakesLinkForNoCellIn(slot.representation))
+            return &slot;
+    }
+    return nullptr;
+}
+
 void planEnvironmentsHandedBack(const Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts)
 {
     if (program.admitsInspector || !withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::CellsInFrames))
@@ -241,19 +259,25 @@ void planEnvironmentsHandedBack(const Program& program, const Facts& facts, Buil
             if (program.at(id).kind != LayoutKind::Environment || takenOrNothing.get(id.index()))
                 continue;
             PlannedLayout& planned = parts.layouts[id.index()];
-            if (planned.storage != LayoutStorage::Environment || planned.slots.isEmpty() || planned.liesOnlyInFrames || planned.isEscapedOffset)
+            if (planned.storage != LayoutStorage::Environment || planned.slots.isEmpty() || planned.liesOnlyInFrames || planned.cellsAreHandedBack)
                 continue;
-            uint64_t endOfFields = offsetOfFirstEnvironmentVariable;
-            for (const PlacedSlot& slot : planned.slots) {
-                if (slot.hasStorage())
-                    endOfFields = std::max<uint64_t>(endOfFields, slot.end());
+            if (const PlacedSlot* holderOfLink = findSlotThatHoldsLinkWhileCellWaits(planned))
+                planned.offsetOfLinkToNextCellHandedBack = holderOfLink->offset;
+            else {
+                uint64_t endOfFields = offsetOfFirstEnvironmentVariable;
+                for (const PlacedSlot& slot : planned.slots) {
+                    if (slot.hasStorage())
+                        endOfFields = std::max<uint64_t>(endOfFields, slot.end());
+                }
+                endOfFields = WTF::roundUpToMultipleOf<sizeof(uint64_t)>(endOfFields);
+                uint64_t size = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(endOfFields + sizeof(uint64_t));
+                if (size > build.limit(LimitID::MaxFieldOffset))
+                    continue;
+                planned.offsetOfLinkToNextCellHandedBack = static_cast<uint32_t>(endOfFields);
+                planned.size = static_cast<uint32_t>(size);
             }
-            uint64_t size = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(endOfFields + sizeof(bool));
-            if (size > build.limit(LimitID::MaxFieldOffset))
-                continue;
-            planned.isEscapedOffset = static_cast<uint32_t>(endOfFields);
+            planned.cellsAreHandedBack = true;
             build.statistics().count(StatisticID::AllocateInFramesChanges);
-            planned.size = static_cast<uint32_t>(size);
         }
     }
 }

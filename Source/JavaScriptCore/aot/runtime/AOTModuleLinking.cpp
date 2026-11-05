@@ -632,7 +632,8 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         return;
     }
     walk.replay(scope, isUnlinked, [](ModuleLinkWalk::Leaf, ModuleID) { }, [&](ModuleID module, bool) {
-        setStatus(module, ModuleStatus::Linked);
+        if (!mocks.hides(module))
+            setStatus(module, ModuleStatus::Linked);
     });
 }
 

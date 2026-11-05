@@ -174,7 +174,7 @@ struct FunctionTableWords {
 
 struct ClosureWords {
     static constexpr unsigned numberOfExecutables = 3;
-    static constexpr unsigned numberOfSlimClosureAllocators = 3;
+    static constexpr unsigned numberOfSlimClosureAllocators = 5;
 
     JSCell* executables[numberOfExecutables];
     uint64_t closureHeaders[numberOfClosureStructures];

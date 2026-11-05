@@ -220,7 +220,7 @@ static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(
     if (standsInBlockInFront && (!index.dominates(blockOfLiteral, blockOfUser) || index.loopOf(blockOfLiteral) != index.loopOf(blockOfUser) || index.hasIrreducibleFlow()))
         return std::nullopt;
     literal.names.append(allocated);
-    literal.keepsItsNames = standsInBlockInFront || walker.walksStretchInsideAnother();
+    literal.keepsItsNames = standsInBlockInFront || (walker.walksStretchInsideAnother() && allocated.index() < index.block(blockOfUser).firstValue().index() + walker.beginOfStretchBeingWalked());
     LayoutID layout = layoutOfLiteralMadeByInWalkCopies(program, index.value(allocated));
     if (!layout || program.at(layout).kind != LayoutKind::Record || !walker.plan().slots().holdsCompiledObjects(layout))
         return std::nullopt;

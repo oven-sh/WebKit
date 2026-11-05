@@ -393,6 +393,7 @@ export const evaluatedAsText: UseSpec = { use: "Role", role: "EvaluatedAsText" }
 export const loadedAsModule: UseSpec = { use: "Role", role: "ModuleSpecifier" };
 export const readAsCharacters: UseSpec = { use: "Role", role: "ReadAsCharacters" };
 export const readAsLocale: UseSpec = { use: "Role", role: "Locale" };
+export const mayReplaceLocale: UseSpec = { use: "Role", role: "MayReplaceLocale" };
 export const contentKey: UseSpec = { use: "Role", role: "ContentKey" };
 export const replacesContents: UseSpec = { use: "Role", role: "ReplacesContents" };
 export const becomesLengthOfReceiver: UseSpec = { use: "Role", role: "BecomesLengthOfReceiver" };
@@ -1033,8 +1034,6 @@ export const viewType = (path: string, ...typeArguments: readonly SlotName[]): T
   typeArguments,
 });
 export const cppClass = (name: string, header = `${name}.h`): CppClassRef => ({ name, header });
-export const typesByName = (types: Readonly<Record<string, TableType>>): Readonly<Record<string, TypeSpec>> =>
-  Object.fromEntries(Object.entries(types).map(([name, type]) => [name, type.spec]));
 export const staticTable = (file: string, table: string): StaticTableRef => ({ file, table });
 export const membersFrom = (holder: BuiltinPath, table: StaticTableRef | undefined): Declaration[] =>
   table === undefined ? [] : [{ declares: "StaticTable", holder, table }];
@@ -1061,9 +1060,6 @@ const classColumnKeys = [
   "instancesAreEntries",
   "definesCharactersOnNewInstances",
   "namesDefinedOnNewInstances",
-  "typesOfNamesDefinedOnNewInstances",
-  "namesMadeByStaticMembers",
-  "namesReadToDescribeInstances",
   "constructorOnlyReadsPrototypeOfNewTarget",
   "constructorAdder",
   "instanceCppClass",

@@ -29,6 +29,7 @@ public:
 
 private:
     CellPointer receiverOrElse(const ValueContext&, Boxed object, LayoutSetID receivers, LBasicBlock failure);
+    Condition truthOfWhatSlotHolds(const ValueContext& read, Operand loaded, const Type& typeOfForm, const Type& held);
     CellPointer elementsOwnerOrElse(const ValueContext&, Boxed object, LBasicBlock failure);
     Word32 indexOrElse(Boxed position, LBasicBlock failure);
     void readElementOfProvenList(const ValueContext&);

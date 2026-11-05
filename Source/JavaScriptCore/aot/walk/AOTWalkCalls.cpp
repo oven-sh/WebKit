@@ -398,7 +398,7 @@ static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, co
     CodeUnit entered = conventions.entryBehindGuardOf(request.callee);
     if (!admitsDirectEntryInWalkCalls(walker, callee, entered))
         return false;
-    if (!request.calleeComesBack && !walker.plan().endsItsTailCalls(request.callee) && isReturnedByTailCallInWalkCalls(walker.currentBodyIndex(), call.id()) && unitsReturnInOneFormInWalkCalls(walker, entered) && !unitMayLeaveByCallInWalkCalls(walker, entered))
+    if (!request.calleeComesBack && !calleeOfTailCallComesBack(walker, request.callee, request.arguments) && isReturnedByTailCallInWalkCalls(walker.currentBodyIndex(), call.id()) && unitsReturnInOneFormInWalkCalls(walker, entered) && !unitMayLeaveByCallInWalkCalls(walker, entered))
         return false;
     Vector<OperandInWalkCalls, 8> planned;
     if (!planOperandsInWalkCalls(walker, request, callee, entered, planned)) {
@@ -1057,8 +1057,6 @@ bool buildTypedConstructionOfItsOpcodes(Walker& walker, const BodyValue& value)
         return true;
     }
 
-    if (buildObjectOfTaggedClassConstructor(walker, value))
-        return true;
     auto allocation = value.as<Opcode::NewObject>();
     Reference prototype = allocation.prototypeOperand() ? walker.referenceOf(allocation.prototypeOperand()) : Reference();
     if (!prototype || !prototype.isValue() || !allocation.fields().empty())

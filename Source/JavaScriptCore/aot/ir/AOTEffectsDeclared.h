@@ -9,6 +9,7 @@
 
 #include "AOTEffects.h"
 #include "AOTSchemaEffects.h"
+#include <array>
 #include <type_traits>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -70,7 +71,10 @@ constexpr Effects withDeclaredKindOfThrow(Opcode opcode, Effects effects)
     return effects;
 }
 
-const Effects* findDeclaredEffectsOfEveryValue(Opcode);
+extern const std::array<const Effects*, numberOfOpcodes> declaredBoundsByOpcode;
+extern const OpcodeSet opcodesWithExactBoundsInTable;
+ALWAYS_INLINE const Effects& declaredBoundInTable(Opcode opcode) { return *declaredBoundsByOpcode[static_cast<unsigned>(opcode)]; }
+ALWAYS_INLINE const Effects* findDeclaredEffectsOfEveryValue(Opcode opcode) { return opcodesWithExactBoundsInTable.contains(opcode) ? &declaredBoundInTable(opcode) : nullptr; }
 
 inline constexpr AbstractHeapSet heapsThatOnlyFlagsOfIsNotFrozenRead { AbstractHeap::NamedProperties };
 
@@ -98,8 +102,15 @@ const Effects& declaredEffectsOfOperation(const Program& program, Opcode opcode,
     if (const Effects* effects = findDeclaredEffectsOfEveryValue(opcode)) {
         if (opcode != Opcode::IsNotFrozen || operation.hasNoExtraProperties() || operation.hasNoFieldOutsideSlot())
             return *effects;
+        storage = *effects;
+        storage.reads.remove(heapsThatOnlyFlagsOfIsNotFrozenRead);
+        return storage;
     }
-    storage = declaredEffectsOfOperation(program, opcode, operation);
+    storage = Effects::none();
+    EffectsBuilder builder(program, storage);
+    forEachDeclaredEffect(operation, builder);
+    if (storage.mayThrow && opcodesThrowingOnlyForLackOfMemory.contains(opcode))
+        storage.mayThrow = ThrowEffect::onlyForLackOfMemory();
     return storage;
 }
 
@@ -112,7 +123,7 @@ Effects declaredEffectsOfTerminator(const Program& program, const Terminator& te
     return effects;
 }
 
-const Effects& declaredBoundInTable(Opcode);
+
 extern const OpcodeSet opcodesWithPureBoundInTable;
 inline const OpcodeSet& opcodesWithPureDeclaredBound() { return opcodesWithPureBoundInTable; }
 extern const OpcodeSet opcodesWithSuspendingBoundInTable;

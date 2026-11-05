@@ -28,12 +28,6 @@ WayBehindTerminator wayBehindTarget(const Walker&, BlockID from, uint32_t target
 
 bool comeToSamePlace(const BodyIndex&, const WayBehindTerminator&, const WayBehindTerminator&);
 
-struct CasesLeftOfSwitch {
-    Vector<uint32_t, 16> cases;
-    uint32_t rest { 0 };
-};
-CasesLeftOfSwitch casesLeftOfSwitch(Walker&, const BodyTerminator&, const TerminatorDraft& asWritten);
-
 bool readsNothingOfWhatItCatches(const BodyIndex&, BodyBlock handler);
 
 } } } // namespace JSC::AOT::Typed

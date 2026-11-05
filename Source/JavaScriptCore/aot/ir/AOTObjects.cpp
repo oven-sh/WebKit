@@ -55,14 +55,6 @@ static void setClassOfObjectRecord(ObjectRecord& record, const BuiltinTable& bui
     record.builtinClass = builtinClass;
 }
 
-static void makeObjectRecordInstanceOf(ObjectRecord& record, const BuiltinTable& builtins, BuiltinClassID builtinClass)
-{
-    if (builtins.at(builtinClass).hasClosureInstances)
-        record.traits.add(ObjectTrait::IsCallable);
-    else
-        setClassOfObjectRecord(record, builtins, builtinClass);
-}
-
 static ObjectRecord objectRecordOfBuiltin(const BuiltinTable& builtins, ObjectKind kind, BuiltinID canonical)
 {
     OptionSet<ObjectTrait> traits { ObjectTrait::HasNoShape, ObjectTrait::IsBuiltin };
@@ -358,7 +350,6 @@ ObjectTable::ObjectTable(const BuiltinTable& builtins, std::span<const FunctionI
         ObjectShapesOfBuiltin shapes = objectShapesInRowsOf(builtins, canonical);
         for (uint32_t ordinal = 0; ordinal < numberOfResultObjectsOfBuiltin; ++ordinal) {
             ObjectRecord record = objectRecordOfKind(ObjectKind::ResultOfBuiltin, canonical.index(), { ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject });
-            record.origin = SiteOrigin::BuiltinResult;
             record.ordinal = ordinal;
             if (!isFunctionOfNativeAccessor(record))
                 (ordinal ? shapes.contents : shapes.result).applyTo(record, builtins);
@@ -390,7 +381,6 @@ ObjectTable::ObjectTable(const BuiltinTable& builtins, std::span<const FunctionI
     begin(ObjectKind::EscapedWithoutShape);
     for (MakerOfShapelessObject maker : { MakerOfShapelessObject::Host, MakerOfShapelessObject::OperationOrRow }) {
         ObjectRecord record = objectRecordOfKind(ObjectKind::EscapedWithoutShape, static_cast<uint32_t>(maker), { ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject, ObjectTrait::IsMerged });
-        record.origin = SiteOrigin::BuiltinResult;
         m_records.append(record);
     }
 
@@ -404,7 +394,6 @@ ObjectTable::ObjectTable(const BuiltinTable& builtins, std::span<const FunctionI
 
     for (unsigned kind = indexOf(ObjectKind::Namespace); kind <= numberOfKinds; ++kind)
         m_first[kind] = size();
-    m_firstSiteOfFunction.fill(0, static_cast<size_t>(numberOfFunctions) + 1);
 }
 
 void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& modulesNamedByModuleBuiltins, const ParallelLoops& loops)
@@ -412,7 +401,7 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
     uint32_t numberOfFunctions = endOf(ObjectKind::Closure) - firstOf(ObjectKind::Closure);
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
     uint32_t numberOfModules = static_cast<uint32_t>(program.modules.size());
-    RELEASE_ASSERT(size() == firstOf(ObjectKind::Namespace) && size() == firstObjectOfInstances());
+    RELEASE_ASSERT(size() == firstOf(ObjectKind::Namespace) && size() == m_first[numberOfKinds]);
     RELEASE_ASSERT(program.functions.size() == numberOfFunctions);
 
     auto begin = [&](ObjectKind kind) {
@@ -475,12 +464,6 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
         FunctionID constructor = wordsOfLayouts[index].constructor;
         if (constructor && constructor.index() < numberOfFunctions)
             setLayoutOfObjectRecord(m_records[constructedObjectOf(constructor).index()], LayoutID(index), mayHaveLayoutBelow.quickGet(index));
-    }
-
-    m_bodiesOfLibraryModules.ensureSize(numberOfFunctions);
-    for (const Module& module : program.modules) {
-        if (module.kind == ModuleKind::RuntimeSource && module.body && module.body.index() < numberOfFunctions)
-            m_bodiesOfLibraryModules.quickSet(module.body.index());
     }
 
     Vector<uint8_t> isModuleOfLibrary(numberOfModules, [&](size_t index) -> uint8_t {
@@ -561,68 +544,8 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
     appendForEachLayout(ObjectKind::Prototype, { ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject }, false);
     appendForEachLayout(ObjectKind::EscapedOfLayout, { ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject, ObjectTrait::IsMerged }, true);
 
-    begin(ObjectKind::Site);
     m_first[numberOfKinds] = size();
-}
-
-void ObjectTable::reserveSites(std::span<const uint32_t> numberOfSitesOfFunctions, const ParallelLoops& loops)
-{
-    RELEASE_ASSERT(numberOfSitesOfFunctions.size() + 1 == m_firstSiteOfFunction.size());
-    RELEASE_ASSERT(size() == firstOf(ObjectKind::Site) && size() == firstObjectOfInstances());
-
-    uint64_t next = size();
-    for (size_t function = 0; function < numberOfSitesOfFunctions.size(); ++function) {
-        m_firstSiteOfFunction[function] = static_cast<uint32_t>(next);
-        next += numberOfSitesOfFunctions[function];
-    }
-    RELEASE_ASSERT(next <= largestIDPosition);
-    m_firstSiteOfFunction.last() = static_cast<uint32_t>(next);
-
-    Vector<ObjectRecord> records;
-    records.grow(static_cast<size_t>(next));
-    carryObjectRecordsOver(m_records.span(), records.mutableSpan(), loops);
-    m_records = WTF::move(records);
-    m_first[numberOfKinds] = size();
-}
-
-void ObjectTable::defineSites(FunctionID function, std::span<const ObjectSite> sortedByValueAndOrdinal)
-{
-    uint32_t first = m_firstSiteOfFunction[function.index()];
-    RELEASE_ASSERT(sortedByValueAndOrdinal.size() == m_firstSiteOfFunction[function.index() + 1] - first);
-    ASSERT(std::ranges::is_sorted(sortedByValueAndOrdinal, { }, [](const ObjectSite& site) {
-        return std::pair { site.value, site.ordinal };
-    }));
-
-    std::span<ObjectRecord> records = m_records.mutableSpan().subspan(first, sortedByValueAndOrdinal.size());
-    for (size_t index = 0; index < records.size(); ++index) {
-        const ObjectSite& site = sortedByValueAndOrdinal[index];
-        ObjectRecord record = objectRecordOfKind(ObjectKind::Site, site.value.index(), { ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject });
-        record.origin = site.origin;
-        record.ordinal = site.ordinal;
-        record.owner = function;
-        record.siteTraits = site.traits;
-        if (site.layout)
-            setLayoutOfObjectRecord(record, site.layout, site.mayHaveLayoutBelow);
-        else if (site.builtinClass)
-            makeObjectRecordInstanceOf(record, m_builtins, site.builtinClass);
-        records[index] = record;
-    }
-}
-
-ObjectID ObjectTable::addObjectsOfInstances(std::span<const ObjectOfInstance> withoutRepeats)
-{
-    uint32_t first = size();
-    RELEASE_ASSERT(first + withoutRepeats.size() <= largestIDPosition);
-    for (const ObjectOfInstance& wanted : withoutRepeats) {
-        ObjectRecord record = at(wanted.sharedForm);
-        RELEASE_ASSERT(!record.has(ObjectTrait::IsOfInstance));
-        RELEASE_ASSERT(!record.has(SiteTrait::IsTemplateObject));
-        record.traits.add(ObjectTrait::IsOfInstance);
-        record.sharedForm = wanted.sharedForm;
-        record.instance = wanted.instance;
-        m_records.append(record);
-    }
-    return ObjectID(first);
+    RELEASE_ASSERT(size() <= largestIDPosition);
 }
 
 ObjectID ObjectTable::objectOf(BuiltinID builtin) const
@@ -654,19 +577,6 @@ ObjectID ObjectTable::escapedFunctionsOf(BuiltinID holder) const
     return ObjectID(firstOf(ObjectKind::EscapedFunctionsOfHolder) + m_builtins.canonicalID(holder).index());
 }
 
-ObjectID ObjectTable::siteObject(FunctionID function, ValueID value, uint32_t ordinal) const
-{
-    std::span<const ObjectRecord> sites = sitesOf(function);
-    auto keyOf = [](const ObjectRecord& site) {
-        return std::pair { site.payload, site.ordinal };
-    };
-    std::pair wanted { value.index(), ordinal };
-    auto found = std::ranges::lower_bound(sites, wanted, { }, keyOf);
-    if (found == sites.end() || keyOf(*found) != wanted)
-        return { };
-    return ObjectID(m_firstSiteOfFunction[function.index()] + static_cast<uint32_t>(found - sites.begin()));
-}
-
 static bool isProxy(const ObjectRecord& record)
 {
     switch (record.kind) {
@@ -676,8 +586,6 @@ static bool isProxy(const ObjectRecord& record)
         if (BuiltinID(record.payload) == Builtins::ProxyRevocable)
             return record.ordinal == 1;
         return record.builtinClass == BuiltinClasses::Proxy;
-    case ObjectKind::Site:
-        return record.has(SiteTrait::IsProxyFromNamedConstructor) || record.builtinClass == BuiltinClasses::Proxy;
     case ObjectKind::EscapedOfClass:
         return BuiltinClassID(record.payload) == BuiltinClasses::Proxy;
     case ObjectKind::HostObject:
@@ -719,12 +627,6 @@ std::optional<MakerOfShapelessObject> ObjectTable::makerOfShapelessObjectThatMer
             return std::nullopt;
         return MakerOfShapelessObject::Host;
     }
-    case ObjectKind::Site:
-        if (!record.owner || record.origin == SiteOrigin::BuiltinResult)
-            return MakerOfShapelessObject::Host;
-        if (m_bodiesOfLibraryModules.get(record.owner.index()))
-            return std::nullopt;
-        return MakerOfShapelessObject::OperationOrRow;
     case ObjectKind::CoroutineResult:
     case ObjectKind::RestArray:
     case ObjectKind::FunctionPrototype:
@@ -782,7 +684,6 @@ ObjectID ObjectTable::mergedFormOf(ObjectID object) const
     case ObjectKind::ConstructedObject:
     case ObjectKind::Instance:
     case ObjectKind::Prototype:
-    case ObjectKind::Site:
         break;
     }
 

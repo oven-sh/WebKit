@@ -113,6 +113,8 @@ public:
     BitVector functionsNeverReached;
     Vector<FunctionEffects> effects;
     FactRows<PositionFacts> entryParameters;
+    uint32_t firstLayoutOfNamespace { 0 };
+    uint32_t endOfLayoutsOfNamespaces { 0 };
 
     Vector<VariableFacts> variables;
     Vector<uint32_t> firstFieldOfLayout;
@@ -137,6 +139,7 @@ public:
     BitVector builtinMembersLockedAtStartUp;
     Vector<BuiltinLeftOpen> builtinMembersLeftOpen;
     Vector<BuiltinID> builtinMembersThatTestsReplace;
+    BitVector builtinMembersBehindWatch;
     MocksOfProgram mocks;
     BitVector builtinHoldersWhoseKeysAreNeverListed;
     Vector<BuiltinUseRecord> builtinUses;
@@ -242,6 +245,7 @@ public:
     const BitVector& builtinMembersLockedAtStartUp() const LIFETIME_BOUND { return m_tables.builtinMembersLockedAtStartUp; }
     std::span<const BuiltinLeftOpen> builtinMembersLeftOpen() const LIFETIME_BOUND { return m_tables.builtinMembersLeftOpen.span(); }
     std::span<const BuiltinID> builtinMembersThatTestsReplace() const LIFETIME_BOUND { return m_tables.builtinMembersThatTestsReplace.span(); }
+    bool isBehindWatch(BuiltinID member) const { return member && m_tables.builtinMembersBehindWatch.get(member.index()); }
     const MocksOfProgram& mocks() const LIFETIME_BOUND { return m_tables.mocks; }
     bool listsKeysOf(BuiltinID canonicalHolder) const { return !m_tables.builtinHoldersWhoseKeysAreNeverListed.get(canonicalHolder.index()); }
     std::span<const BuiltinUseRecord> builtinUses() const LIFETIME_BOUND { return m_tables.builtinUses.span(); }

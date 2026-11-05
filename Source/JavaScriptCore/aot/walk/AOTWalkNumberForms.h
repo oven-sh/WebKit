@@ -26,7 +26,6 @@ Reference integerInNumberForms(Walker&, int64_t);
 Reference booleanInNumberForms(Walker&, bool);
 Reference buildOperatorInNumberForms(Walker&, Opcode, Reference left, Reference right, Origin);
 Reference buildInAllowedFormInNumberForms(Walker&, Draft&&);
-std::optional<uint32_t> operandsNarrowedBehindTestInNumberForms(const Walker&, ValueID test);
 void goOnWhereTestPassesInNumberForms(Walker&, Reference passes, BlockID otherwise);
 Reference buildNarrowedInNumberForms(Walker&, Reference value, Reference test, uint32_t operandIndex, bool isOnTakenEdge, Origin);
 struct WayInNumberForms {
@@ -60,9 +59,9 @@ std::optional<BitsOfDividendCompared> tryCompareBitsOfDividend(Walker&, Origin, 
 Reference buildComparisonWhereDivisorsAreNotZero(Walker&, Draft&& comparison, std::span<const ValueID> divisorsThatMayBeZero);
 bool buildNumberRemainderWithItsTest(Walker&, const BodyValue& remainder);
 
-inline constexpr OpcodeSet opcodesThatBuildNumberFormTakes = allBitwiseOperators | allEqualities | allRelations | OpcodeSet { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow, Opcode::Negate,
-    Opcode::Increment, Opcode::Decrement, Opcode::DirectEval, Opcode::LogicalNot, Opcode::ToBoolean };
-AOT_LINK_OF_WALK_WITH_INPUTS(buildNumberForm, opcodesThatBuildNumberFormTakes)
+inline constexpr OpcodeSet opcodesThatBuildNumberFormTakes = allBitwiseOperators | allEqualities | allRelations | OpcodeSet { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow,
+    Opcode::LogicalNot, Opcode::ToBoolean };
+AOT_LINK_OF_WALK(buildNumberForm, opcodesThatBuildNumberFormTakes)
 
 
 Reference buildCallOnNumbers(Walker&, const CallByOneRow&);
@@ -81,7 +80,6 @@ bool buildElementAccessUnderNumber(Walker&, const BodyValue&, const InputsOfType
 struct SwitchOnNumbers {
     Reference subject;
     Vector<int64_t, 8> cases;
-    std::optional<uint32_t> caseLeftUntested;
 };
 std::optional<SwitchOnNumbers> planSwitchOnNumbers(Walker&, const BodyTerminator&);
 

@@ -337,8 +337,6 @@ InlineForm PrimitiveFormChooser::regExpForm() const
     case InlineBuiltin::RegExpFlag:
     case InlineBuiltin::RegExpGetLastIndex:
         return wholeIf(isRegExp(receiver()));
-    case InlineBuiltin::RegExpSetLastIndex:
-        return wholeIf(isRegExp(receiver()) && isValue(argument(0)));
     case InlineBuiltin::RegExpExec:
     case InlineBuiltin::RegExpTest:
         return wholeIf(isRegExp(receiver()) && isString(argument(0)));

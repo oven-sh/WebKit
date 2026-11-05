@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/MathExtras.h>
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT {
@@ -43,6 +44,9 @@ struct Layout : LayoutRecord {
 
     std::optional<uint32_t> findField(PropertyKeyID) const;
     std::optional<uint32_t> findStaticField(PropertyKeyID) const;
+    bool hasStaticFieldWithComputedKey() const;
+    bool mayHaveStaticField(PropertyKeyID key) const { return hasStaticFieldWithComputedKey() || findStaticField(key); }
+    template<typename Functor> void forEachStaticFieldThatMayMatch(PropertyKeyID, const Functor&) const;
     void indexFields();
 
     uint32_t appendField(Field&&);
@@ -63,6 +67,9 @@ private:
         return hash ^ (hash >> 15);
     }
     void addToIndex(uint32_t field);
+    uint32_t staticFieldTableSize() const { return WTF::roundUpToPowerOfTwo(2 * static_cast<uint32_t>(staticFields.size())); }
+    std::span<const IndexedField> staticFieldsOutsideTable() const { return m_staticFieldsByKey.span().subspan(staticFieldTableSize()); }
+    Vector<uint32_t, 4> indexedStaticFieldsThatMayMatch(PropertyKeyID) const;
 
     Vector<IndexedField> m_fieldsByKey;
     Vector<IndexedField> m_staticFieldsByKey;
@@ -95,6 +102,21 @@ inline std::optional<uint32_t> Layout::findField(PropertyKeyID key) const
         if (!indexed.key)
             return std::nullopt;
     }
+}
+
+template<typename Functor>
+void Layout::forEachStaticFieldThatMayMatch(PropertyKeyID key, const Functor& functor) const
+{
+    RELEASE_ASSERT(m_indexedStaticFieldCount == staticFields.size());
+    if (m_staticFieldsByKey.isEmpty()) {
+        for (const StaticField& field : staticFields) {
+            if (!field.key || field.key == key)
+                functor(field);
+        }
+        return;
+    }
+    for (uint32_t field : indexedStaticFieldsThatMayMatch(key))
+        functor(staticFields[field]);
 }
 
 struct FieldReference {

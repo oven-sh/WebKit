@@ -216,8 +216,7 @@ bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
     }
     case TerminatorKind::Switch:
     case TerminatorKind::SwitchString:
-    case TerminatorKind::SwitchOnShape:
-        return has(Mechanism::Folding) && (endBlockWithSwitchOverShapes(terminator) || endBlockWithCasesLeft(terminator));
+        return has(Mechanism::Folding) && endBlockWithSwitchOverShapes(terminator);
     default:
         return false;
     }

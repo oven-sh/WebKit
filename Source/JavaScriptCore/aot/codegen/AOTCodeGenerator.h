@@ -17,6 +17,7 @@
 #include "AOTOperand.h"
 #include "AOTOperationContext.h"
 #include "AOTPlan.h"
+#include "AOTRepresentationRules.h"
 #include "AOTTypeArena.h"
 #include <array>
 #include <memory>
@@ -103,7 +104,7 @@ public:
     Output& out() LIFETIME_BOUND { return m_out; }
     PinnedValues& pinned() LIFETIME_BOUND { return m_pinned; }
     CodeRecords& records() { return m_records; }
-    MentionList& mentions();
+    MentionList& mentions() { return m_mentions; }
     ValueID operationBeingGenerated() const { return m_operation ? m_operation->valueID() : ValueID(); }
     BlockID blockBeingGenerated() const { return m_operation ? m_operation->block() : BlockID(); }
 
@@ -111,7 +112,7 @@ public:
     Opcode opcodeOf(ValueID id) const { return code().at(id).opcode; }
     TypeID typeIDOf(ValueID id) const { return code().at(id).type; }
     Representation representationOf(ValueID id) const { return code().at(id).representation; }
-    Type typeOf(ValueID id) const { return m_inputs.types.at(typeIDOf(id)); }
+    ALWAYS_INLINE Type typeOf(ValueID id) const { return m_inputs.types.at(typeIDOf(id)); }
 
     bool suspends() const { return m_proc.traits().savesFrameOnSuspend; }
     bool hasHandlers() const { return code().hasHandlers(); }
@@ -133,21 +134,39 @@ public:
     const PlacedSlot* slotOfScopeOfClosureWithoutValue(ValueID closure) const { return closure == m_closureReadForItsScope ? m_slotOfScopeOfClosureRead : nullptr; }
     const Effects& effectsOf(const OperationContext& context LIFETIME_BOUND) const
     {
-        if (!context.m_effects)
+        if (!context.m_hasEffects)
             computeEffectsOf(context);
-        return *context.m_effects;
+        return context.m_effects;
     }
 
-    Operand get(ValueID);
-    void verifyThatDefinitionDominates(ValueID, BlockID user);
+    ALWAYS_INLINE Operand get(ValueID id) { return get(id, code().at(id)); }
     LValue wordOf(ValueID id) const { return m_values[id.index()]; }
-    Operand getIn(ValueID, Representation);
+    ALWAYS_INLINE Operand getIn(ValueID id, Representation wanted)
+    {
+        if (wanted == Representation::Void)
+            return { wanted, nullptr };
+        const Operation& operation = code().at(id);
+        if (isSameWord(operation.representation, wanted)) [[likely]]
+            return { wanted, get(id, operation).value };
+        return makeInWantedForm(id, operation, wanted);
+    }
     bool holdsAnyNaN(ValueID id) const { return m_followsNumbersOutOfBytes && m_valuesHoldingAnyNaN.quickGet(id.index()); }
     Operand getWithAnyNaN(ValueID);
     bool isCarriedBoxed(ValueID id) const { return m_carriesParametersBoxed && m_parametersCarriedBoxed.quickGet(id.index()); }
-    ValueID sumBoxedBy(const Operation& box) const;
+    ValueID sumBoxedBy(const Operation& box) const
+    {
+        if (box.opcode != Opcode::Box || box.representation != Representation::JSValue || m_followsNumbersOutOfBytes)
+            return { };
+        if (code().at(box.valueOperand()).representation != Representation::Double) [[likely]]
+            return { };
+        return sumBoxedBySlow(box);
+    }
     Number settleNaNOf(const ValueContext&, Number);
-    void define(const ValueContext&, Operand);
+    ALWAYS_INLINE void define(const ValueContext& value, Operand result)
+    {
+        RELEASE_ASSERT(!value.isBranchCondition());
+        defineValue(value.id(), value.representation(), result);
+    }
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);
     Operand resultAt(ValueID producer, uint32_t index) const;
@@ -159,6 +178,11 @@ public:
     void passHandlerArguments(const Edge& handler);
 
     void generateBranchCondition(const TerminatorContext&, ValueID condition, BranchTargets);
+    struct WaysOfTruth {
+        BranchTargets targets;
+        bool areOfObjectAndNothing { false };
+    };
+    std::optional<WaysOfTruth> waysOfTruthOf(const ValueContext& read) const;
     void generateReturnedCall(const TerminatorContext&, ValueID call);
 
     template<typename T> T& emitter();
@@ -202,6 +226,8 @@ private:
         uint32_t first;
         uint32_t size;
     };
+    using OperationDispatchers = std::array<void (*)(CodeGenerator&, const ValueContext&), numberOfEnumerators<Opcode>>;
+    using TerminatorDispatchers = std::array<void (*)(CodeGenerator&, const TerminatorContext&), numberOfEnumerators<TerminatorKind>>;
 
     template<typename T> T& makeEmitter();
     bool isDeferredClosure(const Operation& definition) const
@@ -220,17 +246,20 @@ private:
     bool recordSitesWithoutCode();
     void orderBlocks();
     bool isProvenToDominate(BlockID home, BlockID user) const { return m_userOfHomesProven == user && m_homesProven[home.index() % m_homesProven.size()] == home; }
+    void verifyThatDefinitionDominates(ValueID, BlockID home, BlockID user);
     bool dominates(BlockID home, BlockID user);
     void findDominators();
     void numberDominatorTree();
     void createBlocks();
     void createPhis();
     bool isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft) const;
+    ValueID sumBoxedBySlow(const Operation& box) const;
     bool waitsForBoxOfSum(ValueID, const Operation&) const;
     void followNumbersOutOfBytes();
     bool letsAnyNaNInto(ValueID parameter);
     bool goesOnBehindJump(size_t positionInOrder) const;
-    void generateBlock(BlockID);
+    void generateBlock(BlockID id) { generateBlock(id, code().at(id)); }
+    void generateBlock(BlockID, const Block&);
     ValueID testReadByBranchAlone(BlockID, const Terminator&) const;
     bool isAwaitedAtOnce(const Operation& call, std::span<const ValueID> valuesOfBlock, size_t index) const;
     void generateValue(BlockID, ValueID, const Operation&, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind);
@@ -242,10 +271,13 @@ private:
             declareAccessesSlow(context);
     }
     void declareAccessesSlow(const OperationContext&);
-    void dispatch(const ValueContext&);
+    static const OperationDispatchers& operationDispatchers();
+    void dispatch(const ValueContext& value) { m_operationDispatchers[static_cast<size_t>(value.opcode())](*this, value); }
     void dispatchWatched(const ValueContext&);
     template<Opcode> void dispatchOperation(const ValueContext&);
-    void dispatch(const TerminatorContext&);
+    static const TerminatorDispatchers& terminatorDispatchers();
+    void dispatch(const TerminatorContext& terminator) { m_terminatorDispatchers[static_cast<size_t>(terminator.kind())](*this, terminator); }
+    template<TerminatorKind> void dispatchTerminator(const TerminatorContext&);
 
     const Edge* handlerOf(BlockID block) const
     {
@@ -263,12 +295,46 @@ private:
         EdgeID handler = code().handlerOf(id);
         return handler ? &code().at(handler) : nullptr;
     }
-    Operand get(ValueID, const Operation&);
-    Operand makeConstant(ValueID id) { return makeConstant(id, code().at(id)); }
+    ALWAYS_INLINE Operand get(ValueID id, const Operation& operation)
+    {
+        Representation representation = operation.representation;
+        RELEASE_ASSERT(representation != Representation::Unchosen);
+        if (representation == Representation::Void)
+            return { };
+        BlockID home = operation.block();
+        if (!home)
+            return makeConstant(id, operation);
+        if (BlockID user = blockBeingGenerated(); user && user != home && home != m_onlyEntryBlock && !isProvenToDominate(home, user))
+            verifyThatDefinitionDominates(id, home, user);
+        LValue lowered = m_values[id.index()];
+        if (!lowered) [[unlikely]]
+            return zeroInPlaceOfValueOfFailedCode(representation);
+        if (representation == Representation::Double && (m_carriesParametersBoxed || m_followsNumbersOutOfBytes)) [[unlikely]]
+            return getNumberInFormKept(id, lowered);
+        return { representation, lowered };
+    }
+    Operand zeroInPlaceOfValueOfFailedCode(Representation);
+    Operand getNumberInFormKept(ValueID, LValue lowered);
+    Operand makeInWantedForm(ValueID, const Operation&, Representation wanted);
     Operand makeConstant(ValueID, const Operation&);
-    void defineValue(ValueID, Representation ofRecord, Operand);
+    ALWAYS_INLINE void defineValue(ValueID id, Representation representation, Operand operand)
+    {
+        if (m_definitionTaken) [[unlikely]] {
+            *m_definitionTaken = operand;
+            return;
+        }
+        RELEASE_ASSERT(operand.representation == representation);
+        if (operand.representation == Representation::Void)
+            return;
+        LValue& lowered = m_values[id.index()];
+        RELEASE_ASSERT(!lowered && operand.value && operand.value->type() == machineTypeOf(operand.representation));
+        lowered = operand.value;
+    }
+    BlockEdge edgeLeavingTurnLaidOut(const Block& blockAtEnd);
+    BlockEdge edgeThatPassesArguments(const TerminatorContext&, const Edge&, std::span<const Operand> declaredResults);
     void passArguments(const Edge&, std::span<const ValueID> parameters, std::span<const Operand> declaredResults);
     void passArgument(ValueID parameter, Operand);
+    void failToPassArgument(ValueID parameter, Representation found, Representation wanted);
     bool currentBlockIsOpen() const;
     struct SumOfIntegers {
         size_t indexOfParameter { 0 };
@@ -301,12 +367,17 @@ private:
     const FunctionInputs m_inputs;
     Machine::Procedure& m_proc;
     CodeRecords& m_records;
+    MentionList& m_mentions;
+    const TypingContext m_typing;
+    const OperationDispatchers& m_operationDispatchers;
+    const TerminatorDispatchers& m_terminatorDispatchers;
     Output m_out;
     const bool m_checksAllocation;
     const bool m_checksEffects;
     const uint32_t m_rowThatSaysLess;
     bool m_watchesOperations { false };
     bool m_notesForms { false };
+    bool m_mayReleaseBehindLastReads { false };
     PinnedValues m_pinned;
     std::span<LValue> m_values;
     std::span<ResultRange> m_resultRanges;
@@ -357,7 +428,27 @@ private:
 FOR_EACH_AOT_EMITTER(AOT_DEFINE_EMITTER_ACCESSOR)
 #undef AOT_DEFINE_EMITTER_ACCESSOR
 
-ValueID valueOwnedByTerminator(const Terminator&);
+inline ValueID valueOwnedByTerminator(const Terminator& terminator)
+{
+    switch (terminator.kind) {
+    case TerminatorKind::TestAndBranch:
+        return terminator.conditionOperand();
+    case TerminatorKind::ReturnCall:
+        return terminator.callOperand();
+    case TerminatorKind::Jump:
+    case TerminatorKind::Branch:
+    case TerminatorKind::Switch:
+    case TerminatorKind::SwitchString:
+    case TerminatorKind::Return:
+    case TerminatorKind::Throw:
+    case TerminatorKind::Rethrow:
+    case TerminatorKind::Unreachable:
+    case TerminatorKind::SwitchOnShape:
+    case TerminatorKind::TryCallInline:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 } } } // namespace JSC::AOT::Typed
 

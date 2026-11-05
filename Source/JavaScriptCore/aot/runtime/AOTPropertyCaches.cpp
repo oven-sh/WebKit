@@ -2279,7 +2279,7 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
         if (std::optional<uint32_t> offset = field ? offsetOfPlainValueInCell(*field) : std::nullopt; offset && (object->isInSlot(*field) || isLeftOut)) {
             const SiteAnswers* answers = m_answersAtSites.answersOf(place);
             bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != object->shapeWord() && !answers->second.key;
-            if (use == SiteUse::Read && !hasRoomOnlyByStructure) {
+            if (use == SiteUse::Read && !hasRoomOnlyByStructure && !object->bearsMark()) {
                 m_answersAtSites.fillByShape(place, SiteAnswers::byShape(object->shapeWord(), *offset));
                 return;
             }
@@ -2292,15 +2292,18 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
         if (std::optional<SiteAnswers::Answer> answer = field && use == SiteUse::Read ? answerForTypedSlotInCell(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
             const SiteAnswers* answers = m_answersAtSites.answersOf(place);
             bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != answer->key && !answers->second.key;
-            std::optional<SiteAnswers::Form> form = hasRoomOnlyByStructure ? SiteAnswers::formByStructureOfSlotInCell(field->slot.representation()) : std::nullopt;
+            std::optional<SiteAnswers::Form> form = hasRoomOnlyByStructure || object->bearsMark() ? SiteAnswers::formByStructureOfSlotInCell(field->slot.representation()) : std::nullopt;
             if (std::optional<SiteAnswers::Answer> byStructure = form ? SiteAnswers::tryByStructure(use, id, *form, field->slot.offset) : std::nullopt) {
                 m_answersAtSites.fill(place, use, { *byStructure }, name.uid, { });
                 return;
             }
-            m_answersAtSites.fillByShape(place, *answer);
+            if (object->bearsMark())
+                m_answersAtSites.didFailToFill(place);
+            else
+                m_answersAtSites.fillByShape(place, *answer);
             return;
         }
-        if (std::optional<SiteAnswers::Answer> answer = field && use == SiteUse::Read ? answerForPlainValueInExtension(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
+        if (std::optional<SiteAnswers::Answer> answer = field && use == SiteUse::Read && !object->bearsMark() ? answerForPlainValueInExtension(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
             m_answersAtSites.fillByShape(place, *answer);
             return;
         }

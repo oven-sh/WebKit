@@ -177,6 +177,7 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
     JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, source);
+    callsOperation.append(branchIfCellBearsMark(jit, source));
 
     static_assert(CompiledStructure::offsetOfHeldKeyOrder() == CompiledStructure::offsetOfFlags() + 1);
     constexpr int32_t keyOrderStaysBehind = 0xff00;
@@ -665,7 +666,7 @@ static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& ca
     callsOperation.append(branchIfNotCompiledObjectOfThisImage(jit, target));
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
-    jit.load32(Address(target, offsetOfShapeWord), word);
+    loadShapeWord(jit, target, word);
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, Address(source, offsetOfShapeWord)));
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, Address(target, offsetOfOrderWord), TrustedImm32(unorderedOrderWord)));
     jit.load32(Address(source, offsetOfOrderWord), orderWord);
@@ -685,7 +686,7 @@ static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& ca
 
 static void branchUnlessSourceOfSameLayoutHasUnnumberedKeyOrder(StubAssembler& jit, GPRReg target, GPRReg source, GPRReg scratch, JumpList& otherwise)
 {
-    jit.load32(Address(target, offsetOfShapeWord), scratch);
+    loadShapeWord(jit, target, scratch);
     otherwise.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(source, offsetOfShapeWord)));
     jit.load32(Address(source, offsetOfOrderWord), scratch);
     jit.and32(TrustedImm32(~(orderWordIntegrityBits | orderWordCountBits)), scratch);

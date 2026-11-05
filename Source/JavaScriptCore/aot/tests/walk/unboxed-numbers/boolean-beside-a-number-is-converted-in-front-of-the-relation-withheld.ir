@@ -1,7 +1,0 @@
-# the same relation with unboxed numbers withheld: a boolean is no operand of the typed forms, so the relation is closed
-# RUN: walk f1 mechanisms=none+TypedOperations
-# CHECK-LABEL: code f1:Body
-# CHECK: = Less {{*}}form=Generic
-# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
-# NEVER-NOT: = ToNumber
-# PROGRAM-OF: boolean-beside-a-number-is-converted-in-front-of-the-relation.ir

@@ -51,7 +51,7 @@ constexpr StubKey getByIdOfNarrowCellInExtension() { return StubKey(StubFamily::
 constexpr StubKey getByIdOfEmptySlot() { return StubKey(StubFamily::GetByIdOfEmptySlot); }
 constexpr StubKey getByIdOfFieldLeftOut() { return StubKey(StubFamily::GetByIdOfFieldLeftOut); }
 constexpr StubKey getByIdBehindFieldTable() { return StubKey(StubFamily::GetByIdBehindFieldTable); }
-constexpr StubKey callMethodById(unsigned count) { return StubKey(StubFamily::CallMethodById).withCount(count); }
+constexpr StubKey callMethodById(unsigned count, unsigned lentArguments = 0) { return lentArguments ? StubKey(StubFamily::CallMethodByIdLending).withCount(count).withForm(static_cast<uint8_t>(lentArguments - 1)) : StubKey(StubFamily::CallMethodById).withCount(count); }
 constexpr StubKey getByIdAtSite() { return StubKey(StubFamily::GetByIdAtSite); }
 constexpr StubKey getByIdOfObjectAtSite() { return StubKey(StubFamily::GetByIdOfObjectAtSite); }
 constexpr StubKey getByIdAtSiteHashed() { return StubKey(StubFamily::GetByIdAtSiteHashed); }
@@ -94,7 +94,7 @@ constexpr ReadBehindSiteForm readBehindSiteFormOf(StubKey key)
     return { static_cast<WayBehindSite>(key.form() % 2), static_cast<NameAtSite>(key.form() / 2) };
 }
 constexpr StubKey readLengthAtSite(NameAtSite name) { return StubKey(StubFamily::ReadLengthAtSite).withForm(static_cast<uint8_t>(name)); }
-constexpr StubKey callMethodAtSite(unsigned count) { return StubKey(StubFamily::CallMethodAtSite).withCount(count); }
+constexpr StubKey callMethodAtSite(unsigned count, unsigned lentArguments = 0) { return lentArguments ? StubKey(StubFamily::CallMethodAtSiteLending).withCount(count).withForm(static_cast<uint8_t>(lentArguments - 1)) : StubKey(StubFamily::CallMethodAtSite).withCount(count); }
 constexpr StubKey throughProxy(TrapOfProxy trap) { return StubKey(StubFamily::ThroughProxy).withForm(static_cast<uint8_t>(trap)); }
 constexpr StubKey inById(PresenceQuestion question) { return StubKey(StubFamily::InById).withForm(static_cast<uint8_t>(question)); }
 constexpr StubKey readFieldInExtension(unsigned granule, SlotInGranule slot) { return StubKey(StubFamily::ReadFieldInExtension).withForm(static_cast<uint8_t>(slot)).withCount(granule); }
@@ -291,7 +291,7 @@ static_assert([] {
         instanceOf(InstanceOfOperand::Prototype),
         callMethodById(0),
         readAtSite(ReceiverAtSite::IsCell, NameAtSite::HasColumn), readBehindSite(WayBehindSite::OfFieldLeftOut, NameAtSite::HasColumn), readLengthAtSite(NameAtSite::HasColumn), callMethodAtSite(0),
-        getByIdBehindFieldTable(), getByIdAtSite(), getByIdOfObjectAtSite(), getByIdAtSiteHashed(), putByIdAtSite(PutMode::Define, NameOfStoreAtSite::NamesField),
+        getByIdBehindFieldTable(), getByIdAtSite(), getByIdOfObjectAtSite(), getByIdAtSiteHashed(), putByIdAtSite(PutMode::Sloppy, NameOfStoreAtSite::NamesField),
         putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdOfSymbolOfRealm(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define), putValueThatSlotRefuses(PutMode::Define),
         didCreateField(), didCreateFieldOfSlot(), putSlotOrAdd(PlaceOfCreatedSlot::OutOfLine, SlotRepresentation::JSValue), putSlotOrAddAtKeyInRegister(SlotRepresentation::JSValue),
         getByValCached(), getByValCachedCells(), getByValCachedAtPlace(), getByValCachedBehindPlaces(),
@@ -304,7 +304,7 @@ static_assert([] {
     return true;
 }());
 static_assert(putKnownFieldKeepingNumbersAsValues(PutMode::Define).count() == descriptorOf(StubFamily::PutKnownField).maxCount && !exists(createKnownField(PutMode::Define).withCount(1)));
-static_assert(putByIdAtSite(PutMode::Define, NameOfStoreAtSite::NamesNoField).count() == descriptorOf(StubFamily::PutByIdAtSite).maxCount);
+static_assert(putByIdAtSite(PutMode::Sloppy, NameOfStoreAtSite::NamesNoField).count() == descriptorOf(StubFamily::PutByIdAtSite).maxCount);
 static_assert(!exists(getById().withImmediate(1)));
 static_assert(exists(didCreateFieldOfSlot().withImmediate(1)) && !exists(didCreateField().withImmediate(1)));
 static_assert(exists(putSlotOrAdd(PlaceOfCreatedSlot::OutOfLine, SlotRepresentation::OptionalDouble).withImmediate(1)));

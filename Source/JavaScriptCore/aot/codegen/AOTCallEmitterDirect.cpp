@@ -32,7 +32,8 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, const 
     RELEASE_ASSERT(arguments.size() == locations.parameters.size() && locations.convention == EntryConvention::Direct);
 
     PlacedArguments placed;
-    placed.onStack.fill(nullptr, locations.numberOfStackArguments);
+    if (locations.numberOfStackArguments)
+        placed.onStack.fill(nullptr, locations.numberOfStackArguments);
     std::array<LValue, numberOfDirectArgumentGPRs> inGPRs { };
     unsigned numberOfGPRs = 0;
     placed.stackWordsToReserve = std::max(conventions().stackWordsReservedByCallersOf(m_program, callee), locations.numberOfStackWords());
@@ -104,7 +105,7 @@ Vector<Operand, 2> CallEmitter::callEntry(const OperationContext& context, CodeU
 void CallEmitter::tailCallEntry(const OperationContext& context, CodeUnit callee, uint16_t entry, const ArgumentLocations& locations, std::span<const Operand> arguments)
 {
     RELEASE_ASSERT(m_program.at(callee.function).hasBody());
-    emitTailCall(context, CallTarget::unit(callee, entry), placeArguments(callee, locations, arguments));
+    emitTailCall(context, CallTarget::unit(callee, entry), placeArguments(callee, locations, arguments), &locations);
 }
 
 void CallEmitter::callStartOfModule(const ValueContext& value, CodeUnit start, const ArgumentLocations& locations)
@@ -203,15 +204,15 @@ void CallEmitter::callThroughMethodTable(const ValueContext& value, uint32_t pla
     Vector<Operand, 8> arguments = operandsOf(receiverAndArguments, locations);
 
     m_out.clearDeclaredAccesses();
-    Word32 shapeWord = shapes.shapeWordOf(arguments[0].as<CellPointer>());
+    ShapeTestEmitter::IndexByShape row = shapes.indexByShapeOf(arguments[0].as<CellPointer>());
     TypedPointer wordOfSelector = instanceWord(m_heaps.AOTInstance_classGuards, m_mentions.add(NumberSpace::MethodSelector, placeOfSelector));
-    Word32 codeOffset(m_out.load32(m_out.baseIndex(*wordOfSelector.heap(), wordOfSelector.base(), signExtended(shapeWord).value(), ScaleFour, wordOfSelector.offset())));
+    Word32 codeOffset(m_out.load32(m_out.baseIndex(*wordOfSelector.heap(), wordOfSelector.base(), row.index.value(), ScaleFour, wordOfSelector.offset() + row.offset)));
     Pointer entry = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(image.code)), zeroExtended(codeOffset), WTF::fastLog2(static_cast<unsigned>(codeOffsetUnit)));
 
     CallTarget target = CallTarget::address(entry.value(), takesAndReturnsAlike);
     PlacedArguments placed = placeArguments(takesAndReturnsAlike, locations, arguments.span());
     if (value.returnCall()) {
-        emitTailCall(value, target, placed);
+        emitTailCall(value, target, placed, &locations);
         return;
     }
     defineResultsOfCall(value, locations.results.span(), emitCall(value, target, placed, locations.results.span(), { .callerSuspendsAtReturn = value.isAwaitedAtOnce() }));

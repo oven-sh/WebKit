@@ -50,7 +50,7 @@ static bool isConstantLocationInWalkBuiltins(const Program& program, const Facts
     return facts.builtinLocation(member) == BuiltinLocationState::Constant;
 }
 
-BuiltinID findConstantMemberFrom(const Program& program, const Facts& facts, BuiltinID start, PropertyKeyID key)
+BuiltinID findConstantMemberFrom(const Program& program, const Facts& facts, BuiltinID start, PropertyKeyID key, MembersBehindWatch watch)
 {
     const BuiltinTable& table = program.builtins();
     if (liesInThread(key) || !builtinMemberNameOf(program, key))
@@ -62,10 +62,12 @@ BuiltinID findConstantMemberFrom(const Program& program, const Facts& facts, Bui
             return { };
         if (BuiltinID member = members.findOwnMember(holder)) {
             bool liesOnHolder = !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
-            return liesOnHolder && isConstantLocationInWalkBuiltins(program, facts, member) ? member : BuiltinID();
+            bool isBelieved = isConstantLocationInWalkBuiltins(program, facts, member) || (watch == MembersBehindWatch::AreAsBuilt && facts.isBehindWatch(member));
+            return liesOnHolder && isBelieved ? member : BuiltinID();
         }
         const Builtin& object = table.at(holder);
-        if (!listsEveryMemberUnder(program, holder, key) || !members.isClosedKey(holder) || !table.hasLockedPrototypeLink(holder))
+        auto opened = watch == MembersBehindWatch::AreAsBuilt ? MembersUnderKey::NamesOpenedForTestRun::AreAbsent : MembersUnderKey::NamesOpenedForTestRun::MayLieOnHolder;
+        if (!listsEveryMemberUnder(program, holder, key) || !members.isClosedKey(holder, opened) || !table.hasLockedPrototypeLink(holder))
             return { };
         switch (object.prototypeLink) {
         case BuiltinPrototypeLink::Unknown:
@@ -108,7 +110,22 @@ static bool lookupFromClosuresGoesToFunctionPrototypeInWalkBuiltins(const Walker
     return true;
 }
 
-static BuiltinID findMemberReadOffInWalkBuiltins(const Walker& walker, TypeID object, PropertyKeyID key, bool isAsItsClassMakesIt)
+static constexpr AbstractHeapSet heapsUnderTestOfBeingAsMadeInWalkBuiltins { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks };
+
+void noteObjectPassedTestOfBeingAsMade(Walker& walker, Reference object, Reference test, uint32_t numberOfValuesInFrontOfTest)
+{
+    if (!walker.program().admitsReplacedBuiltins || !test || !test.isValue() || test.id().index() < numberOfValuesInFrontOfTest)
+        return;
+    noteKnown(walker, KnownNote::PassedTestOfBeingAsMade, { }, object, 0, LocationMasks(heapsUnderTestOfBeingAsMadeInWalkBuiltins), 1);
+}
+
+static MembersBehindWatch membersBehindWatchAboveInWalkBuiltins(Walker& walker, Reference object)
+{
+    bool hasPassed = walker.program().admitsReplacedBuiltins && object && object.isValue() && findKnown(walker, KnownNote::PassedTestOfBeingAsMade, { }, object);
+    return hasPassed ? MembersBehindWatch::AreAsBuilt : MembersBehindWatch::AreOpen;
+}
+
+static BuiltinID findMemberReadOffInWalkBuiltins(const Walker& walker, TypeID object, PropertyKeyID key, bool isAsItsClassMakesIt, MembersBehindWatch watch = MembersBehindWatch::AreOpen)
 {
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
@@ -138,6 +155,8 @@ static BuiltinID findMemberReadOffInWalkBuiltins(const Walker& walker, TypeID ob
     for (BuiltinClassID current = builtinClass; current && !prototype; current = table.at(current).parent)
         prototype = table.at(current).prototype;
     BuiltinID member = prototype ? findConstantMemberOnceForBuild(walker, prototype, key) : BuiltinID();
+    if (!member && prototype && !isPrimitive && watch == MembersBehindWatch::AreAsBuilt)
+        member = findConstantMemberFrom(program, walker.facts(), prototype, key, watch);
     if (!member || isPrimitive)
         return member;
 
@@ -154,7 +173,7 @@ BuiltinID findConstantMemberReadOff(const Walker& walker, TypeID object, Propert
 BuiltinID findConstantMemberReadOff(Walker& walker, Reference object, PropertyKeyID key)
 {
     TypeID type = object ? walker.typeOf(object) : TypeID();
-    return type ? findMemberReadOffInWalkBuiltins(walker, type, key, isListAsMade(walker, object)) : BuiltinID();
+    return type ? findMemberReadOffInWalkBuiltins(walker, type, key, isListAsMade(walker, object), membersBehindWatchAboveInWalkBuiltins(walker, object)) : BuiltinID();
 }
 
 static constexpr PristineAspectSet aspectsOfObjectAsMade { PristineAspects::Storage, PristineAspects::Names, PristineAspects::NamesKeptBelow, PristineAspects::Prototype };
@@ -187,7 +206,7 @@ Reference buildTestOfObjectAsMade(Walker& walker, Reference object, Origin origi
 
 TypeID typeFoundOnObjectAsMade(Walker& walker, const BodyValue& read, TypeID typeOfObject)
 {
-    BuiltinID member = findMemberReadOffInWalkBuiltins(walker, typeOfObject, read.key(), true);
+    BuiltinID member = findMemberReadOffInWalkBuiltins(walker, typeOfObject, read.key(), true, MembersBehindWatch::AreAsBuilt);
     if (!member)
         return { };
     const BuiltinTable& table = walker.program().builtins();
@@ -200,7 +219,7 @@ TypeID typeFoundOnObjectAsMade(Walker& walker, const BodyValue& read, TypeID typ
 
 bool readOffObjectAsMadeCallsGetter(Walker& walker, const BodyValue& read, TypeID typeOfObject)
 {
-    BuiltinID member = findMemberReadOffInWalkBuiltins(walker, typeOfObject, read.key(), true);
+    BuiltinID member = findMemberReadOffInWalkBuiltins(walker, typeOfObject, read.key(), true, MembersBehindWatch::AreAsBuilt);
     const BuiltinTable& table = walker.program().builtins();
     return member && table.at(table.canonicalID(member)).kind == BuiltinKind::Accessor;
 }
@@ -406,7 +425,7 @@ TypedForm buildReadOfBuiltinMember(Walker& walker, const BodyValue& read, TypeID
     if (!location && (readsOffEntryParameterThatStaysAsMade(walker, read) || receiverStaysAsMadeByLink(walker, read)))
         location = findMemberReadOffInWalkBuiltins(walker, typeOfObject, key, true);
     if (!location && !object && classWhoseInstancesAreTestedInWalkBuiltins(walker, typeOfObject)) {
-        location = findMemberReadOffInWalkBuiltins(walker, typeOfObject, key, true);
+        location = findMemberReadOffInWalkBuiltins(walker, typeOfObject, key, true, MembersBehindWatch::AreAsBuilt);
         formAskedAbout = TypedForm::BuiltOnObjectAsMade;
     }
     if (!location)

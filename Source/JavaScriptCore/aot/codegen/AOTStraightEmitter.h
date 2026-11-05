@@ -291,8 +291,8 @@ private:
     static constexpr uint32_t fewestImportChecksInList = 2;
     static constexpr uint16_t firstEntryOfListOfImportChecks = 0xf000;
     std::optional<ImportCheck> importCheckIn(BodyBlock) const;
-    uint32_t countImportChecksFrom(BodyBlock) const;
-    void generateImportChecks(BodyBlock first, uint32_t numberOfChecks);
+    Vector<ImportCheck, 8> importChecksFrom(BodyBlock) const;
+    void generateImportChecks(BodyBlock first, Vector<ImportCheck, 8>&& checks);
     void writeListsOfImportChecks();
     void generateOperation(const BodyValue&);
     bool leavesDefinitionToFirstRead(const BodyValue&);

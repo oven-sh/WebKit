@@ -49,6 +49,11 @@ enum class MakerOfType : uint8_t {
     TruthyPart,
     FalsyPart,
     WithoutLayoutsThatTestMayRefuse,
+    WithPrimitives,
+    BuiltinClassWithOneContent,
+    NarrowedByTestThatPassed,
+    NarrowedByTestThatFailed,
+    FirstNarrowedByComparison,
 };
 
 inline constexpr uint32_t bitsOfOperationInTypeMemo = 8;
@@ -66,9 +71,7 @@ constexpr uint32_t stampInTypeMemo(uint32_t operation, uint32_t epoch)
 
 constexpr size_t slotInTypeMemo(uint32_t operation, uint32_t first, uint32_t second, size_t numberOfSlots)
 {
-    uint64_t mixed = (static_cast<uint64_t>(first) << 32 | second) * 0x9e3779b97f4a7c15ull;
-    mixed = ((mixed ^ (mixed >> 32)) + operation) * 0xbf58476d1ce4e5b9ull;
-    return static_cast<size_t>(mixed >> 32) & (numberOfSlots - 1);
+    return slotOfMemoHash(hashOfMemoQuestion(operation, first, second), numberOfSlots);
 }
 
 class TypeArena final : private IDSetAnnotator {
@@ -113,6 +116,7 @@ public:
     static constexpr ClassPartsID partsOf(BuiltinClassID builtinClass) { return idAt<ClassPartsID>(IDHome::Value, builtinClass.index()); }
 
     TypeID intern(const TypeParts&);
+    TypeID internPartsThatAreCanonical(const TypeParts&);
 
     static constexpr TypeID fromPrimitives(uint16_t primitives) { return typeOfPrimitives(primitives); }
     TypeID integer(Range);
@@ -148,6 +152,7 @@ public:
 
     TypeID withPrimitives(TypeID, uint16_t added);
     TypeID withoutPrimitives(TypeID, uint16_t removed);
+    TypeID wholeKindsAndBuiltinClassesOf(TypeID);
     TypeID withoutNullish(TypeID type) { return withoutPrimitives(type, Primitive::UndefinedOrNull); }
     TypeID withoutObjects(TypeID);
     TypeID withOnlyObjects(TypeID);
@@ -186,12 +191,12 @@ public:
 
     StringID internText(std::span<const uint8_t> programString);
     StringID internJoinedTexts(StringID left, StringID right);
-    bool joinedTextIsSpelledAsItsPieces(StringID left, StringID right) const;
     std::span<const uint8_t> bytesOf(StringID) const;
     size_t numberOfBytesOf(StringID) const;
     bool isWideText(StringID) const;
     StringView viewOf(StringID, Vector<char16_t>& bufferForNonASCII) const;
     bool spellSameText(StringID a, StringID b) const { return a == b || (liesInThread(a) != liesInThread(b) && numberOfBytesOf(a) == numberOfBytesOf(b) && std::ranges::equal(bytesOf(a), bytesOf(b))); }
+    bool hasMadeTexts() const { return !m_madeTexts.isEmpty(); }
 
 private:
     friend class ArenasOfWorkers;
@@ -209,11 +214,17 @@ private:
 
     static const MemoEntry& entryInMemo(const Vector<MemoEntry>&, uint32_t operation, uint32_t first, uint32_t second);
     std::optional<uint32_t> remembered(Operation, uint32_t first, uint32_t second);
+    std::optional<uint32_t> rememberedUntilReset(uint32_t operationWord, uint32_t first, uint32_t second) const;
+    std::optional<uint32_t> rememberedAtOnce(Operation, uint32_t first, uint32_t second);
+    std::optional<uint32_t> rememberedElsewhere(Operation, uint32_t first, uint32_t second);
     void remember(Operation, uint32_t first, uint32_t second, uint32_t result);
     void rememberInFirstMemoUntilReset(Operation, uint32_t first, uint32_t second, uint32_t result);
+    bool makeRoomForTypesMade();
     void forgetUnionsOfMany();
     Type complete(const TypeParts& canonical) const;
-    TypeID internCanonical(const Type&);
+    void completeInPlace(Type&) const;
+    void addWhatNamedObjectsBring(Type&) const;
+    TypeID internCanonical(Type&);
 
     TypeID unionOfDifferentTypes(TypeID, TypeID);
     TypeID intersectionOfDifferentTypes(TypeID, TypeID, DeclaredParts);
@@ -221,6 +232,7 @@ private:
     bool overlapOfDifferentTypes(TypeID, TypeID);
     TypeID differenceOfTypesWithValues(TypeID value, TypeID removed);
     TypeID withoutPrimitivesHeld(TypeID, uint16_t removed);
+    TypeID takePrimitivesAwayAndRemember(TypeID, uint16_t removed);
     TypeID withoutObjectsOfRecord(TypeID);
     TypeID withoutBoundsOfFractionsOfRecord(TypeID);
     TypeID withSeedsOnRecord(TypeID, UnknownSeeds added);
@@ -236,7 +248,7 @@ private:
 
     TypeTable& m_table;
     const ArenaKeeps m_keeps;
-    const bool m_keepsTypesMade;
+    bool m_keepsTypesMade { false };
     bool m_someAnythingOfSeedLiesInThread { false };
     uint32_t m_epoch { 1 };
     const std::span<const Type* const> m_typesOfFrozenTable;
@@ -350,8 +362,8 @@ inline std::span<const ClassPart> TypeArena::at(ClassPartsID id) const
 
 ALWAYS_INLINE const PropertyKey& TypeArena::at(PropertyKeyID key) const
 {
-    if (key.bits() < m_table.m_propertyKeysOnceFrozen.size()) [[likely]]
-        return *m_table.m_propertyKeysOnceFrozen[key.bits()];
+    if (key.bits() < m_table.m_numberOfPropertyKeysOnceFrozen) [[likely]]
+        return m_table.propertyKeyOnceFrozenAt(key.bits());
     if (liesInThread(key))
         return m_propertyKeys[positionOf(key)];
     return m_table.at(key);
@@ -364,7 +376,25 @@ ALWAYS_INLINE const TypeArena::MemoEntry& TypeArena::entryInMemo(const Vector<Me
     return memo.span().data()[slotInTypeMemo(operation, first, second, memo.size())];
 }
 
+ALWAYS_INLINE void TypeArena::noteTypeMade(MakerOfType maker, uint32_t first, uint32_t second, TypeID made, bool internedNothingInThread)
+{
+    if (m_typesMade.isEmpty() && !makeRoomForTypesMade())
+        return;
+    uint32_t makerWord = static_cast<uint32_t>(maker);
+    m_typesMade.mutableSpan().data()[slotInTypeMemo(makerWord, first, second, m_typesMade.size())] = { first, second, made.bits(), stampInTypeMemo(makerWord, internedNothingInThread ? 0 : m_epoch) };
+}
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+ALWAYS_INLINE std::optional<uint32_t> TypeArena::rememberedUntilReset(uint32_t operationWord, uint32_t first, uint32_t second) const
+{
+    if (m_memoUntilReset.isEmpty())
+        return std::nullopt;
+    const MemoEntry& entry = entryInMemo(m_memoUntilReset, operationWord, first, second);
+    if (entry.first != first || entry.second != second || entry.operationAndEpoch != stampInTypeMemo(operationWord, m_epoch))
+        return std::nullopt;
+    return entry.result;
+}
 
 ALWAYS_INLINE std::optional<uint32_t> TypeArena::remembered(Operation operation, uint32_t first, uint32_t second)
 {
@@ -373,12 +403,25 @@ ALWAYS_INLINE std::optional<uint32_t> TypeArena::remembered(Operation operation,
         if (std::optional<uint32_t> result = m_lastingMemo.find(operationWord, first, second))
             return result;
     }
-    if (m_memoUntilReset.isEmpty())
+    return rememberedUntilReset(operationWord, first, second);
+}
+
+ALWAYS_INLINE std::optional<uint32_t> TypeArena::rememberedAtOnce(Operation operation, uint32_t first, uint32_t second)
+{
+    uint32_t operationWord = static_cast<uint32_t>(operation);
+    if (!wordOfTypeMemoLiesInThread(first) && !wordOfTypeMemoLiesInThread(second))
+        return m_lastingMemo.findInRecentGeneration(operationWord, first, second);
+    return rememberedUntilReset(operationWord, first, second);
+}
+
+ALWAYS_INLINE std::optional<uint32_t> TypeArena::rememberedElsewhere(Operation operation, uint32_t first, uint32_t second)
+{
+    uint32_t operationWord = static_cast<uint32_t>(operation);
+    if (wordOfTypeMemoLiesInThread(first) || wordOfTypeMemoLiesInThread(second))
         return std::nullopt;
-    const MemoEntry& entry = entryInMemo(m_memoUntilReset, operationWord, first, second);
-    if (entry.first != first || entry.second != second || entry.operationAndEpoch != stampInTypeMemo(operationWord, m_epoch))
-        return std::nullopt;
-    return entry.result;
+    if (std::optional<uint32_t> result = m_lastingMemo.findInOlderGeneration(operationWord, first, second))
+        return result;
+    return rememberedUntilReset(operationWord, first, second);
 }
 
 ALWAYS_INLINE std::optional<uint32_t> TypeArena::rememberedAnswer(uint8_t question, uint32_t first, uint32_t second)
@@ -483,24 +526,49 @@ inline TypeID TypeArena::withSeeds(TypeID type, UnknownSeeds added)
     return withSeedsOnRecord(type, added);
 }
 
-inline const Type& TypeReader::recordOf(TypeID id) const { return m_arena ? m_arena->recordOf(id) : m_table->typeKeptAt(id); }
-inline Type TypeReader::at(TypeID id) const
+ALWAYS_INLINE __attribute__((used)) const Type& TypeReader::recordOf(TypeID id) const { return m_arena ? m_arena->recordOf(id) : m_table->typeKeptAt(id); }
+ALWAYS_INLINE __attribute__((used)) Type TypeReader::at(TypeID id) const
 {
     if (isItsOwnValue(id))
         return TypeTable::typeInID(id);
     return recordOf(id);
 }
 inline SetView<LayoutID, LayoutSetID> TypeReader::at(LayoutSetID id) const { return m_arena ? m_arena->at(id) : m_table->at(id); }
-inline std::span<const LayoutID> TypeReader::listOf(LayoutSetID id) const { return m_arena ? m_arena->listOf(id) : m_table->listOf(id); }
+ALWAYS_INLINE __attribute__((used)) std::span<const LayoutID> TypeReader::listOf(LayoutSetID id) const { return m_arena ? m_arena->listOf(id) : m_table->listOf(id); }
 inline SetView<ObjectID, ObjectSetID> TypeReader::at(ObjectSetID id) const { return m_arena ? m_arena->at(id) : m_table->at(id); }
 inline SetView<StringID, StringSetID> TypeReader::at(StringSetID id) const { return m_arena ? m_arena->at(id) : m_table->at(id); }
 inline SetView<PropertyKeyID, KeySetID> TypeReader::at(KeySetID id) const { return m_arena ? m_arena->at(id) : m_table->at(id); }
-inline std::span<const ClassPart> TypeReader::at(ClassPartsID id) const { return m_arena ? m_arena->at(id) : m_table->at(id); }
+ALWAYS_INLINE __attribute__((used)) std::span<const ClassPart> TypeReader::at(ClassPartsID id) const { return m_arena ? m_arena->at(id) : m_table->at(id); }
 inline const PropertyKey& TypeReader::at(PropertyKeyID id) const { return m_arena ? m_arena->at(id) : m_table->at(id); }
 inline const ObjectRecord& TypeReader::at(ObjectID id) const { return m_table->objects().at(id); }
 inline const ObjectTable& TypeReader::objects() const { return m_table->objects(); }
 inline const BuiltinTable& TypeReader::builtins() const { return m_table->builtins(); }
 inline const Program* TypeReader::program() const { return m_table->program(); }
+
+ALWAYS_INLINE __attribute__((used)) std::span<const LayoutID> membersOf(TypeReader reader, LayoutSetID set)
+{
+    return reader.listOf(set);
+}
+
+ALWAYS_INLINE __attribute__((used)) std::span<const LayoutID> membersOf(TypeReader reader, const Type& type)
+{
+    return reader.listOf(type.layouts);
+}
+
+ALWAYS_INLINE __attribute__((used)) std::span<const ClassPart> classPartsOf(TypeReader reader, const Type& type)
+{
+    if (!type.classes)
+        return { };
+    return reader.at(type.classes);
+}
+
+ALWAYS_INLINE __attribute__((used)) const ClassPart* singleBuiltinClassOf(TypeReader reader, const Type& type)
+{
+    if (!type.hasOnlyClassObjects())
+        return nullptr;
+    std::span<const ClassPart> parts = classPartsOf(reader, type);
+    return parts.size() == 1 ? parts.data() : nullptr;
+}
 
 } } } // namespace JSC::AOT::Typed
 

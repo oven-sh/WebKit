@@ -450,10 +450,8 @@ void Walker::beginTurnsWrittenOut(BlockID inputHead)
     }
     m_frames[frameIndex].valuesListedForTurnsWrittenOut.shrink(0);
     for (ValueID value : readBehindLoop) {
-        if (m_frames[frameIndex].valuesBuiltTwice.contains(value))
-            continue;
-        m_frames[frameIndex].valuesBuiltTwice.append(value);
-        m_frames[frameIndex].valuesListedForTurnsWrittenOut.append(value);
+        if (m_frames[frameIndex].listAsBuiltTwice(value))
+            m_frames[frameIndex].valuesListedForTurnsWrittenOut.append(value);
     }
     m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
     m_frames[frameIndex].standsInFrontOfHead = false;
@@ -477,8 +475,8 @@ void Walker::leadIntoLoopAsWrittenBehindTurns(TurnsOfForInWrittenOut& turns, Blo
             open.types.append(ownTypeOf(argument));
         }
         open.state = WTF::move(m_state);
-        takeNamesOntoEdge(open, frameIndex, inputHead);
-        open.names.append({ turns.step, position });
+        takeNamesOntoEdge(open, frameIndex);
+        open.names.setNameIn(m_frames[frameIndex].ensureValuesBuiltTwice().ensureSlotOf(turns.step), position);
         turns.edgesIntoLoopAsWritten.append(place);
     }
     m_block = { };
@@ -506,7 +504,7 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
             open.types.append(ownTypeOf(argument));
         }
         open.state = WTF::move(m_state);
-        takeNamesOntoEdge(open, frameIndex, inputHead);
+        takeNamesOntoEdge(open, frameIndex);
     }
     m_block = { };
     m_state.clear();
@@ -540,8 +538,9 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
 
     if (forIn && !m_hasFailed) {
         IterationByIndex& iteration = m_iterationsByIndex[forIn->place];
+        uint32_t slotOfStep = m_frames[frameIndex].ensureValuesBuiltTwice().ensureSlotOf(forIn->step);
         for (uint32_t cameRound = inputBlock(frameIndex, inputHead).firstOpenEdge; cameRound != noOpenEdge; cameRound = m_openEdges[cameRound].next)
-            m_openEdges[cameRound].names.append({ forIn->step, iteration.position });
+            m_openEdges[cameRound].names.setNameIn(slotOfStep, iteration.position);
         for (uint32_t waiting : forIn->edgesIntoLoopAsWritten)
             m_openEdges[waiting].next = std::exchange(inputBlock(frameIndex, inputHead).firstOpenEdge, waiting);
         iteration.takenAtOpen.shrink(0);
@@ -577,11 +576,8 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
             onlyWayOut = target.block();
         }
     }
-    if (leavesByOneBlock) {
-        m_frames[frameIndex].valuesBuiltTwice.removeAllMatching([&](ValueID value) {
-            return listedForTheseTurns.contains(value);
-        });
-    }
+    if (leavesByOneBlock && onlyWayOut && !listedForTheseTurns.isEmpty())
+        m_frames[frameIndex].valuesBuiltTwice->namesGivenForGood.append({ onlyWayOut, WTF::move(listedForTheseTurns) });
     m_block = { };
     m_state.clear();
 }

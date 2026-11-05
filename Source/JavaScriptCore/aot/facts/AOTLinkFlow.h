@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinsInReach.h"
+#include "AOTLargeList.h"
 #include "AOTLinkTables.h"
 #include "AOTLinkKeyOrders.h"
 #include "AOTNameClass.h"
@@ -38,6 +39,7 @@ struct LinkType {
     enum class Objects : uint8_t {
         None,
         Layout,
+        Set,
         Prototype,
         Prototypes,
         Family,
@@ -46,6 +48,7 @@ struct LinkType {
     enum class Functions : uint8_t {
         None,
         Closure,
+        Set,
         Constructors,
         Lost,
     };
@@ -94,7 +97,7 @@ struct LinkType {
 
     uint16_t primitives { 0 };
     Objects objects : 3 { Objects::None };
-    Functions functions : 2 { Functions::None };
+    Functions functions : 3 { Functions::None };
     Classes classes : 2 { Classes::None };
     bool holdsUnseen : 1 { false };
     bool holdsLostBuiltins : 1 { false };
@@ -140,6 +143,77 @@ struct LinkType {
             && first.layout == second.layout && first.family == second.family && first.function == second.function && first.constructorsOf == second.constructorsOf && first.site == second.site;
     }
 };
+
+template<typename MemberID>
+class SetsOfFourInLinkFlow {
+    WTF_MAKE_NONCOPYABLE(SetsOfFourInLinkFlow);
+public:
+    static constexpr size_t mostMembers = 4;
+
+    SetsOfFourInLinkFlow() = default;
+    ~SetsOfFourInLinkFlow()
+    {
+        for (auto& part : m_parts)
+            delete[] part.load(std::memory_order_relaxed);
+    }
+
+    std::span<const MemberID> membersOf(uint32_t set) const
+    {
+        const Members& members = recordOf(set);
+        size_t size = 2;
+        while (size < mostMembers && members[size])
+            ++size;
+        return std::span<const MemberID>(members).first(size);
+    }
+    uint32_t numberOf(std::span<const MemberID> sortedMembers)
+    {
+        RELEASE_ASSERT(sortedMembers.size() >= 2 && sortedMembers.size() <= mostMembers);
+        Members members { };
+        std::ranges::copy(sortedMembers, members.begin());
+        std::pair<uint64_t, uint64_t> words { static_cast<uint64_t>(members[0].bits()) << 32 | members[1].bits(), static_cast<uint64_t>(members[2].bits()) << 32 | members[3].bits() };
+        while (m_isLocked.load(std::memory_order_relaxed) || m_isLocked.exchange(true, std::memory_order_acquire)) { }
+        uint32_t next = m_size.load(std::memory_order_relaxed);
+        auto added = m_numbers.add(words, next);
+        if (added.isNewEntry) {
+            auto [part, position] = placeOf(next);
+            Members* records = m_parts[part].load(std::memory_order_relaxed);
+            if (!records) {
+                records = new Members[static_cast<size_t>(1) << (part + log2OfSetsInFirstPart)] { };
+                m_parts[part].store(records, std::memory_order_release);
+            }
+            records[position] = members;
+            m_size.store(next + 1, std::memory_order_release);
+        }
+        uint32_t number = added.iterator->value;
+        m_isLocked.store(false, std::memory_order_release);
+        return number;
+    }
+    uint32_t size() const { return m_size.load(std::memory_order_acquire); }
+
+private:
+    using Members = std::array<MemberID, mostMembers>;
+    static constexpr unsigned log2OfSetsInFirstPart = 10;
+    static constexpr size_t numberOfParts = 32 - log2OfSetsInFirstPart;
+
+    static std::pair<unsigned, uint32_t> placeOf(uint32_t set)
+    {
+        uint32_t stretch = (set >> log2OfSetsInFirstPart) + 1;
+        unsigned part = 31 - std::countl_zero(stretch);
+        return { part, set - (((1u << part) - 1) << log2OfSetsInFirstPart) };
+    }
+    const Members& recordOf(uint32_t set) const
+    {
+        auto [part, position] = placeOf(set);
+        return m_parts[part].load(std::memory_order_acquire)[position];
+    }
+
+    std::array<std::atomic<Members*>, numberOfParts> m_parts { };
+    UncheckedKeyHashMap<std::pair<uint64_t, uint64_t>, uint32_t> m_numbers;
+    std::atomic<uint32_t> m_size { 0 };
+    std::atomic<bool> m_isLocked { false };
+};
+using SetsOfLayoutsInLinkFlow = SetsOfFourInLinkFlow<LayoutID>;
+using SetsOfFunctionsInLinkFlow = SetsOfFourInLinkFlow<FunctionID>;
 
 using FlowNodeID = ID<struct FlowNodeIDTag>;
 
@@ -397,6 +471,49 @@ public:
 
     mutable std::unique_ptr<WriterOfLinkLayouts, DeleterOfWriterOfLinkLayouts> writerOfLayouts;
 
+    std::span<const LayoutID> layoutsOfSet(const LinkType& type) const LIFETIME_BOUND
+    {
+        ASSERT(type.objects == LinkType::Objects::Set);
+        return m_setsOfLayouts.membersOf(type.layout.index());
+    }
+    std::span<const LayoutID> layoutsOfFamily(FamilyID) const LIFETIME_BOUND;
+    LinkType typeOfLayouts(std::span<const LayoutID> sortedMembers) const;
+    enum class LayoutsNamed : uint8_t { Exactly, AtMost };
+    LayoutsNamed forEachLayoutOf(const LinkType& type, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
+    {
+        switch (type.objects) {
+        case LinkType::Objects::None:
+        case LinkType::Objects::Prototype:
+        case LinkType::Objects::Prototypes:
+            return LayoutsNamed::Exactly;
+        case LinkType::Objects::Layout:
+            functor(type.layout);
+            return LayoutsNamed::Exactly;
+        case LinkType::Objects::Set:
+            for (LayoutID member : layoutsOfSet(type))
+                functor(member);
+            return LayoutsNamed::Exactly;
+        case LinkType::Objects::Family:
+            for (LayoutID member : layoutsOfFamily(type.family))
+                functor(member);
+            return LayoutsNamed::AtMost;
+        case LinkType::Objects::Lost:
+            if (type.layout) {
+                for (LayoutID member : membersOfLostFamily(unitedLayouts.representativeWithoutShortening(type.layout.index())))
+                    functor(member);
+            }
+            return LayoutsNamed::AtMost;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    uint32_t numberOfSetsOfLayouts() const { return m_setsOfLayouts.size(); }
+    std::span<const FunctionID> functionsOfSet(const LinkType& type) const LIFETIME_BOUND
+    {
+        ASSERT(type.functions == LinkType::Functions::Set);
+        return m_setsOfFunctions.membersOf(type.function.index());
+    }
+    LinkType typeOfFunctions(std::span<const FunctionID> sortedMembers) const;
+
     LinkType joinOf(const LinkType&, const LinkType&);
     LinkType passedBy(const LinkType&, TypeID test) const;
     LinkType fromTypeID(TypeID) const;
@@ -487,7 +604,7 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, BuiltinReadThroughAggregate, ExportIsShown };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite };
     void note(Note, uint32_t number, uint32_t more = 0);
     unsigned numberOfLanes() const { return static_cast<unsigned>(m_lanes.size()); }
     bool bringAliveOnLanes(std::span<const FunctionID>, const ScopedLambda<void(FunctionID)>& bringAlive);
@@ -566,6 +683,7 @@ public:
     void noteSomethingBefell(FamilyID family) const { m_outermostFamiliesWhereSomethingBefell.quickSet(m_outermostFamilies[family.index()].index()); }
     BitVector escapedVariables;
     BitVector variablesStoredFirst;
+    Vector<LinkedVariableStoredFirst> firstReadersOfVariablesStoredFirst;
     BitVector libraryFunctionsEntered;
     BitVector exportsShown;
     void showExport(ModuleID, uint32_t index);
@@ -575,6 +693,8 @@ public:
     void inspectionObserved(const FlowObserver&, const LinkType&);
     void accessObserved(const FlowObserver&, const LinkType&);
     PropertyKeyID keyOf(FunctionID, const SummaryAccess&) const;
+    bool everySymbolOfLibraryMayHavePreparation() const { return m_everySymbolOfLibraryMayHavePreparation; }
+    Vector<PropertyKeyID> symbolsWithPreparation() const;
     void noteSymbolHandedToPreparation(FunctionID caller, FlowNodeID);
     enum class UnknownSymbolIs : uint8_t { UnknownInSightToo, UnknownByEscapeAlone, UnknownInSightAlone };
     void noteUnknownSymbolHandedToPreparation(UnknownSymbolIs = UnknownSymbolIs::UnknownInSightToo);
@@ -597,8 +717,9 @@ public:
         }
     };
     Vector<uint32_t> firstCallOfFunction;
-    Vector<CalleesOfCall> calleesOfCalls;
+    LargeList<CalleesOfCall> calleesOfCalls;
     Vector<CalleesOfCall> calleesOfSharedCalls;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> callsOfBuiltinsTold;
     struct ViewOfHeldReading {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ViewOfHeldReading);
         ~ViewOfHeldReading();
@@ -690,7 +811,7 @@ private:
         uint32_t firstEdge { UINT32_MAX };
         uint32_t firstObserver { UINT32_MAX };
     };
-    Vector<Node> m_nodes;
+    LargeList<Node> m_nodes;
     using SetOfNumbers = HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     bool hasPreparation(PropertyKeyID symbol) const { return m_everySymbolOfLibraryMayHavePreparation || m_symbolsWithPreparation.contains(symbol.bits()); }
     struct SymbolsWithPreparationInSight {
@@ -717,7 +838,7 @@ private:
     Vector<std::pair<PropertyKeyID, FlowObserver>> m_accessesUnderSymbolsOfLibrary;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_accessesUnderSymbolsOfLibraryListed;
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_symbolsAtNodes;
-    Vector<ListsOfNode> m_listsOfNodes;
+    LargeList<ListsOfNode> m_listsOfNodes;
     std::optional<SizeOfLinkFlow> m_sizeWhenWaysWereForgotten;
     BitVector m_flowsIntoUnseen;
     BitVector m_hasEdgesInSet;
@@ -798,6 +919,7 @@ private:
     void sendFromLane(unsigned lane);
     void receiveInLane(unsigned lane);
     void foldObjects(LinkType& into, std::span<const LinkType> met) const;
+    void foldObjectsTakenApart(LinkType& into, std::span<const LinkType> met) const;
     void foldFunctions(LinkType& into, std::span<const LinkType> met) const;
     bool severalThreadsPayFor(size_t numberOfSteps) const;
     void takeInWhatWasHeldBack();
@@ -878,7 +1000,7 @@ private:
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfObjectsMadeForClassesBelow;
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfMembersWritten;
 
-    enum class NodeOnDemand : uint8_t { ReadThroughFamily, StoredThroughFamily, StoredInConstructionThroughFamily, AnyFieldReadOfLayout, AnyFieldStoredOfLayout, AnyFieldReadOfFamily, AnyFieldStoredOfFamily, FoundBesideFieldsUnderKey, LaidOnClosuresUnderKey, AnyFieldDefinedOnLayout };
+    enum class NodeOnDemand : uint8_t { ReadThroughFamily, StoredThroughFamily, StoredInConstructionThroughFamily, AnyFieldReadOfLayout, AnyFieldStoredOfLayout, AnyFieldReadOfFamily, AnyFieldStoredOfFamily, AnyFieldReadOfSet, ElementReadOfSet, AnyFieldStoredOfSet, FoundBesideFieldsUnderKey, LaidOnClosuresUnderKey, AnyFieldDefinedOnLayout };
     enum class AggregateAccess : uint8_t { Read, Store };
 
     struct MemberOfClass {
@@ -944,9 +1066,16 @@ private:
     void joinFunctions(LinkType& into, const LinkType&) const;
     void joinClasses(LinkType& into, const LinkType&) const;
     bool standsOutsideFamilies(const LinkType&) const;
+    bool namesOnlyLayoutsOfSet(const LinkType&, const LinkType& set) const;
     void deferLoss(LayoutID) const;
     void deferUnion(LayoutID, LayoutID) const;
     LayoutID memberStandingFor(const LinkType&) const;
+    mutable SetsOfLayoutsInLinkFlow m_setsOfLayouts;
+    BitVector m_layoutsOfDeclaredFamilies;
+    bool mayStandInOneSet(std::span<const LayoutID> sortedMembers) const;
+    mutable SetsOfFunctionsInLinkFlow m_setsOfFunctions;
+    bool namesOnlyFunctionsOfSet(const LinkType&, const LinkType& set) const;
+    void foldFunctionsTakenApart(LinkType& into, std::span<const LinkType> met) const;
     void uniteLost(LayoutID, LayoutID);
     void loseFamiliesOfMembersThatMeet(uint32_t kept, uint32_t absorbed);
     struct TiesToLay {

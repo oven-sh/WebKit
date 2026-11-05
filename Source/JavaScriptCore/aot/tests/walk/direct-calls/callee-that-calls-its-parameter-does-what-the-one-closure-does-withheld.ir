@@ -1,5 +1,0 @@
-# the same program with direct calls withheld: the call by value runs code that nobody knows
-# RUN: walk f3 mechanisms=none+TypedOperations
-# CHECK-LABEL: code f3:Body
-# CHECK: = Call {{*}}mayCallUnknownCode
-# PROGRAM-OF: callee-that-calls-its-parameter-does-what-the-one-closure-does.ir

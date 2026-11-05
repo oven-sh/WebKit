@@ -113,7 +113,11 @@ bool StringEmitter::comparesLiteralInPlace(const String& text) const
 
 void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets)
 {
-    String text = textOf(literal);
+    branchOnEqualsLiteralByStub(context, operand, subject, literal, textOf(literal), targets);
+}
+
+void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, const String& text, BranchTargets targets)
+{
     if (!comparedTextFitsInRegister(text)) {
         branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first)), targets);
         return;
@@ -141,7 +145,12 @@ static constexpr OpcodeSet comparisonsWithLiteral { Opcode::StringEqualsLiteral,
 
 void StringEmitter::makeCellsHoldAtomOf(StringID literal)
 {
-    if (comparesLiteralInPlace(textOf(literal)) && !hasCellOfVM(types().bytesOf(literal)))
+    makeCellsHoldAtomOf(literal, textOf(literal));
+}
+
+void StringEmitter::makeCellsHoldAtomOf(StringID literal, const String& text)
+{
+    if (comparesLiteralInPlace(text) && !hasCellOfVM(types().bytesOf(literal)))
         m_mentions.add(NumberSpace::AtomOfString, literal);
 }
 
@@ -151,7 +160,9 @@ bool StringEmitter::readsCharactersInLine(const OperationContext& context)
     static_assert(formDependsOnLoopOf(Opcode::StrictEq) && formDependsOnLoopOf(Opcode::Eq) && formDependsOnLoopOf(TerminatorKind::SwitchString));
     static_assert(formByLoopAlone(Opcode::StringEqualsLiteral, StateOfKnowledge::Always, true).form == formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, true).form);
     static_assert(formByLoopAlone(Opcode::StringEqualsLiteral, StateOfKnowledge::Always, false).form == formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false).form);
-    FormAtPlace named = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, context.block() && generator().isInLoop(context.block()));
+    static constexpr FormAtPlace namedInLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, true);
+    static constexpr FormAtPlace namedOutsideLoops = formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false);
+    FormAtPlace named = context.block() && generator().isInLoop(context.block()) ? namedInLoops : namedOutsideLoops;
     m_out.noteFormOf(comparisonsWithLiteral, named.form, StateOfKnowledge::Always, named.place);
     return named.form == Form::Open;
 }
@@ -184,9 +195,13 @@ CellPointer StringEmitter::branchOnAtomOfLiteral(ComparedOperand operand, LValue
 
 void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject)
 {
+    branchOnEqualsLiteral(context, operand, subject, literal, textOf(literal), targets, flatSubject, everyCellIsString, lengthOfSubject);
+}
+
+void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, const String& text, BranchTargets targets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject)
+{
     RELEASE_ASSERT(!flatSubject || (operand == ComparedOperand::String && flatSubject->cell().value() == subject));
     bool subjectIsFlat = !!flatSubject;
-    String text = textOf(literal);
     if (text.isEmpty()) {
         m_out.noteFormOf(comparisonsWithLiteral, Form::Open, StateOfKnowledge::EmptyLiteral);
         branch(equal(Boxed(subject), boxCell(emptyString())), targets);
@@ -202,14 +217,14 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     StateOfKnowledge known = subjectIsFlat ? StateOfKnowledge::FlatSubject : lengthOfSubject ? StateOfKnowledge::LengthOfSubject : StateOfKnowledge::Always;
     if (!comparesLiteralInPlace(text)) {
         m_out.noteFormOf(comparisonsWithLiteral, Form::Closed, StateOfKnowledge::LiteralComparedByStub);
-        branchOnEqualsLiteralByStub(context, operand, subject, literal, targets);
+        branchOnEqualsLiteralByStub(context, operand, subject, literal, text, targets);
         return;
     }
 
     CellPointer string(subject);
     if (known == StateOfKnowledge::Always) {
         if (!readsCharactersInLine(context)) {
-            branchOnEqualsLiteralByStub(context, operand, subject, literal, targets);
+            branchOnEqualsLiteralByStub(context, operand, subject, literal, text, targets);
             return;
         }
         bool isString = operand == ComparedOperand::String || everyCellIsString;
@@ -218,7 +233,7 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
             continueIf(hasCellType(string, StringType), targets.notTaken);
     } else {
         m_out.noteFormOf(comparisonsWithLiteral, Form::Open, known);
-        makeCellsHoldAtomOf(literal);
+        makeCellsHoldAtomOf(literal, text);
     }
 
     LBasicBlock slow = newBlock();
@@ -234,7 +249,7 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     branchOnBytesAt(characters, asBytes(text.span8()), m_heaps.characters8.atAnyIndex(), string, targets);
 
     m_out.appendTo(slow);
-    branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, targets);
+    branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, text, targets);
 }
 
 Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, std::optional<Word32> lengthOfSubject)
@@ -246,7 +261,7 @@ Condition StringEmitter::equalsLiteral(const OperationContext& context, Compared
     }
     if (lengthOfSubject || comparedTextFitsInRegister(text) || comparesLiteralInPlace(text)) {
         return asBoolean([&](BranchTargets targets) {
-            branchOnEqualsLiteral(context, operand, subject, literal, targets, flatSubject, everyCellIsString, lengthOfSubject);
+            branchOnEqualsLiteral(context, operand, subject, literal, text, targets, flatSubject, everyCellIsString, lengthOfSubject);
         });
     }
     m_out.noteFormOf(comparisonsWithLiteral, Form::Closed, StateOfKnowledge::LiteralComparedByStub);
@@ -279,13 +294,6 @@ void StringEmitter::generateValueEqualsLiteral(const ValueContext& value)
     const Type& type = typeOf(value->valueOperand());
     bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
     generateEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(value->valueOperand()).value(), std::nullopt, everyCellIsString);
-}
-
-void StringEmitter::generateValueLooselyEqualsLiteral(const ValueContext& value)
-{
-    Boxed subject = in<Boxed>(value->valueOperand());
-    Integer text = zeroExtended(numberOf(m_mentions.add(NumberSpace::String, value->literal())));
-    defineTest(value, callOperation<Condition>(value, RuntimeOperation::CompareEqToString, { subject, text }));
 }
 
 void StringEmitter::branchOnBytesAt(Pointer address, std::span<const uint8_t> bytes, const Machine::AbstractHeap& heap, CellPointer owner, BranchTargets targets)
@@ -336,8 +344,8 @@ Condition StringEmitter::hasTextAt(const CharacterView& view, Word32 offset, Str
 
 void StringEmitter::branchOnTextAt(const CharacterView& view, Word32 offset, StringID literal, BranchTargets targets)
 {
-    RELEASE_ASSERT(canCompareInline(literal));
     String text = textOf(literal);
+    RELEASE_ASSERT(canCompareInline(text));
     if (text.isEmpty()) {
         m_out.jump(targets.taken);
         return;

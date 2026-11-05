@@ -62,17 +62,7 @@ struct StubCallResult {
 class OperationEmitter : public PrimitiveEmitter {
 protected:
     explicit OperationEmitter(CodeGenerator& generator)
-        : PrimitiveEmitter(generator)
-        , m_generator(generator)
-        , m_program(generator.program())
-        , m_plan(generator.plan())
-        , m_facts(generator.facts())
-        , m_code(generator.code())
-        , m_unit(generator.unit())
-        , m_id(generator.unit().function)
-        , m_records(generator.records())
-        , m_builtins(generator.program().builtins())
-        , m_options(generator.build().options())
+        : OperationEmitter(generator, generator.inputs().program, generator.code().unit())
     {
     }
 
@@ -85,7 +75,7 @@ protected:
     const Operation& operationAt(ValueID id) const LIFETIME_BOUND { return m_code.at(id); }
     Opcode opcodeOf(ValueID id) const { return m_code.at(id).opcode; }
     TypeID typeIDOf(ValueID id) const { return m_code.at(id).type; }
-    Type typeOf(ValueID id) const { return m_generator.typeOf(id); }
+    ALWAYS_INLINE Type typeOf(ValueID id) const { return m_generator.typeOf(id); }
     Representation representationOf(ValueID id) const { return m_code.at(id).representation; }
     bool isDeferredClosure(ValueID id) const { return m_generator.isDeferredClosure(id); }
     const Effects& effectsOf(const OperationContext& context LIFETIME_BOUND) const { return m_generator.effectsOf(context); }
@@ -99,13 +89,13 @@ protected:
     bool functionHasHandlers() const { return m_generator.hasHandlers(); }
     bool hasOneInstance() const;
 
-    Operand get(ValueID id) const { return m_generator.get(id); }
-    template<typename T> T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
+    ALWAYS_INLINE Operand get(ValueID id) const { return m_generator.get(id); }
+    template<typename T> ALWAYS_INLINE T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
     template<typename T> std::optional<T> inOptional(ValueID id) const { return id ? std::optional<T>(in<T>(id)) : std::nullopt; }
-    Boxed boxed(ValueID) const;
+    ALWAYS_INLINE Boxed boxed(ValueID id) const { return in<Boxed>(id); }
     Integer integerOf(ValueID);
 
-    void define(const ValueContext& value, Operand result) { m_generator.define(value, result); }
+    ALWAYS_INLINE void define(const ValueContext& value, Operand result) { m_generator.define(value, result); }
     void defineNarrowed(const ValueContext&, Operand);
     void defineTest(const ValueContext& value, Condition result) { m_generator.defineTest(value, result); }
     void defineTestByBranching(const ValueContext&, NOESCAPE const Invocable<void(BranchTargets)> auto& branchOnTest);
@@ -135,6 +125,7 @@ protected:
 
     Representation resultRepresentationOf(const InlineCall&) const;
     Type resultTypeOf(const InlineCall&) const;
+    TypeID resultTypeIDOf(const InlineCall&) const;
     bool resultIsRead(const InlineCall&) const;
     LBasicBlock missBlockOf(const InlineCall&);
     void finishInlineCall(const InlineCall&, Operand result);
@@ -158,6 +149,22 @@ protected:
     CodeRecords& m_records;
     const BuiltinTable& m_builtins;
     const AOT::CompileOptions& m_options;
+
+private:
+    OperationEmitter(CodeGenerator& generator, const CodeGenerationInputs& inputs, CodeUnit unit)
+        : PrimitiveEmitter(generator)
+        , m_generator(generator)
+        , m_program(inputs.program)
+        , m_plan(inputs.plan)
+        , m_facts(inputs.facts)
+        , m_code(generator.code())
+        , m_unit(unit)
+        , m_id(unit.function)
+        , m_records(generator.records())
+        , m_builtins(inputs.program.builtins())
+        , m_options(generator.build().options())
+    {
+    }
 };
 
 void OperationEmitter::defineTestByBranching(const ValueContext& value, NOESCAPE const Invocable<void(BranchTargets)> auto& branchOnTest)

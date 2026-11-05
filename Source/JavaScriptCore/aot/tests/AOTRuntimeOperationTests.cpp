@@ -46,7 +46,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral callsThroughRuntimeTableTest = "runtime-operations/operations-are-called-through-the-table"_s;
 static constexpr ASCIILiteral unusedEntriesTrapTest = "runtime-operations/unused-entries-trap"_s;
 static constexpr ASCIILiteral unmappedArgumentsTest = "runtime-operations/unmapped-arguments-come-from-frame-and-rest"_s;
-static constexpr ASCIILiteral readsOfArgumentsTest = "runtime-operations/reads-of-arguments-that-were-never-created"_s;
 static constexpr ASCIILiteral appendElementsTest = "runtime-operations/append-elements"_s;
 static constexpr ASCIILiteral arrayLiteralsTest = "runtime-operations/array-literals-are-pristine-and-contiguous"_s;
 static constexpr ASCIILiteral badTimeStopsTest = "runtime-operations/a-realm-with-an-image-that-begins-to-have-a-bad-time-stops"_s;
@@ -290,20 +289,6 @@ static void checkUnmappedArgumentsOfEveryCount(LoadedProgram& program)
 
         vm.heap.collectSync(CollectionScope::Full);
     }
-}
-
-static void checkReadsOfArguments(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSArray* list = createArrayOfNumbers(program.realm(), 10, 2);
-    auto read = [&](JSValue property) {
-        return JSValue::decode(callFromNativeCode(program, operationAOTGetFromArguments, list, JSValue::encode(property)));
-    };
-    AOT_TEST_CHECK(read(jsNumber(0)) == jsNumber(10));
-    AOT_TEST_CHECK(read(jsNumber(1)) == jsNumber(11));
-    AOT_TEST_CHECK(read(jsNumber(2)).isUndefined());
-    AOT_TEST_CHECK(read(jsNontrivialString(vm, "length"_s)) == jsNumber(2));
-    AOT_TEST_CHECK(read(jsNontrivialString(vm, "nameNobodyHas"_s)).isUndefined());
 }
 
 static void checkCallsThroughRuntimeTable(LoadedProgram& program)
@@ -781,11 +766,6 @@ static void unmappedArgumentsComeFromFrameAndRest()
     runWithLoadedProgram(unmappedArgumentsTest, programText, checkUnmappedArgumentsOfEveryCount);
 }
 
-static void readsOfArgumentsThatWereNeverCreated()
-{
-    runWithLoadedProgram(readsOfArgumentsTest, programText, checkReadsOfArguments);
-}
-
 static void appendElements()
 {
     runWithLoadedProgram(appendElementsTest, programText, checkAppendElements);
@@ -858,7 +838,6 @@ std::span<const NativeTest> runtimeOperationTests()
         { unusedEntriesTrapTest, unusedEntriesTrap },
         { callsThroughRuntimeTableTest, operationsAreCalledThroughRuntimeTable },
         { unmappedArgumentsTest, unmappedArgumentsComeFromFrameAndRest },
-        { readsOfArgumentsTest, readsOfArgumentsThatWereNeverCreated },
         { appendElementsTest, appendElements },
         { arrayLiteralsTest, arrayLiteralsArePristineAndContiguous },
         { badTimeStopsTest, realmWithImageThatBeginsToHaveABadTimeStops },

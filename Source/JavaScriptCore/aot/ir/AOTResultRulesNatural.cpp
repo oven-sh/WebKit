@@ -159,12 +159,12 @@ static TypeID widestPrimitiveResultByRuleOf(Opcode opcode)
 
 TypeID widestPrimitiveResultOf(Opcode opcode)
 {
-    static std::array<TypeID, numberOfEnumerators<Opcode>> results;
-    static std::once_flag once;
-    std::call_once(once, [] {
+    static const std::array<TypeID, numberOfEnumerators<Opcode>> results = [] {
+        std::array<TypeID, numberOfEnumerators<Opcode>> byRule;
         for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index)
-            results[index] = widestPrimitiveResultByRuleOf(static_cast<Opcode>(index));
-    });
+            byRule[index] = widestPrimitiveResultByRuleOf(static_cast<Opcode>(index));
+        return byRule;
+    }();
     return results[static_cast<unsigned>(opcode)];
 }
 
@@ -200,22 +200,21 @@ TypeID widestPrimitiveResultOf(TypeArena& types, Opcode producer, uint32_t resul
     return applyResultRule(rules, Draft(producer), resultIndex, ResultSide::Unproven);
 }
 
-static NaturalOperand naturalOperandOf(const TypeArena& types, TypeID id)
+static ALWAYS_INLINE NaturalOperand naturalOperandOf(const TypeArena& types, TypeID id)
 {
     RELEASE_ASSERT(id);
     if (holdsOnlyPrimitives(id))
         return { primitivesInID(id), integersInID(id), true, Range::empty() };
-    Type type = types.at(id);
+    const Type& type = types.recordOf(id);
     return { type.primitives, type.integers, !type.hasObjects() && type.isJavaScriptValue(), type.boundsOfFractions };
 }
 
-static Vector<NaturalOperand, 2> naturalOperandsOf(const TypeArena& types, OperandTypes operandTypes, uint32_t numberOfOperands)
+static ALWAYS_INLINE Vector<NaturalOperand, 2> naturalOperandsOf(const TypeArena& types, OperandTypes operandTypes, uint32_t numberOfOperands)
 {
     RELEASE_ASSERT(numberOfOperands <= operandTypes.size());
-    Vector<NaturalOperand, 2> operands;
-    for (uint32_t index = 0; index < numberOfOperands; ++index)
-        operands.append(naturalOperandOf(types, operandTypes[index]));
-    return operands;
+    return Vector<NaturalOperand, 2>(numberOfOperands, [&](size_t index) {
+        return naturalOperandOf(types, operandTypes.types[index]);
+    });
 }
 
 static OperandClass classOf(const NaturalOperand& operand)
@@ -229,9 +228,13 @@ static OperandClass classOf(const NaturalOperand& operand)
     return OperandClass::Any;
 }
 
-static bool hasNever(NaturalOperands operands)
+static ALWAYS_INLINE bool hasNever(NaturalOperands operands)
 {
-    return std::ranges::any_of(operands, &NaturalOperand::isNever);
+    for (const NaturalOperand& operand : operands) {
+        if (operand.isNever())
+            return true;
+    }
+    return false;
 }
 
 static TypeID naturalTypeOfIntegers(TypeArena& types, Range integers, uint16_t otherPrimitives = 0)

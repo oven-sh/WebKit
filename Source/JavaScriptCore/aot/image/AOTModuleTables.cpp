@@ -316,7 +316,9 @@ static void listModulesOfChunkForModuleTables(const TableInputs& inputs, const A
         listed.modulesByPath.append({ program.string(module.path), index });
         appendHashesOfModulePath(program, index, listed);
     }
-    AOT::sort(listed.hashesOfDirectories);
+    radixSortKeepingEqualKeysInOrder<32>(listed.hashesOfDirectories, [](uint32_t hash) {
+        return hash;
+    });
     removeRepeatedElements(listed.hashesOfDirectories);
 }
 

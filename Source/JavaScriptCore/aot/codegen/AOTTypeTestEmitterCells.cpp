@@ -35,6 +35,12 @@ void TypeTestEmitter::forEachCellCase(CellPointer cell, const TypeTestPlan& plan
 
     const Type from = types().at(plan.from);
     auto visitCellTest = [&](const CellTest& test) {
+        if (test.kind == CellTestKind::ShapeIn && m_casesAreBranchedOn && emitter<ShapeTestEmitter>().paysForMark(test.layouts, from)) {
+            visit([&] {
+                m_nextCaseIsUnlikely = true;
+                return passesCellTest(cell, test, from, MarkedObjects::AreAskedAgain);
+            });
+        }
         visit([&] {
             return passesCellTest(cell, test, from);
         });
@@ -127,6 +133,7 @@ void TypeTestEmitter::testCell(CellPointer cell, const TypeTestPlan& plan, Block
 
 Condition TypeTestEmitter::cellPasses(CellPointer cell, const TypeTestPlan& plan)
 {
+    SetForScope casesAreBranchedOn(m_casesAreBranchedOn, false);
     Condition result;
     forEachCellCase(cell, plan, [&](const auto& emitTest) {
         result = logicalOr(result, emitTest());
@@ -151,7 +158,7 @@ Condition TypeTestEmitter::stringPasses(CellPointer cell, const TypeTestPlan& pl
     });
 }
 
-Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test, const Type& from)
+Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test, const Type& from, MarkedObjects marked)
 {
     Machine::DeclaredAccessesSuspension suspension(m_out);
     switch (test.kind) {
@@ -162,7 +169,7 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
     case CellTestKind::CellTypeIs:
         return hasCellTypeIn(cell, test.cellTypes);
     case CellTestKind::ShapeIn: {
-        Condition hasShape = emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from);
+        Condition hasShape = emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from, marked);
         if (!test.asksForInstance)
             return hasShape;
         return logicalAnd(hasShape, emitter<GuardEmitter>().belongsToInstance(cell));
@@ -271,6 +278,16 @@ Condition TypeTestEmitter::inheritsClassInfo(CellPointer cell, BuiltinClassID cl
 }
 
 Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, OptionSet<PristineAspects> aspects)
+{
+    Condition isAsMade = isAsItsClassMadeIt(cell, classID, aspects);
+    if (!m_program.admitsReplacedBuiltins || !aspects.containsAny({ PristineAspects::Names, PristineAspects::NamesKeptBelow }))
+        return isAsMade;
+    Pointer classesWrittenAbove = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.classesWrittenAbove));
+    Word32 wasWrittenAbove(m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), classesWrittenAbove.value(), classID.index())));
+    return logicalAnd(isAsMade, isZero(wasWrittenAbove));
+}
+
+Condition TypeTestEmitter::isAsItsClassMadeIt(CellPointer cell, BuiltinClassID classID, OptionSet<PristineAspects> aspects)
 {
     if (aspects.containsAny(aspectsWithoutTest))
         return boolean(false);

@@ -224,7 +224,7 @@ static bool generatorGoesIntoIterationAloneOfCoroutine(const BodyIndex& body, Va
     return taking.opcode() == Opcode::IteratorOpen && taking.as<Opcode::IteratorOpen>().iteratorKind() == IteratorKind::Sync;
 }
 
-static bool nobodyLooksAboveGeneratorsOfCoroutine(const Walker& walker, FunctionID generatorFunction)
+bool nobodyLooksAboveGeneratorsOf(const Walker& walker, FunctionID generatorFunction, uint32_t* numberOfListedCalls)
 {
     const Function& function = walker.program().at(generatorFunction);
     if (!function.has(FunctionFlags::IsGenerator) || function.has(FunctionFlags::IsAsync) || !walker.facts().mechanisms().contains(Mechanism::TypedOperations))
@@ -243,6 +243,8 @@ static bool nobodyLooksAboveGeneratorsOfCoroutine(const Walker& walker, Function
         for (const LinkedCall& call : linked.calls.span().subspan(first, linked.firstCallOfCaller[referrer.index() + 1] - first)) {
             if (call.callee != generatorFunction)
                 continue;
+            if (numberOfListedCalls)
+                ++*numberOfListedCalls;
             if (!body)
                 body = walker.facts().bodies().find(referrer);
             if (!body || !generatorGoesIntoIterationAloneOfCoroutine(*body, call.site))
@@ -292,7 +294,7 @@ static void replaceInitialYieldOfCoroutine(Walker& walker, const BodyValue& valu
         walker.fail("a generator function does not take its function object, which its generators read their prototype from"_s);
         return;
     }
-    if (!nobodyLooksAboveGeneratorsOfCoroutine(walker, walker.unit().function) && (!walker.has(Mechanism::TypedOperations) || headOfGeneratorMayReplacePrototypeOfCoroutine(walker.currentBodyIndex()))) {
+    if (!nobodyLooksAboveGeneratorsOf(walker, walker.unit().function, nullptr) && (!walker.has(Mechanism::TypedOperations) || headOfGeneratorMayReplacePrototypeOfCoroutine(walker.currentBodyIndex()))) {
         Draft takePrototype = draftForCoroutine(walker, Opcode::TakeGeneratorPrototype, origin);
         takePrototype.setGeneratorOperand(body->driver);
         takePrototype.setCalleeOperand(walker.referenceOf(walker.currentBodyIndex().block(entryBlock).parameter(*calleeParameter)));
@@ -523,7 +525,7 @@ bool walkRampOfCoroutine(Walker& walker)
         }
         Draft allocation = draftForCoroutine(walker, function.has(FunctionFlags::IsAsync) ? Opcode::NewAsyncGenerator : Opcode::NewGenerator, origin);
         allocation.setFunction(unit.function);
-        if (!nobodyLooksAboveGeneratorsOfCoroutine(walker, unit.function))
+        if (!nobodyLooksAboveGeneratorsOf(walker, unit.function, nullptr))
             allocation.setCalleeOperand(operands[*calleeParameter]);
         driver = walker.build(WTF::move(allocation));
     } else if (neverSuspends)

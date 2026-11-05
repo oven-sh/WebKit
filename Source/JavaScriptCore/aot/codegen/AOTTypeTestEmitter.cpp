@@ -79,7 +79,7 @@ const TypeTestPlan& TypeTestEmitter::planFor(TypeID from, Representation represe
     RELEASE_ASSERT(from && to);
     uint64_t key = static_cast<uint64_t>(from.bits()) << 32 | to.bits();
     return *m_plans[static_cast<size_t>(representation)].ensure(key, [&] {
-        return makeUniqueWithoutFastMallocCheck<TypeTestPlan>(computeTypeTestPlan(types(), TypeTestContext { m_plan, hasOneInstance() }, from, representation, to));
+        return std::unique_ptr<TypeTestPlan>(new TypeTestPlan(computeTypeTestPlan(types(), TypeTestContext { m_plan, hasOneInstance() }, from, representation, to)));
     }).iterator->value;
 }
 

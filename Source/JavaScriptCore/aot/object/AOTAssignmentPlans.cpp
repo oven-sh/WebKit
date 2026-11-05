@@ -456,7 +456,7 @@ FieldMap::Entry AssignmentPlanCache::describeMappedField(VM& vm, const LayoutDat
     if (excludedRunNumberPlusOne && m_excludedListsByRun.get(excludedRunNumberPlusOne)->contains(name))
         return { FieldMap::isLeftOut };
     const FieldData* to = layouts.field(vm, target, name);
-    if (!to || to->flags & (fieldIsStoredOnce | fieldAttributeFlags | fieldMayExistWithoutStorage))
+    if (!to || to->flags & (fieldAttributeFlags | fieldMayExistWithoutStorage))
         return { FieldMap::isNotServed };
     if (to->holdsRawValueFromBirth)
         return { FieldMap::isNotServed };
@@ -588,7 +588,7 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             extraPropertyStores.append(AssignmentPlan::ExtraPropertyStore { .from = property.field, .sourceOffset = property.offset, .offset = offset, .name = property.name, .addsName = !isValidOffset(offset) });
             continue;
         }
-        if (field->flags & (fieldIsStoredOnce | fieldAttributeFlags))
+        if (field->flags & fieldAttributeFlags)
             return;
         if (isPreparedBeforeLookups(vm, property.name))
             return;

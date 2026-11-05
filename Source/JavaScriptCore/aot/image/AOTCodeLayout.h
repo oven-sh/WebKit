@@ -20,11 +20,12 @@ namespace JSC { namespace AOT {
 
 struct SharedCode {
     uint32_t thunkOffset(const ArgumentMoves&) const;
-    void buildArgumentMovesHashIndex();
+    uint32_t thunkOffset(uint32_t positionOfBody, uint32_t indexInBody) const { return argumentThunks.offsets[thunksOfArgumentMoves[firstArgumentMovesOfBody[positionOfBody] + indexInBody]]; }
 
     StubBlob blob;
     Vector<const ArgumentMoves*> argumentMoves;
-    Vector<uint32_t> argumentMovesHashSlots;
+    Vector<uint32_t> firstArgumentMovesOfBody;
+    Vector<uint32_t> thunksOfArgumentMoves;
     ArgumentThunks argumentThunks;
     uint32_t argumentThunksOffset { 0 };
     uint32_t veneersOffset { 0 };

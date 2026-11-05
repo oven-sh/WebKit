@@ -108,7 +108,7 @@ runtime NarrowCharactersOfString : size_t (JSCell* string) ; reads(all)
 
 effects RuntimeMatchesRegExp = reads(all) writes(RegExpState, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime RegExpExec : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
-runtime RegExpTest, RegExpFind : size_t (JSCell* regExp, JSCell* string) ; unknownCode
+runtime RegExpTest : size_t (JSCell* regExp, JSCell* string) ; unknownCode
 runtime RegExpTestBoxed : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
 runtime RegExpMatchLiteral : EncodedJSValue (JSCell* regExp, JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
 runtime RegExpMatchLiteralWithoutObject : EncodedJSValue (JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
@@ -128,6 +128,5 @@ runtime StringMatchRegExp, StringSearchRegExp : EncodedJSValue (JSCell* string, 
 runtime JSONAppendString : uint8_t* (JSCell* builder, uint8_t* cursor, JSCell* string) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime JSONAppendInteger : uint8_t* (uint8_t* cursor, int64_t integer) ; writes(StringBuilderContents) ; leaf
 runtime JSONAppendNumber : uint8_t* (uint8_t* cursor, double number) ; writes(StringBuilderContents) ; leaf
-runtime JSONAppendDate : uint8_t* (uint8_t* cursor, double timeValue) ; writes(StringBuilderContents) ; leaf
 runtime JSONAppendValue : UGPRPair (JSCell* builder, uint8_t* cursor, EncodedJSValue value, uint32_t positionAndLevels) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime JSONStringifyPrimitive : JSCell* (EncodedJSValue value) ; RuntimeCreatesString

@@ -16,39 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-
-struct FrameAtBlock {
-    bool isEnteredInFrame() const { return runsInFrame && !isSetUpAtHead; }
-    bool isLeftInFrame() const { return runsInFrame && !isTornDownAtEnd; }
-
-    bool runsInFrame;
-    bool isSetUpAtHead;
-    bool isTornDownAtEnd;
-    bool returnsInPlaceOfJump;
-};
-
-static ALWAYS_INLINE FrameAtBlock frameAtBlock(const Encoder& encoder, const Block* block, const BlockPlace& place)
-{
-    switch (encoder.m_coverage) {
-    case FrameCoverage::None:
-        return { false, false, false, false };
-    case FrameCoverage::WholeFunction:
-        return { true, block->isEntry(), false, false };
-    case FrameCoverage::RareRegions: {
-        bool runsInFrame = place.isRare() && encoder.m_allocation.needsFrameIn(place.rareRegion);
-        return { runsInFrame, runsInFrame && (block->isEntry() || place.entersRareRegion), runsInFrame && place.leavesRareRegion, false };
-    }
-    case FrameCoverage::FramedPart:
-        return { encoder.m_frame.holdsStepsOf(block), encoder.m_frame.isSetUpAtHeadOf(block), encoder.m_frame.isTornDownAtEndOf(block), encoder.m_frame.returnsInPlaceOfJumpAtEndOf(block) };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static ALWAYS_INLINE FrameAtBlock frameAtBlock(const Encoder& encoder, const Block* block)
-{
-    return frameAtBlock(encoder, block, encoder.m_order.of(block));
-}
-
 static NEVER_INLINE void encodeArgumentRegister(Encoder& encoder, const Step& step)
 {
     RELEASE_ASSERT(step.destination.isRegister());
@@ -156,9 +123,14 @@ Encoder::Encoder(Procedure& proc, CCallHelpers& jit, RelocationRecorder& relocat
     , m_notesRangesOfOrigins(proc.traits().notesRangesOfOrigins)
     , m_hasSpills(!proc.allocation().spills().empty())
     , m_hasFramedPart(proc.allocation().hasFramedPart())
+    , m_places(proc.order().places())
+    , m_stepsOfBlocks(proc.allocation().stepsOfBlocks())
+    , m_steps(proc.allocation().steps().data())
+    , m_spillsOfValues(proc.allocation().spillsOfValues())
+    , m_valueFacts(proc.liveness().valueFacts())
     , m_labels(proc.arena().createSpan<MacroAssembler::Label>(proc.numberOfBlocks()))
     , m_blocksEntered(proc.arena().createSpan<const Block*>(proc.numberOfBlocks()))
-    , m_nextLayoutIndexWithCode(proc.arena().createSpan<uint32_t>(proc.order().blocksInLayout().size() + 1))
+    , m_nextLayoutIndexWithCode(WTF::unsafeMakeSpan(proc.arena().allocateArray<uint32_t>(proc.order().blocksInLayout().size() + 1), proc.order().blocksInLayout().size() + 1))
 {
 }
 
@@ -167,7 +139,7 @@ static bool blockThatJumpsOnlyJumpsOn(const Encoder& encoder, const Block* block
     ASSERT(block->last()->opcode() == Jump);
 
     const Allocation& allocation = encoder.m_allocation;
-    const BlockSteps& steps = allocation.stepsOf(block);
+    const BlockSteps& steps = encoder.stepsOf(block);
     if (steps.beginOfEdgeMoves != steps.endOfEdgeMoves)
         return false;
     for (uint32_t index = steps.begin; index < steps.end; ++index) {
@@ -187,8 +159,8 @@ static bool blockThatJumpsOnlyJumpsOn(const Encoder& encoder, const Block* block
     }
     if (block->isEntry() || block->isLandingPad())
         return false;
-    const BlockPlace& place = encoder.m_order.of(block);
-    FrameAtBlock frame = frameAtBlock(encoder, block, place);
+    const BlockPlace& place = encoder.placeOf(block);
+    FrameAtBlock frame = encoder.frameAtBlock(block, place);
     if (frame.isSetUpAtHead || frame.isTornDownAtEnd || frame.returnsInPlaceOfJump)
         return false;
     if (encoder.m_hasFramedPart && allocation.isHeadOfFramedPart(block) && allocation.headOfFramedPartAbove(block).beginOfSteps != allocation.headOfFramedPartAbove(block).endOfSteps)
@@ -213,6 +185,8 @@ void Encoder::findBlocksWithoutCode()
     UncheckedSpan<Block* const> layout = m_order.blocksInLayout();
     const uint32_t numberOfBlocksInLayout = static_cast<uint32_t>(layout.size());
     const bool someBlockMayRunWithoutFrame = m_coverage != FrameCoverage::WholeFunction;
+    UncheckedSpan<const Block*> blocksEntered = m_blocksEntered;
+    UncheckedSpan<uint32_t> nextLayoutIndexWithCode = m_nextLayoutIndexWithCode;
     ArenaVector<uint32_t> layoutIndexesOfBlocksThatOnlyJumpOn;
     for (uint32_t index = 0; index < numberOfBlocksInLayout; ++index) {
         const Block* block = layout[index];
@@ -235,8 +209,8 @@ void Encoder::findBlocksWithoutCode()
                 m_blocksThatOnlyReturnWithoutFrame = BitSpan::create(m_arena, m_proc.numberOfBlocks());
             m_blocksThatOnlyReturnWithoutFrame.set(block->index());
         }
-        m_blocksEntered[block->index()] = entered;
-        m_nextLayoutIndexWithCode[index] = index;
+        blocksEntered[block->index()] = entered;
+        nextLayoutIndexWithCode[index] = index;
     }
     m_nextLayoutIndexWithCode[numberOfBlocksInLayout] = numberOfBlocksInLayout;
     m_numberOfBlocksWithCode = numberOfBlocksInLayout;
@@ -265,13 +239,16 @@ void Encoder::findBlocksWithoutCode()
 
 namespace {
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 class OrderOfWriting {
 public:
     explicit OrderOfWriting(Encoder& encoder)
         : m_encoder(encoder)
         , m_arena(encoder.m_arena)
         , m_order(encoder.m_order)
-        , m_allocation(encoder.m_allocation)
+        , m_places(encoder.m_places)
+        , m_stepsOfBlocks(encoder.m_stepsOfBlocks)
         , m_layout(encoder.m_order.blocksInLayout())
         , m_blocksEntered(encoder.m_blocksEntered)
         , m_next(encoder.m_nextLayoutIndexWithCode)
@@ -301,12 +278,12 @@ private:
         uint32_t bytesInFront;
     };
 
-    uint32_t bytesGuessedFor(const Block* block) const
+    static uint32_t bytesGuessedFor(const BlockSteps& steps)
     {
-        const BlockSteps& steps = m_allocation.stepsOf(block);
         return (steps.end - steps.begin + steps.endOfEdgeMoves - steps.beginOfEdgeMoves + 1) * bytesGuessedForStep;
     }
-    const BlockPlace& placeEnteredThrough(const Block* block) const { return m_order.of(m_blocksEntered[block->index()]); }
+    const BlockPlace& placeOf(const Block* block) const { return m_places[block->index()]; }
+    const BlockPlace& placeEnteredThrough(const Block* block) const { return placeOf(m_blocksEntered[block->index()]); }
     bool fallsIntoNext(const Block* block, uint32_t next) const
     {
         for (const Edge& edge : block->successors()) {
@@ -327,7 +304,7 @@ private:
     {
         ASSERT(layoutIndex < m_beginOfRarePart);
         uint32_t piece = layoutIndex < m_beginOfUnlikelyPart ? noPiece : m_runsOfUnlikelyBlocks[layoutIndex - m_beginOfUnlikelyPart];
-        ASSERT(piece == pieceOf(m_order.of(m_layout[layoutIndex])));
+        ASSERT(piece == pieceOf(placeOf(m_layout[layoutIndex])));
         return piece;
     }
 
@@ -338,7 +315,8 @@ private:
     Encoder& m_encoder;
     Arena& m_arena;
     const Order& m_order;
-    const Allocation& m_allocation;
+    const BlockPlace* const m_places;
+    const BlockSteps* const m_stepsOfBlocks;
     UncheckedSpan<Block* const> m_layout;
     UncheckedSpan<const Block* const> m_blocksEntered;
     UncheckedSpan<const uint32_t> m_next;
@@ -355,22 +333,23 @@ private:
 void OrderOfWriting::findPieces()
 {
     m_pieces.grow(m_arena, m_order.rareRegions().size());
-    m_beginOfRarePart = static_cast<uint32_t>(m_layout.size());
-    for (; m_beginOfRarePart; --m_beginOfRarePart) {
-        const BlockPlace& place = m_order.of(m_layout[m_beginOfRarePart - 1]);
+    uint32_t beginOfRarePart = static_cast<uint32_t>(m_layout.size());
+    for (; beginOfRarePart; --beginOfRarePart) {
+        const BlockPlace& place = placeOf(m_layout[beginOfRarePart - 1]);
         if (place.layoutPart != LayoutPart::Rare)
             break;
         if (!place.isRare())
             continue;
         Piece& region = m_pieces[place.rareRegion];
         if (!region.end)
-            region.end = m_beginOfRarePart;
-        RELEASE_ASSERT(region.end == m_beginOfRarePart || region.begin == m_beginOfRarePart);
-        region.begin = m_beginOfRarePart - 1;
+            region.end = beginOfRarePart;
+        RELEASE_ASSERT(region.end == beginOfRarePart || region.begin == beginOfRarePart);
+        region.begin = beginOfRarePart - 1;
     }
+    m_beginOfRarePart = beginOfRarePart;
 
     m_beginOfUnlikelyPart = m_beginOfRarePart;
-    while (m_beginOfUnlikelyPart && m_order.of(m_layout[m_beginOfUnlikelyPart - 1]).layoutPart == LayoutPart::Unlikely)
+    while (m_beginOfUnlikelyPart && placeOf(m_layout[m_beginOfUnlikelyPart - 1]).layoutPart == LayoutPart::Unlikely)
         --m_beginOfUnlikelyPart;
     if (m_beginOfUnlikelyPart == m_beginOfRarePart)
         return;
@@ -413,22 +392,28 @@ void OrderOfWriting::writePiece(Piece& piece)
 
 uint32_t OrderOfWriting::writeRun(uint32_t index, uint32_t limit, bool nothingFallsIn)
 {
-    const uint32_t beginOfRun = m_written.size();
+    const BlockPlace* const places = m_places;
+    const BlockSteps* const stepsOfBlocks = m_stepsOfBlocks;
+    const UncheckedSpan<Block* const> layout = m_layout;
+    const UncheckedSpan<const Block* const> blocksEntered = m_blocksEntered;
+    const UncheckedSpan<const uint32_t> next = m_next;
+    ArenaVector<Block*>& written = m_written;
+    const uint32_t beginOfRun = written.size();
     const size_t firstEntrance = m_entrances.size();
     uint32_t bytesOfRun = 0;
     bool somethingFallsOut = true;
     while (somethingFallsOut && index < limit) {
-        Block* block = m_layout[index];
-        m_written.append(m_arena, block);
+        Block* block = layout[index];
+        written.append(m_arena, block);
         if (uint32_t number = pieceAheadOfRarePart(index); number != noPiece) {
             m_pieces[number].isEntered = true;
             m_pieces[number].isPlaced = true;
         }
-        bytesOfRun += bytesGuessedFor(block);
-        index = m_next[index + 1];
+        bytesOfRun += bytesGuessedFor(stepsOfBlocks[block->index()]);
+        index = next[index + 1];
         somethingFallsOut = false;
         for (const Edge& edge : block->successors()) {
-            const BlockPlace& place = placeEnteredThrough(edge.block());
+            const BlockPlace& place = places[blocksEntered[edge.block()->index()]->index()];
             somethingFallsOut |= place.layoutIndex == index;
             if (place.layoutPart == LayoutPart::Likely) [[likely]]
                 continue;
@@ -438,8 +423,8 @@ uint32_t OrderOfWriting::writeRun(uint32_t index, uint32_t limit, bool nothingFa
             Piece& piece = m_pieces[number];
             piece.isEntered = true;
             uint32_t bytesOfPiece = 0;
-            for (uint32_t inPiece = m_next[piece.begin]; inPiece < piece.end && bytesOfPiece <= mostBytesOfPiece; inPiece = m_next[inPiece + 1])
-                bytesOfPiece += bytesGuessedFor(m_layout[inPiece]);
+            for (uint32_t inPiece = next[piece.begin]; inPiece < piece.end && bytesOfPiece <= mostBytesOfPiece; inPiece = next[inPiece + 1])
+                bytesOfPiece += bytesGuessedFor(stepsOfBlocks[layout[inPiece]->index()]);
             if (bytesOfPiece <= mostBytesOfPiece)
                 m_entrances.append(m_arena, Entrance { number, bytesOfPiece, bytesOfRun });
         }
@@ -498,12 +483,14 @@ bool OrderOfWriting::run()
 
     m_beginOfRareCode = m_written.size();
     for (uint32_t index = m_next[m_beginOfRarePart]; index < m_layout.size(); index = m_next[index + 1]) {
-        const BlockPlace& place = m_order.of(m_layout[index]);
+        const BlockPlace& place = placeOf(m_layout[index]);
         if (!place.isRare() || !m_pieces[place.rareRegion].isPlaced)
             m_written.append(m_arena, m_layout[index]);
     }
     return true;
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } // anonymous namespace
 
@@ -537,41 +524,27 @@ void Encoder::run()
     ASSERT(!m_proc.failure());
     DisallowMacroScratchRegisterUsage disallowScratch(m_jit);
 
-    UncheckedSpan<Block* const> layout = m_order.blocksInLayout();
-    ASSERT(!layout.empty());
+    ASSERT(!m_order.blocksInLayout().empty());
     findBlocksWithoutCode();
     placeColdCodeNearItsJumps();
     m_pendingJumps.reserve(m_arena, m_numberOfBlocksWithCode);
-    if (m_blocksAsWritten.isEmpty()) {
-        const uint32_t numberOfBlocksInLayout = static_cast<uint32_t>(layout.size());
-        for (uint32_t index = m_nextLayoutIndexWithCode[0]; index < numberOfBlocksInLayout;) {
-            uint32_t next = m_nextLayoutIndexWithCode[index + 1];
-            m_blockWrittenNext = next < numberOfBlocksInLayout ? layout[next] : nullptr;
-            encodeBlock(layout[index]);
-            index = next;
-        }
-    } else {
-        const uint32_t numberOfBlocksAsWritten = m_blocksAsWritten.size();
-        bool rangeOfRareCodeIsOpen = false;
-        for (uint32_t index = 0; index < numberOfBlocksAsWritten; ++index) {
-            m_isAmongOtherCode = index < m_beginOfRareCodeAsWritten;
-            if (bool isRare = m_isAmongOtherCode && m_order.of(m_blocksAsWritten[index]).isRare(); isRare != rangeOfRareCodeIsOpen) {
-                rangeOfRareCodeIsOpen = isRare;
-                MacroAssembler::Label here = m_jit.labelIgnoringWatchpoints();
-                if (isRare)
-                    m_proc.m_rangesOfRareCodeAmongOtherCode.append(m_arena, RangeOfRareCode { here, MacroAssembler::Label() });
-                else
-                    m_proc.m_rangesOfRareCodeAmongOtherCode.last().end = here;
-            }
-            m_blockWrittenNext = index + 1 < numberOfBlocksAsWritten ? m_blocksAsWritten[index + 1] : nullptr;
-            encodeBlock(m_blocksAsWritten[index]);
-        }
-        if (rangeOfRareCodeIsOpen)
-            m_proc.m_rangesOfRareCodeAmongOtherCode.last().end = m_jit.labelIgnoringWatchpoints();
-        m_isAmongOtherCode = false;
+    switch (m_coverage) {
+    case FrameCoverage::None:
+        encodeBlocksUnder<FrameCoverage::None>();
+        break;
+    case FrameCoverage::WholeFunction:
+        encodeBlocksUnder<FrameCoverage::WholeFunction>();
+        break;
+    case FrameCoverage::RareRegions:
+        encodeBlocksUnder<FrameCoverage::RareRegions>();
+        break;
+    case FrameCoverage::FramedPart:
+        encodeBlocksUnder<FrameCoverage::FramedPart>();
+        break;
     }
     m_block = nullptr;
     m_blockWrittenNext = nullptr;
+    m_proc.m_numberOfOperationsEncoded += m_numberOfOperationsEncoded;
 
     if (!m_proc.m_rareCodeStart.isSet()) {
         m_proc.m_rareCodeStart = m_jit.labelIgnoringWatchpoints();
@@ -596,13 +569,7 @@ void Encoder::run()
 
 bool Encoder::fallsThroughToSlowCase(const Block* from, const Block* target) const
 {
-    if (from == m_block) [[likely]] {
-        const Block* entered = blockEnteredThrough(target);
-        if (!entered || entered != m_blockWrittenNext)
-            return false;
-        return m_blockIsLeftInFrame == frameAtBlock(*this, entered).isEnteredInFrame();
-    }
-
+    ASSERT(from != m_block);
     const BlockPlace& placeAsNamed = m_order.of(target);
     if (!placeAsNamed.isReached())
         return false;
@@ -612,12 +579,13 @@ bool Encoder::fallsThroughToSlowCase(const Block* from, const Block* target) con
             return false;
     } else if (m_order.of(target).layoutIndex != m_nextLayoutIndexWithCode[m_order.of(from).layoutIndex + 1])
         return false;
-    return frameAtBlock(*this, from).isLeftInFrame() == frameAtBlock(*this, target).isEnteredInFrame();
+    return frameAtBlock(from).isLeftInFrame() == frameAtBlock(target).isEnteredInFrame();
 }
 
-void Encoder::encodeBlock(Block* block)
+template<FrameCoverage coverage>
+ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
 {
-    const BlockPlace& place = m_order.of(block);
+    const BlockPlace& place = placeOf(block);
     ASSERT(place.isReached());
     ASSERT(hasCode(block));
     MacroAssembler::Label& label = m_labels[block->index()];
@@ -630,7 +598,7 @@ void Encoder::encodeBlock(Block* block)
         noteStartOfRareCode(m_jit);
     }
 
-    const FrameAtBlock frame = frameAtBlock(*this, block, place);
+    const FrameAtBlock frame = frameAtBlockUnder<coverage>(block, place);
     m_blockIsLeftInFrame = frame.isLeftInFrame();
     noteOrigin(Origin());
     noteFrameState(frame.isEnteredInFrame());
@@ -650,20 +618,24 @@ void Encoder::encodeBlock(Block* block)
     if (m_hasSpills && (!block->phis().empty() || m_blocksThatStoreResultOfPatchAtHead.get(block->index())))
         storeSpilledValuesDefinedAtHead(block, place);
 
-    const BlockSteps& steps = m_allocation.stepsOf(block);
+    const BlockSteps& steps = stepsOf(block);
     if (steps.begin < steps.end)
         encodeSteps(steps.begin, steps.end);
     if (steps.beginOfEdgeMoves < steps.endOfEdgeMoves)
         encodeSteps(steps.beginOfEdgeMoves, steps.endOfEdgeMoves);
 
     RELEASE_ASSERT(steps.terminator != UINT32_MAX);
-    const Step& terminator = m_allocation.step(steps.terminator);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    const Step& terminator = m_steps[steps.terminator];
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     ASSERT(terminator.kind == StepKind::Execute);
     ASSERT(terminator.operation == block->last());
 
-    if ((m_coverage == FrameCoverage::RareRegions || m_coverage == FrameCoverage::FramedPart) && !frame.returnsInPlaceOfJump) {
-        for (const Edge& edge : block->successors())
-            RELEASE_ASSERT(frameAtBlock(*this, edge.block()).isEnteredInFrame() == m_blockIsLeftInFrame);
+    if constexpr (coverage == FrameCoverage::RareRegions || coverage == FrameCoverage::FramedPart) {
+        if (!frame.returnsInPlaceOfJump) {
+            for (const Edge& edge : block->successors())
+                RELEASE_ASSERT(frameAtBlockUnder<coverage>(edge.block(), placeOf(edge.block())).isEnteredInFrame() == m_blockIsLeftInFrame);
+        }
     }
     if (frame.isTornDownAtEnd) {
         RELEASE_ASSERT(terminator.operation->isUnconditionalJump());
@@ -672,13 +644,54 @@ void Encoder::encodeBlock(Block* block)
     }
 
     noteOrigin(terminator.operation->origin(), terminator.operation->index());
-    ++m_proc.m_numberOfOperationsEncoded;
+    ++m_numberOfOperationsEncoded;
     if (frame.returnsInPlaceOfJump) {
         RELEASE_ASSERT(terminator.operation->isUnconditionalJump() && !m_frameIsSetUp);
         m_jit.ret();
         return;
     }
+    if (isTerminal(terminator.operation->opcode())) [[likely]] {
+        encodeTerminatorInline(block, terminator);
+        return;
+    }
     encodeExecute(terminator);
+}
+
+template<FrameCoverage coverage>
+void Encoder::encodeBlocksUnder()
+{
+    if (m_blocksAsWritten.isEmpty()) {
+        UncheckedSpan<Block* const> layout = m_order.blocksInLayout();
+        const uint32_t numberOfBlocksInLayout = static_cast<uint32_t>(layout.size());
+        for (uint32_t index = m_nextLayoutIndexWithCode[0]; index < numberOfBlocksInLayout;) {
+            uint32_t next = m_nextLayoutIndexWithCode[index + 1];
+            m_blockWrittenNext = next < numberOfBlocksInLayout ? layout[next] : nullptr;
+            encodeBlockUnder<coverage>(layout[index]);
+            index = next;
+        }
+        return;
+    }
+
+    const uint32_t numberOfBlocksAsWritten = m_blocksAsWritten.size();
+    UncheckedSpan<Block* const> blocksAsWritten = m_blocksAsWritten.span();
+    bool rangeOfRareCodeIsOpen = false;
+    for (uint32_t index = 0; index < numberOfBlocksAsWritten; ++index) {
+        Block* block = blocksAsWritten[index];
+        m_isAmongOtherCode = index < m_beginOfRareCodeAsWritten;
+        if (bool isRare = m_isAmongOtherCode && placeOf(block).isRare(); isRare != rangeOfRareCodeIsOpen) {
+            rangeOfRareCodeIsOpen = isRare;
+            MacroAssembler::Label here = m_jit.labelIgnoringWatchpoints();
+            if (isRare)
+                m_proc.m_rangesOfRareCodeAmongOtherCode.append(m_arena, RangeOfRareCode { here, MacroAssembler::Label() });
+            else
+                m_proc.m_rangesOfRareCodeAmongOtherCode.last().end = here;
+        }
+        m_blockWrittenNext = index + 1 < numberOfBlocksAsWritten ? blocksAsWritten[index + 1] : nullptr;
+        encodeBlockUnder<coverage>(block);
+    }
+    if (rangeOfRareCodeIsOpen)
+        m_proc.m_rangesOfRareCodeAmongOtherCode.last().end = m_jit.labelIgnoringWatchpoints();
+    m_isAmongOtherCode = false;
 }
 
 void Encoder::encodeSteps(uint32_t begin, uint32_t end)
@@ -687,38 +700,40 @@ void Encoder::encodeSteps(uint32_t begin, uint32_t end)
         return candidate.kind == StepKind::Execute && candidate.operation->opcode() == Store;
     };
 
-    for (uint32_t index = begin; index < end; ++index) {
-        const Step& step = m_allocation.step(index);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    const Step* const endOfSteps = m_steps + end;
+    for (const Step* current = m_steps + begin; current < endOfSteps; ++current) {
+        const Step& step = *current;
         if (m_notesRangesOfOrigins) [[unlikely]] {
             if (step.kind == StepKind::Execute)
                 noteOrigin(step.operation->origin(), step.operation->index());
             else
-                noteOrigin(originOfStepOfAllocator(*this, index));
+                noteOrigin(originOfStepOfAllocator(*this, static_cast<uint32_t>(current - m_steps)));
         }
-        const Step* next = index + 1 < end ? &m_allocation.step(index + 1) : nullptr;
+        const Step* const next = current + 1;
 
         switch (step.kind) {
         case StepKind::Execute: {
             Opcode opcode = step.operation->opcode();
-            if (opcode == Store && next && executesStore(*next) && tryEncodePairOfStores(step, *next)) {
-                m_proc.m_numberOfOperationsEncoded += 2;
-                ++index;
+            if (opcode == Store && next < endOfSteps && executesStore(*next) && tryEncodePairOfStores(step, *next)) {
+                m_numberOfOperationsEncoded += 2;
+                ++current;
                 continue;
             }
-            if (isARM64() && opcode == Load && next && tryEncodePairOfLoads(*this, step, *next)) {
-                m_proc.m_numberOfOperationsEncoded += 2;
+            if (isARM64() && opcode == Load && next < endOfSteps && tryEncodePairOfLoads(*this, step, *next)) {
+                m_numberOfOperationsEncoded += 2;
                 storeToSpillIfSpilled(step.operation);
                 storeToSpillIfSpilled(next->operation);
-                ++index;
+                ++current;
                 continue;
             }
-            if (isX86_64() && opcode == Add && next && tryEncodeSumAndConstant(step, *next)) {
-                m_proc.m_numberOfOperationsEncoded += 2;
+            if (isX86_64() && opcode == Add && next < endOfSteps && tryEncodeSumAndConstant(step, *next)) {
+                m_numberOfOperationsEncoded += 2;
                 storeToSpillIfSpilled(next->operation);
-                ++index;
+                ++current;
                 continue;
             }
-            ++m_proc.m_numberOfOperationsEncoded;
+            ++m_numberOfOperationsEncoded;
             encodeExecuteInline(step);
             storeToSpillIfSpilled(step.operation);
             continue;
@@ -727,15 +742,15 @@ void Encoder::encodeSteps(uint32_t begin, uint32_t end)
             encodeMove(step);
             continue;
         case StepKind::Reload:
-            if (isARM64() && next && next->kind == StepKind::Reload && tryEncodePairOfMoves(step, *next)) {
-                ++index;
+            if (isARM64() && next < endOfSteps && next->kind == StepKind::Reload && tryEncodePairOfMoves(step, *next)) {
+                ++current;
                 continue;
             }
             encodeReload(step);
             continue;
         case StepKind::Save:
-            if (isARM64() && next && next->kind == StepKind::Save && tryEncodePairOfMoves(step, *next)) {
-                ++index;
+            if (isARM64() && next < endOfSteps && next->kind == StepKind::Save && tryEncodePairOfMoves(step, *next)) {
+                ++current;
                 continue;
             }
             encodeSave(step);
@@ -755,6 +770,7 @@ void Encoder::encodeSteps(uint32_t begin, uint32_t end)
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 void Encoder::encodeExecute(const Step& step)
@@ -1044,15 +1060,6 @@ void Encoder::linkPendingJumps()
         }
     }
     m_pendingJumpTables.clear();
-}
-
-void Encoder::jumpTo(const Block* target)
-{
-    if (!m_frameIsSetUp && m_blocksThatOnlyReturnWithoutFrame.get(blockEnteredThrough(target)->index())) {
-        m_jit.ret();
-        return;
-    }
-    addPendingJump(m_jit.jump(), target);
 }
 
 void Encoder::addPendingJumps(const MacroAssembler::JumpList& jumps, const Block* target)

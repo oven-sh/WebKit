@@ -89,7 +89,6 @@ struct FunctionEffects {
 };
 
 struct LocationFacts {
-    StoreCount stores { StoreCount::Unknown };
     InitializationState initialization { InitializationState::Unknown };
     ReadState reads { ReadState::Unknown };
     ClosureDeferral deferral { ClosureDeferral::Unknown };

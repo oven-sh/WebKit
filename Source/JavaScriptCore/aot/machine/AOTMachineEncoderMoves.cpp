@@ -15,83 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-enum class MemoryOfEncodedMove : bool { IsRead, IsWritten };
-
-static bool encodedMoveIsWide(Width width)
-{
-    RELEASE_ASSERT(width == Width32 || width == Width64);
-    return width == Width64;
-}
-
-static void checkRegisterOfEncodedMove(Reg reg)
-{
-    RELEASE_ASSERT(reg);
-    RELEASE_ASSERT(!reg.isGPR() || reg.gpr() != secondScratchGPR);
-}
-
-static void willWriteRegisterOfEncodedMove(CCallHelpers& jit, Reg destination)
-{
-    checkRegisterOfEncodedMove(destination);
-    if (destination.isGPR() && destination.gpr() == scratchGPR)
-        jit.scratchRegister();
-}
-
-static void checkMemoryOfEncodedMove(const Encoder& encoder, Location memory, Width width, MemoryOfEncodedMove access)
-{
-    switch (memory.kind()) {
-    case Location::Spill:
-        RELEASE_ASSERT(encoder.m_frameIsSetUp);
-        RELEASE_ASSERT(bytesForWidth(width) <= bytesForWidth(encoder.m_allocation.spills()[memory.spillIndex()].width));
-        return;
-    case Location::Outgoing:
-        RELEASE_ASSERT(encoder.m_frameIsSetUp);
-        return;
-    case Location::InstanceWord:
-        RELEASE_ASSERT(access == MemoryOfEncodedMove::IsRead);
-        return;
-    case Location::None:
-    case Location::Register:
-    case Location::SlotBytes:
-    case Location::Immediate:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void loadForEncodedMove(CCallHelpers& jit, MacroAssembler::Address source, Width width, Reg destination)
-{
-    bool isWide = encodedMoveIsWide(width);
-    willWriteRegisterOfEncodedMove(jit, destination);
-    if (destination.isGPR()) {
-        if (isWide)
-            jit.load64(source, destination.gpr());
-        else
-            jit.load32(source, destination.gpr());
-        return;
-    }
-    if (isWide)
-        jit.loadDouble(source, destination.fpr());
-    else
-        jit.loadFloat(source, destination.fpr());
-}
-
-static void storeForEncodedMove(CCallHelpers& jit, Reg source, Width width, MacroAssembler::Address destination)
-{
-    bool isWide = encodedMoveIsWide(width);
-    checkRegisterOfEncodedMove(source);
-    if (source.isGPR()) {
-        if (isWide)
-            jit.store64(source.gpr(), destination);
-        else
-            jit.store32(source.gpr(), destination);
-        return;
-    }
-    if (isWide)
-        jit.storeDouble(source.fpr(), destination);
-    else
-        jit.storeFloat(source.fpr(), destination);
-}
-
 static void decodeKeptReference(CCallHelpers& jit, GPRReg reference, GPRReg pointer)
 {
     static_assert(cell32Shift <= static_cast<unsigned>(CCallHelpers::TimesEight));
@@ -251,50 +174,6 @@ static void materializeInGPR(Encoder& encoder, const Operation* operation, GPRRe
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-void Encoder::encodeMove(const Step& step)
-{
-    ASSERT(step.kind == StepKind::Move);
-    RELEASE_ASSERT(step.destination.isRegister() && step.sources[0].isRegister());
-    Reg source = step.sources[0].reg();
-    Reg destination = step.destination.reg();
-    checkRegisterOfEncodedMove(source);
-    RELEASE_ASSERT(bankOf(source) == bankOf(destination));
-    bool isWide = encodedMoveIsWide(step.width);
-    if (source == destination)
-        return;
-
-    AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    willWriteRegisterOfEncodedMove(m_jit, destination);
-    if (destination.isFPR()) {
-        m_jit.moveDouble(source.fpr(), destination.fpr());
-        return;
-    }
-    if (isWide)
-        m_jit.move(source.gpr(), destination.gpr());
-    else
-        m_jit.zeroExtend32ToWord(source.gpr(), destination.gpr());
-}
-
-void Encoder::encodeReload(const Step& step)
-{
-    ASSERT(step.kind == StepKind::Reload);
-    RELEASE_ASSERT(step.destination.isRegister());
-    checkMemoryOfEncodedMove(*this, step.sources[0], step.width, MemoryOfEncodedMove::IsRead);
-
-    AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    loadForEncodedMove(m_jit, addressOf(step.sources[0]), step.width, step.destination.reg());
-}
-
-void Encoder::encodeSave(const Step& step)
-{
-    ASSERT(step.kind == StepKind::Save);
-    RELEASE_ASSERT(step.sources[0].isRegister());
-    checkMemoryOfEncodedMove(*this, step.destination, step.width, MemoryOfEncodedMove::IsWritten);
-
-    AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination));
 }
 
 void Encoder::encodeSwap(const Step& step)

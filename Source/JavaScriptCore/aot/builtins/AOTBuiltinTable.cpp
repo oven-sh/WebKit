@@ -86,27 +86,34 @@ static const T& checkedAt(std::span<const T> list, size_t index)
 }
 
 template<typename Record, typename Key>
-static std::optional<size_t> findPosition(std::span<const Record> records, Key Record::* member, Key key)
+static ALWAYS_INLINE auto findPlace(std::span<const Record> records, Key Record::* member, Key key)
 {
-    size_t position = 0;
     size_t length = records.size();
+    if (!length)
+        return records.end();
+    auto place = records.begin();
     while (length > 1) {
         size_t half = length / 2;
-        position += records[position + half - 1].*member < key ? half : 0;
+        place += place[half - 1].*member < key ? half : 0;
         length -= half;
     }
-    if (length && records[position].*member < key)
-        ++position;
-    if (position == records.size() || records[position].*member != key)
+    return (*place).*member != key ? records.end() : place;
+}
+
+template<typename Record, typename Key>
+static std::optional<size_t> findPosition(std::span<const Record> records, Key Record::* member, Key key)
+{
+    auto place = findPlace(records, member, key);
+    if (place == records.end())
         return std::nullopt;
-    return position;
+    return static_cast<size_t>(place - records.begin());
 }
 
 template<typename Record, typename Key>
 static const Record* findRecord(std::span<const Record> records, Key Record::* member, Key key)
 {
-    std::optional<size_t> position = findPosition(records, member, key);
-    return position ? &records[*position] : nullptr;
+    auto place = findPlace(records, member, key);
+    return place != records.end() ? &*place : nullptr;
 }
 
 template<typename Record>

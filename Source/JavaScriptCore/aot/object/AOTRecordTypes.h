@@ -95,7 +95,7 @@ static_assert(sizeof(SlotRepresentation) == sizeof(uint8_t));
 static_assert(sizeof(MethodKind) == sizeof(uint8_t));
 static_assert(sizeof(CellTestKind) == sizeof(uint8_t));
 static_assert(sizeof(PrimitiveSet) == sizeof(uint16_t));
-static_assert(sizeof(ObjectMutation) == sizeof(uint16_t));
+static_assert(sizeof(ObjectMutation) == sizeof(uint8_t));
 static_assert(EvaluationState { } == EvaluationState::SeenTwice);
 
 } } // namespace JSC::AOT

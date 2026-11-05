@@ -77,7 +77,6 @@ export default b.declarations(
     "OperationsOnGenerators",
     "OperationsOfAwait",
     "OperationsOnPromises",
-    "OperationsOnKeysOfParts",
     "OperationsOnMapsAndSets",
     "OperationsThatCopyObjects",
     "OperationsThatListProperties",

@@ -11,7 +11,7 @@
 # REST-LABEL: code f2:Body
 # REST: = RemainderOfIntegers
 # REST: = RShift {{*}}form=Integers
-# function bits(x) { if (typeof x !== "number") return x; return [x | 0, x >>> 0, ~~x]; }
+# function bits(x) { if (typeof x !== "number") return x; return [x | 0, x >>> 0]; }
 # RUN(BITS): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
 # BITS-LABEL: code f3:Body
 # BITS: = ToInt32
@@ -27,10 +27,10 @@
 # function ofNumber(x) { if (typeof x !== "number") return x; return (x / 3) | 0; } the dividend is no proven integer
 # RUN(NUMBER): walk f5 mechanisms=none+TypedOperations+UnboxedNumbers
 # NUMBER-NOT: DivideIntegers
-# function masked(x) { if (typeof x !== "number") return x; const h = x * 0.5; let s = 0; for (let i = 0; i < 9; i++) s = s + (h & 255); return s; } in a loop the conversion is an operation of its own, and under a mask of low bits it gives those alone
+# function masked(x) { if (typeof x !== "number") return x; const h = x * 0.5; let s = 0; for (let i = 0; i < 9; i++) s = s + (h & 255); return s; } in a loop the conversion is an operation of its own
 # RUN(MASK): walk f6 mechanisms=none+TypedOperations+UnboxedNumbers
 # MASK-LABEL: code f6:Body
-# MASK: = ToInt32 {{*}}givesOnlyLowestBits
+# MASK: = ToInt32
 # MASK: = BitAnd {{*}}form=Integers
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -84,12 +84,10 @@ function f3 name="bits" module=m0 length=1 thisType={type=anything} parameters=[
     v3 = Integer
     v4 = BitOr v2, v3
     v5 = URShift v2, v3
-    v6 = BitNot v2
-    v7 = BitNot v6
-    v8 = NewArray v4, v5, v7 contents=anything
-    Return v8
-  b2(v9):
-    Return v9
+    v6 = NewArray v4, v5 contents=anything
+    Return v6
+  b2(v7):
+    Return v7
 }
 function f4 name="product" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

@@ -1,7 +1,0 @@
-# the same functions with loop invariants withheld: the part is a parameter of the block in which it is joined
-# RUN: walk f1 mechanisms=none+TypedOperations
-# CHECK-LABEL: code f1:Body
-# CHECK: isLoopHead=true
-# RUN(NEVER): walk f1 mechanisms=none+TypedOperations
-# NEVER-NOT: StringBuilder
-# PROGRAM-OF: part-that-depends-on-the-way-is-appended-on-the-edges.ir

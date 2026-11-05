@@ -139,6 +139,7 @@ JS_EXPORT_PRIVATE void setModuleExports(JSGlobalObject*, ModuleID, JSValue);
 JS_EXPORT_PRIVATE JSObject* mainModuleObject(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willStorePathOfMainModule(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* parentModuleObject(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool mayHandOutModuleObject(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool forEachNewChild(JSGlobalObject*, ModuleID, const ScopedLambda<void(JSObject*)>&);
 JS_EXPORT_PRIVATE void dropNewChildren(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadByName = LoadByName::Require);

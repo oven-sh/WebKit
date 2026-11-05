@@ -56,8 +56,6 @@ inline constexpr int32_t siteWordSlotInStubFrame = -3;
 inline constexpr int32_t driverSlotInStubFrame = -4;
 inline constexpr int32_t consumerOfStepHasNewSavedFrame = 4;
 inline constexpr int32_t consumerOfStepNeedsSavedFrame = 8;
-inline constexpr int32_t consumerOfStepAwaitsPromise = 16;
-inline constexpr int32_t consumerOfStepAwaitsCall = 32;
 
 } } // namespace JSC::AOT
 

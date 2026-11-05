@@ -14,31 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void ControlEmitter::generateJump(const TerminatorContext& terminator)
-{
-    generator().jumpTo(terminator, 0);
-}
-
-void ControlEmitter::generateBranch(const TerminatorContext& terminator)
-{
-    if (terminator.generatesCondition()) {
-        generateTestAndBranch(terminator);
-        return;
-    }
-    BranchTargets targets = branchTargetsOf(terminator);
-    branch(in<Condition>(terminator->conditionOperand()), targets);
-}
-
-void ControlEmitter::generateTestAndBranch(const TerminatorContext& terminator)
-{
-    generator().generateBranchCondition(terminator, terminator->conditionOperand(), branchTargetsOf(terminator));
-}
-
-BranchTargets ControlEmitter::branchTargetsOf(const TerminatorContext& terminator)
-{
-    return { generator().edgeTo(terminator, 0), generator().edgeTo(terminator, 1) };
-}
-
 void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
 {
     RELEASE_ASSERT(terminator.numberOfTargets() == terminator->cases().size() + 1);

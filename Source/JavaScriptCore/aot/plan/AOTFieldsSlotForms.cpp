@@ -103,6 +103,11 @@ static SlotRepresentation representationOfContentsForSlotForms(OptionSet<Content
     return SlotRepresentation::JSValue;
 }
 
+SlotRepresentation narrowFormOfSlotHeldToTypeForFields(const Program& program, TypeID held, bool usesWideReferences)
+{
+    return representationOfContentsForSlotForms(contentsOfTypeForSlotForms(program, held, ClaimInSlotForms::IsHeld), true, usesWideReferences, true, false);
+}
+
 static TypeID widestTypeOfRepresentationForSlotForms(TypeArena& types, SlotRepresentation representation)
 {
     switch (representation) {

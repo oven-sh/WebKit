@@ -1,7 +1,0 @@
-# the same function with Folding withheld: nothing is noted of the length or of the test, and the read compares the position with the length again
-# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
-# CHECK-LABEL: code f1:Body
-# CHECK: = GetArrayElement
-# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses
-# NEVER-NOT: isInBounds
-# PROGRAM-OF: position-below-the-length-of-the-list-is-read-without-a-second-test.ir

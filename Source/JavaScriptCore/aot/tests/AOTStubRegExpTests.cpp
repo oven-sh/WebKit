@@ -196,7 +196,6 @@ struct TestForm {
 
 const TestForm formsWithoutArray[] = {
     { RegExpMatchResult::Boolean, 1, 0 },
-    { RegExpMatchResult::Found, 1, 0 },
     { RegExpMatchResult::BoxedBoolean, JSValue::ValueTrue, JSValue::ValueFalse },
 };
 
@@ -215,7 +214,7 @@ static void testMatchesWithoutArray()
         StubRun run = matches.match(form, subject);
         AOT_TEST_CHECK(!run.calledOperation && run.result == match && matches.script.numberOfCalls == 1);
         AOT_TEST_CHECK(!matches.script.start && matches.script.length == text->length());
-        AOT_TEST_CHECK(matches.script.output == (form == RegExpMatchResult::Found ? matches.outputOfRegExp().data() : matches.outputOfVM.data()));
+        AOT_TEST_CHECK(matches.script.output == matches.outputOfVM.data());
         AOT_TEST_CHECK(matches.hasRecorded(subject, 1, 3) && matches.lastIndex() == bitsOfValue(jsNumber(4)));
 
         matches.reset({ }, jsNumber(4));

@@ -41,13 +41,8 @@ public:
         for (const Field& field : fieldsOf(layout)) {
             if (field.key != key)
                 continue;
-            if (field.nullish)
+            if (field.nullish || field.holdsStrings)
                 return false;
-            if (field.holdsStrings) {
-                return field.strings.size() <= maxLiterals && std::ranges::all_of(field.strings, [&](uint32_t string) {
-                    return isAdmitted(LayoutTag { StringID(string) });
-                });
-            }
             uint64_t numberAboveMinimum = static_cast<uint64_t>(field.maximum) - static_cast<uint64_t>(field.minimum);
             if (numberAboveMinimum >= maxLiterals)
                 return false;

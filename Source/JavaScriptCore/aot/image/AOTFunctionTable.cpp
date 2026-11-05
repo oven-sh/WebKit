@@ -106,8 +106,9 @@ static FrameShape frameShapeOf(const FrameDescription& frame)
 std::optional<FrameTable> collectFrames(const LinkedFunctions& functions, BuildContext& context)
 {
     Vector<FrameShape> shapes(functions.size());
-    forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
-        shapes[position] = frameShapeOf(functions[position].frame);
+    forEachRangeOfIndicesInParallel(context.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
+        for (size_t position = first; position < end; ++position)
+            shapes[position] = frameShapeOf(functions[position].frame);
     });
 
     const uint64_t unwindableRegisters = unwindableRegisterMask();
@@ -132,14 +133,16 @@ std::optional<FrameTable> collectFrames(const LinkedFunctions& functions, BuildC
 static Vector<ImageFunction> encodeFunctions(const FunctionTableInputs& inputs, const ParallelLoops& loops)
 {
     Vector<ImageFunction> records(inputs.functions.size());
-    forEachIndexInParallel(loops, inputs.functions.size(), [&](unsigned position) {
-        const CompiledCode& code = inputs.functions[position];
-        const SiteDescription& sites = code.sites;
-        OptionSet<ImageFunctionFlag> flags = inputs.sideTableFlags[position];
-        flags.set(ImageFunctionFlag::HasInlineFrames, sites.hasEncodedInlineFrames());
-        flags.set(ImageFunctionFlag::HasPositions, inputs.hasPositions && !sites.positions.isEmpty());
-        flags.set(ImageFunctionFlag::SpillsArgumentRegisters, code.frame.spillsArgumentRegisters);
-        records[position] = ImageFunction::create(inputs.sideTableOffsets[position], code.function.index(), flags);
+    forEachRangeOfIndicesInParallel(loops, inputs.functions.size(), [&](size_t first, size_t end) {
+        for (size_t position = first; position < end; ++position) {
+            const CompiledCode& code = inputs.functions[position];
+            const SiteDescription& sites = code.sites;
+            OptionSet<ImageFunctionFlag> flags = inputs.sideTableFlags[position];
+            flags.set(ImageFunctionFlag::HasInlineFrames, sites.hasEncodedInlineFrames());
+            flags.set(ImageFunctionFlag::HasPositions, inputs.hasPositions && !sites.positions.isEmpty());
+            flags.set(ImageFunctionFlag::SpillsArgumentRegisters, code.frame.spillsArgumentRegisters);
+            records[position] = ImageFunction::create(inputs.sideTableOffsets[position], code.function.index(), flags);
+        }
     });
     return records;
 }
@@ -185,7 +188,7 @@ static Vector<uint64_t> encodeClosureWords(const FunctionTableInputs& inputs, Bu
             RELEASE_ASSERT(codeOffset && !(codeOffset % imageFunctionAlignment));
             entry = code.entry;
         } else if (auto fused = std::ranges::lower_bound(fusedCallEntries, numbers.unitOf(function), { }, &FusedCallEntry::unitIndex); fused != fusedCallEntries.end() && fused->unitIndex == numbers.unitOf(function)) {
-            std::optional<uint32_t> positionOfTarget = inputs.functions.positionOfUnit(fused->unit, fused->unitIndex);
+            std::optional<uint32_t> positionOfTarget = fused->unit.role == Typed::CodeRole::GenericCallEntry ? inputs.functions.positionOfCodeAt(fused->placeOfTarget) : inputs.functions.positionOfUnit(fused->unit, fused->unitIndex);
             std::optional<uint32_t> offsetInTarget = positionOfTarget ? inputs.functions[*positionOfTarget].body.offsetOfEntry(Typed::fusedCallEntry) : std::nullopt;
             if (offsetInTarget)
                 codeOffset = inputs.layout.bodyStarts[*positionOfTarget] + *offsetInTarget;

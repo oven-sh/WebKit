@@ -16,7 +16,6 @@ enum class CompactTableOwner : uint8_t { Map, Set };
 
 constexpr StubKey mapGet(KeyComparison comparison) { return StubKey(StubFamily::MapGet).withForm(static_cast<uint8_t>(comparison)); }
 constexpr StubKey mapHas(KeyComparison comparison) { return StubKey(StubFamily::MapHas).withForm(static_cast<uint8_t>(comparison)); }
-constexpr StubKey mapFind(KeyComparison comparison) { return StubKey(StubFamily::MapFind).withForm(static_cast<uint8_t>(comparison)); }
 constexpr StubKey setHas(KeyComparison comparison) { return mapHas(comparison); }
 constexpr StubKey mapSet(KeyComparison comparison) { return StubKey(StubFamily::MapSet).withForm(static_cast<uint8_t>(comparison)); }
 constexpr StubKey setAdd(KeyComparison comparison) { return StubKey(StubFamily::SetAdd).withForm(static_cast<uint8_t>(comparison)); }

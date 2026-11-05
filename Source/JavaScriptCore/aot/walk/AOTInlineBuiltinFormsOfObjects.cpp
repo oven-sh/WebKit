@@ -93,11 +93,6 @@ public:
         return mayBothBeStrings || mayBothBeBigInts ? twoWay() : InlineForm::Whole;
     }
 
-    InlineForm forObjectFreeze() const
-    {
-        return canFreezeInPlace(m_query.argument(0)) ? twoWay() : call();
-    }
-
     InlineForm forCollectionFromIterable() const
     {
         return m_query.numberOfArguments() == 1 && mayBeListedWithoutIterator(m_query.argument(0)) ? InlineForm::Whole : call();
@@ -113,8 +108,6 @@ private:
         unsigned numberOfArguments = m_query.numberOfArguments();
         return numberOfArguments == 1 || (numberOfArguments == 2 && hasOnlyPrimitivesIn(m_query.argument(1), Primitive::Undefined));
     }
-
-    bool canFreezeInPlace(TypeID) const { return false; }
 
     bool mayBeListedWithoutIterator(TypeID iterable) const
     {
@@ -170,8 +163,6 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinQuery& query)
         return rules.formWhereInlineCodeHandlesSomeObjects(query.receiver());
     case InlineBuiltin::SetPrototypeOf:
         return rules.forSetPrototypeOf();
-    case InlineBuiltin::ObjectFreeze:
-        return rules.forObjectFreeze();
     case InlineBuiltin::ObjectAssign:
         return query.numberOfArguments() == 2 ? rules.formWhereInlineCodeHandlesSomeObjects(query.argument(0)) : rules.call();
     case InlineBuiltin::ObjectIs:

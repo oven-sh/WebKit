@@ -112,7 +112,7 @@ void computeModuleFlags(std::span<ModuleData> modulesAndEndRecord, std::span<con
     ModuleGraph graph { modulesAndEndRecord, requests };
     for (unsigned module = 0; module < graph.size(); ++module) {
         for (const ModuleRequestData& request : graph.requestsOf(module)) {
-            if (request.isDynamicStarExport)
+            if (request.isDynamicStarExport && graph[module].kind != ModuleKind::CommonJs)
                 graph[module].add(ModuleData::Flag::HasDynamicStarExport);
             if (request.isDeferred && graph[module].kind != ModuleKind::CommonJs)
                 graph[module].add(ModuleData::Flag::HasDeferredRequest);

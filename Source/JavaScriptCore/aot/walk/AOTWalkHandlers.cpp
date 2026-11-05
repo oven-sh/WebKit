@@ -13,6 +13,8 @@ namespace JSC { namespace AOT { namespace Typed {
 void Walker::noteStateAtThrowForHandler(std::span<const Reference> thrown)
 {
     size_t frameIndex = numberOfFramesUpToHandlerInForce();
+    if (m_numberOfFramesOverHandlersOfCode && handlerOfCodeInForce(frameIndex))
+        return;
     if (!frameIndex--)
         return;
 
@@ -33,7 +35,7 @@ void Walker::noteStateAtThrowForHandler(std::span<const Reference> thrown)
             letLeave(state, reference);
     }
     for (ValueID argument : target.arguments()) {
-        if (Reference reference = frame.references[argument.index()])
+        if (Reference reference = referenceBoundIn(frame, argument))
             letLeave(state, reference);
     }
 }

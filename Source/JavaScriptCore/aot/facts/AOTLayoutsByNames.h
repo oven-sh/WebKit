@@ -106,9 +106,14 @@ public:
 
     bool isInUse(LayoutID layout) const { return layout.index() + 1 < m_firstNameOfLayout.size() && m_firstNameOfLayout[layout.index()] < m_firstNameOfLayout[layout.index() + 1]; }
 
-    bool hasAll(LayoutID layout, std::span<const PropertyKeyID> names) const
+    ALWAYS_INLINE bool hasAll(LayoutID layout, std::span<const PropertyKeyID> names) const
     {
-        return layout.index() + 1 < m_firstNameOfLayout.size() && std::ranges::all_of(names, [&](PropertyKeyID name) { return has(layout.index(), name); });
+        if (layout.index() + 1 >= m_firstNameOfLayout.size())
+            return false;
+        if (names.empty())
+            return true;
+        std::span<const uint32_t> namesOfLayout = m_names.span().subspan(m_firstNameOfLayout[layout.index()], m_firstNameOfLayout[layout.index() + 1] - m_firstNameOfLayout[layout.index()]);
+        return std::ranges::all_of(names, [&](PropertyKeyID name) { return std::ranges::binary_search(namesOfLayout, name.index()); });
     }
 
     LayoutID findOnlyHolderAmong(PropertyKeyID name, std::span<const LayoutID> ascending) const

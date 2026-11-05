@@ -20,6 +20,7 @@
 #include "AOTNameClass.h"
 #include "AOTNumberMethodSelectors.h"
 #include "AOTPhaseTimes.h"
+#include "AOTProgramVerifier.h"
 #include "AOTRowsOfLayouts.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
@@ -27,6 +28,7 @@
 #include "AOTUnionPlan.h"
 #include "AOTThinSummary.h"
 #include "AOTThreads.h"
+#include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include <algorithm>
 #include <array>
@@ -394,30 +396,6 @@ static BitVector layoutsWithClassRecordInPlan(const Program& program, const Fact
     return layouts;
 }
 
-static BitVector variablesThatRunTimeMayFillInPlan(const Program& program)
-{
-    BitVector found(program.variables.size());
-    auto add = [&](VariableID variable) {
-        if (variable)
-            found.quickSet(variable.index());
-    };
-    for (const Module& module : program.modules) {
-        for (const SyntheticExport& entry : module.syntheticExports)
-            add(entry.variable);
-        add(module.exportsVariable);
-    }
-    for (const EvalScope& scope : program.evalScopes) {
-        for (const EvalBinding& binding : scope.bindings)
-            add(binding.variable);
-    }
-    for (uint32_t index = 0; index < program.variables.size(); ++index) {
-        const Variable& variable = program.variables[index];
-        if (variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable }) || variable.owner)
-            found.quickSet(index);
-    }
-    return found;
-}
-
 static BitVector functionsWhoseResultsPassNoReturnInPlan(const Program& program, const Facts& facts)
 {
     const LinkTables& linked = facts.linked();
@@ -509,6 +487,8 @@ static bool capturesAtMostEnvironmentOfClassObjectInPlan(const Program& program,
 static bool classRecordCanCreateMemberInPlan(const Program& program, const Function& constructor, const ClassMember& member)
 {
     if (!member.key || !member.function || member.isAssignedByProgram || program.isIndexLike(member.key) || classHolderIsMadeWithName(program, member.side, member.key))
+        return false;
+    if (PropertyKeyKind kind = program.at(member.key).kind; kind == PropertyKeyKind::CreatedSymbol || kind == PropertyKeyKind::RegisteredSymbol)
         return false;
     const Function& function = program.at(member.function);
     return function.name && capturesAtMostEnvironmentOfClassObjectInPlan(program, constructor, function);
@@ -680,7 +660,84 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
     build.statistics().count(StatisticID::NumbersOrUndefinedReturnedRaw, numberOfFunctionsThatReturnNumberOrUndefinedRaw);
     parts.functionsWhoseResultsPassNoReturn = functionsWhoseResultsPassNoReturnInPlan(program, facts);
     if (AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtEntries) || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtEntriesAndFields)) {
-        parts.variablesThatRunTimeMayFill = variablesThatRunTimeMayFillInPlan(program);
+        parts.variablesThatRunTimeMayFill = variablesThatRunTimeMayFill(program);
+    }
+}
+
+static bool makesObjectsWithBirthsInPlan(const Program& program, const SlotPlanParts& slots, uint32_t layout)
+{
+    LayoutKind kind = program.layouts[layout].kind;
+    return kind == LayoutKind::Instance && slots.layouts[layout].holdsCompiledObjects() && !slots.layoutsNeverAllocated.get(layout);
+}
+
+static bool slotMayBeOfBirthInPlan(const PlannedLayout& planned, FieldIndex field)
+{
+    const PlacedSlot& slot = planned.slots[field];
+    return slot.storage == SlotStorage::Inline && slot.indexInLayoutRecord && canLeaveSlot(slot.representation) && !slot.holdsAccessor && !slot.mayExistWithoutStorage
+        && slot.representation != SlotRepresentation::DeferredClosure && !slot.deferredFunction && planned.environmentOfDeferredClosures != field;
+}
+
+static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, SlotPlanParts& slots)
+{
+    if (!withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::TypedSlots) || program.admitsInspector)
+        return;
+    const LinkTables& linked = facts.linked();
+    const LinkTables& held = facts.held();
+    uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
+    RELEASE_ASSERT(held.firstFieldOfLayout.size() == numberOfLayouts + 1 && linked.firstFieldOfLayout.size() == numberOfLayouts + 1 && slots.layouts.size() == numberOfLayouts);
+
+    auto declarationOfField = [&](FieldReference reference) {
+        FieldReference declaration = declarationOf(program, reference);
+        return held.firstFieldOfLayout[declaration.layout.index()] + declaration.field;
+    };
+    BitVector isLeftOutBySomeLayout(held.fields.size());
+    BitVector isLookedAtInSomeLayout(held.fields.size());
+    BitVector mayHoldMarkInSomeLayout(held.fields.size());
+    BitVector standsInRowOfClasses(numberOfLayouts);
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        const Layout& layout = program.layouts[index];
+        if (!layout.base || layout.isDerived())
+            continue;
+        standsInRowOfClasses.quickSet(index);
+        standsInRowOfClasses.quickSet(declaredLayoutOf(program, layout.base).index());
+    }
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (!makesObjectsWithBirthsInPlan(program, slots, index))
+            continue;
+        LayoutID id(index);
+        bool isReadWithoutLook = !linked.layout(id).reachesUnseenCode;
+        for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
+            uint32_t declaration = declarationOfField({ id, field });
+            bool isOfBirth = held.field({ id, field }).isOfBirth || (program.layouts[index].fields[field].flags.contains(FieldFlags::IsInherited) && held.fields[declaration].isOfBirth);
+            if (!isOfBirth || !slotMayBeOfBirthInPlan(slots.layouts[index], field) || standsInRowOfClasses.quickGet(declaredLayoutOf(program, id).index()))
+                isLeftOutBySomeLayout.quickSet(declaration);
+            else if (!isReadWithoutLook || !linked.field({ id, field }).isFilled)
+                isLookedAtInSomeLayout.quickSet(declaration);
+            const PlacedSlot& slot = slots.layouts[index].slots[field];
+            const Field& record = program.layouts[index].fields[field];
+            const Field& origin = record.originLayout && record.originField ? fieldAt(program, { record.originLayout, *record.originField }) : record;
+            TypeID written = origin.declared.written();
+            LinkedCell cell = held.field({ id, field });
+            if (!traitsOf(slot.representation).hasUndefined || !slot.type || !written || program.types.at(written).isAnything() || program.types.at(written).mayBeUndefinedOrNull()
+                || cell.isOnlyGivenUndefinedByMakers || cell.isLeftUndefinedByMakers || cell.isGivenByNoMaker || cell.isGivenUndefinedOrNullInSight
+                || (slot.provenType && program.types.at(slot.provenType).mayBeUndefinedOrNull()))
+                mayHoldMarkInSomeLayout.quickSet(declaration);
+        }
+    }
+
+    TypeArena types(program.types, ArenaKeeps::InProgram);
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (!makesObjectsWithBirthsInPlan(program, slots, index))
+            continue;
+        for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
+            uint32_t declaration = declarationOfField({ LayoutID(index), field });
+            slots.layouts[index].slots[field].isFilledAtBirth = isLookedAtInSomeLayout.quickGet(declaration) && !isLeftOutBySomeLayout.quickGet(declaration);
+            slots.layouts[index].mayBearMark |= slots.layouts[index].slots[field].isFilledAtBirth;
+            if (slots.layouts[index].slots[field].isFilledAtBirth && !mayHoldMarkInSomeLayout.quickGet(declaration)) {
+                slots.layouts[index].fieldsThatHoldRawValuesFromBirth.set(field);
+                slots.layouts[index].slots[field].typeOfRawValue = types.withoutNullish(slots.layouts[index].slots[field].typeInLayoutRecord());
+            }
+        }
     }
 }
 
@@ -702,7 +759,7 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
     parts.hasOneInstance = facts.hasOneInstance();
     parts.closureLayout = closureLayoutOfPlan(program);
     SlotPlanParts slots;
-    BitVector functionsThatEndTheirTailCalls;
+    FunctionsThatEndTheirTailCalls functionsThatEndTheirTailCalls;
     runLanes(build.parallelLoops(), {
         [&] { runLane("plan: lane of slots"_s, [&] { slots = computeSlotPlanParts(program, facts, build); }); },
         [&] { runLane("plan: lane of modules, classes"_s, [&] { planModulesAndGlobalNames(program, facts, build, parts); }); },
@@ -721,6 +778,7 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
     parts.deferredDefinitions = deferredDefinitionsOfPlan(program, facts, variablesDescribedToRunTime, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime));
     slots.variables = variablesOfPlan(program, facts, variablesDescribedToRunTime);
     slots.classCreation = classCreationOfPlan(program, facts);
+    markSlotsFilledAtBirthInPlan(program, facts, slots);
     parts.slots = SlotPlan(WTF::move(slots));
     if (!finish("plan: closure forms, variables, class creation"_s))
         return nullptr;
@@ -933,7 +991,7 @@ void CollectorOfUnitsNamedOutsideCode::addBodiesThatStartsOfModulesCall()
 
 void CollectorOfUnitsNamedOutsideCode::addFunctionsWithoutReferrers()
 {
-    const Vector<LinkedFunction>& functions = m_facts.linked().functions;
+    const LargeList<LinkedFunction>& functions = m_facts.linked().functions;
     for (uint32_t index = 0; index < functions.size(); ++index) {
         if (!functions[index].isInQueueFromStart)
             continue;

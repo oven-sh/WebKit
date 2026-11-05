@@ -53,7 +53,7 @@ static uint64_t hashOfArgumentMoves(const ArgumentMoves& moves)
     return hash;
 }
 
-static Vector<const ArgumentMoves*> removeDuplicateArgumentMoves(const ParallelLoops& loops, const Vector<HashedArgumentMoves>& lists)
+static Vector<uint32_t> removeDuplicateArgumentMoves(const ParallelLoops& loops, const Vector<HashedArgumentMoves>& lists, Vector<uint32_t>& listKeptFor)
 {
     size_t numberOfSlots = std::bit_ceil(lists.size() * 2 + 1);
     unsigned shift = 64 - std::countr_zero(numberOfSlots);
@@ -62,18 +62,22 @@ static Vector<const ArgumentMoves*> removeDuplicateArgumentMoves(const ParallelL
     forEachRangeOfIndicesInParallel(loops, numberOfSlots, [&](size_t first, size_t end) {
         zeroSpan(slots.mutableSpan().subspan(first, end - first));
     });
-    return collectInParallel<const ArgumentMoves*>(loops, static_cast<unsigned>(lists.size()), [&](unsigned index, Vector<const ArgumentMoves*>& distinct) {
+    listKeptFor.grow(lists.size());
+    return collectInParallel<uint32_t>(loops, static_cast<unsigned>(lists.size()), [&](unsigned index, Vector<uint32_t>& kept) {
         const HashedArgumentMoves& list = lists[index];
         for (size_t slot = list.hash >> shift;; slot = (slot + 1) & (numberOfSlots - 1)) {
             AtomicRef occupant(slots[slot]);
             uint32_t indexPlusOne = occupant.load(std::memory_order_relaxed);
             if (!indexPlusOne && occupant.compare_exchange_strong(indexPlusOne, index + 1, std::memory_order_relaxed)) {
-                distinct.append(list.moves);
+                kept.append(index);
+                listKeptFor[index] = index;
                 return;
             }
             const HashedArgumentMoves& other = lists[indexPlusOne - 1];
-            if (other.hash == list.hash && *other.moves == *list.moves)
+            if (other.hash == list.hash && *other.moves == *list.moves) {
+                listKeptFor[index] = indexPlusOne - 1;
                 return;
+            }
         }
     });
 }
@@ -82,33 +86,42 @@ namespace {
 
 struct ArgumentMovesWithFirstWords {
     std::array<uint64_t, 4> firstWords;
-    const ArgumentMoves* moves;
+    uint32_t list;
 };
 
 } // anonymous namespace
 
-static void sortArgumentMovesByWords(const ParallelLoops& loops, Vector<const ArgumentMoves*>& lists)
+static Vector<const ArgumentMoves*> sortArgumentMovesByWords(const ParallelLoops& loops, const Vector<HashedArgumentMoves>& lists, const Vector<uint32_t>& kept, Vector<uint32_t>& placeOfKept)
 {
     Vector<ArgumentMovesWithFirstWords> withFirstWords;
-    withFirstWords.grow(lists.size());
-    forEachRangeOfIndicesInParallel(loops, lists.size(), [&](size_t first, size_t end) {
+    withFirstWords.grow(kept.size());
+    forEachRangeOfIndicesInParallel(loops, kept.size(), [&](size_t first, size_t end) {
         for (size_t index = first; index < end; ++index) {
-            std::span<const uint64_t> words = lists[index]->span();
+            std::span<const uint64_t> words = lists[kept[index]].moves->span();
             ArgumentMovesWithFirstWords& entry = withFirstWords[index];
-            entry.moves = lists[index];
+            entry.list = kept[index];
             for (size_t word = 0; word < entry.firstWords.size(); ++word)
                 entry.firstWords[word] = word < words.size() ? words[word] : 0;
         }
     });
-    parallelSort(loops, withFirstWords.mutableSpan(), [](const ArgumentMovesWithFirstWords& a, const ArgumentMovesWithFirstWords& b) {
-        if (a.firstWords != b.firstWords)
-            return a.firstWords < b.firstWords;
-        return comesFirstAmongArgumentMoves(a.moves, b.moves);
+    parallelSort(loops, withFirstWords.mutableSpan(), [&](const ArgumentMovesWithFirstWords& a, const ArgumentMovesWithFirstWords& b) {
+        for (size_t word = 0; word < a.firstWords.size(); ++word) {
+            if (a.firstWords[word] != b.firstWords[word])
+                return a.firstWords[word] < b.firstWords[word];
+        }
+        return comesFirstAmongArgumentMoves(lists[a.list].moves, lists[b.list].moves);
     });
-    forEachRangeOfIndicesInParallel(loops, lists.size(), [&](size_t first, size_t end) {
-        for (size_t index = first; index < end; ++index)
-            lists[index] = withFirstWords[index].moves;
-    });
+
+    Vector<const ArgumentMoves*> sorted;
+    sorted.reserveInitialCapacity(withFirstWords.size());
+    placeOfKept.grow(lists.size());
+    for (const ArgumentMovesWithFirstWords& entry : withFirstWords) {
+        const ArgumentMoves* moves = lists[entry.list].moves;
+        if (sorted.isEmpty() || !areSameArgumentMoves(sorted.last(), moves))
+            sorted.append(moves);
+        placeOfKept[entry.list] = static_cast<uint32_t>(sorted.size() - 1);
+    }
+    return sorted;
 }
 
 static String describeStubForSharedCode(StubKey key)
@@ -124,21 +137,29 @@ namespace {
 template<typename T, typename Traits>
 class DistinctElements {
 public:
-    void add(const T& element)
+    uint32_t& slotOf(const T& element)
     {
         if (m_elements.size() * 2 >= m_slots.size())
             grow();
         size_t mask = m_slots.size() - 1;
         for (size_t slot = Traits::hash(element) >> m_shift;; slot = (slot + 1) & mask) {
-            uint32_t indexPlusOne = m_slots[slot];
-            if (!indexPlusOne) {
-                m_elements.append(element);
-                m_slots[slot] = static_cast<uint32_t>(m_elements.size());
-                return;
-            }
-            if (Traits::equal(m_elements[indexPlusOne - 1], element))
-                return;
+            uint32_t& indexPlusOne = m_slots[slot];
+            if (!indexPlusOne || Traits::equal(m_elements[indexPlusOne - 1], element))
+                return indexPlusOne;
         }
+    }
+
+    void addAt(uint32_t& emptySlot, const T& element)
+    {
+        m_elements.append(element);
+        emptySlot = static_cast<uint32_t>(m_elements.size());
+    }
+
+    void add(const T& element)
+    {
+        uint32_t& indexPlusOne = slotOf(element);
+        if (!indexPlusOne)
+            addAt(indexPlusOne, element);
     }
 
     Vector<T> take() { return WTF::move(m_elements); }
@@ -175,9 +196,15 @@ struct HashedArgumentMovesTraits {
 using DistinctStubKeys = DistinctElements<StubKey, StubKeyTraits>;
 using DistinctArgumentMoves = DistinctElements<HashedArgumentMoves, HashedArgumentMovesTraits>;
 
+struct SharedCodeCalledByChunk {
+    DistinctStubKeys stubKeys;
+    DistinctStubKeys stubKeysOfArgumentMoves;
+    DistinctArgumentMoves argumentMoves;
+};
+
 } // anonymous namespace
 
-[[nodiscard]] static bool addSharedCodeCalledBy(const CompiledCode& function, DistinctStubKeys& stubKeys, DistinctArgumentMoves& argumentMoves, BuildContext& context)
+[[nodiscard]] static bool addSharedCodeCalledBy(const CompiledCode& function, SharedCodeCalledByChunk& called, std::span<uint32_t> placesOfArgumentMoves, BuildContext& context)
 {
     bool everyStubExists = true;
     auto existsOrIsReported = [&](StubKey key) {
@@ -192,13 +219,24 @@ using DistinctArgumentMoves = DistinctElements<HashedArgumentMoves, HashedArgume
         return false;
     };
     for (StubKey key : function.body.stubKeys) {
-        if (existsOrIsReported(key))
-            stubKeys.add(key);
+        uint32_t& indexPlusOne = called.stubKeys.slotOf(key);
+        if (!indexPlusOne && existsOrIsReported(key))
+            called.stubKeys.addAt(indexPlusOne, key);
     }
+    size_t numberOfLists = 0;
     for (const ArgumentMoves& moves : function.body.argumentMoves) {
         RELEASE_ASSERT(moves.size() >= numberOfHeaderWords && !((moves.size() - numberOfHeaderWords) % 2));
-        if (existsOrIsReported(StubKey::fromBits(moves[0])))
-            argumentMoves.add({ hashOfArgumentMoves(moves), &moves });
+        HashedArgumentMoves hashed { hashOfArgumentMoves(moves), &moves };
+        uint32_t& indexPlusOne = called.argumentMoves.slotOf(hashed);
+        if (!indexPlusOne) {
+            StubKey key = StubKey::fromBits(moves[0]);
+            uint32_t& indexOfKeyPlusOne = called.stubKeysOfArgumentMoves.slotOf(key);
+            if (!indexOfKeyPlusOne && existsOrIsReported(key))
+                called.stubKeysOfArgumentMoves.addAt(indexOfKeyPlusOne, key);
+            if (indexOfKeyPlusOne)
+                called.argumentMoves.addAt(indexPlusOne, hashed);
+        }
+        placesOfArgumentMoves[numberOfLists++] = indexPlusOne - 1;
     }
     return everyStubExists;
 }
@@ -207,32 +245,54 @@ std::optional<CalledSharedCode> collectCalledSharedCode(const LinkedFunctions& f
 {
     StepTimes times(context, "image: shared code"_s);
     const ParallelLoops& loops = context.parallelLoops();
-    const ChunksOfIndices chunks = divideIntoChunks(safeCast<unsigned>(functions.size()));
-    Vector<Vector<StubKey>> stubKeysOfChunks(chunks.size());
-    Vector<Vector<HashedArgumentMoves>> argumentMovesOfChunks(chunks.size());
+    const size_t numberOfChunks = numberOfRangesOfIndices(safeCast<unsigned>(functions.size()));
+    Vector<Vector<StubKey>> stubKeysOfChunks(numberOfChunks);
+    Vector<Vector<HashedArgumentMoves>> argumentMovesOfChunks(numberOfChunks);
+    CalledSharedCode called;
+    called.firstArgumentMovesOfBody.grow(functions.size() + 1);
+    uint64_t numberOfLists = 0;
+    for (size_t position = 0; position < functions.size(); ++position) {
+        called.firstArgumentMovesOfBody[position] = static_cast<uint32_t>(numberOfLists);
+        numberOfLists += functions[position].body.argumentMoves.size();
+    }
+    called.firstArgumentMovesOfBody[functions.size()] = safeCast<uint32_t>(numberOfLists);
+    called.thunksOfArgumentMoves.grow(numberOfLists);
+    std::span<const uint32_t> firstListOfBody = called.firstArgumentMovesOfBody.span();
+    std::span<uint32_t> thunksOfLists = called.thunksOfArgumentMoves.mutableSpan();
     std::atomic<bool> everyStubExists { true };
-    forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
-        DistinctStubKeys stubKeys;
-        DistinctArgumentMoves argumentMoves;
-        for (unsigned position = chunks.firstIndexOf[chunk]; position < chunks.firstIndexOf[chunk + 1]; ++position) {
-            if (!addSharedCodeCalledBy(functions[position], stubKeys, argumentMoves, context))
+    forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
+        SharedCodeCalledByChunk calledByChunk;
+        for (size_t position = first; position < end; ++position) {
+            std::span<uint32_t> placesOfArgumentMoves = thunksOfLists.subspan(firstListOfBody[position], firstListOfBody[position + 1] - firstListOfBody[position]);
+            if (!addSharedCodeCalledBy(functions[position], calledByChunk, placesOfArgumentMoves, context))
                 everyStubExists.store(false, std::memory_order_relaxed);
         }
-        stubKeysOfChunks[chunk] = stubKeys.take();
-        argumentMovesOfChunks[chunk] = argumentMoves.take();
+        stubKeysOfChunks[first / indicesInRangeOfLoop] = calledByChunk.stubKeys.take();
+        argumentMovesOfChunks[first / indicesInRangeOfLoop] = calledByChunk.argumentMoves.take();
     });
     times.didFinish("collect by chunk"_s);
     if (!everyStubExists.load(std::memory_order_relaxed))
         return std::nullopt;
 
+    Vector<uint32_t> firstListKeptByChunk(numberOfChunks);
+    size_t numberOfListsKeptByChunks = 0;
+    for (size_t chunk = 0; chunk < numberOfChunks; ++chunk) {
+        firstListKeptByChunk[chunk] = static_cast<uint32_t>(numberOfListsKeptByChunks);
+        numberOfListsKeptByChunks += argumentMovesOfChunks[chunk].size();
+    }
     Vector<HashedArgumentMoves> hashedMoves = joinChunks<HashedArgumentMoves>(loops, WTF::move(argumentMovesOfChunks));
-    CalledSharedCode called;
-    called.argumentMoves = removeDuplicateArgumentMoves(loops, hashedMoves);
+    Vector<uint32_t> listKeptFor;
+    Vector<uint32_t> kept = removeDuplicateArgumentMoves(loops, hashedMoves, listKeptFor);
     times.didFinish("remove duplicate argument moves"_s);
 
     called.stubKeys = joinChunks<StubKey>(loops, WTF::move(stubKeysOfChunks));
-    sortArgumentMovesByWords(loops, called.argumentMoves);
-    removeRepeatedElements(called.argumentMoves, areSameArgumentMoves);
+    Vector<uint32_t> placeOfKept;
+    called.argumentMoves = sortArgumentMovesByWords(loops, hashedMoves, kept, placeOfKept);
+    forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
+        uint32_t firstListKept = firstListKeptByChunk[first / indicesInRangeOfLoop];
+        for (uint32_t& thunk : thunksOfLists.subspan(firstListOfBody[first], firstListOfBody[end] - firstListOfBody[first]))
+            thunk = placeOfKept[listKeptFor[firstListKept + thunk]];
+    });
     times.didFinish("sort argument moves"_s);
     return called;
 }
@@ -274,32 +334,8 @@ static void checkStubSummariesMatchCompile(const StubCatalog& catalogOfImage, st
     }
 }
 
-void SharedCode::buildArgumentMovesHashIndex()
-{
-    size_t numberOfSlots = std::bit_ceil(argumentMoves.size() * 2 + 1);
-    unsigned shift = 64 - std::countr_zero(numberOfSlots);
-    argumentMovesHashSlots.fill(0, numberOfSlots);
-    for (size_t index = 0; index < argumentMoves.size(); ++index) {
-        size_t slot = hashOfArgumentMoves(*argumentMoves[index]) >> shift;
-        while (argumentMovesHashSlots[slot])
-            slot = (slot + 1) & (numberOfSlots - 1);
-        argumentMovesHashSlots[slot] = static_cast<uint32_t>(index) + 1;
-    }
-}
-
 uint32_t SharedCode::thunkOffset(const ArgumentMoves& moves) const
 {
-    if (!argumentMovesHashSlots.isEmpty()) {
-        size_t mask = argumentMovesHashSlots.size() - 1;
-        unsigned shift = 64 - std::countr_zero(argumentMovesHashSlots.size());
-        for (size_t slot = hashOfArgumentMoves(moves) >> shift;; slot = (slot + 1) & mask) {
-            uint32_t indexPlusOne = argumentMovesHashSlots[slot];
-            RELEASE_ASSERT(indexPlusOne);
-            if (*argumentMoves[indexPlusOne - 1] == moves)
-                return argumentThunks.offsets[indexPlusOne - 1];
-        }
-    }
-
     auto found = std::ranges::lower_bound(argumentMoves, &moves, comesFirstAmongArgumentMoves);
     RELEASE_ASSERT(found != argumentMoves.end() && **found == moves);
     return argumentThunks.offsets[found - argumentMoves.begin()];
@@ -310,7 +346,8 @@ SharedCode generateSharedCode(CalledSharedCode&& called, const StubCatalog& cata
     StepTimes times(context, "image: shared code"_s);
     SharedCode result;
     result.argumentMoves = WTF::move(called.argumentMoves);
-    result.buildArgumentMovesHashIndex();
+    result.firstArgumentMovesOfBody = WTF::move(called.firstArgumentMovesOfBody);
+    result.thunksOfArgumentMoves = WTF::move(called.thunksOfArgumentMoves);
     std::expected<ArgumentThunks, LinkFailure> argumentThunks = generateArgumentThunks(context, catalog, result.argumentMoves);
     times.didFinish("generate argument thunks"_s);
     if (!argumentThunks) {
@@ -320,8 +357,12 @@ SharedCode generateSharedCode(CalledSharedCode&& called, const StubCatalog& cata
     result.argumentThunks = WTF::move(*argumentThunks);
     RELEASE_ASSERT(result.argumentThunks.offsets.size() == result.argumentMoves.size());
 
-    Vector<StubKey> calledKeys = WTF::move(called.stubKeys);
-    calledKeys.appendVector(result.argumentThunks.stubKeys);
+    DistinctStubKeys distinctKeys;
+    for (StubKey key : called.stubKeys)
+        distinctKeys.add(key);
+    for (StubKey key : result.argumentThunks.stubKeys)
+        distinctKeys.add(key);
+    Vector<StubKey> calledKeys = distinctKeys.take();
     sortAndRemoveDuplicates(context.parallelLoops(), calledKeys);
     if (checksSharedCodeWhileBuilding())
         checkStubSummariesMatchCompile(catalog, calledKeys.span());

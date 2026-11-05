@@ -34,12 +34,13 @@ enum class FormOfLinkTarget : uint8_t { PlaceInCode, Number, DistanceFromInstanc
 struct ValuesOfLinkedMention {
     enum class State : uint8_t { NotAsked, HasValue, HasNone };
 
-    std::array<uint32_t, 2> values { };
-    std::array<State, 2> states { };
+    std::array<uint32_t, 2> values;
+    std::array<State, 2> states;
 };
+static_assert(!static_cast<uint8_t>(ValuesOfLinkedMention::State::NotAsked));
 
 struct PieceOfLinkedCode {
-    ASCIILiteral name;
+    ASCIILiteral name { };
     const CompiledCode* function { nullptr };
     uint32_t position { 0 };
     size_t start;
@@ -171,7 +172,6 @@ struct CodeLinker {
         AOT_NAME_OF_NUMBER_SPACE(ModuleValue)
         AOT_NAME_OF_NUMBER_SPACE(ModuleNamespace)
         AOT_NAME_OF_NUMBER_SPACE(ModuleBuiltinCell)
-        AOT_NAME_OF_NUMBER_SPACE(DataCell)
         AOT_NAME_OF_NUMBER_SPACE(DataStorage)
         AOT_NAME_OF_NUMBER_SPACE(DataElements)
         AOT_NAME_OF_NUMBER_SPACE(RegExpLiteralCell)
@@ -221,18 +221,23 @@ struct CodeLinker {
         return start;
     }
 
-    std::nullopt_t fail(const PieceOfLinkedCode& piece, const Relocation& relocation, StringView why) const
+    NEVER_INLINE std::nullopt_t fail(const PieceOfLinkedCode& piece, const Relocation& relocation, StringView why) const
     {
         context.diagnostics().add(InternalError {
             .kind = InternalErrorKind::RelocationNotApplied,
             .function = functionOf(piece),
             .count = relocation.offset,
-            .detail = makeString("at offset "_s, relocation.offset, " of the "_s, piece.name, ": "_s, why),
+            .detail = makeString("at offset "_s, relocation.offset, " of the "_s, piece.function ? nameOf(piece.function->unit.role) : piece.name, ": "_s, why),
         });
         return std::nullopt;
     }
 
-    std::optional<uint32_t> valueOfMention(const PieceOfLinkedCode& piece, const Relocation& relocation, bool asInstanceWord) const
+    NEVER_INLINE void failForMentionWithoutValue(const PieceOfLinkedCode& piece, const Relocation& relocation, NumberSpace space, bool asInstanceWord) const
+    {
+        fail(piece, relocation, makeString("what it mentions in NumberSpace::"_s, nameOfNumberSpace(space), asInstanceWord ? " has no word of the instance"_s : " has no number"_s));
+    }
+
+    ALWAYS_INLINE std::optional<uint32_t> valueOfMention(const PieceOfLinkedCode& piece, const Relocation& relocation, bool asInstanceWord) const
     {
         using State = ValuesOfLinkedMention::State;
         if (relocation.symbol >= piece.mentions.size())
@@ -245,7 +250,7 @@ struct CodeLinker {
             known.states[asInstanceWord] = value ? State::HasValue : State::HasNone;
             known.values[asInstanceWord] = value.value_or(0);
             if (!value)
-                fail(piece, relocation, makeString("what it mentions in NumberSpace::"_s, nameOfNumberSpace(mention.space), asInstanceWord ? " has no word of the instance"_s : " has no number"_s));
+                failForMentionWithoutValue(piece, relocation, mention.space, asInstanceWord);
         }
         if (known.states[asInstanceWord] == State::HasNone)
             return std::nullopt;
@@ -340,7 +345,7 @@ struct CodeLinker {
         case SymbolSpace::ArgumentThunk:
             if (!body || symbol >= body->argumentMoves.size())
                 return fail(piece, relocation, "the code lists no such argument moves"_s);
-            return piece.sharedCodeCopy + sharedCode.argumentThunksOffset + sharedCode.thunkOffset(body->argumentMoves[symbol]);
+            return piece.sharedCodeCopy + sharedCode.argumentThunksOffset + sharedCode.thunkOffset(piece.position, symbol);
         case SymbolSpace::Constant:
         case SymbolSpace::JumpTable: {
             if (!body)
@@ -403,9 +408,11 @@ struct CodeLinker {
             if (!target)
                 continue;
             int32_t distance = static_cast<int32_t>(static_cast<uint32_t>(*target));
-            bool isApplied = relocation.space == SymbolSpace::InstanceWord && isFarInstanceWord(distance)
-                ? applyToFarInstanceWord(piece, relocation, distance, numberOfDetoursTaken)
-                : applyRelocation(code, piece.start, relocation, *target);
+            bool isApplied;
+            if (relocation.space == SymbolSpace::InstanceWord && isFarInstanceWord(distance))
+                isApplied = applyToFarInstanceWord(piece, relocation, distance, numberOfDetoursTaken);
+            else
+                [[clang::always_inline]] isApplied = MacroAssembler::applyRelocation(relocation.kind, code, piece.start + relocation.offset, *target);
             if (!isApplied) {
                 fail(piece, relocation, "its target is out of reach"_s);
                 continue;
@@ -519,10 +526,10 @@ struct CodeLinker {
         size_t end = start + body.bytes.size();
         const FarInstanceWords* farInstanceWords = inputs.sizeOfFarInstanceWords(position) ? &inputs.farInstanceWords[position] : nullptr;
         size_t firstVeneer = layout.firstVeneerOffset(position, body.bytes.size(), inputs.sizeOfFarInstanceWords(position));
-        mentions.fill({ }, body.mentions.size());
+        mentions.resize(body.mentions.size());
+        zeroSpan(mentions.mutableSpan());
 
         uint64_t numberNotApplied = link({
-            .name = nameOf(function.unit.role),
             .function = &function,
             .position = position,
             .start = start,

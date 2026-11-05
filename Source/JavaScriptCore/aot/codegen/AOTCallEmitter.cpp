@@ -12,6 +12,7 @@
 #include "AOTBuiltinCallEmitter.h"
 #include "AOTCallPlan.h"
 #include "AOTClosureWord.h"
+#include "AOTClosuresLent.h"
 #include "AOTConvention.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTFrameMapEmitter.h"
@@ -37,6 +38,11 @@ static bool isPassedInCall(const ArgumentLocation& location)
 
 static LType machineTypeOfResults(Machine::Procedure& proc, std::span<const ArgumentLocation> results)
 {
+    if (results.size() == 1) {
+        if (!isPassedInCall(results[0]))
+            return Machine::Void;
+        return machineTypeOf(results[0].representation);
+    }
     Vector<LType, 4> types;
     for (const ArgumentLocation& result : results) {
         if (isPassedInCall(result))
@@ -104,7 +110,11 @@ Vector<Operand, 8> CallEmitter::operandsOf(std::span<const ValueID> ids, const A
 
 CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const ConventionCall& call)
 {
-    const StubSignature& signature = inputs().stubCatalog.summaryOf(call.stub).signature;
+    return placeConventionArguments(call, inputs().stubCatalog.summaryOf(call.stub).signature);
+}
+
+CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const ConventionCall& call, const StubSignature& signature)
+{
     RELEASE_ASSERT(signature.usesCallConvention && call.stubOperands.size() == signature.numberOfOperands);
 
     PlacedArguments placed;
@@ -129,20 +139,22 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
 void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params)
 {
     RegisterSet released = params.value()->registersToRelease();
+    if (released.isEmpty())
+        return;
     released.exclude(params.usedRegisters());
     released.forEach([&](Reg reg) {
         jit.move(CCallHelpers::TrustedImm32(0), reg.gpr());
     });
 }
 
-Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed, std::span<const ArgumentLocation> results, const CallOptions& options)
+Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed, std::span<const ArgumentLocation> results, const CallOptions& options, const AnswersOfCalledStub* answersOfCalledStub)
 {
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
-    const StubCatalog& catalog = inputs().stubCatalog;
+    static const RegisterSet registersClobberedByCalls = calls.registersClobberedByCalls();
     CallPatchpointRequest request {
         .resultType = machineTypeOfResults(m_proc, results),
         .earlyClobbered = RegisterSet::macroClobberedGPRs(),
-        .lateClobbered = calls.registersClobberedByCalls(),
+        .lateClobbered = registersClobberedByCalls,
         .effects = Effects::unknownCode(),
     };
     switch (target.kind) {
@@ -151,8 +163,11 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
             request.lateClobbered = StubBodyConvention::registersClobberedByCalls();
         break;
     case TargetKind::Stub:
-        request.lateClobbered.merge(catalog.summaryOf(target.calledStub).clobbered);
-        request.effects = catalog.effectsOf(target.calledStub);
+        if (answersOfCalledStub) {
+            request.lateClobbered.merge(answersOfCalledStub->summary->clobbered);
+            request.effects = answersOfCalledStub->effects;
+        } else
+            request.lateClobbered.merge(inputs().stubCatalog.summaryAndEffectsOf(target.calledStub, request.effects).clobbered);
         break;
     case TargetKind::Address:
         break;
@@ -171,9 +186,11 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
         if (LValue argument = placed.onStack[stackIndex])
             patchpoint->append(Machine::ConstrainedValue(argument, callStackWordRep(stackIndex)));
     }
-    for (unsigned child = 0; child < patchpoint->numChildren(); ++child) {
-        if (placed.letGoByCallee.contains(patchpoint->child(child)))
-            patchpoint->markChildAsLetGoByCallee(child);
+    if (!placed.letGoByCallee.isEmpty()) {
+        for (unsigned child = 0; child < patchpoint->numChildren(); ++child) {
+            if (placed.letGoByCallee.contains(patchpoint->child(child)))
+                patchpoint->markChildAsLetGoByCallee(child);
+        }
     }
 
     uint32_t stackWordsToReserve = placed.stackWordsToReserve;
@@ -276,7 +293,9 @@ Boxed CallEmitter::callByConvention(const OperationContext& context, const Conve
 {
     RELEASE_ASSERT(!options.pureFunction);
     const ArgumentLocation boxedResult { ArgumentLocation::Kind::GPR, GPRInfo::returnValueGPR, 0, Representation::JSValue };
-    return Boxed(emitCall(context, CallTarget::stub(call.stub, options.immediate), placeConventionArguments(call), { &boxedResult, 1 }, options));
+    AnswersOfCalledStub answers;
+    answers.summary = &inputs().stubCatalog.summaryAndEffectsOf(call.stub, answers.effects);
+    return Boxed(emitCall(context, CallTarget::stub(call.stub, options.immediate), placeConventionArguments(call, answers.summary->signature), { &boxedResult, 1 }, options, &answers));
 }
 
 void CallEmitter::chooseStubThatCallsValue(ConventionCall& call, LValue& countOperand, bool calleeIsCell)
@@ -313,23 +332,13 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
     return callByConvention(context, conventionCall, options);
 }
 
-static uint8_t argumentsLentBy(const Code& code, const Operation& call)
-{
-    uint8_t lentArguments = 0;
-    std::span<const ValueID> arguments = call.argumentsOperands();
-    for (unsigned index = 0; index < arguments.size() && index < ClosureWord::numberOfBorrowedArguments; ++index) {
-        const Operation* made = &code.at(arguments[index]);
-        if (made->opcode == Opcode::Box)
-            made = &code.at(made->operand(0));
-        if (made->opcode == Opcode::NewClosure && made->isLent())
-            lentArguments |= 1u << index;
-    }
-    return lentArguments;
-}
-
 void CallEmitter::defineResultOfCallByValue(const ValueContext& value, Boxed result)
 {
-    Type callee = typeOf(value->calleeOperand());
+    defineResultOfCallByValue(value, result, typeOf(value->calleeOperand()));
+}
+
+void CallEmitter::defineResultOfCallByValue(const ValueContext& value, Boxed result, const Type& callee)
+{
     if (BuiltinID called = callee.isObject() ? singleBuiltinOf(types(), callee) : BuiltinID())
         emitter<BuiltinCallEmitter>().stopUnlessNativeResultIsAsWritten(value, result, called, constructionsByValue.contains(value->opcode));
     define(value, result);
@@ -340,7 +349,8 @@ void CallEmitter::generateCall(const ValueContext& value)
     if (emitter<AccessEmitter>().tryCallMethodByName(value))
         return;
     ValueID callee = value->calleeOperand();
-    if (const Type& type = typeOf(callee); value->calleeName() && !type.hasObjects() && type.isJavaScriptValue() && !type.isNever()) {
+    const Type type = typeOf(callee);
+    if (value->calleeName() && !type.hasObjects() && type.isJavaScriptValue() && !type.isNever()) {
         emitter<ThrowEmitter>().throwAt(value, *siteThatNamesCallee(value), Operand(in<Boxed>(callee)));
         if (value.returnCall()) {
             m_out.unreachable();
@@ -351,8 +361,8 @@ void CallEmitter::generateCall(const ValueContext& value)
     }
     Vector<Boxed, 8> arguments = boxedOperands(value->argumentsOperands());
     ValueCall call { in<Boxed>(callee), thisOrUndefined(value->thisValueOperand()), arguments.span() };
-    call.calleeIsCell = typeOf(callee).isObject();
-    call.lentArguments = argumentsLentBy(m_code, value.value());
+    call.calleeIsCell = type.isObject();
+    call.lentArguments = argumentsLentBy(m_program, generator().facts(), m_code, value.value());
     if (value->methodOfReceiverAsMade() && value->thisValueOperand())
         call.methodOfBuiltinClass = m_program.builtins().boxedCallStubOf(value->methodOfReceiverAsMade());
     if (value.returnCall()) {
@@ -361,7 +371,7 @@ void CallEmitter::generateCall(const ValueContext& value)
     }
     if (mayForwardCallToReceiver(value.value()))
         requireForwardedCallCanBeMade(value, call.callee, call.thisValue, value->isTailCall);
-    defineResultOfCallByValue(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value), .callerSuspendsAtReturn = value.isAwaitedAtOnce() }));
+    defineResultOfCallByValue(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value), .callerSuspendsAtReturn = value.isAwaitedAtOnce() }), type);
 }
 
 } } } // namespace JSC::AOT::Typed

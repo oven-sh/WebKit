@@ -11,7 +11,7 @@
 
 namespace JSC { namespace AOT {
 
-enum class RegExpMatchResult : uint8_t { Array, Boolean, Found, BoxedBoolean };
+enum class RegExpMatchResult : uint8_t { Array, Boolean, BoxedBoolean };
 enum class FinishRegExpExecForm : uint8_t { WithObject, WithoutObject };
 
 constexpr uint32_t noSharedRegExpOffset = UINT32_MAX;

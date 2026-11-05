@@ -20,8 +20,6 @@ void writeTablesOfUnions(LinkFlow&, LinkTables&);
 void notePrototypesLaidAboveOtherObjects(LinkFlow&, const LinkType& above);
 TypeID typeOfElementsOfTemplateObject(const BodyValue& made);
 
-bool someInspectionMayRunCode(const LinkFlow&, const LinkTables&, FunctionID);
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

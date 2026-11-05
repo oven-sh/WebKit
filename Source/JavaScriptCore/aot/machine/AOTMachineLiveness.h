@@ -341,22 +341,33 @@ inline constexpr unsigned maxOperationsBetweenLoadAndUser = 4;
 
 inline constexpr unsigned maxOperationsBetweenLoadAndUpdate = 24;
 
+constexpr bool mayBeFusedAsAddress(Opcode opcode) { return opcode == Add; }
+
 Liveness* scanBackward(Procedure&);
 
 class BackwardScan {
     WTF_MAKE_NONCOPYABLE(BackwardScan);
 public:
+    enum class KindOfBlock : uint8_t {
+        Plain,
+        Rare,
+        InLoop,
+        RareInLoop,
+        Any,
+    };
+
     BackwardScan(Procedure&, Liveness&);
     void run();
 
     void scanBlock(Block*);
+    template<KindOfBlock> void scanBlockOfKind(Block*, const BlockPlace&);
     void addUse(Operation* value, Position, Reg hint = Reg());
     void define(Operation*, Position);
     void noteCall(const PatchOperation*, Position late, const Block*);
-    void enterLoopsEndingAt(Position);
-    void leaveLoopsBeginningAt(Position);
+    void enterLoopsEndingAt(uint32_t innermostLoop, Position);
+    void leaveLoopsBeginningAt(uint32_t innermostLoop, Position);
     void findBlocksThatRareBlocksBranchOff();
-    ValueFacts& facts(const Operation* operation) { return m_liveness.m_values[operation->index()]; }
+    ValueFacts& facts(const Operation* operation) { return m_facts[operation->index()]; }
     ArenaVector<Use>& uses() { return m_liveness.m_uses; }
     uint8_t*& traitsOfUses() { return m_liveness.m_traitsOfUses; }
     ArenaVector<std::array<Position, numberOfBanks>>& lastCallsInBlocks() { return m_liveness.m_lastCallsInBlocks; }

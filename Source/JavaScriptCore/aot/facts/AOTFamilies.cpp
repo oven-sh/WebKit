@@ -318,7 +318,6 @@ static bool isOneThingInEveryRunForFamilies(ObjectKind kind)
     case ObjectKind::ConstructedObject:
     case ObjectKind::Instance:
     case ObjectKind::EscapedOfLayout:
-    case ObjectKind::Site:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -470,11 +470,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONAppendNumber, uint8_t*, (uint8
     return byteCast<uint8_t>(appendJSONNumber(byteCast<Latin1Character>(cursor), number));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONAppendDate, uint8_t*, (uint8_t* cursor, double timeValue))
-{
-    return byteCast<uint8_t>(appendJSONTimeValue(byteCast<Latin1Character>(cursor), timeValue));
-}
-
 static ALWAYS_INLINE UGPRPair toRegisterPair(AppendedJSONValue appended)
 {
     return makeUGPRPair(std::bit_cast<UCPURegister>(appended.cursor), static_cast<UCPURegister>(appended.outcome));

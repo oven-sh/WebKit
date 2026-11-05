@@ -22,17 +22,9 @@ class Plan;
 class Program;
 }
 
-struct WrittenTailCall {
-    FunctionID function;
-    FunctionID callee;
-    uint32_t position { 0 };
-    bool isWhereThisIsMade { false };
-};
-
 struct BodyFactsForTables {
     BitVector functionsThatOnlyReturn;
     BitVector functionsWithFrames;
-    Vector<WrittenTailCall> placesOfTailCalls;
 };
 
 BodyFactsForTables collectBodyFactsForTables(const Typed::Program&, const Typed::Plan&, const LinkedFunctions&, BuildContext&);

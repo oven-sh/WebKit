@@ -12,18 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-template<typename Summary>
-static std::span<const uint32_t> nodesWhoseKeysAreListedForLinkKnownEffects(const Summary& summary)
-{
-    if constexpr (requires { summary.nodesWhoseKeysAreListed; })
-        return summary.nodesWhoseKeysAreListed.span();
-    else
-        return { };
-}
-
-template<typename Summary>
-static constexpr bool hasInspectionsForLinkKnownEffects = requires(const Summary& summary) { summary.inspections; };
-
 template<typename Summary, typename Functor>
 static bool forEachInspectionForLinkKnownEffects(const Summary& summary, const Functor& functor)
 {
@@ -55,6 +43,12 @@ uint64_t CalleeSummarizerForLinkEffects::bitsOfLayoutsAt(const LinkType& type)
         return 0;
     case LinkType::Objects::Layout:
         return m_bitsOfLayouts[type.layout.index()];
+    case LinkType::Objects::Set: {
+        uint64_t bits = 0;
+        for (LayoutID member : m_flow.layoutsOfSet(type))
+            bits |= m_bitsOfLayouts[member.index()];
+        return bits;
+    }
     case LinkType::Objects::Family:
         return m_bitsOfFamilies[type.family.index()];
     case LinkType::Objects::Prototype:
@@ -119,26 +113,39 @@ void CalleeSummarizerForLinkEffects::findLayoutsOfPlainObjects()
     }
 }
 
-bool CalleeSummarizerForLinkEffects::holdsOnlyPlainObjectsOfOneLayout(const LinkType& type) const
+std::span<const LayoutID> CalleeSummarizerForLinkEffects::layoutsNamedBy(const LinkType& type) const
 {
-    return type.objects == LinkType::Objects::Layout && type.functions == LinkType::Functions::None && !mayBeOtherCallableForLinkEffects(type) && m_layoutsOfPlainObjects.get(type.layout.index());
+    switch (type.objects) {
+    case LinkType::Objects::Layout:
+        return std::span<const LayoutID>(&type.layout, 1);
+    case LinkType::Objects::Set:
+        return m_flow.layoutsOfSet(type);
+    case LinkType::Objects::None:
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+    case LinkType::Objects::Family:
+    case LinkType::Objects::Lost:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool CalleeSummarizerForLinkEffects::holdsOnlyPlainObjectsOfNamedLayouts(const LinkType& type) const
+{
+    std::span<const LayoutID> layouts = layoutsNamedBy(type);
+    return !layouts.empty() && type.functions == LinkType::Functions::None && !mayBeOtherCallableForLinkEffects(type) && std::ranges::all_of(layouts, [&](LayoutID layout) {
+        return m_layoutsOfPlainObjects.get(layout.index());
+    });
 }
 
 bool CalleeSummarizerForLinkEffects::listingOfKeysMayRunCode(FunctionID id, const ThinSummary& summary) const
 {
-    std::span<const uint32_t> nodes = nodesWhoseKeysAreListedForLinkKnownEffects(summary);
-    if (summary.has(SummaryTrait::ListsKeys) && nodes.empty() && !hasInspectionsForLinkKnownEffects<ThinSummary>)
-        return true;
     auto mayRunCode = [&](uint32_t node, bool walksChain) {
         LinkType subject = typeAt(id, node);
         if (!mayBeObjectForLinkEffects(subject))
             return false;
-        return !holdsOnlyPlainObjectsOfOneLayout(subject) || (walksChain && m_layoutsThatMayFindAnything.get(subject.layout.index()));
+        return !holdsOnlyPlainObjectsOfNamedLayouts(subject) || (walksChain && mayFindAnything(subject));
     };
-    for (uint32_t node : nodes) {
-        if (mayRunCode(node, false))
-            return true;
-    }
     return !forEachInspectionForLinkKnownEffects(summary, [&](uint32_t subject, bool walksChain) {
         return !mayRunCode(subject, walksChain);
     });
@@ -162,23 +169,31 @@ bool CalleeSummarizerForLinkEffects::copyMayRunCode(FunctionID id, const Summary
     LinkType source = typeAt(id, change.other);
     if (!mayBeObjectForLinkEffects(source))
         return false;
-    if (!holdsOnlyPlainObjectsOfOneLayout(source))
+    if (!holdsOnlyPlainObjectsOfNamedLayouts(source))
         return true;
-    if (m_tables.layouts[source.layout.index()].possibleChanges.contains(LayoutChange::GainsProperty))
-        return true;
+    std::span<const LayoutID> layoutsOfSource = layoutsNamedBy(source);
+    for (LayoutID layout : layoutsOfSource) {
+        if (m_tables.layouts[layout.index()].possibleChanges.contains(LayoutChange::GainsProperty))
+            return true;
+    }
 
     constexpr uint16_t primitivesWithoutMembers = Primitive::UndefinedOrNull | Primitive::Absent;
     LinkType target = typeAt(id, change.subject);
-    bool targetIsOfOneLayout = target.objects == LinkType::Objects::Layout && target.functions == LinkType::Functions::None && !mayBeOtherCallableForLinkEffects(target) && !(target.primitives & ~primitivesWithoutMembers);
-    if (!targetIsOfOneLayout || m_layoutsThatMayFindAnything.get(target.layout.index()))
+    std::span<const LayoutID> layoutsOfTarget = layoutsNamedBy(target);
+    bool targetIsOfNamedLayouts = !layoutsOfTarget.empty() && target.functions == LinkType::Functions::None && !mayBeOtherCallableForLinkEffects(target) && !(target.primitives & ~primitivesWithoutMembers);
+    if (!targetIsOfNamedLayouts || mayFindAnything(target))
         return true;
-    for (const Field& field : m_program.at(source.layout).fields) {
-        if (storeMayFindCode(target.layout, field.key))
-            return true;
-    }
-    for (PropertyKeyID key : m_tables.appendedKeysOf(source.layout)) {
-        if (storeMayFindCode(target.layout, key))
-            return true;
+    for (LayoutID from : layoutsOfSource) {
+        for (LayoutID into : layoutsOfTarget) {
+            for (const Field& field : m_program.at(from).fields) {
+                if (storeMayFindCode(into, field.key))
+                    return true;
+            }
+            for (PropertyKeyID key : m_tables.appendedKeysOf(from)) {
+                if (storeMayFindCode(into, key))
+                    return true;
+            }
+        }
     }
     return false;
 }
@@ -295,12 +310,45 @@ void CalleeSummarizerForLinkEffects::addEffectsOfOperatorsLeftApart(FunctionID i
     takeKnownEffects(ofOperators, ofOperators.writes, 0, WayInKnownEffects::ToReturn, effects);
 }
 
+bool CalleeSummarizerForLinkEffects::readMayMakeClosureOfField(const LinkType& subject, PropertyKeyID key) const
+{
+    auto holdsClosures = [&](LayoutID layout) {
+        std::optional<FieldReference> field = findField(m_program, layout, key);
+        return field && m_flow.typeAt(m_flow.field(*field)).functions == LinkType::Functions::Closure;
+    };
+    switch (subject.objects) {
+    case LinkType::Objects::None:
+        return false;
+    case LinkType::Objects::Layout:
+        return holdsClosures(subject.layout);
+    case LinkType::Objects::Set:
+        return std::ranges::any_of(m_flow.layoutsOfSet(subject), holdsClosures);
+    case LinkType::Objects::Family: {
+        bool found = false;
+        m_program.at(m_flow.families.layoutsOf(subject.family)).forEach([&](LayoutID member) {
+            found |= holdsClosures(member);
+        });
+        return found;
+    }
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+    case LinkType::Objects::Lost:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void CalleeSummarizerForLinkEffects::addEffectsOfAccessItself(FunctionID id, const ThinSummary& summary, const SummaryAccess& access, const LinkType& subject, PropertyKeyID key, WayInKnownEffects way, EffectsOfComponentInKnownEffects& effects)
 {
     Effects ofLookup = effectsOfLookupItself(access.kind, key);
     uint64_t layouts = 0;
     switch (access.kind) {
     case SummaryAccess::Kind::Read:
+        if (key && readMayMakeClosureOfField(subject, key)) {
+            ofLookup.writes.add(m_program, MemoryLocation::objectField(key));
+            layouts = bitsOfLayoutsAt(subject);
+        }
+        break;
     case SummaryAccess::Kind::Has:
         break;
     case SummaryAccess::Kind::Store:
@@ -426,7 +474,10 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
         if (!mergeKnownEffectsOfCodeFound(found, component, way, effects))
             return false;
         itself.merge(effectsOfLookupItself(SummaryAccess::Kind::Read, call.key));
-        takeKnownEffects(itself, itself.writes, 0, way, effects);
+        bool mayMakeClosure = readMayMakeClosureOfField(*expected, call.key);
+        if (mayMakeClosure)
+            itself.writes.add(m_program, MemoryLocation::objectField(call.key));
+        takeKnownEffects(itself, itself.writes, mayMakeClosure ? bitsOfLayoutsAt(*expected) : 0, way, effects);
         given.parametersTakenAsExpected |= 1u << *parameter;
         return true;
     }
@@ -454,6 +505,14 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
         const LocationMasks* ownWritesOnWaysToReturn = summary.knownEffectsApart.ownWritesOnWaysToReturn();
         effects.writesOnReturn = ownWritesOnWaysToReturn ? *ownWritesOnWaysToReturn : summary.ownEffects.writes;
         effects.layoutsWritten = summary.layoutsOfOwnWrites;
+        if (summary.ownEffects.reads.contains(AbstractHeap::ModuleVariables)) {
+            for (const SummaryNode& node : summary.nodes) {
+                if (node.kind != SummaryNode::Kind::Variable || !m_variablesThatFirstReadMayFill.quickGet(node.first))
+                    continue;
+                effects.all.writes.add(m_program, MemoryLocation::moduleVariable(VariableID(node.first)));
+                effects.writesOnReturn.add(m_program, MemoryLocation::moduleVariable(VariableID(node.first)));
+            }
+        }
         addEffectsOfOperatorsLeftApart(id, summary, effects);
         for (const SummaryChange& change : summary.changes) {
             if (changeMayRunCode(id, change)) {
@@ -478,6 +537,8 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
             continue;
         }
         EffectsOfComponentInKnownEffects ofCall { itself, itself.writes, layoutsChangedByRowsOf(id, summary, index, itself) };
+        if (call.callee == SummaryCall::Callee::Name && call.key && readMayMakeClosureOfField(typeAt(id, call.receiver), call.key))
+            ofCall.layoutsWritten |= bitsOfLayoutsAt(typeAt(id, call.receiver));
         bool isEnteredByCallAsWritten = !call.isMadeByProtocol && builtinsEnteredBy(id, summary, index).empty();
         entersOwnComponent |= !mergeKnownEffectsOfCodeOutside(code, component, isEnteredByCallAsWritten ? WayInKnownEffects::ToReturn : WayInKnownEffects::ToReturnUnderHandler, ofCall);
         takeKnownEffects(ofCall.all, ofCall.writesOnReturn, ofCall.layoutsWritten, way, effects);
@@ -543,6 +604,15 @@ void CalleeSummarizerForLinkEffects::prepareKnownEffects()
             m_bitsOfFamilies[above.index()] |= m_bitsOfFamilies[family];
     }
     findLayoutsOfPlainObjects();
+    m_variablesThatFirstReadMayFill.ensureSize(m_program.variables.size());
+    for (const Module& module : m_program.modules) {
+        if (!module.body)
+            continue;
+        for (const SummaryDefinition& definition : m_flow.summaries.at(module.body).definitions) {
+            if (!definition.makesClosure)
+                m_variablesThatFirstReadMayFill.quickSet(definition.variable.index());
+        }
+    }
 }
 
 void CalleeSummarizerForLinkEffects::findComponentsThatExpectationsLeadTo()

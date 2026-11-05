@@ -142,19 +142,12 @@ Test Encoder::resolveTest(const Operation* user, LeafCursor& cursor)
 
 void Encoder::encodeTerminator(Block* block, const Step& step)
 {
-    ASSERT(step.kind == StepKind::Execute && step.operation == block->last());
+    encodeTerminatorInline(block, step);
+}
 
+void Encoder::encodeRareTerminator(Block* block, const Step& step)
+{
     Opcode opcode = step.operation->opcode();
-    if (step.operation->isUnconditionalJump()) {
-        const Block* target = block->successor(0).block();
-        if (!fallsThroughTo(block, target))
-            jumpTo(target);
-        return;
-    }
-    if (opcode == Branch) {
-        encodeBranch(block, step);
-        return;
-    }
     if (opcode == Switch) {
         encodeSwitch(block, step);
         return;
@@ -187,17 +180,19 @@ void Encoder::encodeBranch(Block* block, const Step& step)
     const Edge& whenZero = block->successor(1);
     RELEASE_ASSERT(whenNotZero.block() != whenZero.block());
 
-    if (m_liveness.worksInMemory(step.operation)) {
+    const ValueFacts& facts = factsOf(step.operation);
+    if (facts.has(ValueFlag::WorksInMemory)) {
         encodeBranchInMemory(block, step);
         return;
     }
-    if (m_liveness.goesByOverflow(step.operation)) {
+    if (facts.has(ValueFlag::GoesByOverflow)) {
         encodeBranchOnOverflow(block, step);
         return;
     }
 
+    const Operation* predicate = inlineChildWithoutCheck(step.operation, 0);
 #if CPU(X86_64)
-    if (std::optional<MacroAssembler::RelationalCondition> condition = tryEmitFlagsOfPredicate(step)) {
+    if (std::optional<MacroAssembler::RelationalCondition> condition = tryEmitFlagsOfPredicate(step, predicate)) {
         if (fallsThroughTo(block, whenNotZero.block())) {
             addPendingJump(m_jit.branchOnFlags(MacroAssembler::invert(*condition)), whenZero.block());
             return;
@@ -213,10 +208,16 @@ void Encoder::encodeBranch(Block* block, const Step& step)
         return;
     }
 #endif
+    encodeBranchOnTest(block, step, predicate);
+}
+
+NEVER_INLINE void Encoder::encodeBranchOnTest(Block* block, const Step& step, const Operation* predicate)
+{
+    const Edge& whenNotZero = block->successor(0);
+    const Edge& whenZero = block->successor(1);
 
     LeafCursor cursor(step);
-    const Operation* predicate = step.operation->child(0);
-    bool predicateIsFused = m_liveness.isFused(predicate);
+    bool predicateIsFused = isFused(predicate);
     bool testsTwice = false;
     if (predicateIsFused && (predicate->opcode() == BitAnd || predicate->opcode() == BitOr)) {
         const Operation* first = predicate->child(0);

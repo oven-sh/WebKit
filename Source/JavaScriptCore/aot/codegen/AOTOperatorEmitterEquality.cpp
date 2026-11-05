@@ -55,13 +55,15 @@ public:
         static_assert(formByLoopAlone(Opcode::StrictEq, inPlace, true).form == formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, true).form);
         static_assert(formByLoopAlone(Opcode::StrictEq, inPlace, false).form == formByLoopAlone(Opcode::ValueEqualsLiteral, StateOfKnowledge::Always, false).form);
         static_assert(formByLoopAlone(Opcode::Eq, inPlace, true).form == formByLoopAlone(Opcode::StrictEq, inPlace, true).form && formByLoopAlone(Opcode::Eq, inPlace, false).form == formByLoopAlone(Opcode::StrictEq, inPlace, false).form);
+        if (!m_records.formsSaid.areNoted())
+            return;
         StringEmitter& strings = emitter<StringEmitter>();
         String text = strings.textOf(literal);
         if (text.isEmpty()) {
             m_out.noteForm(Form::Open, StateOfKnowledge::EmptyLiteral);
             return;
         }
-        if (!text.is8Bit() || !strings.canCompareInline(literal)) {
+        if (!text.is8Bit() || !StringEmitter::canCompareInline(text)) {
             m_out.noteForm(Form::Closed, StateOfKnowledge::LiteralComparedByStub);
             return;
         }
@@ -314,6 +316,20 @@ public:
     {
         Boxed x = in<Boxed>(value->leftOperand());
         Boxed y = in<Boxed>(value->rightOperand());
+        if (value->leftOperand() == value->rightOperand()) {
+            m_out.noteForm(Form::Open, StateOfKnowledge::ValueAndItself);
+            defineTestByBranching(value, [&](BranchTargets targets) {
+                LBasicBlock isNoInt32 = newBlock();
+                LBasicBlock isDouble = newBlock();
+                m_out.branch(isInt32(x).value(), targets.taken, normalEdge(isNoInt32));
+                m_out.appendTo(isNoInt32);
+                m_out.branch(isNumber(x).value(), normalEdge(isDouble), targets.taken);
+                m_out.appendTo(isDouble);
+                Number number = unboxDouble(x);
+                branch(equal(number, number), targets);
+            });
+            return;
+        }
         bool asksBothTagsInLine = value->expectsInt32s() && generator().code().at(value.block()).frequency != BlockFrequency::Rare;
         if (asksBothTagsInLine && !bitsDecide(kindsComparedBy(value)) && !generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
             m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);

@@ -9,6 +9,7 @@
 
 #include "AOTClosure.h"
 #include "AOTClosureTable.h"
+#include "AOTConvention.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
 #include "AOTLoadedProgramTestSupport.h"
@@ -31,7 +32,7 @@ inline constexpr ASCIILiteral programWithClosuresToDrop =
     "variable g0 name=\"arrow\" module=m0 declared={type=anything} initialization=Undefined\n"
     "variable g1 name=\"plain\" module=m0 declared={type=anything} initialization=Undefined\n"
     "variable g2 name=\"asyncArrow\" module=m0 declared={type=anything} initialization=Undefined\n"
-    "variable g3 name=\"holdsFive\" module=m0 declared={type=anything} initialization=Undefined\n"
+    "variable g3 name=\"holdsNine\" module=m0 declared={type=anything} initialization=Undefined\n"
     "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
     "  b0():\n"
     "    v0 = Builtin builtin=GlobalThis\n"
@@ -77,7 +78,7 @@ inline constexpr ASCIILiteral programWithClosuresToDrop =
     "    PutModuleVariable v4 variable=g1\n"
     "    v6 = NewClosure v0 function=f3\n"
     "    PutModuleVariable v6 variable=g2\n"
-    "    v8 = NewClosure v0, v0, v0, v0, v0 function=f7\n"
+    "    v8 = NewClosure v0, v0, v0, v0, v0, v0, v0, v0, v0 function=f7\n"
     "    PutModuleVariable v8 variable=g3\n"
     "    Return\n"
     "}\n"
@@ -86,12 +87,13 @@ inline constexpr ASCIILiteral programWithClosuresToDrop =
     "    v1 = PropGet v0 key=\"displayName\" @7\n"
     "    Return v1\n"
     "}\n"
-    "function f7 name=\"holdsFive\" kind=Arrow captures=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {\n"
-    "  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything):\n"
-    "    Return v4\n"
+    "function f7 name=\"holdsNine\" kind=Arrow captures=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {\n"
+    "  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything):\n"
+    "    Return v8\n"
     "}\n"_s;
 
-inline constexpr ASCIILiteral namesOfFunctionsWithClosuresToDrop[] = { "arrow"_s, "plain"_s, "asyncArrow"_s, "holdsFive"_s, "callAll"_s, "create"_s, "readDisplayName"_s };
+inline constexpr ASCIILiteral namesOfFunctionsWithClosuresToDrop[] = { "arrow"_s, "plain"_s, "asyncArrow"_s, "holdsNine"_s, "callAll"_s, "create"_s, "readDisplayName"_s };
+static_assert(ClosureRequest::maxSlimClosureCaptures < 9);
 
 inline FunctionID findFunctionWithClosuresToDrop(LoadedProgram& program, ASCIILiteral name)
 {

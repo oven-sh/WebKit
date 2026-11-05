@@ -114,9 +114,9 @@ BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
     return Typed::findOwnMember(m_table, holder, m_memberName);
 }
 
-bool MembersUnderKey::isClosedKey(BuiltinID holder) const
+bool MembersUnderKey::isClosedKey(BuiltinID holder, NamesOpenedForTestRun opened) const
 {
-    if (m_textOpenedSomewhere && m_program.isOpened(holder, m_textOpenedSomewhere)) [[unlikely]]
+    if (opened == NamesOpenedForTestRun::MayLieOnHolder && m_textOpenedSomewhere && m_program.isOpened(holder, m_textOpenedSomewhere)) [[unlikely]]
         return false;
     if (m_table.at(holder).flags.contains(BuiltinFlag::IsLockedObject))
         return true;

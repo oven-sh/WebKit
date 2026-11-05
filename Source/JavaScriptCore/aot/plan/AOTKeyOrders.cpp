@@ -127,10 +127,11 @@ std::optional<KeyOrderContinuation> KeyOrders::continuationCreatingBehindFewestK
     }
     if (fewest == noPlace)
         return std::nullopt;
-    return KeyOrderContinuation {
-        wordOfBeginningOfKeyOrder(*this, layout, best, fewest),
-        wordOfBeginningOfKeyOrder(*this, layout, best, fewest + createdFields.size()),
-    };
+    uint32_t wordInFront = wordOfBeginningOfKeyOrder(*this, layout, best, fewest);
+    size_t numberOfFieldsBehind = fewest + createdFields.size();
+    ASSERT(firstKeyOrderNotBefore(*this, layout, order(layout, best).first(numberOfFieldsBehind)) == best);
+    RELEASE_ASSERT(best < maxKeyOrdersPerLayout && numberOfFieldsBehind <= maxFieldsInOrder);
+    return KeyOrderContinuation { wordInFront, orderWordOf(best, static_cast<uint32_t>(numberOfFieldsBehind)) };
 }
 
 std::optional<uint32_t> KeyOrders::findOrderWordOfShortestBeginningThatLists(LayoutID layout, std::span<const FieldIndex> fields) const

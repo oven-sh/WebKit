@@ -33,7 +33,7 @@ static std::optional<Wire::SourceLocation> placeWhereLiteralObjectIsWritten(cons
 
 void AllocationEmitter::generateNewRegExp(const ValueContext& value)
 {
-    if (value->isNeverToldApart() || emitter<AccessEmitter>().isPatternLeftToCall(value.id())) {
+    if (emitter<AccessEmitter>().isPatternLeftToCall(value.id())) {
         emitter<BuiltinCallEmitter>().generateSharedRegExpLiteral(value);
         return;
     }

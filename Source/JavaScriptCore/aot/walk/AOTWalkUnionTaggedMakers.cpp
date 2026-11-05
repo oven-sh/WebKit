@@ -25,37 +25,17 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-template<typename Tag>
 struct CaseOfTagInFamily {
-    Tag tag { };
+    int64_t tag { 0 };
     LayoutID layout;
 };
 
-struct TagsOfFamily {
-    Vector<int64_t, 16> integers;
-    Vector<StringID, 16> strings;
-
-    void append(const LayoutTag& tag)
-    {
-        WTF::switchOn(tag,
-            [&](int64_t integer) {
-                integers.append(integer);
-            },
-            [&](StringID string) {
-                strings.append(string);
-            });
-    }
-};
-
 struct LayoutsForTag {
-    Vector<CaseOfTagInFamily<int64_t>, 16> integerCases;
-    Vector<CaseOfTagInFamily<StringID>, 16> stringCases;
+    Vector<CaseOfTagInFamily, 16> integerCases;
     LayoutID defaultLayout;
 
-    bool isOneLayout() const { return integerCases.isEmpty() && stringCases.isEmpty(); }
+    bool isOneLayout() const { return integerCases.isEmpty(); }
 };
-
-enum class SwitchOnTextsOfTags : bool { IsNotForeseen, IsForeseen };
 
 } // anonymous namespace
 
@@ -73,19 +53,6 @@ static LayoutID layoutOfTagInFamily(const Walker& walker, const TaggedFamily& fa
 {
     LayoutID member = layoutMadeWithTag(family, tag);
     return member && hasObjectsOfItsOwnForTaggedMakers(walker, member) ? member : family.maker;
-}
-
-static LayoutID layoutOfTextInFamily(const Walker& walker, const TaggedFamily& family, StringID text)
-{
-    const TypeArena& types = walker.types();
-    for (const TaggedLayout& member : family.members) {
-        for (const LayoutTag& tag : member.tags) {
-            const StringID* string = std::get_if<StringID>(&tag);
-            if (string && types.spellSameText(*string, text))
-                return layoutOfTagInFamily(walker, family, tag);
-        }
-    }
-    return family.maker;
 }
 
 static PrimitiveKnownToFolding primitiveHeldForTaggedMakers(const Walker& walker, Reference reference)
@@ -131,7 +98,6 @@ static LayoutID layoutOfKnownTagInFamily(const Walker& walker, const TaggedFamil
     case PrimitiveKnownToFolding::Kind::Number:
         return isTrackedInteger(known.asNumber()) ? layoutOfTagInFamily(walker, family, LayoutTag(static_cast<int64_t>(known.asNumber()))) : family.maker;
     case PrimitiveKnownToFolding::Kind::Text:
-        return layoutOfTextInFamily(walker, family, known.asText());
     case PrimitiveKnownToFolding::Kind::Undefined:
     case PrimitiveKnownToFolding::Kind::Null:
     case PrimitiveKnownToFolding::Kind::Boolean:
@@ -147,23 +113,16 @@ static void forEachTagThatTypeLeaves(const Walker& walker, const TaggedFamily& f
         if (!hasObjectsOfItsOwnForTaggedMakers(walker, member.layout))
             continue;
         for (const LayoutTag& tag : member.tags) {
-            TypeID narrowed = WTF::switchOn(tag,
-                [&](int64_t integer) {
-                    return narrowByIntegerCase(typing, typeOfTag, integer);
-                },
-                [&](StringID string) {
-                    return narrowByStringCase(typing, typeOfTag, string);
-                });
+            TypeID narrowed = narrowByIntegerCase(typing, typeOfTag, tag);
             if (!isNeverType(narrowed) && functor(tag, member.layout) == IterationStatus::Done)
                 return;
         }
     }
 }
 
-static bool tagsCoverType(const Walker& walker, const TagsOfFamily& tags, TypeID typeOfTag)
+static bool tagsCoverType(const Walker& walker, std::span<const LayoutTag> tags, TypeID typeOfTag)
 {
-    TypeArena& types = walker.types();
-    return isNeverType(narrowByOtherwise(types, narrowByOtherwise(types, typeOfTag, tags.integers.span()), tags.strings.span()));
+    return isNeverType(narrowByOtherwise(walker.types(), typeOfTag, tags));
 }
 
 static bool tagSelectsSeveralLayouts(const Walker& walker, const TaggedFamily& family, Reference tag)
@@ -171,7 +130,7 @@ static bool tagSelectsSeveralLayouts(const Walker& walker, const TaggedFamily& f
     TypeID typeOfTag = walker.typeOf(tag);
     LayoutID onlyLayout;
     bool selectsSeveral = false;
-    TagsOfFamily tags;
+    Vector<LayoutTag, 16> tags;
     forEachTagThatTypeLeaves(walker, family, typeOfTag, [&](const LayoutTag& left, LayoutID layout) {
         selectsSeveral = onlyLayout && onlyLayout != layout;
         if (selectsSeveral)
@@ -180,10 +139,10 @@ static bool tagSelectsSeveralLayouts(const Walker& walker, const TaggedFamily& f
         tags.append(left);
         return IterationStatus::Continue;
     });
-    return selectsSeveral || (onlyLayout && !tagsCoverType(walker, tags, typeOfTag));
+    return selectsSeveral || (onlyLayout && !tagsCoverType(walker, tags.span(), typeOfTag));
 }
 
-static LayoutsForTag collectLayoutsForTag(const Walker& walker, const TaggedFamily& family, Reference tag, SwitchOnTextsOfTags switchOnTexts)
+static LayoutsForTag collectLayoutsForTag(const Walker& walker, const TaggedFamily& family, Reference tag)
 {
     LayoutsForTag layouts;
     layouts.defaultLayout = layoutOfKnownTagInFamily(walker, family, tag);
@@ -191,32 +150,20 @@ static LayoutsForTag collectLayoutsForTag(const Walker& walker, const TaggedFami
         return layouts;
 
     TypeID typeOfTag = walker.typeOf(tag);
-    TagsOfFamily tags;
+    Vector<LayoutTag, 16> tags;
     forEachTagThatTypeLeaves(walker, family, typeOfTag, [&](const LayoutTag& left, LayoutID layout) {
-        bool isText = std::holds_alternative<StringID>(left);
-        if (isText && switchOnTexts == SwitchOnTextsOfTags::IsNotForeseen)
-            return IterationStatus::Continue;
         tags.append(left);
-        if (isText)
-            layouts.stringCases.append({ std::get<StringID>(left), layout });
-        else
-            layouts.integerCases.append({ std::get<int64_t>(left), layout });
+        layouts.integerCases.append({ left, layout });
         return IterationStatus::Continue;
     });
 
     layouts.defaultLayout = family.maker;
-    if (tagsCoverType(walker, tags, typeOfTag)) {
-        if (!layouts.stringCases.isEmpty())
-            layouts.defaultLayout = layouts.stringCases.takeLast().layout;
-        else if (!layouts.integerCases.isEmpty())
-            layouts.defaultLayout = layouts.integerCases.takeLast().layout;
-    }
+    if (tagsCoverType(walker, tags.span(), typeOfTag) && !layouts.integerCases.isEmpty())
+        layouts.defaultLayout = layouts.integerCases.takeLast().layout;
 
-    auto hasDefaultLayout = [&](const auto& caseOfTag) {
+    layouts.integerCases.removeAllMatching([&](const CaseOfTagInFamily& caseOfTag) {
         return caseOfTag.layout == layouts.defaultLayout;
-    };
-    layouts.integerCases.removeAllMatching(hasDefaultLayout);
-    layouts.stringCases.removeAllMatching(hasDefaultLayout);
+    });
     return layouts;
 }
 
@@ -236,13 +183,10 @@ static Reference buildObjectByTag(Walker& walker, LayoutsForTag& layouts, Refere
     if (layouts.isOneLayout())
         return buildAllocationForTaggedMakers(walker, layouts.defaultLayout, prototype, origin);
 
-    std::ranges::sort(layouts.integerCases, { }, &CaseOfTagInFamily<int64_t>::tag);
-    std::ranges::sort(layouts.stringCases, { }, &CaseOfTagInFamily<StringID>::tag);
+    std::ranges::sort(layouts.integerCases, { }, &CaseOfTagInFamily::tag);
 
     Vector<LayoutID, 32> layoutsOfCases;
-    for (const CaseOfTagInFamily<int64_t>& caseOfTag : layouts.integerCases)
-        layoutsOfCases.append(caseOfTag.layout);
-    for (const CaseOfTagInFamily<StringID>& caseOfTag : layouts.stringCases)
+    for (const CaseOfTagInFamily& caseOfTag : layouts.integerCases)
         layoutsOfCases.append(caseOfTag.layout);
     std::ranges::sort(layoutsOfCases);
     layoutsOfCases.shrink(layoutsOfCases.size() - std::ranges::unique(layoutsOfCases).size());
@@ -254,31 +198,16 @@ static Reference buildObjectByTag(Walker& walker, LayoutsForTag& layouts, Refere
     };
 
     Vector<int64_t, 32> integers;
-    Vector<StringID, 32> texts;
     Vector<BlockID, 32> targetsOfIntegers;
-    Vector<BlockID, 32> targetsOfTexts;
-    for (const CaseOfTagInFamily<int64_t>& caseOfTag : layouts.integerCases) {
+    for (const CaseOfTagInFamily& caseOfTag : layouts.integerCases) {
         integers.append(caseOfTag.tag);
         targetsOfIntegers.append(blockOf(caseOfTag.layout));
-    }
-    for (const CaseOfTagInFamily<StringID>& caseOfTag : layouts.stringCases) {
-        texts.append(caseOfTag.tag);
-        targetsOfTexts.append(blockOf(caseOfTag.layout));
     }
 
     BlockID otherTags = walker.addBlock();
     BlockID whereObjectsMeet = walker.addBlock();
     Reference object = walker.addParameter(whereObjectsMeet, { }, Representation::Cell);
-    if (integers.isEmpty())
-        walker.switchOnTexts(tag, texts.span(), targetsOfTexts.span(), otherTags);
-    else if (texts.isEmpty())
-        walker.switchOn(tag, integers.span(), targetsOfIntegers.span(), otherTags);
-    else {
-        BlockID noInteger = walker.addBlock();
-        walker.switchOn(tag, integers.span(), targetsOfIntegers.span(), noInteger);
-        walker.continueIn(noInteger);
-        walker.switchOnTexts(tag, texts.span(), targetsOfTexts.span(), otherTags);
-    }
+    walker.switchOn(tag, integers.span(), targetsOfIntegers.span(), otherTags);
     if (walker.hasFailed())
         return { };
 
@@ -297,7 +226,7 @@ static Reference buildObjectByTag(Walker& walker, LayoutsForTag& layouts, Refere
 std::optional<uint32_t> positionOfTagAmongArguments(const Walker& walker, FunctionID constructor)
 {
     const TaggedMaker* maker = findMakerForTaggedMakers(walker, constructor);
-    if (!maker || maker->allocation)
+    if (!maker)
         return std::nullopt;
     return maker->tagParameter - walker.program().at(constructor).firstParameterIndex();
 }
@@ -355,7 +284,7 @@ bool chooseLayoutByTagAtConstruction(Walker& walker, const BodyValue& constructi
     }
     if (tagSelectsSeveralLayouts(walker, family, tag))
         return false;
-    LayoutsForTag layouts = collectLayoutsForTag(walker, family, tag, SwitchOnTextsOfTags::IsForeseen);
+    LayoutsForTag layouts = collectLayoutsForTag(walker, family, tag);
     if (!layouts.isOneLayout())
         return false;
     constructed = layouts.defaultLayout;
@@ -367,74 +296,8 @@ Reference buildThisByTag(Walker& walker, FunctionID constructor, Reference proto
     if (!positionOfTagAmongArguments(walker, constructor) || !tag || !tag.isRecord())
         return { };
     const TaggedFamily& family = walker.program().taggedFamilies[findMakerForTaggedMakers(walker, constructor)->family];
-    LayoutsForTag layouts = collectLayoutsForTag(walker, family, tag, SwitchOnTextsOfTags::IsForeseen);
+    LayoutsForTag layouts = collectLayoutsForTag(walker, family, tag);
     return buildObjectByTag(walker, layouts, tag, prototype, origin);
-}
-
-bool buildObjectOfTaggedClassConstructor(Walker& walker, const BodyValue& allocation)
-{
-    if (allocation.opcode() != Opcode::NewObject)
-        return false;
-    const TaggedMaker* maker = findMakerForTaggedMakers(walker, walker.currentFunction());
-    if (!maker || maker->allocation != allocation.id())
-        return false;
-    const Program& program = walker.program();
-    const TaggedFamily& family = program.taggedFamilies[maker->family];
-    if (!walker.plan().hasOneInstance() || !walker.facts().isEvaluatedAtMostOnce(family.maker) || !walker.plan().hasClassRecord(family.maker))
-        return false;
-
-    BodyBlock entry = walker.currentBodyIndex().block(entryBlock);
-    Reference newTarget = walker.referenceOf(entry.parameter(*program.at(maker->constructor).newTargetParameterIndex()));
-    Reference tag = walker.referenceOf(entry.parameter(maker->tagParameter));
-    if (!newTarget || !tag || !tag.isRecord())
-        return false;
-    LayoutsForTag layouts = collectLayoutsForTag(walker, family, tag, SwitchOnTextsOfTags::IsNotForeseen);
-    if (layouts.isOneLayout() && layouts.defaultLayout == family.maker)
-        return false;
-    if (!layouts.isOneLayout() && walker.depthOfCopies())
-        return false;
-
-    Origin origin = walker.originOf(allocation);
-    Type typeOfNewTarget = walker.types().at(walker.typeOf(newTarget));
-    if (typeOfNewTarget.isObject() && typeOfNewTarget.isJavaScriptValue() && singleFunctionOf(walker.types(), typeOfNewTarget) == maker->constructor) {
-        if (Reference object = buildObjectByTag(walker, layouts, tag, { }, origin))
-            walker.bind(allocation.id(), object);
-        return true;
-    }
-
-    if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !newTarget.isValue() || !walker.facts().linked().mayBeMentionedBy(walker.unit(), maker->constructor))
-        return false;
-    Draft written = walker.draftOf(allocation);
-    if (walker.hasFailed())
-        return true;
-    Draft test(Opcode::IsClosureOf, origin);
-    walker.chooseConservativeFields(test);
-    test.setFunction(maker->constructor);
-    test.setValueOperand(newTarget);
-    Reference isOwnNewTarget = walker.build(WTF::move(test));
-    if (!isOwnNewTarget)
-        return true;
-
-    BlockID underOwnNewTarget = walker.addBlock();
-    BlockID underOtherNewTarget = walker.addBlock(BlockFrequency::Unlikely);
-    BlockID behind = walker.addBlock();
-    Reference object = walker.addParameter(behind, { }, Representation::Cell);
-    walker.branch(isOwnNewTarget, underOwnNewTarget, underOtherNewTarget);
-    walker.noteGuessOpened();
-
-    walker.continueIn(underOtherNewTarget);
-    walker.chooseConservativeFields(written);
-    if (Reference asWritten = walker.build(WTF::move(written)))
-        walker.jumpTo(behind, singleElementSpan(asWritten));
-
-    walker.continueIn(underOwnNewTarget);
-    if (Reference byTag = buildObjectByTag(walker, layouts, tag, { }, origin))
-        walker.jumpTo(behind, singleElementSpan(byTag));
-
-    walker.continueIn(behind);
-    if (!walker.isUnreachable())
-        walker.bind(allocation.id(), object);
-    return true;
 }
 
 } } } // namespace JSC::AOT::Typed

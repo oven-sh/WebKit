@@ -136,6 +136,7 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
             loadShapeTest(shapeTest);
             jit.load32(Address(shapeTest, ShapeTestData::offsetOfLast()), shapeTest);
             jit.add32(Address(r.value, offsetOfShapeWord), shapeTest);
+            jit.and32(TrustedImm32(shapeWordIsUnmarked - 1), shapeTest);
             isAccepted.append(jit.branch32(CCallHelpers::Equal, shapeTest, held));
             testFailed.append(jit.jump());
             isNotHashed.link(&jit);

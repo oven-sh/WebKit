@@ -32,17 +32,15 @@ ExceptionEmitter::ExceptionEmitter(CodeGenerator& generator)
     m_caughtWords = arena.createSpan<LValue>(numberOfBlocks);
     m_landingPadsOfBlocks = arena.createSpan<uint32_t>(numberOfBlocks);
 
-    findValuesCaughtByCleanups();
-    forEachReachedBlock([&](BlockID id, const Block& block) {
-        TerminatorKind kind = block.terminator.kind;
-        if (!block.handler || (kind != TerminatorKind::Rethrow && kind != TerminatorKind::Throw))
-            return;
+    Vector<BlockID, 8> blocksThatThrowIntoHandlers;
+    findValuesCaughtByCleanups(blocksThatThrowIntoHandlers);
+    for (BlockID id : blocksThatThrowIntoHandlers) {
         BlockID handler = handlerOf(id);
         if (!handler)
-            return;
-        if (kind == TerminatorKind::Rethrow || handlerTypeOf(handler) != HandlerType::Finally || keepsException(handler))
+            continue;
+        if (m_code.at(id).terminator.kind == TerminatorKind::Rethrow || handlerTypeOf(handler) != HandlerType::Finally || keepsException(handler))
             m_handlersEnteredByJump.set(handler.index());
-    });
+    }
 }
 
 BlockID ExceptionEmitter::handlerOf(BlockID block) const
@@ -70,11 +68,11 @@ uint32_t ExceptionEmitter::findOrAddLandingPad(const Edge& handler)
         next = first.iterator->value;
         first.iterator->value = added;
     }
-    m_landingPads.append(LandingPad { &handler, nullptr, 0, next });
+    m_landingPads.append(LandingPad { &handler, nullptr, 0, next, HandlerType::Catch });
     return added;
 }
 
-void ExceptionEmitter::findValuesCaughtByCleanups()
+void ExceptionEmitter::findValuesCaughtByCleanups(Vector<BlockID, 8>& blocksThatThrowIntoHandlers)
 {
     struct Caught {
         ValueID value;
@@ -82,6 +80,9 @@ void ExceptionEmitter::findValuesCaughtByCleanups()
     };
     Vector<Caught, 4> worklist;
     forEachReachedBlock([&](BlockID id, const Block& block) {
+        TerminatorKind kind = block.terminator.kind;
+        if (block.handler && (kind == TerminatorKind::Rethrow || kind == TerminatorKind::Throw))
+            blocksThatThrowIntoHandlers.append(id);
         if (!block.isHandlerBlock() || block.role == BlockRole::CatchHandler)
             return;
         for (ValueID value : m_code.valuesOf(id)) {
@@ -229,7 +230,7 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, Machine
     patch->clobberLateOnSuccessor(landingPadSuccessor, emitter<RuntimeCallEmitter>().registersClobberedByCalls());
     patch->effects.terminal = true;
 
-    patch->setGenerator([records = &m_records.exceptions, siteGenerator = patch->generator(), site, landingPadNumber = landingPad.indexInRecords, landingPadSuccessor, type = handlerTypeOf(handler->to), mayReturn](CCallHelpers& jit, const Machine::PatchParameters& params) {
+    patch->setGenerator([records = &m_records.exceptions, siteGenerator = patch->generator(), site, landingPadNumber = landingPad.indexInRecords, landingPadSuccessor, type = landingPad.type, mayReturn](CCallHelpers& jit, const Machine::PatchParameters& params) {
         siteGenerator->run(jit, params);
         std::span<MacroAssembler::Label* const> labels = params.successorLabels();
         if (mayReturn && !params.fallsThroughToSuccessor(0)) {
@@ -272,11 +273,12 @@ const ExceptionEmitter::LandingPad& ExceptionEmitter::landingPadFor(BlockID bloc
 
     landingPad.block = newBlock();
     landingPad.indexInRecords = static_cast<uint32_t>(m_records.exceptions.landingPads.size());
+    landingPad.type = handlerTypeOf(handler.to);
     m_records.exceptions.landingPads.append(nullptr);
 
     LBasicBlock siteBlock = m_out.m_block;
     m_out.appendTo(landingPad.block);
-    if (handlerTypeOf(handler.to) == HandlerType::SynthesizedCatch)
+    if (landingPad.type == HandlerType::SynthesizedCatch)
         callWithoutSite<Boxed>(RuntimeOperation::Catch, { }, { .isOnRarePath = true, .followsThrow = true });
     generator().passHandlerArguments(handler);
     if (isEnteredByJump(handler.to))

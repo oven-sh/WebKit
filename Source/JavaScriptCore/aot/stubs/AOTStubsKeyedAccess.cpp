@@ -530,7 +530,7 @@ static void locateAcceptedKind(StubAssembler& jit, GPRReg value, GPRReg type, GP
         loadStructure(jit, value, entry);
         isOfOtherRealm = branchIfNotOfThisRealm(jit, entry);
     }
-    jit.load32(Address(value, offsetOfShapeWord), kind);
+    loadShapeWordWithMark(jit, value, kind);
     hasKind.append(jit.branch32(CCallHelpers::AboveOrEqual, kind, TrustedImm32(static_cast<int32_t>(AcceptedKindOfValue::leastWordThatIsKind))));
     Jump isCompiledClosure = jit.branch8(CCallHelpers::Equal, Address(value, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledClosureType));
     if (isOfOtherRealm.isSet())
@@ -1712,9 +1712,8 @@ static void removeBySlotAndReturn(StubAssembler& jit, const KeyedProbeRegisters&
     fieldRemoval.loadSecondPayloadWord(jit, scratch);
     jit.store32(scratch, Address(base, offsetOfOrderWord));
     Jump staysAsBorn = fieldRemoval.branchUnlessFlag(jit, Slot::leavesStateOfBirth);
-    jit.load8(Address(base, JSCell::typeInfoFlagsOffset()), scratch);
-    jit.or32(TrustedImm32(TypeInfoPerCellBit), scratch);
-    jit.store8(scratch, Address(base, JSCell::typeInfoFlagsOffset()));
+    setFlagThatFieldHasLeft(jit, base, scratch);
+    setMarkOfCell(jit, base, scratch);
     staysAsBorn.link(&jit);
     returnThatPropertyIsGone(jit);
 

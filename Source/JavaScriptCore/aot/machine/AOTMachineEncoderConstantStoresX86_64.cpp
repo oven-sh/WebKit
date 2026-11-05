@@ -21,6 +21,8 @@ bool Encoder::tryEncodePairOfStores(const Step& first, const Step& second)
     const Operation* firstStore = first.operation;
     const Operation* secondStore = second.operation;
     ASSERT(firstStore->opcode() == Store && secondStore->opcode() == Store);
+    if (!first.sources[0].isImmediate() || !second.sources[0].isImmediate())
+        return false;
 
     Width width = firstStore->accessWidth();
     if (secondStore->accessWidth() != width || (width != Width32 && width != Width64))

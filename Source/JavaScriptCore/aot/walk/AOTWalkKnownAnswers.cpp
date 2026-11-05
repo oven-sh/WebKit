@@ -703,7 +703,7 @@ static Reference referenceToRecordInKnownAnswers(const Code& code, ValueID recor
     return code.isConstant(record) ? Reference::constant(record) : Reference::value(record);
 }
 
-static Reference rootInKnownAnswers(const Code& code, Reference name)
+static ALWAYS_INLINE Reference rootInKnownAnswers(const Code& code, Reference name)
 {
     return name.isValue() ? referenceToRecordInKnownAnswers(code, rootOfCellInSweptCode(code, name.id())) : name;
 }

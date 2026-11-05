@@ -10,29 +10,24 @@
 
 #include <algorithm>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC { namespace AOT { namespace Machine {
 
 static constexpr uint32_t machineNumberingSmallestNumberOfBuckets = 64;
 
-static bool machineNumberingIsAddressInFrame(const Operation* operation)
+template<typename EntryType>
+static ALWAYS_INLINE void machineNumberingMakeFirstBuckets(Arena& arena, ArenaVector<EntryType>& entries, ArenaVector<uint32_t>& buckets)
 {
-    if (!operation->hasNoPosition())
-        return false;
-    if (operation->opcode() == Add)
-        operation = operation->child(0);
-    return operation->opcode() == FramePointer || operation->opcode() == SlotBase;
-}
-
-bool Numbering::isComputedFromAddressInFrame(const Operation* operation)
-{
-    ASSERT(!isLoad(operation->opcode()));
-    return std::ranges::any_of(operation->children(), machineNumberingIsAddressInFrame);
+    ASSERT(buckets.isEmpty() && entries.isEmpty());
+    buckets.fill(arena, machineNumberingSmallestNumberOfBuckets, 0);
+    entries.reserve(arena, machineNumberingSmallestNumberOfBuckets);
 }
 
 template<typename EntryType>
 static void machineNumberingGrowBuckets(Arena& arena, ArenaVector<EntryType>& entries, ArenaVector<uint32_t>& buckets)
 {
-    uint32_t numberOfBuckets = buckets.isEmpty() ? machineNumberingSmallestNumberOfBuckets : buckets.size() * 2;
+    uint32_t numberOfBuckets = buckets.size() * 2;
     RELEASE_ASSERT(numberOfBuckets);
     buckets.fill(arena, numberOfBuckets, 0);
     entries.reserve(arena, numberOfBuckets);
@@ -52,8 +47,8 @@ Numbering::Numbering(Procedure& procedure)
     , m_savesFrameOnSuspend(procedure.traits().savesFrameOnSuspend)
     , m_timesOfWrites(procedure.arena().createSpan<TimesOfWrites>(procedure.heapTree().size()))
 {
-    machineNumberingGrowBuckets(m_arena, m_log, m_buckets);
-    machineNumberingGrowBuckets(m_arena, m_withoutPosition, m_bucketsWithoutPosition);
+    machineNumberingMakeFirstBuckets(m_arena, m_log, m_buckets);
+    machineNumberingMakeFirstBuckets(m_arena, m_withoutPosition, m_bucketsWithoutPosition);
 }
 
 void Numbering::growBucketsWithoutPosition()
@@ -103,7 +98,7 @@ bool Numbering::isStillValid(const NumberingKey& key, const Operation* load) con
 void Numbering::addPurePatch(const NumberingKeyOfPurePatch& key, PatchOperation* patch)
 {
     RELEASE_ASSERT(!patch->hasNoPosition() && !patch->traps() && patch->opcode() == Patch && patch->pureFunction && !patch->effects.terminal);
-    if (m_savesFrameOnSuspend && isComputedFromAddressInFrame(patch))
+    if (m_savesFrameOnSuspend && std::ranges::any_of(patch->operands(), isAddressInFrame))
         return;
 
     ++m_numberOfEntriesThatWritesEnd;
@@ -119,17 +114,8 @@ void Numbering::addInPlaceOfPurePatch(const NumberingKeyOfPurePatch& key, Operat
     ASSERT(matches(key, m_log.last()));
 }
 
-void Numbering::didWrite(const HeapSet& heaps)
+void Numbering::didWriteListedHeaps(std::span<const HeapIndex> list)
 {
-    if (m_numberOfEntriesThatWritesEnd == m_numberOfEntriesEndedByWriteToAllHeaps)
-        return;
-    if (heaps.isTop()) {
-        m_timesOfWrites[rootHeapIndex].toHeap = timeOfNewWrite();
-        m_numberOfEntriesEndedByWriteToAllHeaps = m_numberOfEntriesThatWritesEnd;
-        return;
-    }
-
-    std::span<const HeapIndex> list = heaps.heaps();
     if (list.empty())
         return;
     if (m_numberOfEntriesThatWritesEnd == m_numberOfEntriesEndedByLastListWritten && list.data() == m_lastListWritten.data() && list.size() == m_lastListWritten.size())
@@ -138,13 +124,18 @@ void Numbering::didWrite(const HeapSet& heaps)
     m_lastListWritten = list;
 
     uint32_t time = timeOfNewWrite();
+    TimesOfWrites* const times = m_timesOfWrites.data();
+    const size_t numberOfHeaps = m_timesOfWrites.size();
+    const HeapIndex* const parents = m_heapTree.parents().data();
+    RELEASE_ASSERT(numberOfHeaps <= m_heapTree.size());
     for (HeapIndex heap : list) {
-        m_timesOfWrites[heap].toHeap = time;
+        RELEASE_ASSERT(heap < numberOfHeaps);
+        times[heap].toHeap = time;
         while (heap != rootHeapIndex) {
-            heap = m_heapTree.parentOf(heap);
-            if (m_timesOfWrites[heap].belowHeap == time)
+            heap = parents[heap];
+            if (times[heap].belowHeap == time)
                 break;
-            m_timesOfWrites[heap].belowHeap = time;
+            times[heap].belowHeap = time;
         }
     }
 }
@@ -157,19 +148,6 @@ void Numbering::forgetSuspendedBlocksFrom(uint32_t numberKept)
         if (placeOfBlock == place)
             placeOfBlock = 0;
     }
-}
-
-bool Numbering::canRestore(const ScopeMark& mark) const
-{
-    if (mark.floor == mark.logSize || mark.logSize > m_log.size())
-        return false;
-    return m_log[mark.logSize - 1].operation == mark.newestOperation;
-}
-
-void Numbering::inheritScope(const ScopeMark& mark)
-{
-    restore(mark);
-    m_endOfInheritedEntries = m_log.size();
 }
 
 void Numbering::switchBlocksThatMayWait(Block* from, Block* to)
@@ -235,5 +213,7 @@ void Numbering::growBuckets()
 }
 
 } } } // namespace JSC::AOT::Machine
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(AOT)

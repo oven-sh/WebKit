@@ -63,7 +63,7 @@ static bool mayDeferForClosuresOfLiterals(const Program& program, const Facts& f
 {
     if (slot.storage != SlotStorage::Inline || slot.representation != SlotRepresentation::JSValue || !slot.indexInLayoutRecord)
         return false;
-    if (slot.holdsAccessor || slot.mayExistWithoutStorage || slot.isFilledAtBirth || slot.deferredFunction)
+    if (slot.holdsAccessor || slot.mayExistWithoutStorage || slot.isFilledAtBirth || slot.typeOfRawValue || slot.deferredFunction)
         return false;
     constexpr OptionSet<FieldFlags> excludedFlags { FieldFlags::IsPrivate, FieldFlags::IsImmutable, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden, FieldFlags::IsRemovedAsUnread, FieldFlags::IsAlsoInPrototype };
     const Field& field = fieldAt(program, declarationOf(program, reference));

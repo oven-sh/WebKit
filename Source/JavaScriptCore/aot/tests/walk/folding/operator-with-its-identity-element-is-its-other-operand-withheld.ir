@@ -8,10 +8,7 @@
 # RUN(INTEGER): walk f3 mechanisms=none+TypedOperations+UnboxedNumbers
 # INTEGER-LABEL: code f3:Body
 # INTEGER: = Add
-# RUN(DISTANCE): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
-# DISTANCE-LABEL: code f4:Body
-# DISTANCE: = Sub
-# RUN(TWICE): walk f7 mechanisms=none+TypedOperations+UnboxedNumbers
-# TWICE-LABEL: code f7:Body
+# RUN(TWICE): walk f4 mechanisms=none+TypedOperations+UnboxedNumbers
+# TWICE-LABEL: code f4:Body
 # TWICE-COUNT-2: = LogicalNot
 # PROGRAM-OF: operator-with-its-identity-element-is-its-other-operand.ir

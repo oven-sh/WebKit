@@ -12,6 +12,7 @@
 #include "CCallHelpers.h"
 #include "LinkBuffer.h"
 #include "RelocationKind.h"
+#include <type_traits>
 
 namespace JSC { namespace AOT {
 
@@ -87,11 +88,12 @@ public:
 
     void finalize(bool dumpsDisassembly, ASCIILiteral name);
     std::span<uint8_t> bytes();
+    Vector<uint8_t> takeBytes();
     CCallHelpers::Label end() const { return m_end; }
 
 private:
     CCallHelpers::Label m_end;
-    Vector<uint32_t> m_storage;
+    Vector<uint8_t> m_storage;
     LinkBuffer m_linkBuffer;
     uint32_t m_sizeOfCode { 0 };
     bool m_didFinalize { false };
@@ -126,6 +128,51 @@ constexpr bool relocationMayName(RelocationKind kind, SymbolSpace space)
         return space != SymbolSpace::Number && space != SymbolSpace::InstanceWord;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
+template<RelocationKind kind>
+using ConstantRelocationKind = std::integral_constant<RelocationKind, kind>;
+
+template<typename Functor>
+ALWAYS_INLINE auto withKindAsConstant(RelocationKind kind, const Functor& functor)
+{
+    switch (kind) {
+    case RelocationKind::Call:
+        return functor(ConstantRelocationKind<RelocationKind::Call> { });
+    case RelocationKind::Jump:
+        return functor(ConstantRelocationKind<RelocationKind::Jump> { });
+    case RelocationKind::ShortJump:
+        return functor(ConstantRelocationKind<RelocationKind::ShortJump> { });
+    case RelocationKind::ConditionalJump:
+        return functor(ConstantRelocationKind<RelocationKind::ConditionalJump> { });
+    case RelocationKind::ShortConditionalJump:
+        return functor(ConstantRelocationKind<RelocationKind::ShortConditionalJump> { });
+    case RelocationKind::ConditionalJumpThenNop:
+        return functor(ConstantRelocationKind<RelocationKind::ConditionalJumpThenNop> { });
+    case RelocationKind::TestBitJump:
+        return functor(ConstantRelocationKind<RelocationKind::TestBitJump> { });
+    case RelocationKind::TestBitJumpThenNop:
+        return functor(ConstantRelocationKind<RelocationKind::TestBitJumpThenNop> { });
+    case RelocationKind::InvertedJumpThenJump:
+        return functor(ConstantRelocationKind<RelocationKind::InvertedJumpThenJump> { });
+    case RelocationKind::AddressNear:
+        return functor(ConstantRelocationKind<RelocationKind::AddressNear> { });
+    case RelocationKind::AddressFar:
+        return functor(ConstantRelocationKind<RelocationKind::AddressFar> { });
+    case RelocationKind::Load64:
+        return functor(ConstantRelocationKind<RelocationKind::Load64> { });
+    case RelocationKind::Distance32:
+        return functor(ConstantRelocationKind<RelocationKind::Distance32> { });
+    case RelocationKind::InstanceOffset:
+        return functor(ConstantRelocationKind<RelocationKind::InstanceOffset> { });
+    case RelocationKind::Number32:
+        return functor(ConstantRelocationKind<RelocationKind::Number32> { });
+    case RelocationKind::InstanceAccess:
+        return functor(ConstantRelocationKind<RelocationKind::InstanceAccess> { });
+    case RelocationKind::NumberWord:
+        return functor(ConstantRelocationKind<RelocationKind::NumberWord> { });
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 class JS_EXPORT_PRIVATE RelocationRecorder {
@@ -180,6 +227,7 @@ public:
 #endif
 
     uint32_t numberOfRelocations() const { return m_pending.size(); }
+    void reserveRoomFor(size_t number) { m_pending.reserveCapacity(number); }
 
     std::expected<RelocatableCode, LinkFailure> finalize(LinkBuffer::Profile, BuildContext*);
     std::expected<Vector<Relocation>, LinkFailure> link(ImageLinkBuffer&, BuildContext*);
@@ -213,7 +261,9 @@ private:
 
 [[nodiscard]] ALWAYS_INLINE bool applyRelocation(std::span<uint8_t> code, size_t bodyStart, const Relocation& relocation, size_t target)
 {
-    return MacroAssembler::applyRelocation(relocation.kind, code, bodyStart + relocation.offset, target);
+    return withKindAsConstant(relocation.kind, [&](auto kind) ALWAYS_INLINE_LAMBDA {
+        return MacroAssembler::applyRelocation(kind, code, bodyStart + relocation.offset, target);
+    });
 }
 
 ALWAYS_INLINE bool isFarInstanceWord([[maybe_unused]] int32_t distance)

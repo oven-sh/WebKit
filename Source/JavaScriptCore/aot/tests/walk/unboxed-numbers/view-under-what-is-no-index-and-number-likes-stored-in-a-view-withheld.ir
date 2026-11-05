@@ -1,9 +1,0 @@
-# the same accesses with unboxed numbers withheld: the store of a boolean is no proven store, and the view is asked under every number
-# RUN: walk f3 mechanisms=none+DirectCalls+Folding+TypedOperations
-# CHECK-LABEL: code f3:Body
-# CHECK: PutTypedArrayElement
-# CHECK: = GetTypedArrayElement
-# RUN(NEVER): walk f1 mechanisms=none+DirectCalls+TypedOperations
-# NEVER-NOT: = ToNumber
-# NEVER-NOT: level=Proven
-# PROGRAM-OF: view-under-what-is-no-index-and-number-likes-stored-in-a-view.ir

@@ -32,7 +32,6 @@ interface BindingLists {
   classes: readonly string[];
   instanceStructureLookup: string;
   cachedGetters: readonly string[];
-  customGetters: readonly string[];
   directFunctions: readonly string[];
   nativeFunctions: readonly string[];
   hostNumbers: readonly string[];
@@ -183,21 +182,6 @@ function formatCachedGetterBinding(overload: ModelOverload): string[] {
   ];
 }
 
-function customGetterOf({ code: { implementation } }: ModelOverload): string | null {
-  return implementation.how === "HostCall" ? implementation.customGetter : null;
-}
-
-function formatCustomGetterBinding(overload: ModelOverload): string[] {
-  const symbol = customGetterOf(overload);
-  if (symbol === null) return [];
-  return [
-    formatAggregate([
-      ["overload", formatId("BuiltinOverloadID", overload)],
-      ["function", symbol],
-    ]),
-  ];
-}
-
 function findFeatureOfHolders(builtin: ModelBuiltin): FeatureName | undefined {
   for (let holder = builtin.holder; holder !== null; holder = holder.holder) {
     const guard = holder.attachments.featureUses.find(use => use.isGuard);
@@ -209,11 +193,10 @@ function findFeatureOfHolders(builtin: ModelBuiltin): FeatureName | undefined {
 function formatHostEntryPointRecord(
   table: string,
   builtin: ModelBuiltin,
-  symbol: string | null,
+  symbol: string,
   formatRecord: FormatTableEntryRecord,
   stub: "Throw" | "Abort" = "Throw",
 ): string[] {
-  if (symbol === null) return [];
   const guard = builtin.attachments.featureUses.find(use => use.isGuard);
   if (guard !== undefined)
     return [formatRecord(`Bun::AOTHostBindings::${table}`, guard.feature, stub, symbol, builtin.id)];
@@ -268,7 +251,6 @@ function emitBindings(declaration: string, lists: BindingLists): string {
   const arrays = [
     ["classes", "static constexpr BuiltinClassBinding", lists.classes],
     ["cachedGetters", "static constexpr BuiltinCachedGetterBinding", lists.cachedGetters],
-    ["customGetters", "static constexpr BuiltinCustomGetterBinding", lists.customGetters],
     ["directFunctions", "static const BuiltinDirectFunctionBinding", lists.directFunctions],
     ["nativeFunctions", "static constexpr BuiltinNativeFunctionBinding", lists.nativeFunctions],
     ["hostNumbers", "static constexpr BuiltinHostNumberBinding", lists.hostNumbers],
@@ -446,7 +428,6 @@ export function emitHostBindings(
   const classes = findClassesWithBindings(model, "Host");
   const nativeFunctions = findNativeFunctions(model, "Host");
   const directFunctions = findDirectFunctions(model);
-  const customGetters = sortUnique(model.overloads.flatMap(overload => customGetterOf(overload) ?? []));
   const symbolsWithoutHeader = collectNativeFunctionSymbols(
     nativeFunctions.filter(({ nativeFunction }) => nativeFunction.header === null),
   );
@@ -466,10 +447,6 @@ export function emitHostBindings(
     ...nativeFunctions.flatMap(({ builtin, nativeFunction }) =>
       formatHostEntryPointRecord("nativeFunctions", builtin, nativeFunction.symbol, formatRecord),
     ),
-    ...model.overloads.flatMap(overload => {
-      const symbol = customGetterOf(overload);
-      return formatHostEntryPointRecord("customGetters", overload.builtin, symbol, formatRecord);
-    }),
   ];
   const blocks = [
     `${fileHeader}#include "root.h"`,
@@ -481,7 +458,6 @@ export function emitHostBindings(
       nativeCallListStamp,
     ),
     emitHostFunctionDeclarations(symbolsWithoutHeader.filter(isInNamespace)),
-    customGetters.map(symbol => `JSC_DECLARE_CUSTOM_GETTER(${symbol});`).join("\n"),
     "namespace Bun::AOTHostBindings {",
     `using namespace JSC::AOT;\n${namespacesOfHostFunctions}`,
     emitCallListReference(nativeCallListStamp),
@@ -490,7 +466,6 @@ export function emitHostBindings(
       classes: classes.map(builtinClass => formatClassBinding(builtinClass, formatId("BuiltinClassID", builtinClass))),
       instanceStructureLookup: emitInstanceStructureLookup(classes),
       cachedGetters: model.overloads.flatMap(formatCachedGetterBinding),
-      customGetters: model.overloads.flatMap(formatCustomGetterBinding),
       directFunctions: directFunctions.map(formatDirectFunctionBinding),
       nativeFunctions: nativeFunctions.map(formatHostNativeFunction),
       hostNumbers: model.builtins.flatMap(formatHostNumberBinding),

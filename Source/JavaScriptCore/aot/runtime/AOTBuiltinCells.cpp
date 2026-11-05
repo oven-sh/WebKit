@@ -98,6 +98,10 @@ BuiltinCells::BuiltinCells(State& state)
     , m_writtenMembers(BuiltinTable::singleton().builtinCount())
 {
     m_instance.prefix().builtinCells = m_cells;
+    size_t numberOfClasses = BuiltinTable::singleton().classCount();
+    m_classesWrittenAbove = unsafeMakeSpan(state.tableArena.allocate<uint8_t>(numberOfClasses), numberOfClasses);
+    zeroSpan(m_classesWrittenAbove);
+    m_instance.builtins.classesWrittenAbove = m_classesWrittenAbove.data();
     m_instance.builtins.hostValues = std::bit_cast<EncodedJSValue*>(std::bit_cast<uintptr_t>(m_values.data()) - m_numberOfFirstValue * sizeof(EncodedJSValue));
     m_instance.builtinBindings.directFunctions = BuiltinBindings::directFunctions().data();
     m_instance.builtinBindings.nativeFunctionsOfHost = BuiltinBindings::nativeFunctionsOfHost().data();
@@ -519,9 +523,29 @@ bool BuiltinCells::awaitCreation(uint32_t number)
     return true;
 }
 
+void BuiltinCells::noteWriteAboveInstances(BuiltinID holder)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    holder = table.canonicalID(holder);
+    if (table.at(holder).kind != BuiltinKind::Prototype || m_holdersWhoseWriteIsNoted.set(holder.index()))
+        return;
+    for (unsigned index = 0; index < table.classCount(); ++index) {
+        BuiltinID above;
+        for (BuiltinClassID current(index); current && !above; current = table.at(current).parent)
+            above = table.at(current).prototype;
+        while (above && table.canonicalID(above) != holder) {
+            const Builtin& object = table.at(table.canonicalID(above));
+            above = object.prototypeLink == BuiltinPrototypeLink::Builtin ? object.inheritsFrom : BuiltinID();
+        }
+        if (above)
+            m_classesWrittenAbove[index] = 1;
+    }
+}
+
 void BuiltinCells::willWrite(BuiltinID member, UniquedStringImpl* key)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
+    noteWriteAboveInstances(table.at(member).holder);
     if (!BuiltinBindings::provides(table.at(member).origin) || m_writtenMembers.quickSet(member.index()))
         return;
     JSObject* holder = m_lockedObjects.get(table.at(member).holder.index());
@@ -608,6 +632,7 @@ void BuiltinCells::cannotHearOfWritesTo(BuiltinID holder)
         if (table.at(key->builtin()).holder == holder && !awaitCreation(number))
             cell(number);
     }
+    noteWriteAboveInstances(holder);
     for (BuiltinID member : table.membersOf(holder))
         m_writtenMembers.quickSet(member.index());
 }

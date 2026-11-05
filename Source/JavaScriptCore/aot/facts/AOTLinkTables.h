@@ -11,6 +11,7 @@
 #include "AOTCodeRole.h"
 #include "AOTEffects.h"
 #include "AOTFamilies.h"
+#include "AOTLargeList.h"
 #include "AOTLinkCoroutineTables.h"
 #include "AOTLinkKnownEffects.h"
 #include "AOTMechanisms.h"
@@ -21,12 +22,15 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class BodyIndexTable;
+
 struct LinkedParameter {
     TypeID expected;
     bool expectedIsDeclared { false };
     TypeID proven;
     bool staysAsItsClassMakesIt { false };
     bool isOnlyCalled { false };
+    bool isCapturedWhereOnlyCalled { false };
 };
 
 struct LinkedFunction {
@@ -41,8 +45,6 @@ struct LinkedFunction {
     bool isInQueueFromStart { false };
     bool namesOnlyWhatEveryFunctionLeadsTo { false };
     bool closuresAreChanged { false };
-    bool closuresStayAsMade { false };
-    bool closuresGetNoNameButPrototype { false };
     bool closuresGetOnlyNamesThatAreListed { false };
     bool prototypePropertyStaysAsMade { false };
     uint32_t cycle { 0 };
@@ -70,6 +72,7 @@ struct LinkedCell {
     bool holdsAccessorFromBirth { false };
     bool isOnlyGivenUndefinedByMakers { false };
     bool isLeftUndefinedByMakers { false };
+    bool isGivenUndefinedOrNullInSight { false };
     bool isGivenByNoMaker { false };
     OptionSet<FieldForm> formThatDefinitionsCreate;
 };
@@ -94,7 +97,6 @@ struct LinkedLayout {
     bool listsEveryStaticMember { false };
     bool hasConstructorFunctionInRow { true };
     bool isFilledUnderComputedKeys { false };
-    bool keysMayBeListed { true };
     bool onlyOwnObjectsStandBelowPrototype { false };
     bool prototypeObjectIsSettledAheadOfEveryObject { false };
     LayoutID heritage;
@@ -124,7 +126,6 @@ struct LinkedNameOnPrototype {
 struct LinkedNameOnFunction {
     FunctionID holder;
     PropertyKeyID key;
-    FunctionID function;
 };
 
 struct LinkTables;
@@ -216,6 +217,14 @@ struct LinkedReceiverAsMade {
     friend constexpr auto operator<=>(const LinkedReceiverAsMade&, const LinkedReceiverAsMade&) = default;
 };
 
+struct LinkedVariableStoredFirst {
+    FunctionID body;
+    FunctionID functionWhoseUseCounts;
+    VariableID variable;
+
+    friend constexpr auto operator<=>(const LinkedVariableStoredFirst&, const LinkedVariableStoredFirst&) = default;
+};
+
 struct LinkedCatch {
     FunctionID function;
     BlockID handler;
@@ -249,6 +258,13 @@ struct WriteFollowedToBuiltin {
     bool knowsNamesBrought { false };
 };
 
+struct LinkedCallOfBuiltin {
+    FunctionID caller;
+    ValueID site;
+    BuiltinID row;
+    bool isConstruction { false };
+};
+
 struct LookupsPastProgramObjects {
     BitVector namesRead;
     BitVector namesCalled;
@@ -257,6 +273,7 @@ struct LookupsPastProgramObjects {
     BitVector builtinsCalled;
     BitVector builtinsLetGo;
     BitVector builtinsCalledOutOfSight;
+    Vector<LinkedCallOfBuiltin> callsOfBuiltinsAtSites;
     // MUST BE TRUE OF THE PROGRAM THAT RUNS: each is locked at the start (Facts::builtinMembersLockedAtStartUp()), with every mechanism withheld too: what is reached hangs on it.
     BitVector membersTakenForConstants;
     BitVector membersWritten;
@@ -295,13 +312,16 @@ private:
 
 struct LinkTables {
     BitVector exportsThatStayIn;
-    Vector<LinkedFunction> functions;
-    Vector<LinkedParameter> parameters;
+    LargeList<LinkedFunction> functions;
+    LargeList<LinkedParameter> parameters;
     Vector<LinkedCall> calls;
     Vector<LinkedCallThatFindsBuiltin> callsThatFindBuiltins;
     BitVector callersThatFindBuiltins;
     Vector<uint32_t> firstCallOfCaller;
     Vector<LinkedAccess> accessesUnderOneKey;
+    Vector<PropertyKeyID> symbolsWithPreparation;
+    bool everySymbolOfLibraryMayHavePreparation { true };
+    bool lookupUnderKeyMayRunPreparation(const Program&, PropertyKeyID) const;
     Vector<LinkedGetterAtRead> gettersExpectedAtReads;
     Vector<LinkedCoroutine> coroutines;
     const LinkedCoroutine* findCoroutine(FunctionID) const;
@@ -321,6 +341,12 @@ struct LinkTables {
     Vector<VariableID> exportsSpiedOnThatWireLeavesShut;
     LinkKnownEffects known;
     Vector<LinkedCatch> catches;
+    Vector<LinkedVariableStoredFirst> variablesStoredFirst;
+    std::span<const LinkedVariableStoredFirst> variablesStoredFirstIn(FunctionID body) const LIFETIME_BOUND
+    {
+        auto found = std::ranges::equal_range(variablesStoredFirst, body, { }, &LinkedVariableStoredFirst::body);
+        return { found.begin(), found.end() };
+    }
     Vector<LinkedGroup> groups;
     Vector<uint32_t> firstReferrer;
     Vector<FunctionID> referrers;
@@ -330,7 +356,7 @@ struct LinkTables {
     Vector<uint32_t> firstCycleNamed;
     Vector<uint32_t> cyclesNamed;
     Vector<uint32_t> firstFieldOfLayout;
-    Vector<LinkedCell> fields;
+    LargeList<LinkedCell> fields;
     Vector<uint32_t> firstAppendedFieldOfLayout;
     Vector<PropertyKeyID> appendedKeys;
     Vector<uint32_t> firstKeyAppendedByHeldAloneOfLayout;
@@ -339,7 +365,7 @@ struct LinkTables {
     Vector<LinkedCell> appendedFields;
     BitVector appendedFieldsThatSomeWrittenTypeRequires;
     BitVector appendedFieldsThatTypeOfThisRequires;
-    BitVector appendedFieldsNamedMostOften;
+    BitVector appendedFieldsThatTakeWordLeftInCell;
     Vector<uint32_t> firstRunOfMakersOfLayout;
     Vector<uint32_t> firstKeyOfRunOfMakers;
     Vector<PropertyKeyID> keysOfRunsOfMakers;
@@ -354,10 +380,10 @@ struct LinkTables {
     Vector<RunBehindTaggedMakers> runsBehindTaggedMakers;
     Vector<PropertyKeyID> keysOfRunsBehindTaggedMakers;
     Vector<LayoutID> makersOfRunsBehindTaggedMakers;
-    Vector<LinkedCell> variables;
+    LargeList<LinkedCell> variables;
     Vector<uint32_t> firstCaptureOfFunction;
-    Vector<LinkedCell> captures;
-    Vector<LinkedLayout> layouts;
+    LargeList<LinkedCell> captures;
+    LargeList<LinkedLayout> layouts;
     Vector<LinkedMember> members;
     Vector<uint32_t> membersByKey;
     std::array<BitVector, 2> keysOfMembers;
@@ -435,10 +461,10 @@ struct LinkTables {
         std::optional<size_t> place = findPlaceOfAppendedField(field);
         return place && appendedFieldsThatSomeWrittenTypeRequires.get(*place);
     }
-    bool isAppendedFieldNamedMostOften(FieldReference field) const
+    bool takesWordLeftInCell(FieldReference field) const
     {
         std::optional<size_t> place = findPlaceOfAppendedField(field);
-        return place && appendedFieldsNamedMostOften.get(*place);
+        return place && appendedFieldsThatTakeWordLeftInCell.get(*place);
     }
     bool isAppendedFieldRequiredByTypeOfThis(FieldReference field) const
     {
@@ -462,7 +488,32 @@ struct LinkTables {
     const LinkedCell& variable(VariableID id) const LIFETIME_BOUND { return variables[id.index()]; }
     const LinkedCell& capture(FunctionID id, uint32_t capture) const LIFETIME_BOUND { return captures[firstCaptureOfFunction[id.index()] + capture]; }
     const LinkedLayout& layout(LayoutID id) const LIFETIME_BOUND { return layouts[id.index()]; }
-    FunctionID calleeAt(FunctionID caller, ValueID site) const;
+    template<typename Listed, typename Place>
+    static ALWAYS_INLINE const Listed* findListedUnder(std::span<const Listed> ascending, Place place, const auto& placeOf)
+    {
+        size_t length = ascending.size();
+        if (!length)
+            return nullptr;
+        auto found = ascending.begin();
+        while (length > 1) {
+            size_t half = length / 2;
+            found += placeOf(found[half - 1]) < place ? half : 0;
+            length -= half;
+        }
+        return placeOf(*found) == place ? &*found : nullptr;
+    }
+    static uint64_t placeOfSite(FunctionID function, ValueID site) { return static_cast<uint64_t>(function.index()) << 32 | site.index(); }
+    ALWAYS_INLINE FunctionID calleeAt(FunctionID caller, ValueID site) const
+    {
+        RELEASE_ASSERT(firstCallOfCaller.last() == calls.size());
+        if (caller.index() + 1 >= firstCallOfCaller.size())
+            return { };
+        uint32_t first = firstCallOfCaller[caller.index()];
+        const LinkedCall* found = findListedUnder(calls.span().subspan(first, firstCallOfCaller[caller.index() + 1] - first), site, [](const LinkedCall& call) {
+            return call.site;
+        });
+        return found ? found->callee : FunctionID();
+    }
     bool onlyCallsWhatArrivesAt(FunctionID function, unsigned entryParameter) const
     {
         if (function.index() >= functions.size())
@@ -470,10 +521,38 @@ struct LinkTables {
         std::span<const LinkedParameter> arriving = parametersOf(function);
         return entryParameter < arriving.size() && arriving[entryParameter].isOnlyCalled;
     }
-    const LinkedCallThatFindsBuiltin* findCallThatFindsBuiltin(FunctionID caller, ValueID site) const LIFETIME_BOUND;
-    PropertyKeyID keyAt(FunctionID, ValueID site) const;
-    TypeID resultOfReadByKey(FunctionID, ValueID site) const;
-    const LinkedContentsAtOperation* contentsAtOperation(FunctionID, ValueID site) const;
+    bool capturesWhatItOnlyCalls(FunctionID function) const
+    {
+        return function.index() < functions.size() && std::ranges::any_of(parametersOf(function), &LinkedParameter::isCapturedWhereOnlyCalled);
+    }
+    const LinkedCallThatFindsBuiltin* findCallThatFindsBuiltin(FunctionID caller, ValueID site) const LIFETIME_BOUND
+    {
+        if (!callersThatFindBuiltins.get(caller.index()))
+            return nullptr;
+        return findListedUnder(callsThatFindBuiltins.span(), placeOfSite(caller, site), [](const LinkedCallThatFindsBuiltin& call) {
+            return placeOfSite(call.caller, call.site);
+        });
+    }
+    PropertyKeyID keyAt(FunctionID function, ValueID site) const
+    {
+        const LinkedAccess* found = findListedUnder(accessesUnderOneKey.span(), placeOfSite(function, site), [](const LinkedAccess& access) {
+            return placeOfSite(access.function, access.site);
+        });
+        return found ? found->key : PropertyKeyID();
+    }
+    TypeID resultOfReadByKey(FunctionID function, ValueID site) const
+    {
+        const LinkedResultOfRead* found = findListedUnder(resultsOfReadsByKey.span(), placeOfSite(function, site), [](const LinkedResultOfRead& read) {
+            return placeOfSite(read.function, read.site);
+        });
+        return found ? found->proven : TypeID();
+    }
+    const LinkedContentsAtOperation* contentsAtOperation(FunctionID function, ValueID site) const
+    {
+        return findListedUnder(contentsAtOperations.span(), placeOfSite(function, site), [](const LinkedContentsAtOperation& contents) {
+            return placeOfSite(contents.function, contents.site);
+        });
+    }
     bool receiverStaysAsMadeAt(FunctionID function, ValueID site) const
     {
         auto placeOf = [](const LinkedReceiverAsMade& listed) {

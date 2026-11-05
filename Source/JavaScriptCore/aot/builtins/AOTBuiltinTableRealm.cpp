@@ -957,6 +957,8 @@ public:
         BuiltinName name = table.nameOf(m_vm, uid);
         if (BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID())
             m_writes->willWrite(member, uid);
+        else
+            m_writes->willAddNameTo(m_holder);
     }
 
     bool contains(UniquedStringImpl* uid) const final

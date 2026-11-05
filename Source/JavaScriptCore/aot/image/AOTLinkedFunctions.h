@@ -96,6 +96,7 @@ public:
         , m_fusedCallEntries(WTF::move(fusedCallEntries))
     {
         RELEASE_ASSERT(m_placesInCode.size() == m_functions.size());
+        indexPlacesInCode();
     }
     explicit LinkedFunctions(Vector<CompiledCode>&& functions, Vector<FusedCallEntry>&& fusedCallEntries = { })
         : LinkedFunctions(keepInBlocks(WTF::move(functions)), WTF::move(fusedCallEntries))
@@ -154,13 +155,40 @@ public:
 
     std::optional<uint32_t> positionOfCodeAt(uint32_t place) const
     {
-        auto found = std::ranges::lower_bound(m_placesInCode, place);
-        if (found == m_placesInCode.end() || *found != place)
+        std::span<const uint32_t> places = m_placesInCode.span();
+        size_t first = 0;
+        if (!m_firstPositionInGroupOfPlaces.isEmpty()) {
+            size_t group = static_cast<size_t>(place) >> m_shiftOfGroupsOfPlaces;
+            if (group + 1 >= m_firstPositionInGroupOfPlaces.size())
+                return std::nullopt;
+            first = m_firstPositionInGroupOfPlaces[group];
+            places = places.subspan(first, m_firstPositionInGroupOfPlaces[group + 1] - first);
+        }
+        auto found = std::ranges::lower_bound(places, place);
+        if (found == places.end() || *found != place)
             return std::nullopt;
-        return static_cast<uint32_t>(found - m_placesInCode.begin());
+        return static_cast<uint32_t>(first + static_cast<size_t>(found - places.begin()));
     }
 
 private:
+    void indexPlacesInCode()
+    {
+        std::span<const uint32_t> places = m_placesInCode.span();
+        if (places.empty() || !std::ranges::is_sorted(places))
+            return;
+        size_t lastPlace = places.back();
+        while (lastPlace >> m_shiftOfGroupsOfPlaces >= places.size())
+            ++m_shiftOfGroupsOfPlaces;
+        size_t numberOfGroups = (lastPlace >> m_shiftOfGroupsOfPlaces) + 1;
+        m_firstPositionInGroupOfPlaces.grow(numberOfGroups + 1);
+        size_t group = 0;
+        for (size_t position = 0; position < places.size(); ++position) {
+            for (size_t groupOfPlace = static_cast<size_t>(places[position]) >> m_shiftOfGroupsOfPlaces; group <= groupOfPlace; ++group)
+                m_firstPositionInGroupOfPlaces[group] = static_cast<uint32_t>(position);
+        }
+        m_firstPositionInGroupOfPlaces[numberOfGroups] = static_cast<uint32_t>(places.size());
+    }
+
     static CodeInBlocks keepInBlocks(Vector<CompiledCode>&& functions)
     {
         CodeInBlocks kept;
@@ -174,6 +202,8 @@ private:
 
     ListOfKeptCode m_functions;
     Vector<uint32_t> m_placesInCode;
+    Vector<uint32_t> m_firstPositionInGroupOfPlaces;
+    unsigned m_shiftOfGroupsOfPlaces { 0 };
     Vector<BlocksOfUnits> m_blocks;
     Vector<FusedCallEntry> m_fusedCallEntries;
 };

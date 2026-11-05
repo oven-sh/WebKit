@@ -184,8 +184,9 @@ private:
     void escapeExportsOf(ModuleID);
     void findModulesWhoseValueStaysInSight();
     void escapeValueOf(ModuleID);
+    void escapeExportsWhoseGettersFacesRun();
     BitVector findFilesThatHaveRunToTheirEndWhereOthersNameThem() const;
-    BitVector findVariablesStoredFirst() const;
+    BitVector findVariablesStoredFirst(Vector<LinkedVariableStoredFirst>& firstReaders) const;
     void escapeVariable(VariableID);
     void escapeField(FieldReference);
 
@@ -196,6 +197,7 @@ private:
     void letGoWhatHostHandsOver(const BuiltinHostUses&);
     void loadLibraryModule(RuntimeModuleID);
     bool m_hasEnteredLoaderFunctionsForTestRun { false };
+    bool m_hasEnteredLoaderFunctionsForValueOfHost { false };
     void enterWhatUndeclaredNativeCodeCalls();
     void enterWhatHostLoadsToPrintObjects();
     void enterLoaderOfHost();
@@ -253,6 +255,8 @@ private:
     BitVector m_modulesWithReachedCode;
     BitVector m_modulesWithEscapedExports;
     BitVector m_modulesWhoseValueStaysInSight;
+    Vector<ModuleID> m_facesThatWereFollowedAtFirst;
+    bool m_showsWaysBetweenModuleObjects { false };
 
     Vector<std::pair<ModuleID, VariableID>> m_variablesOfLibraryFiles;
     BuiltinsInReach m_builtinsInReach;
@@ -301,6 +305,7 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
     m_evaluatedModules = BitVector(m_program.modules.size());
     m_modulesWithReachedCode = BitVector(m_program.modules.size());
     m_modulesWithEscapedExports = BitVector(m_program.modules.size());
+    m_showsWaysBetweenModuleObjects = namesWaysToModuleObjects(m_program);
     findModulesWhoseValueStaysInSight();
 
     m_moduleWithBody.fill(ModuleID(), numberOfFunctions);
@@ -514,6 +519,10 @@ void StateOfLinkReach::escapeAllOf(const LinkType& type)
     case LinkType::Objects::Layout:
         escapeLayout(type.layout);
         break;
+    case LinkType::Objects::Set:
+        for (LayoutID member : m_flow.layoutsOfSet(type))
+            escapeLayout(member);
+        break;
     case LinkType::Objects::Prototype:
         escapePrototype(type.layout);
         break;
@@ -537,6 +546,7 @@ void StateOfLinkReach::escapeAllOf(const LinkType& type)
     case LinkType::Functions::Constructors:
         escapeConstructorsOf(type.constructorsOf);
         break;
+    case LinkType::Functions::Set:
     case LinkType::Functions::Lost:
         escapeLostFunctions();
         break;
@@ -616,7 +626,7 @@ BitVector StateOfLinkReach::findFilesThatHaveRunToTheirEndWhereOthersNameThem() 
     return found;
 }
 
-BitVector StateOfLinkReach::findVariablesStoredFirst() const
+BitVector StateOfLinkReach::findVariablesStoredFirst(Vector<LinkedVariableStoredFirst>& firstReaders) const
 {
     BitVector isLeftOut(m_program.modules.size());
     BitVector hasRunToItsEnd = findFilesThatHaveRunToTheirEndWhereOthersNameThem();
@@ -652,6 +662,8 @@ BitVector StateOfLinkReach::findVariablesStoredFirst() const
     BitVector couldRun(m_program.functions.size());
     Vector<uint32_t> placeOfFirstReader;
     placeOfFirstReader.fill(UINT32_MAX, m_program.variables.size());
+    Vector<FunctionID> functionWhoseUseCounts;
+    functionWhoseUseCounts.fill(FunctionID(), m_program.variables.size());
     Vector<FunctionID> toVisit;
     for (const Start& start : starts) {
         ModuleID module = m_program.at(start.function).module;
@@ -666,7 +678,10 @@ BitVector StateOfLinkReach::findVariablesStoredFirst() const
                     toVisit.append(FunctionID(node.first));
                 if (node.kind != SummaryNode::Kind::Variable)
                     continue;
-                placeOfFirstReader[node.first] = std::min(placeOfFirstReader[node.first], start.position);
+                if (start.position < placeOfFirstReader[node.first]) {
+                    placeOfFirstReader[node.first] = start.position;
+                    functionWhoseUseCounts[node.first] = start.function;
+                }
                 if (FunctionID declared = m_program.variables[node.first].function)
                     toVisit.append(declared);
             }
@@ -682,10 +697,14 @@ BitVector StateOfLinkReach::findVariablesStoredFirst() const
         if (isLeftOut.quickGet(index))
             continue;
         for (SummaryPlaceInBody store : m_flow.summaries.at(m_program.modules[index].body).firstStoresOfBody) {
-            if (store.position <= placeOfFirstReader[store.number])
-                found.quickSet(store.number);
+            if (store.position > placeOfFirstReader[store.number])
+                continue;
+            found.quickSet(store.number);
+            if (functionWhoseUseCounts[store.number])
+                firstReaders.append(LinkedVariableStoredFirst { m_program.modules[index].body, functionWhoseUseCounts[store.number], VariableID(store.number) });
         }
     }
+    std::ranges::sort(firstReaders);
     return found;
 }
 
@@ -693,7 +712,8 @@ void StateOfLinkReach::fillVariables()
 {
     LinkType absent = m_flow.fromTypeID(TypeTable::absent);
     LinkType undefined = m_flow.fromTypeID(TypeTable::undefined);
-    m_flow.variablesStoredFirst = findVariablesStoredFirst();
+    m_flow.firstReadersOfVariablesStoredFirst.shrink(0);
+    m_flow.variablesStoredFirst = findVariablesStoredFirst(m_flow.firstReadersOfVariablesStoredFirst);
     const BitVector& isStoredFirst = m_flow.variablesStoredFirst;
     for (uint32_t index = 0; index < m_program.variables.size(); ++index) {
         const Variable& variable = m_program.variables[index];
@@ -727,11 +747,13 @@ void StateOfLinkReach::fillVariables()
     }
     std::ranges::sort(m_variablesOfLibraryFiles);
 
-    for (const Module& module : m_program.modules) {
-        if (module.exportsVariable)
+    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+        const Module& module = m_program.modules[index];
+        if (module.exportsVariable && !m_modulesWhoseValueStaysInSight.quickGet(index))
             escapeVariable(module.exportsVariable);
+        bool isFollowedFace = module.kind == ModuleKind::SourceText && m_modulesWhoseValueStaysInSight.quickGet(index);
         for (const SyntheticExport& synthetic : module.syntheticExports) {
-            if (synthetic.variable)
+            if (synthetic.variable && !isFollowedFace)
                 escapeVariable(synthetic.variable);
         }
     }
@@ -778,8 +800,6 @@ void StateOfLinkReach::evaluateModule(ModuleID id)
         reach(module.body);
     else
         noteCodeOfModule(id);
-    if (module.flags.contains(ModuleFlags::IsImportedAsNamespace))
-        escapeExportsOf(id);
 }
 
 void StateOfLinkReach::noteCodeOfModule(ModuleID id)
@@ -790,8 +810,13 @@ void StateOfLinkReach::noteCodeOfModule(ModuleID id)
         escapeVariable(variable);
     bool hasBody = !!m_program.at(id).body;
     for (const ModuleRequest& request : m_program.at(id).requests) {
-        if (request.kind == ModuleRequestKind::Require && hasBody)
+        if (request.kind == ModuleRequestKind::Require && hasBody) {
+            if (m_showsWaysBetweenModuleObjects) {
+                escapeExportsOf(request.target);
+                escapeValueOf(request.target);
+            }
             continue;
+        }
         evaluate(request.target);
         if (request.kind == ModuleRequestKind::Require)
             escapeExportsOf(request.target);
@@ -807,7 +832,10 @@ void StateOfLinkReach::escapeExportsOf(ModuleID first)
     };
     add(first);
     while (!modules.isEmpty()) {
-        const Module& module = m_program.at(modules.takeLast());
+        ModuleID id = modules.takeLast();
+        const Module& module = m_program.at(id);
+        if (module.kind != ModuleKind::RuntimeSource)
+            escapeValueOf(id);
         for (const ModuleExport& exported : module.exports) {
             if (exported.variable && !m_variablesReadByUnseenCode.set(exported.variable.index())) {
                 m_flow.note(LinkFlow::Note::ExportIsShown, exported.variable.index());
@@ -842,11 +870,24 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
 
     static constexpr OptionSet<ModuleFlags> flagsOfModulesHandedOut {
         ModuleFlags::IsFoundByName, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::RunsAgain, ModuleFlags::IsImportedAsNamespace, ModuleFlags::AnswersLoaderWithNamespace,
-        ModuleFlags::IsListedInCache, ModuleFlags::IsShownByEntryOfCache, ModuleFlags::IsHandedOutByTestRunner, ModuleFlags::MayBeImportedWhileItRuns,
+        ModuleFlags::IsListedInCache, ModuleFlags::IsShownByEntryOfCache, ModuleFlags::IsHandedOutByTestRunner, ModuleFlags::MayBeImportedWhileItRuns, ModuleFlags::IsChangedOnDiskByRun,
     };
     BitVector isAskedFor = modulesThatHostAsksFor(m_program);
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         const Module& module = m_program.modules[index];
+        if (module.kind == ModuleKind::CommonJs) {
+            bool isReadBySitesAlone = module.body && module.exportsVariable && module.requireResult == RequireResult::ModuleExports && module.syntheticExports.isEmpty();
+            if (isReadBySitesAlone && !m_showsWaysBetweenModuleObjects && !module.flags.containsAny(flagsOfModulesHandedOut - ModuleFlags::RunsAgain) && !isAskedFor.get(index))
+                m_modulesWhoseValueStaysInSight.quickSet(index);
+            continue;
+        }
+        if (ModuleID captured = commonJsModuleCapturedBy(m_program, module)) {
+            bool isFilledByCaptureAlone = module.body && module.requests.size() == 1 && module.exports.isEmpty() && std::ranges::none_of(module.syntheticExports, &SyntheticExport::isReplaceable);
+            bool isLoadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader) || m_program.at(captured).flags.contains(ModuleFlags::IsLoadedByLoader);
+            if (isFilledByCaptureAlone && !isLoadedByLoader && !m_showsWaysBetweenModuleObjects && !module.flags.containsAny(flagsOfModulesHandedOut) && !isAskedFor.get(index))
+                m_modulesWhoseValueStaysInSight.quickSet(index);
+            continue;
+        }
         if (module.kind != ModuleKind::RuntimeSource || !module.runtimeModule || module.flags.containsAny(flagsOfModulesHandedOut) || isAskedFor.get(index))
             continue;
         if (builtins.at(module.runtimeModule).flags.contains(RuntimeModuleFlag::IsPublic) || isLoadedByNativeCode.get(module.runtimeModule.index()))
@@ -855,11 +896,65 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
     }
     for (const Module& module : m_program.modules) {
         for (const ModuleRequest& request : module.requests) {
-            if (request.kind != ModuleRequestKind::Require)
+            bool bindsVariablesOfFace = request.phase == ImportPhase::Evaluation && !request.isDynamicStarExport && commonJsModuleCapturedBy(m_program, m_program.at(request.target));
+            if (request.kind != ModuleRequestKind::Require && !bindsVariablesOfFace)
                 m_modulesWhoseValueStaysInSight.quickClear(request.target.index());
         }
-        for (const RequiredName& required : module.requiredNames)
-            m_modulesWhoseValueStaysInSight.quickClear(required.module.index());
+        for (const RequiredName& required : module.requiredNames) {
+            if (!commonJsModuleCapturedBy(m_program, m_program.at(required.module)))
+                m_modulesWhoseValueStaysInSight.quickClear(required.module.index());
+        }
+        for (const ModuleExport& exported : module.exports) {
+            if (exported.module)
+                m_modulesWhoseValueStaysInSight.quickClear(exported.module.index());
+        }
+        if (module.kind == ModuleKind::External && module.referrer)
+            m_modulesWhoseValueStaysInSight.quickClear(module.referrer.index());
+    }
+    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+        ModuleID captured = commonJsModuleCapturedBy(m_program, m_program.modules[index]);
+        if (captured && (!m_modulesWhoseValueStaysInSight.quickGet(index) || !m_modulesWhoseValueStaysInSight.quickGet(captured.index()))) {
+            m_modulesWhoseValueStaysInSight.quickClear(index);
+            m_modulesWhoseValueStaysInSight.quickClear(captured.index());
+        } else if (captured)
+            m_facesThatWereFollowedAtFirst.append(ModuleID(index));
+    }
+}
+
+void StateOfLinkReach::escapeExportsWhoseGettersFacesRun()
+{
+    for (ModuleID face : m_facesThatWereFollowedAtFirst) {
+        uint32_t index = face.index();
+        ModuleID captured = m_modulesWhoseValueStaysInSight.quickGet(index) ? commonJsModuleCapturedBy(m_program, m_program.modules[index]) : ModuleID();
+        if (!captured)
+            continue;
+        const LinkType& exports = m_flow.typeAt(m_flow.variable(m_program.at(captured).exportsVariable));
+        auto hasAccessor = [&](LayoutID layout) {
+            return std::ranges::contains(m_flow.fieldsWithKnownAccessors, layout, &FieldReference::layout);
+        };
+        bool mayHaveAccessor = false;
+        switch (exports.objects) {
+        case LinkType::Objects::None:
+            break;
+        case LinkType::Objects::Layout:
+            mayHaveAccessor = hasAccessor(exports.layout);
+            break;
+        case LinkType::Objects::Set:
+            mayHaveAccessor = std::ranges::any_of(m_flow.layoutsOfSet(exports), hasAccessor);
+            break;
+        case LinkType::Objects::Family:
+            m_program.at(m_flow.families.layoutsOf(exports.family)).forEach([&](LayoutID member) {
+                mayHaveAccessor |= hasAccessor(member);
+            });
+            break;
+        case LinkType::Objects::Prototype:
+        case LinkType::Objects::Prototypes:
+        case LinkType::Objects::Lost:
+            mayHaveAccessor = true;
+            break;
+        }
+        if (mayHaveAccessor)
+            escapeValueOf(ModuleID(index));
     }
 }
 
@@ -867,6 +962,15 @@ void StateOfLinkReach::escapeValueOf(ModuleID id)
 {
     if (!m_modulesWhoseValueStaysInSight.quickClear(id.index()))
         return;
+    if (VariableID exportsVariable = m_program.at(id).exportsVariable)
+        escapeVariable(exportsVariable);
+    if (ModuleID captured = commonJsModuleCapturedBy(m_program, m_program.at(id))) {
+        for (const SyntheticExport& synthetic : m_program.at(id).syntheticExports) {
+            if (synthetic.variable)
+                escapeVariable(synthetic.variable);
+        }
+        escapeValueOf(captured);
+    }
     FunctionID body = m_program.at(id).body;
     for (uint32_t result = 0; body && result < m_program.at(body).results.size(); ++result)
         m_flow.addEdge(m_flow.result(body, result), m_flow.unseen());
@@ -1029,6 +1133,7 @@ void StateOfLinkReach::enterWhatUnseenCodeFinds()
 bool StateOfLinkReach::enterLibraryInReach()
 {
     RELEASE_ASSERT(m_steps.isEmpty() && m_functionsToBringAlive.isEmpty());
+    escapeExportsWhoseGettersFacesRun();
     if (m_flow.objectsReachUnseen() && !std::exchange(m_nativeCodeMayHoldObjects, true)) {
         m_builtinsInReach.noteNativeCodeMayHoldObjects();
     }
@@ -1074,6 +1179,10 @@ bool StateOfLinkReach::enterLibraryInReach()
         for (RuntimeFunctionID function : m_program.builtins().moduleLoaderFunctions())
             enterLibraryFunction(function);
         enterLibraryBehind(m_program.builtins().canonicalID(Builtins::ModuleRequireResolve));
+    }
+    if (m_builtinsInReach.hostIsAskedForValueOfModule() && !std::exchange(m_hasEnteredLoaderFunctionsForValueOfHost, true)) {
+        for (RuntimeFunctionID function : m_program.builtins().moduleLoaderFunctions())
+            enterLibraryFunction(function);
     }
     if (m_builtinsInReach.loaderOfHostMayRun())
         enterLoaderOfHost();
@@ -1636,6 +1745,15 @@ void LinkFlow::arriveFromSource(FlowNodeID node, FamilyID family)
 
 void LinkFlow::arriveFromSource(FlowNodeID node, const LinkType& type)
 {
+    if (type.objects == LinkType::Objects::Set) {
+        LinkType rest = type;
+        rest.objects = LinkType::Objects::None;
+        rest.layout = { };
+        arrive(node, rest);
+        for (LayoutID member : layoutsOfSet(type))
+            stateOfLinkReach().arriveFromSource(node, typeOfObjectsForLinkReach(member));
+        return;
+    }
     if (type.objects != LinkType::Objects::Layout && type.objects != LinkType::Objects::Family) {
         arrive(node, type);
         return;

@@ -16,6 +16,7 @@
 #include "AOTSlotEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsArrays.h"
+#include "AOTThrowEmitter.h"
 #include "ArrayConventions.h"
 #include "Butterfly.h"
 #include "JSArray.h"
@@ -254,13 +255,21 @@ Operand ElementAccessEmitter::convertInt32Element(Word32 element, Representation
     return element;
 }
 
-Operand ElementAccessEmitter::convertRawElement(const ArrayStorageForm& form, Operand rawElement, Representation representation, const Type& result)
+Operand ElementAccessEmitter::convertRawElement(const OperationContext& context, const ArrayStorageForm& form, Operand rawElement, Representation representation, TypeID result)
 {
     if (form.element == Representation::Double && holdsDouble(representation))
         return Operand(representation, rawElement.value);
     if (form.element == Representation::Int32 && holdsUnboxedNumber(representation))
         return convertInt32Element(unboxInt32Element(rawElement.as<Boxed>()), representation);
-    return emitter<ConversionEmitter>().unbox(boxRawElement(form, rawElement), result, representation);
+    Boxed element = boxRawElement(form, rawElement);
+    if (form.element == Representation::JSValue && holdsUnboxedNumber(representation))
+        stopUnlessElementIsOf(context, element, result);
+    return emitter<ConversionEmitter>().unbox(element, types().at(result), representation);
+}
+
+void ElementAccessEmitter::stopUnlessElementIsOf(const OperationContext& context, Boxed element, TypeID proven)
+{
+    emitter<ThrowEmitter>().requireOrStopAtFalseProof(context, hasType(element, typeTestPlanFor(TypeTable::anything, Representation::JSValue, proven)), element, ProofSource::Contents);
 }
 
 static bool holdsUndefined(Representation representation)
@@ -395,17 +404,7 @@ bool ElementAccessEmitter::testsEveryPosition()
 
 void ElementAccessEmitter::stopUnlessInside(const ValueContext& access, Condition isInside)
 {
-    LBasicBlock stops = newBlock();
-    LBasicBlock continuation = newBlock();
-    ScopeFork fork = m_out.forkScope();
-    m_out.branch(isInside.value(), normalEdge(continuation), rareEdge(stops));
-    m_out.appendToArm(stops, fork);
-    FunctionID writtenIn = m_code.inlineFrames()[access->inlineFrame].callee;
-    m_out.suspendDeclaredAccesses();
-    callVoidOperation(access, RuntimeOperation::StopAtFalseProof, { Boxed(m_out.constInt64(JSValue::encode(JSValue()))), word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(access->position)), word32(static_cast<int32_t>(ProofSource::WhatIsRemembered)) });
-    m_out.resumeDeclaredAccesses();
-    m_out.unreachable();
-    m_out.appendToArm(continuation, fork);
+    emitter<ThrowEmitter>().requireOrStopAtFalseProof(access, isInside, std::nullopt, ProofSource::WhatIsRemembered);
 }
 
 void ElementAccessEmitter::holdPositionInsideList(const ValueContext& access)
@@ -497,7 +496,7 @@ Operand ElementAccessEmitter::readElementInsideLength(const ValueContext& value,
         m_out.branch(this->isHole(form, rawElement).value(), rareEdge(isHole), normalEdge(holdsValue));
         m_out.appendTo(holdsValue);
     }
-    return convertRawElement(form, rawElement, value.representation(), typeOf(value.id()));
+    return convertRawElement(value, form, rawElement, value.representation(), typeIDOf(value.id()));
 }
 
 const PlacedSlot* ElementAccessEmitter::extraPropertiesWordOfReadByPosition(const ValueContext& read)
@@ -712,7 +711,7 @@ Operand ElementAccessEmitter::readNumberInsideLength(const ValueContext& value, 
     RELEASE_ASSERT(form.element == Representation::Int32);
     Boxed rawElement = loadRawElement(form, elements, index).as<Boxed>();
     Number element = select(isEmpty(rawElement), number(PNaN), toNumber(unboxInt32Element(rawElement)));
-    return convertRawElement(arrayStorageFormOf(ArrayStorage::Double), element, value.representation(), typeOf(value.id()));
+    return convertRawElement(value, arrayStorageFormOf(ArrayStorage::Double), element, value.representation(), typeIDOf(value.id()));
 }
 
 void ElementAccessEmitter::readFromDoubleOrInt32Storage(const ValueContext& value)

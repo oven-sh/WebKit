@@ -169,6 +169,13 @@ void nameWhatFunctionTablesName(const TableInputs& inputs, const GatheredMention
             FunctionID id(index);
             if (!isShownByName(inputs, id))
                 continue;
+            const Typed::Function& function = program.at(id);
+            if (!function.name)
+                continue;
+            if (!function.enclosingRuntimeFunction) {
+                named.append(function.name);
+                continue;
+            }
             if (StringID name = nameShownForFunction(program, id, Typed::functionTraceOf(program, conventions, { id, Typed::CodeRole::Body }).implements()))
                 named.append(name);
         }
@@ -272,7 +279,9 @@ FunctionTablesByRange::FunctionTablesByRange(const TableEncoder& encoder)
 
 static void uniteEqualFunctionRecords(Vector<DistinctFunctionRecord>& records)
 {
-    AOT::sortInLine(records, { }, &DistinctFunctionRecord::bits);
+    radixSortKeepingEqualKeysInOrder<32>(records, [](const DistinctFunctionRecord& record) {
+        return record.bits;
+    });
     size_t count = 0;
     for (const DistinctFunctionRecord& next : records) {
         if (count && records[count - 1].bits == next.bits)
@@ -477,7 +486,6 @@ void FunctionTablesByRange::forEachTable(const auto& functor) const
 {
     functor(ProgramTableIndex::functionNames, m_names.rows);
     functor(ProgramTableIndex::functionNameGroups, m_groupsOfNames);
-    functor(ProgramTableIndex::functionNameRuns, Vector<FunctionNameRunData> { });
     functor(ProgramTableIndex::functionRecordNumbers, m_recordNumbers);
     functor(ProgramTableIndex::functionRecords, m_records);
     functor(ProgramTableIndex::functionRecordsByFunction, m_recordsByFunction);

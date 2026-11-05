@@ -97,11 +97,8 @@ static Range truthyIntegersOf(Range integers)
     return integers;
 }
 
-static TypeID truthyPartWith(TypeArena& types, TypeID type, StringID emptyString)
+static NEVER_INLINE TypeID makeTruthyPart(TypeArena& types, TypeID type, StringID emptyString)
 {
-    if (TypeID made = types.typeMadeBefore(MakerOfType::TruthyPart, type.bits(), emptyString.bits()))
-        return made;
-
     Type whole = types.at(type);
     if (!whole.isJavaScriptValue())
         return type;
@@ -118,11 +115,15 @@ static TypeID truthyPartWith(TypeArena& types, TypeID type, StringID emptyString
     return result;
 }
 
-static TypeID falsyPartWith(TypeArena& types, TypeID type, StringID emptyString)
+static ALWAYS_INLINE TypeID truthyPartWith(TypeArena& types, TypeID type, StringID emptyString)
 {
-    if (TypeID made = types.typeMadeBefore(MakerOfType::FalsyPart, type.bits(), emptyString.bits()))
+    if (TypeID made = types.typeMadeBefore(MakerOfType::TruthyPart, type.bits(), emptyString.bits()))
         return made;
+    return makeTruthyPart(types, type, emptyString);
+}
 
+static NEVER_INLINE TypeID makeFalsyPart(TypeArena& types, TypeID type, StringID emptyString)
+{
     if (!types.at(type).isJavaScriptValue())
         return type;
 
@@ -139,6 +140,13 @@ static TypeID falsyPartWith(TypeArena& types, TypeID type, StringID emptyString)
     TypeID result = types.intern(parts);
     types.noteTypeMade(MakerOfType::FalsyPart, type.bits(), emptyString.bits(), result, !liesInThread(type) && !liesInThread(withoutObjects) && !liesInThread(result));
     return result;
+}
+
+static ALWAYS_INLINE TypeID falsyPartWith(TypeArena& types, TypeID type, StringID emptyString)
+{
+    if (TypeID made = types.typeMadeBefore(MakerOfType::FalsyPart, type.bits(), emptyString.bits()))
+        return made;
+    return makeFalsyPart(types, type, emptyString);
 }
 
 TypeID truthyPartOf(TypeArena& types, TypeID type)
@@ -317,7 +325,7 @@ static TypeID withLooselyFittingClassesInside(TypeArena& types, TypeID passing, 
     return types.unionOf(types.intern(parts), types.withOnlyObjects(tested));
 }
 
-TypeID narrowByTest(const TypingContext& context, TypeID source, TypeID tested, EdgeSide side)
+static NEVER_INLINE TypeID narrowByTestAnew(const TypingContext& context, TypeID source, TypeID tested, EdgeSide side)
 {
     TypeArena& types = context.types;
     if (side == EdgeSide::Taken) {
@@ -332,6 +340,17 @@ TypeID narrowByTest(const TypingContext& context, TypeID source, TypeID tested, 
     }
     TypeID recognized = mayRefuseUntestableBuiltins(context, source, tested) ? withoutBuiltinsThatNoTestFinds(types, tested) : tested;
     return narrowedWithin(types, source, types.differenceOf(source, withoutLayoutsThatTestMayRefuse(context, recognized)));
+}
+
+TypeID narrowByTest(const TypingContext& context, TypeID source, TypeID tested, EdgeSide side)
+{
+    TypeArena& types = context.types;
+    MakerOfType maker = side == EdgeSide::Taken ? MakerOfType::NarrowedByTestThatPassed : MakerOfType::NarrowedByTestThatFailed;
+    if (TypeID made = types.typeMadeBefore(maker, source.bits(), tested.bits()))
+        return made;
+    TypeID result = narrowByTestAnew(context, source, tested, side);
+    types.noteTypeMade(maker, source.bits(), tested.bits(), result, !liesInThread(source) && !liesInThread(tested) && !liesInThread(result));
+    return result;
 }
 
 TypeID narrowByNotNullish(TypeArena& types, TypeID source, EdgeSide side)
@@ -449,6 +468,51 @@ static TypeID narrowByIntegerBound(TypeArena& types, Opcode comparison, bool sou
     return types.integer(integers);
 }
 
+static NEVER_INLINE TypeID narrowByComparisonAnew(TypeArena& types, Opcode comparison, bool sourceIsLeft, TypeID source, TypeID other, EdgeSide side)
+{
+    switch (comparison) {
+    case Opcode::StrictEq:
+        return narrowByStrictEquality(types, source, other, side);
+    case Opcode::Eq:
+        return narrowByLooseEquality(types, source, other, side);
+    case Opcode::Less:
+    case Opcode::LessEq:
+    case Opcode::Greater:
+    case Opcode::GreaterEq:
+        return narrowByIntegerBound(types, comparison, sourceIsLeft, source, other, side);
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+static MakerOfType makerOfNarrowingByComparison(Opcode comparison, bool sourceIsLeft, EdgeSide side)
+{
+    unsigned relation = 0;
+    switch (comparison) {
+    case Opcode::StrictEq:
+        relation = 0;
+        break;
+    case Opcode::Eq:
+        relation = 1;
+        break;
+    case Opcode::Less:
+        relation = sourceIsLeft ? 2 : 3;
+        break;
+    case Opcode::LessEq:
+        relation = sourceIsLeft ? 4 : 5;
+        break;
+    case Opcode::Greater:
+        relation = sourceIsLeft ? 6 : 7;
+        break;
+    case Opcode::GreaterEq:
+        relation = sourceIsLeft ? 8 : 9;
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    return static_cast<MakerOfType>(static_cast<unsigned>(MakerOfType::FirstNarrowedByComparison) + relation * 2 + (side == EdgeSide::Taken ? 1 : 0));
+}
+
 TypeID narrowByComparison(const TypingContext& context, Opcode comparison, bool sourceIsLeft, TypeID source, TypeID other, EdgeSide side)
 {
     if (!other)
@@ -456,19 +520,13 @@ TypeID narrowByComparison(const TypingContext& context, Opcode comparison, bool 
     if (isNeverType(other))
         return TypeTable::never;
 
-    switch (comparison) {
-    case Opcode::StrictEq:
-        return narrowByStrictEquality(context.types, source, other, side);
-    case Opcode::Eq:
-        return narrowByLooseEquality(context.types, source, other, side);
-    case Opcode::Less:
-    case Opcode::LessEq:
-    case Opcode::Greater:
-    case Opcode::GreaterEq:
-        return narrowByIntegerBound(context.types, comparison, sourceIsLeft, source, other, side);
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+    TypeArena& types = context.types;
+    MakerOfType maker = makerOfNarrowingByComparison(comparison, sourceIsLeft, side);
+    if (TypeID made = types.typeMadeBefore(maker, source.bits(), other.bits()))
+        return made;
+    TypeID result = narrowByComparisonAnew(types, comparison, sourceIsLeft, source, other, side);
+    types.noteTypeMade(maker, source.bits(), other.bits(), result, !liesInThread(source) && !liesInThread(other) && !liesInThread(result));
+    return result;
 }
 
 static TypeID typeEqualToIntegerCase(TypeArena& types, int64_t value)
@@ -528,12 +586,6 @@ TypeID narrowByOtherwise(TypeArena& types, TypeID source, std::span<const int64_
     return typeLeftByIntegerCases(types, source, sortedCases.mutableSpan());
 }
 
-TypeID narrowByOtherwise(TypeArena& types, TypeID source, std::span<const StringID> cases)
-{
-    Vector<StringID, 16> sortedCases(cases);
-    return typeLeftByStringCases(types, source, sortedCases.mutableSpan());
-}
-
 TypeID narrowByShapeCase(const TypingContext& context, TypeID source, LayoutSetID caseLayouts)
 {
     return narrowByTest(context, source, context.types.forLayoutSet(caseLayouts), EdgeSide::Taken);
@@ -584,6 +636,10 @@ TypeID typeOfEdgeResult(const TypingContext& context, const Test& test, OperandT
     case Proof::TestedType:
     case Proof::Shape:
     case Proof::ExactFunction:
+        if constexpr (!isCursorOverInput<Test>) {
+            if (opcode == Opcode::ShapeTest && side == EdgeSide::NotTaken && test.refusesMarkedObjects())
+                return source;
+        }
         return narrowByTest(context, source, typeThatTestAsksFor(context.types, test), side);
     case Proof::Truthiness:
         return narrowByTruthiness(context, source, side);

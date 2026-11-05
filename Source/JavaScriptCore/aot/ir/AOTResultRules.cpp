@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBody.h"
 #include "AOTCode.h"
 #include "AOTIRProgram.h"
 #include "AOTResultRulesInlines.h"
@@ -40,7 +41,7 @@ const PositionTypes& PositionTypes::knowingNothing()
     return positions;
 }
 
-TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
+TypeID TypingContext::typeIDOfSlowCase(const DeclaredType& declared) const
 {
     switch (level) {
     case TypeLevel::Proven:
@@ -69,6 +70,8 @@ TypeID ResultRules::provenOrUnknown(TypeID type, UnknownSeed seed)
 }
 
 static constexpr OpcodeSet callsOfNamedFunctionInResultRules { Opcode::CallDirect, Opcode::CallTable };
+static_assert((opcodesWithCountedResults | callsOfNamedFunctionInResultRules) == opcodesWithCountedResults);
+static_assert(opcodesWithCountedResults.contains(Opcode::Results) && opcodesWithCountedResults.contains(Opcode::DestructureIterable));
 
 template<typename Operation>
 std::optional<uint32_t> numberOfCountedResultsOf(const Program& program, const Operation& operation)
@@ -97,11 +100,13 @@ static bool hasRuleForResultAt(const Program& program, const Operation& operatio
     return resultIndex < numberOfResultsOf(program, operation).value_or(1);
 }
 
-static bool holdsNeverAmongOperandsOfRule(OperandTypes operands)
+static ALWAYS_INLINE bool holdsNeverAmongOperandsOfRule(OperandTypes operands)
 {
-    return std::ranges::any_of(operands.types, [](TypeID type) {
-        return isNeverType(type);
-    });
+    for (TypeID type : operands.types) {
+        if (isNeverType(type))
+            return true;
+    }
+    return false;
 }
 
 static constexpr OpcodeSet checksThatThrowInResultRules = checksThatHandOnOrThrow;
@@ -200,7 +205,7 @@ TypeID resultTypeOf(const TypingContext& context, const Operation& operation, Op
         return context.types.anything(seedOfUnknownResultOf(opcode));
 
     ResultRules rules { context, operands, created };
-    TypeID result = applyResultRule(rules, operation, resultIndex, ResultSide::Proven);
+    TypeID result = applyResultRuleInLine(rules, operation, resultIndex, ResultSide::Proven);
     if (rules.wasUnproven && opcodesWithOtherResultRuleWhereUnproven.contains(opcode))
         result = applyResultRule(rules, operation, resultIndex, ResultSide::Unproven);
     return result;
@@ -299,10 +304,12 @@ LayoutSetID layoutsSelectedByNewTarget(const TypingContext& context, LayoutID wr
 
 template TypeID resultTypeOf<Draft>(const TypingContext&, const Draft&, OperandTypes, ObjectID, uint32_t);
 template TypeID resultTypeOf<Operation>(const TypingContext&, const Operation&, OperandTypes, ObjectID, uint32_t);
+template TypeID resultTypeOf<BodyValue>(const TypingContext&, const BodyValue&, OperandTypes, ObjectID, uint32_t);
 template TypeID edgeResultTypeOf<TerminatorDraft>(const TypingContext&, const TerminatorDraft&, OperandTypes, uint32_t, uint32_t);
 template TypeID edgeResultTypeOf<Terminator>(const TypingContext&, const Terminator&, OperandTypes, uint32_t, uint32_t);
 template std::optional<uint32_t> numberOfCountedResultsOf<Draft>(const Program&, const Draft&);
 template std::optional<uint32_t> numberOfCountedResultsOf<Operation>(const Program&, const Operation&);
+template std::optional<uint32_t> numberOfCountedResultsOf<BodyValue>(const Program&, const BodyValue&);
 
 } } } // namespace JSC::AOT::Typed
 

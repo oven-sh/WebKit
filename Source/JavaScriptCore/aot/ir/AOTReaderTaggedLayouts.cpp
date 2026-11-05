@@ -198,9 +198,7 @@ bool TellingFields::excludes(uint32_t layout, uint32_t key, const LayoutTag& tag
     for (const Field& field : fieldsOf(layout)) {
         if (field.key != key)
             continue;
-        if (const int64_t* integer = std::get_if<int64_t>(&tag))
-            return field.holdsStrings || *integer < field.minimum || *integer > field.maximum;
-        return !field.holdsStrings || std::ranges::find(field.strings, std::get<StringID>(tag).index()) == field.strings.end();
+        return field.holdsStrings || tag < field.minimum || tag > field.maximum;
     }
     return false;
 }
@@ -283,20 +281,13 @@ std::optional<LayoutTag> TaggedLayoutPlanner::literalOf(const Wire::Type& type) 
     if (hasOtherParts)
         return std::nullopt;
 
-    if (type.flags == static_cast<uint32_t>(TypeFlags::HasIntegers) && !type.strings.count) {
-        int64_t minimum = type.minimum;
-        int64_t maximum = type.maximum;
-        if (minimum != maximum)
-            return std::nullopt;
-        return LayoutTag { minimum };
-    }
-
-    if (type.flags || type.strings.count != 1 || type.strings.start >= m_sections.words.size())
+    if (type.flags != static_cast<uint32_t>(TypeFlags::HasIntegers) || type.strings.count)
         return std::nullopt;
-    uint32_t string = m_sections.words[type.strings.start];
-    if (string >= m_sections.strings.size())
+    int64_t minimum = type.minimum;
+    int64_t maximum = type.maximum;
+    if (minimum != maximum)
         return std::nullopt;
-    return LayoutTag { StringID(string) };
+    return LayoutTag { minimum };
 }
 
 std::optional<LayoutTag> TaggedLayoutPlanner::tagOf(uint32_t type, uint32_t key) const

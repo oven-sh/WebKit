@@ -396,7 +396,6 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
         return WordOfMentionKey::Module;
     case NumberSpace::ModuleBuiltinCell:
         return index ? WordOfMentionKey::Module : WordOfMentionKey::Builtin;
-    case NumberSpace::DataCell:
     case NumberSpace::DataStorage:
     case NumberSpace::DataElements:
         return WordOfMentionKey::Data;

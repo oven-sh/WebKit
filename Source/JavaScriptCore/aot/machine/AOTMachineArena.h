@@ -32,13 +32,26 @@ public:
     Arena() = default;
     JS_EXPORT_PRIVATE ~Arena();
 
+    static constexpr size_t alignmentOfCursor = 8;
+
     void* allocate(size_t bytes, size_t alignment = alignof(std::max_align_t))
     {
         ASSERT(hasOneBitSet(alignment));
-        uintptr_t start = (m_cursor + alignment - 1) & ~(static_cast<uintptr_t>(alignment) - 1);
-        if (start + bytes > m_end || start < m_cursor) [[unlikely]]
+        uintptr_t start = alignment <= alignmentOfCursor ? m_cursor : (m_cursor + alignment - 1) & ~(static_cast<uintptr_t>(alignment) - 1);
+        ASSERT(start >= m_cursor);
+        uintptr_t end = start + bytesTakenBy(bytes);
+        if (end > m_end) [[unlikely]]
             return allocateSlow(bytes, alignment);
-        m_cursor = start + bytes;
+        m_cursor = end;
+        return reinterpret_cast<void*>(start);
+    }
+
+    bool hasRoomFor(size_t bytes) const { return m_cursor + bytesTakenBy(bytes) <= m_end; }
+    void* allocateWhereThereIsRoom(size_t bytes)
+    {
+        ASSERT(hasRoomFor(bytes));
+        uintptr_t start = m_cursor;
+        m_cursor = start + bytesTakenBy(bytes);
         return reinterpret_cast<void*>(start);
     }
 
@@ -116,6 +129,8 @@ private:
     };
 
     static constexpr size_t smallestChunkSize = 64 * KB;
+
+    static constexpr size_t bytesTakenBy(size_t bytes) { return (bytes + alignmentOfCursor - 1) & ~(alignmentOfCursor - 1); }
 
     JS_EXPORT_PRIVATE void* allocateSlow(size_t bytes, size_t alignment);
     JS_EXPORT_PRIVATE void addFinalizer(void* object, void (*destroy)(void*));
@@ -273,7 +288,7 @@ public:
     static BitSpan create(Arena& arena, size_t numberOfBits) { return BitSpan(arena.createSpan<uint64_t>((numberOfBits + 63) / 64)); }
 
     size_t size() const { return m_words.size() * 64; }
-    bool get(size_t bit) const { return bit < size() && (m_words[bit / 64] >> (bit % 64) & 1); }
+    bool get(size_t bit) const { return bit < size() && (m_words.data()[bit / 64] >> (bit % 64) & 1); }
     void set(size_t bit)
     {
         ASSERT(bit < size());

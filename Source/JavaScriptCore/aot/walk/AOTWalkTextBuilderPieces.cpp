@@ -70,22 +70,6 @@ static std::optional<InlineBuiltin> codeInLineOfRowCalledInTextBuilderPieces(con
     return walker.program().builtins().at(call.overload()).code.implementation.inlineBuiltin;
 }
 
-static std::optional<StringRangeMethod> methodOfCutInTextBuilderPieces(InlineBuiltin codeInLine)
-{
-    switch (codeInLine) {
-    case InlineBuiltin::StringSlice:
-        return StringRangeMethod::Slice;
-    case InlineBuiltin::StringSubstring:
-        return StringRangeMethod::Substring;
-    case InlineBuiltin::StringSubstr:
-        return StringRangeMethod::Substr;
-    case InlineBuiltin::StringCharAt:
-        return StringRangeMethod::SingleIndex;
-    default:
-        return std::nullopt;
-    }
-}
-
 static ValueID rangeGivingBoundInTextBuilderPieces(const Code& code, ValueID bound, uint32_t index)
 {
     const Operation& result = code.at(rootOfCellInSweptCode(code, bound));
@@ -131,60 +115,6 @@ static Reference stringCutFromInTextBuilderPieces(const Code& code, ValueID stri
     return referenceToRecordInTextBuilderPieces(code, root.opcode == Opcode::FlattenString ? root.stringOperand() : string);
 }
 
-static Reference buildBoundInTextBuilderPieces(Walker& walker, Reference bounds, uint32_t index, Origin origin)
-{
-    if (walker.isUnreachable() || !bounds)
-        return { };
-    Draft bound(Opcode::ResultAt, origin);
-    bound.setResultsOperand(bounds);
-    bound.setIndex(index);
-    return walker.build(WTF::move(bound));
-}
-
-static std::optional<RangeInTextBuilderPieces> buildRangeOfCutByCallInTextBuilderPieces(Walker& walker, ValueID made, Origin origin)
-{
-    const Code& code = walker.code();
-    const Operation& call = code.at(made);
-    std::optional<InlineBuiltin> codeInLine = codeInLineOfRowCalledInTextBuilderPieces(walker, call);
-    std::optional<StringRangeMethod> method = codeInLine ? methodOfCutInTextBuilderPieces(*codeInLine) : std::nullopt;
-    if (!method || !call.receiverOperand() || !typeOfRecordInTextBuilderPieces(walker, call.receiverOperand()).isAnyString())
-        return std::nullopt;
-
-    std::span<const ValueID> arguments = call.argumentsOperands();
-    if (arguments.size() > (*method == StringRangeMethod::SingleIndex ? 1u : 2u))
-        return std::nullopt;
-    Reference positions[2];
-    for (size_t index = 0; index < arguments.size(); ++index) {
-        Type type = typeOfRecordInTextBuilderPieces(walker, arguments[index]);
-        if (isUndefinedInTextBuilderPieces(type))
-            continue;
-        if (!type.isNumber())
-            return std::nullopt;
-        positions[index] = referenceToRecordInTextBuilderPieces(code, arguments[index]);
-    }
-    if (!isReadByNoRecordSoFar(walker, Reference::value(made)))
-        return std::nullopt;
-
-    RangeInTextBuilderPieces range;
-    range.string = referenceToRecordInTextBuilderPieces(code, call.receiverOperand());
-    Draft lengthOfString(Opcode::GetStringLength, origin);
-    lengthOfString.setStringOperand(range.string);
-    Reference length = walker.build(WTF::move(lengthOfString));
-    if (!length)
-        return range;
-
-    Draft clamped(Opcode::StringRange, origin);
-    clamped.setLengthOperand(length);
-    clamped.setFirstOperand(positions[0] ? positions[0] : walker.constant(Draft(Opcode::Integer, origin)));
-    if (positions[1])
-        clamped.setSecondOperand(positions[1]);
-    clamped.setMethod(*method);
-    Reference bounds = walker.build(WTF::move(clamped));
-    range.start = buildBoundInTextBuilderPieces(walker, bounds, startOfRangeInTextBuilderPieces, origin);
-    range.end = buildBoundInTextBuilderPieces(walker, bounds, endOfRangeInTextBuilderPieces, origin);
-    return range;
-}
-
 static std::optional<RangeInTextBuilderPieces> rangeOfSubstringInTextBuilderPieces(const Walker& walker, ValueID made)
 {
     const Code& code = walker.code();
@@ -202,14 +132,12 @@ bool appendPieceWithoutCutting(Walker& walker, TextInStringBuilder& text, Refere
     if (opcodesWithoutEmitter().contains(Opcode::StringBuilderAppendStringRange))
         return false;
     ValueID made = findRecordMadeToBeAppendedInTextBuilderPieces(walker, part);
-    if (!made)
+    if (!made || walker.code().at(made).opcode != Opcode::Substring)
         return false;
     origin.isTailCall = false;
-    std::optional<RangeInTextBuilderPieces> range = walker.code().at(made).opcode == Opcode::Substring ? rangeOfSubstringInTextBuilderPieces(walker, made) : buildRangeOfCutByCallInTextBuilderPieces(walker, made, origin);
+    std::optional<RangeInTextBuilderPieces> range = rangeOfSubstringInTextBuilderPieces(walker, made);
     if (!range)
         return false;
-    if (!range->start || !range->end || walker.isUnreachable())
-        return true;
     if (rootOfCellInSweptCode(walker.code(), range->start.id()) == rootOfCellInSweptCode(walker.code(), range->end.id()))
         return true;
 
@@ -219,14 +147,12 @@ bool appendPieceWithoutCutting(Walker& walker, TextInStringBuilder& text, Refere
     append.setStringOperand(range->string);
     append.setStartOperand(range->start);
     append.setEndOperand(range->end);
-    bool liesInFrame = becomeOperationOfStringBuilderInFrame(walker, text, name, append, Opcode::StackStringBuilderAppendStringRange);
+    becomeOperationOfStringBuilderInFrame(walker, text, name, append, Opcode::StackStringBuilderAppendStringRange);
     if (walker.isUnreachable())
         return true;
     text.stringOfState = { };
     text.lengthOfState = { };
-    Reference cursor = walker.build(WTF::move(append));
-    if (liesInFrame && cursor)
-        noteCursorBehind(walker, text, cursor);
+    walker.build(WTF::move(append));
     return true;
 }
 

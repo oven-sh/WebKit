@@ -28,7 +28,13 @@ static bool mayStandInFrontOfCallInAwaitedCalls(Opcode opcode)
     return bound.isUnobservable() && bound.reads.containsOnly(bookkeepingHeaps);
 }
 
-std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& walker, const BodyIndex& index, BodyBlock block, ValueID call)
+struct WaitOfCallInCoroutine {
+    ValueID await;
+    uint32_t placeOfCall { 0 };
+    uint32_t endOfWait { 0 };
+};
+
+static std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& walker, const BodyIndex& index, BodyBlock block, ValueID call)
 {
     uint32_t firstValue = block.firstValue().index();
     WaitOfCallInCoroutine wait;
@@ -56,7 +62,7 @@ std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& walker, c
     return wait;
 }
 
-bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block, const WaitOfCallInCoroutine& wait, Vector<Reference, 4>& held)
+static bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block, const WaitOfCallInCoroutine& wait, Vector<Reference, 4>& held)
 {
     uint32_t firstValue = block.firstValue().index();
     ValueID call(firstValue + wait.placeOfCall);
@@ -80,7 +86,7 @@ bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block
     return true;
 }
 
-void finishWaitOfCall(Walker& walker, BodyBlock block, const WaitOfCallInCoroutine& wait, Reference given)
+static void finishWaitOfCall(Walker& walker, BodyBlock block, const WaitOfCallInCoroutine& wait, Reference given)
 {
     walker.bind(wait.await, given);
     leaveAnythingForSwallowedOperation(walker, wait.await);

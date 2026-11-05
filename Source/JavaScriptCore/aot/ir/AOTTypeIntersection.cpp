@@ -437,10 +437,7 @@ static ObjectSetID subtractNamedObjects(TypeArena& arena, ObjectSetID objects, c
         return arena.objectSets().filtered(asked, [&](ObjectID object) {
             if (surelyFitsUnknownOf(reader, object, removed))
                 return false;
-            const ObjectRecord& record = reader.at(object);
-            if (record.sharedForm && namedByRemoved.contains(record.sharedForm))
-                return false;
-            return !namedByRemoved.contains(object) || record.has(ObjectTrait::IsMerged);
+            return !namedByRemoved.contains(object) || reader.at(object).has(ObjectTrait::IsMerged);
         });
     };
     bool isWide = arena.objectSets().sizeOf(objects) > membersPerSetChunk;

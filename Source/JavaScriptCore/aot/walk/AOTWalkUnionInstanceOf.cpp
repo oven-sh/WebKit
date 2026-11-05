@@ -192,10 +192,8 @@ static bool findsOrdinaryHasInstanceForInstanceOf(const Walker& walker, const Cl
     if (!tested.isConstructorFunction && classStaysAsWrittenForInstanceOf(link, tested.layout) && link.findMember(program, tested.layout, ClassSide::Static, key).kind == MemberFound::Kind::Nothing) {
         bool mayBeHidden = false;
         size_t stepsLeft = program.layouts.size();
-        for (LayoutID current = tested.layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
-            for (const StaticField& field : program.at(current).staticFields)
-                mayBeHidden |= !field.key || field.key == key;
-        }
+        for (LayoutID current = tested.layout; current && stepsLeft; current = program.at(current).base, --stepsLeft)
+            mayBeHidden |= program.at(current).mayHaveStaticField(key);
         if (!mayBeHidden && stepsLeft)
             return true;
     }
@@ -642,15 +640,13 @@ static bool buildInstanceOfBuiltinByValue(Walker& walker, const BodyValue& test,
     return true;
 }
 
-static_assert(opcodesThatBuildFormOnShapesTakes == (OpcodeSet { Opcode::InstanceOf, Opcode::RequireObjectCoercible }));
+static_assert(opcodesThatBuildFormOnShapesTakes == (OpcodeSet { Opcode::InstanceOf }));
 
 bool buildFormOnShapesOfItsOpcodes(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     switch (value.opcode()) {
     case Opcode::InstanceOf:
         return buildInstanceOfClassOfProgram(walker, value, inputs) || buildInstanceOfBuiltinByValue(walker, value, inputs);
-    case Opcode::RequireObjectCoercible:
-        return buildCheckThatTypesPass(walker, value, inputs);
     default:
         return false;
     }

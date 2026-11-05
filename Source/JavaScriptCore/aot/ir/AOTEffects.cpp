@@ -49,10 +49,12 @@ constexpr auto distinctBounds = [] {
 
 } // anonymous namespace
 
-const Effects& declaredBoundInTable(Opcode opcode)
-{
-    return distinctBounds.rows[distinctBounds.rowOf[static_cast<unsigned>(opcode)]];
-}
+constinit const std::array<const Effects*, numberOfOpcodes> declaredBoundsByOpcode = [] {
+    std::array<const Effects*, numberOfOpcodes> bounds { };
+    for (Opcode member : allMembersOf<Opcode>)
+        bounds[static_cast<unsigned>(member)] = &distinctBounds.rows[distinctBounds.rowOf[static_cast<unsigned>(member)]];
+    return bounds;
+}();
 
 constinit const OpcodeSet opcodesWithPureBoundInTable = [] {
     OpcodeSet opcodes;
@@ -94,7 +96,9 @@ private:
     bool m_boundIsExact { true };
 };
 
-constexpr OpcodeSet opcodesWithExactBounds = [] {
+} // anonymous namespace
+
+constinit const OpcodeSet opcodesWithExactBoundsInTable = [] {
     OpcodeSet result;
     for (Opcode member : allMembersOf<Opcode>) {
         ExactBoundDetector detector;
@@ -104,13 +108,6 @@ constexpr OpcodeSet opcodesWithExactBounds = [] {
     }
     return result;
 }();
-
-} // anonymous namespace
-
-const Effects* findDeclaredEffectsOfEveryValue(Opcode opcode)
-{
-    return opcodesWithExactBounds.contains(opcode) ? &declaredBoundInTable(opcode) : nullptr;
-}
 
 namespace EffectsAlgebra {
 

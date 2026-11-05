@@ -53,18 +53,24 @@ public:
         }
         return nullptr;
     }
-    ALWAYS_INLINE void addWithoutPosition(Operation* operation, uint64_t payload, uint32_t hash)
+    bool hasRoomWithoutPosition() const { return m_withoutPosition.size() < m_bucketsWithoutPosition.size(); }
+    ALWAYS_INLINE void addWithoutPositionWhereThereIsRoom(Operation* operation, uint64_t payload, uint32_t hash)
     {
         RELEASE_ASSERT(operation->hasNoPosition());
         ASSERT(hasNoPosition(operation->opcode()) || operation->opcode() == ArgumentReg || operation->opcode() == Add);
         ASSERT(hash == hashWithoutPosition(operation->opcode(), payload, baseOf(operation)));
         ASSERT(!findWithoutPosition(operation->opcode(), payload, hash, baseOf(operation)));
+        ASSERT(hasRoomWithoutPosition());
 
-        if (m_withoutPosition.size() >= m_bucketsWithoutPosition.size()) [[unlikely]]
-            growBucketsWithoutPosition();
         uint32_t& bucket = m_bucketsWithoutPosition[hash & (m_bucketsWithoutPosition.size() - 1)];
         m_withoutPosition.appendWithinCapacity(Entry { operation, hash, bucket, m_clock, payload });
         bucket = m_withoutPosition.size();
+    }
+    ALWAYS_INLINE void addWithoutPosition(Operation* operation, uint64_t payload, uint32_t hash)
+    {
+        if (!hasRoomWithoutPosition()) [[unlikely]]
+            growBucketsWithoutPosition();
+        addWithoutPositionWhereThereIsRoom(operation, payload, hash);
     }
 
     enum class Reach : bool { WholeScope, OwnEntries };
@@ -82,12 +88,12 @@ public:
             rest ^= static_cast<uint64_t>(key.children[2]->index()) << 32;
         return combine(head, rest);
     }
-    Found lookUp(const NumberingKey& key, uint32_t hash, Reach reach = Reach::WholeScope) const
+    ALWAYS_INLINE Found lookUp(const NumberingKey& key, uint32_t hash, Reach reach = Reach::WholeScope) const
     {
         ASSERT(!isLoad(key.opcode));
         return lookUpOperation<false>(key, hash, reach);
     }
-    Found lookUpLoad(const NumberingKey& key, uint32_t hash, Reach reach = Reach::WholeScope) const
+    ALWAYS_INLINE Found lookUpLoad(const NumberingKey& key, uint32_t hash, Reach reach = Reach::WholeScope) const
     {
         ASSERT(isLoad(key.opcode));
         return lookUpOperation<true>(key, hash, reach);
@@ -97,7 +103,7 @@ public:
     ALWAYS_INLINE void add(const NumberingKey& key, uint32_t hash, Operation* operation)
     {
         RELEASE_ASSERT(operation->m_owner && !operation->traps() && countsChildrenAtFirstUse(operation->m_opcode));
-        if (m_savesFrameOnSuspend && isComputedFromAddressInFrame(operation)) [[unlikely]]
+        if (m_savesFrameOnSuspend && computationReadsAddressInFrame(operation)) [[unlikely]]
             return;
         appendToLog(operation, hash, key.payload);
         ASSERT(matches(key, m_log.last()));
@@ -125,7 +131,17 @@ public:
             m_timesOfWrites[heap].belowHeap = time;
         }
     }
-    JS_EXPORT_PRIVATE void didWrite(const HeapSet&);
+    void didWrite(const HeapSet& heaps)
+    {
+        if (m_numberOfEntriesThatWritesEnd == m_numberOfEntriesEndedByWriteToAllHeaps)
+            return;
+        if (heaps.isTop()) {
+            m_timesOfWrites[rootHeapIndex].toHeap = timeOfNewWrite();
+            m_numberOfEntriesEndedByWriteToAllHeaps = m_numberOfEntriesThatWritesEnd;
+            return;
+        }
+        didWriteListedHeaps(heaps.heaps());
+    }
     void didSuspend()
     {
         m_timeOfLastSuspension = m_clock++;
@@ -133,28 +149,40 @@ public:
     }
 
     ScopeMark mark() const { return { m_log.size(), m_floor, m_suspendedBlocks.size(), m_endOfInheritedEntries, m_log.isEmpty() ? nullptr : m_log.last().operation }; }
-    void restore(const ScopeMark& mark)
+    ALWAYS_INLINE void restore(const ScopeMark& mark)
     {
         RELEASE_ASSERT(mark.floor <= mark.endOfInheritedEntries && mark.endOfInheritedEntries <= mark.logSize && mark.logSize <= m_log.size());
         RELEASE_ASSERT(mark.numberOfSuspendedBlocks <= m_suspendedBlocks.size());
         RELEASE_ASSERT(!mark.numberOfSuspendedBlocks || m_suspendedBlocks[mark.numberOfSuspendedBlocks - 1].mark.logSize <= mark.floor);
 
         uint32_t bucketMask = m_buckets.size() - 1;
-        while (m_log.size() > mark.logSize) {
-            const Entry& entry = m_log.last();
+        uint32_t logSizeOfMark = mark.logSize;
+        uint32_t logSize = m_log.size();
+        while (logSize > logSizeOfMark) {
+            const Entry& entry = m_log[logSize - 1];
             uint32_t& bucket = m_buckets[entry.hash & bucketMask];
-            ASSERT(bucket == m_log.size());
+            ASSERT(bucket == logSize);
             bucket = entry.previousInBucket;
-            m_log.shrink(m_log.size() - 1);
+            --logSize;
         }
+        m_log.shrink(logSize);
         m_floor = mark.floor;
         m_endOfInheritedEntries = mark.endOfInheritedEntries;
 
         if (m_suspendedBlocks.size() > mark.numberOfSuspendedBlocks) [[unlikely]]
             forgetSuspendedBlocksFrom(mark.numberOfSuspendedBlocks);
     }
-    JS_EXPORT_PRIVATE bool canRestore(const ScopeMark&) const;
-    JS_EXPORT_PRIVATE void inheritScope(const ScopeMark&);
+    ALWAYS_INLINE bool canRestore(const ScopeMark& mark) const
+    {
+        if (mark.floor == mark.logSize || mark.logSize > m_log.size())
+            return false;
+        return m_log[mark.logSize - 1].operation == mark.newestOperation;
+    }
+    ALWAYS_INLINE void inheritScope(const ScopeMark& mark)
+    {
+        restore(mark);
+        m_endOfInheritedEntries = m_log.size();
+    }
 
     void switchBlocks(Block* from, Block* to)
     {
@@ -213,7 +241,23 @@ private:
             && operation->m_children[0] == key.children[0] && operation->m_children[1] == key.children[1] && operation->m_children[2] == key.children[2];
     }
     static bool matches(const NumberingKeyOfPurePatch&, const Entry&);
-    JS_EXPORT_PRIVATE static bool isComputedFromAddressInFrame(const Operation*);
+    static bool isAddressInFrame(const Operation* operation)
+    {
+        if (operation->m_owner)
+            return false;
+        if (operation->m_opcode == Add)
+            operation = operation->m_children[0];
+        return operation->m_opcode == FramePointer || operation->m_opcode == SlotBase;
+    }
+    static bool computationReadsAddressInFrame(const Operation* computation)
+    {
+        ASSERT(countsChildrenAtFirstUse(computation->m_opcode));
+        for (const Operation* child : std::span<Operation* const>(computation->m_children, computation->m_auxiliary)) {
+            if (isAddressInFrame(child))
+                return true;
+        }
+        return false;
+    }
 
     template<bool isKeyOfLoad>
     ALWAYS_INLINE Found lookUpOperation(const NumberingKey& key, uint32_t hash, Reach reach) const
@@ -266,9 +310,10 @@ private:
         return time;
     }
     bool patchWasEndedByWrite(const Entry&) const;
+    JS_EXPORT_PRIVATE void didWriteListedHeaps(std::span<const HeapIndex>);
     JS_EXPORT_PRIVATE void growBuckets();
     void growBucketsWithoutPosition();
-    void switchBlocksThatMayWait(Block* from, Block* to);
+    JS_EXPORT_PRIVATE void switchBlocksThatMayWait(Block* from, Block* to);
     JS_EXPORT_PRIVATE void forgetSuspendedBlocksFrom(uint32_t numberKept);
 
     Arena& m_arena;

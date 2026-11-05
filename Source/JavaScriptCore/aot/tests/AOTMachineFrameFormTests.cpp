@@ -574,6 +574,137 @@ static void appendReaderOfFrameFormTest(TestProcedure& test, Operation* value)
     reader->setGenerator([](CCallHelpers&, const PatchParameters&) { });
 }
 
+static void testMachineFrameFormReadInLaterArmBehindJoinIsOutOfReach()
+{
+    TestProcedure test(traitsOfFrameFormTest(true, true));
+    Output& out = test.out();
+    Operation* choice = test.argumentGPR(1);
+    Operation* value = out.opaque(out.add(test.argumentGPR(0), out.constInt64(1)));
+    Block* calling = out.newBlock();
+    Block* other = out.newBlock();
+    Block* left = out.newBlock();
+    Block* right = out.newBlock();
+    Block* join = out.newBlock();
+    Block* end = out.newBlock();
+    out.branch(out.testNonZero64(choice, out.constInt64(1)), normalEdge(calling), normalEdge(other));
+
+    out.appendTo(calling);
+    appendReaderOfFrameFormTest(test, value);
+    appendCallOfFrameFormTest(test);
+    out.jump(end);
+
+    out.appendTo(other);
+    out.branch(out.testNonZero64(choice, out.constInt64(2)), normalEdge(left), normalEdge(right));
+    out.appendTo(left);
+    appendReaderOfFrameFormTest(test, choice);
+    out.jump(join);
+    out.appendTo(right);
+    out.jump(join);
+    out.appendTo(join);
+    appendReaderOfFrameFormTest(test, value);
+    out.jump(end);
+
+    out.appendTo(end);
+    out.ret(out.constInt64(5));
+    compileOrFail(test);
+    const Order& order = test.procedure().order();
+    AOT_FRAME_FORM_TEST_CHECK(test, order.headOf(calling) < order.headOf(join) && order.headOf(join) < order.headOf(end));
+    AOT_FRAME_FORM_TEST_CHECK(test, !test.procedure().allocation().isSpilled(value) && !test.procedure().allocation().usedCalleeSaves());
+    for (uint64_t way = 0; way < 4; ++way)
+        AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 7 }, way) == 5);
+}
+
+static void testMachineFrameFormReadInLoopThatRareBlockBehindItEntersIsWithinReach()
+{
+    TestProcedure test(traitsOfFrameFormTest(true, true));
+    Output& out = test.out();
+    uint64_t noted = 0;
+    Operation* base = test.argumentGPR(0);
+    Operation* choice = test.argumentGPR(1);
+    Operation* turns = test.argumentGPR(2);
+    Block* outerHead = out.newBlock();
+    Block* body = out.newBlock();
+    Block* deciding = out.newBlock();
+    Block* entering = out.newBlock();
+    Block* decidingRarely = out.newBlock();
+    Block* enteringRarely = out.newBlock();
+    Block* head = out.newBlock();
+    Block* behind = out.newBlock();
+    Block* rareBehind = out.newBlock();
+    Block* rareJoin = out.newBlock();
+    Block* latch = out.newBlock();
+    Block* end = out.newBlock();
+    ValueFromBlock firstOuterTurns = out.anchor(out.constInt64(2));
+    out.jump(outerHead);
+
+    out.appendTo(outerHead);
+    Operation* outerTurnsLeft = out.phi(Int64, firstOuterTurns);
+    out.branch(out.notZero64(outerTurnsLeft), normalEdge(body), normalEdge(end));
+
+    out.appendTo(body);
+    Operation* value = out.opaque(out.add(base, outerTurnsLeft));
+    out.branch(out.testNonZero64(choice, out.constInt64(1)), normalEdge(deciding), normalEdge(entering));
+
+    out.appendTo(deciding);
+    appendReaderOfFrameFormTest(test, choice);
+    out.jump(rareEdge(decidingRarely));
+
+    out.appendTo(entering);
+    ValueFromBlock turnsOfUsualWay = out.anchor(turns);
+    out.jump(head);
+
+    out.appendTo(decidingRarely);
+    out.branch(out.testNonZero64(choice, out.constInt64(4)), normalEdge(rareJoin), normalEdge(enteringRarely));
+
+    out.appendTo(enteringRarely);
+    appendReaderOfFrameFormTest(test, choice);
+    ValueFromBlock turnsOfRareWay = out.anchor(turns);
+    out.jump(head);
+
+    out.appendTo(head);
+    Operation* turnsLeft = out.phi(Int64, turnsOfUsualWay, turnsOfRareWay);
+    PatchOperation* reader = out.patch(Void);
+    reader->effects = Effects::none();
+    reader->effects.writesLocalState = true;
+    reader->setRunsWithoutFrame(true);
+    reader->appendSomeRegister(value);
+    reader->setGenerator([place = &noted](CCallHelpers& jit, const PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg address = jit.scratchRegister();
+        jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+        jit.store64(params[0].gpr(), CCallHelpers::Address(address));
+    });
+    Operation* nextTurnsLeft = out.sub(turnsLeft, out.constInt64(1));
+    out.addIncomingToPhi(turnsLeft, out.anchor(nextTurnsLeft));
+    out.branch(out.notZero64(nextTurnsLeft), normalEdge(head), normalEdge(behind));
+
+    out.appendTo(behind);
+    out.branch(out.testNonZero64(choice, out.constInt64(8)), rareEdge(rareBehind), normalEdge(latch));
+
+    out.appendTo(rareBehind);
+    appendReaderOfFrameFormTest(test, turns);
+    out.jump(rareJoin);
+
+    out.appendTo(rareJoin);
+    appendReaderOfFrameFormTest(test, base);
+    out.jump(latch);
+
+    out.appendTo(latch);
+    out.addIncomingToPhi(outerTurnsLeft, out.anchor(out.sub(outerTurnsLeft, out.constInt64(1))));
+    out.jump(outerHead);
+
+    out.appendTo(end);
+    out.ret(out.constInt64(5));
+    compileOrFail(test);
+    const Order& order = test.procedure().order();
+    AOT_FRAME_FORM_TEST_CHECK(test, order.of(enteringRarely).isReached() && deciding->numSuccessors() == 1 && deciding->successor(0).block() == decidingRarely);
+    AOT_FRAME_FORM_TEST_CHECK(test, order.headOf(deciding) < order.headOf(head) && order.headOf(head) < order.headOf(decidingRarely) && order.headOf(decidingRarely) < order.headOf(enteringRarely));
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 7 }, uint64_t { 5 }, uint64_t { 2 }) == 5 && !noted);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 7 }, uint64_t { 1 }, uint64_t { 2 }) == 5 && noted == 8);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 8 }, uint64_t { 0 }, uint64_t { 2 }) == 5 && noted == 9);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 9 }, uint64_t { 8 }, uint64_t { 2 }) == 5 && noted == 10);
+}
+
 static void testMachineFrameFormArmThatOnlyLeadsOnToSharedNeedIsNoHead()
 {
     TestProcedure test(traitsOfFrameFormTest(true, true));
@@ -727,6 +858,8 @@ std::span<const NativeTest> machineFrameFormTests()
         { "machine/frame-forms/one-word-without-a-record-lies-at-the-stack-pointer"_s, Machine::testMachineFrameFormOneWordWithoutRecordLiesAtStackPointer },
         { "machine/frame-forms/two-words-have-no-record"_s, Machine::testMachineFrameFormWithTwoWordsHasNoRecord },
         { "machine/frame-forms/many-words-have-no-record"_s, Machine::testMachineFrameFormWithManyWordsHasNoRecord },
+        { "machine/frame-forms/a-read-in-a-later-arm-behind-a-join-is-out-of-reach"_s, Machine::testMachineFrameFormReadInLaterArmBehindJoinIsOutOfReach },
+        { "machine/frame-forms/a-read-in-a-loop-that-a-rare-block-behind-it-enters-is-within-reach"_s, Machine::testMachineFrameFormReadInLoopThatRareBlockBehindItEntersIsWithinReach },
         { "machine/frame-forms/an-arm-that-only-leads-on-to-a-shared-need-is-no-head"_s, Machine::testMachineFrameFormArmThatOnlyLeadsOnToSharedNeedIsNoHead },
         { "machine/frame-forms/patch-that-needs-the-record-keeps-it"_s, Machine::testMachineFrameFormPatchThatNeedsRecordKeepsIt },
         { "machine/frame-forms/generator-told-of-a-place-in-the-frame-keeps-the-record"_s, Machine::testMachineFrameFormGeneratorToldOfPlaceInFrameKeepsRecord },

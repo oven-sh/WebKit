@@ -1169,53 +1169,21 @@ static void runLawsOfTypes(TestCommandContext& context)
     LawsOfTypes(context.out, program, WTF::move(corpus)).run();
 }
 
-static void defineSitesOfAliasTest(Program& program)
-{
-    Vector<ObjectSite> sites;
-    auto addSite = [&](SiteOrigin origin, LayoutID layout, BuiltinClassID builtinClass, bool mayHaveLayoutBelow) {
-        ObjectSite site;
-        site.value = ValueID(static_cast<uint32_t>(sites.size()));
-        site.origin = origin;
-        site.layout = layout;
-        site.builtinClass = builtinClass;
-        site.mayHaveLayoutBelow = mayHaveLayoutBelow;
-        sites.append(site);
-    };
-    for (unsigned layout = 0; layout < numberOfLayoutsInTypeTest(program); ++layout) {
-        addSite(SiteOrigin::Operation, LayoutID(layout), { }, false);
-        addSite(SiteOrigin::Operation, LayoutID(layout), { }, true);
-    }
-    addSite(SiteOrigin::Operation, { }, BuiltinClasses::Array, false);
-    addSite(SiteOrigin::Operation, { }, BuiltinClasses::Map, false);
-    addSite(SiteOrigin::BuiltinResult, { }, BuiltinClasses::Array, false);
-    addSite(SiteOrigin::Operation, { }, { }, false);
-    addSite(SiteOrigin::BuiltinResult, { }, { }, false);
-
-    Vector<uint32_t> numberOfSitesOfFunctions;
-    numberOfSitesOfFunctions.fill(0u, program.functions.size());
-    numberOfSitesOfFunctions[0] = static_cast<uint32_t>(sites.size());
-    ObjectTable& objects = program.types.objects();
-    ParallelLoops loops(1);
-    objects.reserveSites(numberOfSitesOfFunctions.span(), loops);
-    objects.defineSites(FunctionID(0u), sites.span());
-}
-
 static bool someMemberMayBeObject(TypeReader reader, const SetView<ObjectID, ObjectSetID>& members, ObjectID object)
 {
     return members.anyOf([&](ObjectID member) {
-        return reader.at(member).sharedForm != object && mayBeSameObject(reader, object, member);
+        return mayBeSameObject(reader, object, member);
     });
 }
 
 static void runAliases(TestCommandContext& context)
 {
     Program& program = *context.program;
-    defineSitesOfAliasTest(program);
     auto types = typesOfTypeTest(context);
     if (!types)
         return;
 
-    ObjectTable& objects = program.types.objects();
+    const ObjectTable& objects = program.types.objects();
     TypeArena arena(program.types, ArenaKeeps::InProgram);
     Vector<ObjectID> corpus;
     for (unsigned i = 0; i < types->size(); ++i) {
@@ -1252,8 +1220,6 @@ static void runAliases(TestCommandContext& context)
         corpus.append(objects.namespaceOf(ModuleID(module)));
     for (unsigned layout = 0; layout < numberOfLayoutsInTypeTest(program); ++layout)
         corpus.appendList({ objects.instanceOf(LayoutID(layout)), objects.prototypeOf(LayoutID(layout)), objects.escapedOf(LayoutID(layout)) });
-    for (uint32_t site = objects.firstOf(ObjectKind::Site); site < objects.endOf(ObjectKind::Site); ++site)
-        corpus.append(ObjectID(site));
     const BuiltinTable& builtins = arena.builtins();
     for (uint32_t ofModule = objects.firstOf(ObjectKind::ModuleBuiltin); ofModule < objects.endOf(ObjectKind::ModuleBuiltin); ++ofModule)
         corpus.appendList({ ObjectID(ofModule), objects.objectOf(objects.builtinOf(ObjectID(ofModule))) });
@@ -1270,16 +1236,6 @@ static void runAliases(TestCommandContext& context)
     }
     std::ranges::sort(corpus);
     corpus.shrink(std::ranges::unique(corpus).begin() - corpus.begin());
-
-    Vector<ObjectOfInstance> copies;
-    for (ObjectID object : corpus) {
-        copies.append(ObjectOfInstance { 1, object });
-        copies.append(ObjectOfInstance { 2, object });
-    }
-    uint32_t firstCopy = objects.addObjectsOfInstances(copies.span()).index();
-    size_t numberOfSharedForms = corpus.size();
-    for (uint32_t index = 0; index < copies.size(); ++index)
-        corpus.append(ObjectID(firstCopy + index));
 
     ObjectSetID everyObject = arena.objectSets().ofSorted(corpus.span());
     Vector<TypeID> typesOfObjects = corpus.map([&](ObjectID object) {
@@ -1339,7 +1295,7 @@ static void runAliases(TestCommandContext& context)
             context.out.print("the index differs from mayBeSameObject(), which says "_s, hasAlias ? "yes"_s : "no"_s, ", in set "_s, set, ": "_s);
             printObject(context.out, arena, object);
             view.forEach([&](ObjectID member) {
-                if (arena.at(member).sharedForm == object || !mayBeSameObject(arena, object, member))
+                if (!mayBeSameObject(arena, object, member))
                     return;
                 context.out.print(" = "_s);
                 printObject(context.out, arena, member);
@@ -1372,12 +1328,8 @@ static void runAliases(TestCommandContext& context)
             holdTypesAgainstEachPair(arena.forObjects(rest), arena.forObjects(seededSets[set]));
     }
 
-    Vector<ObjectID> firstCopies;
-    for (size_t index = 0; index < numberOfSharedForms; ++index) {
-        firstCopies.append(ObjectID(firstCopy + 2 * static_cast<uint32_t>(index)));
-        holdIndexAgainstEachMember(firstCopies.span().last(1), true);
-    }
-    holdIndexAgainstEachMember(firstCopies.span(), false);
+    for (size_t index = 0; index < corpus.size(); ++index)
+        holdIndexAgainstEachMember(corpus.span().subspan(index, 1), true);
 
     Vector<Vector<ObjectID>> expectedInThread;
     for (unsigned set = 1; set < numberOfSeededSets; ++set) {

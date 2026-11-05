@@ -126,6 +126,7 @@ private:
     void lookBehindReturnOfCopy(LookAhead&, const PlaceLookedAt& from, const BodyTerminator&);
     template<typename Functor> bool looksAhead(LookAhead&, const Functor& isLeanedOn);
     bool endOfBlockMayBeWalkedForEachWayFrom(uint32_t begin);
+    bool bringSameNames(std::span<const uint32_t> ways);
     bool leansOnWhatWaysHaveProven(std::span<const uint32_t> passing, std::span<const uint32_t> closed);
     bool takesApartParameter(ValueID parameter);
     bool letArmsWalkEndOfBlockFrom(uint32_t begin);
@@ -167,15 +168,23 @@ bool KnownThreading::terminatorMayBeWalkedAgain()
 
 void KnownThreading::forgetValuesThatNobodyReadsAnyMore()
 {
-    if (!frame().loopsBeingBuiltTwice.isEmpty())
+    if (!frame().loopsBeingBuiltTwice.isEmpty() || !frame().valuesBuiltTwice)
         return;
     uint32_t here = m_block.firstParameter().index();
-    frame().valuesBuiltTwice.removeAllMatching([&](ValueID value) {
-        if (m_walker.m_liveness.lastUse(value).index() >= here)
-            return false;
-        frame().references[value.index()] = Reference();
-        return true;
-    });
+    Walker::Frame::ValuesBuiltTwice& listed = *frame().valuesBuiltTwice;
+    for (uint32_t slot : listed.slotsListedAnew) {
+        if (listed.slots[slot].value.index() >= frame().index->numberOfValues())
+            continue;
+        listed.slotsByLastUse.append({ m_walker.m_liveness.lastUse(listed.slots[slot].value).index(), slot });
+        std::ranges::push_heap(listed.slotsByLastUse, std::ranges::greater());
+    }
+    listed.slotsListedAnew.shrink(0);
+    while (!listed.slotsByLastUse.isEmpty() && listed.slotsByLastUse.first().first < here) {
+        std::ranges::pop_heap(listed.slotsByLastUse, std::ranges::greater());
+        Walker::Frame::ValuesBuiltTwice::Slot& dead = listed.slots[listed.slotsByLastUse.takeLast().second];
+        if (std::exchange(dead.ordinal, 0))
+            frame().references[dead.value.index()] = Reference();
+    }
 }
 
 void KnownThreading::forgetValuesFrom(ValueID first)
@@ -207,12 +216,16 @@ bool KnownThreading::letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay
             readBehind.append(value);
         });
     }
-    if (uint32_t firstWay = m_walker.inputBlock(m_frameIndex, m_block.id()).firstOpenEdge; firstWay != Walker::noOpenEdge) {
-        for (auto [value, name] : m_walker.m_openEdges[firstWay].names) {
-            if (!frame().valuesBuiltTwice.contains(value) && isReadBehindBlock(value))
-                readBehind.append(value);
+    Vector<ValueID, 4> wouldBeNamedForGood;
+    if (frame().valuesBuiltTwice) {
+        for (const auto& given : frame().valuesBuiltTwice->namesGivenForGood) {
+            for (ValueID value : given.values) {
+                if (given.block == m_block.id() && isReadBehindBlock(value))
+                    wouldBeNamedForGood.append(value);
+            }
         }
     }
+    readBehind.appendVector(wouldBeNamedForGood);
     std::ranges::sort(readBehind);
     readBehind.shrink(std::ranges::unique(readBehind).begin() - readBehind.begin());
 
@@ -241,10 +254,15 @@ bool KnownThreading::letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay
     }
 
     forgetValuesThatNobodyReadsAnyMore();
-    for (ValueID value : readBehind) {
-        if (!frame().valuesBuiltTwice.contains(value))
-            frame().valuesBuiltTwice.append(value);
+    if (frame().valuesBuiltTwice) {
+        frame().valuesBuiltTwice->namesGivenForGood.removeAllMatching([&](const auto& given) {
+            return given.block == m_block.id();
+        });
     }
+    for (ValueID value : wouldBeNamedForGood)
+        frame().valuesBuiltTwice->remove(value);
+    for (ValueID value : readBehind)
+        frame().listAsBuiltTwice(value);
     frame().blocksWalkedForEachWay.shrink(0);
     frame().blocksWalkedForEachWay.append(m_block.id());
     return true;
@@ -283,12 +301,6 @@ void KnownThreading::walkBlockOnWays(std::span<const uint32_t> places, uint32_t 
     Walker& walker = m_walker;
     if (places.empty() || walker.m_hasFailed)
         return;
-    for (auto [value, name] : walker.m_openEdges[places[0]].names) {
-        if (!frame().valuesBuiltTwice.contains(value) && isReadBehindBlock(value)) {
-            walker.fail("some of the ways into a block walk it for themselves, and no edge behind it brings on a name that they bring"_s);
-            return;
-        }
-    }
     Walker::InputBlock& record = walker.inputBlock(m_frameIndex, m_block.id());
     record = Walker::InputBlock { };
     record.firstNarrowerName = namesAtHead;
@@ -440,7 +452,7 @@ bool KnownThreading::looksAhead(LookAhead& look, const Functor& isLeanedOn)
                 if (operand == place.call)
                     looks = place.given && isLeanedOn(place.given, Reference());
                 else if (operand < place.call) {
-                    Reference name = here.frame().references[operand.index()];
+                    Reference name = walker.referenceBoundIn(here.frame(), operand);
                     looks = name && isLeanedOn(ValueID(), name);
                 }
             });
@@ -511,6 +523,17 @@ bool KnownThreading::armsWouldStayApartBehindEndOfBlock(uint32_t begin, uint32_t
     return false;
 }
 
+bool KnownThreading::bringSameNames(std::span<const uint32_t> ways)
+{
+    bool bringSameNames = true;
+    for (size_t index = 1; index < ways.size(); ++index) {
+        m_walker.m_openEdges[ways[index]].names.forEachSlotNamedOtherwiseBy(m_walker.m_openEdges[ways[index - 1]].names, [&](uint32_t slot) {
+            bringSameNames = bringSameNames && !m_walker.isNamedByWaysInto(frame(), frame().valuesBuiltTwice->slots[slot].value, m_block.id());
+        });
+    }
+    return bringSameNames;
+}
+
 bool KnownThreading::leansOnWhatWaysHaveProven(std::span<const uint32_t> passing, std::span<const uint32_t> closed)
 {
     Walker& walker = m_walker;
@@ -519,11 +542,9 @@ bool KnownThreading::leansOnWhatWaysHaveProven(std::span<const uint32_t> passing
         if (value && value >= m_block.firstParameter())
             name = open.arguments[value.index() - m_block.firstParameter().index()];
         else if (value) {
-            name = walker.referenceOf(value);
-            for (auto [builtTwice, nameOnWay] : open.names) {
-                if (builtTwice == value)
-                    name = nameOnWay;
-            }
+            name = walker.isNamedByWaysInto(frame(), value, m_block.id()) ? frame().valuesBuiltTwice->nameOn(open.names, value) : Reference();
+            if (!name)
+                name = walker.referenceOf(value);
         }
         while (Reference checked = name ? open.state.checkedNameOf(name) : Reference())
             name = checked;
@@ -592,11 +613,11 @@ bool KnownThreading::walkApartFromClosedWays()
     uint32_t firstWay = walker.inputBlock(m_frameIndex, block).firstOpenEdge;
     for (uint32_t place = firstWay; place != Walker::noOpenEdge; place = walker.m_openEdges[place].next) {
         const Walker::OpenEdge& open = walker.m_openEdges[place];
-        if (open.block || open.arguments.size() != m_block.numberOfParameters() || open.names.size() != walker.m_openEdges[firstWay].names.size())
+        if (open.block || open.arguments.size() != m_block.numberOfParameters())
             return false;
         (open.isLedByClosedArm ? closed : passing).append(place);
     }
-    if (passing.isEmpty() || closed.isEmpty() || walker.isWalkingBlockForEachWay(m_frameIndex) || !mayBeWalkedApartFromClosedWays())
+    if (passing.isEmpty() || closed.isEmpty() || walker.isWalkingBlockForEachWay(m_frameIndex) || !mayBeWalkedApartFromClosedWays() || !bringSameNames(closed.span()))
         return false;
     passing.reverse();
     closed.reverse();
@@ -605,9 +626,6 @@ bool KnownThreading::walkApartFromClosedWays()
     if (!terminatorMayBeWalkedByWaysApart() || !letTerminatorBeWalkedForEachWay(m_block.firstParameter()))
         return false;
 
-    Vector<ValueID, 4> namedByWays;
-    for (auto [value, name] : walker.m_openEdges[firstWay].names)
-        namedByWays.append(value);
     uint32_t namesAtHead = walker.inputBlock(m_frameIndex, block).firstNarrowerName;
     {
         Walker::ClosedArm closedArm(walker);
@@ -620,8 +638,8 @@ bool KnownThreading::walkApartFromClosedWays()
     frame().blocksWalkedForEachWay.shrink(0);
     walker.inputBlock(m_frameIndex, block).firstNarrowerName = namesAtHead;
     forgetValuesFrom(m_block.firstParameter());
-    for (ValueID value : namedByWays)
-        frame().references[value.index()] = Reference();
+    if (frame().valuesBuiltTwice)
+        walker.forgetNamesOfWay(frame());
     walker.m_block = { };
     walker.m_state.clear();
     return true;
@@ -669,7 +687,7 @@ bool KnownThreading::walkForEachWayThatBringsObjectInSight()
     uint32_t firstWay = walker.inputBlock(m_frameIndex, block).firstOpenEdge;
     for (uint32_t place = firstWay; place != Walker::noOpenEdge; place = walker.m_openEdges[place].next) {
         const Walker::OpenEdge& open = walker.m_openEdges[place];
-        if (open.block || open.isLedByClosedArm || open.arguments.size() != m_block.numberOfParameters() || open.names.size() != walker.m_openEdges[firstWay].names.size())
+        if (open.block || open.isLedByClosedArm || open.arguments.size() != m_block.numberOfParameters())
             return false;
         ways.append(place);
     }
@@ -700,9 +718,6 @@ bool KnownThreading::walkForEachWayThatBringsObjectInSight()
 
     ways.reverse();
     ++walker.m_numberOfJoinsWalkedForEachWay;
-    Vector<ValueID, 4> namedByWays;
-    for (auto [value, name] : walker.m_openEdges[firstWay].names)
-        namedByWays.append(value);
     uint32_t namesAtHead = walker.inputBlock(m_frameIndex, block).firstNarrowerName;
     for (uint32_t place : ways)
         walkBlockOnWays(singleElementSpan(place), namesAtHead);
@@ -710,8 +725,8 @@ bool KnownThreading::walkForEachWayThatBringsObjectInSight()
     frame().blocksWalkedForEachWay.shrink(0);
     walker.inputBlock(m_frameIndex, block).firstNarrowerName = namesAtHead;
     forgetValuesFrom(m_block.firstParameter());
-    for (ValueID value : namedByWays)
-        frame().references[value.index()] = Reference();
+    if (frame().valuesBuiltTwice)
+        walker.forgetNamesOfWay(frame());
     walker.m_block = { };
     walker.m_state.clear();
     return true;

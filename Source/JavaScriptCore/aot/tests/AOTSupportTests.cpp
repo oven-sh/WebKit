@@ -15,12 +15,14 @@
 #include "AOTDriver.h"
 #include "AOTIR.h"
 #include "AOTIRParser.h"
+#include "AOTLargeList.h"
 #include "AOTLimits.h"
 #include "AOTNativeTest.h"
 #include "AOTOptionWords.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
 #include "AOTProgramFile.h"
+#include "AOTReaderInternal.h"
 #include "AOTRowsOfLayouts.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSort.h"
@@ -54,6 +56,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {
@@ -434,6 +437,70 @@ static void testCurrentWorkNamesFunctionAndStep()
     AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling).isEmpty());
 }
 
+static void testLargeListHasRoomForMoreBytesThanVector()
+{
+    struct Record {
+        std::array<uint32_t, 9> words { 7 };
+    };
+    constexpr size_t room = defaultLimitValue(LimitID::VectorBytes, hostArchitecture()) / sizeof(Record) + 1;
+    static_assert(!WTF::isValidCapacityForVector<Record>(room));
+
+    ParallelLoops loops(numberOfWorkers);
+    LargeList<Record> list;
+    list.reserve(room);
+    list.grow(loops, 10000);
+    AOT_TEST_CHECK(list.room() == room && list.size() == 10000 && list.span().size() == 10000);
+    AOT_TEST_CHECK(std::ranges::all_of(list.span(), [](const Record& record) { return record.words[0] == 7 && !record.words[8]; }));
+    const Record* first = &list[0];
+    list.grow(10001);
+    AOT_TEST_CHECK(&list[0] == first && list.room() == room && list[10000].words[0] == 7);
+    list.clear();
+    AOT_TEST_CHECK(!list.size() && !list.room());
+}
+
+static void testLargeListMovesAndDestroysWhatItHolds()
+{
+    auto alive = std::make_shared<int>(0);
+    struct Holder {
+        std::shared_ptr<int> held;
+        Vector<uint32_t> numbers;
+    };
+    static_assert(!movesAsBytes<Holder> && !std::is_trivially_copyable_v<Holder>);
+    {
+        LargeList<Holder> list;
+        for (uint32_t number = 0; number < 1000; ++number)
+            list.append(Holder { alive, { number } });
+        AOT_TEST_CHECK(list.size() == 1000 && list.room() >= 1000 && alive.use_count() == 1001);
+        for (uint32_t number = 0; number < 1000; ++number)
+            AOT_TEST_CHECK(list[number].numbers.size() == 1 && list[number].numbers[0] == number);
+        list.grow(1500);
+        AOT_TEST_CHECK(list.size() == 1500 && !list[1499].held && list[999].numbers[0] == 999 && alive.use_count() == 1001);
+        LargeList<Holder> taken = WTF::move(list);
+        AOT_TEST_CHECK(!list.size() && taken.size() == 1500 && alive.use_count() == 1001);
+    }
+    AOT_TEST_CHECK(alive.use_count() == 1);
+}
+
+static void testListThatFitsNoTableIsRefusedInSentence()
+{
+    constexpr size_t mostFunctions = defaultLimitValue(LimitID::VectorBytes, hostArchitecture()) / sizeof(Function);
+    static_assert(WTF::isValidCapacityForVector<Function>(mostFunctions) && !WTF::isValidCapacityForVector<Function>(mostFunctions + 1));
+    static constexpr Wire::Function record { };
+
+    auto sayOf = [&](size_t numberOfFunctions) {
+        BuildContext build(makeDefaultCompileOptions());
+        Program program(BuiltinTable::singleton());
+        Wire::Sections sections;
+        sections.functions = unsafeMakeSpan(&record, numberOfFunctions);
+        bool haveRoom = Reader(program, build).tablesHaveRoomFor(sections);
+        build.diagnostics().finish(nullptr);
+        AOT_TEST_CHECK(haveRoom == build.diagnostics().userDiagnostics().isEmpty() && build.diagnostics().internalErrors().isEmpty());
+        return haveRoom ? String() : build.diagnostics().messageOfUserDiagnostic(0);
+    };
+    AOT_TEST_CHECK(sayOf(mostFunctions).isNull());
+    AOT_TEST_CHECK(sayOf(mostFunctions + 1) == makeString("the program exceeds a compiler limit: VectorBytes (the size of a compiler table), needed "_s, (mostFunctions + 1) * sizeof(Function)));
+}
+
 std::span<const NativeTest> supportTests()
 {
     static constexpr NativeTest tests[] = {
@@ -446,6 +513,9 @@ std::span<const NativeTest> supportTests()
         { "threads/plan-that-fails-its-check-in-front-of-compile-reaches-no-walk"_s, testPlanThatFailsItsCheckInFrontOfCompileReachesNoWalk },
         { "current-work/names-function-and-step"_s, testCurrentWorkNamesFunctionAndStep },
         { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
+        { "large-list/has-room-for-more-bytes-than-a-vector"_s, testLargeListHasRoomForMoreBytesThanVector },
+        { "large-list/moves-and-destroys-what-it-holds"_s, testLargeListMovesAndDestroysWhatItHolds },
+        { "reader/a-list-that-fits-no-table-is-refused-in-a-sentence"_s, testListThatFitsNoTableIsRefusedInSentence },
     };
     return tests;
 }

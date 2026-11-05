@@ -297,6 +297,17 @@ Operand SlotAccessEmitter::readIfMemberHasField(const ValueContext& value, CellP
     return join.finish();
 }
 
+static bool everyMemberWithFieldKeepsSlotFilled(const Program& program, const Facts& facts, const Plan& plan, const FieldAccess& access)
+{
+    return std::ranges::all_of(access.membersWithField, [&](LayoutID member) {
+        FieldIndex field = *plan.slots().findField(program, member, access.key);
+        const PlacedSlot& slot = plan.slot(member, field);
+        const LinkedCell* cell = facts.linked().findCellOfField({ member, field });
+        bool takesEveryValue = slot.representation == SlotRepresentation::JSValue && (!slot.type || program.at(slot.type).isAnything());
+        return cell && cell->isFilledAtEveryRead && (takesEveryValue || (slot.type && slot.everyStoreFits));
+    });
+}
+
 Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell, const FieldAccess& access, bool absentIsUndefined)
 {
     if (value.representation() == Representation::Void)
@@ -316,8 +327,13 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
     case FieldAccess::Coverage::NoMember:
         break;
     case FieldAccess::Coverage::SomeMembers:
-        if (mayBeAbsent)
+        if (mayBeAbsent && !everyMemberWithFieldKeepsSlotFilled(m_program, m_facts, m_plan, access))
             return readIfMemberHasField(value, cell, access, load);
+        if (mayBeAbsent) {
+            return readIfMemberHasField(value, cell, access, [&] {
+                return inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
+            });
+        }
         return inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
     case FieldAccess::Coverage::EveryMember:
         return mayBeAbsent ? load() : inResultRepresentation(value, loadFilledSlot(value, baseOfSlot(cell, access), access));
@@ -554,8 +570,9 @@ void SlotAccessEmitter::markCellIfMarkerReplacesRawValue(CellPointer cell, const
     if (!typeOf(stored).mayBeUndefinedOrNull())
         return;
     SlotEmitter& slots = emitter<SlotEmitter>();
-    if (slots.holdsRawValueFromBirthInSomeMember(setOfMembersWithField(access), access.key))
-        slots.markCellIfMarkerIsStored(cell, stored);
+    LayoutSetID members = setOfMembersWithField(access);
+    if (slots.holdsRawValueFromBirthInSomeMember(members, access.key))
+        slots.markCellIfMarkerIsStored(cell, stored, members);
 }
 
 void SlotAccessEmitter::generatePutSlot(const ValueContext& value)
@@ -621,6 +638,18 @@ bool SlotAccessEmitter::tryPutSlotOrAddByStub(const ValueContext& value, CellPoi
     return true;
 }
 
+bool SlotAccessEmitter::nextStoreWritesOrderWordAtOnce(const ValueContext& value) const
+{
+    std::span<const ValueID> behind = value.operationsBehind();
+    if (behind.empty())
+        return false;
+    const Operation& next = operationAt(behind.front());
+    if (next.opcode != Opcode::PutSlotOrAdd || next.objectOperand() != value->objectOperand() || !next.orderWordAfter() || next.level() == KnowledgeLevel::Expected)
+        return false;
+    FieldAccess access = fieldAccessFor(next.key(), next.receivers(), true);
+    return slotAccessFindsSlotInEveryReceiver(access) && mayCreateListedField(access) && !access.slot.isOutOfLine();
+}
+
 void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
 {
     if (GuessedAccessEmitter::testsForItself(value)) {
@@ -637,7 +666,7 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     CellPointer cell = in<CellPointer>(value->objectOperand());
     ValueID stored = value->valueOperand();
     MemoryLocation location = locationOfSlotAccess(access);
-    bool needsStorage = needsStorageFor(access.slot, typeOf(stored));
+    bool needsStorage = !access.slot.isOutOfLine() || !access.slot.mayExistWithoutStorage || needsStorageFor(access.slot, typeOf(stored));
     markCellIfMarkerReplacesRawValue(cell, access, stored);
     BlockFrequency frequency = generator().code().at(value.block()).frequency;
     Place coldPlace = frequency == BlockFrequency::Rare ? Place::RareBlock : frequency == BlockFrequency::Unlikely ? Place::UnlikelyBlock : Place::Anywhere;
@@ -653,7 +682,7 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     auto store = [&] {
         if (needsStorage)
             writeSlot(value, cell, access, stored);
-        else if (!value->hasNoExtension())
+        else
             slots.storeIfExtensionHolds(baseOfSlot(cell, access), access.slot, location, get(stored), access.extensionWord);
     };
     if (!mayCreateListedField(access)) {
@@ -662,7 +691,8 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     }
 
     if (std::optional<OrderWord> orderWordAfter = value->orderWordAfter()) {
-        storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(orderWordAfter->value())));
+        if (!nextStoreWritesOrderWordAtOnce(value))
+            storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(orderWordAfter->value())));
         store();
         return;
     }
@@ -763,8 +793,7 @@ SlotAccessEmitter::CreationByDefinition SlotAccessEmitter::tryCreateFieldByDefin
     auto isNoPrototype = [&] {
         return hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits);
     };
-    if (!definition->objectIsNoPrototype())
-        goOnIf(isNoPrototype());
+    goOnIf(isNoPrototype());
     if (access->slot.isOutOfLine())
         slots.ensureExtensionHolds(definition, cell, access->extensionWord, granuleBitOf(access->slot.offset), granuleBitsWithFieldsBehind(*access), OwnerBarrier::Emitted);
     auto lacksField = [&] {
@@ -860,6 +889,8 @@ std::optional<KeyOrderStep> SlotAccessEmitter::testLikeliestKeyOrderStep(CellPoi
             continue;
         uint64_t wordsBefore = static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(member))) << 32 | continuation->orderWordBefore;
         Integer words(m_out.load64(m_out.address(m_heaps.AOTObject_orderWord, cell.value(), offsetOfOrderWord)));
+        if (m_plan.layout(member).mayBearMark)
+            words = bitOr(words, integer(static_cast<int64_t>(orderAndShapeWordsAreUnmarked)));
         return KeyOrderStep { equal(words, integer(static_cast<int64_t>(wordsBefore))), word32(static_cast<int32_t>(continuation->orderWordAfter)) };
     }
     return std::nullopt;

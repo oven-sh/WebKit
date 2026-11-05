@@ -37,7 +37,7 @@ struct BuiltinNativeFunctionBinding;
 
 struct BuiltinWords {
     ObjectBuiltinWords objects;
-    uint8_t* locationStates;
+    uint8_t* classesWrittenAbove;
     EncodedJSValue* hostValues;
 };
 

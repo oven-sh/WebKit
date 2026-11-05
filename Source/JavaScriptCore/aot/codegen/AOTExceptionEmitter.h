@@ -31,7 +31,7 @@ private:
     friend class RuntimeCallEmitter;
     friend class ThrowEmitter;
 
-    bool unwindsWithinFunction(const OperationContext& context) const { return context.handler(); }
+    static bool unwindsWithinFunction(const OperationContext& context) { return context.handler(); }
     void attachLandingPad(const OperationContext&, Machine::PatchOperation*, uint32_t site, bool mayReturn);
 
     struct LandingPad {
@@ -39,13 +39,15 @@ private:
         LBasicBlock block;
         uint32_t indexInRecords;
         uint32_t next;
+        HandlerType type;
     };
     static constexpr uint32_t noLandingPad = UINT32_MAX;
     template<typename T> using BlockMap = std::span<T>;
 
     void forEachReachedBlock(NOESCAPE const Invocable<void(BlockID, const Block&)> auto& functor) const
     {
-        for (uint32_t index = 0; index < m_code.numberOfBlocks(); ++index) {
+        uint32_t numberOfBlocks = m_code.numberOfBlocks();
+        for (uint32_t index = 0; index < numberOfBlocks; ++index) {
             BlockID block(index);
             if (m_code.isReached(block))
                 functor(block, m_code.at(block));
@@ -69,7 +71,7 @@ private:
     void jumpToHandler(const Edge& handler, LValue caught);
     void throwByOperation(const TerminatorContext&, RuntimeOperation, Boxed thrown);
     void throwAfterCleanup(const TerminatorContext&, Boxed thrown);
-    void findValuesCaughtByCleanups();
+    void findValuesCaughtByCleanups(Vector<BlockID, 8>& blocksThatThrowIntoHandlers);
     void findCleanupsThatKeepException();
     LValue caughtWord(const ValueContext&);
     Boxed valueOfException(CellPointer exception);

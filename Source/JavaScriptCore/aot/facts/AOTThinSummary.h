@@ -9,11 +9,13 @@
 
 #include "AOTBody.h"
 #include "AOTEffects.h"
+#include "AOTLargeList.h"
 #include "AOTLayout.h"
 #include "AOTMechanisms.h"
 #include "AOTOpcode.h"
 #include "AOTThreads.h"
 #include "AOTType.h"
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <wtf/ScopedLambda.h>
@@ -324,6 +326,7 @@ struct SummaryDefinition {
     VariableID variable;
     ValueID made;
     ValueID store;
+    bool makesClosure { false };
 };
 
 struct SummaryHandler {
@@ -336,6 +339,12 @@ struct SummaryScopeStoredFirst {
     uint32_t blockOfLeaving { UINT32_MAX };
     uint32_t positionOfLeaving { 0 };
     Vector<uint32_t, 4> fields;
+};
+
+struct SummaryMakerThatEndsWhereItLeaves {
+    ValueID allocation;
+    uint32_t blockOfLeaving { UINT32_MAX };
+    uint32_t positionOfLeaving { 0 };
 };
 
 struct ThinSummary {
@@ -353,6 +362,7 @@ struct ThinSummary {
     Vector<VariableID> functionVariablesStoredInto;
     Vector<SummaryConstruction::Part> partsOfConstructions;
     Vector<FieldReference> fieldsLeftEmpty;
+    Vector<SummaryMakerThatEndsWhereItLeaves> makersThatEndWhereTheyLeave;
     Vector<FieldReference> fieldsFilledAtEndAlone;
     Vector<FieldReference> fieldsEmptyAtEndAlone;
     Vector<HalfOfAccessorInSummary> halvesOfAccessorsNotLaid;
@@ -363,7 +373,6 @@ struct ThinSummary {
     Vector<ValueID> environmentsMade;
     Vector<SummaryScopeStoredFirst> scopesStoredFirst;
     Vector<ValueID> environmentsHandedToFunctionsEntered;
-    Vector<uint32_t> nodesWhoseKeysAreListed;
     Vector<SummaryDefinition> definitions;
     Vector<FunctionID> functionsNamed;
     Vector<BlockID> blocksNeverEntered;
@@ -462,22 +471,16 @@ struct ThinSummary {
     bool has(SummaryTrait trait) const { return traits.contains(trait); }
 };
 
+struct LiteralOfVariable {
+    VariableID variable;
+    Opcode opcode { Opcode::Undefined };
+    uint64_t bits { 0 };
+};
+
 class ThinSummaries {
 public:
-    explicit ThinSummaries(size_t numberOfFunctions)
-        : m_summaries(numberOfFunctions)
-    {
-    }
-
-    ThinSummaries(size_t numberOfFunctions, const ParallelLoops& loops)
-    {
-        m_summaries.reserveInitialCapacity(numberOfFunctions);
-        std::span<uint8_t> storage = asMutableByteSpan(unsafeMakeSpan(m_summaries.mutableSpan().data(), numberOfFunctions));
-        forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t first, size_t end) {
-            zeroSpan(storage.subspan(first * sizeof(ThinSummary), (end - first) * sizeof(ThinSummary)));
-        });
-        m_summaries.grow(numberOfFunctions);
-    }
+    explicit ThinSummaries(size_t numberOfFunctions) { m_summaries.grow(numberOfFunctions); }
+    ThinSummaries(size_t numberOfFunctions, const ParallelLoops& loops) { m_summaries.grow(loops, numberOfFunctions); }
 
     const ThinSummary& at(FunctionID id) const LIFETIME_BOUND { return m_summaries[id.index()]; }
     ThinSummary& at(FunctionID id) LIFETIME_BOUND { return m_summaries[id.index()]; }
@@ -487,14 +490,20 @@ public:
     const BitVector& textsSpelledThatNameFieldsNeverWritten() const LIFETIME_BOUND { return m_textsSpelledThatNameFieldsNeverWritten; }
     void setTextsSpelledThatNameFieldsNeverWritten(BitVector&& texts) { m_textsSpelledThatNameFieldsNeverWritten = WTF::move(texts); }
 
+    const LiteralOfVariable* findLiteralOfVariable(VariableID variable) const LIFETIME_BOUND
+    {
+        auto found = std::ranges::lower_bound(m_literalsOfVariables, variable, { }, &LiteralOfVariable::variable);
+        return found != m_literalsOfVariables.end() && found->variable == variable ? &*found : nullptr;
+    }
+    void setLiteralsOfVariables(Vector<LiteralOfVariable>&& literals) { m_literalsOfVariables = WTF::move(literals); }
+
 private:
-    Vector<ThinSummary> m_summaries;
+    LargeList<ThinSummary> m_summaries;
     BitVector m_textsSpelledThatNameFieldsNeverWritten;
+    Vector<LiteralOfVariable> m_literalsOfVariables;
 };
 
 ThinSummaries scanBodies(const Program&, Diagnostics&, const ParallelLoops&, Mechanisms = allMechanisms);
-ThinSummary scanBody(const Program&, Diagnostics&, FunctionID, Mechanisms = allMechanisms);
-void scanBodiesAppendedToProgram(const Program&, Diagnostics&, ThinSummaries&, Mechanisms);
 
 PropertyKeyID keyOfSymbolThatCallMakes(const Program&, FunctionID, const BodyValue& call, const ScopedLambda<BodyValue(ValueID)>& definitionOf);
 PropertyKeyID keyOfSymbolMadeOnceBy(const Program&, const SummaryCall&);

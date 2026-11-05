@@ -1,10 +1,10 @@
-# If the join of two layouts kept a set of two, types would grow with the program and Link would no longer be linear. If it dropped one of the two, a read through the parameter would be compiled for the wrong shape
+# A set holds layouts that stand in no declared family, or layouts that one declared family holds all. A layout of a family beside a stranger, and layouts of different families, are lost as before: else every place where hundreds of kinds meet would climb through three sets on its way there and tell its observers each time. If the join dropped one of the two, a read through the parameter would be compiled for the wrong shape
 # interface Shape { }  type Circle, Square: Shape  type Point
-# A circle and a square arrive at `area`: their join is the family that the program declares for both. A circle and a point arrive at `any`: no declared family holds both, so both are lost and the type is any object. Neither has escaped.
+# A circle and a square arrive at `area`: the set of the two, which one declared family holds. A circle and a point arrive at `any`: the circle stands in a family that does not hold the point: both are lost and the type is any object. Neither has escaped.
 # RUN: link families functions layouts mechanisms=all
 # CHECK: family [[shape]] [{{*}}L1, L2]
 # CHECK: function f1 callers-known one-callee
-# CHECK-NEXT: parameter 0 {{*}}proven=L
+# CHECK-NEXT: parameter 0 {{*}}proven=L1|L2
 # CHECK: function f2 callers-known one-callee
 # CHECK-NEXT: parameter 0 {{*}}proven=object
 # CHECK: layout L1 family=[[shape]] changes=[]

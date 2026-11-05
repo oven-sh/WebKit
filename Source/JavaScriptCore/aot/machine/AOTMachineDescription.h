@@ -13,9 +13,39 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-void describeConstants(const Procedure&, decltype(CodeBody::constants)&);
-void describeJumpTables(const Procedure&, const LinkBuffer&, decltype(CodeBody::jumpTables)&);
-void describeEntries(const Procedure&, const LinkBuffer&, Vector<CodeEntry, 1>&);
+void describeListedConstants(const Procedure&, decltype(CodeBody::constants)&);
+inline void describeConstants(const Procedure& procedure, decltype(CodeBody::constants)& constants)
+{
+    RELEASE_ASSERT(constants.isEmpty());
+    if (!procedure.constantData().empty())
+        describeListedConstants(procedure, constants);
+}
+
+void describeListedJumpTables(const Procedure&, const LinkBuffer&, decltype(CodeBody::jumpTables)&);
+inline void describeJumpTables(const Procedure& procedure, const LinkBuffer& linkBuffer, decltype(CodeBody::jumpTables)& jumpTables)
+{
+    RELEASE_ASSERT(jumpTables.isEmpty());
+    if (!procedure.jumpTables().empty())
+        describeListedJumpTables(procedure, linkBuffer, jumpTables);
+}
+
+inline uint32_t describedOffsetOf(const LinkBuffer& linkBuffer, MacroAssembler::Label label)
+{
+    RELEASE_ASSERT(label.isSet());
+    uint32_t offset = const_cast<LinkBuffer&>(linkBuffer).offsetOf(label);
+    RELEASE_ASSERT(offset <= linkBuffer.size(), offset, linkBuffer.size());
+    return offset;
+}
+
+inline void describeEntries(const Procedure& procedure, const LinkBuffer& linkBuffer, Vector<CodeEntry, 1>& entries)
+{
+    std::span<const Entrypoint> entrypoints = procedure.entrypoints();
+    if (entries.size() + entrypoints.size() > entries.capacity())
+        entries.reserveCapacity(entries.size() + entrypoints.size());
+    for (const Entrypoint& entrypoint : entrypoints)
+        entries.append(CodeEntry { describedOffsetOf(linkBuffer, entrypoint.label), entrypoint.id });
+}
+
 void describeFrame(const Procedure&, const LinkBuffer&, FrameDescription&);
 
 struct LinkedTrappingAccess {
@@ -24,7 +54,12 @@ struct LinkedTrappingAccess {
     GPRReg reference;
     bool referenceIsNarrow;
 };
-void describeTrappingAccesses(const Procedure&, const LinkBuffer&, Vector<LinkedTrappingAccess>&);
+void describeListedTrappingAccesses(const Procedure&, const LinkBuffer&, Vector<LinkedTrappingAccess>&);
+inline void describeTrappingAccesses(const Procedure& procedure, const LinkBuffer& linkBuffer, Vector<LinkedTrappingAccess>& accesses)
+{
+    if (!procedure.trappingAccesses().empty())
+        describeListedTrappingAccesses(procedure, linkBuffer, accesses);
+}
 
 enum class CodeOfBackEnd : uint8_t { Move, Reload, Save, Materialize, Swap, ClearSpill, KeepPointer, StoreBehindDefinition, FrameSetup, FrameTeardown, StoreToOutgoingWord, LoadFromOutgoingWord };
 enum class PlaceOfCodeOfBackEnd : uint8_t { Nowhere, Operation, Patch, Check, Branch, Return, LastPatch, Edge };

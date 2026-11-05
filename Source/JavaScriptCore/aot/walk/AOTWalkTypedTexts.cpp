@@ -115,8 +115,6 @@ static ValueID findJoinThatAloneTakesInWalkTexts(const Walker& walker, const Bod
         return { };
     for (uint32_t between = text.index() + 1; between < user.index(); ++between) {
         Opcode opcode = index.opcodeOf(ValueID(between));
-        if (mayStandInsideRowOfJoins(walker, index, text, ValueID(between)))
-            continue;
         if (!opcodesThatStateTypes.contains(opcode) && !declaredBoundInTable(opcode).isUnobservable())
             return { };
     }

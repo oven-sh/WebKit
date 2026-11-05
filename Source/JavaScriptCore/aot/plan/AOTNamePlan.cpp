@@ -24,20 +24,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(!RowDisplacementTable::hasColumn(0) && RowDisplacementTable::hasColumn(RowDisplacementTable::maxColumn) && FieldTableEntry::hasColumn(RowDisplacementTable::maxColumn));
 
-namespace {
-
-enum class PlaceOfNamedFieldInNamePlan : uint8_t { ValueInCell, ValueInExtension, DoubleInCell, Elsewhere };
-
-template<typename T>
-struct ByPlaceOfNamedFieldInNamePlan {
-    T& operator[](PlaceOfNamedFieldInNamePlan place) { return values[static_cast<unsigned>(place)]; }
-    T operator[](PlaceOfNamedFieldInNamePlan place) const { return values[static_cast<unsigned>(place)]; }
-
-    std::array<T, 4> values { };
-};
-
-} // anonymous namespace
-
 MentionsOfKeys countMentionsOfKeys(const Program&, const Facts&, const ParallelLoops&);
 MentionsOfKeys countMentionsOfKeys(const Program& program, const Facts& facts, const ParallelLoops& loops)
 {
@@ -64,6 +50,13 @@ MentionsOfKeys countMentionsOfKeys(const Program& program, const Facts& facts, c
             }
         }
     });
+    for (const LinkedAccess& access : link.accessesUnderOneKey) {
+        if (access.key.index() >= numberOfKeys)
+            continue;
+        ++mentions.all[access.key.index()];
+        if (!facts.runsAtMostOnce(access.function) && !program.at(access.function).isModuleBody())
+            ++mentions.thatMayRunAgain[access.key.index()];
+    }
     for (size_t text : facts.summaries().textsSpelledThatNameFieldsNeverWritten()) {
         std::optional<PropertyKeyID> key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = StringID(static_cast<uint32_t>(text)) });
         if (key && key->index() < numberOfKeys)
@@ -83,14 +76,8 @@ static BitVector chooseKeysWithColumnForNamePlan(const Program& program, const M
         if (mentions.all[key] && program.types.hasStableNumber(PropertyKeyID(key)))
             mentionedKeys.append(key);
     }
-    if (mentionedKeys.size() > numberOfColumns) {
-        parallelSort(build.parallelLoops(), mentionedKeys.mutableSpan(), [&](uint32_t first, uint32_t second) {
-            if (mentions.thatMayRunAgain[first] != mentions.thatMayRunAgain[second])
-                return mentions.thatMayRunAgain[first] > mentions.thatMayRunAgain[second];
-            return mentions.all[first] != mentions.all[second] ? mentions.all[first] > mentions.all[second] : first < second;
-        });
+    if (mentionedKeys.size() > numberOfColumns)
         mentionedKeys.shrink(numberOfColumns);
-    }
     for (uint32_t key : mentionedKeys)
         keysWithColumn.quickSet(key);
 
@@ -103,15 +90,6 @@ static BitVector chooseKeysWithColumnForNamePlan(const Program& program, const M
         --columnsLeft;
     }
     return keysWithColumn;
-}
-
-static PlaceOfNamedFieldInNamePlan placeOfNamedFieldInSlotForNamePlan(const PlacedSlot& slot)
-{
-    if (traitsOf(slot.representation).valueKind == SlotValueKind::Double && !slot.isOutOfLine())
-        return PlaceOfNamedFieldInNamePlan::DoubleInCell;
-    if (slot.representation != SlotRepresentation::JSValue && slot.representation != SlotRepresentation::Cell)
-        return PlaceOfNamedFieldInNamePlan::Elsewhere;
-    return slot.isOutOfLine() ? PlaceOfNamedFieldInNamePlan::ValueInExtension : PlaceOfNamedFieldInNamePlan::ValueInCell;
 }
 
 static void forEachNamedSlotOfCompiledObjectsForNamePlan(const Program& program, const SlotPlanParts& parts, size_t firstLayout, size_t endOfLayouts, const Invocable<void(PropertyKeyID, const PlacedSlot&)> auto& functor)
@@ -129,35 +107,6 @@ static void forEachNamedSlotOfCompiledObjectsForNamePlan(const Program& program,
                 functor(key, planned.slots[field]);
         }
     }
-}
-
-static FieldTableProbePlan planFieldTableProbesForNamePlan(const Program& program, const SlotPlanParts& parts, const MentionsOfKeys& mentions, const ParallelLoops& loops)
-{
-    unsigned numberOfKeys = program.types.numberOfPropertyKeys();
-    Vector<ByPlaceOfNamedFieldInNamePlan<uint32_t>> layoutsByKey(numberOfKeys);
-    forEachRangeOfIndicesInParallel(loops, parts.layouts.size(), [&](size_t first, size_t end) {
-        forEachNamedSlotOfCompiledObjectsForNamePlan(program, parts, first, end, [&](PropertyKeyID key, const PlacedSlot& slot) {
-            if (slot.hasStorage())
-                AtomicRef(layoutsByKey[key.index()][placeOfNamedFieldInSlotForNamePlan(slot)]).fetch_add(1, std::memory_order_relaxed);
-        });
-    });
-
-    FieldTableProbePlan plan;
-    ByPlaceOfNamedFieldInNamePlan<double> reads;
-    for (unsigned key = 0; key < numberOfKeys; ++key) {
-        const ByPlaceOfNamedFieldInNamePlan<uint32_t>& layouts = layoutsByKey[key];
-        double total = 0;
-        for (uint32_t count : layouts.values)
-            total += count;
-        if (!total || !program.types.hasStableNumber(PropertyKeyID(key)))
-            continue;
-        double places = 1.0 + mentions.all[key];
-        for (unsigned place = 0; place < reads.values.size(); ++place)
-            reads.values[place] += places * (layouts.values[place] / total);
-    }
-    plan.readsTestOutOfLineValuesSecond = 2 * reads[PlaceOfNamedFieldInNamePlan::ValueInExtension] > reads[PlaceOfNamedFieldInNamePlan::Elsewhere] + reads[PlaceOfNamedFieldInNamePlan::DoubleInCell];
-    plan.readsTestDoublesSecond = 6 * reads[PlaceOfNamedFieldInNamePlan::DoubleInCell] > reads[PlaceOfNamedFieldInNamePlan::Elsewhere] + reads[PlaceOfNamedFieldInNamePlan::ValueInExtension];
-    return plan;
 }
 
 static void chooseFormsOfKeysForNamePlan(const Program& program, SlotPlanParts& parts, const ParallelLoops& loops)
@@ -191,7 +140,7 @@ void planNames(const Program&, const MentionsOfKeys&, BuildContext&, SlotPlanPar
 void planNames(const Program& program, const MentionsOfKeys& mentions, BuildContext& build, SlotPlanParts& parts)
 {
     parts.keysWithColumn = chooseKeysWithColumnForNamePlan(program, mentions, build);
-    parts.fieldTableProbes = planFieldTableProbesForNamePlan(program, parts, mentions, build.parallelLoops());
+    parts.fieldTableProbes = { .readsTestOutOfLineValuesSecond = true, .readsTestDoublesSecond = false };
     chooseFormsOfKeysForNamePlan(program, parts, build.parallelLoops());
 }
 

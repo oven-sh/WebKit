@@ -32,10 +32,12 @@ unsigned chooseCodeGranuleShift(const LinkedFunctions& functions, BuildContext& 
     constexpr size_t maxStartsPassedOnAverage = 8;
     Vector<size_t> functionEnds(functions.size());
     Vector<uint8_t> isReturnedInto(functions.size());
-    forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned index) {
-        auto& body = functions[index].body;
-        functionEnds[index] = body.bytes.size();
-        isReturnedInto[index] = !body.bytes.isEmpty() && !body.returnSites.isEmpty();
+    forEachRangeOfIndicesInParallel(context.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            auto& body = functions[index].body;
+            functionEnds[index] = body.bytes.size();
+            isReturnedInto[index] = !body.bytes.isEmpty() && !body.returnSites.isEmpty();
+        }
     });
     for (size_t index = 1; index < functionEnds.size(); ++index)
         functionEnds[index] += WTF::roundUpToMultipleOf<imageFunctionAlignment>(functionEnds[index - 1]);
@@ -89,13 +91,15 @@ static std::optional<size_t> computeNopSize(const CompiledCode& function)
 Vector<FinalJump> findFinalJumps(const LinkedFunctions& functions, const ResolvedCallees& callees, BuildContext& context)
 {
     Vector<FinalJump> finalJumps(functions.size());
-    forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
-        const CompiledCode& function = functions[position];
-        finalJumps[position].sizeWithoutJump = safeCast<uint32_t>(function.body.bytes.size());
-        if (position + 1 == functions.size() || !endsInJumpToNextBody(functions, callees, position))
-            return;
-        if (std::optional<size_t> nopSize = computeNopSize(function))
-            finalJumps[position] = { safeCast<uint32_t>(function.body.relocations.last().offset + *nopSize), true };
+    forEachRangeOfIndicesInParallel(context.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
+        for (size_t position = first; position < end; ++position) {
+            const CompiledCode& function = functions[position];
+            finalJumps[position].sizeWithoutJump = safeCast<uint32_t>(function.body.bytes.size());
+            if (position + 1 == functions.size() || !endsInJumpToNextBody(functions, callees, static_cast<uint32_t>(position)))
+                continue;
+            if (std::optional<size_t> nopSize = computeNopSize(function))
+                finalJumps[position] = { safeCast<uint32_t>(function.body.relocations.last().offset + *nopSize), true };
+        }
     });
     return finalJumps;
 }
@@ -160,10 +164,12 @@ void removeFinalJumps(LinkedFunctions& functions, const BitVector& fallsIntoNext
 static std::array<Vector<size_t>, 2> collectSizesAndAlignedOffsets(const LinkedFunctions& functions, BuildContext& context)
 {
     std::array<Vector<size_t>, 2> result { Vector<size_t>(functions.size()), Vector<size_t>(functions.size()) };
-    forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
-        const CodeBody& body = functions[position].body;
-        result[0][position] = body.bytes.size();
-        result[1][position] = body.primaryEntryOffset();
+    forEachRangeOfIndicesInParallel(context.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
+        for (size_t position = first; position < end; ++position) {
+            const CodeBody& body = functions[position].body;
+            result[0][position] = body.bytes.size();
+            result[1][position] = body.primaryEntryOffset();
+        }
     });
     return result;
 }
@@ -190,10 +196,12 @@ static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<co
 
     Vector<CopyableUse> uses(numberOfBodies);
     Vector<uint32_t> firstUseByBody(numberOfBodies + 1);
-    forEachIndexInParallel(loops, firstUseByBody.size(), [&](unsigned index) {
-        firstUseByBody[index] = index;
-        if (index < numberOfBodies)
-            uses[index] = { 0, 0, clampTo<uint32_t>(unitSizes[index]), reachOfNearCall };
+    forEachRangeOfIndicesInParallel(loops, firstUseByBody.size(), [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            firstUseByBody[index] = static_cast<uint32_t>(index);
+            if (index < numberOfBodies)
+                uses[index] = { 0, 0, clampTo<uint32_t>(unitSizes[index]), reachOfNearCall };
+        }
     });
 
     size_t codeSizeBound = sharedCodeSize + imageStubsAlignment + granuleSize;
@@ -271,13 +279,15 @@ static std::optional<UnitPlacement> placeCodeOfLayout(const CodeLayoutInputs& in
 {
     const ParallelLoops& loops = context.parallelLoops();
     const uint64_t codeSizeLimit = std::min<uint64_t>(context.limit(LimitID::CodeBytes), std::numeric_limits<uint32_t>::max());
-    forEachIndexInParallel(loops, bodySizes.size(), [&](unsigned position) {
-        size_t sizeOfFarInstanceWords = inputs.sizeOfFarInstanceWords(position);
-        size_t numberOfVeneers = layout.veneersByBody[position].size();
-        if (sizeOfFarInstanceWords || numberOfVeneers)
-            unitSizes[position] = sizeOfUnitWithVeneers(bodySizes[position], sizeOfFarInstanceWords, numberOfVeneers, inputs.templates);
-        else
-            unitSizes[position] = layout.fallsIntoNext.quickGet(position) ? inputs.finalJumps[position].sizeWithoutJump : bodySizes[position];
+    forEachRangeOfIndicesInParallel(loops, bodySizes.size(), [&](size_t first, size_t end) {
+        for (size_t position = first; position < end; ++position) {
+            size_t sizeOfFarInstanceWords = inputs.sizeOfFarInstanceWords(position);
+            size_t numberOfVeneers = layout.veneersByBody[position].size();
+            if (sizeOfFarInstanceWords || numberOfVeneers)
+                unitSizes[position] = sizeOfUnitWithVeneers(bodySizes[position], sizeOfFarInstanceWords, numberOfVeneers, inputs.templates);
+            else
+                unitSizes[position] = layout.fallsIntoNext.quickGet(position) ? inputs.finalJumps[position].sizeWithoutJump : bodySizes[position];
+        }
     });
     size_t sharedCodeSize = sharedCodeSizeWithVeneers(inputs, layout);
     UnitPlacement placement = placeBodies(unitSizes.span(), alignedOffsets, layout.fallsIntoNext, sharedCodeSize, inputs.codeGranuleShift, loops);
@@ -397,11 +407,13 @@ CodeLayout layOutCode(const CodeLayoutInputs& inputs, BuildContext& context)
     layout.bodyStarts.grow(numberOfBodies);
     layout.sharedCodeCopyByBody.grow(numberOfBodies);
     std::atomic<uint64_t> numberOfVeneers { static_cast<uint64_t>(layout.sharedCodeVeneers.size()) * layout.sharedCodeCopies.size() };
-    forEachIndexInParallel(loops, numberOfBodies, [&](unsigned position) {
-        layout.bodyStarts[position] = safeCast<uint32_t>(placement->unitStarts[position]);
-        layout.sharedCodeCopyByBody[position] = safeCast<uint32_t>(placement->copyOffsetByUse[position]);
-        if (size_t numberOfVeneersOfBody = layout.veneersByBody[position].size())
-            numberOfVeneers.fetch_add(numberOfVeneersOfBody, std::memory_order_relaxed);
+    forEachRangeOfIndicesInParallel(loops, numberOfBodies, [&](size_t first, size_t end) {
+        for (size_t position = first; position < end; ++position) {
+            layout.bodyStarts[position] = safeCast<uint32_t>(placement->unitStarts[position]);
+            layout.sharedCodeCopyByBody[position] = safeCast<uint32_t>(placement->copyOffsetByUse[position]);
+            if (size_t numberOfVeneersOfBody = layout.veneersByBody[position].size())
+                numberOfVeneers.fetch_add(numberOfVeneersOfBody, std::memory_order_relaxed);
+        }
     });
     context.statistics().count(StatisticID::Veneers, numberOfVeneers.load(std::memory_order_relaxed));
     context.statistics().count(StatisticID::StubCopiesEmitted, layout.sharedCodeCopies.size());

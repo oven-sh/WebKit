@@ -26,6 +26,7 @@ namespace Typed {
 
 bool leavesCallerWithoutFrame(StubKey);
 struct PatchEffectsMemo;
+struct RememberedPatchEffects;
 struct StubCallShape;
 struct StubCallShapeCache;
 
@@ -72,9 +73,16 @@ public:
     void applyEffects(Machine::PatchOperation*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay);
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
 
-    RegisterSet registersClobberedByCalls() const;
+    RegisterSet registersClobberedByCalls() const
+    {
+        if (!m_registersClobberedByCalls) [[unlikely]]
+            findRegistersClobberedByCalls();
+        return *m_registersClobberedByCalls;
+    }
+    RegisterSet registersThatThrowSitesClobber() const;
     RecordedSite recordedSiteOf(const OperationContext&, const CallOptions& = { });
     uint32_t addSite(const OperationContext&, const CallOptions& = { });
+    uint32_t addRecordedSite(const OperationContext&, const RecordedSite&);
 
     struct WatchOfEffects {
         struct Digest {
@@ -117,6 +125,7 @@ private:
 
         StubKey key;
         Vector<PlacedOperand, 8> operands;
+        std::span<const LValue> operandsOfStub;
         const CallOptions* options { nullptr };
         CallEnd end { CallEnd::Returns };
         std::optional<BranchTargets> targets;
@@ -127,7 +136,8 @@ private:
         const Effects* effectsOfCallee { nullptr };
         ArgumentBufferAccess argumentBufferAccess { ArgumentBufferAccess::None };
         std::optional<AOT::Entry> entry;
-        const StubCallShape* shape { nullptr };
+        StubCallShape* shape { nullptr };
+        bool shapeKnowsCallee { false };
     };
 
     struct CallRequestWithOwnOptions : CallRequest {
@@ -137,9 +147,12 @@ private:
 
     bool mayConvertCells(const Effects&);
     StubCallShapeCache& stubCallShapes() const;
+    PatchEffectsMemo& patchEffectsMemo();
+    void findRegistersClobberedByCalls() const;
+    const RememberedPatchEffects* applyEffectsThroughMemo(Machine::PatchOperation*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState, CellConversions);
     void computeEffects(Machine::PatchOperation*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState, CellConversions);
     void fillRequest(CallRequest&, StubKey, std::span<const LValue> operands, const CallOptions&, std::optional<BranchTargets> = std::nullopt, std::optional<Origin> firstRead = std::nullopt) const;
-    void fillEntryRequest(CallRequestWithOwnOptions&, AOT::Entry, const CallOptions&) const;
+    void fillEntryRequest(CallRequestWithOwnOptions&, AOT::Entry, OperationCall::FirstArgument, const CallOptions&) const;
     void fillRequestOfDirectFunction(CallRequestWithOwnOptions&, DirectFunctionCall, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);
     void placeArguments(CallRequest&, std::span<const LValue> arguments, OperationCall::FirstArgument) const;
     Operand callChecked(const OperationContext*, RuntimeOperation, std::span<const Operand> arguments, Representation result, const CallOptions&);
@@ -160,6 +173,7 @@ private:
     Machine::StackSlot* m_transientBuffer { nullptr };
     mutable StubCallShapeCache* m_stubCallShapes { nullptr };
     PatchEffectsMemo* m_patchEffectsMemo { nullptr };
+    mutable std::optional<RegisterSet> m_registersClobberedByCalls;
     std::optional<LType> m_typeOfTwoWords;
     HeapList m_scratchHeaps;
 };

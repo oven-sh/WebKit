@@ -49,6 +49,8 @@ static constexpr RuntimeCounterID counterFor(SlotExitReason reason)
 
 void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingProperty leaving, SlotExitReason reason)
 {
+    if ((field.getterIsProven || field.setterIsProven) && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]]
+        crashOnImpossibleMutation(vm, *this, field, mutationOf(reason));
     if (reason == SlotExitReason::Redefinition) {
         const FieldExit* exit = state().propertyCaches->findFieldExit(structureID(), field.name);
         if (exit && exit->isDefinition && exit->attributes == leaving.attributes && tryRepeat(vm, *exit, leaving.valueOrAccessor))
@@ -67,7 +69,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     if (!isInKeyOrder(state, field))
         didCreateField(state, field, false);
     at<uint32_t>(offsetOfOrderWord) |= orderWordHasFieldOutsideSlot;
-    setPerCellBit(true);
+    setBearsMark(true);
     putProperty(vm, extra, name, leaving);
     clear(field);
     didChangeExtraProperties(vm);
@@ -94,7 +96,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     if (!exit.isDefinition && !field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
         exit.absentBits = traits.absentBits;
         exit.offsetOfSlot = field.slot.offset;
-        exit.widthOfSlot = traits.width;
+        exit.widthOfSlot = traits.width | (mayBearMark() ? FieldExit::objectMayBearMark : 0);
     }
     state.propertyCaches->remember(exit);
 }
@@ -127,7 +129,7 @@ bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
         setExtraProperties(vm, extra, structureAfter);
     }
     at<uint32_t>(offsetOfOrderWord) = orderWordAfter;
-    setPerCellBit(true);
+    setBearsMark(true);
     clear(field);
     countFieldThatLeftSlot(vm, layout().index, indexOf(field), counterFor(reason), value);
     ensureStillAliveHere(structureAfter);
@@ -160,6 +162,13 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
     return true;
 }
 
+bool Object::mayBearMark() const
+{
+    return std::ranges::any_of(layout().fields(), [](const FieldData& field) {
+        return field.isFilledAtBirth || field.holdsRawValueFromBirth;
+    });
+}
+
 bool Object::hasEveryFieldOfBirth() const
 {
     return std::ranges::all_of(layout().fields() | std::views::reverse, [&](const FieldData& field) {
@@ -175,8 +184,8 @@ bool Object::hasEveryFieldOfBirth() const
 
 void Object::tryFinishBirth()
 {
-    if (perCellBit() && !(orderWord() & orderWordHasFieldOutsideSlot) && hasEveryFieldOfBirth())
-        setPerCellBit(false);
+    if (bearsMark() && !(orderWord() & orderWordHasFieldOutsideSlot) && hasEveryFieldOfBirth())
+        setBearsMark(false);
 }
 
 void Object::deleteField(VM& vm, const FieldData& field)
@@ -188,7 +197,7 @@ void Object::deleteField(VM& vm, const FieldData& field)
     State& state = this->state();
     clear(field);
     if (field.isFilledAtBirth)
-        setPerCellBit(true);
+        setBearsMark(true);
     removeFieldFromKeyOrder(vm, state, *this, field);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Remove, name);
     countFieldThatLeftSlot(vm, layout().index, indexOf(field), RuntimeCounterID::FieldsLeftSlotByDelete);

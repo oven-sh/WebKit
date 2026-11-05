@@ -238,7 +238,7 @@ static std::optional<EvalBindingLocation> findLocationOfVariableInEvalBinding(co
         const PlacedVariable& placed = variables[variable.index()];
         switch (placed.plan.storage) {
         case Typed::VariableStorage::Statics:
-            if (!placed.hasWordInStatics() || placed.plan.encoding == Typed::VariableEncoding::UndefinedAsZero)
+            if (!placed.hasWordInStatics())
                 break;
             return EvalBindingLocation { .offset = placed.offset, .representation = placed.plan.representation };
         case Typed::VariableStorage::ClosureTable:
@@ -337,14 +337,9 @@ static uint32_t sharedStorageOfDataRequest(const TableEncoder& encoder, DataID d
     const PlacedStatics& statics = encoder.numbers.statics();
     switch (encoding) {
     case Typed::DataEncoding::Unselected:
-    case Typed::DataEncoding::Expanded:
         failForDataOfRequest(encoder, "code hands the run time constant data that it was to build by itself"_s, data);
         return DataRequest::noSharedStorage;
     case Typed::DataEncoding::ReadOnlyTree:
-        return DataRequest::noSharedStorage;
-    case Typed::DataEncoding::MadeOnce:
-        if (!hasWordForDataOfRequest(statics.dataCellOffsets, data))
-            failForDataOfRequest(encoder, "constant data that is made once has no word for its cell"_s, data);
         return DataRequest::noSharedStorage;
     case Typed::DataEncoding::CopyOnWriteArray: {
         const auto* array = encoder.program.at(data).root.tryAs<Typed::DataNode::Array>();

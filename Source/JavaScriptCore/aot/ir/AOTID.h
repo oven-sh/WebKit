@@ -98,13 +98,8 @@ using ExpectedResultID = ID<struct ExpectedResultIDTag>;
 using LayoutSetID = ID<struct LayoutSetIDTag>;
 using CalleeSetID = ID<struct CalleeSetIDTag>;
 using AccessSiteID = ID<struct AccessSiteIDTag>;
-using AllocationSiteID = ID<struct AllocationSiteIDTag>;
 using AllocationClassID = ID<struct AllocationClassIDTag>;
-using FieldAccessID = ID<struct FieldAccessIDTag>;
-using AllocationID = ID<struct AllocationIDTag>;
 using RegExpRecordID = ID<struct RegExpRecordIDTag>;
-using GlobalBindingID = ID<struct GlobalBindingIDTag>;
-using GuardBitID = ID<struct GuardBitIDTag>;
 
 } } } // namespace JSC::AOT::Typed
 

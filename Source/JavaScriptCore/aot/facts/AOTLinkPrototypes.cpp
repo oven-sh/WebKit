@@ -38,7 +38,6 @@ void appendMembersAssignedToPrototype(const Program& program, const LinkTables& 
         member.side = ClassSide::Prototype;
         member.kind = MethodKind::Method;
         member.function = name.expected;
-        member.isWritableData = true;
         member.isAssignedByProgram = true;
         members.append(member);
     }

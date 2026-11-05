@@ -12,9 +12,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 bool buildCallOfBuiltinForTexts(Walker&, const BodyValue& call);
-bool joinOfWhatIsInSight(Walker&, const BodyValue& call);
 
-bool mayStandInsideRowOfJoins(const Walker&, const BodyIndex&, ValueID link, ValueID between);
 bool holdsPartsTakenOutOfTexts(const Walker&, const BodyValue& join, std::span<const Reference> parts);
 inline constexpr OpcodeSet opcodesThatGuessThatOperandBesideStringHasTextTakes { Opcode::Add };
 AOT_LINK_OF_WALK(guessThatOperandBesideStringHasText, opcodesThatGuessThatOperandBesideStringHasTextTakes)

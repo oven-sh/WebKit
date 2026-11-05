@@ -1,6 +1,5 @@
 # Who names the heap of a field whose reading takes more for granted than a type says, and who calls a function that trusts its caller: <name> | <file> | <how often> | <why each is right>.
 # aot/codegen/generator/reads-that-assume.ts holds the sources to these counts in every build. A declaration and a definition count as well.
-JSString_value | codegen/AOTStringBuilderEmitter.cpp | 1 | tests the rope bit, reads nothing through the word
 JSString_value | codegen/AOTHeaps.cpp | 1 | makes the heap another name of JSRopeString_fiber0, no load
 JSString_value | codegen/AOTHeaps.h | 1 | the declaration of the heap
 JSString_value | codegen/AOTPrimitiveEmitter.h | 1 | isRopeString(): it is the test

@@ -1,5 +1,5 @@
 # const rows = new Map();
-# rows.set("first", { kept: id(1) });
+# rows.set("first", { kept: 1 });
 # rows.set("second", id("text"));
 # function read(name) { const row = rows.get(name); return row === undefined ? "none" : row.kept; }
 # print(read("first"));
@@ -37,7 +37,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v7 = Builtin builtin=GlobalThis
     v8 = PropGet v7 key="id" [isFreeName]
     v9 = Integer integer=1
-    v10 = Call v8, -, v9 calleeName="id"
+    v10 = Integer integer=1
     v11 = NewObject -, v10 layout=L0 fields=[0]
     v12 = FinishObject v11
     v13 = Call v5, v3, v6, v12 calleeKey="set" calleeName="rows.set"

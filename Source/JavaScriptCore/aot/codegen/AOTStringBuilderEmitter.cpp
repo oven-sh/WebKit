@@ -20,12 +20,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(JSString::MaxLength == static_cast<unsigned>(std::numeric_limits<int32_t>::max()), "the length of a builder, and so a checkpoint, is an int32 that is not negative");
 
-static constexpr int32_t stringUseOfBuilderResult(bool isLikelyKey)
-{
-    using StringUse = StringBuilderStorage::StringUse;
-    return static_cast<int32_t>(isLikelyKey ? StringUse::LikelyKey : StringUse::Unknown);
-}
-
 static void storeBytesOfStringBuilder(Output& out, unsigned width, LValue value, TypedPointer pointer)
 {
     switch (width) {
@@ -74,14 +68,14 @@ void StringBuilderEmitter::generateStringBuilderToString(const ValueContext& val
     define(value, either<CellPointer>(logicalAnd(hasLastString, equal(lengthOfLastString, lengthOf(builder))), [&] {
         return CellPointer(lastString.value());
     }, [&] {
-        return callOperation<CellPointer>(value, RuntimeOperation::StringBuilderToString, { builder, word32(stringUseOfBuilderResult(false)) });
+        return callOperation<CellPointer>(value, RuntimeOperation::StringBuilderToString, { builder, word32(static_cast<int32_t>(StringBuilderStorage::StringUse::Unknown)) });
     }));
 }
 
 void StringBuilderEmitter::generateStringBuilderFinish(const ValueContext& value)
 {
     CellPointer builder = in<CellPointer>(value->builderOperand());
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::StringBuilderFinish, { builder, word32(stringUseOfBuilderResult(value->isLikelyKey())) }));
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::StringBuilderFinish, { builder, word32(static_cast<int32_t>(StringBuilderStorage::StringUse::Unknown)) }));
 }
 
 void StringBuilderEmitter::generateStringBuilderDiscard(const ValueContext& value)
@@ -159,31 +153,7 @@ void StringBuilderEmitter::generateStackStringBuilderToString(const ValueContext
 
 void StringBuilderEmitter::generateStackStringBuilderFinish(const ValueContext& value)
 {
-    Pointer record = recordOf(value);
-    Pointer cursor = in<Pointer>(value->cursorOperand());
-    auto finishByCall = [&] {
-        return callOperation<CellPointer>(value, RuntimeOperation::StackStringBuilderFinish, { record, cursor, word32(static_cast<int32_t>(value->stringUse())) });
-    };
-    if (!value->firstPartOperand() || !value->endOfFirstPartOperand()) {
-        define(value, finishByCall());
-        return;
-    }
-
-    CellPointer firstPart = in<CellPointer>(value->firstPartOperand());
-    LBasicBlock firstMayBeAll = newBlock();
-    LBasicBlock byCall = newBlock();
-    Join<CellPointer> text(m_out);
-    m_out.branch(equal(cursor, in<Pointer>(value->endOfFirstPartOperand())).value(), BlockEdge(firstMayBeAll, Machine::EdgeClass::Unlikely), normalEdge(byCall));
-
-    m_out.appendTo(firstMayBeAll);
-    Pointer limit = limitOf(record);
-    branchUnless(equal(limit, limitOnStack(record)), byCall);
-    branchUnless(hasNoBits(loadField<Pointer>(firstPart, m_heaps.JSString_value), JSString::isRopeInPointer), byCall);
-    text.add(firstPart);
-
-    m_out.appendTo(byCall);
-    text.add(finishByCall());
-    define(value, text.finish());
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::StackStringBuilderFinish, { recordOf(value), in<Pointer>(value->cursorOperand()), word32(static_cast<int32_t>(StringBuilderStorage::StringUse::Unknown)) }));
 }
 
 void StringBuilderEmitter::generateStackStringBuilderDiscard(const ValueContext& value)

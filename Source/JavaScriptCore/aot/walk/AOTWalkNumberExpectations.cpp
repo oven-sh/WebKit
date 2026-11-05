@@ -9,15 +9,12 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
-#include "AOTFamilies.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
 #include "AOTOpcodeSets.h"
 #include "AOTOperatorForms.h"
-#include "AOTPlan.h"
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
-#include "AOTTypeNarrowing.h"
 #include "AOTTypeTable.h"
 #include <algorithm>
 #include <optional>
@@ -27,7 +24,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet readsOfPlacesInNumberExpectations { Opcode::PropGet, Opcode::PrivateGet, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture };
 static constexpr OpcodeSet callsWithResultsInNumberExpectations { Opcode::Call, Opcode::CallList };
-static constexpr OpcodeSet testsThatCutNumberExpectations = allRelations | allEqualities | OpcodeSet { Opcode::TypeTest };
 static constexpr OpcodeSet sumsFollowedInNumberExpectations { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
 static constexpr OpcodeSet operatorsWithZeroAsIdentityInNumberExpectations { Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };
 static constexpr OpcodeSet operatorsThatMakeFractions { Opcode::Div, Opcode::Pow };
@@ -400,110 +396,6 @@ static bool holdsOnlyInt32InNumberExpectations(const Type& held)
     return held.integers == Range::full() || held.integers.isSubsetOf(Range::int32());
 }
 
-static ExpectationOfNumber cutByTestInNumberExpectations(Walker& walker, ValueID input, ExpectationOfNumber found)
-{
-    const BodyIndex& index = walker.currentBodyIndex();
-    TypeArena& types = walker.types();
-    if (!found.type || !index.isParameter(input) || !(types.at(found.type).primitives & Primitive::Number))
-        return found;
-    std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(index.blockOf(input));
-    if (!edge)
-        return found;
-
-    std::optional<BodyEdgeResult> proof;
-    uint32_t numberOfProofs = static_cast<uint32_t>(edge->target.proofs().size());
-    for (uint32_t proofIndex = 0; proofIndex < numberOfProofs && !proof; ++proofIndex) {
-        std::optional<BodyEdgeResult> result = index.edgeResult(edge->from, edge->targetIndex, edge->target, proofIndex);
-        if (result && result->parameter == input)
-            proof = result;
-    }
-    if (!proof || !proof->test || index.isParameter(proof->test))
-        return found;
-    BodyValue test = index.value(proof->test);
-    if (!testsThatCutNumberExpectations.contains(test.opcode()))
-        return found;
-
-    Vector<TypeID, 4> operandTypes;
-    operandTypes.fill(TypeID(), numberOfNamedOperandsOf(test.opcode()) + test.variadicOperands().size());
-    test.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        TypeID proven = provenTypeInNumberExpectations(walker, operand);
-        operandTypes[operandIndex] = proven ? proven : TypeID(TypeTable::anything);
-    });
-    if (proof->operandIndex >= operandTypes.size())
-        return found;
-    operandTypes[proof->operandIndex] = found.type;
-
-    TypingContext expecting { walker.program(), types, walker.positionsKnowingNothing(), TypeLevel::Expected };
-    TypeID behind = typeOfEdgeResult(expecting, test, OperandTypes { operandTypes.span() }, proof->operandIndex, proof->isOnTakenEdge ? EdgeSide::Taken : EdgeSide::NotTaken);
-    if (!behind || isNeverType(behind) || behind == found.type)
-        return found;
-    return { behind, found.isDeclared, found.isHeld };
-}
-
-static uint16_t kindsOfPrimitivesAmongInNumberExpectations(uint16_t primitives)
-{
-    uint16_t kinds = 0;
-    for (uint16_t kind : { Primitive::Number, Primitive::Boolean, Primitive::AnyString, Primitive::AnySymbol, Primitive::BigInt }) {
-        if (primitives & kind)
-            kinds |= kind;
-    }
-    return kinds;
-}
-
-static TypeID writtenTypeUnitedWithTypeSeen(TypeArena& types, TypeID written, TypeID seen)
-{
-    Type type = types.at(written);
-    if (!type.isJavaScriptValue())
-        return written;
-    uint16_t leftToWrittenType = Primitive::UndefinedOrNull | Primitive::Absent | Primitive::Unspecified | kindsOfPrimitivesAmongInNumberExpectations(type.primitives);
-    TypeParts added = types.at(types.withoutPrimitives(seen, leftToWrittenType));
-    if (added.unnamedClasses && type.unnamedClasses) {
-        Vector<ClassPart, 8> classesNobodyWrote;
-        for (const ClassPart& part : types.at(added.unnamedClasses)) {
-            if (!findClassPart(types, type, part.builtinClass))
-                classesNobodyWrote.append(part);
-        }
-        added.unnamedClasses = classesNobodyWrote.isEmpty() ? ClassPartsID() : types.internClassParts(classesNobodyWrote.span());
-    }
-    return types.unionOf(written, types.intern(added));
-}
-
-static ExpectationOfNumber unitedWithWhatWasSeenInNumberExpectations(Walker& walker, ValueID input, ExpectationOfNumber found)
-{
-    TypeArena& types = walker.types();
-    if (!found.type || !found.isDeclared || found.isHeld)
-        return found;
-    Type written = types.at(found.type);
-    if (!written.isJavaScriptValue() || !written.hasObjects() || written.hasUnboundedUnknown() || written.hasOnlyClosures())
-        return found;
-    TypeID seen = typeHeldAtPositionOf(walker, input);
-    if (saysNothingInNumberExpectations(types, seen) || !types.at(seen).isJavaScriptValue() || types.isSubset(types.withOnlyObjects(seen), found.type))
-        return found;
-
-    Type objectsSeen = types.at(types.describedByShape(types.withOnlyObjects(seen)));
-    if (objectsSeen.hasUnboundedUnknown())
-        return found;
-    for (LayoutID layout : membersOf(types, objectsSeen)) {
-        if (!walker.plan().isInUse(layout) || !walker.plan().layout(layout).holdsCompiledObjects())
-            return found;
-    }
-
-    bool someWrittenLayoutHasObjects = !written.hasOnlyLayouts();
-    for (LayoutID layout : membersOf(types, written))
-        someWrittenLayoutHasObjects |= walker.plan().isInUse(layout);
-    TypeID writtenPart = someWrittenLayoutHasObjects ? found.type : types.withoutObjects(found.type);
-    TypeID united = writtenTypeUnitedWithTypeSeen(types, writtenPart, types.describedByShape(seen));
-    if (TypeID proven = provenTypeInNumberExpectations(walker, input)) {
-        TypeID within = types.intersectionOf(proven, united);
-        if (!isNeverType(within))
-            united = within;
-    }
-    Type tested = types.at(types.testablePartOf(types.withLiteralStringsWidened(types.withoutNullish(widenedToFamily(types, walker.facts().families(), united)))));
-    if (tested.isNever() || !tested.isJavaScriptValue() || tested.hasUnboundedUnknown() || (tested.hasObjects() && tested.primitives))
-        return found;
-    return { united, someWrittenLayoutHasObjects, true };
-}
-
 static bool isLeftAsFoundInNumberExpectations(const Walker::RememberedExpectation& remembered)
 {
     return !remembered.isKnown && remembered.isHeld;
@@ -569,9 +461,6 @@ ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, Expectation
     if (isLeftAsFoundInNumberExpectations(walker.rememberedExpectationOf(input)))
         return found;
     TypeArena& types = walker.types();
-    found = cutByTestInNumberExpectations(walker, input, found);
-    found = unitedWithWhatWasSeenInNumberExpectations(walker, input, found);
-
     TypeID proven = provenTypeInNumberExpectations(walker, input);
     if (found.type) {
         Type expected = types.at(found.type);

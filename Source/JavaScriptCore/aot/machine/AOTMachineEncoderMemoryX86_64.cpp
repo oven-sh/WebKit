@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Machine {
 
 static bool loadOrStoreMayFault(const Encoder& encoder, const Operation* access)
 {
-    return access->traps() || encoder.m_liveness.of(access).has(ValueFlag::TakesOverTrap);
+    return access->traps() || encoder.factsOf(access).has(ValueFlag::TakesOverTrap);
 }
 
 static bool loadOrStoreMovesNumber(const Operation* access)
@@ -41,13 +41,16 @@ static void withOperandOfLoadOrStore(const AddressForm& form, const Functor& fun
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void emitX86Load(Encoder& encoder, const Operation* load, const AddressForm& form, Reg destination)
+static ALWAYS_INLINE void emitX86Load(Encoder& encoder, const Operation* load, const AddressForm& form, Reg destination)
 {
     CCallHelpers& jit = encoder.m_jit;
-    bool isNumber = loadOrStoreMovesNumber(load);
+    ASSERT(isLoad(load->opcode()));
+    Type type = load->type();
+    bool isNumber = type.isFloat();
+    Width width = accessWidthOf(load->opcode(), type);
     ASSERT(destination.isFPR() == isNumber);
-    withOperandOfLoadOrStore(form, [&](auto address) {
-        switch (load->accessWidth()) {
+    withOperandOfLoadOrStore(form, [&](auto address) ALWAYS_INLINE_LAMBDA {
+        switch (width) {
         case Width8:
             ASSERT(load->type() == Int32);
             if (load->opcode() == Load8S)
@@ -81,13 +84,16 @@ static void emitX86Load(Encoder& encoder, const Operation* load, const AddressFo
     });
 }
 
-static void emitX86StoreOfRegister(Encoder& encoder, const Operation* store, Reg source, const AddressForm& form)
+static ALWAYS_INLINE void emitX86StoreOfRegister(Encoder& encoder, const Operation* store, Reg source, const AddressForm& form)
 {
     CCallHelpers& jit = encoder.m_jit;
-    bool isNumber = loadOrStoreMovesNumber(store);
+    ASSERT(isStore(store->opcode()));
+    Type type = inlineChildWithoutCheck(store, 0)->type();
+    bool isNumber = type.isFloat();
+    Width width = accessWidthOf(store->opcode(), type);
     ASSERT(source.isFPR() == isNumber);
-    withOperandOfLoadOrStore(form, [&](auto address) {
-        switch (store->accessWidth()) {
+    withOperandOfLoadOrStore(form, [&](auto address) ALWAYS_INLINE_LAMBDA {
+        switch (width) {
         case Width8:
             jit.store8(source.gpr(), address);
             return;
@@ -143,7 +149,7 @@ static void emitX86StoreOfImmediate(Encoder& encoder, const Operation* store, co
     });
 }
 
-static void emitX86Store(Encoder& encoder, const Operation* store, Location value, const AddressForm& form)
+static ALWAYS_INLINE void emitX86Store(Encoder& encoder, const Operation* store, Location value, const AddressForm& form)
 {
     switch (value.kind()) {
     case Location::Register:
@@ -431,7 +437,7 @@ void Encoder::encodeStore(const Step& step)
 {
     const Operation* store = step.operation;
     ASSERT(isStore(store->opcode()) && !m_liveness.isFused(store->child(0)));
-    if (m_liveness.worksInMemory(store)) {
+    if (factsOf(store).has(ValueFlag::WorksInMemory)) {
         encodeX86StoreInMemory(*this, step);
         return;
     }

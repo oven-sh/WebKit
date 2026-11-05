@@ -201,7 +201,7 @@ export default b.declarations(
           ...nativeEffects,
           readsStateBeforeConversions: true,
           uses: { this: [b.movesElements], value: [b.becomesLengthOfReceiver] },
-          implementation: b.inline("ArraySetLength"),
+          implementation: b.generic,
         },
       },
     },

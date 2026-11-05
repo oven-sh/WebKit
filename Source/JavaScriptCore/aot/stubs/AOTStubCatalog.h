@@ -47,6 +47,7 @@ struct StubOptions {
 struct StubPolicy {
     bool readsTestOutOfLineValuesSecond { false };
     bool readsTestDoublesSecond { false };
+    bool shapesFitHalfword { true };
 };
 
 StubPolicy stubPolicyOf(const Typed::SlotPlan&);
@@ -67,6 +68,15 @@ public:
     const RegisterSet& clobberedByRegisterVariantsOf(StubKey) const;
     const RegisterSet& clobberedBesideResultByRegisterVariantsOf(StubKey) const;
     Typed::Effects effectsOf(StubKey) const;
+    const StubSummary& summaryAndEffectsOf(StubKey key, Typed::Effects& effects) const
+    {
+        const Answer& answer = answerFor(key);
+        if (isOperationCallHead(key))
+            effects = effectsOf(key);
+        else
+            effects = answer.effects;
+        return answer.summary;
+    }
     bool isLeaf(StubKey) const;
     bool bindsImmediate(StubKey) const;
     const StubOptions& options() const { return m_options; }

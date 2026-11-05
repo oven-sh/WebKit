@@ -206,16 +206,11 @@ function formatBuiltin(builtin: ModelBuiltin): string {
 interface ClassPools {
   slots: Pool;
   names: Pool;
-  typesOfNames: Pool;
-  makersOfNames: Pool;
 }
 
 function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
   const { slots: classSlots, names: classNames } = pools;
   const names = builtinClass.namesDefinedOnNewInstances?.toSorted((left, right) => left.number - right.number);
-  const typesOfNames = builtinClass.typesOfNamesDefinedOnNewInstances.toSorted(
-    (left, right) => left.name.number - right.name.number,
-  );
   return formatAggregate([
     ["id", formatId("BuiltinClassID", builtinClass)],
     ["origin", formatUnlessDefault("BuiltinOrigin", builtinClass.origin, "Engine")],
@@ -233,30 +228,6 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
     ["definesCharactersOnNewInstances", formatUnlessFalse(builtinClass.definesCharactersOnNewInstances)],
     ["listsNamesDefinedOnNewInstances", formatUnlessFalse(names !== undefined)],
     ["namesDefinedOnNewInstances", names === undefined ? null : classNames.add(names.map(name => formatName(name)))],
-    [
-      "typesOfNamesDefinedOnNewInstances",
-      pools.typesOfNames.add(
-        typesOfNames.map(({ name, type }) =>
-          formatAggregate([
-            ["name", formatName(name)],
-            ["type", formatId("BuiltinTypeID", type)],
-          ]),
-        ),
-      ),
-    ],
-    [
-      "makersOfNamesDefinedOnNewInstances",
-      pools.makersOfNames.add(
-        builtinClass.namesMadeByStaticMembers.map(({ name, member }) =>
-          formatAggregate([
-            ["name", formatName(name)],
-            ["holder", formatId("BuiltinID", builtinClass.constructor)],
-            ["member", formatName(member)],
-          ]),
-        ),
-      ),
-    ],
-    ["namesReadToDescribeInstances", classNames.add(builtinClass.namesReadToDescribeInstances.map(name => formatName(name)))],
     [
       "constructorOnlyReadsPrototypeOfNewTarget",
       formatUnlessFalse(builtinClass.constructorOnlyReadsPrototypeOfNewTarget),
@@ -442,8 +413,6 @@ export function emitCppBuiltins(model: TableModel): string {
   const classPools: ClassPools = {
     slots: classSlots,
     names: classNames,
-    typesOfNames: new Pool("BuiltinResultProperty", "typesOfClassNames"),
-    makersOfNames: new Pool("BuiltinPropertyMaker", "makersOfClassNames"),
   };
   const layoutFields = new Pool("BuiltinLayoutField", "layoutFields");
   const implementedBuiltins = new Pool("BuiltinID", "implementedBuiltins");
@@ -550,8 +519,6 @@ export function emitCppBuiltins(model: TableModel): string {
   const body = joinBlocks([
     classSlots.emit(),
     classNames.emit(),
-    classPools.typesOfNames.emit(),
-    classPools.makersOfNames.emit(),
     layoutFields.emit(),
     implementedBuiltins.emit(),
     exportsHeldByNamespaces.emit(),

@@ -51,6 +51,8 @@ bool Modules::hasImporterBelowThatGetsOriginal(ModuleID root, ModuleID fileOrFac
                     return true;
                 continue;
             }
+            if (isMocked(imported) && !runsBesideMockFor(imported, importer))
+                continue;
             if (data(imported).isESModuleOfProgram() && status(imported) < ModuleStatus::Evaluating && !seen.quickSet(imported.index()))
                 toVisit.append(imported);
         }

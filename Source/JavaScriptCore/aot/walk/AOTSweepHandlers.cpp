@@ -351,7 +351,7 @@ static bool sweptAllocationLeavesYoungCell(const Plan& plan, const Operation& ma
         return true;
     const PlannedLayout& layout = plan.layout(made.layout());
     // An environment cell that was handed back is an old one, which the collector may have marked.
-    if (layout.isEscapedOffset)
+    if (layout.cellsAreHandedBack)
         return false;
     return !made.prototypeOperand() && layout.hasSlots();
 }

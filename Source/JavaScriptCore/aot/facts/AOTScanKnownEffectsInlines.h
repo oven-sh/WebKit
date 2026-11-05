@@ -14,12 +14,12 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint16_t plainPrimitivesInScanKnownEffects = Primitive::NumberLike | Primitive::AnyString;
 
-static PropertyKeyID keyWrittenAtInScanKnownEffects(const Program& program, const BodyValue& value)
+static PropertyKeyID keyWrittenAtInScanKnownEffects(const Program& program, const BodyValue& value, PropertyKeyID keyOfOperation)
 {
     Opcode opcode = value.opcode();
     if (PayloadWord::field(opcode) && value.layout() && value.field() < program.at(value.layout()).fields.size())
         return program.at(value.layout()).fields[value.field()].key;
-    return PayloadWord::key(opcode) ? value.key() : PropertyKeyID();
+    return keyOfOperation;
 }
 
 void ScanOfBody::noteWritesIn(uint32_t block, const LocationMasks& writes)
@@ -59,7 +59,7 @@ const Effects& ScanOfBody::noteOwnEffectsOfOperator(const BodyValue& value, uint
         return storage;
     }
 
-    TypeID widest = widestPrimitiveResultOf(opcode);
+    TypeID widest = m_widestPrimitiveResults[static_cast<unsigned>(opcode)];
     uint32_t numberOfOperands = numberOfNamedOperandsOf(opcode);
     uint32_t numberOfOperandsAtHand = 0;
     value.forEachOperand([&](ValueID, uint32_t) {
@@ -89,13 +89,15 @@ const Effects& ScanOfBody::noteOwnEffectsOfOperator(const BodyValue& value, uint
 
 const Effects& ScanOfBody::noteOwnEffects(const BodyValue& value, uint32_t block, std::optional<SummaryAccess::Kind> access, const Effects& effects, Effects& storage)
 {
-    Opcode opcode = value.opcode();
-    if (access && declaredBoundInTable(opcode).mayCallUnknownCode && keyWrittenAtInScanKnownEffects(m_program, value)) {
+    uint32_t traits = traitsOfOpcodeInScan(value.opcode());
+    if (access && (traits & RowOfOpcodeInScan::mayCallUnknownCode) && keyWrittenAtInScanKnownEffects(m_program, value, m_keyOfOperation)) {
         m_knownEffects.whatIsLeftApartMayThrow = true;
         return noEffectsInScan;
     }
-    if (effectRuleOf(opcode) == EffectRule::Operator)
+    if (traits & RowOfOpcodeInScan::isOperator)
         return noteOwnEffectsOfOperator(value, block, effects, storage);
+    if (effects.writes.isEmpty())
+        return effects;
     if (!access)
         noteObjectsWrittenBy(value, effects);
     noteWritesIn(block, effects.writes);

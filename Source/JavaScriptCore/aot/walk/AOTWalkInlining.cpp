@@ -580,6 +580,35 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
     return isEnteredAtInlining(walker.program().at(callee), isConstruction) && copyPays(site.argumentsOperands().size());
 }
 
+static CallOfInlining callAsWrittenAtInlining(const Draft& site, FunctionID callee)
+{
+    CallOfInlining written;
+    written.callee = callee;
+    written.closure = closureCalledAtInlining(site);
+    written.arguments = site.argumentsOperands();
+    return written;
+}
+
+bool callMayEnterCopyOfBody(Walker& walker, const Draft& site, FunctionID callee, std::span<const Reference> handedOver)
+{
+    const Function& function = walker.program().at(callee);
+    if (site.opcode != Opcode::Call || site.isNeverInlined() || !isEnteredAtInlining(function, false))
+        return false;
+    return operandsFitAtInlining(walker, callAsWrittenAtInlining(site, callee), function, handedOver);
+}
+
+Vector<Reference, 8> buildEntryArgumentsOfCopy(Walker& walker, const Draft& site, FunctionID callee, std::span<const Reference> handedOver)
+{
+    Origin origin = site.origin();
+    origin.isTailCall = false;
+    return buildEntryArgumentsAtInlining(walker, origin, callAsWrittenAtInlining(site, callee), walker.program().at(callee), handedOver);
+}
+
+bool operationsFitWindowOfCallWrittenInLoop(const Walker& walker, uint64_t numberOfOperations)
+{
+    return (walker.depthOfCopies() ? walker.operationsCopiedAtWrittenCall() : 0) + numberOfOperations <= inlineWindowOfWrittenCallInLoops;
+}
+
 bool mayCopyCallee(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
 {
     return walker.has(Mechanism::Inlining) && opcodesOfInlining.contains(site.opcode) && callAdmitsCopyAtInlining(walker, site, callee, place, nullptr)
@@ -939,6 +968,8 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     frame.function = callee;
     frame.body = &body.body();
     frame.index = &body;
+    if (function.isModuleBody())
+        frame.variablesStoredFirst = facts().linked().variablesStoredFirstIn(callee);
     frame.references.fill(Reference(), body.numberOfValues());
     frame.loopDepthAtCall = m_frames.last().loopDepthAtCall + bodyOfCaller.loopDepthOf(bodyOfCaller.blockOf(call.id()));
     frame.returnsInPlaceOfUnit = returnsInPlaceOfUnit;
@@ -948,6 +979,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         frame.answerIsDeclared = ofAnswer.isDeclared;
     }
     frame.callCopied = call.id();
+    frame.numberOfValuesBuiltBefore = m_code.numberOfValues();
     frame.isCopiedByLinkOfChain = isCopiedByLinkOfChain(call);
     frame.inlineFrame = m_code.addInlineFrame({
         .callee = callee,

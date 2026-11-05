@@ -15,13 +15,18 @@ struct ListTestedInFrontOfLoop {
     Reference name;
     ArrayStorage storage { ArrayStorage::Other };
     bool admitsInt32Storage { false };
+    bool isWritable { false };
+    bool turnsStoreIntoLists { false };
 };
 
 std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker&, const BodyValue& read);
+std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker&, Reference list);
 void nameKindOfListTestedInFrontOfLoop(Draft& read, const ListTestedInFrontOfLoop&);
 void takeStorageAndLengthFromInFrontOfLoop(Walker&, Draft& read, const ListTestedInFrontOfLoop&);
 bool positionIsKnownToLieInsideList(Walker&, Reference list, Reference position);
+Reference storageOfListFromInFrontOfLoop(Walker&, const ListTestedInFrontOfLoop&, Origin);
 
+bool holeLeavesTurnBehindRow(const BodyIndex&, const BodyValue& read, const ListTestedInFrontOfLoop&);
 TypeID typeReadOutOfListTestedInFrontOfLoop(Walker&, const BodyIndex&, const BodyValue& read, TypeID typeOfList, TypeID typeOfPosition);
 bool leavesListsTestedInFrontOfLoopAsTheyAre(const Effects&);
 

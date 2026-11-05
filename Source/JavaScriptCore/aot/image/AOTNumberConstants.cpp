@@ -432,12 +432,14 @@ void ImageNumbersBuilder::numberTypes()
         return arena.compareByContent(first, second) < 0;
     });
 
-    numbers.m_placesOfTypes = Vector<ImageNumbers::PlaceOfType>(types.size(), [&](size_t place) {
-        return ImageNumbers::PlaceOfType { types[place].bits(), static_cast<uint32_t>(place) };
-    });
-    parallelSort(loops, numbers.m_placesOfTypes.mutableSpan(), [](const ImageNumbers::PlaceOfType& first, const ImageNumbers::PlaceOfType& second) {
-        return first.bits < second.bits;
-    });
+    size_t numberOfSlots = std::bit_ceil(2 * types.size() + 2);
+    numbers.m_placesOfTypes.fill(ImageNumbers::PlaceOfType { 0, 0 }, numberOfSlots);
+    for (size_t place = 0; place < types.size(); ++place) {
+        size_t slot = ImageNumbers::firstSlotOfType(types[place].bits(), numberOfSlots);
+        while (numbers.m_placesOfTypes[slot].placePlusOne)
+            slot = (slot + 1) & (numberOfSlots - 1);
+        numbers.m_placesOfTypes[slot] = { types[place].bits(), static_cast<uint32_t>(place) + 1 };
+    }
     numbers.m_typesNeededAtRunTime = WTF::move(types);
 }
 

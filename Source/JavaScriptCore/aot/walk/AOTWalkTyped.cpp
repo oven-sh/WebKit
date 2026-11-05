@@ -102,7 +102,7 @@ template<Opcode opcode> static bool buildTypedOperationOf(Walker& walker, const 
         return true;
     if (buildTypedJoinOfTexts(walker, value))
         return true;
-    if (buildNumberForm(walker, value, InputsOfTypedOperation(walker, nullptr)))
+    if (buildNumberForm(walker, value))
         return true;
     return operatorFamiliesOfWalkTyped.contains(opcode) && buildTypedOperator(walker, value);
 }
@@ -146,8 +146,6 @@ static TypedForm typedFormAsReceiverStands(Walker& walker, const BodyValue& valu
     if (buildFormOnShapes(walker, value, inputs))
         return TypedForm::Built;
     if (buildInstanceOfBuiltin(walker, value, inputs))
-        return TypedForm::Built;
-    if (buildNumberForm(walker, value, inputs))
         return TypedForm::Built;
     return operatorFamiliesOfWalkTyped.contains(opcode) && buildTypedOperator(walker, value, inputs) ? TypedForm::Built : TypedForm::None;
 }

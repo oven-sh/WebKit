@@ -49,10 +49,15 @@ struct NameCandidate {
 };
 
 struct StringByFirstFunction {
-    friend auto operator<=>(const StringByFirstFunction&, const StringByFirstFunction&) = default;
+    static StringByFirstFunction create(const FunctionByModule& firstFunction, StringID string)
+    {
+        return { static_cast<uint64_t>(firstFunction.module.index()) << 32 | firstFunction.position, static_cast<uint64_t>(firstFunction.function.index()) << 32 | string.index() };
+    }
 
-    FunctionByModule firstFunction;
-    StringID string;
+    StringID string() const { return StringID(static_cast<uint32_t>(functionAndString)); }
+
+    uint64_t moduleAndPosition;
+    uint64_t functionAndString;
 };
 
 } // anonymous namespace
@@ -139,17 +144,23 @@ static bool isNameKeyOrderedBefore(const Typed::Program& program, PropertyKeyID 
     return a < b;
 }
 
+static void sortNamesByWordAndThen(const ParallelLoops& loops, std::span<NameCandidate> names, const Invocable<uint64_t(const NameCandidate&)> auto& wordOf, const Invocable<bool(const NameCandidate&, const NameCandidate&)> auto& comesFirstAmongNamesWithOneWord)
+{
+    sortByWordKeepingEqualElementsInOrder(names, wordOf);
+    for (size_t first = 0, end = 0; first < names.size(); first = end) {
+        uint64_t word = wordOf(names[first]);
+        for (end = first + 1; end < names.size() && wordOf(names[end]) == word; ++end) { }
+        std::span<NameCandidate> namesWithOneWord = names.subspan(first, end - first);
+        if (!std::ranges::is_sorted(namesWithOneWord, comesFirstAmongNamesWithOneWord))
+            parallelSort(loops, namesWithOneWord, comesFirstAmongNamesWithOneWord);
+    }
+}
+
 static void sortByUse(const Typed::Program& program, const ParallelLoops& loops, std::span<NameCandidate> names)
 {
-    parallelSort(loops, names, [&](const NameCandidate& a, const NameCandidate& b) {
-        if (a.isOnlyCompared != b.isOnlyCompared)
-            return b.isOnlyCompared;
-        if (a.hasPromisedColumn != b.hasPromisedColumn)
-            return a.hasPromisedColumn;
-        if (a.numberOfFunctions != b.numberOfFunctions)
-            return a.numberOfFunctions > b.numberOfFunctions;
-        if (a.isLookedUpByCode() != b.isLookedUpByCode())
-            return a.isLookedUpByCode();
+    sortNamesByWordAndThen(loops, names, [](const NameCandidate& name) {
+        return static_cast<uint64_t>(name.isOnlyCompared) << 34 | static_cast<uint64_t>(!name.hasPromisedColumn) << 33 | static_cast<uint64_t>(UINT32_MAX - name.numberOfFunctions) << 1 | static_cast<uint64_t>(!name.isLookedUpByCode());
+    }, [&](const NameCandidate& a, const NameCandidate& b) {
         if (a.identifier.key != b.identifier.key)
             return isNameKeyOrderedBefore(program, a.identifier.key, b.identifier.key);
         return a.identifier.text < b.identifier.text;
@@ -166,15 +177,9 @@ static void groupColumnsByFirstFunction(std::span<NameCandidate> namesWithColumn
 
 static void sortNamesWithoutColumn(const Typed::Program& program, const ParallelLoops& loops, std::span<NameCandidate> names)
 {
-    parallelSort(loops, names, [&](const NameCandidate& a, const NameCandidate& b) {
-        if (a.isLookedUpByCode() != b.isLookedUpByCode())
-            return a.isLookedUpByCode();
-        if (a.isOnlyCompared != b.isOnlyCompared)
-            return b.isOnlyCompared;
-        if (a.isEngineSymbol != b.isEngineSymbol)
-            return a.isEngineSymbol;
-        if (a.identifier.text != b.identifier.text)
-            return a.identifier.text < b.identifier.text;
+    sortNamesByWordAndThen(loops, names, [](const NameCandidate& name) {
+        return static_cast<uint64_t>(!name.isLookedUpByCode()) << 34 | static_cast<uint64_t>(name.isOnlyCompared) << 33 | static_cast<uint64_t>(!name.isEngineSymbol) << 32 | name.identifier.text.index();
+    }, [&](const NameCandidate& a, const NameCandidate& b) {
         return isNameKeyOrderedBefore(program, a.identifier.key, b.identifier.key);
     });
 }
@@ -259,15 +264,20 @@ static Vector<FunctionByModule> findFirstFunctionsNamingTexts(const Typed::Progr
     return firstFunctions;
 }
 
-static Vector<StringID> sortStringsByFirstFunction(const ParallelLoops& loops, const BitVector& strings, const Invocable<FunctionByModule(size_t)> auto& firstFunctionOf)
+static Vector<StringID> sortStringsByFirstFunction(const BitVector& strings, const Invocable<FunctionByModule(size_t)> auto& firstFunctionOf)
 {
     Vector<StringByFirstFunction> inOrder;
     inOrder.reserveInitialCapacity(strings.bitCount());
     for (size_t string : strings)
-        inOrder.append(StringByFirstFunction { firstFunctionOf(string), StringID(string) });
-    parallelSort(loops, inOrder.mutableSpan(), std::less<StringByFirstFunction> { });
+        inOrder.append(StringByFirstFunction::create(firstFunctionOf(string), StringID(string)));
+    sortByWordKeepingEqualElementsInOrder(inOrder.mutableSpan(), [](const StringByFirstFunction& entry) {
+        return entry.functionAndString >> 32;
+    });
+    sortByWordKeepingEqualElementsInOrder(inOrder.mutableSpan(), [](const StringByFirstFunction& entry) {
+        return entry.moduleAndPosition;
+    });
     return inOrder.map([](const StringByFirstFunction& entry) {
-        return entry.string;
+        return entry.string();
     });
 }
 
@@ -344,15 +354,15 @@ void ImageNumbersBuilder::numberIdentifiersAndStrings()
     auto firstFunctionNamingText = [&](size_t string) {
         return firstFunctionsNamingTexts[string];
     };
-    numbers.m_stringsInOrderOfText = sortStringsByFirstFunction(loops, textsOfNames, firstFunctionNamingText);
-    Vector<StringID> otherStrings = sortStringsByFirstFunction(loops, stringsWithText, firstFunctionNamingText);
+    numbers.m_stringsInOrderOfText = sortStringsByFirstFunction(textsOfNames, firstFunctionNamingText);
+    Vector<StringID> otherStrings = sortStringsByFirstFunction(stringsWithText, firstFunctionNamingText);
     std::ranges::stable_partition(otherStrings, [&](StringID string) {
         return program.strings[string].size() <= ImageString::lengthMask;
     });
     numbers.m_stringsInOrderOfText.appendVector(otherStrings);
 
     StringConstantNumbering constants;
-    constants.m_strings = sortStringsByFirstFunction(loops, numberedConstants, [&](size_t string) {
+    constants.m_strings = sortStringsByFirstFunction(numberedConstants, [&](size_t string) {
         return mentions.firstFunctionMentioning(NumberSpace::StringCell, static_cast<uint32_t>(string));
     });
     constants.m_numbersPlusOne.fill(0, numberOfStrings);

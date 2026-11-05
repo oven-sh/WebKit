@@ -10,6 +10,7 @@
 
 #include "AOTIRPrinter.h"
 #include "AOTPlan.h"
+#include <bit>
 #include <wtf/CommaPrinter.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -58,8 +59,6 @@ static ASCIILiteral nameInPlanText(VariableEncoding encoding)
     switch (encoding) {
     case VariableEncoding::Plain:
         return "Plain"_s;
-    case VariableEncoding::UndefinedAsZero:
-        return "UndefinedAsZero"_s;
     case VariableEncoding::FunctionAsZero:
         return "FunctionAsZero"_s;
     }
@@ -105,6 +104,10 @@ static void printPlacedSlot(IRPrinter& printer, const PlacedSlot& slot)
         out.print(" doors="_s);
         printer.print(slot.provenType);
     }
+    if (slot.typeOfRawValue) {
+        out.print(" raw="_s);
+        printer.print(slot.typeOfRawValue);
+    }
     if (slot.holdsAccessor)
         out.print(" accessor"_s);
     if (slot.isFilledAtBirth)
@@ -130,8 +133,8 @@ static void printPlannedLayouts(IRPrinter& printer, const Plan& plan)
             out.print(" never-allocated"_s);
         if (layout.hasSlots())
             out.print(" size="_s, layout.size);
-        if (layout.isEscapedOffset)
-            out.print(" escaped-at="_s, *layout.isEscapedOffset);
+        if (layout.cellsAreHandedBack)
+            out.print(" handed-back link-at="_s, layout.offsetOfLinkToNextCellHandedBack);
         if (layout.extensionSize)
             out.print(" extension="_s, layout.extensionSize);
         if (ShapeRange shapes = plan.shapes().shapesOf(id); !shapes.isEmpty())
@@ -275,6 +278,8 @@ static void printPlannedUnits(IRPrinter& printer, const Plan& plan)
         if (isGenericEntry(unit.role)) {
             out.print(" -> "_s);
             printCodeUnit(out, conventions.genericEntry(unit).target);
+            if (uint8_t onlyCalled = conventions.genericEntry(unit).borrowedArguments)
+                out.print(" only-calls="_s, onlyCalled & 1 ? "0"_s : ""_s, onlyCalled & 2 ? "1"_s : ""_s);
             out.println();
             continue;
         }
@@ -296,6 +301,13 @@ static void printPlannedUnits(IRPrinter& printer, const Plan& plan)
                 out.print(" reserves="_s, reserved);
             if (unit.role == CodeRole::Body && plan.endsItsTailCalls(unit.function))
                 out.print(" ends-its-tail-calls"_s);
+            if (uint64_t mustEndTheirs = unit.role == CodeRole::Body ? plan.entryParametersThatMustEndTheirTailCalls(unit.function) : 0) {
+                out.print(" ends-tail-calls-if-arguments-do=["_s);
+                CommaPrinter commaOfParameters;
+                for (; mustEndTheirs; mustEndTheirs &= mustEndTheirs - 1)
+                    out.print(commaOfParameters, std::countr_zero(mustEndTheirs));
+                out.print("]"_s);
+            }
             if (unit.role == CodeRole::CoroutineBody && conventions.of(unit.function).coroutineNeverSuspends)
                 out.print(" never-suspends"_s);
             if (unit.role == CodeRole::ParameterGuard) {

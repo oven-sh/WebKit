@@ -148,7 +148,7 @@ BitVector findGroupsLaidForGoodForFields(const SlotPlanParts& parts, const Group
 {
     BitVector groupsLaidForGood(parts.layouts.size());
     for (uint32_t index : groups.layouts) {
-        if (hasCellsForFields(parts, LayoutID(index)) && parts.layouts[index].isEscapedOffset)
+        if (hasCellsForFields(parts, LayoutID(index)) && parts.layouts[index].cellsAreHandedBack)
             groupsLaidForGood.quickSet(groups.groupOf[index]);
     }
     return groupsLaidForGood;
@@ -265,6 +265,17 @@ public:
         }
     }
 
+    std::optional<uint64_t> tryTakeBelow(uint32_t width, uint64_t limit)
+    {
+        for (uint64_t offset = 0; offset + width <= limit; offset += width) {
+            if (!isFree(offset, width))
+                continue;
+            occupy(offset, width);
+            return offset;
+        }
+        return std::nullopt;
+    }
+
     uint64_t end() const { return m_end; }
 
 private:
@@ -310,6 +321,7 @@ private:
     void layFieldsOfUnions();
     std::optional<FieldReference> findFieldAbove(const BitVector& isLaid, FieldReference, LayoutID base) const;
     void layFieldsOf(LayoutID, const BitVector& isLaid);
+    void fillRoomLeftInCell(LayoutID, PlannedLayout&);
     void finishCell(LayoutID);
     void layCellsAgain();
 
@@ -318,10 +330,12 @@ private:
     const LinkTables& m_link;
     BuildContext& m_build;
     SlotPlanParts& m_parts;
+    CellSizesForFields m_cellSizes;
     GroupsOfLayoutsForFields m_groups;
     UnitsOfFields m_units;
 
     BitVector m_groupsLaidAgain;
+    BitVector m_groupsOfSeveralLayouts;
 
     BitVector m_layoutsWithHiddenWords;
 
@@ -339,11 +353,18 @@ ChooserOfFieldsStorage::ChooserOfFieldsStorage(Program& program, const Facts& fa
     , m_link(facts.linked())
     , m_build(build)
     , m_parts(parts)
+    , m_cellSizes(build)
     , m_groups(groupLayoutsForFields(program, facts.families()))
     , m_units(collectUnitsOfFields(program, parts, m_groups))
     , m_groupsLaidAgain(program.layouts.size())
+    , m_groupsOfSeveralLayouts(program.layouts.size())
     , m_layoutsWithHiddenWords(program.layouts.size())
 {
+    for (size_t position = 1; position < m_groups.layouts.size(); ++position) {
+        uint32_t group = m_groups.groupOf[m_groups.layouts[position]];
+        if (group == m_groups.groupOf[m_groups.layouts[position - 1]])
+            m_groupsOfSeveralLayouts.quickSet(group);
+    }
 }
 
 void ChooserOfFieldsStorage::run()
@@ -591,6 +612,31 @@ void ChooserOfFieldsStorage::layFieldsOf(LayoutID id, const BitVector& isLaid)
         finishCell(id);
 }
 
+void ChooserOfFieldsStorage::fillRoomLeftInCell(LayoutID id, PlannedLayout& planned)
+{
+    LayoutKind kind = m_program.at(id).kind;
+    if (m_build.recordedOptions().useWideReferences() || (kind != LayoutKind::Record && kind != LayoutKind::Instance))
+        return;
+    if (m_groupsOfSeveralLayouts.quickGet(m_groups.groupOf[id.index()]))
+        return;
+
+    uint64_t endOfCell = m_cellSizes.cellSizeFor(m_cell.end());
+    for (FieldIndex field = static_cast<uint32_t>(m_program.at(id).fields.size()); field < planned.numberOfFields(); ++field) {
+        PlacedSlot& slot = planned.slots[field];
+        if (!slot.isOutOfLine() || slot.representation != SlotRepresentation::JSValue || !slot.type || !isPlainSlotOfField(planned, field) || !isPlainFieldByRecords(m_program, m_facts, { id, field }))
+            continue;
+        if (narrowFormOfSlotHeldToTypeForFields(m_program, slot.type, false) != SlotRepresentation::OptionalCell32)
+            continue;
+        std::optional<uint64_t> offset = m_cell.tryTakeBelow(widthOf(SlotRepresentation::OptionalCell32), endOfCell);
+        if (!offset)
+            return;
+        slot.storage = SlotStorage::Inline;
+        slot.representation = SlotRepresentation::OptionalCell32;
+        slot.offset = static_cast<uint32_t>(*offset);
+        slot.mayExistWithoutStorage = false;
+    }
+}
+
 void ChooserOfFieldsStorage::finishCell(LayoutID id)
 {
     PlannedLayout& planned = m_parts.layouts[id.index()];
@@ -602,6 +648,17 @@ void ChooserOfFieldsStorage::finishCell(LayoutID id)
         if (slot.storage != SlotStorage::Inline)
             continue;
         slot.offset = static_cast<uint32_t>(field < numberListed ? m_offsets[m_units.rowOf({ id, field })] : m_cell.take(slot.width()));
+    }
+
+    if (hasSlotOutOfLine) {
+        fillRoomLeftInCell(id, planned);
+        hasSlotOutOfLine = planned.slots.containsIf([](const PlacedSlot& slot) {
+            return slot.isOutOfLine();
+        });
+        if (!hasSlotOutOfLine) {
+            planned.extensionSize = 0;
+            planned.granulesOfFirstExtension = 0;
+        }
     }
 
     PlacedSlot& extension = planned.slots[planned.extensionWordIndex()];

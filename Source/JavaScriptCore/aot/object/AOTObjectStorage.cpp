@@ -49,9 +49,9 @@ Object* Object::create(VM& vm, Structure* structure, const LayoutData& layout, s
             object->clear(field);
         isBornUnfinished |= field.isFilledAtBirth;
     }
-    object->setPerCellBit(isBornUnfinished);
     object->at<uint32_t>(offsetOfOrderWord) = orderWord;
     object->at<uint32_t>(offsetOfShapeWord) = shapeWordOf(layout.shape);
+    object->setIsInBirth(isBornUnfinished);
     object->JSCell::finishCreation(vm);
     return object;
 }
@@ -101,9 +101,6 @@ JSValue Object::read(const FieldData& field) const
 
 bool Object::tryStore(VM& vm, const FieldData& field, JSValue value)
 {
-    bool holdsPlaceholder = !field.canLeaveSlot() || field.slot.representation() == SlotRepresentation::DeferredClosure;
-    if (field.flags & fieldIsStoredOnce && !holdsPlaceholder)
-        return false;
     return tryInitialize(vm, field, value);
 }
 
@@ -123,7 +120,7 @@ ALWAYS_INLINE void Object::willStoreMarker(VM& vm, const FieldData& field, JSVal
     if (field.keepsStateOfBirth && !state().objects->layouts.fieldAccepts(field, marker)) [[unlikely]]
         crashOnLostStateOfBirth(vm, *this, field, nameOf(ObjectMutation::StoreOfOtherType));
     if (field.holdsRawValueFromBirth)
-        setPerCellBit(true);
+        setBearsMark(true);
 }
 
 bool Object::store(VM& vm, const FieldData& field, JSValue value)
@@ -426,8 +423,8 @@ Environment* Environment::create(VM& vm, Structure* structure, const Environment
         if (traitsOf(variable.slot.representation()).absentBits)
             clearSlot(variable.slot.representation(), &environment->at<uint8_t>(variable.slot.offset));
     }
-    environment->at<uint8_t>(offsetOfEnvironmentShapeLowByte) = layout.shape;
-    environment->at<uint8_t>(offsetOfEnvironmentShapeHighByte) = layout.shape >> 8;
+    environment->at<uint8_t>(offsetOfEnvironmentShapeLowByte) = lowByteOfEnvironmentShape(layout.shape);
+    environment->at<uint8_t>(offsetOfEnvironmentShapeHighByte) = highByteOfEnvironmentShape(layout.shape);
     ASSERT(environment->at<uint64_t>(0) == headerFor(structure, layout.shape));
     vm.mutatorFence();
     return environment;
@@ -439,7 +436,7 @@ uint64_t Environment::headerFor(Structure* structure, uint32_t shape)
     ASSERT(uncheckedDowncast<CompiledStructure>(structure)->environmentShapePage() == shape >> environmentShapesPerPageShift);
     uint64_t header = cellHeaderFor(structure);
     header &= ~(0xffull << 8 * offsetOfEnvironmentShapeLowByte | 0xffull << 8 * offsetOfEnvironmentShapeHighByte);
-    header |= static_cast<uint64_t>(shape & 0xff) << 8 * offsetOfEnvironmentShapeLowByte | static_cast<uint64_t>(shape >> 8 & 0xff) << 8 * offsetOfEnvironmentShapeHighByte;
+    header |= static_cast<uint64_t>(lowByteOfEnvironmentShape(shape)) << 8 * offsetOfEnvironmentShapeLowByte | static_cast<uint64_t>(highByteOfEnvironmentShape(shape)) << 8 * offsetOfEnvironmentShapeHighByte;
     return header;
 }
 

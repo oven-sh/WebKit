@@ -156,6 +156,15 @@ void HintEmitter::generateClearFrameCell(const ValueContext& value)
         m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.entire(heap), cell.value(), offset));
 }
 
+void HintEmitter::generateEndLifeOfCell(const ValueContext& value)
+{
+    const Operation& made = operationAt(definitionOf(value->cellOperand()));
+    FunctionID madeIn = generator().code().inlineFrames()[made.inlineFrame].callee;
+    m_out.suspendDeclaredAccesses();
+    callVoidOperation(value, RuntimeOperation::PoisonCell, { in<CellPointer>(value->cellOperand()), word32(static_cast<int32_t>(madeIn.index())), word32(static_cast<int32_t>(made.position)) });
+    m_out.resumeDeclaredAccesses();
+}
+
 void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)
 {
     RELEASE_ASSERT(hasFaultingLoopPolls);
@@ -179,7 +188,7 @@ void HintEmitter::emitPoll(const ValueContext& value)
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(value);
 
-    bool leavesOwedError = value->leavesOwedError() || m_code.marksOf(value.id()).contains(SweepMark::LeavesOwedError);
+    bool leavesOwedError = m_code.marksOf(value.id()).contains(SweepMark::LeavesOwedError);
     if (hasFaultingLoopPolls) {
         patchpoint->setRunsWithoutFrame(!isARM64());
         patchpoint->setGenerator([records = &m_records, site, leavesOwedError](CCallHelpers& jit, const Machine::PatchParameters& params) {

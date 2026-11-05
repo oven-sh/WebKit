@@ -17,6 +17,7 @@
 #include "AOTObjectModel.h"
 #include "AOTProgramStatics.h"
 #include "AOTRuntimeHooks.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTState.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubEntrypoints.h"
@@ -65,11 +66,11 @@ enum class ImportWalkStep : uint8_t { Skip, Enter, Stop };
 static constexpr size_t stackNeededToStartRuntimeModule = 128 * KB;
 static_assert(BuiltinCells::stackKeptFromProgram >= 2 * stackNeededToStartRuntimeModule, "the first use of a built-in cell loads a module, which loads others");
 
-static bool isComponentEvaluated(const Modules& modules, ModuleID module, std::optional<BitVector>& onStacks)
+static bool isComponentEvaluated(const Modules& modules, ModuleID module, Modules::ModulesThatWaitForCycles& waiting)
 {
     if (ModuleRecord* record = modules.recordIfExists(module))
         return record->isSCCEvaluated();
-    return modules.status(module) == ModuleStatus::Evaluated && !modules.waitsForItsCycle(module, onStacks);
+    return modules.status(module) == ModuleStatus::Evaluated && !modules.waitsForItsCycle(module, waiting);
 }
 
 static void checkSafeToRecurse(JSGlobalObject* realm, ThrowScope& scope)
@@ -118,12 +119,12 @@ static bool walkImports(Modules& modules, ModuleID start, const UncompiledFuncto
 
 void Modules::gatherAsynchronousTransitiveDependencies(ModuleID start, OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen)
 {
-    std::optional<BitVector> onStacks;
+    ModulesThatWaitForCycles waiting;
     walkImports(*this, start, [&](AbstractModuleRecord* record) {
         record->gatherAsynchronousTransitiveDependencies(result, seen);
         return ImportWalkStep::Skip;
     }, [&](ModuleID module, const ModuleData& moduleData) {
-        if (moduleData.isSynchronous() || status(module) == ModuleStatus::Evaluating || isComponentEvaluated(*this, module, onStacks))
+        if (moduleData.isSynchronous() || status(module) == ModuleStatus::Evaluating || isComponentEvaluated(*this, module, waiting))
             return ImportWalkStep::Skip;
         if (!moduleData.hasTopLevelAwait())
             return ImportWalkStep::Enter;
@@ -137,11 +138,11 @@ void Modules::gatherAsynchronousTransitiveDependencies(ModuleID start, OrderedHa
 
 bool Modules::readyForSyncExecution(ModuleID start, VisitedModuleRecords& seen)
 {
-    std::optional<BitVector> onStacks;
+    ModulesThatWaitForCycles waiting;
     return walkImports(*this, start, [&](AbstractModuleRecord* record) {
         return record->readyForSyncExecution(seen) ? ImportWalkStep::Skip : ImportWalkStep::Stop;
     }, [&](ModuleID module, const ModuleData& moduleData) {
-        if (isComponentEvaluated(*this, module, onStacks))
+        if (isComponentEvaluated(*this, module, waiting))
             return ImportWalkStep::Skip;
         ModuleStatus moduleStatus = status(module);
         if (moduleStatus == ModuleStatus::Evaluating && isCommonJSFileOrFace(module))
@@ -212,6 +213,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     runMocksBelow(root);
     RETURN_IF_EXCEPTION(scope, void());
     noteModulesLoadedWith(root);
+    noteThatGraphBegins(root);
     MocksBelowRoot mocks = mocksBelow(root);
 
     if (status(root) == ModuleStatus::Evaluating && !m_modulesAskedForWhileTheyRan.contains(root)) [[unlikely]]
@@ -580,16 +582,18 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
     std::span<const uint8_t> statuses = m_storedStatuses;
     for (size_t index = WTF::find(statuses, mark); index != notFound; index = WTF::find(statuses, mark, index + 1))
         beingEvaluated.append(ModuleID(static_cast<uint32_t>(index)));
-    BitVector haveRun;
-    if (std::ranges::any_of(beingEvaluated, [&](ModuleID failed) { return isOnCycleOfImports(failed); }))
-        haveRun = modulesThatHaveRunOnStacksOfEvaluations();
+    ModulesThatWaitForCycles haveRun;
+    for (ModuleID failed : beingEvaluated) {
+        if (isOnCycleOfImports(failed))
+            lookAtCycleOf(failed, haveRun);
+    }
     if (isInRecord)
         setStoredStatus(module, StoredModuleStatus::InRecord);
     for (ModuleID failed : beingEvaluated) {
         if (!isInRecord || failed != module)
             didThrowInBody(failed, exception->value());
     }
-    for (size_t index : haveRun) {
+    for (size_t index : haveRun.modules) {
         if (ModuleID failed(static_cast<uint32_t>(index)); markOfEvaluationThatBegan(failed) == mark)
             setFailed(failed, exception->value());
     }
@@ -673,54 +677,73 @@ void Modules::abandonEvaluation(ModuleID module, JSValue error)
         didThrowInBody(module, error);
 }
 
-bool Modules::waitsForItsCycle(ModuleID module, std::optional<BitVector>& onStacks) const
+bool Modules::waitsForItsCycle(ModuleID module, ModulesThatWaitForCycles& waiting) const
 {
     if (!mayWaitForItsCycle(module))
         return false;
-    if (!onStacks)
-        onStacks = modulesThatHaveRunOnStacksOfEvaluations();
-    return onStacks->get(module.index());
+    lookAtCycleOf(module, waiting);
+    return waiting.modules.get(module.index());
 }
 
-BitVector Modules::modulesThatHaveRunOnStacksOfEvaluations() const
+const CyclesOfImports& Modules::cyclesOfImports() const
+{
+    std::unique_ptr<CyclesOfImports>& cycles = m_instance.vm->aotState().cyclesOfImports;
+    if (!cycles)
+        cycles = makeUnique<CyclesOfImports>(m_table);
+    return *cycles;
+}
+
+void Modules::lookAtCycleOf(ModuleID module, ModulesThatWaitForCycles& waiting) const
 {
     constexpr uint8_t evaluated = static_cast<uint8_t>(StoredModuleStatus::Evaluated);
     constexpr uint8_t evaluating = static_cast<uint8_t>(StoredModuleStatus::Evaluating);
-    Vector<uint8_t> evaluationOf(m_table.size(), [&](size_t index) -> uint8_t {
-        ModuleID module(static_cast<uint32_t>(index));
-        uint8_t stored = m_storedStatuses[index];
-        if (stored < evaluated || stored == evaluating || !isOnCycleOfImports(module))
+    const CyclesOfImports& cycles = cyclesOfImports();
+    const CyclesOfImports::Member* asked = cycles.find(module);
+    if (!asked || waiting.cyclesLookedAt.set(asked->cycle))
+        return;
+    std::span<const uint32_t> members = cycles.membersOf(asked->cycle);
+    countEvent(*m_instance.vm, RuntimeCounterID::ModulesForCyclesThatWait, members.size());
+    if (std::ranges::none_of(members, [&](uint32_t member) { return m_storedStatuses[member] > evaluating; }))
+        return;
+
+    Vector<uint8_t> evaluationOf(members.size(), [&](size_t place) -> uint8_t {
+        ModuleID member(members[place]);
+        uint8_t stored = m_storedStatuses[member.index()];
+        if (stored < evaluated || stored == evaluating || !isOnCycleOfImports(member))
             return 0;
-        return stored == evaluated ? markOfEvaluationThatBegan(module) : stored;
+        return stored == evaluated ? markOfEvaluationThatBegan(member) : stored;
     });
 
     struct ImportTargets {
         std::span<const ModuleRequestData> requests;
         uint32_t importer;
+        uint32_t cycle;
+        const CyclesOfImports& cycles;
         const Vector<uint8_t>& evaluationOf;
 
         size_t size() const { return requests.size(); }
         uint32_t operator[](size_t index) const
         {
             const ModuleRequestData& request = requests[index];
-            bool isFollowed = !request.isRequire && !request.isDeferred && evaluationOf[importer] && evaluationOf[request.target()] == evaluationOf[importer];
-            return isFollowed ? request.target() : importer;
+            if (request.isRequire || request.isDeferred || !evaluationOf[importer])
+                return importer;
+            const CyclesOfImports::Member* target = cycles.find(request.targetModule());
+            bool isFollowed = target && target->cycle == cycle && evaluationOf[target->place] == evaluationOf[importer];
+            return isFollowed ? target->place : importer;
         }
     };
-    Typed::StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(m_table.size(), [&](unsigned index) {
-        return ImportTargets { m_table.requests(ModuleID(index)), index, evaluationOf };
+    Typed::StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(members.size(), [&](unsigned place) {
+        return ImportTargets { m_table.requests(ModuleID(members[place])), place, asked->cycle, cycles, evaluationOf };
     });
     BitVector unfinishedComponents(components.numberOfComponents);
-    for (unsigned index = 0; index < m_table.size(); ++index) {
-        if (evaluationOf[index] && m_storedStatuses[index] != evaluated)
-            unfinishedComponents.quickSet(components.componentOf[index]);
+    for (unsigned place = 0; place < members.size(); ++place) {
+        if (evaluationOf[place] && m_storedStatuses[members[place]] != evaluated)
+            unfinishedComponents.quickSet(components.componentOf[place]);
     }
-    BitVector found(m_table.size());
-    for (unsigned index = 0; index < m_table.size(); ++index) {
-        if (evaluationOf[index] && m_storedStatuses[index] == evaluated && unfinishedComponents.quickGet(components.componentOf[index]))
-            found.quickSet(index);
+    for (unsigned place = 0; place < members.size(); ++place) {
+        if (evaluationOf[place] && m_storedStatuses[members[place]] == evaluated && unfinishedComponents.quickGet(components.componentOf[place]))
+            waiting.modules.set(members[place]);
     }
-    return found;
 }
 
 void Modules::evaluateModuleInRecord(ModuleID module)
@@ -1227,8 +1250,10 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             evaluateByCallingBody(imported);
         else
             evaluateModuleInRecord(imported);
-        if (!scope.exception() && mockInPlace(imported) && hasImporterBelowThatGetsOriginal(root, imported)) [[unlikely]]
+        if (!scope.exception() && mockInPlace(imported) && hasImporterBelowThatGetsOriginal(root, imported)) [[unlikely]] {
             runFileBesideMock(fileOf(imported));
+            RETURN_IF_EXCEPTION(scope, didRunFile);
+        }
         Exception* exception = scope.exception();
         bool didQueueJobsAheadOfLoader = filesBeingRun.isAheadOfJobsOfLoader && (numberOfJobsThatWouldWait(jobs) != numberOfJobs || (!hadQueuedTicks && hasQueuedTicks()));
         if (didQueueJobsAheadOfLoader && !(exception && vm.isTerminationException(exception))) [[unlikely]] {
@@ -1281,6 +1306,16 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             holdJobsBehind(numberOfJobs, imported, jobs);
         m_rootWhoseFilesRanAhead = root;
         return didRunFile;
+    }
+    if (m_numberOfMocksInPlace) [[unlikely]] {
+        BitVector mocked = m_modulesWithMockInPlace;
+        for (size_t file : mocked) {
+            if (!hasImporterBelowThatGetsOriginal(root, ModuleID(file)))
+                continue;
+            runFileBesideMock(ModuleID(file));
+            RETURN_IF_EXCEPTION(scope, didRunFile);
+            didRunFile = true;
+        }
     }
     if (didRunFile)
         m_rootsLoadedWithoutLoader.append(root);
@@ -1492,9 +1527,6 @@ void Modules::didFailToLoadGraph(ModuleID root)
     if (!m_levelsOfLoads.isEmpty()) [[unlikely]] {
         m_levelsOfLoads.removeIf([&](auto& entry) {
             return entry.value->plan->found[0].module == root;
-        });
-        m_filesAskedForOnBehalfOfRoot.removeAllMatching([&](const FileAskedForOnBehalfOfRoot& file) {
-            return file.plan->found[0].module == root;
         });
     }
     letGoGraphsHeldBehindEarlierCalls();
@@ -1889,7 +1921,7 @@ bool Modules::planLevelsOfLoad(ModuleID root)
     Vector<uint32_t, 64> firstRequestOfPlace;
     Vector<uint32_t, 256> requestedPlaces;
     placesSeen[root.index()] = firstPlaceFound;
-    found.append(Found { root, 0, 0, false, false, false });
+    found.append(Found { root, 0, 0, false, false, false, false });
     levels.append(Level { 0, 0, 0, false });
     while (true) {
         Level next { static_cast<uint32_t>(found.size()), 0, 0, false };
@@ -1944,7 +1976,7 @@ bool Modules::planLevelsOfLoad(ModuleID root)
                 }
                 placeSeen = firstPlaceFound + found.size();
                 requestedPlaces.append(found.size());
-                found.append(Found { target, importer, laterRequests, isFile, false, false });
+                found.append(Found { target, importer, laterRequests, isFile, isFile && isCommonJSFileOrFace(target), false, false });
                 next.hasFiles |= isFile;
                 if (laterRequests > next.laterRequests) {
                     next.laterRequests = laterRequests;
@@ -1975,6 +2007,8 @@ bool Modules::planLevelsOfLoad(ModuleID root)
         firstRequestOfPlace.append(requestedPlaces.size());
         plan->stepsOfWholeGraph = countStepsOfWholeGraph(plan.get(), firstRequestOfPlace.mutableSpan(), requestedPlaces.mutableSpan());
     }
+    for (size_t place = found.size(); --place;)
+        found[found[place].importer].leadsToFile |= found[place].leadsToFile;
     layWayOfLoad(plan.get(), nullptr);
     bool marksWait = false;
     m_loadsInFlight.forEachOfRoot(root, [&](LoadInFlight& load) {
@@ -2010,35 +2044,24 @@ void Modules::layWayOfLoad(PlanOfLoad& plan, LevelOfLoad* above)
     }
 
     std::optional<ModuleID> below;
-    Vector<LevelOfLoad::FileOfNextLevel, 4> filesInFront;
-    Vector<LevelOfLoad::FileOfNextLevel, 4> filesBehind;
     for (size_t depth = levels.size(); depth-- > highestLevel; onWay = &found[onWay->importer]) {
-        auto planned = makeUnique<LevelOfLoad>();
+        std::unique_ptr<LevelOfLoad>& planned = m_levelsOfLoads.ensure(onWay->module, [] {
+            return makeUnique<LevelOfLoad>();
+        }).iterator->value;
         planned->next = below;
-        planned->filesInFrontOfNext = std::exchange(filesInFront, { });
-        planned->filesBehindNext = std::exchange(filesBehind, { });
         planned->plan = &plan;
         planned->depth = depth;
         planned->place = onWay - found.span().data();
         if (levels[depth].hasFiles) {
-            uint32_t placeOfModuleThatAsks = above && depth == highestLevel ? above->place : onWay->importer;
             for (Found& file : plan.level(depth)) {
-                if (!file.isFile || &file == onWay || !isLeftToLoad(plan, file))
-                    continue;
-                if (isCommonJSFileOrFace(file.module))
-                    (&file < onWay ? filesInFront : filesBehind).append({ file.module, file.importer == placeOfModuleThatAsks });
-                else
+                if (file.isFile && !file.leadsToFile && &file != onWay && isLeftToLoad(plan, file))
                     planned->filesWithoutCode.append(file.module);
             }
         }
-        m_levelsOfLoads.set(onWay->module, WTF::move(planned));
         below = onWay->module;
     }
-    if (!above)
-        return;
-    above->next = below;
-    above->filesInFrontOfNext = WTF::move(filesInFront);
-    above->filesBehindNext = WTF::move(filesBehind);
+    if (above)
+        above->next = below;
 }
 
 void Modules::countStepsOfLevel(PlanOfLoad& plan, size_t depth)
@@ -2524,6 +2547,25 @@ void Modules::recordEvaluationIfNothingIsLeftToRun(ModuleID module)
 bool Modules::isLeftToStartsOfImporters(ModuleID module) const
 {
     return status(module) == ModuleStatus::Linked && isPassedOverByEvaluation(data(module));
+}
+
+void Modules::noteThatGraphBegins(ModuleID root)
+{
+    m_filesWhoseNamesNobodyAnswersFor.clearAll();
+    if (!m_table.listsNamesOfStatements())
+        return;
+    Vector<ModuleID, 32> toFollow;
+    toFollow.append(fileOf(root));
+    while (!toFollow.isEmpty()) {
+        ModuleID importer = toFollow.takeLast();
+        if (!isLoadedWithRequests(importer) || isMocked(importer) || mockInPlace(importer) || m_modulesWithMockToRun.get(importer.index()))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            ModuleID file = fileOf(request.targetModule());
+            if (!m_filesWhoseGraphHasBegun.set(file.index()))
+                toFollow.append(file);
+        }
+    }
 }
 
 void Modules::captureExportsOfFilesBeingEvaluated(ModuleID root)
@@ -3229,7 +3271,7 @@ JSValue Modules::exportsShownByModuleObject(ModuleID file)
 JSValue Modules::exportsSeenByLoader(ModuleID module)
 {
     LoadedModule* loaded = loadedIfExists(module);
-    if (!loaded || !loaded->requirer) [[likely]]
+    if (!loaded || !loaded->requirer || data(module).exportsStayInCompiledCode()) [[likely]]
         return commonJSExports(module);
     return loaded->requirer->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
 }

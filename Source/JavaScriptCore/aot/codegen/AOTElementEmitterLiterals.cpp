@@ -45,13 +45,6 @@ void GuardEmitter::generateHasArrayStorage(const ValueContext& value)
     defineTest(value, emitter<ElementAccessEmitter>().hasArrayStorage(in<CellPointer>(value->arrayOperand()), kind, value->isWritable()));
 }
 
-void GuardEmitter::generateIsInBounds(const ValueContext& value)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    Integer index = elements.indexOrElse(value->positionOperand(), true, nullptr);
-    defineTest(value, elements.testLength(value, index, elements.elementsOf(value, in<CellPointer>(value->arrayOperand()))).isInside);
-}
-
 void GuardEmitter::generateIsElementPresent(const ValueContext& value)
 {
     const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
@@ -62,17 +55,6 @@ void GuardEmitter::generateIsElementPresent(const ValueContext& value)
             emitter<ElementAccessEmitter>().branchOnPresentElement(value, *form, targets);
         else
             emitter<ElementAccessEmitter>().branchOnPresentElementInAnyStorage(value, targets);
-    });
-}
-
-void GuardEmitter::generateIsInsideView(const ValueContext& value)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    defineTestByBranching(value, [&](BranchTargets targets) {
-        LBasicBlock fails = targets.notTaken.block();
-        Integer index = elements.indexOrElse(value->positionOperand(), value->keyIsIntegral(), fails);
-        TypedArrayElements view = elements.typedArrayElementsOf(value->viewOperand(), fails);
-        branch(value->mayEqualLength() ? belowOrEqual(index, view.length) : below(index, view.length), targets);
     });
 }
 

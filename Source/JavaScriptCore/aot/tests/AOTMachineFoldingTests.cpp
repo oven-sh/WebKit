@@ -568,7 +568,7 @@ static void testMachineFoldingOfIntegerConversions()
         { "Trunc(Add(a, Const64(1)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(Add, v.a, 1)); } },
         { "Trunc(BitAnd(a, Const64(2147483647)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(BitAnd, v.a, 0x7fffffff)); } },
 
-        { "Trunc(Add(SExt32(i), SExt32(j)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(Add, v.make(SExt32, v.i), v.make(SExt32, v.j))); } },
+        { "Trunc(Add(SExt32(i), SExt32(j)))"_s, [](FoldingTest& v) { LValue left = v.make(SExt32, v.i); return v.make(Trunc, v.make(Add, left, v.make(SExt32, v.j))); } },
         { "Trunc(Add(SExt32(i), Const64(1)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(Add, v.make(SExt32, v.i), 1)); } },
         { "Trunc(Sub(SExt32(i), SExt32(j)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(Sub, v.make(SExt32, v.i), v.make(SExt32, v.j))); } },
 
@@ -777,7 +777,7 @@ static void testMachineFoldingOfIntegerComparisons()
         { "LessThan(i, j)"_s, [](FoldingTest& v) { return v.make(LessThan, v.make(SExt32, v.i), v.make(SExt32, v.j)); } },
         { "Below(i, j)"_s, [](FoldingTest& v) { return v.make(LessThan, v.make(ZExt32, v.i), v.make(ZExt32, v.j)); } },
         { "LessThan(SExt32(i), ZExt32(j))"_s, [](FoldingTest& v) { return v.make(LessThan, v.make(SExt32, v.i), v.make(ZExt32, v.j)); } },
-        { "Equal(SExt32(i), ZExt32(j))"_s, [](FoldingTest& v) { return v.make(Equal, v.make(SExt32, v.i), v.make(ZExt32, v.j)); } },
+        { "Equal(SExt32(i), ZExt32(j))"_s, [](FoldingTest& v) { LValue left = v.make(SExt32, v.i); return v.make(Equal, left, v.make(ZExt32, v.j)); } },
         { "Equal(a, SExt32(i))"_s, [](FoldingTest& v) { return v.make(Equal, v.make(SExt32, v.i), v.a); } },
     };
     checkFoldingTestCases(FoldingTestOperands::Integers, cases);

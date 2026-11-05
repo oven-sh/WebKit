@@ -69,7 +69,8 @@ void* Arena::allocateSlow(size_t bytes, size_t alignment)
     }
 #endif
 
-    size_t overhead = sizeof(Chunk) + alignment - 1;
+    static_assert(!(sizeof(Chunk) % alignmentOfCursor));
+    size_t overhead = sizeof(Chunk) + alignment - 1 + alignmentOfCursor - 1;
     RELEASE_ASSERT(bytes <= std::numeric_limits<size_t>::max() - overhead);
     size_t size = std::max(m_chunk ? m_chunk->size * 2 : smallestChunkSize, bytes + overhead);
     Chunk* chunk = new (NotNull, fastMalloc(size)) Chunk { m_chunk, size };

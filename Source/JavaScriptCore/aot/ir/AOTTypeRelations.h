@@ -69,32 +69,13 @@ public:
     size_t numberOfPairsAsked() const { return m_numberOfPairsAsked; }
 
 private:
-    class SharedFormsOfCopies {
-    public:
-        void add(ObjectID sharedForm)
-        {
-            if (!m_first)
-                m_first = sharedForm;
-            else if (m_first != sharedForm)
-                m_areSeveral = true;
-        }
-
-        bool holdOtherThan(ObjectID sharedForm) const { return m_areSeveral || (m_first && m_first != sharedForm); }
-
-    private:
-        ObjectID m_first;
-        bool m_areSeveral { false };
-    };
-
     struct LayoutOfMembers {
         ObjectKinds kinds { 0 };
-        SharedFormsOfCopies copies;
         std::array<ObjectKinds, 2> kindsSpread { };
         std::array<ObjectKinds, 2> kindsAsked { };
         std::array<ObjectKinds, 2> kindsWithAlias { };
         bool isOfPrototype { false };
         bool isOfPrototypeOfConstructor { false };
-        SharedFormsOfCopies copiesOfPrototypes;
     };
 
     struct NoValue { };
@@ -155,7 +136,6 @@ private:
     struct CellsNobodyDescribes {
         const ObjectRecord* example;
         ObjectKinds kinds;
-        SharedFormsOfCopies copies { };
     };
 
     struct ClassOfCells {
@@ -163,8 +143,7 @@ private:
         ObjectKinds kinds;
     };
 
-    void lookAtMembersButClosuresAndSites();
-    void lookAtSites();
+    void lookAtMembersButClosures();
     void lookAtMember(ObjectID);
     void noteShapeOf(const ObjectRecord&);
     void noteLayout(LayoutID, const ObjectRecord& ofMember);
@@ -172,8 +151,8 @@ private:
     void noteFunctionPrototype(const ObjectRecord&);
     std::span<const ObjectID> closuresOfLibrary();
     bool answerFromWhatWasRead(ObjectID);
-    bool namesObjectOfShape(ObjectID sharedForm, const ObjectRecord&);
-    bool namesPrototypeUnderAnotherName(ObjectID sharedForm, const ObjectRecord& prototype);
+    bool namesObjectOfShape(ObjectID, const ObjectRecord&);
+    bool namesPrototypeUnderAnotherName(const ObjectRecord& prototype);
     bool namesPrototypeOfClassOf(FunctionID constructor);
     bool namesBuiltinThatMayBeClosureOf(FunctionID ofLibrary);
     bool namesClosureThatMayBe(BuiltinID);
@@ -181,14 +160,11 @@ private:
     TypeReader m_reader;
     SetView<ObjectID, ObjectSetID> m_members;
     bool m_hasLookedAtMembers { false };
-    bool m_hasLookedAtSites { false };
     bool m_hasListedClosuresOfLibrary { false };
     bool m_namesUnknown { false };
     ObjectKinds m_kinds { 0 };
     Vector<ObjectID, 4> m_askedOneByOne;
-    SlotsByNumber<NoValue> m_sharedFormsOfCopies;
     Vector<ObjectID, 8> m_builtins;
-    Vector<ObjectID, 4> m_copiesOfClosures;
     Vector<ObjectID, 4> m_closuresOfLibrary;
     SlotsByNumber<ObjectKinds> m_kindsOfBuiltins;
     SlotsByNumber<NoValue> m_holdersOfHostObjects;

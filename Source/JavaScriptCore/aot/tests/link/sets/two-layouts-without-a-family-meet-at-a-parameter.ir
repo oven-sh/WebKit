@@ -1,0 +1,30 @@
+# If two layouts that no declared family holds were lost where they meet, the parameter would be any object, and whatever is done through it would be charged to both and to every stranger that meets either of them later
+# function take(o) { return 1; }  take({ x: 1, p: 1 });  take({ x: 1, q: 1 });
+# RUN: link functions layouts mechanisms=all
+# CHECK: function f1 callers-known one-callee
+# CHECK-NEXT: parameter 0 {{*}}proven=L0|L1
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v2 calleeName="take"
+    v7 = Call v5, -, v4 calleeName="take"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="take" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}

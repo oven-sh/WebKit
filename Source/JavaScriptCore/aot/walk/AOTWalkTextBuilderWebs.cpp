@@ -90,7 +90,6 @@ private:
     void passOverEdge(ValueID, uint32_t parameterIndex);
     void followEdge(const BodyTerminator&, uint32_t targetIndex, BodyTarget);
     void holdBackEdgeToBringingTexts();
-    void followHandlerEdge(BodyBlock);
     void arriveAt(BlockID, uint32_t text, uint32_t parameterIndex);
     template<typename Functor> void forEachNameLiveAtHeadOf(BlockID, const Functor&);
 
@@ -122,9 +121,6 @@ private:
     Vector<ValueID, 32> m_versionsAtEntries;
     Vector<ValueID, 2> m_versions;
     Vector<uint32_t, 2> m_parametersThatTakeTexts;
-    Vector<bool, 2> m_mayThrowBehindGrowth;
-    Vector<uint32_t, 2> m_textsGrownSinceSomethingMayHaveThrown;
-    Vector<bool, 2> m_isReadByHandler;
     Vector<ValueID, 8> m_partsToLookAt;
 };
 
@@ -382,7 +378,6 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
     CandidateInTextBuilderWeb& candidate = m_candidates[textInFront];
     giveName(operation.id(), textInFront, operation.id());
     m_versions[textInFront] = operation.id();
-    m_textsGrownSinceSomethingMayHaveThrown.append(textInFront);
     candidate.grows = true;
     if (!candidate.takesTextOfJSONStringify)
         candidate.takesTextOfJSONStringify = takesTextOfJSONStringifyBehindFront(operation);
@@ -471,56 +466,6 @@ void TextBuilderWebScan::followEdge(const BodyTerminator& terminator, uint32_t t
     });
 }
 
-void TextBuilderWebScan::followHandlerEdge(BodyBlock block)
-{
-    BodyTarget handler = block.handler();
-    std::span<const ValueID> atEntry = versionsAtEntryOf(block.id());
-    m_parametersThatTakeTexts.fill(none, m_candidates.size());
-    std::span<const ValueID> arguments = handler.arguments();
-    for (uint32_t argumentIndex = 0; argumentIndex < arguments.size(); ++argumentIndex) {
-        NameInTextBuilderWeb* name = findName(arguments[argumentIndex]);
-        if (!name || !isOpen(name->text))
-            continue;
-        if (name->version != atEntry[name->text] || m_parametersThatTakeTexts[name->text] != none) {
-            refuse(name->text);
-            continue;
-        }
-        m_parametersThatTakeTexts[name->text] = argumentIndex;
-    }
-
-    bool leavesLoop = !isInLoop(handler.block());
-    m_isReadByHandler.fill(false, m_candidates.size());
-    if (leavesLoop) {
-        forEachNameLiveAtHeadOf(handler.block(), [&](const NameInTextBuilderWeb& name) {
-            if (!isOpen(name.text))
-                return;
-            if (name.version != atEntry[name.text])
-                refuse(name.text);
-            else
-                m_isReadByHandler[name.text] = true;
-        });
-    }
-
-    for (uint32_t text = 0; text < m_candidates.size(); ++text) {
-        if (!isOpen(text))
-            continue;
-        bool isHanded = m_parametersThatTakeTexts[text] != none || m_isReadByHandler[text];
-        bool hasGrown = m_versions[text] != atEntry[text];
-        if (hasGrown && (isHanded ? m_mayThrowBehindGrowth[text] : !leavesLoop)) {
-            refuse(text);
-            continue;
-        }
-        if (leavesLoop) {
-            if (isHanded)
-                noteThatStateIsSeen(*findName(atEntry[text]));
-            continue;
-        }
-        ValueID atEnd = std::exchange(m_versions[text], atEntry[text]);
-        arriveAt(handler.block(), text, m_parametersThatTakeTexts[text]);
-        m_versions[text] = atEnd;
-    }
-}
-
 void TextBuilderWebScan::scanBlock(BodyBlock block)
 {
     std::span<const ValueID> atEntry = versionsAtEntryOf(block.id());
@@ -531,24 +476,12 @@ void TextBuilderWebScan::scanBlock(BodyBlock block)
             refuse(text);
         m_versions[text] = atEntry[text];
     }
-    m_mayThrowBehindGrowth.fill(false, m_candidates.size());
-    m_textsGrownSinceSomethingMayHaveThrown.shrink(0);
-    auto noteWhatMayThrow = [&](bool mayThrowHere) {
-        if (!mayThrowHere)
-            return;
-        for (uint32_t text : m_textsGrownSinceSomethingMayHaveThrown)
-            m_mayThrowBehindGrowth[text] = true;
-        m_textsGrownSinceSomethingMayHaveThrown.shrink(0);
-    };
 
     refuseTextNamedBy(block.subject());
-    for (BodyValue operation : block.values()) {
-        noteWhatMayThrow(!!declaredBoundInTable(operation.opcode()).mayThrow);
+    for (BodyValue operation : block.values())
         scanOperation(operation);
-    }
 
     BodyTerminator terminator = block.terminator();
-    noteWhatMayThrow(!!declaredBoundOf(terminator.kind()).mayThrow);
     terminator.forEachOperand([&](ValueID operand, uint32_t) {
         if (NameInTextBuilderWeb* name = noteMention(operand))
             noteThatStateIsSeen(*name);
@@ -561,10 +494,8 @@ void TextBuilderWebScan::scanBlock(BodyBlock block)
             followEdge(terminator, targetIndex, target);
         ++targetIndex;
     }
-    if (block.hasHandler()) {
+    if (block.hasHandler())
         m_standsUnderHandlers = true;
-        followHandlerEdge(block);
-    }
 }
 
 void TextBuilderWebScan::run(Vector<GrowingText, 2>& texts)
@@ -624,6 +555,9 @@ void findGrowingTexts(Walker& walker, BlockID inputHead, const LoopPreview& prev
     if (!index.isLoopHead(inputHead) || index.isEnteredByHandlerEdge(inputHead))
         return;
     TextBuilderWebScan(walker, inputHead, preview).run(texts);
+    texts.removeAllMatching([&](const GrowingText& text) {
+        return text.standsUnderHandlers && !everyHandlerLetsTextGo(walker, text);
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

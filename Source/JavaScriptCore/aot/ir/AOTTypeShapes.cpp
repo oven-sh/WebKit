@@ -131,7 +131,6 @@ static bool isFoundByTestOfIdentity(const BuiltinTable& builtins, const ObjectRe
     case ObjectKind::Instance:
     case ObjectKind::Prototype:
     case ObjectKind::EscapedOfLayout:
-    case ObjectKind::Site:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -183,11 +182,6 @@ static TypeParts describeObjectsByShape(TypeArena& arena, const Type& type, Shap
             addObjectToDescribedShapes(reader, shapes, record);
             return false;
         });
-        if (parts.objects && type.traitsOfNamed.contains(ObjectTrait::IsOfInstance)) {
-            parts.objects = arena.objectSets().replaced(parts.objects, [&](ObjectID object) {
-                return objects.sharedFormOf(object);
-            });
-        }
     }
 
     if (type.unnamedLayouts) {

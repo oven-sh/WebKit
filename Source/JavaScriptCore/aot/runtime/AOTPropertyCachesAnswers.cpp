@@ -808,7 +808,7 @@ static PropertyAnswer classifyFieldStore(const StoreQuery& query, Object& object
     const CompiledStructure* before = compiledObjectStructureOrNull(query.structureBefore);
     if (!before || &before->layout() != &object.layout() || (object.structure() != before && !query.slot.isCacheableSetter()))
         return uncacheableOnce(access);
-    if (field.flags & (fieldIsStoredOnce | fieldAttributeFlags) || field.slot.representation() == SlotRepresentation::DeferredClosure)
+    if (field.flags & fieldAttributeFlags || field.slot.representation() == SlotRepresentation::DeferredClosure)
         return PropertyAnswer::uncacheable(access);
     PropertyAnswer answer { .kind = PropertyAnswerKind::Field, .access = access, .isOwn = true, .field = &field };
     answer.undefinedNeedsNoStorage = field.flags & fieldMayExistWithoutStorage && object.state().objects->layouts.slotAdmits(field, jsUndefined());

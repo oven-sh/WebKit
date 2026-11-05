@@ -51,6 +51,8 @@ public:
     const RuntimeType& typeOf(const FieldData& field) const { return typeAt(field.type); }
 
     const FieldData* field(VM&, const LayoutData&, UniquedStringImpl*);
+    const FieldData* staticField(const LayoutData& classLayout, uint32_t identifierNumber) { return findByName(classLayout.staticFields(), classLayout.index * 3 + 2, identifierNumber); }
+    const MethodData* staticMethod(const LayoutData& classLayout, uint32_t identifierNumber) { return findByName(classLayout.staticMethods(), classLayout.index * 3 + 3, identifierNumber); }
     UniquedStringImpl* nameOf(VM&, const FieldData&);
 
     bool valueHasType(const RuntimeType&, JSValue) const;
@@ -82,11 +84,26 @@ private:
 
     const FieldData* findField(VM&, const LayoutData&, UniquedStringImpl*);
     const FieldData* findFieldWithoutColumn(const LayoutData&, uint32_t identifierNumber);
+    static constexpr size_t minRecordsToIndex = 12;
+    static bool hasLiteralName(const FieldData&) { return true; }
+    static bool hasLiteralName(const MethodData& method) { return !(method.flags & methodHasComputedName); }
+    template<typename Record> static Vector<uint32_t> indexByName(std::span<const Record>);
+    template<typename Record> const Record* findInIndex(std::span<const Record>, uint32_t indexKey, uint32_t identifierNumber);
+    template<typename Record> const Record* findByName(std::span<const Record> records, uint32_t indexKey, uint32_t identifierNumber)
+    {
+        if (records.size() >= minRecordsToIndex) [[unlikely]]
+            return findInIndex(records, indexKey, identifierNumber);
+        for (const Record& record : records) {
+            if (hasLiteralName(record) && record.name == identifierNumber)
+                return &record;
+        }
+        return nullptr;
+    }
 
     State& m_state;
     const ProgramTables& m_tables;
     CachedField* m_cachedFields { nullptr };
-    UncheckedKeyHashMap<uint32_t, Vector<uint16_t>> m_fieldsByName;
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t>> m_recordsByName;
 };
 
 class StructureTable {

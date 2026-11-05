@@ -25,7 +25,6 @@ enum class PureOperation : uint16_t {
     ReadFieldInExtension,
     ModuleNamespace,
     ModuleBuiltinCell,
-    DataCell,
     SingletonClosure,
 };
 

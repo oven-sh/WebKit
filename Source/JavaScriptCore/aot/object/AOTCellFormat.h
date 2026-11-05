@@ -57,6 +57,16 @@ static constexpr uint8_t frameCellState = UINT8_MAX;
 static constexpr uint32_t shapeWordOf(uint32_t shape) { return 0 - shape; }
 static constexpr uint32_t shapeOf(uint32_t shapeWord) { return 0 - shapeWord; }
 
+static constexpr uint32_t shapeWordIsUnmarked = 1u << 23;
+static constexpr uint64_t orderAndShapeWordsAreUnmarked = static_cast<uint64_t>(shapeWordIsUnmarked) << 32;
+static constexpr ptrdiff_t offsetOfByteWithMark = offsetOfShapeWord + 2;
+static constexpr uint8_t byteWithMarkIsUnmarked = 1u << 7;
+static constexpr uint32_t maxNumberOfShapes = shapeWordIsUnmarked;
+static constexpr uint32_t shapeWordWithoutMark(uint32_t shapeWordWithMark) { return shapeWordWithMark | shapeWordIsUnmarked; }
+static_assert(shapeWordWithoutMark(shapeWordOf(1)) == shapeWordOf(1) && shapeWordWithoutMark(shapeWordOf(maxNumberOfShapes)) == shapeWordOf(maxNumberOfShapes) && shapeWordWithoutMark(shapeWordOf(maxNumberOfShapes + 1)) != shapeWordOf(maxNumberOfShapes + 1));
+static_assert(shapeWordWithoutMark(shapeBlockMarker) == shapeBlockMarker && shapeWordIsUnmarked == static_cast<uint32_t>(byteWithMarkIsUnmarked) << 8 * (offsetOfByteWithMark - offsetOfShapeWord));
+static_assert(shapeBlockMarkerBesideMark == (shapeBlockMarker & ~shapeWordIsUnmarked));
+
 enum class KeyListKind : uint8_t { Strings, StringsAndSymbols, Symbols };
 static constexpr uint32_t keyListWordStep = (1u << 29) + 341;
 static constexpr uint32_t keyListWordOf(uint32_t shapeWord, KeyListKind kind) { return shapeWord - static_cast<uint32_t>(kind) * keyListWordStep; }
@@ -119,7 +129,12 @@ static constexpr uint32_t extensionCellSizeFor(uint32_t numberOfGranules) { retu
 static constexpr uint32_t offsetOfEnvironmentShapeLowByte = 4;
 static constexpr uint32_t offsetOfEnvironmentShapeHighByte = 6;
 static constexpr uint32_t offsetOfFirstEnvironmentVariable = 8;
-static constexpr unsigned environmentShapesPerPageShift = 16;
+static constexpr unsigned environmentShapesPerPageShift = 15;
+static constexpr uint8_t environmentIsEscapedBit = 1u << 7;
+static constexpr uint8_t lowByteOfEnvironmentShape(uint32_t shape) { return static_cast<uint8_t>(shape); }
+static constexpr uint8_t highByteOfEnvironmentShape(uint32_t shape) { return shape >> 8 & (environmentIsEscapedBit - 1); }
+static constexpr uint32_t environmentShapeInPage(uint8_t lowByte, uint8_t highByte) { return lowByte | (highByte & (environmentIsEscapedBit - 1)) << 8; }
+static constexpr uint32_t tagOfLinkBetweenEnvironmentsHandedBack = 2;
 
 static constexpr ptrdiff_t offsetOfClosureEntry = 32;
 static constexpr ptrdiff_t offsetOfClosureCaptures = 40;
@@ -142,6 +157,9 @@ static_assert(shapeWordOf(1) & compiledObjectShapeBit);
 static_assert(!canPassShapeTest(pointerUpperHalfBits));
 static_assert(!canPassShapeTest(bigIntHashMask));
 static_assert(!mayBeUpperHalfOfSlimClosureWord(pointerUpperHalfBits) && !mayBeUpperHalfOfSlimClosureWord(bigIntHashMask) && !mayBeUpperHalfOfSlimClosureWord(shapeWordOf(1)));
+static_assert(environmentShapeInPage(UINT8_MAX, UINT8_MAX) + 1 == 1u << environmentShapesPerPageShift);
+static_assert(environmentShapeInPage(lowByteOfEnvironmentShape(0x2abcd), highByteOfEnvironmentShape(0x2abcd)) == 0x2bcd && environmentShapeInPage(lowByteOfEnvironmentShape(0x2abcd), highByteOfEnvironmentShape(0x2abcd) | environmentIsEscapedBit) == 0x2bcd);
+static_assert((0x2abcdu >> environmentShapesPerPageShift << environmentShapesPerPageShift) + 0x2bcd == 0x2abcd);
 
 #endif // ENABLE(AOT)
 

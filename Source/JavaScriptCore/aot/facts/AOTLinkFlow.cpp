@@ -12,7 +12,6 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
-#include "AOTLinkLargeLists.h"
 #include "AOTNameClass.h"
 #include "AOTRowsOfLayouts.h"
 #include "AOTThreads.h"
@@ -402,12 +401,17 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
     exportsShown.ensureSize(program.variables.size());
     allocatedLayouts.ensureSize(numberOfLayouts);
     lostLayouts.ensureSize(numberOfLayouts);
+    m_layoutsOfDeclaredFamilies.ensureSize(numberOfLayouts);
+    for (uint32_t family = 0; family < families.size(); ++family) {
+        for (LayoutID member : layoutsOfFamily(FamilyID(family)))
+            m_layoutsOfDeclaredFamilies.quickSet(member.index());
+    }
     escapedLayouts.ensureSize(numberOfLayouts);
     escapedVariables.ensureSize(program.variables.size());
     layoutsWithKnownAccessors.ensureSize(program.layouts.size());
     layoutsDefinedOnUnderWrittenKeys.ensureSize(program.layouts.size());
     prototypesLaidAboveOtherObjects.ensureSize(program.layouts.size());
-    taggedMakers = findTaggedMakers(program, summaries, bodiesLookedAt(looks), mechanisms);
+    taggedMakers = findTaggedMakers(program, summaries, mechanisms);
     possibleChanges.fill(OptionSet<LayoutChange> { }, numberOfLayouts);
     fieldsWrittenAfterConstruction.ensureSize(m_firstFieldOfLayout.last());
     fieldsThatMayBeEmpty.ensureSize(m_firstFieldOfLayout.last());
@@ -438,8 +442,7 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
     }
     RELEASE_ASSERT(numberOfCalls < UINT32_MAX);
     firstCallOfFunction.append(static_cast<uint32_t>(numberOfCalls));
-    reserveLargeListInLinkFlow(loops, calleesOfCalls, numberOfCalls, numberOfCalls);
-    calleesOfCalls.grow(numberOfCalls);
+    calleesOfCalls.grow(loops, numberOfCalls);
 
     m_layoutsWithFieldsUnderComputedKeys.ensureSize(numberOfLayouts);
     for (size_t index = 0; index < numberOfLayouts; ++index) {
@@ -598,8 +601,10 @@ void LinkFlow::numberNodes()
     });
 
     size_t roomForNodes = next + next / 4 + 64;
-    fillLargeListInLinkFlow(loops, m_nodes, Node { }, next, roomForNodes);
-    fillLargeListInLinkFlow(loops, m_listsOfNodes, ListsOfNode { }, next, roomForNodes);
+    m_nodes.reserve(roomForNodes);
+    m_nodes.grow(loops, next);
+    m_listsOfNodes.reserve(roomForNodes);
+    m_listsOfNodes.grow(loops, next);
     m_isOnWorklist.ensureSize(roomForNodes);
     m_isToBeTold.ensureSize(roomForNodes);
     m_flowsIntoUnseen.ensureSize(roomForNodes);
@@ -669,8 +674,8 @@ FlowNodeID LinkFlow::makeNode()
     if (m_severalThreadsTell)
         return FlowNodeID(m_numberOfNodesMade.fetch_add(1, std::memory_order_relaxed));
     FlowNodeID node(m_nodes.size());
-    m_nodes.append(Node { });
-    m_listsOfNodes.append(ListsOfNode { });
+    m_nodes.grow(m_nodes.size() + 1);
+    m_listsOfNodes.grow(m_nodes.size());
     if (m_nodes.size() > m_isOnWorklist.size()) {
         m_isOnWorklist.ensureSize(m_nodes.size() + m_nodes.size() / 4 + 64);
         m_isToBeTold.ensureSize(m_isOnWorklist.size());
@@ -875,10 +880,79 @@ void LinkFlow::findLayoutsBelowMembersUnderNumbers()
     });
 }
 
+std::span<const LayoutID> LinkFlow::layoutsOfFamily(FamilyID family) const
+{
+    return program.types.listOf(families.layoutsOf(family));
+}
+
+LinkType LinkFlow::typeOfLayouts(std::span<const LayoutID> sortedMembers) const
+{
+    if (sortedMembers.empty())
+        return { };
+    if (sortedMembers.size() == 1)
+        return typeOfLayoutInLinkFlow(sortedMembers[0]);
+    LinkType type;
+    type.objects = LinkType::Objects::Set;
+    type.layout = LayoutID(m_setsOfLayouts.numberOf(sortedMembers));
+    return type;
+}
+
+bool LinkFlow::mayStandInOneSet(std::span<const LayoutID> members) const
+{
+    size_t numberInFamilies = std::ranges::count_if(members, [&](LayoutID member) {
+        return m_layoutsOfDeclaredFamilies.quickGet(member.index());
+    });
+    if (!numberInFamilies || members.size() < 2)
+        return true;
+    if (numberInFamilies != members.size())
+        return false;
+    FamilyID common = families.nearestCommonFamily(members[0], members[1]);
+    for (size_t index = 2; index < members.size() && common; ++index)
+        common = families.nearestCommonFamily(common, members[index]);
+    return !!common;
+}
+
+LinkType LinkFlow::typeOfFunctions(std::span<const FunctionID> sortedMembers) const
+{
+    if (sortedMembers.empty())
+        return { };
+    if (sortedMembers.size() == 1)
+        return typeOfClosureInLinkFlow(sortedMembers[0]);
+    LinkType type;
+    type.functions = LinkType::Functions::Set;
+    type.function = FunctionID(m_setsOfFunctions.numberOf(sortedMembers));
+    return type;
+}
+
+bool LinkFlow::namesOnlyFunctionsOfSet(const LinkType& type, const LinkType& set) const
+{
+    std::span<const FunctionID> members = functionsOfSet(set);
+    if (type.functions == LinkType::Functions::Closure)
+        return std::ranges::find(members, type.function) != members.end();
+    if (type.functions != LinkType::Functions::Set)
+        return false;
+    return std::ranges::all_of(functionsOfSet(type), [&](FunctionID member) {
+        return std::ranges::find(members, member) != members.end();
+    });
+}
+
+bool LinkFlow::namesOnlyLayoutsOfSet(const LinkType& type, const LinkType& set) const
+{
+    std::span<const LayoutID> members = layoutsOfSet(set);
+    if (type.objects == LinkType::Objects::Layout)
+        return std::ranges::find(members, type.layout) != members.end();
+    if (type.objects != LinkType::Objects::Set)
+        return false;
+    return std::ranges::all_of(layoutsOfSet(type), [&](LayoutID member) {
+        return std::ranges::find(members, member) != members.end();
+    });
+}
+
 bool LinkFlow::standsOutsideFamilies(const LinkType& type) const
 {
     switch (type.objects) {
     case LinkType::Objects::None:
+    case LinkType::Objects::Set:
     case LinkType::Objects::Family:
     case LinkType::Objects::Lost:
         return false;
@@ -922,6 +996,8 @@ LayoutID LinkFlow::memberStandingFor(const LinkType& type) const
     case LinkType::Objects::Layout:
     case LinkType::Objects::Lost:
         return type.layout;
+    case LinkType::Objects::Set:
+        return layoutsOfSet(type)[0];
     case LinkType::Objects::Family:
         return program.types.listOf(families.layoutsOf(type.family))[0];
     case LinkType::Objects::None:
@@ -1090,6 +1166,7 @@ void LinkFlow::joinObjects(LinkType& into, const LinkType& other) const
                 into.primitives |= LinkType::closed(Primitive::All);
                 return;
             case Objects::None:
+            case Objects::Set:
             case Objects::Family:
             case Objects::Lost:
                 break;
@@ -1109,32 +1186,7 @@ void LinkFlow::joinObjects(LinkType& into, const LinkType& other) const
         return;
     }
 
-    if (into.objects != Objects::Lost && other.objects != Objects::Lost) {
-        if (FamilyID common = nearestCommonFamily(into.objects == Objects::Layout, other.objects == Objects::Layout)) {
-            if (into.objects == Objects::Layout)
-                noteMetInFamily(into.layout);
-            if (other.objects == Objects::Layout)
-                noteMetInFamily(other.layout);
-            take(typeOfFamilyInLinkFlow(common));
-            return;
-        }
-    }
-
-    auto lose = [&](const LinkType& type) {
-        if (type.objects == Objects::Layout)
-            deferLoss(type.layout);
-        else if (type.objects == Objects::Family)
-            deferLoss(type.family);
-    };
-    lose(into);
-    lose(other);
-    LayoutID one = memberStandingFor(into);
-    LayoutID another = memberStandingFor(other);
-    if (one && another)
-        deferUnion(one, another);
-    into.objects = Objects::Lost;
-    into.layout = one ? one : another;
-    into.family = { };
+    foldObjects(into, std::span<const LinkType>(&other, 1));
 }
 
 void LinkFlow::joinFunctions(LinkType& into, const LinkType& other) const
@@ -1150,38 +1202,7 @@ void LinkFlow::joinFunctions(LinkType& into, const LinkType& other) const
     }
     if (into.functions == other.functions && into.function == other.function && into.constructorsOf == other.constructorsOf)
         return;
-
-    auto commonFamily = [&]() -> FamilyID {
-        if (into.functions == Functions::Lost || other.functions == Functions::Lost)
-            return { };
-        if (into.functions == Functions::Constructors && other.functions == Functions::Constructors)
-            return families.nearestCommonFamily(into.constructorsOf, other.constructorsOf);
-        LayoutID classOfInto = into.functions == Functions::Closure ? classOfConstructor(into.function) : LayoutID();
-        LayoutID classOfOther = other.functions == Functions::Closure ? classOfConstructor(other.function) : LayoutID();
-        if (into.functions == Functions::Constructors)
-            return classOfOther ? families.nearestCommonFamily(into.constructorsOf, classOfOther) : FamilyID();
-        if (other.functions == Functions::Constructors)
-            return classOfInto ? families.nearestCommonFamily(other.constructorsOf, classOfInto) : FamilyID();
-        return classOfInto && classOfOther ? families.nearestCommonFamily(classOfInto, classOfOther) : FamilyID();
-    };
-    if (FamilyID common = commonFamily()) {
-        into.functions = Functions::Constructors;
-        into.function = { };
-        into.constructorsOf = common;
-        return;
-    }
-
-    auto lose = [&](const LinkType& type) {
-        if (type.functions == Functions::Closure)
-            deferLoss(type.function);
-        else if (type.functions == Functions::Constructors)
-            deferLossOfConstructors(type.constructorsOf);
-    };
-    lose(into);
-    lose(other);
-    into.functions = Functions::Lost;
-    into.function = { };
-    into.constructorsOf = { };
+    foldFunctions(into, std::span<const LinkType>(&other, 1));
 }
 
 void LinkFlow::joinClasses(LinkType& into, const LinkType& other) const
@@ -1352,6 +1373,10 @@ bool LinkFlow::appendNamesOfObjectsAmong(const LinkType& listed, Vector<Property
     case LinkType::Objects::Layout:
         appendNamesOf(listed.layout);
         break;
+    case LinkType::Objects::Set:
+        for (LayoutID member : layoutsOfSet(listed))
+            appendNamesOf(member);
+        break;
     case LinkType::Objects::Family:
         program.at(families.layoutsOf(listed.family)).forEach([&](LayoutID member) {
             appendNamesOf(member);
@@ -1489,6 +1514,12 @@ bool LinkFlow::wouldNameSomethingNewAtUnseen(const LinkType& type) const
         if (!m_layoutsAtUnseen.get(type.layout.index()))
             return true;
         break;
+    case LinkType::Objects::Set:
+        for (LayoutID member : layoutsOfSet(type)) {
+            if (!m_layoutsAtUnseen.get(member.index()))
+                return true;
+        }
+        break;
     case LinkType::Objects::Prototype:
         if (!m_prototypesAtUnseen.get(type.layout.index()))
             return true;
@@ -1517,6 +1548,7 @@ bool LinkFlow::wouldNameSomethingNewAtUnseen(const LinkType& type) const
         if (!m_constructorsAtUnseen.get(type.constructorsOf.index()))
             return true;
         break;
+    case LinkType::Functions::Set:
     case LinkType::Functions::Lost:
         if (!m_lostFunctionsReachUnseen)
             return true;
@@ -1545,6 +1577,10 @@ void LinkFlow::noteReachesUnseen(const LinkType& type) const
     case LinkType::Objects::Layout:
         namesSomethingNew |= m_layoutsAtUnseen.add(type.layout.index());
         break;
+    case LinkType::Objects::Set:
+        for (LayoutID member : layoutsOfSet(type))
+            namesSomethingNew |= m_layoutsAtUnseen.add(member.index());
+        break;
     case LinkType::Objects::Prototype:
         namesSomethingNew |= m_prototypesAtUnseen.add(type.layout.index());
         break;
@@ -1570,6 +1606,7 @@ void LinkFlow::noteReachesUnseen(const LinkType& type) const
         if (m_constructorsAtUnseen.add(type.constructorsOf.index()))
             m_deferred.append(Deferred { Deferred::Kind::ConstructorsEscape, type.constructorsOf.index(), { } });
         break;
+    case LinkType::Functions::Set:
     case LinkType::Functions::Lost:
         namesSomethingNew |= !std::exchange(m_lostFunctionsReachUnseen, true);
         break;
@@ -1756,8 +1793,18 @@ ALWAYS_INLINE void LinkFlow::receive(FlowNodeID node, const LinkType& type, Prop
     if (m_setsMeetingsAside) {
         bool objectsMeet = arriving.objects != LinkType::Objects::None && before.objects != LinkType::Objects::None && before.objects != LinkType::Objects::Lost
             && (arriving.objects != before.objects || arriving.layout != before.layout || arriving.family != before.family);
+        if (objectsMeet && before.objects == LinkType::Objects::Set && namesOnlyLayoutsOfSet(arriving, before)) {
+            objectsMeet = false;
+            arriving.objects = before.objects;
+            arriving.layout = before.layout;
+        }
         bool functionsMeet = arriving.functions != LinkType::Functions::None && before.functions != LinkType::Functions::None && before.functions != LinkType::Functions::Lost
             && (arriving.functions != before.functions || arriving.function != before.function || arriving.constructorsOf != before.constructorsOf);
+        if (functionsMeet && before.functions == LinkType::Functions::Set && namesOnlyFunctionsOfSet(arriving, before)) {
+            functionsMeet = false;
+            arriving.functions = before.functions;
+            arriving.function = before.function;
+        }
         if (objectsMeet || functionsMeet) {
             LinkType met;
             if (objectsMeet) {
@@ -2062,6 +2109,19 @@ void LinkFlow::takeNote(Note note, uint32_t number, uint32_t more)
     case Note::NameWrittenThroughUnseenByLibrary:
         builtinsInReach().noteNameWrittenThroughUnseenByLibrary(PropertyKeyID::fromBits(number));
         return;
+    case Note::BuiltinCalledAtSite: {
+        if (!callsOfBuiltinsTold.add(static_cast<uint64_t>(number) << 24 | more).isNewEntry)
+            return;
+        BuiltinID row(more & 0x7fffff);
+        bool isConstruction = more >> 23;
+        if (number >= calleesOfCalls.size()) {
+            builtinsInReach().noteCalledAtSite({ }, { }, isConstruction, row);
+            return;
+        }
+        FunctionID caller(static_cast<uint32_t>(std::ranges::upper_bound(firstCallOfFunction, number) - firstCallOfFunction.begin()) - 1);
+        builtinsInReach().noteCalledAtSite(caller, summaries.at(caller).calls[number - firstCallOfFunction[caller.index()]].site, isConstruction, row);
+        return;
+    }
     case Note::OptionThatRunsCodePassed:
         builtinsInReach().noteOptionThatRunsCodePassed(BuiltinID(number));
         return;
@@ -2167,6 +2227,11 @@ LinkType LinkFlow::withoutObjectsThatHaveEscaped(LinkType type) const
     case LinkType::Objects::Prototype:
         objectsHaveEscaped = escapedLayouts.get(type.layout.index());
         break;
+    case LinkType::Objects::Set:
+        objectsHaveEscaped = std::ranges::all_of(layoutsOfSet(type), [&](LayoutID member) {
+            return escapedLayouts.get(member.index());
+        });
+        break;
     case LinkType::Objects::Prototypes:
     case LinkType::Objects::Family:
         objectsHaveEscaped = m_familiesThatHaveEscaped.quickGet(type.family.index());
@@ -2264,6 +2329,7 @@ void LinkFlow::settleTypes()
             case LinkType::Functions::Constructors:
                 functionsHaveEscaped = familiesWhoseConstructorsHaveEscaped.quickGet(type.constructorsOf.index());
                 break;
+            case LinkType::Functions::Set:
             case LinkType::Functions::Lost:
                 functionsHaveEscaped = m_lostFunctionsReachUnseen;
                 break;
@@ -2356,6 +2422,73 @@ void LinkFlow::foldObjects(LinkType& into, std::span<const LinkType> met) const
         return;
     }
 
+    Vector<LayoutID, 16> members;
+    bool someIsSet = false;
+    bool allNameTheirLayouts = true;
+    auto gather = [&](const LinkType& type) {
+        switch (type.objects) {
+        case Objects::None:
+            return;
+        case Objects::Layout:
+            members.append(type.layout);
+            return;
+        case Objects::Set:
+            someIsSet = true;
+            members.append(layoutsOfSet(type));
+            return;
+        case Objects::Prototype:
+        case Objects::Prototypes:
+        case Objects::Family:
+        case Objects::Lost:
+            allNameTheirLayouts = false;
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    gather(into);
+    for (const LinkType& other : met)
+        gather(other);
+    if (allNameTheirLayouts) {
+        std::ranges::sort(members, { }, &LayoutID::index);
+        members.shrink(members.size() - std::ranges::unique(members).size());
+        if (into.objects == Objects::Set && members.size() == layoutsOfSet(into).size())
+            return;
+        if (members.size() <= SetsOfLayoutsInLinkFlow::mostMembers && mayStandInOneSet(members.span())) {
+            LinkType named = typeOfLayouts(members.span());
+            into.objects = named.objects;
+            into.layout = named.layout;
+            into.family = { };
+            return;
+        }
+    }
+    if (!someIsSet) {
+        foldObjectsTakenApart(into, met);
+        return;
+    }
+
+    Vector<LinkType, 16> apart;
+    auto takeApart = [&](const LinkType& type) {
+        if (type.objects != Objects::Set) {
+            apart.append(type);
+            return;
+        }
+        for (LayoutID member : layoutsOfSet(type))
+            apart.append(typeOfLayoutInLinkFlow(member));
+    };
+    takeApart(into);
+    for (const LinkType& other : met)
+        takeApart(other);
+    LinkType folded = apart[0];
+    foldObjectsTakenApart(folded, apart.span().subspan(1));
+    into.objects = folded.objects;
+    into.layout = folded.layout;
+    into.family = folded.family;
+}
+
+void LinkFlow::foldObjectsTakenApart(LinkType& into, std::span<const LinkType> met) const
+{
+    using Objects = LinkType::Objects;
+
     auto familyHoldingBoth = [&](const LinkType& one, const LinkType& other) -> FamilyID {
         if (one.objects == Objects::Layout && other.objects == Objects::Layout)
             return families.nearestCommonFamily(one.layout, other.layout);
@@ -2422,6 +2555,71 @@ void LinkFlow::foldObjects(LinkType& into, std::span<const LinkType> met) const
 }
 
 void LinkFlow::foldFunctions(LinkType& into, std::span<const LinkType> met) const
+{
+    using Functions = LinkType::Functions;
+    Vector<FunctionID, 16> members;
+    bool someIsSet = false;
+    bool allArePlainClosures = true;
+    auto gather = [&](const LinkType& type) {
+        switch (type.functions) {
+        case Functions::None:
+            return;
+        case Functions::Closure:
+            allArePlainClosures &= !classOfConstructor(type.function);
+            members.append(type.function);
+            return;
+        case Functions::Set:
+            someIsSet = true;
+            members.append(functionsOfSet(type));
+            return;
+        case Functions::Constructors:
+        case Functions::Lost:
+            allArePlainClosures = false;
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    gather(into);
+    for (const LinkType& other : met)
+        gather(other);
+    if (allArePlainClosures) {
+        std::ranges::sort(members, { }, &FunctionID::index);
+        members.shrink(members.size() - std::ranges::unique(members).size());
+        if (into.functions == Functions::Set && members.size() == functionsOfSet(into).size())
+            return;
+        if (members.size() <= 1) {
+            LinkType named = typeOfFunctions(members.span());
+            into.functions = named.functions;
+            into.function = named.function;
+            into.constructorsOf = { };
+            return;
+        }
+    }
+    if (!someIsSet) {
+        foldFunctionsTakenApart(into, met);
+        return;
+    }
+
+    Vector<LinkType, 16> apart;
+    auto takeApart = [&](const LinkType& type) {
+        if (type.functions != Functions::Set) {
+            apart.append(type);
+            return;
+        }
+        for (FunctionID member : functionsOfSet(type))
+            apart.append(typeOfClosureInLinkFlow(member));
+    };
+    takeApart(into);
+    for (const LinkType& other : met)
+        takeApart(other);
+    LinkType folded = apart[0];
+    foldFunctionsTakenApart(folded, apart.span().subspan(1));
+    into.functions = folded.functions;
+    into.function = folded.function;
+    into.constructorsOf = folded.constructorsOf;
+}
+
+void LinkFlow::foldFunctionsTakenApart(LinkType& into, std::span<const LinkType> met) const
 {
     using Functions = LinkType::Functions;
     auto familyHoldingBoth = [&](const LinkType& one, const LinkType& other) -> FamilyID {
@@ -3093,6 +3291,9 @@ void LinkType::dump(PrintStream& out) const
     case Objects::Layout:
         out.print(comma, "L", layout.index());
         break;
+    case Objects::Set:
+        out.print(comma, "setOfLayouts");
+        break;
     case Objects::Prototype:
         out.print(comma, "prototype(L", layout.index(), ")");
         break;
@@ -3113,6 +3314,9 @@ void LinkType::dump(PrintStream& out) const
         break;
     case Functions::Closure:
         out.print(comma, "f", function.index());
+        break;
+    case Functions::Set:
+        out.print(comma, "setOfFunctions");
         break;
     case Functions::Constructors:
         out.print(comma, "constructors(family", constructorsOf.index(), ")");
@@ -3280,7 +3484,6 @@ LinkType LinkFlow::fromTypeID(TypeID id) const
         case ObjectKind::Namespace:
         case ObjectKind::Instance:
         case ObjectKind::EscapedOfLayout:
-        case ObjectKind::Site:
             if (!record.traits.containsAny({ ObjectTrait::HasLayout, ObjectTrait::HasClass }) || record.has(ObjectTrait::MayHaveLayoutBelow))
                 result = joined(result, typeOfUnseenObjectsInLinkFlow());
             return;
@@ -3322,6 +3525,9 @@ TypeID LinkFlow::toTypeID(TypeArena& types, const LinkType& type) const
         } else
             parts.environment = type.layout;
         break;
+    case LinkType::Objects::Set:
+        parts.unnamedLayouts = types.layoutSets().ofSorted(layoutsOfSet(type));
+        break;
     case LinkType::Objects::Family:
         parts.unnamedLayouts = families.layoutsOf(type.family);
         break;
@@ -3341,6 +3547,14 @@ TypeID LinkFlow::toTypeID(TypeArena& types, const LinkType& type) const
             break;
         }
         parts.objects = types.objectSets().with(parts.objects, types.objects().closureOf(type.function));
+        break;
+    case LinkType::Functions::Set:
+        for (FunctionID member : functionsOfSet(type)) {
+            if (!tablesMayName(member))
+                parts.anyFunction = true;
+            else
+                parts.objects = types.objectSets().with(parts.objects, types.objects().closureOf(member));
+        }
         break;
     case LinkType::Functions::Constructors:
     case LinkType::Functions::Lost:
@@ -3452,6 +3666,16 @@ LinkType LinkFlow::passedBy(const LinkType& type, TypeID test) const
         if (!(tested.layouts && reader.at(tested.layouts).contains(type.layout)) && !mayBeInsideSomeClassPart(reader, type.layout, classes))
             passObjects(LinkType { });
         break;
+    case LinkType::Objects::Set: {
+        Vector<LayoutID, SetsOfLayoutsInLinkFlow::mostMembers> kept;
+        for (LayoutID member : layoutsOfSet(type)) {
+            if ((tested.layouts && reader.at(tested.layouts).contains(member)) || mayBeInsideSomeClassPart(reader, member, classes))
+                kept.append(member);
+        }
+        if (kept.size() != layoutsOfSet(type).size())
+            passObjects(typeOfLayouts(kept.span()));
+        break;
+    }
     case LinkType::Objects::Prototype:
     case LinkType::Objects::Prototypes:
         if (classes.empty() && !tested.layouts)
@@ -3494,6 +3718,21 @@ LinkType LinkFlow::passedBy(const LinkType& type, TypeID test) const
     case LinkType::Functions::Closure:
         passesFunctions = mayHoldAnyFunction || namesFunction(reader, tested, type.function);
         break;
+    case LinkType::Functions::Set: {
+        if (mayHoldAnyFunction)
+            break;
+        Vector<FunctionID, SetsOfFunctionsInLinkFlow::mostMembers> kept;
+        for (FunctionID member : functionsOfSet(type)) {
+            if (namesFunction(reader, tested, member))
+                kept.append(member);
+        }
+        if (kept.size() != functionsOfSet(type).size()) {
+            LinkType named = typeOfFunctions(kept.span());
+            passed.functions = named.functions;
+            passed.function = named.function;
+        }
+        break;
+    }
     case LinkType::Functions::Constructors:
     case LinkType::Functions::Lost:
         passesFunctions = mayHoldAnyFunction || tested.traitsOfNamed.contains(ObjectTrait::IsClosure);
@@ -4572,6 +4811,14 @@ FlowNodeID LinkFlow::anyFieldReadThrough(LinkType::Objects objects, LayoutID lay
         }
         return aggregate;
     }
+    case LinkType::Objects::Set: {
+        auto [aggregate, isNew] = nodeOnDemand(keyIsNumber ? NodeOnDemand::ElementReadOfSet : NodeOnDemand::AnyFieldReadOfSet, layout.index(), { });
+        if (isNew) {
+            for (LayoutID member : m_setsOfLayouts.membersOf(layout.index()))
+                addEdge(anyFieldReadThrough(LinkType::Objects::Layout, member, { }, keyIsNumber), aggregate);
+        }
+        return aggregate;
+    }
     case LinkType::Objects::Prototype:
         deferEscape(layout);
         settle();
@@ -4650,6 +4897,14 @@ FlowNodeID LinkFlow::anyFieldStoredThrough(LinkType::Objects objects, LayoutID l
         if (isNew) {
             addEdge(aggregate, unseen());
             tieStoreOfAnyField(aggregate, layout);
+        }
+        return aggregate;
+    }
+    case LinkType::Objects::Set: {
+        auto [aggregate, isNew] = nodeOnDemand(NodeOnDemand::AnyFieldStoredOfSet, layout.index(), { });
+        if (isNew) {
+            for (LayoutID member : m_setsOfLayouts.membersOf(layout.index()))
+                addEdge(aggregate, anyFieldStoredThrough(LinkType::Objects::Layout, member, { }));
         }
         return aggregate;
     }
@@ -4986,7 +5241,7 @@ void LinkFlow::forgetWaysOfFlow()
         empty->index = index;
         m_lanes[index] = WTF::move(empty);
     });
-    m_listsOfNodes = { };
+    m_listsOfNodes.clear();
     m_isToBeTold = { };
     m_flowsIntoUnseen = { };
 }

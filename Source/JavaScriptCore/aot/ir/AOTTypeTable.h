@@ -31,6 +31,21 @@ struct ObjectSetSummary {
 };
 inline constexpr uint32_t wordsOfObjectSetSummary = 3;
 
+inline constexpr uint32_t log2OfFirstInternedSegment = 8;
+inline constexpr uint32_t sizeOfFirstInternedSegment = 1u << log2OfFirstInternedSegment;
+
+constexpr uint32_t internedSegmentOf(uint32_t position)
+{
+    return static_cast<uint32_t>(std::bit_width(position + sizeOfFirstInternedSegment)) - 1 - log2OfFirstInternedSegment;
+}
+
+constexpr uint32_t firstPositionOfInternedSegment(uint32_t segment)
+{
+    return (sizeOfFirstInternedSegment << segment) - sizeOfFirstInternedSegment;
+}
+
+inline constexpr uint32_t numberOfInternedSegments = internedSegmentOf(largestIDPosition) + 1;
+
 template<typename Record>
 class InternedRecords {
     WTF_MAKE_NONCOPYABLE(InternedRecords);
@@ -75,7 +90,44 @@ private:
     std::unique_ptr<Shard[]> m_shards;
 };
 
-uint32_t hashOf(const TypeParts&);
+constexpr uint64_t addToInternedHash(uint64_t hash, uint64_t bits)
+{
+    hash = (hash ^ bits) * 0x9e3779b97f4a7c15ull;
+    return hash ^ hash >> 32;
+}
+
+constexpr uint64_t addToInternedHash(uint64_t hash, uint32_t first, uint32_t second)
+{
+    return addToInternedHash(hash, static_cast<uint64_t>(first) << 32 | second);
+}
+
+constexpr uint32_t finishInternedHash(uint64_t hash)
+{
+    return static_cast<uint32_t>(addToInternedHash(hash, 0));
+}
+
+ALWAYS_INLINE uint32_t hashOf(const TypeParts& parts)
+{
+    uint64_t flags = parts.primitives
+        | static_cast<uint64_t>(parts.seeds.toRaw()) << 16
+        | static_cast<uint64_t>(parts.anyObject) << 32
+        | static_cast<uint64_t>(parts.anyFunction) << 33
+        | (parts.opaque ? static_cast<uint64_t>(*parts.opaque) + 1 : 0) << 34;
+    uint64_t hash = addToInternedHash(0, flags);
+    if (!parts.integers.isEmpty()) {
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.minimum));
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.maximum));
+    }
+    if (!parts.boundsOfFractions.isEmpty()) {
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.minimum));
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.maximum));
+    }
+    hash = addToInternedHash(hash, parts.environment.bits(), parts.stringLiterals.bits());
+    hash = addToInternedHash(hash, parts.symbolLiterals.bits(), parts.objects.bits());
+    hash = addToInternedHash(hash, parts.unnamedLayouts.bits(), parts.unnamedClasses.bits());
+    return finishInternedHash(hash);
+}
+
 uint32_t hashOf(std::span<const uint32_t> words);
 uint32_t hashOf(const PropertyKey&);
 
@@ -158,8 +210,8 @@ public:
     std::strong_ordering compareByContent(PropertyKeyID first, PropertyKeyID second) const
     {
         auto contentOf = [](const PropertyKey& key) {
-            const auto& [kind, text, owner, wellKnownSymbol, module, callNumber, site] = key;
-            return std::tuple(kind, text, owner, wellKnownSymbol, module, callNumber, site);
+            const auto& [kind, text, owner, wellKnownSymbol, module, callNumber] = key;
+            return std::tuple(kind, text, owner, wellKnownSymbol, module, callNumber);
         };
         return contentOf(at(first)) <=> contentOf(at(second));
     }
@@ -203,6 +255,7 @@ private:
 
     std::span<const ClassPart> classPartsKeptAt(ClassPartsID) const;
     const PropertyKey& propertyKeyKeptAt(PropertyKeyID) const;
+    const PropertyKey& propertyKeyOnceFrozenAt(uint32_t position) const;
 
     struct MemosOfArena {
         IDPairMemo types;
@@ -232,7 +285,8 @@ private:
     IDSetTable m_keySets { IDSetForm::ListsAndChunks, 0 };
     InternedWordLists m_classParts;
     InternedRecords<PropertyKey> m_propertyKeys;
-    Vector<const PropertyKey*> m_propertyKeysOnceFrozen;
+    uint32_t m_numberOfPropertyKeysOnceFrozen { 0 };
+    std::array<uintptr_t, numberOfInternedSegments> m_addressesOfPositionZeroInKeySegments { };
     uint32_t m_numberOfKeysWithStableNumbers { UINT32_MAX };
     Vector<uint8_t> m_locationBitsOfKeys;
     Vector<TypeID> m_typeOfWireIndex;
@@ -270,10 +324,19 @@ inline std::span<const ClassPart> TypeTable::at(ClassPartsID id) const
     return classPartsKeptAt(id);
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+ALWAYS_INLINE const PropertyKey& TypeTable::propertyKeyOnceFrozenAt(uint32_t position) const
+{
+    return *reinterpret_cast<const PropertyKey*>(m_addressesOfPositionZeroInKeySegments.data()[internedSegmentOf(position)] + static_cast<uintptr_t>(position) * sizeof(PropertyKey));
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 ALWAYS_INLINE const PropertyKey& TypeTable::at(PropertyKeyID key) const
 {
-    if (key.bits() < m_propertyKeysOnceFrozen.size()) [[likely]]
-        return *m_propertyKeysOnceFrozen[key.bits()];
+    if (key.bits() < m_numberOfPropertyKeysOnceFrozen) [[likely]]
+        return propertyKeyOnceFrozenAt(key.bits());
     return propertyKeyKeptAt(key);
 }
 

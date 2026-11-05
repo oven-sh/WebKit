@@ -39,7 +39,7 @@ using LoadedProgramTest = void (*)(LoadedProgram&);
 
 Vector<uint8_t> compileProgramText(ASCIILiteral programText, std::initializer_list<ASCIILiteral> optionWords = { });
 void runWithLoadedProgram(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, std::initializer_list<ASCIILiteral> optionWords = { });
-void runWithLoadedProgramThatStops(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, ASCIILiteral lastWords);
+void runWithLoadedProgramThatStops(ASCIILiteral testName, ASCIILiteral programText, LoadedProgramTest body, ASCIILiteral lastWords, std::initializer_list<ASCIILiteral> optionWords = { });
 void overwriteWordInImage(const uint32_t& word, uint32_t value);
 
 template<std::span<const NativeTest> (*provider)(), const ASCIILiteral& programText, LoadedProgramTest body>

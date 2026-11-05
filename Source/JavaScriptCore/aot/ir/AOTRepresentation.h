@@ -74,7 +74,7 @@ Representation representationOf(OpaqueKind);
 Representation representationOf(SlotRepresentation);
 Representation loadedRepresentationOf(SlotRepresentation, const Type& loaded);
 bool isLegalRepresentationOfInternalValue(const Type&, Representation);
-inline bool isLegalRepresentation(const Type& type, Representation representation)
+ALWAYS_INLINE bool isLegalRepresentation(const Type& type, Representation representation)
 {
     if (representation == Representation::Unchosen)
         return false;
@@ -93,7 +93,7 @@ inline bool isLegalRepresentation(const Type& type, Representation representatio
         return false;
     return set.hasObjects || !hasObjects;
 }
-inline bool isLegalRepresentation(TypeReader types, TypeID id, Representation representation)
+ALWAYS_INLINE bool isLegalRepresentation(TypeReader types, TypeID id, Representation representation)
 {
     if (!holdsOnlyPrimitives(id))
         return isLegalRepresentation(types.recordOf(id), representation);

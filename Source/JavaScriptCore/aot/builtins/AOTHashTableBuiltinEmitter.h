@@ -13,7 +13,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class HashTableOwner : uint8_t { Map, Set };
-enum class LookupAnswer : uint8_t { IsPresent, Value, ValueOrNothing };
+enum class LookupAnswer : uint8_t { IsPresent, Value };
 
 class HashTableBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:

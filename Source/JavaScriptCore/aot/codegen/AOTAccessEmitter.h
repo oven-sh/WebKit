@@ -17,7 +17,11 @@ struct MentionedAllocation;
 
 class AccessEmitter final : public OperationEmitter {
 public:
-    explicit AccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
+    explicit AccessEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+        , m_functionComesAgain(!(m_facts.runsAtMostOnce(m_id) || m_program.at(m_id).isModuleBody()))
+    {
+    }
 
     void generatePropGet(const ValueContext&);
     void generatePropSet(const ValueContext&);
@@ -56,7 +60,7 @@ public:
     StubKey stubThatReadsAtSite(PropertyKeyID, ValueID receiver);
     Condition hasById(const OperationContext&, Boxed receiver, PropertyKeyID);
     Boxed getByVal(const OperationContext&, Boxed receiver, Boxed key);
-    bool isSymbolOfRealm(PropertyKeyID) const;
+    bool isSymbolOfRealm(PropertyKeyID key) const { return !m_plan.hasOneInstance() && !liesInThread(key) && m_program.at(key).kind == PropertyKeyKind::CreatedSymbol; }
     Boxed cellOfKey(const OperationContext&, PropertyKeyID);
     void putByVal(const OperationContext&, Boxed receiver, Boxed key, Boxed value, PutMode);
     Condition hasByVal(const OperationContext&, Boxed receiver, Boxed key);
@@ -80,6 +84,7 @@ private:
     }
 
     bool comesAgain(const OperationContext&) const;
+    std::optional<NumberedImmediate> answersOfKeyThatIsNoSymbolOfRealm(const OperationContext&, PropertyKeyID, SiteUse);
     struct StoreOfKnownField {
         StubKey stub;
         uint32_t offsetOfRecord;
@@ -129,6 +134,7 @@ private:
         ValueID pattern;
     };
     std::optional<ReadLeftToCall> m_readLeftToCall;
+    const bool m_functionComesAgain;
 };
 
 } } } // namespace JSC::AOT::Typed

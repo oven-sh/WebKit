@@ -166,7 +166,7 @@ private:
 
     bool isRead() const { return m_access.kind == Kind::Read; }
     bool isNamed() const { return !!m_access.key; }
-    bool isTakenByLoader() const { return isRead() && m_function && std::ranges::contains(m_flow.summaries.at(m_function).namesThatLoaderTakes, m_access.value, &ThinSummary::NameThatLoaderTakes::read); }
+    bool isTakenByLoader() const { return isRead() && m_function && isLibraryCode(m_program, m_program.at(m_function)) && std::ranges::contains(m_flow.summaries.at(m_function).namesThatLoaderTakes, m_access.value, &ThinSummary::NameThatLoaderTakes::read); }
     bool readKey();
 
     void give(const LinkType&);
@@ -204,10 +204,12 @@ private:
     bool namesNothingOnPlainClosures() const;
 
     void resolveUnderPrivateName();
-    void resolveOnLayout(LayoutID);
+    void resolveOnLayout(LayoutID, const LinkType& pooled);
     void resolvePrototypeLinkOfLayout(LayoutID, const Layout&);
     void resolveOnNamespace(const Layout&);
     void giveExport(ModuleID, uint32_t index);
+    bool wasNamedBefore(LayoutID) const;
+    void resolveOnSet(const LinkType& subject);
     void resolveOnFamily(FamilyID);
     void resolveOnLostObjects(LayoutID member);
     void resolveOnPrototype(LayoutID);
@@ -496,7 +498,10 @@ void AccessInLinkAccesses::resolve()
         case LinkType::Objects::None:
             break;
         case LinkType::Objects::Layout:
-            resolveOnLayout(subject.layout);
+            resolveOnLayout(subject.layout, subject);
+            break;
+        case LinkType::Objects::Set:
+            resolveOnSet(subject);
             break;
         case LinkType::Objects::Prototype:
             resolveOnPrototype(subject.layout);
@@ -513,7 +518,11 @@ void AccessInLinkAccesses::resolve()
         }
     }
 
-    if (subject.functions != m_before.functions || subject.function != m_before.function || subject.constructorsOf != m_before.constructorsOf) {
+    auto holdsLostFunctions = [](const LinkType& type) {
+        return type.functions == LinkType::Functions::Set || type.functions == LinkType::Functions::Lost;
+    };
+    bool functionsAreNew = subject.functions != m_before.functions || subject.function != m_before.function || subject.constructorsOf != m_before.constructorsOf;
+    if (functionsAreNew && !(holdsLostFunctions(subject) && holdsLostFunctions(m_before))) {
         switch (subject.functions) {
         case LinkType::Functions::None:
             break;
@@ -523,6 +532,7 @@ void AccessInLinkAccesses::resolve()
         case LinkType::Functions::Constructors:
             resolveOnConstructors(subject.constructorsOf);
             break;
+        case LinkType::Functions::Set:
         case LinkType::Functions::Lost:
             resolveOnLostFunctions();
             break;
@@ -562,7 +572,7 @@ void AccessInLinkAccesses::resolveUnderPrivateName()
         noteWrittenAfterConstruction(*field);
 }
 
-void AccessInLinkAccesses::resolveOnLayout(LayoutID id)
+void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
 {
     const Layout& layout = m_program.at(id);
     switch (layout.kind) {
@@ -589,9 +599,9 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id)
             m_flow.escape(id);
         mayThrow();
         if (isRead())
-            giveWhatIsHeldAt(m_flow.anyFieldReadThrough(LinkType::Objects::Layout, id, FamilyID(), namesOnlyElements()));
+            giveWhatIsHeldAt(m_flow.anyFieldReadThrough(pooled.objects, pooled.layout, pooled.family, namesOnlyElements()));
         else
-            storeInto(m_flow.anyFieldStoredThrough(LinkType::Objects::Layout, id, FamilyID()));
+            storeInto(m_flow.anyFieldStoredThrough(pooled.objects, pooled.layout, pooled.family));
         return;
     }
     if (m_nameClass == NameClass::Proto) {
@@ -788,6 +798,35 @@ void AccessInLinkAccesses::giveExport(ModuleID module, uint32_t index)
         }
     }
     giveAnything();
+}
+
+bool AccessInLinkAccesses::wasNamedBefore(LayoutID layout) const
+{
+    switch (m_before.objects) {
+    case LinkType::Objects::Layout:
+        return m_before.layout == layout;
+    case LinkType::Objects::Set:
+        return std::ranges::contains(m_flow.layoutsOfSet(m_before), layout);
+    case LinkType::Objects::None:
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+    case LinkType::Objects::Family:
+    case LinkType::Objects::Lost:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void AccessInLinkAccesses::resolveOnSet(const LinkType& subject)
+{
+    std::span<const LayoutID> members = m_flow.layoutsOfSet(subject);
+    bool poolOfSetWouldLetNamespaceEscape = std::ranges::any_of(members, [&](LayoutID member) {
+        return m_program.at(member).kind == LayoutKind::ModuleNamespace;
+    });
+    for (LayoutID member : members) {
+        if (!wasNamedBefore(member))
+            resolveOnLayout(member, poolOfSetWouldLetNamespaceEscape ? instanceForLinkAccesses(member) : subject);
+    }
 }
 
 void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
@@ -1133,13 +1172,11 @@ void AccessInLinkAccesses::resolveOnClassObject(FunctionID function, LayoutID cl
     bool findsField = false;
     bool isHiddenByEveryClass = classHolderIsMadeWithName(m_program, ClassSide::Static, m_access.key);
     forEachLayoutUpTheBases(classLayout, [&](LayoutID current) {
-        for (const StaticField& field : m_program.at(current).staticFields) {
-            if (field.key && field.key != m_access.key)
-                continue;
+        m_program.at(current).forEachStaticFieldThatMayMatch(m_access.key, [&](const StaticField& field) {
             findsField |= !!field.key;
             giveWhatIsHeldAt(m_flow.variable(field.variable));
             storeInto(m_flow.variable(field.variable));
-        }
+        });
         return findsField || isHiddenByEveryClass;
     });
 
@@ -1313,6 +1350,7 @@ void AccessInLinkAccesses::enterAccessorAt(FlowNodeID member)
         m_flow.addEdge(member, m_flow.unseen());
         cannotTellWhatRuns();
         break;
+    case LinkType::Functions::Set:
     case LinkType::Functions::Lost:
         mayThrow();
         m_flow.addEdge(m_receiver, m_flow.receiverOfLostFunctions());

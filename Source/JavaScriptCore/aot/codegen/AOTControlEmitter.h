@@ -15,8 +15,16 @@ class ControlEmitter final : public OperationEmitter {
 public:
     explicit ControlEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
-    void generateJump(const TerminatorContext&);
-    void generateBranch(const TerminatorContext&);
+    void generateJump(const TerminatorContext& terminator) { generator().jumpTo(terminator, 0); }
+    void generateBranch(const TerminatorContext& terminator)
+    {
+        if (terminator.generatesCondition()) {
+            generateTestAndBranch(terminator);
+            return;
+        }
+        BranchTargets targets = branchTargetsOf(terminator);
+        branch(in<Condition>(terminator->conditionOperand()), targets);
+    }
     void generateSwitch(const TerminatorContext&);
     void generateSwitchString(const TerminatorContext&);
     void generateReturn(const TerminatorContext&);
@@ -25,9 +33,9 @@ public:
     void generateRethrow(const TerminatorContext&);
     void generateUnreachable(const TerminatorContext&);
     void generateSwitchOnShape(const TerminatorContext&);
-    void generateTestAndBranch(const TerminatorContext&);
+    void generateTestAndBranch(const TerminatorContext& terminator) { generator().generateBranchCondition(terminator, terminator->conditionOperand(), branchTargetsOf(terminator)); }
 
-    BranchTargets branchTargetsOf(const TerminatorContext&);
+    BranchTargets branchTargetsOf(const TerminatorContext& terminator) { return { generator().edgeTo(terminator, 0), generator().edgeTo(terminator, 1) }; }
 
 private:
     void switchOnInteger(const TerminatorContext&, LValue subject, LType, BlockEdge otherwise);

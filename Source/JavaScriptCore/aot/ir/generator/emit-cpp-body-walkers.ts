@@ -222,6 +222,35 @@ function numberOfFieldWordsFunction(cursor: Cursor): string[] {
   );
 }
 
+function numberOfWordsBehindHeadFunction(operations: readonly Entry[]): string[] {
+  const cases = operations.map(entry => {
+    const fields = fixedNumberOfFieldWordsOf(entry);
+    const words = fields === null ? variableSizeMarker : fields + (wireFlagsOf(entry).length > 0 ? 1 : 0);
+    return { label: entry.name, value: words < variableSizeMarker ? String(words) : "variableNumberOfFieldWords" };
+  });
+  return blocks(
+    constexprSwitch({
+      signature: "uint8_t fixedNumberOfWordsBehindHeadOfBodyValue(Opcode opcode)",
+      subject: "opcode",
+      enumName: "Opcode",
+      cases,
+      defaultValue: "most common",
+    }),
+    [
+      "ALWAYS_INLINE uint32_t numberOfWordsBehindHead(Opcode opcode, const uint32_t* words)",
+      "{",
+      ...indent([
+        "uint8_t fixed = CaseTable<Opcode, fixedNumberOfWordsBehindHeadOfBodyValue>::at(opcode);",
+        "if (fixed != variableNumberOfFieldWords) [[likely]]",
+        ...indent(["return fixed;"]),
+        "uint32_t numberOfFlagsWords = CaseTable<Opcode, hasFlagsWordOnWire>::at(opcode);",
+        "return numberOfFlagsWords + numberOfFieldWords(opcode, words + numberOfFlagsWords);",
+      ]),
+      "}",
+    ],
+  );
+}
+
 function visitOperands(entry: Entry): string[] {
   const visits = placedOperandsOf(entry).map(({ part, offset }) =>
     part.isVariadic
@@ -282,17 +311,13 @@ function operandByPlace(operations: readonly Entry[]): string[] {
       `inline constexpr uint32_t numberOfBodyOperandsWithPlace = ${numberOfOperandsWithPlace};`,
       `inline constexpr uint32_t placeOfAbsentBodyOperand = ${placeOfAbsentOperand};`,
     ],
-    [
-      `// A byte an operand, the first operand in the lowest: the words between the head of the value and the operand, the flags among them.`,
-      `// ${placeOfAbsentOperand}: the entry has no such operand on the wire. ${noPlace}: where it lies hangs on the words in front of it, or the entry is not on the wire.`,
-      ...constexprSwitch({
-        signature: "uint32_t placesOfOperandsOfBodyValue(Opcode opcode)",
-        subject: "opcode",
-        enumName: "Opcode",
-        cases: operations.map(entry => ({ label: entry.name, value: placesOfOperands(entry) })),
-        defaultValue: everyPlaceIsUnknown,
-      }),
-    ],
+    constexprSwitch({
+      signature: "uint32_t placesOfOperandsOfBodyValue(Opcode opcode)",
+      subject: "opcode",
+      enumName: "Opcode",
+      cases: operations.map(entry => ({ label: entry.name, value: placesOfOperands(entry) })),
+      defaultValue: everyPlaceIsUnknown,
+    }),
     [
       "ALWAYS_INLINE ValueID BodyValue::operand(uint32_t operandIndex) const",
       "{",
@@ -488,10 +513,23 @@ function walkersOf(schema: Schema): Walker[] {
   ];
 }
 
+function fieldsReadBy(body: Lines, entry: Entry, receiver: string): string[] {
+  if (!body.some(line => /\b(fields|word)\b/.test(line))) return [];
+  const hasFlagsWord = wireFlagsOf(entry).length > 0;
+  const fieldsOfValue = hasFlagsWord ? "fieldWordsBehindFlagsWord" : "fieldWordsBehindHead";
+  return [
+    `BodyFields fields = ${receiver}${entry.isTerminator ? "fieldWords" : fieldsOfValue}();`,
+    "[[maybe_unused]] auto word = [&fields](uint32_t offset) { return fields.word(offset); };",
+  ];
+}
+
 function defineWalker(cursor: Cursor, walker: Walker): string[] {
   const { className, enumName, tag } = cursor;
   const receiver = walker.isMember ? "" : `${cursor.parameter}.`;
-  const walked = cursor.entries.map(entry => ({ entry, body: entry.isWire ? walker.bodyOf(entry) : notOnWire }));
+  const walked = cursor.entries.map(entry => {
+    const body = entry.isWire ? walker.bodyOf(entry) : notOnWire;
+    return { entry, body: [...fieldsReadBy(body, entry, receiver), ...body] };
+  });
   const groups = [...Map.groupBy(walked, ({ body }) => body.join("\n")).values()];
   if (groups.length > maxCasesPerTable) {
     throw new Error(`${walker.name} of ${className} has more cases than a byte can number`);
@@ -508,10 +546,8 @@ function defineWalker(cursor: Cursor, walker: Walker): string[] {
     "{",
     ...indent([
       ...guard,
-      `BodyFields fields = ${receiver}fieldWords();`,
-      "[[maybe_unused]] auto word = [&fields](uint32_t offset) { return fields.word(offset); };",
       `switch (CaseTable<${enumName}, ${caseOf}>::at(${receiver}${tag}())) {`,
-      ...groups.flatMap((group, index) => [`case ${index}:`, ...indent(group[0].body)]),
+      ...groups.flatMap((group, index) => [`case ${index}: {`, ...indent(group[0].body), "}"]),
       "default:",
       ...indent(["WTF_UNREACHABLE();"]),
       "}",
@@ -539,6 +575,7 @@ function bodyWalkersHeader(schema: Schema): string[] {
   const body = blocks(
     helpers,
     ...cursors.map(numberOfFieldWordsFunction),
+    numberOfWordsBehindHeadFunction(schema.operations),
     ...walkersOf(schema).flatMap(walker => cursors.map(cursor => defineWalker(cursor, walker))),
     operandByPlace(schema.operations),
   );

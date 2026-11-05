@@ -11,8 +11,8 @@
 # CHECK: isLoopHead=true
 # CHECK-NOT: = GetTypedArrayLength
 # CHECK-NOT: = GetTypedArrayVector
-# CHECK: = GetTypedArrayElement {{*}}, -, [[vector]], [[length]] typedArrayType
-# CHECK: = GetTypedArrayElement {{*}}, -, [[vector]], [[length]] typedArrayType
+# CHECK: = GetTypedArrayElement {{*}}, [[vector]], [[length]] typedArrayType
+# CHECK: = GetTypedArrayElement {{*}}, [[vector]], [[length]] typedArrayType
 # CHECK-LABEL: code f2:Body
 # CHECK: isLoopHead=true
 # CHECK: [[lengthInFront]]: {{*}} = GetTypedArrayLength
@@ -24,8 +24,8 @@
 # CHECK: [[lengthOfStored]]: {{*}} = GetTypedArrayLength
 # CHECK: [[vectorOfStored]]: {{*}} = GetTypedArrayVector
 # CHECK: isLoopHead=true
-# CHECK: = GetTypedArrayElement {{*}}, -, [[vectorOfStored]], [[lengthOfStored]] typedArrayType
-# CHECK: = PutTypedArrayElement {{*}}, -, [[vectorOfStored]], [[lengthOfStored]] typedArrayType
+# CHECK: = GetTypedArrayElement {{*}}, [[vectorOfStored]], [[lengthOfStored]] typedArrayType
+# CHECK: = PutTypedArrayElement {{*}}, [[vectorOfStored]], [[lengthOfStored]] typedArrayType
 # RUN(SHELL): run-in-shell globalThis.keep = () => { }; globalThis.sink = (first, second, third) => { print(String(first) + " " + String(second) + " " + String(third)); };
 # SHELL: 0 0 2
 # SHELL: exited with 0

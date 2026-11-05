@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTProgramStrings.h"
+#include "AOTStronglyConnectedComponents.h"
 #include <algorithm>
 #include <array>
 #include <compare>
@@ -20,6 +21,39 @@
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {
+
+CyclesOfImports::CyclesOfImports(const ModuleTable& table)
+{
+    struct ImportTargets {
+        std::span<const ModuleRequestData> requests;
+        uint32_t importer;
+
+        size_t size() const { return requests.size(); }
+        uint32_t operator[](size_t index) const { return requests[index].isRequire || requests[index].isDeferred ? importer : requests[index].target(); }
+    };
+    Typed::StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(table.size(), [&](unsigned index) {
+        return ImportTargets { table.requests(ModuleID(index)), index };
+    });
+    firstMemberOf.append(0);
+    for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
+        std::span<const uint32_t> found = components.membersOf(component);
+        if (found.size() < 2)
+            continue;
+        uint32_t cycle = firstMemberOf.size() - 1;
+        for (uint32_t module : found) {
+            membersByModule.append({ module, cycle, static_cast<uint32_t>(members.size() - firstMemberOf.last()) });
+            members.append(module);
+        }
+        firstMemberOf.append(members.size());
+    }
+    std::ranges::sort(membersByModule, { }, &Member::module);
+}
+
+const CyclesOfImports::Member* CyclesOfImports::find(ModuleID module) const
+{
+    auto found = std::ranges::lower_bound(membersByModule, module.index(), { }, &Member::module);
+    return found != membersByModule.end() && found->module == module.index() ? &*found : nullptr;
+}
 
 static std::strong_ordering compareCodePoints(StringView first, StringView second)
 {

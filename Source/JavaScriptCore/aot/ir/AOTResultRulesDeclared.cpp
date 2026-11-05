@@ -38,7 +38,7 @@ struct FieldReadUnion {
     Vector<TypeID, 16> parts { };
     bool hasUninformativePart { false };
 
-    bool add(TypeID part)
+    ALWAYS_INLINE bool add(TypeID part)
     {
         if (part && !parts.isEmpty() && parts.last() == part)
             return true;
@@ -447,16 +447,12 @@ TypeID tryTypeOfFieldRead(const TypingContext& context, TypeID receiverID, Prope
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-TypeID tryTypeOfGlobalBindingRead(const TypingContext& context, PropertyKeyID key, bool mayBeShadowed, bool findsOwnProperty)
+TypeID tryTypeOfGlobalBindingRead(const TypingContext& context, PropertyKeyID key, bool mayBeShadowed)
 {
     if (mayBeShadowed && context.level == TypeLevel::Proven)
         return { };
 
-    TypeID globalObject = typeOfBuiltinObject(context, Builtins::GlobalThis);
-    ObjectID holder = findsOwnProperty ? singleObjectOf(context.at(globalObject)) : ObjectID();
-    if (TypeID held = holder ? context.positions.ownProperty(context.level, holder, key) : TypeID())
-        return held;
-    return tryTypeOfFieldRead(context, globalObject, key);
+    return tryTypeOfFieldRead(context, typeOfBuiltinObject(context, Builtins::GlobalThis), key);
 }
 
 static TypeID tryTypeOfTypedArrayContents(const BuiltinTable& builtins, BuiltinClassID builtinClass, ContentsSlot slot)
@@ -671,26 +667,6 @@ static TypeID tryExpectedTypeOfAwaitedObjects(const TypingContext& context, Type
     return context.types.unionOf(others, fulfillment);
 }
 
-static TypeID tryProvenTypeOfAwaitedObjects(const TypingContext& context, TypeID awaitedID, const Type& awaited)
-{
-    if (!awaited.isJavaScriptValue() || !awaited.hasOnlyNamedObjects())
-        return { };
-
-    Vector<ObjectID, 8> objects;
-    context.types.at(awaited.objects).forEach([&](ObjectID object) {
-        objects.append(object);
-    });
-
-    TypeID given = context.types.withoutObjects(awaitedID);
-    for (ObjectID object : objects) {
-        TypeID givenByObject = context.positions.awaited(TypeLevel::Proven, object);
-        if (!givenByObject || isNeverType(givenByObject))
-            return { };
-        given = context.types.unionOf(given, givenByObject);
-    }
-    return given;
-}
-
 TypeID tryTypeOfAwaited(const TypingContext& context, TypeID awaitedID)
 {
     if (!awaitedID)
@@ -701,7 +677,7 @@ TypeID tryTypeOfAwaited(const TypingContext& context, TypeID awaitedID)
 
     switch (context.level) {
     case TypeLevel::Proven:
-        return tryProvenTypeOfAwaitedObjects(context, awaitedID, awaited);
+        return { };
     case TypeLevel::Expected:
         return tryExpectedTypeOfAwaitedObjects(context, awaitedID, awaited);
     }

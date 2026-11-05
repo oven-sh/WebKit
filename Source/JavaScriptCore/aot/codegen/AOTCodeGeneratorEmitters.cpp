@@ -84,6 +84,10 @@ CodeGenerator::CodeGenerator(const FunctionInputs& inputs, Machine::Procedure& p
     : m_inputs(inputs)
     , m_proc(proc)
     , m_records(records)
+    , m_mentions(records.mentions)
+    , m_typing { inputs.program.program, inputs.types, PositionTypes::knowingNothing() }
+    , m_operationDispatchers(operationDispatchers())
+    , m_terminatorDispatchers(terminatorDispatchers())
     , m_out(proc)
     , m_checksAllocation(proc.traits().checksAllocation)
     , m_checksEffects(AOT::hasFlag(inputs.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime))

@@ -170,10 +170,6 @@ static Vector<ClassBelowBuiltinClass> findClassesBelowBuiltinClassesForFacts(con
 
 static void updateProgramBehindIndexesForFacts(Program& program, BodyIndexTable& bodies, const ParallelLoops& loops)
 {
-    Vector<uint32_t> numberOfSitesOfFunctions(program.functions.size(), [](size_t) -> uint32_t {
-        return 0;
-    });
-    program.types.objects().reserveSites(numberOfSitesOfFunctions.span(), loops);
     program.setConstructionStarts(bodies.takeConstructionStarts());
     Vector<ClassBelowBuiltinClass> classes = findClassesBelowBuiltinClassesForFacts(program, bodies, loops);
     noteSubclassesOfBuiltinClasses(program, classes.span());
@@ -189,6 +185,14 @@ static void fillFunctionTablesForFacts(const Program& program, const ThinSummari
 {
     size_t numberOfFunctions = program.functions.size();
     RELEASE_ASSERT(linked.functions.size() == numberOfFunctions && summaries.size() == numberOfFunctions);
+
+    for (uint32_t layout = 0; layout < program.layouts.size(); ++layout) {
+        if (program.layouts[layout].kind != LayoutKind::ModuleNamespace)
+            continue;
+        if (!tables.endOfLayoutsOfNamespaces)
+            tables.firstLayoutOfNamespace = layout;
+        tables.endOfLayoutsOfNamespaces = layout + 1;
+    }
 
     tables.summaries.reserveInitialCapacity(numberOfFunctions);
     tables.effects.reserveInitialCapacity(numberOfFunctions);
@@ -270,7 +274,8 @@ static void fillFieldTablesForFacts(const Program& program, const LinkTables& li
                 facts.stability.add(FieldStability::IsNeverDeleted);
             if (!layout.reachesUnseenCode) {
                 bool isDeclaredPlain = field >= numberDeclared ? facts.formOfValue.isEmpty() : fieldAt(program, declarationOf(program, { id, field })).form.isEmpty();
-                if (isDeclaredPlain && !layout.possibleChanges.contains(LayoutChange::GetsAccessor))
+                const LinkedCell* cell = layout.isRedefinedByLiteralsAlone ? linked.findCellOfField({ id, field }) : nullptr;
+                if (isDeclaredPlain && (!layout.possibleChanges.contains(LayoutChange::GetsAccessor) || (cell && cell->isFilled)))
                     facts.stability.add(FieldStability::IsNeverRedefined);
             }
             tables.fields.append(facts);
@@ -645,13 +650,12 @@ bool Facts::testMentionsWhatIsOutOfReach(TypeReader types, TypeID tested, NOESCA
     Type type = types.at(tested);
     if (!type.hasObjects())
         return false;
-    bool mentionsIt = false;
-    types.at(type.layouts).forEach([&](LayoutID layout) {
+    bool mentionsIt = types.at(type.layouts).anyOfWithin(m_tables.firstLayoutOfNamespace, m_tables.endOfLayoutsOfNamespaces, [&](LayoutID layout) {
         const Layout& record = m_program.at(layout);
         if (record.kind != LayoutKind::ModuleNamespace)
-            return;
+            return false;
         FunctionID body = record.namespaceOf ? m_program.at(record.namespaceOf).body : FunctionID();
-        mentionsIt |= !body || !isInReach(body);
+        return !body || !isInReach(body);
     });
     types.at(type.objects).forEach([&](ObjectID object) {
         const ObjectRecord& record = types.at(object);

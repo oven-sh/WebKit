@@ -15,6 +15,7 @@
 #include "AOTWalkNumberGuesses.h"
 #include "AOTWalkTextBuilders.h"
 #include <algorithm>
+#include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -22,29 +23,83 @@ static constexpr uint32_t largestLoopBuiltTwice = 100;
 
 bool Walker::leavesLoopBeingBuiltTwice(size_t frameIndex, BlockID to) const
 {
+    if (!m_generatorsWalkedInConsumers.isEmpty() && leavesRegionOfIteration(frameIndex, to))
+        return true;
     const Frame& frame = m_frames[frameIndex];
     return std::ranges::any_of(frame.loopsBeingBuiltTwice, [&](LoopID loop) {
-        return !frame.index->isInLoop(to, loop);
+        return loop.index() < frame.index->numberOfLoops() && !frame.index->isInLoop(to, loop);
     });
 }
 
-void Walker::takeNamesOntoEdge(OpenEdge& edge, size_t frameIndex, BlockID to)
+void Walker::takeNamesOntoEdge(OpenEdge& edge, size_t frameIndex)
 {
     const Frame& frame = m_frames[frameIndex];
-    if (frame.valuesBuiltTwice.isEmpty())
+    if (!frame.valuesBuiltTwice)
         return;
+    edge.names = frame.valuesBuiltTwice->namesOfWay;
+    for (ValueID value : frame.valuesBuiltTwice->boundOnWay) {
+        if (Reference name = frame.references[value.index()]; name && frame.valuesBuiltTwice->contains(value))
+            edge.names.setNameIn(frame.valuesBuiltTwice->slotOf(value), name);
+    }
+}
+
+void Walker::takeNamesOfWay(BlockID inputBlock, NamesOfWay&& names)
+{
+    Frame& frame = m_frames.last();
+    frame.valuesBuiltTwice->namesOfWay = WTF::move(names);
+    frame.valuesBuiltTwice->blockThatWayEnters = inputBlock;
+    for (uint32_t carried = frame.index->numberOfValues(); carried < frame.references.size(); ++carried) {
+        if (Reference name = frame.valuesBuiltTwice->nameOn(frame.valuesBuiltTwice->namesOfWay, ValueID(carried)))
+            bind(ValueID(carried), name);
+    }
+    frame.valuesBuiltTwice->namesGivenForGood.removeAllMatching([&](const Frame::ValuesBuiltTwice::NamesGivenForGood& given) {
+        if (given.block != inputBlock)
+            return false;
+        for (ValueID value : given.values) {
+            Reference name = referenceBoundIn(frame, value);
+            frame.valuesBuiltTwice->remove(value);
+            if (name)
+                bind(value, name);
+        }
+        return true;
+    });
+}
+
+void Walker::forgetNamesOfWay(Frame& frame)
+{
+    Frame::ValuesBuiltTwice& listed = *frame.valuesBuiltTwice;
+    for (ValueID value : listed.boundOnWay) {
+        if (const Frame::ValuesBuiltTwice::Slot& slot = listed.slots[listed.slotOf(value)]; slot.ordinal && slot.hasSeveralNames && value.index() < frame.index->numberOfValues())
+            frame.references[value.index()] = Reference();
+    }
+    listed.boundOnWay.shrink(0);
+    listed.namesOfWay.clear();
+    listed.blockThatWayEnters = { };
+}
+
+bool Walker::isNamedByWaysInto(const Frame& frame, ValueID value, BlockID inputBlock) const
+{
+    if (value == frame.stepWhosePositionEdgesBring)
+        return true;
+    if (!frame.isBuiltTwice(value))
+        return false;
+    if (value.index() >= frame.index->numberOfValues())
+        return true;
     if (!m_liveness.isComputedFor(*frame.index))
         m_liveness.compute(*frame.index);
-    for (ValueID value : frame.valuesBuiltTwice) {
-        if (m_liveness.isLiveAtHead(value, to))
-            edge.names.append({ value, frame.references[value.index()] });
-    }
+    return m_liveness.isLiveAtHead(value, inputBlock);
+}
+
+Reference Walker::nameBroughtByWay(const Frame& frame, ValueID value) const
+{
+    Reference name = frame.valuesBuiltTwice->nameOn(frame.valuesBuiltTwice->namesOfWay, value);
+    return name && isNamedByWaysInto(frame, value, frame.valuesBuiltTwice->blockThatWayEnters) ? name : Reference();
 }
 
 bool Walker::isWithoutNameBehindLoopBuiltTwice(ValueID value)
 {
     const Frame& frame = m_frames.last();
-    if (!frame.valuesBuiltTwice.contains(value) || frame.index->blockOf(value) == frame.block)
+    if (!frame.isBuiltTwice(value) || frame.index->blockOf(value) == frame.block)
         return false;
     if (!m_liveness.isComputedFor(*frame.index))
         m_liveness.compute(*frame.index);
@@ -74,8 +129,11 @@ void Walker::walkCopyOfLoop(BlockID inputHead, std::span<const Reference> enteri
         open.types.append(ownTypeOf(argument));
     }
     open.state = WTF::move(m_state);
-    takeNamesOntoEdge(open, frameIndex, inputHead);
+    takeNamesOntoEdge(open, frameIndex);
     m_block = { };
+    NamesOfWay namesInFrontOfLoop;
+    if (m_frames[frameIndex].valuesBuiltTwice)
+        namesInFrontOfLoop = m_frames[frameIndex].valuesBuiltTwice->namesOfWay;
 
     size_t numberOfLoopsAround = m_openLoops.size();
     for (BlockID member : index.membersOf(loop)) {
@@ -86,6 +144,11 @@ void Walker::walkCopyOfLoop(BlockID inputHead, std::span<const Reference> enteri
     endBlocksInFrontOfLoopsFrom(numberOfLoopsAround);
     m_block = { };
     m_state.clear();
+    if (m_frames[frameIndex].valuesBuiltTwice) {
+        forgetNamesOfWay(m_frames[frameIndex]);
+        m_frames[frameIndex].valuesBuiltTwice->namesOfWay = WTF::move(namesInFrontOfLoop);
+        m_frames[frameIndex].valuesBuiltTwice->blockThatWayEnters = inputHead;
+    }
 }
 
 ValueID Walker::findReadAskedAtHeadOfLoop(BlockID inputHead, std::span<const std::pair<Reference, TypeID>> tested)
@@ -139,6 +202,7 @@ bool Walker::askObjectAtHeadOfTypedCopy(const BodyValue& read)
     }
 
     Reference object = referenceOf(read.objectOperand());
+    uint32_t numberOfValuesInFrontOfTest = m_code.numberOfValues();
     Reference test = buildTestOfObjectAsMade(*this, object, originOf(read));
     if (!test || m_hasFailed)
         return false;
@@ -152,6 +216,7 @@ bool Walker::askObjectAtHeadOfTypedCopy(const BodyValue& read)
     if (m_hasFailed || isUnreachable())
         return false;
     noteListAsMade(*this, object);
+    noteObjectPassedTestOfBeingAsMade(*this, object, test, numberOfValuesInFrontOfTest);
     noteGuessOpened();
     return true;
 }
@@ -167,10 +232,11 @@ void Walker::noteHeadOfTurn(BlockID inputHead)
     BodyBlock head = currentBodyIndex().block(inputHead);
     std::span<const ValueID> taken = m_code.at(way.entry).parameters();
     way.heldAtHead.shrink(0);
-    if (taken.size() != head.numberOfParameters() || m_code.at(m_block).parameters().size() != taken.size())
+    std::span<const ValueID> heldByHead = m_code.at(m_block).parameters();
+    if (taken.size() < head.numberOfParameters() || heldByHead.size() != taken.size())
         return;
-    for (uint32_t index = 0; index < head.numberOfParameters(); ++index) {
-        Reference reference = referenceOf(head.parameter(index));
+    for (uint32_t index = 0; index < taken.size(); ++index) {
+        Reference reference = index < head.numberOfParameters() ? referenceOf(head.parameter(index)) : Reference::value(heldByHead[index]);
         TypeID type = ownTypeOf(reference);
         if (!type || !m_types.isSubset(type, m_code.at(taken[index]).type)) {
             way.heldAtHead.shrink(0);
@@ -199,7 +265,7 @@ bool Walker::turnsOfTypedCopyMayBeginAgain(BlockID inputHead, const LoopPreview&
 {
     size_t frameIndex = m_frames.size() - 1;
     if (!preview.effects.mayRunOtherCode() || hasTextsInStringBuilders() || m_numberOfCopiesBuiltForSize || isUnderHandler()
-        || m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)) || isLoopThatMayDoAnything(currentFunction(), inputHead))
+        || (m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)) && !iterationsSteppedAtHandOverPositionsAlone(inputHead)) || isLoopThatMayDoAnything(currentFunction(), inputHead))
         return false;
     return !preview.otherCodeRunsInLoopInside && currentBodyIndex().loop(currentBodyIndex().loopOf(inputHead)).numberOfLoopsWithin <= 1;
 }
@@ -308,7 +374,7 @@ Walker::InFrontOfTypedCopy::~InFrontOfTypedCopy()
 {
     if (!m_isInFront)
         return;
-    m_walker.m_block = m_blockInside;
+    m_walker.m_block = m_walker.m_hasFailed ? BlockID() : m_blockInside;
     m_walker.m_numberOfLoopsThatMayBeLeft = m_numberOfLoopsThatMightBeLeft;
 }
 
@@ -499,10 +565,8 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
     }
     settleParametersOf(entryOfClosedCopy);
 
-    for (ValueID value : *readBehindLoop) {
-        if (!m_frames[frameIndex].valuesBuiltTwice.contains(value))
-            m_frames[frameIndex].valuesBuiltTwice.append(value);
-    }
+    for (ValueID value : *readBehindLoop)
+        m_frames[frameIndex].listAsBuiltTwice(value);
     m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
     uint32_t namesInFrontOfLoop = inputBlock(frameIndex, inputHead).firstNarrowerName;
 
@@ -558,14 +622,58 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     BlockID sharedStart = shared ? shared->start : BlockID();
     BlockID sharedEntry = shared ? shared->entry : BlockID();
 
+    IterationsSteppedAtHead steppedAtHead = takeIterationsSteppedAt(inputHead);
+    auto takeIterationsAsTheyEntered = [&] {
+        for (const auto& [place, entered] : steppedAtHead.asTheyEntered) {
+            IterationByIndex& iteration = m_iterationsByIndex[place];
+            iteration.mayGoByProtocol = entered.mayGoByProtocol;
+            iteration.list = entered.list;
+            iteration.state = entered.state;
+            iteration.iterator = entered.iterator;
+            iteration.next = entered.next;
+            iteration.stateHoldsVerdictOnNext = entered.stateHoldsVerdictOnNext;
+        }
+    };
+    auto takeIterationsAsSteppedByIndexAlone = [&] {
+        for (const auto& [place, entered] : steppedAtHead.asTheyEntered) {
+            if (!entered.mayGoByProtocol)
+                continue;
+            IterationByIndex& iteration = m_iterationsByIndex[place];
+            iteration.mayGoByProtocol = false;
+            iteration.state = { };
+            iteration.iterator = { };
+            iteration.next = { };
+            iteration.stateHoldsVerdictOnNext = false;
+        }
+    };
+    auto takeAsTheyEnteredAtEnd = makeScopeExit(takeIterationsAsTheyEntered);
+    takeIterationsAsSteppedByIndexAlone();
+    bool stepsWhatProtocolMayHaveOpened = steppedAtHead.asTheyEntered.containsIf([](const auto& entered) { return entered.second.mayGoByProtocol; });
+    Vector<GuessInFrontOfLoop, 4> guessesAtListsAlone;
+    ListsReadInLoop listsReadWithoutGuesses;
+    if (stepsWhatProtocolMayHaveOpened) {
+        SetForScope asked(m_inputHeadAskedAboutTypedCopy, turnsOfTypedCopyMayBeginAgain(inputHead, preview) ? inputHead : m_inputHeadAskedAboutTypedCopy);
+        listsReadWithoutGuesses = findListsReadInLoop(*this, inputHead, preview, entering, guessesAtListsAlone);
+        if (!listsReadWithoutGuesses.areLeftAsTheyAre)
+            return false;
+    }
     Vector<GuessInFrontOfLoop, 4> guesses = findGuessesInFrontOfLoop(*this, inputHead, preview);
     BlockID headOfLooksTriedForLists = turnsOfTypedCopyMayBeginAgain(inputHead, preview) ? inputHead : m_inputHeadAskedAboutTypedCopy;
     ListsReadInLoop listsRead;
-    {
+    if (stepsWhatProtocolMayHaveOpened && guesses.isEmpty()) {
+        listsRead = WTF::move(listsReadWithoutGuesses);
+        guesses = WTF::move(guessesAtListsAlone);
+    } else {
         SetForScope asked(m_inputHeadAskedAboutTypedCopy, headOfLooksTriedForLists);
         listsRead = findListsReadInLoop(*this, inputHead, preview, entering, guesses);
     }
     Vector<CounterTestedInFrontOfLoop, 2> counters = findCountersTestedInFrontOfLoop(*this, inputHead, entering, guesses);
+    bool somethingElseIsAskedInFront = !guesses.isEmpty() || !counters.isEmpty() || !listsRead.lists.isEmpty();
+    for (const auto& [place, entered] : steppedAtHead.asTheyEntered) {
+        bool isAsked = !entered.mayGoByProtocol || guesses.containsIf([&](const GuessInFrontOfLoop& asked) { return asked.value == entered.list; });
+        if (!isAsked)
+            guesses.append(GuessInFrontOfLoop { entered.list, entered.contents == IterationByIndex::Contents::Text ? TypeID(TypeTable::string) : m_types.builtinClass(entered.builtinClass), { }, { } });
+    }
     Vector<std::pair<Reference, TypeID>, 4> testedInFront;
     for (const GuessInFrontOfLoop& guess : guesses)
         testedInFront.append({ guess.value, guess.tested });
@@ -607,7 +715,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     hasTestInFront |= !guardsAskedOfObjectsOfTurns.isEmpty();
     otherCopyOpensItsGuesses &= guardsAskedOfObjectsOfTurns.isEmpty();
     std::unique_ptr<LoopPreview> ofTypedCopy = previewTypedCopy(inputHead, preview, entering, listsRead.lists.span());
-    if (!hasTestInFront && variablesCheckedInTurns.isEmpty() && !ofTypedCopy)
+    if ((!hasTestInFront || (!somethingElseIsAskedInFront && !asksAtHead && guardsAskedOfObjectsOfTurns.isEmpty())) && variablesCheckedInTurns.isEmpty() && !ofTypedCopy)
         return false;
     otherCopyOpensItsGuesses &= variablesCheckedInTurns.isEmpty() || ofTypedCopy || !listsRead.lists.isEmpty();
     for (size_t place = 0; ofTypedCopy && place < ofTypedCopy->guessesCountedOn.size(); ++place) {
@@ -734,6 +842,11 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         continueIn(passed);
         proofs.append(buildProofInFrontOfLoop(*this, guess, test, origin));
     }
+    for (const auto& [place, entered] : steppedAtHead.asTheyEntered) {
+        size_t guess = entered.mayGoByProtocol ? guesses.findIf([&](const GuessInFrontOfLoop& asked) { return asked.value == entered.list; }) : notFound;
+        if (guess != notFound && guess < proofs.size() && proofs[guess])
+            m_iterationsByIndex[place].list = proofs[guess];
+    }
     Vector<Reference, 8> enteringTypedCopy;
     enteringTypedCopy.append(entering);
     for (const CounterTestedInFrontOfLoop& counter : counters) {
@@ -761,25 +874,28 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     ++m_numberOfLoopsBuiltTwice;
     BlockID entryOfClosedCopy = sharedEntry;
     Vector<Reference, 8> enteringClosedCopy;
-    if (!sharedEntry && (asksAtHead || (!hasTextsInStringBuilders() && !m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead))))) {
+    Vector<Reference, 2> positionsEnteringClosedCopy;
+    if (!sharedEntry && (asksAtHead || (!hasTextsInStringBuilders() && (steppedAtHead.asTheyEntered.isEmpty() ? !m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)) : iterationsSteppedAtHandOverPositionsAlone(inputHead))))) {
         entryOfClosedCopy = addBlock(otherCopyOpensItsGuesses ? BlockFrequency::Normal : BlockFrequency::Rare);
         for (size_t index = 0; index < entering.size(); ++index) {
             TypeID type = joinTypes(preview.typesOfParameters[index], ownTypeOf(entering[index]));
             enteringClosedCopy.append(addParameter(entryOfClosedCopy, type, formOfParameter(type, { })));
         }
+        for (size_t place = 0; place < steppedAtHead.asTheyEntered.size(); ++place) {
+            TypeID type = m_types.integer(Range { 0, positionBehindEveryEnd });
+            positionsEnteringClosedCopy.append(addParameter(entryOfClosedCopy, type, formOfParameter(type, { })));
+        }
         settleParametersOf(entryOfClosedCopy);
     }
+    takeIterationsAsTheyEntered();
 
-    for (ValueID value : readBehindLoop) {
-        if (!m_frames[frameIndex].valuesBuiltTwice.contains(value))
-            m_frames[frameIndex].valuesBuiltTwice.append(value);
-    }
+    for (ValueID value : readBehindLoop)
+        m_frames[frameIndex].listAsBuiltTwice(value);
     m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
     uint32_t namesInFrontOfLoop = inputBlock(frameIndex, inputHead).firstNarrowerName;
 
     BlockID typedStart = isUnreachable() ? BlockID() : m_block;
     WalkState stateWhereTestsPassed = m_state;
-    IterationsSteppedAtHead steppedAtHead = takeIterationsSteppedAt(inputHead);
     if (!sharedEntry) {
         if (closedStart)
             continueIn(closedStart);
@@ -790,8 +906,15 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             m_state.clear();
         }
         if (entryOfClosedCopy) {
-            if (!isUnreachable())
-                endWithJumpInto(entryOfClosedCopy, entering);
+            if (!isUnreachable()) {
+                Vector<Reference, 8> withPositions;
+                withPositions.append(entering);
+                for (size_t place = 0; place < positionsEnteringClosedCopy.size(); ++place)
+                    withPositions.append(steppedAtHead.asTheyEntered[place].second.position);
+                endWithJumpInto(entryOfClosedCopy, withPositions.span());
+            }
+            for (size_t place = 0; place < positionsEnteringClosedCopy.size(); ++place)
+                m_iterationsByIndex[steppedAtHead.asTheyEntered[place].first].position = positionsEnteringClosedCopy[place];
             m_block = entryOfClosedCopy;
             m_state.clear();
         }
@@ -810,6 +933,18 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         m_block = typedStart;
         m_state = WTF::move(stateWhereTestsPassed);
         putBackIterationsSteppedAt(steppedAtHead);
+        for (const auto& [place, entered] : steppedAtHead.asTheyEntered) {
+            size_t guess = entered.mayGoByProtocol ? guesses.findIf([&](const GuessInFrontOfLoop& asked) { return asked.value == entered.list; }) : notFound;
+            if (guess == notFound || !proofs[guess])
+                continue;
+            IterationByIndex& iteration = m_iterationsByIndex[place];
+            iteration.mayGoByProtocol = false;
+            iteration.list = proofs[guess];
+            iteration.state = { };
+            iteration.iterator = { };
+            iteration.next = { };
+            iteration.stateHoldsVerdictOnNext = false;
+        }
         Vector<std::pair<ValueID, Reference>, 8> boundBefore;
         for (size_t place = 0; place < guesses.size(); ++place) {
             if (!proofs[place])
@@ -830,6 +965,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         for (auto [name, reference] : boundBefore)
             bind(name, reference);
     }
+    takeIterationsAsTheyEntered();
 
     for (BlockID member : index.membersOf(loop))
         inputBlock(frameIndex, member).firstNarrowerName = namesInFrontOfLoop;

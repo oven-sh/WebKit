@@ -233,51 +233,53 @@ const FieldData* RuntimeLayoutTable::findField(VM& vm, const LayoutData& layout,
     return findFieldWithoutColumn(layout, *number);
 }
 
-static constexpr uint16_t noFieldInSlot = UINT16_MAX;
-static_assert(maxFieldsInOrder * 2 < 1u << (32 - 12) && maxFieldsInOrder < noFieldInSlot);
+static constexpr uint32_t emptySlot = UINT32_MAX;
 
-static size_t firstSlotOfName(uint32_t identifierNumber, size_t mask)
+static size_t firstSlotOfName(uint32_t identifierNumber, size_t numberOfSlots)
 {
-    return (identifierNumber * 0x9e3779b1u >> 12) & mask;
+    return identifierNumber * 0x9e3779b1u >> (32 - std::countr_zero(numberOfSlots));
 }
 
-static Vector<uint16_t> indexFieldsByName(std::span<const FieldData> fields)
+template<typename Record>
+Vector<uint32_t> RuntimeLayoutTable::indexByName(std::span<const Record> records)
 {
-    Vector<uint16_t> slots;
-    slots.fill(noFieldInSlot, std::bit_ceil(fields.size() * 2));
+    Vector<uint32_t> slots;
+    slots.fill(emptySlot, std::bit_ceil(records.size() * 2));
     size_t mask = slots.size() - 1;
-    for (size_t index = 0; index < fields.size(); ++index) {
-        size_t slot = firstSlotOfName(fields[index].name, mask);
-        while (slots[slot] != noFieldInSlot && fields[slots[slot]].name != fields[index].name)
+    for (size_t index = 0; index < records.size(); ++index) {
+        if (!hasLiteralName(records[index]))
+            continue;
+        size_t slot = firstSlotOfName(records[index].name, slots.size());
+        while (slots[slot] != emptySlot && records[slots[slot]].name != records[index].name)
             slot = (slot + 1) & mask;
-        if (slots[slot] == noFieldInSlot)
-            slots[slot] = static_cast<uint16_t>(index);
+        if (slots[slot] == emptySlot)
+            slots[slot] = static_cast<uint32_t>(index);
     }
     return slots;
 }
 
-const FieldData* RuntimeLayoutTable::findFieldWithoutColumn(const LayoutData& layout, uint32_t identifierNumber)
+template<typename Record>
+const Record* RuntimeLayoutTable::findInIndex(std::span<const Record> records, uint32_t indexKey, uint32_t identifierNumber)
 {
-    constexpr size_t minNumberOfFieldsToIndex = 12;
-    std::span<const FieldData> fields = layout.fields();
-    if (fields.size() < minNumberOfFieldsToIndex) {
-        for (const FieldData& field : fields) {
-            if (field.name == identifierNumber)
-                return &field;
-        }
-        return nullptr;
-    }
-    auto found = m_fieldsByName.find(layout.index + 1);
-    if (found == m_fieldsByName.end())
-        found = m_fieldsByName.add(layout.index + 1, indexFieldsByName(fields)).iterator;
-    const Vector<uint16_t>& slots = found->value;
+    auto found = m_recordsByName.find(indexKey);
+    if (found == m_recordsByName.end())
+        found = m_recordsByName.add(indexKey, indexByName(records)).iterator;
+    const Vector<uint32_t>& slots = found->value;
     size_t mask = slots.size() - 1;
-    for (size_t slot = firstSlotOfName(identifierNumber, mask); slots[slot] != noFieldInSlot; slot = (slot + 1) & mask) {
-        const FieldData& field = fields[slots[slot]];
-        if (field.name == identifierNumber)
-            return &field;
+    for (size_t slot = firstSlotOfName(identifierNumber, slots.size()); slots[slot] != emptySlot; slot = (slot + 1) & mask) {
+        const Record& record = records[slots[slot]];
+        if (record.name == identifierNumber)
+            return &record;
     }
     return nullptr;
+}
+
+template const FieldData* RuntimeLayoutTable::findInIndex(std::span<const FieldData>, uint32_t, uint32_t);
+template const MethodData* RuntimeLayoutTable::findInIndex(std::span<const MethodData>, uint32_t, uint32_t);
+
+const FieldData* RuntimeLayoutTable::findFieldWithoutColumn(const LayoutData& layout, uint32_t identifierNumber)
+{
+    return findByName(layout.fields(), layout.index * 3 + 1, identifierNumber);
 }
 
 UniquedStringImpl* RuntimeLayoutTable::nameOf(VM& vm, const FieldData& field)
@@ -964,9 +966,10 @@ void StructureTable::rememberStepOfKeyOrder(StructureID before, uint32_t orderAn
     (*m_stepsOfKeyOrders)[newer] = { before, orderAndCountBefore, fieldAndKind, after, orderAndCountAfter };
 }
 
-static constexpr uint64_t orderAndShapeWordsFor(uint32_t shape, uint32_t orderWord)
+static uint64_t orderAndShapeWordsFor(const AllocationData& allocation)
 {
-    return static_cast<uint64_t>(shapeWordOf(shape)) << 32 | orderWord;
+    uint32_t shapeWord = shapeWordOf(allocation.shape);
+    return static_cast<uint64_t>(allocation.isBornUnfinished ? shapeWord & ~shapeWordIsUnmarked : shapeWord) << 32 | allocation.orderWord();
 }
 
 static bool fillsSameRecord(const ProgramTables& tables, uint32_t first, uint32_t second)
@@ -1011,12 +1014,6 @@ ALWAYS_INLINE AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number
     return *record;
 }
 
-static uint64_t objectHeaderFor(Structure* structure, const AllocationData& allocation)
-{
-    static_assert(JSCell::typeInfoFlagsOffset() == 6);
-    return cellHeaderFor(structure) | (allocation.isBornUnfinished ? static_cast<uint64_t>(TypeInfoPerCellBit) << 48 : 0);
-}
-
 AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number)
 {
     return ensureRecord(number, m_tables.allocations()[number].shape);
@@ -1048,8 +1045,8 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
     CompleteSubspace& space = kind == AllocatedCellKind::Object ? vm.cellSpace() : *vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>();
     void* allocator = space.allocatorFor(allocation.size(), AllocatorForMode::EnsureAllocator).localAllocator();
     record = AllocationSiteRecord {
-        .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : objectHeaderFor(structure, allocation),
-        .orderAndShapeWords = orderAndShapeWordsFor(allocation.shape, allocation.orderWord()),
+        .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : cellHeaderFor(structure),
+        .orderAndShapeWords = orderAndShapeWordsFor(allocation),
         .allocator = allocator ? allocator : &m_allocatorWithoutRoom,
         .prototype = kind == AllocatedCellKind::Object ? static_cast<uint64_t>(JSValue::encode(structure->storedPrototype())) : 0,
     };
@@ -1066,7 +1063,7 @@ void StructureTable::predictStructure(VM&, uint32_t number, CompiledStructure* s
     AllocationSiteRecord* record = m_state.instance.objects.allocationSite(number);
     if (!usual || !record || !usual->hasOtherPrototype() || structureIDOf(number) != usual->id())
         return;
-    record->header = objectHeaderFor(structure, allocation);
+    record->header = cellHeaderFor(structure);
     record->prototype = static_cast<uint64_t>(JSValue::encode(structure->storedPrototype()));
     m_writtenRecords.record(record);
 }
@@ -1091,7 +1088,7 @@ void StructureTable::forgetStructuresOf(const LayoutData& classLayout)
     }
 
     for (AllocationSiteRecord& record : std::span { m_state.instance.objects.emptyAllocationSite() - m_numberOfAllocationSiteRecords, m_numberOfAllocationSiteRecords }) {
-        uint32_t shape = shapeWordOf(static_cast<uint32_t>(record.orderAndShapeWords >> 32));
+        uint32_t shape = shapeOf(shapeWordWithoutMark(static_cast<uint32_t>(record.orderAndShapeWords >> 32)));
         if (record.header && shape < m_tables.firstEnvironmentShape && belongsToClass(shape))
             record = emptyAllocationSiteRecord();
     }
@@ -1117,7 +1114,7 @@ JSCell* StructureTable::allocate(VM& vm, uint32_t number)
     switch (allocatedCellKindOf(m_tables, allocation.shape)) {
     case AllocatedCellKind::Object: {
         Object* object = Object::create(vm, structure, m_tables.layoutForShape(allocation.shape), allocation.size(), allocation.orderWord());
-        object->setPerCellBit(allocation.isBornUnfinished);
+        object->setIsInBirth(allocation.isBornUnfinished);
         return object;
     }
     case AllocatedCellKind::Closure:

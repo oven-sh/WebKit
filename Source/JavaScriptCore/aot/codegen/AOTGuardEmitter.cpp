@@ -104,6 +104,7 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
 {
     ValueID object = value->objectOperand();
     bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(object));
+    MarkedObjects marked = value->refusesMarkedObjects() ? MarkedObjects::AreRefused : MarkedObjects::Pass;
     defineTestByBranching(value, [&](BranchTargets targets) {
         BranchTargets targetsOfShape = targets;
         LBasicBlock hasShape = nullptr;
@@ -112,7 +113,7 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
             targetsOfShape = { normalEdge(hasShape), targets.notTaken };
         }
         CellPointer cell = cellOrElse(value, object, targets.notTaken);
-        emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), typeOf(object), targetsOfShape);
+        emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), typeOf(object), targetsOfShape, marked);
         if (!asksForInstance)
             return;
         m_out.appendTo(hasShape);
@@ -192,18 +193,8 @@ Condition GuardEmitter::orderWordHasNoBits(const ValueContext& value, uint32_t b
 void GuardEmitter::generateHasNoFieldOutsideSlot(const ValueContext& value)
 {
     defineTestOfCompiledObject(value, [&] {
-        if (value->mayMeetUnfinishedObject())
-            return orderWordHasNoBits(value, orderWordHasFieldOutsideSlot);
         Word32 flags = loadByte(in<CellPointer>(value->objectOperand()), m_heaps.JSCell_typeInfoFlags);
         return hasNoBits(flags, TypeInfoPerCellBit);
-    });
-}
-
-void GuardEmitter::generateHasBirthFieldsFilled(const ValueContext& value)
-{
-    defineTestOfCompiledObject(value, [&] {
-        Word32 flags = loadByte(in<CellPointer>(value->objectOperand()), m_heaps.JSCell_typeInfoFlags);
-        return hasNoBits(flags, value->hasLayoutPrototype() ? TypeInfoPerCellBit | JSC::IsPristine : TypeInfoPerCellBit);
     });
 }
 

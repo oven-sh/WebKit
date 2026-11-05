@@ -19,6 +19,7 @@ public:
     void generateReleaseHint(const ValueContext&);
     void release(ValueID);
     void generateClearFrameCell(const ValueContext&);
+    void generateEndLifeOfCell(const ValueContext&);
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:

@@ -532,12 +532,6 @@ struct BuiltinSlot {
     bool holdsWhatStepsHandOut { false };
 };
 
-struct BuiltinPropertyMaker {
-    BuiltinName name;
-    BuiltinID holder { };
-    BuiltinName member;
-};
-
 struct BuiltinClass {
     BuiltinClassID id { };
     BuiltinOrigin origin { BuiltinOrigin::Engine };
@@ -555,9 +549,6 @@ struct BuiltinClass {
     bool definesCharactersOnNewInstances { false };
     bool listsNamesDefinedOnNewInstances { false };
     std::span<const BuiltinName> namesDefinedOnNewInstances { };
-    std::span<const BuiltinResultProperty> typesOfNamesDefinedOnNewInstances { };
-    std::span<const BuiltinPropertyMaker> makersOfNamesDefinedOnNewInstances { };
-    std::span<const BuiltinName> namesReadToDescribeInstances { };
     bool constructorOnlyReadsPrototypeOfNewTarget { false };
     BuiltinName constructorAdder { };
     std::span<const BuiltinSlotID> slots { };
@@ -751,7 +742,6 @@ enum class BuiltinMark : uint8_t {
     EvaluatesTextInGlobalScope,
     HoldsLoader,
     IsSpy,
-    IsNotEnumerable,
     RunsWaitingJobs,
     IsCalledWithoutStartupLoads,
     InstancesHaveMethodCalledWithStartupLoads,

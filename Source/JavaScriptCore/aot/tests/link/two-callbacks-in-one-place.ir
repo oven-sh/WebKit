@@ -11,7 +11,7 @@
 # LOST-NOT: unreached
 # LOST-NOT: one-callee
 # LOST: function f3 callers-known one-callee {{*}}result=true|string
-# LOST-NEXT: parameter 0 {{*}}proven=function
+# LOST-NEXT: parameter 0 {{*}}proven=f1|f2
 # LOST: field L0.0 "x" proven=string writers-known written-at-construction-alone
 # LOST: layout L0 changes=[]
 

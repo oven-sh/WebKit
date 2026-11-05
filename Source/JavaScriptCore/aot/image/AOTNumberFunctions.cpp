@@ -142,13 +142,12 @@ void ImageNumbersBuilder::numberClosureCellsAndClassRanks()
     const Typed::Plan& plan = inputs.plan;
     const Typed::CallingConventions& conventions = plan.conventions();
 
-    const BitVector& cellsMentionedByCode = mentions.byID(NumberSpace::ClosureCell).isMentioned;
     const BitVector functionsMadeWhileModulesLoad = findFunctionsWhoseClosuresAreMadeWhileModulesLoad(inputs, tables);
     uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());
     Vector<PlaceOfClosureCell> cells;
     for (uint32_t index = 0; index < numberOfFunctions; ++index) {
         FunctionID id(index);
-        if (!plan.hasClosureCell(id) || !(cellsMentionedByCode.get(index) || tables.functionsWithClosureCell.get(index)))
+        if (!plan.hasClosureCell(id) || !isClosureCellNamed(id, tables, mentions))
             continue;
         if (!numbers.m_functions.idOf(conventions.indexOf(conventions.closureEntryOf(id))))
             continue;
@@ -171,18 +170,22 @@ void ImageNumbersBuilder::numberClosureCellsAndClassRanks()
     }
 }
 
-static std::optional<uint32_t> numberToPutInPlaceOfMention(const CompiledCode& code, uint32_t mentionIndex, ASCIILiteral holder, const ImageNumbers& numbers, BuildContext& context)
+static NEVER_INLINE void reportMentionWithoutNumber(const CompiledCode& code, const Mention& mention, ASCIILiteral holder, BuildContext& context)
+{
+    context.diagnostics().add(InternalError {
+        .kind = InternalErrorKind::RelocationNotApplied,
+        .function = code.unit.function,
+        .count = static_cast<uint32_t>(mention.space),
+        .detail = makeString(holder, " in its "_s, nameOf(code.unit.role), " mentions a thing of number space "_s, static_cast<unsigned>(mention.space), " that has no number"_s),
+    });
+}
+
+static ALWAYS_INLINE std::optional<uint32_t> numberToPutInPlaceOfMention(const CompiledCode& code, uint32_t mentionIndex, ASCIILiteral holder, const ImageNumbers& numbers, BuildContext& context)
 {
     const Mention& mention = code.body.mentions[mentionIndex];
     std::optional<uint32_t> number = numbers.valueOf(mention, code.body.mentionWords.span(), false);
-    if (!number) {
-        context.diagnostics().add(InternalError {
-            .kind = InternalErrorKind::RelocationNotApplied,
-            .function = code.unit.function,
-            .count = static_cast<uint32_t>(mention.space),
-            .detail = makeString(holder, " in its "_s, nameOf(code.unit.role), " mentions a thing of number space "_s, static_cast<unsigned>(mention.space), " that has no number"_s),
-        });
-    }
+    if (!number)
+        reportMentionWithoutNumber(code, mention, holder, context);
     return number;
 }
 
@@ -218,38 +221,40 @@ static void putNumbersInThrowWordsOfAccess(const CompiledCode& code, FaultingAcc
 
 void applyNumbersToFunctions(LinkedFunctions& functions, const ImageNumbers& numbers, BuildContext& context)
 {
-    forEachIndexInParallel(context.parallelLoops(), static_cast<unsigned>(functions.size()), [&](unsigned position) {
-        CompiledCode& code = functions[position];
-        code.function = numbers.functions().idOf(code.unitIndex);
-        if (!code.function) {
-            context.diagnostics().add(InternalError {
-                .kind = InternalErrorKind::PlacementCheckFailed,
-                .function = code.unit.function,
-                .detail = makeString("its "_s, nameOf(code.unit.role), " has code and no number among the functions of the image"_s),
-            });
-            return;
-        }
-
-        for (const NumberedStubKey& numbered : code.body.numberedStubKeys) {
-            StubKey& key = code.body.stubKeys[numbered.stubKey];
-            ASSERT(key.immediate() == std::optional<uint32_t>(0));
-            if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, numbered.mention, "the key of a stub"_s, numbers, context))
-                key = key.withImmediate(*immediate);
-        }
-
-        for (ArgumentMoves& moves : code.body.argumentMoves) {
-            if (moves[1] & immediateIsMention) {
-                if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, static_cast<uint32_t>(moves[1]), "the immediate that an argument thunk moves"_s, numbers, context))
-                    moves[1] = hasImmediate | *immediate;
+    forEachRangeOfIndicesInParallel(context.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
+        for (size_t position = first; position < end; ++position) {
+            CompiledCode& code = functions[position];
+            code.function = numbers.functions().idOf(code.unitIndex);
+            if (!code.function) {
+                context.diagnostics().add(InternalError {
+                    .kind = InternalErrorKind::PlacementCheckFailed,
+                    .function = code.unit.function,
+                    .detail = makeString("its "_s, nameOf(code.unit.role), " has code and no number among the functions of the image"_s),
+                });
+                continue;
             }
-            for (size_t index = numberOfHeaderWords; index < moves.size(); index += 2) {
-                if (sourceOfArgumentMove(moves, index) == ArgumentSource::ThrowWordWithMention)
-                    putNumberInThrowWordOfThunk(code, moves, index, numbers, context);
-            }
-        }
 
-        for (FaultingAccess& access : code.sites.faultingAccesses)
-            putNumbersInThrowWordsOfAccess(code, access, numbers, context);
+            for (const NumberedStubKey& numbered : code.body.numberedStubKeys) {
+                StubKey& key = code.body.stubKeys[numbered.stubKey];
+                ASSERT(key.immediate() == std::optional<uint32_t>(0));
+                if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, numbered.mention, "the key of a stub"_s, numbers, context))
+                    key = key.withImmediate(*immediate);
+            }
+
+            for (ArgumentMoves& moves : code.body.argumentMoves) {
+                if (moves[1] & immediateIsMention) {
+                    if (std::optional<uint32_t> immediate = numberToPutInPlaceOfMention(code, static_cast<uint32_t>(moves[1]), "the immediate that an argument thunk moves"_s, numbers, context))
+                        moves[1] = hasImmediate | *immediate;
+                }
+                for (size_t index = numberOfHeaderWords; index < moves.size(); index += 2) {
+                    if (sourceOfArgumentMove(moves, index) == ArgumentSource::ThrowWordWithMention)
+                        putNumberInThrowWordOfThunk(code, moves, index, numbers, context);
+                }
+            }
+
+            for (FaultingAccess& access : code.sites.faultingAccesses)
+                putNumbersInThrowWordsOfAccess(code, access, numbers, context);
+        }
     });
 }
 

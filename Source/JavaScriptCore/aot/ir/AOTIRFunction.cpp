@@ -88,47 +88,11 @@ Wire::SourceLocation Function::declarationLocation() const
     return locationAt(position);
 }
 
-static unsigned entryParameterCount(const Function& function, EntryParameter kind)
-{
-    switch (kind) {
-    case EntryParameter::Capture:
-        return function.captures.size();
-    case EntryParameter::Parameter:
-        return function.parameters.size();
-    case EntryParameter::This:
-    case EntryParameter::Callee:
-    case EntryParameter::NewTarget:
-    case EntryParameter::ArgumentCount:
-    case EntryParameter::HiddenRest:
-        return function.flags.containsAll(presentWithOf(kind)) ? 1 : 0;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static unsigned numberOfEntryParametersBefore(const Function& function, EntryParameter kind)
-{
-    unsigned count = 0;
-    for (EntryParameter earlierKind : allMembersOf<EntryParameter>) {
-        if (earlierKind == kind)
-            break;
-        count += entryParameterCount(function, earlierKind);
-    }
-    return count;
-}
-
 static std::optional<unsigned> singleEntryParameterIndex(const Function& function, EntryParameter kind)
 {
-    if (!entryParameterCount(function, kind))
+    if (!function.numberOfEntryParametersOfKind(kind))
         return std::nullopt;
-    return numberOfEntryParametersBefore(function, kind);
-}
-
-unsigned Function::numberOfEntryParameters() const
-{
-    unsigned count = 0;
-    for (EntryParameter kind : allMembersOf<EntryParameter>)
-        count += entryParameterCount(*this, kind);
-    return count;
+    return function.numberOfEntryParametersBefore(kind);
 }
 
 std::optional<unsigned> Function::thisParameterIndex() const
@@ -151,51 +115,9 @@ std::optional<unsigned> Function::argumentCountParameterIndex() const
     return singleEntryParameterIndex(*this, EntryParameter::ArgumentCount);
 }
 
-unsigned Function::firstParameterIndex() const
-{
-    return numberOfEntryParametersBefore(*this, EntryParameter::Parameter);
-}
-
 std::optional<unsigned> Function::hiddenRestParameterIndex() const
 {
     return singleEntryParameterIndex(*this, EntryParameter::HiddenRest);
-}
-
-unsigned Function::numberOfPositionalParameters() const
-{
-    unsigned numberOfRestParameters = has(FunctionFlags::HasRestParameter);
-    RELEASE_ASSERT(parameters.size() >= numberOfRestParameters);
-    return parameters.size() - numberOfRestParameters;
-}
-
-EntryParameter Function::entryParameterKind(unsigned entryParameterIndex) const
-{
-    unsigned end = 0;
-    for (EntryParameter kind : allMembersOf<EntryParameter>) {
-        end += entryParameterCount(*this, kind);
-        if (entryParameterIndex < end)
-            return kind;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-const DeclaredType* Function::declaredEntryParameter(unsigned entryParameterIndex) const
-{
-    EntryParameter kind = entryParameterKind(entryParameterIndex);
-    switch (kind) {
-    case EntryParameter::Capture:
-        return &captures[entryParameterIndex - numberOfEntryParametersBefore(*this, kind)];
-    case EntryParameter::This:
-        return &thisType;
-    case EntryParameter::Parameter:
-        return &parameters[entryParameterIndex - numberOfEntryParametersBefore(*this, kind)];
-    case EntryParameter::Callee:
-    case EntryParameter::NewTarget:
-    case EntryParameter::ArgumentCount:
-    case EntryParameter::HiddenRest:
-        return nullptr;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function& function)

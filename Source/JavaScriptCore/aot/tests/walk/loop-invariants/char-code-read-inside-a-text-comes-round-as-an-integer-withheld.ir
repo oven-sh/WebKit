@@ -1,7 +1,0 @@
-# without BuiltinCalls neither the look nor the walk knows the callee's row
-# f1 = last
-# PROGRAM-OF: char-code-read-inside-a-text-comes-round-as-an-integer.ir
-# RUN: walk f1 mechanisms=all-BuiltinCalls
-# REQUIRES: entries-of-bun
-# CHECK-LABEL: code f1:Body
-# CHECK-NOT: : int[0, 65535] @Int32{{*}}isLoopHead=true
