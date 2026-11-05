@@ -673,6 +673,7 @@ void writeOutPendingOutputSlow(JSGlobalObject* globalObject)
         for (unsigned i = 0; i < listLength(list); ++i)
             streams.append(listGet(list, i));
         listTruncate(globalObject, list, 0);
+        scope.clearException();
         for (unsigned i = 0; i < streams.size(); ++i) {
             auto* stream = PyRecord::from(streams.at(i));
             if (stream->type() == textIOWrapper)

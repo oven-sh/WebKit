@@ -69,7 +69,9 @@ numbers, is stored as int32s or as doubles: what `[]`, `[1, 2]` and a comprehens
 `op_py_list_append` and `op_py_set_item` keep it so. (In an array of doubles a whole number is an int. A float that is whole is a cell, and
 makes it an array of values.) JS also makes copy-on-write
 arrays, ones with holes, sparse, frozen, with accessors for indices, with any length below 2^32; and once `Array.prototype` has an accessor
-for an index, *every* array of the realm, also the next one that Python makes, has `ArrayStorage`. So nothing outside `PyList.cpp`
+for an index, *every* array of the realm, also the next one that Python makes, has `ArrayStorage`, and `a[i] = v` and `push()` of JS hand the
+value to that accessor where the array has nothing of its own at the index. The items of a list are nobody else's: there they are
+defined (`listSetSlow()`, `listPush()`), and a hole is read as `None` without asking. So nothing outside `PyList.cpp`
 touches a butterfly. There, what changes a list asks `ListStorage` whether the items are values in a row, which makes them so if they are
 numbers in a row. What only reads asks `listValues()`, or `hasItemsInARow()` and then `copyItems()`. If they are not, each item goes
 through what works for any array. What is done to a whole list asks once, works on the row and has one barrier. A hole, which reads

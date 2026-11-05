@@ -317,10 +317,36 @@ JSValue listGetSlow(JSArray* list, unsigned index)
     return entry->get();
 }
 
+// Once a prototype of the array has an accessor for an index (for Array.prototype that goes for every array of the realm), `a[i] = v`
+// and push() of JS ask it first where the array has nothing of its own: the setter gets the value, and the array keeps a hole. The
+// items of a list are nobody else's: they are defined.
+// (An array that takes no more items says so in its own way.)
+static ALWAYS_INLINE bool prototypeIsAskedAboutHoles(JSArray* list)
+{
+    return hasSlowPutArrayStorage(list->indexingType()) && list->structure()->isStructureExtensible();
+}
+
+static NEVER_INLINE void listDefine(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValue value)
+{
+    list->putDirectIndex(globalObject, index, value, 0, PutDirectIndexShouldThrow);
+}
+
 // list[index] = value in strict code.
 static void listSetSlow(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValue value)
 {
+    if (prototypeIsAskedAboutHoles(list)) [[unlikely]] {
+        PropertySlot slot(list, PropertySlot::InternalMethodType::GetOwnProperty);
+        if (!JSArray::getOwnPropertySlotByIndex(list, globalObject, index, slot))
+            return listDefine(globalObject, list, index, value);
+    }
     list->methodTable()->putByIndex(list, globalObject, index, value, true);
+}
+
+static ALWAYS_INLINE void listPush(JSGlobalObject* globalObject, JSArray* list, JSValue value)
+{
+    if (prototypeIsAskedAboutHoles(list) && list->length() <= MAX_ARRAY_INDEX) [[unlikely]]
+        return listDefine(globalObject, list, list->length(), value);
+    list->pushInline(globalObject, value);
 }
 
 void listSet(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValue value)
@@ -338,7 +364,7 @@ void listAppend(JSGlobalObject* globalObject, JSArray* list, JSValue value)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    list->push(globalObject, value);
+    listPush(globalObject, list, value);
     RETURN_IF_EXCEPTION(scope, void());
 }
 
@@ -433,7 +459,7 @@ static void listAppendSpan(JSGlobalObject* globalObject, JSArray* list, std::spa
         return;
     }
     for (JSValue item : items) {
-        list->push(globalObject, item);
+        listPush(globalObject, list, item);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -474,7 +500,7 @@ void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable, L
             return;
         }
         for (unsigned i = 0; i < count; ++i) {
-            list->push(globalObject, listGet(other, i));
+            listPush(globalObject, list, listGet(other, i));
             RETURN_IF_EXCEPTION(scope, void());
         }
         return;
@@ -496,7 +522,7 @@ void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable, L
         RETURN_IF_EXCEPTION(scope, void());
         if (!item)
             return;
-        list->pushInline(globalObject, item);
+        listPush(globalObject, list, item);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -1961,7 +1987,7 @@ static JSValue listIMul(JSGlobalObject* globalObject, JSValue self, JSValue coun
     }
     for (uint64_t i = 1; i < count; ++i) {
         for (unsigned j = 0; j < length; ++j) {
-            list->push(globalObject, listGet(list, j));
+            listPush(globalObject, list, listGet(list, j));
             RETURN_IF_EXCEPTION(scope, { });
         }
     }
@@ -1972,7 +1998,7 @@ static JSValue listAppendMethod(JSGlobalObject* globalObject, JSValue self, JSVa
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    asList(self)->push(globalObject, item);
+    listPush(globalObject, asList(self), item);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
