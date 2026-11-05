@@ -1187,7 +1187,8 @@ static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame,
     return generator;
 }
 
-// callee(*args, **kwargs): the arguments in an array, as op_call_varargs takes them. The names of the keywords are set aside.
+// callee(*positional, **keywords): the arguments in an array, as op_call_varargs takes them. The names of the keywords are set aside.
+// `keywords`: empty (then nobody asks for the names), or a dict that the compiled code has made.
 static JSValue callArguments(JSGlobalObject* globalObject, JSValue, JSValue positional, JSValue keywords)
 {
     Runtime& rt = runtime(globalObject);
@@ -1213,9 +1214,12 @@ static JSValue callArguments(JSGlobalObject* globalObject, JSValue, JSValue posi
         }
     }
 
+    if (!keywords)
+        return array;
+
     rt.setPendingKeywordNames(jsUndefined());
-    auto* dict = keywords ? PyDict::from(keywords) : nullptr;
-    if (!dict || dict->isEmpty())
+    auto* dict = PyDict::from(keywords);
+    if (dict->isEmpty())
         return array;
     PyTuple* names = keywordNamesOf(globalObject, dict);
     RETURN_IF_EXCEPTION(scope, { });

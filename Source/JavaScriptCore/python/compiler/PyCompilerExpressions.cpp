@@ -1831,7 +1831,10 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
     Reg array = newTemporary();
     callRuntime(array.get(), RuntimeFunction::CallArguments, operands);
     Reg thisValue = newTemporary();
-    callRuntime(thisValue.get(), RuntimeFunction::TakeKeywordNames);
+    if (keywords.isEmpty())
+        load(thisValue.get(), jsUndefined());
+    else
+        callRuntime(thisValue.get(), RuntimeFunction::TakeKeywordNames);
     markTemporaryMade(temporary);
     return g.emitPyCallVarargs(result.get(), callee, thisValue.get(), array.get());
 }
