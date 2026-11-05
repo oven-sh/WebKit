@@ -1257,6 +1257,8 @@ static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSStri
 
     Vector<unsigned, 16> ends;
     unsigned separatorLength = separatorImpl->length();
+    // So many pieces are not for here, and there is no need to find the rest.
+    uint32_t enough = std::min<uint32_t>(limit, MIN_SPARSE_ARRAY_INDEX);
     {
         auto subject = string->view(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1265,7 +1267,7 @@ static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSStri
         unsigned position = 0;
         while ((found = separatorLength == 1 ? subject->find(sought[0], position) : subject->find(vm.adaptiveStringSearcherTables(), sought, position)) != notFound) {
             ends.append(static_cast<unsigned>(found));
-            if (ends.size() == limit)
+            if (ends.size() == enough)
                 break;
             position = static_cast<unsigned>(found) + separatorLength;
         }
