@@ -385,8 +385,14 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Operator op, JSValue value, JSValue 
     {
         bool areInts = isInt(value) && isInt(right);
         auto sizeOf = [&](JSValue sequence) -> std::optional<uint64_t> {
-            if (isStr(sequence))
-                return strLength(globalObject(), strValue(sequence));
+            if (isStr(sequence)) {
+                uint64_t length = strLength(globalObject(), strValue(sequence));
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearException();
+                    return maxStrSize + 1;
+                }
+                return length;
+            }
             if (auto* bytes = PyBytes::tryFrom(sequence))
                 return bytes->length();
             return std::nullopt;
