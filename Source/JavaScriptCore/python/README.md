@@ -348,7 +348,9 @@ collection (15 to 20 µs). An Eden collection frees nothing that has survived a 
 to since the last collection (`Heap::reconcileWeakGCHashTables()` goes by the same): none, in a program that looks up nothing new. (An Eden collection with nothing to do, in
 a program of JS that has imported one file of Python: 55 µs; 72 if all of the table were gone through, which is 1.5 to 2 % of a loop that only makes garbage.) More pairs of a class and a name than there are places push each other out, where the 16 places that each type had before grew with the number of
 classes: `getattr()` on 300 to 3,000 classes in turn, with 12 names each, takes a fifth to a quarter longer than it did; on 100 classes, or with 40 names each, a tenth to
-a quarter less. Programs have more than 16 names for a class: six that were measured take up to 4 % less time.
+a quarter less. Programs have more than 16 names for a class. Measured twice: the inner
+loops of six programs, over and over in one process, take 2 to 4 % less time (black: the same); whole runs of five of them, with their imports, collections and subprocesses,
+take 1 to 5 % fewer instructions (black 0.9, pytest 1.0, django 1.2, sympy 1.5, docutils 4.6).
 
 `object.name(...)` makes no bound method: `op_py_get_method` gives the function and the object, which is passed as the first argument.
 `with` finds `__enter__` and `__exit__` with the same instruction (a number stands for the name: they are looked for in the class alone).
