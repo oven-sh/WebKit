@@ -261,6 +261,8 @@ JSString* format(JSGlobalObject*, JSValue, JSString* spec); // A null spec is an
 JSValue formatObject(JSGlobalObject*, JSValue, JSString* spec); // The same, as the object __format__() returned: it may be of a class derived from str.
 // For messages: the text, or "<?>" and no exception if that throws... never throws.
 String reprForMessage(JSGlobalObject*, JSValue);
+// repr(value), cut short as "%.<limit>R" does it.
+String shortRepr(JSGlobalObject*, JSValue, unsigned limit);
 
 // ---- Comparison ----
 

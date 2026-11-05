@@ -682,18 +682,6 @@ static JSValue sreMatchLastGroup(JSGlobalObject*, JSValue thisValue)
 template<unsigned field>
 static JSValue sreField(JSGlobalObject*, JSValue thisValue) { return PyRecord::from(thisValue)->get(field); }
 
-// repr(value), cut short as "%.<limit>R" does it.
-static String sreShortRepr(JSGlobalObject* globalObject, JSValue value, unsigned limit)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* string = repr(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, { });
-    StrView view(globalObject, string);
-    RETURN_IF_EXCEPTION(scope, { });
-    return view.length() <= limit ? view.string() : view.substring(0, limit);
-}
-
 static JSValue sreMatchRepr(JSGlobalObject* globalObject, JSValue thisValue)
 {
     VM& vm = getVM(globalObject);
@@ -701,7 +689,7 @@ static JSValue sreMatchRepr(JSGlobalObject* globalObject, JSValue thisValue)
     PyRecord* match = PyRecord::from(thisValue);
     JSValue whole = sreGroupByIndex(globalObject, match, 0, none());
     RETURN_IF_EXCEPTION(scope, { });
-    String wholeRepr = sreShortRepr(globalObject, whole, 50);
+    String wholeRepr = shortRepr(globalObject, whole, 50);
     RETURN_IF_EXCEPTION(scope, { });
     return makeStr(vm, makeString("<re.Match object; span=("_s, sreMarkOf(match, 0), ", "_s, sreMarkOf(match, 1), "), match="_s, wholeRepr, '>'));
 }
@@ -1152,7 +1140,7 @@ static JSValue srePatternRepr(JSGlobalObject* globalObject, JSValue thisValue)
     if (!sreNumberField(pattern, SrePattern::IsBytes) && (flags & (SreFlagLocale | SreFlagUnicode | SreFlagASCII)) == SreFlagUnicode)
         flags &= ~SreFlagUnicode;
 
-    String source = sreShortRepr(globalObject, pattern->get(SrePattern::Source), 200);
+    String source = shortRepr(globalObject, pattern->get(SrePattern::Source), 200);
     RETURN_IF_EXCEPTION(scope, { });
     StrBuilder builder;
     builder.append("re.compile("_s, source);

@@ -502,23 +502,25 @@ bool normalizeNumberText(StringView text, Vector<Latin1Character, 64>& result)
 {
     unsigned start = 0;
     unsigned end = text.length();
-    while (start < end && isPythonWhitespace(text[start]))
+    while (start < end && isWhitespaceAroundNumber(text[start]))
         ++start;
-    while (end > start && isPythonWhitespace(text[end - 1]))
+    while (end > start && isWhitespaceAroundNumber(text[end - 1]))
         --end;
     // All at once: a Vector that grows step by step ends the process long before it is full.
     if (end - start > result.capacity()) [[unlikely]]
         result.reserveCapacity(end - start);
     bool previousIsDigit = false;
-    for (unsigned i = start; i < end; ++i) {
+    auto characterAt = [&](unsigned i) -> char32_t {
         char32_t character = text[i];
-        if (U16_IS_LEAD(character) && i + 1 < end && U16_IS_TRAIL(text[i + 1])) {
-            character = U16_GET_SUPPLEMENTARY(character, text[i + 1]);
+        return U16_IS_LEAD(character) && i + 1 < end && U16_IS_TRAIL(text[i + 1]) ? U16_GET_SUPPLEMENTARY(character, text[i + 1]) : character;
+    };
+    for (unsigned i = start; i < end; ++i) {
+        char32_t character = characterAt(i);
+        if (character > 0xffff)
             ++i;
-        }
         if (character == '_') {
             // Only between two digits.
-            if (!previousIsDigit || i + 1 >= end || decimalDigitValue(text[i + 1]) < 0)
+            if (!previousIsDigit || i + 1 >= end || decimalDigitValue(characterAt(i + 1)) < 0)
                 return false;
             previousIsDigit = false;
             continue;
@@ -1211,8 +1213,11 @@ static JSValue floatNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
                     text = String(byteCast<Latin1Character>(bytes));
             }
             auto parsed = text.isNull() ? std::nullopt : floatFromText(text);
-            if (!parsed)
-                return raiseValueError(globalObject, scope, "could not convert string to float: "_s, reprForMessage(globalObject, source));
+            if (!parsed) {
+                JSString* shown = repr(globalObject, source);
+                RETURN_IF_EXCEPTION(scope, { });
+                return raiseValueError(globalObject, scope, "could not convert string to float: "_s, stringOf(shown));
+            }
             value = *parsed;
         } else {
             floatFromNumber(globalObject, source, value);

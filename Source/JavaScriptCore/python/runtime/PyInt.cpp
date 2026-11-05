@@ -1033,16 +1033,32 @@ static JSValue intFromBytes(JSGlobalObject* globalObject, JSValue cls, JSValue b
 // ---- int() ----
 
 // The text of an int in the given base (0: as a literal says). Empty with no exception: it is not one.
-JSValue intFromText(JSGlobalObject* globalObject, StringView text, int base)
+JSValue intFromText(JSGlobalObject* globalObject, StringView text, int base, NumberTextOf textOf)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Whatever is a decimal digit anywhere counts as the ASCII digit, also where a prefix or a leading zero is looked for.
+    if (!text.is8Bit()) [[unlikely]] {
+        Vector<Latin1Character, 64> ascii;
+        if (text.length() > ascii.capacity() && !ascii.tryReserveInitialCapacity(text.length())) [[unlikely]]
+            return raiseMemoryError(globalObject, scope, String());
+        for (char32_t character : text.codePoints()) {
+            if (character >= 0x80) {
+                int digit = decimalDigitValue(character);
+                character = digit >= 0 ? '0' + digit : isPythonWhitespace(character) ? ' ' : '?';
+            }
+            ascii.append(static_cast<Latin1Character>(character));
+        }
+        RELEASE_AND_RETURN(scope, intFromText(globalObject, StringView(ascii.span()), base));
+    }
+
+    auto isSpace = [&](Latin1Character character) { return isWhitespaceAroundNumber(character) && (character < 0x80 || textOf == NumberTextOf::Str); };
     unsigned start = 0;
     unsigned end = text.length();
-    while (start < end && isPythonWhitespace(text[start]))
+    while (start < end && isSpace(text[start]))
         ++start;
-    while (end > start && isPythonWhitespace(text[end - 1]))
+    while (end > start && isSpace(text[end - 1]))
         --end;
     bool negative = false;
     if (start < end && (text[start] == '+' || text[start] == '-')) {
@@ -1068,6 +1084,7 @@ JSValue intFromText(JSGlobalObject* globalObject, StringView text, int base)
         }
     };
     bool hadPrefix = false;
+    bool mustBeZero = false;
     if (!base) {
         base = prefixBase();
         if (base)
@@ -1075,12 +1092,7 @@ JSValue intFromText(JSGlobalObject* globalObject, StringView text, int base)
         else {
             base = 10;
             // "0" and "00" are fine, "01" is not.
-            if (start < end && text[start] == '0') {
-                for (unsigned i = start; i < end; ++i) {
-                    if (text[i] != '0' && text[i] != '_')
-                        return { };
-                }
-            }
+            mustBeZero = start < end && text[start] == '0';
         }
     } else if (prefixBase() == base)
         hadPrefix = true;
@@ -1093,55 +1105,70 @@ JSValue intFromText(JSGlobalObject* globalObject, StringView text, int base)
     if (start >= end)
         return { };
 
-    // No time is to be spent on a text that is too long.
-    int limit = runtime(globalObject).maxStrDigits;
-    bool isLimited = limit > 0 && (base & (base - 1));
-    if (isLimited && end - start > static_cast<unsigned>(limit) && text.is8Bit()) {
-        size_t count = 0;
-        for (Latin1Character ch : text.span8().subspan(start, end - start)) {
-            if (isASCIIAlphanumeric(ch) && alphanumericDigitValue(ch) < static_cast<unsigned>(base))
-                ++count;
-            else if (ch != '_')
-                break;
+    // Goes through the digits and hands each to `take`. False: this is no number.
+    size_t count = 0;
+    bool isZero = true;
+    bool endsAtNUL = false;
+    auto scan = [&](auto&& take) {
+        count = 0;
+        bool lastWasUnderscore = true; // None at the start.
+        for (unsigned i = start; i < end; ++i) {
+            Latin1Character ch = text[i];
+            if (ch == '_') {
+                if (lastWasUnderscore)
+                    return false;
+                lastWasUnderscore = true;
+                continue;
+            }
+            int digit = isASCIIDigit(ch) ? ch - '0' : isASCIIAlpha(ch) ? toASCIILowerUnchecked(ch) - 'a' + 10 : -1;
+            if (digit < 0 || digit >= base) {
+                while (i < end && isSpace(text[i]))
+                    ++i;
+                endsAtNUL = i < end && !text[i] && !lastWasUnderscore;
+                return false;
+            }
+            lastWasUnderscore = false;
+            isZero &= !digit;
+            ++count;
+            take("0123456789abcdefghijklmnopqrstuvwxyz"[digit]);
         }
-        if (count > static_cast<size_t>(limit))
+        return !lastWasUnderscore;
+    };
+
+    // No memory is spent on a text that is too long. (CPython counts the digits of a C string, and finds out afterwards that the text
+    // went on behind a NUL.)
+    int limit = runtime(globalObject).maxStrDigits;
+    if (limit > 0 && (base & (base - 1)) && end - start > static_cast<unsigned>(limit)) {
+        bool isNumber = scan([](Latin1Character) { });
+        if ((isNumber || endsAtNUL) && count > static_cast<size_t>(limit))
             return raiseValueError(globalObject, scope, "Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, count, " digits; use sys.set_int_max_str_digits() to increase the limit"_s);
+        if (!isNumber)
+            return { };
     }
 
     Vector<Latin1Character, 64> digits;
     // All at once: a Vector that grows step by step ends the process long before it is full.
     if (end - start > digits.capacity() && !digits.tryReserveInitialCapacity(end - start)) [[unlikely]]
         return raiseMemoryError(globalObject, scope, String());
-    bool lastWasUnderscore = true; // None at the start.
-    for (unsigned i = start; i < end; ++i) {
-        char32_t ch = text[i];
-        if (U16_IS_LEAD(ch) && i + 1 < end && U16_IS_TRAIL(text[i + 1]))
-            ch = U16_GET_SUPPLEMENTARY(ch, text[++i]);
-        if (ch == '_') {
-            if (lastWasUnderscore)
-                return { };
-            lastWasUnderscore = true;
-            continue;
-        }
-        lastWasUnderscore = false;
-        int digit = decimalDigitValue(ch);
-        if (digit < 0 && isASCIIAlpha(ch))
-            digit = toASCIILowerUnchecked(ch) - 'a' + 10;
-        if (digit < 0 || digit >= base)
-            return { };
-        digits.append("0123456789abcdefghijklmnopqrstuvwxyz"[digit]);
-    }
-    if (lastWasUnderscore)
+    if (!scan([&](Latin1Character digit) { digits.append(digit); }))
         return { };
-
-    if (isLimited && digits.size() > static_cast<size_t>(limit))
-        return raiseValueError(globalObject, scope, "Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, digits.size(), " digits; use sys.set_int_max_str_digits() to increase the limit"_s);
+    if (mustBeZero && !isZero)
+        return { };
 
     JSValue result = intFromDigits(globalObject, StringView(digits.span()), base);
     RETURN_IF_EXCEPTION(scope, { });
     if (negative)
         RELEASE_AND_RETURN(scope, intNegate(globalObject, result));
     return result;
+}
+
+JSValue raiseInvalidIntLiteral(JSGlobalObject* globalObject, JSValue source, int base)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String shown = shortRepr(globalObject, source, 200);
+    RETURN_IF_EXCEPTION(scope, { });
+    return raiseValueError(globalObject, scope, "invalid literal for int() with base "_s, base, ": "_s, shown);
 }
 
 static JSValue intFromTextObject(JSGlobalObject* globalObject, JSValue source, int base)
@@ -1160,13 +1187,13 @@ static JSValue intFromTextObject(JSGlobalObject* globalObject, JSValue source, i
             return raiseMemoryError(globalObject, scope, String());
         text = String(byteCast<Latin1Character>(bytes));
     }
-    JSValue result = intFromText(globalObject, StringView(text), base);
+    JSValue result = intFromText(globalObject, StringView(text), base, isStr(source) ? NumberTextOf::Str : NumberTextOf::Bytes);
     RETURN_IF_EXCEPTION(scope, { });
     if (!result) {
         // What is not a str is shown as bytes, whatever it is.
         if (!isStr(source))
             source = PyBytes::create(globalObject, byteCast<uint8_t>(text.span8().first(std::min<size_t>(text.length(), 200))));
-        return raiseValueError(globalObject, scope, "invalid literal for int() with base "_s, base, ": "_s, reprForMessage(globalObject, source));
+        RELEASE_AND_RETURN(scope, raiseInvalidIntLiteral(globalObject, source, base));
     }
     return result;
 }

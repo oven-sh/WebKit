@@ -470,7 +470,7 @@ static bool parseComplex(std::span<const Latin1Character> text, Complex& result)
     size_t i = 0;
     size_t size = text.size();
     auto skipSpaces = [&] {
-        while (i < size && isPythonWhitespace(text[i]))
+        while (i < size && isWhitespaceAroundNumber(text[i]))
             ++i;
     };
     auto at = [&](size_t index) -> Latin1Character { return index < size ? text[index] : Latin1Character(0); };
@@ -555,21 +555,28 @@ static bool isRealNumber(JSGlobalObject* globalObject, JSValue value)
     return type->lookup(Special::Float) || type->lookup(Special::Index);
 }
 
-// Whether an underscore is anywhere but between two digits. (With an underscore in the text, a NUL counts as well.)
+// Whether an underscore is anywhere but between two digits, in what CPython looks through: a copy of the text in ASCII, which ends
+// behind the first character that has no place in a number (where all is ASCII there is no copy), up to a NUL. With an underscore
+// before it, the NUL counts as well.
 static bool hasMisplacedUnderscore(StringView text)
 {
     if (text.find('_') == notFound)
         return false;
+    bool isAllASCII = text.containsOnlyASCII();
+    bool hasUnderscore = false;
     bool previousIsDigit = false;
     bool previousIsUnderscore = false;
     for (char32_t character : text.codePoints()) {
         if (!character)
-            return true;
+            return hasUnderscore;
         bool isDigit = decimalDigitValue(character) >= 0;
+        if (character >= 0x7f && !isAllASCII && !isDigit && !isPythonWhitespace(character))
+            return previousIsUnderscore;
         if (character == '_' ? !previousIsDigit : previousIsUnderscore && !isDigit)
             return true;
         previousIsDigit = isDigit;
         previousIsUnderscore = character == '_';
+        hasUnderscore |= previousIsUnderscore;
     }
     return previousIsUnderscore;
 }
@@ -592,8 +599,11 @@ static JSValue complexNew(JSGlobalObject* globalObject, JSValue cls, const CallA
             RETURN_IF_EXCEPTION(scope, { });
             Vector<Latin1Character, 64> normalized;
             Complex value;
-            if (hasMisplacedUnderscore(text))
-                return raiseValueError(globalObject, scope, "could not convert string to complex: "_s, reprForMessage(globalObject, argument));
+            if (hasMisplacedUnderscore(text)) {
+                JSString* shown = repr(globalObject, argument);
+                RETURN_IF_EXCEPTION(scope, { });
+                return raiseValueError(globalObject, scope, "could not convert string to complex: "_s, stringOf(shown));
+            }
             if (!normalizeNumberText(text, normalized) || !parseComplex(normalized.span(), value))
                 return raiseValueError(globalObject, scope, "complex() arg is a malformed string"_s);
             RELEASE_AND_RETURN(scope, makeComplex(globalObject, type, value.real, value.imaginary));

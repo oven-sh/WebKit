@@ -104,7 +104,22 @@ static NEVER_INLINE JSValue raiseNameNotDefined(JSGlobalObject* globalObject, JS
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PyException* exception = newException(globalObject, rt.NameError(), makeString("name '"_s, stringOf(name), "' is not defined"_s));
+    // The name as "%.200s" shows its UTF-8: up to a NUL, and as many whole characters as take no more than 200 bytes.
+    String text = stringOf(name);
+    if (!lengthInUTF8(text)) [[unlikely]] {
+        strEncode(globalObject, name, nullptr, nullptr);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    StringView shown = StringView(text).left(text.find(static_cast<char16_t>(0)));
+    unsigned units = 0;
+    for (size_t bytes = 0; units < shown.length();) {
+        bool isPair = U16_IS_LEAD(shown[units]);
+        bytes += isPair ? 4 : U8_LENGTH(shown[units]);
+        if (bytes > 200)
+            break;
+        units += isPair ? 2 : 1;
+    }
+    PyException* exception = newException(globalObject, rt.NameError(), makeString("name '"_s, shown.left(units), "' is not defined"_s));
     RETURN_IF_EXCEPTION(scope, { });
     exception->setField(vm, ExceptionField::nameErrorName, name);
     return raiseNewException(globalObject, scope, exception);

@@ -263,7 +263,10 @@ JSValue formatterParser(JSGlobalObject*, JSValue formatString);
 JSValue formatterFieldNameSplit(JSGlobalObject*, JSValue fieldName);
 JSValue intFromByteSpan(JSGlobalObject*, std::span<const uint8_t>, bool littleEndian, bool isSigned);
 // int(text, base). Empty with no exception: it is not the text of an int.
-JSValue intFromText(JSGlobalObject*, StringView, int base);
+// Bytes: each character is a byte, and nothing beyond ASCII means anything.
+enum class NumberTextOf : bool { Str, Bytes };
+JSValue intFromText(JSGlobalObject*, StringView, int base, NumberTextOf = NumberTextOf::Str);
+JSValue raiseInvalidIntLiteral(JSGlobalObject*, JSValue source, int base);
 // float(text). nullopt: it is not the text of a float.
 std::optional<double> floatFromText(StringView);
 // How many characters at the start are the text of a float. 0: none.
@@ -293,6 +296,12 @@ inline unsigned alphanumericDigitValue(char32_t character)
 // ---- Text ----
 
 inline bool isPythonWhitespace(char32_t character) { return character < 0x80 ? character == ' ' || (character >= 0x09 && character <= 0x0d) || (character >= 0x1c && character <= 0x1f) : isWhitespace(character); }
+// What may stand before and behind a number in a str: the white space of C, and what is white space beyond ASCII. Not U+001C to
+// U+001F, which str.isspace() counts.
+ALWAYS_INLINE bool isWhitespaceAroundNumber(char32_t character)
+{
+    return character < 0x80 ? character == ' ' || (character >= '\t' && character <= '\r') : isPythonWhitespace(character);
+}
 // format % arguments
 JSValue strFormatPercent(JSGlobalObject*, JSString* format, JSValue arguments);
 JSValue bytesFormatPercent(JSGlobalObject*, std::span<const uint8_t> format, JSValue arguments, bool makeByteArray);

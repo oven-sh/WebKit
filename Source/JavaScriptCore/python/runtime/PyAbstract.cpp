@@ -1630,6 +1630,17 @@ String reprForMessage(JSGlobalObject* globalObject, JSValue value)
     return result;
 }
 
+String shortRepr(JSGlobalObject* globalObject, JSValue value, unsigned limit)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* string = repr(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    StrView view(globalObject, string);
+    RETURN_IF_EXCEPTION(scope, { });
+    return view.length() <= limit ? view.string() : view.substring(0, limit);
+}
+
 ReprGuard::ReprGuard(JSGlobalObject* globalObject, JSValue value)
     : m_globalObject(globalObject)
     , m_cell(value.asCell())
