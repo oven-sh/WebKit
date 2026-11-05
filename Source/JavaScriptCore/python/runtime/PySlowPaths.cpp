@@ -1195,10 +1195,14 @@ static JSValue callArguments(JSGlobalObject* globalObject, JSValue, JSValue posi
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    auto* tuple = PyTuple::tryFrom(positional);
     JSArray* array;
     if (isExactList(positional) && !keywords) {
         // Made by the compiled code, or about to be copied into the frame anyway.
         array = asList(positional);
+    } else if (tuple && tuple->type() == rt.tupleType() && !keywords) {
+        array = newList(globalObject, tuple->span());
+        RETURN_IF_EXCEPTION(scope, { });
     } else {
         array = newList(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
