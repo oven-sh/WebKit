@@ -664,16 +664,20 @@ static bool encodeForFormat(JSGlobalObject* globalObject, JSValue value, Bytes& 
     }
     String text = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    if (text.containsOnlyASCII()) [[likely]] {
-        for (unsigned i = 0; i < text.length(); ++i)
-            bytes.append(static_cast<uint8_t>(text[i]));
-    } else if (auto encoded = tryEncodeUTF8(text))
-        bytes.appendVector(*encoded);
-    else {
+    auto length = lengthInUTF8(text);
+    if (!length) {
         codecEncodeUTF8(globalObject, string, "strict"_s);
         EXCEPTION_ASSERT(scope.exception());
         return false;
     }
+    // (With room for what little is appended to it.)
+    if (*length > String::MaxLength / 2) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
+    }
+    size_t size = bytes.size();
+    bytes.grow(size + *length);
+    writeUTF8(text, bytes.mutableSpan().subspan(size));
     return true;
 }
 

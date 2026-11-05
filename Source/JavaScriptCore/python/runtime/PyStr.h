@@ -260,8 +260,12 @@ String strRepr(StringView);
 // With everything beyond ASCII escaped.
 String asciiEscape(StringView);
 
-// UTF-8, with the handler "surrogatepass" if `allowSurrogates`; otherwise nullopt if there is a lone surrogate.
+// UTF-8, with the handler "surrogatepass" if `allowSurrogates`; otherwise nullopt if there is a lone surrogate. Only for text that is known
+// to be short: a Vector ends the process where it cannot hold the bytes. For what a program hands over there is encodeUTF8(), or
+// appendUTF8() in PyBytes.h.
 std::optional<Vector<uint8_t>> tryEncodeUTF8(StringView, bool allowSurrogates = false);
+// False: an exception, that of str.encode() for a lone surrogate, or a MemoryError for more than 2**30 bytes.
+bool encodeUTF8(JSGlobalObject*, JSString*, Vector<uint8_t>& result);
 // How many bytes the text takes (nothing: it has halves of surrogate pairs on their own, which have no UTF-8), and the bytes, into room
 // of just that size.
 std::optional<size_t> lengthInUTF8(StringView);

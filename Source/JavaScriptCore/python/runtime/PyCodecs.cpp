@@ -286,15 +286,8 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (acceptStr && isStr(value)) {
-            String text = strValue(value)->value(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
-            auto encoded = tryEncodeUTF8(text);
-            if (!encoded) {
-                scope.release();
-                codecEncodeUTF8(globalObject, strValue(value), String());
+            if (failed(scope, appendUTF8(globalObject, m_owned, strValue(value))))
                 return false;
-            }
-            m_owned = WTF::move(*encoded);
             m_span = m_owned.span();
             return true;
         }
@@ -310,7 +303,7 @@ public:
 
 private:
     std::span<const uint8_t> m_span;
-    Vector<uint8_t> m_owned;
+    ByteBuilder m_owned;
     Buffer m_buffer;
     JSGlobalObject* m_globalObject { nullptr };
 };

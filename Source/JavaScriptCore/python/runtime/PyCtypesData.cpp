@@ -589,16 +589,16 @@ static JSValue dataSetState(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (!isDict(dict))
         return raiseTypeError(globalObject, scope, "__setstate__() argument 1 must be dict, not "_s, typeNameOfArgument(globalObject, dict));
     {
-        Vector<uint8_t> encoded;
+        ByteBuilder encoded;
         BufferHolder holder(globalObject);
         std::span<const uint8_t> source;
         if (isStr(bytes)) {
             StrView view(globalObject, strValue(bytes));
             RETURN_IF_EXCEPTION(scope, { });
-            auto utf8 = tryEncodeUTF8(view.view());
-            if (!utf8)
+            if (!appendUTF8(encoded, view.view()))
                 return raiseValueError(globalObject, scope, "surrogates not allowed"_s);
-            encoded = WTF::move(*utf8);
+            if (encoded.hasOverflowed()) [[unlikely]]
+                return raiseMemoryError(globalObject, scope, String());
             source = encoded.span();
         } else {
             if (!hasBuffer(bytes))

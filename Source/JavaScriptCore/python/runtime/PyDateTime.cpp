@@ -646,7 +646,7 @@ bool timeSpecArgument(JSGlobalObject* globalObject, JSValue value, int microseco
     RETURN_IF_EXCEPTION(scope, false);
     String text = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!text.is8Bit() && !tryEncodeUTF8(text)) {
+    if (!text.is8Bit() && !lengthInUTF8(text)) {
         // Which raises.
         scope.release();
         strEncode(globalObject, string, makeStr(vm, "utf-8"_s), makeStr(vm, "strict"_s));

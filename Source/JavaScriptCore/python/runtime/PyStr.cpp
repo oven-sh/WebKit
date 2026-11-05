@@ -497,6 +497,29 @@ bool appendUTF8(JSGlobalObject* globalObject, ByteBuilder& result, JSString* str
     return true;
 }
 
+bool encodeUTF8(JSGlobalObject* globalObject, JSString* string, Vector<uint8_t>& result)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    auto length = lengthInUTF8(text);
+    if (!length) {
+        // Which raises.
+        scope.release();
+        strEncode(globalObject, string, nullptr, nullptr);
+        return false;
+    }
+    // With room for a NUL, or whatever little is appended to it: a Vector grows by half.
+    result.shrink(0);
+    if (*length > String::MaxLength / 2 || !result.tryGrow(*length)) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
+    }
+    writeUTF8(text, result.mutableSpan());
+    return true;
+}
+
 // Decodes one character. 0: the bytes at the start are not UTF-8.
 static unsigned decodeOneUTF8(std::span<const uint8_t> bytes, char32_t& character)
 {
