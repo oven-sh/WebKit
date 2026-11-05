@@ -823,6 +823,7 @@ public:
     void releaseIteratorOfLoop(JSValue iterator);
     // An exception is caught in the frame, or leaves it.
     void releaseIteratorsOfLoopsLeft(CallFrame*, unsigned offset, bool isCaught);
+    unsigned ownershipEpoch() const { return m_ownershipEpoch; }
 
     // ---- What an instruction leaves for the next ----
 

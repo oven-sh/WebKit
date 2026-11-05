@@ -530,8 +530,12 @@ public:
             return cell->value();
         JSValue held = registerOf(index);
         // The cells of a generator are made when it starts.
-        if (!held || at(index).kind == CodeInfo::VariableKind::Local || m_holdsArguments)
+        if (!held || at(index).kind == CodeInfo::VariableKind::Local || m_holdsArguments) {
+            // `.0`, what a generator expression goes through. The frame had the only reference: see GeneratorsOwnedByFrame.
+            if (auto* generator = held ? PyGenerator::tryFrom(held) : nullptr) [[unlikely]]
+                generator->loopOwnership = 0;
             return held;
+        }
         // So are those of a function, and something may look at the frame before that.
         auto* cell = PyCell::tryFrom(held);
         return cell ? cell->value() : JSValue();

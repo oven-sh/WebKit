@@ -790,7 +790,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     finalized as the collector would do it, `ResourceWarning` included, on the line where CPython gives it. Of several in one call
     (`open(w, "w").writelines(open(p))`) the last made goes first, as CPython lets go of them. Not `json.load(open(p))` or
     `for line in open(p)`: what a function written in Python does with its argument is not known when the file is opened.
-  - A generator function looks at the marks too, and notes the last generator made if its use is the head of a `for` loop, or to be
+  - A generator function looks at the marks too, and so does what makes the generator of a generator expression. It notes the last generator made if its use is
+    the head of a `for` loop or of a loop of a comprehension, or to be
     passed to a built-in function that is already waiting in a register and says that it goes through such an argument and keeps
     nothing of it (`NativeFlag::ClosesGeneratorArgument`: `next`, `any`, `all`, `sum`, `min`, `max`). The use takes the note up:
     `op_py_get_iter`, the next instruction to run there, or the function when it begins (`GeneratorArgumentScope`). There is one note, so of two
@@ -801,6 +802,12 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     returns or raises; if a profiler is waiting to hear of that, after it has. A generator that the
     collector would leave alone (no handler in it, nothing in its frame to close) is left alone here too, unless a tool listens to
     its code, which is then told of the `GeneratorExit`, as in CPython.
+  - `(x for x in g())`: what a generator expression goes through is not in a temporary but in a variable of its frame, `.0`, and goes when the frame goes. The use of `g()` is
+    the call that makes the generator expression, which takes the note up (`Runtime::didMakeGenerator()`). Where the generator expression is closed or dropped while it is
+    suspended, the frame is gone at once, for nobody gets to see the `GeneratorExit` whose traceback has it: whoever closes a generator closes what its frame owned
+    afterwards (`GeneratorsOwnedByFrame`). So `next(x for x in g())`, `any(p(x) for x in g())` and a `sum()` that raises run the `finally` clauses of `g` before the next statement. An
+    exception that comes out of the generator expression keeps the frame, as in CPython, and the collector finds out when that is over. What `f_locals` shows of `.0`
+    is owned no longer.
   - The unwinder reads the iterator from its register, and no instruction shows that use. Nor does any show that a trace function may send the frame
     back to the head of a loop from where the code only leaves it (`frame.f_lineno = line`). So whoever asks which registers are live adds
     what the blocks that are open hold (`BlockPiece`): the collector, before it empties dead temporaries, and what decides

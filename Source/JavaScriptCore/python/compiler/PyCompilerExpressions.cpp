@@ -1682,7 +1682,7 @@ void Unit::markTemporaryUsed(unsigned number, TemporaryUse::Kind kind, RegisterI
         g.addPythonMark(PythonMark::TemporaryUsed, number, TemporaryUse::encode(kind, (reg ? reg->virtualRegister() : VirtualRegister()).offset(), isLast));
 }
 
-RegisterID* Unit::emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range& range)
+RegisterID* Unit::emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range& range, unsigned temporary, unsigned temporaryToGoThrough)
 {
     Reg heldCallee = callee;
     Vector<Reg, 4> held;
@@ -1694,6 +1694,8 @@ RegisterID* Unit::emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initi
     for (RegisterID* argument : args)
         g.move(arguments.argumentRegister(i++), argument);
     loc(range);
+    markTemporaryUsed(temporaryToGoThrough, TemporaryUse::ForHeader, nullptr, true);
+    markTemporaryMade(temporary);
     return g.emitPyCall(dst, callee, arguments, args.size());
 }
 
@@ -2216,7 +2218,7 @@ void Unit::comprehensionElement(ComprehensionKind kind, Expr* element, Expr* val
 }
 
 // `firstIterator`: for the first clause, the iterator of its iterable.
-void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> generators, unsigned index, Expr* element, Expr* value, RegisterID* result, RegisterID* firstIterator, const Range& range)
+void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> generators, unsigned index, Expr* element, Expr* value, RegisterID* result, RegisterID* firstIterator, bool ownsFirstIterator, const Range& range)
 {
     if (!isSafeToRecurse())
         return;
@@ -2238,7 +2240,7 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
             jumpIf(condition, next.get(), false);
         }
         if (index + 1 < generators.size()) {
-            comprehensionGenerator(kind, generators, index + 1, element, value, result, nullptr, range);
+            comprehensionGenerator(kind, generators, index + 1, element, value, result, nullptr, false, range);
             // So nothing jumps to where the inner loop goes on when it has ended.
             if (!generator->ifs.isEmpty()) {
                 line(placeOfElement);
@@ -2304,13 +2306,19 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     }
 
     Reg iterator = firstIterator;
+    bool ownsIterator = ownsFirstIterator;
     if (!iterator) {
         iterator = newTemporary();
+        unsigned temporary = beginTemporaryOfLoop(generator->iter);
         Reg iterable = exprToIterateOverOrSearch(generator->iter);
         loc(generator->iter->range);
+        markTemporaryUsed(temporary, TemporaryUse::ForHeader, nullptr, true);
         g.emitPyGetIter(iterator.get(), iterable.get());
+        ownsIterator = !!temporary;
     }
     g.settlePythonLineMark();
+    if (ownsIterator)
+        pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .saved = iterator.get(), .ownsIterator = true });
     g.emitLabel(start.get());
     line(generator->iter->range);
     loc(generator->iter->range);
@@ -2333,6 +2341,8 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     g.emitLabel(next.get());
     line(placeOfElement);
     jump(start.get());
+    if (ownsIterator)
+        popBlock();
     g.emitLabel(end.get());
     // A generator expression returns from there.
     if (kind == ComprehensionKind::Generator && !index)
@@ -2344,6 +2354,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
     Scope* scope = c.m_symbols->scopeFor(node);
     Comprehension* outermost = generators[0];
     const Range& range = node->range;
+    unsigned temporary = takeTemporary(node);
 
     auto emitContainer = [&](Unit& unit, RegisterID* result) {
         if (kind != ComprehensionKind::Generator)
@@ -2369,6 +2380,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         Reg iterator = newTemporary();
         // (CPython has something between this and the call of iter(), so it is a list if it is written as one.)
         // Nothing of the program runs in between: a variable can stay where it is.
+        unsigned temporaryOfIterable = outermost->isAsync ? 0 : beginTemporaryOfLoop(outermost->iter);
         Reg iterable = outermost->iter->is<NameExpr>() ? expr(outermost->iter) : expr(outermost->iter, iterator.get());
 
         VariableMap& variables = *m_variables.get(scope);
@@ -2401,13 +2413,15 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         loc(outermost->iter->range);
         if (outermost->isAsync)
             callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterable.get() });
-        else
+        else {
+            markTemporaryUsed(temporaryOfIterable, TemporaryUse::ForHeader, nullptr, true);
             g.emitPyGetIter(iterator.get(), iterable.get());
+        }
         iterable = nullptr;
         m_overlays.append(scope);
         pushBlock({ .kind = BlockKind::InlinedComprehension, .tryDepth = guard ? guard->depthBefore : g.tryDepth(), .comprehension = scope });
         emitContainer(*this, result.get());
-        comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), range);
+        comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), !!temporaryOfIterable, range);
         line(range);
         popBlock();
         m_overlays.removeLast();
@@ -2434,9 +2448,12 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
     Name name = kind == ComprehensionKind::Generator ? names().genexpr : kind == ComprehensionKind::List ? names().listcomp : kind == ComprehensionKind::Set ? names().setcomp : names().dictcomp;
     CodeSpec spec { UnitKind::Comprehension, scope, name, range, range.lineno };
     bool isGenerator = kind == ComprehensionKind::Generator;
+    // The generator expression has the only reference to what was made for it to go through, in a variable: GeneratorsOwnedByFrame.
+    bool ownsFirstIterator = isGenerator && !outermost->isAsync && mayMakeGenerator(outermost->iter);
     if (isGenerator)
         spec.iterateFirstParameter = outermost->isAsync ? CodeSpec::IterateFirstParameter::Async : CodeSpec::IterateFirstParameter::Sync;
     auto* executable = c.compileCode(this, spec, m_source, [&](Unit& unit) {
+        unit.m_info.hasLoopThatOwnsItsIterator |= ownsFirstIterator;
         Reg iterator = isGenerator ? unit.m_firstIterator : unit.loadName(names().dotZero, unit.newTemporary().get(), range);
         if (!isGenerator) {
             unit.loc(outermost->iter->range);
@@ -2447,7 +2464,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         }
         Reg result = unit.newTemporary();
         emitContainer(unit, result.get());
-        unit.comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), range);
+        unit.comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), false, range);
         if (isGenerator)
             unit.emitReturnNone();
         else
@@ -2458,8 +2475,9 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
     Reg function = newTemporary();
     loc(range);
     emitMakeFunction(function.get(), executable, scope, { });
+    unsigned temporaryOfIterable = ownsFirstIterator ? beginTemporaryOfLoop(outermost->iter) : 0;
     Reg iterable = outermost->isAsync ? expr(outermost->iter) : exprToIterateOverOrSearch(outermost->iter);
-    emitSimpleCall(result.get(), function.get(), { iterable.get() }, range);
+    emitSimpleCall(result.get(), function.get(), { iterable.get() }, range, temporary, temporaryOfIterable);
     if (scope->isCoroutine && !isGenerator)
         emitAwait(result.get(), result.get(), 0);
     return result.get();

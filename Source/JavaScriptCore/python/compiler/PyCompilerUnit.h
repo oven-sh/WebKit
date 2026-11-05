@@ -460,11 +460,16 @@ private:
     // callee(pushed..., *args, **keywords). `injected`: a variable to pass after the positional arguments.
     RegisterID* emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<AST::Keyword*> keywords, Name injected, const Range&, unsigned temporary = 0);
 
-    // Marks for runtime/PyTemporaries.cpp: the value of a call or a subscript that goes in a temporary register and is used once.
-    static bool makesTemporary(Expr* node) { return node->is<AST::Call>() || node->is<AST::Subscript>(); }
+    // Marks for runtime/PyTemporaries.cpp: the value of a call, a subscript or a generator expression that goes in a temporary register and is
+    // used once.
+    static bool makesTemporary(Expr* node) { return node->is<AST::Call>() || node->is<AST::Subscript>() || node->is<AST::GeneratorExp>(); }
     // For what is about to compile `node` as an operand of its own: the number of the value, which it passes to markTemporaryUsed()
     // right before each instruction that may turn out to be the use. 0: the node is not of that kind.
     unsigned beginTemporary(Expr* node);
+    // For a loop that is about to compile what it goes through. Nothing but a call or a generator expression: in `for x in (g := f()):` there
+    // is a variable as well.
+    static bool mayMakeGenerator(Expr* node) { return node->is<AST::Call>() || node->is<AST::GeneratorExp>(); }
+    unsigned beginTemporaryOfLoop(Expr* node) { return mayMakeGenerator(node) ? beginTemporary(node) : 0; }
     // For what compiles `node`, first thing: the number, which it passes to markTemporaryMade() right before each instruction that may
     // turn out to make the value. 0: nobody asked.
     unsigned takeTemporary(Expr* node);
@@ -474,7 +479,7 @@ private:
     unsigned m_temporaryNumber { 0 };
     unsigned m_temporaryCount { 0 };
     unsigned m_storedTemporary { 0 }; // For store(): the number of the value, if it is to mark the store as its use.
-    RegisterID* emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range&);
+    RegisterID* emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range&, unsigned temporary = 0, unsigned temporaryToGoThrough = 0);
     // What op_py_get_method gave is called: with `self` before the arguments, unless it is the empty value.
     RegisterID* emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range&);
     void validateKeywords(Seq<AST::Keyword*>);
@@ -505,7 +510,7 @@ private:
     void unpack(Seq<Expr*> targets, RegisterID* value, const Range&);
 
     RegisterID* comprehension(Expr*, ComprehensionKind, Seq<AST::Comprehension*>, Expr* element, Expr* value, RegisterID* dst);
-    void comprehensionGenerator(ComprehensionKind, Seq<AST::Comprehension*>, unsigned index, Expr* element, Expr* value, RegisterID* result, RegisterID* firstIterator, const Range&);
+    void comprehensionGenerator(ComprehensionKind, Seq<AST::Comprehension*>, unsigned index, Expr* element, Expr* value, RegisterID* result, RegisterID* firstIterator, bool ownsFirstIterator, const Range&);
     void comprehensionElement(ComprehensionKind, Expr* element, Expr* value, RegisterID* result);
 
     // ---- Patterns ----

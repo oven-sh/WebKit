@@ -198,6 +198,22 @@ JSValue makeANextAwaitable(JSGlobalObject*, JSValue awaitable, JSValue defaultVa
 void generatorClose(JSGlobalObject*, PyGenerator*);
 // What is done to one that the program has dropped.
 void finalizeGeneratorNow(JSGlobalObject*, PyGenerator*);
+
+// (x for x in g()): what the generator expression goes through is a variable of its frame, `.0`, and nothing else refers to it. It goes when
+// the frame goes. That is known to be at once where the generator expression is closed, or dropped: nobody gets to see the GeneratorExit, whose
+// traceback has the frame. An exception that comes out of the generator expression has the frame for as long as it lasts, which only the collector knows.
+// For what closes a generator that is suspended: made before, and told when it is over.
+class GeneratorsOwnedByFrame {
+public:
+    explicit GeneratorsOwnedByFrame(Runtime&, PyGenerator*);
+    // Those that loops in there own have been closed on the way out.
+    void frameIsGone();
+
+private:
+    Runtime& m_runtime;
+    std::array<PyGenerator*, 4> m_generators;
+    unsigned m_count { 0 };
+};
 // Nothing refers to it any more, and the code that held it knows: what CPython does at that moment. Does not throw.
 void generatorIsDropped(JSGlobalObject*, PyGenerator*);
 // RuntimeWarning: coroutine '...' was never awaited

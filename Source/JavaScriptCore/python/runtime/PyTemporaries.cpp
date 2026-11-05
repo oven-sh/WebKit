@@ -304,7 +304,8 @@ void Runtime::didStoreInItem(JSValue value)
 // of the argument. A generator function notes the last generator made, if it was made for such a use: at the head of a `for`
 // loop, or as an argument of a built-in function that is already waiting in its register and says that it closes such an
 // argument (NativeFlag::ClosesGeneratorArgument).
-// The use takes the note up: op_py_get_iter, which is the very next instruction to run in the caller, or the function, which does so
+// The use takes the note up: op_py_get_iter, which is the very next instruction to run in the caller (for a generator expression, the call
+// that makes it, with what it goes through for its argument), or the function, which does so
 // whether or not the generator is the argument that it goes through (next(it, g()) may return it). So no note outlives the use. One that
 // the use never came for, because another argument raised, is of a generator that can never turn up again. Other arguments are
 // evaluated between the making and the use; they cannot get at the generator, and if they make another for such a use,
@@ -343,13 +344,16 @@ void Runtime::findUseOfCall(UseOfCall& found, CallFrame* callFrame)
 
 void Runtime::didMakeGenerator(PyGenerator* generator, CallFrame* frameOfFunction)
 {
-    m_newGenerator = nullptr;
+    PyGenerator* previous = std::exchange(m_newGenerator, nullptr);
     void* caller = frameOfFunction->callerFrameOrEntryFrame();
     if (caller == m_vm.topEntryFrame) [[unlikely]]
         return;
     auto* callFrame = static_cast<CallFrame*>(caller);
     CodeBlock* codeBlock = callFrame->codeBlock();
     unsigned call = callFrame->callSiteIndex().bits();
+    // (x for x in g()): this call is the use. See GeneratorsOwnedByFrame.
+    if (previous && m_callerOfNewGenerator == callFrame && m_useOfNewGenerator == call) [[unlikely]]
+        previous->loopOwnership = m_ownershipEpoch;
     UseOfCall& use = m_usesOfCalls[(call ^ std::bit_cast<uintptr_t>(codeBlock) >> 5) % m_usesOfCalls.size()];
     if (use.codeBlock != codeBlock || use.call != call) [[unlikely]]
         findUseOfCall(use, callFrame);
@@ -387,6 +391,11 @@ void GeneratorArgumentScope::release()
 {
     if (m_whereToLeaveIt) {
         *m_whereToLeaveIt = m_generator;
+        return;
+    }
+    // Most have been gone through to their end.
+    if (m_generator->isCompleted()) [[likely]] {
+        m_generator->loopOwnership = 0;
         return;
     }
     // An exception that the function has raised waits.
@@ -439,6 +448,24 @@ void Runtime::releaseIteratorOfLoop(JSValue iterator)
         return;
     if (std::exchange(generator->loopOwnership, 0) == m_ownershipEpoch && !hasNothingToClose(generator))
         finalizeGeneratorNow(m_globalObject, generator);
+}
+
+GeneratorsOwnedByFrame::GeneratorsOwnedByFrame(Runtime& runtime, PyGenerator* generator)
+    : m_runtime(runtime)
+{
+    if (!generator->body()->codeInfo().hasLoopThatOwnsItsIterator) [[likely]]
+        return;
+    for (unsigned i = 0; i < generator->slotCount() && m_count < m_generators.size(); ++i) {
+        if (auto* held = PyGenerator::tryFrom(generator->slot(i)); held && held->loopOwnership == runtime.ownershipEpoch())
+            m_generators[m_count++] = held;
+    }
+}
+
+void GeneratorsOwnedByFrame::frameIsGone()
+{
+    // That of the innermost loop first, as when they are taken off the stack of the frame.
+    while (m_count)
+        m_runtime.releaseIteratorOfLoop(m_generators[--m_count]);
 }
 
 unsigned whereHandlerBegins(CodeBlock* codeBlock, unsigned offsetOfCatch)

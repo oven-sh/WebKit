@@ -1830,8 +1830,7 @@ void Unit::forLoop(For* node, Last isLast)
     Ref<Label> end = g.newLabel();
 
     Reg iterator = newTemporary();
-    // Nothing but a call: in `for x in (g := f()):` there is a variable as well.
-    unsigned temporary = node->iter->is<Call>() ? beginTemporary(node->iter) : 0;
+    unsigned temporary = beginTemporaryOfLoop(node->iter);
     {
         Reg iterable = exprToIterateOverOrSearch(node->iter);
         loc(node->iter->range);

@@ -334,11 +334,13 @@ static JSValue generatorCloseWithResult(JSGlobalObject* globalObject, PyGenerato
     // It is raised here, by whoever closes the generator, and then thrown in.
     if (JSValue handled = rt.handledException())
         exit->setContext(vm, handled);
+    GeneratorsOwnedByFrame owned(rt, generator);
     JSValue out;
     PyGenerator::Outcome outcome = generator->resume(globalObject, exit, throwAndClose, out);
     EXCEPTION_ASSERT(!!scope.exception() == (outcome == PyGenerator::Outcome::Threw));
     switch (outcome) {
     case PyGenerator::Outcome::Returned:
+        owned.frameIsGone();
         return out;
     case PyGenerator::Outcome::Yielded:
         return raiseRuntimeError(globalObject, scope, describe(generator->kind()), " ignored GeneratorExit"_s);
@@ -346,8 +348,10 @@ static JSValue generatorCloseWithResult(JSGlobalObject* globalObject, PyGenerato
         break;
     }
     scope.release();
-    if (clearPendingExceptionIfMatches(globalObject, rt.GeneratorExit()))
+    if (clearPendingExceptionIfMatches(globalObject, rt.GeneratorExit())) {
+        owned.frameIsGone();
         return jsUndefined();
+    }
     return { };
 }
 
@@ -362,7 +366,9 @@ void generatorIsDropped(JSGlobalObject* globalObject, PyGenerator* generator)
         return;
     // GeneratorExit would go through it unnoticed.
     if (!generator->body()->functionExecutable()->unlinkedExecutable()->pythonCodeHasExceptionHandlers() && !runtime(globalObject).monitoring().wantsExceptions()) {
+        GeneratorsOwnedByFrame owned(runtime(globalObject), generator);
         generator->complete();
+        owned.frameIsGone();
         return;
     }
     finalizeGeneratorNow(globalObject, generator);
