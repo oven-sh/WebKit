@@ -21,7 +21,7 @@ class Facts;
 class Program;
 struct SlotPlanParts;
 
-// Either a field of a scope that is never made (layout, field), or a value that functions no longer capture: function and capture name the first of them.
+// Either a field of a scope that is never made (layout, field), or a value that functions no longer capture: function and capture name the first of them, and every other one has its types.
 struct PromotedVariable {
     ModuleID module;
     StringID name;
@@ -44,11 +44,10 @@ struct RemovedCapture {
     VariableID variable;
 };
 
-// The NewClosure or CallDirect as written stores the operand that it lists for the capture, in front of whatever else it does.
+// The value as written is stored once on each way: a parameter at the entry, anything else right behind the operation that makes it.
 struct StoreOfCapturedValue {
     FunctionID function;
-    ValueID site;
-    uint32_t capture { 0 };
+    ValueID value;
     VariableID variable;
 };
 
@@ -71,7 +70,6 @@ struct PromotedEnvironments {
     }
 
     bool isMaker(FunctionID function) const { return makers.get(function.index()); }
-    bool leadsToMaker(FunctionID function) const { return functionsThatLeadToMakers.get(function.index()); }
 
     const RemovedCapture* findRemoved(FunctionID function, uint32_t capture) const LIFETIME_BOUND
     {
@@ -83,14 +81,19 @@ struct PromotedEnvironments {
         return found != removedCaptures.end() && found->function == function && found->capture == capture ? &*found : nullptr;
     }
     bool isRemoved(FunctionID function, uint32_t capture) const { return !!findRemoved(function, capture); }
+    std::span<const RemovedCapture> removedCapturesOf(FunctionID function) const LIFETIME_BOUND
+    {
+        if (!numberOfRemovedCapturesOf(function))
+            return { };
+        auto found = std::ranges::equal_range(removedCaptures, function, { }, &RemovedCapture::function);
+        return { found.begin(), found.end() };
+    }
 
-    std::span<const StoreOfCapturedValue> storesAt(FunctionID function, ValueID site) const LIFETIME_BOUND
+    std::span<const StoreOfCapturedValue> storesIn(FunctionID function) const LIFETIME_BOUND
     {
         if (stores.isEmpty() || !isMaker(function))
             return { };
-        auto found = std::ranges::equal_range(stores, std::pair { function, site }, { }, [](const StoreOfCapturedValue& store) {
-            return std::pair { store.function, store.site };
-        });
+        auto found = std::ranges::equal_range(stores, function, { }, &StoreOfCapturedValue::function);
         return { found.begin(), found.end() };
     }
 
@@ -101,7 +104,6 @@ struct PromotedEnvironments {
     Vector<RemovedCapture> removedCaptures;
     Vector<StoreOfCapturedValue> stores;
     BitVector makers;
-    BitVector functionsThatLeadToMakers;
 };
 
 PromotedEnvironments planPromotedEnvironments(const Program&, const Facts&, const SlotPlanParts&);

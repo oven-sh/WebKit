@@ -129,7 +129,7 @@ std::optional<CodeUnit> parseCodeUnit(StringView text)
     Vector<StringView, 3> parts;
     for (StringView part : text.splitAllowingEmptyEntries(':'))
         parts.append(part);
-    if (parts.isEmpty() || parts.size() > 3)
+    if (parts.isEmpty() || parts.size() > 2)
         return std::nullopt;
 
     std::optional<FunctionID> function = functionInNameOfCodeUnit(parts[0]);
@@ -141,20 +141,12 @@ std::optional<CodeUnit> parseCodeUnit(StringView text)
     std::optional<CodeRole> role = parseEnum<CodeRole>(parts[1]);
     if (!role)
         return std::nullopt;
-    if (parts.size() == 2)
-        return CodeUnit(*function, *role);
-
-    std::optional<uint16_t> layout = numberInNameOfCodeUnit<uint16_t>(parts[2]);
-    if (*role != CodeRole::Serializer || !layout)
-        return std::nullopt;
-    return CodeUnit::serializer(*function, LayoutID(static_cast<uint32_t>(*layout)));
+    return CodeUnit(*function, *role);
 }
 
 void printCodeUnit(PrintStream& out, CodeUnit unit)
 {
     out.print("f"_s, unit.function.index(), ":"_s, nameOf(unit.role));
-    if (unit.role == CodeRole::Serializer)
-        out.print(":"_s, unit.layoutOfSerializer().index());
 }
 
 static String nameOfStagedUnit(CodeUnit unit)

@@ -279,9 +279,47 @@ static uint64_t headerOfSlimClosureInFrame(LoadedProgram& program, FunctionID fu
     return program.instance().slimClosureHeaders[functionKindData(function).slimClosureKind()] | static_cast<uint64_t>(frameCellState) << 8 * JSCell::cellStateOffset();
 }
 
-static void testClosureMovedToHeapMarksEnvironmentThatItHolds(LoadedProgram& program)
+namespace {
+
+struct alignas(16) ClosureInFrameWithOneCapture {
+    static constexpr size_t placeOfCapture = offsetOfSlimClosureCaptures / sizeof(uint64_t);
+    static constexpr size_t placeOfCopyInHeap = offsetOfCopyInHeapOfClosureInFrame(offsetOfSlimClosureCaptures, 1) / sizeof(uint64_t);
+
+    void make(LoadedProgram& program, FunctionID function, uint64_t capture)
+    {
+        words = { headerOfSlimClosureInFrame(program, function), FunctionTables::of(program.vm()).words[closureNumberOf(function)], capture, 0 };
+    }
+
+    JSCell* moveToHeap(LoadedProgram& program) { return callOperationFromTest(program.vm(), operationAOTMoveClosureToHeap, &program.instance(), reinterpret_cast<JSCell*>(words.data())); }
+    uint64_t address() const { return std::bit_cast<uintptr_t>(words.data()); }
+    JSCell* copyInHeap() const { return std::bit_cast<JSCell*>(words[placeOfCopyInHeap]); }
+
+    std::array<uint64_t, sizeOfClosureInFrame(offsetOfSlimClosureCaptures, 1) / sizeof(uint64_t)> words { };
+};
+static_assert(ClosureInFrameWithOneCapture::placeOfCopyInHeap == ClosureInFrameWithOneCapture::placeOfCapture + 1 && sizeof(ClosureInFrameWithOneCapture) == (ClosureInFrameWithOneCapture::placeOfCopyInHeap + 1) * sizeof(uint64_t));
+
+} // anonymous namespace
+
+static uint64_t captureOf(JSCell* closureInHeap)
+{
+    return uncheckedDowncast<SlimClosure>(closureInHeap)->captures()[0];
+}
+
+static unsigned numberOfClosuresInHeap(LoadedProgram& program, FunctionID function)
 {
     VM& vm = program.vm();
+    uint64_t word = FunctionTables::of(vm).words[closureNumberOf(function)];
+    unsigned count = 0;
+    HeapIterationScope iterationScope(vm.heap);
+    vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+        count += isJSCellKind(kind) && static_cast<JSCell*>(cell)->type() == SlimClosureType && reinterpret_cast<uint64_t*>(cell)[offsetOfSlimClosureWord / sizeof(uint64_t)] == word;
+        return IterationStatus::Continue;
+    });
+    return count;
+}
+
+static void testClosureMovedToHeapMarksEnvironmentThatItHolds(LoadedProgram& program)
+{
     FunctionID function = slimFunctionNamed(program, "increment"_s);
     CaptureCounts counts = captureCountsOf(function);
     AOT_TEST_CHECK(counts.references == 1 && counts.captures == 1);
@@ -289,18 +327,23 @@ static void testClosureMovedToHeapMarksEnvironmentThatItHolds(LoadedProgram& pro
     Environment* other = allocateEnvironment(program);
     const EnvironmentData& layout = environment->layout();
 
-    alignas(16) std::array<uint64_t, 4> inFrame { headerOfSlimClosureInFrame(program, function), FunctionTables::of(vm).words[closureNumberOf(function)], std::bit_cast<uint64_t>(environment), std::bit_cast<uint64_t>(other) };
-    JSCell* moved = callOperationFromTest(vm, operationAOTMoveClosureToHeap, &program.instance(), reinterpret_cast<JSCell*>(inFrame.data()));
+    struct {
+        ClosureInFrameWithOneCapture closure;
+        uint64_t wordBehindClosure;
+    } inFrame;
+    inFrame.closure.make(program, function, std::bit_cast<uint64_t>(environment));
+    inFrame.wordBehindClosure = std::bit_cast<uint64_t>(other);
+    JSCell* moved = inFrame.closure.moveToHeap(program);
     AOT_TEST_CHECK(moved->type() == SlimClosureType && moved->cellState() == CellState::DefinitelyWhite && uncheckedDowncast<SlimClosure>(moved)->function() == function);
-    AOT_TEST_CHECK(uncheckedDowncast<SlimClosure>(moved)->captures()[0] == inFrame[2]);
-    AOT_TEST_CHECK(environment->isEscaped() && &environment->layout() == &layout && !other->isEscaped());
+    AOT_TEST_CHECK(captureOf(moved) == std::bit_cast<uint64_t>(environment) && inFrame.closure.copyInHeap() == moved);
+    AOT_TEST_CHECK(environment->isEscaped() && &environment->layout() == &layout && !other->isEscaped() && inFrame.wordBehindClosure == std::bit_cast<uint64_t>(other));
 
     JSObject* object = constructEmptyObject(program.realm());
     uint8_t flagsOfObject = object->inlineTypeFlags();
     for (JSValue held : { JSValue(object), JSValue(), jsUndefined(), jsNumber(7), jsNumber(0.5) }) {
-        inFrame[2] = static_cast<uint64_t>(JSValue::encode(held));
-        moved = callOperationFromTest(vm, operationAOTMoveClosureToHeap, &program.instance(), reinterpret_cast<JSCell*>(inFrame.data()));
-        AOT_TEST_CHECK(uncheckedDowncast<SlimClosure>(moved)->captures()[0] == inFrame[2]);
+        inFrame.closure.make(program, function, static_cast<uint64_t>(JSValue::encode(held)));
+        moved = inFrame.closure.moveToHeap(program);
+        AOT_TEST_CHECK(captureOf(moved) == static_cast<uint64_t>(JSValue::encode(held)));
     }
     AOT_TEST_CHECK(object->inlineTypeFlags() == flagsOfObject && !other->isEscaped());
 }
@@ -309,29 +352,100 @@ static void testClosureMovedToHeapTakesAlongClosuresOfFramesThatItHolds(LoadedPr
 {
     VM& vm = program.vm();
     FunctionID function = slimFunctionNamed(program, "increment"_s);
-    uint64_t header = headerOfSlimClosureInFrame(program, function);
-    uint64_t word = FunctionTables::of(vm).words[closureNumberOf(function)];
     Environment* environment = allocateEnvironment(program);
 
     constexpr size_t depth = 2000;
-    struct alignas(16) ClosureInFrame {
-        std::array<uint64_t, 4> words;
-    };
-    Vector<ClosureInFrame> inFrames(depth);
-    inFrames[0].words = { header, word, std::bit_cast<uint64_t>(environment), 0 };
+    std::array<ClosureInFrameWithOneCapture, depth> inFrames;
+    inFrames[0].make(program, function, std::bit_cast<uint64_t>(environment));
     for (size_t level = 1; level < depth; ++level)
-        inFrames[level].words = { header, word, std::bit_cast<uint64_t>(&inFrames[level - 1]), 0 };
+        inFrames[level].make(program, function, inFrames[level - 1].address());
 
-    JSCell* moved = callOperationFromTest(vm, operationAOTMoveClosureToHeap, &program.instance(), reinterpret_cast<JSCell*>(&inFrames[depth - 1]));
-    inFrames.fill(ClosureInFrame { });
+    JSCell* moved = inFrames[depth - 1].moveToHeap(program);
+    inFrames.fill(ClosureInFrameWithOneCapture { });
     vm.heap.collectSync(CollectionScope::Full);
     JSCell* closure = moved;
     for (size_t level = depth; --level;) {
         AOT_TEST_CHECK(closure->type() == SlimClosureType && static_cast<uint8_t>(closure->cellState()) != frameCellState && uncheckedDowncast<SlimClosure>(closure)->function() == function);
-        closure = std::bit_cast<JSCell*>(uncheckedDowncast<SlimClosure>(closure)->captures()[0]);
+        closure = std::bit_cast<JSCell*>(captureOf(closure));
     }
-    AOT_TEST_CHECK(closure->type() == SlimClosureType && uncheckedDowncast<SlimClosure>(closure)->captures()[0] == std::bit_cast<uint64_t>(environment) && environment->isEscaped());
+    AOT_TEST_CHECK(closure->type() == SlimClosureType && captureOf(closure) == std::bit_cast<uint64_t>(environment) && environment->isEscaped());
     ensureStillAliveHere(moved);
+}
+
+static void testClosureMovedToHeapTwiceIsOneCell(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    FunctionID function = slimFunctionNamed(program, "increment"_s);
+    Environment* environment = allocateEnvironment(program);
+
+    ClosureInFrameWithOneCapture inFrame;
+    inFrame.make(program, function, std::bit_cast<uint64_t>(environment));
+    AOT_TEST_CHECK(!inFrame.copyInHeap());
+    JSCell* moved = inFrame.moveToHeap(program);
+    AOT_TEST_CHECK(inFrame.copyInHeap() == moved && static_cast<uint8_t>(reinterpret_cast<JSCell*>(inFrame.words.data())->cellState()) == frameCellState);
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(inFrame.moveToHeap(program) == moved && inFrame.copyInHeap() == moved && captureOf(moved) == std::bit_cast<uint64_t>(environment));
+
+    std::array<ClosureInFrameWithOneCapture, 2> holders;
+    for (ClosureInFrameWithOneCapture& holder : holders) {
+        holder.make(program, function, inFrame.address());
+        AOT_TEST_CHECK(captureOf(holder.moveToHeap(program)) == std::bit_cast<uint64_t>(moved));
+    }
+    AOT_TEST_CHECK(holders[0].copyInHeap() != holders[1].copyInHeap() && inFrame.copyInHeap() == moved);
+    ensureStillAliveHere(moved);
+}
+
+static void testChainOfClosuresMovedToHeapManyTimesIsCopiedOnce(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    FunctionID function = slimFunctionNamed(program, "increment"_s);
+    Environment* environment = allocateEnvironment(program);
+    unsigned numberOfClosuresBefore = numberOfClosuresInHeap(program, function);
+
+    constexpr size_t depth = 2000;
+    std::array<ClosureInFrameWithOneCapture, depth> inFrames;
+    inFrames[0].make(program, function, std::bit_cast<uint64_t>(environment));
+    for (size_t level = 1; level < depth; ++level)
+        inFrames[level].make(program, function, inFrames[level - 1].address());
+
+    JSCell* moved = inFrames[depth - 1].moveToHeap(program);
+    AOT_TEST_CHECK(numberOfClosuresInHeap(program, function) == numberOfClosuresBefore + depth);
+    for (size_t turn = 1; turn < depth; ++turn)
+        AOT_TEST_CHECK(inFrames[depth - 1].moveToHeap(program) == moved);
+    JSCell* closure = moved;
+    for (size_t level = depth; level--;) {
+        AOT_TEST_CHECK(inFrames[level].moveToHeap(program) == closure);
+        closure = std::bit_cast<JSCell*>(captureOf(closure));
+    }
+    AOT_TEST_CHECK(closure == environment && numberOfClosuresInHeap(program, function) == numberOfClosuresBefore + depth);
+
+    std::array<ClosureInFrameWithOneCapture, depth> movedFromBottom;
+    movedFromBottom[0].make(program, function, std::bit_cast<uint64_t>(environment));
+    for (size_t level = 1; level < depth; ++level)
+        movedFromBottom[level].make(program, function, movedFromBottom[level - 1].address());
+    for (size_t level = 0; level < depth; ++level) {
+        JSCell* copy = movedFromBottom[level].moveToHeap(program);
+        AOT_TEST_CHECK(captureOf(copy) == (level ? std::bit_cast<uint64_t>(movedFromBottom[level - 1].copyInHeap()) : std::bit_cast<uint64_t>(environment)));
+    }
+    AOT_TEST_CHECK(numberOfClosuresInHeap(program, function) == numberOfClosuresBefore + 2 * depth);
+}
+
+static void testSlotOfFrameThatIsUsedAgainIsCopiedAgain(LoadedProgram& program)
+{
+    FunctionID function = slimFunctionNamed(program, "increment"_s);
+    Environment* first = allocateEnvironment(program);
+    Environment* second = allocateEnvironment(program);
+
+    ClosureInFrameWithOneCapture slot;
+    slot.make(program, function, std::bit_cast<uint64_t>(first));
+    JSCell* copyOfFirst = slot.moveToHeap(program);
+    slot.make(program, function, std::bit_cast<uint64_t>(second));
+    AOT_TEST_CHECK(!slot.copyInHeap() && !second->isEscaped());
+    JSCell* copyOfSecond = slot.moveToHeap(program);
+    AOT_TEST_CHECK(copyOfSecond != copyOfFirst && slot.copyInHeap() == copyOfSecond && second->isEscaped());
+    AOT_TEST_CHECK(captureOf(copyOfFirst) == std::bit_cast<uint64_t>(first) && captureOf(copyOfSecond) == std::bit_cast<uint64_t>(second));
+    ensureStillAliveHere(copyOfFirst);
 }
 
 static void testComponentsOfVariantAreIndependent(LoadedProgram& program)
@@ -450,6 +564,9 @@ std::span<const NativeTest> compiledStructureTests()
         { "compiled-structures/collector-takes-a-link-between-environments-for-no-cell"_s, withProgram<testCollectorTakesLinkBetweenEnvironmentsForNoCell> },
         { "compiled-structures/closure-moved-to-the-heap-marks-the-environment-that-it-holds"_s, withProgram<testClosureMovedToHeapMarksEnvironmentThatItHolds> },
         { "compiled-structures/closure-moved-to-the-heap-takes-along-the-closures-of-frames-that-it-holds"_s, withProgram<testClosureMovedToHeapTakesAlongClosuresOfFramesThatItHolds> },
+        { "compiled-structures/closure-moved-to-the-heap-twice-is-one-cell"_s, withProgram<testClosureMovedToHeapTwiceIsOneCell> },
+        { "compiled-structures/chain-of-closures-moved-to-the-heap-many-times-is-copied-once"_s, withProgram<testChainOfClosuresMovedToHeapManyTimesIsCopiedOnce> },
+        { "compiled-structures/slot-of-the-frame-that-is-used-again-is-copied-again"_s, withProgram<testSlotOfFrameThatIsUsedAgainIsCopiedAgain> },
         { "compiled-structures/components-of-variant-are-independent"_s, withProgram<testComponentsOfVariantAreIndependent> },
         { "compiled-structures/variant-nobody-holds-lives-as-long-as-its-prototype"_s, withProgram<testVariantNobodyHoldsLivesAsLongAsItsPrototype> },
         { "compiled-structures/header-of-an-allocation-comes-without-a-cell"_s, withProgram<testHeaderOfAnAllocationComesWithoutACell> },

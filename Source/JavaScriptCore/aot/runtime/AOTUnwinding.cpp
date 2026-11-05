@@ -14,6 +14,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
+#include "AOTMembersLeftOut.h"
 #include "AOTSavedFrame.h"
 #include "AOTStackTrace.h"
 #include "AOTState.h"
@@ -293,6 +294,8 @@ CompiledUnwindResult unwindRunOfThrow(VM& vm, Instance& instanceThatThrows, cons
 
 CompiledUnwindResult unwindCompiledFrames(VM& vm, const CompiledFrameIterator& frames, VMEntryRecord& record, bool isTermination)
 {
+    if (isTermination) [[unlikely]]
+        stopIfMissOfReachIsPending(vm);
     const int8_t* bufferSlots = bufferSlotsByRegisterIndex();
     if (CallFrame* stubFrame = frames.generatorStubFrameLeft())
         completeGeneratorLeftByThrow(stubFrame);

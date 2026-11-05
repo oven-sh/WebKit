@@ -17,6 +17,7 @@
 #include "AOTTypeIDs.h"
 #include "AOTVector.h"
 #include "JSExportMacros.h"
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
@@ -96,6 +97,8 @@ struct MethodSelector {
     bool isTyped { false };
     Representation result { Representation::JSValue };
     TypeID typeOfResult;
+    BitVector methodsEnteredDirectly;
+    bool everyMethodIsEnteredDirectly { false };
 };
 
 struct MethodTablePlan {
@@ -104,16 +107,12 @@ struct MethodTablePlan {
     uint32_t numberOfUnits { 0 };
 };
 
-enum class SerializerParameter : uint8_t { Object, Builder, LevelsAround };
-inline constexpr unsigned numberOfSerializerParameters = 3;
-
 struct CallingConventionParts {
     Vector<FunctionConvention> conventions;
     Vector<Representation> formsOfResults;
     Vector<Representation> formsOfEntryParameters;
     Vector<TypeID> typesBehindGuards;
     MethodTablePlan methodTable;
-    Vector<FunctionID> functionsOfSerializers;
 };
 
 static constexpr unsigned maxArgumentsOfTableCall = 4;
@@ -160,8 +159,7 @@ public:
         return m_functionsWithGenericEntry.findBit(lower.index() + 1, true) >= higher.index();
     }
 
-    uint32_t numberOfUnits() const { return static_cast<uint32_t>(m_parts.conventions.size() * numberOfCodeRolesOfOneFunction) + m_parts.methodTable.numberOfUnits + numberOfPlacesOfSerializers(); }
-    uint32_t firstSerializer() const { return numberOfUnits() - numberOfPlacesOfSerializers(); }
+    uint32_t numberOfUnits() const { return static_cast<uint32_t>(m_parts.conventions.size() * numberOfCodeRolesOfOneFunction) + m_parts.methodTable.numberOfUnits; }
     uint32_t indexOf(CodeUnit unit) const
     {
         if (!isRoleOfOneFunction(unit.role))
@@ -198,9 +196,7 @@ public:
             return m_parts.formsOfResults[convention.firstResult + resultIndex];
         }
         RELEASE_ASSERT(!resultIndex);
-        if (unit.role == CodeRole::Serializer)
-            return Representation::Int32;
-        return isTableRole(unit.role) ? methodSelector(unit.numberOfBoundArguments).result : Representation::JSValue;
+        return isTableRole(unit.role) ? methodSelector(unit.placeOfSelector()).result : Representation::JSValue;
     }
     JS_EXPORT_PRIVATE ArgumentLocations locationsOf(const Program&, CodeUnit) const;
     JS_EXPORT_PRIVATE uint32_t stackWordsReservedByCallersOf(const Program&, CodeUnit callee) const;
@@ -222,14 +218,19 @@ public:
     const MethodSelector& methodSelector(uint32_t selector) const LIFETIME_BOUND { return m_parts.methodTable.selectors[selector]; }
     const MethodFamily& familyOf(const MethodSelector& selector) const LIFETIME_BOUND { return m_parts.methodTable.families[selector.family]; }
     JS_EXPORT_PRIVATE std::optional<uint32_t> findMethodSelector(PropertyKeyID, unsigned numberOfArguments) const;
-    CodeUnit tableLookupOf(const MethodSelector& selector) const { return { familyOf(selector).methods[0], CodeRole::TableLookup, placeOf(selector) }; }
-    CodeUnit serializerOf(LayoutID layout) const
+    CodeUnit tableLookupOf(const MethodSelector& selector) const { return CodeUnit::ofMethodTable(familyOf(selector).methods[0], CodeRole::TableLookup, placeOf(selector)); }
+    CodeUnit unitEnteredThroughTable(const Program&, const MethodSelector& selector, FunctionID method) const
     {
-        FunctionID listedUnder = layout.index() < m_parts.functionsOfSerializers.size() ? m_parts.functionsOfSerializers[layout.index()] : FunctionID();
-        return listedUnder ? CodeUnit::serializer(listedUnder, layout) : CodeUnit();
+        const Vector<FunctionID>& methods = familyOf(selector).methods;
+        size_t place = std::ranges::lower_bound(methods, method) - methods.begin();
+        return selector.methodsEnteredDirectly.get(place) ? directEntryOf(method) : CodeUnit::ofMethodTable(method, CodeRole::TableEntry, placeOf(selector));
     }
-    uint32_t numberOfPlacesOfSerializers() const { return static_cast<uint32_t>(m_parts.functionsOfSerializers.size()); }
-    CodeUnit unitEnteredThroughTable(const Program&, const MethodSelector& selector, FunctionID method) const { return { method, CodeRole::TableEntry, placeOf(selector) }; }
+    const MethodTableRow* findRowOfMethodTable(uint32_t selector, LayoutID receiver) const LIFETIME_BOUND
+    {
+        const Vector<MethodTableRow>& rows = familyOf(methodSelector(selector)).rows;
+        auto row = std::ranges::lower_bound(rows, receiver, { }, &MethodTableRow::layout);
+        return row != rows.end() && row->layout == receiver ? &*row : nullptr;
+    }
 
 private:
     static bool returnsAsDeclared(CodeRole role, const FunctionConvention& convention) { return (returnsResultOfFunction(role) || role == CodeRole::ModuleStart) && !convention.has(CodeRole::CoroutineBody); }
@@ -248,11 +249,11 @@ private:
     JS_EXPORT_PRIVATE bool existsBehindUnitsOfFunctions(CodeUnit) const;
     JS_EXPORT_PRIVATE uint32_t indexBehindUnitsOfFunctions(CodeUnit) const;
 
-    uint16_t placeOf(const MethodSelector& selector) const
+    uint32_t placeOf(const MethodSelector& selector) const
     {
         size_t place = static_cast<size_t>(&selector - m_parts.methodTable.selectors.begin());
-        RELEASE_ASSERT(place < m_parts.methodTable.selectors.size() && place <= UINT16_MAX);
-        return static_cast<uint16_t>(place);
+        RELEASE_ASSERT(place < m_parts.methodTable.selectors.size() && place < 1u << 24);
+        return static_cast<uint32_t>(place);
     }
 
     CallingConventionParts m_parts;

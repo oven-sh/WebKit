@@ -21,6 +21,7 @@
 #include "AOTNameClass.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTResultRules.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeWords.h"
 #include "AOTSlotEmitter.h"
 #include "AOTStubCalls.h"
@@ -29,6 +30,7 @@
 #include "AOTStubsElements.h"
 #include "AOTStubsGlobalBindings.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTTruthinessEmitter.h"
 #include "AOTTypeArena.h"
 #include "ECMAMode.h"
 #include "GetterSetter.h"
@@ -532,6 +534,9 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
     bool goesByClass = boxedCall && servesCallsByName(*boxedCall, count);
     std::optional<CompiledMethodOfArray> compiledMethod = !goesByClass && call->methodOfReceiverAsMade() && count <= maxArgumentCountOfCompiledMethodOfArray ? compiledMethodOfArray(call->methodOfReceiverAsMade()) : std::nullopt;
     std::optional<NumberedImmediate> answers = (!goesByClass || call->methodIsNamedByKeyAlone()) && !compiledMethod && m_plan.slots().hasColumn(read.key) ? answersOf(call, read.key, SiteUse::Call) : std::nullopt;
+    bool standsBehindFailedLookInLoop = goesByClass && m_code.at(call.block()).frequency == BlockFrequency::Rare && m_generator.paysForCodeInLine(call.block());
+    if (!answers && standsBehindFailedLookInLoop && !read.pattern && m_plan.slots().hasColumn(read.key) && !isSymbolOfRealm(read.key) && comesAgain(call))
+        answers = answersAtSite(call, read.key, SiteUse::Call);
     RELEASE_ASSERT((!read.pattern || goesByClass) && (!lentArguments || !goesByClass));
     StubKey byClass = !goesByClass ? StubKey() : read.pattern ? (answers ? callMethodOfBuiltinClassAtSiteWithSharedPattern(*boxedCall, count) : callMethodOfBuiltinClassWithSharedPattern(*boxedCall, count))
         : answers ? callMethodOfBuiltinClassAtSite(*boxedCall, count)
@@ -565,11 +570,43 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
     return true;
 }
 
+bool AccessEmitter::readsTruthAtSite(BlockID block, ValueID id) const
+{
+    const Operation& read = operationAt(id);
+    PropertyKeyID key = read.key();
+    if (read.isFreeName() || isSymbolOfRealm(key) || liesInThread(key) || !m_functionComesAgain)
+        return false;
+    if (m_code.at(block).frequency == BlockFrequency::Rare || testsItsOwnGuess(read))
+        return false;
+    return m_program.nameClassOf(key) != NameClass::Length;
+}
+
+void AccessEmitter::branchOnTruthAtSite(const ValueContext& read)
+{
+    PropertyKeyID key = read->key();
+    ValueID receiverID = read->objectOperand();
+    Boxed receiver = in<Boxed>(receiverID);
+    m_out.noteForm(Form::Closed, StateOfKnowledge::Always);
+    std::optional<NumberedImmediate> answers = answersOfKeyThatIsNoSymbolOfRealm(read, key, SiteUse::Read);
+    if (!answers) {
+        emitter<TruthinessEmitter>().branchOnTruthiness(read, getById(read, receiver, key, receiverID), typeOf(read.id()), read.branchTargets());
+        return;
+    }
+    NameAtSite name = m_plan.slots().hasColumn(key) ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
+    ReceiverAtSite receiverIs = typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
+    LValue operands[] = { receiver.value() };
+    emitter<RuntimeCallEmitter>().callStubAndBranch(read, readTruthAtSite(receiverIs, name), operands, { .numberedImmediate = *answers }, read.branchTargets());
+}
+
 void AccessEmitter::generatePropGet(const ValueContext& value)
 {
     if (value->isFreeName()) {
         m_out.noteForm(Form::Runtime, StateOfKnowledge::FreeName);
         define(value, getFreeName(value));
+        return;
+    }
+    if (value.isBranchCondition()) {
+        branchOnTruthAtSite(value);
         return;
     }
     ValueID onlyUser = m_code.onlyUserOf(value.id());

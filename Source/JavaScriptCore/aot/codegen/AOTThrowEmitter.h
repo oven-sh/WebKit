@@ -57,6 +57,7 @@ private:
     UncheckedKeyHashMap<uint64_t, Vector<CheckedThrowSite, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_checkedThrowSites;
 };
 
+void emitStraightThrowSite(CCallHelpers&, CodeRecords&, const ThrowSite&, std::optional<GPRReg> operand, unsigned registerNumberWithoutOperand, uint32_t callSite);
 Vector<uint32_t, 3> throwSiteWords(const ThrowSite&, Representation, unsigned registerNumber);
 inline uint8_t mentionsAmongThrowSiteWords(const ThrowSite& site, size_t numberOfWords)
 {

@@ -952,11 +952,12 @@ function checkOwnSlot(overload: ModelOverload, model: TableModel, problems: Prob
   if (!realmGetterPattern.test(getter)) {
     report(problems, overload, `${JSON.stringify(getter)} is not the name of a getter of JSGlobalObject`);
   }
-  if (!overload.result.type.isAnything && builtin.mutability !== "AlwaysLocked") {
+  const isProof = !overload.result.type.isAnything && !overload.flags.includes("ResultIsDeclaredOnly");
+  if (isProof && builtin.mutability !== "AlwaysLocked") {
     report(
       problems,
       overload,
-      "a store to the property keeps the Structure, so an own slot that is not AlwaysLocked holds b.any",
+      "a store to the property keeps the Structure, so an own slot that is not AlwaysLocked holds b.any, or its type is declared only",
     );
   }
   if (offset !== names.length - 1 || names.at(-1) !== builtin.name || offset > maximumOwnSlotOffset) {
@@ -1096,10 +1097,11 @@ const mayBeObject = (type: ModelType): boolean =>
   type.isAnything || type.hasAnyObject || type.hasAnyFunction || type.hasPlainData || type.parts.length > 0;
 
 function conditionsOf({ attachments }: ModelBuiltin): ModelCondition[] {
-  const { featureUses, unseenCodeCondition, moduleLoads, calledFunctions } = attachments;
+  const { featureUses, unseenCodeCondition, conditionOnInstancesThatAnswerEveryName, moduleLoads, calledFunctions } = attachments;
   return [
     ...featureUses.map(use => use.condition),
     unseenCodeCondition,
+    conditionOnInstancesThatAnswerEveryName,
     ...moduleLoads.map(load => load.condition),
     ...calledFunctions.map(called => called.condition),
   ].flatMap(condition => condition ?? []);

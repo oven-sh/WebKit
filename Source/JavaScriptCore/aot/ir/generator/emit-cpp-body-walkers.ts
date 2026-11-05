@@ -28,12 +28,19 @@ interface Placed<Part extends Parameter> {
   readonly offset: string;
 }
 
+interface LoopOverValue {
+  readonly definition: Lines;
+  readonly keepsCases: boolean;
+}
+
 interface Walker {
   readonly name: string;
   readonly head: (cursor: Cursor) => Lines;
   readonly isMember: boolean;
   readonly answerForParameter: string;
   readonly bodyOf: (entry: Entry) => Lines;
+  readonly walksOnly?: Cursor["className"];
+  readonly loopOverValue?: LoopOverValue;
 }
 
 type Translation =
@@ -339,6 +346,149 @@ function operandByPlace(operations: readonly Entry[]): string[] {
   );
 }
 
+const mostNamedOperandsInOutline = 6;
+const placeBehindCountInOutline = 0x3f;
+const payloadInOutline = 0x40;
+const outlineIsIncomplete = 0x80;
+const greatestPlaceInOutline = 0xff;
+const placeFoundByCase = 0xff;
+const outlineOfEntryNotOnWire = BigInt((placeFoundByCase << 8) | outlineIsIncomplete | payloadInOutline);
+
+function refuseOutline(entry: Entry, problem: string): never {
+  throw new SchemaError(entry.location, `${entry.name} does not fit the outline of its fields: ${problem}`);
+}
+
+function outlineOfFields(entry: Entry): bigint {
+  if (!entry.isWire) return outlineOfEntryNotOnWire;
+  const numberOfFlagsWords = wireFlagsOf(entry).length > 0 ? 1 : 0;
+  const operands = wireSlotsOf(entry).flatMap(({ parameter, offset }) =>
+    parameter.tag === "Operand" ? [{ operand: parameter, offset }] : [],
+  );
+  const positionOfVariadic = operands.findIndex(({ operand }) => operand.isVariadic);
+  if (positionOfVariadic >= 0 && positionOfVariadic !== operands.length - 1) {
+    refuseOutline(entry, "an operand follows the variadic ones");
+  }
+  const variadic = positionOfVariadic < 0 ? null : operands[positionOfVariadic];
+  const named = variadic === null ? operands : operands.slice(0, positionOfVariadic);
+  if (named.some(({ operand }, position) => operand.index !== position)) {
+    refuseOutline(entry, "the named operands on the wire are not its first ones in their order");
+  }
+  if (variadic !== null && named.length !== entry.namedOperands.length) {
+    refuseOutline(entry, "a named operand is not on the wire, and variadic ones are");
+  }
+  if (named.length > mostNamedOperandsInOutline) refuseOutline(entry, "it has too many named operands");
+
+  const countsInFront = named.length > 0 ? named[0].offset.counted : [];
+  if (named.some(({ offset }) => offset.counted.length !== countsInFront.length)) {
+    refuseOutline(entry, "a list stands between its named operands");
+  }
+  const isListOfWords = countsInFront.every(
+    ({ count, wordsPerElement }) => count.counted.length === 0 && wordsPerElement === 1,
+  );
+  if (countsInFront.length > 1 || !isListOfWords) {
+    refuseOutline(entry, "more than one list of single words stands in front of its named operands");
+  }
+  const [listInFront] = countsInFront;
+  const placeBehindCount = listInFront === undefined ? 0 : listInFront.count.fixedWords + numberOfFlagsWords + 1;
+  if (placeBehindCount > placeBehindCountInOutline) {
+    refuseOutline(entry, "the list in front lies too far behind the head");
+  }
+
+  const placesBehindNamed = named.map(({ offset }) => offset.fixedWords + numberOfFlagsWords + 1);
+  if (placesBehindNamed.some(place => place > greatestPlaceInOutline)) {
+    refuseOutline(entry, "a named operand lies too far behind the head");
+  }
+  const placeOfFirstVariadic =
+    variadic === null
+      ? 0
+      : variadic.offset.counted.length > 0
+        ? placeFoundByCase
+        : Math.min(variadic.offset.fixedWords + numberOfFlagsWords + 1, placeFoundByCase);
+  const marks =
+    placeBehindCount |
+    (placedPayloadOf(entry).length > 0 ? payloadInOutline : 0) |
+    (placeBehindCount > 0 ? outlineIsIncomplete : 0);
+  const places = placesBehindNamed.reduceRight((behind, place) => (behind << 8n) | BigInt(place), 0n);
+  return (places << 16n) | BigInt((placeOfFirstVariadic << 8) | marks);
+}
+
+function outlineOfFieldsColumn(operations: readonly Entry[]): string[] {
+  const textOf = (outline: bigint) => `0x${outline.toString(16)}`;
+  return blocks(
+    [
+      `inline constexpr uint64_t placeBehindCountInOutlineOfFields = ${placeBehindCountInOutline};`,
+      `inline constexpr uint64_t payloadInOutlineOfFields = ${payloadInOutline};`,
+      `inline constexpr uint64_t outlineOfFieldsIsIncomplete = ${outlineIsIncomplete};`,
+      `inline constexpr uint64_t placeOfVariadicBodyOperandsFoundByCase = ${placeFoundByCase};`,
+    ],
+    constexprSwitch({
+      signature: "uint64_t outlineOfFieldsOfBodyValue(Opcode opcode)",
+      subject: "opcode",
+      enumName: "Opcode",
+      cases: operations.map(entry => ({ label: entry.name, value: textOf(outlineOfFields(entry)) })),
+      defaultValue: textOf(outlineOfEntryNotOnWire),
+    }),
+    `static_assert(!!(outlineOfFieldsOfBodyValue(Opcode::Parameter) & outlineOfFieldsIsIncomplete));
+
+ALWAYS_INLINE uint64_t outlineOfFieldsOf(Opcode opcode) { return ColumnTable<Opcode, uint64_t, outlineOfFieldsOfBodyValue>::at(opcode); }
+ALWAYS_INLINE uint64_t placesBehindNamedOperandsIn(uint64_t outline) { return outline >> 16; }
+ALWAYS_INLINE uint64_t placeOfFirstVariadicOperandIn(uint64_t outline) { return outline >> 8 & 0xff; }
+
+inline uint32_t numberOfWordsInFrontOfNamedOperands(uint64_t outline, const uint32_t* wordsBehindHead)
+{
+    uint64_t placeBehindCount = outline & placeBehindCountInOutlineOfFields;
+    RELEASE_ASSERT(placeBehindCount);
+    return wordsBehindHead[placeBehindCount - 1];
+}`.split("\n"),
+  );
+}
+
+const variadicOperandsByOutline = `ALWAYS_INLINE std::span<const ValueID> BodyValue::variadicOperands() const
+{
+    uint64_t placeOfFirst = placeOfFirstVariadicOperandIn(outlineOfFieldsOf(m_opcode));
+    if (!placeOfFirst)
+        return { };
+    if (placeOfFirst != placeOfVariadicBodyOperandsFoundByCase) [[likely]]
+        return wordsBehindHead().operandsAt(static_cast<uint32_t>(placeOfFirst - 1));
+    return variadicOperandsFoundByCase();
+}`.split("\n");
+
+const forEachOperandByOutline = `template<typename Functor>
+void BodyValue::forEachOperand(const Functor& functor) const
+{
+    uint64_t outline = outlineOfFieldsOf(m_opcode);
+    const uint32_t* words = m_words + numberOfHeadWords;
+    if (outline & outlineOfFieldsIsIncomplete) [[unlikely]] {
+        if (isParameter())
+            return;
+        words += numberOfWordsInFrontOfNamedOperands(outline, words);
+    }
+    std::span<const ValueID> variadic = variadicOperands();
+    uint32_t operandIndex = 0;
+    for (uint64_t places = placesBehindNamedOperandsIn(outline); places; places >>= 8)
+        visitBodyOperand(ValueID::fromBits(words[(places & 0xff) - 1]), operandIndex++, functor);
+    visitVariadicBodyOperands(variadic, operandIndex, functor);
+}`.split("\n");
+
+const copyFieldsByOutline = `template<OperationHolder Holder, typename Functor>
+void copyFields(const BodyValue& value, Holder& holder, const Functor& operandOf)
+{
+    uint64_t outline = outlineOfFieldsOf(value.opcode());
+    const uint32_t* words = value.words() + BodyValue::numberOfHeadWords;
+    if (outline & outlineOfFieldsIsIncomplete) [[unlikely]] {
+        if (value.isParameter())
+            return;
+        words += numberOfWordsInFrontOfNamedOperands(outline, words);
+    }
+    if (outline & payloadInOutlineOfFields)
+        copyPayload(value, holder);
+    uint32_t operandIndex = 0;
+    for (uint64_t places = placesBehindNamedOperandsIn(outline); places; places >>= 8)
+        copyBodyOperand(ValueID::fromBits(words[(places & 0xff) - 1]), operandIndex++, holder, operandOf);
+    if (placeOfFirstVariadicOperandIn(outline))
+        copyVariadicBodyOperands(value.variadicOperands(), holder, operandOf);
+}`.split("\n");
+
 function listVariadicOperands(entry: Entry): string[] {
   const variadic = placedOperandsOf(entry).find(({ part }) => part.isVariadic);
   return [variadic === undefined ? "return { };" : `return fields.operandsAt(${variadic.offset});`];
@@ -463,6 +613,10 @@ function copyEntry(entry: Entry): string[] {
   return [...statements, "return;"];
 }
 
+function copyPayloadOfEntry(entry: Entry): string[] {
+  return [...placedPayloadOf(entry).flatMap(field => copyPayload(entry, field)), "return;"];
+}
+
 function walkersOf(schema: Schema): Walker[] {
   return [
     {
@@ -474,6 +628,7 @@ function walkersOf(schema: Schema): Walker[] {
       isMember: true,
       answerForParameter: "return;",
       bodyOf: visitOperands,
+      loopOverValue: { definition: forEachOperandByOutline, keepsCases: true },
     },
     {
       name: "Operand",
@@ -486,7 +641,9 @@ function walkersOf(schema: Schema): Walker[] {
     },
     {
       name: "VariadicOperands",
-      head: ({ className }) => [`inline std::span<const ValueID> ${className}::variadicOperands() const`],
+      head: ({ className }) => [
+        `inline std::span<const ValueID> ${className}::${className === "BodyValue" ? "variadicOperandsFoundByCase" : "variadicOperands"}() const`,
+      ],
       isMember: true,
       answerForParameter: "return { };",
       bodyOf: listVariadicOperands,
@@ -502,6 +659,17 @@ function walkersOf(schema: Schema): Walker[] {
       bodyOf: entry => visitReferences(schema, entry),
     },
     {
+      name: "CopyPayload",
+      head: ({ className, parameter }) => [
+        "template<OperationHolder Holder>",
+        `NEVER_INLINE void copyPayload(const ${className}& ${parameter}, Holder& holder)`,
+      ],
+      isMember: false,
+      answerForParameter: "return;",
+      bodyOf: copyPayloadOfEntry,
+      walksOnly: "BodyValue",
+    },
+    {
       name: "CopyFields",
       head: ({ className, parameter }) => [
         "template<OperationHolder Holder, typename Functor>",
@@ -510,6 +678,7 @@ function walkersOf(schema: Schema): Walker[] {
       isMember: false,
       answerForParameter: "return;",
       bodyOf: copyEntry,
+      loopOverValue: { definition: copyFieldsByOutline, keepsCases: false },
     },
   ];
 }
@@ -538,7 +707,12 @@ function defineWalker(cursor: Cursor, walker: Walker): string[] {
         `BodyFields fields = ${receiver}wordsBehindHead(caseWithMark / ${markOfFlagsWordInCase});`,
       ]
     : [`BodyFields fields = ${receiver}fieldWords();`];
-  return blocks(constexprSwitch({ signature, subject: tag, enumName, cases, defaultValue: "most common" }), [
+  const caseOfEntry = constexprSwitch({ signature, subject: tag, enumName, cases, defaultValue: "most common" });
+  if (isValue && walker.loopOverValue !== undefined) {
+    const { definition, keepsCases } = walker.loopOverValue;
+    return keepsCases ? blocks(caseOfEntry, definition) : [...definition];
+  }
+  return blocks(caseOfEntry, [
     ...walker.head(cursor),
     "{",
     ...indent([
@@ -574,8 +748,14 @@ function bodyWalkersHeader(schema: Schema): string[] {
     helpers,
     ...cursors.map(numberOfFieldWordsFunction),
     numberOfWordsBehindHeadFunction(schema.operations),
-    ...walkersOf(schema).flatMap(walker => cursors.map(cursor => defineWalker(cursor, walker))),
+    outlineOfFieldsColumn(schema.operations),
+    ...walkersOf(schema).flatMap(walker =>
+      cursors
+        .filter(({ className }) => walker.walksOnly === undefined || walker.walksOnly === className)
+        .map(cursor => defineWalker(cursor, walker)),
+    ),
     operandByPlace(schema.operations),
+    variadicOperandsByOutline,
   );
   return cppHeader(['"AOTBody.h"', "<algorithm>", "<type_traits>"], inNamespace("Typed", body));
 }

@@ -30,7 +30,6 @@
 #include "AOTGuardEmitter.h"
 #include "AOTHintEmitter.h"
 #include "AOTInlineBuiltinEmitter.h"
-#include "AOTJSONWriteEmitter.h"
 #include "AOTModuleEmitter.h"
 #include "AOTObjectCreationEmitter.h"
 #include "AOTOperatorEmitter.h"

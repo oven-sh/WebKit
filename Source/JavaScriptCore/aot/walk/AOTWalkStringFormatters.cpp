@@ -235,7 +235,7 @@ bool buildFormatterCallByPattern(Walker& walker, const CallByOneRow& call)
         if (type.isNever() || !(request->kind == FormatPatternKind::Number ? type.isNumber() : type.isObject()))
             return false;
         FunctionID function = walker.unit().function;
-        if (call.call.opcode() != Opcode::Call || (!walker.isInLoop() && (walker.facts().runsAtMostOnce(function) || program.at(function).isModuleBody())))
+        if (call.call.opcode() != Opcode::Call || (!walker.isInLoop() && program.at(function).isModuleBody()))
             return false;
     }
 

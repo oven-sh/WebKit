@@ -34,7 +34,7 @@ public:
     bool runOnModulesNamedInBodies();
 
 private:
-    void fail(InternalError&&);
+    COLD NEVER_INLINE void fail(InternalError&&);
     bool hasFailed() const { return m_hasFailed; }
 
     void verifyIDs();

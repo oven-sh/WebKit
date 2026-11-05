@@ -87,6 +87,7 @@ private:
     uint64_t m_entry;
 };
 static_assert(sizeof(JSFunction) == offsetOfClosureEntry && Closure::offsetOfEntry() == offsetOfClosureEntry && sizeof(Closure) == offsetOfClosureCaptures);
+static_assert(offsetOfCopyInHeapOfClosureInFrame(Closure::offsetOfCaptures(), 3) == static_cast<ptrdiff_t>(Closure::allocationSize(3)));
 
 ALWAYS_INLINE bool isCompiledClosure(const JSCell* cell) { return cell->type() == CompiledClosureType; }
 

@@ -327,7 +327,7 @@ static bool codeComesAgainInQuotients(const Walker& walker)
     if (walker.isInLoop())
         return true;
     FunctionID function = walker.unit().function;
-    return !walker.facts().runsAtMostOnce(function) && !walker.program().at(function).isModuleBody();
+    return !walker.program().at(function).isModuleBody();
 }
 
 bool buildNumberRemainderWithItsTest(Walker& walker, const BodyValue& remainder)

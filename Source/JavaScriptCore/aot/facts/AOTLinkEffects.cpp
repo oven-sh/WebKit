@@ -118,6 +118,15 @@ static constexpr OperandUses usesThatChangeOperandInLinkEffects {
     OperandUse::WritesContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom,
     OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype,
 };
+static constexpr OperandUses usesThatAddNoEffectsInLinkEffects {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents, OperandUse::MovesElements,
+};
+static constexpr OperandUses usesThatNeedNoHeapInLinkEffects {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly,
+    OperandUse::RetainsContents, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperandInLinkEffects, usesThatRunCodeNobodyNamesInLinkEffects, usesThatChangeShapeInLinkEffects, usesThatAddNoEffectsInLinkEffects }));
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatChangeOperandInLinkEffects, OperandUse::ReadsContents, usesThatNeedNoHeapInLinkEffects }));
 
 static bool mayBeObjectForLinkEffects(const LinkType& type)
 {

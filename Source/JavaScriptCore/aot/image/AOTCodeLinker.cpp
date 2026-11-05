@@ -221,7 +221,7 @@ struct CodeLinker {
         return start;
     }
 
-    NEVER_INLINE std::nullopt_t fail(const PieceOfLinkedCode& piece, const Relocation& relocation, StringView why) const
+    COLD NEVER_INLINE std::nullopt_t fail(const PieceOfLinkedCode& piece, const Relocation& relocation, StringView why) const
     {
         context.diagnostics().add(InternalError {
             .kind = InternalErrorKind::RelocationNotApplied,

@@ -25,6 +25,7 @@ CompiledCode generateCode(const CodeGenerationWorker&, const CodeGenerationInput
 class BodyIndex;
 bool hasStraightForm(const CodeGenerationInputs&, CodeUnit, const BodyIndex&);
 std::optional<CompiledCode> generateStraightCode(const CodeGenerationWorker&, const CodeGenerationInputs&, const Code&, const BodyIndex&, CodeGenerationTotals&);
+std::optional<CompiledCode> generateEntryWrittenByHand(const CodeGenerationWorker&, const CodeGenerationInputs&, const Code&, NOESCAPE const ScopedLambda<TypeID(unsigned)>& typeAskedOfEntryParameter, CodeGenerationTotals&);
 
 } } } // namespace JSC::AOT::Typed
 

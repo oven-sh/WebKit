@@ -1,7 +1,0 @@
-# the same program with the calls of built-ins withheld: the call goes by value, and whatever is called so may run any code
-# RUN: walk f1 mechanisms=-BuiltinCalls
-# CHECK-LABEL: code f1:Body
-# CHECK: = Call {{*}}mayCallUnknownCode
-# RUN(NEVER): walk f1 mechanisms=-BuiltinCalls
-# NEVER-NOT: CallBuiltin
-# PROGRAM-OF: json-stringify-of-plain-data-calls-no-unknown-code.ir

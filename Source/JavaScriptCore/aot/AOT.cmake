@@ -267,7 +267,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTInstanceKeyOrderTests.cpp
     aot/tests/AOTInterpretedStoreUnderCompiledPrototypeTests.cpp
     aot/tests/AOTInterpreterSiteCacheTests.cpp
-    aot/tests/AOTJSONPlanTestCommands.cpp
     aot/tests/AOTKnownAnswersTests.cpp
     aot/tests/AOTKnownJoinsTests.cpp
     aot/tests/AOTKnownThreadingTests.cpp

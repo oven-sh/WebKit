@@ -169,7 +169,28 @@ TypeID Arrivals::provenAt(TypeArena& types, FunctionID function, uint32_t entryP
         TypeID both = types.intersectionOf(left, byLink);
         return isNeverType(both) ? left : both;
     }
-    return provenAt(function, entryParameter);
+    TypeID proven = provenAt(function, entryParameter);
+    return proven ? proven : askedByDoorsOfCapture(types, function, entryParameter);
+}
+
+TypeID Arrivals::askedByDoorsOfCapture(TypeArena& types, FunctionID id, uint32_t entryParameter) const
+{
+    const Function& function = m_program.at(id);
+    if (entryParameter >= function.numberOfEntryParameters() || function.entryParameterKind(entryParameter) != EntryParameter::Capture)
+        return { };
+    uint32_t capture = entryParameter - function.numberOfEntryParametersBefore(EntryParameter::Capture);
+    if (function.captures[capture].isEstablished() || !withoutMechanismsMissingDependencies(m_facts.mechanisms()).contains(Mechanism::TypedOperations))
+        return { };
+    const LinkedCell& cell = linkTablesOfArrivals(m_facts).capture(id, capture);
+    if (!cell.everyWriterIsKnown || !cell.proven || !types.at(cell.proven).isJavaScriptValue())
+        return { };
+    TypeID asked = types.testablePartOf(cell.proven);
+    bool someMakerMayAskLess = m_facts.testMentionsWhatIsOutOfReach(types, asked, scopedLambda<bool(FunctionID)>([](FunctionID) {
+        return false;
+    }));
+    if (!someMakerMayAskLess)
+        return asked;
+    return types.unionOf(types.withoutObjects(asked), types.at(asked).hasOnlyClosures() ? TypeTable::function : TypeTable::object);
 }
 
 void takeArrivals(Walker& walker)

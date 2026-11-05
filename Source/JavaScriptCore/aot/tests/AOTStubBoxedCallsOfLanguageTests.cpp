@@ -83,14 +83,6 @@ static bool refersToInLanguageCallTests(const StubCatalog& catalog, StubKey from
     });
 }
 
-static bool callsOperationInLanguageCallTests(const StubCatalog& catalog, StubKey from, Entry entry)
-{
-    const StubRecording& recording = catalog.recordingOf(bodyOf(from));
-    return recording.operationsCalled.get(indexOf(entry)) || recording.references.containsIf([&](const StubReference& reference) {
-        return reference.target.immediate() == offsetInRuntimeTable(entry);
-    });
-}
-
 static void testFormsThatMatchInLanguageCallTests()
 {
     StubCatalog matches(StubOptions { });
@@ -100,8 +92,8 @@ static void testFormsThatMatchInLanguageCallTests()
         AOT_TEST_CHECK(!refersToInLanguageCallTests(matchesNothing, key, regExpMatch(RegExpMatchResult::Array)));
     }
     for (StubKey key : { callBoxedBuiltin(BoxedCallForm::StringMatch, 1), callMethodOfBuiltinClass(BoxedCallForm::StringMatch, 1), tryCallMethodOfBuiltinClass(BoxedCallForm::StringMatch, 1) }) {
-        AOT_TEST_CHECK(callsOperationInLanguageCallTests(matches, key, Entry::operationAOTStringMatchRegExp));
-        AOT_TEST_CHECK(!callsOperationInLanguageCallTests(matchesNothing, key, Entry::operationAOTStringMatchRegExp));
+        AOT_TEST_CHECK(refersToInLanguageCallTests(matches, key, regExpMatch(RegExpMatchResult::ArrayForStringMatch)));
+        AOT_TEST_CHECK(!refersToInLanguageCallTests(matchesNothing, key, regExpMatch(RegExpMatchResult::ArrayForStringMatch)));
     }
     for (BoxedCallForm form : { BoxedCallForm::RegExpExec, BoxedCallForm::StringMatch }) {
         AOT_TEST_CHECK(servesCallsByName(form, 1));

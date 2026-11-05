@@ -7,7 +7,7 @@
 #   b0(v0: anything @JSValue, v1: anything @JSValue) entry=0:
 #     v2: object @Cell = NewDictionary
 #     v3: f6 @Cell = NewClosure v1 function=f6 storage=Frame closureForm=Slim loan=LeftToStubOfCall
-#     v4 @Void = PropDefine v2, v3 key="run"
+#     v4 @Void = PropDefine v2, v3 key="publish"
 #     Return v2
 # }
 # -- end of code

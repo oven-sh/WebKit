@@ -43,6 +43,7 @@ enum StatisticID (stage: StatisticStage) {
     AllocateInFramesChanges ClosuresInFrames KnownInductionsUsed
     SlicesMadeOfElementsInSight
     MethodCallsToldApartByShape
+    MethodCallsThroughTable
     [Emit]
     NativeFunctionsCalledDirectly NativeFunctionTestsEmitted ExactIntegersBehindNumbers StepsThatKnowTheDeletedPrefix LoopsRotated
     InnerPointersAcrossSafepoints NullChecksFoldedIntoAccesses

@@ -48,6 +48,20 @@ static constexpr OperandUses usesThatChangeObjectsForLinkCalls {
     OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype,
 };
 
+static constexpr OperandUses usesThatNeedNoRecordForLinkCalls {
+    OperandUse::Inspects, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::MovesElements,
+    OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+
+static constexpr OperandUses usesThatLeaveObjectsUnchangedForLinkCalls {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly,
+    OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents, OperandUse::MovesElements, OperandUse::PassesToUserCode,
+    OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatRecordsSpellOutForLinkCalls, usesThatNeedNoRecordForLinkCalls }));
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatChangeObjectsForLinkCalls, usesThatLeaveObjectsUnchangedForLinkCalls }));
+
 static constexpr BuiltinMark marksOfRowsThatSayTooLittleForLinkCalls[] {
     BuiltinMark::EvaluatesTextInGlobalScope, BuiltinMark::HoldsLoader, BuiltinMark::IsSpy, BuiltinMark::LoadsCodeWithoutJSAccess, BuiltinMark::IsResolverThatLoaderCalls,
     BuiltinMark::IsRequireThatLoaderCalls, BuiltinMark::MocksModule, BuiltinMark::ExtendsMatchers, BuiltinMark::FakesTimers, BuiltinMark::RunsCodeThatLocksDoNotBind,
@@ -356,9 +370,16 @@ static bool recordsSpellOutForLinkCalls(const BuiltinTable& builtins, const Buil
             || std::ranges::any_of(row.flow.propertyActions, [&](const BuiltinPropertyAction& action) {
                 return action.kind == Action::ChangesPrototype && isNamedAt(action.value, Said::Itself);
             });
-    default:
+    case OperandUse::Inspects:
+    case OperandUse::Returns:
+    case OperandUse::ReadsContents:
+    case OperandUse::WritesContents:
+    case OperandUse::MovesElements:
+    case OperandUse::AppliesTransitively:
+    case OperandUse::AppliesToContents:
         return true;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool recordsSpellOutEveryUseForLinkCalls(const BuiltinTable& builtins, const BuiltinOverload& row, const BuiltinParameter& parameter)
@@ -713,6 +734,7 @@ private:
     void tellWhatReadFinds(const RowCall&, const BuiltinPropertyAction&);
     void tellWhatIterationCallsAbove(BuiltinClassID, bool followsWhatIsMade);
     void tellWhatIterationCalls(const LinkType& iterable);
+    void tellNamesAskedOf(const LinkType&, const Questions&);
     void addResult(RowCall&);
 
     Values valuesAt(const RowCall&, BuiltinOperand);
@@ -2075,12 +2097,14 @@ ValuesInLinkCalls CallInLinkCalls::passToLostFunctions(const Passed& passed, con
 {
     if (passed.list || passed.newTarget) {
         LinkType functions;
-        functions.functions = LinkType::Functions::Lost;
+        functions.functions = callee.functions;
+        functions.function = callee.function;
         escape(functions, source);
         return passToUnseen(passed);
     }
 
     callees().mayEnterLost = true;
+    m_flow.noteCallOfLostFunctions(callee);
     if (passed.isConstruction)
         flowInto(valuesOf(unseenObjectsForLinkCalls()), m_flow.madeForLostFunctionsWithoutClass());
     else
@@ -2932,6 +2956,16 @@ void CallInLinkCalls::tellWhatIterationCallsAbove(BuiltinClassID builtinClass, b
     }
 }
 
+void CallInLinkCalls::tellNamesAskedOf(const LinkType& type, const Questions& questions)
+{
+    if (!type.holdsUnseen && !type.holdsLostBuiltins)
+        return;
+    for (const auto& keys : { questions.keys.span(), questions.keysAnsweredByProgramAlone.span(), questions.keysOfConversion.span() }) {
+        for (PropertyKeyID key : keys)
+            m_flow.note(LinkFlow::Note::NameCalled, key.bits());
+    }
+}
+
 void CallInLinkCalls::tellWhatIterationCalls(const LinkType& iterable)
 {
     if (iterable.classes == LinkType::Classes::Site)
@@ -3413,6 +3447,7 @@ void CallInLinkCalls::addResultsOfCallbacks(RowCall& call, BuiltinOperand operan
             break;
         case LinkType::Functions::Set:
         case LinkType::Functions::Lost:
+            m_flow.noteCallOfLostFunctions(callee);
             add(values, m_flow.resultOfLostFunctions(), beyond(source));
             break;
         }
@@ -3823,6 +3858,7 @@ bool CallInLinkCalls::ask(const Values& subjects, const Questions& questions)
     forEachType(subjects, [&](const LinkType& type, const Source* source) {
         if (isDataDescriptorInSight(source))
             return;
+        tellNamesAskedOf(type, questions);
         if (mayAnswer(type, source, questions, false)) {
             escape(type, source);
             someMayAnswer = true;
@@ -3896,6 +3932,7 @@ void CallInLinkCalls::takeStepOfInspection(uint32_t step, const LinkType& now)
 
 void CallInLinkCalls::inspectType(const LinkType& type, uint32_t inspection)
 {
+    tellNamesAskedOf(type, m_state.inspections[inspection].questions);
     if (m_state.inspections[inspection].questions.iterate)
         tellWhatIterationCalls(type);
 

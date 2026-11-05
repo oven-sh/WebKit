@@ -352,7 +352,7 @@ public:
     }
 
 private:
-    void fail(ASCIILiteral rule, LayoutID layout = { }) const { m_encoder.fail(rule, layout); }
+    COLD void fail(ASCIILiteral rule, LayoutID layout = { }) const { m_encoder.fail(rule, layout); }
 
     void openNode(const Typed::DataNode& node)
     {

@@ -224,6 +224,14 @@ struct MissesOfPairs {
     static constexpr uint32_t missesBetweenFilingsOfDictionaries = 64;
 };
 
+struct PlaceOfOrdinaryConstructor {
+    static constexpr unsigned numberOfPlacesLog2 = 6;
+    static constexpr unsigned numberOfPlaces = 1u << numberOfPlacesLog2;
+    static constexpr unsigned placeThatIsNeverRead = numberOfPlaces;
+
+    static constexpr unsigned indexFor(uint32_t structureIDBits) { return structureIDBits * HashedSlot::structureMultiplier >> (32 - numberOfPlacesLog2); }
+};
+
 enum class TrapOfProxy : uint8_t { Get, Has, Set };
 inline constexpr unsigned numberOfTrapsOfProxies = 3;
 
@@ -277,11 +285,13 @@ struct PropertyCacheWords {
     const void* lookupOfArrays;
     const void* lookupOfFunctions;
     JSCell* defaultHasInstanceFunction;
+    JSCell* holderOfDefaultHasInstanceFunction;
     const FieldExit* fieldExits;
     AccessTableWords accessTable;
 #if !defined(BUN_HARDENED)
     SlotHandlers handlers;
 #endif
+    uint64_t headersOfPrototypeSlotsOfOrdinaryConstructors[PlaceOfOrdinaryConstructor::numberOfPlaces + 1];
 
     static constexpr ptrdiff_t offsetOfFront(SlotAccess access) { return OBJECT_OFFSETOF(PropertyCacheWords, front) + static_cast<ptrdiff_t>(static_cast<unsigned>(access) * sizeof(FrontWords)); }
 };

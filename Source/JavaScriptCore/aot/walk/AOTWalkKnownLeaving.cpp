@@ -82,7 +82,7 @@ ArgumentsMadeWhereTheyLeave::ArgumentsMadeWhereTheyLeave(Walker& walker, const B
     FunctionID function = walker.currentFunction();
     if (!walker.program().at(function).has(FunctionFlags::HasHiddenRest))
         return;
-    if (!walker.isInLoop() && (walker.facts().runsAtMostOnce(function) || walker.program().at(function).isModuleBody()))
+    if (!walker.isInLoop() && walker.program().at(function).isModuleBody())
         return;
     if (!walker.m_liveness.isComputedFor(index))
         walker.m_liveness.compute(index);

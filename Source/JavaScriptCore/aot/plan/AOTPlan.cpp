@@ -1260,8 +1260,6 @@ void CheckerOfPlan::checkMethodTable()
         numberOfTableUnits += 1 + conventions.familyOf(selector).methods.size();
     }
     uint64_t numberOfUnits = static_cast<uint64_t>(conventions.numberOfFunctions()) * numberOfCodeRolesOfOneFunction + numberOfTableUnits;
-    expect(!conventions.numberOfPlacesOfSerializers() || conventions.numberOfPlacesOfSerializers() == std::min<size_t>(m_program.layouts.size(), CodeUnit::numberOfLayoutsThatSerializersCanName), RuleOfPlan::UnitsOfMethodTable);
-    numberOfUnits += conventions.numberOfPlacesOfSerializers();
     expect(conventions.numberOfUnits() == numberOfUnits, RuleOfPlan::UnitsOfMethodTable);
 }
 

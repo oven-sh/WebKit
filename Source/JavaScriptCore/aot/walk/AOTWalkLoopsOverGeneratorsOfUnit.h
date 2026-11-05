@@ -20,6 +20,7 @@ struct LoopsOverGeneratorsOfUnit {
     std::optional<bool> engineAnswers;
     bool hasStepsWrittenByHand { false };
     HashMap<uint32_t, BitVector, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callsOfNextWhoseResultIsOnlyRead;
+    HashMap<uint32_t, BitVector, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> awaitedCallsOfNextWhoseResultIsOnlyRead;
 };
 
 } } } // namespace JSC::AOT::Typed

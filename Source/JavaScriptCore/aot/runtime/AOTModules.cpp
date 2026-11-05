@@ -409,8 +409,6 @@ void Modules::forgetEvaluation(ModuleID module)
         if (importsEvictedFile(request.targetModule(), walk, earliestVisitReached))
             return leaveToHost(module);
     }
-    if (!walk.filesToAskHostAbout.isEmpty())
-        m_filesAboveNoEvictedFile.clearAll();
 }
 
 void Modules::leaveToHostUnlessItHasRun(ModuleID module)
@@ -453,12 +451,25 @@ bool Modules::writesNameThatHostMayAnswerFor(ModuleID file, WalkForEvictedFiles&
     return *walk.pluginsAnswerForNames;
 }
 
-bool Modules::hostAnswersForNameWrittenBy(ModuleID file)
+AnswerForName Modules::askHostAboutNamesWrittenBy(ModuleID file, Vector<uint32_t, 4>& filesThatAnswersLeadAwayFrom)
 {
     String importer = m_table.pathText(file);
-    return std::ranges::any_of(m_table.namesOfStatements(file), [&](const NameOfStatementData& written) {
-        return host().answersForName(m_instance.globalObject, ProgramStrings::text(m_table.programTables(), written.nameString()), importer);
-    });
+    AnswerForName answer = AnswerForName::Declined;
+    for (const NameOfStatementData& written : m_table.namesOfStatements(file)) {
+        String foundWithoutPlugins;
+        switch (host().answersForName(m_instance.globalObject, ProgramStrings::text(m_table.programTables(), written.nameString()), importer, foundWithoutPlugins)) {
+        case AnswerForName::Declined:
+            continue;
+        case AnswerForName::Thrown:
+            return AnswerForName::Thrown;
+        case AnswerForName::Answered:
+            break;
+        }
+        answer = AnswerForName::Answered;
+        if (std::optional<ModuleID> linked = foundWithoutPlugins.isNull() ? std::nullopt : m_table.findByPath(foundWithoutPlugins))
+            filesThatAnswersLeadAwayFrom.append(fileOf(*linked).index());
+    }
+    return answer;
 }
 
 bool Modules::isChangedOutOfSightOfBuild(StringView path) const
@@ -473,8 +484,6 @@ bool Modules::walkForEvictedFiles(ModuleID module, WalkForEvictedFiles& walk)
 {
     uint32_t earliestVisitReached = 0;
     bool isAboveEvictedFile = importsEvictedFile(module, walk, earliestVisitReached);
-    if (!walk.filesToAskHostAbout.isEmpty())
-        m_filesAboveNoEvictedFile.clearAll();
     if (isAboveEvictedFile) {
         for (uint32_t file : walk.unsettledFiles)
             m_filesAboveEvictedFile.set(file);
@@ -482,11 +491,8 @@ bool Modules::walkForEvictedFiles(ModuleID module, WalkForEvictedFiles& walk)
     return isAboveEvictedFile;
 }
 
-bool Modules::askHostLevelByLevel(ModuleID root, const WalkForEvictedFiles& walk, BitVector& filesAsked)
+bool Modules::askHostLevelByLevel(ModuleID root, WalkForEvictedFiles& walk, BitVector& filesAsked)
 {
-    BitVector isListed;
-    for (uint32_t index : walk.filesToAskHostAbout)
-        isListed.set(index);
     bool didAsk = false;
     BitVector isReached;
     Deque<ModuleID, 32> toFollow;
@@ -494,24 +500,29 @@ bool Modules::askHostLevelByLevel(ModuleID root, const WalkForEvictedFiles& walk
     toFollow.append(fileOf(root));
     while (!toFollow.isEmpty()) {
         ModuleID file = toFollow.takeFirst();
-        if (isEvicted(file))
+        if (isEvicted(file) || m_filesWhoseGraphHasBegun.get(file.index()) || status(file) >= ModuleStatus::Evaluating || hasRun(file))
             continue;
-        if (isListed.get(file.index()) && !filesAsked.get(file.index()) && mayBeAskedAbout(file) && status(file) < ModuleStatus::Evaluating && !hasRun(file)) {
+        if (isMocked(file) || mockInPlace(file) || m_modulesWithMockToRun.get(file.index()))
+            continue;
+        Vector<uint32_t, 4> filesThatAnswersLeadAwayFrom;
+        if (!filesAsked.get(file.index()) && mayBeAskedAbout(file) && writesNameThatHostMayAnswerFor(file, walk)) {
             if (filesAsked.isEmpty())
                 host().askingAboutNames(m_instance.globalObject, nullptr);
             filesAsked.set(file.index());
             didAsk = true;
-            if (hostAnswersForNameWrittenBy(file)) {
+            AnswerForName answer = askHostAboutNamesWrittenBy(file, filesThatAnswersLeadAwayFrom);
+            if (answer == AnswerForName::Declined)
+                m_filesWhoseNamesNobodyAnswersFor.set(file.index());
+            else
                 leaveToHostUnlessItHasRun(file);
+            if (answer == AnswerForName::Thrown)
                 continue;
-            }
-            m_filesWhoseNamesNobodyAnswersFor.set(file.index());
         }
-        if (!isLoadedWithRequests(file))
+        if (!isLoadedWithRequests(file) || (walk.pluginsAnswerForNames && !*walk.pluginsAnswerForNames))
             continue;
         for (const ModuleRequestData& request : m_table.imports(file)) {
             ModuleID target = fileOf(request.targetModule());
-            if (walk.visitOrder.contains(target.index()) && !isReached.set(target.index()))
+            if (!m_filesAboveNoEvictedFile.get(target.index()) && !filesThatAnswersLeadAwayFrom.contains(target.index()) && !isReached.set(target.index()))
                 toFollow.append(target);
         }
     }
@@ -538,10 +549,8 @@ bool Modules::importsEvictedFile(ModuleID module)
     while (true) {
         WalkForEvictedFiles walk;
         isAboveEvictedFile = walkForEvictedFiles(module, walk);
-        if (isAboveEvictedFile)
-            return true;
         if (m_listsWithoutAsking || !askHostLevelByLevel(module, walk, filesAsked))
-            return false;
+            return isAboveEvictedFile;
     }
 }
 
@@ -571,8 +580,9 @@ bool Modules::importsEvictedFile(ModuleID module, WalkForEvictedFiles& walk, uin
         leaveToHostUnlessItHasRun(file);
         return true;
     }
+    uint32_t numberOfFilesToAskHostAbout = walk.numberOfFilesToAskHostAbout;
     if (mayBeAskedAbout(file) && writesNameThatHostMayAnswerFor(file, walk)) [[unlikely]]
-        walk.filesToAskHostAbout.append(file.index());
+        ++walk.numberOfFilesToAskHostAbout;
     size_t numberOfUnsettledFiles = walk.unsettledFiles.size();
     uint32_t earliestVisitReachedFromHere = visit;
     if (isLoadedWithRequests(file)) {
@@ -588,9 +598,11 @@ bool Modules::importsEvictedFile(ModuleID module, WalkForEvictedFiles& walk, uin
         earliestVisitReached = std::min(earliestVisitReached, earliestVisitReachedFromHere);
         return false;
     }
-    m_filesAboveNoEvictedFile.set(file.index());
-    for (uint32_t settled : walk.unsettledFiles.span().subspan(numberOfUnsettledFiles))
-        m_filesAboveNoEvictedFile.set(settled);
+    if (walk.numberOfFilesToAskHostAbout == numberOfFilesToAskHostAbout) {
+        m_filesAboveNoEvictedFile.set(file.index());
+        for (uint32_t settled : walk.unsettledFiles.span().subspan(numberOfUnsettledFiles))
+            m_filesAboveNoEvictedFile.set(settled);
+    }
     walk.unsettledFiles.shrink(numberOfUnsettledFiles);
     return false;
 }
@@ -691,7 +703,7 @@ void Modules::retireRecord(ModuleRecord* record)
     ASSERT(!record->isRetained());
     ASSERT(record->status() == CyclicModuleRecord::Status::Evaluated);
     ASSERT(!record->evaluationError());
-    ASSERT(record->asyncEvaluationOrder().isUnset());
+    ASSERT(!record->asyncEvaluationOrder().hasOrder());
     setStoredStatus(record->module(), StoredModuleStatus::Evaluated);
     loader()->removeEntryOfRecord(record);
     Locker locker { m_state.caches->lock() };
@@ -712,10 +724,16 @@ void Modules::retireRecordOfModuleThatHasNotBegun(ModuleRecord* record)
 bool Modules::hasRunToItsEndWithItsCycle(const ModuleRecord& record) const
 {
     auto hasRunToItsEnd = [](const CyclicModuleRecord& module) {
-        return module.status() == CyclicModuleRecord::Status::Evaluated && !module.evaluationError() && module.asyncEvaluationOrder().isUnset();
+        return module.status() == CyclicModuleRecord::Status::Evaluated && !module.evaluationError() && !module.asyncEvaluationOrder().hasOrder();
     };
     const CyclicModuleRecord* root = record.cycleRoot();
     return hasRunToItsEnd(record) && (!root || hasRunToItsEnd(*root));
+}
+
+bool Modules::isEvaluatingAsynchronouslyWithItsCycle(const ModuleRecord& record)
+{
+    const CyclicModuleRecord* root = record.cycleRoot();
+    return record.status() == CyclicModuleRecord::Status::EvaluatingAsync || (root && root->status() == CyclicModuleRecord::Status::EvaluatingAsync);
 }
 
 void Modules::retireRecordsOfSettledLoads()
@@ -743,7 +761,19 @@ void Modules::retireRecordsOfSettledLoads()
             retireRecordOfModuleThatHasNotBegun(record);
         else if (hasRunToItsEndWithItsCycle(*record))
             retireRecord(record);
+        else if (isEvaluatingAsynchronouslyWithItsCycle(*record))
+            m_modulesToRetireAfterAsyncEvaluation.append(module);
     }
+    m_modulesToRetireAfterAsyncEvaluation.removeAllMatching([&](ModuleID module) {
+        ModuleRecord* record = recordIfExists(module);
+        if (!record || record->isRetained())
+            return true;
+        if (isEvaluatingAsynchronouslyWithItsCycle(*record))
+            return false;
+        if (hasRunToItsEndWithItsCycle(*record))
+            retireRecord(record);
+        return true;
+    });
 }
 
 void didSettleLoad(JSPromise* settled)

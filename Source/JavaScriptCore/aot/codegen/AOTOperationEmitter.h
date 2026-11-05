@@ -140,7 +140,7 @@ protected:
     std::optional<Pointer> siteCacheAddress(const OperationContext&, PropertyKeyID, SlotAccess);
     std::optional<NumberedImmediate> answersAtSite(const OperationContext&, PropertyKeyID, SiteUse);
 
-    void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
+    COLD void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
 
     CodeGenerator& m_generator;
     const Program& m_program;

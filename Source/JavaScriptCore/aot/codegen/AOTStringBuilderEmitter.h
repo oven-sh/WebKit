@@ -26,7 +26,6 @@ public:
     void generateStringBuilderDiscard(const ValueContext&);
     void generateStringBuilderCheckpoint(const ValueContext&);
     void generateStringBuilderRollBack(const ValueContext&);
-    void generateStringBuilderCheckLength(const ValueContext&);
     void generateStackStringBuilderBegin(const ValueContext&);
     void generateStackStringBuilderStart(const ValueContext&);
     void generateStackStringBuilderCursor(const ValueContext&);

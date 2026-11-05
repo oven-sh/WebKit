@@ -251,9 +251,28 @@ static ALWAYS_INLINE SpillIndex keepPointerBesideAllocatedReference(Allocator& a
     return keepPointerBesideAllocatedReferenceThatNeedsIt(allocator, reference, spill);
 }
 
+struct ValueThatAsksForCalleeSave {
+    Operation* value;
+    unsigned gain;
+    uint8_t indexOfRegister;
+
+    Reg reg() const { return Reg::fromIndex(indexOfRegister); }
+};
+static_assert(std::is_trivially_default_constructible_v<ValueThatAsksForCalleeSave>);
+
+static void orderByGainFromCalleeSaves(const Allocator& allocator, std::span<ValueThatAsksForCalleeSave> asking)
+{
+    for (ValueThatAsksForCalleeSave& one : asking)
+        one.gain = allocator.numberOfReadsThatWordWouldReload(one.value);
+    std::ranges::stable_sort(asking, std::ranges::greater { }, &ValueThatAsksForCalleeSave::gain);
+}
+
 static NEVER_INLINE void bindArgumentRegistersOfEntry(Allocator& allocator, Block* entry)
 {
     allocator.m_lastDefinitionOfArgumentRegister = 0;
+    allocator.m_argumentRegistersThatGiveWay = 0;
+    std::array<ValueThatAsksForCalleeSave, 64> asking[numberOfBanks];
+    unsigned numberAsking[numberOfBanks] = { };
     for (Operation* argument : entry->operations()) {
         if (argument->opcode() != ArgumentReg || !allocator.m_liveness.standsInItsBlock(argument))
             continue;
@@ -263,11 +282,25 @@ static NEVER_INLINE void bindArgumentRegistersOfEntry(Allocator& allocator, Bloc
             allocator.m_proc.fail(FailureKind::MalformedProcedure, argument);
             return;
         }
+        if (allocator.m_liveness.of(argument).has(ValueFlag::LivesAcrossCall)) {
+            unsigned bank = static_cast<unsigned>(bankOf(reg));
+            if (numberAsking[bank] < asking[bank].size())
+                asking[bank][numberAsking[bank]++] = { argument, 0, static_cast<uint8_t>(reg.index()) };
+        }
         if (allocator.m_valueIn[reg.index()] == argument)
             continue;
         if (allocator.m_valueIn[reg.index()])
             allocator.unbind(reg);
         allocator.bind(reg, argument);
+    }
+    for (Bank bank : { Bank::GP, Bank::FP }) {
+        std::span<ValueThatAsksForCalleeSave> ofBank = std::span(asking[static_cast<unsigned>(bank)]).first(numberAsking[static_cast<unsigned>(bank)]);
+        size_t numberOfCalleeSaves = static_cast<size_t>(std::popcount(allocator.m_file.calleeSavedIn(bank)));
+        if (!numberOfCalleeSaves || ofBank.size() <= numberOfCalleeSaves)
+            continue;
+        orderByGainFromCalleeSaves(allocator, ofBank);
+        for (const ValueThatAsksForCalleeSave& one : ofBank.subspan(numberOfCalleeSaves))
+            allocator.m_argumentRegistersThatGiveWay |= maskOf(one.reg());
     }
 }
 
@@ -666,7 +699,8 @@ NEVER_INLINE void Allocator::allocateArgumentRegister(Operation* operation)
             m_allocation.m_registerAtDefinition[operation->index()] = reg;
             location = Location::reg(reg);
         } else {
-            const bool mayLieInCalleeSave = facts.has(ValueFlag::LivesAcrossCall) && !(registersWhereCallInBlockTakesWhatLiesThere(m_block) & maskOf(reg));
+            const bool givesWay = m_argumentRegistersThatGiveWay & maskOf(reg);
+            const bool mayLieInCalleeSave = facts.has(ValueFlag::LivesAcrossCall) && !givesWay && !(registersWhereCallInBlockTakesWhatLiesThere(m_block) & maskOf(reg));
             unbindAll(operation, state);
             if (asksForNoMoreThanItsRegister) {
                 ASSERT(registerFileIsConsistent());
@@ -677,6 +711,10 @@ NEVER_INLINE void Allocator::allocateArgumentRegister(Operation* operation)
                 location = Location::reg(reg);
             } else
                 location = defineResult(operation, maskOf(reg) | (mayLieInCalleeSave ? m_file.calleeSaved : 0), 0, reg);
+            if (givesWay && !leavesValuesAcrossCallsToFramedPart() && facts.lastUse != noPosition && !m_proc.failure() && !m_allocation.isSpilled(operation)) {
+                markSpilled(operation);
+                noteFrameUse();
+            }
         }
     } else
         location = defineResult(operation, m_file.allocatableIn(bankOf(reg)), registersReservedAtAllocatedOperation(*this), Reg());
@@ -1565,6 +1603,8 @@ void Allocator::enterFramedPart()
             waiting.pointer = keepPointerBesideAllocatedReference(*this, reference, waiting.pointer);
     }
 
+    std::array<ValueThatAsksForCalleeSave, 64> asking;
+    unsigned numberAsking = 0;
     forEachRegister(m_bound & ~m_file.calleeSaved & ~registersWhereCallInBlockTakesWhatLiesThere(m_block), [&](Reg reg) {
         Operation* value = m_valueIn[reg.index()];
         if (!value || !value->type().isNumeric() || (stateOf(value).registers & m_file.calleeSaved))
@@ -1574,17 +1614,27 @@ void Allocator::enterFramedPart()
             return;
         if (!callStandsOnWayFromHeadToRead(*this, value))
             return;
+        asking[numberAsking++] = { value, 0, static_cast<uint8_t>(reg.index()) };
+    });
+    std::span<ValueThatAsksForCalleeSave> inOrder = std::span(asking).first(numberAsking);
+    if (numberAsking > 1)
+        orderByGainFromCalleeSaves(*this, inOrder);
+    for (const ValueThatAsksForCalleeSave& one : inOrder) {
+        Operation* value = one.value;
+        Reg reg = one.reg();
+        if (stateOf(value).registers & m_file.calleeSaved)
+            continue;
         Bank bank = bankOf(reg);
         RegisterMask freeRegisters = calleeSavesWorthTakingFor(value, bank, m_block) & ~m_bound;
         if (!freeRegisters)
-            return;
+            continue;
         Reg target = takeRegister(bank, freeRegisters, hintIfAmong(hintOf(value), freeRegisters));
         Step& move = appendStep(StepKind::Move, value);
         move.destination = Location::reg(target);
         move.sources[0] = Location::reg(reg);
         unbindAll(value);
         bind(target, value);
-    });
+    }
 }
 
 } } } // namespace JSC::AOT::Machine

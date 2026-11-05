@@ -243,7 +243,7 @@ Vector<LayoutID> findEnvironmentsHandedBack(const Program& program, const Facts&
             return;
         for (ValueID environment : facts.summaries().at(makers[place]).environmentsMade) {
             LayoutID layout = index->value(environment).as<Opcode::NewObject>().layout();
-            if (facts.runsAtMostOnce(makers[place]))
+            if (program.at(makers[place]).isModuleBody())
                 continue;
             BlockID making = index->blockOf(environment);
             if (index->loopOf(making) || index->block(making).hasHandler())

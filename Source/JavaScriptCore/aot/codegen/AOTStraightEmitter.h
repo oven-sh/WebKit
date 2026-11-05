@@ -196,8 +196,8 @@ public:
     void storeVariable(VariableID, GPRReg boxed);
     void barrierAfterStore(GPRReg owner);
 
-    void fail(Opcode);
-    void fail(const BodyValue& value) { fail(value.opcode()); }
+    COLD NEVER_INLINE void fail(Opcode);
+    COLD void fail(const BodyValue& value) { fail(value.opcode()); }
 
     static OpcodeSet opcodesOfConstants();
     static OpcodeSet opcodesOfCasts();

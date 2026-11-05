@@ -299,8 +299,6 @@ constexpr unsigned rankInCodeOf(Typed::CodeRole role)
 
 constexpr uint32_t placeInCodeOf(Typed::CodeUnit unit, uint32_t unitIndex)
 {
-    if (unit.role == Typed::CodeRole::Serializer)
-        return unitIndex;
     if (Typed::isTableRole(unit.role))
         return unitIndex;
     return unitIndex - static_cast<unsigned>(unit.role) + rankInCodeOf(unit.role);

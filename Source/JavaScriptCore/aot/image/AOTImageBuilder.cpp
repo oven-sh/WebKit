@@ -209,9 +209,11 @@ OptionSet<ImageFlag> imageFlagsAdmittedBy(Wire::UnseenCodeCause cause)
     return { };
 }
 
-OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const CompileOptions&)
+OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const CompileOptions& options)
 {
     OptionSet<ImageFlag> flags;
+    if (options.excludesLibraryText())
+        flags.add(ImageFlag::IsBuiltWithLibrary);
     for (const auto& record : facts.unseenCode())
         flags.add(imageFlagsAdmittedBy(record.cause));
     RELEASE_ASSERT(facts.unseenCodeCanRun() || !flags.contains(ImageFlag::AdmitsUnknownJavaScript));

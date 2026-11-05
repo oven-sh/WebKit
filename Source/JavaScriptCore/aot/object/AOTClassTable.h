@@ -19,6 +19,7 @@
 #include "RememberedSlot.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <memory>
 #include <optional>
@@ -109,6 +110,7 @@ public:
     JSObject* classPrototypeOfBase(VM&, const LayoutData&);
     void didCreatePrototypePropertyOf(Closure*);
     JSObject* classPrototypeIfExists(const LayoutData&) const;
+    bool prototypeAwaitsFirstTouch(const LayoutData& classLayout) const { return m_classesWhosePrototypeAwaitsFirstTouch.get(m_tables.rankOfClass(classLayout.index)); }
     JSObject* createClassPrototype(VM&, const LayoutData&, JSObject* parent);
     void registerClassPrototype(const LayoutData&, JSObject*);
     ChainDependentOwnerID ownerOfGuardsThatHangOnChains();
@@ -139,6 +141,7 @@ public:
     void armMemberGuards(VM&, const LayoutData&, ClassSide, JSObject* holder, HolderState = HolderState::Unknown);
     bool tryLeaveHoldersOut(VM&, const LayoutData&, Closure* classObject, JSObject* prototype);
     bool guardHasEnded(const LayoutData& classLayout, ClassSide side) const { return m_endedGuards.get(indexOfGuard(classLayout, side)); }
+    bool hasNoGuardLeft(const LayoutData& classLayout, ClassSide side) const { return !classLayout.classData().hasGuardsHereOrBelow(side) || guardHasEnded(classLayout, side); }
     bool hasInstanceBelowOtherPrototype(const LayoutData& classLayout) const { return !m_classesWithInstanceBelowOtherPrototype.isEmpty() && m_classesWithInstanceBelowOtherPrototype.contains(classLayout.index); }
     bool guardsAwaitFirstInstance(const LayoutData& classLayout) const { return !m_constructorFunctionsThatAreOnlyBases.isEmpty() && m_constructorFunctionsThatAreOnlyBases.contains(classLayout.index); }
     static bool leavesDefinitionToRecord(const LayoutData& classLayout) { return classLayout.createsMembersLazily && classLayout.createsClassObjectOnMutation && classLayout.classData().guardsHoldWhileClear; }
@@ -253,7 +256,8 @@ private:
     void enterHolderWithoutGuards(VM&, const LayoutData&, ClassSide, JSObject* holder);
     bool tryLeaveDefinitionToRecord(VM&, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent);
     bool tryDefineAgainWithKeptStructures(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue heritage, JSValue prototypeParent);
-    bool hasNoGuardLeft(const LayoutData& classLayout) const { return guardHasEnded(classLayout, ClassSide::Prototype) && guardHasEnded(classLayout, ClassSide::Static); }
+    bool hasNoGuardLeft(const LayoutData& classLayout) const { return hasNoGuardLeft(classLayout, ClassSide::Prototype) && hasNoGuardLeft(classLayout, ClassSide::Static); }
+    bool everyGuardHasEnded(const LayoutData& classLayout) const { return guardHasEnded(classLayout, ClassSide::Prototype) && guardHasEnded(classLayout, ClassSide::Static); }
     const LayoutData* classOfHolderLeftOut(JSObject* holder, ClassSide&) const;
     bool endGuardsOfShadowedMember(const LayoutData& instanceLayout, UniquedStringImpl*);
     void didShadowMemberSlowCase(const LayoutData& instanceLayout, const FieldData&);
@@ -295,6 +299,8 @@ private:
     std::array<PlaceOfPrototypeProperty, numberOfPlacesOfPrototypeProperties> m_placesOfPrototypeProperties { };
     std::array<PrototypeOfClassObject, numberOfPrototypesOfClassObjects> m_prototypesOfClassObjects { };
     std::array<PrivateFieldPlace, numberOfPrivateFieldPlaces> m_privateFieldPlaces { };
+    static constexpr size_t numberOfClassesOfFunctionsAsked = 64;
+    mutable std::array<std::atomic<uint64_t>, numberOfClassesOfFunctionsAsked> m_classesOfFunctionsAsked { };
     State& m_state;
     const ProgramTables& m_tables;
     UncheckedKeyHashMap<JSObject*, Structure*> m_classPrototypeStructures;
@@ -304,8 +310,8 @@ private:
     bool m_hasHoldersLeftOut { false };
     RefPtr<PrivateSymbolImpl> m_classObjectOfHolderLeftOut;
     BitVector m_endedGuards;
-    BitVector m_sidesWithEndedNames;
-    static constexpr uint32_t nameWithoutNumber = UINT32_MAX;
+    BitVector m_classesWhosePrototypeAwaitsFirstTouch;
+    BitVector m_sidesWhereNamesEnded;
     static constexpr uint64_t storesStillPassUnderEndedName = 1ull << 63;
     static constexpr uint64_t readsStillFindUnderEndedName = 1ull << 62;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_endedNames;

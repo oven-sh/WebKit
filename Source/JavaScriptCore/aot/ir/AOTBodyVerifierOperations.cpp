@@ -79,13 +79,21 @@ static bool hasValidHolesInVerifiedArray(const BodyOperation<Opcode::NewArray>& 
 
 static bool mayThrowOrCallAtVerifiedPosition(Opcode opcode)
 {
+    static constexpr OperandUses usesThatCall { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::PassesToUserCode };
+    static constexpr OperandUses usesThatCallNothing {
+        OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents,
+        OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor,
+        OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+    };
+    static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCall, usesThatCallNothing }));
+
     Effects bound = declaredBoundOf(opcode);
     if (bound.mayThrowByRule() || bound.mayRunOtherCode())
         return true;
     uint32_t numberOfOperandInfos = numberOfNamedOperandsOf(opcode) + hasVariadicOperand(opcode);
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperandInfos; ++operandIndex) {
         const OperandInfo& info = operandInfoOf(opcode, operandIndex);
-        if (!info.protocols.isEmpty() || info.uses.containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::PassesToUserCode }))
+        if (!info.protocols.isEmpty() || info.uses.containsAny(usesThatCall))
             return true;
     }
     return false;

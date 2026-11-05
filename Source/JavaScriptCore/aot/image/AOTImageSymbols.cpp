@@ -371,7 +371,7 @@ static void appendUnitsToMap(ImageSymbolTable& table, const Typed::Program& prog
             table.appendText(program.strings, function.name);
         table.append("\t"_s);
         table.append(nameOf(code.unit.role));
-        appendNumberToMapRow(table, code.unit.numberOfBoundArguments);
+        appendNumberToMapRow(table, code.unit.placeOfSelector());
         table.append("\t"_s);
         if (function.module)
             table.appendText(program.strings, program.at(function.module).path);

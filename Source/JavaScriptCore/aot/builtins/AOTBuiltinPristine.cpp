@@ -43,19 +43,6 @@ BuiltinClassID classBelowWithTestedStructure(const BuiltinTable& table, BuiltinC
     return below;
 }
 
-PristineAspects aspectThatFindsMember(const BuiltinTable& table, BuiltinClassID receiverClass, BuiltinID member)
-{
-    if (table.at(member).kind != BuiltinKind::Accessor || pristineTestOf(table, receiverClass) != PristineTest::MayPass)
-        return PristineAspects::Names;
-    BuiltinClassID below = classBelowWithTestedStructure(table, receiverClass);
-    if (!below)
-        return PristineAspects::Names;
-    BuiltinMemberLookup foundBelow = table.findForInstance(below, table.at(member).name);
-    if (foundBelow.outcome != BuiltinMemberLookup::Outcome::Found || table.canonicalID(foundBelow.member) != table.canonicalID(member))
-        return PristineAspects::Names;
-    return PristineAspects::NamesKeptBelow;
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

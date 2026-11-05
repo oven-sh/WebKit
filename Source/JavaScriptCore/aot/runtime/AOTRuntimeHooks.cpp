@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAsyncResumption.h"
 #include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTClosure.h"
@@ -184,7 +185,7 @@ void didChangeMicrotaskQueueing(VM& vm)
         instance->realm.microtaskQueue = &instance->globalObject->microtaskQueue();
         instance->awaitMustSuspend = !instance->globalObject->canFastQueueMicrotask() || vm.hostObservesMicrotaskBoundaries() || vm.m_synchronousModuleQueue;
         if (instance->awaitMustSuspend)
-            instance->coroutines.frameThatMayContinue = nullptr;
+            takeAwayRightToContinue(*instance);
     }
     if (vm.hostObservesMicrotaskBoundaries() && vm.aotState().modulesWhoseFilesRunAheadOfLoader) [[unlikely]]
         runFilesThatWaitInLoader(vm);

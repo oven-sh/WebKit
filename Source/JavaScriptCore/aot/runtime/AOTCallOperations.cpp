@@ -19,6 +19,7 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTMembersLeftOut.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
@@ -494,6 +495,8 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
             rethrownException = uncheckedDowncast<Exception>(thrown.asCell());
     }
     bool isTermination = exception && vm.isTerminationException(exception);
+    if (isTermination) [[unlikely]]
+        stopIfMissOfReachIsPending(vm);
     auto unwind = [&]() ALWAYS_INLINE_LAMBDA {
         return unwindRunOfThrow(vm, *instance, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame));
     };

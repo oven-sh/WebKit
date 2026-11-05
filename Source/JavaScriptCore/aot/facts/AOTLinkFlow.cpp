@@ -332,7 +332,6 @@ struct alignas(128) LinkFlow::Lane {
 };
 
 constinit thread_local LinkFlow::Lane* LinkFlow::s_laneAtWork = nullptr;
-constinit thread_local LinkFlow::ViewOfHeldReading* LinkFlow::s_viewAtWork = nullptr;
 constinit thread_local unsigned LinkFlow::s_depthOfLockOfWhatIsShared = 0;
 const LinkType LinkFlow::s_nothing;
 
@@ -1509,6 +1508,11 @@ bool LinkFlow::wouldNameSomethingNewAtUnseen(const LinkType& type) const
             return true;
         break;
     case LinkType::Functions::Set:
+        for (FunctionID member : functionsOfSet(type)) {
+            if (!m_functionsAtUnseen.get(member.index()))
+                return true;
+        }
+        break;
     case LinkType::Functions::Lost:
         if (!m_lostFunctionsReachUnseen)
             return true;
@@ -1567,6 +1571,9 @@ void LinkFlow::noteReachesUnseen(const LinkType& type) const
             m_deferred.append(Deferred { Deferred::Kind::ConstructorsEscape, type.constructorsOf.index(), { } });
         break;
     case LinkType::Functions::Set:
+        for (FunctionID member : functionsOfSet(type))
+            namesSomethingNew |= m_functionsAtUnseen.add(member.index());
+        break;
     case LinkType::Functions::Lost:
         namesSomethingNew |= !std::exchange(m_lostFunctionsReachUnseen, true);
         break;
@@ -2035,6 +2042,13 @@ void LinkFlow::takeNote(Note note, uint32_t number, uint32_t more)
     case Note::ReadUnderKeyNobodyKnows:
         builtinsInReach().noteReadUnderKeyNobodyKnows();
         return;
+    case Note::LostFunctionCalled:
+        m_lostFunctionsThatCallsName.set(number);
+        m_someCallNamesLostFunctions = true;
+        return;
+    case Note::EveryLostFunctionCalled:
+        m_lostFunctionsAreCalled = true;
+        return;
     case Note::BuiltinRead:
     case Note::BuiltinReadThroughAggregate:
         builtinsInReach().noteRead(BuiltinID(number));
@@ -2225,13 +2239,9 @@ LinkType LinkFlow::withoutObjectsThatHaveEscaped(LinkType type) const
 std::unique_ptr<LinkFlow::ViewOfHeldReading> LinkFlow::makeViewOfHeldReading()
 {
     auto view = makeUnique<ViewOfHeldReading>();
+    m_flowIsAtRest = true;
     settleSharedCallsAs(WhatUnseenCodeDoes::OnlyReadsAndCalls);
     view->escapedLayouts.ensureSize(escapedLayouts.size());
-    view->types = unsafeMakeSpan(static_cast<LinkType*>(fastMalloc(m_nodes.size() * sizeof(LinkType))), m_nodes.size());
-    forEachRangeOfIndicesInParallel(loops, m_nodes.size(), [&](size_t first, size_t end) {
-        for (size_t index = first; index < end; ++index)
-            new (NotNull, &view->types[index]) LinkType(m_nodes[index].type.asSeen());
-    });
     view->calleesOfSharedCalls = calleesOfSharedCalls;
     view->calleesOfCalls = unsafeMakeSpan(static_cast<CalleesOfCall*>(fastMalloc(calleesOfCalls.size() * sizeof(CalleesOfCall))), calleesOfCalls.size());
     forEachRangeOfIndicesInParallel(loops, calleesOfCalls.size(), [&](size_t first, size_t end) {
@@ -2243,8 +2253,6 @@ std::unique_ptr<LinkFlow::ViewOfHeldReading> LinkFlow::makeViewOfHeldReading()
 
 LinkFlow::ViewOfHeldReading::~ViewOfHeldReading()
 {
-    static_assert(std::is_trivially_destructible_v<LinkType>);
-    fastFree(types.data());
     for (CalleesOfCall& callees : calleesOfCalls)
         callees.~CalleesOfCall();
     fastFree(calleesOfCalls.data());
@@ -2260,12 +2268,12 @@ void LinkFlow::settleTypes()
         return constructor && !escapedFunctions.get(constructor.index());
     });
     m_familiesThatHaveEscaped = BitVector(families.size());
-    BitVector familiesWhoseConstructorsHaveEscaped(families.size());
+    m_familiesWhoseConstructorsHaveEscaped = BitVector(families.size());
     for (uint32_t family = 0; family < families.size(); ++family) {
         if (!familiesWithLayoutThatHasNotEscaped.quickGet(family))
             m_familiesThatHaveEscaped.quickSet(family);
         if (!familiesWithConstructorThatHasNotEscaped.quickGet(family))
-            familiesWhoseConstructorsHaveEscaped.quickSet(family);
+            m_familiesWhoseConstructorsHaveEscaped.quickSet(family);
     }
     m_lostFamiliesThatHaveEscaped = BitVector(program.layouts.size());
     for (size_t layout : lostLayouts) {
@@ -2281,46 +2289,51 @@ void LinkFlow::settleTypes()
             m_lostFamiliesThatHaveEscaped.quickSet(member);
         });
     }
-    BitVector sitesThatHaveEscaped(m_sites.size());
+    m_sitesThatHaveEscaped = BitVector(m_sites.size());
     for (uint32_t site = 0; site < m_sites.size(); ++site) {
         if (hasEscaped(SiteID(site)))
-            sitesThatHaveEscaped.quickSet(site);
+            m_sitesThatHaveEscaped.quickSet(site);
     }
 
-    forEachRangeOfIndicesInParallel(loops, m_nodes.size(), [&](size_t first, size_t end) {
-        for (size_t index = first; index < end; ++index) {
-            LinkType& type = m_nodes[index].type;
-            if (!type.holdsUnseen)
-                continue;
+    m_flowIsAtRest = true;
+    m_typesAreSettled = true;
+}
 
-            bool functionsHaveEscaped = false;
-            switch (type.functions) {
-            case LinkType::Functions::None:
-                break;
-            case LinkType::Functions::Closure:
-                functionsHaveEscaped = escapedFunctions.get(type.function.index());
-                break;
-            case LinkType::Functions::Constructors:
-                functionsHaveEscaped = familiesWhoseConstructorsHaveEscaped.quickGet(type.constructorsOf.index());
-                break;
-            case LinkType::Functions::Set:
-            case LinkType::Functions::Lost:
-                functionsHaveEscaped = m_lostFunctionsReachUnseen;
-                break;
-            }
-            if (functionsHaveEscaped) {
-                type.functions = LinkType::Functions::None;
-                type.function = { };
-                type.constructorsOf = { };
-            }
+LinkType LinkFlow::settled(LinkType type) const
+{
+    ASSERT(type.holdsUnseen);
 
-            if (type.classes != LinkType::Classes::None && sitesThatHaveEscaped.quickGet(type.site.index())) {
-                type.classes = LinkType::Classes::None;
-                type.builtinClass = { };
-                type.site = { };
-            }
-        }
-    });
+    bool functionsHaveEscaped = false;
+    switch (type.functions) {
+    case LinkType::Functions::None:
+        break;
+    case LinkType::Functions::Closure:
+        functionsHaveEscaped = escapedFunctions.get(type.function.index());
+        break;
+    case LinkType::Functions::Constructors:
+        functionsHaveEscaped = m_familiesWhoseConstructorsHaveEscaped.quickGet(type.constructorsOf.index());
+        break;
+    case LinkType::Functions::Set:
+        functionsHaveEscaped = std::ranges::all_of(functionsOfSet(type), [&](FunctionID member) {
+            return escapedFunctions.get(member.index());
+        });
+        break;
+    case LinkType::Functions::Lost:
+        functionsHaveEscaped = m_lostFunctionsReachUnseen;
+        break;
+    }
+    if (functionsHaveEscaped) {
+        type.functions = LinkType::Functions::None;
+        type.function = { };
+        type.constructorsOf = { };
+    }
+
+    if (type.classes != LinkType::Classes::None && m_sitesThatHaveEscaped.quickGet(type.site.index())) {
+        type.classes = LinkType::Classes::None;
+        type.builtinClass = { };
+        type.site = { };
+    }
+    return type;
 }
 
 static constexpr size_t fewestStepsForSeveralThreadsInLinkFlow = 512;
@@ -5649,7 +5662,6 @@ FlowNodeID LinkFlow::gatheredByLostFunctions()
 FlowNodeID LinkFlow::parameterOfLostFunctions(uint32_t positionalArgument)
 {
     return nodeAskedOnceByLane(MadeOnDemand::ParameterOfLostFunctions, positionalArgument, [&]() -> FlowNodeID {
-        m_lostFunctionsAreCalled = true;
         return argumentOfLostFunctions(positionalArgument);
     });
 }
@@ -5657,7 +5669,6 @@ FlowNodeID LinkFlow::parameterOfLostFunctions(uint32_t positionalArgument)
 FlowNodeID LinkFlow::receiverOfLostFunctions()
 {
     return nodeAskedOnceByLane(MadeOnDemand::ReceiverOfLostFunctions, 0, [&]() -> FlowNodeID {
-        m_lostFunctionsAreCalled = true;
         return fixedNodeInLinkFlow(FixedNodeOfLinkFlow::ReceiverOfLostFunctions);
     });
 }
@@ -5665,7 +5676,6 @@ FlowNodeID LinkFlow::receiverOfLostFunctions()
 FlowNodeID LinkFlow::resultOfLostFunctions()
 {
     return nodeAskedOnceByLane(MadeOnDemand::ResultOfLostFunctions, 0, [&]() -> FlowNodeID {
-        m_lostFunctionsAreCalled = true;
         return fixedNodeInLinkFlow(FixedNodeOfLinkFlow::ResultOfLostFunctions);
     });
 }
@@ -5675,12 +5685,30 @@ FlowNodeID LinkFlow::madeForLostFunctionsWithoutClass()
     return fixedNodeInLinkFlow(FixedNodeOfLinkFlow::MadeForLostFunctionsWithoutClass);
 }
 
+void LinkFlow::noteCallOfLostFunctions(const LinkType& callee)
+{
+    if (m_lostFunctionsAreCalled)
+        return;
+    if (callee.functions != LinkType::Functions::Set) {
+        note(Note::EveryLostFunctionCalled, 0);
+        return;
+    }
+    for (FunctionID member : functionsOfSet(callee)) {
+        if (!m_lostFunctionsThatCallsName.get(member.index()))
+            note(Note::LostFunctionCalled, member.index());
+    }
+}
+
 bool LinkFlow::tieInLostFunctions()
 {
-    if (!m_lostFunctionsAreCalled || lostFunctions.bitCount() == m_numberOfLostFunctionsTied)
+    if ((!m_lostFunctionsAreCalled && !m_someCallNamesLostFunctions) || lostFunctions.bitCount() == m_numberOfLostFunctionsTied)
         return false;
     BitVector fresh = lostFunctions;
+    if (!m_lostFunctionsAreCalled)
+        fresh.filter(m_lostFunctionsThatCallsName);
     fresh.exclude(m_lostFunctionsTied);
+    if (fresh.isEmpty())
+        return false;
     m_lostFunctionsTied.merge(fresh);
     m_numberOfLostFunctionsTied += fresh.bitCount();
     for (size_t index : fresh)

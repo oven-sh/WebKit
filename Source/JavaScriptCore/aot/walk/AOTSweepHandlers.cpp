@@ -368,6 +368,13 @@ static bool sweptOperationMayCollectOrRunOtherCode(const Code& code, const Opera
 
 static constexpr OperandUses usesThatLetSweptCellBeSeen { OperandUse::Retains, OperandUse::Calls, OperandUse::PassesToUserCode };
 static constexpr OperandUses usesThatLetSweptCellBeSeenOrGiveAnotherName { OperandUse::Retains, OperandUse::Calls, OperandUse::PassesToUserCode, OperandUse::Returns };
+static constexpr OperandUses usesThatLeaveSweptCellYoung {
+    OperandUse::Inspects, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents,
+    OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor,
+    OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatLetSweptCellBeSeen, OperandUse::Returns, usesThatLeaveSweptCellYoung }));
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatLetSweptCellBeSeenOrGiveAnotherName, usesThatLeaveSweptCellYoung }));
 
 static constexpr OperandUses usesThatEndYouthOfOperandOf(Opcode opcode)
 {

@@ -501,6 +501,17 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
         const LocationMasks* ownWritesOnWaysToReturn = summary.knownEffectsApart.ownWritesOnWaysToReturn();
         effects.writesOnReturn = ownWritesOnWaysToReturn ? *ownWritesOnWaysToReturn : summary.ownEffects.writes;
         effects.layoutsWritten = summary.layoutsOfOwnWrites;
+        // What a function that runs at most once hands to closures, and what it lays into a scope at its making, may be stored into words of the instance (plan/AOTPromotedEnvironments.cpp).
+        // The body as written holds no such store. It is counted here, for whoever reads these effects, and climbs to the callers like any other write.
+        if (m_tables.function(id).runsAtMostOnce) {
+            LocationMasks wordsInPlaceOfCells;
+            if (!summary.sitesThatHandOverCaptures.isEmpty())
+                wordsInPlaceOfCells.add(AbstractHeap::ModuleVariables, locationMaskOfBit(Program::locationBitOfVariablesThatPlanAdds));
+            if (!summary.environmentsMade.isEmpty())
+                wordsInPlaceOfCells.add(AbstractHeap::EnvironmentFields);
+            effects.all.writes.merge(wordsInPlaceOfCells);
+            effects.writesOnReturn.merge(wordsInPlaceOfCells);
+        }
         if (summary.ownEffects.reads.contains(AbstractHeap::ModuleVariables)) {
             for (const SummaryNode& node : summary.nodes) {
                 if (node.kind != SummaryNode::Kind::Variable || !m_variablesThatFirstReadMayFill.quickGet(node.first))

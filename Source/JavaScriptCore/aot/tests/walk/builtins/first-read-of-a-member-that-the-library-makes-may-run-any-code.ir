@@ -2,6 +2,7 @@
 # The host makes process.nextTick when it is first read, and it makes it by entering compiled code of the library. The first read was built as InitializeBuiltin, whose row says: no other code, no throw, no collection;
 # the walk kept all that it remembered across it. It is built as the read that may do all of that. A member that the engine merely adds at its first read (Math.imul) goes as before.
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: InitializeBuiltin
 # CHECK: GetWatchedBuiltinValue {{*}}builtin=ProcessNextTick

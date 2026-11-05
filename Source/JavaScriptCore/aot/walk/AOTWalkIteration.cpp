@@ -35,7 +35,7 @@ Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Re
 bool canWaitForStepOfAsyncGenerator(Walker&);
 bool canCallCompilerHelper(Walker&, FunctionID helper);
 Reference callCompilerHelper(Walker&, FunctionID helper, std::span<const Reference> arguments, Origin);
-Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, Origin);
+Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Origin);
 
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
@@ -44,45 +44,6 @@ static constexpr OpcodeSet opcodesReplacedByIteration { Opcode::IteratorOpen, Op
 static constexpr OpcodeSet appendsToListsInIteration { Opcode::AppendElement, Opcode::AppendHole };
 static constexpr OpcodeSet callsOfListsInIteration { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList };
 static constexpr OpcodeSet opcodesOfTypedIteration = opcodesReplacedByIteration | appendsToListsInIteration | callsOfListsInIteration | OpcodeSet { Opcode::ResultAt };
-
-static bool isConstantLocationForIteration(const Walker& walker, BuiltinID member)
-{
-    const Program& program = walker.program();
-    const BuiltinTable& table = program.builtins();
-    if (table.has(BuiltinMark::MayBeAbsent, member) || program.isUnlocked(member) || program.isUnlocked(table.canonicalID(member)))
-        return false;
-    if (table.at(member).mutability == BuiltinMutability::AlwaysLocked || table.isLocationOfLockedObject(member))
-        return true;
-    return walker.facts().builtinLocation(member) == BuiltinLocationState::Constant;
-}
-
-static std::optional<BuiltinID> findMemberAboveForIteration(const Walker& walker, BuiltinID start, BuiltinName name)
-{
-    const Program& program = walker.program();
-    const BuiltinTable& table = program.builtins();
-    PropertyKeyID key = program.keyOf(name);
-    if (!start || !key)
-        return std::nullopt;
-    MembersUnderKey members(program, key);
-    BuiltinID holder = table.canonicalID(start);
-    while (true) {
-        if (BuiltinID member = members.findOwnMember(holder)) {
-            bool liesOnHolder = !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
-            return liesOnHolder && isConstantLocationForIteration(walker, member) ? std::optional(member) : std::nullopt;
-        }
-        if (!listsEveryMemberUnder(program, holder, key) || !members.isClosedKey(holder) || !table.hasLockedPrototypeLink(holder))
-            return std::nullopt;
-        switch (table.at(holder).prototypeLink) {
-        case BuiltinPrototypeLink::Unknown:
-            return std::nullopt;
-        case BuiltinPrototypeLink::Null:
-            return BuiltinID();
-        case BuiltinPrototypeLink::Builtin:
-            holder = table.canonicalID(table.at(holder).inheritsFrom);
-            break;
-        }
-    }
-}
 
 static std::optional<JSC::IterationKind> kindOfIterationThatNobodySees(const Walker& walker, BuiltinClassID builtinClass, bool isPrimitive = false, BuiltinName under = { })
 {
@@ -2199,7 +2160,7 @@ private:
 
         if (isAsync) {
             Reference generator = goOnWhereTypeTestPasses(iterator, types.builtinClass(BuiltinClasses::AsyncGenerator), byCall);
-            Reference stepped = m_walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(m_walker, generator, sent ? sent : undefined(), m_held, m_origin);
+            Reference stepped = m_walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(m_walker, generator, sent ? sent : undefined(), m_held, { }, m_origin);
             Reference value = resultOfGeneratorStep(stepped, StepGeneratorResult::Value);
             Reference status = resultOfGeneratorStep(stepped, StepGeneratorResult::Status);
             BlockID isAnsweredByObject = addBlock(BlockFrequency::Rare);

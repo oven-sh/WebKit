@@ -60,7 +60,6 @@ struct Proven {
     static ProvenInEveryVersion byConstruction(TypeID type) { return ProvenInEveryVersion(type); }
     static ProvenInEveryVersion byCompiler(TypeID type) { return ProvenInEveryVersion(type); }
     static ProvenInEveryVersion byPosition(TypeID type) { return ProvenInEveryVersion(type); }
-    template<typename T> static ProvenValue<T> byClosedSet(T members) { return ProvenValue<T>(std::move(members)); }
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -31,7 +31,6 @@
 #include "AOTWalkCoroutinePositions.h"
 #include "AOTWalkCoroutinePromises.h"
 #include "AOTWalkCoroutineCalls.h"
-#include "AOTWalkJSONWrites.h"
 #include "AOTWalkNumberGuesses.h"
 #include "AOTWalkTextBuilders.h"
 #include "AOTWalkTextBuilderRows.h"
@@ -270,6 +269,12 @@ public:
     TypeID entryParameter(TypeLevel level, FunctionID function, uint32_t entryParameter) const final { return level == TypeLevel::Proven ? m_plan.conventions().typeBehindGuard(function, entryParameter) : TypeID(); }
     bool entryParameterIsLeftOutOfCalls(FunctionID function, uint32_t entryParameter) const final { return m_plan.promotedEnvironments().isRemoved(function, entryParameter); }
     TypeID resultOfSelector(TypeLevel, uint32_t selector) const final { return m_plan.conventions().methodSelector(selector).typeOfResult; }
+    TypeID resultOfTableRow(TypeLevel level, uint32_t selector, LayoutID receiver, bool& hasRow) const final
+    {
+        const MethodTableRow* row = m_plan.conventions().findRowOfMethodTable(selector, receiver);
+        hasRow = row;
+        return row && !row->guardedClass ? result(level, row->method, 0) : TypeID();
+    }
     TypeID capture(TypeLevel level, FunctionID function, uint32_t capture) const final
     {
         if (const auto& captures = m_program.at(function).captures; !m_believesTables && capture < captures.size() && captures[capture].isEstablished())
@@ -285,7 +290,10 @@ private:
     {
         if (promoted.layout)
             return environmentField(level, promoted.layout, promoted.field);
-        return m_program.provenTypeOf(m_program.at(promoted.function).captures[promoted.capture]);
+        TypeID established = m_program.provenTypeOf(m_program.at(promoted.function).captures[promoted.capture]);
+        TypeID proven = capture(level, promoted.function, promoted.capture);
+        TypeID both = proven ? m_types.intersectionOf(established, proven) : TypeID();
+        return both && !isNeverType(both) ? both : established;
     }
 
     TypeID typeReadOffMember(TypeLevel level, const MemberFound& found) const
@@ -608,6 +616,7 @@ void Walker::beginUnit(CodeUnit unit)
     m_sharedConstants.shrink(0);
     m_numberOfSharedConstants = 0;
     m_wordsThatSayNothing.shrink(0);
+    m_storesOfCapturedValues = { };
     m_holdsReadsOfVariablesAsConstants = false;
     m_narrowedTypedLast = { };
     m_copiesOfConstants.shrink(0);
@@ -671,8 +680,6 @@ bool Walker::walk(CodeUnit unit)
         isBuilt = walkBody();
     else if (unit.role == CodeRole::Body)
         isBuilt = walkRampOfCoroutine(*this);
-    else if (unit.role == CodeRole::Serializer)
-        isBuilt = walkSerializerUnit(*this);
     else
         isBuilt = walkEntryUnit(*this, unit);
     if (m_walksUnitAgain) {
@@ -746,6 +753,7 @@ bool Walker::walkBody()
         build(WTF::move(enter));
     }
     stopAtSecondEntryOfMaker(*this);
+    storeParametersNoLongerCaptured();
 
     for (uint32_t number = 0; number < index.numberOfBlocks() && !m_hasFailed; ++number)
         walkBlock(BlockID(number));
@@ -1238,10 +1246,13 @@ void Walker::holdStoredValuesToPlaces(const Draft& draft)
 {
     Origin origin = draft.origin();
     if (draft.opcode == Opcode::PutModuleVariable) {
-        holdToTypeOfPlace(draft.valueOperand(), m_positionsOfBuild->variable(TypeLevel::Proven, draft.variable()), ProofSource::Variable, origin);
+        holdToTypeOfPlace(draft.valueOperand(), m_positionsOfBuild->variable(TypeLevel::Proven, draft.variable()), plan().promotedEnvironments().find(draft.variable()) ? ProofSource::Capture : ProofSource::Variable, origin);
         return;
     }
     if (draft.opcode == Opcode::PutEnvironmentField) {
+        // The first words of a scope that is never made are stored one by one. As in an allocation, the `undefined` that a variable is born with is no store that Link has counted.
+        if (Reference born = draft.valueOperand(); born && born.isConstant() && typeOf(born) == TypeID(TypeTable::undefined) && plan().promotedEnvironments().isPromoted(draft.layout()))
+            return;
         holdToTypeOfPlace(draft.valueOperand(), m_positionsOfBuild->environmentField(TypeLevel::Proven, draft.layout(), draft.field()), ProofSource::SlotOfScope, origin);
         return;
     }
@@ -1426,7 +1437,7 @@ static ProofSource sourceOfProofInWalk(Opcode opcode)
     switch (accessClassOf(opcode)) {
     case AccessClass::DirectCall:
     case AccessClass::IndirectCall:
-        return opcode == Opcode::CallDirect ? ProofSource::ResultOfCall : ProofSource::ResultOfOtherCall;
+        return opcode == Opcode::CallDirect || opcode == Opcode::CallTable ? ProofSource::ResultOfCall : ProofSource::ResultOfOtherCall;
     case AccessClass::Slot:
     case AccessClass::ByName:
         return ProofSource::Field;
@@ -1441,8 +1452,9 @@ static constexpr OpcodeSet readsThatHandOverWhatLies {
     Opcode::GetCapture, Opcode::GetGlobalBinding, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex,
 };
 
+static constexpr RepresentationSet rawFormsOfJavaScriptValuesInWalk { Representation::Boolean, Representation::Int32, Representation::Double, Representation::OptionalInt64, Representation::OptionalDouble };
 static constexpr OpcodeSet callsByValueInWalk = opcodesWhere([](Opcode opcode) {
-    return accessClassOf(opcode) == AccessClass::IndirectCall && resultRuleOf(opcode) == ResultRule::Unknown;
+    return accessClassOf(opcode) == AccessClass::IndirectCall && resultRuleOf(opcode) == ResultRule::Unknown && opcode != Opcode::CallTable;
 });
 
 TypeID Walker::typeThatCallByValueIsShownToGive(const auto& call, std::span<const TypeID> shownOfOperands)
@@ -1535,11 +1547,28 @@ bool Walker::entryParameterIsCapture(const Block& entry, ValueID parameter) cons
 
 bool Walker::entryParameterIsShown(const Block& entry, ValueID parameter) const
 {
-    return isEnforced(entryParameterIsCapture(entry, parameter) ? ProofSource::Capture : ProofSource::EntryParameter);
+    switch (unit().role) {
+    case CodeRole::Body:
+    case CodeRole::CoroutineBody:
+    case CodeRole::SlowBody:
+    case CodeRole::ParameterGuard:
+    case CodeRole::ModuleStart:
+        return isEnforced(entryParameterIsCapture(entry, parameter) ? ProofSource::Capture : ProofSource::EntryParameter);
+    case CodeRole::GenericCallEntry:
+    case CodeRole::GenericConstructEntry:
+    case CodeRole::AllocatingConstructEntry:
+    case CodeRole::TableEntry:
+    case CodeRole::TableLookup:
+    case CodeRole::Serializer:
+        return namesOnlyUnitsOfItsFunction(unit().role) && isEnforced(ProofSource::EntryParameter);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static TypeID typeOfFunctionThatVariableIsBornWith(const Program& program, const Plan& plan, VariableID id)
 {
+    if (plan.promotedEnvironments().find(id))
+        return { };
     const Variable& variable = program.at(id);
     if (variable.initialization != VariableInitialization::Function || variable.owner || !variable.flags.contains(VariableFlags::IsImmutable) || !variable.declared.isEstablished())
         return { };
@@ -1558,7 +1587,7 @@ TypeID Walker::typeShownAtOnce(ValueID id) const
     if (m_code.isConstant(id))
         return record.type;
     bool isEntryParameter = record.opcode == Opcode::Parameter && m_code.at(record.block()).isEntry;
-    if (numberRepresentations.contains(record.representation) && familyOf(record.opcode) != OperationFamily::Operator && record.opcode != Opcode::Narrowed && !isEntryParameter)
+    if (numberRepresentations.contains(record.representation) && resultRuleOf(record.opcode) != ResultRule::Natural && record.opcode != Opcode::Narrowed && !isEntryParameter)
         return widestTypeOf(record.representation);
     if (record.representation == Representation::Boolean)
         return TypeTable::boolean;
@@ -2046,7 +2075,7 @@ void Walker::buildCheckOfProof(Reference value, TypeID proven, TypeID withoutPro
         }
         bool isRawNumber = !value.isConstant() && (m_types.at(said).primitives & Primitive::Number);
         bool mayBeNumberThatIsProven = isRawNumber && (m_types.at(proven).primitives & Primitive::Number);
-        if (m_types.isSubset(said, proven) || (mayBeNumberThatIsProven && source != ProofSource::EntryParameter)) {
+        if (m_types.isSubset(said, proven) || (mayBeNumberThatIsProven && source != ProofSource::EntryParameter && m_types.isSubset(typeAsBuilt(value), proven))) {
             ++m_numberOfProofsThatFormTells;
             return;
         }
@@ -2717,7 +2746,7 @@ void Walker::askTruthOfOperandsNotProvenBoolean(DraftType& draft)
     }
 }
 
-static void logMisfitInWalk(const TypeArena& types, ASCIILiteral takenBy, const IllTypedOperand& misfit)
+COLD NEVER_INLINE static void logMisfitInWalk(const TypeArena& types, ASCIILiteral takenBy, const IllTypedOperand& misfit)
 {
     dataLogLn("AOT: ", takenBy, ", operand ", misfit.operandIndex, ": ", nameOf(misfit.error), ": it is ", TypeInText { types, misfit.proven }, ", and ", TypeInText { types, misfit.required }, " is taken");
 }
@@ -3160,7 +3189,7 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         convertOperands(draft);
     if (isUnreachable())
         return { };
-    if (effects.mayThrow && !m_isLeadingHandlerEdge && !m_code.at(m_block).handler && numberOfFramesUpToHandlerInForce()) {
+    if (effects.mayThrow && !m_isLeadingHandlerEdge && !m_code.at(m_block).handler && (m_handlerMadeOverCopies || numberOfFramesUpToHandlerInForce())) {
         leadHandlerEdge();
         if (isUnreachable())
             return { };
@@ -3178,6 +3207,9 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         else
             draft.representation = resultRepresentationOf(*this, draft, proven);
     }
+    if ((steps & Step::isTypedByWhatIsProven) && proven && m_positions == m_positionsOfBuild.get() && m_types.at(proven).isJavaScriptValue() && rawFormsOfJavaScriptValuesInWalk.contains(draft.representation)
+        && ((m_resultOfReadBeingTyped && draft.opcode == Opcode::ElemGet) || (m_contentsBeingTyped && recordsTypedByWhatIsProvenOfContents.contains(draft.opcode))))
+        draft.representation = Representation::JSValue;
     bool holdsValue = proven && !isNeverType(proven) && hasRegister(draft.representation) && draft.representation != Representation::RawWord;
     if (draft.representation == Representation::Unchosen || (holdsValue && !isLegalRepresentation(m_types, proven, draft.representation))) {
         fail("the result of an operation is kept in a form that its type does not allow"_s);
@@ -4744,6 +4776,10 @@ void Walker::leadHandlerEdge()
 {
     if (m_code.at(m_block).handler)
         return;
+    if (handlerMadeOverCopiesIsInForce()) {
+        m_code.closeEdge(m_code.addHandlerEdge(m_block), m_handlerMadeOverCopies, { });
+        return;
+    }
     size_t frameIndex = numberOfFramesUpToHandlerInForce();
     if (!frameIndex--)
         return;
@@ -5163,6 +5199,7 @@ void Walker::walkStretch(BlockID inputBlock, uint32_t begin, uint32_t end)
     for (uint32_t place = begin; place < end && !isUnreachable() && !m_hasFailed; ++place) {
         if (place >= m_frames[frameIndex].walkedUpTo)
             walkOperation(index.value(ValueID(firstValue + place)));
+        storeValueBehindItsDefinition(ValueID(firstValue + place));
     }
     Frame& frame = m_frames[frameIndex];
     frame.walkedUpTo = std::max({ walkedBefore, frame.walkedUpTo, end });
@@ -5190,14 +5227,14 @@ template<Opcode known> static ALWAYS_INLINE bool isReadThatOnlyCallUsesInChain(c
 template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
 {
     BodyValueOf<known> value(walked);
+    if (value.opcode() == Opcode::Call && !referenceOf(value.calleeOperand()) && callMethodThroughTable(*this, value))
+        return false;
     if (hasTextsInStringBuilders() && bindCastOfTextInStringBuilder(*this, value))
         return false;
     if (value.opcode() == Opcode::Builtin)
         buildFirstReadOfNamedBuiltin(*this, value);
     if ((value.opcode() == Opcode::NewObject || value.opcode() == Opcode::ReleaseHint) && leaveEnvironmentAmongVariables(*this, value))
         return false;
-    if (value.opcode() == Opcode::NewClosure || value.opcode() == Opcode::CallDirect)
-        storeValuesNoLongerCaptured(*this, value);
     if (value.opcode() == Opcode::NewObject && has(Mechanism::Guesses) && m_opensGuesses && openGuessAtAllocation(*this, value))
         return true;
     if (has(Mechanism::Guesses) && m_opensGuesses && useKeyOfForInBehindTest(*this, value))
@@ -5229,7 +5266,8 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         || (has(Mechanism::DirectCalls) && callDirectly(*this, value))
         || (has(Mechanism::DirectCalls) && callProvenAccessor(*this, value))
         || (has(Mechanism::Folding) && unit().role == CodeRole::SlowBody && program().admitsReplacedBuiltins && buildBuiltinThatExecutableNames(*this, value))
-        || (has(Mechanism::TypedOperations) && buildTypedOperation(*this, value));
+        || (has(Mechanism::TypedOperations) && buildTypedOperation(*this, value))
+        || (value.opcode() == Opcode::PropGet && has(Mechanism::TypedOperations) && has(Mechanism::DirectCalls) && leaveReadOfMethodToTableCall(*this, value));
     if (!isBuilt && value.opcode() == Opcode::PropGet && !m_waysIntoClosedCopies.isEmpty() && has(Mechanism::Guesses) && m_opensGuesses && askObjectAtHeadOfTypedCopy(value))
         isBuilt = buildTypedOperation(*this, value);
     if (!isBuilt && has(Mechanism::Guesses) && m_opensGuesses) {
@@ -5881,8 +5919,12 @@ Reference Walker::holdResultToItsType(Reference value, Origin origin)
         held = { };
     if (Representation form = plan().conventions().resultRepresentation(unit()); rawFormsOfResults.contains(form) && !isLegalRepresentation(m_types.at(typeOf(value)), form))
         return proveOrTrap(value, held ? m_types.testablePartOf(held) : widestTypeOf(form), ProofSource::ResultOfCall, origin);
-    if (held && value.isRecord() && !isShown(value, held))
-        buildCheckOfProof(value, held, typeShown(value), ProofSource::ResultOfCall, origin, true);
+    if (held && value.isRecord() && !isShown(value, held)) {
+        TypeID shown = typeShown(value);
+        Reference asked = representationOf(value) == Representation::Boolean ? convert(value, Representation::JSValue, origin) : value;
+        if (asked && !isUnreachable())
+            buildCheckOfProof(asked, held, shown, ProofSource::ResultOfCall, origin, true);
+    }
     return isUnreachable() ? Reference() : value;
 }
 

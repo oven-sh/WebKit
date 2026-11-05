@@ -14,6 +14,7 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTCellFormat.h"
+#include "AOTCompileUnit.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTGuardEmitter.h"
@@ -27,7 +28,6 @@
 #include "AOTSlotEmitter.h"
 #include "AOTStubsArrays.h"
 #include "AOTStubsElements.h"
-#include "AOTStubsValues.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTruthinessEmitter.h"
 #include "AOTTypeArena.h"
@@ -158,19 +158,6 @@ Word32 GuessedAccessEmitter::indexOrElse(Boxed position, LBasicBlock failure)
     return unboxInt32(position);
 }
 
-Condition GuessedAccessEmitter::truthOfWhatSlotHolds(const ValueContext& read, Operand loaded, const Type& typeOfForm, const Type& held)
-{
-    Condition told = emitter<TruthinessEmitter>().isTruthy(read, loaded, held);
-    if (!AOT::hasFlag(generator().build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))
-        return told;
-    m_out.suspendDeclaredAccesses();
-    Boxed found = emitter<ConversionEmitter>().box(read, loaded, typeOfForm);
-    Condition asked(m_out.castToInt32(callStub(read, AOT::toBoolean(), { found.value() }).first));
-    emitter<ThrowEmitter>().requireOrStopAtFalseProof(read, Condition(m_out.equal(told.value(), asked.value())), found, ProofSource::Field);
-    m_out.resumeDeclaredAccesses();
-    return told;
-}
-
 void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
 {
     if (!isGuessedFormOf(value, Opcode::PropGet) || value.representation() != Representation::JSValue) {
@@ -195,11 +182,23 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     bool readsEmptySlotAsUndefined = value.opcode() == Opcode::GetSlotOrUndefined || value.opcode() == Opcode::GetDeferredClosureSlotOrUndefined;
     LBasicBlock failure = newBlock();
 
-    std::optional<CodeGenerator::WaysOfTruth> ways = slot.representation == SlotRepresentation::DeferredClosure ? std::nullopt : generator().waysOfTruthOf(value);
+    bool asksWhatSlotsHold = sourcesOfProofsCheckedUnder(generator().build().options().testing) & bitOfSourceOfProofs(ProofSource::Field);
+    std::optional<CodeGenerator::WaysOfTruth> ways = asksWhatSlotsHold || slot.representation == SlotRepresentation::DeferredClosure ? std::nullopt : generator().waysOfTruthOf(value);
+    TypeID heldBySlots;
+    if (ways || asksWhatSlotsHold) {
+        AccessContext context { m_program, WalkFacts(m_facts), m_plan, types(), m_id };
+        heldBySlots = typeHeldBySlotsOf(context, access.membersWithField.span(), key);
+    }
+    TypeID askedOfWhatSlotsHold = heldBySlots;
+    if (asksWhatSlotsHold && heldBySlots) {
+        bool namesOrdinaryObjects = std::ranges::any_of(membersOf(types(), types().at(heldBySlots)), [&](LayoutID member) {
+            return !m_plan.layout(member).holdsCompiledObjects();
+        });
+        if (namesOrdinaryObjects)
+            askedOfWhatSlotsHold = types().unionOf(types().withoutObjects(heldBySlots), TypeTable::object);
+    }
     Type held;
     if (ways) {
-        AccessContext context { m_program, WalkFacts(m_facts), m_plan, types(), m_id };
-        TypeID heldBySlots = typeHeldBySlotsOf(context, access.membersWithField.span(), key);
         if (heldBySlots) {
             held = types().at(heldBySlots);
             held.primitives &= ~Primitive::Absent;
@@ -212,6 +211,11 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     std::optional<Join<Boxed>> join;
     if (!ways)
         join.emplace(m_out);
+    auto foundInSlot = [&](Boxed found) {
+        if (asksWhatSlotsHold && heldBySlots)
+            emitter<ThrowEmitter>().requireOrStopAtFalseProof(value, hasType(found, typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, askedOfWhatSlotsHold)), found, ProofSource::Field);
+        return found;
+    };
 
     LayoutSetID holders = membersWithFieldAmong(access, value->receivers());
     CellPointer cell = receiverOrElse(value, object, holders, failure);
@@ -228,19 +232,18 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
         loaded.primitives &= ~(Primitive::UndefinedOrNull | Primitive::Absent);
         if (ways) {
             held.primitives &= ~Primitive::UndefinedOrNull;
-            branch(truthOfWhatSlotHolds(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded, held), ways->targets);
+            branch(emitter<TruthinessEmitter>().isTruthy(value, slots.loadSlot(base, slot, location, extensionWord, loaded), held), ways->targets);
         } else
-            join->add(conversions.box(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded));
+            join->add(foundInSlot(conversions.box(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded)));
     } else {
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
         if (value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark)
             continueGuessedAccessIf(m_out, slots.holdsValue(base, slot, location, extensionWord), slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure));
         Operand loaded = slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
-        Type typeOfForm = types().at(widestTypeOf(loaded.representation));
         if (ways)
-            branch(truthOfWhatSlotHolds(value, loaded, typeOfForm, held), ways->targets);
+            branch(emitter<TruthinessEmitter>().isTruthy(value, loaded, held), ways->targets);
         else
-            join->add(conversions.box(value, loaded, typeOfForm));
+            join->add(foundInSlot(conversions.box(value, loaded, types().at(widestTypeOf(loaded.representation)))));
 
         if (slotIsEmpty) {
             m_out.appendTo(slotIsEmpty);

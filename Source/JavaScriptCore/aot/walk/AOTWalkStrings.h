@@ -44,7 +44,6 @@ Reference rootForStrings(const Walker&, Reference);
 PrimitiveKnownToFolding primitiveKnownForStrings(const Walker&, Reference);
 StringID textKnownForStrings(const Walker&, Reference);
 std::optional<char16_t> onlyCodeUnitOfText(const Walker&, StringID);
-Reference constantForStrings(Walker&, PrimitiveKnownToFolding);
 Reference integerForStrings(Walker&, int64_t);
 bool isProvenString(const Walker&, TypeID);
 std::optional<uint32_t> operandsNarrowedBehindTestForStrings(const Walker&, ValueID test);

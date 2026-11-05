@@ -138,7 +138,7 @@ private:
     bool runsAtMostOnce(const CompiledCode& code) const
     {
         FunctionID function = code.unit.function;
-        return m_facts.runsAtMostOnce(function) && !m_facts.hasLoops(function) && code.sites.pollSites.isEmpty();
+        return m_program.at(function).isModuleBody() && !m_facts.hasLoops(function) && code.sites.pollSites.isEmpty();
     }
 
     static constexpr bool impliesOtherMentions(NumberSpace space)

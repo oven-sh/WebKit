@@ -10,6 +10,7 @@
 #include "AOTLayout.h"
 #include "AOTTypeArena.h"
 #include <wtf/BitVector.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT {
 
@@ -23,10 +24,12 @@ using FamilyID = ID<struct FamilyIDTag>;
 
 enum class SetsThatNoFamilyHolds : bool { Stay, BecomeAnyObject };
 
+using SetsOfLayoutsWritten = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+
 class Families {
     WTF_MAKE_NONCOPYABLE(Families);
 public:
-    Families(Program&, const ParallelLoops&);
+    Families(Program&, const SetsOfLayoutsWritten& writtenInBodies, const ParallelLoops&);
 
     uint32_t size() const { return m_layouts.size(); }
     LayoutSetID layoutsOf(FamilyID id) const { return m_layouts[id.index()]; }

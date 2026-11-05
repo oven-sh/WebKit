@@ -277,7 +277,7 @@ static Reference searchInStringURLs(Walker& walker, Reference text, Reference sc
         results[0] = buildPieceOfString(walker, text, endOfPath, endOfQuery, origin);
     };
     auto giveEmptyText = [&](std::span<Reference> results) {
-        results[0] = constantForStrings(walker, PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
+        results[0] = walker.constant(PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
     };
     std::array<Reference, 1> met;
     return buildArmsForStrings(walker, hasQuery, BlockFrequency::Normal, ArmForStrings(cutQuery), ArmForStrings(giveEmptyText), met) ? met[0] : Reference();
@@ -297,13 +297,13 @@ static Reference answerOfSearchInStringURLs(Walker& walker, Reference text, Refe
         return { };
     auto giveWhatWasFound = [&](std::span<Reference> results) {
         if (!answersValue) {
-            results[0] = constantForStrings(walker, PrimitiveKnownToFolding::boolean(true));
+            results[0] = walker.constant(PrimitiveKnownToFolding::boolean(true));
             return;
         }
         results[0] = pieceInStringURLs(walker, text, shiftedInStringURLs(walker, found, PlainURL::bitsOfOffset, origin), offsetInStringURLs(walker, found, 0, origin), origin);
     };
     auto giveNothing = [&](std::span<Reference> results) {
-        results[0] = constantForStrings(walker, answersValue ? PrimitiveKnownToFolding::null() : PrimitiveKnownToFolding::boolean(false));
+        results[0] = walker.constant(answersValue ? PrimitiveKnownToFolding::null() : PrimitiveKnownToFolding::boolean(false));
     };
     std::array<Reference, 1> met;
     return buildArmsForStrings(walker, isFound, BlockFrequency::Normal, ArmForStrings(giveWhatWasFound), ArmForStrings(giveNothing), met) ? met[0] : Reference();
@@ -485,23 +485,14 @@ static Reference isPlainInStringURLs(Walker& walker, const URLThatIsNeverMade& u
 
 static Reference meetInStringURLs(Walker& walker, BlockID meeting, Reference answer, BlockID endOfPlain, Reference written, BlockID endOfWritten)
 {
-    if (!endOfPlain && !endOfWritten)
-        return { };
-    const Code& code = walker.code();
-    TypeID typeOfAnswer = endOfPlain ? code.at(answer.id()).type : code.at(written.id()).type;
-    TypeID typeOfWritten = endOfWritten ? code.at(written.id()).type : typeOfAnswer;
-    TypeID type = joinOf(walker.types(), walker.facts().families(), typeOfAnswer, typeOfWritten);
-    Representation forms[] { walker.representationOf(endOfPlain ? answer : written), walker.representationOf(endOfWritten ? written : answer) };
-    Reference met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms));
-    if (endOfPlain) {
-        walker.continueIn(endOfPlain);
-        walker.jumpTo(meeting, singleElementSpan(answer));
-    }
-    if (endOfWritten) {
-        walker.continueIn(endOfWritten);
-        walker.jumpTo(meeting, singleElementSpan(written));
-    }
-    walker.continueIn(meeting);
+    Vector<Walker::ArmThatMeets, 2> arms;
+    if (endOfPlain)
+        arms.append(Walker::ArmThatMeets { endOfPlain, { answer } });
+    if (endOfWritten)
+        arms.append(Walker::ArmThatMeets { endOfWritten, { written } });
+    Reference met;
+    if (!arms.isEmpty())
+        walker.letArmsMeet(arms.span(), meeting, singleElementSpan(met));
     return met;
 }
 
@@ -517,7 +508,7 @@ static bool answerReadOffURLInStringURLs(Walker& walker, const URLThatIsNeverMad
     }
     auto answerOutOfText = [&](std::span<Reference> results) {
         if (!question) {
-            results[0] = constantForStrings(walker, PrimitiveKnownToFolding::undefined());
+            results[0] = walker.constant(PrimitiveKnownToFolding::undefined());
             return;
         }
         RowInStringURLs row;
@@ -614,7 +605,7 @@ bool answerFromURLThatIsNeverMadeOfItsOpcodes(Walker& walker, const BodyValue& v
     if (value.opcode() == Opcode::PropGet && mention == MentionInStringURLs::URL)
         return answerReadOffURLInStringURLs(walker, *url, value);
     if (value.opcode() == Opcode::PropGet && mention == MentionInStringURLs::Query && mentionInStringURLs(*url, value.id()) == MentionInStringURLs::Method) {
-        walker.bind(value.id(), constantForStrings(walker, PrimitiveKnownToFolding::undefined()));
+        walker.bind(value.id(), walker.constant(PrimitiveKnownToFolding::undefined()));
         return true;
     }
     if (value.opcode() == Opcode::Call && mention == MentionInStringURLs::Query && mentionInStringURLs(*url, value.calleeOperand()) == MentionInStringURLs::Method)
@@ -693,13 +684,13 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     if (walker.hasFailed())
         return true;
 
-    Reference nothing = constantForStrings(walker, PrimitiveKnownToFolding::undefined());
+    Reference nothing = walker.constant(PrimitiveKnownToFolding::undefined());
     url.inlineFrame = walker.originOfOperation().inlineFrame;
     url.made = made;
     url.typeOfObject = typeOfObject;
     Vector<Walker::ArmThatMeets, 2> arms;
     if (endOfWritten) {
-        Reference noText = constantForStrings(walker, PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
+        Reference noText = walker.constant(PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
         arms.append(Walker::ArmThatMeets { endOfWritten, { object, noText, integerForStrings(walker, PlainURL::notPlain) } });
     }
     arms.append(Walker::ArmThatMeets { plain, { nothing, string, scan } });
@@ -800,24 +791,11 @@ bool buildURLCallByScan(Walker& walker, const CallByOneRow& call)
             endOfWritten = walker.currentBlock();
         }
     }
-    if (walker.hasFailed() || (!endOfPlain && !endOfWritten))
+    if (walker.hasFailed())
         return true;
-
-    const Code& code = walker.code();
-    TypeID typeOfAnswer = endOfPlain ? code.at(answer.id()).type : code.at(written.id()).type;
-    TypeID typeOfWritten = endOfWritten ? code.at(written.id()).type : typeOfAnswer;
-    TypeID type = joinOf(walker.types(), walker.facts().families(), typeOfAnswer, typeOfWritten);
-    Representation forms[] { walker.representationOf(endOfPlain ? answer : written), walker.representationOf(endOfWritten ? written : answer) };
-    Reference met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms));
-    if (endOfPlain) {
-        walker.continueIn(endOfPlain);
-        walker.jumpTo(meeting, singleElementSpan(answer));
-    }
-    if (endOfWritten) {
-        walker.continueIn(endOfWritten);
-        walker.jumpTo(meeting, singleElementSpan(written));
-    }
-    walker.continueIn(meeting);
+    Reference met = meetInStringURLs(walker, meeting, answer, endOfPlain, written, endOfWritten);
+    if (!met)
+        return true;
     walker.bind(row->last, met);
     walker.walkStretch(block, placeOfLast + 1, placeOfLast + 1);
     return true;

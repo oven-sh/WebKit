@@ -99,8 +99,9 @@ public:
     static constexpr ptrdiff_t matchResult = cachedResult + RegExpCachedResult::offsetOfResult();
     static constexpr unsigned kindOfMatchArray = static_cast<unsigned>(InlineAllocation::RegExpMatchesArray);
 
-    Matches()
-        : m_globalObject(makeUniqueWithoutFastMallocCheck<FakeObject<sizeof(JSGlobalObject)>>())
+    explicit Matches(const StubOptions& options = { })
+        : runner(options)
+        , m_globalObject(makeUniqueWithoutFastMallocCheck<FakeObject<sizeof(JSGlobalObject)>>())
     {
         scriptOfMatchingCode = &script;
         Instance& instance = runner.instance();
@@ -146,7 +147,12 @@ public:
         m_auxiliarySpace.at<void*>(CompleteSubspace::offsetOfAllocatorForSizeStep() + (words + 1) / 2 * sizeof(void*)) = allocator;
     }
 
-    StubRun match(RegExpMatchResult form, const FakeSubject& subject) { return runner.run(regExpMatch(form), { regExpObject.address(), subject.address() }); }
+    StubRun match(RegExpMatchResult form, const FakeSubject& subject)
+    {
+        if (takesStringInFrontOfRegExp(form))
+            return runner.run(regExpMatch(form), { subject.address(), regExpObject.address() });
+        return runner.run(regExpMatch(form), { regExpObject.address(), subject.address() });
+    }
 
     template<typename T> T& recorded(ptrdiff_t offset) { return m_globalObject->at<T>(offset); }
     uint64_t addressOfGlobalObject() const { return m_globalObject->address(); }
@@ -384,6 +390,94 @@ static void testMatchArrays()
     }
 }
 
+static void testStringMatchAndSearch()
+{
+    Matches matches;
+    Ref<StringImpl> text = StringImpl::create("abcdef"_span);
+    FakeSubject subject(text.get());
+    {
+        matches.reset({ }, jsNumber(9), 1);
+        MatchArrayMemory memory(matches, 1);
+        matches.script.answer = 1;
+        matches.script.offsets = { 1, 4, 2, 4 };
+        StubRun run = matches.match(RegExpMatchResult::ArrayForStringMatch, subject);
+        checkMatchArray(matches, memory, subject, run, 1, 1);
+        AOT_TEST_CHECK(!matches.script.start && matches.hasRecorded(subject, 1, 4) && matches.lastIndex() == bitsOfValue(jsNumber(9)));
+    }
+    {
+        matches.reset({ Yarr::Flags::Sticky }, jsNumber(2), 0);
+        MatchArrayMemory memory(matches, 0);
+        matches.script.answer = 2;
+        matches.script.offsets = { 2, 4 };
+        StubRun run = matches.match(RegExpMatchResult::ArrayForStringMatch, subject);
+        checkMatchArray(matches, memory, subject, run, 0, 2);
+        AOT_TEST_CHECK(matches.script.start == 2 && matches.hasRecorded(subject, 2, 4) && matches.lastIndex() == bitsOfValue(jsNumber(4)));
+    }
+    matches.reset({ }, jsNumber(0));
+    matches.script.answer = -1;
+    StubRun run = matches.match(RegExpMatchResult::ArrayForStringMatch, subject);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOfValue(jsNull()) && matches.hasRecordedNothing());
+
+    matches.reset({ }, jsNumber(0));
+    matches.script.answer = 2;
+    matches.script.offsets = { 2, 4 };
+    run = matches.match(RegExpMatchResult::IndexForStringSearch, subject);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOfValue(jsNumber(2)) && matches.hasRecorded(subject, 2, 4) && matches.lastIndex() == bitsOfValue(jsNumber(0)));
+
+    matches.reset({ }, jsNumber(0));
+    matches.script.answer = -1;
+    run = matches.match(RegExpMatchResult::IndexForStringSearch, subject);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOfValue(jsNumber(-1)) && matches.hasRecordedNothing());
+
+    auto isLeftToOperation = [&](RegExpMatchResult form, Entry operation, OptionSet<Yarr::Flags> flags, JSValue lastIndex) {
+        matches.reset(flags, lastIndex);
+        matches.runner.recordCallsOf(operation);
+        matches.runner.setResultOfRecordedOperation(0x1234);
+        StubRun left = matches.match(form, subject);
+        matches.runner.countCallsOf(operation);
+        return left.numberOfRecordedCalls == 1 && left.result == 0x1234 && left.recordedArguments[0] == subject.address() && left.recordedArguments[1] == matches.regExpObject.address()
+            && !matches.script.numberOfCalls && matches.hasRecordedNothing() && matches.lastIndex() == bitsOfValue(lastIndex);
+    };
+    AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::ArrayForStringMatch, Entry::operationAOTStringMatchRegExp, { Yarr::Flags::Global }, jsNumber(0)));
+    AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::ArrayForStringMatch, Entry::operationAOTStringMatchRegExp, { Yarr::Flags::Global, Yarr::Flags::Sticky }, jsNumber(0)));
+    AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::ArrayForStringMatch, Entry::operationAOTStringMatchRegExp, { }, jsUndefined()));
+    AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::IndexForStringSearch, Entry::operationAOTStringSearchRegExp, { Yarr::Flags::Global }, jsNumber(0)));
+    AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::IndexForStringSearch, Entry::operationAOTStringSearchRegExp, { Yarr::Flags::Sticky }, jsNumber(0)));
+    AOT_TEST_CHECK(isLeftToOperation(RegExpMatchResult::IndexForStringSearch, Entry::operationAOTStringSearchRegExp, { }, jsNumber(3)));
+}
+
+static void testNoRecordWhereNobodyReadsIt()
+{
+    Matches matches(StubOptions { .recordsLastMatch = false });
+    Ref<StringImpl> text = StringImpl::create("abcdef"_span);
+    FakeSubject subject(text.get());
+
+    for (auto [form, match, miss] : formsWithoutArray) {
+        UNUSED_VARIABLE(miss);
+        for (bool isGlobal : { false, true }) {
+            matches.reset(isGlobal ? OptionSet<Yarr::Flags> { Yarr::Flags::Global } : OptionSet<Yarr::Flags> { }, jsNumber(0));
+            matches.script.answer = 1;
+            matches.script.offsets = { 1, 3 };
+            StubRun run = matches.match(form, subject);
+            AOT_TEST_CHECK(!run.calledOperation && run.result == match && matches.hasRecordedNothing() && matches.lastIndex() == bitsOfValue(jsNumber(isGlobal ? 3 : 0)));
+        }
+    }
+
+    matches.reset({ }, jsNumber(0));
+    matches.script.answer = 1;
+    matches.script.offsets = { 1, 3 };
+    StubRun run = matches.match(RegExpMatchResult::IndexForStringSearch, subject);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOfValue(jsNumber(1)) && matches.hasRecordedNothing());
+
+    matches.reset({ Yarr::Flags::Global }, jsNumber(0), 0);
+    MatchArrayMemory memory(matches, 0);
+    matches.script.answer = 2;
+    matches.script.offsets = { 2, 4 };
+    run = matches.match(RegExpMatchResult::Array, subject);
+    checkMatchArray(matches, memory, subject, run, 0, 2);
+    AOT_TEST_CHECK(matches.hasRecordedNothing() && matches.lastIndex() == bitsOfValue(jsNumber(4)));
+}
+
 static void testWideUnitsInMatchArrays()
 {
     Matches matches;
@@ -619,6 +713,8 @@ std::span<const NativeTest> stubRegExpTests()
         { "stubs/regexp-match/matches-of-atoms"_s, ImageTests::whenExecutable<testMatchesOfAtoms> },
         { "stubs/regexp-match/barrier-of-recorded-match"_s, ImageTests::whenExecutable<testBarrierOfRecordedMatch> },
         { "stubs/regexp-match/arrays"_s, ImageTests::whenExecutable<testMatchArrays> },
+        { "stubs/regexp-match/string-match-and-search"_s, ImageTests::whenExecutable<testStringMatchAndSearch> },
+        { "stubs/regexp-match/no-record-where-nobody-reads-it"_s, ImageTests::whenExecutable<testNoRecordWhereNobodyReadsIt> },
         { "stubs/regexp-match/wide-units-in-arrays"_s, ImageTests::whenExecutable<testWideUnitsInMatchArrays> },
         { "stubs/regexp-match/arrays-left-to-operation"_s, ImageTests::whenExecutable<testMatchArraysLeftToOperation> },
         { "stubs/regexp-match/arrays-without-object"_s, ImageTests::whenExecutable<testMatchArraysWithoutObject> },

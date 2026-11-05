@@ -39,9 +39,9 @@ public:
     void setOrigin(Origin origin) { m_origin = origin; }
     Origin origin() const { return m_origin; }
 
-    Block* newBlock() { return m_proc.addBlockInline(); }
+    Block* newBlock() { return m_proc.addBlock(); }
 
-    ALWAYS_INLINE void appendTo(Block* block)
+    NEVER_INLINE void appendTo(Block* block)
     {
         ASSERT(block);
         sealPendingPatch();
@@ -68,7 +68,7 @@ public:
         sealPendingPatch();
         return { m_numbering.mark(), m_block };
     }
-    ALWAYS_INLINE void appendToArm(Block* block, const ScopeFork& fork)
+    NEVER_INLINE void appendToArm(Block* block, const ScopeFork& fork)
     {
         sealPendingPatch();
         ASSERT(block->numberOfIncomingEdges() <= 1);
@@ -79,7 +79,7 @@ public:
         m_numbering.restore(fork.mark);
         m_block = block;
     }
-    ALWAYS_INLINE void appendToJoin(Block* block, const ScopeFork& fork)
+    NEVER_INLINE void appendToJoin(Block* block, const ScopeFork& fork)
     {
         sealPendingPatch();
         m_numbering.restore(fork.mark);

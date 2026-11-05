@@ -43,14 +43,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-static const LayoutData* findClassConstructedBy(const ProgramTables& tables, FunctionID function)
+static uint32_t findOffsetOfClassConstructedBy(const ProgramTables& tables, FunctionID function)
 {
     auto constructors = tables.constructors();
     auto found = std::ranges::lower_bound(constructors, function.index(), { }, &ConstructorData::function);
     if (found == constructors.end() || found->function != function.index())
-        return nullptr;
-    uint32_t offset = tables.offsetOfClass(found->layoutIndex);
-    return offset ? tables.at<LayoutData>(offset) : nullptr;
+        return 0;
+    return tables.offsetOfClass(found->layoutIndex);
 }
 
 static std::optional<uint32_t> keyOf(State& state, UniquedStringImpl* uid)
@@ -98,7 +97,17 @@ FunctionID ClassTable::functionOfOwnClosure(const Closure& closure) const
 
 const LayoutData* ClassTable::classConstructedBy(FunctionID function) const
 {
-    return findClassConstructedBy(m_tables, function);
+    static_assert(alignof(LayoutData) > 1);
+    constexpr uint64_t isAnswered = 1;
+    std::atomic<uint64_t>& place = m_classesOfFunctionsAsked[function.index() % numberOfClassesOfFunctionsAsked];
+    uint64_t question = static_cast<uint64_t>(function.index()) << 32 | isAnswered;
+    uint64_t answer = place.load(std::memory_order_relaxed);
+    if ((answer & (UINT64_MAX << 32 | isAnswered)) != question) {
+        answer = question | findOffsetOfClassConstructedBy(m_tables, function);
+        place.store(answer, std::memory_order_relaxed);
+    }
+    uint32_t offset = static_cast<uint32_t>(answer & ~isAnswered);
+    return offset ? m_tables.at<LayoutData>(offset) : nullptr;
 }
 
 Structure* ClassTable::lazyClassObjectStructure(VM& vm, const LayoutData& classLayout)
@@ -250,6 +259,12 @@ JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
         JSObject* parent = baseClass ? classPrototype(vm, *baseClass) : m_state.instance.globalObject->objectPrototype();
         if (!parent)
             return nullptr;
+        return createClassPrototype(vm, classLayout, parent);
+    }
+    if (prototypeAwaitsFirstTouch(classLayout)) {
+        JSObject* parent = classPrototype(vm, *assumedBaseOf(classLayout));
+        RELEASE_ASSERT(parent);
+        parent->didBecomePrototype(vm);
         return createClassPrototype(vm, classLayout, parent);
     }
     if (isDefinedByClass(classLayout) && !canBeDefinedFromRecord(classLayout))
@@ -716,10 +731,10 @@ ClassDefinition::ParentResolution ClassDefinition::resolveParents(JSValue herita
     bool isDefinedBeforeEvaluation = m_requestedPart == ClassPart::Everything && !heritage;
     m_prototypeParent = m_globalObject->objectPrototype();
     if (!createsClassObject())
-        m_prototypeParent = m_classes.classPrototypeIfExists(m_classLayout)->getPrototypeDirect();
+        m_prototypeParent = m_classes.classPrototype(m_vm, m_classLayout)->getPrototypeDirect();
     else if (wasDeclared) {
         m_classObjectParent = m_classObject->getPrototypeDirect().getObject();
-        m_prototypeParent = m_classes.classPrototypeIfExists(m_classLayout)->getPrototypeDirect();
+        m_prototypeParent = m_classes.classPrototype(m_vm, m_classLayout)->getPrototypeDirect();
     } else if (const LayoutData* baseClass = m_classes.baseOf(m_classLayout)) {
         Closure* baseClassObject = findBaseClassObject(*baseClass, heritage);
         if (!baseClassObject && isDefinedBeforeEvaluation)
@@ -998,17 +1013,13 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
     if (classObject->structure() != structure)
         return false;
     JSObject* parentOfPrototype = nullptr;
-    if (const LayoutData* baseClass = baseOf(classLayout)) {
+    bool leavesPrototypeToFirstTouch = false;
+    if (const LayoutData* baseClass = heritage ? assumedBaseOf(classLayout) : baseOf(classLayout)) {
         FunctionID baseConstructor(baseClass->classData().classConstructor);
-        JSCell* baseClassObject = hasOneClassObject(*baseClass) ? closures.closure(vm, baseConstructor) : closures.closureIfCreated(baseConstructor);
+        JSCell* baseClassObject = baseOf(classLayout) && hasOneClassObject(*baseClass) ? closures.closure(vm, baseConstructor) : closures.closureIfCreated(baseConstructor);
         if (!baseClassObject || (heritage && heritage != JSValue(baseClassObject)))
             return false;
-        if (!classLayout.createsPrototypeBeforeClassObject) {
-            JSValue prototypeOfBase = uncheckedDowncast<Closure>(baseClassObject)->prototypeProperty(vm);
-            if (!prototypeOfBase || !prototypeOfBase.isObject())
-                return false;
-            parentOfPrototype = asObject(prototypeOfBase);
-        }
+        leavesPrototypeToFirstTouch = !classLayout.createsPrototypeBeforeClassObject;
         structure = lazyClassObjectStructureInheritingFrom(vm, asObject(baseClassObject));
     } else if (heritage || classLayout.hasUntypedBase) {
         if (!heritage || !heritage.isObject() || !prototypeParent || !prototypeParent.isObject() || classLayout.assumedBase() != LayoutData::noBase)
@@ -1016,7 +1027,7 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
         parentOfPrototype = asObject(prototypeParent);
         structure = lazyClassObjectStructureInheritingFrom(vm, asObject(heritage));
     }
-    if (!parentOfPrototype && !classLayout.createsPrototypeBeforeClassObject)
+    if (!parentOfPrototype && !classLayout.createsPrototypeBeforeClassObject && !leavesPrototypeToFirstTouch)
         return false;
 
     if (!registered)
@@ -1024,6 +1035,8 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
     if (!classLayout.staticFields().empty())
         markFunctionPropertiesDeclaredAsFields(vm, classObject, classLayout);
     classObject->setStructure(vm, structure);
+    if (leavesPrototypeToFirstTouch)
+        m_classesWhosePrototypeAwaitsFirstTouch.set(m_tables.rankOfClass(classLayout.index));
     if (parentOfPrototype) {
         parentOfPrototype->didBecomePrototype(vm);
         createClassPrototype(vm, classLayout, parentOfPrototype);
@@ -1088,7 +1101,7 @@ void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject,
     ClosureTable& closures = m_state.objects->closures;
     JSCell* registered = closures.closureIfCreated(functionOfOwnClosure(*classObject));
     RELEASE_ASSERT(!isProvenOnce || !registered || registered == classObject);
-    if (isProvenOnce && (classObject->getDirect(vm, vm.propertyNames->prototype) || (!classLayout.createsPrototypeBeforeClassObject && classPrototypeIfExists(classLayout))))
+    if (isProvenOnce && (classObject->getDirect(vm, vm.propertyNames->prototype) || (!classLayout.createsPrototypeBeforeClassObject && (classPrototypeIfExists(classLayout) || prototypeAwaitsFirstTouch(classLayout)))))
         return;
     if (registered && registered != classObject) {
         didEvaluateClassAgain(m_state, classLayout);
@@ -1118,6 +1131,7 @@ void ClassTable::forgetEvaluationOf(const LayoutData& classLayout)
     }
     disarmMemberGuards(classLayout);
     prototypeCellOf(m_state, classLayout) = nullptr;
+    m_classesWhosePrototypeAwaitsFirstTouch.clear(m_tables.rankOfClass(classLayout.index));
     m_constructorFunctionsThatAreOnlyBases.remove(classLayout.index);
     if (constructor)
         m_declaredMemberLocations.remove(constructor.index());

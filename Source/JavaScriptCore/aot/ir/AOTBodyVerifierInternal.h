@@ -59,7 +59,7 @@ public:
 private:
     bool hasWords(uint64_t count) const { return count <= m_end - m_offset; }
     void checkID(RemappedIDKind, uint32_t word);
-    void fail(InternalErrorKind);
+    COLD NEVER_INLINE void fail(InternalErrorKind);
     uint32_t failForLackOfWords();
 
     BodyVerifier& m_verifier;
@@ -184,7 +184,7 @@ public:
     bool run();
     Vector<InternalError> takeErrors();
 
-    void fail(InternalErrorKind, BlockID = { }, ValueID = { }, uint32_t count = 0);
+    COLD NEVER_INLINE void fail(InternalErrorKind, BlockID = { }, ValueID = { }, uint32_t count = 0);
     bool hasFailed() const { return !m_errors.isEmpty(); }
     void setSubject(BlockID block, ValueID value)
     {

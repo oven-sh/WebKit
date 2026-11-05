@@ -604,6 +604,7 @@ public:
     static constexpr uint8_t lowByteOfShape = 0xc3;
     static constexpr uint8_t highByteOfShape = 0x5a;
     static_assert(SlimClosure::allocationSize(numberOfCaptures) <= cellSize && cellSize < SlimClosure::allocationSize(numberOfCaptures) + MarkedSpace::sizeStep);
+    static_assert(sizeOfClosureInFrame(offsetOfSlimClosureCaptures, numberOfCaptures) == cellSize);
     static_assert(!(highByteOfShape & environmentIsEscapedBit));
 
     using Closure = FakeObject<cellSize>;

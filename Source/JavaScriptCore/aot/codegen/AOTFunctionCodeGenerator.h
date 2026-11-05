@@ -16,6 +16,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class BodyIndex;
 class StraightEmitter;
+struct QuestionOfEntry;
 
 Machine::ProcedureTraits machineTraitsOf(const BuildContext&, const CodeGenerationInputs&, const Code&);
 
@@ -26,13 +27,14 @@ public:
 
     CompiledCode run();
     std::optional<CompiledCode> runStraight(const BodyIndex&);
+    CompiledCode runEntryWrittenByHand(std::span<const QuestionOfEntry>);
 
 private:
     bool appendOperations();
     void appendStraightBody(StraightEmitter&);
     CompiledCode emitCode();
     bool frameFitsImage();
-    void reportLinkFailure(LinkFailure);
+    COLD NEVER_INLINE void reportLinkFailure(LinkFailure);
 
     const CodeGenerationWorker m_worker;
     const CodeGenerationInputs& m_inputs;

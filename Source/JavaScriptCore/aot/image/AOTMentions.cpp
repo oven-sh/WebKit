@@ -649,8 +649,10 @@ void forEachUnitBehindSlowCase(const Mention& mention, std::span<const uint32_t>
         const Typed::CallingConventions& conventions = plan.conventions();
         const Typed::MethodSelector& selector = conventions.methodSelector(key[0]);
         const Typed::MethodFamily& family = conventions.familyOf(selector);
-        for (FunctionID method : family.methods)
-            functor(conventions.unitEnteredThroughTable(program, selector, method), MentionKind::Call);
+        for (size_t place = 0; place < family.methods.size() && !selector.everyMethodIsEnteredDirectly; ++place) {
+            if (!selector.methodsEnteredDirectly.get(place))
+                functor(conventions.unitEnteredThroughTable(program, selector, family.methods[place]), MentionKind::Call);
+        }
         if (family.entersLookup())
             functor(conventions.tableLookupOf(selector), MentionKind::Call);
         return;

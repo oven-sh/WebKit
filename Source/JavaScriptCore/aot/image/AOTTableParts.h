@@ -271,7 +271,7 @@ struct TableEncoder {
     std::optional<FunctionID> findEntrypoint(FunctionID) const;
     bool hasCode(CodeUnit) const;
     bool obfuscates() const { return build.options().obfuscates(); }
-    void fail(ASCIILiteral rule, RowOwner = { }, const String& circumstances = { }) const;
+    COLD NEVER_INLINE void fail(ASCIILiteral rule, RowOwner = { }, const String& circumstances = { }) const;
 
     const TableInputs& inputs;
     const Typed::Program& program;
@@ -283,6 +283,7 @@ struct TableEncoder {
     TablePart part;
     Vector<uint32_t> classesByParent;
     Vector<uint32_t> firstClassBelow;
+    BitVector sidesWithClassGuardsHereOrBelow;
 };
 
 bool showsVariablesOf(const TableInputs&, ModuleID);

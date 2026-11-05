@@ -2052,7 +2052,7 @@ static void checkSiteOfFunctionEvaluatedOnceKeepsItsPrototype(LoadedProgram& pro
     }
 }
 
-static void checkAssignedMethodKeepsItsGuard(LoadedProgram& program)
+static void checkHolderOfClassThatNoCodeAsksAboutIsNotLookedAt(LoadedProgram& program)
 {
     VM& vm = program.vm();
     State& state = program.state();
@@ -2074,8 +2074,7 @@ static void checkAssignedMethodKeepsItsGuard(LoadedProgram& program)
     asObject(prototype)->putDirect(vm, Identifier::fromString(vm, "sum"_s), made);
 
     objects.structures.allocate(vm, allocations[0]);
-    AOT_TEST_CHECK(objects.closures.closureIfCreated(function) == made);
-    AOT_TEST_CHECK(classGuardOfNameHolds(state, *classLayout, ClassSide::Prototype, static_cast<uint32_t>(method.name)));
+    AOT_TEST_CHECK(!classLayout->classData().hasGuardsHereOrBelow(ClassSide::Prototype) && !objects.closures.closureIfCreated(function));
 }
 
 static constexpr ASCIILiteral methodAbovePrototypeObjectThatIsAnInstance = R"IR(layout L0 kind=Instance name="Above" constructor=f1 fields=[{key="a" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
@@ -2534,7 +2533,7 @@ std::span<const NativeTest> constructorFunctionTests()
         { "constructor-functions/commonjs-module"_s, testCommonJSModule },
         { "constructor-functions/site-predicts-the-first-prototype"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, factoryWithoutCaptures, checkSitePredictsTheFirstPrototype> },
         { "constructor-functions/site-of-a-function-evaluated-once-keeps-its-prototype"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkSiteOfFunctionEvaluatedOnceKeepsItsPrototype> },
-        { "constructor-functions/assigned-method-keeps-its-guard"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkAssignedMethodKeepsItsGuard> },
+        { "constructor-functions/holder-of-a-class-that-no-code-asks-about-is-not-looked-at"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkHolderOfClassThatNoCodeAsksAboutIsNotLookedAt> },
         { "constructor-functions/compiled-prototype-object-is-assigned-a-name-found-above-it"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsNameFoundAboveIt<WayToGetName::Assign>> },
         { "constructor-functions/one-word-counts-guards-of-several-classes"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkOneWordCountsGuardsOfSeveralClasses> },
         { "constructor-functions/compiled-prototype-object-gets-the-name-of-a-field-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsTheNameOfAFieldBelow> },

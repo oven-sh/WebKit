@@ -205,6 +205,7 @@ public:
 
     void returnToCaller();
     void boxBooleanAtEveryReturn() { m_boxesBooleanAtEveryReturn = true; }
+    void goOnAtEveryReturnIn(StubKey stub) { m_stubBehindEveryReturn = stub; }
 #if CPU(X86_64)
     void emitFramelessCallerEpilogue();
 #else
@@ -342,6 +343,7 @@ private:
     RegisterSet m_borrowedFPRs;
     Vector<RegisterSet, 4> m_savedRegisterStack;
     bool m_boxesBooleanAtEveryReturn { false };
+    std::optional<StubKey> m_stubBehindEveryReturn;
     Vector<Function<void(StubAssembler&)>> m_outOfLineParts;
 
     Vector<BoundEntry> m_boundEntries;

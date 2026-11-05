@@ -37,6 +37,15 @@ static constexpr OperandUses usesThatReachPastOperandsOfHeldBackStore {
     OperandUse::AppliesToContents,
 };
 
+static constexpr OperandUses usesThatWriteNoOperandOfHeldBackStore {
+    OperandUse::Inspects,
+    OperandUse::Returns,
+    OperandUse::ReadsContents,
+    OperandUse::RetainsContents,
+};
+
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatWriteIntoOperandOfHeldBackStore, usesThatReachPastOperandsOfHeldBackStore, OperandUse::Retains, usesThatWriteNoOperandOfHeldBackStore }));
+
 static constexpr OpcodeSet heldBackOpcodesThatWriteWordOfTheirCell { Opcode::FinishBirth, Opcode::TryFinishBirth };
 static_assert(OperandIndex::FinishBirth::object == OperandIndex::TryFinishBirth::object);
 

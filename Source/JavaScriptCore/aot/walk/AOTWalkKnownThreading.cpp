@@ -780,6 +780,7 @@ bool Walker::letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<Frame::
 
 void Walker::walkEndOfBlockBehindReturnsOfCopy(ValueID call)
 {
+    storeValueBehindItsDefinition(call);
     Frame& frame = m_frames.last();
     frame.walkedUpTo = call.index() - frame.index->block(frame.block).firstValue().index() + 1;
     if (!isUnreachable() && !endArmWithBranchOf(frame.block))
@@ -822,6 +823,7 @@ bool Walker::armsMayEndWithBranchBehind(const BodyValue& operation)
 
 bool Walker::endArmWithBranchBehind(const BodyValue& operation)
 {
+    storeValueBehindItsDefinition(operation.id());
     Frame& frame = m_frames.last();
     frame.walkedUpTo = operation.id().index() - frame.index->block(frame.block).firstValue().index() + 1;
     return endArmWithBranchOf(frame.block);

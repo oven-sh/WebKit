@@ -53,7 +53,7 @@ bool passOnOwnArgumentsByCount(Walker& walker, const BodyValue& call, const Draf
         if (!parameters.last())
             return false;
     }
-    if (walker.facts().runsAtMostOnce(walker.currentFunction()))
+    if (walker.program().at(walker.currentFunction()).isModuleBody())
         return false;
 
     Origin originInFrontOfCall = written.origin();

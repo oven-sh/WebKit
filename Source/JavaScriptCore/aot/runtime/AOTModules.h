@@ -804,6 +804,7 @@ private:
     void retireRecord(ModuleRecord*);
     void retireRecordOfModuleThatHasNotBegun(ModuleRecord*);
     bool hasRunToItsEndWithItsCycle(const ModuleRecord&) const;
+    static bool isEvaluatingAsynchronouslyWithItsCycle(const ModuleRecord&);
     void setValue(ModuleID, JSValue);
     LoadedModule& ensureLoaded(ModuleID);
     LoadedModule* loadedIfExists(ModuleID) const;
@@ -1297,6 +1298,7 @@ private:
     };
     LoadsInFlight m_loadsInFlight;
     Vector<ModuleID, 4> m_modulesWhoseRecordsLoaderHolds;
+    Vector<ModuleID, 4> m_modulesToRetireAfterAsyncEvaluation;
     BitVector m_modulesBelowWalkedRoots;
     struct PlanOfLoad : RefCounted<PlanOfLoad> {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlanOfLoad);
@@ -1527,14 +1529,14 @@ private:
     struct WalkForEvictedFiles {
         UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> visitOrder;
         Vector<uint32_t, 32> unsettledFiles;
-        Vector<uint32_t, 8> filesToAskHostAbout;
+        uint32_t numberOfFilesToAskHostAbout { 0 };
         std::optional<bool> pluginsAnswerForNames;
         bool importsAreFollowed { false };
     };
     bool importsEvictedFile(ModuleID, WalkForEvictedFiles&, uint32_t& earliestVisitReached);
     bool importsEvictedFile(ModuleID);
     bool walkForEvictedFiles(ModuleID, WalkForEvictedFiles&);
-    bool askHostLevelByLevel(ModuleID root, const WalkForEvictedFiles&, BitVector& filesAsked);
+    bool askHostLevelByLevel(ModuleID root, WalkForEvictedFiles&, BitVector& filesAsked);
     void followImportsOfModulesThatHaveRun();
     void followImportsAnewAtNextQuestion();
     void evaluateModulesOwedBelow(ModuleID root, bool hasImporterThatRan = false);
@@ -1546,7 +1548,7 @@ private:
     void leaveToHost(ModuleID file);
     bool isChangedOnDisk(ModuleID file);
     bool writesNameThatHostMayAnswerFor(ModuleID file, WalkForEvictedFiles&);
-    bool hostAnswersForNameWrittenBy(ModuleID file);
+    AnswerForName askHostAboutNamesWrittenBy(ModuleID file, Vector<uint32_t, 4>& filesThatAnswersLeadAwayFrom);
     bool mayBeAskedAbout(ModuleID file) const { return !m_filesWhoseNamesNobodyAnswersFor.get(file.index()) && !m_filesWhoseGraphHasBegun.get(file.index()); }
     void forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
     void forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;

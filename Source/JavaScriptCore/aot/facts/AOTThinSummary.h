@@ -9,6 +9,7 @@
 
 #include "AOTBody.h"
 #include "AOTEffects.h"
+#include "AOTFamilies.h"
 #include "AOTLargeList.h"
 #include "AOTLayout.h"
 #include "AOTMechanisms.h"
@@ -487,10 +488,13 @@ public:
 
     const BitVector& textsSpelledThatNameFieldsNeverWritten() const LIFETIME_BOUND { return m_textsSpelledThatNameFieldsNeverWritten; }
     void setTextsSpelledThatNameFieldsNeverWritten(BitVector&& texts) { m_textsSpelledThatNameFieldsNeverWritten = WTF::move(texts); }
+    const SetsOfLayoutsWritten& setsOfLayoutsWrittenInBodies() const LIFETIME_BOUND { return m_setsOfLayoutsWrittenInBodies; }
+    void setSetsOfLayoutsWrittenInBodies(SetsOfLayoutsWritten&& sets) { m_setsOfLayoutsWrittenInBodies = WTF::move(sets); }
 
 private:
     LargeList<ThinSummary> m_summaries;
     BitVector m_textsSpelledThatNameFieldsNeverWritten;
+    SetsOfLayoutsWritten m_setsOfLayoutsWrittenInBodies;
 };
 
 ThinSummaries scanBodies(const Program&, Diagnostics&, const ParallelLoops&, Mechanisms = allMechanisms);

@@ -102,7 +102,7 @@ static bool buildAccessUnderWholeRemainderInNumberKeys(Walker& walker, const Bod
     WayInNumberForms underInteger = endOfAccessInNumberKeys(walker, value);
 
     walker.continueIn(whereDivisorIsZero);
-    buildAccessUnderKeyInNumberKeys(walker, value, constantInNumberForms(walker, PrimitiveKnownToFolding::number(PNaN)));
+    buildAccessUnderKeyInNumberKeys(walker, value, walker.constant(PrimitiveKnownToFolding::number(PNaN)));
     std::array<WayInNumberForms, 2> ways { underInteger, endOfAccessInNumberKeys(walker, value) };
     if (Reference met = meetInNumberForms(walker, meeting, ways))
         walker.bind(value.id(), met);
@@ -148,7 +148,7 @@ static bool buildViewAccessUnderNumberOrUndefinedInNumberKeys(Walker& walker, co
     {
         Walker::ClosedArm closedArm(walker, true);
         if (!walker.isUnreachable()) {
-            buildAccessUnderKeyInNumberKeys(walker, value, constantInNumberForms(walker, PrimitiveKnownToFolding::undefined()));
+            buildAccessUnderKeyInNumberKeys(walker, value, walker.constant(PrimitiveKnownToFolding::undefined()));
             underUndefined = endOfAccessInNumberKeys(walker, value);
         }
     }

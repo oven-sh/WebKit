@@ -144,20 +144,6 @@ export default b.declarations(
         ],
       },
     },
-    pairsOfFlatEntries: {
-      args: { entries: b.instance("Array") },
-      returns: b.instance("Array").holding({ element: b.layoutOf("EntriesPair") }).fresh.dense,
-      capability: "heap",
-      uses: { entries: [b.readsContents(), b.contentsStoredIn(b.nativeMemory)] },
-      implementation: b.hostCall,
-      directEntry: {
-        symbol: "AOT__pairsOfFlatEntries",
-        declaration:
-          'extern "C" SYSV_ABI JSC::EncodedJSValue AOT__pairsOfFlatEntries(JSC::JSGlobalObject*, JSC::EncodedJSValue);',
-        headers: [],
-        parameters: [realm, value],
-      },
-    },
     describeUnlessOrdinary: {
       args: { source: b.any },
       returns: b.object,

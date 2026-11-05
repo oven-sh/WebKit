@@ -404,6 +404,7 @@ public:
     void findGapsAheadOfLandingPads();
 
     RegisterMask registersWhereCallInBlockTakesWhatLiesThere(const Block*) const;
+    unsigned numberOfReadsThatWordWouldReload(const Operation*) const;
     void findFramedPart();
     void settleFramedPart();
     void standIn(const Block* block)
@@ -491,6 +492,7 @@ public:
     Position m_beginOfWaysOnFromBlock { 0 };
     bool m_somePatchWithResultHasEndedBlock { false };
     Position m_lastDefinitionOfArgumentRegister { 0 };
+    RegisterMask m_argumentRegistersThatGiveWay { 0 };
     uint32_t m_rareRegion { noRareRegion };
     RegisterMask m_calleeSavesTakenOutsideRareRegions { 0 };
     bool m_isAheadOfFramedPart { false };

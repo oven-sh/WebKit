@@ -40,7 +40,7 @@ static String describeUnitOfQueue(const Typed::Program& program, Typed::CodeUnit
 
 [[noreturn]] static NEVER_INLINE void crashOnMentionOfUnplannedUnit(const Typed::Program& program, Typed::CodeUnit unit)
 {
-    dataLogLn("AOT: finished code mentions a unit that is not in the plan: ", describeUnitOfQueue(program, unit), ", ", static_cast<unsigned>(unit.numberOfBoundArguments), " bound arguments");
+    dataLogLn("AOT: finished code mentions a unit that is not in the plan: ", describeUnitOfQueue(program, unit), ", ", unit.placeOfSelector(), " bound arguments");
     CRASH();
 }
 
@@ -244,7 +244,6 @@ void UnitQueue::mention(unsigned thread, Typed::CodeUnit unit)
         crashOnMentionOfUnplannedUnit(m_program, unit);
 
     bool isOfFunctionInQueueFromStart = isInQueueFromStart(unit.function) && (unit.role != Typed::CodeRole::SlowBody || m_conventions.isSeedOfFunctionInQueueFromStart(unit));
-    isOfFunctionInQueueFromStart |= unit.role == Typed::CodeRole::Serializer;
     if (!isOfFunctionInQueueFromStart)
         checkMentionByTakenUnit(thread, unit);
 
@@ -259,10 +258,6 @@ void UnitQueue::mention(unsigned thread, Typed::CodeUnit unit)
         return;
     }
 
-    if (unit.role == Typed::CodeRole::Serializer) {
-        push(thread, index, nullptr);
-        return;
-    }
     if (standsOutsideCycles(unit)) {
         push(thread, index, nullptr);
         return;
@@ -305,8 +300,6 @@ bool UnitQueue::beginCycle(unsigned thread, uint32_t number)
         if (m_unitsBehindRoles.isEmpty())
             continue;
         for (const UnitBehindRoles& other : std::ranges::equal_range(m_unitsBehindRoles, member.index(), { }, &UnitBehindRoles::function)) {
-            if (m_conventions.unitAt(other.unit).role == Typed::CodeRole::Serializer)
-                continue;
             if (isMentioned(other.unit))
                 mentionedUnits.append(other.unit);
         }
@@ -538,7 +531,6 @@ std::optional<Typed::CodeUnit> UnitQueue::take(unsigned thread)
     Typed::CodeUnit unit = m_conventions.unitAt(unitsOfThread.takenUnit);
     unitsOfThread.cycleOfTakenUnit = cycleOf(unit.function);
     unitsOfThread.takenUnitStandsOutsideCycles = standsOutsideCycles(unit);
-    unitsOfThread.takenUnitStandsOutsideCycles |= unit.role == Typed::CodeRole::Serializer;
     return unit;
 }
 

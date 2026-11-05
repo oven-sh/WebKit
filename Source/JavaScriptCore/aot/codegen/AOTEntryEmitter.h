@@ -37,6 +37,16 @@ private:
 
 // All of it falls through to the primary entry, but in a parameter guard, which begins with its way to the slow version: the way to the fast one has to come last.
 [[nodiscard]] CCallHelpers::Jump emitEntryPreambles(CCallHelpers&, const CodeGenerationInputs&, CodeUnit, CodeRecords&);
+struct QuestionOfEntry {
+    GPRReg value { InvalidGPRReg };
+    uint16_t passingPrimitives { 0 };
+    bool everyObjectPasses { false };
+    bool shapeMayBearMark { false };
+    std::optional<uint32_t> shapeWord;
+    Vector<JSTypeRange, 2> cellTypes;
+};
+std::optional<Vector<QuestionOfEntry, 4>> findQuestionsOfEntryWrittenByHand(const CodeGenerationInputs&, TypeArena&, CodeUnit, NOESCAPE const ScopedLambda<TypeID(unsigned)>& typeAskedOfEntryParameter);
+void emitEntryWrittenByHand(CCallHelpers&, const CodeGenerationInputs&, CodeRecords&, CodeUnit, std::span<const QuestionOfEntry>, bool frameIsSetUp);
 EntryDescription describeEntry(const CodeGenerationInputs&, CodeUnit);
 bool readsCallerFrame(const CodeGenerationInputs&, const Code&);
 

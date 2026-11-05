@@ -95,17 +95,6 @@ void StringBuilderEmitter::generateStringBuilderRollBack(const ValueContext& val
     callVoidOperation(value, RuntimeOperation::StringBuilderRollBack, { builder, checkpoint });
 }
 
-void StringBuilderEmitter::generateStringBuilderCheckLength(const ValueContext& value)
-{
-    CellPointer builder = in<CellPointer>(value->builderOperand());
-    Word32 limit(m_out.load32(storageField(builder, StringBuilderStorage::offsetOfLimit())));
-    Word32 lengthOutsideBuffer(m_out.load32(storageField(builder, StringBuilderStorage::offsetOfLengthOutsideBuffer())));
-    Word32 longestLengthLetIn = add(limit, lengthOutsideBuffer);
-    ifElse(belowOrEqual(longestLengthLetIn, static_cast<int32_t>(JSString::MaxLength)), [] { }, [&] {
-        callVoidOperation(value, RuntimeOperation::StringBuilderCheckLength, { builder }, { .isOnRarePath = true });
-    });
-}
-
 void StringBuilderEmitter::generateStackStringBuilderBegin(const ValueContext& value)
 {
     LValue slot = m_out.lockedStackSlot(sizeof(StackStringBuilder));

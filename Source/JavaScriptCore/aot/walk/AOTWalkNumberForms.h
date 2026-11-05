@@ -21,7 +21,6 @@ namespace JSC { namespace AOT { namespace Typed {
 bool hasMechanismsOfNumberForms(const Walker&);
 PrimitiveKnownToFolding primitiveKnownInNumberForms(const Walker&, Reference);
 std::optional<int64_t> integerKnownInNumberForms(const Walker&, Reference);
-Reference constantInNumberForms(Walker&, PrimitiveKnownToFolding);
 Reference integerInNumberForms(Walker&, int64_t);
 Reference booleanInNumberForms(Walker&, bool);
 Reference buildOperatorInNumberForms(Walker&, Opcode, Reference left, Reference right, Origin);

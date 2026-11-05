@@ -27,6 +27,10 @@ static constexpr OpcodeSet opcodesThatTheWalkLowers {
 
 static constexpr OpcodeSet opcodesWithoutEmitterByList = opcodesThatStateTypes | opcodesThatTheWalkLowers | OpcodeSet {
     Opcode::StringBuilderAppend,
+    Opcode::StringBuilderCheckLength, Opcode::StringBuilderReserve, Opcode::StringBuilderCommit,
+    Opcode::JSONEnterWatchedLevel, Opcode::JSONAppendKey, Opcode::JSONAppendToken, Opcode::JSONAppendBoolean,
+    Opcode::JSONAppendInteger, Opcode::JSONAppendNumber, Opcode::JSONAppendString,
+    Opcode::JSONAppendValue, Opcode::JSONAppendObject, Opcode::JSONHasStackSpace,
 };
 
 static_assert([]() consteval {

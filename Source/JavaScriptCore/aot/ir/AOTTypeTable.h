@@ -151,7 +151,6 @@ public:
     static constexpr TypeID string = typeOfPrimitives(Primitive::String);
     static constexpr TypeID symbol = typeOfPrimitives(Primitive::Symbol);
     static constexpr TypeID bigInt = typeOfPrimitives(Primitive::BigInt);
-    static constexpr TypeID anyPrimitive = typeOfPrimitives(Primitive::All);
     // The constructor interns these first, in this order, without seeds: for the target of a test, a bound, the widest type of a representation.
     static constexpr TypeID function = idAt<TypeID>(IDHome::Program, 0);
     static constexpr TypeID object = idAt<TypeID>(IDHome::Program, 1);

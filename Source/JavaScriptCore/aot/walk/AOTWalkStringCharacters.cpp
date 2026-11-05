@@ -53,13 +53,13 @@ private:
     {
         switch (m_method) {
         case CharacterReadInWalkStrings::CharCodeAt:
-            return constantForStrings(m_walker, Known::number(PNaN));
+            return m_walker.constant(Known::number(PNaN));
         case CharacterReadInWalkStrings::CharAt:
-            return constantForStrings(m_walker, Known::text(m_walker.program().strings.emptyString()));
+            return m_walker.constant(Known::text(m_walker.program().strings.emptyString()));
         case CharacterReadInWalkStrings::CodePointAt:
         case CharacterReadInWalkStrings::At:
         case CharacterReadInWalkStrings::Element:
-            return constantForStrings(m_walker, Known::undefined());
+            return m_walker.constant(Known::undefined());
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -363,7 +363,7 @@ bool buildCharacterReadByMethod(Walker& walker, const CallByOneRow& call)
         return false;
     }
     BuilderOfCharacterRead read(walker, call.call, method, call.receiver, call.origin);
-    if (!read.build(call.arguments.empty() ? constantForStrings(walker, PrimitiveKnownToFolding::undefined()) : call.arguments[0]))
+    if (!read.build(call.arguments.empty() ? walker.constant(PrimitiveKnownToFolding::undefined()) : call.arguments[0]))
         return false;
     return true;
 }

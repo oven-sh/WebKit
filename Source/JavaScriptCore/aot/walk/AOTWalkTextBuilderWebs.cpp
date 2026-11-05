@@ -8,8 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinIDs.h"
-#include "AOTBuiltinTable.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
@@ -41,16 +39,6 @@ static bool passesOperandThroughInTextBuilderWebs(const BodyValue& operation, ui
     return !declared.has(PositionFlags::IsClaim) && !declared.has(PositionFlags::IsInt32Promise);
 }
 
-static ValueID operandPassedThroughInTextBuilderWebs(const BodyValue& cast)
-{
-    Opcode opcode = cast.opcode();
-    for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode); ++operandIndex) {
-        if (passesOperandThroughInTextBuilderWebs(cast, operandIndex))
-            return cast.operand(operandIndex);
-    }
-    return { };
-}
-
 namespace {
 
 struct NameInTextBuilderWeb {
@@ -64,7 +52,6 @@ struct CandidateInTextBuilderWeb {
     bool grows { false };
     bool isRefused { false };
     bool isOnlyConcatenated { true };
-    bool takesTextOfJSONStringify { false };
 };
 
 class TextBuilderWebScan {
@@ -100,7 +87,6 @@ private:
     void refuse(uint32_t text);
     void refuseTextNamedBy(ValueID);
     bool makesTextThatIsOnlyRead(const BodyValue& join);
-    bool takesTextOfJSONStringifyBehindFront(const BodyValue& join);
     void noteThatStateIsSeen(const NameInTextBuilderWeb& name) { m_candidates[name.text].isOnlyConcatenated &= !m_index.isParameter(name.version); }
 
     Walker& m_walker;
@@ -125,7 +111,6 @@ private:
     Vector<bool, 2> m_mayThrowBehindGrowth;
     Vector<uint32_t, 2> m_textsGrownSinceSomethingMayHaveThrown;
     Vector<bool, 2> m_isReadByHandler;
-    Vector<ValueID, 8> m_partsToLookAt;
 };
 
 TextBuilderWebScan::TextBuilderWebScan(Walker& walker, BlockID inputHead, const LoopPreview& preview)
@@ -304,41 +289,6 @@ bool TextBuilderWebScan::makesTextThatIsOnlyRead(const BodyValue& join)
     }
 }
 
-bool TextBuilderWebScan::takesTextOfJSONStringifyBehindFront(const BodyValue& join)
-{
-    m_partsToLookAt.shrink(0);
-    join.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (operandIndex != frontOperandInTextBuilderWebs)
-            m_partsToLookAt.append(operand);
-    });
-    TypeArena& types = m_walker.types();
-    const BuiltinTable& builtins = m_walker.program().builtins();
-    while (!m_partsToLookAt.isEmpty()) {
-        ValueID part = m_partsToLookAt.takeLast();
-        if (!part || m_index.isParameter(part) || m_index.useCount(part) != 1)
-            continue;
-        BodyValue made = m_index.value(part);
-        Opcode opcode = made.opcode();
-        if (opcode == Opcode::Call) {
-            TypeID callee = typeInLooks(made.as<Opcode::Call>().calleeOperand());
-            BuiltinID called = callee ? singleBuiltinOf(types, types.at(callee)) : BuiltinID();
-            if (called && builtins.canonicalID(called) == Builtins::JSONStringify)
-                return true;
-            continue;
-        }
-        if (ValueID passedThrough = operandPassedThroughInTextBuilderWebs(made)) {
-            m_partsToLookAt.append(passedThrough);
-            continue;
-        }
-        if (opcode != Opcode::ToString && !operationsThatJoinTexts.contains(opcode))
-            continue;
-        made.forEachOperand([&](ValueID operand, uint32_t) {
-            m_partsToLookAt.append(operand);
-        });
-    }
-    return false;
-}
-
 void TextBuilderWebScan::scanOperation(const BodyValue& operation)
 {
     Opcode opcode = operation.opcode();
@@ -384,8 +334,6 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
     m_versions[textInFront] = operation.id();
     m_textsGrownSinceSomethingMayHaveThrown.append(textInFront);
     candidate.grows = true;
-    if (!candidate.takesTextOfJSONStringify)
-        candidate.takesTextOfJSONStringify = takesTextOfJSONStringifyBehindFront(operation);
 }
 
 void TextBuilderWebScan::arriveAt(BlockID block, uint32_t text, uint32_t parameterIndex)
@@ -597,7 +545,6 @@ void TextBuilderWebScan::run(Vector<GrowingText, 2>& texts)
         grown.loopHead = m_head.id();
         grown.parameterIndex = candidate.parameterIndex;
         grown.isOnlyConcatenated = candidate.isOnlyConcatenated;
-        grown.takesTextOfJSONStringify = candidate.takesTextOfJSONStringify;
         grown.standsUnderHandlers = m_standsUnderHandlers;
         for (const NameInTextBuilderWeb& name : m_names) {
             if (name.text != text)

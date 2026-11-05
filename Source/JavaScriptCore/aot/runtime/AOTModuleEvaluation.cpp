@@ -408,23 +408,29 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             return;
 
         Vector<ModuleRecord*, 8> recordsToRetire;
-        bool canRetireComponent = true;
+        bool isWhollyCompiled = true;
+        bool hasRunToItsEnd = true;
         for (AbstractModuleRecord* member = nullptr; member != record;) {
             member = context.stack.takeLast();
             auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(member);
             bool isEvaluated = cyclic->asyncEvaluationOrder().isUnset();
             cyclic->setStatus(isEvaluated ? CyclicModuleRecord::Status::Evaluated : CyclicModuleRecord::Status::EvaluatingAsync);
             member->setCycleRoot(vm, record);
+            hasRunToItsEnd &= isEvaluated;
             auto* compiled = dynamicDowncast<ModuleRecord>(member);
-            if (!compiled || !isEvaluated)
-                canRetireComponent = false;
+            if (!compiled)
+                isWhollyCompiled = false;
             else if (!compiled->isRetained())
                 recordsToRetire.append(compiled);
         }
-        if (!canRetireComponent)
+        if (!isWhollyCompiled)
             return;
-        for (ModuleRecord* member : recordsToRetire)
-            retireRecord(member);
+        for (ModuleRecord* member : recordsToRetire) {
+            if (hasRunToItsEnd)
+                retireRecord(member);
+            else
+                m_modulesToRetireAfterAsyncEvaluation.append(member->module());
+        }
     };
 
     ModuleNumbers requests = m_table.allEvaluationRequests();
@@ -2546,7 +2552,6 @@ bool Modules::isLeftToStartsOfImporters(ModuleID module) const
 
 void Modules::noteThatGraphBegins(ModuleID root)
 {
-    m_filesWhoseNamesNobodyAnswersFor.clearAll();
     if (!m_table.listsNamesOfStatements())
         return;
     Vector<ModuleID, 32> toFollow;

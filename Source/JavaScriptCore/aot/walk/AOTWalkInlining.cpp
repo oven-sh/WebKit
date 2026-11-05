@@ -28,7 +28,6 @@ static constexpr uint32_t inlineLimitInLoopsWithoutObjects = 24;
 static constexpr uint32_t inlineWindowOfWrittenCall = 40;
 static constexpr uint32_t inlineWindowOfWrittenCallInLoops = 120;
 static constexpr uint32_t inlineLimitOfLeaves = 12;
-static constexpr uint32_t inlineLimitInRecursion = 10;
 static constexpr uint32_t inlineLimitOfHelpers = 40;
 static constexpr uint32_t inlineWindowOfHelpers = 120;
 
@@ -147,14 +146,11 @@ static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t n
     if (summary.numberOfOperations <= inlineLimitOutsideLoops + numberOfOperands
         && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= window || isNoLargerThanCallWithItsOwnCallsAtInlining(summary, numberOfOperands)))
         return true;
-    if (uint32_t weight = walker.facts().linked().function(callee).weightAsLeaf; weight <= inlineLimitOfLeaves + numberOfOperands
-        && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + weight <= window)
-        && (place.isInLoop || walker.facts().linked().function(walker.unit().function).isNamedInItsCycle))
+    if (uint32_t weight = walker.facts().linked().function(callee).weightAsLeaf; place.isInLoop && weight <= inlineLimitOfLeaves + numberOfOperands
+        && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + weight <= window))
         return true;
     if (walker.program().at(callee).kind == FunctionKind::Initializer)
         return summary.numberOfOperations <= inlineLimitInLoops && !summary.has(SummaryTrait::HasLoops);
-    if (place.caller == walker.unit().function && !place.isInLoop && walker.facts().linked().function(place.caller).isNamedInItsCycle)
-        return summary.numberOfOperations <= inlineLimitInRecursion && !summary.has(SummaryTrait::HasLoops);
     if (place.caller != walker.unit().function && place.isInLoop && walker.standsInTurnThatLooksCountOn())
         return walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= window && !summary.has(SummaryTrait::HasLoops);
     if (place.caller != walker.unit().function || !place.isInLoop || summary.has(SummaryTrait::HasLoops))
@@ -212,7 +208,7 @@ static bool copyPaysForClosureHandedOverAtInlining(const Walker& walker, Functio
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     if (!summary.has(SummaryTrait::HasLoops) || summary.numberOfOperations > inlineLimitOfHelpers)
         return false;
-    if (!place.isInLoop && walker.facts().linked().function(walker.unit().function).runsAtMostOnce)
+    if (!place.isInLoop && walker.program().at(walker.unit().function).isModuleBody())
         return false;
     if (place.caller != walker.unit().function && walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations > inlineWindowOfHelpers)
         return false;
@@ -260,7 +256,12 @@ static bool copyOfClosureHandedOverPaysAtInlining(const Walker& walker, Function
     return summary.numberOfOperations <= inlineLimitInLoops && !summary.has(SummaryTrait::HasLoops);
 }
 
-static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee)
+static bool entersBodyOfCoroutineAtInlining(const Draft& site)
+{
+    return site.opcode == Opcode::CallDirect && site.role() == CodeRole::CoroutineBody;
+}
+
+static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee, bool entersBodyOfCoroutine = false)
 {
     const Program& program = walker.program();
     const Function& function = program.at(callee);
@@ -268,7 +269,8 @@ static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee)
     const BodyIndex* body = walker.facts().bodies().find(callee);
     if (walker.plan().promotedEnvironments().isMaker(callee))
         return false;
-    if (function.isCoroutine() || function.results.size() != 1 || walker.facts().isTakenToRunOnce(callee))
+    bool isPlainBodyOfCoroutine = function.isCoroutine() && entersBodyOfCoroutine && walker.plan().conventions().of(callee).coroutineNeverSuspends;
+    if ((function.isCoroutine() && !isPlainBodyOfCoroutine) || function.results.size() != 1 || walker.facts().isTakenToRunOnce(callee))
         return false;
     FlagsOfSummaryForInlining flags {
         .suspends = summary.has(SummaryTrait::Suspends),
@@ -278,7 +280,7 @@ static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee)
     if (whyNoCallInlines(program, callee, PartOfCallee::WholeBody, &flags, body) != NotInlinedCause::None)
         return false;
 
-    if (!walker.plan().conventions().exists({ callee, CodeRole::Body }))
+    if (!walker.plan().conventions().exists({ callee, isPlainBodyOfCoroutine ? CodeRole::CoroutineBody : CodeRole::Body }))
         return false;
     if (walker.code().inlineFrames().size() >= mostInlineFramesAtInlining)
         return false;
@@ -565,8 +567,6 @@ static bool stepsForOfAtInlining(const Walker& walker, FunctionID callee)
 
 static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place, const OperandsInSightAtInlining* inSight)
 {
-    if (walker.program().at(callee).isCoroutine() && (site.opcode != Opcode::CallDirect || site.role() != CodeRole::CoroutineBody))
-        return false;
     auto copyPays = [&](size_t numberOfOperands) {
         if (inSight && isSecondLoopOverWhatCopyCallsAtInlining(walker, callee, place, inSight->handedOver))
             return false;
@@ -592,7 +592,7 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
 bool mayCopyCallee(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
 {
     return walker.has(Mechanism::Inlining) && opcodesOfInlining.contains(site.opcode) && callAdmitsCopyAtInlining(walker, site, callee, place, nullptr)
-        && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee);
+        && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee, entersBodyOfCoroutineAtInlining(site));
 }
 
 bool copyOfCalleeCalledInLoopPays(const Walker& walker, FunctionID callee, size_t numberOfArguments)
@@ -607,7 +607,7 @@ bool shouldCopyCallee(const Walker& walker, const Draft& site, FunctionID callee
     OperandsInSightAtInlining inSight { handedOver, callsParameterOfCopy, false };
     PlaceOfCall place { walker.currentFunction(), walker.isInLoop() };
     return walker.has(Mechanism::Inlining) && opcodesOfInlining.contains(site.opcode) && callAdmitsCopyAtInlining(walker, site, callee, place, &inSight)
-        && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee);
+        && !walker.isBeingWalked(callee) && mayBeWalkedAtInlining(walker, callee, entersBodyOfCoroutineAtInlining(site));
 }
 
 Vector<Reference, 8> operandsHandedToCopy(const Draft& site, const Function& callee)
@@ -859,6 +859,13 @@ bool Walker::copyHandsBack(ValueID input)
     return frame.valueHandedBack && frame.valueHandedBack == body.valueBehindCasts(input);
 }
 
+bool Walker::walkInlineUnderHandlerMade(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft& writtenOut, BlockID handler)
+{
+    SetForScope handlerMade(m_handlerMadeOverCopies, handler);
+    SetForScope framesBelow(m_numberOfFramesBelowHandlerMade, m_frames.size());
+    return walkInline(call, callee, arguments, &writtenOut);
+}
+
 bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft* writtenOut)
 {
     if (!m_opensGuesses || isBeingWalked(callee))
@@ -878,7 +885,7 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         written.closure = closureCalledAtInlining(site);
         written.arguments = site.argumentsOperands();
     }
-    if (!mayBeWalkedAtInlining(*this, callee) || !operandsFitAtInlining(*this, written, function, arguments))
+    if (!mayBeWalkedAtInlining(*this, callee, entersBodyOfCoroutineAtInlining(site)) || !operandsFitAtInlining(*this, written, function, arguments))
         return false;
     if (!depthOfCopies())
         m_operationsCopiedAtWrittenCall = 0;

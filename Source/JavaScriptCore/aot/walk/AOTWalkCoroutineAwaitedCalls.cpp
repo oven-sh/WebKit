@@ -28,13 +28,7 @@ static bool mayStandInFrontOfCallInAwaitedCalls(Opcode opcode)
     return bound.isUnobservable() && bound.reads.containsOnly(bookkeepingHeaps);
 }
 
-struct WaitOfCallInCoroutine {
-    ValueID await;
-    uint32_t placeOfCall { 0 };
-    uint32_t endOfWait { 0 };
-};
-
-static std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& walker, const BodyIndex& index, BodyBlock block, ValueID call)
+std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& walker, const BodyIndex& index, BodyBlock block, ValueID call)
 {
     uint32_t firstValue = block.firstValue().index();
     WaitOfCallInCoroutine wait;
@@ -62,7 +56,7 @@ static std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& wa
     return wait;
 }
 
-static bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block, const WaitOfCallInCoroutine& wait, Vector<Reference, 4>& held)
+bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block, const WaitOfCallInCoroutine& wait, Vector<Reference, 4>& held)
 {
     uint32_t firstValue = block.firstValue().index();
     ValueID call(firstValue + wait.placeOfCall);
@@ -86,7 +80,7 @@ static bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBloc
     return true;
 }
 
-static void finishWaitOfCall(Walker& walker, BodyBlock block, const WaitOfCallInCoroutine& wait, Reference given)
+void finishWaitOfCall(Walker& walker, BodyBlock block, const WaitOfCallInCoroutine& wait, Reference given)
 {
     walker.bind(wait.await, given);
     leaveAnythingForSwallowedOperation(walker, wait.await);
@@ -139,7 +133,13 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
     BlockID handler;
     if (bodyMayThrowInAwaitedCalls(walker, callee))
         handler = standUnderHandlerOfCoroutineCalls(walker);
-    Reference returned = buildStartOfBodyOfCoroutine(walker, call, callee, operands, undefinedOfCoroutineCalls(walker));
+    Draft start = draftOfCoroutineCalls(walker, Opcode::CallDirect, origin);
+    start.setFunction(callee);
+    start.setRole(CodeRole::CoroutineBody);
+    start.setNumberOfBoundArguments(0);
+    start.setVariadicOperands(operands);
+    bool isCopied = !walker.hasHandlerMadeOverCopies() && shouldCopyCallee(walker, start, callee, operands) && walker.walkInlineUnderHandlerMade(call, callee, operands, start, handler);
+    Reference returned = !isCopied ? buildStartOfBodyOfCoroutine(walker, call, callee, operands, undefinedOfCoroutineCalls(walker)) : walker.isUnreachable() ? Reference() : walker.referenceBoundTo(call.id());
     if (walker.hasFailed())
         return { };
 

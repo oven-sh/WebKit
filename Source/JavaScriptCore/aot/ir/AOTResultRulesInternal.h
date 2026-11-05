@@ -14,8 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class FieldTypeRule : uint8_t { NamedRead, SlotRead, DeferringSlotRead, SlotStore };
-
 TypeID naturalTypeOfOperands(const TypingContext&, Opcode, NaturalTable, OperandTypes);
 TypeID numberResultOf(TypeArena&, Opcode, OperandTypes);
 TypeID integerQuotientType(TypeArena&, Range dividends, Range divisors, QuotientRounding);

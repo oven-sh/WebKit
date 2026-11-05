@@ -179,12 +179,19 @@ static String findPartThatLinkHasNotCounted(const Code& code, const Operation& o
     return { };
 }
 
-static BitVector findFramesOfClosuresThatCalledParametersHold(const WalkInputs& inputs, TypeArena& types, const Code& code, uint32_t parametersCalled)
+struct ClosuresThatCalledParametersHold {
+    bool run(const Operation& operation) const { return frames.get(operation.origin().inlineFrame) || (operation.opcode == Opcode::CallDirect && functions.contains(operation.function())); }
+
+    Vector<FunctionID, 4> functions;
+    BitVector frames;
+};
+
+static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(const WalkInputs& inputs, TypeArena& types, const Code& code, uint32_t parametersCalled)
 {
-    Vector<FunctionID, 4> held;
+    ClosuresThatCalledParametersHold held;
     auto note = [&](TypeID type) {
         if (FunctionID function = type ? singleFunctionOf(types, types.at(type)) : FunctionID())
-            held.append(function);
+            held.functions.append(function);
     };
     std::span<const LinkedParameter> parameters = inputs.facts.linked().parametersOf(code.unit().function);
     for (uint32_t parameter = 0; parameter < parameters.size() && parameter < 32; ++parameter) {
@@ -206,13 +213,12 @@ static BitVector findFramesOfClosuresThatCalledParametersHold(const WalkInputs& 
             note(operation.testedType());
     }
 
-    BitVector frames;
     std::span<const InlineFrame> copied = code.inlineFrames();
     for (uint32_t frame = 1; frame < copied.size(); ++frame) {
-        if ((!copied[frame].parent && held.contains(copied[frame].callee)) || frames.get(copied[frame].parent))
-            frames.set(frame);
+        if ((!copied[frame].parent && held.functions.contains(copied[frame].callee)) || held.frames.get(copied[frame].parent))
+            held.frames.set(frame);
     }
-    return frames;
+    return held;
 }
 
 static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeArena& types, const Code& code)
@@ -232,20 +238,45 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
         RowThatSaysLess row = RowThatSaysLess::decode(inputs.options.rowThatSaysLess);
         row.cut(KindOfEffectsRow::Summary, unit.function.index(), given ? countedGivenArguments : counted);
     }
-    BitVector framesLeftToCaller = given && given->parametersCalled ? findFramesOfClosuresThatCalledParametersHold(inputs, types, code, given->parametersCalled) : BitVector();
+    ClosuresThatCalledParametersHold leftToCaller;
+    if (given && given->parametersCalled)
+        leftToCaller = findClosuresThatCalledParametersHold(inputs, types, code, given->parametersCalled);
     for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
         const Operation& operation = code.at(ValueID(index));
         if (!operation.block() || operation.traits().mayCallUnknownCode())
             continue;
         String part = findPartThatLinkHasNotCounted(code, operation, counted);
         ASCIILiteral summary = "Link's effects of the function"_s;
-        if (part.isNull() && given && code.at(operation.block()).frequency == BlockFrequency::Normal && !framesLeftToCaller.get(operation.origin().inlineFrame)) {
+        if (part.isNull() && given && code.at(operation.block()).frequency == BlockFrequency::Normal && !leftToCaller.run(operation)) {
             part = findPartThatLinkHasNotCounted(code, operation, countedGivenArguments);
             summary = "Link's effects of the function given its arguments"_s;
         }
         if (part.isNull())
             continue;
         return makeString('f', unit.function.index(), " v"_s, index, " ("_s, nameOf(operation.opcode), ") "_s, part, ", and "_s, summary, " say that it does not"_s);
+    }
+    return { };
+}
+
+// A caller may make what it hands to such a parameter in its own frame. Link has judged that on the body as written: no store that the walk adds may keep it.
+static String findStoreOfWhatCallerMayLend(const WalkInputs& inputs, const Code& code)
+{
+    CodeUnit unit = code.unit();
+    if (!walksInputBody(unit.role) || !(code.opcodesOfValues().contains(Opcode::PutModuleVariable) || code.opcodesOfValues().contains(Opcode::PutEnvironmentField)))
+        return { };
+    const LinkTables& tables = inputs.facts.linked();
+    for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
+        const Operation& operation = code.at(ValueID(index));
+        if (!operation.block() || (operation.opcode != Opcode::PutModuleVariable && operation.opcode != Opcode::PutEnvironmentField) || code.isConstant(operation.valueOperand()))
+            continue;
+        ValueID stored = rootOfCellInSweptCode(code, operation.valueOperand());
+        const Operation& made = code.at(stored);
+        if (made.opcode != Opcode::Parameter || !code.at(made.block()).isEntry)
+            continue;
+        std::span<const ValueID> parameters = code.at(made.block()).parameters();
+        size_t entryParameter = std::ranges::find(parameters, stored) - parameters.begin();
+        if (tables.onlyCallsWhatArrivesAt(unit.function, static_cast<unsigned>(entryParameter)))
+            return makeString('f', unit.function.index(), " v"_s, index, " ("_s, nameOf(operation.opcode), ") keeps entry parameter "_s, entryParameter, ", of which Link says that it is only called"_s);
     }
     return { };
 }
@@ -261,6 +292,10 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::EffectsNotCounted;
         brokenRule = findOperationThatLinkHasNotCounted(inputs, types, code);
+    }
+    if (brokenRule.isNull()) {
+        kindOfBrokenRule = InternalErrorKind::OpcodeNotInForm;
+        brokenRule = findStoreOfWhatCallerMayLend(inputs, code);
     }
     if (brokenRule.isNull())
         return true;
@@ -550,7 +585,7 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
         return true;
     if (unit.role != CodeRole::Body)
         return !index.opcodes().contains(Opcode::Builtin);
-    if (!inputs.facts.runsAtMostOnce(unit.function) && !inputs.program.at(unit.function).isModuleBody())
+    if (!inputs.program.at(unit.function).isModuleBody())
         return false;
     return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper;
 }
@@ -591,6 +626,32 @@ std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
     return compiled;
 }
 
+std::optional<CompiledCode> CompileWorker::compileEntryByHand(CodeUnit unit)
+{
+    const WalkInputs& inputs = m_inputs.walk;
+    if (unit.role != CodeRole::GenericCallEntry || inputs.options.checksProofs)
+        return std::nullopt;
+
+    m_types.reset();
+    Code& code = m_walker->code();
+    code.reset(unit);
+    bool believesCallers = withoutMechanismsMissingDependencies(inputs.facts.mechanisms()).contains(Mechanism::Arrivals);
+    std::optional<CompiledCode> compiled = generateEntryWrittenByHand(CodeGenerationWorker { m_build, m_types, *m_arena }, m_inputs.generation, code, scopedLambda<TypeID(unsigned)>([&](unsigned entryParameter) -> TypeID {
+        TypeID known = believesCallers ? inputs.arrivals.provenAt(m_types, unit.function, entryParameter) : TypeID();
+        TypeID believed = inputs.facts.typeBelievedOfEntryParameter(m_types, unit.function, entryParameter, known);
+        if (!m_types.at(believed).isJavaScriptValue())
+            return { };
+        TypeID asked = m_types.testablePartOf(believed);
+        return m_types.isSubset(TypeTable::anything, asked) ? TypeID() : asked;
+    }), m_totals);
+    if (!compiled || !compiled->unit) {
+        m_arena->reset();
+        return std::nullopt;
+    }
+    m_build.statistics().count(StatisticID::UnitsCompiled);
+    return compiled;
+}
+
 std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
 {
     CurrentWorkScope work(m_inputs.walk.program, unit.function, "walk"_s);
@@ -598,6 +659,8 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
     m_arena->reset();
     if (std::optional<CompiledCode> straight = compileStraight(unit))
         return straight;
+    if (std::optional<CompiledCode> entry = compileEntryByHand(unit))
+        return entry;
     std::optional<uint64_t> instructionsAtStart = instructionsOfCompileThreadSoFar(m_build);
     if (!walkAndSweep(unit))
         return std::nullopt;
@@ -623,8 +686,6 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
 
     Statistics& statistics = m_build.statistics();
     statistics.count(StatisticID::UnitsCompiled);
-    if (unit.role == CodeRole::Serializer)
-        statistics.count(StatisticID::SerializersCreated);
     if (uint32_t slices = m_walker->numberOfSlicesMadeOfElementsInSight())
         statistics.count(StatisticID::SlicesMadeOfElementsInSight, slices);
     for (const Walker::CountOfUnit& count : m_walker->countsOfUnit())

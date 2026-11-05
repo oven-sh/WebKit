@@ -32,7 +32,6 @@ void writeTypedPositionsOnAllThreads(const LinkFlow& flow, TypeTable& table, uns
 
     static constexpr unsigned positionsInStretch = 256;
     unsigned numberOfStretches = (numberOfPositions + positionsInStretch - 1) / positionsInStretch;
-    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
     struct OfWorker {
         std::unique_ptr<TypeArena> types;
         TypesOfFlowTurnedOnce turned;
@@ -41,7 +40,6 @@ void writeTypedPositionsOnAllThreads(const LinkFlow& flow, TypeTable& table, uns
         TypeTable::RoundWithoutAdditions nobodyAdds(table);
         Vector<OfWorker> workers(loops.width());
         forEachIndexInParallel(loops, numberOfStretches, [&](unsigned stretch, unsigned worker) {
-            LinkFlow::ViewAtWork viewAtWork(view);
             OfWorker& own = workers[worker];
             if (!own.types)
                 own.types = makeUniqueWithoutFastMallocCheck<TypeArena>(table, ArenaKeeps::UntilReset);

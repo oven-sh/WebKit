@@ -71,7 +71,6 @@ void BuiltinBindings::bindNativeHelpersOfEngine()
 {
     RELEASE_ASSERT(!hasHost() && nativeHelpersOfEngine().isEmpty());
     bindNativeHelper(Builtins::CompilerHelpersOwnEntriesFlat, AOT__ownEntriesFlat);
-    bindNativeHelper(Builtins::CompilerHelpersPairsOfFlatEntries, AOT__pairsOfFlatEntries);
     bindNativeHelper(Builtins::CompilerHelpersDescribeUnlessOrdinary, AOT__describeUnlessOrdinary);
     bindNativeHelper(Builtins::CompilerHelpersDefinePropertiesFrom, AOT__definePropertiesFrom);
     bindNativeHelper(Builtins::CompilerHelpersScanPlainQuery, AOT__scanPlainQuery);

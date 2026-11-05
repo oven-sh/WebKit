@@ -29,6 +29,7 @@ static thread_local bool t_isInsideLoop = false;
 static thread_local const ParallelLoops* t_currentLoops = nullptr;
 static thread_local unsigned t_workerNumber = 0;
 static thread_local const ParallelLoops* t_loopsOfLane = nullptr;
+constinit thread_local void* t_whatHelpersInherit = nullptr;
 
 bool ParallelLoops::isInsideLoop()
 {
@@ -95,6 +96,7 @@ private:
         , m_maxHelpers(maxHelpers)
         , m_work(work)
         , m_hasWorkToTake(hasWorkToTake)
+        , m_whatHelpersInherit(t_whatHelpersInherit)
     {
     }
 
@@ -121,7 +123,10 @@ private:
             askForHelper();
             askForHelper();
         }
-        m_work(LoopParticipant::Helper);
+        {
+            SetForScope whatHelpersInherit(t_whatHelpersInherit, m_whatHelpersInherit);
+            m_work(LoopParticipant::Helper);
+        }
         close();
         if (m_state.exchangeSub(oneHelperAtWork) == (isClosed | oneHelperAtWork))
             ParkingLot::unparkAll(&m_state);
@@ -154,6 +159,7 @@ private:
     const unsigned m_maxHelpers;
     const Work& m_work;
     const ScopedLambda<bool()>& m_hasWorkToTake;
+    void* const m_whatHelpersInherit;
     std::atomic<unsigned> m_numberOfHelpersAskedFor { 0 };
     Atomic<uint32_t> m_state { 0 };
 };
@@ -176,6 +182,7 @@ private:
         , m_count(count)
         , m_lane(lane)
         , m_stepOfCaller(currentWorkOfThread().step.load(std::memory_order_relaxed))
+        , m_whatHelpersInherit(t_whatHelpersInherit)
         , m_numberOfLanesLeft(count - 1)
     {
     }
@@ -209,6 +216,7 @@ private:
                 SetForScope isInsideLoop(t_isInsideLoop, false);
                 SetForScope currentLoops(t_currentLoops, nullptr);
                 SetForScope workerNumber(t_workerNumber, 0u);
+                SetForScope whatHelpersInherit(t_whatHelpersInherit, m_whatHelpersInherit);
                 std::optional<CurrentWorkScope> workOfCaller;
                 if (m_stepOfCaller)
                     workOfCaller.emplace(ASCIILiteral::fromLiteralUnsafe(m_stepOfCaller));
@@ -231,6 +239,7 @@ private:
     const unsigned m_count;
     const Lane& m_lane;
     const char* const m_stepOfCaller;
+    void* const m_whatHelpersInherit;
     Atomic<unsigned> m_nextLane { 1 };
     Atomic<uint32_t> m_numberOfLanesLeft;
 };
@@ -260,10 +269,12 @@ void runOnBuildThread(NOESCAPE const ScopedLambda<void()>& functor)
     uint32_t functionPlusOneOfCaller = caller.functionPlusOne.load(std::memory_order_relaxed);
     const char* stepOfCaller = caller.step.load(std::memory_order_relaxed);
     const ParallelLoops* loopsOfCaller = t_currentLoops ? t_currentLoops : t_loopsOfLane;
+    void* inheritedFromCaller = t_whatHelpersInherit;
     startBuildThread("AOT build"_s, [&] {
         if (InstructionCounts::hasBegun()) [[unlikely]]
             InstructionCounts::countOnCurrentThread();
         SetForScope laneOfThread(t_loopsOfLane, loopsOfCaller);
+        SetForScope whatHelpersInherit(t_whatHelpersInherit, inheritedFromCaller);
         std::optional<CurrentWorkScope> workOfCaller;
         if (stepOfCaller && programOfCaller && functionPlusOneOfCaller)
             workOfCaller.emplace(*programOfCaller, FunctionID(functionPlusOneOfCaller - 1), ASCIILiteral::fromLiteralUnsafe(stepOfCaller));

@@ -830,6 +830,7 @@ struct BuiltinTableNames {
 struct BuiltinTableAttachments {
     std::span<const BuiltinFeatureUse> featureUses { };
     std::span<const BuiltinUnseenCode> unseenCode { };
+    std::span<const BuiltinUnseenCode> instancesThatAnswerEveryName { };
     std::span<const BuiltinModuleLoad> moduleLoads { };
     std::span<const BuiltinModuleLoad> startupLoads { };
     std::span<const BuiltinCalledFunction> calledFunctions { };
@@ -1004,6 +1005,7 @@ public:
     std::span<const BuiltinCalledFunction> calledFunctionsOf(BuiltinID) const;
     Vector<const BuiltinCondition*, 8> conditionsOnLightForms() const;
     const BuiltinUnseenCode* unseenCodeOf(BuiltinID) const;
+    const BuiltinCondition* conditionOnInstancesThatAnswerEveryName(BuiltinID constructor) const;
     bool letsInUnseenCode(BuiltinID) const;
     bool letsInUnseenCodeWhenCalled(BuiltinID) const;
     const BuiltinForms* formsOf(BuiltinID) const;

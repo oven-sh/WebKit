@@ -210,38 +210,6 @@ std::optional<char16_t> onlyCodeUnitOfText(const Walker& walker, StringID text)
     return view[0];
 }
 
-Reference constantForStrings(Walker& walker, PrimitiveKnownToFolding primitive)
-{
-    Draft constant(Opcode::Undefined);
-    switch (primitive.kind()) {
-    case PrimitiveKnownToFolding::Kind::Undefined:
-        break;
-    case PrimitiveKnownToFolding::Kind::Null:
-        constant.become(Opcode::Null);
-        break;
-    case PrimitiveKnownToFolding::Kind::Boolean:
-        constant.become(Opcode::Boolean);
-        constant.setBoolean(primitive.asBoolean());
-        break;
-    case PrimitiveKnownToFolding::Kind::Number:
-        if (isTrackedInteger(primitive.asNumber())) {
-            constant.become(Opcode::Integer);
-            constant.setInteger(static_cast<int64_t>(primitive.asNumber()));
-        } else {
-            constant.become(Opcode::Double);
-            constant.setNumber(primitive.asNumber());
-        }
-        break;
-    case PrimitiveKnownToFolding::Kind::Text:
-        constant.become(Opcode::String);
-        constant.setString(primitive.asText());
-        break;
-    case PrimitiveKnownToFolding::Kind::Unknown:
-        return { };
-    }
-    return walker.constant(WTF::move(constant));
-}
-
 Reference integerForStrings(Walker& walker, int64_t integer)
 {
     Draft constant(Opcode::Integer);
@@ -418,7 +386,7 @@ Reference buildNegationForStrings(Walker& walker, Reference boolean, Origin orig
 {
     PrimitiveKnownToFolding known = primitiveKnownForStrings(walker, boolean);
     if (known.kind() == PrimitiveKnownToFolding::Kind::Boolean)
-        return constantForStrings(walker, PrimitiveKnownToFolding::boolean(!known.asBoolean()));
+        return walker.constant(PrimitiveKnownToFolding::boolean(!known.asBoolean()));
     return buildOperatorForStrings(walker, Opcode::LogicalNot, boolean, { }, origin);
 }
 

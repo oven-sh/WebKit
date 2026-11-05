@@ -65,8 +65,33 @@ static bool isRankedAmongClassRecords(const TableEncoder& encoder, LayoutID id)
     return encoder.program.at(id).kind == LayoutKind::Instance && encoder.numbers.rankOfClass(id);
 }
 
+static size_t placeOfSideOfClass(LayoutID classLayout, ClassSide side)
+{
+    return static_cast<size_t>(classLayout.index()) * numberOfClassSides + static_cast<size_t>(side);
+}
+
+static BitVector findSidesWithClassGuardsHereOrBelow(const TableEncoder& encoder, std::span<const LayoutID> parentsThatListClasses)
+{
+    BitVector sides(parentsThatListClasses.size() * numberOfClassSides);
+    auto markUpwardFrom = [&](LayoutID classLayout, ClassSide side) {
+        while (classLayout && !sides.quickSet(placeOfSideOfClass(classLayout, side)))
+            classLayout = parentsThatListClasses[classLayout.index()];
+    };
+    const PlacedStatics& statics = encoder.numbers.statics();
+    for (size_t place = 0; place < statics.classGuardBits.size(); ++place) {
+        if (statics.classGuardBits[place] != noClassGuardBit)
+            markUpwardFrom(LayoutID(place / numberOfClassSides), static_cast<ClassSide>(place % numberOfClassSides));
+    }
+    for (const PlacedClassGuardOfName& guard : statics.classGuardsOfNames)
+        markUpwardFrom(guard.classLayout, guard.side);
+    for (const PlacedClassGuardOfName& guard : statics.namesOfClassGuardsOfSeveralNames)
+        markUpwardFrom(guard.classLayout, guard.side);
+    return sides;
+}
+
 void groupClassesByParentInClassRecords(TableEncoder& encoder, std::span<const LayoutID> parentsThatListClasses)
 {
+    encoder.sidesWithClassGuardsHereOrBelow = findSidesWithClassGuardsHereOrBelow(encoder, parentsThatListClasses);
     Vector<uint32_t> firstClassBelow(FillWith { }, parentsThatListClasses.size() + 1, 0);
     for (LayoutID parent : parentsThatListClasses) {
         if (parent)
@@ -154,8 +179,8 @@ static MethodData describeMemberInClassRecord(const TableEncoder& encoder, Layou
 static uint32_t guardBitInClassRecord(const TableEncoder& encoder, LayoutID classLayout, ClassSide side)
 {
     const Vector<uint32_t>& bits = encoder.numbers.statics().classGuardBits;
-    size_t index = static_cast<size_t>(classLayout.index()) * numberOfClassSides + static_cast<size_t>(side);
-    return index < bits.size() ? bits[index] : noClassGuardBit;
+    size_t place = placeOfSideOfClass(classLayout, side);
+    return place < bits.size() ? bits[place] : noClassGuardBit;
 }
 
 static Vector<uint32_t> collectGuardsOfNamesInClassRecord(const TableEncoder& encoder, LayoutID classLayout, ClassSide side)
@@ -265,6 +290,8 @@ void appendListsOfClassRecord(TableEncoder& encoder, LayoutID classLayout, const
     for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
         const Vector<uint32_t>& guards = namedGuards[static_cast<unsigned>(side)];
         data.namedGuardsOffset[static_cast<unsigned>(side)] = guards.isEmpty() ? 0 : encoder.part.append(guards);
+        if (encoder.sidesWithClassGuardsHereOrBelow.get(placeOfSideOfClass(classLayout, side)))
+            data.sidesWithGuardsHereOrBelow |= 1u << static_cast<unsigned>(side);
     }
     if (std::span<const uint32_t> subclasses = classesBelowInClassRecords(encoder, classLayout); !subclasses.empty()) {
         Vector<uint32_t, 8> list;

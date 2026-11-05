@@ -51,6 +51,7 @@ public:
     virtual TypeID resultOfReadBeingTyped(TypeLevel) const { return { }; }
     virtual TypeID contentsBeingTyped(TypeLevel) const { return { }; }
     virtual TypeID resultOfSelector(TypeLevel, uint32_t) const { return { }; }
+    virtual TypeID resultOfTableRow(TypeLevel, uint32_t, LayoutID, bool&) const { return { }; }
 
     enum class QuestionOfEachObject : uint8_t { Property, Contents };
     virtual TypeID askedOfEachObject(QuestionOfEachObject, TypeLevel, ObjectSetID, uint32_t, NOESCAPE const ScopedLambda<TypeID()>& askEachObject) const { return askEachObject(); }

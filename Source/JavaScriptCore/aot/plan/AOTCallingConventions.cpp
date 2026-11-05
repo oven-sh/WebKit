@@ -14,7 +14,6 @@
 #include "AOTFacts.h"
 #include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
-#include "AOTJSONSerializerPlan.h"
 #include "AOTLayout.h"
 #include "AOTMechanisms.h"
 #include "AOTPromotedEnvironments.h"
@@ -216,9 +215,9 @@ static unsigned numberOfParametersInConventionOf(const CallingConventions& conve
         break;
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
-        return 1 + conventions.methodSelector(unit.numberOfBoundArguments).numberOfArguments;
+        return 1 + conventions.methodSelector(unit.placeOfSelector()).numberOfArguments;
     case CodeRole::Serializer:
-        return numberOfSerializerParameters;
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -244,12 +243,12 @@ bool CallingConventions::existsBehindUnitsOfFunctions(CodeUnit unit) const
 {
     switch (unit.role) {
     case CodeRole::Serializer:
-        return unit && serializerOf(unit.layoutOfSerializer()) == unit;
+        return false;
     case CodeRole::TableEntry:
     case CodeRole::TableLookup: {
-        if (unit.numberOfBoundArguments >= methodSelectors().size())
+        if (unit.placeOfSelector() >= methodSelectors().size())
             return false;
-        const MethodFamily& family = familyOf(methodSelector(unit.numberOfBoundArguments));
+        const MethodFamily& family = familyOf(methodSelector(unit.placeOfSelector()));
         return unit.role == CodeRole::TableLookup ? family.entersLookup() && unit.function == family.methods[0] : std::ranges::binary_search(family.methods, unit.function);
     }
     case CodeRole::Body:
@@ -288,7 +287,7 @@ uint32_t CallingConventions::indexBehindUnitsOfFunctions(CodeUnit unit) const
     switch (unit.role) {
     case CodeRole::TableEntry:
     case CodeRole::TableLookup: {
-        const MethodSelector& selector = methodSelector(unit.numberOfBoundArguments);
+        const MethodSelector& selector = methodSelector(unit.placeOfSelector());
         uint32_t lookup = firstUnitBehindFunctions + selector.firstUnit;
         if (unit.role == CodeRole::TableLookup)
             return lookup;
@@ -298,8 +297,6 @@ uint32_t CallingConventions::indexBehindUnitsOfFunctions(CodeUnit unit) const
         return lookup + 1 + static_cast<uint32_t>(found - methods.begin());
     }
     case CodeRole::Serializer:
-        RELEASE_ASSERT(exists(unit));
-        return firstSerializer() + unit.layoutOfSerializer().index();
     case CodeRole::Body:
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
@@ -319,16 +316,13 @@ CodeUnit CallingConventions::unitAt(uint32_t index) const
     if (index < numberOfUnitsOfFunctions)
         return { FunctionID(index / numberOfCodeRolesOfOneFunction), static_cast<CodeRole>(index % numberOfCodeRolesOfOneFunction) };
 
-    if (index >= firstSerializer() && index - firstSerializer() < numberOfPlacesOfSerializers())
-        return serializerOf(LayoutID(index - firstSerializer()));
-
     uint32_t indexAmongTableUnits = index - numberOfUnitsOfFunctions;
     RELEASE_ASSERT(indexAmongTableUnits < m_parts.methodTable.numberOfUnits);
     std::span<const MethodSelector> selectors = methodSelectors();
     const MethodSelector& selector = *std::prev(std::ranges::upper_bound(selectors, indexAmongTableUnits, { }, &MethodSelector::firstUnit));
     if (indexAmongTableUnits == selector.firstUnit)
         return tableLookupOf(selector);
-    return { familyOf(selector).methods[indexAmongTableUnits - selector.firstUnit - 1], CodeRole::TableEntry, placeOf(selector) };
+    return CodeUnit::ofMethodTable(familyOf(selector).methods[indexAmongTableUnits - selector.firstUnit - 1], CodeRole::TableEntry, placeOf(selector));
 }
 
 static Representation formOfParameterProvenToBe(const Program& program, TypeID proven)
@@ -367,12 +361,11 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
         RELEASE_ASSERT(parameterIndex < numberOfParametersInConventionOf(*this, program, unit));
         return parameterIndex ? Representation::JSValue : Representation::Cell;
     case CodeRole::Serializer:
-        RELEASE_ASSERT(parameterIndex < numberOfSerializerParameters);
-        return static_cast<SerializerParameter>(parameterIndex) == SerializerParameter::LevelsAround ? Representation::Int32 : Representation::Cell;
+        break;
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
         RELEASE_ASSERT(parameterIndex < numberOfParametersInConventionOf(*this, program, unit));
-        if (const MethodSelector& selector = methodSelector(unit.numberOfBoundArguments); parameterIndex && selector.isTyped)
+        if (const MethodSelector& selector = methodSelector(unit.placeOfSelector()); parameterIndex && selector.isTyped)
             return formOfParameterProvenToBe(program, familyOf(selector).typesOfArguments[parameterIndex - 1]);
         return parameterIndex ? Representation::JSValue : Representation::Cell;
     }
@@ -409,9 +402,6 @@ uint32_t CallingConventions::stackWordsReservedByCallersOf(const Program& progra
 {
     if (isGenericEntry(callee.role))
         return 0;
-
-    if (callee.role == CodeRole::Serializer)
-        return stackWordsTakenInConventionOf(*this, program, callee);
 
     if (isTableRole(callee.role))
         return stackWordsTakenInConventionOf(*this, program, callee);
@@ -563,7 +553,7 @@ static bool entryByValueHasToAskForConventions(const Program& program, const Fac
     bool takesWhatCallersLeave = id.index() < facts.linked().functions.size() && facts.linked().bodyTakesWhatCallersLeave(id);
     for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index) {
         EntryParameter kind = function.entryParameterKind(index);
-        if ((kind == EntryParameter::This || kind == EntryParameter::Parameter) && (takesWhatCallersLeave || facts.typeOfEntryParameter(id, index).proven))
+        if ((kind == EntryParameter::This || kind == EntryParameter::Parameter || kind == EntryParameter::NewTarget) && (takesWhatCallersLeave || facts.typeOfEntryParameter(id, index).proven))
             return true;
     }
     return false;
@@ -811,7 +801,6 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
         }
     });
     boxResultsThatNobodyTakesRaw(linked, functionsThatReturnRawValues, parts);
-    planSerializers(parts, program, facts);
     return CallingConventions(WTF::move(parts));
 }
 

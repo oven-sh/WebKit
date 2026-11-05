@@ -140,6 +140,7 @@ function createAttachments(): ModelAttachments {
   return {
     featureUses: [],
     unseenCodeCondition: null,
+    conditionOnInstancesThatAnswerEveryName: null,
     moduleLoads: [],
     calledFunctions: [],
     literalPartsForm: null,

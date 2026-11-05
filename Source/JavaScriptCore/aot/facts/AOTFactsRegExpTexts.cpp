@@ -23,6 +23,7 @@
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
+#include "JSMap.h"
 #include "JSNativeStdFunction.h"
 #include "JSPromise.h"
 #include "MarkedVector.h"
@@ -103,7 +104,12 @@ private:
         JSArray* captures { nullptr };
     };
 
-    bool isKnown(JSValue value) const { return value != JSValue(m_unknown.get()); }
+    bool isKnown(JSValue value) const { return !value || !value.isObject() || asObject(value)->structure() != m_unknown->structure(); }
+    bool isNumberThatNobodyKnows(JSValue value) const { return !isKnown(value) && value != JSValue(m_unknown.get()); }
+    bool isNumberKnownOrNot(JSValue value) const { return value.isNumber() || isNumberThatNobodyKnows(value); }
+    JSValue makeNumberThatNobodyKnows();
+    void layUnderNumberThatNobodyKnows(JSObject*, JSValue number, JSValue laid);
+    JSValue findUnderNumberThatNobodyKnows(JSObject*, JSValue number);
     bool isGlobalObject(JSValue value) const { return value == JSValue(m_realm.get()) || value == JSValue(m_realm->globalThis()); }
     JSValue unknown() const { return m_unknown.get(); }
     JSValue at(const Activation& activation, ValueID id) const
@@ -194,6 +200,7 @@ private:
     Identifier m_numberOfFunction;
     Identifier m_capturesOfFunction;
     Identifier m_markOfPatternMadeHere;
+    Identifier m_laidUnderNumbersThatNobodyKnows;
     UncheckedKeyHashMap<uint64_t, Identifier> m_privateNames;
     UncheckedKeyHashMap<uint32_t, Vector<BlockID>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_joins;
     Vector<StateOfModule> m_statesOfModules;
@@ -239,6 +246,7 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     m_numberOfFunction = Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "function"_s));
     m_capturesOfFunction = Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "captures"_s));
     m_markOfPatternMadeHere = Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "made"_s));
+    m_laidUnderNumbersThatNobodyKnows = Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "numbers"_s));
 
     const BuiltinTable& table = program.builtins();
     auto leaveEmpty = [](JSValue*) { };
@@ -674,6 +682,32 @@ void RehearsalOfRegExpTexts::noteTexts(std::span<const JSValue> arguments)
     }
 }
 
+JSValue RehearsalOfRegExpTexts::makeNumberThatNobodyKnows()
+{
+    VM& vm = *m_vm;
+    JSObject* number = constructEmptyObject(vm, m_realm->nullPrototypeObjectStructure());
+    number->putDirect(vm, vm.propertyNames->toPrimitiveSymbol, m_unknown->getDirect(vm, vm.propertyNames->toPrimitiveSymbol));
+    return number;
+}
+
+void RehearsalOfRegExpTexts::layUnderNumberThatNobodyKnows(JSObject* object, JSValue number, JSValue laid)
+{
+    VM& vm = *m_vm;
+    JSValue found = object->getDirect(vm, m_laidUnderNumbersThatNobodyKnows);
+    JSMap* all = found ? uncheckedDowncast<JSMap>(found) : JSMap::create(vm, m_realm->mapStructure());
+    if (!found)
+        object->putDirect(vm, m_laidUnderNumbersThatNobodyKnows, all);
+    all->set(m_realm.get(), number, laid);
+}
+
+JSValue RehearsalOfRegExpTexts::findUnderNumberThatNobodyKnows(JSObject* object, JSValue number)
+{
+    JSValue found = object->getDirect(*m_vm, m_laidUnderNumbersThatNobodyKnows);
+    if (!found || !uncheckedDowncast<JSMap>(found)->has(m_realm.get(), number))
+        return unknown();
+    return uncheckedDowncast<JSMap>(found)->get(m_realm.get(), number);
+}
+
 void RehearsalOfRegExpTexts::noteHandedToCodeThatNobodyKnows(std::span<const JSValue> arguments)
 {
     if (!m_goesThroughStartOfProgram)
@@ -1060,6 +1094,8 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         auto read = value.as<Opcode::ElemGet>();
         JSValue object = operand(read.objectOperand());
         JSValue property = operand(read.propertyOperand());
+        if (isKnown(object) && object.isObject() && isNumberThatNobodyKnows(property))
+            return findUnderNumberThatNobodyKnows(asObject(object), property);
         if (!isKnown(object) || !isKnown(property) || object.isUndefinedOrNull())
             return unknown();
         Identifier name = property.toPropertyKey(realm);
@@ -1089,6 +1125,10 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         JSValue object = operand(value.operand(0));
         JSValue property = operand(value.operand(1));
         JSValue stored = operand(opcode == Opcode::ElemSet ? value.as<Opcode::ElemSet>().valueOperand() : value.as<Opcode::ElemDefine>().valueOperand());
+        if (isKnown(object) && object.isObject() && !isGlobalObject(object) && isNumberThatNobodyKnows(property)) {
+            layUnderNumberThatNobodyKnows(asObject(object), property, stored);
+            return { };
+        }
         if (!isKnown(object) || !isKnown(property) || !object.isObject() || isGlobalObject(object))
             return { };
         Identifier name = property.toPropertyKey(realm);
@@ -1168,7 +1208,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         JSValue left = operand(value.operand(0));
         JSValue right = operand(value.operand(1));
         if (!isKnown(left) || !isKnown(right))
-            return unknown();
+            return isNumberKnownOrNot(left) && isNumberKnownOrNot(right) ? makeNumberThatNobodyKnows() : unknown();
         return settle(jsAdd(realm, left, right));
     }
     case Opcode::Sub:
@@ -1190,9 +1230,9 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     case Opcode::StrictEq: {
         JSValue left = operand(value.operand(0));
         JSValue right = operand(value.operand(1));
-        if (!isKnown(left) || !isKnown(right))
-            return unknown();
         bool isArithmetic = opcode != Opcode::Less && opcode != Opcode::LessEq && opcode != Opcode::Greater && opcode != Opcode::GreaterEq && opcode != Opcode::Eq && opcode != Opcode::StrictEq;
+        if (!isKnown(left) || !isKnown(right))
+            return isArithmetic ? makeNumberThatNobodyKnows() : unknown();
         if (isArithmetic && (left.isBigInt() || right.isBigInt() || left.isObject() || right.isObject()))
             return unknown();
         double first = 0;
@@ -1248,7 +1288,11 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     case Opcode::Decrement:
     case Opcode::Negate: {
         JSValue of = operand(value.operand(0));
-        if (!isKnown(of) || of.isBigInt())
+        if (isNumberThatNobodyKnows(of) && (opcode == Opcode::ToNumber || opcode == Opcode::ToNumeric))
+            return of;
+        if (!isKnown(of))
+            return makeNumberThatNobodyKnows();
+        if (of.isBigInt())
             return unknown();
         double converted = number(of);
         return settle(jsNumber(opcode == Opcode::Increment ? converted + 1 : opcode == Opcode::Decrement ? converted - 1 : opcode == Opcode::Negate ? -converted : converted));

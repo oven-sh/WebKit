@@ -20,7 +20,6 @@
 #include "AOTTypeTable.h"
 #include "AOTWalkStrings.h"
 #include "AOTWalkTextBuilders.h"
-#include "AOTWalkJSONWrites.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -484,15 +483,6 @@ bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call, BuiltinID called
     if (Reference text = walker.build(WTF::move(joined)))
         walker.bind(call.id(), text);
     return true;
-}
-
-bool buildCallOfBuiltinForTexts(Walker& walker, const BodyValue& call, BuiltinID called)
-{
-    if (writeJSONTextOfCall(walker, call)) {
-        walker.count(StatisticID::OwnKeyWalksExpanded);
-        return true;
-    }
-    return joinOfWhatIsInSight(walker, call, called);
 }
 
 } } } // namespace JSC::AOT::Typed

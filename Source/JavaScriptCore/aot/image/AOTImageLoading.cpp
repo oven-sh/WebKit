@@ -17,6 +17,7 @@
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/threads/Signals.h>
 
@@ -32,6 +33,7 @@
 #endif
 #if OS(LINUX) || OS(FREEBSD)
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #if OS(LINUX)
 #include <sys/auxv.h>
@@ -150,6 +152,31 @@ static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_
 #ifndef MREMAP_DONTUNMAP
 #define MREMAP_DONTUNMAP 4
 #endif
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+
+static void layMemoryWhereCallLeftNone(void* target, size_t size)
+{
+    void* laid = mmap(target, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    if (laid == target)
+        return;
+    RELEASE_ASSERT(laid != MAP_FAILED || errno == EEXIST);
+    if (laid != MAP_FAILED)
+        munmap(laid, size);
+}
+
+static bool tryMoveLoadedPages(std::span<const uint8_t> pages, void* target)
+{
+    void* clone = mremap(const_cast<uint8_t*>(pages.data()), pages.size(), pages.size(), MREMAP_MAYMOVE | MREMAP_DONTUNMAP, nullptr);
+    if (clone == MAP_FAILED)
+        return false;
+    if (mremap(clone, pages.size(), pages.size(), MREMAP_MAYMOVE | MREMAP_FIXED, target) == target)
+        return true;
+    munmap(clone, pages.size());
+    layMemoryWhereCallLeftNone(target, pages.size());
+    return false;
+}
 
 static void* moveLoadedCode(std::span<const uint8_t> code, size_t executableSize)
 {
@@ -157,7 +184,7 @@ static void* moveLoadedCode(std::span<const uint8_t> code, size_t executableSize
     if (target == MAP_FAILED)
         return nullptr;
     auto move = [&](size_t offset, size_t size) {
-        return !size || mremap(const_cast<uint8_t*>(code.data()) + offset, size, size, MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP, static_cast<uint8_t*>(target) + offset) != MAP_FAILED;
+        return !size || tryMoveLoadedPages(code.subspan(offset, size), static_cast<uint8_t*>(target) + offset);
     };
     if (!move(0, executableSize) || !move(executableSize, code.size() - executableSize)) {
         munmap(target, code.size());
@@ -339,40 +366,46 @@ static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t*
 #endif
 
 #if OS(LINUX) || OS(FREEBSD)
-static std::optional<Image::PositionInFile> findPositionOfImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file)
+// The number of a descriptor that is kept may come to name another file: a program may close every descriptor it finds. So none is kept: whoever maps out of the executable opens it, maps and closes it.
+static int openExecutable(const Invocable<bool(int)> auto& isWanted)
 {
-    using PositionInFile = Image::PositionInFile;
-    if (file)
-        return std::nullopt;
-    std::optional<SegmentOfExecutable> segment = findSegmentOfExecutable(bytes.data());
-    if (!segment)
-        return std::nullopt;
-    auto isImageInFile = [&](int descriptor) {
-        std::array<uint8_t, offsetof(ImageHeader, codeSize) + sizeof(ImageHeader::codeSize)> header;
-        return pread(descriptor, header.data(), header.size(), segment->offsetInFile) == static_cast<ssize_t>(header.size()) && !memcmp(header.data(), bytes.data(), header.size());
-    };
-    static int descriptorOfExecutable = -1;
-    if (descriptorOfExecutable >= 0)
-        return isImageInFile(descriptorOfExecutable) ? std::optional(PositionInFile { descriptorOfExecutable, segment->offsetInFile }) : std::nullopt;
-    auto closeUnlessImageIsInFile = [&](int& descriptor) {
-        if (descriptor >= 0 && !isImageInFile(descriptor)) {
+    auto closeUnlessWanted = [&](int& descriptor) {
+        if (descriptor >= 0 && !isWanted(descriptor)) {
             close(descriptor);
             descriptor = -1;
         }
     };
     int descriptor = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
-    closeUnlessImageIsInFile(descriptor);
+    closeUnlessWanted(descriptor);
 #if OS(LINUX)
     if (descriptor < 0) {
         if (auto* path = std::bit_cast<const char*>(getauxval(AT_EXECFN)))
             descriptor = open(path, O_RDONLY | O_CLOEXEC);
-        closeUnlessImageIsInFile(descriptor);
+        closeUnlessWanted(descriptor);
     }
 #endif
-    if (descriptor < 0)
-        return std::nullopt;
-    descriptorOfExecutable = descriptor;
-    return PositionInFile { descriptor, segment->offsetInFile };
+    return descriptor;
+}
+
+// At the start, while the name is fresh. These bytes are the same in every program that one Bun builds.
+static int openExecutableAt(std::span<const uint8_t> bytes, int64_t offsetInFile)
+{
+    return openExecutable([&](int descriptor) {
+        std::array<uint8_t, offsetof(ImageHeader, codeSize) + sizeof(ImageHeader::codeSize)> header;
+        return pread(descriptor, header.data(), header.size(), offsetInFile) == static_cast<ssize_t>(header.size()) && !memcmp(header.data(), bytes.data(), header.size());
+    });
+}
+
+// Behind the start a name may have gone to another build. The file that was loaded stays what it is while its mappings live.
+int openExecutableThatHolds(const Image& image)
+{
+    const std::optional<Image::PlaceInExecutable>& place = image.placeInExecutable();
+    if (!place)
+        return -1;
+    return openExecutable([&](int descriptor) {
+        struct stat status;
+        return !fstat(descriptor, &status) && static_cast<uint64_t>(status.st_dev) == place->device && static_cast<uint64_t>(status.st_ino) == place->inode;
+    });
 }
 #endif
 
@@ -480,12 +513,6 @@ bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pa
     RELEASE_ASSERT(mach_vm_protect(mach_task_self(), address, pages.size(), true, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS);
     RELEASE_ASSERT(mach_vm_protect(mach_task_self(), address, pages.size(), false, VM_PROT_READ) == KERN_SUCCESS);
     return true;
-#elif OS(LINUX) || OS(FREEBSD)
-    const std::optional<Image::PositionInFile>& position = image.positionInFile();
-    if (!position)
-        return false;
-    int64_t offset = position->offset + (pages.data() - image.bytes().data());
-    return mmap(target, pages.size(), PROT_READ, MAP_PRIVATE | MAP_FIXED, position->descriptor, offset) != MAP_FAILED;
 #else
     UNUSED_PARAM(target);
     return false;
@@ -570,7 +597,14 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
         return ImageVerdict::CannotMapCode;
     std::optional<Image::PositionInFile> positionInFile;
 #if OS(LINUX) || OS(FREEBSD)
-    positionInFile = findPositionOfImage(bytes, file);
+    if (std::optional<SegmentOfExecutable> segment = file ? std::nullopt : findSegmentOfExecutable(bytes.data())) {
+        if (int descriptor = openExecutableAt(bytes, segment->offsetInFile); descriptor >= 0)
+            positionInFile = Image::PositionInFile { descriptor, segment->offsetInFile };
+    }
+    auto closeExecutable = makeScopeExit([&] {
+        if (positionInFile)
+            close(positionInFile->descriptor);
+    });
 #endif
 #if OS(LINUX) && defined(BUN_REFUSES_EXECUTE_ONLY_START)
     if (!file && !positionInFile)
@@ -581,12 +615,11 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
     if (!code)
         return refusal;
     std::unique_ptr<Image> image = Image::create(bytes, static_cast<const uint8_t*>(code));
-    image->setPositionInFile(positionInFile);
 #if OS(LINUX) || OS(FREEBSD)
     if (file)
         image->setPositionOfCodeInFile(Image::PositionInFile { static_cast<int>(file->descriptor), file->offset + static_cast<int64_t>(header.codeOffset) });
-    else if (positionInFile)
-        image->setPositionOfCodeInFile(Image::PositionInFile { positionInFile->descriptor, positionInFile->offset + static_cast<int64_t>(header.codeOffset) });
+    else if (struct stat status; positionInFile && !fstat(positionInFile->descriptor, &status))
+        image->setPlaceInExecutable({ positionInFile->offset, static_cast<uint64_t>(status.st_dev), static_cast<uint64_t>(status.st_ino) });
 #endif
     Image::publish(WTF::move(image));
     didPublishImage(*Image::current());

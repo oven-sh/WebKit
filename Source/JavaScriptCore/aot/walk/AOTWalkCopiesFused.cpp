@@ -88,7 +88,7 @@ bool buildCopyWithWhatFollowsOfItsOpcodes(Walker& walker, const BodyValue& copy)
     if (operation.assigns() || !operation.excludedKeys().isEmpty() || !operation.excludedOperands().empty())
         return false;
     FunctionID function = walker.unit().function;
-    if (!walker.isInLoop() && (walker.facts().runsAtMostOnce(function) || walker.program().at(function).isModuleBody()))
+    if (!walker.isInLoop() && walker.program().at(function).isModuleBody())
         return false;
     Reference source = walker.referenceOf(operation.sourceOperand());
     if (!isValueOfProgramInCopiesFused(walker, source) || walker.types().at(walker.typeOf(source)).hasOnlyLayouts())

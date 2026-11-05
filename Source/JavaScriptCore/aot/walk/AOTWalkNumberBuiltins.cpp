@@ -361,7 +361,7 @@ static Reference buildConversionByCallInNumberBuiltins(Walker& walker, const Cal
         if (isNumber)
             return integerInNumberForms(walker, 0);
         if (isString)
-            return constantInNumberForms(walker, PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
+            return walker.constant(PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
         return isBoolean ? booleanInNumberForms(walker, false) : Reference();
     }
     if (call.arguments.empty())
@@ -400,7 +400,7 @@ Reference buildCallOnNumbers(Walker& walker, const CallByOneRow& call)
 
     if (walker.has(Mechanism::Folding)) {
         if (std::optional<PrimitiveKnownToFolding> folded = foldExactly(walker, call)) {
-            Reference constant = constantInNumberForms(walker, *folded);
+            Reference constant = walker.constant(*folded);
             TypeID byRow = walker.resultTypeOf(draftOfCodeInLineInNumberBuiltins(walker, call, call.arguments));
             if (constant && byRow && walker.types().isSubset(walker.typeOf(constant), byRow))
                 return constant;

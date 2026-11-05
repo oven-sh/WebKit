@@ -5,7 +5,7 @@ enum BuiltinLocationState { | engine Unknown Constant }
 
 flags ObjectMutation {
     | engine DeleteField RedefineProperty AddProperty ChangeIntegrity ChangePrototype BecomePrototype
-    StoreAfterCreation StoreOfOtherType
+    StoreOfOtherType
 }
 flags FieldStability { | engine IsNeverDeleted IsNeverRedefined }
 

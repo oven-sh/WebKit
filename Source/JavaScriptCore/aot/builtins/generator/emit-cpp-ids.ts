@@ -197,6 +197,11 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
     ]),
     ["BuiltinFeatureUse", "builtinTableFeatureUses", countAttached(attachments => attachments.featureUses)],
     ["BuiltinUnseenCode", "builtinTableUnseenCode", countBuiltins(hasUnseenCodeCondition)],
+    [
+      "BuiltinUnseenCode",
+      "builtinTableInstancesThatAnswerEveryName",
+      countBuiltins(({ attachments }) => attachments.conditionOnInstancesThatAnswerEveryName !== null),
+    ],
     ["BuiltinModuleLoad", "builtinTableModuleLoads", countAttached(attachments => attachments.moduleLoads)],
     ["BuiltinModuleLoad", "builtinTableStartupLoads", startup.loads.length],
     ["BuiltinCalledFunction", "builtinTableCalledFunctions", countAttached(attachments => attachments.calledFunctions)],

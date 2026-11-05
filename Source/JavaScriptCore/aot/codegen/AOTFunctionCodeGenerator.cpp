@@ -256,6 +256,37 @@ std::optional<CompiledCode> FunctionCodeGenerator::runStraight(const BodyIndex& 
     return code;
 }
 
+CompiledCode FunctionCodeGenerator::runEntryWrittenByHand(std::span<const QuestionOfEntry> questions)
+{
+    CodeUnit unit = m_code.unit();
+    setStackCheckGenerator(m_procedure, StackCheck::CoveredByCallers, m_records.frame, m_stackChecks);
+    m_records.sites.inlineCallSites.append(0);
+
+    Machine::Builder builder(m_procedure);
+    builder.appendTo(m_procedure.addEntrypoint(primaryEntry));
+    ArgumentLocations locations = m_inputs.plan.conventions().locationsOf(m_inputs.program, unit);
+    Vector<Machine::ConstrainedValue, 8> passed;
+    for (const ArgumentLocation& location : locations.parameters) {
+        if (location.kind == ArgumentLocation::Kind::GPR || location.kind == ArgumentLocation::Kind::FPR)
+            passed.append(Machine::ConstrainedValue(builder.argumentRegister(location.reg), Machine::ValueRep::reg(location.reg)));
+    }
+    if (AOT::hasFlag(m_worker.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime)) [[unlikely]]
+        countEntryIntoCode(builder.patch(Machine::Void));
+    Machine::PatchOperation* patch = builder.patch(Machine::Void);
+    for (const Machine::ConstrainedValue& value : passed)
+        patch->append(value);
+    patch->effects.terminal = true;
+    patch->setRunsWithoutFrame(true);
+    RegisterSet clobbered = registersClobberedByCompiledCalls();
+    clobbered.merge(RegisterSet::macroClobberedGPRs());
+    patch->clobberLate(clobbered);
+    patch->setGenerator([this, unit, questions](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        emitEntryWrittenByHand(jit, m_inputs, m_records, unit, questions, params.frameIsSetUp());
+    });
+    RELEASE_ASSERT(!m_procedure.failure());
+    return emitCode();
+}
+
 CompiledCode FunctionCodeGenerator::emitCode()
 {
     BuildContext& build = m_worker.build;
@@ -355,6 +386,17 @@ CompiledCode generateCode(const CodeGenerationWorker& worker, const CodeGenerati
     CurrentWorkScope work(inputs.program, code.function(), "emit"_s);
     FunctionCodeGenerator generator(worker, inputs, code, totals);
     return generator.run();
+}
+
+std::optional<CompiledCode> generateEntryWrittenByHand(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, const Code& code, NOESCAPE const ScopedLambda<TypeID(unsigned)>& typeAskedOfEntryParameter, CodeGenerationTotals& totals)
+{
+    std::optional<Vector<QuestionOfEntry, 4>> questions = findQuestionsOfEntryWrittenByHand(inputs, worker.types, code.unit(), typeAskedOfEntryParameter);
+    if (!questions)
+        return std::nullopt;
+    worker.arena.reset();
+    CurrentWorkScope work(inputs.program, code.function(), "emit"_s);
+    FunctionCodeGenerator generator(worker, inputs, code, totals);
+    return generator.runEntryWrittenByHand(questions->span());
 }
 
 bool hasStraightForm(const CodeGenerationInputs& inputs, CodeUnit unit, const BodyIndex& index)

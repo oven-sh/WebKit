@@ -17,7 +17,6 @@ class JSGlobalObject;
 extern "C" {
 
 JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__ownEntriesFlat(JSC::JSGlobalObject*, JSC::EncodedJSValue object);
-JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__pairsOfFlatEntries(JSC::JSGlobalObject*, JSC::EncodedJSValue flatEntries);
 JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__describeUnlessOrdinary(JSC::JSGlobalObject*, JSC::EncodedJSValue source);
 JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__definePropertiesFrom(JSC::JSGlobalObject*, JSC::EncodedJSValue target, JSC::EncodedJSValue described, JSC::EncodedJSValue source);
 

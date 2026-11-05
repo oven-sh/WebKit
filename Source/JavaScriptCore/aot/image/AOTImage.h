@@ -112,8 +112,13 @@ public:
         int descriptor { -1 };
         int64_t offset { 0 };
     };
-    const std::optional<PositionInFile>& positionInFile() const { return m_positionInFile; }
-    void setPositionInFile(const std::optional<PositionInFile>& position) { m_positionInFile = position; }
+    struct PlaceInExecutable {
+        int64_t offset { 0 };
+        uint64_t device { 0 };
+        uint64_t inode { 0 };
+    };
+    const std::optional<PlaceInExecutable>& placeInExecutable() const { return m_placeInExecutable; }
+    void setPlaceInExecutable(const PlaceInExecutable& place) { m_placeInExecutable = place; }
     const std::optional<PositionInFile>& positionOfCodeInFile() const { return m_positionOfCodeInFile; }
     void setPositionOfCodeInFile(const std::optional<PositionInFile>& position) { m_positionOfCodeInFile = position; }
     unsigned number() const { return m_number; }
@@ -133,6 +138,7 @@ public:
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
     bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
+    bool isBuiltWithLibrary() const { return header().has(ImageFlag::IsBuiltWithLibrary); }
     bool refusesOriginalsBesideMocks() const { return header().has(ImageFlag::RefusesOriginalsBesideMocks); }
     bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
@@ -195,7 +201,7 @@ private:
     mutable std::array<std::atomic<void*>, 8> m_frequentStubs { };
     unsigned m_number { 0 };
     const Image* m_publishedBefore { nullptr };
-    std::optional<PositionInFile> m_positionInFile;
+    std::optional<PlaceInExecutable> m_placeInExecutable;
     std::optional<PositionInFile> m_positionOfCodeInFile;
     std::span<const uint8_t> m_bytes;
     const uint8_t* m_code;

@@ -63,7 +63,6 @@ void branchOnOrderOfFlatStrings(StubAssembler&, const OrderedFlatStrings&, Macro
 PreludeExit emitToLowerCasePrelude(StubAssembler&);
 PreludeExit emitToUpperCasePrelude(StubAssembler&);
 PreludeExit emitStringLocaleComparePrelude(StubAssembler&);
-PreludeExit emitJSONAppendValuePrelude(StubAssembler&);
 
 void loadSubstringBaseAndOffset(StubAssembler&, GPRReg string, GPRReg base, GPRReg offset);
 void packSubstringFibers(StubAssembler&, GPRReg base, GPRReg offset, GPRReg length, GPRReg lengthWord);

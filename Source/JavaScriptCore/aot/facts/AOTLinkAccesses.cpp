@@ -301,7 +301,7 @@ AccessInLinkAccesses::AccessInLinkAccesses(LinkFlow& flow, const PrivatePartsInL
         m_before = parts.typeObservedBefore;
     if (m_access.value != noSummaryNode) {
         m_value = flow.nodeOf(observer.function, m_access.value);
-        __builtin_prefetch(&flow.typeAt(m_value));
+        flow.prefetchTypeAt(m_value);
     }
     if (m_access.key)
         m_nameClass = flow.nameClassOf(m_access.key);
@@ -1357,6 +1357,7 @@ void AccessInLinkAccesses::enterAccessorAt(FlowNodeID member)
     case LinkType::Functions::Set:
     case LinkType::Functions::Lost:
         mayThrow();
+        m_flow.noteCallOfLostFunctions(held);
         m_flow.addEdge(m_receiver, m_flow.receiverOfLostFunctions());
         giveFrom(m_flow.resultOfLostFunctions());
         storeInto(m_flow.parameterOfLostFunctions(0));
@@ -1917,7 +1918,18 @@ bool AccessInLinkAccesses::nativeSetterFoundFromKeepsReceiver(BuiltinID start)
     for (const BuiltinOverload& overload : m_table.overloadsOf(member)) {
         if (overload.mode != BuiltinCallMode::Set)
             continue;
-        if (overload.isUndeclared())
+        static constexpr OperandUses usesThatLeaveReceiverOtherThanMade {
+            OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor,
+            OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype,
+        };
+        static constexpr OperandUses usesThatLeaveReceiverAsMade {
+            OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly,
+            OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents, OperandUse::MovesElements, OperandUse::PassesToUserCode,
+            OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+        };
+        static_assert(everyOperandUseIsInExactlyOneOf({ usesThatLeaveReceiverOtherThanMade, usesThatLeaveReceiverAsMade }));
+        const BuiltinParameter* receiver = m_table.parameterFor(overload, BuiltinOperand::receiver());
+        if (overload.isUndeclared() || (receiver && receiver->uses.containsAny(usesThatLeaveReceiverOtherThanMade)))
             return false;
         hasSetter = true;
     }
@@ -2068,7 +2080,7 @@ PropertyKeyID LinkFlow::keyOf(FunctionID function, const SummaryAccess& access) 
     PropertyKeyID symbol = symbolAt(node);
     if (!symbol || !isNameInTextOf(program, symbol, function))
         return { };
-    if (s_viewAtWork) {
+    if (ViewAtWork::current()) {
         if (!m_symbolsInSight.areNames && isSymbolOfLibrary(program, symbol) && m_symbolsInSight.hasPreparation(symbol))
             return { };
         return symbol;

@@ -1,0 +1,10 @@
+# An image that was built without the library (the engine's default: these tests, the fuzzers, --no-builtin-modules) runs the engine's own functions from their text
+# LIBRARY: own
+# RUN: run-in-shell globalThis.report = message => print(message);
+# CHECK: 2,4
+# CHECK-NEXT: 2
+# CHECK-NEXT: tea2
+# CHECK-NEXT: exited with 0
+# RUN(IMAGE): image
+# IMAGE-NOT: IsBuiltWithLibrary
+# PROGRAM-OF: text-of-an-engine-built-in-that-the-image-lacks-is-refused-where-the-build-held-the-library.ir

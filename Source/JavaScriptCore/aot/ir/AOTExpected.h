@@ -7,44 +7,16 @@
 
 #if ENABLE(AOT)
 
-#include <concepts>
-#include <ranges>
-#include <type_traits>
 #include <utility>
 #include <wtf/Compiler.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-struct Proven;
-
-template<typename T>
-class ProvenValue {
-public:
-    constexpr operator const T&() const LIFETIME_BOUND { return m_value; }
-    constexpr const T& value() const LIFETIME_BOUND { return m_value; }
-    constexpr auto begin() const LIFETIME_BOUND requires std::ranges::range<const T> { return std::ranges::begin(m_value); }
-    constexpr auto end() const LIFETIME_BOUND requires std::ranges::range<const T> { return std::ranges::end(m_value); }
-
-private:
-    friend struct Proven;
-    constexpr explicit ProvenValue(T value)
-        : m_value(std::move(value))
-    {
-    }
-
-    T m_value;
-};
-
 template<typename T>
 class Expected {
 public:
-    constexpr Expected() = default;
     constexpr Expected(T value)
         : m_value(std::move(value))
-    {
-    }
-    constexpr Expected(const ProvenValue<T>& fact)
-        : m_value(fact.value())
     {
     }
 
@@ -54,48 +26,6 @@ public:
 private:
     T m_value { };
 };
-
-template<typename T>
-class Expected<const T&> {
-public:
-    constexpr Expected(const T& value LIFETIME_BOUND)
-        : m_value(&value)
-    {
-    }
-
-    constexpr const T& predicted() const { return *m_value; }
-
-private:
-    const T* m_value;
-};
-
-template<typename T> inline constexpr bool isExpectedKind = false;
-template<typename T> inline constexpr bool isExpectedKind<Expected<T>> = true;
-
-template<typename T> constexpr const T& valueUnderPrediction(const T& value LIFETIME_BOUND) { return value; }
-template<typename T> constexpr const T& valueUnderPrediction(const Expected<T>& value LIFETIME_BOUND) { return value.predicted(); }
-
-template<typename A, typename B> concept EitherIsExpected = isExpectedKind<A> || isExpectedKind<B>;
-
-#define AOT_OPERATOR_ON_EXPECTED(op) \
-    template<typename A, typename B> requires EitherIsExpected<A, B> \
-    constexpr auto operator op(const A& a, const B& b) { return Expected<std::remove_cvref_t<decltype(valueUnderPrediction(a) op valueUnderPrediction(b))>>(valueUnderPrediction(a) op valueUnderPrediction(b)); }
-
-AOT_OPERATOR_ON_EXPECTED(==)
-AOT_OPERATOR_ON_EXPECTED(!=)
-AOT_OPERATOR_ON_EXPECTED(<)
-AOT_OPERATOR_ON_EXPECTED(<=)
-AOT_OPERATOR_ON_EXPECTED(>)
-AOT_OPERATOR_ON_EXPECTED(>=)
-AOT_OPERATOR_ON_EXPECTED(+)
-AOT_OPERATOR_ON_EXPECTED(-)
-AOT_OPERATOR_ON_EXPECTED(*)
-AOT_OPERATOR_ON_EXPECTED(/)
-
-#undef AOT_OPERATOR_ON_EXPECTED
-
-template<typename T>
-constexpr Expected<bool> operator!(const Expected<T>& value) { return !value.predicted(); }
 
 } } } // namespace JSC::AOT::Typed
 

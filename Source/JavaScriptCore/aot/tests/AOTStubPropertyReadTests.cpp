@@ -1844,6 +1844,128 @@ static void testFieldsReadOutOfExtension()
     }
 }
 
+static void testInstanceOfRemembersOrdinaryConstructors()
+{
+    constexpr uint32_t structureIDOfValues = 0x2000;
+    PropertyReads reads;
+    StubRunner& runner = reads.runner;
+    Instance& instance = runner.instance();
+    PropertyCacheWords& words = instance.propertyCaches;
+    const StructureID id = std::bit_cast<StructureID>(PropertyReads::structureID);
+    auto cellAt = [](uint64_t address) { return std::bit_cast<JSCell*>(address); };
+
+    FakeObject<16> nameOfHasInstance;
+    FakeObject<16> nameOfPrototype;
+    words.hasInstanceUID = std::bit_cast<UniquedStringImpl*>(nameOfHasInstance.address());
+    words.prototypeUID = std::bit_cast<UniquedStringImpl*>(nameOfPrototype.address());
+
+    FakeObject<16> ordinaryMethod;
+    ordinaryMethod.setHeader(0, JSFunctionType);
+    FakeHolder functionPrototype;
+    FakeHolder otherHolder;
+    functionPrototype.property(FakeHolder::inlineOffset) = ordinaryMethod.address();
+    otherHolder.property(FakeHolder::inlineOffset) = ordinaryMethod.address();
+    words.defaultHasInstanceFunction = cellAt(ordinaryMethod.address());
+    words.holderOfDefaultHasInstanceFunction = cellAt(functionPrototype.address());
+
+    FakeObject<16> prototypeObject;
+    FakeObject<16> otherPrototypeObject;
+    FakeObject<16> objectPrototype;
+    for (auto* object : { &prototypeObject, &otherPrototypeObject, &objectPrototype })
+        object->setHeader(0, FinalObjectType);
+    instance.realm.objectPrototype = std::bit_cast<JSObject*>(objectPrototype.address());
+
+    FakeObject<sizeof(Structure)> structureOfValues;
+    instance.prefix().structureIDBase = structureOfValues.address() - structureIDOfValues;
+    structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = prototypeObject.address();
+    FakeObject<16> value;
+    value.setHeader(structureIDOfValues, FinalObjectType);
+
+    FakeHolder constructor;
+    constructor.setHeader(PropertyReads::structureID, JSFunctionType);
+    constructor.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = ImplementsDefaultHasInstance;
+
+    auto forgetPlaces = [&] { zeroSpan(std::span { words.headersOfPrototypeSlotsOfOrdinaryConstructors }); };
+    auto fileMethodIn = [&](FakeHolder& holder) {
+        reads.fileBesideOthers(Slot::createInStorage(id, Slot::Kind::Value, Slot::dependsOnChain, cellAt(holder.address()), FakeHolder::inlineOffset), words.hasInstanceUID);
+    };
+    auto ask = [&](uint64_t asked) { return runner.run(instanceOf(InstanceOfOperand::Constructor), { asked, constructor.address() }); };
+    auto answersWithoutTables = [&](bool expected) {
+        reads.clear();
+        StubRun run = ask(value.address());
+        return !run.calledOperation && run.result == expected;
+    };
+
+    for (PropertyOffset offset : { FakeHolder::inlineOffset, FakeHolder::outOfLineOffset }) {
+        forgetPlaces();
+        reads.clear();
+        fileMethodIn(functionPrototype);
+        reads.fileBesideOthers(Slot::createInStorage(id, Slot::Kind::Value, Slot::isOwn, nullptr, offset), words.prototypeUID);
+        constructor.property(offset) = prototypeObject.address();
+        StubRun first = ask(value.address());
+        AOT_TEST_CHECK(!first.calledOperation && first.result == 1);
+        AOT_TEST_CHECK(answersWithoutTables(true));
+
+        constructor.property(offset) = otherPrototypeObject.address();
+        structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = objectPrototype.address();
+        AOT_TEST_CHECK(answersWithoutTables(false));
+        structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = otherPrototypeObject.address();
+        AOT_TEST_CHECK(answersWithoutTables(true));
+        for (uint64_t primitive : { bitsOf(jsNumber(7)), bitsOf(jsNull()), bitsOf(jsUndefined()) }) {
+            StubRun run = ask(primitive);
+            AOT_TEST_CHECK(!run.calledOperation && !run.result);
+        }
+
+        constructor.property(offset) = bitsOf(jsNumber(3));
+        runner.recordCallsOf(Entry::operationAOTDefaultHasInstance);
+        StubRun withoutPrototypeObject = ask(value.address());
+        runner.countCallsOf(Entry::operationAOTDefaultHasInstance);
+        AOT_TEST_CHECK(withoutPrototypeObject.numberOfRecordedCalls == 1 && withoutPrototypeObject.recordedArguments[0] == value.address() && withoutPrototypeObject.recordedArguments[1] == bitsOf(jsNumber(3)));
+
+        constructor.property(offset) = prototypeObject.address();
+        structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = prototypeObject.address();
+        constructor.setHeader(PropertyReads::structureIDOfHolder, JSFunctionType);
+        AOT_TEST_CHECK(ask(value.address()).calledOperation);
+        constructor.setHeader(PropertyReads::structureID, JSFunctionType);
+        AOT_TEST_CHECK(answersWithoutTables(true));
+        forgetPlaces();
+        AOT_TEST_CHECK(ask(value.address()).calledOperation);
+    }
+
+    forgetPlaces();
+    reads.clear();
+    fileMethodIn(otherHolder);
+    reads.fileBesideOthers(Slot::createInStorage(id, Slot::Kind::Value, Slot::isOwn, nullptr, FakeHolder::inlineOffset), words.prototypeUID);
+    StubRun methodLiesElsewhere = ask(value.address());
+    AOT_TEST_CHECK(!methodLiesElsewhere.calledOperation && methodLiesElsewhere.result == 1);
+    reads.clear();
+    AOT_TEST_CHECK(ask(value.address()).calledOperation);
+
+    forgetPlaces();
+    reads.clear();
+    fileMethodIn(functionPrototype);
+    otherHolder.property(FakeHolder::outOfLineOffset) = prototypeObject.address();
+    constructor.property(FakeHolder::outOfLineOffset) = otherPrototypeObject.address();
+    reads.fileBesideOthers(Slot::createInStorage(id, Slot::Kind::Value, Slot::dependsOnChain, cellAt(otherHolder.address()), FakeHolder::outOfLineOffset), words.prototypeUID);
+    StubRun prototypeIsInherited = ask(value.address());
+    AOT_TEST_CHECK(!prototypeIsInherited.calledOperation && prototypeIsInherited.result == 1);
+    reads.clear();
+    AOT_TEST_CHECK(ask(value.address()).calledOperation);
+
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    forgetPlaces();
+    reads.clear();
+    fileMethodIn(functionPrototype);
+    reads.fileBesideOthers(Slot::createInStorage(id, Slot::Kind::Value, Slot::isOwn, nullptr, FakeHolder::outOfLineOffset), words.prototypeUID);
+    constructor.property(FakeHolder::outOfLineOffset) = prototypeObject.address();
+    ask(value.address());
+    runner.setCountsInstructions(true);
+    AOT_TEST_CHECK(isWithinBudgetOfRead(ask(value.address()), 32, "instanceof of a remembered constructor, found at the first link"_s));
+    structureOfValues.at<uint64_t>(Structure::prototypeOffset()) = objectPrototype.address();
+    AOT_TEST_CHECK(isWithinBudgetOfRead(ask(value.address()), 34, "instanceof of a remembered constructor, not found below Object.prototype"_s));
+#endif
+}
+
 std::span<const NativeTest> stubPropertyReadTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1878,6 +2000,7 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/closures-not-created"_s, ImageTests::whenExecutable<testReadsOfClosuresNotCreated> },
         { "stubs/in-by-val/presence-from-leaf-lookup"_s, ImageTests::whenExecutable<testPresenceFromLeafLookup> },
         { "stubs/in-by-val/own-presence-of-fields-that-objects-above-answer-for"_s, ImageTests::whenExecutable<testOwnPresenceOfFieldsThatObjectsAboveAnswerFor> },
+        { "stubs/instance-of/ordinary-constructors-are-remembered"_s, ImageTests::whenExecutable<testInstanceOfRemembersOrdinaryConstructors> },
         { "stubs/read-field-in-extension/granules-widths-and-registers"_s, ImageTests::whenExecutable<testFieldsReadOutOfExtension> },
     };
     return tests;

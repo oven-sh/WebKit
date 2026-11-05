@@ -130,9 +130,13 @@ static KnowledgeLevel levelOfArrayAccessOfTypedElements(const AccessOfTypedEleme
 
 static KnowledgeLevel levelOfArrayReadOfTypedElements(const AccessOfTypedElements& access)
 {
-    if ((access.base && isFreshListAsMade(access.walker, access.base)) || readsOffListThatStaysAsMadeByLink(access.walker, access.value))
+    if (access.base && isFreshListAsMade(access.walker, access.base))
         return KnowledgeLevel::Proven;
-    return levelOfArrayAccessOfTypedElements(access);
+    if (!readsOffListThatStaysAsMadeByLink(access.walker, access.value))
+        return levelOfArrayAccessOfTypedElements(access);
+    if (!access.isOnlyAskedAbout)
+        holdLinksWordAgainstObjectAsMade(access.walker, access.base, access.walker.originOf(access.value), false);
+    return KnowledgeLevel::Proven;
 }
 
 static ArrayStorage storageDeclaredForTypedElements(const AccessOfTypedElements& access)
@@ -554,11 +558,32 @@ static bool holdPositionBelowLengthOrBeginTurnAgainInTypedElements(const AccessO
     return !walker.isUnreachable();
 }
 
-TypeID typeOfElementInsideViewOfNumbers(Walker& walker, TypeID typeOfView, TypeID typeOfPosition)
+static bool onlyUserTakesNumberInTypedElements(Walker& walker, const BodyValue& read)
+{
+    if (onlyUserTakesUndefinedForNaNInTypedElements(walker, read))
+        return true;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID name = read.id();
+    ValueID user = index.onlyUsingValue(name);
+    while (user && opcodesThatStateTypes.contains(index.opcodeOf(user))) {
+        name = user;
+        user = index.onlyUsingValue(user);
+    }
+    if (!user)
+        return false;
+    BodyValue operation = index.value(user);
+    static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet };
+    if (accessesByKey.contains(operation.opcode()))
+        return operation.propertyOperand() == name && operation.objectOperand() != name;
+    return allBitwiseOperators.contains(operation.opcode());
+}
+
+TypeID typeOfElementInsideViewOfNumbers(Walker& walker, const BodyValue& read, TypeID typeOfView, TypeID typeOfPosition)
 {
     if (!typeOfView || !typeOfPosition)
         return { };
-    if (!walker.types().at(typeOfPosition).isInteger())
+    Type position = walker.types().at(typeOfPosition);
+    if (!position.isInteger() || (position.integers.minimum < 0 && !onlyUserTakesNumberInTypedElements(walker, read)))
         return { };
     BaseOfTypedElements base = classifyBaseOfTypedElements(walker, typeOfView);
     if (base.kind != KindOfBaseOfTypedElements::TypedArray || !hasInlineElementAccess(base.typedArrayType) || isBigInt(base.typedArrayType))
@@ -897,11 +922,14 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
     }
     case KindOfBaseOfTypedElements::TypedArray: {
         const ClassPart* onlyClass = singleBuiltinClassOf(types, types.at(typeOfBase));
-        bool isSeenToFindGetter = onlyClass && ((!isOnlyAskedAbout && findConstantMemberReadOff(walker, base, value.key())) || readsOffEntryParameterThatStaysAsMade(walker, value));
-        if (!isSeenToFindGetter)
+        bool isSeenToFindGetter = onlyClass && !isOnlyAskedAbout && findConstantMemberReadOff(walker, base, value.key());
+        bool isSaidByLinkToFindGetter = onlyClass && !isSeenToFindGetter && readsOffEntryParameterThatStaysAsMade(walker, value);
+        if (!isSeenToFindGetter && !isSaidByLinkToFindGetter)
             return false;
         if (isOnlyAskedAbout)
             return answerAhead(Opcode::GetTypedArrayLength);
+        if (isSaidByLinkToFindGetter)
+            holdLinksWordAgainstObjectAsMade(walker, base, walker.originOf(value), false);
         Draft length = draftOfTypedElements(walker, value, Opcode::GetTypedArrayLength);
         length.setViewOperand(base);
         length.setTypedArrayType(classified.typedArrayType);

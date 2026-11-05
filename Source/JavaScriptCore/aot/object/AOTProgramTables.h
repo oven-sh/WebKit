@@ -90,6 +90,7 @@ constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape)
     v(classAccessors, uint64_t) \
     v(methodTableDependents, MethodTableDependentData) \
     v(classGuardCounts, ClassGuardCountData) \
+    v(namesOfClassGuards, uint32_t) \
     v(parsedRecordFields, ParsedRecordFieldData)
 
 #define FOR_EACH_AOT_PROGRAM_TABLE(v) \
@@ -225,6 +226,11 @@ struct ProgramTables {
         if (!(groups[index / 32 * 2] >> index % 32 & 1))
             return 0;
         return groups[numberOfClassGroupWords() + rankOfClass(index)];
+    }
+    bool someClassGuardNames(uint32_t identifierNumber) const
+    {
+        std::span<const uint32_t> words = namesOfClassGuards();
+        return identifierNumber / 32 < words.size() && (words[identifierNumber / 32] >> identifierNumber % 32 & 1);
     }
     std::span<const uint32_t> propertyRunRow(uint32_t number) const
     {

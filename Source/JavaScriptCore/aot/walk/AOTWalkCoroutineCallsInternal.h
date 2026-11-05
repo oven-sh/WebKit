@@ -52,11 +52,21 @@ bool writtenOperandsMayStartBodyOfCoroutine(Walker&, const Draft& written);
 void leaveAnythingForSwallowedOperation(Walker&, ValueID);
 ValueID followCastsToOnlyTaker(const BodyIndex&, ValueID& name);
 
+struct WaitOfCallInCoroutine {
+    ValueID await;
+    uint32_t placeOfCall { 0 };
+    uint32_t endOfWait { 0 };
+};
+std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker&, const BodyIndex&, BodyBlock, ValueID call);
+bool walkUpToAwaitOfCall(Walker&, const BodyIndex&, BodyBlock, const WaitOfCallInCoroutine&, Vector<Reference, 4>& held);
+void finishWaitOfCall(Walker&, BodyBlock, const WaitOfCallInCoroutine&, Reference given);
+
 bool buildAwaitedCall(Walker&, const BodyValue& call);
 
 bool nameCastInFrontOfAwaitTakenInCopy(Walker&, const BodyValue& cast);
 
 bool buildStepWrittenByHand(Walker&, const BodyValue& call);
+bool buildAwaitedStepWrittenByHand(Walker&, const BodyValue& call);
 bool buildPromiseAllOfElements(Walker&, const BodyValue& call);
 
 } } } // namespace JSC::AOT::Typed

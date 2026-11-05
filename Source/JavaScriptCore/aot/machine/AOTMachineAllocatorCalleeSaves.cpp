@@ -31,6 +31,16 @@ static bool isWorthCalleeSaveNotYetSaved(const Allocator& allocator, const Opera
     return facts.lastUse != noPosition && facts.lastUse > lastRead;
 }
 
+unsigned Allocator::numberOfReadsThatWordWouldReload(const Operation* value) const
+{
+    unsigned number = 0;
+    for (uint32_t use = m_liveness.of(value).firstUse; use; use = m_liveness.use(use).next) {
+        if (m_liveness.use(use).position > m_position && !m_liveness.isUseInRareRegion(use))
+            ++number;
+    }
+    return number;
+}
+
 RegisterMask Allocator::calleeSavesWorthTakingFor(const Operation* value, Bank bank, const Block* block) const
 {
     RegisterMask calleeSaved = m_file.calleeSavedIn(bank);

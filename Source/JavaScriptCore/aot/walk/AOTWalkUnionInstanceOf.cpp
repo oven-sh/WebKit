@@ -121,7 +121,7 @@ static bool mayBuildArmsForInstanceOf(const Walker& walker)
     if (walker.isInLoop())
         return true;
     FunctionID function = walker.currentFunction();
-    return !walker.facts().runsAtMostOnce(function) && !walker.program().at(function).isModuleBody();
+    return !walker.program().at(function).isModuleBody();
 }
 
 static Reference booleanAnswerOfInstanceOf(Walker& walker, bool answer)

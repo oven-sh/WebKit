@@ -18,6 +18,7 @@
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsPropertyKeys.h"
 #include "DeferGCInlines.h"
+#include "FunctionPrototype.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include <algorithm>
@@ -81,7 +82,7 @@ static void testStubsFindTheirWordsBeforeFirstUse(LoadedProgram& program)
 
     AOT_TEST_CHECK(words.hashedSlots && words.front[0].plane && words.front[0].rowsForStructureIDZero);
     AOT_TEST_CHECK(words.hasInstanceUID == vm.propertyNames->hasInstanceSymbol.impl() && words.prototypeUID == vm.propertyNames->prototype.impl());
-    AOT_TEST_CHECK(words.defaultHasInstanceFunction == program.realm()->functionProtoHasInstanceSymbolFunction());
+    AOT_TEST_CHECK(words.defaultHasInstanceFunction == program.realm()->functionProtoHasInstanceSymbolFunction() && words.holderOfDefaultHasInstanceFunction == program.realm()->functionPrototype());
 }
 
 #if defined(BUN_HARDENED) && OS(UNIX)

@@ -12,6 +12,8 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void Walker::noteStateAtThrowForHandler(std::span<const Reference> thrown)
 {
+    if (handlerMadeOverCopiesIsInForce())
+        return;
     size_t frameIndex = numberOfFramesUpToHandlerInForce();
     if (!frameIndex--)
         return;

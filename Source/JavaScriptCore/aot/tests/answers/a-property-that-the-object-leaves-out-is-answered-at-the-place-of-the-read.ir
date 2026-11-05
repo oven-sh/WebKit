@@ -16,6 +16,36 @@
 # NOFIELD-NEXT: above undefined
 # NOFIELD-NEXT: proxy undefined
 # NOFIELD-NEXT: exited with 0
+# `options.other` asked at one place of objects of five kinds that all lack it: the place keeps the Structures of all five, and each way in which the name comes to one of them ends it for that one.
+# RUN(MANY): run-in-shell --aotCountsPath=/dev/null globalThis.register = (signalOf, bare, full, otherOf) => { const root = { above: 1 }; const kinds = [bare, () => ({ a: 1 }), () => ({ b: 1, c: 2 }), () => Object.create(null), () => Object.create(root)]; const all = () => { let text = ""; for (let kind = 0; kind < 5; kind++) text += (kind ? "," : "") + otherOf(kinds[kind]()); return text; }; let missing = 0; for (let turn = 0; turn < 32000; turn++) { if (otherOf(kinds[turn % 5]()) === undefined) missing++; } print(missing, aotOperationCount("operationAOTFillSiteAnswers") < 100 ? "the place holds all five" : "the place holds too few"); gc(); print(all()); const later = kinds[1](); later.other = "later"; print(otherOf(later), all()); root.other = "above"; print(all()); delete root.other; print(all()); for (let turn = 0; turn < 32000; turn++) { if (otherOf(kinds[turn % 5]()) === undefined) missing++; } Object.setPrototypeOf(root, { other: "laid above" }); print(missing, all()); };
+# MANY: 32000 the place holds all five
+# MANY-NEXT: undefined,undefined,undefined,undefined,undefined
+# MANY-NEXT: later undefined,undefined,undefined,undefined,undefined
+# MANY-NEXT: undefined,undefined,undefined,undefined,above
+# MANY-NEXT: undefined,undefined,undefined,undefined,undefined
+# MANY-NEXT: 64000 undefined,undefined,undefined,undefined,laid above
+# MANY-NEXT: exited with 0
+# `options.signal` of objects that leave the property out and stand below another object than Object.prototype: the place keeps what stands above them, in that object's cell, in its storage, or nowhere.
+# RUN(ABOVE): run-in-shell --aotCountsPath=/dev/null globalThis.register = (signalOf, bare, full) => { const many = { }; for (let i = 0; i < 12; i++) many["p" + i] = i; many.signal = "in the storage"; const roots = [{ }, { signal: "in the cell" }, many]; for (let which = 0; which < 3; which++) { const root = roots[which]; const below = () => Object.setPrototypeOf(bare(), root); const before = aotOperationCount("operationAOTFillSiteAnswers"); let seen; for (let turn = 0; turn < 32000; turn++) seen = signalOf(below()); print(seen, aotOperationCount("operationAOTFillSiteAnswers") - before < 100 ? "the place keeps what stands above" : "the place keeps nothing"); gc(); print(signalOf(below()), signalOf(Object.setPrototypeOf(full(), root)), signalOf(bare())); root.signal = "stored above"; print(signalOf(below())); for (let i = 0; i < 40; i++) root["q" + i] = i; print(signalOf(below())); delete root.signal; print(signalOf(below())); Object.defineProperty(root, "signal", { get() { return "got above"; } }); print(signalOf(below())); } };
+# ABOVE: undefined the place keeps what stands above
+# ABOVE-NEXT: undefined signal undefined
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: undefined
+# ABOVE-NEXT: got above
+# ABOVE-NEXT: in the cell the place keeps what stands above
+# ABOVE-NEXT: in the cell signal undefined
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: undefined
+# ABOVE-NEXT: got above
+# ABOVE-NEXT: in the storage the place keeps what stands above
+# ABOVE-NEXT: in the storage signal undefined
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: stored above
+# ABOVE-NEXT: undefined
+# ABOVE-NEXT: got above
+# ABOVE-NEXT: exited with 0
 
 module m0 path="absent-place.ts" displayPath="absent-place.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

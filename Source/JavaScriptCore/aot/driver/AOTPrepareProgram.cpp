@@ -106,7 +106,7 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
             return false;
     }
 
-    prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime)));
+    prepared.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), facts.mayReadLegacyRegExpStatics(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime)));
     times.didFinish("make the stub catalog"_s);
     return true;
 }

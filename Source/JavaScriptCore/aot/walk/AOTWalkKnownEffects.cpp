@@ -50,7 +50,7 @@ void addEffectsOfEnteringByValue(Effects& effects)
 
 bool unitDoesMoreThanBodyForKnownEffects(const Plan& plan, FunctionID function)
 {
-    return !!plan.moduleEvaluation().moduleThatBeginsIn(function) || plan.promotedEnvironments().leadsToMaker(function);
+    return !!plan.moduleEvaluation().moduleThatBeginsIn(function);
 }
 
 static Effects effectsOfCallByValueOfFunctionForKnownEffects(const LinkTables& linked, FunctionID function)

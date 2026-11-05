@@ -778,6 +778,8 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
         walker.bind(call.id(), object);
         return true;
     }
+    if (ofWhatCameBack && types.isSubset(ofWhatCameBack, TypeTable::object))
+        return true;
 
     Draft test(Opcode::TypeTest, origin);
     test.setValueOperand(returned);

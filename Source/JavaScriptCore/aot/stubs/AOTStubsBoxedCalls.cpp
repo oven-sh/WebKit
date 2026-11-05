@@ -741,7 +741,7 @@ static constexpr CallWithoutHostFunction regExpExecCalls[] = { { { aText, anythi
 static constexpr CallWithoutHostFunction regExpTestCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::BoxedBoolean) } };
 static constexpr CallWithoutHostFunction stringEndsWithCalls[] = { { { aText, anything }, Entry::operationAOTStringEndsWith } };
 static constexpr CallWithoutHostFunction stringIncludesCalls[] = { { { aText, anything }, Entry::operationAOTStringIncludes } };
-static constexpr CallWithoutHostFunction stringMatchCalls[] = { { { aPattern, anything }, Entry::operationAOTStringMatchRegExp } };
+static constexpr CallWithoutHostFunction stringMatchCalls[] = { { { aPattern, anything }, std::nullopt, regExpMatch(RegExpMatchResult::ArrayForStringMatch) } };
 static constexpr CallWithoutHostFunction stringReplaceCalls[] = {
     { { aPattern, aText }, std::nullopt, stringReplaceRegExpMayNotMatch() },
     { { aPattern, aFunction }, std::nullopt, stringReplaceRegExpMayNotMatch() },

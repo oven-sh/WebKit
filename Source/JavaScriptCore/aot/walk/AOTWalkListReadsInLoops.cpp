@@ -341,7 +341,7 @@ static std::unique_ptr<LoopPreview> lookThatFindsListsLeftAsTheyAreInListReadsIn
     return makeUniqueWithoutFastMallocCheck<LoopPreview>(WTF::move(preview));
 }
 
-static Vector<ValueID, 2> namesThatLoopMentionsInListReadsInLoops(const Walker& walker, const BodyIndex& index, LoopID loop, uint32_t firstValueOfLoop, Reference value)
+Vector<ValueID, 2> namesInFrontThatLoopMentions(const Walker& walker, const BodyIndex& index, LoopID loop, uint32_t firstValueOfLoop, Reference value)
 {
     Vector<ValueID, 2> names;
     auto mention = [&](ValueID operand) {
@@ -560,7 +560,7 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
         });
         if (hasGuess || isProvenListInListReadsInLoops(walker, list.name) || classOfProvenViewInListReadsInLoops(walker, list.name))
             continue;
-        guesses.append(GuessInFrontOfLoop { list.name, types.builtinClass(BuiltinClasses::Array), { }, namesThatLoopMentionsInListReadsInLoops(walker, index, loop, firstValueOfLoop, list.name) });
+        guesses.append(GuessInFrontOfLoop { list.name, types.builtinClass(BuiltinClasses::Array), { }, namesInFrontThatLoopMentions(walker, index, loop, firstValueOfLoop, list.name) });
     }
     return found;
 }

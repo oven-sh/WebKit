@@ -934,8 +934,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderReserve, uint8_t*, (Instance* 
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderReserve);
     auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderReserve);
-    if (isReservationOfAtMost(size))
-        OPERATION_RETURN(scope, byteCast<uint8_t>(storage->reserve(globalObject, { .length = 0, .maxLengthOfRest = decodeReservationOfAtMost(size) })));
     OPERATION_RETURN(scope, byteCast<uint8_t>(storage->reserve(globalObject, size)));
 }
 

@@ -646,7 +646,7 @@ static void chooseWhatListTakesFromItsSiteInChoices(Walker& walker, Draft& list)
 {
     bool isEmpty = !list.numberOfVariadicOperands() && list.holes().empty();
     bool kindIsWritten = list.contents() && !walker.types().at(list.contents()).isAnything() && arrayStorageHolding(walker.types(), list.contents()) == ArrayStorage::Contiguous;
-    if (isEmpty && !kindIsWritten && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other && (walker.isInLoop() || !walker.facts().runsAtMostOnce(walker.unit().function)))
+    if (isEmpty && !kindIsWritten && list.storage() == AllocationStorage::Heap && list.arrayStorage() == ArrayStorage::Other && (walker.isInLoop() || !walker.program().at(walker.unit().function).isModuleBody()))
         list.setLiteralStorage(ArrayLiteralStorage::Profiled);
 }
 
@@ -718,7 +718,7 @@ static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array&
     if (isStorageOfArray(array))
         return true;
     FunctionID function = walker.currentFunction();
-    if ((walker.program().at(function).isModuleBody() || walker.facts().runsAtMostOnce(function)) && !walker.isInLoop())
+    if (walker.program().at(function).isModuleBody() && !walker.isInLoop())
         return false;
     return std::ranges::all_of(array.elements, canLieInSharedStorageInChoices);
 }

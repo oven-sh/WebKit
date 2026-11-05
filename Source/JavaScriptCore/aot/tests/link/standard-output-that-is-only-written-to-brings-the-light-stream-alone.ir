@@ -6,6 +6,7 @@
 # RUN: link functions mechanisms=all
 # RUN(LOOKUPS): link lookups mechanisms=all
 # REQUIRES: entries-of-bun
+# REQUIRES(LOOKUPS): entries-of-bun
 # CHECK-NOT: function f1 unreached
 # CHECK: function f2 unreached
 # The light stream answers under the names, so no member of the table is found under them: not the `write` of every sink and socket.

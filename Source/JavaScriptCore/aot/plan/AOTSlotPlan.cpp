@@ -527,7 +527,7 @@ static void findMembersThatAgreeOnSlotsForSlotPlan(const Program& program, const
         members.shrink(0);
 }
 
-static void chooseListedFieldsOutOfLineForSlotPlan(const Program& program, const LinkTables& link, const LinkTables& held, const Families& families, std::span<const StorageOfLayoutInSlotPlan> storage, PlacesOfFieldsInSlotPlan& result)
+static void chooseListedFieldsOutOfLineForSlotPlan(const Program& program, const LinkTables& held, const Families& families, std::span<const StorageOfLayoutInSlotPlan> storage, PlacesOfFieldsInSlotPlan& result)
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
     BitVector keysLeftOut;
@@ -539,7 +539,7 @@ static void chooseListedFieldsOutOfLineForSlotPlan(const Program& program, const
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         if (storage[index].storage != LayoutStorage::CompiledObject || !storage[index].hasCells() || index >= held.layouts.size() || !result.layoutsWithHiddenWords.quickGet(index))
             continue;
-        if (FunctionID maker = held.layouts[index].onlyFunctionThatMakesObjects; maker && (program.at(maker).isModuleBody() || link.function(maker).runsAtMostOnce))
+        if (FunctionID maker = held.layouts[index].onlyFunctionThatMakesObjects; maker && program.at(maker).isModuleBody())
             continue;
         for (uint32_t field = 0; field < program.layouts[index].fields.size(); ++field) {
             if (!mayLieOutOfLineThoughListedInSlotPlan(program, held, layoutsWithLayoutsBelow, { LayoutID(index), field }))
@@ -846,7 +846,7 @@ static void placeFieldsForSlotPlan(const Program& program, const LinkTables& lin
     if (families)
         result.familiesThatMayAgreeOnSlots = findFamiliesThatMayAgreeOnSlotsForSlotPlan(program, *families, storage);
     if (families && hasTypedSlots)
-        chooseListedFieldsOutOfLineForSlotPlan(program, link, held, *families, storage, result);
+        chooseListedFieldsOutOfLineForSlotPlan(program, held, *families, storage, result);
     placeAppendedFieldsForSlotPlan(program, link, families, storage, result);
     if (families) {
         placeFieldsSharedByFamiliesForSlotPlan(program, *families, storage, result);
@@ -1458,6 +1458,9 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
     runLanes(build.parallelLoops(), {
         [&] {
             StepTimes times(build, nameOf(Stage::PlanSlots));
+            environmentsHandedBack.removeAllMatching([&](LayoutID id) {
+                return promotedEnvironments.isPromoted(id);
+            });
             layEnvironmentsHandedBack(build, environmentsHandedBack.span(), parts);
             chooseStorageOfFields(program, facts, build, parts, layoutsBelowTheirBases, WTF::move(groupsForFields), WTF::move(unitsOfFields));
             dropTypesOfNumbersLeftBoxedInSlotPlan(program, build, parts);

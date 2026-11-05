@@ -42,7 +42,6 @@ std::span<const OperationPrelude> operationPreludes()
         { Entry::operationAOTCreatePromise, emitCreatePromisePrelude, writes(PromiseState, AllocatorState) },
         { Entry::operationAOTGetConstructPrototype, emitGetConstructPrototypePrelude, NoEffects },
         { Entry::operationAOTGetSuperBase, emitGetSuperBasePrelude, NoEffects },
-        { Entry::operationAOTJSONAppendValue, emitJSONAppendValuePrelude, writes(StringBuilderContents) },
         { Entry::operationAOTPrivateDefine, emitPrivateDefinePrelude, writes(ObjectFields, NamedProperties, ShapeWords, OrderWords, ArrayStorage, AllocatorState) },
         { Entry::operationAOTPrivateSet, emitPrivateSetPrelude, writes(NamedProperties) },
         { Entry::operationAOTStringLocaleCompare, emitStringLocaleComparePrelude, NoEffects },

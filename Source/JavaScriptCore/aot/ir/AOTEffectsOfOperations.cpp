@@ -196,6 +196,12 @@ static_assert([] {
 } // anonymous namespace
 
 static constexpr OperandUses usesThatCallOperandForEffects { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly };
+static constexpr OperandUses usesThatDeclareNoCodeOfOperandsForEffects {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents,
+    OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor,
+    OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperandForEffects, OperandUse::PassesToUserCode, usesThatDeclareNoCodeOfOperandsForEffects }));
 
 static constexpr OpcodeSet opcodesThatMakeThisForEffects { Opcode::Construct, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList };
 static constexpr Effects effectsOfMakingThisOfConstruction = [] {
@@ -415,6 +421,7 @@ static const OpcodesByWhatOperandsDeclare& opcodesByWhatOperandsDeclare()
 {
     static constexpr OpcodesByWhatOperandsDeclare sorted = [] {
         constexpr OperandUses usesThatCall { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::PassesToUserCode };
+        static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCall, usesThatDeclareNoCodeOfOperandsForEffects }));
         OpcodesByWhatOperandsDeclare result;
         result.haveEffectsOfRow = opcodesWithEffectsOfRowWhateverOperandsAre;
         for (Opcode opcode : allMembersOf<Opcode>) {

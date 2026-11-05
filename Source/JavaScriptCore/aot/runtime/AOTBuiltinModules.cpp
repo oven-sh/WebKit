@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTCompileOptions.h"
 #include "AOTClosure.h"
 #include "AOTClosureTable.h"
 #include "AOTErrorMessages.h"
@@ -27,6 +28,7 @@
 #include "JSCInlines.h"
 #include "LLIntData.h"
 #include "NativeExecutable.h"
+#include "StackVisitor.h"
 #include "TopExceptionScope.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -223,13 +225,13 @@ static std::optional<uint32_t> builtinFunctionHolding(const FunctionExecutable& 
     return executable.source().provider()->builtinFunctionAt(executable.source().startOffset());
 }
 
-static bool isTextOfHostLibrary(ScriptExecutable& executable)
+static bool isTextOfLibrary(ScriptExecutable& executable, bool countsTextOfEngine)
 {
     auto* function = dynamicDowncast<FunctionExecutable>(&executable);
     if (!function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
         return false;
     std::optional<uint32_t> id = builtinFunctionHolding(*function);
-    return !id || *id >= numberOfBuiltinCodes;
+    return countsTextOfEngine || !id || *id >= numberOfBuiltinCodes;
 }
 
 static Lock s_functionsOfTestRunnerLock;
@@ -258,7 +260,7 @@ static bool isOfTestRunner(ScriptExecutable& executable)
 
 bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
 {
-    return refusesLibraryText(realm) && isTextOfHostLibrary(executable) && !isOfTestRunner(executable);
+    return refusesLibraryText(realm) && isTextOfLibrary(executable, Image::current()->isBuiltWithLibrary()) && !isOfTestRunner(executable);
 }
 
 bool refusesToRun(JSFunction* function)
@@ -270,7 +272,7 @@ bool refusesToRun(JSFunction* function)
 bool isNeededByNothingThatRuns(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
-    if (!executable || !Instance::of(function->realm()) || !isTextOfHostLibrary(*executable))
+    if (!executable || !Instance::of(function->realm()) || !isTextOfLibrary(*executable, false))
         return false;
     return !Image::current()->admitsLibraryText();
 }
@@ -297,6 +299,33 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
     return names;
 }
 
+static bool admitsTextOfRunTime(const Image& image)
+{
+    return image.admitsUnknownJavaScript() || image.loadsCodeOutsideImage() || hasFlag(image.header().options.admitted(), AdmittedCode::Inspector);
+}
+
+enum class AskerForFunctionLeftOut : uint8_t { TextOfRunTime, CompiledCode, NativeCodeAlone };
+
+static AskerForFunctionLeftOut findAskerForFunctionLeftOut(VM& vm)
+{
+    AskerForFunctionLeftOut asker = AskerForFunctionLeftOut::NativeCodeAlone;
+    if (!vm.topCallFrame)
+        return asker;
+    StackVisitor::visit(vm.topCallFrame, vm, [&](auto& visitor) {
+        if constexpr (std::remove_cvref_t<decltype(visitor)>::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame()) {
+                asker = AskerForFunctionLeftOut::CompiledCode;
+                return IterationStatus::Continue;
+            }
+        }
+        if (!visitor->codeBlock())
+            return IterationStatus::Continue;
+        asker = AskerForFunctionLeftOut::TextOfRunTime;
+        return IterationStatus::Done;
+    });
+    return asker;
+}
+
 void throwBuiltinNotCompiled(JSGlobalObject* realm, const String& builtin)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
@@ -320,6 +349,20 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
     });
     if (!isGetterOfAccessor)
         noteErrorOfCodeLeftOut(realm, error);
+    VM& vm = realm->vm();
+    if (AskerForFunctionLeftOut asker = findAskerForFunctionLeftOut(vm); asker != AskerForFunctionLeftOut::TextOfRunTime && !admitsTextOfRunTime(*Image::current())) {
+        String sentence = makeString(names.isEmpty() ? makeString("The built-in function '"_s, function.name().string(), '\'') : makeStringByJoining(names.span(), " or "_s), " was left out of the executable, because nothing seemed to use it. This is a bug in Bun."_s);
+        bool isFunctionOfBuiltin = id && (*id < numberOfBuiltinCodes || (table.contains(RuntimeFunctionID(*id)) && !table.at(RuntimeFunctionID(*id)).implements.empty()));
+        if (isFunctionOfBuiltin) {
+            dataLogLn(sentence);
+            CRASH();
+        }
+        if (asker == AskerForFunctionLeftOut::CompiledCode && !vm.traps().isDeferringTermination()) {
+            scope.release();
+            throwMissOfReach(realm, WTF::move(sentence), !isGetterOfAccessor);
+            return;
+        }
+    }
     throwException(realm, scope, error);
 }
 

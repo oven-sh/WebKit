@@ -253,14 +253,13 @@ static std::optional<unsigned> numberOfParametersInPlanText(const CallingConvent
     case CodeRole::CoroutineBody:
         return conventions.of(unit.function).numberOfEntryParameters + 1;
     case CodeRole::Serializer:
-        return numberOfSerializerParameters;
     case CodeRole::GenericCallEntry:
     case CodeRole::GenericConstructEntry:
     case CodeRole::AllocatingConstructEntry:
         return std::nullopt;
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
-        return 1 + conventions.methodSelector(unit.numberOfBoundArguments).numberOfArguments;
+        return 1 + conventions.methodSelector(unit.placeOfSelector()).numberOfArguments;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

@@ -290,6 +290,7 @@ bool buildCoroutineOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
     size_t depthOfCopies = walker.depthOfCopies();
     return (walker.currentBodyIndex().opcodes().contains(Opcode::NewArray) && buildPromiseAllOfElements(walker, value))
         || buildStepWrittenByHand(walker, value)
+        || (!depthOfCopies && walker.unit().role == CodeRole::CoroutineBody && buildAwaitedStepWrittenByHand(walker, value))
         || ((depthOfCopies ? !!walker.coroutineState().keptByCalls : walker.unit().role == CodeRole::CoroutineBody) && buildAwaitedCall(walker, value))
         || (!depthOfCopies && walker.isInLoop() && buildRampAtCall(walker, value));
 }

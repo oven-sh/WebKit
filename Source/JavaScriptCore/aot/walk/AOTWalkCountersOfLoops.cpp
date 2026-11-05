@@ -10,32 +10,31 @@
 
 #include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
+#include "AOTWalkListReadsInLoops.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet stepsByOneOfCountersOfLoops { Opcode::Increment, Opcode::Decrement };
 static constexpr OpcodeSet stepsByNumberOfCountersOfLoops { Opcode::Add, Opcode::Sub };
+static constexpr OpcodeSet operatorsOnBitsOfCountersOfLoops { Opcode::BitOr, Opcode::BitAnd, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift };
 static constexpr size_t mostNamesOfCounterOfLoop = 16;
 
 using NamesOfCounterOfLoop = Vector<ValueID, mostNamesOfCounterOfLoop>;
 
-static bool isBoxThatMayHoldInt32InCountersOfLoops(const Walker& walker, Reference value)
+static bool mayBeInt32InCountersOfLoops(const Walker& walker, Reference value)
 {
-    if (!value || !value.isValue() || walker.representationOf(value) != Representation::JSValue)
-        return false;
-    Type type = walker.types().at(walker.typeOf(value));
-    return type.isJavaScriptValue() && type.primitives & Primitive::Integer && !type.isNumber();
-}
-
-static bool isBoundThatMayBeInt32InCountersOfLoops(const Walker& walker, Reference value)
-{
-    if (isBoxThatMayHoldInt32InCountersOfLoops(walker, value))
-        return true;
     if (!value || !value.isValue())
         return false;
-    Representation held = walker.representationOf(value);
     Type type = walker.types().at(walker.typeOf(value));
-    return (held == Representation::JSValue || held == Representation::Double) && type.isNumber() && !type.isInteger() && type.primitives & Primitive::Integer;
+    return type.isJavaScriptValue() && type.primitives & Primitive::Integer && !type.isInteger();
+}
+
+static bool isBoxOrDoubleThatMayBeInt32InCountersOfLoops(const Walker& walker, Reference value)
+{
+    if (!mayBeInt32InCountersOfLoops(walker, value))
+        return false;
+    Representation held = walker.representationOf(value);
+    return held == Representation::JSValue || (held == Representation::Double && walker.types().at(walker.typeOf(value)).isNumber());
 }
 
 static bool isWholeNumberAsWrittenInCountersOfLoops(const BodyIndex& index, ValueID value)
@@ -104,12 +103,25 @@ static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& 
     return true;
 }
 
-static bool mayHoldInt32BesideOthersInCountersOfLoops(const Walker& walker, Reference value)
+static bool turnsTakeCounterAsIntegerInCountersOfLoops(const BodyIndex& index, LoopID loop, const NamesOfCounterOfLoop& names)
 {
-    if (!value || !value.isValue())
-        return false;
-    Type type = walker.types().at(walker.typeOf(value));
-    return type.isJavaScriptValue() && type.primitives & Primitive::Integer && !type.isNumber();
+    static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
+    static constexpr OpcodeSet calls { Opcode::Call, Opcode::CallDirect, Opcode::Construct };
+    auto isName = [&](ValueID operand) {
+        return names.contains(operand);
+    };
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            Opcode opcode = operation.opcode();
+            if (accessesByKey.contains(opcode) && isName(operation.propertyOperand()))
+                return true;
+            if (calls.contains(opcode) && std::ranges::any_of(operation.argumentsOperands(), isName))
+                return true;
+            if (operatorsOnBitsOfCountersOfLoops.contains(opcode) && (isName(operation.operand(0)) || (opcode != Opcode::BitNot && isName(operation.operand(1)))))
+                return true;
+        }
+    }
+    return false;
 }
 
 enum class WhatComesRoundInCountersOfLoops : uint8_t { NotAsked, IsBeingAsked, Int32, Other };
@@ -150,36 +162,6 @@ static bool comesRoundAsInt32InCountersOfLoops(Walker& walker, const BodyIndex& 
     return comesRound;
 }
 
-static Vector<ValueID, 2> namesInFrontThatLoopMentionsInCountersOfLoops(const Walker& walker, const BodyIndex& index, LoopID loop, uint32_t firstValueOfLoop, Reference value)
-{
-    Vector<ValueID, 2> names;
-    auto mention = [&](ValueID operand) {
-        if (operand && operand.index() < firstValueOfLoop && !names.contains(operand) && walker.referenceOf(operand) == value)
-            names.append(operand);
-    };
-    for (BlockID member : index.membersOf(loop)) {
-        BodyBlock block = index.block(member);
-        for (BodyValue operation : block.values()) {
-            operation.forEachOperand([&](ValueID operand, uint32_t) {
-                mention(operand);
-            });
-        }
-        BodyTerminator end = block.terminator();
-        end.forEachOperand([&](ValueID operand, uint32_t) {
-            mention(operand);
-        });
-        for (BodyTarget target : end.targets()) {
-            for (ValueID argument : target.arguments())
-                mention(argument);
-        }
-        if (block.hasHandler()) {
-            for (ValueID argument : block.handler().arguments())
-                mention(argument);
-        }
-    }
-    return names;
-}
-
 static void guessBoundsInCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead, const NamesOfCounterOfLoop& names, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
 {
     LoopID loop = index.loopOf(inputHead);
@@ -195,13 +177,13 @@ static void guessBoundsInCountersOfLoops(Walker& walker, const BodyIndex& index,
                 if (!bound || bound.index() >= firstValueOfLoop)
                     continue;
                 Reference value = walker.referenceOf(bound);
-                if (!isBoundThatMayBeInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end())
+                if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end())
                     continue;
                 size_t listed = guesses.findIf([&](const GuessInFrontOfLoop& guess) {
                     return guess.value == value;
                 });
                 if (listed == notFound)
-                    guesses.append(GuessInFrontOfLoop { value, TypeTable::int32, { }, namesInFrontThatLoopMentionsInCountersOfLoops(walker, index, loop, firstValueOfLoop, value) });
+                    guesses.append(GuessInFrontOfLoop { value, TypeTable::int32, { }, namesInFrontThatLoopMentions(walker, index, loop, firstValueOfLoop, value) });
                 else if (walker.types().at(guesses[listed].tested).isNumber())
                     guesses[listed].tested = TypeTable::int32;
             }
@@ -215,8 +197,7 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers))
         return counters;
     const BodyIndex& index = walker.currentBodyIndex();
-    static constexpr OpcodeSet operatorsOnBits { Opcode::BitOr, Opcode::BitAnd, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift };
-    bool holdsOperatorsOnBits = index.holdsAnyOf(operatorsOnBits);
+    bool holdsOperatorsOnBits = index.holdsAnyOf(operatorsOnBitsOfCountersOfLoops);
     if (!holdsOperatorsOnBits && !index.holdsAnyOf(stepsByOneOfCountersOfLoops | stepsByNumberOfCountersOfLoops))
         return counters;
     uint32_t numberOfParameters = index.block(inputHead).numberOfParameters();
@@ -230,7 +211,7 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
                 guessBoundsInCountersOfLoops(walker, index, inputHead, names, entering, guesses);
             continue;
         }
-        if (!mayHoldInt32BesideOthersInCountersOfLoops(walker, enters))
+        if (!mayBeInt32InCountersOfLoops(walker, enters))
             continue;
         bool isTestedAlready = std::ranges::find(entering.first(position), enters) != entering.first(position).end() || guesses.containsIf([&](const GuessInFrontOfLoop& guess) {
             return guess.value == enters;
@@ -242,7 +223,9 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
             continue;
         }
         NamesOfCounterOfLoop names;
-        if (!isBoxThatMayHoldInt32InCountersOfLoops(walker, enters) || !isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names))
+        if (!isBoxOrDoubleThatMayBeInt32InCountersOfLoops(walker, enters) || !isSteppedAllRoundInCountersOfLoops(walker, index, inputHead, position, names))
+            continue;
+        if (walker.types().at(walker.typeOf(enters)).isNumber() && !turnsTakeCounterAsIntegerInCountersOfLoops(index, index.loopOf(inputHead), names))
             continue;
         counters.append({ position, TypeTable::int32 });
         guessBoundsInCountersOfLoops(walker, index, inputHead, names, entering, guesses);

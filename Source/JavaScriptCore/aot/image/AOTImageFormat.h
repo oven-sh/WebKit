@@ -121,6 +121,7 @@ enum class ImageFlag : uint32_t {
     AdmitsLibraryText = 1 << 3,
     ShowsWaysBetweenModuleObjects = 1 << 4,
     LoadsCodeOutsideImage = 1 << 5,
+    IsBuiltWithLibrary = 1 << 6,
     RunsEntryPointsAgain = 1 << 8,
     StoresPathOfMainModule = 1 << 10,
     RefusesOriginalsBesideMocks = 1 << 12,

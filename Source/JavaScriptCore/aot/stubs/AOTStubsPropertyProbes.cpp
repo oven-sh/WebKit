@@ -1810,6 +1810,28 @@ void loadInheritedValueBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg
     jit.load64(BaseIndex(storage, wordIndex, CCallHelpers::TimesEight), result);
 }
 
+static void loadValueOfHolderBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg holderAndStorage, GPRReg wordIndex, GPRReg result)
+{
+#if CPU(X86_64)
+    jit.m_assembler.btw_ir(flagBitInHeader(Slot::isOutOfLine).position, slot.header());
+    jit.m_assembler.cmovq_mr(X86Assembler::ConditionC, JSObject::butterflyOffset(), holderAndStorage, holderAndStorage);
+#else
+    Jump isInline = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
+    jit.loadPtr(Address(holderAndStorage, JSObject::butterflyOffset()), holderAndStorage);
+    isInline.link(&jit);
+#endif
+    slot.loadOwnWordIndex(jit, wordIndex);
+    jit.load64(BaseIndex(holderAndStorage, wordIndex, CCallHelpers::TimesEight), result);
+}
+
+void loadOwnValueBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result)
+{
+    RELEASE_ASSERT(slot.form() == SlotForm::Slot && Slot::payloadOf(slot.kind()) == SlotPayload::Holder);
+    RELEASE_ASSERT(noOverlap(receiver, storage, wordIndex) && noOverlap(slot.header(), storage));
+    jit.move(receiver, storage);
+    loadValueOfHolderBySlot(jit, slot, storage, wordIndex, result);
+}
+
 void loadValueBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result)
 {
     RELEASE_ASSERT(Slot::payloadOf(slot.kind()) == SlotPayload::Holder);
@@ -1817,16 +1839,7 @@ void loadValueBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg receiver
     if (slot.form() == SlotForm::Slot) {
         slot.loadHolder(jit, storage);
         jit.moveConditionallyTest64(CCallHelpers::Zero, storage, storage, receiver, storage);
-#if CPU(X86_64)
-        jit.m_assembler.btw_ir(flagBitInHeader(Slot::isOutOfLine).position, slot.header());
-        jit.m_assembler.cmovq_mr(X86Assembler::ConditionC, JSObject::butterflyOffset(), storage, storage);
-#else
-        Jump isInline = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
-        jit.loadPtr(Address(storage, JSObject::butterflyOffset()), storage);
-        isInline.link(&jit);
-#endif
-        slot.loadOwnWordIndex(jit, wordIndex);
-        jit.load64(BaseIndex(storage, wordIndex, CCallHelpers::TimesEight), result);
+        loadValueOfHolderBySlot(jit, slot, storage, wordIndex, result);
         return;
     }
 

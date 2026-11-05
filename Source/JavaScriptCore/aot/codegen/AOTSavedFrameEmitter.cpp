@@ -526,13 +526,13 @@ void SavedFrameEmitter::generateIsUnmodifiedGenerator(const ValueContext& value)
     });
 }
 
-static std::optional<StepConsumer> stepConsumerOf(CoroutineKind kind)
+static std::optional<StepConsumer> stepConsumerOf(CoroutineKind kind, bool awaitsCall)
 {
     switch (kind) {
     case CoroutineKind::AsyncFunction:
-        return StepConsumer::AsyncFunction;
+        return awaitsCall ? StepConsumer::AsyncFunctionAwaitingCall : StepConsumer::AsyncFunction;
     case CoroutineKind::AsyncGenerator:
-        return StepConsumer::AsyncGenerator;
+        return awaitsCall ? StepConsumer::AsyncGeneratorAwaitingCall : StepConsumer::AsyncGenerator;
     case CoroutineKind::Generator:
         return std::nullopt;
     }
@@ -542,7 +542,7 @@ static std::optional<StepConsumer> stepConsumerOf(CoroutineKind kind)
 void SavedFrameEmitter::generateStepAsyncGenerator(const ValueContext& value)
 {
     ValueID driver = value->driverOperand();
-    std::optional<StepConsumer> consumer = stepConsumerOf(kindOfFunction());
+    std::optional<StepConsumer> consumer = stepConsumerOf(kindOfFunction(), !!value->calledBuiltin());
     if (!consumer || opcodeOf(driver) == Opcode::Absent) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         return;

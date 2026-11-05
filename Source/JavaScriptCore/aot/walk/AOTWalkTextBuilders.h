@@ -71,7 +71,6 @@ Reference finishTextInFrame(Walker&, Reference name, Origin);
 bool appendPieceWithoutCutting(Walker&, TextInStringBuilder&, Reference name, Reference part, Origin);
 bool appendResultOfBuiltinStraight(Walker&, TextInStringBuilder&, Reference name, Reference part, Origin);
 bool takePartsOfJoinReturnedByCopy(Walker&, ValueID operand, Vector<Reference, 8>& parts);
-bool appendJSONTextStraight(Walker&, TextInStringBuilder&, Reference name, ValueID part, Origin);
 
 } } } // namespace JSC::AOT::Typed
 

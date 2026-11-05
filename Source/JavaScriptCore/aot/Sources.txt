@@ -95,7 +95,6 @@ aot/codegen/AOTGuessedAccessEmitter.cpp
 aot/codegen/AOTHeaps.cpp
 aot/codegen/AOTHintEmitter.cpp
 aot/codegen/AOTInlineBuiltinEmitter.cpp
-aot/codegen/AOTJSONWriteEmitter.cpp
 aot/codegen/AOTModuleEmitter.cpp
 aot/codegen/AOTObjectCreationEmitter.cpp
 aot/codegen/AOTOperationEmitter.cpp
@@ -146,7 +145,6 @@ aot/codegen/AOTStraightRuntimeIntrinsics.cpp
 aot/codegen/AOTStraightSlots.cpp
 aot/codegen/AOTStraightSwitches.cpp
 aot/codegen/AOTStraightTypeTests.cpp
-aot/codegen/AOTStringBuilderCursor.cpp
 aot/codegen/AOTStringBuilderEmitter.cpp
 aot/codegen/AOTStringBuilderPartEmitter.cpp
 aot/codegen/AOTStringBuiltinEmitter.cpp
@@ -374,7 +372,6 @@ aot/plan/AOTEnvironmentsHandedBack.cpp
 aot/plan/AOTFieldsSlotForms.cpp
 aot/plan/AOTFieldsStorage.cpp
 aot/plan/AOTFunctionKinds.cpp
-aot/plan/AOTJSONSerializerPlan.cpp
 aot/plan/AOTKeyOrders.cpp
 aot/plan/AOTModuleEvaluationPlan.cpp
 aot/plan/AOTNamePlan.cpp
@@ -522,12 +519,6 @@ aot/walk/AOTWalkHandlers.cpp
 aot/walk/AOTWalkInlining.cpp
 aot/walk/AOTWalkInt32Promises.cpp
 aot/walk/AOTWalkIteration.cpp
-aot/walk/AOTWalkJSONWriteLists.cpp
-aot/walk/AOTWalkJSONWritePlan.cpp
-aot/walk/AOTWalkJSONWriteTexts.cpp
-aot/walk/AOTWalkJSONWriteTrust.cpp
-aot/walk/AOTWalkJSONWriteValues.cpp
-aot/walk/AOTWalkJSONWrites.cpp
 aot/walk/AOTWalkKeyOrdersAccessors.cpp
 aot/walk/AOTWalkKnownAnswers.cpp
 aot/walk/AOTWalkKnownCopiesLetGo.cpp
@@ -610,5 +601,6 @@ aot/walk/AOTWalkUnionInstanceOf.cpp
 aot/walk/AOTWalkUnionMethodCalls.cpp
 aot/walk/AOTWalkUnionSlots.cpp
 aot/walk/AOTWalkUnionSwitches.cpp
+aot/walk/AOTWalkUnionTableCalls.cpp
 aot/walk/AOTWalkUnionTaggedMakers.cpp
 aot/walk/AOTWalkWrittenDescriptors.cpp

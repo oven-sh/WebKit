@@ -19,7 +19,7 @@ class AccessEmitter final : public OperationEmitter {
 public:
     explicit AccessEmitter(CodeGenerator& generator)
         : OperationEmitter(generator)
-        , m_functionComesAgain(!(m_facts.runsAtMostOnce(m_id) || m_program.at(m_id).isModuleBody()))
+        , m_functionComesAgain(!m_program.at(m_id).isModuleBody())
     {
     }
 
@@ -68,6 +68,7 @@ public:
     void storeStructureAfterPrototypeTransition(CellPointer object, Word32 structureID);
     std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, const MentionedAllocation&, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty);
     bool tryCallMethodByName(const ValueContext& call);
+    bool readsTruthAtSite(BlockID, ValueID read) const;
     bool isPatternLeftToCall(ValueID pattern) const { return m_readLeftToCall && m_readLeftToCall->pattern == pattern; }
     bool methodMayBeUnread(ValueID read) const { return m_methodsThatMayBeUnread.get(read.index()); }
     static PutMode putModeOf(ECMAMode mode) { return forMode(mode, PutMode::Strict, PutMode::Sloppy); }
@@ -93,6 +94,7 @@ private:
     std::optional<StoreOfKnownField> findStoreOfKnownField(const Type& receiver, PropertyKeyID, PutMode);
     void putNamedProperty(const ValueContext&, Boxed object, PutMode);
     Boxed getNamedProperty(const ValueContext&);
+    void branchOnTruthAtSite(const ValueContext& read);
     std::optional<Boxed> lookWhetherReceiverIsAsMadeInPlaceOfRead(const ValueContext&);
     bool isReadOfMethodCalledNext(const ValueContext& read);
     ValueID findPatternLeftToCall(const ValueContext& read);

@@ -24,15 +24,16 @@ const messageSignature = (className: string) =>
     implementation: b.inline("NewError", { parameters: [className], otherwise: b.hostCall }),
   });
 
-const ownPropertyOfNewErrors = (name: string, structure: string, after: readonly string[]) =>
+const ownPropertyOfNewErrors = (name: string, laidByConstructor: b.TableType, structure: string, after: readonly string[]) =>
   ({
-    ...b.ownSlot(b.any, { structure, after }),
+    ...b.ownSlot(laidByConstructor, { structure, after }),
+    resultIsDeclaredOnly: true,
     uses: { this: [b.readByKey(b.keysNamed(name)), b.runs("PrototypeChain")] },
   }) satisfies b.GetterField;
 
 const ownPropertiesOfNewErrors = (structure: string) => ({
-  message: ownPropertyOfNewErrors("message", structure, []),
-  cause: ownPropertyOfNewErrors("cause", structure, ["message"]),
+  message: ownPropertyOfNewErrors("message", b.string, structure, []),
+  cause: ownPropertyOfNewErrors("cause", b.undefined, structure, ["message"]),
 });
 
 const textsOnPrototype = { name: b.property(b.string), message: b.property(b.string) };

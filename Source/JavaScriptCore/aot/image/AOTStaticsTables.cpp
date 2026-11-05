@@ -158,7 +158,7 @@ public:
     }
 
 private:
-    void fail(ASCIILiteral rule, RowOwner owner = { })
+    COLD NEVER_INLINE void fail(ASCIILiteral rule, RowOwner owner = { })
     {
         if (!std::exchange(m_hasFailed, true))
             m_encoder.fail(rule, owner);
@@ -318,6 +318,22 @@ static void encodeNamesOfVariables(TableEncoder& encoder)
     encoder.part.setTable(ProgramTableIndex::namedVariables, writer.bytes());
 }
 
+static Vector<uint32_t> collectBitsOfNamesOfClassGuards(const TableEncoder& encoder)
+{
+    const PlacedStatics& statics = encoder.numbers.statics();
+    Vector<uint32_t> names;
+    for (const Vector<PlacedClassGuardOfName>* guards : { &statics.classGuardsOfNames, &statics.namesOfClassGuardsOfSeveralNames }) {
+        for (const PlacedClassGuardOfName& guard : *guards) {
+            if (std::optional<uint32_t> name = encoder.numbers.numberOf(guard.spaceOfName, std::span<const uint32_t>(&guard.name, 1)))
+                names.append(*name);
+        }
+    }
+    Vector<uint32_t> words(FillWith { }, names.isEmpty() ? 0 : *std::ranges::max_element(names) / 32 + 1, 0);
+    for (uint32_t name : names)
+        words[name / 32] |= 1u << name % 32;
+    return words;
+}
+
 void encodeStaticsTables(TableEncoder& encoder)
 {
     const PlacedStatics& statics = encoder.numbers.statics();
@@ -330,6 +346,7 @@ void encodeStaticsTables(TableEncoder& encoder)
     encoder.part.setTable(ProgramTableIndex::classGuardCounts, Vector<ClassGuardCountData>(statics.guardsOfClassGuardCounts.size(), [&](size_t index) {
         return ClassGuardCountData { statics.guardsOfClassGuardCounts[index].bit, statics.guardsOfClassGuardCounts[index].offsetOfCount };
     }));
+    encoder.part.setTable(ProgramTableIndex::namesOfClassGuards, collectBitsOfNamesOfClassGuards(encoder));
     encodeTableOfGlobalBindings(encoder);
 }
 

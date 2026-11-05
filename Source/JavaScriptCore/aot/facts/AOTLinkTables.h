@@ -40,7 +40,6 @@ struct LinkedFunction {
     bool ringsOfTailCallsAreListed { false };
     bool runsAtMostOnce { false };
     bool isNamedInItsCycle { true };
-    bool isCalledInLoop { false };
     bool liesUnderNameOrIsLost { false };
     bool isInQueueFromStart { false };
     bool namesOnlyWhatEveryFunctionLeadsTo { false };

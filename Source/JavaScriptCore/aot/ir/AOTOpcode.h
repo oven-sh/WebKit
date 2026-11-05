@@ -18,7 +18,28 @@ namespace JSC { namespace AOT { namespace Typed {
 using OperandUses = OptionSet<OperandUse>;
 using Protocols = OptionSet<Protocol>;
 
-inline constexpr uint32_t numberOfInlineOperands = 3;
+constexpr bool everyOperandUseIsInExactlyOneOf(std::initializer_list<OperandUses> sets)
+{
+    OperandUses every;
+    for (OperandUse use : allMembersOf<OperandUse>)
+        every.add(use);
+    OperandUses found;
+    for (OperandUses set : sets) {
+        if (found.containsAny(set))
+            return false;
+        found.add(set);
+    }
+    return found == every;
+}
+
+inline constexpr OperandUses usesThatNeverReturnOperand {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::ReadsContents,
+    OperandUse::WritesContents, OperandUse::RetainsContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom,
+    OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype,
+    OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ OperandUse::Returns, usesThatNeverReturnOperand }));
+
 inline constexpr uint32_t numberOfInlinePayloadWords = 3;
 
 constexpr bool mustBeDefinition(OperandKind kind)

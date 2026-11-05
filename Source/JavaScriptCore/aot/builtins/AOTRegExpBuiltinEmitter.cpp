@@ -155,14 +155,14 @@ void RegExpBuiltinEmitter::generateStringMatch(const InlineCall& call)
 {
     CellPointer string = cellOperand(call.receiver());
     CellPointer regExpObject = cellOperand(call.argument(0));
-    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::StringMatchRegExp, { string, regExpObject }));
+    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::ArrayForStringMatch), { string.value(), regExpObject.value() }).first));
 }
 
 void RegExpBuiltinEmitter::generateStringSearch(const InlineCall& call)
 {
     CellPointer string = cellOperand(call.receiver());
     CellPointer regExpObject = cellOperand(call.argument(0));
-    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::StringSearchRegExp, { string, regExpObject }));
+    finish(call, Boxed(callStub(call.context(), regExpMatch(RegExpMatchResult::IndexForStringSearch), { string.value(), regExpObject.value() }).first));
 }
 
 } } } // namespace JSC::AOT::Typed

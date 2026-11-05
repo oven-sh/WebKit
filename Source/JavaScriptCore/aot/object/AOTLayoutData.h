@@ -185,9 +185,11 @@ struct ClassData {
     uint32_t namedGuardsOffset[numberOfClassSides];
     uint32_t guardsHoldWhileClear : 1;
     uint32_t guardsOfPrototypeSideHoldWhileClear : 1;
-    uint32_t unusedClassBits : 30 { 0 };
+    uint32_t sidesWithGuardsHereOrBelow : numberOfClassSides;
+    uint32_t unusedClassBits : 30 - numberOfClassSides { 0 };
 
     bool bitsAreClearWhileGuardsHold(ClassSide side) const { return side == ClassSide::Prototype ? guardsOfPrototypeSideHoldWhileClear : guardsHoldWhileClear; }
+    bool hasGuardsHereOrBelow(ClassSide side) const { return sidesWithGuardsHereOrBelow >> static_cast<unsigned>(side) & 1; }
 };
 static_assert(sizeof(ClassData) == 56 && isImageRecord<ClassData>);
 

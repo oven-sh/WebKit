@@ -49,7 +49,7 @@ Reference buildComparisonOfRangeWithText(Walker& walker, const PieceOfString& pi
     Type start = walker.types().at(walker.typeOf(piece.start));
     Type end = walker.types().at(walker.typeOf(piece.end));
     if (start.integers.isSingleValue() && end.integers.isSingleValue() && end.integers.minimum - start.integers.minimum != static_cast<int64_t>(length))
-        return constantForStrings(walker, PrimitiveKnownToFolding::boolean(false));
+        return walker.constant(PrimitiveKnownToFolding::boolean(false));
     return buildReadOfRangeForStringRanges(walker, ReadOfRangeInWalkStrings::EqualsLiteral, piece, text, { }, origin);
 }
 

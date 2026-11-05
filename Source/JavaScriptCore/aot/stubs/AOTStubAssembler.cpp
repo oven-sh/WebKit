@@ -78,6 +78,7 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
     m_borrowedFPRs = RegisterSet();
     m_savedRegisterStack.clear();
     m_boxesBooleanAtEveryReturn = false;
+    m_stubBehindEveryReturn = std::nullopt;
     m_outOfLineParts.clear();
 
     if (!isOperationCallHead(body))
@@ -609,6 +610,10 @@ void StubAssembler::returnToCaller()
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
     RELEASE_ASSERT(!isARM64() || key().callerFrame() != CallerFrame::Frameless);
+    if (m_stubBehindEveryReturn) {
+        jumpToStub(*m_stubBehindEveryReturn);
+        return;
+    }
     if (m_boxesBooleanAtEveryReturn)
         or32(TrustedImm32(JSValue::ValueFalse), result());
     ret();

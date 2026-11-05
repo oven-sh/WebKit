@@ -48,6 +48,7 @@ import {
 const objectColumns = [
   "usesFeature",
   "runsUnseenCode",
+  "instancesAnswerEveryName",
   "loads",
   "callsFunctions",
   "literalPartsForm",
@@ -776,6 +777,7 @@ function buildEntryAttachments(context: AttachmentContext, builtin: ModelBuiltin
   return {
     featureUses: buildFeatureUses(context, builtin),
     unseenCodeCondition: null,
+    conditionOnInstancesThatAnswerEveryName: buildConditionOnInstancesThatAnswerEveryName(builder, builtin),
     moduleLoads: buildModuleLoads(context, builtin),
     calledFunctions: buildCalledFunctions(context, builtin),
     literalPartsForm: buildLiteralPartsForm(context, builtin),
@@ -998,6 +1000,19 @@ function runsOnlySeenCode(builder: ModelBuilder, seen: SeenCode, builtin: ModelB
   const bindingFile = seen.bindingFiles.get(builtin);
   if (bindingFile !== undefined) return seen.nativeFiles.has(bindingFile);
   return writtenColumn(builder, builtin, "nativeSymbols").some(({ source }) => seen.nativeFiles.has(source.file));
+}
+
+function buildConditionOnInstancesThatAnswerEveryName(builder: ModelBuilder, builtin: ModelBuiltin): ModelCondition | null {
+  const [written] = writtenColumn(builder, builtin, "instancesAnswerEveryName");
+  if (written === undefined) return null;
+  const condition = resolveCondition(builder, builtin, written.value, written.source);
+  if (condition !== null && (condition.hasProperty === null || builtin.instanceClass === null)) {
+    builder.problems.add(
+      written.source,
+      `${builtin.text}: instancesAnswerEveryName names a member of an operand of the constructor of a class: b.whenOperandHasProperty(..)`,
+    );
+  }
+  return condition;
 }
 
 function markUnseenCode(builtin: MutableBuiltin, condition: ModelCondition | null): void {

@@ -68,6 +68,7 @@ JS_EXPORT_PRIVATE void deliverBareStepToDriver(JSObject* driver, bool isDone);
 JSValue enterSavedFrame(VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue sent);
 void resumeSavedAsyncFunction(JSGlobalObject*, VM&, Instance&, SavedFrame*, Typed::ResumeMode, JSValue resolution);
 void settlePromiseOfHandler(VM&, JSCell* promise, JSValue returned, JSValue error);
+void takeAwayRightToContinue(Instance&);
 
 JS_EXPORT_PRIVATE bool isSuspendedAsyncFunction(JSCell*);
 JS_EXPORT_PRIVATE bool isSuspendedModuleBody(VM&, JSValue coroutine);

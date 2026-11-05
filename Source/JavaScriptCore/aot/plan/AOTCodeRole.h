@@ -16,7 +16,6 @@ namespace JSC { namespace AOT { namespace Typed {
 inline constexpr unsigned numberOfCodeRolesOfOneFunction = 8;
 static_assert(sizeof(CodeRole) == 1);
 static_assert(static_cast<unsigned>(CodeRole::TableEntry) == numberOfCodeRolesOfOneFunction);
-static_assert(static_cast<unsigned>(CodeRole::Serializer) + 1 == numberOfEnumerators<CodeRole>);
 
 inline constexpr uint16_t coroutineResumeEntry = 1;
 
@@ -59,25 +58,25 @@ struct CodeUnit {
     {
     }
 
+    static constexpr CodeUnit ofMethodTable(FunctionID method, CodeRole role, uint32_t placeOfSelector)
+    {
+        CodeUnit unit(method, role, static_cast<uint16_t>(placeOfSelector));
+        unit.highByteOfPlaceOfSelector = static_cast<uint8_t>(placeOfSelector >> 16);
+        return unit;
+    }
+
     constexpr explicit operator bool() const { return !!function; }
+    constexpr uint32_t placeOfSelector() const { return static_cast<uint32_t>(highByteOfPlaceOfSelector) << 16 | numberOfBoundArguments; }
     friend constexpr bool operator==(const CodeUnit&, const CodeUnit&) = default;
     friend constexpr auto operator<=>(const CodeUnit&, const CodeUnit&) = default;
 
-    static constexpr uint32_t numberOfLayoutsThatSerializersCanName = 1u << 24;
-    static constexpr CodeUnit serializer(FunctionID listedUnder, LayoutID layout)
-    {
-        CodeUnit unit(listedUnder, CodeRole::Serializer, static_cast<uint16_t>(layout.index()));
-        unit.upperBitsOfLayout = static_cast<uint8_t>(layout.index() >> 16);
-        return unit;
-    }
-    constexpr LayoutID layoutOfSerializer() const { return LayoutID(static_cast<uint32_t>(upperBitsOfLayout) << 16 | numberOfBoundArguments); }
-
     FunctionID function;
     CodeRole role { CodeRole::Body };
-    uint8_t upperBitsOfLayout { 0 };
+    uint8_t highByteOfPlaceOfSelector { 0 };
     uint16_t numberOfBoundArguments { 0 };
 };
 static_assert(sizeof(CodeUnit) == 8);
+static_assert(CodeUnit::ofMethodTable(FunctionID(), CodeRole::TableLookup, 0xabcdef).placeOfSelector() == 0xabcdef);
 
 } } } // namespace JSC::AOT::Typed
 

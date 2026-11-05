@@ -1,13 +1,13 @@
 # A test run has opened a name on Object.prototype. "Only Object.prototype stands above the record, which has no such name and gets none" does not hold there, and no look at the object and no guard of a class sees what comes to lie on it.
 # So nobody answers for what stands above an object (whoAnswersForWhatStandsAboveObjectsOf()), and the read of a field that is left out goes as it is written.
-# The records are those of the twin, field-left-out-is-read-behind-a-look-in-a-function-that-a-loop-calls.ir, where f1 holds `= GetSlotOrUndefined`, and one more: the last line.
-# RUN: walk f1 mechanisms=all
-# CHECK-LABEL: code f1:Body
+# The records are those of the twin, field-left-out-is-read-behind-a-look-where-a-loop-copies-the-function.ir, where the copy in the loop of f0 holds `= GetSlotOrUndefined`, and one more: the last line.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
 # CHECK: = PropGet {{*}}key="aborted"
-# RUN(FORM): walk f1 mechanisms=all
+# RUN(FORM): walk f0 mechanisms=all
 # FORM-NOT: GetSlotOrUndefined
 
-module m0 path="field-left-out-is-read-behind-a-look-in-a-function-that-a-loop-calls.ts" displayPath="field-left-out-is-read-behind-a-look-in-a-function-that-a-loop-calls.ts" body=f0 namespaceLayout=L(m0)
+module m0 path="field-left-out-is-read-behind-a-look-where-a-loop-copies-the-function.ts" displayPath="field-left-out-is-read-behind-a-look-where-a-loop-copies-the-function.ts" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
 entry module=m0

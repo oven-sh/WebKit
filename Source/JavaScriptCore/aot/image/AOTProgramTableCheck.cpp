@@ -667,13 +667,33 @@ static void checkClassRecord(const JoinedTables& check, const LayoutData& layout
         bool areClasses = std::ranges::all_of(subclasses, [&](uint32_t index) {
             return index < check.program.layouts.size() && check.program.layouts[index].kind == LayoutKind::Instance;
         });
-        if (check.expect(!subclasses.empty(), "OffsetOutsideItsPart"_s, id) && check.expect(areClasses, "TableOutOfBounds"_s, id))
+        if (check.expect(!subclasses.empty(), "OffsetOutsideItsPart"_s, id) && check.expect(areClasses, "TableOutOfBounds"_s, id)) {
             check.expect(ascendsStrictlyInTable(subclasses, std::identity { }), "TableNotSorted"_s, id);
+            check.expect(std::ranges::all_of(subclasses, [&](uint32_t index) {
+                uint32_t offsetOfClassBelow = check.tables.offsetOfClass(index);
+                const LayoutData* below = offsetOfClassBelow ? check.tryGetRecord<LayoutData>(TablePartID::Layouts, offsetOfClassBelow) : nullptr;
+                if (!below || !below->isClass() || !check.liesInPart(TablePartID::Layouts, offsetOfClassBelow - below->prefixSize(), below->prefixSize(), alignof(LayoutData)))
+                    return true;
+                return !(below->classData().sidesWithGuardsHereOrBelow & ~classData.sidesWithGuardsHereOrBelow);
+            }), "ClassDoesNotListenForGuardsBelow"_s, id);
+        }
     }
     for (unsigned side = 0; side < numberOfClassSides; ++side) {
         uint32_t bit = classData.guardBit[side];
         check.expect(bit == check.guardBitInStatics(id, side), "GuardBitDiffersFromStatics"_s, id);
         check.expect(bit == noClassGuardBit || byteOffsetOfClassGuardBit(bit) < check.tables.instanceSizes.sizeOfStatics, "TableOutOfBounds"_s, id);
+        uint32_t offsetOfNamedGuards = classData.namedGuardsOffset[side];
+        check.expect((bit == noClassGuardBit && !offsetOfNamedGuards) || classData.hasGuardsHereOrBelow(static_cast<ClassSide>(side)), "ClassDoesNotListenForItsGuards"_s, id);
+        if (!offsetOfNamedGuards)
+            continue;
+        std::span<const uint32_t> count = check.tryGetWords(TablePartID::Layouts, offsetOfNamedGuards, 1);
+        std::span<const uint32_t> list = count.empty() ? count : check.tryGetWords(TablePartID::Layouts, offsetOfNamedGuards, 1 + 2 * static_cast<uint64_t>(count[0]));
+        if (!check.expect(!list.empty(), "OffsetOutsideItsPart"_s, id))
+            continue;
+        bool everyNameHasItsBit = true;
+        for (size_t place = 1; place < list.size(); place += 2)
+            everyNameHasItsBit &= check.tables.someClassGuardNames(list[place]);
+        check.expect(everyNameHasItsBit, "NameOfClassGuardWithoutItsBit"_s, id);
     }
     check.expect(!!classData.guardsHoldWhileClear == check.plan.classGuardsHoldWhileClear(id), "GuardPolarityDiffersFromPlan"_s, id);
     check.expect(!!classData.guardsOfPrototypeSideHoldWhileClear == check.plan.bitsOfClassGuardsAreClearWhileTheyHold(id, ClassSide::Prototype), "GuardPolarityDiffersFromPlan"_s, id);

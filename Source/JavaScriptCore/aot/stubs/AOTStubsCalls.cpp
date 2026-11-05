@@ -470,6 +470,7 @@ static void emitCopyLentClosure(StubAssembler& jit, const CallRegisters& registe
 {
     static_assert(CaptureCounts { 0, 1 }.encoded() == 1 << 4);
     static_assert(SlimClosure::allocationSize(0) == MarkedSpace::sizeStep && SlimClosure::allocationSize(2) == 2 * MarkedSpace::sizeStep);
+    static_assert(sizeOfClosureInFrame(offsetOfSlimClosureCaptures, 1) == 2 * MarkedSpace::sizeStep && sizeOfClosureInFrame(offsetOfSlimClosureCaptures, 2) > 2 * MarkedSpace::sizeStep);
     static_assert((ClosureRequest::maxSlimClosureCaptures + 1) / 2 < ClosureWords::numberOfSlimClosureAllocators);
     const GPRReg cell = registers.word;
     const GPRReg allocator = registers.scratch;

@@ -270,6 +270,10 @@ static constexpr OperandUses usesThatWriteOperandInKnownWriters {
 static constexpr OperandUses usesThatReachBeyondOperandInKnownWriters {
     OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents
 };
+static constexpr OperandUses usesThatWriteNoOperandInKnownWriters {
+    OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::RetainsContents
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ usesThatCallOperandInKnownWriters, usesThatWriteOperandInKnownWriters, usesThatReachBeyondOperandInKnownWriters, usesThatWriteNoOperandInKnownWriters }));
 
 static uint32_t numberOfDeclaredOperandsInKnownWriters(Opcode opcode)
 {

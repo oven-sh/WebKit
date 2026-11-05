@@ -34,9 +34,7 @@
 #include "JSSetInlines.h"
 #include "MarkedBlockCage.h"
 #include "ObjectConstructor.h"
-#include <algorithm>
 #include <wtf/DataLog.h>
-#include <wtf/HashMap.h>
 #include <wtf/WTFProcess.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -127,17 +125,13 @@ struct ClosureInFrame {
         , closureNumber(ClosureWord::closureNumberOf(words[placeOfClosureWord]))
         , counts(captureCountsOfClosureNumber(closureNumber))
     {
+        RELEASE_ASSERT(static_cast<uint8_t>(closure->cellState()) == frameCellState);
         RELEASE_ASSERT(isFull || closure->type() == SlimClosureType);
         RELEASE_ASSERT(counts.references <= counts.captures && counts.captures <= (isFull ? Closure::maxNumberOfCaptures : ClosureRequest::maxSlimClosureCaptures));
     }
 
     std::span<const uint64_t> captures() const { return { words + placeOfClosureWord + 1, counts.captures }; }
-    bool holdsClosureOfFrame() const
-    {
-        return std::ranges::any_of(captures().first(counts.references), [](uint64_t reference) {
-            return liesInFrame(JSValue::decode(reference));
-        });
-    }
+    JSCell*& copyInHeap() const { return *reinterpret_cast<JSCell**>(reinterpret_cast<uint8_t*>(cell) + offsetOfCopyInHeapOfClosureInFrame(isFull ? Closure::offsetOfCaptures() : SlimClosure::offsetOfCaptures(), counts.captures)); }
 
     JSCell* cell;
     const uint64_t* words;
@@ -156,8 +150,9 @@ static JSCell* makeRoomInHeapFor(VM& vm, Instance* instance, const ClosureInFram
     return SlimClosure::createForCompiledCode(vm, instance->state->objects->closures.slimClosureStructure(kindOfClosureNumber(closure.closureNumber)), SlimClosure::allocationSize(closure.counts.captures));
 }
 
-static void copyToHeap(const ClosureInFrame& closure, JSCell* room, NOESCAPE const Invocable<JSCell*(JSCell*)> auto& copyInHeapOf)
+static JSCell* copyToHeap(VM& vm, Instance* instance, const ClosureInFrame& closure)
 {
+    JSCell* room = makeRoomInHeapFor(vm, instance, closure);
     uint64_t* target = reinterpret_cast<uint64_t*>(room);
     for (size_t place = 1; place < closure.placeOfClosureWord; ++place)
         target[place] = closure.words[place];
@@ -166,9 +161,10 @@ static void copyToHeap(const ClosureInFrame& closure, JSCell* room, NOESCAPE con
         uint64_t word = captures[slot];
         if (slot < closure.counts.references) {
             JSValue held = JSValue::decode(word);
-            if (liesInFrame(held))
-                word = std::bit_cast<uint64_t>(copyInHeapOf(held.asCell()));
-            else
+            if (liesInFrame(held)) {
+                word = std::bit_cast<uint64_t>(ClosureInFrame(held.asCell()).copyInHeap());
+                RELEASE_ASSERT(word);
+            } else
                 markEscapedIfEnvironment(held);
         }
         target[closure.placeOfClosureWord + 1 + slot] = word;
@@ -176,36 +172,30 @@ static void copyToHeap(const ClosureInFrame& closure, JSCell* room, NOESCAPE con
     WTF::storeStoreFence();
     target[closure.placeOfClosureWord] = closure.words[closure.placeOfClosureWord];
     WTF::storeStoreFence();
+    return room;
 }
 
 static JSCell* moveToHeap(VM& vm, Instance* instance, JSCell* closureInFrame)
 {
-    ClosureInFrame closure(closureInFrame);
-    if (!closure.holdsClosureOfFrame()) [[likely]] {
-        JSCell* room = makeRoomInHeapFor(vm, instance, closure);
-        copyToHeap(closure, room, [](JSCell*) -> JSCell* {
-            RELEASE_ASSERT_NOT_REACHED();
-        });
-        return room;
-    }
-
-    DeferGC deferGC(vm);
-    UncheckedKeyHashMap<JSCell*, JSCell*> rooms;
-    Vector<JSCell*, 8> found;
-    auto copyInHeapOf = [&](JSCell* inFrame) {
-        auto added = rooms.add(inFrame, nullptr);
-        if (added.isNewEntry) {
-            added.iterator->value = makeRoomInHeapFor(vm, instance, ClosureInFrame(inFrame));
-            found.append(inFrame);
+    Vector<JSCell*, 8> waiting;
+    waiting.append(closureInFrame);
+    while (true) {
+        ClosureInFrame closure(waiting.last());
+        if (!closure.copyInHeap()) {
+            size_t numberWaiting = waiting.size();
+            for (uint64_t reference : closure.captures().first(closure.counts.references)) {
+                JSValue held = JSValue::decode(reference);
+                if (liesInFrame(held) && !ClosureInFrame(held.asCell()).copyInHeap())
+                    waiting.append(held.asCell());
+            }
+            if (waiting.size() != numberWaiting)
+                continue;
+            closure.copyInHeap() = copyToHeap(vm, instance, closure);
         }
-        return added.iterator->value;
-    };
-    JSCell* moved = copyInHeapOf(closureInFrame);
-    for (size_t index = 0; index < found.size(); ++index) {
-        JSCell* inFrame = found[index];
-        copyToHeap(ClosureInFrame(inFrame), rooms.get(inFrame), copyInHeapOf);
+        waiting.removeLast();
+        if (waiting.isEmpty())
+            return closure.copyInHeap();
     }
-    return moved;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Instance* instance, JSCell* closureInFrame))

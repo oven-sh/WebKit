@@ -46,7 +46,6 @@
 #include "AOTHintEmitter.h"
 #include "AOTInlineBuiltinEmitter.h"
 #include "AOTIntlBuiltinEmitter.h"
-#include "AOTJSONWriteEmitter.h"
 #include "AOTMapSetBuiltinEmitter.h"
 #include "AOTMathBuiltinEmitter.h"
 #include "AOTModuleEmitter.h"

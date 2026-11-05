@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
@@ -892,10 +893,23 @@ ALWAYS_INLINE void CodeGenerator::generateTerminator(BlockID id, const Block& bl
 
 void CodeGenerator::generateBranchCondition(const TerminatorContext& terminator, ValueID condition, BranchTargets targets)
 {
+    if (ValueID read = std::exchange(m_readLeftToBranch, ValueID()))
+        condition = read;
     ValueContext context(terminator.block(), condition, code().at(condition), handlerOf(terminator.block()));
     context.m_branchTargets = targets;
     generate(context);
     RELEASE_ASSERT(m_hasFailed || !currentBlockIsOpen());
+}
+
+ValueID CodeGenerator::readLeftToBranchOnItsTruth(BlockID id, std::span<const ValueID> values, ValueID test)
+{
+    if (!test || values.size() < 2 || values.back() != test || code().at(id).isInLoop || m_headOfTurnsLaidOut || code().handlerOf(id))
+        return { };
+    const Operation& asked = code().at(test);
+    ValueID read = values[values.size() - 2];
+    if (asked.opcode != Opcode::ToBoolean || asked.form() != OperatorForm::Generic || asked.valueOperand() != read || code().useCountOf(read) != 1)
+        return { };
+    return code().at(read).opcode == Opcode::PropGet && emitter<AccessEmitter>().readsTruthAtSite(id, read) ? read : ValueID();
 }
 
 std::optional<CodeGenerator::WaysOfTruth> CodeGenerator::waysOfTruthOf(const ValueContext& read) const
@@ -990,8 +1004,12 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     };
     ValueID test = block.terminator.kind == TerminatorKind::Branch ? testReadByBranchAlone(id, block.terminator) : ValueID();
     bool testWaitsForBranch = false;
+    if (releases.empty())
+        m_readLeftToBranch = readLeftToBranchOnItsTruth(id, values, test);
     for (size_t index = 0; index < values.size(); ++index) {
         ValueID value = values[index];
+        if (value == m_readLeftToBranch)
+            continue;
         const Operation& operation = code().at(value);
         bool isCatch = false;
         if (!releases.empty()) [[unlikely]] {

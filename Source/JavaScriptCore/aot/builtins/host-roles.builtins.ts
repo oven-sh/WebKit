@@ -15,7 +15,6 @@ export default b.declarations(
     "%CompilerHelpers%.openIterator",
     "%CompilerHelpers%.openWrappedIterator",
     "%CompilerHelpers%.ownEntriesFlat",
-    "%CompilerHelpers%.pairsOfFlatEntries",
     "%CompilerHelpers%.plainQueryEntries",
     "%CompilerHelpers%.plainQueryKeys",
     "%CompilerHelpers%.plainQueryValues",

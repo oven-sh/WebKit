@@ -648,7 +648,7 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, BuildConte
     ThinSummaries summaries = scanBodies(program, build.diagnostics(), loops, mechanisms);
     if (build.diagnostics().hasErrors())
         return;
-    Families families(program, loops);
+    Families families(program, summaries.setsOfLayoutsWrittenInBodies(), loops);
     OwnedLooksAtBodies looks = lookAtBodies(program, *bodies, summaries, build);
     printBreachesOfClosureOfLink(out, program, summaries, families, *looks, mechanisms, build);
 }
@@ -825,23 +825,24 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
         return nullptr;
 
     PhaseTimes times(build, "scan and Link"_s);
-    runLanes(loops, {
-        [&] {
-            parts.summaries = makeUniqueWithoutFastMallocCheck<ThinSummaries>(scanBodies(program, build.diagnostics(), build.parallelLoops(), parts.mechanisms));
-        },
-        [&] {
-            StepTimes stepsOfLane(build, "facts"_s);
-            parts.families = makeUniqueWithoutFastMallocCheck<Families>(program, build.parallelLoops());
-            stepsOfLane.didFinish("families"_s);
-        },
-    });
+    parts.summaries = makeUniqueWithoutFastMallocCheck<ThinSummaries>(scanBodies(program, build.diagnostics(), build.parallelLoops(), parts.mechanisms));
     times.didFinish("scan"_s);
     if (hasFailed())
         return nullptr;
+    steps.didFinish("scan"_s);
+    OwnedLooksAtBodies looks;
+    runLanes(loops, {
+        [&] {
+            looks = lookAtBodies(program, *parts.bodies, *parts.summaries, build);
+        },
+        [&] {
+            StepTimes stepsOfLane(build, "facts"_s);
+            parts.families = makeUniqueWithoutFastMallocCheck<Families>(program, parts.summaries->setsOfLayoutsWrittenInBodies(), build.parallelLoops());
+            stepsOfLane.didFinish("families"_s);
+        },
+    });
     times.didFinish("families"_s);
-    steps.didFinish("scan beside families"_s);
-    OwnedLooksAtBodies looks = lookAtBodies(program, *parts.bodies, *parts.summaries, build);
-    steps.didFinish("look at bodies"_s);
+    steps.didFinish("look at bodies beside families"_s);
     TurnsOfReadings turns;
     runLanes(loops, {
         [&] {

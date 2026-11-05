@@ -82,6 +82,10 @@ static MatchAnswers answersOf(RegExpMatchResult result)
         return { Entry::operationAOTRegExpTest, 1, 0 };
     case RegExpMatchResult::BoxedBoolean:
         return { Entry::operationAOTRegExpTestBoxed, JSValue::encode(jsBoolean(true)), JSValue::encode(jsBoolean(false)) };
+    case RegExpMatchResult::ArrayForStringMatch:
+        return { Entry::operationAOTStringMatchRegExp, std::nullopt, JSValue::encode(jsNull()) };
+    case RegExpMatchResult::IndexForStringSearch:
+        return { Entry::operationAOTStringSearchRegExp, std::nullopt, JSValue::encode(jsNumber(-1)) };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -302,19 +306,50 @@ static void advanceLastIndexAndRecordMatch(StubAssembler& jit, GPRReg regExpObje
     Jump keepsLastIndex = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(globalFlag | stickyFlag));
     storeEndOfMatchInLastIndex(jit, regExpObject, registers.offsets, registers.scratch);
     keepsLastIndex.link(&jit);
+    if (jit.options().recordsLastMatch)
+        recordMatch(jit, registers);
+}
+
+static void recordMatchThatKeepsLastIndex(StubAssembler& jit, GPRReg regExpObject, const MatchRecordRegisters& registers)
+{
+    if (!jit.options().recordsLastMatch)
+        return;
+    loadRegExp(jit, regExpObject, registers.regExp);
+    loadMatchOutput(jit, registers.offsets);
     recordMatch(jit, registers);
 }
 
-static void finishMatchAndReturn(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, const MatchAnswers& answers)
+static void finishMatchAndReturn(StubAssembler& jit, RegExpMatchResult form, const MatchRegisters& registers, const MatchOperands& operands, const MatchAnswers& answers, bool keepsLastIndex)
 {
-    if (!answers.match) {
+    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
+    const MatchRecordRegisters record { .regExp = regExp, .string = operands.string, .offsets = characters, .globalObject = impl, .scratch = scratch };
+    switch (form) {
+    case RegExpMatchResult::ArrayForStringMatch:
+        jit.swap(operands.regExpObject, operands.string);
+        checkStubOperands(finishRegExpExec(FinishRegExpExecForm::WithObject), { operands.string, operands.regExpObject });
+        jit.jumpToStub(finishRegExpExec(FinishRegExpExecForm::WithObject));
+        return;
+    case RegExpMatchResult::Array:
         checkStubOperands(finishRegExpExec(FinishRegExpExecForm::WithObject), { operands.regExpObject, operands.string });
         jit.jumpToStub(finishRegExpExec(FinishRegExpExecForm::WithObject));
         return;
+    case RegExpMatchResult::IndexForStringSearch:
+        recordMatchThatKeepsLastIndex(jit, operands.regExpObject, record);
+        loadMatchOutput(jit, jit.result());
+        jit.load32(matchOutputEntry(jit.result(), 0), jit.result());
+        boxInt32(jit, jit.result(), jit.result());
+        jit.returnToCaller();
+        return;
+    case RegExpMatchResult::Boolean:
+    case RegExpMatchResult::BoxedBoolean:
+        if (keepsLastIndex)
+            recordMatchThatKeepsLastIndex(jit, operands.regExpObject, record);
+        else
+            advanceLastIndexAndRecordMatch(jit, operands.regExpObject, length, record);
+        returnResult(jit, TrustedImm64(*answers.match));
+        return;
     }
-    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
-    advanceLastIndexAndRecordMatch(jit, operands.regExpObject, length, { .regExp = regExp, .string = operands.string, .offsets = characters, .globalObject = impl, .scratch = scratch });
-    returnResult(jit, TrustedImm64(*answers.match));
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static constexpr size_t offsetOfButterflyInMatchArrayStorage = initialOutOfLineCapacity * sizeof(EncodedJSValue) + sizeof(IndexingHeader);
@@ -461,7 +496,8 @@ void generateRegExpMatch(StubAssembler& jit)
 {
     const auto form = static_cast<RegExpMatchResult>(jit.key().form());
     const MatchAnswers answers = answersOf(form);
-    const MatchOperands operands { .regExpObject = jit.clobberOperand(0), .string = jit.clobberOperand(1) };
+    const bool stringIsInFront = takesStringInFrontOfRegExp(form);
+    const MatchOperands operands { .regExpObject = jit.clobberOperand(stringIsInFront ? 1 : 0), .string = jit.clobberOperand(stringIsInFront ? 0 : 1) };
     const auto [regExpObject, string] = operands;
     const MatchRegisters registers = allocateMatchRegisters(jit);
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
@@ -472,7 +508,10 @@ void generateRegExpMatch(StubAssembler& jit)
     Jump isRope = loadFlatSubject(jit, registers, string);
     Label hasCharacters = jit.label();
     jit.load64(Address(regExpObject, RegExpObject::offsetOfLastIndex()), scratch);
-    slowCases.append(jit.branchIfNotNumber(scratch));
+    if (form == RegExpMatchResult::IndexForStringSearch)
+        slowCases.append(jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(JSValue::encode(jsNumber(0)))));
+    else
+        slowCases.append(jit.branchIfNotNumber(scratch));
     loadRegExpAndFlags(jit, registers, regExpObject);
     Jump usesLastIndex = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag | stickyFlag));
     Jump isTooShort = jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize()));
@@ -485,18 +524,22 @@ void generateRegExpMatch(StubAssembler& jit)
 
     didNotMiss.link(&jit);
     slowCases.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm64(0)));
+    if (answers.match)
+        finishMatchAndReturn(jit, form, registers, operands, answers, true);
     Label hasFound = jit.label();
-    finishMatchAndReturn(jit, registers, operands, answers);
+    finishMatchAndReturn(jit, form, registers, operands, answers, false);
 
     isRope.link(&jit);
     JumpList isNotSubstring;
     loadSubstringCharacters(jit, string, impl, characters, subjectLength, isNotSubstring);
     switch (form) {
     case RegExpMatchResult::Array:
+    case RegExpMatchResult::ArrayForStringMatch:
         matchSubstringForArray(jit, registers, operands, answers, isNotSubstring, slowCases, hasFound);
         break;
     case RegExpMatchResult::Boolean:
     case RegExpMatchResult::BoxedBoolean:
+    case RegExpMatchResult::IndexForStringSearch:
         jit.jump().linkTo(hasCharacters, &jit);
         break;
     }
@@ -504,8 +547,14 @@ void generateRegExpMatch(StubAssembler& jit)
     isNotSubstring.link(&jit);
     flattenSubject(jit, string, { regExpObject, string }, begin);
 
-    usesLastIndex.link(&jit);
-    matchFromLastIndex(jit, registers, operands, answers, slowCases, hasFound);
+    if (form == RegExpMatchResult::IndexForStringSearch)
+        slowCases.append(usesLastIndex);
+    else {
+        usesLastIndex.link(&jit);
+        if (form == RegExpMatchResult::ArrayForStringMatch)
+            slowCases.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag)));
+        matchFromLastIndex(jit, registers, operands, answers, slowCases, hasFound);
+    }
 
     hasNoCode.link(&jit);
     matchAtom(jit, registers, operands, answers, slowCases, hasFound);

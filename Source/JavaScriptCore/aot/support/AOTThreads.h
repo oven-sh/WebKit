@@ -68,6 +68,8 @@ JS_EXPORT_PRIVATE void forEachIndexInParallel(const ParallelLoops&, unsigned cou
 JS_EXPORT_PRIVATE void forEachIndexInParallel(const ParallelLoops&, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>&);
 JS_EXPORT_PRIVATE void runTasksInParallel(const ParallelLoops&, std::initializer_list<ScopedLambda<void()>>);
 
+extern JS_EXPORT_PRIVATE constinit thread_local void* t_whatHelpersInherit;
+
 JS_EXPORT_PRIVATE void runLanes(const ParallelLoops&, unsigned count, NOESCAPE const ScopedLambda<void(unsigned lane, const ParallelLoops& loopsOfLane)>&);
 JS_EXPORT_PRIVATE void runLanes(const ParallelLoops&, std::initializer_list<ScopedLambda<void()>>);
 

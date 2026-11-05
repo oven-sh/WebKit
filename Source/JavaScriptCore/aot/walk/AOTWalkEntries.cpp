@@ -581,7 +581,7 @@ bool BuilderOfEntries::buildParameterGuard()
 
 void BuilderOfEntries::takeParametersOfTableCall()
 {
-    const MethodFamily& family = m_conventions.familyOf(m_conventions.methodSelector(m_unit.numberOfBoundArguments));
+    const MethodFamily& family = m_conventions.familyOf(m_conventions.methodSelector(m_unit.placeOfSelector()));
     Vector<LayoutID, 8> receivers;
     for (const MethodTableRow& row : family.rows) {
         if (m_unit.role == CodeRole::TableLookup || row.method == m_unit.function)
@@ -590,14 +590,14 @@ void BuilderOfEntries::takeParametersOfTableCall()
     TypeID receiver = m_types.forLayouts(receivers.span());
     TypeID anything = m_types.anything(UnknownSeed::LostByWalk);
     takeParameters([&](unsigned index) {
-        TypeID proven = index && m_conventions.methodSelector(m_unit.numberOfBoundArguments).isTyped ? family.typesOfArguments[index - 1] : TypeID();
+        TypeID proven = index && m_conventions.methodSelector(m_unit.placeOfSelector()).isTyped ? family.typesOfArguments[index - 1] : TypeID();
         return !index ? receiver : proven ? proven : anything;
     });
 }
 
 void BuilderOfEntries::returnWhatCallByNameGives()
 {
-    PropertyKeyID key = m_conventions.familyOf(m_conventions.methodSelector(m_unit.numberOfBoundArguments)).key;
+    PropertyKeyID key = m_conventions.familyOf(m_conventions.methodSelector(m_unit.placeOfSelector())).key;
     Draft read = draft(Opcode::PropGet);
     read.setObjectOperand(m_parameters[0]);
     read.setKey(key);
@@ -624,7 +624,7 @@ bool BuilderOfEntries::buildTableLookup()
 
 bool BuilderOfEntries::buildTableEntry()
 {
-    const MethodSelector& selector = m_conventions.methodSelector(m_unit.numberOfBoundArguments);
+    const MethodSelector& selector = m_conventions.methodSelector(m_unit.placeOfSelector());
     takeParametersOfTableCall();
 
     Draft test = draft(Opcode::HasLayoutPrototype);

@@ -340,6 +340,7 @@ private:
     uint32_t secondPosition() const { return m_words[sizeInWords() - 1]; }
     JS_EXPORT_PRIVATE Origin originWithSecondPosition() const;
     ValueID operandFoundByCase(uint32_t operandIndex) const;
+    std::span<const ValueID> variadicOperandsFoundByCase() const;
 
     const uint32_t* m_words { nullptr };
     const UnitIDRemap* m_unit { nullptr };

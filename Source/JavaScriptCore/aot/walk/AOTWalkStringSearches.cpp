@@ -30,7 +30,7 @@ static constexpr OptionSet<RegExpFlags> flagsOfRegExpsThatSearchForNoText { RegE
 
 static Reference booleanForStringSearches(Walker& walker, bool value)
 {
-    return constantForStrings(walker, PrimitiveKnownToFolding::boolean(value));
+    return walker.constant(PrimitiveKnownToFolding::boolean(value));
 }
 
 static Reference stringReadByStringSearches(Walker& walker, Reference string, Origin origin)

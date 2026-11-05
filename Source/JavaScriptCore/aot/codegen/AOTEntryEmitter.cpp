@@ -15,6 +15,8 @@
 #include "AOTIRProgram.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStubsCallFrames.h"
+#include "AOTThrowEmitter.h"
+#include "AOTTypeTestPlan.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include <algorithm>
@@ -337,6 +339,215 @@ static bool emitFusedCallEntry(CCallHelpers& jit, const CodeGenerationInputs& in
         jit.move(overwritten.gpr(), scratch);
     }
     return true;
+}
+
+static std::optional<QuestionOfEntry> findSimpleQuestionOfEntry(const CodeGenerationInputs& inputs, TypeArena& types, GPRReg value, const TypeTestPlan& plan)
+{
+    uint16_t numbers = plan.passingPrimitives & Primitive::Number;
+    if (plan.integers || !plan.stringLiterals.isEmpty() || (numbers && numbers != Primitive::Number))
+        return std::nullopt;
+
+    QuestionOfEntry question { .value = value, .passingPrimitives = plan.passingPrimitives, .everyObjectPasses = plan.objects == ObjectsVerdict::AllPass };
+    for (const CellTest& test : plan.cellTests) {
+        switch (test.kind) {
+        case CellTestKind::IsObject:
+            question.everyObjectPasses = true;
+            break;
+        case CellTestKind::CellTypeIs:
+            question.cellTypes.append(test.cellTypes);
+            break;
+        case CellTestKind::ShapeIn: {
+            std::span<const LayoutID> members = membersOf(types, test.layouts);
+            ShapeTest shapes = inputs.plan.shapes().testOf(test.layouts, members);
+            if (shapes.form == ShapeTestForm::NeverPasses)
+                break;
+            if (test.asksForInstance || question.shapeWord || shapes.form != ShapeTestForm::OneShape)
+                return std::nullopt;
+            question.shapeWord = AOT::shapeWordOf(shapes.first);
+            question.shapeMayBearMark = std::ranges::any_of(members, [&](LayoutID member) {
+                return inputs.plan.layout(member).mayBearMark;
+            });
+            break;
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+    return question;
+}
+
+std::optional<Vector<QuestionOfEntry, 4>> findQuestionsOfEntryWrittenByHand(const CodeGenerationInputs& inputs, TypeArena& types, CodeUnit unit, NOESCAPE const ScopedLambda<TypeID(unsigned)>& typeAskedOfEntryParameter)
+{
+    const CallingConventions& conventions = inputs.plan.conventions();
+    if (unit.role != CodeRole::GenericCallEntry || conventions.hasFusedCallEntry(unit.function) || conventions.spillsArgumentRegisters(unit) || !planCallEntryMoves(inputs.program, conventions, unit.function))
+        return std::nullopt;
+
+    const Function& function = inputs.program.at(unit.function);
+    ArgumentLocations taken = conventions.locationsOf(inputs.program, conventions.genericEntry(unit).target);
+    Vector<QuestionOfEntry, 4> questions;
+    for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index) {
+        EntryParameter kind = function.entryParameterKind(index);
+        if (kind == EntryParameter::NewTarget && taken.parameters[index].kind != ArgumentLocation::Kind::None) {
+            TypeID believed = typeAskedOfEntryParameter(index);
+            if (believed && !(types.at(believed).primitives & Primitive::Undefined))
+                return std::nullopt;
+        }
+        if (kind == EntryParameter::Capture && taken.parameters[index].kind != ArgumentLocation::Kind::None && inputs.facts.linked().bodyTakesWhatCallersLeave(unit.function) && typeAskedOfEntryParameter(index))
+            return std::nullopt;
+        if ((kind != EntryParameter::This && kind != EntryParameter::Parameter) || taken.parameters[index].kind == ArgumentLocation::Kind::None)
+            continue;
+        TypeID asked = typeAskedOfEntryParameter(index);
+        if (!asked)
+            continue;
+        TypeTestPlan plan = computeTypeTestPlan(types, TypeTestContext { inputs.plan, inputs.plan.hasOneInstance() }, TypeTable::anything, Representation::JSValue, asked);
+        if (plan.verdict == TypeTestVerdict::AlwaysPasses)
+            continue;
+        std::optional<QuestionOfEntry> question = findSimpleQuestionOfEntry(inputs, types, kind == EntryParameter::This ? thisGPR : argumentGPR(index - function.firstParameterIndex()), plan);
+        if (!question)
+            return std::nullopt;
+        questions.append(WTF::move(*question));
+    }
+    return questions;
+}
+
+enum class CaseOfQuestionOfEntry : uint8_t { Number, Text, Symbol, BigInteger, Object, CellType, Shape, Boolean, False, True, Undefined, Null };
+
+struct CaseInQuestionOfEntry {
+    CaseOfQuestionOfEntry which;
+    unsigned index { 0 };
+};
+
+static Vector<CaseInQuestionOfEntry, 8> cellsThatFitQuestionOfEntry(const QuestionOfEntry& question)
+{
+    Vector<CaseInQuestionOfEntry, 8> cases;
+    if (question.shapeWord)
+        cases.append({ CaseOfQuestionOfEntry::Shape });
+    if (question.everyObjectPasses)
+        cases.append({ CaseOfQuestionOfEntry::Object });
+    for (unsigned index = 0; index < question.cellTypes.size(); ++index)
+        cases.append({ CaseOfQuestionOfEntry::CellType, index });
+    if (question.passingPrimitives & Primitive::AnyString)
+        cases.append({ CaseOfQuestionOfEntry::Text });
+    if (question.passingPrimitives & Primitive::AnySymbol)
+        cases.append({ CaseOfQuestionOfEntry::Symbol });
+    if (question.passingPrimitives & Primitive::BigInt)
+        cases.append({ CaseOfQuestionOfEntry::BigInteger });
+    return cases;
+}
+
+static Vector<CaseInQuestionOfEntry, 8> wordsThatFitQuestionOfEntry(const QuestionOfEntry& question)
+{
+    Vector<CaseInQuestionOfEntry, 8> cases;
+    uint16_t passing = question.passingPrimitives;
+    if ((passing & Primitive::Boolean) == Primitive::Boolean)
+        cases.append({ CaseOfQuestionOfEntry::Boolean });
+    else if (passing & Primitive::Boolean)
+        cases.append({ passing & Primitive::True ? CaseOfQuestionOfEntry::True : CaseOfQuestionOfEntry::False });
+    if (passing & Primitive::Undefined)
+        cases.append({ CaseOfQuestionOfEntry::Undefined });
+    if (passing & Primitive::Null)
+        cases.append({ CaseOfQuestionOfEntry::Null });
+    return cases;
+}
+
+static CCallHelpers::Jump branchOnCaseOfQuestionOfEntry(CCallHelpers& jit, const QuestionOfEntry& question, GPRReg scratch, CaseInQuestionOfEntry asked, bool whereItFits)
+{
+    GPRReg value = question.value;
+    CCallHelpers::RelationalCondition condition = whereItFits ? CCallHelpers::Equal : CCallHelpers::NotEqual;
+    auto isWord = [&](JSValue word) {
+        return jit.branch64(condition, value, CCallHelpers::TrustedImm32(static_cast<int32_t>(JSValue::encode(word))));
+    };
+    switch (asked.which) {
+    case CaseOfQuestionOfEntry::Number:
+        return whereItFits ? jit.branchIfNumber(value) : jit.branchIfNotNumber(value);
+    case CaseOfQuestionOfEntry::Text:
+        return whereItFits ? jit.branchIfString(value) : jit.branchIfNotString(value);
+    case CaseOfQuestionOfEntry::Symbol:
+        return whereItFits ? jit.branchIfSymbol(value) : jit.branchIfNotSymbol(value);
+    case CaseOfQuestionOfEntry::BigInteger:
+        return whereItFits ? jit.branchIfHeapBigInt(value) : jit.branchIfNotHeapBigInt(value);
+    case CaseOfQuestionOfEntry::Object:
+        return whereItFits ? jit.branchIfObject(value) : jit.branchIfNotObject(value);
+    case CaseOfQuestionOfEntry::CellType:
+        return whereItFits ? jit.branchIfType(value, question.cellTypes[asked.index]) : jit.branchIfNotType(value, question.cellTypes[asked.index]);
+    case CaseOfQuestionOfEntry::Shape:
+        if (!question.shapeMayBearMark)
+            return jit.branch32(condition, CCallHelpers::Address(value, offsetOfShapeWord), CCallHelpers::TrustedImm32(static_cast<int32_t>(*question.shapeWord)));
+        jit.load32(CCallHelpers::Address(value, offsetOfShapeWord), scratch);
+        jit.or32(CCallHelpers::TrustedImm32(static_cast<int32_t>(shapeWordIsUnmarked)), scratch);
+        return jit.branch32(condition, scratch, CCallHelpers::TrustedImm32(static_cast<int32_t>(*question.shapeWord)));
+    case CaseOfQuestionOfEntry::Boolean:
+        return whereItFits ? jit.branchIfBoolean(value, scratch) : jit.branchIfNotBoolean(value, scratch);
+    case CaseOfQuestionOfEntry::False:
+        return isWord(jsBoolean(false));
+    case CaseOfQuestionOfEntry::True:
+        return isWord(jsBoolean(true));
+    case CaseOfQuestionOfEntry::Undefined:
+        return isWord(jsUndefined());
+    case CaseOfQuestionOfEntry::Null:
+        return isWord(jsNull());
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+struct WaysOutOfQuestionOfEntry {
+    CCallHelpers::JumpList misfits;
+    CCallHelpers::JumpList isNoCell;
+    CCallHelpers::Label behind;
+};
+
+static void emitQuestionOfEntry(CCallHelpers& jit, const QuestionOfEntry& question, GPRReg scratch, WaysOutOfQuestionOfEntry& ways)
+{
+    CCallHelpers::JumpList fits;
+    Vector<CaseInQuestionOfEntry, 8> inLine = cellsThatFitQuestionOfEntry(question);
+    bool asksForNumbers = question.passingPrimitives & Primitive::Number;
+    if (inLine.isEmpty()) {
+        if (asksForNumbers)
+            inLine.append({ CaseOfQuestionOfEntry::Number });
+        inLine.appendVector(wordsThatFitQuestionOfEntry(question));
+    } else {
+        if (asksForNumbers)
+            fits.append(branchOnCaseOfQuestionOfEntry(jit, question, scratch, { CaseOfQuestionOfEntry::Number }, true));
+        (wordsThatFitQuestionOfEntry(question).isEmpty() ? ways.misfits : ways.isNoCell).append(jit.branchIfNotCell(question.value));
+    }
+    if (inLine.isEmpty())
+        ways.misfits.append(jit.jump());
+    for (size_t index = 0; index < inLine.size(); ++index) {
+        bool isLast = index + 1 == inLine.size();
+        (isLast ? ways.misfits : fits).append(branchOnCaseOfQuestionOfEntry(jit, question, scratch, inLine[index], !isLast));
+    }
+    fits.link(&jit);
+    ways.behind = jit.label();
+}
+
+void emitEntryWrittenByHand(CCallHelpers& jit, const CodeGenerationInputs& inputs, CodeRecords& records, CodeUnit unit, std::span<const QuestionOfEntry> questions, bool frameIsSetUp)
+{
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    GPRReg scratch = valueEntryGPR;
+    Vector<WaysOutOfQuestionOfEntry, 4> ways(questions.size());
+    for (size_t index = 0; index < questions.size(); ++index)
+        emitQuestionOfEntry(jit, questions[index], scratch, ways[index]);
+
+    emitFusedCallEntry(jit, inputs, unit.function);
+    if (frameIsSetUp)
+        jit.emitFunctionEpilogue();
+    records.stubCalls.jumpToFunction(jit, inputs.plan.conventions().genericEntry(unit).target, primaryEntry);
+    if (questions.empty())
+        return;
+
+    uint32_t site = records.sites.addSite({ .origin = Origin { .position = inputs.program.at(unit.function).position, .inlineFrame = 0, .isTailCall = false, .isPartOfConstruction = false } });
+    for (size_t index = 0; index < questions.size(); ++index) {
+        if (!ways[index].isNoCell.empty()) {
+            ways[index].isNoCell.link(&jit);
+            for (CaseInQuestionOfEntry word : wordsThatFitQuestionOfEntry(questions[index]))
+                branchOnCaseOfQuestionOfEntry(jit, questions[index], scratch, word, true).linkTo(ways[index].behind, &jit);
+        }
+        ways[index].misfits.link(&jit);
+        if (!frameIsSetUp)
+            jit.emitFunctionPrologue();
+        emitStraightThrowSite(jit, records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = ProofSource::EntryParameter }, questions[index].value, 0, site);
+        jit.breakpoint();
+    }
 }
 
 CCallHelpers::Jump emitEntryPreambles(CCallHelpers& jit, const CodeGenerationInputs& inputs, CodeUnit unit, CodeRecords& records)

@@ -22,6 +22,8 @@ class VM;
 namespace AOT {
 
 void noteErrorOfCodeLeftOut(JSGlobalObject*, JSObject* error);
+void throwMissOfReach(JSGlobalObject*, String&& sentence, bool mayBeTakenForStandIn);
+void stopIfMissOfReachIsPending(VM&);
 JS_EXPORT_PRIVATE JSValue takeStandInForMemberLeftOut(JSGlobalObject*, const String& nameOfMember, JSObject* answeredBy = nullptr);
 struct FunctionLeftOut {
     ASCIILiteral name;

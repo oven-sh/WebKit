@@ -43,11 +43,6 @@ struct TestedArmOfOwnKeyList {
     size_t order { 0 };
 };
 
-struct EndOfArmOfOwnKeyList {
-    BlockID last;
-    Reference list;
-};
-
 } // anonymous namespace
 
 static std::optional<OwnKeyList> listAskedForInListedOwnKeys(Walker& walker, const BodyValue& call)
@@ -126,12 +121,6 @@ static bool buildListOfObjectInSightInListedOwnKeys(Walker& walker, const CallOf
     return true;
 }
 
-static bool isReturnedAtOnceInListedOwnKeys(const BodyIndex& index, ValueID call)
-{
-    BodyTerminator end = index.terminator(index.blockOf(call));
-    return end.kind() == TerminatorKind::ReturnCall && end.operand(0) == call;
-}
-
 static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnKeyList& asked, ValueID written, Reference source)
 {
     OwnKeyPlan plan = planOwnKeyWalk(walker, written, source);
@@ -151,7 +140,6 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     ValueID call = asked.call.id();
     BodyBlock block = index.block(index.blockOf(call));
     uint32_t place = call.index() - block.firstValue().index();
-    bool isReturnedAtOnce = isReturnedAtOnceInListedOwnKeys(index, call);
 
     walker.noteGuessOpened();
     BlockID asWritten = walker.addBlock(BlockFrequency::Unlikely);
@@ -168,23 +156,9 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
         walker.continueIn(whereTestFails);
     }
 
-    Vector<EndOfArmOfOwnKeyList, mostArmsOfOwnKeyWalk + 1> ends;
-    auto endArm = [&] {
-        if (isReturnedAtOnce && !walker.isUnreachable())
-            walker.endArmWithReturnOf(block.id());
-        if (walker.isUnreachable())
-            return;
-        Reference list = walker.referenceOf(call);
-        if (!list || !list.isRecord())
-            return walker.fail("an arm of a list of own keys has no list"_s);
-        ends.append({ walker.currentBlock(), list });
-    };
-
-    {
-        Walker::ClosedArm closedArm(walker);
-        walker.walkStretch(block.id(), place, place + 1);
-        endArm();
-    }
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1, true);
+    Walker::ArmsThatMeet ends;
+    walker.walkClosedArm(walker.currentBlock(), stretch, ends);
     if (walker.hasFailed())
         return true;
 
@@ -196,33 +170,14 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
         if (!built)
             continue;
         walker.bind(call, built);
-        endArm();
+        walker.listArm(stretch, ends);
         if (walker.hasFailed())
             return true;
     }
 
-    if (ends.isEmpty()) {
-        walker.continueIn(meeting);
+    if (!walker.letArmsMeet(stretch, ends, meeting))
         return true;
-    }
-
-    const Code& code = walker.code();
-    TypeID type = code.at(ends[0].list.id()).type;
-    Vector<Representation, mostArmsOfOwnKeyWalk + 1> forms;
-    for (const EndOfArmOfOwnKeyList& end : ends) {
-        type = joinOf(walker.types(), walker.facts().families(), type, code.at(end.list.id()).type);
-        forms.append(walker.representationOf(end.list));
-    }
-    Reference met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms.span()));
-    for (const EndOfArmOfOwnKeyList& end : ends) {
-        walker.continueIn(end.last);
-        walker.jumpTo(meeting, singleElementSpan(end.list));
-        if (walker.hasFailed())
-            return true;
-    }
-    walker.continueIn(meeting);
-    walker.bind(call, met);
-    if (walker.program().builtins().mayHavePristineInstances(BuiltinClasses::Array))
+    if (Reference met = walker.referenceBoundTo(call); met && walker.program().builtins().mayHavePristineInstances(BuiltinClasses::Array))
         noteListMadeByCaller(walker, met);
     return true;
 }

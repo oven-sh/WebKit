@@ -800,6 +800,7 @@ const entryColumnKeys = [
   "usesFeature",
   "prototypeUsesFeature",
   "runsUnseenCode",
+  "instancesAnswerEveryName",
   "hasUndeclaredMembers",
   "marks",
   "loadsMachineCodeAs",

@@ -1315,7 +1315,7 @@ private:
     using Traits = OptionSet<TraitOfWriteInLinkLayouts>;
 
     uint32_t cellOf(FieldReference reference) const { return m_tables.firstFieldOfLayout[reference.layout.index()] + reference.field; }
-    const LinkType& typeAt(FunctionID function, uint32_t nodeInSummary) const { return m_flow.typeAt(m_flow.nodeOf(function, nodeInSummary)); }
+    LinkType typeAt(FunctionID function, uint32_t nodeInSummary) const { return m_flow.typeAt(m_flow.nodeOf(function, nodeInSummary)); }
     bool hasEscaped(uint32_t layout) const
     {
         if (m_flow.escapedLayoutsAsRead().get(layout) || m_isMadeAtNoNode.quickGet(layout))
@@ -3414,7 +3414,6 @@ void WriterOfLinkLayouts::lookAtSummaries()
     m_saidByEdges.fieldsWrittenLate.ensureSize(m_tables.fields.size());
     m_saidByEdges.layoutsGivenUndefinedByMakers.ensureSize(m_program.layouts.size());
     m_saidByEdges.unitsListedForFields.fill(0, m_tables.fields.size());
-    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
     runLanes(m_flow.loopsOfReading().ofCurrentThread(), {
         [&] {
             for (size_t index : m_flow.reached) {
@@ -3426,7 +3425,6 @@ void WriterOfLinkLayouts::lookAtSummaries()
             }
         },
         [&] {
-            LinkFlow::ViewAtWork viewAtWork(view);
             for (size_t index : m_flow.reached)
                 lookAtEdges(FunctionID(index), m_flow.summaries.at(FunctionID(index)));
         },
@@ -3449,7 +3447,6 @@ void WriterOfLinkLayouts::writeWhatMakesNoType(BitVector&& functionsWhoseCallers
 {
     m_functionsWhoseCallersAreAllKnown = WTF::move(functionsWhoseCallersAreAllKnown);
     noteNamesThatMakersGive();
-    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
     runLanes(m_flow.loopsOfReading().ofCurrentThread(), {
         [&] {
             appendFields();
@@ -3457,7 +3454,6 @@ void WriterOfLinkLayouts::writeWhatMakesNoType(BitVector&& functionsWhoseCallers
             writeRunsBehindTaggedMakers();
         },
         [&] {
-            LinkFlow::ViewAtWork viewAtWork(view);
             gatherAtDeclarationsOfFields();
         },
     });

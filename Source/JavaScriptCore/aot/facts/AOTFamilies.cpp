@@ -40,11 +40,39 @@ static bool comesFirstBySizeAndContentInFamilies(const TypeTable& types, const D
     return compareByContent(types.at(first.layouts).untyped(), types.at(second.layouts).untyped()) < 0;
 }
 
-static Vector<DeclaredSetForFamilies> declaredSetsForFamilies(const Program& program, const ParallelLoops& loops)
+static SetsOfLayoutsWritten setsWrittenOnPlacesForFamilies(const Program& program, const SetsOfLayoutsWritten& writtenInBodies)
+{
+    SetsOfLayoutsWritten sets = writtenInBodies;
+    auto note = [&](const DeclaredType& declared) {
+        if (!declared.written() || declared.isExpected() || holdsOnlyPrimitives(declared.written()))
+            return;
+        if (LayoutSetID set = program.at(declared.written()).unnamedLayouts; set && !holdsOneMember(set))
+            sets.add(set.bits());
+    };
+    for (const Function& function : program.functions) {
+        note(function.thisType);
+        for (const DeclaredType& declared : function.parameters)
+            note(declared);
+        for (const DeclaredType& declared : function.results)
+            note(declared);
+        for (const DeclaredCapture& declared : function.captures)
+            note(declared);
+    }
+    for (const Layout& layout : program.layouts) {
+        for (const Field& field : layout.fields)
+            note(field.declared);
+    }
+    for (const Variable& variable : program.variables)
+        note(variable.declared);
+    return sets;
+}
+
+static Vector<DeclaredSetForFamilies> declaredSetsForFamilies(const Program& program, const SetsOfLayoutsWritten& writtenInBodies, const ParallelLoops& loops)
 {
     const TypeTable& types = program.types;
     unsigned numberOfLayouts = static_cast<unsigned>(program.layouts.size());
     std::span<const TypeID> writtenTypes = types.typesOfWireIndexes();
+    SetsOfLayoutsWritten setsWrittenOnPlaces = setsWrittenOnPlacesForFamilies(program, writtenInBodies);
     Vector<DeclaredSetForFamilies> declaredSets = collectInParallel<DeclaredSetForFamilies>(loops, numberOfLayouts + static_cast<unsigned>(writtenTypes.size()), [&](unsigned index, Vector<DeclaredSetForFamilies>& found) {
         LayoutSetID set;
         SourceOfSetForFamilies source = SourceOfSetForFamilies::WrittenTypeAlone;
@@ -54,6 +82,8 @@ static Vector<DeclaredSetForFamilies> declaredSetsForFamilies(const Program& pro
             source = program.layouts[index].kind == LayoutKind::Instance ? SourceOfSetForFamilies::Class : SourceOfSetForFamilies::OtherLayout;
         } else if (TypeID type = writtenTypes[index - numberOfLayouts]; type && !holdsOnlyPrimitives(type))
             set = types.at(type).unnamedLayouts;
+        if (index >= numberOfLayouts && set && !setsWrittenOnPlaces.contains(set.bits()))
+            return;
         if (set && !holdsOneMember(set))
             found.append(DeclaredSetForFamilies { set, source, types.at(set).size() });
     });
@@ -76,12 +106,12 @@ static size_t placeOfSetInFamilies(LayoutSetID set, size_t numberOfPlaces)
     return (hash ^ (hash >> 15)) & (numberOfPlaces - 1);
 }
 
-Families::Families(Program& program, const ParallelLoops& loops)
+Families::Families(Program& program, const SetsOfLayoutsWritten& writtenInBodies, const ParallelLoops& loops)
 {
     const TypeTable& types = program.types;
     constexpr uint32_t none = UINT32_MAX;
 
-    Vector<DeclaredSetForFamilies> declaredSets = declaredSetsForFamilies(program, loops);
+    Vector<DeclaredSetForFamilies> declaredSets = declaredSetsForFamilies(program, writtenInBodies, loops);
     Vector<DeclaredSetForFamilies> admitted;
     Vector<uint32_t> placesAbove;
     Vector<uint32_t> placesFarAbove;

@@ -190,6 +190,7 @@ void generateNewSlimClosureInFrame(StubAssembler& jit)
 
     initializeSlimClosure(jit, registers);
     jit.store8(TrustedImm32(frameCellState), Address(cell, JSCell::cellStateOffset()));
+    jit.store64(TrustedImm64(0), Address(cell, offsetOfCopyInHeapOfClosureInFrame(offsetOfSlimClosureCaptures, jit.key().count())));
     jit.returnToCaller();
 }
 

@@ -604,6 +604,9 @@ void StateOfLinkReach::escapeAllOf(const LinkType& type)
         escapeConstructorsOf(type.constructorsOf);
         break;
     case LinkType::Functions::Set:
+        for (FunctionID member : m_flow.functionsOfSet(type))
+            escapeFunction(member);
+        break;
     case LinkType::Functions::Lost:
         escapeLostFunctions();
         break;
@@ -1179,7 +1182,8 @@ void StateOfLinkReach::enterLibraryBehind(BuiltinID canonical)
         bool makesValue = std::ranges::any_of(load.usesOfExports, [&](const BuiltinHostUses& uses) {
             return hostUsesPutValueInto(builtins, uses, canonical);
         });
-        if (!mayRunOrHasObjects && !makesValue)
+        bool rowSaysWhereExportsGo = !load.readsEveryExport && std::ranges::all_of(load.usesOfExports, &BuiltinHostUses::areListed);
+        if (!mayRunOrHasObjects && rowSaysWhereExportsGo && !makesValue)
             continue;
         if (!mayHold(load.condition, canonical))
             continue;

@@ -236,7 +236,7 @@ private:
         uint32_t capacity { 0 };
     };
 
-    uint32_t* allocateInAnotherSegment(uint32_t numberOfWords);
+    COLD NEVER_INLINE uint32_t* allocateInAnotherSegment(uint32_t numberOfWords);
 
     Vector<Segment, 4> m_segments;
     uint32_t m_current { 0 };
@@ -384,7 +384,7 @@ private:
         m_words = std::exchange(other.m_words, other.inlineWords());
         m_capacity = std::exchange(other.m_capacity, inlineCapacity);
     }
-    NEVER_INLINE void grow(uint32_t capacity)
+    COLD NEVER_INLINE void grow(uint32_t capacity)
     {
         capacity = std::max(capacity, m_capacity * 2);
         T* grown = static_cast<T*>(fastMalloc(static_cast<size_t>(capacity) * sizeof(T)));
@@ -394,7 +394,7 @@ private:
         m_words = grown;
         m_capacity = capacity;
     }
-    NEVER_INLINE void replaceFromInNewMemory(uint32_t first, std::span<const T> words, T filler)
+    COLD NEVER_INLINE void replaceFromInNewMemory(uint32_t first, std::span<const T> words, T filler)
     {
         uint32_t size = first + static_cast<uint32_t>(words.size());
         uint32_t capacity = std::max(size, m_capacity * 2);

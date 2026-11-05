@@ -103,7 +103,7 @@ bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
         } else if (*isInOrder)
             end = other;
         else if (method == StringRangeMethod::Slice) {
-            walker.bind(call.call.id(), constantForStrings(walker, PrimitiveKnownToFolding::text(walker.program().strings.emptyString())));
+            walker.bind(call.call.id(), walker.constant(PrimitiveKnownToFolding::text(walker.program().strings.emptyString())));
             return true;
         } else
             end = std::exchange(start, other);
@@ -136,7 +136,7 @@ bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
     if (start == zero && end == length)
         piece = string;
     else if (rootForStrings(walker, start) == rootForStrings(walker, end))
-        piece = constantForStrings(walker, PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
+        piece = walker.constant(PrimitiveKnownToFolding::text(walker.program().strings.emptyString()));
     else
         piece = buildPieceOfString(walker, string, start, end, origin);
     if (piece)

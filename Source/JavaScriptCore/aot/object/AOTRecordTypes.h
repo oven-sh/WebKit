@@ -32,8 +32,6 @@ using Typed::ExternalKind;
 using Typed::GeneratorStepCheck;
 using Typed::GeneratorStepStatus;
 using Typed::ImportPhase;
-using Typed::JSONOutcome;
-using Typed::JSONPosition;
 using Typed::LayoutKind;
 using Typed::MethodKind;
 using Typed::ModuleExportKind;

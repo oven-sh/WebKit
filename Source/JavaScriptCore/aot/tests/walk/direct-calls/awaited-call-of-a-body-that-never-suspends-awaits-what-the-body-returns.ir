@@ -1,13 +1,13 @@
 # nothing in the callee suspends, so its body returns and throws like a plain function. In a loop the body is called where the call stands, and what it returns is awaited: no promise is made for a value without then
 # async function same(x) { return x; }  async function run(x, n) { for (let i = 0; i < n; i++) x = await same(x); return x; }  sink(run);
-# RUN: walk f2:CoroutineBody mechanisms=all
+# RUN: walk f2:CoroutineBody mechanisms=all-Inlining
 # CHECK-LABEL: code f2:CoroutineBody
 # CHECK: [[returned]]: {{*}} = CallDirect {{*}}role=CoroutineBody
 # CHECK: = IsNotThenable [[returned]]
-# RUN(AWAITS): walk f2:CoroutineBody mechanisms=all
+# RUN(AWAITS): walk f2:CoroutineBody mechanisms=all-Inlining
 # AWAITS-LABEL: code f2:CoroutineBody
 # AWAITS: = AwaitBySavingFrame
-# RUN(NEVER): walk f2:CoroutineBody mechanisms=all
+# RUN(NEVER): walk f2:CoroutineBody mechanisms=all-Inlining
 # NEVER-NOT: = AwaitCallBySavingFrame
 # RUN(WITHHELD): walk f2:CoroutineBody mechanisms=none
 # WITHHELD-NOT: role=CoroutineBody

@@ -10,7 +10,7 @@ layout L0 kind=Instance name="Unmade" module=m0 constructor=f1 fields=[{key="lab
 layout L1 kind=Instance name="First" module=m0 constructor=f2 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L2 kind=Instance name="Second" module=m0 constructor=f3 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L3 kind=Environment module=m0 fields=[{key=@"0" declared={type=f5 flags=[IsFromCompiler]} flags=[IsImmutable] variableName="fallback"}, {key=@"1" declared={type=anything} variableName="held"}] ownFieldCount=2
-layout L4 module=m0 fields=[{key="other" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L4 module=m0 fields=[{key="other" declared={type=anything} flags=[IsRequired]}, {key="kind" declared={type=undefined|L0|L1|L2|L5|L6|L7}}] ownFieldCount=2
 layout L5 kind=Instance name="Third" module=m0 constructor=f6 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L6 kind=Instance name="Fourth" module=m0 constructor=f7 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L7 kind=Instance name="Fifth" module=m0 constructor=f8 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1

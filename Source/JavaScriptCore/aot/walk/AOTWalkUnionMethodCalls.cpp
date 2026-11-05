@@ -21,15 +21,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr size_t mostArmsInUnionMethodCalls = 4;
 
-namespace {
-
-struct ArmInUnionMethodCalls {
-    BlockID last;
-    Vector<Reference, 4> values;
-};
-
-} // anonymous namespace
-
 constinit const OpcodeSet opcodesThatCallMethodsBehindTestsOfShapeTakes { Opcode::PropGet };
 
 bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& read)
@@ -82,43 +73,24 @@ bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& 
     if (arms.isEmpty())
         return false;
 
-    const Code& code = walker.code();
     uint32_t firstOfStretch = first + begin;
     uint32_t size = end - begin;
     Vector<ValueID, 4> names;
-    Vector<uint32_t, 16> mentions;
-    mentions.fill(0, size);
     for (uint32_t place = 0; place < size; ++place) {
         index.value(ValueID(firstOfStretch + place)).forEachOperand([&](ValueID operand, uint32_t) {
-            if (operand.index() >= firstOfStretch)
-                ++mentions[operand.index() - firstOfStretch];
-            else if (walker.referenceOf(operand) == receiver && !names.contains(operand))
+            if (operand.index() < firstOfStretch && walker.referenceOf(operand) == receiver && !names.contains(operand))
                 names.append(operand);
         });
     }
-    Vector<ValueID, 4> valuesMentionedLater;
-    for (uint32_t place = 0; place < size; ++place) {
-        uint32_t uses = index.useCount(ValueID(firstOfStretch + place));
-        if (uses == BodyIndex::maxCountedUses || uses > mentions[place])
-            valuesMentionedLater.append(ValueID(firstOfStretch + place));
-    }
 
     Origin origin = walker.originOf(read);
-    Vector<ArmInUnionMethodCalls, mostArmsInUnionMethodCalls + 1> built;
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), begin, end);
+    Walker::ArmsThatMeet built;
     auto walkArm = [&] {
         for (uint32_t place = 0; place < size; ++place)
             walker.bind(ValueID(firstOfStretch + place), Reference());
         walker.walkStretch(block.id(), begin, end);
-        if (walker.isUnreachable() || walker.hasFailed())
-            return;
-        ArmInUnionMethodCalls arm { walker.currentBlock(), { } };
-        for (ValueID mentioned : valuesMentionedLater) {
-            Reference value = walker.referenceOf(mentioned);
-            if (!value || !value.isRecord())
-                return walker.fail("an arm behind a test of a receiver has no value for what is read behind it"_s);
-            arm.values.append(value);
-        }
-        built.append(WTF::move(arm));
+        walker.listArm(stretch, built);
     };
     auto narrowedBy = [&](Reference value, Reference test, bool isOnTakenEdge) {
         Draft narrowed(Opcode::Narrowed, origin);
@@ -184,42 +156,8 @@ bool callMethodsBehindTestsOfShapeOfItsOpcodes(Walker& walker, const BodyValue& 
         } else
             walker.endAsUnreachable(origin);
     }
-    if (walker.hasFailed())
-        return true;
-
-    for (uint32_t place = 0; place < size; ++place) {
-        if (built.isEmpty() || !valuesMentionedLater.contains(ValueID(firstOfStretch + place)))
-            walker.bind(ValueID(firstOfStretch + place), Reference());
-    }
-    Vector<size_t, 4> positionsOfParameters;
-    for (size_t position = 0; position < valuesMentionedLater.size() && !built.isEmpty(); ++position) {
-        Reference met = built.first().values[position];
-        bool allAreOne = std::ranges::all_of(built, [&](const ArmInUnionMethodCalls& arm) {
-            return arm.values[position] == met;
-        });
-        if (!allAreOne) {
-            TypeID type = code.at(met.id()).type;
-            Vector<Representation, mostArmsInUnionMethodCalls + 1> forms;
-            for (const ArmInUnionMethodCalls& arm : built) {
-                type = joinOf(types, walker.facts().families(), type, code.at(arm.values[position].id()).type);
-                forms.append(walker.representationOf(arm.values[position]));
-            }
-            met = walker.addParameter(meeting, type, walker.formOfParameter(type, forms.span()));
-            positionsOfParameters.append(position);
-        }
-        walker.bind(valuesMentionedLater[position], met);
-    }
-    Vector<Reference, 4> arguments;
-    for (const ArmInUnionMethodCalls& arm : built) {
-        arguments.shrink(0);
-        for (size_t position : positionsOfParameters)
-            arguments.append(arm.values[position]);
-        walker.continueIn(arm.last);
-        walker.jumpTo(meeting, arguments.span());
-        if (walker.hasFailed())
-            return true;
-    }
-    walker.continueIn(meeting);
+    if (!walker.hasFailed())
+        walker.letArmsMeet(stretch, built, meeting);
     return true;
 }
 

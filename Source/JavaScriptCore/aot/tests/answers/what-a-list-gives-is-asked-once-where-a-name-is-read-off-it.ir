@@ -31,7 +31,7 @@
 # ALL-NEXT: 3
 # ALL-NEXT: true
 # ALL-NEXT: true
-# ALL-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
@@ -39,7 +39,7 @@
 # CALLS-NEXT: 3
 # CALLS-NEXT: true
 # CALLS-NEXT: true
-# CALLS-NEXT: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS-NEXT: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
 # CALLS-NOT: went on
 # CALLS: crashed with
 

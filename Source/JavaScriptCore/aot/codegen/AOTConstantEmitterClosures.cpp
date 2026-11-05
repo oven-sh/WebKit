@@ -60,6 +60,11 @@ static void storeClosureCaptureWords(Output& out, CellPointer closure, std::span
         out.store64(wordsBySlot[slot], out.address(closure.value(), captureWords[slot]));
 }
 
+static void storeThatClosureInFrameHasNoCopyInHeap(Output& out, const AOTHeaps& heaps, CellPointer closure, ptrdiff_t offsetOfCaptures, unsigned numberOfCaptures)
+{
+    out.store64(out.int64Zero, out.address(heaps.frameSlots, closure.value(), offsetOfCopyInHeapOfClosureInFrame(offsetOfCaptures, numberOfCaptures)));
+}
+
 static bool closureHoldsWordForListedCapture(const Program& program, const CallingConventions& conventions, FunctionID function, unsigned index)
 {
     return closureCaptureRepresentationOf(program, conventions, function, index) != Representation::Void;
@@ -212,13 +217,14 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
     }
 
     build().statistics().count(StatisticID::ClosuresInFrames);
-    CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(value, SlimClosure::allocationSize(count));
+    CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(value, sizeOfClosureInFrame(SlimClosure::offsetOfCaptures(), count));
     Vector<LValue, 4> captureWords = captureWordsBySlot(value, request);
     size_t numberOfWordsStored = 0;
     if (generator().takesOpenForm(value, StateOfKnowledge::SlimInFrame)) {
         CodeGenerator::InitializationScope scope(generator());
         emitter<CellAllocationEmitter>().storeHeader(cell, bitOr(loadImmutable64(AOT_INSTANCE_OFFSET(slimClosureHeaders) + request.kind.slimClosureKind() * sizeof(uint64_t)), integer(stateOfFrameCellInHeader)));
         storeField(cell, m_heaps.AOTSlimClosure_word, closureWordOf(request));
+        storeThatClosureInFrameHasNoCopyInHeap(m_out, m_heaps, cell, SlimClosure::offsetOfCaptures(), count);
     } else {
         numberOfWordsStored = std::min<size_t>(count, ClosureRequest::maxSlimClosureCapturesInRegisters);
         Vector<LValue, 6> operands;
@@ -289,7 +295,7 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
         isOnHeap = true;
         break;
     case AllocationStorage::Frame:
-        cell = cellAllocation.allocateInFrame(value, Closure::allocationSize(request.numberOfWords));
+        cell = cellAllocation.allocateInFrame(value, sizeOfClosureInFrame(Closure::offsetOfCaptures(), request.numberOfWords));
         build().statistics().count(StatisticID::ClosuresInFrames);
         break;
     }
@@ -300,6 +306,8 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
             Integer header = loadImmutable64(AOT_INSTANCE_OFFSET(closures.closureHeaders) + structure * sizeof(uint64_t));
             cellAllocation.storeHeader(cell, isOnHeap ? header : bitOr(header, integer(stateOfFrameCellInHeader)));
         }
+        if (!isOnHeap)
+            storeThatClosureInFrameHasNoCopyInHeap(m_out, m_heaps, cell, Closure::offsetOfCaptures(), request.numberOfWords);
         storeField(cell, m_heaps.JSNonArray_butterfly, integer(0));
         storeField(cell, m_heaps.JSCallee_scope, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)));
         storeField(cell, m_heaps.JSFunction_executableOrRareData, loadImmutablePointer(AOT_INSTANCE_OFFSET(closures.executables) + executable * sizeof(JSCell*)));

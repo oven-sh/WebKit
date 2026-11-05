@@ -314,7 +314,7 @@ static bool looksBehindAllocationPayInBirths(const Walker& walker)
     if (walker.isInLoop())
         return true;
     FunctionID function = walker.unit().function;
-    return !walker.facts().runsAtMostOnce(function) && !walker.program().at(function).isModuleBody();
+    return !walker.program().at(function).isModuleBody();
 }
 
 static Reference buildWhatConstructionGivesInBirths(Walker& walker, FunctionID callee, Reference returned, Reference object, Origin origin)

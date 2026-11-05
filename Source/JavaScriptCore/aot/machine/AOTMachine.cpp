@@ -232,7 +232,7 @@ void Procedure::fail(FailureKind kind, const Operation* operation)
         m_failure = Failure { kind, Origin(), UINT32_MAX };
 }
 
-Block* Procedure::addBlock()
+NEVER_INLINE Block* Procedure::addBlock()
 {
     return addBlockInline();
 }

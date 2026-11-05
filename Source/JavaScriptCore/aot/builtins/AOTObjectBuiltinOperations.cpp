@@ -339,23 +339,6 @@ static JSValue listOwnProperties(Instance* instance, JSValue value, OwnPropertyL
     return entries;
 }
 
-static JSArray* listPairsOfFlatEntries(JSGlobalObject* globalObject, JSValue listedFlat)
-{
-    VM& vm = globalObject->vm();
-    JSArray* flatEntries = uncheckedDowncast<JSArray>(listedFlat);
-    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-    unsigned numberOfPairs = flatEntries->length() / 2;
-    JSArray* pairs = JSArray::create(vm, structure, numberOfPairs);
-    for (unsigned index = 0; index < numberOfPairs; ++index) {
-        JSArray* pair = JSArray::create(vm, structure, 2);
-        pair->setIndexQuickly(vm, 0, flatEntries->getDirectIndex(globalObject, index * 2));
-        pair->setIndexQuickly(vm, 1, flatEntries->getDirectIndex(globalObject, index * 2 + 1));
-        pairs->setIndexQuickly(vm, index, pair);
-    }
-    ensureStillAliveHere(flatEntries);
-    return pairs;
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTObjectToStringOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
 {
     JSValue value = JSValue::decode(encodedValue);
@@ -699,11 +682,6 @@ private:
 extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__ownEntriesFlat(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedObject)
 {
     return JSC::JSValue::encode(JSC::AOT::listOwnProperties(JSC::AOT::Instance::of(globalObject), JSC::JSValue::decode(encodedObject), JSC::AOT::OwnPropertyList::FlatEntries));
-}
-
-extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__pairsOfFlatEntries(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedFlatEntries)
-{
-    return JSC::JSValue::encode(JSC::AOT::listPairsOfFlatEntries(globalObject, JSC::JSValue::decode(encodedFlatEntries)));
 }
 
 extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__describeUnlessOrdinary(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSource)

@@ -438,30 +438,12 @@ Reference stringOfTextInStringBuilder(Walker& walker, TextInStringBuilder& text,
     return text.stringOfState;
 }
 
-static void appendPartsBehindFrontInTextBuilders(Walker& walker, TextInStringBuilder& text, Reference name, const BodyValue& join, std::span<const Reference> parts, Origin origin)
+static void appendPartsBehindFrontInTextBuilders(Walker& walker, TextInStringBuilder& text, Reference name, std::span<const Reference> parts, Origin origin)
 {
-    if (text.web.standsUnderHandlers) {
+    if (text.web.standsUnderHandlers)
         appendPartsRolledBackWhereTheyFail(walker, text, name, parts.subspan(1), origin);
-        return;
-    }
-    Vector<ValueID, 8> operands;
-    if (text.web.takesTextOfJSONStringify) {
-        join.forEachOperand([&](ValueID operand, uint32_t) {
-            operands.append(operand);
-        });
-    }
-    if (operands.size() != parts.size()) {
+    else
         appendPartsToStringBuilder(walker, text, name, parts.subspan(1), origin);
-        return;
-    }
-    for (size_t place = 1; place < parts.size() && !walker.isUnreachable(); ++place) {
-        if (!appendJSONTextStraight(walker, text, name, operands[place], origin)) {
-            appendPartsToStringBuilder(walker, text, name, parts.subspan(place, 1), origin);
-            continue;
-        }
-        text.stringOfState = { };
-        text.lengthOfState = { };
-    }
 }
 
 bool appendRowToTextInStringBuilder(Walker& walker, const BodyValue& join, Vector<Reference, 8>& parts)
@@ -488,7 +470,7 @@ bool appendRowToTextInStringBuilder(Walker& walker, const BodyValue& join, Vecto
     if (!name)
         return false;
 
-    appendPartsBehindFrontInTextBuilders(walker, *grown, name, join, parts.span(), origin);
+    appendPartsBehindFrontInTextBuilders(walker, *grown, name, parts.span(), origin);
     if (!walker.isUnreachable())
         walker.bind(join.id(), name);
     return true;

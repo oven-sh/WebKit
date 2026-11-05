@@ -22,7 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static Reference booleanForStringComparisons(Walker& walker, bool value)
 {
-    return constantForStrings(walker, PrimitiveKnownToFolding::boolean(value));
+    return walker.constant(PrimitiveKnownToFolding::boolean(value));
 }
 
 static bool asksForGreaterOnLeftForStringComparisons(Opcode relation)

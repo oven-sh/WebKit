@@ -40,7 +40,7 @@ static bool comesAgainForStringJoins(const Walker& walker)
     if (walker.isInLoop())
         return true;
     FunctionID function = walker.unit().function;
-    return !walker.facts().runsAtMostOnce(function) && !walker.program().at(function).isModuleBody();
+    return !walker.program().at(function).isModuleBody();
 }
 
 static ValueID findCallThatAloneTakesJoinForStringJoins(const Walker& walker, const BodyIndex& index, const BodyBlock& block, ValueID join, ValueID& taken)
@@ -131,7 +131,7 @@ static std::optional<TestAgainstJoinOfTexts> findTestAgainstJoinForStringJoins(W
 
 Reference buildTestOfCodeUnitBesidePartOfJoin(Walker& walker, Reference string, Reference lengthOfPart, Reference holdsOfPart, char16_t unit, bool testsStart, Origin origin)
 {
-    Reference no = constantForStrings(walker, PrimitiveKnownToFolding::boolean(false));
+    Reference no = walker.constant(PrimitiveKnownToFolding::boolean(false));
     std::array<Reference, 1> answer;
     bool isBuilt = buildArmsForStrings(walker, holdsOfPart, BlockFrequency::Normal, [&](std::span<Reference> results) {
         Reference length = buildLengthOfString(walker, string, origin);

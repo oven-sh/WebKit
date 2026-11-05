@@ -84,7 +84,10 @@ void generateInstanceOf(StubAssembler& jit)
 
     const GPRReg method = jit.allocateScratch(StubRegister::T10);
     const GPRReg payload = jit.allocateScratch(slotPayloadRegister);
+    const GPRReg place = jit.allocateScratch(StubRegister::A2);
     const HashedProbeRegisters probe { current, method, jit.allocateScratch(StubRegister::T14), next, payload, payload };
+    const CachedSlot valueSlot(SlotForm::Slot, Slot::Kind::Value, probe.header, probe.payload);
+    const BaseIndex headerAtPlace(instanceGPR, place, CCallHelpers::TimesEight, AOT_INSTANCE_OFFSET(propertyCaches.headersOfPrototypeSlotsOfOrdinaryConstructors));
     JumpList miss;
 
     struct SlotRead {
@@ -92,12 +95,17 @@ void generateInstanceOf(StubAssembler& jit)
         Jump isNotValue;
         Label isDone;
     };
-    auto readFromConstructor = [&](GPRReg result) {
+    auto readFromConstructor = [&](GPRReg result, bool remembersOwnSlot) {
         SlotRead read { result, { }, { } };
         jit.load32(Address(constructor, JSCell::structureIDOffset()), probe.structureID);
         findHashedSlot(jit, SlotAccess::Read, probe, miss);
         read.isNotValue = branchIfSlotKindDiffers(jit, { SlotForm::Slot, probe.header, probe.payload }, Slot::Kind::Value, probe.uid);
-        loadValueBySlot(jit, CachedSlot(SlotForm::Slot, Slot::Kind::Value, probe.header, probe.payload), constructor, probe.structureID, probe.entry, result);
+        loadValueBySlot(jit, valueSlot, constructor, probe.structureID, probe.entry, result);
+        if (remembersOwnSlot) {
+            Jump isInherited = valueSlot.branchUnlessFlag(jit, Slot::isOwn);
+            jit.store64(probe.header, headerAtPlace);
+            isInherited.link(&jit);
+        }
         read.isDone = jit.label();
         return read;
     };
@@ -114,19 +122,37 @@ void generateInstanceOf(StubAssembler& jit)
     };
 
     miss.append(jit.branchIfNotCell(constructor));
-    miss.append(jit.branchIfNotObject(constructor));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.hasInstanceUID)), probe.uid);
-    SlotRead methodRead = readFromConstructor(method);
-    Jump isNotDefaultMethod = jit.branchPtr(CCallHelpers::NotEqual, method, Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.defaultHasInstanceFunction)));
-    miss.append(jit.branchTest8(CCallHelpers::Zero, Address(constructor, JSCell::typeInfoFlagsOffset()), TrustedImm32(ImplementsDefaultHasInstance)));
-
+    jit.load32(Address(constructor, JSCell::structureIDOffset()), probe.structureID);
+    jit.mul32(TrustedImm32(static_cast<int32_t>(HashedSlot::structureMultiplier)), probe.structureID, place);
+    jit.urshift32(TrustedImm32(32 - PlaceOfOrdinaryConstructor::numberOfPlacesLog2), place);
+    jit.load64(headerAtPlace, probe.header);
+    Jump isNotRemembered = jit.branch32(CCallHelpers::NotEqual, probe.header, probe.structureID);
     notInstance.append(jit.branchIfNotCell(value));
     notInstance.append(jit.branchIfNotObject(value));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.prototypeUID)), probe.uid);
-    SlotRead prototypeRead = readFromConstructor(prototype);
+    loadOwnValueBySlot(jit, valueSlot, constructor, probe.structureID, probe.header, prototype);
+    Label hasReadPrototype = jit.label();
     slowCases.append(jit.branchIfNotCell(prototype));
     slowCases.append(jit.branchIfNotObject(prototype));
     followPrototypeChainAndReturn();
+
+    isNotRemembered.link(&jit);
+    miss.append(jit.branchIfNotObject(constructor));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.hasInstanceUID)), probe.uid);
+    SlotRead methodRead = readFromConstructor(method, false);
+    Jump isNotDefaultMethod = jit.branchPtr(CCallHelpers::NotEqual, method, Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.defaultHasInstanceFunction)));
+    miss.append(jit.branchTest8(CCallHelpers::Zero, Address(constructor, JSCell::typeInfoFlagsOffset()), TrustedImm32(ImplementsDefaultHasInstance)));
+    Jump methodCannotChange = jit.branchPtr(CCallHelpers::Equal, probe.payload, Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.holderOfDefaultHasInstanceFunction)));
+    jit.move(TrustedImm32(PlaceOfOrdinaryConstructor::placeThatIsNeverRead), place);
+    methodCannotChange.link(&jit);
+
+    JumpList isNoObject;
+    isNoObject.append(jit.branchIfNotCell(value));
+    isNoObject.append(jit.branchIfNotObject(value));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.prototypeUID)), probe.uid);
+    SlotRead prototypeRead = readFromConstructor(prototype, true);
+    jit.jump().linkTo(hasReadPrototype, &jit);
+    isNoObject.link(&jit);
+    returnBoolean(false);
 
     isNotDefaultMethod.link(&jit);
     const GPRReg argument = jit.reuseScratch(StubRegister::A0);

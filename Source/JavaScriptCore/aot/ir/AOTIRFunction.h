@@ -32,7 +32,6 @@ struct Function : FunctionRecord {
     ConstructorForm constructorForm() const;
     bool takesThisFromConstruction() const { return kind == FunctionKind::Plain && constructorForm() == ConstructorForm::Base; }
 
-    bool mayBeCalledByHost() const { return !has(FunctionCapabilities::IsNeverCalledByHost); }
     bool isHiddenInStackTraces() const { return has(FunctionCapabilities::IsHiddenInStackTraces) || has(FunctionFlags::IsHiddenInStackTraces); }
 
     Wire::SourceLocation locationOf(const BodyValue&) const;

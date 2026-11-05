@@ -644,6 +644,12 @@ const BuiltinUnseenCode* BuiltinTable::unseenCodeOf(BuiltinID id) const
     return findRecord(m_data.attachments.unseenCode, &BuiltinUnseenCode::builtin, id);
 }
 
+const BuiltinCondition* BuiltinTable::conditionOnInstancesThatAnswerEveryName(BuiltinID constructor) const
+{
+    const BuiltinUnseenCode* row = constructor ? findRecord(m_data.attachments.instancesThatAnswerEveryName, &BuiltinUnseenCode::builtin, constructor) : nullptr;
+    return row ? row->condition : nullptr;
+}
+
 bool BuiltinTable::letsInUnseenCodeWhenCalled(BuiltinID id) const
 {
     constexpr OptionSet<BuiltinFlag> flagsOfEvents { BuiltinFlag::EvaluatesText, BuiltinFlag::LoadsModuleByName, BuiltinFlag::RunsUnseenCode };

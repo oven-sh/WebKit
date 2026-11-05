@@ -1,6 +1,0 @@
-# the same program with the calls of built-ins withheld: no layout has a serializer, so an object that may lie in itself is not written whole, and nobody begins a text that he cannot end
-# RUN: json-plan mechanisms=-BuiltinCalls
-# CHECK: object L0
-# RUN(NEVER): json-plan mechanisms=-BuiltinCalls
-# NEVER-NOT: whole
-# PROGRAM-OF: object-that-lies-in-itself-is-written-by-its-serializer.ir

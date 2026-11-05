@@ -21,6 +21,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
+bool canWaitForStepOfAsyncGenerator(Walker&);
+Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Origin);
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
 extern const OpcodeSet opcodesThatAnswerFromStepWrittenByHandTakes;
@@ -52,7 +54,8 @@ static Reference buildResultAtInStepsByHand(Walker& walker, Reference step, Step
     return buildInStepsByHand(walker, WTF::move(read));
 }
 
-static Reference buildTestOfStatusInStepsByHand(Walker& walker, Reference status, GeneratorStepStatus asked, Origin origin)
+template<typename Status>
+static Reference buildTestOfStatusInStepsByHand(Walker& walker, Reference status, Status asked, Origin origin)
 {
     if (walker.isUnreachable())
         return { };
@@ -148,9 +151,13 @@ static bool mayHandOnInStepsByHand(Walker& walker, const BodyValue& operation, T
     return !widest || walker.types().isSubset(handedOn, widest);
 }
 
-static const BitVector& findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(Walker& walker)
+enum class ResultOfNextInStepsByHand : uint8_t { IsWhatCallGives, IsWhatAwaitOfCallGives };
+
+static const BitVector& findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(Walker& walker, ResultOfNextInStepsByHand result = ResultOfNextInStepsByHand::IsWhatCallGives)
 {
-    auto added = walker.loopsOverGenerators().callsOfNextWhoseResultIsOnlyRead.add(walker.currentFunction().index(), BitVector());
+    bool isAwaited = result == ResultOfNextInStepsByHand::IsWhatAwaitOfCallGives;
+    auto& found = isAwaited ? walker.loopsOverGenerators().awaitedCallsOfNextWhoseResultIsOnlyRead : walker.loopsOverGenerators().callsOfNextWhoseResultIsOnlyRead;
+    auto added = found.add(walker.currentFunction().index(), BitVector());
     BitVector& onlyRead = added.iterator->value;
     if (!added.isNewEntry)
         return onlyRead;
@@ -178,7 +185,11 @@ static const BitVector& findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(Walker
             Opcode opcode = user.opcode();
             if (opcodesThatStateTypes.contains(opcode))
                 callsBehindNames[user.id().index()] = callBehind(user.operand(0));
-            else if (opcode == Opcode::TypeTest && walker.types().isSubset(user.as<Opcode::TypeTest>().testedType(), TypeTable::nullish)) {
+            else if (ValueID awaited = isAwaited && opcode == Opcode::Await ? index.valueBehindCasts(user.valueOperand()) : ValueID(); awaited && callBehind(awaited) == awaited.index()) {
+                callsBehindNames[user.id().index()] = awaited.index();
+                for (ValueID held : user.heldOperands())
+                    refuse(held);
+            } else if (opcode == Opcode::TypeTest && walker.types().isSubset(user.as<Opcode::TypeTest>().testedType(), TypeTable::nullish)) {
             } else if (opcode == Opcode::PropGet && !user.isFreeName() && (user.key() == done || user.key() == value)) {
             } else {
                 user.forEachOperand([&](ValueID operand, uint32_t) {
@@ -349,6 +360,125 @@ bool buildStepWrittenByHand(Walker& walker, const BodyValue& call)
         return false;
     Reference sent = call.argumentsOperands().empty() ? undefinedOfCoroutineCalls(walker) : walker.referenceOf(call.argumentsOperands()[0]);
     return sent && buildStepInStepsByHand(walker, call, generator, sent);
+}
+
+static Reference goOnWhereTestPassesInStepsByHand(Walker& walker, Reference value, TypeID tested, BlockID otherwise, bool& someWayTurnsAway, Origin origin)
+{
+    if (walker.isUnreachable() || walker.types().isSubset(walker.typeOf(value), tested))
+        return value;
+    Draft test = draftOfCoroutineCalls(walker, Opcode::TypeTest, origin);
+    test.setValueOperand(value);
+    test.setTestedType(tested);
+    Reference passes = walker.build(WTF::move(test));
+    if (!passes)
+        return { };
+    BlockID passed = walker.addBlock();
+    walker.branch(passes, passed, otherwise);
+    someWayTurnsAway = true;
+    walker.continueIn(passed);
+    Draft proof(Opcode::Narrowed, origin);
+    proof.setValueOperand(value);
+    proof.setTestOperand(passes);
+    proof.setOperandIndex(OperandIndex::TypeTest::value);
+    proof.setIsOnTakenEdge(true);
+    return buildInStepsByHand(walker, WTF::move(proof));
+}
+
+static Reference buildAwaitedStepInStepsByHand(Walker& walker, const BodyValue& call, Reference callee, Reference receiver, Reference sent, std::span<const Reference> held, bool resultIsOnlyRead, Origin originOfAwait)
+{
+    TypeArena& types = walker.types();
+    BuiltinID next = walker.program().builtins().canonicalID(Builtins::AsyncGeneratorPrototypeNext);
+    Draft written = walker.draftOf(call);
+    Origin origin = written.origin();
+    origin.isTailCall = false;
+
+    BlockID byCall = walker.addBlock(BlockFrequency::Rare);
+    BlockID meeting = walker.addBlock();
+    Reference whole;
+    for (uint32_t parameter = 0; parameter < numberOfParametersOfMeetingInStepsByHand; ++parameter) {
+        Reference added = walker.addParameter(meeting, { }, Representation::JSValue);
+        if (parameter == Whole)
+            whole = added;
+    }
+    if (resultIsOnlyRead)
+        walker.code().markMeetingOfStepWrittenByHand(meeting);
+    Reference nothing = undefinedOfCoroutineCalls(walker);
+    bool someWayArrives = false;
+    bool someWayTurnsAway = false;
+
+    goOnWhereTestPassesInStepsByHand(walker, callee, types.forBuiltin(next), byCall, someWayTurnsAway, origin);
+    Reference generator = goOnWhereTestPassesInStepsByHand(walker, receiver, types.builtinClass(BuiltinClasses::AsyncGenerator), byCall, someWayTurnsAway, origin);
+    walker.noteGuessOpened();
+    Reference stepped = walker.isUnreachable() ? Reference() : buildStepOfAsyncGenerator(walker, generator, sent, held, next, origin);
+    Reference value = buildResultAtInStepsByHand(walker, stepped, StepGeneratorResult::Value, origin);
+    Reference status = buildResultAtInStepsByHand(walker, stepped, StepGeneratorResult::Status, origin);
+    if (Reference isAnsweredByObject = buildTestOfStatusInStepsByHand(walker, status, AsyncGeneratorStepStatus::Result, origin)) {
+        BlockID ofEngine = walker.addBlock(BlockFrequency::Rare);
+        BlockID ofStep = walker.addBlock();
+        walker.branch(isAnsweredByObject, ofEngine, ofStep);
+        walker.continueIn(ofEngine);
+        jumpToInStepsByHand(walker, meeting, std::array { value, value, booleanInStepsByHand(walker, true, origin), nothing, nothing }, someWayArrives);
+        walker.continueIn(ofStep);
+        Reference isCompleted = buildTestOfStatusInStepsByHand(walker, status, AsyncGeneratorStepStatus::Completed, origin);
+        Reference made = buildResultObjectInStepsByHand(walker, value, isCompleted, origin);
+        jumpToInStepsByHand(walker, meeting, std::array { made, nothing, booleanInStepsByHand(walker, false, origin), value, isCompleted }, someWayArrives);
+    }
+
+    if (someWayTurnsAway && !walker.hasFailed()) {
+        walker.continueIn(byCall);
+        written.setOrigin(origin);
+        written.resultIsReturnedAtOnce = false;
+        written.inputValueGiven = { };
+        walker.chooseConservativeFields(written);
+        Reference promised = walker.build(WTF::move(written));
+        Reference answer = promised ? buildAwaitBySavingFrame(walker, promised, held, originOfAwait) : Reference();
+        if (answer)
+            jumpToInStepsByHand(walker, meeting, std::array { answer, answer, booleanInStepsByHand(walker, true, origin), nothing, nothing }, someWayArrives);
+    }
+    if (!someWayArrives || walker.hasFailed())
+        return { };
+    walker.continueIn(meeting);
+    walker.loopsOverGenerators().hasStepsWrittenByHand = true;
+    return whole;
+}
+
+bool buildAwaitedStepWrittenByHand(Walker& walker, const BodyValue& call)
+{
+    if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses())
+        return false;
+    const Program& program = walker.program();
+    if (!call.thisValueOperand() || call.argumentsOperands().size() > 1 || call.calleeKey() != program.keyOf(BuiltinNames::next) || !canWaitForStepOfAsyncGenerator(walker))
+        return false;
+
+    Reference receiver = walker.referenceOf(call.thisValueOperand());
+    Reference callee = walker.referenceOf(call.calleeOperand());
+    if (!receiver || !receiver.isValue() || !callee)
+        return false;
+    TypeArena& types = walker.types();
+    TypeID generators = types.builtinClass(BuiltinClasses::AsyncGenerator);
+    TypeID typeOfReceiver = walker.typeOf(receiver);
+    if (!types.at(typeOfReceiver).isObject() || !types.isSubset(typeOfReceiver, generators)) {
+        TypeID expected = findExpectation(walker, call.thisValueOperand()).type;
+        if (!expected || !types.isSubset(types.withoutNullish(expected), generators))
+            return false;
+    }
+
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(call.id()));
+    std::optional<WaitOfCallInCoroutine> wait = findWaitOfCallInCoroutine(walker, index, block, call.id());
+    if (!wait || !mayHandOnInStepsByHand(walker, index.value(wait->await), TypeTable::anything))
+        return false;
+    Reference sent = call.argumentsOperands().empty() ? undefinedOfCoroutineCalls(walker) : walker.referenceOf(call.argumentsOperands()[0]);
+    if (!sent)
+        return false;
+
+    Vector<Reference, 4> held;
+    if (!walkUpToAwaitOfCall(walker, index, block, *wait, held))
+        return true;
+    bool resultIsOnlyRead = findCallsOfNextWhoseResultIsOnlyReadInStepsByHand(walker, ResultOfNextInStepsByHand::IsWhatAwaitOfCallGives).quickGet(call.id().index());
+    if (Reference whole = buildAwaitedStepInStepsByHand(walker, call, callee, receiver, sent, held.span(), resultIsOnlyRead, walker.originOf(index.value(wait->await))))
+        finishWaitOfCall(walker, block, *wait, whole);
+    return true;
 }
 
 } } } // namespace JSC::AOT::Typed

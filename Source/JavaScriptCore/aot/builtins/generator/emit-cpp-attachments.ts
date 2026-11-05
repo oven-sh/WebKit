@@ -119,8 +119,8 @@ function formatFeatureUse(context: AttachmentContext, builtin: ModelBuiltin, use
   ]);
 }
 
-function formatUnseenCode(context: AttachmentContext, builtin: ModelBuiltin): string[] {
-  const condition = formatCondition(context, builtin.attachments.unseenCodeCondition);
+function formatConditionOn(context: AttachmentContext, builtin: ModelBuiltin, written: ModelCondition | null): string[] {
+  const condition = formatCondition(context, written);
   if (condition === null) return [];
   return [
     formatAggregate([
@@ -366,7 +366,14 @@ export function emitCppAttachments(model: TableModel, features: readonly TableFe
     emitTableArray(
       "BuiltinUnseenCode",
       "UnseenCode",
-      builtins.flatMap(builtin => formatUnseenCode(context, builtin)),
+      builtins.flatMap(builtin => formatConditionOn(context, builtin, builtin.attachments.unseenCodeCondition)),
+    ),
+    emitTableArray(
+      "BuiltinUnseenCode",
+      "InstancesThatAnswerEveryName",
+      builtins.flatMap(builtin =>
+        formatConditionOn(context, builtin, builtin.attachments.conditionOnInstancesThatAnswerEveryName),
+      ),
     ),
     emitTableArray(
       "BuiltinModuleLoad",

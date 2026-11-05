@@ -67,9 +67,7 @@ void writeCoroutinesOfLink(const Program& program, const LinkFlow& flow, TypeAre
 
     bool writesWhatIsExpected = flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls;
 
-    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
     Vector<uint32_t> coroutines = findIndicesInParallel(flow.loopsOfReading(), static_cast<unsigned>(program.functions.size()), [&](unsigned index) {
-        LinkFlow::ViewAtWork viewAtWork(view);
         FunctionID id(index);
         const Function& function = program.at(id);
         if (!function.isCoroutine() || !function.hasBody() || function.isModuleBody() || function.results.size() != 1 || !flow.reached.get(index))

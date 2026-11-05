@@ -129,6 +129,7 @@ private:
     void verifyRecords();
     void verifyNarrowedValues();
     void verifyFrameCells();
+    void verifyWordsInPlaceOfCaptures();
 
     template<typename Entry> void verifyWords(BlockID, ValueID, const Instruction&, Entry);
     void verifyBlock(BlockID);
@@ -233,6 +234,7 @@ String CodeVerifier::run()
         &CodeVerifier::verifyRecords,
         &CodeVerifier::verifyNarrowedValues,
         &CodeVerifier::verifyFrameCells,
+        &CodeVerifier::verifyWordsInPlaceOfCaptures,
     };
     return run(stages);
 }
@@ -1176,6 +1178,14 @@ ValueID CodeVerifier::cellBeforeForwarding(ValueID id) const
     return id;
 }
 
+static constexpr OperandUses usesThatTakeNoFramePointerInCodeVerifier {
+    OperandUse::Inspects, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::ReadsContents, OperandUse::WritesContents,
+    OperandUse::RetainsContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::DefinesName,
+    OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode,
+    OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+};
+static_assert(everyOperandUseIsInExactlyOneOf({ OperandUse::Retains, OperandUse::Returns, usesThatTakeNoFramePointerInCodeVerifier }));
+
 bool CodeVerifier::handsBackPointerIntoFrame(const Operation& operation) const
 {
     if (handsOperandsToCallee(operation.opcode) || (hasRegister(operation.representation) && !holdsCells(operation.representation)))
@@ -1540,6 +1550,133 @@ void CodeVerifier::verifyFrameCells()
         });
         if (hasFailed())
             return;
+    }
+}
+
+// No operand leads from the store of a word in the place of captures to its readers, so no other rule holds them behind it.
+// This rule checks what makes a reader reachable, in the body of the function that fills the word: a closure made there, or a call written there that hands the value over.
+// It does not check a reader, or what a copy of a reader makes. Those may stand behind a test of the closure (`if (read !== null) read()`), which goes with the way that stored, and the code does not say so.
+// A scope that lists values where it is made is checked at its closures, by its first word. Calls are not: the word in the place of the scope is the same whether the call is written or made from a call of a closure.
+// It goes by ways, not by one store in front of everything: ways that were walked apart each store for themselves and may meet again.
+// The compile unit verifies its code in front of the sweep alone, so nothing checks that the sweep and what follows it leave the stores where they stand.
+void CodeVerifier::verifyWordsInPlaceOfCaptures()
+{
+    if (!m_plan || !m_plan->promotedEnvironments().isMaker(m_code.function()))
+        return;
+    const PromotedEnvironments& promoted = m_plan->promotedEnvironments();
+    auto isFilledByThisFunction = [&](VariableID word) {
+        const PromotedVariable* variable = promoted.find(word);
+        return variable && variable->maker == m_code.function();
+    };
+    auto wordFilledBy = [&](const Operation& operation) {
+        VariableID word;
+        if (operation.opcode == Opcode::PutModuleVariable)
+            word = operation.variable();
+        else if (operation.opcode == Opcode::PutEnvironmentField)
+            word = promoted.variableOf(operation.layout(), 0);
+        return word && isFilledByThisFunction(word) ? word : VariableID();
+    };
+
+    Vector<VariableID, 8> words;
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            if (VariableID word = wordFilledBy(m_code.at(id)))
+                words.append(word);
+        }
+    }
+    std::ranges::sort(words);
+    words.shrink(std::ranges::unique(words).begin() - words.begin());
+    auto numberOf = [&](VariableID variable) -> std::optional<size_t> {
+        auto found = std::ranges::lower_bound(words, variable);
+        if (found == words.end() || *found != variable)
+            return std::nullopt;
+        return static_cast<size_t>(found - words.begin());
+    };
+
+    uint32_t numberOfNodes = m_numbers.size();
+    Vector<BitVector> filledIn;
+    Vector<BitVector> filledBehind;
+    filledIn.fill(BitVector(words.size()), numberOfNodes);
+    filledBehind.fill(BitVector(words.size()), numberOfNodes);
+    for (BlockID block : m_reachedBlocks) {
+        for (ValueID id : operationsOf(block)) {
+            if (VariableID word = wordFilledBy(m_code.at(id)))
+                filledIn[nodeThatDefines(id)].quickSet(*numberOf(word));
+        }
+    }
+
+    BitVector isJudged(numberOfNodes);
+    isJudged.quickSet(root());
+    auto filledInFrontOf = [&](uint32_t node) {
+        BitVector filled(words.size());
+        bool hasWay = false;
+        auto meet = [&](uint32_t predecessor) {
+            if (!isJudged.quickGet(predecessor))
+                return;
+            if (std::exchange(hasWay, true))
+                filled.filter(filledBehind[predecessor]);
+            else
+                filled = filledBehind[predecessor];
+        };
+        BlockID block(node / 2);
+        if (isTail(node))
+            meet(headOf(block));
+        else {
+            if (isWhereWalkBegan(block))
+                meet(root());
+            for (EdgeID edge : incomingEdgesOf(block))
+                meet(nodeThatEdgeLeaves(edge));
+        }
+        return filled;
+    };
+    for (bool hasChanged = true; hasChanged;) {
+        hasChanged = false;
+        for (uint32_t node : m_nodesInOrder.span().subspan(1)) {
+            BitVector filled = filledInFrontOf(node);
+            filled.merge(filledIn[node]);
+            if (isJudged.quickSet(node) && filled == filledBehind[node])
+                continue;
+            filledBehind[node] = WTF::move(filled);
+            hasChanged = true;
+        }
+    }
+
+    for (BlockID block : m_reachedBlocks) {
+        BitVector filled = filledInFrontOf(headOf(block));
+        for (ValueID id : operationsOf(block)) {
+            const Operation& operation = m_code.at(id);
+            if (VariableID word = wordFilledBy(operation)) {
+                filled.quickSet(*numberOf(word));
+                continue;
+            }
+            bool makesClosure = operation.opcode == Opcode::NewClosure;
+            if ((!makesClosure && operation.opcode != Opcode::CallDirect) || operation.origin().inlineFrame)
+                continue;
+            auto mustBeFilled = [&](VariableID word) {
+                if (!isFilledByThisFunction(word))
+                    return;
+                std::optional<size_t> number = numberOf(word);
+                if (!number || !filled.quickGet(*number))
+                    fail(block, id, "a word in the place of captures is not filled on every way to whoever may read it"_s, { }, InternalErrorKind::UseNotDominated);
+            };
+            std::span<const ValueID> handedOver = operation.variadicOperands();
+            for (const RemovedCapture& removed : promoted.removedCapturesOf(operation.function())) {
+                if (removed.variable) {
+                    ValueID handed = removed.capture < handedOver.size() ? handedOver[removed.capture] : ValueID();
+                    if (makesClosure || (handed && m_code.at(handed).opcode != Opcode::Unspecified))
+                        mustBeFilled(removed.variable);
+                    continue;
+                }
+                LayoutID scope = makesClosure ? m_program.at(m_program.provenTypeOf(m_program.at(removed.function).captures[removed.capture])).environment : LayoutID();
+                bool listsValuesWhereItIsMade = scope && std::ranges::any_of(m_program.at(scope).fields, [](const Field& field) {
+                    return field.flags.contains(FieldFlags::IsRequired);
+                });
+                if (listsValuesWhereItIsMade)
+                    mustBeFilled(promoted.variableOf(scope, 0));
+            }
+            if (hasFailed())
+                return;
+        }
     }
 }
 

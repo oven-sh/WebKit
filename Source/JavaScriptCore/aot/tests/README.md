@@ -226,7 +226,9 @@ lines of the functions it uses. The line `# LIBRARY: own`, written exactly like 
 The stand-in answers for the statements of the shell too, wherever the build has compiled it: for the built-ins that the program can come by (`link/library-*.ir`),
 which is all of them once unseen code can run. So a test whose
 program or statements run such a built-in and bring no text for it (`map`, `Array.from`, `apply`, a `for of` that goes by the protocol, a generator) has the
-line as well: the engine's own functions then run.
+line as well: the engine's own functions then run. That is the engine's default. A front end that holds the library says `exclude=LibraryText`, as Bun's does in every
+build but one with `--no-builtin-modules`: the image then has the flag `IsBuiltWithLibrary`, and the run time refuses by name whatever of the engine's functions in JavaScript
+the image lacks, as it refuses the host's (`answers/text-of-an-engine-built-in-that-the-image-lacks-is-refused-where-the-build-held-the-library.ir`).
 
 **`JSC-OPTIONS`** sets JSC options in the process that runs the commands, and only while the file runs. The shell of `run-in-shell` is
 another process and takes its own options.
@@ -608,8 +610,8 @@ those words of operand 0 are others behind it. This is a bug in Bun.`
   `answers/false-rows-of-effects-are-stopped-by-name.ir`.
 - **Its twin at build time**, in every build that verifies (`findOperationThatLinkHasNotCounted()`, `walk/AOTCompileUnit.cpp`): an operation of a `Body` whose own row is exact, that is one which calls
   no unknown code, and which writes an observable heap, throws by rule or collects, in a function of which Link's effects say that it does not, stops the verifier: `f2 v12 (PutSlot) writes ObjectFields,
-  and Link's effects of the function say that it does not`. In every block against the effects of the function, in blocks that are not rare also against its effects given the arguments (but the text of a closure
-  that a called parameter holds, where the walk has copied it in, and what is copied below it: the caller adds the effects of the closure that it hands over). Only functions whose callers take Link's effects are judged: of the others
+  and Link's effects of the function say that it does not`. In every block against the effects of the function, in blocks that are not rare also against its effects given the arguments (but the closure
+  that a called parameter holds: its text where the walk has copied it in, what is copied below it, and a direct call of it: the caller adds the effects of the closure that it hands over). Only functions whose callers take Link's effects are judged: of the others
   `effectsOfDirectCall()` says any code (`unitDoesMoreThanBodyForKnownEffects()`). What fills an
   allocation of the unit is no write, as for Link. A closed operation's row is an upper bound and judges nothing: that is the net's. Nor is what an operator may throw judged: Link
   (`addEffectsOfOperatorsLeftApart()`) and the walk (`effectsOfOperatorWithin()`) each have a rule for it over the same types, and the walk's is the wider: `undefined|string < "b"`. A hint (`family Hint`: `EndLifeOfCell`

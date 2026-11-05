@@ -351,19 +351,11 @@ Liveness* scanBackward(Procedure&);
 class BackwardScan {
     WTF_MAKE_NONCOPYABLE(BackwardScan);
 public:
-    enum class KindOfBlock : uint8_t {
-        Plain,
-        Rare,
-        InLoop,
-        RareInLoop,
-        Any,
-    };
-
     BackwardScan(Procedure&, Liveness&);
     void run();
 
     void scanBlock(Block*);
-    template<KindOfBlock> void scanBlockOfKind(Block*, const BlockPlace&);
+
     void addUse(Operation* value, Position, Reg hint = Reg());
     void define(Operation*, Position);
     void noteCall(const PatchOperation*, Position late, const Block*);

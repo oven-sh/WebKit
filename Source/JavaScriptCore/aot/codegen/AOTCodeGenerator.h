@@ -182,6 +182,7 @@ public:
     void passHandlerArguments(const Edge& handler);
 
     void generateBranchCondition(const TerminatorContext&, ValueID condition, BranchTargets);
+    ValueID readLeftToBranchOnItsTruth(BlockID, std::span<const ValueID> values, ValueID test);
     struct WaysOfTruth {
         BranchTargets targets;
         bool areOfObjectAndNothing { false };
@@ -192,7 +193,7 @@ public:
     template<typename T> T& emitter();
 
     Subject subjectOf(const OperationContext&) const;
-    void fail(const OperationContext&, InternalErrorKind, const String& detail = { });
+    COLD NEVER_INLINE void fail(const OperationContext&, InternalErrorKind, const String& detail = { });
     void failAtLimit(const OperationContext&, LimitID, uint64_t needed);
     bool hasFailed() const { return m_hasFailed; }
 
@@ -390,6 +391,7 @@ private:
     std::span<LBasicBlock> m_blocks;
     bool m_nextBlockGoesOnHere { false };
     BlockID m_headOfTurnsLaidOut;
+    ValueID m_readLeftToBranch;
     Vector<Operand, 8> m_argumentsForNextTurn;
     std::span<const BlockID> m_turnLaidOut;
     WTF::Function<LBasicBlock()> m_blockLeavingTurnLaidOut;

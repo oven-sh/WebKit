@@ -30,6 +30,7 @@ bool holeLeavesTurnBehindRow(const BodyIndex&, const BodyValue& read, const List
 bool readLeavesTurnAtHoleBehindRow(Walker&, const BodyValue& read);
 TypeID typeReadOutOfListTestedInFrontOfLoop(Walker&, const BodyIndex&, const BodyValue& read, TypeID typeOfList, TypeID typeOfPosition);
 bool leavesListsTestedInFrontOfLoopAsTheyAre(const Effects&);
+Vector<ValueID, 2> namesInFrontThatLoopMentions(const Walker&, const BodyIndex&, LoopID, uint32_t firstValueOfLoop, Reference value);
 bool readsLengthOfViewTestedInFrontOfLoop(Walker&, const BodyValue& read);
 bool leavesViewsTestedInFrontOfLoopAsTheyAre(const Effects&);
 

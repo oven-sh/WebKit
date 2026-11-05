@@ -19,7 +19,7 @@ namespace JSC { namespace AOT { namespace Machine {
 
 using PlaceOfScannedReads = BackwardScan::PlaceOfReads;
 using SummaryOfScannedReads = BackwardScan::SummaryOfReads;
-using KindOfScannedBlock = BackwardScan::KindOfBlock;
+
 
 static void incrementScanCount(uint16_t& count)
 {
@@ -225,7 +225,7 @@ static NEVER_INLINE void listScannedReadFromOutsideLoops(BackwardScan& scan, Ope
     loopOfLastListedRead = at.loop;
 }
 
-static bool scannedLeafWithoutPositionNeedsRegister(const Liveness& liveness, const Operation* user, unsigned childIndex, const Operation* leaf)
+static NEVER_INLINE bool scannedLeafWithoutPositionNeedsRegister(const Liveness& liveness, const Operation* user, unsigned childIndex, const Operation* leaf)
 {
     if (leaf->opcode() == ArgumentReg || user->as<PatchOperation>())
         return false;
@@ -354,27 +354,6 @@ enum class KindOfScannedRead : uint8_t {
     Added,
 };
 
-template<KindOfScannedBlock kind>
-struct KnowledgeOfScannedBlock {
-    static constexpr bool mayLieInLoop = kind != KindOfScannedBlock::Plain && kind != KindOfScannedBlock::Rare;
-    static constexpr bool mayLieOutsideLoops = kind != KindOfScannedBlock::InLoop && kind != KindOfScannedBlock::RareInLoop;
-    static constexpr bool mayBeRare = kind != KindOfScannedBlock::Plain && kind != KindOfScannedBlock::InLoop;
-    static constexpr bool mayLieOutsideRareRegions = kind != KindOfScannedBlock::Rare && kind != KindOfScannedBlock::RareInLoop;
-    static constexpr bool mayNoteWordsReadWhole = kind == KindOfScannedBlock::Any;
-
-    static ALWAYS_INLINE bool liesInLoop(uint32_t loop) { return mayLieInLoop && (!mayLieOutsideLoops || loop != noLoop); }
-    static ALWAYS_INLINE bool isRare(uint32_t rareRegion) { return mayBeRare && (!mayLieOutsideRareRegions || rareRegion != noRareRegion); }
-    static ALWAYS_INLINE uint32_t loopOf(uint32_t loop) { return liesInLoop(loop) ? loop : noLoop; }
-    static ALWAYS_INLINE uint32_t rareRegionOf(uint32_t rareRegion) { return isRare(rareRegion) ? rareRegion : noRareRegion; }
-    static ALWAYS_INLINE uint8_t traitsOfUses(const PlaceOfScannedReads& at)
-    {
-        if constexpr (mayBeRare && mayLieOutsideRareRegions)
-            return at.traitsOfUses;
-        else
-            return mayBeRare ? Liveness::useIsInRareRegion : 0;
-    }
-};
-
 template<KindOfScannedRead kind>
 static ALWAYS_INLINE bool recordScannedRead(BackwardScan& scan, const PlaceOfScannedReads& at, Operation* value, ValueFacts& read, Position position, unsigned hint, bool readsUpperHalf)
 {
@@ -490,13 +469,11 @@ static NEVER_INLINE void noteScannedReadThatCountsForCallsInLoop(BackwardScan& s
     noteRegionOfScannedUse(summary.regionOfUses, at.rareRegion);
 }
 
-template<KindOfScannedRead kind, KindOfScannedBlock kindOfBlock>
+template<KindOfScannedRead kind>
 static ALWAYS_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation* value, ValueFacts& read, Position position, unsigned hint, bool readsUpperHalf)
 {
     static_assert(kind != KindOfScannedRead::Added);
-    using Known = KnowledgeOfScannedBlock<kindOfBlock>;
     const PlaceOfScannedReads& at = scan.m_placeOfReads;
-    ASSERT(Known::liesInLoop(at.loop) == (at.loop != noLoop) && Known::isRare(at.rareRegion) == at.isRare());
     ArenaVector<Use>& uses = scan.uses();
     uint8_t*& traitsOfUses = scan.traitsOfUses();
     uint16_t flags = read.flags;
@@ -508,7 +485,7 @@ static ALWAYS_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation*
 
     if (read.definition != noPosition || (flags & scanBitOf(ValueFlag::IsDropped)) || !type.isNumeric() || newUse == uses.capacity() || firstOfUses[behind].position < position) [[unlikely]]
         return readValueInScannedBlockTheLongWay<kind>(scan, value, read, position, hint, readsUpperHalf);
-    if (Known::liesInLoop(at.loop) && owner && scan.m_places[owner->index()].head < at.beginOfLoop) [[unlikely]]
+    if (at.loop != noLoop && owner && scan.m_places[owner->index()].head < at.beginOfLoop) [[unlikely]]
         return readValueInScannedBlockTheLongWay<kind>(scan, value, read, position, hint, readsUpperHalf);
 
     Position passedOnEveryPath = at.passedOnEveryPath;
@@ -516,13 +493,13 @@ static ALWAYS_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation*
     if (behind)
         greatestPassedOnEveryPath = std::max(greatestPassedOnEveryPath, firstOfUses[behind].greatestHeadOfBlockPassedOnEveryPath);
     uses.appendWithinCapacity(Use { position, behind, passedOnEveryPath, greatestPassedOnEveryPath });
-    traitsOfUses[newUse] = static_cast<uint8_t>(Known::traitsOfUses(at) | (readsUpperHalf ? Liveness::useReadsUpperHalf : 0));
+    traitsOfUses[newUse] = static_cast<uint8_t>(at.traitsOfUses | (readsUpperHalf ? Liveness::useReadsUpperHalf : 0));
     read.firstUse = newUse;
 
     if (readsUpperHalf)
         flags |= scanBitOf(ValueFlag::UpperHalfIsRead);
     if (hint != noHintOfScannedRead && bankOf(Reg::fromIndex(hint)) == bankOf(type)) {
-        bool isHintOfRareRegion = Known::isRare(at.rareRegion) && owner && scan.m_places[owner->index()].rareRegion != at.rareRegion;
+        bool isHintOfRareRegion = at.isRare() && owner && scan.m_places[owner->index()].rareRegion != at.rareRegion;
         if (!isHintOfRareRegion || !read.hint || (flags & scanBitOf(ValueFlag::HintIsOfRareRegion))) {
             constexpr uint16_t flag = scanBitOf(ValueFlag::HintIsOfRareRegion);
             read.hint = Reg::fromIndex(hint);
@@ -560,20 +537,19 @@ static ALWAYS_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation*
 
     uint32_t index = value->index();
     if constexpr (kind == KindOfScannedRead::ByOperation) {
-        if (Known::mayLieInLoop && at.countsForLoops)
+        if (at.countsForLoops)
             scan.m_loopOfLastListedRead[index] = at.loop;
     }
-    if (Known::mayLieOutsideRareRegions && scan.m_summariesOfReads.isEmpty())
+    if (scan.m_summariesOfReads.isEmpty())
         return;
-    ASSERT(!scan.m_summariesOfReads.isEmpty());
-    if (Known::mayBeRare && at.positionThatCountsForCalls != noPosition && at.rareRegion != scan.m_places[owner->index()].rareRegion) {
+    if (at.positionThatCountsForCalls != noPosition && at.rareRegion != scan.m_places[owner->index()].rareRegion) {
         if (at.loopThatCountsForCalls != noLoop) [[unlikely]]
             return noteScannedReadThatCountsForCallsInLoop(scan, value);
         position = at.positionThatCountsForCalls;
     }
     SummaryOfScannedReads& summary = scan.m_summariesOfReads[index];
     summary.lastReadCountedForCalls = std::max(summary.lastReadCountedForCalls, position);
-    if (Known::isRare(at.rareRegion))
+    if (at.isRare())
         noteRareRegionOfScannedUse(summary.regionOfUses, at.rareRegion);
     else
         summary.regionOfUses = BackwardScan::severalRegions;
@@ -691,11 +667,17 @@ static ALWAYS_INLINE Reg hintOfScannedRead(const Operation* operation, const Pat
     return Reg();
 }
 
-static ALWAYS_INLINE void noteScannedReadOfWholeWord(BackwardScan& scan, const Operation* operation)
+static NEVER_INLINE void noteScannedReadOfWholeWordTheLongWay(BackwardScan& scan, const Operation* operation)
 {
-    if (scan.m_wordsReadWhole.isEmpty() || operation->opcode() != Load || operation->type() != Int64 || scan.m_order.of(operation->owner()).isRare())
+    if (operation->opcode() != Load || operation->type() != Int64 || scan.m_order.of(operation->owner()).isRare())
         return;
     scan.m_wordsReadWhole[operation->lastChild()->index()] |= BackwardScan::bitOfWord(operation->offset());
+}
+
+static ALWAYS_INLINE void noteScannedReadOfWholeWord(BackwardScan& scan, const Operation* operation)
+{
+    if (!scan.m_wordsReadWhole.isEmpty()) [[unlikely]]
+        noteScannedReadOfWholeWordTheLongWay(scan, operation);
 }
 
 static bool functionEndsBehindScannedPatch(const PatchOperation* patch)
@@ -805,14 +787,18 @@ static ALWAYS_INLINE void noteScannedCall(BackwardScan& scan, const PatchOperati
         noteRegistersTakenByScannedCallInLoops(scan, patch, block, loop, region, clobbered);
 }
 
-template<KindOfScannedBlock kindOfBlock>
 static ALWAYS_INLINE void readLeafOfScannedOperation(BackwardScan& scan, const Operation* user, unsigned childIndex, Operation* leaf, ValueFacts& read, Position early, unsigned hint, bool readsUpperHalf, bool userIsPatch = false)
 {
-    readValueInScannedBlock<KindOfScannedRead::ByOperation, kindOfBlock>(scan, leaf, read, early, hint, readsUpperHalf);
+    readValueInScannedBlock<KindOfScannedRead::ByOperation>(scan, leaf, read, early, hint, readsUpperHalf);
     if (userIsPatch)
         return;
-    if (KnowledgeOfScannedBlock<kindOfBlock>::mayLieInLoop && scan.m_placeOfReads.countsForLoops && leaf->hasNoPosition() && scannedLeafWithoutPositionNeedsRegister(scan.m_liveness, user, childIndex, leaf)) [[unlikely]]
+    if (scan.m_placeOfReads.countsForLoops && leaf->hasNoPosition() && scannedLeafWithoutPositionNeedsRegister(scan.m_liveness, user, childIndex, leaf)) [[unlikely]]
         listScannedReadFromOutsideLoops(scan, leaf, scan.m_placeOfReads);
+}
+
+static NEVER_INLINE void readLeafOfScannedOperationOutOfLine(BackwardScan& scan, const Operation* user, unsigned childIndex, Operation* leaf, Position early, unsigned hint, bool readsUpperHalf)
+{
+    readLeafOfScannedOperation(scan, user, childIndex, leaf, scan.facts(leaf), early, hint, readsUpperHalf);
 }
 
 static NEVER_INLINE void readLeavesBelowScannedOperation(BackwardScan& scan, Operation* operation, const Operation* below, const Operation* selectAbove, Position early)
@@ -825,7 +811,7 @@ static NEVER_INLINE void readLeavesBelowScannedOperation(BackwardScan& scan, Ope
     forEachLeafBelow(scan.m_liveness, below, [&](const Operation* user, unsigned childIndex, Operation* leaf) {
         bool standsForFirstChild = (user->opcode() == Trunc && user == operation->child(0)) || std::exchange(nextLeafStandsForFirstChild, false);
         Reg hint = user == operation || standsForFirstChild ? hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult) : Reg();
-        readLeafOfScannedOperation<KindOfScannedBlock::Any>(scan, user, childIndex, leaf, scan.facts(leaf), early, hint.index(), user->opcode() != Trunc && !isBranchOnOverflow);
+        readLeafOfScannedOperationOutOfLine(scan, user, childIndex, leaf, early, hint.index(), user->opcode() != Trunc && !isBranchOnOverflow);
     }, selectAbove);
 }
 
@@ -839,11 +825,11 @@ static NEVER_INLINE void readLeavesOfScannedOperationTheLongWay(BackwardScan& sc
     bool readsUpperHalf = operation->opcode() != Trunc;
     Reg hintOfResult = scan.facts(operation).hint;
     forEachLeafInParts(scan.m_liveness, operation, [&](unsigned childIndex, Operation* leaf) ALWAYS_INLINE_LAMBDA {
-        readLeafOfScannedOperation<KindOfScannedBlock::Any>(scan, operation, childIndex, leaf, scan.facts(leaf), early, hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult).index(), readsUpperHalf);
+        readLeafOfScannedOperationOutOfLine(scan, operation, childIndex, leaf, early, hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult).index(), readsUpperHalf);
     }, [&](const Operation* user, unsigned childIndex, Operation* leaf) ALWAYS_INLINE_LAMBDA {
         bool isBelowTrunc = user->opcode() == Trunc;
         Reg hint = isBelowTrunc && user == operation->child(0) ? hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult) : Reg();
-        readLeafOfScannedOperation<KindOfScannedBlock::Any>(scan, user, childIndex, leaf, scan.facts(leaf), early, hint.index(), !isBelowTrunc);
+        readLeafOfScannedOperationOutOfLine(scan, user, childIndex, leaf, early, hint.index(), !isBelowTrunc);
     }, [&](const Operation* below, const Operation* selectAbove) ALWAYS_INLINE_LAMBDA {
         readLeavesBelowScannedOperation(scan, operation, below, selectAbove, early);
     });
@@ -863,11 +849,10 @@ static NEVER_INLINE void readChildrenOfScannedReturn(BackwardScan& scan, Operati
     for (unsigned index = 0; index < numberOfChildren; ++index) {
         Operation* leaf = child[index];
         Reg hint = leaf->type().isFloat() ? Reg(FPRInfo::returnValueFPR) : Reg(GPRInfo::returnValueGPR);
-        readLeafOfScannedOperation<KindOfScannedBlock::Any>(scan, operation, index, leaf, facts[leaf->index()], early, hint.index(), true);
+        readLeafOfScannedOperationOutOfLine(scan, operation, index, leaf, early, hint.index(), true);
     }
 }
 
-template<KindOfScannedBlock kindOfBlock>
 static ALWAYS_INLINE void readOperandsOfScannedPatch(BackwardScan& scan, PatchOperation* patch, const ValueFacts& own, Position early)
 {
     std::span<Operation* const> operands = patch->operands();
@@ -890,7 +875,7 @@ static ALWAYS_INLINE void readOperandsOfScannedPatch(BackwardScan& scan, PatchOp
         }
         const ValueRep& constraint = constraints[index];
         Reg hint = constraint.isReg() ? constraint.reg() : patch->registerToBringOperandTo(index);
-        readLeafOfScannedOperation<kindOfBlock>(scan, patch, index, leaf, read, early, hint.index(), true, true);
+        readLeafOfScannedOperation(scan, patch, index, leaf, read, early, hint.index(), true, true);
     }
 }
 
@@ -901,9 +886,9 @@ static ALWAYS_INLINE bool scannedOperationMustStay(const Operation* operation, O
     return mustStay || own.has(ValueFlag::GoesByOverflow);
 }
 
-template<KindOfScannedBlock kindOfBlock, unsigned numberOfLevelsReadInLine>
-static ALWAYS_INLINE void readLeavesBelowFusedChildOfScannedOperation(BackwardScan& scan, ValueFacts* facts, Operation* operation, const Operation* below, Opcode opcodeBelow, unsigned hintOfFirstChild, Position early)
+static NEVER_INLINE void readLeavesBelowFusedChildOfScannedOperation(BackwardScan& scan, Operation* operation, const Operation* below, Opcode opcodeBelow, unsigned hintOfFirstChild, Position early)
 {
+    ValueFacts* facts = scan.m_facts;
     bool isBelowTrunc = opcodeBelow == Trunc;
     unsigned hintOfFirstChildBelow = isBelowTrunc && below == operation->inlineChildren()[0] ? hintOfFirstChild : noHintOfScannedRead;
     Operation* const* childBelow = below->inlineChildren();
@@ -912,31 +897,25 @@ static ALWAYS_INLINE void readLeavesBelowFusedChildOfScannedOperation(BackwardSc
         ValueFacts& read = facts[leaf->index()];
         uint16_t flagsOfLeaf = read.flags;
         if (flagsOfLeaf & scanBitOf(ValueFlag::IsFused)) {
-            if constexpr (numberOfLevelsReadInLine > 1) {
-                Opcode opcodeOfLeaf = leaf->opcode();
-                if (opcodeBelow != Select && !(flagsOfLeaf & flagsOfScannedOperationWithLeavesOfItsOwn) && !(traitsOfScannedOpcodes.of[opcodeOfLeaf] & ScannedOpcodeIsReadTheLongWayWhereFused)) [[likely]] {
-                    readLeavesBelowFusedChildOfScannedOperation<kindOfBlock, numberOfLevelsReadInLine - 1>(scan, facts, operation, leaf, opcodeOfLeaf, hintOfFirstChild, early);
-                    continue;
-                }
+            Opcode opcodeOfLeaf = leaf->opcode();
+            if (opcodeBelow != Select && !(flagsOfLeaf & flagsOfScannedOperationWithLeavesOfItsOwn) && !(traitsOfScannedOpcodes.of[opcodeOfLeaf] & ScannedOpcodeIsReadTheLongWayWhereFused)) [[likely]] {
+                readLeavesBelowFusedChildOfScannedOperation(scan, operation, leaf, opcodeOfLeaf, hintOfFirstChild, early);
+                continue;
             }
             readLeavesBelowScannedOperation(scan, operation, leaf, opcodeBelow == Select ? below : nullptr, early);
             continue;
         }
-        readLeafOfScannedOperation<kindOfBlock>(scan, below, indexBelow, leaf, read, early, indexBelow ? noHintOfScannedRead : hintOfFirstChildBelow, !isBelowTrunc);
+        readLeafOfScannedOperation(scan, below, indexBelow, leaf, read, early, indexBelow ? noHintOfScannedRead : hintOfFirstChildBelow, !isBelowTrunc);
     }
 }
 
-template<KindOfScannedBlock kindOfBlock>
 static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block, Operation* operation, Position early, Position earlyOfLastOperation)
 {
-    using Known = KnowledgeOfScannedBlock<kindOfBlock>;
     const PlaceOfScannedReads& at = scan.m_placeOfReads;
     ValueFacts* facts = scan.m_facts;
     ValueFacts& own = facts[operation->index()];
-    ASSERT(Known::mayNoteWordsReadWhole || scan.m_wordsReadWhole.isEmpty());
     if (own.has(ValueFlag::IsFused)) {
-        if constexpr (Known::mayNoteWordsReadWhole)
-            noteScannedReadOfWholeWord(scan, operation);
+        noteScannedReadOfWholeWord(scan, operation);
         return false;
     }
 
@@ -956,18 +935,17 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
         }
     }
 
-    uint32_t rareRegion = Known::rareRegionOf(at.rareRegion);
+    uint32_t rareRegion = at.rareRegion;
     if (lastUse == noPosition) {
         if (!scannedOperationMustStay(operation, opcode, traits, own) || ((traits & ScannedOpcodeIsLoad) && operation->traps() && scan.tryHandOverTrap(operation))) {
             own.flags |= scanBitOf(ValueFlag::IsDropped);
             return false;
         }
-        if constexpr (Known::mayNoteWordsReadWhole)
-            noteScannedReadOfWholeWord(scan, operation);
+        noteScannedReadOfWholeWord(scan, operation);
         own.definition = early + 1;
     } else {
         Position lastReadCountedForCalls = lastUse;
-        if (!Known::mayLieOutsideRareRegions || scan.m_hasRareRegions) {
+        if (scan.m_hasRareRegions) {
             const SummaryOfScannedReads& summary = scan.m_summariesOfReads[operation->index()];
             uint32_t region = summary.regionOfUses;
             if (region < BackwardScan::severalRegions && region != rareRegion && !scannedOperationMustStay(operation, opcode, traits, own) && scan.trySink(operation)) {
@@ -977,16 +955,15 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
             }
             lastReadCountedForCalls = summary.lastReadCountedForCalls;
         }
-        if constexpr (Known::mayNoteWordsReadWhole)
-            noteScannedReadOfWholeWord(scan, operation);
+        noteScannedReadOfWholeWord(scan, operation);
         closeScannedRangeOfReadValue(scan, operation, own, lastUse, lastReadCountedForCalls, early + 1, rareRegion);
     }
     if (opcode == Patch) {
         PatchOperation* patch = static_cast<PatchOperation*>(operation);
-        if (patch->bringsOperandsToTheirRegisters() && (Known::isRare(rareRegion) || !Known::liesInLoop(at.loop) || functionEndsBehindScannedPatch(patch)))
+        if (patch->bringsOperandsToTheirRegisters() && (rareRegion != noRareRegion || at.loop == noLoop || functionEndsBehindScannedPatch(patch)))
             patch->leaveOperandsWhereTheyLie();
-        noteScannedCall(scan, patch, early + 1, block, rareRegion, Known::loopOf(at.loop), true);
-        readOperandsOfScannedPatch<kindOfBlock>(scan, patch, own, early);
+        noteScannedCall(scan, patch, early + 1, block, rareRegion, at.loop, true);
+        readOperandsOfScannedPatch(scan, patch, own, early);
         return true;
     }
 
@@ -1021,7 +998,7 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
         ValueFacts& factsBelow = facts[below->index()];
         uint16_t flagsBelow = factsBelow.flags;
         if (!(flagsBelow & scanBitOf(ValueFlag::IsFused))) {
-            readLeafOfScannedOperation<kindOfBlock>(scan, operation, index, below, factsBelow, early, index ? noHintOfScannedRead : hintOfFirstChild, readsUpperHalf);
+            readLeafOfScannedOperation(scan, operation, index, below, factsBelow, early, index ? noHintOfScannedRead : hintOfFirstChild, readsUpperHalf);
             continue;
         }
         Opcode opcodeBelow = below->opcode();
@@ -1029,7 +1006,7 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
             readLeavesBelowScannedOperation(scan, operation, below, opcode == Select ? operation : nullptr, early);
             continue;
         }
-        readLeavesBelowFusedChildOfScannedOperation<kindOfBlock, 2>(scan, facts, operation, below, opcodeBelow, hintOfFirstChild, early);
+        readLeavesBelowFusedChildOfScannedOperation(scan, operation, below, opcodeBelow, hintOfFirstChild, early);
     }
     return true;
 }
@@ -1104,20 +1081,18 @@ BackwardScan::BackwardScan(Procedure& proc, Liveness& liveness)
 #endif
 }
 
-template<KindOfScannedBlock kindOfBlock>
-ALWAYS_INLINE void BackwardScan::scanBlockOfKind(Block* block, const BlockPlace& place)
+ALWAYS_INLINE void BackwardScan::scanBlock(Block* block)
 {
-    using Known = KnowledgeOfScannedBlock<kindOfBlock>;
     ASSERT(block->isTerminated());
     uint32_t blockIndex = block->index();
-    uint32_t loopOfBlock = Known::loopOf(place.loop);
-    uint32_t rareRegion = Known::rareRegionOf(place.rareRegion);
-    ASSERT(loopOfBlock == place.loop && rareRegion == place.rareRegion);
+    const BlockPlace& place = m_places[blockIndex];
+    uint32_t loopOfBlock = place.loop;
+    uint32_t rareRegion = place.rareRegion;
     Position head = place.head;
     Position end = head + 2 * (block->size() + 1);
     ASSERT(end == m_order.endOf(block));
     noteWaysOnFrom(block, end);
-    if (Known::liesInLoop(loopOfBlock)) {
+    if (loopOfBlock != noLoop) {
         noteLoopsLeftFromScannedBlock(*this, block, loopOfBlock, end);
         const Loop& loop = m_order.loops().data()[loopOfBlock];
         if (loop.endBlock == place.orderIndex + 1)
@@ -1126,7 +1101,7 @@ ALWAYS_INLINE void BackwardScan::scanBlockOfKind(Block* block, const BlockPlace&
 
     Position early = end - 2;
     const PlaceOfReads& at = m_placeOfReads;
-    const Block* origin = Known::isRare(rareRegion) ? m_liveness.blockThatRareBlockBranchesOff(block) : nullptr;
+    const Block* origin = rareRegion != noRareRegion ? m_liveness.blockThatRareBlockBranchesOff(block) : nullptr;
     findPlaceOfReadsInScannedBlock(*this, m_placeOfReads, loopOfBlock, rareRegion, origin, headOfBlockPassedOnEveryPathToScannedBlock(*this, place, origin));
     for (Operation* upsilon : block->upsilons()) {
         ValueFacts& factsOfUpsilon = m_facts[upsilon->index()];
@@ -1140,16 +1115,16 @@ ALWAYS_INLINE void BackwardScan::scanBlockOfKind(Block* block, const BlockPlace&
             define(upsilon, early + 1);
         Operation* child = upsilon->valueHandedOn();
         const Operation* phi = upsilon->phi();
-        readValueInScannedBlock<KindOfScannedRead::ByUpsilon, kindOfBlock>(*this, child, m_facts[child->index()], early, m_facts[phi->index()].hint.index(), phi->has(OperationFlag::UpperHalfIsRead));
+        readValueInScannedBlock<KindOfScannedRead::ByUpsilon>(*this, child, m_facts[child->index()], early, m_facts[phi->index()].hint.index(), phi->has(OperationFlag::UpperHalfIsRead));
     }
 
-    bool countsForPressureOfLoop = Known::mayLieInLoop && at.countsForLoops;
-    bool standsBehindLastExit = countsForPressureOfLoop && !Known::isRare(rareRegion) && head >= m_loopStates[loopOfBlock].endOfLastExitingBlock;
+    bool countsForPressureOfLoop = at.countsForLoops;
+    bool standsBehindLastExit = countsForPressureOfLoop && rareRegion == noRareRegion && head >= m_loopStates[loopOfBlock].endOfLastExitingBlock;
     m_mostLiveInBlock = { 0, 0 };
     Operation* const* operations = block->operations().data();
     Position earlyOfLastOperation = early;
     for (unsigned index = block->size(); index--; early -= 2) {
-        if (scanOperationOfBlock<kindOfBlock>(*this, block, operations[index], early, earlyOfLastOperation) && countsForPressureOfLoop)
+        if (scanOperationOfBlock(*this, block, operations[index], early, earlyOfLastOperation) && countsForPressureOfLoop)
             samplePressureOfScan(*this, loopOfBlock, standsBehindLastExit);
     }
     m_liveness.m_mostLiveInBlocks[blockIndex] = m_mostLiveInBlock;
@@ -1167,39 +1142,18 @@ ALWAYS_INLINE void BackwardScan::scanBlockOfKind(Block* block, const BlockPlace&
         m_nearestEventBehind = std::min(m_nearestEventBehind, head);
         m_liveness.m_hasLandingPads = true;
     }
-    if (!Known::isRare(rareRegion))
+    if (rareRegion == noRareRegion)
         m_liveness.m_nextCallsBehindHeads[blockIndex] = m_nextCallThatTakesRegisters;
-    if (Known::liesInLoop(loopOfBlock) && at.beginOfLoop == head)
+    if (loopOfBlock != noLoop && at.beginOfLoop == head)
         leaveLoopsBeginningAt(loopOfBlock, head);
-}
-
-ALWAYS_INLINE void BackwardScan::scanBlock(Block* block)
-{
-    const BlockPlace& place = m_places[block->index()];
-    if (place.loop == noLoop) {
-        if (!place.isRare())
-            scanBlockOfKind<KindOfBlock::Plain>(block, place);
-        else
-            scanBlockOfKind<KindOfBlock::Rare>(block, place);
-        return;
-    }
-    if (!place.isRare())
-        scanBlockOfKind<KindOfBlock::InLoop>(block, place);
-    else
-        scanBlockOfKind<KindOfBlock::RareInLoop>(block, place);
 }
 
 void BackwardScan::run()
 {
     std::span<Block* const> blocks = m_order.blocksInOrder();
     Block* const* firstBlock = blocks.data();
-    if (m_wordsReadWhole.isEmpty()) [[likely]] {
-        for (size_t index = blocks.size(); index--;)
-            scanBlock(firstBlock[index]);
-    } else {
-        for (size_t index = blocks.size(); index--;)
-            scanBlockOfKind<KindOfBlock::Any>(firstBlock[index], m_places[firstBlock[index]->index()]);
-    }
+    for (size_t index = blocks.size(); index--;)
+        scanBlock(firstBlock[index]);
 
     for (ArenaVector<Operation*>& sunk : m_liveness.m_sunk) {
         std::sort(sunk.begin(), sunk.end(), [](const Operation* left, const Operation* right) {

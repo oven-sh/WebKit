@@ -196,7 +196,7 @@ private:
 
     static uint64_t keyOf(CodeUnit unit)
     {
-        return static_cast<uint64_t>(unit.function.index()) << 32 | static_cast<uint64_t>(unit.role) << 16 | unit.numberOfBoundArguments;
+        return static_cast<uint64_t>(unit.function.index()) << 32 | static_cast<uint64_t>(unit.role) << 24 | unit.placeOfSelector();
     }
 
     CodeBody& m_body;

@@ -198,33 +198,6 @@ static void runWalkCommand(TestCommandContext& context)
     }
 }
 
-static void runWalkSerializersCommand(TestCommandContext& context)
-{
-    if (refuseArgumentsOfWalkCommand(context))
-        return;
-    StagedBuild stage = context.stage();
-    const PreparedProgram* prepared = stage.prepared();
-    if (!prepared)
-        return;
-    context.out.print("mechanisms "_s);
-    printMechanisms(context.out, stage.mechanisms());
-    context.out.println();
-    const Program& program = stage.program();
-    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-        CodeUnit unit = prepared->compileInputs->walk.plan.conventions().serializerOf(LayoutID(index));
-        if (!unit)
-            continue;
-        const Code* code = stage.code(unit);
-        if (!code) {
-            context.out.print("the walk of "_s);
-            printCodeUnit(context.out, unit);
-            context.out.println(" failed"_s);
-            return;
-        }
-        printCode(context.out, CodeTextContext { program, stage.types() }, *code);
-    }
-}
-
 static void runWhyClosedCommand(TestCommandContext& context)
 {
     std::optional<Vector<CodeUnit>> units = unitsInOrderOfWords(*context.program, context.arguments, context.out);
@@ -251,7 +224,6 @@ std::span<const TestCommand> walkTestCommands()
 {
     static constexpr TestCommand commands[] {
         { "walk"_s, runWalkCommand, ProgramOfCommand::AsWritten, "unit.."_s },
-        { "walk-serializers"_s, runWalkSerializersCommand, ProgramOfCommand::AsWritten, ""_s },
         { "why-closed"_s, runWhyClosedCommand, ProgramOfCommand::AsWritten, "unit.."_s },
         { "code-round-trip"_s, runCodeRoundTripCommand },
         { "verify-code"_s, runVerifyCodeCommand },

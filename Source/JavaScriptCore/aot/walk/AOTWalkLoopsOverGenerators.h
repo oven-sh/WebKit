@@ -13,6 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool buildLoopOverGenerator(Walker&, const BodyValue&);
 bool engineAnswersForGenerators(Walker&);
+std::optional<BuiltinID> findMemberAboveForIteration(const Walker&, BuiltinID start, BuiltinName);
 GeneratorStepCheck checkLeftToStepOf(Walker&, Reference generator);
 Reference buildStepOfGenerator(Walker&, Reference generator, ResumeMode, Reference sent, GeneratorStepCheck, Origin);
 

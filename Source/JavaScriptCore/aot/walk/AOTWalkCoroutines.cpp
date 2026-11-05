@@ -31,7 +31,7 @@ Reference addDriverParameterOfCoroutine(Walker&, BlockID entry);
 Reference convertReturnedValueOfCoroutine(Walker&, Reference returned, Origin);
 Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, Origin);
 bool canWaitForStepOfAsyncGenerator(Walker&);
-Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, Origin);
+Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Origin);
 bool engineAnswersAboveGenerators(const Walker&);
 
 static constexpr OpcodeSet operationsOfFamilyCoroutine { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope };
@@ -146,7 +146,7 @@ bool canWaitForStepOfAsyncGenerator(Walker& walker)
     return body && body->kind != CoroutineKind::Generator && !walker.program().at(walker.unit().function).isModuleBody();
 }
 
-Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Reference sent, std::span<const Reference> held, Origin origin)
+Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Reference sent, std::span<const Reference> held, BuiltinID awaitedCallee, Origin origin)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
     if (!body || body->kind == CoroutineKind::Generator) {
@@ -159,6 +159,7 @@ Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Referen
     step.setValueOperand(sent);
     step.setDriverOperand(body->driver);
     step.setHeldOperands(held);
+    step.setCalledBuiltin(awaitedCallee);
     return buildSuspensionOfCoroutine(walker, WTF::move(step));
 }
 

@@ -213,7 +213,7 @@ bool foldOperationOnKnownTextsOfItsOpcodes(Walker& walker, const BodyValue& valu
     if (!opcodesOfStringFolds.contains(value.opcode()))
         return false;
     KnownToFolds answer = value.opcode() == Opcode::Strcat ? joinOfKnownPartsInStringFolds(walker, value) : answerOnKnownTextInStringFolds(walker, value);
-    Reference constant = answer ? constantForStrings(walker, answer) : Reference();
+    Reference constant = answer ? walker.constant(answer) : Reference();
     if (!constant)
         return false;
     walker.bind(value.id(), constant);
@@ -278,7 +278,7 @@ void mergeKnownPartsOfJoinedText(Walker& walker, Vector<Reference, 8>& parts)
             for (Reference part : parts.span().subspan(first, end - first))
                 known.append(primitiveKnownForStrings(walker, part));
             if (KnownToFolds text = joinKnownTextsForStrings(walker, known.span()))
-                joined = constantForStrings(walker, text);
+                joined = walker.constant(text);
         }
         if (joined) {
             parts[numberOfPartsKept++] = joined;
@@ -298,6 +298,11 @@ std::optional<Effects> effectsOfRowOnOperandsWithoutCode(Walker& walker, Builtin
         OperandUse::WritesContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom,
         OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype,
     };
+    static constexpr OperandUses usesThatNeedNoHeap {
+        OperandUse::Inspects, OperandUse::Retains, OperandUse::Returns, OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly,
+        OperandUse::RetainsContents, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents,
+    };
+    static_assert(everyOperandUseIsInExactlyOneOf({ usesThatChangeOperand, OperandUse::ReadsContents, usesThatNeedNoHeap }));
 
     const BuiltinTable& table = walker.program().builtins();
     TypeArena& types = walker.types();
@@ -392,7 +397,7 @@ TypeID typeGivenByRowForStrings(Walker& walker, const CallByOneRow& call)
 bool bindAnswerOfFoldedCall(Walker& walker, const CallByOneRow& call, KnownToFolds answer)
 {
     TypeID byRow = answer ? typeGivenByRowForStrings(walker, call) : TypeID();
-    Reference constant = byRow ? constantForStrings(walker, answer) : Reference();
+    Reference constant = byRow ? walker.constant(answer) : Reference();
     if (!constant || !walker.types().isSubset(walker.typeOf(constant), byRow))
         return false;
     walker.bind(call.call.id(), constant);

@@ -714,6 +714,37 @@ static void allocatorGivesArgumentThatLivesAcrossCallItsHomeWhereItIsDefined()
     }
 }
 
+static void allocatorGivesCalleeSavesAtEntryToArgumentsThatAreReadMost()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    const unsigned numberOfArguments = allocationTestCountOf(file.calleeSavedIn(Bank::GP)) + 1;
+    if (numberOfArguments > GPRInfo::numberOfArgumentRegisters)
+        return;
+    Vector<LValue> arguments;
+    for (unsigned index = 0; index < numberOfArguments; ++index)
+        arguments.append(test.argumentGPR(index));
+    allocationTestAppendCall(test, nullptr);
+    LValue mixed = arguments[0];
+    for (unsigned index = 1; index < numberOfArguments; ++index)
+        mixed = out.add(out.bitXor(out.add(mixed, arguments[index]), arguments[index]), arguments[index]);
+    out.ret(mixed);
+    compileOrFail(test);
+
+    const Allocation& allocation = test.procedure().allocation();
+    AOT_ALLOCATION_TEST_CHECK(test, !allocation.hasFramedPart());
+    AOT_ALLOCATION_TEST_CHECK(test, allocation.isSpilled(arguments[0]) && allocation.isStoredBehindDefinition(arguments[0]) && allocation.registerAtDefinitionOf(arguments[0]) == arguments[0]->argumentReg());
+    for (unsigned index = 1; index < numberOfArguments; ++index)
+        AOT_ALLOCATION_TEST_CHECK(test, !allocation.isSpilled(arguments[index]) && (maskOf(allocation.registerAtDefinitionOf(arguments[index])) & file.calleeSaved));
+
+    std::array<uint64_t, 8> passed { 3, 50, 700, 9000, 11000, 130000, 1700000, 19000000 };
+    uint64_t expected = passed[0];
+    for (unsigned index = 1; index < numberOfArguments; ++index)
+        expected = ((expected + passed[index]) ^ passed[index]) + passed[index];
+    AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(passed[0], passed[1], passed[2], passed[3], passed[4], passed[5], passed[6], passed[7]) == expected);
+}
+
 static void allocatorLeavesArgumentWhereCallInItsBlockTakesIt()
 {
     uint64_t noted = 0;
@@ -2845,6 +2876,7 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/a-phi-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesPhiWhereCallInItsBlockTakesIt },
         { "machine-allocation/an-argument-that-lives-across-a-call-takes-its-home-where-it-is-defined"_s, Machine::allocatorGivesArgumentThatLivesAcrossCallItsHomeWhereItIsDefined },
         { "machine-allocation/an-argument-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesArgumentWhereCallInItsBlockTakesIt },
+        { "machine-allocation/at-the-entry-the-registers-that-callees-keep-go-to-the-arguments-that-are-read-most"_s, Machine::allocatorGivesCalleeSavesAtEntryToArgumentsThatAreReadMost },
         { "machine-allocation/count-that-one-arm-adds-to-comes-round-in-its-register"_s, Machine::allocatorBringsCountThatOneArmAddsToRoundInItsRegister },
         { "machine-allocation/phi-of-a-join-lies-in-the-word-of-the-phi-that-is-handed-to-it"_s, Machine::allocatorLaysPhiOfJoinInWordOfPhiThatIsHandedToIt<false> },
         { "machine-allocation/phi-of-a-join-has-a-word-of-its-own-where-what-is-handed-to-it-lives-on"_s, Machine::allocatorLaysPhiOfJoinInWordOfPhiThatIsHandedToIt<true> },

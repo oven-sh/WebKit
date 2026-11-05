@@ -26,6 +26,7 @@ enum class KnownNote : uint8_t {
     ListTestedInFrontOfLoop,
     NumberReadOutOfList,
     PassedTestOfBeingAsMade,
+    HeldToStayingAsMade,
 };
 void noteKnown(Walker&, KnownNote, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension = false);
 std::optional<uint64_t> findKnown(Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);

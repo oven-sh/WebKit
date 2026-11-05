@@ -6,6 +6,7 @@
 // What the plan has promoted (AOTPromotedEnvironments.cpp) is decided there alone, so every unit of a function goes by it, the slow body too.
 // A field of such a scope stays a GetEnvironmentField | PutEnvironmentField: Link's effects, the looks at loops and the state go on speaking of fields, and the emitter finds the word among the variables.
 // In the place of the scope, and of a capture that is left out of a call, stands a word that says nothing. Whoever inspects it stops the build (UnspecifiedValueInspected).
+// A reader of such a word takes no operand, so nothing but its place holds it behind the store: it leaves no loop (findLoopToBuildInFrontOf()).
 
 #include "config.h"
 #include "AOTWalk.h"
@@ -15,6 +16,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTIRProgram.h"
 #include "AOTPlan.h"
+#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -83,7 +85,9 @@ bool leaveEnvironmentAmongVariables(Walker& walker, const BodyValue& value)
         return false;
     if (value.opcode() == Opcode::ReleaseHint) {
         Reference released = walker.referenceBoundTo(value.operand(0));
-        return released && released.isConstant() && walker.code().at(released.id()).opcode == Opcode::Unspecified;
+        TypeID type = released ? walker.typeOf(released) : TypeID();
+        LayoutID scope = type ? walker.types().at(type).environment : LayoutID();
+        return scope && promoted.isPromoted(scope);
     }
 
     LayoutID layout = value.as<Opcode::NewObject>().layout();
@@ -113,35 +117,46 @@ bool leaveEnvironmentAmongVariables(Walker& walker, const BodyValue& value)
     return true;
 }
 
-void storeValuesNoLongerCaptured(Walker& walker, const BodyValue& value)
+// That a way has stored is a fact of the way. The state holds it as it holds the end of a dead zone: no effect ends it, and a join keeps it only where every way brings it.
+// Where the state has let it go the value is stored once more, which changes nothing.
+void Walker::storeValueNoLongerCaptured(const StoreOfCapturedValue& store)
 {
-    const PromotedEnvironments& promoted = walker.plan().promotedEnvironments();
-    std::span<const StoreOfCapturedValue> stores = promoted.storesAt(walker.currentFunction(), value.id());
-    if (stores.empty())
+    Reference stored = referenceBoundTo(store.value);
+    if (!stored || isUnreachable() || m_state.isPastDeadZone(store.variable))
         return;
-    Draft written = walker.draftOf(value);
-    Origin origin = written.origin();
+    const PromotedVariable& variable = *plan().promotedEnvironments().find(store.variable);
+    Origin origin = m_origin;
     origin.isTailCall = false;
-    for (const StoreOfCapturedValue& store : stores) {
-        if (walker.isUnreachable())
-            return;
-        const PromotedVariable& variable = *promoted.find(store.variable);
-        Reference stored = store.capture < written.numberOfVariadicOperands() ? written.variadicOperands()[store.capture] : Reference();
-        TypeID type = stored ? walker.typeOf(stored) : TypeID();
-        if (!type || !walker.types().isSubset(type, walker.program().provenTypeOf(walker.program().at(variable.function).captures[variable.capture]))) {
-            walker.fail("a value that functions no longer capture is not proven to have the type of the capture"_s);
-            return;
-        }
-        // A capture is an entry parameter of its reader, and the words that check only entries check it there. Its readers take no operand any more: it is held to its type here.
-        walker.checkProofOfCopy(stored, walker.positions().variable(TypeLevel::Proven, store.variable), walker.checksProofsOf(ProofSource::Capture) ? ProofSource::Capture : ProofSource::EntryParameter, origin);
-        if (walker.isUnreachable())
-            return;
-        Draft put(Opcode::PutModuleVariable, origin);
-        put.setVariable(store.variable);
-        put.setValueOperand(stored);
-        walker.chooseConservativeFields(put);
-        walker.build(WTF::move(put));
+    TypeID type = typeOf(stored);
+    if (!type || !m_types.isSubset(type, program().provenTypeOf(program().at(variable.function).captures[variable.capture]))) {
+        fail("a value that functions no longer capture is not proven to have the type of the capture"_s);
+        return;
     }
+    Draft put(Opcode::PutModuleVariable, origin);
+    put.setVariable(store.variable);
+    put.setValueOperand(stored);
+    chooseConservativeFields(put);
+    build(WTF::move(put));
+    m_state.noteEndOfDeadZone(store.variable);
+}
+
+void Walker::storeParametersNoLongerCaptured()
+{
+    m_storesOfCapturedValues = plan().promotedEnvironments().storesIn(unit().function);
+    for (const StoreOfCapturedValue& store : m_storesOfCapturedValues) {
+        if (currentBodyIndex().isParameter(store.value))
+            storeValueNoLongerCaptured(store);
+    }
+}
+
+// The store belongs to the definition, which every way to a reader goes through: whatever passes by a closure that nobody asks for (a throw that nobody reads) passes by no store.
+// Whoever binds an operation by hand and walks what stands behind it before walkStretch() comes back to the operation calls this behind the binding, once for each way.
+// The verifier holds the outcome against the code (verifyWordsInPlaceOfCaptures()).
+void Walker::storeValueBehindItsDefinitionInMaker(ValueID definition)
+{
+    auto found = std::ranges::lower_bound(m_storesOfCapturedValues, definition, { }, &StoreOfCapturedValue::value);
+    if (found != m_storesOfCapturedValues.end() && found->value == definition)
+        storeValueNoLongerCaptured(*found);
 }
 
 } } } // namespace JSC::AOT::Typed

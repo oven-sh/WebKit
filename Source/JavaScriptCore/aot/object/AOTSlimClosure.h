@@ -151,6 +151,7 @@ JSC_DECLARE_CUSTOM_GETTER(createPrototypeProperty);
 static_assert(SlimClosure::offsetOfWord() == offsetOfSlimClosureWord);
 static_assert(sizeof(SlimClosure) == offsetOfSlimClosureCaptures);
 static_assert(sizeof(ReifiedSlimClosure) == sizeof(SlimClosure));
+static_assert(offsetOfCopyInHeapOfClosureInFrame(SlimClosure::offsetOfCaptures(), 3) == static_cast<ptrdiff_t>(SlimClosure::allocationSize(3)));
 
 } } // namespace JSC::AOT
 

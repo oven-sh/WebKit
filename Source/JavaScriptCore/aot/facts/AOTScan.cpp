@@ -914,6 +914,7 @@ public:
     }
     void noteTextsSpelledIn(const DataNode&);
     const BitVector& textsSpelled() const { return m_textsSpelled; }
+    const SetsOfLayoutsWritten& setsOfLayoutsWritten() const { return m_setsOfLayoutsWritten; }
 
     struct KeyOfVariableInScan {
         VariableID variable;
@@ -995,6 +996,7 @@ private:
     void noteFunctionsBehind(ExpectedResultID expected) { noteFunctionsBehind(m_program.at(expected).type); }
     void noteFunctionsBehind(LayoutID);
     void noteFunctionsBehind(TypeID);
+    void noteSetOfLayoutsWritten(TypeID);
     template<typename OtherID> void noteFunctionsBehind(OtherID) { }
 
     ALWAYS_INLINE ListInScan listOfNode(uint32_t node)
@@ -1278,6 +1280,8 @@ private:
     OpcodeSet m_opcodesThatOnlyReturnTheirOperand;
     Vector<const Effects*, 8> m_effectsMerged;
     std::array<uint64_t, 256> m_typesThatNameNoFunction { };
+    std::array<uint64_t, 256> m_typesWhoseSetsAreNoted { };
+    SetsOfLayoutsWritten m_setsOfLayoutsWritten;
     bool m_hasStopped { false };
     std::optional<InternalError> m_error;
 
@@ -1464,6 +1468,10 @@ struct ReferencesOfScan {
             return;
         }
         scan.noteFunctionsBehind(id);
+        if constexpr (std::is_same_v<IDType, TypeID>) {
+            if (!statesExpectation)
+                scan.noteSetOfLayoutsWritten(id);
+        }
         if constexpr (std::is_same_v<IDType, FunctionID>) {
             scan.noteRecordOf(scan.m_program.at(id).module);
             if (!isNewClosure)
@@ -1492,6 +1500,7 @@ struct ReferencesOfScan {
     uint32_t block;
     bool isNewClosure;
     bool handsModuleOut;
+    bool statesExpectation;
     bool namesUndefinedRecord { false };
 };
 
@@ -1552,6 +1561,17 @@ void ScanOfBody::noteFunctionsBehind(TypeID type)
     });
     if (!namesFunction)
         known = asKnown;
+}
+
+void ScanOfBody::noteSetOfLayoutsWritten(TypeID type)
+{
+    if (holdsOnlyPrimitives(type))
+        return;
+    uint64_t asNoted = static_cast<uint64_t>(type.bits()) + 1;
+    if (std::exchange(m_typesWhoseSetsAreNoted[type.bits() % m_typesWhoseSetsAreNoted.size()], asNoted) == asNoted)
+        return;
+    if (LayoutSetID set = m_program.at(type).unnamedLayouts; set && !holdsOneMember(set))
+        m_setsOfLayoutsWritten.add(set.bits());
 }
 
 void ScanOfBody::run(FunctionID id, ThinSummary& result)
@@ -2512,6 +2532,8 @@ BodyBlock ScanOfBody::readBlock(const BodyBlock& block)
         m_atoms.append(parameterBit | m_numberOfParameters++);
         m_roots[value] = value;
         m_blocks[value] = number;
+        if (TypeID type = block.parameterType(position))
+            noteSetOfLayoutsWritten(type);
         if (block.id() == entryBlock)
             readEntryParameter(position);
     }
@@ -2674,7 +2696,8 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
     if (traits & Row::namesRecords) {
         bool isFollowedFromHere = (opcode == Opcode::ModuleNamespace && layoutOfNamespaceGivenBy(value)) || (opcode == Opcode::RequireModule && answersWithResultOfBody(value));
         bool handsModuleOut = (traits & Row::givesResult) && !isFollowedFromHere;
-        ReferencesOfScan references { *this, value.id(), block, opcode == Opcode::NewClosure, handsModuleOut };
+        bool statesExpectation = opcode == Opcode::Check || (opcode == Opcode::Convert && value.as<Opcode::Convert>().declared().isExpected());
+        ReferencesOfScan references { *this, value.id(), block, opcode == Opcode::NewClosure, handsModuleOut, statesExpectation };
         value.forEachReference(references);
         if (traits & Row::namesModules) {
             notePathsOfModulesReadInScan(value, m_summary);
@@ -4587,7 +4610,7 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
 {
     TerminatorKind kind = terminator.kind();
     if (terminatorKindsThatNameRecordsInScan.contains(kind)) {
-        ReferencesOfScan references { *this, ValueID(), block, false, false };
+        ReferencesOfScan references { *this, ValueID(), block, false, false, false };
         terminator.forEachReference(references);
         if (references.namesUndefinedRecord) {
             stopAtUndefinedRecord(block, ValueID(), m_function->locationOf(terminator), nameOf(kind));
@@ -4612,6 +4635,13 @@ const uint32_t* ScanOfBody::readTerminator(const BodyTerminator& terminator, uin
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         noteUseByBodyOfModule(operand);
         noteTakerOfValueMadeForVariable(operand);
+        constexpr OperandUses usesThatFlowNowhereFromTerminator {
+            OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::ReadsContents, OperandUse::WritesContents, OperandUse::RetainsContents,
+            OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor,
+            OperandUse::ChangesIntegrity, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively,
+            OperandUse::AppliesToContents,
+        };
+        static_assert(everyOperandUseIsInExactlyOneOf({ OperandUse::Inspects, OperandUse::Returns, OperandUse::Retains, usesThatFlowNowhereFromTerminator }));
         OperandUses uses = operandUsesOf(kind, operandIndex);
         if (uses != OperandUses { OperandUse::Inspects })
             noteLeaving(operand, kind == TerminatorKind::Return && !m_function->isCoroutine() ? WayOfLeavingInScan::IsReturned : WayOfLeavingInScan::IsSeenFromOutside);
@@ -5878,6 +5908,15 @@ ThinSummaries scanBodies(const Program& program, Diagnostics& diagnostics, const
         }
         summaries.setTextsSpelledThatNameFieldsNeverWritten(WTF::move(textsSpelled));
     }
+
+    SetsOfLayoutsWritten setsOfLayoutsWritten;
+    for (std::unique_ptr<ScanOfBody>& scan : scans) {
+        if (!scan)
+            continue;
+        for (uint32_t set : scan->setsOfLayoutsWritten())
+            setsOfLayoutsWritten.add(set);
+    }
+    summaries.setSetsOfLayoutsWrittenInBodies(WTF::move(setsOfLayoutsWritten));
 
     nameKeysOfMembersByVariablesInScan(program, scans, summaries);
 

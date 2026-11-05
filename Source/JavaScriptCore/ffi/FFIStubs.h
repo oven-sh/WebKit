@@ -33,6 +33,9 @@
 namespace JSC {
 
 class JSFFICallback;
+namespace AOT {
+class Image;
+}
 
 namespace FFI {
 
@@ -128,9 +131,10 @@ private:
         std::span<uint8_t> pages;
         size_t contextSize { 0 };
         Vector<uint32_t> offsets;
-        // Where the pages lie in a file that was open when the image was taken into use.
+        // Where the pages lie in a file that was open when the image was taken into use, or in the executable, which is opened anew.
         int descriptor { -1 };
         int64_t offsetInFile { 0 };
+        const AOT::Image* imageInExecutable { nullptr };
     };
 
     Stubs(InvokeStubFunction, CodeOfCallbackEntries&&);

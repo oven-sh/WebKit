@@ -91,7 +91,7 @@ static PrimitiveKnownToFolding primitiveHeldInFolding(Walker& walker, Reference 
     return onlyValueOfTypeInFolding(walker.types(), walker.typeOf(reference));
 }
 
-static Reference constantForFolding(Walker& walker, PrimitiveKnownToFolding primitive)
+Reference Walker::constant(PrimitiveKnownToFolding primitive)
 {
     Draft constant(Opcode::Undefined);
     switch (primitive.kind()) {
@@ -120,7 +120,7 @@ static Reference constantForFolding(Walker& walker, PrimitiveKnownToFolding prim
     case PrimitiveKnownToFolding::Kind::Unknown:
         return { };
     }
-    return walker.constant(WTF::move(constant));
+    return this->constant(WTF::move(constant));
 }
 
 static std::optional<double> toNumberInFolding(PrimitiveKnownToFolding primitive)
@@ -409,7 +409,7 @@ static Reference foldOverKnownPrimitivesInFolding(Walker& walker, const BodyValu
     }
     if (!operands[0])
         return { };
-    return constantForFolding(walker, evaluateInFolding(walker.program(), walker.types(), &walker.types(), value.opcode(), operands[0], operands[1]));
+    return walker.constant(evaluateInFolding(walker.program(), walker.types(), &walker.types(), value.opcode(), operands[0], operands[1]));
 }
 
 static_assert(primitivesWrittenForFolding == OpcodeSet { Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String });
@@ -733,7 +733,7 @@ static Reference foldTypeOfInFolding(Walker& walker, const BodyValue& typeOf)
         answer = program.stringOf(BuiltinNames::symbol);
     else if (type.hasOnlyPrimitives(Primitive::BigInt))
         answer = program.stringOf(BuiltinNames::bigint);
-    return answer ? constantForFolding(walker, PrimitiveKnownToFolding::text(answer)) : Reference();
+    return answer ? walker.constant(PrimitiveKnownToFolding::text(answer)) : Reference();
 }
 
 static LinkedCell cellOfVariableInFolding(const Walker& walker, VariableID variable)
@@ -753,7 +753,7 @@ static Reference onlyValueOfCellInFolding(Walker& walker, const LinkedCell& cell
         return { };
     if (walker.checksProofs())
         return { };
-    return constantForFolding(walker, onlyValueOfTypeInFolding(walker.types(), cell.proven));
+    return walker.constant(onlyValueOfTypeInFolding(walker.types(), cell.proven));
 }
 
 static Reference unlessAbsentInFolding(Walker& walker, Reference held)
@@ -929,12 +929,12 @@ static Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
     }
     if (testsThatTypesDecideInFolding.contains(opcode)) {
         if (std::optional<bool> answer = answerThatTypesDecideInFolding(walker, value))
-            return constantForFolding(walker, PrimitiveKnownToFolding::boolean(*answer));
+            return walker.constant(PrimitiveKnownToFolding::boolean(*answer));
     }
     if (opcode == Opcode::TypeTest && isLookAtCellInFrontOfIsArray(walker, walker.currentBodyIndex(), value)) {
         Reference asked = walker.referenceOf(value.operand(0));
         if (!asked || !cellAnswersWhetherValueIsArray(walker, walker.typeOf(asked)))
-            return constantForFolding(walker, PrimitiveKnownToFolding::boolean(false));
+            return walker.constant(PrimitiveKnownToFolding::boolean(false));
     }
     if (Reference answer = opcode == Opcode::StrictEq && !walker.isAskedByBranchOfItsBlock(value) ? walker.buildTestOfTagAsTestOfShape(value) : Reference())
         return answer;

@@ -90,7 +90,7 @@ static bool isConstantLocationForGenerators(const Walker& walker, BuiltinID memb
     return walker.facts().builtinLocation(member) == BuiltinLocationState::Constant;
 }
 
-static std::optional<BuiltinID> findMemberAboveForGenerators(const Walker& walker, BuiltinID start, BuiltinName name)
+std::optional<BuiltinID> findMemberAboveForIteration(const Walker& walker, BuiltinID start, BuiltinName name)
 {
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
@@ -123,13 +123,13 @@ static bool findsEngineAnswersForGenerators(const Walker& walker)
     const BuiltinTable& table = walker.program().builtins();
     BuiltinID prototype = table.at(BuiltinClasses::Generator).prototype;
     auto finds = [&](BuiltinName name, BuiltinID expected) {
-        std::optional<BuiltinID> member = findMemberAboveForGenerators(walker, prototype, name);
+        std::optional<BuiltinID> member = findMemberAboveForIteration(walker, prototype, name);
         return member && *member && table.canonicalID(*member) == table.canonicalID(expected);
     };
     if (!finds(BuiltinNames::next, Builtins::GeneratorPrototypeNext) || !finds(BuiltinNames::returnKeyword, Builtins::GeneratorPrototypeReturn))
         return false;
 
-    std::optional<BuiltinID> method = findMemberAboveForGenerators(walker, prototype, table.nameOf(WellKnownSymbol::Iterator));
+    std::optional<BuiltinID> method = findMemberAboveForIteration(walker, prototype, table.nameOf(WellKnownSymbol::Iterator));
     if (!method || !*method)
         return false;
     bool returnsReceiver = false;
@@ -164,7 +164,7 @@ static void buildFirstReadForGenerators(Walker& walker, BuiltinName name, Origin
 {
     if (walker.isUnreachable())
         return;
-    std::optional<BuiltinID> location = findMemberAboveForGenerators(walker, walker.program().builtins().at(BuiltinClasses::Generator).prototype, name);
+    std::optional<BuiltinID> location = findMemberAboveForIteration(walker, walker.program().builtins().at(BuiltinClasses::Generator).prototype, name);
     if (!location || !*location || !firstReadIsSeenForGenerators(walker, *location))
         return;
     if (walker.has(Mechanism::Folding) && walker.state().hasReadBuiltin(*location))

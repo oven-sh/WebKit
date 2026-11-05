@@ -808,7 +808,7 @@ ThrowSite StraightEmitter::throwSiteWithName(ThrowKind kind, StringID name)
     return { .kind = kind, .a = m_records.mentions.add(NumberSpace::ShownString, name), .b = std::nullopt, .aIsMention = true };
 }
 
-static void emitStraightThrowSite(CCallHelpers& jit, CodeRecords& records, const ThrowSite& site, std::optional<GPRReg> operand, unsigned registerNumberWithoutOperand, uint32_t callSite)
+void emitStraightThrowSite(CCallHelpers& jit, CodeRecords& records, const ThrowSite& site, std::optional<GPRReg> operand, unsigned registerNumberWithoutOperand, uint32_t callSite)
 {
     Vector<uint32_t, 3> words = throwSiteWords(site, operand ? Representation::JSValue : Representation::Void, operand ? static_cast<unsigned>(*operand) : registerNumberWithoutOperand);
     uint8_t wordsThatAreMentions = mentionsAmongThrowSiteWords(site, words.size());

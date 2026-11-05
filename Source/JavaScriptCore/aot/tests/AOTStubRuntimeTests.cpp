@@ -688,12 +688,55 @@ static void testSlimClosures()
     FakeCell inFrame;
     run = runner.run(newSlimClosureInFrame(kind, 1), { function, inFrame.address(), capture });
     AOT_TEST_CHECK(!run.calledOperation && run.result == inFrame.address());
-    AOT_TEST_CHECK(inFrame.words[0] == headerInFrame && inFrame.words[1] == closureWords[function] && inFrame.words[2] == capture && inFrame.words[3] == FakeCell::untouched);
+    AOT_TEST_CHECK(inFrame.words[0] == headerInFrame && inFrame.words[1] == closureWords[function] && inFrame.words[2] == capture && !inFrame.words[3] && inFrame.words[4] == FakeCell::untouched);
 
     FakeCell withTwoCaptures;
     run = runner.run(newSlimClosureInFrame(kind, 2), { function, withTwoCaptures.address(), capture, ~capture });
     AOT_TEST_CHECK(!run.calledOperation && run.result == withTwoCaptures.address());
-    AOT_TEST_CHECK(withTwoCaptures.words[0] == headerInFrame && withTwoCaptures.words[1] == closureWords[function] && withTwoCaptures.words[2] == capture && withTwoCaptures.words[3] == ~capture && withTwoCaptures.words[4] == FakeCell::untouched);
+    AOT_TEST_CHECK(withTwoCaptures.words[0] == headerInFrame && withTwoCaptures.words[1] == closureWords[function] && withTwoCaptures.words[2] == capture && withTwoCaptures.words[3] == ~capture && !withTwoCaptures.words[4] && withTwoCaptures.words[5] == FakeCell::untouched);
+
+    FakeCell withoutCaptures;
+    run = runner.run(newSlimClosureInFrame(kind, 0), { function, withoutCaptures.address() });
+    AOT_TEST_CHECK(!run.calledOperation && run.result == withoutCaptures.address());
+    AOT_TEST_CHECK(withoutCaptures.words[0] == headerInFrame && withoutCaptures.words[1] == closureWords[function] && !withoutCaptures.words[2] && withoutCaptures.words[3] == FakeCell::untouched);
+}
+
+static void testSlotOfFrameThatIsUsedAgainForgetsCopyInHeap()
+{
+    constexpr uint32_t function = 3;
+    constexpr uint64_t header = 0x0123456789abcdefULL;
+    constexpr std::array<uint64_t, ClosureRequest::maxSlimClosureCapturesInRegisters> captures { 0x5555666677778888ULL, 0x1111222233334444ULL, 0x9999aaaabbbbccccULL, 0xddddeeeeffff0000ULL };
+    constexpr unsigned kind = 1;
+    constexpr unsigned count = 7;
+    constexpr size_t firstCapture = offsetOfSlimClosureCaptures / sizeof(uint64_t);
+    constexpr size_t copyBehindOneCapture = offsetOfCopyInHeapOfClosureInFrame(offsetOfSlimClosureCaptures, 1) / sizeof(uint64_t);
+    constexpr size_t copyBehindAllCaptures = offsetOfCopyInHeapOfClosureInFrame(offsetOfSlimClosureCaptures, count) / sizeof(uint64_t);
+    static_assert(count > captures.size() && sizeOfClosureInFrame(offsetOfSlimClosureCaptures, count) < sizeof(FakeCell));
+    const std::array<uint64_t, 4> closureWords { 0, 0, 0, 0x1122334455667788ULL };
+
+    StubRunner runner;
+    runner.instance().functionTables.closureWords = closureWords.data();
+    runner.instance().slimClosureHeaders[kind] = header;
+
+    FakeCell copyInHeap;
+    FakeCell slot;
+    for (uint64_t capture : captures) {
+        StubRun run = runner.run(newSlimClosureInFrame(kind, 1), { function, slot.address(), capture });
+        AOT_TEST_CHECK(!run.calledOperation && run.result == slot.address());
+        AOT_TEST_CHECK(slot.words[firstCapture] == capture && !slot.words[copyBehindOneCapture] && slot.words[copyBehindOneCapture + 1] == FakeCell::untouched);
+        slot.words[copyBehindOneCapture] = copyInHeap.address();
+    }
+
+    FakeCell largeSlot;
+    for (unsigned making = 0; making < 2; ++making) {
+        StubRun run = runner.run(newSlimClosureInFrame(kind, count), { function, largeSlot.address(), captures[0], captures[1], captures[2], captures[3] });
+        AOT_TEST_CHECK(!run.calledOperation && run.result == largeSlot.address());
+        AOT_TEST_CHECK(std::ranges::equal(std::span(largeSlot.words).subspan(firstCapture, captures.size()), captures));
+        AOT_TEST_CHECK(std::ranges::all_of(std::span(largeSlot.words).subspan(firstCapture + captures.size(), count - captures.size()), [](uint64_t word) { return word == FakeCell::untouched; }));
+        AOT_TEST_CHECK(!largeSlot.words[copyBehindAllCaptures] && largeSlot.words[copyBehindAllCaptures + 1] == FakeCell::untouched);
+        largeSlot.words[copyBehindAllCaptures] = copyInHeap.address();
+    }
+    AOT_TEST_CHECK(copyInHeap.isUntouched());
 }
 
 static void testSlimClosuresWithMoreCapturesThanRegisters()
@@ -1053,6 +1096,7 @@ std::span<const NativeTest> stubRuntimeTests()
         { "stubs/allocation-at-sites"_s, ImageTests::whenExecutable<testAllocationAtSites> },
         { "stubs/allocation-from-templates"_s, ImageTests::whenExecutable<testAllocationFromTemplates> },
         { "stubs/slim-closures"_s, ImageTests::whenExecutable<testSlimClosures> },
+        { "stubs/slot-of-the-frame-that-is-used-again-forgets-the-copy-in-the-heap"_s, ImageTests::whenExecutable<testSlotOfFrameThatIsUsedAgainForgetsCopyInHeap> },
         { "stubs/slim-closures-with-more-captures-than-registers"_s, ImageTests::whenExecutable<testSlimClosuresWithMoreCapturesThanRegisters> },
         { "stubs/typed-arrays-with-length"_s, ImageTests::whenExecutable<testTypedArraysWithLength> },
         { "stubs/created-fields-in-orders-of-the-image"_s, ImageTests::whenExecutable<testCreatedFieldsInOrdersOfImage> },

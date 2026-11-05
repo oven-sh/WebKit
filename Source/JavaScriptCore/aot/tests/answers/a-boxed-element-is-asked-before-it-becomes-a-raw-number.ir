@@ -12,11 +12,11 @@
 # RUN(FORM): walk f1 mechanisms=all
 # FORM: @OptionalDouble = GetArrayElement
 # RUN(ALL): run-in-shell mechanisms=all
-# ALL: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
-# CALLS: AOT: f{{*}} at {{*}}: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS: AOT: f{{*}} at {{*}}: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
 # CALLS-NOT: went on
 # CALLS: crashed with
 

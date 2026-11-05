@@ -4,6 +4,7 @@
 # RUN: link functions mechanisms=all
 # RUN(LOOKUPS): link lookups mechanisms=all
 # REQUIRES: entries-of-bun
+# REQUIRES(LOOKUPS): entries-of-bun
 # CHECK-NOT: function f1 unreached
 # CHECK-NOT: function f2 unreached
 # From there on the stream is an object that nobody knows, at the call in front of the read too.

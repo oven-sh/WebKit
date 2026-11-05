@@ -75,38 +75,6 @@ std::optional<int64_t> integerKnownInNumberForms(const Walker& walker, Reference
     return type.integers.minimum;
 }
 
-Reference constantInNumberForms(Walker& walker, PrimitiveKnownToFolding primitive)
-{
-    Draft constant(Opcode::Undefined);
-    switch (primitive.kind()) {
-    case PrimitiveKnownToFolding::Kind::Undefined:
-        break;
-    case PrimitiveKnownToFolding::Kind::Null:
-        constant.become(Opcode::Null);
-        break;
-    case PrimitiveKnownToFolding::Kind::Boolean:
-        constant.become(Opcode::Boolean);
-        constant.setBoolean(primitive.asBoolean());
-        break;
-    case PrimitiveKnownToFolding::Kind::Number:
-        if (isTrackedInteger(primitive.asNumber())) {
-            constant.become(Opcode::Integer);
-            constant.setInteger(static_cast<int64_t>(primitive.asNumber()));
-        } else {
-            constant.become(Opcode::Double);
-            constant.setNumber(primitive.asNumber());
-        }
-        break;
-    case PrimitiveKnownToFolding::Kind::Text:
-        constant.become(Opcode::String);
-        constant.setString(primitive.asText());
-        break;
-    case PrimitiveKnownToFolding::Kind::Unknown:
-        return { };
-    }
-    return walker.constant(WTF::move(constant));
-}
-
 Reference integerInNumberForms(Walker& walker, int64_t integer)
 {
     Draft constant(Opcode::Integer);
@@ -174,41 +142,27 @@ Reference buildNarrowedInNumberForms(Walker& walker, Reference value, Reference 
     return walker.build(WTF::move(proof));
 }
 
-static Reference addParameterForWaysInNumberForms(Walker& walker, BlockID meeting, std::span<const WayInNumberForms> ways, Reference WayInNumberForms::* brought)
-{
-    TypeID type;
-    Vector<Representation, 4> forms;
-    for (const WayInNumberForms& way : ways) {
-        if (!way.end || !(way.*brought))
-            continue;
-        TypeID arriving = walker.code().at((way.*brought).id()).type;
-        type = type ? joinOf(walker.types(), walker.facts().families(), type, arriving) : arriving;
-        forms.append(walker.representationOf(way.*brought));
-    }
-    return type ? walker.addParameter(meeting, type, walker.formOfParameter(type, forms.span())) : Reference();
-}
-
 Reference meetInNumberForms(Walker& walker, BlockID meeting, std::span<const WayInNumberForms> ways, Reference* metBeside)
 {
-    bool someWayArrives = std::ranges::any_of(ways, [](const WayInNumberForms& way) {
-        return !!way.end;
-    });
-    if (!someWayArrives)
-        return { };
-
-    Reference met = addParameterForWaysInNumberForms(walker, meeting, ways, &WayInNumberForms::brought);
-    Reference beside = met ? addParameterForWaysInNumberForms(walker, meeting, ways, &WayInNumberForms::broughtBeside) : Reference();
+    auto isValue = [&](Reference brought) {
+        return brought && walker.code().at(brought.id()).type;
+    };
+    Vector<Walker::ArmThatMeets, 2> arms;
+    size_t numberOfValues = 0;
     for (const WayInNumberForms& way : ways) {
         if (!way.end)
             continue;
-        walker.continueIn(way.end);
-        std::array<Reference, 2> arguments { way.brought, way.broughtBeside };
-        walker.jumpTo(meeting, std::span<const Reference>(arguments).first(beside ? 2 : met ? 1 : 0));
+        arms.append(Walker::ArmThatMeets { way.end, { way.brought, way.broughtBeside } });
+        numberOfValues = std::max<size_t>(numberOfValues, !isValue(way.brought) ? 0 : isValue(way.broughtBeside) ? 2 : 1);
     }
-    walker.continueIn(meeting);
+    if (arms.isEmpty())
+        return { };
+
+    std::array<Reference, 2> met;
+    walker.letArmsMeet(arms.span(), meeting, std::span<Reference>(met).first(numberOfValues));
     if (metBeside)
-        *metBeside = beside;
-    return met;
+        *metBeside = met[1];
+    return met[0];
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -58,6 +58,8 @@ enum class RequireOverride : uint8_t {
 
 enum class FactoryAskedForBy : uint8_t { ImportCall, ImportCallBehindItsText, Loader };
 
+enum class AnswerForName : uint8_t { Declined, Answered, Thrown };
+
 struct ModuleHost {
     void (*createModuleObject)(JSGlobalObject*, JSString* path, ModuleID, OptionSet<ModuleObjectTrait>, ModuleObjects&);
     void (*createRequirer)(JSGlobalObject*, JSObject* importMeta, ModuleObjects&);
@@ -83,7 +85,7 @@ struct ModuleHost {
     bool (*loadsSynchronously)(JSGlobalObject*, ModuleID);
     bool (*loadsFileItself)(JSGlobalObject*, const String& path);
     bool (*hasPluginsThatAnswerForNames)(JSGlobalObject*);
-    bool (*answersForName)(JSGlobalObject*, const String& name, const String& importer);
+    AnswerForName (*answersForName)(JSGlobalObject*, const String& name, const String& importer, String& foundWithoutPlugins);
     void (*askingAboutNames)(JSGlobalObject*, const ScopedLambda<bool(const String& importer)>* leavesWhereAskingEnds);
     const MockOperations* (*mockOperations)();
     uint64_t (*stampOfFile)(std::span<const char> path);

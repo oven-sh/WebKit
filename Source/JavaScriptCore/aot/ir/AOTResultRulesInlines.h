@@ -661,6 +661,17 @@ TypeID ResultRules::unknown(const Operation& operation)
     if constexpr (HoldsOpcode<Operation>) {
         if (opcode == Opcode::CallTable) {
             TypeID returned = context.positions.resultOfSelector(context.level, operation.selector());
+            TypeID receivers = operands[OperandIndex::CallTable::receiver];
+            size_t numberOfReceivers = !returned && receivers ? membersOf(context.types, context.types.at(receivers)).size() : 0;
+            for (size_t place = 0; place < numberOfReceivers; ++place) {
+                bool hasRow = false;
+                TypeID held = context.positions.resultOfTableRow(context.level, operation.selector(), membersOf(context.types, context.types.at(receivers))[place], hasRow);
+                if (!hasRow)
+                    continue;
+                if (!held)
+                    return context.types.anything(seed);
+                returned = returned ? context.types.unionOf(returned, held) : held;
+            }
             return returned ? returned : context.types.anything(seed);
         }
     }

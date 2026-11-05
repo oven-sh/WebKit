@@ -160,7 +160,6 @@ struct TestCommand {
     v(factsTestCommands) \
     v(testRunsTestCommands) \
     v(planTestCommands) \
-    v(jsonPlanTestCommands) \
     v(walkTestCommands) \
     v(machineTestCommands) \
     v(programTestCommands)

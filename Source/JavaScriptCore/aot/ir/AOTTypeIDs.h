@@ -126,7 +126,6 @@ constexpr bool isIntegerType(TypeID type) { return !isNeverType(type) && hasOnly
 constexpr bool isInt32Type(TypeID type) { return isIntegerType(type) && integersInID(type).isSubsetOf(Range::int32()); }
 constexpr bool isNumberType(TypeID type) { return !isNeverType(type) && hasOnlyPrimitivesIn(type, Primitive::Number); }
 constexpr bool isBooleanType(TypeID type) { return !isNeverType(type) && hasOnlyPrimitivesIn(type, Primitive::Boolean); }
-constexpr bool isStringType(TypeID type) { return type.bits() == Primitive::String; }
 constexpr bool isNullishType(TypeID type) { return !isNeverType(type) && hasOnlyPrimitivesIn(type, Primitive::UndefinedOrNull); }
 
 static_assert(integersInID(*tryMakeTypeOfPrimitives(Primitive::Integer, { -1, 255 })) == Range { -1, 255 });

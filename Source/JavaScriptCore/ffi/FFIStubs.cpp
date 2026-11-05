@@ -18,6 +18,7 @@
 
 #if ENABLE(AOT)
 #include "AOTImage.h"
+#include "AOTImageLoading.h"
 #endif
 
 #if FFI_STUBS_SUPPORTED
@@ -26,6 +27,8 @@
 #else
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <wtf/Scope.h>
 #endif
 #if OS(DARWIN)
 #include <mach/mach.h>
@@ -103,14 +106,23 @@ std::optional<Stubs::BlockOfCallbackEntries> Stubs::tryMapCallbackEntries() cons
 #else
     // A process that may not make memory executable may still map a file for execution.
     // The number of the descriptor may stand for another file by now. A mapping behind the end of a shorter file succeeds, and the first look at it faults.
+    int descriptor = m_callbackEntries.descriptor;
+#if ENABLE(AOT)
+    if (m_callbackEntries.imageInExecutable)
+        descriptor = AOT::openExecutableThatHolds(*m_callbackEntries.imageInExecutable);
+#endif
+    auto closeExecutable = makeScopeExit([&] {
+        if (m_callbackEntries.imageInExecutable && descriptor >= 0)
+            close(descriptor);
+    });
     struct stat status;
-    if (m_callbackEntries.descriptor < 0 || fstat(m_callbackEntries.descriptor, &status) || !S_ISREG(status.st_mode) || status.st_size < m_callbackEntries.offsetInFile + static_cast<int64_t>(codeSize))
+    if (descriptor < 0 || fstat(descriptor, &status) || !S_ISREG(status.st_mode) || status.st_size < m_callbackEntries.offsetInFile + static_cast<int64_t>(codeSize))
         return std::nullopt;
     void* region = mmap(nullptr, regionSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (region == MAP_FAILED)
         return std::nullopt;
     // It may still be another file of that length.
-    if (mmap(region, codeSize, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_FIXED, m_callbackEntries.descriptor, m_callbackEntries.offsetInFile) == MAP_FAILED || memcmp(region, pages, codeSize)) {
+    if (mmap(region, codeSize, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_FIXED, descriptor, m_callbackEntries.offsetInFile) == MAP_FAILED || memcmp(region, pages, codeSize)) {
         munmap(region, regionSize);
         return std::nullopt;
     }
@@ -150,6 +162,9 @@ std::unique_ptr<const Stubs> Stubs::tryCreateFromImage()
     if (const auto& position = image->positionOfCodeInFile()) {
         entries.descriptor = position->descriptor;
         entries.offsetInFile = position->offset + (base - image->code().data());
+    } else if (const auto& place = image->placeInExecutable()) {
+        entries.imageInExecutable = image;
+        entries.offsetInFile = place->offset + image->header().codeOffset + (base - image->code().data());
     }
     return std::unique_ptr<const Stubs>(new Stubs(invoke, WTF::move(entries)));
 #else

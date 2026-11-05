@@ -14,6 +14,7 @@
 #include "AOTCompileUnit.h"
 #include "AOTDiagnostics.h"
 #include "AOTMechanisms.h"
+#include "AOTPromotedEnvironments.h"
 #include "AOTWalkLinks.h"
 #include "AOTWalkLoopsOverGeneratorsOfUnit.h"
 #include "AOTWalkCoroutineState.h"
@@ -27,6 +28,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class PrimitiveKnownToFolding;
 class Walker;
 
 class NamesOfWay {
@@ -70,7 +72,6 @@ void markEnvironmentsThatCoroutineIsHanded(Walker&);
 void takeWhatIsNoLongerCaptured(Walker&);
 void stopAtSecondEntryOfMaker(Walker&);
 bool leaveEnvironmentAmongVariables(Walker&, const BodyValue&);
-void storeValuesNoLongerCaptured(Walker&, const BodyValue&);
 Reference wordInPlaceOfRemovedCapture(Walker&, FunctionID, uint32_t capture);
 Reference valueNoLongerCaptured(Walker&, FunctionID, uint32_t capture, Origin);
 bool isVariableFilledAtFirstRead(const Plan&, VariableID);
@@ -79,6 +80,7 @@ bool foldOperation(Walker&, const BodyValue&);
 bool buildFreshObject(Walker&, const BodyValue&);
 bool callBuiltin(Walker&, const BodyValue&);
 void nameMethodOfReceiverAsMade(Walker&, const BodyValue& call, Draft&);
+TypeID typeThatMapIsExpectedToGive(Walker&, const BodyValue& call);
 void sayWhatIsExpectedOfComparedOperands(Walker&, const BodyValue& equality, Draft&);
 inline constexpr OpcodeSet opcodesThatCallFunctionGivenToVariableTakes { Opcode::Call };
 AOT_LINK_OF_WALK(callFunctionGivenToVariable, opcodesThatCallFunctionGivenToVariableTakes)
@@ -252,6 +254,8 @@ Reference callCompilerHelper(Walker&, FunctionID helper, std::span<const Referen
 enum class MayCopyFunctionCalledDirectly : bool { No, Yes };
 bool callFunctionDirectly(Walker&, const BodyValue& operation, FunctionID, Reference thisValue, std::span<const Reference> arguments, MayCopyFunctionCalledDirectly = MayCopyFunctionCalledDirectly::Yes);
 bool callGetterExpectedAtRead(Walker&, const BodyValue& read);
+AOT_LINK_OF_WALK(leaveReadOfMethodToTableCall, opcodesThatLeaveReadOfMethodToTableCallTakes)
+AOT_LINK_OF_WALK(callMethodThroughTable, opcodesThatCallMethodThroughTableTakes)
 AOT_LINK_OF_WALK(callMethodsBehindTestsOfShape, opcodesThatCallMethodsBehindTestsOfShapeTakes)
 bool askGuardsAboutDeclaredMember(Walker&, const BodyValue&);
 LayoutSetID receiversWhoseCellsAnswerForOwnProperty(Walker&, ValueID input, PropertyKeyID);
@@ -311,7 +315,6 @@ struct GrowingText {
     Vector<NameOfGrowingText, 8> names;
     Vector<ValueID, 2> parametersOfInnerHeads;
     bool isOnlyConcatenated { false };
-    bool takesTextOfJSONStringify { false };
     bool standsUnderHandlers { false };
 };
 struct TextInStringBuilder {
@@ -505,7 +508,14 @@ public:
     Draft draftOf(const BodyValue&);
     Reference build(Draft&&, const Effects* foundByCaller = nullptr);
     Reference constant(Draft&&);
+    Reference constant(PrimitiveKnownToFolding);
     Reference wordThatSaysNothing(TypeID);
+    void storeParametersNoLongerCaptured();
+    ALWAYS_INLINE void storeValueBehindItsDefinition(ValueID definition)
+    {
+        if (!m_storesOfCapturedValues.empty() && m_frames.size() == 1) [[unlikely]]
+            storeValueBehindItsDefinitionInMaker(definition);
+    }
     Reference cellThatRunTimeKeeps(Draft&);
     bool copy(const BodyValue&);
     void chooseConservativeFields(Draft&);
@@ -735,15 +745,17 @@ public:
     FormAskedAhead takeFormAskedAhead() { return std::exchange(m_formAskedAhead, { }); }
 
     bool walkInline(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft* writtenOut = nullptr);
+    bool walkInlineUnderHandlerMade(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft& writtenOut, BlockID handler);
     void noteThatCopyMakesNewList(FunctionID callee, Reference receiver);
     bool takeWordThatCopyMakesNewList(Reference receiver);
 
     void leaveArrivals(FunctionID callee, std::span<const Reference> arguments);
 
-    void fail(ASCIILiteral what);
+    COLD NEVER_INLINE void fail(ASCIILiteral what);
     void report(const UserDiagnostic& diagnostic) { m_reports.append(diagnostic); }
     Vector<UserDiagnostic> takeReports() { return std::exchange(m_reports, { }); }
     bool hasFailed() const { return m_hasFailed; }
+    bool hasHandlerMadeOverCopies() const { return !!m_handlerMadeOverCopies; }
     ASCIILiteral failure() const { return m_failure; }
     ALWAYS_INLINE bool isUnreachable() const { return !m_block || m_code.at(m_block).hasEnded(); }
 
@@ -1206,7 +1218,7 @@ private:
     Opcode m_opcodeBeingWalked { Opcode::Undefined };
     ValueID m_valueBeingWalked;
     bool m_isMakingObjectsOfConstant { false };
-    void giveUpWalkOfUnit();
+    COLD NEVER_INLINE void giveUpWalkOfUnit();
     struct LoopOfWalkGivenUp {
         FunctionID function;
         BlockID inputHead;
@@ -1361,8 +1373,9 @@ private:
     {
         if (m_block && m_code.at(m_block).handler)
             return true;
-        return numberOfFramesUpToHandlerInForce();
+        return m_handlerMadeOverCopies || numberOfFramesUpToHandlerInForce();
     }
+    ALWAYS_INLINE bool handlerMadeOverCopiesIsInForce() const { return m_handlerMadeOverCopies && numberOfFramesUpToHandlerInForce() <= m_numberOfFramesBelowHandlerMade; }
     ALWAYS_INLINE size_t numberOfFramesUpToHandlerInForce() const
     {
         size_t numberOfFrames = m_frames.size();
@@ -1544,6 +1557,9 @@ private:
     bool m_holdsReadsOfVariablesAsConstants { false };
     uint32_t m_numberOfSharedConstants { 0 };
     Vector<std::pair<TypeID, Reference>, 2> m_wordsThatSayNothing;
+    void storeValueNoLongerCaptured(const StoreOfCapturedValue&);
+    void storeValueBehindItsDefinitionInMaker(ValueID);
+    std::span<const StoreOfCapturedValue> m_storesOfCapturedValues;
     struct NarrowedTypedLast {
         Reference value;
         Reference test;
@@ -1568,6 +1584,8 @@ private:
     uint32_t m_numberOfIterationsInFrontOfTheirLoops { 0 };
     std::optional<bool> m_listsAreIteratedByIndex;
     bool m_isLeadingHandlerEdge { false };
+    BlockID m_handlerMadeOverCopies;
+    size_t m_numberOfFramesBelowHandlerMade { 0 };
     Vector<OpenLoop, 4> m_openLoops;
     Vector<uint32_t> m_placesOfLoopsBehindBlocks;
     uint32_t m_numberOfLoopsThatMayBeLeft { UINT32_MAX };
@@ -1710,7 +1728,7 @@ bool readsOffListThatStaysAsMadeByLink(Walker&, const BodyValue& read);
 BuiltinClassID classOfIterableThatStaysAsMadeByLink(Walker&, const BodyValue& operation, ValueID iterable);
 bool indexesAreAbsentAboveLists(const Walker&);
 Reference buildReadOfElementOffExpectedList(Walker&, const BodyValue& read);
-TypeID typeOfElementInsideViewOfNumbers(Walker&, TypeID typeOfView, TypeID typeOfPosition);
+TypeID typeOfElementInsideViewOfNumbers(Walker&, const BodyValue& read, TypeID typeOfView, TypeID typeOfPosition);
 Reference buildReadOfElementOfViewBehindTestOfLength(Walker&, const BodyValue& read, Reference view, Origin, BlockID whereItLiesOutside);
 bool splitNullishOffReceiverOfAccess(Walker&, const BodyValue& access);
 void buildFirstReadOfNamedBuiltin(Walker&, const BodyValue& named);

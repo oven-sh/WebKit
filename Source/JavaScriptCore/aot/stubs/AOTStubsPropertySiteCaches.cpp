@@ -14,6 +14,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsField.h"
+#include "AOTStubsValues.h"
 #include "JSArrayBufferView.h"
 #include "JSCell.h"
 #include "JSObject.h"
@@ -433,10 +434,13 @@ public:
     {
         static_assert(InstanceLayout::sizeOfIndexOfSiteAnswers == sizeof(uint16_t));
         jit.load16(BaseIndex(instanceGPR, distance, CCallHelpers::TimesOne), place);
-#if !CPU(X86_64)
-        jit.getEffectiveAddress(BaseIndex(instanceGPR, place, CCallHelpers::TimesEight), place);
-        jit.addPtr(TrustedImm32(static_cast<int32_t>(InstanceLayout::offsetOfSiteAnswers)), place);
-#endif
+        locate(jit);
+    }
+    static AnswersOfStub atLoadedIndex(StubAssembler& jit, GPRReg place)
+    {
+        AnswersOfStub answers(place);
+        answers.locate(jit);
+        return answers;
     }
 #if CPU(X86_64)
     using Word = CCallHelpers::BaseIndex;
@@ -512,6 +516,18 @@ public:
     }
 
 private:
+    explicit AnswersOfStub(GPRReg place)
+        : m_place(place)
+    {
+    }
+    void locate([[maybe_unused]] StubAssembler& jit) const
+    {
+#if !CPU(X86_64)
+        jit.getEffectiveAddress(BaseIndex(instanceGPR, m_place, CCallHelpers::TimesEight), m_place);
+        jit.addPtr(TrustedImm32(static_cast<int32_t>(InstanceLayout::offsetOfSiteAnswers)), m_place);
+#endif
+    }
+
     GPRReg m_place;
 };
 
@@ -519,6 +535,12 @@ private:
 
 static constexpr ptrdiff_t offsetOfFirstAnswer = OBJECT_OFFSETOF(SiteAnswers, first);
 static constexpr ptrdiff_t offsetOfSecondAnswer = OBJECT_OFFSETOF(SiteAnswers, second);
+
+static Jump branchUnlessAnswersAreWide(StubAssembler& jit, GPRReg distance, GPRReg index)
+{
+    jit.load16(BaseIndex(instanceGPR, distance, CCallHelpers::TimesOne), index);
+    return jit.branchTest32(CCallHelpers::Zero, index, TrustedImm32(static_cast<int32_t>(SiteAnswers::firstWordOfWideAnswers)));
+}
 
 static Jump branchUnlessForm(StubAssembler& jit, SiteUse use, GPRReg bitsOfForm, SiteAnswers::Form form)
 {
@@ -590,13 +612,34 @@ StubSignature signatureOfReadLengthAtSite(StubKey key)
     return signatureOfReadBehindSite(key);
 }
 
-void generateReadAtSite(StubAssembler& jit)
+StubSignature signatureOfReadTruthAtSite(StubKey key)
+{
+    const StubSignature reads = signatureOfReadAtSite(key);
+    StubSignature signature = signatureWithFlagsResult({ reads.operands[0] }, signatureOf(valueIsTruthy()).trueCondition);
+    signature.immediate = reads.immediate;
+    return signature;
+}
+
+static void emitReadAtSite(StubAssembler& jit, bool asksTruth)
 {
     constexpr SiteUse use = SiteUse::Read;
     using Form = SiteAnswers::Form;
     const ReadAtSiteForm form = readAtSiteFormOf(jit.key());
     const GPRReg receiver = jit.operand(0);
-    const GPRReg result = jit.result();
+    const GPRReg result = asksTruth ? jit.clobberRegister(signatureOf(valueIsTruthy()).operands[0].gpr()) : jit.result();
+    if (asksTruth)
+        jit.goOnAtEveryReturnIn(valueIsTruthy());
+    auto goOnIn = [&](StubKey next) {
+        if (!asksTruth) {
+            jit.jumpToStub(next);
+            return;
+        }
+        jit.emitFunctionPrologue();
+        jit.callStub(next.withCallerFrame(CallerFrame::StubFrame));
+        jit.bindReturnLabel(StubFrameKind::MethodRead);
+        jit.emitFunctionEpilogue();
+        jit.returnToCaller();
+    };
     const GPRReg distance = jit.immediate();
 #if CPU(X86_64)
     const GPRReg place = jit.allocateScratch(StubRegister::T11);
@@ -720,7 +763,7 @@ void generateReadAtSite(StubAssembler& jit)
     isNotAsked.append(jit.branchTest8(CCallHelpers::NonZero, Address(receiver, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
     jit.load64(Address(receiver, JSArrayBufferView::offsetOfLength()), operand);
     isNotAsked.append(jit.branch64(CCallHelpers::Above, operand, TrustedImm32(std::numeric_limits<int32_t>::max())));
-    boxInt32(jit, operand, jit.result());
+    boxInt32(jit, operand, result);
     jit.returnToCaller();
 
     const StubKey callOfGetter = callGetterOfAnswer(jit.key().callerFrame());
@@ -730,7 +773,7 @@ void generateReadAtSite(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(receiverOfGetter, getterSetter, key, operand, distance, place));
     auto callGetterIn = [&](BaseIndex word) {
         jit.load64(word, getterSetter);
-        jit.jumpToStub(callOfGetter);
+        goOnIn(callOfGetter);
     };
     ownFieldOrGetterAboveInStorage.toUpper.link(&jit);
     jit.move(receiver, receiverOfGetter);
@@ -806,9 +849,29 @@ void generateReadAtSite(StubAssembler& jit)
         jit.move(receiver, gprOf(firstStubOperandRegister));
         if (distance != gprOf(shortStubImmediateRegister))
             jit.move(distance, jit.clobberRegister(shortStubImmediateRegister));
-        jit.jumpToStub(readBehindSite(way, form.name));
+        goOnIn(readBehindSite(way, form.name));
     };
+    static_assert(!(WideSiteAnswers::numberOfStructuresThatLackName % 2));
+    JumpList findsNothing;
     isNotAnswered.link(&jit);
+#if CPU(X86_64)
+    Jump hasNoMoreAnswers = jit.branchTest32(CCallHelpers::Zero, place, TrustedImm32(static_cast<int32_t>(SiteAnswers::firstWordOfWideAnswers)));
+#else
+    Jump hasNoMoreAnswers = branchUnlessAnswersAreWide(jit, distance, key);
+#endif
+    jit.load32(Address(receiver, JSCell::structureIDOffset()), key);
+    for (unsigned index = 0; index < WideSiteAnswers::numberOfStructuresThatLackName; index += 2) {
+        const ptrdiff_t offset = OBJECT_OFFSETOF(WideSiteAnswers, structuresThatLackName) + index * sizeof(uint32_t);
+#if CPU(X86_64)
+        findsNothing.append(jit.branch32(CCallHelpers::Equal, answers.word(offset), key));
+        findsNothing.append(jit.branch32(CCallHelpers::Equal, answers.word(offset + sizeof(uint32_t)), key));
+#else
+        jit.loadPair32(place, TrustedImm32(static_cast<int32_t>(offset)), keyOfAnswer, operand);
+        findsNothing.append(jit.branch32(CCallHelpers::Equal, key, keyOfAnswer));
+        findsNothing.append(jit.branch32(CCallHelpers::Equal, key, operand));
+#endif
+    }
+    hasNoMoreAnswers.link(&jit);
     goOnBehindSite(WayBehindSite::AfterMiss);
 
     slotIsEmpty.link(&jit);
@@ -823,18 +886,52 @@ void generateReadAtSite(StubAssembler& jit)
     jit.load64(BaseIndex(place, operand, CCallHelpers::TimesEight), place);
     jit.urshift64(key, place);
     isNotAsked.append(jit.branchTest64(CCallHelpers::NonZero, place, TrustedImm32(1)));
+    findsNothing.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), result);
     jit.returnToCaller();
 
+    JumpList isNotAnsweredAbove;
+    isNotBelowObjectPrototype.link(&jit);
+    isNotAnsweredAbove.append(branchUnlessAnswersAreWide(jit, distance, place));
+    const AnswersOfStub wideAnswers = AnswersOfStub::atLoadedIndex(jit, place);
+    jit.load32(Address(receiver, JSCell::structureIDOffset()), key);
+#if CPU(X86_64)
+    isNotAnsweredAbove.append(jit.branch32(CCallHelpers::NotEqual, wideAnswers.word(OBJECT_OFFSETOF(WideSiteAnswers, structureThatLeavesFieldOut)), key));
+    jit.load32(wideAnswers.word(OBJECT_OFFSETOF(WideSiteAnswers, holderOrWordAbove)), operand);
+#else
+    static_assert(OBJECT_OFFSETOF(WideSiteAnswers, holderOrWordAbove) == OBJECT_OFFSETOF(WideSiteAnswers, structureThatLeavesFieldOut) + sizeof(uint32_t));
+    jit.loadPair32(place, TrustedImm32(static_cast<int32_t>(OBJECT_OFFSETOF(WideSiteAnswers, structureThatLeavesFieldOut))), keyOfAnswer, operand);
+    isNotAnsweredAbove.append(jit.branch32(CCallHelpers::NotEqual, key, keyOfAnswer));
+#endif
+    jit.load32SignedExtendTo64(wideAnswers.word(OBJECT_OFFSETOF(WideSiteAnswers, indexInStorageOfHolderAbove)), key);
+    Jump standsInStorage = jit.branchTest64(CCallHelpers::NonZero, key);
+    jit.load64(BaseIndex(cellCageBaseGPR, operand, CCallHelpers::TimesEight), result);
+    jit.returnToCaller();
+
+    standsInStorage.link(&jit);
+    jit.loadPtr(BaseIndex(cellCageBaseGPR, operand, CCallHelpers::TimesEight, JSObject::butterflyOffset()), operand);
+    jit.load64(BaseIndex(operand, key, CCallHelpers::TimesEight), result);
+    jit.returnToCaller();
+
     if (!nameHasColumn(form.name))
-        isNotAsked.append(isNotBelowObjectPrototype);
+        isNotAsked.append(isNotAnsweredAbove);
     isNotAsked.link(&jit);
     goOnBehindSite(WayBehindSite::WithoutMiss);
 
     if (nameHasColumn(form.name)) {
-        isNotBelowObjectPrototype.link(&jit);
+        isNotAnsweredAbove.link(&jit);
         goOnBehindSite(WayBehindSite::OfFieldLeftOut);
     }
+}
+
+void generateReadAtSite(StubAssembler& jit)
+{
+    emitReadAtSite(jit, false);
+}
+
+void generateReadTruthAtSite(StubAssembler& jit)
+{
+    emitReadAtSite(jit, true);
 }
 
 StubSignature signatureOfReadAtSiteUnlessAsMade(StubKey key)
@@ -943,13 +1040,11 @@ void generateReadBehindSite(StubAssembler& jit)
     checkStubOperands(getById(), { receiver });
     checkStubOperands(getByIdOfCell(), { receiver });
     checkStubOperands(getByIdOfFieldLeftOut(), { receiver });
-    if (form.way == WayBehindSite::AfterMiss)
+    if (form.way != WayBehindSite::WithoutMiss)
         countMissAtSite(jit, receiver, distance, name, scratch, SiteUse::Read, form.name);
     loadNameOfSite(jit, distance, distance == gprOf(slotNameRegister) ? distance : jit.allocateScratch(slotNameRegister), scratch, form.name);
-    if (!nameHasColumn(form.name))
-        jit.jumpToStub(getByIdCheckingColumn());
-    else
-        jit.jumpToStub(form.way == WayBehindSite::AfterMiss ? getByIdOfCell() : form.way == WayBehindSite::OfFieldLeftOut ? getByIdOfFieldLeftOut() : getById());
+    const StubKey reads = !nameHasColumn(form.name) ? getByIdCheckingColumn() : form.way == WayBehindSite::AfterMiss ? getByIdOfCell() : form.way == WayBehindSite::OfFieldLeftOut ? getByIdOfFieldLeftOut() : getById();
+    jit.jumpToStub(reads.withCallerFrame(jit.key().callerFrame()));
 }
 
 void generateReadLengthAtSite(StubAssembler& jit)
@@ -960,15 +1055,23 @@ void generateReadLengthAtSite(StubAssembler& jit)
         const GPRReg place = jit.reuseScratch(StubRegister::T11);
         const GPRReg key = jit.allocateScratch(StubRegister::T13);
         RELEASE_ASSERT(noOverlap(receiver, distance, place, key));
-        const AnswersOfStub answers(jit, distance, place);
-        jit.load32(Address(receiver, JSCell::structureIDOffset()), key);
-        jit.or32(TrustedImm32(static_cast<int32_t>(SiteAnswers::bitsOf(SiteUse::Read, SiteAnswers::Form::LengthOfTypedArray))), key);
-        goesOn.append(jit.branch32(CCallHelpers::NotEqual, answers.word(offsetOfSecondAnswer), key));
+        jit.load8(Address(receiver, JSCell::typeInfoTypeOffset()), key);
+        jit.sub32(TrustedImm32(FirstTypedArrayType), key);
+        goesOn.append(jit.branch32(CCallHelpers::AboveOrEqual, key, TrustedImm32(NumberOfTypedArrayTypesExcludingDataView)));
+        Jump isNotAsMade = branchIfNotPristine(jit, receiver);
+        Label readsLength = jit.label();
         goesOn.append(jit.branchTest8(CCallHelpers::NonZero, Address(receiver, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
         jit.load64(Address(receiver, JSArrayBufferView::offsetOfLength()), key);
         goesOn.append(jit.branch64(CCallHelpers::Above, key, TrustedImm32(std::numeric_limits<int32_t>::max())));
         boxInt32(jit, key, jit.result());
         jit.returnToCaller();
+
+        isNotAsMade.link(&jit);
+        const AnswersOfStub answers(jit, distance, place);
+        jit.load32(Address(receiver, JSCell::structureIDOffset()), key);
+        jit.or32(TrustedImm32(static_cast<int32_t>(SiteAnswers::bitsOf(SiteUse::Read, SiteAnswers::Form::LengthOfTypedArray))), key);
+        jit.branch32(CCallHelpers::Equal, answers.word(offsetOfSecondAnswer), key).linkTo(readsLength, &jit);
+        goesOn.append(jit.jump());
     });
 }
 

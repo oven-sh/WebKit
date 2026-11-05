@@ -145,6 +145,7 @@ class CompileWorker {
 public:
     CompileWorker(const CompileInputs&, BuildContext&, TypeTable&);
     std::optional<CompiledCode> compileStraight(CodeUnit);
+    std::optional<CompiledCode> compileEntryByHand(CodeUnit);
     ~CompileWorker();
 
     std::optional<CompiledCode> compile(CodeUnit);

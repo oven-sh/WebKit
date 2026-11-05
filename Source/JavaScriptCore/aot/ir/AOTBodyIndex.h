@@ -241,7 +241,6 @@ public:
     bool isReachable(BlockID id) const { return m_blocks[id.index()].flags & IsReachable; }
     uint32_t numberOfIncomingEdges(BlockID id) const { return m_blocks[id.index()].numberOfIncomingEdges; }
     bool isEnteredByHandlerEdge(BlockID id) const { return m_blocks[id.index()].flags & IsEnteredByHandlerEdge; }
-    using OnlyIncomingEdge = BodyIncomingEdge;
     std::optional<BodyIncomingEdge> onlyIncomingEdge(BlockID id) const
     {
         const BlockPlace& place = m_blocks[id.index()];

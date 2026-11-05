@@ -486,6 +486,7 @@ export default b.declarations(
     lockedMembers: ["constructor"],
     mutability: "AlwaysLocked",
     slots: { target: b.state(internalFields), handler: b.state(internalFields) },
+    instancesAnswerEveryName: b.whenOperandHasProperty("handler", "get"),
     call: requiresNew,
     construct: {
       args: { target: b.object, handler: b.object },
@@ -499,6 +500,7 @@ export default b.declarations(
       revocable: {
         args: { target: b.object, handler: b.object },
         returns: b.object.fresh,
+        resultProperties: { proxy: b.instance("Proxy"), revoke: b.callable },
         capability: "js",
         runsOnlyOperandCode: true,
         uses: { target: [b.everything], handler: [b.everything] },

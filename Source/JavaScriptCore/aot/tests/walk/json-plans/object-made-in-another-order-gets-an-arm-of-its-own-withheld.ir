@@ -1,7 +1,0 @@
-# the same program with typed slots withheld: the plan takes no order from an allocation, so the order of the declaration has the one arm, and an object made the other way round is turned away by its order word
-# RUN: json-plan mechanisms=-TypedSlots
-# CHECK: object L0
-# CHECK-NEXT: order "a" "b"
-# RUN(NEVER): json-plan mechanisms=-TypedSlots
-# NEVER-NOT: order "b" "a"
-# PROGRAM-OF: object-made-in-another-order-gets-an-arm-of-its-own.ir

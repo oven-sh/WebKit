@@ -154,7 +154,7 @@ export const operandRoles = [
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 
-export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense", "NamesKeptBelow", "Prototype"] as const;
+export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense", "NamesKeptBelow", "Prototype", "CellAlone"] as const;
 export type PristineAspect = (typeof pristineAspects)[number];
 
 export const contentsSlots = ["Element", "Key", "Value"] as const;
@@ -571,6 +571,7 @@ export interface EntryColumns {
   usesFeature?: FeatureUseSpec | readonly FeatureUseSpec[];
   prototypeUsesFeature?: boolean;
   runsUnseenCode?: boolean | ConditionSpec;
+  instancesAnswerEveryName?: ConditionSpec;
   hasUndeclaredMembers?: boolean;
   marks?: readonly BuiltinMark[];
   loadsMachineCodeAs?: BuiltinPath;

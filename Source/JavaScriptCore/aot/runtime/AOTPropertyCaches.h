@@ -115,7 +115,12 @@ public:
     AnswersAtSites(State&, SiteCaches&);
 
     uint32_t placeAtDistanceFromInstance(uint32_t) const;
-    SiteAnswers* answersOf(uint32_t place) const { return m_indices[place] ? &m_answers[m_indices[place] / wordsInAnswers] : nullptr; }
+    SiteAnswers* answersOf(uint32_t place) const
+    {
+        if (WideSiteAnswers* wide = wideAnswersOf(place))
+            return &wide->answers;
+        return m_indices[place] ? &m_answers[m_indices[place] / wordsInAnswers] : nullptr;
+    }
 
     bool isDueForFilling(uint32_t place);
     void didFailToFill(uint32_t place);
@@ -125,6 +130,14 @@ public:
     };
     void fill(uint32_t place, SiteUse, const AnswerByStructure&, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
     void fillByShape(uint32_t place, SiteAnswers::Answer);
+    bool holdsAnotherStructure(uint32_t place, StructureID) const;
+    void addStructureThatLacksName(uint32_t place, StructureID, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
+    struct WhatStandsAbove {
+        uint32_t holderOrWord;
+        int32_t indexInStorageOfHolder { 0 };
+    };
+    bool findsSlotOf(uint32_t place, const Object&) const;
+    void fillAboveFieldLeftOut(uint32_t place, StructureID, WhatStandsAbove, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
 
     void dropChainDependent(VM&, uint32_t place, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t place, UniquedStringImpl* uidOrNull) const final;
@@ -133,17 +146,25 @@ public:
 
 private:
     static constexpr uint32_t wordsInAnswers = sizeof(SiteAnswers) / sizeof(uint64_t);
+    static constexpr uint32_t wordsInWideAnswers = sizeof(WideSiteAnswers) / sizeof(uint64_t);
 
     const void* keyOfState(uint32_t place) const { return &m_indices[place]; }
     SiteAnswers* ensureAnswersOf(uint32_t place, SiteUse);
+    WideSiteAnswers* wideAnswersOf(uint32_t place) const { return m_indices[place] >= SiteAnswers::firstWordOfWideAnswers ? &m_wideAnswers[(m_indices[place] - SiteAnswers::firstWordOfWideAnswers) / wordsInWideAnswers] : nullptr; }
+    WideSiteAnswers* ensureWideAnswersOf(uint32_t place);
     void giveBackIfEmpty(uint32_t numberOfAnswers);
+    void giveBackWideAnswersIfEmpty(uint32_t numberOfWideAnswers);
 
     State& m_state;
     SiteCaches& m_states;
     std::span<uint16_t> m_indices;
     std::span<SiteAnswers> m_answers;
+    std::span<WideSiteAnswers> m_wideAnswers;
     Vector<uint32_t> m_places;
     Vector<uint16_t> m_numbersGivenBack;
+    Vector<uint32_t> m_placesOfWideAnswers;
+    Vector<uint16_t> m_numbersOfWideAnswersGivenBack;
+    uint32_t m_nextStructureToForget { 0 };
     uint64_t* m_placesThatMissed { nullptr };
     uint64_t* m_placesThatFailed { nullptr };
     static constexpr uint8_t requestsThatOpenPage = 3;
@@ -234,6 +255,7 @@ private:
     void erase(Entry&);
     void forgetPlacesCopiedFrom(const HashedSlot&);
     void forgetPlacesCopiedFromSlotForStores(const Slot&);
+    void forgetOrdinaryConstructorsWith(StructureID);
     void releaseNamesErasedDuringCollection();
     void grow();
 
@@ -375,6 +397,7 @@ public:
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
     void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse);
+    bool fillAboveFieldLeftOut(uint32_t place, Object&, const CachedName&);
     JSCell* keyForTraps(UniquedStringImpl*);
     void prepareHoldersBeforeLookupsUnder(Symbol*, JSObject* function);
     JSObject* preparationBeforeLookupsUnder(UniquedStringImpl* uid) const { return m_preparationsBeforeLookups.isEmpty() ? nullptr : m_preparationsBeforeLookups.get(uid).function; }

@@ -47,7 +47,7 @@ bool Walker::handlerInForceIgnoresWhatIsThrown() const
 {
     if (isUnreachable())
         return false;
-    if (hasTextsInStringBuilders())
+    if (hasTextsInStringBuilders() || handlerMadeOverCopiesIsInForce())
         return false;
     if (EdgeID led = m_code.at(m_block).handler; led && !m_code.at(led).isOpen())
         return false;

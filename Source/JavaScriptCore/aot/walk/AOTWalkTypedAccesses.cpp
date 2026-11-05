@@ -934,9 +934,7 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
             return TypedForm::Built;
         }
         TypedForm behindFilledSlot = formBehindFilledSlotForTypedAccess(walker, *receivers, field, key, TypedAccess::ReadsFilledSlot);
-        const LinkedFunction& functionOfUnit = walker.facts().linked().function(walker.unit().function);
-        bool isWrittenInWhatRepeats = walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked) && (functionOfUnit.isNamedInItsCycle || functionOfUnit.isCalledInLoop);
-        bool paysToLookAtCell = walker.isInLoop() || isWrittenInWhatRepeats;
+        bool paysToLookAtCell = walker.isInLoop() || walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked);
         if (behindFilledSlot != TypedForm::None || !paysToLookAtCell)
             return behindFilledSlot;
         if (askAheadAboutReadOfSlotThatMayBeEmpty(walker, *receivers, field, key))
@@ -1389,8 +1387,7 @@ static TypedForm buildReadThatFindsNothingBehindLooksForTypedAccess(Walker& walk
             return TypedForm::None;
         bool paysToLookAtCell = walker.isInLoop();
         if (!paysToLookAtCell) {
-            const LinkedFunction& functionOfUnit = walker.facts().linked().function(walker.unit().function);
-            Reference bound = functionOfUnit.isNamedInItsCycle || functionOfUnit.isCalledInLoop ? walker.referenceOf(value.objectOperand()) : Reference();
+            Reference bound = walker.referenceOf(value.objectOperand());
             TypeID proven = bound ? walker.typeOf(bound) : TypeID();
             paysToLookAtCell = bound && (walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked) || (proven && walker.types().isSubset(walker.types().withoutNullish(proven), operands.typeOfObject)));
         }
@@ -1585,7 +1582,8 @@ static bool closureTableHoldsMethodForTypedAccess(const Walker& walker, Function
 
 static FunctionID findMethodReadBehindLooksForTypedAccess(const Walker& walker, const BodyValue& read, const ReceiversOfTypedAccess& receivers, PropertyKeyID key, ASCIILiteral* whyNone = nullptr)
 {
-    if (!walker.has(Mechanism::DirectCalls) || !isReadForCallAloneInTypedAccess(walker, read)) {
+    bool isForCallAlone = isReadForCallAloneInTypedAccess(walker, read);
+    if (!walker.has(Mechanism::DirectCalls) || (!isForCallAlone && read.opcode() != Opcode::PropGet)) {
         if (whyNone)
             *whyNone = "no field, and the read is not there for a call alone"_s;
         return { };
@@ -1596,6 +1594,14 @@ static FunctionID findMethodReadBehindLooksForTypedAccess(const Walker& walker, 
         return { };
     }
     FunctionID method = findMethodDeclaredAboveReceiversForTypedAccess(walker, receivers, key, whyNone);
+    if (!isForCallAlone) {
+        if (method && !closureTableHoldsMethodForTypedAccess(walker, method)) {
+            if (whyNone)
+                *whyNone = "no field: a method above that is read as a value, and the closure table does not hold it"_s;
+            return { };
+        }
+        return method;
+    }
     BodyValue user = walker.currentBodyIndex().value(walker.currentBodyIndex().onlyUsingValue(read.id()));
     if (method && user.opcode() == Opcode::CallList && !listSpreadBehindArgumentsIsRestListOf(const_cast<Walker&>(walker), user, method)) {
         if (whyNone)

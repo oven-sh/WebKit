@@ -13,6 +13,7 @@
 #include "AOTLinkKeyOrders.h"
 #include "AOTNameClass.h"
 #include "AOTTestRuns.h"
+#include "AOTThreads.h"
 #include "AOTUnitedFamilies.h"
 #include <array>
 #include <bit>
@@ -521,12 +522,27 @@ public:
     FlowNodeID receiverOfLostFunctions();
     FlowNodeID resultOfLostFunctions();
     FlowNodeID madeForLostFunctionsWithoutClass();
+    void noteCallOfLostFunctions(const LinkType& callee);
 
-    const LinkType& typeAt(FlowNodeID id) const LIFETIME_BOUND
+    LinkType typeAt(FlowNodeID id) const
     {
-        if (const ViewOfHeldReading* view = s_viewAtWork) [[unlikely]]
-            return id.index() < view->types.size() ? view->types[id.index()] : s_nothing;
-        return id.index() < m_nodes.size() ? m_nodes[id.index()].type : s_nothing;
+        if (id.index() >= m_nodes.size())
+            return { };
+        const LinkType& type = m_nodes[id.index()].type;
+        if (!m_flowIsAtRest)
+            return type;
+        if (ViewAtWork::current())
+            return type.asSeen();
+        if (type.holdsUnseen && m_typesAreSettled && (type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None))
+            return settled(type);
+        return type;
+    }
+    void prefetchTypeAt(FlowNodeID id) const { __builtin_prefetch(&m_nodes[id.index()].type); }
+    FunctionID closureAloneAt(FlowNodeID id) const
+    {
+        if (id.index() >= m_nodes.size() || m_nodes[id.index()].type.functions != LinkType::Functions::Closure)
+            return { };
+        return typeAt(id).function;
     }
     void arrive(FlowNodeID, const LinkType&, PropertyKeyID symbol = { });
     PropertyKeyID symbolAt(FlowNodeID node) const { return LinkType::holdsOneSymbol(typeAt(node).primitives) ? symbolNotedAt(node) : PropertyKeyID(); }
@@ -536,6 +552,7 @@ public:
     void observe(FlowNodeID, const FlowObserver&);
     void run();
     void settleTypes();
+    LinkType settled(LinkType) const;
     LinkType withoutObjectsThatHaveEscaped(LinkType) const;
     Vector<BreachOfClosure> findBreachesOfClosure();
     void describe(PrintStream&, FlowNodeID) const;
@@ -608,7 +625,7 @@ public:
     TypeID toTypeID(TypeArena&, const LinkType&) const;
     bool tablesMayName(FunctionID function) const
     {
-        const BitVector* functions = s_viewAtWork ? s_viewAtWork->functionsThatTablesMayName : nullptr;
+        const BitVector* functions = ViewAtWork::current() ? ViewAtWork::current()->functionsThatTablesMayName : nullptr;
         return !functions || functions->get(function.index());
     }
 
@@ -694,7 +711,7 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, EveryLostFunctionCalled };
     void note(Note, uint32_t number, uint32_t more = 0);
     static constexpr uint32_t byCode = 1;
     static constexpr uint32_t byRowThatMayRunCode = 2;
@@ -817,7 +834,6 @@ public:
     struct ViewOfHeldReading {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ViewOfHeldReading);
         ~ViewOfHeldReading();
-        std::span<LinkType> types;
         BitVector escapedLayouts;
         std::span<CalleesOfCall> calleesOfCalls;
         Vector<CalleesOfCall> calleesOfSharedCalls;
@@ -830,20 +846,20 @@ public:
         WTF_MAKE_NONCOPYABLE(ViewAtWork);
     public:
         explicit ViewAtWork(ViewOfHeldReading* view)
-            : m_outer(std::exchange(s_viewAtWork, view))
+            : m_outer(static_cast<ViewOfHeldReading*>(std::exchange(t_whatHelpersInherit, view)))
         {
         }
-        ~ViewAtWork() { s_viewAtWork = m_outer; }
-        static ViewOfHeldReading* current() { return s_viewAtWork; }
+        ~ViewAtWork() { t_whatHelpersInherit = m_outer; }
+        static ViewOfHeldReading* current() { return static_cast<ViewOfHeldReading*>(t_whatHelpersInherit); }
     private:
         ViewOfHeldReading* m_outer;
     };
-    const ParallelLoops& loopsOfReading() const { return s_viewAtWork ? *s_viewAtWork->loops : loops; }
-    WhatUnseenCodeDoes reading() const { return s_viewAtWork ? WhatUnseenCodeDoes::OnlyReadsAndCalls : WhatUnseenCodeDoes::Anything; }
-    const BitVector& escapedLayoutsAsRead() const { return s_viewAtWork ? s_viewAtWork->escapedLayouts : escapedLayouts; }
-    std::span<const CalleesOfCall> calleesOfCallsAsSettled() const { return s_viewAtWork ? std::span<const CalleesOfCall>(s_viewAtWork->calleesOfCalls) : calleesOfCalls.span(); }
-    const Vector<CalleesOfCall>& calleesOfSharedCallsAsSettled() const { return s_viewAtWork ? s_viewAtWork->calleesOfSharedCalls : calleesOfSharedCalls; }
-    std::unique_ptr<WriterOfLinkLayouts, DeleterOfWriterOfLinkLayouts>& writerOfLayoutsOfReading() const { return s_viewAtWork ? s_viewAtWork->writerOfLayouts : writerOfLayouts; }
+    const ParallelLoops& loopsOfReading() const { return ViewAtWork::current() ? *ViewAtWork::current()->loops : loops; }
+    WhatUnseenCodeDoes reading() const { return ViewAtWork::current() ? WhatUnseenCodeDoes::OnlyReadsAndCalls : WhatUnseenCodeDoes::Anything; }
+    const BitVector& escapedLayoutsAsRead() const { return ViewAtWork::current() ? ViewAtWork::current()->escapedLayouts : escapedLayouts; }
+    std::span<const CalleesOfCall> calleesOfCallsAsSettled() const { return ViewAtWork::current() ? std::span<const CalleesOfCall>(ViewAtWork::current()->calleesOfCalls) : calleesOfCalls.span(); }
+    const Vector<CalleesOfCall>& calleesOfSharedCallsAsSettled() const { return ViewAtWork::current() ? ViewAtWork::current()->calleesOfSharedCalls : calleesOfSharedCalls; }
+    std::unique_ptr<WriterOfLinkLayouts, DeleterOfWriterOfLinkLayouts>& writerOfLayoutsOfReading() const { return ViewAtWork::current() ? ViewAtWork::current()->writerOfLayouts : writerOfLayouts; }
     struct SubjectOfSharedCall {
         FamilyID family;
         PropertyKeyID key;
@@ -962,7 +978,10 @@ private:
     unsigned laneIndexOf(FlowNodeID node) const { return (node.index() >> m_log2OfNodesInBlock) & m_maskOfLanes; }
     Lane& laneOf(FlowNodeID node) { return *m_lanes[laneIndexOf(node)]; }
     static constinit thread_local Lane* s_laneAtWork;
-    static constinit thread_local ViewOfHeldReading* s_viewAtWork;
+    bool m_flowIsAtRest { false };
+    bool m_typesAreSettled { false };
+    BitVector m_familiesWhoseConstructorsHaveEscaped;
+    BitVector m_sitesThatHaveEscaped;
     bool m_holdsBack { false };
     bool m_tellsObservers { false };
     bool m_severalThreadsTell { false };
@@ -1482,6 +1501,8 @@ private:
     BitVector m_lostFunctionsTied;
     size_t m_numberOfLostFunctionsTied { 0 };
     bool m_lostFunctionsAreCalled { false };
+    BitVector m_lostFunctionsThatCallsName;
+    bool m_someCallNamesLostFunctions { false };
 
     bool mayBeNamedByNumber(PropertyKeyID key) const { return !key || mayBeElementKey(nameClassOf(key)); }
     FlowNodeID foundBesideFieldsUnderAnyNumber();

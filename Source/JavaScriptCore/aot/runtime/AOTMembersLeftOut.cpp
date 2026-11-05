@@ -37,6 +37,7 @@ struct StandIn {
 };
 
 struct MembersLeftOut {
+    String sentenceOfMiss;
     Weak<JSObject> error;
     String message;
     Vector<StandIn> standIns;
@@ -150,6 +151,33 @@ void noteErrorOfCodeLeftOut(JSGlobalObject* realm, JSObject* error)
     members.message = WTF::move(text);
 }
 
+void throwMissOfReach(JSGlobalObject* realm, String&& sentence, bool mayBeTakenForStandIn)
+{
+    VM& vm = realm->vm();
+    {
+        Locker locker { membersLock };
+        MembersLeftOut& members = membersByVM().ensure(&vm, [] {
+            return MembersLeftOut { };
+        }).iterator->value;
+        members.sentenceOfMiss = WTF::move(sentence);
+        if (!mayBeTakenForStandIn)
+            members.message = String();
+    }
+    vm.ensureTerminationException();
+    vm.setHasTerminationRequest();
+    vm.throwTerminationException();
+}
+
+void stopIfMissOfReachIsPending(VM& vm)
+{
+    Locker locker { membersLock };
+    auto found = membersByVM().find(&vm);
+    if (found == membersByVM().end() || found->value.sentenceOfMiss.isNull())
+        return;
+    dataLogLn(found->value.sentenceOfMiss);
+    CRASH();
+}
+
 static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
 {
     Exception* exception = vm.exceptionForInspection();
@@ -157,13 +185,24 @@ static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
         return { };
 
     String message;
+    bool isMissOfReach = vm.isTerminationException(exception);
     {
         Locker locker { membersLock };
         auto found = membersByVM().find(&vm);
-        if (found == membersByVM().end() || !found->value.error || exception->value() != JSValue(found->value.error.get()))
+        if (found == membersByVM().end())
             return { };
-        message = std::exchange(found->value.message, String());
-        found->value.error.clear();
+        MembersLeftOut& members = found->value;
+        if (isMissOfReach ? members.sentenceOfMiss.isNull() || members.message.isNull() : !members.error || exception->value() != JSValue(members.error.get()))
+            return { };
+        message = std::exchange(members.message, String());
+        members.error.clear();
+        members.sentenceOfMiss = String();
+    }
+    if (isMissOfReach) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        scope.clearException();
+        vm.clearHasTerminationRequest();
+        return message;
     }
     UnverifiedExceptionScope scope(vm);
     bool isCleared = scope.tryClearException();

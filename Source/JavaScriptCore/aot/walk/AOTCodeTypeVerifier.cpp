@@ -72,6 +72,7 @@ public:
     TypeID capture(TypeLevel level, FunctionID function, uint32_t captureIndex) const final { return m_positionsOfWalk.capture(level, function, captureIndex); }
     TypeID captureOfObject(TypeLevel level, ObjectID object, uint32_t captureIndex) const final { return m_positionsOfWalk.captureOfObject(level, object, captureIndex); }
     TypeID resultOfSelector(TypeLevel level, uint32_t selector) const final { return m_positionsOfWalk.resultOfSelector(level, selector); }
+    TypeID resultOfTableRow(TypeLevel level, uint32_t selector, LayoutID receiver, bool& hasRow) const final { return m_positionsOfWalk.resultOfTableRow(level, selector, receiver, hasRow); }
     TypeID askedOfEachObject(QuestionOfEachObject question, TypeLevel level, ObjectSetID objects, uint32_t word, NOESCAPE const ScopedLambda<TypeID()>& askEachObject) const final { return m_positionsOfWalk.askedOfEachObject(question, level, objects, word, askEachObject); }
     TypeID askedOfEachLayout(QuestionOfEachLayout question, TypeLevel level, LayoutSetID layouts, PropertyKeyID key, NOESCAPE const ScopedLambda<TypeID()>& askEachLayout) const final { return m_positionsOfWalk.askedOfEachLayout(question, level, layouts, key, askEachLayout); }
 

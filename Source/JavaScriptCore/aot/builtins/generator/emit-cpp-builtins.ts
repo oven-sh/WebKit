@@ -76,6 +76,7 @@ const tokenSpans: readonly SpanMember[] = [
 const attachmentSpans: readonly SpanMember[] = [
   ["featureUses", "builtinTableFeatureUses"],
   ["unseenCode", "builtinTableUnseenCode"],
+  ["instancesThatAnswerEveryName", "builtinTableInstancesThatAnswerEveryName"],
   ["moduleLoads", "builtinTableModuleLoads"],
   ["startupLoads", "builtinTableStartupLoads"],
   ["calledFunctions", "builtinTableCalledFunctions"],

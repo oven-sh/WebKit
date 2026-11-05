@@ -486,6 +486,7 @@ export interface ModelNativeFunction {
 export interface ModelAttachments {
   featureUses: readonly ModelFeatureUse[];
   unseenCodeCondition: ModelCondition | null;
+  conditionOnInstancesThatAnswerEveryName: ModelCondition | null;
   moduleLoads: readonly ModelModuleLoad[];
   calledFunctions: readonly ModelCalledFunction[];
   literalPartsForm: { argument: ModelOperand; names: readonly ModelName[]; builtin: ModelBuiltin } | null;

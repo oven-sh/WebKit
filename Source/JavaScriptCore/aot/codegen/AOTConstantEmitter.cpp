@@ -282,7 +282,7 @@ CellPointer ConstantEmitter::cellMadeByStub(const OperationContext& context, Stu
     constexpr FormAtPlace namedOutsideLoops = formByLoopAlone(Opcode::String, always, false);
     bool standsInLoop = generator().isInLoop(context.block());
     FormAtPlace named = standsInLoop ? namedInLoops : namedOutsideLoops;
-    bool runsOnce = !standsInLoop && (m_facts.runsAtMostOnce(m_id) || m_program.at(m_id).isModuleBody());
+    bool runsOnce = !standsInLoop && m_program.at(m_id).isModuleBody();
     bool standsInRareBlock = m_code.at(context.block()).frequency == BlockFrequency::Rare;
     bool standsInUnlikelyBlock = m_code.at(context.block()).frequency == BlockFrequency::Unlikely;
     if (named.form == Form::Closed || runsOnce || standsInRareBlock || standsInUnlikelyBlock) {

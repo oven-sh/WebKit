@@ -13,12 +13,12 @@
 # BYTES: argument thunk {{*}}ThrowAtSite.WordInRegister
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: 1
-# ALL-NEXT: AOT: f1 at 1:1: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# ALL-NEXT: AOT: f1 at 1:1: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
 # ALL-NOT: went on
 # ALL: crashed with
 # RUN(CALLS): run-in-shell mechanisms=-Inlining
 # CALLS: 1
-# CALLS-NEXT: AOT: f1 at 1:1: what a container holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# CALLS-NEXT: AOT: f1 at 1:1: what {{*}} is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
 # CALLS-NOT: went on
 # CALLS: crashed with
 

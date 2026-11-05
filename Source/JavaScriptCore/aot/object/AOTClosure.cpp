@@ -327,7 +327,8 @@ bool Closure::isLazyClassObject() const
     const LayoutData* classLayout = classData();
     if (!classLayout)
         return false;
-    return classLayout->createsClassObjectOnMutation && (classLayout->createsPrototypeBeforeClassObject || state().objects->classes.classPrototypeIfExists(*classLayout));
+    const ClassTable& classes = state().objects->classes;
+    return classLayout->createsClassObjectOnMutation && (classLayout->createsPrototypeBeforeClassObject || classes.classPrototypeIfExists(*classLayout) || classes.prototypeAwaitsFirstTouch(*classLayout));
 }
 
 bool Closure::hasStructureOfNewClosure(VM& vm) const
@@ -549,15 +550,14 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
-    const LayoutData* classLayout = closure->classData();
     if (JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot))
         return true;
-    if (classLayout && closure->isLazyClassObject()) {
+    if (closure->isLazyClassObject()) {
         if (JSValue value = StaticFields::tryRead(*closure, propertyName.uid())) {
             slot.setValue(closure, static_cast<unsigned>(PropertyAttribute::None), value);
             return true;
         }
-        if (propertyName != vm.propertyNames->prototype && propertyName != vm.propertyNames->name && propertyName != vm.propertyNames->length && !closure->state().objects->classes.hasStaticMethodNamed(*classLayout, propertyName.uid()))
+        if (propertyName != vm.propertyNames->prototype && propertyName != vm.propertyNames->name && propertyName != vm.propertyNames->length && !closure->state().objects->classes.hasStaticMethodNamed(*closure->classData(), propertyName.uid()))
             return false;
         closure->ensureClassObject(vm);
         if (JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot))

@@ -350,9 +350,10 @@ class WriterOfLink {
 public:
     WriterOfLink(const LinkFlow&, LinkTables&);
 
-    // In this order. Only the second makes types, and the third is for linked() alone.
+    // In this order. Only the second makes types, and the third and the fourth are for linked() alone. The effects of functions are summarized behind the third.
     void writeWhatMakesNoType();
     void writeWhatMakesTypes(TypeArena&);
+    void findFunctionsThatRunAtMostOnce();
     void writeProofsThatMakeNoType();
     void weighLeaves();
     BitVector functionsWhoseCallersAreAllKnown();
@@ -391,7 +392,6 @@ private:
     bool mayFindUnlistedNames(const LinkType& receiver) const;
     FunctionID oneCalleeOf(FunctionID caller, const SummaryCall&, const LinkFlow::CalleesOfCall&) const;
     void findRingsOfTailCalls();
-    void findFunctionsThatRunAtMostOnce();
     uint32_t weighAsLeaf(FunctionID, unsigned depth, bool& levelsRanOut);
 
     BitVector m_functionsThatAreNoLeaves;
@@ -426,7 +426,7 @@ private:
     TypeID typeIDOf(const LinkType&);
     TypeID typeIDOfCapture(FunctionID, uint32_t capture);
 
-    FunctionID closureAloneAt(FlowNodeID node) const { return m_flow.typeAt(node).functions == LinkType::Functions::Closure ? m_flow.typeAt(node).function : FunctionID(); }
+    FunctionID closureAloneAt(FlowNodeID node) const { return m_flow.closureAloneAt(node); }
     bool mayTakeArrivals(FunctionID id) const { return m_tables.function(id).everyCallerIsKnown && m_tables.function(id).everyCallHasOneCallee; }
     FunctionID addGroup(LinkedGroup::Kind, uint32_t subject = 0);
     void forEachNodeArrivingAt(FlowNodeID, const Invocable<void(FunctionID)> auto&) const;
@@ -517,7 +517,6 @@ void WriterOfLink::writeProofsThatMakeNoType()
     findExportsThatStayIn();
     writeReceiversThatStayAsMade();
     findRingsOfTailCalls();
-    findFunctionsThatRunAtMostOnce();
 }
 
 void WriterOfLink::findExportsThatStayIn()
@@ -618,21 +617,23 @@ FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call,
     const Function& function = m_program.at(callee);
     if (!function.hasBody())
         return { };
-    auto typeAt = [&](uint32_t node) -> const LinkType* {
-        return node && node != noSummaryNode ? &m_flow.typeAt(m_flow.nodeOf(caller, node)) : nullptr;
+    auto typeAt = [&](uint32_t node) -> std::optional<LinkType> {
+        if (!node || node == noSummaryNode)
+            return std::nullopt;
+        return m_flow.typeAt(m_flow.nodeOf(caller, node));
     };
 
     switch (call.callee) {
     case SummaryCall::Callee::Binding:
         return callee;
     case SummaryCall::Callee::Name: {
-        const LinkType* receiver = typeAt(call.receiver);
+        std::optional<LinkType> receiver = typeAt(call.receiver);
         if (!receiver || (!writesWhatIsExpected() && mayFindUnlistedNames(*receiver)))
             return { };
         return isEnteredByCallsAloneForLink(function.kind) ? callee : FunctionID();
     }
     case SummaryCall::Callee::Value: {
-        const LinkType* subject = typeAt(call.subject);
+        std::optional<LinkType> subject = typeAt(call.subject);
         if (!subject)
             return { };
         LinkType called = *subject;
@@ -701,8 +702,7 @@ void WriterOfLink::weighLeaves()
 
 void WriterOfLink::writeCalls()
 {
-    Vector<LinkedCall> found = collectInParallel<LinkedCall>(loops(), m_numberOfFunctions, [&, view = LinkFlow::ViewAtWork::current()](unsigned index, Vector<LinkedCall>& calls) {
-        LinkFlow::ViewAtWork viewAtWork(view);
+    Vector<LinkedCall> found = collectInParallel<LinkedCall>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<LinkedCall>& calls) {
         if (!m_flow.reached.get(index))
             return;
         auto noteSharing = [&](FunctionID callee) {
@@ -777,8 +777,7 @@ void WriterOfLink::writeAccessesUnderOneKey()
 {
     m_tables.symbolsWithPreparation = m_flow.symbolsWithPreparation();
     m_tables.everySymbolOfLibraryMayHavePreparation = m_flow.everySymbolOfLibraryMayHavePreparation();
-    m_tables.accessesUnderOneKey = collectInParallel<LinkedAccess>(loops(), m_numberOfFunctions, [&, view = LinkFlow::ViewAtWork::current()](unsigned index, Vector<LinkedAccess>& accesses) {
-        LinkFlow::ViewAtWork viewAtWork(view);
+    m_tables.accessesUnderOneKey = collectInParallel<LinkedAccess>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<LinkedAccess>& accesses) {
         if (!m_flow.reached.get(index))
             return;
         FunctionID function(index);
@@ -799,8 +798,7 @@ void WriterOfLink::writeCallsThatFindBuiltins()
 {
     if (!writesWhatIsExpected())
         return;
-    m_tables.callsThatFindBuiltins = collectInParallel<LinkedCallThatFindsBuiltin>(loops(), m_numberOfFunctions, [&, view = LinkFlow::ViewAtWork::current()](unsigned index, Vector<LinkedCallThatFindsBuiltin>& calls) {
-        LinkFlow::ViewAtWork viewAtWork(view);
+    m_tables.callsThatFindBuiltins = collectInParallel<LinkedCallThatFindsBuiltin>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<LinkedCallThatFindsBuiltin>& calls) {
         if (!m_flow.reached.get(index))
             return;
         FunctionID caller(index);
@@ -911,8 +909,7 @@ void WriterOfLink::writeGettersExpectedAtReads()
     }
     if (laid.isEmpty())
         return;
-    m_tables.gettersExpectedAtReads = collectInParallel<LinkedGetterAtRead>(loops(), m_numberOfFunctions, [&, view = LinkFlow::ViewAtWork::current()](unsigned index, Vector<LinkedGetterAtRead>& reads) {
-        LinkFlow::ViewAtWork viewAtWork(view);
+    m_tables.gettersExpectedAtReads = collectInParallel<LinkedGetterAtRead>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<LinkedGetterAtRead>& reads) {
         if (!m_flow.reached.get(index))
             return;
         FunctionID function(index);
@@ -1076,8 +1073,6 @@ void WriterOfLink::writeResultsOfReadsByKey()
 
 void WriterOfLink::writeContentsAtOperations()
 {
-    if (writesWhatIsExpected())
-        return;
     struct Operation {
         FunctionID function;
         ValueID site;
@@ -1098,7 +1093,7 @@ void WriterOfLink::writeContentsAtOperations()
             bool mayMakeIteratorOverList = receiver.builtinClass == BuiltinClasses::Array && !call.numberOfArguments;
             if (receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || (!isMapOrWeakMap(receiver) && !mayMakeIteratorOverList && receiver.builtinClass != BuiltinClasses::Set))
                 continue;
-            if ((receiver.primitives & ~Primitive::UndefinedOrNull) || m_flow.hasEscaped(receiver.site))
+            if ((receiver.primitives & ~Primitive::UndefinedOrNull) || (!writesWhatIsExpected() && m_flow.hasEscaped(receiver.site)))
                 continue;
             operationsOfChunk.append(Operation { function, call.site, node });
         }
@@ -1240,8 +1235,6 @@ void WriterOfLink::findFunctionsThatRunAtMostOnce()
     for (const LinkedCall& call : m_tables.calls) {
         uint8_t& number = numberOfCallsThatEnter[call.callee.index()];
         number = std::min<uint8_t>(number + 1, several);
-        if (call.mayComeAgain)
-            m_tables.functions[call.callee.index()].isCalledInLoop = true;
     }
 
     Vector<FunctionID> functionsToFollow;
@@ -1308,8 +1301,7 @@ void WriterOfLink::findRingsOfTailCalls()
         return m_tables.functions[id.index()].everyCallHasOneCallee && mayReturnInFormOfItsOwn(m_program.at(id));
     };
     uint32_t anyLostFunction = m_numberOfFunctions;
-    Vector<TailCall> tailCalls = collectInParallel<TailCall>(loops(), m_numberOfFunctions, [&, view = LinkFlow::ViewAtWork::current()](unsigned index, Vector<TailCall>& tailCalls) {
-        LinkFlow::ViewAtWork viewAtWork(view);
+    Vector<TailCall> tailCalls = collectInParallel<TailCall>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<TailCall>& tailCalls) {
         if (m_flow.lostFunctions.get(index))
             tailCalls.append(TailCall { anyLostFunction, index, false });
         if (!m_flow.reached.get(index))
@@ -1440,10 +1432,8 @@ void WriterOfLink::indexFunctionsThatAreHeld()
         }
     };
     Vector<Holders> holdersOfWorkers(loops().width());
-    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
     auto forEachIndexOnAllThreads = [&](size_t count, const auto& functor) {
         forEachIndexInParallel(loops(), static_cast<unsigned>(numberOfRangesOfIndices(count)), [&](unsigned range, unsigned worker) {
-            LinkFlow::ViewAtWork viewAtWork(view);
             size_t end = std::min(count, (static_cast<size_t>(range) + 1) * indicesInRangeOfLoop);
             for (size_t index = static_cast<size_t>(range) * indicesInRangeOfLoop; index < end; ++index)
                 functor(static_cast<uint32_t>(index), holdersOfWorkers[worker]);
@@ -1763,9 +1753,7 @@ void WriterOfLink::writeReferrers()
     uint32_t numberOfNodes = m_tables.numberOfNodesOfReferrers();
     ChunksOfIndices division = divideIntoChunks(numberOfNodes);
     Vector<Vector<uint64_t>> namingsOfChunks(division.size());
-    LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
     forEachIndexInParallel(loops, division.size(), [&](unsigned chunk) {
-        LinkFlow::ViewAtWork viewAtWork(view);
         Vector<uint64_t>& namings = namingsOfChunks[chunk];
         Vector<uint32_t, 64> namedByOne;
         for (uint32_t index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
@@ -2046,6 +2034,7 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
         writeTablesOfUnions(flow, tables);
     }
     endTurnOfProvingReading();
+    writer.findFunctionsThatRunAtMostOnce();
     runLanes(flow.loops, 3, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
         if (!lane) {
             summarizeCallees(flow, tables);

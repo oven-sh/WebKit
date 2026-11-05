@@ -965,7 +965,7 @@ class Procedure {
 public:
     JS_EXPORT_PRIVATE Procedure(Arena&, const HeapTree&, const ProcedureTraits&);
 
-    JS_EXPORT_PRIVATE void fail(FailureKind, const Operation* = nullptr);
+    COLD JS_EXPORT_PRIVATE void fail(FailureKind, const Operation* = nullptr);
     const std::optional<Failure>& failure() const { return m_failure; }
 
     Arena& arena() { return m_arena; }

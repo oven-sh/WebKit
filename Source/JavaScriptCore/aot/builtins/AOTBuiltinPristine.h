@@ -21,7 +21,6 @@ enum class PristineTest : uint8_t { NeverPasses, MayPass, ClosureAsCreated, Inst
 PristineTest pristineTestOf(const BuiltinTable&, BuiltinClassID);
 std::optional<Receiver> receiverWithTestedStructure(BuiltinClassID);
 BuiltinClassID classBelowWithTestedStructure(const BuiltinTable&, BuiltinClassID);
-PristineAspects aspectThatFindsMember(const BuiltinTable&, BuiltinClassID receiverClass, BuiltinID member);
 
 inline constexpr PristineAspectSet aspectsWithoutTest { PristineAspects::AsCreated, PristineAspects::Dense, PristineAspects::Prototype };
 

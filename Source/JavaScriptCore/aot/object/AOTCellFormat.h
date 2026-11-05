@@ -140,7 +140,10 @@ static constexpr ptrdiff_t offsetOfClosureEntry = 32;
 static constexpr ptrdiff_t offsetOfClosureCaptures = 40;
 static constexpr ptrdiff_t offsetOfSlimClosureWord = 8;
 static constexpr ptrdiff_t offsetOfSlimClosureCaptures = 16;
+static constexpr ptrdiff_t offsetOfCopyInHeapOfClosureInFrame(ptrdiff_t offsetOfCaptures, unsigned numberOfCaptures) { return offsetOfCaptures + static_cast<ptrdiff_t>(numberOfCaptures * sizeof(uint64_t)); }
+static constexpr size_t sizeOfClosureInFrame(ptrdiff_t offsetOfCaptures, unsigned numberOfCaptures) { return offsetOfCopyInHeapOfClosureInFrame(offsetOfCaptures, numberOfCaptures) + sizeof(JSCell*); }
 
+static_assert(offsetOfCopyInHeapOfClosureInFrame(offsetOfSlimClosureCaptures, 0) == offsetOfSlimClosureCaptures && sizeOfClosureInFrame(offsetOfClosureCaptures, 2) == offsetOfClosureCaptures + 3 * sizeof(uint64_t));
 static_assert(!granuleOf(offsetOfFirstExtensionSlot) && granuleOf(maxExtensionSize - 1) == maxExtensionGranules - 1);
 static_assert(extensionCellSizeFor(1) == minExtensionSize && extensionCellSizeFor(2) == 2 * minExtensionSize && extensionCellSizeFor(3) == 2 * minExtensionSize && extensionCellSizeFor(4) == 3 * minExtensionSize);
 static_assert(extensionCellSizeFor(maxExtensionGranules) >= maxExtensionSize);

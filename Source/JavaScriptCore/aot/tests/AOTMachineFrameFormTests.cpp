@@ -307,6 +307,7 @@ static void testMachineFrameFormReadsOfRareRegionsDoNotCount()
     TestProcedure test(traitsOfFrameFormTest(true, false));
     Output& out = test.out();
     Operation* seed = test.argumentGPR(0);
+    Operation* secondOfPair = isARM64() ? test.argumentGPR(1) : nullptr;
     Operation* value = out.opaque(out.add(seed, out.constInt64(1)));
     Block* rare = out.newBlock();
     Block* usual = out.newBlock();
@@ -315,12 +316,15 @@ static void testMachineFrameFormReadsOfRareRegionsDoNotCount()
     out.appendTo(rare);
     out.ret(out.add(out.opaque(out.add(value, value)), value));
     out.appendTo(usual);
-    out.ret(out.add(value, out.constInt64(5)));
+    Operation* result = out.add(value, out.constInt64(5));
+    out.ret(secondOfPair ? out.add(result, secondOfPair) : result);
     compileOrFail(test);
 
-    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().order().of(rare).isRare() && test.procedure().allocation().isSpilled(value));
-    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 20 }) == 26);
-    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 21 }) == 66);
+    const Allocation& allocation = test.procedure().allocation();
+    AOT_FRAME_FORM_TEST_CHECK(test, std::popcount(allocation.usedCalleeSaves()) == (isARM64() ? 2 : 1));
+    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().order().of(rare).isRare() && allocation.isSpilled(value));
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 20 }, uint64_t { 0 }) == 26);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 21 }, uint64_t { 0 }) == 66);
 }
 
 static void testMachineFrameFormSecondSavedRegisterOfPairIsFree()
@@ -453,6 +457,53 @@ static void testMachineFrameFormWhatCallAtHeadTakesStaysWhereItLies()
     AOT_FRAME_FORM_TEST_CHECK(test, numberOfMoves == 1 && !allocation.isSpilled(taken));
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 40 }, uint64_t { 3 }) == 3 && !noted);
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 40 }, uint64_t { 2 }) == 42 && noted == 40);
+}
+
+static void testMachineFrameFormCalleeSavesAtHeadGoToWhatIsReadMost()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    Procedure& proc = test.procedure();
+    const unsigned numberKept = numberOfCalleeSavedGPRsInFrameFormTests() + 1;
+    if (numberKept + 1 > GPRInfo::numberOfArgumentRegisters)
+        return;
+    Operation* tested = test.argumentGPR(0);
+    Vector<Operation*> kept;
+    for (unsigned index = 0; index < numberKept; ++index)
+        kept.append(test.argumentGPR(index + 1));
+    unsigned readLeast = 0;
+    for (unsigned index = 1; index < numberKept; ++index) {
+        if (kept[index]->argumentReg().index() < kept[readLeast]->argumentReg().index())
+            readLeast = index;
+    }
+    Block* returning = out.newBlock();
+    Block* calling = out.newBlock();
+    out.branch(out.testNonZero64(tested, out.constInt64(1)), normalEdge(returning), normalEdge(calling));
+    out.appendTo(returning);
+    out.ret(tested);
+    out.appendTo(calling);
+    appendCallOfFrameFormTest(test);
+    Operation* mixed = kept[readLeast];
+    for (unsigned index = 0; index < numberKept; ++index) {
+        if (index != readLeast)
+            mixed = out.add(out.bitXor(out.add(mixed, kept[index]), kept[index]), kept[index]);
+    }
+    out.ret(mixed);
+    compileOrFail(test);
+
+    const Allocation& allocation = proc.allocation();
+    AOT_FRAME_FORM_TEST_CHECK(test, proc.frame().coverage() == FrameCoverage::FramedPart && allocation.onlyHeadOfFramedPart() == calling);
+    for (unsigned index = 0; index < numberKept; ++index)
+        AOT_FRAME_FORM_TEST_CHECK(test, allocation.isSpilled(kept[index]) == (index == readLeast));
+
+    std::array<uint64_t, 8> passed { 2, 50, 700, 9000, 11000, 130000, 1700000, 19000000 };
+    uint64_t expected = passed[readLeast + 1];
+    for (unsigned index = 0; index < numberKept; ++index) {
+        if (index != readLeast)
+            expected = ((expected + passed[index + 1]) ^ passed[index + 1]) + passed[index + 1];
+    }
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(passed[0], passed[1], passed[2], passed[3], passed[4], passed[5], passed[6], passed[7]) == expected);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 3 }, passed[1], passed[2], passed[3], passed[4], passed[5], passed[6], passed[7]) == 3);
 }
 
 static void testMachineFrameFormNumberStoredBehindSetupIsNotPushed()
@@ -890,6 +941,7 @@ std::span<const NativeTest> machineFrameFormTests()
         { "machine/frame-forms/arguments-stored-behind-the-setup-are-pushed"_s, Machine::testMachineFrameFormArgumentsStoredBehindSetupArePushed },
         { "machine/frame-forms/saves-of-a-head-are-pushed"_s, Machine::testMachineFrameFormSavesOfHeadArePushed },
         { "machine/frame-forms/what-the-call-at-a-head-takes-stays-where-it-lies"_s, Machine::testMachineFrameFormWhatCallAtHeadTakesStaysWhereItLies },
+        { "machine/frame-forms/at-a-head-the-registers-that-callees-keep-go-to-what-is-read-most"_s, Machine::testMachineFrameFormCalleeSavesAtHeadGoToWhatIsReadMost },
         { "machine/frame-forms/number-stored-behind-the-setup-is-not-pushed"_s, Machine::testMachineFrameFormNumberStoredBehindSetupIsNotPushed },
         { "machine/frame-forms/outgoing-words-keep-the-saves-on-top"_s, Machine::testMachineFrameFormOutgoingWordsKeepSavesOnTop },
         { "machine/frame-forms/saved-registers-at-the-bottom-come-back"_s, Machine::testMachineFrameFormSavedRegistersAtBottomComeBack },
