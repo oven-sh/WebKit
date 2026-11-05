@@ -1601,6 +1601,9 @@ The collector is told the size of the side tables, which are several times the s
   (`inspect.getattr_static()`, and so `isinstance()` with a protocol). `__dict__` cannot be assigned or deleted, of any object of JS's: no
   other mapping can take the place of the properties. Nor can `__class__`: the prototype says what the object is an instance of.
   `copy.copy()` and `pickle` refuse such an instance.
+  `str(instance)` is what JS makes of it, by `toString()` or `[Symbol.toPrimitive]()`. Where it has no other than
+  `Object.prototype.toString()`, which is to JS what `object.__str__()` is to Python, it is `repr(instance)`: a `__repr__()` of the class,
+  or of `@dataclass`, serves `print()` too.
   An object is an instance of `Derived` by its prototype, if it is what the methods of `Derived` count on: a `Map`, a promise or a typed
   array where `Base` extends that. `Object.create(Derived.prototype)` is no `Uint8Array`, and the prototype of a class of Python's that
   derives from no class of JS's makes an object nothing but an object with that prototype: `Object.create(list.prototype)` is no list.

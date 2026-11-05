@@ -19,6 +19,7 @@
 #include "JSWeakMapInlines.h"
 #include "NumberConstructor.h"
 #include "ObjectConstructor.h"
+#include "ObjectPrototype.h"
 #include "PropertyNameArray.h"
 #include "ProxyConstructor.h"
 #include "PyAbstract.h"
@@ -464,10 +465,34 @@ static JSValue jsObjectDelAttr(JSGlobalObject* globalObject, JSValue self, JSVal
     return jsObjectSetOrDelAttr<isOfDerivedClass>(globalObject, self, nameValue, { });
 }
 
+static JSValue jsObjectStr(JSGlobalObject*, JSValue self);
+
+// Object.prototype.toString() is to JS what object.__str__() is to Python: for who has nothing of its own. Where the instance has no
+// other, str() is repr(), so that a __repr__() of the class serves for both.
+static JSValue strOfInstanceOfDerivedClass(JSGlobalObject* globalObject, JSValue self)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = asObject(self);
+    bool hasToPrimitive = object->hasProperty(globalObject, vm.propertyNames->toPrimitiveSymbol);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!hasToPrimitive) {
+        JSValue toString = object->get(globalObject, vm.propertyNames->toString);
+        RETURN_IF_EXCEPTION(scope, { });
+        // (Of whichever realm.)
+        if (auto* function = dynamicDowncast<JSFunction>(toString); function && function->isHostFunction() && function->nativeFunction() == TaggedNativeFunction(objectProtoFuncToString))
+            RELEASE_AND_RETURN(scope, repr(globalObject, self));
+    }
+    RELEASE_AND_RETURN(scope, jsObjectStr(globalObject, self));
+}
+
 static constexpr NativeDef methodsOfDerivedClasses[] = {
     PY_SLOT("__getattribute__", jsObjectGetAttributeImpl<true>, "($self, name, /)"),
     PY_SLOT("__setattr__", jsObjectSetOrDelAttr<true>, "($self, name, value, /)"),
     PY_SLOT("__delattr__", jsObjectDelAttr<true>, "($self, name, /)"),
+    PY_SLOT("__str__", strOfInstanceOfDerivedClass, "($self, /)"),
 };
 
 void addMethodsOfDerivedClasses(JSGlobalObject* globalObject, PyType* type)
