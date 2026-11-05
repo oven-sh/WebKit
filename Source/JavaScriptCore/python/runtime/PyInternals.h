@@ -306,6 +306,8 @@ JSValue dictSubscript(JSGlobalObject*, PyDict*, JSValue key);
 JSValue makeMappingProxy(JSGlobalObject*, JSValue mapping);
 void setUpdate(JSGlobalObject*, JSValue set, JSValue iterable);
 bool setContains(JSGlobalObject*, PySet*, JSValue key); // key in set. (False if it has thrown.)
+void setDifferenceUpdate(JSGlobalObject*, PySet*, JSValue iterable);
+void setSymmetricDifferenceUpdate(JSGlobalObject*, PySet*, JSValue iterable);
 // The __getitem__ of these types. That of bytes is bytearray's too.
 JSValue listGetItem(JSGlobalObject*, JSValue self, JSValue key);
 JSValue tupleGetItem(JSGlobalObject*, JSValue self, JSValue key);

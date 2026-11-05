@@ -63,8 +63,9 @@ static void mergeMapping(JSGlobalObject* globalObject, PyDict* dict, JSValue oth
         if (dict->isEmpty()) {
             if (otherDict->hasTableThatFits())
                 return dict->takeTableOf(vm, otherDict);
-            // Otherwise the keys go in one by one, each compared with those of the same hash that are in already. Among strs nobody can tell.
-            if (otherDict->hasOnlyStringKeys())
+            // Otherwise the keys go in one by one, each compared with those of the same hash that are in already. Among strs nobody can tell. (Into
+            // the table that the dict has, if it has one: what is left in that shows later.)
+            if (otherDict->hasOnlyStringKeys() && !dict->storageIdentity())
                 return dict->takeItemsOf(vm, otherDict);
         }
         dict->reserve(vm, otherDict->size(), otherDict->hasOnlyStringKeys());
@@ -101,11 +102,16 @@ static void mergeMapping(JSGlobalObject* globalObject, PyDict* dict, JSValue oth
     }
     for (unsigned i = 0; i < listLength(list); ++i) {
         JSValue key = listGet(list, i);
-        int64_t hash = hashOf(key);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (!isNew(key, hash))
-            return;
+        if (duplicate) {
+            int64_t hash = hashOf(key);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!isNew(key, hash))
+                return;
+        }
+        // (The other is asked first, and then the key for its hash: a program can tell.)
         JSValue value = getItem(globalObject, other, key);
+        RETURN_IF_EXCEPTION(scope, void());
+        int64_t hash = hashOf(key);
         RETURN_IF_EXCEPTION(scope, void());
         dict->set(globalObject, key, hash, value);
         RETURN_IF_EXCEPTION(scope, void());
@@ -228,7 +234,8 @@ void dictMergeForCall(JSGlobalObject* globalObject, PyDict* dict, JSValue mappin
 }
 
 // dict(*args, **kwargs), dict.update(*args, **kwargs)
-static bool updateFromArguments(JSGlobalObject* globalObject, PyDict* dict, const CallArgs& args, ASCIILiteral function)
+// `mergesKeywords`: CPython has the keywords in a dict and merges that, so room is made as for a dict. Only dict() itself stores them one by one.
+static bool updateFromArguments(JSGlobalObject* globalObject, PyDict* dict, const CallArgs& args, ASCIILiteral function, bool mergesKeywords)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -239,12 +246,16 @@ static bool updateFromArguments(JSGlobalObject* globalObject, PyDict* dict, cons
         RETURN_IF_EXCEPTION(scope, false);
     }
     JSValue keys = args.keywordCount() ? hiddenField(globalObject, args.keywordNames(), keywordKeysField) : JSValue();
+    if (mergesKeywords && args.keywordCount()) {
+        // (An empty dict takes the table of the other, whatever is left in its own.)
+        if (dict->isEmpty())
+            dict->clear(vm);
+        dict->reserve(vm, args.keywordCount(), !keys);
+    }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        if (keys) [[unlikely]] {
-            dict->set(globalObject, PyTuple::from(keys)->at(i), args.keywordValue(i));
-            RETURN_IF_EXCEPTION(scope, false);
-        } else
-            dict->set(vm, args.keywordName(i), args.keywordValue(i));
+        // (A key of another kind that is there may say that it is equal to the name.)
+        dict->set(globalObject, keys ? PyTuple::from(keys)->at(i) : JSValue(args.keywordName(i)), args.keywordValue(i));
+        RETURN_IF_EXCEPTION(scope, false);
     }
     return true;
 }
@@ -267,7 +278,8 @@ static JSValue dictInit(JSGlobalObject* globalObject, JSValue self, const CallAr
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, updateFromArguments(globalObject, PyDict::from(self), args, "dict"_s)))
+    PyDict* dict = PyDict::from(self);
+    if (failed(scope, updateFromArguments(globalObject, dict, args, "dict"_s, dict->type() != runtime(globalObject).dictType())))
         return { };
     return jsUndefined();
 }
@@ -503,7 +515,7 @@ static JSValue dictUpdateMethod(JSGlobalObject* globalObject, JSValue self, cons
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, updateFromArguments(globalObject, PyDict::from(self), args, "update"_s)))
+    if (failed(scope, updateFromArguments(globalObject, PyDict::from(self), args, "update"_s, true)))
         return { };
     return jsUndefined();
 }
@@ -538,6 +550,8 @@ static JSValue dictFromKeys(JSGlobalObject* globalObject, JSValue cls, JSValue i
             return result;
         }
         if (auto* source = PySet::tryFrom(iterable); source && (source->type() == rt.setType() || source->type() == rt.frozensetType())) {
+            // (A table for keys of any kind, whatever the elements are: so CPython.)
+            result->reserve(vm, source->size(), false);
             JSValue key;
             int64_t hash;
             for (size_t position = 0; source->next(position, key, hash);) {
@@ -626,7 +640,7 @@ static JSValue frozendictNew(JSGlobalObject* globalObject, JSValue cls, const Ca
             return existing;
     }
     PyDict* result = PyDict::create(rt.vm(), rt.structure<PyDict>(), type);
-    if (failed(scope, updateFromArguments(globalObject, result, args, "frozendict"_s)))
+    if (failed(scope, updateFromArguments(globalObject, result, args, "frozendict"_s, false)))
         return { };
     return result;
 }
@@ -912,10 +926,38 @@ static JSValue viewSubOf(JSGlobalObject* globalObject, JSValue left, JSValue rig
     auto scope = DECLARE_THROW_SCOPE(vm);
     PySet* result = setFrom(globalObject, left);
     RETURN_IF_EXCEPTION(scope, { });
-    forEach(globalObject, right, [&](JSValue item) {
-        result->remove(globalObject, item);
-        return true;
-    });
+    setDifferenceUpdate(globalObject, result, right);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
+}
+
+// d.items() ^ e.items() goes by the keys, with the hashes that the dicts have kept, and makes pairs only of what is in the result. (Which keys and
+// values are asked for that, and the order of the result, are CPython's.)
+static JSValue itemsXor(JSGlobalObject* globalObject, PyDict* left, PyDict* right)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* rest = copyAsBaseType(globalObject, left);
+    RETURN_IF_EXCEPTION(scope, { });
+    PySet* result = PySet::create(globalObject);
+    JSValue key, value;
+    int64_t hash;
+    for (unsigned position = 0; right->next(position, key, value, hash);) {
+        JSValue other = rest->get(globalObject, key, hash);
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isInBoth = other && isEqual(globalObject, other, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isInBoth) {
+            // (A second search, which an __eq__ that has changed its mind may send elsewhere.)
+            bool removed = !!rest->take(globalObject, key, hash);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!removed)
+                return raiseKeyError(globalObject, scope, key);
+        } else
+            result->add(globalObject, PyTuple::create(globalObject, { key, value }));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    setUpdate(globalObject, result, PyDictView::create(globalObject, PyDictView::Kind::Items, rest));
     RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
@@ -924,20 +966,12 @@ static JSValue viewXorOf(JSGlobalObject* globalObject, JSValue left, JSValue rig
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (PyDictView* leftView = asSetLikeView(left), *rightView = asSetLikeView(right); leftView && rightView && leftView->kind() == PyDictView::Kind::Items && rightView->kind() == PyDictView::Kind::Items)
+        RELEASE_AND_RETURN(scope, itemsXor(globalObject, leftView->dict(), rightView->dict()));
     PySet* result = setFrom(globalObject, left);
     RETURN_IF_EXCEPTION(scope, { });
-    PySet* other = setFrom(globalObject, right);
+    setSymmetricDifferenceUpdate(globalObject, result, right);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue key;
-    int64_t hash;
-    for (size_t position = 0; other->next(position, key, hash);) {
-        bool removed = result->remove(globalObject, key, hash);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!removed) {
-            result->add(globalObject, key, hash);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
-    }
     return result;
 }
 
@@ -955,6 +989,21 @@ static JSValue viewIsDisjoint(JSGlobalObject* globalObject, JSValue self, JSValu
     auto* view = PyDictView::from(self);
     if (self == other)
         return jsBoolean(view->dict()->isEmpty());
+    // Through the shorter of the two, if looking into the other is cheap.
+    Runtime& rt = runtime(globalObject);
+    auto* otherSet = PySet::tryFrom(other);
+    if (otherSet && otherSet->type() != rt.setType() && otherSet->type() != rt.frozensetType())
+        otherSet = nullptr;
+    PyDictView* otherView = asSetLikeView(other);
+    if ((otherSet && otherSet->size() > view->dict()->size()) || (otherView && otherView->dict()->size() > view->dict()->size())) {
+        bool disjoint = true;
+        forEach(globalObject, self, [&](JSValue item) {
+            disjoint = !(otherSet ? setContains(globalObject, otherSet, item) : viewContainsItem(globalObject, otherView, item));
+            return disjoint;
+        });
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsBoolean(disjoint);
+    }
     bool disjoint = true;
     forEach(globalObject, other, [&](JSValue item) {
         disjoint = !viewContainsItem(globalObject, view, item);

@@ -566,15 +566,18 @@ static PySet* intersection(JSGlobalObject* globalObject, PySet* set, JSValue oth
         RETURN_IF_EXCEPTION(scope, false);
         bool found = set->contains(globalObject, key, hash);
         RETURN_IF_EXCEPTION(scope, false);
-        if (found)
-            result->add(globalObject, key, hash);
-        return true;
+        if (!found)
+            return true;
+        result->add(globalObject, key, hash);
+        RETURN_IF_EXCEPTION(scope, false);
+        // With all of the set found, the rest is not looked at (nor hashed, which shows).
+        return result->size() < set->size();
     });
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;
 }
 
-static void differenceUpdate(JSGlobalObject* globalObject, PySet* set, JSValue other)
+void setDifferenceUpdate(JSGlobalObject* globalObject, PySet* set, JSValue other)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -615,7 +618,7 @@ static PySet* difference(JSGlobalObject* globalObject, PySet* set, JSValue other
     if ((!otherSet && !otherDict) || (set->size() >> 2) > otherSize) {
         PySet* result = copyAsBaseType(globalObject, set);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        differenceUpdate(globalObject, result, other);
+        setDifferenceUpdate(globalObject, result, other);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return result;
     }
@@ -633,7 +636,7 @@ static PySet* difference(JSGlobalObject* globalObject, PySet* set, JSValue other
     return result;
 }
 
-static void symmetricDifferenceUpdate(JSGlobalObject* globalObject, PySet* set, JSValue other)
+void setSymmetricDifferenceUpdate(JSGlobalObject* globalObject, PySet* set, JSValue other)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -996,19 +999,19 @@ static JSValue setDifference(JSGlobalObject* globalObject, JSValue self, const C
     PySet* result = difference(globalObject, set, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     for (unsigned i = 1; i < args.size(); ++i) {
-        differenceUpdate(globalObject, result, args[i]);
+        setDifferenceUpdate(globalObject, result, args[i]);
         RETURN_IF_EXCEPTION(scope, { });
     }
     return result;
 }
 
-static JSValue setDifferenceUpdate(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+static JSValue setDifferenceUpdateMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     PY_SET_PROLOGUE();
     if (failed(scope, rejectKeywords(globalObject, "difference_update"_s, args)))
         return { };
     for (JSValue other : args.positional()) {
-        differenceUpdate(globalObject, set, other);
+        setDifferenceUpdate(globalObject, set, other);
         RETURN_IF_EXCEPTION(scope, { });
     }
     return jsUndefined();
@@ -1020,15 +1023,15 @@ static JSValue setSymmetricDifference(JSGlobalObject* globalObject, JSValue self
     PySet* result = newSetLike(globalObject, set);
     updateSet(globalObject, result, other);
     RETURN_IF_EXCEPTION(scope, { });
-    symmetricDifferenceUpdate(globalObject, result, set);
+    setSymmetricDifferenceUpdate(globalObject, result, set);
     RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
 
-static JSValue setSymmetricDifferenceUpdate(JSGlobalObject* globalObject, JSValue self, JSValue other)
+static JSValue setSymmetricDifferenceUpdateMethod(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
     PY_SET_PROLOGUE();
-    symmetricDifferenceUpdate(globalObject, set, other);
+    setSymmetricDifferenceUpdate(globalObject, set, other);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
@@ -1131,10 +1134,10 @@ static JSValue setInPlace(JSGlobalObject* globalObject, JSValue self, JSValue ot
         break;
     }
     case SetOperator::Sub:
-        differenceUpdate(globalObject, set, otherSet);
+        setDifferenceUpdate(globalObject, set, otherSet);
         break;
     case SetOperator::Xor:
-        symmetricDifferenceUpdate(globalObject, set, otherSet);
+        setSymmetricDifferenceUpdate(globalObject, set, otherSet);
         break;
     }
     RETURN_IF_EXCEPTION(scope, { });
@@ -1198,11 +1201,11 @@ static constexpr NativeDef setMethods[] = {
     PY_METHOD("clear", setClear, "($self, /)"),
     PY_METHOD("copy", setCopy, "($self, /)"),
     PY_METHOD("discard", setDiscard, "($self, object, /)"),
-    PY_METHOD("difference_update", setDifferenceUpdate, "($self, /, *others)"),
+    PY_METHOD("difference_update", setDifferenceUpdateMethod, "($self, /, *others)"),
     PY_METHOD("intersection_update", setIntersectionUpdate, "($self, /, *others)"),
     PY_METHOD("pop", setPop, "($self, /)"),
     PY_METHOD("remove", setRemove, "($self, object, /)"),
-    PY_METHOD("symmetric_difference_update", setSymmetricDifferenceUpdate, "($self, other, /)"),
+    PY_METHOD("symmetric_difference_update", setSymmetricDifferenceUpdateMethod, "($self, other, /)"),
     PY_METHOD("update", setUpdateMethod, "($self, /, *others)"),
 };
 
