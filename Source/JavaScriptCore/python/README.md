@@ -1559,7 +1559,12 @@ The collector is told the size of the side tables, which are several times the s
   `Headers`, `URLSearchParams`, `FormData`, `CookieMap`, a cache from a package (`isMappingByMethods`, asked at each use). `o[k]` is `get(k)`, or a
   `KeyError` if not `has(k)`; `k in o` is `has(k)`; `o[k] = v` is `set(k, v)`; `del o[k]` is `delete(k)`; iteration is over `keys()`; `len()` is
   `length`, `size` or the number of keys; an empty one is false. So `dict(o)` and `**o`. `items()`, `pop()`, `popitem()`, `setdefault()` and `update()` are
-  those of a mapping, made of the above. What the object has itself comes first as ever: `o.get(k)` is JS's, which knows no default, and
+  those of a mapping, made of the above. `o.get(k, default=None)` is Python's too, where the `get()` of JS's is written in C++, as that of a `Map`, of `Headers`
+  and the like is: it knows no default and ignores a second argument. It is asked, and where a default was given, it gives `undefined` or `null` and `has(k)` says
+  no, the default is the answer. A `get()` written in JS says itself what its arguments mean (`get(key, options)` of a cache) and is left alone; so is
+  `Map.prototype.get`. `o.get` is then no function of JS's but a method written in C++, as `{}.get` is, whose `__self__` is the bound function of JS's;
+  it is remembered with that (`bindIfFunction`), so `o.get is o.get`. It goes by the name: the same function under another name is JS's. Passed on to JS it is a function of Python's of
+  two parameters. What else the object has itself comes first as ever:
   `o.keys()`, `o.values()` and `o.entries()` give iterators of JS. Its properties are attributes only. A key that is there twice
   (`URLSearchParams`) is iterated over twice, and `[]` gives what `get()` gives, the first.
   (A decision that can still be changed.)
@@ -1581,7 +1586,7 @@ The collector is told the size of the side tables, which are several times the s
   properties (what JS iterates over, a `WeakMap`, a `WeakSet`: `itemsAreProperties`) they are the mapping of its own properties, `_js.JSProperties`, see below.
 - A function that is read off an object is bound to it, so `f = o.method; f()` works as it does in Python. It is one bound function for
   each object and function, remembered weakly (`bindIfFunction`): `o.method is o.method`, and `emitter.off(name, o.method)` finds what
-  `on()` was given. Not bound: classes, what a module exports (read off its namespace), and what is read off the `prototype` of a
+  `on()` was given. (The `get()` of a mapping by its methods: see there.) Not bound: classes, what a module exports (read off its namespace), and what is read off the `prototype` of a
   constructor, which is how JS spells an unbound method (`js.String.prototype.toUpperCase.call("abc")`).
 - `weakref.ref()`, `proxy()`, `finalize()` and the weak containers take objects and functions of JS.
 - A function written in JS has a signature for `inspect.signature()`, made of the text of its parameters (`__text_signature__`):

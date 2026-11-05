@@ -183,10 +183,13 @@ static bool isPrototypeOfConstructor(JSGlobalObject* globalObject, JSObject* obj
 }
 
 static bool isClassWrittenInJS(JSFunction*);
+static bool hasItemsByMethods(JSGlobalObject*, JSObject*);
+static JSValue getWithDefaultFor(JSGlobalObject*, JSBoundFunction*);
 
 // A function that is a property is a method: it is called with the object as `this`, as in object.method(). The method of an object is
 // one thing, however often it is read: object.method is object.method, and emitter.off(name, object.method) finds what on() was given.
-static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JSValue value)
+// `key`: of the property. The get() of a mapping by its methods takes a default, see getWithDefault().
+static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JSValue value, const Identifier& key)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -217,12 +220,30 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
     };
     JSWeakMap* objects = mapIn(rt.slot(Runtime::Slot::BoundMethodsOfJS), [&](JSWeakMap* map) { rt.setSlot(Runtime::Slot::BoundMethodsOfJS, map); });
     JSWeakMap* methods = mapIn(objects->get(object), [&](JSWeakMap* map) { objects->set(vm, object, map); });
-    if (JSValue bound = methods->get(function); bound.isCell())
-        return bound;
-    JSBoundFunction* bound = JSBoundFunction::create(vm, globalObject, function, object, ArgList(), 0, nullptr, SourceTaintedOrigin::Untainted);
-    if (bound) [[likely]]
+    JSValue bound = methods->get(function);
+    if (!bound.isCell()) {
+        bound = JSBoundFunction::create(vm, globalObject, function, object, ArgList(), 0, nullptr, SourceTaintedOrigin::Untainted);
+        RETURN_IF_EXCEPTION(scope, { });
         methods->set(vm, function, bound);
-    return bound;
+    }
+    // It is a get() written in C++ that gives way: one written in JS says itself what its arguments mean (`get(key, options)` of a cache).
+    if (key != vm.propertyNames->get) [[likely]]
+        return bound;
+    if (auto* jsFunction = dynamicDowncast<JSFunction>(function); !jsFunction || !jsFunction->isHostFunction())
+        return bound;
+    // bound function -> what stands for it
+    if (JSValue method = methods->get(asObject(bound)); method.isCell())
+        return method;
+    // It may take JS to tell what the object is. Another thread can call neither.
+    if (!rt.threads().isMainThread())
+        return bound;
+    bool byMethods = hasItemsByMethods(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!byMethods)
+        return bound;
+    JSValue method = getWithDefaultFor(globalObject, uncheckedDowncast<JSBoundFunction>(bound.asCell()));
+    methods->set(vm, asObject(bound), method);
+    return method;
 }
 
 static bool isMappingByMethods(JSGlobalObject*, JSObject*);
@@ -281,7 +302,7 @@ static ALWAYS_INLINE JSValue attributeFromProperty(JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(scope, { });
     if (!value)
         return { };
-    RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, receiver, value));
+    RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, receiver, value, key));
 }
 
 JSValue attributeFromPropertyOfJS(JSGlobalObject* globalObject, JSObject* object, JSString* name)
@@ -1111,6 +1132,33 @@ static JSValue jsObjectMappingMethod(JSGlobalObject* globalObject, JSValue self,
     RELEASE_AND_RETURN(scope, withFirstArgument(self, args, [&](const CallArgs& all) {
         return call(globalObject, function, all);
     }));
+}
+
+// The get() of a Map, of Headers and the like, and of a WeakMap knows no default and ignores a second argument. To Python they are mappings,
+// and every mapping has get(key, default=None). So mapping.get is this to Python, a method written in C++ as that of a dict is. Its `self` is
+// the method of JS's, bound to the mapping.
+static JSValue getWithDefault(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue defaultValue)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* method = uncheckedDowncast<JSBoundFunction>(self.asCell());
+    MarkedArgumentBuffer list;
+    list.append(valueForJS(key));
+    JSValue value = JSC::call(globalObject, method->targetFunction(), method->boundThis(), list, "not a function"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!defaultValue || !value.isUndefinedOrNull())
+        return value;
+    JSValue has = callMethodOfJS(globalObject, asObject(method->boundThis()), vm.propertyNames->has, { key });
+    RETURN_IF_EXCEPTION(scope, { });
+    return has.toBoolean(globalObject) ? value : defaultValue;
+}
+static constexpr NativeDef getWithDefaultDef = PY_METHOD("get", getWithDefault, "($self, key, default=None, /)");
+
+static JSValue getWithDefaultFor(JSGlobalObject* globalObject, JSBoundFunction* method)
+{
+    return PyNativeFunction::create(globalObject, getWithDefaultDef, NativeKind::Function, method, runtime(globalObject).jsObjectType());
 }
 
 // MutableMapping.pop() asks `self` for a mark of the class.
