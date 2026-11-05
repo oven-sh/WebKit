@@ -17,10 +17,7 @@ struct InternalError;
 
 namespace Typed {
 
-// The rules of the program's tables as the front end sends them: everything but the bodies, which AOTBodyVerifier.h checks.
-// It runs in every build, behind Program::read() and in front of the bodies' verifier.
 bool verifyRecords(const Program&, BuildContext&);
-// The part of the rules of the module graph that goes by what code names. verifyBodies() ends with it: it reads every body through cursors, which are safe only on words that have been checked.
 bool verifyModulesNamedInBodies(const Program&, BuildContext&);
 
 bool isValidPropertyKey(const PropertyKey&);
@@ -38,7 +35,6 @@ private:
     void fail(InternalError&&);
     bool hasFailed() const { return m_hasFailed; }
 
-    // AOTProgramVerifier.cpp
     void verifyIDs();
     void verifyTypes();
     void verifyPropertyKeys();
@@ -50,7 +46,6 @@ private:
     bool isValidClass(LayoutID, const Layout&) const;
     void verifyVariables();
 
-    // AOTProgramVerifierModules.cpp
     void verifyModules();
     void verifyModule(ModuleID, const Module&);
     bool hasValidBody(const Module&) const;
@@ -62,7 +57,6 @@ private:
     void verifyDataNode(DataID, const DataNode&);
     void verifySmallRecords();
 
-    // AOTProgramVerifierFunctions.cpp
     void verifyFunctionHeaders();
     void verifyFunctionHeader(FunctionID, const Function&);
 

@@ -19,7 +19,6 @@
 
 namespace JSC { namespace AOT {
 
-// `list.push(a, b)`. Dense storage that is neither shared nor frozen refuses nothing and runs nobody's code, so value by value is what Array.prototype.push() does. It does every other list itself, in a frame of its own.
 static EncodedJSValue pushSeveralInPushOperations(Instance* instance, JSArray* array, std::span<const EncodedJSValue> values)
 {
     JSGlobalObject* globalObject = instance->globalObject;

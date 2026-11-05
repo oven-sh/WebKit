@@ -30,7 +30,6 @@ struct RequestTargetsOfModuleLists {
     ModuleID operator[](size_t index) const { return requests[index].target; }
 };
 
-// What a module requires runs inside its body, so a require() closes no cycle of imports: it leads nowhere.
 struct ImportTargetsOfModuleLists {
     const Vector<Typed::ModuleRequest>& requests;
     ModuleID importer;
@@ -42,17 +41,14 @@ struct ImportTargetsOfModuleLists {
 using DirectoryNumbersOfModuleLists = UncheckedKeyHashMap<uint64_t, uint32_t>;
 using PiecesOfModulePath = Vector<StringID, 16>;
 
-// The lists of modules that stand side by side. An entry that names a place in one of the lists counts from the start of these.
 struct ModuleListsOfChunk : ModuleLists {
     Vector<uint32_t> filesShownByFaces;
 };
 
-// A place in each list that holds the entries of the modules one behind the other.
 struct PlacesInModuleLists {
     uint32_t displayPaths { 0 };
     uint32_t requests { 0 };
     uint32_t exports { 0 };
-    uint32_t modulesThatDeclareExports { 0 };
     uint32_t indirectExports { 0 };
     uint32_t syntheticExports { 0 };
     uint32_t requiredNames { 0 };
@@ -93,9 +89,6 @@ static bool moduleHasCompiledBody(const TableInputs& inputs, ModuleID id)
         || unitHasCodeForModuleLists(inputs, { body, Typed::CodeRole::GenericCallEntry });
 }
 
-// IsNeverEvaluated: a body that only returns has no code either, and neither has one that does nothing, whose call the walk drops. Their modules are evaluated like any other.
-// IsBodyEnteredByRunTime: not where compiled code alone comes to the module: it may store no status, so a body that the loader found in the table would run again. Else its start, else its body.
-// The roots of Compile and the units behind a mention of the module go by the same three questions in the same order: unitThatLoaderEnters() of plan/AOTUnitsNamedOutsideCode.cpp, UnitsBehindMention::addModule() of AOTMentions.cpp.
 static OptionSet<AnswerAboutModule> askAboutBodyOfModule(const TableInputs& inputs, ModuleID id)
 {
     const Typed::ModuleEvaluationPlan& evaluation = inputs.plan.moduleEvaluation();
@@ -112,15 +105,11 @@ static OptionSet<AnswerAboutModule> askAboutBodyOfModule(const TableInputs& inpu
     return answers;
 }
 
-// The host enters the function by the entry of its closures, which the plan names for it: addFunctionsThatHostEnters() of plan/AOTUnitsNamedOutsideCode.cpp.
-// An entry that holds the body leaves the body without a unit of its own. A function that is left out here is run by the interpreter, and nothing says so.
-// A body with code whose entry has none is listed, so that whoever numbers the entry refuses it.
 static bool hostEntersCodeOfFunction(const TableInputs& inputs, FunctionID function)
 {
     return unitHasCodeForModuleLists(inputs, inputs.plan.conventions().closureEntryOf(function)) || unitHasCodeForModuleLists(inputs, { function, Typed::CodeRole::Body });
 }
 
-// The entry that the table names goes on to the start of the module, which evaluates what the module imports and keeps its status.
 static bool entryOfModuleBodyLeadsToStart(const TableInputs& inputs, FunctionID body)
 {
     const Typed::CallingConventions& conventions = inputs.plan.conventions();
@@ -144,14 +133,12 @@ static SlotData slotAtOffsetForModuleLists(const TableEncoder& encoder, uint32_t
 
 namespace {
 
-// The walk over the modules asks one of these two for every number. The first answers with the numbers of the image. The second notes what was asked for, so that Image numbers it.
 struct NumbersOfImageForModuleLists {
     uint32_t shownString(StringID id) const { return encoder.stringNumber(id); }
     uint32_t nameOfText(StringID text, ASCIILiteral use, ModuleID owner) const { return encoder.identifierNumberOfText(text, use, owner); }
 
     uint32_t entryOfBody(FunctionID body, ModuleID owner) const
     {
-        // The loader would run the body and nothing of what the module imports.
         const Typed::ModuleStart* start = encoder.plan.moduleEvaluation().findStart(owner);
         if (start && !start->steps.empty() && !entryOfModuleBodyLeadsToStart(encoder.inputs, body))
             encoder.fail("EntryOfModuleBodyPassesByStepsOfItsStart"_s, owner);
@@ -166,7 +153,6 @@ struct NumbersOfImageForModuleLists {
             return { };
         }
         const PlacedVariable& placed = variables[id.index()];
-        // The run time reads the word raw.
         if (placed.plan.encoding == Typed::VariableEncoding::UndefinedAsZero) {
             encoder.fail("VariableReadByTableHoldsUndefinedAsZero"_s, id);
             return { };
@@ -184,6 +170,12 @@ struct NumbersOfImageForModuleLists {
         }
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    bool hasWordOfModuleValue(ModuleID id) const
+    {
+        const Vector<uint32_t>& offsets = encoder.numbers.statics().moduleValueOffsets;
+        return id.index() < offsets.size() && offsets[id.index()] != PlacedStatics::noOffset;
     }
 
     SlotData slotOfModuleValue(ModuleID id) const
@@ -209,7 +201,6 @@ struct NumbersOfImageForModuleLists {
     const TableEncoder& encoder;
 };
 
-// A set of NamesOfTables has a bit for each string of the program, so the modules of a chunk list what they name, with repeats.
 struct IDsNotedForModuleLists {
     void addTo(NamesOfTables& names) const
     {
@@ -258,8 +249,8 @@ struct NamesNotedForModuleLists {
         return { };
     }
 
+    bool hasWordOfModuleValue(ModuleID) const { return true; }
     SlotData slotOfModuleValue(ModuleID) const { return { }; }
-    // Requests name nothing that Image numbers.
     bool hasRequireEdge(ModuleID, ModuleID) const { return false; }
 
     const TableInputs& inputs;
@@ -273,7 +264,6 @@ static bool mayHavePathInPieces(const Typed::Module& module)
     return module.kind == ModuleKind::SourceText || module.kind == ModuleKind::Data;
 }
 
-// A piece ends with a slash or with the path.
 static void forEachPieceOfModulePath(std::span<const uint8_t> path, NOESCAPE const Invocable<void(std::span<const uint8_t>)> auto& functor)
 {
     if (path.empty() || path.back() == '/' || !std::ranges::contains(path, '/'))
@@ -290,13 +280,16 @@ static bool unseenCodeMayNameFilesOfProgram(const Typed::Facts& facts)
 {
     for (const auto& record : facts.unseenCode()) {
         using Cause = decltype(record.cause);
+        if (record.builtin != Wire::none && record.witness.function == Wire::none)
+            continue;
         switch (record.cause) {
-        // A text that the program evaluates finds no file: the run time refuses it where nothing is found by name.
         case Cause::EvaluatesText:
-        case Cause::LoadsModuleByName:
         case Cause::RunsMachineCode:
             continue;
-        // Code that comes from outside the image names what it likes.
+        case Cause::LoadsModuleByName:
+            if (record.builtin != Wire::none)
+                return true;
+            continue;
         case Cause::Unknown:
         case Cause::ImportsUncompiledModule:
         case Cause::RunsUnseenCode:
@@ -315,19 +308,21 @@ void hidePathsOfModules(Typed::Program& program, const Typed::Facts& facts, cons
     using Typed::ModuleFlags;
     if (!build.options().obfuscates())
         return;
-    // A name that is made at run time may be that of any file, and so may one that a walk over the folders of the executable finds.
-    if (facts.findsFilesOfProgramByName() || unseenCodeMayNameFilesOfProgram(facts))
+    if (unseenCodeMayNameFilesOfProgram(facts))
         return;
+    const BuiltinTable& builtins = program.builtins();
+    for (const BuiltinMarkedEntry& resolver : builtins.marked(BuiltinMark::AnswersWithPathOfModule)) {
+        if (facts.isUsedByOperation(resolver.builtin) || facts.isUsedByOperation(builtins.canonicalID(resolver.builtin)))
+            return;
+    }
 
-    BitVector isRead = Typed::modulesThatHostAsksFor(program, true, true);
+    BitVector isRead = Typed::modulesThatHostAsksFor(program, true);
     auto read = [&](ModuleID module) {
         if (module)
             isRead.quickSet(module.index());
     };
     for (const Typed::Module& module : program.modules) {
-        // The host resolves a name against the file that asks. For a module that is not of the image the table has that file.
         read(module.referrer);
-        // "Export named 'a' not found in module <path>"
         for (const Typed::RequiredName& required : module.requiredNames)
             read(required.module);
     }
@@ -345,13 +340,10 @@ void hidePathsOfModules(Typed::Program& program, const Typed::Facts& facts, cons
         Typed::Module& module = program.modules[index];
         if (isRead.quickGet(index) || module.kind != ModuleKind::SourceText || module.flags.containsAny(isKnownByPath))
             continue;
-        // `import.meta`, `__filename`, `require.resolve("./a")`, the message of a require() that fails.
         if (facts.isPathReadByOperation(ModuleID(index)))
             continue;
-        // A require() that code leaves to the loader asks for the module under the path that it had when the code was made. `module.children` lists who was required.
         if (plan.moduleEvaluation().isPathNamedBySites(ModuleID(index)))
             continue;
-        // As the face of a CommonJS file is named.
         module.path = program.strings.intern(makeString('#', index));
     }
 }
@@ -367,7 +359,6 @@ void internPiecesOfModulePaths(Typed::Program& program)
     }
 }
 
-// Such a module is simple whatever requests the tables keep, unless a cycle of imports leads through it: they keep no request that the program lacks.
 static bool pathLiesInPiecesOutsideCyclesOfImports(const Typed::Program& program, const Typed::Module& module)
 {
     return program.strings.size() <= Number24::max && mayHavePathInPieces(module) && !module.flags.contains(Typed::ModuleFlags::HasTopLevelAwait);
@@ -387,7 +378,6 @@ static BitVector findModulesOutsideCyclesOfImports(const Typed::Program& program
     return result;
 }
 
-// None where a piece is no string of the program.
 static PiecesOfModulePath findPiecesOfModulePath(const Typed::Program& program, const Typed::Module& module)
 {
     PiecesOfModulePath pieces;
@@ -401,7 +391,6 @@ static PiecesOfModulePath findPiecesOfModulePath(const Typed::Program& program, 
     return pieces;
 }
 
-// A number depends on every path in front, so this goes in order. Files that stand side by side lie in the same directories for the most part: only where a path leaves that of the file in front of it is a directory looked up.
 static void numberDirectoriesOfModulePaths(const BitVector& modulesOutsideCyclesOfImports, std::span<const PiecesOfModulePath> piecesOfPaths, AnswersAboutModules& answers)
 {
     DirectoryNumbersOfModuleLists numbersOfDirectories;
@@ -451,7 +440,6 @@ static void markModulesNotWorthVisiting(const Typed::Program& program, const Typ
     const Vector<Typed::Module>& modules = program.modules;
     const Vector<uint32_t>& componentOf = componentsOfRequests.componentOf;
 
-    // A component has a higher number than every component it requests.
     BitVector componentsWorthVisiting(componentsOfRequests.numberOfComponents);
     for (uint32_t index : componentsOfRequests.members) {
         bool isWorthVisiting = !moduleRunsNothingItself(program, answers, ModuleID(index)) || std::ranges::any_of(modules[index].requests, [&](const Typed::ModuleRequest& request) {
@@ -466,7 +454,6 @@ static void markModulesNotWorthVisiting(const Typed::Program& program, const Typ
     }
 }
 
-// Whether a unit has code is a search through the code of every unit, and a piece of a path is looked up by its text. What goes through a graph or through every function has one thread, and runs beside those.
 AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoops& loops)
 {
     const Typed::Program& program = inputs.program;
@@ -516,9 +503,6 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
 
     markModulesNotWorthVisiting(program, componentsOfRequests, answers);
     numberDirectoriesOfModulePaths(modulesOutsideCyclesOfImports, piecesOfPaths.span(), answers);
-    answers.mayMocksStandInPlaceOfModules = program.admitsReplacedBuiltins || std::ranges::any_of(program.modules, [](const Typed::Module& module) {
-        return module.flags.contains(Typed::ModuleFlags::MayBeMocked);
-    });
     answers.variablesThatHoldMocks = Vector<VariableID>(numberOfModules);
     for (const Vector<uint32_t>& variables : variablesThatHoldMocksInRanges) {
         for (uint32_t index : variables) {
@@ -549,7 +533,6 @@ static void setDisplayPathInModuleLists(const Typed::Program& program, ModuleID 
     std::span<const uint8_t> publicPath = program.string(module.path);
     if (publicPath.size() >= displayPath.size()) {
         std::span<const uint8_t> inFront = publicPath.first(publicPath.size() - displayPath.size());
-        // The run time counts characters.
         bool isCounted = inFront.size() < ModuleData::hasNoDisplayPath && std::ranges::all_of(inFront, isASCII<uint8_t>);
         if (isCounted && std::ranges::equal(publicPath.subspan(inFront.size()), displayPath)) {
             entry.charactersInFrontOfDisplayPath = static_cast<uint8_t>(inFront.size());
@@ -570,7 +553,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
     bool isModuleOfHost = module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime;
     bool isBundlerHelper = Typed::isBundlerHelperModule(program, module);
     bool isOfLibrary = isModuleOfHost || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelper;
-    bool hasValue = module.exportsVariable || inputs.plan.hasModuleValue(id);
+    bool hasValue = module.exportsVariable || (inputs.plan.hasModuleValue(id) && numbers.hasWordOfModuleValue(id));
     bool isEntered = answers.has(id, AnswerAboutModule::IsBodyEnteredByRunTime);
 
     ModuleData entry { };
@@ -610,8 +593,6 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
     return entry;
 }
 
-// No edge: the code of the requester evaluates the target where the require() stands, and asks the run time nothing.
-// A site that finds its target by a name at run time has no edge either, and asks the run time: code calls only what the plan lets it call.
 template<typename Numbers>
 static bool isAnsweredByCode(const TableInputs& inputs, const Numbers& numbers, ModuleID requester, const Typed::ModuleRequest& request)
 {
@@ -628,7 +609,6 @@ static bool isAnsweredByCode(const TableInputs& inputs, const Numbers& numbers, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The plan gave a variable that the run time reads a word in a form that the run time can read. It has decided, by what Facts says of the namespace, which exports those are.
 static bool isExportDescribedInModuleLists(const TableInputs& inputs, const Typed::ModuleExport& moduleExport)
 {
     switch (moduleExport.kind) {
@@ -642,24 +622,25 @@ static bool isExportDescribedInModuleLists(const TableInputs& inputs, const Type
 }
 
 template<typename Numbers>
-static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, VariableID variableThatHoldsMock, bool mayMocksStandInPlaceOfModules, const Numbers& numbers, ModuleLists& lists)
+static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, VariableID variableThatHoldsMock, const Numbers& numbers, ModuleLists& lists)
 {
     const Typed::Program& program = inputs.program;
+    uint32_t indexInRecord = 0;
     for (const Typed::ModuleExport& moduleExport : program.at(id).exports) {
+        VariableID behind = program.variableBehindExport(id, indexInRecord++);
         if (!isExportDescribedInModuleLists(inputs, moduleExport))
             continue;
         ModuleExportData entry { };
+        entry.staysIn = behind && inputs.facts.linked().exportsThatStayIn.get(behind.index());
         entry.name = numbers.nameOfText(moduleExport.name, "an export of"_s, id);
         entry.kindBits = static_cast<uint32_t>(moduleExport.kind);
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;
         entry.isFromStarExport = moduleExport.isFromStarExport;
         entry.isDroppedWhileEmpty = moduleExport.isDroppedWhileEmpty;
-        ModuleID declaring = id;
         switch (moduleExport.kind) {
         case ModuleExportKind::Variable:
             entry.variable = numbers.slotOfVariable(moduleExport.variable);
             entry.isReplaceable = program.at(moduleExport.variable).flags.contains(Typed::VariableFlags::IsReplaceable);
-            declaring = program.at(moduleExport.variable).module;
             break;
         case ModuleExportKind::Namespace:
             entry.module = moduleExport.module.index();
@@ -670,21 +651,15 @@ static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, V
             break;
         }
         lists.exports.append(entry);
-        if (mayMocksStandInPlaceOfModules)
-            lists.modulesThatDeclareExports.append(declaring.index());
     }
-    // ModuleTable::wordOfMock(). No program without such a module has such an entry.
     if (variableThatHoldsMock) {
         ModuleExportData entry { };
         entry.kindBits = ModuleExportData::kindBitsOfWordOfMock;
         entry.variable = numbers.slotOfVariable(variableThatHoldsMock);
-        if (mayMocksStandInPlaceOfModules)
-            lists.modulesThatDeclareExports.append(id.index());
         lists.exports.append(entry);
     }
 }
 
-// Reads the records of other modules and none of their entries in the lists: the modules are walked in any order, in lists of any length.
 template<typename Numbers>
 static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAboutModules& answers, ModuleID id, const Numbers& numbers, ModuleLists& lists)
 {
@@ -697,7 +672,6 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
     lists.setListStarts(record);
     lists.modules.append(record);
 
-    // The run time finds the file behind a face in the first request of the face, whether the body of the face calls the file or asks the loader for it.
     const Typed::ModuleRequest* requestOfFace = Typed::isFaceOfCommonJSFile(program, module) ? &module.requests[0] : nullptr;
     for (const Typed::ModuleRequest& request : module.requests) {
         if (answers.ofModules[request.target.index()].containsAll({ AnswerAboutModule::IsNotWorthVisiting, AnswerAboutModule::IsNeverEvaluated }))
@@ -707,7 +681,7 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
             continue;
         lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
     }
-    appendExportsToModuleLists(inputs, id, answers.variablesThatHoldMocks[id.index()], answers.mayMocksStandInPlaceOfModules, numbers, lists);
+    appendExportsToModuleLists(inputs, id, answers.variablesThatHoldMocks[id.index()], numbers, lists);
     for (const Typed::SyntheticExport& syntheticExport : module.syntheticExports) {
         SyntheticExportData entry { };
         entry.name = numbers.nameOfText(syntheticExport.name, "an export that the run time fills for"_s, id);
@@ -741,40 +715,33 @@ static void appendWhatNoModuleOwnsToModuleLists(const TableInputs& inputs, const
     AOT::stableSort(lists.sourceStamps, { }, &SourceStampData::module);
 }
 
-// ModuleData::evaluatesItself() says that what the run time enters stores the status of the module. Where it says so wrongly the body runs twice or never.
 static void settleBodyInModuleLists(const TableEncoder& encoder, ModuleID id, ModuleData& record)
 {
     const Typed::Module& module = encoder.program.at(id);
     const Typed::ModuleEvaluationPlan& evaluation = encoder.plan.moduleEvaluation();
-    // It stores no status, so the loader would take it for unevaluated and run a body that it finds here once more.
     if (evaluation.isEvaluatedByCodeAlone(id)) {
         record.body = Number24(Number24::max);
         record.flags &= ~static_cast<uint16_t>(ModuleData::Flag::EvaluatesItself);
         return;
     }
-    // Nothing but the steps calls the modules that have no body here.
     const Typed::ModuleStart* start = evaluation.findStart(id);
     bool isEnteredAtStart = record.bodyFunction() && record.evaluatesItself();
     if (start && !start->steps.empty() && !isEnteredAtStart) {
-        // A module that nothing reaches has neither code nor a body here.
         if (record.bodyFunction() || encoder.hasCode({ module.body, Typed::CodeRole::ModuleStart }))
             encoder.fail("ModuleStartWithStepsIsNotEntered"_s, id);
         return;
     }
     if (!record.bodyFunction() || record.evaluatesItself())
         return;
-    // The entry that the record names leads to the body.
     bool isFileWithCode = module.kind == ModuleKind::SourceText || module.kind == ModuleKind::CommonJs;
     if (isFileWithCode && encoder.inputs.bodyFacts.functionsThatOnlyReturn.get(module.body.index())) {
         record.body = Number24(Number24::max);
         return;
     }
-    // Such a body opens with BeginModuleEvaluation, which refuses a module that the loader has begun.
     if (evaluation.moduleThatBeginsIn(module.body) == id)
         record.add(ModuleData::Flag::EvaluatesItself);
 }
 
-// The run time finds the file behind a face in the first request that the tables keep. The module is the last of the lists.
 static void markFaceOfFileInModuleLists(const Typed::Program& program, ModuleID id, ModuleListsOfChunk& lists)
 {
     const Typed::Module& module = program.at(id);
@@ -794,17 +761,14 @@ static void forEachListOfEntriesOfModules(const auto& functor)
     functor(&ModuleLists::displayPaths, &PlacesInModuleLists::displayPaths);
     functor(&ModuleLists::requests, &PlacesInModuleLists::requests);
     functor(&ModuleLists::exports, &PlacesInModuleLists::exports);
-    functor(&ModuleLists::modulesThatDeclareExports, &PlacesInModuleLists::modulesThatDeclareExports);
     functor(&ModuleLists::indirectExports, &PlacesInModuleLists::indirectExports);
     functor(&ModuleLists::syntheticExports, &PlacesInModuleLists::syntheticExports);
     functor(&ModuleLists::requiredNames, &PlacesInModuleLists::requiredNames);
     functor(&ModuleLists::exportStatements, &PlacesInModuleLists::exportStatements);
 }
 
-// The lists of a chunk are as long as they are, so where each begins among all is a sum, and every chunk is then written there beside the others. Leaves room for the last record, and frees the lists of the chunks.
 static ModuleLists joinModuleListsOfChunks(const ParallelLoops& loops, const ChunksOfIndices& chunks, Vector<ModuleListsOfChunk>& listsOfChunks)
 {
-    // [chunk], and one more for the end.
     Vector<PlacesInModuleLists> starts(chunks.size() + 1);
     for (unsigned chunk = 0; chunk < chunks.size(); ++chunk) {
         forEachListOfEntriesOfModules([&](auto list, auto place) {
@@ -868,7 +832,6 @@ ModuleLists collectModuleLists(TableEncoder& encoder, const AnswersAboutModules&
         ModuleListsOfChunk& lists = listsOfChunks[chunk];
         for (unsigned index = chunks.firstIndexOf[chunk]; index < chunks.firstIndexOf[chunk + 1]; ++index) {
             appendModuleToModuleLists(inputs, answers, ModuleID(index), numbers, lists);
-            // computeModuleFlags() goes by which modules have a body.
             settleBodyInModuleLists(encoder, ModuleID(index), lists.modules.last());
             markFaceOfFileInModuleLists(program, ModuleID(index), lists);
         }
@@ -883,7 +846,7 @@ ModuleLists collectModuleLists(TableEncoder& encoder, const AnswersAboutModules&
         for (uint32_t file : listsOfChunk.filesShownByFaces)
             lists.modules[file].shownByFace = true;
     }
-    for (size_t index : Typed::modulesThatHostAsksFor(program, inputs.facts.findsFilesOfProgramByName()))
+    for (size_t index : Typed::modulesThatHostAsksFor(program))
         lists.modules[index].add(ModuleData::Flag::IsEntryPoint);
     markExportsBoundByRequiredNames(lists);
     return lists;
@@ -892,7 +855,6 @@ ModuleLists collectModuleLists(TableEncoder& encoder, const AnswersAboutModules&
 void nameWhatModuleListsName(const TableInputs& inputs, const AnswersAboutModules& answers, const ParallelLoops& loops, NamesOfTables& names)
 {
     ChunksOfIndices chunks = divideIntoChunks(static_cast<unsigned>(inputs.program.modules.size()));
-    // [chunk], and one more for what no module owns.
     Vector<IDsNotedForModuleLists> notedByChunks(chunks.size() + 1);
     forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
         NamesNotedForModuleLists numbers { inputs, notedByChunks[chunk] };

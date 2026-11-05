@@ -20,12 +20,9 @@ enum class PureOperation : uint16_t {
     TruncateToInt64,
     NonNegativeInt32,
     RuntimeOperation,
-    LiteralStringToString,
-    ToLiteralString,
     BoxNumber,
     ResolveCallTarget,
     ReadFieldInExtension,
-    LiteralStringCell,
     ModuleNamespace,
     ModuleBuiltinCell,
     DataCell,
@@ -42,7 +39,6 @@ constexpr Machine::PureFunction truncationToInt64(uint32_t payload)
     return { static_cast<uint64_t>(PureOperation::TruncateToInt64) << 32 | payload, true, true };
 }
 
-// Of its children and of what the Patch says that it reads. The payload tells apart what reads different heaps.
 constexpr Machine::PureFunction functionOfMemory(PureOperation operation, uint32_t payload)
 {
     return { static_cast<uint64_t>(operation) << 32 | payload, true, false, true };

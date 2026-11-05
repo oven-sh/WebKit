@@ -12,10 +12,8 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// At every place that its definition dominates it gives the same result, and it does nothing else.
 static bool canSinkIntoRareRegion(const Operation* operation)
 {
-    // The Extracts of a tuple stand right behind it.
     if (!operation->type().isNumeric())
         return false;
 
@@ -73,7 +71,6 @@ static bool canSinkIntoRareRegion(const Operation* operation)
     case Load16Z:
     case Load16S:
     case Load:
-        // A write may stand between a load from any other heap and the region.
         return operation->has(OperationFlag::ReadsImmutableHeap) && !operation->traps();
 
     case Patch: {
@@ -87,10 +84,8 @@ static bool canSinkIntoRareRegion(const Operation* operation)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The Extracts of a Patch that ends a block stand at the head of its first successor, and nothing that takes a register may stand between the Patch and them.
 static bool extractsStandAtHeadOfSinkTarget(const Order& order, const Block* entry)
 {
-    // On the way to a landing pad the results of the Patch do not exist. Any other entry of a rare region has one predecessor.
     if (entry->isLandingPad())
         return false;
     std::span<Block* const> predecessors = order.of(entry).predecessors;
@@ -116,18 +111,15 @@ bool BackwardScan::trySink(Operation* operation)
     if (!entry || extractsStandAtHeadOfSinkTarget(m_order, entry))
         return false;
 
-    // Every way into the region leads through its entry. So a definition outside that reaches a read inside stands on every way to the entry, and so do its children.
     const BlockPlace& placeOfEntry = m_order.of(entry);
     Position head = placeOfEntry.head;
     Position early = m_order.earlyPositionOf(operation);
     if (head <= early)
         return false;
 
-    // In a loop that begins behind the definition it would be computed on every turn that takes the rare way, and its children would live through the loop.
     if (placeOfEntry.loop != noLoop && m_order.loops()[placeOfEntry.loop].begin > early)
         return false;
 
-    // A child may be computed from an address in the frame, and no such value lives across a suspension.
     if (m_nextSuspension < head)
         return false;
 
@@ -136,7 +128,6 @@ bool BackwardScan::trySink(Operation* operation)
         m_liveness.m_sunk.grow(m_proc.arena(), m_order.mostBlocks());
     m_liveness.m_sunk[entry->index()].append(m_proc.arena(), operation);
 
-    // A sum takes in what it would where it stood, which gives the same wherever it is computed. Nothing else is fused into what sinks. A child that nothing else reads sinks in its turn.
     tryFuseScaledIndex(operation);
     const PatchOperation* patch = operation->as<PatchOperation>();
     forEachLeaf(m_liveness, operation, [&](const Operation*, unsigned index, Operation* leaf) {
@@ -148,12 +139,10 @@ bool BackwardScan::trySink(Operation* operation)
             return;
         noteRegionOfUse(leaf, entry);
 
-        // What sank into a block runs in a row at one pair of positions. A leaf outlives that pair, so that no result or clobber of one of them takes the register that a later one reads it from.
         ValueFacts& read = facts(leaf);
         read.lastUse = std::max(read.lastUse, head + 2);
     });
 
-    // It is a call of the region from here on. Its own result is defined behind this and counts as living across it, which claims more and never less.
     if (patch)
         noteCall(patch, head + 1, entry);
     return true;
@@ -162,7 +151,6 @@ bool BackwardScan::trySink(Operation* operation)
 void BackwardScan::noteRegionOfUse(Operation* value, const Block* user)
 {
     uint32_t& regionOfUses = m_summariesOfReads[value->index()].regionOfUses;
-    // No region has that number, so whatever the region of this user is, the answer stays.
     if (regionOfUses == severalRegions)
         return;
     uint32_t region = m_order.of(user).rareRegion;

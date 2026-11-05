@@ -50,8 +50,6 @@ const lookupDeclarations = [
   "JS_EXPORT_PRIVATE std::optional<uint32_t> numberOfDeclaredResultsOf(Opcode);",
 ];
 
-// The declaration and the definition must spell the constraint the same way.
-// Otherwise they are two templates, and every call is ambiguous.
 const operationTemplateHead = "template<typename Rules, HoldsOpcode Operation>";
 const terminatorTemplateHead = "template<typename Rules, HoldsTerminatorKind Terminator>";
 

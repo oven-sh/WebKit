@@ -18,32 +18,21 @@ enum class StubFrameKind : uint8_t {
     Adapter,
     ConstructAdapter,
     SavedFrameAdapter,
-    // As Adapter, in the frame of the adapter of SavedFrames: it has called the handler of a job, which lies in the callee slot.
     HandlerOfJob,
     EngineCallee,
     HostCall,
     GeneratorBody,
     AsyncGeneratorBody,
     ArgumentList,
-    // The caller's site has two positions, and the stub is at the first: the first of two reads, or the making of an Error that it then throws.
     FirstOfTwoReads,
-    // The stub reads the method that the caller's site calls.
     MethodRead,
-    // As Plain, in a frame whose stub has spilled the argument registers.
     BelowSpilledArguments,
-    // As BelowSpilledArguments, in a PlainFunctionConstructFrame whose callee has been entered.
     PlainFunctionConstruct,
-    // As BelowSpilledArguments, in a PlainFunctionConstructFrame whose callee has not been entered: the stub makes `this`. Bytecode does that in the frame of the callee, so a stack trace lists the callee.
     PlainFunctionConstructMakesThis,
-    // As ConstructAdapter, before the callee is entered: the adapter makes `this`.
     ConstructAdapterMakesThis,
-    // In a stub that has no frame record and has pushed nothing: its return address is on top of the stack.
     AtStubEntry,
-    // The frame is one that emitHostCallFrame() has made, and the stub does in it what the native callee would do. A run of compiled frames ends at it, as at a frame of the engine.
     InHostCallFrame,
-    // Like Plain, in a frame with a record: after the operation it called returns, the stub only returns to its caller.
     ReturnsAfterOperation,
-    // In a ModuleStartFrame, behind the call of the body or of the start that a word of the row names.
     ModuleStart,
 };
 inline constexpr unsigned numberOfStubFrameKinds = 20;
@@ -78,7 +67,6 @@ constexpr bool hasSingleReturnSite(StubFrameKind kind)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// What lies between the return address of a frame and the stack pointer its caller had at the call: emitSpillArgumentRegisters() puts the registers in front of the caller's stack words.
 constexpr unsigned bytesAboveReturnAddressOf(StubFrameKind kind)
 {
     switch (kind) {
@@ -108,11 +96,8 @@ constexpr unsigned bytesAboveReturnAddressOf(StubFrameKind kind)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// Of the stub StartModule, which is entered anew for each start that a row names: as deep as the graph of imports.
 struct ModuleStartFrame {
-    // The address of the next word of the row. Null: the callee has not returned, it has thrown.
     static constexpr ptrdiff_t offsetOfNextStep = -8;
-    // The number of a module and one more: whoever unwinds clears the next step and lands behind the call, as at a cleanup. The stub abandons the evaluation of the module and throws on. Zero: a throw passes the frame by.
     static constexpr ptrdiff_t offsetOfModuleToAbandon = -16;
     static constexpr unsigned size = 16;
 };

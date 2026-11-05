@@ -21,7 +21,6 @@
 
 namespace JSC { namespace AOT {
 
-// WTF::codePointCompare() orders by UTF-16 code unit. modulesByPath has the order of the UTF-8 bytes of the paths, which is code point order.
 static std::strong_ordering compareCodePoints(StringView first, StringView second)
 {
     if (first.is8Bit() || second.is8Bit())
@@ -72,6 +71,12 @@ std::optional<uint64_t> ModuleTable::sourceStamp(ModuleID module) const
     return found->stamp();
 }
 
+std::span<const NameOfStatementData> ModuleTable::namesOfStatements(ModuleID module) const
+{
+    auto ofModule = std::ranges::equal_range(m_tables->namesOfStatements(), module.index(), { }, &NameOfStatementData::module);
+    return { ofModule.begin(), ofModule.end() };
+}
+
 bool ModuleTable::isAmbiguousExport(ModuleID module, StringView name) const
 {
     return std::ranges::any_of(ambiguousExports(module), [&](const AmbiguousExportData& entry) {
@@ -79,7 +84,6 @@ bool ModuleTable::isAmbiguousExport(ModuleID module, StringView name) const
     });
 }
 
-// A table has modules with a path that are not in modulesByPath: what it does not hold compiled.
 std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath, unsigned hashOfPath) const
 {
     std::span<const uint32_t> entries = m_tables->modulesByHashOfPath();
@@ -201,7 +205,6 @@ std::optional<unsigned> ModuleTable::findExport(ModuleID module, UniquedStringIm
     return std::nullopt;
 }
 
-// The front end numbers the face close behind the file, so the search begins there. It goes by no order: wherever the face stands, it is found.
 std::optional<ModuleID> ModuleTable::faceOfFile(ModuleID file) const
 {
     if (!data(file).hasFace())
@@ -226,7 +229,6 @@ bool ModuleTable::isRuntimeFunction(FunctionID function) const
     return std::ranges::contains(m_tables->compiledRuntimeFunctions(), function.index(), &CompiledRuntimeFunctionData::function);
 }
 
-// From the start of the path.
 ModuleTable::PiecesOfPath ModuleTable::piecesOfPath(ModuleID module) const
 {
     PiecesOfPath pieces;
@@ -238,10 +240,8 @@ ModuleTable::PiecesOfPath ModuleTable::piecesOfPath(ModuleID module) const
     return pieces;
 }
 
-// A piece ends with a slash or with the path, so none ends inside a surrogate pair.
 std::strong_ordering ModuleTable::comparePath(ModuleID module, StringView other) const
 {
-    // The name of a module of the library.
     if (const ModuleData& moduleData = data(module); !optionalIDInImage<uint32_t>(moduleData.directory)) {
         StringView name = ProgramStrings::viewInImage(*m_tables, StringID(moduleData.publicPathOrName));
         if (std::strong_ordering order = compareCodePoints(name, other.substring(0, name.length())); order != 0)
@@ -297,7 +297,6 @@ String ModuleTable::pathTextForLineColumns(ModuleID module) const
     return data(module).hasInstalledPositions ? pathText(module) : displayPathText(module);
 }
 
-// The name of a file ends its public path, whether or not the directory stands apart.
 IterationStatus ModuleTable::forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor) const
 {
     ModuleNumbers byPath = modulesByPath();

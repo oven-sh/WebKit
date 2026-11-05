@@ -20,8 +20,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// The parameters: the result, unless the operation is a store, then the address, then the operands.
-// Every access is sequentially consistent, as Atomics asks: acquire and release on ARM64, a locked instruction or a plain load on x86-64.
 struct AtomicAccessGenerator {
     AtomicsOperation operation;
     Width width;
@@ -31,7 +29,6 @@ struct AtomicAccessGenerator {
 
 #if CPU(ARM64)
 
-// One instruction reads, changes and writes the element. Without it a loop does, which takes a register for what it stores and one for whether the store took place.
 bool hasAtomicReadModifyWriteInstructions(const Machine::Procedure& procedure)
 {
     return procedure.traits().features.contains(CPUFeature::LSE);
@@ -111,7 +108,6 @@ void AtomicAccessGenerator::operator()(CCallHelpers& jit, const Machine::PatchPa
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // No operand lies in the register of the result.
     GPRReg result = params[0].gpr();
     if (hasAtomicReadModifyWriteInstructions(params.proc())) {
         auto readModifyWrite = [&](auto on8Bits, auto on16Bits, auto on32Bits, GPRReg operand) {
@@ -127,7 +123,6 @@ void AtomicAccessGenerator::operator()(CCallHelpers& jit, const Machine::PatchPa
             readModifyWrite(&CCallHelpers::atomicXchgAdd8, &CCallHelpers::atomicXchgAdd16, &CCallHelpers::atomicXchgAdd32, result);
             return;
         case AtomicsOperation::And:
-            // The instruction clears the bits that are set in its operand.
             jit.not32(operandAt(0), result);
             readModifyWrite(&CCallHelpers::atomicXchgClear8, &CCallHelpers::atomicXchgClear16, &CCallHelpers::atomicXchgClear32, result);
             return;
@@ -167,12 +162,10 @@ void AtomicAccessGenerator::operator()(CCallHelpers& jit, const Machine::PatchPa
     CCallHelpers::Label retry = jit.label();
     loadLinked(result);
     if (operation == AtomicsOperation::CompareExchange) {
-        // The expected value arrives without bits above the width, as the load leaves none.
         CCallHelpers::Jump differs = jit.branch32(CCallHelpers::NotEqual, result, operandAt(0));
         storeConditionally(operandAt(1), status);
         jit.branchTest32(CCallHelpers::NonZero, status).linkTo(retry, &jit);
         CCallHelpers::Jump done = jit.jump();
-        // What was read is stored back, so that the read is as ordered as an exchange that takes place.
         differs.link(&jit);
         storeConditionally(result, status);
         jit.branchTest32(CCallHelpers::NonZero, status).linkTo(retry, &jit);
@@ -311,7 +304,6 @@ void AtomicAccessGenerator::operator()(CCallHelpers& jit, const Machine::PatchPa
         break;
     }
 
-    // The instruction compares with rax and, where the element holds something else by now, leaves that in rax.
     GPRReg updated = params.gpScratch(0);
     RELEASE_ASSERT(params[0].gpr() == X86Registers::eax && operandAt(0) != X86Registers::eax && memory.base != X86Registers::eax);
     load(X86Registers::eax);
@@ -353,7 +345,6 @@ LValue BufferBuiltinEmitter::emitAtomicAccess(AtomicsOperation operation, std::s
     bool isLoad = operation == AtomicsOperation::Load;
     bool comparesWithAccumulator = isX86_64() && (operation == AtomicsOperation::CompareExchange || operation == AtomicsOperation::And || operation == AtomicsOperation::Or || operation == AtomicsOperation::Xor);
 
-    // Other threads write the elements of a shared buffer. So each access, a load too, ends every load of an element that was numbered in front of it.
     const Machine::AbstractHeap* elements = &m_heaps.entire(AbstractHeap::TypedArrayElements);
     Machine::PatchOperation* access = m_out.patchpoint(isStore ? Machine::Void : Machine::Int32);
     access->effects = Machine::Effects::none();
@@ -380,7 +371,6 @@ LValue BufferBuiltinEmitter::emitAtomicAccess(AtomicsOperation operation, std::s
     UNUSED_VARIABLE(comparesWithAccumulator);
 #endif
 
-    // The code writes the result while it still reads the address and the operands.
     if (!isStore && !isLoad)
         access->resultConstraints = { Machine::ValueRep::SomeEarlyRegister };
     access->appendSomeRegister(address);
@@ -412,7 +402,6 @@ void BufferBuiltinEmitter::generateAtomics(const InlineCall& call)
         Word32 bits = typeOf(operand).isInteger() ? low32(integerOperand(operand)) : emitter<ConversionEmitter>().toInt32(numberOperand(operand));
         operands.append(bits.value());
     }
-    // The element is compared as it lies in memory: without the bits above its width.
     if (operation == AtomicsOperation::CompareExchange && width != Width32)
         operands[0] = m_out.bitAnd(operands[0], m_out.constInt32(width == Width8 ? 0xff : 0xffff));
     Pointer vector = vectorHoldingElement(view, index, miss);
@@ -426,7 +415,6 @@ void BufferBuiltinEmitter::generateAtomics(const InlineCall& call)
             finish(call, get(stored), typeOf(stored));
             return;
         }
-        // ToIntegerOrInfinity of what was passed: NaN is 0, and -0 is 0.
         Number value = numberOperand(stored);
         Condition isNotNaN = equal(value, value);
         finish(call, select(isNotNaN, add(trunc(value), 0), 0));

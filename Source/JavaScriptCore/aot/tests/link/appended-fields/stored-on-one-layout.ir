@@ -4,7 +4,7 @@
 # RUN: link functions fields layouts mechanisms=all
 # CHECK: function f1
 # CHECK-NEXT: parameter 0 {{*}}proven=undefined|null|string
-# CHECK-NEXT: parameter 1 {{*}}proven=undefined kept
+# CHECK-NEXT: parameter 1 {{*}}proven=undefined
 # CHECK: field L0.0 "a"
 # CHECK-NEXT: field L0.1 "b" appended proven=null|string writers-known
 # CHECK-NEXT: field L0.2 "c" appended proven=i32 writers-known

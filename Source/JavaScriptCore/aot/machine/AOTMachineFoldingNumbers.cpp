@@ -15,11 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// Every rule produces the exact bits that the operation would, except for the payload of a NaN.
-// Of two NaNs with different signs an instruction keeps the one in its first operand, and the allocator decides which operand comes first.
-// None of these hold: x + 0 = x (fails for -0), x * 0 = 0 (NaN, infinity, negative x), x - x = 0 (NaN, infinity).
-// Nothing is reassociated, because every operation rounds.
-
 template<typename T>
 static std::optional<T> numberFoldConstantOf(const Operation* operation)
 {
@@ -33,9 +28,6 @@ static std::optional<T> numberFoldConstantOf(const Operation* operation)
     return std::nullopt;
 }
 
-// An invalid operation makes a NaN with the sign set on x86-64 and clear on ARM64, and a NaN that an operand brings keeps its sign. A program can read the sign out of a Float64Array.
-// The builder and the encoders are compiled for one CPU, that of the compiler itself, so the host's arithmetic gives the target's sign.
-// The payload goes: without it a NaN is a number when it is boxed.
 static Operation* numberFoldConstant(Builder& builder, double value)
 {
     return builder.constDouble(std::isnan(value) ? std::bit_cast<double>((std::bit_cast<uint64_t>(value) >> 51 | 1) << 51) : value);
@@ -46,8 +38,6 @@ static Operation* numberFoldConstant(Builder& builder, float value)
     return builder.constFloat(std::isnan(value) ? std::bit_cast<float>((std::bit_cast<uint32_t>(value) >> 22 | 1) << 22) : value);
 }
 
-// Like Math.min and Math.max: NaN if either operand is NaN, and -0 is less than 0.
-// The NaN is that of the sum: fmin and fmax choose it as fadd does on ARM64, and the encoder adds the operands on x86-64.
 template<typename T>
 static T numberFoldMin(T left, T right)
 {
@@ -68,14 +58,12 @@ static T numberFoldMax(T left, T right)
     return left > right ? left : right;
 }
 
-// The operation only produces whole numbers, infinities and NaN. Rounding leaves each of those unchanged, -0 included.
 static bool numberFoldIsRounded(const Operation* operation)
 {
     Opcode opcode = operation->opcode();
     return opcode == Ceil || opcode == Floor || opcode == FTrunc || opcode == IToD;
 }
 
-// Only a power of two has one. Dividing by it and multiplying by its reciprocal compute the same real number, and each rounds it once.
 template<typename T>
 static std::optional<T> numberFoldExactReciprocalOf(T divisor)
 {
@@ -90,7 +78,6 @@ static std::optional<T> numberFoldExactReciprocalOf(T divisor)
     return reciprocal;
 }
 
-// At most 2^52 in magnitude, so IToD rounded nothing away.
 static bool numberFoldIsExactInteger(const Operation* number)
 {
     if (number->opcode() != IToD)
@@ -106,19 +93,16 @@ static Operation* numberFoldIntegerBehind(Builder& builder, Operation* number)
     return integer->type() == Int32 ? builder.unary(SExt32, integer) : integer;
 }
 
-// Add(IToD a, IToD b) is IToD(Add(a, b)), and so for Sub. The result is at most 2^53 in magnitude, which a double holds. Neither form gives -0.
 static Operation* numberFoldSumOfExactIntegers(Builder& builder, Opcode opcode, Operation* left, Operation* right)
 {
     ASSERT(opcode == Add || opcode == Sub);
     if (!numberFoldIsExactInteger(left) || !numberFoldIsExactInteger(right))
         return nullptr;
-    // A statement each: as two arguments of one call they would be built in an order that the language leaves open, and the index of an operation follows that order.
     Operation* wideLeft = numberFoldIntegerBehind(builder, left);
     Operation* wideRight = numberFoldIntegerBehind(builder, right);
     return builder.unary(IToD, builder.binary(opcode, wideLeft, wideRight));
 }
 
-// An operation on two constants must always fold: the encoder has only one scratch register to materialize a constant in.
 template<typename T>
 static Operation* foldMachineNumber(Builder& builder, Opcode opcode, Operation* left, Operation* rightOrNull)
 {
@@ -135,7 +119,6 @@ static Operation* foldMachineNumber(Builder& builder, Opcode opcode, Operation* 
             return nullptr;
         if (leftConstant)
             return numberFoldConstant(builder, *leftConstant + *rightConstant);
-        // -0 + 0 is 0, so the identity of addition is -0, not 0.
         if (!*rightConstant && std::signbit(*rightConstant))
             return left;
         return nullptr;
@@ -147,7 +130,6 @@ static Operation* foldMachineNumber(Builder& builder, Opcode opcode, Operation* 
             return nullptr;
         if (leftConstant)
             return numberFoldConstant(builder, *leftConstant - *rightConstant);
-        // x - -0 is x + 0, which turns -0 into 0.
         if (!*rightConstant && !std::signbit(*rightConstant))
             return left;
         return nullptr;

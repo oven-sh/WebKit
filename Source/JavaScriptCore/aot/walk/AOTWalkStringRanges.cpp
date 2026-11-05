@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Strings: what is read off a range of a string in the place of a piece that is then never cut: a comparison with a written text, a number, a parsed integer.
-// This file alone names StringRangeEqualsLiteral, StringRangeToNumber and StringRangeParseInt, and it names them through a parameter: while their rows are out of the schema it builds nothing.
-// The three keep nothing and throw only for lack of memory, as the cut does in whose place they stand. Withheld: their callers are not asked.
-
 #include "config.h"
 #include "AOTWalkStrings.h"
 
@@ -23,22 +19,18 @@ enum class ReadOfRangeInWalkStrings : uint8_t { EqualsLiteral, ToNumber, ParseIn
 
 } // anonymous namespace
 
-template<typename Opcodes, typename DraftOfRead>
 static Reference buildReadOfRangeForStringRanges(Walker& walker, ReadOfRangeInWalkStrings read, const PieceOfString& piece, StringID text, Reference radixOrNull, Origin origin)
 {
-    if constexpr (requires { Opcodes::StringRangeEqualsLiteral; Opcodes::StringRangeToNumber; Opcodes::StringRangeParseInt; }) {
-        Opcodes opcode = read == ReadOfRangeInWalkStrings::EqualsLiteral ? Opcodes::StringRangeEqualsLiteral : read == ReadOfRangeInWalkStrings::ToNumber ? Opcodes::StringRangeToNumber : Opcodes::StringRangeParseInt;
-        DraftOfRead draft(opcode, origin);
-        draft.setStringOperand(piece.string);
-        draft.setStartOperand(piece.start);
-        draft.setEndOperand(piece.end);
-        if (read == ReadOfRangeInWalkStrings::EqualsLiteral)
-            draft.setLiteral(text);
-        if (radixOrNull)
-            draft.setRadixOperand(radixOrNull);
-        return walker.build(WTF::move(draft));
-    } else
-        return { };
+    Opcode opcode = read == ReadOfRangeInWalkStrings::EqualsLiteral ? Opcode::StringRangeEqualsLiteral : read == ReadOfRangeInWalkStrings::ToNumber ? Opcode::StringRangeToNumber : Opcode::StringRangeParseInt;
+    Draft draft(opcode, origin);
+    draft.setStringOperand(piece.string);
+    draft.setStartOperand(piece.start);
+    draft.setEndOperand(piece.end);
+    if (read == ReadOfRangeInWalkStrings::EqualsLiteral)
+        draft.setLiteral(text);
+    if (radixOrNull)
+        draft.setRadixOperand(radixOrNull);
+    return walker.build(WTF::move(draft));
 }
 
 static bool mayReadRangeForStringRanges(const Walker& walker, const PieceOfString& piece)
@@ -54,26 +46,25 @@ Reference buildComparisonOfRangeWithText(Walker& walker, const PieceOfString& pi
     if (!length)
         return buildOperatorForStrings(walker, Opcode::StrictEq, piece.start, piece.end, origin);
 
-    // Bounds that are known lie as far apart as the text is long, or the two differ.
     Type start = walker.types().at(walker.typeOf(piece.start));
     Type end = walker.types().at(walker.typeOf(piece.end));
     if (start.integers.isSingleValue() && end.integers.isSingleValue() && end.integers.minimum - start.integers.minimum != static_cast<int64_t>(length))
         return constantForStrings(walker, PrimitiveKnownToFolding::boolean(false));
-    return buildReadOfRangeForStringRanges<Opcode, Draft>(walker, ReadOfRangeInWalkStrings::EqualsLiteral, piece, text, { }, origin);
+    return buildReadOfRangeForStringRanges(walker, ReadOfRangeInWalkStrings::EqualsLiteral, piece, text, { }, origin);
 }
 
 Reference buildNumberOfRange(Walker& walker, const PieceOfString& piece, Origin origin)
 {
     if (!mayReadRangeForStringRanges(walker, piece))
         return { };
-    return buildReadOfRangeForStringRanges<Opcode, Draft>(walker, ReadOfRangeInWalkStrings::ToNumber, piece, { }, { }, origin);
+    return buildReadOfRangeForStringRanges(walker, ReadOfRangeInWalkStrings::ToNumber, piece, { }, { }, origin);
 }
 
 Reference buildParsedIntegerOfRange(Walker& walker, const PieceOfString& piece, Reference radixOrNull, Origin origin)
 {
     if (!mayReadRangeForStringRanges(walker, piece))
         return { };
-    return buildReadOfRangeForStringRanges<Opcode, Draft>(walker, ReadOfRangeInWalkStrings::ParseInt, piece, { }, radixOrNull, origin);
+    return buildReadOfRangeForStringRanges(walker, ReadOfRangeInWalkStrings::ParseInt, piece, { }, radixOrNull, origin);
 }
 
 } } } // namespace JSC::AOT::Typed

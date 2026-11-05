@@ -109,7 +109,6 @@ public:
         close(m_file);
     }
 
-    // On the thread that made it.
     std::optional<uint64_t> read() const
     {
         if (m_file < 0)
@@ -120,8 +119,6 @@ public:
     }
 
 private:
-    // Compile asks three times a unit, and half a million units make the system calls a tenth of its time. As the comment above perf_event_mmap_page::lock has it.
-    // Nothing where the system does not let user mode read the counter, or the counter is not on the processor now.
     std::optional<uint64_t> readWithoutSystemCall() const
     {
 #if CPU(X86_64)
@@ -220,9 +217,6 @@ size_t PhaseTimes::residentMegabytes()
 #endif
 }
 
-// Linux lets a process reset its own high-water mark, so each line of the log can say how high its phase went.
-// The reset also lowers what getrusage() reports, so the peak of the process is kept here.
-// Tasks of one stage log beside each other: the lock keeps a mark that one thread has read and reset from being missed by another.
 static constinit Lock peakBeforeResetsLock;
 static size_t peakBeforeResets WTF_GUARDED_BY_LOCK(peakBeforeResetsLock) { 0 };
 
@@ -256,7 +250,6 @@ size_t PhaseTimes::takePeakResidentMegabytesSinceLastTaken()
 size_t PhaseTimes::peakResidentMegabytes()
 {
 #if OS(LINUX)
-    // Not getrusage(): there a spawned process starts from the peak of its parent.
     size_t peakKilobytes = 0;
     if (FILE* file = fopen("/proc/self/status", "r")) {
         char line[256];
@@ -329,7 +322,6 @@ void PhaseTimes::didFinish(ASCIILiteral phase)
     if (instructionsNow && m_instructionsAtPhaseStart)
         line.print(" | instructions ", static_cast<double>(*instructionsNow - *m_instructionsAtPhaseStart) / 1e6, " M");
     line.println();
-    // As one operand: dataLog() writes each of its operands by itself, and whoever embeds the engine writes to the same descriptor under no lock of ours.
     dataLog(line.toUTF8CString());
     m_instructionsAtPhaseStart = instructionsNow;
     m_phaseStart = MonotonicTime::now();
@@ -351,12 +343,9 @@ void StepTimes::didFinish(ASCIILiteral step)
         return;
     MonotonicTime now = MonotonicTime::now();
     Seconds threadCPUTime = CPUTime::forCurrentThread();
-    // As one operand: dataLog() writes each of its operands by itself, and whoever embeds the engine writes to the same descriptor under no lock of ours.
-    // WHAT ONE THREAD DOES ALONE BOUNDS THE SECONDS OF A STAGE THAT DOES NOT FILL THE CORES, and its instructions hold still on a busy machine, where its milliseconds do not.
     std::optional<uint64_t> instructionsOfThread = InstructionCounts::ofCurrentThread();
     dataLog(toUTF8CString("AOT phase times: ", m_name, " | ", step, " | wall ", (now - m_stepStart).milliseconds(), " ms | this thread ", (threadCPUTime - m_threadCPUTimeAtStepStart).milliseconds(), " ms | instructions of this thread ", instructionsOfThread && m_instructionsOfThreadAtStepStart ? static_cast<double>(*instructionsOfThread - *m_instructionsOfThreadAtStepStart) / 1e6 : 0.0, " M\n"));
     m_instructionsOfThreadAtStepStart = instructionsOfThread;
-    // The next step counts the writing of this line, so the steps add up to the line of the phase.
     m_stepStart = now;
     m_threadCPUTimeAtStepStart = threadCPUTime;
 }

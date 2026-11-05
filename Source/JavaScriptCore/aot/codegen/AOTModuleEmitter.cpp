@@ -17,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The word of such a module holds its namespace object, once the run time has been asked for it, and nothing else.
 static bool keepsNamespaceInValueWord(const Module& module, ImportPhase phase)
 {
     switch (phase) {
@@ -72,7 +71,6 @@ Word32 ModuleEmitter::moduleIndex(ModuleID module)
     return word32(static_cast<int32_t>(module.index()));
 }
 
-// A load takes the address of a word of the instance without a register only at offset zero, so the offset is part of the mention.
 TypedPointer ModuleEmitter::valueWordOf(ModuleID module, int32_t offsetFromValue)
 {
     return instanceWord(m_heaps.AOTInstance_moduleValues, m_mentions.add(NumberSpace::ModuleValue, module, offsetFromValue));
@@ -83,13 +81,11 @@ Boxed ModuleEmitter::loadModuleValue(ModuleID module)
     return Boxed(m_out.load64(valueWordOf(module, 0)));
 }
 
-// The word follows the module's value.
 Boxed ModuleEmitter::loadRequireCacheValue(ModuleID module)
 {
     return Boxed(m_out.load64(valueWordOf(module, static_cast<int32_t>(sizeof(EncodedJSValue)))));
 }
 
-// No instruction reads the edge's number. The mention alone makes Image list the edge for the run time and makes Compile include the code the run time enters for the target.
 void ModuleEmitter::mentionRequireEdge(const ValueContext& value)
 {
     uint32_t key[] { value->referrer().index(), value->module().index(), value->specifier().index() };
@@ -103,7 +99,6 @@ void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
     auto getInSlowPath = [&](const CallOptions& options) {
         return callOperation<CellPointer>(value, RuntimeOperation::GetModuleNamespace, { moduleIndex(module), word32(static_cast<int32_t>(phase)) }, options);
     };
-    // Under a mock the module may have two objects, and no word of the image says which of them the asker gets.
     if (value->ofModuleItself()) {
         define(value, callOperation<CellPointer>(value, RuntimeOperation::GetNamespaceOfModuleItself, { moduleIndex(module) }));
         return;
@@ -117,7 +112,6 @@ void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
             define(value, getInSlowPath({ }));
             return;
         }
-        // `fs.existsSync(path)` behind `import * as fs` hands the object on as `this`, at every call. It is made once.
         uint32_t key[] { module.index() };
         define(value, emitter<ConstantEmitter>().numberedPermanentCell(pureFunction(PureOperation::ModuleNamespace, module.index()), false, [&] {
             return instanceWord(m_heaps.entire(AbstractHeap::AllocatorState), m_mentions.add(NumberSpace::ModuleNamespace, module));
@@ -197,6 +191,11 @@ void ModuleEmitter::generateMockSeenBy(const ValueContext& value)
     define(value, callWithoutSite<Boxed>(RuntimeOperation::MockSeenBy, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
 }
 
+void ModuleEmitter::generateNamespaceSeenBy(const ValueContext& value)
+{
+    define(value, callOperation<Boxed>(value, RuntimeOperation::NamespaceSeenBy, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
+}
+
 void ModuleEmitter::generateCountExecution(const ValueContext& value)
 {
     Operand arguments[] { moduleIndex(value->module()), numberOf(m_mentions.add(NumberSpace::String, value->description())), word32(static_cast<int32_t>(value->counter())) };
@@ -246,7 +245,6 @@ void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
     ModuleID module = value->module();
     Word32 inRecord = word32(static_cast<int32_t>(StoredModuleStatus::InRecord));
     Word32 status(m_out.load8ZeroExt32(statusOf(module)));
-    // The stub StartModule does the same by a bit of the step: generateStartModule() of stubs/AOTStubsCallAdapters.cpp.
     bool isComparedWithDisk = ModuleEvaluationPlan::beginAsksRunTime(m_program, module);
     defineTest(value, selectByBranch<Condition>(belowOrEqual(status, inRecord), [&] {
         auto askRunTime = [&] {
@@ -278,15 +276,18 @@ void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
     });
 }
 
+void ModuleEmitter::generateEnterBodyThatRunsOnce(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::EnterBodyThatRunsOnce, { word32(static_cast<int32_t>(value->functionNumber())) });
+}
+
 void ModuleEmitter::generateEvaluateRequiredModule(const ValueContext& value)
 {
     ModuleID module = value->module();
     mentionRequireEdge(value);
-    // The operations around the site record who required whom, also where the module has run and the run time is not asked.
     auto askRunTime = [&](const CallOptions& options) {
         callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(ModuleID()) }, options);
     };
-    // A mock that ended has kept a module below this one from running. The run time knows.
     if (m_plan.importsWhatMayBeMocked(module)) {
         askRunTime({ });
         return;

@@ -93,8 +93,6 @@ Vector<Boxed, 8> CallEmitter::boxedOperands(std::span<const ValueID> ids)
     return operands;
 }
 
-// A constant has no form of its own: it is made in the form in which the callee takes the parameter.
-// A word that says nothing is handed over all the same, as zero: ControlEmitter::generateReturn().
 Vector<Operand, 8> CallEmitter::operandsOf(std::span<const ValueID> ids, const ArgumentLocations& locations)
 {
     RELEASE_ASSERT(ids.size() == locations.parameters.size());
@@ -128,10 +126,9 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     return placed;
 }
 
-void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params, const RegisterSet& among)
+void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params)
 {
     RegisterSet released = params.value()->registersToRelease();
-    released.filter(among);
     released.exclude(params.usedRegisters());
     released.forEach([&](Reg reg) {
         jit.move(CCallHelpers::TrustedImm32(0), reg.gpr());
@@ -174,6 +171,10 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
         if (LValue argument = placed.onStack[stackIndex])
             patchpoint->append(Machine::ConstrainedValue(argument, callStackWordRep(stackIndex)));
     }
+    for (unsigned child = 0; child < patchpoint->numChildren(); ++child) {
+        if (placed.letGoByCallee.contains(patchpoint->child(child)))
+            patchpoint->markChildAsLetGoByCallee(child);
+    }
 
     uint32_t stackWordsToReserve = placed.stackWordsToReserve;
     Vector<Machine::ValueRep, 2> resultConstraints;
@@ -214,7 +215,7 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
     }
     patchpoint->setGenerator([records = &m_records, wordsOfThrowSite, wordsThatAreMentions, kind = target.kind, calledUnit = target.calledUnit, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, numberedImmediate = options.numberedImmediate, site = OptionalIndex { site }, firstReadSite, callerSuspendsAtReturn = options.callerSuspendsAtReturn](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        emitClearOfReleasedRegisters(jit, params, RegisterSet::allGPRs());
+        emitClearOfReleasedRegisters(jit, params);
         if (callerSuspendsAtReturn)
             FrameMapEmitter::releaseSavedRegisters(jit, params);
         StubCalls& stubCalls = records->stubCalls;
@@ -243,7 +244,6 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
 Operand CallEmitter::resultOfCall(const ArgumentLocation& location, LValue value)
 {
     if (!isPassedInCall(location)) {
-        // The callee does not hand the result back, and no ResultAt asks for it. Whoever returns the results of the call as they came has no place for it either.
         if (location.representation == Representation::Void)
             return { };
         RELEASE_ASSERT(location.representation == Representation::JSValue);
@@ -256,7 +256,6 @@ void CallEmitter::defineResultsOfCall(const ValueContext& value, std::span<const
 {
     if (results.empty())
         return;
-    // A callee that hands back one field in place of its object has one result too. The record of its call holds none of its results: ResultAt reads the field.
     if (results.size() == 1 && hasRegister(value.representation())) {
         define(value, resultOfCall(results[0], call));
         return;
@@ -280,7 +279,6 @@ Boxed CallEmitter::callByConvention(const OperationContext& context, const Conve
     return Boxed(emitCall(context, CallTarget::stub(call.stub, options.immediate), placeConventionArguments(call), { &boxedResult, 1 }, options));
 }
 
-// countOperand lives as long as the call does.
 void CallEmitter::chooseStubThatCallsValue(ConventionCall& call, LValue& countOperand, bool calleeIsCell)
 {
     unsigned count = static_cast<unsigned>(call.arguments.size());
@@ -315,7 +313,6 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
     return callByConvention(context, conventionCall, options);
 }
 
-// A cell is boxed as it is, so the record between the closure and the call moves nothing.
 static uint8_t argumentsLentBy(const Code& code, const Operation& call)
 {
     uint8_t lentArguments = 0;
@@ -343,7 +340,6 @@ void CallEmitter::generateCall(const ValueContext& value)
     if (emitter<AccessEmitter>().tryCallMethodByName(value))
         return;
     ValueID callee = value->calleeOperand();
-    // The stub that calls a value does not know what the program calls it. What is no object is never called, so the place throws by itself and says the name.
     if (const Type& type = typeOf(callee); value->calleeName() && !type.hasObjects() && type.isJavaScriptValue() && !type.isNever()) {
         emitter<ThrowEmitter>().throwAt(value, *siteThatNamesCallee(value), Operand(in<Boxed>(callee)));
         if (value.returnCall()) {
@@ -363,9 +359,8 @@ void CallEmitter::generateCall(const ValueContext& value)
         tailCallValue(value, call);
         return;
     }
-    // The tail call of an inlined function. A stack trace leaves that function out once the callee is entered, as it does after a real tail call.
-    if (value->isTailCall && mayForwardCallToReceiver(value))
-        requireCallableBeforeTailCall(value, call.callee, call.thisValue);
+    if (mayForwardCallToReceiver(value.value()))
+        requireForwardedCallCanBeMade(value, call.callee, call.thisValue, value->isTailCall);
     defineResultOfCallByValue(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value), .callerSuspendsAtReturn = value.isAwaitedAtOnce() }));
 }
 

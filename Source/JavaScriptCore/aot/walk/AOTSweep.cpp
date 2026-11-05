@@ -21,17 +21,12 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint8_t neededMarkOfSweep = static_cast<uint8_t>(SweepMark::IsNeeded);
 static constexpr uint8_t leavesOwedErrorMarkOfSweep = static_cast<uint8_t>(SweepMark::LeavesOwedError);
 static constexpr uint8_t pollsForNothingMarkOfSweep = static_cast<uint8_t>(SweepMark::PollsForNothing);
-// The parameters of reached blocks, and each operation that the way has come by. Whatever is found needed with its bit set goes through the worklist. sweepBackward() takes the bit away again.
-static constexpr uint8_t passedByMarkOfSweep = 1 << 6;
 static_assert(!OptionSet<SweepMark> { SweepMark::IsNeeded, SweepMark::ReleasesOperand, SweepMark::LaterBarrierCovers, SweepMark::LeavesOwedError, SweepMark::PollsForNothing, SweepMark::LaterFenceCovers, SweepMark::OwnerIsYoung }.containsAny(OptionSet<SweepMark>::fromRaw(passedByMarkOfSweep)));
 
-// Kept whatever their traits say: coverage counters are never removed, a loop without a poll cannot be interrupted, and what was decided by a proof has left nobody else who looks at the value.
 static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof };
 
-// Each speaks of a cell and does nothing for the program: where nothing else needs the cell, neither is made.
 static constexpr OpcodeSet operationsThatSweepKeepsForTheirOperand { Opcode::ReleaseHint, Opcode::MarkEnvironmentEscaped, Opcode::ReleaseEnvironment, Opcode::ClearFrameCell };
 static_assert(OperandIndex::ReleaseHint::value == OperandIndex::MarkEnvironmentEscaped::environment && OperandIndex::ReleaseHint::value == OperandIndex::ReleaseEnvironment::environment);
 static_assert(OperandIndex::ReleaseHint::value == OperandIndex::ClearFrameCell::cell);
@@ -40,6 +35,8 @@ static constexpr uint8_t isKeptForOperandInRowOfSweep = 1 << 0;
 static constexpr uint8_t isNeverDroppedInRowOfSweep = 1 << 1;
 static constexpr uint8_t writesOnlyItsAnswerInRowOfSweep = 1 << 2;
 static constexpr uint8_t hasNoResultInRowOfSweep = 1 << 3;
+static constexpr uint8_t hasOwnerBarrierInRowOfSweep = 1 << 4;
+static constexpr uint8_t isAllocationWithFenceInRowOfSweep = 1 << 5;
 static constexpr std::array<uint8_t, numberOfEnumerators<Opcode>> rowsOfOpcodesInSweep = [] {
     std::array<uint8_t, numberOfEnumerators<Opcode>> rows { };
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -52,21 +49,20 @@ static constexpr std::array<uint8_t, numberOfEnumerators<Opcode>> rowsOfOpcodesI
             row |= writesOnlyItsAnswerInRowOfSweep;
         if (resultRuleOf(opcode) == ResultRule::None)
             row |= hasNoResultInRowOfSweep;
+        if (sweptOperationsWithOwnerBarriers.contains(opcode))
+            row |= hasOwnerBarrierInRowOfSweep;
+        if (sweptAllocationsWithFences.contains(opcode))
+            row |= isAllocationWithFenceInRowOfSweep;
         rows[static_cast<unsigned>(opcode)] = row;
     }
     return rows;
 }();
 
-namespace {
+static ALWAYS_INLINE uint8_t rowOfOpcodeInSweep(Opcode opcode)
+{
+    return rowsOfOpcodesInSweep.data()[static_cast<unsigned>(opcode)];
+}
 
-struct BlockOnSearchPathOfSweep {
-    BlockID block;
-    uint32_t nextEdge { 0 };
-};
-
-} // anonymous namespace
-
-// A Narrowed emits no code that reads its test, and the branch on the test keeps the test needed.
 template<typename Functor>
 static void forEachOperandNeededBySweep(const Operation& operation, const Functor& functor)
 {
@@ -77,8 +73,6 @@ static void forEachOperandNeededBySweep(const Operation& operation, const Functo
     operation.forEachChild(functor);
 }
 
-// The row of a function or getter of the host says what the call changes, and nobody checks what the row leaves out: the state may be read through another object, or be ambient.
-// A built-in of the language works on its operands and on the heaps that its row names, so a call of one goes by its traits.
 static bool callsBuiltinOfHostInSweep(const BuiltinTable& table, const Operation& callBuiltin)
 {
     return table.at(table.at(callBuiltin.overload()).builtin).origin != BuiltinOrigin::Engine;
@@ -89,11 +83,30 @@ static std::tuple<uint32_t, FactKind, FactSubject::Kind, uint32_t, uint32_t> sor
     return { use.record.index(), use.kind, use.subjectKind, use.subject, use.index };
 }
 
+static ALWAYS_INLINE void needInSweep(uint8_t* marksOfValues, Vector<ValueID>& worklist, ValueID value)
+{
+    uint8_t& marks = marksOfValues[value.index()];
+    if (marks & neededMarkOfSweep)
+        return;
+    marks |= neededMarkOfSweep;
+    if (!(marks & passedByMarkOfSweep))
+        return;
+    worklist.append(value);
+}
+
+static ALWAYS_INLINE void countUseInSweep(uint8_t* useCounts, ValueID* onlyUsers, ValueID used, ValueID user)
+{
+    uint8_t& count = useCounts[used.index()];
+    if (count == std::numeric_limits<uint8_t>::max())
+        return;
+    onlyUsers[used.index()] = count ? ValueID() : user;
+    ++count;
+}
+
 SweepTotals Sweep::run(const SweepInputs& inputs, Code& code)
 {
     m_inputs = &inputs;
     m_code = &code;
-    // operationsSwept rises each time a loop visits a record that the walk appended to a block, so a further pass over Code shows in it. Parameters and constants are not among OperationsBuilt, and do not count here.
     m_totals = { };
 
     uint32_t numberOfValues = code.numberOfValues();
@@ -101,20 +114,20 @@ SweepTotals Sweep::run(const SweepInputs& inputs, Code& code)
     code.m_marks.fill(0, numberOfValues);
     for (PollWithFate listed : code.pollsWithFates())
         code.m_marks[listed.poll.index()] |= listed.fate == FateOfPoll::LeavesHandler ? leavesOwedErrorMarkOfSweep : pollsForNothingMarkOfSweep;
-    code.m_suspensions.shrink(0);
-    code.m_liveValues.shrink(0);
+
     code.m_reachedBlocks.clearAll();
     code.m_reachedBlocks.ensureSize(numberOfBlocks);
     code.m_blocksWithoutThrows.clearAll();
     code.m_blocksWithoutThrows.ensureSize(numberOfBlocks);
-    // Set first, so that Code::handlerOf() and Code::forEachEdgeOf() skip the handler edges that are given up, in every step below.
     code.m_isSwept = true;
     m_worklist.shrink(0);
     m_blocksToReach.shrink(0);
     m_reachedInPostorder.shrink(0);
     m_holdsBackStores = false;
     m_hasListedIncomingEdges = false;
-    m_hasGivenUpHandlers = false;
+    m_hasForgottenEdgesThatAreNotTaken = false;
+    m_someBlockHandsOverArguments = false;
+    m_blockThatEdgesAscendInto = { };
 
     sweepBackward();
 
@@ -123,7 +136,6 @@ SweepTotals Sweep::run(const SweepInputs& inputs, Code& code)
     return m_totals;
 }
 
-// Afterward, the edges that lead to block b are m_incomingEdges[m_firstIncomingEdge[b] .. m_firstIncomingEdge[b + 1]), whether or not anything takes them.
 void Sweep::listIncomingEdges()
 {
     const Code& code = *m_code;
@@ -148,17 +160,50 @@ void Sweep::listIncomingEdges()
     }
 }
 
-// Afterward, the lists hold the edges from reached blocks alone, without the handler edges that were given up.
+ALWAYS_INLINE bool Sweep::isTaken(EdgeID id, const Edge& edge) const
+{
+    return isSweptEdgeTaken(*m_code, m_states, id, edge);
+}
+
+void Sweep::listEdgesThatAreTaken()
+{
+    const Code& code = *m_code;
+    uint32_t numberOfBlocks = code.numberOfBlocks();
+    uint32_t numberOfEdges = code.numberOfEdges();
+    m_hasListedIncomingEdges = true;
+    m_firstIncomingEdge.fill(0, numberOfBlocks + 1);
+    uint32_t* const firstIncomingEdge = m_firstIncomingEdge.mutableSpan().data();
+    for (uint32_t index = 0; index < numberOfEdges; ++index) {
+        const Edge& edge = code.at(EdgeID(index));
+        if (edge.to && isTaken(EdgeID(index), edge))
+            ++firstIncomingEdge[edge.to.index()];
+    }
+
+    uint32_t numberOfIncomingEdges = 0;
+    for (uint32_t index = 0; index <= numberOfBlocks; ++index) {
+        numberOfIncomingEdges += firstIncomingEdge[index];
+        firstIncomingEdge[index] = numberOfIncomingEdges;
+    }
+    m_incomingEdges.fill(EdgeID(), numberOfIncomingEdges);
+    EdgeID* const incomingEdges = m_incomingEdges.mutableSpan().data();
+    for (uint32_t index = numberOfEdges; index--;) {
+        const Edge& edge = code.at(EdgeID(index));
+        if (edge.to && isTaken(EdgeID(index), edge))
+            incomingEdges[--firstIncomingEdge[edge.to.index()]] = EdgeID(index);
+    }
+}
+
 void Sweep::forgetEdgesThatAreNotTaken()
 {
-    uint32_t numberOfBlocks = m_code->numberOfBlocks();
+    const Code& code = *m_code;
+    uint32_t numberOfBlocks = code.numberOfBlocks();
     uint32_t numberKept = 0;
     uint32_t next = 0;
     for (uint32_t index = 0; index < numberOfBlocks; ++index) {
         uint32_t end = m_firstIncomingEdge[index + 1];
         m_firstIncomingEdge[index] = numberKept;
         for (; next < end; ++next) {
-            if (isTaken(m_incomingEdges[next]))
+            if (isTaken(m_incomingEdges[next], code.at(m_incomingEdges[next])))
                 m_incomingEdges[numberKept++] = m_incomingEdges[next];
         }
     }
@@ -166,132 +211,55 @@ void Sweep::forgetEdgesThatAreNotTaken()
     m_incomingEdges.shrink(numberKept);
 }
 
-// A unit with handlers sets its frame up at entry and traps nowhere.
+void Sweep::ensureEdgesThatAreTakenAreListed()
+{
+    if (m_hasForgottenEdgesThatAreNotTaken)
+        return;
+    m_hasForgottenEdgesThatAreNotTaken = true;
+    if (m_hasListedIncomingEdges)
+        forgetEdgesThatAreNotTaken();
+    else
+        listEdgesThatAreTaken();
+}
+
+ALWAYS_INLINE bool Sweep::edgesAscendInto(BlockID id, const Block& block)
+{
+    if (m_blockThatEdgesAscendInto == id)
+        return true;
+    const Code& code = *m_code;
+    EdgeID edge = block.firstEdgeIn();
+    while (EdgeID next = code.at(edge).nextInto()) {
+        if (next < edge)
+            return false;
+        edge = next;
+    }
+    m_blockThatEdgesAscendInto = id;
+    return true;
+}
+
 void Sweep::forgetHandlersThatAreGone()
 {
     Code& code = *m_code;
-    if (!code.m_hasHandlers)
-        return;
-    code.m_hasHandlers = std::ranges::any_of(m_reachedInPostorder, [&](BlockID block) {
-        return code.handlerOf(block) || code.at(block).isHandlerBlock();
+    code.m_hasHandlers = std::ranges::any_of(m_reachedInPostorder, [&](BlockID id) {
+        const Block& block = code.at(id);
+        return handlerOfSweptBlock(block, m_states[id.index()]) || block.isHandlerBlock();
     });
 }
 
-bool Sweep::isTaken(EdgeID id) const
+ALWAYS_INLINE void Sweep::needArgumentsOn(const Edge& edge)
 {
-    const Code& code = *m_code;
-    BlockID from = code.at(id).from;
-    return code.m_reachedBlocks.quickGet(from.index()) && (code.at(from).handler != id || !code.m_blocksWithoutThrows.quickGet(from.index()));
-}
-
-void Sweep::reach(BlockID start)
-{
-    Code& code = *m_code;
-    if (code.m_reachedBlocks.quickSet(start.index()))
+    std::span<const ValueID> arguments = edge.arguments();
+    if (arguments.empty())
         return;
-
-    Vector<BlockOnSearchPathOfSweep, 32> path;
-    scanRootsOf(start);
-    BlockID from = start;
-    uint32_t nextEdge = 0;
-    for (;;) {
-        const Terminator& terminator = code.at(from).terminator;
-        uint32_t numberOfEdges = terminator.numberOfEdges;
-        BlockID below;
-        while (nextEdge < numberOfEdges) {
-            const Edge& edge = code.at(terminator.edge(nextEdge++));
-            BlockID to = edge.to;
-            RELEASE_ASSERT(to);
-            needArgumentsOn(edge);
-            if (code.m_reachedBlocks.quickSet(to.index()))
-                continue;
-            scanRootsOf(to);
-            if (code.at(to).terminator.numberOfEdges) {
-                below = to;
-                break;
-            }
-            m_reachedInPostorder.append(to);
-        }
-        if (below) {
-            path.append({ from, nextEdge });
-            from = below;
-            nextEdge = 0;
-            continue;
-        }
-        m_reachedInPostorder.append(from);
-        if (path.isEmpty())
-            return;
-        BlockOnSearchPathOfSweep above = path.takeLast();
-        from = above.block;
-        nextEdge = above.nextEdge;
-    }
-}
-
-ALWAYS_INLINE void Sweep::scanRootsOf(BlockID id)
-{
-    Code& code = *m_code;
-    const Block& block = code.at(id);
-    RELEASE_ASSERT(block.terminator.isSet);
-    for (ValueID parameter : block.parameters()) {
-        uint8_t& marks = code.m_marks[parameter.index()];
-        if (marks & passedByMarkOfSweep)
-            continue;
-        marks |= passedByMarkOfSweep;
-        if (marks & neededMarkOfSweep)
-            m_worklist.append(parameter);
-    }
-    if (block.handler)
-        giveUpHandlerOf(id);
-
-    block.terminator.forEachChild([&](ValueID operand) {
-        need(operand);
-        countUse(operand, ValueID());
-    });
-    if (block.subject) {
-        need(block.subject);
-        countUse(block.subject, ValueID());
-    }
-    // visitOperationsOf() finds the roots among the operations.
-}
-
-void Sweep::need(ValueID value)
-{
-    uint8_t& marks = m_code->m_marks[value.index()];
-    if (marks & neededMarkOfSweep)
-        return;
-    marks |= neededMarkOfSweep;
-    // The way has yet to come by it. A constant, by which it never comes, waits for needOperandsOfWhatWayDoesNotComeBy().
-    if (!(marks & passedByMarkOfSweep))
-        return;
-    m_worklist.append(value);
-}
-
-void Sweep::needArgumentsFor(ValueID parameter)
-{
-    const Code& code = *m_code;
-    BlockID block = code.blockOf(parameter);
-    RELEASE_ASSERT(block);
-    std::span<const ValueID> parameters = code.at(block).parameters();
-    RELEASE_ASSERT(!parameters.empty());
-
-    size_t position = parameter.index() - parameters.front().index();
-    if (position >= parameters.size() || parameters[position] != parameter)
-        position = std::ranges::find(parameters, parameter) - parameters.begin();
-    RELEASE_ASSERT(position < parameters.size());
-
-    if (!code.at(block).firstEdgeIn())
-        return;
-    if (!m_hasListedIncomingEdges)
-        listIncomingEdges();
-
-    // Parameters past the edge's arguments receive the terminator's declared results, and a terminator is never dropped.
-    // An edge that begins to be taken later brings its argument then: needArgumentsOn().
-    for (uint32_t index = m_firstIncomingEdge[block.index()]; index < m_firstIncomingEdge[block.index() + 1]; ++index) {
-        if (!isTaken(m_incomingEdges[index]))
-            continue;
-        std::span<const ValueID> arguments = code.at(m_incomingEdges[index]).arguments();
-        if (position < arguments.size() && arguments[position])
-            need(arguments[position]);
+    m_states[edge.from.index()] |= sweptBlockHandsOverArguments;
+    m_someBlockHandsOverArguments = true;
+    std::span<const ValueID> parameters = m_code->at(edge.to).parameters();
+    size_t numberOfPairs = std::min(parameters.size(), arguments.size());
+    uint8_t* const marksOfValues = m_arrays.marks;
+    for (size_t position = 0; position < numberOfPairs; ++position) {
+        ValueID argument = arguments.data()[position];
+        if (argument && (marksOfValues[parameters.data()[position].index()] & neededMarkOfSweep))
+            needInSweep(marksOfValues, m_worklist, argument);
     }
 }
 
@@ -300,19 +268,145 @@ void Sweep::needArgumentsOn(EdgeID id)
     needArgumentsOn(m_code->at(id));
 }
 
-void Sweep::needArgumentsOn(const Edge& edge)
+ALWAYS_INLINE void Sweep::scanRootsOf(const ArraysByValue& arrays, BlockID id, const Block& block)
+{
+    RELEASE_ASSERT(block.terminator.isSet);
+    for (ValueID parameter : block.parameters()) {
+        uint8_t& marks = arrays.marks[parameter.index()];
+        if (marks & passedByMarkOfSweep)
+            continue;
+        marks |= passedByMarkOfSweep;
+        if (marks & neededMarkOfSweep)
+            m_worklist.append(parameter);
+    }
+    if (block.handler)
+        giveUpHandlerOf(id, block);
+
+    block.terminator.forEachChild([&](ValueID operand) {
+        needInSweep(arrays.marks, m_worklist, operand);
+        countUseInSweep(arrays.useCounts, arrays.onlyUsers, operand, ValueID());
+    });
+    if (block.subject) {
+        needInSweep(arrays.marks, m_worklist, block.subject);
+        countUseInSweep(arrays.useCounts, arrays.onlyUsers, block.subject, ValueID());
+    }
+}
+
+void Sweep::reach(BlockID start)
+{
+    Code& code = *m_code;
+    uint8_t* const states = m_states;
+    if (states[start.index()] & sweptBlockIsReached)
+        return;
+    states[start.index()] |= sweptBlockIsReached;
+    code.m_reachedBlocks.quickSet(start.index());
+
+    const ArraysByValue arrays = m_arrays;
+    BlockOnSearchPath* const path = m_searchPath.mutableSpan().data();
+    uint32_t depth = 0;
+    const Block* from = &code.at(start);
+    uint32_t indexOfFrom = start.index();
+    scanRootsOf(arrays, start, *from);
+    uint32_t nextEdge = 0;
+    for (;;) {
+        uint32_t numberOfEdges = from->terminator.numberOfEdges;
+        uint32_t firstEdge = from->terminator.firstEdge.index();
+        const Block* below = nullptr;
+        uint32_t indexOfBelow = 0;
+        while (nextEdge < numberOfEdges) {
+            const Edge& edge = code.at(EdgeID(firstEdge + nextEdge++));
+            BlockID to = edge.to;
+            RELEASE_ASSERT(to);
+            needArgumentsOn(edge);
+            if (states[to.index()] & sweptBlockIsReached)
+                continue;
+            states[to.index()] |= sweptBlockIsReached;
+            code.m_reachedBlocks.quickSet(to.index());
+            const Block& entered = code.at(to);
+            scanRootsOf(arrays, to, entered);
+            if (entered.terminator.numberOfEdges) {
+                below = &entered;
+                indexOfBelow = to.index();
+                break;
+            }
+            m_reachedInPostorder.append(to);
+        }
+        if (below) {
+            path[depth++] = { from, indexOfFrom, nextEdge };
+            from = below;
+            indexOfFrom = indexOfBelow;
+            nextEdge = 0;
+            continue;
+        }
+        m_reachedInPostorder.append(BlockID(indexOfFrom));
+        if (!depth)
+            return;
+        BlockOnSearchPath above = path[--depth];
+        from = above.block;
+        indexOfFrom = above.index;
+        nextEdge = above.nextEdge;
+    }
+}
+
+void Sweep::need(ValueID value)
+{
+    needInSweep(m_arrays.marks, m_worklist, value);
+}
+
+ALWAYS_INLINE void Sweep::needArgumentsFor(ValueID parameter, const Operation& record)
 {
     const Code& code = *m_code;
-    std::span<const ValueID> arguments = edge.arguments();
-    if (arguments.empty())
+    BlockID id = record.block();
+    RELEASE_ASSERT(id);
+    const Block& block = code.at(id);
+    std::span<const ValueID> parameters = block.parameters();
+    RELEASE_ASSERT(!parameters.empty());
+
+    size_t position = parameter.index() - parameters.front().index();
+    if (position >= parameters.size() || parameters[position] != parameter)
+        position = std::ranges::find(parameters, parameter) - parameters.begin();
+    RELEASE_ASSERT(position < parameters.size());
+
+    EdgeID first = block.firstEdgeIn();
+    if (!first)
         return;
-    m_blocksThatHandOverArguments.quickSet(edge.from.index());
-    std::span<const ValueID> parameters = code.at(edge.to).parameters();
-    size_t numberOfPairs = std::min(parameters.size(), arguments.size());
-    for (size_t position = 0; position < numberOfPairs; ++position) {
-        if (arguments[position] && code.isNeeded(parameters[position]))
-            need(arguments[position]);
+
+    auto needArgumentOn = [&](EdgeID incoming, const Edge& edge) ALWAYS_INLINE_LAMBDA {
+        if (!isTaken(incoming, edge))
+            return;
+        std::span<const ValueID> arguments = edge.arguments();
+        if (position < arguments.size() && arguments[position])
+            needInSweep(m_arrays.marks, m_worklist, arguments[position]);
+    };
+    if (!m_hasListedIncomingEdges) {
+        if (edgesAscendInto(id, block)) {
+            for (EdgeID incoming = first; incoming;) {
+                const Edge& edge = code.at(incoming);
+                needArgumentOn(incoming, edge);
+                incoming = edge.nextInto();
+            }
+            return;
+        }
+        listIncomingEdges();
     }
+    for (uint32_t index = m_firstIncomingEdge[id.index()]; index < m_firstIncomingEdge[id.index() + 1]; ++index)
+        needArgumentOn(m_incomingEdges[index], code.at(m_incomingEdges[index]));
+}
+
+static ALWAYS_INLINE bool staysInSweptCodeByItselfByRow(const Program& program, const Operation& operation, uint8_t row)
+{
+    if (row & isKeptForOperandInRowOfSweep)
+        return false;
+    if (row & isNeverDroppedInRowOfSweep)
+        return true;
+    if (operation.opcode == Opcode::CallBuiltin && callsBuiltinOfHostInSweep(program.builtins(), operation))
+        return true;
+    EffectTraits traits = operation.traits();
+    if ((row & writesOnlyItsAnswerInRowOfSweep) && !traits.mayThrowByRule() && traits.alwaysCompletes())
+        return false;
+    if (!neitherThrowsNorRunsCode(traits))
+        return true;
+    return row & hasNoResultInRowOfSweep;
 }
 
 bool Sweep::isRoot(const Operation& operation) const
@@ -322,88 +416,37 @@ bool Sweep::isRoot(const Operation& operation) const
 
 bool staysInSweptCodeByItself(const Program& program, const Operation& operation)
 {
-    uint8_t row = rowsOfOpcodesInSweep[static_cast<unsigned>(operation.opcode)];
-    // A hint keeps nothing alive: settleOperationsKeptForTheirOperands() keeps it only if its operand is needed.
-    if (row & isKeptForOperandInRowOfSweep)
-        return false;
-    if (row & isNeverDroppedInRowOfSweep)
-        return true;
-    if (operation.opcode == Opcode::CallBuiltin && callsBuiltinOfHostInSweep(program.builtins(), operation))
-        return true;
-    // Its write is seen through its answer alone. Where it tests its own guess the traits are those of the generic operation, which may run code.
-    EffectTraits traits = operation.traits();
-    if ((row & writesOnlyItsAnswerInRowOfSweep) && !traits.mayThrowByRule() && traits.alwaysCompletes())
-        return false;
-    if (!neitherThrowsNorRunsCode(traits))
-        return true;
-    // An operation without a result is never used, so being unused says nothing about it: FinishBirth writes a word that no JavaScript read sees but the engine reads.
-    return row & hasNoResultInRowOfSweep;
+    return staysInSweptCodeByItselfByRow(program, operation, rowOfOpcodeInSweep(operation.opcode));
 }
 
-void Sweep::sweepBackward()
+ALWAYS_INLINE void Sweep::noteNeededOperation(const ArraysByValue& arrays, const uint8_t& stateOfBlock, ValueID value, const Operation& operation)
 {
-    Code& code = *m_code;
-    uint32_t numberOfValues = code.numberOfValues();
-    m_operationsNeededLate.shrink(0);
-    m_operationsKeptForOperands.shrink(0);
-    m_numberOfOperationsInOrder = 0;
-    code.m_order.shrink(0);
-    code.m_useCounts.fill(0, numberOfValues);
-    code.m_onlyUsers.fill(ValueID(), numberOfValues);
-    for (uint32_t index = 0; index < code.numberOfBlocks(); ++index) {
-        code.m_blocks[index].m_firstInOrder = 0;
-        code.m_blocks[index].m_numberInOrder = 0;
-    }
-    m_looksForCoveredBarriers = beginLookingForCoveredBarriers();
-    m_looksForCoveredFences = beginLookingForCoveredFences();
-    m_coverageIsOutOfDate = false;
-    beginFollowingLiveness();
-    m_blocksThatHandOverArguments.clearAll();
-    m_blocksThatHandOverArguments.ensureSize(code.numberOfBlocks());
-
-    for (const EntryOfCode& entry : code.entries())
-        reach(entry.block);
-    size_t next = 0;
-    do {
-        settleWhatIsNeeded();
-        // The list grows where something needed turns out to throw to a handler block.
-        for (; next < m_reachedInPostorder.size(); ++next) {
-            visitOperationsOf(m_reachedInPostorder[next]);
-            if (!m_worklist.isEmpty() || !m_blocksToReach.isEmpty())
-                settleWhatIsNeeded();
-        }
-        needOperandsOfWhatWayDoesNotComeBy();
-    } while (!m_worklist.isEmpty());
-    for (uint8_t& marks : code.m_marks)
-        marks &= static_cast<uint8_t>(~passedByMarkOfSweep);
-    // From here on finishLiveness() alone goes by the lists of incoming edges.
-    if (m_followsLiveness) {
-        if (!m_hasListedIncomingEdges)
-            listIncomingEdges();
-        forgetEdgesThatAreNotTaken();
-    }
-    forgetHandlersThatAreGone();
-
-    settleOperationsKeptForTheirOperands();
-    putOperationsNeededLateInOrder();
-    m_totals.operationsDropped -= m_numberOfOperationsInOrder;
-    countUsesAtEndsOfBlocks();
-    if (m_coverageIsOutOfDate)
-        lookForCoverageAgain();
-    sortFactUses();
-    finishLiveness();
+    if ((stateOfBlock & (sweptBlockHasGivenUpHandler | sweptBlockNeedsNoHandler)) == sweptBlockHasGivenUpHandler && !(arrays.marks[value.index()] & leavesOwedErrorMarkOfSweep))
+        keepHandlerIfThrows(operation);
+    if (m_holdsBackStores)
+        needStoresHeldBackFor(value);
+    forEachOperandNeededBySweep(operation, [&](ValueID operand) {
+        needInSweep(arrays.marks, m_worklist, operand);
+        countUseInSweep(arrays.useCounts, arrays.onlyUsers, operand, value);
+    });
+    if (m_followsLiveness)
+        noteNeededOperationForLiveness(value, operation);
 }
 
 ALWAYS_INLINE void Sweep::visitOperationsOf(BlockID id)
 {
     Code& code = *m_code;
     Block& block = code.m_blocks[id.index()];
-    uint32_t firstInOrder = static_cast<uint32_t>(code.m_order.size());
-    block.m_firstInOrder = firstInOrder;
+    const Program& program = m_inputs->program;
+    const ArraysByValue arrays = m_arrays;
+    const uint8_t& stateOfBlock = m_states[id.index()];
+    ValueID* const order = code.m_order.mutableSpan().data();
+    const uint32_t endInOrder = m_firstInOrderSoFar;
+    uint32_t firstInOrder = endInOrder;
 
     const bool looksForCoveredBarriers = m_looksForCoveredBarriers;
     const bool looksForCoveredFences = m_looksForCoveredFences;
-    if (looksForCoveredBarriers && !m_coveredAtHeads.isEmpty())
+    if (looksForCoveredBarriers && !m_coveredAtHeads.isEmpty() && block.terminator.numberOfEdges && m_numberCoveredAtHead[code.at(block.terminator.edge(0)).to.index()])
         beginCoverageAtEndOf(id);
     if (looksForCoveredFences) {
         if (m_laterFenceCoversAtSomeHead)
@@ -421,19 +464,20 @@ ALWAYS_INLINE void Sweep::visitOperationsOf(BlockID id)
             continue;
         ++numberOfOperationsVisited;
 
-        uint8_t& marks = code.m_marks[value.index()];
+        uint8_t row = rowOfOpcodeInSweep(opcode);
+        uint8_t& marks = arrays.marks[value.index()];
         marks |= passedByMarkOfSweep;
         bool isNeeded = marks & neededMarkOfSweep;
         if (!isNeeded) {
-            if (rowsOfOpcodesInSweep[static_cast<unsigned>(opcode)] & isKeptForOperandInRowOfSweep) {
+            if (row & isKeptForOperandInRowOfSweep) {
                 if (!noteOperationKeptForItsOperand(id, value, operation))
                     continue;
             } else {
-                if ((marks & pollsForNothingMarkOfSweep) || !isRoot(operation))
+                if ((marks & pollsForNothingMarkOfSweep) || !staysInSweptCodeByItselfByRow(program, operation, row))
                     continue;
                 EffectTraits traits = operation.traits();
                 ValueID object;
-                if (!traits.mayBeTerminated() && !traits.mayRunOtherCode() && !traits.mayWriteOutsideObjects() && isStoreIntoOwnObject(operation, object) && !code.isNeeded(object)) {
+                if (!traits.mayBeTerminated() && !traits.mayRunOtherCode() && !traits.mayWriteOutsideObjects() && isStoreIntoOwnObject(operation, object) && !(arrays.marks[object.index()] & neededMarkOfSweep)) {
                     holdBackUntilNeeded(value, object);
                     continue;
                 }
@@ -441,18 +485,20 @@ ALWAYS_INLINE void Sweep::visitOperationsOf(BlockID id)
                 isNeeded = true;
             }
         }
-        code.m_order.append(value);
+        order[--firstInOrder] = value;
         if (isNeeded)
-            noteNeededOperation(value, operation);
-        if (looksForCoveredBarriers && (!m_coveredOwners.isEmpty() || sweptOperationsWithOwnerBarriers.contains(opcode)))
-            lookForCoveredBarrier(value, operation);
-        if (looksForCoveredBarriers && (!m_storesThatAwaitBirth.isEmpty() || sweptOperationsWithOwnerBarriers.contains(opcode)))
-            lookForBirthOfOwner(value, operation);
-        if (looksForCoveredFences && (m_laterFenceCovers || sweptAllocationsWithFences.contains(opcode)))
+            noteNeededOperation(arrays, stateOfBlock, value, operation);
+        if (looksForCoveredBarriers) {
+            bool hasOwnerBarrier = row & hasOwnerBarrierInRowOfSweep;
+            if (hasOwnerBarrier || !m_coveredOwners.isEmpty())
+                lookForCoveredBarrier(value, operation);
+            if (hasOwnerBarrier || !m_storesThatAwaitBirth.isEmpty())
+                lookForBirthOfOwner(value, operation);
+        }
+        if (looksForCoveredFences && (m_laterFenceCovers || (row & isAllocationWithFenceInRowOfSweep)))
             lookForCoveredFence(value, operation);
     }
     m_totals.operationsSwept += numberOfOperationsVisited;
-    // Until sweepBackward() takes off what it keeps.
     m_totals.operationsDropped += numberOfOperationsVisited;
     if (looksForCoveredBarriers && !m_coveredOwners.isEmpty())
         endCoverageAtHeadOf(id);
@@ -460,33 +506,78 @@ ALWAYS_INLINE void Sweep::visitOperationsOf(BlockID id)
         forgetStoresThatAwaitBirth();
     if (looksForCoveredFences && m_laterFenceCovers)
         endFenceCoverageAtHeadOf(id);
-    uint32_t numberInOrder = static_cast<uint32_t>(code.m_order.size()) - firstInOrder;
-    if (numberInOrder > 1)
-        std::ranges::reverse(code.m_order.mutableSpan().subspan(firstInOrder));
+    uint32_t numberInOrder = endInOrder - firstInOrder;
+    block.m_firstInOrder = firstInOrder;
     block.m_numberInOrder = numberInOrder;
+    m_firstInOrderSoFar = firstInOrder;
     m_numberOfOperationsInOrder += numberInOrder;
 }
 
-ALWAYS_INLINE void Sweep::noteNeededOperation(ValueID value, const Operation& operation)
+void Sweep::sweepBackward()
 {
     Code& code = *m_code;
-    // A poll that leaves an owed error owed throws nothing that a handler could catch.
-    if (m_hasGivenUpHandlers && code.m_blocksWithoutThrows.quickGet(operation.blockIndex) && !(code.m_marks[value.index()] & leavesOwedErrorMarkOfSweep))
-        keepHandlerIfThrows(operation);
-    if (m_holdsBackStores)
-        needStoresHeldBackFor(value);
-    forEachOperandNeededBySweep(operation, [&](ValueID operand) {
-        need(operand);
-        countUse(operand, value);
-    });
+    uint32_t numberOfValues = code.numberOfValues();
+    uint32_t numberOfBlocks = code.numberOfBlocks();
+    m_operationsNeededLate.shrink(0);
+    m_operationsKeptForOperands.shrink(0);
+    m_numberOfOperationsInOrder = 0;
+    code.m_order.fill(ValueID(), numberOfValues);
+    m_firstInOrderSoFar = numberOfValues;
+    code.m_useCounts.fill(0, numberOfValues);
+    code.m_onlyUsers.fill(ValueID(), numberOfValues);
+    m_arrays = { code.m_marks.mutableSpan().data(), code.m_useCounts.mutableSpan().data(), code.m_onlyUsers.mutableSpan().data() };
+    m_statesOfBlocks.fill(0, numberOfBlocks);
+    m_states = m_statesOfBlocks.mutableSpan().data();
+    if (m_searchPath.size() < numberOfBlocks)
+        m_searchPath.grow(numberOfBlocks);
+    m_looksForCoveredBarriers = beginLookingForCoveredBarriers();
+    m_looksForCoveredFences = beginLookingForCoveredFences();
+    m_coverageIsOutOfDate = false;
+    beginFollowingLiveness();
+
+    for (const EntryOfCode& entry : code.entries())
+        reach(entry.block);
+    size_t next = 0;
+    do {
+        if (!m_worklist.isEmpty() || !m_blocksToReach.isEmpty())
+            settleWhatIsNeeded();
+        for (; next < m_reachedInPostorder.size(); ++next) {
+            visitOperationsOf(m_reachedInPostorder[next]);
+            if (!m_worklist.isEmpty() || !m_blocksToReach.isEmpty())
+                settleWhatIsNeeded();
+        }
+        needOperandsOfWhatWayDoesNotComeBy();
+    } while (!m_worklist.isEmpty());
+    for (uint8_t& marks : code.m_marks)
+        marks &= static_cast<uint8_t>(~passedByMarkOfSweep);
+    if (m_reachedInPostorder.size() != numberOfBlocks) {
+        for (uint32_t index = 0; index < numberOfBlocks; ++index) {
+            if (m_states[index] & sweptBlockIsReached)
+                continue;
+            code.m_blocks[index].m_firstInOrder = 0;
+            code.m_blocks[index].m_numberInOrder = 0;
+        }
+    }
+    if (code.m_hasHandlers)
+        forgetHandlersThatAreGone();
+
+    if (!m_operationsKeptForOperands.isEmpty())
+        settleOperationsKeptForTheirOperands();
+    if (!m_operationsNeededLate.isEmpty())
+        putOperationsNeededLateInOrder();
+    m_totals.operationsDropped -= m_numberOfOperationsInOrder;
+    countUsesAtEndsOfBlocks();
+    if (m_coverageIsOutOfDate)
+        lookForCoverageAgain();
+    sortFactUses();
     if (m_followsLiveness)
-        noteNeededOperationForLiveness(value, operation);
+        finishLiveness();
 }
 
-// Afterward nothing waits: each parameter that is needed has asked for its arguments, each handler block that something needed throws to is listed, and each operation that was found needed behind the way has been visited.
 void Sweep::settleWhatIsNeeded()
 {
     Code& code = *m_code;
+    const ArraysByValue arrays = m_arrays;
     for (;;) {
         while (!m_blocksToReach.isEmpty())
             reach(m_blocksToReach.takeLast());
@@ -496,13 +587,13 @@ void Sweep::settleWhatIsNeeded()
         ValueID value = m_worklist.takeLast();
         const Operation& operation = code.at(value);
         if (operation.opcode == Opcode::Parameter) {
-            needArgumentsFor(value);
+            needArgumentsFor(value, operation);
             continue;
         }
         ++m_totals.operationsSwept;
         if (!mayBeKeptForItsOperand(operation))
             m_operationsNeededLate.append({ operation.block(), value });
-        noteNeededOperation(value, operation);
+        noteNeededOperation(arrays, m_states[operation.blockIndex], value, operation);
         m_coverageIsOutOfDate = m_coverageIsOutOfDate || mayChangeWhatIsCovered(operation);
     }
 }
@@ -529,13 +620,11 @@ bool Sweep::noteOperationKeptForItsOperand(BlockID block, ValueID id, const Oper
     return mayBeKept;
 }
 
-// Each has its one operand and needs nothing: it stays where something else needs the operand.
 void Sweep::settleOperationsKeptForTheirOperands()
 {
     Code& code = *m_code;
     Vector<BlockID, 8> blocksWithGaps;
     for (const OperationKeptForOperand& kept : m_operationsKeptForOperands) {
-        // Something uses what it gives, so it has been noted like any other.
         if (!kept.standsInOrder || code.isNeeded(kept.operation))
             continue;
         if (code.isNeeded(kept.operand)) {
@@ -568,7 +657,6 @@ void Sweep::settleOperationsKeptForTheirOperands()
     }
 }
 
-// Records of one block ascend in its order. A block that gains some gets a new stretch of Code::m_order, which nobody reads but block by block.
 void Sweep::putOperationsNeededLateInOrder()
 {
     Code& code = *m_code;
@@ -600,26 +688,29 @@ void Sweep::putOperationsNeededLateInOrder()
     m_numberOfOperationsInOrder += static_cast<uint32_t>(m_operationsNeededLate.size());
 }
 
-// Every reached block has been visited. A constant lies in no block and is made of constants alone, so what it needs changes nothing for any operation, and the worklist stays empty.
 void Sweep::needOperandsOfWhatWayDoesNotComeBy()
 {
     Code& code = *m_code;
     ASSERT(m_worklist.isEmpty());
     Vector<ValueID, 16> notComeBy;
     std::span<const uint8_t> marks = code.m_marks.span();
+    auto listIfMadeOfOthers = [&](size_t index) ALWAYS_INLINE_LAMBDA {
+        if (code.at(ValueID(index)).numberOfOperands())
+            notComeBy.append(ValueID(index));
+    };
     constexpr size_t marksInWord = sizeof(uint64_t);
     constexpr uint64_t neededMarkOfEach = 0x0101010101010101ull * neededMarkOfSweep;
     static_assert(neededMarkOfSweep == 1 && passedByMarkOfSweep == 1 << 6 && std::endian::native == std::endian::little);
     size_t index = 0;
     for (; index + marksInWord <= marks.size(); index += marksInWord) {
         uint64_t word;
-        memcpy(&word, marks.subspan(index, marksInWord).data(), marksInWord);
+        memcpy(&word, marks.data() + index, marksInWord);
         for (uint64_t found = word & ~(word >> 6) & neededMarkOfEach; found; found &= found - 1)
-            notComeBy.append(ValueID(static_cast<uint32_t>(index + std::countr_zero(found) / 8)));
+            listIfMadeOfOthers(index + std::countr_zero(found) / 8);
     }
     for (; index < marks.size(); ++index) {
         if ((marks[index] & (neededMarkOfSweep | passedByMarkOfSweep)) == neededMarkOfSweep)
-            notComeBy.append(ValueID(static_cast<uint32_t>(index)));
+            listIfMadeOfOthers(index);
     }
     while (!notComeBy.isEmpty()) {
         forEachOperandNeededBySweep(code.at(notComeBy.takeLast()), [&](ValueID operand) {
@@ -632,49 +723,50 @@ void Sweep::needOperandsOfWhatWayDoesNotComeBy()
     }
 }
 
-// A null user stands for a terminator, an edge or a block's subject.
 void Sweep::countUse(ValueID used, ValueID user)
 {
-    Code& code = *m_code;
-    uint8_t& count = code.m_useCounts[used.index()];
-    if (count == std::numeric_limits<uint8_t>::max())
-        return;
-    code.m_onlyUsers[used.index()] = count ? ValueID() : user;
-    ++count;
+    countUseInSweep(m_arrays.useCounts, m_arrays.onlyUsers, used, user);
 }
 
-// Over blocks and edges, once it is known which parameters are needed and which edges are taken.
 void Sweep::countUsesAtEndsOfBlocks()
 {
     Code& code = *m_code;
     bool notesParametersFed = code.hasLoops();
     code.m_parametersFed.fill(ValueID(), notesParametersFed ? code.numberOfValues() : 0);
-    auto countUsesOn = [&](const Edge& edge) {
+    if (!m_someBlockHandsOverArguments)
+        return;
+
+    const ArraysByValue arrays = m_arrays;
+    const uint8_t* const states = m_states;
+    ValueID* const parametersFed = code.m_parametersFed.mutableSpan().data();
+    auto countUsesOn = [&](const Edge& edge) ALWAYS_INLINE_LAMBDA {
         std::span<const ValueID> arguments = edge.arguments();
         if (arguments.empty())
             return;
         std::span<const ValueID> parameters = code.at(edge.to).parameters();
         size_t numberOfPairs = std::min(parameters.size(), arguments.size());
         for (size_t position = 0; position < numberOfPairs; ++position) {
-            if (!arguments[position] || !code.isNeeded(parameters[position]))
+            ValueID argument = arguments.data()[position];
+            ValueID parameter = parameters.data()[position];
+            if (!argument || !(arrays.marks[parameter.index()] & neededMarkOfSweep))
                 continue;
-            countUse(arguments[position], ValueID());
+            countUseInSweep(arrays.useCounts, arrays.onlyUsers, argument, ValueID());
             if (!notesParametersFed)
                 continue;
-            // A record stands behind what it is made of, so a parameter in front of its argument is one that the edge leads back to.
-            ValueID& fed = code.m_parametersFed[arguments[position].index()];
-            if (!fed || parameters[position] < arguments[position])
-                fed = parameters[position];
+            ValueID& fed = parametersFed[argument.index()];
+            if (!fed || parameter < argument)
+                fed = parameter;
         }
     };
     for (BlockID id : m_reachedInPostorder) {
-        if (!m_blocksThatHandOverArguments.quickGet(id.index()))
+        uint8_t state = states[id.index()];
+        if (!(state & sweptBlockHandsOverArguments))
             continue;
         const Block& block = code.at(id);
         const Terminator& terminator = block.terminator;
         for (uint32_t index = 0; index < terminator.numberOfEdges; ++index)
             countUsesOn(code.at(terminator.edge(index)));
-        if (block.handler && !code.m_blocksWithoutThrows.quickGet(id.index()))
+        if (block.handler && !(state & sweptBlockHasGivenUpHandler))
             countUsesOn(code.at(block.handler));
     }
 }

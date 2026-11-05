@@ -17,7 +17,6 @@ namespace JSC { namespace AOT {
 
 static_assert(sizeOfNearCall == MacroAssembler::relocationSize(RelocationKind::Call) && sizeOfJump == MacroAssembler::relocationSize(RelocationKind::Jump));
 static_assert(MacroAssembler::relocationSize(RelocationKind::Distance32) == sizeof(int32_t) && MacroAssembler::relocationSize(RelocationKind::NumberWord) == sizeof(uint32_t));
-// The word and the detour of a far word hold 32 bits.
 static constexpr size_t reachOfInstanceWord = isARM64() ? static_cast<size_t>(std::numeric_limits<int32_t>::max()) : static_cast<size_t>(MacroAssembler::relocationReach(RelocationKind::InstanceAccess));
 static_assert(InstanceLayout::reachAboveInstance <= reachOfInstanceWord && InstanceLayout::reachBelowInstance <= reachOfInstanceWord);
 
@@ -34,7 +33,6 @@ void ImageLinkBuffer::finalize(bool dumpsDisassembly, ASCIILiteral name)
 {
     RELEASE_ASSERT(!didFailToAllocate() && !m_didFinalize);
     FINALIZE_CODE_IF(dumpsDisassembly, m_linkBuffer, JITThunkPtrTag, nullptr, "%s", name.characters());
-    // Not m_linkBuffer.size(): LinkBuffer fills the storage that jump shortening and branch compaction leave over with nops.
     m_sizeOfCode = m_linkBuffer.offsetOf(m_end);
     m_didFinalize = true;
 }

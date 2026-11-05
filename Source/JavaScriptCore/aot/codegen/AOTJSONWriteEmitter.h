@@ -11,8 +11,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// JSON text is written at a cursor into room that StringBuilderReserve has found in the buffer of a builder. No operation between a reservation and its commit asks for room again:
-// the walk has counted what each takes (AOTStringBuilderCursor.h).
 class JSONWriteEmitter final : public OperationEmitter {
 public:
     explicit JSONWriteEmitter(CodeGenerator& generator)
@@ -35,7 +33,6 @@ public:
     void generateJSONHasStackSpace(const ValueContext&);
 
 private:
-    // Whatever reads a field of a builder or writes bytes at a cursor does so through its functions.
     StringBuilderEmitter& builders() { return emitter<StringBuilderEmitter>(); }
     CellPointer builderOf(const ValueContext& value) const { return in<CellPointer>(value->builderOperand()); }
     Pointer cursorOf(const ValueContext& value) const { return in<Pointer>(value->cursorOperand()); }

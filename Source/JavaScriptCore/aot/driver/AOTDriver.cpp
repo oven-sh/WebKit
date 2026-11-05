@@ -59,12 +59,9 @@ size_t peakResidentMegabytesOfProcess()
 
 namespace {
 
-// Instructions retired by all build threads between two stage boundaries. One line per boundary; several lines may name the same stage.
-// Counts only when the build logs phase times, and prints nothing where the platform has no counter.
 class DriverInstructionLog {
     WTF_MAKE_NONCOPYABLE(DriverInstructionLog);
 public:
-    // Constructed on the build thread, whose counter it starts.
     explicit DriverInstructionLog(const BuildContext& context)
         : m_isOn(context.options().logging.logsPhaseTimes)
     {
@@ -85,7 +82,6 @@ public:
         m_countAtLastBoundary = now;
     }
 
-    // A part of the stage that just finished, summed from each thread's own counter.
     void didCountPart(ASCIILiteral part, uint64_t instructions)
     {
         if (m_isOn && m_countAtLastBoundary)
@@ -95,7 +91,6 @@ public:
 private:
     static void printLine(ASCIILiteral label, uint64_t instructions)
     {
-        // As one operand: dataLog() writes each operand separately, and the embedder writes to the same descriptor without taking our lock.
         dataLog(toUTF8CString("AOT instructions: ", label, " | ", instructions, "\n"));
     }
 
@@ -118,7 +113,6 @@ void logUseOfCompileThreads(const UseOfCompileThreads& use)
     dataLog(lines.toUTF8CString());
 }
 
-// A line for each thing that is destroyed, where the build logs phase times. A PhaseTimes belongs to a build, and the build may be over.
 class DestructionLog {
 public:
     explicit DestructionLog(bool isOn)
@@ -149,7 +143,6 @@ void destroyOnAllThreads(const ParallelLoops& loops, std::span<T> elements)
     });
 }
 
-// What the stages have left once the output is written. No destructor in it looks at the build, which may be over.
 struct StageResults {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StageResults);
 
@@ -189,7 +182,6 @@ void StageResults::destroy(const ParallelLoops& loops, bool logsTimes)
     });
     log.didDestroy("facts, the plan and the tables of the image, side by side"_s);
 
-    // Facts and the plan refer to it.
     if (program) {
         destroyOnAllThreads(loops, program->functions.mutableSpan());
         destroyOnAllThreads(loops, program->layouts.mutableSpan());
@@ -201,7 +193,6 @@ void StageResults::destroy(const ParallelLoops& loops, bool logsTimes)
     }
 }
 
-// prepareProgram() and buildImage() open the PhaseTimes of their own stages. A scope around either would count the time twice.
 class BuildDriver {
     WTF_MAKE_NONCOPYABLE(BuildDriver);
 public:
@@ -211,7 +202,6 @@ public:
         , m_owner(owner)
         , m_instructions(context)
     {
-        // The mark that Linux keeps still holds the peak of the front end.
         if (context.options().logging.logsPhaseTimes)
             PhaseTimes::takePeakResidentMegabytes();
     }
@@ -257,7 +247,6 @@ private:
 
 void BuildDriver::read(std::span<const uint8_t> bytes)
 {
-    // The options were rejected.
     if (hasErrors())
         return;
     {
@@ -302,13 +291,11 @@ void BuildDriver::runStagesAfterRead()
         break;
     }
 
-    // On one thread nothing can run beside Compile, so the check stays in front of it and a plan that fails never reaches the walk.
     if (makesImage && m_context.threadCount() > 1)
         m_prepared.checkOfPlan = CheckOfPlan::LeftToCaller;
 
     if (!prepare())
         return;
-    // The walk takes the notes, so a CheckOnly build compiles too. Its code is dropped.
     if (!compile())
         return;
     if (m_prepared.compileInputs->walk.options.takesNotes)
@@ -317,7 +304,6 @@ void BuildDriver::runStagesAfterRead()
         buildImageFromCode();
 }
 
-// VerifyOnly runs the verifiers and nothing else. Every other build runs them in prepareProgram().
 void BuildDriver::verify()
 {
     {
@@ -334,7 +320,6 @@ bool BuildDriver::prepare()
 {
     bool isPrepared = prepareProgram(m_prepared, m_context);
     RELEASE_ASSERT(isPrepared || hasErrors());
-    // Before Image, which changes the program's strings and paths.
     if (m_prepared.facts) {
         PhaseTimes times(m_context, Stage::AnalyzeFlow);
         writeFactSections(*m_prepared.program, *m_prepared.facts, m_output);
@@ -358,7 +343,6 @@ bool BuildDriver::compile()
             compileUnits();
             break;
         case CheckOfPlan::LeftToCaller: {
-            // The first lane stays on this thread. Units compiled from a plan that fails are dropped with the build.
             std::optional<StepTimes> timesOfWait;
             runLanes(m_context.parallelLoops(), {
                 [&] {
@@ -367,7 +351,6 @@ bool BuildDriver::compile()
                 },
                 [&] { checkPlanOfPreparedProgram(m_prepared, m_context); },
             });
-            // Only the time the build waited once the units were done, so the lines of the stages still add up. The lane's own line says how long the check took.
             timesOfWait->didFinish("check the plan"_s);
             m_instructions.didFinish("AnalyzeFlow PlanSlots"_s);
             break;
@@ -392,7 +375,7 @@ void BuildDriver::explain()
 {
     {
         PhaseTimes times(m_context, Stage::GenerateCode);
-        writeExplainSections(*m_prepared.program, *m_prepared.facts, m_compiled.notes.span(), m_context, m_output);
+        writeExplainSections(*m_prepared.program, m_compiled.notes.span(), m_context, m_output);
         times.didFinish("write the records of --explain"_s);
         destroyNotes();
         times.didFinish("destroy notes"_s);
@@ -440,7 +423,6 @@ void BuildDriver::buildImageFromCode()
     times.didFinish("write reports of the code"_s);
 }
 
-// No body is read after the first call, so diagnostics resolve their body locations before it.
 void BuildDriver::releaseProgram()
 {
     if (const Typed::Program* program = m_prepared.program.get())
@@ -449,7 +431,6 @@ void BuildDriver::releaseProgram()
         release(m_owner.owner);
 }
 
-// The bodies, the threads' arenas and what goes here were two fifths of what the process holds, and the lists of the image come on top of what is still resident.
 void BuildDriver::letGoOfWhatCompileRead()
 {
     m_prepared.compileInputs = nullptr;
@@ -484,7 +465,6 @@ void BuildDriver::destroyNotes()
     });
 }
 
-// The build waits for none of it where the host has a pool: the caller has its output while the pool frees what made it.
 void BuildDriver::destroyStageResults()
 {
     PhaseTimes times(m_context, Stage::BuildImage);
@@ -505,7 +485,6 @@ void BuildDriver::destroyStageResults()
     times.didFinish("destroy stage results"_s);
 }
 
-// The build thread and the context are made before there is a PhaseTimes to time them.
 void logTimeToEnterEngine(const BuildContext& context, MonotonicTime entered)
 {
     if (!context.options().logging.logsPhaseTimes) [[likely]]
@@ -513,7 +492,6 @@ void logTimeToEnterEngine(const BuildContext& context, MonotonicTime entered)
     dataLog(toUTF8CString("AOT phase times: ReadAndVerify | enter the engine | wall ", (MonotonicTime::now() - entered).milliseconds(), " ms\n"));
 }
 
-// --aot-harden. Every other mechanism is withheld by tests and by testaot alone.
 template<typename Switches>
 Typed::Mechanisms withoutMechanismsThatOptionsWithhold(Typed::Mechanisms mechanisms, Switches testing)
 {
@@ -561,11 +539,6 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
 std::unique_ptr<CompileOutput> compileProgramWithMechanisms(std::span<const uint8_t> program, const Wire::CompileOptions& options, Typed::Mechanisms mechanisms)
 {
     return compileBytesWithBuildDriver(program, options, nullptr, { }, mechanisms);
-}
-
-std::unique_ptr<CompileOutput> compileParsedProgram(std::unique_ptr<Typed::Program> program, BuildContext& context)
-{
-    return compileRecordsWithBuildDriver(WTF::move(program), context, nullptr, Typed::allMechanisms);
 }
 
 std::unique_ptr<CompileOutput> compileParsedProgramWithMechanisms(std::unique_ptr<Typed::Program> program, BuildContext& context, Typed::Mechanisms mechanisms)

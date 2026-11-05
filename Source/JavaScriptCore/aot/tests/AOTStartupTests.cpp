@@ -130,7 +130,6 @@ static void testClassesOfPrimitivesAreNotCreatedAtStart(LoadedProgram& program)
     fileAnswerUnder(caches, constructEmptyObject(realm)->structure(), name);
     AOT_TEST_CHECK(words.numberStructureID == structureIDOfNoReceiver && words.booleanStructureID == structureIDOfNoReceiver);
 
-    // While nothing is filed for numbers, a probe has nothing to find under either Structure.
     Structure* numberStructure = realm->numberObjectStructure();
     AOT_TEST_CHECK(words.numberStructureID == structureIDOfNoReceiver);
 
@@ -191,11 +190,9 @@ static uintptr_t* countOfArgumentsAboveEveryFrame(char** environment)
     return word;
 }
 
-// The collector scans the main thread's stack up to this address: too low and it misses the first frames, too high and it reads what is not mapped.
 static void testMainThreadStackEndsAboveItsFirstFrame()
 {
     char** environment = environ;
-    // Pages below the first frame, whatever the size of a page.
     char planted[256 * KB] = "/path/that/a/tracer/keeps/below/the/first/frame";
     bool isMainThread = getpid() == static_cast<pid_t>(syscall(SYS_gettid));
     if (!isMainThread || reinterpret_cast<char*>(environment) < planted)
@@ -237,7 +234,6 @@ static ProgramHeader segmentOfKind(unsigned kind, uintptr_t address, size_t size
     return header;
 }
 
-// Passes the objects the way dl_iterate_phdr() does.
 static std::optional<LoadedObject> findObjectAmong(std::span<const LoadedObject> objects, uintptr_t address)
 {
     LoadedObjectSearch search(address);
@@ -281,11 +277,9 @@ static void testObjectIsFoundInEveryList()
         AOT_TEST_CHECK(found->findSegment(executable.loadBias + page) == &segmentsOfExecutable[2]);
         AOT_TEST_CHECK(found->findSegment(executable.loadBias + 3 * page - 1) == &segmentsOfExecutable[2]);
         AOT_TEST_CHECK(found->findSegment(executable.loadBias + 4 * page - 1) == &segmentsOfExecutable[3]);
-        // Not from the file, not loaded, below the first segment.
         AOT_TEST_CHECK(!found->findSegment(executable.loadBias + 4 * page));
         AOT_TEST_CHECK(!found->findSegment(executable.loadBias + 5 * page));
         AOT_TEST_CHECK(!found->findSegment(executable.loadBias - 1));
-        // An address in another object is in no segment of this one.
         AOT_TEST_CHECK(!found->findSegment(linker.loadBias + page + 16));
         AOT_TEST_CHECK(!found->findSegment(library.loadBias + page + 16));
     } while (std::ranges::next_permutation(order).found);
@@ -300,7 +294,6 @@ static void testLoadedExecutableIsThisProgram()
     Others others { loadedExecutable() };
     const ProgramHeader* code = others.executable.findSegment(reinterpret_cast<uintptr_t>(&testLoadedExecutableIsThisProgram));
     AOT_TEST_CHECK(code && code->p_flags & PF_X);
-    // The kernel describes the file it was given, which is the dynamic linker if that was started with the program as its argument.
     if (others.executable.findSegment(getauxval(AT_ENTRY))) {
         AOT_TEST_CHECK(reinterpret_cast<uintptr_t>(others.executable.programHeaders.data()) == getauxval(AT_PHDR));
         AOT_TEST_CHECK(others.executable.programHeaders.size() == getauxval(AT_PHNUM));
@@ -321,7 +314,6 @@ static void testLoadedExecutableIsThisProgram()
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
-// Without an image the collector keeps upstream's accounts: what a string borrows counts as memory that the heap holds on to, and so decides when the next collection starts.
 static void testBorrowedTextOfStringIsCountedWithoutImage()
 {
     if (Image::isRegistered())

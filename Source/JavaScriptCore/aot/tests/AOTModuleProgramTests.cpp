@@ -61,7 +61,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-// ES modules import each file through a module of its own, which evaluates the file. The names are found in what the file exports then.
 static constexpr ASCIILiteral mainThatImports = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}]
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -88,7 +87,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-// Behind commonJSModules: the records of a kind stand in the order of their numbers.
 static constexpr ASCIILiteral facesOfCommonJSModules = R"IR(module m4 path="#4" displayPath="function.cjs" exportRule=CommonJs body=f5 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g3}, {name="tag" variable=g4}]
 module m5 path="#5" displayPath="filled.cjs" exportRule=CommonJs body=f6 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="a" variable=g5}, {name="default" variable=g6}]
 module m6 path="#6" displayPath="chained.cjs" exportRule=CommonJs body=f7 requests=[{target=m3 kind=Require completes=true}] syntheticExports=[{name="sum" variable=g7}]
@@ -178,7 +176,6 @@ function f4 name="exported" module=m1 results=[{type=anything}] {
 }
 )IR"_s;
 
-// The exports of the required module are variables and nothing else.
 static constexpr ASCIILiteral commonJSEntryPoint = R"IR(module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
 module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1
 entry module=m0
@@ -258,7 +255,6 @@ function f1 name="child" module=m1 kind=CommonJsModule flags=[IsSloppy] results=
 }
 )IR"_s;
 
-// The loader has asked for beside.cjs when first.cjs runs, and for below.cjs it has not.
 static constexpr ASCIILiteral parentsByLevel = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m4 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
 module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
 module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1
@@ -311,7 +307,6 @@ function f4 name="below" module=m4 kind=CommonJsModule flags=[IsSloppy] results=
 }
 )IR"_s;
 
-// require.cache of a test run lists a file from when the loader asks for it: beside.cjs and last.cjs while first.cjs runs, and not below.cjs.
 static constexpr ASCIILiteral cacheByLevel = R"IR(module m0 path="/main.js" displayPath="main.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m3 completes=true isHoisted=true}, {target=m5 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}]
 module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m6 kind=Require completes=true}]
 module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[KeepsError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1 requests=[{target=m3 kind=Require completes=true}]
@@ -392,7 +387,6 @@ function f6 name="own" module=m6 kind=CommonJsModule flags=[IsSloppy] results=[{
 }
 )IR"_s;
 
-// The call of a body that does nothing is dropped, so the body has no code. Its file has run all the same, and answers to its path.
 static constexpr ASCIILiteral nothingToRun = R"IR(module m0 path="/main.js" displayPath="main.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/nothing.js" displayPath="nothing.js" flags=[IsListedInCache] body=f1
 entry module=m0
@@ -575,7 +569,6 @@ function f5 name="describesWrapper" module=m1 captures=[{type=anything}] results
 }
 )IR"_s;
 
-// The face stands behind its file, as the front end numbers it. root.js imports the file first, so the file runs before the loader has asked for beside.js.
 static constexpr ASCIILiteral fileThatImportsAheadOfLoader = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m3 completes=true}, {target=m4 completes=true}]
 module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
@@ -734,7 +727,6 @@ function f6 name="importRoot" results=[{type=anything}] {
 }
 )IR"_s;
 
-// When asks.cjs calls import(), second.js and third.js are still to be read.
 static constexpr ASCIILiteral textsInTurns = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m7 completes=true}, {target=m3 completes=true}]
 module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
@@ -814,8 +806,6 @@ function f8 name="importRoot" results=[{type=anything}] {
 }
 )IR"_s;
 
-// main.js: register(() => require("./late.js"))      late.js: import "./first.js"; import "./second.js"; import "./third.js"      third.js: if (shouldThrow) throw "boom"
-// Only late.js has a state. A handler of the program may stand around the call of its start, so the start abandons the evaluation where something is thrown through it.
 static constexpr ASCIILiteral moduleThatMayFailWhereItIsRequired = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require}]
 module m1 path="/late.js" displayPath="late.js" body=f1 requests=[{target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}]
 module m2 path="/first.js" displayPath="first.js" body=f2
@@ -1020,7 +1010,6 @@ the closure, called later: true
 
 static void testImportMetaPassedOn()
 {
-    // Whoever holds import.meta can load any module of the host, and validation looks for all of them in the realm.
     checkShellOutput(importMetaPassedOn, { }, R"(id(import.meta) === import.meta: true
 )"_s);
 }
@@ -1035,9 +1024,6 @@ the closure, called later: true
 )"_s);
 }
 
-// Nobody can tell how the graph of root.js is loaded, so asks.cjs runs ahead of the loader. Its import() hands the graph to the loader, Modules::handGraphToLoader(), which resolves beside.js there.
-// The request waits for the end of the hand-off and is thrown at the check behind it. No handler of the file catches it, nothing of the graph runs behind it, its promise stays as it is,
-// and the graph counts as being loaded no longer: a later call finds its text at once, in the jobs of its own turn.
 static void testTerminationDuringImportHandoff()
 {
     checkShellOutput(fileThatImportsAheadOfLoader, { }, R"(begins: asks.cjs
@@ -1060,7 +1046,6 @@ report("every job", "has run");
 )js"_s);
 }
 
-// The graph that is being loaded runs first, whoever waits for it goes on, and a later call does not overtake the one that waits.
 static void testImportCalledDuringLoad()
 {
     checkShellOutput(importCalledDuringLoad, { }, R"(runs: asks.cjs
@@ -1079,7 +1064,6 @@ runs: later.js
 )js"_s);
 }
 
-// While the text of late.js is on its way each text comes in a turn of its own, in the order in which they were asked for: late.js, then second.js, which first.js asks for when its own text has come, behind that of asks.cjs, then third.js.
 static constexpr ASCIILiteral outputOfTextsInTurns = R"(runs: asks.cjs
 runs: late.js
 runs: third.js
@@ -1089,7 +1073,6 @@ runs: root.js
 the graph: is loaded
 )"_s;
 
-// Nobody can tell how the graph is loaded until asks.cjs calls import(): the file runs ahead of the loader, and the call hands the graph over.
 static void testTextsInTurns()
 {
     checkShellOutput(textsInTurns, { }, outputOfTextsInTurns, R"js(.then(async () => {
@@ -1099,7 +1082,6 @@ static void testTextsInTurns()
 )js"_s);
 }
 
-// A job of the script waits between the steps of the loader, so the loader walks the graph from the start and asks.cjs runs in the step that makes its record.
 static void testTextsInTurnsWhileOtherJobsWait()
 {
     checkShellOutput(textsInTurns, { }, outputOfTextsInTurns, R"js(.then(async () => {
@@ -1113,7 +1095,6 @@ static void testTextsInTurnsWhileOtherJobsWait()
 )js"_s);
 }
 
-// The module keeps the error: whoever requires it again gets the same error, and nothing of it runs again.
 static void testThrowThroughStartOfModule()
 {
     checkShellOutput(moduleThatMayFailWhereItIsRequired, { }, R"(runs: first.js
@@ -1165,7 +1146,6 @@ static std::span<const uint8_t> sectionOfImageWithRows(std::span<const uint8_t> 
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-// A bit for each operation that stands in the rows of the image. Each row ends, and names what the image has.
 static uint32_t operationsInRowsOfStarts(const String& programText)
 {
     using Operation = ModuleStartStepData::Operation;
@@ -1202,7 +1182,6 @@ static uint32_t operationsInRowsOfStarts(const String& programText)
     return found;
 }
 
-// The shell runs both programs in tests of their own: cache-by-level, throw-through-start-of-module.
 static void testEveryKindOfStepOfStart()
 {
     using Operation = ModuleStartStepData::Operation;

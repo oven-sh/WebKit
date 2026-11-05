@@ -15,7 +15,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// Most operations share their bound with others: the table holds each bound once.
 template<size_t capacity>
 struct DistinctBounds {
     std::array<uint8_t, numberOfOpcodes> rowOf { };
@@ -64,10 +63,17 @@ constinit const OpcodeSet opcodesWithPureBoundInTable = [] {
     return opcodes;
 }();
 
+constinit const OpcodeSet opcodesWithSuspendingBoundInTable = [] {
+    OpcodeSet opcodes;
+    for (Opcode member : allMembersOf<Opcode>) {
+        if (distinctBounds.rows[distinctBounds.rowOf[static_cast<unsigned>(member)]].maySuspend)
+            opcodes.add(member);
+    }
+    return opcodes;
+}();
+
 namespace {
 
-// A bound names entire heaps. When an opcode's row never names a location within a heap, the bound equals the declared effects of every operation with that opcode.
-// A row that names a constant location, such as Elements[Array], does not qualify either: that location's mask comes from maskOf(), which is not constexpr.
 class ExactBoundDetector {
 public:
     constexpr void reads(const MemoryLocation& location) { m_boundIsExact &= location.isEntireHeap(); }

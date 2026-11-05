@@ -62,11 +62,9 @@ static_assert(suspensionClobberedGPRs.size() == 1);
 static_assert(SavedFrame::preservedRegister != InvalidGPRReg && Reg(SavedFrame::preservedRegister).index() < Reg(suspensionClobberedGPRs[0]).index(), "where both are saved, the stubs find the preserved register below the other one");
 #endif
 
-// The least set that holds `used` and that the SavedFrame::savedRegisterBits bits of a site word can name. emitMoveRegistersSavedInFrame() moves what they name between the registers and the run of saves.
 static RegisterMask roundUpCalleeSavesOfPlannedFrame(RegisterMask used)
 {
 #if CPU(ARM64)
-    // The bits count pairs. The stubs find the last pair of suspensionClobberedGPRs at FP - 16, the pair in front of it at FP - 32, and so on, so the run ends in the last register of the list.
     constexpr size_t numberOfRegisters = suspensionClobberedGPRs.size();
     size_t first = 0;
     while (first < numberOfRegisters && !(used & maskOf(Reg(suspensionClobberedGPRs[first]))))
@@ -113,7 +111,6 @@ bool plannedBlockOnlyReturns(const Procedure& proc, const Block* block)
     return true;
 }
 
-// Nothing where the frame has to be set up at the entry after all.
 static std::optional<PlannedBlocksOfFramedPart> planBlocksOfFramedPart(Procedure& proc)
 {
     const Order& order = proc.order();
@@ -132,12 +129,10 @@ static std::optional<PlannedBlocksOfFramedPart> planBlocksOfFramedPart(Procedure
     PlannedBlocksOfFramedPart blocks { BitSpan::create(arena, numberOfBlocks), BitSpan::create(arena, numberOfBlocks), BitSpan::create(arena, numberOfBlocks), BitSpan::create(arena, numberOfBlocks) };
     BitSpan returnsForWaysInFrame = BitSpan::create(arena, numberOfBlocks);
 
-    // Each answer goes by the block itself and by which of its predecessors stand in the framed part.
     for (const Block* block : blocksInOrder) {
         const BlockPlace& place = order.of(block);
         const bool isInFramedPart = allocation.isInFramedPart(block);
         bool runsInFrame = isInFramedPart || (place.isRare() && allocation.needsFrameIn(place.rareRegion));
-        // One teardown serves every way out of the framed part that only returns, and a way that comes without the frame returns where it stands.
         bool returnsForWayInFrame = false;
         if (!runsInFrame && plannedBlockOnlyReturns(proc, block)) {
             for (const Block* predecessor : place.predecessors) {
@@ -193,7 +188,6 @@ static FrameCoverage chooseCoverageOfPlannedFrame(const Procedure& proc, bool ha
     const Allocation& allocation = proc.allocation();
     if (hasFramedPart)
         return FrameCoverage::FramedPart;
-    // A Patch that follows a setup needs no frame where it stands, so no need of a frame has been noted for it.
     if (proc.traits().setsUpFrameAtEntry() || allocation.needsFrameOutsideRareRegions() || allocation.holdsPatchThatFollowsFrameSetup())
         return FrameCoverage::WholeFunction;
 
@@ -271,7 +265,6 @@ Frame* planFrame(Procedure& proc)
         frame->m_bytesDeadAtSuspensions = form.hasFrameRecord && !form.savesLieAtBottom ? static_cast<unsigned>(bytesBelowFrameRecord - bytesOfSaves - slots.bytesKeptAtSuspensions()) : 0;
     }
 
-    // Whatever else a suspension may keep unwritten is cleared at the suspension: SlotAssigner::publishDeadWords().
     if (slots.firstWordClearedAtSetup() < slots.endOfWordsClearedAtSetup()) {
         RELEASE_ASSERT(frame->hasFrame() && slots.endOfWordsClearedAtSetup() <= slots.numberOfWordsKeptAtSuspensions());
         frame->m_beginOfWordsClearedAtSetup = -static_cast<int32_t>(bytesOfSaves + static_cast<uint64_t>(slots.endOfWordsClearedAtSetup()) * plannedFrameWordSize);
@@ -280,7 +273,6 @@ Frame* planFrame(Procedure& proc)
 
     std::span<const SpillFacts> spills = allocation.spills();
     if (!spills.empty()) {
-        // Every entry is written right here.
         int32_t* offsetOfSpill = static_cast<int32_t*>(arena.allocate(spills.size() * sizeof(int32_t), alignof(int32_t)));
         for (SpillIndex spill = 0; spill < spills.size(); ++spill) {
             const uint32_t distance = slots.distanceOf(spill);
@@ -296,7 +288,6 @@ Frame* planFrame(Procedure& proc)
         slot->m_offsetFromFP = static_cast<intptr_t>(form.topOfSlots) - static_cast<intptr_t>(distance);
     }
 
-    // It has nothing to say of a function without suspensions.
     if (!allocation.suspensions().empty())
         SlotAssigner::publishDeadWords(proc, numberOfSaves);
     return frame;
@@ -323,8 +314,6 @@ static bool operationNamesFrameToBePlanned(const Operation* value)
     return false;
 }
 
-// Whether operationNamesFrameToBePlanned() holds of one of the leaves that forEachLeaf() lists.
-// Rule 8 is left out: it puts an extension of a word with a position in the place of that word, and neither of the two names the frame.
 static bool someLeafNamesFrameToBePlanned(const Liveness& liveness, const Operation* operation)
 {
     if (operation->isUnconditionalJump())
@@ -344,7 +333,6 @@ static bool someLeafNamesFrameToBePlanned(const Liveness& liveness, const Operat
     return false;
 }
 
-// True: forEachLeaf() lists children of the operation alone, each of them a value with a position or a constant. None of those names the frame.
 static ALWAYS_INLINE bool everyLeafIsValueOrConstantAheadOfFrame(const ValueFacts* valueFacts, const Operation* operation)
 {
     constexpr uint16_t hasLeavesOfItsOwn = static_cast<uint16_t>(ValueFlag::WorksInMemory) | static_cast<uint16_t>(ValueFlag::GoesByOverflow);
@@ -357,22 +345,18 @@ static ALWAYS_INLINE bool everyLeafIsValueOrConstantAheadOfFrame(const ValueFact
     return true;
 }
 
-// Builder::framePointer() alone makes a FramePointer, and notes it in the procedure. A SlotBase is the address of a StackSlot. Without either, operationNamesFrameToBePlanned() holds of nothing.
 static bool someOperationMayNameFrameToBePlanned(const Procedure& proc)
 {
     return proc.namesFramePointer() || !proc.stackSlots().empty();
 }
 
-// `stopsAtFirstNeed`, `mayNameFrame`: as readBlockAheadOfFrame() says.
 static ALWAYS_INLINE void readOperationAheadOfFrame(const Liveness& liveness, const Operation* operation, Position late, bool stopsAtFirstNeed, bool mayNameFrame, FactsOfBlockAheadOfFrame& facts)
 {
     Opcode opcode = operation->opcode();
     if (const PatchOperation* patch = operation->as<PatchOperation>()) {
-        // As Allocator::allocatePatch() counts it, whether or not it emits code.
         facts.holdsPatchThatNeedsFrame |= patch->needsFrameRecord() || !patch->runsWithoutFrame() || patch->followsFrameSetup();
         if (patch->onlyKeepsChildrenAlive || (stopsAtFirstNeed && facts.holdsPatchThatNeedsFrame))
             return;
-        // A Check writes on its late path alone, which does not come back.
         if (opcode == Patch) {
             facts.writesMemory |= !patch->effects.writes.isEmpty();
             if (patch->effects.mayCollect) {
@@ -387,8 +371,6 @@ static ALWAYS_INLINE void readOperationAheadOfFrame(const Liveness& liveness, co
         facts.namesFrame = someLeafNamesFrameToBePlanned(liveness, operation);
 }
 
-// Outside rare regions it stops at the first need of a frame: nobody asks what else such a block holds.
-// `mayNameFrame`: someOperationMayNameFrameToBePlanned().
 static void readBlockAheadOfFrame(const Allocator& allocator, const Block* block, bool mayNameFrame, FactsOfBlockAheadOfFrame& result)
 {
     const Liveness& liveness = allocator.m_liveness;
@@ -404,14 +386,12 @@ static void readBlockAheadOfFrame(const Allocator& allocator, const Block* block
         if (stopsAtFirstNeed && (facts.holdsPatchThatNeedsFrame || facts.namesFrame))
             break;
         const Operation* operation = operations[index];
-        // Order::earlyPositionOf(), and one more.
         if (liveness.standsInItsBlock(operation))
             readOperationAheadOfFrame(liveness, operation, head + 2 * (index + 1) + 1, stopsAtFirstNeed, mayNameFrame, facts);
     }
     result = facts;
 }
 
-// FactsOfBlockAheadOfFrame::holdsPatchThatNeedsFrame as readBlockAheadOfFrame() finds it, and nothing else of the block.
 static bool blockHoldsPatchThatNeedsFrameToBePlanned(const Liveness& liveness, const Block* block)
 {
     auto needsFrame = [](const PatchOperation* patch) ALWAYS_INLINE_LAMBDA {
@@ -447,7 +427,6 @@ void Allocator::findFramedPart()
     Block* const* const blocks = blocksInOrder.data();
     const size_t numberOfBlocksInOrder = blocksInOrder.size();
     const Block* entry = m_proc.entrypoints().data()->block;
-    // More values at one place than there are registers that no caller counts on: some of them get a callee-saved register or a word of the frame.
     const unsigned numberOfGPRsThatNoCallerCountsOn = static_cast<unsigned>(std::popcount(m_file.allocatableIn(Bank::GP) & ~m_file.calleeSaved));
     const unsigned numberOfFPRsThatNoCallerCountsOn = static_cast<unsigned>(std::popcount(m_file.allocatableIn(Bank::FP) & ~m_file.calleeSaved));
     auto runsOutOfRegisters = [&](const Block* block) {
@@ -465,14 +444,12 @@ void Allocator::findFramedPart()
         return facts.holdsPatchThatNeedsFrame || facts.namesFrame || runsOutOfRegisters(block);
     };
 
-    // Most functions leave by what the first search finds, which asks a block for nothing but its need. Where no operation names the frame, that is a Patch or a want of registers: whoever asks for more reads the block then.
     const bool mayNameFrame = someOperationMayNameFrameToBePlanned(m_proc);
     auto needsFrameForPatchOrRegisters = [&](const Block* block) {
         ASSERT(!mayNameFrame);
         return runsOutOfRegisters(block) || blockHoldsPatchThatNeedsFrameToBePlanned(m_liveness, block);
     };
 
-    // The search below goes no further than a need in the entrypoint, and so finds no way out of the function.
     FactsOfBlockAheadOfFrame factsOfEntry;
     const bool entryIsRare = placeOf(entry).isRare();
     const bool entryIsRead = !entryIsRare && mayNameFrame;
@@ -484,19 +461,15 @@ void Allocator::findFramedPart()
         return;
 
     const uint32_t numberOfBlocks = m_proc.numberOfBlocks();
-    // By Block::index(), a bit for each thing that is found out of a block.
     constexpr uint8_t isRead = 1 << 0;
     constexpr uint8_t isReachedWithoutFrame = 1 << 1;
     constexpr uint8_t leadsToNeed = 1 << 2;
     constexpr uint8_t followsSetup = 1 << 3;
-    // No head stands in a loop or in a rare region: what follows a setup there has its head above.
     constexpr uint8_t isHeadForWhatLiesBelow = 1 << 4;
-    // A frame that is set up where every way on needs it is set up for nobody in vain. An edge that comes round says nothing of the ways out of its loop, and a rare region sets up its own.
     constexpr uint8_t everyWayOnNeedsFrame = 1 << 5;
     constexpr uint8_t isHead = 1 << 6;
     constexpr uint8_t isReachedWithoutPassingHead = 1 << 7;
     uint8_t* const marks = m_arena.createSpan<uint8_t>(numberOfBlocks).data();
-    // By Block::index(). An entry holds something once its block is marked as read.
     FactsOfBlockAheadOfFrame* const factsOfBlocks = static_cast<FactsOfBlockAheadOfFrame*>(m_arena.allocate(numberOfBlocks * sizeof(FactsOfBlockAheadOfFrame), alignof(FactsOfBlockAheadOfFrame)));
     if (entryIsRead) {
         marks[entry->index()] |= isRead;
@@ -514,7 +487,6 @@ void Allocator::findFramedPart()
         return needsFrameByFacts(block, factsOf(block));
     };
 
-    // A search lists a block once, where it marks it.
     const Block** const blocksToVisit = static_cast<const Block**>(m_arena.allocate(numberOfBlocks * sizeof(const Block*), alignof(const Block*)));
     size_t numberOfBlocksToVisit = 0;
     auto reach = [&](uint8_t mark, const Block* block) ALWAYS_INLINE_LAMBDA {
@@ -525,7 +497,6 @@ void Allocator::findFramedPart()
         blocksToVisit[numberOfBlocksToVisit++] = block;
     };
 
-    // Whatever lies behind the first needs is reached through one of them. The search back from them starts with this list.
     const Block** const blocksToFollowBack = static_cast<const Block**>(m_arena.allocate(numberOfBlocks * sizeof(const Block*), alignof(const Block*)));
     size_t numberOfBlocksToFollowBack = 0;
     bool someWayLeavesFunction = false;
@@ -533,7 +504,6 @@ void Allocator::findFramedPart()
     while (numberOfBlocksToVisit) {
         const Block* block = blocksToVisit[--numberOfBlocksToVisit];
         if (!placeOf(block).isRare()) {
-            // The entrypoint has been asked.
             if (block != entry && (mayNameFrame ? needsFrame(block) : needsFrameForPatchOrRegisters(block))) {
                 marks[block->index()] |= followsSetup | leadsToNeed;
                 blocksToFollowBack[numberOfBlocksToFollowBack++] = block;
@@ -547,7 +517,6 @@ void Allocator::findFramedPart()
     if (!numberOfBlocksToFollowBack || !someWayLeavesFunction)
         return;
 
-    // So does whatever writes memory on a way to one of them, where a setup may stop the function.
     bool writesMemoryOnWayToNeed = false;
     const bool everySetupMayStopFunction = !m_proc.largestFrameSetUpWithoutStackCheck();
     while (numberOfBlocksToFollowBack) {
@@ -559,7 +528,6 @@ void Allocator::findFramedPart()
             blocksToFollowBack[numberOfBlocksToFollowBack++] = predecessor;
             const FactsOfBlockAheadOfFrame& facts = factsOf(predecessor);
             bool isRare = placeOf(predecessor).isRare();
-            // What a rare region leaves in a StackSlot is gone with the frame of the region.
             bool leavesSomethingInFrame = isRare && facts.namesFrame;
             bool writesWhatSomebodySees = facts.writesMemory && !(isRare && facts.holdsPatchThatNeedsFrame);
             if (leavesSomethingInFrame || (writesWhatSomebodySees && everySetupMayStopFunction))
@@ -569,7 +537,6 @@ void Allocator::findFramedPart()
         }
     }
 
-    // By Block::index(). Of a block in a loop or a rare region from which the way up was gone: where it ended. The blocks of a long loop stand one above another, and each is passed once.
     const Block** const blocksAboveLoopsAndRareRegions = m_arena.createSpan<const Block*>(numberOfBlocks).data();
     for (size_t index = numberOfBlocksInOrder; index--;) {
         const Block* block = blocks[index];
@@ -607,14 +574,12 @@ void Allocator::findFramedPart()
                 if (!everyWayOnDoes)
                     break;
             }
-            // Outside loops the needs of the block itself are asked for nothing else, so it is read only where the ways on do not settle the answer.
             if (!(someWayLeadsOn && everyWayOnDoes) && !(mayBeHead && needsFrame(block)))
                 continue;
         }
         marks[block->index()] |= everyWayOnNeedsFrame;
     }
 
-    // What dominates a block comes first.
     BitSpan isInFramedPart = BitSpan::create(m_arena, m_order.mostBlocks());
     for (const Block* block : blocksInOrder) {
         const Block* dominator = immediateDominatorOf(block);
@@ -629,6 +594,13 @@ void Allocator::findFramedPart()
             const BlockPlace& place = placeOf(block);
             if (place.isRare() || place.loop != noLoop)
                 continue;
+            if (!(marksOfBlock & followsSetup) && !needsFrame(block)) {
+                bool someWayLeavesPartUnused = false;
+                for (const Edge& edge : block->successors())
+                    someWayLeavesPartUnused |= !placeOf(edge.block()).isRare() && immediateDominatorOf(edge.block()) != block;
+                if (someWayLeavesPartUnused)
+                    continue;
+            }
         }
         if (block == entry || block->isLandingPad())
             return;
@@ -636,7 +608,6 @@ void Allocator::findFramedPart()
         isInFramedPart.set(block->index());
     }
 
-    // The first such way settles it.
     bool someWayLeavesFunctionWithoutPassingHead = false;
     reach(isReachedWithoutPassingHead, entry);
     while (numberOfBlocksToVisit && !someWayLeavesFunctionWithoutPassingHead) {
@@ -650,7 +621,6 @@ void Allocator::findFramedPart()
     if (!someWayLeavesFunctionWithoutPassingHead)
         return;
 
-    // A rare region stands in one piece. From one that neither comes back nor turns, no way leads on to a read outside it.
     for (size_t index = 0; index < numberOfBlocksInOrder;) {
         const BlockPlace& place = placeOf(blocks[index]);
         Position first = noPosition;
@@ -688,8 +658,6 @@ void Allocator::findFramedPart()
     m_allocation.m_writesMemoryAheadOfFramedPart = writesMemoryOnWayToNeed;
 }
 
-// Step::destination and Step::sources lie side by side: six Locations in three words. Every Location that is a spill has the one bit of Location::spill(0), and so have a few of other kinds.
-// False: none of the six is a spill.
 static ALWAYS_INLINE bool stepNearFramedPartMayNameSpillBesideItsAssignment(const Step& step)
 {
     static_assert(sizeof(Location) == sizeof(uint32_t) && sizeof(Step::sources) == 5 * sizeof(Location));
@@ -724,7 +692,6 @@ void Allocator::settleFramedPart()
         return;
 
     ArenaVector<SpillFacts>& spills = m_allocation.m_spills;
-    // Nothing else sets SpillFacts::isStoredAtHeadOfFramedPart. Where no spill has it, no step is asked whether it names such a spill.
     bool someSpillIsStoredAtHead = false;
     for (SpillFacts& spill : spills) {
         const Operation* value = spill.value;
@@ -734,7 +701,6 @@ void Allocator::settleFramedPart()
         spill.isStoredAtHeadOfFramedPart = isAheadOfFramedPart(blockOfStore) && !m_order.of(blockOfStore).isRare();
         someSpillIsStoredAtHead |= spill.isStoredAtHeadOfFramedPart;
     }
-    // The stores behind the definitions have waited for this answer: run() has noted no need of a frame for them. In a part that is framed for want of registers nothing else may have noted one.
     auto setUpFrameAtEntryAfterAll = [&] {
         for (SpillFacts& spill : spills)
             spill.isStoredAtHeadOfFramedPart = false;
@@ -748,7 +714,6 @@ void Allocator::settleFramedPart()
     auto stepMayStandAhead = [&](const Step& step, const BlockPlace& place) {
         if (someSpillIsStoredAtHead && stepNearFramedPartMayNameSpillBesideItsAssignment(step) && (isStoredAtHead(step.destination) || std::ranges::any_of(step.sources, isStoredAtHead)))
             return false;
-        // allocatePatch() alone appends the Execute of a Patch or a Check, and gives each its PatchAssignment.
         if (step.kind == StepKind::Execute && step.patchAssignment != UINT32_MAX) {
             const PatchOperation* patch = step.operation->as<PatchOperation>();
             if (patch && patch->followsFrameSetup())
@@ -779,12 +744,10 @@ void Allocator::settleFramedPart()
         }
     }
 
-    // Ahead of a head nothing lies in memory, so whatever is live there has its register. Outside the range of a spill its place may be another's.
     const uint32_t begin = m_allocation.m_steps.size();
     for (Allocation::HeadOfFramedPart& head : m_allocation.m_headsOfFramedPart) {
         Position position = m_order.headOf(head.block);
         head.beginOfSteps = m_allocation.m_steps.size();
-        // A Phi that got no register is stored by the edges that lead to it, and those run where the frame of the head is not set up yet.
         for (const Operation* phi : head.block->phis()) {
             if (m_liveness.isDropped(phi) || !m_allocation.isSpilled(phi) || m_allocation.registerAtDefinitionOf(phi).isSet())
                 continue;
@@ -795,7 +758,6 @@ void Allocator::settleFramedPart()
             return;
         }
         for (const RegisterBinding& binding : m_allocation.registersAtHeadOf(head.block)) {
-            // A way out of the framed part has fixed the head.
             if (maskOf(binding.reg) & m_file.calleeSaved) {
                 m_allocation.m_steps.shrink(begin);
                 for (Allocation::HeadOfFramedPart& other : m_allocation.m_headsOfFramedPart)

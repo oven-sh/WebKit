@@ -57,7 +57,6 @@ function f5 name="isTruthy" parameters=[{type=anything}] results=[{type=anything
 }
 )IR"_s;
 
-// The first accesses of a hundred in a row fill the caches of the run time, and the rest are answered by them.
 #define STATEMENTS_DEFINING_REPEAT R"JS(
 const repeat = (what, access) => {
     let result;
@@ -136,7 +135,6 @@ static void testReadsFollowTheGlobalObject()
         { }, statementsChangingTheGlobalObject);
 }
 
-// The global object of another realm reports no change to this program, and an object below the proxy is no proxy.
 static constexpr ASCIILiteral statementsWithOtherReceivers = STATEMENTS_DEFINING_REPEAT R"JS(
 globalThis.publish = (read, has, hasOwn) => {
     const other = createGlobalObject();
@@ -169,7 +167,6 @@ static void testReadsFollowOtherReceivers()
         { }, statementsWithOtherReceivers);
 }
 
-// `globalThis[key] = value` stores to the global object through its proxy.
 static constexpr ASCIILiteral programWithStoresByKey = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -253,7 +250,6 @@ static void testStoresByKeyFollowTheGlobalObject()
         { }, statementsWithStoresByKey);
 }
 
-// `base.shared = value` where the base turns out to be globalThis.
 static constexpr ASCIILiteral programWithStoresByName = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {

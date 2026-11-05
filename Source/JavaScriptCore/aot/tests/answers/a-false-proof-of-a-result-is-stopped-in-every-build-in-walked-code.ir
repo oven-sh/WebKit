@@ -1,0 +1,119 @@
+# -- source: a-false-proof-of-a-result-is-stopped-in-every-build-in-walked-code.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# declare const which: number;
+# function returnsIt() { const got = id(7); print("got it"); return got; }
+# function endsInIt() { return id(7); }
+# function endsInThat() { return returnsIt(); }
+# if (which === 1) print(typeof returnsIt());
+# if (which === 2) print(typeof endsInIt());
+# if (which === 3) print(typeof endsInThat());
+# print("went on");
+# -- end of source
+# records of 24d01380bfc1a5a8
+# THE DOOR OF A RESULT, AS A USER BUILDS: no word that checks proofs. THE LIE, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so it proves all three results undefined, and a number comes.
+# returnsIt: the return holds what goes out to the type that the result is held to (Plan::typeHeldOfResult()): the number is stopped there, by name.
+# endsInIt ends in a call of a value of which only the flow says what it is: its result passes no return, so the record of a call of it claims nothing, and what Link has proven is asked where the call stands.
+# endsInThat ends in a call of a function by its binding, which is held to no more than it is itself: the callee's return is its door.
+# BELIEVED, each printed "undefined" for a number and went on.
+# OPTIONS: testing=UnseenCodeAnswersUndefined
+# RUN(RETURNS): run-in-shell mechanisms=all-Inlining globalThis.which = 1;
+# RETURNS: got it
+# RETURNS-NEXT: AOT: f1 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# RETURNS-NOT: went on
+# RETURNS: crashed with
+# RUN(ENDS): run-in-shell mechanisms=all-Inlining globalThis.which = 2;
+# ENDS: AOT: f0 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# ENDS-NOT: went on
+# ENDS: crashed with
+# RUN(THAT): run-in-shell mechanisms=all-Inlining globalThis.which = 3;
+# THAT: got it
+# THAT-NEXT: AOT: f1 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# THAT-NOT: went on
+# THAT: crashed with
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: went on
+# NONE-NEXT: exited with 0
+
+module m0 path="a-false-proof-of-a-result-is-stopped-in-every-build-in-walked-code.ts" displayPath="a-false-proof-of-a-result-is-stopped-in-every-build-in-walked-code.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="returnsIt" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @284
+    v5 = PropGet v4 key="which" [isFreeName] @284
+    v6 = Integer integer=1 @294
+    v7 = StrictEq v5, v6 @294
+    Branch v7 -> taken b1(), notTaken b2() @294
+  b1():
+    v8 = Builtin builtin=GlobalThis @297
+    v9 = PropGet v8 key="print" [isFreeName] @297
+    v10 = GetModuleVariable variable=g0 @310
+    v11 = Call v10 calleeName="returnsIt" @310
+    v12 = TypeOf v11 @303
+    v13 = Call v9, -, v12 calleeName="print" @297
+    Jump -> next b2() @297
+  b2():
+    v14 = Builtin builtin=GlobalThis @328
+    v15 = PropGet v14 key="which" [isFreeName] @328
+    v16 = Integer integer=2 @338
+    v17 = StrictEq v15, v16 @338
+    Branch v17 -> taken b3(), notTaken b4() @338
+  b3():
+    v18 = Builtin builtin=GlobalThis @341
+    v19 = PropGet v18 key="print" [isFreeName] @341
+    v20 = Call v1 calleeName="endsInIt" @354
+    v21 = TypeOf v20 @347
+    v22 = Call v19, -, v21 calleeName="print" @341
+    Jump -> next b4() @341
+  b4():
+    v23 = Builtin builtin=GlobalThis @371
+    v24 = PropGet v23 key="which" [isFreeName] @371
+    v25 = Integer integer=3 @381
+    v26 = StrictEq v24, v25 @381
+    Branch v26 -> taken b5(), notTaken b6() @381
+  b5():
+    v27 = Builtin builtin=GlobalThis @384
+    v28 = PropGet v27 key="print" [isFreeName] @384
+    v29 = Call v3 calleeName="endsInThat" @397
+    v30 = TypeOf v29 @390
+    v31 = Call v28, -, v30 calleeName="print" @384
+    Jump -> next b6() @384
+  b6():
+    v32 = Builtin builtin=GlobalThis @412
+    v33 = PropGet v32 key="print" [isFreeName] @412
+    v34 = String string="went on" @418
+    v35 = Call v33, -, v34 calleeName="print" @412
+    v36 = Undefined @412
+    Return v36 @412
+}
+function f1 name="returnsIt" module=m0 position=123 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @158
+    v1 = PropGet v0 key="id" [isFreeName] @158
+    v2 = Integer integer=7 @161
+    v3 = Call v1, -, v2 calleeName="id" @158
+    v4 = Builtin builtin=GlobalThis @165
+    v5 = PropGet v4 key="print" [isFreeName] @165
+    v6 = String string="got it" @171
+    v7 = Call v5, -, v6 calleeName="print" @165
+    Return v3 @189
+}
+function f2 name="endsInIt" module=m0 position=196 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @225
+    v1 = PropGet v0 key="id" [isFreeName] @225
+    v2 = Integer integer=7 @228
+    v3 = Call v1, -, v2 calleeName="id" @225
+    ReturnCall v3 @225
+}
+function f3 name="endsInThat" module=m0 position=234 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @265
+    v1 = Call v0 calleeName="returnsIt" @265
+    ReturnCall v1 @265
+}

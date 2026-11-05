@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// UnboxedNumbers, for numbers that arrive boxed: a chain of operators is walked on integers and on doubles behind one test of each tag, a sum that is taken boxed stays boxed, a truncation reads the tag,
-// and arithmetic beside one proven number takes that number raw. Nothing here is a guess: every arm is right.
-// At a suspension: no chain holds an operation that may suspend. At a throw: operators on numbers throw nothing, and the closed forms throw as ever.
-// Withheld (UnboxedNumbers, TypedOperations; Guesses for the chains): each operator takes the form that the chain gives it.
-
 #include "config.h"
 #include "AOTWalkNumberGuesses.h"
 
@@ -28,51 +23,37 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, Opcode, const BodyValue&, const InputsOfTypedOperation&);
-// AOTWalkNumbers.cpp
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet operatorsOfNumberPaths = allSums | allBitwiseOperators | allRelations | OpcodeSet { Opcode::Mul, Opcode::Negate, Opcode::StrictEq };
-// Of those, these give a number that may be no integer, so only their results gain by an integer arm. A bit operator gives an integer on both sides.
 static constexpr OpcodeSet operatorsThatGiveNumbersOnNumberPaths { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Negate, Opcode::Increment, Opcode::Decrement };
-// Of those, on two int32 these may give -0 or more than an integer holds: the checked form, whose answer is a Double.
 static constexpr OpcodeSet operatorsCheckedOnIntegersInNumberPaths { Opcode::Mul, Opcode::Negate };
-// Whether one of them pays by itself is what the tables of forms say: loneOperatorPaysOnIntegers().
 static constexpr OpcodeSet operatorsThatMayStandAloneOnNumberPaths = operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative, OperatorKind::Bitwise });
 static constexpr OpcodeSet operatorsBesideOneNumber { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
 static constexpr OpcodeSet operatorsWithZeroAsIdentityInNumberPaths { Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };
 static constexpr OpcodeSet commutativeAmongOperatorsWithZeroAsIdentity { Opcode::BitOr, Opcode::BitXor };
-// Closed, each takes what it stores, hands over or joins as a box.
 static constexpr OpcodeSet takersOfBoxesInNumberPaths { Opcode::PropSet, Opcode::PropDefine, Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::Call, Opcode::CallList, Opcode::Construct, Opcode::Strcat };
 static constexpr OpcodeSet callsAmongTakersOfBoxes { Opcode::Call, Opcode::CallList, Opcode::Construct };
 
-// Both copies of a chain are code at the site.
 static constexpr uint32_t mostOperatorsOfNumberPath = 16;
 static constexpr size_t mostNumbersTestedOnNumberPath = defaultLimitValue(LimitID::MaxNumberPathValues, hostArchitecture());
 static constexpr unsigned mostCastsFollowedInNumberPaths = 16;
-// `d * d`: how many operations behind an operator are looked at for the users of a result that is mentioned more than once.
 static constexpr uint32_t mostOperationsLookedAtBehindOperatorOfNumberPath = 8;
 
 namespace {
 
 enum class KindOnNumberPath : uint8_t {
-    // It is no operand of an operator of a path.
     Foreign,
     Integer,
-    // A number from in front of the chain that arrives boxed.
     Tagged,
-    // What an operator of the chain gives, which only operators of the chain take.
     Waits,
 };
 
 struct OperandOnNumberPath {
     KindOnNumberPath kind { KindOnNumberPath::Foreign };
-    // Tagged: the value of the body in front of the chain.
     ValueID tagged;
-    // Waits: on int32 too the operator gives a Double: a product and a negation are checked, and so is whatever takes one. Whoever takes it works on doubles on both sides.
     bool isDoubleOnIntegersToo { false };
-    // Waits: the place of the operator in the chain.
     uint32_t place { 0 };
 };
 
@@ -95,9 +76,6 @@ bool isTaggedNumber(Walker& walker, Reference reference)
     return type.integers.minimum <= Range::int32().maximum && type.integers.maximum >= Range::int32().minimum;
 }
 
-// ---- Number paths
-
-// Every mention of the value is an operand of an operator of a path that stands in the block of the value, as it is or through casts.
 static bool isTakenOnlyByOperatorsOfNumberPath(const BodyIndex& index, const BodyBlock& block, ValueID value)
 {
     uint32_t numberOfMentions = index.useCount(value);
@@ -137,8 +115,6 @@ static bool isTakenOnlyByOperatorsOfNumberPath(const BodyIndex& index, const Bod
     return false;
 }
 
-// `i % n` on boxed numbers of which int32 is expected. In the form Numbers the operator unboxes both ways and calls the run time, on integers it does neither. Where the arms meet, an integer becomes a double again,
-// so an operator that is open in both forms gains nothing by itself, and one whose code takes the box as it is asks the tag itself.
 static bool loneOperatorPaysOnIntegers(Walker& walker, const BodyValue& operation, std::span<const TestOfNumber> tests)
 {
     Opcode opcode = operation.opcode();
@@ -173,9 +149,6 @@ static bool loneOperatorPaysOnIntegers(Walker& walker, const BodyValue& operatio
     return true;
 }
 
-// `(a + b) * c < d`, `(a + b) | 0` on values that are proven numbers and arrive boxed. The chain is read ahead in the body, from its first operator on:
-// an operator waits where it gives a number that only operators of the chain take, and the chain ends behind an operator that takes one that waits and does not wait itself, once nothing waits.
-// Between the operators stand casts, written constants and hints alone.
 static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, const BodyValue& firstOperator)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -185,7 +158,6 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, cons
     uint32_t limit = limitOfStretchOfNumbers(walker, block);
     uint32_t first = firstValue + begin;
 
-    // By place in the chain.
     Vector<OperandOnNumberPath, 32> given;
     Vector<uint32_t, 32> mentionsLeft;
     uint32_t mentionsLeftOfAll = 0;
@@ -212,7 +184,6 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, cons
         uint32_t mentionsOfResult = 0;
 
         if (opcodesThatStateTypes.contains(opcode)) {
-            // A cast becomes its operand: whoever takes it takes that.
             result = kindOf(operation.operand(0));
             if (result.kind == KindOnNumberPath::Waits) {
                 uint32_t uses = index.useCount(operation.id());
@@ -226,7 +197,6 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, cons
         } else if (opcode == Opcode::Integer)
             result.kind = KindOnNumberPath::Integer;
         else if (primitiveConstants.contains(opcode) || opcode == Opcode::ReleaseHint) {
-            // Nothing of the chain takes it.
         } else {
             bool mayStandAlone = place == begin && operatorsThatMayStandAloneOnNumberPaths.contains(opcode);
             if ((!operatorsOfNumberPaths.contains(opcode) && !mayStandAlone) || numberOfOperators == mostOperatorsOfNumberPath)
@@ -252,7 +222,6 @@ static std::optional<NumberPathInBody> findNumberPathInBody(Walker& walker, cons
                     --mentionsLeft[operand.place];
                     --mentionsLeftOfAll;
                 }
-                // `total + a * b`: int32 is asked of an operand only where its operator gets a form on integers by the answer.
                 if (operand.kind != KindOnNumberPath::Tagged || takesDoubleOnIntegersToo)
                     continue;
                 Reference reference = walker.referenceOf(operand.tagged);
@@ -309,7 +278,6 @@ static bool buildNumberPath(Walker& walker, const BodyValue& firstOperator)
     std::optional<NumberPathInBody> path = findNumberPathInBody(walker, firstOperator);
     if (!path)
         return false;
-    // It guesses nothing, and it costs bytes.
     if (!shouldOpenGuess(walker, walker.referenceOf(path->tests[0].input), TypeTable::int32, true, path->numberOfOperators))
         return false;
     BlockID block = walker.currentBodyIndex().blockOf(firstOperator.id());
@@ -323,9 +291,6 @@ bool buildArmsInFrontOfTypedFormsOfItsOpcodes(Walker& walker, const BodyValue& v
     return buildNumberPath(walker, value);
 }
 
-// ---- Sums of boxed numbers
-
-// The taker as it is written, in its closed form, with `standIn` in the place of the sum: the rules of forms say how it takes that operand. It builds nothing.
 static bool takerWantsBoxInNumberPaths(Walker& walker, const BodyValue& taker, ValueID taken, Reference standIn, TypeID typeOfSum)
 {
     if (!takersOfBoxesInNumberPaths.contains(taker.opcode()))
@@ -342,7 +307,6 @@ static bool takerWantsBoxInNumberPaths(Walker& walker, const BodyValue& taker, V
     if (lacksOperand)
         return false;
 
-    // A call that enters a function or a row of the table may take the number raw.
     if (callsAmongTakersOfBoxes.contains(taker.opcode())) {
         if (taker.calleeOperand() == taken || findOnlyCallee(walker, taker, walker.referenceOf(taker.calleeOperand())))
             return false;
@@ -363,7 +327,6 @@ static bool takerWantsBoxInNumberPaths(Walker& walker, const BodyValue& taker, V
     return takesBox;
 }
 
-// By the body as written: the sum has one user, which stands in its block, behind casts.
 static bool onlyUserTakesBoxInNumberPaths(Walker& walker, const BodyValue& written, Reference standIn, TypeID typeOfSum, bool otherArmIsClosed)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -378,7 +341,6 @@ static bool onlyUserTakesBoxInNumberPaths(Walker& walker, const BodyValue& writt
         case BodyUseKind::Operand: {
             if (!block.holds(user->value))
                 return false;
-            // `s += pair[0] + pair[1]`: the arms of the guess meet in front of whoever stands behind the stretch, and the closed arm brings a box.
             if (user->value.index() >= block.firstValue().index() + walker.endOfStretchBeingWalked())
                 return otherArmIsClosed;
             BodyValue taker = walker.asWalked(index.value(user->value));
@@ -388,14 +350,12 @@ static bool onlyUserTakesBoxInNumberPaths(Walker& walker, const BodyValue& writt
             break;
         }
         case BodyUseKind::TerminatorOperand: {
-            // A copy hands what it returns to whoever goes on behind the call.
             if (user->block != blockOfSum || index.terminator(blockOfSum).kind() != TerminatorKind::Return || walker.depthOfCopies())
                 return false;
             const CallingConventions& conventions = walker.plan().conventions();
             return conventions.numberOfResults(walker.unit()) == 1 && conventions.resultRepresentation(walker.unit()) == Representation::JSValue;
         }
         case BodyUseKind::EdgeArgument: {
-            // `s += list[i]`, where `s` goes round the loop boxed, because for all that is proven a text may come to it. The head of a loop around the sum is built, and says how it takes what comes round.
             bool goesRoundBoxed = false;
             for (BodyTarget target : index.terminator(user->block).targets()) {
                 std::span<const ValueID> arguments = target.arguments();
@@ -424,7 +384,6 @@ static bool onlyUserTakesBoxInNumberPaths(Walker& walker, const BodyValue& writt
     return false;
 }
 
-// `o.total = a.x + b.y`, `pos += 2`: unboxed, each number is asked for its tag and converted, the doubles are added, and the sum is boxed again. Boxed, int32s are added as int32s.
 bool sumStaysBoxed(Walker& walker, const BodyValue& written, const Draft& sum)
 {
     if (!walker.has(Mechanism::UnboxedNumbers) || !allSums.contains(sum.opcode) || written.opcode() != sum.opcode)
@@ -432,9 +391,7 @@ bool sumStaysBoxed(Walker& walker, const BodyValue& written, const Draft& sum)
     if (sum.form() != OperatorForm::Numbers || sum.representation != Representation::Unchosen)
         return false;
 
-    // As isSumOfBoxedNumbers() of the rules of forms asks, and the code of the sum takes numbers alone.
     Reference boxedNumber;
-    // That an operand is a number is what a test has shown of a value that may be none: without the proof `+` is closed and may give a text. A difference beside one proven number gives a raw number on the other arm too.
     bool otherArmIsClosed = false;
     for (Reference operand : sum.operands()) {
         Type type = walker.types().at(walker.typeOf(operand));
@@ -451,9 +408,6 @@ bool sumStaysBoxed(Walker& walker, const BodyValue& written, const Draft& sum)
     return onlyUserTakesBoxInNumberPaths(walker, written, boxedNumber, walker.resultTypeOf(sum), otherArmIsClosed);
 }
 
-// ---- Truncations
-
-// `x | 0`, `x >>> 0` with x a proven number that lies boxed: the code of ToInt32 and ToUint32 looks at the tag itself, and a boxed int32 is its own answer.
 bool buildTruncationOfBoxedNumber(Walker& walker, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
@@ -489,10 +443,6 @@ bool buildTruncationOfBoxedNumber(Walker& walker, const BodyValue& value)
     return true;
 }
 
-// ---- Arithmetic beside one proven number
-
-// `x * 2`, `x - 1`, `x / 2` with x unknown, where no guess was opened: the stub takes the number raw, asks the other side alone and hands back a raw number, so what follows stays unboxed.
-// `"" + x`: a string is handed back as it is.
 static_assert(opcodesThatBuildOperatorBesideOneNumberTakes == (operatorsBesideOneNumber));
 
 bool buildOperatorBesideOneNumberOfItsOpcodes(Walker& walker, const BodyValue& value)

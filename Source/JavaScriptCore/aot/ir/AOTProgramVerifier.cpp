@@ -30,7 +30,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// StringTable::find() takes a canonical string alone, so it is asked last. Of two equal strings it answers either one.
 std::optional<InternalError> findErrorInStringAsRead(const Program& program, uint32_t index)
 {
     const StringTable& strings = program.strings;
@@ -46,7 +45,6 @@ std::optional<InternalError> findErrorInStringAsRead(const Program& program, uin
     return std::nullopt;
 }
 
-// The error of the first string that has one.
 std::optional<InternalError> findErrorInStringsAsRead(const Program& program, const ParallelLoops& loops)
 {
     Vector<InternalError> errors = collectInParallel<InternalError>(loops, static_cast<unsigned>(program.strings.size()), [&](unsigned index, Vector<InternalError>& found) {
@@ -100,7 +98,6 @@ bool canConstruct(const Function& constructor, const Layout& layout)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// For an id of IDHome::Value or IDHome::SmallRange.
 bool isCanonicalTypeWithoutRecord(TypeID id)
 {
     if (homeOf(id) == IDHome::Value && (id.bits() >> maximumLandmarkShift & 7) >= maximumLandmarks.size())
@@ -156,7 +153,6 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // A program as read has no table of any other kind of record.
     template<typename Tag>
     void operator()(ID<Tag>)
     {
@@ -186,7 +182,6 @@ public:
             m_hasInvalidReference = true;
     }
 
-    // The tables of sets and of class parts say nothing of their sizes, so the position of a record is taken on trust.
     template<typename MemberID, typename SetID>
     void checkSet(SetID set)
     {
@@ -197,7 +192,6 @@ public:
             (*this)(MemberID(positionOf(set)));
             return;
         case IDHome::Program:
-            // The members ascend, and each is asked whether its number is below a size: the last answers for all.
             if (auto members = m_program.types.at(set); !members.isEmpty())
                 (*this)(members.last());
             return;
@@ -246,8 +240,6 @@ private:
     bool m_hasInvalidReference { false };
 };
 
-// forEachReference() passes over null ids and over ids of the built-ins' table, and a required id whose word names nothing reads as null.
-// These check the ids of both kinds that no other group of the verifier tests.
 void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const FunctionRecord& function)
 {
     checker.checkRequired(function.module);
@@ -271,6 +263,8 @@ void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const Module
 {
     for (StringID name : module.otherNames)
         checker.checkRequired(name);
+    for (StringID name : module.namesOfStatements)
+        checker.checkRequired(name);
 }
 
 void checkIDsThatRecordWalkerSkips(RecordReferenceChecker& checker, const ReplaceableBuiltin& replaceable)
@@ -289,7 +283,6 @@ void checkIDsThatRecordWalkerSkips(RecordReferenceChecker&, const Record&)
 {
 }
 
-// A bit for each number below `count` that matches, 64 of them a word: IDSetView::anyWordOf().
 Vector<uint64_t> markNumbersByWord(size_t count, NOESCAPE const Invocable<bool(uint32_t)> auto& matches)
 {
     Vector<uint64_t> words(FillWith { }, (count + 63) / 64, 0ull);
@@ -300,8 +293,6 @@ Vector<uint64_t> markNumbersByWord(size_t count, NOESCAPE const Invocable<bool(u
     return words;
 }
 
-// What is asked of each member of each set of each type, answered once for all layouts and objects.
-// A thousand classes that extend one another are a thousand types of up to a thousand layouts, and as many of up to a thousand constructors: a step for each member of each is a step for each pair of classes.
 class AnswersForMembersOfVerifiedTypes {
 public:
     explicit AnswersForMembersOfVerifiedTypes(const Program& program)
@@ -313,8 +304,6 @@ public:
         m_traitsSharedBy64Objects.fill(notAsked, (m_objects.size() + 63) / 64);
     }
 
-    // The traits of the 64 objects, where all have the same and neither a layout nor a class. Nothing: each of them is to be looked at.
-    // Found when a set first asks, on whichever thread: a program without a large set of objects asks for none.
     std::optional<OptionSet<ObjectTrait>> traitsSharedBy64Objects(uint32_t word) const
     {
         uint16_t known = AtomicRef(m_traitsSharedBy64Objects[word]).load(std::memory_order_relaxed);
@@ -331,11 +320,9 @@ public:
         return OptionSet<ObjectTrait>::fromRaw(known);
     }
 
-    // By layout, 64 a word.
     const Vector<uint64_t> environments;
 
 private:
-    // No object has either as its traits: it has one of the first three, and there are twelve.
     static constexpr uint16_t notAsked = 0;
     static constexpr uint16_t differ = UINT16_MAX;
 
@@ -362,7 +349,6 @@ bool hasValidReferences(const Program& program, const Type& type, RecordReferenc
     });
 }
 
-// What TypeArena::intern() promises of the parts, and that a type that needs no record has none.
 bool hasCanonicalTypeParts(const Type& type)
 {
     if (type.primitives & ~Primitive::Defined)
@@ -416,7 +402,6 @@ bool hasCanonicalListsOfVerifiedType(const Program& program, const Type& type)
         && hasCanonicalClassPartsOfVerifiedType(program, type.classes);
 }
 
-// Behind hasCanonicalListsOfVerifiedType(): the class parts ascend.
 bool derivedPartsCoverObjectsOfType(const Program& program, const Type& type, const AnswersForMembersOfVerifiedTypes& answers)
 {
     SetView<LayoutID, LayoutSetID> layouts = program.at(type.layouts);
@@ -455,7 +440,6 @@ bool derivedPartsCoverObjectsOfType(const Program& program, const Type& type, co
     return coversNamedObjects && traits == type.traitsOfNamed;
 }
 
-// A built-in constant is a primitive value, and a type names built-in objects.
 static bool namesBuiltinConstantAmongObjects(const Program& program, TypeID id)
 {
     const ObjectTable& objects = program.types.objects();
@@ -463,7 +447,6 @@ static bool namesBuiltinConstantAmongObjects(const Program& program, TypeID id)
         const ObjectRecord& record = objects.at(object);
         return record.kind == ObjectKind::Builtin && program.builtins().at(BuiltinID(record.payload)).kind == BuiltinKind::Constant;
     };
-    // The objects are numbered kind by kind, and behind them all stand the copies for instances: the closures of a large family are not gone through.
     SetView<ObjectID, ObjectSetID> named = program.types.at(program.at(id).objects);
     return named.anyOfWithin(objects.firstOf(ObjectKind::Builtin), objects.endOf(ObjectKind::Builtin), isBuiltinConstant)
         || (objects.firstObjectOfInstances() < objects.size() && named.anyOfWithin(objects.firstObjectOfInstances(), objects.size(), isBuiltinConstant));
@@ -632,9 +615,7 @@ ProgramVerifier::ProgramVerifier(const Program& program, BuildContext& build)
 
 bool ProgramVerifier::run()
 {
-    // The driver's line of the records counts all of these.
     StepTimes steps(m_build, "ReadAndVerify: verify records"_s);
-    // The groups read name classes and built-in names.
     if (auto error = findErrorInStringsAsRead(m_program, m_build.parallelLoops())) {
         fail(WTF::move(*error));
         return false;
@@ -741,7 +722,6 @@ void ProgramVerifier::verifyIDs()
     for (uint32_t index : layoutsWithInvalidMembers)
         fail(inLayout(index));
 
-    // The other lists that the schema marks sorted: supertypes in verifyLayouts(); exports, synthetic exports and run-time functions in AOTProgramVerifierModules.cpp.
     Vector<InternalError> orderErrors = collectInParallel<InternalError>(loops, m_program.functions.size(), [&](unsigned index, Vector<InternalError>& found) {
         if (auto error = findListOrderErrorOfFunctionRecord(FunctionID(index), m_program.functions[index]))
             found.append(WTF::move(*error));
@@ -844,7 +824,6 @@ void ProgramVerifier::verifyClasses()
 
 bool ProgramVerifier::isValidClass(LayoutID id, const Layout& layout) const
 {
-    // Written bases may form a ring: `class A extends B {}` beside `class B extends A {}` compiles, and throws when it runs.
     if (layout.base && m_program.at(layout.base).kind != LayoutKind::Instance)
         return false;
     if (layout.kind != LayoutKind::Instance)
@@ -877,7 +856,6 @@ void ProgramVerifier::verifyVariables()
             return false;
         if (variable.flags.contains(VariableFlags::IsReplaceable) && (variable.flags.contains(VariableFlags::IsImmutable) || variable.owner))
             return false;
-        // It holds what replaces its module while a mock that was registered before the module loaded is in effect, and is empty at all other times. No code of the program names it.
         if (variable.flags.contains(VariableFlags::HoldsMock)) {
             if (!variable.flags.contains(VariableFlags::IsReplaceable) || variable.initialization != VariableInitialization::Uninitialized || variable.name
                 || !m_program.at(variable.module).flags.contains(ModuleFlags::MayBeMocked) || hasVariableThatHoldsMock.quickSet(variable.module.index()))

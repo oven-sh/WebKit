@@ -107,7 +107,6 @@ static_assert(Butterfly::offsetOfPublicLength() == -2 * static_cast<ptrdiff_t>(s
 
 size_t sizeOfVector(size_t vectorLength) { return Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)); }
 
-// What JSObject::ensureLengthSlow() asks the auxiliary space for when a full vector of this length gets one more element.
 size_t sizeStepOfNextVector(uint32_t fullLength)
 {
     return MarkedSpace::sizeClassToIndex(sizeOfVector(std::max<size_t>(BASE_CONTIGUOUS_VECTOR_LEN, nextLength(fullLength + 1))));
@@ -159,7 +158,6 @@ StubRun appendByStore(StubRunner& runner, FakeArray& array, uint32_t length, JSV
 template<uint32_t fullLength>
 static void checkGrowth(GrowingArrays& arrays, Append append, const ArrayKind& kind)
 {
-    // The cell is larger than the request, as a size class may be, and the vector takes all of it.
     const size_t sizeStep = sizeStepOfNextVector(fullLength);
     const size_t cellSize = (sizeStep + 1) * MarkedSpace::sizeStep;
     const uint32_t newVectorLength = static_cast<uint32_t>((cellSize - sizeof(IndexingHeader)) / sizeof(EncodedJSValue));

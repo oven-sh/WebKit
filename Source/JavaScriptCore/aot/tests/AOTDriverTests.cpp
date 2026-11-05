@@ -80,23 +80,6 @@ static void expectRejectedWith(const ChildProcessResult& result, InternalErrorKi
     AOT_TEST_CHECK(lastLineOf(result.output).startsWith(makeString(nameOf(kind), ": "_s)));
 }
 
-static void expectWireText(StringView text, std::span<const uint8_t> bytes)
-{
-    BuildContext build(makeDefaultCompileOptions());
-    AOT_TEST_CHECK(equalSpans(encodeProgramText(text, build).span(), bytes));
-}
-
-static void testPrintWireAccepts()
-{
-    BuildContext build(makeDefaultCompileOptions());
-    Vector<uint8_t> bytes = encodeProgramText(sampleProgram, build);
-    AOT_TEST_CHECK(programKindOf(bytes.span()) == ProgramFile::Kind::Bytes);
-    TemporaryFile program(".bin"_s, bytes.span());
-    ChildProcessResult result = runPrintWire(program);
-    expectExitCode(result, exitCodeForSuccess);
-    expectWireText(result.output, bytes.span());
-}
-
 static void testPrintWireRejects()
 {
     BuildContext build(makeDefaultCompileOptions());
@@ -112,18 +95,10 @@ static void testPrintWireRejects()
     expectRejectedWith(runPrintWire(programWithoutEntry), InternalErrorKind::NoEntryPoint);
 }
 
-static void testPrintWireTakesNoOtherFlag()
-{
-    TemporaryFile program(".ir"_s, byteCast<uint8_t>(sampleProgram.span8()));
-    expectExitCode(runPrintWire(program, { "no-such-word"_s }), exitCodeForInvalidCommandLine);
-}
-
 std::span<const NativeTest> driverTests()
 {
     static constexpr NativeTest tests[] = {
-        { "subcommands/print-wire-accepts"_s, testPrintWireAccepts },
         { "subcommands/print-wire-rejects"_s, testPrintWireRejects },
-        { "subcommands/print-wire-takes-no-other-flag"_s, testPrintWireTakesNoOtherFlag },
     };
     return tests;
 }

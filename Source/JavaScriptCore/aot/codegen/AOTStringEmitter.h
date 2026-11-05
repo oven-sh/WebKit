@@ -17,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Whoever reads through `characters` ends with ensureStillAliveHere(owner).
 struct CharacterView {
     Pointer characters;
     Word32 length;
@@ -36,12 +35,9 @@ struct CodeUnitRange {
     Word32 end;
 };
 
-// A position after ToIntegerOrInfinity.
 struct StringPosition {
     Integer value;
-    // What the type says of the position where it is used. It chooses what is emitted.
     Range range { Range::full() };
-    // The conversion has made the least int64 of NaN and of whatever lies beyond int64. Whoever finds the value negative asks the number.
     std::optional<Number> numberBehindBareConversion { };
 };
 
@@ -53,7 +49,6 @@ LValue loadBytes(Output&, unsigned width, TypedPointer);
 
 class StringEmitter;
 
-// The cell of a string that is flat and stays so. Only StringEmitter makes one, from what the program says of the value.
 class FlatStringCell {
 public:
     CellPointer cell() const { return m_cell; }
@@ -91,26 +86,20 @@ public:
     void generateStringRangeEqualsLiteral(const ValueContext&);
     void generateStringRangeToNumber(const ValueContext&);
     void generateStringRangeParseInt(const ValueContext&);
-    // The units from the start operand to the end operand, which lie inside the string.
     CharacterView viewOfRange(const ValueContext&);
 
-    // What follows is emitted where the condition holds.
     void continueIf(Condition, BlockEdge otherwise);
-    // The 8-bit side falls through.
     template<typename T> T selectByWidth(Condition is8Bit, NOESCAPE const Invocable<T(bool is8Bit)> auto& read, Machine::EdgeClass frequencyOfWide = Machine::EdgeClass::Unlikely);
 
     Word32 word32Of(ValueID);
     String textOf(StringID) const;
 
     Word32 lengthOf(ValueID string);
-    Word32 lengthOf(LiteralStringWord, const Type&);
     Word32 lengthOf(CellPointer string);
     CharacterView viewOf(const OperationContext&, ValueID string);
     CharacterView viewOfFlatString(CellPointer flat);
-    // Of what FlattenString has made. With an answer, whoever reads the string until forgetStringsFoundNarrow() reads bytes: the caller branches on the answer and generates nothing where it may have failed.
     std::optional<Condition> findNarrow(ValueID flatString);
     void forgetStringsFoundNarrow() { m_flagsFoundNarrow.shrink(0); }
-    // The result of FlattenString.
     std::optional<FlatStringCell> flatStringByType(ValueID string);
     Pointer implOfFlatString(FlatStringCell);
     CharacterView viewOfString(const OperationContext&, CellPointer string);
@@ -128,21 +117,15 @@ public:
     Condition areEqual(const OperationContext&, CellPointer, CellPointer, StringIdentity = StringIdentity::Unknown);
     Word32 order(const OperationContext&, CellPointer, CellPointer);
     Word32 orderToCharacter(const CharacterView&, char16_t codeUnit);
-    // `lengthOfSubject`: how long the subject is, and -1 for a subject that is no string, where somebody has read that already.
     Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, std::optional<FlatStringCell> flatSubject = std::nullopt, bool everyCellIsString = false, std::optional<Word32> lengthOfSubject = std::nullopt);
     void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, std::optional<FlatStringCell> flatSubject = std::nullopt, bool everyCellIsString = false, std::optional<Word32> lengthOfSubject = std::nullopt);
-    // Where the atom of a name of the image lies. In an image that may lie anywhere the atom is made on demand: `exists` says whether it has been.
     struct AtomOfName {
         Pointer address;
         std::optional<Condition> exists;
     };
-    // `mentionOfName` is what m_mentions.add() gave for NumberSpace::Name or NameOfText.
     AtomOfName atomOfName(uint32_t mentionOfName);
-    // For a subject that the comparison in place cannot answer: a rope, a 16-bit string.
     void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets);
-    // Whatever cell the image makes of the text holds an atom, so a comparison with another text tells it apart by its address.
     void makeCellsHoldAtomOf(StringID);
-    // The view has as many units behind the offset as the text has, and canCompareInline() holds of the text.
     Condition hasTextAt(const CharacterView&, Word32 offset, StringID);
     void branchOnTextAt(const CharacterView&, Word32 offset, StringID, BranchTargets);
     bool canCompareInline(StringID) const;
@@ -173,12 +156,10 @@ private:
     void generateFindLiteral(const ValueContext&, SearchDirection);
     bool comparesLiteralInPlace(const String& text) const;
     bool readsCharactersInLine(const OperationContext&);
-    // Leaves Output where the pointer does not answer: with a cell that is not known to hold an atom, or while the text has none.
     CellPointer branchOnAtomOfLiteral(ComparedOperand, LValue subject, StringID, BranchTargets, bool isString, Machine::EdgeClass frequencyWithoutAtom);
     void branchOnBytesAt(Pointer address, std::span<const uint8_t> bytes, const Machine::AbstractHeap&, CellPointer owner, BranchTargets);
     Integer truncateToInteger(Number position);
     StringPosition truncatedPositionOf(Number position, StringRangeMethod);
-    // Of a position that arrives as an integer or as a double.
     StringPosition truncatedPositionOf(ValueID, StringRangeMethod);
     Word32 clampToLength(const StringPosition&, Word32 length, bool isRelativeToEnd);
 
@@ -186,9 +167,7 @@ private:
         Pointer impl;
         CharacterSource source;
     };
-    // What FlattenString has read where it made the flat string, which is in front of every reader of it.
     UncheckedKeyHashMap<LValue, OpenedString> m_openedStrings;
-    // The flags of strings that a test in front of the code being generated has found to be of 8 bits.
     Vector<LValue, 2> m_flagsFoundNarrow;
 };
 

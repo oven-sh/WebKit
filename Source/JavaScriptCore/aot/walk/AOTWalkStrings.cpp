@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Strings: the two doors of the mechanism (TypedOperations, BuiltinCalls), and what its files read and build with.
-// Nothing waits and the state is not asked. A suspension means nothing here: what is noted ties records of one block, and integers and strings are saved with the frame.
-// What is built throws only for lack of memory, as the call or the read in whose place it stands does. Withheld (TypedOperations, BuiltinCalls): the doors are not asked.
-
 #include "config.h"
 #include "AOTWalkStrings.h"
 
@@ -24,17 +20,13 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-// AOTWalkNumbers.cpp
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet accessesUnderKeysInWalkStrings { Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine };
 static constexpr OpcodeSet conversionsToNumbersInWalkStrings { Opcode::ToNumber, Opcode::ToNumeric };
 
-// ---- The doors
-
-static_assert(opcodesThatBuildTypedOperationOnStringsTakes == (accessesUnderKeysInWalkStrings | conversionsToNumbersInWalkStrings | allEqualities | allRelations | OpcodeSet { Opcode::ElemGet, Opcode::PropGet, Opcode::ToBoolean, Opcode::TypeTest }));
+static_assert(opcodesThatBuildTypedOperationOnStringsTakes == (accessesUnderKeysInWalkStrings | conversionsToNumbersInWalkStrings | allEqualities | allRelations | OpcodeSet { Opcode::ElemGet, Opcode::PropGet, Opcode::ToBoolean }));
 
 bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
@@ -42,12 +34,10 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
     if (opcode == Opcode::PropGet)
         return buildLengthOfPieceInSight(walker, value, inputs);
     if (opcode == Opcode::ElemGet) {
-        return buildReadByPartsOfKey(walker, value, inputs) || buildAccessUnderOneOfFewTexts(walker, value, inputs)
-            || buildCharacterByIndex(walker, value, inputs) || buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
+        return buildReadByPartsOfKey(walker, value, inputs) || buildCharacterByIndex(walker, value, inputs) || buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
     }
     if (inputs.areOnlyTypes())
         return false;
-    // Each form of a comparison, a truth, a test and a conversion leans on a text, a character or a length in sight.
     if (!accessesUnderKeysInWalkStrings.contains(opcode)) {
         bool somethingIsProven = false;
         for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode); ++operandIndex) {
@@ -58,15 +48,13 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
             return false;
     }
     if (accessesUnderKeysInWalkStrings.contains(opcode))
-        return buildAccessUnderOneOfFewTexts(walker, value, inputs) || buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
+        return buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
     if (allEqualities.contains(opcode))
         return buildEqualityOnStrings(walker, value, inputs);
     if (allRelations.contains(opcode))
         return buildRelationOnStrings(walker, value, inputs);
     if (opcode == Opcode::ToBoolean)
         return buildTruthinessOfLengthOfString(walker, value, inputs);
-    if (opcode == Opcode::TypeTest)
-        return buildTestOfCharacterByCodeUnit(walker, value, inputs);
     if (conversionsToNumbersInWalkStrings.contains(opcode))
         return buildNumberOfPiece(walker, value, inputs);
     return false;
@@ -118,8 +106,6 @@ NotesOfStrings& notesOfStrings(Walker& walker)
         kept = makeUniqueWithoutFastMallocCheck<NotesOfStrings>();
     return static_cast<NotesOfStrings&>(*kept);
 }
-
-// ---- What is known
 
 Reference referenceToRecordForStrings(const Walker& walker, ValueID record)
 {
@@ -307,8 +293,6 @@ Opcode relationWithSidesSwappedForStrings(Opcode relation)
     }
 }
 
-// ---- What the body says
-
 std::optional<uint32_t> operandsNarrowedBehindTestForStrings(const Walker& walker, ValueID test)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -328,8 +312,6 @@ std::optional<uint32_t> operandsNarrowedBehindTestForStrings(const Walker& walke
     return operands;
 }
 
-// Arms that each end with the terminator of their block lead several edges of Code into a block that one edge of the body enters, and the test stays bound to the record of the arm that was walked last.
-// So the walk has to stand in the very block that an edge of the Branch on the record enters, on the side on which the record has come out so.
 static bool branchOnRecordEntersCurrentBlockInWalkStrings(const Walker& walker, Reference test, bool holds)
 {
     if (!test.isValue() || walker.isUnreachable())
@@ -377,7 +359,6 @@ std::optional<TestThatLedHere> testThatLedToBlockOf(Walker& walker, const BodyVa
     return led;
 }
 
-// position < length, spelled in one of four ways. `holds`: how the relation has come out.
 static bool relationSaysPositionBelowLengthInWalkStrings(const Walker& walker, const Operation& relation, bool holds, uint32_t& placeOfPosition, Reference string)
 {
     switch (relation.opcode) {
@@ -412,25 +393,6 @@ bool nameProvesPositionBelowLengthForStrings(const Walker& walker, Reference pos
     }
     return false;
 }
-
-bool testThatLedHereProvesPositionBelowLength(Walker& walker, const BodyValue& value, Reference string, Reference position)
-{
-    if (!walker.types().at(walker.typeOf(position)).isInteger())
-        return false;
-    std::optional<TestThatLedHere> led = testThatLedToBlockOf(walker, value);
-    if (!led)
-        return false;
-    Reference test = walker.referenceBoundTo(led->test);
-    if (!test.isValue())
-        return false;
-    const Operation& relation = walker.code().at(test.id());
-    uint32_t placeOfPosition = 0;
-    if (!relationSaysPositionBelowLengthInWalkStrings(walker, relation, led->holds, placeOfPosition, string))
-        return false;
-    return rootForStrings(walker, referenceToRecordForStrings(walker, relation.operand(placeOfPosition))) == rootForStrings(walker, position);
-}
-
-// ---- What is built
 
 void bindForStrings(Walker& walker, ValueID input, Reference built, Origin origin)
 {
@@ -471,7 +433,6 @@ Reference buildLengthOfString(Walker& walker, Reference string, Origin origin)
     return walker.build(WTF::move(length));
 }
 
-// Read through a flat string the operation writes nothing, so LoopInvariants may move it to wherever its operands stand. So it takes the flat string only beside a position whose name hangs on the test of the bound.
 Reference buildCodeUnitOfString(Walker& walker, Reference string, Reference position, Origin origin)
 {
     if (walker.isUnreachable() || !string || !position)

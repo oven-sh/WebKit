@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Folding: a block is left otherwise than it is written where that asks less: negations are taken off a branch, ways that come to one place need no test. And the one door for whoever ends a block so.
-// At a suspension: nothing. At a throw: the door leads the handler edge as Walker::walkTerminator() does.
-// Withheld: every terminator is copied. The door is no mechanism: it does what it is told.
-
 #include "config.h"
 #include "AOTWalkBranches.h"
 
@@ -26,7 +22,6 @@ static constexpr TerminatorKindSet kindsThatLeadToBlocksInWalkBranches { Termina
 
 namespace {
 
-// BodyTargets::operator[] passes every target in front of the one that it is asked for. Whoever asks in ascending order goes on here from where the last question has stopped.
 class TargetsInWalkBranches {
 public:
     explicit TargetsInWalkBranches(const BodyIndex& index)
@@ -47,7 +42,6 @@ public:
             ++m_target;
         return *m_target;
     }
-    // Of the block that was asked about last.
     const BodyTerminator& terminator() const LIFETIME_BOUND { return m_terminator; }
 
 private:
@@ -74,8 +68,6 @@ static uint32_t numberOfEdgesOfDraftInWalkBranches(const TerminatorDraft& draft)
     }
 }
 
-// ---- The door
-
 void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTargetOfBody> edges)
 {
     if (isUnreachable())
@@ -86,14 +78,12 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
     RELEASE_ASSERT(kindsThatLeadToBlocksInWalkBranches.contains(draft.kind));
     RELEASE_ASSERT(numberOfEdges == numberOfEdgesOfDraftInWalkBranches(draft));
 
-    // leadEdge() takes a block that one edge of the body enters for entered by the edge that it leads alone.
     Vector<uint64_t, 16> targetsLedTo;
     for (const EdgeToTargetOfBody& edge : edges)
         targetsLedTo.append(static_cast<uint64_t>(edge.inputBlock.index()) << 32 | edge.targetIndex);
     std::ranges::sort(targetsLedTo);
     RELEASE_ASSERT(std::ranges::adjacent_find(targetsLedTo) == targetsLedTo.end());
 
-    // Nobody enters a block that is passed by, so what it dominates would find no narrower name: standIn() asks the dominator. What holds in the block being walked holds there.
     for (const EdgeToTargetOfBody& edge : edges) {
         if (edge.inputBlock == m_frames[frameIndex].block)
             continue;
@@ -108,7 +98,6 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
 
     TargetsInWalkBranches targets(index);
 
-    // What comes round is brought into its form in the block that it leaves.
     if (draft.kind == TerminatorKind::Jump) {
         BodyTarget target = targets.at(edges[0].inputBlock, edges[0].targetIndex);
         if (BlockID head = inputBlock(frameIndex, target.block()).head; head && target.proofs().empty()) {
@@ -126,7 +115,6 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
         }
     }
 
-    // askTruthOfOperandsNotProvenBoolean() and convertOperands() are templates of AOTWalk.cpp. This is what they do to a terminator.
     Origin originOfTests = draft.origin();
     originOfTests.isTailCall = false;
     bool areAsTaken = operandsAreAsTaken(draft);
@@ -198,8 +186,6 @@ void Walker::endBlockLeadingTo(TerminatorDraft&& draft, std::span<const EdgeToTa
     m_state.clear();
 }
 
-// ---- Who asks for the door here
-
 bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
 {
     switch (terminator.kind()) {
@@ -216,8 +202,7 @@ bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
     case TerminatorKind::Branch: {
         if (!has(Mechanism::Folding))
             return false;
-        // A constant is for onlyTargetKnownToFolding().
-        Reference condition = referenceOf(terminator.operand(0));
+        Reference condition = referenceOf(terminator.as<TerminatorKind::Branch>().conditionOperand());
         if (!condition || !condition.isValue())
             return false;
         if (std::optional<uint32_t> onlyTarget = onlyTargetWhereAllComeToOnePlace(terminator)) {
@@ -225,7 +210,9 @@ bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
             endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, m_origin), singleElementSpan(edge));
             return true;
         }
-        return branchOnTestBelowNegations(terminator);
+        const Operation& made = m_code.at(condition.id());
+        bool isLookedThrough = made.opcode == Opcode::LogicalNot || (made.opcode == Opcode::ToBoolean ? isBooleanType(m_code.at(made.valueOperand()).type) : conversionsOfForm.contains(made.opcode));
+        return isLookedThrough && branchOnTestBelowNegations(terminator);
     }
     case TerminatorKind::Switch:
     case TerminatorKind::SwitchString:
@@ -236,16 +223,12 @@ bool Walker::leaveBlockAnotherWay(const BodyTerminator& terminator)
     }
 }
 
-// ---- Negations
-
-// `const missing = !(key in o); if (missing)`: the emitter writes a test that its branch alone reads as jumps, and sees through no LogicalNot. Nothing reads the negations then, and the sweep drops them. A front end takes a negation that is written in the condition itself off by changing the targets round.
 bool Walker::branchOnTestBelowNegations(const BodyTerminator& terminator)
 {
     Reference condition = referenceOf(terminator.operand(0));
     if (!condition || !condition.isValue())
         return false;
 
-    // `const no = !(typeof v === "string"); if (no)`: a front end asks every value for its truth, so a ToBoolean stands on either side of the negation. Of a proven boolean that is the value itself, and so is the same value in another form.
     ValueID test = condition.id();
     bool isNegated = false;
     bool hasPassedNegation = false;
@@ -261,7 +244,6 @@ bool Walker::branchOnTestBelowNegations(const BodyTerminator& terminator)
     if (!hasPassedNegation || m_code.isConstant(test))
         return false;
 
-    // A proof on an edge speaks of what the ToBoolean in front of the branch was asked. A Narrowed can no longer say that: its test would stand above the condition. A front end hands such a proof on and reads it nowhere.
     const BodyIndex& index = currentBodyIndex();
     bool someProofIsRead = false;
     index.forEachEdgeResult(terminator.block(), [&](const BodyEdgeResult& result) {
@@ -277,24 +259,18 @@ bool Walker::branchOnTestBelowNegations(const BodyTerminator& terminator)
     return true;
 }
 
-// ---- Ways that come to one place
-
 bool isUnseenWhenUnused(const Walker& walker, const BodyValue& operation)
 {
     Opcode opcode = operation.opcode();
-    // An operation without a result is never used, and the int32 error looks at every operation that states a type.
     if (resultRuleOf(opcode) == ResultRule::None || boundToOf(opcode) != BoundTo::Nothing || opcodesThatStateTypes.contains(opcode))
         return false;
-    // A holder may add a member when it is first read, which shows in the order of its keys.
     if (opcode == Opcode::Builtin && firstReadOfNamedBuiltinIsSeen(walker, operation))
         return false;
-    // The declared effects do not hold what an operand runs that is called or converted.
     if (operandsMayRunCode(opcode))
         return false;
     return declaredEffectsOfOperation(walker.program(), opcode, operation).isRemovableWhenUnused();
 }
 
-// `arriving` is the one edge into the block. A value that somebody uses is a name for what the edge brings.
 static bool isPassedUnseenInWalkBranches(const Walker& walker, const BodyIndex& index, BodyBlock block, BodyTarget arriving)
 {
     if (index.numberOfIncomingEdges(block.id()) != 1 || block.numberOfParameters() != arriving.numberOfIncomingValues())
@@ -327,10 +303,8 @@ WayBehindTerminator wayBehindTarget(const Walker& walker, BlockID from, uint32_t
     return way;
 }
 
-// What the way brings to a parameter of the block that it comes to, under the name that the value has in front of the terminator, behind casts. A proof brings the value that it narrows. Null: nobody can name it.
 static ValueID valueBroughtInWalkBranches(const BodyIndex& index, const WayBehindTerminator& way, uint32_t position)
 {
-    // The jump out of a block that is passed has no proofs.
     auto broughtByEdge = [&](uint32_t positionInTarget) -> ValueID {
         std::span<const ValueID> arguments = way.target.arguments();
         if (positionInTarget < arguments.size())
@@ -340,7 +314,6 @@ static ValueID valueBroughtInWalkBranches(const BodyIndex& index, const WayBehin
     };
 
     ValueID value = way.numberOfPassedBlocks ? way.arrival.arguments()[position] : broughtByEdge(position);
-    // A name that a block gives stands for what an earlier block or the edge has brought, so the last block is asked first.
     for (uint32_t place = way.numberOfPassedBlocks; value && place--;) {
         std::optional<uint32_t> parameter = index.block(way.passed[place]).indexOfParameter(index.valueBehindCasts(value));
         if (!parameter)
@@ -363,7 +336,6 @@ bool comeToSamePlace(const BodyIndex& index, const WayBehindTerminator& left, co
     return true;
 }
 
-// `if (verbose) { }`: the walk takes one of the two ways as it is written. Nothing reads the test then, and the sweep drops it with what computed it.
 std::optional<uint32_t> Walker::onlyTargetWhereAllComeToOnePlace(const BodyTerminator& terminator) const
 {
     if (terminator.kind() != TerminatorKind::Branch || terminator.numberOfTargets() != 2)
@@ -373,11 +345,15 @@ std::optional<uint32_t> Walker::onlyTargetWhereAllComeToOnePlace(const BodyTermi
     BodyTarget taken = *target;
     BodyTarget notTaken = *++target;
 
-    // Nearly every branch is turned away here.
     auto mayBePassed = [&](BodyTarget led) {
         return index.numberOfIncomingEdges(led.block()) == 1 && index.terminator(led.block()).kind() == TerminatorKind::Jump;
     };
     if (taken.block() != notTaken.block() && !mayBePassed(taken) && !mayBePassed(notTaken))
+        return std::nullopt;
+    auto endsWhereNoOtherWayComes = [&](BodyTarget led) {
+        return index.numberOfIncomingEdges(led.block()) == 1 && !isPassedUnseenInWalkBranches(*this, index, index.block(led.block()), led);
+    };
+    if (taken.block() != notTaken.block() && (endsWhereNoOtherWayComes(taken) || endsWhereNoOtherWayComes(notTaken)))
         return std::nullopt;
 
     if (!comeToSamePlace(index, wayBehindTarget(*this, terminator.block(), 0, taken), wayBehindTarget(*this, terminator.block(), 1, notTaken)))

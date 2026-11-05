@@ -75,7 +75,6 @@ static constexpr DescribedRuntime thisRuntime = {
     },
 };
 
-// It lies beside imageStamp(), which every run time has, so that no linker leaves it out.
 extern "C" AOT_IN_RUNTIME_DESCRIPTION_SECTION AOT_KEPT_BY_EVERY_LINKER constinit const DescribedRuntime describedRuntime = thisRuntime;
 
 std::span<const uint8_t> descriptionOfThisRuntime()

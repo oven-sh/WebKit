@@ -56,7 +56,6 @@ static bool checkFunctionLimits(const FunctionTableInputs& inputs, BuildContext&
     return fits(LimitID::ImageFunctions, std::max<uint64_t>(inputs.functions.size(), numbers.numberOfFunctions())) && fits(LimitID::ImageClosureFunctions, numbers.endOfClosureFunctions().index() - numbers.firstClosureFunction().index());
 }
 
-// The run time counts the closure words by the range in the tables, and the code holds the closure numbers that the numbering gave out.
 static bool checkClosureFunctionRange(const FunctionTableInputs& inputs, BuildContext& context)
 {
     const ClosureFunctionRangeData& range = inputs.programTables.closureFunctions;
@@ -170,7 +169,6 @@ static Vector<uint32_t> encodeCodeGranules(const CodeLayout& layout)
     return codeGranules;
 }
 
-// The ids of the functions that closures are made of ascend by unit, and their code lies among the other units of their functions.
 static Vector<uint64_t> encodeClosureWords(const FunctionTableInputs& inputs, BuildContext& context)
 {
     const ClosureFunctionRangeData& range = inputs.programTables.closureFunctions;
@@ -209,8 +207,6 @@ static Vector<uint64_t> encodeClosureWords(const FunctionTableInputs& inputs, Bu
     return words;
 }
 
-// The words of the table, then the lookup of each selector by its place in CallingConventions::methodSelectors(): Image::methodTable() and methodLookups(). Each is an offset into the code, in units of codeOffsetUnit.
-// A word that belongs to no selector is 0, and so is the lookup of a selector that is never mentioned or never enters one.
 static Vector<uint32_t> encodeMethodTable(const FunctionTableInputs& inputs, BuildContext& context)
 {
     const Typed::CallingConventions& conventions = inputs.plan.conventions();
@@ -273,7 +269,6 @@ EncodedFunctionTables encodeFunctionTables(const FunctionTableInputs& inputs, Bu
     if (!checkFunctionLimits(inputs, context) || !checkClosureFunctionRange(inputs, context))
         return { };
 
-    // A loop that starts in a task runs on one thread, so only what has no loop is a task.
     EncodedFunctionTables tables;
     tables.functions = bytesOf(encodeFunctions(inputs, loops));
     tables.closureWords = bytesOf(encodeClosureWords(inputs, context));

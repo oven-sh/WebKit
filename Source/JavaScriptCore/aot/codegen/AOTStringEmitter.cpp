@@ -10,7 +10,6 @@
 
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
-#include "AOTIRProgram.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTRepresentationRules.h"
 #include "AOTStubsStrings.h"
@@ -123,7 +122,6 @@ CharacterSource StringEmitter::sourceOfRope(const OperationContext& context, Cel
     CellPointer base = substringBaseOf(rope);
     CellPointer flat = select(isNotSubstring, rope, base);
     Pointer characters(callStub(context, ropeCharacters(), { rope.value() }).first);
-    // Atomizing the base can replace its StringImpl with one of the other width, so a substring's own 8-bit flag may be stale.
     Word32 flags = loadField<Word32>(loadField<Pointer>(flat, m_heaps.JSString_value), m_heaps.StringImpl_hashAndFlags);
     return { characters, length, flags };
 }
@@ -133,7 +131,6 @@ CharacterView StringEmitter::viewOfString(const OperationContext& context, CellP
     LBasicBlock flat = newBlock();
     LBasicBlock rope = newBlock();
     LBasicBlock continuation = newBlock();
-    // The flags meet, not the answer of a test on them: a branch on the width then tests the bit itself.
     Vector<ValueFromBlock, 2> characters;
     Vector<ValueFromBlock, 2> lengths;
     Vector<ValueFromBlock, 2> implFlags;
@@ -184,7 +181,6 @@ Word32 StringEmitter::lengthOf(CellPointer string)
     ScopeFork fork = m_out.forkScope();
     m_out.branch(isFlat.value(), normalEdge(flat), unlikelyEdge(rope));
 
-    // The cell is kept alive on the side that reads through the impl, so that the block behind the two sides holds nothing but what uses the length.
     m_out.appendToArm(flat, fork);
     Word32 lengthInImpl = loadField<Word32>(fiber, m_heaps.StringImpl_length);
     ensureStillAliveHere(string);
@@ -196,47 +192,8 @@ Word32 StringEmitter::lengthOf(CellPointer string)
     return join.finishBehind(fork);
 }
 
-Word32 StringEmitter::lengthOf(LiteralStringWord word, const Type& type)
-{
-    // The word of a value that may be any string may be the number of any literal, and the type lists none of them.
-    RELEASE_ASSERT(!(type.primitives & Primitive::String));
-
-    ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    bool mayBeCell = false;
-    Vector<std::pair<StringID, unsigned>, 16> lengths;
-    Vector<char16_t> bufferForNonASCII;
-    types().at(type.stringLiterals).forEach([&](StringID literal) {
-        if (literalStrings().indexOf(literal))
-            lengths.append({ literal, m_program.strings.viewOf(literal, bufferForNonASCII).length() });
-        else
-            mayBeCell = true;
-    });
-    unsigned commonest = commonestOf(Vector<unsigned, 16>(lengths.size(), [&](size_t index) { return lengths[index].second; }).span());
-    std::optional<NarrowReference> narrow = mayBeCell ? std::nullopt : narrowWordBehind(word);
-    auto isLiteral = [&](StringID literal) {
-        if (narrow)
-            return equal(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(literalStringWord(literalStrings().numberOf(literal))))));
-        return equal(word, conversions.literalStringConstant(literal));
-    };
-    auto lengthByNumber = [&] {
-        Word32 length = word32(static_cast<int32_t>(commonest));
-        for (auto [literal, lengthOfLiteral] : lengths) {
-            if (lengthOfLiteral != commonest)
-                length = Word32(m_out.select(isLiteral(literal).value(), m_out.constInt32(static_cast<int32_t>(lengthOfLiteral)), length.value()));
-        }
-        return length;
-    };
-    if (!mayBeCell)
-        return lengthByNumber();
-    return selectByBranch<Word32>(conversions.isStringCell(word), [&] {
-        return lengthOf(CellPointer(word.value()));
-    }, lengthByNumber);
-}
-
 Word32 StringEmitter::lengthOf(ValueID string)
 {
-    if (representationOf(string) == Representation::LiteralString)
-        return lengthOf(in<LiteralStringWord>(string), typeOf(string));
     std::optional<FlatStringCell> flat = flatStringByType(string);
     if (!flat)
         return lengthOf(in<CellPointer>(string));
@@ -332,7 +289,6 @@ CellPointer StringEmitter::substring(const OperationContext& context, CellPointe
     return CellPointer(callStub(context, AOT::substring(), { string.value(), zeroExtended(range.start).value(), zeroExtended(range.end).value() }).first);
 }
 
-// IToD rounds only integers beyond 2^53, and those are out of range for every string before and after rounding.
 static std::optional<LValue> integerBehindStringPosition(Number position)
 {
     if (position.value()->opcode() != Machine::IToD)
@@ -363,7 +319,6 @@ Integer StringEmitter::truncateToInteger(Number position)
 StringPosition StringEmitter::truncatedPositionOf(Number position, StringRangeMethod method)
 {
 #if !CPU(ARM64)
-    // An index is not clamped, and NaN is the index 0.
     bool isClamped = method == StringRangeMethod::Slice || method == StringRangeMethod::Substring || method == StringRangeMethod::Substr;
     if (isClamped && !position.value()->hasDouble() && !integerBehindStringPosition(position))
         return { .value = emitter<ConversionEmitter>().toInteger(position), .numberBehindBareConversion = position };
@@ -406,7 +361,6 @@ Word32 StringEmitter::clampToLength(const StringPosition& position, Word32 lengt
         return range.minimum >= 0 ? countedFromStart() : countedFromEnd();
     }
 
-    // A site that gets a negative position gets one every time it runs, so that side lies out of line but is not punished as rare code is.
     LBasicBlock isNotNegative = newBlock();
     LBasicBlock isNegative = newBlock();
     Join<Word32> join(m_out);
@@ -417,7 +371,6 @@ Word32 StringEmitter::clampToLength(const StringPosition& position, Word32 lengt
     join.add(countedFromStart());
     m_out.appendToArm(isNegative, fork);
     Word32 clamped = countedFromEnd();
-    // NaN counts as 0, which is where the least int64 ends up on either way.
     if (position.numberBehindBareConversion)
         clamped = select(greaterThan(*position.numberBehindBareConversion, number(0)), length, clamped);
     join.add(clamped);
@@ -435,7 +388,6 @@ CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length,
 CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length, StringPosition first, std::optional<StringPosition> second)
 {
     auto singleUnit = [&](bool isRelativeToEnd) -> CodeUnitRange {
-        // Outside the string the index is -1, so the end is 0.
         Word32 index = low32(indexInString(first.value, length, isRelativeToEnd));
         Word32 start = select(lessThan(index, 0), 0, index);
         return { start, add(index, word32(1)) };

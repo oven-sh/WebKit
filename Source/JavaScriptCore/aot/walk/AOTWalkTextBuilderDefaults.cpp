@@ -10,8 +10,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What AOTWalkTextBuilders.cpp asks and nobody answers yet. Each answer keeps a text out of its builder, or has a string made of it.
-
 
 
 

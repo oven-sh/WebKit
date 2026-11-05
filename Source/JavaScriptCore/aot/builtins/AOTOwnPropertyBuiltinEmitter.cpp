@@ -35,14 +35,12 @@ public:
     {
     }
 
-    // By its shape an object with extra properties always takes `otherwise`: its order word says that it has them, and under such a word the run time caches lists by Structure alone. A collection drops those.
     Pointer keyListOrElse(CellPointer object, BlockEdge otherwise, KeyListKey key, KeyListKind kind = KeyListKind::Strings)
     {
         static_assert(sizeof(KeyListCacheEntry) == 16);
         static_assert(hasOneBitSet(numberOfKeyLists));
         static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
         static_assert(keyListWordOfStructure(UINT32_MAX) == UINT32_MAX >> 1);
-        // The symbols in a list are those of the realm that keeps it.
         if (key == KeyListKey::Shape && kind != KeyListKind::Strings && !hasOneInstance())
             leaveUnless(emitter<GuardEmitter>().belongsToInstance(object), otherwise);
         ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
@@ -126,7 +124,6 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
 {
     OwnKeysKind kind = call.parameter<OwnKeysKind>(0);
     ValueID argument = call.argumentOrNull(0);
-    // On a way that is seldom taken the bytes of the code in line buy nothing.
     bool isSeldomRun = m_code.at(call.context().block()).frequency != BlockFrequency::Normal;
     if (!call.canMiss() && (!argument || !typeOf(argument).hasObjects() || (isSeldomRun && !typeOf(argument).isObject()))) {
         finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { firstArgumentOrUndefined(call), word32(static_cast<int32_t>(kind)) }));
@@ -158,7 +155,6 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
         lists.add(reader.keyListOrElse(object, unlikelyEdge(isNotCachedByShape), KeyListKey::Shape, listKind));
         m_out.appendTo(isNotCachedByShape);
         branchUnless(hasBits(shapeTests.orderWordOf(object), orderWordHasExtraProperties), outOfLine);
-        // A list cached by Structure holds every own key: all are enumerable strings.
         lists.add(reader.keyListOrElse(object, rareEdge(outOfLine), KeyListKey::Structure));
     };
     bool mayBeCompiledObject = type.anyObject || type.layouts;
@@ -175,14 +171,12 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
     }
 
     Pointer list = lists.finish();
-    // The header of a new cell is state of the allocator. An array literal reads the same word, and a word is read under one heap. It is zero in a realm that is having a bad time.
     Integer header(m_out.load64(instanceField(m_heaps.entire(AbstractHeap::AllocatorState), Instance::offsetOfNewCopyOnWriteArrayHeader(CopyOnWriteArrayWithContiguous))));
     branchUnless(isNotZero(header), outOfLine);
     results.add(ArrayAllocationEmitter(generator()).allocateArrayCell(header, offsetBy(list, JSCellButterfly::offsetOfData()), outOfLine));
 
     m_out.appendTo(outOfLine);
     results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { boxCell(object), word32(static_cast<int32_t>(kind)) }, { .calledBuiltin = functionOf(call.overload()), .isOnRarePath = true }));
-    // What is no object is converted, or refused in the words of the call as it is written.
     if (testsForObject) {
         m_out.appendTo(isNoObject);
         results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { firstArgumentOrUndefined(call), word32(static_cast<int32_t>(kind)) }));
@@ -195,7 +189,6 @@ void OwnPropertyBuiltinEmitter::generateObjectHasOwn(const InlineCall& call)
 {
     bool takesReceiver = m_builtins.at(call.overload()).receiver;
     ValueID keyOperand = call.argument(takesReceiver ? 0 : 1);
-    // The stub refuses undefined and null before it converts the key, as Object.hasOwn does. hasOwnProperty converts the key first, and only a key that is an object can tell the two orders apart.
     RELEASE_ASSERT(!takesReceiver || !typeOf(keyOperand).hasObjects());
     Boxed object = boxedOperand(call.context(), takesReceiver ? call.receiver() : call.argument(0));
     Boxed key = boxedOperand(call.context(), keyOperand);

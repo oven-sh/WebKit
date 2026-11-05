@@ -56,7 +56,6 @@ struct PlacedTypes {
     Vector<uint32_t> places;
 };
 
-// Each function but the body of the first module has a text of its own and fails at one place, which quotes a text. The functions of a module stand side by side.
 struct SizeOfProgramWithTexts {
     constexpr uint32_t numberOfFunctions() const { return numberOfModules * functionsInModule; }
     constexpr uint32_t moduleOf(uint32_t function) const { return (function - 1) / functionsInModule; }
@@ -93,19 +92,14 @@ static constexpr unsigned numberOfTypesBorn = 32;
 static constexpr uint32_t placesOnLineOfProgramWithTexts = 25;
 static constexpr uint32_t kindsOfSharedText = 2;
 static constexpr uint32_t timesEachConstantIsHeld = 3;
-// Several groups to a module, the last of them not full, and several lines to a group.
 static constexpr SizeOfProgramWithTexts fewTexts { 3, 2 * rowsInGroupOfQuotedTexts + 6 };
 static constexpr SizeOfProgramWithTexts manyTexts { 3, 4400 };
 static constexpr uint32_t closuresHandedOutByCall = 50;
 static constexpr uint32_t numberOfKeysInLongList = manyTexts.numberOfFunctions() / 2 + 1;
-// parallelSort() sorts a shorter list on the thread that calls it.
 static constexpr size_t fewestSortedOnPool = 1 << 13;
 static_assert(manyTexts.numberOfFunctions() > fewestSortedOnPool && numberOfKeysInLongList > indicesInRangeOfLoop);
-// Of three texts two are one of kindsOfSharedText texts. Sorted, equal ones stand side by side: more of them than a range holds, so some range begins among them.
 static_assert(manyTexts.numberOfFunctions() / 3 * 2 / kindsOfSharedText > indicesInRangeOfLoop);
-// Of three ranges in a row at most one begins with the first of three equal constants, whatever stands in front of them.
 static_assert(indicesInRangeOfLoop % timesEachConstantIsHeld && manyTexts.numberOfFunctions() > 3 * indicesInRangeOfLoop);
-// A group: a record that two makers fill in two orders, an environment that two closures share, a class and a class below it.
 static constexpr uint32_t numberOfGroupsOfLayouts = 1100;
 static constexpr uint32_t layoutsInGroup = 4;
 static constexpr uint32_t functionsInGroup = 5;
@@ -115,9 +109,7 @@ static_assert(thingsMentionedByBody < numberOfMentionedThings);
 static_assert(firstThingStride <= thingsMentionedByBody && numberOfMentioningBodies * firstThingStride >= numberOfMentionedThings, "every thing is mentioned");
 
 #if CPU(ARM64)
-// On x86-64 a near call reaches all the code that an image can hold: nothing there has a veneer.
 static constexpr size_t reachOfNearCall = MacroAssembler::relocationReach(RelocationKind::Call);
-// Every place in a body has to reach one copy of the shared code.
 static constexpr size_t sizeOfLongBody = reachOfNearCall / 8 * 5;
 static constexpr uint32_t numberOfLongBodies = 2;
 static constexpr uint32_t numberOfBodiesOnEachSide = 150;
@@ -130,7 +122,6 @@ static constexpr uint16_t secondEntry = 1;
 static_assert(sizeOfLongBody < reachOfNearCall && numberOfLongBodies * sizeOfLongBody > reachOfNearCall);
 #endif
 
-// An image in memory holds addresses inside itself. Two images are compared as the compiler wrote them: for the address 0.
 static Vector<uint8_t> copyBytes(const TestImage& image)
 {
     Vector<uint8_t> bytes(image.bytes.span());
@@ -144,7 +135,6 @@ static void checkSameForAllThreadCounts(const BuildBytes& buildBytes)
     Vector<uint8_t> expected = buildBytes(threadCounts[0], nullptr);
     for (unsigned threadCount : std::span(threadCounts).subspan(1))
         AOT_TEST_CHECK(buildBytes(threadCount, nullptr) == expected);
-    // As a build inside Bun runs: its loops and its lanes on the pool of the host.
     AOT_TEST_CHECK(buildBytes(mostThreads, &Typed::poolOfNewThreads) == expected);
 }
 
@@ -176,7 +166,6 @@ static StringID internNumberedText(Typed::Program& program, ASCIILiteral prefix,
     return program.strings.intern(StringView(text));
 }
 
-// The spaces take turns, so that each body mentions things of all of them.
 static Vector<MentionedThing> createMentionedThings(Typed::Program& program)
 {
     constexpr uint32_t module = 0;
@@ -186,9 +175,7 @@ static Vector<MentionedThing> createMentionedThings(Typed::Program& program)
     for (unsigned index = 0; index < thingsInMentionedSpace; ++index) {
         uint32_t name = internNumberedText(program, "name"_s, index, ""_s).index();
         uint32_t text = internNumberedText(program, "text"_s, index, ""_s).index();
-        // Image makes a string of the name of the group, in whatever order it goes through the patterns.
         uint32_t pattern = internNumberedText(program, "(?<group"_s, index, ">a+)"_s).index();
-        // Records of several sizes: where one lies depends on all that lie in front of it.
         Vector<uint32_t, 8> request { static_cast<uint32_t>(RequestKind::TemplateObject) };
         for (unsigned part = 0; part <= index % mostPartsOfTemplate; ++part) {
             request.append(text);
@@ -204,7 +191,6 @@ static Vector<MentionedThing> createMentionedThings(Typed::Program& program)
     return things;
 }
 
-// Either way a body mentions the same things: names and strings are numbered by the first function that names them. Backward, the last body comes first, and each begins with its last thing.
 static Vector<CompiledCode> mentioningBodies(std::span<const MentionedThing> things, ArrivalOrder order)
 {
     Vector<CompiledCode> result;
@@ -356,7 +342,6 @@ static void appendModuleWithTexts(StringBuilder& text, SizeOfProgramWithTexts si
         text.append(place ? ", "_s : ""_s, "{position="_s, place, " start="_s, start, " end="_s, textOfQuotes.length(), '}');
     }
     text.append("] textOfQuotes=\""_s, textOfQuotes.toString(), "\"} functionText=\""_s);
-    // A blank between two functions: texts that touch are kept as one.
     for (uint32_t place = 0; place < size.functionsInModule; ++place)
         text.append(functionTextAt(module, place), ' ');
     text.append("\"\n"_s);
@@ -401,8 +386,6 @@ static std::array<uint32_t, 2> keyInLongList(uint32_t number)
     return { module, number % numberOfKeysInLongList };
 }
 
-// Only a function object is asked for its text, so each function has the entry that its closures name.
-// Most of the constants repeat another, and so do most of the keys.
 static Vector<CompiledCode> codeOfProgramWithTexts(const TestBuild& build, SizeOfProgramWithTexts size)
 {
     Vector<CompiledCode> result;
@@ -427,7 +410,6 @@ static Vector<CompiledCode> codeOfProgramWithTexts(const TestBuild& build, SizeO
     return result;
 }
 
-// As findQuotedText() of the run time reads.
 static String readQuotedText(const ProgramTables& tables, uint32_t module, LineColumn place)
 {
     std::tuple wanted { module, static_cast<uint32_t>(place.line), static_cast<uint32_t>(place.column) };
@@ -501,7 +483,6 @@ static void testTextsOfSeveralModulesReadBack()
     checkTextsReadBack(builtImage(build, codeOfProgramWithTexts(build, fewTexts)), fewTexts);
 }
 
-// The bytes, and behind them the numbers of the keys, which no code of this program is linked with.
 static Vector<uint8_t> bytesOfImageWithLongLists(unsigned threadCount, const HostThreadPool* hostPool)
 {
     TestBuild build(textOfProgramWithTexts(manyTexts), { .threadCount = threadCount, .hostPool = hostPool });
@@ -528,7 +509,6 @@ static void appendLayoutsOfGroup(StringBuilder& text, uint32_t group)
     text.append("layout L"_s, layout + 3, " kind=Instance name=\"Derived"_s, group, "\" base=L"_s, layout + 2, " constructor=f"_s, function + 4, " fields=[{key=\"level\" declared={type=anything}}] flags=[HasHeritage]\n"_s);
 }
 
-// v0 is the global object and v1 a function that nobody knows.
 static void appendStatementsOfGroup(StringBuilder& text, uint32_t group)
 {
     uint32_t layout = group * layoutsInGroup;
@@ -583,7 +563,6 @@ static String textOfProgramWithManyLayouts()
     return text.toString();
 }
 
-// The list lies in front of the record, three counts first. Here only what lies in the cell is compared.
 template<typename Record>
 static void checkReferencesReadBack(const ProgramTables& tables, const Typed::PlannedLayout& planned, const Record& record)
 {
@@ -625,7 +604,6 @@ static void checkObjectRecordReadBack(const TestBuild& build, const ProgramTable
             AOT_TEST_CHECK(plan.slot(id, fields[place]).indexInLayoutRecord == std::optional<uint16_t>(entries[place]));
     }
     checkReferencesReadBack(tables, planned, record);
-    // The record of each shape says of the class what the record that the class is found by says.
     if (uint32_t offsetOfClass = record.isClass() ? tables.offsetOfClass(id.index()) : 0)
         AOT_TEST_CHECK(!memcmp(&record.classData(), &tables.at<LayoutData>(offsetOfClass)->classData(), sizeof(ClassData)));
     ++counts.objects;
@@ -651,7 +629,6 @@ static void checkEnvironmentRecordReadBack(const TestBuild& build, const Program
     counts.environmentsWithVariables += record.kind == LayoutKind::Environment && !described.empty();
 }
 
-// The lists of subclasses are the inverse of LayoutData::assumedBase() among the classes that have a record.
 static void checkListsOfSubclassesReadBack(const ProgramTables& tables, RecordsReadBack& counts)
 {
     Vector<Vector<uint32_t>> classesBelow(tables.numberOfLayoutIndices);
@@ -673,7 +650,6 @@ static void checkListsOfSubclassesReadBack(const ProgramTables& tables, RecordsR
     }
 }
 
-// Against the plan, which compiled code goes by: whatever it has decided about the program, the records say the same.
 static void checkLayoutRecordsReadBack(const TestBuild& build, const ProgramTables& tables)
 {
     const Typed::ShapeTable& shapes = build.plan().shapes();
@@ -709,7 +685,6 @@ static void testRecordsOfManyLayouts()
     });
 }
 
-// It has the tables that only a validating run time reads, and checkProgramTables() goes through the joined tables.
 static void testRecordsOfManyLayoutsOfValidatingBuild()
 {
     checkSameForAllThreadCounts([](unsigned threadCount, const HostThreadPool* hostPool) {

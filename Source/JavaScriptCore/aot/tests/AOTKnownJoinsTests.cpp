@@ -27,7 +27,6 @@ static void appendModuleForKnownJoinsTests(StringBuilder& text)
     text.append("    v2 = NewClosure function=f1\n    v3 = Call v1, -, v2\n    Return v3\n}\n"_s);
 }
 
-// function run(c) { g0 = 1; g1 = 1; ..  if (c) g0 = 1; else g0 = 2; g0;  if (c) g1 = 1; else g1 = 2; g1; .. }  sink(run)
 static String joinsBehindKnownVariablesForKnownJoinsTests(unsigned numberOfJoins)
 {
     StringBuilder text;
@@ -49,7 +48,6 @@ static String joinsBehindKnownVariablesForKnownJoinsTests(unsigned numberOfJoins
     return text.toString();
 }
 
-// function run(c) { const a0 = [c], a1 = [c], ..;  (c ? { x: 1 } : { x: 2 }).x; (c ? { x: 1 } : { x: 2 }).x; ..  c(a0); c(a1); .. }  sink(run)
 static String joinsOfObjectsUnderLiveValuesForKnownJoinsTests(unsigned numberOfJoins)
 {
     StringBuilder text;
@@ -80,7 +78,6 @@ static std::optional<uint64_t> instructionsOfWalkForKnownJoinsTests(const String
         std::unique_ptr<Program> parsed = parseProgram(withStandInLibrary(text), build);
         AOT_TEST_CHECK(parsed);
         StagedBuild stages(WTF::move(parsed), build);
-        // The first request runs the whole stage.
         AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
         instructions = instructionsOfAllThreadsIn([&] {
             AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
@@ -89,7 +86,6 @@ static std::optional<uint64_t> instructionsOfWalkForKnownJoinsTests(const String
     return instructions;
 }
 
-// A join looks at the places that its ways do not share. Where it goes through all that either state holds, the work is the square of the number of joins.
 static void testWalkGrowsAsJoinsBehindKnownVariablesDo()
 {
     constexpr unsigned numberOfJoins = 1500;
@@ -99,7 +95,6 @@ static void testWalkGrowsAsJoinsBehindKnownVariablesDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// Whether an object has another name behind the join is told by where it was made. Where the join goes through the values that are live at its head, the work is the square of the number of joins.
 static void testWalkGrowsAsJoinsOfObjectsUnderLiveValuesDo()
 {
     constexpr unsigned numberOfJoins = 1500;

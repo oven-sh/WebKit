@@ -32,8 +32,6 @@ void notePrototypesLaidAboveOtherObjects(LinkFlow& flow, const LinkType& above)
         flow.prototypesLaidAboveOtherObjects.quickSet(member.index());
 }
 
-// `x instanceof C` is a test of the shape where whatever stands below C.prototype is an object that `new C` has made, or `new` of a class that the tag of C chooses:
-// nobody outside has the prototype object or the class in hand, nothing was laid below the prototype object by a link that the layouts do not show, and no class is written below C but the members that its maker picks by tag.
 static bool onlyOwnObjectsStandBelowPrototypeOf(const LinkFlow& flow, const LinkTables& tables, LayoutID id)
 {
     const Program& program = flow.program;
@@ -61,7 +59,6 @@ void writeTablesOfUnions(LinkFlow& flow, LinkTables& tables)
         tables.layouts[index].onlyOwnObjectsStandBelowPrototype = onlyOwnObjectsStandBelowPrototypeOf(flow, tables, LayoutID(index));
 }
 
-// `tag`hello ${x}``: a cooked text is undefined only where the text that is written is no valid one.
 TypeID typeOfElementsOfTemplateObject(const BodyValue& made)
 {
     for (TemplateString part : made.as<Opcode::NewTemplateObject>().templateStrings()) {

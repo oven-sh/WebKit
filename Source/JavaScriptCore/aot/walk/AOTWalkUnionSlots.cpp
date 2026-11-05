@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `function scaleOf(s: Circle | Square) { return s.scale }`, where both keep the field in the cell in one form at different offsets: one operation on the slot, whose code finds the offset by the shape word.
-// It only answers AOTWalkTypedAccesses.cpp, out of the plan alone: the answers are kept from unit to unit, so they hang neither on a loop nor on the state. At a suspension and at a throw: nothing.
-// Withheld with TypedOperations, which asks.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -24,12 +20,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What a closed read by name costs where the place at its site answers.
 static constexpr unsigned instructionsOfClosedAccessInUnionSlots = 14;
-// The image keeps equal tables once, so a table costs its bytes once for a key and a set of layouts. Each unit that has such an access makes the table anew, which is what this bounds: as many shapes as a flat table takes, a byte each.
 static constexpr size_t mostBytesOfOffsetTableInUnionSlots = maxShapesInFlatTable;
 
-// The smallest family that holds every member. Null: there is none, or the set has one member.
 FamilyID familyAroundSetOfLayouts(const Walker& walker, LayoutSetID set)
 {
     if (!set || holdsOneMember(set))
@@ -47,8 +40,6 @@ FamilyID familyAroundSetOfLayouts(const Walker& walker, LayoutSetID set)
         }
         return family;
     }
-    // The families that hold one layout stand in one another, so the first of them that holds the set is the smallest that does. All but one of a thousand members: the set has its parts in common with the
-    // family, and the comparison passes those over.
     for (FamilyID family = families.nearestFamilyOf(view.first()); family; family = families.nearestFamilyAbove(family)) {
         LayoutSetID layouts = families.layoutsOf(family);
         if (types.at(layouts).size() >= view.size() && types.layoutSets().isSubset(set, layouts))
@@ -57,13 +48,11 @@ FamilyID familyAroundSetOfLayouts(const Walker& walker, LayoutSetID set)
     return { };
 }
 
-// A test or a case of the program has left some members of a family: `switch (s.tag) { case "circle": case "square": s.scale }`.
 bool mayAccessThroughSetOfLayouts(const Walker& walker, LayoutSetID set)
 {
     return !!familyAroundSetOfLayouts(walker, set);
 }
 
-// No emitter of an access under a private name finds an offset by the shape: it compares the brand and reads at one place.
 static bool isNameOfPropertyInUnionSlots(const Program& program, PropertyKeyID key)
 {
     if (!key || liesInThread(key))
@@ -82,7 +71,6 @@ static bool isNameOfPropertyInUnionSlots(const Program& program, PropertyKeyID k
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The list that SlotAccessEmitter::distanceBehindLowestOffset() makes, and the question that it asks.
 bool paysToFindOffsetByShape(const Walker& walker, std::span<const LayoutID> receivers, PropertyKeyID key, bool isStore)
 {
     const Program& program = walker.program();
@@ -99,7 +87,6 @@ bool paysToFindOffsetByShape(const Walker& walker, std::span<const LayoutID> rec
             return false;
         ShapeRange range = shapes.shapesOf(receiver);
         if (range.isEmpty()) {
-            // A store writes without asking whether the object has the slot.
             if (isStore)
                 return false;
             continue;
@@ -119,7 +106,6 @@ bool paysToFindOffsetByShape(const Walker& walker, std::span<const LayoutID> rec
     return distances.numberOfInstructions() < instructionsOfClosedAccessInUnionSlots && distances.table.size() <= mostBytesOfOffsetTableInUnionSlots;
 }
 
-// `"x" in point`, where the plan keeps the field of every receiver in a form without an empty state: no bits of such a slot say that it is empty, so the property is there for the life of the object.
 bool everyReceiverKeepsFieldInSlotThatIsNeverEmpty(const Walker& walker, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     const SlotPlan& slots = walker.plan().slots();

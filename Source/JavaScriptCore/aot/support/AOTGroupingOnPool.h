@@ -12,9 +12,6 @@
 
 namespace JSC { namespace AOT {
 
-// A counting sort on all threads. Whatever comes out is the same at any number of threads.
-
-// The rows come ascending by group. Where the rows of each group begin, and one more for the end. A group may have no rows.
 Vector<uint32_t> firstRowsOfGroups(const ParallelLoops& loops, uint32_t numberOfGroups, size_t numberOfRows, const Invocable<uint32_t(size_t)> auto& groupOfRow)
 {
     RELEASE_ASSERT(numberOfGroups < UINT32_MAX && numberOfRows <= UINT32_MAX);
@@ -34,8 +31,6 @@ Vector<uint32_t> firstRowsOfGroups(const ParallelLoops& loops, uint32_t numberOf
     return firstRow;
 }
 
-// A row has its group in the high half. The rows of a group stay in the order in which they came. A counting sort by eleven bits at a time, lowest first:
-// each piece of the rows counts for itself, so nobody shares a counter and no group is one thread's.
 inline void sortRowsByGroup(const ParallelLoops& loops, Vector<uint64_t>& rows, uint32_t numberOfGroups)
 {
     static constexpr unsigned bitsOfDigit = 11;
@@ -53,7 +48,6 @@ inline void sortRowsByGroup(const ParallelLoops& loops, Vector<uint64_t>& rows, 
         return;
     }
 
-    // By the count alone.
     const size_t numberOfPieces = std::min(mostPieces, count / fewestRowsOfPiece);
     auto pieceOf = [&](std::span<const uint64_t> all, size_t piece) {
         size_t first = count * piece / numberOfPieces;
@@ -61,7 +55,6 @@ inline void sortRowsByGroup(const ParallelLoops& loops, Vector<uint64_t>& rows, 
     };
     Vector<uint64_t> scratch;
     scratch.grow(count);
-    // By digit, then by piece: the order in which the rows come to stand.
     Vector<uint32_t> firstPlace;
     firstPlace.grow(numberOfDigits * numberOfPieces);
     for (unsigned shift = 32; static_cast<uint64_t>(numberOfGroups - 1) >> (shift - 32); shift += bitsOfDigit) {

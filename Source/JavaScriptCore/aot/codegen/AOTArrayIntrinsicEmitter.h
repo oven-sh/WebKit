@@ -33,15 +33,12 @@ public:
     void generatePutContiguousIndex(const ValueContext& value) { putInBounds(value, arrayStorageFormOf(ArrayStorage::Contiguous)); }
     void generatePutDoubleIndex(const ValueContext& value) { putInBounds(value, arrayStorageFormOf(ArrayStorage::Double)); }
     void generateNewContiguousArray(const ValueContext& value) { newArrayOfForm(value, arrayStorageFormOf(ArrayStorage::Contiguous)); }
-    void generateNewDoubleArray(const ValueContext& value) { newArrayOfForm(value, arrayStorageFormOf(ArrayStorage::Double)); }
     void generateNewArrayLike(const ValueContext&);
-    void generateNewArrayWithCapacity(const ValueContext&);
     void generateTryPutByValDirect(const ValueContext&);
     void generateTryPutIndex(const ValueContext&);
     void generateTryCopyFilledElements(const ValueContext&);
     void generateTryPutElements(const ValueContext&);
     void generateTryFillNewArray(const ValueContext&);
-    void generateGrowNewArray(const ValueContext&);
     void generateTruncateNewArray(const ValueContext&);
 
 private:
@@ -51,10 +48,8 @@ private:
 
     ElementAccessEmitter& elements() { return emitter<ElementAccessEmitter>(); }
     Boxed contiguousElementOrEmpty(const ValueContext& access, CellPointer array, Integer index);
-    // Null: the read does not stand in the arm of the last HasContiguousIndex that a Branch asked, of the same array and position, with nothing but names in between.
     LValue elementFoundByTestInFront(const ValueContext& read);
     void putInBounds(const ValueContext&, const ArrayStorageForm&);
-    // Of an operation that tests nothing, because the library's code says that the position lies below the length. It counts the operation, or builds the test: ElementAccessEmitter::testsEveryPosition().
     Integer positionThatLibraryVouchesFor(const ValueContext&, const ArrayElements&);
     template<typename Functor> void forEachPositionBelow(Integer count, const Functor&);
     Condition isOneOfBoxedForms(Word32 mode, IndexingType ofIntegers, IndexingType ofValues);

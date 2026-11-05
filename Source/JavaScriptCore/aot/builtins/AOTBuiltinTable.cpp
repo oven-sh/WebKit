@@ -88,10 +88,18 @@ static const T& checkedAt(std::span<const T> list, size_t index)
 template<typename Record, typename Key>
 static std::optional<size_t> findPosition(std::span<const Record> records, Key Record::* member, Key key)
 {
-    auto found = std::ranges::lower_bound(records, key, { }, member);
-    if (found == records.end() || (*found).*member != key)
+    size_t position = 0;
+    size_t length = records.size();
+    while (length > 1) {
+        size_t half = length / 2;
+        position += records[position + half - 1].*member < key ? half : 0;
+        length -= half;
+    }
+    if (length && records[position].*member < key)
+        ++position;
+    if (position == records.size() || records[position].*member != key)
         return std::nullopt;
-    return static_cast<size_t>(found - records.begin());
+    return position;
 }
 
 template<typename Record, typename Key>
@@ -108,7 +116,6 @@ static std::span<const Record> findRecords(std::span<const Record> records, Buil
     return records.subspan(found.begin() - records.begin(), found.size());
 }
 
-// Where the records of each built-in begin in a list that is in the order of the built-ins. The compiler asks every built-in for its records, several times a program.
 template<typename Record>
 class RecordsByBuiltin {
 public:
@@ -153,11 +160,6 @@ bool BuiltinTable::contains(RuntimeFunctionID id) const
     return !!findRecord(m_data.runtime.functions, &RuntimeFunctionData::id, id);
 }
 
-const Builtin& BuiltinTable::at(BuiltinID id) const
-{
-    return checkedAt(m_data.builtins, id.index());
-}
-
 static std::atomic<const BuiltinOverload*> unpackedOverloads;
 
 static NEVER_INLINE const BuiltinOverload* unpackOverloads(std::span<const BuiltinPackedOverload> packedOverloads)
@@ -197,11 +199,6 @@ static ALWAYS_INLINE std::span<const BuiltinOverload> unpacked(std::span<const B
 const BuiltinOverload& BuiltinTable::at(BuiltinOverloadID id) const
 {
     return checkedAt(unpacked(keptByThisReader(m_data.overloads, builtinTableOverloads)), id.index());
-}
-
-const BuiltinClass& BuiltinTable::at(BuiltinClassID id) const
-{
-    return checkedAt(m_data.classes, id.index());
 }
 
 const BuiltinSlot& BuiltinTable::at(BuiltinSlotID id) const
@@ -461,7 +458,6 @@ bool BuiltinTable::isSameOrSubclassOf(BuiltinClassID builtinClass, BuiltinClassI
     return false;
 }
 
-// The test for an instance of the class compares the type of the cell, and the type of the cell says how wide an element is.
 TypedArrayType BuiltinTable::typedArrayTypeOf(BuiltinClassID builtinClass) const
 {
     if (!builtinClass || !isTypedArrayType(at(builtinClass).type))
@@ -660,7 +656,6 @@ bool BuiltinTable::letsInUnseenCode(BuiltinID id) const
 {
     if (letsInUnseenCodeWhenCalled(id))
         return true;
-    // createRequire() returns a require function.
     return std::ranges::any_of(overloadsOf(id), [&](const BuiltinOverload& overload) {
         return std::ranges::any_of(at(overload.result.type).parts, [&](const BuiltinTypePart& part) {
             return part.kind == BuiltinTypePartKind::Builtin && letsInUnseenCodeWhenCalled(canonicalID(part.builtin));
@@ -682,7 +677,12 @@ std::span<const BuiltinMarkedEntry> BuiltinTable::marked(BuiltinMark mark) const
 
 bool BuiltinTable::has(BuiltinMark mark, BuiltinID id) const
 {
-    return std::ranges::binary_search(marked(mark), id, { }, &BuiltinMarkedEntry::builtin);
+    auto placeOf = [](BuiltinMark markOfEntry, BuiltinID builtin) {
+        return static_cast<uint64_t>(markOfEntry) << 32 | builtin.index();
+    };
+    return std::ranges::binary_search(m_data.runtime.marks, placeOf(mark, id), { }, [&](const BuiltinMarkedEntry& entry) {
+        return placeOf(entry.mark, entry.builtin);
+    });
 }
 
 std::optional<BuiltinBoxedStub> BuiltinTable::boxedCallStubOf(BuiltinID id) const
@@ -1047,7 +1047,6 @@ BuiltinID BuiltinTable::builtinFromToken(StringView token) const
     if (token.isEmpty())
         return { };
     if (this != &singleton()) {
-        // The table of a build has the tokens of the table it was made from.
         BuiltinID found = singleton().builtinFromToken(token);
         if (contains(found) && token == tokenOf(found))
             return found;

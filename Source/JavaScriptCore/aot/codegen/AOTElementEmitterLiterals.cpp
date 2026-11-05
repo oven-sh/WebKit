@@ -20,12 +20,6 @@ void AllocationEmitter::generateNewArray(const ValueContext& value)
     define(value, allocation.newLiteral(value));
 }
 
-void AllocationEmitter::generateNewArrayOfElements(const ValueContext& value)
-{
-    ArrayAllocationEmitter allocation(generator());
-    define(value, allocation.newLiteralOfElements(value));
-}
-
 void AllocationEmitter::generateAppendElement(const ValueContext& value)
 {
     emitter<ElementAccessEmitter>().appendElement(value, in<CellPointer>(value->arrayOperand()), value->valueOperand());
@@ -55,7 +49,6 @@ void GuardEmitter::generateIsInBounds(const ValueContext& value)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     Integer index = elements.indexOrElse(value->positionOperand(), true, nullptr);
-    // testLength() needs storage that has a form. That is tested or proven before this test, as it is before the access that this test guards.
     defineTest(value, elements.testLength(value, index, elements.elementsOf(value, in<CellPointer>(value->arrayOperand()))).isInside);
 }
 
@@ -72,7 +65,6 @@ void GuardEmitter::generateIsElementPresent(const ValueContext& value)
     });
 }
 
-// A view of a detached buffer has the length 0.
 void GuardEmitter::generateIsInsideView(const ValueContext& value)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();

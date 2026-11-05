@@ -115,7 +115,6 @@ static void writeLocaleUseSection(const Typed::Program& program, const Typed::Fa
         uses.append(CanonicalUse { use.kind, { }, use.builtin, use.witness });
         if (use.kind != Wire::LocaleUseKind::Constant)
             continue;
-        // The run time looks for data under the canonical form of what the program spells.
         String canonical;
         if (use.tag) {
             Vector<char16_t> buffer;
@@ -179,8 +178,8 @@ static void writeWorkerSections(const Typed::Program& program, const Typed::Fact
     setRecordsOfResultSection(output, Wire::ResultSection::WorkerEntries, entries);
 
     Vector<Wire::WorkerStartRecord> startsWithoutName;
-    if (std::optional<Wire::Witness> start = facts.workerStartWithoutName())
-        startsWithoutName.append(Wire::WorkerStartRecord { .witness = *start });
+    for (const Wire::Witness& start : facts.workerStartsWithoutName())
+        startsWithoutName.append(Wire::WorkerStartRecord { .witness = start });
     setRecordsOfResultSection(output, Wire::ResultSection::WorkerStartsWithoutName, startsWithoutName);
 
     const Vector<Wire::Witness>& urlsThatStartWorkers = facts.tables().program.urlsThatStartWorkers;
@@ -252,7 +251,6 @@ void writeFeatureSection(const Typed::Facts& facts, const BuiltImage* image, Com
         if (contents.numberOfWebAssemblyModules)
             add(RemovableFeature::WebAssembly);
 
-        // A use that is not named does not keep every feature, and the code of the image has no way around what it calls.
         FeatureSet featuresNamedByFacts;
         for (const Wire::FeatureUseRecord& record : records) {
             if (record.kind == Wire::FeatureUseKind::Named && record.feature < FeatureSet::size())

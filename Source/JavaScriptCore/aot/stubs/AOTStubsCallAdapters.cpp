@@ -103,7 +103,6 @@ static void emitSaveRegistersInAdapter(StubAssembler& jit, GPRReg instance)
 #endif
 }
 
-// vmEntryToJavaScript() and its kin store only to the head of the record in their frame. The frame pointer is still the caller's.
 static void emitFillFrameOfEntryFromNativeCode(StubAssembler& jit, GPRReg vm, AdapterCaller caller)
 {
     const ptrdiff_t begin = EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, calleeSaveRegistersBuffer);
@@ -118,7 +117,6 @@ static void emitFillFrameOfEntryFromNativeCode(StubAssembler& jit, GPRReg vm, Ad
     for (ptrdiff_t offset = begin; offset < 0; offset += sizeof(CPURegister))
         jit.store64(TrustedImm32(0), Address(fp, static_cast<int32_t>(offset)));
     if (caller == AdapterCaller::NativeCodeOrInterpreter) {
-        // An even number of arguments, this among them, leaves one word between the arguments and the record.
         Jump argumentsFillFrame = jit.branchTest32(CCallHelpers::NonZero, incomingFrameSlot(CallFrameSlot::argumentCountIncludingThis), TrustedImm32(1));
         jit.store64(TrustedImm32(JSValue::ValueUndefined), Address(fp, static_cast<int32_t>(EntryFrame::vmEntryRecordOffset() - sizeof(Register))));
         argumentsFillFrame.link(&jit);
@@ -157,7 +155,6 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
     static_assert(!(AdapterFrame::saveAreaSize % stackAlignmentBytes()));
     jit.subPtr(TrustedImm32(AdapterFrame::saveAreaSize + extraBytes), sp);
     emitSaveRegistersInAdapter(jit, instance);
-    // The word that only aligns the area.
     if constexpr (-AdapterFrame::offsetOfNewTarget < static_cast<ptrdiff_t>(AdapterFrame::saveAreaSize))
         jit.store64(TrustedImm32(0), Address(fp, AdapterFrame::offsetOfNewTarget - static_cast<ptrdiff_t>(sizeof(CPURegister))));
     jit.move(instance, instanceGPR);
@@ -275,7 +272,6 @@ static void emitCopyStackWords(StubAssembler& jit, const StackWordCopy& copy, Ju
     emitCopyFromLastWord(jit, Address(copy.source), Address(copy.destination), copy.index, copy.value);
 }
 
-// The caller does not read the callee frame again. The stack words slide down over the adapter frame, which is rebuilt above them with the arguments that go in registers.
 static void emitRelocateFrameAboveStackWords(StubAssembler& jit, const EntryCall& call, const StackWordCopy& copy)
 {
     constexpr int32_t numberOfRegisters = numberOfArgumentGPRs;
@@ -389,7 +385,6 @@ void generateEnterClosure(StubAssembler& jit)
     jit.load64(Address(calleeGPR, offsetOfClosureEntry), word);
     hasWord.append(jit.jump());
 
-    // The callee only says which realm is entered. The first argument is the closure number of the function, an int32.
     jit.bindEntry(enterModuleBody());
     emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
     jit.load32(Address(fp, offsetOfFirstArgument), word);
@@ -414,8 +409,6 @@ void generateEnterClosure(StubAssembler& jit)
 
 StubSignature signatureOfStartModule(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0) }); }
 
-// It keeps nothing in a register across a call, so a throw that passes its frame by has nothing to put back.
-// The status operations do what ModuleEmitter of codegen/AOTModuleEmitter.cpp emits for BeginModuleEvaluation, FinishModuleEvaluation and StopLoadingBehindFile.
 void generateStartModule(StubAssembler& jit)
 {
     using Operation = ModuleStartStepData::Operation;
@@ -446,7 +439,6 @@ void generateStartModule(StubAssembler& jit)
         jit.loadPtr(nextStepInFrame, nextStep);
     };
 
-    // A row may name starts as deep as the graph of imports, and the bodies count on this test.
     Label entry = jit.label();
     jit.checkStackBeforeEntering();
     jit.emitFunctionPrologue();
@@ -480,7 +472,6 @@ void generateStartModule(StubAssembler& jit)
     Jump mayStopLoading = branchIfStepIs(Operation::ReturnIfLoadingStops);
     jit.breakpoint();
 
-    // The row of a module that has begun does nothing, and most requests lead to a module that somebody else has imported first.
     callsStart.link(&jit);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
     jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
@@ -499,12 +490,10 @@ void generateStartModule(StubAssembler& jit)
     jit.storePtr(nextStep, nextStepInFrame);
     jit.call(target, JSEntryPtrTag);
     Label behindCall = jit.bindReturnLabel(StubFrameKind::ModuleStart);
-    // On ARM64 whoever lands behind a throw leaves the stack pointer to the landing.
     jit.addPtr(TrustedImm32(-static_cast<int32_t>(ModuleStartFrame::size)), fp, sp);
     jit.loadPtr(nextStepInFrame, nextStep);
     jit.branchTestPtr(CCallHelpers::NonZero, nextStep).linkTo(takesNextStep, &jit);
 
-    // What CatchException, AbandonModuleEvaluation and Rethrow do in a cleanup.
     jit.move(instanceGPR, operationArgumentGPR(0));
     jit.callOperation(Entry::operationAOTCatchException, jit.reuseScratch(StubRegister::Operation));
     jit.store64(GPRInfo::returnValueGPR, nextStepInFrame);
@@ -567,7 +556,6 @@ void generateStartModule(StubAssembler& jit)
     jit.emitFunctionEpilogue();
     jit.returnToCaller();
 
-    // As if what the row calls had thrown it: whoever unwinds knows whether the frame is passed by, and a termination passes every frame by.
     hasThrown.link(&jit);
     emitThrowFromAdapter(jit, behindCall, handleException(false));
 }
@@ -580,7 +568,6 @@ Address emitLocateRememberedConstructWord(StubAssembler& jit, GPRReg wordOfCall,
     return Address(entry, AOT_INSTANCE_OFFSET(constructWords.entries));
 }
 
-// A binary search of ProgramTables::constructEntrypoints, which is ascending by function and lists every function that comes here.
 static void emitFindConstructWord(StubAssembler& jit, GPRReg word, Jump isNeeded, Label continuation, Address newTarget, GPRReg candidate)
 {
     static_assert(sizeof(ConstructEntrypointData) == 8);
@@ -707,7 +694,6 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
     emitPollPath(jit, entryCall);
     emitStackOverflowPath(jit, entryCall);
 
-    // The word of a plain function that reads new.target has the address of its [[Call]] entry, which takes no new.target.
     isNotPlainFunction.link(&jit);
     Jump isNotCallable = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::isNotCallableBit));
     Jump needsConstructWord = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::takesNewTargetBit));
@@ -715,14 +701,12 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
     Label hasConstructWord = jit.label();
     jit.store64(word, Address(fp, offsetOfConstructEntryWord));
     jit.branchTest64(CCallHelpers::Zero, word, bitMask(ClosureWord::isNotCallableBit)).linkTo(makesThis, &jit);
-    // A class constructor allocates its object itself.
     jit.store64(TrustedImm64(JSValue::ValueUndefined), Address(fp, offsetOfConstructThis));
     jit.jump().linkTo(hasThis, &jit);
 
     emitFindConstructWord(jit, word, needsConstructWord, hasConstructWord, Address(fp, AdapterFrame::offsetOfNewTarget), jit.reuseScratch(StubRegister::T9));
 }
 
-// No bit of the mask is set in the kind of a function that may be called and constructed.
 static uint32_t nonPlainFunctionKindMask()
 {
     static_assert(!static_cast<unsigned>(CallableKind::Plain));
@@ -734,7 +718,8 @@ static uint32_t nonPlainFunctionKindMask()
     uint32_t mask = std::bit_cast<uint16_t>(others);
     for (uint32_t bits = 0; bits <= std::numeric_limits<uint16_t>::max(); ++bits) {
         auto kind = std::bit_cast<FunctionKindData>(static_cast<uint16_t>(bits));
-        RELEASE_ASSERT(!(bits & mask) == (FunctionTables::executableKind(kind) == FunctionTables::ExecutableKind::Constructible));
+        bool hasCallableKind = kind.callableKind <= static_cast<unsigned>(CallableKind::Method);
+        RELEASE_ASSERT(!(bits & mask) == (hasCallableKind && FunctionTables::executableKind(kind) == FunctionTables::ExecutableKind::Constructible));
     }
     return mask;
 }
@@ -780,7 +765,6 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     jit.load64(Address(fp, offsetOfCallee), calleeGPR);
     jit.load64(Address(fp, offsetOfWord), word);
     jit.load32(Address(fp, offsetOfCount), countGPR);
-    // new.target lies in front of the arguments and is counted with them.
     jit.addPtr(TrustedImm32(static_cast<int32_t>(offsetOfStackWordFromFrame(0))), fp, base);
     Jump takesNewTarget = jit.branchTest64(CCallHelpers::NonZero, word, bitMask(ClosureWord::takesNewTargetBit));
     jit.addPtr(TrustedImm32(sizeof(Register)), base);

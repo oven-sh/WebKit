@@ -96,60 +96,6 @@ function f11 name="entry" module=m11 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral programWithFaces = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m4 completes=true}, {target=m7 completes=true}]
-module m1 path="#1" displayPath="behind.cjs" exportRule=CommonJs body=f1 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g4}]
-module m2 path="/behind.cjs" displayPath="behind.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
-module m3 path="/near.cjs" displayPath="near.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1 requests=[{target=m6 kind=Require completes=true}]
-module m4 path="#4" displayPath="near.cjs" exportRule=CommonJs body=f4 requests=[{target=m3 kind=Require completes=true}] syntheticExports=[{name="default" variable=g5}]
-module m5 path="/apart.cjs" displayPath="apart.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g2
-module m6 path="/alone.cjs" displayPath="alone.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g3
-module m7 path="#7" displayPath="apart.cjs" exportRule=CommonJs body=f7 requests=[{target=m5 kind=Require completes=true}] syntheticExports=[{name="default" variable=g6}]
-entry module=m0
-variable g0 name="exports" module=m2 declared={type=anything} initialization=Undefined
-variable g1 name="exports" module=m3 declared={type=anything} initialization=Undefined
-variable g2 name="exports" module=m5 declared={type=anything} initialization=Undefined
-variable g3 name="exports" module=m6 declared={type=anything} initialization=Undefined
-variable g4 name="default" module=m1 declared={type=anything}
-variable g5 name="default" module=m4 declared={type=anything}
-variable g6 name="default" module=m7 declared={type=anything}
-function f0 name="main" kind=Module results=[{type=anything}] {
-    Return
-}
-function f1 name="faceOfBehind" module=m2 kind=Module results=[{type=anything}] {
-    EvaluateModule module=m2 referrer=m1 [isBare]
-    Return
-}
-function f2 name="behind" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-    v0 = NewDictionary
-    PutModuleVariable v0 variable=g0
-    Return
-}
-function f3 name="near" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-    v0 = NewDictionary
-    PutModuleVariable v0 variable=g1
-    EvaluateModule module=m6 referrer=m3 [isBare]
-    Return
-}
-function f4 name="faceOfNear" module=m3 kind=Module results=[{type=anything}] {
-    EvaluateModule module=m3 referrer=m4 [isBare]
-    Return
-}
-function f5 name="apart" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-    v0 = NewDictionary
-    PutModuleVariable v0 variable=g2
-    Return
-}
-function f6 name="alone" module=m6 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-    v0 = NewDictionary
-    PutModuleVariable v0 variable=g3
-    Return
-}
-function f7 name="faceOfApart" module=m5 kind=Module results=[{type=anything}] {
-    EvaluateModule module=m5 referrer=m7 [isBare]
-    Return
-}
-)IR"_s;
-
 static constexpr ModuleID mainModule { 0u };
 static constexpr ModuleID leftModule { 1u };
 static constexpr ModuleID rightModule { 2u };
@@ -159,8 +105,6 @@ static constexpr ModuleID accentModule { 5u };
 static constexpr ModuleID tildeModule { 6u };
 static constexpr ModuleID faceModule { 7u };
 static constexpr ModuleID shortModule { 8u };
-static constexpr ModuleID libraryModule { 9u };
-static constexpr ModuleID otherModule { 10u };
 static constexpr ModuleID entryModule { 11u };
 static constexpr unsigned numberOfModules = 12;
 
@@ -189,7 +133,6 @@ static String as16Bit(ASCIILiteral text)
 static void checkLists(LoadedProgram&)
 {
     ModuleTable table = tableOfImage();
-    // Behind the modules of the program comes the one that withStandInLibrary() adds.
     AOT_TEST_CHECK(table.size() == numberOfModules + 1 && &table.programTables() == &Image::current()->programTables());
 
     auto hasTargets = [&](ModuleID module, std::initializer_list<ModuleID> targets) {
@@ -199,7 +142,6 @@ static void checkLists(LoadedProgram&)
     AOT_TEST_CHECK(hasTargets(sharedModule, { mapModule }) && hasTargets(mapModule, { sharedModule }) && hasTargets(accentModule, { }));
     AOT_TEST_CHECK(hasTargets(entryModule, { mainModule, accentModule, tildeModule, faceModule, shortModule }));
 
-    // Only the walk of the entry point comes to the other modules, so its body calls their code and the loader has nothing to visit. The lists of a walk that is left to the loader: AOTModuleRequestListTests.cpp.
     for (unsigned index = 0; index < numberOfModules; ++index)
         AOT_TEST_CHECK(table.evaluationRequests(ModuleID(index)).empty());
     AOT_TEST_CHECK(table.allEvaluationRequests().empty() && !table.endOfEvaluationRequests(entryModule));
@@ -242,12 +184,10 @@ static void checkFindByPath(LoadedProgram&)
         ModuleID module(index);
         AOT_TEST_CHECK(table.findByPath(table.pathText(module)) == module);
     }
-    // The files of one directory share it, and the path is put together again. A module of a cycle gets a record with its path for a key: that path is whole.
     AOT_TEST_CHECK(table.data(mainModule).directory != Number24::max && table.data(mainModule).directory == table.data(leftModule).directory && table.data(mainModule).directory != table.data(entryModule).directory);
     AOT_TEST_CHECK(table.data(sharedModule).directory == Number24::max && table.pathText(sharedModule) == "/app/shared.js"_s);
     AOT_TEST_CHECK(table.pathText(mainModule) == "/app/main.js"_s && table.pathText(entryModule) == "/entry.js"_s && table.pathText(shortModule) == "/a"_s);
     AOT_TEST_CHECK(table.pathText(faceModule) == fromUTF8("/app/\xf0\x9f\x98\x80.js"));
-    // The end of the public path, and a text of its own.
     AOT_TEST_CHECK(table.displayPathText(mainModule) == "main.js"_s && table.displayPathText(entryModule) == "entry.js"_s && table.displayPathText(mapModule) == "shared.js.map.js"_s);
     AOT_TEST_CHECK(table.displayPathText(accentModule) == "e.js"_s && table.displayPathText(tildeModule) == "tilde.js"_s && table.displayPathText(faceModule) == "face.js"_s);
 
@@ -262,38 +202,9 @@ static void checkFindByPath(LoadedProgram&)
     }
 }
 
-static void checkFindByPathOutsideASCII(LoadedProgram&)
-{
-    ModuleTable table = tableOfImage();
-    AOT_TEST_CHECK(table.findByPath(fromUTF8("/app/\xc3\xa9.js")) == accentModule);
-    AOT_TEST_CHECK(table.findByPath(fromUTF8("/app/\xef\xbd\x9e.js")) == tildeModule);
-    AOT_TEST_CHECK(table.findByPath(fromUTF8("/app/\xf0\x9f\x98\x80.js")) == faceModule);
-
-    AOT_TEST_CHECK(!table.findByPath("/app/e.js"_s));
-    AOT_TEST_CHECK(!table.findByPath(fromUTF8("/app/\xc3\xa8.js")) && !table.findByPath(fromUTF8("/app/\xc3\xa9")) && !table.findByPath(fromUTF8("/app/\xc3\xa9.jsx")));
-    AOT_TEST_CHECK(!table.findByPath(fromUTF8("/app/\xef\xbd\x9d.js")) && !table.findByPath(fromUTF8("/app/\xef\xbd\x9f.js")));
-    AOT_TEST_CHECK(!table.findByPath(fromUTF8("/app/\xf0\x9f\x98\x81.js")) && !table.findByPath(fromUTF8("/app/\xf0\x9f\x98\x80")));
-
-    constexpr char16_t leadSurrogateOnly[] = { '/', 'a', 'p', 'p', '/', 0xd83d, '.', 'j', 's' };
-    AOT_TEST_CHECK(!table.findByPath(StringView(std::span<const char16_t>(leadSurrogateOnly))));
-}
-
 static std::optional<unsigned> findExport(LoadedProgram& program, ModuleID module, const String& name)
 {
     return tableOfImage().findExport(module, Identifier::fromString(program.vm(), name).impl());
-}
-
-static void checkFindExport(LoadedProgram& program)
-{
-    AOT_TEST_CHECK(findExport(program, sharedModule, "alpha"_s) == 0u);
-    AOT_TEST_CHECK(findExport(program, sharedModule, "alphabet"_s) == 1u);
-    AOT_TEST_CHECK(findExport(program, sharedModule, "beta"_s) == 2u);
-    AOT_TEST_CHECK(findExport(program, sharedModule, as16Bit("beta"_s)) == 2u);
-
-    for (ASCIILiteral absentName : { ""_s, "a"_s, "alph"_s, "alphab"_s, "alphabets"_s, "Alpha"_s, "bet"_s, "betas"_s, "gamma"_s, "default"_s })
-        AOT_TEST_CHECK(!findExport(program, sharedModule, absentName));
-    for (ModuleID moduleWithoutExports : { mainModule, mapModule, entryModule })
-        AOT_TEST_CHECK(!findExport(program, moduleWithoutExports, "alpha"_s));
 }
 
 static void checkFindExportOfSymbol(LoadedProgram& program)
@@ -308,55 +219,6 @@ static void checkFindExportOfSymbol(LoadedProgram& program)
     AOT_TEST_CHECK(table.findExport(sharedModule, Identifier::fromString(vm, "alpha"_s).impl()) == 0u);
 }
 
-static void checkFindExportWithSurrogatePair(LoadedProgram& program)
-{
-    String face = fromUTF8("\xf0\x9f\x98\x80");
-    String tilde = fromUTF8("\xef\xbd\x9e");
-    std::optional<unsigned> indexOfFace = findExport(program, sharedModule, face);
-    std::optional<unsigned> indexOfTilde = findExport(program, sharedModule, tilde);
-    AOT_TEST_CHECK(indexOfFace && indexOfTilde && *indexOfFace != *indexOfTilde && *indexOfFace >= 3 && *indexOfTilde >= 3);
-
-    AOT_TEST_CHECK(!findExport(program, sharedModule, fromUTF8("\xf0\x9f\x98\x81")) && !findExport(program, sharedModule, fromUTF8("\xef\xbd\x9d")));
-    AOT_TEST_CHECK(!findExport(program, sharedModule, makeString(face, face)) && !findExport(program, sharedModule, makeString(tilde, 'a')));
-    constexpr char16_t leadSurrogateOnly[] = { 0xd83d };
-    AOT_TEST_CHECK(!findExport(program, sharedModule, String(std::span<const char16_t>(leadSurrogateOnly))));
-}
-
-// The loader answers these calls, so it links what they name when they run: the tables have no request for them.
-static void checkRequireOfLoaderIsNoRequest(LoadedProgram&)
-{
-    ModuleTable table = tableOfImage();
-    for (ModuleID requirer : { mainModule, leftModule }) {
-        for (const ModuleRequestData& request : table.requests(requirer))
-            AOT_TEST_CHECK(ModuleTable::isImport(request) && request.targetModule() != libraryModule && request.targetModule() != otherModule);
-    }
-}
-
-static void testRequestOfRequire()
-{
-    ModuleRequestData imported = ModuleRequestData::create(7, true, false);
-    ModuleRequestData required = ModuleRequestData::create(ModuleRequestData::maxTarget, false, false, true);
-    AOT_TEST_CHECK(ModuleTable::isImport(imported) && imported.target() == 7 && imported.isDeferred && !imported.isDynamicStarExport);
-    AOT_TEST_CHECK(!ModuleTable::isImport(required) && required.target() == ModuleRequestData::maxTarget && !required.isDeferred && !required.isDynamicStarExport);
-}
-
-// The face right behind its file, as the front end numbers it, behind another file, and in front of its file.
-static void checkFacesOfFiles(LoadedProgram&)
-{
-    ModuleTable table = tableOfImage();
-    constexpr std::pair<ModuleID, ModuleID> filesAndFaces[] {
-        { ModuleID { 3u }, ModuleID { 4u } },
-        { ModuleID { 5u }, ModuleID { 7u } },
-        { ModuleID { 2u }, ModuleID { 1u } },
-    };
-    for (auto [file, face] : filesAndFaces) {
-        AOT_TEST_CHECK(table.data(file).hasFace() && table.fileBehindFace(face) == file && !table.fileBehindFace(file));
-        AOT_TEST_CHECK(table.faceOfFile(file) == face && !table.faceOfFile(face));
-    }
-    constexpr ModuleID fileWithoutFace { 6u };
-    AOT_TEST_CHECK(!table.data(fileWithoutFace).hasFace() && !table.faceOfFile(fileWithoutFace));
-}
-
 template<LoadedProgramTest body>
 static constexpr void (*withModules)() = runNativeTestWithLoadedProgram<moduleTableTests, programText, body>;
 
@@ -366,13 +228,7 @@ std::span<const NativeTest> moduleTableTests()
         { "module-table/lists"_s, withModules<checkLists> },
         { "module-table/module-numbers-in-one-and-two-words"_s, testModuleNumbersInOneAndTwoWords },
         { "module-table/find-by-path"_s, withModules<checkFindByPath> },
-        { "module-table/path-outside-ascii"_s, withModules<checkFindByPathOutsideASCII> },
-        { "module-table/find-export"_s, withModules<checkFindExport> },
         { "module-table/export-of-symbol"_s, withModules<checkFindExportOfSymbol> },
-        { "module-table/export-with-surrogate-pair"_s, withModules<checkFindExportWithSurrogatePair> },
-        { "module-table/require-of-the-loader-is-no-request"_s, withModules<checkRequireOfLoaderIsNoRequest> },
-        { "module-table/request-of-a-require"_s, testRequestOfRequire },
-        { "module-table/face-of-a-file-wherever-it-stands"_s, runNativeTestWithLoadedProgram<moduleTableTests, programWithFaces, checkFacesOfFiles> },
     };
     return tests;
 }

@@ -87,7 +87,6 @@ static std::optional<UnaryOperationForm> unaryFormOfStraightForm(Opcode opcode)
     }
 }
 
-// Their rows say so: no other operation of the input gives a string whatever it is handed.
 static constexpr OpcodeSet opcodesThatGiveStringsInStraightForm { Opcode::String, Opcode::ToString, Opcode::Strcat, Opcode::TypeOf };
 
 static void generateStrcat(StraightEmitter& emitter, const BodyValue& value)

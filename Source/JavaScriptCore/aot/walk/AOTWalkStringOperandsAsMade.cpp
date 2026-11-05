@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Guesses at a call of a known built-in whose row takes the tested operand only as its class makes it: `text.replace(pattern, "")`, with `pattern` written as a RegExp.
-// No type says that of an object, so the test of the class and the look at the cell stand in a row in front of the call. Where either fails the call is made as it is written, in one Rare block.
-// What the look has found the state keeps (noteListAsMade()) and ends as it ends whatever it knows of an object. Behind the rejoin nothing is left of the proof. At a suspension and at a throw it does nothing of its own.
-// Withheld (Guesses, EscapeAnalysis): the call enters the native code on any operands.
-
 #include "config.h"
 #include "AOTWalkStrings.h"
 
@@ -21,7 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// buildTestOfObjectAsMade(): one bit of the cell.
 static constexpr PristineAspectSet aspectsThatLookAtCellProvesForStringOperands { PristineAspects::Storage, PristineAspects::Names, PristineAspects::NamesKeptBelow, PristineAspects::Prototype };
 
 namespace {
@@ -37,7 +31,6 @@ bool goesByOneRowOnOperandAsMade(Walker& walker, const BodyValue& call, BuiltinI
 {
     TypeArena& types = walker.types();
     const BuiltinTable& table = walker.program().builtins();
-    // The state keeps what the look has found only while EscapeAnalysis is on.
     Type typeBehindTest = types.at(behindTest);
     const ClassPart* onlyClass = walker.has(Mechanism::EscapeAnalysis) && typeBehindTest.isObject() ? singleBuiltinClassOf(types, typeBehindTest) : nullptr;
     if (!onlyClass || pristineTestOf(table, onlyClass->builtinClass) != PristineTest::MayPass)
@@ -64,7 +57,7 @@ bool goesByOneRowOnOperandAsMade(Walker& walker, const BodyValue& call, BuiltinI
         assumed.aspectsOfArguments.append(aspects);
     }
 
-    BuiltinTypeContext context { walker.program(), types, &walker.facts() };
+    BuiltinTypeContext context { walker.program(), types };
     if (!isEachBuilt || !rowsSpeakOfCallOnReceiver(context, builtin, assumed.receiver))
         return false;
     Vector<BuiltinOverloadID, 4> reached = overloadsReachedBy(context, builtin, BuiltinCallMode::Call, assumed);
@@ -97,7 +90,6 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         walker.continueIn(passed);
     };
 
-    // Neither writes anything, so what held in front of the first holds wherever one fails.
     Reference isOfClass = buildTypeTestForStrings(walker, value, tested, origin);
     if (!isOfClass)
         return;
@@ -171,7 +163,6 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         if (walker.hasFailed())
             return;
     }
-    // Neither arm comes through: the walk stands nowhere, and what is behind the call is not built.
     walker.continueIn(meetingBlock);
 }
 

@@ -409,7 +409,6 @@ static bool findsInIndexOrder(const ParallelLoops& loops)
     return findIndicesInParallel(loops, count, matches) == expected;
 }
 
-// The second number tells elements with equal keys apart, so the order they are left in shows.
 static bool sortsAsOnOneThread(const ParallelLoops& loops, size_t count, const Invocable<uint32_t(size_t)> auto& keyAt)
 {
     using Element = std::pair<uint32_t, uint32_t>;
@@ -451,12 +450,10 @@ static bool sortsAndRemovesDuplicates(const ParallelLoops& loops, unsigned count
     return list == expected;
 }
 
-// The low half tells rows of one group apart, so the order they are left in shows.
 static bool sortsRowsByGroupAsOnOneThread(const ParallelLoops& loops, size_t count, uint32_t numberOfGroups)
 {
     WeakRandom random(1);
     Vector<uint64_t> rows(count, [&](size_t index) {
-        // Every fourth row goes to one group: no group may be one thread's.
         uint32_t group = index % 4 ? random.getUint32(numberOfGroups) : numberOfGroups / 2;
         return static_cast<uint64_t>(group) << 32 | index;
     });
@@ -611,7 +608,6 @@ static bool buildThreadHasWorkerStack()
 
 static bool poolThreadsHaveWorkerStack(const ParallelLoops& loops)
 {
-    // On a busy machine a yield takes milliseconds, so the caller waits for the first pool thread and no longer.
     const Thread& caller = Thread::currentSingleton();
     std::atomic<bool> haveWorkerStack { true };
     std::atomic<bool> hasSeenPoolThread { false };
@@ -636,7 +632,6 @@ struct ScheduledCall {
     void* argument;
 };
 
-// A host pool has no argument of its own, and one test command runs at a time.
 struct HeldCalls {
     Lock lock;
     Vector<ScheduledCall> calls WTF_GUARDED_BY_LOCK(lock);
@@ -697,13 +692,11 @@ static bool asksForNoMoreHelpersThanIndices()
     constexpr unsigned count = 3;
     std::atomic<unsigned> visits { 0 };
     unsigned numberOfCalls = 0;
-    // The thread that starts the loop also plays the pool, whose threads have the stack of a worker.
     runOnBuildThread([&] {
         ParallelLoops loops(16, &poolThatHoldsCalls);
         forEachIndexInParallel(loops, count, [&](unsigned) {
             if (visits.fetch_add(1))
                 return;
-            // The caller is in its first index: whoever is asked for now finds the others unclaimed.
             for (Vector<ScheduledCall> calls = takeHeldCalls(); !calls.isEmpty(); calls = takeHeldCalls()) {
                 numberOfCalls += static_cast<unsigned>(calls.size());
                 for (ScheduledCall call : calls)
@@ -714,7 +707,6 @@ static bool asksForNoMoreHelpersThanIndices()
     return visits.load() == count && numberOfCalls && numberOfCalls <= count - 1 && takeHeldCalls().isEmpty();
 }
 
-// Each of two lanes waits until the other has begun. One behind the other, the first would wait until its time is up.
 static bool lanesRunSideBySide(const ParallelLoops& loops)
 {
     if (loops.width() == 1)
@@ -871,7 +863,6 @@ void runHashedIndexTestCommand(TestCommandContext& context)
     if (!wantedPosition)
         return printBadArgument(context.out, words[2]);
 
-    // The list at a position holds that position and nothing else, so lists under one hash differ and a search names the one it wants.
     InternedWordLists lists;
     bool positionsFollowArrival = true;
     for (uint32_t position = 0; position < hashes->size(); ++position)

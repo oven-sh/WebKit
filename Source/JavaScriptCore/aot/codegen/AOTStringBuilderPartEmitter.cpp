@@ -19,14 +19,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The operand kind Any admits more: an object, whose conversion runs the program's code, which no append is declared to do, and Absent, which has no text.
 static constexpr uint16_t primitivesTakenByStringBuilderParts = Primitive::All | Primitive::LiteralString | Primitive::LiteralSymbol;
 
-// Two stores. A longer text is a string of the image, which the stub copies.
 static constexpr unsigned maxLengthOfTextWrittenByStores = 2 * sizeof(uint64_t);
 static constexpr int32_t bytesReservedForBooleanPart = roundUpToMultipleOf<sizeof(uint64_t)>(sizeof("false") - 1);
 static constexpr int32_t bytesReservedForNullishPart = roundUpToMultipleOf<sizeof(uint64_t)>(sizeof("undefined") - 1);
-// In the frame each of them is written first, and the cursor behind it is held against the limit then.
 static_assert(maxLengthOfTextWrittenByStores <= StackStringBuilder::maxBytesWrittenPastLimit && StringBuilderEmitter::maxInlineDigits <= StackStringBuilder::maxBytesWrittenPastLimit);
 static_assert(bytesReservedForBooleanPart <= static_cast<int32_t>(StackStringBuilder::maxBytesWrittenPastLimit) && bytesReservedForNullishPart <= static_cast<int32_t>(StackStringBuilder::maxBytesWrittenPastLimit));
 
@@ -75,7 +72,6 @@ void StringBuilderPartEmitter::appendPrimitive(const OperationContext& context, 
     callVoidOperation(context, RuntimeOperation::StringBuilderAppend, { builder, word32(1), argumentBuffer(singleElementSpan(primitive)) }, { .isOnRarePath = isOnRarePath });
 }
 
-// How many characters are appended is known only when they are written, and fewer than the bytes that are written.
 void StringBuilderPartEmitter::appendInWordsOrByCall(const OperationContext& context, CellPointer builder, int32_t bytesWritten, NOESCAPE const Invocable<Pointer(Pointer cursor)> auto& write, NOESCAPE const Invocable<Boxed()> auto& box)
 {
     LBasicBlock byCall = newBlock();
@@ -114,7 +110,6 @@ void StringBuilderPartEmitter::appendNullish(const OperationContext& context, Ce
     });
 }
 
-// Texts that stand side by side are written as one. Compile makes no string of them: the characters are immediates of the stores.
 void StringBuilderPartEmitter::generateStringBuilderAppendConstant(const ValueContext& value)
 {
     if (m_numberOfConstantsWrittenAhead) {
@@ -175,7 +170,6 @@ void StringBuilderPartEmitter::generateStringBuilderAppendNumber(const ValueCont
         });
         return;
     }
-    // -0 is whole, and its text is that of 0. What the conversion makes of NaN is no NaN.
     Number appended = in<Number>(value->valueOperand());
     Integer truncated = emitter<ConversionEmitter>().toInteger(appended);
     Condition isWhole = equal(toNumber(truncated), appended);
@@ -198,7 +192,6 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const Valu
     StringEmitter& strings = emitter<StringEmitter>();
     CellPointer builder = in<CellPointer>(value->builderOperand());
     CellPointer string = in<CellPointer>(value->stringOperand());
-    // The code below takes the bounds on trust.
     Word32 start = strings.word32Of(value->startOperand());
     Word32 end = strings.word32Of(value->endOperand());
     Word32 length = sub(end, start);
@@ -237,7 +230,6 @@ void StringBuilderPartEmitter::generateStringBuilderAppendBoolean(const ValueCon
     });
 }
 
-// The code takes every cell for a string and whatever is no cell for undefined or null.
 void StringBuilderPartEmitter::generateStringBuilderAppendStringOrNullish(const ValueContext& value)
 {
     if (!typeOf(value->valueOperand()).hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull)) {
@@ -262,7 +254,6 @@ void StringBuilderPartEmitter::generateStringBuilderAppendValue(const ValueConte
     }
     CellPointer builder = in<CellPointer>(value->builderOperand());
     Boxed boxed = in<Boxed>(appended);
-    // `list[i]` is undefined or a number. Less the tag of numbers, a small integer is itself, and every other value is large.
     if (typeOf(appended).primitives & Primitive::Number) {
         Integer untagged(m_out.sub(boxed.value(), m_numberTag));
         emitArmsOfStringBuilderPart(m_out, below(untagged, StringBuilderEmitter::firstIntegerWrittenByCall), Machine::EdgeClass::Normal, [&] {
@@ -274,8 +265,6 @@ void StringBuilderPartEmitter::generateStringBuilderAppendValue(const ValueConte
     }
     appendPrimitive(value, builder, boxed);
 }
-
-// ---- In the frame
 
 Pointer StringBuilderPartEmitter::appendString(const OperationContext& context, PlaceInFrame place, CellPointer string)
 {
@@ -292,7 +281,6 @@ Pointer StringBuilderPartEmitter::appendPrimitive(const OperationContext& contex
     return callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderAppend, { place.record, place.cursor, primitive }, { .isOnRarePath = isOnRarePath });
 }
 
-// As in the heap, texts that stand side by side are written as one. The first of them gives the cursor behind the last, and each of the others hands on the cursor that it takes: no cursor but the newest is good.
 void StringBuilderPartEmitter::generateStackStringBuilderAppendConstant(const ValueContext& value)
 {
     if (m_numberOfConstantsWrittenAhead) {
@@ -354,7 +342,6 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendNumber(const Valu
         }));
         return;
     }
-    // -0 is whole, and its text is that of 0. What the conversion makes of NaN is no NaN.
     Number appended = in<Number>(value->valueOperand());
     Integer truncated = emitter<ConversionEmitter>().toInteger(appended);
     Condition isWhole = equal(toNumber(truncated), appended);
@@ -377,7 +364,6 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendStringRange(const
     StringEmitter& strings = emitter<StringEmitter>();
     PlaceInFrame place = placeInFrameOf(value);
     CellPointer string = in<CellPointer>(value->stringOperand());
-    // The code below takes the bounds on trust.
     Word32 start = strings.word32Of(value->startOperand());
     Word32 end = strings.word32Of(value->endOperand());
     Word32 length = sub(end, start);
@@ -409,7 +395,6 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendBoolean(const Val
     builders().defineCursorBehindPart(value, place.record, builders().advance(value, place.record, Pointer(m_out.sub(endOfFalse.value(), zeroExtended(isTrue).value()))));
 }
 
-// The code takes every cell for a string and whatever is no cell for undefined or null.
 void StringBuilderPartEmitter::generateStackStringBuilderAppendStringOrNullish(const ValueContext& value)
 {
     if (!typeOf(value->valueOperand()).hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull)) {

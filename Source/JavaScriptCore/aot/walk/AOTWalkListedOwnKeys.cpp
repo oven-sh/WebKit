@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// BuiltinCalls, the lists of own keys: `Object.keys(o)` and `Object.values(o)` without the run time. Which keys an object has, and in which order it got them, AOTWalkCopiesOwnKeys.cpp says.
-// In sight: a literal of constant names and of what the slots hold. Expected: the same behind the tests of an arm, and the call as written where a test fails.
-// At a suspension and at a throw: nothing of its own. Withheld: every call stays as written.
-
 #include "config.h"
 #include "AOTWalkListedOwnKeys.h"
 
@@ -27,9 +23,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// How many closed operations stand for a list by the run time at the least: it lists the keys and reads each.
 static constexpr uint32_t closedOperationsOfOwnKeyList = 2;
-// About 12 B a field beside the 35 B of the tests and the allocation, against a call of 30 B.
 static constexpr size_t mostFieldsOfOwnKeyListOutsideLoops = 8;
 
 namespace {
@@ -39,7 +33,6 @@ enum class OwnKeyList : uint8_t { Keys, Values };
 struct CallOfOwnKeyList {
     const BodyValue& call;
     OwnKeyList list;
-    // It is no tail call: what stands in the place of the call returns here.
     Origin origin;
     ExpectedType expected;
 };
@@ -57,9 +50,6 @@ struct EndOfArmOfOwnKeyList {
 
 } // anonymous namespace
 
-// ---- Which list is asked for
-
-// By what the callee is, whatever the program calls it.
 static std::optional<OwnKeyList> listAskedForInListedOwnKeys(Walker& walker, const BodyValue& call)
 {
     if (call.isDoneInPlace() || call.argumentsOperands().size() != 1)
@@ -88,8 +78,6 @@ static bool canWriteOutInListedOwnKeys(size_t numberOfFields)
     return numberOfFields <= maxComputedElementsOfArrayLiteral;
 }
 
-// ---- Building
-
 static Reference buildLiteralInListedOwnKeys(Walker& walker, std::span<const Reference> elements, const CallOfOwnKeyList& asked)
 {
     TypeArena& types = walker.types();
@@ -116,7 +104,6 @@ static Reference nameOfOwnKeyInListedOwnKeys(Walker& walker, LayoutID layout, Fi
     return walker.constant(WTF::move(name));
 }
 
-// `object` has the keys of the order and no other: ownKeysInSight() has said so, or goOnWhereObjectHasOwnKeys() has passed. Null: unreachable or failed.
 static Reference buildListOfOrderInListedOwnKeys(Walker& walker, const CallOfOwnKeyList& asked, Reference object, const OwnKeyOrder& order)
 {
     Vector<Reference, 16> elements;
@@ -129,8 +116,6 @@ static Reference buildListOfOrderInListedOwnKeys(Walker& walker, const CallOfOwn
     return buildLiteralInListedOwnKeys(walker, elements.span(), asked);
 }
 
-// ---- An object in sight
-
 static bool buildListOfObjectInSightInListedOwnKeys(Walker& walker, const CallOfOwnKeyList& asked, Reference source)
 {
     std::optional<OwnKeyOrder> order = ownKeysInSight(walker, source);
@@ -140,8 +125,6 @@ static bool buildListOfObjectInSightInListedOwnKeys(Walker& walker, const CallOf
         walker.bind(asked.call.id(), list);
     return true;
 }
-
-// ---- Layouts and orders behind tests
 
 static bool isReturnedAtOnceInListedOwnKeys(const BodyIndex& index, ValueID call)
 {
@@ -154,8 +137,6 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     OwnKeyPlan plan = planOwnKeyWalk(walker, written, source);
     if (!plan)
         return false;
-    // The run time keeps one list of keys for the objects of a shape that got their keys in one order, and the code in line of the built-in hands out a cell over it.
-    // Behind arms that list meets the lists of the arms, and objects of none of the guessed layouts may be all that comes.
     if (asked.list == OwnKeyList::Keys && !plan.layoutsAreProven)
         return false;
     size_t mostFields = walker.isInLoop() ? mostFieldsOfOwnKeyWalk : mostFieldsOfOwnKeyListOutsideLoops;
@@ -176,7 +157,6 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     BlockID asWritten = walker.addBlock(BlockFrequency::Unlikely);
     BlockID meeting = walker.addBlock();
 
-    // None of the tests writes anything, so what held in front of the first holds wherever one fails.
     Vector<TestedArmOfOwnKeyList, mostArmsOfOwnKeyWalk> tested;
     for (size_t number = 0; number < plan.orders.size() && !walker.isUnreachable(); ++number) {
         BlockID whereTestFails = number + 1 == plan.orders.size() ? asWritten : walker.addBlock();
@@ -221,7 +201,6 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
             return true;
     }
 
-    // No arm comes through: the walk stands nowhere.
     if (ends.isEmpty()) {
         walker.continueIn(meeting);
         return true;
@@ -243,12 +222,10 @@ static bool buildListBehindTestsInListedOwnKeys(Walker& walker, const CallOfOwnK
     }
     walker.continueIn(meeting);
     walker.bind(call, met);
-    // Every way here has made its list there, as a list is made, and has handed it to nobody.
     if (walker.program().builtins().mayHavePristineInstances(BuiltinClasses::Array))
         noteListMadeByCaller(walker, met);
     return true;
 }
-// ---- The link
 
 bool buildOwnKeyListOfItsOpcodes(Walker& walker, const BodyValue& value)
 {

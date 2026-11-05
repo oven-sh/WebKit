@@ -46,7 +46,6 @@ static_assert([] {
     return true;
 }());
 
-// The scratch registers are dead at every call and at every return.
 static_assert([] {
     auto isScratch = [](GPRReg reg) {
 #if CPU(X86_64)
@@ -63,10 +62,8 @@ static_assert([] {
 }());
 static_assert(noOverlap(GPRInfo::returnValueGPR, instanceGPR, cellCageBaseGPR));
 
-// The closure and `this`.
 static constexpr unsigned numberOfParametersInFrontOfGenericArguments = 2;
 
-// Each value takes the next register of its bank, so this many values need no stack word whatever their forms are.
 static constexpr unsigned numberOfValuesThatNeverNeedStackWords = std::min(numberOfDirectArgumentGPRs, numberOfDirectArgumentFPRs);
 
 static constexpr uint8_t bitOfRoleInConvention(CodeRole role)
@@ -88,7 +85,6 @@ namespace {
 struct LocationAllocatorOfConvention {
     ArgumentLocation allocate(Representation representation)
     {
-        // Nobody hands it over.
         if (representation == Representation::Void)
             return { .kind = ArgumentLocation::Kind::None, .representation = representation };
         if (isPassedInFPR(representation)) {
@@ -133,7 +129,6 @@ static ALWAYS_INLINE ArgumentLocations locationsOfDirectConvention(size_t number
     locations.numberOfStackArguments = assignLocationsOfConvention(numberOfParameters, formOfParameter, locations.parameters);
 
     if (!numberOfResults) {
-        // Such a call returns undefined. No register or stack word carries it: the caller makes the boxed constant.
         locations.results.append(ArgumentLocation { .kind = ArgumentLocation::Kind::None, .representation = Representation::JSValue });
         return locations;
     }
@@ -185,13 +180,11 @@ static Representation formOfEntryParameterInConvention(const CallingConventionPa
     return parts.formsOfEntryParameters[convention.firstEntryParameter + entryParameter];
 }
 
-// An awaited call enters the body of an async function without a promise: undefined stands in its place.
 static Representation formOfCoroutineDriver(const Function& coroutine)
 {
     return coroutine.has(FunctionFlags::IsGenerator) ? Representation::Cell : Representation::JSValue;
 }
 
-// new.target comes first where the entry takes it.
 static unsigned numberOfArgumentsTakenInRegistersBy(const CallingConventions& conventions, const Program& program, CodeUnit entry)
 {
     return program.at(entry.function).numberOfPositionalParameters() + conventions.genericEntry(entry).takesNewTarget;
@@ -324,7 +317,6 @@ CodeUnit CallingConventions::unitAt(uint32_t index) const
     if (index < numberOfUnitsOfFunctions)
         return { FunctionID(index / numberOfCodeRolesOfOneFunction), static_cast<CodeRole>(index % numberOfCodeRolesOfOneFunction) };
 
-    // Null: the layout of the place has no serializer.
     if (index >= firstSerializer() && index - firstSerializer() < numberOfPlacesOfSerializers())
         return serializerOf(LayoutID(index - firstSerializer()));
 
@@ -345,7 +337,6 @@ static Representation formOfParameterProvenToBe(const Program& program, TypeID p
     return form == Representation::Int32 || form == Representation::Double ? form : Representation::JSValue;
 }
 
-// What the guard has proven a number comes raw: the guard unboxes it once, and a caller that has it raw hands it over so.
 Representation CallingConventions::formBehindGuard(const Program& program, const FunctionConvention& convention, unsigned parameterIndex) const
 {
     TypeID tested = m_parts.typesBehindGuards[convention.firstTypeBehindGuard + parameterIndex];
@@ -359,13 +350,11 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
         if (parameterIndex == of(unit.function).numberOfEntryParameters)
             return formOfCoroutineDriver(program.at(unit.function));
         return formOfEntryParameterInConvention(m_parts, program, unit.function, parameterIndex);
-    // Once the forms are settled formOfEntryParameterAsListed() answers for these three, and nobody comes here.
     case CodeRole::Body:
     case CodeRole::ModuleStart:
     case CodeRole::ParameterGuard:
         RELEASE_ASSERT(m_parts.formsOfEntryParameters.isEmpty());
         return boxedFormOfEntryParameter(program, program.at(unit.function), parameterIndex);
-    // It leans on nothing that is proven of a caller. The guard boxes what arrives raw.
     case CodeRole::SlowBody:
         return boxedFormOfEntryParameter(program, program.at(unit.function), parameterIndex);
     case CodeRole::GenericCallEntry:
@@ -376,7 +365,6 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
     case CodeRole::Serializer:
         RELEASE_ASSERT(parameterIndex < numberOfSerializerParameters);
         return static_cast<SerializerParameter>(parameterIndex) == SerializerParameter::LevelsAround ? Representation::Int32 : Representation::Cell;
-    // The receiver, then the arguments as they are written.
     case CodeRole::TableEntry:
     case CodeRole::TableLookup:
         RELEASE_ASSERT(parameterIndex < numberOfParametersInConventionOf(*this, program, unit));
@@ -415,11 +403,9 @@ ArgumentLocations CallingConventions::locationsOf(const Program& program, CodeUn
 
 uint32_t CallingConventions::stackWordsReservedByCallersOf(const Program& program, CodeUnit callee) const
 {
-    // Whoever calls by value leaves room for the arguments it passes, which may be fewer than the entry reads.
     if (isGenericEntry(callee.role))
         return 0;
 
-    // A serializer goes on to no unit of the function that it is listed under.
     if (callee.role == CodeRole::Serializer)
         return stackWordsTakenInConventionOf(*this, program, callee);
 
@@ -450,7 +436,6 @@ GenericEntryPlan CallingConventions::genericEntry(CodeUnit unit) const
             plan.constructEntry = { unit.function, CodeRole::AllocatingConstructEntry };
         else if (convention.has(CodeRole::GenericConstructEntry))
             plan.constructEntry = { unit.function, CodeRole::GenericConstructEntry };
-        // Only the run time enters the body of a module by value. Compiled code calls the start and the body directly.
         if (convention.has(CodeRole::ModuleStart))
             plan.target = { unit.function, CodeRole::ModuleStart };
         return plan;
@@ -458,7 +443,6 @@ GenericEntryPlan CallingConventions::genericEntry(CodeUnit unit) const
         plan.takesNewTarget = true;
         return plan;
     case CodeRole::AllocatingConstructEntry:
-        // Whoever constructs passes new.target, though here it is the closure.
         plan.takesNewTarget = true;
         plan.allocatesThis = true;
         return plan;
@@ -486,7 +470,6 @@ void CallingConventions::setParameterGuards(std::span<const ParameterGuardPlan> 
     }
 }
 
-// Each condition is one under which BuilderOfEntries::buildGenericEntry() of walk/AOTWalkEntries.cpp builds more than reads of captures and a tail call of the target.
 std::optional<Vector<CallEntryMove, 8>> planCallEntryMoves(const Program& program, const CallingConventions& conventions, FunctionID id)
 {
     const Function& function = program.at(id);
@@ -497,12 +480,10 @@ std::optional<Vector<CallEntryMove, 8>> planCallEntryMoves(const Program& progra
     CodeUnit target = plan.target;
     if (conventions.entryConventionOf(entry) != EntryConvention::GenericRegisters || plan.takesNewTarget || !target || !conventions.exists(target))
         return std::nullopt;
-    // It has no code: a call of it is a call of the stub StartModule.
     if (target.role == CodeRole::ModuleStart)
         return std::nullopt;
     if (conventions.numberOfResults(target) != 1 || !haveSameRegisterRepresentation(conventions.resultRepresentation(target), conventions.resultRepresentation(entry)))
         return std::nullopt;
-    // Whoever calls by value leaves no room for them.
     if (conventions.stackWordsReservedByCallersOf(program, target))
         return std::nullopt;
 
@@ -543,7 +524,6 @@ std::optional<Vector<CallEntryMove, 8>> planCallEntryMoves(const Program& progra
             unsigned argument = index - firstParameter;
             if (!takesBoxedValue || argument >= function.numberOfPositionalParameters() || argument >= numberOfArgumentGPRs)
                 return std::nullopt;
-            // Only the count tells an argument that was left out from undefined.
             TypeID written = function.parameters[argument].written();
             if (written && (program.at(written).primitives & Primitive::Absent))
                 return std::nullopt;
@@ -583,7 +563,6 @@ static bool constructEntryAllocatesThisOf(const Program& program, const Function
 {
     if (function.kind != FunctionKind::Plain || function.isCoroutine() || !function.has(FunctionFlags::HasThis) || function.results.size() != 1 || !function.constructedClass)
         return false;
-    // The run time constructs the constructor functions of its own modules by name.
     if (isRunTimeCodeForConventions(program, function))
         return false;
     LayoutID declared = declaredLayoutOf(program, function.constructedClass);
@@ -614,7 +593,6 @@ static ConstructionThroughConvention constructionThroughConventionOf(const Progr
 
 static void chooseRolesOfConvention(const Program& program, const Facts& facts, FunctionID id, const BitVector& bodiesWithModuleStart, const BitVector& layoutsMadeAsCompiledObjects, FunctionConvention& convention)
 {
-    // A model describes native code, and a signature has no body.
     const Function& function = program.at(id);
     if (!function.hasBody() || !hasSourceBodyOf(function.role) || !canBeCalledByValueOf(function.role))
         return;
@@ -623,7 +601,6 @@ static void chooseRolesOfConvention(const Program& program, const Facts& facts, 
         convention.roles |= bitOfRoleInConvention(role);
     };
 
-    // The word of every closure names this unit, and Image numbers the functions that closures are made of by it. A closure of a function that is never entered may still be made.
     add(CodeRole::GenericCallEntry);
     convention.takesArgumentsInBuffer = function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest, FunctionFlags::HasArgumentCount });
 
@@ -655,7 +632,6 @@ static void chooseRolesOfConvention(const Program& program, const Facts& facts, 
         add(CodeRole::ModuleStart);
 }
 
-// An integer past int32 is returned as the double that it is.
 static Representation formOfResultProvenToBe(const Program& program, TypeID proven)
 {
     if (!proven)
@@ -668,7 +644,6 @@ static Representation formOfResultProvenToBe(const Program& program, TypeID prov
     case Representation::Int64:
     case Representation::Double:
         return Representation::Double;
-    // `function total(e) { if (e.kind === "num") return e.value; .. return total(e.left) + total(e.right); }`: what Link reads off every member of a union holds undefined beside the number.
     case Representation::OptionalInt64:
         return Representation::OptionalInt64;
     case Representation::OptionalDouble:
@@ -678,7 +653,6 @@ static Representation formOfResultProvenToBe(const Program& program, TypeID prov
     }
 }
 
-// A generic entry hands such a parameter the marker for what the caller left out, which is no number.
 static bool tellsAbsentFromUndefinedInConvention(const Program& program, const DeclaredType& parameter)
 {
     TypeID written = parameter.written();
@@ -700,8 +674,6 @@ static void appendFormsOfEntryParameters(const Program& program, const Facts& fa
     }
 }
 
-// A call in tail position out of a function that returns boxed values is a jump where the callee returns boxed values too, and else comes back to box what it got.
-// So a function whose result nobody else takes returns a boxed value. That may leave the functions in which it ends itself with nobody either.
 static void boxResultsThatNobodyTakesRaw(const LinkTables& linked, BitVector& functionsThatReturnRawValues, CallingConventionParts& parts)
 {
     auto returnsRawValue = [&](FunctionID id) {
@@ -731,11 +703,8 @@ static void boxResultsThatNobodyTakesRaw(const LinkTables& linked, BitVector& fu
 
 CallingConventions computeCallingConventions(const Program& program, const Facts& facts, const BitVector& bodiesWithModuleStart, const BitVector& layoutsMadeAsCompiledObjects)
 {
-    // The body takes what Link has proven of a parameter through Arrivals alone. Without it the parameter holds anything there, which no raw form allows.
     bool unboxesNumbers = facts.mechanisms().containsAll({ Mechanism::UnboxedNumbers, Mechanism::Arrivals });
     const LinkTables& linked = facts.linked();
-    // Whoever calls the Body takes the result as the convention says, and every entry by value comes back for it and boxes it. So a raw result pays at a direct call and costs at a call by value:
-    // a function returns one where Link lists every call that may enter it.
     bool returnsRawValues = unboxesNumbers && linked.functions.size() == program.functions.size();
     uint32_t numberOfFunctions = safeCast<uint32_t>(program.functions.size());
 
@@ -762,7 +731,6 @@ CallingConventions computeCallingConventions(const Program& program, const Facts
         }
         if (!unboxesNumbers)
             continue;
-        // What a generic entry reads out of the buffer has no proven type, and the ramp of a coroutine takes its parameters as the record declares them.
         bool mayTakeUnboxedNumbers = convention.has(CodeRole::Body) && facts.everyCallerIsKnown(id) && !convention.takesArgumentsInBuffer && !function.isCoroutine();
         convention.firstEntryParameter = safeCast<uint32_t>(parts.formsOfEntryParameters.size());
         appendFormsOfEntryParameters(program, facts, id, mayTakeUnboxedNumbers, parts.formsOfEntryParameters);

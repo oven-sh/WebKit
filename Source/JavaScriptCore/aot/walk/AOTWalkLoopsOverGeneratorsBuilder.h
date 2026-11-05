@@ -20,16 +20,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkCalls.cpp
 bool canCallCompilerHelper(Walker&, FunctionID helper);
 Reference callCompilerHelper(Walker&, FunctionID helper, std::span<const Reference> arguments, Origin);
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-// AOTWalkNumbers.cpp
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
-// BuilderOfIteration of AOTWalkIteration.cpp, as far as a synchronous `for (.. of ..)` goes. An arm may end early: from there on nothing is built and null stands for every value,
-// until continueIn() or jumpTo() enters a block that something has arrived at. So every arm is built to its end.
 class BuilderForGenerators {
     WTF_MAKE_NONCOPYABLE(BuilderForGenerators);
 public:
@@ -57,13 +52,11 @@ public:
         return m_walker.build(WTF::move(operation));
     }
 
-    // An operation whose fields are chosen.
     Reference buildAsItIs(Draft&& operation)
     {
         return m_walker.isUnreachable() ? Reference() : m_walker.build(WTF::move(operation));
     }
 
-    // It goes to parameters of joins, which hold boxed values.
     Reference constant(Draft&& written)
     {
         written.representation = Representation::JSValue;
@@ -104,7 +97,6 @@ public:
         return build(WTF::move(invocation));
     }
 
-    // Null: the program does not hold the function, or no direct call may be built. The part of the protocol is then written out.
     FunctionID findHelper(IterationHelper helper)
     {
         if (m_walker.isUnreachable())
@@ -161,8 +153,6 @@ public:
         return boxedUnlessNumbersAreUnboxed(m_walker, m_walker.build(WTF::move(operation)), m_origin);
     }
 
-    // ---- Control
-
     BlockID addBlock(BlockFrequency frequency = BlockFrequency::Normal) { return m_walker.addBlock(frequency); }
     void branch(Reference condition, BlockID taken, BlockID notTaken) { m_walker.branch(condition, taken, notTaken); }
 
@@ -178,7 +168,6 @@ public:
         standUnderHandler();
     }
 
-    // The walk stands in a block that the taken edge of a branch on the test alone enters.
     Reference narrowed(Reference value, Reference test, uint32_t operandIndex)
     {
         Draft proof = draft(Opcode::Narrowed);
@@ -189,7 +178,6 @@ public:
         return buildAsItIs(WTF::move(proof));
     }
 
-    // The walk goes on where the test passes, with what it leaves of the value.
     Reference goOnWhereTypeTestPasses(Reference value, TypeID tested, BlockID otherwise)
     {
         Reference test = testType(value, tested);
@@ -199,7 +187,6 @@ public:
         return narrowed(value, test, OperandIndex::TypeTest::value);
     }
 
-    // What it gives is of the type never, and nobody asks for it. Whoever goes on calls continueIn().
     void buildThrowingOperation(Draft&& throwing)
     {
         build(WTF::move(throwing));
@@ -207,7 +194,6 @@ public:
             m_walker.code().end(m_walker.currentBlock(), TerminatorDraft(TerminatorKind::Unreachable, m_origin), 0);
     }
 
-    // RequireObject of what is no object is the closed form of a throw of its error.
     void throwError(RuntimeErrorKind error)
     {
         Draft check = draft(Opcode::RequireObject);
@@ -216,7 +202,6 @@ public:
         buildThrowingOperation(WTF::move(check));
     }
 
-    // Whatever is thrown from here to dropWhatWasThrown() is dropped. Both are asked where the walk can go on.
     void beginToDropWhatIsThrown()
     {
         Code& code = m_walker.code();
@@ -225,19 +210,15 @@ public:
         jumpTo(addBlock());
     }
 
-    // The walk goes on in `after`.
     void dropWhatWasThrown(BlockID after)
     {
         BlockID handler = std::exchange(m_handler, BlockID());
         jumpTo(after);
-        // No edge of the Walker's leads here, so it brings no state.
         continueIn(handler);
         m_walker.state().clear();
         build(draft(Opcode::CatchValue));
         jumpTo(after);
     }
-
-    // ---- A step
 
     MeetingOfStep openMeetingOfStep()
     {
@@ -248,7 +229,6 @@ public:
         return meeting;
     }
 
-    // What the last step hands out is hidden.
     void endStep(Reference done, Reference value, const MeetingOfStep& after)
     {
         BlockID last = addBlock();
@@ -276,9 +256,6 @@ public:
         jumpTo(after.block, { boolean(false), value });
     }
 
-    // ---- The protocol, for whatever has failed the test at the open
-
-    // A list of the iterator and its `next`.
     Reference openByProtocol(Reference iterable)
     {
         Draft check = draft(Opcode::RequireObjectCoercible);
@@ -288,7 +265,6 @@ public:
 
         Reference iterator;
         if (FunctionID opens = findHelper(IterationHelper::OpenIterator)) {
-            // Undefined: there is no method to call.
             iterator = callHelper(opens, { iterable });
             BlockID opened = addBlock();
             BlockID lacksMethod = addBlock(BlockFrequency::Rare);
@@ -315,7 +291,6 @@ public:
         return build(WTF::move(words));
     }
 
-    // The walk stands where the parameter holds no generator.
     Reference takeWordsOfProtocol(Reference parameter)
     {
         Reference test = testType(parameter, m_walker.types().builtinClass(BuiltinClasses::Array));
@@ -335,7 +310,6 @@ public:
     void stepByProtocol(Reference iterator, Reference next, const MeetingOfStep& after)
     {
         if (FunctionID steps = findHelper(IterationHelper::StepIterator)) {
-            // What the iterator hands out, or the mark of a closed iterator, which no program ever holds.
             Reference handedOut = callHelper(steps, { iterator, next });
             Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
             isClosed.setTableOperand(handedOut);
@@ -345,7 +319,6 @@ public:
         readAnswerOfStep(requireObject(call(next, iterator), RuntimeErrorKind::IteratorResultNotObject), after);
     }
 
-    // `return` is looked up each time: it may have been added since the open.
     void closeByProtocol(Reference iterator, IteratorCompletion completion)
     {
         if (m_walker.isUnreachable())
@@ -357,7 +330,6 @@ public:
             else
                 callReturn(iterator, true);
             return;
-        // The error that is already being thrown wins.
         case IteratorCompletion::Throw:
             break;
         }
@@ -372,8 +344,6 @@ public:
     }
 
 private:
-    // The Walker leads an edge to the handler of the block being walked in front of the first operation that may throw, and only out of a block that has no handler edge.
-    // So a block that is entered while m_handler is set gets its edge here, in front of its first operation.
     void standUnderHandler()
     {
         if (!m_handler || m_walker.isUnreachable())
@@ -392,7 +362,6 @@ private:
         buildThrowingOperation(WTF::move(error));
     }
 
-    // The list holds an object, so its storage holds any value, and nobody has taken one of its two elements away.
     Reference readWord(Reference words, uint32_t word)
     {
         Draft element = draft(Opcode::GetArrayElement);
@@ -425,7 +394,6 @@ private:
 
     Walker& m_walker;
     Origin m_origin;
-    // Blocks that are entered stand under this handler block. Null: under the handler of the block being walked.
     BlockID m_handler;
 };
 

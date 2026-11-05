@@ -17,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Booth and Lueker, "Testing for the consecutive ones property, interval graphs, and graph planarity using PQ-tree algorithms".
 struct ConsecutiveSets::Tree {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Tree);
     WTF_MAKE_NONCOPYABLE(Tree);
@@ -30,23 +29,16 @@ struct ConsecutiveSets::Tree {
 private:
     static constexpr uint32_t none = UINT32_MAX;
 
-    // A P node's children may be in any order. A Q node's children keep the order of their row, forward or reversed.
-    // AbsorbedQ is a former Q node whose children moved into the row of the Q node at the end of its parent chain.
     enum class Kind : uint8_t { Leaf, P, Q, AbsorbedQ };
-    // Whether none, some or all of the leaves below the node are in the current set.
     enum class Label : uint8_t { Empty, Partial, Full };
 
     struct Node {
         Kind kind { Kind::Leaf };
-        // For a child of a Q node this may be an AbsorbedQ node: read it through parentOf().
         uint32_t parent { none };
-        // The children of a P or Q node are linked into a row. The two neighbors have no fixed direction: a traversal tracks the node it came from, so two rows can be joined at any of their ends.
         std::array<uint32_t, 2> neighbors { none, none };
         std::array<uint32_t, 2> endChildren { none, none };
-        // Only maintained for P nodes.
         uint32_t numberOfChildren { 0 };
 
-        // The remaining fields describe the current set and are valid only while epoch == m_epoch.
         uint32_t epoch { 0 };
         Label label { Label::Empty };
         uint8_t numberOfPartialChildren { 0 };
@@ -56,12 +48,10 @@ private:
         uint32_t numberOfFullChildren { 0 };
         uint32_t firstFullChild { none };
         uint32_t nextFullSibling { none };
-        // For a Q node with full children: the two ends of the run of full children, and the sibling just outside each end.
         std::array<uint32_t, 2> endsOfFullRun { none, none };
         std::array<uint32_t, 2> neighborsOfFullRun { none, none };
     };
 
-    // A detached segment of a row. Each end has one unused neighbor entry.
     struct PartialRow {
         uint32_t emptyEnd { none };
         uint32_t fullEnd { none };
@@ -106,7 +96,6 @@ private:
     void reducePertinentRootP(uint32_t root);
     void reducePertinentRootQ(uint32_t root);
 
-    // Leaf i is node i.
     Vector<Node> m_nodes;
     Vector<uint32_t> m_queue;
     uint32_t m_numberOfLeaves { 0 };
@@ -232,7 +221,6 @@ void ConsecutiveSets::Tree::beginVisiting(uint32_t index)
     node.firstFullChild = none;
 }
 
-// Returns the number of distinct leaves and puts them at the front of m_queue.
 uint32_t ConsecutiveSets::Tree::markLeaves(std::span<const uint32_t> leaves)
 {
     ++m_epoch;
@@ -250,7 +238,6 @@ uint32_t ConsecutiveSets::Tree::markLeaves(std::span<const uint32_t> leaves)
     return static_cast<uint32_t>(m_queue.size());
 }
 
-// Climbs breadth-first and stops once the paths have merged, so it overshoots the pertinent root by no more nodes than the longest path has below it.
 void ConsecutiveSets::Tree::countPertinentChildren()
 {
     bool hasPassedRoot = false;
@@ -268,7 +255,6 @@ void ConsecutiveSets::Tree::countPertinentChildren()
     }
 }
 
-// Returns the pertinent root, the lowest node with every leaf of the set below it, or none if no order the tree allows keeps the set together.
 uint32_t ConsecutiveSets::Tree::labelPertinentNodes(uint32_t numberOfLeavesInSet)
 {
     m_queue.shrink(numberOfLeavesInSet);
@@ -297,7 +283,6 @@ uint32_t ConsecutiveSets::Tree::labelPertinentNodes(uint32_t numberOfLeavesInSet
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Requires labels on the node's pertinent children. Returns false if they cannot be made consecutive or, below the pertinent root, cannot also be moved to one end of the node.
 bool ConsecutiveSets::Tree::tryLabel(uint32_t index, bool isPertinentRoot)
 {
     Node& node = at(index);
@@ -338,7 +323,6 @@ bool ConsecutiveSets::Tree::tryLabel(uint32_t index, bool isPertinentRoot)
     return isPertinentRoot || numberOfRowEnds;
 }
 
-// Detaches the full children and returns one unlinked node that holds them: the child itself if there is only one, a new P node if there are several, none if there are none.
 uint32_t ConsecutiveSets::Tree::takeFullChildrenOfP(uint32_t node)
 {
     uint32_t first = at(node).firstFullChild;
@@ -355,7 +339,6 @@ uint32_t ConsecutiveSets::Tree::takeFullChildrenOfP(uint32_t node)
     return group;
 }
 
-// Requires a partial node below the pertinent root that is already unlinked from its row. Turns it and the chain of partial nodes below it into one segment of q's row.
 auto ConsecutiveSets::Tree::flatten(uint32_t node, uint32_t q) -> PartialRow
 {
     PartialRow outer;
@@ -473,7 +456,6 @@ bool ConsecutiveSets::Tree::tryKeepTogether(std::span<const uint32_t> leaves)
         return true;
     countPertinentChildren();
     uint32_t pertinentRoot = labelPertinentNodes(numberOfLeavesInSet);
-    // So far only per-set marks were written and parentOf() shortened its paths, so a refusal has nothing to undo.
     if (pertinentRoot == none)
         return false;
     if (at(pertinentRoot).label == Label::Full)

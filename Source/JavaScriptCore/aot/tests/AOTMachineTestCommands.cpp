@@ -26,77 +26,16 @@
 #include <wtf/SetForScope.h>
 #include <wtf/StringPrintStream.h>
 
-// Every command but `bytes-by-form`, `named-forms` and `bytes-outside-operations` heads each unit with `unit f<n>:<role>`. Without arguments it takes every unit of unitsToCompile().
-//
-// The text of `bytes-by-form`, over every unit of unitsToCompile(). A build counts these under the option word report=Flow alone: without it the command prints one line that says so.
-//     <operation> <state> <place> <Open | Closed | Runtime> <sites> <bytes> <bytes a site>      ascending by opcode, state, place and form: codegen/AOTFormsSaid.h, the columns of ir/AOTSchema.def
-//     not named: <operation> <state> <place> <form> <sites>                 of the rows above: what an emitter said and the schema does not name, or said of a place where the operation does not stand
-//     looks otherwise: <operation> <state> <place> <form> <sites>           of the rows above: sites whose code in front of the rare code calls what the form does not call, or calls nothing where the form calls
-//                      found Open <sites> Closed <sites> Runtime <sites>    on the same line: every site of the row that has code there, by what that code calls
-//     longer than a call: <operation> <state> <place> <form> <sites>        of the rows above that call: sites whose code in front of the rare code is more than the call and what brings the words of the operation to it
-//     picked by the place: <operation> <state> <place> <form> <sites> <bytes> asked by <the questions of the emitters>      of the rows above: the place is no loop, and the design lets an emitter ask for a loop alone
-//     forms that differ from the schema <sites>                             not named, looks otherwise or longer than a call, each site once: StatisticID::FormsThatDifferFromSchema
-//     forms picked by a place other than a loop <sites>                     StatisticID::FormsPickedByPlaceOtherThanLoop
-//     every form is named | forms not named <rows>
-//     all forms <count> <bytes>
-//     in inline frames <bytes>                                              of `all forms`: callees walked at calls, bodies that have moved to their only call among them
-//     in inline frames of the library <bytes>                               of those: the callee is text of the library
-//     in frames of built-ins <bytes>                                        of those: the steps of a built-in function, written out at its call
-//     all code <bytes>                                                      with the bytes that belong to no operation
-// Behind `says=<operation>:<form>` the emitter of that operation says that form whatever it writes: the control of `not named`.
-// Behind names of roles (`bytes-by-form Body`) it counts the units of those roles alone, and two more lines follow:
-//     units <count>
-//     inline frames <count>
-//
-// The text of `named-forms`, which takes no program: what the schema names for each operation in the arguments, and what CodeGenerator::takesOpenForm() goes by.
-//     <operation> <state> <form>, in a loop <form> [by the loop]            for each state that the row names: `Always` alone where it has one form
-//     <operation> in <place> <form> [, which takesOpenForm() does not ask]  for each place that the row lists
-//
-// The text of `bytes-outside-operations`, under report=Flow, over the same units and behind the same names of roles: the code that `all code` holds beyond `all forms`.
-//     <Move | Reload | Save | Materialize | ..> <what it stands in front of> <main | rare> <count> <bytes>      the back end's: machine/AOTMachineDescription.h
-//     End <kind of terminator> <main | rare> <count> <bytes>                what the emitters append for the end of a block
-//     Other Nowhere <main | rare> <count> <bytes>                           entries, preambles, padding
-//     all rows <count> <bytes>
-//     all code <bytes>
-//
-// The text of `ranges`, under report=Flow: all the code of each unit, a line a range, ascending. With the places at which a profile's samples lie it says what the instructions that run were written for.
-//     <begin> <end> <main | rare> <operation> v<n>                          the code of that value of `walk`: late paths are ranges of their own
-//     <begin> <end> <main | rare> <what `bytes-outside-operations` names>   `Move Patch`, `End Branch`, `Other Nowhere`
-//
-// The text of `bytes`. Behind `f<n>:<role>` in the heading a function, module, layout, variable, key, string, datum or type is spelled by what it is, never by its number in the program,
-// so that the texts of one function in two programs compare line by line. An offset counts from the start of the unit's code.
-//     unit f3:Body "src/a.ts":120 "handle"                                  the path of the module, the position and the name of the function
-//       size=184 frame=48@4-180 entries=1 sites=2 ..                        frame=none, or the size and the ranges of code in which the frame is set up
-//       parameters=2 borrowedArguments=0
-//       hash <SHA-1 of the code with the fields of its relocations cleared>
-//       entry <id> at <offset>
-//       saves <register> at <offset in the frame>
-//       prologue check calls at <offset> and resumes at <offset>
-//       relocation <offset> <RelocationKind> <SymbolSpace> <symbol>
-//       argument thunk <index> <stub>, <register> = <register | ArgumentSource payload> ..
-//       constant <index> align <n> <ConstantKind> <hex>
-//       jump table <index> <offset> ..
-//       return <offset> <site>
-//       first read returns at <offset> <site> columns <n>
-//       site <n> .. is <CallSiteKind>
-//       constructs <unit> at <site>
-//       handler <HandlerType> at <offset> for <site>
-//       fault <offset> <site> throws <word | (mention)> ..
-//       poll <offset> [frameless] <site>
-//       frame map <hex word> ..
-// symbol: `<role> <function> entry <n>` | a stub by family, form, count, caller's frame and operation | `<NumberSpace> <key>` with each id of the key by name | an index into the lists of this text
-// site:   `site <n> "<path>":<line>:<column>` | `without site`
-
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class WordOfMentionKey : uint8_t { Number, Key, Text, Module, Variable, Layout, Function, Unit, Data, Type, Builtin, BuiltinCell, ClassSide };
+enum class WordOfMentionKey : uint8_t { Number, Key, Text, Module, Variable, Layout, Function, Data, Type, Builtin, BuiltinCell, ClassSide };
 
 class NamesInBytesText {
     WTF_MAKE_NONCOPYABLE(NamesInBytesText);
 public:
-    NamesInBytesText(PrintStream&, const Program&, const Plan&);
+    NamesInBytesText(PrintStream&, const Program&);
 
     PrintStream& out() { return m_out; }
 
@@ -104,11 +43,9 @@ public:
     void printUnitName(CodeUnit);
     void printMention(const CodeBody&, uint32_t index);
     void printSymbol(const CodeBody&, const Relocation&);
-    // With a blank in front.
     void printSite(const SiteDescription&, OptionalIndex);
 
 private:
-    // Prints `-` for no id and `?<n>` for an id that names no record.
     template<typename IDType> bool namesRecord(IDType, size_t numberOfRecords);
 
     void printModuleName(ModuleID);
@@ -124,11 +61,8 @@ private:
 
     PrintStream& m_out;
     const Program& m_program;
-    const Plan& m_plan;
     IRPrinter m_printer;
-    // [DataID]: how many data of the same module have a smaller number. Data have no name.
     Vector<uint32_t> m_placeOfDataInModule;
-    // A private name among the keys of a layout names its owner, a layout in turn. That one is spelled without its fields.
     bool m_isListingFieldsOfLayout { false };
 };
 
@@ -140,8 +74,6 @@ struct TotalOfCodeForm {
 } // anonymous namespace
 
 static constexpr ASCIILiteral lineOfFailedMachineCommand = "the build failed"_s;
-
-// ---- Units
 
 static std::optional<Vector<CodeUnit>> unitsOfMachineCommand(TestCommandContext& context, StagedBuild& stage)
 {
@@ -161,8 +93,6 @@ static void printHeadingOfMachineUnit(PrintStream& out, CodeUnit unit)
     out.print("unit "_s);
     printCodeUnit(out, unit);
 }
-
-// ---- Machine operations
 
 static void printProceduresOfMachineUnits(TestCommandContext& context, MachineState state, void (*print)(PrintStream&, const Machine::Procedure&))
 {
@@ -209,7 +139,6 @@ static void runMachineFrameCommand(TestCommandContext& context)
     printProceduresOfMachineUnits(context, MachineState::Prepared, Machine::printFrame);
 }
 
-// The emitters by themselves: what they make of Code that no walk would build. The section `code` is swept first.
 static void runMachineEmitCodeCommand(TestCommandContext& context)
 {
     StagedBuild stage = context.stage();
@@ -242,12 +171,9 @@ static void runMachineEmitCodeCommand(TestCommandContext& context)
     Machine::printProcedure(context.out, *procedure);
 }
 
-// ---- Names
-
-NamesInBytesText::NamesInBytesText(PrintStream& out, const Program& program, const Plan& plan)
+NamesInBytesText::NamesInBytesText(PrintStream& out, const Program& program)
     : m_out(out)
     , m_program(program)
-    , m_plan(plan)
     , m_printer(out, program)
 {
     size_t numberOfModules = program.modules.size();
@@ -320,7 +246,6 @@ void NamesInBytesText::printLayoutName(LayoutID id)
         return;
     }
 
-    // All object types with the same names share a layout that is written nowhere.
     if (m_isListingFieldsOfLayout) {
         m_out.print("{..}"_s);
         return;
@@ -392,7 +317,6 @@ bool NamesInBytesText::printNameInPlaceOf(IDPrefix prefix, uint32_t number)
     return true;
 }
 
-// The printers of keys and types spell an id as a letter and a number, outside quotes, with no letter or digit on either side. The number of a layout is Program::numberInTextOf().
 void NamesInBytesText::printNamesInPlaceOfNumbers(const WTF::CStringBase& textOfIRPrinter)
 {
     std::span<const char> text = textOfIRPrinter.span();
@@ -438,7 +362,6 @@ void NamesInBytesText::printTypeName(TypeID type)
     printNamesInPlaceOfNumbers(text.toUTF8CString());
 }
 
-// The module and the position of each call through which the place was inlined, from the outermost in, and then its own.
 static WordOfMentionKey wordOfPlaceInMentionKeyAt(size_t index)
 {
     return index % 2 ? WordOfMentionKey::Number : WordOfMentionKey::Module;
@@ -478,7 +401,6 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
     case NumberSpace::DataElements:
         return WordOfMentionKey::Data;
     case NumberSpace::RegExpLiteralCell:
-        // The key of a NewRegExp goes on with the pattern and the flags.
         if (index == 2)
             return WordOfMentionKey::Text;
         return index ? WordOfMentionKey::Number : WordOfMentionKey::Module;
@@ -502,8 +424,6 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
         return WordOfMentionKey::Function;
-    case NumberSpace::Function:
-        return WordOfMentionKey::Unit;
     case NumberSpace::Allocation:
         if (index == layoutWordOfAllocationKey)
             return WordOfMentionKey::Layout;
@@ -520,7 +440,6 @@ static WordOfMentionKey wordOfMentionKeyAt(NumberSpace space, std::span<const ui
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The index counts the words behind the kind.
 static WordOfMentionKey wordOfRequestKeyAt(RequestKind kind, size_t index)
 {
     switch (kind) {
@@ -562,12 +481,6 @@ void NamesInBytesText::printWord(WordOfMentionKey kind, uint32_t word)
         return;
     case WordOfMentionKey::Function:
         printFunctionName(FunctionID::fromBits(word));
-        return;
-    case WordOfMentionKey::Unit:
-        if (word < m_plan.conventions().numberOfUnits())
-            printUnitName(m_plan.conventions().unitAt(word));
-        else
-            m_out.print("?"_s, word);
         return;
     case WordOfMentionKey::Data:
         printDataName(DataID::fromBits(word));
@@ -717,8 +630,6 @@ void NamesInBytesText::printSite(const SiteDescription& sites, OptionalIndex sit
         m_out.print(" in inline frame "_s, position.inlineFrame);
 }
 
-// ---- bytes
-
 static void printHexInBytesText(PrintStream& out, std::span<const uint8_t> bytes)
 {
     for (uint8_t byte : bytes)
@@ -807,7 +718,6 @@ static void printListsOfBodyInBytesText(NamesInBytesText& names, const CodeBody&
         names.printSymbol(body, relocation);
         out.println();
     }
-    // A cell of the closure table that only a stub reads: the mention is all that gives the function its cell.
     for (uint32_t index = 0; index < body.mentions.size(); ++index) {
         bool isNamedByCode = std::ranges::any_of(body.relocations, [&](const Relocation& relocation) {
             return relocation.space == SymbolSpace::Number && relocation.symbol == index;
@@ -925,13 +835,12 @@ static void runMachineBytesCommand(TestCommandContext& context)
     std::optional<Vector<CodeUnit>> units = unitsOfMachineCommand(context, stage);
     if (!units)
         return;
-    const Plan* plan = stage.plan();
-    if (!plan) {
+    if (!stage.plan()) {
         context.out.println(lineOfFailedMachineCommand);
         return;
     }
 
-    NamesInBytesText names(context.out, stage.program(), *plan);
+    NamesInBytesText names(context.out, stage.program());
     for (CodeUnit unit : *units) {
         printHeadingOfMachineUnit(context.out, unit);
         context.out.print(" "_s);
@@ -946,9 +855,6 @@ static void runMachineBytesCommand(TestCommandContext& context)
     }
 }
 
-// ---- bytes-by-form
-
-// A state names a form only on a row that lists it, `form` speaks for Always alone, and a place only where the row lists the place.
 static_assert(namedFormOf(Opcode::Mod, StateOfKnowledge::NumbersAndOtherDivisor, Place::Anywhere) == Form::Runtime && namedFormOf(Opcode::Mod, StateOfKnowledge::Numbers, Place::Anywhere) == Form::Open);
 static_assert(!namedFormOf(Opcode::Mod, StateOfKnowledge::Always, Place::Anywhere) && !namedFormOf(Opcode::Mod, StateOfKnowledge::Strings, Place::Anywhere));
 static_assert(namedFormOf(Opcode::Call, StateOfKnowledge::Always, Place::Anywhere) == Form::Closed && !namedFormOf(Opcode::Call, StateOfKnowledge::Generic, Place::Anywhere));
@@ -965,7 +871,6 @@ static String nameOfRowInBytesByFormText(uint64_t key)
     return makeString(nameOf(static_cast<Opcode>(key >> 32)), ' ', nameOf(static_cast<StateOfKnowledge>(key >> 16 & 0xFFFF)), ' ', nameOf(static_cast<Place>(key >> 8 & 0xFF)), ' ', nameOf(formReportedAs(static_cast<Wire::CodeForm>(key & 0xFF))));
 }
 
-// The questions of the emitters that ask for more than a loop. What has been measured of each stands above the rows of the schema that list the place.
 static ASCIILiteral questionInBytesByFormTextAbout(Place place)
 {
     switch (place) {
@@ -1122,8 +1027,6 @@ static void runMachineBytesByFormCommand(TestCommandContext& context)
     }
 }
 
-// ---- named-forms
-
 static void runMachineNamedFormsCommand(TestCommandContext& context)
 {
     for (const String& word : context.arguments) {
@@ -1150,8 +1053,6 @@ static void runMachineNamedFormsCommand(TestCommandContext& context)
     }
 }
 
-// ---- bytes-outside-operations
-
 static void runMachineBytesOutsideOperationsCommand(TestCommandContext& context)
 {
     Vector<CodeRole, 2> roles;
@@ -1170,7 +1071,6 @@ static void runMachineBytesOutsideOperationsCommand(TestCommandContext& context)
     }
 
     StagedBuild stage = context.stage();
-    // By the origin and whether the code is rare.
     UncheckedKeyHashMap<uint64_t, TotalOfCodeForm, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> totals;
     TotalOfCodeForm totalOfAllRows;
     uint64_t bytesOfCode = 0;
@@ -1205,8 +1105,6 @@ static void runMachineBytesOutsideOperationsCommand(TestCommandContext& context)
     context.out.println("all rows "_s, totalOfAllRows.count, " "_s, totalOfAllRows.bytes);
     context.out.println("all code "_s, bytesOfCode);
 }
-
-// ---- ranges
 
 static void runMachineRangesCommand(TestCommandContext& context)
 {

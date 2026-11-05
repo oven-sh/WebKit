@@ -32,7 +32,6 @@
 
 namespace JSC { namespace AOT {
 
-// Only ARM64 uses the scratches.
 static void copyChunkAtOffset(StubAssembler& jit, GPRReg source, GPRReg target, GPRReg offset, GPRReg firstScratch, GPRReg secondScratch)
 {
 #if CPU(X86_64)
@@ -71,7 +70,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     const GPRReg source = jit.operand(0);
     const GPRReg excludedRun = jit.clobberOperand(1);
     const GPRReg count = jit.clobberOperand(2);
-    // The operation reads no keys where their number is zero.
     const GPRReg kept = jit.clobberOperand(3);
     const GPRReg copy = jit.result();
     const GPRReg word = jit.allocateScratch(StubRegister::T9);
@@ -83,9 +81,7 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     const GPRReg shapeWord = count;
     RELEASE_ASSERT(noOverlap(source, excludedRun, count, kept, copy, word, size, structure, instanceGPR));
     RELEASE_ASSERT(secondScratchOfChunk == InvalidGPRReg || noOverlap(secondScratchOfChunk, source, excludedRun, count, kept, copy, word, size, structure, instanceGPR));
-    // The operands are as they came.
     JumpList callsOperation;
-    // excludedRun and count, which were zero, hold other things.
     JumpList callsOperationWithoutExclusions;
 
     constexpr int32_t wordSize = sizeof(uint64_t);
@@ -93,7 +89,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     static_assert(offsetOfFirstField == chunkSize && JSFinalObject::offsetOfInlineStorage() == chunkSize && MarkedSpace::sizeStep == chunkSize);
     static_assert(JSCell::cellStateOffset() == wordSize - 1 && !JSCell::structureIDOffset() && std::endian::native == std::endian::little);
 
-    // size holds the size of the cell and header its first word. For a record shapeWord holds its shape word.
     auto allocateAndCopy = [&](bool isRecord, const Invocable<void()> auto& finish) {
         callsOperationWithoutExclusions.append(jit.branch32(CCallHelpers::Above, size, TrustedImm32(MarkedSpace::largeCutoff)));
         jit.add32(TrustedImm32(chunkSize - 1), size);
@@ -121,16 +116,13 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     };
     auto finishNothing = [] { };
 
-    // Leaves in kept the butterfly of a copy of the storage that the object has outside its cell, or zero. word holds the Structure of the object, which has no elements, and keeps it. It writes count, size, structure and copy.
     auto copyStorageOutsideCell = [&](GPRReg object) {
         const GPRReg named = word;
         const GPRReg storage = count;
         const GPRReg scratch = structure;
         JumpList& cannot = callsOperationWithoutExclusions;
-        // The storage is as long as Structure::outOfLineCapacity() says. A butterfly without elements points one word behind it.
         constexpr int32_t maxCapacityCopied = 4 * initialOutOfLineCapacity;
         static_assert(outOfLineGrowthFactor == 2 && MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*) && sizeof(IndexingHeader) == sizeof(EncodedJSValue));
-        // A Structure without properties, or with more than the half word counts, holds one of the two greatest numbers there.
         static_assert(Structure::greatestMaxOffsetOutsideRareData >= firstOutOfLineOffset + maxCapacityCopied && !(initialOutOfLineCapacity % 2));
         jit.loadPtr(Address(object, JSObject::butterflyOffset()), storage);
         jit.load16(Address(named, Structure::maxOffsetOffset()), size);
@@ -165,7 +157,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
         hasNoStorage.link(&jit);
     };
 
-    // size holds the layout.
     auto loadWordsOfRecord = [&] {
         jit.load32(Address(size, OBJECT_OFFSETOF(LayoutData, shape)), shapeWord);
         jit.neg32(shapeWord);
@@ -177,7 +168,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
         jit.or64(word, header);
     };
 
-    // A store to a new object defines a property unless Object.prototype has a setter or a read-only property. No source that is copied here has elements or a name __proto__.
     if (copiedBy == ObjectIsCopiedBy::Stores) {
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype)), structure);
         loadStructure(jit, structure, structure);
@@ -188,7 +178,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
     JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, source);
 
-    // The copy has the Structure of the source, and with it a key order that the Structure holds.
     static_assert(CompiledStructure::offsetOfHeldKeyOrder() == CompiledStructure::offsetOfFlags() + 1);
     constexpr int32_t keyOrderStaysBehind = 0xff00;
     constexpr int32_t isCopiedByWords = static_cast<uint8_t>(CompiledStructure::Flag::IsCopiedByWords);
@@ -200,7 +189,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     jit.and32(TrustedImm32(isCopiedByWords | hasOnlyFieldsBelowObjectPrototype | hasExtraProperties | keyOrderStaysBehind), word);
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(isCopiedByWords | hasOnlyFieldsBelowObjectPrototype)));
 
-    // An instance of a class leaves here.
     LayoutData testedBits { };
     testedBits.kindBits = (1 << 4) - 1;
     testedBits.hasExtensionData = true;
@@ -222,13 +210,11 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     isNotCompiledObject.link(&jit);
     callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(source, JSCell::typeInfoTypeOffset()), TrustedImm32(FinalObjectType)));
     Jump hasButterfly = jit.branchTestPtr(CCallHelpers::NonZero, Address(source, JSObject::butterflyOffset()));
-    // What tryCreateObjectViaCloning() asks of a Structure before it gives the copy the same one.
     constexpr uint32_t bitsThatForbid = Structure::s_dictionaryKindBits | Structure::s_hasAnyKindOfGetterSetterPropertiesBits | Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits
         | Structure::s_hasNonEnumerablePropertiesBits | Structure::s_anyImmutablePropertiesBits | Structure::s_mayBePrototypeBits | Structure::s_didPreventExtensionsBits | Structure::s_hasBeenFlattenedBeforeBits
         | Structure::s_hasBeenDictionaryBits | Structure::s_hasUnderscoreProtoPropertyExcludingOriginalProtoBits | Structure::s_hasNonConfigurablePropertiesBits;
     constexpr uint32_t bitsThatAreNeeded = Structure::s_isQuickPropertyAccessAllowedForEnumerationBits | Structure::s_didTransitionBits;
     static_assert(!TypeInfoBlob::indexingModeIncludingHistoryOffset() && sizeof(TypeInfoBlob) == sizeof(uint32_t) && JSCell::indexingTypeAndMiscOffset() == sizeof(uint32_t));
-    // Returns where the tests go on behind those of the bits.
     auto testStructureOfOrdinaryObject = [&](JumpList& hasOtherBitsOfStructure) {
         loadStructure(jit, source, structure);
         jit.load32(Address(structure, Structure::bitFieldOffset()), word);
@@ -256,13 +242,11 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     loadWordsOfOrdinaryObject();
     allocateAndCopy(false, finishNothing);
 
-    // An object that never got a property. Its copy is as large as it is: what is copied to be added to keeps its room.
     mayBeEmpty.link(&jit);
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(bitsThatAreNeeded & ~Structure::s_didTransitionBits))));
     jit.branchTestPtr(CCallHelpers::Zero, Address(structure, Structure::seenPropertiesOffset())).linkTo(hasTestedBits, &jit);
     callsOperation.append(jit.jump());
 
-    // An ordinary object with more properties than its cell holds.
     hasButterfly.link(&jit);
     testStructureOfOrdinaryObject(callsOperation);
     callsOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(source, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
@@ -274,7 +258,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
         jit.storePtr(kept, Address(copy, JSObject::butterflyOffset()));
     });
 
-    // A record that holds fields in an Extension, or extra properties in an object of their own. The copy has the Structure and the words of the source and a copy of each of the two.
     // A cell is whole before the next allocation can fail: the collector may find what is left behind.
     hasOtherLayout.link(&jit);
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(bitsOfRecordWithExtension.firstWord()))));
@@ -284,7 +267,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
         const GPRReg extraProperties = excludedRun;
         const GPRReg storage = count;
         const GPRReg named = word;
-        // kept holds the butterfly of the copy, then the two hidden words of the copy: that of the extra properties in the low half, that of the Extension in the high half.
         const GPRReg scratch = structure;
         JumpList& cannot = callsOperationWithoutExclusions;
         callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(source, offsetOfOrderWord), TrustedImm32(~(orderAndCountMask | orderWordHasExtraProperties))));
@@ -368,7 +350,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
                 jit.loadPtr(BaseIndex(allocatorOfExtension, units, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocatorOfExtension);
                 cannot.append(jit.branchTestPtr(CCallHelpers::Zero, allocatorOfExtension));
                 allocateCell(jit, copy, allocatorOfExtension, scratch, cannot);
-                // What lies behind the granules of the source is zero.
                 static_assert(minExtensionSize == chunkSize);
                 jit.lshift32(TrustedImm32(4), units);
                 Label copyNextChunkOfExtension = jit.label();
@@ -409,7 +390,6 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
         });
     }
 
-    // A value that is no cell has no own properties, whichever keys are left out. The operation prepares the allocation.
     isNotCell.link(&jit);
     constexpr unsigned kind = static_cast<unsigned>(InlineAllocation::DefaultFinalObject);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator)), allocator);
@@ -444,11 +424,9 @@ struct MoveWalk {
     GPRReg source;
     GPRReg copy;
     GPRReg endOfRun;
-    // Of the move, from the end of its run.
     GPRReg offset;
     GPRReg bits;
     GPRReg scratch;
-    // On x86-64 an instruction takes the operand out of memory.
     GPRReg operandOfMove;
 };
 
@@ -549,7 +527,6 @@ static void walkRun(StubAssembler& jit, const MoveWalk& walk, MappedCopy::RunOfS
     isEmpty.link(&jit);
 }
 
-// The copy that is kept at the place of this one. Where there is none, every copy of this kind takes a frame.
 static Jump loadCopyWithoutFrame(StubAssembler& jit, GPRReg target, GPRReg source, GPRReg excludedRun, GPRReg copy)
 {
     static_assert(std::endian::native == std::endian::little && offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t));
@@ -565,9 +542,6 @@ static Jump loadCopyWithoutFrame(StubAssembler& jit, GPRReg target, GPRReg sourc
     return jit.branchTestPtr(CCallHelpers::Zero, copy);
 }
 
-// What tryCopyByFieldMapWithoutFrame() does, for a copy all of whose moves the stub makes. It falls through where that function is to make the copy: the copy is kept for this source and the stub does not make its moves, or has refused one.
-// A place may hold the copy of other objects: then the copy takes a frame at once.
-// It leaves by keepsNoCopyOfSource where the place holds the copy of sources with another Structure: count is zero there and structureIDOfTarget holds what it held.
 static void copyByFieldMap(StubAssembler& jit, GPRReg target, GPRReg source, GPRReg excludedRun, GPRReg count, GPRReg excludedKeys, GPRReg structureIDOfTarget, GPRReg copy, GPRReg word, JumpList& takesFrame, JumpList& keepsNoCopyOfSource, const Invocable<void()> auto& leaveWithCopyMade)
 {
     const GPRReg structure = structureIDOfTarget;
@@ -585,7 +559,6 @@ static void copyByFieldMap(StubAssembler& jit, GPRReg target, GPRReg source, GPR
     decodeStructureID(jit, structure);
     takesFrame.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
 
-    // The operation reads no keys where their number is zero.
     const MoveWalk walk {
         .target = target,
         .source = source,
@@ -631,13 +604,11 @@ struct ChunkCopy {
     GPRReg source;
     GPRReg excludedRun;
     GPRReg count;
-    // Holds the StructureID of both.
     GPRReg structure;
     GPRReg word;
     GPRReg orderWord;
 };
 
-// copy.structure holds the layout and copy.orderWord the order word of the source.
 static void copyFieldWords(StubAssembler& jit, const ChunkCopy& copy)
 {
     const auto [target, source, excludedRun, count, structure, word, orderWord] = copy;
@@ -673,7 +644,6 @@ static uint32_t firstWordOfRecordLayoutWith(bool hasExtensionData)
     return bits.firstWord();
 }
 
-// copy.structure holds the Structure of the target and copy.orderWord the order word of the source. It leaves by hasOtherLayout as copyByChunks() does.
 static void copyFieldWordsOfRecord(StubAssembler& jit, const ChunkCopy& copy, JumpList& callsOperation, JumpList& hasOtherLayout)
 {
     const GPRReg layout = copy.structure;
@@ -689,8 +659,6 @@ static void copyFieldWordsOfRecord(StubAssembler& jit, const ChunkCopy& copy, Ju
     copyFieldWords(jit, copy);
 }
 
-// Between records of one Structure that hold their fields in plain slots. It falls through where the copy is made.
-// It leaves by hasOtherLayout with the tested bits of the layout in copy.word and the layout in copy.structure: copyByChunksWithExtension() goes on from there.
 static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& callsOperation, JumpList& hasOtherLayout)
 {
     const auto [target, source, excludedRun, count, structure, word, orderWord] = copy;
@@ -715,7 +683,6 @@ static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& ca
     copyFieldWordsOfRecord(jit, copy, callsOperation, hasOtherLayout);
 }
 
-// The key order of the source has no number: it lies in the Structure of the source. The operation that makes such a copy sees to it that the place of the copy is not empty.
 static void branchUnlessSourceOfSameLayoutHasUnnumberedKeyOrder(StubAssembler& jit, GPRReg target, GPRReg source, GPRReg scratch, JumpList& otherwise)
 {
     jit.load32(Address(target, offsetOfShapeWord), scratch);
@@ -727,13 +694,10 @@ static void branchUnlessSourceOfSameLayoutHasUnnumberedKeyOrder(StubAssembler& j
 
 static void takeStructureOfSource(StubAssembler& jit, const ChunkCopy& copy)
 {
-    // Both describe cells with the same header.
     jit.load32(Address(copy.source, JSCell::structureIDOffset()), copy.word);
     jit.store32(copy.word, Address(copy.target, JSCell::structureIDOffset()));
 }
 
-// Behind branchUnlessSourceOfSameLayoutHasUnnumberedKeyOrder(): the target takes the Structure of the source, which serves every object with that key order. Both lie below the prototype of their layout.
-// copy.structure holds the StructureID of the target. The rest is as in copyByChunks().
 static void copyByChunksWithStructure(StubAssembler& jit, const ChunkCopy& copy, JumpList& callsOperation, JumpList& hasOtherLayout)
 {
     const auto [target, source, excludedRun, count, structure, word, orderWord] = copy;
@@ -771,7 +735,6 @@ static void copyByChunksWithStructure(StubAssembler& jit, const ChunkCopy& copy,
     takeStructureOfSource(jit, copy);
 }
 
-// The same where fields lie in an Extension: the copy gets one of its own. It writes copy.excludedRun and copy.count, which are zero. Where it leaves, they are zero again and nothing is allocated.
 static void copyByChunksWithExtension(StubAssembler& jit, const ChunkCopy& copy, JumpList& callsOperation)
 {
     const auto [target, source, excludedRun, count, structure, word, orderWord] = copy;
@@ -787,7 +750,6 @@ static void copyByChunksWithExtension(StubAssembler& jit, const ChunkCopy& copy,
     }
     callsOperation.append(branchIfBarrierIsNeeded(jit, target, word));
 
-    // The Extension is made first: behind it nothing is left to the operation.
     loadExtensionWordOffset(jit, source, from);
     jit.load32(BaseIndex(source, from, CCallHelpers::TimesOne), from);
     Jump hasNone = jit.branchTest32(CCallHelpers::Zero, from);
@@ -802,7 +764,6 @@ static void copyByChunksWithExtension(StubAssembler& jit, const ChunkCopy& copy,
     jit.loadPtr(BaseIndex(allocator, units, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
     givesUp.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
     allocateCell(jit, made, allocator, scratch, givesUp);
-    // What lies behind the granules of the source is zero.
     static_assert(minExtensionSize == 2 * sizeof(uint64_t));
     jit.lshift32(TrustedImm32(4), units);
     Label copyNextChunk = jit.label();
@@ -829,7 +790,6 @@ static void copyByChunksWithExtension(StubAssembler& jit, const ChunkCopy& copy,
     isCopied.link(&jit);
 }
 
-// `{ ...source }` and what else copies into a record. Between two records of one layout, into one that has no key yet, the words of the fields are the fields. Any other copy that was made before is made by the moves that the run time has kept of it.
 PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
 {
     StubFamily family = jit.key().family();
@@ -854,7 +814,6 @@ PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
     JumpList callsOperation;
     callsOperation.append(jit.branchIfNotCell(source));
 
-    // A call that preserves registers may write that of its immediate. With it the Structures are compared and the place of the copy is looked at. What the copy by chunks or by moves writes is saved behind that.
     if (preservesRegisters) {
         const GPRReg immediate = *jit.signature().immediate;
         RELEASE_ASSERT(noOverlap(immediate, target, source, excludedRun, count, word, structure, instanceGPR));
@@ -1006,8 +965,6 @@ StubSignature signatureOfCopyObjectAndDefineFrontEnd(StubKey)
     return operationFrontEndSignature(4);
 }
 
-// The operands are those of the operation: the source, the number of the first name, the count of the names and a list of the count, the numbers of the names and their values.
-// An ordinary object whose copy with these names the table knows is copied here, into a cell that has the final Structure from the start. Any other source is left to the operation.
 void generateCopyObjectAndDefineFrontEnd(StubAssembler& jit)
 {
     const GPRReg source = jit.operand(0);
@@ -1022,9 +979,7 @@ void generateCopyObjectAndDefineFrontEnd(StubAssembler& jit)
     const GPRReg butterfly = firstName;
     RELEASE_ASSERT(noOverlap(source, firstName, count, list, copy, record, size, scratch, instanceGPR));
     RELEASE_ASSERT(secondScratchOfChunk == InvalidGPRReg || noOverlap(secondScratchOfChunk, source, firstName, count, list, copy, record, size, scratch, instanceGPR));
-    // The operands are as they came.
     JumpList callsOperation;
-    // The list is in its register, and says again what the two registers in front of it held.
     JumpList callsOperationWithList;
 
     constexpr int32_t wordSize = sizeof(uint64_t);
@@ -1056,7 +1011,6 @@ void generateCopyObjectAndDefineFrontEnd(StubAssembler& jit)
     jit.branch32(CCallHelpers::Above, size, TrustedImm32(1)).linkTo(compareNextName, &jit);
     hasOneName.link(&jit);
 
-    // From here on firstName and count hold other things.
     jit.move(TrustedImm32(0), butterfly);
     jit.load16(Address(record, OBJECT_OFFSETOF(CopyWithNames, storageSize)), size);
     Jump hasNoStorage = jit.branchTest32(CCallHelpers::Zero, size);
@@ -1066,7 +1020,6 @@ void generateCopyObjectAndDefineFrontEnd(StubAssembler& jit)
     callsOperationWithList.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
     allocateCell(jit, copy, scratch, count, callsOperationWithList);
     jit.getEffectiveAddress(BaseIndex(copy, size, CCallHelpers::TimesOne, sizeof(IndexingHeader)), butterfly);
-    // The properties lie at the end of the storage. What the source has no counterpart for lies in front of them.
     jit.load16(Address(record, OBJECT_OFFSETOF(CopyWithNames, storageSizeOfSource)), scratch);
     jit.sub32(scratch, size);
     Jump hasNoMoreStorage = jit.branchTest32(CCallHelpers::Zero, size);
@@ -1122,7 +1075,6 @@ void generateCopyObjectAndDefineFrontEnd(StubAssembler& jit)
     isStored.link(&jit);
     jit.branchTest32(CCallHelpers::NonZero, count).linkTo(storeNextValue, &jit);
     fenceAfterAllocation(jit);
-    // Whoever called tests this register for an exception.
     jit.move(TrustedImm32(0), jit.secondResult());
     jit.returnToCaller();
 

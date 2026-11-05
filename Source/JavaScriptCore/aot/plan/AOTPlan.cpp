@@ -27,6 +27,7 @@
 #include "AOTUnionPlan.h"
 #include "AOTThinSummary.h"
 #include "AOTThreads.h"
+#include "AOTTypeRelations.h"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -34,33 +35,23 @@
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(!(AOT::Closure::allocationSize(1) % 16));
 static_assert(AOT::Closure::maxNumberOfCaptures % 2);
 static_assert(unorderedOrderWord == orderWordOf(0, 0));
-// FunctionAsZero tells a word that was never stored from every value that a store leaves there.
 static_assert(representsAbsentAsZero(SlotRepresentation::JSValue) && traitsOf(SlotRepresentation::JSValue).undefinedBits);
 
-// What the other files of plan/ make for planProgram(). No header declares them.
-// AOTFunctionKinds.cpp.
 Vector<ClosureForm> chooseClosureForms(const Program&, const LinkTables&);
-// AOTSlotPlan.cpp: every member but `variables`, `classCreation` and `closureForms`. It reports what the records of the image cannot say.
 SlotPlanParts computeSlotPlanParts(Program&, const Facts&, BuildContext&);
-// AOTShapeTest.cpp.
+void holdDoorsToProofsInSlotPlan(Program&, const Facts&, SlotPlanParts&);
 ShapeTable computeShapeTable(const Program&, const LinkTables&, const SlotPlan&, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts);
-// AOTKeyOrders.cpp.
 KeyOrders computeKeyOrders(const Program&, const LinkTables&, const ThinSummaries&, const BodyIndexTable&, Mechanisms, const SlotPlan&, BuildContext&);
-// AOTLiteralStrings.cpp.
-LiteralStringTable computeLiteralStrings(const Program&);
-// walk/AOTWalkGuesses.cpp: typesBehindParameterGuard() of each function. Ascending by function.
 Vector<ParameterGuardPlan> planParameterGuards(Program&, const Facts&, const Plan&, BuildContext&);
-// AOTUnionMethodSelectors.cpp: MethodFamily::receivers and typesOfArguments, and the typed selectors.
 void finishMethodTableForUnions(Program&, const Facts&, Plan&);
 
-// A family for each name that some call by name spells and under which objects of the program's classes find methods, as the classes are written.
-// A row stands on the guard of the name at the class of its layout (object/AOTClassGuards.h) unless Link has proven that nothing under the name can change. An object that was laid below another prototype says so itself: the entry asks it.
 static MethodTablePlan planMethodTable(const Program& program, const Facts& facts, const Plan& plan)
 {
     MethodTablePlan table;
@@ -69,7 +60,6 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
     const LinkTables& linked = facts.linked();
     const CallingConventions& conventions = plan.conventions();
 
-    // By key: a bit for each number of arguments that a call passes.
     Vector<uint8_t> numbersOfArgumentsPassedUnderKey;
     numbersOfArgumentsPassedUnderKey.fill(0, program.types.numberOfPropertyKeys());
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
@@ -84,7 +74,6 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
     auto isEnteredThroughTable = [&](FunctionID method) {
         const Function& function = program.at(method);
         FunctionConvention convention = conventions.of(method);
-        // Only the calls that Link lists enter such a method, and each of them goes straight to it. A call through the table mentions every method of the family, and nothing leads from it to this one: LinkedFunction::isInQueueFromStart.
         if (linked.function(method).everyCallerIsKnown && linked.function(method).everyCallHasOneCallee)
             return false;
         return function.kind == FunctionKind::Method && function.captures.isEmpty() && !function.has(FunctionFlags::TakesCallee) && !function.has(FunctionFlags::HasNewTarget)
@@ -99,7 +88,6 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
         MethodTableRow row;
     };
     Vector<RowUnderKey> rows;
-    // By key: the last layout on whose way up the key was met.
     Vector<uint32_t> lastLayoutThatPassedKey;
     lastLayoutThatPassedKey.fill(UINT32_MAX, program.types.numberOfPropertyKeys());
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
@@ -109,7 +97,6 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
             continue;
         unsigned numberOfClassesPassed = 0;
         for (LayoutID current = layout; current; current = program.at(current).base) {
-            // A row of classes that comes round, a constructor function, a member under a key that is computed: nobody says what is found from here on.
             if (++numberOfClassesPassed > program.layouts.size() || program.at(current).has(LayoutFlags::IsConstructorFunction))
                 break;
             auto members = std::ranges::equal_range(linked.members, std::pair { current, ClassSide::Prototype }, { }, sideOf);
@@ -140,7 +127,6 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
         for (; end < rows.size() && rows[end].key == family.key; ++end) {
             family.rows.append(rows[end].row);
             family.methods.append(rows[end].row.method);
-            // An entry goes on to the lookup for an object that stands below another prototype than its class made.
             family.hasGuardedRow = true;
         }
         family.hasGuardedRow = !formsOfSelector(program, linked, conventions, family).everyRowIsProven;
@@ -159,10 +145,6 @@ static MethodTablePlan planMethodTable(const Program& program, const Facts& fact
     return table;
 }
 
-// ---- Variables
-
-// What a table of the image hands to the run time: the exports of modules, the bindings that evaluated text finds, mocks, and static fields, which lie in their variables until the class object is made.
-// Any other variable has a word where code mentions it.
 static BitVector variablesDescribedToRunTimeByPlan(const Program& program)
 {
     BitVector described(program.variables.size());
@@ -188,9 +170,6 @@ static BitVector variablesDescribedToRunTimeByPlan(const Program& program)
     return described;
 }
 
-// The body is one that the loader enters once: the scan has asked all of that but whether several modules name it.
-// `checksProofs`, TestingSwitch::CheckProofsAtRunTime: that no read comes in front of the declaration is Link's word, and a variable that is marked from birth has no state left that could show a read which does.
-// So each variable is marked where it is declared, and what a read in front of that finds is held against the proof like what any read finds: Walker::checkProof().
 static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, const Facts& facts, const BitVector& variablesDescribedToRunTime, bool checksProofs)
 {
     DeferredDefinitions result;
@@ -214,7 +193,6 @@ static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, con
             const Variable& variable = program.at(definition.variable);
             if (definition.variable.index() >= linked.variables.size() || variablesDescribedToRunTime.quickGet(definition.variable.index()))
                 continue;
-            // A binding that cannot be assigned to is stored into once, where its module declares it.
             const LinkedCell& cell = linked.variable(definition.variable);
             if (!cell.everyWriterIsKnown || cell.isWrittenAfterConstruction || !cell.proven || variable.owner || variable.initialization == VariableInitialization::Function
                 || variable.flags.containsAny({ VariableFlags::HoldsMock, VariableFlags::IsReplaceable }))
@@ -224,15 +202,12 @@ static DeferredDefinitions deferredDefinitionsOfPlan(const Program& program, con
             if (!index)
                 break;
             BodyValue made = index->value(definition.made);
-            // Most reads of a closure only call it and take nothing of the object. A test and a rare block at each of them would cost more than the closure.
             if (made.opcode() == Opcode::NewClosure)
                 continue;
 
-            // The image fills the first word of a variable only where somebody may read it, so only the empty word, which is what the statics are made of, is a mark from birth.
             bool isBornAbsent = variable.initialization == VariableInitialization::Uninitialized;
             bool isMarkedFromBirth = isBornAbsent && !checksProofs && (cell.isFilledAtEveryRead || !(program.at(cell.proven).primitives & Primitive::Absent));
             uint16_t mark = isMarkedFromBirth ? Primitive::Absent : isBornAbsent ? Primitive::Undefined : Primitive::Null;
-            // A read is typed within what is established of the variable.
             if (std::optional<ProvenInEveryVersion> established = variable.declared.established(); established && !(program.at(*established).primitives & mark))
                 continue;
             result.variables.append(DeferredVariable { definition.variable, mark, !isMarkedFromBirth, body, definition.made, made.opcode() });
@@ -263,7 +238,6 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
         const Variable& declaration = program.variables[index];
         PlannedVariable& planned = variables[index];
         planned.isDescribedToRunTime = described.quickGet(index);
-        // Only the run time stores into the variable of a static field. It starts empty.
         if (declaration.owner)
             continue;
         switch (declaration.initialization) {
@@ -277,8 +251,6 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
             RELEASE_ASSERT(declaration.function);
             planned.encoding = VariableEncoding::FunctionAsZero;
             planned.function = declaration.function;
-            // The word of such a variable holds what a store has left there, and whoever finds it empty takes the one closure of the function. Nobody stores: nobody needs the word.
-            // A function that is not reached has no closure: nothing names its variable, which gets no word as it is, and no table holds its name.
             if (leavesOutWordsNeverStored && facts.linked().function(declaration.function).isReached && !facts.linked().variable(VariableID(index)).isStoredInto)
                 planned.storage = VariableStorage::ClosureTable;
             break;
@@ -287,10 +259,6 @@ static Vector<PlannedVariable> variablesOfPlan(const Program& program, const Fac
     return variables;
 }
 
-// ---- Modules
-
-// A mock that has ended may have kept a module below the importer from running, and only the run time knows. What may be mocked is itself left out only where it imports something that may be.
-// A spy replaces what an export holds, which no record says: a test run claims nothing.
 static BitVector modulesWhoseImportsAreNeverMockedInPlan(const Program& program)
 {
     uint32_t numberOfModules = static_cast<uint32_t>(program.modules.size());
@@ -351,12 +319,10 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
         const Module& module = program.modules[index];
         if (module.kind != ModuleKind::CommonJs)
             parts.modulesWithValue.quickSet(index);
-        // The value word of such a module holds what require() answers. Image places the word where code mentions it.
         if (module.kind == ModuleKind::Runtime || module.kind == ModuleKind::RuntimeSource)
             parts.modulesWithNamespaceWord.quickSet(index);
         if (!module.body || !program.at(module.body).hasBody() || bodyOfModuleOnlyReturns(program.at(module.body).body))
             parts.modulesWhoseBodyIsPassedOver.quickSet(index);
-        // A RequireModule keeps the referrer that wrote it, so the requests as written name every pair that code can ask about.
         for (const ModuleRequest& request : module.requests) {
             if (request.kind != ModuleRequestKind::Require || !request.target)
                 continue;
@@ -375,8 +341,6 @@ static BitVector bodiesWithModuleStartInPlan(const Program& program, const Modul
         bodies.quickSet(start.body.index());
     return bodies;
 }
-
-// ---- Layouts, classes and closures
 
 static LayoutID closureLayoutOfPlan(const Program& program)
 {
@@ -397,8 +361,6 @@ static BitVector layoutsMadeAsCompiledObjectsInPlan(const Program& program, cons
     return layouts;
 }
 
-// A record names the class above by its number, and the run time takes a number without a record for no class at all. So a class that reached code evaluates or takes a token of has one, whether or not an object of it is made,
-// so has a layout of which reached code makes an object, and so has every class above those. `if (false) { class Dead { } }`, an exported class of a file that nobody imports: nothing evaluates it, and its record would spell its name in the executable.
 static BitVector layoutsWithClassRecordInPlan(const Program& program, const Facts& facts)
 {
     BitVector layouts(program.layouts.size());
@@ -414,12 +376,10 @@ static BitVector layoutsWithClassRecordInPlan(const Program& program, const Fact
         for (LayoutID evaluated : facts.summaries().at(FunctionID(index)).classesEvaluated)
             add(evaluated);
     }
-    // Whoever makes an object asks the record of its layout what stands above the object. `Object.create(methods)`: no NewClass evaluates the layout of what it makes.
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         if (!program.layouts[index].has(LayoutFlags::IsNeverAllocated) && (index >= link.layouts.size() || link.layouts[index].isAllocated))
             add(LayoutID(index));
     }
-    // The loader evaluates the class of a constructor function for a variable that is born as the function.
     for (const Variable& variable : program.variables) {
         if (variable.initialization == VariableInitialization::Function && link.function(variable.function).isReached)
             add(classOfConstructorFunction(program, variable.function));
@@ -434,7 +394,6 @@ static BitVector layoutsWithClassRecordInPlan(const Program& program, const Fact
     return layouts;
 }
 
-// PlanParts::variablesThatRunTimeMayFill: of what variablesDescribedToRunTimeByPlan() lists, all but the exports that the run time only reads.
 static BitVector variablesThatRunTimeMayFillInPlan(const Program& program)
 {
     BitVector found(program.variables.size());
@@ -459,7 +418,6 @@ static BitVector variablesThatRunTimeMayFillInPlan(const Program& program)
     return found;
 }
 
-// PlanParts::functionsWhoseResultsPassNoReturn.
 static BitVector functionsWhoseResultsPassNoReturnInPlan(const Program& program, const Facts& facts)
 {
     const LinkTables& linked = facts.linked();
@@ -467,20 +425,31 @@ static BitVector functionsWhoseResultsPassNoReturnInPlan(const Program& program,
     if (linked.functions.size() != program.functions.size())
         return found;
 
+    TypeReader types(program);
     Vector<FunctionID> toTell;
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        FunctionID function(index);
-        bool endsInUnlistedCall = std::ranges::any_of(facts.summaries().at(function).calls, [&](const SummaryCall& call) {
-            return call.isInTailPosition && !linked.calleeAt(function, call.site);
-        });
-        if (endsInUnlistedCall && !found.quickSet(index))
-            toTell.append(function);
-    }
-    // Upward, from a callee to whoever ends in a call of it.
     Vector<std::pair<FunctionID, FunctionID>> callersByCallee;
-    for (const LinkedCall& call : linked.calls) {
-        if (call.isInTailPosition)
-            callersByCallee.append({ call.callee, call.caller });
+    for (uint32_t number = 0; number < program.functions.size(); ++number) {
+        FunctionID function(number);
+        TypeID held = linked.function(function).result;
+        if (!held)
+            continue;
+        bool passesNoReturn = facts.testMentionsWhatIsOutOfReach(types, held, scopedLambda<bool(FunctionID)>([&](FunctionID named) {
+            return linked.leadsTo(CodeUnit { function, CodeRole::Body }, named);
+        }));
+        const BodyIndex* index = facts.bodies().find(function);
+        for (const SummaryCall& call : facts.summaries().at(function).calls) {
+            if (passesNoReturn)
+                break;
+            if (!call.isInTailPosition)
+                continue;
+            FunctionID entered = index ? facts.functionThatCallEntersByBinding(*index, index->value(call.site)) : FunctionID();
+            TypeID heldByCallee = entered && !program.at(entered).isCoroutine() ? linked.function(entered).result : TypeID();
+            passesNoReturn = !heldByCallee || !isSubset(types, types.at(heldByCallee), types.at(held));
+            if (!passesNoReturn)
+                callersByCallee.append({ entered, function });
+        }
+        if (passesNoReturn && !found.quickSet(number))
+            toTell.append(function);
     }
     std::ranges::sort(callersByCallee);
     while (!toTell.isEmpty()) {
@@ -496,7 +465,6 @@ static BitVector functionsWhoseResultsPassNoReturnInPlan(const Program& program,
 static BitVector functionsWithClosureCellInPlan(const Program& program, const CallingConventions& conventions)
 {
     uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());
-    // The run time registers the first class object of a layout in the cell of its constructor, whatever the constructor captures.
     BitVector constructors(numberOfFunctions);
     for (const Layout& layout : program.layouts) {
         if (layout.constructor)
@@ -505,7 +473,6 @@ static BitVector functionsWithClosureCellInPlan(const Program& program, const Ca
 
     BitVector functions(numberOfFunctions);
     for (uint32_t index = 0; index < numberOfFunctions; ++index) {
-        // The table makes a closure from the word that names this entry.
         if (!conventions.of(FunctionID(index)).has(CodeRole::GenericCallEntry))
             continue;
         if (program.functions[index].captures.isEmpty() || constructors.quickGet(index))
@@ -524,14 +491,11 @@ BuiltinID builtinParentNamedByClassRecord(const Program& program, const Facts& f
     return program.builtins().at(classFacts.baseClass).constructor;
 }
 
-// ---- How classes are made
-
 static bool isDefinedByClassSyntaxInPlan(const Layout& layout)
 {
     return layout.kind == LayoutKind::Instance && layout.constructor && !layout.isDerived() && !layout.has(LayoutFlags::IsConstructorFunction);
 }
 
-// The run time has one environment at hand when it makes the closure of a member: the one that the class object captures.
 static bool capturesAtMostEnvironmentOfClassObjectInPlan(const Program& program, const Function& constructor, const Function& member)
 {
     if (member.captures.isEmpty())
@@ -542,8 +506,6 @@ static bool capturesAtMostEnvironmentOfClassObjectInPlan(const Program& program,
     return captured && captured == constructor.captures[0].written() && program.at(captured).environment;
 }
 
-// A function without a name of its own takes one from its key when it is defined, and the run time gives none.
-// A member under a name that its holder is made with redefines a property, and a record only adds.
 static bool classRecordCanCreateMemberInPlan(const Program& program, const Function& constructor, const ClassMember& member)
 {
     if (!member.key || !member.function || member.isAssignedByProgram || program.isIndexLike(member.key) || classHolderIsMadeWithName(program, member.side, member.key))
@@ -552,7 +514,6 @@ static bool classRecordCanCreateMemberInPlan(const Program& program, const Funct
     return function.name && capturesAtMostEnvironmentOfClassObjectInPlan(program, constructor, function);
 }
 
-// The run time makes the one closure of a constructor function by itself only where the function captures nothing.
 static bool classAboveIsEvaluatedOnceInPlan(const Program& program, const Facts& facts, LayoutID id)
 {
     if (!facts.isEvaluatedAtMostOnce(id))
@@ -567,16 +528,12 @@ static LayoutID provenBaseOfClassInPlan(const Facts& facts, LayoutID id)
     return classFacts.baseState == BaseState::Layout ? classFacts.base : LayoutID();
 }
 
-// `class C { m() { } get g() { } static s() { } }`: the record of the class lists the members, and the run time makes them of it: with the class, or, of a class that is evaluated once, when a member is first looked for.
-// The walk builds no definition of such a member: leaveMemberToClassRecord() of walk/AOTWalkReplacements.cpp. A definition that stays all the same defines the member once more, in its place among the keys.
-// Withheld with TypedOperations: every member is created at its definition.
 static Vector<ClassCreationPlan> classCreationOfPlan(const Program& program, const Facts& facts)
 {
     if (!facts.mechanisms().contains(Mechanism::TypedOperations))
         return { };
 
     size_t numberOfLayouts = program.layouts.size();
-    // Of the classes above a class, as far up as they are proven.
     BitVector classesBelowClassesEvaluatedOnce = answerAlongRows(numberOfLayouts, false, [&](LayoutID id) -> StepAlongRow {
         LayoutID base = provenBaseOfClassInPlan(facts, id);
         if (!base)
@@ -591,8 +548,6 @@ static Vector<ClassCreationPlan> classCreationOfPlan(const Program& program, con
         return { !program.at(id).has(LayoutFlags::HasHeritage) && !facts.classOf(id).prototypeBase, { } };
     });
 
-    // ClassData::guardsHoldWhileClear of object/AOTClassGuards.h: the record names every member of the class, and so does that of each class above, as far up as the records name a parent: ClassData::base, or expectedBase where none is proven.
-    // A definition that is handed another parent ends the guards itself (ClassDefinition::armGuards()), and until a class is defined no object is an instance of it. Past a parent that nobody has written a class for, code resolves nothing under a guard.
     BitVector classesWhoseGuardsHoldWhileClear = answerAlongRows(numberOfLayouts, false, [&](LayoutID id) -> StepAlongRow {
         const Layout& layout = program.at(id);
         bool recordNamesEveryMember = std::ranges::all_of(facts.membersOf(id), [](const ClassMember& member) {
@@ -605,7 +560,6 @@ static Vector<ClassCreationPlan> classCreationOfPlan(const Program& program, con
         switch (classFacts.baseState) {
         case BaseState::BuiltinClass:
             return { true, { } };
-        // Not `extends null`, and not a class that the program lays below another behind its definition: until then the record names a parent that the class does not have.
         case BaseState::None:
             return { !layout.has(LayoutFlags::HasHeritage) && !classFacts.prototypeBase, { } };
         case BaseState::Layout:
@@ -634,7 +588,6 @@ static Vector<ClassCreationPlan> classCreationOfPlan(const Program& program, con
         if (!isDefinedByClassSyntaxInPlan(layout))
             continue;
 
-        // The order of keys is observable: what the record creates comes first, so on each side it creates a beginning of the members and nothing behind that.
         const Function& constructor = program.at(layout.constructor);
         std::array<bool, numberOfEnumerators<ClassSide>> recordCreatesSide;
         recordCreatesSide.fill(true);
@@ -648,7 +601,6 @@ static Vector<ClassCreationPlan> classCreationOfPlan(const Program& program, con
         bool basesAreEvaluatedOnce = classesBelowClassesEvaluatedOnce.quickGet(index);
         plan.createsMembersLazily = facts.isEvaluatedAtMostOnce(id) && recordCreatesSide[static_cast<unsigned>(ClassSide::Prototype)];
         plan.createsPrototypeBeforeClassObject = plan.createsMembersLazily && basesAreEvaluatedOnce && classesWhoseRowEndsWithoutHeritage.quickGet(index);
-        // Static fields do not stand in the way: until the class object is made they lie in their variables (object/AOTStaticFields.h).
         plan.createsClassObjectOnMutation = plan.createsMembersLazily && basesAreEvaluatedOnce && recordCreatesSide[static_cast<unsigned>(ClassSide::Static)];
         plan.guardsHoldWhileClear = classesWhoseGuardsHoldWhileClear.quickGet(index);
         plan.guardsOfPrototypeSideHoldWhileClear = plan.guardsHoldWhileClear;
@@ -656,11 +608,6 @@ static Vector<ClassCreationPlan> classCreationOfPlan(const Program& program, con
     return plans;
 }
 
-// ---- Names of the global object
-
-// Only a store through a binding replaces a value without a report. What unseen code, native code, a store under a computed key or a store that stays by name puts on the global object fires the watch
-// that GlobalBindings::fileConstant() has set, which empties the constant in the record. So all that counts are the stores that the walk may bind: those on the global object as a body writes it.
-// A key without a stable number is stored, for all that anybody knows.
 static BitVector globalNamesNeverStoredInPlan(const Program& program, const Facts& facts)
 {
     unsigned numberOfKeys = program.types.numberOfPropertyKeys();
@@ -684,15 +631,11 @@ static BitVector globalNamesNeverStoredInPlan(const Program& program, const Fact
     return neverStored;
 }
 
-// ---- The driver
-
 static void planModulesAndGlobalNames(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts)
 {
     parts.layoutsWithClassRecord = layoutsWithClassRecordInPlan(program, facts);
-    parts.literalStrings = computeLiteralStrings(program);
     parts.moduleEvaluation = planModuleEvaluation(program, facts, build.parallelLoops(), build.statistics());
     chooseModuleWordsOfPlan(program, parts);
-    // Plan sees a store as it is written, not whether the walk will bind it, so both sets take one answer.
     parts.globalNamesNeverStoredByName = globalNamesNeverStoredInPlan(program, facts);
     parts.globalNamesNeverStoredThroughBinding = parts.globalNamesNeverStoredByName;
 }
@@ -710,7 +653,6 @@ static void planShapes(Program& program, const Facts& facts, PlanParts& parts)
 
 static void planConventions(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts)
 {
-    // A convention counts its parameters in sixteen bits, as the table of functions counts them: FunctionTablesByRange::collectClosureFunction() names the same limit.
     bool everyFunctionCanBeCounted = true;
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         size_t numberOfParameters = program.functions[index].numberOfEntryParameters();
@@ -736,9 +678,8 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
     }
     build.statistics().count(StatisticID::AsyncWorkersMade, numberOfAsyncFunctionsThatNeverSuspend);
     build.statistics().count(StatisticID::NumbersOrUndefinedReturnedRaw, numberOfFunctionsThatReturnNumberOrUndefinedRaw);
-    // Results are checked under each of the three words.
+    parts.functionsWhoseResultsPassNoReturn = functionsWhoseResultsPassNoReturnInPlan(program, facts);
     if (AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtEntries) || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtEntriesAndFields)) {
-        parts.functionsWhoseResultsPassNoReturn = functionsWhoseResultsPassNoReturnInPlan(program, facts);
         parts.variablesThatRunTimeMayFill = variablesThatRunTimeMayFillInPlan(program);
     }
 }
@@ -760,23 +701,22 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
     parts.usesWideReferences = build.recordedOptions().useWideReferences();
     parts.hasOneInstance = facts.hasOneInstance();
     parts.closureLayout = closureLayoutOfPlan(program);
-    // A lane writes members of the parts that no other lane of its group reads. Only the slots add types to the program.
     SlotPlanParts slots;
-    // It goes by Facts alone, and the plan gets it where its turn is: in front of planTailCallsAndStackTests().
     BitVector functionsThatEndTheirTailCalls;
     runLanes(build.parallelLoops(), {
         [&] { runLane("plan: lane of slots"_s, [&] { slots = computeSlotPlanParts(program, facts, build); }); },
-        [&] { runLane("plan: lane of modules, classes, literal strings"_s, [&] { planModulesAndGlobalNames(program, facts, build, parts); }); },
+        [&] { runLane("plan: lane of modules, classes"_s, [&] { planModulesAndGlobalNames(program, facts, build, parts); }); },
         [&] { runLane("plan: lane of tail calls that end"_s, [&] {
             if (facts.mechanisms().contains(Mechanism::DirectCalls))
                 functionsThatEndTheirTailCalls = findFunctionsThatEndTheirTailCalls(program, facts);
         }); },
     });
-    if (!finish("plan: slots beside modules, classes, literal strings"_s))
+    if (!finish("plan: slots beside modules, classes"_s))
         return nullptr;
 
     slots.closureForms = chooseClosureForms(program, facts.linked());
     leaveClosuresOfLiteralsUnmade(program, facts, build.recordedOptions().useWideReferences(), slots);
+    holdDoorsToProofsInSlotPlan(program, facts, slots);
     const BitVector variablesDescribedToRunTime = variablesDescribedToRunTimeByPlan(program);
     parts.deferredDefinitions = deferredDefinitionsOfPlan(program, facts, variablesDescribedToRunTime, AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime));
     slots.variables = variablesOfPlan(program, facts, variablesDescribedToRunTime);
@@ -793,7 +733,6 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
     if (!finish("plan: conventions and closure cells"_s))
         return nullptr;
 
-    // Where a guard pays is asked of the code that builds typed operations, which asks the plan.
     std::unique_ptr<Plan> plan = makeUnique<Plan>(WTF::move(parts));
     plan->setMethodTable(planMethodTable(program, facts, *plan));
     if (!finish("plan: method table"_s))
@@ -807,8 +746,6 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
         return nullptr;
     return plan;
 }
-
-// ---- Allocations
 
 static bool allocationIsBornUnfinishedInPlan(const PlannedLayout& planned, std::span<const FieldIndex> initialFields)
 {
@@ -829,7 +766,6 @@ std::optional<PlacedAllocation> Plan::allocation(const Program& program, LayoutI
 {
     const PlannedLayout& planned = layout(id);
     uint32_t shape = shapes().generalShapeOf(id);
-    // The image describes no cell of a layout that is never allocated or whose objects are not compiled objects.
     if (!planned.holdsCompiledObjects() || !shapes().isAssigned(shape))
         return std::nullopt;
 
@@ -875,8 +811,6 @@ PlacedAllocation Plan::closureAllocation(unsigned numberOfCaptures) const
     return placed;
 }
 
-// ---- The units that something other than compiled code names
-
 namespace {
 
 class CollectorOfUnitsNamedOutsideCode {
@@ -910,7 +844,6 @@ private:
     const Facts& m_facts;
     const Plan& m_plan;
     const CallingConventions& m_conventions;
-    // By function. The bodies of modules are among them until addModulesThatLoaderEnters() has taken out those that the loader does not enter.
     BitVector m_functionsThatHostEnters;
     BitVector m_visitedClasses;
     Vector<CodeUnit> m_units;
@@ -922,8 +855,6 @@ void CollectorOfUnitsNamedOutsideCode::add(CodeUnit unit)
         m_units.append(unit);
 }
 
-// Whoever makes a closure writes the number of this entry into its word, whether or not anything ever enters the function. So this does not ask whether the function may be reached.
-// Once the entry of a constructor has code, the record of its class names the entries of the members that it creates.
 void CollectorOfUnitsNamedOutsideCode::addClosureOf(FunctionID function)
 {
     if (!function)
@@ -937,7 +868,6 @@ void CollectorOfUnitsNamedOutsideCode::addClosureOf(FunctionID function)
     addFunctionsNamedByClassRecords(m_program.at(function).constructedClass);
 }
 
-// The run time makes a class of its record, and first the classes above it of theirs. The members are read as UnitsBehindMention::addClass() of image/AOTMentions.cpp reads them.
 void CollectorOfUnitsNamedOutsideCode::addFunctionsNamedByClassRecords(LayoutID classLayout)
 {
     LayoutID current = classLayout;
@@ -959,7 +889,6 @@ void CollectorOfUnitsNamedOutsideCode::addFunctionsNamedByClassRecords(LayoutID 
     }
 }
 
-// The table of modules and the units behind a mention of a module ask the same: askAboutBodyOfModule() of image/AOTModuleLists.cpp, UnitsBehindMention::addModule() of image/AOTMentions.cpp.
 CodeUnit CollectorOfUnitsNamedOutsideCode::unitThatLoaderEnters(ModuleID id) const
 {
     const ModuleEvaluationPlan& evaluation = m_plan.moduleEvaluation();
@@ -973,7 +902,6 @@ CodeUnit CollectorOfUnitsNamedOutsideCode::unitThatLoaderEnters(ModuleID id) con
     return { };
 }
 
-// The table of modules names a body only where the unit has code, so a module that is left out here does not run, and nothing says so.
 void CollectorOfUnitsNamedOutsideCode::addModulesThatLoaderEnters()
 {
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
@@ -985,13 +913,11 @@ void CollectorOfUnitsNamedOutsideCode::addModulesThatLoaderEnters()
             m_functionsThatHostEnters.clear(body.index());
             continue;
         }
-        // A start has no code. The loader comes to it through the entry of the body, which addFunctionsThatHostEnters() adds.
         if (entered.role != CodeRole::ModuleStart)
             add(entered);
     }
 }
 
-// No code names what the row of a start calls: listStartsOfModules() of image/AOTModuleTables.cpp writes the rows of the same starts, and stops the build at a body without code.
 void CollectorOfUnitsNamedOutsideCode::addBodiesThatStartsOfModulesCall()
 {
     const ModuleEvaluationPlan& evaluation = m_plan.moduleEvaluation();
@@ -1005,7 +931,6 @@ void CollectorOfUnitsNamedOutsideCode::addBodiesThatStartsOfModulesCall()
     }
 }
 
-// LinkedFunction::isInQueueFromStart: every unit whose code may name another function, but for a slow version that only a fast version that is left enters. The others may come at any time: UnitQueue::standsOutsideCycles().
 void CollectorOfUnitsNamedOutsideCode::addFunctionsWithoutReferrers()
 {
     const Vector<LinkedFunction>& functions = m_facts.linked().functions;
@@ -1028,7 +953,6 @@ void CollectorOfUnitsNamedOutsideCode::addFunctionsThatHostEnters()
     }
 }
 
-// Any other variable has a word only where code mentions it, and the mention brings the entry: forEachUnitBehind() of image/AOTMentions.cpp.
 void CollectorOfUnitsNamedOutsideCode::addInitialFunctionsOfVariables()
 {
     unsigned numberOfVariables = m_plan.slots().numberOfVariables();
@@ -1059,8 +983,6 @@ Vector<CodeUnit> unitsNamedOutsideCode(const Program& program, const Facts& fact
     return CollectorOfUnitsNamedOutsideCode(program, facts, plan).collect();
 }
 
-// ---- The check
-
 #define FOR_EACH_AOT_PLAN_RULE(v) \
     v(WideReferencesOfBuild, "the plan and the options of the build disagree on wide references") \
     v(NumberOfLayouts, "the plan does not have one layout for each layout of the program") \
@@ -1081,7 +1003,6 @@ Vector<CodeUnit> unitsNamedOutsideCode(const Program& program, const Facts& fact
     v(FieldOfKeyOrder, "a key order is empty, or lists a field twice or one without storage") \
     v(SortingOfKeyOrders, "the key orders of the layout are not sorted, or one begins another") \
     v(UnitsOfMethodTable, "the method table does not have the units of its selectors and no other") \
-    v(BytesKeptZero, "bytes that the layout keeps zero lie outside the cell or share bytes with a slot") \
     v(ExtensionWord, "a slot lies out of line and the layout has no word for the Extension, or it has the word and no such slot")
 
 namespace {
@@ -1189,12 +1110,6 @@ void CheckerOfPlan::checkLayout(LayoutID id)
     expect(!(planned.size % 8), RuleOfPlan::CellSize, id);
     checkArea(id, planned, SlotStorage::Inline, isEnvironment ? offsetOfFirstEnvironmentVariable : offsetOfFirstField, planned.size, RuleOfPlan::SlotOutsideCell);
     checkArea(id, planned, SlotStorage::OutOfLine, offsetOfFirstExtensionSlot, std::min(planned.extensionSize, maxExtensionSize), RuleOfPlan::SlotOutsideExtension);
-    for (const ReservedBytes& reserved : planned.bytesKeptZero) {
-        uint64_t endOfReserved = static_cast<uint64_t>(reserved.offset) + reserved.width;
-        expect(reserved.width && reserved.offset >= offsetOfFirstField && endOfReserved <= planned.size, RuleOfPlan::BytesKeptZero, id);
-        for (const PlacedSlot& slot : planned.slots)
-            expect(slot.storage != SlotStorage::Inline || slot.offset >= endOfReserved || static_cast<uint64_t>(slot.offset) + slot.width() <= reserved.offset, RuleOfPlan::BytesKeptZero, id);
-    }
 
     if (!m_plan.isInUse(id) || !(planned.holdsCompiledObjects() || isEnvironment))
         return;
@@ -1249,7 +1164,6 @@ void CheckerOfPlan::checkKeyOrdersOf(LayoutID id)
     }
 }
 
-// Of a selector: the lookup, and an entry for each method of the family.
 void CheckerOfPlan::checkMethodTable()
 {
     const CallingConventions& conventions = m_plan.conventions();
@@ -1261,7 +1175,6 @@ void CheckerOfPlan::checkMethodTable()
         numberOfTableUnits += 1 + conventions.familyOf(selector).methods.size();
     }
     uint64_t numberOfUnits = static_cast<uint64_t>(conventions.numberOfFunctions()) * numberOfCodeRolesOfOneFunction + numberOfTableUnits;
-    // A place for each layout that a unit can name, or none at all.
     expect(!conventions.numberOfPlacesOfSerializers() || conventions.numberOfPlacesOfSerializers() == std::min<size_t>(m_program.layouts.size(), CodeUnit::numberOfLayoutsThatSerializersCanName), RuleOfPlan::UnitsOfMethodTable);
     numberOfUnits += conventions.numberOfPlacesOfSerializers();
     expect(conventions.numberOfUnits() == numberOfUnits, RuleOfPlan::UnitsOfMethodTable);

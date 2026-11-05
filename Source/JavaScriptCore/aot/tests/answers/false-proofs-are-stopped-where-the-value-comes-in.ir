@@ -47,7 +47,7 @@
 # OPERAND-NOT: went on
 # OPERAND: crashed with
 # RUN(FIELD): run-in-shell mechanisms=all globalThis.which = 4;
-# FIELD: AOT: f{{*}} at {{*}}: what a field holds is not of the type that the compiler has proven of it. It is: string. This is a bug in Bun.
+# FIELD: AOT: StoreOfOtherType of an object of layout L{{*}}, field {{*}}: the compiler has proven that it never happens, and compiled code reads such objects without a look. This is a bug in Bun.
 # FIELD-NOT: went on
 # FIELD: crashed with
 # RUN(VARIABLE): run-in-shell mechanisms=all globalThis.which = 5;

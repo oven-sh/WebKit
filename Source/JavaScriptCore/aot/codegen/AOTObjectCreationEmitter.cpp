@@ -64,7 +64,6 @@ void ObjectCreationEmitter::generateDefineOwnProperty(const ValueContext& value)
         m_out.jump(done);
         m_out.appendTo(done);
     }
-    // A value of type never has no representation of an object.
     if (!typeOf(value.id()).isNever())
         defineNarrowed(value, object);
 }

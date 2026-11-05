@@ -34,7 +34,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// The empty value: nothing that the program can see is done, and the caller calls the function of the host.
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySplice, EncodedJSValue, (Instance* instance, JSCell* cell, int32_t start, int32_t deleteCount, uint32_t count, const EncodedJSValue* items))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySplice);
@@ -51,31 +50,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySplice, EncodedJSValue, (Instance* ins
     bool isDone = array->fastSplice(globalObject, length, from, removed, std::span { items, count });
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, isDone ? JSValue::encode(result) : encodedJSValue());
-}
-
-// Of a view with a fixed length. The list starts out with the storage that is named and gets the storage that holds everything where an element is NaN.
-JSC_DEFINE_JIT_OPERATION(operationAOTArrayFromTypedArray, JSCell*, (Instance* instance, JSCell* cell, uint32_t indexingType))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayFromTypedArray);
-    auto* view = cellArgument<JSArrayBufferView>(cell, Entry::operationAOTArrayFromTypedArray);
-    markPristineIfOriginal(*instance, view);
-    size_t count = view->length();
-    JSArray* array = count <= MAX_STORAGE_VECTOR_LENGTH ? JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), 0, count) : nullptr;
-    if (!array) {
-        throwOutOfMemoryError(globalObject, scope);
-        OPERATION_RETURN(scope, nullptr);
-    }
-    for (size_t i = 0; i < count; ++i) {
-        array->push(globalObject, view->getIndexQuicklyForTypedArray(i));
-        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    OPERATION_RETURN(scope, array);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateStorage, void*, (Instance* instance, uint64_t size))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTAllocateStorage);
-    return vm.cellSpace().allocate(vm, size, nullptr, AllocationFailureMode::ReturnNull);
 }
 
 template<typename CharacterType, typename SourceCharacterType>
@@ -162,7 +136,6 @@ static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString*
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // A join that runs code is under way further up, and may be one of this list: `toString()` of an element has stored a text over itself and asks for the list again. The function of the host knows which lists are being joined, and answers such a call with the empty text.
     if (vm.stringRecursionCheckFirstObject) [[unlikely]]
         return nullptr;
     EnsureStillAliveScope arrayScope(array);
@@ -255,7 +228,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayJoinOfAnyReceiver, EncodedJSValue, (In
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, JSC::getCallData(function), receiver, arguments)));
 }
 
-// Array.prototype.toString calls what it finds under `join`.
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayToStringOfAnyReceiver, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, JSCell* function))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayToStringOfAnyReceiver);
@@ -276,12 +248,10 @@ static ALWAYS_INLINE bool precedesInDefaultOrder(const StringImpl& first, const 
     return is_lt(codePointCompare(StringView { first }, StringView { second }));
 }
 
-// Comparing strings runs no code, so any stable sort gives the same order as sortImpl() in ArrayPrototype.cpp. When this returns false, it has changed nothing the program can observe.
 static bool trySortStrings(JSGlobalObject* globalObject, JSArray* array)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The host function throws when it stores into a frozen array, even if the order does not change.
     if (!hasContiguous(array->indexingType()) || array->structure()->hasImmutableProperties())
         return false;
     Butterfly& butterfly = *array->butterfly();
@@ -345,7 +315,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfDouble, size_t, (Insta
     return found ? found - data : static_cast<size_t>(-1);
 }
 
-// Of storage that holds boxed values, for a value that equals what has the same bits and nothing else.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfInt32, size_t, (Instance*, JSCell* array, EncodedJSValue searched))
 {
     Butterfly& butterfly = *cellArgument<JSArray>(array, Entry::operationAOTArrayIndexOfInt32)->butterfly();
@@ -424,7 +393,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySearchOfAnyValue, EncodedJSValue, (Ins
     OPERATION_RETURN(scope, encodedJSValue());
 }
 
-// The empty value: nothing is done, and the caller calls the function of the host.
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshift, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue item))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayUnshift);
@@ -448,9 +416,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayIterator, JSCell*, (Instan
     RELEASE_ASSERT(kind <= static_cast<uint32_t>(IterationKind::Entries));
     return JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), cellArgument<JSObject>(array, Entry::operationAOTNewArrayIterator), static_cast<IterationKind>(kind));
 }
-
-// What the stubs of boxed calls jump to (stubs/AOTStubsBoxedCalls.cpp): the receiver is of the class, of a class below it too, and the arguments are whatever the call hands over.
-// Each gives the whole answer of its method: the way that the function of the engine takes for a plain receiver, and the function itself for every other.
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayPopOfAnyList, EncodedJSValue, (Instance* instance, JSCell* cell))
 {
@@ -483,7 +448,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshiftOfAnyList, EncodedJSValue, (Ins
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(length + 1)));
 }
 
-// Null: the fast way has given up, and has changed nothing that the program can see.
 static JSArray* trySpliceFast(JSGlobalObject* globalObject, VM& vm, JSArray* array, JSValue start, JSValue deleteCount, std::span<const EncodedJSValue> items)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -501,12 +465,10 @@ static JSArray* trySpliceFast(JSGlobalObject* globalObject, VM& vm, JSArray* arr
     return isDone ? result : nullptr;
 }
 
-// `sorted.splice(at, 0, item)`, where the vector has room and no hole stands behind the place: what stands there moves up by one. Null: nothing is done.
 static JSArray* tryInsertItemFast(JSGlobalObject* globalObject, VM& vm, JSArray* array, JSValue start, JSValue deleteCount, JSValue item)
 {
     if (!start.isInt32() || !deleteCount.isInt32() || deleteCount.asInt32() > 0 || !arraySpeciesWatchpointIsValid(vm, array) || globalObject->isHavingABadTime()) [[unlikely]]
         return nullptr;
-    // The mode says copy-on-write, which an array with immutable properties is.
     IndexingType mode = array->indexingMode();
     if (mode != ArrayWithContiguous && (mode != ArrayWithInt32 || !item.isInt32()))
         return nullptr;
@@ -523,7 +485,6 @@ static JSArray* tryInsertItemFast(JSGlobalObject* globalObject, VM& vm, JSArray*
     JSArray* removed = tryCreateArrayWithStorage(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0, 1);
     if (!removed) [[unlikely]]
         return nullptr;
-    // As JSArray::unshiftCountWithAnyIndexingType(): the length first, and the collector looks at the list again behind the move.
     butterfly->setPublicLength(length + 1);
     gcSafeMemmove(elements + from + 1, elements + from, (length - from) * sizeof(JSValue));
     elements[from].setWithoutWriteBarrier(item);

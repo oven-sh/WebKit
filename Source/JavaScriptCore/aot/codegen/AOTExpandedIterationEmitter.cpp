@@ -30,7 +30,7 @@ void ExpandedIterationEmitter::generateDestructureIterable(const ValueContext& v
     auto takeOutOfLine = [&] {
         Pointer buffer = emitter<RuntimeCallEmitter>().uninitializedArgumentBuffer(count);
         if (value->readsListsByIndex())
-            callStub(value, destructureIterable(), { iterable.value(), m_out.constInt32(count), buffer.value() });
+            callStub(value, destructureIterable(), { iterable.value(), m_out.constInt32(count), buffer.value() }, { .writesArgumentBuffer = true });
         else
             callVoidOperation(value, RuntimeOperation::DestructureIterable, { iterable, word32(count), buffer });
         Vector<Operand, 8> results;
@@ -101,7 +101,6 @@ void GuardEmitter::generateIsEnumeratorCurrent(const ValueContext& value)
     });
 }
 
-// Behind IsEnumeratorCurrent: the object is a cell with the keys that the enumerator has cached, and the position lies in the part that its Structure lists.
 void ExpandedIterationEmitter::generateEnumeratorGetByVal(const ValueContext& value)
 {
     ForInEmitter& forIn = emitter<ForInEmitter>();
@@ -135,7 +134,6 @@ void ExpandedIterationEmitter::generateEnumeratorGetByVal(const ValueContext& va
     ensureStillAliveHere(object);
     join.add(outOfLineProperty);
 
-    // The fields of a compiled object lie where its shape says, which the table under the key knows.
     m_out.appendTo(isCompiledObject);
     join.add(Boxed(callStub(value, getByValCachedCells(), { boxedObject.value(), key.value() }).first));
 
@@ -147,7 +145,6 @@ void ExpandedIterationEmitter::generateCreateAsyncFromSyncIterator(const ValueCo
     define(value, callOperation<CellPointer>(value, RuntimeOperation::CreateAsyncFromSyncIterator, { in<CellPointer>(value->iteratorOperand()), in<Boxed>(value->nextOperand()) }));
 }
 
-// A view whose length cannot change and that has memory is attached. The run time looks at every other view, an empty one among them.
 void ExpandedIterationEmitter::generateRequireAttachedTypedArray(const ValueContext& value)
 {
     CellPointer view = in<CellPointer>(value->viewOperand());
@@ -166,8 +163,6 @@ void ExpandedIterationEmitter::generateRequireAttachedTypedArray(const ValueCont
     m_out.appendToJoin(done, fork);
 }
 
-// Only a text and a view are listed in one piece. The run time counts what a long one hands out, and throws where no list holds that many.
-// With a length the source is one of the two. Without one it may be anything, and whoever knows so little of it expects neither.
 void ExpandedIterationEmitter::generateRequireLengthFitsList(const ValueContext& value)
 {
     Boxed source = in<Boxed>(value->sourceOperand());

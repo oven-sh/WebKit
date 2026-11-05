@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT) && CPU(X86_64)
 
-#include "AOTCodeSites.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include <optional>
 #include <utility>
@@ -76,7 +75,6 @@ struct X86ComparedOperand {
         return result;
     }
 
-    // What a load of an integer reads there, extended as the load extends it.
     static X86ComparedOperand readBy(Opcode load, const AddressForm& form)
     {
         RELEASE_ASSERT(isLoad(load) && form.kind != AddressForm::InstanceSymbol && form.extension == IndexExtension::None && form.shift <= 3);
@@ -103,7 +101,6 @@ struct X86ComparedOperand {
     bool isInRegister() const { return kind == InRegister; }
     bool isInMemory() const { return kind == InMemory; }
     bool isConstant() const { return kind == IsConstant; }
-    // A word as wide as the comparison at [base + offset], which address() names.
     bool isWholeWordAtBase() const { return isInMemory() && load == Load && index == InvalidGPRReg; }
 
     GPRReg gpr() const
@@ -122,7 +119,6 @@ struct X86ComparedOperand {
         return MacroAssembler::Address(base, offset);
     }
 
-    // Whether writing the register changes what the operand reads.
     bool mentions(Reg other) const
     {
         switch (kind) {
@@ -138,16 +134,12 @@ struct X86ComparedOperand {
 
     Kind kind { IsConstant };
     uint8_t shift { 0 };
-    // The image's linker writes the offset, so nothing may be added to it.
     bool offsetIsFilledLater { false };
-    // OperationFlag::ReadsZeroOffNoCell.
-    bool readsZeroOffNoCell { false };
     Opcode load { Load };
     Reg reg;
     GPRReg base { InvalidGPRReg };
     GPRReg index { InvalidGPRReg };
     int32_t offset { 0 };
-    // For a number, its bits.
     int64_t constant { 0 };
 };
 
@@ -178,7 +170,6 @@ static X86ComparedOperand x86ComparedOperandAt(const Encoder& encoder, Location 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The address of a word that a symbol names goes into the scratch GPR. A number at an indexed address goes into the scratch FPR.
 static X86ComparedOperand x86ComparedOperandReadByFusedLoad(Encoder& encoder, const Operation* load, AddressForm form)
 {
     RELEASE_ASSERT(isLoad(load->opcode()) && !load->traps() && !encoder.m_liveness.of(load).has(ValueFlag::TakesOverTrap));
@@ -189,11 +180,8 @@ static X86ComparedOperand x86ComparedOperandReadByFusedLoad(Encoder& encoder, co
         form.kind = AddressForm::BaseOffset;
         form.base = scratchGPR;
     }
-    if (load->type().isInt()) {
-        X86ComparedOperand word = X86ComparedOperand::readBy(load->opcode(), form);
-        word.readsZeroOffNoCell = load->readsZeroOffNoCell();
-        return word;
-    }
+    if (load->type().isInt())
+        return X86ComparedOperand::readBy(load->opcode(), form);
 
     RELEASE_ASSERT(load->opcode() == Load && load->type().isFloat());
     if (form.kind == AddressForm::BaseOffset)
@@ -294,8 +282,6 @@ static MacroAssembler::RelationalCondition unsignedFormOfX86Condition(MacroAssem
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// One instruction that reads the left operand where it lies, as wide as it lies there, against the constant on the right, which fits an immediate of 32 bits. Nothing: there is none, and nothing was written.
-// fusionCanTestLoadInMemory() of the scan asks for no more than this gives.
 static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordInMemory(CCallHelpers& jit, const X86Comparison& comparison, Width width, MacroAssembler::RelationalCondition condition)
 {
     const X86ComparedOperand& word = comparison.left;
@@ -321,12 +307,10 @@ static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordI
 
     if (comparison.kind == Test::CompareIntegers) {
         if (isByte || isHalf) {
-            // An immediate of 16 bits would change the length of the instruction behind a prefix, which stalls the decoder.
             int64_t least = extendsSign ? -128 : 0;
             int64_t most = isByte && !extendsSign ? 255 : 127;
             if (constant < least || constant > most)
                 return std::nullopt;
-            // Neither side is below zero, so the order of the extended words is the unsigned order of the words as they lie.
             if (!extendsSign)
                 condition = unsignedFormOfX86Condition(condition);
         }
@@ -344,7 +328,6 @@ static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordI
     if (numberOfBytes < 8) {
         uint64_t bitsOfWord = (uint64_t { 1 } << (8 * numberOfBytes)) - 1;
         uint64_t bitsOfRegister = width == Width32 ? uint64_t { UINT32_MAX } : UINT64_MAX;
-        // They are copies of the sign.
         if (extendsSign && (bits & bitsOfRegister & ~bitsOfWord))
             return std::nullopt;
         bits &= bitsOfWord;
@@ -369,8 +352,6 @@ static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86WordI
     return condition;
 }
 
-// Returns the condition under which the comparison holds. After it, nothing reads the operands, so the scratch register is free.
-// The flags last as long as only moves, loads and conditional moves are emitted.
 static MacroAssembler::RelationalCondition emitFlagsOfX86Comparison(CCallHelpers& jit, X86Comparison comparison)
 {
     bool testsBits = comparison.kind == Test::TestBits;
@@ -384,20 +365,12 @@ static MacroAssembler::RelationalCondition emitFlagsOfX86Comparison(CCallHelpers
     X86ComparedOperand& right = comparison.right;
     Width width = comparison.width;
 
-    if (left.readsZeroOffNoCell || right.readsZeroOffNoCell) [[unlikely]] {
-        RELEASE_ASSERT(!testsBits && width == Width32 && left.readsZeroOffNoCell && left.isWholeWordAtBase() && right.isConstant() && !comparison.rightIsNumberOfBit);
-        jit.m_assembler.buffer().putByte(markOfReadOffNoCell);
-        jit.m_assembler.cmpl_im(static_cast<int32_t>(right.constant), left.offset, left.base);
-        return *condition;
-    }
-
     if (comparison.rightIsNumberOfBit) {
         RELEASE_ASSERT(testsBits && left.isInRegister() && right.isInRegister());
         if (width == Width32)
             jit.m_assembler.bt_ir(right.gpr(), left.gpr());
         else
             jit.m_assembler.btw_ir(right.gpr(), left.gpr());
-        // The carry flag holds the bit.
         return comparison.relation == NotEqual ? MacroAssembler::Below : MacroAssembler::AboveOrEqual;
     }
 
@@ -420,7 +393,6 @@ static MacroAssembler::RelationalCondition emitFlagsOfX86Comparison(CCallHelpers
         bringX86ComparedIntegerIntoScratch(jit, width, right, left);
     if (left.isInMemory() && right.isInMemory())
         bringX86ComparedIntegerIntoScratch(jit, width, right, left);
-    // The assembler has no 32-bit test of memory against a register.
     if (testsBits && width == Width32 && left.isInMemory() && right.isInRegister())
         bringX86ComparedIntegerIntoScratch(jit, width, left, right);
 
@@ -491,7 +463,6 @@ static MacroAssembler::DoubleCondition numberConditionOfX86Comparison(const X86C
     return *condition;
 }
 
-// MacroAssembler compares numbers only in registers. May write both scratch registers.
 static void bringX86ComparedNumbersIntoRegisters(CCallHelpers& jit, X86Comparison& comparison)
 {
     RELEASE_ASSERT(comparison.width == Width32 || comparison.width == Width64);
@@ -533,7 +504,6 @@ static MacroAssembler::JumpList branchOnX86ComparedNumbers(CCallHelpers& jit, X8
 
     MacroAssembler::JumpList jumps;
     if (condition == MacroAssembler::DoubleNotEqualOrUnordered && left != right) {
-        // Unordered operands set the zero flag and the parity flag. MacroAssembler gives one Jump, at the price of a jump around a jump.
         jumps.append(branch(MacroAssembler::DoubleNotEqualAndOrdered));
         jumps.append(MacroAssembler::Jump(jit.m_assembler.jp()));
         return jumps;
@@ -573,7 +543,6 @@ static bool canMoveArmOfX86SelectWithoutClobberingFlags(const X86SelectArm& arm)
     return !arm.location.isImmediate() || arm.value->hasInt();
 }
 
-// Writes the destination and nothing else: neither the flags nor a scratch register.
 static void moveArmOfX86Select(Encoder& encoder, const X86SelectArm& arm, Reg destination)
 {
     CCallHelpers& jit = encoder.m_jit;
@@ -632,7 +601,6 @@ static void moveArmOfX86Select(Encoder& encoder, const X86SelectArm& arm, Reg de
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// May clobber the flags and the scratch registers, so the test has to be encoded already.
 static void moveArmOfX86SelectAfterTest(Encoder& encoder, const X86SelectArm& arm, Reg destination)
 {
     if (arm.location.isImmediate()) {
@@ -642,7 +610,6 @@ static void moveArmOfX86SelectAfterTest(Encoder& encoder, const X86SelectArm& ar
     moveArmOfX86Select(encoder, arm, destination);
 }
 
-// The destination takes one arm, and then the other if the condition says so. An arm that is already in the destination goes first.
 static void encodeX86SelectByConditionalMove(Encoder& encoder, X86Comparison comparison, const X86SelectArm& whenItHolds, const X86SelectArm& otherwise, GPRReg destination)
 {
     CCallHelpers& jit = encoder.m_jit;
@@ -671,7 +638,6 @@ static void encodeX86SelectByConditionalMove(Encoder& encoder, X86Comparison com
         return;
     }
 
-    // The destination may hold an operand of the test, so the flags come first.
     MacroAssembler::RelationalCondition condition = emitFlagsOfX86Comparison(jit, comparison);
     if (!movesWhenTestHolds)
         condition = MacroAssembler::invert(condition);
@@ -763,7 +729,6 @@ static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86TestO
     return tryEmitFlagsOfX86Register(jit, test.kind == Test::TestBits, test.relation, test.width, test.left.gpr(), test.right, test.rightConstant);
 }
 
-// One instruction that reads a word of the instance where it lies, against a constant. Nothing: there is none, and nothing was written. What it asks in front of tryEmitFlagsOfX86WordInMemory() is what emitFlagsOfX86Comparison() asks there.
 static std::optional<MacroAssembler::RelationalCondition> tryEmitFlagsOfX86InstanceWord(Encoder& encoder, bool testsBits, Opcode relation, Width widthOfComparison, const Operation* load, CodeSymbol symbol, Location right, int64_t constant)
 {
     if (!right.isImmediate() || !load->type().isInt())
@@ -898,7 +863,6 @@ void Encoder::encodeComparison(const Step& step)
         return;
     }
 
-    // setcc writes 8 bits. MacroAssembler offers it only as part of its own comparisons, and always zero-extends afterward.
     bool clearsDestinationFirst = !comparison.left.mentions(destination) && !comparison.right.mentions(destination);
     if (clearsDestinationFirst)
         m_jit.move(MacroAssembler::TrustedImm32(0), destination);
@@ -914,7 +878,6 @@ void Encoder::encodeSelect(const Step& step)
     const Operation* operation = step.operation;
     ASSERT(operation->opcode() == Select);
 
-    // resolveTest() may leave an operand in a scratch register, which nothing may write until the test is encoded.
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     LeafCursor cursor(step);
     X86Comparison comparison = x86ComparisonOfTest(*this, resolveTest(operation, cursor));

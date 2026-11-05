@@ -130,12 +130,10 @@ struct AbsenceFilter {
     uint32_t structureID;
     uint32_t generationForStores;
     uint64_t namesThatStopStores[numberOfWordsForStores];
-    // The number of changes under a name that had been reported when the filter was built. While the count is unchanged, the filter is complete for every name.
     uint32_t changesUnderNames;
     uint32_t unused;
 };
 
-// The name that a short text of 8-bit characters spells, found by the characters, so a string that is no atom finds its name without leaving the stub.
 struct NameOfText {
     static constexpr unsigned numberOfPairs = 64;
     static constexpr unsigned numberOfEntries = 2 * numberOfPairs;
@@ -154,15 +152,12 @@ struct NameOfText {
     UniquedStringImpl* uid;
 };
 
-// Where the objects of one Structure keep their own value under one key, found by the cell of the key. Nothing is asked of the key, so a string that is no atom is found as fast as one that is.
-// Or that neither such an object nor any object above it has anything under the key.
 struct KeyedValuePlace {
     static constexpr unsigned numberOfPlacesPerAccess = 512;
     static constexpr unsigned numberOfPlaces = 2 * numberOfPlacesPerAccess;
     static constexpr unsigned sizeShift = 4;
     static constexpr uint32_t offsetMask = (numberOfPlacesPerAccess - 1) << sizeShift;
 
-    // The places for reads come first, then those for stores that replace the value.
     static constexpr int32_t offsetOfFirst(SlotAccess access)
     {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(access == SlotAccess::Read || access == SlotAccess::Store);
@@ -171,89 +166,58 @@ struct KeyedValuePlace {
 
     static uint32_t offsetFor(const JSCell* key, StructureID structureID) { return (static_cast<uint32_t>(std::bit_cast<uintptr_t>(key)) + structureID.bits()) & offsetMask; }
 
-    // The low bits of a StructureID are zero. What a place says beside the absence bit holds until an object of some chain changes: PropertyCacheWords::placesSayAbsence.
     static constexpr uint32_t absenceBit = 1;
     static constexpr uint32_t fieldBit = 2;
     static constexpr uint32_t extraPropertyBits = absenceBit | fieldBit;
-    // Of a place for reads: the objects of the Structure have an accessor of their own under the key, and the word index says where its GetterSetter lies. That is loaded at each read: a definition with another getter puts another one there and leaves the Structure.
     static constexpr uint32_t getterBit = 4;
-    // Of a place for reads: the objects of the Structure have nothing of their own under the key, whatever stands above them. It holds for as long as the Structure lives. Only whoever asks for an own property looks for it.
     static constexpr uint32_t notOwnBits = getterBit | absenceBit;
-    // Of a place for stores under the Structure of globalThis: the StructureID and the word index are those of the global object.
     static constexpr uint32_t globalObjectBit = 1;
-    // Of a place for stores: the objects of the Structure have nothing under the key, a store adds it, and their storage has room. The word index says where the value goes, and
-    // RestOfPlaceForStores which Structure the object has then. It holds for as long as the slot of the hashed table that said so: PropertyCacheWords::placesFiledFromSlots.
     static constexpr uint32_t additionBit = 4;
-    // Of a place for stores beside the field bit: the slot holds a narrow reference.
     static constexpr uint32_t narrowReferenceBit = 1u << 31;
 
-    // For a compiled object whose Structure identifies the Structure of its extra-property object.
     struct ExtraProperty {
-        // The offset in the cell of the reference to the object that holds the property.
         uint16_t hiddenWordOffset;
-        // Slot::wordIndexFor() in that object.
         int16_t wordIndex;
     };
 
     JSCell* key;
     uint32_t structureID;
     union {
-        // Slot::wordIndexFor().
         int32_t wordIndex;
-        // Beside the field bit: SlotData::bits() of a field that lies in the cell.
         uint32_t slotData;
-        // Beside the field bit in a place for stores: how far into the cell lies the slot of a field, and narrowReferenceBit. The slot is of one of AcceptedKindOfValue::ClassOfSlot.
-        // RestOfPlaceForStores has the type of the field. It holds for as long as the slot of the hashed table that led to the store: PropertyCacheWords::placesFiledFromSlots.
         uint32_t offsetOfSlot;
-        // Beside both bits.
         ExtraProperty extraProperty;
     };
 };
 
-// One for each place for stores, behind them and as far apart as they are, so that a stub reaches it from the place by one distance.
 struct alignas(16) RestOfPlaceForStores {
     static constexpr ptrdiff_t distanceFromPlace = KeyedValuePlace::numberOfPlacesPerAccess << KeyedValuePlace::sizeShift;
 
     union {
-        // Beside the addition bit.
         uint32_t structureIDAfterAddition;
-        // Beside the field bit: AcceptedKindOfValue::type.
         uint32_t typeOfField;
     };
 };
 
-// The type of a field has accepted a value of a kind, which was stored in a slot of a class. It accepts every other value of that kind, and every slot of that class holds it in the same way.
-// What the stubs ask of a cell they ask of the type of the cell, which its Structure has, and of the word at offsetOfShapeWord: the shape of a compiled object, the function of a slim closure.
-// Such a word is the kind. In every other cell that word is below them and nothing is asked of it. Of a closure that is a JSFunction the stubs ask for its function, which is its kind.
-// Of any other cell the StructureID is the kind, shifted so that it is below all of these. The kinds of what is no cell lie between.
 struct AcceptedKindOfValue {
     static constexpr unsigned numberOfEntries = 256;
     static constexpr unsigned sizeShift = 3;
     static constexpr uint32_t leastWordThatIsKind = closureWordMarker;
-    // No two Structures begin within as many bytes.
     static constexpr unsigned structureIDShift = 6;
-    // Added to the number of the function.
     static constexpr uint32_t kindOfCompiledClosureZero = 1u << 28;
     static constexpr uint32_t kindOfInt32 = 1u << 29;
     static constexpr uint32_t kindOfDouble = kindOfInt32 + 1;
-    // undefined, null, true and false: added to the low word of the encoded value.
     static constexpr uint32_t kindOfImmediateZero = kindOfInt32 + 16;
-    // Of the sum of the type and the kind, so that one type in two classes of slots has two entries for a kind.
     static constexpr uint32_t indexMask = numberOfEntries - 1;
 
-    // JSValue, Cell: the value as it is. Cell32, OptionalCell32: a cell as a narrow reference, undefined and null as their low words.
     enum class ClassOfSlot : uint8_t { JSValue, Cell, Cell32, OptionalCell32 };
     static constexpr uint32_t classesWithNarrowReferences = 2;
 
-    // In the place of the type: the index of an entry of the table of fields whose field is stored by its record. Layouts read one entry only where their records of the field say the same, so the index is of one type, one slot and one set of flags.
-    // It is of the image and not of a realm: whoever asks under it has seen that the holder is of the realm that runs. No offset of a record has the bit.
     static constexpr uint32_t isEntryOfFieldTable = 1u << 31;
-    // Slot::FieldPayload::type, with the class of the slot in the two bits that are zero in the offset of a record.
     uint32_t type;
     uint32_t kind;
 };
 
-// What the objects themselves answer is filed nowhere. A counter for each pair of a Structure and a name says when a miss leaves for the operation that files.
 struct MissesOfPairs {
     static constexpr uint32_t numberOfCounters = 1u << 15;
     static constexpr uint32_t missesBetweenFilings = 16;
@@ -263,14 +227,12 @@ struct MissesOfPairs {
 enum class TrapOfProxy : uint8_t { Get, Has, Set };
 inline constexpr unsigned numberOfTrapsOfProxies = 3;
 
-// What the stub that goes through a proxy keeps in its frame while code of the program runs.
 struct ProxyAccessWords {
     JSObject* proxy;
     JSCell* key;
     JSObject* target;
     JSObject* handler;
     EncodedJSValue storedValue;
-    // Of a store: whether the code is strict. Of a read: Slot::headerBits() of the slot that led here.
     uint64_t storeIsStrictOrHeaderOfSlot;
 };
 
@@ -294,27 +256,18 @@ struct PropertyCacheWords {
     const NameOfText* namesOfTexts;
     uint8_t missIsDueForFiling;
     uint8_t placesSayAbsence;
-    // A place for stores was filled while nobody watched the Structure for replacements. Such a place holds until somebody does.
     uint8_t placesTakeReplacementsAsUnwatched;
-    // StringKeyCache::KeyOfPair: some pair has a place beside its key.
     uint8_t pairsHavePlaces;
-    // How often the places that say absence were cleared. Whoever keeps a copy of such a place keeps it for one such count.
     uint32_t timesAbsencesWereForgotten;
-    // How many places for stores were filled, since the places were last cleared, with what a slot of the hashed table said about an addition or a field. Such a place holds until such a slot leaves that table.
-    // Once as many were filled as there are places, one more would only push another out: where a program has that many pairs of a key and a Structure in turns, no place is found again before it is pushed out.
     uint16_t placesFiledFromSlots;
-    // How many of them were cleared because a slot left the table. Where it is all of them, no place says what a slot said. The count above goes on: only a collection begins it anew.
     uint16_t placesFiledFromSlotsAndCleared;
     const void* infoOfClassPrototypes;
     SiteCacheState* siteCacheStates;
-    // In steps of SiteCacheState::sampleStep.
     uint8_t missesOfEmptySites;
-    // Reads by a pair that has the place of another Structure, in steps of StringKeyCache::KeyOfPair::stepOfMisses.
     uint8_t missesOfPlacesOfPairs;
     const CustomAccessorRecord* customAccessors;
     uint32_t numberStructureID;
     uint32_t booleanStructureID;
-    // By TrapOfProxy. Zero where the image does not have the name.
     uint32_t numbersOfNamesOfTraps[numberOfTrapsOfProxies];
     UniquedStringImpl* hasInstanceUID;
     UniquedStringImpl* prototypeUID;
@@ -324,7 +277,6 @@ struct PropertyCacheWords {
     const void* lookupOfArrays;
     const void* lookupOfFunctions;
     JSCell* defaultHasInstanceFunction;
-    // None until the run time has seen a store by name.
     const FieldExit* fieldExits;
     AccessTableWords accessTable;
 #if !defined(BUN_HARDENED)

@@ -26,29 +26,23 @@ struct ExtraPropertyGrowthRegisters {
     GPRReg scratch;
 };
 
-// Nothing is written before a jump to any list.
 struct ExtraPropertyAdditionExits {
     JumpList isNotExtensible;
     JumpList growsStorage;
     JumpList cannot;
 };
 
-// Ends the stub, after a write barrier on owner if valueMayNeedBarrier.
 using StoreFinish = ScopedLambda<void(GPRReg owner, bool valueMayNeedBarrier)>;
 
 void loadExtraProperties(StubAssembler&, GPRReg object, GPRReg hiddenWordOffset, GPRReg result, JumpList& hasNone);
-// The property is at BaseIndex(extraProperties, wordIndex, TimesEight): extraProperties has the cell or its butterfly.
 void locateExtraProperty(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, JumpList& miss);
 void readExtraPropertyAndReturn(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, GPRReg result, JumpList& miss);
-// cell holds a cell of the front table of the kind ExtraProperty. At hasNone only storage is written.
 void loadExtraPropertyByFrontCell(StubAssembler&, GPRReg cell, GPRReg object, GPRReg storage, GPRReg wordIndex, GPRReg result, JumpList& hasNone);
 #if CPU(X86_64)
-// The same for a cell that is read where it lies, by a caller that has seen its flags. At hasNone only word is written. Behind it the index of the cell may be.
 void loadExtraPropertyByFrontCell(StubAssembler&, const BaseIndex& cell, bool isOutOfLine, GPRReg object, GPRReg word, GPRReg result, JumpList& hasNone);
 #endif
 void storeExtraProperty(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, GPRReg value, const StoreFinish&, JumpList& miss);
 void addExtraProperty(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, GPRReg value, const StoreFinish&, ExtraPropertyAdditionExits&);
-// Goes on from growsStorage. Reads the header of the slot before it writes oldCapacity, storage or scratch, so one of them may hold the header.
 void addExtraPropertyInNewStorage(StubAssembler&, const CachedSlot&, const ExtraPropertyGrowthRegisters&, GPRReg value, const StoreFinish&, JumpList& cannot);
 
 } } // namespace JSC::AOT

@@ -835,7 +835,6 @@ function markPayloadKind(kind: Kind): void {
   for (const field of wireFields) markPayloadKind(field.kind);
 }
 
-// Only the Rust outputs read the mark, so nothing that stays in the engine sets it.
 export function markPayloadTypes(scope: Scope): void {
   for (const entry of scope.entries.values()) {
     if (!entry.isWire) continue;

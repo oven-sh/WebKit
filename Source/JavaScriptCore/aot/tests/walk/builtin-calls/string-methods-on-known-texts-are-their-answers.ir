@@ -1,4 +1,4 @@
-# a method of strings whose row is deterministic, on a known text and known primitives, is its answer: by code units where that is a primitive, the receiver or a piece of it, else by the engine in the realm of the build
+# a method of strings whose row is deterministic, on a known text and known primitives, is its answer: the engine gives it in the realm of the build
 # function place() { return ["a,b".indexOf(",")]; }
 # RUN: walk f1 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
 # CHECK-LABEL: code f1:Body
@@ -7,33 +7,17 @@
 # function trimmed() { return [" x ".trim()]; }
 # RUN(TRIM): walk f2 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
 # TRIM-LABEL: code f2:Body
-# TRIM: [[text]]: {{*}} = String string="x"
+# TRIM: [[text]]: {{*}} = String string=made "x"
 # TRIM: = NewArray [[text]]
 # function verb() { return ["GET /x".slice(0, 3)]; }
 # RUN(SLICE): walk f3 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
 # SLICE-LABEL: code f3:Body
 # SLICE: [[text]]: {{*}} = String string=made "GET"
 # SLICE: = NewArray [[text]]
-# a subject whose type of written texts is shorter than the text holds it nowhere: function short(s) { if (s === "ab" || s === "cd") return [s.indexOf("abc")]; }
-# RUN(SHORT): walk f4 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
-# SHORT-LABEL: code f4:Body
-# SHORT: [[nowhere]]: {{*}} = Integer integer=-1
-# SHORT: = NewArray [[nowhere]]
-# the one way into the block leads over the same question of the same string: function flag(s) { if (typeof s === "string" && s.startsWith("--")) return [s.startsWith("--")]; }
-# RUN(SAME): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
-# SAME-LABEL: code f5:Body
-# SAME: [[yes]]: {{*}} = Boolean boolean=true
-# SAME: = NewArray [[yes]]
-# function colors() { return "red,green".split(","); }
-# RUN(SPLIT): walk f6 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
-# SPLIT-LABEL: code f6:Body
-# SPLIT: [[red]]: {{*}} = String string=made "red"
-# SPLIT: [[green]]: {{*}} = String string=made "green"
-# SPLIT: = NewArray [[red]], [[green]]
-# f7, function loud() { return ["abc".toUpperCase()]; }: string-method-on-a-known-text-is-answered-by-the-engine.ir
+# f4, function loud() { return ["abc".toUpperCase()]; }: string-method-on-a-known-text-is-answered-by-the-engine.ir
 # nobody knows the text that is looked for: function anywhere(t) { if (typeof t === "string") return ["a,b".indexOf(t)]; }
-# RUN(UNKNOWN): walk f8 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
-# UNKNOWN-LABEL: code f8:Body
+# RUN(UNKNOWN): walk f5 mechanisms=none+TypedOperations+DirectCalls+BuiltinCalls+Folding
+# UNKNOWN-LABEL: code f5:Body
 # UNKNOWN-NOT: = Integer integer=1
 # UNKNOWN: = NewArray
 
@@ -48,11 +32,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v4 = NewClosure function=f3
     v5 = NewClosure function=f4
     v6 = NewClosure function=f5
-    v7 = NewClosure function=f6
-    v8 = NewClosure function=f7
-    v9 = NewClosure function=f8
-    v10 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9
-    Return v10
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
 }
 function f1 name="place" module=m0 thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -81,48 +62,7 @@ function f3 name="verb" module=m0 thisType={type=anything} results=[{type=anythi
     v5 = NewArray v4 contents=anything
     Return v5
 }
-function f4 name="short" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = TypeTest v0 testedType="ab"|"cd"
-    Branch v1 -> taken b1(| 0), notTaken b2()
-  b1(v2):
-    v3 = PropGet v2 key="indexOf"
-    v4 = String string="abc"
-    v5 = Call v3, v2, v4 calleeKey="indexOf"
-    v6 = NewArray v5 contents=anything
-    Return v6
-  b2():
-    v7 = Undefined
-    Return v7
-}
-function f5 name="flag" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = TypeTest v0 testedType=string
-    Branch v1 -> taken b1(| 0), notTaken b3()
-  b1(v2):
-    v3 = PropGet v2 key="startsWith"
-    v4 = String string="--"
-    v5 = Call v3, v2, v4 calleeKey="startsWith"
-    Branch v5 -> taken b2(), notTaken b3()
-  b2():
-    v6 = PropGet v2 key="startsWith"
-    v7 = String string="--"
-    v8 = Call v6, v2, v7 calleeKey="startsWith"
-    v9 = NewArray v8 contents=anything
-    Return v9
-  b3():
-    v10 = Undefined
-    Return v10
-}
-function f6 name="colors" module=m0 thisType={type=anything} results=[{type=anything}] {
-  b0():
-    v0 = String string="red,green"
-    v1 = PropGet v0 key="split"
-    v2 = String string=","
-    v3 = Call v1, v0, v2 calleeKey="split"
-    Return v3
-}
-function f7 name="loud" module=m0 thisType={type=anything} results=[{type=anything}] {
+function f4 name="loud" module=m0 thisType={type=anything} results=[{type=anything}] {
   b0():
     v0 = String string="abc"
     v1 = PropGet v0 key="toUpperCase"
@@ -130,7 +70,7 @@ function f7 name="loud" module=m0 thisType={type=anything} results=[{type=anythi
     v3 = NewArray v2 contents=anything
     Return v3
 }
-function f8 name="anywhere" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f5 name="anywhere" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2()

@@ -20,7 +20,6 @@ std::span<const NativeTest> branchesGrowthTests();
 
 using namespace Typed;
 
-// function pick(v) { switch (v) { case 0: break; case 1: v.seen; break; case 2: break; .. } return v; }  sink(pick)
 static String switchWithManyCasesForBranchesGrowthTests(unsigned numberOfCases)
 {
     StringBuilder text;
@@ -54,7 +53,6 @@ static std::optional<uint64_t> instructionsOfWalkForBranchesGrowthTests(const St
         std::unique_ptr<Program> parsed = parseProgram(withStandInLibrary(text), build);
         AOT_TEST_CHECK(parsed);
         StagedBuild stages(WTF::move(parsed), build);
-        // The first request runs the whole stage, for what callers leave their callees.
         AOT_TEST_CHECK(stages.code(CodeUnit { function, CodeRole::Body }));
         instructions = instructionsOfAllThreadsIn([&] {
             AOT_TEST_CHECK(stages.code(CodeUnit { function, CodeRole::Body }));
@@ -63,7 +61,6 @@ static std::optional<uint64_t> instructionsOfWalkForBranchesGrowthTests(const St
     return instructions;
 }
 
-// Each case is asked where it comes to, and the target of a case is found by passing those in front of it. Where that is done anew for each case, the work is the square of their number.
 static void testWalkGrowsAsCasesOfSwitchDo()
 {
     constexpr unsigned numberOfCases = 3000;

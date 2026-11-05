@@ -45,16 +45,12 @@ struct BitOfClassGuard {
     uint8_t mask { 0 };
 };
 
-// AsDeclared and MayStillBeDefined: but for the names that are listed beside the answer. Differs: in a way that no name stands for.
 enum class StateOfClassHolder : uint8_t { AsDeclared, MayStillBeDefined, Differs };
 
-// AbsentUntilReported: the table of classes hears of it when the holder gets the name. AbsentForNow: there is no holder yet, or one that tells the table nothing.
 enum class NameOnPrototypeHolder : uint8_t { Found, AbsentUntilReported, AbsentForNow };
 
-// Under these a holder has something else than the record of its class says, or lacks what the record says.
 struct NamesThatDifferOnClassHolders {
     Vector<uint32_t, 4> numbers;
-    // Where the record declares nothing and the holder has a plain value that may be written: a store into an instance passes it by.
     Vector<uint32_t, 4> numbersOfPlainValues;
     bool someHasNoNumber { false };
 
@@ -119,7 +115,6 @@ static BitOfClassGuard bitOfClassGuard(const State& state, const LayoutData& cla
     return bitOfClassGuardWithNumber(state, classLayout.classData().guardBit[static_cast<size_t>(side)]);
 }
 
-// Ascending by name. A name may come several times, and so may the bit of a guard for several names.
 static std::span<const NamedClassGuardData> guardsOfNamesInClassRecord(const ProgramTables& tables, const LayoutData& classLayout, ClassSide side)
 {
     uint32_t offset = classLayout.classData().namedGuardsOffset[static_cast<size_t>(side)];
@@ -134,7 +129,6 @@ static auto guardsOfNameInClassRecord(const ProgramTables& tables, const LayoutD
     return std::ranges::equal_range(guardsOfNamesInClassRecord(tables, classLayout, side), key, { }, &NamedClassGuardData::name);
 }
 
-// The pages of the table are read-only but for the time of an update.
 static void setMethodTableWritableForClassGuards(State& state, bool isWritable)
 {
     OSAllocator::protect(state.instance.methodTable().data(), InstanceLayout::bytesReservedForMethodTable(state.tables.instanceSizes), true, isWritable);
@@ -173,7 +167,6 @@ static void repointMethodTableEntries(State& state, Dependents&& dependents, boo
     }
 }
 
-// The bit has just changed.
 static void countChangeOfClassGuard(State& state, uint32_t numberOfBit, bool holds)
 {
     for (const ClassGuardCountData& count : std::ranges::equal_range(state.tables.classGuardCounts(), numberOfBit, { }, &ClassGuardCountData::guardBit)) {
@@ -203,7 +196,6 @@ static void storeBitOfClassGuard(State& state, const LayoutData& classLayout, Cl
             countEvent(*state.instance.vm, RuntimeCounterID::ClassGuardBitsEnded);
     }
 
-    // A call through the method table tests no guard and asks no object.
     auto dependents = std::ranges::equal_range(state.tables.methodTableDependents(), numberOfBit, { }, &MethodTableDependentData::guardBit);
     if (!dependents.empty())
         repointMethodTableEntries(state, dependents, holds && !state.objects->classes.hasInstanceBelowOtherPrototype(classLayout));
@@ -214,7 +206,6 @@ static bool bitOfClassGuardSaysThatItHolds(const LayoutData& classLayout, ClassS
     return !!(*bit.byte & bit.mask) != classLayout.classData().bitsAreClearWhileGuardsHold(side);
 }
 
-// Whatever has become of its names.
 static bool classGuardOfSideHolds(const State& state, const LayoutData& classLayout, ClassSide side)
 {
     if (state.objects->classes.guardHasEnded(classLayout, side))
@@ -236,7 +227,6 @@ bool classGuardOfNameHolds(const State& state, const LayoutData& classLayout, Cl
         return classGuardHolds(state, classLayout, side);
     if (state.objects->classes.guardHasEnded(classLayout, side))
         return false;
-    // What ends the guard of the name ends every guard that is listed under it. A guard for several names may have ended for another of them.
     return std::ranges::any_of(guards, [&](const NamedClassGuardData& guard) {
         return !guard.answersStoresAlone() && bitOfClassGuardSaysThatItHolds(classLayout, side, bitOfClassGuardWithNumber(state, guard.numberOfBit()));
     });
@@ -262,7 +252,6 @@ void endClassGuard(State& state, const LayoutData& classLayout, ClassSide side)
     while (!classesToEnd.isEmpty()) {
         const LayoutData* current = classes.classWithIndex(classesToEnd.takeLast());
         RELEASE_ASSERT(current);
-        // Whatever ended the guard of a class has ended those of the classes below it.
         if (classes.m_endedGuards.set(classes.indexOfGuard(*current, side)))
             continue;
         storeBitOfClassGuard(state, *current, side, current->classData().guardBit[static_cast<size_t>(side)], false);
@@ -298,7 +287,6 @@ void endClassGuardsOfName(State& state, const LayoutData& classLayout, ClassSide
     while (!classesToEnd.isEmpty()) {
         const LayoutData* current = classes.classWithIndex(classesToEnd.takeLast());
         RELEASE_ASSERT(current);
-        // Whatever ended a guard of a class has ended the same guard of the classes below it.
         if (classes.guardHasEnded(*current, side) || (current->index != classLayout.index && hasEndedAt(*current)))
             continue;
         if (toEnd != GuardsOfNameToEnd::ReadsStillFind)
@@ -315,7 +303,6 @@ void endClassGuardsOfName(State& state, const LayoutData& classLayout, ClassSide
     }
 }
 
-// What happens to a holder before the guards of its class begin is seen when they begin. The classes below have looked at the holder already.
 static void endClassGuardsThatHaveBegun(State& state, const LayoutData& classLayout, ClassSide side)
 {
     ClassTable& classes = state.objects->classes;
@@ -369,7 +356,6 @@ static Closure* registeredClassObjectOf(State& state, const LayoutData& classLay
     return registered ? dynamicDowncast<Closure>(registered) : nullptr;
 }
 
-// Allocates nothing: a store that creates a field asks. The prototype object of a class may be made before its class object.
 static JSObject* prototypeHolderIfMade(VM& vm, State& state, const LayoutData& classLayout)
 {
     if (JSObject* prototype = state.objects->classes.classPrototypeIfExists(classLayout))
@@ -400,7 +386,6 @@ static bool isClosureOfMethodInClassRecord(const JSCell* closure, const MethodDa
     return functionOf(closure) == FunctionID(method.function);
 }
 
-// Compiled code that reads a method behind the guard takes the closure that the table holds, or has the table make one.
 static bool isClosureHeldByClosureTable(State& state, const JSCell* closure, const MethodData& method)
 {
     ClosureTable& closures = state.objects->closures;
@@ -413,7 +398,6 @@ static bool isMethodOfClassRecord(State& state, const JSCell* closure, const Met
     return isClosureOfMethodInClassRecord(closure, method) && (method.kind() != MethodKind::Method || isClosureHeldByClosureTable(state, closure, method));
 }
 
-// Asked of what a holder has. Where the table has made no closure of the function yet, the one on the holder becomes the table's: what is read behind the guard is the same object.
 static bool holdsMethodOfClassRecord(State& state, JSCell* closure, const MethodData& method)
 {
     if (!isClosureOfMethodInClassRecord(closure, method))
@@ -439,7 +423,6 @@ static bool holdsMemberOfClassRecord(State& state, JSValue value, unsigned attri
     return holdsGetter && holdsSetter;
 }
 
-// How many members that the record declares without a name make up the property. 0 where something else has a part in it.
 static size_t numberOfComputedNameMembersInProperty(State& state, std::span<const MethodData> methods, JSValue value, unsigned attributes)
 {
     auto isDeclared = [&](const JSCell* closure, MethodKind kind) {
@@ -473,13 +456,11 @@ static bool isImplicitMemberOfClassHolder(VM& vm, ClassSide side, UniquedStringI
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A class object reports what happens to it through its method table. A prototype object reports through VM::invalidateStructureChainIntegrity(), and so does a constructor function.
 static bool classHolderReportsAsPrototype(const ClassTable& classes, const LayoutData& classLayout, ClassSide side)
 {
     return side == ClassSide::Prototype || !classes.isDefinedByClass(classLayout);
 }
 
-// `Below.prototype = new Above()` (AOTClassGuards.h). No closure that lies on the object is looked at: whatever it has differs.
 static StateOfClassHolder stateOfCompiledClassHolder(VM& vm, State& state, const LayoutData& classLayout, ClassSide side, Object& holder, NamesThatDifferOnClassHolders& namesThatDiffer)
 {
     JSObject* extraProperties = extraPropertiesIfMade(holder);
@@ -530,7 +511,6 @@ static StateOfClassHolder stateOfClassHolder(VM& vm, State& state, const LayoutD
         AOT::sort(namesOfStaticFields);
     }
 
-    // Until the definition of a class ends, no code of the program can name the class. What a constructor function lacks at its first allocation, the program sees to be missing.
     bool isDefinedByClass = state.objects->classes.isDefinedByClass(classLayout);
     const ProgramIdentifiers& identifiers = identifiersOf(state.instance);
     size_t numberOfMembersWithoutNameFound = 0;
@@ -596,7 +576,6 @@ static const LayoutData* classAboveOnSide(const ClassTable& classes, const Layou
     return classes.assumedBaseOf(classLayout);
 }
 
-// The class that the object is a holder of, entered or not.
 static const LayoutData* classWithHolder(const ClassTable& classes, JSObject* object)
 {
     ClassSide side;
@@ -614,7 +593,6 @@ static bool isClassOfLibrary(const LayoutData& classLayout)
     return constructor && functionKindData(constructor).isInRuntimeModule;
 }
 
-// `Object.setPrototypeOf(Readable, Stream)` (AOTClassGuards.h). Each function above is that of the class which the record of the one below names, so what changes it ends the guards below.
 static bool standsBelowFunctionsNamedByClassRecords(VM& vm, State& state, const LayoutData& classLayout, JSObject* function, NamesThatDifferOnClassHolders& namesOfFunctionsAbove)
 {
     ClassTable& classes = state.objects->classes;
@@ -637,7 +615,6 @@ static bool standsBelowFunctionsNamedByClassRecords(VM& vm, State& state, const 
     return true;
 }
 
-// A lookup that passes an instance stops at the first holder that has the name: what stands under it further up is never come to. `ofHolder`: what differs on the holder of the class itself.
 static void addNamesThatLookupsComeToAbove(const LayoutData& classLayout, ClassSide side, const NamesThatDifferOnClassHolders& above, NamesThatDifferOnClassHolders& ofHolder)
 {
     size_t numberOfOwnNumbers = ofHolder.numbers.size();
@@ -656,8 +633,6 @@ static void addNamesThatLookupsComeToAbove(const LayoutData& classLayout, ClassS
     ofHolder.someHasNoNumber |= above.someHasNoNumber;
 }
 
-// A change to a class ends the guards of the classes that its record lists below it. So a holder may stand below the holder of the class that its own record names, and below that of no other class of the program.
-// What has ended a guard of a name at a class whose guards have begun has ended it below. Of a holder above that nobody has looked at yet, the names that differ are listed.
 static bool hasParentNamedByClassRecord(VM& vm, State& state, const LayoutData& classLayout, ClassSide side, JSObject* holder, NamesThatDifferOnClassHolders& namesThatDifferAbove)
 {
     ClassTable& classes = state.objects->classes;
@@ -674,13 +649,11 @@ static bool hasParentNamedByClassRecord(VM& vm, State& state, const LayoutData& 
     bool guardAboveHasBegun = !classes.guardsAwaitFirstInstance(*above);
     if (guardAboveHasBegun ? !classGuardOfSideHolds(state, *above, side) : classes.guardHasEnded(*above, side))
         return false;
-    // The holders of a class that is left to its record are entered before their first change.
     if (above->classData().guardsHoldWhileClear)
         return true;
     ClassSide sideOfParent;
     if (classes.classHeldBy(parent, sideOfParent) != above || sideOfParent != side)
         return false;
-    // A side that no code tests has no bit to say that its guard has begun.
     if (guardAboveHasBegun && bitOfClassGuard(state, *above, side).byte)
         return true;
     NamesThatDifferOnClassHolders namesFurtherUp;
@@ -697,13 +670,11 @@ static bool hasParentNamedByClassRecord(VM& vm, State& state, const LayoutData& 
 static bool definesMemberOfClassRecord(State& state, const LayoutData& classLayout, ClassSide side, UniquedStringImpl* uid, JSCell* function)
 {
     std::optional<uint32_t> key = identifiersOf(state.instance).numberOf(uid);
-    // A member with a computed name that lands on a name of the record replaces what the record declares there.
     bool recordNamesKey = key && declaresMember(classLayout, side, *key);
     return std::ranges::any_of(methodsInClassRecord(classLayout, side), [&](const MethodData& method) {
         bool isRowOfKey = recordNamesKey ? isNamedInClassRecord(method, *key) : !!(method.flags & methodHasComputedName);
         if (!isRowOfKey)
             return false;
-        // As where a holder is looked at: what the definition lays there is what is read behind the guard.
         return method.kind() == MethodKind::Method ? holdsMethodOfClassRecord(state, function, method) : isMethodOfClassRecord(state, function, method);
     });
 }
@@ -718,8 +689,6 @@ static bool isLastMemberCreatedAtDefinition(const LayoutData& classLayout, Class
     return false;
 }
 
-// What a lookup that passes an instance of the class finds under the name on the prototype object of the class.
-// A compiled holder counts as having each name of its layout, whatever its slots hold: compiled code fills them without a word.
 static NameOnPrototypeHolder findNameOnPrototypeHolder(VM& vm, State& state, const LayoutData& classLayout, UniquedStringImpl* uid, std::optional<uint32_t> key)
 {
     if (uid == vm.propertyNames->constructor.impl() || (key && declaresMember(classLayout, ClassSide::Prototype, *key)))
@@ -728,7 +697,6 @@ static NameOnPrototypeHolder findNameOnPrototypeHolder(VM& vm, State& state, con
     JSObject* holder = prototypeHolderIfMade(vm, state, classLayout);
     if (!holder)
         return NameOnPrototypeHolder::AbsentForNow;
-    // didChangeClassHolder() knows such an object by the class that it names.
     if (isLazyClassHolder(holder, ClassSide::Prototype))
         return classes.classPrototypeIfExists(classLayout) == holder ? NameOnPrototypeHolder::AbsentUntilReported : NameOnPrototypeHolder::AbsentForNow;
     if (isCompiledObject(holder) ? !Object::structureGuaranteesAbsence(holder->structure(), uid) : isValidOffset(holder->structure()->get(vm, uid)))
@@ -744,13 +712,11 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
     ASSERT(holder);
     MethodTableUpdate update(*this);
     forgetWhatCreatedFieldsHide();
-    // Only an object whose Structure may be a prototype reports an added name or a replaced value.
     if (classHolderReportsAsPrototype(*this, layout, side)) {
         holder->didBecomePrototype(vm);
         if (side == ClassSide::Static)
             m_state.objects->closures.didGivePrototypePropertyTo(vm, holder);
     }
-    // A constructor allocates an instance of the class whose prototype object it is handed, so the holders of every evaluation say which class they are of: classHeldBy(). The guards describe the first evaluation.
     auto entry = m_classSidesByHolder.add(holder, encodeSideOfClassHolder(layout, side));
     bool isEnteredForThisSide = entry.iterator->value == encodeSideOfClassHolder(layout, side);
     if (entry.isNewEntry)
@@ -758,17 +724,19 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
     else if (isEnteredForThisSide && holderState == HolderState::NotTouched)
         return;
 
-    // Compiled code makes a second closure of a function that is no class without a word to the run time.
-    bool runTimeSeesEveryEvaluation = isDefinedByClass(layout) || layout.evaluation() == EvaluationState::ProvenOnce;
+    bool runTimeSeesEveryEvaluation = isDefinedByClass(layout) || layout.evaluation() == EvaluationState::ProvenOnce || side == ClassSide::Prototype;
     bool isOfFirstEvaluation = layout.evaluation() != EvaluationState::SeenTwice && registeredHolderOf(vm, m_state, layout, side) == holder;
-    if (!isEnteredForThisSide || !runTimeSeesEveryEvaluation || !isOfFirstEvaluation) {
+    if (isEnteredForThisSide && isOfFirstEvaluation && !runTimeSeesEveryEvaluation) {
+        endClassGuard(m_state, layout, side);
+        return;
+    }
+    if (!isEnteredForThisSide || !isOfFirstEvaluation) {
         disarmMemberGuards(layout);
         return;
     }
     if (m_endedGuards.get(indexOfGuard(layout, side)))
         return;
 
-    // With one class object every member that the record creates is the closure that the table holds.
     bool isMadeAsDeclared = holderState == HolderState::AsDefinitionMadeIt && hasOneClassObject(layout);
 #if ASSERT_ENABLED
     if (isMadeAsDeclared) {
@@ -804,7 +772,6 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
     }
 }
 
-// The classes below look at the holder when their own guards begin, and hear of every change to it from here on.
 void ClassTable::enterHolderWithoutGuards(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder)
 {
     ASSERT(!isDefinedByClass(layout) && !layout.classData().guardsHoldWhileClear);
@@ -821,7 +788,6 @@ bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, Closure* c
     ASSERT(isDefinedByClass(layout));
     if (layout.evaluation() == EvaluationState::SeenTwice)
         disarmMemberGuards(layout);
-    // A prototype object that has not made its members says by itself which class it is of, and makes them once it is given a property.
     if (!hasNoGuardLeft(layout) || prototype->type() != FinalObjectType)
         return false;
     if (!m_classObjectOfHolderLeftOut)
@@ -832,8 +798,6 @@ bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, Closure* c
     return true;
 }
 
-// Nothing can change or remove the prototype property of a class object, so a class object that names the holder as its prototype proves what the holder is.
-// The holder's own `constructor` is the program's to delete, redefine or overwrite with that of another class, as a mixin does: it says nothing.
 const LayoutData* ClassTable::classOfHolderLeftOut(JSObject* holder, ClassSide& side) const
 {
     VM& vm = *m_state.instance.vm;
@@ -865,24 +829,19 @@ void ClassTable::disarmMemberGuards(const LayoutData& classLayout)
     endClassGuard(m_state, classLayout, ClassSide::Static);
 }
 
-// Some callers report a change before they make it, so didChangeMember, didChangeEveryMember and didChangePrototypeLink never read the holder.
 void ClassTable::didChangeMember(const LayoutData& layout, ClassSide side, UniquedStringImpl* uid)
 {
     if (m_endedGuards.get(indexOfGuard(layout, side)))
         return;
-    // `Counter.made++` says nothing about a prototype object.
     if (side == ClassSide::Prototype || uid == m_state.instance.vm->propertyNames->prototype.impl())
         forgetWhatCreatedFieldsHide();
     if (m_memberBeingDefined.classLayout && m_memberBeingDefined.classLayout->index == layout.index && m_memberBeingDefined.side == side && m_memberBeingDefined.uid == uid)
         return;
-    // The class of a constructor function is defined at its first allocation, out of what the program has assigned until then. Its guards begin there.
     if (!layout.classData().guardsHoldWhileClear && !isDefinedByClass(layout) && !classPrototypeIfExists(layout))
         return;
-    // Every function has a name and a length of its own from the start, and the first look at one makes the property. So no lookup passes a class object under either, and no guard speaks of them.
     const CommonIdentifiers& names = *m_state.instance.vm->propertyNames;
     if (side == ClassSide::Static && (uid == names.name.impl() || uid == names.length.impl()) && !hasStaticMethodNamed(layout, uid))
         return;
-    // Compiled code resolves nothing under the name of a static field, at the class or below it, so no guard speaks of one.
     std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
     if (side == ClassSide::Static && key && isStaticFieldInClassRecord(layout, *key) && !declaresMember(layout, side, *key))
         return;
@@ -891,7 +850,6 @@ void ClassTable::didChangeMember(const LayoutData& layout, ClassSide side, Uniqu
 
 void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid, JSObject* function)
 {
-    // The holders may have been left out, and stay out.
     if (hasNoGuardLeft(layout))
         return;
     forgetWhatCreatedFieldsHide();
@@ -923,10 +881,8 @@ void ClassTable::didFreezeHolder(VM& vm, const LayoutData& layout, ClassSide sid
     if (m_endedGuards.get(indexOfGuard(layout, side)))
         return;
     forgetWhatCreatedFieldsHide();
-    // As in didChangeMember(): whoever begins the guards looks at the holder.
     if (!layout.classData().guardsHoldWhileClear && !isDefinedByClass(layout) && !classPrototypeIfExists(layout))
         return;
-    // The Structure of a compiled object lists none of its properties.
     if (isCompiledObject(holder)) {
         endClassGuardsThatHaveBegun(m_state, layout, side);
         return;
@@ -952,7 +908,6 @@ void ClassTable::didDefineWithOtherParent(const LayoutData& layout, ClassSide si
     endClassGuard(m_state, layout, side);
 }
 
-// A guard that has ended stays ended, so an answer that rests on one stands for good.
 bool ClassTable::endGuardsOfShadowedMember(const LayoutData& instanceLayout, UniquedStringImpl* uid)
 {
     if (!instanceLayout.isClass())
@@ -1003,8 +958,6 @@ void ClassTable::SetOfFieldRecords::add(uint32_t number)
         m_pagesInUse.append(page);
     bits |= 1ull << number % PagedBitSet::bitsPerPage;
 }
-
-// ---- Guards that hang on the objects of a chain
 
 struct ClassTable::OwnerOfGuardsThatHangOnChains final : ChainDependentOwner {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(OwnerOfGuardsThatHangOnChains);
@@ -1063,15 +1016,12 @@ void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLa
     JSObject* holder = registeredHolderOf(vm, m_state, layout, ClassSide::Prototype);
     if (holder && prototype == JSValue(holder))
         return;
-    // Until its first object is linked the class of what Object.create() makes has no prototype. What is allocated till then says in its cell that it stands below another.
     if (!holder && isClassOfCreatedObjects(layout))
         return;
-    // An object of a class that nobody has defined: its guards have not begun, and hold for no object alone.
     if (!holder) {
         endClassGuard(m_state, layout, ClassSide::Prototype);
         return;
     }
-    // A call through the method table goes by the shape, which the object keeps. Each row of the class hangs on a guard of a name of the class (MethodTablePlanner::rowOf()).
     if (!m_classesWithInstanceBelowOtherPrototype.add(layout.index).isNewEntry)
         return;
     forgetWhatCreatedFieldsHide();
@@ -1082,14 +1032,6 @@ void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLa
     }
 }
 
-// ---- Objects that a program lays between the objects of a class and its prototype object
-//
-// express, at every request: `Object.setPrototypeOf(req, app.request)`, and app.request stands below an object that stands below IncomingMessage.prototype.
-// Such a request still finds every member of its class, but for the names that the objects between have themselves. It does not get the bit that HasLayoutPrototype asks for.
-// Whoever passes by that bit asks a guard of the class as well, of a name or of the side (walk/AOTWalkTypedAccesses.cpp: whatChangesForbid). So, for all the objects of the class:
-// - no object between may have a name that is found above them: it would hide a member;
-// - the guards of every name that an object between has end here: a read under it finds something, and a store may meet a setter;
-// - the guard of the side hangs on each object between: whatever changes there, a name or what stands above it, ends it, and with it the guards of all names.
 bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instanceLayout, JSObject* firstAbove)
 {
     if (!instanceLayout.isClass() || !m_state.chainDependents)
@@ -1104,8 +1046,6 @@ bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instan
     firstAbove->didBecomePrototype(vm);
     ChainObjects between;
     for (JSObject* object = firstAbove; object != holder; object = object->getPrototypeDirect().getObject()) {
-        // A plain object has what its Structure lists and nothing else, and once it stands above another it reports every change: didChangeChainObject().
-        // An object that is still being filled is a dictionary until somebody looks.
         if (!object || object->type() != FinalObjectType || !flattenOnce(vm, object))
             return false;
         Structure* structure = object->structure();
@@ -1113,8 +1053,6 @@ bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instan
             return false;
         between.append(object);
     }
-    // `Sub.prototype = Object.create(Base.prototype); Sub.prototype.render = ..`: an object between that hides a member speaks for its own kind of object alone. To end the guard of that name would take the member's typed forms
-    // from every object of the class: such an object gets the bit, as ever.
     Vector<uint32_t, 16> namesBetween;
     bool hidesMember = false;
     for (JSObject* object : between) {
@@ -1137,15 +1075,10 @@ bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instan
     return true;
 }
 
-// ---- The class of what one Object.create() makes
-
-// No record names what stands above such an object, so nothing here goes by records. The guards that stores ask begin where a store under the name into an object below `parent` creates the object's own property,
-// and each hangs on every object of the chain that may change that. The guards that reads ask never begin. An object that is linked below another parent has the bit that HasLayoutPrototype asks for.
 void ClassTable::defineClassOfCreatedObjects(VM& vm, const LayoutData& classLayout, JSObject* parent)
 {
     ASSERT(isClassOfCreatedObjects(classLayout) && !classPrototypeIfExists(classLayout));
     registerClassPrototype(classLayout, parent);
-    // What was allocated so far stands below Object.prototype until it is linked, and says that it has another prototype than its class.
     m_state.objects->structures.forgetStructuresOf(classLayout);
     if (!classLayout.shape || guardHasEnded(classLayout, ClassSide::Prototype) || !m_state.chainDependents)
         return;
@@ -1154,7 +1087,6 @@ void ClassTable::defineClassOfCreatedObjects(VM& vm, const LayoutData& classLayo
         return;
     Structure* structure = m_state.objects->structures.objectStructure(vm, classLayout.shape);
     JSGlobalObject* realm = m_state.instance.globalObject;
-    // The bit of a guard for several names stands under each of them.
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bitsThatDoNotBegin;
     uint32_t nameAsked = 0;
     bool passes = false;

@@ -16,6 +16,7 @@
 #include <type_traits>
 #include <utility>
 #include <wtf/FastMalloc.h>
+#include <wtf/HashSet.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
@@ -42,13 +43,10 @@ class StringKeyCache;
 struct BuiltinFamilyState;
 struct ObjectModel;
 
-// Zeroed pages for data that lives as long as the process. With ENABLE(AOT_GUARDED_PAGES) they sit between two inaccessible pages, on Linux at their own random address.
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void releaseGuardedPages(void* pages, size_t bytes);
 
-// Zeroed pages for data that lives no longer than a VM. What the VM takes at startup are pieces of one mapping, which is unmapped in one call when the VM ends,
-// so threads that start or end together make one system call each. What does not fit gets its own pages. With ENABLE(AOT_GUARDED_PAGES) everything does.
 class PagesOfVM {
     WTF_MAKE_TZONE_ALLOCATED(PagesOfVM);
     WTF_MAKE_NONCOPYABLE(PagesOfVM);
@@ -59,9 +57,7 @@ public:
     void* allocate(size_t bytes);
     void* tryAllocate(size_t bytes);
     void release(void* pages, size_t bytes);
-    // The system moved the pages elsewhere: nothing is mapped here any more.
     void didMoveAway(void* pages, size_t bytes);
-    // From here on, a released piece stays mapped until the whole mapping is released, if the mapping is still whole.
     void willReleaseEverything() { m_releasesEverything = true; }
 
 private:
@@ -71,7 +67,6 @@ private:
     size_t m_size { 0 };
     size_t m_used { 0 };
     bool m_releasesEverything { false };
-    // The pieces that were released early, unordered. A neighboring piece may have grown into one since.
     Vector<std::pair<uint8_t*, size_t>> m_gaps;
 };
 
@@ -84,7 +79,6 @@ public:
     }
     ~ZeroedPages();
 
-    // AllAtOnce is for a table whose every page is written right away: one call into the kernel takes the place of a fault per page.
     enum class FirstUse : uint8_t { PageByPage, AllAtOnce };
     void* allocate(size_t bytes, FirstUse = FirstUse::PageByPage);
     void release(void* pages);
@@ -110,8 +104,6 @@ private:
     size_t m_used { 0 };
 };
 
-// A table that is made at its first use. Its pages are set aside with the tables of the program, and a program that never makes it never touches them.
-// The first use may come where no more memory can be mapped, and what reads a property or copies an object has no way to report that.
 template<typename T>
 class MadeInArena {
     WTF_MAKE_NONCOPYABLE(MadeInArena);
@@ -150,7 +142,6 @@ private:
     T* m_value { nullptr };
 };
 
-// Created at its first use. A program without one never pays for it.
 template<typename T>
 class CreatedAtFirstUse {
     WTF_MAKE_NONCOPYABLE(CreatedAtFirstUse);
@@ -177,7 +168,6 @@ private:
 extern template class CreatedAtFirstUse<PropertyCaches>;
 extern template class CreatedAtFirstUse<StringKeyCache>;
 
-// The field of an object's layout that has the name of a field that a class declares. Layouts and their fields are data of the image, so what is remembered never goes stale.
 struct FieldUnderDeclaredName {
     const LayoutData* layoutOfObject;
     const FieldData* declared;
@@ -199,7 +189,6 @@ struct State {
     ZeroedTableArena tableArena;
     std::unique_ptr<CacheRegistry> caches;
     std::unique_ptr<ImmortalCells> immortalCells;
-    // Nobody is shown it. The first word behind its header holds undefined for ever: SiteAnswers::Form::ValueInWordOfCage.
     JSObject* objectThatHoldsUndefined { nullptr };
     std::unique_ptr<ProgramStrings> strings;
     std::unique_ptr<ProgramStatics> statics;
@@ -207,7 +196,6 @@ struct State {
     std::unique_ptr<ChainDependents> chainDependents;
     CreatedAtFirstUse<PropertyCaches> propertyCaches;
     CreatedAtFirstUse<StringKeyCache> stringKeys;
-    // Created when an object is first given a name that is new to its Structure.
     std::unique_ptr<FirstAdditions> firstAdditions;
     std::unique_ptr<Modules> modules;
     std::unique_ptr<BuiltinModuleTable> builtinModules;
@@ -215,17 +203,12 @@ struct State {
     std::unique_ptr<CoroutineTable> coroutines;
     std::unique_ptr<BuiltinFamilyState> builtinFamilies;
     std::unique_ptr<GlobalBindings> globalBindings;
-    // What registerWrittenAtFaults held at the last null check that faulted. The handler may run on another thread than the one that faulted.
     uint64_t registerBeforeFault { 0 };
-    // Where the last Throw at the end of a cleanup returns to. No other throw returns there.
     const void* returnAddressOfThrowAfterCleanup { nullptr };
-    // What that cleanup has kept of the throw that entered it: the Exception, or where a `throw` of the same function returns to, or zero. It is read only between that Throw and the search for its handler.
     uint64_t keptByCleanup { 0 };
-    // PlanOfArrival, from operationAOTLayOutSlowFrames to the jump into the slow body.
-    Vector<uint64_t> memoryOfPlanOfArrival;
     static constexpr size_t numberOfFieldsUnderDeclaredNames = 64;
-    // Allocated when a private name is first looked for in an object of another layout than the one that declares it.
     FieldUnderDeclaredName* fieldsUnderDeclaredNames { nullptr };
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsEnteredThatRunOnce;
 
 private:
     explicit State(Instance&);

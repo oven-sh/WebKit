@@ -33,7 +33,6 @@ static void callOperationAndReturn(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTGetByVal, { .returns = OperationCall::Returns::Value, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
-// The search of WTF::HashTable::inlineLookup().
 void emitFindSparseElement(StubAssembler& jit, const SparseElementSearch& search, JumpList& isAbsent)
 {
     const auto [owner, index, entry, probe, table] = search;
@@ -67,7 +66,6 @@ void emitFindSparseElement(StubAssembler& jit, const SparseElementSearch& search
     isFound.link(&jit);
 }
 
-// Where nothing stands under an index on the prototypes of the array, an element that is not there reads as undefined. A position that is no index is a name.
 void generateArrayGetAtIndex(StubAssembler& jit)
 {
     bool listIsAsMade = static_cast<ArrayRead>(jit.key().form()) == ArrayRead::OfListAsMade;
@@ -184,8 +182,7 @@ StubSignature signatureOfArrayGetAtNumber(StubKey) { return StubSignature::withG
 
 static bool searchesArrayFromStart(StubKey key)
 {
-    SearchedElements elements = static_cast<SearchedElements>(key.form());
-    return elements == SearchedElements::ValuesFromStart || elements == SearchedElements::StringsFromStart;
+    return static_cast<SearchedElements>(key.form()) == SearchedElements::ValuesFromStart;
 }
 
 StubSignature signatureOfArrayIndexOfString(StubKey key)
@@ -195,7 +192,6 @@ StubSignature signatureOfArrayIndexOfString(StubKey key)
     return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
 }
 
-// characters holds the fiber word of a rope on entry. flags may alias string.
 static void loadSubstringCharactersAndFlags(StubAssembler& jit, GPRReg string, GPRReg characters, GPRReg offset, GPRReg flags, JumpList& notSubstring)
 {
     notSubstring.append(jit.branchTestPtr(CCallHelpers::Zero, characters, TrustedImm32(JSRopeString::isSubstringInPointer)));
@@ -216,15 +212,11 @@ void generateArrayIndexOfString(StubAssembler& jit)
     constexpr int32_t wordSize = sizeof(uint64_t);
     constexpr int32_t is8BitFlag = StringImpl::flagIs8Bit();
     static_assert(sizeof(EncodedJSValue) == 8 && is8BitFlag == 4);
-    const SearchedElements searchedElements = static_cast<SearchedElements>(jit.key().form());
-    const bool elementsAreStrings = searchedElements == SearchedElements::Strings || searchedElements == SearchedElements::StringsFromStart;
     const bool hasStart = searchesArrayFromStart(jit.key());
     const GPRReg array = jit.operand(0);
     const GPRReg searchString = jit.operand(1);
     const GPRReg cursor = hasStart ? jit.clobberOperand(2) : jit.allocateScratch(StubRegister::A3);
-    // Address of the last element, plus 1, plus is8BitFlag if searchString is 8-bit.
     const GPRReg end = jit.allocateScratch(StubRegister::A4);
-    // Length of searchString in the low 32 bits, its size in bytes in the high 32 bits.
     const GPRReg lengthAndByteSize = jit.allocateScratch(StubRegister::A5);
     const GPRReg searchCharacters = jit.allocateScratch(StubRegister::T12);
     const GPRReg element = jit.allocateScratch(StubRegister::T9);
@@ -272,11 +264,9 @@ void generateArrayIndexOfString(StubAssembler& jit)
     JumpList hasOtherLength;
     Label compareLengths = jit.label();
     jit.load64(Address(cursor), element);
-    if (!elementsAreStrings) {
-        hasOtherLength.append(jit.branchIfNotCell(element));
-        hasOtherLength.append(jit.branchTest64(CCallHelpers::Zero, element));
-        hasOtherLength.append(jit.branchIfNotType(element, StringType));
-    }
+    hasOtherLength.append(jit.branchIfNotCell(element));
+    hasOtherLength.append(jit.branchTest64(CCallHelpers::Zero, element));
+    hasOtherLength.append(jit.branchIfNotType(element, StringType));
     jit.loadPtr(Address(element, JSString::offsetOfValue()), characters);
     Jump firstRope = jit.branchIfRopeStringImpl(characters);
     Jump firstOfSameLength = jit.branch32(CCallHelpers::Equal, Address(characters, StringImpl::lengthMemoryOffset()), lengthAndByteSize);
@@ -314,11 +304,9 @@ void generateArrayIndexOfString(StubAssembler& jit)
     Label loop = jit.label();
     jit.load64(Address(cursor), element);
     found.append(jit.branch64(CCallHelpers::Equal, element, searchString));
-    if (!elementsAreStrings) {
-        nextElement.append(jit.branchIfNotCell(element));
-        nextElement.append(jit.branchTest64(CCallHelpers::Zero, element));
-        nextElement.append(jit.branchIfNotType(element, StringType));
-    }
+    nextElement.append(jit.branchIfNotCell(element));
+    nextElement.append(jit.branchTest64(CCallHelpers::Zero, element));
+    nextElement.append(jit.branchIfNotType(element, StringType));
     jit.loadPtr(Address(element, JSString::offsetOfValue()), characters);
     Jump elementIsRope = jit.branchIfRopeStringImpl(characters);
     nextElement.append(jit.branch32(CCallHelpers::NotEqual, Address(characters, StringImpl::lengthMemoryOffset()), lengthAndByteSize));

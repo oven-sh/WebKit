@@ -68,8 +68,6 @@ struct TestProcedure::Storage {
     {
     }
 
-    // The last step whose outcome the procedure holds. prepareForGeneration() stores the outcome of a step that fails too, so each kind of failure goes by the earliest step that reports it.
-    // A step may report a kind ahead of the check that AOTMachineChecker.h lists it for: BackwardScan::applyCollectorRules() reports InnerPointerWithoutOwner, the allocator RegisterLacksItsValue and SpillSlotLacksItsValue.
     TestProcedureStage stage() const
     {
         if (!didPrepare)
@@ -110,12 +108,9 @@ struct TestProcedure::Storage {
     Vector<uint8_t> linkedCode;
     MacroAssemblerCodeRef<JSEntryPtrTag> wrapper;
     bool didPrepare { false };
-    // Every step has left its outcome, and a later failure takes none away: one of the encoder, or of a check that a test runs on an allocation it has damaged.
     bool didFinishPreparing { false };
     bool didGenerate { false };
 };
-
-// ---- The wrapper.
 
 #if CPU(ARM64)
 static constexpr std::array<GPRReg, 10> gprsKeptByTestWrapper {
@@ -142,7 +137,6 @@ static CCallHelpers::Address slotOfTestWrapper(size_t index)
     return CCallHelpers::Address(GPRInfo::callFrameRegister, -static_cast<int32_t>((index + 1) * sizeof(CPURegister)));
 }
 
-// It writes no register that holds an argument in front of the call, and none that holds a result behind it.
 static MacroAssemblerCodeRef<JSEntryPtrTag> compileTestWrapper(uint8_t* entry, void* instance)
 {
     constexpr size_t numberOfSlots = gprsKeptByTestWrapper.size() + fprsKeptByTestWrapper.size();
@@ -177,9 +171,6 @@ static MacroAssemblerCodeRef<JSEntryPtrTag> compileTestWrapper(uint8_t* entry, v
     return FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "AOT machine test wrapper");
 }
 
-// ---- The code, with its constants and jump tables behind it.
-
-// RelocationKind::AddressFar is page relative on ARM64.
 static constexpr size_t alignmentOfTestProcedureCode = 4 * KB;
 
 static ASCIILiteral describeLinkFailureOfTestProcedure(LinkFailure failure)
@@ -271,8 +262,6 @@ static Vector<uint8_t> layOutTestProcedure(const Procedure& procedure, ImageLink
     return image;
 }
 
-// ---- TestProcedure.
-
 TestProcedure::TestProcedure(ProcedureTraits traits)
     : m_storage(makeUniqueWithoutFastMallocCheck<Storage>(traitsOfTestProcedure(traits)))
     , m_procedure(&m_storage->procedure)
@@ -306,7 +295,6 @@ bool TestProcedure::compile(void* instance)
     Storage& storage = *m_storage;
     Procedure& procedure = storage.procedure;
     CPUFeatureSet features = procedure.traits().features;
-    // generate() appends to the records of the procedure.
     AOT_TEST_CHECK(!storage.didGenerate);
     AOT_TEST_CHECK(features.isSubsetOf(CPUFeatureSet::host()));
     AOT_TEST_CHECK(ExecutableAllocator::singleton().isValid());

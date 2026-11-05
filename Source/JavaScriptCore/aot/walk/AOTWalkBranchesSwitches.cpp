@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Folding: a switch lists no case that the proven type of its subject rules out, and none that comes to where the rest comes to.
-// At a suspension: nothing. At a throw: a SwitchString may throw where it resolves a rope, and Walker::endBlockLeadingTo() leads its handler edge.
-// Withheld: every case is listed as it is written.
-
 #include "config.h"
 #include "AOTWalkBranches.h"
 
@@ -22,7 +18,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(!OperandIndex::Switch::subject && !OperandIndex::SwitchString::subject && !OperandIndex::SwitchOnShape::subject);
 
-// A case that lists no layout, or only layouts that are never allocated, passes for no object.
 static bool anyLayoutOfCaseHasShapeInWalkSwitches(Walker& walker, LayoutSetID layouts)
 {
     const ShapeTable& shapes = walker.plan().shapes();
@@ -31,7 +26,6 @@ static bool anyLayoutOfCaseHasShapeInWalkSwitches(Walker& walker, LayoutSetID la
     });
 }
 
-// Null: nothing may be concluded from the type, or it holds whatever a case of that kind can name.
 static TypeID typeThatMayRuleOutCasesInWalkSwitches(Walker& walker, TerminatorKind kind, Reference subject)
 {
     TypeID type = walker.typeOf(subject);
@@ -56,7 +50,6 @@ static TypeID typeThatMayRuleOutCasesInWalkSwitches(Walker& walker, TerminatorKi
     return holdsEveryCase ? TypeID() : type;
 }
 
-// `switch (node.kind)`: what lay in the slot says which layouts can have held it.
 static bool isReadThatNarrowsItsHolderInWalkSwitches(const Code& code, ValueID value)
 {
     while (opcodesThatGiveSameValue.contains(code.at(value).opcode))
@@ -64,11 +57,9 @@ static bool isReadThatNarrowsItsHolderInWalkSwitches(const Code& code, ValueID v
     return readsThatNarrowTheirHolders.contains(code.at(value).opcode);
 }
 
-// `left` lists every case that the type leaves, and there is one. A case that comes to where the rest comes to needs no test. No value is listed twice: BodyVerifier::verifyTerminatorOperation().
 static void leaveCasesOnWayOfRestUntestedInWalkSwitches(Walker& walker, const BodyTerminator& terminator, const TerminatorDraft& asWritten, CasesLeftOfSwitch& left)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    // BodyTargets::operator[] passes every target in front of the one that it is asked for.
     Vector<BodyTarget, 16> targets;
     for (BodyTarget target : terminator.targets())
         targets.append(target);
@@ -82,7 +73,6 @@ static void leaveCasesOnWayOfRestUntestedInWalkSwitches(Walker& walker, const Bo
     if (testedCases.size() == left.cases.size())
         return;
 
-    // A range has no holes. A tested case between two that are not would come back into the type of the subject on the edge of the rest, and its layouts into the type of the holder.
     Reference subject = asWritten.subjectOperand();
     TypeID subjectType = walker.typeOf(subject);
     if (asWritten.kind == TerminatorKind::Switch && subject.isValue() && subjectType && !isNeverType(subjectType) && isReadThatNarrowsItsHolderInWalkSwitches(walker.code(), subject.id())) {
@@ -120,7 +110,6 @@ CasesLeftOfSwitch casesLeftOfSwitch(Walker& walker, const BodyTerminator& termin
         left.cases.append(caseIndex);
     }
 
-    // Two cases of a SwitchOnShape may name one layout, and the first of them takes it.
     if (!left.cases.isEmpty() && asWritten.kind != TerminatorKind::SwitchOnShape)
         leaveCasesOnWayOfRestUntestedInWalkSwitches(walker, terminator, asWritten, left);
     return left;
@@ -138,7 +127,6 @@ static Vector<Case, 16> casesKeptInWalkSwitches(const Cases& cases, const CasesL
 
 bool Walker::endBlockWithCasesLeft(const BodyTerminator& terminator)
 {
-    // A constant is for onlyTargetKnownToFolding().
     uint32_t numberOfCases = terminator.numberOfCases();
     Reference subject = referenceOf(terminator.operand(0));
     if (!numberOfCases || !subject || !subject.isValue())

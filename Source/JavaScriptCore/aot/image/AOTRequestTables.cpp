@@ -28,9 +28,6 @@
 
 namespace JSC { namespace AOT {
 
-// One kind of word holds an offset into the tables and is linked: CollectionDataRequest::tableInImage, which leads into TablePartID::Data.
-// A record names a node of data by the number of its first word in ProgramTables::data(), and a run begins at a number of words from the start of its own table.
-
 template<typename... Records>
 static constexpr bool fillWholeWordsOfRequestTable = ((!(sizeof(Records) % sizeof(uint32_t)) && alignof(Records) == alignof(uint32_t)) && ...);
 
@@ -54,7 +51,6 @@ struct EvalBindingLocation {
 
 } // anonymous namespace
 
-// std::nullopt for a malformed key. Must agree with the sizes that ImageNumbersBuilder::numberRows() uses to assign the offsets.
 static std::optional<size_t> sizeOfRecordInRequestTable(const Typed::Program& program, std::span<const uint32_t> key)
 {
     if (key.empty())
@@ -95,7 +91,6 @@ static std::optional<size_t> sizeOfRecordInRequestTable(const Typed::Program& pr
     return std::nullopt;
 }
 
-// The part of isValidEvalBinding() in ir/AOTProgramVerifierModules.cpp that this file depends on. Shipping builds do not run the verifier.
 static bool evalBindingHasCompleteLocation(const Typed::Program& program, const Typed::EvalBinding& binding)
 {
     if (binding.variable)
@@ -109,7 +104,6 @@ static bool evalBindingHasCompleteLocation(const Typed::Program& program, const 
     return binding.field && *binding.field < program.at(binding.layout).fields.size();
 }
 
-// The key of the field of an instance that a private name stands for.
 static PropertyKeyID privateKeyOfEvalBinding(const Typed::Program& program, const Typed::EvalBinding& binding)
 {
     if (binding.variable || !binding.layout || binding.kind == EvalBindingKind::MappedArgument || program.at(binding.layout).isEnvironment())
@@ -137,7 +131,6 @@ static void nameWhatDirectEvalRequestNames(const TableInputs& inputs, Typed::Eva
         if (!binding.variable)
             continue;
         names.variables.set(binding.variable.index());
-        // The run time takes the closure of such a variable from the closure table.
         if (FunctionID function = inputs.plan.variable(binding.variable).function)
             names.functionsWithClosureCell.set(function.index());
     }
@@ -163,11 +156,9 @@ void nameWhatRequestTablesName(const TableInputs& inputs, const GatheredMentions
             break;
         case RequestKind::NewClass:
             break;
-        // nameWhatDataTableNames() names what lies in the trees.
         case RequestKind::Data:
         case RequestKind::CollectionData:
             break;
-        // Its texts lie in the record.
         case RequestKind::FormatPattern:
             break;
         }
@@ -226,7 +217,6 @@ static void setFlagOfDirectEvalRequest(DirectEvalRequest& request, Typed::EvalSc
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The operation hands over `this` and new.target in front of the environments.
 static uint32_t operandOfDirectEvalRequest(std::optional<uint32_t> environment)
 {
     constexpr uint32_t operandsBeforeEnvironments = 2;
@@ -248,12 +238,10 @@ static std::optional<EvalBindingLocation> findLocationOfVariableInEvalBinding(co
         const PlacedVariable& placed = variables[variable.index()];
         switch (placed.plan.storage) {
         case Typed::VariableStorage::Statics:
-            // The run time reads the word raw, where zero is absent.
             if (!placed.hasWordInStatics() || placed.plan.encoding == Typed::VariableEncoding::UndefinedAsZero)
                 break;
             return EvalBindingLocation { .offset = placed.offset, .representation = placed.plan.representation };
         case Typed::VariableStorage::ClosureTable:
-            // The run time keeps the closure that it makes in the cell of the function.
             if (std::optional<FunctionID> entry = encoder.findEntrypoint(placed.function); entry && encoder.numbers.closureCellNumber(placed.function))
                 return EvalBindingLocation { .offset = entry->index(), .representation = SlotRepresentation::DeferredClosure };
             break;
@@ -355,7 +343,6 @@ static uint32_t sharedStorageOfDataRequest(const TableEncoder& encoder, DataID d
     case Typed::DataEncoding::ReadOnlyTree:
         return DataRequest::noSharedStorage;
     case Typed::DataEncoding::MadeOnce:
-        // The code alone reads and fills the word of the cell. To the run time any offset in the record is that of storage that arrays share.
         if (!hasWordForDataOfRequest(statics.dataCellOffsets, data))
             failForDataOfRequest(encoder, "constant data that is made once has no word for its cell"_s, data);
         return DataRequest::noSharedStorage;
@@ -365,7 +352,6 @@ static uint32_t sharedStorageOfDataRequest(const TableEncoder& encoder, DataID d
             failForDataOfRequest(encoder, "constant data that is no array is to share the storage of an array"_s, data);
             return DataRequest::noSharedStorage;
         }
-        // Such storage lies in the image, where the code finds it by NumberSpace::DataElements.
         if (Typed::isStorageOfArray(*array))
             return DataRequest::noSharedStorage;
         if (!hasWordForDataOfRequest(statics.dataStorageOffsets, data)) {
@@ -385,7 +371,6 @@ static void encodeDataRequest(const TableEncoder& encoder, DataID data, Typed::D
     request.sharedStorageOffset = sharedStorageOfDataRequest(encoder, data, encoding);
 }
 
-// The pattern was read from the ICU of this process. Where that does not say which it is the digest stays zero, which no ICU has, and the formatter of the program formats by itself.
 static void encodeFormatPatternRequest(std::span<const uint32_t> words, std::span<uint8_t>& bytes)
 {
     std::span<uint8_t> record = consumeSpan(bytes, words.size_bytes());
@@ -418,7 +403,6 @@ static void encodeTableOfRequests(TableEncoder& encoder)
             encoder.fail("the key of a request names no record of the program"_s, { }, makeString("the request numbered "_s, place));
             continue;
         }
-        // The code holds the offset already.
         uint32_t offset = offsets[place];
         uint32_t end = place + 1 < requests.size() ? offsets[place + 1] : sizeOfTable;
         if (offset % sizeof(uint32_t) || end > sizeOfTable || offset > end || *size > end - offset) {
@@ -461,7 +445,6 @@ static void encodeTableOfRequests(TableEncoder& encoder)
         encoder.part.link(startOfTable + offsetInTable, TablePartID::Data);
 }
 
-// ProgramTables::propertyRunRow(): where each run starts and where the last one ends, then the runs.
 static void encodeTableOfPropertyRuns(TableEncoder& encoder)
 {
     const NumberedKeys& runs = encoder.numbers.propertyRuns();

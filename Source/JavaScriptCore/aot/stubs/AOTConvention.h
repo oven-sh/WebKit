@@ -57,9 +57,7 @@ constexpr ptrdiff_t offsetOfStackWordFromFrame(unsigned stackIndex)
 
 static constexpr unsigned maxArrayElementsInRegisters = 4;
 static constexpr unsigned arrayLiteralVectorLength(unsigned count) { return (count ? count : 5) | 1; }
-// A longer array is allocated by the stub that takes the length as an operand.
 static constexpr unsigned maxArrayLengthInStubKey = 16;
-// The elements of an array that lies in a frame. A longer literal, and a longer list of surplus arguments, lies on the heap.
 static constexpr unsigned maxLengthOfArrayInFrame = 8;
 static constexpr unsigned capacityShiftInArrayLiteralCount = 27;
 
@@ -73,7 +71,6 @@ static_assert(sizeOfSpilledArgumentRegisters <= maxUncheckedFrameSize);
 
 static_assert(numberOfArgumentGPRs <= ClosureWord::maxNumberOfParameters);
 
-// The function is named by its closure number, as in a closure word.
 struct ClosureRequest {
     static constexpr unsigned executableShift = ClosureWord::numberOfFunctionBits + 2;
     static constexpr unsigned allocationShift = 32;

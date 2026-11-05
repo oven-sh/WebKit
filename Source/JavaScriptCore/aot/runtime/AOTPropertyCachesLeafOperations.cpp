@@ -110,7 +110,6 @@ static StructuralRead readByFiledSlot(const JSObject* receiver, const Slot& slot
         return { };
     if (slot.has(Slot::isOwn))
         return { valueAtOffset(receiver, slot.offsetInStorage()), LeafPresence::Own };
-    // The own properties of a global proxy are those of its target, which a slot names as their holder.
     return { valueAtOffset(asObject(slot.holder), slot.offsetInStorage()), receiver->type() == GlobalProxyType ? LeafPresence::TakeSlowPath : LeafPresence::Inherited };
 }
 
@@ -121,7 +120,6 @@ static StructuralRead readEmptyFieldByFiledSlot(const Object& object, UniquedStr
         return { };
     if (slot.has(Slot::absentIsUndefined))
         return { jsUndefined(), LeafPresence::Absent };
-    // Nothing above the object has the name, and it does not lie among the extra properties of an object of the Structure.
     if (slot.has(Slot::emptySlotMayBeUndefined))
         return { jsUndefined(), object.isInKeyOrder(object.state(), *field) ? LeafPresence::Own : LeafPresence::Absent };
     return { };
@@ -219,11 +217,9 @@ static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedSt
     }
     bool shouldCache = !filedSlot && caches.shouldFile(structure->id(), uid, SlotAccess::Read);
     isDueForFiling = shouldCache;
-    // Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated.
     if (shouldCache && structure->isDictionary() && !structure->isUncacheableDictionary())
         flattenOnce(vm, base);
     bool canFile = !structure->isDictionary() || isHeldByCacheableDictionary(structure, uid);
-    // What a dictionary lacks is filed once it is no dictionary any more, and the caching operation makes it so once.
     if (shouldCache && !canFile && !structure->hasBeenFlattenedBefore() && base->type() == FinalObjectType)
         return { };
     shouldCache = shouldCache && canFile;
@@ -259,37 +255,6 @@ static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedSt
     return { value, slot.isUnset() ? LeafPresence::Absent : presenceIn(slot.slotBase(), base) };
 }
 
-// For a read in front of a loop, which may run no code. Nothing: only a read by name can answer.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReadValueWithoutCode, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key))
-{
-    VM& vm = *instance->vm;
-    LeafOperationScope leaf(vm);
-    UniquedStringImpl* uid = instance->state->propertyCaches->nameOf(key).uid;
-    if (!base->isObject() || isNeverCachedName(vm, uid) || isPreparedBeforeLookups(vm, uid))
-        return JSValue::encode(JSValue());
-    // An export lies in a variable, which a turn of the loop may store to without touching an object.
-    if (base->type() == ObjectType && isModuleNamespace(asObject(base)))
-        return JSValue::encode(JSValue());
-    bool isDueForFiling = false;
-    if (JSValue value = readAndCache(instance, asObject(base), uid, isDueForFiling).value)
-        return JSValue::encode(value);
-    // It leaves what is due for filing to an operation that may change the object. Nobody comes behind this one, so the objects themselves are asked.
-    Object* object = compiledObjectOrNull(base);
-    if (!object)
-        return JSValue::encode(readGeneric(asObject(base), uid).value);
-    if (object->fieldNamed(object->state(), uid))
-        return JSValue::encode(readFieldGeneric(instance, object, uid));
-    if (object->hasExtraProperties())
-        return JSValue::encode(JSValue());
-    ChainWalk walk = walkChain({ instance->globalObject, object->structure(), object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid);
-    if (walk.result == ChainWalkResult::Absent)
-        return JSValue::encode(jsUndefined());
-    if (walk.result == ChainWalkResult::Unknown || walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || !isValidOffset(walk.offset))
-        return JSValue::encode(JSValue());
-    return JSValue::encode(valueAtOffset(walk.holder, walk.offset));
-}
-
-// No read by name need ever come by a site that asks here, so what is found is filed here: the code in line finds it in the front cell from then on.
 static GetterSetter* findAndFileAccessorAboveCompiledObject(Instance* instance, Object& object, const CachedName& name)
 {
     UniquedStringImpl* uid = name.uid;
@@ -326,22 +291,6 @@ static GetterSetter* findAccessorByInquiry(Instance* instance, JSObject* base, U
     return isFound && slot.isAccessor() ? slot.getterSetter() : nullptr;
 }
 
-// The tests in front of the call say that the lookup finds the accessor where its class has defined it.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindAccessorOfMember, JSCell*, (Instance* instance, JSCell* base, uint32_t key, uint32_t isSetter))
-{
-    LeafOperationScope leaf(*instance->vm);
-    CachedName name = instance->state->propertyCaches->nameOf(key);
-    GetterSetter* accessor = nullptr;
-    if (Object* object = compiledObjectOrNull(base))
-        accessor = findAndFileAccessorAboveCompiledObject(instance, *object, name);
-    if (!accessor && base->isObject())
-        accessor = findAccessorByInquiry(instance, asObject(base), name.uid);
-    if (!accessor) [[unlikely]]
-        crashOnWrongOperand(Entry::operationAOTFindAccessorOfMember);
-    return isSetter ? accessor->setter() : accessor->getter();
-}
-
-// A frozen array that has a name of its own, as the strings of a tagged template have, keeps its elements in a map.
 static JSValue readSparseElement(JSObject* object, uint32_t index)
 {
     if (!hasAnyArrayStorage(object->indexingType()) || (object->type() != ArrayType && object->type() != FinalObjectType))
@@ -360,13 +309,11 @@ static KeyName nameOfKeyForLeaf(Instance* instance, JSCell* key, KeyAtomization 
     bool wasAtom = atomOfKey(key);
     StringImpl* textBefore = key->isString() ? asString(key)->tryGetValueImpl() : nullptr;
     KeyName name = nameOfKeyWithoutAllocating(instance->globalObject, key, atomization);
-    // A text that became the name itself is the first of its characters. The stubs look for the name of a text that comes again.
     if (!wasAtom && key->isString() && name.kind == KeyNameKind::Name && name.uid != textBefore)
         instance->state->propertyCaches->tables().rememberNameOfText(name.uid);
     return name;
 }
 
-// An accessor has no value to read here, and neither has a field that holds nothing while the objects above have the name or lack it.
 static LeafPresence findPresenceWithoutValue(Instance* instance, JSObject* base, UniquedStringImpl* uid)
 {
     VM& vm = *instance->vm;
@@ -424,20 +371,17 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key, L
         JSValue value = object->tryGetIndexQuickly(name.index);
         if (!value)
             value = readSparseElement(object, name.index);
-        // Nothing above a pristine array has elements.
         if (!value && object->type() == ArrayType && !hasAnyArrayStorage(object->indexingType()) && object->structure()->hasPristineElements())
             return { jsUndefined(), LeafPresence::Absent };
         return { value, value ? LeafPresence::Own : LeafPresence::TakeSlowPath };
     }
     case KeyNameKind::Name: {
-        // Nothing is cached for a function used as a key: the objects themselves are consulted.
         if (key->isObject()) {
             if (StructuralRead read = readGeneric(object, name.uid); read.presence != LeafPresence::TakeSlowPath)
                 return read;
         }
         bool isDueForFiling = false;
         StructuralRead read = readAndCache(instance, object, name.uid, isDueForFiling);
-        // What is due is filed by the operation that the stub calls next, and from then on the stub answers.
         if (question == LeafQuestion::Presence && read.presence == LeafPresence::TakeSlowPath && !isDueForFiling)
             read.presence = findPresenceWithoutValue(instance, object, name.uid);
         return read;
@@ -483,7 +427,6 @@ static LeafAnswer putToCompiledObject(Instance* instance, Object* object, Unique
     VM& vm = *instance->vm;
     PropertyCaches& caches = *instance->state->propertyCaches;
     Structure* structure = object->structure();
-    // Every field has a name that the program spells.
     bool isSpelledByProgram = identifiersOf(*instance).numberOf(uid).has_value();
     const FieldData* field = isSpelledByProgram ? object->fieldNamed(object->state(), uid) : nullptr;
     if (!field) {
@@ -502,7 +445,6 @@ static LeafAnswer putToCompiledObject(Instance* instance, Object* object, Unique
         OptionSet<Flag> flags { Flag::IsKnownNotToBeField };
         if (isKnownToBeAbsent)
             flags.add(Flag::IsKnownToBeAbsent);
-        // The caller has told indexes and "__proto__" from names, and takes no private name.
         if (!isSpelledByProgram)
             flags.add(Flag::IsMadeAtRunTime);
         auto stored = object->tryStoreExtraProperty(vm, uid, value, flags);
@@ -542,7 +484,6 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
 {
     VM& vm = *instance->vm;
     Structure* structure = object->structure();
-    // The guard of a class ends when a member of the class gets another value, so a store to an object that may be a prototype is reported even where it only replaces a value. Nothing here reports.
     if (structure->mayBePrototype() || structure->mayHaveImmutableProperties() || !object->canPerformFastPutInlineExcludingProto())
         return LeafAnswer::TakeSlowPath;
     PutPropertySlot slot(object, true);
@@ -571,7 +512,6 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
     bool repeatsAddition = repeatsPropertyAddition(structure, uid);
     if (!repeatsAddition && !hasStructureAtHand(vm))
         return LeafAnswer::TakeSlowPath;
-    // An object that has many names, or was filled again and again, and is given more names by key grows into a dictionary.
     if (!repeatsAddition) {
         FirstAdditions& additions = firstAdditionsOf(*instance->state);
         if ((structure->hasBeenDictionary() || !hasFewEnoughNamesToBeFilled(structure) || !additions.mayBeginToFill(object)) && !additions.shouldMakeStructure(structure, uid))
@@ -583,7 +523,6 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
     return LeafAnswer::Yes;
 }
 
-// A property of the global object that a store through globalThis has filed: filing it fired what watched its replacement, as for any store that a stub makes.
 static LeafAnswer putToGlobalObjectThroughItsProxy(Instance* instance, JSObject* proxy, JSCell* key, UniquedStringImpl* uid, JSValue value)
 {
     JSGlobalObject* target = instance->globalObject;
@@ -595,7 +534,6 @@ static LeafAnswer putToGlobalObjectThroughItsProxy(Instance* instance, JSObject*
         return LeafAnswer::TakeSlowPath;
     PropertyOffset offset = filed->offsetInStorage();
     target->putDirectOffset(*instance->vm, offset, value);
-    // What an object that serves as a key converts to may change. The text of a string and the name of a symbol stay.
     if (!key->isObject() && proxy->classInfo() == JSGlobalProxy::info() && uncheckedDowncast<JSGlobalProxy>(proxy)->target() == target) {
         auto placesForStores = instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>();
         placesForStores[KeyedValuePlace::offsetFor(key, proxy->structureID()) >> KeyedValuePlace::sizeShift] = { key, structure->id().bits() + KeyedValuePlace::globalObjectBit, { Slot::wordIndexFor(offset) } };
@@ -620,8 +558,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance
     return static_cast<size_t>(answer);
 }
 
-// A program function used as a key converts to its source text: it has no own properties, nothing on its prototype chain has Symbol.toPrimitive, and the toString it finds is the built-in one.
-// The Structure caches both from the first conversion for as long as they hold, and the string exists from then on.
 static JSString* functionSourceForKey(VM& vm, JSCell* key)
 {
     if (key->type() != SlimClosureType)
@@ -637,7 +573,6 @@ static JSString* functionSourceForKey(VM& vm, JSCell* key)
     return CompiledCallee::sourceStringIfCreated(vm, asObject(key));
 }
 
-// Only a string that starts with a digit can be an index.
 static bool mayBeginWithDigit(const JSString* string)
 {
     JSRopeString::LeafIterator pieces(string);
@@ -657,7 +592,6 @@ KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, Ke
     }
     if (!key->isString()) {
         key = functionSourceForKey(globalObject->vm(), key);
-        // The first conversion atomized the string.
         if (!key || !atomOfKey(key))
             return { };
     }
@@ -717,7 +651,6 @@ UniquedStringImpl* uidOfKey(JSCell* key)
     return key->isSymbol() ? &asSymbol(key)->uid() : atomOfKey(key);
 }
 
-// Nothing is made: neither an atom nor, of a rope, a flat string. A flat string takes the text of the atom in place of its own, so the next access under it compares nothing.
 static std::optional<RefPtr<AtomStringImpl>> findAtomEqualTo(JSGlobalObject* globalObject, JSString* string)
 {
     if (string->tryGetValueImpl())
@@ -731,7 +664,6 @@ static std::optional<RefPtr<AtomStringImpl>> findAtomEqualTo(JSGlobalObject* glo
     return string->is8Bit() ? lookUp(Vector<Latin1Character>()) : lookUp(Vector<char16_t>());
 }
 
-// These texts are long. The comparison of WTF goes by eight bytes at a time on x86-64, that of the C library by a hundred and more.
 static bool areLongTextsEqual(StringView first, StringView second)
 {
     if (first.is8Bit() != second.is8Bit())
@@ -739,7 +671,6 @@ static bool areLongTextsEqual(StringView first, StringView second)
     return first.is8Bit() ? equalSpans(first.span8(), second.span8()) : equalSpans(first.span16(), second.span16());
 }
 
-// Of the same length. Nothing is made: the pieces of a rope are compared where they lie.
 static bool isEqualToName(JSString* string, const UniquedStringImpl& name)
 {
     StringView rest { name };
@@ -767,7 +698,6 @@ static bool hasOrdinaryLookups(JSObject* object)
     return !TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && !TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()) && !structure->typeInfo().overridesGetPrototype() && !structure->isCompiledStructure();
 }
 
-// A key this long is not made an atom to be looked up. Every name of an ordinary object is an atom already, and the table of atoms says which one equals the key, if any.
 std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValue key, bool checksPrototypes)
 {
     if (!key.isString() || asString(key)->length() <= JSString::maxLengthForOnStackResolve || !base.isObject() || atomOfKey(key))
@@ -776,7 +706,6 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
     VM& vm = string->vm();
     JSGlobalObject* globalObject = asObject(base)->globalObject();
     unsigned length = string->length();
-    // Visiting a name costs about as much as hashing sixteen units of the key.
     uint64_t remainingNames = length / 16;
     UniquedStringImpl* nameWithSameLength = nullptr;
     std::optional<RefPtr<AtomStringImpl>> atom;
@@ -812,11 +741,9 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
             atom = findAtomEqualTo(globalObject, string);
             if (!atom)
                 return std::nullopt;
-            // The holders visited so far have no other name of this length.
             if (*atom && atom->get() == nameWithSameLength)
                 return nameWithSameLength;
         }
-        // The holder keeps the atom alive.
         if (*atom && isValidOffset(structure->get(vm, PropertyName(atom->get()))))
             return atom->get();
     }
@@ -824,14 +751,12 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
         return nullptr;
     if (!isEqualToName(string, *nameWithSameLength))
         return nullptr;
-    // Only compared. A flat key that comes back takes the text of the atom, so that later accesses compare nothing.
     static thread_local const JSString* lastKeyCompared;
     if (std::exchange(lastKeyCompared, string) == string && string->tryGetValueImpl())
         string->toExistingAtomString(globalObject);
     return nameWithSameLength;
 }
 
-// A compiled object's fields have names that appear in the program, which are atoms wherever they are looked up, and its extra properties are in an ordinary object.
 static bool findsOnlyAtomNames(JSObject* object)
 {
     if (Object* compiled = compiledObjectOrNull(object))

@@ -36,7 +36,6 @@ class CompiledStructure;
 class ObjectBuilderPlan;
 struct Instance;
 
-// Every table below names Structures and keeps none of them alive: clear() runs at each collection.
 class JSONRuntime {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSONRuntime);
     WTF_MAKE_NONCOPYABLE(JSONRuntime);
@@ -50,19 +49,14 @@ public:
     void clear();
 
     const StringImpl* wideText() const { return m_wideText.get(); }
-    // They last as long as the open source.
 
     JSONValueParser::LearnedNames& learnedNames();
 
-    // ---- Records that the parser of untyped values makes
-
-    // No plan: an object with these names stays ordinary.
     struct RecordPlan {
         const ObjectBuilderPlan* plan { nullptr };
         Structure* structure { nullptr };
     };
     bool hasParsedRecords() const { return m_hasParsedRecords; }
-    // The Structure is the one that an ordinary object with the names has, in the order of the text.
     ALWAYS_INLINE RecordPlan recordPlanFor(VM& vm, Structure* ordinaryStructure)
     {
         uint32_t id = ordinaryStructure->id().bits();
@@ -77,7 +71,6 @@ public:
 private:
     struct CachedRecordPlan {
         uint32_t ordinaryStructureID { 0 };
-        // An object with this Structure has come once, and stayed ordinary. The plan is looked for when one comes again.
         uint32_t structureIDSeenOnce { 0 };
         RecordPlan recordPlan;
     };
@@ -107,7 +100,6 @@ private:
     bool m_hasParsedRecords { false };
     MadeInArena<RecordPlanCache> m_recordPlanCache;
     MadeInArena<JSONValueParser::LearnedNames> m_learnedNames;
-    // A plan is made of names and of records of the image, so it lasts. Null: no layout takes the names.
     Vector<RecordPlanForNames> m_recordPlans;
     RefPtr<StringImpl> m_wideText;
     size_t m_sourceCapacity { 0 };

@@ -13,7 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// No body names a member of a tagged family: whoever constructs the maker makes its objects. It goes by the records and by what is reached, which only grows, so it hangs on no order of the worklist.
 void noteLayoutsMadeByTag(LinkFlow& flow, FunctionID reached)
 {
     const TaggedMaker* maker = findTaggedMaker(flow.taggedMakers.span(), reached);

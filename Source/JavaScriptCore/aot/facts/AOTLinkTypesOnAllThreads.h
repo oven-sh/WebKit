@@ -14,15 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A TYPE IS NUMBERED AS IT ARRIVES IN THE PROGRAM's TABLE, so one thread writes a table that holds types, position by position: TurnsOfReadings. BUT MOST POSITIONS MAKE NO TYPE: they hold what another holds.
-// A loop over positions that are written each by itself goes in three rounds:
-//   ALL THREADS LOOK       each writes its positions with an arena that keeps what is new to itself, and notes the positions at which that arena made something
-//   ONE THREAD MAKES       it writes those positions again, in their order, with the arena of the turn. The first position that needs a type is among them, whichever thread looked at it: that thread had not made the type before.
-//                          What else is among them finds its types made. So the types arrive in the table as they do where one thread writes every position, at any number of threads
-//   ALL THREADS WRITE      the positions that hold a type which the thread that looked had made for itself. Nothing is new by then: an arena that makes something stops the build
-// A POSITION AT WHICH NOTHING WAS MADE AND WHICH HOLDS THE PROGRAM's OWN TYPES ALONE IS WRITTEN FOR GOOD IN THE FIRST ROUND: a type has one number in the table. Behind the first tables of a build that is nearly every position.
-// `write` hears a position up to twice, on any thread, and writes nothing but what belongs to the position. What it makes it makes with the arena and the memo that `putToWork` has handed the thread; null: those of the turn.
-// It answers whether every type that it has written there is the program's (isOfProgramInLink()). Where it answers nothing, the position counts as holding a type of the thread.
 struct TypesOfThreadInLink {
     TypeArena* types { nullptr };
     TypesOfFlowTurnedOnce* turned { nullptr };
@@ -33,7 +24,6 @@ inline bool isOfProgramInLink(TypeID type) { return !liesInThread(type); }
 void writeTypedPositionsOnAllThreads(const LinkFlow& flow, TypeTable& table, unsigned numberOfPositions, const Invocable<void(TypesOfThreadInLink)> auto& putToWork, const auto& write)
 {
     const ParallelLoops& loops = flow.loopsOfReading();
-    // Two rounds on all threads cost what one thread spends twice over: with fewer than four nothing is won.
     if (loops.width() < 4 || ParallelLoops::isInsideLoop()) {
         for (unsigned position = 0; position < numberOfPositions; ++position)
             write(position);
@@ -48,7 +38,6 @@ void writeTypedPositionsOnAllThreads(const LinkFlow& flow, TypeTable& table, uns
         TypesOfFlowTurnedOnce turned;
     };
     auto onAllThreads = [&](const auto& writeWith) {
-        // The arena of the turn rests, and the other reading waits for its turn or makes no type.
         TypeTable::RoundWithoutAdditions nobodyAdds(table);
         Vector<OfWorker> workers(loops.width());
         forEachIndexInParallel(loops, numberOfStretches, [&](unsigned stretch, unsigned worker) {

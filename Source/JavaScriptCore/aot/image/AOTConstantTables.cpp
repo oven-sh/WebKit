@@ -12,36 +12,19 @@
 #include "AOTFacts.h"
 #include "AOTIRProgram.h"
 #include "AOTIdentifierTable.h"
-#include "AOTLiteralStringDigest.h"
 #include "AOTNameClass.h"
 #include "AOTOperationData.h"
 #include "AOTPhaseTimes.h"
-#include "AOTPlan.h"
 #include "AOTSort.h"
 #include "AOTTextEncoder.h"
 #include "AOTThreads.h"
 #include <algorithm>
-#include <array>
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT {
-
-// No table of this part holds an offset into the tables, so no word of it is linked.
-
-namespace {
-
-struct MeasuredTextOfConstantTables {
-    uint32_t hash { 0 };
-    uint32_t length { 0 };
-    // Only of ImageNumbers::literalStringsWithoutText().
-    std::array<uint8_t, 20> digest { };
-};
-
-} // anonymous namespace
 
 static void nameStringOfConstantTables(const Typed::Program& program, NamesOfTables& names, StringID string)
 {
@@ -54,17 +37,14 @@ void nameWhatConstantTablesName(const TableInputs& inputs, const GatheredMention
 {
     const Typed::Program& program = inputs.program;
 
-    // ImageNumbersBuilder::numberConstants() gives a cell to each key that code mentions as a cell, and to every symbol.
     names.keys.merge(mentions.byID(NumberSpace::KeyCell).isMentioned);
     for (unsigned index = 0; index < program.types.numberOfPropertyKeys(); ++index) {
         if (Typed::isSymbolKind(program.at(PropertyKeyID(index)).kind))
             names.keys.set(index);
     }
 
-    // A literal string is not named for having a number: ImageNumbersBuilder::numberIdentifiersAndStrings() names those that something spells.
     for (const Typed::OpenedName& opened : program.openedNames)
         nameStringOfConstantTables(program, names, opened.name);
-    // ImageNumbersBuilder::numberConstants() makes a constant of the digits that code mentions, and of NamesOfTables::bigInts. Whoever names a BigInt there names its digits as a string too: nameWhatDataTableNames().
     for (size_t digits : mentions.byID(NumberSpace::BigInt).isMentioned)
         nameStringOfConstantTables(program, names, StringID(digits));
 }
@@ -78,57 +58,6 @@ static void setConstantTableOfWords(TableEncoder& encoder, ProgramTableIndex tab
                 words[place] = wordOf(items[place]);
         });
     });
-}
-
-static Vector<MeasuredTextOfConstantTables> measureTextsOfConstantTables(const TableEncoder& encoder, std::span<const StringID> strings)
-{
-    const BitVector& literalStringsWithoutText = encoder.numbers.literalStringsWithoutText();
-    Vector<MeasuredTextOfConstantTables> texts(strings.size());
-    forEachIndexInParallel(encoder.build.parallelLoops(), static_cast<unsigned>(strings.size()), [&](unsigned index) {
-        DecodedString decoded = decodeForImage(encoder.program.strings[strings[index]]);
-        texts[index] = { decoded.hash, decoded.length(), { } };
-        if (literalStringsWithoutText.get(strings[index].index()))
-            texts[index].digest = digestOfLiteralString(decoded.is16Bit() ? StringView(decoded.units16.span()) : StringView(byteCast<Latin1Character>(decoded.units8.span())));
-    });
-    return texts;
-}
-
-static void encodeTablesOfLiteralStrings(TableEncoder& encoder)
-{
-    std::span<const StringID> strings = encoder.plan.literalStrings().strings();
-    if (strings.size() > maxLiteralStrings) {
-        encoder.fail("TooManyLiteralStrings"_s);
-        strings = strings.first(maxLiteralStrings);
-    }
-    setConstantTableOfWords(encoder, ProgramTableIndex::literalStrings, strings, [&](StringID string) {
-        return encoder.numberOfLiteralString(string);
-    });
-
-    const BitVector& literalStringsWithoutText = encoder.numbers.literalStringsWithoutText();
-    Vector<MeasuredTextOfConstantTables> texts = measureTextsOfConstantTables(encoder, strings);
-    uint32_t numberOfSlots = std::max<uint32_t>(static_cast<uint32_t>(strings.size()), 4) * 2;
-    Vector<LiteralStringLimits, 1> limits;
-    if (!strings.empty())
-        limits.append(LiteralStringLimits { 0 });
-    // Which slot a string gets depends on the strings in front of it, so one thread hands them out.
-    encoder.part.setTableWrittenInPlace<uint32_t>(ProgramTableIndex::literalStringTable, numberOfSlots, [&](std::span<uint32_t> slots) {
-        zeroSpan(slots);
-        for (uint32_t number = 0; number < strings.size(); ++number) {
-            uint32_t hash = texts[number].hash;
-            uint32_t slot = LiteralStringTable::firstSlot(hash, numberOfSlots);
-            while (slots[slot])
-                slot = slot + 1 == numberOfSlots ? 0 : slot + 1;
-            slots[slot] = LiteralStringTable::entryFor(number, hash);
-            limits[0].maxLength = std::max(limits[0].maxLength, texts[number].length);
-        }
-    });
-    // The run time finds a digest by a binary search over the numbers.
-    Vector<LiteralStringDigest> digests = collectInParallel<LiteralStringDigest>(encoder.build.parallelLoops(), static_cast<unsigned>(strings.size()), [&](unsigned number, Vector<LiteralStringDigest>& found) {
-        if (literalStringsWithoutText.get(strings[number].index()))
-            found.append(LiteralStringDigest { number, texts[number].length, texts[number].digest });
-    });
-    encoder.part.setTable(ProgramTableIndex::literalStringLimits, limits);
-    encoder.part.setTable(ProgramTableIndex::literalStringDigests, digests);
 }
 
 static void encodeTablesOfIdentifiers(TableEncoder& encoder)
@@ -162,16 +91,13 @@ static Vector<uint32_t> listConstantAndUnlockedBuiltinMembers(const TableEncoder
     for (size_t index : encoder.facts.builtinMembersLockedAtStartUp()) {
         BuiltinID member(static_cast<uint32_t>(index));
         const Builtin& entry = builtins.at(member);
-        // A default export is no property of its holder: the loader hands it out.
         if (entry.holder && entry.name && builtins.findOwnMember(entry.holder, entry.name) == member)
             constantMembers.append(member);
     }
-    // The run time finds the members of a holder by a binary search over the holders.
     AOT::sortInLine(constantMembers, { }, [&](BuiltinID member) {
         return std::pair(builtins.at(member).holder, member);
     });
 
-    // The run time finds an unlocked member by a binary search.
     BitVector unlockedMembers(builtins.builtinCount());
     for (BuiltinID member : program.unlockedBuiltins())
         unlockedMembers.set(member.index());
@@ -195,7 +121,6 @@ static Vector<uint32_t> listNamesTakenForAbsent(const TableEncoder& encoder)
     Vector<uint32_t> numbers;
     for (PropertyKeyID key : program.keysTakenForAbsent())
         numbers.append(ProgramTables::numberOfNameTakenForAbsent(program.string(program.at(key).text)));
-    // What the engine reads off a function by itself, whatever the program reads.
     for (ASCIILiteral name : { "prototype"_s, "displayName"_s })
         numbers.append(ProgramTables::numberOfNameTakenForAbsent(byteCast<uint8_t>(name.span())));
     AOT::sortInLine(numbers);
@@ -220,8 +145,6 @@ void encodeConstantTables(TableEncoder& encoder)
         return encoder.identifierNumber(key, "a key that code holds as a cell"_s);
     });
     times.didFinish("built-ins, BigInts, keys"_s);
-    encodeTablesOfLiteralStrings(encoder);
-    times.didFinish("literal strings"_s);
     encodeTablesOfIdentifiers(encoder);
     times.didFinish("identifiers"_s);
     setConstantTableOfWords(encoder, ProgramTableIndex::entryPoints, encoder.program.entries.span(), [](const Typed::Entry& entry) {

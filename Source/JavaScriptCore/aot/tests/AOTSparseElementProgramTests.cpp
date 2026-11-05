@@ -36,7 +36,6 @@ function f3 name="hasInArray" parameters=[{type=Array}, {type=number}] results=[
 }
 )IR"_s;
 
-// 300 elements are enough for several of them to hash to the same bucket of the SparseArrayValueMap, so a search has to probe past its first bucket.
 static constexpr ASCIILiteral statementsBeforeProgram = R"JS(
 const first = 100000;
 const step = 7;

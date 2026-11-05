@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations with UnboxedNumbers: a switch on what charCodeAt() gave, or on one character of a text, goes by the code unit, and a switch whose cases cover its subject leaves one of them untested.
-// It plans and builds nothing: Walker::walkTerminator() changes the draft. The targets stay as written, each with its own case.
-// At a suspension and at a throw: nothing, a Switch on an integer does neither. Withheld: the switch is built as written.
-
 #include "config.h"
 #include "AOTWalkNumberForms.h"
 
@@ -20,7 +16,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(!OperandIndex::Switch::subject && !OperandIndex::SwitchString::subject);
 
-// `switch (s.charCodeAt(i)) { case 32: .. }`. NaN takes no case, and -1, which stands in its place, takes none that is not negative.
 static Reference integerToSwitchOnInPlaceOf(Walker& walker, const BodyTerminator& terminator, Reference subject)
 {
     Reference codeUnit = codeUnitBesideCharCode(walker, subject);
@@ -33,9 +28,6 @@ static Reference integerToSwitchOnInPlaceOf(Walker& walker, const BodyTerminator
     return codeUnit;
 }
 
-// `switch (s[i]) { case "a": .. }`, `switch (s.charAt(i))`. A text of one code unit is taken where the code unit is that one.
-// The empty text is what charAt() gives outside the text, where -1 stands. What may be undefined there is never the empty text.
-// No other text is one character, and of two equal texts the first takes the subject: such a case gets an integer that no code unit is, and keeps its place among the targets.
 static bool planSwitchOnCodeUnitOfCharacter(Walker& walker, const BodyTerminator& terminator, Reference subject, SwitchOnNumbers& planned)
 {
     Reference codeUnit = codeUnitBesideCharacter(walker, subject);
@@ -61,7 +53,6 @@ static bool planSwitchOnCodeUnitOfCharacter(Walker& walker, const BodyTerminator
     return true;
 }
 
-// `switch (n & 3) { case 0: .. case 1: .. case 2: .. case 3: .. }`.
 static std::optional<uint32_t> caseThatNeedsNoTest(Walker& walker, const BodyTerminator& terminator, Reference subject)
 {
     TypeID id = walker.typeOf(subject);

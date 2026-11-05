@@ -21,7 +21,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// options.seed is the first seed of a test, and then the seed of the procedure at hand.
 struct RandomTestCase {
     RandomProcedureOptions options { };
     bool savesFrameOnSuspend { false };
@@ -34,7 +33,6 @@ static constexpr unsigned numberOfSeedsInRandomCostTest = 96;
 static constexpr unsigned numberOfArgumentPairsInRandomTest = 6;
 static constexpr int64_t argumentsOfRandomTest[] = { 0, 1, -1, 2, 5, 13, 31, 100, 65537, 0x7fffffff, -0x80000000ll, 0x123456789ll, std::numeric_limits<int64_t>::min() };
 
-// buildRandomProcedure() makes landing pads only in a function that has handlers.
 static ProcedureTraits traitsOfRandomTest(const RandomTestCase& testCase)
 {
     ProcedureTraits traits;
@@ -62,7 +60,6 @@ static ProcedureTraits traitsOfRandomTest(const RandomTestCase& testCase)
             failRandomTest(testCase, test, __LINE__, #__VA_ARGS__); \
     } while (false)
 
-// How many procedures of a test hold what its options name, and how many give more than one answer. A test that compares nothing passes too.
 struct RandomTestCensus {
     void add(const Procedure& procedure)
     {
@@ -109,7 +106,6 @@ static void countScaledSumsOfRandomTest(const Procedure& procedure, RandomTestCe
     census.withSelectsThatTestTheirArm += testsArm;
 }
 
-// On x86-64 code reads some constants from words of the instance.
 static void placePinnedConstantsForRandomTest(const Procedure& procedure, TestInstance& instance)
 {
     for (uint32_t index = 0; index < procedure.numberOfOperations(); ++index) {
@@ -172,7 +168,6 @@ static void runRandomTestCases(RandomTestCase testCase)
 
     const RandomProcedureOptions& options = testCase.options;
     AOT_TEST_CHECK(!!census.withLandingPads == options.withLandingPads);
-    // The builder makes rare edges of its own: a chill division that tests its divisor has a rare arm.
     AOT_TEST_CHECK(census.withRareEdges || !(options.withRareRegions || options.withLandingPads));
     AOT_TEST_CHECK(!!census.withNumbers == options.withNumbers);
     AOT_TEST_CHECK(2 * census.withSeveralAnswers > numberOfSeedsInRandomTest);
@@ -265,7 +260,6 @@ static RandomTestBuild buildForRandomTest(const RandomTestCase& testCase, size_t
 
 static void testRandomProceduresAreBuiltTheSameWayTwice()
 {
-    // The second build lies at other addresses, and the chunks of its arena end at other operations.
     constexpr size_t bytesAheadOfSecondBuild = 40 * KB + 8;
 
     RandomTestCase testCase { .options = { .seed = 10001 } };
@@ -294,7 +288,6 @@ struct RandomTestCost {
     uint64_t arenaBytes { 0 };
 };
 
-// A list that grows by doubling takes its storage in steps. Sizes spread evenly over a factor of two meet every part of a step, at either scale.
 static RandomTestCost costOfRandomTestCases(unsigned scale)
 {
     constexpr unsigned smallestNumberOfBlocks = 48;
@@ -316,7 +309,6 @@ static void testRandomProceduresCostArenaBytesByTheOperation()
     RandomTestCost smaller = costOfRandomTestCases(1);
     RandomTestCost larger = costOfRandomTestCases(2);
     bool isFarLarger = 2 * larger.operations >= 3 * smaller.operations;
-    // Twice the operations may cost 2.1 times the bytes.
     bool isLinear = 20 * larger.arenaBytes * smaller.operations <= 21 * smaller.arenaBytes * larger.operations;
     if (!isFarLarger || !isLinear)
         dataLogLn(smaller.operations, " operations take ", smaller.arenaBytes, " bytes of the arena, ", larger.operations, " operations take ", larger.arenaBytes);
@@ -324,7 +316,6 @@ static void testRandomProceduresCostArenaBytesByTheOperation()
     AOT_TEST_CHECK(isLinear);
 }
 
-// Seeds of `testaot fuzz-allocation` at which the allocator has stopped or gone wrong on one architecture or the other. The seeds of the tests above draw other shapes.
 static void testRandomProceduresOfSeedsThatFailed()
 {
     static constexpr uint64_t seeds[] = {
@@ -336,7 +327,6 @@ static void testRandomProceduresOfSeedsThatFailed()
             dataLogLn("seed ", seed, ": ", reason);
         AOT_TEST_CHECK(reason.isNull());
     }
-    // With more blocks than the fuzzer's usual twelve.
     static constexpr std::pair<uint64_t, unsigned> seedsWithBlocks[] = { { 412999, 16 }, { 476261, 16 }, { 709891, 32 } };
     for (auto [seed, numberOfBlocks] : seedsWithBlocks) {
         String reason = fuzzOneProcedure(seed, numberOfBlocks);

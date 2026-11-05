@@ -16,7 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// By the operations of the body alone, as the scan has read them: the walk enters no block that the scan has passed over.
 bool isAsyncFunctionInWhichNothingSuspends(const Program& program, const Facts& facts, FunctionID id)
 {
     const Function& function = program.at(id);

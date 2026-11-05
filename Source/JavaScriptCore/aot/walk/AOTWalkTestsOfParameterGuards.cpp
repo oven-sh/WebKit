@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// ParameterGuards: the guard at an entry tests for what the program has written, without the undefined and null that it did not write and that nobody in sight passes.
-// At a suspension and at a throw: nothing. What the narrower test turns away goes on in the slow version.
-// Withheld: no function has a guard, so nothing here is asked.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -19,7 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The type of a position that holds a reference lists undefined and null whatever the program has written. The type itself where the program has written both, or nothing else.
 static TypeID withoutOmittedNullishForTestsOfGuards(TypeArena& types, TypeID type, const DeclaredType& declared)
 {
     uint16_t omitted = 0;
@@ -33,7 +28,6 @@ static TypeID withoutOmittedNullishForTestsOfGuards(TypeArena& types, TypeID typ
     return isNeverType(written) ? type : written;
 }
 
-// What the narrower test turns away goes on in the slow version: nothing throws and nothing is converted.
 static bool mayTestForLessThanIsWrittenForTestsOfGuards(const Function& function, uint32_t entryParameter)
 {
     if (function.role != FunctionRole::Source || function.constructedClass || function.has(FunctionFlags::HasNewTarget))
@@ -67,8 +61,6 @@ static bool mayTestForLessThanIsWrittenForTestsOfGuards(const Function& function
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `function len(p?: Point) { const q: Point = p!; return q.x + q.y }`: the cast is the one mention of the value, so what the program has written of that position is all that the body goes on with.
-// Null: the body does something else with the value too, or casts it into no written position.
 static TypeID typeThatCastsOfOnlyMentionEnterForTestsOfGuards(TypeArena& types, const BodyIndex& index, ValueID parameter)
 {
     if (index.block(entryBlock).hasHandler())
@@ -83,7 +75,6 @@ static TypeID typeThatCastsOfOnlyMentionEnterForTestsOfGuards(TypeArena& types, 
         if (cast.opcode() != Opcode::Convert)
             continue;
         DeclaredType position = cast.declared();
-        // The program has to prove what enters a position declared int32: checkInt32Promise(). A test that the compiler adds for the sake of the cast would prove it to every build.
         if (!position.isGuarded() || !position.written() || position.has(PositionFlags::IsInt32Promise) || describesBagOfOptions(types, position.written()))
             continue;
         TypeID written = withoutOmittedNullishForTestsOfGuards(types, types.testablePartOf(position.written()), position);
@@ -92,8 +83,6 @@ static TypeID typeThatCastsOfOnlyMentionEnterForTestsOfGuards(TypeArena& types, 
     return entered;
 }
 
-// A member of the written type that some caller is seen to pass is an ordinary value of the parameter, and a test that turns it away would send ordinary calls into the slow version.
-// No word, and `anything`, which stands where no caller in sight brings anything: nobody was seen, and what the program wrote decides.
 static bool everyArrivalInSightFitsForTestsOfGuards(Walker& walker, FunctionID id, uint32_t entryParameter, TypeID tested, TypeID narrower)
 {
     const LinkTables& held = walker.facts().held();
@@ -109,7 +98,6 @@ static bool everyArrivalInSightFitsForTestsOfGuards(Walker& walker, FunctionID i
         return false;
     if (type.isAnything())
         return true;
-    // What the written type turns away goes on in the slow version whichever of the two is tested for. Where the two ask the same of objects, no object tells them apart.
     seen = types.intersectionOf(seen, tested);
     if (types.withOnlyObjects(tested) == types.withOnlyObjects(narrower))
         seen = types.withoutObjects(seen);
@@ -129,7 +117,6 @@ TypeID typeTestedInPlaceOfWrittenType(Walker& walker, FunctionID id, uint32_t en
     TypeID narrowest = tested;
     const BodyIndex& index = walker.currentBodyIndex();
     TypeID checked = typeThatCastsOfOnlyMentionEnterForTestsOfGuards(types, index, index.block(entryBlock).parameter(entryParameter));
-    // typeTestedByParameterGuard() has asked the layouts of `tested` for their shapes, so the casts may take primitives away and no layout.
     bool asksSameOfObjects = checked && types.withOnlyObjects(checked) == types.withOnlyObjects(tested);
     if (asksSameOfObjects && checked != tested && !isNeverType(checked) && types.isSubset(checked, tested) && changesCodeWhereProven(types, checked) && everyArrivalInSightFitsForTestsOfGuards(walker, id, entryParameter, tested, checked))
         narrowest = checked;

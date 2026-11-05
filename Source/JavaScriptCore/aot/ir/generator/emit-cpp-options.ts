@@ -33,7 +33,6 @@ function listMembers(type: SchemaEnum): string[] {
   ];
 }
 
-/** The function that applies the word, and the function that lists what its value can be. */
 function functionsOf(word: OptionWord): readonly [string[], string[]] {
   const { action } = word;
   switch (action.tag) {

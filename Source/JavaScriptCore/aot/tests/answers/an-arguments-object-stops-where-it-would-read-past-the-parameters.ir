@@ -4,6 +4,7 @@
 # RUN: run-in-shell globalThis.keep = list => print(list.length); globalThis.many = false;
 # CHECK: 1
 # CHECK-NOT: crashed with
+# CHECK: exited with 0
 # RUN(PAST): run-in-shell globalThis.keep = list => print(list.length); globalThis.many = true;
 # PAST-NOT: 3
 # PAST: crashed with

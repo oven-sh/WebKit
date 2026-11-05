@@ -81,7 +81,6 @@ inline TableFixture::TableFixture()
 
 inline TableFixture::~TableFixture()
 {
-    // Each table releases its pages in its destructor, so the tables go before the pages. VMState::releaseImage() skips a VM without compiled code.
     VMState& state = m_vm->aotState();
     state.propertyCaches = nullptr;
     state.caches = nullptr;

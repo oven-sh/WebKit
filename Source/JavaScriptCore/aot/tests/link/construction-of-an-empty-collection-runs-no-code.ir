@@ -10,9 +10,9 @@
 # -- end of source
 # records of d5e510349de97bc5
 # RUN: link functions mechanisms=all
-# CHECK: function f1 fresh-result {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
-# CHECK: function f2 fresh-result {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
-# CHECK: function f3 fresh-result {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK: function f1 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK: function f2 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK: function f3 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
 # CHECK: function f4 {{*}}mayCallUnknownCode
 # CHECK: function f5 {{*}}mayCallUnknownCode
 

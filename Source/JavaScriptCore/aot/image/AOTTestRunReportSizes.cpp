@@ -22,7 +22,6 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// In the order of the line.
 enum class CellOfTablesInSizesReport : uint8_t {
     ProgramTables,
     Text,
@@ -105,7 +104,6 @@ static CellOfTablesInSizesReport cellOfSectionInSizesReport(ImageSection section
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The parts that have a cell of their own. The header is among the other bytes, and the image builder has taken the sets of shapes off the tables.
 static constexpr std::pair<ASCIILiteral, TablePartID> partsWithCellInSizesReport[] = {
     { "functions"_s, TablePartID::Functions }, { "function texts"_s, TablePartID::FunctionTexts }, { "layouts"_s, TablePartID::Layouts }, { "field table"_s, TablePartID::FieldTable },
     { "types"_s, TablePartID::Types }, { "data"_s, TablePartID::Data }, { "modules"_s, TablePartID::Modules }, { "requests"_s, TablePartID::Requests },
@@ -119,12 +117,10 @@ SizesOfImage measureImageForTestRunReport(std::span<const uint8_t> image, const 
     auto rangeOf = [&](ImageSection section) {
         return header.sections[static_cast<unsigned>(section)];
     };
-    // The sections lie in their order, and the tables end where the last of them ends: StatisticID::TableBytesEmitted.
     ImageSectionRange lastSection = header.sections[numberOfImageSections - 1];
     uint64_t tableBytes = static_cast<uint64_t>(lastSection.offset) + lastSection.size;
     uint64_t programTableBytes = rangeOf(ImageSection::ProgramTables).size;
     RELEASE_ASSERT(programTableBytes >= sizeof(ProgramTables) && tableBytes <= image.size());
-    const auto& programTables = *reinterpret_cast<const ProgramTables*>(image.subspan(rangeOf(ImageSection::ProgramTables).offset).data());
 
     SizesOfImage sizes;
     auto addToImage = [&](ASCIILiteral name, uint64_t number) {
@@ -137,7 +133,6 @@ SizesOfImage measureImageForTestRunReport(std::span<const uint8_t> image, const 
     addToImage("text bytes"_s, rangeOf(ImageSection::Text).size);
     addToImage("identifiers"_s, header.numbers.endOfIdentifiers);
     addToImage("string constants"_s, context.statistics().values()[static_cast<unsigned>(StatisticID::StringConstantsNumbered)]);
-    addToImage("literal strings"_s, programTables.literalStrings().size());
     addToImage("shapes"_s, header.numbers.lastShape);
 
     std::array<uint64_t, std::size(namesOfCellsOfTablesInSizesReport)> bytesOfCells { };
@@ -177,7 +172,6 @@ void logSizesOfImageForTestRunReport(std::span<const uint8_t> image, const std::
     printLineOfSizesReport(lines, "AOT size of the image"_s, sizes.image);
     printLineOfSizesReport(lines, "AOT size of the tables"_s, sizes.tables);
     printLineOfSizesReport(lines, "AOT size of the program tables"_s, sizes.programTables);
-    // As one operand: dataLog() writes each of its operands by itself, and whoever embeds the engine writes to the same descriptor under no lock of ours.
     dataLog(lines.toUTF8CString());
 }
 

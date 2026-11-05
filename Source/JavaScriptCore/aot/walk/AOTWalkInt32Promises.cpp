@@ -3,9 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// The build proves that every value that enters a position declared `int32` is a whole number in range, and reports where it cannot. Nothing is built: to the code the declaration stays a guess.
-// At a suspension, at a throw: nothing. It belongs to no mechanism and is never withheld.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -26,12 +23,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Where the result of one of these may be no integer, the reason lies with the operand that may be none, if there is one.
 static constexpr OpcodeSet opcodesFollowedForInt32Failure = opcodesThatGiveSameValue | allSums | OpcodeSet { Opcode::ToNumber, Opcode::ToNumeric, Opcode::Negate };
-// Each makes a number of its operands by a rule that reads their types and nothing else.
 static constexpr OpcodeSet operatorsJudgedByWrittenTypes = allNumericOperators;
 
-// Whatever stands beside the numbers is the position's own affair.
 static bool numbersKeepInt32Promise(const Type& type)
 {
     return !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
@@ -77,29 +71,20 @@ static Int32ProofFailure whyConstantBreaksInt32Promise(double number)
 namespace {
 
 struct TypeAsWritten {
-    // Null: nobody can say.
     TypeID type;
-    // A type that the program wrote stands in it, in place of what the walk has for the same value.
     bool restsOnWrittenType { false };
-    // Of some parameter of the function the walk has less than is written: Link, a caller or an inlined call have said who calls.
     bool leavesOutWhoCalls { false };
+    bool standsBehindBrokenPromise { false };
 };
 
-// The block in which the run stands that asks: every relation in front of it holds of the value.
 struct ValueAtPlace {
     ValueID value;
     BlockID place;
 };
 
-// Over the body being walked. A parameter of the function is what is written of it, and so is a call or a read of a place with a written type, with or without a cast. An operator and a built-in whose row bounds its result by its arguments go by their rules.
-// A relation that the program asks in front of the promise cuts what is written of its operands: `if (limit > i) return i + 1`.
-// Where ways meet again, what arrives is what each way brings, judged in the block that the way leaves: `a !== -2147483648 ? a - 1 : a`. Not at the head of a loop: typeOfParameter().
-// For everything else the walk answers, and for whatever is made of such values alone.
-// `function sum(a: int32, b: int32) { return (a + b) as int32; }` is reported though `sum(1, 2)` is the one call, and `Math.min(a.x, b.y)` of two int32s is not, whatever arrives in them.
 class TypesAsWritten {
     WTF_MAKE_NONCOPYABLE(TypesAsWritten);
 public:
-    // `place`: the block in which the promise is made.
     TypesAsWritten(Walker& walker, BlockID place)
         : m_walker(walker)
         , m_input(walker.currentBodyIndex())
@@ -108,9 +93,7 @@ public:
     }
 
     TypeAsWritten of(ValueID);
-    // Behind of(), for a value that may be a double.
     Int32ProofFailure failureNamedByProducerOf(ValueID) const;
-    // Of some parameter of the function the walk has less than is written. Then whatever it makes of the body may rest on who calls.
     bool walkKnowsWhoCalls() const;
 
 private:
@@ -119,14 +102,12 @@ private:
     static uint64_t keyOf(ValueAtPlace asked) { return static_cast<uint64_t>(asked.place.index()) << 32 | asked.value.index(); }
     TypeAsWritten known(ValueAtPlace asked) const { return m_known.get(keyOf(asked)); }
     TypeAsWritten asWalkHasIt(ValueID) const;
-    // Of a value that is made of no other: by what is written of it alone.
     TypeAsWritten typeWrittenOf(ValueID) const;
     TypeID typeStatedByCastsOf(ValueID) const;
     Parts otherSidesOfRelationsInFront(ValueAtPlace) const;
     TypeAsWritten cutByRelationsInFront(ValueAtPlace, TypeAsWritten) const;
     BuiltinID builtinWrittenAsCallee(ValueID) const;
     BuiltinID builtinBoundedByArguments(BodyValue) const;
-    // The values that the type is made of. None: the walk answers.
     Parts partsOf(ValueAtPlace) const;
     Parts valuesThatMeetIn(ValueID parameter) const;
     std::optional<BodyEdgeResult> testThatFills(ValueID parameter) const;
@@ -154,7 +135,6 @@ TypeAsWritten TypesAsWritten::typeWrittenOf(ValueID value) const
 {
     if (m_input.isParameter(value))
         return typeOfParameter(m_input.value(value));
-    // Also in an arm that the walk has not entered, because it knows who calls.
     if (primitiveConstants.contains(m_input.opcodeOf(value)))
         return { typeOfConstant(typingForInt32Promises(m_walker), m_input.value(value)) };
     ExpectationOfValue expectation = findExpectation(m_walker, value);
@@ -163,7 +143,6 @@ TypeAsWritten TypesAsWritten::typeWrittenOf(ValueID value) const
     return asWalkHasIt(value);
 }
 
-// `if (a !== -2147483648) return a - 1`. As boundsProvenOnEdge(), which leaves equality out because the walk builds a name on every edge for which it answers.
 static std::optional<std::array<BodyEdgeResult, 2>> sidesOfEqualityOnEdgeForInt32Promises(const BodyIndex& index, const BodyTerminator& terminator, uint32_t targetIndex)
 {
     if (!terminator.isConditionalBranch() || index.isParameter(terminator.operand(0)))
@@ -183,10 +162,6 @@ static std::optional<std::array<BodyEdgeResult, 2>> sidesOfEqualityOnEdgeForInt3
     return sides;
 }
 
-// Up the blocks that stand above the place, as far as the block that makes the value: every run that comes to the place has come through each of them, and by the edge where one edge alone enters.
-// `for (let i: int32 = 0; i < to; i++) { if (c) .. }`: ways part and meet between the test and the step, and the test holds all the same.
-// `i < point[key]`: the front end states behind a read that is an operand what the checker has for it, where that is an int32. As typeBehindConvert(): a cast into a position with the promise proves nothing,
-// and what is only expected of a value is written nowhere.
 TypeID TypesAsWritten::typeStatedByCastsOf(ValueID value) const
 {
     while (value && !m_input.isParameter(value) && m_input.opcodeOf(value) == Opcode::Convert) {
@@ -200,8 +175,6 @@ TypeID TypesAsWritten::typeStatedByCastsOf(ValueID value) const
     return { };
 }
 
-// `i <= point[key] - 1`: what bounds the value is made of other values, as the value that enters a promise is. Each other side, in the block of its relation: of() judges it in front of the value that it cuts.
-// That block stands above the place that asks, so the places climb and this ends. The climb is that of cutByRelationsInFront().
 TypesAsWritten::Parts TypesAsWritten::otherSidesOfRelationsInFront(ValueAtPlace asked) const
 {
     Parts otherSides;
@@ -256,7 +229,6 @@ TypeAsWritten TypesAsWritten::cutByRelationsInFront(ValueAtPlace asked, TypeAsWr
             TypeID cut = narrowByComparison(typing, relation.opcode(), !bound.operandIndex, written.type, other, bound.isOnTakenEdge ? EdgeSide::Taken : EdgeSide::NotTaken);
             if (!cut || isNeverType(cut) || cut == written.type)
                 continue;
-            // The relation is written, and the walk has no name for what it leaves: whatever is made of the value is made by the rules.
             written.type = cut;
             written.restsOnWrittenType = true;
         }
@@ -264,8 +236,6 @@ TypeAsWritten TypesAsWritten::cutByRelationsInFront(ValueAtPlace asked, TypeAsWr
     return written;
 }
 
-// The front end names a member where the table locks it. Where the program may put something else in its place, as a run of tests that replaces `Math`, it says which built-in the callee is
-// declared to be, as what is expected of the read. That is what is written of the callee.
 BuiltinID TypesAsWritten::builtinWrittenAsCallee(ValueID callee) const
 {
     if (!callee || m_input.isParameter(callee))
@@ -285,7 +255,6 @@ BuiltinID TypesAsWritten::builtinWrittenAsCallee(ValueID callee) const
     return m_walker.program().builtins().at(named).mutability == BuiltinMutability::AlwaysLocked ? named : BuiltinID();
 }
 
-// `Math.min(a.x, b.y)`.
 BuiltinID TypesAsWritten::builtinBoundedByArguments(BodyValue written) const
 {
     if (written.opcode() != Opcode::Call)
@@ -333,7 +302,6 @@ TypesAsWritten::Parts TypesAsWritten::partsOf(ValueAtPlace asked) const
     return parts;
 }
 
-// What each edge into the block of the parameter hands to it, with the block that the edge leaves. None: the entry, the head of a loop, a block that a handler edge enters, a parameter that a test fills.
 TypesAsWritten::Parts TypesAsWritten::valuesThatMeetIn(ValueID parameter) const
 {
     BlockID block = m_input.blockOf(parameter);
@@ -343,7 +311,6 @@ TypesAsWritten::Parts TypesAsWritten::valuesThatMeetIn(ValueID parameter) const
         return { };
     uint32_t index = *m_input.block(block).indexOfParameter(parameter);
 
-    // Whoever jumps here stands at or below the block above. In the order of the walk the arms come in front of the block in which they meet: an edge that does not is missed by the count, and then the walk answers.
     Parts arriving;
     std::span<const BlockID> order = m_input.blocksInDominatorOrder();
     for (uint32_t number = m_input.dominatorNumber(above); number < m_input.dominatorNumber(block); ++number) {
@@ -360,7 +327,6 @@ TypesAsWritten::Parts TypesAsWritten::valuesThatMeetIn(ValueID parameter) const
     return arriving;
 }
 
-// BodyIndex::valueNarrowedInto(), with the test.
 std::optional<BodyEdgeResult> TypesAsWritten::testThatFills(ValueID parameter) const
 {
     std::optional<BodyIncomingEdge> edge = m_input.onlyIncomingEdge(m_input.blockOf(parameter));
@@ -375,8 +341,6 @@ std::optional<BodyEdgeResult> TypesAsWritten::testThatFills(ValueID parameter) c
     return std::nullopt;
 }
 
-// Of the function, and of a variable with the promise at the head of a loop: whatever comes in there has been held to the promise where it was stored, the first value and that of each turn.
-// So a store in the loop is judged with the variable as it is written and the tests of the program in front: `for (let i: int32 = 0; i < to; i++)` has room for the step, `i <= to` has not.
 TypeAsWritten TypesAsWritten::typeOfParameter(BodyValue parameter) const
 {
     TypeAsWritten walked = asWalkHasIt(parameter.id());
@@ -398,7 +362,6 @@ bool TypesAsWritten::walkKnowsWhoCalls() const
     return false;
 }
 
-// Every run has come by one of the edges.
 TypeAsWritten TypesAsWritten::typeWhereWaysMeet(ValueID parameter, const Parts& arriving) const
 {
     TypeAsWritten met;
@@ -409,11 +372,11 @@ TypeAsWritten TypesAsWritten::typeWhereWaysMeet(ValueID parameter, const Parts& 
         met.type = met.type ? m_walker.types().unionOf(met.type, typeOfPart.type) : typeOfPart.type;
         met.restsOnWrittenType |= typeOfPart.restsOnWrittenType;
         met.leavesOutWhoCalls |= typeOfPart.leavesOutWhoCalls;
+        met.standsBehindBrokenPromise |= typeOfPart.standsBehindBrokenPromise;
     }
     return met.restsOnWrittenType ? met : asWalkHasIt(parameter);
 }
 
-// `a ?? 0`: the parameter is the value that was tested, on the edge on which the test has said what it is.
 TypeAsWritten TypesAsWritten::typeBehindTest(ValueID parameter, const BodyEdgeResult& filled, const Parts& operandsOfTest) const
 {
     Vector<TypeID, 2> types;
@@ -431,18 +394,19 @@ TypeAsWritten TypesAsWritten::typeBehindConvert(BodyValue convert, BlockID place
     DeclaredType declared = convert.as<Opcode::Convert>().declared();
     TypeAsWritten entering = known({ convert.operand(0), place });
     TypeID stated = targetOfConvert(typingForInt32Promises(m_walker), declared);
-    // A cast into a position with the promise proves nothing, and what is only expected of a value is written nowhere.
     bool statesNothing = !stated || declared.has(PositionFlags::IsInt32Promise) || declared.isExpected();
     if (!statesNothing && writtenTypeKeepsInt32Promise(m_walker, stated)) {
         TypeID both = entering.type && entering.restsOnWrittenType ? m_walker.types().intersectionOf(entering.type, stated) : TypeID();
-        return both && !isNeverType(both) ? TypeAsWritten { both, true, entering.leavesOutWhoCalls } : TypeAsWritten { stated, true };
+        return both && !isNeverType(both) ? TypeAsWritten { both, true, entering.leavesOutWhoCalls, entering.standsBehindBrokenPromise } : TypeAsWritten { stated, true };
     }
     if (!entering.type || !entering.restsOnWrittenType)
         return asWalkHasIt(convert.id());
+    if (declared.has(PositionFlags::IsInt32Promise) && writtenTypeKeepsInt32Promise(m_walker, stated) && !numbersKeepInt32Promise(m_walker.types().at(entering.type)))
+        return { stated, true, entering.leavesOutWhoCalls, true };
     if (statesNothing)
         return entering;
     TypeID both = m_walker.types().intersectionOf(entering.type, stated);
-    return { isNeverType(both) ? stated : both, true, entering.leavesOutWhoCalls };
+    return { isNeverType(both) ? stated : both, true, entering.leavesOutWhoCalls, entering.standsBehindBrokenPromise };
 }
 
 TypeAsWritten TypesAsWritten::compute(ValueAtPlace asked) const
@@ -469,6 +433,7 @@ TypeAsWritten TypesAsWritten::compute(ValueAtPlace asked) const
             return asWalkHasIt(written.id());
         made.restsOnWrittenType |= typeOfPart.restsOnWrittenType;
         made.leavesOutWhoCalls |= typeOfPart.leavesOutWhoCalls;
+        made.standsBehindBrokenPromise |= typeOfPart.standsBehindBrokenPromise;
         typesOfParts.append(typeOfPart.type);
     }
     if (!made.restsOnWrittenType)
@@ -480,14 +445,11 @@ TypeAsWritten TypesAsWritten::compute(ValueAtPlace asked) const
         made.type = resultTypeOfReachableOverloads(BuiltinTypeContext { m_walker.program(), m_walker.types() }, builtin, BuiltinCallMode::Call, passed);
     } else if (typesOfParts.size() == numberOfNamedOperandsOf(opcode))
         made.type = resultTypeOfOperator(typingForInt32Promises(m_walker), opcode, typesOfParts.span());
-    // `const low = a & 255; return low !== 0 ? -low : 0;`
     return made.type ? cutByRelationsInFront(asked, made) : asWalkHasIt(written.id());
 }
 
 TypeAsWritten TypesAsWritten::of(ValueID root)
 {
-    // An operation stands behind its operands, so this ends. How deep an expression is written is no depth of the stack.
-    // Nor does a way that meets another lead back to itself: valuesThatMeetIn() follows no turn of a loop.
     Vector<ValueAtPlace, 16> pending { { root, m_place } };
     while (!pending.isEmpty()) {
         ValueAtPlace asked = pending.last();
@@ -512,7 +474,6 @@ TypeAsWritten TypesAsWritten::of(ValueID root)
     return known({ root, m_place });
 }
 
-// It proves nothing: it only finds the words for what the types have decided.
 Int32ProofFailure TypesAsWritten::failureNamedByProducerOf(ValueID value) const
 {
     auto typeOf = [&](ValueID part) {
@@ -545,7 +506,6 @@ Int32ProofFailure TypesAsWritten::failureNamedByProducerOf(ValueID value) const
     return typeOf(value).isAnything() ? Int32ProofFailure::Untyped : Int32ProofFailure::AnyNumber;
 }
 
-// The list of a spread argument enters the position in place of elements that nobody has looked at: a type without numbers proves nothing unless a value of it can lie there.
 static bool mayLieInPositionOfInt32Promise(Walker& walker, TypeID judged, const DeclaredType& position)
 {
     if (walker.types().at(judged).isInt32OrNullish())
@@ -566,12 +526,10 @@ void checkInt32Promise(Walker& walker, const DeclaredType& position, ValueID ent
     auto keepsPromise = [&](TypeID type) {
         return numbersKeepInt32Promise(walker.types().at(type)) && mayLieInPositionOfInt32Promise(walker, type, position);
     };
-    // Where the promise is made, not where the value is: `for (let i = 0; i < point[key]; i++) take(i)`: `i` is a parameter of the head of the loop, and the relation stands on the way from there into the body.
     TypesAsWritten typesAsWritten(walker, walker.inputBlockBeingWalked());
     TypeAsWritten asWritten = typesAsWritten.of(entering);
     bool isJudgedAsWritten = asWritten.type && asWritten.restsOnWrittenType;
-    // Of what is written the walk may make more than the rules do one by one: a read that it has seen tested.
-    if (keepsPromise(walked) && (!isJudgedAsWritten || !typesAsWritten.walkKnowsWhoCalls()))
+    if (keepsPromise(walked) && (!isJudgedAsWritten || !(typesAsWritten.walkKnowsWhoCalls() || asWritten.standsBehindBrokenPromise)))
         return;
     if (isJudgedAsWritten && keepsPromise(asWritten.type))
         return;
@@ -585,7 +543,6 @@ void checkInt32Promise(Walker& walker, const DeclaredType& position, ValueID ent
     bool isOneNumber = (hasOnlyIntegersAmongNumbers && judged.integers.isSingleValue()) || (isConstant && judged.isNumber());
 
     UserDiagnostic diagnostic {
-        // Whoever builds the program cannot change what a dependency wrote.
         .kind = position.has(PositionFlags::IsDeclaredByDependency) ? UserDiagnosticKind::Int32OfDependencyNotProven : isOneNumber ? UserDiagnosticKind::ConstantNotInt32 : UserDiagnosticKind::UnprovenInt32,
         .function = walker.currentFunction(),
         .location = walker.code().locationOf(walker.program(), origin),
@@ -595,9 +552,7 @@ void checkInt32Promise(Walker& walker, const DeclaredType& position, ValueID ent
         diagnostic.origin = { site.module.index(), site.position };
         diagnostic.siteKind = site.kind;
     }
-    // The warning words neither a reason nor a range.
     if (diagnostic.kind != UserDiagnosticKind::Int32OfDependencyNotProven) {
-        // Unknown: no number is among what may come, and none of it can lie in the position.
         Int32ProofFailure failure = Int32ProofFailure::Unknown;
         if (!numbersKeepInt32Promise(judged))
             failure = judged.primitives & Primitive::Double ? typesAsWritten.failureNamedByProducerOf(entering) : Int32ProofFailure::OutOfRange;

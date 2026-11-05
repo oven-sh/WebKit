@@ -22,7 +22,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 std::unique_ptr<Program> parseProgram(StringView text, BuildContext& build)
 {
-    // ASCII is its own UTF-8. The text of a large program is over the length that the conversion takes.
     if (text.is8Bit() && text.containsOnlyASCII())
         return TextParser(byteCast<uint8_t>(text.span8()), build).run();
     CString utf8 = text.utf8();
@@ -110,7 +109,6 @@ std::unique_ptr<Program> TextParser::run()
         return nullptr;
 
     m_program = makeUnique<Program>(m_builtins);
-    // Strings, keys and types are numbered where they are first named. In the order of the lists, which is the printer's, a text gives the bytes that its printed form gives.
     AOT::stableSort(m_items, { }, &TextItem::list);
     for (const TextItem& item : m_items) {
         parseItem(item);
@@ -118,11 +116,8 @@ std::unique_ptr<Program> TextParser::run()
             return nullptr;
     }
 
-    // A type that a record leaves out is wire type 0, and the reader looks up every type word that it meets.
     typeWordOfAnything();
 
-    // The bodies of the functions stay in these bytes, so the program owns them before anything points into them.
-    // Program::read() makes the program that it fills. The layout sets of the text are interned in the table of this one.
     m_program->adoptBuffer(m_builder.finish());
     Reader reader(*m_program, m_build);
     if (!reader.run())
@@ -288,7 +283,6 @@ void TextParser::parseItem(const TextItem& item)
         break;
     case ProgramList::Functions: {
         Wire::Function wire;
-        // Wire type 0 is whichever type the text names first.
         wire.thisType.type = typeWordOfAnything();
         FunctionRecord engineFields;
         parseFields(*this, wire, engineFields);
@@ -427,7 +421,6 @@ uint32_t TextParser::parseUInt32(uint32_t maximum)
 
 uint64_t TextParser::parseUInt64()
 {
-    // A number above the int64 range is a Decimal token, whose double has lost digits.
     std::optional<uint64_t> value;
     if (at(TokenKind::Integer) || at(TokenKind::Decimal))
         value = parseInteger<uint64_t>(token().view());
@@ -478,7 +471,6 @@ bool TextParser::parseBool()
     return false;
 }
 
-// The reader derives layouts from those of the text and places them after the layouts of built-ins and namespaces. The text numbers them after its own.
 uint32_t TextParser::layoutWordOf(uint32_t numberInText)
 {
     if (numberInText < countOf(ProgramList::Layouts))

@@ -24,12 +24,6 @@ std::span<const NativeTest> stringStraysTests();
 
 using namespace Typed;
 
-// ---- Features by the condition of their line. Of the engine's own table one line has a condition on an operand: Intl.supportedValuesOf(key) reads the data of collations where the key is "collation".
-
-// ---- The ladder of names
-
-// class Box { constructor() { this.width = 1; } }  function run(p) { const x0 = p.next; x0.tag = x0.width; const x1 = p.next; .. }  sink(run, new Box, { width: 1 })
-// Two layouts have `width` and none has `tag`: each value goes up the whole ladder and finds nothing.
 static String valuesThatClimbLadderForStringStraysTests(unsigned numberOfValues)
 {
     StringBuilder text;
@@ -58,7 +52,6 @@ static std::optional<uint64_t> instructionsOfWalkForStringStraysTests(const Stri
         std::unique_ptr<Program> parsed = parseProgram(withStandInLibrary(text), build);
         AOT_TEST_CHECK(parsed);
         StagedBuild stages(WTF::move(parsed), build);
-        // The first request runs the whole stage, for what callers leave their callees.
         AOT_TEST_CHECK(stages.code(CodeUnit { function, CodeRole::Body }));
         instructions = instructionsOfAllThreadsIn([&] {
             AOT_TEST_CHECK(stages.code(CodeUnit { function, CodeRole::Body }));
@@ -67,7 +60,6 @@ static std::optional<uint64_t> instructionsOfWalkForStringStraysTests(const Stri
     return instructions;
 }
 
-// Where each value that climbs the ladder reads the body for itself, the work is the square of the body.
 static void testWalkGrowsAsValuesThatClimbLadderDo()
 {
     constexpr unsigned numberOfValues = 1500;

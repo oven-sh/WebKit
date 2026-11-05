@@ -37,8 +37,6 @@
 
 namespace JSC { namespace AOT {
 
-// A node is named by the number of its first word in ProgramTables::data(), in the table and in a request alike. The table holds no offset in bytes, so none of its words is linked.
-
 static constexpr FieldIndex noFieldOfDataMember = std::numeric_limits<FieldIndex>::max();
 
 namespace {
@@ -60,7 +58,6 @@ struct DataObjectAllocationRow {
     std::optional<uint32_t> number;
 };
 
-// The rows of a table of data are objects of one layout with the same fields: each such list is planned, and its key made, once.
 class DataObjectAllocationRowCache {
     WTF_MAKE_NONCOPYABLE(DataObjectAllocationRowCache);
 public:
@@ -73,7 +70,6 @@ public:
     std::span<const FieldIndex> fieldsOf(const DataObjectAllocationRow& row) const { return m_fields.span().subspan(row.firstField, row.numberOfFields); }
     std::span<const uint32_t> keyWordsOf(const DataObjectAllocationRow& row) const { return m_keyWords.span().subspan(row.firstKeyWord, row.numberOfKeyWords); }
 
-    // The answer stays where it is until the next call.
     DataObjectAllocationRow& rowFor(LayoutID layout, std::span<const FieldIndex> fieldsInOrderOfMembers)
     {
         uint32_t& firstRowPlusOne = m_firstRowPlusOneOfLayout[layout.index()];
@@ -89,7 +85,6 @@ public:
         row.firstKeyWord = static_cast<uint32_t>(m_keyWords.size());
         row.allocation = m_inputs.plan.allocation(m_inputs.program, layout, Typed::AllocationClassID(), fieldsInOrderOfMembers);
         if (row.allocation) {
-            // The one writer of such keys writes this one too.
             m_mentionsOfOneRow.mentions.shrink(0);
             m_mentionsOfOneRow.mentionWords.shrink(0);
             m_mentions.allocation(*row.allocation, fieldsInOrderOfMembers);
@@ -103,7 +98,6 @@ public:
         return m_rows.last();
     }
 
-    // The key of each row that has one, behind the number of its words: NamesOfTables::allocations.
     void appendKeysTo(Vector<uint32_t>& keys) const
     {
         for (const DataObjectAllocationRow& row : m_rows) {
@@ -173,7 +167,6 @@ static FieldIndex fieldOfDataMember(const TableInputs& inputs, FormOfDataObject 
     return inputs.plan.slots().findField(inputs.program, object.layout, member.key).value_or(noFieldOfDataMember);
 }
 
-// What tryWriteSlot() answers for the value at run time, where a refusal ends the process.
 static bool representationTakesDataMember(SlotRepresentation representation, const Typed::DataNode& value)
 {
     SlotTraits traits = traitsOf(representation);
@@ -189,18 +182,16 @@ static bool representationTakesDataMember(SlotRepresentation representation, con
     case Typed::DataNode::Kind::Number:
         return tryWriteDouble(representation, &bytesOfSlot, value.as<Typed::DataNode::Number>().value);
     case Typed::DataNode::Kind::String:
-        return traits.holdsCell;
     case Typed::DataNode::Kind::BigInt:
     case Typed::DataNode::Kind::Array:
     case Typed::DataNode::Kind::Object:
-        return traits.holdsCell && traits.valueKind != SlotValueKind::LiteralString;
+        return traits.holdsCell;
     case Typed::DataNode::Kind::Hole:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The third word: the encoding of Data, whether CollectionData has values.
 static void forEachRequestForData(const NumberedKeys& requests, NOESCAPE const Invocable<void(DataID, RequestKind, uint32_t)> auto& functor)
 {
     for (uint32_t place = 0; place < requests.size(); ++place) {
@@ -233,7 +224,6 @@ static BitVector findDataWithNodes(const Typed::Program& program, const Numbered
     return data;
 }
 
-// ImageNumbersBuilder::numberConstants() and numberRows() read no tree: a BigInt or an allocation of constant data has a number because it is named here.
 static void nameWhatDataTreeNames(const TableInputs& inputs, const Typed::DataNode& root, DataObjectAllocationRowCache& rows, NamesOfTables& names)
 {
     auto nameString = [&](StringID string) {
@@ -276,7 +266,6 @@ static void nameWhatDataTreeNames(const TableInputs& inputs, const Typed::DataNo
                 if (field == noFieldOfDataMember || inputs.plan.slot(object.layout, field).hasStorage())
                     nodesToVisit.append(&member.value);
             }
-            // The list that DataTableWriter::appendObject() asks the number of.
             if (form == FormOfDataObject::Compiled)
                 rows.rowFor(object.layout, fields.span());
             break;
@@ -318,7 +307,6 @@ public:
         : m_encoder(encoder)
         , m_rows(encoder.inputs)
     {
-        // The word in front of the first node reads as an array without elements, and 0 names no node.
         static_assert(DataNodeHeader::firstNode == 1);
         m_table.append(0);
     }
@@ -341,8 +329,6 @@ public:
         return DataWord::operandOf(m_words.takeLast());
     }
 
-    // Nothing: a key is no string, or a value is an object, which each collection has to get anew.
-    // A key that comes again keeps its place and takes the later value, as where the constructor adds the entries one behind the other.
     std::optional<Vector<uint8_t>> tryEncodeTableInImage(const Typed::DataNode::Array& entries, bool hasValues) const
     {
         Vector<TableInImage::Key> keys;
@@ -419,7 +405,6 @@ private:
         m_words.append(DataWord::encodeNode(node));
     }
 
-    // In such storage every NaN is a hole.
     uint64_t bitsOfDoubleElement(const Typed::DataNode& element) const
     {
         if (const auto* number = element.tryAs<Typed::DataNode::Number>(); number && number->value == number->value)
@@ -474,7 +459,6 @@ private:
         return row;
     }
 
-    // A field in its slot is a property of the form that the record of the layout gives it: describeFieldOfLayoutRecord() of AOTLayoutTables.cpp. The types of the slot do not say so: the slot of an accessor may take any value.
     bool isPlainPropertyInSlot(Typed::FieldReference field, const Typed::FieldFacts& facts) const
     {
         if (facts.facts.contains(Typed::FieldFact::IsAccessor) || !facts.formOfValue.isEmpty())
@@ -485,7 +469,6 @@ private:
         return Typed::fieldAt(program, Typed::declarationOf(program, field)).form.isEmpty();
     }
 
-    // Code that reads the slot takes what lies there for a value of both types: an allocation that the walk builds is held to the same two.
     bool slotTakesMember(const Typed::FieldFacts& facts, const Typed::PlacedSlot& slot, const Typed::DataNode& value) const
     {
         if (!representationTakesDataMember(slot.representation, value))
@@ -514,7 +497,6 @@ private:
         Vector<uint64_t, 16> fieldValues;
         Vector<uint32_t, 16> otherKeys;
         Vector<uint64_t, 16> otherValues;
-        // The run time lists the other members behind the fields, but for an index, which comes first wherever it is written.
         bool sawNamedMemberOutsideFields = false;
         size_t nextWord = 0;
         for (size_t index = 0; index < fieldOfEachMember.size(); ++index) {
@@ -584,18 +566,6 @@ private:
         case Typed::DataNode::Kind::Number:
             return tryWriteDouble(representation, bytes, withoutPayload(value.as<Typed::DataNode::Number>().value));
         case Typed::DataNode::Kind::String:
-            if (traits.valueKind == SlotValueKind::LiteralString) {
-                StringID string = value.as<Typed::DataNode::String>().value;
-                if (m_encoder.program.string(string).empty()) {
-                    writeSlotBits(representation, bytes, emptyLiteralStringWord);
-                    return true;
-                }
-                if (std::optional<uint32_t> number = m_encoder.plan.literalStrings().indexOf(string)) {
-                    writeSlotBits(representation, bytes, literalStringWord(*number));
-                    return true;
-                }
-            }
-            break;
         case Typed::DataNode::Kind::BigInt:
         case Typed::DataNode::Kind::Array:
         case Typed::DataNode::Kind::Object:
@@ -612,7 +582,6 @@ private:
         return true;
     }
 
-    // The words of the cell behind its header, as the run time copies them.
     std::optional<uint32_t> tryAppendObjectBody(const Typed::DataNode::Object& object, const Typed::PlacedAllocation& allocation, uint32_t allocationNumber, std::span<const FieldIndex> fieldOfEachMember, std::span<const uint64_t> contents)
     {
         const Typed::PlannedLayout& layout = m_encoder.plan.layout(object.layout);
@@ -638,7 +607,6 @@ private:
             if (!slot.hasStorage())
                 continue;
             const Typed::DataNode& value = object.members[index].value;
-            // Object::willStoreMarker() marks the cell, which a copy of words does not.
             bool setsMarkOfCell = (value.is<Typed::DataNode::Undefined>() || value.is<Typed::DataNode::Null>()) && m_encoder.facts.field({ object.layout, field }).facts.contains(Typed::FieldFact::HoldsRawValueFromBirth);
             if (slot.isOutOfLine() || setsMarkOfCell || !tryWriteDataInSlot(slot, bytesOf(slot), value, contents[nextWord++]))
                 return std::nullopt;
@@ -648,7 +616,6 @@ private:
 
     uint32_t appendNode(DataNodeHeader::Kind kind, uint32_t operand, std::span<const uint64_t> contents, std::span<const uint8_t> behindContents = { }, std::optional<uint32_t> otherMembers = std::nullopt)
     {
-        // No node has more than twice as many words as contents, and four.
         if (m_table.size() + 2 * contents.size() + 4 > std::numeric_limits<uint32_t>::max()) {
             fail("the table of constant data has more words than the number of a node counts"_s);
             return 0;
@@ -699,7 +666,6 @@ void encodeDataTable(TableEncoder& encoder, FirstTableParts& firstParts)
     auto hasOffsetIn = [](const Vector<uint32_t>& offsets, DataID id) {
         return id.index() < offsets.size() && offsets[id.index()] != PlacedStatics::noOffset;
     };
-    // A collection whose entries lie in a table of their own is made without the nodes of its data.
     BitVector data(program.data.size());
     for (uint32_t index = 0; index < program.data.size(); ++index) {
         if (hasOffsetIn(statics.dataCellOffsets, DataID(index)) || hasOffsetIn(statics.dataStorageOffsets, DataID(index)))

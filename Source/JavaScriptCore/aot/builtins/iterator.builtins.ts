@@ -12,7 +12,6 @@ const underlyingIterator = b.storedIn(b.resultSlot("iterated"));
 const newHelper = b.instance("IteratorHelper").fresh;
 const accumulator = b.union(b.operand("initialValue"), item, b.callbackResult("reducer"));
 const updatesState = [b.readsContents(), b.writesContents()];
-// DisposableStackConstructor.cpp: the stack is pending, and its list is empty. The functions of DisposableStackPrototype.ts fill the list.
 const fieldsOfNewStack = {
   state: b.state(internalFields, b.int(0, 1)),
   capability: b.state(internalFields, b.instance("Array").holding({ element: b.never }).fresh),
@@ -89,8 +88,6 @@ const testingMethod = (name: string, returns: b.TableType) =>
     { predicate: itemCallback("PerElement", "Tested") },
   );
 
-// What is sent goes into the body of the generator, which does with it what its own code says. A generator nobody knows holds it like native code.
-// What the body yields or returns lies in the generator, and a step hands it out.
 const resumeMethod = (name: string, parameter: string, ...sent: readonly b.UseSpec[]) =>
   ({
     args: { [parameter]: b.any },
@@ -107,8 +104,6 @@ const resumeMethod = (name: string, parameter: string, ...sent: readonly b.UseSp
     implementation: b.compiled("GeneratorPrototype", name),
   }) satisfies b.FunctionField;
 
-// The jobs that run the body hold an async generator while a step is under way, and they do nothing else with it: whoever steps it hands it to native code no more than whoever steps a generator.
-// The promise is fulfilled with an iterator result whose value is what the generator hands out. A layout has one type for each field, so no type says that here: the flow rule for resuming a generator does.
 const asyncResumeMethod = (parameter: string, ...sent: readonly b.UseSpec[]) =>
   [
     {
@@ -135,14 +130,12 @@ const disposalCallback = (...args: readonly b.PlaceLike[]) => [
 ];
 
 export default b.declarations(
-  // An iterator helper steps and closes the iterator below it without operands.
   b.namedMemberCall("next", []),
   b.namedMemberCall("return", []),
   b.class("Iterator", {
     isNeverPristine: true,
     lockedMembers: ["prototype"],
     call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
-    // Only for a class that extends it: with itself as new.target it throws.
     construct: { ...operandCodeEffects, returns: b.instance("Iterator").fresh, implementation: b.hostCall },
     static: {
       from: {
@@ -272,7 +265,6 @@ export default b.declarations(
     prototypeTable: b.staticTable("runtime/AsyncGeneratorPrototype.cpp", "asyncGeneratorPrototypeTable"),
     proto: {
       next: asyncResumeMethod("value"),
-      // The value is awaited: the constructor of a promise is read and the promise gets a reaction, and the `then` of any other object is called.
       return: asyncResumeMethod("value", b.runs("Thenable", b.named("constructor")), ...updatesState),
       throw: asyncResumeMethod("exception", b.storedIn(b.resultSlot("reason"))),
     },
@@ -335,6 +327,5 @@ export default b.declarations(
   }),
   b.same("DisposableStack.prototype.@@dispose", "DisposableStack.prototype.dispose"),
 
-  // `import "core-js"` replaces them without a test, from 3.45 to 3.49.
   b.replacedByPackages("Iterator.prototype.chunks", "Iterator.prototype.windows"),
 );

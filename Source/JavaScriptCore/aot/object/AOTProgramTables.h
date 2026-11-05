@@ -53,7 +53,6 @@ struct TableRange {
 };
 static_assert(sizeof(TableRange) == 8 && isImageRecord<TableRange>);
 
-// One row for each field of each record layout whose objects the parser of untyped values may make by their names alone. In ascending order of key().
 struct ParsedRecordFieldData {
     Number24 name;
     Number24 shape;
@@ -63,22 +62,16 @@ struct ParsedRecordFieldData {
 };
 static_assert(sizeof(ParsedRecordFieldData) == 6 && isImageRecord<ParsedRecordFieldData>);
 
-// In ascending order. Until the class guard whose bit has the number ends (AOTClassGuards.h), the entry of the instance's method table holds what the image has there. From then on the entry holds the lookup of the selector.
-// The guard is that of the name of the method on the prototype side of the receiver's class: the guard of the side alone outlives `C.prototype.m = f`.
 struct MethodTableDependentData {
     uint32_t guardBit;
-    // In bytes from the instance, signed.
     uint32_t distanceToEntry;
-    // Its place in CallingConventions::methodSelectors().
     uint32_t selector;
 
     friend auto operator<=>(const MethodTableDependentData&, const MethodTableDependentData&) = default;
 };
 static_assert(sizeof(MethodTableDependentData) == 12 && isImageRecord<MethodTableDependentData>);
 
-// `distanceToWordOfSelector` is the instance word of NumberSpace::MethodSelector. Code goes on from there by the shape word of the receiver, which is the shape negated, in entries of four bytes.
 constexpr uint32_t distanceToMethodTableEntry(uint32_t distanceToWordOfSelector, uint32_t shape) { return distanceToWordOfSelector - shape * static_cast<uint32_t>(sizeof(uint32_t)); }
-// The same entry, counted in words from the first word of the table. `originOfSelector` is the number of NumberSpace::MethodSelector.
 constexpr uint32_t methodTableEntryOf(uint32_t originOfSelector, uint32_t shape) { return originOfSelector - shape; }
 
 #define FOR_EACH_AOT_OBJECT_PROGRAM_TABLE(v) \
@@ -148,9 +141,6 @@ struct ProgramTables {
     FOR_EACH_AOT_PROGRAM_TABLE(AOT_PROGRAM_TABLE_ACCESSOR)
 #undef AOT_PROGRAM_TABLE_ACCESSOR
 
-    // One table: first the members that start-up locks, then those of the table's locks that a test run leaves open, each with the first bit.
-    // Then the names that the program adds to objects which take no other new name: two words a name, the object and the number of the string, each with both bits.
-    // An executable has none of the second kind.
     static constexpr uint32_t unlockedBuiltinMember = 1u << 31;
     static constexpr uint32_t openedName = 3u << 30;
     size_t numberOfWordsBelow(uint32_t mark) const
@@ -162,7 +152,6 @@ struct ProgramTables {
     std::span<const uint32_t> unlockedBuiltinMembers() const { return constantAndUnlockedBuiltinMembers().first(numberOfWordsBelow(openedName)).subspan(numberOfWordsBelow(unlockedBuiltinMember)); }
     std::span<const uint32_t> openedNames() const { return constantAndUnlockedBuiltinMembers().subspan(numberOfWordsBelow(openedName)); }
     static bool isUnlocked(std::span<const uint32_t> unlockedBuiltinMembers, uint32_t member) { return std::ranges::binary_search(unlockedBuiltinMembers, member | unlockedBuiltinMember); }
-    // namesTakenForAbsent(): a number for each text of Program::keysTakenForAbsent(), ascending. The image need not hold the texts. Where two texts share a number the run time refuses one name more than it has to.
     static constexpr uint32_t numberOfNameTakenForAbsent(std::span<const uint8_t> utf8)
     {
         uint32_t number = 2166136261u;
@@ -191,14 +180,12 @@ struct ProgramTables {
         ASSERT(shape >= firstEnvironmentShape);
         return *at<EnvironmentData>(layouts()[shape]);
     }
-    // The table has the sites that a value or a static field refers to, in ascending order. Only messages ask.
     const TypeSiteData* findTypeSite(uint32_t site) const
     {
         std::span<const TypeSiteData> sites = typeSites();
         auto found = std::ranges::lower_bound(sites, site, { }, &TypeSiteData::site);
         return found != sites.end() && found->site == site ? &*found : nullptr;
     }
-    // The number of types, two words for every 32 of them (which have a record, how many in front of them have one), then the offsets of the records.
     uint32_t numberOfTypes() const { return types()[0]; }
     static constexpr uint32_t numberOfTypeGroupWords(uint32_t numberOfTypes) { return (numberOfTypes + 31) / 32 * 2; }
     uint32_t offsetOfType(uint32_t index) const
@@ -227,7 +214,6 @@ struct ProgramTables {
     }
     uint32_t numberOfClassGroupWords() const { return (numberOfLayoutIndices + 31) / 32 * 2; }
     uint32_t numberOfClasses() const { return classes().size() - numberOfClassGroupWords(); }
-    // How many classes have a smaller layout index.
     uint32_t rankOfClass(uint32_t index) const
     {
         const uint32_t* groups = classes().data();
@@ -250,7 +236,6 @@ struct ProgramTables {
         return *std::ranges::lower_bound(functionsWithLargeCounts(), function, { }, [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; });
     }
     bool hasClosureNumber(uint32_t number) const { return number < closureFunctions.end - closureFunctions.first; }
-    // What closure words, requests for closures and the stubs have for a function that closures are made of.
     uint32_t closureNumberOf(uint32_t function) const
     {
         ASSERT(function >= closureFunctions.first && function < closureFunctions.end);
@@ -290,7 +275,6 @@ struct ProgramTables {
         return std::ranges::lower_bound(functionRecordsByFunction(), function, { }, &FunctionRecordByFunctionData::function)->record;
     }
     const FunctionTraceData& traceOfFunction(uint32_t function) const { return recordOfFunction(function).trace; }
-    // The kinds of the functions that closures are made of have a table of their own, which stubs read too: Instance::image.closureFunctionKinds.
     FunctionKindData kindOfFunction(uint32_t function) const
     {
         std::span<const FunctionKindData> kinds = closureFunctionKinds();
@@ -299,16 +283,13 @@ struct ProgramTables {
             return kinds[index];
         return recordOfFunction(function).kind;
     }
-    // Every function in front of the first one that is a form of another is its own source. The table starts at that one.
     uint32_t sourceFunctionOf(uint32_t function) const
     {
         std::span<const Number24> sources = functionSources();
         size_t firstListed = numberOfFunctions() - sources.size();
         return function < firstListed ? function : sources[function - firstListed];
     }
-    // A form of a function has the name of its source.
     static constexpr uint32_t numberOfFunctionNameGroupWords(size_t numberOfFunctions) { return static_cast<uint32_t>((numberOfFunctions + 31) / 32 * 2); }
-    // The number of the string. None: the function was written without a name, or nobody is shown its name. Its name is empty.
     std::optional<uint32_t> nameOfFunction(uint32_t function) const
     {
         uint32_t source = sourceFunctionOf(function);

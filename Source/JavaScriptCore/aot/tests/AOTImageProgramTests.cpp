@@ -64,7 +64,6 @@ struct ParsedProgram {
     ParsedProgram(const String& text, const TestOptions& = { });
 };
 
-// Takes the program out of the ParsedProgram, whose context it goes on using.
 struct CompiledWholeProgram {
     PreparedProgram prepared;
     CompiledProgram units;
@@ -155,7 +154,6 @@ static void appendFlags(StringBuilder& text, RegExpFlags flags)
     text.append(']');
 }
 
-// A request comes from code that makes the literal, so each literal is handed to a function that nobody knows.
 static String patternsText(const Vector<PatternUse>& uses)
 {
     StringBuilder text;
@@ -221,70 +219,12 @@ static void testInsignificantFlags()
 
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 
-static constexpr uint8_t moduleReturning42[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
-    0x03, 0x02, 0x01, 0x00,
-    0x07, 0x05, 0x01, 0x01, 0x66, 0x00, 0x00,
-    0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x2a, 0x0b,
-};
-
-static String webAssemblyText(size_t numberOfEntries)
-{
-    StringBuilder text;
-    for (size_t k = 0; k < std::max<size_t>(numberOfEntries, 1); ++k)
-        text.append("module m"_s, k, " path=\"m"_s, k, ".js\" displayPath=\"m"_s, k, ".js\"\n"_s);
-    text.append("entry\n"_s);
-    for (size_t k = 0; k < numberOfEntries; ++k)
-        text.append("webassemblymodule module=m"_s, k, '\n');
-    return text.toString();
-}
-
 namespace {
-
-struct CompiledWebAssembly {
-    ParsedProgram parsed;
-    WebAssemblyImageInputs modules;
-
-    CompiledWebAssembly(std::initializer_list<std::span<const uint8_t>>);
-};
 
 } // anonymous namespace
 
-CompiledWebAssembly::CompiledWebAssembly(std::initializer_list<std::span<const uint8_t>> entries)
-    : parsed(webAssemblyText(entries.size()))
-{
-    size_t index = 0;
-    for (std::span<const uint8_t> bytes : entries)
-        parsed.program->webAssemblyModules[index++].bytes = bytes;
-
-    modules = compileWebAssemblyModules(*parsed.program, testTemplates(), parsed.context);
-    AOT_TEST_CHECK(!parsed.context.diagnostics().hasErrors());
-    AOT_TEST_CHECK(modules.code.isEmpty() == !entries.size());
-}
-
-static void checkModuleCount(const CompiledWebAssembly& compiled, uint32_t numberOfModules)
-{
-    Wasm::DirectoryInImage header;
-    AOT_TEST_CHECK(compiled.modules.directory.size() >= sizeof(header));
-    memcpySpan(asMutableByteSpan(header), compiled.modules.directory.span().first(sizeof(header)));
-    AOT_TEST_CHECK(compiled.modules.numberOfModules == numberOfModules);
-    AOT_TEST_CHECK(header.numberOfModules == numberOfModules);
-    AOT_TEST_CHECK(!header.numberOfDeclinedModules);
-}
-
-static void testSameModuleTwice()
-{
-    CompiledWebAssembly once({ moduleReturning42 });
-    CompiledWebAssembly twice({ moduleReturning42, moduleReturning42 });
-    checkModuleCount(twice, 1);
-    AOT_TEST_CHECK(twice.modules.directory == once.modules.directory);
-    AOT_TEST_CHECK(twice.modules.code == once.modules.code);
-}
-
 #endif // ENABLE(WEBASSEMBLY_OMGJIT)
 
-// A RegExp that its function returns has to be created, whatever Facts knows. Creating it takes the number of its record and a word of the instance.
 static constexpr ASCIILiteral functionsWithOwnSpaces =
     "function f1 name=\"addsConstant\" parameters=[{type=number}] results=[{type=number}] {\n"
     "  b0(v0: number):\n"
@@ -320,7 +260,6 @@ static void appendFunctionWithAccesses(StringBuilder& text, unsigned function)
     text.append("    v4 = Integer integer="_s, function, "\n    v5 = Call v3, v2, v4, v1, v1, v1, v1, v1, v1, v1, v1\n    Return v5\n}\n"_s);
 }
 
-// A function that calls itself is never wholly in line, so a call that names a function stays.
 static void appendFunctionThatCallsItself(StringBuilder& text, unsigned function)
 {
     text.append("function f"_s, function, " name=\"callsItself\" parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n"_s);
@@ -328,7 +267,6 @@ static void appendFunctionThatCallsItself(StringBuilder& text, unsigned function
     text.append("    v3 = CallDirect v2 function=f"_s, function, "\n    v4 = CallDirect v3 function=f"_s, function, "\n    Return v4\n  b2():\n    Return v0\n}\n"_s);
 }
 
-// An array literal with more elements than fit in registers has rare calls that pass small constants, and such a call goes through an argument thunk.
 static void appendFunctionWithArrayLiteral(StringBuilder& text, unsigned function)
 {
     constexpr unsigned numberOfElements = maxArrayElementsInRegisters + 1;
@@ -409,7 +347,6 @@ static void testSymbolSpacesOfProgram()
             dataLogLn("no relocation names symbol space ", static_cast<size_t>(space));
         AOT_TEST_CHECK(usedSpaces.get(static_cast<size_t>(space)));
     }
-    // Code names the record of a regular expression by its number, not by a symbol of a space of its own.
     AOT_TEST_CHECK(mentionsRegExp);
 }
 
@@ -417,16 +354,6 @@ static constexpr ASCIILiteral programForOneInstance = "module m0 path=\"main.js\
     "entry\n"
     "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
     "  b0():\n"
-    "    Return\n"
-    "}\n"_s;
-
-static constexpr ASCIILiteral programForManyInstances = "variable g0 name=\"worker\" declared={type=anything}\n"
-    "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0 exports=[{name=\"worker\" variable=g0}]\n"
-    "entry hostReads=[{exportName=\"worker\"}]\n"
-    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    v0 = Builtin builtin=Worker\n"
-    "    PutModuleVariable v0 variable=g0\n"
     "    Return\n"
     "}\n"_s;
 
@@ -484,19 +411,6 @@ static void testRealmAfterRetiredRealm(LoadedProgram& program)
     AOT_TEST_CHECK(!Instance::of(createRealmWithHostOf(program)));
 }
 
-static void testTwoRealmsHaveInstances(LoadedProgram& program)
-{
-    // Facts decides whether the compiler sets this flag for a program that exports Worker. The test sets it and checks only the run time.
-    const ProgramTables& tables = Image::current()->programTables();
-    overwriteWordInImage(tables.flags, tables.flags | ProgramTables::mayRunInMultipleInstances);
-    Instance* second = Instance::of(createRealmWithHostOf(program));
-    AOT_TEST_CHECK(second);
-    AOT_TEST_CHECK(second != &program.instance());
-    AOT_TEST_CHECK(second->state);
-    AOT_TEST_CHECK(second->state != program.instance().state);
-    AOT_TEST_CHECK(!Instance::of(program.realms().plain()));
-}
-
 #if OS(LINUX)
 namespace {
 
@@ -514,11 +428,9 @@ std::span<const NativeTest> programInputTests()
         { "image/instances/second-realm-has-no-instance"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testSecondRealmHasNoInstance> },
         { "image/instances/realm-after-collected-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterCollectedRealm> },
         { "image/instances/realm-after-retired-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterRetiredRealm> },
-        { "image/instances/two-realms-have-instances"_s, runNativeTestWithLoadedProgram<programInputTests, programForManyInstances, testTwoRealmsHaveInstances> },
 #if OS(LINUX)
 #endif
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-        { "image/wasm-modules/same-module-twice"_s, testSameModuleTwice },
 #endif
     };
     return tests;

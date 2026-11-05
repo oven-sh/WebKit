@@ -16,18 +16,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Each kind holds whatever the kinds in front of it hold.
 static_assert(ArrayStorage::Other < ArrayStorage::Int32 && ArrayStorage::Int32 < ArrayStorage::Double && ArrayStorage::Double < ArrayStorage::Contiguous);
 
 static constexpr TypeID typeReadFromInt32ArrayStorage = *tryMakeTypeOfPrimitives(Primitive::Integer | Primitive::Undefined, Range::int32());
 static constexpr TypeID typeReadFromDoubleArrayStorage = typeOfPrimitives(Primitive::Number | Primitive::Undefined);
 
-static constexpr ArrayStorage arrayStorageWithFormFor(ArrayStorage kind)
-{
-    return hasArrayStorageForm(kind) ? kind : ArrayStorage::Contiguous;
-}
-
-// The answer is a prediction, and the creator and the readers of an array take the same one.
 static ArrayStorage arrayStorageHoldingValuesOf(const Type& elements)
 {
     if (elements.hasObjects() || !elements.isJavaScriptValue())
@@ -40,7 +33,6 @@ static ArrayStorage arrayStorageHoldingValuesOf(const Type& elements)
     return primitives & ~Primitive::Number ? ArrayStorage::Contiguous : ArrayStorage::Double;
 }
 
-// `number[]` says nothing of fractions, and most such lists hold integers. Out of storage for doubles each of them is asked at every read whether it is an int32 before it is boxed.
 static ArrayStorage arrayStorageDeclaredByElements(const Type& elements)
 {
     if (elements.isAnything())
@@ -59,7 +51,6 @@ ArrayStorage arrayStorageHolding(TypeReader types, TypeID elements)
     return elements ? arrayStorageHoldingValuesOf(types.at(elements)) : ArrayStorage::Other;
 }
 
-// Only what is written of the elements counts. A named object says nothing of its contents, so a type that names arrays alone declares nothing.
 Expected<ArrayStorage> arrayStorageDeclaredBy(const Program& program, TypeReader types, TypeID array)
 {
     if (!array || holdsOnlyPrimitives(array))
@@ -100,11 +91,6 @@ bool readTakesIndexOfProvenList(TypeReader types, TypeID array, TypeID position)
     return part && part->builtinClass == BuiltinClasses::Array;
 }
 
-ArrayStorage arrayStorageAtAllocation(const TypeArena& types, TypeID elements)
-{
-    return arrayStorageWithFormFor(arrayStorageHolding(types, elements));
-}
-
 ArrayStorage arrayStorageOfData(const Program& program, const DataNode::Array& array)
 {
     bool areInt32 = true;
@@ -115,7 +101,6 @@ ArrayStorage arrayStorageOfData(const Program& program, const DataNode::Array& a
         areDoublesOrHoles &= number ? canStoreWithoutConversion(ArrayStorage::Double, number->value) : element.is<DataNode::Hole>();
     }
     ArrayStorage narrowest = areInt32 ? ArrayStorage::Int32 : areDoublesOrHoles ? ArrayStorage::Double : ArrayStorage::Contiguous;
-    // The readers of an array test for the kind that is declared for it, also where every constant fits a narrower one.
     ArrayStorage declared = array.contents ? arrayStorageDeclaredByElements(program.at(array.contents)) : ArrayStorage::Other;
     return std::max(narrowest, declared);
 }
@@ -178,13 +163,11 @@ bool fitsStorageOfLiteral(const TypeArena& types, ArrayStorage kind, TypeID elem
 {
     if (isNeverType(element))
         return true;
-    // A NaN among the numbers is found when the literal runs, and the array is then born with the storage that holds everything.
     if (kind == ArrayStorage::Double)
         return element && types.at(element).isNumber();
     return canStoreWithoutConversion(types, kind, element);
 }
 
-// With undefined for a hole. Whoever reads a hole as something else, or looks above the array for it, adds that.
 TypeID typeOfElementRead(ArrayStorage kind)
 {
     switch (kind) {

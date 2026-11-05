@@ -15,7 +15,6 @@ ErrorBuiltinEmitter::ErrorBuiltinEmitter(CodeGenerator& generator)
 {
 }
 
-// The operation answers for every message and for all options, so the code never misses.
 void ErrorBuiltinEmitter::generateNewError(const InlineCall& call)
 {
     auto argument = [&](unsigned index) {

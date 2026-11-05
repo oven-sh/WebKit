@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The last operands of a suspension are what the suspended function holds. Nothing reads them: the saved frame lists them as references.
 template<HoldsOpcode Operation>
 uint32_t numberOfHeldOperandsOf(const Operation& operation)
 {

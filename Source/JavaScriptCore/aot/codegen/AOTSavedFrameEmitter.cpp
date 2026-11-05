@@ -60,7 +60,6 @@ LValue SavedFrameEmitter::cellOrZero(ValueID driver)
     return m_out.select(isCell(boxed).value(), boxed.value(), m_out.int64Zero);
 }
 
-// The site word names the location of this word, and a constant has none, so nothing here is folded by type. Who reads the word tells a promise from undefined.
 LValue SavedFrameEmitter::driverAsPassed(ValueID driver)
 {
     if (representationOf(driver) == Representation::Cell)
@@ -109,7 +108,6 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
     if (hasMode)
         patch->resultConstraints.append(Machine::ValueRep::reg(signature.secondResult));
 
-    // A function that waits is on no stack, and a trace lists it by this site.
     Origin originOfSuspension = value.origin();
     originOfSuspension.isTailCall = false;
     uint32_t site = calls.addSite(value, { .origin = originOfSuspension, .callerHasLeft = runsCodeOfAwaited == RunsCodeOfAwaited::BehindFunction });
@@ -156,7 +154,6 @@ Pointer SavedFrameEmitter::framePointerAtThisPoint()
     return Pointer(patch);
 }
 
-// The conditions on which the stub AwaitBySavingFrame goes on without saving the frame. Whatever queues a job calls the run time, so the words of the queue are run-time state.
 void SavedFrameEmitter::generateAwaitMayContinue(const ValueContext& value)
 {
     const Machine::AbstractHeap& queueWords = m_heaps.entire(AbstractHeap::RuntimeState);
@@ -184,7 +181,6 @@ void SavedFrameEmitter::generateAwaitBySavingFrame(const ValueContext& value)
         return;
     }
     case CoroutineKind::AsyncGenerator:
-        // The engine resumes an async generator, and none of its jobs waits a turn more.
         if (value->takesExtraTurn()) {
             fail(value, InternalErrorKind::OpcodeWithoutCode);
             return;
@@ -208,7 +204,6 @@ void SavedFrameEmitter::generateAwaitCallBySavingFrame(const ValueContext& value
     Vector<Operand, 8> arguments;
     for (ValueID argument : value->argumentsOperands().first(value->numberOfVariadicOperands() - numberOfHeldOperandsOf(value.value())))
         arguments.append(get(argument));
-    // The body takes its driver behind the parameters of the function. A caller that awaits the call itself has no promise to pass.
     arguments.append(undefined());
     Operand returned = emitter<CallEmitter>().callDirect(value, callee, arguments.span(), { .callerSuspendsAtReturn = true });
     RELEASE_ASSERT(isSameWord(returned.representation, Representation::JSValue));
@@ -222,7 +217,6 @@ void SavedFrameEmitter::suspendGenerator(const ValueContext& value, GeneratorSus
     defineValueAndWord(value, suspend(value, AOT::suspendGenerator(form), { in<CellPointer>(generator).value(), yielded.value() }, generator));
 }
 
-// What a yield and a step of a generator answer.
 void SavedFrameEmitter::defineValueAndWord(const ValueContext& value, StubCallResult result)
 {
     defineResults(value, { Boxed(result.first), low32(Integer(result.second)) });
@@ -263,7 +257,6 @@ static constexpr ptrdiff_t offsetOfWordInHeapFrame(uint32_t index)
     return SavedFrame::offsetOfWords() + static_cast<ptrdiff_t>(index) * static_cast<ptrdiff_t>(sizeof(uint64_t));
 }
 
-// A heap frame that nothing resumes: the function that makes it keeps values in its words.
 void SavedFrameEmitter::generateNewHeapWords(const ValueContext& value)
 {
     uint32_t numberOfWords = value->numberOfWords();
@@ -276,7 +269,6 @@ void SavedFrameEmitter::generateNewHeapWords(const ValueContext& value)
     define(value, boxCell(frame));
 }
 
-// A word holds a boxed value, whatever form the type of the value has elsewhere.
 void SavedFrameEmitter::generateGetHeapFrameWord(const ValueContext& value)
 {
     LValue frame = in<Boxed>(value->frameOperand()).value();
@@ -289,20 +281,16 @@ void SavedFrameEmitter::generatePutHeapFrameWord(const ValueContext& value)
     ValueID operand = value->valueOperand();
     const Type& storedType = typeOf(operand);
     LValue stored = in<Boxed>(operand).value();
-    // The collector visits every word. A narrow reference that nothing has filled is 0, which decodes to the start of the cage, where no cell lies.
     if (m_cellCageBase && storedType.mayBeUnspecified())
         stored = m_out.select(m_out.equal(stored, m_cellCageBase), m_out.int64Zero, stored);
     m_out.store64(stored, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame.value(), offsetOfWordInHeapFrame(value->index())));
     if (value->remembersFrame())
-        emitter<BarrierEmitter>().barrierAfterStore(value, frame, Boxed(stored), storedType);
+        emitter<BarrierEmitter>().barrierAfterStore(value, frame, storedType);
 }
 
-// A store of zero for each word. A larger frame is made by the stub, which has a loop.
 static constexpr uint32_t maxWordsOfHeapFrameMadeInLine = 16;
 static_assert(maxWordsOfHeapFrameMadeInLine <= SavedFrame::maxWordsAllocatedInStub);
 
-// The Structure is the one that InternalFunction::createSubclassStructure answers without reading the property `prototype`: the function remembers it, and it was made for this class in this realm.
-// Without a closure the generator inherits from %GeneratorPrototype% itself.
 CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> closure, LBasicBlock slowPath)
 {
     std::optional<Word32> structureID;
@@ -311,7 +299,6 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
         constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
         Pointer taggedRareData = loadField<Pointer>(*closure, m_heaps.JSFunction_executableOrRareData);
         branchUnless(Condition(m_out.testNonZeroPtr(taggedRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), slowPath);
-        // A store to `prototype` makes the function forget the Structure, so this is a read of its named properties.
         structureID = Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), taggedRareData.value(), offsetOfStructureID - static_cast<ptrdiff_t>(JSFunction::rareDataTag))));
         branchUnless(isNotZero(*structureID), slowPath);
 
@@ -343,7 +330,6 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
     return result;
 }
 
-// The closure of a generator function has the full form, whoever calls it.
 void SavedFrameEmitter::generateNewGenerator(const ValueContext& value)
 {
     std::optional<CellPointer> closure;
@@ -361,7 +347,7 @@ void SavedFrameEmitter::generateNewGenerator(const ValueContext& value)
 
 void SavedFrameEmitter::generateNewAsyncGenerator(const ValueContext& value)
 {
-    define(value, CellPointer(callStub(value, AOT::newGenerator(NewGeneratorKind::Async), { in<CellPointer>(value->calleeOperand()).value() }).first));
+    define(value, CellPointer(callStub(value, AOT::newAsyncGenerator(), { in<CellPointer>(value->calleeOperand()).value() }).first));
 }
 
 void SavedFrameEmitter::generateTakeGeneratorPrototype(const ValueContext& value)
@@ -389,7 +375,6 @@ void SavedFrameEmitter::generateStepGenerator(const ValueContext& value)
     defineValueAndWord(value, callStub(value, stepGenerator(value->check()), { generator.value(), mode, sentValue.value() }));
 }
 
-// Every cell of the type is an object of the class. The type may also hold undefined and null, which are not cells.
 static bool everyCellIsOfCoroutineClass(TypeReader types, const Type& type, BuiltinClassID builtinClass)
 {
     if (!type.hasOnlyClassObjects())
@@ -413,7 +398,6 @@ void SavedFrameEmitter::branchUnlessUnmodifiedGenerator(Operand operand, const T
         break;
     case Representation::JSValue: {
         Boxed boxed = operand.as<Boxed>();
-        // The empty value has no tag bits, so it passes isCell.
         if (type.primitives & Primitive::Absent)
             branchUnless(isNotEmpty(boxed), otherwise);
         if (!type.isObject())
@@ -430,7 +414,6 @@ void SavedFrameEmitter::branchUnlessUnmodifiedGenerator(Operand operand, const T
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -438,13 +421,11 @@ void SavedFrameEmitter::branchUnlessUnmodifiedGenerator(Operand operand, const T
     if (!everyCellIsOfCoroutineClass(types(), type, BuiltinClasses::Generator))
         branchUnless(emitter<TypeTestEmitter>().inheritsClassInfo(cell, BuiltinClasses::Generator), otherwise);
 
-    // The stored prototype is only known to be a cell while the flag is clear, so test the flag first.
     Word32 hasOtherPrototype(m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::PrototypeLinks), cell.value(), Generator::offsetOfHasOtherPrototype())));
     branchUnless(isZero(hasOtherPrototype), otherwise);
     branchUnless(Condition(m_out.isNull(m_out.loadPtr(cell.value(), m_heaps.JSObject_butterfly))), otherwise);
     CellPointer prototype(m_out.load64(loadStructure(cell).value(), m_heaps.Structure_prototype));
     Word32 structureID = loadStructureID(prototype);
-    // A generator above which nobody looks hangs right below %GeneratorPrototype%. While it has the structure that all such are made with, nothing lies on it.
     Condition hangsBelowEmptyPrototype = equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyGeneratorPrototypeStructureID)));
     Condition isAsAllPlainOnesAreMade = equal(loadStructureID(cell), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.plainGeneratorHeader)));
     branchUnless(Condition(m_out.bitOr(hangsBelowEmptyPrototype.value(), isAsAllPlainOnesAreMade.value())), otherwise);
@@ -472,12 +453,10 @@ static std::optional<StepConsumer> stepConsumerOf(CoroutineKind kind, bool await
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The frame may be saved at this site: where the iterator does not answer at once, the stub suspends the function here, and whoever finishes the step resumes it with both results.
 void SavedFrameEmitter::generateStepAsyncGenerator(const ValueContext& value)
 {
     ValueID driver = value->driverOperand();
     std::optional<StepConsumer> consumer = stepConsumerOf(kindOfFunction(), value->awaitsCall());
-    // No form of the stub serves a step that names no driver.
     if (!consumer || opcodeOf(driver) == Opcode::Absent) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         return;

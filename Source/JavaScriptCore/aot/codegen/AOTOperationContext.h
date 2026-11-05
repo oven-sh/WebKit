@@ -27,7 +27,6 @@ public:
     Origin origin() const { return m_instruction.origin(); }
 
 protected:
-    // The handler is Code::handlerOf(block): none where the sweep found that nothing in the block throws, and none ahead of the first operation of the block that may throw.
     OperationContext(BlockID block, ValueID valueID, const Instruction& instruction, const Edge* handler)
         : m_block(block)
         , m_valueID(valueID)
@@ -55,7 +54,6 @@ public:
     const Terminator* operator->() const LIFETIME_BOUND { return &m_terminator; }
     TerminatorKind kind() const { return m_terminator.kind; }
     uint32_t numberOfTargets() const { return m_terminator.numberOfEdges; }
-    // Of a Branch: the block has left the condition to it, and CodeGenerator::generateBranchCondition() makes it.
     bool generatesCondition() const { return m_generatesCondition; }
 
 private:
@@ -88,15 +86,11 @@ public:
 
     const TerminatorContext* returnCall() const { return m_returnCall; }
     bool isAwaitedAtOnce() const { return m_isAwaitedAtOnce; }
-    // What the block generates behind the operation, in that order. Empty for an operation that a terminator generates and for a constant.
-    // A test that only the Branch of the block reads is listed where it stands in Code, and is generated behind the operations without effects that follow it, by the block or by the Branch. Those operations get an empty list.
-    // Behind the end of the list anything may follow.
     std::span<const ValueID> operationsBehind() const { return m_operationsBehind; }
 
 private:
     friend class CodeGenerator;
 
-    // A constant lies in no block: `block` is that of the operation it is made for.
     ValueContext(BlockID block, ValueID id, const Operation& value, const Edge* handler)
         : OperationContext(block, id, value, handler)
         , m_value(value)

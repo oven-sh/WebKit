@@ -17,7 +17,6 @@ struct NumberedIdentifier {
     StringID text;
 };
 
-// The run time creates the identifiers of all of these in one step, before it looks up the first uid: ProgramTables::identifiersOfEngineSymbols().
 constexpr bool isKindOfEngineSymbol(PropertyKeyKind kind)
 {
     switch (kind) {
@@ -46,7 +45,6 @@ public:
 
     uint32_t count() const { return m_identifiers.size(); }
     uint32_t countWithLookupTableColumn() const { return m_countWithLookupTableColumn; }
-    // The table of fields goes on past the columns of the front table, up to the last name that code looks up.
     uint32_t countWithFieldTableColumn() const { return m_countWithFieldTableColumn; }
     bool hasFieldTableColumn(uint32_t number) const { return number && number < m_countWithFieldTableColumn; }
 

@@ -16,7 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// No value is wider than 64 bits, so a register whose upper half alone is in the set is not in the mask.
 RegisterMask maskOf(const RegisterSet& set)
 {
     static_assert(sizeof(RegisterBitSet) == sizeof(RegisterBitSet::WordType));
@@ -35,13 +34,11 @@ RegisterSet registerSetOf(RegisterMask mask)
     return result;
 }
 
-// An Add without position counted its children when it was made.
 static bool machineCoreCountsChildrenAtThisRead(const Operation* operation)
 {
     return !operation->useCount() && operation->owner() && countsChildrenAtFirstUse(operation->opcode());
 }
 
-// A chain of operations that nothing has read yet can be long, so this does not recurse.
 void Operation::countChildrenAtFirstUse()
 {
     Operation* operation = this;
@@ -91,7 +88,6 @@ NEVER_INLINE void Operation::countChildrenAtFirstUseWithWorklist()
     }
 }
 
-// A count that has reached its limit says nothing, and stays.
 void Operation::loseUse()
 {
     Vector<Operation*, 16> pendingReads;
@@ -133,9 +129,7 @@ void PatchOperation::append(Operation* value, const ValueRep& rep)
 {
     ASSERT(value->type().isNumeric());
     ASSERT(rep.isAny() || rep.kind() == ValueRep::SomeRegister || rep.kind() == ValueRep::SomeLateRegister || rep.kind() == ValueRep::Register || rep.kind() == ValueRep::StackArgument);
-    // Operand 0 of a Check is its predicate.
     ASSERT(m_opcode != Check || !m_operands.isEmpty() || rep.kind() == ValueRep::ColdAny);
-    // Says nothing about a value in another block: validate() checks dominance.
     RELEASE_ASSERT(value->hasNoPosition() || value->owner() != m_owner || value->opcode() == Phi || value->indexInBlock() < m_indexInBlock);
 
     if (m_operands.size() == m_operands.capacity()) [[unlikely]]
@@ -143,7 +137,6 @@ void PatchOperation::append(Operation* value, const ValueRep& rep)
     m_operands.appendWithinCapacity(value);
     m_constraints.appendWithinCapacity(rep);
 
-    // A Check that was folded away stands in no block, and nothing reads its operands.
     if (m_owner)
         value->gainUse();
 }
@@ -157,7 +150,6 @@ void PatchOperation::markChildAsLetGoByCallee(unsigned child)
 void PatchOperation::leaveOperandsWhereTheyLie()
 {
     RELEASE_ASSERT(m_opcode == Patch && bringsOperandsToTheirRegisters() && m_registersToBringOperandsTo.isEmpty());
-    // The generator writes the registers before anything is read that the allocator has placed. So nothing may be placed in one of them by the allocator's choice.
     if (numGPScratchRegisters)
         return;
     for (const ValueRep& constraint : m_constraints) {
@@ -166,7 +158,6 @@ void PatchOperation::leaveOperandsWhereTheyLie()
     }
     for (unsigned child = 0; child < m_operands.size(); ++child) {
         ValueRep& constraint = m_constraints[child];
-        // What else has no position lies nowhere: it is made in the register. The generator is told a constant.
         if (!constraint.isGPR() || (m_operands[child]->hasNoPosition() && !m_operands[child]->isConstant()))
             continue;
         if (m_registersToBringOperandsTo.isEmpty())
@@ -186,7 +177,6 @@ void PatchOperation::setWrites(std::span<const AbstractHeap* const> heaps)
     effects.writes = m_procedure.heapSet(heaps);
 }
 
-// The emitters set effects.terminal only after this call, so it is not asserted here.
 void PatchOperation::clobberLateOnSuccessor(unsigned successorIndex, const RegisterSet& set)
 {
     RELEASE_ASSERT(m_opcode == Patch && m_owner && m_owner->last() == this);
@@ -302,7 +292,6 @@ StackSlot* Procedure::addStackSlot(unsigned byteSize)
     return slot;
 }
 
-// FNV-1a.
 static uint32_t machineCoreHashOfConstantData(std::span<const uint8_t> bytes, uint32_t alignment)
 {
     uint32_t hash = 2166136261u ^ alignment;
@@ -354,7 +343,6 @@ static bool machineCoreLiesBelowListedHeap(const HeapTree& tree, const BitSpan& 
     return false;
 }
 
-// A call lists dozens of heaps, so no heap is compared with every other: each walks up the tree once.
 static std::span<const HeapIndex> machineCoreKeepHeapsBelowNoOther(Arena& arena, const HeapTree& tree, std::span<const AbstractHeap* const> heaps)
 {
     std::span<HeapIndex> kept = arena.createSpan<HeapIndex>(heaps.size());
@@ -467,7 +455,6 @@ HeapIndex HeapTree::add(HeapIndex parent, ASCIILiteral name)
     return static_cast<HeapIndex>(index);
 }
 
-// Whoever reads at any index has already added the offset of the elements to the address, so that heap has no offset of its own.
 IndexedAbstractHeap::IndexedAbstractHeap(HeapTree& tree, HeapIndex parent, ASCIILiteral name, ptrdiff_t offset, size_t elementSize, OptionSet<HeapTrait> traits)
     : m_anyIndex(tree.add(parent, name), 0, traits)
     , m_offset(offset)

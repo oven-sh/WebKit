@@ -26,7 +26,6 @@ struct OperandKindFit {
 
 } // anonymous namespace
 
-// Absent counts as a value of JavaScript, as it does for Type::isJavaScriptValue().
 static uint16_t primitivesOfOperandKind(OperandKind kind)
 {
     switch (kind) {
@@ -135,7 +134,6 @@ static bool operandLayoutIsEnvironment(const Program* program, LayoutID layout)
     return layout && program && program->at(layout).isEnvironment();
 }
 
-// `type` is the record of `id` and has no Unspecified.
 static bool recordHasOperandKind(TypeArena& types, TypeID id, const Type& type, OperandKind kind, LayoutID layoutOfOperation)
 {
     switch (kind) {
@@ -165,7 +163,6 @@ static bool recordHasOperandKind(TypeArena& types, TypeID id, const Type& type, 
     case OperandKind::EvalOperand:
         return type.isJavaScriptValue() || operandIsEnvironment(type) || type.isOpaque(OpaqueKind::ClassToken);
     case OperandKind::Convertible:
-        // Nothing that takes such an operand looks into it, so an environment that may be absent passes: the Narrowed behind the test that asks whether it is there takes one.
         return !type.opaque || holdsCells(representationOf(*type.opaque));
     case OperandKind::Guard:
     case OperandKind::IteratorState:
@@ -186,7 +183,6 @@ static bool recordHasOperandKind(TypeArena& types, TypeID id, const Type& type, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `proven` is not null. A type that is left without a value fits every kind.
 static OperandKindFit fitOfOperandKind(TypeArena& types, TypeID proven, OperandKind kind, LayoutID layoutOfOperation)
 {
     if (holdsOnlyPrimitives(proven))
@@ -238,14 +234,12 @@ static bool anyOperandTypeIsNever(OperandTypes proven)
     });
 }
 
-// Whoever reads the position gets a type with Unspecified in it: a read is typed by what is known of the position, else by what is established of it.
 static bool operandPositionMayBeUnspecified(const TypingContext& context, TypeID known, const DeclaredType& declared)
 {
     TypeID held = known ? known : context.atLevel(TypeLevel::Proven).typeIDOf(declared);
     return held && context.at(held).mayBeUnspecified();
 }
 
-// The result is the operand as it was found.
 static bool returnsOperandUnchanged(Opcode opcode, uint32_t operandIndex)
 {
     if (operandUsesOf(opcode, operandIndex) != OperandUses { OperandUse::Returns })
@@ -259,21 +253,17 @@ bool handsOperandOn(const TypingContext& context, const Operation& operation, ui
     Opcode opcode = opcodeOf(operation);
     if (opcode == Opcode::PutHeapFrameWord)
         return operandIndex == OperandIndex::PutHeapFrameWord::value;
-    // Nothing crosses the call for an entry parameter that no caller hands over, so nobody looks at what holds its place. Whoever starts a coroutine lists the entry parameters too, in front of the driver or of what it holds.
     if ((opcode == Opcode::CallDirect || opcode == Opcode::AwaitCallBySavingFrame) && (returnsResultOfFunction(operation.role()) || operation.role() == CodeRole::CoroutineBody) && operandIndex >= numberOfNamedOperandsOf(opcode)) {
         uint32_t entryParameter = operandIndex - numberOfNamedOperandsOf(opcode);
         if (entryParameter < context.program.at(operation.function()).numberOfEntryParameters() && context.positions.entryParameterIsLeftOutOfCalls(operation.function(), entryParameter))
             return true;
     }
-    // No closure has a word for such a capture either.
     if (opcode == Opcode::NewClosure && operandIndex >= numberOfNamedOperandsOf(opcode) && context.positions.entryParameterIsLeftOutOfCalls(operation.function(), operandIndex - numberOfNamedOperandsOf(opcode)))
         return true;
     if (opcode == Opcode::PutModuleVariable) {
-        // A variable that Plan added is numbered behind the program's own and has no record. It holds the object that it stands for, or nothing yet.
         VariableID id = operation.variable();
         if (id.index() >= context.program.variables.size())
             return false;
-        // A variable that has an owner gets back the word that was read from it.
         const Variable& variable = context.program.at(id);
         return variable.owner || operandPositionMayBeUnspecified(context, context.positions.variable(TypeLevel::Proven, id), variable.declared);
     }
@@ -290,17 +280,21 @@ bool handsOperandOn(const TypingContext& context, const Operation& operation, ui
     return isHeldOperand(operation, operandIndex) || returnsOperandUnchanged(opcode, operandIndex);
 }
 
-// True: findIllTypedOperand() finds nothing. False says nothing: whatever takes more than a look at the type is left to the rules below, which also say what is wrong.
 template<typename Operation>
 static ALWAYS_INLINE bool everyOperandFitsAtAGlance(const TypingContext& context, const Operation& operation, OperandTypes proven)
 {
     Opcode opcode = opcodeOf(operation);
-    if (opcode == Opcode::GetEnvironmentField || opcode == Opcode::PutEnvironmentField)
-        return false;
+    LayoutID environment;
+    if (opcode == Opcode::GetEnvironmentField || opcode == Opcode::PutEnvironmentField) {
+        environment = operation.layout();
+        if (!operandLayoutIsEnvironment(&context.program, environment) || anyOperandTypeIsNever(proven))
+            return false;
+    }
 
     TypeArena& types = context.types;
     bool takesEveryOperandAsAny = testsItsOwnGuess(operation);
     uint32_t numberOfOperands = operation.numberOfOperands();
+    const OperandInfosOfEntry infos = operandInfosByOpcode[static_cast<unsigned>(opcode)];
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex) {
         if (!operation.operand(operandIndex))
             continue;
@@ -308,7 +302,7 @@ static ALWAYS_INLINE bool everyOperandFitsAtAGlance(const TypingContext& context
         if (!id)
             return false;
 
-        OperandKind kind = takesEveryOperandAsAny ? OperandKind::Any : operandKindOf(opcode, operandIndex);
+        OperandKind kind = takesEveryOperandAsAny ? OperandKind::Any : operandInfoIn(infos, operandIndex).kind;
         if (holdsOnlyPrimitives(id)) {
             if (primitivesInID(id) & ~(primitivesOfOperandKind(kind) & ~Primitive::Unspecified))
                 return false;
@@ -329,6 +323,15 @@ static ALWAYS_INLINE bool everyOperandFitsAtAGlance(const TypingContext& context
                 if (type.opaque)
                     return false;
                 break;
+            case OperandKind::Layout:
+                if (!environment || !operandIsEnvironment(type) || type.environment != environment)
+                    return false;
+                break;
+            case OperandKind::Callable:
+            case OperandKind::Array:
+                if (anyOperandTypeIsNever(proven) || !operandHoldsOnlyObjects(type) || !types.isSubset(id, widestTypeOf(types, kind)))
+                    return false;
+                break;
             case OperandKind::Boolean:
             case OperandKind::Integer:
             case OperandKind::Number:
@@ -347,7 +350,7 @@ static ALWAYS_INLINE bool everyOperandFitsAtAGlance(const TypingContext& context
         if (kind != OperandKind::Declared)
             continue;
         TypeID required = requiredTypeOfOperand(context, operation, operandIndex);
-        if (required && !types.isSubset(id, required))
+        if (required && id != required && !types.isSubset(id, required))
             return false;
     }
     return true;
@@ -383,7 +386,6 @@ std::optional<IllTypedOperand> findIllTypedOperand(const TypingContext& context,
         TypeID type = proven[operandIndex];
         OperandKind kind = takesEveryOperandAsAny ? OperandKind::Any : operandKindOf(opcode, operandIndex);
         if (!type) {
-            // An operand without a type gives no value. In ResultAt's place it says that the caller found no result at that index.
             if (kind != OperandKind::Results)
                 return IllTypedOperand { InternalErrorKind::OperandTypeMismatch, operandIndex, { }, typeRequiredByOperandKind(types, kind, layout) };
             if (opcode == Opcode::ResultAt)
@@ -410,7 +412,6 @@ std::optional<IllTypedOperand> findIllTypedOperand(const TypingContext& context,
     return std::nullopt;
 }
 
-// A function hands on what its result is declared to hold.
 static bool returnHandsOperandOn(const TypingContext& context, FunctionID returningFunction)
 {
     if (!returningFunction)
@@ -444,7 +445,6 @@ std::optional<IllTypedOperand> findIllTypedOperandOfTerminator(const TypingConte
         TypeID type = proven[operandIndex];
         OperandKind kind = operandKindOf(terminatorKind, operandIndex);
         if (!type) {
-            // Return alone takes what gives several results, for which a caller may have no one type.
             if (terminatorKind == TerminatorKind::Return)
                 continue;
             return IllTypedOperand { InternalErrorKind::OperandTypeMismatch, operandIndex, { }, typeRequiredByOperandKind(types, kind, { }) };

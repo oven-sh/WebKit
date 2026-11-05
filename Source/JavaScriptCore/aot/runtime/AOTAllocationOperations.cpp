@@ -48,7 +48,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlow, JSCell*, (Instance* 
     OPERATION_RETURN(scope, newCellForCompiledCode(vm, instance->state->objects->structures.allocateAsCompiledCodeDoes(vm, allocation)));
 }
 
-// The cell is as allocateCellFromTemplate() leaves it: compiled code goes on to store what it has values for, and nothing else.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlowFromTemplate, JSCell*, (Instance* instance, uint32_t allocation, const uint8_t* body))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAllocateSlowFromTemplate);
@@ -62,7 +61,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlowFromTemplate, JSCell*,
     OPERATION_RETURN(scope, newCellForCompiledCode(vm, cell));
 }
 
-// For an object that lives in a frame. No cell is allocated: one that is dropped at once would lie in the heap with a header and without its fields.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetHeaderOfAllocation, uint64_t, (Instance* instance, uint32_t allocation))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetHeaderOfAllocation);
@@ -101,7 +99,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance
     OPERATION_RETURN(scope, cell);
 }
 
-// The closure is slim and lies in a frame. Nothing but the call that is under way has it.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Instance* instance, JSCell* closureInFrame))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTMoveClosureToHeap);
@@ -167,7 +164,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTKeyConstant, JSCell*, (Instance* i
     return instance->state->strings->keyCell(vm, index);
 }
 
-// Compiled code reads through the cell without a test.
 static void exitIfRealmLacksHostOf(State& state, uint32_t cellNumber)
 {
     const BuiltinTable& table = BuiltinTable::singleton();

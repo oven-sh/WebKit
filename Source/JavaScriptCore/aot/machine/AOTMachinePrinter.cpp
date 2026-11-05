@@ -74,7 +74,6 @@ static void printMachineNumber(PrintStream& out, Number value)
     out.print(numberToStringAndSize(value, buffer));
 }
 
-// Forwards everything to the target and counts the characters.
 class MachinePrinterLine final : public PrintStream {
 public:
     explicit MachinePrinterLine(PrintStream& target)
@@ -126,7 +125,6 @@ public:
     static ASCIILiteral nameOf(SymbolSpace);
 
 private:
-    // The sources of a step, in the order of forEachLeaf().
     class Leaves {
     public:
         explicit Leaves(const Step& step)
@@ -141,7 +139,6 @@ private:
         size_t m_next { 0 };
     };
 
-    // Where the value of a step is named, counted from the start of the step's text.
     static constexpr unsigned columnOfValue = 31;
 
     static const Block* blockEndedBy(const Operation*);
@@ -333,7 +330,6 @@ void MachinePrinter::printHeap(PrintStream& out, HeapIndex heap)
     ASCIILiteral name = tree.nameOf(heap);
     out.print(name);
 
-    // The heaps below the one for any index of an IndexedAbstractHeap have its name.
     HeapIndex parent = tree.parentOf(heap);
     if (heap == rootHeapIndex || tree.nameOf(parent) != name)
         return;
@@ -573,8 +569,6 @@ void MachinePrinter::printOperation(PrintStream& out, const Operation* operation
         out.print(comma, "IsIntegerAddedTo");
     if (operation->has(OperationFlag::ExtendsWordThatIsNotNegative))
         out.print(comma, "ExtendsWordThatIsNotNegative");
-    if (operation->has(OperationFlag::ReadsZeroOffNoCell))
-        out.print(comma, "ReadsZeroOffNoCell");
     if (operation->opcode() == Phi && operation->type() == Int64 && operation->useCount() && !operation->has(OperationFlag::UpperHalfIsRead))
         out.print(comma, "UpperHalfIsNotRead");
     if (operation->origin())
@@ -761,7 +755,6 @@ void MachinePrinter::printLiveness(PrintStream& out)
         printFlag(ValueFlag::IsKeptForCollector, "IsKeptForCollector"_s);
         printFlag(ValueFlag::GoesByOverflow, "GoesByOverflow"_s);
         printFlag(ValueFlag::HintIsOfRareRegion, "HintIsOfRareRegion"_s);
-        // Nearly every value has the flag, so the few without it are the ones that are marked.
         if (operation->type() == Int64 && facts.lastUse != noPosition && !facts.has(ValueFlag::UpperHalfIsRead))
             out.print(", UpperHalfIsNotRead");
         out.println();
@@ -999,7 +992,6 @@ void MachinePrinter::printStepLine(PrintStream& out, const Step& step)
     out.println();
 }
 
-// The one store of a spilled value has no step. It is shown where the encoder writes it.
 void MachinePrinter::printStoreToSpill(PrintStream& out, Operation* value)
 {
     const Allocation& allocation = m_proc.allocation();
@@ -1048,8 +1040,6 @@ void MachinePrinter::printAllocation(PrintStream& out)
         }
 
         const BlockSteps& range = allocation.stepsOf(block);
-        // The block in which a failed allocation stopped has no end, and its steps are the last in the list.
-        // A block that was never entered has no end either, but it begins at zero. The first block is the only entered one that does.
         bool allocationStoppedHere = range.terminator == UINT32_MAX && (range.begin || block == blocks.front());
         printSteps(range.begin, allocationStoppedHere ? static_cast<uint32_t>(steps.size()) : range.end);
         printSteps(range.beginOfEdgeMoves, range.endOfEdgeMoves);
@@ -1071,6 +1061,8 @@ void MachinePrinter::printAllocation(PrintStream& out)
             out.print(", isSaveInRareRegion");
         if (spill.isStoredAtHeadOfFramedPart)
             out.print(", isStoredAtHeadOfFramedPart");
+        if (spill.isSharedByPhis)
+            out.print(", isSharedByPhis");
         out.println();
     }
 

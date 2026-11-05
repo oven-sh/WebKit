@@ -13,8 +13,6 @@ namespace JSC { namespace AOT { namespace Typed {
 using ClassPartsToUnite = Vector<ClassPart, 8>;
 using UnitedClassParts = Vector<ClassPart, 16>;
 
-// Null means that nothing is written, which reads as anything, so it swallows the other side. internClassParts() stores a null with written contents after it as TypeTable::anything.
-// A union that isAnything() may differ from TypeTable::anything by seeds, Absent, Unspecified or named objects. It becomes null too, or the union of three types would depend on their order.
 static TypeID uniteWrittenContents(TypeArena& arena, TypeID first, TypeID second)
 {
     if (first == second)
@@ -44,7 +42,6 @@ static ClassPartsID uniteClassParts(TypeArena& arena, ClassPartsID classesOfFirs
     if (!classesOfFirst)
         return classesOfSecond;
 
-    // Copies, because uniting contents interns, and interning may move the parts that an id names.
     ClassPartsToUnite first(arena.at(classesOfFirst));
     ClassPartsToUnite second(arena.at(classesOfSecond));
 
@@ -77,8 +74,6 @@ static bool unionHoldsTwoInternalValues(const Type& first, const Type& second)
         || (first.environment && second.environment && first.environment != second.environment);
 }
 
-// intern() decides which part swallows which. Here each part only grows with either side.
-// The parts for (a, b) intern to the same type as the parts for (b, a): TypeArena::unionOf() remembers one answer for both.
 TypeParts uniteTypes(TypeArena& arena, const Type& first, const Type& second)
 {
     TypeParts united;
@@ -90,8 +85,6 @@ TypeParts uniteTypes(TypeArena& arena, const Type& first, const Type& second)
     if (!first.holdsFractionsWithoutBounds() && !second.holdsFractionsWithoutBounds())
         united.boundsOfFractions = first.boundsOfFractions.unionWith(second.boundsOfFractions);
 
-    // intern() turns an opaque value or an environment into anything once it is mixed with something else.
-    // The parts hold only one of each, so anyObject stands in for a second, different one.
     united.opaque = first.opaque ? first.opaque : second.opaque;
     united.environment = first.environment ? first.environment : second.environment;
     if (unionHoldsTwoInternalValues(first, second))

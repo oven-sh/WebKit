@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Strings: comparisons that need no string. A character and a char code are compared by the code unit that their read has left, a length is asked for zero by asking the cell, a piece is compared where it lies,
-// two relations on two strings share one order, and a row of comparisons of one subject with written texts shares its length.
-// Each looks back by records that dominate it and keeps nothing, so a suspension and a throw end nothing. A test whose edges hand on a narrowed operand keeps its opcode and its operands: it is refused here.
-// Withheld (TypedOperations): every comparison is copied in its closed form.
-
 #include "config.h"
 #include "AOTWalkStrings.h"
 
@@ -56,20 +51,6 @@ static Reference compareInOrderForStringComparisons(Walker& walker, Opcode opcod
     return buildOperatorForStrings(walker, opcode, subjectIsOnLeft ? subject : other, subjectIsOnLeft ? other : subject, origin);
 }
 
-// ---- A character by its code unit
-
-// Outside the string the read gave undefined, and the code unit is -1. Only for a character that nobody takes as a string: whoever does wants the test to leave him the string.
-static Reference testCharacterForUndefinedForStringComparisons(Walker& walker, Reference character, bool passesForUndefined, Origin origin)
-{
-    Reference codeUnit = codeUnitOfCharacterInSight(walker, character);
-    Reference root = rootForStrings(walker, character);
-    if (!codeUnit || !(walker.types().at(walker.typeOf(root)).primitives & Primitive::Undefined) || !notesOfStrings(walker).charactersOnlyAskedAbout.contains(root.id().index()))
-        return { };
-    Reference zero = integerForStrings(walker, 0);
-    return passesForUndefined ? buildOperatorForStrings(walker, Opcode::Less, codeUnit, zero, origin) : buildOperatorForStrings(walker, Opcode::LessEq, zero, codeUnit, origin);
-}
-
-// NaN equals nothing and stands in no relation. -1 does as NaN does where the other side cannot tell them apart, and as an unsigned word it lies above every int32.
 static Reference compareCharCodeForStringComparisons(Walker& walker, Opcode opcode, Reference codeUnit, Reference other, bool numberIsOnLeft, Origin origin)
 {
     Type typeOfOther = walker.types().at(walker.typeOf(other));
@@ -91,24 +72,20 @@ static Reference compareCharacterWithTextForStringComparisons(Walker& walker, Op
     if (allEqualities.contains(opcode)) {
         if (unit)
             return buildOperatorForStrings(walker, Opcode::StrictEq, codeUnit, integerForStrings(walker, *unit), origin);
-        // charAt() gives the empty string outside the string, and nowhere else.
         if (!lengthOfTextForStrings(walker, text) && !mayBeUndefined)
             return buildOperatorForStrings(walker, Opcode::StrictEq, codeUnit, integerForStrings(walker, -1), origin);
         return booleanForStringComparisons(walker, false);
     }
     if (!unit)
         return { };
-    // The empty string lies below every character, as -1 does. undefined stands in no relation.
     bool holdsOfMinusOne = asksForGreaterOnLeftForStringComparisons(opcode) != characterIsOnLeft;
     if (holdsOfMinusOne && mayBeUndefined)
         codeUnit = buildOperatorForStrings(walker, Opcode::URShift, codeUnit, integerForStrings(walker, 0), origin);
     return compareInOrderForStringComparisons(walker, opcode, codeUnit, integerForStrings(walker, *unit), characterIsOnLeft, origin);
 }
 
-// Null: nothing was built.
 static Reference compareByCodeUnitForStringComparisons(Walker& walker, Opcode opcode, Reference left, Reference right, Origin origin)
 {
-    bool isEquality = allEqualities.contains(opcode);
     for (uint32_t side = 0; side < 2; ++side) {
         Reference subject = side ? right : left;
         Reference other = side ? left : right;
@@ -121,12 +98,6 @@ static Reference compareByCodeUnitForStringComparisons(Walker& walker, Opcode op
         if (!codeUnit)
             continue;
         PrimitiveKnownToFolding known = primitiveKnownForStrings(walker, other);
-        bool asksForUndefined = known.kind() == PrimitiveKnownToFolding::Kind::Undefined || (opcode == Opcode::Eq && known.kind() == PrimitiveKnownToFolding::Kind::Null);
-        if (isEquality && asksForUndefined) {
-            if (Reference answer = testCharacterForUndefinedForStringComparisons(walker, subject, true, origin))
-                return answer;
-            continue;
-        }
         if (!known.isText())
             continue;
         if (Reference answer = compareCharacterWithTextForStringComparisons(walker, opcode, subject, codeUnit, known.asText(), !side, origin))
@@ -135,7 +106,6 @@ static Reference compareByCodeUnitForStringComparisons(Walker& walker, Opcode op
     return { };
 }
 
-// `s[i] === t[j]`. Where both may lie outside their strings, both have to give the same there.
 static Reference compareCharactersForStringComparisons(Walker& walker, Reference left, Reference right, Origin origin)
 {
     Reference leftUnit = codeUnitOfCharacterInSight(walker, left);
@@ -150,9 +120,6 @@ static Reference compareCharactersForStringComparisons(Walker& walker, Reference
     return buildOperatorForStrings(walker, Opcode::StrictEq, leftUnit, rightUnit, origin);
 }
 
-// ---- The length asked for zero
-
-// The operand is the length of a string, and the comparison alone reads it. Null: it is not.
 static Reference stringWhoseLengthIsAskedForStringComparisons(Walker& walker, ValueID operand)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -205,9 +172,6 @@ static Reference askLengthForZeroForStringComparisons(Walker& walker, const Body
     return { };
 }
 
-// ---- A subject beside a written text
-
-// Null: nothing was built.
 static Reference comparePieceWithTextForStringComparisons(Walker& walker, const PieceOfString& piece, StringID text, Origin origin)
 {
     unsigned length = lengthOfTextForStrings(walker, text);
@@ -220,11 +184,9 @@ static Reference comparePieceWithTextForStringComparisons(Walker& walker, const 
         if (Reference answer = buildComparisonOfRangeWithText(walker, piece, text, origin))
             return answer;
     }
-
-    return buildComparisonOfPieceAtEndOfStringWithText(walker, piece, text, origin);
+    return { };
 }
 
-// The record is a comparison of the subject with some written text.
 static bool comparesSubjectWithTextForStringComparisons(const Walker& walker, const Operation& record, Reference rootOfSubject)
 {
     auto isSubject = [&](ValueID operand) {
@@ -247,9 +209,6 @@ static bool comparesSubjectWithTextForStringComparisons(const Walker& walker, co
     }
 }
 
-// `if (s === "get") .. else if (s === "put") .. else if (s === "post") ..`: from the second comparison on the length is read once, -1 where the subject is no string, and a text of another length costs one comparison of integers.
-// `e.kind === "num" .. e.kind === "add"`: behind a text of the same length the length tells nothing apart, and the comparison stays the one of two strings.
-// Null: no comparison of the subject has led here, or none that the length goes on from.
 static Reference lengthSharedByComparisonsForStringComparisons(Walker& walker, const BodyValue& value, Reference subject, StringID text, Origin origin)
 {
     std::optional<TestThatLedHere> led = testThatLedToBlockOf(walker, value);
@@ -281,7 +240,6 @@ static Reference lengthSharedByComparisonsForStringComparisons(Walker& walker, c
     return isBuilt ? length[0] : Reference();
 }
 
-// True: the comparison is built and bound, or the walk stands nowhere.
 static bool compareSubjectWithTextForStringComparisons(Walker& walker, const BodyValue& value, uint32_t placeOfSubject, StringID text, std::optional<uint32_t> narrowed, Origin origin)
 {
     TypeArena& types = walker.types();
@@ -300,7 +258,6 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
         }
     }
 
-    // `anything == "abc"`: no number, boolean or BigInt equals a text that converts to NaN, so only an object is converted.
     if (value.opcode() == Opcode::Eq && narrowsNothing && type.hasObjects() && type.isJavaScriptValue() && !type.mayBeUnspecified()) {
         Vector<char16_t> buffer;
         if (!std::isnan(jsToNumber(types.viewOf(text, buffer))))
@@ -314,11 +271,9 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
         return true;
     }
 
-    // The outcome narrows operand 0 of the operations below, which is the subject.
     if (!narrowed || (*narrowed & ~(placeOfSubject ? 0u : 1u)))
         return false;
-    // A subject that is held as one of the program's written texts is compared as a word.
-    if (!subject.isValue() || walker.representationOf(subject) == Representation::LiteralString || !type.isJavaScriptValue() || !(type.primitives & Primitive::AnyString))
+    if (!subject.isValue() || !type.isJavaScriptValue() || !(type.primitives & Primitive::AnyString))
         return false;
     bool isString = isProvenString(walker, walker.typeOf(subject));
     if (!isString && value.opcode() != Opcode::StrictEq)
@@ -349,8 +304,6 @@ static bool compareSubjectWithTextForStringComparisons(Walker& walker, const Bod
         walker.bind(value.id(), answer);
     return true;
 }
-
-// ---- The doors
 
 bool buildEqualityOnStrings(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
@@ -384,7 +337,6 @@ bool buildEqualityOnStrings(Walker& walker, const BodyValue& value, const Inputs
     return false;
 }
 
-// The order of the two strings that the test which led here has asked for. `isSwapped`: it was asked with the sides the other way round.
 static Reference orderInSightForStringComparisons(Walker& walker, const BodyValue& value, Reference left, Reference right, bool& isSwapped)
 {
     std::optional<TestThatLedHere> led = testThatLedToBlockOf(walker, value);
@@ -406,7 +358,6 @@ static Reference orderInSightForStringComparisons(Walker& walker, const BodyValu
     return isSwapped || (first == rootOfLeft && second == rootOfRight) ? order : Reference();
 }
 
-// `a < b ? -1 : a > b ? 1 : 0`: a block that the Branch on this relation alone leads to holds a relation on the same two.
 static bool secondRelationStandsBehindBranchForStringComparisons(Walker& walker, const BodyValue& value)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -457,7 +408,6 @@ bool buildRelationOnStrings(Walker& walker, const BodyValue& value, const Inputs
     if (!isProvenString(walker, walker.typeOf(left)) || !isProvenString(walker, walker.typeOf(right)))
         return false;
 
-    // `s < "a"`: the first code unit and the length decide.
     for (uint32_t placeOfText = 0; placeOfText < 2 && walker.isInLoop(); ++placeOfText) {
         StringID text = textKnownForStrings(walker, placeOfText ? right : left);
         std::optional<char16_t> unit = text ? onlyCodeUnitOfText(walker, text) : std::nullopt;
@@ -487,7 +437,6 @@ bool buildRelationOnStrings(Walker& walker, const BodyValue& value, const Inputs
     return true;
 }
 
-// `if (s.length)`
 bool buildTruthinessOfLengthOfString(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (inputs.areOnlyTypes() || walker.isUnreachable())
@@ -500,28 +449,6 @@ bool buildTruthinessOfLengthOfString(Walker& walker, const BodyValue& value, con
         return false;
     if (Reference answer = buildTestForEmptyStringForStringComparisons(walker, string, false, walker.originOf(value)))
         walker.bind(value.id(), answer);
-    return true;
-}
-
-// `typeof ch === "string"`, a test for undefined: it tells every string from undefined, which is all that a character can be.
-bool buildTestOfCharacterByCodeUnit(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
-{
-    if (inputs.areOnlyTypes() || walker.isUnreachable())
-        return false;
-    std::optional<uint32_t> narrowed = operandsNarrowedBehindTestForStrings(walker, value.id());
-    if (!narrowed || *narrowed)
-        return false;
-    Type tested = walker.types().at(value.testedType());
-    if (!tested.isJavaScriptValue())
-        return false;
-    bool passesForUndefined = tested.primitives & Primitive::Undefined;
-    bool tellsStringsFromUndefined = passesForUndefined ? !(tested.primitives & Primitive::AnyString) : !!(tested.primitives & Primitive::String);
-    if (!tellsStringsFromUndefined)
-        return false;
-    Reference answer = testCharacterForUndefinedForStringComparisons(walker, walker.referenceOf(value.operand(0)), passesForUndefined, walker.originOf(value));
-    if (!answer)
-        return false;
-    walker.bind(value.id(), answer);
     return true;
 }
 

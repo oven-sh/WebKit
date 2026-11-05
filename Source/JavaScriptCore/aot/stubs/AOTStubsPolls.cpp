@@ -18,7 +18,6 @@
 
 namespace JSC { namespace AOT {
 
-// In a frame with a record, with the stack pointer aligned as at the entry of a stub.
 static void callPollSlow(StubAssembler& jit)
 {
     jit.preservingRegistersClobberedBy(StubCallee::Operation, false, [&](unsigned) {
@@ -27,10 +26,8 @@ static void callPollSlow(StubAssembler& jit)
     });
 }
 
-// bytesAboveSavedRegisters: from the registers that are saved for the operation up to where the stack pointer is once the call of the function object has returned.
 static void callPollBeforeEntering(StubAssembler& jit, unsigned bytesAboveSavedRegisters)
 {
-    // A call by value passes nothing in a floating-point register and keeps nothing in one.
     bool entersFunctionObject = static_cast<PollBeforeEnteringForm>(jit.key().form()) == PollBeforeEnteringForm::FunctionObject;
     jit.preservingRegistersClobberedBy(StubCallee::Operation, false, entersFunctionObject ? RegisterSet::allFPRs() : RegisterSet(), [&](unsigned bytes) {
         jit.addPtr(TrustedImm32(bytes + bytesAboveSavedRegisters), sp, A1);
@@ -45,7 +42,6 @@ StubSignature signatureOfPollAtLoop(StubKey) { return { }; }
 StubSignature signatureOfPollBeforeEntering(StubKey) { return { }; }
 
 #if CPU(X86_64)
-// The return address of the stub is on top of the stack. The throwing stub finds the stack as the caller of the function left it: a caller without a frame record is found by the stack pointer alone.
 static void leaveFunctionAtPrologue(StubAssembler& jit, StubKey throwingStub)
 {
     constexpr GPRReg returnAddress = CCallHelpers::s_scratchRegister;
@@ -53,7 +49,6 @@ static void leaveFunctionAtPrologue(StubAssembler& jit, StubKey throwingStub)
     jit.loadPtr(Address(sp), A1);
     jit.move(instanceGPR, A0);
     jit.subPtr(TrustedImm32(sizeof(void*)), sp);
-    // This path does not return to the function, so it clobbers nothing for it.
     jit.withSavedRegisters(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()), [&] {
         jit.callOperation(Entry::operationAOTBytesAllocatedAtPrologueCheck, T11);
     });
@@ -74,7 +69,6 @@ static void leaveFunctionAtPrologue(StubAssembler& jit, StubKey throwingStub)
 static void generatePollAtPrologue(StubAssembler& jit, Entry operation)
 {
 #if CPU(X86_64)
-    // Frame setup clobbers no register here, so every one of them may hold a value of the caller, the macro assembler's scratch register too.
     constexpr GPRReg stackPointerAtSite = X86Registers::eax;
     jit.push(stackPointerAtSite);
     jit.addPtr(TrustedImm32(2 * sizeof(void*)), sp, stackPointerAtSite);
@@ -144,7 +138,6 @@ void generatePollAtLoop(StubAssembler& jit)
     jit.emitFunctionEpilogue();
     jit.jumpToStub(handleException(true));
 #else
-    // A poll clobbers the scratch registers of the macro assembler and nothing else.
     constexpr GPRReg scratch = ARM64Registers::x17;
     jit.emitFunctionPrologue();
     callPollSlow(jit);
@@ -166,7 +159,6 @@ void generatePollBeforeEntering(StubAssembler& jit)
     jit.addPtr(TrustedImm32(sizeof(void*)), sp, scratch);
     Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, StubAssembler::softStackLimitWord());
     jit.emitFunctionPrologue();
-    // The frame record, the return address of this stub and the return address of the call.
     callPollBeforeEntering(jit, 3 * sizeof(void*));
     jit.emitFunctionEpilogue();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
@@ -190,7 +182,6 @@ void generatePollBeforeEntering(StubAssembler& jit)
     jit.loadPtr(Address(exception, VM::exceptionOffset()), exception);
     jit.popPair(CCallHelpers::linkRegister, scratch);
     Jump hasThrown = jit.branchTestPtr(CCallHelpers::NonZero, exception);
-    // A return, so that it pairs with the call in the return-address predictor.
     jit.m_assembler.ret(scratch);
 
     hasThrown.link(&jit);

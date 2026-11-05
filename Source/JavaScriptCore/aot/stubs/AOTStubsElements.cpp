@@ -43,7 +43,6 @@ StubSignature signatureOfMoveFewBytes(StubKey)
     return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
 }
 
-// The ranges may overlap, so every byte is read before any is written. The first and last word of a range cover all of it.
 void generateMoveFewBytes(StubAssembler& jit)
 {
     static_assert(maxBytesMovedByStub == 2 * sizeof(uint64_t));
@@ -154,7 +153,6 @@ static void returnValueUnlessHole(StubAssembler& jit, const ElementRegisters& re
     jit.returnToCaller();
 }
 
-// The elements of a compiled object are those of its extra properties.
 static void loadExtraPropertiesOfCompiledObject(StubAssembler& jit, const ElementRegisters& registers, JumpList& hasNone)
 {
     const auto [base, key, extraProperties, index, hiddenWordOffset, number] = registers;
@@ -198,7 +196,6 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     jit.loadPtr(BaseIndex(length, storage, CCallHelpers::TimesEight), jit.result());
     jit.returnToCaller();
 
-    // A table that a literal with numbers for keys has made.
     isNotString.link(&jit);
     JumpList isNotCompiledObject = branchIfNotCompiledObject(jit, base);
     loadExtraPropertiesOfCompiledObject(jit, registers, notHandled);
@@ -219,7 +216,6 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     jit.loadDouble(element, number);
     returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, notHandled), numberScratch);
 
-    // Mostly a typed array, whose arm below takes a key that is an int32. Any other key goes through the tests of the entry for any key.
     isNotCompiledObject.link(&jit);
     jit.signExtend32ToPtr(index, storage);
     notHandled.append(jit.branch64(CCallHelpers::NotEqual, index, storage));
@@ -306,7 +302,6 @@ static void loadStringCharacterAndReturn(StubAssembler& jit, const ElementRegist
     jit.branch32(CCallHelpers::BelowOrEqual, storage, TrustedImm32(maxSingleCharacterString)).linkTo(characterReady, &jit);
     slow.append(jit.jump());
 
-    // A piece of a longer string stays one however often it is read, so the operation would answer for each of its characters. They lie in the longer string.
     isRope.link(&jit);
     const GPRReg impl = storage;
     const GPRReg characters = index;
@@ -384,7 +379,6 @@ static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const Element
     jit.loadDouble(element, number);
     returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, isAbsent), numberScratch);
 
-    // Right above the object is the Object.prototype of its realm, which has no elements and takes none. A negative key is a name.
     isAbsent.link(&jit);
     slow.append(jit.branch32(CCallHelpers::LessThan, key, TrustedImm32(0)));
     loadStructure(jit, base, storage);
@@ -578,7 +572,6 @@ static void storeTypedArrayElementAndReturn(StubAssembler& jit, const ElementReg
     slow.append(jit.jump());
 }
 
-// A store at the public length appends. Where the index is not below the vector length, the vector is then full and grows first.
 template<typename Functor>
 static void storeOrAppendAndReturn(StubAssembler& jit, const ElementRegisters& registers, GPRReg allocator, GPRReg scratch, JumpList& slow, const Functor& storeAndReturn)
 {
@@ -690,8 +683,6 @@ static JSType typeOfExpectedView(ExpectedElements expected)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Leaves the operands as they came, so that a miss goes on to the stub that takes everything. The index is a whole register: a negative one lies above every length.
-// With a value, the element is replaced: only one that is there, and only by an int32.
 static void accessExpectedElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, ExpectedElements expected, GPRReg index, std::optional<GPRReg> value, JumpList& miss)
 {
     const GPRReg base = registers.base;

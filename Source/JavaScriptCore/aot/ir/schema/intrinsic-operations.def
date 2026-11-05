@@ -8,7 +8,7 @@ enum SetNextResult { | engine HasEntry Entry Element }
 family EngineIntrinsic AsRead..Placed ; isIntrinsic = true
 operation IsConstructor (value: Any/inspects) -> natural(boolean) ; none ; runtime = IsConstructor ; flow = TableProves ; form = Runtime
 operation ReadsIteratorOfListUnseen (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; runtime = ReadsIteratorOfListUnseen ; flow = TableProves ; form = Runtime
-operation ArraySpeciesCreate (length: Number/inspects, array: Any/inspects+runs(Species), room?: Number/inspects) -> unknown ; Allocates throws ; runtime = ArraySpeciesCreate ; flow = Copies ; form = Runtime
+operation ArraySpeciesCreate (length: Number/inspects, array: Any/inspects+runs(Species), room?: Number/inspects) -> unknown ; Allocates reads(ArrayStorage) throws ; runtime = ArraySpeciesCreate ; flow = Copies ; form = Runtime
 operation GetByValWithThis (object: Any/retains, thisValue: Any/retains, property: Any/Converted) -> unknown ; unknownCode ; runtime = GetByValWithThis ; flow = Copies ; flowRule = Heap ; form = Closed
 operation GetOwnProperty (object: Any/retains, key: PropertyKey) -> unknown ; unknownCode ; runtime = GetOwnProperty ; flow = Copies ; flowRule = Heap ; form = Runtime
 operation ToLength (value: Any/Converted) -> natural(number) ; ResolvesRopes by Operator ; runtime = ToLength ; flow = TableProves ; form = Open
@@ -17,10 +17,10 @@ operation ResumeGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode
 operation StepGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode, value: Any/retains, check: GeneratorStepCheck) -> results(StepGeneratorResult: unknown, natural(GeneratorStepStatus)) ; unknownCode ; flow = Copies ; flowRule = Generator ; form = Closed
 operation IsGeneratorSuspendedAtStart (generator: Any/inspects) -> natural(boolean) ; reads(InternalFields) ; runtime = IsGeneratorSuspendedAtStart ; flow = TableProves ; form = Runtime
 operation IsUnmodifiedGenerator (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = UnmodifiedGenerator ; branches = May ; flow = TableProves ; form = Open
-operation CreateIteratorResult (value: Any/retains(result), done: Boolean/inspects, engine allocationSite?: AllocationSite) -> allocation(IteratorResult) ; Allocates ; AsRead..AsRead ; removedBy = ResolveBuiltins ; flow = Allocates ; flowRule = Heap
-operation StepArrayIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; removedBy = ExpandIteration ; flow = Copies ; flowRule = StepOfLibrary
-operation StepMapIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; removedBy = ExpandIteration ; flow = Copies ; flowRule = StepOfLibrary
-operation StepSetIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; removedBy = ExpandIteration ; flow = Copies ; flowRule = StepOfLibrary
+operation CreateIteratorResult (value: Any/retains(result), done: Boolean/inspects, engine allocationSite?: AllocationSite) -> allocation(IteratorResult) ; Allocates ; AsRead..AsRead ; flow = Allocates ; flowRule = Heap
+operation StepArrayIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; flow = Copies ; flowRule = StepOfLibrary
+operation StepMapIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; flow = Copies ; flowRule = StepOfLibrary
+operation StepSetIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; flow = Copies ; flowRule = StepOfLibrary
 
 family RuntimeIntrinsic AsRead..Placed ; isIntrinsic = true
 operation RequireBuiltinModule (runtimeModule: RuntimeModule) -> unknown ; unknownCode ; runtime = RequireBuiltinModule ; flow = Copies ; flowRule = Module ; form = Runtime
@@ -38,10 +38,8 @@ operation ResolvePromise (promise: Object/inspects+writesContents, value: Any/re
 operation RejectPromise (promise: Object/inspects+writesContents, value: Any/retains(promise)) -> none ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState, ExternalState) ; runtime = RejectPromise ; flow = Copies ; flowRule = Promise ; holder = promise ; slotOfHolder = InternalField ; fieldOfHolder = 1 ; form = Runtime
 
 family ArrayIntrinsic AsRead..Placed ; isIntrinsic = true
-# The front end asks it where a program writes Array.from(list).
 operation IsPristineArray (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks, ArrayStorage) ; proves = Pristine ; branches = May ; hasKnownValueRule = true ; flow = TableProves ; isIntrinsic = false ; form = Open
 operation ArrayStorageKind (array: Array/inspects) -> natural(ArrayStorage) ; reads(ArrayStorage) ; flow = TableProves ; form = Open
-# storage, here and below: GetArrayStorage of the array.
 operation HasContiguousIndex (array: Array/inspects, position: Integer/inspects, engine storage?: ArrayStoragePointer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; branches = May ; flow = TableProves ; form = Open
 operation GetContiguousIndex (array: Array/inspects+readsContents, position: Integer/inspects, engine storage?: ArrayStoragePointer/inspects) -> unknown => declared(array) ; reads(ArrayStorage, Elements[Array]) ; flow = Copies ; flowRule = Heap ; form = Open
 operation GetDoubleIndex (array: Array/inspects+readsContents, position: Integer/inspects, engine storage?: ArrayStoragePointer/inspects) -> natural(number) ; reads(ArrayStorage, Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
@@ -54,18 +52,12 @@ operation PutOwnContiguousIndex (array: Array/inspects+writesContents, position:
 operation PutOwnDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects, engine storage?: ArrayStoragePointer/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; flow = Copies ; flowRule = Heap ; form = Open
 operation PutOwnInt32Index (array: Array/inspects+writesContents, position: Integer/inspects, value: Integer/inspects, engine storage?: ArrayStoragePointer/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; flow = Copies ; flowRule = Heap ; form = Open
 operation NewContiguousArray (length: Integer/inspects, engine allocationSite?: AllocationSite) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates ; form = Closed
-operation NewDoubleArray (length: Integer/inspects, engine allocationSite?: AllocationSite) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates ; form = Closed
-operation NewArrayLike (length: Integer/inspects, source?: Any/inspects, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage) -> allocation(Array) ; Allocates reads(ArrayStorage) throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates ; form = Closed
-operation NewArrayWithCapacity (length: Integer/inspects, source?: Any/inspects, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage) -> allocation(Array) ; Allocates reads(ArrayStorage) throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates ; form = Closed
+operation NewArrayLike (length: Integer/inspects, source?: Any/inspects, room?: Integer/inspects, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage) -> allocation(Array) ; Allocates reads(ArrayStorage) throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates ; form = Closed
 operation TryPutByValDirect (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array), engine length?: Integer/inspects, engine arrayStorage: ArrayStorage) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves ; flowRule = Heap ; form = Open
-operation TryPutIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage) writes(ArrayStorage, Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves ; flowRule = Heap ; form = Open
+operation TryPutIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage, RuntimeState) writes(ArrayStorage, Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves ; flowRule = Heap ; form = Open
 operation TryCopyFilledElements (array: Array/inspects+writesContents, source: Array/inspects+readsContents+retainsContents, count: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) writes(ArrayStorage, Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
 operation TryPutElements (array: Array/inspects+writesContents, source: Array/inspects+readsContents+retainsContents, count: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) writes(Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
-# The library has just made the array, with holes up to its length: every place below the length gets the value. False, with nothing stored: the storage does not hold boxed values.
 operation TryFillNewArray (array: Array/inspects+writesContents, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
-operation TryPutDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
-operation GrowNewArray (array: Array/inspects+writesContents, length: Integer/inspects) -> none ; GrowsArray ; runtime = GrowNewArray ; flow = Copies ; flowRule = Heap ; form = Runtime
-# It gives the array or a copy of it. Facts hands the array on, so the array stands for both, and what is given has the type of the array.
 operation TruncateNewArray (array: Array/inspects+returns+writesContents, length: Integer/inspects) -> allocation(Array) => natural(same(array)) ; GrowsArray ; runtime = TruncateNewArray ; flow = Copies ; flowRule = Heap ; form = Open
 
 family CollectionIntrinsic AsRead..Placed ; isIntrinsic = true

@@ -23,7 +23,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(declaredBoundOf(Opcode::NewObject).writes.containsEntire(AbstractHeap::MemberGuards));
-// It does what the first allocation of the class does. So whoever counts a construction has counted it: the pre-scans of loops, and Facts.
 static_assert(declaredBoundOf(Opcode::BeginMemberGuards).writes.isSubsetOf(declaredBoundOf(Opcode::NewObject).writes) && declaredBoundOf(Opcode::NewObject).mayCollect);
 
 bool hasTextByItself(const Type& type)
@@ -31,7 +30,6 @@ bool hasTextByItself(const Type& type)
     return !type.isNever() && type.hasOnlyPrimitives(Primitive::NumberLike | Primitive::AnyString | Primitive::BigInt);
 }
 
-// A string of the program is held in no fewer bytes than it has characters.
 uint64_t longestTextOf(TypeReader reader, const Type& type)
 {
     constexpr uint64_t longestTextOfNumberLike = std::tuple_size_v<NumberToStringBuffer>;
@@ -73,7 +71,6 @@ enum class CodeRunByProtocols : uint8_t { None, IterationOfStrings, Unknown };
 
 struct OperandSeenByProtocols {
     uint16_t primitives { 0 };
-    // An object, or a word of which the type does not say what it holds.
     bool mayBeMoreThanPrimitive { false };
 };
 
@@ -200,8 +197,7 @@ static_assert([] {
 
 static constexpr OperandUses usesThatCallOperandForEffects { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly };
 
-// In front of the body that it enters, a construction by value reads `prototype` off new.target and makes `this`. What is known of a callee speaks of its body alone.
-static constexpr OpcodeSet opcodesThatMakeThisForEffects { Opcode::Construct, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList, Opcode::ConstructSuperForwardVarargs };
+static constexpr OpcodeSet opcodesThatMakeThisForEffects { Opcode::Construct, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList };
 static constexpr Effects effectsOfMakingThisOfConstruction = [] {
     Effects effects = declaredBoundOf(Opcode::GetConstructPrototype);
     effects.merge(declaredBoundOf(Opcode::NewObject));
@@ -216,7 +212,6 @@ static_assert([] {
     return liesInsideEveryBound;
 }());
 
-// String.prototype[Symbol.iterator] and the next() of its iterators are read-only, so no code of the program runs. The iterator and each character are made.
 static constexpr Effects effectsOfIteratingString = [] {
     Effects effects = declaredBoundOf(NamedEffectSet::CreatesString);
     effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
@@ -239,10 +234,8 @@ static constexpr OpcodeSet opcodesWithEffectsOfResolvingRopesAlone = [] {
 
 static constexpr OpcodeSet opcodesWithEffectsFittedToOperands = [] {
     OpcodeSet opcodes = opcodesWithEffectsOfResolvingRopesAlone;
-    for (Opcode opcode : { Opcode::Decode, Opcode::Strcat }) {
-        if (effectRuleOf(opcode) == EffectRule::Declared)
-            opcodes.add(opcode);
-    }
+    if (effectRuleOf(Opcode::Strcat) == EffectRule::Declared)
+        opcodes.add(Opcode::Strcat);
     return opcodes;
 }();
 
@@ -345,7 +338,6 @@ static bool mayBeCellForEffects(const TypingContext& context, TypeID type)
 
 static constexpr uint16_t primitivesWithMembersForProtocols = Primitive::Defined & ~(Primitive::UndefinedOrNull | Primitive::Absent);
 
-// The primitives on which the protocol looks a member up. A program may add members to the prototypes of numbers, booleans, symbols and BigInts: Number.prototype[Symbol.iterator], BigInt.prototype.toJSON.
 static constexpr uint16_t primitiveReceiversOfProtocol(Protocol protocol)
 {
     switch (protocol) {
@@ -483,7 +475,6 @@ Effects effectsOfProtocolsOn(const TypingContext& context, OptionSet<Protocol> p
 
 namespace {
 
-// Gathered operand by operand, and turned into effects once.
 struct CodeRunByOperands {
     bool isUnknown { false };
     bool iteratesStrings { false };
@@ -514,10 +505,6 @@ struct CodeRunByOperands {
 
 } // anonymous namespace
 
-// The first object of a constructor function ends a set of guards, and so does the prototype property that a function gets when it is first asked for.
-// Whoever resolves members or callees sees neither, so no caller takes those writes away.
-// A row of unknown code declares every write and so names none that is its own: effectsOf() keeps what a construction does by itself.
-// `effects` comes in as the operation's own.
 static void cutBoundByWhatCallerFound(Effects& effects, const CodeRunByOperands& code, const Effects* foundByCaller)
 {
     if (!foundByCaller) {
@@ -549,11 +536,9 @@ static bool declaresCodeOfOperands(TerminatorKind kind)
     return terminatorKindsDeclaringCodeOfOperands().contains(kind);
 }
 
-// `effects` comes in as the operation's own.
 template<typename Entry, typename Holder>
 static ALWAYS_INLINE void addCodeOfOperands(const TypingContext& context, Entry entry, const Holder& holder, OperandTypes operandTypes, Effects& effects, const Effects* foundByCaller)
 {
-    // Any code may run before a suspended operation goes on, whatever is known of what it calls.
     if (effects.maySuspend) {
         effects.merge(Effects::unknownCode());
         return;
@@ -569,7 +554,6 @@ static ALWAYS_INLINE void addCodeOfOperands(const TypingContext& context, Entry 
     cutBoundByWhatCallerFound(effects, code, foundByCaller);
 }
 
-// IsLooselyEqual leaves undefined and null as they are, and converts anything else only to compare it with a boolean, number, string, symbol or BigInt.
 static bool mayBeConvertedByLooseEqualityForEffects(const Type& operand, const Type& other)
 {
     bool isMoreThanNullish = operand.primitives & ~Primitive::UndefinedOrNull || operand.hasObjects() || !operand.isJavaScriptValue();
@@ -665,17 +649,6 @@ static bool joinsTextsThatFitForEffects(const TypingContext& context, const Hold
     return texts.fitInString();
 }
 
-// A narrow reference to a cell names a cell that is there, and decoding it is arithmetic. Only the word of a literal may have to make its string.
-static bool decodesWordOfNoStringForEffects(const TypingContext& context, TypeID type)
-{
-    if (!type)
-        return false;
-    if (holdsOnlyPrimitives(type))
-        return !(primitivesInID(type) & (Primitive::AnyString | Primitive::Unspecified));
-    Type decoded = context.at(type);
-    return decoded.isJavaScriptValue() && !decoded.mayBeUnspecified() && !(decoded.primitives & Primitive::AnyString) && !decoded.stringLiterals;
-}
-
 template<typename Holder>
 static ALWAYS_INLINE Effects declaredEffectsBuiltInPlace(const Program& program, Opcode opcode, const Holder& operation)
 {
@@ -696,8 +669,6 @@ static ALWAYS_INLINE Effects declaredEffectsBuiltInPlace(const Program& program,
 template<typename Holder>
 static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode opcode, const Holder& operation, OperandTypes operandTypes)
 {
-    if (opcode == Opcode::Decode && decodesWordOfNoStringForEffects(context, operandTypes[0]))
-        return Effects::none();
     Effects effects = declaredEffectsBuiltInPlace(context.program, opcode, operation);
     if (opcodesWithEffectsOfResolvingRopesAlone.contains(opcode) && readsOnlyFlatStringsForEffects(context, opcode, operation, operandTypes)) {
         LocationMasks reads = effects.reads;
@@ -709,7 +680,6 @@ static Effects declaredEffectsWithOperands(const TypingContext& context, Opcode 
     return effects;
 }
 
-// A test of the mark of a cell reads NamedProperties. Whether a field holds a raw value from birth, so that undefined or null in its slot sets the mark, is a fact, which no row declares.
 static constexpr OpcodeSet slotStoresThatMaySetMarkForEffects { Opcode::PutSlot, Opcode::PutSlotOrAdd };
 
 template<typename Operation>

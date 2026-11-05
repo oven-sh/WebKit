@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Branches and relations that need no test, for Folding with TypedOperations: a branch on a test whose operands have narrower names by now, and a relation of a value with itself or with what compares as NaN.
-// At a suspension and at a throw: nothing. Each answer follows from values that are primitives, or from what a value is, and neither changes.
-// Withheld: every branch keeps both sides, and every relation is compared.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -22,9 +18,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Each is converted without code, and none throws beside another of them.
 static constexpr uint16_t primitivesComparedQuietlyInBranches = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnyString | Primitive::BigInt;
-// None of them compares as NaN, so of any two of them one is less or they are equal. A string beside a number may say NaN.
 static constexpr uint16_t primitivesInTotalOrderInBranches = Primitive::Null | Primitive::Boolean | Primitive::Integer | Primitive::FractionalNumber | Primitive::BigInt;
 
 static ValueID valueBehindNamesInBranches(const Code& code, ValueID value)
@@ -48,8 +42,6 @@ static bool convertsQuietlyInBranches(const Type& type)
     return !type.isNever() && type.hasOnlyPrimitives(primitivesComparedQuietlyInBranches);
 }
 
-// ---- Relations
-
 std::optional<bool> answerOfRelationWithoutCompare(Walker& walker, const BodyValue& relation)
 {
     Opcode opcode = relation.opcode();
@@ -64,7 +56,6 @@ std::optional<bool> answerOfRelationWithoutCompare(Walker& walker, const BodyVal
     if (!convertsQuietlyInBranches(typeOfLeft) || !convertsQuietlyInBranches(typeOfRight))
         return std::nullopt;
 
-    // `x < undefined`: what compares as NaN stands in no relation to anything.
     const Code& code = walker.code();
     auto isAlwaysNaN = [&](Reference operand, const Type& type) {
         const Operation& record = code.at(operand.id());
@@ -77,7 +68,6 @@ std::optional<bool> answerOfRelationWithoutCompare(Walker& walker, const BodyVal
     ValueID rootOfRight = valueBehindNamesInBranches(code, right.id());
     if (!rootOfLeft || !rootOfRight)
         return std::nullopt;
-    // No value is less than itself, and each is at most itself unless it compares as NaN. Two strings are compared as strings.
     if (rootOfLeft != rootOfRight)
         return std::nullopt;
     if (!relationAdmitsEqualityInBranches(opcode))
@@ -86,8 +76,6 @@ std::optional<bool> answerOfRelationWithoutCompare(Walker& walker, const BodyVal
         return true;
     return std::nullopt;
 }
-
-// ---- Branches
 
 bool Walker::endBlockInAnotherWay(const BodyTerminator& terminator)
 {

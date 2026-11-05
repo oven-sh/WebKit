@@ -144,7 +144,6 @@ static const FormatPatternHeader& headerOfFormatPattern(const WTF::Vector<uint8_
     return *reinterpret_cast<const FormatPatternHeader*>(pattern.span().data());
 }
 
-// The same numbers in every build, so that a request has one answer.
 class SampleNumbersForFormatPattern {
 public:
     double next()
@@ -169,7 +168,6 @@ static ALWAYS_INLINE auto ofNumberFormat(Arguments... arguments)
     return callRemovable<RemovableFeature::IntlNumberFormat, RemovedFeatureStub::Abort, function>(arguments...);
 }
 
-// Nothing of Intl or ICU is called by name here: a direct call would make ICU part of what the compiler keeps in a trimmed executable.
 class FormatPatternPlanner {
 public:
     explicit FormatPatternPlanner(JSGlobalObject* globalObject)
@@ -255,7 +253,6 @@ private:
         return Formatter { object, format };
     }
 
-    // Another locale is formatted in the locale of the machine that the program runs on.
     bool isSupportedLocale(const Formatter& formatter, const String& locale)
     {
         return lengthOf(callMethod(get(formatter.object, "constructor"_s), "supportedLocalesOf"_s, { jsString(m_vm, locale) })) == 1u;
@@ -268,7 +265,6 @@ private:
 
     static bool isSameText(const String& written, const String& throughICU)
     {
-        // jsString() answers the shared text for one character, whatever it is handed.
         return !written.isNull() && written == throughICU && (written.length() <= 1 || written.is8Bit() == throughICU.is8Bit());
     }
 
@@ -314,7 +310,6 @@ private:
     static constexpr double hour = 60 * minute;
     static constexpr double day = 24 * hour;
 
-    // Saturday, the 3rd of February 2001, 04:05:06.789 on the formatter's clock.
     static double timeValueWithOneDigitInEachField(int32_t utcOffsetInMinutes)
     {
         constexpr double startOf2001 = 978307200000.0;

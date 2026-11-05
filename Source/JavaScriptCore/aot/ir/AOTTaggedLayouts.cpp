@@ -34,7 +34,6 @@ static void admitTypeToFieldOfTaggedLayout(TypeArena& types, DeclaredType& prese
     else if (present.isEstablished() && declared.isEstablished())
         present.establish(Proven::byCompiler(admitted));
     else {
-        // No member of DeclaredType clears IsFromCompiler, so an established field becomes guarded by copying the guarded declaration.
         if (present.isEstablished()) {
             present = declared;
             present.site = { };

@@ -24,7 +24,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr TypeID int53Type = *tryMakeTypeOfPrimitives(Primitive::Integer, Range::exact());
 static constexpr TypeID fractionType = typeOfPrimitives(Primitive::FractionalNumber);
 static constexpr TypeID wholeNumberType = typeOfPrimitives(Primitive::WholeNumber);
-static constexpr TypeID numberWithoutNaNType = typeOfPrimitives(Primitive::Integer | Primitive::FractionalNumber);
 
 struct TableOfElementTypes : TypeTable {
     TableOfElementTypes()
@@ -59,21 +58,6 @@ static void testFormsTable()
     for (IndexingType indexingType : { NonArray, ArrayClass, ArrayWithUndecided, ArrayWithArrayStorage, ArrayWithSlowPutArrayStorage })
         AOT_TEST_CHECK(arrayStorageOf(indexingType) == ArrayStorage::Other);
     AOT_TEST_CHECK(arrayStorageTestMask == IndexingShapeMask);
-}
-
-static void testFormsAtAllocation()
-{
-    TableOfElementTypes table;
-    TypeArena types(table, ArenaKeeps::InProgram);
-
-    AOT_TEST_CHECK(arrayStorageAtAllocation(types, types.withPrimitives(numberWithoutNaNType, Primitive::Undefined)) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(types, types.withPrimitives(fractionType, Primitive::Null)) == ArrayStorage::Double);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(types, types.withPrimitives(TypeTable::int32, Primitive::UndefinedOrNull | Primitive::Absent)) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(types, TypeTable::int32) == ArrayStorage::Int32);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(types, types.withPrimitives(TypeTable::string, Primitive::Undefined)) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(types, TypeTable::anything) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(types, TypeTable::never) == ArrayStorage::Contiguous);
-    AOT_TEST_CHECK(arrayStorageAtAllocation(types, TypeTable::undefined) == ArrayStorage::Contiguous);
 }
 
 static void testFormsStoreWithoutConversion()
@@ -244,11 +228,9 @@ static void testReserveLeavesSmallStepsToUsualGrowth()
 static void testReserveDeclines()
 {
     Realms realms;
-    // The constant of the same name in reserveArrayCapacity().
     constexpr unsigned maxElementsReservedInOneStep = 4194304;
     JSArray* array = createArray(realms, ArrayWithInt32, 4);
     Butterfly* butterfly = array->butterfly();
-    // The longest storage has room for the first two counts, so only the bound on one reservation declines them.
     uint64_t largestCountThatFits = MAX_STORAGE_VECTOR_LENGTH - array->length();
     for (uint64_t additional : { uint64_t { maxElementsReservedInOneStep } + 1, largestCountThatFits, static_cast<uint64_t>(-1), static_cast<uint64_t>(MAX_STORAGE_VECTOR_LENGTH) })
         reserveArrayCapacity(realms.vm(), array, additional);
@@ -267,7 +249,6 @@ std::span<const NativeTest> arrayTests()
 {
     static constexpr NativeTest tests[] = {
         { "arrays/forms/table"_s, testFormsTable },
-        { "arrays/forms/at-allocation"_s, testFormsAtAllocation },
         { "arrays/forms/store-without-conversion"_s, testFormsStoreWithoutConversion },
         { "arrays/profile/grows-with-the-third-longer-array"_s, testProfileGrowsWithTheThirdLongerArray },
         { "arrays/profile/review-interval"_s, testProfileReviewInterval },

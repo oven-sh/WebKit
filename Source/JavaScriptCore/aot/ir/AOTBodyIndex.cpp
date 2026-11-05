@@ -34,7 +34,6 @@ std::span<uint8_t> BodyIndexTable::Worker::allocate(size_t numberOfBytes)
         chunks.append(MallocSpan<uint8_t>::zeroedMalloc(roundedBytes));
         allocatedBytes += roundedBytes;
         std::span<uint8_t> memory = chunks.last().mutableSpan().first(numberOfBytes);
-        // usedBytesOfLastChunk describes the last chunk, so the chunk that still has room stays last.
         if (chunks.size() > 1)
             chunks.last().swap(chunks[chunks.size() - 2]);
         else
@@ -44,7 +43,6 @@ std::span<uint8_t> BodyIndexTable::Worker::allocate(size_t numberOfBytes)
 
     size_t room = chunks.isEmpty() ? 0 : chunks.last().span().size() - usedBytesOfLastChunk;
     if (chunks.isEmpty() || roundedBytes > room) {
-        // The verifier makes a table for each function, so a table that holds one index stays small. A chunk is as large as all in front of it together, up to bytesPerChunk.
         size_t bytesOfChunk = std::max(roundedBytes, std::min(bytesPerChunk, std::max(bytesOfFirstChunkOfBodyIndexMemory, allocatedBytes)));
         chunks.append(MallocSpan<uint8_t>::zeroedMalloc(bytesOfChunk));
         allocatedBytes += bytesOfChunk;
@@ -142,13 +140,11 @@ namespace {
 
 struct TestBehindBodyProofs {
     Proof proof { Proof::None };
-    // Null where the terminator itself is the test.
     BodyValue value;
 };
 
 } // anonymous namespace
 
-// The index may still be under construction: it only has to know the place of the value that the Branch tests, which precedes the Branch in the stream.
 static TestBehindBodyProofs findTestBehindBodyProofs(const BodyIndex& index, const BodyTerminator& terminator)
 {
     if (!terminator.isConditionalBranch())
@@ -164,7 +160,6 @@ static ValueID subjectOfBodyProof(const TestBehindBodyProofs& test, const BodyTe
     return test.value ? test.value.operand(operandIndex) : terminator.operand(operandIndex);
 }
 
-// The rows with an operand of the kind IteratorState or with `held`, and ReleaseHint.
 static constexpr OpcodeSet opcodesThatMayNameIterations {
     Opcode::IteratorResume, Opcode::IteratorClose, Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::StepAsyncGenerator, Opcode::AwaitBySavingFrame, Opcode::AwaitCallBySavingFrame,
     Opcode::YieldBySavingFrame, Opcode::AsyncGeneratorYield, Opcode::ReleaseHint
@@ -172,7 +167,10 @@ static constexpr OpcodeSet opcodesThatMayNameIterations {
 
 static bool takesBodyProofs(const BodyTerminator& terminator, uint32_t targetIndex)
 {
-    const TargetInfo* info = infoOfTarget(terminator.kind(), targetIndex, terminator.numberOfTargets());
+    TerminatorKind kind = terminator.kind();
+    if (std::optional<uint32_t> numberOfFixedTargets = numberOfFixedTargetsOf(kind))
+        return targetIndex < terminator.numberOfTargets() && targetIndex < *numberOfFixedTargets && targetsTakingProofsOf(kind) >> targetIndex & 1;
+    const TargetInfo* info = infoOfTarget(kind, targetIndex, terminator.numberOfTargets());
     return info && info->takesProofs;
 }
 
@@ -191,7 +189,6 @@ const BodyIndex& BodyIndexBuilder::run()
     findParametersReadByReleaseHintsAlone();
     computeDominators();
     numberDominatorTree();
-    // The entry has the number zero and dominates every block that is reached.
     m_index->m_blocksInDominatorOrder = m_blocksInDominatorOrder.first(m_blocks[entryBlock.index()].lastDominatorNumberBelow + 1);
     findLoops();
     adoptLoops();
@@ -218,7 +215,6 @@ void BodyIndexBuilder::allocate()
     m_onlyUsersOfValues = takeArrayOfBodyIndex<uint32_t>(memory, numberOfValues);
     m_usesOfValues = takeArrayOfBodyIndex<uint8_t>(memory, numberOfValues);
 
-    // A null id is not zero.
     std::uninitialized_default_construct(m_blocks.begin(), m_blocks.end());
 
     m_index->m_body = body;
@@ -255,15 +251,12 @@ ALWAYS_INLINE void BodyIndexBuilder::noteUse(ValueID used, BodyUseKind kind, uin
         ++uses;
 }
 
-// A ReleaseHint reads nothing, and an edge reads what it hands to a parameter for the sake of whoever reads the parameter.
-// From the values with a mention of another kind, through the parameters among them, to what edges hand to those. Each link is followed once.
 void BodyIndexBuilder::findParametersReadByReleaseHintsAlone()
 {
     std::span<const BodyArgumentLink> links = m_worker.argumentLinks.span();
     if (m_worker.releaseHints.isEmpty() || links.empty() || !m_function.isCoroutine())
         return;
 
-    // Nothing: the target has no such parameter, so nobody can say who reads the value.
     auto parameterFilledBy = [&](const BodyArgumentLink& link) -> std::optional<uint32_t> {
         if (link.indexOfParameter >= m_index->block(link.to).numberOfParameters())
             return std::nullopt;
@@ -271,10 +264,8 @@ void BodyIndexBuilder::findParametersReadByReleaseHintsAlone()
     };
 
     uint32_t numberOfValues = m_function.body.numberOfValues();
-    // By value.
     Vector<uint32_t> numberOfMentionsByHintsAndEdges;
     numberOfMentionsByHintsAndEdges.fill(0, numberOfValues);
-    // By parameter, and one more. The count of each becomes the end of its list. Filling the lists from their ends turns each end into the start.
     Vector<uint32_t> firstArgument;
     firstArgument.fill(0, numberOfValues + 1);
     for (ValueID hint : m_worker.releaseHints) {
@@ -362,7 +353,6 @@ void BodyIndexBuilder::noteEdge(BlockID from, BodyTarget target, uint32_t target
         place.flags |= BodyIndex::IsEnteredByHandlerEdge;
 }
 
-// It counts a mention exactly where BodyIndex::edgeResult() answers.
 void BodyIndexBuilder::noteProofs(const BodyBlock& from, const BodyTerminator& terminator)
 {
     TestBehindBodyProofs test = findTestBehindBodyProofs(*m_index, terminator);
@@ -396,7 +386,6 @@ void BodyIndexBuilder::indexWords()
     auto offsetOf = [&](const uint32_t* word) {
         return static_cast<uint32_t>(word - firstWord);
     };
-    // The place of a value that the loop has not come to is zero, where no operation begins.
     auto isIteratorOpen = [&](ValueID named) {
         uint32_t place = m_placesOfValues[named.index()];
         return place && !(place & BodyIndex::isParameterBit) && body.operationAt(place, named).opcode() == Opcode::IteratorOpen;
@@ -440,7 +429,6 @@ void BodyIndexBuilder::indexWords()
             }
             if (value.words()[0] & Wire::WrittenPositionFollows) [[unlikely]] {
                 std::optional<ConstructionStart> start = value.constructionStart();
-                // Program::findConstructionReportedAt() looks up starts by module, so a start without a module could never be found.
                 if (start && m_function.module)
                     m_worker.constructionStarts.append(ConstructionStartInModule { m_function.module, *start });
             }
@@ -491,7 +479,6 @@ void BodyIndexBuilder::adoptLoops()
         for (LoopID holder = place.loop; holder; holder = found[holder.index()].parent)
             functor(found[holder.index()]);
     };
-    // Where the members of each loop stand in a row among those of the loop around it, the list of a loop in no other serves all inside it: a block is listed once, however many loops hold it.
     for (const BlockPlace& place : m_blocks) {
         if (place.loop)
             ++found[place.loop.index()].numberOfMembers;
@@ -535,7 +522,6 @@ void BodyIndexBuilder::adoptLoops()
             numberOfMembers += std::exchange(loop.numberOfMembers, 0);
         }
     }
-    // A parent has a smaller id.
     for (size_t place = found.size(); place--;) {
         if (LoopID parent = found[place].parent)
             found[parent.index()].numberOfLoopsWithin += found[place].numberOfLoopsWithin;
@@ -569,7 +555,7 @@ void BodyIndexBuilder::adoptLoops()
     m_index->m_membersOfLoops = members;
 }
 
-ValueID BodyIndex::valueBehindCasts(ValueID id) const
+ValueID BodyIndex::valueBehindCastsFrom(ValueID id) const
 {
     while (!isParameter(id)) {
         BodyValue definition = value(id);

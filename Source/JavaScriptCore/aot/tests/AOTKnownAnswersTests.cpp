@@ -32,7 +32,6 @@ struct AnswerOfKnownAnswersTests {
     bool endsAtSuspension { false };
 };
 
-// What AnswersOfWalk and KnownAnswers mean, said with lists that are gone through from end to end.
 struct PlainTableOfKnownAnswersTests {
     uint32_t numberOf(const AnswerOfKnownAnswersTests& answer)
     {
@@ -41,7 +40,6 @@ struct PlainTableOfKnownAnswersTests {
                 continue;
             if (answers[number] == answer)
                 return number;
-            // What rests on nothing is found again however old it is.
             if (!answer.restsOn.isEmpty())
                 break;
         }
@@ -82,7 +80,6 @@ struct PlainListOfKnownAnswersTests {
         });
     }
 
-    // `written`: nothing where other code runs.
     void endWhatIsWritten(const PlainTableOfKnownAnswersTests& table, std::optional<AbstractHeapSet> written, const WalkState& stateAskedWhatIsFresh)
     {
         held.removeAllMatching([&](uint32_t number) {
@@ -131,7 +128,6 @@ static std::optional<uint64_t> findInKnownAnswersTests(const WalkState& state, u
     return answer ? std::optional<uint64_t>(answer->noted) : std::nullopt;
 }
 
-// Numbers that only grow, one that comes again now and then, sets that are emptied and begin anew far up.
 static void testSetsAnswerAsPlainListsDo()
 {
     constexpr size_t numberOfSets = 4;
@@ -260,7 +256,6 @@ static void testAnswersAsPlainListsDo()
                 AnswerOfKnownAnswersTests answer;
                 answer.key = random.getUint32(numberOfKeys);
                 answer.noted = random.getUint32(3);
-                // One key always rests on the same, as the notes of the walk do.
                 answer.restsOn = heapsRestedOn[answer.key % std::size(heapsRestedOn)];
                 answer.holder = answer.key % 5 ? valueOfKnownAnswersTests(answer.key % numberOfHolders) : Reference();
                 answer.endsAtSuspension = !(answer.key % 7);
@@ -331,7 +326,6 @@ static void testAnswersAsPlainListsDo()
     }
 }
 
-// Two ways that come by one answer hold one number, so the answer is there behind the join. What one way alone has come by is not, nor what the two know differently.
 static void testWhatEveryWayHasNotedHoldsBehindJoin()
 {
     AnswersOfWalk table;
@@ -351,7 +345,6 @@ static void testWhatEveryWayHasNotedHoldsBehindJoin()
     AOT_TEST_CHECK(findInKnownAnswersTests(taken, 2) == std::optional<uint64_t>(20));
     AOT_TEST_CHECK(!findInKnownAnswersTests(taken, 3) && !findInKnownAnswersTests(taken, 4) && !findInKnownAnswersTests(taken, 5));
 
-    // A state that never had the table takes nothing away from one that has it.
     state = WalkState();
     noteInKnownAnswersTests(state, { 6, 60, { }, { }, false });
     AOT_TEST_CHECK(findInKnownAnswersTests(state, 6) == std::optional<uint64_t>(60));
@@ -361,7 +354,6 @@ static void testWhatEveryWayHasNotedHoldsBehindJoin()
     AOT_TEST_CHECK(findInKnownAnswersTests(state, 7) == std::optional<uint64_t>(70) && !findInKnownAnswersTests(state, 6));
 }
 
-// A suspension ends what no saved frame keeps, on a fresh holder too, and not what is known for good. A call of unseen code is no suspension.
 static void testSuspensions()
 {
     AnswersOfWalk table;
@@ -387,7 +379,6 @@ static void testSuspensions()
     AOT_TEST_CHECK(findInKnownAnswersTests(other, 1) && !findInKnownAnswersTests(other, 2) && !findInKnownAnswersTests(other, 3) && findInKnownAnswersTests(other, 4));
 }
 
-// `p.z = 1; o.c`, `o.m(); new Q(); o.m()`: of two holders the one that may be written forgets, of two guards the one whose class may be meant.
 static void testWriterEndsWhatItMayWrite()
 {
     AnswersOfWalk table;
@@ -426,26 +417,19 @@ static void testWriterEndsWhatItMayWrite()
     AOT_TEST_CHECK(state.variable(VariableID(0u)) == held);
     AOT_TEST_CHECK(!state.guardOfReadsHolds(LayoutID(1u), key) && state.guardOfReadsHolds(LayoutID(2u), key));
     AOT_TEST_CHECK(!findInKnownAnswersTests(state, 1) && findInKnownAnswersTests(state, 2) && findInKnownAnswersTests(state, 3));
-    // What may lie in any object.
     AOT_TEST_CHECK(!findInKnownAnswersTests(state, 4));
-    // Once for the records of the state, once for the one answer.
     AOT_TEST_CHECK(numberOfQuestionsAboutOther == 2);
 
-    // What is no part of an object is written whoever is asked.
     state.invalidate(effectsThatWriteInKnownAnswersTests({ AbstractHeap::ModuleVariables }), mayBeWritten, mayEndGuard);
     AOT_TEST_CHECK(!state.variable(VariableID(0u)) && !findInKnownAnswersTests(state, 3) && findInKnownAnswersTests(state, 2));
 
-    // The bytes under a view are no part of it.
     state.invalidate(effectsThatWriteInKnownAnswersTests({ AbstractHeap::TypedArrayElements }), mayBeWritten, mayEndGuard);
     AOT_TEST_CHECK(!state.element(other, held) && state.slot(other, field) == held);
 
-    // Where other code runs nobody is asked.
     state.invalidate(Effects::unknownCode(), mayBeWritten, mayEndGuard);
     AOT_TEST_CHECK(!state.slot(other, field) && !state.guardOfReadsHolds(LayoutID(2u), key) && !findInKnownAnswersTests(state, 2));
 }
 
-// A row of loops: what was noted in front of them all holds at each head, and what a loop notes ends with it. So at each loop a set with one old number takes a new one, further off each time.
-// Where a word is written for each 64 numbers between the two, this does not end.
 static void testNumberFarAboveOldOneCostsNoMore()
 {
     constexpr uint32_t numberOfLoops = 200000;
@@ -471,7 +455,6 @@ static void testNumberFarAboveOldOneCostsNoMore()
     AOT_TEST_CHECK(old.size() == 1 && old.contains(3));
 }
 
-// NOTES x WRITERS, where the writer stores into an object that is fresh: `const n = new Node(); n.left = a; n.right = b`, beside ever more objects of which a field is known.
 static void testStoresIntoFreshObjectsCostNoMoreEach()
 {
     constexpr uint32_t numberOfStatements = 200000;

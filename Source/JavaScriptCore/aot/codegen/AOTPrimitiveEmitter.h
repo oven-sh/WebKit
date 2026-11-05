@@ -41,7 +41,6 @@ protected:
     template<typename Usual, typename Rare> void ifElse(Condition, const Usual&, const Rare&);
     template<typename T, typename Usual, typename Rare> T either(Condition, const Usual&, const Rare&);
     template<typename Usual, typename Rare> Operand eitherOperand(Condition, Representation, const Usual&, const Rare&);
-    // Both sides are as likely as the code before them.
     template<typename T> T selectByBranch(Condition, NOESCAPE const Invocable<T()> auto& whenTrue, NOESCAPE const Invocable<T()> auto& whenFalse);
     Condition asBoolean(NOESCAPE const Invocable<void(BranchTargets)> auto& branch);
     void branchUnless(Condition condition, LBasicBlock rareTarget);
@@ -125,7 +124,6 @@ protected:
     template<typename T> requires isBitwiseComparable<T> Condition above(T a, T b) { return binary<Condition>(&Output::above, a, b); }
     template<typename T> requires isBitwiseComparable<T> Condition aboveOrEqual(T a, T b) { return binary<Condition>(&Output::aboveOrEqual, a, b); }
 
-    // An operand that is written as a number becomes a constant once the operand before it has been appended.
     template<typename T> T constant(Immediate<T>);
     template<typename T> T add(T a, Immediate<T> b) { return add(a, constant<T>(b)); }
     template<typename T> T sub(T a, Immediate<T> b) { return sub(a, constant<T>(b)); }
@@ -161,10 +159,8 @@ protected:
     Integer zeroExtended(Condition value) { return Integer(m_out.zeroExt(value.value(), Machine::Int64)); }
     Word32 low32(Integer value) { return Word32(m_out.castToInt32(value.value())); }
     Word32 low32(Boxed value) { return Word32(m_out.castToInt32(value.value())); }
-    // ToInt32 of an integer that may have left int32 and that nothing tests: `((h << 5) - h + c) | 0`. What the integer is a sum of is added in words.
     Word32 low32InWords(Integer value) { return Word32(m_out.lowWord(value.value())); }
     Word32 asWord32(Condition value) { return Word32(value.value()); }
-    // For zero the count is any number.
     LValue countTrailingZerosOfNonZero(LValue bits);
 
     Condition isInt32(Boxed value) { return Condition(m_out.aboveOrEqual(value.value(), m_numberTag)); }
@@ -179,13 +175,8 @@ protected:
     Condition isUndefinedOrNull(Boxed, uint16_t occurringPrimitives);
     Condition isEmpty(Boxed value) { return Condition(m_out.isZero64(value.value())); }
     Condition isNotEmpty(Boxed value) { return Condition(m_out.notZero64(value.value())); }
-    // A value in a narrow reference is a reference or one of the three markers, and no marker is above undefinedCell32: the comparison takes an immediate of one byte.
     Condition isCellReference(NarrowReference value) { return Condition(m_out.above(value.value(), undefinedCell32)); }
-    // For a word that may be any word below minCell32: that of a literal string, an immediate in the table of a collection.
     Condition isCellReferenceAmongAllWords(NarrowReference value) { return Condition(m_out.aboveOrEqual(value.value(), minCell32)); }
-    // What a load makes of the word in a narrow slot: the cell where the word is a reference, the word itself where it is none.
-    std::optional<NarrowReference> narrowWordBehind(LiteralStringWord);
-    // What SlotEmitter::loadWord() makes of the word in a slot of 32 bits for integers and markers. Whoever asks the word itself leaves nothing of the widening in use.
     std::optional<Word32> narrowWordBehind(OptionalInteger);
 
     Boxed boxInt32(Word32 value)
@@ -218,7 +209,6 @@ protected:
     Condition hasCellTypeIn(CellPointer, JSTypeRange stableRange);
     Condition hasCellType(CellPointer cell, JSType type) { return hasCellTypeIn(cell, { type, type }); }
     Condition hasCellTypeAbove(CellPointer, JSType);
-    // True of a cell that has left the type in place since the type was last read. False is the truth.
     Condition hasOrHadCellType(CellPointer, JSType);
     Condition hasMutableCellType(CellPointer, JSType);
     Condition isObjectCell(CellPointer cell) { return hasCellTypeIn(cell, { ObjectType, MaxJSType }); }
@@ -244,7 +234,6 @@ protected:
     TypedPointer instanceField(const Machine::AbstractHeap&, ptrdiff_t offsetInInstance);
     TypedPointer mutableInstanceField(ptrdiff_t offsetInInstance) { return instanceField(m_heaps.AOTInstance_mutableFields, offsetInInstance); }
 
-    // What only Image can count. `mention` is what m_mentions.add() gave. AOTNumbering.h says which spaces have a number and which have a word of the instance.
     Word32 numberOf(uint32_t mention) { return Word32(m_out.number(mention)); }
     TypedPointer instanceWord(const Machine::AbstractHeap& heap, uint32_t mention) { return m_out.instanceWord(heap, mention); }
 
@@ -254,7 +243,6 @@ protected:
 
     void mutatorFence();
 
-    // Behind the last read through a pointer that was loaded from the cell (a view's vector, a string's characters) under a heap without HeapTrait::HoldsInnerPointer: nothing else keeps the cell visible to the conservative scan.
     void ensureStillAliveHere(CellPointer);
 
     Machine::Procedure& m_proc;

@@ -32,7 +32,6 @@ enum class CopyPolicy : uint8_t {
 struct UnitPlacementInputs {
     std::span<const size_t> sizes;
     std::span<const size_t> alignedOffsets;
-    // One for each unit, or one for all of them.
     std::span<const size_t> alignments;
     const BitVector& fallsIntoNext;
     std::span<const CopyableUnit> copyables;

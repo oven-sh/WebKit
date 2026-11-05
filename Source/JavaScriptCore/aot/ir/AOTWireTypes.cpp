@@ -59,7 +59,6 @@ static LayoutSetID uniteFamiliesOfWireLayouts(TypeArena& arena, const Vector<Lay
     if (namedLayouts.size() == 1)
         return familyOfLayout[namedLayouts[0]];
 
-    // Chunk by chunk: a family may have tens of thousands of members, and nobody has asked for a list of them yet.
     Vector<LayoutSetID, 16> families;
     for (uint32_t layout : namedLayouts)
         families.append(familyOfLayout[layout]);
@@ -73,7 +72,6 @@ static ObjectSetID objectsOfWireBuiltins(TypeArena& arena, std::span<const uint3
 
     const BuiltinTable& builtins = arena.builtins();
     const ObjectTable& objects = arena.objects();
-    // Two built-ins may be one object, and the numbers of objects need not follow those of built-ins.
     Vector<ObjectID, 8> named;
     for (uint32_t builtin : namedBuiltins)
         named.append(objects.objectOf(builtins.canonicalID(BuiltinID(builtin))));
@@ -103,8 +101,6 @@ static ClassPartsID readClassPartsOfWireType(TypeArena& arena, const Wire::Secti
     return arena.internClassParts(parts.span());
 }
 
-// One more than the largest index among the types that the classes of the type name, and 0 where they name none.
-// wireTypeUnitesContentsOfClasses: two parts have one class or stand out of order, so internClassParts() makes types of its own on the way.
 static uint32_t endOfTypesNamedByWireType(const Wire::Sections& checkedSections, uint32_t index)
 {
     Wire::Span list = checkedSections.types[index].classes;
@@ -135,7 +131,6 @@ static void internStringTagKeys(Program& program, const ParallelLoops& loops)
         }
     });
 
-    // Numbered in the order of layouts and fields: these keys have stable numbers.
     ArenasOfWorkers arenas(program.types, loops);
     Vector<PropertyKeyID> keys(literals.size());
     arenas.internInOrder(keys.mutableSpan(), [&](uint32_t index) {
@@ -162,7 +157,6 @@ static FunctionInOrderOfObjects placeInOrderOfObjects(const Wire::Function& func
     constexpr uint32_t flagsOfCoroutines = OptionSet<FunctionFlags> { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }.toRaw();
     constexpr uint32_t flagsOfRestArrays = OptionSet<FunctionFlags> { FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }.toRaw();
     FunctionInOrderOfObjects place { Group::EnteredByEngineAlone, !!(function.flags & flagsOfCoroutines), !!(function.flags & flagsOfRestArrays) };
-    // verifyRecords() reports a kind that is none, and it runs behind the read.
     switch (static_cast<FunctionKind>(function.kind)) {
     case FunctionKind::Plain:
     case FunctionKind::BaseConstructor:
@@ -187,7 +181,6 @@ static FunctionInOrderOfObjects placeInOrderOfObjects(const Wire::Function& func
 
 void WireTypeReader::makeObjects()
 {
-    // The records of the wire's functions are tens of megabytes, of which this reads three words each.
     Vector<FunctionInOrderOfObjects> functions;
     functions.grow(m_sections.functions.size());
     forEachRangeOfIndicesInParallel(m_build.parallelLoops(), functions.size(), [&](size_t first, size_t end) {
@@ -282,12 +275,8 @@ void WireTypeReader::readTypes()
         return parts;
     };
 
-    // The positions of types are those that one thread hands out that interns the list in its order, so they depend on the program alone.
-    // Contents name earlier types. So the list is cut where a type names one that stands behind the last cut: the types between two cuts find all that they name, and are interned together.
-    // The front end lists types by their height, so there are about as many cuts as heights.
     for (uint32_t first = 0; first < numberOfTypes;) {
         if (endOfNamedTypes[first] == wireTypeUnitesContentsOfClasses) {
-            // The calling thread is worker 0.
             TypeArena& arena = arenas.of(0);
             types[first] = arena.intern(partsOf(first, arena));
             ++first;
@@ -302,7 +291,6 @@ void WireTypeReader::readTypes()
         first = end;
     }
 
-    // One thread, in the order of the list: the positions of these types depend on the program alone too.
     TypeArena& arenaOfCaller = arenas.of(0);
     for (uint32_t index = 0; index < numberOfTypes; ++index) {
         std::span<const uint32_t> namedLayouts = wordsListedByWireType(m_sections, m_sections.types[index].layouts);
@@ -332,14 +320,12 @@ void WireTypeReader::finishLayouts()
     internStringTagKeys(m_program, m_build.parallelLoops());
     steps.didFinish("keys of built-in names and of tags"_s);
 
-    // In the order in which computeFamilies() counted and numbered them.
     m_program.appendBuiltinLayouts();
     steps.didFinish("layouts of built-ins"_s);
     m_program.appendNamespaceLayouts(m_build.parallelLoops());
     steps.didFinish("layouts of namespaces"_s);
     appendTaggedLayouts(m_program, m_program.taggedFamilies.span());
     steps.didFinish("tagged layouts"_s);
-    // Plan gives its shape to every closure that is a cell of its own: findClosureLayout().
     Layout layoutOfClosures;
     layoutOfClosures.kind = LayoutKind::Closure;
     m_program.layouts.append(WTF::move(layoutOfClosures));
@@ -353,7 +339,6 @@ void WireTypeReader::finishLayouts()
     initializeLayouts(m_program, m_build);
     steps.didFinish("initialize layouts"_s);
 
-    // A chain of written bases that runs into a cycle has no root to inherit from.
     BitVector layoutsWithAcyclicBases = answerAlongRows(numberOfWireLayouts, false, [&](LayoutID id) -> StepAlongRow {
         LayoutID base = m_program.at(id).base;
         if (!base)
@@ -399,7 +384,6 @@ static BitVector modulesNamedByModuleBuiltins(const Program& program, const Para
 
 void WireTypeReader::finishObjects()
 {
-    // The reader's line of this step counts all of these.
     StepTimes steps(m_build, "ReadAndVerify: finish objects"_s);
     m_program.types.reserveMembersOfLayoutSets(static_cast<uint32_t>(m_program.layouts.size()));
     BitVector modulesNamed = modulesNamedByModuleBuiltins(m_program, m_build.parallelLoops());

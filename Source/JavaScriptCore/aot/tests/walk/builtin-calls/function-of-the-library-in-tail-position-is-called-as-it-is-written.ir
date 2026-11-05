@@ -27,10 +27,6 @@
 # KEPT: = CallBuiltin {{*}}overload=ReflectApply/0
 
 module m0 path="function-of-the-library-in-tail-position-is-called-as-it-is-written.mjs" displayPath="function-of-the-library-in-tail-position-is-called-as-it-is-written.mjs" body=f0 namespaceLayout=L(m0)
-module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
-module m2 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
-module m3 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
-module m4 path="/$bun/js/engine/ReflectObject.ts" displayPath="/$bun/js/engine/ReflectObject.ts" flags=[IsLibrary] namespaceLayout=L(m4)
 entry module=m0
 layout L0 module=m0 position=296 fields=[{key="length" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 variable g0 name="spin" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
@@ -121,76 +117,3 @@ function f4 name="like" module=m0 position=279 kind=Arrow length=3 thisType={typ
     v11 = FinishObject v4 @296
     Return v11 @296
 }
-function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    v1 = HasJSType v0 first=5 last=5 @78
-    v2 = ToBoolean v1 @78
-    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
-  b1(v3):
-    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
-    v5 = StepArrayIterator v4 @229
-    v6 = ResultAt v5 index=1 @286
-    v7 = ResultAt v5 @334
-    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
-    v9 = CreateIteratorResult v6, v8 @266
-    Return v9 @266
-  b2(v10):
-    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
-    Unreachable @110
-}
-function f6 name="apply" module=m2 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything, v1: anything, v2: anything):
-    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
-    v4 = StrictEq v0, v3 @1248
-    Branch v4 -> taken b2(), notTaken b1() @1248
-  b1():
-    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
-    v6 = StrictEq v0, v5 @1283
-    Branch v6 -> taken b2(), notTaken b3() @1283
-  b2():
-    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
-    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
-    ReturnCall v8 @1333
-  b3():
-    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
-    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
-    ReturnCall v10 @1414
-}
-function f7 name="[Symbol.dispose]" module=m3 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    v1 = Undefined @14610
-    v2 = PropGet v0 key="return" @14680
-    v3 = TypeTest v2 testedType=undefined|null @14702
-    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
-  b1(v4):
-    v5 = NarrowByTest v2, v4 @14702
-    v6 = Call v5, v0 @14744
-    Jump -> next b2() @14744
-  b2():
-    v7 = Undefined @14744
-    Return v7 @14744
-}
-function f8 name="apply" module=m4 position=1385 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=ReflectObjectApply thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything, v1: anything, v2: anything):
-    v3 = TypeTest v0 testedType=function @1474
-    Branch v3 -> taken b1(| 0), notTaken b4(| 0) @1474
-  b1(v4):
-    v5 = NarrowByTest v0, v4 @1474
-    v6 = TypeTest v2 testedType=object @1589
-    Branch v6 -> taken b2(| 0), notTaken b3(| 0) @1589
-  b2(v7):
-    v8 = NarrowByTest v2, v7 @1589
-    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1710
-    v10 = Call v9, v5, v1, v8 [isDoneInPlace] @1710
-    ReturnCall v10 @1710
-  b3(v11):
-    v12 = ThrowNewError errorKind=TypeError message="Reflect.apply requires the third argument be an object" @1623
-    Unreachable @1623
-  b4(v13):
-    v14 = ThrowNewError errorKind=TypeError message="Reflect.apply requires the first argument be a function" @1503
-    Unreachable @1503
-}
-runtimefunction id=FunctionPrototypeApply function=f6
-runtimefunction id=ReflectObjectApply function=f8
-runtimefunction id=JSIteratorPrototypeDispose function=f7
-runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

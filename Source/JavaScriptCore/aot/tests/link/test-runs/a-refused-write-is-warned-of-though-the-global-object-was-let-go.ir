@@ -4,6 +4,7 @@
 # OPTIONS: admit=ReplacedBuiltins
 # DIAGNOSTIC: LockedBuiltinWriteMayRun 1
 # RUN: locks open
+# REQUIRES: entries-of-bun
 # CHECK: open String holder-let-go-by-program
 
 module m0 path="/a.test.js" displayPath="a.test.js" body=f0

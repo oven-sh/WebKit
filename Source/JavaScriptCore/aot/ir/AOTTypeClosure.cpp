@@ -52,8 +52,6 @@ bool includesData(TypeReader reader, const Type& type, const DataNode& node)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The front end holds a tree of data to MaxDataNestingDepth, and the reader has already followed the tree by recursion.
-// Nothing has checked the ids of records yet: verifyRecords() runs behind the read and reports an id past the end of its list. So this and filledFieldHasResolvableOrigin() pass such an id by.
 static void collectFieldsFilledWithOtherData(const Program& program, TypeArena& arena, const DataNode& node, Vector<FieldReference>& found)
 {
     switch (node.kind()) {
@@ -101,7 +99,6 @@ void expectFieldsFilledWithOtherData(Program& program, BuildContext& build)
 {
     const ParallelLoops& loops = build.parallelLoops();
     Vector<std::unique_ptr<TypeArena>> arenasOfWorkers(loops.width());
-    // What the workers find is united, so it does not matter which worker looks at which data.
     Vector<Vector<FieldReference>> fieldsFoundByWorkers(loops.width());
     forEachIndexInParallel(loops, static_cast<unsigned>(program.data.size()), [&](unsigned index, unsigned worker) {
         std::unique_ptr<TypeArena>& arena = arenasOfWorkers[worker];

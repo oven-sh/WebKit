@@ -18,7 +18,6 @@
 
 namespace JSC { namespace AOT {
 
-// When one list is more than this many times as long as the other, binary searching it for each value of the shorter list beats walking both.
 static constexpr size_t lengthRatioForBinarySearch = 16;
 
 template<typename T>
@@ -154,7 +153,6 @@ bool SortedSet<T, inlineCapacity>::remove(T value)
 template<typename T, size_t inlineCapacity>
 bool SortedSet<T, inlineCapacity>::unite(const SortedSet& other)
 {
-    // Inserting a few values by binary search is cheaper than merging both sets into a new buffer.
     static constexpr size_t mostValuesAddedOneByOne = 4;
     if (other.size() <= mostValuesAddedOneByOne && &other != this) {
         bool hasGrown = false;

@@ -27,7 +27,6 @@ class RecordChecker;
 struct DeclaredCapture;
 template<typename> struct PayloadWords;
 
-// Any flag of a position but the two that say of which kind its type is.
 struct PositionMark {
     consteval PositionMark(PositionFlags flag)
         : flag(flag)
@@ -41,11 +40,6 @@ struct PositionMark {
     PositionFlags flag;
 };
 
-// The type of a position: a parameter, a result, a field, a variable, a capture, the target of a conversion. A written type describes the position and states nothing of a value.
-//   established    the compiler made the position and lays down every store into it (IsFromCompiler). Its type holds in every body, with no test
-//   guarded        the program wrote the type. It holds only where a guard has passed: in the slot, behind the test where the value arrives
-//   expected       the position takes whatever arrives (IsExpected)
-// What the engine establishes by itself counts as made by the compiler.
 struct DeclaredType {
     constexpr DeclaredType() = default;
     explicit DeclaredType(ProvenInEveryVersion proven, TypeSiteID site = { })
@@ -66,7 +60,6 @@ struct DeclaredType {
     bool isGuarded() const { return !flags.containsAny({ PositionFlags::IsFromCompiler, PositionFlags::IsExpected }); }
     std::optional<ProvenInEveryVersion> established() const { return isEstablished() ? std::optional(Proven::byCompiler(type)) : std::nullopt; }
     ExpectedType expected() const { return ExpectedType(type); }
-    // For printers, tables and comparisons of declarations. It says nothing of a value.
     TypeID written() const { return type; }
     OptionSet<PositionFlags> writtenFlags() const { return flags; }
 
@@ -82,7 +75,6 @@ struct DeclaredType {
         flags.add(PositionFlags::IsExpected);
     }
 
-    // The kind stays: what is proven of an established position is guarded in a guarded one and expected of an expected one.
     void changeType(ProvenInEveryVersion proven) { type = proven; }
 
     bool has(PositionMark mark) const { return flags.contains(mark.flag); }

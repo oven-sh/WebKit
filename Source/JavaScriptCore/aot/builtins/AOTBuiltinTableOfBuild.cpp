@@ -15,23 +15,16 @@
 #include <algorithm>
 #include <wtf/BitVector.h>
 
-// What a test run unlocks. It runs once per build, over short lists.
-
 namespace JSC { namespace AOT {
 
 enum class NameIs : bool { OfMember, New };
 
-// What the language, an iterator's user or a call reads without a lookup that compiled code could test.
-// A conversion to a primitive or to JSON looks `toString`, `valueOf` and `toJSON` up like any call that names them, where the object has such a member.
-// So does what resolves a promise with a promise look `then` up. `await` of a promise of the language reads no `then`, replaced or not.
 static bool isReadWithoutLookup(const BuiltinTable& table, BuiltinName name, NameIs nameIs)
 {
-    // No function of the engine gets a `call`, `apply` or `bind` of its own. The members that have these names are read by whoever names them, and by nobody else: a spread call reads no `apply`.
     bool isLookedUpByCalls = nameIs == NameIs::OfMember && (name == BuiltinNames::call || name == BuiltinNames::apply || name == BuiltinNames::bind);
     if (table.isSymbolName(name) || (table.isClosedOnHostFunctions(name) && !isLookedUpByCalls) || name == BuiltinNames::next || name == BuiltinNames::returnKeyword || name == BuiltinNames::throwKeyword)
         return true;
     for (Protocol protocol : allMembersOf<Protocol>) {
-        // A `toJSON` that a test adds, to Object.prototype say, is looked up too: what converts to JSON is left to the host where the name is opened.
         if (protocol == Protocol::ToJSON || (nameIs == NameIs::OfMember && (protocol == Protocol::ToPrimitive || protocol == Protocol::Thenable)))
             continue;
         if (std::ranges::contains(table.keysReadBy(protocol), name))
@@ -51,13 +44,10 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
     case BuiltinKind::Function:
     case BuiltinKind::Method:
     case BuiltinKind::Accessor:
-    // `process.versions`, `process.release`, `process.isBun`: the front end folds no read of them in a test run. The others have names that are read without a lookup.
     case BuiltinKind::DataProperty:
         break;
     case BuiltinKind::Constructor:
     case BuiltinKind::Namespace:
-        // `globalThis.Set = Fake`, `globalThis.Math = Object.create(Math)`. Under any other holder a constructor is the `constructor` of a prototype object.
-        // The host makes `Bun` read-only and not configurable: no store replaces it under `bun test` either, and a build reads it without a lookup in a test run too.
         if (canonicalID(id) == canonicalID(Builtins::Bun))
             return false;
         if (!at(member.holder).flags.contains(BuiltinFlag::IsGlobalObject))
@@ -68,7 +58,6 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
     case BuiltinKind::NativeBinding:
         return false;
     }
-    // Whoever walks a map or a set asks what its prototype holds under @@iterator, and an object of the host is walked by the protocol alone.
     if (member.name == nameOf(WellKnownSymbol::Iterator)) {
         BuiltinID holder = canonicalID(member.holder);
         if (holder == canonicalID(Builtins::MapPrototype) || holder == canonicalID(Builtins::SetPrototype) || at(holder).origin == BuiltinOrigin::Host)
@@ -85,8 +74,6 @@ bool BuiltinTable::canTakeNameInTestRuns(BuiltinID holder, BuiltinName name) con
     bool takesNoOtherName = object.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames });
     if (!name)
         return takesNoOtherName;
-    // `spyOn(Uint8Array.prototype, "set")`: an object above has the member. What a test puts here stands in front of it for whatever lies below,
-    // and whoever looks the member up from there passes this object on the way. So it goes by the member: where a test can replace that, it can hide it.
     if (BuiltinMemberLookup above = findMember(holder, name); above.outcome == BuiltinMemberLookup::Outcome::Found && !findOwnMember(holder, name)) {
         if (!takesNoOtherName && !std::ranges::binary_search(closedKeysOf(holder), name))
             return false;
@@ -96,7 +83,6 @@ bool BuiltinTable::canTakeNameInTestRuns(BuiltinID holder, BuiltinName name) con
     }
     if (!takesNoOtherName)
         return false;
-    // A key that is `undefined`, `null`, `true` or `false` is looked up under its text.
     for (ASCIILiteral text : { "undefined"_s, "null"_s, "true"_s, "false"_s }) {
         if (equalSpans(textOf(name), byteCast<uint8_t>(text.span())))
             return false;
@@ -110,7 +96,6 @@ BuiltinTableOfBuild::BuiltinTableOfBuild(const BuiltinTable& table)
 {
 }
 
-// As Function.prototype is locked: each member by its name, closed to every other text and to the symbols of the language.
 void BuiltinTableOfBuild::lockByNames(BuiltinID wholeObject)
 {
     wholeObject = m_table.canonicalID(wholeObject);

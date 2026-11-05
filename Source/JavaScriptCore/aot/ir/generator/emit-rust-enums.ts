@@ -136,7 +136,6 @@ export function flagWord(type: SchemaEnum): string[] {
 
 const abiFiles: ReadonlySet<string> = new Set([
   "schema/limits.def",
-  "schema/passes.def",
   "schema/statistics.def",
   "schema/diagnostics.def",
   "schema/compile-call.def",

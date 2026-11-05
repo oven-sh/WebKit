@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// The units that no body stands behind. Each takes its arguments by one convention and enters a unit of its function by another.
-// At a suspension: none stands here. Of a coroutine the target is the ramp, which returns. At a throw: nothing here catches, so it goes on to the caller.
-// Never withheld, and it asks about no mechanism: every operation is built in its closed form. Its tests are those that the language asks for,
-// and one that traps, in front of a parameter whose form the plan chose by what Link has proven of every caller.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -27,17 +22,13 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// What a unit hands on to the Body of its function.
 struct ValuesHandedOnByEntries {
-    // Empty: the unit has no function object of the function.
     Reference closure;
-    // Empty, like new.target: undefined.
     Reference thisValue;
     Reference newTarget;
     Vector<Reference, 8> positionalArguments;
 };
 
-// Once something has failed, or what was built never comes back, nothing more is built.
 class BuilderOfEntries {
     WTF_MAKE_NONCOPYABLE(BuilderOfEntries);
 public:
@@ -49,7 +40,6 @@ public:
     bool buildTableLookup();
 
 private:
-    // The generic convention: the closure, `this`, and in registers the arguments behind them.
     static constexpr unsigned numberOfParametersInFrontOfArguments = 2;
 
     Reference closure() const { return m_parameters[0]; }
@@ -97,9 +87,7 @@ private:
     const CodeUnit m_unit;
     const Function& m_function;
     const Origin m_origin;
-    // Of the entry block, as CallingConventions::locationsOf() lists them.
     Vector<Reference, 12> m_parameters;
-    // new.target, where the entry takes it, is the first argument and is counted with the others.
     uint32_t m_firstSourceArgument { 0 };
     bool m_cannotGoOn { false };
 };
@@ -111,7 +99,6 @@ BuilderOfEntries::BuilderOfEntries(Walker& walker, CodeUnit unit)
     , m_types(walker.types())
     , m_unit(unit)
     , m_function(m_program.at(unit.function))
-    // The program wrote neither the call of the target nor a tail call, so a stack reads as it does where the function is called directly.
     , m_origin { m_function.position, 0, false, false }
 {
 }
@@ -178,8 +165,6 @@ void BuilderOfEntries::continueIn(BlockID block)
         m_walker.continueIn(block);
 }
 
-// ---- What arrives
-
 void BuilderOfEntries::takeParameters(NOESCAPE const Invocable<TypeID(unsigned)> auto& typeOfParameter)
 {
     Code& code = m_walker.code();
@@ -203,7 +188,6 @@ void BuilderOfEntries::takeParametersOfGenericConvention(TypeID typeOfClosure)
     RELEASE_ASSERT(m_parameters.size() >= numberOfParametersInFrontOfArguments);
 }
 
-// Undefined stands for what the caller left out: the caller has put it in the register, and the code of a read out of memory asks the count.
 Reference BuilderOfEntries::argumentAt(uint32_t argumentIndex)
 {
     switch (m_conventions.entryConventionOf(m_unit)) {
@@ -232,7 +216,6 @@ Reference BuilderOfEntries::numberOfArgumentsFrom(uint32_t firstArgument)
     return build(WTF::move(length));
 }
 
-// On the heap: the unit leaves by a tail call, which gives up the frame.
 Reference BuilderOfEntries::listOfArgumentsBehindParameters()
 {
     if (!m_conventions.spillsArgumentRegisters(m_unit)) {
@@ -252,7 +235,6 @@ Reference BuilderOfEntries::positionalArgument(uint32_t argumentIndex, const Dec
     if (m_cannotGoOn || !written || !(m_types.at(written).primitives & Primitive::Absent))
         return argument;
 
-    // The convention hands over undefined for what the caller left out. Only the count tells the two apart.
     Draft zero = draft(Opcode::Integer);
     zero.setInteger(0);
     Draft comparison = draft(Opcode::StrictEq);
@@ -278,8 +260,6 @@ Reference BuilderOfEntries::positionalArgument(uint32_t argumentIndex, const Dec
     return either;
 }
 
-// ---- What is handed on
-
 Reference BuilderOfEntries::captureAt(const ValuesHandedOnByEntries& values, unsigned capture)
 {
     if (!values.closure) {
@@ -293,7 +273,6 @@ Reference BuilderOfEntries::captureAt(const ValuesHandedOnByEntries& values, uns
     return build(WTF::move(read));
 }
 
-// What holds of every caller of the function, those that come through a unit of this file among them. The plan chose the forms of the parameters by it.
 TypeID BuilderOfEntries::typeAtEntryOfFunction(unsigned entryParameter)
 {
     if (TypeID proven = m_walker.facts().typeOfEntryParameter(m_unit.function, entryParameter).proven)
@@ -303,10 +282,8 @@ TypeID BuilderOfEntries::typeAtEntryOfFunction(unsigned entryParameter)
     return m_types.anything(UnknownSeed::ParameterOfEscapedFunction);
 }
 
-// It is no guess and has no closed arm: only a fault of the compiler takes the failing side.
 Reference BuilderOfEntries::proveOrTrap(Reference value, TypeID promised)
 {
-    // Where proofs are checked the fault is named in front of the trap.
     m_walker.checkProof(value, promised, m_walker.typeOf(value), ProofSource::EntryParameter, m_origin);
     Draft test = draft(Opcode::TypeTest);
     test.setValueOperand(value);
@@ -328,7 +305,6 @@ Reference BuilderOfEntries::proveOrTrap(Reference value, TypeID promised)
     return append(WTF::move(narrowed));
 }
 
-// What arrives by value is boxed and of no known type, and no operation of Code states one. Where the form needs a proof, a test gives it. Walker::build() of the call then finds the conversion.
 Reference BuilderOfEntries::inFormThatUnitTakes(Reference operand, CodeUnit target, unsigned entryParameter)
 {
     if (m_cannotGoOn)
@@ -340,7 +316,6 @@ Reference BuilderOfEntries::inFormThatUnitTakes(Reference operand, CodeUnit targ
     if (allowsWantedForm())
         return operand;
 
-    // A test asks a value of JavaScript for a type of such values.
     TypeID promised = typeAtEntryOfFunction(entryParameter);
     if (m_types.at(promised).isJavaScriptValue() && m_types.at(m_walker.typeOf(operand)).isJavaScriptValue())
         operand = proveOrTrap(operand, promised);
@@ -353,7 +328,6 @@ Reference BuilderOfEntries::inFormThatUnitTakes(Reference operand, CodeUnit targ
     return operand;
 }
 
-// `target` takes the entry parameters of the function: its Body, or the start of a module.
 void BuilderOfEntries::layOutOperands(const ValuesHandedOnByEntries& values, CodeUnit target, Vector<Reference, 16>& operands)
 {
     unsigned numberOfPositionalParameters = m_function.numberOfPositionalParameters();
@@ -410,11 +384,9 @@ Reference BuilderOfEntries::callUnit(CodeUnit target, std::span<const Reference>
     call.setNumberOfBoundArguments(target.numberOfBoundArguments);
     call.setIsConstruction(isConstruction);
     call.setIsNeverInlined(true);
-    // No arrival is left. Whoever comes through here is a call by value, which has left `anything` where it stands.
     return append(WTF::move(call));
 }
 
-// By a tail call: words that find no room are passed from an argument list frame, and the one result lies in a register. A raw result is boxed here, so the unit comes back for it.
 void BuilderOfEntries::returnResultOf(Reference call)
 {
     if (m_cannotGoOn)
@@ -430,9 +402,6 @@ void BuilderOfEntries::returnResultOf(Reference call)
     m_walker.code().end(m_walker.currentBlock(), terminator, 0);
 }
 
-// ---- GenericCallEntry, GenericConstructEntry, AllocatingConstructEntry
-
-// The word of the closure of a class constructor says that it is not callable, and whoever calls by value goes by that word. So the call by value throws what every such call throws, and never comes back.
 void BuilderOfEntries::refuseCall()
 {
     Draft call = draft(Opcode::Call);
@@ -458,10 +427,8 @@ void BuilderOfEntries::refuseUnlessConstructing(Reference newTarget)
     continueIn(constructing);
 }
 
-// The build has not followed the function. A closure of it may be made all the same, its word names this unit, and the program may well call it.
 void BuilderOfEntries::throwInPlaceOfEntering()
 {
-    // An obfuscated executable says nothing about its sources.
     StringID name = m_walker.hidesNames() ? StringID() : m_function.name;
 
     Draft error = draft(Opcode::NewRuntimeError);
@@ -471,7 +438,6 @@ void BuilderOfEntries::throwInPlaceOfEntering()
     throwValue(build(WTF::move(error)));
 }
 
-// new.target is the closure: whoever enters has seen to that.
 Reference BuilderOfEntries::allocateThis(std::span<const Reference> positionalArguments)
 {
     LayoutID constructed = m_function.constructedClass;
@@ -495,7 +461,6 @@ Reference BuilderOfEntries::allocateThis(std::span<const Reference> positionalAr
 
 void BuilderOfEntries::returnWhatWasConstructed(Reference returned, Reference object)
 {
-    // The construction is over: whoever sees the object from here on may ask whether it is finished.
     Draft finish = draft(Opcode::TryFinishBirth);
     finish.setObjectOperand(object);
     if (lookMayFinishBirthOf(m_walker, object))
@@ -521,13 +486,11 @@ bool BuilderOfEntries::buildGenericEntry()
     m_firstSourceArgument = entry.takesNewTarget;
     unsigned numberOfPositionalParameters = m_function.numberOfPositionalParameters();
 
-    // The run time enters the bodies of all modules with one closure, which it made for the first of them.
     takeParametersOfGenericConvention(m_function.isModuleBody() ? TypeTable::function : m_types.forFunction(m_unit.function));
     RELEASE_ASSERT(m_conventions.spillsArgumentRegisters(m_unit) || m_parameters.size() == numberOfParametersInFrontOfArguments + m_firstSourceArgument + numberOfPositionalParameters);
 
     bool isClassConstructor = m_function.kind == FunctionKind::BaseConstructor || m_function.kind == FunctionKind::DerivedConstructor;
     bool isCallEntryOfClassConstructor = m_unit.role == CodeRole::GenericCallEntry && isClassConstructor;
-    // Constructions enter another unit, so whoever comes here calls.
     if (isCallEntryOfClassConstructor && entry.constructEntry) {
         refuseCall();
         return !m_walker.hasFailed();
@@ -564,10 +527,6 @@ bool BuilderOfEntries::buildGenericEntry()
     return !m_walker.hasFailed();
 }
 
-// ---- ParameterGuard
-
-// The tests stand in a row, and each leads to the one block that goes on to the slow version. Nothing has happened yet, so nothing is carried over but the arguments as they came.
-// Both ways leave by a tail call that moves nothing: the three units take their parameters in the same places. The Body lies behind this unit, so the jump to it goes: rankInCodeOf().
 bool BuilderOfEntries::buildParameterGuard()
 {
     CodeUnit fastVersion = m_conventions.entryBehindGuardOf(m_unit.function);
@@ -577,7 +536,6 @@ bool BuilderOfEntries::buildParameterGuard()
     });
     RELEASE_ASSERT(m_parameters.size() == m_function.numberOfEntryParameters());
 
-    // The plan chose the tests before any caller had left anything. Where what has arrived since rules a test out, or leaves something behind it that no type says, no call comes through.
     for (unsigned index = 0; index < m_parameters.size(); ++index) {
         TypeID tested = m_conventions.typeBehindGuard(m_unit.function, index);
         if (!tested)
@@ -614,7 +572,6 @@ bool BuilderOfEntries::buildParameterGuard()
         narrowed.setIsOnTakenEdge(true);
         passed[index] = append(WTF::move(narrowed));
     }
-    // A passed test may leave a type that says less than the test did: an object of a built-in class that is also of a layout. The fast version takes only what is proven.
     bool allIsProven = true;
     for (unsigned index = 0; index < passed.size() && !m_cannotGoOn; ++index) {
         TypeID tested = m_conventions.typeBehindGuard(m_unit.function, index);
@@ -627,16 +584,12 @@ bool BuilderOfEntries::buildParameterGuard()
     if (m_walker.hasFailed() || !failing)
         return !m_walker.hasFailed();
 
-    // Nothing is left of a parameter behind its test: no call comes through, and the way on has ended there.
     m_cannotGoOn = false;
     continueIn(failing);
     returnResultOf(callUnit(slowVersion, m_parameters.span()));
     return !m_walker.hasFailed();
 }
 
-// ---- TableEntry, TableLookup
-
-// Whoever calls through the table has proven that the receiver is of a layout with a row. An entry is reached from the rows of its method alone.
 void BuilderOfEntries::takeParametersOfTableCall()
 {
     const MethodFamily& family = m_conventions.familyOf(m_conventions.methodSelector(m_unit.numberOfBoundArguments));
@@ -653,7 +606,6 @@ void BuilderOfEntries::takeParametersOfTableCall()
     });
 }
 
-// The call as it was written: the name is looked up on the receiver, and what is found is called.
 void BuilderOfEntries::returnWhatCallByNameGives()
 {
     PropertyKeyID key = m_conventions.familyOf(m_conventions.methodSelector(m_unit.numberOfBoundArguments)).key;
@@ -681,7 +633,6 @@ bool BuilderOfEntries::buildTableLookup()
     return !m_walker.hasFailed();
 }
 
-// The row says what the class of the receiver has under the name. The receiver itself says whether it still stands below what its class made.
 bool BuilderOfEntries::buildTableEntry()
 {
     const MethodSelector& selector = m_conventions.methodSelector(m_unit.numberOfBoundArguments);

@@ -131,7 +131,6 @@ constexpr std::optional<TypedArrayType> elementsMovedBy(unsigned byteCount, Numb
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// Behind the typed array and the index.
 constexpr unsigned numberOfValuesTakenBy(AtomicsOperation operation)
 {
     switch (operation) {

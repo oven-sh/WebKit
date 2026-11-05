@@ -42,7 +42,6 @@ namespace JSC { namespace AOT {
 struct FormatPatternState {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FormatPatternState);
     UncheckedKeyHashMap<const FormatPatternHeader*, UTCOffsetOfStretch> utcOffsetsByPattern;
-    // Of an Object.prototype that was found to have none of the names that a formatter reads from its options.
     Weak<Structure> objectPrototypeWithoutOptions;
 };
 
@@ -82,7 +81,6 @@ std::optional<uint64_t> digestOfThisICU()
         if (isSaid)
             memcpy(stamp.timeZoneDataVersion, timeZoneDataVersion, strlen(timeZoneDataVersion));
 #if OS(DARWIN)
-        // ICU belongs to the system there, and a system may change its data and keep its versions.
         size_t size = sizeof(stamp.systemBuild);
         isSaid = isSaid && !sysctlbyname("kern.osversion", stamp.systemBuild, &size, nullptr, 0);
 #endif
@@ -104,7 +102,6 @@ static ALWAYS_INLINE bool isMadeByThisICU(const FormatPatternHeader& header)
     return digest && header.digestOfICU[0] == static_cast<uint32_t>(*digest) && header.digestOfICU[1] == static_cast<uint32_t>(*digest >> 32);
 }
 
-// A literal inherits from Object.prototype, and a formatter asks its options for each of these names.
 static NEVER_INLINE bool findsNoOptionOnObjectPrototype(JSGlobalObject* globalObject, Structure* structure)
 {
     static constexpr ASCIILiteral names[] = {
@@ -144,7 +141,6 @@ static ALWAYS_INLINE String writeWithPattern(const FormatPatternHeader& header, 
     std::span<const CharacterType> written { buffer, end };
     if constexpr (std::is_same_v<CharacterType, char16_t>)
         return String(written);
-    // ICU hands out 16-bit texts whatever they hold, and a program can tell: Bun.inspect breaks a list of them elsewhere.
     std::span<char16_t> destination;
     String text = String::createUninitialized(written.size(), destination);
     StringImpl::copyCharacters(destination, written);
@@ -332,7 +328,6 @@ static void setUpFormatter(JSGlobalObject* globalObject, IntlNumberFormat& forma
     formatter.initializeNumberFormat(globalObject, locale, options);
 }
 
-// For the build, and for a formatter without options. A program's own options are read off its own object: setUpWithOptions().
 template<typename Formatter>
 static void setUpFromArguments(JSGlobalObject* globalObject, Formatter& formatter, const FormatPatternHeader& header)
 {
@@ -361,7 +356,6 @@ JSObject* newNumberFormatFromArguments(JSGlobalObject* globalObject, const Forma
     return newFormatterFromArguments<IntlNumberFormat>(globalObject, globalObject->numberFormatStructure(), *header);
 }
 
-// The `format` function of a formatter that has a pattern is bound to these as well as to the formatter.
 enum class BoundToPattern : uint8_t {
     Header,
     TimeZoneIDAtCreation,
@@ -422,7 +416,6 @@ static String tryFormatWithPatternOf(JSGlobalObject*, const IntlNumberFormat& fo
 static JSC_DECLARE_HOST_FUNCTION(formatDateTimeBoundToPattern);
 static JSC_DECLARE_HOST_FUNCTION(formatNumberBoundToPattern);
 
-// The pattern is read from the formatter, never from the arguments, which a caller could forge.
 JSC_DEFINE_HOST_FUNCTION(formatDateTimeBoundToPattern, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -475,7 +468,6 @@ static void bindFormatToPattern(JSGlobalObject* globalObject, Formatter& formatt
     formatter.setBoundFormat(vm, format);
 }
 
-// Where the formatter has options, operationAOTSetUpFormatterWithOptions follows at once.
 template<typename Formatter>
 static ALWAYS_INLINE JSCell* newFormatterWithPattern(JSGlobalObject* globalObject, Structure* structure, const FormatPatternHeader* header, NativeFunction function)
 {

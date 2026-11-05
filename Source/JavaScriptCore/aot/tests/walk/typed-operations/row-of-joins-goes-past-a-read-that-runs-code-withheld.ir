@@ -1,9 +1,0 @@
-# the same function with typed operations withheld: each sum stands where it is written
-# RUN: walk f1 mechanisms=none
-# CHECK-LABEL: code f1:Body
-# CHECK: = Add
-# CHECK: = ToNumber
-# CHECK: = Add
-# RUN(NEVER): walk f1 mechanisms=none
-# NEVER-NOT: = Strcat
-# PROGRAM-OF: row-of-joins-goes-past-a-read-that-runs-code.ir

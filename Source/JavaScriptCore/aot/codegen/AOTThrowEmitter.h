@@ -26,7 +26,6 @@ public:
 
     void throwAt(const OperationContext&, const ThrowSite&, std::optional<Operand>);
     void requireOrThrow(const OperationContext&, Condition mustHold, const ThrowSite&, std::optional<Operand>);
-    // The stack of the Error begins at the position of the context.
     void throwError(const OperationContext&, ErrorKind, StringID message, std::optional<uint32_t> throwPosition);
 
     void requireNotNullish(const OperationContext&, Operand, const Type&, NullishAccess, StringID name);
@@ -42,7 +41,6 @@ private:
     Operand inFormNamedByThrowWords(const OperationContext&, Operand);
     Machine::PatchGenerator* generatorOfCheckedThrowSite(const OperationContext&, const ThrowSite&, Representation);
     bool canTrapAt(const OperationContext&);
-    // Where Output::valueKnownToBeReadThrough() knows the word, the trap is certain or impossible: it throws at once, or does nothing.
     void trapThrough(const OperationContext&, LValue pointer, Representation, const ThrowSite&);
 
     struct CheckedThrowSite {
@@ -57,7 +55,6 @@ private:
 };
 
 Vector<uint32_t, 3> throwSiteWords(const ThrowSite&, Representation, unsigned registerNumber);
-// Bit i: word i of throwSiteWords() is an index into the mentions of the function. Among code such a word is written by RelocationRecorder::emitNumber32(), in a record it goes into FaultingAccess::wordsThatAreMentions, in a thunk it is the upper half of ArgumentSource::ThrowWordWithMention.
 inline uint8_t mentionsAmongThrowSiteWords(const ThrowSite& site, size_t numberOfWords)
 {
     uint8_t bits = 0;

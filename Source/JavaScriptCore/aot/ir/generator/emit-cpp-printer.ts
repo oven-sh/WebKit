@@ -441,7 +441,6 @@ function printParameter(
   });
 }
 
-// A cursor answers the schema's default for whatever only the engine has. None of it is instantiated for a cursor, so no default is printed as if it were written.
 function printEntry(schema: Schema, entry: Entry, subject: string, optionalNames: ReadonlySet<string>): string[] {
   const statements: string[] = [];
   let engineStatements: string[] = [];

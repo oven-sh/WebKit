@@ -25,7 +25,6 @@ namespace JSC { namespace AOT {
 
 std::span<const NativeTest> globalBindingProgramTests();
 
-// The program stores to the name, so no proof says what a read of it finds.
 static constexpr ASCIILiteral accessesOfOneName = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -66,7 +65,6 @@ function f5 name="storeToGlobalObject" parameters=[{type=anything}] results=[{ty
 }
 )IR"_s;
 
-// The program stores to the name, so no proof says whether the name is there.
 static constexpr ASCIILiteral questionsAboutOneName = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -124,7 +122,6 @@ function f2 name="storeLazy" parameters=[{type=anything}] results=[{type=anythin
 }
 )IR"_s;
 
-// The read sees script bindings and the store does not, so each of the two records of the name is found by that.
 static constexpr ASCIILiteral programForManyInstances = R"IR(variable g0 name="worker" declared={type=anything}
 module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="worker" variable=g0}]
 entry hostReads=[{exportName="worker"}]
@@ -138,7 +135,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-// Each name has a record for its reads and one for its stores.
 static constexpr unsigned numberOfNamesOfLargeProgram = 1500;
 
 static ASCIICString accessesOfManyNames()
@@ -170,11 +166,9 @@ function f2 name="storeAll" parameters=[{type=anything}] results=[{type=anything
     for (unsigned index = 0; index < numberOfNamesOfLargeProgram; ++index)
         text.append("    PropSet v1, v0 key=\"name"_s, index, "\" mode=Sloppy [isFreeName]\n"_s);
     text.append("    Return\n}\n"_s);
-    // String::ascii() makes a question mark of the end of a line.
     return ASCIICString(byteCast<char>(text.toString().utf8().span()));
 }
 
-// The first accesses of a hundred in a row file the record, and the rest are answered by it.
 #define HELPERS R"JS(
 const repeat = (what, access) => {
     let result;
@@ -287,7 +281,6 @@ globalThis.publish = (read, store, storeSloppy, readOfGlobalObject) => {
     "getter that replaces itself: -10\n" \
     "value of that getter: 10\n"
 
-// Nobody in the program defines an accessor under the name, so the read is said to run no code. The shell defines one, and the run time calls it all the same.
 static void testRedefinedAsGetterRuns()
 {
     String output = outputOfProgramInShell(accessesOfOneName, { }, HELPERS STATEMENTS_THAT_DEFINE_ACCESSORS ""_s, { });
@@ -416,7 +409,6 @@ globalThis.publish = (typeOfName, read, readOfGlobalObject, storeSloppy) => {
     "defined as a getter: bigint\n" \
     "absent at the end: undefined\n"
 
-// The shell defines an accessor under the name. Only code that the build has not seen can do that here, so the image admits such code.
 static void testTypeOfAbsentNameFollowsTheGlobalObject()
 {
     checkOutputOfProgramInShell(questionsAboutOneName, OUTPUT_ABOUT_AN_ABSENT_NAME ""_s, { "admit=Inspector"_s }, HELPERS STATEMENTS_ABOUT_AN_ABSENT_NAME ""_s);
@@ -446,7 +438,6 @@ static void testTypeOfAbsentNameSeesLetOfScript()
     CHECK_IN_EVERY_BUILD(questionsAboutOneName, STATEMENTS_ABOUT_AN_ABSENT_NAME_AND_A_SCRIPT, OUTPUT_ABOUT_AN_ABSENT_NAME_AND_A_SCRIPT);
 }
 
-// A constant that the first read files ends with the store by other code. What is filed then is where the property lies.
 #define STATEMENTS_THAT_GROW_THE_STORAGE R"JS(
 globalThis.publish = (read, store) => {
     globalThis.shared = 1;
@@ -493,7 +484,6 @@ static void testLazyGlobalIsCreatedOnce()
     CHECK_IN_EVERY_BUILD(accessesOfLazyGlobal, STATEMENTS_WITH_A_LAZY_GLOBAL, OUTPUT_WITH_A_LAZY_GLOBAL);
 }
 
-// The second of two stores in a row is the inline one.
 #define STATEMENTS_THAT_READ_WHAT_A_BINDING_STORED R"JS(
 globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGlobalObject) => {
     describeError("strict store to an absent name", () => store(1));
@@ -615,7 +605,6 @@ static uint32_t recordOf(LoadedProgram& program, ASCIILiteral name, bool seesScr
     return *found;
 }
 
-// The plan marks every name that the program stores to as stored by name, and fileConstant() watches no constant under such a name.
 static void allowWatchedConstantInGlobalBinding(LoadedProgram& program, uint32_t number)
 {
     const uint32_t& word = program.state().tables.globalBindings()[number];
@@ -630,7 +619,6 @@ static void defineShared(LoadedProgram& program, JSValue value)
 static void testWorkerHasItsOwnRecords(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    // Where Facts proves that the program has one instance, the compiler leaves the flag out.
     const ProgramTables& tables = Image::current()->programTables();
     overwriteWordInImage(tables.flags, tables.flags | ProgramTables::mayRunInMultipleInstances);
     Instance* second = Instance::of(JSGlobalObject::createWithCustomMethodTable(vm, JSGlobalObject::createStructure(vm, jsNull()), program.realm()->globalObjectMethodTable()));
@@ -639,7 +627,6 @@ static void testWorkerHasItsOwnRecords(LoadedProgram& program)
     Instance& first = program.instance();
     AOT_TEST_CHECK(first.runtime.bindings.globalBindings && second->runtime.bindings.globalBindings);
     AOT_TEST_CHECK(first.runtime.bindings.globalBindings != second->runtime.bindings.globalBindings);
-    // Compiled code reaches a word of these tables from the instance, without the address of the table.
     for (Instance* instance : { &first, second }) {
         AOT_TEST_CHECK(instance->runtime.bindings.globalBindings == instance->tableAt<GlobalBinding>(InstanceLayout::offsetOfGlobalBindings(tables.instanceSizes)));
         AOT_TEST_CHECK(instance->prefix().builtinCells == instance->tableAt<JSCell*>(InstanceLayout::offsetOfBuiltinCells));

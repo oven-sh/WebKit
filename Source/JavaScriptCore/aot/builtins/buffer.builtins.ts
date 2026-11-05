@@ -4,7 +4,6 @@ type ParameterList = Readonly<Record<string, b.TableType>>;
 
 const bytes = "TypedArrayElements";
 const storage = "TypedArrayStorage";
-// No value of the language lies among the bytes.
 const rawBytes = b.state(bytes, b.never);
 const otherAgents = "ExternalState";
 
@@ -12,7 +11,6 @@ const byteCount = b.int(0, b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE"));
 const anyArrayBuffer = b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
 const readsState = [b.readsContents()];
 const changesState = [b.readsContents(), b.writesContents()];
-// Settled when the buffer is made, and detaching keeps it.
 const fixedAtCreation = b.inspected;
 
 const requiresNew = {
@@ -74,7 +72,6 @@ const bufferSlice = (className: string) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// A buffer of a fixed length is refused before the length is converted.
 const lengthChange = {
   args: { newLength: b.index.loose },
   capability: "heap",

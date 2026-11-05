@@ -24,7 +24,6 @@
 
 namespace JSC { namespace AOT {
 
-// Bun's src/aot/report/levels.rs finds the count of a level and of a cost at the number of the enumerator.
 static_assert(!static_cast<unsigned>(Wire::KnowledgeLevel::Unknown) && static_cast<unsigned>(Wire::KnowledgeLevel::Expected) == 1 && static_cast<unsigned>(Wire::KnowledgeLevel::Proven) == 2);
 static_assert(std::tuple_size_v<decltype(Wire::AccessCountRecord::accesses)> == numberOfEnumerators<Wire::KnowledgeLevel>);
 static_assert(std::tuple_size_v<decltype(Wire::AccessCountRecord::calls)> == numberOfEnumerators<Wire::KnowledgeLevel>);
@@ -41,9 +40,7 @@ struct PlacedExplainNote {
     uint32_t function { 0 };
     uint32_t unit { 0 };
     uint32_t index { 0 };
-    // The AccessKind of an operation, the AllocationKind of an object, nothing of a test.
     uint8_t kind { 0 };
-    // Lower is worse, so the worst note of a place sorts first.
     uint8_t rank { 0 };
 };
 
@@ -211,63 +208,6 @@ static Wire::IllTypedCause illTypedCauseForExplainedCause(Wire::UnprovenCause ca
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<Typed::ObjectMutation> mutationForExplainedCause(Wire::UnprovenCause cause)
-{
-    switch (cause) {
-    case Wire::UnprovenCause::ReachesNativeCode:
-        return Typed::ObjectMutation::ReachNativeCode;
-    case Wire::UnprovenCause::ReachesUnknownJavaScript:
-        return Typed::ObjectMutation::ReachUnknownJavaScript;
-    case Wire::UnprovenCause::FieldDeleted:
-        return Typed::ObjectMutation::DeleteField;
-    case Wire::UnprovenCause::PropertyRedefined:
-        return Typed::ObjectMutation::RedefineProperty;
-    case Wire::UnprovenCause::PropertyAdded:
-        return Typed::ObjectMutation::AddProperty;
-    case Wire::UnprovenCause::IntegrityChanged:
-        return Typed::ObjectMutation::ChangeIntegrity;
-    case Wire::UnprovenCause::PrototypeChanged:
-        return Typed::ObjectMutation::ChangePrototype;
-    case Wire::UnprovenCause::StoreOfOtherType:
-        return Typed::ObjectMutation::StoreOfOtherType;
-    case Wire::UnprovenCause::Unknown:
-    case Wire::UnprovenCause::ResultDisabled:
-    case Wire::UnprovenCause::UnknownObject:
-    case Wire::UnprovenCause::NonLayoutObject:
-    case Wire::UnprovenCause::BuiltinBase:
-    case Wire::UnprovenCause::UnknownBase:
-    case Wire::UnprovenCause::ClassEvaluatedAgain:
-    case Wire::UnprovenCause::UnknownWriter:
-    case Wire::UnprovenCause::UnknownCallee:
-    case Wire::UnprovenCause::UnprovenContents:
-    case Wire::UnprovenCause::UnknownKeyDelete:
-    case Wire::UnprovenCause::UnknownKeyStore:
-    case Wire::UnprovenCause::OwnPropertyHidesMember:
-    case Wire::UnprovenCause::OtherNewTarget:
-    case Wire::UnprovenCause::UndescribedNativeResult:
-    case Wire::UnprovenCause::UnseenCode:
-    case Wire::UnprovenCause::UncheckedConversionOfUntracked:
-    case Wire::UnprovenCause::DataFromOutside:
-    case Wire::UnprovenCause::ThrownByRunTime:
-    case Wire::UnprovenCause::ParameterOfEscapedFunction:
-    case Wire::UnprovenCause::ContentsOfEscapedObject:
-    case Wire::UnprovenCause::ResultOfUnknownCallee:
-    case Wire::UnprovenCause::ObjectWithoutLayout:
-    case Wire::UnprovenCause::Untracked:
-    case Wire::UnprovenCause::LayoutOutsideFamily:
-        return std::nullopt;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static Typed::ObjectID objectNamedByExplainNote(const Typed::Program& program, const Typed::WalkNote& note)
-{
-    if (!note.hasSubject || note.subject.kind() != Typed::FactSubject::Kind::Object)
-        return { };
-    Typed::ObjectID object(note.subject.first());
-    return object && object.index() < program.types.objects().size() ? object : Typed::ObjectID();
-}
-
 static Wire::AllocationKind allocationKindOfExplainedLayout(Typed::LayoutKind kind)
 {
     switch (kind) {
@@ -288,80 +228,18 @@ static Wire::AllocationKind allocationKindOfExplainedLayout(Typed::LayoutKind ki
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Wire::AllocationKind allocationKindOfExplainedClass(BuiltinClassID builtinClass)
-{
-    if (builtinClass == BuiltinClasses::Object)
-        return Wire::AllocationKind::Object;
-    if (builtinClass == BuiltinClasses::Array)
-        return Wire::AllocationKind::Array;
-    if (builtinClass == BuiltinClasses::Arguments)
-        return Wire::AllocationKind::Arguments;
-    if (builtinClass == BuiltinClasses::Generator || builtinClass == BuiltinClasses::AsyncGenerator)
-        return Wire::AllocationKind::Generator;
-    if (builtinClass == BuiltinClasses::Promise)
-        return Wire::AllocationKind::Promise;
-    if (builtinClass == BuiltinClasses::BoundFunction)
-        return Wire::AllocationKind::BoundFunction;
-    if (builtinClass == BuiltinClasses::Function || builtinClass == BuiltinClasses::AsyncFunction || builtinClass == BuiltinClasses::GeneratorFunction || builtinClass == BuiltinClasses::AsyncGeneratorFunction)
-        return Wire::AllocationKind::Closure;
-    if (builtinClass == BuiltinClasses::String)
-        return Wire::AllocationKind::StringRange;
-    if (builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || builtinClass == BuiltinClasses::WeakMap || builtinClass == BuiltinClasses::WeakSet)
-        return Wire::AllocationKind::Collection;
-    return Wire::AllocationKind::Other;
-}
-
 static Wire::AllocationKind allocationKindOfExplainNote(const Typed::Program& program, const Typed::WalkNote& note)
 {
-    Typed::LayoutID layout = note.layout;
-    BuiltinClassID builtinClass;
-    if (Typed::ObjectID object = objectNamedByExplainNote(program, note)) {
-        const Typed::ObjectRecord& record = program.types.objects().at(object);
-        switch (record.kind) {
-        case Typed::ObjectKind::Closure:
-            return Wire::AllocationKind::Closure;
-        case Typed::ObjectKind::RestArray:
-            return Wire::AllocationKind::Rest;
-        case Typed::ObjectKind::Unknown:
-        case Typed::ObjectKind::Builtin:
-        case Typed::ObjectKind::ResultOfBuiltin:
-        case Typed::ObjectKind::HostObject:
-        case Typed::ObjectKind::EscapedFunctionsOfHolder:
-        case Typed::ObjectKind::EscapedOfClass:
-        case Typed::ObjectKind::EscapedWithoutShape:
-        case Typed::ObjectKind::CoroutineResult:
-        case Typed::ObjectKind::FunctionPrototype:
-        case Typed::ObjectKind::ConstructedObject:
-        case Typed::ObjectKind::Namespace:
-        case Typed::ObjectKind::ModuleBuiltin:
-        case Typed::ObjectKind::Instance:
-        case Typed::ObjectKind::Prototype:
-        case Typed::ObjectKind::EscapedOfLayout:
-        case Typed::ObjectKind::Site:
-            break;
-        }
-        if (record.layout)
-            layout = record.layout;
-        builtinClass = record.builtinClass;
-    }
-    if (layout) {
-        Wire::AllocationKind kind = allocationKindOfExplainedLayout(program.at(layout).kind);
-        if (kind != Wire::AllocationKind::Other)
-            return kind;
-    }
-    return builtinClass ? allocationKindOfExplainedClass(builtinClass) : Wire::AllocationKind::Other;
+    return note.layout ? allocationKindOfExplainedLayout(program.at(note.layout).kind) : Wire::AllocationKind::Other;
 }
 
-// The walk declines a frame and never adds one, so an object whose site has none lies in the heap.
-static Wire::AllocationOutcome outcomeOfExplainNote(const Typed::Program& program, const Typed::Facts& facts, const Typed::WalkNote& note)
+static Wire::AllocationOutcome outcomeOfExplainNote(const Typed::WalkNote& note)
 {
     if (note.kind == Typed::WalkNoteKind::ObjectStayedVirtual)
         return Wire::AllocationOutcome::Removed;
     if (note.kind == Typed::WalkNoteKind::ObjectNotInFrame)
         return Wire::AllocationOutcome::Heap;
-    if (Typed::ObjectID object = objectNamedByExplainNote(program, note))
-        return facts.object(object).frame == Typed::FrameVerdict::MayLiveInFrame ? Wire::AllocationOutcome::Frame : Wire::AllocationOutcome::Heap;
-    if (note.layout && !facts.has(note.layout, Typed::LayoutFact::MayLiveInFrame))
+    if (note.layout)
         return Wire::AllocationOutcome::Heap;
     return Wire::AllocationOutcome::Unknown;
 }
@@ -410,23 +288,16 @@ static ExplainedHeapCause explainedHeapCauseFor(Typed::ObjectBuiltCause cause)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static ExplainedHeapCause heapCauseOfExplainNote(const Typed::Program& program, const Typed::Facts& facts, const Typed::WalkNote& note)
+static ExplainedHeapCause heapCauseOfExplainNote(const Typed::WalkNote& note)
 {
-    Wire::AllocationOutcome outcome = outcomeOfExplainNote(program, facts, note);
+    Wire::AllocationOutcome outcome = outcomeOfExplainNote(note);
     if (outcome == Wire::AllocationOutcome::Frame || outcome == Wire::AllocationOutcome::Removed)
         return { };
     ExplainedHeapCause why = explainedHeapCauseFor(note.objectBuilt);
-    if (why.cause != Wire::AllocationHeapCause::None)
-        return why;
-    if (Typed::ObjectID object = objectNamedByExplainNote(program, note)) {
-        Typed::ObjectFacts objectFacts = facts.object(object);
-        if (objectFacts.frame == Typed::FrameVerdict::Heap)
-            why.cause = objectFacts.heapCause;
-    }
     return why;
 }
 
-static std::optional<PlacedExplainNote> classifyExplainNote(const Typed::Program& program, const Typed::Facts& facts, const Typed::WalkNote& note, NotesToExplain wanted)
+static std::optional<PlacedExplainNote> classifyExplainNote(const Typed::Program& program, const Typed::WalkNote& note, NotesToExplain wanted)
 {
     PlacedExplainNote placed;
     switch (wanted) {
@@ -447,14 +318,13 @@ static std::optional<PlacedExplainNote> classifyExplainNote(const Typed::Program
         if (note.kind != Typed::WalkNoteKind::ObjectBuilt && note.kind != Typed::WalkNoteKind::ObjectNotInFrame && note.kind != Typed::WalkNoteKind::ObjectStayedVirtual)
             return std::nullopt;
         placed.kind = static_cast<uint8_t>(allocationKindOfExplainNote(program, note));
-        placed.rank = rankOfExplainedOutcome(outcomeOfExplainNote(program, facts, note));
+        placed.rank = rankOfExplainedOutcome(outcomeOfExplainNote(note));
         return placed;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Ascending by module, position, kind and function, which is a place, then by rank, unit and index: no two notes compare equal.
-static Vector<PlacedExplainNote> placeExplainNotes(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, NotesToExplain wanted, const ParallelLoops& loops)
+static Vector<PlacedExplainNote> placeExplainNotes(const Typed::Program& program, std::span<const Typed::WalkNotes> units, NotesToExplain wanted, const ParallelLoops& loops)
 {
     Vector<PlacedExplainNote> placedNotes = collectInParallel<PlacedExplainNote>(loops, static_cast<unsigned>(units.size()), [&](unsigned unit, Vector<PlacedExplainNote>& found) {
         const Typed::WalkNotes& notes = units[unit];
@@ -462,7 +332,7 @@ static Vector<PlacedExplainNote> placeExplainNotes(const Typed::Program& program
             const Typed::WalkNote& note = notes.notes[index];
             if (!note.writtenIn)
                 continue;
-            std::optional<PlacedExplainNote> placed = classifyExplainNote(program, facts, note, wanted);
+            std::optional<PlacedExplainNote> placed = classifyExplainNote(program, note, wanted);
             if (!placed)
                 continue;
             placed->location = Typed::locationOf(program, notes, note);
@@ -483,7 +353,6 @@ static Vector<PlacedExplainNote> placeExplainNotes(const Typed::Program& program
     return placedNotes;
 }
 
-// Where the notes of each place begin, and behind the last place the number of notes.
 static Vector<uint32_t> findExplainedPlaces(std::span<const PlacedExplainNote> sortedNotes)
 {
     Vector<uint32_t> firstNoteOfPlace;
@@ -505,7 +374,6 @@ static const Typed::WalkNote& explainedWalkNote(std::span<const Typed::WalkNotes
     return units[placed.unit].notes[placed.index];
 }
 
-// One inline frame of one unit is one copy of a place. The walk may take several notes there: a test of each operand, of each parameter, of the shape and of the slot.
 static uint32_t countExplainedCopies(std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace)
 {
     if (notesOfPlace.size() == 1)
@@ -517,15 +385,11 @@ static uint32_t countExplainedCopies(std::span<const Typed::WalkNotes> units, st
     return static_cast<uint32_t>(removeRepeatedElements(frames));
 }
 
-// The notes of a place that have the outcome reported, which is the worst: they come first.
 static std::span<const PlacedExplainNote> explainNotesWithWorstOutcome(std::span<const PlacedExplainNote> notesOfPlace)
 {
     return notesOfPlace.first(static_cast<size_t>(std::ranges::count(notesOfPlace, notesOfPlace.front().rank, &PlacedExplainNote::rank)));
 }
 
-// Each ObjectBuilt is an allocation in the code, and each ObjectStayedVirtual is one that is gone from it.
-// Of an object that it builds and declines a frame the walk also takes an ObjectNotInFrame. The ObjectBuilt beside it reads Frame while its site may live in a frame, so it is not among these notes.
-// Where it is, the two are one allocation: an ObjectNotInFrame counts only where no ObjectBuilt of its inline frame stands for the same object.
 static uint32_t countExplainedAllocations(std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesWithOutcome)
 {
     if (notesWithOutcome.size() == 1)
@@ -549,15 +413,10 @@ static uint32_t countExplainedAllocations(std::span<const Typed::WalkNotes> unit
     return numberOfAllocations;
 }
 
-static ExplainedCause explainCauseOfNote(const Typed::Program& program, const Typed::Facts& facts, const Typed::WalkNote& note)
+static ExplainedCause explainCauseOfNote(const Typed::Program& program, const Typed::WalkNote& note)
 {
     ExplainedCause explained;
     explained.cause = note.cause;
-    // Facts keeps the lowest place that mutates a named object, or lets it escape.
-    if (std::optional<Typed::ObjectMutation> mutation = mutationForExplainedCause(explained.cause)) {
-        if (Typed::ObjectID object = objectNamedByExplainNote(program, note))
-            explained.witness = facts.witnessOf(object, *mutation);
-    }
     explained.illTypedCause = note.illTypedCause != Wire::IllTypedCause::None ? note.illTypedCause : illTypedCauseForExplainedCause(explained.cause);
     if (Typed::hasFunction(explained.witness) && !hasModule(explained.witness.location))
         explained.witness.location = program.at(Typed::FunctionID(explained.witness.function)).declarationLocation();
@@ -590,7 +449,7 @@ static bool isExplainedOperator(Wire::AccessKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Wire::AccessRecord makeExplainedAccess(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
+static Wire::AccessRecord makeExplainedAccess(const Typed::Program& program, std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
 {
     const PlacedExplainNote& place = notesOfPlace.front();
     const Typed::WalkNote& worst = explainedWalkNote(units, place);
@@ -611,11 +470,9 @@ static Wire::AccessRecord makeExplainedAccess(const Typed::Program& program, con
     if (!asksForCause || (record.level == Wire::KnowledgeLevel::Proven && record.cost == Wire::AccessCost::Free))
         return record;
 
-    ExplainedCause explained = explainCauseOfNote(program, facts, worst);
-    // `x + 1` with `x: number | string` has no typed form though no `unknown` reaches it. Of an access, Unknown reads as a fault of the compiler.
+    ExplainedCause explained = explainCauseOfNote(program, worst);
     if (explained.cause == Wire::UnprovenCause::Unknown && isExplainedOperator(record.kind))
         explained.cause = Wire::UnprovenCause::Untracked;
-    // Bun's src/aot/report/causes.rs shows a cause at its witness. Where nothing leads further back, that is the line that pays.
     if (!Typed::hasFunction(explained.witness) || !hasModule(explained.witness.location))
         explained.witness = { place.function, Wire::none, place.location };
     record.cause = explained.cause;
@@ -624,16 +481,16 @@ static Wire::AccessRecord makeExplainedAccess(const Typed::Program& program, con
     return record;
 }
 
-static Vector<Wire::AccessRecord> explainAccesses(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, bool asksForCauses, const ParallelLoops& loops)
+static Vector<Wire::AccessRecord> explainAccesses(const Typed::Program& program, std::span<const Typed::WalkNotes> units, bool asksForCauses, const ParallelLoops& loops)
 {
-    Vector<PlacedExplainNote> notes = placeExplainNotes(program, facts, units, NotesToExplain::Operations, loops);
+    Vector<PlacedExplainNote> notes = placeExplainNotes(program, units, NotesToExplain::Operations, loops);
     Vector<uint32_t> firstNoteOfPlace = findExplainedPlaces(notes.span());
     return collectInParallel<Wire::AccessRecord>(loops, static_cast<unsigned>(firstNoteOfPlace.size() - 1), [&](unsigned place, Vector<Wire::AccessRecord>& found) {
-        found.append(makeExplainedAccess(program, facts, units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place]), asksForCauses));
+        found.append(makeExplainedAccess(program, units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place]), asksForCauses));
     });
 }
 
-static Wire::TypeTestRecord makeExplainedTypeTest(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
+static Wire::TypeTestRecord makeExplainedTypeTest(const Typed::Program& program, std::span<const Typed::WalkNotes> units, std::span<const PlacedExplainNote> notesOfPlace, bool asksForCause)
 {
     const PlacedExplainNote& place = notesOfPlace.front();
     const Typed::WalkNote& worst = explainedWalkNote(units, place);
@@ -647,19 +504,19 @@ static Wire::TypeTestRecord makeExplainedTypeTest(const Typed::Program& program,
     if (!asksForCause)
         return record;
 
-    ExplainedCause explained = explainCauseOfNote(program, facts, worst);
+    ExplainedCause explained = explainCauseOfNote(program, worst);
     record.cause = explained.cause;
     record.illTypedCause = explained.illTypedCause;
     record.witness = explained.witness;
     return record;
 }
 
-static Vector<Wire::TypeTestRecord> explainTypeTests(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, bool asksForCauses, const ParallelLoops& loops)
+static Vector<Wire::TypeTestRecord> explainTypeTests(const Typed::Program& program, std::span<const Typed::WalkNotes> units, bool asksForCauses, const ParallelLoops& loops)
 {
-    Vector<PlacedExplainNote> notes = placeExplainNotes(program, facts, units, NotesToExplain::Tests, loops);
+    Vector<PlacedExplainNote> notes = placeExplainNotes(program, units, NotesToExplain::Tests, loops);
     Vector<uint32_t> firstNoteOfPlace = findExplainedPlaces(notes.span());
     return collectInParallel<Wire::TypeTestRecord>(loops, static_cast<unsigned>(firstNoteOfPlace.size() - 1), [&](unsigned place, Vector<Wire::TypeTestRecord>& found) {
-        found.append(makeExplainedTypeTest(program, facts, units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place]), asksForCauses));
+        found.append(makeExplainedTypeTest(program, units, notes.span().subspan(firstNoteOfPlace[place], firstNoteOfPlace[place + 1] - firstNoteOfPlace[place]), asksForCauses));
     });
 }
 
@@ -717,9 +574,9 @@ static Vector<Wire::AccessCountRecord> countExplainedAccesses(const Typed::Progr
     return counts;
 }
 
-static Vector<Wire::AllocationRemarkRecord> explainAllocations(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, const ParallelLoops& loops, CompileOutput& output)
+static Vector<Wire::AllocationRemarkRecord> explainAllocations(const Typed::Program& program, std::span<const Typed::WalkNotes> units, const ParallelLoops& loops, CompileOutput& output)
 {
-    Vector<PlacedExplainNote> notes = placeExplainNotes(program, facts, units, NotesToExplain::Objects, loops);
+    Vector<PlacedExplainNote> notes = placeExplainNotes(program, units, NotesToExplain::Objects, loops);
     Vector<uint32_t> firstNoteOfPlace = findExplainedPlaces(notes.span());
     std::array<Wire::TextRange, numberOfEnumerators<Typed::Opcode>> namesOfOpcodes { };
 
@@ -733,19 +590,17 @@ static Vector<Wire::AllocationRemarkRecord> explainAllocations(const Typed::Prog
 
         Wire::AllocationRemarkRecord remark;
         remark.location = first.location;
-        remark.outcome = outcomeOfExplainNote(program, facts, worst);
+        remark.outcome = outcomeOfExplainNote(worst);
         remark.copies = countExplainedAllocations(units, notesWithOutcome);
         remark.function = first.function;
         remark.kind = static_cast<Wire::AllocationKind>(first.kind);
-        remark.cause = heapCauseOfExplainNote(program, facts, worst).cause;
+        remark.cause = heapCauseOfExplainNote(worst).cause;
         uint32_t reasons = 0;
         for (const PlacedExplainNote& placed : notesWithOutcome)
-            reasons |= heapCauseOfExplainNote(program, facts, explainedWalkNote(units, placed)).reasons;
+            reasons |= heapCauseOfExplainNote(explainedWalkNote(units, placed)).reasons;
         remark.reasons = static_cast<Wire::AllocationEscapeReason>(reasons);
-        // Bun's src/aot/report/allocations.rs prints it as the place where the object escapes. A cell of the frame is needed there and does not escape.
         if (worst.neededIn && remark.outcome != Wire::AllocationOutcome::Frame)
             remark.forcedBy = program.at(worst.neededIn).locationAt(worst.neededAt.position);
-        // The default of WalkNote::opcode, and no operation that needs a cell.
         if (worst.opcode != Typed::Opcode::Undefined) {
             Wire::TextRange& name = namesOfOpcodes[static_cast<size_t>(worst.opcode)];
             if (!name.length)
@@ -786,7 +641,7 @@ static void writeExplainedLayoutNames(const Typed::Program& program, const BitVe
     output.setRecords(Wire::ResultSection::LayoutNames, records.span());
 }
 
-void writeExplainSections(const Typed::Program& program, const Typed::Facts& facts, std::span<const Typed::WalkNotes> units, BuildContext& build, CompileOutput& output)
+void writeExplainSections(const Typed::Program& program, std::span<const Typed::WalkNotes> units, BuildContext& build, CompileOutput& output)
 {
     Wire::ReportSet reports = build.options().reports;
     bool explainsFlow = hasFlag(reports, Wire::ReportSet::Flow);
@@ -799,8 +654,8 @@ void writeExplainSections(const Typed::Program& program, const Typed::Facts& fac
     NamesInExplainRecords names(program);
 
     if (explainsFlow || countsAccesses) {
-        Vector<Wire::AccessRecord> accesses = explainAccesses(program, facts, units, explainsFlow, loops);
-        Vector<Wire::TypeTestRecord> typeTests = explainTypeTests(program, facts, units, explainsFlow, loops);
+        Vector<Wire::AccessRecord> accesses = explainAccesses(program, units, explainsFlow, loops);
+        Vector<Wire::TypeTestRecord> typeTests = explainTypeTests(program, units, explainsFlow, loops);
         if (countsAccesses) {
             Vector<Wire::AccessCountRecord> counts = countExplainedAccesses(program, accesses.span(), typeTests.span());
             for (const Wire::AccessCountRecord& record : counts) {
@@ -829,7 +684,7 @@ void writeExplainSections(const Typed::Program& program, const Typed::Facts& fac
     }
 
     if (explainsAllocations) {
-        Vector<Wire::AllocationRemarkRecord> remarks = explainAllocations(program, facts, units, loops, output);
+        Vector<Wire::AllocationRemarkRecord> remarks = explainAllocations(program, units, loops, output);
         for (const Wire::AllocationRemarkRecord& remark : remarks)
             names.addFunction(remark.function);
         output.setRecords(Wire::ResultSection::AllocationRemarks, remarks.span());

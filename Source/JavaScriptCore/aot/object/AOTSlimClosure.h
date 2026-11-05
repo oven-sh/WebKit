@@ -64,13 +64,11 @@ public:
     static bool preventExtensions(JSObject*, JSGlobalObject*);
     static bool isExtensible(JSObject*, JSGlobalObject*) { return true; }
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
-    static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
     uint32_t closureNumber() const { return ClosureWord::closureNumberOf(m_word); }
     FunctionID function() const { return functionOfClosureWord(m_word); }
     FunctionKindData kind() const { return kindOfClosureNumber(closureNumber()); }
     bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
-    bool isBound() const { return kind().isBound(); }
     std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOfClosureNumber(closureNumber()).captures }; }
     unsigned numberOfReferences() const { return captureCountsOfClosureNumber(closureNumber()).references; }
     State& state() const;
@@ -113,15 +111,13 @@ ALWAYS_INLINE bool SlimClosure::tryVisitFields(SlimClosure* closure, Visitor& vi
 class ReifiedSlimClosure final : public JSObjectWithButterfly {
 public:
     using Base = JSObjectWithButterfly;
-    enum class Variant : uint8_t { Ordinary, Bound };
-    // It has no special name. Whoever copies properties goes through a JSFunction key by key, names first and then symbols, because that has some: so it goes through the closure that stands in the place of one.
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnSpecialPropertyNames | OverridesGetCallData | OverridesPut | ImplementsHasInstance | ImplementsDefaultHasInstance;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     template<typename CellType, SubspaceAccess mode>
     static CompleteSubspace* subspaceFor(VM& vm) { return vm.heap.aotClosureSpace<mode>(); }
 
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, Variant);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
     static constexpr ptrdiff_t offsetOfFunctionIndexInButterfly() { return offsetInButterfly(firstOutOfLineOffset) * static_cast<ptrdiff_t>(sizeof(EncodedJSValue)); }
 
@@ -137,18 +133,14 @@ public:
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
-    static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
-    // Under every other name defineOwnProperty() is that of an ordinary object.
     static bool hasOrdinaryDefineOwnProperty(VM&, PropertyName);
 
     uint32_t closureNumber() const { return *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(butterfly()) + offsetOfFunctionIndexInButterfly()); }
     FunctionID function() const { return closureFunctionWithNumber(closureNumber()); }
     FunctionKindData kind() const { return kindOfClosureNumber(closureNumber()); }
     bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
-    bool isBound() const { return kind().isBound(); }
     std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOfClosureNumber(closureNumber()).captures }; }
     unsigned numberOfReferences() const { return captureCountsOfClosureNumber(closureNumber()).references; }
-    State& state() const;
 
 private:
     ReifiedSlimClosure() = delete;

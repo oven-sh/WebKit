@@ -45,9 +45,6 @@ bool ClosureTestEmitter::closureWordNames(FunctionID function) const
     return hasOneInstance() && closureKindOf(function).isSlim && conventions().exists(conventions().closureEntryOf(function));
 }
 
-// A closure that gained a property, a different prototype or a different integrity level has a butterfly where its word was, so comparing the word rejects it.
-// On the failing edge, TypeArena::differenceOf() removes the function from a type that names it. So the word alone may decide only when the tested type does not name the function.
-// The walk expects a changed closure to be rejected only among values with unbounded `unknown`: falseRefusalsOfTest() in walk/AOTWalkTypeTests.cpp.
 bool ClosureTestEmitter::isDecidedByClosureWord(FunctionID function, const Type& tested)
 {
     if (!closureWordNames(function))
@@ -111,7 +108,6 @@ void ClosureTestEmitter::branchOnClosureTest(CellPointer cell, FunctionID functi
         LBasicBlock hasOtherWord = newBlock();
         m_out.branch(equal(upperHalf, upperHalfOfClosureWordOf(function)).value(), targets.taken, normalEdge(hasOtherWord));
 
-        // Another slim closure that is as it was created, or a compiled object.
         m_out.appendToContinuation(hasOtherWord);
         m_out.branch(hasBits(upperHalf, closureWordMarker | compiledObjectShapeBit).value(), targets.notTaken, rareEdge(hasOtherStructure));
 
@@ -135,7 +131,6 @@ Condition ClosureTestEmitter::isClosureOfAny(CellPointer cell, std::span<const F
     });
 }
 
-// Image gives the higher function the higher number, so the bounds ascend as the runs do.
 void ClosureTestEmitter::branchOnClosureNumberInRuns(Word32 closureNumber, std::span<const ClosureNumberRun> ascendingRuns, int32_t addend, bool mayLieBelowFirstRun, BranchTargets targets)
 {
     static constexpr size_t maxRunsTestedInOrder = 3;
@@ -206,7 +201,6 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
         return;
     }
 
-    // Only the bounds of a run are mentioned. A member between them that nothing else mentions gets no number, and no closure of it is ever made.
     AOT::sort(members);
     Vector<ClosureNumberRun, 4> runs;
     for (FunctionID member : members) {
@@ -221,7 +215,6 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
     }
 
     if (closureWordsDecide) {
-        // What these bits leave of the word of any other cell lies below the marker or has the bit above it, so it lies in no run.
         Word32 markerAndNumber = bitAnd(upperHalfOfWordAtSlimClosureWord(cell), word32(static_cast<int32_t>(closureWordMarker | compiledObjectShapeBit | ClosureWord::functionMask)));
         branchOnClosureNumberInRuns(markerAndNumber, runs.span(), closureWordMarker, true, targets);
         return;
@@ -240,7 +233,6 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
         Word32 upperHalf(m_out.load32(m_out.address(cell.value(), word, sizeof(uint32_t))));
         return bitAnd(upperHalf, word32(ClosureWord::functionMask));
     };
-    // What follows it stands where the cell has another form.
     auto addForm = [&](Condition hasForm, BlockEdge otherForms, const auto& loadClosureNumber) {
         LBasicBlock form = newBlock();
         ScopeFork fork = m_out.forkScope();
@@ -269,7 +261,6 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
             });
         }
     }
-    // What is no closure at all is told in line.
     LBasicBlock isChangedClosure = newBlock();
     if (hasFullMember) {
         LBasicBlock isNoFunctionObject = newBlock();
@@ -313,7 +304,6 @@ Condition ClosureTestEmitter::isSlimClosureAsCreated(CellPointer cell)
     return greaterThanOrEqual(topByte, word32(static_cast<uint32_t>(ClosureWord::minTopByteOfCalleeTaking(ClosureWord::maxNumberOfParameters))));
 }
 
-// The word says of the code what holds in every instance. A slim closure that has got properties has a butterfly where its word was, and counts as one that says nothing.
 void ClosureTestEmitter::branchOnEndsItsTailCalls(Boxed value, BranchTargets targets)
 {
     static_assert(ClosureWord::functionShift == 32 && ClosureWord::endsItsTailCallsBit >= ClosureWord::functionShift);
@@ -362,8 +352,6 @@ Word32 ClosureTestEmitter::closureTableEntry(FunctionID function)
     return Word32(m_out.load32(closureCellOf(function)));
 }
 
-// The run time allocates the table apart from the instance, so the number of the cell is scaled where the code runs.
-// A cell of ClosureTable holds a narrow reference less one, or a pointer where the program's references are wide.
 TypedPointer ClosureTestEmitter::closureCellOf(FunctionID function)
 {
     RELEASE_ASSERT(m_plan.hasClosureCell(function));

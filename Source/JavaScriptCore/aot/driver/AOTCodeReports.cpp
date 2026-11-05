@@ -38,7 +38,6 @@ struct CodeReportFormTotal {
     uint64_t countThatDiffersFromSchema { 0 };
 };
 
-// By keyOfCodeReportForm().
 using CodeReportFormTotals = UncheckedKeyHashMap<uint64_t, CodeReportFormTotal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
 struct CodeReportForm {
@@ -65,7 +64,6 @@ static uint64_t keyOfCodeReportForm(const BytesOfForm& entry)
     return static_cast<uint64_t>(entry.opcode) << 32 | static_cast<uint64_t>(entry.state) << 16 | static_cast<uint64_t>(entry.place) << 8 | static_cast<uint64_t>(entry.form) << 1 | !entry.isNamed;
 }
 
-// A record for each run of neighboring units of one module within a chunk. A module may have many runs.
 static Vector<Wire::ModuleBytesRecord> measureCodeReportRunsOfModules(const Typed::Program& program, const BuiltImage& built, const ParallelLoops& loops)
 {
     const LinkedFunctions& units = built.functions;
@@ -105,7 +103,6 @@ static void writeCodeReportBytesByModule(const Typed::Program& program, const Bu
 
 static CodeReportFormTotals sumCodeReportBytesByForm(const LinkedFunctions& units, const ParallelLoops& loops)
 {
-    // A table for each thread. These are sums of whole numbers, so which thread takes a chunk does not change them.
     Vector<CodeReportFormTotals> totalsOfThreads(loops.width());
 
     ChunksOfIndices chunks = divideIntoChunks(static_cast<unsigned>(units.size()));
@@ -133,7 +130,6 @@ static CodeReportFormTotals sumCodeReportBytesByForm(const LinkedFunctions& unit
     return totals;
 }
 
-// `Mod NumbersAndWholeDivisor`: the operation, what its emitter knew unless the opcode says all, and the place where that has picked the form.
 static void printCodeReportNameOfForm(PrintStream& out, const CodeReportForm& row)
 {
     out.print(nameOf(row.opcode));
@@ -143,7 +139,6 @@ static void printCodeReportNameOfForm(PrintStream& out, const CodeReportForm& ro
         out.print(" in ", nameOf(row.place));
 }
 
-// A form that is not named is a fault of the table, and the code is what it would be without the report.
 static bool codeReportStopsAtFormsThatAreNotNamed()
 {
     return ASSERT_ENABLED || ASAN_ENABLED || Options::verifyAOTMachineCode();

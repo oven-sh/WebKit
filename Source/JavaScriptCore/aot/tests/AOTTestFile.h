@@ -75,10 +75,8 @@ struct TestTodo {
     unsigned line;
 };
 
-// `# -- <name>` down to `# -- end of <name>`: text for a stage other than the reader, each line after `# `. The one name: code.
 struct TestSection {
     String name;
-    // Of the first line of the text, so that an error in it names a line of the file.
     unsigned firstLine { 0 };
     String text;
 };
@@ -92,10 +90,8 @@ struct TestFile {
     Vector<ExpectedDiagnostic> diagnostics;
     Vector<ExpectedStatistic> statistics;
     Vector<TestSection> sections;
-    // `# TYPES: f<n>`: `t<k>` in a section or an argument is the declared type of parameter k of that function.
     std::optional<FunctionID> functionOfTypesLine;
     std::optional<TestTodo> todo;
-    // `# HANGS-ON-ORDER: <owner>: <what differs>`: a debt of Link alone. It says nothing of what the file's own lines expect.
     std::optional<TestTodo> hangsOnOrder;
     Vector<TestFileError> errors;
 

@@ -38,7 +38,6 @@ void BufferBuiltinEmitter::generateDataViewByteLength(const InlineCall& call)
     ArrayBufferViewBuiltinEmitter& views = emitter<ArrayBufferViewBuiltinEmitter>();
     CellPointer view = cellOperand(call.receiver());
     missUnless(call, views.hasFixedLength(view));
-    // A view of a detached buffer has no bytes, and the getter throws.
     Integer length = views.lengthOf(view);
     missUnless(call, isNotZero(length));
     finish(call, length, Range { 1, maxByteLengthOfBuffer });
@@ -91,7 +90,6 @@ void BufferBuiltinEmitter::generateDataViewSet(const InlineCall& call)
     finishWithUndefined(call);
 }
 
-// `source.copy(target, targetStart, sourceStart, sourceEnd)` copies as many bytes as are available and fit. A position that is negative, fractional or past the end of the source falls back to the function.
 void BufferBuiltinEmitter::generateBufferCopy(const InlineCall& call)
 {
     ArrayBufferViewBuiltinEmitter& views = emitter<ArrayBufferViewBuiltinEmitter>();
@@ -173,7 +171,6 @@ Pointer BufferBuiltinEmitter::vectorHoldingElement(CellPointer view, Integer ind
     return elements.vector;
 }
 
-// The length of the view counts elements, and an element has at least one byte.
 Pointer BufferBuiltinEmitter::findBytes(CellPointer view, Integer offset, bool mayBeNegative, unsigned size, LBasicBlock otherwise)
 {
     if (size > 1 && mayBeNegative)
@@ -256,7 +253,6 @@ Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer
     }
     if (isBigInt(elements))
         return newBigInt(context, element.as<Integer>(), elements == TypeBigInt64);
-    // The bytes may spell any NaN.
     if (isFloat(elements))
         return emitter<ConversionEmitter>().purified(element.as<Number>());
     return element;
@@ -298,7 +294,6 @@ Condition BufferBuiltinEmitter::isNegativeBigInt(CellPointer bigInt)
     return hasBits(loadByte(bigInt, m_heaps.JSBigInt_sign), TypeInfoPerCellBit);
 }
 
-// A BigInt holds a sign and digits, the lowest digit first, and zero has none.
 Integer BufferBuiltinEmitter::low64Of(CellPointer bigInt)
 {
     static_assert(sizeof(JSBigInt::Digit) == sizeof(uint64_t));
@@ -330,7 +325,6 @@ CellPointer BufferBuiltinEmitter::newBigInt(const OperationContext& context, Int
             Integer header(m_out.load64(instanceField(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header))));
             cells.storeHeader(cell, select(isNegative, bitOr(header, integer(static_cast<int64_t>(TypeInfoPerCellBit) << 48)), header));
         }
-        // The word of the length is eight bytes wide, and the upper four hold nothing.
         storeField(cell, m_heaps.JSBigInt_length, zeroExtended(isNotZero(bits)));
         storeField(cell, m_heaps.JSBigInt_data, magnitude);
     }

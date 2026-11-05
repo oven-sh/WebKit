@@ -53,12 +53,10 @@ static uint64_t hashOfArgumentMoves(const ArgumentMoves& moves)
     return hash;
 }
 
-// Which of several equal lists stays depends on the threads. Nothing that reaches the image does: the caller sorts what stays by its words.
 static Vector<const ArgumentMoves*> removeDuplicateArgumentMoves(const ParallelLoops& loops, const Vector<HashedArgumentMoves>& lists)
 {
     size_t numberOfSlots = std::bit_ceil(lists.size() * 2 + 1);
     unsigned shift = 64 - std::countr_zero(numberOfSlots);
-    // index + 1, linear probing.
     Vector<uint32_t> slots;
     slots.grow(numberOfSlots);
     forEachRangeOfIndicesInParallel(loops, numberOfSlots, [&](size_t first, size_t end) {
@@ -82,7 +80,6 @@ static Vector<const ArgumentMoves*> removeDuplicateArgumentMoves(const ParallelL
 
 namespace {
 
-// A list that is shorter has zeros behind it, which order it in front of every list that it begins.
 struct ArgumentMovesWithFirstWords {
     std::array<uint64_t, 4> firstWords;
     const ArgumentMoves* moves;
@@ -124,7 +121,6 @@ static String describeStubForSharedCode(StubKey key)
 
 namespace {
 
-// Keeps the first of equal elements, in the order in which they were added.
 template<typename T, typename Traits>
 class DistinctElements {
 public:
@@ -181,7 +177,6 @@ using DistinctArgumentMoves = DistinctElements<HashedArgumentMoves, HashedArgume
 
 } // anonymous namespace
 
-// False where the function names a stub that does not exist.
 [[nodiscard]] static bool addSharedCodeCalledBy(const CompiledCode& function, DistinctStubKeys& stubKeys, DistinctArgumentMoves& argumentMoves, BuildContext& context)
 {
     bool everyStubExists = true;
@@ -208,8 +203,6 @@ using DistinctArgumentMoves = DistinctElements<HashedArgumentMoves, HashedArgume
     return everyStubExists;
 }
 
-// Runs after applyNumbersToFunctions(), so a key whose immediate is a number given by Image already has it, and so has a throw word that a thunk moves.
-// StubCalls adds a key or a list of moves only along with a relocation that names it, so what a body lists is what it calls.
 std::optional<CalledSharedCode> collectCalledSharedCode(const LinkedFunctions& functions, BuildContext& context)
 {
     StepTimes times(context, "image: shared code"_s);
@@ -263,8 +256,6 @@ static bool isSameStubSummary(const StubSummary& a, const StubSummary& b)
         && a.clobberedInline == b.clobberedInline;
 }
 
-// The functions were compiled against a catalog that did not know the last column of the field table. What it said about a stub has to hold for the stub in the image.
-// StubOptions::from() takes the last column of the front tables for maxNameInFieldTable, and the options of the two catalogs agree in everything else.
 static void checkStubSummariesMatchCompile(const StubCatalog& catalogOfImage, std::span<const StubKey> calledKeys)
 {
     StubOptions optionsOfCompile = catalogOfImage.options();

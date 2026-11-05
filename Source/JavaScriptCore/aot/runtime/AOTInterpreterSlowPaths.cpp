@@ -47,10 +47,8 @@ void willRunInInterpreter(CodeBlock* codeBlock)
         return;
     if (codeBlock->source().provider()->provenance() != SourceProvenance::Static)
         return;
-    // The text of an implicit class constructor is the engine's, whichever text declares the class. Only bytecode creates one, and that bytecode came through here.
     if (codeBlock->unlinkedCodeBlock()->isBuiltinDefaultClassConstructor())
         return;
-    // Compiled code belongs to the realm of the program. Any other realm has its built-in functions as text, and what creates such a realm is declared to use the interpreter.
     if (vm.hasCompiledCode() && !Instance::of(codeBlock->globalObject()) && codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
         return;
 
@@ -66,7 +64,6 @@ static Instance* instanceOfInterpreter(JSGlobalObject* realm)
     return instance && instance->state ? instance : nullptr;
 }
 
-// Null where the field lies outside the cell and has no storage yet.
 static void* storageOfField(const Slot& slot, Object& object)
 {
     uint32_t offset = slot.fieldSlot().offset;
@@ -82,10 +79,9 @@ static JSValue readField(Instance& instance, const Slot& slot, Object& object)
     const void* field = storageOfField(slot, object);
     if (!field)
         return { };
-    // Only the object makes the closure that its slot still defers.
     if (representation == SlotRepresentation::DeferredClosure && *static_cast<const uint32_t*>(field) < minCell32)
         return { };
-    JSValue value = readSlot(representation, field, *instance.state->strings);
+    JSValue value = readSlot(representation, field, instance);
     if (!value && slot.has(Slot::absentIsUndefined))
         return jsUndefined();
     return value;
@@ -96,7 +92,6 @@ static JSValue valueInStorage(const Slot& slot, JSCell* base)
     return valueAtOffset(asObject(slot.has(Slot::isOwn) ? base : slot.holder), slot.offsetInStorage());
 }
 
-// callCustomGetterAndReturn() in the stubs.
 static JSValue callCustomGetter(Instance& instance, const Slot& slot, JSCell* base, const Identifier& ident)
 {
     const CustomAccessorRecord& record = instance.state->propertyCaches->tables().customAccessors().at(slot.customAccessor.index);
@@ -107,7 +102,6 @@ static JSValue callCustomGetter(Instance& instance, const Slot& slot, JSCell* ba
     return Interpreter::callCustomGetter(record, base, ident);
 }
 
-// Empty where the slot does not say what the value is, and after an exception.
 static JSValue readBySlot(Instance& instance, const Slot& slot, JSCell* base, const Identifier& ident)
 {
     switch (slot.kind) {
@@ -174,7 +168,6 @@ static JSValue getById(Instance& instance, JSCell* base, const Identifier& ident
 
 enum class CacheOfOperation : bool { None, HoldsOwnValues };
 
-// The interpreter looks an ordinary object up itself, so that its own cache gets what it can hold. didGetById() files the rest.
 static std::optional<JSValue> tryGetFromOrdinaryObject(Instance& instance, JSCell* base, const Identifier& ident, CacheOfOperation cache)
 {
     auto scope = DECLARE_THROW_SCOPE(*instance.vm);
@@ -190,7 +183,6 @@ static std::optional<JSValue> tryGetFromOrdinaryObject(Instance& instance, JSCel
     return value;
 }
 
-// addExtraProperty() in the stubs, for a property that needs no new storage: the Structures before and after are the slot's, so nothing is looked up and nobody is told again.
 static bool tryAddExtraProperty(Instance& instance, const Slot& slot, Object& object, JSValue value)
 {
     if (object.isNotExtensible() || slot.has(Slot::isOutOfLine))
@@ -295,7 +287,6 @@ std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject* globalObje
     }
     case SlotRepresentation::Cell32:
     case SlotRepresentation::OptionalCell32:
-    case SlotRepresentation::LiteralString32:
     case SlotRepresentation::DeferredClosure:
         return narrowReferenceInSiteCache + static_cast<PropertyOffset>(offset);
     case SlotRepresentation::Cell:
@@ -313,7 +304,6 @@ std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject* globalObje
     case SlotRepresentation::Int8:
     case SlotRepresentation::Uint16:
     case SlotRepresentation::Int16:
-    case SlotRepresentation::LiteralString:
         return invalidOffset;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -369,7 +359,6 @@ bool tryPutById(JSGlobalObject* globalObject, JSCell* base, const Identifier& id
 bool tryPutByVal(JSGlobalObject* globalObject, JSCell* base, JSValue key, JSValue value, bool isStrict)
 {
     UniquedStringImpl* uid = nameOfKey(key);
-    // The holder is prepared in front of a look by value, and what the tables hold under such a symbol was filed by stores by name.
     if (!uid || isPreparedBeforeLookups(globalObject->vm(), uid))
         return false;
     return tryPutById(globalObject, base, Identifier::fromUid(globalObject->vm(), uid), value, isStrict);

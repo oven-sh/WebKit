@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations, the walk over own keys: which keys an object has, and in which order it got them, is one number in its cell. Whoever copies or lists an object without the run time asks here which number to expect.
-// The state knows the number (the object was made here, or the number was tested): no test. Layouts are proven or expected: an arm a layout and order, behind tests whose failing edges lead to the operation as written.
-// At a suspension and at a throw: nothing is kept, the state ends what it knows by the effects of what is built. Withheld: nothing is in sight, and every plan is empty.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -29,16 +25,13 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 enum class FieldInOwnKeyPlan : uint8_t {
-    // Whether a walk meets the field, or what it would find in the slot, is not known when the program is built.
     Unknown,
-    // The property is there, and no walk over enumerable string keys meets it.
     LeftOut,
     Listed,
 };
 
 } // anonymous namespace
 
-// An allocation of the layout that lists nothing leaves the word of no keys, and from there on the word of a cell says which keys it has got. An order is numbered within its shape.
 bool orderWordTellsOwnKeysOf(const Walker& walker, LayoutID layout)
 {
     const Plan& plan = walker.plan();
@@ -51,7 +44,6 @@ static FieldInOwnKeyPlan classifyFieldInCopiesOwnKeys(const Walker& walker, Layo
     const Layout& record = program.at(layout);
     FieldFacts fieldFacts = walker.facts().field({ layout, field });
     PropertyKeyID key;
-    // Where only definitions fill the field, the property has the form that they give it, whatever is written.
     OptionSet<FieldForm> form = fieldFacts.formOfValue;
     if (field < record.fields.size()) {
         const Field& declared = record.fields[field];
@@ -79,7 +71,6 @@ static FieldInOwnKeyPlan classifyFieldInCopiesOwnKeys(const Walker& walker, Layo
     }
     if (form.contains(FieldForm::IsNotEnumerable))
         return FieldInOwnKeyPlan::LeftOut;
-    // The key is listed, and the slot holds the pair of functions, which a walk over the slots would take for the value.
     if (form.contains(FieldForm::IsAccessor) || fieldFacts.facts.contains(FieldFact::IsAccessor) || walker.plan().slot(layout, field).holdsAccessor)
         return FieldInOwnKeyPlan::Unknown;
     return FieldInOwnKeyPlan::Listed;
@@ -89,16 +80,13 @@ static bool canPlanOwnKeysOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID
 {
     const Program& program = walker.program();
     const Plan& plan = walker.plan();
-    // The instances of a class below a built-in class are cells of that class. They have no slots and no word for the order of their keys.
     if (!isFoundByShapeTest(program.at(layout)) || !plan.isInUse(layout) || !orderWordTellsOwnKeysOf(walker, layout))
         return false;
 
     const PlannedLayout& planned = plan.layout(layout);
     for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
-        // A slot without an empty state counts as filled from the allocation on, and no order lists it.
         if (planned.slots[field].hasStorage() && !canLeaveSlot(planned.slots[field].representation))
             return false;
-        // An index is listed in front of every name, in ascending order, whenever it was created.
         PropertyKeyID key = plan.slots().keyOf(program, { layout, field });
         if (key && program.at(key).kind == PropertyKeyKind::Text && (program.isIndexLike(key) || program.nameClassOf(key) == NameClass::Proto))
             return false;
@@ -106,7 +94,6 @@ static bool canPlanOwnKeysOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID
     return true;
 }
 
-// `created`: an object has these fields with storage, got them in this order and has no other.
 static std::optional<OwnKeyOrder> ownKeysAmongCreatedFieldsInCopiesOwnKeys(const Walker& walker, LayoutID layout, std::span<const FieldIndex> created)
 {
     OwnKeyOrder order { layout, { }, { } };
@@ -118,11 +105,9 @@ static std::optional<OwnKeyOrder> ownKeysAmongCreatedFieldsInCopiesOwnKeys(const
         case FieldInOwnKeyPlan::LeftOut:
             break;
         case FieldInOwnKeyPlan::Listed: {
-            // The order may list such a field while nothing holds its value, so that the object has it does not say that its slot can be read.
             const PlacedSlot& slot = walker.plan().slot(layout, field);
             if (!slot.hasStorage() || (slot.isOutOfLine() && slot.mayExistWithoutStorage))
                 return std::nullopt;
-            // A closure that is made on demand lies there as a mark until somebody asks for it, and a GetSlot asks nobody.
             if (slot.representation == SlotRepresentation::DeferredClosure)
                 return std::nullopt;
             order.fields.append(field);
@@ -143,9 +128,6 @@ static LayoutID onlyLayoutProvenInCopiesOwnKeys(Walker& walker, TypeID proven)
     return singleLayoutOf(walker.types(), type);
 }
 
-// ---- Objects in sight
-
-// The state knows an object that was made here under the record that made it, and one that has passed a test under the name that the test gave it.
 static Reference nameWhoseOrderWordIsKnownInCopiesOwnKeys(Walker& walker, Reference object)
 {
     if (walker.state().orderWordOf(object))
@@ -166,7 +148,6 @@ std::optional<OwnKeyOrder> ownKeysInSight(Walker& walker, Reference object)
     if (!layout || !canPlanOwnKeysOfLayoutInCopiesOwnKeys(walker, layout))
         return std::nullopt;
 
-    // The word is known whole and has no flag: the object lists these keys, one behind the other, each lies in its slot, and it has no property but those.
     uint32_t orderWord = *walker.state().orderWordOf(known);
     if (orderWord & ~orderAndCountMask || isOrderStoredOutOfLine(orderWord))
         return std::nullopt;
@@ -180,8 +161,6 @@ std::optional<OwnKeyOrder> ownKeysInSight(Walker& walker, Reference object)
     return ownKeysAmongCreatedFieldsInCopiesOwnKeys(walker, layout, created);
 }
 
-// ---- Plans
-
 static bool isRequiredInCopiesOwnKeys(const Walker& walker, LayoutID layout, FieldIndex field)
 {
     const Layout& record = walker.program().at(layout);
@@ -190,8 +169,6 @@ static bool isRequiredInCopiesOwnKeys(const Walker& walker, LayoutID layout, Fie
     return walker.facts().linked().isAppendedFieldRequiredBySomeWrittenType({ layout, field });
 }
 
-// At how many keys of the order, from the first on, the makers of the program are likely to stop, the likeliest first. A guess about an object, which HasKeyOrder tests.
-// Outside a loop: at the end of an order that lists every field of a layout whose fields are all required. In a loop: at the end of any order, and behind its last required field.
 static Vector<uint32_t, 2> countsAtWhichMakersStopInCopiesOwnKeys(const Walker& walker, LayoutID layout, std::span<const FieldIndex> order)
 {
     uint32_t behindLastRequiredField = 0;
@@ -222,7 +199,6 @@ static Vector<uint32_t, 2> countsAtWhichMakersStopInCopiesOwnKeys(const Walker& 
     return counts;
 }
 
-// Appends an arm for each list of keys at which the makers of the layout's objects stop. False: some such list has no arm, or there is none.
 static bool appendOrdersOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID layout, unsigned mostArms, OwnKeyPlan& plan)
 {
     if (!canPlanOwnKeysOfLayoutInCopiesOwnKeys(walker, layout))
@@ -236,7 +212,6 @@ static bool appendOrdersOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID l
         std::span<const FieldIndex> order = keyOrders.order(layout, number);
         for (uint32_t count : countsAtWhichMakersStopInCopiesOwnKeys(walker, layout, order)) {
             std::span<const FieldIndex> created = order.first(count);
-            // Orders that begin alike share the word of the first of them up to where they part.
             bool hasArmAlready = std::ranges::any_of(plan.orders.span().subspan(firstArmOfLayout), [&](const OwnKeyOrder& earlier) {
                 return std::ranges::equal(earlier.created, created);
             });
@@ -255,7 +230,6 @@ static bool appendOrdersOfLayoutInCopiesOwnKeys(const Walker& walker, LayoutID l
     return hasList && everyListHasArm;
 }
 
-// The layouts in use that the type lists, as many as there may be arms. False: the type admits values that have no layout, and no arm takes them.
 static bool listLayoutsInCopiesOwnKeys(Walker& walker, TypeID listed, unsigned mostArms, Vector<LayoutID, mostArmsOfOwnKeyWalk>& layouts, bool& hasMoreLayouts)
 {
     if (!listed)
@@ -277,7 +251,6 @@ static bool listLayoutsInCopiesOwnKeys(Walker& walker, TypeID listed, unsigned m
 
 OwnKeyPlan planOwnKeyWalk(Walker& walker, ValueID source, Reference built)
 {
-    // Every arm stands behind a test of ours, whatever is proven of the layout: which keys an object has by now is a guess about its state.
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !built || !built.isValue())
         return { };
 
@@ -291,7 +264,6 @@ OwnKeyPlan planOwnKeyWalk(Walker& walker, ValueID source, Reference built)
     plan.isDeclared = true;
     bool layoutsAreListedByProof = listLayoutsInCopiesOwnKeys(walker, proven, mostArms, layouts, hasMoreLayouts);
     if (!layoutsAreListedByProof) {
-        // Undefined and null fail the test of the shape like any other value that nobody expects, and the operation as written says what becomes of them.
         ExpectationOfValue expectation = findExpectation(walker, source);
         TypeID expected = expectation.type ? types.withoutNullish(expectation.type) : TypeID();
         if (!expected || !proven || !types.overlap(proven, expected) || !listLayoutsInCopiesOwnKeys(walker, expected, mostArms, layouts, hasMoreLayouts))
@@ -307,8 +279,6 @@ OwnKeyPlan planOwnKeyWalk(Walker& walker, ValueID source, Reference built)
         return { };
     return plan;
 }
-
-// ---- The tests of an arm
 
 static bool goOnWhereTestPassesInCopiesOwnKeys(Walker& walker, Reference test, BlockID whereTestFails)
 {
@@ -347,13 +317,11 @@ bool goOnWhereObjectHasOwnKeys(Walker& walker, Reference& object, const OwnKeyOr
     if (!goOnWhereTestPassesInCopiesOwnKeys(walker, walker.build(WTF::move(hasOrder)), waysOut.whereOrderDiffers))
         return false;
 
-    // An extra key stands among the fields where it was created, and a field that was redefined or that got a value its slot cannot hold lies among the extra properties in whatever form it has now.
     Draft hasNothingElse(Opcode::HasNoExtraProperties, origin);
     hasNothingElse.setObjectOperand(object);
     hasNothingElse.setHasNoFieldOutsideSlot(true);
     if (!goOnWhereTestPassesInCopiesOwnKeys(walker, walker.build(WTF::move(hasNothingElse)), waysOut.whereTestFails))
         return false;
-    // A frozen object is read like any other, so nobody has asked whether it is one: the whole word, which WalkState::noteOrderWord() speaks of, is not known.
     walker.state().noteFactsOfCell(object, FactOfCell::NoFieldOutsideSlot);
     return true;
 }

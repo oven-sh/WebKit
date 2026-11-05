@@ -19,7 +19,6 @@ enum FunctionRole (hasSourceBody: Bool, canBeCalledByValue: Bool, hasStackArgume
     CoroutineRamp(false, true, true, Coroutine, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, true, false)
     CoroutineBody(false, false, true, Coroutine, none, false, false, false, false)
     AsyncWorker(false, false, true, Coroutine, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost, true, true, false, false)
-    BoundFunction(false, true, true, BoundFunction, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
     ResultWrapper(false, true, true, ResultWrapper, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
     ResultWorker(false, false, true, ResultWorker, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost, true, true, false, false)
     ParameterWrapper(false, true, true, ParameterWrapper, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
@@ -39,7 +38,6 @@ enum TypedResultForm { | engine None ParsedText ParsedBody Rows }
 
 record ParameterOrigin engine { original: UInt32? }
 record Derivation engine { source: Function(Dispatch)? parameter: UInt32 node: UInt32 parameterMap: List<ParameterOrigin> }
-record DerivedFunctionKey engine { role: FunctionRole target: Function(Dispatch)? parameter: UInt32 node: UInt32 }
 record InlineFrame engine {
     callee: Function(Dispatch)? callPosition: UInt32 parent: UInt32 isTailCall: Bool isConstruction: Bool callIsPartOfConstruction: Bool callsOwnFunctionObject: Bool calleeIsKeptInFrame: Bool calleeIsPredicted: Bool module: Module(Referrer)?
     calledBuiltin: Builtin?
@@ -57,7 +55,6 @@ variant CreatorRecord engine {
         kind: CoroutineKind ramp: Function(Dispatch) body: Function(Dispatch) entryWithoutPromise: Function(Dispatch)? promiseType: Type?
         promiseParameter: UInt32? worker: Function(Dispatch)?
     }
-    BoundFunction { target: Function(Closure) numberOfBoundArguments: UInt32 numberOfCapturedArguments: UInt32 capturesTargetClosure: Bool }
     ResultWrapper { worker: Function(Dispatch) nullish: NullishResult layout: Layout? }
     ResultWorker { origin: Function(Dispatch) }
     ParameterWrapper { body: Function(Dispatch) parameter: UInt32 }

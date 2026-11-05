@@ -68,18 +68,10 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
     case Opcode::Decode:
         if (from == Cell32 && (to == Cell || to == JSValue))
             return conversions.decode(source.as<NarrowReference>(), type, to);
-        if (from == LiteralString && (to == Cell || to == JSValue)) {
-            // A marker has the same bits in both forms. A Narrowed takes this step too, and it declares no access to the string cells that boxLiteralString() reads.
-            if (!(type.primitives & Primitive::AnyString))
-                return Operand(to, source.value);
-            return Operand(to, conversions.boxLiteralString(context, source.as<LiteralStringWord>(), type).value());
-        }
         break;
     case Opcode::Compress:
         if (to == Cell32 && RepresentationSet { Void, Cell, JSValue }.contains(from))
             return conversions.compress(source, type);
-        if (to == LiteralString && RepresentationSet { Void, Cell, JSValue }.contains(from))
-            return conversions.toLiteralString(source, type);
         break;
     default:
         RELEASE_ASSERT_NOT_REACHED();

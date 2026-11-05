@@ -20,7 +20,7 @@ OpcodeSet StraightEmitter::opcodesOfModules()
 {
     return {
         Opcode::ModuleNamespace, Opcode::ImportModule, Opcode::RequireModule, Opcode::EvaluateModule, Opcode::RecordRequire,
-        Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::MockSeenBy, Opcode::AreLoaderFunctionsStored, Opcode::CountExecution,
+        Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::MockSeenBy, Opcode::NamespaceSeenBy, Opcode::AreLoaderFunctionsStored, Opcode::CountExecution,
         Opcode::ResolveModule, Opcode::ThrowModuleFailure, Opcode::ImportDynamic, Opcode::RequireDynamic, Opcode::ResolveDynamic
     };
 }
@@ -101,7 +101,6 @@ static void callStartOfModuleInStraightForm(StraightEmitter& emitter, const Body
     emitter.callStub(value, startModule(), { StraightArgument::word(ModuleEvaluationPlan::numberOf(*start)) }, options);
 }
 
-// Whoever evaluates a module has nothing to pass but `this`, which is undefined.
 static void callBodyOfModuleInStraightForm(StraightEmitter& emitter, const BodyValue& value, FunctionID body, const StraightCallOptions& options)
 {
     const Program& program = emitter.program();
@@ -214,6 +213,10 @@ void StraightEmitter::generateModule(const BodyValue& value)
         return;
     case Opcode::MockSeenBy:
         callOperation(value, RuntimeOperation::MockSeenBy, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()) });
+        define(value);
+        return;
+    case Opcode::NamespaceSeenBy:
+        callOperation(value, RuntimeOperation::NamespaceSeenBy, { moduleIndexInStraightForm(value.module()), moduleIndexInStraightForm(value.referrer()) });
         define(value);
         return;
     case Opcode::AreLoaderFunctionsStored:

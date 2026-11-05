@@ -16,10 +16,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// An Int32. `constant`: the table among the constants of the procedure, where the form has one. `tables`: AOTImage_tables.
 JS_EXPORT_PRIVATE LValue appendDistanceOfShape(Output&, const Machine::AbstractHeap& tables, LValue shapeWord, const DistancesByShape&, uint32_t constant);
 
-// Whether the keys of an object are at a place in an order of the image where the created fields come next, and the order word after them.
 struct KeyOrderStep {
     Condition applies;
     Word32 orderWordAfter;
@@ -39,33 +37,23 @@ public:
     void generatePutSlot(const ValueContext&);
     void generatePutSlotOrAdd(const ValueContext&);
 
-    // From where the offset of access.slot leads to the slot of this object: the cell, or an address behind it where the receivers keep the field at different offsets.
     CellPointer baseOfSlot(CellPointer, const FieldAccess&);
 
-    // Object.defineProperty(object, "key", { .. }) where the object's layout keeps the field with the attributes that the definition creates.
-    // Creates the field in its slot, if the object is extensible, is not a prototype and lacks the property. Otherwise the object is unchanged.
-    // What the record of the definition answers is not tested: orderWordAfter, objectIsNoPrototype.
     struct CreationByDefinition {
         bool isEmitted { false };
-        // Where control goes if the field was not created. Null: nothing was tested.
         LBasicBlock leftToRunTime { nullptr };
     };
     CreationByDefinition tryCreateFieldByDefinition(const ValueContext& definition, CellPointer);
 
-    // Lists the key.
     void didCreateField(const ValueContext&, CellPointer, const FieldAccess&, bool isOnRarePath = false);
-    // To the block that calls for a field that is missing. Where the store expects none the call is rare, so a function without another call has no frame on the way that is taken.
     BlockEdge edgeToCreation(LBasicBlock creates, bool isExpectedToCreate);
 
     bool mayCreateListedField(const FieldAccess&) const;
     bool tryPutSlotOrAddByStub(const ValueContext&, CellPointer, const FieldAccess&, Operand stored);
-    // Of a slot out of line: its granule, and those of the fields out of line that the likeliest key order of every member lists behind the field.
-    // `request.user = user; request.session = session;`: the store that makes the Extension makes room for them all.
     uint64_t granuleBitsWithFieldsBehind(const FieldAccess&) const;
     void markCellIfMarkerReplacesRawValue(CellPointer, const FieldAccess&, ValueID stored);
     std::optional<KeyOrderStep> testLikeliestKeyOrderStep(CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys);
     void takeKeyOrderStepOr(CellPointer, const std::optional<KeyOrderStep>&, NOESCAPE const Invocable<void()> auto& otherwise);
-    // Gives the object the order word that it has with the fields, by the step that applies. Otherwise the caller tests the slots. `isExpectedToCreate` is the flag of the store.
     void listCreatedFields(CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys, bool isExpectedToCreate, NOESCAPE const Invocable<void()> auto& listIfMissing);
 
 private:
@@ -75,7 +63,6 @@ private:
     FieldAccess fieldAccessOf(const ValueContext&, bool isStore) const;
     LayoutSetID setOfMembersWithField(const FieldAccess&);
     Operand readSlot(const ValueContext&, CellPointer, const FieldAccess&, bool absentIsUndefined);
-    // Nothing where the operation has got its result without a read.
     std::optional<CellPointer> loadHalfOfAccessorInSlot(const ValueContext&, ptrdiff_t offsetInGetterSetter);
     void readDeferringSlot(const ValueContext&, bool readsEmptySlotAsUndefined);
     CellPointer makeDeferredClosure(const ValueContext&, CellPointer, const FieldAccess&);
@@ -84,7 +71,6 @@ private:
     Operand loadDeferringSlotOrFieldOutsideIt(const ValueContext&, CellPointer, const FieldAccess&);
     Operand decodeWordOfDeferringSlot(const ValueContext&, NarrowReference);
     void writeSlot(const ValueContext&, CellPointer, const FieldAccess&, ValueID stored);
-    // For a store that needs storage and may list the key of the field. False: nothing was appended.
     bool tryPutSlotOrAddByStub(const ValueContext&, CellPointer, const FieldAccess&, ValueID stored);
 
     Operand loadSlot(CellPointer, const FieldAccess&);
@@ -94,14 +80,12 @@ private:
     Operand inResultRepresentation(const ValueContext&, Operand loaded);
     Operand undefinedResult(const ValueContext&);
     bool receiversAreNeverAllocated(const ValueContext&) const;
-    // Of an access that finds no slot to go to. A store has no result and ignores it.
     Operand resultWithoutSlot(const ValueContext&);
     Operand resultBehindTestThatNeverPasses(const ValueContext&);
     Operand failRead(const ValueContext&, InternalErrorKind);
 
     Word32 distanceBehindLowestOffset(CellPointer, const FieldAccess&);
 
-    // One for all accesses of the function to a name through the same layouts. The bytes of a table have gone to the constant.
     struct OffsetsByShape {
         DistancesByShape distances;
         uint32_t constant { 0 };

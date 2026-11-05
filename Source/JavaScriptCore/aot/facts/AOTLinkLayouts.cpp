@@ -27,11 +27,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// `anything` stands for what has escaped only. So a value that goes where no node follows it (a property that the layout does not list, `this` of an accessor,
-// an object above which something else was put) flows into unseen().
-
-// ---- What no summary shows
-
 static bool variablesAreWrittenOnlyByBodiesInLinkLayouts(ModuleKind kind)
 {
     switch (kind) {
@@ -47,20 +42,17 @@ static bool variablesAreWrittenOnlyByBodiesInLinkLayouts(ModuleKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A variable may be handed over more than once.
 template<typename Functor>
 static void forEachVariableSharedWithUnseenCodeInLinkLayouts(const Program& program, const Functor& functor)
 {
     for (uint32_t index = 0; index < program.variables.size(); ++index) {
         const Variable& variable = program.variables[index];
         const Module& module = program.at(variable.module);
-        // A static field is a property of the class object. Only the run time stores into its variable, whatever is stored under the name, and it empties it (object/AOTStaticFields.h).
         if (variable.owner || variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun })
             || !module.body || !variablesAreWrittenOnlyByBodiesInLinkLayouts(module.kind))
             functor(VariableID(index));
     }
 
-    // The run time fills these.
     for (const Module& module : program.modules) {
         if (module.exportsVariable)
             functor(module.exportsVariable);
@@ -89,7 +81,6 @@ static void forEachFieldSharedWithEvaluatedTextInLinkLayouts(const Program& prog
     }
 }
 
-// What a data module exports, which the loader makes, and Object.create(). A layout may be handed over more than once.
 template<typename Functor>
 static void forEachLayoutMadeAtNoNodeInLinkLayouts(const Program& program, const Functor& functor)
 {
@@ -131,7 +122,6 @@ static void forEachLayoutMadeAtNoNodeInLinkLayouts(const Program& program, const
     }
 }
 
-// Of any other layout native code makes objects too.
 static bool onlyCompiledCodeWritesFieldsInLinkLayouts(const Layout& layout)
 {
     return layout.kind == LayoutKind::Environment || isFoundByShapeTest(layout);
@@ -162,8 +152,6 @@ void seedCellsSharedWithUnseenCode(LinkFlow& flow)
     }
 }
 
-// ---- The observer of changes
-
 static OptionSet<LayoutChange> changesMadeByInLinkLayouts(SummaryChange::Kind kind)
 {
     switch (kind) {
@@ -171,14 +159,12 @@ static OptionSet<LayoutChange> changesMadeByInLinkLayouts(SummaryChange::Kind ki
         return { LayoutChange::IsFrozen };
     case SummaryChange::Kind::Deletes:
         return { LayoutChange::LosesProperty };
-    // A descriptor may take `writable` away, which refuses stores as freezing does.
     case SummaryChange::Kind::DefinesByDescriptor:
         return { LayoutChange::GetsAccessor, LayoutChange::GainsProperty, LayoutChange::IsFrozen };
     case SummaryChange::Kind::ChangesPrototype:
         return { LayoutChange::ChangesPrototype };
     case SummaryChange::Kind::BecomesPrototype:
         return { };
-    // A key that nobody knows may find the setter of the prototype link.
     case SummaryChange::Kind::CopiesInto:
         return { LayoutChange::GainsProperty, LayoutChange::ChangesPrototype };
     }
@@ -189,9 +175,7 @@ namespace {
 
 struct ObservedChangeInLinkLayouts {
     FlowNodeID subjectNode;
-    // Null: the change names none.
     FlowNodeID otherNode;
-    // Copies: asking for an aggregate may make a node, which moves the types.
     LinkType subject;
     LinkType other;
     PropertyKeyID key;
@@ -199,10 +183,8 @@ struct ObservedChangeInLinkLayouts {
     bool descriptorIsInSight { false };
     bool laysValueInSight { false };
     FlowNodeID valueInSight;
-    // Null: the descriptor does not name it.
     FlowNodeID getterInSight;
     FlowNodeID setterInSight;
-    // SummaryChange::definesWhatItCopies.
     bool definesWhatItCopies { false };
 };
 
@@ -239,7 +221,6 @@ static LinkType typeOfUnseenObjectsInLinkLayouts()
     return type;
 }
 
-// The layouts whose instances the type names one by one. The members of Lost are not among them: they are still being added.
 template<typename Functor>
 static void forEachLayoutNamedInLinkLayouts(const LinkFlow& flow, const LinkType& type, const Functor& functor)
 {
@@ -259,7 +240,6 @@ static void forEachLayoutNamedInLinkLayouts(const LinkFlow& flow, const LinkType
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The classes whose prototype objects the type names.
 template<typename Functor>
 static void forEachClassOfPrototypeNamedInLinkLayouts(const LinkFlow& flow, const LinkType& type, const Functor& functor)
 {
@@ -279,7 +259,6 @@ static void forEachClassOfPrototypeNamedInLinkLayouts(const LinkFlow& flow, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The classes whose class objects the type names. Those of the lost closures are not among them: noteLostClassObjects().
 template<typename Functor>
 static void forEachClassOfClassObjectNamedInLinkLayouts(const LinkFlow& flow, const LinkType& type, const Functor& functor)
 {
@@ -298,7 +277,6 @@ static void forEachClassOfClassObjectNamedInLinkLayouts(const LinkFlow& flow, co
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A property under an index is an element, and a row may have laid something under a name. What a map or a set holds is no property.
 template<typename Functor>
 static void forEachElementsNodeInLinkLayouts(LinkFlow& flow, const LinkType& type, const Functor& functor)
 {
@@ -308,13 +286,11 @@ static void forEachElementsNodeInLinkLayouts(LinkFlow& flow, const LinkType& typ
     functor(flow.contentsOf(type, SlotOfContents::underAnyName()));
 }
 
-// No prototype object, no function, no built-in: what is done to those changes what lookups find on other objects.
 static bool namesOnlyInstancesInLinkLayouts(const LinkType& type)
 {
     return type.objects != LinkType::Objects::Prototype && type.objects != LinkType::Objects::Prototypes && type.functions == LinkType::Functions::None && !type.builtin;
 }
 
-// Null: the key names no field there. A null key: every field.
 static FlowNodeID nodeStoredUnderInLinkLayouts(LinkFlow& flow, const LinkType& type, PropertyKeyID key)
 {
     switch (type.objects) {
@@ -341,7 +317,6 @@ static void addChangesInLinkLayouts(LinkFlow& flow, LayoutID layout, OptionSet<L
     flow.possibleChanges[layout.index()].add(changes);
 }
 
-// What is done through a lost value is gathered behind the flow, when every member of Lost is known: WriterOfLinkLayouts::lookAtChanges().
 static void addChangesToLayoutsNamedInLinkLayouts(LinkFlow& flow, const LinkType& type, OptionSet<LayoutChange> changes)
 {
     forEachLayoutNamedInLinkLayouts(flow, type, [&](LayoutID layout) {
@@ -349,7 +324,6 @@ static void addChangesToLayoutsNamedInLinkLayouts(LinkFlow& flow, const LinkType
     });
 }
 
-// What lies above the instances of a class lies above those of the classes below it.
 static void escapeClassInLinkLayouts(LinkFlow& flow, LayoutID classLayout)
 {
     flow.escape(classLayout);
@@ -357,7 +331,6 @@ static void escapeClassInLinkLayouts(LinkFlow& flow, LayoutID classLayout)
         flow.escape(below);
 }
 
-// A node that holds a class object or a prototype object does not climb when the class escapes. Whoever has read what lies above either has taken foundBesideFieldsOf() of the class along, which holds anything from then on.
 static void handToUnseenCodeInLinkLayouts(LinkFlow& flow, FlowNodeID node, const LinkType& type)
 {
     if (node != flow.unseen())
@@ -369,10 +342,8 @@ static void handToUnseenCodeInLinkLayouts(LinkFlow& flow, FlowNodeID node, const
     forEachClassOfClassObjectNamedInLinkLayouts(flow, type, letGo);
 }
 
-// The engine runs an accessor with the object as `this`, at no call.
 static bool listsAccessorInLinkLayouts(const Program& program, LayoutID layout)
 {
-    // `class A extends B {}` beside `class B extends A {}` compiles.
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
         for (const Field& field : program.at(current).fields) {
@@ -387,7 +358,6 @@ static void observeFreezeInLinkLayouts(LinkFlow& flow, const ObservedChangeInLin
 {
     OptionSet<LayoutChange> changes = changesMadeByInLinkLayouts(SummaryChange::Kind::Freezes);
     addChangesToLayoutsNamedInLinkLayouts(flow, change.subject, changes);
-    // A name that is read only above an object refuses the store on the object.
     forEachClassOfPrototypeNamedInLinkLayouts(flow, change.subject, [&](LayoutID classLayout) {
         addChangesInLinkLayouts(flow, classLayout, changes);
         for (LayoutID below : flow.program.layoutsExpectedBelow(classLayout))
@@ -403,7 +373,6 @@ static void observeDeletionInLinkLayouts(LinkFlow& flow, const ObservedChangeInL
 
     if (FlowNodeID emptied = nodeStoredUnderInLinkLayouts(flow, change.subject, change.key)) {
         flow.arrive(emptied, flow.fromTypeID(typeOfPrimitives(Primitive::Undefined | Primitive::Absent)));
-        // From then on a read goes on upward. The flow opens a layout that is flagged, and the flags of the lost ones come behind the flow.
         if (change.subject.objects == LinkType::Objects::Lost)
             flow.arrive(emptied, LinkType::anything());
     }
@@ -413,12 +382,10 @@ static void observeDeletionInLinkLayouts(LinkFlow& flow, const ObservedChangeInL
             flow.arrive(elements, undefined);
         });
     }
-    // What a row has laid under a name on an object of one of the engine's classes. From then on a read goes on upward.
     if (change.subject.classes != LinkType::Classes::None && (!change.key || !flow.program.isIndexLike(change.key)))
         handToUnseenCodeInLinkLayouts(flow, change.subjectNode, change.subject);
 }
 
-// Null: the type names anything else than the object that one constructor function was made with under `prototype`.
 static LayoutID onlyPrototypeOfConstructorFunctionInLinkLayouts(const LinkFlow& flow, const LinkType& type)
 {
     if (type.objects != LinkType::Objects::Prototype || !flow.isOfConstructorFunction(type.layout))
@@ -428,10 +395,6 @@ static LayoutID onlyPrototypeOfConstructorFunctionInLinkLayouts(const LinkFlow& 
     return withoutPrimitives == typeOfPrototypeInLinkLayouts(type.layout) ? type.layout : LayoutID();
 }
 
-// The engine hands the object to the accessors as `this`, and they have escaped with the descriptor. A value under the name of a method hides the method.
-// `{ get x() { .. } }` on an object of one layout that lists the name as a field. Whoever reads the field runs the getter with the object as `this` and gets what it returns. Whoever stores into it hands the setter what is stored.
-// False: nobody can tell who runs what.
-// THE EDGES ARE LAID FOR THE OBJECTS OF THE LAYOUT WHATEVER ELSE THE TWO TYPES HOLD, and then the answer is false: an allocation holds unseen objects too once its layout has escaped, and what is laid may not hang on whether the definition was looked at before that.
 static bool layKnownAccessorInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
 {
     const Program& program = flow.program;
@@ -454,7 +417,6 @@ static bool layKnownAccessorInLinkLayouts(LinkFlow& flow, const ObservedChangeIn
     FunctionID id = change.other.function;
     const Function& function = program.at(id);
     bool isGetter = change.lays == SummaryChange::Lays::Getter;
-    // Only of an accessor do the tables know that something other than a call enters it. `arguments` lists what is stored, at a node that all such lists share.
     if (function.kind != (isGetter ? FunctionKind::Getter : FunctionKind::Setter) || !function.hasBody() || function.isCoroutine() || function.results.size() != 1 || flow.summaries.at(id).has(SummaryTrait::UsesArguments))
         return false;
 
@@ -462,7 +424,6 @@ static bool layKnownAccessorInLinkLayouts(LinkFlow& flow, const ObservedChangeIn
     flow.fieldsWithKnownAccessors.append(*field);
     flow.accessorsLaidInFields.append({ *field, id, isGetter });
     flow.reach(id);
-    // Whoever reads or stores may catch it, and no edge leads there.
     flow.addEdge(flow.thrown(id), flow.unseen());
     FlowNodeID held = flow.field(*field);
     LinkType undefined = flow.fromTypeID(TypeTable::undefined);
@@ -509,8 +470,6 @@ static bool layKnownAccessorInLinkLayouts(LinkFlow& flow, const ObservedChangeIn
     return namesNothingElse;
 }
 
-// The engine runs a half with the object as `this`, and a setter with what is stored under the key: that escapes in observeDefinitionInLinkLayouts(), as the halves have in ScanOfBody::layDescriptorsInSight().
-// False: something other than closures of one function, or undefined, lies under `get` or `set`, and nobody can tell what is run.
 static bool handObjectToHalvesInSightInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
 {
     for (FlowNodeID half : { change.getterInSight, change.setterInSight }) {
@@ -531,7 +490,6 @@ static bool handObjectToHalvesInSightInLinkLayouts(LinkFlow& flow, const Observe
     return true;
 }
 
-// The subject is the object that one constructor function is made with and nothing else, or the closures of one function whose names are followed and nothing else.
 static bool definitionInSightIsStoreInLinkLayouts(const LinkFlow& flow, const LinkType& subject, PropertyKeyID key)
 {
     if (onlyPrototypeOfConstructorFunctionInLinkLayouts(flow, subject))
@@ -541,24 +499,19 @@ static bool definitionInSightIsStoreInLinkLayouts(const LinkFlow& flow, const Li
 
 static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
 {
-    // Anywhere else the value lies under the name where anybody may read it, as the scan has it of every other descriptor.
     bool isStore = change.laysValueInSight && change.key && definitionInSightIsStoreInLinkLayouts(flow, change.subject, change.key);
     if (change.valueInSight && !isStore && !change.subject.isNothing())
         flow.addEdge(change.valueInSight, flow.unseen());
     if (layKnownAccessorInLinkLayouts(flow, change))
         return;
-    // SummaryChange::descriptorIsInSight: that one key of the object changes. Of a prototype object or a class object the halves are run with the objects below as `this`: there all is as it was.
     bool namesObjectsOfLayoutsAlone = (change.subject.objects == LinkType::Objects::Layout || change.subject.objects == LinkType::Objects::Family) && change.subject.functions == LinkType::Functions::None && change.subject.classes == LinkType::Classes::None && !change.subject.builtin;
     if (change.descriptorIsInSight && namesObjectsOfLayoutsAlone && handObjectToHalvesInSightInLinkLayouts(flow, change)) {
-        // What lies under the key from now on the definition's own access has brought to the field of that key, listed or appended. No other name answers otherwise than before, so the layout is not opened: openLayoutsThatChanged().
         forEachLayoutNamedInLinkLayouts(flow, change.subject, [&](LayoutID layout) {
             flow.layoutsDefinedOnUnderWrittenKeys.set(layout.index());
-            // A name that nobody else names has no access of its own. What lies under it lies beside the fields all the same: whoever lists what the object holds, or reads under a computed key, finds it.
             if (!change.key) {
                 flow.addEdge(flow.unseen(), flow.storedBesideFieldsOf(layout));
                 return;
             }
-            // From then on the engine hands the setter whatever is stored under the key, at no call that is written. The setter has escaped, so what it is handed has too.
             if (change.setterInSight) {
                 std::optional<FieldReference> field = findField(flow.program, layout, change.key);
                 flow.addEdge(field ? flow.field(*field) : flow.appendedField(layout, change.key), flow.unseen());
@@ -566,7 +519,6 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
         });
         return;
     }
-    // SummaryChange::laysValueInSight: the call keeps nothing of the descriptor, no half is laid, and the definition's own access has brought the value under the name: resolveOnPrototype(), resolveOnClosure().
     if (isStore)
         return;
     if (change.otherNode)
@@ -585,11 +537,8 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
 
 static bool agreesWithLayoutsInLinkLayouts(const LinkFlow&, const LinkType& above, const LinkType& below);
 
-// From here on a lookup on the object finds what nobody can list, and what it finds is called with the object as `this`.
-// `Object.setPrototypeOf(G.prototype, F.prototype)` lays the link that the layouts are written with. Until it runs, the lookups from below find less than Link lets them find.
 static void observeChangeOfPrototypeInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
 {
-    // Below null a lookup does not come to Object.prototype, where Link lets every lookup end.
     bool mayPutNullAbove = change.other.primitives & Primitive::Null;
     if (change.otherNode && !mayPutNullAbove && onlyPrototypeOfConstructorFunctionInLinkLayouts(flow, change.subject) && (change.other.isNothing() || agreesWithLayoutsInLinkLayouts(flow, change.other, change.subject)))
         return;
@@ -598,21 +547,18 @@ static void observeChangeOfPrototypeInLinkLayouts(LinkFlow& flow, const Observed
     handToUnseenCodeInLinkLayouts(flow, change.subjectNode, change.subject);
     addChangesToLayoutsNamedInLinkLayouts(flow, change.subject, changesMadeByInLinkLayouts(SummaryChange::Kind::ChangesPrototype));
     notePrototypesLaidAboveOtherObjects(flow, change.other);
-    // A read at a hole goes on upward.
     LinkType anything = LinkType::anything();
     forEachElementsNodeInLinkLayouts(flow, change.subject, [&](FlowNodeID elements) {
         flow.arrive(elements, anything);
     });
 }
 
-// Whether the layouts say it already: the class object of the written base above a class object, its prototype object above a prototype object, the prototype object of a class above an instance of that class.
 static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType& above, const LinkType& below)
 {
     const Program& program = flow.program;
     LinkType aboveWithoutPrimitives = above;
     aboveWithoutPrimitives.primitives = 0;
 
-    // ResolveHeritage stands in front of the definition of a class and throws for every primitive but null. A variable holds `absent` before it holds the class.
     if (below.functions == LinkType::Functions::Closure && below == typeOfClosuresInLinkLayouts(below.function) && flow.classOfConstructor(below.function)) {
         if (above.primitives & Primitive::Null)
             return false;
@@ -623,7 +569,6 @@ static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType&
         return constructorOfBase && aboveWithoutPrimitives == typeOfClosuresInLinkLayouts(constructorOfBase);
     }
 
-    // The row of ResolveHeritage always lists null. Whether the heritage may be null is asked above, which lets go of the class.
     if (below.objects == LinkType::Objects::Prototype && below == typeOfPrototypeInLinkLayouts(below.layout)) {
         if (aboveWithoutPrimitives.isNothing())
             return true;
@@ -631,9 +576,6 @@ static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType&
         return base && aboveWithoutPrimitives == typeOfPrototypeInLinkLayouts(base);
     }
 
-    // For the prototype object of a class the run time makes an instance of that class only if the class is written at or below the one that the allocation names, else an ordinary object (ClassTable::instanceWithPrototype()).
-    // The scan lays the layout that the allocation names and all that are written below it at the object, and no other layout arrives there. So the class is one of those if the object's type names it, and its layout lies there already.
-    // In place of a primitive the run time takes a prototype object of its own.
     if (!namesOnlyInstancesInLinkLayouts(below) || below.classes != LinkType::Classes::None)
         return false;
     switch (above.objects) {
@@ -654,15 +596,12 @@ static bool agreesWithLayoutsInLinkLayouts(const LinkFlow& flow, const LinkType&
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Where the layouts do not say it, lookups on what lies below find what nobody can list, and what lies above is found by objects that Link does not know as its instances.
-// The run time may then have made an ordinary object, or one of the layout under another prototype, and what the allocation lists lies in it.
 static void observeNewHeirInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
 {
     if (!change.otherNode) {
         handToUnseenCodeInLinkLayouts(flow, change.subjectNode, change.subject);
         return;
     }
-    // Nothing lies below yet.
     if (change.other.isNothing())
         return;
 
@@ -675,7 +614,6 @@ static void observeNewHeirInLinkLayouts(LinkFlow& flow, const ObservedChangeInLi
     notePrototypesLaidAboveOtherObjects(flow, change.subject);
 }
 
-// Where what a copy brings under a key that nobody knows lands in the objects of the program among its targets. Null: there are none.
 static FlowNodeID nodeLaidUnderAnyKeyByCopyInLinkLayouts(LinkFlow& flow, const LinkType& subject, bool definesWhatItCopies)
 {
     if (definesWhatItCopies && subject.objects == LinkType::Objects::Layout && flow.program.at(subject.layout).kind == LayoutKind::Record && !listsAccessorInLinkLayouts(flow.program, subject.layout))
@@ -685,21 +623,14 @@ static FlowNodeID nodeLaidUnderAnyKeyByCopyInLinkLayouts(LinkFlow& flow, const L
 
 namespace {
 
-// Of a copy that defines.
 struct KeysOfCopyInLinkLayouts {
-    // False: a key that a source lists finds no field in some layout of the target.
     bool findFieldsInTarget { true };
-    // Beside the fields of a source, under names that nobody lists here.
     bool somethingLiesBesideFields { false };
     bool somethingSeenLiesBesideFields { false };
 };
 
 } // anonymous namespace
 
-// `{ ...record }`: the objects of the program among the sources have own values that can be listed, and those among the targets are records. What lies in a field of a source goes under the same key: into the field that the target lists for it.
-// What a source has beside its fields may land in any field of the target. Neither object is handed to anybody, and only what finds no field in the target is out of sight.
-// IT GOES BY THE LADDER OF Objects ALONE, so that whatever order the types climb in, the same has been done in the end: nothing where either side has no object yet, this for a layout and a family, and all that observeCopyInLinkLayouts() does above those.
-// The node under any key of a copy that defines says nothing of what the target gains: whether something lies beside the fields of a source is looked at here, and the copy is told when that changes (LinkFlow::copiesToldOfWhatLiesBesideFields).
 static bool isListedOnBothSidesInLinkLayouts(LinkFlow& flow, const LinkType& subject, const LinkType& other)
 {
     if (subject.objects == LinkType::Objects::None || other.objects == LinkType::Objects::None)
@@ -735,7 +666,6 @@ static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, const LinkType& subjec
                 keys.somethingLiesBesideFields |= !held.isNothing();
                 keys.somethingSeenLiesBesideFields |= !held.asSeen().isNothing();
             }
-            // Asked of each layout: the aggregate of a family takes every key.
             if (definesWhatItCopies && value.key) {
                 forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID target) {
                     keys.findFieldsInTarget &= !!findField(flow.program, target, value.key);
@@ -748,7 +678,6 @@ static bool copyFieldByFieldInLinkLayouts(LinkFlow& flow, const LinkType& subjec
     return true;
 }
 
-// `Object.assign(record, { ["__proto__"]: above })`: a property of the source's own under that name. What lies beside the fields lies under names that nobody lists here.
 static bool mayHaveOwnValueUnderPrototypeLinkInLinkLayouts(LinkFlow& flow, const LinkType& source)
 {
     bool mayHave = false;
@@ -759,7 +688,6 @@ static bool mayHaveOwnValueUnderPrototypeLinkInLinkLayouts(LinkFlow& flow, const
     return mayHave;
 }
 
-// Each object among the sources is of a layout whose own values are listed: no accessor of its own answers the copy, and whatever it holds is led on from where it lies.
 static bool holdsOnlyObjectsWithListedOwnValuesInLinkLayouts(LinkFlow& flow, const LinkType& source)
 {
     if (source.functions != LinkType::Functions::None || source.classes != LinkType::Classes::None || source.builtin)
@@ -782,8 +710,6 @@ static bool holdsOnlyObjectsWithListedOwnValuesInLinkLayouts(LinkFlow& flow, con
     return isListed;
 }
 
-// Which keys the source has nobody can tell: it may have gained some. So what is copied may land in any field, beside the fields, on top of a method, or in a setter.
-// What it still waits for: LinkFlow::CopyLookedAt.
 enum class CopyWaitsForInLinkLayouts : uint8_t { WhateverLiesBesideFields, WhatIsSeenAlone, Nothing };
 
 static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const ObservedChangeInLinkLayouts& change)
@@ -794,23 +720,16 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
     LinkType anything = LinkType::anything();
     const LinkType& subject = change.subject;
     const LinkType& other = change.other;
-    // `Object.assign(module.exports, record)`: what lands on an unseen object, a function or a list is out of sight.
     bool landsOnObjectsOfProgramAlone = !subject.holdsUnseen && !subject.builtin && subject.functions == LinkType::Functions::None && subject.classes == LinkType::Classes::None;
-    // `Object.assign({}, defaults, given)` ASSIGNS, and an assignment differs from a definition where it finds a setter, on the target or above it. A record lists no accessor, and above it stands Object.prototype,
-    // which has one setter, under `__proto__`, unless a test run lays another. So where every key that a source can have is listed, and none is that name, the assignment lays what a definition lays and nobody gets the target.
-    // A record that is linked below something else, or gets an accessor, is opened for that, as it is for the stores by name that are written out.
-    // It can only cease to hold as the types climb, and all that is done for a definition is done for an assignment too.
     auto isOfObjectsThatNobodyLists = [](const LinkType& type) {
         return type.holdsUnseen || type.builtin || type.functions != LinkType::Functions::None || type.classes != LinkType::Classes::None || (type.primitives & LinkType::closed(Primitive::AnyString));
     };
     bool assignmentFindsNoSetter = !flow.program.admitsReplacedBuiltins && !change.definesWhatItCopies && change.otherNode && landsOnObjectsOfProgramAlone && !isOfObjectsThatNobodyLists(other)
         && isListedOnBothSidesInLinkLayouts(flow, subject, other) && !mayHaveOwnValueUnderPrototypeLinkInLinkLayouts(flow, other);
     bool definesWhatItCopies = change.definesWhatItCopies || assignmentFindsNoSetter;
-    // The edges from field to field are laid whatever else the target holds: an allocation holds unseen objects too once its layout has escaped, and what is laid may not hang on whether the copy was looked at before that.
     KeysOfCopyInLinkLayouts keys;
     bool isListedOnBothSides = change.otherNode && copyFieldByFieldInLinkLayouts(flow, subject, other, definesWhatItCopies, keys);
     bool copiesFieldByField = isListedOnBothSides && landsOnObjectsOfProgramAlone;
-    // `Object.assign(EventEmitter, { once, on, EventEmitter })`: what lands on a function is out of sight, and is held to lie there under its key as what a store by name lays there: AccessInLinkAccesses::resolveOnClosure().
     if (change.otherNode && subject.functions != LinkType::Functions::None) {
         forEachLayoutNamedInLinkLayouts(flow, other, [&](LayoutID layout) {
             for (const LinkFlow::OwnValue& value : flow.ownValuesOf(layout)) {
@@ -840,23 +759,18 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
             read = flow.anyFieldReadThrough(other.objects, other.layout, other.family);
         break;
     }
-    // Under an index, which no layout lists.
     forEachElementsNodeInLinkLayouts(flow, other, [&](FlowNodeID elements) {
         flow.addEdge(elements, unseen);
     });
 
-    // On an object of one of the engine's classes it may land on top of what the class has under the name: SlotOfContents::underUnknownNames().
     if (!namesOnlyInstancesInLinkLayouts(subject) || subject.classes != LinkType::Classes::None)
         handToUnseenCodeInLinkLayouts(flow, change.subjectNode, subject);
-    // It may land beside the fields, where a read gives `anything`.
     if (read)
         flow.addEdge(read, unseen);
     forEachElementsNodeInLinkLayouts(flow, subject, [&](FlowNodeID elements) {
         flow.arrive(elements, anything);
     });
 
-    // `{ ...other }` DEFINES. Under `__proto__` that makes a property of that name, so the target stays below what it stands below. And where each key that a source can have is a field of the target, the target gains nothing.
-    // What only unseen code may have given a source the proving reading alone counts.
     uint16_t texts = LinkType::closed(Primitive::AnyString);
     bool isNoObjectOfProgram = other.builtin || other.functions != LinkType::Functions::None || other.classes != LinkType::Classes::None;
     bool gainsInSight = !isListedOnBothSides || isNoObjectOfProgram || other.holdsUnseenInSight() || (other.primitivesSeen() & texts) || !keys.findFieldsInTarget || keys.somethingSeenLiesBesideFields;
@@ -870,7 +784,6 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
             flow.layoutsThatGainWhatUnseenCodeGaveSources.set(layout.index());
         });
     }
-    // Above a record lies nothing that the program wrote. Which members lie above anything else, under which keys, no table lists.
     forEachLayoutNamedInLinkLayouts(flow, subject, [&](LayoutID layout) {
         if (flow.program.at(layout).kind != LayoutKind::Record || listsAccessorInLinkLayouts(flow.program, layout))
             flow.escape(layout);
@@ -878,10 +791,7 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
     if (subject.objects == LinkType::Objects::Lost)
         handToUnseenCodeInLinkLayouts(flow, change.subjectNode, subject);
 
-    // Of a source that is no object of the program nobody knows what it has: an unseen object, a function, a list, a text.
     bool copiesWhatNobodyLists = !copiesFieldByField || other.holdsUnseen || other.builtin || other.functions != LinkType::Functions::None || other.classes != LinkType::Classes::None || (other.primitives & LinkType::closed(Primitive::AnyString));
-    // The copy assigns, and under `__proto__` an assignment lays what is copied above the target.
-    // ONE THAT DEFINES RUNS NO SETTER ON THE TARGET OR ABOVE IT AND RELINKS NOTHING: NOBODY GETS THE TARGET. What answers for a source that nobody lists (an accessor of its own, a trap) gets the source.
     bool mayLayPrototype = !definesWhatItCopies && (copiesWhatNobodyLists || mayHaveOwnValueUnderPrototypeLinkInLinkLayouts(flow, other));
     if (mayLayPrototype) {
         ObservedChangeInLinkLayouts relink = change;
@@ -897,8 +807,6 @@ static CopyWaitsForInLinkLayouts observeCopyInLinkLayouts(LinkFlow& flow, const 
                 flow.addEdge(read, stored);
         }
     }
-    // EACH LAYOUT OF THE SOURCE HAS TWO NODES THAT TELL THE COPY, AND A LOOK GOES THROUGH ALL THE LAYOUTS: a telling that cannot raise what has been said returns at once (LinkFlow::changeObserved()).
-    // An assignment that finds no setter yet waits for whatever may come to lie under `__proto__`.
     if (assignmentFindsNoSetter)
         return CopyWaitsForInLinkLayouts::WhateverLiesBesideFields;
     if (definesWhatItCopies ? gainsInSight : mayLayPrototype)
@@ -925,7 +833,6 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // Of the primitives a change asks only whether there are any, whether null is one and whether a text is one: `{ ...text }` defines its indexes. addEdge() knows only the newest edge of a node again.
     auto withoutKindsOfPrimitives = [](LinkType type) {
         constexpr uint16_t texts = LinkType::closed(Primitive::AnyString);
         if (type.primitives)
@@ -958,7 +865,6 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     if (change.subject.isNothing())
         return;
 
-    // `{ ...message }`: each layout that passes for Message has two nodes beside its fields, and each of them tells the copy whenever it climbs.
     uint64_t placeOfCopy = static_cast<uint64_t>(observer.function.index()) << 32 | observer.record;
     if (record.kind == SummaryChange::Kind::CopiesInto) {
         auto lookedAt = copiesLookedAt.find(placeOfCopy);
@@ -967,9 +873,8 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
             return;
     }
 
-    // `Object.defineProperty(prototype, name, d)`, `delete holder.member`, `Object.assign(holder, source)`
     if (record.kind == SummaryChange::Kind::Deletes || record.kind == SummaryChange::Kind::DefinesByDescriptor) {
-        noteWriteOn(change.subject, record.key, observer.function);
+        noteWriteOn(change.subject, record.key, observer.function, record.kind == SummaryChange::Kind::Deletes ? WhatIsStored::TextsNumbersAndBooleans : WhatIsStored::Anything);
         if (!record.key && record.other != noSummaryNode)
             noteSiteOfCopy(observer.function, record.site, change.subjectNode, change.otherNode);
         else
@@ -1014,9 +919,6 @@ void LinkFlow::changeObserved(const FlowObserver& observer, const LinkType& now)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ---- Which fields a construction fills
-
-// Of any other layout no field counts as filled: the scan follows the allocations of these alone, and native code makes objects of the others.
 static bool constructionsAreFollowedInLinkLayouts(const Layout& layout)
 {
     return isFoundByShapeTest(layout) && !layout.isDerived();
@@ -1024,11 +926,8 @@ static bool constructionsAreFollowedInLinkLayouts(const Layout& layout)
 
 namespace {
 
-// The object of a class is made by the constructors of the row of classes, the one that allocates first, each with its initializers of fields.
-// What they have defined when the object can first be seen from outside all of them is what every object of the layout has.
 class RowOfConstructorsInLinkLayouts {
 public:
-    // UntilEnds: for the mark of the cell, no proof: what each body of the row has defined when it is through with the object, down the whole row, whoever has seen the object meanwhile and whatever lies above it.
     enum class Follows : uint8_t { UntilFirstSight, UntilEnds };
 
     RowOfConstructorsInLinkLayouts(const LinkFlow& flow, LayoutID made, Follows follows = Follows::UntilFirstSight)
@@ -1040,16 +939,12 @@ public:
     {
     }
 
-    // False: it ended above the class that is made, or in it.
     bool followWholeRow() { return followRow({ }) && m_hasGoneThroughRow; }
 
-    // In no order, with repeats.
     Vector<PropertyKeyID, 32>& filled() LIFETIME_BOUND { return m_filled; }
-    // The keys that whatLookUpFinds() was asked for. Nothing else of what the row fills hangs on the class that is made.
     Vector<PropertyKeyID, 32>& lookedUp() LIFETIME_BOUND { return m_lookedUp; }
     bool hasLookedUpNameThatEveryClassHides() const { return m_hasLookedUpNameThatEveryClassHides; }
 
-    // By the constructors of the classes above the one named. Nothing: the class is not in the row.
     std::optional<Vector<PropertyKeyID, 32>> findKeysFilledAbove(LayoutID classInRow)
     {
         if (!followRow(classInRow))
@@ -1058,10 +953,8 @@ public:
     }
 
 private:
-    // Whether it came to `end`.
     bool followRow(LayoutID end)
     {
-        // `class A extends B {}` beside `class B extends A {}` compiles.
         Vector<LayoutID, 8> row;
         for (LayoutID current = m_made; current; current = m_program.at(current).base) {
             if (row.size() == m_program.layouts.size())
@@ -1074,8 +967,6 @@ private:
         return true;
     }
 
-    // `function Below(a) { Base.call(this, a); }` with `Object.setPrototypeOf(Below.prototype, Base.prototype)`: `new Below()` hands the object to Below. Base stands above it in the row and runs where Below calls it, if it does.
-    // So the row of those that make the object begins with the lowest constructor that takes no object from `super()`.
     size_t numberOfConstructorsThatMakeObject(std::span<const LayoutID> row) const
     {
         for (size_t index = 0; index < row.size(); ++index) {
@@ -1099,7 +990,6 @@ private:
     }
 
 public:
-    // One class of the row, behind all above it. False: the row ends here.
     bool followConstructorOf(LayoutID classInRow, bool isTopmost)
     {
         const Layout& layout = m_program.at(classInRow);
@@ -1123,11 +1013,9 @@ public:
 
 private:
 
-    // False: from some point of the body on the object may have been seen. What was added holds at that point too.
     bool addWhatBodyFills(FunctionID body, SummaryConstruction::Object object, bool mayHaveParts)
     {
         const ThinSummary& summary = m_flow.summaries.at(body);
-        // Evaluated text names `this` where no operand shows it.
         if (!m_program.at(body).hasBody() || summary.has(SummaryTrait::HasDirectEval))
             return false;
         const SummaryConstruction* construction = nullptr;
@@ -1159,7 +1047,6 @@ private:
                 return false;
         }
 
-        // A method above that has become read only refuses the assignment, and outside strict code nothing is thrown.
         for (const SummaryConstruction::Key& key : keys) {
             if (key.isFilled && (!key.isLookedUp || whatLookUpFinds(key.key) == Found::Nothing))
                 m_filled.append(key.key);
@@ -1167,7 +1054,6 @@ private:
         return !construction->isSeenFromOutside;
     }
 
-    // True: the row goes on.
     bool addWhatBodyFillsToItsEnd(const ThinSummary& summary, const SummaryConstruction& construction)
     {
         for (const SummaryConstruction::Part& part : summary.partsOfConstructions.span().subspan(construction.firstPart, construction.numberOfParts)) {
@@ -1182,7 +1068,6 @@ private:
 
     enum class Found : uint8_t { Nothing, Method, Accessor };
 
-    // Above the object, whose class may be below the class of the body that looks.
     Found whatLookUpFinds(PropertyKeyID key)
     {
         m_lookedUp.append(key);
@@ -1194,7 +1079,6 @@ private:
             return Found::Accessor;
         if (std::optional<FieldReference> field = findField(m_program, m_made, key); field && fieldAt(m_program, *field).form.contains(FieldForm::IsAccessor))
             return Found::Accessor;
-        // `Object.freeze(Object.prototype)`: anybody may do that at any time.
         Found found = m_flow.isAbsentAboveClasses(key) ? Found::Nothing : Found::Method;
         for (const LinkFlow::FoundMember& member : m_flow.findMembers(m_made, ClassSide::Prototype, key)) {
             if (member.kind != MethodKind::Method)
@@ -1220,7 +1104,6 @@ private:
 void LinkFlow::noteFieldMayBeEmpty(FieldReference reference)
 {
     uint32_t cell = m_firstFieldOfLayout[reference.layout.index()] + reference.field;
-    // It only grows, and whoever set it has done the rest.
     if (fieldsThatMayBeEmpty.get(cell))
         return;
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
@@ -1248,7 +1131,6 @@ FlowNodeID LinkFlow::foundWhereFieldIsEmpty(FieldReference reference)
     });
 }
 
-// Whatever else `super()` answers has left the construction that made it.
 bool LinkFlow::mayReadInFrontOfDefinition(FunctionID reader, const SummaryAccess& access, LayoutID layout) const
 {
     if (!access.isPartOfConstruction || !access.subjectIsAnsweredBySuperCall)
@@ -1257,14 +1139,10 @@ bool LinkFlow::mayReadInFrontOfDefinition(FunctionID reader, const SummaryAccess
     return filledAbove && !filledAbove->contains(access.key);
 }
 
-// WHAT THE ROW FILLS DOWN TO A CLASS IS WHAT IT FILLS DOWN TO THE CLASS ABOVE, AND WHAT THE CONSTRUCTOR OF THE CLASS ADDS. A walk down the whole row for every class is a step for each pair of classes in a row.
-// All that is read here is laid down when the flow begins. What a body fills hangs on the class that is made in one way alone: by what a lookup finds above the object. So a class goes down the whole row by itself
-// where that may differ from what the class above it found: it brings a member or another kind of field under a key that was looked up, its names are known where those above are not, or the name is one that every class hides.
 void LinkFlow::findWhatRowsOfConstructorsFill()
 {
     using Row = RowOfConstructorsInLinkLayouts;
     struct DownToClass {
-        // Places in `lists`.
         uint32_t filled { 0 };
         uint32_t lookedUp { 0 };
         bool goesOn { true };
@@ -1275,7 +1153,6 @@ void LinkFlow::findWhatRowsOfConstructorsFill()
     lists.append(Vector<PropertyKeyID>());
     m_keysThatRowsOfConstructorsFill.grow(numberOfLayouts);
 
-    // The list at `place` and `added`. Sorted, without repeats. A class that adds nothing new has the list of the class above it.
     auto placeOfListWith = [&](uint32_t place, Vector<PropertyKeyID, 32>& added) {
         std::ranges::sort(added);
         added.shrink(std::ranges::unique(added).begin() - added.begin());
@@ -1326,7 +1203,6 @@ void LinkFlow::findWhatRowsOfConstructorsFill()
         return result;
     };
 
-    // `class A extends B {}` beside `class B extends A {}` compiles: of a row that comes back to where it has been nothing is followed.
     BitVector rowsThatNeverEnd = answerAlongRows(numberOfLayouts, true, [&](LayoutID id) -> StepAlongRow {
         if (LayoutID base = program.at(id).base)
             return { std::nullopt, base };
@@ -1337,7 +1213,6 @@ void LinkFlow::findWhatRowsOfConstructorsFill()
     BitVector isKnown(numberOfLayouts);
     Vector<LayoutID, 32> rowNotKnown;
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        // Who is asked for: noteConstructionsOf(), noteBirthsOf().
         const Layout& asked = program.layouts[index];
         if (!asked.constructor || program.at(asked.constructor).constructedClass != LayoutID(index) || asked.fields.isEmpty() || rowsThatNeverEnd.quickGet(index))
             continue;
@@ -1346,7 +1221,6 @@ void LinkFlow::findWhatRowsOfConstructorsFill()
         while (!rowNotKnown.isEmpty()) {
             LayoutID id = rowNotKnown.takeLast();
             const Layout& layout = program.at(id);
-            // RowOfConstructorsInLinkLayouts::numberOfConstructorsThatMakeObject().
             bool takesObjectFromSuperCall = layout.base && layout.constructor && program.at(layout.constructor).kind == FunctionKind::DerivedConstructor;
             untilFirstSight[id.index()] = withConstructorOf(id, Row::Follows::UntilFirstSight, takesObjectFromSuperCall ? &untilFirstSight[layout.base.index()] : nullptr);
             untilEnds[id.index()] = withConstructorOf(id, Row::Follows::UntilEnds, layout.base ? &untilEnds[layout.base.index()] : nullptr);
@@ -1362,7 +1236,6 @@ void LinkFlow::noteConstructionsOf(FunctionID id)
         noteFieldMayBeEmpty(field);
 
     LayoutID made = program.at(id).constructedClass;
-    // The row is asked about the fields of the layout and nothing else.
     if (!made || program.at(made).constructor != id || program.at(made).fields.isEmpty())
         return;
     const Vector<PropertyKeyID>& filled = m_listsOfKeysThatRowsOfConstructorsFill[m_keysThatRowsOfConstructorsFill[made.index()].untilFirstSight];
@@ -1372,8 +1245,6 @@ void LinkFlow::noteConstructionsOf(FunctionID id)
             noteFieldMayBeEmpty({ made, field });
     }
 }
-
-// ---- What is written behind the flow
 
 namespace {
 
@@ -1386,17 +1257,13 @@ enum class TraitOfWriteInLinkLayouts : uint8_t {
     ComesAfterConstruction = 1 << 0,
     AddsWhatIsNotListed = 1 << 1,
     MayRunSetter = 1 << 2,
-    // It may be what creates the property, as anything but an accessor whose function is named.
     MayGiveValue = 1 << 3,
-    // `this.exports = undefined`, `node.jsDoc = undefined`: a body stores the constant on an object that it is making or that a call has just given it.
     GivesUndefinedToObjectBeingMade = 1 << 4,
-    // `this.flags = flags`: the construction itself, or the body that constructs, stores anything else.
     FillsObjectBeingConstructed = 1 << 5,
 };
 
 } // anonymous namespace
 
-// Types only climb, so the type at a subject now names every layout that it ever named.
 class WriterOfLinkLayouts {
     WTF_MAKE_NONCOPYABLE(WriterOfLinkLayouts);
 public:
@@ -1412,14 +1279,12 @@ private:
 
     uint32_t cellOf(FieldReference reference) const { return m_tables.firstFieldOfLayout[reference.layout.index()] + reference.field; }
     const LinkType& typeAt(FunctionID function, uint32_t nodeInSummary) const { return m_flow.typeAt(m_flow.nodeOf(function, nodeInSummary)); }
-    // What the run time makes at no node brings values that no flow has seen: nothing is held of it either. What is done to a class object through a lost value is a closed operation, which reports to the guard words of the class.
     bool hasEscaped(uint32_t layout) const
     {
         if (m_flow.escapedLayoutsAsRead().get(layout) || m_isMadeAtNoNode.quickGet(layout))
             return true;
         return m_liesBelowLostClassObject.quickGet(layout) && m_flow.reading() == WhatUnseenCodeDoes::Anything;
     }
-    // The families are as the flow left them: nothing is united any more.
     uint32_t lostFamilyOf(LayoutID member) const { return m_flow.unitedLayouts.representativeOf(member.index()); }
     bool answersOnlyWithObjectOfItsConstruction(FunctionID constructor) const;
     bool findWhetherConstructorAnswersOnlyWithObjectOfItsConstruction(FunctionID constructor) const;
@@ -1431,10 +1296,10 @@ private:
     }
 
     TypeID unlessAnything(TypeID) const;
-    // Null: nothing arrived, or anything may have.
     TypeID claimedTypeAt(FlowNodeID);
+    bool claimLeavesOutWhatArrivesAt(FlowNodeID) const;
+    TypeID namingSymbolAt(FlowNodeID, TypeID);
     TypeID claimedTypeAtEither(FlowNodeID, FlowNodeID);
-    // What the compiler established of a position holds whoever writes there, and says what no flow does: that no read comes in front of the first store. Null: nothing.
     TypeID typeEstablishedOf(const DeclaredType&) const;
     TypeID narrowerOf(TypeID byFlow, const DeclaredType&);
     TypeID typeOfWrittenUnit(WrittenUnit);
@@ -1449,21 +1314,18 @@ private:
     void lookAtMembers(const ThinSummary&);
     void noteWrite(const LinkType& subject, PropertyKeyID, Traits);
     PropertyKeyID findNameThatConstructorStores(FunctionID, const ThinSummary&, const SummaryAccess&) const;
-    // `mayComeToObject`: false where no object of the layout is known by the family that the write goes through.
     void noteWriteInto(LayoutID, PropertyKeyID, Traits, bool mayComeToObject = true);
     bool comesToAccessorAbove(LayoutID, PropertyKeyID) const;
     void noteReadInFrontOfDefinition(FunctionID reader, const SummaryAccess&);
 
     void noteLostClassObjects();
     bool objectPrototypeMayGainName() const;
-    // LinkedFunction::everyCallerIsKnown, which WriterOfLink writes beside the look. While the summaries are looked at nobody has said, and it counts as not known: what the look answers may not hang on how far the other has come.
     bool everyCallerIsKnown(FunctionID function) const { return m_functionsWhoseCallersAreAllKnown.get(function.index()); }
     BitVector m_functionsWhoseCallersAreAllKnown;
     bool mayBeAllocated(LayoutID) const;
     bool mayBeKnownByFamily(LayoutID id) const { return m_flow.layoutsMetInFamilies.get(id.index()) || m_flow.lostLayouts.get(id.index()) || hasEscaped(id.index()); }
     bool canHoldAppendedFields(LayoutID) const;
     bool canNameAppendedField(LayoutID, PropertyKeyID) const;
-    // False: it can be no field, so a store under it adds a property.
     bool isListedByClassBelow(LayoutID, PropertyKeyID) const;
     bool noteNameNotListed(LayoutID, PropertyKeyID);
     void noteNamesWrittenOfLayouts();
@@ -1495,10 +1357,8 @@ private:
 
     const LinkFlow& m_flow;
     const Program& m_program;
-    // Since write().
     TypeArena* m_types { nullptr };
     TypesOfFlowTurnedOnce m_typesTurned;
-    // AOTLinkTypesOnAllThreads.h.
     static thread_local TypesOfThreadInLink s_typesOfThread;
     TypeArena& types() const { return s_typesOfThread.types ? *s_typesOfThread.types : *m_types; }
     TypesOfFlowTurnedOnce& typesTurned() { return s_typesOfThread.turned ? *s_typesOfThread.turned : m_typesTurned; }
@@ -1510,43 +1370,30 @@ private:
     }
     LinkTables& m_tables;
 
-    // By layout. Beside LinkFlow::possibleChanges: what stores add.
     Vector<OptionSet<LayoutChange>> m_changes;
-    // To all that were lost.
-    // By representative.
     Vector<OptionSet<LayoutChange>> m_changesOfLostFamilies;
     BitVector m_isMadeAtNoNode;
-    // By function.
     mutable Vector<uint8_t> m_whatConstructorsAnswerWith;
     mutable std::optional<AnswersAlongRows> m_rowsThatMayAnswerWithOlderObject;
     BitVector m_liesBelowLostClassObject;
     BitVector m_isFilledUnderComputedKeys;
-    // LinkedLayout::heritage. Null behind a bit of the second: several things arrive, or something that is no class of the program.
     Vector<LayoutID> m_heritages;
     BitVector m_hasHeritage;
-    // What the bodies lay on `F.prototype` as they are written, whatever has become of the layout in the flow: by the number of the layout above the key.
     struct NameWrittenOnPrototype {
         FunctionID getter;
         FunctionID setter;
         FunctionID method;
-        // One descriptor, which holds an accessor as it is written, or one store of a closure that the body makes, and nothing else.
         bool isWrittenOnce { false };
         bool isWrittenAgain { false };
     };
     HashMap<uint64_t, NameWrittenOnPrototype, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesWrittenOnPrototypes;
-    // `const accessors = { ended: { get() { .. } } }`: by the number of the layout of the map above the key. SummaryAccess::mapOfWrittenAccessor.
     HashMap<uint64_t, NameWrittenOnPrototype, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_accessorsWrittenInMaps;
-    // `Object.defineProperties(Duplex.prototype, { ended: accessors.ended })`: the first is laid with what the second names, both as above.
     Vector<std::pair<uint64_t, uint64_t>> m_namesLaidOutOfMaps;
 
-    // By cell of LinkTables::fields. writeFields() gathers both at the declaration of the field, because the classes below list it again and a reader may ask either cell.
     BitVector m_fieldsWrittenLate;
-    // Something other than an accessor whose function is named may be what creates the property.
     BitVector m_fieldsGivenValues;
-    // By cell: WrittenUnit::bits() of the one text, integer or boolean that allocations and constant data list there. 0: nothing has been listed yet. otherThanOneUnit: two of them, or anything else, or a write by name.
     static constexpr uint32_t otherThanOneUnit = UINT32_MAX;
     Vector<uint32_t> m_unitsListedForFields;
-    // lookAtEdges(), until lookAtSummaries() has united them with those of the same names.
     struct SaidByEdges {
         BitVector fieldsGivenValues;
         BitVector fieldsGivenUndefinedByMakers;
@@ -1556,48 +1403,32 @@ private:
         Vector<uint32_t> unitsListedForFields;
     };
     SaidByEdges m_saidByEdges;
-    // By key: some body tells holders apart by what it reads under the name. Of any other field the kind of value says all that anybody asks.
     BitVector m_keysOfTestedFields;
-    // LinkedCell::isLeftUndefinedByMakers is the first without the second.
     BitVector m_fieldsGivenUndefinedByMakers;
     BitVector m_fieldsFilledByConstructors;
-    // By layout: some cell of it is in the first.
     BitVector m_layoutsGivenUndefinedByMakers;
-    // SlotPlan reads the answer off Facts::held() alone.
     bool m_asksWhatMakersGive { false };
-    // By layout: LinkedLayout::onlyFunctionThatMakesObjects, and whether there are more.
     Vector<FunctionID> m_onlyFunctionsThatMakeObjects;
     BitVector m_layoutsMadeInSeveralFunctions;
-    // Of the body whose accesses are looked at: the entry parameter that is `this` of an object being made. UINT32_MAX: none.
     uint32_t m_thisOfObjectBeingMade { UINT32_MAX };
     BitVector m_fieldsWithUnseenWriters;
-    // The representative above the key.
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_keysWrittenLateThroughLost;
     BitVector m_lostFamiliesWrittenLateUnderEveryKey;
-    // By cell of LinkTables::fields: a body that is making the object reads the name where it may not have defined it yet.
     BitVector m_fieldsReadInFrontOfDefinition;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_keysReadInFrontOfDefinitionThroughLost;
-    // By family and key: the traits that its members have been told of.
     HashMap<uint64_t, uint8_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_writesNotedThroughFamilies;
 
-    // The names that stores lay on objects of layouts that do not list them, as the functions and their accesses are gone through. Each pair once.
     struct NameNotListed {
         LayoutID layout;
         PropertyKeyID key;
         bool isRequiredBySomeWrittenType { false };
-        // `function Type(this: Type)`: of the types that are written of `this`.
         bool isRequiredBySomeTypeOfThis { false };
         bool isOptionalInSomeTypeOfThis { false };
 
-        // `function createObjectType(flags, symbol) { const type = createType(flags); type.objectFlags = flags; type.symbol = symbol; return type; }`: a body that stores on what was constructed for it and returns that.
         bool isGivenBySecondConstructor { false };
-        // `this[kHeaders] = {}` in the constructor itself.
         bool isGivenByConstructor { false };
-        // `req.res = res`, stored by the program on an object of a class of the library.
         bool isLaidOnObjectsOfLibrary { false };
-        // By form, as the bits of FieldForm: a definition by a descriptor in sight creates the property in that form.
         uint16_t formsThatDescriptorsCreate { 0 };
-        // A definition by name (a field of a class, a member of a literal), or by a descriptor of which nobody knows the flags. A store by name that finds no property creates one beside the slot: it decides nothing.
         bool isDefinedInOtherWays { false };
         OptionSet<FieldForm> formToPlanFor() const
         {
@@ -1606,72 +1437,45 @@ private:
             return OptionSet<FieldForm>::fromRaw(static_cast<uint8_t>(WTF::ctz(static_cast<uint32_t>(formsThatDescriptorsCreate))));
         }
 
-        // `Object.defineProperty(this, "id", { value: id })`: whoever writes the attributes of a property out does it where the objects are made: the slot lies in the cell.
         bool isRequiredByTypeOfThis() const { return (isRequiredBySomeTypeOfThis && !isOptionalInSomeTypeOfThis) || isGivenByConstructor || isGivenBySecondConstructor || isLaidOnObjectsOfLibrary || !formToPlanFor().isEmpty(); }
     };
     Vector<NameNotListed> m_namesNotListed;
-    // The number of the layout above the key. Filled in front of everything else, so that it does not matter which body is looked at first.
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesThatConstructorsStore;
-    // `req.res = res; req.next = next` in a framework: the number of a layout of the library above the key.
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesLaidOnObjectsOfLibrary;
-    // Of the access whose write is being noted: lookAtAccesses().
     const SummaryAccess* m_definitionAtHand { nullptr };
-    // Beside LinkTables::appendedKeys.
     Vector<OptionSet<FieldForm>> m_formsOfAppendedKeys;
-    // The number of the layout above the key: the place in m_namesNotListed.
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_pairsNotListed;
-    // Stored under on an object of which nobody knows the layout: a lost one, or one that unseen code may have had.
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_keysStoredOnUnknownObjects;
-    // By key: how many accesses of reached functions name it.
     Vector<uint32_t> m_mentionsOfKeys;
-    // By key: how many other names the program is written to store in front of it. UINT32_MAX: it stores none under the key.
     Vector<uint32_t> m_placesOfFirstStoresOfKeys;
-    // `const made = new F(..); made.a = ..; made.b = ..`: the names that one body stores on what a call or an allocation of its own has given it, each once, in the order of the stores.
     struct RunOfMaker {
-        // In the body that is looked at: the node of the summary. Behind it: nothing.
         uint32_t subject { 0 };
-        // Null: nobody knows what the body was given.
         LayoutID layout;
         Vector<PropertyKeyID, 8> keys;
-        // The one function of the program whose call has given the body the object. Null: an allocation or a construction of its own, or nobody knows.
         FunctionID givenBy;
-        // An allocation or a construction of the body's own has made the object.
         bool isMadeHere { false };
-        // All that the body returns is the object.
         bool isHandedOn { false };
         FunctionID body;
         ValueID firstStore;
-        // By place in `keys`, of the first 64: every store of the body under the key stores the constant undefined.
         uint64_t keysOnlyGivenUndefined { 0 };
     };
     Vector<RunOfMaker, 4> m_runsOfMakersInFunction;
-    // A list of up to this many is gone through. A longer one is in a table: the body of a module makes objects by the ten thousand, and a literal has as many keys.
     static constexpr size_t longestListGoneThrough = 8;
-    // By the node of the summary: the place in m_runsOfMakersInFunction, once those are many.
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_placesOfRunsInFunction;
-    // The place in m_runsOfMakersInFunction above the key, of each run that has many.
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_keysOfLongRunsInFunction;
     Vector<RunOfMaker> m_runsOfMakers;
-    // `result.links.target = symbol; result.links.mapper = mapper`: the same of the object that lies in a field of what a call or an allocation of the body has given. Each read of the field is a node of its own.
     struct RunOnObjectInField {
         uint32_t holder { 0 };
         PropertyKeyID keyInHolder;
-        // The first read.
         uint32_t subject { 0 };
         LayoutID layout;
         Vector<PropertyKeyID, 8> keys;
-        // The one function of the program whose call has given the body the holder.
         FunctionID givenBy;
     };
     Vector<RunOnObjectInField, 2> m_runsOnObjectsInFieldsInFunction;
     Vector<RunOnObjectInField> m_runsOnObjectsInFields;
-    // By the function above the key: one more than the place in m_runsOnObjectsInFields of the run on what lies under the key in the object that the function returns.
     HashMap<uint64_t, uint32_t> m_runsOnFieldsOfWhatFunctionsReturn;
-    // By key: the functions whose closures some body lays into a field under the key. Link's ladder has room for the closures of one function, so of `{ createBaseNode: kind => .. }`, written four times, it says nothing.
-    // Kept where the program has tagged makers, for writeRunsBehindTaggedMakers() alone, which guesses.
     HashMap<uint32_t, Vector<FunctionID, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_functionsLaidIntoFieldsUnderKey;
-    // By function: one more than the place in m_runsOfMakers of the run on what the function returns, where all that it returns is what one call or one allocation of its own has given it. 0: none.
-    // `function createObjectType(flags, symbol) { const type = createTypeWithSymbol(flags, symbol); type.objectFlags = flags; return type; }`: whoever gets the object goes on where this run ended.
     Vector<uint32_t> m_runsOnWhatFunctionsReturn;
     bool m_asksWhatBodyHandsOn { false };
     uint32_t m_numberOfKeysStored { 0 };
@@ -1681,7 +1485,6 @@ private:
     BitVector m_variablesSharedWithUnseenCode;
 
     Vector<LinkedMember> m_members;
-    // Of the summary at hand, ascending.
     Vector<LayoutID> m_layoutsAllocatedHere;
 };
 
@@ -1727,7 +1530,6 @@ TypeID WriterOfLinkLayouts::unlessAnything(TypeID type) const
     return types().at(type).isAnything() ? TypeID() : type;
 }
 
-// What is held of a field, a variable or a capture is an expectation, which is tested at each use: what was seen to arrive, whatever else unseen code may bring. As WriterOfLink::typeIDOf() writes the positions of functions.
 TypeID WriterOfLinkLayouts::claimedTypeAt(FlowNodeID node)
 {
     LinkType type = m_flow.typeAt(node);
@@ -1739,6 +1541,14 @@ TypeID WriterOfLinkLayouts::claimedTypeAt(FlowNodeID node)
             type.functions = LinkType::Functions::Lost;
     }
     return type.isNothing() ? TypeID() : unlessAnything(typesTurned().turn(m_flow, types(), type));
+}
+
+bool WriterOfLinkLayouts::claimLeavesOutWhatArrivesAt(FlowNodeID node) const
+{
+    if (m_flow.reading() != WhatUnseenCodeDoes::OnlyReadsAndCalls)
+        return false;
+    LinkType type = m_flow.typeAt(node);
+    return type.holdsUnseen || type.holdsLostBuiltins || type.builtin || (type.functions != LinkType::Functions::None && type.functions != LinkType::Functions::Closure);
 }
 
 TypeID WriterOfLinkLayouts::claimedTypeAtEither(FlowNodeID first, FlowNodeID second)
@@ -1773,7 +1583,6 @@ TypeID WriterOfLinkLayouts::typeOfWrittenUnit(WrittenUnit unit)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Both hold.
 TypeID WriterOfLinkLayouts::narrowerOf(TypeID byFlow, const DeclaredType& declared)
 {
     TypeID established = typeEstablishedOf(declared);
@@ -1782,7 +1591,6 @@ TypeID WriterOfLinkLayouts::narrowerOf(TypeID byFlow, const DeclaredType& declar
     return byFlow && types().isSubset(byFlow, established) ? byFlow : established;
 }
 
-// The scan lays a plain edge into a field only while the body that made the object has it alone, which is construction. An environment is stored into by every closure that holds it.
 void WriterOfLinkLayouts::lookAtEdges(FunctionID id, const ThinSummary& summary)
 {
     for (VariableID variable : summary.functionVariablesStoredInto)
@@ -1828,7 +1636,6 @@ void WriterOfLinkLayouts::lookAtEdges(FunctionID id, const ThinSummary& summary)
             if (m_program.at(layout).isEnvironment() || !std::ranges::binary_search(m_layoutsAllocatedHere, layout))
                 m_saidByEdges.fieldsWrittenLate.quickSet(cellOf({ layout, to.second }));
         } else if (to.kind == SummaryNode::Kind::Variable) {
-            // A binding that cannot be assigned to is stored into once, where its module declares it, if the module runs once.
             const Variable& variable = m_program.variables[to.first];
             bool isStoredOnce = function.isModuleBody() && function.module == variable.module && variable.flags.contains(VariableFlags::IsImmutable)
                 && !m_program.at(variable.module).flags.contains(ModuleFlags::RunsAgain);
@@ -1865,7 +1672,6 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
         }
         if (!access.isPartOfConstruction)
             traits.add(Trait::ComesAfterConstruction);
-        // `meter.value = 1` on an object that somebody has made: where an accessor lies under the name the store runs it, and where nothing lies there the object was made without the field.
         if (!access.isPartOfConstruction && access.kind == SummaryAccess::Kind::Store)
             traits.remove(Trait::MayGiveValue);
         noteNameWrittenOnPrototype(id, summary, access);
@@ -1874,7 +1680,6 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
         PropertyKeyID key = m_flow.keyOf(id, access);
         noteStoreOfMaker(summary, access, key);
         traits.add(traitsOfStoreOfMaker(id, summary, access));
-        // Objects that have met others in unseen hands are known by no layout. What a constructor stores on `this` speaks of the layout that it constructs all the same.
         if (LayoutID constructed = traits.containsAny({ Trait::GivesUndefinedToObjectBeingMade, Trait::FillsObjectBeingConstructed }) ? m_program.at(id).constructedClass : LayoutID(); constructed && summary.nodes[access.subject].kind == SummaryNode::Kind::Parameter && typeAt(id, access.subject).objects == LinkType::Objects::Lost) {
             if (std::optional<FieldReference> found = findField(m_program, constructed, access.key)) {
                 (traits.contains(Trait::FillsObjectBeingConstructed) ? m_fieldsFilledByConstructors : m_fieldsGivenUndefinedByMakers).quickSet(cellOf(*found));
@@ -1882,14 +1687,12 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
             }
         }
         const LinkType& subject = typeAt(id, access.subject);
-        // Objects that have met others in unseen hands are known by no layout, and the store would name none.
         if (constructs && key && (subject.objects == LinkType::Objects::Lost || subject.objects == LinkType::Objects::None) && findNameThatConstructorStores(id, summary, access))
             noteWriteInto(m_program.at(id).constructedClass, key, traits);
         noteChangeOfClosure(subject);
         noteWriteOfPrototypeProperty(subject, key, access.kind == SummaryAccess::Kind::Store && access.storesObjectMadeForIt);
         if (access.kind != SummaryAccess::Kind::Store || !key || m_program.nameClassOf(key) != NameClass::Prototype)
             noteNameGivenToClosure(subject, access.laysValueInSightUnderName() ? key : PropertyKeyID());
-        // An object of a class of Bun's own library that the program has in hand, known by its layout: the library makes one for a request or a connection and hands it over, and whoever lays a name on it there does so to each.
         if (key && subject.objects == LinkType::Objects::Layout && !access.isToContents() && m_program.at(id).role != FunctionRole::Library) {
             const Layout& stored = m_program.at(subject.layout);
             if (stored.kind == LayoutKind::Instance && stored.constructor && m_program.at(stored.constructor).role == FunctionRole::Library)
@@ -1905,7 +1708,6 @@ void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const ThinSummary& summa
     finishRunsOnObjectsInFieldsIn(id);
 }
 
-// `function Reply(res) { this.raw = res; this[kHeaders] = {}; }`: the front end lists `raw`; that kHeaders is one symbol only Link knows. Null: the access is no store of a constructor on `this` under a name that its layout does not list.
 PropertyKeyID WriterOfLinkLayouts::findNameThatConstructorStores(FunctionID id, const ThinSummary& summary, const SummaryAccess& access) const
 {
     const Function& function = m_program.at(id);
@@ -1918,7 +1720,6 @@ PropertyKeyID WriterOfLinkLayouts::findNameThatConstructorStores(FunctionID id, 
     return key && !findField(m_program, function.constructedClass, key) ? key : PropertyKeyID();
 }
 
-// What a call or an allocation of its own has given the body, and `this` of a body that `new` or a constructor hands the object.
 WriterOfLinkLayouts::Traits WriterOfLinkLayouts::traitsOfStoreOfMaker(FunctionID, const ThinSummary& summary, const SummaryAccess& access) const
 {
     if (!m_asksWhatMakersGive || !access.key || access.value == noSummaryNode)
@@ -1990,7 +1791,6 @@ void WriterOfLinkLayouts::noteStoreOnObjectInField(const ThinSummary& summary, c
     SummaryNode::Kind kindOfHolder = summary.nodes[read.subject].kind;
     if (kindOfHolder != SummaryNode::Kind::ResultOfCall && kindOfHolder != SummaryNode::Kind::Allocation)
         return;
-    // A body stores on the fields of few objects that it was just given. One that does so of many says nothing of the later ones.
     size_t place = m_runsOnObjectsInFieldsInFunction.findIf([&](const RunOnObjectInField& run) {
         return run.holder == read.subject && run.keyInHolder == read.key;
     });
@@ -2038,7 +1838,6 @@ void WriterOfLinkLayouts::finishRunsOnObjectsInFieldsIn(FunctionID id)
 
 void WriterOfLinkLayouts::finishRunsOfMakersIn(FunctionID id)
 {
-    // Most bodies store on nothing that a call or an allocation has given them, and their edges are not gone through. Whether such a body hands on what it was given is asked where a maker builds on its answer: appendFields().
     if (m_runsOfMakersInFunction.isEmpty() && !m_asksWhatBodyHandsOn)
         return;
     const ThinSummary& summary = m_flow.summaries.at(id);
@@ -2052,7 +1851,6 @@ void WriterOfLinkLayouts::finishRunsOfMakersIn(FunctionID id)
     }
     if (!returnsOneNode || returned == noSummaryNode || (summary.nodes[returned].kind != SummaryNode::Kind::ResultOfCall && summary.nodes[returned].kind != SummaryNode::Kind::Allocation))
         returned = noSummaryNode;
-    // A body that only hands on what it was given has a run without a name.
     if (returned != noSummaryNode && !m_runsOfMakersInFunction.containsIf([&](const RunOfMaker& run) { return run.subject == returned; }))
         m_runsOfMakersInFunction.append(RunOfMaker { returned, { }, { }, { }, false, false, { }, { } });
     for (RunOfMaker& run : m_runsOfMakersInFunction) {
@@ -2118,7 +1916,6 @@ void WriterOfLinkLayouts::lookAtChanges(FunctionID id, const ThinSummary& summar
         if (subject.isNothing() || waitsForOther)
             continue;
         noteChangeOfClosure(subject);
-        // What a data descriptor in sight lays the definition's own access has listed.
         if (change.kind != SummaryChange::Kind::DefinesByDescriptor || !change.laysValueInSight || !change.key)
             noteNameGivenToClosure(subject);
         if (subject.objects == LinkType::Objects::Lost && subject.layout) {
@@ -2133,7 +1930,6 @@ void WriterOfLinkLayouts::lookAtChanges(FunctionID id, const ThinSummary& summar
         case SummaryChange::Kind::ChangesPrototype:
             break;
         case SummaryChange::Kind::BecomesPrototype:
-            // A closure that the body makes is a node of the summary at which nothing arrives.
             if (change.other != noSummaryNode && summary.nodes[change.other].kind == SummaryNode::Kind::Closure)
                 noteHeritage(subject, FunctionID(summary.nodes[change.other].first));
             break;
@@ -2154,14 +1950,12 @@ void WriterOfLinkLayouts::lookAtChanges(FunctionID id, const ThinSummary& summar
     }
 }
 
-// By the types that the flow ended with, so it is the same in whatever order the flow ran.
 void WriterOfLinkLayouts::noteChangeOfClosure(const LinkType& subject)
 {
     if (subject.functions == LinkType::Functions::Closure)
         m_tables.functions[subject.function.index()].closuresAreChanged = true;
 }
 
-// A function that has met another is lost, and not every caller of it is known. Constructors that have met are still known by their family.
 void WriterOfLinkLayouts::noteWriteOfPrototypeProperty(const LinkType& subject, PropertyKeyID key, bool storesObjectMadeForIt)
 {
     if (key && m_program.nameClassOf(key) != NameClass::Prototype)
@@ -2219,7 +2013,6 @@ void WriterOfLinkLayouts::noteHeritage(const LinkType& heritage, FunctionID cons
     LayoutID classLayout = m_flow.classOfConstructor(constructor);
     if (!classLayout || m_program.at(classLayout).base)
         return;
-    // ResolveHeritage throws for every primitive but null.
     LinkType objects = heritage;
     objects.primitives = 0;
     LayoutID above;
@@ -2233,8 +2026,6 @@ void WriterOfLinkLayouts::noteHeritage(const LinkType& heritage, FunctionID cons
     m_heritages[classLayout.index()] = above;
 }
 
-// `F.prototype.name = ..`, `Object.defineProperties(F.prototype, { name: .. })`: the subject is a read under `prototype` off a closure that the body makes, or off the variable that is born as the function.
-// The flow loses sight of the object once the layout has escaped, and whether it has by the time the access is told hangs on the order.
 void WriterOfLinkLayouts::noteNameWrittenOnPrototype(FunctionID id, const ThinSummary& summary, const SummaryAccess& access)
 {
     if (access.key && access.mapOfWrittenAccessor) {
@@ -2268,7 +2059,6 @@ void WriterOfLinkLayouts::noteNameWrittenOnPrototype(FunctionID id, const ThinSu
         added.iterator->value.isWrittenAgain = true;
         return;
     }
-    // By the types that the flow ended with: objects of one layout are all that the descriptor is read off.
     if (access.kind != SummaryAccess::Kind::Define || access.descriptorFromElsewhere == noSummaryNode || summary.nodes[access.descriptorFromElsewhere].kind != SummaryNode::Kind::ResultOfAccess)
         return;
     const SummaryAccess& taken = summary.accesses[summary.nodes[access.descriptorFromElsewhere].first];
@@ -2316,7 +2106,6 @@ void WriterOfLinkLayouts::noteWrite(const LinkType& subject, PropertyKeyID key, 
         if (!subject.layout)
             return;
         uint32_t family = lostFamilyOf(subject.layout);
-        // Under a name, LinkFlow::run() has noted which members lack it.
         if (traits.contains(Trait::AddsWhatIsNotListed) && !key)
             m_changesOfLostFamilies[family].add(LayoutChange::GainsProperty);
         if (traits.contains(Trait::MayRunSetter) && (!key || m_program.nameClassOf(key) == NameClass::Proto))
@@ -2362,7 +2151,6 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
     if (!found) {
         if (!traits.contains(Trait::AddsWhatIsNotListed) || (traits.contains(Trait::MayRunSetter) && comesToAccessorAbove(layout, key)))
             return;
-        // `class Below extends Base { c = 1 }`: the constructor below stores into what the constructor above has allocated, which is known there as an object of the class above and is one of the class below.
         bool isFieldOfClassBelow = !traits.contains(Trait::ComesAfterConstruction) && isListedByClassBelow(layout, key);
         if (!(mayComeToObject && !isFieldOfClassBelow && noteNameNotListed(layout, key)))
             changes.add(LayoutChange::GainsProperty);
@@ -2381,33 +2169,24 @@ void WriterOfLinkLayouts::noteWriteInto(LayoutID layout, PropertyKeyID key, Trai
         m_fieldsFilledByConstructors.quickSet(cellOf(*found));
 }
 
-// ---- The fields that are appended. A list claims nothing, so whom it names decides only how fast a name is found and how large the tables are.
-
-// Only a compiled object has slots.
 bool WriterOfLinkLayouts::canHoldAppendedFields(LayoutID id) const
 {
     const Layout& layout = m_program.at(id);
     return isFoundByShapeTest(layout) && !layout.isDerived() && !layout.has(LayoutFlags::IsNeverAllocated) && mayBeAllocated(id);
 }
 
-// An index may be an element, and `__proto__` finds the accessor of Object.prototype. A store under the name of an accessor creates nothing, and under that of a method it hides the method in some of the objects.
 bool WriterOfLinkLayouts::canNameAppendedField(LayoutID layout, PropertyKeyID key) const
 {
-    // `socket[kRequest] = request`, where all that kRequest can be is one symbol: the access goes by the key of the symbol (LinkFlow::keyOf()), and a layout lists fields under such keys like any other.
     PropertyKeyKind kind = m_program.at(key).kind;
     if (!m_program.types.hasStableNumber(key) || (kind != PropertyKeyKind::Text && kind != PropertyKeyKind::CreatedSymbol && kind != PropertyKeyKind::RegisteredSymbol))
         return false;
     NameClass nameClass = m_program.nameClassOf(key);
-    // `Object.defineProperty(konstructor.prototype, name, { get, set })`, where nobody knows the name: a store under the name of an accessor finds its slot empty each time and goes upward, which no table remembers: so it refuses every name.
-    // But for what the constructor itself stores on `this`: whoever makes the object means to lay the property, and the front end lists `this.raw = res` whatever is defined above. A guess at where a slot pays: a list claims nothing.
     uint64_t layoutAndKey = static_cast<uint64_t>(layout.index()) << 32 | key.bits();
     bool countsKeysThatNobodyKnows = kind == PropertyKeyKind::Text && !m_namesThatConstructorsStore.contains(layoutAndKey) && !m_namesLaidOnObjectsOfLibrary.contains(layoutAndKey);
-    // What Object.create() makes stands below an object that nobody knows: `ctx.body = text` may find a setter there each time. Whoever makes the object means to lay what he stores on it.
     if (countsKeysThatNobodyKnows && m_program.at(layout).has(LayoutFlags::IsOfCreatedObject))
         return false;
     if (mayBeElementKey(nameClass) || nameClass == NameClass::Proto || m_flow.findMembers(layout, ClassSide::Prototype, key).mayAnswer() || m_flow.mayLieOnPrototypeAbove(layout, key, countsKeysThatNobodyKnows))
         return false;
-    // The same of what stands above a class that is written without a base.
     LayoutID heritage = m_heritages[layout.index()];
     return !isWrittenOnPrototypeAbove(layout, key) && (!heritage || (!m_flow.findMembers(heritage, ClassSide::Prototype, key).mayAnswer() && !m_flow.mayLieOnPrototypeAbove(heritage, key, countsKeysThatNobodyKnows)));
 }
@@ -2420,8 +2199,6 @@ bool WriterOfLinkLayouts::isListedByClassBelow(LayoutID layout, PropertyKeyID ke
     auto listsName = [&](LayoutID member) {
         return member != layout && writtenBaseOf(m_program.at(member)) && m_program.at(member).findField(key);
     };
-    // `class C1 extends C0 { f1 = 1 }   class C2 extends C1 { f2 = 2 }   ..`: each initializer stores into what the constructor at the top has allocated, so each name is asked of each class above the one that lists it,
-    // and that one stands behind all the classes between. Program::layoutsWithName() leaves out some that list a name, so it says yes and never no.
     std::span<const LayoutID> layoutsWithName = m_program.layoutsWithName(key);
     if (layoutsWithName.size() <= members.size()) {
         for (LayoutID holder : layoutsWithName) {
@@ -2449,17 +2226,12 @@ bool WriterOfLinkLayouts::noteNameNotListed(LayoutID layout, PropertyKeyID key)
     return true;
 }
 
-// `interface Links { seen?: boolean }   function Links(this: Links) { }   linksOf(node).seen = true`, where nobody knows what linksOf() answers.
-// The store names a field of the layouts that may hide behind such a value and of whose objects a written type declares the name. A method lies above the objects, and what is written of an accessor is what its getter answers.
-// `interface Type { flags: number }   interface ObjectType extends Type { objectFlags: number }   function Type(this: Type) { }   (made as ObjectType).objectFlags = 0`:
-// a type that no layout with objects is written as speaks of the objects of the nearest types above it that some layout is written as: only a cast leads to it.
 void WriterOfLinkLayouts::noteNamesWrittenOfLayouts()
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(m_program.layouts.size());
     auto isWrittenTypeAlone = [&](LayoutID id) {
         return m_program.at(id).has(LayoutFlags::IsNeverAllocated);
     };
-    // By written type. A cast leads down as well as up, and what a class declares is stored on its own objects: it speaks for no other layout.
     Vector<Vector<LayoutID>> layoutsWrittenAs(numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         if (!canHoldAppendedFields(LayoutID(index)))
@@ -2520,12 +2292,9 @@ void WriterOfLinkLayouts::noteNamesWrittenOfLayouts()
     }
 }
 
-// The names of a layout come in the order in which the program is written to store them first: a maker stores one name after the other, and a granule that lies behind all that an Extension holds goes into the room that is left.
-// A layout that is stored more names than it has room for keeps what the type of `this` requires, and then those that the program names most often. The others are extra properties.
 void WriterOfLinkLayouts::appendFields()
 {
     noteNamesWrittenOfLayouts();
-    // What is found may build on the answer of another body in turn. Behind this no run is added.
     BitVector bodiesAskedWhatTheyHandOn(m_program.functions.size());
     for (size_t place = 0; place < m_runsOfMakers.size(); ++place) {
         FunctionID givenBy = m_runsOfMakers[place].givenBy;
@@ -2537,15 +2306,11 @@ void WriterOfLinkLayouts::appendFields()
         finishRunsOfMakersIn(givenBy);
         m_asksWhatBodyHandsOn = false;
     }
-    // A SECOND CONSTRUCTOR: a body that stores on an object which was made for it, by a construction of its own or by another such body, and returns it.
-    // WHAT IT STORES LIES IN THE CELL WHERE OTHER MAKERS BUILD ON IT: `createType()` under `createTypeWithSymbol()` under `createObjectType()` under `createTypeReference()`: it is to them what the constructor of a base class is
-    // to the classes below. What the last maker of a row stores only its own kind of object gets, and all the kinds have one cell: forty makers' names in every object.
     BitVector bodiesThatOtherMakersBuildOn(m_program.functions.size());
     for (const RunOfMaker& run : m_runsOfMakers) {
         if (run.givenBy)
             bodiesThatOtherMakersBuildOn.quickSet(run.givenBy.index());
     }
-    // Where nobody knows what the body was given: the layouts that are stored every name of the run.
     HashMap<uint32_t, Vector<LayoutID, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> layoutsStoredUnderKey;
     auto placeOfName = [&](LayoutID layout, PropertyKeyID key) -> std::optional<uint32_t> {
         auto found = m_pairsNotListed.find(static_cast<uint64_t>(layout.index()) << 32 | key.bits());
@@ -2584,7 +2349,6 @@ void WriterOfLinkLayouts::appendFields()
             for (const NameNotListed& name : m_namesNotListed)
                 layoutsStoredUnderKey.add(name.key.bits(), Vector<LayoutID, 2> { }).iterator->value.append(name.layout);
         }
-        // The layouts that list every name themselves: `result.declarations = symbol.declarations; result.parent = symbol.parent`.
         for (LayoutID layout : m_asksWhatMakersGive ? m_program.layoutsWithName(run.keys[0]) : std::span<const LayoutID> { }) {
             bool listsEveryName = m_layoutsGivenUndefinedByMakers.quickGet(layout.index()) && m_program.at(layout).kind == LayoutKind::Instance && std::ranges::all_of(run.keys, [&](PropertyKeyID key) {
                 return !!findField(m_program, layout, key);
@@ -2604,7 +2368,6 @@ void WriterOfLinkLayouts::appendFields()
         }
     }
     m_pairsNotListed.clear();
-    // What stands above a class that is written without a base is known now, whichever body was looked at first.
     m_namesNotListed.removeAllMatching([&](const NameNotListed& name) {
         if (canNameAppendedField(name.layout, name.key))
             return false;
@@ -2680,13 +2443,9 @@ void WriterOfLinkLayouts::appendFields()
         m_tables.appendedFields[place].formThatDefinitionsCreate = m_formsOfAppendedKeys[place];
 }
 
-// The order in which a maker stores is the order in which its objects get their keys: plan/AOTKeyOrders.cpp. A guess.
-// What the layout lists itself its construction has created. A name that has no field is an extra property, and from there on the keys of the object are in no order of the image.
-// Where nobody knows what the maker was given, its stores speak of the layouts that have fields for them: for all of them, or for the first two at least.
 void WriterOfLinkLayouts::writeRunsOfMakers()
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(m_program.layouts.size());
-    // By each key that some layout has appended: those of the layouts whose objects a maker may have been given without anybody knowing. A family of ten thousand classes has a key in common and as many makers.
     HashMap<uint32_t, Vector<LayoutID, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> layoutsWithAppendedKey;
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         bool mayBeGivenUnknown = m_flow.lostLayouts.get(index) || hasEscaped(index);
@@ -2706,8 +2465,6 @@ void WriterOfLinkLayouts::writeRunsOfMakers()
     };
     Vector<RunOfLayout> runs;
     Vector<PropertyKeyID> keys;
-    // `createObjectType()` stores behind `createTypeWithSymbol()`, which stores behind `createType()`, which constructs: the object has the names of all of them, the innermost first.
-    // So the run of a maker begins with the runs of those that had the object in front of it. A guess like the run itself.
     Vector<const RunOfMaker*, 8> makers;
     Vector<PropertyKeyID, 32> keysOfMakers;
     auto keysOfAllMakersOf = [&](const RunOfMaker& last) -> std::span<const PropertyKeyID> {
@@ -2763,7 +2520,6 @@ void WriterOfLinkLayouts::writeRunsOfMakers()
         }
     }
 
-    // The object in the field has the names of all that had its holder in their hands, the innermost first.
     Vector<const RunOnObjectInField*, 8> runsOnField;
     for (const RunOnObjectInField& last : m_runsOnObjectsInFields) {
         runsOnField.shrink(0);
@@ -2809,17 +2565,13 @@ void WriterOfLinkLayouts::writeRunsOfMakers()
     m_tables.firstKeyOfRunOfMakers.append(static_cast<uint32_t>(m_tables.keysOfRunsOfMakers.size()));
 }
 
-// `createPropertyAccessExpression()` stores on what `createBaseDeclaration()` gives, which has it from `createBaseNode()`, which has it from `baseFactory.createBaseNode()`: one of four functions, and each constructs a `Node`.
-// So the run speaks of the members below `Node` and of none below `Token`. It follows what each body returns, and an argument that a body returns as it came. A guess: the order of keys is looked at where it counts.
 void WriterOfLinkLayouts::writeRunsBehindTaggedMakers()
 {
     if (m_flow.taggedMakers.isEmpty())
         return;
 
-    // The edges of a body are gone over once, however many rows lead through it.
     struct WaysThroughBody {
         Vector<uint32_t, 2> returned;
-        // The join, then what flows into it. Sorted.
         Vector<std::pair<uint32_t, uint32_t>, 2> intoJoins;
     };
     HashMap<uint32_t, WaysThroughBody, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> waysThroughBodies;
@@ -2838,7 +2590,6 @@ void WriterOfLinkLayouts::writeRunsBehindTaggedMakers()
         return added.iterator->value;
     };
 
-    // A row is short. One that is not says nothing worth its price.
     static constexpr size_t mostNodesFollowed = 64;
     Vector<std::pair<uint32_t, uint32_t>, 16> nodesFollowed;
     Vector<uint32_t, 8> nodesToFollow;
@@ -2850,7 +2601,6 @@ void WriterOfLinkLayouts::writeRunsBehindTaggedMakers()
         const ThinSummary& summary = m_flow.summaries.at(id);
         const SummaryNode& record = summary.nodes[node];
         if (record.kind == SummaryNode::Kind::Join) {
-            // The table may grow below, so what is found in it is copied out first.
             size_t first = nodesToFollow.size();
             for (auto [join, from] : std::ranges::equal_range(waysThrough(id).intoJoins, node, { }, &std::pair<uint32_t, uint32_t>::first))
                 nodesToFollow.append(from);
@@ -2890,7 +2640,6 @@ void WriterOfLinkLayouts::writeRunsBehindTaggedMakers()
             for (FunctionID callee : m_flow.calleesOfSharedCallsAsSettled()[shared].listed)
                 followCallee(callee);
         }
-        // Nobody knows the receiver: whatever some body has laid into a field under the name.
         if (call.callee == SummaryCall::Callee::Name && call.key && callees.listed.isEmpty() && callees.shared.isEmpty()) {
             if (auto found = m_functionsLaidIntoFieldsUnderKey.find(call.key.bits()); found != m_functionsLaidIntoFieldsUnderKey.end()) {
                 for (FunctionID callee : found->value)
@@ -2909,7 +2658,6 @@ void WriterOfLinkLayouts::writeRunsBehindTaggedMakers()
         if (makers.isEmpty())
             continue;
 
-        // As writeRunsOfMakers() has it: the object has the names of all that had it in their hands, the innermost first.
         row.shrink(0);
         for (const RunOfMaker* run = &last; run && !row.contains(run);) {
             row.append(run);
@@ -2930,7 +2678,6 @@ void WriterOfLinkLayouts::writeRunsBehindTaggedMakers()
     }
 }
 
-// Whatever lays a property on an object under a name that Link does not follow shows as GainsProperty: a computed key, a copy, a definition by a descriptor, a name that got no field.
 void WriterOfLinkLayouts::writeAppendedFields()
 {
     for (uint32_t index = 0; index < m_tables.layouts.size(); ++index) {
@@ -2939,24 +2686,22 @@ void WriterOfLinkLayouts::writeAppendedFields()
             continue;
         std::span<const PropertyKeyID> keys = m_tables.appendedKeysOf(id);
         for (uint32_t place = 0; place < keys.size(); ++place) {
-            // Without a node no access has come to the layout, by itself or by a family, and what a store through a lost value brings was followed no further.
             FlowNodeID node = m_flow.findAppendedField(id, keys[place]);
             if (!node)
                 continue;
             LinkedCell& cell = m_tables.appendedFields[m_tables.firstAppendedFieldOfLayout[index] + place];
             cell.everyWriterIsKnown = true;
             cell.proven = m_flow.typeAt(node).isNothing() ? TypeID(TypeTable::never) : claimedTypeAt(node);
+            cell.leavesOutWhatArrives = claimLeavesOutWhatArrivesAt(node);
         }
     }
 }
 
-// The setter runs, or there is none and nothing is stored. Whoever lays another property in front of the accessor defines it, or changes what lies above: each is a change of its own.
 bool WriterOfLinkLayouts::comesToAccessorAbove(LayoutID layout, PropertyKeyID key) const
 {
     if (m_flow.namesMayBeIncomplete(layout, ClassSide::Prototype))
         return false;
     LinkFlow::FoundMembers members = m_flow.findMembers(layout, ClassSide::Prototype, key);
-    // As AccessInLinkAccesses::resolveOnLayout(): until the function is linked below the class its objects find nothing there.
     if (members.lookupGoesOnAboveClasses())
         return false;
     return std::ranges::any_of(members, [](const LinkFlow::FoundMember& member) {
@@ -2982,7 +2727,6 @@ void WriterOfLinkLayouts::lookAtMembers(const ThinSummary& summary)
     }
 }
 
-// An access on a lost closure reads anything and stores into unseen code. So nobody follows what is done to a lost class object, or to the prototype object that is read off it.
 void WriterOfLinkLayouts::noteLostClassObjects()
 {
     auto note = [&](LayoutID classLayout) {
@@ -2990,7 +2734,6 @@ void WriterOfLinkLayouts::noteLostClassObjects()
         for (LayoutID below : m_program.layoutsExpectedBelow(classLayout))
             m_liesBelowLostClassObject.quickSet(below.index());
     };
-    // Of a constructor function nothing but `prototype` is followed, and whoever asks a lost closure for that lets them all escape.
     for (size_t index : m_flow.lostFunctions) {
         if (LayoutID constructed = m_program.functions[index].constructedClass; constructed && !m_flow.isOfConstructorFunction(constructed))
             note(constructed);
@@ -3002,7 +2745,6 @@ void WriterOfLinkLayouts::noteLostClassObjects()
     }
 }
 
-// The run time refuses every new name on it, but those that a test run has opened.
 bool WriterOfLinkLayouts::objectPrototypeMayGainName() const
 {
     const BuiltinTable& builtins = m_program.builtins();
@@ -3021,11 +2763,9 @@ bool WriterOfLinkLayouts::mayBeAllocated(LayoutID id) const
     case LayoutKind::Record:
     case LayoutKind::Environment:
         return false;
-    // The entry that allocates for `new` stands at no node. It is an entry of the constructor: a class that is sent without one is there for the types that name it.
     case LayoutKind::Instance:
         if (!layout.constructor || !m_flow.reached.get(layout.constructor.index()))
             return false;
-        // Every entry of the constructor is listed, and each is the `super()` of a class below: LinkFlow::allocatedLayouts has the class otherwise.
         return m_program.at(layout.constructor).kind != FunctionKind::DerivedConstructor || !everyCallerIsKnown(layout.constructor);
     case LayoutKind::Container:
     case LayoutKind::Closure:
@@ -3068,16 +2808,12 @@ void WriterOfLinkLayouts::writeLayouts()
             linked.reachesUnseenCode = false;
         linked.possibleChanges = m_changes[index];
         linked.possibleChanges.add(m_flow.possibleChangesOf(index));
-        // The walk goes by the layout, not by the name: to it the object may have got an accessor, a property more, and a field that refuses stores.
         if (m_flow.layoutsDefinedOnUnderWrittenKeys.get(index))
             linked.possibleChanges.add(changesMadeByInLinkLayouts(SummaryChange::Kind::DefinesByDescriptor));
-        // What is done through a lost value counts in either reading.
         linked.isRedefinedByLiteralsAlone = m_flow.layoutsWithKnownAccessors.get(index) && !linked.possibleChanges.contains(LayoutChange::GetsAccessor)
             && !(m_flow.lostLayouts.get(index) && m_changesOfLostFamilies[lostFamilyOf(id)].contains(LayoutChange::GetsAccessor));
         if (m_flow.layoutsWithKnownAccessors.get(index))
             linked.possibleChanges.add(LayoutChange::GetsAccessor);
-        // Which member it was done to nobody knows. A proof charges all of them. What is held is what is expected of an object of the layout, and the look at the object sees the rest:
-        // on a large program strangers meet until most layouts are one family, in which each of the five is done to somebody.
         if (m_flow.lostLayouts.get(index) && m_flow.reading() == WhatUnseenCodeDoes::Anything)
             linked.possibleChanges.add(m_changesOfLostFamilies[lostFamilyOf(id)]);
         if (everyPrototypeMayChange)
@@ -3085,8 +2821,6 @@ void WriterOfLinkLayouts::writeLayouts()
     }
 }
 
-// What the body returns is the object that it allocates, `this` that `new` has handed it, what its own `super()` answers, or a primitive, in the place of which the construction answers with one of those.
-// Every class of a family asks the constructors above it.
 bool WriterOfLinkLayouts::answersOnlyWithObjectOfItsConstruction(FunctionID constructor) const
 {
     enum : uint8_t { NotAsked, Yes, No };
@@ -3132,7 +2866,6 @@ bool WriterOfLinkLayouts::findWhetherConstructorAnswersOnlyWithObjectOfItsConstr
                 if (!function.takesThisFromConstruction() || function.thisParameterIndex() != std::optional<unsigned>(from.first))
                     return false;
                 break;
-            // `new X` names no new.target of its own.
             case SummaryNode::Kind::ResultOfCall:
                 if (function.kind != FunctionKind::DerivedConstructor || !summary.calls[from.first].isConstruction || summary.calls[from.first].newTarget == noSummaryNode)
                     return false;
@@ -3145,8 +2878,6 @@ bool WriterOfLinkLayouts::findWhetherConstructorAnswersOnlyWithObjectOfItsConstr
     return true;
 }
 
-// `let first; class A { constructor() { if (first) return first; first = this; } }  class B extends A { constructor(v) { super(); this.x = v; } }`: the scan counts every store into what `super()` answers
-// as a part of the construction. Where a constructor above may answer with another object than the one that this construction makes, such a store lands in an object that was made long ago.
 bool WriterOfLinkLayouts::superCallMayAnswerWithOlderObject(LayoutID id) const
 {
     const Layout& layout = m_program.at(id);
@@ -3154,7 +2885,6 @@ bool WriterOfLinkLayouts::superCallMayAnswerWithOlderObject(LayoutID id) const
         return false;
     if (!layout.base)
         return true;
-    // `class A extends B {}` beside `class B extends A {}` compiles.
     if (!m_rowsThatMayAnswerWithOlderObject)
         m_rowsThatMayAnswerWithOlderObject.emplace(m_program.layouts.size(), true);
     return m_rowsThatMayAnswerWithOlderObject->answerFor(layout.base, [&](LayoutID above) -> StepAlongRow {
@@ -3167,7 +2897,6 @@ bool WriterOfLinkLayouts::superCallMayAnswerWithOlderObject(LayoutID id) const
     });
 }
 
-// What is said of a cell is gathered at the declaration of the field, because the classes below list it again and a reader may ask either cell. It makes no type.
 void WriterOfLinkLayouts::gatherAtDeclarationsOfFields()
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(m_tables.layouts.size());
@@ -3193,7 +2922,12 @@ void WriterOfLinkLayouts::gatherAtDeclarationsOfFields()
     }
 }
 
-// A field has one node, that of its declaration (LinkFlow::numberNodes()). So what arrives is typed once, where the field is declared, and each layout is written by itself: AOTLinkTypesOnAllThreads.h.
+TypeID WriterOfLinkLayouts::namingSymbolAt(FlowNodeID node, TypeID type)
+{
+    PropertyKeyID symbol = type ? m_flow.symbolAt(node) : PropertyKeyID();
+    return symbol ? types().unionOf(types().withoutPrimitives(type, Primitive::AnySymbol), types().symbolLiteral(symbol)) : type;
+}
+
 void WriterOfLinkLayouts::writeFields()
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(m_tables.layouts.size());
@@ -3201,6 +2935,7 @@ void WriterOfLinkLayouts::writeFields()
     provenAtDeclaration.fill(TypeID(), m_tables.fields.size());
     static constexpr uint8_t somethingArrives = 1;
     static constexpr uint8_t anythingArrives = 2;
+    static constexpr uint8_t partIsLeftOut = 4;
     Vector<uint8_t> arrivesAtDeclaration;
     arrivesAtDeclaration.fill(0, m_tables.fields.size());
 
@@ -3219,8 +2954,10 @@ void WriterOfLinkLayouts::writeFields()
                 continue;
             uint32_t cell = cellOf(reference);
             TypeID arrived = claimedTypeAt(node);
+            if (m_program.layouts[index].isEnvironment())
+                arrived = namingSymbolAt(node, arrived);
             provenAtDeclaration[cell] = arrived;
-            arrivesAtDeclaration[cell] = arrived ? somethingArrives : somethingArrives | anythingArrives;
+            arrivesAtDeclaration[cell] = (arrived ? somethingArrives : somethingArrives | anythingArrives) | (claimLeavesOutWhatArrivesAt(node) ? partIsLeftOut : 0);
             isOfProgram &= isOfProgramInLink(arrived);
         }
         return isOfProgram;
@@ -3233,12 +2970,9 @@ void WriterOfLinkLayouts::writeFields()
 
     writeOnAllThreads(numberOfLayouts, [&](unsigned index) {
         uint32_t numberOfFields = m_tables.firstFieldOfLayout[index + 1] - m_tables.firstFieldOfLayout[index];
-        // A deletion empties the slot, and so does a definition by a descriptor, which moves the field out to the extra properties.
         bool everyConstructionIsSeen = constructionsAreFollowedInLinkLayouts(m_program.layouts[index]) && !hasEscaped(index);
         bool keepsWhatConstructionsFill = everyConstructionIsSeen && !m_tables.layouts[index].possibleChanges.containsAny({ LayoutChange::LosesProperty, LayoutChange::GetsAccessor });
-        // `{ raw: 0, get value() { .. } }`: the accessors that literals lay under names of their own take no other field out of its slot.
         bool keepsWhatLiesBesideAccessors = everyConstructionIsSeen && m_tables.layouts[index].isRedefinedByLiteralsAlone && !m_tables.layouts[index].possibleChanges.contains(LayoutChange::LosesProperty);
-        // The loader fills all that a data module lists.
         bool isRecordThatIsMade = m_asksWhatMakersGive && m_program.layouts[index].kind == LayoutKind::Record && m_flow.allocatedLayouts.get(index) && !m_isMadeAtNoNode.quickGet(index);
         bool isOfProgram = true;
         for (uint32_t field = 0; field < numberOfFields; ++field) {
@@ -3246,20 +2980,17 @@ void WriterOfLinkLayouts::writeFields()
             uint32_t declaration = cellOf(declarationOf(m_program, reference));
             LinkedCell& cell = m_tables.fields[cellOf(reference)];
             cell.everyWriterIsKnown = !m_fieldsWithUnseenWriters.quickGet(declaration);
+            cell.leavesOutWhatArrives = arrivesAtDeclaration[declaration] & partIsLeftOut;
             cell.isWrittenAfterConstruction = !cell.everyWriterIsKnown || m_fieldsWrittenLate.quickGet(declaration);
             cell.proven = cell.everyWriterIsKnown && !(arrivesAtDeclaration[declaration] & anythingArrives) ? provenAtDeclaration[declaration] : TypeID();
-            // A read of an environment's field is typed by this alone, and a read that gives `never` ends its block. So of such a field nothing is said where nothing arrives.
             if (cell.everyWriterIsKnown && !(arrivesAtDeclaration[declaration] & somethingArrives) && !m_program.layouts[index].isEnvironment())
                 cell.proven = TypeTable::never;
             cell.proven = narrowerOf(cell.proven, fieldAt(m_program, reference).declared);
-            // `{ kind: "num", value }`: every value that arrives has been listed by an allocation or by constant data, all of them list one and the same, and nothing is stored there by name.
-            // A PROOF, in Facts::linked() alone: what a slot is laid out for and held to stays the kind of value.
             if (uint32_t unit = m_unitsListedForFields[cellOf(reference)]; unit && unit != otherThanOneUnit && m_flow.reading() == WhatUnseenCodeDoes::Anything && fieldAt(m_program, reference).key && m_keysOfTestedFields.get(fieldAt(m_program, reference).key.index()) && cellOf(reference) == declaration && cell.proven && !cell.isWrittenAfterConstruction && m_program.layouts[index].kind == LayoutKind::Record) {
                 TypeID written = typeOfWrittenUnit(WrittenUnit::fromBits(unit));
                 if (types().isSubset(written, cell.proven))
                     cell.proven = written;
             }
-            // An allocation may list the mark of an empty cell as the value of a field. Where no store brings anything there is no object to speak of.
             const Field& record = fieldAt(m_program, reference);
             bool liesBesideAccessors = keepsWhatLiesBesideAccessors && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration);
             cell.isFilled = (keepsWhatConstructionsFill || liesBesideAccessors || (everyConstructionIsSeen && isPrivateNameInLink(m_program, record.key))) && record.key && record.form.isEmpty() && !m_flow.fieldsThatMayBeEmpty.get(cellOf(reference))
@@ -3268,7 +2999,6 @@ void WriterOfLinkLayouts::writeFields()
             cell.isFilledAtEveryRead = cell.isFilled && !m_fieldsReadInFrontOfDefinition.quickGet(cellOf(reference))
                 && !(m_flow.lostLayouts.get(index) && m_keysReadInFrontOfDefinitionThroughLost.contains(record.key.bits()));
             cell.isLeftUndefinedByMakers = m_layoutsGivenUndefinedByMakers.quickGet(index) && m_fieldsGivenUndefinedByMakers.quickGet(declaration) && !m_fieldsFilledByConstructors.quickGet(declaration);
-            // `{ id, get extra() { .. } }`: the literal gives the field, as a pair of functions.
             cell.isGivenByNoMaker = isRecordThatIsMade && !m_fieldsGivenUndefinedByMakers.quickGet(declaration) && !m_fieldsFilledByConstructors.quickGet(declaration)
                 && !hasKnownAccessor.quickGet(cellOf(reference)) && !hasKnownAccessor.quickGet(declaration);
             cell.isFilledByAccessorsAlone = m_program.layouts[index].kind == LayoutKind::Record && record.form.isEmpty() && hasKnownAccessor.quickGet(cellOf(reference))
@@ -3286,7 +3016,6 @@ thread_local TypesOfThreadInLink WriterOfLinkLayouts::s_typesOfThread;
 
 void WriterOfLinkLayouts::writeVariables()
 {
-    m_tables.orderOfScopes = m_flow.orderOfScopes;
     writeOnAllThreads(static_cast<unsigned>(m_tables.variables.size()), [&](unsigned index) {
         LinkedCell& cell = m_tables.variables[index];
         cell.everyWriterIsKnown = !m_variablesSharedWithUnseenCode.quickGet(index) && !m_flow.escapedVariables.get(index);
@@ -3297,9 +3026,8 @@ void WriterOfLinkLayouts::writeVariables()
         cell.proven = typeEstablishedOf(declared);
         if (!cell.everyWriterIsKnown)
             return isOfProgramInLink(cell.proven);
-        // What the variable holds at the start has arrived there. A type without `absent` says that no read comes in front of the first store: only the compiler can know that.
         cell.proven = narrowerOf(claimedTypeAt(m_flow.variable(VariableID(index))), declared);
-        // As WriterOfLink::holdsOnlyInstancesThatStayAsMade().
+        cell.proven = namingSymbolAt(m_flow.variable(VariableID(index)), cell.proven);
         const LinkType& arrived = m_flow.typeAt(m_flow.variable(VariableID(index)));
         if (m_flow.reading() != WhatUnseenCodeDoes::Anything || arrived.classes != LinkType::Classes::Site || arrived.objects != LinkType::Objects::None || arrived.functions != LinkType::Functions::None
             || arrived.holdsUnseen || arrived.holdsLostBuiltins || arrived.builtin || m_flow.hasEscaped(arrived.site))
@@ -3310,7 +3038,6 @@ void WriterOfLinkLayouts::writeVariables()
     });
 }
 
-// No operation writes a capture. NewClosure fills it, and a direct call passes it as an entry parameter.
 void WriterOfLinkLayouts::writeCaptures()
 {
     writeOnAllThreads(static_cast<unsigned>(m_program.functions.size()), [&](unsigned index) {
@@ -3372,7 +3099,6 @@ void WriterOfLinkLayouts::writeMembers()
         }
         m_tables.namesOnPrototypes.append(linked);
     }
-    // The names of which the flow has no record.
     for (const auto& [word, written] : m_namesWrittenOnPrototypes) {
         LinkedNameOnPrototype linked { LayoutID(static_cast<uint32_t>(word >> 32)), PropertyKeyID::fromBits(static_cast<uint32_t>(word)), FunctionID() };
         if (written.isWrittenOnce) {
@@ -3411,7 +3137,6 @@ void WriterOfLinkLayouts::lookAtSummaries()
         }
     }
 
-    // THE EDGES BESIDE THE RECORDS. What both say of a cell or a layout is only ever added, so the edges say it in tables of their own, which are united with the others behind the two.
     m_saidByEdges.fieldsGivenValues.ensureSize(m_tables.fields.size());
     m_saidByEdges.fieldsGivenUndefinedByMakers.ensureSize(m_tables.fields.size());
     m_saidByEdges.fieldsFilledByConstructors.ensureSize(m_tables.fields.size());
@@ -3448,7 +3173,6 @@ void WriterOfLinkLayouts::lookAtSummaries()
     m_saidByEdges = { };
 }
 
-// Behind the look, in front of the turn at the table of types.
 void WriterOfLinkLayouts::writeWhatMakesNoType(BitVector&& functionsWhoseCallersAreAllKnown)
 {
     m_functionsWhoseCallersAreAllKnown = WTF::move(functionsWhoseCallersAreAllKnown);
@@ -3462,7 +3186,6 @@ void WriterOfLinkLayouts::write(TypeArena& types)
 {
     m_types = &types;
     m_typesTurned = { };
-    // WriterOfLink::writeFunctions() has said of which constructors every caller is known.
     writeLayouts();
     writeFields();
     writeAppendedFields();

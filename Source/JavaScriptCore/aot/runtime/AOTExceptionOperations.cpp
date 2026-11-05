@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTCallSiteTable.h"
 #include "AOTCompiledFrame.h"
+#include "AOTEffectsNet.h"
 #include "AOTErrorMessages.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
@@ -21,6 +22,8 @@
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeReporter.h"
+#include "AOTRuntimeTable.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
 #include "AOTStubRegisters.h"
@@ -46,7 +49,6 @@
 
 namespace JSC { namespace AOT {
 
-// generatePollBeforeEntering() has the call's return address on the stack: where the call pushed it, or below the stub's.
 SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* stackPointerOfCaller)
 {
     return removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
@@ -54,21 +56,17 @@ SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* stackPointerOfC
 
 static bool hasCollectedInPolledCall(VM& vm, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
 {
-    // Another stub may have made the polled call. generatePollBeforeEntering() sets up a frame record on x86-64 only.
     CallFrame* framePointerOfCaller = isX86() ? static_cast<CallFrame*>(frameOfPollStub->callerFrameOrEntryFrame()) : frameOfPollStub;
     std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreate(vm, framePointerOfCaller, returnAddressOfPolledCall(stackPointerOfCaller), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, stackPointerOfCaller);
     return frames && !frames->isAtEnd() && frames->callSite().address == vm.aotState().returnAddressOfCallThatCollected;
 }
 
-// Out of line so the frame that a poll collects from has no slot that only the throw writes.
 static NEVER_INLINE void throwOwedOutOfMemoryError(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope)
 {
     DeferGCForAWhile deferGC(vm);
     throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
 }
 
-// The compiler does not see a poll inside a call stub: the call's IR operation may say that it neither collects nor throws.
-// A call inside which a collection has run says both. At any other call the error waits for the prologue of a function that may collect, or for a loop poll.
 static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, void* stackPointerOfCaller, CallFrame* frameOfPollStub)
 {
     {
@@ -85,7 +83,6 @@ static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& sco
     throwOwedOutOfMemoryError(vm, globalObject, scope);
 }
 
-// Asks what hasCollectedInPolledCall() is about to ask. Nothing allocates between here and that poll, so it collects nothing more.
 void collectInPlaceOfPollBehindOperation(VM& vm, JSCell* madeByOperation)
 {
     if (vm.aotState().returnAddressOfCallThatCollected != returnAddressOfInnermostCompiledCall(vm))
@@ -101,13 +98,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEntering, void, (Instance* instan
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell*, void* stackPointerOfCaller, void*))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEnteringFunctionObject);
-    pollInCallStub(vm, globalObject, scope, stackPointerOfCaller, callFrame);
-    OPERATION_RETURN(scope);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollSlow);
@@ -116,7 +106,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
     OPERATION_RETURN_IF_EXCEPTION(scope);
     vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    // Thrown at such a poll, the error would pass the catch clause of the try block around the loop. It stays owed until a poll under a handler, a function entry or the return of an operation.
     if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && !leavesOwedError) [[unlikely]]
         throwOwedOutOfMemoryError(vm, globalObject, scope);
     OPERATION_RETURN(scope);
@@ -140,7 +129,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance,
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologueWithoutCollecting, void*, (Instance* instance, uint8_t* returnAddress))
 {
-    // What a caller knows about a callee that collects nothing holds for the callee's prologue too.
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPollAtPrologueWithoutCollecting);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
@@ -160,7 +148,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance* 
     OPERATION_RETURN(scope);
 }
 
-// The program threw the value somewhere else, and a cleanup that took the value throws it on.
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instance, EncodedJSValue value, uint64_t kept))
 {
     AOT_OPERATION_BEGIN_THROW_OF_VALUE(instance, Entry::operationAOTThrowAfterCleanup);
@@ -175,8 +162,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instanc
     return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
 }
 
-// A `throw` that jumps to a cleanup of its function calls nothing else, and a stack trace finds the place of a frame by a return address.
-// The address lies in the function. A stub that calls the operation has a frame of its own in between, and one that jumps to it has none.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instance* instance))
 {
     VM& vm = *instance->vm;
@@ -210,11 +195,9 @@ static Exception* takePendingException(VM& vm)
 
 struct ThrownValue {
     JSValue value;
-    // Null where compiled code threw the value and nothing has made an Exception of it.
     Exception* exception;
 };
 
-// The word holds what compiled code threw: the value, or the Exception that a cleanup throws on. While it is empty the exception is pending in the VM.
 static ThrownValue takeThrownValue(VM& vm, Instance* instance)
 {
     JSValue thrown = JSValue::decode(std::exchange(instance->runtime.exceptions.thrownValue, 0));
@@ -232,7 +215,6 @@ static ThrownValue takeThrownValue(VM& vm, Instance* instance)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
-    // A collection that starts here goes over the frames from this one.
     AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
     return JSValue::encode(takeThrownValue(vm, instance).value);
 }
@@ -244,7 +226,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (I
     ThrownValue thrown = takeThrownValue(vm, instance);
     if (thrown.exception)
         return JSValue::encode(thrown.exception);
-    // Nobody lists the frames of a throw that compiled code catches further up.
     return JSValue::encode(Exception::create(vm, thrown.value, Exception::StackCaptureAction::DoNotCaptureStack));
 }
 
@@ -268,7 +249,6 @@ static String nameOfFunctionOnTop(VM& vm)
     return writtenFunctionName(FunctionDescription(frames->frame().function).sourceFunction());
 }
 
-// `node:fs`, where the function on top is of a module that a program can import.
 static String importableModuleOnTop(VM& vm)
 {
     auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
@@ -327,7 +307,6 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
     case Typed::RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject:
         return createTypeError(globalObject, "iterator method should return an object"_s);
     case Typed::RuntimeErrorKind::LeftOutOfExecutable:
-        // An error that the program could catch would let it go on with a wrong answer.
         if (String nameOfFunction = name ? name->string() : nameOfFunctionOnTop(globalObject->vm()); !nameOfFunction.isEmpty())
             dataLogLn('\'', nameOfFunction, "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun.");
         else
@@ -395,15 +374,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtNativeResult, void, (Instanc
     CRASH();
 }
 
-// By numbers alone: an executable may hold no names. `testaot walk <program> f<function>` shows the CheckProof at the position, with the type.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*, EncodedJSValue encodedFound, uint32_t function, uint32_t position, uint32_t source))
 {
-    // By Typed::ProofSource: CastEmitter::generateCheckProof().
     static constexpr std::array<ASCIILiteral, 10> names {
         "an entry parameter"_s, "the result of a call"_s, "what a field holds"_s, "what a variable holds"_s, "what was captured"_s, "what a container holds"_s, "the function that is called"_s, "what an operation gives"_s, "what a test has let pass"_s, "what memory holds where the compiler remembers another value"_s,
     };
     StringPrintStream found;
-    // The answer of a test comes without a value. Of a field: whether its slot is filled, and whether a slot for raw numbers holds one of its marks.
     constexpr uint32_t field = 2;
     if (!encodedFound)
         found.print(source + 1 == names.size() ? "another value or a test that once passed fails"_s : source == field ? "nothing, undefined or null"_s : "nothing"_s);
@@ -413,6 +389,112 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseProof, void, (Instance*
         printKindsOfNativeResult(found, kindOfNativeResult(JSValue::decode(encodedFound)));
     dataLogLn("AOT: f", function, " at ", position, ": ", names[std::min<size_t>(source, names.size() - 1)], " is not of the type that the compiler has proven of it. It is: ", found.toString(), ". This is a bug in Bun.");
     CRASH();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnterBodyThatRunsOnce, void, (Instance* instance, uint32_t function))
+{
+    if (instance->state->functionsEnteredThatRunOnce.add(function).isNewEntry) [[likely]]
+        return;
+    dataLogLn("AOT: f", function, " is entered a second time, and the compiler has proven that it runs at most once. This is a bug in Bun.");
+    CRASH();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instance*, uint32_t function, uint32_t position, uint32_t part, uint32_t rows, uint64_t differs))
+{
+    static constexpr std::array<ASCIILiteral, 5> names { "nothing"_s, "run no other code, and compiled code was entered"_s, "throw nothing, and it threw"_s, "nothing"_s, "not collect, and the heap was collected"_s };
+    static const bool goesOn = !!getenv("BUN_AOT_EFFECTS_NET_GOES_ON");
+    StringPrintStream said;
+    said.print("f", function, " at ", position, ": the rows of effects of ");
+    printRowOfEffectsNet(said, rows & UINT16_MAX);
+    said.print(" and of ");
+    printRowOfEffectsNet(said, rows >> 16);
+    if ((part & 0xff) == static_cast<uint32_t>(Typed::PartOfEffects::Writes)) {
+        said.print(" say that the call will not write ");
+        CommaPrinter comma;
+        for (unsigned lane = 0; lane < Typed::heapsOfDigestInEffectsNet.size(); ++lane) {
+            if (differs >> lane * 8 & 0xff)
+                said.print(comma, Typed::nameOf(Typed::heapsOfDigestInEffectsNet[lane]));
+        }
+        said.print(", and those words of operand ", part >> 16, " are others behind it");
+    } else {
+        if (differs)
+            said.print(" (", BuiltinTable::singleton().textOf(BuiltinID(static_cast<uint16_t>(differs))), ")");
+        said.print(" say that the call will ", names[std::min<size_t>(part, names.size() - 1)]);
+    }
+    if (goesOn && !noteFalseRowOfEffects(said.toString()))
+        return;
+    dataLogLn("AOT: ", said.toString(), ". This is a bug in Bun.");
+    if (!goesOn)
+        CRASH();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCollectionsForEffectsNet, uint64_t, (uint64_t vm))
+{
+    return reinterpret_cast<VM*>(vm)->heap.objectSpace().newlyAllocatedVersion();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDigestForEffectsNet, uint64_t, (EncodedJSValue encodedValue, uint64_t lanes))
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value || !value.isCell())
+        return 0;
+    std::array<uint64_t, Typed::heapsOfDigestInEffectsNet.size()> hashes { };
+    auto mix = [&](unsigned lane, uint64_t word) {
+        hashes[lane] = (hashes[lane] ^ word) * 0x9e3779b97f4a7c15ull;
+        hashes[lane] ^= hashes[lane] >> 29;
+    };
+    auto mixWords = [&](unsigned lane, const void* start, size_t numberOfBytes) {
+        const uint8_t* bytes = static_cast<const uint8_t*>(start);
+        for (size_t offset = 0; offset + sizeof(uint64_t) <= numberOfBytes; offset += sizeof(uint64_t))
+            mix(lane, WTF::unalignedLoad<uint64_t>(bytes + offset));
+    };
+    constexpr unsigned shapeWords = 0, orderWords = 1, objectFields = 2, arrayStorage = 4, elements = 5, stringStorage = 6, typedArrayStorage = 7;
+    static_assert(Typed::heapsOfDigestInEffectsNet[shapeWords] == Typed::AbstractHeap::ShapeWords && Typed::heapsOfDigestInEffectsNet[typedArrayStorage] == Typed::AbstractHeap::TypedArrayStorage);
+
+    JSCell* cell = value.asCell();
+    if (cell->isString()) {
+        if (const StringImpl* found = asString(cell)->tryGetValueImpl()) {
+            const uint8_t* impl = reinterpret_cast<const uint8_t*>(found);
+            mix(stringStorage, reinterpret_cast<uintptr_t>(impl));
+            mix(stringStorage, WTF::unalignedLoad<uint32_t>(impl + StringImpl::flagsOffset()));
+            mix(stringStorage, WTF::unalignedLoad<uint32_t>(impl + StringImpl::lengthMemoryOffset()));
+            mix(stringStorage, WTF::unalignedLoad<uint64_t>(impl + StringImpl::dataOffset()));
+        } else
+            mixWords(stringStorage, reinterpret_cast<const uint8_t*>(cell) + sizeof(JSCell), sizeof(JSRopeString) - sizeof(JSCell));
+    } else if (Object* compiled = compiledObjectOrNull(cell)) {
+        mix(shapeWords, compiled->shapeWord());
+        mix(orderWords, compiled->orderWord());
+        mixWords(objectFields, reinterpret_cast<const uint8_t*>(cell) + offsetOfFirstField, compiled->layout().size - offsetOfFirstField);
+    } else if (cell->isObject()) {
+        JSObject* object = asObject(cell);
+        Butterfly* butterfly = object->butterfly();
+        bool isArray = cell->type() == ArrayType || cell->type() == DerivedArrayType;
+        if (isArray) {
+            mix(arrayStorage, object->indexingTypeAndMisc() & AllArrayTypesAndHistory);
+            mix(arrayStorage, reinterpret_cast<uintptr_t>(butterfly));
+        }
+        if (butterfly && hasAnyArrayStorage(object->indexingType())) {
+            mix(arrayStorage, butterfly->arrayStorage()->length());
+            mix(arrayStorage, butterfly->arrayStorage()->vectorLength());
+        } else if (butterfly && hasIndexedProperties(object->indexingType())) {
+            mix(arrayStorage, butterfly->publicLength());
+            mix(arrayStorage, butterfly->vectorLength());
+            mixWords(elements, butterfly->contiguous().data(), std::min<size_t>(butterfly->publicLength(), butterfly->vectorLength()) * sizeof(EncodedJSValue));
+        }
+        if (isTypedArrayTypeIncludingDataView(cell->type())) {
+            JSArrayBufferView* view = uncheckedDowncast<JSArrayBufferView>(cell);
+            mix(typedArrayStorage, reinterpret_cast<uintptr_t>(view->vectorWithoutPACValidation()));
+            mix(typedArrayStorage, view->lengthRaw());
+            mix(typedArrayStorage, view->byteOffsetRaw());
+            mix(typedArrayStorage, static_cast<uint64_t>(view->mode()));
+        }
+    }
+    uint64_t digest = 0;
+    for (unsigned lane = 0; lane < hashes.size(); ++lane) {
+        if (lanes & 1ull << lane)
+            digest |= (hashes[lane] >> 56) << lane * 8;
+    }
+    return digest;
 }
 
 static Identifier identifierOf(VM& vm, StringID text)
@@ -534,7 +616,6 @@ JSValue valueOfDecodedReference(const Instance* instance, uint64_t bits)
 
 static JSValue throwSiteValue(const Instance* instance, const uint64_t* registers, const DecodedThrowSite& decoded)
 {
-    // Such a site names no register: ThrowSiteWord::isCallSite().
     if (static_cast<Typed::Representation>(decoded.word.representation) == Typed::Representation::Void)
         return jsUndefined();
     unsigned number = decoded.word.registerNumber;
@@ -553,10 +634,6 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
         return jsNumber(static_cast<double>(static_cast<int64_t>(bits)));
     case Typed::Representation::Double:
         return jsNumber(withoutPayload(std::bit_cast<double>(floatingPointBits)));
-    case Typed::Representation::LiteralString:
-        if (isLiteralStringWord(bits))
-            return instance->state->strings->stringForLiteralStringWord(bits);
-        [[fallthrough]];
     case Typed::Representation::Cell:
         value = decoded.isFaultSite ? valueOfDecodedReference(instance, bits) : JSValue::decode(bits);
         return value ? value : jsUndefined();
@@ -599,7 +676,6 @@ static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObje
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAtSite);
-    // The fault handler has passed an address in a register that compiled code allocates like any other.
     if (static_cast<ThrowSiteSource>(source) == ThrowSiteSource::FaultSite)
         const_cast<uint64_t*>(registers)[static_cast<unsigned>(registerWrittenAtFaults)] = instance->state->registerBeforeFault;
     DecodedThrowSite decoded = decodeThrowSite(registers, site, static_cast<ThrowSiteSource>(source));

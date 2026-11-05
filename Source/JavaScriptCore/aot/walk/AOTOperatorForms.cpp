@@ -73,7 +73,6 @@ struct OperandOfForm : Type {
     bool isBooleanOrNullish() const { return hasOnlyPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull); }
     bool isStringOrUndefined() const { return primitives & Primitive::AnyString && hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined); }
     bool mayBeString() const { return primitives & Primitive::AnyString; }
-    // Not a JavaScript value. A cell test would mistake the word for a cell.
     bool mayBeMarker() const { return primitives & (Primitive::Absent | Primitive::Unspecified); }
 };
 
@@ -84,14 +83,12 @@ struct OperandsOfForm {
     bool isEither(Question question) const { return (left.*question)() || (right.*question)(); }
     bool mayBothBe(uint16_t primitives) const { return left.primitives & primitives && right.primitives & primitives; }
 
-    // The words are equal exactly when the values are. Numbers have two zeros and a NaN that equals nothing, and two cells may hold the same text or the same BigInt.
     bool canCompareBits() const
     {
         return areBoth(&Type::isJavaScriptValue) && !mayBothBe(Primitive::Number) && !mayBothBe(Primitive::AnyString) && !mayBothBe(Primitive::BigInt);
     }
 
     OperandOfForm left;
-    // For a unary operator, the same operand as left.
     OperandOfForm right;
 };
 
@@ -157,7 +154,6 @@ static std::optional<Range> remaindersInIntegersForm(Range dividends, Range divi
     return Range { 0, std::min(dividends.maximum, largestDivisor - 1) };
 }
 
-// The range that integer registers hold after the operation. Nothing where they would wrap around or trap, or where the true result may be -0 or NaN, which no integer is.
 static std::optional<Range> resultsInIntegersForm(Opcode opcode, Range left, Range right)
 {
     if (opcode == Opcode::Add)
@@ -277,7 +273,6 @@ static OperatorForm chooseRelationForm(const OperandsOfForm& operands)
         return OperatorForm::NumberAndValue;
     if (operands.areBoth(&Type::isAnyString))
         return OperatorForm::Strings;
-    // A character read past the end of a string is undefined, which compares as NaN, so no relation holds. null compares as 0, which a string such as "-1" is less than, so null is left out.
     if (operands.areBoth(&OperandOfForm::isStringOrUndefined))
         return OperatorForm::NullableStrings;
     return OperatorForm::Generic;
@@ -326,7 +321,6 @@ static OperatorForm chooseLooseEqualityForm(const OperandsOfForm& operands)
         return OperatorForm::NullableStrings;
     if (operands.areBoth(&OperandOfForm::isObjectOrNullish) || operands.areBoth(&OperandOfForm::isBooleanOrNullish))
         return OperatorForm::Bits;
-    // undefined and null equal each other and nothing else, and no conversion runs to find that out.
     if (operands.isEither(&Type::isUndefinedOrNull) && operands.areBoth(&Type::isJavaScriptValue) && !operands.isEither(&OperandOfForm::mayBeMarker))
         return OperatorForm::Bits;
     return OperatorForm::Generic;
@@ -401,10 +395,16 @@ OperatorForm chooseConversionForm(const Program&, const TypeArena& types, Opcode
 
 OperatorForm chooseFormOfOperator(const Program& program, TypeArena& types, Opcode opcode, OperatorTypes operandTypes)
 {
-    if (arithmeticOperatorsWithForm.contains(opcode))
-        return chooseOperatorForm(program, types, opcode, operandTypes).form;
     RELEASE_ASSERT(hasOperatorForm(opcode));
     checkOperandsOfForm(opcode, operandTypes);
+    if (arithmeticOperatorsWithForm.contains(opcode)) {
+        std::array<TypeID, 2> leftAndRight { operandTypes.left, operandTypes.right };
+        std::span<const TypeID> typesByOperandIndex = std::span<const TypeID>(leftAndRight).first(numberOfNamedOperandsOf(opcode));
+        TypingContext typing { program, types, PositionTypes::knowingNothing() };
+        OperatorForm form = chooseArithmeticForm(program, types, opcode, operandTypes, resultTypeOfOperator(typing, opcode, typesByOperandIndex));
+        RELEASE_ASSERT(isLegalOperatorForm(opcode, form));
+        return form;
+    }
     OperatorForm form = comparisonsWithForm.contains(opcode) ? chooseComparisonForm(program, types, opcode, operandTypes) : chooseConversionForm(program, types, opcode, operandTypes.left);
     RELEASE_ASSERT(isLegalOperatorForm(opcode, form));
     return form;
@@ -512,7 +512,6 @@ bool mayCallRuntime(Opcode opcode, OperatorForm form)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// An operand may be an object. Where the schema says the operand is converted, the object's own conversion methods run.
 static Effects effectsOfFormThatTakesAnyValue(Opcode opcode)
 {
     Effects effects = declaredBoundOf(opcode);

@@ -26,12 +26,10 @@
 
 namespace JSC { namespace AOT {
 
-// No two functions share a cell, and only a function that closures are made of has one. ProgramTables::closureCellNumbers() keeps the numbers in 24 bits.
 static_assert(defaultLimitValue(LimitID::ImageClosureFunctions, hostArchitecture()) < Number24::max);
 
 namespace {
 
-// The cells lie in the order of these. The function tells all of them apart.
 struct PlaceOfClosureCell {
     friend auto operator<=>(const PlaceOfClosureCell&, const PlaceOfClosureCell&) = default;
 
@@ -56,7 +54,6 @@ void ImageNumbersBuilder::numberFunctions()
     const uint32_t firstDerived = static_cast<uint32_t>(inputs.program.functions.size());
     const uint32_t numberOfUnits = conventions.numberOfUnits();
 
-    // Whoever holds the word of a closure, code or a table of the image, names a generic entry by its closure number. The tables do not list the entries that they name, so every generic entry with code has one.
     BitVector closureEntries(numberOfUnits);
     BitVector otherDerivedUnits(numberOfUnits);
     for (const CompiledCode& code : inputs.functions) {
@@ -93,7 +90,6 @@ void ImageNumbersBuilder::numberFunctions()
         else
             idsOfUnitsBehindFunctions.append({ unitIndex, id });
     };
-    // An inline frame names a function that has no code of its own by its Body.
     for (uint32_t index = 0; index < firstDerived; ++index)
         setIDOfUnit(conventions.indexOf({ FunctionID(index), Typed::CodeRole::Body }), FunctionID(index));
 
@@ -122,8 +118,6 @@ void ImageNumbersBuilder::numberFunctions()
     }
 }
 
-// The run time makes the closures whose cells the tables name: the constructors and members of classes, the functions that the host calls.
-// What a variable is born as, a deferred closure or class among them, is made by whoever reads the variable first.
 static BitVector findFunctionsWhoseClosuresAreMadeWhileModulesLoad(const NumberingInputs& inputs, const NamesOfTables& tables)
 {
     BitVector functions = tables.functionsWithClosureCell;
@@ -156,24 +150,19 @@ void ImageNumbersBuilder::numberClosureCellsAndClassRanks()
         FunctionID id(index);
         if (!plan.hasClosureCell(id) || !(cellsMentionedByCode.get(index) || tables.functionsWithClosureCell.get(index)))
             continue;
-        // The run time finds the cell by the entry that the word of a closure names, and makes no closure of a function without one.
         if (!numbers.m_functions.idOf(conventions.indexOf(conventions.closureEntryOf(id))))
             continue;
         ModuleID module = program.functions[index].module;
         cells.append({ !functionsMadeWhileModulesLoad.get(index), module ? module.index() : UINT32_MAX, index });
     }
-    // The cells that a module fills as it loads share pages, and those that only some later read fills lie behind all of them.
-    // The members of classes are among the first, and a row of a class holds no number above ClassRowEntry::maxNumber.
     AOT::sort(cells);
 
     numbers.m_closureCellNumbers.fill(0, numberOfFunctions);
-    // The run time allocates cell 0 with the others and never stores into it: ProgramTables::numberOfClosureCells counts it.
     uint32_t numberOfCells = 1;
     for (const PlaceOfClosureCell& cell : cells)
         numbers.m_closureCellNumbers[cell.function] = numberOfCells++;
     numbers.m_numberOfClosureCells = numberOfCells;
 
-    // ProgramTables::rankOfClass() counts the records of classes that AOTLayoutTables.cpp writes, which are these: Plan alone says which records are in use.
     numbers.m_classRanks.fill(UINT32_MAX, program.layouts.size());
     uint32_t numberOfClassRecords = 0;
     for (size_t index : plan.layoutsWithClassRecord()) {
@@ -197,7 +186,6 @@ static std::optional<uint32_t> numberToPutInPlaceOfMention(const CompiledCode& c
     return number;
 }
 
-// From here on sites of any function that throw the same way have equal lists, and so one thunk.
 static void putNumberInThrowWordOfThunk(const CompiledCode& code, ArgumentMoves& moves, size_t index, const ImageNumbers& numbers, BuildContext& context)
 {
     uint32_t firstWord = static_cast<uint32_t>(moves[index + 1]);
@@ -220,7 +208,6 @@ static void putNumbersInThrowWordsOfAccess(const CompiledCode& code, FaultingAcc
             return;
         word = *number;
     }
-    // Only among code do the words have to be as many whatever the number is. Without a wide `a` the second word is `b`.
     if (!(wordsThatWereMentions & 1 << wordOfWideA) || !std::bit_cast<ThrowSiteWord>(access.throwSite[0]).hasWideA)
         return;
     if (std::optional<uint32_t> narrowWord = ThrowSiteWord::withNarrowA(access.throwSite[0], access.throwSite[wordOfWideA])) {

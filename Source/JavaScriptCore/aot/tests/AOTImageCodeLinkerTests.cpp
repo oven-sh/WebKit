@@ -46,8 +46,7 @@ struct BrokenRelocation {
 static constexpr uint32_t numberOfCalleesOfLinkedBody = 3;
 static constexpr uint16_t entryThatNoLinkedBodyHas = 7;
 
-// A mention's key can be a string of the program, and Steps creates the program from the bodies. So a body refers to its mentions by these indices and receives the mentions afterward.
-static constexpr uint32_t linkedUnitMention = 0;
+static constexpr uint32_t linkedStringMention = 0;
 static constexpr uint32_t linkedStringCellMention = 1;
 static constexpr uint32_t linkedRegExpMention = 2;
 
@@ -95,10 +94,10 @@ static CompiledCode bodyWithManySpaces(uint32_t function, uint32_t callee)
         recorder.moveAddress({ SymbolSpace::JumpTable, 0 }, GPRInfo::regT0, PCRelativeReach::Far);
     });
     appendRelocated(sketch, [](RelocationRecorder& recorder) {
-        recorder.moveNumber({ SymbolSpace::Number, linkedUnitMention }, GPRInfo::regT0);
+        recorder.moveNumber({ SymbolSpace::Number, linkedStringMention }, GPRInfo::regT0);
     });
     appendRelocated(sketch, [](RelocationRecorder& recorder) {
-        recorder.emitNumber32({ SymbolSpace::Number, linkedUnitMention });
+        recorder.emitNumber32({ SymbolSpace::Number, linkedStringMention });
     });
     appendRelocated(sketch, [](RelocationRecorder& recorder) {
         recorder.loadInstanceWord({ SymbolSpace::InstanceWord, linkedStringCellMention }, InstanceWordWidth::Word32, instanceGPR, GPRInfo::regT0);
@@ -155,10 +154,10 @@ static void addMentionsOfLinkedBody(Steps& steps, uint32_t function)
     CompiledCode& code = steps.functions[positionOfLinkedBody(steps, function)];
     StringID text = steps.build.program().strings.intern(StringView { "linked"_s });
     MentionList mentions;
-    uint32_t unit = mentions.add(NumberSpace::Function, code.unitIndex);
+    uint32_t string = mentions.add(NumberSpace::String, text);
     uint32_t stringCell = mentions.add(NumberSpace::StringCell, text);
     uint32_t regExp = mentions.regExp(text, { });
-    AOT_TEST_CHECK(unit == linkedUnitMention && stringCell == linkedStringCellMention && regExp == linkedRegExpMention);
+    AOT_TEST_CHECK(string == linkedStringMention && stringCell == linkedStringCellMention && regExp == linkedRegExpMention);
     mentions.moveTo(code.body);
 }
 
@@ -301,7 +300,7 @@ static void testEverySpaceLinks()
     AOT_TEST_CHECK(spaces.count() == numberOfSymbolSpaces - 2);
     AOT_TEST_CHECK(!spaces.get(static_cast<size_t>(SymbolSpace::WebAssembly)));
     AOT_TEST_CHECK(!spaces.get(static_cast<size_t>(SymbolSpace::FFI)));
-    AOT_TEST_CHECK(valueOfLinkedMention(numbers, body, linkedUnitMention, false) == function);
+    AOT_TEST_CHECK(valueOfLinkedMention(numbers, body, linkedStringMention, false) != linkedStringMention);
     AOT_TEST_CHECK(valueOfLinkedMention(numbers, body, linkedRegExpMention, false) != linkedRegExpMention);
 
     Vector<uint8_t> code = link(steps, numbers);
@@ -396,10 +395,10 @@ static void testRelocationsThatNameNothing()
     checkLinkerReportsEach(cases);
 }
 
-static void nameNumberOfLinkedUnit(Relocation& relocation)
+static void nameNumberOfLinkedString(Relocation& relocation)
 {
     relocation.space = SymbolSpace::Number;
-    relocation.symbol = linkedUnitMention;
+    relocation.symbol = linkedStringMention;
 }
 
 static void nameWordOfLinkedStringCell(Relocation& relocation)
@@ -411,7 +410,7 @@ static void nameWordOfLinkedStringCell(Relocation& relocation)
 static void testKindsThatDoNotFitTheirSpace()
 {
     static constexpr BrokenRelocation cases[] = {
-        { SymbolSpace::Stub, nameNumberOfLinkedUnit },
+        { SymbolSpace::Stub, nameNumberOfLinkedString },
         { SymbolSpace::Stub, nameWordOfLinkedStringCell },
         { SymbolSpace::Number, nameWordOfLinkedStringCell },
     };
@@ -426,8 +425,8 @@ static void testMentionWithoutInstanceWord()
     const CodeBody& body = steps.functions[0].body;
     Relocation& relocation = relocationIn(steps, 0, SymbolSpace::InstanceWord);
     AOT_TEST_CHECK(relocation.symbol == linkedStringCellMention);
-    AOT_TEST_CHECK(!numbers.valueOf(body.mentions[linkedUnitMention], body.mentionWords.span(), true));
-    relocation.symbol = linkedUnitMention;
+    AOT_TEST_CHECK(!numbers.valueOf(body.mentions[linkedStringMention], body.mentionWords.span(), true));
+    relocation.symbol = linkedStringMention;
     link(steps, numbers);
     checkLinkerReported(steps, relocation);
 }
@@ -470,7 +469,6 @@ static CompiledCode bodyThatThrowsWithName(uint32_t function, uint32_t mentionOf
     return sketch.take();
 }
 
-// The name has one index among the mentions of one body and another among those of the other.
 static void testThrowWordsThatNameOneStringShareThunk()
 {
     constexpr uint32_t mentionInFirstBody = 1;
@@ -521,7 +519,6 @@ static CompiledCode bodyThatReadsByName(uint32_t function, uint32_t mentionOfNam
     return sketch.take();
 }
 
-// ImmediateBinding::InThunk. The name has one index among the mentions of one body and another among those of the other, and the thunk makes no move but that of its number.
 static void testReadsOfOneNameShareThunk()
 {
     static_assert(descriptorOf(StubFamily::GetById).binding == ImmediateBinding::InThunk);
@@ -561,7 +558,6 @@ static CompiledCode closureEntryOfLinkedBody(uint32_t function)
     return sketch.take();
 }
 
-// Code alone mentions the cells of the first two functions. A table names the cell of the last.
 static void testClosureCellsThatTablesNameComeFirst()
 {
     constexpr uint32_t numberOfClosures = 3;
@@ -588,7 +584,6 @@ static void testClosureCellsThatTablesNameComeFirst()
 }
 
 #if CPU(ARM64)
-// On x86-64 a near call reaches 2 GB, and an image holds no more code than that: no call there goes through a veneer.
 static constexpr uint64_t reachOfLinkedCall = MacroAssembler::relocationReach(RelocationKind::Call);
 static constexpr size_t sizeOfFillerOfFarBody = reachOfLinkedCall / 8 * 5;
 static constexpr uint32_t numberOfBodiesWithFarCalls = 4;
@@ -605,7 +600,6 @@ static void appendFillerOfFarBody(CodeSketch& sketch)
     zeroSpan(bytes.mutableSpan().subspan(start));
 }
 
-// The later entry of a body lies behind its filler. The first body calls both entries of the last body, and the later entry of the body in front of that one.
 static Vector<CompiledCode> bodiesWithFarCalls()
 {
     constexpr uint32_t lastBody = numberOfBodiesWithFarCalls;
@@ -631,8 +625,6 @@ static Vector<CompiledCode> bodiesWithFarCalls()
     return code;
 }
 
-// The relocation lies at the start of the emitted bytes.
-// An image with far calls is too large to build a second one to compare with, so the bytes are linked once more where they lie.
 static void checkLinksTo(std::span<uint8_t> code, size_t offset, std::span<const uint8_t> emitted, RelocationKind kind, size_t target)
 {
     std::span<uint8_t> place = code.subspan(offset, emitted.size());
@@ -672,13 +664,11 @@ static void testFarCallsGoThroughVeneers()
     }
 }
 
-// On x86-64 every access holds the whole distance. The addend of a mention stands for a program so large that the word lies beyond what the immediates hold.
 static constexpr int32_t addendOfFarInstanceWord = 48 * MB;
 static constexpr uint32_t instanceWordFarAbove = 0;
 static constexpr uint32_t instanceWordFarBelow = 1;
 static constexpr uint32_t nearInstanceWord = 2;
 
-// The first site lies too far in front of the end of the body to read a distance there.
 static CompiledCode bodyWithFarInstanceWords(uint32_t function)
 {
     CodeSketch sketch(function);
@@ -777,7 +767,6 @@ static void testFarInstanceWordWithoutRoomIsReported()
     AOT_TEST_CHECK(steps.build.count(InternalErrorKind::RelocationNotApplied) == 4);
 }
 
-// What lies behind such a body is no code. Without the far word the same body falls into the next.
 static void testBodyWithFarInstanceWordsKeepsItsFinalJump()
 {
     for (bool findsFarWords : { false, true }) {
@@ -800,7 +789,6 @@ static void testBodyWithFarInstanceWordsKeepsItsFinalJump()
     }
 }
 
-// Runs every form of an access, with the distance read from a word and with the distance made in a detour.
 static void testFarInstanceWordsAreReached()
 {
     constexpr GPRReg instance = GPRInfo::argumentGPR0;
@@ -810,7 +798,6 @@ static void testFarInstanceWordsAreReached()
     constexpr FPRReg number = FPRInfo::fpRegT0;
     constexpr int32_t megabyte = MB;
     constexpr size_t reach = 32 * MB;
-    // By symbol. The first beyond the immediates on either side are among them.
     static constexpr int32_t distances[] = {
         20 * megabyte + 8, -20 * megabyte - 16, 17 * megabyte + 4099, -17 * megabyte + 4, 31 * megabyte + 24,
         -31 * megabyte - 8, 16 * megabyte, -16 * megabyte + 4095, 25 * megabyte + 4088,
@@ -868,7 +855,6 @@ static void testFarInstanceWordsAreReached()
         };
         uint64_t expectedSum = 0;
         for (uint32_t index = 0; index < std::size(bitsRead); ++index) {
-            // The bytes behind a byte and behind a word of four are not read.
             WTF::unalignedStore<uint64_t>(wordAt(distances[index]), index == 2 ? bitsRead[index] | 0xffffffffffffff00ull : index == 3 ? bitsRead[index] | 0xffffffff00000000ull : bitsRead[index]);
             expectedSum += bitsRead[index];
         }

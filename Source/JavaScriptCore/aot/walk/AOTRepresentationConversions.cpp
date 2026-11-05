@@ -9,18 +9,16 @@
 #if ENABLE(AOT)
 
 #include "AOTTypeArena.h"
-#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What has no bits is made anew from its type. Absent has no boxed form that the program may see: what is made for it is the engine's marker, which only slots, arguments and tests may meet.
 static constexpr std::optional<Opcode> conversionStepFromVoid(Representation to)
 {
     using enum Representation;
     switch (to) {
     case OptionalInt64: case OptionalDouble: case JSValue:
         return Opcode::Box;
-    case Cell32: case LiteralString:
+    case Cell32:
         return Opcode::Compress;
     case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case Cell: case RawWord:
         return std::nullopt;
@@ -34,7 +32,7 @@ static constexpr std::optional<Opcode> conversionStepFromBoolean(Representation 
     switch (to) {
     case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell: case Cell32: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -50,7 +48,7 @@ static constexpr std::optional<Opcode> conversionStepFromInt32(Representation to
         return Opcode::IntegerToNumber;
     case OptionalInt64: case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Int32: case OptionalDouble: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case OptionalDouble: case Cell: case Cell32: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -66,7 +64,7 @@ static constexpr std::optional<Opcode> conversionStepFromInt64(Representation to
         return Opcode::IntegerToNumber;
     case OptionalInt64: case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Int64: case OptionalDouble: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int64: case OptionalDouble: case Cell: case Cell32: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -80,7 +78,7 @@ static constexpr std::optional<Opcode> conversionStepFromDouble(Representation t
         return Opcode::NumberToInteger;
     case OptionalDouble: case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Double: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Double: case OptionalInt64: case Cell: case Cell32: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -94,7 +92,7 @@ static constexpr std::optional<Opcode> conversionStepFromOptionalInt64(Represent
         return Opcode::Unbox;
     case OptionalDouble: case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Double: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Double: case OptionalInt64: case Cell: case Cell32: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -108,7 +106,7 @@ static constexpr std::optional<Opcode> conversionStepFromOptionalDouble(Represen
         return Opcode::Unbox;
     case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case OptionalDouble: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case OptionalDouble: case Cell: case Cell32: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -120,7 +118,7 @@ static constexpr std::optional<Opcode> conversionStepFromCell(Representation to)
     switch (to) {
     case JSValue:
         return Opcode::Box;
-    case Cell32: case LiteralString:
+    case Cell32:
         return Opcode::Compress;
     case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell: case RawWord:
         return std::nullopt;
@@ -134,7 +132,7 @@ static constexpr std::optional<Opcode> conversionStepFromEncodedCell(Representat
     switch (to) {
     case Cell: case JSValue:
         return Opcode::Decode;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell32: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -146,7 +144,7 @@ static constexpr std::optional<Opcode> conversionStepFromJSValue(Representation 
     switch (to) {
     case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell:
         return Opcode::Unbox;
-    case Cell32: case LiteralString:
+    case Cell32:
         return Opcode::Compress;
     case Unchosen: case Void: case JSValue: case RawWord:
         return std::nullopt;
@@ -174,7 +172,7 @@ static constexpr std::optional<Opcode> singleConversionStep(Representation from,
         return conversionStepFromOptionalDouble(to);
     case Cell:
         return conversionStepFromCell(to);
-    case Cell32: case LiteralString:
+    case Cell32:
         return conversionStepFromEncodedCell(to);
     case JSValue:
         return conversionStepFromJSValue(to);
@@ -202,50 +200,39 @@ static constexpr bool conversionTableIsWellFormed()
 
 static_assert(conversionTableIsWellFormed());
 
-std::optional<ConversionPath> findConversion(TypeReader types, TypeID proven, Representation from, Representation to)
+ConversionInSteps findConversionInSteps(TypeReader types, TypeID proven, Representation from, Representation to)
 {
     if (from == to)
-        return ConversionPath { };
+        return { .isFound = true };
 
-    // No step tests anything: NumberToInteger and NarrowInteger are right only because the proven type fits the form that they lead to.
-    Type type = types.at(proven);
-    if (!isLegalRepresentation(type, to))
-        return std::nullopt;
-    // The type has to name the one value that is made.
-    if (from == Representation::Void && !isLegalRepresentation(type, Representation::Void))
-        return std::nullopt;
+    if (!isLegalRepresentation(types, proven, to))
+        return { };
+    if (from == Representation::Void && !isLegalRepresentation(types, proven, Representation::Void))
+        return { };
 
     if (std::optional<Opcode> opcode = singleConversionStep(from, to))
-        return ConversionPath { ConversionStep { *opcode, to } };
+        return { .steps = { { ConversionStep { *opcode, to } } }, .numberOfSteps = 1, .isFound = true };
 
     for (Representation intermediate : { Representation::Int64, Representation::Double, Representation::Cell, Representation::JSValue }) {
-        if (!isLegalRepresentation(type, intermediate))
+        if (!isLegalRepresentation(types, proven, intermediate))
             continue;
         std::optional<Opcode> first = singleConversionStep(from, intermediate);
         std::optional<Opcode> second = singleConversionStep(intermediate, to);
         if (first && second)
-            return ConversionPath { ConversionStep { *first, intermediate }, ConversionStep { *second, to } };
+            return { .steps = { { ConversionStep { *first, intermediate }, ConversionStep { *second, to } } }, .numberOfSteps = 2, .isFound = true };
     }
-    return std::nullopt;
+    return { };
 }
 
-// Among lengths that are equally common the last in the span wins. Callers hand the lengths in the order of the type's set of literals, which the program's ids fix.
-unsigned commonestOf(std::span<const unsigned> lengths)
+std::optional<ConversionPath> findConversion(TypeReader types, TypeID proven, Representation from, Representation to)
 {
-    Vector<unsigned, 16> sorted;
-    sorted.append(lengths);
-    std::ranges::sort(sorted);
-
-    unsigned commonest = 0;
-    size_t most = 0;
-    for (unsigned length : lengths) {
-        size_t count = std::ranges::equal_range(sorted, length).size();
-        if (count >= most) {
-            most = count;
-            commonest = length;
-        }
-    }
-    return commonest;
+    ConversionInSteps found = findConversionInSteps(types, proven, from, to);
+    if (!found.isFound)
+        return std::nullopt;
+    ConversionPath path;
+    for (uint8_t index = 0; index < found.numberOfSteps; ++index)
+        path.append(found.steps[index]);
+    return path;
 }
 
 } } } // namespace JSC::AOT::Typed

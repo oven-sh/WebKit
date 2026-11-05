@@ -21,7 +21,6 @@ void OwnAccessEmitter::generatePropHasOwn(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->objectOperand());
     PropertyKeyID key = value->key();
-    // Image counts the keys of the program. A key of the thread's arena dies with the unit.
     if (liesInThread(key)) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         defineTest(value, boolean(false));
@@ -29,7 +28,6 @@ void OwnAccessEmitter::generatePropHasOwn(const ValueContext& value)
     }
     auto askRunTime = [&] {
         AccessEmitter& accesses = emitter<AccessEmitter>();
-        // Behind a cell that does not answer stands an object with properties of its own that no layout lists, and the name is mostly found above it: what the stub by key remembers at the key's place.
         if (accesses.isSymbolOfRealm(key) || value->receivers())
             return Condition(m_out.castToInt32(callStub(value, inByValCached(PresenceQuestion::HasOwn), { object.value(), accesses.cellOfKey(value, key).value() }).first));
         CallOptions options { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::Name, key) } };

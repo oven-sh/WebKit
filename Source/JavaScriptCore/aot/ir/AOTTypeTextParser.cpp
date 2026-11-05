@@ -56,9 +56,7 @@ public:
 private:
     static constexpr unsigned maxTypeNestingDepth = 32;
     static constexpr unsigned maxCodePointDigits = 6;
-    // valueOfDigits() saturates at UINT32_MAX.
     static constexpr uint32_t largestNumber = UINT32_MAX - 1;
-    // ObjectTable::resultOf() asserts that the ordinal is below two.
     static constexpr uint32_t largestResultOrdinal = 1;
 
     using Bytes = Vector<uint8_t, 64>;
@@ -100,7 +98,6 @@ private:
         { "unspecified"_s, Primitive::Unspecified },
     };
 
-    // Each with its arguments in parentheses. `builtin` and `escaped` stand for two kinds, and the arguments say which.
     static constexpr NamedObjectWord namedObjectWords[] = {
         { "builtin"_s, ObjectKind::Builtin },
         { "result"_s, ObjectKind::ResultOfBuiltin },
@@ -200,7 +197,6 @@ private:
 
 std::optional<UnknownSeed> TypeTextParser::seedNamed(StringView name)
 {
-    // nameOf() stops the process at a bit that is no seed, and LostByWalk is the last one.
     for (auto bit = static_cast<unsigned>(UnknownSeed::ResultOfUnknownCallee); bit <= static_cast<unsigned>(UnknownSeed::LostByWalk); bit <<= 1) {
         auto seed = static_cast<UnknownSeed>(bit);
         if (name == nameOf(seed))
@@ -406,7 +402,6 @@ LayoutID TypeTextParser::parseLayout()
 {
     const Program* program = m_arena.program();
     if (word() != "L"_s || peek(1) != '(') {
-        // The number is IR text's. The layouts of built-ins and namespaces take none, so the size of the list only bounds it.
         unsigned start = m_offset;
         StringView name = word();
         std::optional<uint32_t> number = parseID(IDPrefix::Layout, program ? program->layouts.size() : 0, "layout"_s);
@@ -418,7 +413,6 @@ LayoutID TypeTextParser::parseLayout()
         return layout;
     }
 
-    // IR text names a layout that the reader made by what it was made for: `L(m2)`, or the token of a layout of the table of built-ins.
     unsigned start = m_offset++;
     expectOpening('(');
     LayoutID layout;
@@ -491,7 +485,6 @@ bool TypeTextParser::parseEscape(Bytes& bytes)
         if (numberOfDigits && codePoint <= UCHAR_MAX_VALUE && accept('}')) {
             std::array<uint8_t, U8_MAX_LENGTH> encoded;
             size_t length = 0;
-            // U8_APPEND refuses a surrogate, and a string of a program may hold a lone one.
             U8_APPEND_UNSAFE(encoded, length, codePoint);
             bytes.append(std::span<const uint8_t> { encoded }.first(length));
             return true;
@@ -501,7 +494,6 @@ bool TypeTextParser::parseEscape(Bytes& bytes)
     return false;
 }
 
-// A caller hands in the bytes of its text as Latin-1, so a character is a byte of the string.
 bool TypeTextParser::parseQuoted(Bytes& bytes)
 {
     if (!accept('"')) {
@@ -561,7 +553,6 @@ bool TypeTextParser::isAtSymbolKey() const
         return false;
     if (afterName != '@')
         return afterName == '(';
-    // `symbol@JSValue` is the primitive, and what follows it belongs to the caller.
     char16_t afterAt = peek(name.length() + 1);
     return afterAt == '-' || (afterAt == letterOf(IDPrefix::Module) && isASCIIDigit(peek(name.length() + 2)));
 }
@@ -642,7 +633,6 @@ ObjectID TypeTextParser::objectAt(ObjectKind kind, uint32_t number) const
     return number < numberOf(kind) ? ObjectID(m_arena.objects().firstOf(kind) + number) : ObjectID();
 }
 
-// The table lays the objects of functions and of layouts in an order of its own.
 ObjectID TypeTextParser::objectOfFunction(ObjectKind kind, FunctionID function) const
 {
     const ObjectTable& objects = m_arena.objects();
@@ -681,8 +671,6 @@ ObjectID TypeTextParser::objectOfLayout(ObjectKind kind, LayoutID layout) const
     }
 }
 
-// Parses what is between the parentheses, or the function of a closure. Null: the build has no such object, or parsing has failed.
-// An object of a built-in comes from the table's own lookups: an alias has a place too, with the same record, and the table never hands that place out.
 ObjectID TypeTextParser::parseObjectOfKind(ObjectKind kind)
 {
     const ObjectTable& objects = m_arena.objects();
@@ -695,7 +683,6 @@ ObjectID TypeTextParser::parseObjectOfKind(ObjectKind kind)
         ModuleID module = parseModule();
         if (hasFailed())
             return { };
-        // For a built-in of the realm the table answers with its one object, which is written without a module.
         ObjectID object = objects.objectOf(builtin, module);
         return object && objects.kindOf(object) == ObjectKind::ModuleBuiltin ? object : ObjectID();
     }
@@ -733,7 +720,6 @@ ObjectID TypeTextParser::parseObjectOfKind(ObjectKind kind)
         expectComma();
         std::optional<uint32_t> value = parseID(IDPrefix::Value, static_cast<uint64_t>(ValueID::largestIndex) + 1, "value"_s);
         uint32_t ordinal = acceptComma() ? parseNumber() : 0;
-        // Before the scan the table has no sites to search.
         if (hasFailed() || !numberOf(kind))
             return { };
         return objects.siteObject(function, ValueID(*value), ordinal);
@@ -744,7 +730,6 @@ ObjectID TypeTextParser::parseObjectOfKind(ObjectKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Null without a failure: no named object begins here, and nothing was read.
 ObjectID TypeTextParser::parseNamedObject()
 {
     unsigned start = m_offset;
@@ -835,7 +820,6 @@ void TypeTextParser::parseClassPart(TypeArena& arena, ParsedParts& parsed)
     parsed.classes.insert(place - parsed.classes.begin(), part);
 }
 
-// False without a failure: no part begins here, and nothing was read.
 bool TypeTextParser::parsePart(TypeArena& arena, ParsedParts& parsed)
 {
     TypeParts& parts = parsed.parts;

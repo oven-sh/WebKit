@@ -21,15 +21,12 @@
 
 namespace JSC { namespace AOT {
 
-// What the instruction reaches: 128 MB on ARM64, 2 GB on x86-64.
 static constexpr int64_t reachOfNearCall = MacroAssembler::relocationReach(RelocationKind::Call);
 static_assert(MacroAssembler::relocationReach(RelocationKind::Jump) == reachOfNearCall);
 
-// No copy of the shared code can lie between bodies that fall into each other, and each of them has to reach one.
 static constexpr size_t maxSizeOfRunOfBodies = 1 * MB;
 static_assert(static_cast<int64_t>(maxSizeOfRunOfBodies) * 8 <= reachOfNearCall);
 
-// Image::locate() runs where the cache of call sites has no entry. It walks the starts of functions from the first one in the granule, and sixteen of them lie in a cache line.
 unsigned chooseCodeGranuleShift(const LinkedFunctions& functions, BuildContext& context)
 {
     constexpr size_t maxStartsPassedOnAverage = 8;
@@ -77,12 +74,10 @@ static bool endsInJumpToNextBody(const LinkedFunctions& functions, const Resolve
 
 static std::optional<size_t> computeNopSize(const CompiledCode& function)
 {
-    // The layout aligns the primary entry, so the first byte of the body lies this far past a multiple of the alignment.
     size_t startMisalignment = (imageFunctionAlignment - function.body.primaryEntryOffset() % imageFunctionAlignment) % imageFunctionAlignment;
     auto roundUpToAlignedEnd = [&](size_t size) {
         return WTF::roundUpToMultipleOf<imageFunctionAlignment>(size + startMisalignment) - startMisalignment;
     };
-    // Image::locate would attribute a return address at the very end of a body to the next body.
     size_t offset = function.body.relocations.last().offset;
     std::optional<uint32_t> lastReturnSite = endOfLastReturnSite(function);
     size_t newSize = std::max(roundUpToAlignedEnd(offset), lastReturnSite ? roundUpToAlignedEnd(static_cast<size_t>(*lastReturnSite) + 1) : 0);
@@ -117,7 +112,6 @@ Vector<FarInstanceWords> findFarInstanceWords(const LinkedFunctions& functions, 
         FarInstanceWords& words = wordsByBody[position];
         Vector<uint32_t, 16> sites;
         for (const Relocation& relocation : body.relocations) {
-            // A relocation that names nothing is the linker's to report.
             if (relocation.space != SymbolSpace::InstanceWord || relocation.symbol >= body.mentions.size())
                 continue;
             std::optional<uint32_t> distance = numbers.valueOf(body.mentions[relocation.symbol], body.mentionWords.span(), true);
@@ -217,11 +211,9 @@ static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<co
         .uses = uses.span(),
         .firstUseByUnit = firstUseByBody.span(),
         .alignmentAfterCopies = granuleSize,
-        // A closure word of 0 means "no code", so no body starts at offset 0.
         .start = oneCopyReachesAllCode && sharedCodeSize ? 0 : granuleSize,
         .policy = oneCopyReachesAllCode ? CopyPolicy::BeforeUser : CopyPolicy::AfterUsers,
     });
-    // The run time enters stubs of every image, even of one without bodies.
     if (placement.copies.isEmpty()) {
         size_t offset = WTF::roundUpToMultipleOf<imageStubsAlignment>(placement.end);
         placement.copies.append(PlacedCopy { 0, offset });
@@ -230,14 +222,12 @@ static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<co
     return placement;
 }
 
-// Leaves all but the size as it is where the code is larger than the limit, which is at most what 32 bits hold.
 static void layOutWhatFollowsFunctions(const CodeLayoutInputs& inputs, CodeLayout& layout, size_t functionsEnd, uint64_t codeSizeLimit)
 {
     static_assert(!(imagePageSize % RegExpSection::alignment));
     const RegExpSection& regExpSection = inputs.regExpSection;
     size_t webAssemblyCodeOffset = WTF::roundUpToMultipleOf(inputs.webAssemblyCodeAlignment, functionsEnd);
     size_t ffiCodeOffset = WTF::roundUpToMultipleOf(inputs.ffiCodeAlignment, webAssemblyCodeOffset + inputs.webAssemblyCodeSize);
-    // The section of the regular expressions lies across the end of what is executed: its code is the last of the code, and its tables are the first of the data.
     size_t executableSize = WTF::roundUpToMultipleOf<imagePageSize>(ffiCodeOffset + inputs.ffiCodeSize + regExpSection.dataOffset);
     size_t regExpCodeOffset = executableSize - regExpSection.dataOffset;
     size_t constantsOffset = WTF::roundUpToMultipleOf<imageConstantsAlignment>(regExpCodeOffset + regExpSection.bytes.size());
@@ -257,7 +247,6 @@ static void layOutWhatFollowsFunctions(const CodeLayoutInputs& inputs, CodeLayou
     layout.ffiDirectoryOffset = safeCast<uint32_t>(ffiDirectoryOffset);
 }
 
-// Without what rounds the code of the regular expressions up to RegExpSection::dataOffset: layOutRegExpSection() counts that.
 static uint64_t paddingAfterFunctions(const CodeLayoutInputs& inputs, const CodeLayout& layout)
 {
     uint64_t padding = layout.webAssemblyCodeOffset - layout.functionsEnd;
@@ -278,7 +267,6 @@ static size_t sharedCodeSizeWithVeneers(const CodeLayoutInputs& inputs, const Co
     return inputs.sharedCode.veneersOffset + layout.sharedCodeVeneers.size() * inputs.templates.sizeOfVeneer();
 }
 
-// With the veneers and the fall-throughs that the layout has so far. Nothing where the code is larger than the limit, which is reported.
 static std::optional<UnitPlacement> placeCodeOfLayout(const CodeLayoutInputs& inputs, std::span<const size_t> bodySizes, std::span<const size_t> alignedOffsets, Vector<size_t>& unitSizes, CodeLayout& layout, BuildContext& context)
 {
     const ParallelLoops& loops = context.parallelLoops();
@@ -302,9 +290,6 @@ static std::optional<UnitPlacement> placeCodeOfLayout(const CodeLayoutInputs& in
     return placement;
 }
 
-// Stubs and argument thunks lie in the copy of the shared code that the placement keeps in reach of the body.
-// The code of a function takes the address of the code of a regular expression and has no call or jump there: StubCalls makes none, and the symbol would be a mention, whose number is not known here.
-// A relocation that names nothing is the linker's to report.
 static void forEachTransferToOtherBody(const CodeLayoutInputs& inputs, uint32_t position, const Invocable<void(const Relocation&, uint32_t callee)> auto& functor)
 {
     uint32_t firstCallee = inputs.callees.firstCallee[position];
@@ -336,8 +321,6 @@ static void sortVeneerTargetsAndRemoveDuplicates(Vector<VeneerTarget>& targets)
     removeRepeatedElements(targets);
 }
 
-// The starts of the first placement, each moved up by what the bodies in front of it could grow by: a veneer for every transfer, the final jump back, and the most that alignment takes.
-// However many veneers there are in the end, two bodies lie no further apart than here, but for copies of the shared code that come to lie between them.
 static Vector<size_t> computeLatestStartsOfBodies(const CodeLayoutInputs& inputs, std::span<const size_t> bodySizes, std::span<const size_t> unitSizes, std::span<const size_t> unitStarts, const ParallelLoops& loops)
 {
     Vector<size_t> latestStarts(bodySizes.size());
@@ -358,15 +341,12 @@ static Vector<size_t> computeLatestStartsOfBodies(const CodeLayoutInputs& inputs
     return latestStarts;
 }
 
-// Whether there are any.
 static bool addVeneersToLayout(const CodeLayoutInputs& inputs, std::span<const size_t> bodySizes, std::span<const size_t> unitSizes, const UnitPlacement& firstPlacement, CodeLayout& layout, const ParallelLoops& loops)
 {
-    // The code of the regular expressions is the last of the code, and a copy of the shared code may come to lie anywhere in front of it.
     appendTransfersToRegExpCode(layout.sharedCodeVeneers, inputs.sharedCode.blob.code.relocations.span(), inputs.regExpSection);
     appendTransfersToRegExpCode(layout.sharedCodeVeneers, inputs.sharedCode.argumentThunks.code.relocations.span(), inputs.regExpSection);
     sortVeneerTargetsAndRemoveDuplicates(layout.sharedCodeVeneers);
 
-    // A copy lies as far behind the last one as the bodies between them allow, which is further than a near call reaches. So at most one comes to lie between a transfer and a target that are in reach of each other.
     const size_t roomOfCopy = sharedCodeSizeWithVeneers(inputs, layout) + imageStubsAlignment + (static_cast<size_t>(1) << inputs.codeGranuleShift);
     const Vector<size_t> latestStarts = computeLatestStartsOfBodies(inputs, bodySizes, unitSizes, firstPlacement.unitStarts.span(), loops);
     std::atomic<bool> hasVeneers { !layout.sharedCodeVeneers.isEmpty() };
@@ -407,7 +387,6 @@ CodeLayout layOutCode(const CodeLayoutInputs& inputs, BuildContext& context)
     Vector<size_t> unitSizes(numberOfBodies);
 
     std::optional<UnitPlacement> placement = placeCodeOfLayout(inputs, bodySizes, alignedOffsets, unitSizes, layout, context);
-    // Every transfer and every target lie in what is executed.
     if (placement && layout.executableSize > reachOfNearCall && addVeneersToLayout(inputs, bodySizes, unitSizes.span(), *placement, layout, loops))
         placement = placeCodeOfLayout(inputs, bodySizes, alignedOffsets, unitSizes, layout, context);
     if (!placement)

@@ -1,37 +1,16 @@
 import { cppMarker, indentation, pack } from "./lines.ts";
-import type { Entry, InlineBuiltin, Schema } from "./model.ts";
+import type { Entry, Schema } from "./model.ts";
 import { entriesOf, isLegalIn } from "./model.ts";
 import { cppEmitterClassName, cppGenerateFunctionName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 
-// No class of codegen/AOTEmitterList.h has generate<Name>() for these.
-// The list must equal opcodesWithoutEmitter() of walk/AOTCode.cpp, which keeps them out of Code.
 const entriesWithoutEmitter: ReadonlySet<string> = new Set(
   `Convert Check Expect AssumeType Upcast NarrowByField NarrowByTest
    AppendSpread IteratorOpen IteratorResume IteratorClose StepArrayIterator StepMapIterator StepSetIterator
    CreateIteratorResult Await Yield InitialYield ReadScope EvaluateModule StringBuilderAppend
-   AllGuards Entered Specified
-   RecordCallee KeepCalleeInFrame KeepEnvironmentOfCalleeInFrame AreFunctionNamesUnchanged
-   IsPrototypeOfClass
-   ReadAboveFreshObject DidReadAbove
    ReportMismatch
-   TryPutDoubleIndex HasSpareArrayCapacity
-   ToEnumeratorPosition
-   IsBuiltinLocationUnchanged NewHeapFrame GetResumeIndex SuspendInHeapFrame SubstringOrUndefined
-   IsGeneratorRunning IsGeneratorUnstarted IsUnmodifiedAsyncGenerator MarkGeneratorRunning TakeGeneratorStepStatus
-   GetAccessorOfMember GetCachedValue GetOwnPropertyFields GetEncodedModuleVariable ConvertToDoubleStorage
-   GetArrayCapacity HasFixedBytes ReserveArrayCapacity TypedArrayRange NewArrayOfMembers AbandonModuleEvaluation
-   StopLoadingBehindFile TryStrcat CallForwardVarargs ConstructSuperForwardVarargs
-   GetMyArgumentByVal
-   JSONSourceOpen JSONSourceStart JSONSourceClose JSONSourceAbandon JSONGetByte JSONStartsWith JSONAdvance JSONSkipByte JSONSkipWhitespace JSONParseString JSONParseKey
-   JSONParseNumber JSONParseInteger JSONParseValue JSONFindMember JSONMemberRepeats JSONKeyHasEscapes JSONObjectBegin JSONObjectKey JSONObjectFinish JSONParseExtraMembers ExpectRows`.split(/\s+/),
-);
-
-// The same for the rows of inline-builtins.def.
-const inlineBuiltinsWithoutEmitter: ReadonlySet<string> = new Set(
-  `ArraySplicePrefix ArrayWithLength ArrayOf
-   OwnPropertyDescriptorFields
-   StringSplitPrefix RegExpExecPrefix StringMatchPrefix`.split(/\s+/),
+   MayBindAnswersOfGetAndSetTraps MayBindAnswersOfHasTraps ValidateAnswerOfGetTrap ValidateDenialOfHasTrap ValidateConsentOfDeleteTrap
+   HasOwnByAnswerOfDescriptorTrap FinishStoreByTrap`.split(/\s+/),
 );
 
 function requireNamesInSchema(
@@ -46,10 +25,6 @@ function requireNamesInSchema(
 
 function hasEmitter(entry: Entry): boolean {
   return isLegalIn(entry, "Placed") && !entriesWithoutEmitter.has(entry.name);
-}
-
-function inlineBuiltinHasEmitter(builtin: InlineBuiltin): boolean {
-  return !builtin.isFormOnly && !inlineBuiltinsWithoutEmitter.has(builtin.name);
 }
 
 function dispatchCase(enumName: string, name: string, family: string, argument: string): string {
@@ -78,23 +53,16 @@ function dispatchInc(entries: readonly Entry[], enumName: string, argument: stri
 }
 
 function inlineDispatchInc(schema: Schema): string[] {
-  const generated = schema.inlineBuiltins.filter(builtin => inlineBuiltinHasEmitter(builtin));
-  const unreachable = schema.inlineBuiltins.filter(builtin => !inlineBuiltinHasEmitter(builtin));
   return [
     cppMarker,
     "",
-    ...generated.map(builtin => dispatchCase("InlineBuiltin", builtin.name, builtin.family, "call")),
-    ...unreachableCases(
-      "InlineBuiltin",
-      unreachable.map(builtin => builtin.name),
-    ),
+    ...schema.inlineBuiltins.map(builtin => dispatchCase("InlineBuiltin", builtin.name, builtin.family, "call")),
   ];
 }
 
 export function emitCppDispatch(context: EmitContext): OutputFile[] {
   const { schema } = context;
   requireNamesInSchema("entriesWithoutEmitter", entriesWithoutEmitter, entriesOf(schema));
-  requireNamesInSchema("inlineBuiltinsWithoutEmitter", inlineBuiltinsWithoutEmitter, schema.inlineBuiltins);
   return [
     { name: "AOTSchemaOperationDispatch.inc", lines: dispatchInc(schema.operations, "Opcode", "value") },
     { name: "AOTSchemaTerminatorDispatch.inc", lines: dispatchInc(schema.terminators, "TerminatorKind", "terminator") },

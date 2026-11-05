@@ -54,7 +54,6 @@ const promiseClassToken = "Promise";
 const functionClassToken = "Function";
 const classesOfTestedClosures = [functionClassToken, "AsyncFunction"];
 const engineFileExtension = ".ts";
-// A getter may be a template over one enumerator, as errorStructureWithErrorType<ErrorType::TypeError> is.
 const realmGetterPattern = /^[A-Za-z_][A-Za-z0-9_]*(<[A-Za-z_][A-Za-z0-9_]*::[A-Za-z_][A-Za-z0-9_]*>)?$/;
 const maximumOwnSlotOffset = 0xff;
 
@@ -208,7 +207,6 @@ function formatComponent({ kind, text }: ModelName, isFirst: boolean): string {
   }
 }
 
-// Neither half of the table holds the text of an entry: BuiltinTable::textOf() and text_of() in lookup.rs write it like this.
 function checkTextsFollowFromNames(model: TableModel, problems: Problems): void {
   for (const builtin of model.builtins) {
     const names = [builtin.name];
@@ -360,7 +358,6 @@ function checkInstancesThatAreEntries(model: TableModel, problems: Problems): vo
   }
 }
 
-// The flow analysis writes what the types say onto each new instance, and takes nothing else for what native code puts there.
 function checkTypesOfNamesDefinedOnNewInstances(model: TableModel, problems: Problems): void {
   for (const builtinClass of model.classes) {
     const { token, namesDefinedOnNewInstances, typesOfNamesDefinedOnNewInstances, namesMadeByStaticMembers } =
@@ -407,7 +404,6 @@ function extendsClass(builtinClass: ModelClass, ancestor: ModelClass): boolean {
   return current !== null;
 }
 
-// The test compares with the Structures that closures are created with, which inherit from the prototype of one of these classes.
 function checkPristineTests(model: TableModel, problems: Problems): void {
   const prototypesOfClosures = model.classes
     .filter(builtinClass => classesOfTestedClosures.includes(builtinClass.token))
@@ -507,7 +503,6 @@ function placesStoredInto(overload: ModelOverload): ModelPlace[] {
   ];
 }
 
-// "It holds only what is stored" is said where a record stores, and by every record that stores into the field.
 export function checkFieldsHoldingOnlyWhatIsStored(overload: ModelOverload, problems: Problems): void {
   const stored = placesStoredInto(overload).filter(place => place.place === "ResultField");
   for (const place of placesOf(overload)) {
@@ -527,12 +522,9 @@ export function checkFieldsHoldingOnlyWhatIsStored(overload: ModelOverload, prob
   }
 }
 
-// `const list = $evaluateCommonJSModule(module, this); if (list) ..`: the code builder takes the type of a call from `returns` and reads no record. Only the analysis reads them.
-// So a value that a record brings into the result, out of a property or out of memory of native code, has to be admitted there: it may be an object.
 export function checkResultAdmitsWhatRecordsBring(overload: ModelOverload, problems: Problems): void {
   const { type } = overload.result;
   if (overload.mode === "Get" || overload.mode === "Set" || overload.flags.includes("IsUndeclared")) return;
-  // A definition that native code is generated from says of its operands all that could be, and the generated code holds the result to its type.
   if (overload.proof === "ByConstruction") return;
   if (type.isAnything || type.hasAnyObject || type.hasAnyFunction || type.hasPlainData || type.parts.length > 0) return;
   const { transfers, propertyActions } = overload.flow;
@@ -609,7 +601,6 @@ const isCalledAfterReturn = (times: CallbackTimes): boolean => times === "Later"
 const onlyInspects = ({ uses, protocols: run }: ModelParameter): boolean =>
   run.length === 0 && uses.every(use => use === "Inspects");
 
-// Compiled code takes the heaps that such a row names for all that the call touches.
 function touchesNothingByItsRow(overload: ModelOverload): boolean {
   const { capability, reads, writes } = overload.effects;
   if (overload.flags.includes("IsUndeclared") || overload.code.implementation.how === "Compiled") return false;
@@ -617,7 +608,6 @@ function touchesNothingByItsRow(overload: ModelOverload): boolean {
   return reads.length + writes.length === 0 && operandsOf(overload).every(onlyInspects);
 }
 
-// The getter says where the value lies. A setter that only refuses, as that of Function.prototype.caller does, has a getter that reads no heap.
 function checkSettersThatWriteNothing(model: TableModel, problems: Problems): void {
   for (const overload of model.overloads) {
     if (overload.mode !== "Set" || !touchesNothingByItsRow(overload)) continue;
@@ -776,7 +766,6 @@ function checkRoles(model: TableModel, problems: Problems): void {
 const holdsStrings = (type: ModelType): boolean =>
   type.parts.some(part => part.part === "Instance" && part.contents.some(({ type: held }) => admits(held, "String")));
 
-// Compiled code takes such a call apart: it clamps the bounds itself, and makes the view only for whoever needs one.
 function checkRangeOfView(overload: ModelOverload, problems: Problems): void {
   const { type, rangeOf } = overload.result;
   if (rangeOf === null) return;
@@ -1072,21 +1061,19 @@ function effectsBeyondOverload(overload: ModelOverload, declared: EffectsSummary
 }
 
 function checkInlineEffects(overload: ModelOverload, schema: Schema, problems: Problems): void {
-  const { implementation, fieldsForm, prefixForm } = overload.code;
+  const { implementation } = overload.code;
   if (overload.effects.capability === "js" && !overload.flags.includes("RunsOnlyOperandCode")) return;
-  // Not the list form: the call that it replaces reads the list too, which no overload states.
-  const rows = [implementation.how === "Inline" ? implementation.builtin : null, fieldsForm, prefixForm];
-  for (const row of new Set(rows)) {
-    const declared = row === null ? undefined : schema.inlineBuiltins.get(row)?.effects;
-    if (declared === undefined || declared === "asOverload") continue;
-    const beyond = effectsBeyondOverload(overload, declared, schema);
-    if (beyond.length === 0) continue;
-    report(
-      problems,
-      overload,
-      `the inline built-in ${row} declares effects that the overload does not have: ${beyond.join(", ")}`,
-    );
-  }
+  if (implementation.how !== "Inline") return;
+  const row = implementation.builtin;
+  const declared = schema.inlineBuiltins.get(row)?.effects;
+  if (declared === undefined || declared === "asOverload") return;
+  const beyond = effectsBeyondOverload(overload, declared, schema);
+  if (beyond.length === 0) return;
+  report(
+    problems,
+    overload,
+    `the inline built-in ${row} declares effects that the overload does not have: ${beyond.join(", ")}`,
+  );
 }
 
 function checkFunctionPlatforms(builtin: ModelBuiltin, named: ModelFunction, problems: Problems): void {
@@ -1113,30 +1100,6 @@ function checkImplementations(model: TableModel, schema: Schema, problems: Probl
   }
   for (const named of model.functions) {
     for (const builtin of named.implements) checkFunctionPlatforms(builtin, named, problems);
-  }
-}
-
-function checkOverloadForms(overload: ModelOverload, schema: Schema, problems: Problems): void {
-  const { fieldsForm, prefixForm, prefixProperties, listForm } = overload.code;
-  const { type } = overload.result;
-  if (prefixProperties.length > 0 && prefixForm === null) {
-    report(problems, overload, "prefixProperties lists what the prefix form returns, so the overload has a prefixForm");
-  }
-  for (const form of [fieldsForm, prefixForm, listForm]) {
-    if (form === null || schema.inlineBuiltins.has(form)) continue;
-    report(problems, overload, describeMissingInlineBuiltin(form));
-  }
-  for (const form of [fieldsForm, prefixForm]) {
-    if (form === null) continue;
-    if (schema.inlineBuiltins.get(form)?.hasOptionalSlowPath === false) {
-      report(problems, overload, describeMissingSlowPath(form));
-    }
-    if (type.freshness !== "Yes" && type.freshness !== "Unaliased") {
-      report(problems, overload, `${form} replaces the result object, so the result is .fresh or .unaliased`);
-    }
-  }
-  if (fieldsForm !== null && !type.parts.some(part => part.part === "Layout")) {
-    report(problems, overload, `${fieldsForm} returns the fields of the result, so the result has a layout`);
   }
 }
 
@@ -1170,7 +1133,6 @@ function checkLiteralPartsForm(builtin: ModelBuiltin, problems: Problems): void 
   if (!builtin.overloads.some(overload => parameterAt(overload, argument) !== null)) {
     problems.add(null, `${builtin.text}: literalPartsForm names ${describeOperand(argument)}, which no overload has`);
   }
-  // The literal is the last argument of the call.
   const taken = (argument.operand === "Argument" ? argument.index : 0) + names.length;
   for (const overload of form.overloads) {
     if (overload.mode === "Call" && overload.receiver === null && overload.parameters.length === taken) continue;
@@ -1179,7 +1141,6 @@ function checkLiteralPartsForm(builtin: ModelBuiltin, problems: Problems): void 
 }
 
 function checkForms(model: TableModel, schema: Schema, problems: Problems): void {
-  for (const overload of model.overloads) checkOverloadForms(overload, schema, problems);
   for (const builtin of model.builtins) {
     const calls = builtin.overloads.filter(({ mode, flags }) => mode === "Call" && !flags.includes("IsUndeclared"));
     checkAppendForm(builtin, calls, schema, problems);
@@ -1200,11 +1161,9 @@ function conditionsOf({ attachments }: ModelBuiltin): ModelCondition[] {
   ].flatMap(condition => condition ?? []);
 }
 
-// The analysis follows an object that the table names or gives a class, and a store into one is no store into an object nobody knows.
 const answersWhatNobodyKnows = (overload: ModelOverload): boolean =>
   overload.flags.includes("IsUndeclared") || overload.result.type.isAnything || overload.result.type.parts.length === 0;
 
-// Of the objects of the host, the analysis notes a store only into one that keeps strings.
 const answersHostObjectWithoutNotedStores = (model: TableModel, overload: ModelOverload): boolean =>
   overload.flow.transfers.some(
     ({ from, to }) =>
@@ -1264,10 +1223,8 @@ function checkConditions(model: TableModel, problems: Problems): void {
   }
 }
 
-// The clock, the locale, the time zone, the state of a generator of random numbers.
 const heapsOutsideOperands: readonly string[] = ["ExternalState", "RuntimeState"];
 
-// With the same operands it answers the same: a call with constant operands is made at build time, and its answer stands in its place.
 function checkDeterministic(model: TableModel, problems: Problems): void {
   for (const builtin of model.builtins) {
     if (!builtin.flags.includes("IsDeterministic")) continue;
@@ -1284,7 +1241,6 @@ function checkDeterministic(model: TableModel, problems: Problems): void {
   }
 }
 
-// Code that no operand names throws what it likes, and an entry that neither allocates nor runs the code of an operand has nothing to hand on.
 function checkPropagatedErrors(model: TableModel, problems: Problems): void {
   for (const overload of model.overloads) {
     if (!overload.flags.includes("OnlyPropagatesErrors")) continue;
@@ -1370,16 +1326,13 @@ export function checkMutability(model: Pick<TableModel, "builtins">, problems: P
   }
 }
 
-// handWrittenRowOf() in AOTFlowRuleTable.cpp asks these of the object that is called.
 const marksOfCalledFunctions: readonly BuiltinMark[] = ["MocksModule", "ExtendsMatchers", "FakesTimers"];
 const marksOfTestRunner: readonly BuiltinMark[] = [...marksOfCalledFunctions, "IsReplacedByFakeTimers"];
 
-// The host of the programs that WebKit's own build links leaves roles out, and it runs no tests.
 const leavesOutRoles = ({ hostRoles, hostClassRoles }: Pick<TableModel, "hostRoles" | "hostClassRoles">): boolean =>
   hostRoles.some(({ token, builtin }) => builtin.token !== token) ||
   hostClassRoles.some(({ token, builtinClass }) => builtinClass.token !== token);
 
-// The engine names no entry of a test runner: the marks tell it what a test replaces. Where one is missing everything builds, and compiled code takes what was replaced for what the table says.
 export function checkMarksOfTestRunner(
   model: Pick<TableModel, "builtins" | "hostRoles" | "hostClassRoles">,
   problems: Problems,
@@ -1411,7 +1364,6 @@ export function checkMarksOfTestRunner(
   }
 }
 
-// AOTFlowRulesUnseenCode.cpp asks these of the object that is called, once its entry has let code in.
 const marksOfReach: readonly BuiltinMark[] = [
   "RunsCodeThatLocksDoNotBind",
   "RunsCodeWithLoader",

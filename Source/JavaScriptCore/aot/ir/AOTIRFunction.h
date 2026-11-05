@@ -17,7 +17,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 enum class ConstructorForm : uint8_t { NotConstructor, Base, Derived };
 
-// The record of a function as the reader made it, and its body where the front end wrote it. Nothing changes either once the program is read.
 struct Function : FunctionRecord {
     Body body;
 
@@ -31,20 +30,16 @@ struct Function : FunctionRecord {
     bool isModuleBody() const;
     bool isCoroutine() const { return hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }); }
     ConstructorForm constructorForm() const;
-    // The construct call allocates `this` for a plain function. A class constructor allocates its own.
     bool takesThisFromConstruction() const { return kind == FunctionKind::Plain && constructorForm() == ConstructorForm::Base; }
 
     bool mayBeCalledByHost() const { return !has(FunctionCapabilities::IsNeverCalledByHost); }
     bool isHiddenInStackTraces() const { return has(FunctionCapabilities::IsHiddenInStackTraces) || has(FunctionFlags::IsHiddenInStackTraces); }
 
-    // Where the source text has the value: its written position where it has one, else where it reports errors.
     Wire::SourceLocation locationOf(const BodyValue&) const;
     Wire::SourceLocation locationOf(const BodyTerminator&) const;
-    // `position` is one of this function's own body. Code::locationOf() answers for an origin in an inline frame.
     Wire::SourceLocation locationAt(uint32_t position) const;
     Wire::SourceLocation declarationLocation() const;
 
-    // The parameters of the entry block, in the order of EntryParameter.
     unsigned numberOfEntryParameters() const;
     std::optional<unsigned> thisParameterIndex() const;
     std::optional<unsigned> calleeParameterIndex() const;

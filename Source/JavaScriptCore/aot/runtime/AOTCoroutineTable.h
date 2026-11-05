@@ -38,7 +38,6 @@ public:
     void* savedFrameEntrypoint() const { return m_savedFrameEntrypoint; }
     void* handlerOfJobEntrypoint() const { return m_handlerOfJobEntrypoint; }
 
-    // From any thread that marks.
     void didVisitFrameWithDeadWords(SavedFrame*, uint32_t version, const uint32_t* firstWordOfMap);
 
     template<typename Visitor> void visitRoots(Visitor&);
@@ -50,7 +49,6 @@ private:
         const uint32_t* firstWordOfMap;
         uint32_t version;
     };
-    // Threads that mark at one time take different lists, and no two lists share a cache line.
     struct ListOfVisitedFrames {
         Lock lock;
         Vector<VisitedFrameWithDeadWords> frames WTF_GUARDED_BY_LOCK(lock);

@@ -227,7 +227,6 @@ static void checkWideHeapStartsHelpers()
 
 static void testWaitingForStartedThreadsDoesNotWaitForTheirWork()
 {
-    // Never destroyed, like the collector's own pool: a thread that is leaving still refers to its pool.
     ParallelHelperPool& pool = ParallelHelperPool::create("Test Helper"_s).leakRef();
     pool.ensureThreads(2);
     BinarySemaphore hasTakenWork;

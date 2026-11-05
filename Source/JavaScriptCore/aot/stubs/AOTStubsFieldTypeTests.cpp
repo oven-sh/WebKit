@@ -36,7 +36,6 @@ static_assert(!(shapeWordOf(1) + 1));
 
 namespace {
 
-// Most reference fields hold the objects of one family of layouts. Such a type has one test, and where the shapes of the family have numbers in a row, that test is one comparison.
 constexpr auto cellTestKindsInTestOrder = [] {
     std::array<CellTestKind, numberOfEnumerators<CellTestKind>> order { };
     size_t count = 0;
@@ -51,7 +50,6 @@ constexpr auto cellTestKindsInTestOrder = [] {
 
 } // namespace
 
-// Reads bits 0 to 31 of type and preserves the register on every path.
 void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, JumpList& isRejected, JumpList& cannot)
 {
     RELEASE_ASSERT(noOverlap(r.value, r.type, r.test, r.scratch, r.secondScratch, instanceGPR));
@@ -90,7 +88,6 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
         jit.load32(Address(r.test, RuntimeCellTest::offsetOfOperand()), result);
         jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), result);
     };
-    // RuntimeLayoutTable::isOfThisRealm(), which the run time asks of the instance of the holder. That need not be the instance that runs: code of one instance stores into an object of another.
     auto leaveCellOfOtherRealmToRunTime = [&] {
         if (jit.options().hasOneInstance)
             return;
@@ -131,7 +128,6 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
             jit.mul32(head, slot);
             jit.urshift64(TrustedImm32(32), head);
             jit.urshift32(head, slot);
-            // No third register keeps the words or the index.
             loadShapeTest(shapeTest);
             jit.load32(Address(shapeTest, ShapeTestData::offsetOfBitSetOffset()), location);
             jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(shapeSets)), words);
@@ -164,7 +160,6 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
         hasWord.link(&jit);
         jit.load64(BaseIndex(words, word, CCallHelpers::TimesEight), bits);
 
-        // No third register keeps the index. A shift looks at the last six bits of it only.
         loadShapeTest(indexFromLast);
         jit.load32(Address(indexFromLast, ShapeTestData::offsetOfLast()), indexFromLast);
         jit.add32(Address(r.value, offsetOfShapeWord), indexFromLast);
@@ -202,7 +197,6 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
             leaveCellOfOtherRealmToRunTime();
             jit.load8(Address(r.value, JSCell::typeInfoTypeOffset()), cellType);
             Jump isSlimClosure = jit.branch32(CCallHelpers::Equal, cellType, TrustedImm32(SlimClosureType));
-            // A slim closure that has got properties keeps the number of its function elsewhere.
             cannot.append(jit.branch32(CCallHelpers::Equal, cellType, TrustedImm32(SlimClosureWithPropertiesType)));
             testFailed.append(jit.branch32(CCallHelpers::NotEqual, cellType, TrustedImm32(CompiledClosureType)));
             jit.load32(Address(r.value, offsetOfClosureEntry + sizeof(uint32_t)), function);

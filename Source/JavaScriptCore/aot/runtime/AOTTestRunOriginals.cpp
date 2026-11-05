@@ -16,21 +16,87 @@
 
 namespace JSC { namespace AOT {
 
-// The host's own loader gives a package the module itself where a test mocks it as Vitest does.
-bool Modules::importsOriginalBesideMock(ModuleID mocked, ModuleID importer) const
+bool Modules::importsOriginalBesideMock(ModuleID fileOrModule, ModuleID importer) const
 {
+    ModuleID mocked = fileOf(fileOrModule);
     if (!isMocked(mocked) || !host().givesOriginalBesideMock || !importer || !m_table.hasFilePath(mocked) || !m_table.hasFilePath(importer))
         return false;
-    // TODO(bun): a CommonJS file has one variable for its exports, and what an import reads of it is taken by the mock.
-    if (!data(mocked).isESModuleOfProgram() || data(mocked).isFaceOfFile())
+    bool isFile = data(mocked).kind == ModuleKind::CommonJs && !data(mocked).isOfLibrary();
+    if (isFile ? moduleWithExportsOf(mocked) == mocked || fileOf(importer) == mocked : !data(mocked).isESModuleOfProgram())
         return false;
     auto asked = m_importersAskedAboutOriginal.add(static_cast<uint64_t>(mocked.index()) << 32 | importer.index(), false);
     if (asked.isNewEntry)
         asked.iterator->value = host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(mocked), m_table.pathText(importer), true);
-    // It was never linked to the mock, and isn't once the mock has ended and the host has forgotten it.
     if (asked.iterator->value)
         m_importersThatGotOriginal.add(asked.iterator->key);
     return asked.iterator->value;
+}
+
+bool Modules::hasImporterBelowThatGetsOriginal(ModuleID root, ModuleID fileOrFace) const
+{
+    ModuleID file = fileOf(fileOrFace);
+    if (!isMocked(file) || isLeftAloneByMock(file) || moduleWithExportsOf(file) == file)
+        return false;
+    BitVector seen(m_table.size());
+    seen.quickSet(root.index());
+    Vector<ModuleID, 16> toVisit { root };
+    while (!toVisit.isEmpty()) {
+        ModuleID importer = toVisit.takeLast();
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (request.isHoisted || request.isRequire)
+                continue;
+            ModuleID imported = moduleLoadedBy(request);
+            if (fileOf(imported) == file) {
+                if (importsOriginalBesideMock(file, importer))
+                    return true;
+                continue;
+            }
+            if (data(imported).isESModuleOfProgram() && status(imported) < ModuleStatus::Evaluating && !seen.quickSet(imported.index()))
+                toVisit.append(imported);
+        }
+    }
+    return false;
+}
+
+void Modules::runFileBesideMock(ModuleID file)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    ModuleID face = moduleWithExportsOf(file);
+    JSObject* mock = mockInPlace(file);
+    ASSERT(mock && face != file && !isLeftAloneByMock(file));
+    JSValue whatRequireAnswers = commonJSExports(file);
+    JSValue original = answerRequireWithOriginal(file, face);
+    RETURN_IF_EXCEPTION(scope, void());
+    LoadedModule& loaded = ensureLoaded(file);
+    if (mockInPlace(file) != mock || loaded.exportsOfOriginalBesideMock.get() != original)
+        return;
+    LoadedModule& exporting = ensureLoaded(face);
+    auto setInPlace = [&](JSObject* standing) {
+        loaded.mockInPlace.set(*this, standing);
+        exporting.mockInPlace.set(*this, standing);
+        m_numberOfMocksInPlace += standing ? 1 : -1;
+        m_modulesWithMockInPlace.set(file.index(), !!standing);
+    };
+    setInPlace(nullptr);
+    JSValue settledAnswer = loaded.requiredValue.get();
+    exporting.capturedExports.set(*this, nullptr);
+    exporting.exportsWhatMockNamesAlone = false;
+    setNamespace(face, ModulePhase::Evaluation, nullptr);
+    setCommonJSExports(file, original);
+    loaded.requiredValue.set(*this, JSValue());
+    captureExports(face);
+    if (scope.exception()) [[unlikely]] {
+        setInPlace(mock);
+        setCommonJSExports(file, whatRequireAnswers);
+        loaded.requiredValue.set(*this, settledAnswer);
+        return;
+    }
+    VMState& state = m_instance.vm->aotState();
+    auto laid = m_mocksOverModulesThatHaveRun.set(file, MockOverModuleThatHasRun { momentOfFirstMockInTestFile(file), state.momentOfTestFile });
+    laid.iterator->value.momentThisWasLaid = laid.iterator->value.momentLaid;
+    laid.iterator->value.didFileRunBesideMock = true;
+    scope.release();
+    setMockOverModuleThatHasRun(file, mock, whatRequireAnswers);
 }
 
 bool Modules::hasRunItself(ModuleID mocked) const
@@ -43,7 +109,6 @@ bool Modules::isMockedByFactoryThatTakesOriginal(ModuleID module) const
     return m_modulesWithMockThatAsksAgain.get(module.index()) && isMocked(module);
 }
 
-// Of a CommonJS file of the program whose body a mock has kept from running.
 bool Modules::getsOriginalBesideMock(ModuleID target, ModuleID referrer)
 {
     if (!m_numberOfMocksInPlace || !host().givesOriginalBesideMock) [[likely]]
@@ -53,19 +118,15 @@ bool Modules::getsOriginalBesideMock(ModuleID target, ModuleID referrer)
     return host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(target), m_table.pathText(referrer), false);
 }
 
-// The answer of the mock stands where the exports of the file are read from, and the file counts as evaluated. The body runs once, with both set aside.
-// Whoever calls it has seen the mock: getsOriginalBesideMock().
 JSValue Modules::answerRequireWithOriginal(ModuleID file, ModuleID referrer)
 {
     ASSERT_UNUSED(referrer, referrer && mockInPlace(file));
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get())
         return original;
-    // A ring of files comes back while the body runs.
     if (status(file) == ModuleStatus::Evaluating)
         return commonJSExports(file);
     JSObject* mockBefore = mockInPlace(file);
-    // The variable and the status are the body's while it runs. What the mock answers waits here: for whoever gets no original, and for a mock that is laid meanwhile.
     ensureLoaded(file).answerOfMockWhileOriginalRuns.set(*this, commonJSExports(file));
     JSValue settledAnswer = ensureLoaded(file).requiredValue.get();
     setStatus(file, ModuleStatus::Unlinked);
@@ -79,10 +140,8 @@ JSValue Modules::answerRequireWithOriginal(ModuleID file, ModuleID referrer)
     JSValue answerOfMock = ensureLoaded(file).answerOfMockWhileOriginalRuns.get();
     ensureLoaded(file).answerOfMockWhileOriginalRuns.set(*this, JSValue());
     JSObject* mock = mockInPlace(file);
-    // As `bun run` does with a CommonJS file whose body throws: whoever asked hears of it, and the next one runs the body again. didThrowInBody() has left the file to this.
     if (hasThrown)
         forgetRunThatThrew(file);
-    // The mock ended while the body ran: the file is what the run has made of it.
     if (!mock)
         return hasThrown ? JSValue() : original;
     markEvaluated(file);
@@ -92,20 +151,17 @@ JSValue Modules::answerRequireWithOriginal(ModuleID file, ModuleID referrer)
     if (hasThrown)
         return { };
     ensureLoaded(file).exportsOfOriginalBesideMock.set(*this, original);
-    // The run may have taken the names of the file for whoever imports them.
     takeNamesOfMockInPlace(moduleWithExportsOf(file), mock);
     RETURN_IF_EXCEPTION(scope, { });
     return original;
 }
 
-// The body ran beside a mock that stands in place of the module. The object in the slot of the module is the mock's: whoever gets the module itself holds another, with the names and the values of the module.
 JSObject* Modules::namespaceOfModuleThatRanBesideMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(module);
     if (JSObject* own = loaded.namespaceBeforeMockInPlace.get())
         return own;
-    // Nobody had asked for it when the mock came.
     JSObject* ofMock = namespaceIfCreated(module, ModulePhase::Evaluation);
     setNamespace(module, ModulePhase::Evaluation, nullptr);
     JSObject* own = nullptr;
@@ -129,18 +185,15 @@ JSC_DEFINE_HOST_FUNCTION(answerImportWithModuleItselfInTestRunOriginals, (JSGlob
     return JSValue::encode(modulesOf(realm)->namespaceOfModuleItself(ModuleID(callFrame->argument(1).asUInt32())));
 }
 
-// TODO(bun): a CommonJS file has one variable for its exports: importsOriginalBesideMock().
 bool Modules::isAskedForByOwnFactory(ModuleID module)
 {
     if (!isMocked(module) || data(module).isOfLibrary() || !data(module).hasExportTable() || data(module).isFaceOfFile()) [[likely]]
         return false;
     if (m_modulesWhoseFactoryRuns.get(module.index()))
         return true;
-    // The factory goes on behind an `await`.
     return !mockInPlace(module) && !m_modulesWithMockToRun.get(module.index()) && host().isCalledFromFactoryThatWaits && host().isCalledFromFactoryThatWaits(m_instance.globalObject, module);
 }
 
-// `bun test` does not let a load wait for the factory that began it: the load comes to the module itself, and the mock is laid when the factory has answered.
 void Modules::noteLoadBegunByFactories(ModuleID root)
 {
     for (size_t index : m_mocks->modules) {
@@ -149,17 +202,15 @@ void Modules::noteLoadBegunByFactories(ModuleID root)
     }
 }
 
-// An evaluation has come to a mocked module: from an importer, or as its root.
 bool Modules::runsBesideMockFor(ModuleID mocked, std::optional<ModuleID> importer) const
 {
-    if (!isMocked(mocked) || hasRunItself(mocked)) [[likely]]
+    if (!isMocked(mocked) || hasRunItself(mocked) || data(mocked).kind == ModuleKind::CommonJs) [[likely]]
         return false;
     if (m_modulesThatOwnFactoryMayLoad.get(mocked.index()))
         return true;
     return importer ? importsOriginalBesideMock(mocked, *importer) : m_modulesOwedBesideMock.get(mocked.index());
 }
 
-// The failure is the module's own, and whoever gets the mock does not hear of it. The error waits for whoever asks for the module itself, and for the end of the mock.
 void Modules::setAsideErrorOfModuleThatRanBesideMock(ModuleID module)
 {
     if (status(module) != ModuleStatus::Failed || !isMocked(module))
@@ -189,7 +240,6 @@ JSC_DEFINE_HOST_FUNCTION(failImportOfModuleItselfInTestRunOriginals, (JSGlobalOb
     return throwVMError(realm, scope, callFrame->argument(0));
 }
 
-// An importer that sees the mock may have come by first. The module counts as evaluated then, and a record that the loader holds answers the next evaluation with the promise of that one.
 void Modules::oweBodyBesideMock(ModuleID module)
 {
     m_modulesOwedBesideMock.set(module.index());
@@ -200,7 +250,6 @@ void Modules::oweBodyBesideMock(ModuleID module)
         record->clearTopLevelCapability();
 }
 
-// The factory of the mock requires the module.
 JSValue Modules::requireModuleItselfBesideMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -219,15 +268,20 @@ JSValue Modules::requireModuleItselfBesideMock(ModuleID module)
     RELEASE_AND_RETURN(scope, namespaceOfModuleItself(module));
 }
 
-// An import() of a package has taken the steps of any import(), and was answered with what the mock shows.
 JSValue Modules::importModuleItselfBesideMock(ModuleID module, JSValue answerOfImport)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The mock has ended meanwhile.
-    if (!isMocked(module))
+    if (!isMocked(fileOf(module)))
         return answerOfImport;
+    if (isCommonJSFileOrFace(module)) {
+        if (mockInPlace(module) && !isLeftAloneByMock(fileOf(module))) {
+            runFileBesideMock(fileOf(module));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        RELEASE_AND_RETURN(scope, namespaceOfModuleItself(moduleWithExportsOf(fileOf(module))));
+    }
     bool hasBegun = hasRunItself(module);
     if (!hasBegun || status(module) == ModuleStatus::EvaluatingAsync) {
         if (!hasBegun)

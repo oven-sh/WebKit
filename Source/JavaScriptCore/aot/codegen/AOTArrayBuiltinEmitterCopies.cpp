@@ -23,7 +23,6 @@ void ArrayBuiltinEmitter::copyElements(const ArrayStorageForm& form, const Eleme
     copyElements(form, form, source, target, count, direction);
 }
 
-// Without `ifHole` a hole is copied as a hole.
 void ArrayBuiltinEmitter::copyElements(const ArrayStorageForm& form, const ArrayStorageForm& formOfTarget, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection direction, LBasicBlock ifHole, bool reverses)
 {
     bool isBackward = direction == CopyDirection::Backward;
@@ -76,8 +75,6 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
     LBasicBlock miss = missBlockOf(call);
     Join<CellPointer> join(m_out);
     bool isExpectedToHoldDoubles = resultIsExpectedToHoldDoubles(call);
-    // `list.concat([item])`: a list that is written at the call has the storage that its literal makes, and Facts may prove the storage of a list. Any other list is expected in the storage of the receiver.
-    // Each list is tested for the kind that is expected of it.
     auto knownFormOf = [&](ValueID list) -> const ArrayStorageForm* {
         if (const ArrayStorageForm* proven = provenFormOfArgument(call, list))
             return proven;
@@ -89,20 +86,9 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
             return named;
         return &allocation.formOfLiteral(call.context(), literal.elementsOperands(), typeOf(written));
     };
-    // `[].concat(list, [item])`: a list that nothing is ever stored into is expected to be empty. Its storage then says nothing about the new list, and the first list behind it stands in its place.
-    const ArrayStorageForm* formBehindEmptyReceiver = nullptr;
-    if (m_facts.everyObjectHas(types(), typeIDOf(call.receiver()), ObjectFact::ContentsAreProven) && isNeverType(elementTypeOf(call, TypeLevel::Proven))) {
-        auto list = std::ranges::find_if(call.arguments(), [&](ValueID argument) {
-            return typeOf(argument).hasObjects();
-        });
-        if (list != call.arguments().end())
-            formBehindEmptyReceiver = knownFormOf(*list);
-    }
     auto concatenate = [&](const ArrayStorageForm& form) {
-        // No array stands for an argument that is an element itself.
         Vector<CellPointer, maxConcatenatedArrays> arrays { receiverOf(call) };
         Vector<const ArrayStorageForm*, maxConcatenatedArrays> forms { &form };
-        // The new list has the storage that holds what all of them hold.
         const ArrayStorageForm* widest = &form;
         for (ValueID argument : call.arguments()) {
             if (!typeOf(argument).hasObjects()) {
@@ -120,10 +106,6 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
                 widest = forms.last();
         }
         const ArrayStorageForm& made = isExpectedToHoldDoubles && widest->kind == ArrayStorage::Int32 ? arrayStorageFormOf(ArrayStorage::Double) : *widest;
-        if (!mayMakeArrayOf(call, made.kind)) {
-            m_out.jump(miss);
-            return;
-        }
 
         Vector<ArrayElements, maxConcatenatedArrays> sources;
         Vector<Integer, maxConcatenatedArrays> lengths;
@@ -133,11 +115,8 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
             lengths.append(array ? elements().publicLength(sources.last()) : integer(1));
             length = add(length, lengths.last());
         }
-        if (formBehindEmptyReceiver)
-            missUnless(call, isZero(lengths[0]));
         missUnless(call, belowOrEqual(length, integer(maxLengthForElementwiseCopy)));
 
-        // The new list has its length from the start, so nothing misses and nothing collects until every element is stored.
         Vector<std::optional<Operand>, maxConcatenatedArrays> rawItems;
         for (unsigned i = 0; i < arrays.size(); ++i) {
             rawItems.append(arrays[i] ? std::nullopt : elements().rawElementToStore(made, call.argument(i - 1), miss));
@@ -151,7 +130,7 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
         {
             CodeGenerator::InitializationScope scope(generator());
             Integer position = integer(0);
-            for (unsigned i = formBehindEmptyReceiver ? 1 : 0; i < arrays.size(); ++i) {
+            for (unsigned i = 0; i < arrays.size(); ++i) {
                 if (arrays[i])
                     copyElements(*forms[i], made, { sources[i], integer(0) }, { target, position }, lengths[i], CopyDirection::Forward);
                 else if (rawItems[i])
@@ -162,10 +141,7 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
         emitter<BarrierEmitter>().fenceAfterInitialization();
         join.add(concatenated);
     };
-    if (formBehindEmptyReceiver)
-        concatenate(*formBehindEmptyReceiver);
-    else
-        forEachFormOrMiss(call, receiverOf(call), arrayStorageTestMask, concatenate);
+    forEachFormOrMiss(call, receiverOf(call), arrayStorageTestMask, concatenate);
     finish(call, join.finish());
 }
 
@@ -182,10 +158,6 @@ void ArrayBuiltinEmitter::copyIntoNewArray(const InlineCall& call, const LengthO
     Join<CellPointer> join(m_out);
     forEachFormOrMiss(call, receiverOf(call), arrayStorageTestMask, [&](const ArrayStorageForm& form) {
         const ArrayStorageForm& made = formOfCopy(call, form);
-        if (!mayMakeArrayOf(call, made.kind)) {
-            m_out.jump(missBlockOf(call));
-            return;
-        }
         ArrayElements source = elements().elementsOf(receiverOf(call));
         Integer length = lengthOfCopy(elements().publicLength(source));
         missUnless(call, belowOrEqual(length, integer(maxLengthForElementwiseCopy)));
@@ -218,7 +190,6 @@ void ArrayBuiltinEmitter::storeItem(const InlineCall& call, const ArrayStorageFo
     m_out.appendTo(newBlock());
 }
 
-// An index outside the array misses: the function throws.
 void ArrayBuiltinEmitter::generateArrayWith(const InlineCall& call)
 {
     if (!checkChosenForm(call, call.canMiss() && call.numberOfArguments() == 2 && typeOf(call.argument(0)).isNumber()))
@@ -283,7 +254,6 @@ void ArrayBuiltinEmitter::generateArrayToSpliced(const InlineCall& call)
     });
 }
 
-// None of them is a hole.
 CellPointer ArrayBuiltinEmitter::copyRemovedElements(const InlineCall& call, const InlineSplice& splice, const ArrayStorageForm& form)
 {
     static_assert(maxRemovedByInlineSplice <= maxArrayElementsInRegisters);
@@ -341,7 +311,6 @@ void ArrayBuiltinEmitter::replaceElements(const InlineCall& call, const InlineSp
         emitter<BarrierEmitter>().barrier(call.context(), array);
 }
 
-// Goes out of line where fewer elements than `removed` stand behind the start, where the tail is long, where the vector has no room, and where the storage is shared with a literal or has none of the forms.
 void ArrayBuiltinEmitter::spliceInline(const InlineCall& call, Integer start, int64_t removed, LBasicBlock outOfLine, const SpliceArm& emitArm)
 {
     CellPointer array = receiverOf(call);
@@ -363,7 +332,6 @@ void ArrayBuiltinEmitter::spliceInline(const InlineCall& call, Integer start, in
     }, firstCandidateFormOf(call));
 }
 
-// `let at: number` that only ever holds whole numbers is a double for all that its type says: the code asks it.
 bool ArrayBuiltinEmitter::hasNumberSpliceRange(const InlineCall& call)
 {
     return call.numberOfArguments() >= 2 && typeOf(call.argument(0)).isNumber() && typeOf(call.argument(1)).isNumber();
@@ -416,10 +384,8 @@ void ArrayBuiltinEmitter::generateArraySplice(const InlineCall& call)
     if (!checkChosenForm(call, call.canMiss() && hasNumberSpliceRange(call) && itemsInsertedBySplice(call).size() <= maxInlineSpliceInsertions))
         return;
 
-    // `list.splice(at, 1)` for what it does to the list alone: the code in line lists nothing.
     Representation representation = resultIsRead(call) ? resultRepresentationOf(call) : Representation::Void;
     OperandJoin join(m_out, representation);
-    // The operation is a call like the call of the function, and a fifth of its instructions. A few elements are moved in place.
     std::optional<int64_t> inlineDeleteCount = deleteCountOfInlineSplice(call);
     if (inlineDeleteCount) {
         LBasicBlock outOfLine = newBlock();
@@ -428,16 +394,11 @@ void ArrayBuiltinEmitter::generateArraySplice(const InlineCall& call)
             if (!inserted)
                 return;
 
-            // Nothing is stored into the array before the list of what is removed is made: making it may throw.
             Operand removedElements;
             if (representation != Representation::Void) {
-                if (!mayMakeArrayOf(call, form.element == Representation::Double ? ArrayStorage::Double : ArrayStorage::Contiguous)) {
-                    m_out.jump(outOfLine);
-                    return;
-                }
                 for (int64_t i = 0; i < splice.removed; ++i) {
                     Operand rawElement = elements().loadRawElement(form, splice.elements, add(splice.from, integer(i)));
-                    branchUnless(logicalNot(elements().isHoleIn(call.receiver(), form, rawElement)), outOfLine);
+                    branchUnless(logicalNot(elements().isHole(form, rawElement)), outOfLine);
                 }
                 removedElements = inRepresentation(call.context(), representation, copyRemovedElements(call, splice, form), resultTypeOf(call));
             }

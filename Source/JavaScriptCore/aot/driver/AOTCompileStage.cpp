@@ -11,7 +11,6 @@
 #include "AOTArrivals.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFacts.h"
-#include "AOTLeavePoints.h"
 #include "AOTLinkTables.h"
 #include "AOTMechanisms.h"
 #include "AOTNumbering.h"
@@ -36,13 +35,11 @@ struct SeedOfCompileStage {
 };
 
 struct OutputOfCompileThread {
-    // In the blocks.
     ListOfKeptCode code;
     BlocksOfUnits blocks;
     Vector<Typed::WalkNotes> notes;
     WTF::BitSet<numberOfEntries> entriesUsed;
     Typed::CompileWorker::InstructionsOfSteps instructionsOfSteps;
-    // Empty unless the build logs its phase times.
     Vector<UseOfCompileThreads::Unit> timesOfUnits;
 };
 
@@ -84,9 +81,6 @@ void mentionWhatCodeNames(UnitQueue& queue, unsigned thread, const CompiledCode&
     }));
 }
 
-// Lightest first, for UnitQueue::addSeeds(): the largest bodies are begun first. The code of an entry names the body of its function, which the same thread takes next: an entry counts for that body.
-// One body is begun once, so of the seeds of one function the first counts for it and the others for nothing.
-// The order changes no byte: it only shortens the wait for the last unit.
 static Vector<CodeUnit> seedsOfCompileStage(const Typed::WalkInputs& inputs, const ParallelLoops& loops)
 {
     Vector<CodeUnit> units = Typed::unitsNamedOutsideCode(inputs.program, inputs.facts, inputs.plan);
@@ -106,7 +100,6 @@ static Vector<CodeUnit> seedsOfCompileStage(const Typed::WalkInputs& inputs, con
     });
 }
 
-// False: the unit has no bytes.
 static bool prepareCodeOfCompileThread(CompiledCode& code, const Typed::CallingConventions& conventions, BuildContext& build)
 {
     if (code.body.bytes.isEmpty()) {
@@ -138,7 +131,6 @@ static Vector<FusedCallEntry> describeFusedCallEntries(std::span<const CodeUnit>
     return described;
 }
 
-// Nothing where the units are more than a list holds, which is reported.
 static std::optional<LinkedFunctions> linkCodeOfCompileThreads(std::span<OutputOfCompileThread> outputs, std::span<const CodeUnit> fusedCallEntries, const Typed::CompileInputs& inputs, BuildContext& build)
 {
     const ParallelLoops& loops = build.parallelLoops();
@@ -166,7 +158,6 @@ static std::optional<LinkedFunctions> linkCodeOfCompileThreads(std::span<OutputO
         return a.placeInCode < b.placeInCode;
     });
 
-    // A record stays where its thread has left it, in front of its lists. Here only their order is made.
     Vector<CompiledCode*> functions(numberOfUnits);
     CodeInBlocks linked;
     linked.placesInCode.grow(numberOfUnits);
@@ -273,14 +264,13 @@ static UseOfCompileThreads describeUseOfCompileThreads(std::span<const OutputOfC
     return use;
 }
 
-// Callers first is the driver's half of Mechanism::Arrivals. Withheld: nobody reads what callers leave, so nothing is ordered.
 static void makeQueueOfCompileStage(std::optional<UnitQueue>& queue, const Typed::WalkInputs& inputs, unsigned numberOfThreads)
 {
     const Typed::CallingConventions& conventions = inputs.plan.conventions();
     if (inputs.options.mechanisms.contains(Typed::Mechanism::Arrivals))
-        queue.emplace(conventions, inputs.facts.linked(), inputs.arrivals, numberOfThreads);
+        queue.emplace(inputs.program, conventions, inputs.facts.linked(), inputs.arrivals, numberOfThreads);
     else
-        queue.emplace(conventions, numberOfThreads);
+        queue.emplace(inputs.program, conventions, numberOfThreads);
 }
 
 CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::TypeTable& types, BuildContext& build)
@@ -289,7 +279,6 @@ CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::Ty
     const ParallelLoops& loops = build.parallelLoops();
     unsigned numberOfThreads = loops.width();
 
-    // Neither reads what the other makes.
     Vector<CodeUnit> seeds;
     std::optional<UnitQueue> queueOfStage;
     runLanes(loops, {
@@ -297,9 +286,6 @@ CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::Ty
         [&] { makeQueueOfCompileStage(queueOfStage, inputs.walk, numberOfThreads); },
     });
     UnitQueue& queue = *queueOfStage;
-    build.leavePoints().prepare(inputs.walk.program.functions.size());
-    queue.closePointsIn(build.leavePoints());
-    // Nobody asks the queue before it has the seeds, because an empty queue is a finished one.
     queue.addSeeds(seeds.span(), loops);
     std::atomic<bool> didFail { false };
     Vector<OutputOfCompileThread> outputs(numberOfThreads);

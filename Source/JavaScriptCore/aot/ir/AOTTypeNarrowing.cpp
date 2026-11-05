@@ -48,9 +48,6 @@ TargetResults targetResultsOf(TerminatorKind kind, uint32_t targetIndex, uint32_
     return info->numberOfResults ? TargetResults::DeclaredResults : TargetResults::None;
 }
 
-// intersectionOf() and differenceOf() may overapproximate, so the result is not always a subset of `source`.
-// It is among the objects that they do: one that only may fit stays named, as builtin(Math) does beside any function. So the objects of `source` stand in for those, and what is said of the rest holds:
-// a value that may be undefined and has passed a test for functions is not undefined.
 static TypeID narrowedWithin(TypeArena& types, TypeID source, TypeID narrowed)
 {
     if (types.isSubset(narrowed, source))
@@ -78,7 +75,6 @@ static void setNarrowedStringLiterals(TypeParts& parts, StringSetID literals)
         parts.primitives &= ~Primitive::LiteralString;
 }
 
-// `type` holds integers.
 static TypeID withIntegersNarrowedTo(TypeArena& types, TypeID type, Range integers)
 {
     TypeParts parts = types.at(type);
@@ -92,7 +88,6 @@ static StringID emptyStringKnownTo(const TypeArena& types)
     return program ? program->strings.emptyString() : StringID();
 }
 
-// A range has no holes, so zero can be removed only at one of its ends.
 static Range truthyIntegersOf(Range integers)
 {
     if (!integers.minimum)
@@ -102,10 +97,11 @@ static Range truthyIntegersOf(Range integers)
     return integers;
 }
 
-// With a null `emptyString` nobody knows which literal is empty, and the literals stay on both sides.
-// WholeNumber holds -0 and NaN beside the infinities, String the empty string, BigInt 0n: each stays on both sides.
 static TypeID truthyPartWith(TypeArena& types, TypeID type, StringID emptyString)
 {
+    if (TypeID made = types.typeMadeBefore(MakerOfType::TruthyPart, type.bits(), emptyString.bits()))
+        return made;
+
     Type whole = types.at(type);
     if (!whole.isJavaScriptValue())
         return type;
@@ -113,17 +109,25 @@ static TypeID truthyPartWith(TypeArena& types, TypeID type, StringID emptyString
     TypeParts parts = whole;
     parts.primitives &= ~(Primitive::UndefinedOrNull | Primitive::False);
     setNarrowedIntegers(parts, truthyIntegersOf(whole.integers));
-    if (emptyString && whole.hasLiteralStrings() && types.stringSets().contains(whole.stringLiterals, emptyString))
+    bool takesLiteralAway = emptyString && whole.hasLiteralStrings() && types.stringSets().contains(whole.stringLiterals, emptyString);
+    if (takesLiteralAway)
         setNarrowedStringLiterals(parts, types.stringSets().without(whole.stringLiterals, emptyString));
-    return types.intern(parts);
+    TypeID result = types.intern(parts);
+    if (!takesLiteralAway)
+        types.noteTypeMade(MakerOfType::TruthyPart, type.bits(), emptyString.bits(), result, !liesInThread(type) && !liesInThread(result));
+    return result;
 }
 
 static TypeID falsyPartWith(TypeArena& types, TypeID type, StringID emptyString)
 {
+    if (TypeID made = types.typeMadeBefore(MakerOfType::FalsyPart, type.bits(), emptyString.bits()))
+        return made;
+
     if (!types.at(type).isJavaScriptValue())
         return type;
 
-    Type whole = types.at(types.withoutObjects(type));
+    TypeID withoutObjects = types.withoutObjects(type);
+    Type whole = types.at(withoutObjects);
     TypeParts parts = whole;
     parts.primitives &= ~(Primitive::True | Primitive::FractionalNumber | Primitive::AnySymbol);
     parts.symbolLiterals = KeySetID();
@@ -132,7 +136,9 @@ static TypeID falsyPartWith(TypeArena& types, TypeID type, StringID emptyString)
         bool mayBeEmpty = types.stringSets().contains(whole.stringLiterals, emptyString);
         setNarrowedStringLiterals(parts, mayBeEmpty ? StringSets::of(emptyString) : StringSetID());
     }
-    return types.intern(parts);
+    TypeID result = types.intern(parts);
+    types.noteTypeMade(MakerOfType::FalsyPart, type.bits(), emptyString.bits(), result, !liesInThread(type) && !liesInThread(withoutObjects) && !liesInThread(result));
+    return result;
 }
 
 TypeID truthyPartOf(TypeArena& types, TypeID type)
@@ -170,7 +176,6 @@ bool mayRefuseUntestableBuiltins(const TypingContext& context, TypeID source, Ty
     return namesUntestableBuiltin && !types.isSubset(types.withOnlyObjects(source), tested);
 }
 
-// `tested` names objects.
 static TypeID withoutBuiltinsThatNoTestFinds(TypeArena& types, TypeID tested)
 {
     const ObjectTable& objects = types.objects();
@@ -183,8 +188,6 @@ static TypeID withoutBuiltinsThatNoTestFinds(TypeArena& types, TypeID tested)
     return types.intern(parts);
 }
 
-// A module namespace has no shape word. Neither has a cell of a built-in class: an instance of a class below one, or an object of a layout that holds dictionaries.
-// So ShapeTest and SwitchOnShape refuse them. TypeTest does find a namespace, but `tested` does not say which test asks.
 static bool testFindsEveryObjectOfLayout(const TypingContext& context, LayoutID layout)
 {
     return isObjectLayoutOf(context.program.at(layout).kind) && !builtinClassWrittenAbove(context.types, layout);
@@ -196,25 +199,25 @@ static TypeID withoutLayoutsThatTestMayRefuse(const TypingContext& context, Type
         return tested;
 
     TypeArena& types = context.types;
+    if (TypeID made = types.typeMadeBefore(MakerOfType::WithoutLayoutsThatTestMayRefuse, tested.bits(), 0))
+        return made;
+
     Type whole = types.at(tested);
     if (!whole.unnamedLayouts)
         return tested;
     LayoutSetID layoutsFound = types.layoutSets().filtered(whole.unnamedLayouts, [&](LayoutID layout) {
         return testFindsEveryObjectOfLayout(context, layout);
     });
-    if (layoutsFound == whole.unnamedLayouts)
-        return tested;
-
-    TypeParts parts = whole;
-    parts.unnamedLayouts = layoutsFound;
-    return types.intern(parts);
+    TypeID result = tested;
+    if (layoutsFound != whole.unnamedLayouts) {
+        TypeParts parts = whole;
+        parts.unnamedLayouts = layoutsFound;
+        result = types.intern(parts);
+    }
+    types.noteTypeMade(MakerOfType::WithoutLayoutsThatTestMayRefuse, tested.bits(), 0, result, !liesInThread(tested) && !liesInThread(layoutsFound) && !liesInThread(result));
+    return result;
 }
 
-// intersectionOf() keeps a named object whole as soon as one of the layouts it may have fits `tested`, so `passing` is not always inside `tested`.
-// Whatever passes a test has one of the tested shapes for life, and the slot operations behind the test need a type that proves their receivers.
-// So Compile replaces such an object with `unknown` within the tested layouts it may have. The result is not a subset of a source that only names the object.
-// Facts and Plan look up an object's cells by its name, so their arenas keep the object.
-// Returns null if no object is replaced.
 static TypeID describeLooselyFittingObjectsByShape(TypeArena& types, TypeID passing, TypeID tested)
 {
     if (types.keeps() != ArenaKeeps::UntilReset || holdsOnlyPrimitives(passing) || types.isSubset(passing, tested))
@@ -265,12 +268,6 @@ TypeID withUndescribedObjectsInside(TypeArena& types, TypeID passing, TypeID hol
     return types.unionOf(types.intern(parts), types.withOnlyObjects(holder));
 }
 
-// No type says that an object is an instance of two classes. So of a tested class and a class that no test tells from it intersectionOf() keeps both, and it keeps an object that is named with such a class:
-// `arguments` behind a test for arrays would be what it was in front of the test, and whoever takes nothing but an array needs a type that says so.
-// What has passed is an instance of a tested class for life, so `unknown` within `tested` takes the place of the other class and of the object.
-// A class below a tested class stays, and so does what is named with it: a TypeError is an Error, and says more.
-// A test for layouts alone turns the cells of a built-in class away: what it leaves named stays named.
-// So does a test for functions: a proxy that can be called stays a proxy, and the positions that Facts has seen it reach name it.
 static TypeID withLooselyFittingClassesInside(TypeArena& types, TypeID passing, TypeID tested)
 {
     if (holdsOnlyPrimitives(passing) || holdsOnlyPrimitives(tested) || types.isSubset(passing, tested))
@@ -280,7 +277,6 @@ static TypeID withLooselyFittingClassesInside(TypeArena& types, TypeID passing, 
     if (!testedType.unnamedClasses || testedType.anyFunction)
         return passing;
 
-    // Interning may move the parts that an id names, so they are copied before anything interns.
     const BuiltinTable& builtins = types.builtins();
     Vector<ClassPart, 8> testedClasses;
     testedClasses.append(types.at(testedType.unnamedClasses));
@@ -345,7 +341,6 @@ TypeID narrowByNotNullish(TypeArena& types, TypeID source, EdgeSide side)
     return types.intersectionOf(source, TypeTable::nullish);
 }
 
-// 0 === -0: whatever may be one of them equals the other.
 static TypeID withZeroesJoined(TypeArena& types, TypeID type)
 {
     Type whole = types.at(type);
@@ -417,7 +412,6 @@ static Opcode negatedBoundTest(Opcode comparison)
     }
 }
 
-// The integers that stand in `relation` to some member of `other`.
 static Range integersPassingBoundTest(Opcode relation, Range other)
 {
     switch (relation) {
@@ -434,9 +428,6 @@ static Range integersPassingBoundTest(Opcode relation, Range other)
     }
 }
 
-// A failed comparison proves its negation only if neither side can be NaN.
-// `i < n / 2`: an integer below a number that is no greater than an integer lies below that integer too.
-// `while (point[depth] > i)`: undefined stands in no relation to anything, so where one has held neither side was undefined.
 static TypeID narrowByIntegerBound(TypeArena& types, Opcode comparison, bool sourceIsLeft, TypeID source, TypeID other, EdgeSide side)
 {
     if (side == EdgeSide::Taken) {
@@ -499,7 +490,6 @@ TypeID narrowByStringCase(const TypingContext& context, TypeID source, StringID 
     return narrowedWithin(types, source, types.intersectionOf(source, types.stringLiteral(caseValue)));
 }
 
-// A range has no holes, so only cases at its ends can be removed. Sorts `cases`.
 static TypeID typeLeftByIntegerCases(TypeArena& types, TypeID source, std::span<int64_t> cases)
 {
     Range integers = types.at(source).integers;
@@ -518,7 +508,6 @@ static TypeID typeLeftByIntegerCases(TypeArena& types, TypeID source, std::span<
     return withIntegersNarrowedTo(types, source, integers);
 }
 
-// Sorts `cases`.
 static TypeID typeLeftByStringCases(TypeArena& types, TypeID source, std::span<StringID> cases)
 {
     Type whole = types.at(source);
@@ -564,7 +553,6 @@ TypeID narrowByOtherwise(const TypingContext& context, TypeID source, std::span<
     return narrowByTest(context, source, types.forLayouts(layoutsOfCases.span()), EdgeSide::NotTaken);
 }
 
-// Engine-only schema entries never appear in a wire body.
 template<typename Holder> static constexpr bool isCursorOverInput = std::is_same_v<Holder, BodyValue> || std::is_same_v<Holder, BodyTerminator>;
 
 template<typename Test>
@@ -578,10 +566,6 @@ static TypeID typeThatTestAsksFor(TypeArena& types, const Test& test)
     case Opcode::ShapeTest:
         if constexpr (!isCursorOverInput<Test>)
             return types.forLayoutSet(test.layouts());
-        break;
-    case Opcode::IsFunctionOfBuiltin:
-        if constexpr (!isCursorOverInput<Test>)
-            return types.forBuiltin(test.member());
         break;
     default:
         break;
@@ -604,10 +588,8 @@ TypeID typeOfEdgeResult(const TypingContext& context, const Test& test, OperandT
     case Proof::Truthiness:
         return narrowByTruthiness(context, source, side);
     case Proof::Equality:
-        // The other side of the comparison is the text in the operation's own words.
         if constexpr (!isCursorOverInput<Test>) {
             if (opcode == Opcode::StringEqualsLiteral || opcode == Opcode::ValueEqualsLiteral) {
-                // Neither the length nor the flat string that the comparison was handed is a side of it.
                 static_assert(!OperandIndex::StringEqualsLiteral::string && !OperandIndex::ValueEqualsLiteral::value);
                 if (narrowedOperandIndex)
                     return source;

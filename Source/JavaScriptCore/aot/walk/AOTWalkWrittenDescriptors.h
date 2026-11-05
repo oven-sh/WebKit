@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Walker::walkThroughChainOf(), in front of buildFreshObject(), which takes the literal for handed out. BuiltinCalls, EscapeAnalysis. False: nothing was built.
 inline constexpr OpcodeSet opcodesThatBuildDefinitionByWrittenDescriptorTakes { Opcode::Call };
 AOT_LINK_OF_WALK(buildDefinitionByWrittenDescriptor, opcodesThatBuildDefinitionByWrittenDescriptorTakes)
 

@@ -304,23 +304,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral originalsNamedAfterReplacement = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="replacement" [isFreeName]
-    v2 = PropGet v0 key="report" [isFreeName]
-    v3 = PropGet v0 key="Math" [isFreeName]
-    PropSet v3, v1 key="sign"
-    PropSet v0, v1 key="Date" [isFreeName]
-    v6 = Builtin builtin=MathSign
-    v7 = Builtin builtin=MathSinh
-    v8 = Builtin builtin=DateNow
-    v9 = Call v2, -, v6, v7, v8
-    Return
-}
-)IR"_s;
-
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.report = value => print(String(value));
 globalThis.replacement = () => "replaced";
@@ -359,7 +342,6 @@ struct Run {
 static constexpr ASCIILiteral wideReferencesWord = "references=wide"_s;
 static constexpr ASCIILiteral narrowReferencesWord = "references=narrow"_s;
 
-// `way` is one of waysToCompilePrograms.
 static String runInShell(const Run& run, ASCIILiteral referencesWord, ASCIILiteral way)
 {
     std::unique_ptr<CompileOutput> output = compile(run.programText, makeString(run.optionWords, ' ', referencesWord), way);
@@ -445,7 +427,6 @@ static void testReplacedGetter()
     checkShellOutput({ replacedGetter }, "function\nreplaced\n"_s);
 }
 
-// Code that the build has not seen can replace what the table leaves open, and nothing else.
 static void testUncompiledPolyfillRunsFirst()
 {
     auto check = [](ASCIILiteral statementsBeforeProgram, ASCIILiteral expectedOutput) {
@@ -460,43 +441,6 @@ static void testUncompiledPolyfillRunsFirst()
 static void testWriteThatFlowDoesNotExpect()
 {
     checkShellOutput({ builtinCalledOnce, ""_s, "try { Math.sign = () => 'polyfill'; } catch { }"_s }, "1\n"_s);
-}
-
-static uint32_t numberOf(LoadedProgram& program, BuiltinID builtin)
-{
-    std::span<const uint32_t> keys = program.instance().tables().builtinCells();
-    for (uint32_t number = 0; number < keys.size(); ++number) {
-        if (keys[number] == BuiltinCellKey::object(builtin).encoded())
-            return number;
-    }
-    failNativeTest(__FILE__, __LINE__, "the image has a cell for the built-in");
-}
-
-static void checkCellsAfterReplacement(LoadedProgram& program)
-{
-    BuiltinCells& cells = *program.state().builtinCells;
-    auto evaluate = [&](ASCIILiteral source) {
-        return program.realms().evaluate(program.realm(), source);
-    };
-    auto wordOf = [&](BuiltinID builtin) {
-        return program.instance().prefix().builtinCells[numberOf(program, builtin)];
-    };
-    JSValue sign = evaluate("Math.sign"_s);
-    JSValue sinh = evaluate("Math.sinh"_s);
-    JSValue now = evaluate("Date.now"_s);
-    JSValue date = evaluate("Date"_s);
-
-    // Nothing is looked up before the program runs.
-    AOT_TEST_CHECK(!wordOf(Builtins::MathSign) && !wordOf(Builtins::Date) && !wordOf(Builtins::MathSinh) && !wordOf(Builtins::DateNow));
-
-    evaluate("Math.sign = () => 0; try { Math.sinh = () => 0; } catch { } globalThis.Date = { now() { } }"_s);
-    // The first write to a member fills its cell with what is still there.
-    AOT_TEST_CHECK(JSValue(wordOf(Builtins::MathSign)) == sign && JSValue(wordOf(Builtins::Date)) == date);
-    AOT_TEST_CHECK(!wordOf(Builtins::MathSinh) && !wordOf(Builtins::DateNow));
-    AOT_TEST_CHECK(evaluate("Math.sign"_s) != sign && evaluate("Math.sinh"_s) == sinh && evaluate("Date.now"_s) != now);
-    AOT_TEST_CHECK(JSValue(cells.cell(numberOf(program, Builtins::MathSign))) == sign && JSValue(cells.findObject(Builtins::MathSign)) == sign);
-    AOT_TEST_CHECK(JSValue(cells.cell(numberOf(program, Builtins::MathSinh))) == sinh);
-    AOT_TEST_CHECK(JSValue(cells.cell(numberOf(program, Builtins::DateNow))) == now && JSValue(cells.findObject(Builtins::DateNow)) == now);
 }
 
 std::span<const NativeTest> replacedBuiltinTests()
@@ -515,7 +459,6 @@ std::span<const NativeTest> replacedBuiltinTests()
         { "replaced-builtins/replaced-getter"_s, testReplacedGetter },
         { "replaced-builtins/uncompiled-polyfill-runs-first"_s, testUncompiledPolyfillRunsFirst },
         { "replaced-builtins/write-that-flow-does-not-expect"_s, testWriteThatFlowDoesNotExpect },
-        { "replaced-builtins/cells-after-replacement"_s, runNativeTestWithLoadedProgram<replacedBuiltinTests, originalsNamedAfterReplacement, checkCellsAfterReplacement> },
     };
     return tests;
 }

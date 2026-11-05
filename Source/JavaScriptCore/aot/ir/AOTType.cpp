@@ -101,15 +101,6 @@ static MemberID onlyMemberOfSetInType(SetID set)
     return holdsOneMember(set) ? MemberID(positionOf(set)) : MemberID();
 }
 
-LayoutID singleLayoutOf(TypeReader, const Type& type)
-{
-    if (type.hasOnlyLayouts())
-        return onlyMemberOfSetInType<LayoutID>(type.layouts);
-    if (type.primitives & ~Primitive::UndefinedOrNull)
-        return { };
-    return type.environment;
-}
-
 const ClassPart* singleBuiltinClassOf(TypeReader reader, const Type& type)
 {
     if (!type.hasOnlyClassObjects())
@@ -125,7 +116,6 @@ const ClassPart* findClassPart(TypeReader reader, const Type& type, BuiltinClass
     return part == parts.end() ? nullptr : &*part;
 }
 
-// `nameOf` answers null for an object that has no such name. Then there is no name that all share.
 template<typename Name, typename NameOf>
 static Name nameSharedByAllObjectsOfType(const SetView<ObjectID, ObjectSetID>& objects, const NameOf& nameOf)
 {
@@ -139,7 +129,6 @@ static Name nameSharedByAllObjectsOfType(const SetView<ObjectID, ObjectSetID>& o
     return allShareIt ? shared : Name();
 }
 
-// A set is visited in ascending order, so nothing numbered at or behind `end` is looked at.
 static void forEachObjectOfTypeNumberedBelow(const SetView<ObjectID, ObjectSetID>& objects, uint32_t end, NOESCAPE const Invocable<void(ObjectID)> auto& functor)
 {
     objects.anyOf([&](ObjectID object) {
@@ -150,7 +139,6 @@ static void forEachObjectOfTypeNumberedBelow(const SetView<ObjectID, ObjectSetID
     });
 }
 
-// Several objects may have one name, and their numbers need not follow the numbers of their names: a copy of a closure for an instance, the built-in that each module has one of.
 template<typename Name, typename NameOf>
 static void forEachDistinctNameAmongObjectsOfType(const SetView<ObjectID, ObjectSetID>& objects, uint32_t end, const NameOf& nameOf, const ScopedLambda<void(Name)>& functor)
 {
@@ -170,21 +158,21 @@ static void forEachDistinctNameAmongObjectsOfType(const SetView<ObjectID, Object
     }
 }
 
-FunctionID singleFunctionOf(TypeReader reader, const Type& type)
+FunctionID functionSharedByClosuresOf(TypeReader reader, const Type& type)
 {
-    if (!type.hasOnlyClosures())
-        return { };
     const ObjectTable& objects = reader.objects();
+    if (ObjectID onlyObject = onlyMemberOfSetInType<ObjectID>(type.objects))
+        return objects.closureFunction(onlyObject);
     return nameSharedByAllObjectsOfType<FunctionID>(reader.at(type.objects), [&](ObjectID object) {
         return objects.closureFunction(object);
     });
 }
 
-BuiltinID singleBuiltinOf(TypeReader reader, const Type& type)
+BuiltinID builtinSharedByObjectsOf(TypeReader reader, const Type& type)
 {
-    if (!type.hasOnlyBuiltins())
-        return { };
     const ObjectTable& objects = reader.objects();
+    if (ObjectID onlyObject = onlyMemberOfSetInType<ObjectID>(type.objects))
+        return objects.builtinOf(onlyObject);
     return nameSharedByAllObjectsOfType<BuiltinID>(reader.at(type.objects), [&](ObjectID object) {
         return objects.builtinOf(object);
     });
@@ -204,7 +192,6 @@ StringID singleStringLiteralOf(const Type& type)
     return onlyMemberOfSetInType<StringID>(type.stringLiterals);
 }
 
-// The key of a symbol that the program creates may stand for several symbols, and only Facts::standsForSeveralSymbols() knows.
 static bool standsForOneSymbolInTypes(PropertyKeyKind kind)
 {
     switch (kind) {
@@ -252,16 +239,13 @@ bool isSingleValue(TypeReader reader, const Type& type)
     }
 }
 
-void forEachFunctionOf(TypeReader reader, const Type& type, NOESCAPE const ScopedLambda<void(FunctionID)>& functor)
+void forEachFunctionAmongClosuresOf(TypeReader reader, const Type& type, NOESCAPE const ScopedLambda<void(FunctionID)>& functor)
 {
-    if (!type.traitsOfNamed.contains(ObjectTrait::IsClosure))
-        return;
     const ObjectTable& objects = reader.objects();
     SetView<ObjectID, ObjectSetID> named = reader.at(type.objects);
     auto functionOf = [&](ObjectID object) {
         return objects.closureFunction(object);
     };
-    // Behind the closures only a copy for an instance may be one.
     uint32_t end = type.traitsOfNamed.contains(ObjectTrait::IsOfInstance) ? objects.size() : objects.endOf(ObjectKind::Closure);
     forEachDistinctNameAmongObjectsOfType(named, end, functionOf, functor);
 }
@@ -271,7 +255,6 @@ void forEachBuiltinOf(TypeReader reader, const Type& type, NOESCAPE const Scoped
     if (!type.traitsOfNamed.contains(ObjectTrait::IsBuiltin))
         return;
     const ObjectTable& objects = reader.objects();
-    // Behind the built-ins of modules only a copy for an instance may be one.
     uint32_t end = type.traitsOfNamed.contains(ObjectTrait::IsOfInstance) ? objects.size() : objects.endOf(ObjectKind::ModuleBuiltin);
     forEachDistinctNameAmongObjectsOfType(reader.at(type.objects), end, [&](ObjectID object) {
         return objects.builtinOf(object);
@@ -301,7 +284,6 @@ bool namesBuiltin(TypeReader reader, const Type& type, BuiltinID builtin)
     SetView<ObjectID, ObjectSetID> named = reader.at(type.objects);
     if (named.contains(objects.objectOf(canonical)))
         return true;
-    // Another object has the name only where each module has one of its own, or as a copy for an instance.
     if (builtins.at(canonical).scope != BuiltinScope::Module && !type.traitsOfNamed.contains(ObjectTrait::IsOfInstance))
         return false;
     return named.anyOf([&](ObjectID object) {

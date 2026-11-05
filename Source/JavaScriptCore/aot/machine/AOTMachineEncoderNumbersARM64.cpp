@@ -17,12 +17,9 @@ struct ARM64NumberOperands {
     FPRReg right;
 };
 
-// No instruction here has a field for a constant, and none reads memory.
-// An operation without position that the allocator left to the instruction is made in the scratch register of its bank.
 static Reg takeARM64NumberSource(Encoder& encoder, const Operation* user, unsigned childIndex, Type type, LeafCursor& leaves)
 {
     const Operation* child = user->child(childIndex);
-    // The leaf of a fused Trunc is the Int64, which lies in a register.
     RELEASE_ASSERT(child->type() == type && (!encoder.m_liveness.isFused(child) || child->opcode() == Trunc));
     Bank bank = bankOf(type);
 
@@ -55,7 +52,6 @@ static FPRReg takeARM64NumberOperand(Encoder& encoder, const Step& step, Type ty
 
 static ARM64NumberOperands takeARM64NumberOperands(Encoder& encoder, const Step& step)
 {
-    // There is one scratch register for both.
     RELEASE_ASSERT(step.sources[0].isRegister() || step.sources[1].isRegister());
 
     const Operation* operation = step.operation;
@@ -101,7 +97,6 @@ static void encodeARM64BitwiseCast(Encoder& encoder, const Step& step)
     jit.move(source.gpr(), destination.gpr());
 }
 
-// No result is purified: a number that is read from raw bytes is purified where it is read.
 void Encoder::encodeNumber(const Step& step)
 {
     ASSERT(step.kind == StepKind::Execute);
@@ -152,7 +147,6 @@ void Encoder::encodeNumber(const Step& step)
         return;
     }
 
-    // fmin and fmax give NaN where either operand is NaN and take -0 for less than +0, as Math.min and Math.max do.
     case FMin: {
         ARM64NumberOperands operands = takeARM64NumberOperands(*this, step);
         if (isDouble)

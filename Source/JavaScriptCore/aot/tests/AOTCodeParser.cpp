@@ -25,28 +25,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The text of Code.
-//
-//   text        = "code" unit [ "frameWords=" n ] [ "holdsCallThatPlanHasNotCounted=true" ] [ "callsOfFunctionNeverCollect=true" ] "{" EOL { line } "}" EOL
-//   unit        = f<n> [ ":" CodeRole ]
-//   line        = frame | "constants" ":" EOL | head | record | terminator | fact | poll
-//   frame       = "frame" n { member "=" value } EOL                     the members of InlineFrame. Ascending without a gap. Frame 0, the function of the unit itself, may be left out
-//   head        = b<n> "(" [ parameter { "," parameter } ] ")" { "role=" BlockRole | "subject=" v<n> | "frequency=" BlockFrequency
-//                 | "isInLoop=true" | "isLoopHead=true" | "entry=" n | "handler=" target } ":" EOL     "entry=": once
-//   parameter   = v<n> ":" type "@" Representation [ origin ]
-//   record      = v<n> [ ":" type ] "@" Representation "=" Opcode fields [ flags ] [ "traits=[" trait { "," trait } "]" ] [ origin ] EOL
-//   terminator  = TerminatorKind fields [ flags ] [ "->" name target { "," name target } ] [ origin ] EOL
-//   target      = b<n> "(" [ v<n> { "," v<n> } ] ")" | "-" [ "(" ")" ]     "-": the edge is open
-//   fields      = [ operand { "," operand } ] { name "=" value }          as in IR text, with the engine's fields and operands. `made "ab"`: a text that the walk has made
-//   origin      = "@" position [ ":" frame ] [ "tail" ] [ "constructs" ]
-//   fact        = "fact" [ v<n> ] { member "=" value } EOL                the members of FactUse but `record`. Without v<n>: of the record line in front
-//   poll        = "poll" v<n> "fate=" FateOfPoll EOL                      v<n>: a LoopHint
-//
-// Records are numbered from v0 without a gap and are appended in the order of their numbers, whichever blocks they stand in: that is the order in which the walk made them.
-// So an operand of a record has a smaller number than the record. An argument of an edge may have any.
-// A record line in front of the first head, or behind `constants:`, is a constant, and so are its operands. Blocks stand in the order of their numbers.
-// What stands behind `#` is a comment, the sweep's marks among it: nobody but the sweep can set them.
-
 static constexpr uint32_t absentInCodeText = UINT32_MAX;
 static constexpr auto endOfFrameNumbersInCodeText = static_cast<uint32_t>(defaultLimitValue(LimitID::InlineFramesPerFunction, hostArchitecture()));
 
@@ -60,9 +38,7 @@ struct RecordInCodeText {
     Lexer::State start;
     uint32_t line { 0 };
     uint32_t id { 0 };
-    // Absent: a constant.
     uint32_t block { absentInCodeText };
-    // Absent: its line is read when its turn comes.
     uint32_t parameter { absentInCodeText };
 };
 
@@ -74,7 +50,6 @@ struct ParameterInCodeText {
 };
 
 struct TargetInCodeText {
-    // Absent: the edge is open.
     uint32_t block { absentInCodeText };
     uint32_t firstArgument { 0 };
     uint32_t numberOfArguments { 0 };
@@ -210,7 +185,6 @@ static bool isIDOfBuiltinTableInCodeText(PayloadExternal external)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What PayloadWords<T>::encode() writes for a T { }.
 static void fillWordsOfDefaultValueInCodeText(const PayloadFieldInfo& info, PayloadKind kind, std::span<uint32_t> words)
 {
     switch (kind) {
@@ -467,7 +441,6 @@ void CodeTextParser::skipLine()
 size_t CodeTextParser::offsetOfToken() const
 {
     size_t offset = m_token.text.data() - m_text.data();
-    // The text of a string starts behind its quote.
     return at(TokenKind::String) ? offset - 1 : offset;
 }
 
@@ -703,7 +676,6 @@ StringID CodeTextParser::parseStringInText()
 {
     if (accept(TokenKind::Minus))
         return { };
-    // `made "ab"`: a text that the walk has made. The program need not spell it.
     bool isMade = acceptWord("made"_s);
     if (!at(TokenKind::String)) {
         failExpecting("a string"_s);
@@ -1555,7 +1527,6 @@ void CodeTextParser::build()
     addFatesOfPolls();
 }
 
-// While Code has no block it takes a frame that names the function of the unit for a description of [0], and from its first block on for a call.
 void CodeTextParser::addFramesAndBlocks()
 {
     std::span<const FrameInCodeText> frames = m_frames.span();

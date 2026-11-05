@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Handlers: `try { if (bad) throw new Error("x"); .. } catch { return null }`. A throw under a `catch` that reads nothing of what it catches is a jump behind the head of the handler block, and what only feeds the throw is never built.
-// At a throw: whether an operation that is passed by completes or throws, the handler runs next with the same arguments. At a suspension: nothing that may suspend is passed by.
-// Withheld: every Throw and Rethrow is copied with its handler edge, and one block of Code stands for a handler block.
-
 #include "config.h"
 #include "AOTWalkBranches.h"
 
@@ -20,9 +16,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(boundToOf(Opcode::CatchValue) == BoundTo::Frame && boundToOf(Opcode::CatchException) == BoundTo::Frame);
 
-// What effectsOfCallByOneRowAhead() may have an answer for.
 static constexpr OpcodeSet callsThatMayGoByOneRowInWalkExceptions { Opcode::Call, Opcode::Construct };
-// They take no operand, so the row types them whatever is built.
 static constexpr OpcodeSet constantsTypedAsWrittenInWalkExceptions = primitiveConstants | OpcodeSet { Opcode::BigInt, Opcode::Builtin };
 
 bool readsNothingOfWhatItCatches(const BodyIndex& index, BodyBlock handler)
@@ -53,10 +47,8 @@ bool Walker::handlerInForceIgnoresWhatIsThrown() const
 {
     if (isUnreachable())
         return false;
-    // A jump brings the handler block what its arguments are bound to. Of a text in a builder that is the cell of the builder, or the string of a reader that is being walked: leadHandlerEdgeBehindStringsOfTexts().
     if (hasTextsInStringBuilders())
         return false;
-    // A handler of a mechanism's own, which no block of a body names, is entered where its edge is made.
     if (EdgeID led = m_code.at(m_block).handler; led && !m_code.at(led).isOpen())
         return false;
 
@@ -80,10 +72,8 @@ bool Walker::jumpToHandlerInPlaceOfThrow(const BodyTerminator&)
         return false;
     size_t frameIndex = numberOfFramesUpToHandlerInForce() - 1;
 
-    // The handler goes on with what holds here, as behind any throw. Nobody gets what would have been thrown.
     noteStateAtThrowForHandler();
 
-    // A jump brings a value in the form that it has: what takes code is built on the edge.
     BodyTarget target = m_frames[frameIndex].index->block(m_frames[frameIndex].block).handler();
     Vector<Reference, 4> arguments;
     Vector<TypeID, 4> types;
@@ -103,7 +93,6 @@ bool Walker::jumpToHandlerInPlaceOfThrow(const BodyTerminator&)
         return true;
     BlockID from = m_block;
     m_code.end(from, TerminatorDraft(TerminatorKind::Jump, m_origin), 1);
-    // Like a handler edge it has no state and no names: enterBehindHeadOfHandlerBlock() tells the two apart by the block that the edge leaves.
     OpenEdge& open = m_openEdges[place];
     open.edge = m_code.at(from).terminator.next();
     open.arguments = WTF::move(arguments);
@@ -127,7 +116,6 @@ bool Walker::enterBehindHeadOfHandlerBlock(BlockID inputBlock, std::span<const u
     BodyBlock input = currentBodyIndex().block(inputBlock);
     uint32_t numberOfCatches = numberOfCatchesAtHeadInWalkExceptions(input);
 
-    // Nothing but a throw enters a handler block of Code. It takes what was thrown and goes on to where the jumps lead.
     if (!thrownEdges.isEmpty()) {
         BlockID catching = addBlockFor(inputBlock, input.role(), BlockFrequency::Unlikely);
         closeEdgesInto(catching, inputBlock, thrownEdges.span(), true);
@@ -146,7 +134,6 @@ bool Walker::enterBehindHeadOfHandlerBlock(BlockID inputBlock, std::span<const u
             BlockID from = m_block;
             m_code.end(from, TerminatorDraft(TerminatorKind::Jump, m_origin), 1);
             m_block = { };
-            // addOpenEdge() turns away an edge to a block that is entered.
             uint32_t place = m_firstFreeOpenEdge;
             if (place != noOpenEdge)
                 m_firstFreeOpenEdge = m_openEdges[place].next;
@@ -170,7 +157,6 @@ bool Walker::enterBehindHeadOfHandlerBlock(BlockID inputBlock, std::span<const u
     if (m_hasFailed)
         return true;
 
-    // Nobody reads what the catches take, and on a way that jumps here nothing was thrown.
     Reference nothing = constant(Draft(Opcode::Undefined, m_origin));
     for (uint32_t place = 0; place < numberOfCatches; ++place)
         bind(ValueID(input.firstValue().index() + place), nothing);
@@ -199,7 +185,6 @@ void Walker::walkOperationsOf(BlockID inputBlock)
         return;
     }
 
-    // By operation of the block: how often the throw and the operations found so far name it. A user in the block stands further on, so whatever has no other user is read by nobody once the throw is a jump.
     uint32_t firstValue = block.firstValue().index();
     Vector<uint8_t, 32> mentions;
     mentions.fill(0, end);
@@ -225,7 +210,6 @@ void Walker::walkOperationsOf(BlockID inputBlock)
     if (firstThatOnlyFeedsThrow == end || isUnreachable())
         return;
 
-    // What stands for an operation that is not walked yet may be left from another walk of the block.
     uint32_t firstValueNotWalked = firstValue + firstThatOnlyFeedsThrow;
     auto typeOfInput = [&](ValueID input) -> TypeID {
         TypeID type;
@@ -252,7 +236,6 @@ void Walker::walkOperationsOf(BlockID inputBlock)
     walkStretch(inputBlock, firstThatOnlyFeedsThrow, firstPassedBy);
     if (firstPassedBy == end || isUnreachable())
         return;
-    // Asked where the throw will ask: nothing more is built on the way there.
     if (!handlerInForceIgnoresWhatIsThrown()) {
         walkStretch(inputBlock, firstPassedBy, end);
         return;

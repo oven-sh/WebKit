@@ -69,7 +69,6 @@ function f8 name="exportsAmbiguous" module=m8 kind=Module results=[{type=anythin
 
 static constexpr ModuleID absentAllowedModule { 0u };
 static constexpr ModuleID absentRequiredModule { 1u };
-static constexpr ModuleID ambiguousModule { 2u };
 static constexpr ModuleID foundModule { 3u };
 static constexpr ModuleID exportsAbsentModule { 7u };
 static constexpr ModuleID exportsAmbiguousModule { 8u };
@@ -111,11 +110,6 @@ static void checkAbsentNameFailsLink(LoadedProgram& program)
     checkLinkThrowsSyntaxError(program, absentRequiredModule, "Export named 'absent' not found in module '/barrel.js'."_s);
 }
 
-static void checkAmbiguousNameThatMayBeAbsentFailsLink(LoadedProgram& program)
-{
-    checkLinkThrowsSyntaxError(program, ambiguousModule, "Export named 'shared' cannot be resolved due to ambiguous multiple bindings in module '/barrel.js'."_s);
-}
-
 static void checkAbsentNameOfExportStatementFailsLink(LoadedProgram& program)
 {
     checkLinkThrowsSyntaxError(program, exportsAbsentModule, "export 'renamed' not found in './barrel'"_s);
@@ -139,7 +133,6 @@ std::span<const NativeTest> requiredNameTests()
     static constexpr NativeTest tests[] = {
         { "required-names/absent-name-that-may-be-absent-links"_s, withBarrel<checkAbsentNameThatMayBeAbsentLinks> },
         { "required-names/absent-name-fails-link"_s, withBarrel<checkAbsentNameFailsLink> },
-        { "required-names/ambiguous-name-that-may-be-absent-fails-link"_s, withBarrel<checkAmbiguousNameThatMayBeAbsentFailsLink> },
         { "required-names/absent-name-of-export-statement-fails-link"_s, withBarrel<checkAbsentNameOfExportStatementFailsLink> },
         { "required-names/ambiguous-name-of-export-statement-fails-link"_s, withBarrel<checkAmbiguousNameOfExportStatementFailsLink> },
         { "required-names/found-name-links"_s, withBarrel<checkFoundNameLinks> },

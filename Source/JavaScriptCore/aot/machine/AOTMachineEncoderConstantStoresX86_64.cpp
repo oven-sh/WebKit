@@ -10,15 +10,11 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// A fault record names a single access, and a Store that works in memory is no plain store.
 static bool isPlainStoreOfX86Constant(const Encoder& encoder, const Operation* store)
 {
     return store->child(0)->hasInt() && !store->traps() && !encoder.m_liveness.worksInMemory(store) && !encoder.m_liveness.of(store).has(ValueFlag::TakesOverTrap);
 }
 
-// The two steps are adjacent and a store writes no register, so the base that the second store reads already holds its value at the first.
-//  - Two words of 32 bits that make up an aligned word of 64, where the whole is the sign extension of its low half: one store of an immediate, 8 bytes for 14.
-//  - Two empty words of 64 bits: one store of 16 bytes out of the scratch register for numbers, 9 bytes for 16, and 5 for 16 where the pair in front has just cleared the register.
 bool Encoder::tryEncodePairOfStores(const Step& first, const Step& second)
 {
     ASSERT(first.kind == StepKind::Execute && second.kind == StepKind::Execute);
@@ -60,7 +56,6 @@ bool Encoder::tryEncodePairOfStores(const Step& first, const Step& second)
 
     if (lower || upper)
         return false;
-    // Nothing has been written since, and nobody jumps into the middle of a block.
     if (m_blockWithClearedScratchFPR != m_block || m_offsetBehindClearedScratchFPR != m_jit.debugOffset())
         m_jit.moveZeroToDouble(scratchFPR);
     m_jit.storeVector(scratchFPR, address);

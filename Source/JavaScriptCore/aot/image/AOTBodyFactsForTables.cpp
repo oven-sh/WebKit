@@ -31,7 +31,6 @@ static BitVector findFunctionsWithFramesForTables(const LinkedFunctions& functio
 
         const CompiledCode& code = functions[position];
         add(found, code.unit.function);
-        // Frame 0 is the unit's own.
         for (size_t frame = 1; frame < code.sites.inlineFrames.size(); ++frame)
             add(found, code.body.callees[code.sites.inlineFrames[frame].callee].function);
     });
@@ -39,13 +38,11 @@ static BitVector findFunctionsWithFramesForTables(const LinkedFunctions& functio
     BitVector all(numberOfFunctions);
     for (const BitVector& found : foundByWorker)
         all.merge(found);
-    // A closure shows the name of its function.
     for (const FusedCallEntry& fused : functions.fusedCallEntries())
         add(all, fused.unit.function);
     return all;
 }
 
-// The run time leaves out the call of such a function, so whatever is not known to do nothing counts as doing something.
 static bool onlyReturnsForTables(const Typed::Function& function)
 {
     if (function.body.numberOfBlocks() != 1 || function.isCoroutine())
@@ -58,7 +55,6 @@ static bool onlyReturnsForTables(const Typed::Function& function)
     Typed::BodyTerminator terminator = block.terminator();
     if (terminator.kind() != Typed::TerminatorKind::Return)
         return false;
-    // A parameter of the entry holds what the caller handed over.
     Typed::ValueID returned = terminator.as<Typed::TerminatorKind::Return>().valueOperand();
     return !returned || (block.holds(returned) && !block.indexOfParameter(returned));
 }

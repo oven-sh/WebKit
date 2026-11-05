@@ -72,7 +72,6 @@ static void computeStorageCapacity(StubAssembler& jit, GPRReg wordIndexAndResult
     jit.lshift32(TrustedImm32(1), wordIndexAndResult, wordIndexAndResult);
 }
 
-// InstanceLayout reserves a granule for a size of 0. A slot that names a location in the statics proves that the size is not 0.
 static constexpr uint32_t roundSizeOfStatics(uint32_t sizeOfStatics)
 {
     return (sizeOfStatics + static_cast<uint32_t>(staticsGranuleMask)) & ~static_cast<uint32_t>(staticsGranuleMask);
@@ -154,7 +153,6 @@ static void joinPayloadWords(StubAssembler& jit, GPRReg firstWordSource, GPRReg 
 #endif
 }
 
-// index holds the row of the receiver's shape plus the name.
 static BaseIndex fieldTableEntry(const FieldTableProbe& probe)
 {
     static_assert(sizeof(FieldTableEntry) == 1u << CCallHelpers::TimesFour);
@@ -180,7 +178,6 @@ void loadIndexInFieldTable(StubAssembler& jit, GPRReg object, GPRReg name, GPRRe
 {
     locateFieldTableEntry(jit, { object, name, index, table, false, true }, hasNone);
 }
-// Where the jump is not taken, index holds the form and the operand of the entry.
 static Jump branchUnlessEntryHasName(StubAssembler& jit, const FieldTableProbe& probe)
 {
     static_assert(FieldTableEntry::nameShift == 16);
@@ -198,7 +195,6 @@ static Jump branchUnlessEntryHasName(StubAssembler& jit, const FieldTableProbe& 
 #endif
 }
 
-// operand holds a form and an operand, less the forms in front of `form`. Where the form is `form` it is left with the operand alone, otherwise with that less one form.
 static Jump branchUnlessForm(StubAssembler& jit, GPRReg operand, FieldTableEntry::Form form)
 {
     if (form != FieldTableEntry::Form::InlineValue)
@@ -212,10 +208,8 @@ static void bindArrivalsWithFormAndOperand(StubAssembler& jit, const FieldTableP
         probe.hasFormAndOperand->link(&jit);
 }
 
-// Takes the operand. Leaves the address of the Extension in extension and the offset of the slot in operand.
 static void locateOutOfLineValue(StubAssembler& jit, GPRReg receiver, GPRReg operand, GPRReg extension, JumpList& hasNoStorage)
 {
-    // The operand is the number of the granule and one more.
     static_assert(offsetOfFirstExtensionSlot == extensionGranuleSize && extensionGranuleSize == sizeof(EncodedJSValue) && maxExtensionGranules == 64);
     const OwnedScratchRegister ownedScratch(jit);
     const GPRReg granuleBits = ownedScratch;
@@ -232,7 +226,6 @@ static void locateOutOfLineValue(StubAssembler& jit, GPRReg receiver, GPRReg ope
     jit.lshift32(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(EncodedJSValue)))), operand);
 }
 
-// The row of a shape is complete: it has an entry for every field. So behind a mismatch only the state of the object and the names of Object.prototype are left to ask.
 static void branchUnlessNameIsAbsent(StubAssembler& jit, const FieldTableProbe& probe, JumpList& mayBePresent, JumpList* isNotBelowObjectPrototype = nullptr)
 {
     static_assert(std::endian::native == std::endian::little);
@@ -243,7 +236,6 @@ static void branchUnlessNameIsAbsent(StubAssembler& jit, const FieldTableProbe& 
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesOfObjectPrototypes)), names);
     jit.urshift32(probe.name, TrustedImm32(6), structure);
     jit.load64(BaseIndex(names, structure, CCallHelpers::TimesEight), names);
-    // A shift takes the low six bits of its count.
     jit.urshift64(probe.name, names);
     mayBePresent.append(jit.branchTest64(CCallHelpers::NonZero, names, TrustedImm32(1)));
 }
@@ -253,7 +245,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     using Form = FieldTableEntry::Form;
     const GPRReg operand = probe.index;
     const GPRReg word = probe.table;
-    // The slot lies in the cell. Empty: it holds what only an empty slot of the form holds. Silent: it does not hold the value, and the record of the field says what it does hold.
     JumpList slotIsEmpty;
     JumpList slotIsSilent;
     auto readValue = [&](auto slot, JumpList& isEmpty) {
@@ -281,7 +272,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     } else
         readValue(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight), slotIsEmpty);
 
-    // operand holds the form and the operand of the entry, less this many forms.
     unsigned formsTakenOff = 0;
     auto branchUnlessFormIs = [&](Form form) {
         int32_t difference = static_cast<int32_t>(form) - static_cast<int32_t>(formsTakenOff);
@@ -294,7 +284,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         if (jit.options().useWideReferences)
             otherwise.append(jit.jump());
         else {
-            // Where the field may exist without storage it is undefined then, which is also the answer where it does not exist and nothing above has the name.
             locateOutOfLineValue(jit, probe.receiver, operand, word, slotIsEmpty);
             readValue(BaseIndex(word, operand, CCallHelpers::TimesOne), slotIsEmpty);
         }
@@ -302,7 +291,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
     };
     const bool testsOutOfLineValuesSecond = jit.bindingPolicy().readsTestOutOfLineValuesSecond;
     const bool testsDoublesSecond = jit.bindingPolicy().readsTestDoublesSecond;
-    // Infinity goes the long way with the NaNs, which may be markers.
     auto readDouble = [&](int32_t firstDouble) {
         jit.load64(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight, -firstDouble * static_cast<int32_t>(sizeof(double))), word);
         boxDoubleBits(jit, PureDoubleBits::branchIfNotFinite(jit, word, operand, slotIsSilent));
@@ -316,7 +304,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         fileAnswerOfFieldTableInAccessTable(jit, { probe.receiver, probe.name, probe.keyInAccessTable, probe.placeInAccessTable }, word);
     }
     bindArrivalsWithFormAndOperand(jit, probe);
-    // The doubles are the last operands of the last form.
     auto readDoubleOrGoOn = [&] {
         RELEASE_ASSERT(!formsTakenOff);
         constexpr int32_t firstDouble = static_cast<int32_t>((static_cast<uint32_t>(Form::Field) << FieldTableEntry::formShift) + FieldTableEntry::firstDouble);
@@ -324,8 +311,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         readDouble(firstDouble);
         isNotDouble.link(&jit);
     };
-    // Asked for in their order, with nothing taken off, a form needs its upper bound alone, and the load takes the form off:
-    // one operand of x86-64 holds a base, an index and a distance. Elsewhere the distance costs more than taking the form off.
 #if CPU(X86_64)
     const bool asksInOrder = !testsOutOfLineValuesSecond;
 #else
@@ -374,7 +359,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         readOutOfLineValue();
     RELEASE_ASSERT(formsTakenOff == static_cast<unsigned>(Form::OutOfLineValue));
 
-    // The form Field is the last one. What is left of the entry is one form and its operand.
     static_assert(static_cast<unsigned>(Form::Field) == static_cast<unsigned>(Form::OutOfLineValue) + 1);
     auto first = [](uint32_t firstOperand) { return static_cast<int32_t>((1u << FieldTableEntry::formShift) + firstOperand); };
     Jump isNotInCell = jit.branch32(CCallHelpers::Below, operand, TrustedImm32(first(FieldTableEntry::firstEncodedByte)));
@@ -424,7 +408,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         isNarrowCellInExtension.append(jit.jump());
         goOnIn(isNarrowCellInExtension, getByIdOfNarrowCellInExtension().withCallerFrame(*probe.answersMissingFields));
 
-        // A sum that has outgrown int32 goes the long way with the markers.
         isNotInExtension.link(&jit);
         otherwise.append(jit.branch32(CCallHelpers::Below, operand, TrustedImm32(first(FieldTableEntry::firstInt64))));
         jit.load64(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight, -first(FieldTableEntry::firstInt64) * static_cast<int32_t>(sizeof(int64_t))), word);
@@ -456,7 +439,6 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     const FieldTableProbe probe { object, name, T10, T11, true, true };
     JumpList isAbsent;
 
-    // The entry says that the field holds a 32-bit reference and in which half of which granule of the Extension. One piece of code for every stub that finds such an entry: it finds it again.
     jit.bindEntry(getByIdOfNarrowCellInExtension().withCallerFrame(callerFrame));
     if (jit.options().useWideReferences)
         otherwise.append(jit.jump());
@@ -478,7 +460,6 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
         locateOutOfLineValue(jit, object, operand, word, isAbsent);
         jit.load32(BaseIndex(word, operand, CCallHelpers::TimesOne, sizeof(uint32_t)), word);
 
-        // No closure that is made at its first use lies in an Extension, so zero says one thing here.
         hasWord.link(&jit);
         static_assert(!absentCell32);
         Jump isNoCell = jit.branch32(CCallHelpers::Below, word, TrustedImm32(minCell32));
@@ -492,8 +473,6 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
         jit.returnToCaller();
     }
 
-    // Whether the slot is empty is for the record of the field to say: the word of an empty reference is also that of a closure that is not made yet.
-    // Where some field of the object lies outside its slot, the row of the Structure says where.
     jit.bindEntry(getByIdOfSilentSlot().withCallerFrame(callerFrame));
     auto branchIfSomeFieldLiesOutsideItsSlot = [&] {
         return jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot)));
@@ -516,10 +495,8 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     JumpList isAbsentInObjectWithEveryFieldInItsSlot;
     branchOnFieldPresence(jit, field, T10, isPresent, isAbsentInObjectWithEveryFieldInItsSlot);
 
-    // A closure that is made at its first use. The object and the name say all that making it takes, so nothing is looked up and nothing is filed.
     static_assert(!uncreatedDeferredClosure);
     isPresent.link(&jit);
-    // `class C { n; }`: a number slot that says undefined or null, or a double that is no value.
     auto returnMarkerOf = [&](SlotRepresentation representation) {
         const SlotTraits traits = traitsOf(representation);
         RELEASE_ASSERT(traits.hasUndefined && traits.hasNull);
@@ -555,8 +532,6 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     jit.bindEntry(getByIdOfFieldLeftOut().withCallerFrame(callerFrame));
     JumpList isNotInFrontTable;
 #if CPU(X86_64)
-    // An instance of a class or of a constructor function. The front table says the same of a pair that a read was filed for: a field whose empty slot reads as undefined, for as long as nothing above changes.
-    // The handler of such a cell finds the slot and looks into it to learn what is known here. This is the probe of the front table, so whatever else the cell says goes on from here as it does from there.
     constexpr int32_t bitsAsked = PackedSlot::kindMask | PackedSlot::kindFlag;
     constexpr int32_t bitsOfFieldThatIsUndefinedWhereEmpty = ((static_cast<uint8_t>(Slot::Kind::Field) | PackedSlot::kindFlag) ^ PackedSlot::ownInlineValueBits) & bitsAsked;
     static_assert(Slot::kindFlagOf(Slot::Kind::Field) == Slot::absentIsUndefined);
@@ -574,14 +549,12 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
     jit.returnToCaller();
 
-    // A cell that is only kept for its name: the Slot of the pair does not pack.
     constexpr int32_t bitsOfCellWithoutSlot = (static_cast<uint8_t>(Slot::Kind::Empty) ^ PackedSlot::ownInlineValueBits) & bitsAsked;
     saysSomethingElse.link(&jit);
     isNotInFrontTable.append(jit.branch32(CCallHelpers::Equal, T10, TrustedImm32(bitsOfCellWithoutSlot)));
     jumpToSlotHandler(jit, slotHandlerTable(SlotOperation::Read, origin, SlotForm::PackedSlot), cell, T10);
 #endif
 
-    // What the handler of a Slot has found above such an object it has filed, for as long as nothing above changes.
     isNotInFrontTable.link(&jit);
     JumpList isNotFiled;
     returnWhatStandsAboveFieldLeftOut(jit, { { object, name, T10, T11 }, T12, T13 }, isNotFiled);
@@ -628,7 +601,6 @@ void locatePlaceInAccessTable(StubAssembler& jit, PartOfAccessTable part, const 
     const TrustedImm32 sizeShift(sizeShiftOfPlaceInAccessTable(part));
     jit.load32(Address(r.cell, JSCell::structureIDOffset()), r.key);
 #if CPU(ARM64)
-    // Each part begins at a multiple of its size, so the index is put into the zeros of the address, and what is above its bits drops out.
     const OwnedScratchRegister ownedScratch(jit);
     const GPRReg index = ownedScratch;
     RELEASE_ASSERT(noOverlap(index, r.cell, r.name, r.key, r.place));
@@ -759,7 +731,6 @@ void returnValueByAccessTable(StubAssembler& jit, const AccessTableRead& read, J
     const StubKey call = callGetterOfAnswer(jit.key().callerFrame());
     const StubSignature signature = signatureOfCallGetterOfAnswer(call);
     const GPRReg receiver = signature.operands[0].gpr();
-    // The receiver has left its register by then.
     const GPRReg getterSetter = r.cell == gprOf(StubRegister::T10) ? jit.clobberOperand(0) : jit.reuseScratch(StubRegister::T10);
     RELEASE_ASSERT(noOverlap(receiver, read.word, r.place) && noOverlap(getterSetter, receiver) && signature.operands[1] == Reg(getterSetter));
     findsGetterInOwnStorage.link(&jit);
@@ -815,7 +786,6 @@ void makeAnswerOfGetterInOwnStorage(StubAssembler& jit, GPRReg wordIndexAndAnswe
 
 void makeAnswerInStorageOfHolder(StubAssembler& jit, GPRReg frontCell, GPRReg answer)
 {
-    // The reference and, above it, the index are the low bits of the cell. They go to the top, and come down with the sign of the index behind them.
     constexpr unsigned bitsAboveIndex = 64 - locationShiftInCell - locationBitsInCell;
     static_assert(locationBitsInCell == 8 && AccessTable::wordIndexShiftBehindHolder - AccessTable::answerShift == locationShiftInCell && cell32Shift == CCallHelpers::TimesEight);
     jit.lshift64(frontCell, TrustedImm32(bitsAboveIndex), answer);
@@ -831,7 +801,6 @@ static Jump branchIfStructureHasBitsForAccessTable(StubAssembler& jit, GPRReg ce
     return jit.branchTest32(CCallHelpers::NonZero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(static_cast<int32_t>(bits)));
 }
 
-// AccessTable::keysThatDependOnChains. Writes both registers.
 static void listKeyThatDependsOnChains(StubAssembler& jit, GPRReg place, ptrdiff_t offsetOfKey, GPRReg scratch)
 {
     const Address numberOfKeys(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.accessTable.numberOfKeysThatDependOnChains));
@@ -886,7 +855,6 @@ void fileOwnValueInStorageInAccessTable(StubAssembler& jit, const AccessTableReg
     isDictionary.link(&jit);
 }
 
-// The receiver is a cell. Binds filesNothing behind itself.
 static void fileAnswerAboutChainInAccessTable(StubAssembler& jit, const AccessTableRegisters& r, GPRReg answer, JumpList& filesNothing)
 {
     filesNothing.append(branchIfStructureHasBitsForAccessTable(jit, r.cell, r.key, dictionaryKindsForAccessTable));
@@ -900,7 +868,6 @@ void fileValueAboveInAccessTable(StubAssembler& jit, const AccessTableRegisters&
     const GPRReg holder = r.place;
     JumpList filesNothing;
     filesNothing.append(jit.branchIfNotCell(r.cell));
-    // Making a dictionary flat moves its values.
     filesNothing.append(branchIfStructureHasBitsForAccessTable(jit, holder, r.key, dictionaryKindsForAccessTable));
     fileAnswerAboutChainInAccessTable(jit, r, slot, filesNothing);
 }
@@ -933,7 +900,6 @@ static void fileAnswerAboveFieldLeftOutInAccessTable(StubAssembler& jit, const A
 
 void fileValueAboveFieldLeftOutInAccessTable(StubAssembler& jit, const AccessTableRegisters& r, GPRReg holder, GPRReg answer)
 {
-    // Making a dictionary flat moves its values.
     Jump filesNothing = branchIfStructureHasBitsForAccessTable(jit, holder, r.key, dictionaryKindsForAccessTable);
     fileAnswerAboveFieldLeftOutInAccessTable(jit, r, answer);
     filesNothing.link(&jit);
@@ -1036,7 +1002,6 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
         storeValue(BaseIndex(extension, operand, CCallHelpers::TimesOne), isEmptySlot);
     }
 
-    // There are many of these probes, so what is left stands once, in a stub of its own.
     const StubKey booleanOrDouble = putBooleanOrDoubleField(putModeOf(operation));
     const StubSignature signature = signatureOf(booleanOrDouble);
     RELEASE_ASSERT(signature.operands[0] == Reg(probe.receiver) && signature.operands[1] == Reg(value) && signature.operands[2] == Reg(operand) && probe.name == *signature.immediate);
@@ -1049,15 +1014,12 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
     isRefusedByInt32Slot.link(&jit);
     jit.jumpToStub(refusedValue);
 
-    // Any other field: the stub that is told the record of the field tests the value and stores it, or creates the field.
     const GPRReg offsetOfRecord = jit.reuseScratch(slotNameRegister);
-    // The entry has the name. Its index is found once more: the form and the operand have taken its place.
     isEmptySlot.link(&jit);
     FieldTableProbe again = probe;
     again.nameHasColumn = true;
     again.receiverIsCell = true;
     locateFieldTableEntry(jit, again, otherwise);
-    // Whoever came with the form and the operand has not loaded it.
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldRecordIndices)), scratch);
     jit.load16(BaseIndex(scratch, probe.index, CCallHelpers::TimesTwo), scratch);
     jit.and32(TrustedImm32(FieldRecordIndex::indexMask), scratch);
@@ -1071,7 +1033,6 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
     jit.load16(BaseIndex(scratch, probe.index, CCallHelpers::TimesTwo), scratch);
     otherwise.append(branchUnlessEntryHasName(jit, probe));
     if (!jit.options().useWideReferences) {
-        // A boxed value or a narrow reference in a slot that is held to a type. The type has taken a value of this kind for this entry before: AcceptedKindOfValue::isEntryOfFieldTable. PutKnownField files the kinds.
         static_assert(!traitsOf(SlotRepresentation::Cell32).absentBits && !traitsOf(SlotRepresentation::OptionalCell32).absentBits);
         static_assert(traitsOf(SlotRepresentation::OptionalCell32).undefinedBits == JSValue::ValueUndefined && traitsOf(SlotRepresentation::OptionalCell32).nullBits == JSValue::ValueNull);
         JumpList goesByItsRecord;
@@ -1080,7 +1041,6 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
         static_assert(!static_cast<unsigned>(Form::InlineValue) && static_cast<unsigned>(Form::InlineNarrowCell) == 2);
         auto leaveUnlessStoreIsKnownToBeTaken = [&] {
             goesByItsRecord.append(jit.branchTest32(CCallHelpers::NonZero, Address(probe.receiver, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(operation))));
-            // branchUnlessTypeAccepts(): what a holder of another realm takes is left to the run time.
             if (!jit.options().hasOneInstance) {
                 loadStructure(jit, probe.receiver, kind);
                 goesByItsRecord.append(branchIfNotOfThisRealm(jit, kind));
@@ -1089,7 +1049,6 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
             branchUnlessKindOfValueIsAccepted(jit, value, entryInPlaceOfType, kind, probe.table, goesByItsRecord);
             if (!jit.options().checksProofs)
                 return;
-            // What is remembered is held against what PutKnownField asks of the record.
             const GPRReg record = probe.table;
             const GPRReg type = entryInPlaceOfType;
             constexpr uint32_t flagsOfFieldsStoredOtherwise = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand | fieldIsOutOfLine | fieldIsStoredOnce;
@@ -1106,7 +1065,6 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
             jit.breakpoint();
             agrees.link(&jit);
         };
-        // A store that creates the field leaves first.
         Jump isNotBoxed = jit.branch32(CCallHelpers::Above, operand, TrustedImm32(FieldTableEntry::maxOperand));
         goesByItsRecord.append(jit.branchTest64(CCallHelpers::Zero, boxedSlot));
         leaveUnlessStoreIsKnownToBeTaken();
@@ -1136,7 +1094,6 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
     jit.jumpToStub(putKnownField(putModeOf(operation)));
 }
 
-// Where a store through the table of fields goes on behind the form OutOfLineValue.
 StubSignature signatureOfPutBooleanOrDoubleField(StubKey)
 {
     StubSignature signature;
@@ -1156,7 +1113,6 @@ StubSignature signatureOfPutValueThatSlotRefuses(StubKey)
     return signature;
 }
 
-// The field leaves its slot. What that made of the last object in the same state it makes of this one: see Object::tryRepeat().
 void generatePutValueThatSlotRefuses(StubAssembler& jit)
 {
     static_assert(sizeof(StructureID) == sizeof(uint32_t) && MarkedSpace::sizeStep == 2 * sizeof(Allocator));
@@ -1192,14 +1148,12 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
     cannot.append(branchIfBarrierIsNeeded(jit, object, scratch));
     cannot.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(frameCellState)));
     cannot.append(jit.branchTest8(CCallHelpers::Zero, memberOfExit(OBJECT_OFFSETOF(FieldExit, widthOfSlot))));
-    // A slot may keep undefined and null: RuntimeLayoutTable::slotAdmits() knows.
     cannot.append(jit.branchIfOther(value, scratch));
     jit.load32(memberOfExit(OBJECT_OFFSETOF(FieldExit, offsetOfSlot)), offsetOfSlot);
     auto branchIfSlotIsWide = [&] {
         return jit.branchTest8(CCallHelpers::NonZero, memberOfExit(OBJECT_OFFSETOF(FieldExit, widthOfSlot)), TrustedImm32(sizeof(uint64_t)));
     };
 
-    // The object has the field, or lacks it, as the other object did.
     Jump slotIsWide = branchIfSlotIsWide();
     jit.load32(slot, scratch);
     Jump isLoaded = jit.jump();
@@ -1208,7 +1162,6 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
     isLoaded.link(&jit);
     Jump isInSlot = jit.branch64(CCallHelpers::NotEqual, scratch, memberOfExit(OBJECT_OFFSETOF(FieldExit, absentBits)));
     cannot.append(jit.branchTest8(CCallHelpers::NonZero, memberOfExit(OBJECT_OFFSETOF(FieldExit, wasInSlot))));
-    // A store that creates the field asks what is above the object. Nothing there has changed since the run time asked for a store to an object of this Structure.
     if (mode != PutMode::Define) {
         jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.absenceFilterGenerationForStores)), scratch);
         cannot.append(jit.branch32(CCallHelpers::NotEqual, memberOfExit(OBJECT_OFFSETOF(FieldExit, generationForStores)), scratch));
@@ -1285,7 +1238,6 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
     jit.jumpToStub(putByIdBehindFieldTable(mode));
 }
 
-// A boolean goes into the slot of a boolean and a number into the slot of a double.
 void generatePutBooleanOrDoubleField(StubAssembler& jit)
 {
     static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1) && JSValue::ValueTrue <= UINT8_MAX);
@@ -1307,7 +1259,6 @@ void generatePutBooleanOrDoubleField(StubAssembler& jit)
         jit.and64(TrustedImm32(~1), value, scratch);
         isStoredByItsRecord.append(jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm32(JSValue::ValueFalse)));
     };
-    // The index of the entry is found once more: the form and the operand have taken its place.
     auto goOnWithRecord = [&](StubKey stub) {
         JumpList isNotCompiledObject;
         locateFieldTableEntry(jit, { object, name, operand, scratch, true, true }, isNotCompiledObject);
@@ -1341,7 +1292,6 @@ void generatePutBooleanOrDoubleField(StubAssembler& jit)
     isStoredByItsRecord.append(jit.branch32(CCallHelpers::AboveOrEqual, operand, TrustedImm32(first(FieldTableEntry::endOfDoubles))));
     const BaseIndex doubleSlot(object, operand, CCallHelpers::TimesEight, -first(FieldTableEntry::firstDouble) * static_cast<int32_t>(sizeof(double)));
     isStoredByItsRecord.append(jit.branchIfNotNumber(value));
-    // No number has the bits of the marker, so a slot that is never empty does not hold them.
     jit.load64(doubleSlot, scratch);
     isCreated.append(jit.branch64(CCallHelpers::Equal, scratch, TrustedImm64(static_cast<int64_t>(absentDouble))));
     Jump isNotInt32 = jit.branchIfNotInt32(value);
@@ -1594,7 +1544,6 @@ void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
 void loadStructureIDOfReceiver(StubAssembler& jit, GPRReg receiver, GPRReg structureID, JumpList& hasNoStructure, const ScopedLambda<void()>& probeCell)
 {
     RELEASE_ASSERT(noOverlap(receiver, structureID, instanceGPR));
-    // The part below runs after the generator has returned.
     RELEASE_ASSERT(!Thread::currentSingleton().stack().contains(&hasNoStructure));
     Jump isNotCell = jit.branchIfNotCell(receiver);
     probeCell();
@@ -1664,7 +1613,6 @@ Jump branchIfCellNameDiffers(StubAssembler& jit, GPRReg column, GPRReg cell, GPR
 #endif
 }
 
-// ProgramSymbols::find().
 void loadProgramSymbol(StubAssembler& jit, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated)
 {
     static_assert(sizeof(ProgramSymbol) == 2u << CCallHelpers::TimesEight);
@@ -1702,7 +1650,6 @@ void loadIdentifier(StubAssembler& jit, GPRReg identifierNumber, GPRReg uid, Jum
         ownedScratch.reset();
         isAtomOfImage.append(jit.branchTest32(CCallHelpers::NonZero, uid));
 
-        // The first use of the name.
         std::array<GPRReg, 3> spare;
         size_t numberOfSpares = 0;
         for (StubRegister candidate : { StubRegister::T10, StubRegister::T11, StubRegister::T12, StubRegister::T13, StubRegister::T14 }) {
@@ -1729,7 +1676,6 @@ void loadIdentifier(StubAssembler& jit, GPRReg identifierNumber, GPRReg uid, Jum
         isAtomOfImage.append(jit.branchTest32(CCallHelpers::NonZero, Address(uid, StringImpl::lengthMemoryOffset())));
     }
 
-    // A symbol, a private name or the empty text.
     loadProgramSymbol(jit, identifierNumber, uid, isNotCreated);
     if (jit.options().isPositionIndependent) {
         Jump isSymbol = jit.jump();
@@ -1906,7 +1852,6 @@ void loadValueBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg receiver
     RELEASE_ASSERT(Slot::payloadOf(slot.kind()) == SlotPayload::Holder);
     RELEASE_ASSERT(noOverlap(receiver, storage, wordIndex) && noOverlap(slot.header(), storage));
     if (slot.form() == SlotForm::Slot) {
-        // An own property has no holder: Slot::createInStorage().
         slot.loadHolder(jit, storage);
         jit.moveConditionallyTest64(CCallHelpers::Zero, storage, storage, receiver, storage);
 #if CPU(X86_64)
@@ -1943,7 +1888,6 @@ void returnPresenceBySlot(StubAssembler& jit, PresenceQuestion question, const P
 {
     constexpr auto bitOf = [](Slot::Kind kind) { return 1u << static_cast<unsigned>(kind); };
     const bool asksIn = question == PresenceQuestion::In;
-    // A slot that leaves the answer to an object above says that the receiver itself has no such property.
     const uint32_t presentKinds = kindsWithPresence(SlotPresence::Present) | bitOf(asksIn ? Slot::Kind::FieldOrInherited : Slot::Kind::InheritedField);
     constexpr uint32_t absentKinds = kindsWithPresence(SlotPresence::Absent);
     const GPRReg kind = jit.reuseScratch(StubRegister::T10);
@@ -1984,7 +1928,6 @@ void returnPresenceBySlot(StubAssembler& jit, PresenceQuestion question, const P
         jit.move(TrustedImm32(1), result);
         jit.returnToCaller();
 
-        // The own properties of a global proxy are those of its target, which a slot names as their holder.
         isInHolder.link(&jit);
         isUnknown.append(jit.branch8(CCallHelpers::Equal, Address(receiver, JSCell::typeInfoTypeOffset()), TrustedImm32(GlobalProxyType)));
         if (rememberThatNothingIsOwn)
@@ -2010,15 +1953,6 @@ void loadStaticsBase(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeO
     jit.and32(TrustedImm32(~staticsGranuleMask), roundedSizeOfStatics);
     jit.sub64(instanceGPR, roundedSizeOfStatics, staticsBase);
     jit.sub64(TrustedImm32(static_cast<int32_t>(InstanceLayout::bytesReservedForPrefixAndPollPage)), staticsBase);
-}
-
-void markStaticsCard(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics)
-{
-    RELEASE_ASSERT(noOverlap(staticsBase, roundedSizeOfStatics, offsetInStatics));
-    jit.urshift32(TrustedImm32(ProgramStatics::cardShift), roundedSizeOfStatics);
-    jit.urshift32(TrustedImm32(ProgramStatics::cardShift), offsetInStatics);
-    jit.sub64(roundedSizeOfStatics, offsetInStatics);
-    jit.store8(TrustedImm32(ProgramStatics::cardIsDirty), BaseIndex(staticsBase, offsetInStatics, CCallHelpers::TimesOne));
 }
 
 } } // namespace JSC::AOT

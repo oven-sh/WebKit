@@ -130,17 +130,6 @@ function checkInlineParameterType(type: SchemaEnum, errors: ErrorList): void {
   errors.add(type.location, `inline parameter ${description} ${type.name} has more than ${limit} members`);
 }
 
-// Generated code is told what the operation AND the function that it calls are both declared to do: RuntimeCallEmitter::effectsOfCall() intersects the two. So a heap that
-// the row of the function leaves out is lost, however right the row of the operation is, and a load of that heap may be carried across the call.
-// Whether a function collects or enters the VM is not asked here. In every build a static_assert ties the macro that a body begins with (AOT_OPERATION_BEGIN,
-// AOT_OPERATION_BEGIN_WITHOUT_COLLECTION) to the `collects` of its row.
-//
-// WHAT THIS DOES NOT SEE. It holds table against table, for the operations that name a function by `runtime =`.
-// - Most functions with a narrow row are named by no operation: stubs and emitters call them. What a stub is taken to do is what all that it calls are declared to do
-//   (StubCatalog::Node), so one function there that is declared to call unknown code hides what the rows of the others leave out.
-// - Nobody reads the C++. A row that says less than its body is found here only if the operation says more than the row: where both say as little, both are wrong and this is silent.
-//
-// What an operation is declared to do and its function is not, and why the row of the function is right. A line that no longer applies is an error too.
 const justifiedDifferences: ReadonlyMap<string, string> = new Map([
   ["NewObject writes MemberGuards", "the first allocation of a class may begin a guard; only what ends one has to say so (GuardEmitter::holds())"],
   ["PrivateSet writes MemberGuards", "DefinesProperty speaks for every definer; a private name is no member, and a guard ends with a member"],

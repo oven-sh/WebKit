@@ -65,8 +65,6 @@ constexpr bool isInt64OrMarker(Representation representation)
     return representation == Representation::Int64 || representation == Representation::OptionalInt64;
 }
 
-// What a tail call returns is proven to be inside the result type of its caller, so where the caller returns a cell a boxed result holds one, and a boxed cell is the pointer.
-// A number keeps the same bits when undefined or null may appear in its place.
 constexpr bool haveSameRegisterRepresentation(Representation returned, Representation expected)
 {
     return returned == expected

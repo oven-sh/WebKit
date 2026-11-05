@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT) && CPU(X86_64)
 
-#include "AOTCodeSites.h"
 #include "AllowMacroScratchRegisterUsage.h"
 
 namespace JSC { namespace AOT { namespace Machine {
@@ -24,7 +23,6 @@ static bool loadOrStoreMovesNumber(const Operation* access)
     return type.isFloat();
 }
 
-// functor(address), where the address is a MacroAssembler::Address or a MacroAssembler::BaseIndex.
 template<typename Functor>
 static void withOperandOfLoadOrStore(const AddressForm& form, const Functor& functor)
 {
@@ -122,7 +120,6 @@ static void emitX86StoreOfImmediate(Encoder& encoder, const Operation* store, co
     RELEASE_ASSERT(constant->isConstant());
     int64_t bits = constant->constantBits();
     Width width = store->accessWidth();
-    // A 64-bit store sign-extends its 32-bit immediate. Narrower stores keep the low bits.
     RELEASE_ASSERT(width != Width64 || isRepresentableAs<int32_t>(bits));
     MacroAssembler::TrustedImm32 immediate(static_cast<int32_t>(bits));
     withOperandOfLoadOrStore(form, [&](auto address) {
@@ -190,7 +187,6 @@ static bool tryLoadInstanceWordInOneInstruction(Encoder& encoder, const Operatio
         encoder.m_relocations.loadInstanceDouble(symbol, instanceGPR, destination.fpr());
         return true;
     }
-    // The recorder zero-extends a byte.
     if (load->opcode() == Load8S)
         return false;
     std::optional<InstanceWordWidth> widthOfWord = instanceWordWidthOfLoadOrStore(width);
@@ -227,7 +223,6 @@ static bool tryStoreInstanceWordInOneInstruction(Encoder& encoder, const Operati
     return true;
 }
 
-// For an access that the recorder has no form for.
 static AddressForm moveAddressOfInstanceWordToScratch(Encoder& encoder, CodeSymbol symbol)
 {
     encoder.m_relocations.moveInstanceAddress(symbol, instanceGPR, scratchGPR);
@@ -236,14 +231,12 @@ static AddressForm moveAddressOfInstanceWordToScratch(Encoder& encoder, CodeSymb
     return form;
 }
 
-// Of a MemoryUpdate. Where a symbol names the word, its address goes into the scratch register.
 static MacroAssembler::Address addressOfX86WordInMemory(Encoder& encoder, const AddressForm& form)
 {
     if (form.kind == AddressForm::InstanceSymbol) {
         RELEASE_ASSERT(!form.offset);
         return moveAddressOfInstanceWordToScratch(encoder, form.symbol).address();
     }
-    // The Load and the Store both read the base, so nothing was fused into the address.
     RELEASE_ASSERT(form.kind == AddressForm::BaseOffset);
     return form.address();
 }
@@ -272,7 +265,6 @@ static MacroAssembler::RelationalCondition conditionOfX86WordInMemory(Opcode rel
     return MacroAssembler::BelowOrEqual;
 }
 
-// [word] = [word] `opcode` source, the source being a register or an immediate.
 template<typename Source>
 static void applyX86InstructionToWordInMemory(CCallHelpers& jit, Opcode opcode, Width width, Source source, MacroAssembler::Address word)
 {
@@ -313,7 +305,6 @@ static void applyX86InstructionToWordInMemory(CCallHelpers& jit, Opcode opcode, 
         jit.xor64(source, word);
 }
 
-// 32 bits, for whoever reads the overflow flag or the carry flag behind it: MacroAssembler is free to pick an instruction that leaves the carry flag alone.
 static void addToX86WordInMemory(CCallHelpers& jit, bool adds, Location operand, int64_t constant, MacroAssembler::Address word)
 {
     if (operand.isImmediate()) {
@@ -338,7 +329,6 @@ static MacroAssembler::Address addressOfX86ConstantInInstance(int64_t constant)
     return MacroAssembler::Address(pinned->reg, *pinned->offset);
 }
 
-// isEncodableArithmeticConstant() holds of the constant.
 static void addX86ConstantToScratch(CCallHelpers& jit, bool adds, int64_t constant)
 {
     if (isRepresentableAs<int32_t>(constant)) {
@@ -355,7 +345,6 @@ static void addX86ConstantToScratch(CCallHelpers& jit, bool adds, int64_t consta
         jit.sub64(addressOfX86ConstantInInstance(constant), scratchGPR);
 }
 
-// Of MemoryUpdate::LowHalf, with the word as the Load read it. Stores the sum of the whole words where it passes the test. Answers the jump that is taken where it does not. Writes the scratch register.
 static MacroAssembler::Jump storeX86SumOfWholeWords(CCallHelpers& jit, const MemoryUpdate& update, Location operand, MacroAssembler::Address word)
 {
     RELEASE_ASSERT(word.base != scratchGPR);
@@ -432,12 +421,7 @@ void Encoder::encodeLoad(const Step& step)
         return;
     }
 
-    // Every other address form is an operand of the access itself, so the instruction at this label is the one that faults.
     MacroAssembler::Label instruction = m_jit.label();
-    if (load->readsZeroOffNoCell()) [[unlikely]] {
-        RELEASE_ASSERT(load->opcode() == Load && load->type() == Int32 && form.kind == AddressForm::BaseOffset && destination.isGPR() && !loadOrStoreMayFault(*this, load));
-        m_jit.m_assembler.buffer().putByte(markOfReadOffNoCell);
-    }
     emitX86Load(*this, load, form, destination);
     if (loadOrStoreMayFault(*this, load))
         recordTrappingAccess(load, form, instruction);
@@ -452,7 +436,6 @@ void Encoder::encodeStore(const Step& step)
         return;
     }
 
-    // The value is child 0, so its leaf comes before the leaves of the address.
     LeafCursor leaves(step);
     Location value = leaves.take();
     AddressForm form = resolveAddress(store, leaves);
@@ -477,7 +460,6 @@ void Encoder::encodeStore(const Step& step)
 
 void Encoder::encodeFence()
 {
-    // Other threads see one x86-64 thread's stores in program order.
     m_jit.storeFence();
 }
 
@@ -528,7 +510,6 @@ void Encoder::encodeBranchInMemory(Block* block, const Step& step)
         if (!fallsThroughTo(block, stores))
             jumpTo(stores);
 
-        // The registers of the leaves hold what they held at the Branch: nothing has run since.
         addX86LatePathOfBranchInMemory(*this, [encoder, form, operand, constant, adds, overflows, failsComparison, labelOfFails](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratchOnLatePath(jit);
             if (overflows.isSet())
@@ -549,7 +530,6 @@ void Encoder::encodeBranchInMemory(Block* block, const Step& step)
             return;
         }
 
-        // The low half lies first.
         addToX86WordInMemory(m_jit, adds, operand, constant, word);
         MacroAssembler::Jump leavesLowHalf(m_jit.m_assembler.jCC(X86Assembler::ConditionC));
         if (!fallsThroughTo(block, stores))

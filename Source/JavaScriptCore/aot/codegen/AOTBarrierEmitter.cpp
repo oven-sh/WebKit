@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
-#include "AOTConversionEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTInstance.h"
 #include "AOTStringTable.h"
@@ -34,15 +33,6 @@ void BarrierEmitter::forEachStoredOperand(const Operation& store, const Functor&
         if (retainedInOf(store.opcode, operandIndex) == RetainedIn::Operand)
             functor(operand);
     });
-}
-
-bool BarrierEmitter::hasSingleStoredCell(const Operation& store) const
-{
-    unsigned count = 0;
-    forEachStoredOperand(store, [&](ValueID operand) {
-        count += typeOf(operand).hasCells();
-    });
-    return count == 1;
 }
 
 // The VM marks them whoever holds them. Such a store runs no barrier, so Sweep::lookForCoveredBarrier() must not let it cover an earlier one.
@@ -120,31 +110,16 @@ bool BarrierEmitter::shouldEmitBarrier(const ValueContext& store, bool mayStoreC
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void BarrierEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, Operand stored, const Type& storedType)
+void BarrierEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, const Type& storedType)
 {
     if (!shouldEmitBarrier(store, storedType.hasCells() && !storesOnlyStringsOfVM(store.value()))) {
         if (m_generator.ownerIsYoung(store.id()) && AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))
             stopIfCellIsOldAndNotRemembered(store, owner);
         return;
     }
-    if (!storedType.hasLiteralStrings() || stored.representation != Representation::LiteralString || !hasSingleStoredCell(store.value())) {
-        barrier(store, owner);
-        return;
-    }
-    // A word that names no cell runs no barrier, so Sweep::lookForCoveredBarrier() must not let this store cover an earlier one either.
-    LBasicBlock isCell = newBlock();
-    LBasicBlock continuation = newBlock();
-    Condition storesCell = emitter<ConversionEmitter>().isStringCell(stored.as<LiteralStringWord>());
-    ScopeFork fork = m_out.forkScope();
-    m_out.branch(storesCell.value(), rareEdge(isCell), normalEdge(continuation));
-    m_out.appendToArm(isCell, fork);
-    callBarrierStub(store, writeBarrier(), { owner.value() }, { .isOnRarePath = true });
-    m_out.jump(continuation);
-    m_out.appendToJoin(continuation, fork);
+    barrier(store, owner);
 }
 
-// TestingSwitch::CheckProofsAtRunTime. A false mark is silent: it loses a cell at the rare collection that falls into the window. A cell that a collection has survived is PossiblyBlack, and one that the marker has reached is PossiblyGrey or PossiblyBlack:
-// so the look stops at the first collection that falls between the making and the store. A cell that is remembered is PossiblyGrey: newCellForCompiledCode().
 void BarrierEmitter::stopIfCellIsOldAndNotRemembered(const ValueContext& store, CellPointer owner)
 {
     LBasicBlock stops = newBlock();
@@ -163,7 +138,6 @@ void BarrierEmitter::stopIfCellIsOldAndNotRemembered(const ValueContext& store, 
 
 void BarrierEmitter::callBarrierStub(const OperationContext& context, StubKey key, std::initializer_list<LValue> operands, CallOptions options)
 {
-    // The effects of a store name no heap that a barrier writes, and a call that writes nothing is dropped.
     options.accessesCollectorState = true;
     callStub(context, key, operands, options);
 }
@@ -181,10 +155,8 @@ void BarrierEmitter::barrier(const OperationContext& context, CellPointer owner)
     m_out.appendToJoin(continuation, fork);
 }
 
-// The owner names its new Extension, which is a store like the one that needs the room.
 OwnerBarrier BarrierEmitter::barrierOfExtension(const ValueContext& store) const
 {
-    // The Extension is made here, behind its owner, so it is the younger of the two: Sweep::lookForBirthOfOwner() says why a young owner is no reason to leave its barrier out.
     BarrierDecision decision = decide(store, true);
     return decision == BarrierDecision::Emit || decision == BarrierDecision::OwnerCannotBeMarked ? OwnerBarrier::Emitted : OwnerBarrier::Omitted;
 }
@@ -216,8 +188,6 @@ void BarrierEmitter::elementBarrierAfterStore(const ValueContext& store, CellPoi
     for (Boxed value : stored) {
         LBasicBlock remembers = newBlock();
         LBasicBlock next = newBlock();
-        // A long array that has been marked stays so, and every store into it comes here. The first questions of generateRememberElement() are asked in place, in its order:
-        // where they end it with nothing to remember, nothing is called. Every other answer is left to the stub, which asks again.
         LBasicBlock nothingMarks = newBlock();
         LBasicBlock isLong = newBlock();
         LBasicBlock isStoredCell = newBlock();

@@ -28,7 +28,6 @@ static constexpr bool areBitsOfNaN(uint64_t bits)
 
 static_assert(areBitsOfNaN(undefinedDouble) && areBitsOfNaN(nullDouble) && areBitsOfNaN(absentDouble));
 static_assert(!static_cast<uint32_t>(undefinedInteger) && !static_cast<uint32_t>(nullInteger) && !static_cast<uint32_t>(absentInteger));
-static_assert(absentCell32 < emptyLiteralStringWord && nullCell32 < emptyLiteralStringWord && undefinedCell32 < emptyLiteralStringWord);
 
 TruthinessEmitter::TruthinessEmitter(CodeGenerator& generator)
     : OperationEmitter(generator)
@@ -68,8 +67,6 @@ Condition TruthinessEmitter::isTruthy(const OperationContext& context, Operand o
             return boolean(false);
         });
     }
-    case Representation::LiteralString:
-        return above(operand.as<LiteralStringWord>(), LiteralStringWord(m_out.constInt64(emptyLiteralStringWord)));
     case Representation::JSValue:
         return isTruthyBoxed(context, operand.as<Boxed>(), type);
     case Representation::Void:
@@ -100,7 +97,6 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
         emitter<RuntimeCallEmitter>().callStubAndBranch(context, valueIsTruthy(), operands, { }, targets);
     };
     bool expectsSmallValues = type.primitives & (Primitive::UndefinedOrNull | Primitive::Boolean);
-    // The empty value passes isCell(), so a type that admits it leaves the cell test to the stub.
     bool expectsObjects = type.hasObjects() && !(type.primitives & Primitive::Absent);
     static constexpr OpcodeSet conversionsToBoolean { Opcode::ToBoolean };
     if (!expectsSmallValues && !expectsObjects) {
@@ -108,7 +104,6 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
         branchInStub();
         return;
     }
-    // Whoever else branches on a value goes by the row of ToBoolean too.
     FormAtPlace named = formByLoopAlone(Opcode::ToBoolean, StateOfKnowledge::BranchOnTestedKinds, context.block() && generator().isInLoop(context.block()));
     m_out.noteFormOf(conversionsToBoolean, named.form, StateOfKnowledge::BranchOnTestedKinds, named.place);
     if (named.form != Form::Open) {
@@ -156,7 +151,6 @@ Condition TruthinessEmitter::isTruthyCell(CellPointer cell, const Type& type)
 
 Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxed value, const Type& type)
 {
-    // The empty value passes isCell().
     if (type.primitives & Primitive::Absent && type.hasCells()) {
         Type present = withoutPrimitives(type, Primitive::Absent);
         return selectByBranch<Condition>(isNotEmpty(value), [&] {

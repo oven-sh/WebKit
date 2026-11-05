@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// At a suspension: nothing. What suspends among the replaced operations goes to AOTWalkIteration.cpp and AOTWalkCoroutines.cpp, and nothing that is built here suspends.
-// At a throw: what is built here throws where its own operations throw, under the handler of the block being walked.
-// It is never withheld.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -37,7 +33,6 @@ static_assert(static_cast<uint32_t>(JSMapIterator::Field::Entry) == static_cast<
 
 static constexpr OpcodeSet opcodesOfIterationReplacements { Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::AppendSpread };
 static constexpr OpcodeSet opcodesOfCoroutineReplacements { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope };
-// Code::append() turns away every operation that states a type, so Upcast and NarrowByField go the way of Convert and Check, whatever range their rows have.
 static constexpr OpcodeSet opcodesOfAllReplacements = opcodesOfIterationReplacements | opcodesOfCoroutineReplacements | opcodesThatStateTypes | OpcodeSet { Opcode::HasJSType, Opcode::ArraySpeciesCreate } | OpcodeSet {
     Opcode::CreateIteratorResult, Opcode::StepArrayIterator, Opcode::StepMapIterator, Opcode::StepSetIterator, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::Call, Opcode::DefineMethod, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::PropGet, Opcode::PropSet
 } | callsByValue | constructionsByValue;
@@ -57,7 +52,6 @@ public:
     }
 
     Walker& walker() { return m_walker; }
-    // A build gave nothing, and the walk has noted why. Nothing more is built.
     bool hasStopped() const { return m_hasStopped; }
 
     Draft draft(Opcode opcode) const { return Draft(opcode, m_origin); }
@@ -121,8 +115,6 @@ public:
         build(WTF::move(store));
     }
 
-    // For what the compiler itself has laid down: a claim of the library, a field that the engine and compiled code alone write. It is no guess and has no closed arm.
-    // A row that takes one kind of operand has no form for any other, and Code has no way to state a type. So the type is tested for, and the failing side traps.
     Reference proveOrTrap(Reference value, TypeID promised)
     {
         if (m_hasStopped)
@@ -153,7 +145,6 @@ public:
         return buildAsItStands(WTF::move(narrowed));
     }
 
-    // For a parameter of a join, which is boxed here. A cell is the same word.
     Reference boxed(Reference value)
     {
         if (m_hasStopped)
@@ -189,7 +180,6 @@ private:
         return built;
     }
 
-    // Left unchosen it would get the form of its type. Every use here is a parameter of a join, an operand of a closed operator or an engine field, which hold boxed values.
     Reference constant(Draft&& written)
     {
         if (m_hasStopped)
@@ -206,7 +196,6 @@ private:
     bool m_hasStopped { false };
 };
 
-// A branch, two arms, and the block in which they meet. Once made, the walk stands in the arm that is taken where the condition holds.
 class ArmsOfReplacements {
     WTF_MAKE_NONCOPYABLE(ArmsOfReplacements);
 public:
@@ -232,7 +221,6 @@ public:
             m_builder.walker().continueIn(m_secondArm);
     }
 
-    // The walk goes on behind the arms. Walker::jumpTo() has typed each result by the join of what arrived.
     void endSecondArm(std::initializer_list<Reference> values) { jumpToJoin(values); }
 
     Reference result(uint32_t index = 0) const { return m_builder.hasStopped() ? Reference() : m_results[index]; }
@@ -259,9 +247,6 @@ private:
 
 } // anonymous namespace
 
-// ---- Operations that state a type
-
-// Null: the Convert claims nothing. Its type is what the source declares, which Guesses reads off the body.
 static TypeID typeClaimedByConvertForReplacement(Walker& walker, const DeclaredType& declared, Reference operand)
 {
     if (!declared.has(PositionFlags::IsClaim))
@@ -280,7 +265,6 @@ static TypeID typeClaimedByConvertForReplacement(Walker& walker, const DeclaredT
 
 static void bindOperandInPlaceOfCastForReplacement(Walker& walker, const BodyValue& cast)
 {
-    // What the tests have left of the value is the value, under the type that they prove.
     Reference operand = walker.referenceOf(cast.operand(cast.opcode() == Opcode::NarrowByTest ? OperandIndex::NarrowByTest::left : 0));
     if (cast.opcode() == Opcode::Convert)
         checkInt32Promise(walker, cast.as<Opcode::Convert>().declared(), cast.operand(0), walker.originOf(cast));
@@ -294,8 +278,6 @@ static void bindOperandInPlaceOfCastForReplacement(Walker& walker, const BodyVal
     }
     walker.bind(cast.id(), operand);
 }
-
-// ---- CreateIteratorResult
 
 static void buildIteratorResultAsReplacement(Walker& walker, const BodyValue& creation)
 {
@@ -319,8 +301,6 @@ static void buildIteratorResultAsReplacement(Walker& walker, const BodyValue& cr
         walker.bind(creation.id(), result);
 }
 
-// ---- What the steps of the engine's iterators share
-
 static Reference buildKindTestForReplacement(BuilderOfReplacements& builder, Reference kind, JSC::IterationKind tested)
 {
     return builder.applyOperator(Opcode::StrictEq, kind, builder.integer(static_cast<int64_t>(tested)));
@@ -329,7 +309,6 @@ static Reference buildKindTestForReplacement(BuilderOfReplacements& builder, Ref
 static Reference buildPairForReplacement(BuilderOfReplacements& builder, Reference key, Reference value)
 {
     Draft pair = builder.draft(Opcode::NewArray);
-    // The program may store anything into the pair.
     pair.setContents(TypeTable::anything);
     pair.setElementsOperands(std::array { key, value });
     return builder.build(WTF::move(pair));
@@ -342,12 +321,9 @@ static void bindStepForReplacement(BuilderOfReplacements& builder, const BodyVal
     Reference built = builder.build(WTF::move(results));
     if (builder.hasStopped())
         return;
-    // Whichever arm was walked last, the step as a whole has done what its row declares.
     builder.walker().state().invalidate(declaredBoundOf(step.opcode()));
     builder.walker().bind(step.id(), built);
 }
-
-// ---- StepArrayIterator
 
 static Reference buildLengthOfIteratedObjectForReplacement(BuilderOfReplacements& builder, Reference iterated)
 {
@@ -408,7 +384,6 @@ static void buildStepOfArrayIteratorAsReplacement(Walker& walker, const BodyValu
     Reference iterated = builder.getInternalField(iterator, JSArrayIterator::Field::IteratedObject);
     Reference length = buildLengthOfIteratedObjectForReplacement(builder, iterated);
     ArmsOfReplacements byRange(builder, builder.applyOperator(Opcode::Less, index, length), 2);
-    // The iterator moves on in front of the read. A getter or a trap that the read runs may step this iterator again, and a read that throws has used up its position.
     builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.applyOperator(Opcode::Add, index, builder.integer(1)));
     byRange.endFirstArm({ builder.boolean(false), buildValueAtPositionOfArrayIteratorForReplacement(builder, iterator, iterated, index) });
     builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.integer(JSArrayIterator::doneIndex));
@@ -417,8 +392,6 @@ static void buildStepOfArrayIteratorAsReplacement(Walker& walker, const BodyValu
     byFinished.endSecondArm({ byRange.result(0), byRange.result(1) });
     bindStepForReplacement(builder, step, byFinished.result(0), byFinished.result(1));
 }
-
-// ---- StepMapIterator, StepSetIterator
 
 static BuiltinClassID classOfCollectionSteppedByReplacement(CollectionSteppedByReplacement collection)
 {
@@ -460,7 +433,6 @@ static void putTableOfCollectionIteratorForReplacement(BuilderOfReplacements& bu
     builder.build(WTF::move(store));
 }
 
-// `key` and `value` are one reference for a set, whose keys are its values.
 static Reference buildValueOfCollectionIteratorKindForReplacement(BuilderOfReplacements& builder, Reference kind, Reference key, Reference value)
 {
     ArmsOfReplacements byEntries(builder, buildKindTestForReplacement(builder, kind, JSC::IterationKind::Entries), 1);
@@ -484,7 +456,6 @@ static Reference buildValueOfFoundEntryForReplacement(BuilderOfReplacements& bui
     Reference value = kindOfCollection == CollectionSteppedByReplacement::Map ? builder.resultAt(found, static_cast<uint32_t>(MapNextResult::Value)) : key;
     builder.putInternalField(iterator, JSSetIterator::Field::Entry, builder.applyOperator(Opcode::Add, entry, builder.integer(1)));
 
-    // The entry counts in the table that the collection has now: the step follows a table that was replaced to its successor.
     Draft current = builder.draft(Opcode::CollectionTable);
     current.setCollectionOperand(collection);
     putTableOfCollectionIteratorForReplacement(builder, iterator, builder.build(WTF::move(current)));
@@ -518,9 +489,6 @@ static void buildStepOfCollectionIteratorAsReplacement(Walker& walker, const Bod
     bindStepForReplacement(builder, step, byFinished.result(0), byFinished.result(1));
 }
 
-// ---- EvaluateModule
-
-// A start asks the status of its module itself. The body of a module without a state is called where the one walk that comes to it stands. Either takes nothing but `this`, which is undefined.
 static void buildCallOfModuleStepAsReplacement(BuilderOfReplacements& builder, const ModuleStep& step, BuiltinID calledBuiltin)
 {
     Walker& walker = builder.walker();
@@ -566,14 +534,12 @@ static void buildModuleStepsAsReplacement(BuilderOfReplacements& builder, std::s
             buildStatusOperationOfModuleAsReplacement(builder, Opcode::BeginModuleEvaluation, step.moduleThatBegins);
             continue;
         }
-        // The loader may hold the status in a record, and the run time takes it from there.
         RELEASE_ASSERT(step.moduleThatHasRun);
         buildStatusOperationOfModuleAsReplacement(builder, Opcode::BeginModuleEvaluation, step.moduleThatHasRun);
         buildStatusOperationOfModuleAsReplacement(builder, Opcode::FinishModuleEvaluation, step.moduleThatHasRun);
     }
 }
 
-// The request to the loader names the path that the module has now, which Image leaves alone while ModuleEvaluationPlan::isPathNamedBySites() says so.
 static void buildEvaluationOfModuleAsReplacement(Walker& walker, const BodyValue& evaluation)
 {
     auto written = evaluation.as<Opcode::EvaluateModule>();
@@ -594,8 +560,6 @@ static void buildEvaluationOfModuleAsReplacement(Walker& walker, const BodyValue
     builder.build(WTF::move(request));
 }
 
-// ---- A symbol that is made once
-
 PropertyKeyID keyOfSymbolMadeOnce(Walker& walker, const BodyValue& value)
 {
     if (value.opcode() != Opcode::Call)
@@ -606,7 +570,6 @@ PropertyKeyID keyOfSymbolMadeOnce(Walker& walker, const BodyValue& value)
     }));
     if (!key)
         return { };
-    // Link has typed what the call answers by the scan's record of it. Whoever counted the loops again would count the edges that are written: `do { .. } while (false)`.
     const Vector<SummaryCall>& calls = walker.facts().summaries().at(walker.currentFunction()).calls;
     auto record = std::ranges::find_if(calls, [&](const SummaryCall& call) {
         return call.site == value.id() && call.callee == SummaryCall::Callee::Builtin;
@@ -625,11 +588,6 @@ static bool replaceCallThatMakesSymbolOnce(Walker& walker, const BodyValue& call
     return true;
 }
 
-// ---- A member that the record of its class creates
-
-// The run time makes such a member with the class, or when it is first looked for: a closure of the function over the one environment that the class object captures (ClassTable::createMethodClosure()).
-// So the definition goes only where the closure as written is that closure and nobody else has seen it. Nothing names the closure then, and the sweep drops it.
-// A definition that stays defines the member once more, in its place among the keys. The plan leaves no member to a record where TypedOperations is withheld from the build.
 static bool leaveMemberToClassRecord(Walker& walker, const BodyValue& value)
 {
     auto definition = value.as<Opcode::DefineMethod>();
@@ -649,7 +607,6 @@ static bool leaveMemberToClassRecord(Walker& walker, const BodyValue& value)
         return false;
     auto member = body.value(closure).as<Opcode::NewClosure>();
 
-    // The members of a class are numbered as they are written, so the number of one is its place in the list.
     LayoutID classLayout = definition.layout();
     std::span<const ClassMember> members = walker.facts().membersOf(classLayout);
     const Vector<MemberCreation>& creations = walker.plan().slots().classCreation(classLayout).members;
@@ -674,12 +631,6 @@ static bool leaveMemberToClassRecord(Walker& walker, const BodyValue& value)
     return capturesOfClassObject.size() == 1 && inFrontOfCasts(capturesOfClassObject[0]) == inFrontOfCasts(capturesOfMember[0]);
 }
 
-// ---- The accessors of a literal
-
-// `{ get a() { .. }, get b() { .. }, .. }`: a closure, a definition, a closure, a definition. One operation lays them all: the run time is entered once, and finds the layout once.
-// Nothing but closures is made between the first and the last, so nobody can tell that the first is laid where the last is written.
-// WHO GOES WITH WHOM IS READ OFF THE BODY AS IT IS WRITTEN, so every copy of it and both arms of a guess say the same: the definitions on one object, under written names, that stand side by side but for
-// the closures, within one row of numbers of values. Such a row holds no more of them than the masks of the operation have bits.
 static constexpr uint32_t valuesInRowOfAccessors = 32;
 
 static bool layAccessorsOfLiteralTogether(Walker& walker, const BodyValue& value)
@@ -698,13 +649,11 @@ static bool layAccessorsOfLiteralTogether(Walker& walker, const BodyValue& value
         return false;
 
     uint32_t row = value.id().index() / valuesInRowOfAccessors;
-    // The nearest definition of the group on that side. Null: there is none.
     auto neighbor = [&](ValueID from, int32_t step) -> ValueID {
         for (uint32_t index = from.index() + step; index >= block.firstValue().index() && index < block.endOfValues().index() && index / valuesInRowOfAccessors == row; index += step) {
             BodyValue other = body.value(ValueID(index));
             if (laysAccessorThere(other))
                 return other.id();
-            // What spells a key that is written does nothing that anybody sees.
             bool spellsWrittenKey = other.opcode() == Opcode::String || (other.opcode() == Opcode::ToPropertyKey && nameWrittenAsKey(walker, other.id()));
             if (other.opcode() != Opcode::NewClosure && !spellsWrittenKey)
                 break;
@@ -741,8 +690,6 @@ static bool layAccessorsOfLiteralTogether(Walker& walker, const BodyValue& value
     return true;
 }
 
-// ---- An access under a key that is proven
-
 static Opcode accessByNameInPlaceOf(Opcode written)
 {
     switch (written) {
@@ -761,16 +708,50 @@ static Opcode accessByNameInPlaceOf(Opcode written)
     }
 }
 
-PropertyKeyID keyThatAccessGoesBy(const Walker& walker, const BodyValue& access)
+static bool isSymbolInReplacements(const Program& program, PropertyKeyID key)
+{
+    PropertyKeyKind kind = program.at(key).kind;
+    return kind == PropertyKeyKind::WellKnownSymbol || kind == PropertyKeyKind::RegisteredSymbol || kind == PropertyKeyKind::CreatedSymbol;
+}
+
+static bool walkHasDerivedKeyOfAccess(const Walker& walker, const BodyValue& access, PropertyKeyID expected)
+{
+    if (!isSymbolInReplacements(walker.program(), expected))
+        return true;
+    TypeArena& types = walker.types();
+    TypeID symbol = types.withPrimitives(types.symbolLiteral(expected), Primitive::Absent);
+    ValueID operand = access.propertyOperand();
+    if (Reference built = walker.referenceOf(operand))
+        return types.isSubset(walker.typeOf(built), symbol);
+
+    const BodyIndex& index = walker.currentBodyIndex();
+    while (!index.isParameter(operand) && index.opcodeOf(operand) == Opcode::CheckInitialized)
+        operand = index.value(operand).operand(0);
+    if (index.isParameter(operand))
+        return false;
+    BodyValue definition = index.value(operand);
+    TypeID read;
+    if (definition.opcode() == Opcode::GetModuleVariable)
+        read = walker.positions().variable(TypeLevel::Proven, definition.as<Opcode::GetModuleVariable>().variable());
+    else if (definition.opcode() == Opcode::GetEnvironmentField)
+        read = walker.positions().environmentField(TypeLevel::Proven, definition.as<Opcode::GetEnvironmentField>().layout(), definition.as<Opcode::GetEnvironmentField>().field());
+    return read && types.isSubset(read, symbol);
+}
+
+PropertyKeyID keyThatAccessGoesBy(const Walker& walker, const BodyValue& access, PropertyKeyID* chosenAndNotDerived)
 {
     if (!accessesUnderComputedKeys.contains(access.opcode()))
         return { };
-    // It stands for a call of the built-in, which a stack trace shows.
     if (access.opcode() == Opcode::ElemDefine && access.as<Opcode::ElemDefine>().calledBuiltin())
         return { };
     if (walker.has(Mechanism::TypedOperations)) {
-        if (PropertyKeyID proven = walker.facts().linked().keyAt(walker.currentFunction(), access.id()))
-            return proven;
+        if (PropertyKeyID chosen = walker.facts().linked().keyAt(walker.currentFunction(), access.id())) {
+            if (walkHasDerivedKeyOfAccess(walker, access, chosen))
+                return chosen;
+            if (chosenAndNotDerived)
+                *chosenAndNotDerived = chosen;
+            return { };
+        }
         return keyOfKnownTextThatAccessGoesBy(walker, access);
     }
     if (walker.has(Mechanism::DirectCalls))
@@ -782,11 +763,9 @@ PropertyKeyID keyThatAccessGoesBy(const Walker& walker, const BodyValue& access)
     const Program& program = walker.program();
     PropertyKeyID key = walker.code().at(built.id()).key();
     bool isSymbol = program.at(key).kind == PropertyKeyKind::CreatedSymbol;
-    // Whether the accesses under a symbol of the library are accesses by name Link alone says: LinkFlow::keyOf().
     return isSymbol && program.types.hasStableNumber(key) && !isSymbolOfLibrary(program, key) ? key : PropertyKeyID();
 }
 
-// The fields of the two operations stand in one order, with the key in the place of the operand.
 AccessUnderProvenKey::AccessUnderProvenKey(const BodyValue& written, PropertyKeyID key)
     : m_entryOfKey(key.bits() + 1)
     , m_unit(written.unit())
@@ -817,11 +796,14 @@ AccessUnderProvenKey::AccessUnderProvenKey(const BodyValue& written, PropertyKey
     RELEASE_ASSERT(made.sizeInWords() == place && made.key() == key && made.objectOperand() == written.objectOperand() && made.position() == written.position());
 }
 
-BodyValue Walker::accessAsWalked(const BodyValue& written)
+BodyValue Walker::accessAsWalked(const BodyValue& written, PropertyKeyID* chosenAndNotDerived)
 {
-    PropertyKeyID key = keyThatAccessGoesBy(*this, written);
-    if (!key)
-        return written;
+    PropertyKeyID key = keyThatAccessGoesBy(*this, written, chosenAndNotDerived);
+    return key ? accessByName(written, key) : written;
+}
+
+BodyValue Walker::accessByName(const BodyValue& written, PropertyKeyID key)
+{
     auto& known = m_frames.last().accessesUnderProvenKeys;
     for (const std::unique_ptr<AccessUnderProvenKey>& access : known) {
         if (access->id() == written.id() && access->key() == key)
@@ -831,9 +813,81 @@ BodyValue Walker::accessAsWalked(const BodyValue& written)
     return known.last()->value();
 }
 
-// ---- A name of the global object
+Walker::KeyOfAccess Walker::compareKeyOfAccessWithSymbol(const BodyValue& written, PropertyKeyID chosen)
+{
+    bool comesAgain = m_accessWhoseKeyIsTested == written.id() && m_depthOfCopiesAroundThatAccess == depthOfCopies();
+    if (comesAgain && !m_opensGuesses)
+        return KeyOfAccess::IsAnyValue;
 
-// Image numbers the name of each binding and Plan keeps its sets by the key, so the key is a name of the program's table. An index and a number in print may be elements, and `__proto__` is an accessor of Object.prototype.
+    Reference key = referenceOf(written.propertyOperand());
+    if (!key)
+        return KeyOfAccess::IsAnyValue;
+    TypeID symbol = m_types.symbolLiteral(chosen);
+    if (!comesAgain && m_opensGuesses && has(Mechanism::Guesses) && key.isValue() && m_types.overlap(typeOf(key), symbol)) {
+        const BodyIndex& index = currentBodyIndex();
+        BlockID inputBlock = index.blockOf(written.id());
+        uint32_t place = written.id().index() - index.block(inputBlock).firstValue().index();
+        ValueID accessBefore = std::exchange(m_accessWhoseKeyIsTested, written.id());
+        size_t depthBefore = std::exchange(m_depthOfCopiesAroundThatAccess, depthOfCopies());
+        openGuess(*this, key, symbol, inputBlock, place, place + 1);
+        m_accessWhoseKeyIsTested = accessBefore;
+        m_depthOfCopiesAroundThatAccess = depthBefore;
+        return KeyOfAccess::ArmsHaveWalkedAccess;
+    }
+    stopUnlessValueIsOf(key, symbol, ProofSource::OtherOperation);
+    return KeyOfAccess::IsSymbol;
+}
+
+void Walker::stopUnlessValueIsOf(Reference value, TypeID tested, ProofSource source)
+{
+    Origin origin = m_origin;
+    origin.isTailCall = false;
+    Representation form = representationOf(value);
+    if (form != Representation::JSValue && form != Representation::Cell && form != Representation::Cell32)
+        value = convert(value, Representation::JSValue, origin);
+    if (value && !isUnreachable())
+        buildCheckOfProof(value, tested, TypeTable::anything, source, origin);
+}
+
+void Walker::holdStoresToSymbolsOfPlaces(const BodyValue& store)
+{
+    auto hold = [&](ValueID stored, TypeID held, ProofSource source) {
+        if (!held || holdsOnlyPrimitives(held) || !(m_types.at(held).primitives & Primitive::LiteralSymbol) || isUnreachable())
+            return;
+        Reference value = referenceOf(stored);
+        if (!value || m_types.isSubset(typeOf(value), held))
+            return;
+        stopUnlessValueIsOf(value, held, source);
+    };
+    switch (store.opcode()) {
+    case Opcode::PutModuleVariable: {
+        auto written = store.as<Opcode::PutModuleVariable>();
+        hold(written.valueOperand(), m_positionsOfBuild->variable(TypeLevel::Proven, written.variable()), ProofSource::Variable);
+        return;
+    }
+    case Opcode::PutEnvironmentField: {
+        auto written = store.as<Opcode::PutEnvironmentField>();
+        hold(written.valueOperand(), m_positionsOfBuild->environmentField(TypeLevel::Proven, written.layout(), written.field()), ProofSource::Capture);
+        return;
+    }
+    case Opcode::NewObject: {
+        auto written = store.as<Opcode::NewObject>();
+        if (!written.layout() || program().at(written.layout()).kind != LayoutKind::Environment)
+            return;
+        std::span<const FieldIndex> fields = written.fields();
+        std::span<const ValueID> values = written.valuesOperands();
+        for (size_t index = 0; index < std::min(fields.size(), values.size()); ++index) {
+            if (Reference listed = referenceOf(values[index]); listed && listed.isConstant() && typeOf(listed) == TypeID(TypeTable::undefined))
+                continue;
+            hold(values[index], m_positionsOfBuild->environmentField(TypeLevel::Proven, written.layout(), fields[index]), ProofSource::Capture);
+        }
+        return;
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
 static bool mayHaveGlobalBindingForReplacement(const Program& program, const BodyValue& access)
 {
     PropertyKeyID key = access.key();
@@ -845,7 +899,6 @@ static bool mayHaveGlobalBindingForReplacement(const Program& program, const Bod
     case PropertyKeyKind::RegisteredSymbol:
     case PropertyKeyKind::CreatedSymbol:
         break;
-    // The library's `$name`. Written as a free name it keeps for good what it has found, and so does the record: isFixed() of AOTGlobalBindingOperations.cpp. Read off the object it is asked for each time.
     case PropertyKeyKind::EnginePrivateName:
         return access.opcode() == Opcode::PropGet && access.isFreeName();
     case PropertyKeyKind::PrivateName:
@@ -856,13 +909,10 @@ static bool mayHaveGlobalBindingForReplacement(const Program& program, const Bod
     return !mayBeElementKey(nameClass) && nameClass != NameClass::Proto;
 }
 
-// A free name, and a name that is read off or stored on the global object. The first access files in a record of the instance what it has found: the value under a watch, or the place where it lies.
-// Whoever stores, defines or deletes the name, or declares it in a script, empties the record, whether the build has seen that code or not. So nothing has to be known of the name, and no lock is leaned on.
 static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
 {
     const Program& program = walker.program();
     PropertyKeyID key = access.key();
-    // The record of the receiver is at hand: nearly none is the global object.
     Reference object = walker.referenceOf(access.objectOperand());
     TypeID typeOfObject = object ? walker.typeOf(object) : TypeID();
     if (!typeOfObject)
@@ -888,7 +938,6 @@ static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
         return true;
     }
 
-    // A store through a binding replaces the value without a report, so the reads of such a name look at no constant. Plan lists the names that a body stores on the global object as it is written, and no other store is bound.
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID holder = index.valueBehindCasts(access.objectOperand());
     if (index.isParameter(holder) || index.opcodeOf(holder) != Opcode::Builtin || !walker.plan().globalName(key).isStoredThroughBinding)
@@ -905,10 +954,6 @@ static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
     return true;
 }
 
-// ---- HasJSType
-
-// `$isJSArray(value)`. Where the engine's type of a cell is how an instance of one built-in class is told (BuiltinInstanceTest::JSTypeEquals), the question is the test of that class.
-// It is built as that test: the code is the same, and behind it the value is of the class, so nothing that takes such an instance tests again.
 static bool replaceTestOfCellTypeByTestOfClass(Walker& walker, const BodyValue& test)
 {
     auto operation = test.as<Opcode::HasJSType>();
@@ -941,28 +986,27 @@ static bool replaceTestOfCellTypeByTestOfClass(Walker& walker, const BodyValue& 
     return true;
 }
 
-// ---- ArraySpeciesCreate
-
-// In a copy of `filter` or `map` whose call reaches the row of lists alone: what the species of such a list makes is `new Array(length)`. It is built as that, so the result is a list that this code alone has.
 static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& created)
 {
     auto operation = created.as<Opcode::ArraySpeciesCreate>();
     Reference length = walker.referenceOf(operation.lengthOperand());
-    if (!walker.takeWordThatCopyMakesNewList(walker.referenceOf(operation.arrayOperand())) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::TypedOperations))
+    Reference source = walker.referenceOf(operation.arrayOperand());
+    if (!walker.takeWordThatCopyMakesNewList(source) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::TypedOperations))
         return false;
     if (!length || !walker.types().at(walker.typeOf(length)).isInteger())
         return false;
     Draft list(Opcode::NewArrayLike, walker.originOf(created));
     walker.chooseConservativeFields(list);
     list.setLengthOperand(length);
+    list.setSourceOperand(source);
+    if (Reference room = operation.roomOperand() ? walker.referenceOf(operation.roomOperand()) : Reference(); room && walker.types().at(walker.typeOf(room)).isInteger())
+        list.setRoomOperand(room);
     list.setArrayStorage(ArrayStorage::Other);
     list.inputValueGiven = created.id();
     walker.bind(created.id(), walker.build(WTF::move(list)));
     walker.count(StatisticID::NewListsInPlaceOfSpecies);
     return true;
 }
-
-// ---- The link of the chain
 
 constinit const OpcodeSet opcodesThatReplaceOperationTakes = opcodesOfAllReplacements;
 
@@ -978,16 +1022,13 @@ bool replaceOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
     if (opcode == Opcode::ArraySpeciesCreate)
         return replaceSpeciesOfListByNewList(walker, value);
 
-    // Any other definition is copied.
     if (opcode == Opcode::DefineMethod)
         return leaveMemberToClassRecord(walker, value);
     if (opcode == Opcode::DefineGetter || opcode == Opcode::DefineSetter)
         return layAccessorsOfLiteralTogether(walker, value) || defineAccessorUnderNameThatKeyIs(walker, value);
 
-    // Each of the three goes by the built-in that is called, which the type of the callee names.
     if (opcode == Opcode::Call && walker.nothingIsProvenOf(walker.referenceOf(value.calleeOperand())))
         return false;
-    // Every other call has its form in Code.
     if (opcode == Opcode::Call && (replaceCallDoneInPlace(walker, value) || replaceCallThatMakesSymbolOnce(walker, value)))
         return true;
     if (callsByValue.contains(opcode) || constructionsByValue.contains(opcode))
@@ -997,7 +1038,6 @@ bool replaceOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
         bindOperandInPlaceOfCastForReplacement(walker, value);
         return true;
     }
-    // ModuleEvaluationPlan::isPathNamedBySites() goes by the same question.
     if (opcode == Opcode::RecordRequire)
         return walker.plan().moduleEvaluation().recordsNothingThatIsSeen(value.as<Opcode::RecordRequire>().module());
 
@@ -1019,7 +1059,6 @@ bool replaceOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
         buildEvaluationOfModuleAsReplacement(walker, value);
     }
 
-    // Walker::copy() has no form for any of these either.
     if (!isReplaced)
         walker.fail("an operation that has no form in Code was not replaced"_s);
     return true;

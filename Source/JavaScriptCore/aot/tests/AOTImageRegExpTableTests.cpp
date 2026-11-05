@@ -50,7 +50,6 @@ struct Pattern {
     String text;
     RegExpFlags flags { };
     bool fitsCodeLimits { true };
-    // Of a predicted text: at some call it is one of all the texts that arrive there.
     bool isEvaluated { false };
 };
 
@@ -65,7 +64,6 @@ struct TextOfRegExpImage {
     Vector<uint8_t> characters;
 };
 
-// Sketched: each request has the form that its Pattern asks for, and offsets where no code lies.
 enum class CodeOfRegExpImage : bool { Sketched, Compiled };
 
 class RegExpImage {
@@ -186,7 +184,6 @@ TextOfRegExpImage RegExpImage::encodeNamedText()
         namedStrings.set(string.index());
     });
 
-    // Only the image writer makes headers of strings, and this image is put together by hand. So its strings are of the kind that has none.
     TextOfRegExpImage text;
     text.strings = Vector<ImageStringWord>(FillWith { }, program->strings.size(), ImageStringWord { 0 });
     for (size_t index : namedStrings) {
@@ -292,7 +289,6 @@ static const ImageRegExp& checkFound(RegExpImage& regExps, const String& lookup,
     const RegExpSummary& summary = regExps.summaryOf(request);
     AOT_TEST_CHECK(record->pattern == requested.pattern.index() && record->flags() == requested.flags);
     AOT_TEST_CHECK(record->form() == regExps.compiled.results[request].form);
-    // Its reader lies outside aot/: without it RegExp::crashIfLiteralIsInterpreted() lets a RegExp of the image reach the interpreter.
     AOT_TEST_CHECK(record->isLiteral == (requested.origin == RegExpRequestOrigin::Literal));
     AOT_TEST_CHECK(record->numSubpatterns == summary.numSubpatterns && record->minimumSize == summary.minimumSize);
     AOT_TEST_CHECK(record->specificPattern() == summary.specificPattern);
@@ -404,7 +400,6 @@ static void testCandidates()
     checkFoundLiteral(regExps, "l+m"_s);
     for (const String& pattern : { String("c+0"_s), String("c+(2)"_s), String("abc"_s) })
         checkFound(regExps, pattern, { }, regExps.indexOfRequest(pattern, { }));
-    // Facts name more texts than the program creates, so one that gets no code gets no record either.
     AOT_TEST_CHECK(!findRegExpRecord(regExps.vm(), "c+1"_s, { }) && !findRegExpRecord(regExps.vm(), nested, { }));
     AOT_TEST_CHECK(regExps.sections.maxOutputSize == 4);
 }
@@ -423,7 +418,6 @@ static void testEvaluatedTexts()
     checkFoundLiteral(regExps, "l+m"_s);
     for (const String& pattern : { String("e+0"_s), String("e+1"_s), String("abc"_s) })
         checkFound(regExps, pattern, { }, regExps.indexOfRequest(pattern, { }));
-    // With the record the run time creates the object without parsing the text. A record without metadata would save it nothing.
     AOT_TEST_CHECK(findRegExpRecord(regExps.vm(), "e+1"_s, { })->form() == Form::NoCode);
     AOT_TEST_CHECK(!findRegExpRecord(regExps.vm(), "c+1"_s, { }) && !findRegExpRecord(regExps.vm(), nested, { }));
 }
@@ -614,11 +608,9 @@ static void testPatternsForWhole8BitSubjects()
     AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects("^[^a-z]+$"_s, Yarr::Flags::UnicodeSets));
     AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects("^[\\q{ab}c]+$"_s, Yarr::Flags::UnicodeSets));
 
-    // A wide subject may match in its narrow part.
     for (ASCIILiteral pattern : { "[a-z]+"_s, "^[a-z]+"_s, "[a-z]+$"_s, "^a+$|b+"_s })
         AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects(pattern));
     AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects("^[a-z]+$"_s, Yarr::Flags::Multiline));
-    // A wide character may be consumed. U+0178 is \xff where case is ignored.
     for (ASCIILiteral pattern : { "^[^a-z]+$"_s, "^.+$"_s, "^\\s+$"_s, "^\\S+$"_s, "^\\W+$"_s, "^\\D+$"_s, "^[a-z\\u0100]+$"_s, "^a\\u4e2d+$"_s, "^(?i:k)+$"_s, "^(?=(.*))\\1$"_s })
         AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects(pattern));
     AOT_TEST_CHECK(!matchesOnlyWhole8BitSubjects("^[a-z]+$"_s, Yarr::Flags::IgnoreCase));
@@ -733,7 +725,6 @@ static void testWideSubjectsOfLiteralWith8BitCodeAlone()
         AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"abc-12")) == whole);
         for (const String& subject : { wideString(u"abc-12中"), wideString(u"中abc-12"), wideString(u"abc中-12"), wideString(u"abc-"), wideString(u"abc-12 ") })
             AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, subject).isEmpty());
-        // Where lastIndex of a global or sticky RegExp has the search start.
         for (const String& subject : { String("abc-12"_s), wideString(u"abc-12"), wideString(u"中bc-12") })
             AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, subject, 1).isEmpty());
     }
@@ -748,7 +739,6 @@ static void testWideSubjectsOfLiteralWith8BitCodeAlone()
     regExp = RegExp::createFromImage(vm, letters, Yarr::Flags::Unicode, recordOfLetters);
     AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"abc")) == (Vector<int> { 0, 3 }));
     AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"ab\U0001f600")).isEmpty());
-    // The search starts inside the pair.
     AOT_TEST_CHECK(matchWithCodeOfImage(regExps, regExp, wideString(u"\U0001f600ab"), 1).isEmpty());
 }
 

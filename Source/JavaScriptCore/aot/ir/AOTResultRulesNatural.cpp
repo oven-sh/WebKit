@@ -35,9 +35,7 @@ struct NaturalOperand {
     bool isInteger() const { return !isNever() && hasOnlyPrimitives(Primitive::Integer); }
     bool isInt32() const { return isInteger() && integers.isSubsetOf(Range::int32()); }
     bool isBoolean() const { return !isNever() && hasOnlyPrimitives(Primitive::Boolean); }
-    // undefined becomes NaN, null 0, false 0 and true 1.
     bool becomesNumberWithoutFraction() const { return !isNever() && hasOnlyPrimitives(Primitive::NumberLike & ~Primitive::FractionalNumber); }
-    // As Type::isNumberWithinBounds() and Type::boundsOfNumbers().
     bool isNumberWithinBounds() const
     {
         bool holdsFractionsWithoutBounds = primitives & Primitive::FractionalNumber && boundsOfFractions.isEmpty();
@@ -54,18 +52,32 @@ constexpr OpcodeSet fractionFreeOperators {
 
 constexpr OpcodeSet shiftOperators { Opcode::LShift, Opcode::RShift, Opcode::URShift };
 
+struct NaturalPrimitives {
+    uint16_t primitives { 0 };
+    Range integers;
+};
+
 } // anonymous namespace
+
+static NaturalPrimitives primitivesOf(const NaturalType& natural)
+{
+    NaturalPrimitives written;
+    written.primitives = fromWire(natural.primitives);
+    if (written.primitives & Primitive::Integer)
+        written.integers = Range::full();
+    if (natural.integers) {
+        written.primitives |= Primitive::Integer;
+        written.integers = written.integers.unionWith({ natural.integers->minimum, natural.integers->maximum });
+    }
+    return written;
+}
 
 static TypeParts primitivePartsOf(const NaturalType& natural)
 {
+    NaturalPrimitives written = primitivesOf(natural);
     TypeParts parts;
-    parts.primitives = fromWire(natural.primitives);
-    if (parts.primitives & Primitive::Integer)
-        parts.integers = Range::full();
-    if (natural.integers) {
-        parts.primitives |= Primitive::Integer;
-        parts.integers = parts.integers.unionWith({ natural.integers->minimum, natural.integers->maximum });
-    }
+    parts.primitives = written.primitives;
+    parts.integers = written.integers;
     return parts;
 }
 
@@ -76,11 +88,12 @@ static bool describesPrimitivesAlone(const NaturalType& natural)
 
 TypeID naturalTypeFrom(TypeArena& types, const NaturalType& natural)
 {
-    TypeParts parts = primitivePartsOf(natural);
     if (describesPrimitivesAlone(natural)) {
-        if (std::optional<TypeID> type = tryMakeTypeOfPrimitives(parts.primitives, parts.integers))
+        NaturalPrimitives written = primitivesOf(natural);
+        if (std::optional<TypeID> type = tryMakeTypeOfPrimitives(written.primitives, written.integers))
             return *type;
     }
+    TypeParts parts = primitivePartsOf(natural);
     parts.anyObject = natural.isObject;
     parts.anyFunction = natural.isObject || natural.isFunction;
     if (parts.anyFunction)
@@ -91,7 +104,6 @@ TypeID naturalTypeFrom(TypeArena& types, const NaturalType& natural)
     return types.intern(parts);
 }
 
-// There is no arena to keep a record in. A range that no id holds by itself goes out to the next landmarks, which an id does hold.
 static TypeID widestTypeOfPrimitivesIn(const NaturalType& natural)
 {
     if (!describesPrimitivesAlone(natural))
@@ -134,12 +146,10 @@ struct WidestPrimitiveResultRules {
 
 } // anonymous namespace
 
-// A natural rule reads none of the operation's own words, so an operation that has the opcode and nothing else stands for every one.
 static TypeID widestPrimitiveResultByRuleOf(Opcode opcode)
 {
     if (resultRuleOf(opcode) != ResultRule::Natural)
         return { };
-    // An access that tests its own guess is typed as its generic operation, and the opcode does not say whether it does.
     std::optional<Opcode> generic = genericOperationOf(opcode);
     if (generic && resultRuleOf(*generic) == ResultRule::Unknown)
         return { };
@@ -147,7 +157,6 @@ static TypeID widestPrimitiveResultByRuleOf(Opcode opcode)
     return applyResultRule(rules, Draft(opcode), 0, ResultSide::Unproven);
 }
 
-// Facts' scan asks for each value, on every thread.
 TypeID widestPrimitiveResultOf(Opcode opcode)
 {
     static std::array<TypeID, numberOfEnumerators<Opcode>> results;
@@ -265,7 +274,6 @@ static TypeID integerProductType(TypeArena& types, Range a, Range b)
     return exactIntegerType(types, minimum, maximum, mayBeNegativeZero ? NegativeZero::Possible : NegativeZero::Impossible);
 }
 
-// Empty where zero is the only divisor.
 static Range integerRemaindersOf(Range dividends, Range divisors)
 {
     int64_t largestDivisor = std::max(std::abs(divisors.minimum), std::abs(divisors.maximum));
@@ -295,7 +303,6 @@ static int64_t floorOfIntegerQuotient(int64_t dividend, int64_t divisor)
     return isRoundedUp ? quotient - 1 : quotient;
 }
 
-// While one operand stays and no divisor is zero, a quotient only rises or only falls with the other operand. So the corners bound it.
 Range quotientsRoundedEitherWay(Range dividends, Range divisors)
 {
     RELEASE_ASSERT(!dividends.isEmpty() && !divisors.isEmpty() && !divisors.contains(0));
@@ -307,7 +314,6 @@ Range quotientsRoundedEitherWay(Range dividends, Range divisors)
     return quotients;
 }
 
-// What a zero divides is an infinity or NaN, which converts to 0. No other quotient lies further from zero than its dividend.
 static Range quotientsConvertedToInt32WhereDivisorMayBeZero(Range dividends, Range divisors)
 {
     int64_t magnitude = std::max(std::abs(dividends.minimum), std::abs(dividends.maximum));
@@ -473,7 +479,6 @@ static TypeID integerResultOf(TypeArena& types, Opcode opcode, NaturalOperands o
     return { };
 }
 
-// Rounding to the nearest double carries no result past an integer that a double holds exactly.
 static TypeID numbersWithinExactBounds(TypeArena& types, CheckedInt64 minimum, CheckedInt64 maximum)
 {
     if (minimum.hasOverflowed() || maximum.hasOverflowed())
@@ -490,7 +495,6 @@ static TypeID quotientOfIntegersWithinBounds(TypeArena& types, const NaturalOper
         return { };
     Range dividends = dividend.integers;
     Range divisors = divisor.integers;
-    // What a zero divides is an infinity or NaN, and 0 divided by a negative number is -0.
     if (divisors.contains(0) || (dividends.contains(0) && divisors.maximum < 0))
         return { };
     if (!dividends.isSubsetOf(Range::exact()) || !divisors.isSubsetOf(Range::exact()))
@@ -498,7 +502,6 @@ static TypeID quotientOfIntegersWithinBounds(TypeArena& types, const NaturalOper
     return types.numbersWithin(quotientsRoundedEitherWay(dividends, divisors));
 }
 
-// No operand is NaN, an infinity or -0. Of such numbers neither a sum nor a difference is -0: x - x is 0.
 static TypeID numberResultWithinBounds(TypeArena& types, Opcode opcode, NaturalOperands operands)
 {
     Range a = operands[0].boundsOfNumbers();
@@ -518,7 +521,6 @@ static TypeID numberResultWithinBounds(TypeArena& types, Opcode opcode, NaturalO
     case Opcode::Decrement:
         return numbersWithinExactBounds(types, CheckedInt64(a.minimum) - 1, CheckedInt64(a.maximum) - 1);
     case Opcode::Negate:
-        // -0 lies within no bounds.
         if (a.contains(0))
             return { };
         return types.numbersWithin({ -a.maximum, -a.minimum });
@@ -532,7 +534,6 @@ static TypeID numberResultWithinBounds(TypeArena& types, Opcode opcode, NaturalO
 
 static TypeID numberResultOf(TypeArena& types, Opcode opcode, NaturalOperands operands)
 {
-    // false is 0 and true is 1.
     if ((opcode == Opcode::ToNumber || opcode == Opcode::ToNumeric) && operands[0].isBoolean())
         return naturalTypeOfIntegers(types, { operands[0].primitives & Primitive::False ? 0 : 1, operands[0].primitives & Primitive::True ? 1 : 0 });
     if (shiftOperators.contains(opcode))
@@ -552,7 +553,6 @@ static TypeID numberResultOf(TypeArena& types, Opcode opcode, NaturalOperands op
     return { };
 }
 
-// Holds only where the operator gives a number whatever these operands turn out to be, as URShift and ToNumber always do.
 TypeID numberResultOf(TypeArena& types, Opcode opcode, OperandTypes operandTypes)
 {
     Vector<NaturalOperand, 2> operands = naturalOperandsOf(types, operandTypes, numberOfNamedOperandsOf(opcode));
@@ -561,9 +561,6 @@ TypeID numberResultOf(TypeArena& types, Opcode opcode, OperandTypes operandTypes
     return numberResultOf(types, opcode, operands.span());
 }
 
-// At 2 ** 53 a step of one is lost to rounding: 2 ** 53 + 1 lies halfway between two doubles and goes to the even one, 2 ** 53 again. So an integer that a double holds exactly is one still after a step of one.
-// The bound is 2 ** 53 and not the largest safe integer, 2 ** 53 - 1: a step up from there is exact and leaves that range.
-// Integers are added in registers, where 2 ** 53 + 1 does not round. So the code of a step makes a double of a sum that may pass 2 ** 53: fitsIntegersForm() of walk/AOTOperatorForms.cpp.
 TypeID typeAfterStepOfOne(TypeArena& types, Opcode opcode, std::span<const TypeID> operandTypes)
 {
     auto stepIn = [](TypeID type) -> int64_t {
@@ -610,7 +607,6 @@ TypeID naturalTypeOfOperands(const TypingContext& context, Opcode opcode, Natura
         if (TypeID stepped = typeAfterStepOfOne(context.types, opcode, operandTypes.types))
             return stepped;
     }
-    // A number and a big integer do not mix: the operator throws. So what may be either is a number wherever an operator beside a number answers.
     for (size_t index = 0; operands.size() == 2 && index < 2; ++index) {
         NaturalOperand& other = operands[1 - index];
         if (classOf(operands[index]) == OperandClass::NumberLike && classOf(other) == OperandClass::Any && other.hasOnlyPrimitives(Primitive::NumberLike | Primitive::BigInt))
@@ -629,7 +625,6 @@ TypeID naturalTypeOfOperands(const TypingContext& context, Opcode opcode, Natura
     return refined;
 }
 
-// The rule of an operator reads its operands' types and none of its own words, so an operation that has the opcode and nothing else stands for every one.
 TypeID resultTypeOfOperator(const TypingContext& context, Opcode opcode, std::span<const TypeID> operandTypes)
 {
     RELEASE_ASSERT(PayloadWord::form(opcode) && resultRuleOf(opcode) == ResultRule::Natural);
@@ -642,7 +637,6 @@ static consteval TypeID typeOfIntegerElements(Range elements)
     return *tryMakeTypeOfPrimitives(Primitive::Integer, elements);
 }
 
-// A type has one id. TypeTable::int16 and TypeTable::uint16 are records, which is right only while neither range fits in an id by itself.
 static_assert(!tryMakeTypeOfPrimitives(Primitive::Integer, { INT16_MIN, INT16_MAX }));
 static_assert(!tryMakeTypeOfPrimitives(Primitive::Integer, { 0, UINT16_MAX }));
 

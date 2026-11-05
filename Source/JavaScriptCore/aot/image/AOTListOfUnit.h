@@ -25,7 +25,6 @@ namespace JSC { namespace AOT {
 
 class BlocksOfUnits;
 
-// True for an element that has lists of its own. forEachListOfUnitIn(element, visitor) visits them.
 template<typename T>
 inline constexpr bool holdsListsOfUnit = false;
 
@@ -45,9 +44,6 @@ protected:
     T* inlineRoom() const { return nullptr; }
 };
 
-// A list in what is left of a unit: CompiledCode. While the unit is described it grows as a Vector does, in the list itself up to its inline capacity and then on the heap.
-// BlocksOfUnits::keep() lays what is on the heap in a block. From then on the list owns no memory: its elements may be written and it may get shorter, and one that outgrows its room goes back to the heap.
-// It points at nothing inside itself, so it moves as bytes wherever its elements lie, and so does an element that holds one.
 template<typename T, size_t inlineCapacity = 0>
 class ListOfUnit : private InlineRoomOfListOfUnit<T, inlineCapacity> {
     using InlineRoom = InlineRoomOfListOfUnit<T, inlineCapacity>;
@@ -63,7 +59,6 @@ public:
     ListOfUnit(ListOfUnit&& other) { takeFrom(other); }
     template<size_t otherInlineCapacity>
     ListOfUnit(const Vector<T, otherInlineCapacity>& other) { append(other.span()); }
-    // The buffer of a Vector comes from the same heap, so it changes hands where Vector::releaseBuffer() takes the type.
     template<size_t otherInlineCapacity>
     ListOfUnit(Vector<T, otherInlineCapacity>&& other)
     {
@@ -162,7 +157,6 @@ public:
             ++m_size;
             return;
         }
-        // The value may be an element of the list.
         append(T(value));
     }
     void append(T&& value)
@@ -175,7 +169,6 @@ public:
             new (NotNull, end()) T(WTF::move(value));
         ++m_size;
     }
-    // The elements are none of the list's own.
     template<typename U, size_t extent>
     void append(std::span<U, extent> elements)
     {
@@ -200,7 +193,6 @@ public:
         destroy(begin() + newSize, end());
         m_size = static_cast<uint32_t>(newSize);
     }
-    // As in a Vector, what needs no constructor is left unwritten.
     void grow(size_t newSize)
     {
         RELEASE_ASSERT(newSize >= m_size);
@@ -321,7 +313,6 @@ private:
 
     bool needsRoomInBlock() const { return liesOnHeap() && m_size > inlineCapacity; }
 
-    // The room is as long as the list.
     void moveToBlock(T* room)
     {
         ASSERT(needsRoomInBlock());
@@ -331,7 +322,6 @@ private:
         m_capacity = m_size | liesInBlockBit;
     }
 
-    // The blocks free it from now on.
     T* leaveMemoryToBlocks()
     {
         ASSERT(liesOnHeap());
@@ -362,12 +352,10 @@ void forEachListOfUnitIn(ListOfUnit<T, inlineCapacity>& list, auto& visit)
     visit(list);
 }
 
-// The memory of what is left of many units, one behind the other. Each thread of Compile has its own, and whoever has the records has the blocks.
 class BlocksOfUnits {
     WTF_MAKE_NONCOPYABLE(BlocksOfUnits);
 public:
     static constexpr size_t sizeOfBlock = MB;
-    // What is larger gets a block to itself, as long as it is.
     static constexpr size_t mostBytesBesideOthers = sizeOfBlock / 4;
 
     BlocksOfUnits() = default;
@@ -382,10 +370,6 @@ public:
     }
     ~BlocksOfUnits() { freeBlocks(); }
 
-    // The record goes into a block, and end to end behind it whatever lies on the heap of the lists that forEachListOfUnitIn(record, ..) visits and of the lists of their elements.
-    // So what is left of a unit is one stretch of memory, and the record that is answered owns none. Whoever has the answer destroys it while the blocks live.
-    // Only a list that would take a block to itself, and that fills the memory it has, is not copied: that memory becomes the block.
-    // By the thread that has filled the lists: it frees what they had.
     template<typename Record>
     Record* keep(Record&& record)
     {
@@ -467,7 +451,6 @@ private:
         return std::exchange(m_next, m_next + size);
     }
 
-    // From the heap of the lists, whose memory may become a block.
     uint8_t* allocateBlock(size_t size)
     {
         uint8_t* block = static_cast<uint8_t*>(WTF::VectorBufferMalloc::malloc(size));

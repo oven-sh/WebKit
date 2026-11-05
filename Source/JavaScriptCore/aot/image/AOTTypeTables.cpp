@@ -32,17 +32,11 @@ namespace JSC { namespace AOT {
 static_assert(!offsetof(LayoutSetData, members));
 static_assert(!(RuntimeCellTest::offsetOfOperand() % sizeof(uint32_t)) && !(sizeof(RuntimeType) % sizeof(uint32_t)) && !(sizeof(RuntimeCellTest) % sizeof(uint32_t)));
 
-// ---- What the tables name
-
 using TypesSeenByTypeTables = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
-// TypeArena::testablePartOf() leaves the primitives as they are, so the record lists exactly these.
-static void nameWhatTypeRecordNames(const Typed::Program& program, const Typed::LiteralStringTable& literalStrings, const Typed::Type& type, NamesOfTables& names)
+static void nameWhatTypeRecordNames(const Typed::Program& program, const Typed::Type& type, NamesOfTables& names)
 {
-    // The run time finds a listed string that has a word by the program's table of literal strings, and any other by its text.
     program.types.at(type.stringLiterals).forEach([&](StringID string) {
-        if (literalStrings.indexOf(string))
-            return;
         names.strings.set(string.index());
         names.stringsWithOtherUsesThanShowing.set(string.index());
     });
@@ -56,7 +50,6 @@ void nameWhatTypeTablesName(const TableInputs& inputs, const GatheredMentions& m
     const Typed::Program& program = inputs.program;
     TypesSeenByTypeTables seen;
     Vector<TypeID> unread;
-    // ImageNumbersBuilder::numberTypes() gives a type of a thread's arena no record, and the code that mentions it stops the build.
     auto add = [&](TypeID type) {
         if (type && !Typed::liesInThread(type) && seen.add(type.bits()).isNewEntry)
             unread.append(type);
@@ -68,7 +61,6 @@ void nameWhatTypeTablesName(const TableInputs& inputs, const GatheredMentions& m
     for (TypeID type : names.types)
         add(type);
 
-    // The groups name side by side, so this one does not see which types the others name: the types of slots.
     const Typed::SlotPlan& slots = inputs.plan.slots();
     for (unsigned index = 0; index < slots.numberOfLayouts(); ++index) {
         for (const Typed::PlacedSlot& slot : slots.layout(LayoutID(index)).slots) {
@@ -77,60 +69,46 @@ void nameWhatTypeTablesName(const TableInputs& inputs, const GatheredMentions& m
         }
     }
 
-    // Every image has this record: it stands for the type of a position that has none.
     names.types.append(Typed::TypeTable::anything);
 
-    // ImageNumbersBuilder::numberTypes() may give a record to what a class is written to hold.
     while (!unread.isEmpty()) {
         Typed::Type type = program.at(unread.takeLast());
-        nameWhatTypeRecordNames(program, inputs.plan.literalStrings(), type, names);
+        nameWhatTypeRecordNames(program, type, names);
         for (const Typed::ClassPart& part : Typed::classPartsOf(program, type)) {
             for (TypeID contents : part.writtenContents)
                 add(contents);
         }
     }
 
-    // LayoutSetData::name.
     names.strings.set(program.strings.emptyString().index());
 }
-
-// ---- Records
 
 namespace {
 
 struct LayoutSetTestedByTypeRecords {
     ShapeTestData members { 0, 0, noBitSet };
-    // Empty where every shape that is given out between the first and the last passes.
     Vector<uint64_t> bits;
     PagedBitSet::Entries entries { PagedBitSet::Entries::None };
     uint32_t row { 0 };
 };
 
 struct OperandOfShapeTestInTypeRecords {
-    // In TypeRecordsBeingEncoded::words.
     uint32_t word;
-    // In TypeRecordsBeingEncoded::sets.
     uint32_t set;
 };
 
 struct TypeRecordsBeingEncoded {
     static constexpr uint32_t noShapePasses = UINT32_MAX;
 
-    // The records, one behind the other.
     Vector<uint32_t> words;
-    // [place in ImageNumbers::typesNeededAtRunTime()], and one more for the end.
     Vector<uint32_t> firstWord;
-    // Ascending by word.
     Vector<OperandOfShapeTestInTypeRecords> operandsOfShapeTests;
-    // In the order in which the records first ask for them, which is an order of content.
     Vector<LayoutSetTestedByTypeRecords> sets;
-    // By LayoutSetID::bits(): one arena makes all of them, so equal sets have equal ids.
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setOfLayouts;
 };
 
 } // anonymous namespace
 
-// A record of a type has linked words and is shared with equal bytes, which are a record too. Nothing else in the part is shared: it might equal a record by chance.
 template<typename T>
 static uint32_t setUnsharedTableOfTypeTables(TablePart& part, ProgramTableIndex index, std::span<const T> items)
 {
@@ -175,7 +153,6 @@ static uint32_t findOrAddLayoutSetTestedByTypeRecords(const TableEncoder& encode
     }).iterator->value;
 }
 
-// No answer: no cell passes the test in any run of this image.
 static std::optional<RuntimeCellTest> encodeCellTestOfTypeRecord(const TableEncoder& encoder, const Typed::TypeArena& arena, TypeRecordsBeingEncoded& records, const Typed::CellTest& test)
 {
     switch (test.kind) {
@@ -189,7 +166,6 @@ static std::optional<RuntimeCellTest> encodeCellTestOfTypeRecord(const TableEnco
         uint32_t set = findOrAddLayoutSetTestedByTypeRecords(encoder, arena, records, test.layouts);
         if (set == TypeRecordsBeingEncoded::noShapePasses)
             return std::nullopt;
-        // The number of the set stands for the offset of its row until the rows have places.
         return RuntimeCellTest::shapeIn(set);
     }
     case CellTestKind::InheritsClassInfo:
@@ -224,7 +200,6 @@ static std::optional<RuntimeCellTest> encodeCellTestOfTypeRecord(const TableEnco
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The tests that a stub decides by itself come first. RuntimeType::testsOfOneFunctionEach() stand behind all others.
 static constexpr uint8_t rankOfCellTestInTypeRecord(CellTestKind kind)
 {
     switch (kind) {
@@ -276,12 +251,8 @@ static void appendTypeRecord(const TableEncoder& encoder, Typed::TypeArena& aren
             if (std::optional<RuntimeCellTest> encoded = encodeCellTestOfTypeRecord(encoder, arena, records, test))
                 cellTests.append(*encoded);
         }
-        for (StringID string : plan.stringLiterals) {
-            if (!encoder.plan.literalStrings().indexOf(string))
-                header.flags |= RuntimeType::hasLiteralStringWithoutWord;
-            // A string without a word that is not named stops the build here: the run time finds it by its text.
-            literalStrings.append(encoder.numberOfLiteralString(string));
-        }
+        for (StringID string : plan.stringLiterals)
+            literalStrings.append(encoder.stringNumber(string));
         integers = plan.integers;
         break;
     }
@@ -324,7 +295,6 @@ static void appendTypeRecord(const TableEncoder& encoder, Typed::TypeArena& aren
     RELEASE_ASSERT((words.size() - sizeBefore) * sizeof(uint32_t) == RuntimeType::sizeInBytes(header.numberOfCellTests, header.numberOfLiteralStrings, header.flags));
 }
 
-// The words of the table shapeSetBits. They become the start of the pool of constants, where compiled code finds a set at the alignment of a constant of its size.
 static Vector<uint64_t> placeShapeSetsOfTypeRecords(TableEncoder& encoder, TypeRecordsBeingEncoded& records)
 {
     Vector<uint32_t> setsWithBits;
@@ -351,7 +321,6 @@ static Vector<uint64_t> placeShapeSetsOfTypeRecords(TableEncoder& encoder, TypeR
             firstWord = words.size();
             words.appendVector(set.bits);
         }
-        // Sets that read equal words in different ways share the words.
         set.members.bitSetOffset = PagedBitSet::locationOf(firstWord, set.entries);
     }
     uint64_t numberOfBits = static_cast<uint64_t>(words.size()) * PagedBitSet::bitsPerPage;
@@ -373,7 +342,6 @@ static void writeLayoutSetsOfTypeRecords(TableEncoder& encoder, TypeRecordsBeing
         return sortKeyOf(records.sets[set].members);
     });
 
-    // The run time reads the members alone.
     uint32_t name = encoder.shownNameNumber(StringID());
     Vector<LayoutSetData> table;
     for (uint32_t set : setsByKey) {
@@ -387,7 +355,6 @@ static void writeLayoutSetsOfTypeRecords(TableEncoder& encoder, TypeRecordsBeing
         records.words[operand.word] = offsetOfTable + records.sets[operand.set].row * static_cast<uint32_t>(sizeof(LayoutSetData));
 }
 
-// [place in ImageNumbers::typesNeededAtRunTime()]: the offset in the part. 0 where the record could not be written, which has stopped the build.
 static Vector<uint32_t> writeTypeRecords(TablePart& part, const TypeRecordsBeingEncoded& records)
 {
     size_t numberOfTypes = records.firstWord.size() - 1;
@@ -412,7 +379,6 @@ static Vector<uint32_t> writeTypeRecords(TablePart& part, const TypeRecordsBeing
     return offsets;
 }
 
-// ProgramTables::offsetOfType(). The index of a type is its place: the id of a type follows the order in which threads arrived.
 static void writeIndexOfTypeRecords(TablePart& part, std::span<const uint32_t> offsets)
 {
     uint32_t numberOfTypes = static_cast<uint32_t>(offsets.size());
@@ -439,7 +405,6 @@ static void writeIndexOfTypeRecords(TablePart& part, std::span<const uint32_t> o
 
 void encodeTypeTables(TableEncoder& encoder, FirstTableParts& firstParts)
 {
-    // Nobody adds to a frozen table: what the arena makes stays in the arena, and the table is only read.
     RELEASE_ASSERT(encoder.program.types.isFrozen());
     Typed::TypeArena arena(const_cast<Typed::TypeTable&>(encoder.program.types), Typed::ArenaKeeps::UntilReset);
 
@@ -457,7 +422,6 @@ void encodeTypeTables(TableEncoder& encoder, FirstTableParts& firstParts)
     firstParts.typeOffsets = writeTypeRecords(encoder.part, records);
     writeIndexOfTypeRecords(encoder.part, firstParts.typeOffsets.span());
 
-    // Only ReportMismatch hands a site to the run time, and the walk never builds one.
     encoder.part.setTable(ProgramTableIndex::typeSites, Vector<TypeSiteData>());
 }
 

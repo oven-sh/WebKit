@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations: the typed form of an operation wherever the proven types of its operands allow it. One look, yes or no: it puts in no test and no arm.
-// At a suspension and at a throw it does nothing of its own: what it has noted in the state ends by the declared effects of what is built, as for any operation.
-// Withheld: nothing here is asked, and every operation takes its closed form.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -24,22 +20,16 @@ static constexpr OpcodeSet elementFamiliesOfWalkTyped = opcodesOfFamily(Operatio
     | opcodesOfFamily(OperationFamily::ForIn);
 static constexpr OpcodeSet operatorFamiliesOfWalkTyped = opcodesOfFamily(OperationFamily::Operator) | opcodesOfFamily(OperationFamily::Cast) | opcodesOfFamily(OperationFamily::Guard);
 
-// Each builds where the inputs are what the walk has built, and only answers where they are types.
-TypedForm typedFormOfAccess(Walker&, const BodyValue&, const TypesOfInputs&); // AOTWalkTypedAccesses.cpp
-bool buildTypedElementAccess(Walker&, const BodyValue&, const InputsOfTypedOperation&); // AOTWalkTypedElements.cpp
-bool buildTypedOperator(Walker&, const BodyValue&, const InputsOfTypedOperation&); // AOTWalkTypedOperators.cpp
-// It only builds: what it makes of a join is no more typed than what buildTypedOperator() makes of it.
+TypedForm typedFormOfAccess(Walker&, const BodyValue&, const TypesOfInputs&);
+bool buildTypedElementAccess(Walker&, const BodyValue&, const InputsOfTypedOperation&);
+bool buildTypedOperator(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 
-// ---- A receiver that may be undefined or null
-
-// Off undefined and null each of them throws, in front of all else that it does. A written type that holds references holds the two as well, so what a guard or a test has proven of a receiver often does.
 static constexpr OpcodeSet accessesThatThrowOffNullishInWalkTyped { Opcode::PropGet, Opcode::PropSet, Opcode::ElemGet, Opcode::ElemSet };
 static constexpr OpcodeSet accessesByNameInWalkTyped { Opcode::PropGet, Opcode::PropSet };
 static constexpr OpcodeSet storesInWalkTyped { Opcode::PropSet, Opcode::ElemSet };
 
 static TypedForm typedFormAsReceiverStands(Walker&, const BodyValue&, const TypesOfInputs&);
 
-// What is left of the receiver where the access does not throw for it: `never` where it is nothing but the two. Null: it is neither of the two, or nothing is known of what else it is.
 static TypeID typeOfReceiverBehindCheckInWalkTyped(Walker& walker, const BodyValue& access, TypeID typeOfReceiver)
 {
     Opcode opcode = access.opcode();
@@ -51,8 +41,6 @@ static TypeID typeOfReceiverBehindCheckInWalkTyped(Walker& walker, const BodyVal
     return walker.types().withoutNullish(typeOfReceiver);
 }
 
-// Where the access has a typed form for the rest of its receiver, a check that throws what the access throws stands in front of it: a load that traps. From there on the state knows the receiver under the name behind the check.
-// True: the access is built, and no run goes on behind it.
 static bool splitNullishOffReceiverInWalkTyped(Walker& walker, const BodyValue& access)
 {
     ValueID input = access.objectOperand();
@@ -69,8 +57,6 @@ static bool splitNullishOffReceiverInWalkTyped(Walker& walker, const BodyValue& 
     if (!isNeverType(rest) && (!receiver.isValue() || typedFormAsReceiverStands(walker, access, typeBehindCheck) == TypedForm::None))
         return false;
 
-    // Off what is nothing but the two the access only throws: it does what the check does and no more, and a look that knew less of the receiver has counted on no more.
-    // Under a computed key it stays as it is written: an image without the text of functions spells the key in the message, and only the closed access has the key.
     Opcode opcode = access.opcode();
     if (isNeverType(rest) && !accessesByNameInWalkTyped.contains(opcode)) {
         Draft asWritten = walker.draftOf(access);
@@ -93,7 +79,6 @@ static bool splitNullishOffReceiverInWalkTyped(Walker& walker, const BodyValue& 
     return walker.isUnreachable();
 }
 
-// `list.length` and `point.length` are one operation: what the layouts do not answer, the classes that have elements may.
 template<Opcode opcode> static bool buildTypedOperationOf(Walker& walker, const BodyValue& walked)
 {
     BodyValueOf<opcode> value(walked);
@@ -122,7 +107,6 @@ template<Opcode opcode> static bool buildTypedOperationOf(Walker& walker, const 
     return operatorFamiliesOfWalkTyped.contains(opcode) && buildTypedOperator(walker, value);
 }
 
-// AOTWalkLinks.h: one copy an opcode.
 bool buildTypedOperation(Walker& walker, const BodyValue& value)
 {
     using Links = bool (*)(Walker&, const BodyValue&);

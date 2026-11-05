@@ -93,7 +93,6 @@ Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticO
         m_out.noteForm(Form::Open, StateOfKnowledge::CheckedIntegers);
         return arithmeticOnCheckedIntegers(value, op);
     case OperatorForm::Numbers: {
-        // What the divisor, the base or the exponent is picks the form of these two: remainder() and power() say it.
         if (op != ArithmeticOperator::Mod && op != ArithmeticOperator::Pow)
             m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
         if (value.representation() == Representation::JSValue) {
@@ -165,14 +164,12 @@ Boxed OperatorEmitter::arithmeticOnBoxedOperands(const ValueContext& value, Arit
 
 Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, ArithmeticOperator op)
 {
-    // One operand is a number by its type and the other is not: two numbers have the form Numbers. A constant has no form of its own to go by.
     bool numberIsOnRight = !typeOf(value->leftOperand()).isNumber();
     ValueID numberID = numberIsOnRight ? value->rightOperand() : value->leftOperand();
     ValueID otherID = numberIsOnRight ? value->leftOperand() : value->rightOperand();
     Number numberOperand = in<Number>(numberID);
     Boxed otherOperand = in<Boxed>(otherID);
     ArithmeticOperatorTraits traits = traitsOfArithmeticOperator(op);
-    // The operation reads the side alone.
     Word32 typeAndNumberSide = word32(static_cast<int32_t>(NumberAndValueBits::encode(0, numberIsOnRight)));
     if (typeOf(otherID).primitives & Primitive::Number) {
         m_out.noteForm(Form::Closed, StateOfKnowledge::NumberAndValue);
@@ -181,7 +178,6 @@ Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, Ar
         };
         if (standsInRareBlock(value))
             return byStub();
-        // `list.length - (hasRest ? 1 : 0)`, where the arms of a guess have met on the length: the value is an int32 wherever such code runs, or else a double. The stub takes what is no number.
         auto withNumber = [&](Number otherNumber) {
             return numberIsOnRight ? arithmeticOnNumbers(op, otherNumber, numberOperand) : arithmeticOnNumbers(op, numberOperand, otherNumber);
         };
@@ -227,7 +223,6 @@ Operand OperatorEmitter::withIntegerOperand(const ValueContext& value, const Fun
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -356,7 +351,6 @@ Operand OperatorEmitter::convertedToNumber(const ValueContext& value, const Func
         return get(operand);
     case OperatorForm::Numbers:
         m_out.noteForm(Form::Open, StateOfKnowledge::Numbers);
-        // asNumber() leaves no payload of a marker in what it gives.
         return asNumericOperand(operand);
     case OperatorForm::NullableNumber:
         m_out.noteForm(Form::Open, StateOfKnowledge::NullableNumber);
@@ -412,7 +406,6 @@ void OperatorEmitter::generateTypeOf(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::TypeOf, { in<Boxed>(value->valueOperand()) }));
 }
 
-// What passes the test is the result as it stands.
 template<typename T, typename Functor>
 T OperatorEmitter::passingOrConverted(Boxed value, const TypeTestPlan& plan, Form formOfConversion, const Functor& convert)
 {
@@ -443,7 +436,6 @@ T OperatorEmitter::passingOrConverted(Boxed value, const TypeTestPlan& plan, For
 
 void OperatorEmitter::generateToObject(const ValueContext& value)
 {
-    // The conversion of undefined or null throws, and a value of type never has no representation of an object.
     bool hasResult = !isNeverType(value->type);
     Boxed operand = in<Boxed>(value->valueOperand());
     const TypeTestPlan& plan = typeTestPlanFor(typeIDOf(value->valueOperand()), Representation::JSValue, TypeTable::object);

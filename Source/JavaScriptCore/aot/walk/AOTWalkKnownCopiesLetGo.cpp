@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Inlining, `consume(load())`: what a call alone held is let go of behind the copy of its callee. A stale register or slot of the caller would keep the object alive for as long as the caller runs.
-// A hint is no code and proves nothing: the sweep lets go of a value behind its last read in Code, wherever the hint stands.
-// At a suspension and at a throw: a way that leaves in front of the hint lets go of nothing. Withheld: there is no copy, and the call itself is the last reader.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -20,7 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What was read out of an object is still named by that object. What a call has handed back may be named by nothing else.
 static bool isHandedBackByCallToOneUserInKnownCopies(const BodyIndex& index, ValueID operand)
 {
     for (ValueID value = operand; value && index.hasOneUse(value) && !index.isParameter(value); value = index.value(value).operand(0)) {
@@ -31,7 +26,6 @@ static bool isHandedBackByCallToOneUserInKnownCopies(const BodyIndex& index, Val
     return false;
 }
 
-// False: no register or stack word holds a cell of the heap for the value, so there is nothing to clear.
 static bool mayReleaseCellInKnownCopies(Walker& walker, Reference released)
 {
     if (!holdsCells(walker.representationOf(released)))
@@ -60,8 +54,6 @@ Vector<Reference, 2> collectWhatCopyAloneHolds(Walker& walker, const BodyValue& 
     return held;
 }
 
-// Each name of a value may lie in a place of its own, so each is let go of by itself.
-// The program has written nothing behind the body of a callee that is walked at its call, so nothing is seen there, and what holds goes on holding.
 void letGoWhatCopyHeld(Walker& walker, std::span<const Reference> held, Origin origin)
 {
     const Code& code = walker.code();

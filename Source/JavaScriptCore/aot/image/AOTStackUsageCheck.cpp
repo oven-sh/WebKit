@@ -96,7 +96,6 @@ static Vector<uint64_t> computeUsageByComponent(const LinkedFunctions& functions
 {
     Vector<uint64_t> usage;
     usage.fill(0, components.numberOfComponents);
-    // Members are sorted by component, and a component's number is higher than that of every component it calls.
     for (uint32_t position : components.members) {
         uint32_t component = components.componentOf[position];
         uint64_t calleeUsage = 0;

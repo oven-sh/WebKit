@@ -15,9 +15,6 @@
 #include <bit>
 #include <wtf/DataLog.h>
 
-// No request goes to the builder between patch() and the last word of the setup: the next request seals the Patch.
-// The wrapper of TestProcedure restores every register that the C convention wants kept, so a test that asks whether compiled code restores them has to look before it returns.
-
 namespace JSC { namespace AOT { namespace Machine {
 
 [[noreturn]] static void failFrameFormTest(const TestProcedure& test, const char* file, int line, const char* condition)
@@ -32,10 +29,8 @@ namespace JSC { namespace AOT { namespace Machine {
     } while (false)
 
 static constexpr int32_t bytesOfFrameFormTestWord = sizeof(uint64_t);
-// From where the stack pointer stands at the entry down to the place of the frame record.
 static constexpr int32_t bytesFromEntryToFrameFormRecord = isX86_64() ? bytesOfFrameFormTestWord : 2 * bytesOfFrameFormTestWord;
 
-// By Reg::index(): what a callee-saved register held at the entry. Then these two.
 static constexpr unsigned stackPointerInFrameFormRecord = 64;
 static constexpr unsigned sumInFrameFormRecord = 65;
 using FrameFormRecord = std::array<uint64_t, 66>;
@@ -63,7 +58,6 @@ static unsigned numberOfCalleeSavedGPRsInFrameFormTests()
     return static_cast<unsigned>(std::popcount(registerFileFor(ProcedureTraits()).calleeSavedIn(Bank::GP)));
 }
 
-// Writes every register that no callee saves.
 static PatchOperation* appendCallOfFrameFormTest(TestProcedure& test)
 {
     RegisterFile file = registerFileFor(test.procedure().traits());
@@ -88,7 +82,6 @@ static PatchOperation* appendCallOfFrameFormTest(TestProcedure& test)
     return call;
 }
 
-// Zero where the stack pointer is aligned.
 static Operation* appendAlignmentProbeOfFrameFormTest(Output& out)
 {
     PatchOperation* probe = out.patch(Int64);
@@ -108,14 +101,12 @@ struct FrameFormSetupProbe {
     MacroAssembler::Label check;
 };
 
-// Notes what the first word of the slots holds where the stack is checked: behind whatever the setup pushes, ahead of every store.
 static void probeFirstSlotAtStackCheck(void* context, CCallHelpers& jit, const Frame& frame, const StackCheckSite&)
 {
     FrameFormSetupProbe& probe = *static_cast<FrameFormSetupProbe*>(context);
     ++probe.numberOfSetups;
     probe.check = jit.label();
 #if CPU(X86_64)
-    // Every other register may hold an argument.
     constexpr GPRReg word = X86Registers::eax;
     GPRReg address = jit.scratchRegister();
     CCallHelpers::Address slot = frame.addressInFrame(frame.topOfSlots() - bytesOfFrameFormTestWord);
@@ -149,8 +140,6 @@ static unsigned bytesOfPushInFrameFormTest(Reg reg)
 }
 #endif
 
-// f(seed, record). Notes what the callee-saved registers and the stack pointer held at the entry, defines seed + 1, seed + 2 and so on, calls, and adds them up, the first `numberReadTwice` of them twice.
-// Leaves with zero where the save area holds what the registers held and the teardown has put all of it back.
 static void buildFrameFormTestThatComparesRegisters(TestProcedure& test, unsigned numberReadTwice, unsigned numberReadOnce)
 {
     Output& out = test.out();
@@ -158,7 +147,6 @@ static void buildFrameFormTestThatComparesRegisters(TestProcedure& test, unsigne
     Operation* seed = test.argumentGPR(0);
     Operation* argumentWithRecord = test.argumentGPR(1);
 
-    // Nothing that is defined ahead of it lives across a call, so no callee-saved register has been written yet.
     PatchOperation* atEntry = out.patch(Void);
     atEntry->appendSomeRegister(argumentWithRecord);
     atEntry->numGPScratchRegisters = 1;
@@ -241,9 +229,6 @@ static void runFrameFormTestThatComparesRegisters(TestProcedure& test, unsigned 
     AOT_FRAME_FORM_TEST_CHECK(test, words[sumInFrameFormRecord] == expectedSum);
 }
 
-// ---- F5
-
-// f(a): a + 1 lives across a call and is read `numberOfReads` times behind it.
 static Operation* buildFrameFormTestOfValueAcrossCall(TestProcedure& test, unsigned numberOfReads)
 {
     Output& out = test.out();
@@ -278,7 +263,6 @@ static void testMachineFrameFormValueReadTwiceTakesSavedRegister()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 40 }) == 87);
 }
 
-// f(a, n): n turns, each of which calls and then notes a + 1. The one read stands in the loop, so in memory the value would be loaded at every turn.
 static void testMachineFrameFormValueThatLoopReadsTakesSavedRegister()
 {
     TestProcedure test(traitsOfFrameFormTest(true, false));
@@ -314,12 +298,10 @@ static void testMachineFrameFormValueThatLoopReadsTakesSavedRegister()
     compileOrFail(test);
 
     AOT_FRAME_FORM_TEST_CHECK(test, !test.procedure().allocation().isSpilled(value) && test.procedure().allocation().usedCalleeSaves());
-    // It is defined and read once a turn.
     AOT_FRAME_FORM_TEST_CHECK(test, !test.procedure().allocation().isSpilled(turnsLeft));
     AOT_FRAME_FORM_TEST_CHECK(test, !test.call<uint64_t>(uint64_t { 9 }, uint64_t { 4 }) && noted == 10);
 }
 
-// f(a): a + 1 lives across a call. The usual way reads it once, a rare block three times: what a rare region reads it loads for itself.
 static void testMachineFrameFormReadsOfRareRegionsDoNotCount()
 {
     TestProcedure test(traitsOfFrameFormTest(true, false));
@@ -341,7 +323,6 @@ static void testMachineFrameFormReadsOfRareRegionsDoNotCount()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 21 }) == 66);
 }
 
-// One value pays for the first register of a pair. On ARM64 the second is stored and loaded by the same two instructions, so a value that is read once takes it.
 static void testMachineFrameFormSecondSavedRegisterOfPairIsFree()
 {
     TestProcedure test(traitsOfFrameFormTest(true, false));
@@ -361,9 +342,6 @@ static void testMachineFrameFormSecondSavedRegisterOfPairIsFree()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 100 }) == 101 + 102 + 101);
 }
 
-// ---- F3
-
-// f(a, b, c, d): all four live across a call. There are fewer callee-saved registers than that on x86-64, so some are stored behind their definitions, which stand right behind the setup.
 static void testMachineFrameFormArgumentsStoredBehindSetupArePushed()
 {
     constexpr std::array<uint64_t, 4> arguments { 0x1111222233330001ull, 0x1111222233330020ull, 0x1111222233330300ull, 0x1111222233334000ull };
@@ -393,7 +371,6 @@ static void testMachineFrameFormArgumentsStoredBehindSetupArePushed()
     for (unsigned index = 0; index < values.size(); ++index)
         AOT_FRAME_FORM_TEST_CHECK(test, values[index] != first || probe.firstSlotAtCheck == arguments[index]);
 
-    // push rbp, mov rbp, rsp, and a push for every other word: no move of the stack pointer and no store.
     unsigned bytesOfSetup = 4;
     for (const RegisterAtOffset& save : frame.calleeSaveRegisterAtOffsetList())
         bytesOfSetup += bytesOfPushInFrameFormTest(save.reg());
@@ -404,7 +381,6 @@ static void testMachineFrameFormArgumentsStoredBehindSetupArePushed()
 #endif
 }
 
-// f(a, b, c, d): returns b at once where a is odd. The other way calls with all four alive, so its head sets the frame up and saves what finds no callee-saved register.
 static void testMachineFrameFormSavesOfHeadArePushed()
 {
     constexpr std::array<uint64_t, 4> arguments { 0x2222333344440002ull, 0x2222333344440020ull, 0x2222333344440300ull, 0x2222333344444000ull };
@@ -440,7 +416,6 @@ static void testMachineFrameFormSavesOfHeadArePushed()
 #endif
 }
 
-// f(a, x): the number lives across a call, and x86-64 has no floating-point register that callees save. There is no push of such a register.
 static void testMachineFrameFormNumberStoredBehindSetupIsNotPushed()
 {
     TestProcedure test;
@@ -454,7 +429,6 @@ static void testMachineFrameFormNumberStoredBehindSetupIsNotPushed()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 3 }, 2.5) == std::bit_cast<uint64_t>(2.5) + 3);
 }
 
-// The outgoing words lie where the stack pointer stands, so the saves cannot.
 static void testMachineFrameFormOutgoingWordsKeepSavesOnTop()
 {
     constexpr uint64_t seedOfRun = 600;
@@ -487,7 +461,6 @@ static void testMachineFrameFormSavedRegistersAtBottomComeBack()
 {
     for (unsigned numberBeyondRegisters : { 1u, 2u, 3u }) {
         TestProcedure test;
-        // The record takes a callee-saved register too.
         unsigned count = numberOfCalleeSavedGPRsInFrameFormTests() - 1 + numberBeyondRegisters;
         buildFrameFormTestThatComparesRegisters(test, count, 0);
         const Frame& frame = test.procedure().frame();
@@ -501,9 +474,6 @@ static void testMachineFrameFormSavedRegistersAtBottomComeBack()
     }
 }
 
-// ---- F4
-
-// f(): calls, and nothing lives across the call. The frame is there for the return address of the callee alone.
 static void testMachineFrameFormOfFunctionThatOnlyCallsHasNoRecord()
 {
     for (bool mayOmitFrameRecord : { true, false }) {
@@ -523,7 +493,6 @@ static void testMachineFrameFormOfFunctionThatOnlyCallsHasNoRecord()
 
 static void testMachineFrameFormSavedRegistersWithoutRecordComeBack()
 {
-    // The record of the test takes the first callee-saved register.
     for (unsigned count = 0; count < numberOfCalleeSavedGPRsInFrameFormTests(); ++count) {
         TestProcedure test(traitsOfFrameFormTest(false, true));
         buildFrameFormTestThatComparesRegisters(test, count, 0);
@@ -531,7 +500,6 @@ static void testMachineFrameFormSavedRegistersWithoutRecordComeBack()
         AOT_FRAME_FORM_TEST_CHECK(test, frame.numberOfCalleeSaves() == count + 1 && !test.procedure().slots().bytesInAll());
         AOT_FRAME_FORM_TEST_CHECK(test, frame.hasFrameRecord() == !isX86_64());
         if (!frame.hasFrameRecord()) {
-            // The last of the run lies at the place of the record, and an odd number of words below the return address keeps the stack pointer aligned.
             AOT_FRAME_FORM_TEST_CHECK(test, frame.calleeSaveRegisterAtOffsetList().at(count).offset() == 0);
             AOT_FRAME_FORM_TEST_CHECK(test, frame.bytesBelowFrameRecord() == (count + 1) / 2 * stackAlignmentBytes());
         }
@@ -539,7 +507,6 @@ static void testMachineFrameFormSavedRegistersWithoutRecordComeBack()
     }
 }
 
-// f(a): a + 1 is read once behind a call, so it lies in memory, and the frame holds nothing else: the word lies where the stack pointer stands.
 static void testMachineFrameFormOneWordWithoutRecordLiesAtStackPointer()
 {
     TestProcedure test(traitsOfFrameFormTest(true, true));
@@ -556,7 +523,6 @@ static void testMachineFrameFormOneWordWithoutRecordLiesAtStackPointer()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 70 }) == 76);
 }
 
-// Two words are reached by addresses that are a byte longer than those off the frame pointer. The record would be two instructions at every entry.
 static void testMachineFrameFormWithTwoWordsHasNoRecord()
 {
     TestProcedure test(traitsOfFrameFormTest(true, true));
@@ -573,7 +539,6 @@ static void testMachineFrameFormWithTwoWordsHasNoRecord()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 10 }) == 23);
 }
 
-// More words than one byte of offset reaches, beside callee saves: each word comes back as it was stored, across two calls.
 static void testMachineFrameFormWithManyWordsHasNoRecord()
 {
     constexpr unsigned numberOfWords = 24;
@@ -599,11 +564,53 @@ static void testMachineFrameFormWithManyWordsHasNoRecord()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 3 }) == numberOfWords * 3 + (uint64_t { 1 } << numberOfWords) - 1);
 }
 
+static void appendReaderOfFrameFormTest(TestProcedure& test, Operation* value)
+{
+    PatchOperation* reader = test.out().patch(Void);
+    reader->effects = Effects::none();
+    reader->effects.writesLocalState = true;
+    reader->setRunsWithoutFrame(true);
+    reader->appendSomeRegister(value);
+    reader->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+}
+
+static void testMachineFrameFormArmThatOnlyLeadsOnToSharedNeedIsNoHead()
+{
+    TestProcedure test(traitsOfFrameFormTest(true, true));
+    Output& out = test.out();
+    Operation* choice = test.argumentGPR(0);
+    Block* returning = out.newBlock();
+    Block* deciding = out.newBlock();
+    Block* arm = out.newBlock();
+    Block* asking = out.newBlock();
+    Block* returningToo = out.newBlock();
+    Block* calling = out.newBlock();
+    out.branch(out.testNonZero64(choice, out.constInt64(1)), normalEdge(deciding), normalEdge(returning));
+    out.appendTo(returning);
+    out.ret(out.constInt64(1));
+    out.appendTo(deciding);
+    out.branch(out.testNonZero64(choice, out.constInt64(2)), normalEdge(arm), normalEdge(asking));
+    out.appendTo(arm);
+    appendReaderOfFrameFormTest(test, choice);
+    out.jump(calling);
+    out.appendTo(asking);
+    out.branch(out.testNonZero64(choice, out.constInt64(4)), normalEdge(calling), normalEdge(returningToo));
+    out.appendTo(returningToo);
+    out.ret(out.constInt64(2));
+    out.appendTo(calling);
+    appendCallOfFrameFormTest(test);
+    out.ret(out.constInt64(3));
+    compileOrFail(test);
+    const Allocation& allocation = test.procedure().allocation();
+    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().frame().coverage() == FrameCoverage::FramedPart);
+    AOT_FRAME_FORM_TEST_CHECK(test, allocation.onlyHeadOfFramedPart() && !allocation.isInFramedPart(arm));
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0 }) == 1 && test.call<uint64_t>(uint64_t { 1 }) == 2 && test.call<uint64_t>(uint64_t { 3 }) == 3 && test.call<uint64_t>(uint64_t { 5 }) == 3);
+}
+
 static void buildFrameFormTestWithPatchThatReadsFramePointer(TestProcedure& test)
 {
     Output& out = test.out();
     appendCallOfFrameFormTest(test);
-    // Zero where the frame pointer register points at the place of the record.
     PatchOperation* reader = out.patch(Int64);
     reader->effects = Effects::none();
     reader->effects.writesLocalState = true;
@@ -626,7 +633,6 @@ static void testMachineFrameFormPatchThatNeedsRecordKeepsIt()
     AOT_FRAME_FORM_TEST_CHECK(test, !test.call<uint64_t>());
 }
 
-// f(a): a + 1 lies in memory where a Patch takes it wherever it lies. The generator reads the word off the frame pointer, as ValueRep::emitRestore() and the thunks for arguments do.
 static void testMachineFrameFormGeneratorToldOfPlaceInFrameKeepsRecord()
 {
     TestProcedure test(traitsOfFrameFormTest(true, true));
@@ -653,7 +659,6 @@ static void testMachineFrameFormUseOfFramePointerKeepsRecord()
     TestProcedure test(traitsOfFrameFormTest(false, true));
     Output& out = test.out();
     appendCallOfFrameFormTest(test);
-    // The word at the frame pointer is the frame pointer of the caller, which lies above.
     Operation* framePointer = out.opaque(out.framePointer());
     out.ret(out.sub(framePointer, out.opaque(out.framePointer())));
     compileOrFail(test);
@@ -685,7 +690,6 @@ static void testMachineFrameFormCheckerRefusesFrameWithoutRecordThatPatchCountsO
     AOT_FRAME_FORM_TEST_CHECK(test, !checkFrame(proc) && proc.failure() && proc.failure()->kind == FailureKind::NeedsFrameWhereNoneIsSetUp);
 }
 
-// Every row at once, with more and fewer values than there are registers: whatever form the frame takes, the caller gets its registers and its stack pointer back.
 static void testMachineFrameFormsGiveEverythingBack()
 {
     for (bool chargesForCalleeSaves : { false, true }) {
@@ -723,6 +727,7 @@ std::span<const NativeTest> machineFrameFormTests()
         { "machine/frame-forms/one-word-without-a-record-lies-at-the-stack-pointer"_s, Machine::testMachineFrameFormOneWordWithoutRecordLiesAtStackPointer },
         { "machine/frame-forms/two-words-have-no-record"_s, Machine::testMachineFrameFormWithTwoWordsHasNoRecord },
         { "machine/frame-forms/many-words-have-no-record"_s, Machine::testMachineFrameFormWithManyWordsHasNoRecord },
+        { "machine/frame-forms/an-arm-that-only-leads-on-to-a-shared-need-is-no-head"_s, Machine::testMachineFrameFormArmThatOnlyLeadsOnToSharedNeedIsNoHead },
         { "machine/frame-forms/patch-that-needs-the-record-keeps-it"_s, Machine::testMachineFrameFormPatchThatNeedsRecordKeepsIt },
         { "machine/frame-forms/generator-told-of-a-place-in-the-frame-keeps-the-record"_s, Machine::testMachineFrameFormGeneratorToldOfPlaceInFrameKeepsRecord },
         { "machine/frame-forms/use-of-the-frame-pointer-keeps-the-record"_s, Machine::testMachineFrameFormUseOfFramePointerKeepsRecord },

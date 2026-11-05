@@ -63,7 +63,6 @@ struct StraightCallOptions {
     bool neverReturns { false };
 };
 
-// (word & mask) == word asked for; no mask: the word as it is.
 struct StraightTest {
     int32_t mask { 0 };
     int32_t word { 0 };
@@ -81,7 +80,6 @@ public:
     static bool covers(const CodeGenerationInputs&, CodeUnit, const BodyIndex&);
 
     uint32_t numberOfSlots() const { return m_numberOfSlots; }
-    // It calls a unit itself, past the stubs that test the stack in front of what they enter.
     bool entersUnits() const { return m_entersUnits; }
     uint32_t wordsOfScratchArea() const { return m_wordsOfScratchArea; }
     void generate(CCallHelpers&, const ArgumentLocations&, unsigned bytesBelowFrameRecord);
@@ -107,36 +105,29 @@ public:
     MentionList& mentions() { return m_records.mentions; }
     RelocationRecorder& relocations() { return m_records.relocations; }
     BodyBlock currentBlock() const { return m_block; }
-    // ThinSummary::blocksNeverEntered: no code is made for such a block and no edge leads there.
     bool isNeverEntered(BlockID block) const { return !m_blocksNeverEntered.empty() && std::ranges::binary_search(m_blocksNeverEntered, block); }
 
-    // A value may wait in the result register for the next operation. Whoever is about to write the register takes it, at the place of the first write.
     GPRReg takeResultRegister()
     {
         storeWhatWaitsInRegister();
         m_valueCopiedInRegister = { };
         return resultGPR;
     }
-    // What a call, a stub or an operation has just left.
     GPRReg resultOfCall() const
     {
         RELEASE_ASSERT(!m_valueInRegister);
         return resultGPR;
     }
-    // What waits is read where it lies.
     GPRReg registerOfWaitingValue(ValueID value) const
     {
         RELEASE_ASSERT(waitsInRegister(value));
         return resultGPR;
     }
-    // Nothing waits in an FPR.
     FPRReg takeResultFPR() { return resultFPR; }
     FPRReg numberOfCall() const { return resultFPR; }
-    // It is no argument register on either processor: a conversion may go through it while those are filled.
     static constexpr FPRReg conversionFPR = CCallHelpers::fpTempRegister;
     static constexpr bool isResultRegister(GPRReg reg) { return reg == resultGPR; }
 
-    // None of them is the result register.
     static GPRReg temporary(unsigned index) { return GPRInfo::toArgumentRegister(index + (GPRInfo::argumentGPR0 == resultGPR)); }
     static constexpr unsigned numberOfTemporaries = GPRInfo::numberOfArgumentRegisters - (GPRInfo::argumentGPR0 == resultGPR);
 
@@ -148,7 +139,6 @@ public:
     CCallHelpers::Address wordOfScratchArea(uint32_t word) const;
 
     void load(ValueID, GPRReg);
-    // A value that waits there, or of which a copy lies there, stays where it is. To take the register first would store it and load it again.
     GPRReg loadIntoResultRegister(ValueID value)
     {
         if (!waitsInRegister(value))
@@ -159,7 +149,6 @@ public:
     void bring(const StraightArgument&, GPRReg);
     void storeInScratchArea(ValueID, uint32_t word);
 
-    // Without a register: the value lies in the result register.
     void define(const BodyValue&, GPRReg boxed);
     void define(const BodyValue& value) { define(value, resultGPR); }
     void defineBoolean(const BodyValue&, GPRReg zeroOrOne);
@@ -169,7 +158,6 @@ public:
     void defineDouble(const BodyValue&, FPRReg);
     void defineDouble(const BodyValue& value) { defineDouble(value, resultFPR); }
     void defineSameAs(const BodyValue&, ValueID);
-    // The word to test lies in the result register, and the Branch of the block makes the test.
     bool isReadByBranchAlone(const BodyValue&) const;
     void defineTest(const BodyValue&, StraightTest);
     void throwIfEmpty(const BodyValue& check, ValueID checked, const ThrowSite&);
@@ -197,12 +185,11 @@ public:
     void throwError(Origin, ErrorKind, StringID message);
     ThrowSite throwSiteWithName(ThrowKind, StringID name);
 
-    // AOTStraightTypeTests.cpp
     bool canTestType(TypeID tested);
     static std::optional<StraightTest> testOfWordAlone(TypeID);
     void testType(GPRReg boxed, TypeID tested, GPRReg zeroOrOne);
+    void trapUnlessOfType(ValueID, TypeID tested, ProofSource, Origin);
 
-    // AOTStraightSlots.cpp
     void loadSlot(GPRReg cell, const PlacedSlot&, GPRReg boxedResult);
     void storeSlot(GPRReg cell, const PlacedSlot&, GPRReg boxed);
     void loadVariable(VariableID, GPRReg boxedResult);
@@ -255,10 +242,8 @@ public:
     void generatePromiseIntrinsic(const BodyValue&);
     void generateRuntimeIntrinsic(const BodyValue&);
 
-    // AOTStraightCalls.cpp. The call that a ReturnCall returns gets no code where it stands.
     static bool coversReturnCalls();
     void generateReturnCall(const BodyTerminator&);
-    // AOTStraightSwitches.cpp
     static bool coversSwitchesOnStrings();
     void generateSwitchOnString(const BodyTerminator&);
 
@@ -267,8 +252,7 @@ public:
     void jumpTo(BlockID);
     void jumpTo(CCallHelpers::Jump, BlockID);
     void tearDownFrame();
-    // The boxed value lies in the result register.
-    void returnToCaller();
+    void returnToCaller(ValueID returned, Origin);
 
 private:
     static constexpr uint32_t isConstantBit = 1u << 31;
@@ -288,6 +272,8 @@ private:
     static const OpcodeSet& opcodesWithStraightForm();
     void findValuesNobodyReads();
     bool isReadByNobody(ValueID value) const { return value.index() < m_valuesNobodyReads.size() && m_valuesNobodyReads.quickGet(value.index()); }
+    bool mayCallOnlyCalleeDirectly(const BodyValue&, ValueID& checkThatPasses);
+    bool callsOnlyCalleeDirectly(ValueID call) const { return call.index() < m_callsOfOnlyCallees.size() && m_callsOfOnlyCallees.quickGet(call.index()); }
     void measureFrame();
     static constexpr uint32_t mostWordsOfFrame = 512;
 
@@ -302,9 +288,7 @@ private:
         uint16_t entry;
         Vector<ImportCheck, 8> checks;
     };
-    // One call and eight bytes a check against 22 bytes a check.
     static constexpr uint32_t fewestImportChecksInList = 2;
-    // No entry of a unit that anybody enters has so high an id.
     static constexpr uint16_t firstEntryOfListOfImportChecks = 0xf000;
     std::optional<ImportCheck> importCheckIn(BodyBlock) const;
     uint32_t countImportChecksFrom(BodyBlock) const;
@@ -332,7 +316,6 @@ private:
     bool isCopiedInRegister(ValueID) const;
     std::optional<BodyUser> onlyReader(ValueID) const;
     void findProofsNobodyReads(const BodyTerminator&);
-    // What is left to a thunk that sites share: AOTStubCalls.h. Null: everything is brought here.
     void bringAll(std::span<const StraightArgument>, NOESCAPE const Invocable<GPRReg(size_t)> auto& registerOf, ArgumentMoves* leftToThunk = nullptr);
     bool leavesArgumentsToThunk(StubKey, const StraightCallOptions&) const;
     void branchOnCondition(ValueID condition, bool jumpsIfTrue, BlockID);
@@ -365,7 +348,6 @@ private:
     Vector<ListOfImportChecks, 1> m_listsOfImportChecks;
     uint32_t m_landingPadOfBlockPlusOne { 0 };
     ValueID m_valueInRegister;
-    // It never got into its slot: whoever reads it a second time finds nothing.
     ValueID m_valueTakenOutOfRegister;
     FormInRegister m_formInRegister { FormInRegister::Boxed };
     StraightTest m_testInRegister;
@@ -377,6 +359,7 @@ private:
     bool m_hasHandlers { false };
     BitVector m_blocksGenerated;
     BitVector m_valuesNobodyReads;
+    BitVector m_callsOfOnlyCallees;
     std::span<const BlockID> m_blocksNeverEntered;
     uint32_t m_wordsOfScratchArea { 0 };
     bool m_hasFailed { false };

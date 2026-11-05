@@ -16,14 +16,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- Paths of modules
-
 static constexpr OpcodeSet opcodesThatNameModulesInScanStrings = opcodesWhere([](Opcode opcode) {
     return PayloadWord::module(opcode) || PayloadWord::referrer(opcode);
 });
-// The run time finds the module of each by its number. What the walk builds of EvaluateModule and RecordRequire is the plan's to say: ModuleEvaluationPlan::isPathNamedBySites(). A module that may be mocked is known by its path anyway.
-// WHATEVER ELSE NAMES A MODULE READS ITS PATH: an operation that is new to the schema does, until somebody has looked.
-static constexpr OpcodeSet opcodesThatGoByNumbersOfModulesInScanStrings { Opcode::ModuleNamespace, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::MockSeenBy };
+static constexpr OpcodeSet opcodesThatGoByNumbersOfModulesInScanStrings { Opcode::ModuleNamespace, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::MockSeenBy, Opcode::NamespaceSeenBy };
 
 namespace {
 
@@ -47,20 +43,14 @@ void notePathsOfModulesReadInScan(const BodyValue& value, ThinSummary& summary)
     Opcode opcode = value.opcode();
     if (!opcodesThatNameModulesInScanStrings.contains(opcode) || opcodesThatGoByNumbersOfModulesInScanStrings.contains(opcode))
         return;
-    // The run time finds the module of an import() by its number. Only where attributes arrive does it look, under the path of the file, for the form that they ask for.
     if (opcode == Opcode::ImportModule && !value.as<Opcode::ImportModule>().optionsOperand())
         return;
-    // A name that is made when the program runs may be that of any file, and `require.resolve(name)` hands the path of what it finds to the program.
     if (raisesOf(opcode) == ProgramEvent::LoadsModule || opcode == Opcode::ResolveDynamic)
         summary.mayReadPathOfAnyModule = true;
-    // No RecordRequire stands beside a RequireModule: the run time itself keeps who asked, as the parent of the module and as the file that the host resolves a mocked name against.
     ModulesNamedInScanStrings named { summary.modulesWhosePathIsRead };
     value.forEachReference(named);
 }
 
-// ---- Keys
-
-// An element key goes by the elements, and `__proto__` finds the link of the object where it is assigned and a property where it is defined. A text without a key in the program's table names nothing that the program spells.
 static PropertyKeyID keyOfTextInScanStrings(const Program& program, StringID text)
 {
     if (!text || text.index() >= program.strings.size())
@@ -84,7 +74,6 @@ static PropertyKeyID keyOfPrimitiveInScanStrings(const Program& program, Primiti
         return keyOfTextInScanStrings(program, program.strings.textOf(held.asBoolean()));
     case PrimitiveKnownToFolding::Kind::Text:
         return keyOfTextInScanStrings(program, held.asText());
-    // Whatever number it is, it is printed as an index or as another canonical numeric string.
     case PrimitiveKnownToFolding::Kind::Number:
     case PrimitiveKnownToFolding::Kind::Unknown:
         return { };
@@ -92,7 +81,6 @@ static PropertyKeyID keyOfPrimitiveInScanStrings(const Program& program, Primiti
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Where the left operand of a sum is a string the sum is that string with something behind it, whatever the right operand is converted to.
 StringID textThatValueBeginsWith(const Program& program, BodyValue definition, NOESCAPE const DefinitionsInScanOfStrings& definitionOf)
 {
     while (definition && !definition.isParameter()) {
@@ -114,7 +102,6 @@ StringID textThatValueBeginsWith(const Program& program, BodyValue definition, N
         default:
             return { };
         }
-        // Each step leads to a value that stands in front.
         if (!first || first >= definition.id())
             return { };
         definition = definitionOf(first);
@@ -127,13 +114,10 @@ PropertyKeyID nameKeyOfAccessInScan(const Program& program, PrimitiveKnownToFold
     beginning = { };
     if (PropertyKeyID key = keyOfPrimitiveInScanStrings(program, held))
         return key;
-    // A key that is known and is no name goes by its value, and nobody needs to be told how it begins.
     if (!held)
         beginning = textThatValueBeginsWith(program, definition, definitionOf);
     return { };
 }
-
-// ---- Behind the body
 
 template<typename IDType>
 static void sortWithoutRepeatsInScanStrings(Vector<IDType>& list)

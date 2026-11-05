@@ -71,7 +71,6 @@ RegExpRecordID RegExpRequests::recordOf(StringID pattern, OptionSet<Yarr::Flags>
     return RegExpRecordID(static_cast<size_t>(found - sortedRequests.begin()));
 }
 
-// Code mentions a RegExp with all of its flags. Dropping the flags that a record ignores can make several keys equal and leaves the keys unsorted.
 static Vector<RegExpRequest> requestsForMentionedRegExps(const NumberedKeys& mentionedKeys, const ParallelLoops& loops)
 {
     Vector<RegExpRequestKey> keys;
@@ -89,7 +88,6 @@ static Vector<RegExpRequest> requestsForMentionedRegExps(const NumberedKeys& men
     });
 }
 
-// The texts that Facts see arrive at RegExp, but for those that code mentions anyway. A text that the program spells nowhere becomes a string of the program here.
 static Vector<RegExpRequest> requestsForPredictedRegExpTexts(const Typed::Facts& facts, Typed::StringTable& strings, std::span<const RegExpRequest> sortedLiterals, const ParallelLoops& loops)
 {
     using PredictedKey = std::tuple<uint32_t, uint16_t, RegExpRequestOrigin>;
@@ -102,7 +100,6 @@ static Vector<RegExpRequest> requestsForPredictedRegExpTexts(const Typed::Facts&
     keys.reserveInitialCapacity(facts.regExpTextsInSight().size() + facts.regExpTextsWorkedOut().size());
     for (const Typed::RegExpTextInSight& text : facts.regExpTextsInSight())
         keys.append(PredictedKey { text.pattern.index(), text.flags, originOf(text.isOneOfAllAtSomeCall) });
-    // Serial and in the order of the list, which is sorted by content, so new strings get the same ids at any thread count.
     for (const Typed::RegExpTextWorkedOut& text : facts.regExpTextsWorkedOut())
         keys.append(PredictedKey { strings.intern(StringView(text.pattern)).index(), text.flags, originOf(text.isOneOfAllAtSomeCall) });
     sortAndRemoveDuplicates(loops, keys);
@@ -125,7 +122,6 @@ static bool areValidRegExpFlags(OptionSet<Yarr::Flags> flags)
     return parsedFlags && *parsedFlags == flags;
 }
 
-// Null for flags that are not valid: the parser is never given such a set.
 static Vector<const RegExpSummary*> summarizeRequestedRegExps(std::span<const RegExpRequest> requests, const Typed::StringTable& strings, BuildContext& context)
 {
     Vector<const RegExpSummary*> summaries;
@@ -141,9 +137,6 @@ static Vector<const RegExpSummary*> summarizeRequestedRegExps(std::span<const Re
     return summaries;
 }
 
-// NewRegExp cannot throw: with the metadata of its record the run time builds no pattern. Whether a literal without metadata throws is known only where it is evaluated,
-// so the front end writes it as a call of RegExp, and the walk leaves such a call as written. Made from a record it would silently become an invalid RegExp.
-// RegExp::finishCreation() takes a record that it finds by the text at its word in the same way.
 static bool canHaveRegExpRecord(const RegExpSummary* summary)
 {
     return summary && summary->canBeCreated();
@@ -163,7 +156,6 @@ static void internStringsOfRegExpMetadata(RegExpRequest& request, const RegExpSu
 
 void ImageNumbersBuilder::collectRegExpRequests()
 {
-    // Interning reallocates the string table's vectors, so nothing that reads a string may run concurrently.
     RELEASE_ASSERT(!ParallelLoops::isInsideLoop());
 
     Typed::StringTable& strings = inputs.program.strings;
@@ -172,18 +164,15 @@ void ImageNumbersBuilder::collectRegExpRequests()
     Vector<const RegExpSummary*> summariesOfLiterals = summarizeRequestedRegExps(literals.span(), strings, context);
     Vector<const RegExpSummary*> summariesOfPredictedTexts = summarizeRequestedRegExps(predictedTexts.span(), strings, context);
 
-    // Serial and in request order, so new strings get the same ids at any thread count.
     for (size_t index = 0; index < literals.size(); ++index) {
         RegExpRequest& request = literals[index];
         if (!canHaveRegExpRecord(summariesOfLiterals[index])) {
-            // A request has no source location.
             context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::InvalidRegExpLiteral, .text = request.pattern });
             continue;
         }
         internStringsOfRegExpMetadata(request, *summariesOfLiterals[index], strings);
     }
 
-    // A text that is no valid pattern throws where it arrives, and the run time finds that out by itself.
     Vector<RegExpRequest> predictedTextsWithRecord;
     for (size_t index = 0; index < predictedTexts.size(); ++index) {
         if (!canHaveRegExpRecord(summariesOfPredictedTexts[index]))

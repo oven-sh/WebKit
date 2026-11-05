@@ -27,12 +27,9 @@ constexpr unsigned numberOfStubFamilies = 0
 #undef v
     ;
 
-// KeepsNoRegisters: it has a frame, and behind the call it reads no register that a C function may write. So the stub saves none around an operation: a dead register may hold a pointer.
-// KeepsNoFPRs: it has a frame, and behind the call it reads no floating-point register that a C function may write. So the stub saves none of those around an operation.
 enum class CallerFrame : uint8_t { HasFrame, Frameless, StubFrame, KeepsNoRegisters, KeepsNoFPRs };
 constexpr bool hasFrameAndKeepsFewerRegisters(CallerFrame callerFrame) { return callerFrame == CallerFrame::KeepsNoRegisters || callerFrame == CallerFrame::KeepsNoFPRs; }
 
-// A stub of such a family takes the frame pointer register at its entry for the frame of the function that calls it, so that function has a frame record.
 constexpr bool readsFrameRecordOfCaller(StubFamily family)
 {
     switch (family) {
@@ -47,7 +44,6 @@ constexpr bool readsFrameRecordOfCaller(StubFamily family)
     }
 }
 
-// A tail call by value gives up the frame that says which closure runs above it. The stubs that make one have a form of their own: StubAssembler::checkStackBeforeEnteringCallee().
 enum class CallPosition : uint8_t { Ordinary, Tail };
 
 class StubKey {

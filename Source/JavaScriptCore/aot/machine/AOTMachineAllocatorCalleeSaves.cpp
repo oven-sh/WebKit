@@ -12,10 +12,8 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// Its store where the frame is set up and its load where the frame is torn down.
 static constexpr unsigned costOfCalleeSaveNotYetSaved = 2;
 
-// What the value costs in memory: the store behind its definition, and a load for each read that a rare region does not make.
 static bool isWorthCalleeSaveNotYetSaved(const Allocator& allocator, const Operation* value, const Block* block)
 {
     if (allocator.m_order.of(block).loop != noLoop)
@@ -30,7 +28,6 @@ static bool isWorthCalleeSaveNotYetSaved(const Allocator& allocator, const Opera
         if (!liveness.isUseInRareRegion(use) && ++worth > costOfCalleeSaveNotYetSaved)
             return true;
     }
-    // A range that goes on behind the last read was extended over a loop that reads the value: every turn would load it.
     return facts.lastUse != noPosition && facts.lastUse > lastRead;
 }
 
@@ -40,7 +37,6 @@ RegisterMask Allocator::calleeSavesWorthTakingFor(const Operation* value, Bank b
     RegisterMask notYetSaved = calleeSaved & ~m_allocation.usedCalleeSaves();
     if (!notYetSaved || !m_proc.traits().chargesForCalleeSaves || m_proc.traits().savesRegistersOfCallers)
         return calleeSaved;
-    // ARM64 stores and loads them in pairs, and an odd number leaves a word of the frame unused.
     if (isARM64() && bank == Bank::GP && (std::popcount(calleeSaved & ~notYetSaved) & 1))
         return calleeSaved;
     if (isWorthCalleeSaveNotYetSaved(*this, value, block))

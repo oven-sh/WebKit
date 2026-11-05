@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations with UnboxedNumbers: what charCodeAt() gave is a number only because it may be NaN. Whoever built the read has the code unit as an integer, with -1 outside the text, and comparisons and sums go by that.
-// The integer is asked for: of NotesOfNumbers, then of AOTWalkStringCharacters.cpp, which builds the reads. Nothing is kept here.
-// At a suspension and at a throw: nothing of its own. Withheld, or where nobody has the integer: the number is compared as a number.
-
 #include "config.h"
 #include "AOTWalkNumberForms.h"
 
@@ -28,7 +24,6 @@ Reference codeUnitBesideCharCode(Walker& walker, Reference number)
     TypeID id = number.isValue() ? walker.typeOf(number) : TypeID();
     if (!id)
         return { };
-    // A whole number that may be NaN. One that is proven an integer needs nobody beside it.
     Type type = walker.types().at(id);
     if (!type.isNumberWithoutFraction() || type.isInteger())
         return { };
@@ -61,7 +56,6 @@ Reference integerThatCharCodeIsKnownToBe(Walker& walker, Reference number)
     return codeUnit && isNeverNegativeInCodeUnits(walker, codeUnit) ? codeUnit : Reference();
 }
 
-// A cast hands its operand on, and a parameter that a test fills is the value that was tested.
 static ValueID valueBehindNamesOfBodyInCodeUnits(const BodyIndex& index, ValueID value)
 {
     while (value) {
@@ -74,7 +68,6 @@ static ValueID valueBehindNamesOfBodyInCodeUnits(const BodyIndex& index, ValueID
     return value;
 }
 
-// `if (c >= 48) use(c - 48)`. One step up the body: the one edge into the block of `user` leaves a Branch on a relation or an equality that names the number, on the side on which it holds.
 static bool standsBehindTestThatNaNFails(const BodyIndex& index, const BodyValue& user, ValueID number)
 {
     std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(index.blockOf(user.id()));
@@ -112,8 +105,6 @@ Reference integerThatCharCodeIsKnownToBe(Walker& walker, const BodyValue& user, 
     return { };
 }
 
-// NaN equals nothing and stands in no relation. In its place stands -1, which equals no code unit and lies below each.
-// Where the char code is asked to be the lesser, -1 is read as the greatest uint32, which lies above every int32.
 bool buildComparisonByCodeUnit(Walker& walker, const BodyValue& comparison, const InputsOfTypedOperation& inputs)
 {
     Opcode opcode = comparison.opcode();

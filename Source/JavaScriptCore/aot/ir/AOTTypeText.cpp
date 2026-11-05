@@ -57,8 +57,6 @@ private:
     static std::optional<CodePoint> decodeCodePoint(std::span<const uint8_t>);
     static bool isLayoutOfBuiltinOrNamespace(const Layout& layout) { return layout.kind == LayoutKind::BuiltinResult || layout.kind == LayoutKind::ModuleNamespace; }
 
-    // IR text is held against what the front end prints (print_names.rs). There `anything`, `object` and `function` stand in front of `absent`, closures in front of built-ins
-    // and classes behind both, a class has all of its contents or none, and an opaque kind is a bare word in lower case.
     bool writesIRText() const { return m_options.namesFamiliesOfLayouts; }
 
     std::span<const uint8_t> bytesOf(StringID) const;
@@ -94,7 +92,6 @@ private:
     TypeTextOptions m_options;
 };
 
-// A string of a program may hold a lone surrogate, which has three bytes like its neighbors.
 std::optional<TypeTextPrinter::CodePoint> TypeTextPrinter::decodeCodePoint(std::span<const uint8_t> bytes)
 {
     static constexpr std::array<char32_t, 5> smallestOfLength { 0, 0, 0x80, 0x800, 0x10000 };
@@ -157,8 +154,6 @@ bool TypeTextPrinter::isNamedInParentheses(LayoutID layout) const
     return program && layout.index() < program->layouts.size() && isLayoutOfBuiltinOrNamespace(program->at(layout));
 }
 
-// The reader of IR text takes a name for its whole family, so only a family that lies inside the set may be named.
-// It numbers the layouts that it derives by itself, so one of those is named only where no family brings it.
 void TypeTextPrinter::replaceByNamesOfFamilies(const Program& program, LayoutList& ascendingMembers) const
 {
     auto familyOf = [&](LayoutID layout) {
@@ -180,7 +175,6 @@ void TypeTextPrinter::replaceByNamesOfFamilies(const Program& program, LayoutLis
         if (familyLiesInside)
             candidates.append(member);
     }
-    // The largest family first, and of equal ones the lowest number: a family inside one that is named already names nothing.
     AOT::sort(candidates, std::ranges::greater { }, [&](LayoutID candidate) {
         return familyOf(candidate).size();
     });

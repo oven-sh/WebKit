@@ -288,7 +288,6 @@ static void checkUnmappedArgumentsOfEveryCount(LoadedProgram& program)
         cells->push(realm, jsNumber(3));
         checkUnmappedArgumentsFromRest(program, cells, std::array { JSValue(realm), jsNumber(3) });
 
-        // No arguments object is alive here, and the next round finds the Structure of the last one again.
         vm.heap.collectSync(CollectionScope::Full);
     }
 }
@@ -378,7 +377,6 @@ static JSString* joinFromNativeCode(LoadedProgram& program, JSString* left, JSSt
     return uncheckedDowncast<JSString>(callFromNativeCode(program, operationAOTConcat, static_cast<JSCell*>(left), static_cast<JSCell*>(right)));
 }
 
-// The string stays the rope that it is.
 static String charactersOf(JSString* string)
 {
     if (string->is8Bit()) {
@@ -401,10 +399,8 @@ static String repeated(ASCIILiteral piece, unsigned times)
 
 static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
 {
-    // In additions that a text takes before it gets its first buffer: a block of cells, which that number goes by, is four times as large on Linux arm64.
     constexpr unsigned numberOfPieces = 10 * minAdditionsToGrowingText;
     constexpr unsigned numberOfPiecesOfOlderText = 4 * minAdditionsToGrowingText;
-    // The first holds twice the characters of the text that was added to often enough, and each of the others twice what did not fit the one before.
     constexpr unsigned maxNumberOfBuffers = 4;
     VM& vm = program.vm();
     Instance& instance = program.instance();
@@ -416,7 +412,6 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
     unsigned numberOfBuffers = 0;
     for (unsigned count = 2; count <= numberOfPieces; ++count) {
         text = joinFromNativeCode(program, text, piece);
-        // What is added to has one piece less, and was added to once for each piece but its first.
         AOT_TEST_CHECK(canGrowInPlace(instance, text) == (count - 2 >= minAdditionsToGrowingText));
         if (count == numberOfPiecesOfOlderText)
             older = text;
@@ -429,7 +424,6 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
     AOT_TEST_CHECK(numberOfBuffers == maxNumberOfBuffers);
     AOT_TEST_CHECK(charactersOf(text) == repeated("ab"_s, numberOfPieces));
 
-    // However long a text is, it stays a rope until it was added to that often: a buffer would hold its characters once more.
     JSString* longPiece = jsNontrivialString(vm, repeated("0123456789"_s, 100 * minLengthOfGrowingText));
     JSString* longText = piece;
     for (unsigned additions = 0; additions < minAdditionsToGrowingText; ++additions) {
@@ -438,17 +432,14 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
     }
     AOT_TEST_CHECK(canGrowInPlace(instance, joinFromNativeCode(program, longText, piece)));
 
-    // An older text has its own characters, and what is added to it leaves the longer text alone.
     AOT_TEST_CHECK(!canGrowInPlace(instance, older) && charactersOf(older) == repeated("ab"_s, numberOfPiecesOfOlderText));
     JSString* other = joinFromNativeCode(program, older, jsNontrivialString(vm, "XY"_s));
     AOT_TEST_CHECK(charactersOf(other) == makeString(repeated("ab"_s, numberOfPiecesOfOlderText), "XY"_s));
     AOT_TEST_CHECK(charactersOf(text) == repeated("ab"_s, numberOfPieces) && canGrowInPlace(instance, text));
 
-    // The text added to itself does not fit, so the sum has a buffer of its own.
     JSString* doubled = joinFromNativeCode(program, text, text);
     AOT_TEST_CHECK(charactersOf(doubled) == repeated("ab"_s, 2 * numberOfPieces) && canGrowInPlace(instance, doubled) && canGrowInPlace(instance, text));
 
-    // A piece that an 8-bit buffer cannot hold moves the text into a 16-bit buffer, which takes pieces of both kinds.
     const char16_t wideCharacters[] = { 0x20ac, 0x20ac };
     String wide { std::span<const char16_t> { wideCharacters } };
     JSString* widened = joinFromNativeCode(program, doubled, jsNontrivialString(vm, wide));
@@ -458,7 +449,6 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
     AOT_TEST_CHECK(charactersOf(longer) == makeString(repeated("ab"_s, 2 * numberOfPieces), wide, "ab"_s));
     AOT_TEST_CHECK(charactersOf(doubled) == repeated("ab"_s, 2 * numberOfPieces));
 
-    // What a stub has added as ropes is written behind the text with the next piece that comes here. A rope among the pieces is written leaf by leaf.
     JSString* inBuffer = joinFromNativeCode(program, doubled, piece);
     JSString* belowRopes = inBuffer;
     String expected = charactersOf(inBuffer);
@@ -472,10 +462,8 @@ static void checkTextThatIsAddedToGrowsInBuffer(LoadedProgram& program)
     AOT_TEST_CHECK(uncheckedDowncast<JSRopeString>(written)->substringBase() == uncheckedDowncast<JSRopeString>(inBuffer)->substringBase());
     AOT_TEST_CHECK(charactersOf(written) == makeString(expected, "ab"_s) && charactersOf(belowRopes) == expected);
 
-    // Whoever reads the text gets a string that shares the buffer.
     AOT_TEST_CHECK(longer->value(program.realm()).data == charactersOf(joinFromNativeCode(program, widened, piece)) && !longer->isRope());
 
-    // As ropes these would be a hundred thousand cells that the text keeps alive.
     constexpr unsigned numberOfPiecesBetweenCollections = 100000;
     constexpr size_t maxNumberOfCellsLeft = 100;
     text = doubled;
@@ -496,7 +484,6 @@ static String copyIn16Bits(const String& text)
     return String(WTF::move(copy));
 }
 
-// A string that becomes a key takes the characters of the name, whatever their width. What was joined of it or cut out of it before goes on saying the width that it had then.
 static void checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -549,12 +536,10 @@ static void checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth(LoadedProg
     JSString* text = piece;
     while (!canGrowInPlace(instance, text))
         text = joinFromNativeCode(program, text, piece);
-    // A new buffer has as much room again as it has text.
     JSString* buffer = bufferOf(text);
     String expected = charactersOf(text);
     AOT_TEST_CHECK(text->is8Bit());
 
-    // What a stub does not write by itself it joins as a rope. The part is a key by the time the rope is written behind the text.
     for (unsigned length : { 2u, 3u, 8u, 16u, 17u, 40u }) {
         JSString* part = makeNarrow(length);
         JSString* joined = jsString(realm, text, part);
@@ -565,7 +550,6 @@ static void checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth(LoadedProg
         AOT_TEST_CHECK(text->is8Bit() && bufferOf(text) == buffer && charactersOf(text) == expected);
     }
 
-    // The leaves of a rope of ropes, among what was added and among the pieces that are handed over.
     {
         JSString* first = makeNarrow(17);
         JSString* second = makeNarrow(40);
@@ -579,12 +563,10 @@ static void checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth(LoadedProg
         AOT_TEST_CHECK(joined->is8Bit() && handedOver->is8Bit() && handedOver->isNonSubstringRope());
         text = append(joined, { handedOver });
         AOT_TEST_CHECK(text->is8Bit() && bufferOf(text) == buffer && charactersOf(text) == expected);
-        // A flat piece goes by the width that it has now, and a buffer of 8-bit characters does not take a wide one.
         text = append(text, { third });
         AOT_TEST_CHECK(!text->is8Bit() && bufferOf(text) != buffer && charactersOf(text) == makeString(expected, charactersOf(third)));
     }
 
-    // A piece of a longer string says 8-bit of itself, and the longer string is wide by now.
     {
         text = joinFromNativeCode(program, piece, piece);
         while (!canGrowInPlace(instance, text))
@@ -602,7 +584,6 @@ static void checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth(LoadedProg
         AOT_TEST_CHECK(text->is8Bit() && bufferOf(text) == buffer && charactersOf(text) == expected);
     }
 
-    // The first buffer of a text is filled with parts that have turned wide.
     {
         JSString* rope = makeNarrow(17);
         expected = charactersOf(rope);
@@ -617,7 +598,6 @@ static void checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth(LoadedProg
         AOT_TEST_CHECK(text->is8Bit() && canGrowInPlace(instance, text) && charactersOf(text) == makeString(expected, "ab"_s));
     }
 
-    // The other way round: a buffer of 16-bit characters takes narrow parts, parts that have turned wide, and wide parts and pieces of them that have turned narrow.
     {
         const char16_t beyondLatin1[] = { 0x2713, 0x2713 };
         text = joinFromNativeCode(program, text, jsNontrivialString(vm, String { std::span<const char16_t> { beyondLatin1 } }));
@@ -656,7 +636,6 @@ static void checkPollThrowsDeferredTerminationAfterTheDeferral(LoadedProgram& pr
     vm.clearHasTerminationRequest();
 }
 
-// No collection has run inside the polled call.
 static void checkPollInCallStubLeavesPendingOutOfMemoryError(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -837,7 +816,6 @@ static void growingTextTakesPartsWhoseCharactersHaveChangedWidth()
     runWithLoadedProgram(partsOfOtherWidthTest, programText, checkGrowingTextTakesPartsWhoseCharactersHaveChangedWidth);
 }
 
-// A build with assertions checks in the child that somebody looks for an exception behind every call that may throw.
 static void pollThrowsDeferredTerminationAfterTheDeferral()
 {
     if (Options::aotImagePath()) {

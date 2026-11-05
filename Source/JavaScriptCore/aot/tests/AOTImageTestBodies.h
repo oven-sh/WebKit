@@ -35,7 +35,6 @@ inline CompiledCode plainBody(uint32_t function)
     return sketch.take();
 }
 
-// The word keeps the entry from being empty once the jump to the body behind it is removed.
 inline CompiledCode entryOfBody(const TestBuild& build, uint32_t function)
 {
     CodeSketch sketch(build.genericEntrypointOf(function));
@@ -114,7 +113,6 @@ inline uint64_t sumOfStatistics(TestBuild& build, std::initializer_list<Statisti
     return sum;
 }
 
-// Each byte of the code part is counted once, under the name of what it is, by whoever makes or writes it.
 inline void checkPartsOfCodeAddUp(TestBuild& build, const TestImage& image)
 {
     const ImageHeader& header = image.image->header();

@@ -152,7 +152,6 @@ function driver(run) {
 globalThis.leaf = function leaf() { return names(new Error().stack); };
 )js"_s;
 
-// `way` is one of waysToCompilePrograms.
 static String runInShell(ASCIILiteral way, ASCIILiteral referencesWord, ASCIILiteral statements)
 {
     std::unique_ptr<CompileOutput> output;
@@ -267,7 +266,6 @@ TypeError: innerRead < outerRead < callsClosure < run < driver
 )"_s);
 }
 
-// The text of a program cannot ask for inlining. The walk inlines callees as small as these.
 static void testInlinedTailCallThatThrowsBeforeTheCalleeIsEntered()
 {
     checkShellOutput(R"js(
@@ -347,7 +345,6 @@ static void testWhichFramesAreShown()
     AOT_TEST_CHECK(!belowShownFrame.shows(TraceVisibility::VisibleOnlyOnTop, false) && belowShownFrame.shows(TraceVisibility::Visible, false));
 }
 
-// The table without an image: what resolve() does with an address that it does not find.
 struct CallSiteCacheSlots {
     static constexpr uintptr_t firstAddress = 0x100000000000;
 
@@ -382,7 +379,6 @@ struct CallSiteCacheSlots {
 
 static void testCallSiteCacheMakesRoomInTheOtherSlot()
 {
-    // The first has one slot. The third shares it, and its other slot is held by the second, which has a free one.
     CallSiteCacheSlots slots;
     const void* addresses[] = { slots.addressWith(5, { 5 }), slots.addressWith(9, { 70 }), slots.addressWith(9, { 5 }) };
     for (unsigned turn = 0; turn < 8; ++turn)
@@ -393,7 +389,6 @@ static void testCallSiteCacheMakesRoomInTheOtherSlot()
 
 static void testCallSiteCacheGrowsWhereEntriesPushEachOtherOut()
 {
-    // Three addresses with two slots between them.
     CallSiteCacheSlots slots;
     const void* addresses[] = { slots.addressWith(5, { 9 }), slots.addressWith(9, { 5 }), slots.addressWith(5, { 9 }) };
     AOT_TEST_CHECK(slots.askForAll(addresses) == 3);

@@ -3,6 +3,7 @@
 # OPTIONS: admit=ReplacedBuiltins
 # DIAGNOSTIC: LockedBuiltinWriteMayRun 1
 # RUN: locks
+# REQUIRES: entries-of-bun
 
 module m0 path="/a.test.js" displayPath="a.test.js" body=f0
 entry module=m0

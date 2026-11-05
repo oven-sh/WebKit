@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCallPlan.h"
-#include "AOTFacts.h"
 #include "AOTIRProgram.h"
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
@@ -26,9 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 enum class BuiltinTypeRole : uint8_t {
-    // What native code hands out. Its `unknown` says where it came from.
     Value,
-    // What is written of a position: a parameter, a field, the contents of a class. It has no seeds, like every target of a test.
     Bound,
 };
 
@@ -41,9 +38,6 @@ struct BuiltinTypeReading {
 
 } // anonymous namespace
 
-// A test at run time answers the first three, and all four speak of names and of prototype links, as ObjectFact::IsPristine does.
-// Dense and AsCreated speak of elements and of what was stored since the object was made. No fact about members proves them: each has a fact of its own, which counts only beside IsPristine.
-static constexpr PristineAspectSet aspectsProvenByPristineMembers { PristineAspects::Storage, PristineAspects::Names, PristineAspects::NamesKeptBelow, PristineAspects::Prototype };
 
 static TypeID typeOfBuiltinTypeRead(const BuiltinTypeReading&, BuiltinTypeID);
 
@@ -99,7 +93,6 @@ static TypeID primitivePartOfBuiltinType(const BuiltinTypeContext& context, cons
     TypeID result = types.intern(parts);
     if (parts.primitives & Primitive::String)
         return result;
-    // A text that the program does not hold has no number, so it can be no member of a set.
     for (BuiltinName name : type.stringLiterals) {
         StringID text = context.program.stringOf(name);
         result = types.unionOf(result, text ? types.stringLiteral(text) : TypeID(TypeTable::string));
@@ -122,7 +115,6 @@ static TypeID anyFunctionWrittenByTable(const BuiltinTypeReading& reading)
     return reading.role == BuiltinTypeRole::Value ? reading.context.types.function(UnknownSeed::UndescribedNativeResult) : TypeTable::function;
 }
 
-// What is written of the contents of a class proves nothing. Only the rules of reads know at which level it counts.
 static TypingContext typingContextOfBuiltinTypes(const BuiltinTypeContext& context)
 {
     return { context.program, context.types, context.positions ? *context.positions : PositionTypes::knowingNothing(), context.level };
@@ -159,7 +151,6 @@ static TypeID typeOfBuiltinInstance(const BuiltinTypeReading& reading, const Bui
         TypeID held = typeOfBuiltinTypeRead(readingOfContents, declared.type);
         if (reading.operands && holdsResolvedValueOfPromise(slot))
             held = typeOfAwaited(typingContextOfBuiltinTypes(context), held);
-        // `new Set<number>()`: what a collection is born with bounds nothing that it is given later, so one that is born empty says nothing. A promise is settled once.
         bool saysNothing = types.at(held).isAnything() || (isNeverType(held) && !holdsResolvedValueOfPromise(slot));
         contents[*position] = saysNothing ? TypeTable::anything : held;
         numberOfContents = std::max<unsigned>(numberOfContents, *position + 1);
@@ -182,7 +173,6 @@ static TypeID typeOfBuiltinTuple(const BuiltinTypeReading& reading, const Builti
     return types.builtinClass(BuiltinClasses::Array, singleElementSpan(element));
 }
 
-// Native code makes an ordinary object with the names of the layout, never a cell of the compiled layout.
 static TypeID typeOfBuiltinLayoutRead(const BuiltinTypeReading& reading, BuiltinLayoutID id)
 {
     const BuiltinLayout& layout = reading.context.program.builtins().at(id);
@@ -224,7 +214,6 @@ static TypeID typeFromClassesOfReceiver(const BuiltinTypeReading& reading, NOESC
         if (!receiver.hasOnlyClassObjects())
             return anyObject;
 
-        // The list of parts may move as soon as the arena makes a type.
         Vector<BuiltinClassID, 4> resultClasses;
         for (const ClassPart& part : classPartsOf(types, receiver)) {
             BuiltinClassID resultClass = resultClassOf(part.builtinClass);
@@ -246,7 +235,6 @@ static TypeID typeOfValuesIteratedByBuiltin(const BuiltinTypeReading& reading, T
     Type iterable = context.types.at(iterableID);
     if (iterable.isAnyString())
         return TypeTable::string;
-    // Native code steps whatever the object finds under `next` or Symbol.iterator, and no type says that an object has kept the members of its class.
     if (reading.role == BuiltinTypeRole::Value && context.level == TypeLevel::Proven)
         return anyValueWrittenByTable(reading);
 
@@ -362,7 +350,6 @@ TypeID parameterTypeOfOverload(const BuiltinTypeContext& context, BuiltinOverloa
     return typeOfBuiltinTypeRead({ context, nullptr, BuiltinTypeRole::Bound, false }, isConvertedInFrontOfCall ? parameter->converted : parameter->accepted);
 }
 
-// `list.reduce(add)` and `list.reduce(add, 0)` are two rows and one text: a guess by the first alone turns away every call that passes an initial value.
 static TypeID parameterTypeAcrossOverloadsOf(const BuiltinTypeContext& context, RuntimeFunctionID function, BuiltinOperand operand)
 {
     const BuiltinTable& table = context.program.builtins();
@@ -400,7 +387,6 @@ TypeID typeExpectedByLibraryFunction(const Program& program, TypeArena& types, F
         operand = BuiltinOperand::receiver();
         break;
     case EntryParameter::Parameter:
-        // The rest parameter takes a list of what the call passes from its position on.
         if (entryParameter - function.firstParameterIndex() < function.numberOfPositionalParameters())
             operand = BuiltinOperand::argument(entryParameter - function.firstParameterIndex());
         break;
@@ -415,7 +401,6 @@ TypeID typeExpectedByLibraryFunction(const Program& program, TypeArena& types, F
     if (!operand || !declared || declared->written() != TypeTable::anything || declared->isEstablished() || declared->has(PositionFlags::IsInt32Promise))
         return { };
 
-    // A function that is written inside the text of the built-in has operands of its own.
     const RuntimeFunctionEntry* entry = findRuntimeFunction(program, function.enclosingRuntimeFunction);
     if (!entry || entry->function != id)
         return { };
@@ -443,25 +428,6 @@ TypedArrayType typedArrayTypeOf(const BuiltinTypeContext& context, TypeID id)
             return NotTypedArray;
     }
     return common;
-}
-
-PristineAspectSet pristineAspectsProvenBy(const BuiltinTypeContext& context, TypeID id, BuiltinClassID builtinClass)
-{
-    if (!context.facts || !id)
-        return { };
-    Type type = context.types.at(id);
-    if (!type.hasOnlyClassObjects() || classPartsOf(context.types, type).size() != 1 || !findClassPart(context.types, type, builtinClass))
-        return { };
-    if (!context.facts->everyObjectHas(context.types, id, ObjectFact::IsPristine))
-        return { };
-
-    // The one fact is stated of arrays alone and the other of RegExps alone, so no other class pays for a second look at its objects.
-    PristineAspectSet aspects = aspectsProvenByPristineMembers;
-    if (builtinClass == BuiltinClasses::Array && context.facts->everyObjectHas(context.types, id, ObjectFact::HasNoHoles))
-        aspects.add(PristineAspects::Dense);
-    if (builtinClass == BuiltinClasses::RegExp && context.facts->everyObjectHas(context.types, id, ObjectFact::IsAsCreated))
-        aspects.add(PristineAspects::AsCreated);
-    return aspects;
 }
 
 } } } // namespace JSC::AOT::Typed

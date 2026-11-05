@@ -52,7 +52,6 @@ struct StubWords {
 #endif
     const void* closureEntrypoint;
     const void* slimClosureEntrypoint;
-    // By CompiledMethodOfArray: the word that a closure of the function behind the built-in holds. Zero: the image has no code for it.
     uint64_t wordsOfCompiledMethodsOfArray[numberOfCompiledMethodsOfArray];
 };
 static_assert(std::is_trivially_default_constructible_v<StubWords>);

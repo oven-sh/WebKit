@@ -1,6 +1,5 @@
 import * as b from "bun-builtins-table";
 
-// In the order of the numbers. A host says what else it needs to know about each: Bun in src/trim/features/engine.def.
 export default b.declarations(
   b.engineFeatures(
     "JIT",
@@ -59,7 +58,6 @@ export default b.declarations(
     "RegExpFromString",
     "ShadowRealm",
     "ElementsToLocaleString",
-    // Families of run-time operations: AOTRuntimeTable.h. No entry of the table is guarded by one: an image uses a family where it lists an operation of it.
     "OperationsOfChecks",
     "OperationsOnProxies",
     "OperationsOfJSONParse",

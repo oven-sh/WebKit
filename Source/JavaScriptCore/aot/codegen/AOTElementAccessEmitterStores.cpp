@@ -43,7 +43,6 @@ enum class ElementConversion : uint8_t {
 static ElementConversion elementConversionTo(const ArrayStorageForm& form, Representation stored, const Type& type)
 {
     bool isUnboxedDouble = stored == Representation::Double || stored == Representation::OptionalDouble;
-    // The counter of a loop over a list. No integer that is held so is beyond 2^53.
     if (stored == Representation::Int64)
         return form.element == Representation::Int32 ? ElementConversion::BoxInt64IfInt32 : form.element == Representation::Double ? ElementConversion::Int64ToDouble : ElementConversion::BoxInt64;
     if (form.element == Representation::Int32) {
@@ -51,10 +50,8 @@ static ElementConversion elementConversionTo(const ArrayStorageForm& form, Repre
             return ElementConversion::BoxInt32;
         if (stored == Representation::JSValue && type.primitives & Primitive::Integer)
             return ElementConversion::CheckBoxedInt32;
-        // A value keeps the representation it was built with, so a number that a test narrowed to int32 still arrives as a double.
         if (isUnboxedDouble && type.isInt32())
             return ElementConversion::BoxDoubleAsInt32;
-        // A whole number that is held as a double lies there as the int32 that it is. Whatever else the double is gives the list another kind.
         if (isUnboxedDouble && type.primitives & Primitive::Integer)
             return ElementConversion::BoxDoubleIfInt32;
         return ElementConversion::NeverFits;
@@ -97,8 +94,6 @@ ArrayStorageFormList ElementAccessEmitter::candidateFormsFor(ValueID stored, Arr
     return forms;
 }
 
-// `number[]` declares no kind: a list that has taken numbers alone has storage for int32 or for doubles, whichever its maker and the numbers so far have given it. So the arm is chosen by the kind that the list has.
-// First the kind that a value of the type leaves as it is. Storage for any value under a list of numbers is what `new Array(n)` and a few functions of the library make: it has an arm where the store comes again and again.
 ArrayStorageFormList ElementAccessEmitter::formsOfListOfNumbersFor(ValueID stored, bool hasArmForEveryKind)
 {
     bool isWhole = representationOf(stored) == Representation::Int32 || representationOf(stored) == Representation::Int64 || typeOf(stored).isNumberWithoutFraction();
@@ -139,7 +134,6 @@ bool ElementAccessEmitter::hasOnlyExpectedArmInLine(const ValueContext& store)
 {
     if (store.opcode() != Opcode::PutArrayElement)
         return false;
-    // openIn = Loop of the row.
     return !generator().takesFormOfLoops(store);
 }
 
@@ -211,7 +205,6 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
 {
     LengthTest test = testLength(index, elements);
     bool isExpectedToAppend = store.opcode() == Opcode::PutArrayElement && store->isExpectedToAppend();
-    // The stub behind the store also puts an element behind the last one.
     if (hasOnlyExpectedArmInLine(store) && !isExpectedToAppend) {
         branchUnless(test.isInside, isBeyondVector);
         replaceElement(store, form, elements, test.indexInside, rawElement);
@@ -228,36 +221,13 @@ void ElementAccessEmitter::storeInVector(const ValueContext& store, const ArrayS
     m_out.appendTo(isBeyondLength);
     branchUnless(below(index, vectorLength(elements)), isBeyondVector);
     setPublicLength(elements, add(index, integer(1)));
-    if (!replacesBoxedInt32(store, form)) {
-        m_out.jump(isWithinLength);
-        m_out.appendTo(isWithinLength);
-        replaceElement(store, form, elements, test.indexInside, rawElement);
-        return;
-    }
-
-    LBasicBlock continuation = newBlock();
-    storeRawElement(form, elements, index, rawElement);
-    m_out.jump(continuation);
-
+    m_out.jump(isWithinLength);
     m_out.appendTo(isWithinLength);
     replaceElement(store, form, elements, test.indexInside, rawElement);
-    m_out.jump(continuation);
-    m_out.appendTo(continuation);
-}
-
-// Inside the length of an array of int32 without holes every element is a boxed int32, and all of them have the same high half.
-bool ElementAccessEmitter::replacesBoxedInt32(const ValueContext& store, const ArrayStorageForm& form)
-{
-    return form.element == Representation::Int32 && representationOf(store->valueOperand()) == Representation::Int32 && isDense(store->arrayOperand());
 }
 
 void ElementAccessEmitter::replaceElement(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement)
 {
-    if (replacesBoxedInt32(store, form)) {
-        Word32 stored = in<Word32>(store->valueOperand());
-        m_out.store32(stored.value(), elementAt(form, elements, index));
-        return;
-    }
     storeRawElement(form, elements, index, rawElement);
     if (form.holdsCells && typeOf(store->valueOperand()).hasCells()) {
         Boxed stored = rawElement.as<Boxed>();
@@ -265,12 +235,10 @@ void ElementAccessEmitter::replaceElement(const ValueContext& store, const Array
     }
 }
 
-// The walk sets isInBounds only where the value's type fits the storage without conversion and a HasArrayStorage[isWritable] test has passed, so nothing is tested here.
 void ElementAccessEmitter::storeInsideLength(const ValueContext& value, const ArrayStorageForm& form)
 {
     ValueID stored = value->valueOperand();
     Representation representation = representationOf(stored);
-    // The operation declares the effects of a single store, so there is no slow path to take. The marker in an optional number would need one.
     bool fitsWithoutTest = canStoreWithoutConversion(types(), form.kind, typeIDOf(stored)) && representation != Representation::OptionalDouble;
     if (!fitsWithoutTest || elementConversionTo(form, representation, typeOf(stored)) == ElementConversion::NeverFits) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
@@ -280,7 +248,6 @@ void ElementAccessEmitter::storeInsideLength(const ValueContext& value, const Ar
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements elements = elementsOf(value, array);
     Integer index = indexInsideLength(value->positionOperand());
-    // A boxed integer may be boxed as a double, which storage of int32 does not hold.
     bool unboxesInt32 = form.element == Representation::Int32 && representation == Representation::JSValue;
     Operand rawElement = unboxesInt32
         ? Operand(boxInt32(emitter<ConversionEmitter>().unbox(in<Boxed>(stored), typeOf(stored), Representation::Int32).as<Word32>()))
@@ -316,7 +283,6 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
     LBasicBlock continuation = newBlock();
     Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), slowPath, NaNIndexMode::ProduceOutOfBoundsIndex);
     if (knownForm) {
-        // A storage kind that no passed test stands behind may be only a prediction, and only the run-time operation may replace copy-on-write storage.
         if (!value->storageIsWritable())
             branchUnless(hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), *knownForm), slowPath);
         Operand rawElement = *rawElementToStore(*knownForm, stored, slowPath);
@@ -325,7 +291,6 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
     } else {
         Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
         ArrayElements elements = elementsOf(array);
-        // Only the storage kind that the stored value most likely goes into gets an inline arm. The stubs have a fast path for the others.
         forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, formExpectedToHold(value->arrayOperand(), stored), slowPath, [&](const ArrayStorageForm& form) {
             Operand rawElement = *rawElementToStore(form, stored, slowPath);
             storeInVector(value, form, elements, index, rawElement, slowPath);
@@ -340,8 +305,6 @@ void ElementAccessEmitter::generatePutArrayElement(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
-// Nothing is left to test but the kind of the storage and the length. An element inside the length is replaced in line, a hole too: no list with storage of its own of a plain kind has an accessor, a read-only element or
-// a fixed length, on itself or above it (emitStoreInsideVector() of the stub, JSObject::putByIndex). The stub takes every other way: another kind, a value that the kind refuses, a position behind the end.
 void ElementAccessEmitter::storeInProvenList(const ValueContext& value, const ArrayStorageFormList& forms)
 {
     CellPointer list = in<CellPointer>(value->arrayOperand());
@@ -395,7 +358,6 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
 
     bool mayConvertToDouble = storedType.isNumberLike() && !storedType.isInt32();
     Operand key = get(position);
-    // The stubs take the position as it is, store wherever the vector has room, and preserve the caller's registers.
     ArrayStoredValue storedValue = mayConvertToDouble ? ArrayStoredValue::Number : ArrayStoredValue::Value;
     if (key.is<Number>()) {
         callStub(value, arrayPutAtNumber(storedValue), { array.value(), boxedValue.value(), key.value });
@@ -404,7 +366,6 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
     callStub(value, arrayPutAtIndex(storedValue), { array.value(), boxedValue.value(), integerOf(position).value() });
 }
 
-// Nothing: the operation names none, or what it names lies in no integer register.
 std::optional<Integer> ElementAccessEmitter::integerNamedByAppend(const ValueContext& store, size_t index)
 {
     if (store.opcode() != Opcode::AppendElement || store->lengthOperands().size() <= index)
@@ -425,7 +386,6 @@ Integer ElementAccessEmitter::lengthNamedOrRead(const ValueContext& store, const
     return *named;
 }
 
-// The room that the operation names is what the list had in front of the loop, and it has no less now. Where that is used up the list may have grown since.
 void ElementAccessEmitter::branchUnlessHasRoomBehindLength(const ValueContext& store, const ArrayElements& elements, Integer length, LBasicBlock isFull)
 {
     std::optional<Integer> roomInFrontOfLoop = integerNamedByAppend(store, 1);
@@ -446,7 +406,6 @@ void ElementAccessEmitter::branchUnlessHasRoomBehindLength(const ValueContext& s
 
 void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer array, ValueID element)
 {
-    // On x86-64 one arm in line is 113 bytes.
     if (!generator().takesOpenForm(store)) {
         appendOutOfLine(store, array, element, NumberBoxing::ByStub);
         return;
@@ -454,8 +413,6 @@ void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer 
 
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(store->arrayOperand())).kind;
     ArrayStorage declared = arrayStorageDeclaredBy(m_program, types(), typeIDOf(store->arrayOperand())).predicted();
-    // `const list: number[] = []; .. list.push(n)`: the type names the object of the site, which declares nothing. The literal in sight names the kind that it has given the list.
-    // A value that the kind may refuse gives the list another kind, and the appends behind that one go on in line.
     if (const Operation& maker = operationAt(definitionOf(store->arrayOperand())); !hasArrayStorageForm(declared) && maker.opcode == Opcode::NewArray && hasArrayStorageForm(maker.arrayStorage())) {
         expected = maker.arrayStorage();
         if (canStoreWithoutConversion(types(), expected, typeIDOf(element)))
@@ -463,7 +420,6 @@ void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer 
     }
     ArrayStorageFormList forms = candidateFormsFor(element, expected);
     bool hasOnlyExpectedArm = hasOnlyExpectedArmInLine(store);
-    // An array whose storage kind is not the one its element type declares takes the stub, which handles every kind.
     if (forms.size() > 1 && (hasOnlyExpectedArm || (hasArrayStorageForm(declared) && forms.first()->kind == declared)))
         forms.shrink(1);
     else if (!hasArrayStorageForm(declared) && goesByKindOfListOfNumbers(store->arrayOperand(), element))
@@ -521,6 +477,27 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
     });
 
     m_out.appendTo(otherwise);
+    LBasicBlock isLeftToOthers = newBlock();
+    const ArrayStorageForm& forInt32 = arrayStorageFormOf(ArrayStorage::Int32);
+    const ArrayStorageForm& forAnyValue = arrayStorageFormOf(ArrayStorage::Contiguous);
+    Operand given = get(stored);
+    bool mayBeNoNumber = !typeOf(stored).isNumber();
+    if (mayBeNoNumber && (given.representation == Representation::JSValue || given.representation == Representation::Cell)) {
+        branchUnless(hasWritableShape(mode, forInt32), isLeftToOthers);
+        if (given.representation == Representation::JSValue)
+            branchUnless(logicalNot(isNumber(given.as<Boxed>())), isLeftToOthers);
+        Integer headerForInt32(m_out.load64(mutableInstanceField(Instance::offsetOfNewArrayHeader(ArrayWithInt32))));
+        Integer headerForAnyValue(m_out.load64(mutableInstanceField(Instance::offsetOfNewArrayHeader(ArrayWithContiguous))));
+        branchUnless(logicalAnd(equal(loadField<Word32>(array, m_heaps.JSCell_structureID), low32(headerForInt32)), isNotZero(headerForAnyValue)), isLeftToOthers);
+        storeField(array, m_heaps.JSCell_structureID, low32(headerForAnyValue));
+        m_out.store32As8(m_out.constInt32(ArrayWithContiguous), array.value(), m_heaps.JSCell_indexingTypeAndMisc);
+        Operand rawElement = *rawElementToStore(forAnyValue, stored, isLeftToOthers);
+        storeInVector(store, forAnyValue, elements, index, rawElement, isLeftToOthers);
+        join.add(boolean(true));
+    } else
+        m_out.jump(isLeftToOthers);
+
+    m_out.appendTo(isLeftToOthers);
     join.add(boolean(false));
     return join.finish();
 }

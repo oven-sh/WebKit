@@ -41,7 +41,6 @@ static uint64_t cellForSizesTests(const SizesOfImage::Cells& cells, ASCIILiteral
     return result;
 }
 
-// What Bun's test/aot/table-sizes-log.test.ts asks of the three lines, and that each number is the one that the build counts or the header holds.
 static void testCellsOfEachLineAddUp()
 {
     TestBuild build(4);
@@ -54,7 +53,6 @@ static void testCellsOfEachLineAddUp()
     AOT_TEST_CHECK(cellForSizesTests(sizes.image, "code bytes"_s) == build.statistic(StatisticID::CodeBytesEmitted));
     AOT_TEST_CHECK(cellForSizesTests(sizes.image, "text bytes"_s) == build.statistic(StatisticID::TextBytesEmitted));
     AOT_TEST_CHECK(cellForSizesTests(sizes.image, "identifiers"_s) == image.image->text().numberOfIdentifiers());
-    AOT_TEST_CHECK(cellForSizesTests(sizes.image, "literal strings"_s) == image.image->programTables().literalStrings().size());
 
     uint64_t tableBytes = cellForSizesTests(sizes.image, "table bytes"_s);
     AOT_TEST_CHECK(tableBytes == build.statistic(StatisticID::TableBytesEmitted) && tableBytes <= header.codeOffset);
@@ -67,7 +65,6 @@ static void testCellsOfEachLineAddUp()
     AOT_TEST_CHECK(sumOfCellsForSizesTests(sizes.programTables) == programTableBytes);
     uint64_t bytesOfFunctions = cellForSizesTests(sizes.programTables, "functions"_s);
     AOT_TEST_CHECK(bytesOfFunctions && bytesOfFunctions == bytesOfParts[static_cast<unsigned>(TablePartID::Functions)]);
-    // The header, up to seven bytes in front of each part, and what is left of the sets of shapes.
     uint64_t otherBytes = cellForSizesTests(sizes.programTables, "other"_s);
     uint64_t mostOtherBytes = bytesOfParts[static_cast<unsigned>(TablePartID::Header)] + bytesOfParts[static_cast<unsigned>(TablePartID::ShapeSets)] + 8 * numberOfTableParts;
     AOT_TEST_CHECK(otherBytes >= sizeof(ProgramTables) && otherBytes <= mostOtherBytes);

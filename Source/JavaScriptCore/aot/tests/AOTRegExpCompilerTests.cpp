@@ -218,12 +218,10 @@ static void testOnePatternServesBothWidthsAndRetries()
     checkPatternServesBothWidthsAndRetries("[a-c]xyz"_s);
     AOT_TEST_CHECK(compileToCode({ "a*e"_s, { } }).code[0]->hasElidedFrame);
     checkPatternServesBothWidthsAndRetries("a*e"_s);
-    // Every match contains a b, and b, unlike e, is rare enough to search for. The frame holds the position where one was last found.
     AOT_TEST_CHECK(!compileToCode({ "a*b"_s, { } }).code[0]->hasElidedFrame);
     checkPatternServesBothWidthsAndRetries("a*b"_s);
 }
 
-// Checks the code for 16-bit subjects, where every CPU calls the routine. For 8-bit subjects, ARM64 inlines the search.
 static bool searchesForOneOfAClass(ASCIILiteral patternString)
 {
     CompiledRegExp regExp = compileToCode({ patternString, { } });
@@ -233,7 +231,6 @@ static bool searchesForOneOfAClass(ASCIILiteral patternString)
     });
 }
 
-// Searching ahead for a character that can begin a match does not pay when most characters of a subject can begin one.
 static void testOnlyARareFirstCharacterIsSearchedFor()
 {
     AOT_TEST_CHECK(searchesForOneOfAClass("[#%&~]+"_s));
@@ -264,7 +261,6 @@ static size_t numberOfClassesMadeFor(ASCIILiteral patternString, OptionSet<Yarr:
     return pattern.m_userCharacterClasses.size();
 }
 
-// A class with the same text as the class parsed just before it is not parsed again, and the pattern reuses that class. A class depends on the flags in force, so a change of flags makes a new one.
 static void testARepeatedClassIsParsedOnce()
 {
     AOT_TEST_CHECK(numberOfClassesMadeFor("[ab]"_s) == 1);

@@ -3,12 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `var args = Array.prototype.slice.call(arguments, 1)`, `[a, b, c].slice(1)`: the state holds every element of what is sliced, and the bounds are written integers.
-// The slice is a list of those elements, made where the call stands. What was sliced is read by nothing, and where nothing else needs it the sweep drops it.
-// At a suspension: nothing.
-// At a throw: nothing throws.
-// Withheld, with EscapeAnalysis or Folding: the call is built by its row.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -18,7 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A relative index held against the length. Nothing: it is known only when the program runs.
 static std::optional<uint32_t> boundOfSliceInSight(const Walker& walker, Reference bound, uint32_t length, uint32_t whereLeftOut)
 {
     if (!bound)
@@ -40,7 +33,6 @@ Reference buildSliceOfElementsInSight(Walker& walker, const SliceOfElementsInSig
 {
     if (!walker.has(Mechanism::EscapeAnalysis) || !walker.has(Mechanism::Folding) || !asked.sliced || walker.isUnreachable())
         return { };
-    // Of what is no list no species is asked, and an `arguments` that is as it was made answers by itself for each index below its length.
     std::optional<Vector<Reference, 8>> elements = elementsOfFreshArguments(walker, asked.sliced);
     if (!elements && asked.isListByItsRow && isFreshListAsMade(walker, asked.sliced))
         elements = elementsOfFreshList(walker, asked.sliced);

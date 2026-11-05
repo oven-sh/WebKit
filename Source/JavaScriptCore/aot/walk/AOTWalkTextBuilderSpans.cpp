@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations with LoopInvariants, of a text that lies in a builder, on the edges. `for (..) s += a; for (..) s += b`: on the edge out of the first loop the text stays where it is, and the second loop goes on with the builder.
-// Where the scan of the second loop refuses the text, it is finished in front of that loop: the place runs once for each builder. `s += c ? "a" : b`: each edge into the block of the join appends what it brings.
-// At a suspension: a loop that may suspend takes no text in a builder. At a throw: nothing here acts under a handler. Withheld: the text is finished on the edge, and the part is a parameter.
-
 #include "config.h"
 #include "AOTWalkTextBuilders.h"
 
@@ -30,7 +26,6 @@ static bool namesTextInTextBuilderSpans(const GrowingText& web, ValueID value)
     return found != web.names.end() && found->value == value;
 }
 
-// It decides what pays, never what is right: by the edges that come round alone, as the scan picks its candidates. Some edge brings what is made in the loop by a join or where edges meet, and every other the parameter itself.
 static bool comesRoundAsJoinInTextBuilderSpans(Walker& walker, const BodyIndex& index, BlockID head, uint32_t parameterIndex)
 {
     LoopID loop = index.loopOf(head);
@@ -54,8 +49,6 @@ static bool comesRoundAsJoinInTextBuilderSpans(Walker& walker, const BodyIndex& 
     return changesOnSomeEdge;
 }
 
-// The way from `to` to the head of the next loop: blocks that one edge enters, in which nobody sees anything and nothing mentions the text, each ended by a jump.
-// So the place in front of that head runs once for each builder, and no other way brings the head a string.
 bool textStaysInStringBuilderOnEdge(Walker& walker, const TextInStringBuilder& text, BlockID to, BodyTarget target)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -64,12 +57,10 @@ bool textStaysInStringBuilderOnEdge(Walker& walker, const TextInStringBuilder& t
     LoopID left = index.loopOf(text.web.loopHead);
     if (!left || index.isInLoop(to, left))
         return false;
-    // What follows reads the body, in which one edge enters each block on the way. Of a loop that is built twice each copy has that edge, and the closed copy, which keeps no text in a builder, brings the head a string.
     if (walker.edgeLeavesLoopBeingBuiltTwice(to))
         return false;
     LoopID around = index.loop(left).parent;
 
-    // The parameters on the way that were handed the text.
     Vector<ValueID, 4> handedOn;
     auto holdsText = [&](ValueID value) {
         return value && (namesTextInTextBuilderSpans(text.web, value) || handedOn.contains(value));
@@ -77,7 +68,6 @@ bool textStaysInStringBuilderOnEdge(Walker& walker, const TextInStringBuilder& t
 
     std::optional<uint32_t> taking;
     for (;;) {
-        // What a test hands on arrives under another name, which nobody follows here.
         if (!target.proofs().empty())
             return false;
         taking = std::nullopt;
@@ -116,7 +106,6 @@ bool textStaysInStringBuilderOnEdge(Walker& walker, const TextInStringBuilder& t
         to = target.block();
     }
 
-    // A loop beside the one that is left, which this way alone enters.
     LoopID entered = index.loopOf(to);
     if (!taking || index.loop(entered).parent != around || index.isEnteredByHandlerEdge(to))
         return false;
@@ -126,7 +115,6 @@ bool textStaysInStringBuilderOnEdge(Walker& walker, const TextInStringBuilder& t
     if (numberOfEntries != 1)
         return false;
 
-    // Whoever read another name of the text from the head on would find what the turns have appended.
     for (const NameOfGrowingText& name : text.web.names) {
         if (walker.isLiveAtHeadOf(name.value, to))
             return false;
@@ -136,7 +124,6 @@ bool textStaysInStringBuilderOnEdge(Walker& walker, const TextInStringBuilder& t
             return false;
     }
 
-    // Under a handler that goes on with the text a builder in the frame takes no append.
     if (text.liesInFrame) {
         for (BlockID member : index.membersOf(entered)) {
             if (index.block(member).hasHandler())
@@ -146,12 +133,9 @@ bool textStaysInStringBuilderOnEdge(Walker& walker, const TextInStringBuilder& t
     return comesRoundAsJoinInTextBuilderSpans(walker, index, to, *taking);
 }
 
-// ---- A part that depends on the way
-
 namespace {
 
 struct LinkInTextBuilderSpans {
-    // Null: there is none.
     ValueID join;
     uint32_t positionOfPart { 0 };
 };
@@ -160,16 +144,13 @@ enum class PartInSightInTextBuilderSpans : uint8_t { No, Primitive, Text };
 
 struct PartAppendedOnEdgesInTextBuilderSpans {
     uint32_t parameterIndex { 0 };
-    // The name that the last link has in front.
     ValueID front;
     ValueID lastLink;
-    // The parameter is added to what is no text, so only a string makes that sum a join.
     bool everyEdgeBringsString { false };
 };
 
 } // anonymous namespace
 
-// The Add or the Strcat of the block that alone reads the value, as it stands or through casts that nothing else reads.
 static LinkInTextBuilderSpans linkThatAloneReadsPartInTextBuilderSpans(const BodyIndex& index, BodyBlock block, ValueID part)
 {
     while (true) {
@@ -188,7 +169,6 @@ static LinkInTextBuilderSpans linkThatAloneReadsPartInTextBuilderSpans(const Bod
         }
         if (!opcodesThatStateTypes.contains(opcode))
             return { };
-        // For a claim the walk builds a test, and a promise of an int32 is judged by what the edges into the block bring.
         if (opcode == Opcode::Convert) {
             DeclaredType declared = operation.as<Opcode::Convert>().declared();
             if (declared.has(PositionFlags::IsClaim) || declared.has(PositionFlags::IsInt32Promise))
@@ -198,7 +178,6 @@ static LinkInTextBuilderSpans linkThatAloneReadsPartInTextBuilderSpans(const Bod
     }
 }
 
-// A constant that is written in the block, a value from in front of the block that is proven to have text by itself, and what the block makes of such values by joining them. A sum of two primitives of which neither is a text may throw.
 static PartInSightInTextBuilderSpans classOfPartInSightInTextBuilderSpans(Walker& walker, const BodyIndex& index, BodyBlock block, ValueID value)
 {
     using PartInSight = PartInSightInTextBuilderSpans;
@@ -233,8 +212,6 @@ static PartInSightInTextBuilderSpans classOfPartInSightInTextBuilderSpans(Walker
     return everyOperandIsInSight && (someOperandIsText || opcode != Opcode::Add) ? PartInSight::Text : PartInSight::No;
 }
 
-// `s += c ? "a" : b`, `s += (c ? "a" : b) + "!"`: from the parameter a row of joins leads to a growth of a text in a builder, and in the text that the growth appends the parameter comes first.
-// A join converts its parts before it joins them: what stands behind the parameter is in sight, so no conversion runs code behind the appends on the edges.
 static std::optional<PartAppendedOnEdgesInTextBuilderSpans> findLinksToGrowthInTextBuilderSpans(Walker& walker, const BodyIndex& index, BodyBlock block, uint32_t parameterIndex, Vector<ValueID, 8>& links)
 {
     using PartInSight = PartInSightInTextBuilderSpans;
@@ -260,7 +237,6 @@ static std::optional<PartAppendedOnEdgesInTextBuilderSpans> findLinksToGrowthInT
         });
         if (!restIsInSight)
             return std::nullopt;
-        // Whatever is added to a text is joined to it.
         if (join.opcode() == Opcode::Add && !partIsText && !isLastLink)
             found.everyEdgeBringsString |= !restHasText;
         partIsText = true;
@@ -274,9 +250,6 @@ static std::optional<PartAppendedOnEdgesInTextBuilderSpans> findLinksToGrowthInT
     return std::nullopt;
 }
 
-// closeEdgesInto(), in front of the parameters. `edges`: the open edges that enter the block, each with an argument for each parameter.
-// The edges append where the last link would, so a text that grows too long throws there: nobody sees what the block does in between, and from the head of the block on the last link alone reads the text.
-// Each edge gets a block in which its argument is appended in the form of its own type, and brings the empty text, which every edge brings alike: so the parameter is not made, and the links join nothing in its place.
 void Walker::appendPartsOfTextsOnEdgesInto(BlockID inputBlock, BlockID entered, std::span<const uint32_t> edges)
 {
     size_t frameIndex = m_frames.size() - 1;
@@ -290,11 +263,9 @@ void Walker::appendPartsOfTextsOnEdgesInto(BlockID inputBlock, BlockID entered, 
         links.shrink(0);
         std::optional<PartAppendedOnEdgesInTextBuilderSpans> found = findLinksToGrowthInTextBuilderSpans(*this, index, block, parameterIndex, links);
         TextInStringBuilder* text = found ? findTextNamedBy(*this, found->front) : nullptr;
-        // Under a handler the builder holds the text at the head of the block.
         if (!text || text->web.standsUnderHandlers || !index.isInLoop(inputBlock, index.loopOf(text->web.loopHead)))
             continue;
 
-        // Behind the last link, which is a growth, no name of the state in front of it is mentioned: the scan of the loop has seen to that.
         bool onlyJoinsInFrontOfLastLink = true;
         for (BodyValue operation : block.values()) {
             if (operation.id() == found->lastLink)
@@ -314,7 +285,6 @@ void Walker::appendPartsOfTextsOnEdgesInto(BlockID inputBlock, BlockID entered, 
         if (!onlyJoinsInFrontOfLastLink)
             continue;
 
-        // It pays where some way brings what has a narrower form than a string that nobody knows: a written text, a number.
         bool everyArgumentFits = true;
         bool someArgumentHasNarrowerForm = false;
         for (uint32_t place : edges) {
@@ -332,7 +302,6 @@ void Walker::appendPartsOfTextsOnEdgesInto(BlockID inputBlock, BlockID entered, 
         Reference emptyText = constant(WTF::move(emptyTextDraft));
         Reference builder = text->builder;
         for (uint32_t place : edges) {
-            // What is built may lead an edge of its own, which moves the list.
             Reference argument = m_openEdges[place].arguments[parameterIndex];
             BlockID onEdge = m_code.addBlock(BlockRole::Ordinary, m_code.at(entered).frequency);
             m_code.setLoopMarks(onEdge, m_code.at(entered).isInLoop, false);
@@ -354,7 +323,6 @@ void Walker::appendPartsOfTextsOnEdgesInto(BlockID inputBlock, BlockID entered, 
             m_block = { };
         }
         m_state.clear();
-        // One part a block: a second one would have to come behind the first in the text.
         return;
     }
 }

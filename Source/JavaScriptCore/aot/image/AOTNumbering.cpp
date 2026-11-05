@@ -51,7 +51,6 @@ static std::optional<uint32_t> placedOffsetAt(const Vector<uint32_t>& offsets, u
     return offsets[index];
 }
 
-// CallingConventions::indexOf() of closureEntryOf(). Neither asks the plan anything.
 static std::optional<uint32_t> unitIndexOfClosureEntry(uint32_t function)
 {
     uint64_t index = static_cast<uint64_t>(function) * Typed::numberOfCodeRolesOfOneFunction + static_cast<uint64_t>(Typed::CodeRole::GenericCallEntry);
@@ -60,7 +59,6 @@ static std::optional<uint32_t> unitIndexOfClosureEntry(uint32_t function)
     return static_cast<uint32_t>(index);
 }
 
-// Only of a space whose things are words of the statics.
 static std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers& numbers, NumberSpace space, std::span<const uint32_t> key)
 {
     if (key.empty() || (hasOneIDAsKey(space) && key.size() != 1))
@@ -127,7 +125,6 @@ static std::optional<uint32_t> offsetOfMentionedWordInStatics(const ImageNumbers
     case NumberSpace::ClassRank:
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
-    case NumberSpace::Function:
     case NumberSpace::Allocation:
     case NumberSpace::Request:
     case NumberSpace::PropertyRun:
@@ -164,7 +161,6 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
         return static_cast<int64_t>(InstanceLayout::offsetOfStringCell(*number));
     }
     case NumberSpace::BuiltinCell: {
-        // The run time puts tables that the instance has no room for elsewhere.
         std::span<const BuiltinCellKey> cells = numbers.builtinCells();
         std::optional<uint32_t> number = numbers.numberOf(space, key);
         if (!number || !InstanceLayout::holdsBuiltinCells(cells.size()))
@@ -208,10 +204,8 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
         return byteOfStatics(byteOffsetOfClassGuardBit(*bit));
     }
     case NumberSpace::ClosureCell:
-        // The run time allocates the closure table apart from the instance and leaves its address in InstanceHeader::closureCells, so a cell has no distance.
         return std::nullopt;
     case NumberSpace::MethodSelector: {
-        // No object has the shape 0, so the word itself may lie behind the table, and nobody reads it.
         std::optional<uint32_t> origin = numbers.numberOf(space, key);
         if (!origin)
             return std::nullopt;
@@ -229,7 +223,6 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     case NumberSpace::DataElements:
     case NumberSpace::ClassRank:
     case NumberSpace::ClosureFunction:
-    case NumberSpace::Function:
     case NumberSpace::Allocation:
     case NumberSpace::Request:
     case NumberSpace::PropertyRun:
@@ -240,7 +233,6 @@ static std::optional<int64_t> distanceFromInstanceToMentionedWord(const ImageNum
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Whoever reads the numbers behind a build that failed finds every table, if empty.
 ImageNumbers::ImageNumbers()
     : m_identifiers(makeUniqueWithoutFastMallocCheck<IdentifierNumbering>())
     , m_stringConstants(makeUniqueWithoutFastMallocCheck<StringConstantNumbering>())
@@ -263,7 +255,6 @@ std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<cons
         return m_identifiers->numberOfText(StringID(key[0]));
     case NumberSpace::String:
     case NumberSpace::ShownString:
-        // ImageSection::Strings has a word for each StringID. Only a named string has a record behind its word.
         if (!m_namedStrings.get(key[0]))
             return std::nullopt;
         return key[0];
@@ -307,7 +298,6 @@ std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<cons
     case NumberSpace::EnvironmentHandedBack:
         return offsetOfMentionedWordInStatics(*this, space, key);
     case NumberSpace::DataElements: {
-        // There are no nodes until setNodesOfData().
         if (key[0] >= m_nodesOfData.size() || !m_nodesOfData[key[0]])
             return std::nullopt;
         uint64_t offset = (static_cast<uint64_t>(m_nodesOfData[key[0]]) + DataNodeHeader::wordsBeforeElements) * sizeof(uint64_t);
@@ -358,12 +348,6 @@ std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<cons
             return std::nullopt;
         return number;
     }
-    case NumberSpace::Function: {
-        FunctionID id = m_functions.idOf(key[0]);
-        if (!id)
-            return std::nullopt;
-        return id.index();
-    }
     case NumberSpace::Allocation:
         return m_allocations.find(key);
     case NumberSpace::Request: {
@@ -377,7 +361,6 @@ std::optional<uint32_t> ImageNumbers::numberOf(NumberSpace space, std::span<cons
     case NumberSpace::Type: {
         if (key.size() != 1)
             return std::nullopt;
-        // There are no offsets until setOffsetsOfTypes().
         std::optional<uint32_t> place = placeOfType(TypeID::fromBits(key[0]));
         if (!place || *place >= m_offsetsOfTypes.size())
             return std::nullopt;
@@ -405,7 +388,6 @@ std::optional<uint32_t> ImageNumbers::valueOf(const Mention& mention, std::span<
             return std::nullopt;
         if (mention.space == NumberSpace::SiteCache)
             number = safeCast<uint32_t>(InstanceLayout::offsetOfIndexOfSiteAnswers(m_instanceSizes, *number));
-        // The addend may be a field that reaches the highest bit, so the sum is taken modulo 2^32.
         return *number + static_cast<uint32_t>(mention.addend);
     }
 
@@ -451,7 +433,6 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
         return static_cast<uint64_t>(places.size()) - static_cast<uint64_t>(std::ranges::count(places, noPlace));
     };
 
-    // The identifier with the number 0 is no name.
     uint64_t count = numbers.identifiers().count() - 1;
     count += numbers.namedStrings().bitCount();
     count += numbers.stringConstants().count();
@@ -482,7 +463,6 @@ static uint64_t countThingsNumbered(const ImageNumbers& numbers)
     count += numberPlaced(statics.classGuardBits, noClassGuardBit);
     count += statics.classGuardsOfNames.size();
     count += statics.classGuardCounts.size();
-    // The names of one guard stand side by side.
     const Vector<PlacedClassGuardOfName>& namesOfSharedGuards = statics.namesOfClassGuardsOfSeveralNames;
     for (size_t index = 0; index < namesOfSharedGuards.size(); ++index)
         count += !index || namesOfSharedGuards[index].bit != namesOfSharedGuards[index - 1].bit;
@@ -500,10 +480,8 @@ void numberWhatStaticsWaitFor(const NumberingInputs& inputs, GatheredMentions& m
         (builder.*step)();
     };
 
-    // It adds strings to the program, which every later step may read.
     run(&ImageNumbersBuilder::collectRegExpRequests);
     times.didFinish("collect the requests for regular expressions"_s);
-    // None of the lanes reads what another of them writes: each fills members of the numbers that are its own, and the rows take the keys of spaces that no other lane asks the mentions for.
     auto runLane = [&](ASCIILiteral name, std::initializer_list<void (ImageNumbersBuilder::*)()> steps) {
         StepTimes timesOfLane(context, "image: number"_s);
         for (void (ImageNumbersBuilder::*step)() : steps)
@@ -530,7 +508,6 @@ void layOutStaticsOfMentions(const NumberingInputs& inputs, GatheredMentions& me
         return;
     StepTimes times(context, "image: number"_s);
     {
-        // It counts the string cells and the global bindings and leaves the sizes of the instance: only a step of the builder can write them.
         ImageNumbersBuilder builder { inputs, mentions, tables, numbers, context };
         CurrentWorkScope currentWork("image"_s);
         builder.layOutStatics();

@@ -40,7 +40,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySpeciesCreate, EncodedJSValue, (Instan
     }
     if (length >= MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH) [[unlikely]]
         OPERATION_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(length))));
-    // Whoever asks for the list fills it element by element. A list that has not decided on its storage decides at the first of them, in the run time: most lists that map() and filter() make hold one or two.
     JSArray* list = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), static_cast<unsigned>(length));
     if (!list) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);

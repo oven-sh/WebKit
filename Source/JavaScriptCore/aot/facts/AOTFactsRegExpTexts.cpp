@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBodyIndex.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTIRProgram.h"
@@ -37,46 +38,16 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// WHICH TEXTS ARRIVE AT RegExp. A text that is listed gets a record and code in the image; one that is not is parsed, and matched by a flat program, when the program runs. So the list claims nothing, and nothing here is proven.
-// The code that leads to a call of RegExp is REHEARSED in a realm of the build. First the body of the module that the program starts with,
-// as the program goes through it: what it imports and requires, the functions that it calls, the classes and constructor functions that it constructs. `app.get("/users/:id", ..)`: the text comes to RegExp many calls down from there.
-// An async function is gone through in one go: what is awaited is the value that a settled promise holds, or what nobody knows, and the call gives a promise that is settled. Many a server registers its routes behind an `await`.
-// Then each function that the start of the program has handed to code that nobody knows (`Bun.serve({ fetch })`), once, with nothing known of what it is handed. Then each function that calls RegExp, with nothing known of what it is handed, and whoever names such a function.
-// What the rehearsal does not know is one object of the realm, which throws where something asks for its text. Where a branch hangs on it both sides are gone through, up to the block where they meet again. From there the way goes on as one:
-// a parameter of that block holds what the ways that know it bring it, or what nobody knows where they differ. Outside loops it goes on once for each of the values instead, a few times in a function. So a branch that nobody knows ends no loop around it.
-// WHAT A PROGRAM DOES WITH THE PATTERNS THAT IT HAS MADE IS NOT REHEARSED: a built-in that is handed one answers what nobody knows, and costs nothing. A pattern that is written is matched: a text is often taken apart and escaped by such.
-// THE LIST FOLLOWS FROM THE PROGRAM ALONE. The realm is the engine's own, with nothing of the host: no file, no process, no environment. No built-in whose row reads or writes ExternalState is called (the clock, chance,
-// the time zone, the locale of the host, other agents), nor one that evaluates text, loads a module or starts an instance. One thread goes through the starts in the order of their numbers,
-// and the engine starts none beside it: no machine code is made of bytecode, and that thread collects alone.
-
-// WHAT BOUNDS IT. What lies behind a bound is compiled when the program runs.
-// Code that throws: the operation gives what nobody knows, and a way that ends in a throw ends. Code that loops or calls without end: the allowances of operations. Code that allocates without end: the last three.
-// THE ALLOWANCES GUARD AGAINST ONE THING: code is run here, and nobody can tell of code whether it ends. They count what is gone through for nothing: behind each text that it finds a start has its allowance anew, and what led there is given back.
-// A function that is handed nothing that anybody knows is not entered: it does what it does from a start of its own. One that calls itself behind a branch that nobody knows is not entered again: nobody knows where that ends, and each call may make two more.
-// EVERY VALUE LIES WHERE THE COLLECTOR SEES IT (the stack, a MarkedVector, an object of the realm), so the realm is collected like any other, under whatever options the process has.
 static constexpr uint32_t operationsFromOneStart = 1 << 17;
-// A start is the body of a module that the program starts with, a function that it hands to code that nobody knows, a function of the program's own that calls RegExp with a text that is not written, or one that names such a function.
-// The first two kinds in all, and the last two in all, go through no more than this many times the operations that the bodies of the program hold,
-// and what a few starts that never end use up. A program that does little else than make patterns needs twice what it holds, a large application a quarter.
 static constexpr uint64_t operationsInAllForEachOfProgram = 4;
-// A text that is found costs this much, and nothing else: `for (let i = 0; ; i++) new RegExp("a" + i)` ends too.
 static constexpr uint64_t operationsForText = 1 << 8;
 static constexpr uint64_t operationsInAllOfSmallestProgram = 8 * operationsFromOneStart;
-// A router lays a path into a tree of its characters, one call a character. A call takes 3 KB of the stack, of which the engine allows 5 MB: the bound is a number, so that the list is the same on every host.
-// Where frames are many times as large (the address sanitizer's) the stack is the bound: the call that finds no room gives what nobody knows, like the deepest.
 static constexpr unsigned deepestCall = 256;
-// To enter a function costs as many operations as it has values, divided by this: room is made for each value.
 static constexpr uint32_t valuesMadeRoomForAtPriceOfOneOperation = 16;
 static constexpr uint8_t timesThroughBlockWhileGoingBothWays = 4;
-// No text is longer than longestRegExpPatternWithCode, and no built-in is handed a greater number, which may set how much it allocates.
-// A built-in costs as many operations as the texts and lists that it is handed have characters and elements: a sort, a join, a search.
-// One that is handed a RegExp may match, and a match may go back over its subject again and again: it costs this much, and an operation for each character. A pattern with a repeat inside a repeat is not matched at all.
 static constexpr uint32_t operationsForBuiltinHandedRegExp = 1 << 10;
-// With this many bytes in the realm, or that many characters made in all, the rehearsal is over, with what it has found. So it is where the engine reports that a limit of its own is reached:
-// no memory, a termination.
 static constexpr size_t mostBytesOfRealm = 256 * MB;
 
-// `(a+)+$`: a match goes back over its subject in as many ways as there are to deal it out among the turns, and gives up at Yarr::matchLimit: half a second.
 static bool repeatsInsideRepeat(const Yarr::PatternDisjunction& disjunction, bool isInsideRepeat)
 {
     for (const auto& alternative : disjunction.m_alternatives) {
@@ -95,7 +66,6 @@ static bool repeatsInsideRepeat(const Yarr::PatternDisjunction& disjunction, boo
 class RehearsalOfRegExpTexts {
     WTF_MAKE_NONCOPYABLE(RehearsalOfRegExpTexts);
 public:
-    // Whoever makes it holds the lock of the VM. It lies on the stack: MarkedVector.
     RehearsalOfRegExpTexts(VM&, const Program&, const BodyIndexTable&, const ThinSummaries&);
 
     void run(std::span<const FunctionID> functionsThatCallRegExp);
@@ -106,10 +76,8 @@ private:
 
     using Values = MarkedVector<JSValue, 8, RecordOverflow>;
 
-    // From a branch on a value that nobody knows to the block where its sides meet again. That block is not entered from inside: what the edges bring it is kept until both sides are through.
     struct OpenRegion {
         BlockID join;
-        // In Activation::arrivals.
         size_t firstArrival { 0 };
         uint32_t numberOfArrivals { 0 };
         bool hasBroughtOtherValues { false };
@@ -119,14 +87,11 @@ private:
         const BodyIndex& index;
         FunctionID function;
         Values values;
-        // While a region is open. By block.
         Vector<uint8_t> timesEnteredWhileGoingBothWays;
         Vector<BlockID, 8> blocksCounted;
         Vector<OpenRegion, 2> regions;
-        // For each edge that has come to the join of an open region, what it brings the parameters of that block, one behind the other. No two of one region bring the same.
         Values arrivals;
         const Vector<BlockID>* joins { nullptr };
-        // How often the code behind a join was gone through once more, for other values.
         unsigned numberOfWaysGoneSeparately { 0 };
         bool waysDifferInWhatTheyReturn { false };
 
@@ -139,8 +104,8 @@ private:
     };
 
     bool isKnown(JSValue value) const { return value != JSValue(m_unknown.get()); }
+    bool isGlobalObject(JSValue value) const { return value == JSValue(m_realm.get()) || value == JSValue(m_realm->globalThis()); }
     JSValue unknown() const { return m_unknown.get(); }
-    // Of an operand that the operation leaves out: undefined.
     JSValue at(const Activation& activation, ValueID id) const
     {
         if (!id)
@@ -151,7 +116,6 @@ private:
 
     String charactersOf(StringID) const;
     JSValue textOf(StringID);
-    // Null: no text names the property.
     Identifier nameOf(PropertyKeyID);
     JSValue builtinInRealm(BuiltinID);
     JSValue valueOfData(const DataNode&);
@@ -163,12 +127,10 @@ private:
     JSValue namespaceOf(ModuleID);
     JSValue prototypeFor(JSValue newTarget);
     Identifier privateNameOf(LayoutID, uint32_t field);
-    // No function: the value is no function of the program.
     ClosureOfProgram closureIn(JSValue) const;
     void givePrototypeTo(JSValue closure);
     bool isPatternMadeHere(JSValue value) const { return value.inherits<RegExpObject>() && asObject(value)->getDirect(*m_vm, m_markOfPatternMadeHere); }
     JSValue notePatternMadeHere(JSValue);
-    // `Bun.serve({ fetch })`: what is handed to code that the rehearsal does not know may be called from there.
     void noteHandedToCodeThatNobodyKnows(std::span<const JSValue> arguments);
     std::optional<bool> isOfType(JSValue, TypeID) const;
 
@@ -176,14 +138,10 @@ private:
     JSValue call(JSValue callee, JSValue thisValue, std::span<const JSValue> arguments);
     JSValue construct(JSValue callee, JSValue newTarget, std::span<const JSValue> arguments);
     bool appendElementsOf(JSValue list, Values&);
-    // False: the allowance does not pay for the call.
     bool payForBuiltin(JSValue thisValue, std::span<const JSValue> arguments);
     bool mayMatchWithoutEnd(RegExp*);
     void noteThrown(Exception*);
-    // EVERY CALL INTO THE ENGINE THAT MAY THROW IS LOOKED AT BEFORE THE NEXT ONE IS MADE: JavaScriptCore's own check of exception scopes holds a build with assertions to that.
-    // True: it threw. What it was to give nobody knows.
     bool hasThrown(TopExceptionScope&);
-    // Null, false, what nobody knows: it threw.
     JSArray* newList();
     bool append(JSArray*, JSValue);
     bool storeAt(JSObject*, unsigned index, JSValue);
@@ -198,9 +156,7 @@ private:
     }
 
     JSValue execute(Activation&, const BodyValue&);
-    // Whether the block is to be entered.
     bool takeEdge(Activation&, const BodyTerminator&, uint32_t targetIndex, BodyTarget);
-    // The block where the ways meet again, if one of them got there.
     BlockID goEachWayFrom(Activation&, BodyBlock, JSValue& result);
     BlockID joinBehind(Activation&, BlockID);
     void runFrom(Activation&, BlockID, JSValue& result);
@@ -210,7 +166,6 @@ private:
     JSValue enterWithNothingKnown(FunctionID);
     JSValue enterWithEntryParameters(FunctionID, std::span<const JSValue>);
     void runModule(ModuleID);
-    // Whether a call of RegExp was handed a text that the rehearsal does not know.
     bool rehearse(FunctionID);
 
     const Program& m_program;
@@ -226,7 +181,6 @@ private:
     JSValue m_objectAssign;
     UncheckedKeyHashSet<JSCell*> m_functionsThatAskTheWorld;
     Values m_builtins;
-    // By StringID: the place in m_textsMade.
     UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_texts;
     Values m_textsMade;
     UncheckedKeyHashMap<uint32_t, Identifier, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_names;
@@ -234,19 +188,16 @@ private:
     Values m_resultsOfModules;
     Values m_moduleObjects;
     Values m_namespaces;
-    // Functions of the program, in the order in which they were handed out, each once.
     Values m_handlers;
     UncheckedKeyHashSet<JSCell*> m_handlersListed;
-    // A start that knows nothing of what it is handed hands functions to what it does not know all the time.
     bool m_goesThroughStartOfProgram { false };
-    // Names that no code of the program can ask for.
     Identifier m_numberOfFunction;
     Identifier m_capturesOfFunction;
     Identifier m_markOfPatternMadeHere;
     UncheckedKeyHashMap<uint64_t, Identifier> m_privateNames;
-    // By function: for each block the nearest block that every way from it to the end of the function goes through.
     UncheckedKeyHashMap<uint32_t, Vector<BlockID>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_joins;
     Vector<StateOfModule> m_statesOfModules;
+    Vector<ModuleID> m_modulesOfRuntimeModules;
     BitVector m_rehearsed;
 
     bool hasRoomLeft() const { return m_vm->heap.capacity() + m_charactersOfTextsMade <= mostBytesOfRealm; }
@@ -254,16 +205,12 @@ private:
     uint32_t m_operationsLeft { 0 };
     uint64_t m_operationsLeftInAll { operationsInAllOfSmallestProgram };
     bool m_isOver { false };
-    // Or at the start, of a start that has found none yet.
     uint64_t m_operationsLeftInAllAtLastText { 0 };
     size_t m_charactersOfTextsMade { 0 };
     unsigned m_depth { 0 };
-    // In all the activations on the stack.
     unsigned m_openRegions { 0 };
-    // By function. Of one that is being gone through: m_openRegions when it was last entered, and one more.
     Vector<unsigned> m_regionsOpenAtEntryPlusOne;
     bool m_sawTextThatNobodyKnows { false };
-    // The operation that is being gone through, as its function and its number, and for each that has called RegExp whether a text has arrived there.
     uint64_t m_operation { 0 };
     UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_callsOfRegExp;
 
@@ -301,6 +248,14 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     m_moduleObjects.fill(vm, program.modules.size(), leaveEmpty);
     m_namespaces.fill(vm, program.modules.size(), leaveEmpty);
     m_statesOfModules.fill(StateOfModule::IsNotEntered, program.modules.size());
+    for (uint32_t index = program.modules.size(); index--;) {
+        const Module& module = program.modules[index];
+        if (!module.runtimeModule || !module.body)
+            continue;
+        if (m_modulesOfRuntimeModules.size() <= module.runtimeModule.index())
+            m_modulesOfRuntimeModules.grow(module.runtimeModule.index() + 1);
+        m_modulesOfRuntimeModules[module.runtimeModule.index()] = ModuleID(index);
+    }
     m_rehearsed.ensureSize(program.functions.size());
     m_regionsOpenAtEntryPlusOne.fill(0, program.functions.size());
     for (size_t function = 0; function < program.functions.size(); ++function)
@@ -412,7 +367,6 @@ JSValue RehearsalOfRegExpTexts::elementAt(JSArray* list, unsigned index)
     return hasThrown(scope) ? unknown() : element;
 }
 
-// To compare two texts the engine may have to join one that it has put off joining.
 bool RehearsalOfRegExpTexts::areStrictlyEqual(JSValue first, JSValue second)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
@@ -466,14 +420,12 @@ JSValue RehearsalOfRegExpTexts::valueOfData(const DataNode& node)
 JSValue RehearsalOfRegExpTexts::closureOf(FunctionID function, std::span<const JSValue> captures)
 {
     const Function& record = m_program.at(function);
-    // The function object keeps the list alive.
     VM& vm = *m_vm;
     JSGlobalObject* realm = m_realm.get();
     JSValue list = listOf(captures);
     if (!isKnown(list))
         return unknown();
     JSArray* held = asArray(list);
-    // A generator is a function like any other to whoever is handed it. What a call of it gives nobody knows.
     bool isGoneThrough = !record.has(FunctionFlags::IsGenerator) && record.hasBody();
     JSObject* made = JSNativeStdFunction::create(vm, realm, record.length, String(), [this, function, held, isGoneThrough](JSGlobalObject*, CallFrame* frame) {
         if (!isGoneThrough)
@@ -500,7 +452,6 @@ RehearsalOfRegExpTexts::ClosureOfProgram RehearsalOfRegExpTexts::closureIn(JSVal
     return { FunctionID(number.asUInt32()), asArray(asObject(value)->getDirect(*m_vm, m_capturesOfFunction)) };
 }
 
-// `function Layer() { }`, `Layer.prototype.match = ..`, `new Layer()`: made when somebody first asks.
 void RehearsalOfRegExpTexts::givePrototypeTo(JSValue closure)
 {
     VM& vm = *m_vm;
@@ -524,10 +475,8 @@ JSValue RehearsalOfRegExpTexts::variable(VariableID id)
     if (record.initialization == VariableInitialization::Function && record.function)
         return held = closureOf(record.function, { });
     runModule(record.module);
-    // `held` stays where it is: the list never grows.
     if (held)
         return held;
-    // `import express from "express"`: the loader fills the variable out of what the CommonJS module exports.
     const Module& module = m_program.at(record.module);
     for (const SyntheticExport& synthetic : module.syntheticExports) {
         if (synthetic.variable != id || module.requests.size() != 1)
@@ -592,7 +541,6 @@ JSValue RehearsalOfRegExpTexts::namespaceOf(ModuleID id)
         if (synthetic.variable)
             made->putDirect(vm, Identifier::fromString(vm, charactersOf(synthetic.name)), variable(synthetic.variable));
     }
-    // What is asked for while the body runs holds what the body has stored so far.
     if (m_statesOfModules[id.index()] == StateOfModule::HasRun)
         m_namespaces[id.index()] = made;
     return made;
@@ -673,15 +621,12 @@ std::optional<bool> RehearsalOfRegExpTexts::isOfType(JSValue value, TypeID id) c
     return std::nullopt;
 }
 
-// ---- Calls
-
 void RehearsalOfRegExpTexts::noteTexts(std::span<const JSValue> arguments)
 {
     JSGlobalObject* realm = m_realm.get();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_vm);
     JSValue pattern = arguments.size() > 0 ? arguments[0] : jsUndefined();
     JSValue flags = arguments.size() > 1 ? arguments[1] : jsUndefined();
-    // What turns the pattern into a text may be code of the program.
     uint64_t site = m_operation;
     m_callsOfRegExp.add(site, false);
     if (!isKnown(pattern)) {
@@ -704,7 +649,6 @@ void RehearsalOfRegExpTexts::noteTexts(std::span<const JSValue> arguments)
 
     bool knowsFlags = isKnown(flags);
     if (!knowsFlags) {
-        // They may be "", "g" or "d", which all find the record without significant flags.
         m_sawTextThatNobodyKnows = true;
         flagsOfText = OptionSet<Yarr::Flags>();
     } else if (!flags.isUndefined()) {
@@ -722,7 +666,6 @@ void RehearsalOfRegExpTexts::noteTexts(std::span<const JSValue> arguments)
     uint16_t significant = ImageRegExp::significantFlags(*flagsOfText).toRaw();
     if (m_seen.add({ text, significant }).isNewEntry) {
         m_found.append(RegExpTextWorkedOut { text.isolatedCopy(), significant, knowsFlags });
-        // What has led to a text was not gone through for nothing: it is given back, and the text costs what it costs. So a start goes on for as long as it finds texts.
         m_operationsLeft = std::max(m_operationsLeft, operationsFromOneStart);
         if (m_operationsLeftInAll) {
             m_operationsLeftInAll = m_operationsLeftInAllAtLastText > operationsForText ? m_operationsLeftInAllAtLastText - operationsForText : 0;
@@ -765,10 +708,8 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
     bool isOfProgram = callee.inherits<JSNativeStdFunction>();
     if (!isOfProgram && !isKnown(thisValue))
         return unknown();
-    // A function that is handed nothing that anybody knows does what it does from a start of its own, if it makes patterns.
     if (isOfProgram && !arguments.empty() && (!isKnown(thisValue) || thisValue.isUndefined()) && std::ranges::none_of(arguments, [&](JSValue argument) { return isKnown(argument); }))
         return unknown();
-    // What a program does with the patterns that it has made is its work, not the making of patterns.
     if (!isOfProgram && callee != m_regExpConstructor && (isPatternMadeHere(thisValue) || std::ranges::any_of(arguments, [&](JSValue argument) { return isPatternMadeHere(argument); })))
         return unknown();
     CallData callData = getCallData(callee);
@@ -818,7 +759,6 @@ bool RehearsalOfRegExpTexts::payForBuiltin(JSValue thisValue, std::span<const JS
                 return false;
             mayMatch = true;
         }
-        // A number may set how much the built-in allocates.
         return !value.isNumber() || value.asNumber() <= m_longestText;
     };
     if (!take(thisValue) || !std::ranges::all_of(arguments, take))
@@ -910,8 +850,6 @@ bool RehearsalOfRegExpTexts::appendElementsOf(JSValue list, Values& elements)
     }
     return true;
 }
-
-// ---- One operation
 
 JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue& value)
 {
@@ -1114,8 +1052,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         if (name == vm.propertyNames->prototype)
             givePrototypeTo(object);
         JSValue found = settle(object.get(realm, name));
-        // The realm of the build has none of what the host lays on the global object.
-        if (found.isUndefined() && object == JSValue(realm))
+        if (found.isUndefined() && isGlobalObject(object))
             return unknown();
         return found;
     }
@@ -1136,7 +1073,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         PropertyKeyID key = opcode == Opcode::PropSet ? value.as<Opcode::PropSet>().key() : value.as<Opcode::PropDefine>().key();
         JSValue stored = operand(opcode == Opcode::PropSet ? value.as<Opcode::PropSet>().valueOperand() : value.as<Opcode::PropDefine>().valueOperand());
         Identifier name = nameOf(key);
-        if (!isKnown(object) || !object.isObject() || object == JSValue(realm) || name.isNull())
+        if (!isKnown(object) || !object.isObject() || isGlobalObject(object) || name.isNull())
             return { };
         if (opcode == Opcode::PropDefine)
             asObject(object)->putDirectMayBeIndex(realm, name, stored);
@@ -1152,7 +1089,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         JSValue object = operand(value.operand(0));
         JSValue property = operand(value.operand(1));
         JSValue stored = operand(opcode == Opcode::ElemSet ? value.as<Opcode::ElemSet>().valueOperand() : value.as<Opcode::ElemDefine>().valueOperand());
-        if (!isKnown(object) || !isKnown(property) || !object.isObject() || object == JSValue(realm))
+        if (!isKnown(object) || !isKnown(property) || !object.isObject() || isGlobalObject(object))
             return { };
         Identifier name = property.toPropertyKey(realm);
         if (!scope.exception()) {
@@ -1163,11 +1100,10 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         return { };
     }
     case Opcode::DefineGetter: {
-        // What a read of the name gives is what the function answers then.
         auto definition = value.as<Opcode::DefineGetter>();
         JSValue object = operand(definition.objectOperand());
         Identifier name = definition.key() ? nameOf(definition.key()) : Identifier();
-        if (isKnown(object) && object.isObject() && object != JSValue(realm) && !name.isNull())
+        if (isKnown(object) && object.isObject() && !isGlobalObject(object) && !name.isNull())
             asObject(object)->putDirectMayBeIndex(realm, name, unknown());
         scope.clearException();
         return { };
@@ -1176,7 +1112,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         auto test = value.as<Opcode::ElemHas>();
         JSValue object = operand(test.objectOperand());
         JSValue property = operand(test.propertyOperand());
-        if (!isKnown(object) || !isKnown(property) || !object.isObject() || object == JSValue(realm))
+        if (!isKnown(object) || !isKnown(property) || !object.isObject() || isGlobalObject(object))
             return unknown();
         Identifier name = property.toPropertyKey(realm);
         if (scope.exception())
@@ -1186,7 +1122,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     case Opcode::PropDelete:
     case Opcode::ElemDelete: {
         JSValue object = operand(value.operand(0));
-        if (!isKnown(object) || !object.isObject() || object == JSValue(realm))
+        if (!isKnown(object) || !object.isObject() || isGlobalObject(object))
             return unknown();
         Identifier name;
         if (opcode == Opcode::PropDelete)
@@ -1210,7 +1146,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         auto test = value.as<Opcode::PropHas>();
         JSValue object = operand(test.objectOperand());
         Identifier name = nameOf(test.key());
-        if (!isKnown(object) || !object.isObject() || object == JSValue(realm) || name.isNull())
+        if (!isKnown(object) || !object.isObject() || isGlobalObject(object) || name.isNull())
             return unknown();
         return settle(jsBoolean(asObject(object)->hasProperty(realm, name)));
     }
@@ -1544,7 +1480,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     case Opcode::PrivateDefine: {
         bool defines = opcode == Opcode::PrivateDefine;
         JSValue object = operand(value.operand(0));
-        if (isKnown(object) && object.isObject() && object != JSValue(realm)) {
+        if (isKnown(object) && object.isObject() && !isGlobalObject(object)) {
             Identifier name = defines ? privateNameOf(value.as<Opcode::PrivateDefine>().layout(), static_cast<uint32_t>(value.as<Opcode::PrivateDefine>().field())) : privateNameOf(value.as<Opcode::PrivateSet>().layout(), static_cast<uint32_t>(value.as<Opcode::PrivateSet>().field()));
             asObject(object)->putDirect(vm, name, operand(defines ? value.as<Opcode::PrivateDefine>().valueOperand() : value.as<Opcode::PrivateSet>().valueOperand()));
         }
@@ -1558,7 +1494,7 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
         JSArray* state = newList();
         if (!state || !append(state, jsNumber(1)))
             return unknown();
-        if (object.isObject() && object != JSValue(realm)) {
+        if (object.isObject() && !isGlobalObject(object)) {
             PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             asObject(object)->getPropertyNames(realm, names, DontEnumPropertiesMode::Exclude);
             if (scope.exception())
@@ -1632,15 +1568,13 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     case Opcode::ModuleNamespace:
         return settle(namespaceOf(value.as<Opcode::ModuleNamespace>().module()));
     case Opcode::RequireBuiltinModule: {
-        auto wanted = value.as<Opcode::RequireBuiltinModule>().runtimeModule();
-        for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
-            if (m_program.modules[index].runtimeModule != wanted || !m_program.modules[index].body)
-                continue;
-            runModule(ModuleID(index));
-            JSValue result = m_resultsOfModules[index];
-            return result ? result : unknown();
-        }
-        return unknown();
+        RuntimeModuleID wanted = value.as<Opcode::RequireBuiltinModule>().runtimeModule();
+        ModuleID module = wanted && wanted.index() < m_modulesOfRuntimeModules.size() ? m_modulesOfRuntimeModules[wanted.index()] : ModuleID();
+        if (!module)
+            return unknown();
+        runModule(module);
+        JSValue result = m_resultsOfModules[module.index()];
+        return result ? result : unknown();
     }
     case Opcode::RequireModule: {
         ModuleID module = value.as<Opcode::RequireModule>().module();
@@ -1656,13 +1590,10 @@ JSValue RehearsalOfRegExpTexts::execute(Activation& activation, const BodyValue&
     }
 }
 
-// ---- One function
-
 bool RehearsalOfRegExpTexts::takeEdge(Activation& activation, const BodyTerminator& terminator, uint32_t targetIndex, BodyTarget target)
 {
     BodyBlock block = activation.index.block(target.block());
     std::span<const ValueID> arguments = target.arguments();
-    // Read first: an edge back to the head of a loop may pass one parameter in the place of another.
     Values passed;
     for (ValueID argument : arguments)
         passed.append(at(activation, argument));
@@ -1727,7 +1658,6 @@ BlockID RehearsalOfRegExpTexts::joinBehind(Activation& activation, BlockID block
             for (uint32_t to : successors[from])
                 predecessors[to].append(from);
         }
-        // From the end backwards, each block behind all that it leads to where that can be.
         Vector<uint32_t> order;
         Vector<uint32_t> number;
         number.fill(none, numberOfBlocks + 1);
@@ -1785,7 +1715,6 @@ BlockID RehearsalOfRegExpTexts::joinBehind(Activation& activation, BlockID block
         }
         return joins;
     }).iterator->value;
-    // The table may move its lists when it grows, while this function calls others.
     return joins[block.index()];
 }
 
@@ -1800,7 +1729,6 @@ BlockID RehearsalOfRegExpTexts::goEachWayFrom(Activation& activation, BodyBlock 
         activation.blocksCounted.append(block.id());
     }
     BlockID join = joinBehind(activation, block.id());
-    // `if (a) { if (b) .. }`: both meet the rest in one block, and the outer one goes on from there.
     bool sharesJoin = join && activation.goesBothWays() && activation.regions.last().join == join;
     activation.regions.append(OpenRegion { join, sharesJoin ? activation.regions.last().firstArrival : activation.arrivals.size(), sharesJoin ? activation.regions.last().numberOfArrivals : 0, false });
     ++m_openRegions;
@@ -1829,7 +1757,6 @@ BlockID RehearsalOfRegExpTexts::goEachWayFrom(Activation& activation, BodyBlock 
         activation.arrivals.removeLast();
     if (!closed.numberOfArrivals)
         return { };
-    // The head of a loop around the branch, inside a region that is still open.
     if (activation.goesBothWays()) {
         uint8_t& times = activation.timesEnteredWhileGoingBothWays[join.index()];
         if (times && (!closed.hasBroughtOtherValues || times >= timesThroughBlockWhileGoingBothWays))
@@ -1839,9 +1766,7 @@ BlockID RehearsalOfRegExpTexts::goEachWayFrom(Activation& activation, BodyBlock 
     }
 
     BodyBlock joined = activation.index.block(join);
-    // Behind these the block may have parameters for what its edges prove.
     uint32_t numberBrought = static_cast<uint32_t>(arrivals.size() / closed.numberOfArrivals);
-    // What nobody knows on one way gives way to what another way knows: the list claims nothing, and a guess that is wrong costs a miss.
     Values agreed;
     bool differ = false;
     for (uint32_t index = 0; index < numberBrought; ++index) {
@@ -1865,7 +1790,6 @@ BlockID RehearsalOfRegExpTexts::goEachWayFrom(Activation& activation, BodyBlock 
             activation.values[joined.parameter(index).index()] = isKnown(brought) ? brought : agreed[index];
         }
     };
-    // `new RegExp(text, sticky ? flags + "y" : flags)`: what stands behind is gone through once for each of the values. In a loop that would be once for each of the ways through all its turns.
     if (differ && !activation.index.loopOf(join) && activation.numberOfWaysGoneSeparately + closed.numberOfArrivals <= timesThroughBlockWhileGoingBothWays) {
         activation.numberOfWaysGoneSeparately += closed.numberOfArrivals - 1;
         bring(0);
@@ -1880,7 +1804,6 @@ BlockID RehearsalOfRegExpTexts::goEachWayFrom(Activation& activation, BodyBlock 
     return join;
 }
 
-// Each goes to the end of the function. None uses up what the ways behind it need.
 void RehearsalOfRegExpTexts::runOneOfWays(Activation& activation, BlockID block, JSValue& result, uint32_t numberOfWaysLeft)
 {
     uint32_t kept = m_operationsLeft - m_operationsLeft / numberOfWaysLeft;
@@ -1893,7 +1816,6 @@ void RehearsalOfRegExpTexts::runFrom(Activation& activation, BlockID current, JS
 {
     JSGlobalObject* realm = m_realm.get();
     const BodyIndex& index = activation.index;
-    // As where ways meet again: what one way knows stands, unless another knows otherwise.
     auto answer = [&](JSValue returned) {
         if (!result || !isKnown(result))
             result = activation.waysDifferInWhatTheyReturn ? unknown() : returned;
@@ -1982,7 +1904,6 @@ void RehearsalOfRegExpTexts::runFrom(Activation& activation, BlockID current, JS
 
 JSValue RehearsalOfRegExpTexts::runBlocks(Activation& activation)
 {
-    // Nothing: no way has come to an end.
     JSValue result;
     runFrom(activation, entryBlock, result);
     return result ? result : unknown();
@@ -1996,7 +1917,6 @@ JSValue RehearsalOfRegExpTexts::enterWithEntryParameters(FunctionID function, st
     uint32_t price = index->numberOfValues() / valuesMadeRoomForAtPriceOfOneOperation;
     if (price >= m_operationsLeft || price >= m_operationsLeftInAll)
         return unknown();
-    // A function that calls itself behind a branch that nobody knows: nobody knows where that ends.
     unsigned& regionsOpenAtEntryPlusOne = m_regionsOpenAtEntryPlusOne[function.index()];
     if (regionsOpenAtEntryPlusOne && regionsOpenAtEntryPlusOne <= m_openRegions)
         return unknown();
@@ -2075,26 +1995,21 @@ void RehearsalOfRegExpTexts::runModule(ModuleID id)
 {
     StateOfModule& state = m_statesOfModules[id.index()];
     FunctionID body = m_program.at(id).body;
-    // Too deep, or nothing left of the allowance: it is entered from a start of its own, or the next time that somebody asks.
     if (state != StateOfModule::IsNotEntered || !body || m_depth >= deepestCall || !m_operationsLeft || !m_operationsLeftInAll || !m_vm->isSafeToRecurse())
         return;
     state = StateOfModule::IsRunning;
     m_rehearsed.set(body.index());
-    // `import "./routes"`: the loader has run what the module imports, in the order in which that is written. Elsewhere than in the start of the program, and of the library, a module is run when somebody asks for a variable of it.
     if (m_goesThroughStartOfProgram) {
         for (const ModuleRequest& request : m_program.at(id).requests) {
             if (request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation && !m_program.at(request.target).flags.contains(ModuleFlags::IsLibrary))
                 runModule(request.target);
         }
     }
-    // `exports.name = ..`: the loader has made the object.
     if (VariableID exported = m_program.at(id).exportsVariable; exported && !m_variables[exported.index()])
         m_variables[exported.index()] = constructEmptyObject(m_realm.get());
     m_resultsOfModules[id.index()] = enterWithNothingKnown(body);
     state = StateOfModule::HasRun;
 }
-
-// ---- The program
 
 bool RehearsalOfRegExpTexts::rehearse(FunctionID function)
 {
@@ -2115,7 +2030,6 @@ void RehearsalOfRegExpTexts::run(std::span<const FunctionID> functionsThatCallRe
         return;
     uint64_t operationsInAll = m_operationsLeftInAll;
 
-    // `app.get("/users/:id", ..)`: the text comes many calls down from the body of the module that the program starts with. That body is gone through as the program goes through it.
     for (const Entry& entry : m_program.entries) {
         m_operationsLeft = static_cast<uint32_t>(std::min<uint64_t>(m_operationsLeftInAll, std::numeric_limits<uint32_t>::max()));
         m_operationsLeftInAllAtLastText = m_operationsLeftInAll;
@@ -2123,8 +2037,6 @@ void RehearsalOfRegExpTexts::run(std::span<const FunctionID> functionsThatCallRe
         runModule(entry.module);
     }
 
-    // A router that makes its one pattern at the first request, out of the routes that the start of the program has given it: each function that was handed to code that nobody knows is called once, with what the start has left behind
-    // and nothing known of what it is handed.
     for (size_t index = 0; index < m_handlers.size(); ++index) {
         ClosureOfProgram handler = closureIn(m_handlers[index]);
         m_operationsLeft = operationsFromOneStart;
@@ -2137,7 +2049,6 @@ void RehearsalOfRegExpTexts::run(std::span<const FunctionID> functionsThatCallRe
         enter(handler.function, captures.span(), unknown(), m_handlers[index], jsUndefined(), arguments.span());
     }
 
-    // A start of the program that never ends takes nothing from the starts that follow.
     if (m_isOver)
         return;
     m_operationsLeftInAll = operationsInAll;
@@ -2149,8 +2060,9 @@ void RehearsalOfRegExpTexts::run(std::span<const FunctionID> functionsThatCallRe
             lacksTexts.set(function.index());
     }
 
-    // `function matcher(word) { return new RegExp("^" + word) }`, `rules.map(rule => new RegExp(rule.source))`: whoever names the function may call it, or hand it to what calls it, with what the rehearsal knows.
-    for (size_t index = 0; index < numberOfFunctions && !lacksTexts.isEmpty(); ++index) {
+    if (lacksTexts.isEmpty())
+        return;
+    for (size_t index = 0; index < numberOfFunctions; ++index) {
         FunctionID function(static_cast<uint32_t>(index));
         if (m_rehearsed.get(index))
             continue;
@@ -2190,10 +2102,9 @@ void RehearsalOfRegExpTexts::storeTexts(ProgramFactTables& program)
     for (TextWithBytes& text : textsWorkedOut)
         program.regExpTextsWorkedOut.append(WTF::move(text.text));
 
-    // What the library hands RegExp is the process's: a variable of the environment, the value to print.
     for (auto& [site, hasText] : m_callsOfRegExp) {
         FunctionID function(static_cast<uint32_t>(site >> 32));
-        if (!hasText && !isLibraryCode(m_program, m_program.at(function)))
+        if (!hasText && !m_program.admitsReplacedBuiltins && !isLibraryCode(m_program, m_program.at(function)))
             program.regExpCallsWithoutText.append(RegExpCallWithoutText { function, ValueID(static_cast<uint32_t>(site)) });
     }
     AOT::sort(program.regExpCallsWithoutText, { }, [](const RegExpCallWithoutText& call) {
@@ -2201,9 +2112,6 @@ void RehearsalOfRegExpTexts::storeTexts(ProgramFactTables& program)
     });
 }
 
-// Ascending. `new RegExp("a+", "g")`: of texts that are written the walk makes the literal, and nobody need work them out.
-// Code of the library is no start. It comes with every program, so every build would make a realm for it, and what it hands RegExp by itself is written, or is what the process finds when it runs:
-// a variable of the environment, the value to print. It is gone through where the program calls it.
 static Vector<FunctionID> functionsThatCallRegExpWithTextsToWorkOut(const Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries)
 {
     const BuiltinTable& table = program.builtins();
@@ -2218,10 +2126,30 @@ static Vector<FunctionID> functionsThatCallRegExpWithTextsToWorkOut(const Progra
             ValueID behindCasts = index->valueBehindCasts(operand);
             return !index->isParameter(behindCasts) && index->opcodeOf(behindCasts) == opcode;
         };
+        auto namesRegExp = [&](BodyValue written) {
+            ValueID callee;
+            written.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (written.operandUses(operandIndex).contains(OperandUse::Calls))
+                    callee = operand;
+            });
+            auto builtinWrittenAt = [&](ValueID operand) {
+                return operand && isWrittenAs(operand, Opcode::Builtin) ? index->value(index->valueBehindCasts(operand)).as<Opcode::Builtin>().builtin() : BuiltinID();
+            };
+            BuiltinID named = builtinWrittenAt(callee);
+            if (callee && isWrittenAs(callee, Opcode::PropGet)) {
+                auto read = index->value(index->valueBehindCasts(callee)).as<Opcode::PropGet>();
+                if (BuiltinID holder = builtinWrittenAt(read.objectOperand()); holder && read.key())
+                    named = findOwnMember(program, table.canonicalID(holder), read.key());
+            }
+            return named && table.canonicalID(named) == regExp;
+        };
         bool hasTextsToWorkOut = std::ranges::any_of(summaries.at(function).calls, [&](const SummaryCall& call) {
-            if (call.callee != SummaryCall::Callee::Builtin || table.canonicalID(call.builtin) != regExp)
+            bool isCalledByBinding = call.callee == SummaryCall::Callee::Builtin;
+            if (isCalledByBinding ? table.canonicalID(call.builtin) != regExp : !program.admitsReplacedBuiltins || call.isMadeByProtocol || !call.site)
                 return false;
             BodyValue written = index->value(call.site);
+            if (!isCalledByBinding && !namesRegExp(written))
+                return false;
             if (written.opcode() != Opcode::Call && written.opcode() != Opcode::Construct)
                 return true;
             std::span<const ValueID> arguments = written.variadicOperands();
@@ -2237,13 +2165,11 @@ static Vector<FunctionID> functionsThatCallRegExpWithTextsToWorkOut(const Progra
 
 void workOutRegExpTexts(const Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, ProgramFactTables& tables)
 {
-    // Many built-in functions of a realm are bytecode.
     if (Options::crashIfInterpreterIsUsed())
         return;
     Vector<FunctionID> functions = functionsThatCallRegExpWithTextsToWorkOut(program, bodies, summaries);
     if (functions.isEmpty())
         return;
-    // The one thread does it all: a build starts the threads that it counts, and says so where it is refused one.
     RuntimeHooks::NoHelperThreadsScope noHelperThreads;
     RefPtr<VM> vm = VM::create(HeapType::Small);
     {
@@ -2253,7 +2179,6 @@ void workOutRegExpTexts(const Program& program, const BodyIndexTable& bodies, co
             rehearsal.run(functions.span());
             rehearsal.storeTexts(tables);
         }
-        // The lock holder is left with the last reference, so the VM dies under its lock.
         vm = nullptr;
     }
 }

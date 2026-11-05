@@ -22,7 +22,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// All: the engine's fields of the program's records too, and ` tail` behind a value's position, which the front end's printer does not write.
 enum class PrintedFields : uint8_t { All, WireOnly };
 
 void printProgram(PrintStream&, const Program&);
@@ -31,7 +30,6 @@ void printFunction(PrintStream&, const Program&, FunctionID);
 void printBody(PrintStream&, const Program&, const Body&);
 void printValue(PrintStream&, const Program&, const BodyValue&);
 void printTerminator(PrintStream&, const Program&, const BodyTerminator&);
-// ir/AOTTypeText.h prints the type.
 void printType(PrintStream&, const Program&, TypeID);
 void printString(PrintStream&, const Program&, StringID);
 void printPropertyKey(PrintStream&, const Program&, PropertyKeyID);
@@ -41,8 +39,6 @@ class IRPrinter {
 public:
     IRPrinter(PrintStream&, const Program&);
     IRPrinter(PrintStream&, const Program&, PrintedFields);
-    // For the text of Code. Types, layout sets and property keys are read through the reader, which may be a thread's arena.
-    // Types print with the default TypeTextOptions, so that parseType() reads them back. Engine fields are printed.
     IRPrinter(PrintStream&, const Program&, TypeReader typesOfCode);
 
     PrintStream& out() { return m_out; }
@@ -54,11 +50,8 @@ public:
     void printBody(const Body&);
     void printValue(const BodyValue&);
     void printTerminator(const BodyTerminator&);
-    // ` [a, b]`, or nothing where no bit is set. For the text of Code too.
     void printFlags(std::span<const ASCIILiteral> names, unsigned flags);
-    // ` @position`, with `:frame`, ` tail` and ` constructs` where the origin has them.
     void printOrigin(Origin);
-    // `name b3(v1, v2 | 0)`.
     void printTarget(ASCIILiteral name, BlockID, std::span<const ValueID> arguments, std::span<const uint32_t> proofs);
 
     void print(ValueID id) { printID(IDPrefix::Value, id.index()); }
@@ -171,7 +164,6 @@ void IRPrinter::list(const Range& range, NOESCAPE const Functor& printElement)
     m_out.print("]"_s);
 }
 
-// The name of a runtime function in IR text. Null for an id that is not in the table.
 StringView tokenOf(const BuiltinTable&, RuntimeFunctionID);
 RuntimeFunctionID runtimeFunctionFromToken(const BuiltinTable&, StringView);
 

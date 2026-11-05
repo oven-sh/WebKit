@@ -85,7 +85,6 @@ struct X86IntegerOperand {
     bool isMemory() const { return kind == AtAddress || kind == AtIndexedAddress; }
     bool isConstant() const { return kind == IsConstant; }
 
-    // Whether writing the register changes what the operand reads.
     bool mentions(GPRReg reg) const
     {
         switch (kind) {
@@ -101,7 +100,6 @@ struct X86IntegerOperand {
     }
 
     Kind kind { IsConstant };
-    // The register, or the base of the address.
     GPRReg gpr { InvalidGPRReg };
     GPRReg index { InvalidGPRReg };
     MacroAssembler::Scale scale { MacroAssembler::TimesOne };
@@ -120,7 +118,6 @@ static void withX86IntegerAddress(const X86IntegerOperand& operand, const Functo
     functor(MacroAssembler::BaseIndex(operand.gpr, operand.index, operand.scale, operand.offset));
 }
 
-// Writes the scratch register where no instruction reads the word in place: a load of 8 or 16 bits, and a word of the instance that a symbol names.
 static X86IntegerOperand takeX86IntegerOperandFromFusedLoad(Encoder& encoder, const Operation* load, LeafCursor& cursor)
 {
     RELEASE_ASSERT(isLoad(load->opcode()) && !load->traps() && !encoder.m_liveness.of(load).has(ValueFlag::TakesOverTrap));
@@ -165,7 +162,6 @@ static X86IntegerOperand takeX86IntegerOperandFromFusedLoad(Encoder& encoder, co
 static X86IntegerOperand takeX86IntegerOperand(Encoder& encoder, const Operation* user, unsigned childIndex, LeafCursor& cursor)
 {
     const Operation* child = user->child(childIndex);
-    // The leaf of a fused Trunc is the Int64, which lies in a register.
     if (encoder.m_liveness.isFused(child) && child->opcode() != Trunc)
         return takeX86IntegerOperandFromFusedLoad(encoder, child, cursor);
 
@@ -203,7 +199,6 @@ static void moveX86IntegerRegister(CCallHelpers& jit, Width width, GPRReg source
         jit.move(source, destination);
 }
 
-// The destination may be a register of the address: the address is read first.
 static void moveX86IntegerOperand(CCallHelpers& jit, Width width, const X86IntegerOperand& source, GPRReg destination)
 {
     switch (source.kind) {
@@ -244,7 +239,6 @@ static bool hasX86IntegerMemoryForm(X86IntegerInstruction instruction, Width wid
     return width == Width32 && operand.kind == X86IntegerOperand::AtAddress;
 }
 
-// destination = destination `instruction` source, the source being a register, an Address or a BaseIndex.
 template<typename Source>
 static void applyX86IntegerInstruction(CCallHelpers& jit, X86IntegerInstruction instruction, Width width, Source source, GPRReg destination)
 {
@@ -296,7 +290,6 @@ static void applyX86IntegerInstruction(CCallHelpers& jit, X86IntegerInstruction 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// destination = source `instruction` constant. The two registers may be the same.
 static void applyX86IntegerImmediate(CCallHelpers& jit, X86IntegerInstruction instruction, Width width, int64_t constant, GPRReg source, GPRReg destination)
 {
     bool is32 = width == Width32;
@@ -364,7 +357,6 @@ static void applyX86IntegerOperand(CCallHelpers& jit, X86IntegerInstruction inst
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The destination may be any register that an operand names, including a register of an address. No register is written while something still reads it.
 static void encodeX86IntegerBinary(Encoder& encoder, const Step& step, X86IntegerInstruction instruction)
 {
     CCallHelpers& jit = encoder.m_jit;
@@ -421,7 +413,6 @@ static void encodeX86IntegerBinary(Encoder& encoder, const Step& step, X86Intege
         if (instruction == X86IntegerInstruction::Add && right.isInRegister()) {
             GPRReg base = left.gpr;
             GPRReg index = right.gpr;
-            // No address has the stack pointer as its index.
             if (index == MacroAssembler::stackPointerRegister)
                 std::swap(base, index);
             if (width == Width32)
@@ -548,7 +539,6 @@ static void encodeX86IntegerExtension(Encoder& encoder, const Step& step, X86Int
         return;
     case X86IntegerExtension::ZeroExtend32:
         ASSERT(!to32);
-        // Emitted even when the registers are the same, unless isFreeInRegisterOfChild() held above: the upper half of a register that holds an Int32 is unspecified.
         if (source.isInRegister()) {
             jit.zeroExtend32ToWord(source.gpr, destination);
             return;
@@ -561,7 +551,6 @@ static void encodeX86IntegerExtension(Encoder& encoder, const Step& step, X86Int
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Trunc and Opaque.
 static void encodeX86IntegerMove(Encoder& encoder, const Step& step)
 {
     const Operation* child = step.operation->child(0);
@@ -658,7 +647,6 @@ static void encodeX86PopulationCount(Encoder& encoder, const Step& step)
     GPRReg destination = step.destination.gpr();
     X86IntegerOperand source = takeFirstX86IntegerOperand(encoder, step);
 
-    // numberOfScratchGPRsOf() decides by the same features, so the scratch register exists exactly when this path is taken.
     if (!MacroAssembler::supportsCountPopulation(encoder.m_proc.traits().features)) {
         encodeX86PopulationCountWithoutPOPCNT(encoder, step, width, source, destination);
         return;
@@ -694,14 +682,12 @@ bool Encoder::tryEncodeSumAndConstant(const Step& sumStep, const Step& outerStep
         return false;
     const Operation* sum = sumStep.operation;
     const Operation* outer = outerStep.operation;
-    // An Int64 sum may be the one address of a cell that the collector finds.
     if (sum->type() != Int32 || outer->child(0) != sum || !outer->child(1)->hasInt32())
         return false;
     if (sum->useCount() != 1 || sum->isNarrowReference() || m_liveness.of(sum).has(ValueFlag::IsKeptForCollector))
         return false;
     if (m_allocation.isSpilled(sum) || m_liveness.worksInMemory(sum) || m_liveness.worksInMemory(outer) || m_liveness.goesByOverflow(outer))
         return false;
-    // The leaf of a fused Trunc is the Int64, which lies in a register.
     for (const Operation* child : sum->children()) {
         if (child->isConstant() || (m_liveness.isFused(child) && child->opcode() != Trunc))
             return false;
@@ -713,7 +699,6 @@ bool Encoder::tryEncodeSumAndConstant(const Step& sumStep, const Step& outerStep
         return false;
     if (outerStep.sources[0] != sumStep.destination || outerStep.sources[1].kind() != Location::Immediate)
         return false;
-    // No address has the stack pointer as its index.
     if (base.gpr() == MacroAssembler::stackPointerRegister || index.gpr() == MacroAssembler::stackPointerRegister)
         return false;
 
@@ -721,7 +706,6 @@ bool Encoder::tryEncodeSumAndConstant(const Step& sumStep, const Step& outerStep
     return true;
 }
 
-// Read by its low half, which lies first in memory.
 static X86IntegerOperand x86OperandOfSumThatSetsFlags(Encoder& encoder, Location location, const Operation* operand)
 {
     switch (location.kind()) {
@@ -741,7 +725,6 @@ static X86IntegerOperand x86OperandOfSumThatSetsFlags(Encoder& encoder, Location
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// 32 bits, for whoever reads the overflow flag behind it: MacroAssembler is free to pick an instruction that sets no flags.
 static void applyX86InstructionThatSetsFlags(CCallHelpers& jit, bool subtracts, const X86IntegerOperand& source, GPRReg destination)
 {
     switch (source.kind) {
@@ -769,7 +752,6 @@ static void applyX86InstructionThatSetsFlags(CCallHelpers& jit, bool subtracts, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The destination may be the register of either operand. A move leaves the flags alone.
 void Encoder::encodeSumThatSetsFlags(const Step& step)
 {
     SumTestedByOverflow test = sumTestedByOverflowOf(m_liveness, step.operation);

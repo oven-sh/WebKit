@@ -14,10 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- Facts::isPathReadByOperation()
-
-// The table is made of what the lists do not name, and only a scan that came to the end of a body is known to have filled them. Code is made for what Link has reached and for nothing else.
-// Nobody knows what stands in a body that the scan has left, and a name that is made when the program runs may be that of any file: then the table stays empty, which keeps the path of every module.
 static void findModulesWhosePathNoOperationReadsForFactsOfStrings(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, FactTables& tables)
 {
     size_t numberOfModules = program.modules.size();
@@ -39,9 +35,6 @@ static void findModulesWhosePathNoOperationReadsForFactsOfStrings(const Program&
     tables.modulesWhosePathNoOperationReads = WTF::move(modules);
 }
 
-// ---- Facts::parsersMayMake()
-
-// A parser leaves out what the text leaves out, lists the keys as the text has them and adds the members that the layout does not declare. No text makes a function.
 static bool parsersCouldMakeRecordsOfLayoutForFactsOfStrings(const Program& program, LayoutID id)
 {
     constexpr OptionSet<LayoutFlags> flagsOfOtherLayouts { LayoutFlags::HasHeritage, LayoutFlags::IsConstructorFunction, LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsNeverAllocated, LayoutFlags::IsWrittenUnderDictionaryType, LayoutFlags::IsDerived, LayoutFlags::IsOfCreatedObject };
@@ -59,8 +52,6 @@ static bool parsersCouldMakeRecordsOfLayoutForFactsOfStrings(const Program& prog
     });
 }
 
-// ONLY A LAYOUT THAT linked() HAS GIVEN UP: some object of it reaches code that nobody has seen, so every field holds anything, every change is possible, and no read goes without a look.
-// A maker that nobody has seen adds nothing to that. Of a layout that linked() holds closed a store that does not fit ends the process.
 static void findLayoutsThatParsersMayMakeForFactsOfStrings(const Program& program, const LinkTables& linked, FactTables& tables)
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
@@ -76,8 +67,6 @@ static void findLayoutsThatParsersMayMakeForFactsOfStrings(const Program& progra
     }
     tables.layoutsThatParsersMayMake = WTF::move(layouts);
 }
-
-// ---- Facts::resultIsReadAsKey()
 
 static void findFunctionsWhoseResultIsReadAsKeyForFactsOfStrings(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held, FactTables& tables)
 {
@@ -107,8 +96,6 @@ void fillTablesOfStringsForFacts(const Program& program, const ThinSummaries& su
     findLayoutsThatParsersMayMakeForFactsOfStrings(program, linked, tables);
     findFunctionsWhoseResultIsReadAsKeyForFactsOfStrings(program, summaries, linked, held, tables);
 }
-
-// ---- LayoutFact::ObjectsAreDictionaries of constructor functions
 
 } } } // namespace JSC::AOT::Typed
 

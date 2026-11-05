@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Arrivals. What callers proved of their arguments is the type of the entry parameters of a Body or a CoroutineBody: whoever makes them asks provenAt(), and takeArrivals() marks each record that leans on the answer. It builds nothing.
-// At a suspension and at a throw it does nothing: the type of a record holds for as long as the record.
-// Withheld: nobody asks provenAt() and takeArrivals() is not called, so nothing is proven of a parameter, and nobody reads what calls leave.
-
 #include "config.h"
 #include "AOTArrivals.h"
 
@@ -42,7 +38,6 @@ static SetID copySetBetweenArenasOfArrivals(const TypeArena& from, SetsOf<Member
     return to.ofSorted(members.span());
 }
 
-// Equal types have one id in an arena, so what is made in `to` is what whoever makes the type there would have got.
 static TypeID copyTypeBetweenArenasOfArrivals(const TypeArena& from, TypeArena& to, TypeID type)
 {
     if (!liesInThread(type))
@@ -64,7 +59,6 @@ static TypeID copyTypeBetweenArenasOfArrivals(const TypeArena& from, TypeArena& 
     return to.intern(parts);
 }
 
-// A union only grows, so a join that holds every value once holds every value at the end, in whichever order the rest is left.
 static TypeID joinSettledForArrivals(const TypeArena& types, TypeID joined)
 {
     return types.at(joined).isAnything() ? TypeTable::anything : joined;
@@ -143,7 +137,6 @@ bool Arrivals::takesWhatWasLeft(FunctionID function) const
     return linked.everyCallerIsKnown && linked.everyCallHasOneCallee && !linked.isNamedInItsCycle;
 }
 
-// No id of m_joins means anything to whoever asks without an arena, and a join that holds every value proves nothing. What Link proved holds of every caller, so it stands in both cases.
 TypeID Arrivals::provenAt(FunctionID function, uint32_t entryParameter) const
 {
     const LinkTables& link = linkTablesOfArrivals(m_facts);
@@ -173,8 +166,6 @@ TypeID Arrivals::provenAt(TypeArena& types, FunctionID function, uint32_t entryP
     return provenAt(function, entryParameter);
 }
 
-// The parameters are made, and Code never changes the type of one. A record that was made within what is proven has a type that no rule derives, so Code says what it leans on.
-// Nothing is noted in the state for a wider record: what is built over a noted type has no witness in Code, and the first call would end the note.
 void takeArrivals(Walker& walker)
 {
     FunctionID function = walker.unit().function;

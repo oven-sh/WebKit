@@ -27,7 +27,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// For planProgram(). No header declares it.
 KeyOrders computeKeyOrders(const Program&, const LinkTables&, const ThinSummaries&, const BodyIndexTable&, Mechanisms, const SlotPlan&, BuildContext&);
 
 static size_t lengthSharedByKeyOrders(std::span<const FieldIndex> first, std::span<const FieldIndex> second)
@@ -35,14 +34,16 @@ static size_t lengthSharedByKeyOrders(std::span<const FieldIndex> first, std::sp
     return static_cast<size_t>(std::ranges::mismatch(first, second).in1 - first.begin());
 }
 
-// The number of the first order that, as lists are sorted, does not come in front of the fields. The orders that begin with the fields are the first of those.
 static uint32_t firstKeyOrderNotBefore(const KeyOrders& orders, LayoutID layout, std::span<const FieldIndex> fields)
 {
     uint32_t low = 0;
     uint32_t high = orders.numberOfOrdersOf(layout);
     while (low < high) {
         uint32_t middle = low + (high - low) / 2;
-        if (std::ranges::lexicographical_compare(orders.order(layout, middle), fields))
+        std::span<const FieldIndex> listed = orders.order(layout, middle);
+        size_t shared = lengthSharedByKeyOrders(listed, fields);
+        bool comesInFront = shared < fields.size() && (shared == listed.size() || listed[shared] < fields[shared]);
+        if (comesInFront)
             low = middle + 1;
         else
             high = middle;
@@ -50,11 +51,19 @@ static uint32_t firstKeyOrderNotBefore(const KeyOrders& orders, LayoutID layout,
     return low;
 }
 
-// How many keys of the order lie in front of the fields, where the order lists the fields one behind the other. An order lists no field twice.
 static std::optional<size_t> findPlaceInKeyOrder(std::span<const FieldIndex> order, std::span<const FieldIndex> fields)
 {
     size_t place = static_cast<size_t>(std::ranges::find(order, fields.front()) - order.begin());
     if (order.size() - place < fields.size() || !std::ranges::equal(order.subspan(place, fields.size()), fields))
+        return std::nullopt;
+    return place;
+}
+
+static std::optional<size_t> findPlaceInKeyOrderInFrontOf(size_t limit, std::span<const FieldIndex> order, std::span<const FieldIndex> fields)
+{
+    std::span<const FieldIndex> beginning = order.first(std::min(order.size(), limit));
+    size_t place = static_cast<size_t>(std::ranges::find(beginning, fields.front()) - beginning.begin());
+    if (place == beginning.size() || order.size() - place < fields.size() || !std::ranges::equal(order.subspan(place, fields.size()), fields))
         return std::nullopt;
     return place;
 }
@@ -68,7 +77,6 @@ static uint32_t wordOfBeginningOfKeyOrder(const KeyOrders& orders, LayoutID layo
 
 std::optional<uint32_t> KeyOrders::findOrderWord(LayoutID layout, std::span<const FieldIndex> fields) const
 {
-    // The run time takes a layout without orders to have one order without keys.
     if (fields.empty())
         return unorderedOrderWord;
     uint32_t number = firstKeyOrderNotBefore(*this, layout, fields);
@@ -80,7 +88,6 @@ std::optional<uint32_t> KeyOrders::findOrderWord(LayoutID layout, std::span<cons
 
 size_t KeyOrders::lengthOfLongestBeginningWithOrderWord(LayoutID layout, std::span<const FieldIndex> fields) const
 {
-    // Among sorted lists, none shares a longer beginning with the fields than one of the two lists that the fields would stand between.
     uint32_t next = firstKeyOrderNotBefore(*this, layout, fields);
     size_t length = 0;
     if (next < numberOfOrdersOf(layout))
@@ -97,25 +104,33 @@ std::optional<KeyOrderContinuation> KeyOrders::continuationCreatingBehindFewestK
 
 std::optional<KeyOrderContinuation> KeyOrders::continuationCreatingBehindFewestKeys(LayoutID layout, std::span<const FieldIndex> createdFields, std::span<const FieldIndex> fieldsInFront) const
 {
-    std::optional<KeyOrderContinuation> best;
-    if (createdFields.empty())
-        return best;
-    size_t fewest = std::numeric_limits<size_t>::max();
     uint32_t numberOfOrders = numberOfOrdersOf(layout);
+    if (createdFields.empty() || !numberOfOrders)
+        return std::nullopt;
+    std::span<const uint32_t> firstFieldOfOrder = m_parts.firstFieldOfOrder.span().subspan(m_parts.firstOrderOfLayout[layout.index()], numberOfOrders + 1);
+    std::span<const FieldIndex> fields = m_parts.fields.span();
+    constexpr size_t noPlace = std::numeric_limits<size_t>::max();
+    size_t fewest = noPlace;
+    uint32_t best = 0;
     for (uint32_t number = 0; number < numberOfOrders; ++number) {
-        std::optional<size_t> place = findPlaceInKeyOrder(order(layout, number), createdFields);
-        if (!place || *place >= fewest || *place < fieldsInFront.size())
+        std::span<const FieldIndex> listed = fields.subspan(firstFieldOfOrder[number], firstFieldOfOrder[number + 1] - firstFieldOfOrder[number]);
+        std::optional<size_t> place = findPlaceInKeyOrderInFrontOf(fewest, listed, createdFields);
+        if (!place || *place < fieldsInFront.size())
             continue;
-        std::span<const FieldIndex> beginning = order(layout, number).first(*place);
+        std::span<const FieldIndex> beginning = listed.first(*place);
         if (!std::ranges::all_of(fieldsInFront, [&](FieldIndex field) { return std::ranges::find(beginning, field) != beginning.end(); }))
             continue;
         fewest = *place;
-        best = KeyOrderContinuation {
-            wordOfBeginningOfKeyOrder(*this, layout, number, *place),
-            wordOfBeginningOfKeyOrder(*this, layout, number, *place + createdFields.size()),
-        };
+        best = number;
+        if (fewest == fieldsInFront.size())
+            break;
     }
-    return best;
+    if (fewest == noPlace)
+        return std::nullopt;
+    return KeyOrderContinuation {
+        wordOfBeginningOfKeyOrder(*this, layout, best, fewest),
+        wordOfBeginningOfKeyOrder(*this, layout, best, fewest + createdFields.size()),
+    };
 }
 
 std::optional<uint32_t> KeyOrders::findOrderWordOfShortestBeginningThatLists(LayoutID layout, std::span<const FieldIndex> fields) const
@@ -199,7 +214,6 @@ struct CandidateForKeyOrders {
     LayoutID layout;
     uint32_t firstField { 0 };
     uint32_t numberOfFields { 0 };
-    // From this one on a maker was seen to store them one behind the other.
     uint32_t numberOfFieldsByDeclaration { 0 };
 };
 
@@ -227,7 +241,6 @@ public:
 private:
     std::span<const FieldIndex> fieldsOf(const CandidateForKeyOrders& candidate) const { return m_fields.span().subspan(candidate.firstField, candidate.numberOfFields); }
     bool hasOrders(LayoutID id) const { return m_slots.layout(id).holdsCompiledObjects(); }
-    // What the compiler keeps for the closures of an object is no property, so no order lists it. Neither is what a type alone spells: it has no place in the record.
     static bool isListedInOrders(const PlannedLayout& planned, FieldIndex field) { return field < planned.numberOfFields() && planned.slots[field].hasStorage() && planned.slots[field].indexInLayoutRecord && planned.environmentOfDeferredClosures != field; }
 
     void finishCandidate(LayoutID layout, size_t firstField) { finishCandidate(layout, firstField, m_fields.size() - firstField); }
@@ -248,14 +261,12 @@ private:
     const SlotPlan& m_slots;
     const ParallelLoops& m_loops;
     Vector<CandidateForKeyOrders> m_candidates;
-    // By layout.
     Vector<uint32_t> m_numbersOfCandidates;
     Vector<FieldIndex> m_fields;
     BitVector m_isListed;
     Vector<LayoutID, 8> m_declaringLayouts;
 };
 
-// The layout, the number of fields, the fields, list behind list.
 static void forEachListOfFieldsForKeyOrders(std::span<const uint32_t> lists, const Invocable<void(LayoutID, std::span<const FieldIndex>)> auto& functor)
 {
     for (size_t next = 0; next < lists.size();) {
@@ -265,7 +276,6 @@ static void forEachListOfFieldsForKeyOrders(std::span<const uint32_t> lists, con
     }
 }
 
-// A constructor creates what the classes above declare in front of what its own class declares. The bases are those that are written: the order only has to be one that objects may have.
 void CollectorOfKeyOrders::listFieldsThatLayoutLists(LayoutID id)
 {
     const PlannedLayout& planned = m_slots.layout(id);
@@ -295,7 +305,6 @@ void CollectorOfKeyOrders::listFieldsThatLayoutLists(LayoutID id)
         };
         for (uint32_t field : declaring.declaredOrder)
             listDeclaration(field);
-        // What it inherits stands behind what it declares: verifyLayout().
         for (uint32_t field = 0; field < declaring.ownFieldCount; ++field)
             listDeclaration(field);
     }
@@ -315,8 +324,6 @@ void CollectorOfKeyOrders::addDeclaredOrderOf(LayoutID id)
     finishCandidate(id, firstField);
 }
 
-// `function Signature(checker, flags) { .. }   const made = new Signature(checker, flags); made.declaration = ..; made.parameters = ..`
-// The construction creates what the layout lists, and the maker goes on from there. An image has room for maxKeyOrdersPerLayout orders of a layout: the makers that come first in the program have theirs.
 void CollectorOfKeyOrders::addOrdersOfMakers(const LinkTables& link)
 {
     for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
@@ -341,8 +348,6 @@ void CollectorOfKeyOrders::addOrdersOfMakers(const LinkTables& link)
     }
 }
 
-// `const node = createBaseDeclaration(kind) as PropertyAccessExpression; node.expression = ..; node.name = ..`: no body names a member of a tagged family, and the constructor of its maker creates only what the member has from the maker.
-// What the member's own types declare is created by whoever stores it first: a factory. Link says which makers the row of calls behind the run leads to, and the body says which members are written of the object.
 void CollectorOfKeyOrders::addOrdersOfMembersMadeByTag(const LinkTables& link, const BodyIndexTable& bodies)
 {
     if (link.runsBehindTaggedMakers.isEmpty())
@@ -356,7 +361,6 @@ void CollectorOfKeyOrders::addOrdersOfMembersMadeByTag(const LinkTables& link, c
     Vector<bool, 4> severalAreWritten;
     for (const LinkTables::RunBehindTaggedMakers& run : link.runsBehindTaggedMakers) {
         const BodyIndex& index = bodies.at(run.body);
-        // `Object.defineProperty(made, "name", ..)` stores under a name too, and is a call.
         if (index.isParameter(run.firstStore) || (index.opcodeOf(run.firstStore) != Opcode::PropSet && index.opcodeOf(run.firstStore) != Opcode::PropDefine))
             continue;
         TypeID written;
@@ -368,7 +372,6 @@ void CollectorOfKeyOrders::addOrdersOfMembersMadeByTag(const LinkTables& link, c
             continue;
         std::span<const PropertyKeyID> keys = link.keysOfRunsBehindTaggedMakers.span().subspan(run.firstKey, run.numberOfKeys);
         std::span<const LayoutID> makers = link.makersOfRunsBehindTaggedMakers.span().subspan(run.firstMaker, run.numberOfMakers);
-        // `createBaseDeclaration<T extends Declaration>()`: a type that names several members below one maker does not say which of them the object is.
         membersWritten.fill(LayoutID(), makers.size());
         severalAreWritten.fill(false, makers.size());
         m_program.at(m_program.at(written).layouts).forEach([&](LayoutID id) {
@@ -414,8 +417,6 @@ void CollectorOfKeyOrders::addOrdersOfMembersMadeByTag(const LinkTables& link, c
     }
 }
 
-// `function Type(checker, flags) { this.flags = flags; if (tracing) this.checker = checker; }`: the layout lists both names, and nearly every object is made without the second.
-// So beside the orders that begin with all that the layout lists stand those that begin with what the constructor creates on every way through it, and the makers go on from there too.
 void CollectorOfKeyOrders::addOrdersBehindWhatConstructorFunctionsAlwaysCreate(const LinkTables& link, const ThinSummaries& summaries)
 {
     struct StoreOnThis {
@@ -496,9 +497,6 @@ void CollectorOfKeyOrders::addOrdersBehindWhatConstructorFunctionsAlwaysCreate(c
     }
 }
 
-// `function Request(socket) { this.aborted = false; this.url = ""; .. this._events = makeEvents(); }` below `Readable`: the body need not begin with what the classes above declare.
-// It creates what it stores on `this`, each name once, in the order in which the stores are written: that is the order of the way through the body that stands first in the text.
-// It ends at a store under a key that nobody knows, and at one under a name without a field.
 static bool isReachableInBody(const BodyIndex& body, BlockID from, BlockID to)
 {
     BitVector visited(body.numberOfBlocks());
@@ -590,11 +588,8 @@ void CollectorOfKeyOrders::addOrdersOfConstructorFunctions(const LinkTables& lin
     }
 }
 
-// `{ flag: true, tail: t }` for `{ name?, depth?, flag, tail? }`: the allocation creates the two at once where their order is one of the image's. Where it is not, the walk defines by name whatever stands behind the longest beginning that is.
-// The list that Plan::allocation() asks the word of. As with the makers, those that come first in the program have theirs.
 void CollectorOfKeyOrders::addOrdersOfAllocations(const LinkTables& link, const ThinSummaries& summaries)
 {
-    // Reading the summaries is most of the work and asks nothing of the lists in front. Which lists a layout has room for is asked behind it, in the order of the program.
     Vector<Vector<uint32_t>> listsOfChunks = collectChunksInParallel<uint32_t>(m_loops, static_cast<unsigned>(m_program.functions.size()), [&](unsigned number, Vector<uint32_t>& lists) {
         if (!link.function(FunctionID(number)).isReached)
             return;
@@ -608,7 +603,6 @@ void CollectorOfKeyOrders::addOrdersOfAllocations(const LinkTables& link, const 
             lists.append(0);
             isListed.clearAll();
             for (uint32_t field : listed) {
-                // What has no slot is no field, and the word says nothing of an object that has such a property.
                 if (field & ThinSummary::keyInListOfAllocation) {
                     std::optional<FieldIndex> found = m_slots.findField(m_program, id, PropertyKeyID(field & ~ThinSummary::keyInListOfAllocation));
                     if (!found)
@@ -637,9 +631,6 @@ void CollectorOfKeyOrders::addOrdersOfAllocations(const LinkTables& link, const 
     }
 }
 
-// `{ ...state, more }`: the object gets the keys of `state` in the order in which `state` got them. Where the walk knows the layout of the source it loads each field and makes the object with them
-// (walk/AOTWalkTypedAccesses.cpp, buildCopyBehindTestsForTypedAccess()), which takes an order of the target that begins so. The summary says what is copied into what, and of a parameter, an allocation, a field
-// and a variable somebody says what is expected there. Null: nobody does.
 TypeID CollectorOfKeyOrders::typeExpectedOfSourceOfCopy(const LinkTables& link, FunctionID function, const SummaryNode& source) const
 {
     switch (source.kind) {
@@ -658,7 +649,6 @@ TypeID CollectorOfKeyOrders::typeExpectedOfSourceOfCopy(const LinkTables& link, 
     }
 }
 
-// An order of the source that lists every field, as the target's fields under the same keys. A rest copy leaves keys out, and the target has no field for those.
 void CollectorOfKeyOrders::addOrdersOfCopy(LayoutID target, LayoutID source, const KeyOrders& ordersOfSources)
 {
     const Layout& declaredSource = m_program.at(source);
@@ -669,7 +659,6 @@ void CollectorOfKeyOrders::addOrdersOfCopy(LayoutID target, LayoutID source, con
         std::span<const FieldIndex> order = ordersOfSources.order(source, number);
         if (order.size() != declaredSource.fields.size() || m_numbersOfCandidates[target.index()] >= maxKeyOrdersPerLayout)
             continue;
-        // As many keys as the layout declares, and one of them appended in place of one that a type alone spells.
         if (std::ranges::any_of(order, [&](FieldIndex index) { return index >= declaredSource.fields.size(); }))
             continue;
         size_t firstField = m_fields.size();
@@ -723,7 +712,6 @@ void CollectorOfKeyOrders::addDeclaredOrders()
     }
 }
 
-// The list that Plan::allocation() asks the word of for the row of the object: fieldOfDataMember() of image/AOTDataTable.cpp.
 void CollectorOfKeyOrders::addOrderOfDataObject(const DataNode::Object& object)
 {
     if (!object.layout || !hasOrders(object.layout))
@@ -782,7 +770,6 @@ KeyOrderParts CollectorOfKeyOrders::sortIntoParts(BuildContext& build)
     KeyOrderParts parts;
     parts.firstOrderOfLayout.reserveInitialCapacity(numberOfLayouts + 1);
     size_t next = 0;
-    // The lists in front of this one that begin it. What a maker was seen to store stays so in the longer list.
     Vector<CandidateForKeyOrders, 4> beginnings;
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         uint32_t firstOrder = static_cast<uint32_t>(parts.firstFieldOfOrder.size());
@@ -790,7 +777,6 @@ KeyOrderParts CollectorOfKeyOrders::sortIntoParts(BuildContext& build)
         for (; next < m_candidates.size() && m_candidates[next].layout.index() == index; ++next) {
             std::span<const FieldIndex> fields = fieldsOf(m_candidates[next]);
             beginnings.append(m_candidates[next]);
-            // Among sorted lists, a list that begins another begins the one behind it.
             if (next + 1 < m_candidates.size() && m_candidates[next + 1].layout.index() == index && lengthSharedByKeyOrders(fields, fieldsOf(m_candidates[next + 1])) == fields.size())
                 continue;
             parts.firstFieldOfOrder.append(static_cast<uint32_t>(parts.fields.size()));
@@ -827,7 +813,6 @@ KeyOrders computeKeyOrders(const Program& program, const LinkTables& link, const
     collector.addOrdersBehindWhatConstructorFunctionsAlwaysCreate(link, summaries);
     if (mechanisms.contains(Mechanism::TypedSlots)) {
         collector.addOrdersOfAllocations(link, summaries);
-        // A copy takes an order of its source, so those are put in order first.
         KeyOrders ordersOfSources(collector.sortIntoParts(build));
         collector.addOrdersOfCopies(link, summaries, ordersOfSources);
     }

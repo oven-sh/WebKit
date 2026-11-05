@@ -27,7 +27,6 @@
 
 namespace JSC { namespace AOT {
 
-// `way` is one of waysToCompilePrograms, or no word.
 inline std::unique_ptr<CompileOutput> compileForShellOnThisThread(ASCIILiteral programText, OptionWords optionWords, ASCIILiteral way = ""_s)
 {
     Wire::CompileOptions options = makeOptionsOfTestedProgram();

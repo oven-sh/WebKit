@@ -19,6 +19,7 @@
 #include "AOTTypeRelations.h"
 #include <algorithm>
 #include <wtf/ASCIICType.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -37,9 +38,10 @@ struct FieldReadUnion {
     Vector<TypeID, 16> parts { };
     bool hasUninformativePart { false };
 
-    // False: nothing is known of the read as a whole.
     bool add(TypeID part)
     {
+        if (part && !parts.isEmpty() && parts.last() == part)
+            return true;
         bool isGuess = context.level == TypeLevel::Expected;
         if (!part || (isGuess && context.at(part).isAnything())) {
             hasUninformativePart = true;
@@ -52,7 +54,7 @@ struct FieldReadUnion {
 
     TypeID finish() const
     {
-        TypeID united = context.types.unionOf(parts.span());
+        TypeID united = parts.size() == 1 ? parts[0] : context.types.unionOf(parts.span());
         if (!hasUninformativePart)
             return united;
         bool isStillWorthGuessing = context.level == TypeLevel::Expected && holdsOnlyArraysBesideNullish(context.types, context.at(united));
@@ -62,18 +64,23 @@ struct FieldReadUnion {
 
 } // anonymous namespace
 
-// Whether the field is in its slot is a test of its own: an object is born unfinished, and nothing here adds absent for that.
+static std::span<const LayoutID> layoutsOfSetInResultRules(const TypingContext& context, LayoutSetID set, LayoutID& onlyMember)
+{
+    if (!holdsOneMember(set))
+        return membersOf(context.types, set);
+    onlyMember = LayoutID::fromBits(positionOf(set));
+    return singleElementSpan(onlyMember);
+}
+
 static TypeID tryTypeHeldInSlot(const TypingContext& context, FieldReference reference)
 {
     if (TypeID known = context.positions.slot(context.level, reference.layout, reference.field))
         return known;
 
-    // A field that Facts appended has no record among the fields of the layout.
     if (reference.field >= context.program.at(reference.layout).fields.size())
         return { };
 
     const Field& field = fieldAt(context.program, reference);
-    // The slot of an accessor holds the getter and the setter. What is written of the field is what the getter answers.
     if (field.form.contains(FieldForm::IsAccessor))
         return { };
     if (context.level == TypeLevel::Expected)
@@ -83,14 +90,11 @@ static TypeID tryTypeHeldInSlot(const TypingContext& context, FieldReference ref
 
     TypeID established = context.typeIDOf(field.declared);
     Type type = context.at(established);
-    // A slot that is laid out for numbers or booleans has markers for undefined and null, so a store of either by name leaves the field in its slot.
     bool hasMarkers = isObjectLayout(context.program.at(reference.layout).kind) && !type.isNever()
         && type.hasOnlyPrimitives(Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull);
     return hasMarkers ? context.types.withPrimitives(established, Primitive::UndefinedOrNull) : established;
 }
 
-// `interface Type { id: number }   function Type(this: Type, flags) { this.flags = flags; }   made.id = next;`
-// The layout of the objects does not declare the name, and a field that Facts appended has no record. The types that the objects are written as say what is expected under it.
 TypeID tryTypeWrittenAbove(const TypingContext& context, LayoutID layout, PropertyKeyID key)
 {
     if (context.level != TypeLevel::Expected)
@@ -99,7 +103,6 @@ TypeID tryTypeWrittenAbove(const TypingContext& context, LayoutID layout, Proper
     const Program& program = context.program;
     FieldReadUnion written { context };
     bool isWritten = false;
-    // False: what is written of an accessor is what its getter answers, and a method lies above the objects.
     auto add = [&](LayoutID view, uint32_t field) {
         const Field& record = program.at(view).fields[field];
         if (record.form.contains(FieldForm::IsAccessor) || record.flags.contains(FieldFlags::IsMethod))
@@ -124,8 +127,6 @@ TypeID tryTypeWrittenAbove(const TypingContext& context, LayoutID layout, Proper
     return isWritten ? written.finish() : TypeID();
 }
 
-// What a read finds has arrived at the field and lies in the slot. The slot alone answers in two cases.
-// That the two types share no value proves less than that no run comes to the read. And an intersection keeps a named object whose shape only may fit, which would say less of the shape than the slot does.
 static TypeID tryTypeReadFromSlot(const TypingContext& context, FieldReference reference, PropertyKeyID key)
 {
     TypeID held = tryTypeHeldInSlot(context, reference);
@@ -138,7 +139,6 @@ static TypeID tryTypeReadFromSlot(const TypingContext& context, FieldReference r
     return isNeverType(found) || !context.types.isSubset(found, held) ? held : found;
 }
 
-// A field that Facts appended has a slot like a declared one, under an index behind theirs.
 static std::optional<FieldReference> findFieldOfSlotAccess(const TypingContext& context, LayoutID layout, PropertyKeyID key)
 {
     if (std::optional<FieldReference> declared = findField(context.program, layout, key))
@@ -150,10 +150,10 @@ static std::optional<FieldReference> findFieldOfSlotAccess(const TypingContext& 
 
 static TypeID askEachReceiverForSlotContents(const TypingContext& context, LayoutSetID receivers, PropertyKeyID key)
 {
-    // An object without the field has nothing in the slot: a read that finds the slot filled has another receiver, and any other read says for itself what an empty slot gives.
     FieldReadUnion read { context };
     bool someReceiverHasField = false;
-    for (LayoutID receiver : membersOf(context.types, receivers)) {
+    LayoutID onlyReceiver;
+    for (LayoutID receiver : layoutsOfSetInResultRules(context, receivers, onlyReceiver)) {
         std::optional<FieldReference> field = findFieldOfSlotAccess(context, receiver, key);
         if (!field)
             continue;
@@ -198,12 +198,11 @@ TypeID tryTypeOfDeferringSlotContents(const TypingContext& context, LayoutSetID 
     return tryTypeOfSlotContents(context, receivers, key);
 }
 
-// A slot whose type is unknown does not narrow the answer, so the answer is never narrower than what all the slots take.
-// Neither does the slot of a layout that no object has: its type is never, and no store reaches it.
 TypeID tryTypeAcceptedBySlots(const TypingContext& context, LayoutSetID receivers, PropertyKeyID key)
 {
     TypeID accepted;
-    for (LayoutID receiver : membersOf(context.types, receivers)) {
+    LayoutID onlyReceiver;
+    for (LayoutID receiver : layoutsOfSetInResultRules(context, receivers, onlyReceiver)) {
         std::optional<FieldReference> field = findFieldOfSlotAccess(context, receiver, key);
         if (!field)
             return { };
@@ -221,14 +220,12 @@ static bool isAccessorOfLayout(const Program& program, LayoutID layout, Property
     return field && fieldAt(program, *field).form.contains(FieldForm::IsAccessor);
 }
 
-// Null too where two layouts find two methods: no type holds a set of closures.
 static TypeID tryProvenTypeFoundAboveObjects(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
-    if (!receiver.hasOnlyLayouts() || receiver.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
-        return { };
     auto askEachLayout = [&]() -> TypeID {
         TypeID foundByAll;
-        for (LayoutID layout : membersOf(context.types, receiver.layouts)) {
+        LayoutID onlyLayout;
+        for (LayoutID layout : layoutsOfSetInResultRules(context, receiver.layouts, onlyLayout)) {
             TypeID found = context.positions.foundAboveObjectsOf(context.level, layout, key);
             if (!found)
                 return { };
@@ -247,11 +244,10 @@ static TypeID tryProvenTypeFoundAboveObjects(const TypingContext& context, const
 
 static TypeID tryProvenTypeReadOffLayouts(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
-    if (!receiver.hasOnlyLayouts() || receiver.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
-        return { };
     auto askEachLayout = [&]() -> TypeID {
         FieldReadUnion read { context };
-        for (LayoutID layout : membersOf(context.types, receiver.layouts)) {
+        LayoutID onlyLayout;
+        for (LayoutID layout : layoutsOfSetInResultRules(context, receiver.layouts, onlyLayout)) {
             if (!read.add(context.positions.readByNameOffObjectsOf(context.level, layout, key)))
                 return { };
         }
@@ -262,7 +258,6 @@ static TypeID tryProvenTypeReadOffLayouts(const TypingContext& context, const Ty
     return context.positions.askedOfEachLayout(PositionTypes::QuestionOfEachLayout::ReadByNameOffObjects, context.level, receiver.layouts, key, scopedLambda<TypeID()>(askEachLayout));
 }
 
-// A primitive has no property of its own but those that its class lists for its instances. Under any other name of the table the lookup starts at the prototype object of the class.
 static TypeID tryProvenTypeFoundAbovePrimitives(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
     const BuiltinTable& builtins = context.program.builtins();
@@ -270,11 +265,10 @@ static TypeID tryProvenTypeFoundAbovePrimitives(const TypingContext& context, co
     BuiltinName name = builtinClass ? context.program.builtinNameOf(key) : BuiltinName();
     if (!name)
         return { };
-    // `text.length`: what the row of the property gives for a primitive of the class.
     if (BuiltinID own = builtins.findOwnPropertyOfInstances(builtinClass, name)) {
         BuiltinOperandTypes passed;
         passed.receiver = typeOfValuesThatLookUpAsInstancesOf(context.types, builtinClass);
-        TypeID written = resultTypeOfReachableOverloads({ context.program, context.types, nullptr, &context.positions, context.level }, own, BuiltinCallMode::Get, passed);
+        TypeID written = resultTypeOfReachableOverloads({ context.program, context.types, &context.positions, context.level }, own, BuiltinCallMode::Get, passed);
         return written && !isNeverType(written) && !context.at(written).isAnything() ? written : TypeID();
     }
     BuiltinID prototype;
@@ -286,16 +280,16 @@ static TypeID tryProvenTypeFoundAbovePrimitives(const TypingContext& context, co
 
 static TypeID tryProvenTypeOfFieldRead(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
-    // Undefined and null throw.
     if (!receiver.isJavaScriptValue())
         return { };
     if (receiver.primitives & ~Primitive::UndefinedOrNull)
         return tryProvenTypeFoundAbovePrimitives(context, receiver, key);
-    if (TypeID found = tryProvenTypeFoundAboveObjects(context, receiver, key))
-        return found;
-    if (TypeID found = tryProvenTypeReadOffLayouts(context, receiver, key))
-        return found;
-    // No cell proves anything about `unknown` or about a merged object.
+    if (receiver.hasOnlyLayouts() && !receiver.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow)) {
+        if (TypeID found = tryProvenTypeFoundAboveObjects(context, receiver, key))
+            return found;
+        if (TypeID found = tryProvenTypeReadOffLayouts(context, receiver, key))
+            return found;
+    }
     if (!receiver.hasOnlyNamedObjects() || receiver.namesMergedObjects())
         return { };
 
@@ -316,16 +310,13 @@ static TypeID tryProvenTypeOfFieldRead(const TypingContext& context, const Type&
     }));
 }
 
-// `{ default: a }` and `{ default: b }` share a layout, whose slot takes what either holds. What a read by name finds in the objects that the type of the receiver names is all that lies in their slots.
 TypeID typeOfSlotContentsInReceiver(const TypingContext& context, TypeID contents, TypeID receiver, PropertyKeyID key)
 {
     if (context.level != TypeLevel::Proven || !contents || !receiver)
         return contents;
-    // The mark of an empty slot is no value, and no read by name finds it.
     if (context.at(contents).primitives & (Primitive::Absent | Primitive::Unspecified))
         return contents;
     TypeID found = tryProvenTypeOfFieldRead(context, context.at(receiver), key);
-    // A receiver that names every object of its layouts finds all that the slots hold.
     if (!found || context.types.isSubset(contents, found))
         return contents;
     TypeID held = context.types.intersectionOf(contents, found);
@@ -339,12 +330,9 @@ static TypeID tryTypeFoundOnPrototypeOfInstances(const TypingContext& context, L
     return context.positions.property(context.level, context.types.objects().prototypeOf(layout), key);
 }
 
-// What is expected of the field is the same whichever way it is read: what the position states, which holds what was seen to arrive beside what is written, or else what is written.
-// The position of an accessor has no answer for its slot, and what is written of such a field is what the getter answers.
 static TypeID expectedTypeOfFieldReadByName(const TypingContext& context, LayoutID receiver, FieldReference reference, PropertyKeyID key)
 {
     TypeID expected = context.positions.slot(context.level, reference.layout, reference.field);
-    // A field that Facts appended has no record among the fields of the layout. An object gets it late.
     bool mayBeLeftOut = true;
     if (reference.field < context.program.at(reference.layout).fields.size()) {
         const Field& field = fieldAt(context.program, reference);
@@ -355,7 +343,6 @@ static TypeID expectedTypeOfFieldReadByName(const TypingContext& context, Layout
         expected = tryTypeWrittenAbove(context, reference.layout, key);
     if (!expected || !mayBeLeftOut)
         return expected;
-    // An object that has no property of its own under the name answers with what its class has there: a method behind an optional field.
     TypeID above = tryTypeFoundOnPrototypeOfInstances(context, receiver, key);
     return context.types.unionOf(expected, above ? above : TypeTable::undefined);
 }
@@ -365,12 +352,10 @@ static TypeID askEachReceiverForExpectedTypeOfFieldRead(const TypingContext& con
     FieldReadUnion read { context };
     bool isFoundSomewhere = false;
     bool isMissingSomewhere = false;
-    // Nothing: the layout has no such field.
     auto expectedOfField = [&](LayoutID layout) -> std::optional<TypeID> {
         std::optional<FieldReference> field = findFieldOfSlotAccess(context, layout, key);
         if (field)
             return expectedTypeOfFieldReadByName(context, layout, *field, key);
-        // The objects get the property late, if at all, and keep it outside of their fields.
         if (TypeID written = tryTypeWrittenAbove(context, layout, key))
             return context.types.withPrimitives(written, Primitive::Undefined);
         return std::nullopt;
@@ -385,7 +370,6 @@ static TypeID askEachReceiverForExpectedTypeOfFieldRead(const TypingContext& con
         read.add(*expected);
     };
 
-    // Many objects may share a layout, whose field is asked once.
     Vector<LayoutID, 8> layoutsOfSilentCells;
     Vector<LayoutID, 8> layoutsOfCellsThatAnswer;
     auto noteLayout = [](Vector<LayoutID, 8>& layouts, LayoutID layout) {
@@ -416,7 +400,6 @@ static TypeID askEachReceiverForExpectedTypeOfFieldRead(const TypingContext& con
     dropRepeats(layoutsOfSilentCells);
     for (LayoutID layout : layoutsOfSilentCells)
         addField(layout);
-    // The cell says what was seen to arrive in one object, the field what is expected of every object of the layout. Neither rules the other out.
     dropRepeats(layoutsOfCellsThatAnswer);
     for (LayoutID layout : layoutsOfCellsThatAnswer) {
         std::optional<TypeID> ofField = expectedOfField(layout);
@@ -433,10 +416,8 @@ static TypeID askEachReceiverForExpectedTypeOfFieldRead(const TypingContext& con
     return read.finish();
 }
 
-// Of the receiver it goes by the objects and the layouts that the type names, and by nothing else.
 static TypeID tryExpectedTypeOfFieldRead(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
-    // `x.kind` on an object that nobody knows: the layouts are all that have the name.
     if (!receiver.objects && receiver.unnamedLayouts && !holdsOneMember(receiver.unnamedLayouts)) {
         return context.positions.askedOfEachLayout(PositionTypes::QuestionOfEachLayout::FieldReadByName, context.level, receiver.unnamedLayouts, key, scopedLambda<TypeID()>([&] {
             return askEachReceiverForExpectedTypeOfFieldRead(context, receiver, key);
@@ -478,7 +459,6 @@ TypeID tryTypeOfGlobalBindingRead(const TypingContext& context, PropertyKeyID ke
     return tryTypeOfFieldRead(context, globalObject, key);
 }
 
-// A typed array's class fixes the type of its elements, no matter who stored them.
 static TypeID tryTypeOfTypedArrayContents(const BuiltinTable& builtins, BuiltinClassID builtinClass, ContentsSlot slot)
 {
     if (slot != ContentsSlot::Element || !builtinClass)
@@ -506,7 +486,6 @@ TypeID tryTypeOfContentsRead(const TypingContext& context, TypeID containerID, C
     bool isProof = context.level == TypeLevel::Proven;
     const BuiltinTable& builtins = context.types.builtins();
     const ObjectTable& objects = context.types.objects();
-    // The few parts go first: where one of them has no answer, nothing is asked of the objects, which may be many.
     Vector<TypeID, 16> typesOfContents;
     for (const ClassPart& part : context.types.at(container.unnamedClasses)) {
         TypeID contents = tryTypeOfTypedArrayContents(builtins, part.builtinClass, slot);
@@ -573,7 +552,6 @@ TypeID narrowResultByOtherResult(const TypingContext& context, Opcode producer, 
     TypeID contents = tryTypeOfContentsRead(context, operandsOfProducer[*collection], *part);
     if (!contents)
         return { };
-    // `source` may be the type of a later name of the result, of which more is proven.
     return context.types.isSubset(contents, source) ? contents : context.types.intersectionOf(source, contents);
 }
 
@@ -641,7 +619,6 @@ TypeID tryTypeOfArrayElementRead(const TypingContext& context, TypeID array, Arr
     TypeID element = tryTypeOfContentsRead(context, array, ContentsSlot::Element);
     if (element && !findsElement)
         element = context.types.withPrimitives(element, Primitive::Undefined);
-    // It holds undefined whether or not the read finds an element: a list may hold undefined.
     if (!element)
         element = context.positions.resultOfReadBeingTyped(context.level);
 
@@ -694,14 +671,11 @@ static TypeID tryExpectedTypeOfAwaitedObjects(const TypingContext& context, Type
     return context.types.unionOf(others, fulfillment);
 }
 
-// `await` reads the `constructor` of a promise, and where that is no longer Promise it calls `then` by name, as it does for every other object.
-// No type says that an object has kept the members of its class, so each object answers for itself, and an object that nobody names has no answer.
 static TypeID tryProvenTypeOfAwaitedObjects(const TypingContext& context, TypeID awaitedID, const Type& awaited)
 {
     if (!awaited.isJavaScriptValue() || !awaited.hasOnlyNamedObjects())
         return { };
 
-    // An answer may be made in the arena, which may move the set.
     Vector<ObjectID, 8> objects;
     context.types.at(awaited.objects).forEach([&](ObjectID object) {
         objects.append(object);
@@ -710,7 +684,6 @@ static TypeID tryProvenTypeOfAwaitedObjects(const TypingContext& context, TypeID
     TypeID given = context.types.withoutObjects(awaitedID);
     for (ObjectID object : objects) {
         TypeID givenByObject = context.positions.awaited(TypeLevel::Proven, object);
-        // A type without values says that the function never goes on, and an empty cell proves only that nothing was seen to arrive.
         if (!givenByObject || isNeverType(givenByObject))
             return { };
         given = context.types.unionOf(given, givenByObject);

@@ -23,21 +23,16 @@ public:
     bool run();
 
 private:
-    // Two Extracts of one member of a tuple are one value, and so are two ArgumentRegs of one register.
     using ValueID = uint32_t;
-    // A register by Reg::index(), then the words of the outgoing area, then the spills.
     using Place = uint32_t;
 
     static constexpr ValueID nothing = 0;
-    // In a spill: the pointer that the narrow reference stands for, and not the reference.
     static constexpr ValueID isPointerOfReference = 1u << 31;
     static constexpr Place numberOfRegisters = 64;
 
     struct ValueRecord {
-        // Zero for a value that is the same wherever it is made.
         Position definition { 0 };
         Width width { Width64 };
-        // It is made again at each use, but behind a suspension the frame may be another one.
         bool isFrameAddress { false };
     };
     struct Entry {
@@ -49,7 +44,6 @@ private:
         bool isSet { false };
         bool isDirty { false };
     };
-    // A step that is no Execute has no position of its own: it stands somewhere between the operation in front of it and the one behind it.
     struct Interval {
         Position lower { 0 };
         Position upper { 0 };
@@ -123,18 +117,14 @@ private:
     Place m_firstSpillPlace { 0 };
 
     ValueID m_firstIncomingValue { 0 };
-    // By Operation::index(), for an operation whose type is a tuple.
     ArenaVector<ValueID> m_firstMember;
     ArenaVector<ValueRecord> m_values;
 
-    // By Block::index().
     ArenaVector<Head> m_heads;
-    // By place.
     ArenaVector<ValueID> m_state;
     ArenaVector<ValueID> m_onEdge;
     BitSpan m_isTouched;
     ArenaVector<Place> m_touched;
-    // By Operation::index() of a Phi, while an edge is followed.
     ArenaVector<ValueID> m_incoming;
 
     Block* m_block { nullptr };
@@ -143,10 +133,8 @@ private:
     Interval m_behind;
     uint32_t m_nextSunk { 0 };
     uint32_t m_nextOperation { 0 };
-    // assignSlots() may give such a spill the place of one that held its value at the write, so nothing in the rest of the block may read that one.
     ArenaVector<WriteOutsideRange> m_writesOutsideRange;
     bool m_wroteSpillBehindLastExecute { false };
-    // The Execute of a sum with ValueFlag::GoesByOverflow in the block. From there to the Branch the flags hold what it left.
     const Step* m_stepThatLeftFlags { nullptr };
     bool m_needsAnotherRound { false };
     bool m_failed { false };
@@ -318,7 +306,6 @@ void AllocationChecker::killRegisters(RegisterMask mask)
     });
 }
 
-// ARM64 reaches a distant word of the frame through it.
 void AllocationChecker::killSecondScratchGPR()
 {
     if constexpr (secondScratchGPR != InvalidGPRReg)
@@ -369,7 +356,6 @@ bool AllocationChecker::isPhiOfOnlySuccessor(const Operation* value) const
     return value && value->opcode() == Phi && m_block->numSuccessors() == 1 && value->owner() == m_block->successor(0).block();
 }
 
-// What has to follow the results of a Patch stands behind its Execute, ahead of the Extracts that define them.
 bool AllocationChecker::beginsBehindExtractsAlone(const SpillFacts& facts) const
 {
     const Operation* extract = facts.value;
@@ -408,7 +394,6 @@ bool AllocationChecker::noteSpillWrite(SpillIndex spill, Width width, const Oper
     m_wroteSpillBehindLastExecute = true;
     if (isInRange(facts))
         return true;
-    // From a block with one successor nothing runs between the write and the head of the Phi but the rest of the block.
     bool beginsAtNextOperation = facts.begin == m_now.upper + 1;
     if (!beginsAtNextOperation && !beginsBehindExtractsAlone(facts) && !isPhiOfOnlySuccessor(facts.value))
         return fail(FailureKind::SpillSlotLacksItsValue, writer);
@@ -492,7 +477,6 @@ bool AllocationChecker::checkSources(const Step& step, RegisterMask& sources)
 
     unsigned numberOfLeaves = 0;
     unsigned numberOfMemoryOperands = rootIsTheOnlyLeaf ? 0 : numberOfFusedLoadsBelow(root);
-    // The word is its one operand in memory.
     if (m_liveness.worksInMemory(root))
         numberOfMemoryOperands = 1;
     bool isSound = true;
@@ -520,7 +504,7 @@ bool AllocationChecker::storeBehindDefinition(const Operation* value)
 {
     SpillIndex spill = m_allocation.spillOf(value);
     Reg reg = m_allocation.registerAtDefinitionOf(value);
-    if (spill == noSpill || !reg.isSet())
+    if (spill == noSpill || !reg.isSet() || m_allocation.isWrittenByEdges(value))
         return true;
     if (spill < m_spills.size() && m_spills[spill].isStoredAtHeadOfFramedPart)
         return true;
@@ -536,7 +520,6 @@ bool AllocationChecker::storeBehindDefinition(const Operation* value)
     return true;
 }
 
-// The sum has left the flags, and where the way to the failing successor takes it back, the registers that the way reads hold what it needs.
 bool AllocationChecker::checkBranchOnOverflow(const Step& step)
 {
     const Operation* branch = step.operation;
@@ -557,7 +540,6 @@ bool AllocationChecker::checkBranchOnOverflow(const Step& step)
     if (!taken.isRegister() || taken != stepOfSum->destination)
         return fail(FailureKind::RegisterLacksItsValue, branch);
 
-    // A Trunc of the sum that has taken the register over has left its low half as it was.
     ValueID held = m_state[taken.reg().index()];
     bool holdsLowHalfOfSum = held == idOf(test.sum);
     if (!holdsLowHalfOfSum && held && held <= m_proc.numberOfOperations()) {
@@ -575,7 +557,6 @@ bool AllocationChecker::executeOperation(const Step& step)
 {
     const Operation* operation = step.operation;
     if (operation->opcode() == Extract) {
-        // A member without a register lies in its spill already, whose range begins behind this Execute.
         if (step.destination.isSpill()) {
             if (m_allocation.registerAtDefinitionOf(operation).isSet() || step.destination.spillIndex() != m_allocation.spillOf(operation))
                 return fail(FailureKind::SpillSlotLacksItsValue, operation);
@@ -587,7 +568,6 @@ bool AllocationChecker::executeOperation(const Step& step)
         return storeBehindDefinition(operation);
     }
     if (operation->opcode() == ArgumentReg) {
-        // The encoder moves the argument register to the destination where the two differ.
         if (!checkHolds(Location::reg(operation->argumentReg()), operation, operation))
             return false;
         if (!operation->type().isNumeric() || !(registerMaskOf(step.destination) & m_file.allocatableIn(bankOf(operation->type()))))
@@ -667,7 +647,6 @@ bool AllocationChecker::checkOperand(const PatchOperation* patch, unsigned child
     case ValueRep::Constant:
         break;
     }
-    // Where the emitter names the register, what else it says of that register is its own business.
     if (!constraint.isReg() && (mask & (m_scratch | patch->earlyClobberedMask())))
         isMet = false;
     if (!isMet)
@@ -685,7 +664,6 @@ bool AllocationChecker::executePatch(const Step& step, const PatchOperation* pat
         return fail(FailureKind::RegisterLacksItsValue, patch);
     const PatchAssignment& assignment = m_allocation.patchAssignment(step.patchAssignment);
     bool isCheck = patch->opcode() == Check;
-    // The generator of a Check writes the late path alone. On the passing side only the test has run.
     bool runsCodeOfGenerator = !isCheck && !patch->onlyKeepsChildrenAlive;
     unsigned numberOfResults = m_proc.resultCount(patch->type());
     unsigned firstOperand = isCheck ? 1 : 0;
@@ -705,7 +683,6 @@ bool AllocationChecker::executePatch(const Step& step, const PatchOperation* pat
         results |= mask;
     }
 
-    // PatchOperation::leaveOperandsWhereTheyLie(): told an operand anywhere but in the register where it belongs, the generator writes that register. What the allocator has made of that is not asked.
     for (unsigned child = firstOperand; child < patch->numberOfOperands(); ++child) {
         Reg reg = patch->registerToBringOperandTo(child);
         if (reg && registerMaskOf(locationsOfOperands[child - firstOperand]) != maskOf(reg))
@@ -773,7 +750,6 @@ bool AllocationChecker::executePatch(const Step& step, const PatchOperation* pat
     m_now = m_behind;
     killRegisters(m_scratch);
     if (runsCodeOfGenerator) {
-        // A generator takes what PatchParameters::unavailableRegisters() leaves for its own. So a register that is missing from usedRegisters fails the read that needed it.
         killRegisters(scratch | early | late | ~assignment.usedRegisters);
         killOutgoingWords();
         if (patch->isSuspension() && !forgetWhatSuspensionLoses(patch))
@@ -786,8 +762,6 @@ bool AllocationChecker::executePatch(const Step& step, const PatchOperation* pat
             return fail(FailureKind::RegisterLacksItsValue, patch);
         set(place, patch->type().isTuple() ? m_firstMember[patch->index()] + index : idOf(patch));
     }
-    // Where the Patch ends its block the store stands at the head of the first successor, and flowAlong() takes the spill away on every other edge.
-    // A result in an outgoing word has no such store: a Reload and a Save copy it.
     if (numberOfResults == 1 && !patch->type().isTuple() && locationsOfResults[0].isRegister())
         return storeBehindDefinition(patch);
     return true;
@@ -842,7 +816,6 @@ bool AllocationChecker::transfer(const Step& step)
     RegisterMask toRegister = registerMaskOf(step.destination);
     RegisterMask fromRegister = registerMaskOf(step.sources[0]);
     Place place;
-    // Any other step may write the flags.
     if (m_stepThatLeftFlags && step.kind != StepKind::Execute && step.kind != StepKind::Move && step.kind != StepKind::Reload && step.kind != StepKind::Save)
         return fail(FailureKind::RegisterLacksItsValue, step.operation);
     switch (step.kind) {
@@ -893,7 +866,6 @@ bool AllocationChecker::transfer(const Step& step)
         if (!step.destination.isSpill() || !findPlace(step.destination, place))
             return fail(FailureKind::SpillSlotLacksItsValue, step.operation);
         const SpillFacts& facts = m_spills[step.destination.spillIndex()];
-        // Right behind the last read the place is still free, unless a spill has been written since: the store of what that operation defined, or a step behind it.
         bool standsRightBehindLastRead = m_now.lower == facts.end + 1 && facts.begin <= m_now.upper && !m_wroteSpillBehindLastExecute;
         if (!isInRange(facts) && !standsRightBehindLastRead)
             return fail(FailureKind::SpillSlotLacksItsValue, step.operation);
@@ -980,7 +952,7 @@ bool AllocationChecker::enter(Block* block)
     for (Operation* phi : block->phis()) {
         if (m_liveness.isDropped(phi) || !m_allocation.isSpilled(phi))
             continue;
-        if (m_allocation.registerAtDefinitionOf(phi).isSet()) {
+        if (m_allocation.registerAtDefinitionOf(phi).isSet() && !m_allocation.isWrittenByEdges(phi)) {
             if (!storeBehindDefinition(phi))
                 return false;
             continue;
@@ -1010,8 +982,6 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
     }
     if (target->isLandingPad())
         killed = ~RegisterMask { 0 };
-    // The teardown gives the saved registers back to the caller, and the frame is gone.
-    // A rare region that needs the frame runs in it, whichever framed part leads there: planBlocksOfFramedPart(). Two parts may meet in one, below the head of neither.
     auto runsInFrame = [&](const Block* block) {
         const BlockPlace& place = m_order.of(block);
         return m_allocation.isInFramedPart(block) || (place.isRare() && m_allocation.needsFrameIn(place.rareRegion));
@@ -1024,7 +994,6 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
         ValueID value = m_state[place];
         if (!value)
             continue;
-        // What is defined at or behind the head is defined again before it can be read, so what lies here is of an earlier turn.
         Position definition = m_values[value & ~isPointerOfReference].definition;
         if (definition >= head || definition == definitionOfLostResults)
             continue;
@@ -1044,7 +1013,6 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
         m_onEdge[place] = value;
     }
 
-    // checkBranchOnOverflow() has been through the step. The way to the failing successor makes the operand again in the register that the sum took.
     if (from->last()->opcode() == Branch && m_liveness.goesByOverflow(from->last())) {
         const Operation* operandTakenBack = m_allocation.step(m_allocation.stepsOf(from).terminator).other;
         if (operandTakenBack && successorIndex != sumTestedByOverflowOf(m_liveness, from->last()).successorThatPasses)
@@ -1066,7 +1034,7 @@ void AllocationChecker::flowAlong(Block* from, unsigned successorIndex)
     }
     for (Operation* phi : target->phis()) {
         SpillIndex spill = m_allocation.spillOf(phi);
-        if (m_liveness.isDropped(phi) || spill >= m_spills.size() || m_allocation.registerAtDefinitionOf(phi).isSet())
+        if (m_liveness.isDropped(phi) || spill >= m_spills.size() || (m_allocation.registerAtDefinitionOf(phi).isSet() && !m_allocation.isWrittenByEdges(phi)))
             continue;
         Place place = m_firstSpillPlace + spill;
         ValueID incoming = m_incoming[phi->index()];
@@ -1152,7 +1120,6 @@ bool AllocationChecker::run()
         head.isSet = true;
         head.isDirty = true;
     }
-    // A head only ever loses entries, and a block is visited again only when its head has lost one.
     do {
         m_needsAnotherRound = false;
         for (Block* block : m_order.blocksInOrder()) {

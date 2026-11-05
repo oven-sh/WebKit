@@ -25,9 +25,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class RecordChecker;
 
-// Reads the program's tables into records: strings, keys, types, layouts, variables, modules, the records of functions and the small lists.
-// It reads no body. A function gets a Body that points at its words.
-// Shared by AOTReader.cpp, AOTReaderFunctions.cpp, the generated AOTSchemaRecordReader.cpp and the parser of IR text.
 class Reader {
     WTF_MAKE_NONCOPYABLE(Reader);
 public:
@@ -36,7 +33,6 @@ public:
     void setExternalFunctionBodies(const ExternalFunctionBodies* bodies) { m_externalBodies = bodies; }
     void setSchemaHashCheck(SchemaHashCheck check) { m_schemaHashCheck = check; }
     // In this order, one after another, each with loops of its own: header; strings; property keys; replaceable built-ins; WireTypeReader's makeObjects, computeFamilies, readTypes;
-    // UnitIDTables::initialize; type sites; the small lists; the layouts with finishLayouts; the functions; finishObjects; finishProgram.
     bool run();
 
     const Program& program() const { return m_program; }
@@ -44,7 +40,6 @@ public:
     const Wire::Sections& sections() const { return m_sections; }
 
 private:
-    // AOTReader.cpp
     bool readHeader();
     void readReplaceableBuiltins();
     void readStrings();
@@ -57,7 +52,6 @@ private:
     void setParameterSiteFunctions();
     bool report(const InternalError&);
 
-    // AOTReaderFunctions.cpp
     void readFunctions();
     void readFunction(uint32_t index, Function&) const;
 
@@ -78,7 +72,6 @@ private:
     SchemaHashCheck m_schemaHashCheck { SchemaHashCheck::Required };
 };
 
-// From the words of a wire record to the values of the engine's. It checks nothing: AOTProgramVerifier.h does, where checks run.
 class RecordChecker {
 public:
     explicit RecordChecker(const Reader& reader)
@@ -87,7 +80,6 @@ public:
     }
 
     const Reader& reader() const { return m_reader; }
-    // A unit of Program::unitsOfBodies, for a record whose words hold the numbers of its unit. Null: they hold the program's.
     void setUnit(const UnitIDRemap* unit) { m_unit = unit; }
 
     template<typename IDType> IDType id(uint32_t word);

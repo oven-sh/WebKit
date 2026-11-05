@@ -13,7 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The system hands out a page when it is first touched, which takes longer than filling it. So all threads touch the pages of a large list, and then it is filled.
 template<typename T>
 void reserveLargeListInLinkFlow(const ParallelLoops& loops, Vector<T>& list, size_t size, size_t room)
 {

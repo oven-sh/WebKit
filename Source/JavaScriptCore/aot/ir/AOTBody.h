@@ -34,19 +34,6 @@ class ParallelLoops;
 
 namespace Typed {
 
-// A function's body is the word stream the front end wrote. Nothing copies it, nothing edits it, and it lives until the last function is compiled.
-//
-//   body       = block*                                              blocks in reverse postorder, b0 is the entry
-//   block      = Wire::BlockHead Wire::ParameterHead* target? value* terminator    the target is there where hasHandler is set
-//   value      = Wire::ValueHead flags? field* writtenPosition?      flags where wireFlagsOf(opcode), writtenPosition where Wire::WrittenPositionFollows
-//   terminator = Wire::TerminatorHead field* target*
-//   target     = Wire::TargetHead argument* proof*
-//   field      = the parameters of the schema's entry that are not `engine`, in declared order:
-//                an operand is one word (Wire::none: absent), `name...` is a count and that many operands, List<T> is a count and that many elements
-//
-// Values are numbered in stream order: a block's parameters, then its values, then the next block's.
-// A word that names a record of the program holds the number its unit gave the record. Every accessor below answers with the program's id.
-
 inline constexpr BlockID entryBlock { 0u };
 
 template<typename IDType> inline constexpr RemappedIDKind remappedIDKindOf = RemappedIDKind::String;
@@ -62,9 +49,6 @@ template<> inline constexpr RemappedIDKind remappedIDKindOf<EvalScopeID> = Remap
 template<> inline constexpr RemappedIDKind remappedIDKindOf<FunctionID> = RemappedIDKind::Function;
 template<> inline constexpr RemappedIDKind remappedIDKindOf<DataID> = RemappedIDKind::Data;
 
-// An entry is the bits of the program's id plus one, and zero where the unit never named the record or no committed file defines it, which reads as the null id.
-// The link reports no such gap. So the scan of Facts, which reads every body first, stops the build with an internal error that names the function and the operation where a required field reads as null.
-// The tables are those of UnitIDTables: its table of types leads to the interned TypeID, not to the position in the wire's list of types.
 template<typename IDType>
 ALWAYS_INLINE IDType programIDOf(const UnitIDRemap& unit, uint32_t word)
 {
@@ -80,7 +64,6 @@ ALWAYS_INLINE IDType optionalProgramIDOf(const UnitIDRemap& unit, uint32_t word)
     return word == Wire::none ? IDType() : programIDOf<IDType>(unit, word);
 }
 
-// One element of a List<T>, or one record among the fields.
 template<typename T> struct BodyElement;
 
 template<typename Tag>
@@ -101,7 +84,6 @@ struct BodyElement<double> {
     static double decode(const uint32_t* words, const UnitIDRemap&) { return std::bit_cast<double>(static_cast<uint64_t>(words[1]) << 32 | words[0]); }
 };
 
-// BodyElement of each wire record that stands among the fields of an entry: DeclaredType, TailCast, TemplateString. In front of whatever names BodyList of one.
 #include "AOTSchemaBodyElements.inc"
 
 template<typename T>
@@ -167,7 +149,6 @@ private:
     uint32_t m_size { 0 };
 };
 
-// The fields of one value or terminator. An offset counts words from the first field.
 class BodyFields {
 public:
     BodyFields() = default;
@@ -190,7 +171,6 @@ public:
 
     template<typename IDType> IDType idAt(uint32_t offset) const { return programIDOf<IDType>(*m_unit, word(offset)); }
     template<typename IDType> IDType optionalIDAt(uint32_t offset) const { return optionalProgramIDOf<IDType>(*m_unit, word(offset)); }
-    // A word that means the same in every unit: an enumerator, a flag word, a number, a boolean, an id of the table of built-ins, or std::optional of one.
     template<typename T> T plainAt(uint32_t offset) const { return decodePayloadWord<T>(word(offset)); }
     int64_t int64At(uint32_t offset) const { return BodyElement<int64_t>::decode(m_fields + offset, *m_unit); }
     double doubleAt(uint32_t offset) const { return BodyElement<double>::decode(m_fields + offset, *m_unit); }
@@ -205,21 +185,13 @@ private:
     uint16_t m_flags { 0 };
 };
 
-// BodyOperation<Opcode::PropGet>, BodyOperation<TerminatorKind::Branch>: the fields of one entry of the schema under their names, each at an offset known when the engine is compiled.
-// AOTSchemaBodyOperations.h specializes it for every entry that is on the wire.
-// A getter has the name the schema gives the parameter: key(), layout(), mode(). An operand's ends in Operand, a variadic operand's in Operands: objectOperand(), argumentsOperands().
-// A flag's getter has the flag's name: isFreeName().
 template<auto entry> class BodyOperation;
 
 struct ConstructionStart {
     uint32_t reported { 0 };
     uint32_t start { 0 };
-    // Reflect.construct(..), which calls the host function where it cannot construct.
     bool isWrittenAsCall { false };
-    // No construction: an operation that reports its own errors at one place, and at `start` whatever it calls.
     bool isForCallers { false };
-    // No construction: a list that takes values, as in `const [[x]] = v`. Several lists are reported at one place, and an error quotes the one that failed.
-    // So the position of what opens a list is where the list is written, which is `reported` here, and a stack trace shows it at `start`.
     bool isShownAtStart { false };
 
     friend bool operator==(const ConstructionStart&, const ConstructionStart&) = default;
@@ -227,20 +199,16 @@ struct ConstructionStart {
 
 enum class WrittenPositionRole : uint8_t {
     None,
-    // The value reports errors at position(), and the source text has it at the second position.
     WhereWritten,
     StartOfConstruction,
     StartForCallers,
-    // Of IteratorOpen: the two positions change places.
     WhereListIsWritten,
 };
 
-// `opcodeWord` is Wire::ValueHead::opcode with its upper bits.
 JS_EXPORT_PRIVATE WrittenPositionRole writtenPositionRoleOf(uint32_t opcodeWord, uint16_t flags);
 
 constexpr uint8_t hasFlagsWordOnWire(Opcode opcode) { return !!wireFlagsOf(opcode); }
 
-// The words of the fields, by the schema. Generated: AOTSchemaBodyWalkers.h.
 inline uint32_t numberOfFieldWords(Opcode, const uint32_t* fields);
 inline uint32_t numberOfFieldWords(TerminatorKind, const uint32_t* fields);
 
@@ -260,8 +228,7 @@ public:
     const uint32_t* words() const { return m_words; }
     const UnitIDRemap& unit() const { return *m_unit; }
 
-    Opcode opcode() const { return m_isParameter ? Opcode::Parameter : static_cast<Opcode>(m_words[0] & opcodeMask); }
-    // Null where the front end wrote none.
+    Opcode opcode() const { return m_opcode; }
     TypeID parameterType() const
     {
         ASSERT(m_isParameter);
@@ -276,7 +243,6 @@ public:
         return { m_words + numberOfHeadWords + hasFlags, m_unit, hasFlags ? static_cast<uint16_t>(m_words[numberOfHeadWords]) : static_cast<uint16_t>(0) };
     }
 
-    // Head, flags, fields and second position. One for a parameter.
     uint32_t sizeInWords() const
     {
         if (m_isParameter)
@@ -285,7 +251,6 @@ public:
         return first + numberOfFieldWords(opcode(), m_words + first) + hasSecondPosition();
     }
 
-    // Where an error is reported.
     uint32_t position() const
     {
         if (m_isParameter)
@@ -295,7 +260,6 @@ public:
         return writtenPositionRole() == WrittenPositionRole::WhereListIsWritten ? secondPosition() : m_words[1];
     }
     bool hasPosition() const { return position() != noPosition; }
-    // A call in tail position that returns here. A stack trace leaves out the frame that makes it.
     bool standsInTailPosition() const { return !m_isParameter && m_words[0] & Wire::StandsInTailPosition; }
     WrittenPositionRole writtenPositionRole() const { return hasSecondPosition() ? writtenPositionRoleOf(m_words[0], flags()) : WrittenPositionRole::None; }
     bool isPartOfConstruction() const
@@ -318,33 +282,29 @@ public:
         return secondPosition();
     }
     JS_EXPORT_PRIVATE std::optional<ConstructionStart> constructionStart() const;
-    Origin origin() const { return { .position = position(), .inlineFrame = 0, .isTailCall = standsInTailPosition(), .isPartOfConstruction = isPartOfConstruction() }; }
+    ALWAYS_INLINE Origin origin() const
+    {
+        if (!hasSecondPosition()) [[likely]]
+            return { .position = m_isParameter ? noPosition : m_words[1], .inlineFrame = 0, .isTailCall = standsInTailPosition(), .isPartOfConstruction = false };
+        return originWithSecondPosition();
+    }
 
     template<Opcode wanted>
     BodyOperation<wanted> as() const
     {
         ASSERT(opcode() == wanted);
-        return BodyOperation<wanted>(fieldWords());
+        constexpr bool hasFlags = hasFlagsWordOnWire(wanted);
+        return BodyOperation<wanted>(BodyFields { m_words + numberOfHeadWords + hasFlags, m_unit, hasFlags ? static_cast<uint16_t>(m_words[numberOfHeadWords]) : static_cast<uint16_t>(0) });
     }
 
-    // functor(ValueID operand, uint32_t operandIndex), for each operand that is there, in stream order.
-    // The index is the schema's, which operandInfoOf(opcode, index) takes: engine operands are counted, and variadic operand i has index numberOfNamedOperandsOf(opcode) + i.
     template<typename Functor> void forEachOperand(const Functor&) const;
-    // Null for an operand that is absent, that only the engine has, or whose index is past the last.
     ValueID operand(uint32_t operandIndex) const;
-    // Empty where the entry has no variadic operand on the wire.
     std::span<const ValueID> variadicOperands() const;
-    // visitor(IDType id) or visitor(IDType id, Role role): every record of the program that the fields name, with FunctionReferenceKind and ModuleReferenceKind as roles.
-    // An optional field that is absent is not visited. Every other id is, in lists and in records too, as the null id where no committed file defines the record.
-    // The scan of Facts stops the build on such a body, so only a visitor that runs in front of the scan or without it meets a null id.
     template<typename Visitor> void forEachReference(Visitor&&) const;
 
     OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode(), operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(opcode(), operandIndex); }
 
-    // Every getter that Operation of walk/AOTCode.h has, under the same name, so that one template serves both.
-    // A field that is on the wire is read as BodyOperation reads it. A field, flag or operand that only the engine has reads as the schema's default: null, absent, false, empty.
-    // A getter stops the build of the program where the opcode has no field of that name. Each reads through fieldWords(): BodyOperation is not yet specialized here.
 #include "AOTSchemaBodyValueAccessors.inc"
 
 private:
@@ -352,17 +312,22 @@ private:
         : m_words(words)
         , m_unit(unit)
         , m_id(id)
+        , m_opcode(isParameter ? Opcode::Parameter : static_cast<Opcode>(words[0] & opcodeMask))
         , m_isParameter(isParameter)
     {
     }
 
-    ALWAYS_INLINE bool hasFlagsWord() const { return !m_isParameter && CaseTable<Opcode, hasFlagsWordOnWire>::at(static_cast<Opcode>(m_words[0] & opcodeMask)); }
+    static_assert(!hasFlagsWordOnWire(Opcode::Parameter));
+    ALWAYS_INLINE bool hasFlagsWord() const { return CaseTable<Opcode, hasFlagsWordOnWire>::at(m_opcode); }
     bool hasSecondPosition() const { return !m_isParameter && m_words[0] & Wire::WrittenPositionFollows; }
     uint32_t secondPosition() const { return m_words[sizeInWords() - 1]; }
+    JS_EXPORT_PRIVATE Origin originWithSecondPosition() const;
+    ValueID operandFoundByCase(uint32_t operandIndex) const;
 
     const uint32_t* m_words { nullptr };
     const UnitIDRemap* m_unit { nullptr };
     ValueID m_id;
+    Opcode m_opcode { Opcode::Parameter };
     bool m_isParameter { false };
 };
 
@@ -379,7 +344,6 @@ public:
     explicit operator bool() const { return m_words; }
     BlockID block() const { return BlockID::fromBits(m_words[0]); }
     std::span<const ValueID> arguments() const { return unsafeMakeSpan(reinterpret_cast<const ValueID*>(m_words + numberOfHeadWords), m_words[1]); }
-    // One more parameter of the target for each, behind those that take the arguments. See BodyIndex::edgeResult().
     std::span<const uint32_t> proofs() const { return unsafeMakeSpan(m_words + numberOfHeadWords + m_words[1], m_words[2]); }
     uint32_t numberOfIncomingValues() const { return m_words[1] + m_words[2]; }
     const uint32_t* end() const { return m_words + numberOfHeadWords + m_words[1] + m_words[2]; }
@@ -436,7 +400,6 @@ public:
     bool isEmpty() const { return !m_size; }
     Iterator begin() const { return { m_first, m_size }; }
     Iterator end() const { return { nullptr, 0 }; }
-    // Passes the targets in front of it.
     BodyTarget operator[](uint32_t index) const
     {
         ASSERT(index < m_size);
@@ -476,7 +439,6 @@ public:
 
     uint32_t numberOfTargets() const { return m_words[2]; }
     BodyTargets targets() const { return { m_words + numberOfHeadWords + numberOfFieldWords(kind(), m_words + numberOfHeadWords), numberOfTargets() }; }
-    // The word behind the last target, where the next block starts.
     const uint32_t* end() const
     {
         const uint32_t* words = m_words + numberOfHeadWords + numberOfFieldWords(kind(), m_words + numberOfHeadWords);
@@ -517,7 +479,6 @@ public:
         return BodyOperation<wanted>(fieldWords());
     }
 
-    // As for BodyValue. The arguments of targets are not operands.
     template<typename Functor> void forEachOperand(const Functor&) const;
     ValueID operand(uint32_t operandIndex) const;
     std::span<const ValueID> variadicOperands() const;
@@ -601,7 +562,6 @@ public:
     static_assert(!offsetof(Wire::BlockHead, parameterCount) && offsetof(Wire::BlockHead, valueCount) == 4 && offsetof(Wire::BlockHead, role) == 8 && offsetof(Wire::BlockHead, subject) == 12 && offsetof(Wire::BlockHead, hasHandler) == 16);
 
     BodyBlock() = default;
-    // `terminator` may be null: terminator() and next() then pass every value of the block to find it. BodyIndex::block() knows it.
     BodyBlock(const uint32_t* head, const uint32_t* terminator, const UnitIDRemap* unit, BlockID id, ValueID firstParameter)
         : m_words(head)
         , m_terminator(terminator)
@@ -617,11 +577,9 @@ public:
 
     BlockRole role() const { return static_cast<BlockRole>(m_words[2]); }
     bool isHandlerBlock() const { return role() != BlockRole::Ordinary; }
-    // Of IterationCleanup: the IteratorOpen whose iterator the block closes. Of DisposalCleanup: what it disposes of. Null otherwise.
     ValueID subject() const { return ValueID::fromBits(m_words[3]); }
 
     uint32_t numberOfParameters() const { return m_words[0]; }
-    // The first id of the block, whether or not it has a parameter.
     ValueID firstParameter() const { return m_firstParameter; }
     ValueID parameter(uint32_t index) const
     {
@@ -636,22 +594,18 @@ public:
         return value.index() >= m_firstParameter.index() && index < numberOfParameters() ? std::optional(index) : std::nullopt;
     }
 
-    // Where an operation of the block throws, control goes there. Its arguments are available at the head of the block.
     bool hasHandler() const { return m_words[4]; }
     BodyTarget handler() const { return hasHandler() ? BodyTarget(m_words + numberOfHeadWords + numberOfParameters()) : BodyTarget(); }
 
     uint32_t numberOfValues() const { return m_words[1]; }
     ValueID firstValue() const { return ValueID(m_firstParameter.index() + numberOfParameters()); }
-    // The id behind the last value: the first parameter of the next block. As a position it stands for the terminator and the edges.
     ValueID endOfValues() const { return ValueID(m_firstParameter.index() + numberOfParameters() + numberOfValues()); }
     bool holds(ValueID value) const { return value.index() >= m_firstParameter.index() && value.index() < endOfValues().index(); }
     BodyValues values() const { return { firstValueWords(), m_unit, firstValue(), numberOfValues() }; }
 
     BodyTerminator terminator() const { return { terminatorWords(), m_unit, m_id }; }
-    // In stream order. The caller knows how many blocks there are.
     BodyBlock next() const { return { terminator().end(), nullptr, m_unit, BlockID(m_id.index() + 1), endOfValues() }; }
 
-    // functor(BodyTarget, bool isHandlerEdge): the targets of the terminator in order, then the handler.
     template<typename Functor>
     void forEachOutgoingEdge(const Functor& functor) const
     {
@@ -704,7 +658,6 @@ public:
     BodyValue parameterAt(uint32_t wordOffset, ValueID id) const { return BodyValue::parameter(m_words + wordOffset, m_unit, id); }
     BodyBlock blockAt(uint32_t wordOffset, uint32_t wordOffsetOfTerminator, BlockID id, ValueID firstParameter) const { return { m_words + wordOffset, m_words + wordOffsetOfTerminator, m_unit, id, firstParameter }; }
 
-    // functor(BodyBlock), in stream order, without an index.
     template<typename Functor>
     void forEachBlock(const Functor& functor) const
     {
@@ -724,8 +677,6 @@ private:
     uint32_t m_numberOfValues { 0 };
 };
 
-// An operation in the engine's form: named operands by the schema's index, variadic operands behind them, payload words at PayloadWord::name(opcode), with room for the engine's own fields.
-// Draft and TerminatorDraft of walk/AOTCode.h are holders.
 template<typename Holder>
 concept OperationHolder = requires(Holder& holder, uint32_t number, typename Holder::OperandID operand, std::span<const uint32_t> words) {
     holder.setOperand(number, operand);
@@ -735,9 +686,6 @@ concept OperationHolder = requires(Holder& holder, uint32_t number, typename Hol
     holder.setPayloadListFrom(number, words);
 };
 
-// Writes every field that is on the wire into a holder that has the entry's defaults (defaultPayloadOf(), null operands). Ids are the program's.
-// operandOf(ValueID) answers with Holder::OperandID and is asked once for each operand that is there, in stream order.
-// Flags, origin and targets are the caller's to copy. Generated: AOTSchemaBodyWalkers.h.
 template<OperationHolder Holder, typename Functor> void copyFields(const BodyValue&, Holder&, const Functor& operandOf);
 template<OperationHolder Holder, typename Functor> void copyFields(const BodyTerminator&, Holder&, const Functor& operandOf);
 
@@ -748,14 +696,11 @@ struct NumbersOfProgramRecords {
     size_t operator[](RemappedIDKind kind) const { return sizes[static_cast<size_t>(kind)]; }
 };
 
-// The tables every Body of a program reads its ids through. The program owns one, and it lives as long as the bodies do.
 class UnitIDTables {
     WTF_MAKE_NONCOPYABLE(UnitIDTables);
 public:
     UnitIDTables() = default;
 
-    // Once, when the wire's types are interned. `typesAsRead` is indexed by the position in the wire's list of types.
-    // Without external bodies, or with bodies of no unit (unitCount is zero), the words hold the program's numbers, and there is one unit whose tables say so.
     void initialize(const ExternalFunctionBodies*, std::span<const TypeID> typesAsRead, const NumbersOfProgramRecords&, const ParallelLoops&);
 
     uint32_t numberOfUnits() const { return static_cast<uint32_t>(m_units.size()); }

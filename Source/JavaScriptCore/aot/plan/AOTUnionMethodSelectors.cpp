@@ -23,12 +23,9 @@ static bool isRawFormOfNumberInUnionSelectors(Representation form)
     return form == Representation::Int32 || form == Representation::Double;
 }
 
-// `node.accept(v)` where nothing is known of `node`: whatever has a row under the name is expected, and one test of shapes asks for all of them (callThroughMethodTableBehindTest() of walk/AOTWalkUnionCalls.cpp).
-// A family grows with the program and a call asks at every copy, so the set is made once for the build.
 static void noteReceiversInUnionSelectors(const Plan& plan, TypeArena& types, MethodFamily& family)
 {
     Vector<LayoutID> receivers;
-    // The test asks for shape numbers.
     for (const MethodTableRow& row : family.rows) {
         if (!plan.shapes().shapesOf(row.layout).isEmpty())
             receivers.append(row.layout);
@@ -37,8 +34,6 @@ static void noteReceiversInUnionSelectors(const Plan& plan, TypeArena& types, Me
         family.receivers = types.at(types.forLayouts(receivers.span())).layouts;
 }
 
-// `shape.scale(2.5)`. Argument i crosses raw where the code that a row leads to takes it raw: each method that names the parameter is entered at its Body, which takes a number that Link has proven.
-// What the selector takes there is all that those methods take. A method that does not name the parameter asks nothing of it.
 static void noteTypesOfArgumentsInUnionSelectors(const Program& program, const LinkTables& linked, const CallingConventions& conventions, TypeArena& types, MethodFamily& family)
 {
     family.typesOfArguments.fill(TypeID(), maxArgumentsOfTableCall);
@@ -63,7 +58,6 @@ static void noteTypesOfArgumentsInUnionSelectors(const Program& program, const L
     }
 }
 
-// The typed selector returns as every method of the family does. Only where nothing puts the lookup into the table: what a lookup finds returns anything.
 static void noteResultInUnionSelectors(const Program& program, const LinkTables& linked, const CallingConventions& conventions, TypeArena& types, const MethodFamily& family, MethodSelector& typed)
 {
     FormsOfSelector forms = formsOfSelector(program, linked, conventions, family);
@@ -78,9 +72,6 @@ static void noteResultInUnionSelectors(const Program& program, const LinkTables&
     typed.typeOfResult = returned;
 }
 
-// planProgram(), behind the guards: which unit a row leads to hangs on them. AOTPlan.cpp declares this.
-// THE BOXED SELECTOR OF A FAMILY AND A COUNT STAYS AS IT IS, and CallingConventions::findMethodSelector() answers it: the emitter takes the table for a closed call, whose record is a boxed value, by that one alone.
-// The typed one stands right behind it, and only a CallTable that the walk has built names it.
 void finishMethodTableForUnions(Program& program, const Facts& facts, Plan& plan)
 {
     const CallingConventions& conventions = plan.conventions();

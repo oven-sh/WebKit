@@ -17,7 +17,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 struct Proven;
 
-// True in every run of the compiled program. Anybody may read it. Only Proven makes one, and from a prediction only where a test stands.
 template<typename T>
 class ProvenValue {
 public:
@@ -36,8 +35,6 @@ private:
     T m_value;
 };
 
-// What an annotation or an open set says. It may be wrong in any run, so it decides only whether something is worth doing and which test to emit.
-// Whatever is computed from one is one. It turns into neither its value nor a bool by itself: predicted() marks each place that acts on a guess.
 template<typename T>
 class Expected {
 public:
@@ -58,7 +55,6 @@ private:
     T m_value { };
 };
 
-// The same of something that lives elsewhere: the record of a type, a set.
 template<typename T>
 class Expected<const T&> {
 public:

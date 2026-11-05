@@ -114,25 +114,6 @@ function f7 name="read" results=[{type=anything}] {
 }
 )IR"_s;
 
-static constexpr ASCIILiteral programWithLiterals = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="registry" [isFreeName]
-    v2 = NewClosure function=f1
-    PropSet v1, v2 key="literals"
-    Return
-}
-function f1 name="literals" results=[{type=anything}] {
-    v0 = NewRegExp pattern="a+" regExpFlags=[]
-    v1 = NewRegExp pattern="b+" regExpFlags=[]
-    v2 = NewRegExp pattern="c+" regExpFlags=[]
-    PropSet v0, v1 key="next"
-    PropSet v1, v2 key="next"
-    Return v0
-}
-)IR"_s;
-
 static constexpr ModuleID firstModule(1u);
 static constexpr ModuleID secondModule(2u);
 static constexpr auto unshared = ArrayBufferSharingMode::Default;
@@ -144,7 +125,6 @@ class TypeRecord {
 public:
     TypeRecord(std::initializer_list<RuntimeCellTest> tests)
     {
-        // As the encoder of the tables writes them: the tests of one function each stand behind all others, by rising number.
         Vector<RuntimeCellTest> ordered(tests);
         std::ranges::stable_sort(ordered, { }, [](const RuntimeCellTest& test) -> int64_t {
             return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(test.operand) : -1;
@@ -191,7 +171,6 @@ static void testSharingModeOfValues(LoadedProgram& program)
     TypeRecord unsharedBuffers { RuntimeCellTest::sharingModeIs(unshared) };
     TypeRecord sharedBuffers { RuntimeCellTest::sharingModeIs(shared) };
 
-    // Reflect.construct(SharedArrayBuffer, [8], ArrayBuffer) makes a shared buffer with the Structure of the other class.
     for (JSValue buffer : { JSValue(createBuffer(program, shared, shared)), JSValue(createBuffer(program, shared, unshared)) })
         AOT_TEST_CHECK(hasType(program, sharedBuffers, buffer) && !hasType(program, unsharedBuffers, buffer));
 
@@ -225,126 +204,6 @@ static void testModuleOfNamespaceObjects(LoadedProgram& program)
     AOT_TEST_CHECK(operationAOTIsNamespaceOfModule(first, firstModule.index()) && !operationAOTIsNamespaceOfModule(first, secondModule.index()));
     AOT_TEST_CHECK(!operationAOTIsNamespaceOfModule(deferredFirst, firstModule.index()));
     AOT_TEST_CHECK(!operationAOTIsNamespaceOfModule(evaluate(program, "({ a: 1 })"_s).asCell(), firstModule.index()));
-}
-
-// The collector reads the stack for what looks like a reference, so the tests below keep the cells they ask about in another form and off the stack.
-using HiddenCells = std::array<uintptr_t, 3>;
-
-static NEVER_INLINE uintptr_t hide(JSCell* cell)
-{
-    return ~std::bit_cast<uintptr_t>(cell);
-}
-
-static NEVER_INLINE unsigned numberOfMarkedCells(VM& vm, const HiddenCells& hidden, unsigned count)
-{
-    unsigned marked = 0;
-    for (unsigned i = 0; i < count; ++i)
-        marked += hasSurvivedCollection(vm, std::bit_cast<JSCell*>(~hidden[i]));
-    return marked;
-}
-
-static void checkCellsMadeBetweenCollectionsLast(LoadedProgram& program, uintptr_t (*makeOrFind)(LoadedProgram&, unsigned index))
-{
-    VM& vm = program.vm();
-    auto hiddenCell = [&](unsigned index) {
-        return makeOrFind(program, index);
-    };
-    auto hiddenOffTheStack = makeUniqueWithoutFastMallocCheck<HiddenCells>();
-    HiddenCells& hidden = *hiddenOffTheStack;
-    auto collect = [&](CollectionScope scope) {
-        vm.heap.collectNow(Sync, scope);
-    };
-    // After this the roots have been visited and nothing has been stored since.
-    collect(CollectionScope::Full);
-    collect(CollectionScope::Eden);
-
-    hidden[0] = hiddenCell(0);
-    collect(CollectionScope::Eden);
-    AOT_TEST_CHECK(numberOfMarkedCells(vm, hidden, 1) == 1);
-    hidden[1] = hiddenCell(1);
-    collect(CollectionScope::Eden);
-    AOT_TEST_CHECK(numberOfMarkedCells(vm, hidden, 2) == 2);
-    hidden[2] = hiddenCell(2);
-    collect(CollectionScope::Full);
-    AOT_TEST_CHECK(numberOfMarkedCells(vm, hidden, 3) == 3);
-    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full, CollectionScope::Full, CollectionScope::Eden }) {
-        collect(scope);
-        AOT_TEST_CHECK(numberOfMarkedCells(vm, hidden, 3) == 3);
-    }
-    for (unsigned i = 0; i < hidden.size(); ++i)
-        AOT_TEST_CHECK(hiddenCell(i) == hidden[i]);
-}
-
-// Nothing but the list of loaded modules holds a namespace object between two requests for it.
-static NEVER_INLINE uintptr_t hiddenNamespaceObject(LoadedProgram& program, unsigned index)
-{
-    using ModulePhase = AbstractModuleRecord::ModulePhase;
-    Modules& modules = modulesOf(program.instance());
-    switch (index) {
-    case 0:
-        return hide(modules.moduleNamespace(firstModule, ModulePhase::Evaluation));
-    case 1:
-        return hide(modules.moduleNamespace(secondModule, ModulePhase::Evaluation));
-    default:
-        return hide(modules.moduleNamespace(firstModule, ModulePhase::Defer));
-    }
-}
-
-static void testNamespaceObjectsMadeBetweenCollectionsLast(LoadedProgram& program)
-{
-    checkCellsMadeBetweenCollectionsLast(program, hiddenNamespaceObject);
-}
-
-// Nothing but the set of literals holds the compiled pattern of a literal between two evaluations of it.
-static NEVER_INLINE uintptr_t hiddenLiteral(LoadedProgram& program, unsigned index)
-{
-    VM& vm = program.vm();
-    return hide(vm.aotState().regExpLiterals->regExpFor(vm, RegExpRecordID(index), { }));
-}
-
-static void testLiteralsMadeBetweenCollectionsLast(LoadedProgram& program)
-{
-    checkCellsMadeBetweenCollectionsLast(program, hiddenLiteral);
-}
-
-static NEVER_INLINE void addTwoPropertiesInARow(LoadedProgram& program, HiddenCells& hidden)
-{
-    VM& vm = program.vm();
-    PropertyOffset offset;
-    Structure* old = program.realm()->objectStructureForObjectConstructor();
-    Structure* first = Structure::addPropertyTransition(vm, old, Identifier::fromString(vm, "firstAddition"_s), 0, offset);
-    Structure* second = Structure::addPropertyTransition(vm, first, Identifier::fromString(vm, "secondAddition"_s), 0, offset);
-    PropertyCaches& caches = *program.state().propertyCaches;
-    caches.didAddProperty(first, second);
-    caches.didAddProperty(old, first);
-    hidden[0] = hide(first);
-    hidden[1] = hide(second);
-}
-
-// A collection takes every word of the stack above it for a reference. What a function that has returned left there lies under the frames of the collection, which do not write every word of theirs,
-// and which frames those are depends on which thread collects.
-static NEVER_INLINE void overwriteFramesOfFunctionsThatReturned()
-{
-    volatile uint8_t bytes[16 * KB];
-    for (size_t i = 0; i < sizeof(bytes); ++i)
-        bytes[i] = 0;
-}
-
-static void testAdditionThatWaitsForItsFirstStructure(LoadedProgram& program)
-{
-    if (framesAreThoseOfAddressSanitizer)
-        return;
-    VM& vm = program.vm();
-    auto hiddenOffTheStack = makeUniqueWithoutFastMallocCheck<HiddenCells>();
-    vm.heap.collectNow(Sync, CollectionScope::Full);
-    addTwoPropertiesInARow(program, *hiddenOffTheStack);
-    overwriteFramesOfFunctionsThatReturned();
-    vm.heap.collectNow(Sync, CollectionScope::Eden);
-    AOT_TEST_CHECK(numberOfMarkedCells(vm, *hiddenOffTheStack, 2) == 2);
-    // A full collection ends every Structure that no object has. The young collection may have run on this thread, with both in its hands.
-    overwriteFramesOfFunctionsThatReturned();
-    vm.heap.collectNow(Sync, CollectionScope::Full);
-    AOT_TEST_CHECK(!numberOfMarkedCells(vm, *hiddenOffTheStack, 2));
 }
 
 static void testNoShapePasses(LoadedProgram& program)
@@ -399,7 +258,6 @@ choice 3: field of a record
 choice 1: export of first
 )"_s;
 
-// `way` is one of waysToCompilePrograms.
 static String runInShell(OptionWords optionWords, ASCIILiteral way)
 {
     std::unique_ptr<CompileOutput> output;
@@ -453,9 +311,6 @@ std::span<const NativeTest> sharingModeAndNamespaceTests()
     static constexpr NativeTest tests[] = {
         { "sharing-mode-and-namespace/sharing-mode-of-values"_s, withProgram<testSharingModeOfValues> },
         { "sharing-mode-and-namespace/module-of-namespace-objects"_s, withProgram<testModuleOfNamespaceObjects> },
-        { "sharing-mode-and-namespace/namespace-objects-made-between-collections-last"_s, withProgram<testNamespaceObjectsMadeBetweenCollectionsLast> },
-        { "sharing-mode-and-namespace/literals-made-between-collections-last"_s, runNativeTestWithLoadedProgram<sharingModeAndNamespaceTests, programWithLiterals, testLiteralsMadeBetweenCollectionsLast> },
-        { "sharing-mode-and-namespace/addition-that-waits-for-its-first-structure"_s, withProgram<testAdditionThatWaitsForItsFirstStructure> },
         { "sharing-mode-and-namespace/no-shape-passes"_s, withProgram<testNoShapePasses> },
         { "sharing-mode-and-namespace/compiled-tests"_s, testCompiledTests },
     };

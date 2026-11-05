@@ -15,7 +15,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// A Location holds its kind above its payload, so the bits of two places compare as their kinds do, and within a kind as their numbers do.
 static_assert(sizeof(Location) == sizeof(uint32_t));
 static_assert(std::bit_cast<uint32_t>(Location::spill(1)) == (static_cast<uint32_t>(Location::Spill) << 28 | 1));
 static_assert(Location::Register < Location::Spill && Location::Spill < Location::Outgoing);
@@ -26,16 +25,12 @@ static ALWAYS_INLINE bool isPlaceOfParallelMove(Location location)
     return kindsOfPlaces >> location.kind() & 1;
 }
 
-// Registers sort first. breakCycle() relies on that.
-// Two spills are two places here, yet assignSlots() lets spills with disjoint ranges share a place in the frame. So the range of every spill that a set writes must overlap the range of every spill that it reads.
-// Allocator::markSpilled() sees to it: the range of a Phi without a register covers the moves of its incoming edges.
 static ALWAYS_INLINE uint64_t parallelMoveLocationKey(Location location)
 {
     RELEASE_ASSERT(isPlaceOfParallelMove(location));
     return std::bit_cast<uint32_t>(location);
 }
 
-// What is made again sorts behind every place, and is the destination of no move.
 static ALWAYS_INLINE uint64_t parallelMoveSourceKey(const PendingMove& move)
 {
     if (move.source.isImmediate())
@@ -71,7 +66,6 @@ static ALWAYS_INLINE Step& constructParallelMoveStep(Step* at, StepKind kind, Wi
 class ParallelMoveResolver {
     WTF_MAKE_NONCOPYABLE(ParallelMoveResolver);
 public:
-    // What a set of so many moves needs lies on the stack, and its moves are grouped without sorting their sources.
     static constexpr uint32_t mostMovesOfSmallSet = 16;
 
     ParallelMoveResolver(Arena& arena, std::span<PendingMove> moves, ArenaVector<Step>& output)
@@ -81,20 +75,16 @@ public:
     {
     }
 
-    // Nothing that this one calls stands out of line. So nobody else gets to see the resolver, and no store to a step makes the compiler read a member again.
     void runOnSmallSet();
     void runOnLargeSet();
 
 private:
     static constexpr uint32_t none = UINT32_MAX;
-    // Reg::index() has seven bits.
     static constexpr unsigned endOfRegisterIndexes = 1 << 7;
 
-    // Whoever groups the moves fills in both: there are as many as the set has moves, and most sets are small.
     struct Source {
         uint32_t numberOfPendingReaders;
         uint32_t writer;
-        // The register that holds the value now: the source itself, a destination already written, or the scratch register of a cycle.
         Reg holder;
         Width maxWidth;
         bool isReleased;
@@ -106,7 +96,6 @@ private:
         bool isDone;
     };
 
-    // The first in is the first out. A move becomes ready once, so each list has room for all of them.
     struct ReadyMoves {
         uint32_t* moves { nullptr };
         uint32_t next { 0 };
@@ -118,7 +107,6 @@ private:
 
     void groupMovesOfSmallSetBySource();
     void groupMovesBySource();
-    // `readyMoves` has room for the moves of the set once for each rank.
     void resolveGroupedMoves(uint32_t* readyMoves);
     void enqueue(uint32_t moveIndex);
     void performReadyMoves();
@@ -129,10 +117,8 @@ private:
     Step& append(StepKind, const PendingMove&, Location destination, Location source);
 
     Arena& m_arena;
-    // Sorted by destination once they are grouped.
     std::span<PendingMove> m_moves;
     ArenaVector<Step>& m_output;
-    // In the room that resolveGroupedMoves() has made at the end of m_output.
     Step* m_nextStep { nullptr };
     MoveState* m_states { nullptr };
     Source* m_sources { nullptr };
@@ -165,7 +151,6 @@ ALWAYS_INLINE void ParallelMoveResolver::runOnLargeSet()
 ALWAYS_INLINE void ParallelMoveResolver::resolveGroupedMoves(uint32_t* readyMoves)
 {
     const uint32_t numberOfMoves = static_cast<uint32_t>(m_moves.size());
-    // A move takes two steps at most: into a scratch register, and on from there. A cycle, which has two moves at least, takes one more.
     const uint32_t mostSteps = 3 * numberOfMoves;
     Step* const firstStep = m_output.appendUninitialized(m_arena, mostSteps);
     m_nextStep = firstStep;
@@ -179,7 +164,6 @@ ALWAYS_INLINE void ParallelMoveResolver::resolveGroupedMoves(uint32_t* readyMove
     }
     performReadyMoves();
 
-    // Every remaining destination has exactly one pending reader, so only disjoint cycles remain.
     for (uint32_t index = 0; index < numberOfMoves; ++index) {
         if (!m_states[index].isDone)
             breakCycle(index);
@@ -190,7 +174,6 @@ ALWAYS_INLINE void ParallelMoveResolver::resolveGroupedMoves(uint32_t* readyMove
     m_output.shrink(m_output.size() - (mostSteps - numberOfSteps));
 }
 
-// What groupMovesBySource() finds, but for the numbers of the sources, which nobody compares but for equality.
 ALWAYS_INLINE void ParallelMoveResolver::groupMovesOfSmallSetBySource()
 {
     const uint32_t numberOfMoves = static_cast<uint32_t>(m_moves.size());
@@ -216,10 +199,8 @@ ALWAYS_INLINE void ParallelMoveResolver::groupMovesOfSmallSetBySource()
         moves[place] = move;
     }
 
-    // Each entry holds something where the mask has the bit of the register.
     RegisterMask registersWritten = 0;
     uint8_t writerOfRegister[endOfRegisterIndexes];
-    // Registers sort first.
     uint32_t numberOfMovesIntoRegisters = 0;
     for (uint32_t index = 0; index < numberOfMoves; ++index) {
         const PendingMove& move = moves[index];
@@ -374,7 +355,6 @@ ALWAYS_INLINE void ParallelMoveResolver::perform(uint32_t moveIndex)
         else
             append(move.source.isImmediate() ? StepKind::Materialize : StepKind::Reload, move, move.destination, move.source);
 
-        // No destination is written twice, so the remaining readers can copy from this register.
         if (move.width == source.maxWidth) {
             source.holder = move.destination.reg();
             release(source);
@@ -401,8 +381,6 @@ ALWAYS_INLINE void ParallelMoveResolver::release(Source& source)
 
 ALWAYS_INLINE Reg ParallelMoveResolver::loadIntoScratch(const PendingMove& move, uint32_t sourceIndex)
 {
-    // A rematerialized value needs a register of its own bank. A word from memory can go through either bank.
-    // x86-64 has a single scratch GPR, so memory-to-memory moves use the scratch FPR. So does any target while a cycle holds a word in the scratch GPR.
     bool isRematerialized = move.source.isImmediate();
     Bank bank = bankOf(move.value->type());
     if (!isRematerialized && (isX86_64() || m_cycleScratch))
@@ -418,7 +396,6 @@ ALWAYS_INLINE Reg ParallelMoveResolver::loadIntoScratch(const PendingMove& move,
     return scratch;
 }
 
-// `first` has the lowest destination in its cycle, so that destination is a register if the cycle has one.
 ALWAYS_INLINE void ParallelMoveResolver::breakCycle(uint32_t first)
 {
     uint32_t last = first;
@@ -467,7 +444,6 @@ ALWAYS_INLINE void ParallelMoveResolver::breakCycle(uint32_t first)
 
 ALWAYS_INLINE Step& ParallelMoveResolver::append(StepKind kind, const PendingMove& move, Location destination, Location source)
 {
-    // Must match what the encoder clobbers and what the allocation checker kills for each step kind.
     RegisterMask written = destination.isRegister() ? maskOf(destination.reg()) : 0;
     switch (kind) {
     case StepKind::Move:
@@ -485,7 +461,6 @@ ALWAYS_INLINE Step& ParallelMoveResolver::append(StepKind kind, const PendingMov
     case StepKind::KeepPointer:
         RELEASE_ASSERT_NOT_REACHED();
     }
-    // A cycle parks its word in one of the two scratch registers and nowhere else.
     if (written & (maskOf(Reg(scratchGPR)) | maskOf(Reg(scratchFPR)))) {
         RELEASE_ASSERT(!m_cycleScratch || !(written & maskOf(m_cycleScratch)));
         for (Bank bank : { Bank::GP, Bank::FP }) {
@@ -502,7 +477,6 @@ static NEVER_INLINE std::span<PendingMove> removeTrivialParallelMoves(std::span<
     size_t newSize = 0;
     for (const PendingMove& move : moves) {
         if (!move.source) {
-            // Allocator::memoryLocationOf() returns an empty Location after it reports a failure, and placeFixedOperands() passes it along.
             Block* owner = move.value->owner();
             RELEASE_ASSERT(owner);
             owner->procedure().fail(FailureKind::RegisterLacksItsValue, move.value);
@@ -514,8 +488,6 @@ static NEVER_INLINE std::span<PendingMove> removeTrivialParallelMoves(std::span<
     return moves.first(newSize);
 }
 
-// What ParallelMoveResolver::perform() appends for a move whose source no other move reads, while no cycle is being broken: nothing lies in a scratch register that the move could take from there.
-// At `next`, which has room for two steps and is moved on behind what is written.
 static ALWAYS_INLINE void constructStepsOfIndependentParallelMove(Step*& next, const PendingMove& move)
 {
     Operation* const value = move.value;
@@ -533,7 +505,6 @@ static ALWAYS_INLINE void constructStepsOfIndependentParallelMove(Step*& next, c
 
     Location holder = source;
     if (!source.isRegister()) {
-        // As ParallelMoveResolver::loadIntoScratch() does.
         bool isRematerialized = source.isImmediate();
         Bank bank = bankOf(value->type());
         if (!isRematerialized && isX86_64())
@@ -544,7 +515,6 @@ static ALWAYS_INLINE void constructStepsOfIndependentParallelMove(Step*& next, c
     constructParallelMoveStep(next++, StepKind::Save, width, destination, holder, value);
 }
 
-// A few moves none of which writes what another reads or writes, and no two of which read one source: most sets are like that. Each is ready from the start, so they go by rank, and within a rank by destination.
 static ALWAYS_INLINE bool tryResolveIndependentParallelMoves(Arena& arena, std::span<const PendingMove> moves, ArenaVector<Step>& output)
 {
     constexpr size_t mostMoves = 8;
@@ -554,7 +524,6 @@ static ALWAYS_INLINE bool tryResolveIndependentParallelMoves(Arena& arena, std::
     if (numberOfMoves > mostMoves)
         return false;
 
-    // No move reads what it writes, so the moves are independent where the set names no place and no value that is made again twice.
     const PendingMove* const firstMove = moves.data();
     RegisterMask registersNamed = 0;
     uint64_t keysOutsideRegisters[2 * mostMoves];
@@ -568,7 +537,6 @@ static ALWAYS_INLINE bool tryResolveIndependentParallelMoves(Arena& arena, std::
         return true;
     };
 
-    // The rank, the destination, the place in the set.
     uint64_t order[mostMoves];
     for (size_t index = 0; index < numberOfMoves; ++index) {
         const PendingMove& move = firstMove[index];
@@ -641,7 +609,6 @@ static NEVER_INLINE void resolveSeveralParallelMoves(Arena& arena, std::span<Pen
     resolveDependentParallelMoves(arena, moves, output);
 }
 
-// What the ways above append for a set of two.
 static NEVER_INLINE void resolveTwoParallelMoves(Arena& arena, std::span<PendingMove> moves, ArenaVector<Step>& output)
 {
     const PendingMove& first = moves.data()[0];
@@ -664,7 +631,6 @@ static NEVER_INLINE void resolveTwoParallelMoves(Arena& arena, std::span<Pending
     const bool secondComesFromRegister = second.source.isRegister();
 
     if (destinationOfFirst != destinationOfSecond && !firstWritesWhatSecondReads && !secondWritesWhatFirstReads && !bothReadOneSource) {
-        // As tryResolveIndependentParallelMoves() has it: by rank, and within a rank by destination.
         const uint64_t orderOfFirst = static_cast<uint64_t>(rankOfParallelMove(firstGoesIntoRegister, firstComesFromRegister)) << 32 | destinationOfFirst;
         const uint64_t orderOfSecond = static_cast<uint64_t>(rankOfParallelMove(secondGoesIntoRegister, secondComesFromRegister)) << 32 | destinationOfSecond;
         constexpr uint32_t mostSteps = 4;
@@ -680,7 +646,6 @@ static NEVER_INLINE void resolveTwoParallelMoves(Arena& arena, std::span<Pending
         return;
     }
 
-    // Between registers every move has one rank, and the resolver numbers the moves by their destinations.
     ASSERT(first.width == Width32 || first.width == Width64);
     ASSERT(second.width == Width32 || second.width == Width64);
     ASSERT(bankOf(first.destination.reg()) == bankOf(first.value->type()) && bankOf(first.source.reg()) == bankOf(first.value->type()));
@@ -689,19 +654,16 @@ static NEVER_INLINE void resolveTwoParallelMoves(Arena& arena, std::span<Pending
     const PendingMove& higher = destinationOfSecond < destinationOfFirst ? first : second;
     Step* const steps = output.appendUninitialized(arena, 2);
     if (bothReadOneSource) {
-        // Both are ready from the start. The second copies from the destination of the first where that has got all of the value.
         constructParallelMoveStep(steps, StepKind::Move, lower.width, lower.destination, lower.source, lower.value);
         const bool lowerHasAllOfValue = lower.width == std::max(Width32, std::max(lower.width, higher.width));
         constructParallelMoveStep(steps + 1, StepKind::Move, higher.width, higher.destination, lowerHasAllOfValue ? lower.destination : higher.source, higher.value);
         return;
     }
     if (firstWritesWhatSecondReads && secondWritesWhatFirstReads) {
-        // ParallelMoveResolver::breakCycle().
         constructParallelMoveStep(steps, StepKind::Swap, std::max(lower.width, higher.width), lower.destination, lower.source, lower.value).other = higher.value;
         output.shrink(output.size() - 1);
         return;
     }
-    // The one that reads what the other writes is ready, and the other once that one has read.
     const PendingMove& reader = firstWritesWhatSecondReads ? second : first;
     const PendingMove& writer = firstWritesWhatSecondReads ? first : second;
     constructParallelMoveStep(steps, StepKind::Move, reader.width, reader.destination, reader.source, reader.value);
@@ -714,7 +676,6 @@ void resolveParallelMoves(Arena& arena, std::span<PendingMove> moves, ArenaVecto
         const PendingMove& move = *moves.data();
         if (move.source && move.source != move.destination) [[likely]] {
             RELEASE_ASSERT(isPlaceOfParallelMove(move.destination) && (move.source.isImmediate() || isPlaceOfParallelMove(move.source)));
-            // Into a register it takes one step.
             if (move.destination.isRegister()) {
                 Step* next = output.appendUninitialized(arena);
                 constructStepsOfIndependentParallelMove(next, move);

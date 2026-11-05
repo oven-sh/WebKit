@@ -21,6 +21,7 @@
 # REQUIRES(ANSWERS): entries-of-bun
 # ANSWERS: 3
 # ANSWERS: 0
+# ANSWERS-NEXT: exited with 0
 
 module m0 path="name-that-no-layout-lists-is-read-behind-looks-at-the-cell.ts" displayPath="name-that-no-layout-lists-is-read-behind-looks-at-the-cell.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

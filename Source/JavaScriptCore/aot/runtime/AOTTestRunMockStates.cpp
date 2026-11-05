@@ -48,15 +48,12 @@ auto Modules::mockState(ModuleID module) -> MockState
             return MockState::InPlaceOverModuleThatHasRun;
         return body == ModuleStatus::Evaluating || body == ModuleStatus::EvaluatingAsync ? MockState::NoneOfThem : MockState::InPlace;
     }
-    // A mock of a module of the library replaces it where the loader did not hold it, and is laid over its names where it did.
     if (isOfLibrary && m_libraryModulesWithMock.get(module.index()))
         return m_libraryModulesThatMockReplaces.get(module.index()) ? MockState::InPlace : MockState::LaidOver;
-    // Linked: a helper has mocked what its importer imports beside it, and the body waits for an import whose own body is up the stack: runBodyOfLinkedModuleAheadOfMock().
     if (isLaidOver)
         return hasBegun || body == ModuleStatus::Linked ? MockState::LaidOver : MockState::NoneOfThem;
     if (isOverModuleThatHasRun)
         return MockState::Runs;
-    // willMockModule() ahead of the load: the names of the module hold what the mock gave, and its body never runs.
     if (isMocked(module))
         return hasWaited || isOfLibrary || m_modulesWhoseFactoryRuns.get(module.index()) ? MockState::Runs : MockState::Fills;
     if (hasKeptError)
@@ -104,7 +101,6 @@ void Modules::countMockStates(ASCIILiteral door, const String& before, ModuleID 
 {
     String after = describeMockState(module);
     countMockTransitionInTestRunMockStates(*m_instance.vm, makeString(before, " > "_s, door, " > "_s, after));
-    // The counts are written when the process ends: a run that stopped here would leave none. Which steps are known: test/aot/mock-states.table.txt in Bun.
     if (mockState(module) == MockState::NoneOfThem) [[unlikely]]
         writeToStandardError(makeString("[aot] the mock of "_s, m_table.pathText(module), " is in no state of its life: "_s, before, " > "_s, door, " > "_s, after, '\n'));
 }

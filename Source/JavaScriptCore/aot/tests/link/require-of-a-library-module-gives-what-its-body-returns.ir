@@ -7,7 +7,7 @@
 # REQUIRES: entries-of-bun
 # CHECK: access f3 v2 under symbol("kHeaders")@m2:0
 # CHECK: function f2 {{*}}result=L1
-# CHECK: variable g0 proven=symbol writers-known written-at-construction-alone filled
+# CHECK: variable g0 proven=symbol("kHeaders")@m2:0 writers-known written-at-construction-alone filled
 
 layout L0 module=m1 fields=[{key=symbol("kHeaders")@m2:0 declared={type=anything}}]
 layout L1 module=m2 fields=[{key="kHeaders" declared={type=anything} flags=[IsRequired]}]

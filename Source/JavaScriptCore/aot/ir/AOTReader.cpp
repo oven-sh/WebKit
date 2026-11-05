@@ -20,9 +20,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The driver's line of the read counts all of these.
 static constexpr ASCIILiteral stepsOfRead = "ReadAndVerify: read"_s;
-// Of a row of steps that runs beside another row. The line of the read that names both rows counts the longer one.
 static constexpr ASCIILiteral stepsOfReadSideBySide = "ReadAndVerify: read, side by side"_s;
 
 Reader::Reader(Program& program, BuildContext& build)
@@ -33,7 +31,6 @@ Reader::Reader(Program& program, BuildContext& build)
 {
 }
 
-// Rows of steps of which none reads what another writes run side by side, as lanes (AOTThreads.h): each has stretches of one thread, and loops that leave threads idle.
 bool Reader::run()
 {
     m_program.admitsReplacedBuiltins = m_build.options().admitsReplacedBuiltins();
@@ -46,7 +43,6 @@ bool Reader::run()
     if (!readHeader())
         return false;
     steps.didFinish("header and bytes"_s);
-    // A key names its text by number.
     runLanes(loops, {
         [&] {
             StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
@@ -71,7 +67,6 @@ bool Reader::run()
     m_program.unitsOfBodies.initialize(m_externalBodies, m_program.types.typesOfWireIndexes(), numbersOfRecords(), loops);
     steps.didFinish("units of bodies"_s);
 
-    // A record of a function names everything but its types and its unit by number, and nothing that finishes the layouts asks for a function. Keys and types are interned by the first row alone.
     runLanes(loops, {
         [&] {
             StepTimes stepsOfLane(m_build, stepsOfReadSideBySide);
@@ -130,7 +125,6 @@ bool Reader::readHeader()
     if (!sections)
         return report({ .kind = InternalErrorKind::SectionOutOfBounds, .count = sections.error() });
     m_sections = *sections;
-    // The image is built from strings and texts when the memory of the front end is gone.
     if (!m_program.ownsBuffer())
         m_sections.bytes = m_program.copyBorrowedBytes(m_sections.bytes, m_build.parallelLoops());
     return true;
@@ -172,7 +166,6 @@ void Reader::readPropertyKeys()
         read(checker, records[index], key);
         return key;
     });
-    // Records and bodies name a key by its place in this list. A key that repeats an earlier one would give every later key another number.
     for (size_t index = 0; index < ids.size(); ++index)
         RELEASE_ASSERT(ids[index].index() == index);
 }
@@ -221,7 +214,6 @@ void Reader::readLayouts()
     readInChunks(loops, records.size(), layoutsPerChunk, [&](uint32_t index) {
         RecordChecker checker(*this);
         read(checker, records[index], static_cast<LayoutRecord&>(m_program.layouts[index]));
-        // A type that reads as anything guards nothing, and nothing rests on what is only expected of a field: what else the type names is the guess.
         std::span<const Wire::Field> fields = checker.slice<Wire::Field>(records[index].fields);
         for (size_t field = 0; field < fields.size(); ++field) {
             DeclaredType& declared = m_program.layouts[index].fields[field].declared;
@@ -248,7 +240,6 @@ void Reader::finishProgram()
     steps.didFinish("functions of parameter sites"_s);
 }
 
-// Nothing has checked the ids of records yet: verifyRecords() runs behind the read and reports an id past the end of its list. So this and setParameterSiteFunctions() pass such an id by.
 void Reader::setConstructedClasses()
 {
     for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
@@ -276,7 +267,6 @@ void Reader::setParameterSiteFunctions()
         m_program.typeSites[site.site.index()].function = site.function;
 }
 
-// The front end sends a layout's own fields alone. The text of a program that was read once has behind them those that the layout takes from its bases.
 void RecordChecker::didRead(LayoutRecord& record)
 {
     auto firstInherited = std::ranges::find_if(record.fields, [](const Field& field) {
@@ -285,7 +275,6 @@ void RecordChecker::didRead(LayoutRecord& record)
     record.ownFieldCount = static_cast<uint32_t>(firstInherited - record.fields.begin());
 }
 
-// The program goes on borrowing `bytes`: the bodies of its functions lie there, unless they lie where the external bodies point.
 static std::unique_ptr<Program> readProgramFromBytes(std::span<const uint8_t> bytes, const ExternalFunctionBodies* externalBodies, BuildContext& build, SchemaHashCheck schemaHashCheck)
 {
     std::unique_ptr<Program> program;

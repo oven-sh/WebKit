@@ -20,7 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The module of the function of the operation's inline frame, and the position in it. Code::locationOf() serves reports: for a function without a text it answers with the call in the frame around it, where several literals would meet.
 static std::optional<Wire::SourceLocation> placeWhereLiteralObjectIsWritten(const Program& program, const Code& code, const Operation& literal)
 {
     FunctionID writtenIn = code.inlineFrames()[literal.inlineFrame].callee;
@@ -42,8 +41,6 @@ void AllocationEmitter::generateNewRegExp(const ValueContext& value)
     StringID pattern = value->pattern();
     OptionSet<Yarr::Flags> flags = toYarrFlags(value->regExpFlags());
 
-    // The stub takes the RegExp out of whatever object fills the cell. Copies of one call of RegExp become different literals where they are inlined under other arguments,
-    // so the place alone does not name the cell: the pattern and the flags are part of its key.
     Wire::SourceLocation written = placeWhereLiteralObjectIsWritten(m_program, m_code, value.value()).value_or(noSourceLocation);
     uint32_t sharedCell = m_mentions.regExpLiteralCell(written, pattern, flags);
 
@@ -117,7 +114,6 @@ CellPointer AllocationEmitter::createArguments(const ValueContext& value, std::o
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         fail(value, InternalErrorKind::WrongRepresentation);
         break;
@@ -167,7 +163,7 @@ void AllocationEmitter::generateSetMappedArgument(const ValueContext& value)
     Condition isWithinCapacity = below(indexWord, loadField<Word32>(arguments, m_heaps.DirectArguments_minCapacity));
     ifElse(isWithinCapacity, [&] {
         storeField(arguments, m_heaps.DirectArguments_storage[index], stored);
-        barrierAfterStore(value, arguments, stored, typeOf(storedValue));
+        barrierAfterStore(value, arguments, typeOf(storedValue));
     }, [&] {
         callVoidOperation(value, RuntimeOperation::SetMappedArgument, { arguments, indexWord, stored }, { .isOnRarePath = true });
     });

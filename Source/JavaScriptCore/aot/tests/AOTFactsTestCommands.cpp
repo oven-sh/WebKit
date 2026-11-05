@@ -20,8 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What the scan and Link have left behind Facts: Facts::summaries(), linked() and families().
-
 struct TraitInFactsText {
     ASCIILiteral name;
     bool (EffectTraits::*holds)() const;
@@ -39,7 +37,6 @@ static constexpr TraitInFactsText traitsInFactsText[] = {
     { "mayWriteOutsideObjects"_s, &EffectTraits::mayWriteOutsideObjects },
 };
 
-// `anything` for effects that claim nothing, `none` for pure ones, else what Code text lists as the traits of an operation.
 static void printEffectsInFactsText(PrintStream& out, const Effects& effects)
 {
     if (effects == Effects { }) {
@@ -60,7 +57,6 @@ static void printEffectsInFactsText(PrintStream& out, const Effects& effects)
     out.print("]"_s);
 }
 
-// How many of the 64 places of the fields of objects the effects write. `all`: the entire heap. Nothing is printed where none is written, or where any code may run.
 static void printFieldsWrittenInFactsText(PrintStream& out, ASCIILiteral name, const Effects& effects)
 {
     uint64_t places = effects.writes.maskOf(AbstractHeap::ObjectFields);
@@ -73,7 +69,6 @@ static void printFieldsWrittenInFactsText(PrintStream& out, ASCIILiteral name, c
         out.print(std::popcount(places));
 }
 
-// `none`, `any`, or how many of the 64 bits of layouts are set.
 static void printLayoutsWrittenInFactsText(PrintStream& out, ASCIILiteral name, uint64_t layouts)
 {
     out.print(" "_s, name, "="_s);
@@ -240,7 +235,6 @@ static void printFlagsInFactsText(PrintStream& out, OptionSet<Flag> flags)
     out.print("]"_s);
 }
 
-// `L0.1 "x"`, and the numbers alone for a field that the layout does not declare.
 static void printFieldInFactsText(IRPrinter& printer, LayoutID layout, uint32_t field)
 {
     printer.print(layout);
@@ -252,7 +246,6 @@ static void printFieldInFactsText(IRPrinter& printer, LayoutID layout, uint32_t 
     printer.print(program.at(layout).fields[field].key);
 }
 
-// `L0 Prototype 0`
 static void printMemberInFactsText(IRPrinter& printer, LayoutID classLayout, ClassSide side, uint32_t index)
 {
     printer.print(classLayout);
@@ -261,7 +254,6 @@ static void printMemberInFactsText(IRPrinter& printer, LayoutID classLayout, Cla
     printer.out().print(" "_s, index);
 }
 
-// ` Method "size"`, ` Getter [computed]`
 static void printKindAndKeyOfMemberInFactsText(IRPrinter& printer, MethodKind kind, PropertyKeyID key)
 {
     printer.out().print(" "_s);
@@ -274,7 +266,6 @@ static void printKindAndKeyOfMemberInFactsText(IRPrinter& printer, MethodKind ki
     printer.print(key);
 }
 
-// `Element`, `Key`, `Value`, `field 1`, `"value"`, `state 12`.
 static void printSlotOfContents(IRPrinter& printer, SlotOfContents slot)
 {
     PrintStream& out = printer.out();
@@ -282,8 +273,6 @@ static void printSlotOfContents(IRPrinter& printer, SlotOfContents slot)
         printer.print(*listed);
     else if (std::optional<uint32_t> field = slot.indexOfInternalField())
         out.print("field "_s, *field);
-    else if (slot == SlotOfContents::yieldedAlone())
-        out.print("yielded"_s);
     else if (slot == SlotOfContents::returnedAlone())
         out.print("returned"_s);
     else if (slot.isUnderName())
@@ -292,7 +281,6 @@ static void printSlotOfContents(IRPrinter& printer, SlotOfContents slot)
         out.print("state "_s, slot.number());
 }
 
-// A site is named by the number of the value that makes the object: `ClassInstance Array #3`. The object that a coroutine hands its caller has none.
 static void printNodeOfSummary(IRPrinter& printer, const ThinSummary& summary, const SummaryNode& node)
 {
     static constexpr uint32_t markOfStaticSide = 1u << 31;
@@ -371,8 +359,6 @@ static void printNodeOfSummary(IRPrinter& printer, const ThinSummary& summary, c
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// How an edge or a record names a node, so that no check line hangs on the number that the scan gave it:
-// what is seen from outside and the sources by what they are (`Parameter 0`, `Field L0.1 "x"`, `Closure f2`), a result by its record (`c0.1`, `a2`, `o3`, `converted-c4` by the first call of the conversion), a join by its number (`n7`).
 static void printReferenceToNodeOfSummary(IRPrinter& printer, const ThinSummary& summary, uint32_t index)
 {
     PrintStream& out = printer.out();
@@ -418,7 +404,6 @@ static void printReferenceToNodeOfSummary(IRPrinter& printer, const ThinSummary&
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Nothing where there is no node.
 static void printNamedNodeOfSummary(IRPrinter& printer, const ThinSummary& summary, ASCIILiteral name, uint32_t index)
 {
     if (index == noSummaryNode)
@@ -470,8 +455,6 @@ static void printCallOfSummary(IRPrinter& printer, const ThinSummary& summary, u
         out.print(" on-no-way-to-return"_s);
     if (call.passesList)
         out.print(" passes-list"_s);
-    if (call.resultIsOnlyIterated)
-        out.print(" only-iterated"_s);
     printNamedNodeOfSummary(printer, summary, "throws-to="_s, call.thrownTo);
     out.println();
 }
@@ -584,38 +567,6 @@ static void printChangeOfSummary(IRPrinter& printer, const ThinSummary& summary,
     out.println();
 }
 
-// The records stand in front of the edges, so that a check line can bind a record (`access [[read]] v1 Read Parameter 0 "x"`) and then follow what it gives (`edge [[read]] -> Result 0`).
-//     summary f1 operations=4 traits=[HasLoops] effects=[mayThrow, mayCollect]
-//       n0 Unknown
-//       n1 Parameter 0
-//       n2 Capture 0 of f3
-//       n3 Member L0 Static 1
-//       n4 Join
-//       call c0 v5 Name "size" this=Parameter 0 (Constant string) in-loop
-//       call c1 v6 Value Closure f2 new-target=Parameter 1 (n4) constructs
-//       call c2 v7 Binding f2 (Parameter 0, c0.0)
-//       call c3 v8 Builtin ObjectFreeze (Parameter 0)
-//       access a0 v1 Read Parameter 0 "x" -> a0
-//       access a1 v2 Store a0 [Parameter 1] <- Constant string
-//       access a2 v3 Define Parameter 0 "y" <- Closure f2 at-construction
-//       access a3 v4 Has Parameter 0 "x"
-//       operator o0 v10 Add (Parameter 0 or converted-c4, Constant int32)
-//       change h0 v8 Freezes Parameter 0
-//       change h1 v9 DefinesByDescriptor Parameter 0 "x" other=Parameter 1
-//       member L0 Prototype 0 Method "size" = Closure f2
-//       member L0 Static 1 Getter [computed] = Closure f4
-//       construction AnsweredBySuperCall fills ["b", "c"] looks-up ["c", "d"] parts [f3, f4 on-some-ways] seen-from-outside
-//       leaves-empty L2.1 "y"
-//       classes L0
-//       hands-out m1
-//       names-where-no-run-comes m2
-//       never-entered b3, b4
-//       still-being-made v9 = v2
-//       handler b3 caught=n7
-//       edge Parameter 1 -> Field L0.1 "x"
-//       edge a0 -> Result 0 passes=string
-//       edge Parameter 0 -> Unknown
-// The last is an escape.
 static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, const ThinSummary& summary)
 {
     PrintStream& out = printer.out();
@@ -708,7 +659,6 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         }
         if (construction.isSeenFromOutside)
             out.print(" seen-from-outside"_s);
-        // Whatever is filled wherever the object leaves is filled at the end: the keys are printed of which the end says more.
         Vector<PropertyKeyID, 16> filledAtEndAlone;
         for (PropertyKeyID key : summary.keysFilledAtEnds.span().subspan(construction.firstKeyFilledAtEnd, construction.numberOfKeysFilledAtEnd)) {
             if (!std::ranges::any_of(keys, [&](const SummaryConstruction::Key& listed) { return listed.key == key && listed.isFilled; }))
@@ -901,11 +851,8 @@ static void runSummaryCommand(TestCommandContext& context)
     }
 }
 
-// ---- link
-
 enum class PartOfLinkTables : uint8_t { Functions, Calls, Accesses, Fields, Variables, Captures, Members, Layouts, Families, Counts };
 
-// LookupsPastProgramObjects. It stands behind the enumerators.
 static constexpr PartOfLinkTables lookupsAmongPartsOfLinkTables = static_cast<PartOfLinkTables>(UINT8_MAX - 1);
 
 struct NamedPartOfLinkTables {
@@ -935,7 +882,6 @@ static void printTypeFieldInFactsText(IRPrinter& printer, ASCIILiteral name, Typ
     printer.print(type);
 }
 
-// Behind the name of the cell. A cell of which nothing is claimed has nothing behind its name.
 static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell)
 {
     printTypeFieldInFactsText(printer, "proven"_s, cell.proven);
@@ -949,7 +895,6 @@ static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell)
         printer.out().print(" filled"_s);
     if (cell.isFilled && !cell.isFilledAtEveryRead)
         printer.out().print(" read-by-its-makers-while-empty"_s);
-    // Whatever is filled is of the birth: the word is printed where it says more.
     if (cell.isOfBirth && !cell.isFilled)
         printer.out().print(" of-birth"_s);
     if (cell.isFilledByAccessorsAlone)
@@ -968,7 +913,6 @@ static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell)
     printer.out().println();
 }
 
-// f3 | anybody | constructors of F2 | shared call 0
 static void printNodeOfReferrersInFactsText(IRPrinter& printer, const LinkTables& tables, FunctionID node)
 {
     if (!tables.isGroup(node)) {
@@ -1003,14 +947,6 @@ static void printReferrersInFactsText(IRPrinter& printer, const LinkTables& tabl
     printer.out().println();
 }
 
-//     function f1 callers-known one-callee fresh-result cycle=2 rank=1 result=number thrown=never returns=[mayCollect] throws=none
-//       parameter 0 expected=number declared proven=int kept
-//       referrers f0, f3, shared call 0
-//     function f2 unreached cycle=0 rank=0 returns=anything throws=anything
-//     catch f1 b3 caught=L0
-//     group shared call 0 cycle=1 rank=0
-//       referrers f0
-// The parameters are the entry parameters: captures, this, the callee and the new target come in front of what is written. `kept`: the parameter does not escape.
 static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
 {
     PrintStream& out = printer.out();
@@ -1025,15 +961,10 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
             out.print(" callers-known"_s);
         if (function.everyCallHasOneCallee)
             out.print(" one-callee"_s);
-        if (function.resultIsFresh)
-            out.print(" fresh-result"_s);
-        if (function.everyEntryIsConstruction)
-            out.print(" only-constructed"_s);
         if (function.closuresAreChanged)
             out.print(" closures-changed"_s);
         out.print(" cycle="_s, function.cycle, " rank="_s, function.rank);
         printTypeFieldInFactsText(printer, "result"_s, function.result);
-        printTypeFieldInFactsText(printer, "thrown"_s, function.thrown);
         out.print(" returns="_s);
         printEffectsInFactsText(out, function.effectsOnReturn);
         out.print(" throws="_s);
@@ -1064,10 +995,10 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
             if (linked.expectedIsDeclared)
                 out.print(" declared"_s);
             printTypeFieldInFactsText(printer, "proven"_s, linked.proven);
-            if (!linked.escapes)
-                out.print(" kept"_s);
             if (linked.staysAsItsClassMakesIt)
                 out.print(" stays-as-made"_s);
+            if (linked.isOnlyCalled)
+                out.print(" only-called"_s);
             out.println();
         }
 
@@ -1103,7 +1034,6 @@ static void printLinkedFunctions(IRPrinter& printer, const LinkTables& tables)
     }
 }
 
-//     call f0 v5 -> f1
 static void printLinkedCalls(IRPrinter& printer, const LinkTables& tables)
 {
     for (const LinkedCall& call : tables.calls) {
@@ -1117,7 +1047,6 @@ static void printLinkedCalls(IRPrinter& printer, const LinkTables& tables)
     }
 }
 
-//     call f1 v9 finds MathAbs beside f3
 static void printLinkedCallsThatFindBuiltins(IRPrinter& printer, const LinkTables& tables)
 {
     for (const LinkedCallThatFindsBuiltin& call : tables.callsThatFindBuiltins) {
@@ -1135,7 +1064,6 @@ static void printLinkedCallsThatFindBuiltins(IRPrinter& printer, const LinkTable
     }
 }
 
-//     access f1 v2 under symbol("depth")@m0:0
 static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
 {
     for (const LinkedAccess& access : tables.accessesUnderOneKey) {
@@ -1147,7 +1075,6 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         printer.print(access.key);
         printer.out().println();
     }
-    //     read f1 v43 proven=undefined|L0
     for (const LinkedResultOfRead& read : tables.resultsOfReadsByKey) {
         printer.out().print("read "_s);
         printer.print(read.function);
@@ -1157,7 +1084,6 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         printer.print(read.proven);
         printer.out().println();
     }
-    //     receiver-as-made f1 v43
     for (const LinkedReceiverAsMade& receiver : tables.receiversThatStayAsMade) {
         printer.out().print("receiver-as-made "_s);
         printer.print(receiver.function);
@@ -1165,7 +1091,6 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         printer.print(receiver.site);
         printer.out().println();
     }
-    //     iterable-as-made f1 v43
     for (const LinkedReceiverAsMade& iterable : tables.iterablesThatStayAsMade) {
         printer.out().print("iterable-as-made "_s);
         printer.print(iterable.function);
@@ -1173,7 +1098,6 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         printer.print(iterable.site);
         printer.out().println();
     }
-    //     accessors L0.0 "total" getter=f2 setter=f3
     for (const LinkedAccessorsOfField& expected : tables.accessorsExpectedInFields) {
         printer.out().print("accessors "_s);
         printFieldInFactsText(printer, expected.field.layout, expected.field.field);
@@ -1191,7 +1115,6 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         }
         printer.out().println();
     }
-    //     read f1 v2 expects getter f3
     for (const LinkedGetterAtRead& read : tables.gettersExpectedAtReads) {
         printer.out().print("read "_s);
         printer.print(read.function);
@@ -1203,8 +1126,6 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
     }
 }
 
-//     coroutine f1 fulfilled=L0 returned=L0 as-made
-//     coroutine f2 yielded=i32 sent=undefined as-made only-iterated
 static void printLinkedCoroutines(IRPrinter& printer, const LinkTables& tables)
 {
     for (const LinkedCoroutine& coroutine : tables.coroutines) {
@@ -1212,18 +1133,10 @@ static void printLinkedCoroutines(IRPrinter& printer, const LinkTables& tables)
         printer.print(coroutine.function);
         printTypeFieldInFactsText(printer, "fulfilled"_s, coroutine.fulfilledWith);
         printTypeFieldInFactsText(printer, "returned"_s, coroutine.returned);
-        printTypeFieldInFactsText(printer, "yielded"_s, coroutine.yielded);
-        printTypeFieldInFactsText(printer, "sent"_s, coroutine.sent);
-        if (coroutine.objectsStayAsMade)
-            printer.out().print(" as-made"_s);
-        if (coroutine.objectsAreOnlyIterated)
-            printer.out().print(" only-iterated"_s);
         printer.out().println();
     }
 }
 
-//     field L0.1 "x" proven=number writers-known written-at-construction-alone
-//     field L0.2 "y" appended proven=number writers-known
 static void printLinkedFields(IRPrinter& printer, const LinkTables& tables)
 {
     for (uint32_t layout = 0; layout + 1 < tables.firstFieldOfLayout.size(); ++layout) {
@@ -1245,7 +1158,6 @@ static void printLinkedFields(IRPrinter& printer, const LinkTables& tables)
     }
 }
 
-//     variable g0 proven=f1 writers-known
 static void printLinkedVariables(IRPrinter& printer, const LinkTables& tables)
 {
     for (uint32_t index = 0; index < tables.variables.size(); ++index) {
@@ -1255,7 +1167,6 @@ static void printLinkedVariables(IRPrinter& printer, const LinkTables& tables)
     }
 }
 
-//     capture f2.0 proven=env L1
 static void printLinkedCaptures(IRPrinter& printer, const LinkTables& tables)
 {
     for (uint32_t function = 0; function + 1 < tables.firstCaptureOfFunction.size(); ++function) {
@@ -1269,8 +1180,6 @@ static void printLinkedCaptures(IRPrinter& printer, const LinkTables& tables)
     }
 }
 
-//     member L0 Prototype 0 Method "size" function=f2 writers-known
-//     member L0 Static 1 Getter [computed]
 static void printLinkedMembers(IRPrinter& printer, const LinkTables& tables)
 {
     PrintStream& out = printer.out();
@@ -1286,11 +1195,6 @@ static void printLinkedMembers(IRPrinter& printer, const LinkTables& tables)
             out.print(" writers-known"_s);
         out.println();
     }
-    //     on-prototype L0 "size" function=f2
-    //     on-prototype L0 "area" expected=f3
-    //     on-prototype L0 "width" getter=f4 setter=f5
-    //     on-prototype L0 [some key]
-    //     on-function f1 "of" function=f4 laid-ahead
     for (const LinkedNameOnFunction& name : tables.namesOnFunctions) {
         out.print("on-function "_s);
         printer.print(name.holder);
@@ -1329,10 +1233,6 @@ static void printLinkedMembers(IRPrinter& printer, const LinkTables& tables)
     }
 }
 
-//     layout L0 family=F1 changes=[GainsProperty]
-//     layout L3 never-allocated changes=[]
-//     layout L2 changes=[GainsProperty] filled-under-computed-keys
-//     layout L4 changes=[] heritage=L2
 static void printLinkedLayouts(IRPrinter& printer, const LinkTables& tables)
 {
     PrintStream& out = printer.out();
@@ -1366,7 +1266,6 @@ static void printLinkedLayouts(IRPrinter& printer, const LinkTables& tables)
     }
 }
 
-//     family F1 [L0, L2]
 static void printFamiliesInFactsText(IRPrinter& printer, const Families& families)
 {
     for (uint32_t index = 0; index < families.size(); ++index) {
@@ -1375,8 +1274,6 @@ static void printFamiliesInFactsText(IRPrinter& printer, const Families& familie
         printer.out().println();
     }
 }
-
-// ---- link counts: how much Link has proven of a whole program. Numbers alone: no name of the program is printed.
 
 enum class TypeInLinkCounts : uint8_t { Nothing, Never, Primitives, OneLayout, SeveralLayouts, OneFunction, OneBuiltin, ObjectsOfClasses, OtherListedObjects, ListedObjectsBesidePrimitives, UnboundedObjects, NoJavaScriptValue };
 static constexpr unsigned numberOfTypesInLinkCounts = 12;
@@ -1399,7 +1296,6 @@ static TypeInLinkCounts classifyForLinkCounts(TypeReader types, TypeID id)
         return TypeInLinkCounts::UnboundedObjects;
     if (type.primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent))
         return TypeInLinkCounts::ListedObjectsBesidePrimitives;
-    // The marker of an empty cell counts as undefined does.
     type.primitives &= Primitive::UndefinedOrNull;
     if (singleFunctionOf(types, type))
         return TypeInLinkCounts::OneFunction;
@@ -1415,7 +1311,6 @@ static TypeInLinkCounts classifyForLinkCounts(TypeReader types, TypeID id)
 struct TypesInLinkCounts {
     uint64_t total { 0 };
     uint64_t byKind[numberOfTypesInLinkCounts] { };
-    // Among the primitives. Each holds the next.
     uint64_t numbers { 0 };
     uint64_t integers { 0 };
     uint64_t int32s { 0 };
@@ -1428,7 +1323,6 @@ struct TypesInLinkCounts {
         if (kind != TypeInLinkCounts::Primitives)
             return;
         Type type = types.at(id);
-        // The marker of an empty cell is passed over.
         type.primitives &= ~Primitive::Absent;
         numbers += type.isNumber();
         integers += type.isInteger();
@@ -1479,11 +1373,11 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
     const ThinSummaries& summaries = facts.summaries();
     TypeReader types(program);
 
-    uint64_t withBody = 0, reached = 0, callersKnown = 0, oneCallee = 0, callersKnownAndOneCallee = 0, takesArrivals = 0, freshResult = 0;
+    uint64_t withBody = 0, reached = 0, callersKnown = 0, oneCallee = 0, callersKnownAndOneCallee = 0, takesArrivals = 0;
     uint64_t returnsAnything = 0, returnsNothing = 0, coroutines = 0;
     uint64_t operationsOfAll = 0, operationsOfReached = 0, nodes = 0, edges = 0, edgesThroughTests = 0, escapes = 0, subjectsOfComputedKeys = 0, operators = 0, operandsConverted = 0;
-    TypesInLinkCounts results, resultsOfCallersKnown, thrown, parameters, parametersOfCallersKnown, receivers;
-    uint64_t expected = 0, expectedDeclared = 0, expectedAndNothingProven = 0, kept = 0;
+    TypesInLinkCounts results, resultsOfCallersKnown, parameters, parametersOfCallersKnown, receivers;
+    uint64_t expected = 0, expectedDeclared = 0, expectedAndNothingProven = 0;
     static constexpr unsigned numberOfCalleeKinds = 4;
     static constexpr ASCIILiteral namesOfCalleeKinds[numberOfCalleeKinds] { "by binding"_s, "by name"_s, "by value"_s, "built-in"_s };
     uint64_t calls[numberOfCalleeKinds] { }, callsWithOneCallee[numberOfCalleeKinds] { }, callsInLoops[numberOfCalleeKinds] { }, callsInLoopsWithOneCallee[numberOfCalleeKinds] { }, constructions[numberOfCalleeKinds] { };
@@ -1519,7 +1413,6 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
         callersKnown += linked.everyCallerIsKnown;
         oneCallee += linked.everyCallHasOneCallee;
         callersKnownAndOneCallee += linked.everyCallerIsKnown && linked.everyCallHasOneCallee;
-        freshResult += linked.resultIsFresh;
         coroutines += function.isCoroutine();
         returnsAnything += linked.effectsOnReturn == Effects { };
         returnsNothing += linked.effectsOnReturn.isPure();
@@ -1530,7 +1423,6 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
         results.add(types, linked.result);
         if (linked.everyCallerIsKnown)
             resultsOfCallersKnown.add(types, linked.result);
-        thrown.add(types, linked.thrown);
         std::span<const LinkedParameter> linkedParameters = tables.parametersOf(id);
         for (uint32_t parameter = 0; parameter < linkedParameters.size(); ++parameter) {
             const LinkedParameter& one = linkedParameters[parameter];
@@ -1545,7 +1437,6 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
                 expected += !!one.expected;
                 expectedDeclared += one.expected && one.expectedIsDeclared;
                 expectedAndNothingProven += one.expected && !one.proven;
-                kept += !one.escapes;
                 break;
             default:
                 break;
@@ -1571,17 +1462,16 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
     }
 
     out.println("counts functions | read "_s, tables.functions.size(), " | with a body "_s, withBody, " | reached "_s, reached, " | every caller known "_s, callersKnown, " | every call has one callee "_s, oneCallee, " | both "_s, callersKnownAndOneCallee, " | both and no referrer in its cycle (takes arrivals) "_s, takesArrivals);
-    out.println("counts functions reached | coroutines "_s, coroutines, " | fresh result "_s, freshResult, " | effects on return: anything "_s, returnsAnything, " | none "_s, returnsNothing, " | cycles "_s, sizesOfCycles.size(), " | alone in its cycle "_s, functionsAloneInCycle, " | the largest cycle "_s, largestCycle, " | the highest rank "_s, highestRank);
+    out.println("counts functions reached | coroutines "_s, coroutines, " | effects on return: anything "_s, returnsAnything, " | none "_s, returnsNothing, " | cycles "_s, sizesOfCycles.size(), " | alone in its cycle "_s, functionsAloneInCycle, " | the largest cycle "_s, largestCycle, " | the highest rank "_s, highestRank);
     out.println("counts summaries | operations of all bodies "_s, operationsOfAll, " | of reached bodies "_s, operationsOfReached, " | nodes "_s, nodes, " | edges "_s, edges, " | of them through a test "_s, edgesThroughTests, " | escapes "_s, escapes, " | subjects of computed keys "_s, subjectsOfComputedKeys, " | operators "_s, operators, " | of their operands may be objects "_s, operandsConverted);
     const SizeOfLinkFlow& flow = tables.sizeOfFlow;
     out.println("counts flow | nodes "_s, flow.nodes, " | edges "_s, flow.edges, " | observers "_s, flow.observers, " | nodes taken off the worklist "_s, flow.nodesTakenOffWorklist, " | observers told "_s, flow.observersTold);
     parameters.print(out, "parameters of reached functions"_s);
     parametersOfCallersKnown.print(out, "parameters where every caller is known"_s);
-    out.println("counts parameters of reached functions | expected "_s, expected, " | of them declared "_s, expectedDeclared, " | seen to arrive "_s, expected - expectedDeclared, " | expected and nothing proven "_s, expectedAndNothingProven, " | kept (does not escape) "_s, kept);
+    out.println("counts parameters of reached functions | expected "_s, expected, " | of them declared "_s, expectedDeclared, " | seen to arrive "_s, expected - expectedDeclared, " | expected and nothing proven "_s, expectedAndNothingProven);
     receivers.print(out, "`this` of reached functions"_s);
     results.print(out, "results of reached functions"_s);
     resultsOfCallersKnown.print(out, "results where every caller is known"_s);
-    thrown.print(out, "thrown by reached functions"_s);
 
     uint64_t allCalls = 0, allWithOneCallee = 0;
     for (unsigned kind = 0; kind < numberOfCalleeKinds; ++kind) {
@@ -1621,7 +1511,6 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
                 (linked.isAllocated ? fieldsOfEnvironments : fieldsOfLayoutsNeverAllocated).add(types, cell);
             continue;
         }
-        // Namespace objects and the result records of built-ins are no objects of the program's.
         if (layout.kind == LayoutKind::ModuleNamespace || layout.kind == LayoutKind::BuiltinResult) {
             ++madeByRunTimeAlone;
             continue;
@@ -1672,8 +1561,6 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
     captures.print(out, "captures of reached functions"_s);
 }
 
-//     parsers-may-make L0
-//     path-unread m1
 static void printFactsOfStringsInFactsText(IRPrinter& printer, const Facts& facts)
 {
     PrintStream& out = printer.out();
@@ -1693,10 +1580,6 @@ static void printFactsOfStringsInFactsText(IRPrinter& printer, const Facts& fact
     }
 }
 
-//     lookup name-read "size"
-//     lookup called ArrayPrototypePush
-//     lookup write Date at f0 v3
-// LookupsPastProgramObjects, field by field. The uses of built-ins, the locks and the reports are made of it.
 static void printLookupsInFactsText(IRPrinter& printer, const LookupsPastProgramObjects& lookups)
 {
     PrintStream& out = printer.out();
@@ -1762,7 +1645,6 @@ static void printLookupsInFactsText(IRPrinter& printer, const LookupsPastProgram
     printFlag("native-code-may-hold-objects"_s, lookups.nativeCodeMayHoldObjects);
 }
 
-// The first line is `mechanisms <list>`: those that Facts was made with. Then the parts in the order of the words.
 static void runLinkCommand(TestCommandContext& context)
 {
     Vector<PartOfLinkTables, 9> parts;
@@ -1796,7 +1678,6 @@ static void runLinkCommand(TestCommandContext& context)
             return;
         }
     }
-    // A bare `link` prints the coroutines too. Words that name only tables with a word of their own print none of the parts.
     bool namesSomeTable = false;
     for (const String& word : context.arguments)
         namesSomeTable |= word != "held"_s && word != "oldest-first"_s && word != "scattered"_s;
@@ -1866,12 +1747,6 @@ static void runLinkCommand(TestCommandContext& context)
     }
 }
 
-// ---- locks
-
-//     locked DateNow constant link
-//     open DateParse written-under-its-name
-// The members that the program locks when it starts, ascending. `constant`: Facts::builtinLocation() says so. `link`: Link has gone by it (LookupsPastProgramObjects::membersTakenForConstants).
-// With the word `open`: behind them the members that the program uses, that a lock can be laid on and that stay open, each with the reason.
 static void runLocksCommand(TestCommandContext& context)
 {
     StagedBuild stage = context.stage();
@@ -1920,7 +1795,6 @@ static void runLocksCommand(TestCommandContext& context)
     }
 }
 
-// A line for each text that Facts list for RegExp, those that the program spells in front. `hashes`: of a text only its length and a hash. `realms`: how many VMs were made on the way, in front.
 static void runRegExpTextsCommand(TestCommandContext& context)
 {
     StagedBuild stage = context.stage();
@@ -1957,7 +1831,6 @@ static void runClosureCommand(TestCommandContext& context)
     printBreachesOfClosureOfLink(context.out, *context.program, context.build, context.mechanisms);
 }
 
-// AOTEnforcedFieldsText.cpp.
 void runFactsCommand(TestCommandContext&);
 
 std::span<const TestCommand> factsTestCommands()

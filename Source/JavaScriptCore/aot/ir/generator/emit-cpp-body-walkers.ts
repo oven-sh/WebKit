@@ -36,7 +36,6 @@ interface Walker {
   readonly bodyOf: (entry: Entry) => Lines;
 }
 
-/** How a field's wire words become its payload words. */
 type Translation =
   | { readonly tag: "None" }
   | { readonly tag: "Id" }
@@ -133,7 +132,6 @@ function refuse(entry: Entry, field: PayloadField, problem: string): never {
   throw new SchemaError(field.location, `field ${field.name} of ${entry.name}: ${problem}`);
 }
 
-// Slot i of an entry belongs to field i of wireParametersOf().
 function placedParametersOf(entry: Entry): Placed<Parameter>[] {
   const parameters = wireParametersOf(entry);
   const slots = wireSlotsOf(entry);
@@ -250,6 +248,69 @@ function findOperand(entry: Entry): string[] {
     ...indent([otherwise]),
     "}",
   ];
+}
+
+const numberOfOperandsWithPlace = 4;
+const placeOfAbsentOperand = 0xfe;
+const noPlace = 0xff;
+
+function placeOfOperand(entry: Entry, operandIndex: number): number {
+  if (!entry.isWire) return noPlace;
+  const operands = placedOperandsOf(entry);
+  const named = operands.find(({ part }) => !part.isVariadic && part.index === operandIndex);
+  if (named === undefined) {
+    const isVariadic = operandIndex >= entry.namedOperands.length && operands.some(({ part }) => part.isVariadic);
+    return isVariadic ? noPlace : placeOfAbsentOperand;
+  }
+  if (!/^\d+$/.test(named.offset)) return noPlace;
+  const place = Number(named.offset) + (wireFlagsOf(entry).length > 0 ? 1 : 0);
+  return place < placeOfAbsentOperand ? place : noPlace;
+}
+
+function placesOfOperands(entry: Entry): string {
+  const places = Array.from({ length: numberOfOperandsWithPlace }, (_, index) => placeOfOperand(entry, index));
+  return `0x${places
+    .reverse()
+    .map(place => place.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function operandByPlace(operations: readonly Entry[]): string[] {
+  const everyPlaceIsUnknown = `0x${noPlace.toString(16).repeat(numberOfOperandsWithPlace)}`;
+  return blocks(
+    [
+      `inline constexpr uint32_t numberOfBodyOperandsWithPlace = ${numberOfOperandsWithPlace};`,
+      `inline constexpr uint32_t placeOfAbsentBodyOperand = ${placeOfAbsentOperand};`,
+    ],
+    [
+      `// A byte an operand, the first operand in the lowest: the words between the head of the value and the operand, the flags among them.`,
+      `// ${placeOfAbsentOperand}: the entry has no such operand on the wire. ${noPlace}: where it lies hangs on the words in front of it, or the entry is not on the wire.`,
+      ...constexprSwitch({
+        signature: "uint32_t placesOfOperandsOfBodyValue(Opcode opcode)",
+        subject: "opcode",
+        enumName: "Opcode",
+        cases: operations.map(entry => ({ label: entry.name, value: placesOfOperands(entry) })),
+        defaultValue: everyPlaceIsUnknown,
+      }),
+    ],
+    [
+      "ALWAYS_INLINE ValueID BodyValue::operand(uint32_t operandIndex) const",
+      "{",
+      ...indent([
+        "if (operandIndex < numberOfBodyOperandsWithPlace) [[likely]] {",
+        ...indent([
+          "uint32_t place = ColumnTable<Opcode, uint32_t, placesOfOperandsOfBodyValue>::at(m_opcode) >> (operandIndex * 8) & 0xff;",
+          "if (place < placeOfAbsentBodyOperand) [[likely]]",
+          ...indent(["return ValueID::fromBits(m_words[numberOfHeadWords + place]);"]),
+          "if (place == placeOfAbsentBodyOperand)",
+          ...indent(["return { };"]),
+        ]),
+        "}",
+        "return operandFoundByCase(operandIndex);",
+      ]),
+      "}",
+    ],
+  );
 }
 
 function listVariadicOperands(entry: Entry): string[] {
@@ -390,7 +451,9 @@ function walkersOf(schema: Schema): Walker[] {
     },
     {
       name: "Operand",
-      head: ({ className }) => [`inline ValueID ${className}::operand(uint32_t operandIndex) const`],
+      head: ({ className }) => [
+        `inline ValueID ${className}::${className === "BodyValue" ? "operandFoundByCase" : "operand"}(uint32_t operandIndex) const`,
+      ],
       isMember: true,
       answerForParameter: "return { };",
       bodyOf: findOperand,
@@ -477,6 +540,7 @@ function bodyWalkersHeader(schema: Schema): string[] {
     helpers,
     ...cursors.map(numberOfFieldWordsFunction),
     ...walkersOf(schema).flatMap(walker => cursors.map(cursor => defineWalker(cursor, walker))),
+    operandByPlace(schema.operations),
   );
   return cppHeader(['"AOTBody.h"', "<algorithm>", "<type_traits>"], inNamespace("Typed", body));
 }

@@ -124,34 +124,6 @@ StubSignature signatureOfArrayLiteral(StubKey key)
 
 void generateArrayLiteral(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count() }); }
 
-StubSignature signatureOfFrameArrayLiteral(StubKey key)
-{
-    StubSignature signature = signatureOfArrayLiteral(arrayLiteral(key.count()));
-    signature.addOperand(operationArgumentGPR(1 + maxArrayElementsInRegisters));
-    return signature;
-}
-
-// The cell, the indexing header and the elements, one behind the other. A realm whose arrays are not pristine has no header for such a cell, and gets an array on the heap.
-void generateFrameArrayLiteral(StubAssembler& jit)
-{
-    const unsigned count = jit.key().count();
-    const GPRReg cell = jit.operand(count);
-    const GPRReg scratch = jit.allocateScratch(arrayAllocationScratchRegister);
-    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.frameArrayHeader)), scratch);
-    Jump isOnHeap = jit.branchTest64(CCallHelpers::Zero, scratch);
-    jit.store64(scratch, Address(cell, 0));
-    jit.addPtr(TrustedImm32(sizeOfFrameArray(0)), cell, scratch);
-    jit.store64(scratch, Address(cell, JSObject::butterflyOffset()));
-    jit.store64(TrustedImm64(static_cast<uint64_t>(count) << 32 | count), Address(cell, sizeof(JSArray)));
-    for (unsigned i = 0; i < count; ++i)
-        jit.store64(jit.operand(i), Address(cell, sizeOfFrameArray(i)));
-    jit.move(cell, jit.result());
-    jit.returnToCaller();
-
-    isOnHeap.link(&jit);
-    jit.jumpToStub(arrayLiteral(count));
-}
-
 static StubSignature signatureTakingDoubles(unsigned count)
 {
     StubSignature signature = StubSignature::withGPRResult({ gprOf(countAndNumberMaskRegister) });
@@ -179,7 +151,6 @@ StubSignature signatureOfNewCopyOnWriteArray(StubKey key)
     return StubSignature::withGPRResult({ gprOf(shortStubImmediateRegister), gprOf(StubRegister::T11) }).withResultIn(key.operandRegister());
 }
 
-// A cell around elements that it shares with every other array of its site. The operation makes the first storage of a site, and every array of a realm that is having a bad time, which has no header for such a cell.
 void generateNewCopyOnWriteArray(StubAssembler& jit)
 {
     const auto kind = static_cast<ArrayElementKind>(jit.key().form() % 3);

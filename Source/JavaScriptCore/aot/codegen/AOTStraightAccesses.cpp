@@ -63,7 +63,6 @@ static GPRReg operandRegisterInStraightAccess(StraightEmitter& emitter, StubKey 
     return emitter.catalog().summaryOf(stub).signature.operands[operand].gpr();
 }
 
-// The cell waits in the register of its operand: whatever brings the other operands writes their registers alone.
 static StraightArgument makeKeyCellInStraightAccess(StraightEmitter& emitter, const BodyValue& value, PropertyKeyID key, GPRReg operand)
 {
     if (emitter.program().at(key).kind == PropertyKeyKind::PrivateName) {

@@ -40,7 +40,6 @@ bool hasStackForRegExpCompiler()
     return remainingStackOnThisThread() >= regExpCompilerStackSize + 16 * KB;
 }
 
-// RegExp.prototype[@@split] and [@@matchAll] parse the source again with whatever the `flags` property of the receiver returns.
 static bool hasUnicodePropertyLookup(StringView pattern, OptionSet<Yarr::Flags> flags, const Yarr::SyntaxSummary& syntax)
 {
     if (syntax.hasUnicodePropertyLookup)
@@ -124,8 +123,6 @@ static bool refersToGroup(const Yarr::PatternDisjunction& disjunction)
     return false;
 }
 
-// A lookaround consumes nothing, but a group inside it captures what it matched, and a reference to that group consumes that text: `^(?=(.*))\1$` matches any one-line subject.
-// So when the pattern has a reference to a group, what its lookarounds match has to be 8-bit too.
 enum class LookaroundContents : bool { Ignored, Checked };
 
 static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjunction, LookaroundContents lookaroundContents)
@@ -170,7 +167,6 @@ static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjuncti
     return true;
 }
 
-// A pattern that is anchored at both ends and consumes only 8-bit characters cannot match a subject that contains a wider character. Patterns for an address, a version or a name are like this.
 static bool matchesOnlyWhole8BitSubjects(const Yarr::YarrPattern& pattern)
 {
     if (pattern.multiline() || pattern.ignoreCase() || pattern.m_containsModifiers)
@@ -203,7 +199,6 @@ RegExpSummary summarizeRegExp(StringView pattern, OptionSet<Yarr::Flags> flags, 
         return summary;
     }
 
-    // Not hasStackForRegExpCompiler(): the 16 KB it adds are for the frames between a caller that tests it and this one.
     RELEASE_ASSERT(remainingStackOnThisThread() >= regExpCompilerStackSize);
     Yarr::YarrPattern yarrPattern(pattern, flags, summary.constructionError, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::CharacterClassForms);
     if (Yarr::hasError(summary.constructionError))
@@ -237,7 +232,6 @@ auto RegExpSummaries::keyOf(StringID pattern, OptionSet<Yarr::Flags> flags) -> K
     return static_cast<uint64_t>(pattern.index()) << 16 | ImageRegExp::significantFlags(flags).toRaw();
 }
 
-// A thread of the host's pool may have less stack than the analysis needs. A summary follows from the pattern, the flags and the depth limit alone, so it is the same on either thread.
 static std::unique_ptr<const RegExpSummary> summarizeRegExpWithEnoughStack(StringView patternText, OptionSet<Yarr::Flags> flags, unsigned parenthesesDepthLimit)
 {
     std::unique_ptr<const RegExpSummary> summary;
@@ -253,7 +247,6 @@ static std::unique_ptr<const RegExpSummary> summarizeRegExpWithEnoughStack(Strin
 
 const RegExpSummary& RegExpSummaries::summaryOf(StringID pattern, OptionSet<Yarr::Flags> flags, StringView patternText)
 {
-    // The id of a text that a walk has made means another text in the next function.
     if (Typed::liesInThread(pattern))
         return summaryOfText(patternText, flags);
 

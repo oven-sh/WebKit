@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTClosureTestEmitter.h"
+#include "AOTCompileUnit.h"
 #include "AOTThrowEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include <wtf/SetForScope.h>
@@ -59,7 +60,6 @@ void CastEmitter::generateRequireObject(const ValueContext& value)
     defineNarrowed(value, operand);
 }
 
-// proveOrTrap() of walk/AOTWalkCasts.cpp: the value has the type, and nothing goes on where the test fails.
 static bool failingSideOfTypeTestTraps(const Code& code, const ValueContext& test)
 {
     if (!test.isBranchCondition())
@@ -75,8 +75,9 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
     Operand operand = get(source);
-    const TypeTestPlan& plan = planFor(source, value->testedType());
-    // A test that gives way to the road for any value may turn away a closure that has changed since it was made. One that traps may not: the target of a proxy is still what the trap is handed.
+    if (value->asksInFull())
+        operand = Operand { Representation::JSValue, operand.value };
+    const TypeTestPlan& plan = value->asksInFull() ? typeTestPlanFor(TypeTable::anythingOrAbsent, Representation::JSValue, value->testedType()) : planFor(source, value->testedType());
     bool& passesChangedClosures = emitter<ClosureTestEmitter>().passesChangedClosures();
     SetForScope passesChangedClosuresWhereFailureTraps(passesChangedClosures, passesChangedClosures || failingSideOfTypeTestTraps(generator().code(), value));
     if (!value.isBranchCondition()) {
@@ -86,20 +87,15 @@ void CastEmitter::generateTypeTest(const ValueContext& value)
     branchOnType(operand, plan, value.branchTargets());
 }
 
-// The record of the value has the type that is asked for, so the code of the test goes by what is known without it. A cell and its boxed form are one word: where the proof is false the word of a "cell" may be any value.
 void CastEmitter::generateCheckProof(const ValueContext& value)
 {
     Operand source = get(value->valueOperand());
-    // The answer of a test that was proven to pass: Walker::checkProofThatSlotIsFilled(). What was found is nothing.
     bool isAnswerOfTest = source.representation == Representation::Boolean;
     Boxed found(isAnswerOfTest ? m_out.constInt64(JSValue::encode(JSValue())) : source.value);
-    // As where the failing side of a TypeTest traps: a closure that has changed since it was made is still a closure of its function.
     SetForScope passesChangedClosures(emitter<ClosureTestEmitter>().passesChangedClosures(), true);
-    // Walker::checkThatReadGivesValue(): nothing is claimed of the type.
     bool asksForType = value->checkedType() != value->typeWithoutProof();
     Condition holds = isAnswerOfTest ? Condition(source.value) : asksForType ? hasType(found, typeTestPlanFor(value->typeWithoutProof(), Representation::JSValue, value->checkedType())) : boolean(true);
-    // Whatever is claimed of it, it is a value of the language. The pair of an accessor, an environment, a structure pass every test of the tag bits, and `anything` asks no other.
-    if (!isAnswerOfTest) {
+    if (!isAnswerOfTest && sourcesOfProofsCheckedUnder(build().options().testing)) {
         holds = logicalAnd(holds, either<Condition>(logicalOr(logicalNot(isCell(found)), isEmpty(found)), [&] {
             return boolean(true);
         }, [&] {
@@ -113,7 +109,6 @@ void CastEmitter::generateCheckProof(const ValueContext& value)
     m_out.branch(holds.value(), normalEdge(continuation), rareEdge(stops));
 
     m_out.appendToArm(stops, fork);
-    // operationAOTStopAtFalseProof() has a word for each.
     static_assert(numberOfEnumerators<ProofSource> == 10);
     FunctionID writtenIn = generator().code().inlineFrames()[value->inlineFrame].callee;
     m_out.suspendDeclaredAccesses();

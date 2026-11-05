@@ -45,7 +45,6 @@ function f4 name="later" flags=[IsAsync] results=[{type=anything}] {
 }
 )IR"_s;
 
-// The stub asks for the allocator of bound functions the first time it meets a closure it takes, and leaves that closure to the host function.
 static constexpr ASCIILiteral statements = R"JS(
 const describe = bound => [bound.name, bound.length, typeof bound, Object.getOwnPropertyNames(bound).sort().join("+")].join(" ");
 globalThis.publish = (bindThis, bindThree, sum, later) => {
@@ -77,7 +76,6 @@ static void testBindFoundByName()
         { }, statements);
 }
 
-// The statements of the shell read RegExp.lastMatch. Where the build sees no such read a match leaves no record, so the program reads it too.
 static constexpr ASCIILiteral programTextOfCallsByValue = R"IR(# LIBRARY: own
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -106,8 +104,6 @@ function f3 name="callWithTwo" parameters=[{type=anything}, {type=anything}, {ty
 }
 )IR"_s;
 
-// Each call is made twice, by compiled code and by the interpreter, on receivers and operands made alike. What is compared: the answer or the class of the error, the receiver and the operands afterwards, and the last match that the realm remembers.
-// An ASCIILiteral holds ASCII alone, so every other character is written as an escape of JavaScript.
 static constexpr ASCIILiteral statementsComparingWithHostFunctions = R"JS(
 const show = value => {
     if (typeof value === "string")

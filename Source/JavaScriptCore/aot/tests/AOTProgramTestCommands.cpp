@@ -56,7 +56,6 @@ struct NamedImageFunctionFlag {
     ImageFunctionFlag flag;
 };
 
-// That a function has a body is the program's record of it, and stays. Its words are taken: whoever reads them faults.
 class BodiesTakenFromProgram {
     WTF_MAKE_NONCOPYABLE(BodiesTakenFromProgram);
 public:
@@ -96,13 +95,11 @@ private:
 
 } // anonymous namespace
 
-// No DIAGNOSTIC line can name the kind, so the run fails whatever its check lines say.
 static void failRunOfProgramCommand(BuildContext& build, ASCIILiteral why)
 {
     build.diagnostics().add(InternalError { .kind = InternalErrorKind::Unknown, .detail = why });
 }
 
-// Takes the program. The build finishes the diagnostics of the context, which the runner does once more behind the command.
 static std::unique_ptr<CompileOutput> compileProgramOfCommand(TestCommandContext& context)
 {
     std::unique_ptr<CompileOutput> output = compileWithMechanisms(WTF::move(context.program), context.build, context.mechanisms);
@@ -155,8 +152,9 @@ static WordsOfShellRun splitWordsOfShellRun(std::span<const String> words)
 static ChildProcessResult startProgramInShell(const WordsOfShellRun& run, Vector<String>&& arguments, const String& promiseOfProgram)
 {
     arguments.appendVector(run.options);
-    arguments.append(String("-e"_s));
-    arguments.append(makeString(run.statements, promiseOfProgram, ".catch(error => print(\"the program threw \" + error));"_s));
+    CString statements = makeString(run.statements, promiseOfProgram, ".catch(error => print(\"the program threw \" + error));"_s).utf8();
+    TemporaryFile fileOfStatements(".js"_s, byteCast<uint8_t>(statements.span()));
+    arguments.append(fileOfStatements.path());
     ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
     result.output = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
     return result;
@@ -170,7 +168,6 @@ static void printOutputOfShell(PrintStream& out, const ChildProcessResult& resul
     out.println(result.description());
 }
 
-// `# -- source: <file>` down to `# -- end of source`, each line behind `# `. A further `# -- source:` line begins a further file.
 static Vector<SourceFileOfTestProgram> findSourcesOfTestProgram(StringView programText)
 {
     constexpr ASCIILiteral startOfFile = "# -- source: "_s;
@@ -201,7 +198,6 @@ static Vector<SourceFileOfTestProgram> findSourcesOfTestProgram(StringView progr
     return files;
 }
 
-// The shell reads JavaScript, and a temporary file has a name of its own, which no other file can import.
 static bool canBeRunByShellItself(const Vector<SourceFileOfTestProgram>& sources)
 {
     return sources.size() == 1 && (sources[0].name.endsWith(".js"_s) || sources[0].name.endsWith(".mjs"_s));
@@ -240,7 +236,8 @@ static void runInShellCommand(TestCommandContext& context)
     TemporaryFile image(".image"_s, output->section(Wire::ResultSection::Image));
     ChildProcessResult compiled = startProgramInShell(run, { makeString("--aotImagePath="_s, image.path()) }, makeString("runCompiledEntryPoint("_s, entryModuleIDs[0], ')'));
     printOutputOfShell(context.out, compiled);
-    // The engine's own code takes what such a built-in returns for what it asked for: a spread takes it for an array.
+    if (compiled.output.contains(lineOfCalledStandIn))
+        failRunOfProgramCommand(context.build, "the program or the statements of the shell called a built-in written in JavaScript that the text brings no runtimefunction line for, and got undefined: the text brings the line, or `# LIBRARY: own`"_s);
     if (compiled.outcome == ChildProcessOutcome::Crashed && !hasOwnLibraryLine(context.programText))
         context.out.println("a built-in written in JavaScript that the text brings no runtimefunction line for returns undefined, to the engine's own code too: the line `", ownLibraryLine, "` lets the engine's functions run");
 
@@ -364,7 +361,6 @@ static void printImageIdentifierWord(PrintStream& out, const ImageIdentifierWord
         out.print(" nameClass=", nameOf(word.nameClass()));
 }
 
-// `moduleStart 0: begin-or-return m0, start 2, body 7, finish m0, return`: a start by its number, a body by its place among the functions of the image.
 static void printStartsOfModulesInImage(PrintStream& out, const ProgramTables& tables)
 {
     using Operation = ModuleStartStepData::Operation;
@@ -415,7 +411,6 @@ static void printStartsOfModulesInImage(PrintStream& out, const ProgramTables& t
     }
 }
 
-// The texts lie in this binary. The table that leads to them is the program's, and goes with it.
 using TokensOfRuntimeFunctions = Vector<std::pair<RuntimeFunctionID, StringView>>;
 
 static TokensOfRuntimeFunctions collectTokensOfRuntimeFunctions(const BuiltinTable& builtins)
@@ -432,7 +427,6 @@ static StringView tokenOf(const TokensOfRuntimeFunctions& tokens, RuntimeFunctio
     return found == tokens.end() ? StringView() : found->second;
 }
 
-// Each table that has rows with their number, and the rows of the tables that have a form here.
 static void printImageProgramTables(PrintStream& out, const TokensOfRuntimeFunctions& tokens, std::span<const uint8_t> bytes)
 {
     if (bytes.size() < sizeof(ProgramTables)) {
@@ -464,7 +458,6 @@ static void printImageProgramTables(PrintStream& out, const TokensOfRuntimeFunct
     });
 }
 
-// The list of sections is the header's. A section without a form of its own here is printed as bytes.
 static void printTextOfImageSection(PrintStream& out, const TokensOfRuntimeFunctions& tokens, ImageSection section, std::span<const uint8_t> bytes)
 {
     if (section == ImageSection::ProgramTables) {
@@ -577,8 +570,6 @@ static void appendFunctionsMentionedBy(const CompiledCode& code, const CompileIn
     });
 }
 
-// While every body is in its place.
-// A unit in which no site has code describes no inline frame, so CodeBody::callees lacks what the walk took in. Code lists every frame.
 static bool appendFunctionsInlinedBy(CompileWorker& worker, CodeUnit unit, Vector<FunctionID>& functions)
 {
     if (!worker.walkAndSweep(unit))
@@ -611,7 +602,6 @@ static bool codeBodiesHaveSameEntries(const CodeBody& a, const CodeBody& b)
     });
 }
 
-// Null where there is none. A relocation names its symbol by a place in a list of the body, so the lists count with the relocations.
 static String firstDifferenceOfCodeBodies(const CodeBody& inside, const CodeBody& alone)
 {
     if (inside.bytes != alone.bytes) {
@@ -648,10 +638,6 @@ static const CompiledCode* findCodeCompiledAlone(std::span<const CompiledCode> f
     return nullptr;
 }
 
-// Inside the whole program: the stage as a build runs it, with all its threads, each worker going from unit to unit.
-// Alone: a worker that has seen nothing, in a program that holds the words of no body but those of the functions that the unit's code mentions or inlines.
-// Facts and the plan are made in front of both, of the whole program: the code of a unit may depend on them. The index of bodies is Facts', with the words of every body.
-// Alone the Code is verified where the whole program leaves that out, and not verified where the whole program does it: the verifier changes no byte.
 static void runSameBytesAloneCommand(TestCommandContext& context)
 {
     std::optional<Vector<CodeUnit>> namedUnits;
@@ -690,7 +676,6 @@ static void runSameBytesAloneCommand(TestCommandContext& context)
         return conventions.exists(unit) && findCodeInWholeProgram(unit);
     };
 
-    // [index in units]
     Vector<Vector<FunctionID>> functionsInlinedBy(units.size());
     {
         CompileWorker worker(inputs, context.build, program.types);
@@ -803,13 +788,6 @@ static void runSameBytesAloneCommand(TestCommandContext& context)
         failRunOfProgramCommand(context.build, "the code of a unit depends on more than the unit, what it mentions or inlines, the facts and the plan, or on whether its Code is verified"_s);
 }
 
-// The units that a build gives code, as the stage finds them, ascending:
-//     unit f3:Body 184 bytes
-//     units 12, bytes 3456
-//     unit f7:GenericCallEntry fused into f7:Body, 3 bytes                  CallingConventions::hasFusedCallEntry(): the bytes from it to the primary entry of that unit
-//     fused call entries 1, bytes 3
-//     call entries 6
-// With words: those units alone, and `unit f5:Body has no code` for a unit that the queue never came to. The last line counts all units either way.
 static void runUnitsWithCodeCommand(TestCommandContext& context)
 {
     std::optional<Vector<CodeUnit>> namedUnits;

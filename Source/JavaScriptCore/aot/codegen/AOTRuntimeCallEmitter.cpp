@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTEffectsNet.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTHeaps.h"
 #include "AOTPureOperations.h"
@@ -51,7 +52,6 @@ struct CallGenerator {
     std::optional<StubKey> keyWhereNoFPRIsKept;
 };
 
-// It is copied into the arena of the procedure, which runs no destructor for it.
 static_assert(std::is_trivially_destructible_v<CallGenerator>);
 
 struct ReturnTraits {
@@ -91,7 +91,6 @@ ArgumentMoves CallGenerator::moveArguments(CCallHelpers& jit, const Machine::Pat
                 appendArgumentMove(moves, destination, ArgumentSource::Constant, rep.value());
             continue;
         }
-        // A frame that is set up has a record, so the thunk reads the word off the frame pointer.
         RELEASE_ASSERT(rep.isStack() && params.frameIsSetUp());
         bool isNarrow = childType == Machine::Int32;
         appendArgumentMove(moves, destination, isNarrow ? ArgumentSource::Stack32 : ArgumentSource::Stack64, static_cast<int64_t>(rep.offsetFromFP()));
@@ -99,7 +98,6 @@ ArgumentMoves CallGenerator::moveArguments(CCallHelpers& jit, const Machine::Pat
     return moves;
 }
 
-// PatchOperation::leaveOperandsWhereTheyLie().
 ArgumentMoves CallGenerator::bringOperands(const Machine::PatchParameters& params) const
 {
     ArgumentMoves moves;
@@ -152,7 +150,6 @@ void CallGenerator::emitCallInstruction(CCallHelpers& jit, StubKey called, const
         : stubCalls.call(jit, called, site);
     if (!throwSite)
         return;
-    // The fault table names the call by its offset.
     Vector<uint32_t, 3> words = throwSiteWords(*throwSite, Representation::JSValue, signature.operands[0].gpr());
     uint8_t wordsThatAreMentions = mentionsAmongThrowSiteWords(*throwSite, words.size());
     records->traps.callThrowSites.append(CallThrowSite { returnSite, WTF::move(words), wordsThatAreMentions });
@@ -181,7 +178,6 @@ static Machine::RegisterMask registersToSaveForCCall(Machine::RegisterMask liveR
     return liveRegisters & callerSavedRegisters;
 }
 
-// A unit that saves the registers of its callers has saved those that it writes itself. The others still hold what a caller keeps in them, and a C function may write them.
 static Machine::RegisterMask registersToKeepAcrossCCall(const Machine::PatchParameters& params)
 {
     Machine::RegisterMask held = params.usedRegistersMask();
@@ -234,12 +230,10 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
         if (std::optional<StubKey> variant = receiver == receiverOfStub ? std::nullopt : tryWithOperandRegister(called, receiver))
             called = *variant;
         else {
-            // Only such a call has said that it writes the register.
             RELEASE_ASSERT(receiver == receiverOfStub || descriptorOf(called.family()).operandRegisters == OperandRegisterChoice::AlternateReceivers);
             jit.move(receiver, receiverOfStub);
         }
     }
-    // Where the choice names the register of the result, the stub itself serves the usual one.
     if (resultIsInAnyRegister && (params[0].gpr() != signature.firstResult.gpr() || !namesRegisterOfResult(descriptorOf(called.family()).operandRegisters)))
         called = called.withOperandRegister(params[0].gpr());
     emitCallInstruction(jit, called, moves);
@@ -262,7 +256,6 @@ static bool acceptsAnyReceiverRegister(StubKey key, const StubSignature& signatu
     return choice != OperandRegisterChoice::AlternateReceivers || signature.result == StubResult::GPR || signature.result == StubResult::None;
 }
 
-// OperandRegisterChoice::AnyAllocatableRegister of a stub without an operand, and the choices that name the register of the result.
 static bool returnsInAnyRegister(StubKey key, const StubSignature& signature, size_t numberOfOperands)
 {
     OperandRegisterChoice choice = descriptorOf(key.family()).operandRegisters;
@@ -271,7 +264,6 @@ static bool returnsInAnyRegister(StubKey key, const StubSignature& signature, si
     return namesRegisterOfResult(choice) || (choice == OperandRegisterChoice::AnyAllocatableRegister && !numberOfOperands);
 }
 
-// A leaf calls nothing and leaves the stack as it found it. On x86-64 the call itself stores the return address, so the caller needs no frame for it. Nor for a stub below which nobody walks the stack.
 bool leavesCallerWithoutFrame(StubKey key)
 {
     return isX86_64() && descriptorOf(key.family()).leafness != StubLeafness::MayCall;
@@ -280,7 +272,6 @@ bool leavesCallerWithoutFrame(StubKey key)
 static RegisterSet lateClobbersOf(const StubCatalog& catalog, StubKey key, bool receiverIsInAnyRegister, const StubSignature& signature, const RegisterSet& additionalClobbers)
 {
     RegisterSet late = receiverIsInAnyRegister ? catalog.clobberedByRegisterVariantsOf(key) : catalog.summaryOf(key).clobbered;
-    // A receiver that lies where no variant takes it is moved to where the stub itself does.
     if (receiverIsInAnyRegister && descriptorOf(key.family()).operandRegisters == OperandRegisterChoice::AlternateReceivers)
         late.add(signature.operands[0], IgnoreVectors);
     if (signature.immediate)
@@ -293,13 +284,11 @@ static RegisterSet lateClobbersOf(const StubCatalog& catalog, StubKey key, bool 
 static RegisterSet earlyClobbersOf(StubKey key, const StubSignature& signature, bool receiverIsInAnyRegister, const RegisterSet& late)
 {
     RegisterSet early = RegisterSet::macroClobberedGPRs();
-    // A variant may take the receiver where the others take the immediate, and the immediate elsewhere.
     if (signature.immediate) {
         std::optional<StubKey> variant = receiverIsInAnyRegister ? tryWithOperandRegister(key, *signature.immediate) : std::nullopt;
         if (!variant || signatureOf(*variant).immediate == signature.immediate)
             early.add(*signature.immediate, IgnoreVectors);
     }
-    // The receiver lies where a variant takes it, or where no variant writes.
     if (receiverIsInAnyRegister) {
         RegisterSet writtenBeforeMove = late;
         for (GPRReg reg : operandRegistersOf(descriptorOf(key.family()).operandRegisters))
@@ -587,7 +576,7 @@ static bool acceptsRepresentation(RuntimeValueKind kind, Representation represen
     case RuntimeValueKind::Size:
     case RuntimeValueKind::Int64:
     case RuntimeValueKind::UInt64:
-        return representation == Representation::Int64 || representation == Representation::RawWord || representation == Representation::OptionalInt64 || representation == Representation::LiteralString;
+        return representation == Representation::Int64 || representation == Representation::RawWord || representation == Representation::OptionalInt64;
     case RuntimeValueKind::Double:
         return representation == Representation::Double || representation == Representation::OptionalDouble;
     case RuntimeValueKind::SiteCache:
@@ -717,7 +706,6 @@ void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LV
         }
         GPRReg destination = argumentGPROfPreservingCall(*request.preservingCall, *request.entry, nextGPR++);
         request.additionalClobbers.add(destination, IgnoreVectors);
-        // What has no position is made again at each use, so it lies nowhere that a thunk could read. A number of the image among them is moved by the site, never by a thunk.
         if (argument->hasNoPosition() && !argument->isConstant()) {
             request.operands.append({ argument, Machine::ValueRep::reg(destination) });
             continue;
@@ -740,17 +728,6 @@ void RuntimeCallEmitter::fillRequestOfDirectFunction(CallRequestWithOwnOptions& 
         request.operands.append({ cell, Machine::ValueRep::LateColdAny });
 }
 
-StubCallResult RuntimeCallEmitter::callDirectFunctionReturningFields(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive)
-{
-    CallRequestWithOwnOptions request;
-    fillRequestOfDirectFunction(request, DirectFunctionCall::LeafReturningFields, number, arguments, keptAlive);
-    Effects memoryAlone = Effects::none();
-    memoryAlone.reads = request.ownEffects.reads;
-    memoryAlone.writes = request.ownEffects.writes;
-    request.ownEffects = memoryAlone;
-    return emitCall(&context, request);
-}
-
 LValue RuntimeCallEmitter::callDirectFunctionReturningNumber(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive)
 {
     Effects effects = effectsOf(context);
@@ -760,7 +737,6 @@ LValue RuntimeCallEmitter::callDirectFunctionReturningNumber(const OperationCont
     return emitCall(&context, request).first;
 }
 
-// A double takes a register of its own kind.
 static size_t countGPRArguments(std::span<const LValue> arguments)
 {
     return std::ranges::count_if(arguments, [](LValue argument) {
@@ -783,7 +759,6 @@ LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, u
     fillRequestOfDirectFunction(request, form, number, arguments, keptAlive);
     if (form == DirectFunctionCall::WithHostFrame) {
         RELEASE_ASSERT(leavesRegistersForHostFrame(arguments));
-        // The function reads the registers of its own parameters, and the stub the two of the frame. Nobody reads those between them, so nothing is moved there.
         if (countGPRArguments(arguments) <= directThisArgumentIndex)
             request.operands.append({ hostFrame->thisValue, Machine::ValueRep::reg(operationArgumentGPR(directThisArgumentIndex)) });
         request.operands.append({ hostFrame->callee, Machine::ValueRep::reg(operationArgumentGPR(directCalleeArgumentIndex)) });
@@ -820,7 +795,8 @@ void RuntimeCallEmitter::fillRequest(CallRequest& request, StubKey key, std::spa
     request.firstRead = firstRead;
     request.effectsOfCallee = &shape.effects;
     request.shape = &shape;
-    request.argumentBufferAccess = options.pureFunction ? ArgumentBufferAccess::None : ArgumentBufferAccess::Reads;
+    RELEASE_ASSERT(!options.pureFunction || !options.writesArgumentBuffer);
+    request.argumentBufferAccess = options.pureFunction ? ArgumentBufferAccess::None : options.writesArgumentBuffer ? ArgumentBufferAccess::ReadsAndWrites : ArgumentBufferAccess::Reads;
     for (size_t i = 0; i < operands.size(); ++i)
         request.operands.append({ operands[i], Machine::ValueRep::reg(signature.operands[i]) });
 }
@@ -847,13 +823,20 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     const StubSignature signature = shape->signature;
     RELEASE_ASSERT(!branchesOnFlags || signature.result == StubResult::Flags);
 
-    const Effects& effectsOfCallee = *request.effectsOfCallee;
+    std::optional<Effects> effectsOfCalleeSayingLess;
+    if (m_options.rowThatSaysLess) [[unlikely]] {
+        effectsOfCalleeSayingLess = *request.effectsOfCallee;
+        RowThatSaysLess row = RowThatSaysLess::decode(m_options.rowThatSaysLess);
+        if (request.entry)
+            row.cut(KindOfEffectsRow::RuntimeOperation, static_cast<unsigned>(*request.entry), *effectsOfCalleeSayingLess);
+        else
+            row.cut(KindOfEffectsRow::Stub, static_cast<unsigned>(key.family()), *effectsOfCalleeSayingLess);
+    }
+    const Effects& effectsOfCallee = effectsOfCalleeSayingLess ? *effectsOfCalleeSayingLess : *request.effectsOfCallee;
     bool calleeMayCollect = effectsOfCallee.mayCollect;
     Effects effects = context ? effectsOfCall(*context, effectsOfCallee) : effectsOfCallee;
     if (options.pureFunction && !options.pureFunction->dependsOnMemory)
         effects.reads = { };
-    // A site says where in the source a frame stands and which handler is in force there.
-    // An operation whose allocation fails throws when it returns. In a function with handlers, its site records which handler, if any, is active there.
     bool mayFailToAllocate = context && returns && calleeMayCollect && !options.pureFunction && !options.followsThrow && functionHasHandlers();
     bool hasSite = effects.mayExitSideways() || options.capturesStackTrace || mayFailToAllocate;
     RELEASE_ASSERT(context || (!hasSite && (!effects.mayCollect || options.followsThrow)));
@@ -862,7 +845,6 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     RELEASE_ASSERT(!options.returnsWord32 || signature.result == StubResult::GPR);
     LType type = options.returnsWord32 ? Machine::Int32 : typeOfResult(signature.result);
     RELEASE_ASSERT(!options.pureFunction || (returns && !effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState));
-    // An Extract stands right behind its Patch, so a call that returns two words is shared with no later one.
     bool mayBeShared = options.pureFunction && signature.result != StubResult::TwoGPRs;
     if (mayBeShared) {
         Vector<LValue, 8> values;
@@ -872,25 +854,30 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
             return resultOfCall(signature.result, known);
     }
 
+    std::optional<WatchOfEffects> watch;
+    if (AOT::hasFlag(m_options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime) && context && context->valueID() && returns && request.entry != AOT::Entry::operationAOTStopAtFalseEffects) [[unlikely]] {
+        static_assert(numberOfEnumerators<Opcode> <= firstRowOfRuntimeOperationsInEffectsNet - firstRowOfOperationsInEffectsNet);
+        static_assert(numberOfEntries <= firstRowOfStubsInEffectsNet - firstRowOfRuntimeOperationsInEffectsNet);
+        static_assert(numberOfStubFamilies <= firstRowOfBuiltinsInEffectsNet - firstRowOfStubsInEffectsNet);
+        unsigned rowOfCallee = request.entry ? firstRowOfRuntimeOperationsInEffectsNet + static_cast<unsigned>(*request.entry) : firstRowOfStubsInEffectsNet + static_cast<unsigned>(key.family());
+        beginWatchOfEffects(*context, effects, EntersCompiledCode::No, (firstRowOfOperationsInEffectsNet + static_cast<unsigned>(operationAt(context->valueID()).opcode)) | rowOfCallee << 16, watch.emplace());
+    }
+
     Machine::PatchOperation* patchpoint = m_out.patchpoint(type);
     patchpoint->effects.terminal = !returns;
     patchpoint->setNeedsFrameRecord(shape->needsFrameRecord);
     patchpoint->setRunsWithoutFrame(!hasSite && !neverReturns && shape->leavesCallerWithoutFrame);
 
-    // The words of a throw site name the register of the operand, which is known here.
     bool receiverIsInAnyRegister = shape->receiverIsInAnyRegister;
     bool resultIsInAnyRegister = shape->resultIsInAnyRegister;
     for (const PlacedOperand& operand : request.operands)
         patchpoint->append(operand.value, receiverIsInAnyRegister ? Machine::ValueRep(Machine::ValueRep::SomeRegister) : operand.rep);
-    // The words of a throw site name the register of the operand at the call, and a call for two reads has a record of its own.
-    // An operand that stays where it lies keeps its register until the call is made, and the result has a register of its own from the start: one of the list, or the usual one.
     auto liesSomewhere = [](const PlacedOperand& operand) { return !operand.value->hasNoPosition(); };
     bool operandsLeaveRegisterForResult = !resultIsInAnyRegister || static_cast<size_t>(std::ranges::count_if(request.operands, liesSomewhere)) <= shape->numberOfOperandRegisters;
     patchpoint->setBringsOperandsToTheirRegisters(!receiverIsInAnyRegister && operandsLeaveRegisterForResult && !request.preservingCall && !request.firstRead && !options.throwSite);
     Machine::RegisterMask additionalClobbers = request.preservingCall ? Machine::maskOf(request.additionalClobbers) : 0;
     ASSERT(request.preservingCall || request.additionalClobbers.isEmpty());
     if (resultIsInAnyRegister) {
-        // A site writes the immediate of a stub without operands there, and nothing else. Any other stub writes the register while it still reads its operands.
         patchpoint->resultConstraints = { Machine::ValueRep(Machine::ValueRep::SomeEarlyRegister) };
         patchpoint->holdResultsTo(shape->resultRegisters);
         patchpoint->clobberLate(shape->lateClobbered | additionalClobbers);
@@ -936,7 +923,184 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         m_out.appendTo(newBlock());
     if (!returns)
         return { };
-    return resultOfCall(signature.result, patchpoint);
+    StubCallResult result = resultOfCall(signature.result, patchpoint);
+    if (watch && watch->isSet()) [[unlikely]]
+        endWatchOfEffects(*context, *watch, signature.result == StubResult::GPR || signature.result == StubResult::FPR ? patchpoint : nullptr);
+    return result;
+}
+
+void RuntimeCallEmitter::beginWatchOfOperation(const ValueContext& context, WatchOfEffects& watch)
+{
+    const Effects* believed = m_code.effectsBelievedOf(context.id());
+    if (!believed || context.isBranchCondition() || context.returnCall())
+        return;
+    const Operation& operation = context.value();
+    unsigned rowOfCallee = noRowInEffectsNet;
+    if (Operation::opcodesWithOverload.contains(operation.opcode)) {
+        unsigned builtin = BuiltinTable::singleton().at(operation.overload()).builtin.index();
+        if (builtin < numberOfRowsInEffectsNet - firstRowOfBuiltinsInEffectsNet)
+            rowOfCallee = firstRowOfBuiltinsInEffectsNet + builtin;
+    }
+    EntersCompiledCode entersCompiledCode = effectRuleOf(operation.opcode) == EffectRule::Call ? EntersCompiledCode::Yes : EntersCompiledCode::No;
+    beginWatchOfEffects(context, *believed, entersCompiledCode, (firstRowOfOperationsInEffectsNet + static_cast<unsigned>(operation.opcode)) | rowOfCallee << 16, watch);
+    m_watchOfOperation = &watch;
+}
+
+void RuntimeCallEmitter::abandonWatchOfOperation(const WatchOfEffects& watch)
+{
+    if (m_watchOfOperation == &watch)
+        m_watchOfOperation = watch.around;
+}
+
+void RuntimeCallEmitter::beginWatchOfEffects(const OperationContext& context, const Effects& effects, EntersCompiledCode entersCompiledCode, uint32_t rows, WatchOfEffects& watch)
+{
+    watch.rows = rows;
+    watch.around = m_watchOfOperation;
+    if (!effects.mayRunOtherCode() && entersCompiledCode == EntersCompiledCode::No)
+        watch.entriesInFront = readWordForEffectsNet(AOT_INSTANCE_OFFSET(effectsNet.entriesIntoCode), std::nullopt, nullptr);
+    if (!effects.mayCollect)
+        watch.collectionsInFront = readCollectionsForEffectsNet(nullptr);
+    watch.isHeldToThrowNothing = !effects.mayThrow;
+    watch.lanesNotWritten = lanesNotWrittenInEffectsNet(effects);
+    if (watch.lanesNotWritten && !generator().isInitializingCell()) {
+        const Operation& operation = operationAt(context.valueID());
+        for (uint32_t operandIndex = 0; operandIndex < operation.numberOfOperands() && watch.numberOfDigests < watch.digests.size(); ++operandIndex) {
+            ValueID operand = operation.operand(operandIndex);
+            if (!operand)
+                continue;
+            Representation representation = representationOf(operand);
+            if (representation != Representation::JSValue && representation != Representation::Cell)
+                continue;
+            LValue cell = generator().wordOf(operand);
+            if (!cell || cell->type() != Machine::Int64)
+                continue;
+            std::array<LValue, 2> arguments { cell, m_out.constInt64(watch.lanesNotWritten) };
+            watch.digests[watch.numberOfDigests++] = { operandIndex, cell, emitEntryCall(nullptr, AOT::Entry::operationAOTDigestForEffectsNet, arguments, { }).first };
+        }
+    }
+    if (watch.isHeldToThrowNothing && watch.entriesInFront) {
+        Origin origin = context.origin();
+        uint64_t function = m_code.inlineFrames()[origin.inlineFrame].callee.index();
+        watch.callHeldToThrowNothing = 1ull << 63 | function << 32 | origin.position;
+        noteCallHeldToThrowNothing(watch.callHeldToThrowNothing, rows);
+    }
+}
+
+void RuntimeCallEmitter::endWatchOfEffects(const OperationContext& context, const WatchOfEffects& watch, LValue behind)
+{
+    abandonWatchOfOperation(watch);
+    const Operation& operation = operationAt(context.valueID());
+    LValue builtinNamed = m_out.constInt64(Operation::opcodesWithBuiltin.contains(operation.opcode) ? operation.builtin().index() : 0);
+    Vector<PartOfEffects, 4> parts;
+    if (watch.collectionsInFront) {
+        stopAtFalseEffects(context, watch.rows, m_out.equal(watch.collectionsInFront, readCollectionsForEffectsNet(behind)), static_cast<uint32_t>(PartOfEffects::Collects), builtinNamed);
+        parts.append(PartOfEffects::Collects);
+        build().statistics().count(StatisticID::CallsHeldNotToCollect);
+    }
+    if (watch.isHeldToThrowNothing) {
+        if (watch.callHeldToThrowNothing)
+            noteCallHeldToThrowNothing(watch.around ? watch.around->callHeldToThrowNothing : 0, watch.around ? watch.around->rows : 0);
+        LValue pending = readWordForEffectsNet(AOT_INSTANCE_OFFSET(vm), VM::exceptionOffset(), behind);
+        stopAtFalseEffects(context, watch.rows, m_out.isZero64(pending), static_cast<uint32_t>(PartOfEffects::Throws), builtinNamed);
+        parts.append(PartOfEffects::Throws);
+        build().statistics().count(StatisticID::CallsHeldToThrowNothing);
+    }
+    if (watch.entriesInFront) {
+        LValue entriesBehind = readWordForEffectsNet(AOT_INSTANCE_OFFSET(effectsNet.entriesIntoCode), std::nullopt, behind);
+        stopAtFalseEffects(context, watch.rows, m_out.equal(watch.entriesInFront, entriesBehind), static_cast<uint32_t>(PartOfEffects::RunsOtherCode), builtinNamed);
+        parts.append(PartOfEffects::RunsOtherCode);
+        build().statistics().count(StatisticID::CallsHeldToRunNoOtherCode);
+    }
+    for (const WatchOfEffects::Digest& digest : std::span(watch.digests).first(watch.numberOfDigests)) {
+        std::array<LValue, 2> arguments { digest.cell, m_out.constInt64(watch.lanesNotWritten) };
+        LValue differs = m_out.bitXor(digest.inFront, emitEntryCall(nullptr, AOT::Entry::operationAOTDigestForEffectsNet, arguments, { }).first);
+        stopAtFalseEffects(context, watch.rows, m_out.isZero64(differs), static_cast<uint32_t>(PartOfEffects::Writes) | digest.operandIndex << 16, differs);
+    }
+    if (watch.numberOfDigests) {
+        parts.append(PartOfEffects::Writes);
+        build().statistics().count(StatisticID::OperandsHashedRoundCalls, watch.numberOfDigests);
+    }
+    markRowsExercised(watch.rows, parts.span());
+}
+
+void RuntimeCallEmitter::stopAtFalseEffects(const OperationContext& context, uint32_t rows, LValue holds, uint32_t part, LValue differs)
+{
+    LBasicBlock stops = newBlock();
+    LBasicBlock continuation = newBlock();
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(holds, normalEdge(continuation), rareEdge(stops));
+
+    m_out.appendToArm(stops, fork);
+    Origin origin = context.origin();
+    FunctionID writtenIn = m_code.inlineFrames()[origin.inlineFrame].callee;
+    m_out.suspendDeclaredAccesses();
+    std::array<LValue, 5> arguments { m_out.constInt32(static_cast<int32_t>(writtenIn.index())), m_out.constInt32(static_cast<int32_t>(origin.position)), m_out.constInt32(static_cast<int32_t>(part)), m_out.constInt32(static_cast<int32_t>(rows)), differs };
+    emitEntryCall(&context, AOT::Entry::operationAOTStopAtFalseEffects, arguments, { });
+    m_out.resumeDeclaredAccesses();
+    m_out.jump(continuation);
+    m_out.appendToJoin(continuation, fork);
+}
+
+LValue RuntimeCallEmitter::readWordForEffectsNet(ptrdiff_t offsetInInstance, std::optional<ptrdiff_t> offsetBehindPointer, LValue behind)
+{
+    Machine::PatchOperation* read = m_out.patchpoint(Machine::Int64);
+    if (behind)
+        read->append(behind, Machine::ValueRep::ColdAny);
+    read->effects = Machine::Effects::none();
+    read->effects.writesLocalState = true;
+    read->setRunsWithoutFrame(true);
+    read->clobber(RegisterSet::macroClobberedGPRs());
+    read->setGenerator([offsetInInstance, offsetBehindPointer](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        jit.load64(CCallHelpers::Address(instanceGPR, offsetInInstance), params[0].gpr());
+        if (offsetBehindPointer)
+            jit.load64(CCallHelpers::Address(params[0].gpr(), *offsetBehindPointer), params[0].gpr());
+    });
+    return read;
+}
+
+LValue RuntimeCallEmitter::readCollectionsForEffectsNet(LValue behind)
+{
+    std::array<LValue, 1> arguments { readWordForEffectsNet(AOT_INSTANCE_OFFSET(vm), std::nullopt, behind) };
+    return emitEntryCall(nullptr, AOT::Entry::operationAOTCollectionsForEffectsNet, arguments, { }).first;
+}
+
+void RuntimeCallEmitter::noteCallHeldToThrowNothing(uint64_t call, uint32_t rows)
+{
+    Machine::PatchOperation* note = m_out.patchpoint(Machine::Void);
+    note->effects = Machine::Effects::none();
+    note->effects.writesLocalState = true;
+    note->setRunsWithoutFrame(true);
+    note->clobber(RegisterSet::macroClobberedGPRs());
+    note->setGenerator([call, rows](CCallHelpers& jit, const Machine::PatchParameters&) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        if (call)
+            jit.store64(CCallHelpers::TrustedImm64(rows), CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(effectsNet.rowsOfCallHeldToThrowNothing)));
+        jit.store64(CCallHelpers::TrustedImm64(static_cast<int64_t>(call)), CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(effectsNet.callHeldToThrowNothing)));
+    });
+}
+
+void RuntimeCallEmitter::markRowsExercised(uint32_t rows, std::span<const PartOfEffects> parts)
+{
+    Machine::PatchOperation* mark = m_out.patchpoint(Machine::Int64);
+    mark->effects = Machine::Effects::none();
+    mark->effects.writesLocalState = true;
+    mark->setRunsWithoutFrame(true);
+    mark->clobber(RegisterSet::macroClobberedGPRs());
+    std::array<unsigned, 8> bytes { };
+    unsigned numberOfBytes = 0;
+    for (PartOfEffects part : parts) {
+        bytes[numberOfBytes++] = byteInEffectsNet(rows & UINT16_MAX, part);
+        if (rows >> 16 != noRowInEffectsNet)
+            bytes[numberOfBytes++] = byteInEffectsNet(rows >> 16, part);
+    }
+    mark->setGenerator([bytes, numberOfBytes](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg table = params[0].gpr();
+        jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(effectsNet.exercised)), table);
+        for (unsigned index = 0; index < numberOfBytes; ++index)
+            jit.store8(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(table, bytes[index]));
+    });
 }
 
 LType RuntimeCallEmitter::typeOfResult(StubResult result)
@@ -1010,7 +1174,6 @@ LValue RuntimeCallEmitter::callStubThatReads(StubKey key, std::span<const LValue
     LocationMasks read;
     read.add(m_program, location);
     effectsOfCallee.reads = effectsOfCallee.reads.intersectedWith(read);
-    // A call that named nothing would be ended by nothing.
     RELEASE_ASSERT(!effectsOfCallee.reads.isEmpty());
     request.effectsOfCallee = &effectsOfCallee;
     return emitCall(nullptr, request).first;
@@ -1019,7 +1182,6 @@ LValue RuntimeCallEmitter::callStubThatReads(StubKey key, std::span<const LValue
 Machine::PatchOperation* RuntimeCallEmitter::createCallPatchpoint(const OperationContext& context, const CallPatchpointRequest& request)
 {
     Effects effects = effectsOfCall(context, request.effects);
-    // If no handler of the function catches it, a stack overflow in the callee ends the function: none of its code runs after that call.
     if (!effects.mayThrowOtherThanStackOverflow() && !emitter<ExceptionEmitter>().unwindsWithinFunction(context))
         effects.mayThrow = false;
 
@@ -1049,24 +1211,19 @@ RegisterSet RuntimeCallEmitter::registersClobberedByCalls() const
 
 RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context, const CallOptions& options)
 {
-    // Whatever a built-in runs, its function object, its inline code or an operation, runs after the tail call.
     Origin origin = options.origin.value_or(context.origin());
     const Operation* operation = context.valueID() ? &operationAt(context.valueID()) : nullptr;
     BuiltinID calledBuiltin = options.calledBuiltin;
     if (!calledBuiltin && operation && Operation::opcodesWithCalledBuiltin.contains(operation->opcode))
         calledBuiltin = operation->calledBuiltin();
-    // Steps of a built-in function that were expanded into its caller record the caller's site and name the function.
     if (BuiltinID builtinOfFrame = origin.inlineFrame ? m_code.inlineFrames()[origin.inlineFrame].calledBuiltin : BuiltinID()) {
         const InlineFrame& frame = m_code.inlineFrames()[origin.inlineFrame];
         calledBuiltin = builtinOfFrame;
         origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isTailCall = frame.isTailCall, .isPartOfConstruction = frame.callIsPartOfConstruction };
     }
-    // No stack trace lists a function that only built-in code can name.
     if (calledBuiltin && BuiltinBindings::linkTimeConstantOf(calledBuiltin))
         calledBuiltin = { };
-    // `new` inside a built-in is a step of the built-in like any other.
     bool standsForCallee = calledBuiltin ? origin.isTailCall || options.isTailCall : origin.isTailCall && !options.isTailCall && !options.constructs;
-    // A call, and the read of the method that it calls, can throw before the callee begins.
     bool isInsideCallee = options.callerHasLeft || (standsForCallee && (calledBuiltin || !operation || !runsBeforeCalleeOf(operation->opcode)));
     std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall || options.callerHasLeft, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });
     RELEASE_ASSERT(kind);
@@ -1168,7 +1325,6 @@ void RuntimeCallEmitter::computeEffects(Machine::PatchOperation* patchpoint, con
 
     bool exitsSideways = effects.mayExitSideways();
     patchpoint->effects.exitsSideways = exitsSideways;
-    // What runs behind a sideways exit may read anything.
     if (exitsSideways || effects.reads.isTop())
         patchpoint->effects.reads = Machine::HeapSet::top();
     else {
@@ -1185,7 +1341,6 @@ void RuntimeCallEmitter::computeEffects(Machine::PatchOperation* patchpoint, con
             m_heaps.decoratePatchpointRead(reads.span(), patchpoint);
     }
 
-    // Every heap that is added below lies under the root.
     if (effects.writes.isTop()) {
         patchpoint->effects.writes = Machine::HeapSet::top();
         return;
@@ -1198,9 +1353,6 @@ void RuntimeCallEmitter::computeEffects(Machine::PatchOperation* patchpoint, con
         bool replacesStorageOfArrays = conversions == CellConversions::WhateverEffectsSay || AOTHeaps::mayReplaceStorageOfArrays(effects);
         m_heaps.appendHeapsOfConvertedCells(writes, replacesStorageOfArrays ? AOTHeaps::ConvertedCells::All : AOTHeaps::ConvertedCells::AllButArrays);
     }
-    // The cell that the closure table has for a function is filled where the closure is first asked for, and a counter rises wherever its code runs.
-    // No operation says so: only generated code reads these words, and a read of one is numbered like any other. Whoever fills a cell of the table makes a cell.
-    // The slot of a site says what a lookup found. It changes where something is written that a lookup may come by, and a collection empties the slot of a Structure that has died.
     if (effects.mayCollect || !effects.writes.isEmpty()) {
         writes.append(&m_heaps.AOTInstance_closureCells);
         writes.append(&m_heaps.AOTInstance_siteCaches);

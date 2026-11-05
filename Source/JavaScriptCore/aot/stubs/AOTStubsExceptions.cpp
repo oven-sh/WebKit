@@ -40,7 +40,6 @@ static_assert(exists(throwStackOverflow(false)) && exists(throwStackOverflow(tru
 static_assert(descriptorOf(StubFamily::ThrowStackOverflow).numberOfForms == static_cast<unsigned>(StackOverflowForm::AtPrologue) + 1);
 static_assert(descriptorOf(StubFamily::RejectInFrame).numberOfForms == static_cast<unsigned>(RejectedFrameForm::BelowSpilledArguments) + 1);
 
-// The VM is in T10, the function in T11. Afterwards the VM is in savedVM.
 static void callLookupExceptionHandler(StubAssembler& jit)
 {
 #if ASSERT_ENABLED
@@ -54,8 +53,6 @@ static void callLookupExceptionHandler(StubAssembler& jit)
     jit.call(T11, OperationPtrTag);
 }
 
-// The buffer lies on the stack, which the collector reads for references. Left as it is, it would hold whatever the frame of the handler had in its registers until the next throw:
-// behind an error for lack of memory, the very objects that filled the heap.
 static void restoreCalleeSavesAndClearBuffer(StubAssembler& jit, GPRReg vm, GPRReg scratch)
 {
     jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(vm, scratch);
@@ -84,13 +81,11 @@ static void jumpToGenericUnwindTarget(StubAssembler& jit)
     jit.farJump(GPRInfo::regT1, ExceptionHandlerPtrTag);
 }
 
-// The callee-saved registers are those of the frame of the handler, so the instance is the one that unwinding has left the word in.
 static void loadStackPointerOfHandler(StubAssembler& jit)
 {
 #if CPU(X86_64)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.stackPointerOfHandler)), CCallHelpers::stackPointerRegister);
 #else
-    // A landing pad takes the stack pointer from the frame pointer.
     UNUSED_PARAM(jit);
 #endif
 }

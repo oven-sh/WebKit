@@ -1,4 +1,3 @@
-/** The word of a schema of Bun's natives (src/codegen/bindgen-lib-internal.ts) means the same. */
 export type Capability = "none" | "heap" | "js";
 
 export const capabilities = ["js", "heap", "none"] as const satisfies readonly Capability[];
@@ -28,7 +27,6 @@ export type Origin = (typeof origins)[number];
 export const scopes = ["Realm", "Module"] as const;
 export type Scope = (typeof scopes)[number];
 
-/** What may become of the location that an entry stands for, the property of its holder under its name. */
 export const mutabilities = ["ChangesOnItsOwn", "ConstantUnlessWritten", "AlwaysLocked"] as const;
 export type Mutability = (typeof mutabilities)[number];
 
@@ -114,7 +112,6 @@ export const conversionProtocols: Readonly<Record<Conversion, readonly Protocol[
   Dictionary: ["Named"],
 };
 
-// A value inside the accepted type fails these by what it is: a negative index, a text that is no BigInt.
 export const conversionsFailingByValue: readonly Conversion[] = ["ToIndex", "ToBigInt", "Dictionary"];
 
 export const operandUses = [
@@ -179,8 +176,6 @@ export type Freshness = (typeof freshnesses)[number];
 export const callbackTimes = ["Later", "Repeatedly", "PerElement", "Once", "PerEvent"] as const;
 export type CallbackTimes = (typeof callbackTimes)[number];
 
-// Flattened: what is no array is stored, and of an array, or a proxy of one, the elements are.
-// AskedWhetherIterable: an object is asked whether it has @@iterator, going up. Nothing is read off it and nobody keeps it.
 export const callbackResultUses = [
   "Escapes",
   "Ignored",
@@ -192,8 +187,6 @@ export const callbackResultUses = [
 ] as const;
 export type CallbackResultUse = (typeof callbackResultUses)[number];
 
-// What native code does, between the calls and behind the last, to objects that it comes upon only because the function put them
-// where it looks. The first is what a table that says nothing means.
 export const callbackAftermaths = ["WritesIntoWhatItFinds", "TouchesOnlyWhatRowNames"] as const;
 export type CallbackAftermath = (typeof callbackAftermaths)[number];
 
@@ -256,7 +249,6 @@ export type ClassName = string;
 export type LayoutName = string;
 export type SlotName = string;
 export type OperandName = "this" | (string & {});
-// An operand of a signature that names none: the receiver, or the argument at an index.
 export type ConstructedOperand = "this" | number;
 
 export interface CheckedNumber {
@@ -279,7 +271,6 @@ export type TypeSpec =
       class: ClassName;
       contents?: Readonly<Record<SlotName, TypeSpec>>;
       pristine?: readonly PristineAspect[];
-      // Of the class itself. Without it the value may be of any class below the one that is named.
       isOfClassItself?: boolean;
       freshness?: Freshness;
     }
@@ -318,7 +309,6 @@ export type PlaceSpec =
   | { place: "Member"; operand: OperandName; path: MemberPath }
   | { place: "NativeCell"; cell: string };
 
-// The names that are read one after the other, starting at an operand. null stands for every own value.
 export type MemberPath = readonly (string | null)[];
 
 export type KeySpec =
@@ -404,7 +394,6 @@ export type ImplementationSpec =
   | { how: "CachedGetter"; cppClass: string; member: string }
   | { how: "OwnSlot"; structure: string; after: readonly string[] };
 
-// What a C function of the host takes as one parameter in a call that compiled code makes without the function object, and the C++ types that the parameter can have.
 const typesOfValue = ["JSC::EncodedJSValue", "JSC::JSCell*", "JSC::JSObject*", "JSC::JSString*"] as const;
 export const directValueTypes = {
   Realm: ["JSC::JSGlobalObject*"],
@@ -417,25 +406,9 @@ export const directValueTypes = {
   Boolean: ["bool"],
   Int32: ["int32_t"],
   Double: ["double"],
-  // The bytes of a view while the call runs: the address of the first one and how many there are. The function never sees the view, so the row may only let it read and write the contents.
-  Bytes: ["uint8_t*, size_t", "const uint8_t*, size_t"],
-  BytesOfReceiver: ["uint8_t*, size_t", "const uint8_t*, size_t"],
-  // The same for a part of a view. Where the part starts and ends, in bytes, are two more operands behind the others. The generator writes these two: see forms-in-ranges.ts.
-  BytesInRange: ["uint8_t*, size_t", "const uint8_t*, size_t"],
-  BytesOfReceiverInRange: ["uint8_t*, size_t", "const uint8_t*, size_t"],
-  // The characters of a string: the address of the first one, with the top bit set where a character has 16 bits, and how many there are.
-  Characters: ["const uint8_t*, size_t"],
 } as const satisfies Record<string, readonly string[]>;
 export type DirectValue = keyof typeof directValueTypes;
-// These take two general registers.
-export const directValuesInTwoRegisters: readonly DirectValue[] = [
-  "RestOfValues",
-  "Bytes",
-  "BytesOfReceiver",
-  "BytesInRange",
-  "BytesOfReceiverInRange",
-  "Characters",
-];
+export const directValuesInTwoRegisters: readonly DirectValue[] = ["RestOfValues"];
 export const maximumDirectParameterCount = 6;
 export const realmParameter: DirectParameterSpec = { value: "Realm", cppType: "JSC::JSGlobalObject*" };
 
@@ -444,38 +417,26 @@ export interface DirectParameterSpec {
   cppType: string;
 }
 
-/** How an operand is handed over, and what the caller has proven it to be. */
 export interface DirectForm extends DirectParameterSpec {
   type: TypeSpec;
 }
 
-/** A C function that takes the operands untested. It answers a value, or nothing with an exception. */
 export interface DirectEntrySpec {
   symbol: string;
-  /** As it stands beside the definition of the function. */
   declaration: string;
-  /** They declare what the declaration is spelled with. */
   headers: readonly string[];
   parameters: readonly DirectParameterSpec[];
-  /** A C++ expression: where in the cell of the receiver the pointer to what it wraps lies. */
   offsetOfNativeObject?: string;
-  /** The function answers the fields of the layout that the row returns, in registers, and makes no object. Compiled code calls it where the program only reads the fields. */
-  returnsFields?: boolean;
-  /** The function answers a `double`, in a register for numbers, and nothing is boxed. It cannot fail. A NaN that it answers is the one that arithmetic makes. */
   returnsNumber?: boolean;
 }
 
 export interface NativeCodeRef {
-  /** As C++ names the function where Bun's, JavaScriptCore's and WebCore's names are in scope. */
   symbol: string;
-  /** Declares it. Without one, a name with a namespace is declared in that namespace and any other is a C function. */
   header?: string;
-  /** The name of the function object, under which a stack trace lists the function. Without one no stack trace lists it. */
   name?: string;
 }
 
 export type ConditionSpec =
-  /** calledOn: and the receivers of the call list the object of that entry. A receiver nobody knows is not taken for it: should it be the entry at run time, what hangs on the row was not compiled and throws the error that names it. */
   | { operand: OperandName; isOneOf: readonly string[]; startsWith: readonly string[]; calledOn?: BuiltinPath }
   | { operand: OperandName; hasProperty: string }
   | { buildAdmitsRuntimeCode: true }
@@ -486,21 +447,16 @@ export type ConditionSpec =
 
 export type FeatureUseSpec = FeatureName | { feature: FeatureName; when: ConditionSpec };
 
-/** What native code has at hand where no call of a built-in is under way: a value that it makes, what lies in a native cell, or something that nobody describes. */
 export type HostValueSpec = Extract<PlaceSpec, { place: "NewValue" | "NativeCell" | "NativeMemory" }>;
 
 export interface HostCallSpec {
   times: CallbackTimes;
   thisValue?: HostValueSpec;
-  /** Without a list native code passes what the annotations of the callee's own parameters say. */
   arguments?: readonly HostValueSpec[];
-  /** What may follow the listed arguments, any number of times. */
   otherArguments?: HostValueSpec;
-  /** Without a list anybody may get what the call answers. An empty list: native code drops it. */
   result?: readonly HostUseSpec[];
 }
 
-/** One thing that native code does with a value that it got hold of by itself: an export that it read from a module, the object of a function of the library, what a call of its own answered. */
 export type HostUseSpec =
   | { read: "Inspected" }
   | { read: "Called"; call?: HostCallSpec }
@@ -516,24 +472,20 @@ export interface ExportReadSpec {
 
 export interface ModuleLoadSpec {
   module: string;
-  /** A bare name: nothing says what native code does with the export, so anybody may get it. */
   exports?: readonly (string | ExportReadSpec)[];
   when?: ConditionSpec;
 }
 
-/** Without uses native code calls the function with what the annotations of its parameters say, and anybody may get what it answers. */
 export type CalledFunctionSpec =
   FunctionRef | { function: FunctionRef; when?: ConditionSpec; uses?: readonly HostUseSpec[] };
 
 export interface HostObjectFieldSpec {
-  /** null: every other name and index. */
   name: string | null;
   values: readonly HostValueSpec[];
 }
 
 export interface HostObjectInternalFieldSpec {
   index: number;
-  /** What native code does with what code of the library stores there. */
   uses: readonly HostUseSpec[];
 }
 
@@ -547,7 +499,6 @@ export interface NativeMentionSpec {
 export interface NativeCallerSpec extends NativeMentionSpec {
   caller: string;
   onBehalfOf: readonly CallingEntrySpec[];
-  /** What this caller does with the functions, where more is known of it than of the callers beside it. */
   calls?: readonly CalledFunctionSpec[];
 }
 
@@ -557,29 +508,20 @@ export interface SignatureColumns {
   writes?: readonly Heap[];
   runsOnlyOperandCode?: boolean;
   readsStateBeforeConversions?: boolean;
-  // The message of a refusal names the operand or the member that is refused and prints nothing of its value.
   refusalsPrintNoValue?: boolean;
-  // A faster form of the next overload for some of its operands. The next one is right for them too, so a call whose operands are not known well enough to tell takes that one.
   isSpecialCase?: boolean;
-  // Nothing proves the result type: native code may hand back any value. Compiled code expects the type and tests the value where it arrives.
   resultIsDeclaredOnly?: boolean;
-  // Native code tests the result where it leaves, and throws a TypeError of its own in place of one outside the type.
   resultIsHeld?: boolean;
   range?: { rule: RangeRule; operand?: OperandName };
   substringOf?: OperandName;
-  /** The result is a new view of the class of this operand over the same memory: its elements from `start` to `end`, which count from the end where they are negative. */
   rangeOf?: OperandName;
   typedResultForm?: { form: Exclude<TypedResultForm, "None">; source: OperandName };
   iterates?: { operand: OperandName; kind: IterationKind };
   prototypeSource?: OperandName;
   implementation?: ImplementationSpec;
-  /** The C function behind the native function of the entry, which converts the operands and calls it. The operands of this overload need no conversion. */
   directEntry?: DirectEntrySpec;
   model?: FunctionRef;
   overloadUsesFeature?: FeatureUseSpec | readonly FeatureUseSpec[];
-  fieldsForm?: InlineBuiltinName;
-  prefixForm?: InlineBuiltinName;
-  listForm?: InlineBuiltinName;
 }
 
 export interface StaticTableRef {
@@ -587,60 +529,32 @@ export interface StaticTableRef {
   table: string;
 }
 
-// What code of the engine asks about an entry, and few entries have. The table lists the entries of each mark, so the engine names none of them.
-// In the order of BuiltinMark in AOTBuiltinTable.h: BuiltinTable::marked() searches the list by that order.
 export const builtinMarks = [
-  // A flag of the command line or an option of the engine puts it on the global object or on process.
   "IsAddedByOption",
-  // The realm of a run may lack it: an option of the engine takes it away, or a host that is built without some of its parts. So nothing is decided at the build that hangs on its being there.
   "MayBeAbsent",
-  // Compiles text: a script or a function in the global scope of this realm, or code in a realm of its own, which has of this one what it is handed.
   "EvaluatesTextInGlobalScope",
-  // Who reads it has a loader of modules in hand.
   "HoldsLoader",
-  // Replaces a member of its first operand by a function of its own.
   "IsSpy",
-  // Whoever goes over the enumerable properties of its holder passes it by: Object.keys, values, entries and assign, a spread, JSON.stringify.
   "IsNotEnumerable",
-  // It, or what it makes, runs the jobs that wait before a call returns: the reactions of promises, and the modules that an import() loads.
   "RunsWaitingJobs",
-  // It stands under a name of methods that are called with what the host loads at start-up. For this one the host loads nothing.
   "IsCalledWithoutStartupLoads",
-  // Its instances have such a method, whether or not the table has their prototype object.
   "InstancesHaveMethodCalledWithStartupLoads",
-  // The native code it loads only receives and returns numbers and pointers. It never gets a JSValue or the global object, so it cannot create objects, register symbols or touch properties.
   "LoadsCodeWithoutJSAccess",
-  // What it answers loads files with code under names that the build does not see, and the table has no entry for the function that does. So the read itself counts as such a load.
   "ReadLoadsCodeByName",
-  // The file at the path that it holds is the main module: `require.main` and `process.mainModule` answer the module object of that file.
   "HoldsPathOfMainModule",
-  // The host makes the value at the first read, and may put another in its place later. It tells the engine when it does: AOT::hostDidReplaceProperty(). So compiled code keeps the value, and reads what it keeps each time.
   "IsReplacedByHostThatSaysSo",
-  // The host calls what the program has stored under it for each name that require() or require.resolve() resolves at run time: on its holder, with the module object of the file that asks. What it answers is the path.
   "IsResolverThatLoaderCalls",
-  // The host calls what the program has stored under it for each require() that is answered at run time: on the module object of the file that asks. What it answers is the module.
   "IsRequireThatLoaderCalls",
-  // Calling it may terminate the process, so code after the call may never run.
   "MayTerminateProcess",
-  // Puts what its second operand answers in the place of the module that its first operand names.
   "MocksModule",
-  // Puts a function of its own under each name of its first operand on the holders of matchers.
   "ExtendsMatchers",
-  // Stores values of the test runner in the place of the entries marked IsReplacedByFakeTimers, and of no other entry.
   "FakesTimers",
-  // The function marked FakesTimers stores a value of the test runner in its place. The mark stands on the member as its holder lists it, not on another entry that is the same object.
   "IsReplacedByFakeTimers",
-  // How far the code reaches that an entry with runsUnseenCode lets in. Without a mark it reaches what a text reaches that is evaluated in this realm: the global scope and what it is handed,
-  // and a loader where an operand of the entry names a module. The locks are laid before any code runs in the realm and turn away whoever writes, so they bind that code too.
-  // With this mark the build counts on no lock beside the entry. Whoever marks an entry says there by which road its code gets past the locks.
   "RunsCodeThatLocksDoNotBind",
-  // The code that it lets in has a loader, or answers in the loader's place, though no operand of the entry names a module.
   "RunsCodeWithLoader",
-  // It runs no code. It answers objects that native code keeps alive, whether or not a row hands them out: what lies in a native cell, a namespace object, the object of a module.
   "HandsOutWhatNativeCodeHolds",
-  // It keeps its second operand. In front of each look by value under the symbol that is its first operand the run time calls that function on the object that has a field under the symbol.
-  // An access by name finds the field as it is. So the build has the accesses that the library writes under such symbols go by name all together, or none of them.
   "RegistersPreparationOfHolders",
+  "AnswersWithPathOfModule",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -648,42 +562,31 @@ export interface EntryColumns {
   mutability?: Mutability;
   deterministic?: boolean;
   requiresHolderAsThis?: boolean;
-  // Makes a second realm that runs the compiled program in the VM of its caller: one whose method table has a module host.
   startsInstance?: boolean;
   privateAlias?: boolean;
   defaultExport?: boolean;
   constructable?: boolean;
-  /** A row of a static table that its holder takes among its own properties when the name is first looked for, behind those it has by then. */
   addedAtFirstRead?: boolean;
-  /** Such a row without DontEnum: who goes over the enumerable properties of the holder comes by it. */
   addedAsEnumerable?: boolean;
   hasSetter?: boolean;
   length?: number;
   nativeSymbols?: readonly string[];
-  /** The native function behind the getter, one of nativeSymbols. It takes the realm, the receiver and the name of the property, and does not test the receiver. */
   customGetter?: string;
-  /** The C function that customGetter calls with what its receiver wraps, and does nothing else. */
   directEntryOfGetter?: DirectEntrySpec;
-  /** The same for a store: what the setter of the table calls with what its receiver wraps and the value. */
   directEntryOfSetter?: DirectEntrySpec;
   directEntryOfMethod?: DirectEntrySpec;
   creationSymbol?: string;
-  /** The native code of the function object. A callee with this code is the function of the entry, whoever made the object. `length` goes with it. */
   functionObjectCode?: NativeCodeRef;
   linkTimeConstant?: string;
   usesFeature?: FeatureUseSpec | readonly FeatureUseSpec[];
-  /** On a class whose instances only its constructor makes: the members of its prototype use the features of the class too. */
   prototypeUsesFeature?: boolean;
   runsUnseenCode?: boolean | ConditionSpec;
-  /** The function has own properties that the table does not list, or something else than Function.prototype above it. */
   hasUndeclaredMembers?: boolean;
   marks?: readonly BuiltinMark[];
-  /** A call of it loads machine code that nobody has seen. A report names the entry at this path, which is what a program writes. */
   loadsMachineCodeAs?: BuiltinPath;
   loads?: readonly ModuleLoadSpec[];
   callsFunctions?: readonly CalledFunctionSpec[];
   appendForm?: InlineBuiltinName;
-  /** The function that does the same where the argument is an object literal that nobody else sees and that has no member but `names`. */
   literalPartsForm?: { argument: number; names: readonly string[]; path: BuiltinPath };
   boxedCallStub?: BoxedStubName;
   platforms?: readonly TargetPlatform[];
@@ -693,9 +596,7 @@ export interface SlotSpec {
   heap: Heap;
   contentsSlot: ContentsSlot | null;
   holds?: TypeSpec;
-  /** The number under which the operations of the IR name the slot: GetInternalField, the column fieldOfHolder. */
   internalField?: number;
-  /** What a step of the iterator hands out lies here from the time the iterator is made: the column `iterates` of the row that makes it says what that is. */
   holdsWhatStepsHandOut?: boolean;
 }
 
@@ -716,37 +617,22 @@ export type PristineTest = (typeof pristineTests)[number];
 export interface ClassColumns {
   extends?: ClassName;
   jsType?: string;
-  /** Other objects have cells of that type too, or take it in place, so no test tells the instances. What has a cell of another type is still no instance. */
   cellTypeIsShared?: boolean;
   sharingMode?: SharingMode;
   isPrimitiveWrapper?: boolean;
   isNeverPristine?: boolean;
-  /** How compiled code tests that an instance has gained no property and kept its prototype. Mark: start-up marks the Structure of new instances. InstanceStructure: the cell has the Structure that the realm gives a new instance. */
   pristineTest?: PristineTest;
   hasClosureInstances?: boolean;
-  /** Native code makes no instance of the class but the entries that inherit from its prototype, so no result that is left undescribed is one. */
   instancesAreEntries?: boolean;
-  /** The constructor puts the characters of a string on an instance, each an own read-only property under its index. The classes below do the same. */
   definesCharactersOnNewInstances?: boolean;
-  /**
-   * Every own property that native code puts on an instance, however the instance is made: by the constructor, by a built-in that answers with one, by an operation of the language, for a class below.
-   * The lists of the classes above and the members under `instance` are added. A list is a claim, an empty one too, and a test holds each class to it.
-   * Left out: nobody has said. A read that finds nothing on an instance then answers with a value nobody knows.
-   */
   namesDefinedOnNewInstances?: readonly string[];
-  /** What native code puts under some of those names: primitives. A name without a type may hold anything. */
   typesOfNamesDefinedOnNewInstances?: Readonly<Record<string, TypeSpec>>;
-  /** Property to static member: native code calls the function the program stored under the member on the constructor to make the property. */
   namesMadeByStaticMembers?: Readonly<Record<string, string>>;
-  /** What native code looks up on an instance and the objects above it whenever it describes the instance. It calls nothing that it finds. */
   namesReadToDescribeInstances?: readonly string[];
-  /** The constructor reads `prototype` from new.target and nothing else, and it calls nothing that it finds on the new object, whatever code of its operands it runs. */
   constructorOnlyReadsPrototypeOfNewTarget?: boolean;
-  /** The only member of the new object that the constructor reads. It calls it once for each value of its iterable operand. */
   constructorAdder?: string;
   instanceCppClass?: CppClassRef;
   prototypeCppExpression?: string;
-  /** The Structure of a new instance, or null until the realm has created it: the expression creates nothing. */
   instanceStructureCppExpression?: string;
   constructorCallee?: Exclude<CalleeKind, "None" | "CustomGetter">;
   slots?: Readonly<Record<SlotName, SlotSpec>>;
@@ -755,15 +641,12 @@ export interface ClassColumns {
   lockedObjects?: readonly ("constructor" | "prototype")[];
   lockedMembers?: readonly ("constructor" | "prototype")[];
   closedToOtherNames?: readonly ("constructor" | "prototype")[];
-  /** The prototype object has the members that the table lists under it and no other. aotBuiltinMismatches() compares its own keys. */
   prototypeListsAllMembers?: boolean;
   openNamesOfPrototype?: readonly string[];
   openNamesOfConstructor?: readonly string[];
-  /** Native code that was not handed the prototype looks up these names on it and no other, and it stores to none. */
   namesReadByNativeCodeOnPrototype?: readonly string[];
   hasConstructor?: boolean;
   hasPrototype?: boolean;
-  /** False: the constructor has no property `prototype`. The prototype object lies above the instances, and no path from the constructor leads to it. */
   constructorHoldsPrototype?: boolean;
   constructorSignaturesOf?: ClassName;
 }

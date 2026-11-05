@@ -42,7 +42,6 @@ static void generateNewClass(StraightEmitter& emitter, const BodyValue& value)
     emitter.define(value);
 }
 
-// leaveMemberToClassRecord() of walk/AOTWalkReplacements.cpp, question for question: every body of a function leaves out the same definitions.
 static bool classRecordCreatesMemberInStraightForm(StraightEmitter& emitter, const BodyValue& value)
 {
     auto definition = value.as<Opcode::DefineMethod>();
@@ -102,7 +101,6 @@ static void generateDefineMethod(StraightEmitter& emitter, const BodyValue& valu
         return;
     }
 
-    // The cell of the key is made where the operation takes it.
     constexpr GPRReg registerOfProperty = operationArgumentGPR(2);
     StubKey makesCell = createConstant(CreatedConstant::Key);
     std::optional<StubKey> makesCellInRegister = tryWithOperandRegister(makesCell, registerOfProperty);

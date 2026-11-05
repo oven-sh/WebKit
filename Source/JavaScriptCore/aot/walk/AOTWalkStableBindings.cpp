@@ -3,12 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// A BINDING IS NO OBJECT. Nothing outside the scope of its declaration can name a variable of a module or a scope slot, so the front end's binder sees every store into one.
-// What it has found stands on the wire: IsImmutable (a `const`, a declared function, a `let` that nothing assigns again), and the established type of a declared function. Link is asked nothing here.
-//   `function outer() { function a() { return b() + 1 } function b() { .. } }`: whoever calls `b` out of the scope slot has the scope that `b` captured at hand.
-//   `const cfg = load(); function f() { a(cfg.x); g(); b(cfg.x) }`: what a read has found in such a binding is what every later read finds.
-// At a suspension: what a read has found is forgotten. The lowering of a decorated class stores into the name of the class twice, and between the two only code runs that the storing body waits for.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -23,9 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- The scope at hand
-
-// A declared function is made where its scope is entered, over that scope, and is stored into it: BodyVerifier holds every store into such a field to that.
 Reference findCaptureAtHand(Walker& walker, FunctionID callee, uint32_t capture, Reference closure)
 {
     if (!closure || !closure.isValue() || !walker.has(Mechanism::DirectCalls))
@@ -47,8 +38,6 @@ Reference findCaptureAtHand(Walker& walker, FunctionID callee, uint32_t capture,
     return code.isConstant(holder) ? Reference::constant(holder) : Reference::value(holder);
 }
 
-// ---- What a read has found
-
 enum class DefinitionOfStableVariable : uint8_t { IsRunByModule, IsPutOff };
 
 static bool variableStaysAsFilled(const Walker& walker, VariableID id, DefinitionOfStableVariable definition = DefinitionOfStableVariable::IsRunByModule)
@@ -64,7 +53,6 @@ static bool variableStaysAsFilled(const Walker& walker, VariableID id, Definitio
     const Module& module = program.at(variable.module);
     if (!isEvaluatedAtMostOnceOf(module.kind) || module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeEvicted, ModuleFlags::MayBeMocked }))
         return false;
-    // No operation stands for such a store, or what lies in the word is a mark.
     const Plan& plan = walker.plan();
     if (plan.runTimeMayFill(id))
         return false;
@@ -79,12 +67,9 @@ static bool scopeSlotStaysAsFilled(const Walker& walker, FieldReference field)
 
 static bool keepsNotesOfStableBindings(const Walker& walker)
 {
-    // A build that checks proofs builds each read, so that what it finds can be held against them.
     return walker.has(Mechanism::Folding) && !walker.checksProofs();
 }
 
-// A binding with a dead zone shows by itself that its store has run. A `var`, and whatever else is made with undefined in it, reads as undefined until then:
-// the body that declares it may be a generator, which whoever holds it steps between two reads, or its store may be put off.
 static bool isValueOfFilledBinding(Walker& walker, Reference value, bool hasDeadZone)
 {
     TypeID type = value ? walker.typeOf(value) : TypeID();
@@ -115,7 +100,6 @@ void noteValueOfStableBinding(Walker& walker, Reference environment, FieldRefere
         noteKnown(walker, KnownNote::ValueKeptByPlace, environment, { }, field.field, LocationMasks(), value.bits(), true);
 }
 
-// `const table = { .. }` at the top of a module, made by whoever reads it first. The word holds a mark until then, so only what such a read has found behind its test, or made, is noted.
 void noteObjectOfVariablePutOff(Walker& walker, VariableID variable, Reference object)
 {
     if (keepsNotesOfStableBindings(walker) && variableStaysAsFilled(walker, variable, DefinitionOfStableVariable::IsPutOff) && isValueOfFilledBinding(walker, object, hasDeadZone(walker, variable)))
@@ -142,7 +126,6 @@ Reference valueOfStableVariable(Walker& walker, VariableID variable, TypeID wide
     return widest && type && walker.types().isSubset(type, widest) ? kept : Reference();
 }
 
-// Null: no read, store or check on every way to here has seen the binding filled.
 Reference valueOfStableBinding(Walker& walker, const BodyValue& read)
 {
     if (!keepsNotesOfStableBindings(walker))
@@ -158,7 +141,6 @@ Reference valueOfStableBinding(Walker& walker, const BodyValue& read)
     }
     if (!noted)
         return { };
-    // What stands for the read claims no more than the read would.
     Reference kept = Reference::fromBits(static_cast<uint32_t>(*noted));
     TypeID widest = widestTypeOfOperation(walker, read);
     TypeID type = walker.typeOf(kept);

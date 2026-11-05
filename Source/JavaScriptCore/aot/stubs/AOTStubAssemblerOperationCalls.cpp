@@ -63,7 +63,6 @@ void StubAssembler::prepareCallOperation()
 
 void StubAssembler::callOperationAndReturn(Entry entry, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead savedRegistersAreRead)
 {
-    // An operation that cannot throw leaves the register that reports an exception undefined.
     bool exceptionIsInRegister = operationCall.returns == OperationCall::Returns::Value || operationCall.returns == OperationCall::Returns::Void;
     RELEASE_ASSERT(!operationCall.checksException || !exceptionIsInRegister || effectsOf(entry).mayThrow);
     OperationCall call = operationCall;
@@ -79,7 +78,6 @@ void StubAssembler::callOperationAndReturn(Entry entry, const OperationCall& ope
     emitOperationCallAndReturn(entry, call, beforeReturn, savedRegistersAreRead);
 }
 
-// A stub may hand an operand back as its result: then the register comes back by being saved.
 bool StubAssembler::resultsComeFromOperation(const OperationCall& operationCall) const
 {
     RegisterSet returned;
@@ -116,7 +114,6 @@ bool StubAssembler::resultsInFPRsComeFromOperation(const OperationCall& operatio
 void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation, const OperationCall& givenCall, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead savedRegistersAreRead)
 {
     OperationCall operationCall = givenCall;
-    // A variant that names the register of its result gets the value of the operation there, and the usual register comes back as it was.
     if (m_key.operandRegister() && namesRegisterOfResult(descriptorOf(m_key.family()).operandRegisters) && operationCall.returns == OperationCall::Returns::Value && !operationCall.valueDestination)
         operationCall.valueDestination = result();
     const bool savesFPRs = operationCall.saves == OperationCall::Saves::CallerSavedRegisters || operationCall.saves == OperationCall::Saves::CallerSavedGPRsAndFewFPRs;
@@ -218,7 +215,6 @@ StubAssembler::OperationToCall StubAssembler::setUpOperationCall(const CalledOpe
     }
     loadFirstArgument(operationCall.firstArgument);
 #if CPU(X86_64)
-    // The call reads the operation from the table.
     return WTF::switchOn(operation,
         [&](Entry entry) {
             recordCall(entry);
@@ -229,7 +225,6 @@ StubAssembler::OperationToCall StubAssembler::setUpOperationCall(const CalledOpe
             RELEASE_ASSERT(noOverlap(offset, operationArgumentGPR(0), operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3)));
             m_recording.hasUnknownEffects = true;
 #if ASSERT_ENABLED
-            // prepareCallOperation() takes the register of the offset.
             static_assert(assertionScratchGPR == preservingCallImmediateGPR);
             loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), function);
             add64(offset, function);
@@ -246,7 +241,6 @@ StubAssembler::OperationToCall StubAssembler::setUpOperationCall(const CalledOpe
 #endif
 }
 
-// No stub has an operand in it, and an operation does not preserve it.
 #if CPU(X86_64)
 static constexpr GPRReg scratchAfterOperation = CCallHelpers::s_scratchRegister;
 #else
@@ -278,7 +272,6 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
 #endif
     } else
         emitFunctionEpilogueWithEmptyFrame();
-    // A stub that another stub called leaves the poll to its caller.
     const bool polls = operationCall.pollsBeforeReturning && !callerIsStub;
     static_assert(noOverlap(scratchAfterOperation, GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2, instanceGPR));
     JumpList exceptionOrPoll;
@@ -326,7 +319,6 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
 }
 
 #if CPU(X86_64)
-// The fault handler pushed the frame pointer of a frameless caller, then the address to resume at.
 void StubAssembler::emitFramelessCallerEpilogue()
 {
     RELEASE_ASSERT(key().callerFrame() == CallerFrame::Frameless);
@@ -363,7 +355,6 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     const bool returnsDouble = operationCall.returns == OperationCall::Returns::Double;
     const std::optional<GPRReg> valueDestination = operationCall.valueDestination;
     const unsigned numberOfSpillSlots = operationCall.spilledArguments ? std::max(operationCall.spilledArguments->count, 1u) : 0;
-    // The operation keeps any other register, so the value is moved there while it still lies in its own.
     const bool valueGoesThroughFrame = valueDestination && std::ranges::find(saved, *valueDestination) != std::end(saved);
     RegisterSet restored;
     for (GPRReg reg : saved) {
@@ -377,10 +368,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
             restored.add(fpr, IgnoreVectors);
     });
 
-    // The arguments that go in memory lie at the stack pointer, the registers below the frame pointer.
     emitFunctionPrologue();
-    // The frame has room for what is saved and for no more: a word that nobody writes holds what an earlier frame left there, and the operation may collect.
-    // The floating-point registers lie nearest: a displacement of one byte reaches sixteen words below the frame pointer, and as many above the stack pointer.
     std::array<unsigned, 16> indexOfFPR { };
     std::array<unsigned, numberOfGPRs> indexOfGPR { };
     unsigned numberOfSlots = 0;
@@ -476,7 +464,6 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     pollBeforeReturningFromOperation(afterPoll);
 }
 #else
-// The fault handler pushed a frame record for a frameless caller. The link register holds the address to resume at.
 void StubAssembler::emitFramelessCallerEpilogueAndReturn(GPRReg scratch)
 {
     RELEASE_ASSERT(key().callerFrame() == CallerFrame::Frameless && m_savedRegisterStack.isEmpty());
@@ -501,9 +488,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     auto gpr = [](unsigned i) { return static_cast<GPRReg>(ARM64Registers::x0 + i); };
     auto fpr = [](unsigned i) { return static_cast<FPRReg>(i < 8 ? ARM64Registers::q0 + i : ARM64Registers::q16 + (i - 8)); };
     const RegisterSet unsavedFPRs = operationCall.saves == OperationCall::Saves::CallerSavedGPRsAndFewFPRs ? floatingPointRegistersLostToAccessors(StubCallee::Operation) : RegisterSet();
-    // They are stored and loaded two at a time.
     auto savesFPR = [&](unsigned i) { return i < numberOfFPRs && (!unsavedFPRs.contains(fpr(i & ~1u), IgnoreVectors) || !unsavedFPRs.contains(fpr(i | 1u), IgnoreVectors)); };
-    // The frame has room for what is saved and for no more: a word that nobody writes holds what an earlier frame left there, and the operation may collect.
     std::array<unsigned, 24> slotOfFPR { };
     unsigned numberOfSlots = numberOfGPRs;
     for (unsigned i = 0; i < numberOfFPRs; i += 2) {
@@ -521,7 +506,6 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         if (savesFPR(i))
             restored.add(fpr(i), IgnoreVectors);
     }
-    // Compiled code pins x18 and no stub names it, so nobody sees an operation change it.
     restored.add(ARM64Registers::x18);
 
     emitFunctionPrologue();
@@ -547,7 +531,6 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     if (polls)
         loadPtr(pollIsDueWord(), scratch);
     if (testsException) {
-        // The registers that report the exception are restored below.
         const GPRReg exception = returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR;
         if (returnsDouble) {
             loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
@@ -603,12 +586,10 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
 void StubAssembler::emitOperationTailCall(const CalledOperation& operation, OperationCall::FirstArgument firstArgument)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);
-    // After a tail call there is no place to poll for the error of a failed allocation. A front end was called by a stub that polls.
     if (const Entry* entry = std::get_if<Entry>(&operation); entry && mayFailToAllocate(*entry, firstArgument) && !effectsOf(*entry).mayThrow && !isRawOperation(*entry)) {
         callOperationAndReturn(*entry, { .firstArgument = firstArgument, .checksException = false });
         return;
     }
-    // No operand is live here: the arguments are in place, and this is none of their registers.
     constexpr GPRReg function = gprOf(StubRegister::Operation);
     loadFirstArgument(firstArgument);
     loadCalledOperation(operation, function);

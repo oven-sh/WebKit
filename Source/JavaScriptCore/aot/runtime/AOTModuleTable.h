@@ -35,7 +35,6 @@ public:
 
     const ModuleData& data(ModuleID module) const { return m_modules[checkedIndex(module)]; }
     std::span<const ModuleRequestData> requests(ModuleID module) const { return listOf(m_tables->moduleRequests(), module, &ModuleData::firstRequest); }
-    // What is evaluated in front of the module.
     auto imports(ModuleID module) const { return requests(module) | std::views::filter(isImport); }
     std::span<const ModuleRequestData> allRequests() const { return m_tables->moduleRequests(); }
     uint32_t endOfRequests(ModuleID module) const { return m_modules[checkedIndex(module) + 1].firstRequest; }
@@ -52,6 +51,12 @@ public:
         std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
         return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? entries.first(entries.size() - 1) : entries;
     }
+    bool someExportStaysIn(ModuleID module) const
+    {
+        return std::ranges::any_of(exports(module), [](const ModuleExportData& entry) {
+            return entry.staysIn;
+        });
+    }
     std::optional<SlotData> wordOfMock(ModuleID module) const
     {
         std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
@@ -60,45 +65,34 @@ public:
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
-    // The export statement that asks for the name. An import asks for any other one.
     const ExportStatementData* findExportStatement(const RequiredNameData&) const;
-    // Of an entry that shows a variable. None: the build knows of no module that a mock may stand in place of.
-    std::optional<ModuleID> moduleThatDeclares(const ModuleExportData&) const;
-    // The table of exports has no entry for such a name.
     std::span<const AmbiguousExportData> ambiguousExports(ModuleID) const;
     bool isAmbiguousExport(ModuleID, StringView name) const;
     bool hasSourceStamps() const { return !m_tables->sourceStamps().empty(); }
     std::optional<uint64_t> sourceStamp(ModuleID) const;
+    std::span<const NameOfStatementData> namesOfStatements(ModuleID) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
-    // Of a module that imports, itself or through what it imports, a name that the build did not find or a file that is no program.
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;
 
     std::optional<ModuleID> findByPath(StringView publicPath) const { return findByPath(publicPath, publicPath.hash()); }
     std::optional<ModuleID> findByPath(StringView publicPath, unsigned hashOfPath) const;
-    // A file that only an attribute asks for stands under its path, a question mark and what the host calls the form.
     bool holdsFormThatAttributeAsksFor(StringView publicPath) const;
     Vector<ModuleID, 2> formsThatAttributesAskFor(StringView publicPath) const;
     bool holdsPathStartingWith(StringView start) const;
     std::span<const UncompiledModuleData> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
-    // Of a module of uncompiled code. Null: the statements that name it say nothing of its type.
     String typeAttribute(ModuleID) const;
     std::optional<ModuleID> findRuntimeSource(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
-    // ES modules import a CommonJS file through a module that evaluates the file first of all and then takes copies of what it exports. Answers the file for such a module.
     std::optional<ModuleID> fileBehindFace(ModuleID module) const { return data(module).isFaceOfFile() ? std::optional(requests(module).front().targetModule()) : std::nullopt; }
     std::optional<ModuleID> faceOfFile(ModuleID) const;
     const CompiledRuntimeFunctionData* findRuntimeFunction(uint32_t id) const;
-    // Walks the table: for what happens rarely.
     bool isRuntimeFunction(FunctionID) const;
 
-    // The characters of a path that is whole in the image are not copied.
     String pathText(ModuleID) const;
     String displayPathText(ModuleID) const;
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
-    // The path of each program file with code that starts with `start`, in sorted order.
     IterationStatus forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
-    // False: no module that is listed by path has a path that starts so.
     bool mayHoldPathStartingWith(StringView start) const;
 
 private:
@@ -134,16 +128,6 @@ inline const IndirectExportData& ModuleTable::indirectExport(const ModuleExportD
     std::span<const IndirectExportData> indirectExports = m_tables->indirectExports();
     RELEASE_ASSERT(moduleExport.indirectExport < indirectExports.size());
     return indirectExports[moduleExport.indirectExport];
-}
-
-inline std::optional<ModuleID> ModuleTable::moduleThatDeclares(const ModuleExportData& moduleExport) const
-{
-    std::span<const uint32_t> modules = m_tables->modulesThatDeclareExports();
-    if (modules.empty())
-        return std::nullopt;
-    size_t number = &moduleExport - m_tables->moduleExports().data();
-    RELEASE_ASSERT(number < modules.size());
-    return ModuleID(modules[number]);
 }
 
 inline const ExportStatementData* ModuleTable::findExportStatement(const RequiredNameData& requiredName) const

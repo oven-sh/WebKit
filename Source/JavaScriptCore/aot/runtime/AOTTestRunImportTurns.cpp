@@ -21,14 +21,12 @@
 
 namespace JSC { namespace AOT {
 
-// queueStepOfImport() of AOTModules.cpp.
 static void queueStepOfImportInImportTurns(JSPromise* importPromise, ModuleID module, uint8_t stepsLeft)
 {
     JSGlobalObject* realm = importPromise->realm();
     realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, jsNumber(module.index()), JSValue());
 }
 
-// settleAsLoaderDoes() of AOTModules.cpp.
 static void settleAsLoaderDoesInImportTurns(JSGlobalObject* realm, JSPromise* promiseOfProgram, JSPromise* loaded)
 {
     VM& vm = realm->vm();
@@ -38,17 +36,15 @@ static void settleAsLoaderDoesInImportTurns(JSGlobalObject* realm, JSPromise* pr
         promiseOfProgram->resolve(realm, vm, loaded);
 }
 
-// `import("./slow"); await vi.dynamicImportSettled()`
 void Modules::tellHostOfImport(JSPromise* promise, const String& path)
 {
     if (auto* didStartImport = host().didStartImport; didStartImport && promise->status() == JSPromise::Status::Pending)
         didStartImport(m_instance.globalObject, promise, path);
 }
 
-// As the host decides where it is asked to fetch a file for an import. While a require() loads a graph it reads every text itself, also for an import() that is called meanwhile.
 bool Modules::isTextReadOnOtherThread(ModuleID file)
 {
-    return host().callInLaterTurn && isFileOfProgram(file) && !m_instance.vm->synchronousModuleQueue() && !hostLoadsSynchronously(file);
+    return host().callInLaterTurn && isFileOfProgram(file) && !m_instance.vm->synchronousModuleQueue() && !isFetchedInsideCall(file);
 }
 
 bool Modules::isTestRun() const
@@ -61,7 +57,6 @@ bool Modules::loadsAsExecutableDoes() const
     return host().holdsTextsOfProgram && host().holdsTextsOfProgram(m_instance.globalObject);
 }
 
-// `bun test` reads a text on another thread, so what a call asks for comes a turn later: behind the `describe` callbacks of a test file, behind the end of a test that does not wait for it.
 bool Modules::hasTextAtHand() const
 {
     return !m_innermostFilesBeingRun && m_textsOnTheirWay.isEmpty() && loadsAsExecutableDoes() && (!isTestRun() || m_isInJobsBehindDelivery);
@@ -72,7 +67,6 @@ bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
     ModuleID file = fileOf(module);
     if (!isTextReadOnOtherThread(file))
         return false;
-    // The loader has the text of whatever it has come to, and what a require() has begun is not begun by this call.
     if (isCommonJSFileOrFace(module)) {
         for (ModuleID fileOrFace : { module, file }) {
             if (status(fileOrFace) != ModuleStatus::Unlinked && status(fileOrFace) != ModuleStatus::Linked)
@@ -92,7 +86,6 @@ bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
 void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* requested, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller)
 {
     VM& vm = *m_instance.vm;
-    // What a file asks for while a graph is loaded stands in line, and so does whatever is asked for while a text is on its way.
     if (m_innermostFilesBeingRun || !m_textsOnTheirWay.isEmpty()) {
         std::optional<ModuleID> fileThatCalls = m_innermostFilesBeingRun ? fileOrFaceEvaluatedIn(*m_innermostFilesBeingRun) : std::nullopt;
         holdText(promise, module, requested, referrerAsyncOrder, fileThatCalls ? turnInWhichTextCame(*fileThatCalls) : m_turnOfTexts);
@@ -107,7 +100,6 @@ void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* 
     host().callInLaterTurn(m_instance.globalObject);
 }
 
-// A text is held in line. The calls that wait for a turn alone came ahead of it, and no call overtakes a text that is on its way.
 void Modules::putCallsThatWaitApartInLine()
 {
     if (m_textsThatWait.isEmpty()) [[likely]]
@@ -116,7 +108,6 @@ void Modules::putCallsThatWaitApartInLine()
         size_t index = m_textsOnTheirWay.size();
         while (index && m_textsOnTheirWay[index - 1].place > text.place)
             --index;
-        // As startImportInLaterTurn().
         if (!text.requestedRecord)
             m_modulesOfQueuedImports.set(text.module.index());
         m_textsOnTheirWay.insert(index, TextOnItsWay { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder, std::nullopt });
@@ -145,7 +136,6 @@ bool Modules::deliverFirstTextThatWaits()
         return false;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     JSPromise* promise = text.promise.get();
-    // The host says when they have run: no job of the run time's own stands among those of the program meanwhile.
     m_isInJobsBehindDelivery = true;
     if (text.jobsBehindFirstCall) {
         m_callsToMakeAgain.append(WTF::move(text));
@@ -191,7 +181,6 @@ bool Modules::makeCallAgain(JSPromise* promise)
     size_t index = m_callsToMakeAgain.findIf([&](const TextThatWaits& text) { return text.promise.get() == promise; });
     if (index == notFound)
         return false;
-    // A step counts its jobs in a byte.
     if (uint32_t jobs = std::min<uint32_t>(m_callsToMakeAgain[index].jobsBehindFirstCall, 255)) {
         m_callsToMakeAgain[index].jobsBehindFirstCall -= jobs;
         queueStepOfImportInImportTurns(promise, m_callsToMakeAgain[index].module, jobs);
@@ -248,7 +237,6 @@ void deliverTextThatWaits(VM& vm)
             return;
         std::optional<uint32_t> turnOfCall = first->turnOfFirstTextThatWaits();
         isDelivered = turnOfCall ? first->deliverFirstTextThatWaits() : first->deliverFirstTextInLine();
-        // Only a request to terminate is left behind, and the jobs find it.
         if (scope.exception()) [[unlikely]]
             return;
         while (turnOfCall && first->turnOfFirstTextThatWaits() == turnOfCall) {
@@ -267,7 +255,6 @@ void didRunJobsBehindDelivery(VM& vm)
     }
 }
 
-// A call has asked the loader by a key, and the key is that of a file of the program.
 bool textOfFetchedModuleComesInLaterTurn(JSGlobalObject* realm, ModuleID module)
 {
     if (!realm->vm().aotState().frameOfImportThatAsksLoader) [[likely]]

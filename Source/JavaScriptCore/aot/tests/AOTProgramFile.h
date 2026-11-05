@@ -39,7 +39,6 @@ WrittenOutText writeOut(String&& text, const String& folder = { });
 
 ProgramFile::Kind programKindOf(std::span<const uint8_t>);
 std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& errors);
-// Bytes are adopted by the program, whose bodies are read in place. Skipped: the bytes come from the binary of the tag (`--program-of-tag`).
 std::unique_ptr<Program> createProgram(ProgramFile&&, BuildContext&, SchemaHashCheck = SchemaHashCheck::Required);
 
 void printDiagnostics(const Diagnostics&, PrintStream&);
@@ -47,6 +46,7 @@ void printDiagnostics(const Diagnostics&, PrintStream&);
 Vector<uint8_t> encodeProgramText(StringView text, BuildContext&);
 
 inline constexpr ASCIILiteral ownLibraryLine = "# LIBRARY: own"_s;
+inline constexpr ASCIILiteral lineOfCalledStandIn = "the stand-in for a built-in written in JavaScript was called"_s;
 
 String standInLibraryText(unsigned libraryFunction);
 String withStandInLibrary(const String& programText);

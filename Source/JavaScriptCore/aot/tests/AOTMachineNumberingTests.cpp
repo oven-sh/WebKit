@@ -19,12 +19,8 @@
 #include <windows.h>
 #endif
 
-// Each value is one Operation, so two requests were numbered alike exactly when they return the same pointer. Most procedures are also compiled and run, so a load wrongly shared across a write shows up in the result.
-// The builder reads a Patch's effects when it seals the Patch. Most later requests seal it; a request for a constant does not. Tests finish setting up a Patch before they make any other request, except the tests about sealing.
-
 namespace JSC { namespace AOT { namespace Machine {
 
-// The procedure takes a pointer to eight words, an integer and the same pointer again, and returns an integer.
 struct NumberingTestFixture {
     using Memory = std::array<int64_t, 8>;
 
@@ -47,10 +43,8 @@ struct NumberingTestFixture {
 
     TypedPointer word(const AbstractHeap& heap, unsigned index = 0) { return out.address(heap, words, offsetOfWord(index)); }
     Operation* load(const AbstractHeap& heap, unsigned index = 0) { return out.load64(word(heap, index)); }
-    // Stores go through the second pointer, so only the heaps tell the builder whether a store can change what a load read.
     void store(Operation* value, const AbstractHeap& heap, unsigned index = 0) { out.store64(value, out.address(heap, alias, offsetOfWord(index))); }
 
-    // Stores the operand to a word and, if it ends its block, continues to its first successor. Its effects start empty: the caller sets what it writes.
     PatchOperation* appendWriter(unsigned index)
     {
         int32_t offset = static_cast<int32_t>(offsetOfWord(index));
@@ -72,7 +66,6 @@ struct NumberingTestFixture {
         return patch;
     }
 
-    // Has the effects of a call and emits no code.
     PatchOperation* appendCall()
     {
         PatchOperation* patch = out.patch(Void);
@@ -112,7 +105,6 @@ using NumberingTestGroup = std::array<Operation*, 4>;
 
 static constexpr NumberingTestFixture::Memory numberingTestMemory { 3, 4, 6, 7, 30, 40, 60, 70 };
 
-// What NumberingTestFixture::combine() computes.
 static constexpr int64_t numberingTestAnswer(int64_t ones, int64_t hundreds, int64_t tenThousands = 0)
 {
     return ones + 100 * hundreds + 10000 * tenThousands;
@@ -129,7 +121,6 @@ static bool areDistinctInNumberingTest(std::span<Operation* const> values)
     return true;
 }
 
-// Computes its id plus the sum of its operands. The caller records it.
 static PatchOperation* appendNumberingTestPurePatch(NumberingTestFixture& fixture, const PureFunction& function, std::span<Operation* const> operands)
 {
     int32_t id = static_cast<int32_t>(function.id);
@@ -157,7 +148,6 @@ static Operation* requestNumberingTestPurePatch(NumberingTestFixture& fixture, c
     return patch;
 }
 
-// A load from a mutable heap, a load from an immutable heap, a pure operation and a pure Patch. Different numbers, all below four, ask for different values.
 static NumberingTestGroup requestNumberingTestGroup(NumberingTestFixture& fixture, unsigned number)
 {
     return {
@@ -188,7 +178,6 @@ static bool standsInNumberingTestBlock(const NumberingTestGroup& group, const Bl
 static void testMachineNumberingPatchWritesCountOnceItIsSetUp()
 {
     {
-        // A new Patch has the effects of a call. They are not read until the Patch is sealed, so the emitter can still replace them.
         NumberingTestFixture fixture;
         Operation* before = fixture.load(fixture.firstElement);
         fixture.appendWriter(0);
@@ -213,7 +202,6 @@ static void testMachineNumberingPatchWritesCountOnceItIsSetUp()
         AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 5, 4));
     }
     {
-        // Emitters make constants while they set up a Patch. A constant does not seal it, so effects set afterward still count.
         NumberingTestFixture fixture;
         Operation* before = fixture.load(fixture.firstElement);
         PatchOperation* patch = fixture.appendWriter(0);
@@ -233,7 +221,6 @@ static void testMachineNumberingPatchWritesCountOnceItIsSetUp()
     }
 }
 
-// A saved frame goes on at another address, and the scope goes on across a suspension. So what has a position and is computed from an address in the frame is not found again.
 static void testMachineNumberingAddressInFrameIsComputedAgain()
 {
     for (bool savesFrameOnSuspend : { true, false }) {
@@ -498,7 +485,6 @@ static void testMachineNumberingSecondVisitSeesNothingOfOtherBlocks()
     AOT_TEST_CHECK(fixture.run(memory, 5) == valueOfNumberingTestGroup(5, 0) + valueOfNumberingTestGroup(5, 1));
 }
 
-// The scan fuses an address into its access and a comparison into its Branch where nothing else reads them. So a request behind the border finds them, and an operation that is appended there reads copies of its own.
 static void testMachineNumberingSuccessorReadsOwnCopyOfWhatIsFused()
 {
     NumberingTestFixture fixture;
@@ -532,7 +518,6 @@ static void testMachineNumberingSuccessorReadsOwnCopyOfWhatIsFused()
     out.jump(next);
     ScopeFork atEnd = out.forkScope();
 
-    // Each request finds what it asks for, so a chain that ends in a load costs nothing the second time.
     out.appendToSuccessor(next, atEnd);
     AOT_TEST_CHECK(requestElement() == element && requestAddress() == address && requestNarrow() == narrow && requestWordOfFrame() == wordOfFrame);
     AOT_TEST_CHECK(out.equal(word, fixture.operand) == test && out.mul(word, fixture.operand) == product && next->isEmpty());
@@ -543,13 +528,11 @@ static void testMachineNumberingSuccessorReadsOwnCopyOfWhatIsFused()
     AOT_TEST_CHECK(ownAddress->child(0) == fixture.words && ownAddress->child(1) != address->child(1) && ownAddress->child(1)->opcode() == Shl && ownAddress->child(1)->owner() == next);
     AOT_TEST_CHECK(requestAddress() == ownAddress);
 
-    // Where an instruction reads an operand from memory, a narrow word that one operation reads is part of that operation.
     Operation* widened = out.signExt32To64(requestNarrow());
     AOT_TEST_CHECK(widened->opcode() == SExt32 && widened->owner() == next && (widened->child(0) != narrow) == isX86_64());
     Operation* mixed = out.bitXor(requestWordOfFrame(), fixture.operand);
     AOT_TEST_CHECK(mixed->owner() == next && mixed->child(0) != wordOfFrame && mixed->child(1) != wordOfFrame);
 
-    // A word of 64 bits and a product take a register wherever they stand.
     Operation* sum = out.add(out.mul(word, fixture.operand), widened);
     AOT_TEST_CHECK(sum->child(0) == product || sum->child(1) == product);
     out.branch(out.equal(word, fixture.operand), normalEdge(isSame), normalEdge(isOther));
@@ -567,7 +550,6 @@ static void testMachineNumberingSuccessorReadsOwnCopyOfWhatIsFused()
     AOT_TEST_CHECK(!fixture.run(memory, 3));
 }
 
-// An emitter asks for a word, writes it, and then reads what it asked for.
 static void testMachineNumberingOwnCopyIsNotMadeOfLoadThatHasEnded()
 {
     NumberingTestFixture fixture;
@@ -596,7 +578,6 @@ static void testMachineNumberingOwnCopyIsNotMadeOfLoadThatHasEnded()
     AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 5) && memory[0] == 5);
 }
 
-// A word that is filled once: zero at the first load, filled by the time a second one would run. Whoever tests it and hands it on hands on what it tested.
 static void testMachineNumberingWordFilledOnceIsLoadedOnce()
 {
     NumberingTestFixture fixture;
@@ -647,7 +628,6 @@ static void testMachineNumberingLoadIsMadeAgainOnRequest()
     AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(4, 4));
 }
 
-// Of two edges one is taken away. The count says one, and nothing says which of the two is left.
 static void testMachineNumberingBlockThatLostAnEdgeStartsEmpty()
 {
     for (bool firstEdgeIsTakenAway : { false, true }) {
@@ -672,7 +652,6 @@ static void testMachineNumberingBlockThatLostAnEdgeStartsEmpty()
     }
 }
 
-// A Branch on a BitOr of two comparisons compares twice and jumps behind each, as long as nothing else reads the three.
 static void testMachineNumberingSuccessorReadsOwnCopyOfTwoComparisons()
 {
     NumberingTestFixture fixture;
@@ -709,7 +688,6 @@ static void testMachineNumberingSuccessorReadsOwnCopyOfTwoComparisons()
     AOT_TEST_CHECK(fixture.run(memory, 5) == 1);
 }
 
-// The emitters mark the operation that their request found. The collector's rules go by the mark of the operation that is read.
 static void testMachineNumberingOwnCopyOfNarrowReferenceIsMarked()
 {
     NumberingTestFixture fixture;
@@ -736,7 +714,6 @@ static void testMachineNumberingOwnCopyOfNarrowReferenceIsMarked()
     AOT_TEST_CHECK(fixture.run(memory, 5) == 3);
 }
 
-// Under --aot-validate. A Patch writes a word and says nothing of it, so the block behind it finds what the word held.
 static void testMachineNumberingInheritedLoadIsVerified()
 {
     for (bool declaresWrite : { false, true }) {
@@ -771,7 +748,6 @@ static void testMachineNumberingInheritedLoadIsVerified()
         compileOrFail(fixture.test);
         NumberingTestFixture::Memory memory = numberingTestMemory;
         AOT_TEST_CHECK(fixture.run(memory, 5) == (declaresWrite ? numberingTestAnswer(5, 6, 30) : -1));
-        // The Patch stores what the word held.
         memory = numberingTestMemory;
         AOT_TEST_CHECK(fixture.run(memory, 3) == numberingTestAnswer(3, 6, 30));
     }
@@ -887,7 +863,6 @@ static void testMachineNumberingPurePatchesAreSharedByIDAndChildren()
     AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(7, 110 + 5 * 5 + 15));
 }
 
-// Reads a word, and says that it reads the heap.
 static Operation* requestNumberingTestReader(NumberingTestFixture& fixture, const PureFunction& function, const AbstractHeap& heap, unsigned index)
 {
     if (Operation* existing = fixture.out.findPurePatch(function, Int64, singleElementSpan(fixture.words)))
@@ -935,7 +910,6 @@ static void testMachineNumberingPatchThatDependsOnMemoryIsSharedUntilWriteThere(
         AOT_TEST_CHECK(fixture.run(memory, 5) == numberingTestAnswer(3, 5, 6));
     }
     {
-        // A write below what it reads, a Patch that writes there and a call end it as well.
         NumberingTestFixture fixture;
         auto read = [&] {
             return requestNumberingTestReader(fixture, reader, fixture.arrays, 0);
@@ -951,7 +925,6 @@ static void testMachineNumberingPatchThatDependsOnMemoryIsSharedUntilWriteThere(
         AOT_TEST_CHECK(read() != third);
     }
     {
-        // A write in one arm ends it at the join, and the arm that does not write still sees it.
         NumberingTestFixture fixture;
         Output& out = fixture.out;
         auto read = [&] {
@@ -973,7 +946,6 @@ static void testMachineNumberingPatchThatDependsOnMemoryIsSharedUntilWriteThere(
         AOT_TEST_CHECK(read() != first);
     }
     {
-        // The control: one that depends on its children alone outlives the write, whatever it says that it reads.
         constexpr PureFunction ofChildrenAlone { 71, true };
         NumberingTestFixture fixture;
         Operation* first = requestNumberingTestReader(fixture, ofChildrenAlone, fixture.firstElement, 0);
@@ -982,7 +954,6 @@ static void testMachineNumberingPatchThatDependsOnMemoryIsSharedUntilWriteThere(
     }
 }
 
-// One arm has read the first word, the other takes the operand in its place.
 static Operation* appendNumberingTestWordReadOrMade(NumberingTestFixture& fixture)
 {
     Output& out = fixture.out;
@@ -1079,7 +1050,6 @@ static void testMachineNumberingTruncationOfConvertedInteger()
     Operation* boundedNumber = out.intToDouble(bounded);
     AOT_TEST_CHECK(out.findPurePatch(truncation, Int64, singleElementSpan(boundedNumber)) == bounded);
 
-    // Above 2^53 a double may differ from the integer it was converted from.
     Operation* wideNumber = out.intToDouble(fixture.operand);
     AOT_TEST_CHECK(!out.findPurePatch(truncation, Int64, singleElementSpan(wideNumber)));
 }

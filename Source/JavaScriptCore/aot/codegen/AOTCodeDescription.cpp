@@ -157,8 +157,6 @@ struct ShownFunction {
 
 using ShownFunctions = Vector<ShownFunction, 4>;
 
-// A function that only an inline frame or a site names stands in CodeBody::callees as its Body, which need not have code.
-// The Body of a coroutine is its ramp: what is walked at a call is the body as written, which is shown as the CoroutineBody is.
 class DescribedCallees {
 public:
     explicit DescribedCallees(CodeBody& body)
@@ -202,7 +200,6 @@ private:
 
 struct DescribedCodeOfOperation {
     uint32_t bytes { 0 };
-    // What the calls in front of the rare code show.
     Form form { Form::Open };
     bool hasCodeOutsideRareCode { false };
     uint32_t bytesOutsideRareCode { 0 };
@@ -211,7 +208,6 @@ struct DescribedCodeOfOperation {
 } // anonymous namespace
 
 static constexpr LineColumn hostFunctionPosition { 0, 0 };
-static constexpr LineColumn superCallOfDefaultConstructor { 1, 28 };
 static_assert(sizeof("(function (...args) { super") == superCallOfDefaultConstructor.column, "JSC makes a default constructor from a text of its own");
 static constexpr LineColumn startOfSuperCallOfDefaultConstructor { 1, 23 };
 static_assert(sizeof("(function (...args) { ") == startOfSuperCallOfDefaultConstructor.column);
@@ -229,7 +225,6 @@ static void reportUndeclaredTrap(const DescribedUnit& described, ValueID value)
         Wire::SourceLocation location = code.locationOf(described.program, operation.origin());
         if (hasModule(location))
             error.location = location;
-        // A record without a location is looked up in the body as the front end wrote it, where the numbers of Code mean nothing.
         if (hasModule(error.location)) {
             error.value = value;
             error.operation = nameOf(operation.opcode);
@@ -254,7 +249,6 @@ static void collectFaultingAccesses(const DescribedUnit& described, CodeRecords&
             continue;
         }
 #if CPU(ARM64)
-        // The handler of faults finds a site by the address of the instruction that faulted, so the record names the load or the store itself.
         uint32_t instruction;
         memcpy(&instruction, body.bytes.subspan(access.codeOffset, sizeof(instruction)).data(), sizeof(instruction));
         RELEASE_ASSERT((instruction & 0x0a000000) == 0x08000000, instruction);
@@ -282,7 +276,6 @@ static std::optional<LineColumn> positionOfImplementedBuiltin(StackTraceBuiltinK
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A class that writes no constructor gets one from the front end, at the position of the class.
 static bool isDefaultConstructor(const Program& program, const Function& function)
 {
     if (function.kind != FunctionKind::BaseConstructor && function.kind != FunctionKind::DerivedConstructor)
@@ -297,7 +290,6 @@ static std::optional<LineColumn> positionInBuiltin(const Program& program, const
         return owner.kind == FunctionKind::DerivedConstructor ? superCallOfDefaultConstructor : startOfBuiltinFunction;
     if (owner.syntax.contains(FunctionSyntax::IsShownAsNativeCode))
         return program.lineColumnFor(owner.module, owner.position);
-    // Its frames name the module of the compiler's helpers, and the host holds the text of that module.
     if (owner.syntax.contains(FunctionSyntax::IsShownInModuleOfHelpers))
         return startOfBuiltinFunction;
     if (!owner.enclosingRuntimeFunction)
@@ -315,7 +307,6 @@ static std::optional<LineColumn> positionInBuiltin(const Program& program, const
     case RuntimeFunctionRole::HostBuiltin:
         break;
     }
-    // In the engine each registered function is a source of its own. A helper outside all of them is shown like one.
     const RuntimeFunctionEntry* registered = findRuntimeFunction(program, owner.enclosingRuntimeFunction);
     if (!registered || !registered->function || registered->function == shown)
         return startOfBuiltinFunction;
@@ -463,7 +454,6 @@ static SitePosition describePosition(const Program& program, ShownFunctions& sho
     return position;
 }
 
-// Indexed by the number the site was recorded under. Empty where no site has a landing pad.
 static Vector<const SiteLandingPad*> findLandingPadsOfSites(const ExceptionRecords& exceptions, size_t numberOfSites)
 {
     Vector<const SiteLandingPad*> landingPads;
@@ -492,7 +482,6 @@ static void describeCalleeOfSite(const RecordedSite& site, uint32_t number, cons
         sites.calleesOfSites.append({ number, CalleeOfSite::ownFunctionObject() });
         return;
     }
-    // Nothing writes the word of an unreachable call.
     if (kept.word >= records.wordsOfCallees.size() || !records.wordsOfCallees[kept.word])
         return;
     intptr_t offset = records.wordsOfCallees[kept.word]->offsetFromFP();
@@ -529,7 +518,6 @@ static void describeSitesInOrder(const DescribedUnit& described, const CodeRecor
     for (const RecordedSite& site : recorded.span().first(numberOfSitesWithoutCode))
         addSite(site);
 
-    // One operation of the program is often several calls in a row.
     struct LastSite {
         const RecordedSite* record { nullptr };
         const SiteLandingPad* landingPad { nullptr };
@@ -590,7 +578,6 @@ static void describeSites(const DescribedUnit& described, CodeRecords& records, 
     AOT::sortInLine(sites.pollSites, { }, &PollSite::offset);
 
     SiteReferencesInOrder references(body, sites);
-    // A stack walk only stops at a site that has code. A body without one is never asked for its inline frames.
     size_t numberOfFrames = described.code.inlineFrames().size();
     size_t numberOfInlineCallSites = numberOfFrames ? numberOfFrames - 1 : 0;
     bool hasOnlyInlineCallSites = numberOfInlineCallSites && sites.numberOfSitesWithoutCode == numberOfInlineCallSites && references.isAtEnd();
@@ -604,7 +591,6 @@ static void describeSites(const DescribedUnit& described, CodeRecords& records, 
     sites.inlineFrames = describeInlineFrames(described.program, described.code, records.sites, callees);
 }
 
-// The code of a preamble is entered in place of the entrypoint of the procedure that has its id.
 static Vector<CodeEntry, 1> describeEntriesOfUnit(const CodeRecords& records, const Machine::Procedure& procedure, LinkBuffer& linkBuffer)
 {
     Vector<CodeEntry, 1> entries;
@@ -644,20 +630,17 @@ static void describeFrameOfUnit(const CodeRecords& records, EmittedCode& emitted
     LinkBuffer& linkBuffer = emitted.buffer.linkBuffer();
     Machine::describeFrame(emitted.procedure, linkBuffer, frame);
     RELEASE_ASSERT(emitted.procedure.frame().hasFrame() || !frame.hasFrame());
-    // A landing pad takes every register that an ordinary call clobbers as clobbered, so unwinding restores the callee-saved registers of the VM alone. Such a function writes none of them.
     if (emitted.procedure.traits().savesRegistersOfCallers) {
         RegisterSet restoredByUnwinding = RegisterSet::vmCalleeSaveRegisters();
         for (const RegisterAtOffset& save : frame.calleeSaveRegisters)
             RELEASE_ASSERT(!restoredByUnwinding.contains(save.reg(), IgnoreVectors));
         frame.calleeSaveRegisters = { };
     }
-    // bytesAboveReturnAddressOf() adds the spilled registers where this is set, so bytesAboveFrameRecord does not count them.
     frame.spillsArgumentRegisters = records.frame.spillsArgumentRegisters;
     frame.stackUsedAtCalls = records.frame.stackUsedAtCalls;
     frame.isEnteredWithoutStackCheck = emitted.stackChecks.isEnteredWithoutStackCheck;
     frame.isProvenToFitOnStack = emitted.stackChecks.isProvenToFitOnStack;
     frame.prologueChecks = linkStackChecks(linkBuffer, records);
-    // A frame is allocated whole when such a check calls, and without a record only its size leads from there to the caller.
     if (!frame.hasFrameRecord) {
         for (const PrologueCheck& check : frame.prologueChecks) {
             RELEASE_ASSERT(frame.frameRanges.isEmpty() || frame.frameRanges.last().end <= check.callOffset);
@@ -688,7 +671,6 @@ static std::optional<StubKey> describedStubEnteredBy(const Relocation& relocatio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The head of an operation call only calls the run-time function, which stands behind the open form and the closed form alike.
 static Form describedFormOfCallTo(StubKey stub)
 {
     return isOperationCallHead(stub) ? Form::Runtime : Form::Closed;
@@ -731,8 +713,6 @@ static bool describedSiteStandsWhereItSays(const Code& code, const SiteOfForm& s
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What a form that calls may write in front of the rare code: the call, an instruction for each word of the payload that brings the word to where the callee takes it, and one for the answer.
-// The moves of the operands are the allocator's, and are counted with the back end. A test in line in front of the call, or stores in line behind it, are more than that.
 static uint32_t describedBytesOfCallFor(const Operation& operation)
 {
     constexpr uint32_t bytesOfInstructionThatBringsWord = isX86_64() ? 10 : 2 * sizeof(uint32_t);
@@ -741,7 +721,6 @@ static uint32_t describedBytesOfCallFor(const Operation& operation)
 
 namespace {
 
-// Machine::describeRareCode().
 class DescribedRareCode {
 public:
     explicit DescribedRareCode(EmittedCode& emitted)
@@ -755,7 +734,6 @@ public:
         return behind != m_ranges.begin() && offset < (behind - 1)->end;
     }
 
-    // functor(begin, end, isRare) for each piece of the range that lies in rare code or outside it altogether.
     template<typename Functor>
     void forEachPieceOf(uint32_t begin, uint32_t end, const Functor& functor) const
     {
@@ -780,8 +758,6 @@ private:
 
 } // anonymous namespace
 
-// The form of a site is what its emitter said, and what the schema names where it said nothing. A row is named where the two agree.
-// What the bytes show is a second witness. The slow arm of an open form lies among the rare code, and it calls, so a call there says nothing, and a site that lies among the rare code altogether shows nothing.
 static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Code& code, const FormsSaid& said, const CodeBody& body, EmittedCode& emitted, CompiledCode& result)
 {
     static_assert(Form::Open < Form::Closed && Form::Closed < Form::Runtime);
@@ -792,7 +768,6 @@ static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Cod
     Machine::describeRangesOfOperations(emitted.procedure, linkBuffer, ranges);
     DescribedRareCode rareCode(emitted);
 
-    // What is appended for a value outside its emitter, as a move that Order puts on an edge, goes with the first site of the value. A value that no emitter was handed gets a site that says nothing.
     Vector<SiteOfForm> sites(said.sites());
     Vector<uint32_t> firstSiteOfValue;
     firstSiteOfValue.fill(noSite, code.numberOfValues());
@@ -814,7 +789,6 @@ static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Cod
         return first;
     });
 
-    // Indexed by the site.
     Vector<DescribedCodeOfOperation> operations;
     operations.fill(DescribedCodeOfOperation { }, sites.size());
     for (size_t index = 0; index < ranges.size(); ++index) {
@@ -830,7 +804,6 @@ static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Cod
         });
     }
 
-    // Relocations and ranges both ascend.
     size_t range = 0;
     for (const Relocation& relocation : body.relocations) {
         std::optional<StubKey> stub = describedStubEnteredBy(relocation, body);
@@ -998,7 +971,6 @@ static std::optional<uint32_t> endOfLastReturnSiteOfDescribedUnit(const Compiled
     return end;
 }
 
-// Image::locate would take a return address at the very end of a body for the next body's. Padding is needed for that alone.
 static void fitPaddingOfDescribedUnit(CompiledCode& code)
 {
     auto& bytes = code.body.bytes;

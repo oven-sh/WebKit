@@ -459,7 +459,6 @@ GlobalBindings::GlobalBindings(State& state)
     , m_names(state.tables.globalBindings())
     , m_chainDependentOwner(state.chainDependents->addOwner(*this))
 {
-    // Compiled code reaches a record by its distance from the instance, and the instance has room for as many records as its sizes say.
     RELEASE_ASSERT(m_records.data() == state.instance.tableAt<GlobalBinding>(InstanceLayout::offsetOfGlobalBindings(state.tables.instanceSizes)));
     RELEASE_ASSERT(m_records.size() == state.tables.instanceSizes.numberOfGlobalBindings);
     state.caches->add(CacheKind::WeakByKey, "GlobalBindings"_s, *this);
@@ -490,7 +489,6 @@ bool GlobalBindings::fileConstant(VM& vm, uint32_t number, JSObject* holderToWat
             return false;
         m_watches.set(number, WTF::move(watch));
     }
-    // The global object or its lexical environment holds the value for as long as it stands here, so the record is no root.
     setConstant(number, value, false);
     return true;
 }
@@ -509,7 +507,6 @@ void GlobalBindings::fileAbsence(VM& vm, uint32_t number, std::span<JSObject* co
     ChainObjects objects;
     objects.append(m_state.instance.globalObject);
     objects.append(objectsAboveGlobalObject);
-    // Only an object that may be a prototype reports its changes. The global object becomes one here, which costs it a Structure.
     for (JSObject* object : objects) {
         if (object->mayBePrototype()) [[likely]]
             continue;
@@ -519,7 +516,6 @@ void GlobalBindings::fileAbsence(VM& vm, uint32_t number, std::span<JSObject* co
     m_state.chainDependents->add(objects.span(), { nameOf(number).impl(), number, m_chainDependentOwner });
     m_watches.remove(number);
     setConstant(number, jsUndefined(), true);
-    // A read that looks at the location alone finds the answer in the record: any new property changes the Structure, and a change above the global object empties the word.
     if (filesLocationAlone(number))
         fileLocation(number, m_state.instance.globalObject->structure(), std::bit_cast<int64_t>(&at(number).constant));
 }
@@ -573,7 +569,6 @@ void GlobalBindings::dropLocations()
     m_filedLocations.shrink(0);
 }
 
-// The number of a dead Structure is given to a later one, which the global object may get.
 size_t GlobalBindings::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     size_t numberOfRemovedEntries = 0;

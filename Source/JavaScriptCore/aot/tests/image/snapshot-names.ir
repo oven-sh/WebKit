@@ -7,9 +7,9 @@
 # TABLES-NOT: namedVariable
 # TABLES: namedCapture closure={{*}} slot=0 name=[[inClosure]]
 # TABLES-NOT: namedCapture
-# The variables are roots of the collector, which a snapshot shows without a name. So a cell stands for the module and lists them.
+# The variables are roots of the collector, which a snapshot shows without a name. So a cell stands for the module and lists them. Another stands between a closure and what it captures, as the scope of a call does under the interpreter.
 # RUN: run-in-shell globalThis.fresh = () => ({}); globalThis.held = []; globalThis.hold = (...values) => { held.push(...values); }; globalThis.namesOfVariables = () => { const snapshot = generateHeapSnapshot(); const kind = snapshot.edgeTypes.indexOf("Variable"); const classes = new Map(); for (let i = 0; i < snapshot.nodes.length; i += 4) classes.set(snapshot.nodes[i], snapshot.nodeClassNames[snapshot.nodes[i + 2]]); const found = new Set(); for (let i = 0; i < snapshot.edges.length; i += 4) { const name = snapshot.edgeNames[snapshot.edges[i + 3]]; if (snapshot.edges[i + 2] === kind && name.startsWith("kept")) found.add(name + " in " + classes.get(snapshot.edges[i])); } return [...found].sort().join(", "); };
-# CHECK: keptInClosure in Function, keptInModule in JSModuleEnvironment
+# CHECK: keptInClosure in JSLexicalEnvironment, keptInModule in JSModuleEnvironment
 # CHECK-NEXT: exited with 0
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)

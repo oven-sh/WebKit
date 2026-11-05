@@ -201,7 +201,6 @@ function readCaseField(recursiveCallees: readonly string[], variant: Variant, fi
   return [`${target} = ${checkedWord(kind, field.isOptional, low)};`];
 }
 
-// Switch on the raw word: Kind is a uint8_t enum, so casting first could truncate an out-of-range word to a valid case.
 function readVariant(schema: Schema, recursive: readonly string[], variant: Variant): string[] {
   const recursiveCallees = recursive.includes(variant.name) ? recursive : [];
   const cases = variant.cases.flatMap(variantCase => {

@@ -388,8 +388,6 @@ std::unique_ptr<Program> createProgram(ProgramFile&& file, BuildContext& build, 
 {
     switch (file.kind) {
     case ProgramFile::Kind::Bytes: {
-        // The program must own the bytes before the reader points into them.
-        // Program::read() followed by adoptBuffer() would not work: read() keeps its copy of the string bytes in the vector that adoptBuffer() overwrites, so the strings it read would dangle.
         auto program = makeUnique<Program>(BuiltinTable::singleton());
         program->adoptBuffer(WTF::move(file.bytes));
         Reader reader(*program, build);
@@ -420,8 +418,6 @@ Vector<uint8_t> encodeProgramText(StringView text, BuildContext& build)
     return Vector<uint8_t>(program->buffer());
 }
 
-// No text names a helper of the compiler, so nobody who writes a test knows that he runs one: the walk calls it in place of what is written, and goes by what it answers.
-// A program that lacks one is compiled as it is written.
 static bool hasStandIn(const RuntimeFunctionData& function)
 {
     bool isHelperOfCompiler = std::ranges::any_of(function.implements, [](BuiltinID implemented) {
@@ -430,10 +426,15 @@ static bool hasStandIn(const RuntimeFunctionData& function)
     return function.platforms.contains(targetOfThisBuild().platform) && !isHelperOfCompiler;
 }
 
+static String standInFunctionBody()
+{
+    return makeString("  b0():\n    v0 = Builtin builtin=GlobalThis\n    v1 = PropGet v0 key=\"printErr\"\n    v2 = String string=\""_s, lineOfCalledStandIn, "\"\n    v3 = Call v1, -, v2\n    Return\n}\n"_s);
+}
+
 String standInLibraryText(unsigned libraryFunction)
 {
     StringBuilder text;
-    text.append("function f"_s, libraryFunction, " name=\"library\" role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+    text.append("function f"_s, libraryFunction, " name=\"library\" role=Library results=[{type=anything}] {\n"_s, standInFunctionBody());
     for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
         if (hasStandIn(function))
             text.append("runtimefunction id="_s, tokenOf(BuiltinTable::singleton(), function.id), " function=f"_s, libraryFunction, '\n');
@@ -490,12 +491,11 @@ String withStandInLibrary(const String& programText)
     std::ranges::sort(standInIDs);
     std::ranges::stable_sort(ownLines, { }, &OwnLine::id);
 
-    // As a front end sends it: a registered function lies in a module of the library, which has no body.
     if (numberOfModules) {
         text.append("module m"_s, numberOfModules, " path=\"library\" displayPath=\"library\" flags=[IsLibrary]\n"_s);
-        text.append("function f"_s, numberOfFunctions, " name=\"library\" module=m"_s, numberOfModules, " role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+        text.append("function f"_s, numberOfFunctions, " name=\"library\" module=m"_s, numberOfModules, " role=Library results=[{type=anything}] {\n"_s, standInFunctionBody());
     } else
-        text.append("function f"_s, numberOfFunctions, " name=\"library\" role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
+        text.append("function f"_s, numberOfFunctions, " name=\"library\" role=Library results=[{type=anything}] {\n"_s, standInFunctionBody());
     size_t nextOwnLine = 0;
     auto appendOwnLinesBelow = [&](uint64_t id) {
         for (; nextOwnLine < ownLines.size() && ownLines[nextOwnLine].id < id; ++nextOwnLine)

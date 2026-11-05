@@ -44,7 +44,6 @@ Number BuiltinFamilyEmitter::numberOperand(ValueID id)
     case Representation::Boolean:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -74,7 +73,6 @@ Integer BuiltinFamilyEmitter::integerOperand(ValueID id)
     case Representation::Boolean:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -104,7 +102,6 @@ Word32 BuiltinFamilyEmitter::int32Operand(ValueID id)
     case Representation::Boolean:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -128,7 +125,6 @@ Condition BuiltinFamilyEmitter::booleanOperand(ValueID id)
     case Representation::OptionalDouble:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -152,7 +148,6 @@ CellPointer BuiltinFamilyEmitter::getCell(ValueID id)
     case Representation::Double:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -206,7 +201,6 @@ void BuiltinFamilyEmitter::missUnless(const InlineCall& call, Condition mustHold
 
 Operand BuiltinFamilyEmitter::inRepresentation(const OperationContext& context, Representation wanted, Operand produced, const Type& producedType)
 {
-    // Nobody reads the result.
     if (wanted == Representation::Void)
         return { };
     return emitter<ConversionEmitter>().inRepresentation(context, produced, producedType, wanted);

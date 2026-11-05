@@ -29,7 +29,6 @@ struct FuzzArguments {
     int64_t b;
 };
 
-// A crash ends the process, and the last line that it printed then names the seed.
 enum class FuzzProgress : bool { Silent, NamesEachSeedFirst };
 
 } // anonymous namespace
@@ -49,7 +48,6 @@ static std::array<FuzzArguments, 3> argumentsOfFuzzSeed(uint64_t seed)
     return { { { 0, 0 }, { 1, -1 }, { static_cast<int64_t>(a), static_cast<int64_t>(b) } } };
 }
 
-// The seeds on record lie below: machine/random/seeds-that-failed.
 static constexpr uint64_t firstFuzzSeedWithScaledSums = 400001;
 static constexpr uint64_t firstFuzzSeedWithArmsThatReturn = 500001;
 
@@ -63,7 +61,6 @@ static RandomProcedureOptions optionsOfFuzzSeed(uint64_t seed, unsigned numberOf
     return options;
 }
 
-// The features stay those that every machine has: the same seed gives the same code wherever it runs.
 ProcedureTraits traitsOfSeed(uint64_t seed)
 {
     ProcedureTraits traits;
@@ -92,7 +89,6 @@ static void fillWordOfFuzzInstance(TestInstance& instance, uint64_t bits)
         instance.words[static_cast<size_t>(word)] = bits;
 }
 
-// On x86-64 code reads some constants from words of the instance, among them ones that only the encoder makes.
 static void fillFuzzInstance(TestInstance& instance, const Procedure& procedure)
 {
     for (uint32_t index = 0; index < procedure.numberOfOperations(); ++index) {
@@ -131,7 +127,6 @@ String fuzzOneProcedure(uint64_t seed, unsigned numberOfBlocks)
 
     for (auto [a, b] : argumentsOfFuzzSeed(seed)) {
         int64_t expected = interpret(*program, a, b);
-        // What the code answers in its place may be an address, so it stays out of the line.
         if (test.call<int64_t>(a, b) != expected)
             return WTF::toString("called with (", a, ", ", b, ") the code does not answer ", expected);
     }
@@ -157,7 +152,6 @@ static unsigned showFuzzedProcedure(uint64_t seed, unsigned numberOfBlocks, Prin
     auto program = buildRandomProcedure(test, optionsOfFuzzSeed(seed, numberOfBlocks));
     out.println("seed ", seed, ": ", numberOfBlocks, " blocks", traits.hasHandlers ? ", has handlers" : "", traits.savesFrameOnSuspend ? ", saves its frame on suspension" : "");
 
-    // Ahead of prepare(), which retargets edges and may crash.
     printTextOfFuzzedProcedure(out, "procedure"_s, test.printedProcedure());
     out.flush();
 
@@ -216,7 +210,6 @@ static int refuseFuzzAllocationArguments(const Types&... sentence)
     return exitCodeForInvalidCommandLine;
 }
 
-// Returns null on success, otherwise the rest of a sentence that starts with the flag's name.
 template<typename Number>
 static ASCIILiteral parseFuzzFlagValue(StringView text, std::optional<Number>& number)
 {
@@ -257,7 +250,6 @@ int runFuzzAllocationSubcommand(std::span<const String> arguments)
     request.count = count.value_or(request.count);
     request.numberOfBlocks = numberOfBlocks.value_or(request.numberOfBlocks);
 
-    // Faults of rare regions with several siblings have shown at sixteen blocks and more and at none of a million seeds at twelve.
     static constexpr unsigned usualNumbersOfBlocks[] { 12, 16, 24 };
     FilePrintStream out(stdout, FilePrintStream::Borrow);
     unsigned numberOfFailures = 0;

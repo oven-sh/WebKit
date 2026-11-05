@@ -12,9 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Until numberDominatorTree() takes its two lists, they serve nearestCommonDominator(), which may be asked only before that.
-// The skip of a block is one of its dominators further up the tree. How far up follows from the block's depth alone,
-// by the rule of skew-binary numbers, so that every dominator of a block is a logarithmic number of steps away.
 template<typename Worker>
 static Vector<uint32_t>& depthsInDominatorTree(Worker& worker)
 {
@@ -42,7 +39,6 @@ void BodyIndexBuilder::computeDominators()
             continue;
 
         if (edge.from != source) {
-            // Every edge that leads forward into it has been seen, so its dominator is final.
             source = edge.from;
             uint32_t dominator = m_blocks[source.index()].immediateDominator.index();
             uint32_t middle = skips[dominator];
@@ -65,7 +61,6 @@ void BodyIndexBuilder::computeDominators()
         return !(m_blocks[edge.from.index()].flags & BodyIndex::IsReachable);
     });
 
-    // An edge to a dominator of its source adds no way into any block, so the tree of the edges that lead forward is the tree of them all.
     for (BodyFlowEdge edge : m_worker.retreatingEdges) {
         bool targetIsReachable = m_blocks[edge.to.index()].flags & BodyIndex::IsReachable;
         if (!targetIsReachable || nearestCommonDominator(edge.to, edge.from) != edge.to) {
@@ -75,8 +70,6 @@ void BodyIndexBuilder::computeDominators()
     }
 }
 
-// Both blocks are reached. A dominator stands in front of what it dominates, so the block that stands later is never the answer and climbs.
-// It takes its skip where that does not pass the other block: what the two have in common stands no later than either.
 BlockID BodyIndexBuilder::nearestCommonDominator(BlockID a, BlockID b) const
 {
     const Vector<uint32_t>& skips = skipsInDominatorTree(m_worker);
@@ -93,16 +86,11 @@ void BodyIndexBuilder::computeDominatorsOfIrreducibleFlow()
 {
     m_index->m_hasIrreducibleFlow = true;
 
-    // In a reverse postorder the edges that lead forward reach every block that anything reaches.
-    // Only then does a dominator stand in front of what it dominates, which nearestCommonDominator() and numberDominatorTree() lean on.
     for (BodyFlowEdge edge : m_worker.retreatingEdges)
         RELEASE_ASSERT(m_blocks[edge.to.index()].flags & BodyIndex::IsReachable);
 
-    // A skip is good only while the tree above its block stays as it is. The entry dominates every block in every tree.
     skipsInDominatorTree(m_worker).fill(entryBlock.index(), m_blocks.size());
 
-    // A dominator only ever moves up the tree as it stands, and never past a block that is on every way to the target.
-    // Where nothing moves any more, the dominator of each target is on the way up from each of its sources, and such a tree is the dominator tree.
     bool didChange;
     do {
         didChange = false;
@@ -179,7 +167,6 @@ void BodyIndexBuilder::findLoops()
         return m_worker.predecessors.span().subspan(first, m_worker.firstPredecessor[block.index() + 1] - first);
     };
 
-    // numberDominatorTree() is done with the list. For a loop that lies in another loop found so far: one of the loops around it. For any other loop: itself.
     Vector<uint32_t>& loopsAround = m_worker.sizesOfSubtrees;
     loopsAround.resize(numberOfLoops);
     for (uint32_t loop = 0; loop < numberOfLoops; ++loop)
@@ -192,7 +179,6 @@ void BodyIndexBuilder::findLoops()
         return loop;
     };
 
-    // The head of a loop dominates the loops inside it, so their heads stand behind it and they are whole when its turn comes.
     Vector<BlockID>& worklist = m_worker.worklist;
     for (uint32_t current = numberOfLoops; current--;) {
         BodyLoop& loop = loops[current];
@@ -234,8 +220,6 @@ void BodyIndexBuilder::collectPredecessors()
 {
     uint32_t numberOfBlocks = static_cast<uint32_t>(m_blocks.size());
 
-    // While the lists fill, the entry behind a block's own says where its next predecessor goes.
-    // In the end that is where its list ends and the list of the next block starts, so every entry has come to mean the start of its own block's list.
     m_worker.firstPredecessor.fill(0, numberOfBlocks + 2);
     std::span<uint32_t> nextPredecessor = m_worker.firstPredecessor.mutableSpan().subspan(1);
 

@@ -75,13 +75,11 @@ void defineDataProperty(Instance* instance, JSObject* object, PropertyName name,
         object->createDataProperty(instance->globalObject, name, value, true);
 }
 
-// These are the arrays for which JSArray::defineOwnProperty() comes down to putDirectIndex(): a length that is read-only puts the array into sparse mode. The text of the index is never made.
 static bool canDefineElementsDirectly(JSObject* object)
 {
     return (isJSArray(object) || object->type() == FinalObjectType) && !object->structure()->hasImmutableIndexedProperties() && !object->inSparseIndexingMode() && !isCopyOnWrite(object->indexingMode());
 }
 
-// Extra properties that hold one element and no name.
 static JSObject* createExtraPropertiesWithElement(Instance* instance, uint32_t index, JSValue value)
 {
     VM& vm = *instance->vm;
@@ -96,7 +94,6 @@ static JSObject* createExtraPropertiesWithElement(Instance* instance, uint32_t i
     return JSFinalObject::createWithButterfly(vm, instance->realm.extraPropertiesWithElementsStructure, butterfly);
 }
 
-// What lies in front of the first element is made with it.
 static constexpr uint32_t maxIndexOfFirstElementStoredContiguously = 7;
 
 bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
@@ -136,8 +133,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineById, void, (Instance* instance, Enco
     OPERATION_RETURN(scope);
 }
 
-// `{ id, [key]: value }`, Object.fromEntries(pairs). As for a store by key: an answer can be filed only if the Structure of the object names the Structure of its extra properties in front of the definition and behind it.
-// The second object that gets the name behind the same names has them named, and the stub adds the property to the third.
 static bool tryDefineExtraPropertyAndCache(Instance* instance, JSObject* object, PropertyName name, JSValue value, const PutPropertySlot& slot)
 {
     using Flag = Object::ExtraPropertyStoreFlag;
@@ -200,7 +195,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
     OPERATION_RETURN(scope);
 }
 
-// Every function is created with a name that is configurable, read-only and not enumerable. A descriptor that sets no other attribute only changes the value: `{ value }`, `{ value, configurable: true }`.
 static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* function, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
     VM& vm = globalObject->vm();
@@ -215,20 +209,17 @@ static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* func
         if ((rareData && rareData->hasReifiedName()) || !structure->isStructureExtensible() || structure->mayHaveImmutableProperties() || closure->getDirect(vm, name))
             return false;
         if (const LayoutData* classLayout = closure->classData()) {
-            // The fields of a class become properties in front of whatever is defined by name.
             ClassTable& classes = closure->state().objects->classes;
             if (!classLayout->staticFields().empty() || classes.hasStaticMethodNamed(*classLayout, name.uid()))
                 return false;
             closure->setNameProperty(vm, asString(value), attributesAtBirth);
             classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
         } else {
-            FunctionKindData kind = closure->kind();
-            if (kind.isBound() || kind.hasInitialNamePrefix() || closure->refusesOwnProperty(vm, name))
+            if (closure->kind().hasInitialNamePrefix() || closure->refusesOwnProperty(vm, name))
                 return false;
             auto defined = asString(value)->tryGetValue();
             if (defined->isNull())
                 return false;
-            // A closure that is told the name it has stays as it is.
             if (defined.data == initialNameProperty(closure->function()))
                 return true;
             closure->setNameProperty(vm, asString(value), attributesAtBirth);
@@ -249,7 +240,6 @@ static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* func
     return true;
 }
 
-// ValidateAndApplyPropertyDescriptor for a property that is configurable: nothing is refused. What the descriptor leaves out stays as it is, or takes its default where a value becomes an accessor or an accessor a value.
 static NEVER_INLINE Object::LeavingProperty redefinedBy(JSGlobalObject* globalObject, Object::LeavingProperty current, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
 {
     bool wasAccessor = current.attributes & PropertyAttribute::Accessor;
@@ -280,14 +270,12 @@ static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* o
         attributes |= PropertyAttribute::Accessor;
     else if (!bits.isWritable)
         attributes |= PropertyAttribute::ReadOnly;
-    // An object in the state of one that had no field of the name and lacked it has none and lacks it.
     if (compiled && !isAccessor) {
         const AddedExtraProperty* added = compiled->state().propertyCaches->findAddedExtraProperty(structure->id(), name.uid());
         if (added && added->attributes == attributes && compiled->tryRepeat(vm, *added, bits.hasValue ? valueOrGetter : jsUndefined()))
             return true;
     }
     const FieldData* field = compiled ? compiled->fieldNamed(compiled->state(), name) : nullptr;
-    // The layout has a field for a getter that the build saw defined, with the attributes it saw.
     if (field && field->isAccessor() && bits.hasGet && !bits.hasSet && valueOrGetter.isObject() && compiled->tryDefineAbsentGetterInSlot(vm, globalObject, *field, name.uid(), asObject(valueOrGetter), attributes))
         return true;
     if (field && compiled->isInSlot(*field))
@@ -336,7 +324,6 @@ static ALWAYS_INLINE PropertyDescriptor descriptorFromBits(JSValue valueOrGetter
     return descriptor;
 }
 
-// While this holds, a descriptor object whose prototype is Object.prototype has the members that it lists itself and no others.
 static bool descriptorObjectsInheritNoMembers(JSGlobalObject* globalObject)
 {
     if (globalObject->propertyDescriptorFastPathWatchpointSet().state() == ClearWatchpoint)
@@ -344,7 +331,6 @@ static bool descriptorObjectsInheritNoMembers(JSGlobalObject* globalObject)
     return globalObject->propertyDescriptorFastPathWatchpointSet().isStillValid() && globalObject->objectPrototypeChainIsSane();
 }
 
-// These run nobody's code when a property is defined. One that refuses is as it was, but for a list that is cut short, which refuses again where it stopped.
 static bool definesWithoutOtherCode(VM& vm, JSObject* object, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
     auto define = object->methodTable()->defineOwnProperty;
@@ -368,7 +354,6 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
         return false;
     if (tryDefineNameOfFunction(globalObject, object, name, valueOrGetter, bits))
         return true;
-    // A closure of the program says by its type that it can be called.
     auto isFunctionOrUndefined = [](JSValue value) {
         return value.isUndefined() || (value.isCell() && isCompiledCalleeType(value.asCell()->type())) || value.isCallable();
     };
@@ -391,7 +376,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
     JSValue setter = JSValue::decode(encodedSetter);
     auto bits = std::bit_cast<PropertyDescriptorBits>(descriptorBits);
     if (object.isObject()) [[likely]] {
-        // The string keeps its atom alive.
         Identifier converted;
         StringImpl* text = JSValue::decode(key).isString() ? asString(JSValue::decode(key))->tryGetValueImpl() : nullptr;
         if (!text || !text->isAtom()) {
@@ -405,7 +389,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
         if (isDefined) [[likely]]
             OPERATION_RETURN(scope);
     }
-    // Object.defineProperty() itself refuses, and runs the code of others, in a frame of its own.
     JSObject* literal = constructObjectFromPropertyDescriptor(globalObject, descriptorFromBits(valueOrGetter, setter, bits));
     callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), literal);
     OPERATION_RETURN(scope);
@@ -458,7 +441,6 @@ static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, JSVal
     defineAccessor(globalObject, object, property, function, accessorFlags & accessorIsEnumerable, accessorFlags & accessorIsGetter);
 }
 
-// Compiled code that finds no allocator comes here, and makes the next pair by itself.
 static void prepareAllocationOfAccessors(Instance* instance)
 {
     if (instance->allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::GetterSetter)].allocator) [[likely]]
@@ -569,7 +551,6 @@ struct OwnPropertyOfPlainObject {
     unsigned attributes { 0 };
 };
 
-// A property without a value is absent. There is no answer for an index, and none where only code of the object's class could give it.
 static std::optional<OwnPropertyOfPlainObject> findOwnPropertyOfPlainObject(VM& vm, JSObject* object, UniquedStringImpl* name)
 {
     if (parseIndex(*name))
@@ -606,8 +587,6 @@ static std::optional<bool> isMarkedAsESModule(JSGlobalObject* globalObject, JSOb
     return slot.getValue(globalObject, marker).toBoolean(globalObject);
 }
 
-// Does all of what TypeScript's __createBinding does, or nothing: false where that would run code of the program, throw, or meet a property that exists.
-// Since TypeScript 4.6 the helper passes on the source's own descriptor for an accessor of an ES module and for a value that can never change.
 static bool tryDefineLiveBinding(JSGlobalObject* globalObject, JSObject* target, JSObject* source, UniquedStringImpl* sourceKey, UniquedStringImpl* targetKey, bool reusesDescriptors, const Invocable<JSObject*()> auto& getterOfBinding)
 {
     VM& vm = globalObject->vm();
@@ -684,7 +663,6 @@ static bool canEnumerateWithoutRunningCode(JSGlobalObject* globalObject, JSObjec
     return true;
 }
 
-// The keys that `for (key in object)` visits while its body changes neither the object nor what the object inherits from. False once the functor says so, or where the keys include indices or cannot be listed.
 static bool forEachEnumeratedName(JSGlobalObject* globalObject, JSObject* object, const Invocable<bool(JSString*)> auto& functor)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
@@ -709,7 +687,6 @@ static bool forEachEnumeratedName(JSGlobalObject* globalObject, JSObject* object
     }
 }
 
-// Does what TypeScript's __exportStar does, one name after the other. Behind false the written loop finishes the work: it skips the names that the target has by then.
 static bool tryReExportFields(Instance* instance, JSObject* target, JSObject* source, uint32_t closureNumberOfGetter, uint32_t rule)
 {
     VM& vm = *instance->vm;
@@ -756,11 +733,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryReExportFields, size_t, (Instan
     if (!target.isObject() || !source.isObject())
         OPERATION_RETURN(scope, 0);
     OPERATION_RETURN(scope, static_cast<size_t>(tryReExportFields(instance, asObject(target), asObject(source), closureNumberOfGetter, rule)));
-}
-
-// A frame is named by the record of its function, so nothing is kept of the function object that runs in it.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance*, JSCell*, void*))
-{
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance* instance, JSCell* cell, EncodedJSValue encodedName, uint32_t methodKind))

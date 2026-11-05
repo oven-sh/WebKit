@@ -11,8 +11,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Closed operations are never withheld. Each of these can be, by a test or by testaot. A build of Bun withholds CellsInFrames alone, where it is asked to: TestingSwitch::KeepsCellsOutOfFrames.
-// With any of them withheld the code is still correct.
 enum class Mechanism : uint16_t {
     TypedOperations = 1 << 0,
     Guesses = 1 << 1,
@@ -27,9 +25,7 @@ enum class Mechanism : uint16_t {
     Handlers = 1 << 10,
     BuiltinCalls = 1 << 11,
     ParameterGuards = 1 << 12,
-    // The plan decides it for the whole program: the body that defines and every function that reads go by DeferredDefinitions.
     Deferral = 1 << 13,
-    // A cell lies in the frame of its maker, or the cell of a scope is handed back and taken again, because Link has found that nobody keeps it. Withheld: every cell lies in the heap until the collector finds it dead.
     CellsInFrames = 1 << 14,
 };
 using Mechanisms = OptionSet<Mechanism>;
@@ -69,7 +65,6 @@ constexpr Mechanisms dependenciesOf(Mechanism mechanism)
     return { };
 }
 
-// A mechanism goes with what it leans on.
 constexpr Mechanisms withoutMechanismsMissingDependencies(Mechanisms mechanisms)
 {
     Mechanisms result;

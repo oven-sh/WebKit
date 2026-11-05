@@ -83,7 +83,6 @@ static void testSetThatNoOrderKeepsTogetherIsRefusedAndChangesNothing()
     AOT_TEST_CHECK(tryKeepTogetherForConsecutiveSetsTests(sets, { 1, 2 }));
     AOT_TEST_CHECK(tryKeepTogetherForConsecutiveSetsTests(sets, { 2, 3 }));
     Vector<uint32_t> before = orderByNumberForConsecutiveSetsTests(sets, 5);
-    // 1 stands between 0 and 2, so 0 and 2 are never neighbors, and the ends of the row never are.
     AOT_TEST_CHECK(!tryKeepTogetherForConsecutiveSetsTests(sets, { 0, 2 }));
     AOT_TEST_CHECK(!tryKeepTogetherForConsecutiveSetsTests(sets, { 0, 3 }));
     AOT_TEST_CHECK(!tryKeepTogetherForConsecutiveSetsTests(sets, { 1, 4 }));
@@ -100,7 +99,6 @@ static void testLeafThatIsNamedTwiceCountsOnce()
     AOT_TEST_CHECK(standSideBySideForConsecutiveSetsTests(orderByNumberForConsecutiveSetsTests(sets, 4), { 0, 3 }));
 }
 
-// Families of eight, in families of sixty-four, and a pair across each border between two families of eight, which is refused or taken. The cost of a set goes by its leaves and the nodes above them, not by the size of the tree.
 static void keepManySetsTogetherForConsecutiveSetsTests(uint32_t numberOfLeaves)
 {
     ConsecutiveSets sets(numberOfLeaves);
@@ -135,8 +133,6 @@ static void testTreeGrowsAsItsLeavesDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// Unions of four records each. Two of the four list `kind`, at different places, one lists `parent` alone, and a function reads both through the union.
-// Each union has names of its own: records with the same names are written as one another, so all of them would be four families that grow with the program, and every function's type with them.
 static String manyUnionsForConsecutiveSetsTests(unsigned numberOfUnions)
 {
     StringBuilder text;
@@ -225,7 +221,6 @@ static void appendModuleThatHandsOutFirstFunctionForConsecutiveSetsTests(StringB
     text.append("function f1 name=\"asked\" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n"_s);
 }
 
-// function asked(k) { if (k === 1 || k === 2 || k === 3 || ..) return 10; return 20; }
 static String chainOfComparisonsForConsecutiveSetsTests(unsigned numberOfLinks)
 {
     StringBuilder text;
@@ -241,7 +236,6 @@ static String chainOfComparisonsForConsecutiveSetsTests(unsigned numberOfLinks)
     return text.toString();
 }
 
-// function asked(k) { return k === 1 || k === 2 || k === 3 || ..; }
 static String rowOfAlternativesForConsecutiveSetsTests(unsigned numberOfAlternatives)
 {
     StringBuilder text;
@@ -276,7 +270,6 @@ static std::optional<uint64_t> instructionsOfWalkForConsecutiveSetsTests(const S
         AOT_TEST_CHECK(parsed);
         StagedBuild stages(WTF::move(parsed), build);
         CodeUnit unit { FunctionID(1u), CodeRole::Body };
-        // The first request runs the whole stage, for what callers leave their callees.
         AOT_TEST_CHECK(stages.code(unit));
         instructions = instructionsOfAllThreadsIn([&] {
             AOT_TEST_CHECK(stages.code(unit));
@@ -285,7 +278,6 @@ static std::optional<uint64_t> instructionsOfWalkForConsecutiveSetsTests(const S
     return instructions;
 }
 
-// The head looks at every link once, and no link is walked, so none looks ahead in its turn.
 static void testWalkGrowsAsLinksOfChainDo()
 {
     constexpr unsigned numberOfLinks = 1500;

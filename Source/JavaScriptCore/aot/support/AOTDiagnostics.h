@@ -52,8 +52,6 @@ constexpr bool failsBuild(UserDiagnosticKind kind)
 
 static_assert(failsBuild(UserDiagnosticKind { }), "A record without a kind must fail the build.");
 
-// In all three records, block and value number the function's body as the front end wrote it.
-// Code's numbers mean nothing once its unit is compiled, so a record that holds them must also set location. A record with a location is never looked up in a body.
 struct Subject {
     Typed::FunctionID function { };
     Typed::BlockID block { };
@@ -70,10 +68,8 @@ struct UserDiagnostic {
     Typed::LayoutID layout { };
     LimitID limit { LimitID::None };
     uint32_t count { 0 };
-    // A string of the program that the message quotes.
     Typed::StringID text { };
     SourceLocation location { noSourceLocation };
-    // About an int32 promise: the type site of the position, and the least and the greatest number that may enter it.
     SourceLocation origin { noSourceLocation };
     Typed::TypeSiteKind siteKind { Typed::TypeSiteKind::Unknown };
     double minimum { 0 };
@@ -88,21 +84,15 @@ struct InternalError {
     Typed::LayoutID layout { };
     LimitID limit { LimitID::None };
     uint32_t count { 0 };
-    // A string of the program that the message quotes.
     Typed::StringID text { };
     SourceLocation location { noSourceLocation };
     std::optional<LineColumn> textPosition { };
-    // What only the reporter knows, in words. It ends the message.
     String detail { };
-    // The name of the operation that value refers to, or of block's terminator when there is no value.
-    // Filled in from the body only for a record that arrives without a location, so a reporter that sets location sets this too.
     ASCIILiteral operation { };
 };
 
-// Reads the function's body, so call it only while bodies are still readable.
 std::optional<SourceLocation> findLocation(const Typed::Program*, const Subject&);
 
-// Innermost first, along the frame pointers: backtrace() finds one frame in a build without unwind tables. How many it has written. None where frames are not linked.
 JS_EXPORT_PRIVATE size_t collectReturnAddressesOfCallers(std::span<void*>);
 
 class Diagnostics {
@@ -118,10 +108,7 @@ public:
 
     Diagnostics(Diagnostics&&);
     Diagnostics& operator=(Diagnostics&&);
-    // ProgramOwner::release() frees the bodies, so call this before it, on failing paths too.
-    // Only the first call reads bodies. Later calls, and finish() after one, read only the program's tables.
     void resolveLocations(const Typed::Program&);
-    // Reads bodies only if resolveLocations() was never called.
     void finish(const Typed::Program*);
 
     JS_EXPORT_PRIVATE const Vector<UserDiagnostic>& userDiagnostics() const;

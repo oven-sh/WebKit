@@ -16,8 +16,6 @@
 
 namespace JSC { namespace AOT {
 
-// Detects a cycle for a writer of JSON that keeps no list of the objects it is currently inside.
-// The text of a cycle never ends, so the writer's buffer keeps growing. After each growth the writer reports the next few objects it visits: few enough that checking them costs little next to copying the buffer.
 class WatchedJSONLevels {
 public:
     bool isWatching() const { return m_numberOfLevelsLeft; }
@@ -39,7 +37,6 @@ public:
         m_levels->path.shrink(0);
         m_levels->holders.clear();
     }
-    // Returns false if the holder is already being written. Nothing reports that a holder is finished: a later call from a frame at the same address or above it means that it is.
     bool enter(EncodedJSValue holder, void* frame)
     {
         ASSERT(isWatching());
@@ -64,7 +61,6 @@ private:
         EncodedJSValue holder;
     };
 
-    // The holders reported since the watch began that are still being written, outermost first.
     struct Levels {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Levels);
         Vector<Level, 16> path;

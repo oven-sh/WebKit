@@ -6,7 +6,6 @@ const elementOrUndefined = b.union(element, b.undefined);
 const callbackResult = b.callbackResult("callback");
 const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh;
 const operandCodeEffects = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
-// handwritten/ArrayPrototype.ts writes these twice. On a list: upstream's text, which is what is copied into a caller. What a call by value enters, and what any other receiver gets, begins with a run over a plain vector.
 const methodsWrittenTwice = new Set(["every", "filter", "find", "findIndex", "forEach", "map", "reduce", "some"]);
 const textOnList = (name: string) => (methodsWrittenTwice.has(name) ? `${name}OfList` : name);
 
@@ -73,8 +72,6 @@ const foundOwnValue: Outcome = { returns: b.any, result: "Tested", receiverUses:
 const foundArrayIndex: Outcome = { returns: b.int(-1, b.checked(2 ** 32 - 1, "UINT32_MAX")), result: "Tested" };
 const foundIndex: Outcome = { returns: b.int(-1, Number.MAX_SAFE_INTEGER), result: "Tested" };
 
-// ArraySpeciesCreate: a new array, or whatever object the species constructor of the receiver makes. The method defines the elements on that object and keeps them nowhere else.
-// filter fills the array index by index. map leaves a hole where the receiver has one, and says so.
 const arrayFromSpecies = b.union(b.instance("Array").dense, b.object).freshUnlessSpecies;
 const elementOfResult = b.resultSlot("element");
 
@@ -159,7 +156,6 @@ interface SortOutcomeOnArrayLike extends SortOutcome {
   receiver: b.TableType;
 }
 
-// ToObject of a receiver that is no object.
 const wrapperOfReceiver = b.union(...(["Boolean", "Number", "String", "Symbol", "BigInt"] as const).map(name => b.instance(name))).fresh;
 
 const sortMethod = (name: string, onArray: SortOutcome, onArrayLike: readonly SortOutcomeOnArrayLike[], columns: b.EntryColumns = {}) =>
@@ -219,7 +215,6 @@ export default b.declarations(
     args: { items: b.any, callback: b.callable },
     returns: b.object.unaliased,
     uses: {
-      // The groups hold the items, and nothing describes the object that holds the groups.
       items: [b.runs("Iterate"), b.iteratedValuesStoredIn(b.nativeMemory)],
       callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerElement", this: b.undefined, args: [b.iterated("items"), b.length], result: "Escapes" })],
     },
@@ -234,9 +229,8 @@ export default b.declarations(
       throws: true,
       uses: { this: b.inspected, items: [b.readsContents()] },
       requiresHolderAsThis: true,
-      implementation: b.inline("ArrayFrom", { otherwise: b.compiled("ArrayConstructor", "from") }),
+      implementation: b.compiled("ArrayConstructor", "from"),
     },
-    // A list as its class makes it is walked by the engine's own iterator, which runs nothing of the program. It gives undefined for a hole.
     {
       ...operandCodeEffects,
       args: { items: listAsItsClassMakesIt, mapper: b.undefined.optional },
@@ -256,7 +250,6 @@ export default b.declarations(
       },
       implementation: b.compiled("ArrayConstructor", "from"),
     },
-    // Only the array-like path of the next overload can read a missing index.
     {
       ...operandCodeEffects,
       args: { items: builtinIterable, mapper: b.undefined.optional },
@@ -272,7 +265,6 @@ export default b.declarations(
       uses: { this: b.inspected, items: [itemsProtocols, b.contentsStoredIn(b.resultSlot("element"))] },
       implementation: b.compiled("ArrayConstructor", "from"),
     },
-    // An iterable whose @@iterator is proven unchanged: the loop over it reads the method once, as Array.from does.
     {
       ...operandCodeEffects,
       args: { items: builtinIterable, mapper: b.callable, thisArg: b.any.optional },

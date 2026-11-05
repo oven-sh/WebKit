@@ -107,7 +107,6 @@ void FunctionBuiltinEmitter::generateFunctionBind(const InlineCall& call)
     m_out.jump(missBlockOf(call));
 }
 
-// The function refuses what cannot be called and what is no object in its own words, so both miss.
 void FunctionBuiltinEmitter::generateReflectApply(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments() == 3);
@@ -119,7 +118,6 @@ void FunctionBuiltinEmitter::generateReflectApply(const InlineCall& call)
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { boxCell(function), thisValue, boxCell(list) }));
 }
 
-// Bytecode also constructs in place, so the stack has no frame for Reflect.construct, and a construct is never a tail call. The host function throws for invalid arguments, so that call stays where it is written.
 void FunctionBuiltinEmitter::generateReflectConstruct(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments() == 2 || call.numberOfArguments() == 3);
@@ -145,7 +143,6 @@ void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
     Boxed function = boxedOperand(call.context(), call.receiver());
     Boxed thisValue = argumentOrUndefined(0);
     Boxed list = argumentOrUndefined(1);
-    // Apply is not told what the program calls the callee, so its TypeError cannot name it.
     if (!types().isSubset(typeIDOf(call.receiver()), TypeTable::function)) {
         CallEmitter& calls = emitter<CallEmitter>();
         calls.requireCallable(call.context(), function, calls.siteThatNamesCallee(*call.value()), call.context().origin().isTailCall, list);

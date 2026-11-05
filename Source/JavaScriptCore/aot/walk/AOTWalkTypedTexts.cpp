@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations, texts that are joined: `a + b + c`, `text += a + b`, a template. A row of joins, each of which alone takes what the one in front of it gives, is one Strcat of all the parts where each part is proven to have text by itself.
-// A text whose first reader takes it as a key is made as a key: the run time has joined the same parts before, and hands out the name that it made then.
-// It keeps nothing from one operation to the next: the first join of a row walks the row to its end. At a suspension: no row goes past one. At a throw: nothing that the program can see stands between two joins of a row,
-// so a text that is too long is refused at the last of them as it would be at the first. Withheld: each join is copied in its closed form.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -30,7 +25,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using PartsOfJoinedText = Vector<Reference, 8>;
 
-// One Strcat lists no more parts than this: its emitter keeps the text of every one of them live at once. A rope has three parts, so a longer row makes no more ropes as two operations than as one.
 static constexpr size_t mostPartsOfJoinedText = 32;
 
 static constexpr OpcodeSet accessesUnderKeysInWalkTexts { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine };
@@ -43,9 +37,6 @@ enum class UseOfTextAsKey : uint8_t { None, AnyKey, NameOfProperty };
 
 } // anonymous namespace
 
-// ---- Keys
-
-// Every method of a Map or a Set that takes a text at all takes it first, as the key.
 static bool takesKeyOfCollectionInWalkTexts(Walker& walker, const BodyValue& user, ValueID text)
 {
     if (user.opcode() != Opcode::Call)
@@ -67,12 +58,10 @@ static bool takesKeyOfCollectionInWalkTexts(Walker& walker, const BodyValue& use
     return expected && holdsCollections(types.withoutNullish(expected));
 }
 
-// By the first mention of the text in the stream, behind whatever only hands it on. It decides what pays, never what is right: a key is a string like any other.
 static UseOfTextAsKey useAsKeyInWalkTexts(Walker& walker, const BodyIndex& index, ValueID text)
 {
     while (true) {
         std::optional<BodyUser> mention = index.firstUser(text);
-        // `return `${a.id},${b.id}`;`: who reads it stands in another body, and Facts has seen one that looks something up by it.
         if (mention && mention->kind == BodyUseKind::TerminatorOperand && index.block(mention->block).terminator().kind() == TerminatorKind::Return && walker.facts().resultIsReadAsKey(walker.currentFunction()))
             return UseOfTextAsKey::AnyKey;
         if (!mention || mention->kind != BodyUseKind::Operand)
@@ -86,16 +75,11 @@ static UseOfTextAsKey useAsKeyInWalkTexts(Walker& walker, const BodyIndex& index
     }
 }
 
-// For guessThatOperandBesideStringHasTextOfItsOpcodes(), which stands in front of the join.
 bool joinIsLikelyKeyInWalkTexts(Walker& walker, ValueID join)
 {
     return useAsKeyInWalkTexts(walker, walker.currentBodyIndex(), join) != UseOfTextAsKey::None;
 }
 
-// ---- Rows
-
-// The parts of the join in the order in which its text holds them. In the place of `joinInFront`, which it alone takes, stand the parts of that.
-// False: a part may run code to give its text, or the operation may add numbers.
 static bool takePartsInWalkTexts(Walker& walker, const BodyValue& join, ValueID joinInFront, std::span<const Reference> partsInFront, PartsOfJoinedText& parts)
 {
     bool eachHasText = true;
@@ -124,7 +108,6 @@ static bool takePartsInWalkTexts(Walker& walker, const BodyValue& join, ValueID 
     return eachHasText && joinsTexts;
 }
 
-// The join that alone takes the text, further on in the stretch that is being walked. Null: there is none, or something stands between the two that the program can see.
 static ValueID findJoinThatAloneTakesInWalkTexts(const Walker& walker, const BodyIndex& index, const BodyBlock& block, ValueID text)
 {
     ValueID user = index.onlyUsingValue(text);
@@ -154,8 +137,7 @@ static void bindJoinedTextInWalkTexts(Walker& walker, const BodyValue& join, std
     walker.chooseConservativeFields(joined);
     joined.setIsLikelyKey(use != UseOfTextAsKey::None);
     joined.setIsLikelyName(use == UseOfTextAsKey::NameOfProperty);
-    std::optional<Effects> ofKnownTexts = effectsOfJoinOfKnownTexts(walker, joined);
-    if (Reference text = walker.build(WTF::move(joined), ofKnownTexts ? &*ofKnownTexts : nullptr))
+    if (Reference text = walker.build(WTF::move(joined)))
         walker.bind(join.id(), text);
 }
 
@@ -171,7 +153,6 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
     if (!takePartsInWalkTexts(walker, first, { }, { }, parts)) {
         if (convertPartsAndAppendToTextInStringBuilder(walker, first, parts.span()))
             return true;
-        // The emitter converts each part of a template that may run code where it stands, and hands the texts to the run time.
         UseOfTextAsKey use = first.opcode() == Opcode::Strcat && !parts.contains(Reference()) ? useAsKeyInWalkTexts(walker, index, first.id()) : UseOfTextAsKey::None;
         if (use == UseOfTextAsKey::None)
             return false;
@@ -179,16 +160,11 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
         return true;
     }
 
-    bool hasTakenTextsApart = takePartsOfTextsThatJoinAloneReads(walker, first, parts, mostPartsOfJoinedText);
     BodyBlock block = index.block(index.blockOf(first.id()));
     uint32_t firstValue = block.firstValue().index();
     BodyValue last = first;
     bool hasWalkedOn = false;
-    auto findTaker = [&] {
-        ValueID taker = findJoinThatAloneTakesInWalkTexts(walker, index, block, last.id());
-        return taker ? taker : findJoinThatTakesLinkPastCode(walker, last.id(), parts.span());
-    };
-    while (ValueID taker = findTaker()) {
+    while (ValueID taker = findJoinThatAloneTakesInWalkTexts(walker, index, block, last.id())) {
         walker.walkStretch(block.id(), last.id().index() + 1 - firstValue, taker.index() - firstValue);
         hasWalkedOn = true;
         if (walker.isUnreachable() || walker.hasFailed())
@@ -198,7 +174,6 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
             break;
         parts = WTF::move(longer);
         last = index.value(taker);
-        // No part runs code, so a call that Link lists here for a conversion enters nothing. It is told all the same, as Walker::walkOperation() tells it of a join that it walks.
         if (FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), last.id()))
             walker.arrivals().leaveAnything(callee);
     }
@@ -210,10 +185,9 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
     }
     UseOfTextAsKey use = useAsKeyInWalkTexts(walker, index, last.id());
     hasWalkedOn |= holdsPartsTakenOutOfTexts(walker, last, parts.span());
-    if (!hasWalkedOn && !hasTakenTextsApart && use == UseOfTextAsKey::None)
+    if (!hasWalkedOn && use == UseOfTextAsKey::None)
         return false;
     bindJoinedTextInWalkTexts(walker, last, parts.span(), use);
-    // The row is walked.
     uint32_t behindRow = last.id().index() + 1 - firstValue;
     walker.walkStretch(block.id(), behindRow, behindRow);
     return true;

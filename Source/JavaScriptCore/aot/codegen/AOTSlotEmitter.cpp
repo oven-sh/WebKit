@@ -29,13 +29,11 @@ static_assert(minExtensionSize == copyChunkBytes && minExtensionSize <= maxExten
 static_assert(JSValue::ValueTrue <= UINT8_MAX && JSValue::ValueUndefined <= UINT8_MAX);
 static_assert(absentInt32 < minInlineInt32 && undefinedInt32 < minInlineInt32 && nullInt32 < minInlineInt32);
 static_assert(maxSlotInteger < undefinedInteger && maxSlotInteger < nullInteger && maxSlotInteger < absentInteger);
-static_assert(absentCell32 < undefinedCell32 && nullCell32 < undefinedCell32 && undefinedCell32 < emptyLiteralStringWord && undefinedCell32 < minCell32);
+static_assert(absentCell32 < undefinedCell32 && nullCell32 < undefinedCell32 && undefinedCell32 < minCell32);
 
-// Of what a slot with boxed markers holds, only the markers have no other bit than these.
 static constexpr int64_t bitsOfBoxedMarkers = JSValue::ValueUndefined | JSValue::ValueNull;
 static constexpr bool hasOnlyBitsOfBoxedMarkers(int64_t bits) { return !(bits & ~bitsOfBoxedMarkers); }
 static_assert(hasOnlyBitsOfBoxedMarkers(JSValue::ValueEmpty) && !hasOnlyBitsOfBoxedMarkers(JSValue::ValueFalse) && !hasOnlyBitsOfBoxedMarkers(JSValue::ValueTrue));
-static_assert(!hasOnlyBitsOfBoxedMarkers(emptyLiteralStringWord) && bitsOfBoxedMarkers < emptyLiteralStringWord);
 
 static constexpr SlotTraits traitsOfLoaded(SlotRepresentation slot)
 {
@@ -114,12 +112,6 @@ Operand SlotEmitter::operandOfBits(LValue bits, SlotRepresentation slot)
     Representation representation = Typed::representationOf(slot);
     if (slot == SlotRepresentation::OptionalInt32)
         return widenOptionalInt32(Word32(bits), AbsentReadsAs::Absent);
-    if (slot == SlotRepresentation::LiteralString32) {
-        NarrowReference word(bits);
-        Condition isCell = isCellReferenceAmongAllWords(word);
-        CellPointer cell = decode(word);
-        return LiteralStringWord(m_out.select(isCell.value(), cell.value(), m_out.zeroExtPtr(bits)));
-    }
     if (bits->type() == Machine::Int32 && machineTypeOf(representation) == Machine::Int64)
         bits = m_out.zeroExtPtr(bits);
     return Operand(representation, bits);
@@ -151,8 +143,6 @@ Operand SlotEmitter::loadWithoutMarkers(TypedPointer pointer, SlotRepresentation
     case SlotRepresentation::Int8:
     case SlotRepresentation::Uint16:
     case SlotRepresentation::Int16:
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32:
     case SlotRepresentation::DeferredClosure:
         break;
     }
@@ -218,11 +208,7 @@ void SlotEmitter::store(TypedPointer pointer, SlotRepresentation slot, Operand o
     }
     if (slot == SlotRepresentation::OptionalInt32)
         bits = narrowOptionalInt32(operand.as<OptionalInteger>()).value();
-    else if (slot == SlotRepresentation::LiteralString32) {
-        Condition isStringCell = emitter<ConversionEmitter>().isStringCell(operand.as<LiteralStringWord>());
-        NarrowReference reference = compress(CellPointer(bits));
-        bits = m_out.select(isStringCell.value(), reference.value(), m_out.castToInt32(bits));
-    } else if (traits.width < sizeof(uint64_t) && bits->type() == Machine::Int64)
+    else if (traits.width < sizeof(uint64_t) && bits->type() == Machine::Int64)
         bits = m_out.castToInt32(bits);
     storeBits(pointer, slot, bits);
 }
@@ -321,7 +307,6 @@ void SlotEmitter::ensureExtensionHolds(const OperationContext& context, CellPoin
     reserveGranules(context, cell, extensionWord, reservedBits, barrier, mayCollect);
     m_out.jump(done);
 
-    // With an empty scope: the hidden word and the bits of the granules are read again, whatever the call declares that it writes.
     m_out.appendTo(done);
 }
 
@@ -346,10 +331,8 @@ void SlotEmitter::reserveGranules(const OperationContext& context, CellPointer c
     }
 }
 
-// ARM64 counts bits in a vector register. For a few bits it is quicker to subtract: x - (x >> 1) - (x >> 2) .. is the number of bits set in x, and a shifted operand costs nothing there.
 static constexpr uint32_t maxGranuleCountedBySubtraction = isARM64() ? 5 : 1;
 
-// The bit of the granule becomes the sign and the bits of the granules behind it fall out, so one value answers whether the granule is held and how many are held up to it.
 Integer SlotEmitter::granuleBitsUpTo(Pointer extension, uint32_t granule)
 {
     return Integer(m_out.shl(loadField<Integer>(extension, m_heaps.AOTExtension_granuleBits).value(), maxExtensionGranules - 1 - granule));
@@ -394,24 +377,37 @@ TypedPointer SlotEmitter::addressOf(CellPointer cell, const PlacedSlot& slot, co
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static constexpr bool namesFormsOfGetSlotForFieldsOutOfLine(Opcode read)
+{
+    for (StateOfKnowledge state : { StateOfKnowledge::FieldInExtension, StateOfKnowledge::FieldLeftOutByMakers }) {
+        for (bool isInLoop : { false, true }) {
+            FormAtPlace named = formByLoopAlone(read, state, isInLoop);
+            FormAtPlace namedForGetSlot = formByLoopAlone(Opcode::GetSlot, state, isInLoop);
+            if (named.form != namedForGetSlot.form || named.place != namedForGetSlot.place)
+                return false;
+        }
+    }
+    return true;
+}
+
 bool SlotEmitter::readsExtensionByCall(const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot& extensionWord) const
 {
     static_assert(formDependsOnLoopOf(Opcode::GetSlot) && formDependsOnLoopOf(Opcode::GetSlotOrUndefined) && formDependsOnLoopOf(Opcode::IsSlotFilled));
     static_assert(formDependsOnLoopOf(Opcode::GetSlotGetter) && formDependsOnLoopOf(Opcode::GetSlotSetter) && formDependsOnLoopOf(Opcode::PutSlotOrAdd));
+    static_assert(namesFormsOfGetSlotForFieldsOutOfLine(Opcode::GetSlotOrUndefined) && namesFormsOfGetSlotForFieldsOutOfLine(Opcode::IsSlotFilled));
+    static_assert(namesFormsOfGetSlotForFieldsOutOfLine(Opcode::GetSlotGetter) && namesFormsOfGetSlotForFieldsOutOfLine(Opcode::GetSlotSetter));
     BlockID block = m_generator.blockBeingGenerated();
     if (!block)
         return false;
-    // What the stub has in its code: where the word of the Extension lies and how wide it is.
     if (extensionWord.offset != offsetOfFirstField || extensionWord.representation != hiddenReferenceRepresentation(inputs().stubCatalog.options().useWideReferences))
         return false;
     if (location.heap() != AbstractHeap::ObjectFields || !representsAbsentAsZero(slot.representation) || !findSlotInGranule(offsetInGranule(slot.offset), widthOf(slot.representation)))
         return false;
-    // For PutSlotOrAdd the read is a part of its form.
     static constexpr OpcodeSet readsOfSlots { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::IsSlotFilled, Opcode::GetSlotGetter, Opcode::GetSlotSetter };
-    // `if (message.isMeta)`: the call would cost more than all that the read does where the object has no Extension.
-    bool readsInLine = m_generator.paysForCodeInLine(block) || slot.isLeftOutByMakers;
-    m_generator.out().noteFormOf(readsOfSlots, readsInLine ? Form::Open : Form::Closed, StateOfKnowledge::FieldInExtension, m_generator.paysForCodeInLine(block) ? Place::Loop : Place::Anywhere);
-    return !readsInLine;
+    StateOfKnowledge state = slot.isLeftOutByMakers ? StateOfKnowledge::FieldLeftOutByMakers : StateOfKnowledge::FieldInExtension;
+    FormAtPlace named = formByLoopAlone(Opcode::GetSlot, state, m_generator.paysForCodeInLine(block));
+    m_generator.out().noteFormOf(readsOfSlots, named.form, state, named.place);
+    return named.form != Form::Open;
 }
 
 LValue SlotEmitter::readFieldInExtension(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location)
@@ -422,7 +418,6 @@ LValue SlotEmitter::readFieldInExtension(CellPointer cell, const PlacedSlot& slo
     static_assert(bitsOfOffset + bitsOfPlace + 8 * sizeof(Machine::HeapIndex) <= 32);
     unsigned width = widthOf(slot.representation);
     SlotInGranule place = *findSlotInGranule(offsetInGranule(slot.offset), width);
-    // As the number of a load has its offset, its width and its heap.
     uint32_t payload = slot.offset | static_cast<uint32_t>(place) << bitsOfOffset | static_cast<uint32_t>(m_heaps.at(m_program, location).index()) << (bitsOfOffset + bitsOfPlace);
     CallOptions options { .pureFunction = functionOfMemory(PureOperation::ReadFieldInExtension, payload), .convertsNoCells = true, .returnsWord32 = width < sizeof(uint64_t) };
     LValue object = cell.value();
@@ -432,7 +427,6 @@ LValue SlotEmitter::readFieldInExtension(CellPointer cell, const PlacedSlot& slo
 Operand SlotEmitter::loadOutOfLine(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot& extensionWord, bool absentReadsAsUndefined)
 {
     RELEASE_ASSERT(representsAbsentAsZero(slot.representation));
-    // The stub takes the cell, and nothing collects until it has read the slot.
     if (readsExtensionByCall(slot, location, extensionWord)) {
         Operand read = operandOfBits(readFieldInExtension(cell, slot, location), slot.representation);
         return absentReadsAsUndefined ? absentAsUndefined(read, slot.representation) : read;
@@ -454,7 +448,6 @@ Operand SlotEmitter::loadSlot(CellPointer cell, const PlacedSlot& slot, const Me
     if (!slot.isOutOfLine())
         return load(addressOf(cell, slot, location), slot.representation);
     RELEASE_ASSERT(extensionWord);
-    // A field that an object lists before it has an extension reads as undefined.
     return loadOutOfLine(cell, slot, location, *extensionWord, traitsOf(slot.representation).hasUndefined);
 }
 
@@ -463,7 +456,6 @@ Operand SlotEmitter::loadSlotThatHoldsValue(CellPointer cell, const PlacedSlot& 
     if (!slot.isOutOfLine())
         return load(addressOf(cell, slot, location), slot.representation);
     RELEASE_ASSERT(extensionWord);
-    // The call is the one that holdsValue() has made, unless something has written there since.
     if (readsExtensionByCall(slot, location, *extensionWord))
         return operandOfBits(readFieldInExtension(cell, slot, location), slot.representation);
     Operand loaded = load(addressOf(cell, slot, location, extensionWord), slot.representation);
@@ -476,7 +468,6 @@ Operand SlotEmitter::loadSlot(CellPointer cell, const PlacedSlot& slot, const Me
     bool holdsNoMarker = loadedRepresentationOf(slot.representation, loadedType) != Typed::representationOf(slot.representation);
     if (holdsNoMarker && !slot.isOutOfLine())
         return loadWithoutMarkers(addressOf(cell, slot, location), slot.representation);
-    // The slot is filled. Only a field that an object may list without storage is filled while its granule is missing or empty: isFilled().
     if (slot.isOutOfLine() && !slot.mayExistWithoutStorage) {
         RELEASE_ASSERT(extensionWord);
         return loadOutOfLine(cell, slot, location, *extensionWord);
@@ -484,7 +475,6 @@ Operand SlotEmitter::loadSlot(CellPointer cell, const PlacedSlot& slot, const Me
     return loadSlot(cell, slot, location, extensionWord);
 }
 
-// The likely path has one test, which the markers fail.
 Operand SlotEmitter::loadSlotOrUndefined(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot* extensionWord)
 {
     SlotRepresentation representation = slot.representation;
@@ -537,7 +527,6 @@ Condition SlotEmitter::isFilled(CellPointer cell, const PlacedSlot& slot, const 
     Condition slotHoldsValue = holdsValue(cell, slot, location, extensionWord);
     if (!slot.isOutOfLine() || !slot.mayExistWithoutStorage)
         return slotHoldsValue;
-    // Absent bytes do not say that the field is absent: only the key order says whether the object lists it.
     RELEASE_ASSERT(!location.isEntireHeap());
     return either<Condition>(slotHoldsValue, [&] {
         return boolean(true);
@@ -546,14 +535,12 @@ Condition SlotEmitter::isFilled(CellPointer cell, const PlacedSlot& slot, const 
     });
 }
 
-// For what load() gives of a slot that has the three markers.
 Condition SlotEmitter::isNoMarker(Operand loaded, SlotRepresentation slot)
 {
     switch (slot) {
     case SlotRepresentation::OptionalInt64:
         return lessThanOrEqual(Integer(loaded.value), integer(maxSlotInteger));
     case SlotRepresentation::OptionalDouble: {
-        // The markers are NaNs. So is NaN, which fails the test with them.
         Number number(loaded.value);
         return equal(number, number);
     }
@@ -562,8 +549,6 @@ Condition SlotEmitter::isNoMarker(Operand loaded, SlotRepresentation slot)
     case SlotRepresentation::OptionalCell32:
         return above(loaded.as<NarrowReference>(), NarrowReference(m_out.constInt32(undefinedCell32)));
     case SlotRepresentation::JSValue:
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32:
         return Condition(m_out.testNonZero64(loaded.value, m_out.constInt64(~bitsOfBoxedMarkers)));
     case SlotRepresentation::Cell:
     case SlotRepresentation::Cell32:
@@ -586,7 +571,6 @@ Condition SlotEmitter::isNoMarker(Operand loaded, SlotRepresentation slot)
 
 Condition SlotEmitter::holdsDeclaredType(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot* extensionWord)
 {
-    // The closure that is not made yet, or a reference: what lies between is absent, null or undefined.
     if (slot.representation == SlotRepresentation::DeferredClosure) {
         Word32 word(m_out.load32(addressOf(cell, slot, location)));
         Condition isUncreated = equal(word, uncreatedDeferredClosure);
@@ -602,7 +586,6 @@ Condition SlotEmitter::holdsDeclaredType(CellPointer cell, const PlacedSlot& slo
     if (slot.representation == SlotRepresentation::OptionalInt32)
         return greaterThanOrEqual(Word32(m_out.load32(pointer)), minInlineInt32);
     if (slot.representation == SlotRepresentation::OptionalDouble) {
-        // Read as a signed word, the upper half of a marker is larger than that of any number, of an infinity and of NaN.
         static_assert(undefinedDouble < nullDouble && nullDouble < absentDouble && !(absentDouble >> 63));
         static_assert(std::bit_cast<uint64_t>(PNaN) < undefinedDouble && !(undefinedDouble & UINT32_MAX));
         TypedPointer upperHalf = m_out.address(m_heaps.at(m_program, location), cell.value(), slot.offset + sizeof(uint32_t));
@@ -619,7 +602,6 @@ bool SlotEmitter::holdsRawValueFromBirthInSomeMember(LayoutSetID receivers, Prop
     });
 }
 
-// For a store into the slot of a number or a boolean for whose raw value the mark of the cell answers.
 void SlotEmitter::markCellIfMarkerIsStored(CellPointer cell, ValueID stored)
 {
     const Type& type = typeOf(stored);

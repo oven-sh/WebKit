@@ -19,7 +19,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// StagedBuild walks under the options of the build: walkOptionsOf() says whether those verify Code. This thread of Compile verifies it whatever they say.
 class VerifiedWalks {
     WTF_MAKE_NONCOPYABLE(VerifiedWalks);
 public:
@@ -34,7 +33,6 @@ public:
         m_worker.emplace(*m_inputs, context.build, m_stage.program().types);
     }
 
-    // False once a stage in front of Compile has reported an error. Nothing else may be asked then.
     bool isReady() const { return m_worker.has_value(); }
 
     const Program& program() const { return m_inputs->walk.program; }
@@ -62,7 +60,6 @@ static bool refuseArgumentsOfWalkCommand(TestCommandContext& context)
     return true;
 }
 
-// The text that was read. Nothing after an error, which is printed.
 static std::optional<StringView> readCodeOfSection(TestCommandContext& context, VerifiedWalks& walks, Code& code)
 {
     const TestSection* section = context.findSection(sectionReadByWalkCommands);
@@ -136,8 +133,6 @@ static void runVerifyCodeCommand(TestCommandContext& context)
         return;
     InternalErrorKind kindOfBrokenRule { InternalErrorKind::Unknown };
     String brokenRule = verifyCode(CodeTextContext { walks.program(), walks.types(), &walks.plan() }, code, &kindOfBrokenRule);
-    // Both verifiers that stand behind each walk, in their order, with the positions that a walk of this program reads.
-    // A record that bears the mark of a fact is held to what Facts says when it is asked once more.
     if (brokenRule.isNull()) {
         kindOfBrokenRule = InternalErrorKind::TypeOutOfDate;
         brokenRule = verifyTypesOfCode(TypingContext { walks.program(), walks.types(), walks.walker().positions() }, walks.plan().conventions(), walks.arrivals(), code);
@@ -148,7 +143,6 @@ static void runVerifyCodeCommand(TestCommandContext& context)
         context.out.println(nameOf(kindOfBrokenRule), ": "_s, brokenRule);
 }
 
-// The sweep by itself: what it makes of Code that no walk would build is tested here.
 static void runSweepCodeCommand(TestCommandContext& context)
 {
     if (refuseArgumentsOfWalkCommand(context))
@@ -165,13 +159,6 @@ static void runSweepCodeCommand(TestCommandContext& context)
     context.out.println("# visits of operations: "_s, totals.operationsSwept);
 }
 
-// Code behind the walk and the sweep, a unit after the other in the order of the words. The order changes nothing of the Code: StagedBuild::code().
-//     mechanisms TypedOperations,Folding
-//     code f1:Body { # swept
-//     ..
-//     }
-// Where a unit fails: `the walk of f1:Body failed`, and the build's diagnostics say why. No unit follows it.
-// A unit that the plan has not: the bare line `code f1:CoroutineBody` and a sentence under it, and the next unit follows: test/aot/shell/toolchain.py asks for both roles of every function.
 static void runWalkCommand(TestCommandContext& context)
 {
     std::optional<Vector<CodeUnit>> units = unitsInOrderOfWords(*context.program, context.arguments, context.out);
@@ -201,7 +188,6 @@ static void runWalkCommand(TestCommandContext& context)
     }
 }
 
-// The serializer of each layout that the plan gives one, in the order of the layouts.
 static void runWalkSerializersCommand(TestCommandContext& context)
 {
     if (refuseArgumentsOfWalkCommand(context))
@@ -229,14 +215,12 @@ static void runWalkSerializersCommand(TestCommandContext& context)
     }
 }
 
-// Why the walk builds each read and each store by name of the units closed, a line each: explainClosedAccess() has the fields.
 static void runWhyClosedCommand(TestCommandContext& context)
 {
     std::optional<Vector<CodeUnit>> units = unitsInOrderOfWords(*context.program, context.arguments, context.out);
     if (!units || units->isEmpty())
         return;
 
-    // What callers leave is there once every unit is compiled: StagedBuild::code().
     StagedBuild stage = context.stage();
     if (!stage.code(units->first()))
         return;

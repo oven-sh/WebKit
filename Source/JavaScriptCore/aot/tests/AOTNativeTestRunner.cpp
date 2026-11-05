@@ -23,10 +23,12 @@ namespace JSC { namespace AOT {
 
 static Lock crashLock;
 
+static constexpr ASCIILiteral whereChecksOfNativeTestsFail = "native test"_s;
+
 void failNativeTest(const char* file, int line, const char* condition)
 {
     crashLock.lock();
-    WTFReportAssertionFailure(file, line, "native test", condition);
+    WTFReportAssertionFailure(file, line, whereChecksOfNativeTestsFail.characters(), condition);
     CRASH();
 }
 
@@ -48,8 +50,6 @@ static std::span<const NativeTestProvider> nativeTestProviders()
     return providers;
 }
 
-// They take seconds, the others milliseconds. They come first, the longest at the front, so whoever deals the tests out over processes that run side by side
-// begins with them.
 static constexpr ASCIILiteral longNativeTests[] = {
     "slow/compact-table/compiled-code-probes-index-wider-than-the-hash"_s,
     "id-sets/operations-lazy-lists"_s,
@@ -78,6 +78,10 @@ static void forEachNativeTest(NOESCAPE const Invocable<void(const NativeTest&)> 
     });
 }
 
+static constexpr ASCIILiteral testsOfHostEntries[] = {
+#include "AOTNativeTestsOfHostEntries.inc"
+};
+
 static void checkNativeTests()
 {
     HashSet<ASCIILiteral> names;
@@ -88,14 +92,11 @@ static void checkNativeTests()
         RELEASE_ASSERT_WITH_MESSAGE(isNewName, "Two native tests are named %s", test.name.characters());
         RELEASE_ASSERT_WITH_MESSAGE(test.todo.isNull() || StringView(test.todo).find(": "_s) != notFound, "The todo of native test %s names no owner", test.name.characters());
     });
+    for (ASCIILiteral name : testsOfHostEntries)
+        RELEASE_ASSERT_WITH_MESSAGE(names.contains(name), "AOTNativeTestsOfHostEntries.inc names %s, which is no native test", name.characters());
 }
 
 using NativeTestList = std::span<const NativeTest* const>;
-
-// They name entries of Bun, or need roles that the stand-in host leaves out. A program that is linked with Bun's table runs them.
-static constexpr ASCIILiteral testsOfHostEntries[] = {
-#include "AOTNativeTestsOfHostEntries.inc"
-};
 
 static bool needsHostEntries(const NativeTest& test)
 {
@@ -112,7 +113,6 @@ static SelectedNativeTests selectNativeTests(const NativeTestRequest& request)
     SelectedNativeTests tests;
     bool leavesOutTestsOfHostEntries = hasStandInHost();
     bool isPastPreviousTest = request.previousTest.isEmpty();
-    // Counted from the start of the list: the child that goes on behind a crash has to take the same tests.
     unsigned ordinal = 0;
     forEachNativeTest([&](const NativeTest& test) {
         bool isSelected = StringView(test.name).contains(request.filter) && request.part.contains(ordinal++);
@@ -151,7 +151,6 @@ static ChildProgress progressOf(StringView output, NativeTestList tests)
         if (lineEnd == notFound)
             break;
         StringView line = output.substring(lineStart, lineEnd - lineStart);
-        // C's stdout ends a line with \r\n on Windows.
         if (line.endsWith('\r'))
             line = line.left(line.length() - 1);
         if (line == tests[progress.startedTestCount]->name) {
@@ -175,7 +174,6 @@ static Vector<String> childArguments(const NativeTestRequest& request, StringVie
     return arguments;
 }
 
-// The check that failed, where the test printed one.
 static StringView failedCheckIn(StringView output)
 {
     constexpr ASCIILiteral start = "ASSERTION FAILED: "_s;
@@ -184,6 +182,19 @@ static StringView failedCheckIn(StringView output)
         return { };
     size_t lineEnd = output.find('\n', lineStart);
     return output.substring(lineStart + start.length(), lineEnd == notFound ? lineEnd : lineEnd - lineStart - start.length());
+}
+
+static bool hasEndedAtCheckOfTest(const ChildProcessResult& result, StringView output)
+{
+    size_t lineStart = output.find("ASSERTION FAILED: "_s);
+    if (result.outcome != ChildProcessOutcome::Crashed || lineStart == notFound || output.contains("ERROR: AddressSanitizer"_s))
+        return false;
+    size_t placeStart = output.find('\n', lineStart);
+    if (placeStart == notFound)
+        return false;
+    size_t placeEnd = output.find('\n', placeStart + 1);
+    StringView place = output.substring(placeStart + 1, placeEnd == notFound ? placeEnd : placeEnd - placeStart - 1);
+    return place.endsWith(makeString(" : "_s, whereChecksOfNativeTestsFail));
 }
 
 static ASCIILiteral todoOf(const NativeTestRequest& request, const NativeTest& test)
@@ -225,7 +236,7 @@ static NativeTestSummary runInChildProcesses(const NativeTestRequest& request, N
         const NativeTest& failed = *tests[progress.startedTestCount - 1];
         ASCIILiteral failedTest = failed.name;
         ASCIILiteral todo = todoOf(request, failed);
-        if (todo.isNull()) {
+        if (todo.isNull() || !hasEndedAtCheckOfTest(result, progress.lastTestOutput)) {
             out.print(progress.lastTestOutput);
             out.println("FAIL ", failedTest, ": ", result.description());
             ++summary.failed;

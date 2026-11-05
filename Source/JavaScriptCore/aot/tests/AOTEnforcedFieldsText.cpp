@@ -16,8 +16,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr unsigned numberOfSourcesInEnforcedFieldsText = 5;
-static_assert(static_cast<unsigned>(SourceOfSlotType::Proven) + 1 == numberOfSourcesInEnforcedFieldsText);
+static constexpr unsigned numberOfSourcesInEnforcedFieldsText = 6;
+static_assert(static_cast<unsigned>(SourceOfSlotType::Seen) + 1 == numberOfSourcesInEnforcedFieldsText);
 
 static ASCIILiteral nameInEnforcedFieldsText(SourceOfSlotType source)
 {
@@ -32,16 +32,12 @@ static ASCIILiteral nameInEnforcedFieldsText(SourceOfSlotType source)
         return "family"_s;
     case SourceOfSlotType::Proven:
         return "proven"_s;
+    case SourceOfSlotType::Seen:
+        return "seen"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-//     field L0.1 "flags" source=written type=i32 markers spares-test slot=JSValue held=undefined|null|i32
-//     field L0.7 "id" appended source=family type=i32 markers spares-test slot=JSValue held=undefined|null|i32
-//     field L2.0 "socket" taken-back slot=JSValue
-//     counts fields 9 | written 4 | family 1 | proven 1 | compiler 0 | taken back 1 | int32 by guess 0 | every value 2
-//     counts stores by name into held slots | may be spared the test 4 | tested 2
-// The fields of the layouts of which the plan keeps compiled objects. One whose slot takes every value, and of which nothing was taken back, has no line.
 static void printEnforcedFields(TestCommandContext& context, StagedBuild& stage, const Facts& facts, const Plan& plan, bool printsCountsAlone, bool printsWhatIsLost)
 {
     PrintStream& out = context.out;
@@ -73,7 +69,6 @@ static void printEnforcedFields(TestCommandContext& context, StagedBuild& stage,
             numberTakenBack += answer.wasTakenBack;
             numberOfInt32sByGuess += answer.isInt32ByGuess;
             numberSparedTest += sparesTest;
-            // `lost`: what is written in checked code and held to nothing all the same.
             if (printsWhatIsLost && !answer.type && field < program.at(id).fields.size()) {
                 const DeclaredType& declared = fieldAt(program, declarationOf(program, reference)).declared;
                 if (declared.isGuarded() && declared.written()) {
@@ -119,11 +114,10 @@ static void printEnforcedFields(TestCommandContext& context, StagedBuild& stage,
     };
     uint64_t numberHeld = numberOfFields - numberFrom(SourceOfSlotType::Nothing);
     out.println("counts fields "_s, numberOfFields, " | written "_s, numberFrom(SourceOfSlotType::Written), " | family "_s, numberFrom(SourceOfSlotType::WrittenInFamily), " | proven "_s, numberFrom(SourceOfSlotType::Proven),
-        " | compiler "_s, numberFrom(SourceOfSlotType::Compiler), " | taken back "_s, numberTakenBack, " | int32 by guess "_s, numberOfInt32sByGuess, " | every value "_s, numberFrom(SourceOfSlotType::Nothing) - numberTakenBack);
+        " | compiler "_s, numberFrom(SourceOfSlotType::Compiler), " | taken back "_s, numberTakenBack, " | int32 by guess "_s, numberOfInt32sByGuess, " | every value "_s, numberFrom(SourceOfSlotType::Nothing) - numberTakenBack, " | seen "_s, numberFrom(SourceOfSlotType::Seen));
     out.println("counts stores by name into held slots | may be spared the test "_s, numberSparedTest, " | tested "_s, numberHeld - numberSparedTest);
 }
 
-// AOTFactsTestCommands.cpp lists it. The first line is `mechanisms <list>`.
 void runFactsCommand(TestCommandContext&);
 void runFactsCommand(TestCommandContext& context)
 {

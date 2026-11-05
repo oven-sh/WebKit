@@ -76,7 +76,6 @@ static void callsOnWaysTestPoison(CCallHelpers& jit, RegisterMask gprs, Register
     });
 }
 
-// Adds one to the word that `counter` points at, if there is one, and leaves poison in every register that no callee saves.
 static PatchOperation* callsOnWaysTestAppendCall(TestProcedure& test, LValue counter)
 {
     RegisterFile file = registerFileFor(test.procedure().traits());
@@ -96,7 +95,6 @@ static PatchOperation* callsOnWaysTestAppendCall(TestProcedure& test, LValue cou
     return call;
 }
 
-// Hands its operand back in the return register and leaves poison in every other register that no callee saves.
 static PatchOperation* callsOnWaysTestAppendCallThatReturns(TestProcedure& test, LValue operand)
 {
     RegisterFile file = registerFileFor(test.procedure().traits());
@@ -116,8 +114,6 @@ static PatchOperation* callsOnWaysTestAppendCallThatReturns(TestProcedure& test,
     return call;
 }
 
-// ---- R1
-
 struct CallsOnWaysTestArms {
     explicit CallsOnWaysTestArms(TestProcedure& test)
         : left(test.out().newBlock())
@@ -136,8 +132,6 @@ struct CallsOnWaysTestArms {
     LValue forRight { nullptr };
 };
 
-// Each arm hands one of two values to its call and reads nothing behind it. In the order one arm stands behind the other, so the value of the later arm counts as live across the call of the earlier one.
-// No way leads from that call to a read of it: it takes no register that the function would have to save, and is not stored.
 static void valueThatLaterArmHandsToItsCallTakesNoSavedRegister()
 {
     TestProcedure test;
@@ -158,7 +152,6 @@ static void valueThatLaterArmHandsToItsCallTakesNoSavedRegister()
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0 }, uint64_t { 10 }, uint64_t { 20 }) == 27);
 }
 
-// The same of two Phis. The call ahead of them sets up the frame at the entry, so no framed part sees to what the arms spill.
 static void phiThatLaterArmHandsToItsCallIsNotStored()
 {
     TestProcedure test;
@@ -198,7 +191,6 @@ static void phiThatLaterArmHandsToItsCallIsNotStored()
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 1 }) == 51 && test.call<uint64_t>(uint64_t { 0 }) == 70);
 }
 
-// Each arm reads its value behind its call, so both are born in registers that calls keep and nothing is moved at the calls.
 static void valueThatArmReadsBehindItsCallIsBornInSavedRegister()
 {
     TestProcedure test;
@@ -220,8 +212,6 @@ static void valueThatArmReadsBehindItsCallIsBornInSavedRegister()
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0 }, uint64_t { 10 }, uint64_t { 20 }) == 27);
 }
 
-// function pick(c, v) { if (c & 1) { count(v); return 0; } if (c & 2) { count(v); return 1; } return v; }
-// Two parts call, each below a head of its own, and the way past both needs no frame. Below each head the call alone reads v.
 static void valueThatCallAloneReadsBelowHeadOfFramedPartStaysWhereItLies()
 {
     TestProcedure test;
@@ -251,7 +241,6 @@ static void valueThatCallAloneReadsBelowHeadOfFramedPartStaysWhereItLies()
 
     const Procedure& procedure = test.procedure();
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, procedure.liveness().of(counter).has(ValueFlag::LivesAcrossCall));
-    // On ARM64 the whole function has the frame.
     if (isX86_64())
         AOT_CALLS_ON_WAYS_TEST_CHECK(test, procedure.allocation().headsOfFramedPart().size() == 2 && !procedure.allocation().needsFrameAheadOfFramedPart());
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, !procedure.allocation().usedCalleeSaves() && !procedure.allocation().isSpilled(counter));
@@ -263,7 +252,6 @@ static void valueThatCallAloneReadsBelowHeadOfFramedPartStaysWhereItLies()
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t*>(uint64_t { 4 }, &word) == &word && word == 2);
 }
 
-// The arm that calls leads on to the join, which reads the value.
 static void valueReadBehindJoinOutlivesCallOfArmThatLeadsThere()
 {
     TestProcedure test;
@@ -286,7 +274,6 @@ static void valueReadBehindJoinOutlivesCallOfArmThatLeadsThere()
     AOT_CALLS_ON_WAYS_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 1 }, uint64_t { 10 }) == 15 && test.call<uint64_t>(uint64_t { 0 }, uint64_t { 10 }) == 15);
 }
 
-// As many arms as the Switch has cases, each of which calls with one value. Every head asks about that value, which every later arm reads.
 static std::optional<uint64_t> callsOnWaysTestInstructionsForArmsThatCall(unsigned numberOfArms)
 {
     TestProcedure test;

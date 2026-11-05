@@ -54,7 +54,6 @@ static constexpr JSTypeRange arrayTypes { ArrayType, DerivedArrayType };
 static_assert(DerivedArrayType == ArrayType + 1);
 static constexpr JSTypeRange typedArrayTypes { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayTypeExcludingDataView) };
 
-// The executable remembers what the table says of its function: one more than the index of the entry, or that there is none. Zero: nobody has looked yet.
 constexpr int32_t hasNoBoxedCallEntry = UINT8_MAX;
 static_assert(StubWords::numberOfBoxedCallEntries < hasNoBoxedCallEntry);
 constexpr int32_t offsetOfBoxedCallTable = Instance::offsetOfBoxedCalls();
@@ -91,7 +90,6 @@ void emitBoxedCallDispatch(StubAssembler& jit, const CallRegisters& registers, u
 
 StubSignature signatureOfFindBoxedCall(StubKey) { return callConventionSignature({ }); }
 
-// Once for an executable. With the registers of emitBoxedCallDispatch(): takes the executable, leaves in the entry's register what it has written into the executable.
 void generateFindBoxedCall(StubAssembler& jit)
 {
     static_assert(BoxedCallEntry::sizeShift > StubWords::boxedCallHashShift);
@@ -140,7 +138,6 @@ static bool receiverOfBoxedCallIsObject(BoxedCallForm);
 
 static void checkCalleeRealm(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
-    // Nobody has looked the callee up. An object as it was made finds it in the realm that made the object, and a string in the realm that runs.
     if (isCalledByName(jit)) {
         if (!receiverOfBoxedCallIsObject(static_cast<BoxedCallForm>(jit.key().form())))
             return;
@@ -172,7 +169,6 @@ static void emitArrayIsArray(StubAssembler& jit, GPRReg scratch, JumpList& calls
     returnBoxedBoolean(jit, true);
 }
 
-// Two values with the same bits are the same value. Of two values with other bits, only two numbers, two strings or two BigInts can be.
 static void emitObjectIs(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     constexpr GPRReg first = argumentGPR(0);
@@ -191,7 +187,6 @@ static void emitObjectIs(StubAssembler& jit, GPRReg scratch, JumpList& callsHost
     returnBoxedBoolean(jit, true);
 }
 
-// `reserved.hasOwnProperty(name)`, whoever has found the function: the caches answer that answer `Object.hasOwn(reserved, name)` where it is typed.
 static void emitObjectHasOwnProperty(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     const StubSignature target = signatureOf(hasOwnByValCachedBoxed());
@@ -199,7 +194,6 @@ static void emitObjectHasOwnProperty(StubAssembler& jit, GPRReg scratch, JumpLis
     const GPRReg key = target.operands[1].gpr();
     callsHostFunction.append(jit.branchIfNotCell(thisGPR));
     callsHostFunction.append(jit.branchIfNotObject(thisGPR));
-    // The function converts the key before it looks at the receiver, and the stub behind it. Only a key that is an object can tell.
     Jump keyIsNoCell = jit.branchIfNotCell(argumentGPR(0));
     callsHostFunction.append(jit.branchIfObject(argumentGPR(0)));
     keyIsNoCell.link(&jit);
@@ -226,7 +220,6 @@ static void emitIsNaN(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFun
     returnBoxedBoolean(jit, true);
 }
 
-// Of two small integers, as lengths and widths are, the answer is one of the two words.
 static void emitMathExtremum(StubAssembler& jit, GPRReg, JumpList& callsHostFunction)
 {
     bool takesLarger = static_cast<BoxedCallForm>(jit.key().form()) == BoxedCallForm::MathMax;
@@ -240,7 +233,6 @@ static void emitMathExtremum(StubAssembler& jit, GPRReg, JumpList& callsHostFunc
     jit.returnToCaller();
 }
 
-// A table that was filled before the program was registered has the engine's storage, which the host function reads.
 static void emitTableSize(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     const GPRReg table = scratch;
@@ -284,7 +276,6 @@ static void emitObjectGetPrototypeOf(StubAssembler& jit, GPRReg scratch, JumpLis
     jit.returnToCaller();
 }
 
-// Only an object or a BigInt is asked for toJSON, and `undefined` has no text.
 static void emitJSONStringify(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     constexpr GPRReg value = argumentGPR(0);
@@ -302,7 +293,6 @@ static void emitJSONStringify(StubAssembler& jit, GPRReg scratch, JumpList& call
     jit.returnToCaller();
 }
 
-// A flat 8-bit string that starts and ends with a printable ASCII character other than the space is its own result.
 static void emitStringTrim(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     constexpr int32_t firstKeptCharacter = 0x21;
@@ -341,7 +331,6 @@ static void emitStringTrim(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
 
 
 
-// The element is found by its bits, a string also by its text.
 static void emitArraySearch(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     constexpr GPRReg searched = argumentGPR(0);
@@ -387,7 +376,6 @@ static void emitArraySearch(StubAssembler& jit, GPRReg scratch, JumpList& callsH
     jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), cursor);
     callsHostFunction.append(jit.branch32(CCallHelpers::Above, Address(cursor, Butterfly::offsetOfPublicLength()), TrustedImm32(maxElementsSearchedOneByOne)));
 
-    // Nothing here runs other code, so the storage stays where it is. The comparison of characters needs the register.
     const GPRReg end = flags;
     auto loadEnd = [&] {
         jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), element);
@@ -406,7 +394,6 @@ static void emitArraySearch(StubAssembler& jit, GPRReg scratch, JumpList& callsH
     jit.branchPtr(CCallHelpers::Below, cursor, end).linkTo(nextWord, &jit);
     isAtEnd.append(jit.jump());
 
-    // As ArrayIndexOfString: a text of another length is passed over with no further look. The same cell and the same characters have the same length.
     seeksText.link(&jit);
     JumpList isAnother;
     Label nextText = jit.label();
@@ -455,8 +442,6 @@ static void emitArraySearch(StubAssembler& jit, GPRReg scratch, JumpList& callsH
     jit.returnToCaller();
 }
 
-// A transition is recorded for a compiled object that is on no chain, so what is left of the built-in is the test of extensibility and the store.
-// Nothing here checks what the layout claims of its prototype, so a validating run must record no transition.
 static void emitObjectSetPrototypeOf(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     static_assert(sizeof(PrototypeTransition) == 16 && hasOneBitSet(numberOfPrototypeTransitions));
@@ -485,7 +470,6 @@ static void emitObjectSetPrototypeOf(StubAssembler& jit, GPRReg scratch, JumpLis
     jit.store8(structureID, Address(object, JSCell::typeInfoFlagsOffset()));
     Jump isLinked = jit.jump();
 
-    // The second half: the flags stay.
     isNotInFirstHalf.link(&jit);
     jit.addPtr(TrustedImm32(numberOfPrototypeTransitions * sizeof(PrototypeTransition)), transition);
     callsHostFunction.append(jit.branch64(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, prototype)), prototype));
@@ -555,7 +539,6 @@ static void emitArraySlice(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
     jit.jumpToStub(arraySlice());
 }
 
-// Without a comparator, a short array that starts with a string is most often an array of strings, which the operation sorts without the set-up of the host function.
 static void emitArraySort(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     if (jit.key().count() == 1)
@@ -574,11 +557,9 @@ static void emitArraySort(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
     jit.callOperationAndReturn(Entry::operationAOTArraySortInDefaultOrder, { .secondArgumentIn = thisGPR });
 }
 
-// `types.splice(~at, 0, type)`: the operation takes the bounds as they come and gives the whole answer.
 static void emitArraySplice(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     static_assert(argumentGPR(0) == operationArgumentGPR(0) && argumentGPR(1) == operationArgumentGPR(1) && argumentGPR(2) == operationArgumentGPR(2));
-    // Nothing misses behind the look at the realm, so the register of the callee, or of the name that is kept there, may go.
     static_assert(noOverlap(thisGPR, operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3), operationArgumentGPR(4)));
     static constexpr std::array operands { StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A4 };
     static_assert(gprOf(operands[0]) == operationArgumentGPR(1) && gprOf(operands[1]) == operationArgumentGPR(2) && gprOf(operands[2]) == operationArgumentGPR(3) && gprOf(operands[3]) == operationArgumentGPR(4));
@@ -591,7 +572,6 @@ static void emitArraySplice(StubAssembler& jit, GPRReg scratch, JumpList& callsH
     jit.jumpToCallOfOperation(count == 3 ? Entry::operationAOTArraySpliceItemIntoAnyList : Entry::operationAOTArraySpliceOfAnyList);
 }
 
-// What FunctionBuiltinEmitter::generateFunctionBind() emits where the callee is known.
 static void emitFunctionBind(StubAssembler& jit, GPRReg allocator, JumpList& callsHostFunction)
 {
     constexpr unsigned kind = static_cast<unsigned>(InlineAllocation::BoundFunction);
@@ -651,10 +631,8 @@ static void emitFunctionBind(StubAssembler& jit, GPRReg allocator, JumpList& cal
     callsHostFunction.append(jit.jump());
 }
 
-// IsUntouchedRegExp: a RegExp of this realm with the Structure that it was made with, while no member that a match reads off RegExp.prototype has been changed.
 enum class ArgumentGuard : uint8_t { None, IsString, IsObject, IsFunction, IsUntouchedRegExp };
 
-// The receiver and the arguments go to the operation or the stub in this order, behind the instance.
 struct CallWithoutHostFunction {
     std::array<ArgumentGuard, 2> arguments;
     std::optional<Entry> operation;
@@ -667,13 +645,10 @@ struct BoxedCallHandler {
     BoxedCallForm form;
     unsigned minCount;
     unsigned maxCount;
-    // A receiver of any other kind is left to the host function. Without types the emitter looks at the receiver itself, if at all.
     std::optional<JSTypeRange> receiverTypes;
     void (*emit)(StubAssembler&, GPRReg scratch, JumpList& callsHostFunction);
-    // Of emitJumpToTarget alone.
     StubKey target { };
     ArgumentGuard firstArgument { ArgumentGuard::None };
-    // Of emitFirstCallThatFits alone.
     std::span<const CallWithoutHostFunction> calls { };
     ArgumentGuard receiver { ArgumentGuard::None };
 };
@@ -682,7 +657,6 @@ static constexpr JSTypeRange exactly(JSType type) { return { type, type }; }
 static void emitJumpToTarget(StubAssembler&, GPRReg scratch, JumpList& callsHostFunction);
 static void emitFirstCallThatFits(StubAssembler&, GPRReg scratch, JumpList& callsHostFunction);
 
-// `stack.pop()`: the last element of a vector of values or of int32s that may be written. A hole there is left to the operation, which looks above the list.
 static void emitArrayPop(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     static_assert(noOverlap(gprOf(StubRegister::A1), gprOf(StubRegister::A2), thisGPR));
@@ -716,7 +690,6 @@ static void emitArrayPop(StubAssembler& jit, GPRReg scratch, JumpList& callsHost
     emitFirstCallThatFits(jit, scratch, callsHostFunction);
 }
 
-// A cache that is emptied at the end of each turn holds nothing in most turns. What has no entry alive stays as it is, as where the call is typed.
 static void emitTableClear(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     const GPRReg table = scratch;
@@ -738,10 +711,8 @@ static constexpr auto anything = ArgumentGuard::None;
 static constexpr auto aText = ArgumentGuard::IsString;
 static constexpr auto aFunction = ArgumentGuard::IsFunction;
 static constexpr auto aPattern = ArgumentGuard::IsUntouchedRegExp;
-// The operation opens no rope among the elements and leaves long elements joined as a rope. It calls the function itself where the text of an element may come from code of the program.
 static constexpr CallWithoutHostFunction arrayJoinCalls[] = { { { anything, anything }, Entry::operationAOTArrayJoinOfAnyReceiver, { }, std::nullopt, true } };
 static constexpr CallWithoutHostFunction arrayToStringCalls[] = { { { anything, anything }, Entry::operationAOTArrayToStringOfAnyReceiver, { }, std::nullopt, true } };
-// Each operation gives the whole answer: the way of the engine's function for a plain receiver, and that function for every other.
 static constexpr CallWithoutHostFunction arrayPopCalls[] = { { { anything, anything }, Entry::operationAOTArrayPopOfAnyList } };
 static constexpr CallWithoutHostFunction arrayShiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayShiftOfAnyList } };
 static constexpr CallWithoutHostFunction arrayUnshiftCalls[] = { { { anything, anything }, Entry::operationAOTArrayUnshiftOfAnyList } };
@@ -867,11 +838,9 @@ static void emitJumpToTarget(StubAssembler& jit, GPRReg scratch, JumpList& calls
     std::array registers { thisGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3) };
     static_assert(registers.size() == BoxedCallEntry::maxArgumentCount + 1);
     const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
-    // The stubs of hash tables may take the receiver in a register of their own.
     registers[0] = signatureOf(handler.target).operands[0].gpr();
     checkStubOperands(handler.target, std::span(registers).first(jit.key().count() + 1));
     branchUnlessPasses(jit, handler.firstArgument, argumentGPR(0), scratch, callsHostFunction);
-    // The target preserves its operands, so its own recording does not list this register.
     if (registers[0] != thisGPR) {
         jit.recordClobbers(RegisterSet { registers[0] });
         jit.move(thisGPR, registers[0]);
@@ -967,7 +936,6 @@ static bool receiverOfBoxedCallIsObject(BoxedCallForm form)
 bool servesCallsByName(BoxedCallForm form, unsigned count)
 {
     const BoxedCallHandler& handler = boxedCallHandlers[static_cast<unsigned>(form)];
-    // A function of a namespace or of a constructor looks at no receiver, and a getter is no call.
     bool looksAtReceiver = handler.receiverTypes || handler.receiver == ArgumentGuard::IsUntouchedRegExp;
     bool isGetter = handler.emit == emitTableSize || handler.emit == emitTypedArrayLength;
     bool needsCallee = handler.emit == emitFunctionBind || handler.emit == emitJSONStringify
@@ -990,7 +958,6 @@ static void branchUnlessReceiverFindsBuiltin(StubAssembler& jit, const BoxedCall
         looksUp.append(jit.branchIfNotCell(thisGPR));
         looksUp.append(jit.branchIfNotType(thisGPR, *handler.receiverTypes));
     }
-    // A string has no names of its own, and what it finds in the locked prototype is what the class gives it.
     if (receiverOfBoxedCallIsObject(handler.form))
         looksUp.append(branchIfNotPristine(jit, thisGPR));
 }
@@ -1010,8 +977,6 @@ void generateTryCallMethodOfBuiltinClass(StubAssembler& jit)
 
 StubSignature signatureOfCallMethodOfBuiltinClassByValue(StubKey key) { return signatureOf(callValue(key.count())); }
 
-// The callee is in its register, so the handlers do as they do in CallBoxedBuiltin: they ask the callee for its realm.
-// `x.test(f())`: the forms of RegExp look at the receiver inside the handler, behind what reads the callee. Until the receiver has been looked at, what was read may be anything: they go by the value.
 void generateCallMethodOfBuiltinClassByValue(StubAssembler& jit)
 {
     const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
@@ -1024,7 +989,6 @@ void generateCallMethodOfBuiltinClassByValue(StubAssembler& jit)
     }
     JumpList isOtherReceiver;
     branchUnlessReceiverFindsBuiltin(jit, handler, isOtherReceiver);
-    // What the handler leaves undone is rare, and the call by value asks nothing of what it calls.
     JumpList leavesUndone;
     handler.emit(jit, jit.allocateScratch(StubRegister::T9), leavesUndone);
     jit.linkToStub(leavesUndone, callValue(count));
@@ -1036,7 +1000,6 @@ StubSignature signatureOfCallMethodOfBuiltinClassAtSite(StubKey key) { return si
 StubSignature signatureOfCallMethodOfBuiltinClassWithSharedPattern(StubKey key) { return signatureOf(callMethodById(key.count())); }
 StubSignature signatureOfCallMethodOfBuiltinClassAtSiteWithSharedPattern(StubKey key) { return signatureOf(callMethodAtSite(key.count())); }
 
-// Overwrites the first argument. What else a call by the name takes survives.
 static void makePatternOfItsOwn(StubAssembler& jit, unsigned count, GPRReg name)
 {
     const GPRReg exception = jit.reuseScratch(StubRegister::T10);
@@ -1044,7 +1007,6 @@ static void makePatternOfItsOwn(StubAssembler& jit, unsigned count, GPRReg name)
     for (unsigned index = 1; index < count; ++index)
         preserved.append(argumentGPR(index));
     RELEASE_ASSERT(!preserved.contains(exception) && !preserved.contains(argumentGPR(0)) && exception != argumentGPR(0));
-    // The frame record is also what aligns sp for the call on x86-64.
     jit.emitFunctionPrologue();
     jit.preserving(preserved.span(), [&] {
         jit.move(argumentGPR(0), operationArgumentGPR(1));
@@ -1085,7 +1047,6 @@ static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsSha
     branchUnlessReceiverFindsBuiltin(jit, handler, looksUp);
     Label receiverFindsBuiltin = jit.label();
 
-    // The handlers take the register of the name for their scratch and leave that of the callee alone, which holds nothing yet.
     jit.move(name, calleeGPR);
     JumpList misses;
     handler.emit(jit, jit.clobberRegister(stubImmediateRegister), misses);
@@ -1094,7 +1055,6 @@ static void emitCallOfMethodOfBuiltinClass(StubAssembler& jit, bool patternIsSha
     looksUp.link(&jit);
     goOnBy(byName);
 
-    // From here on the call goes by the name, as the other entry's does: what the handler leaves undone is rare.
     jit.bindEntry(entryAtSite);
     JumpList isOtherReceiver;
     branchUnlessReceiverFindsBuiltin(jit, handler, isOtherReceiver);

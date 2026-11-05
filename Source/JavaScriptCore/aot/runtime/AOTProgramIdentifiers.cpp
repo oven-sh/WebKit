@@ -65,7 +65,6 @@ Identifier enginePrivateName(VM& vm, const String& text)
     return name;
 }
 
-// The VM makes this object before it makes a name of its own, so from its first atom on a text that the image has is the atom of the image.
 ProgramIdentifiers::ProgramIdentifiers(VM& vm, const Image& image, ProgramIdentifiers* ofVM)
     : m_vm(vm)
     , m_image(image)
@@ -214,15 +213,12 @@ std::optional<uint32_t> ProgramIdentifiers::numberOf(UniquedStringImpl* uid) con
             return found->value;
         return m_ofVM ? m_ofVM->numberOf(uid) : std::nullopt;
     }
-    // The empty name is no atom of the image.
     if (!uid->length())
         return numberOfText(m_image, StringView(*uid), uid->existingHash());
     ASSERT(!numberOfText(m_image, StringView(*uid), uid->existingHash()));
     return std::nullopt;
 }
 
-#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-// Names are short. The last word of each width ends where the characters end, and lies over the one in front of it where it has to.
 static ALWAYS_INLINE bool areSameCharacters(const Latin1Character* first, const Latin1Character* second, size_t length)
 {
     ASSERT(length);
@@ -243,7 +239,6 @@ static ALWAYS_INLINE bool areSameCharacters(const Latin1Character* first, const 
         return areSameAt(0, uint16_t()) && areSameAt(length - sizeof(uint16_t), uint16_t());
     return *first == *second;
 }
-#endif
 
 std::optional<uint32_t> ProgramIdentifiers::numberOfText(const Image& image, StringView characters, unsigned hash)
 {
@@ -276,20 +271,61 @@ std::optional<uint32_t> ProgramIdentifiers::numberOfText(const Image& image, Str
     });
 }
 
-// Every new atom comes through here, a thousand of them while a VM is created. The common answers need no frame: no name has the hash, or an 8-bit name is the text.
+struct alignas(64) NameAskedForLately {
+    static constexpr size_t maxLength = 48;
+    static constexpr uint32_t mark = 1u << 31;
+
+    AtomStringImpl* atom;
+    uint32_t hashAndMark;
+    uint32_t length;
+    Latin1Character characters[maxLength];
+};
+static_assert(sizeof(NameAskedForLately) == 64);
+using NamesAskedForLately = std::array<NameAskedForLately, 2>;
+static constinit thread_local std::array<NamesAskedForLately, 16> t_namesAskedForLately { };
+
+static ALWAYS_INLINE AtomStringImpl* noteNameAskedFor(NamesAskedForLately& lately, AtomStringImpl* atom, unsigned hash, StringView characters)
+{
+    if (!atom) {
+        lately[1].atom = nullptr;
+        lately[1].hashAndMark = hash | NameAskedForLately::mark;
+        return nullptr;
+    }
+    if (!characters.is8Bit() || characters.length() > NameAskedForLately::maxLength)
+        return atom;
+    lately[1] = lately[0];
+    lately[0].atom = atom;
+    lately[0].hashAndMark = hash | NameAskedForLately::mark;
+    lately[0].length = characters.length();
+    memcpySpan(std::span { lately[0].characters }, characters.span8());
+    return atom;
+}
+
 AtomStringImpl* ProgramIdentifiers::findAtom(StringView characters, unsigned hash)
 {
-#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    if (const Image* image = Image::sharedByAllThreads(); image && !characters.isEmpty()) [[likely]] {
-        std::optional<uint32_t> number = IdentifierTable(image->programTables().identifiersByHash()).inSlotFor(hash);
-        if (!number)
+    const Image* image = Image::sharedByAllThreads();
+    if (!image || characters.isEmpty()) [[unlikely]]
+        return findAtomSlow(characters, hash);
+    ASSERT(!(hash & NameAskedForLately::mark));
+    NamesAskedForLately& lately = t_namesAskedForLately[hash % t_namesAskedForLately.size()];
+    for (const NameAskedForLately& name : lately) {
+        if (name.hashAndMark != (hash | NameAskedForLately::mark))
+            continue;
+        if (!name.atom)
             return nullptr;
-        UniquedStringImpl& atom = image->text().identifierAtoms()[*number];
-        if (atom.length() == characters.length() && atom.existingHash() == hash && atom.is8Bit() && characters.is8Bit() && areSameCharacters(atom.span8().data(), characters.span8().data(), characters.length())) [[likely]]
-            return static_cast<AtomStringImpl*>(&atom);
+        if (name.length == characters.length() && characters.is8Bit() && areSameCharacters(name.characters, characters.span8().data(), name.length))
+            return name.atom;
     }
+    std::optional<uint32_t> number = IdentifierTable(image->programTables().identifiersByHash()).inSlotFor(hash);
+    if (!number)
+        return noteNameAskedFor(lately, nullptr, hash, characters);
+#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    UniquedStringImpl& atom = image->text().identifierAtoms()[*number];
+    if (atom.length() == characters.length() && atom.existingHash() == hash && atom.is8Bit() && characters.is8Bit() && areSameCharacters(atom.span8().data(), characters.span8().data(), characters.length())) [[likely]]
+        return noteNameAskedFor(lately, static_cast<AtomStringImpl*>(&atom), hash, characters);
 #endif
-    return findAtomSlow(characters, hash);
+    AtomStringImpl* found = findAtomSlow(characters, hash);
+    return found ? noteNameAskedFor(lately, found, hash, characters) : nullptr;
 }
 
 NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView characters, unsigned hash)
@@ -307,7 +343,6 @@ NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomSlow(StringView charact
 #endif
 }
 
-// The whole text up to 16 characters, the length and both ends of a longer one.
 static ALWAYS_INLINE uint64_t fingerprintOf(std::span<const Latin1Character> characters)
 {
     const Latin1Character* data = characters.data();
@@ -329,7 +364,6 @@ static ALWAYS_INLINE uint64_t fingerprintOf(std::span<const Latin1Character> cha
     return (mixed ^ mixed >> 29) | 1;
 }
 
-// Where the linker puts two literals decides whether they share a place by address, anew in every build. Two that do would put each other out at every turn.
 NEVER_INLINE AtomStringImpl* ProgramIdentifiers::findAtomOfNativeTextByCharacters(std::span<const Latin1Character> characters)
 {
     static_assert(hasOneBitSet(std::tuple_size_v<decltype(m_nativeTextsByCharacters)>));
@@ -360,7 +394,6 @@ AtomStringImpl* ProgramIdentifiers::findAtomOfNativeText(std::span<const Latin1C
     static_assert(hasOneBitSet(std::tuple_size_v<decltype(m_recentNativeTexts)>));
     NativeText& recent = m_recentNativeTexts[std::bit_cast<uintptr_t>(characters.data()) * 0x9e3779b97f4a7c15ull >> (64 - std::countr_zero(m_recentNativeTexts.size()))];
     if (recent.characters == characters.data() && recent.length == characters.size()) [[likely]] {
-        // The address may hold other characters by now. Whoever gets null asks the atom table, which is right whatever stands here.
         if (!recent.atom)
             return nullptr;
         if (WTF::equal(recent.atom->span8().data(), characters)) [[likely]]

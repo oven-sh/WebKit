@@ -44,7 +44,6 @@ std::span<const NativeTest> propertyLookupTests();
 
 using Presence = PropertyWalk::Presence;
 
-// v4 = { label: input, count: Number(input) }
 #define PROGRAM_CREATING_LABELED_OBJECT \
     "layout L0 name=\"Labeled\" module=m0 fields=[{key=\"label\" declared={type=anything} flags=[IsRequired]}, {key=\"count\" declared={type=number} flags=[IsRequired]}]\n" \
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n" \
@@ -62,7 +61,6 @@ static constexpr ASCIILiteral programText = PROGRAM_CREATING_LABELED_OBJECT
     "}\n"
     "entry module=m0\n"_s;
 
-// A store under a key that nobody can name: the layout has a word for extra properties. Code reads `count`, as below.
 static constexpr ASCIILiteral programAddingPropertiesText = PROGRAM_CREATING_LABELED_OBJECT
     "    v5 = Check v2 expectedType=string\n"
     "    ElemSet v4, v5, v2\n"
@@ -73,8 +71,6 @@ static constexpr ASCIILiteral programAddingPropertiesText = PROGRAM_CREATING_LAB
     "}\n"
     "entry module=m0\n"_s;
 
-// keep(input) { const kept = held; held = { label: input, count: Number(input) }; kept.later = input; return [kept.label, kept.count]; }
-// No object of the layout leaves the program, so Link knows every writer of `count`, which holds numbers alone and lies unboxed. The store under a name that the layout does not list gives it the hidden words.
 static constexpr ASCIILiteral programReadingCountText =
     "layout L0 name=\"Labeled\" module=m0 fields=[{key=\"label\" declared={type=anything} flags=[IsRequired]}, {key=\"count\" declared={type=number} flags=[IsRequired]}]\n"
     "variable g0 name=\"held\" module=m0 declared={type=anything} initialization=Undefined\n"
@@ -102,7 +98,6 @@ static constexpr ASCIILiteral programReadingCountText =
     "}\n"
     "entry module=m0\n"_s;
 
-// const tag = Symbol("tag"); publish({ [tag]: input }, tag);
 #define PROGRAM_CREATING_SYMBOL \
     "layout L0 name=\"Tagged\" module=m0 fields=[{key=symbol(\"tag\")@m0:0 declared={type=anything} flags=[IsRequired]}]\n" \
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n" \
@@ -219,14 +214,12 @@ static void testDictionary(LoadedProgram& program)
     AOT_TEST_CHECK(findsOwnValue(program, object, label));
     AOT_TEST_CHECK(isAbsent(readAndClassify(program, object, other)));
 
-    // A cacheable dictionary says where a property is, and not that one is absent.
     object->convertToDictionary(vm);
     AOT_TEST_CHECK(PropertyWalk::hasPropertyOnChain(object->structure(), label.impl()) == Presence::Unknown);
     AOT_TEST_CHECK(isOwn(readAndClassify(program, object, label, ChainWalkMode::AllocatesNothing), PropertyAnswerKind::Value, object->getDirectOffset(vm, label)));
     AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, object, other, ChainWalkMode::AllocatesNothing)));
     AOT_TEST_CHECK(object->structure()->isDictionary());
 
-    // Nothing of a cacheable dictionary moves when it is made flat, so the look that makes it flat is answered.
     AOT_TEST_CHECK(isAbsent(readAndClassify(program, object, other)) && !object->structure()->isDictionary());
     AOT_TEST_CHECK(findsOwnValue(program, object, label));
     AOT_TEST_CHECK(isAbsent(readAndClassify(program, object, other)));
@@ -470,7 +463,6 @@ struct ObjectBelowPrototype {
 
 } // namespace
 
-// Nobody tells the table when an owner evicts what depends on a chain. A full collection asks the owners, but only when as many dependents were added as were left the last time.
 static void testEvictedDependentsAreDroppedWhenTheTableHasDoubled(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -488,7 +480,6 @@ static void testEvictedDependentsAreDroppedWhenTheTableHasDoubled(LoadedProgram&
     AOT_TEST_CHECK(!fixture.find(fixture.other) && dependents.numberOfDependents(fixture.prototype) == 2);
     collect();
     AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == 2);
-    // It does no harm: the change finds nothing to drop.
     fixture.prototype->putDirect(vm, fixture.other, jsNumber(1));
     AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == 1 && fixture.isFiledAsAbsent(fixture.label));
 
@@ -549,7 +540,6 @@ static Object* allocateLabeledObject(LoadedProgram& program)
     failNativeTest(__FILE__, __LINE__, "the image allocates an object");
 }
 
-// What compiled code does: nobody hears of it.
 static bool storeInSlot(LoadedProgram& program, Object* object, const FieldData& field, JSValue value)
 {
     std::optional<AcceptedValue> accepted = program.state().objects->layouts.accept(field, value);
@@ -566,7 +556,6 @@ static void checkWhereSlotsUnderCreatedSymbolAreFiled(LoadedProgram& program, bo
     AOT_TEST_CHECK(identifiersOf(program.instance()).isSymbolOfRealm(*name.identifierNumber) == eachRealmCreatesItsSymbol);
 
     Identifier tag = Identifier::fromUid(vm, name.uid);
-    // Made by hand: an empty object that begins to fill is a dictionary for the time, and of a dictionary nothing is filed in front.
     PropertyOffset offset;
     Structure* structure = Structure::addPropertyTransition(vm, program.realm()->nullPrototypeObjectStructure(), tag, 0, offset);
     AOT_TEST_CHECK(!structure->isDictionary());
@@ -584,7 +573,6 @@ static void testSymbolOfOneRealmIsFiledInFront(LoadedProgram& program)
     checkWhereSlotsUnderCreatedSymbolAreFiled(program, false);
 }
 
-// The cells in front are those of every realm, and the stubs that go on by the number of such a symbol ask them.
 static void testSymbolOfEachRealmIsNeverFiledInFront(LoadedProgram& program)
 {
     checkWhereSlotsUnderCreatedSymbolAreFiled(program, true);
@@ -629,7 +617,6 @@ static void testReadsBelowEmptySlotsAskTheFirstObjectThatHasOne(LoadedProgram& p
         return answer;
     };
 
-    // Nothing above: the object asks the lower prototype, which asks the upper one, whose empty slot reads as undefined.
     PropertyAnswer fromObject = file(object);
     AOT_TEST_CHECK(fromObject.kind == PropertyAnswerKind::InheritedField && fromObject.holder == lower);
     for (JSObject* onChain : { static_cast<JSObject*>(lower), static_cast<JSObject*>(upper), top })
@@ -639,11 +626,9 @@ static void testReadsBelowEmptySlotsAskTheFirstObjectThatHasOne(LoadedProgram& p
     PropertyAnswer fromUpper = file(upper);
     AOT_TEST_CHECK(fromUpper.kind == PropertyAnswerKind::Field && fromUpper.absentIsUndefined);
 
-    // What compiled code does: nobody hears of it, and every record stays right.
     AOT_TEST_CHECK(storeInSlot(program, upper, *labelField, jsNumber(2)));
     AOT_TEST_CHECK(find(object) && find(lower) && find(upper));
 
-    // A data property at the top changes what the upper prototype answers while its slot is empty, and nothing about whom the others ask.
     upper->clear(*labelField);
     top->putDirect(vm, label, jsNumber(5));
     AOT_TEST_CHECK(!find(object) && !find(lower) && !find(upper));
@@ -651,7 +636,6 @@ static void testReadsBelowEmptySlotsAskTheFirstObjectThatHasOne(LoadedProgram& p
     PropertyAnswer aboveUpper = file(upper);
     AOT_TEST_CHECK(aboveUpper.kind == PropertyAnswerKind::FieldOrInheritedValue && aboveUpper.holder == top);
 
-    // An accessor at the top needs the receiver.
     DeletePropertySlot deleteSlot;
     AOT_TEST_CHECK(JSObject::deleteProperty(top, realm, label, deleteSlot));
     defineAccessor(program, top, label);
@@ -688,7 +672,6 @@ static void testEmptySlotOfReceiverDefersToUnboxedFieldOfCompiledPrototype(Loade
     AOT_TEST_CHECK(slot && slot->kind == Slot::Kind::FieldOrInheritedField && slot->has(Slot::dependsOnChain) && slot->fieldSlot() == countField->slot);
     AOT_TEST_CHECK(MarkedBlockCage::decode(vm.heap.cage().base(), slot->fieldAndHolder.holder) == prototype);
 
-    // A store below a writable data property creates the receiver's own, whatever the slot above holds.
     PropertyAnswer store = storeAndClassify(program, object, count, jsNumber(3));
     AOT_TEST_CHECK(store.kind != PropertyAnswerKind::FieldOrInheritedField && object->isInSlot(*countField));
 
@@ -731,13 +714,10 @@ static void testSetterAboveEmptySlotOfCompiledPrototype(LoadedProgram& program)
         return walkChain({ realm, structure, object, ChainWalkMode::MayAllocate, use }, label.impl());
     };
 
-    // Compiled code that fills the slot hides the setter, and nobody hears of it: the answer holds now and cannot be kept.
     AOT_TEST_CHECK(storeThroughChain(walk(ChainWalkUse::UsedAtOnce)) == StoreThroughChain::CallsSetter && walk(ChainWalkUse::UsedAtOnce).holder == top);
     AOT_TEST_CHECK(walk(ChainWalkUse::KeptForStores).result == ChainWalkResult::Unknown && walk(ChainWalkUse::KeptForReads).result == ChainWalkResult::Unknown);
-    // The prototype would call the getter with itself as the receiver.
     AOT_TEST_CHECK(walk(ChainWalkUse::KeptForReadsThatAskObjects).result == ChainWalkResult::Unknown && isLastingRefusal(readAndClassify(program, object, label)));
 
-    // An object with extra properties leaves the creation of a field to the run time, which reports it.
     putByName(program, prototype, other, jsNumber(1));
     AOT_TEST_CHECK(prototype->hasExtraProperties());
     AOT_TEST_CHECK(storeThroughChain(walk(ChainWalkUse::KeptForStores)) == StoreThroughChain::CallsSetter && walk(ChainWalkUse::KeptForReads).holder == top);
@@ -769,7 +749,6 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     const AbsenceFilter* ofBelow = filterOf(below);
     AOT_TEST_CHECK(ofBelow);
 
-    // Many names share a bit of a filter, and the number of a name follows from how many names Bun's built-ins have.
     Identifier label;
     std::optional<uint32_t> number;
     for (ASCIILiteral name : { "label"_s, "count"_s, "publish"_s, "input"_s }) {
@@ -780,23 +759,18 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     }
     AOT_TEST_CHECK(number && ofBelow->letsStoresPass(*number));
 
-    // A data property that can be written stops no store, and the filters for stores outlive its arrival.
     above->putDirect(vm, label, jsNumber(1));
     AOT_TEST_CHECK(validFilterOf(below) == ofBelow && ofBelow->letsStoresPass(*number) && !tables.wasChangedOnSomeChain(*number));
 
-    // The object above keeps the name in a table of its own while it is given its names. To make it flat changes nothing that a name finds, and the filters outlive that too.
     AOT_TEST_CHECK(above->structure()->isDictionary() && flattenOnce(vm, above) && !above->structure()->isDictionary());
     AOT_TEST_CHECK(validFilterOf(below) == ofBelow && ofBelow->letsStoresPass(*number) && !tables.wasChangedOnSomeChain(*number));
 
-    // A filter lasts as long as its Structure: nothing files it anew for a store that the tables answer.
     for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
         vm.heap.collectSync(scope);
         ensureStillAliveHere(below);
         AOT_TEST_CHECK(validFilterOf(below) == ofBelow && ofBelow->letsStoresPass(*number));
     }
 
-    // What the lowest object has itself is nothing to a store that has found that the object lacks the name.
-    // The number of a Structure leads to the place of its filter, and two Structures may have one place. This one has another place than the Structure of the object below, whose filter is asked for again.
     JSObject* owner = nullptr;
     unsigned numberOfOwners = 0;
     do {
@@ -807,7 +781,6 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     const AbsenceFilter* ofOwner = filterOf(owner);
     AOT_TEST_CHECK(ofOwner && ofOwner->letsStoresPass(*number));
 
-    // The filters stay, and the name is marked for all of them.
     above->putDirect(vm, label, jsNumber(1), static_cast<unsigned>(PropertyAttribute::ReadOnly));
     AOT_TEST_CHECK(validFilterOf(below) == ofBelow && tables.wasChangedOnSomeChain(*number));
     JSObject* twoBelow = makeBelow(below);
@@ -819,14 +792,11 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     const AbsenceFilter* ofBelowAccessor = filterOf(makeBelow(withAccessor));
     AOT_TEST_CHECK(ofBelowAccessor && !ofBelowAccessor->letsStoresPass(*number));
 
-    // A change that names nothing ends every filter for stores.
     above->setPrototypeDirect(vm, constructEmptyObject(realm));
     AOT_TEST_CHECK(!validFilterOf(below) && !validFilterOf(owner));
 
-    // No list of names speaks for an object that has a say of its own in a store that comes past it.
     AOT_TEST_CHECK(!filterOf(makeBelow(ProxyObject::create(realm, constructEmptyObject(realm), constructEmptyObject(realm)))));
 
-    // Of two Structures that have one place the one whose filter is filed later takes it, and the other has no filter until it is filed anew.
     JSObject* earlier = makeBelow(constructEmptyObject(realm));
     const AbsenceFilter* place = filterOf(earlier);
     JSObject* later = nullptr;
@@ -847,7 +817,6 @@ static constexpr void (*withProgramAddingProperties)() = runNativeTestWithLoaded
 template<LoadedProgramTest body>
 static void changeObjectsUnseen(LoadedProgram& program)
 {
-    // The record of the layout rules out what Link has proven that nobody does to its objects. The test does it all the same.
     program.vm().aotState().nativeTestChangesObjectsUnseen = true;
     body(program);
 }
@@ -858,7 +827,6 @@ static constexpr void (*withProgramReadingCount)() = runNativeTestWithLoadedProg
 template<LoadedProgramTest body>
 static constexpr void (*withProgramCreatingSymbol)() = runNativeTestWithLoadedProgram<propertyLookupTests, programCreatingSymbolText, body>;
 
-// The build is told that the program runs in several realms, as for `bun test --isolate`.
 static void runSymbolOfEachRealmIsNeverFiledInFront()
 {
     runWithLoadedProgram("property-lookup/symbol-of-each-realm-is-never-filed-in-front"_s, programCreatingSymbolText, testSymbolOfEachRealmIsNeverFiledInFront, { "several-realms"_s });

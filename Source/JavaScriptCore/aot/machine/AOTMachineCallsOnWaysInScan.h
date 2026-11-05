@@ -12,9 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// What the scan does at every block. AOTMachineScan.cpp alone includes it, so it is part of the function that calls it. What the scan does at every call stands there, in noteScannedCall().
-
-// `end`: Order::endOf() the block. The scan has been at every block further on in the order. An edge that leads back, or to the block itself, finds the word as it was filled.
 inline void BackwardScan::noteWaysOnFrom(const Block* block, Position end)
 {
     ArenaVector<Position>& ends = m_liveness.m_endsOfWhatWaysLeadTo;

@@ -247,19 +247,17 @@ macro locateField(instance, entry, object, address, representation, scratch, sec
 end
 
 # AOT::readSlot(), for the representations that take no more than the bits of the slot. A word below AOT::minCell32 is a marker, which is
-# the JSValue it stands for, or names a literal string. The markers of a double are NaNs.
+# the JSValue it stands for. The markers of a double are NaNs.
 macro readField(instance, address, representation, result, isAbsent, cannot, done)
     bieq representation, constexpr AOT::SlotRepresentation::Cell32, .narrowReference
     bieq representation, constexpr AOT::SlotRepresentation::JSValue, .boxed
     bieq representation, constexpr AOT::SlotRepresentation::OptionalInt32, .optionalInt32
     bieq representation, constexpr AOT::SlotRepresentation::OptionalCell32, .narrowReference
     bieq representation, constexpr AOT::SlotRepresentation::OptionalDouble, .double
-    bieq representation, constexpr AOT::SlotRepresentation::LiteralString32, .narrowReference
     bieq representation, constexpr AOT::SlotRepresentation::Double, .double
     bieq representation, constexpr AOT::SlotRepresentation::Boolean, .boolean
     bieq representation, constexpr AOT::SlotRepresentation::Int32, .int32
     bieq representation, constexpr AOT::SlotRepresentation::Cell, .boxed
-    bieq representation, constexpr AOT::SlotRepresentation::LiteralString, .boxed
     bieq representation, constexpr AOT::SlotRepresentation::OptionalBoolean, .optionalBoolean
     bieq representation, constexpr AOT::SlotRepresentation::DeferredClosure, .deferredClosure
     bieq representation, constexpr AOT::SlotRepresentation::OptionalInt64, .integer
@@ -369,12 +367,10 @@ macro branchOnFieldPresence(address, representation, scratch, isPresent, isAbsen
     bieq representation, constexpr AOT::SlotRepresentation::OptionalInt32, .optionalInt32
     bieq representation, constexpr AOT::SlotRepresentation::OptionalCell32, .narrowReference
     bieq representation, constexpr AOT::SlotRepresentation::OptionalDouble, .optionalDouble
-    bieq representation, constexpr AOT::SlotRepresentation::LiteralString32, .narrowReference
     bieq representation, constexpr AOT::SlotRepresentation::Double, isPresent
     bieq representation, constexpr AOT::SlotRepresentation::Boolean, isPresent
     bieq representation, constexpr AOT::SlotRepresentation::Int32, isPresent
     bieq representation, constexpr AOT::SlotRepresentation::Cell, .boxed
-    bieq representation, constexpr AOT::SlotRepresentation::LiteralString, .boxed
     bieq representation, constexpr AOT::SlotRepresentation::OptionalBoolean, .optionalBoolean
     bieq representation, constexpr AOT::SlotRepresentation::Int64, isPresent
     bineq representation, constexpr AOT::SlotRepresentation::OptionalInt64, cannot
@@ -581,7 +577,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     loadPropertyAtWordIndex(t0, t1, t0)
     return(t0)
 
-    # A word below AOT::minCell32 is an empty slot, a marker, a literal string or a closure that the object has yet to make.
+    # A word below AOT::minCell32 is an empty slot, a marker or a closure that the object has yet to make.
 .narrowReference:
     subi NarrowReferenceInSiteCache, t1
     loadi [t3, t1], t0

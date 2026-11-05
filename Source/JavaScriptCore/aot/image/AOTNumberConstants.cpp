@@ -35,22 +35,17 @@ static constexpr bool requestRecordsAreWholeWords = (!(sizeof(Records) % sizeof(
 
 static_assert(requestRecordsAreWholeWords<NewClassRequest, TemplateObjectRequest, TemplateObjectRequest::Part, DirectEvalRequest, EvalBindingData, DataRequest, CollectionDataRequest>);
 
-// No request lies at offset 0.
 static constexpr uint32_t offsetOfFirstNumberedRequest = sizeof(uint32_t);
 
 namespace {
 
 struct NumberedBuiltinCells {
     Vector<BuiltinCellKey> cells;
-    // Places in cells.
     Vector<uint32_t> eagerCells;
 };
 
 } // anonymous namespace
 
-// ---- Types
-
-// In no order. A type of the program's table appears once. A type that is its own id may repeat.
 static Vector<TypeID> collectTypesWithRecord(const Typed::Program& program, const GatheredMentions& mentions, const NamesOfTables& tables)
 {
     Typed::TypeReader reader(program);
@@ -61,7 +56,6 @@ static Vector<TypeID> collectTypesWithRecord(const Typed::Program& program, cons
             return;
         if (Typed::liesInProgram(type)) {
             size_t position = Typed::positionOf(type);
-            // A BitVector grows to the size asked for and no further, and the positions arrive ascending.
             if (position >= isListed.size())
                 isListed.ensureSize(std::max(position + 1, 2 * isListed.size()));
             if (isListed.quickSet(position))
@@ -93,8 +87,6 @@ static Vector<TypeID> collectTypesWithRecord(const Typed::Program& program, cons
     return types;
 }
 
-// ---- Built-in cells
-
 static void sortBuiltinCellsAndRemoveKeysWithoutCell(const BuiltinTable& builtins, Vector<BuiltinCellKey>& cells)
 {
     AOT::sortInLine(cells, { }, &BuiltinCellKey::encoded);
@@ -125,7 +117,6 @@ static void appendCellsNamedByTypeRecords(const Typed::Program& program, std::sp
     }
 }
 
-// ClassData::builtinBase: the run time asks for the cell of the constructor when it makes the class without the code of its definition.
 static void appendParentsNamedByClassRecords(const Typed::Program& program, const Typed::Facts& facts, Vector<BuiltinCellKey>& cells)
 {
     for (unsigned index = 0; index < program.layouts.size(); ++index) {
@@ -149,10 +140,8 @@ static bool stepToBuiltinCellMayBeReplaced(const BuiltinTable& builtins, const T
     return facts.builtinLocation(member) != Typed::BuiltinLocationState::Constant;
 }
 
-// The run time finds a cell by the names on its path, from the nearest holder that start-up found: the holder of a locked member, or an eager cell.
 static std::optional<BuiltinCellKey> findFirstReplaceableStepToCell(const BuiltinTable& builtins, const Typed::Facts& facts, BuiltinCellKey key)
 {
-    // The word of a value that the host makes is filled at its first read and never at start: where the member may be replaced, the test of its location answers for the word.
     BuiltinCellKey first = key.kind() == BuiltinCellKey::Kind::Value ? BuiltinCellKey::object(builtins.at(key.builtin()).holder) : key;
     for (BuiltinCellKey step = first; step.builtin(); step = BuiltinCellKey::object(builtins.at(step.builtin()).holder)) {
         if (stepToBuiltinCellMayBeReplaced(builtins, facts, step.builtin()))
@@ -174,7 +163,6 @@ static NumberedBuiltinCells numberBuiltinCellsOfImage(const NumberingInputs& inp
     const Typed::Facts& facts = inputs.facts;
     const BuiltinTable& builtins = program.builtins();
 
-    // A word that is no key gets no number, and whoever asks for its number stops the build.
     Vector<BuiltinCellKey> cells;
     for (size_t encoded : mentions.byID(NumberSpace::BuiltinCell).isMentioned) {
         if (std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(static_cast<uint32_t>(encoded), builtins))
@@ -194,7 +182,6 @@ static NumberedBuiltinCells numberBuiltinCellsOfImage(const NumberingInputs& inp
     cells.appendVector(eagerCells);
     for (const auto& use : facts.builtinUses())
         cells.append(BuiltinCellKey::object(BuiltinID(use.builtin)));
-    // Where the keys of a holder may be listed, the run time tells a member that compiled code has asked for from one that the program has read.
     for (size_t index = 0, size = cells.size(); index < size; ++index) {
         BuiltinCellKey key = cells[index];
         if (key.kind() == BuiltinCellKey::Kind::Object && firstReadOfCellChangesListedKeys(builtins, facts, key.builtin()))
@@ -207,8 +194,6 @@ static NumberedBuiltinCells numberBuiltinCellsOfImage(const NumberingInputs& inp
     });
     return { WTF::move(cells), WTF::move(placesOfEagerCells) };
 }
-
-// ---- Key cells
 
 static Vector<PropertyKeyID> listKeyCellsOfImage(const Typed::Program& program, const GatheredMentions& mentions)
 {
@@ -226,21 +211,17 @@ static Vector<PropertyKeyID> listKeyCellsOfImage(const Typed::Program& program, 
     for (size_t index : hasCell)
         keys.append(PropertyKeyID(index));
 
-    // The number of a key that Facts or Plan made follows the order in which threads arrived.
     size_t numberOfStableKeys = std::ranges::partition_point(keys, [&](PropertyKeyID key) {
         return types.hasStableNumber(key);
     }) - keys.begin();
     AOT::sort(keys.mutableSpan().subspan(numberOfStableKeys), [&](PropertyKeyID first, PropertyKeyID second) {
         return std::is_lt(types.compareByContent(first, second));
     });
-    // The cells that one function reads lie side by side. Keys with the same first function stay in the order above, and a symbol that no code mentions comes behind every key that some code does.
     AOT::sort(keys, { }, [&](PropertyKeyID key) {
         return mentions.firstFunctionMentioning(NumberSpace::KeyCell, key.index());
     });
     return keys;
 }
-
-// ---- Rows
 
 static uint64_t sizeInBytesOfRequestKey(const Typed::Program& program, std::span<const uint32_t> key)
 {
@@ -268,7 +249,6 @@ static uint64_t sizeInBytesOfRequestKey(const Typed::Program& program, std::span
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `listed`: each key behind the number of its words, in any order, with repeats. Only those are sorted: the others stand in their order.
 static NumberedKeys uniteNumberedKeys(const ParallelLoops& loops, NumberedKeys&& ascending, std::span<const uint32_t> listed)
 {
     if (listed.empty())
@@ -343,7 +323,6 @@ static bool isAllowedInPropertyRun(const Typed::Program& program, PropertyKeyID 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The run time assumes that every key of a run is an ordinary name and that no key repeats.
 bool canBePropertyRun(const Typed::Program& program, std::span<const uint32_t> keys)
 {
     if (keys.empty() || keys.size() > defaultLimitValue(LimitID::MaxPropertyListNames, hostArchitecture()))
@@ -357,14 +336,11 @@ bool canBePropertyRun(const Typed::Program& program, std::span<const uint32_t> k
     });
 }
 
-// ---- The steps
-
 void ImageNumbersBuilder::numberConstants()
 {
     const Typed::Program& program = inputs.program;
 
     NumberedBuiltinCells builtinCells = numberBuiltinCellsOfImage(inputs, mentions, tables);
-    // Code reaches the word of a cell by its distance from the instance, and the words of values begin where the room for cells ends.
     if (!InstanceLayout::holdsBuiltinCells(builtinCells.cells.size())) {
         context.diagnostics().add(InternalError {
             .kind = InternalErrorKind::PlacementCheckFailed,
@@ -395,7 +371,6 @@ void ImageNumbersBuilder::numberConstants()
         PropertyKeyID name(key[0]);
         auto flags = OptionSet<GlobalBindingFlags>::fromRaw(static_cast<uint8_t>(key[1]));
         Typed::GlobalNameUse use = inputs.plan.globalName(name);
-        // Exactly where the code of the read does not look at the constant of the record: AccessEmitter::generateGetGlobalBinding().
         bool readLooksAtLocationAlone = !flags.containsAny({ GlobalBindingFlags::IsStore, GlobalBindingFlags::IsForTypeOf }) && use.isStoredThroughBinding;
         return PlacedGlobalBinding { name, flags, use.isStoredByName, readLooksAtLocationAlone };
     });
@@ -413,7 +388,6 @@ void ImageNumbersBuilder::numberRows()
     const Typed::Program& program = inputs.program;
 
     numbers.m_allocations = uniteNumberedKeys(context.parallelLoops(), mentions.takeKeys(NumberSpace::Allocation), tables.allocations.span());
-    // A ClosureRequest has 24 bits for the row. Code shifts the number in as Image patched it and cannot test it.
     if (context.exceeds(LimitID::ClosureAllocationSites, numbers.m_allocations.size()))
         context.reportLimitExceeded(LimitID::ClosureAllocationSites, numbers.m_allocations.size());
 
@@ -449,12 +423,10 @@ void ImageNumbersBuilder::numberTypes()
 {
     const ParallelLoops& loops = context.parallelLoops();
     Vector<TypeID> types = collectTypesWithRecord(inputs.program, mentions, tables);
-    // Only to bring repeats together. The order that lasts is the one by content.
     parallelSort(loops, types.mutableSpan(), [](TypeID first, TypeID second) {
         return first.bits() < second.bits();
     });
     removeRepeatedElements(types);
-    // On this thread: an arena is one thread's.
     Typed::TypeArena arena(inputs.program.types, Typed::ArenaKeeps::UntilReset);
     AOT::sort(types, [&](TypeID first, TypeID second) {
         return arena.compareByContent(first, second) < 0;

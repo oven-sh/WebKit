@@ -9,7 +9,6 @@ const pristineArray = anyArray.pristine("Storage", "Names");
 const arrayLike = b.object.loose.refusing(b.null);
 
 const self = b.operand("this");
-// ToObject of the receiver: the receiver itself, or a new wrapper of what is no object.
 const wrapperOfReceiver = b.union(...(["Boolean", "Number", "String", "Symbol", "BigInt"] as const).map(name => b.instance(name))).fresh;
 const returningReceiverAsObject = <Columns extends object>(columns: Columns) => [
   { this: b.object, returns: self, ...columns },
@@ -19,9 +18,7 @@ const element = b.slot("this", "element");
 const elementOrUndefined = b.union(element, b.undefined);
 const newArrayOf = (contents: b.TableType) => anyArray.holding({ element: contents }).fresh;
 const newDenseArrayOf = (contents: b.TableType) => newArrayOf(contents).dense;
-// ArraySpeciesCreate: a new array, or whatever object the species constructor of the receiver makes. The method defines the elements on that object and keeps them nowhere else.
 const arrayFromSpecies = b.union(anyArray, b.object).freshUnlessSpecies;
-// The array has a hole only where the operands that say so have one.
 const denseArrayFromSpecies = b.union(anyArray.dense, b.object).freshUnlessSpecies;
 const elementOfResult = b.resultSlot("element");
 
@@ -38,7 +35,6 @@ const operandCodeEffects = { capability: "js", throws: true, runsOnlyOperandCode
 const propertyStoreEffects = { ...operandCodeEffects, writes: ["MemberGuards"] } as const;
 
 const readsArrayLike = [b.readsContents(), b.runs("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"))];
-// An element that is an array, or a proxy of one, is read as the receiver is, down to the depth.
 const readsNestedArrays = b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"));
 const storesLength = b.storedByKey(b.keysNamed("length"), b.length);
 const movesOwnValues = [b.movesElements, b.storedByKey(b.indexKeys, b.ownValues("this")), b.deletedByKey(b.indexKeys)];
@@ -611,9 +607,7 @@ export default b.declarations(
       ],
     },
   }),
-  // Array.prototype.toString calls what it finds under `join` without operands.
   b.namedMemberCall("join", []),
-  // ArrayPrototype.cpp finishCreation: an object without a prototype that holds `true` under the name of each method that `with` does not see.
   b.static("Array.prototype.@@unscopables", b.property(b.any)),
   b.same("Array.prototype.@@iterator", "Array.prototype.values"),
   b.privateAlias(

@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations: a key that is one name is the name (`{ get [KEY]() { .. } }`).
-// At a suspension: it rests on nothing that other code can change, so it holds on. At a throw: a definition by name throws where the definition by key would.
-// Withheld: the definition stays under its computed key.
-
 #include "config.h"
 #include "AOTWalkKnown.h"
 
@@ -23,9 +19,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- K17
-
-// A text that Compile has made is the text of no key, an index is an element, and `__proto__` has a meaning of its own where it is written.
 static PropertyKeyID nameOfTextInKnownKeys(const Walker& walker, StringID text)
 {
     if (!text || liesInThread(text))
@@ -39,7 +32,6 @@ static PropertyKeyID nameOfTextInKnownKeys(const Walker& walker, StringID text)
 
 PropertyKeyID nameThatKeyIs(Walker& walker, Reference key)
 {
-    // A string is its own key, and the conversion may be typed wider than what it converts.
     const Code& code = walker.code();
     if (key.isValue() && code.at(key.id()).opcode == Opcode::ToPropertyKey) {
         ValueID converted = code.at(key.id()).operand(0);
@@ -58,7 +50,6 @@ PropertyKeyID nameWrittenAsKey(const Walker& walker, ValueID key)
 {
     const BodyIndex& body = walker.currentBodyIndex();
     ValueID written = key ? body.valueBehindCasts(key) : ValueID();
-    // A string is its own key.
     if (written && !body.isParameter(written) && body.opcodeOf(written) == Opcode::ToPropertyKey)
         written = body.valueBehindCasts(body.value(written).operand(0));
     if (!written || body.isParameter(written) || body.opcodeOf(written) != Opcode::String)

@@ -58,7 +58,6 @@ void CodeGenerator::dispatchOperation(const ValueContext& value)
     }
 }
 
-// A function for each opcode: one that only hands on to its emitter sets up no frame for the sake of those that do more.
 void CodeGenerator::dispatch(const ValueContext& value)
 {
     using Dispatcher = void (*)(CodeGenerator&, const ValueContext&);

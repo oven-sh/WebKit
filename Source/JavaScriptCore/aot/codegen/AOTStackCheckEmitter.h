@@ -36,7 +36,6 @@ struct StackCheckState {
     bool functionMayCollect { true };
 };
 
-// The state outlives the encoding of the procedure: it is the context of the Machine::StackCheckGenerator.
 void setStackCheckGenerator(Machine::Procedure&, StackCheck, const FrameRequirements&, StackCheckState&);
 void emitStackOverflowPaths(CCallHelpers&, CodeRecords&, StackCheckState&);
 Vector<PrologueCheck, 1> linkStackChecks(LinkBuffer&, const CodeRecords&);

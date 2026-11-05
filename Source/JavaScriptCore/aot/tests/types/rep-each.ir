@@ -8,14 +8,13 @@
 # CHECK-NEXT: t4: rep Double slot Double cells no legal [Double, OptionalDouble, JSValue]
 # CHECK-NEXT: t5: rep OptionalInt64 slot OptionalInt64 cells no legal [OptionalInt64, OptionalDouble, JSValue]
 # CHECK-NEXT: t6: rep OptionalDouble slot OptionalDouble cells no legal [OptionalDouble, JSValue]
-# CHECK-NEXT: t7: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue, LiteralString]
+# CHECK-NEXT: t7: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
 # CHECK-NEXT: t8: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
 # CHECK-NEXT: t9: rep JSValue slot JSValue cells yes legal [JSValue]
-# CHECK-NEXT: t10: rep LiteralString slot LiteralString cells yes legal [Cell32, JSValue, LiteralString]
+# CHECK-NEXT: t10: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
 # CHECK-NEXT: t11: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t12: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
-# CHECK-NEXT: t13: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
-# CHECK-NEXT: t14: rep Void slot JSValue cells no legal [Void, OptionalInt64, OptionalDouble, Cell32, JSValue, LiteralString]
+# CHECK-NEXT: t12: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
+# CHECK-NEXT: t13: rep Void slot JSValue cells no legal [Void, OptionalInt64, OptionalDouble, Cell32, JSValue]
 # CHECK-NEXT: Void: never
 # CHECK-NEXT: Boolean: boolean
 # CHECK-NEXT: Int32: i32
@@ -26,12 +25,11 @@
 # CHECK-NEXT: Cell: string|symbol|bigint|object
 # CHECK-NEXT: Cell32: undefined|null|string|symbol|bigint|absent|object
 # CHECK-NEXT: JSValue: absent|anything
-# CHECK-NEXT: LiteralString: undefined|null|string|absent
 # CHECK-NEXT: RawWord: never
 # CHECK: opaque(CodeAddress): RawWord legal [RawWord]
 # CHECK: laws hold
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment
-function f0 name="types" role=Signature parameters=[{type=boolean}, {type=int[0, 255]}, {type=int[-1, 255]}, {type=int}, {type=number}, {type=undefined|int}, {type=null|number}, {type=string}, {type=symbol}, {type=anything}, {type=undefined|"a"}, {type=iteratorstate}, {type=env L0}, {type=absent|env L0}, {type=undefined}] results=[{type=undefined}]
+function f0 name="types" role=Signature parameters=[{type=boolean}, {type=int[0, 255]}, {type=int[-1, 255]}, {type=int}, {type=number}, {type=undefined|int}, {type=null|number}, {type=string}, {type=symbol}, {type=anything}, {type=iteratorstate}, {type=env L0}, {type=absent|env L0}, {type=undefined}] results=[{type=undefined}]
 entry module=m0

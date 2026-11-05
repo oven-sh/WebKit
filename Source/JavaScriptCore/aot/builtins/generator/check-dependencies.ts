@@ -75,7 +75,6 @@ export function describeUndescribedResults(model: TableModel): string {
     .join("");
 }
 
-/** The properties that native code fills and of whose value the table says nothing. What a module written in JavaScript exports is read off its code. */
 export function undescribedProperties(model: Pick<TableModel, "builtins" | "modules">): ModelBuiltin[] {
   const writtenInJavaScript = new Set(model.modules.filter(({ hasSource }) => hasSource).map(module => module.namespace));
   const isExportOfSource = ({ holder }: ModelBuiltin): boolean => holder !== null && writtenInJavaScript.has(holder);

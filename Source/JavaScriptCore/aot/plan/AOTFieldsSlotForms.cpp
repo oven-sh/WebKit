@@ -3,13 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Mechanism::TypedSlots: a slot in the cell is as wide as what is PROVEN of its field: a byte for booleans, four bytes for integers of 32 bits and for references, each with its marks for absent, undefined and null.
-// A NARROW FORM IS A TYPE IN A SLOT. So it stands where Facts::linked() knows every writer of the field and the layout reaches no unseen code,
-// AND WHERE THE SLOT IS HELD TO A TYPE (PlacedSlot::type of a boxed slot: typeHeldOfFieldForSlotPlan()): there the form follows from the type alone. That is no proof and needs none: every store is held to the type,
-// a value that does not fit takes the field out of its slot, each of these forms has a mark for that, and whoever reads without a proof looks for the mark.
-// At a suspension and at a throw: nothing. The form of a slot is decided once, in front of Compile, and holds for every cell for its whole life.
-// Withheld: every slot keeps the form that it has.
-
 #include "config.h"
 #include "AOTFieldsStorage.h"
 
@@ -32,7 +25,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr uint32_t bytesPerSlotInSlotForms = widthOf(SlotRepresentation::JSValue);
 static constexpr TypeID typeOfIntegerSlotInSlotForms = typeOfPrimitives(Primitive::Integer | Primitive::UndefinedOrNull);
 static constexpr TypeID typeOfNumberSlotInSlotForms = typeOfPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
-// The marks of a narrow slot stand in the place of the few integers of 32 bits below.
 static constexpr Range integersOfNarrowSlotInSlotForms { minInlineInt32, INT32_MAX };
 
 #if USE(BIGINT32)
@@ -41,16 +33,13 @@ static constexpr uint16_t primitivesThatAreCellsInSlotForms = cellPrimitives & ~
 static constexpr uint16_t primitivesThatAreCellsInSlotForms = cellPrimitives;
 #endif
 
-// A field may leave each of these: what a door stores and the form does not hold empties the slot.
 static_assert(canLeaveSlot(SlotRepresentation::OptionalBoolean) && canLeaveSlot(SlotRepresentation::OptionalInt32) && canLeaveSlot(SlotRepresentation::Cell32) && canLeaveSlot(SlotRepresentation::OptionalCell32));
 static_assert(canLeaveSlot(SlotRepresentation::OptionalInt64) && canLeaveSlot(SlotRepresentation::OptionalDouble));
 
 namespace {
 
-// What the stores bring to the fields under one name. Nothing: no store comes to any of them.
 enum class ContentsInSlotForms : uint8_t {
     Booleans = 1 << 0,
-    // Within integersOfNarrowSlotInSlotForms.
     NarrowIntegers = 1 << 1,
     Integers = 1 << 2,
     Fractions = 1 << 3,
@@ -66,13 +55,11 @@ enum class ClaimInSlotForms : bool { IsProven, IsHeld };
 static OptionSet<ContentsInSlotForms> contentsOfTypeForSlotForms(const Program& program, TypeID type, ClaimInSlotForms claim)
 {
     using Contents = ContentsInSlotForms;
-    // `abstract x: number`: nothing is ever stored under this declaration, so it asks nothing of the form that it shares.
     if (isNeverType(type))
         return { };
     Type proven = program.at(type);
     if (!proven.isJavaScriptValue() || proven.primitives & Primitive::Unspecified)
         return Contents::AnyValue;
-    // `{ add: by => (n += by) }`: leaveClosuresOfLiteralsUnmade() lays a mark in the place of such a closure, into a slot that it finds boxed, and the scope into the other half of it.
     if (singleFunctionOf(TypeReader(program), proven))
         return Contents::AnyValue;
     OptionSet<Contents> contents;
@@ -83,7 +70,6 @@ static OptionSet<ContentsInSlotForms> contentsOfTypeForSlotForms(const Program& 
         primitives &= ~some;
     };
     if (primitives & Primitive::Integer)
-        // What is held is made true, so a slot that is held to the integers of 32 bits is held to those that the narrow form has: one of the few below takes the field out of its slot.
         contents.add(proven.integers.isSubsetOf(claim == ClaimInSlotForms::IsHeld ? Range::int32() : integersOfNarrowSlotInSlotForms) ? Contents::NarrowIntegers : Contents::Integers);
     primitives &= ~Primitive::Integer;
     takeOut(Primitive::Number, Contents::Fractions);
@@ -97,10 +83,6 @@ static OptionSet<ContentsInSlotForms> contentsOfTypeForSlotForms(const Program& 
     return contents;
 }
 
-// The narrowest form with an empty state that holds all of it. A number is kept raw whatever its width: typed code reads the slot as it lies.
-// `mayBeNarrow`: false where fewer bytes would make no cell smaller. A narrow reference costs an addition at every read, and a byte more instructions wherever it is read or stored by name.
-// An integer of 32 bits is narrow whatever the cell gains: one compare finds every mark, and a store by name needs no test of the type (FieldRecordIndex::isStoredWithoutTypeTest).
-// `isHeld`: strangers store under the name. The stubs by name have no short way into OptionalInt64, so what outgrows 32 bits is kept as a double there.
 static SlotRepresentation representationOfContentsForSlotForms(OptionSet<ContentsInSlotForms> contents, bool mayBeNarrow, bool usesWideReferences, bool isHeld, bool isReadForArithmetic)
 {
     using Contents = ContentsInSlotForms;
@@ -114,8 +96,6 @@ static SlotRepresentation representationOfContentsForSlotForms(OptionSet<Content
     constexpr OptionSet<Contents> integers { Contents::NarrowIntegers, Contents::Integers };
     if ((values - integers).isEmpty() && !isHeld)
         return SlotRepresentation::OptionalInt64;
-    // Eight raw bytes save nothing against eight boxed ones, and a slot that is only held pays for them: every store tests for a number and unboxes it, and whoever reads into untyped code boxes it again.
-    // It pays where the text reads the field for an operator that takes numbers alone: `this.r * this.r`: no test of the tag, no unboxing.
     if ((values - integers - Contents::Fractions).isEmpty())
         return isHeld && !isReadForArithmetic ? SlotRepresentation::JSValue : SlotRepresentation::OptionalDouble;
     if (values == Contents::Cells && mayBeNarrow && !usesWideReferences)
@@ -123,7 +103,6 @@ static SlotRepresentation representationOfContentsForSlotForms(OptionSet<Content
     return SlotRepresentation::JSValue;
 }
 
-// All that the form holds. A slot in a form that does not hold every value has a type, which every door asks: RuntimeLayoutTable::slotAdmits(). A read is cut to the proof: PositionTypes::readOfSlot().
 static TypeID widestTypeOfRepresentationForSlotForms(TypeArena& types, SlotRepresentation representation)
 {
     switch (representation) {
@@ -144,7 +123,6 @@ static TypeID widestTypeOfRepresentationForSlotForms(TypeArena& types, SlotRepre
     }
 }
 
-// Whoever has given a slot another form than these has had reasons of his own.
 static bool formMayBeReplacedInSlotForms(const PlacedSlot& slot)
 {
     switch (slot.representation) {
@@ -177,7 +155,6 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
     bool usesWideReferences = build.recordedOptions().useWideReferences();
     uint32_t numberOfUnits = static_cast<uint32_t>(units.units.size());
 
-    // The initializers of an abstract class store into the objects of the classes below, under the field as the class lists it.
     BitVector layoutsAboveCells(numberOfLayouts);
     for (uint32_t index : groups.layouts) {
         if (!hasCellsForFields(parts, LayoutID(index)))
@@ -185,7 +162,6 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
         for (LayoutID above = writtenBaseOf(program.layouts[index]); above && !layoutsAboveCells.quickSet(above.index()); above = writtenBaseOf(program.at(above))) { }
     }
 
-    // ONE FORM FOR A GROUP AND NAME, which holds what is proven of the field in every layout that lists it: a store through a family writes without asking which member it has.
     BitVector groupsLaidForGood = findGroupsLaidForGoodForFields(parts, groups);
     Vector<OptionSet<ContentsInSlotForms>> contentsOfUnits(numberOfUnits);
     BitVector unitsWhoseFormMayChange(numberOfUnits);
@@ -197,7 +173,6 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
             bool hasCells = hasCellsForFields(parts, row.layout);
             if (!hasCells && !layoutsAboveCells.quickGet(row.layout.index()))
                 continue;
-            // `name`, `type`, `expression`: appended out of line to the maker of all nodes, in the cell of each kind of node that has them. What lies out of line keeps its granule and its box, and no access finds it at the location of the others.
             if (hasCells && parts.layouts[row.layout.index()].slots[row.field].isOutOfLine())
                 continue;
             const LinkedCell* cell = linked.findCellOfField(row);
@@ -228,7 +203,6 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
     if (unitsWhoseFormMayChange.isEmpty())
         return;
 
-    // A CELL HAS THE SIZE OF ITS SIZE CLASS WHATEVER IT HOLDS. So a slot is narrow only where that makes the cells of some layout that has it smaller. Slots are packed by their widths, so the sum of those says how large a cell is.
     CellSizesForFields sizes(build);
     BitVector layoutsWithSmallerCells(numberOfLayouts);
     for (uint32_t index : groups.layouts) {
@@ -267,7 +241,6 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
         SlotRepresentation representation = representationOfContentsForSlotForms(contentsOfUnits[unit], mayBeNarrow, usesWideReferences, unitsWithSlotHeldToType.quickGet(unit), isReadForArithmetic);
         if (representation == SlotRepresentation::JSValue)
             continue;
-        // A reader takes the layout of what it reads from the type that the slot of a reference is held to, and a store through a family writes without asking which member it has: one type for all, or the slots stay as they are.
         bool holdsReferences = representation == SlotRepresentation::Cell32 || representation == SlotRepresentation::OptionalCell32;
         if (holdsReferences && unitsWithSlotHeldToType.quickGet(unit)) {
             std::optional<TypeID> heldOfAll;
@@ -287,7 +260,6 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
             if (!hasCellsForFields(parts, row.layout) || parts.layouts[row.layout.index()].slots[row.field].isOutOfLine())
                 continue;
             PlacedSlot& slot = parts.layouts[row.layout.index()].slots[row.field];
-            // A number or a boolean is held to all that its form has, so that a store by name needs no test of the type. A reference goes on being held to what it was held to.
             if (!holdsReferences || slot.representation != SlotRepresentation::JSValue || !slot.type)
                 slot.type = type;
             slot.representation = representation;

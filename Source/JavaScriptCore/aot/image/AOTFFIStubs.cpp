@@ -21,7 +21,6 @@
 
 namespace JSC { namespace AOT {
 
-// Whatever makes a foreign function or a callback is a member of Bun.FFI, which the module bun:ffi reads when it is loaded, or the native function behind cc().
 bool mayUseFFI(const Typed::Facts& facts, const CompileOptions& options)
 {
     if (options.excludesForeignCalls())
@@ -38,7 +37,6 @@ static constexpr CodeSymbol callbackContextSymbol { SymbolSpace::FFI, 0 };
 
 FFIStubs generateFFIStubs(BuildContext& context)
 {
-    // One mapping of this code has so many entries. The process maps the code once more when all of them are taken: FFI::CallbackEntryPool.
     constexpr unsigned numberOfCallbackEntries = 256;
 
     CCallHelpers jit;

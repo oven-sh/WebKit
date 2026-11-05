@@ -153,7 +153,6 @@ static void checkFind()
             }
         }
     }
-    // Many places have the first and the last character of the text and not what lies between. The text itself lies at every distance from both ends.
     for (ASCIILiteral wanted : { "a"_s, "ab"_s, "axb"_s, "a0123456789012345b"_s }) {
         Text<CharacterType> needle = textOf<CharacterType>(wanted);
         for (uint32_t length = 0; length <= 70; ++length) {
@@ -326,7 +325,6 @@ static void testImplEqualsTextOfTheImage(LoadedProgram&)
     AOT_TEST_CHECK(!operationAOTStringImplEqualsImageString(in8Bits(""_s).impl(), accentInImage));
 }
 
-// Read as 16-bit units, the 8-bit characters would be two surrogate pairs.
 static void testElementsSpreadFromPartOfTextThatBecameNarrow(LoadedProgram& program)
 {
     VM& vm = program.vm();

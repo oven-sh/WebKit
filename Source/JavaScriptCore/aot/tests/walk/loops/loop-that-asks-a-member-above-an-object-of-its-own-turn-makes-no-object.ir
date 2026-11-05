@@ -30,13 +30,10 @@
 # ROW: = AreMembersUnchanged conditions=[{layout=L2 key="first"}]
 
 module m0 path="loop-that-asks-a-member-above-an-object-of-its-own-turn-makes-no-object.js" displayPath="loop-that-asks-a-member-above-an-object-of-its-own-turn-makes-no-object.js" body=f0 namespaceLayout=L(m0)
-module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 entry module=m0
 layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
 layout L1 kind=Instance name="Base" module=m0 position=112 constructor=f2 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L2 kind=Instance name="Below" module=m0 position=200 base=L1 constructor=f3 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
-data d0 root=Array{contents=anything} module=m1
-data d1 root=Array{contents=anything} module=m1
 variable g0 name="Point" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="Base" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
 variable g2 name="Below" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
@@ -176,95 +173,3 @@ function f8 module=m0 position=331 flags=[HasThis] thisType={type=anything} resu
     v4 = Add v1, v3 @361
     Return v4 @361
 }
-function f9 name="call" module=m1 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
-    v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6 @0
-    v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @194
-    v10 = StrictEq v0, v9 @194
-    Branch v10 -> taken b2(), notTaken b1() @194
-  b1():
-    v11 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @229
-    v12 = StrictEq v0, v11 @229
-    Branch v12 -> taken b2(), notTaken b6() @229
-  b2():
-    v13 = Data data=d0 @288
-    v14 = Integer integer=1 @313
-    v15 = Convert v14 declared={type=number} @313
-    Jump -> next b3(v15) @309
-  b3(v16: number):
-    LoopHint @309
-    v18 = Less v16, v1 @320
-    Branch v18 -> taken b4(), notTaken b5() @320
-  b4():
-    v19 = Integer integer=1 @392
-    v20 = Sub v16, v19 @392
-    v21 = ElemGet v8, v16 @395
-    v22 = Convert v13 declared={type=object flags=[IsFromCompiler, IsClaim]} @355
-    ElemDefine v22, v20, v21 @355
-    v24 = Increment v16 @338
-    v25 = Convert v24 declared={type=number} @338
-    Jump -> next b3(v25) @338
-  b5():
-    v26 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @433
-    v27 = Call v26, v0, v2, v13 [isDoneInPlace] @433
-    ReturnCall v27 @433
-  b6():
-    Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b7(), case b7(), case b8(), case b9(), case b10(), case b11(), otherwise b12() @548
-  b7():
-    v28 = Call v0, v2 @578
-    ReturnCall v28 @578
-  b8():
-    v29 = Call v0, v2, v3 @631
-    ReturnCall v29 @631
-  b9():
-    v30 = Call v0, v2, v3, v4 @698
-    ReturnCall v30 @698
-  b10():
-    v31 = Call v0, v2, v3, v4, v5 @779
-    ReturnCall v31 @779
-  b11():
-    v32 = Call v0, v2, v3, v4, v5, v6 @874
-    ReturnCall v32 @874
-  b12():
-    v33 = Data data=d1 @990
-    v34 = Integer integer=1 @1011
-    v35 = Convert v34 declared={type=number} @1011
-    Jump -> next b13(v35) @1007
-  b13(v36: number):
-    LoopHint @1007
-    v38 = Less v36, v1 @1018
-    Branch v38 -> taken b14(), notTaken b15() @1018
-  b14():
-    v39 = Integer integer=1 @1085
-    v40 = Sub v36, v39 @1085
-    v41 = ElemGet v8, v36 @1088
-    v42 = Convert v33 declared={type=object flags=[IsFromCompiler, IsClaim]} @1049
-    ElemDefine v42, v40, v41 @1049
-    v44 = Increment v36 @1036
-    v45 = Convert v44 declared={type=number} @1036
-    Jump -> next b13(v45) @1036
-  b15():
-    v46 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1115
-    v47 = Call v46, v0, v2, v33 [isDoneInPlace] @1115
-    ReturnCall v47 @1115
-}
-function f10 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything, v1: anything, v2: anything):
-    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
-    v4 = StrictEq v0, v3 @1248
-    Branch v4 -> taken b2(), notTaken b1() @1248
-  b1():
-    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
-    v6 = StrictEq v0, v5 @1283
-    Branch v6 -> taken b2(), notTaken b3() @1283
-  b2():
-    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
-    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
-    ReturnCall v8 @1333
-  b3():
-    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
-    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
-    ReturnCall v10 @1414
-}
-runtimefunction id=FunctionPrototypeApply function=f10
-runtimefunction id=FunctionPrototypeCall function=f9

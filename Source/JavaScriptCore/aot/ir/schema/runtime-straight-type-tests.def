@@ -1,2 +1,1 @@
-# type: the offset of the type's record, NumberSpace::Type. The empty word has no type: whoever tests for Absent asks the word.
 runtime ValueHasType : size_t (EncodedJSValue value, uint32_t type) ; reads(all) writes(AllocatorState, RuntimeState)

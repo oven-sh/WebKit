@@ -60,7 +60,6 @@ const terminatorKinds: EntryEnum = {
   entrySetPrefix: "TerminatorKindSet kindsWith",
 };
 
-// The width of Instruction::flags and of DraftWords::flags in walk/AOTCode.h.
 const bitsOfFlagsInCode = 8;
 
 function flagUsersOf(entry: Entry): User[] {
@@ -98,7 +97,6 @@ function collect(schema: Schema): NamedParts {
   };
 }
 
-// A lookup that this many entries declare reads one table that all its callers share. As a switch it is compiled into a jump table at each of them.
 const leastUsersOfSharedTable = 24;
 
 function lookup(name: string, users: readonly User[]): string[] {
@@ -170,7 +168,6 @@ function payloadAccessors(name: string, field: PayloadField, isOptional: boolean
   const { kind, heldAs } = field;
   const setter = cppSetterName(name);
   const position = `declaredPosition(PayloadWord::${name}(${tag}))`;
-  // Anybody may read a fact. A prediction stays one in the hands of who reads it.
   if (heldAs !== null) {
     const read = `decodePayloadWord<TypeID>(payloadWordAt(${position}))`;
     return {
@@ -211,7 +208,6 @@ function flagAccessors(name: string, tag: string): Accessors {
   };
 }
 
-// OperandID is a name of the class that includes the file: ValueID in a record of Code, Reference in a draft.
 function operandAccessors(name: string, tag: string): Accessors {
   const getter = cppOperandGetterName(name, false);
   const position = `declaredPosition(OperandPosition::${name}(${tag}))`;
@@ -266,8 +262,6 @@ function accessorsOf(parts: NamedParts, entryEnum: EntryEnum): AccessorsOfEntrie
   return { payloadAndFlags, operands };
 }
 
-// A record of Code never changes, so Operation and Terminator include the getters alone.
-// Draft and TerminatorDraft include both files, so the sets of entries stand in this one only.
 function gettersInc({ payloadAndFlags, operands }: AccessorsOfEntries): string[] {
   return blocks(
     [cppMarker],
@@ -276,8 +270,6 @@ function gettersInc({ payloadAndFlags, operands }: AccessorsOfEntries): string[]
   );
 }
 
-// The getter of the operand `set` of SetNext is setOperand(). In Draft it would hide the setter of DraftWords, which the setters below call and the concept OperationHolder requires.
-// Draft and TerminatorDraft alone include the setters, and both derive from DraftWords.
 const inheritedOperandSetter = "using DraftWords::setOperand;";
 
 function settersInc({ payloadAndFlags, operands }: AccessorsOfEntries): string[] {

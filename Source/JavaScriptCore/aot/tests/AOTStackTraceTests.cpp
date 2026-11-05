@@ -171,12 +171,10 @@ function withLimit(limit, run) {
 globalThis.leaf = function leaf() { return names(new Error().stack); };
 )js"_s;
 
-// `way` is one of waysToCompilePrograms.
 static String runInShell(ASCIILiteral way, ASCIILiteral referencesWord, ASCIILiteral statements)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
-        // The script of the shell hands the program its own objects, closures and Error.captureStackTrace.
         output = compileForShellOnThisThread(programText, { "admit=Inspector"_s, referencesWord }, way);
     });
     std::span<const uint32_t> entryModules = output->records<uint32_t>(Wire::ResultSection::EntryModuleIds);
@@ -343,7 +341,6 @@ static void checkBuiltinNamesNeedNoAtomTable(LoadedProgram& program)
         AOT_TEST_CHECK(name == description.name(vm) && name == description.calculatedDisplayName(vm, nullptr, false));
         return name;
     };
-    // Heap::pruneDeadReferences() runs without one.
     Thread& thread = Thread::currentSingleton();
     AtomStringTable* atomStringTable = thread.setCurrentAtomStringTable(nullptr);
     auto restore = makeScopeExit([&] {

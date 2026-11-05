@@ -25,8 +25,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC::AOT {
 
-// Whoever got `create`, `callAll` and `readDisplayName` may do anything with them. The others are only called.
-// The closures of `holdsFive` are full, since a slim closure holds at most four captures. Those of the others are slim.
 inline constexpr ASCIILiteral programWithClosuresToDrop =
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
     "entry module=m0\n"
@@ -83,7 +81,6 @@ inline constexpr ASCIILiteral programWithClosuresToDrop =
     "    PutModuleVariable v8 variable=g3\n"
     "    Return\n"
     "}\n"
-    // A site is numbered by the place of its access in the source.
     "function f6 name=\"readDisplayName\" module=m0 parameters=[{type=anything}] results=[{type=anything}] {\n"
     "  b0(v0: anything):\n"
     "    v1 = PropGet v0 key=\"displayName\" @7\n"
@@ -150,7 +147,6 @@ inline CachedName displayNameInCaches(LoadedProgram& program)
     return name;
 }
 
-// What the operation behind a read that misses does with its answer.
 inline void fileReadOfDisplayName(LoadedProgram& program, JSObject* closure)
 {
     VM& vm = program.vm();
@@ -176,7 +172,6 @@ inline void fillSiteWithReadOfDisplayName(LoadedProgram& program, JSObject* clos
     AOT_TEST_CHECK(site->get().structureID == closure->structureID());
 }
 
-// The first object that gets a name which is new to its Structure may be given a Structure of its own.
 inline JSObject* createClosureWithSharedStructure(LoadedProgram& program, FunctionID function, JSObject* source)
 {
     constexpr unsigned maxNumberOfClosuresMade = 4;
@@ -195,7 +190,6 @@ inline JSObject* createClosureWithStructureOfItsOwn(LoadedProgram& program, Func
     assignDisplayName(program, closure, source);
     if (!closure->structure()->isDictionary())
         closure->convertToDictionary(program.vm());
-    // An object that is being filled is made flat behind its last name, and its Structure is like any other from then on.
     if (FirstAdditions* additions = program.state().firstAdditions.get())
         additions->forget(closure);
     AOT_TEST_CHECK(closure->structure()->isDictionary() && !closure->structure()->isUncacheableDictionary());

@@ -104,7 +104,6 @@ void generateCallOperationPreservingRegisters(StubAssembler& jit)
 
 static_assert(MacroAssembler::numberOfRegisters() <= ThrowSiteWord::numberOfRegistersPerBank && MacroAssembler::numberOfFPRegisters() <= ThrowSiteWord::numberOfRegistersPerBank);
 
-// The frame has room for what is saved and for no more: a word that nobody writes holds what an earlier frame left there, and the operation may collect.
 static void storeRegisterBanks(StubAssembler& jit)
 {
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
@@ -113,7 +112,6 @@ static void storeRegisterBanks(StubAssembler& jit)
     jit.subPtr(TrustedImm32((numberOfStoredGPRs + ThrowSiteWord::numberOfStoredFPRs) * 8), sp);
 #if CPU(ARM64)
     for (unsigned i = 0; i < numberOfStoredGPRs; i += 2) {
-        // No stub names x18, and no value is in it.
         if (i == 18)
             jit.storePair64(ARM64Registers::x19, ARM64Registers::x19, sp, TrustedImm32(i * 8));
         else
@@ -179,7 +177,6 @@ static void dumpRegistersAndThrow(StubAssembler& jit, ThrowSiteSource source)
         jit.move(instanceGPR, operationArgumentGPR(0));
         jit.move(TrustedImm32(static_cast<uint32_t>(source)), operationArgumentGPR(3));
         jit.callOperation(Entry::operationAOTThrowAtSite, jit.allocateScratch(StubRegister::T9));
-        // The operation makes the Error. What throws it comes behind.
         jit.bindReturnLabel(StubFrameKind::FirstOfTwoReads);
     };
     if (!isFrameless) {
@@ -224,7 +221,6 @@ static GPRReg registerOfPreludeAnswer(StubAssembler& jit)
 
 enum class CaughtWord : uint8_t { Value, Exception, ValueAndException };
 
-// The word holds what compiled code threw: the value, or the Exception that a cleanup throws on. lookupExceptionHandler() leaves an Exception there for no handler but a cleanup.
 static PreludeExit emitCatchPrelude(StubAssembler& jit, CaughtWord wanted)
 {
     if (jit.key().family() != StubFamily::TailCallOperation && jit.signature().result != StubResult::GPR)
@@ -285,7 +281,6 @@ PreludeExit emitAddressOfThrowPrelude(StubAssembler& jit)
         return PreludeExit::CallsOperation;
     jit.loadCallerReturnAddress(0, registerOfPreludeAnswer(jit));
     jit.returnToCaller();
-    // Like every head of an operation this one ends in the call, so that what is known of the call holds for the head.
     return PreludeExit::CallsOperation;
 }
 

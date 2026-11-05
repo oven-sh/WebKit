@@ -43,7 +43,6 @@ public:
     {
     }
 
-    // Returns false when the statics are too large. The error has been reported by then.
     bool run()
     {
         createTables();
@@ -68,7 +67,6 @@ private:
     using PlannedVariable = Typed::PlannedVariable;
 
     // The variables lie in this order, so that equal first words lie side by side and nothing is lost to alignment.
-    // The words that the collector visits lie together, so the image lists them as a few ranges.
     enum class WordKind : uint8_t {
         UndefinedValue,
         UndefinedInteger,
@@ -88,7 +86,6 @@ private:
         ZeroWord1,
     };
 
-    // The variables of one kind, in the order of their ids.
     struct Bucket {
         uint64_t size { 0 };
         uint32_t nextOffset { 0 };
@@ -102,10 +99,10 @@ private:
     static constexpr uint32_t noBucket = UINT32_MAX;
 
     static_assert(static_cast<unsigned>(WordKind::ZeroValue) == numberOfFilledWordKinds && static_cast<unsigned>(WordKind::ZeroWord1) + 1 == numberOfWordKinds);
-    static_assert(!traitsOf(SlotRepresentation::JSValue).absentBits && !traitsOf(SlotRepresentation::LiteralString).absentBits);
-    static_assert(!traitsOf(SlotRepresentation::OptionalCell32).absentBits && !traitsOf(SlotRepresentation::LiteralString32).absentBits && !traitsOf(SlotRepresentation::OptionalBoolean).absentBits);
-    static_assert(widthOf(SlotRepresentation::JSValue) == wordSize && widthOf(SlotRepresentation::LiteralString) == wordSize && widthOf(SlotRepresentation::OptionalInt64) == wordSize && widthOf(SlotRepresentation::OptionalDouble) == wordSize);
-    static_assert(widthOf(SlotRepresentation::OptionalCell32) == 4 && widthOf(SlotRepresentation::LiteralString32) == 4 && widthOf(SlotRepresentation::OptionalInt32) == 4 && widthOf(SlotRepresentation::OptionalBoolean) == 1);
+    static_assert(!traitsOf(SlotRepresentation::JSValue).absentBits);
+    static_assert(!traitsOf(SlotRepresentation::OptionalCell32).absentBits && !traitsOf(SlotRepresentation::OptionalBoolean).absentBits);
+    static_assert(widthOf(SlotRepresentation::JSValue) == wordSize && widthOf(SlotRepresentation::OptionalInt64) == wordSize && widthOf(SlotRepresentation::OptionalDouble) == wordSize);
+    static_assert(widthOf(SlotRepresentation::OptionalCell32) == 4 && widthOf(SlotRepresentation::OptionalInt32) == 4 && widthOf(SlotRepresentation::OptionalBoolean) == 1);
     static_assert(defaultLimitValue(LimitID::MaxStaticsSize, Architecture::ARM64) <= UINT32_MAX && defaultLimitValue(LimitID::MaxStaticsSize, Architecture::X86_64) <= UINT32_MAX);
     static_assert(sizeof(EncodedJSValue) == wordSize && sizeof(JSCell*) == wordSize);
     static_assert(byteOffsetOfClassGuardBit(3 * bitsPerByte) == 3 && maskOfClassGuardBit(3 * bitsPerByte) == 1 && noClassGuardBit % bitsPerByte);
@@ -137,14 +134,12 @@ private:
         bool startsUndefined = planned.initialWord == traitsOf(planned.representation).undefinedBits;
         switch (planned.representation) {
         case SlotRepresentation::JSValue:
-        case SlotRepresentation::LiteralString:
             return WordKind::UndefinedValue;
         case SlotRepresentation::OptionalInt64:
             return startsUndefined ? WordKind::UndefinedInteger : WordKind::AbsentInteger;
         case SlotRepresentation::OptionalDouble:
             return startsUndefined ? WordKind::UndefinedDouble : WordKind::AbsentDouble;
         case SlotRepresentation::OptionalCell32:
-        case SlotRepresentation::LiteralString32:
             return WordKind::UndefinedReference4;
         case SlotRepresentation::OptionalInt32:
             return startsUndefined ? WordKind::UndefinedInteger4 : WordKind::AbsentInteger4;
@@ -202,7 +197,6 @@ private:
         return false;
     }
 
-    // Every table gets its full size first, so a reader after a failed build never indexes out of bounds.
     void createTables()
     {
         uint32_t numberOfVariables = m_plan.slots().numberOfVariables();
@@ -231,7 +225,6 @@ private:
         }
     }
 
-    // The counts come behind every guard: firstWordOfClassGuardCountKey.
     uint32_t placeOfFirstClassGuardCount() const
     {
         const NumberedKeys& guards = m_mentions.keys(NumberSpace::ClassGuard);
@@ -241,8 +234,6 @@ private:
         return first;
     }
 
-    // Every bit of a guard starts clear, which says of a guard that begins with the first evaluation of its class that it does not hold.
-    // Counts with equal first values lie side by side, in the order of their keys, so the image lists what they start as in a few runs.
     void placeClassGuardCounts()
     {
         struct CountToPlace {
@@ -255,7 +246,6 @@ private:
             CountToPlace count { 0, static_cast<uint32_t>(index) };
             forEachGuardInClassGuardCountKey(guards.keyAt(firstCount + index), [&](std::span<const uint32_t> guard) {
                 LayoutID classLayout(guard[0]);
-                // placeClassGuards() reports the guard of a class without a record.
                 if (m_plan.hasClassRecord(classLayout) && !m_plan.bitsOfClassGuardsAreClearWhileTheyHold(classLayout, sideOfClassGuardKey(guard)))
                     ++count.firstValue;
             });
@@ -272,7 +262,6 @@ private:
         }
     }
 
-    // Behind the bits of the guards.
     void listGuardsOfClassGuardCounts()
     {
         const NumberedKeys& guards = m_mentions.keys(NumberSpace::ClassGuard);
@@ -294,7 +283,6 @@ private:
             for (size_t index = first; index < end; ++index) {
                 size_t next = firstGuardOfCount[index];
                 forEachGuardInClassGuardCountKey(guards.keyAt(firstCount + index), [&](std::span<const uint32_t> guard) {
-                    // gatherMentions() mentions each guard of a count.
                     std::optional<uint32_t> place = guards.find(guard);
                     RELEASE_ASSERT(place && *place < firstCount);
                     m_statics.guardsOfClassGuardCounts[next++] = { m_statics.bitsOfClassGuards[*place], m_offsetsOfClassGuardCounts[index] };
@@ -308,7 +296,6 @@ private:
     {
         Vector<Bucket> buckets(numberOfWordKinds);
         Vector<uint32_t> bucketOfVariable(FillWith { }, m_statics.variables.size(), noBucket);
-        // What is asked of the plan, the tables and the mentions is asked of each variable by itself. Only the sums go through the variables in their order.
         forEachRangeOfIndicesInParallel(m_context.parallelLoops(), m_statics.variables.size(), [&](size_t first, size_t end) {
             for (size_t index = first; index < end; ++index) {
                 VariableID id(index);
@@ -333,7 +320,6 @@ private:
         }
 
         std::span<Bucket> allBuckets = buckets.mutableSpan();
-        m_statics.sizeFilledAtProgramEntry = alignToWord();
         placeBuckets(allBuckets.first(numberOfFilledWordKinds));
         placeClassGuardCounts();
         placeBuckets(allBuckets.subspan(numberOfFilledWordKinds));
@@ -344,7 +330,6 @@ private:
             PlacedVariable& placed = m_statics.variables[index];
             Bucket& bucket = buckets[bucketOfVariable[index]];
             placed.offset = std::exchange(bucket.nextOffset, bucket.nextOffset + bucket.width);
-            // A root is visited as a word of eight bytes. The image lists the narrow references in a table of their own.
             SlotTraits traits = traitsOf(placed.plan.representation);
             if (!traits.holdsCell || traits.isNarrowReference)
                 continue;
@@ -354,11 +339,17 @@ private:
         return fitsWithin(m_limit);
     }
 
+    // The word of an ES module or of a file of data holds its namespace object for the code that asks for it. Where no code names the word the run time keeps the object itself: Modules::setNamespace().
     bool placeModuleValues()
     {
+        const BitVector& isNamedByCode = m_mentions.byID(NumberSpace::ModuleValue).isMentioned;
         for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
             ModuleID module(index);
             if (!m_plan.hasModuleValue(module))
+                continue;
+            // When a CommonJS file loads again, the word of its face goes on holding the object that the modules which have run were linked with: Modules::captureExportsAgain().
+            const Typed::Module& record = m_program.modules[index];
+            if ((record.kind == ModuleKind::SourceText || record.kind == ModuleKind::Data) && !isNamedByCode.get(index) && !m_plan.hasRequireCacheValue(module) && !Typed::isFaceOfCommonJSFile(m_program, record))
                 continue;
             uint32_t offset = allocateRoot();
             m_statics.moduleValueOffsets[index] = offset;
@@ -370,7 +361,6 @@ private:
         return fitsWithin(m_limit);
     }
 
-    // Every byte starts clear, whichever way the guard of the class holds.
     bool placeClassGuards()
     {
         const NumberedKeys& guards = m_mentions.keys(NumberSpace::ClassGuard);
@@ -383,7 +373,6 @@ private:
             RELEASE_ASSERT(key.size() >= 2 && !(key.size() % 2) && (key[1] < numberOfClassSides || isAskedByStoresAlone));
             ClassSide side = isAskedByStoresAlone ? ClassSide::Prototype : static_cast<ClassSide>(key[1]);
             LayoutID classLayout(key[0]);
-            // The run time ends a guard through the number in the record of the class. Without one, a guard that holds while clear would hold forever.
             if (!m_plan.hasClassRecord(classLayout)) {
                 m_context.diagnostics().add(InternalError {
                     .kind = InternalErrorKind::PlacementCheckFailed,
@@ -397,7 +386,6 @@ private:
                 m_statics.classGuardBits[classLayout.index() * numberOfClassSides + key[1]] = bit;
                 continue;
             }
-            // The keys come in ascending order, word by word, so each list does too: the one by its keys, the other by class and side.
             Vector<PlacedClassGuardOfName>& list = key.size() == 4 ? m_statics.classGuardsOfNames : m_statics.namesOfClassGuardsOfSeveralNames;
             for (std::span<const uint32_t> names = key.subspan(2); !names.empty(); names = names.subspan(2)) {
                 RELEASE_ASSERT(names[0] == static_cast<uint32_t>(NumberSpace::Name) || names[0] == static_cast<uint32_t>(NumberSpace::NameOfText));
@@ -447,7 +435,6 @@ private:
         return fitsWithin(m_limit);
     }
 
-    // A profile of zeroes is due for review at its first allocation. The word of the last array is no root: it neither keeps the array alive nor outlives it.
     bool placeArrayProfiles()
     {
         uint64_t sizeOfProfiles = static_cast<uint64_t>(m_statics.arrayProfileOffsets.size()) * wordSize;
@@ -464,7 +451,6 @@ private:
         return true;
     }
 
-    // The word is no root: nothing else holds the cell that lies there, so a collection frees the cell, and what the cell still names with it.
     bool placeEnvironmentsHandedBack()
     {
         const BitVector& layouts = m_mentions.byID(NumberSpace::EnvironmentHandedBack).isMentioned;
@@ -479,9 +465,6 @@ private:
         return true;
     }
 
-    // A selector that code mentions has a word for each shape of each row of its family. The selectors with the most words are placed first, each as low as the words that are taken allow.
-    // The table lies apart from the statics, in pages of its own: InstanceLayout::offsetOfMethodTable().
-    // A word between those of the selectors belongs to nobody, and nobody reads it: a call through the table has proven that its receiver has a row.
     bool placeMethodTable()
     {
         const Typed::CallingConventions& conventions = m_plan.conventions();
@@ -523,13 +506,11 @@ private:
             forEachShapeOf(toPlace.selector, [&](uint32_t shape) {
                 shapes.append(shape);
             });
-            // No object is made of any layout with a row, so the calls that mention the selector never run. They still need a number.
             if (shapes.isEmpty()) {
                 m_originsOfMethodSelectors[toPlace.selector] = 0;
                 continue;
             }
             auto [leastShape, greatestShape] = std::ranges::minmax(shapes);
-            // The word of the greatest shape is the lowest, and no word below the first free one is free.
             uint64_t origin = firstFreeWord + greatestShape;
             while (std::ranges::any_of(shapes, [&](uint32_t shape) { return isTaken.get(origin - shape); }))
                 ++origin;
@@ -537,7 +518,6 @@ private:
                 m_context.reportLimitExceeded(LimitID::MaxStaticsSize, origin * sizeof(uint32_t));
                 return false;
             }
-            // A BitVector grows to the size asked for and no further, and the origins rise word by word.
             if (uint64_t end = origin - leastShape + 1; end > isTaken.size())
                 isTaken.ensureSize(std::max<size_t>(end, 2 * isTaken.size()));
             for (uint32_t shape : shapes)
@@ -547,7 +527,6 @@ private:
             numberOfWords = std::max(numberOfWords, origin - leastShape + 1);
             m_originsOfMethodSelectors[toPlace.selector] = static_cast<uint32_t>(origin);
         }
-        // No origin lies below the last word of its selector.
         m_sizeOfMethodTable = static_cast<uint32_t>(numberOfWords * sizeof(uint32_t));
         return true;
     }
@@ -570,7 +549,6 @@ private:
     const uint64_t m_limit;
     PlacedStatics m_statics;
     Vector<uint32_t> m_originsOfMethodSelectors;
-    // In the order of their keys.
     Vector<uint32_t> m_offsetsOfClassGuardCounts;
     uint32_t m_sizeOfMethodTable { 0 };
     uint64_t m_end { 0 };
@@ -584,7 +562,6 @@ void ImageNumbersBuilder::layOutStatics()
     bool fits = builder.run();
     numbers.m_statics = builder.takeStatics();
     numbers.m_originsOfMethodSelectors = builder.takeOriginsOfMethodSelectors();
-    // The offsets of these cells are indexed by place in these lists.
     numbers.m_regExpLiteralCells = mentions.takeKeys(NumberSpace::RegExpLiteralCell);
     numbers.m_templateObjectCells = mentions.takeKeys(NumberSpace::TemplateObjectCell);
     numbers.m_arrayProfiles = mentions.takeKeys(NumberSpace::ArrayProfile);
@@ -598,12 +575,10 @@ void ImageNumbersBuilder::layOutStatics()
         numbers.m_numbersOfSites[place] = static_cast<uint32_t>(numberOfNumbersOfSites);
         numberOfNumbersOfSites += ImageNumbers::isPlaceWithSiteAnswers(key) && !inputs.plan.slots().hasColumn(ImageNumbers::nameOfSite(key)) ? 2 : 1;
     }
-    // A number that does not fit is never read: the instance is then too large to be addressed.
     numbers.m_numbersOfSites[sites.size()] = static_cast<uint32_t>(std::min<uint64_t>(numberOfNumbersOfSites, UINT32_MAX));
     if (!fits)
         return;
 
-    // Only a step of the builder can write the sizes, and this is the last step.
     InstanceSizes& sizes = numbers.m_instanceSizes;
     sizes.sizeOfStatics = numbers.m_statics.size;
     if (numbers.m_stringConstants)

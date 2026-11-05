@@ -15,7 +15,6 @@
 
 namespace JSC { namespace AOT {
 
-// The test for a built-in may make its cell.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValueHasType, size_t, (Instance* instance, EncodedJSValue value, uint32_t type))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTValueHasType);

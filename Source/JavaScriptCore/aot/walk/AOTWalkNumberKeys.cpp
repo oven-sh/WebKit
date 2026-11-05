@@ -3,12 +3,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations with UnboxedNumbers, first in buildTypedElementAccess(): an access under a number that has an integer beside it, a view under what is never an index, a number-like stored in a view. And a spread of what has no own properties.
-// It puts in no guess: where it builds arms, both are right. The access itself is built by buildTypedElementAccess(), with the key bound anew for as long as that takes.
-// At a suspension: nothing of its own. At a throw: the access in an arm leads its own handler edge. Withheld: the access goes by the number.
-
 #include "config.h"
-#include "AOTWalkNumberForms.h"
+#include "AOTWalkNumberGuesses.h"
 
 #if ENABLE(AOT)
 
@@ -30,16 +26,14 @@ static Origin originInFrontOfAccessInNumberKeys(Walker& walker, const BodyValue&
     return origin;
 }
 
-// NotTypedArray: the base is not proven to be a view of one kind.
 static TypedArrayType kindOfViewInNumberKeys(Walker& walker, TypeID base)
 {
     if (!base || !walker.types().at(base).isObject())
         return NotTypedArray;
-    TypedArrayType kind = typedArrayTypeOf(BuiltinTypeContext { walker.program(), walker.types(), &walker.facts() }, base);
+    TypedArrayType kind = typedArrayTypeOf(BuiltinTypeContext { walker.program(), walker.types() }, base);
     return isTypedView(kind) ? kind : NotTypedArray;
 }
 
-// -1, 1.5. Not -0, which is the key "0", so none of the whole numbers that no integer type holds.
 static bool isNeverIndexOfView(const Type& key)
 {
     if (key.isNever() || !key.hasOnlyPrimitives(Primitive::Integer | Primitive::FractionalNumber))
@@ -47,9 +41,6 @@ static bool isNeverIndexOfView(const Type& key)
     return !(key.primitives & Primitive::Integer) || key.integers.maximum < 0;
 }
 
-// ---- Views
-
-// `view[-1]`, `view[i + 0.5]`: a view answers for every number by itself, and what is no index is undefined, whatever the prototypes hold. A store there converts the value and stores nothing, in strict code too.
 static bool buildAccessOutsideEveryViewInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     Opcode opcode = value.opcode();
@@ -62,12 +53,10 @@ static bool buildAccessOutsideEveryViewInNumberKeys(Walker& walker, const BodyVa
         walker.bind(value.id(), constantInNumberForms(walker, PrimitiveKnownToFolding::undefined()));
         return true;
     }
-    // Whatever else is stored may throw or run code where it is converted.
     TypeID stored = inputs.typeOf(value.valueOperand());
     return stored && !isNeverType(stored) && walker.types().at(stored).isNumberLike() && !isBigInt(kindOfViewInNumberKeys(walker, inputs.typeOf(value.objectOperand())));
 }
 
-// `bytes[i] = done`, `floats[i] = maybe` with undefined, null or a boolean among what is stored. The store converts the value before it looks at the position, and that conversion runs no code: it is built in front, and the store takes a proven number.
 static bool buildStoreOfNumberLikeInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (value.opcode() != Opcode::ElemSet)
@@ -109,9 +98,6 @@ static bool buildStoreOfNumberLikeInNumberKeys(Walker& walker, const BodyValue& 
     return true;
 }
 
-// ---- An integer in the place of the key
-
-// With a key of that type the access has a typed form.
 static bool hasTypedFormUnderKeyInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs, TypeID key)
 {
     ValueID writtenKey = value.propertyOperand();
@@ -123,7 +109,6 @@ static bool hasTypedFormUnderKeyInNumberKeys(Walker& walker, const BodyValue& va
     return form == TypedForm::Built;
 }
 
-// The typed form where there is one: a look at a loop has counted on it.
 static void buildAccessUnderKeyInNumberKeys(Walker& walker, const BodyValue& value, Reference key)
 {
     ValueID writtenKey = value.propertyOperand();
@@ -134,7 +119,6 @@ static void buildAccessUnderKeyInNumberKeys(Walker& walker, const BodyValue& val
     walker.bind(writtenKey, bound);
 }
 
-// While the key is bound anew the body still writes the remainder behind it.
 static bool keyIsBoundToRemainderInNumberKeys(Walker& walker, ValueID writtenKey)
 {
     Reference key = walker.referenceOf(writtenKey);
@@ -154,7 +138,6 @@ static WayInNumberForms endOfAccessInNumberKeys(Walker& walker, const BodyValue&
     return { walker.currentBlock(), walker.referenceBoundTo(value.id()), { } };
 }
 
-// `ring[i % n]`. -0 is the key "0", as 0 is. NaN, which a divisor of 0 leaves, is the key "NaN": a Rare block does the access as written under it.
 static bool buildAccessUnderWholeRemainderInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     std::optional<WholeRemainder> remainder = findWholeRemainder(walker, value.propertyOperand(), inputs);
@@ -190,7 +173,6 @@ static bool buildAccessUnderWholeRemainderInNumberKeys(Walker& walker, const Bod
     return true;
 }
 
-// `table[s.charCodeAt(i)]` behind a test that NaN fails.
 static bool buildAccessUnderCodeUnitInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     Reference codeUnit = integerThatCharCodeIsKnownToBe(walker, value, value.propertyOperand());
@@ -200,12 +182,60 @@ static bool buildAccessUnderCodeUnitInNumberKeys(Walker& walker, const BodyValue
     return true;
 }
 
+static bool buildViewAccessUnderNumberOrUndefinedInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+{
+    if (value.opcode() == Opcode::ElemHas || !walker.opensGuesses())
+        return false;
+    TypeID keyID = inputs.typeOf(value.propertyOperand());
+    if (!keyID || kindOfViewInNumberKeys(walker, inputs.typeOf(value.objectOperand())) == NotTypedArray)
+        return false;
+    Type key = walker.types().at(keyID);
+    if (!key.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined) || !(key.primitives & Primitive::Number) || !(key.primitives & Primitive::Undefined))
+        return false;
+    TypeID number = walker.types().withoutNullish(keyID);
+    if (!hasTypedFormUnderKeyInNumberKeys(walker, value, inputs, number))
+        return false;
+
+    Origin origin = originInFrontOfAccessInNumberKeys(walker, value);
+    Reference writtenKey = walker.referenceOf(value.propertyOperand());
+    Reference isNumber = buildTestOfNumber(walker, writtenKey, number, origin);
+    if (!isNumber)
+        return true;
+    BlockID whereKeyIsUndefined = walker.addBlock(BlockFrequency::Rare);
+    goOnWhereTestPassesInNumberForms(walker, isNumber, whereKeyIsUndefined);
+    if (Reference proven = buildProofOfNumber(walker, writtenKey, isNumber, origin))
+        buildAccessUnderKeyInNumberKeys(walker, value, proven);
+    WayInNumberForms underNumber = endOfAccessInNumberKeys(walker, value);
+
+    walker.continueIn(whereKeyIsUndefined);
+    WayInNumberForms underUndefined;
+    {
+        Walker::ClosedArm closedArm(walker, true);
+        if (!walker.isUnreachable()) {
+            buildAccessUnderKeyInNumberKeys(walker, value, constantInNumberForms(walker, PrimitiveKnownToFolding::undefined()));
+            underUndefined = endOfAccessInNumberKeys(walker, value);
+        }
+    }
+    if (!underUndefined.end) {
+        if (underNumber.end)
+            walker.continueIn(underNumber.end);
+        walker.bind(value.id(), underNumber.brought);
+        return true;
+    }
+    std::array<WayInNumberForms, 2> ways { underNumber, underUndefined };
+    if (Reference met = meetInNumberForms(walker, walker.addBlock(), ways))
+        walker.bind(value.id(), met);
+    return true;
+}
+
 bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (!opcodesOfNumberKeys.contains(value.opcode()) || !hasMechanismsOfNumberForms(walker))
         return false;
     if (inputs.areOnlyTypes())
         return buildStoreOfNumberLikeInNumberKeys(walker, value, inputs);
+    if (buildViewAccessUnderNumberOrUndefinedInNumberKeys(walker, value, inputs))
+        return true;
 
     TypeID key = inputs.typeOf(value.propertyOperand());
     if (!key || !walker.types().at(key).isNumber() || !inputs.typeOf(value.objectOperand()))
@@ -218,8 +248,6 @@ bool buildElementAccessUnderNumber(Walker& walker, const BodyValue& value, const
         return true;
     return buildStoreOfNumberLikeInNumberKeys(walker, value, inputs);
 }
-
-// ---- A spread of a primitive
 
 } } } // namespace JSC::AOT::Typed
 

@@ -14,7 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// `emitter["on" + kind] = f`. A key is the name of the prototype link only where that name begins as the key does.
 bool keyThatBeginsSoMayNamePrototypeLink(const Program& program, const SummaryAccess& access)
 {
     if (!access.beginningOfKey)

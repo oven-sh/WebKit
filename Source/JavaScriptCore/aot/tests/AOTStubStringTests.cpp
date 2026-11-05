@@ -34,7 +34,6 @@ std::span<const NativeTest> stubStringTests();
 
 namespace {
 
-// The value of maxLengthComparedWithoutCall in stubs/AOTStubsStrings.cpp.
 constexpr unsigned maxLengthComparedByStringStubs = 32;
 constexpr unsigned maxTestedLength = maxLengthComparedByStringStubs + 2 * sizeof(uint64_t) + 1;
 
@@ -60,7 +59,6 @@ struct alignas(16) FakeString {
 static_assert(OBJECT_OFFSETOF(FakeString, type) == JSCell::typeInfoTypeOffset() && OBJECT_OFFSETOF(FakeString, fiber) == JSString::offsetOfValue());
 static_assert(OBJECT_OFFSETOF(FakeString, ropeLength) == JSRopeString::offsetOfLength());
 
-// A read before the first or after the last character of a text at that end of the page faults.
 class GuardedString {
     WTF_MAKE_NONCOPYABLE(GuardedString);
 public:
@@ -223,7 +221,6 @@ private:
 
 } // anonymous namespace
 
-// Neighbors are on both sides of 0x80, where a signed comparison of bytes goes wrong.
 static Units textOfLength(unsigned length, char16_t highBits)
 {
     Units units;
@@ -232,7 +229,6 @@ static Units textOfLength(unsigned length, char16_t highBits)
     return units;
 }
 
-// The units after the position differ the other way, so a comparison that starts at the wrong end of a word gives the opposite order.
 static Units textDifferingFrom(const Units& text, unsigned position, int difference)
 {
     Units units = text;
@@ -398,7 +394,6 @@ static void testRopes()
 
 namespace {
 
-// Every entry of the hashed cache has one key, so a probe hits whatever the hash is.
 class IntegerStrings {
 public:
     IntegerStrings()
@@ -414,7 +409,6 @@ public:
 
     static JSString* cellOfSmallInteger(size_t integer) { return std::bit_cast<JSString*>(0x10000 + 16 * integer); }
     static JSString* cachedCell() { return std::bit_cast<JSString*>(static_cast<uintptr_t>(0x7770)); }
-    // The cage of a runner begins at zero.
     static JSString* cellWithNumber(uint32_t number) { return std::bit_cast<JSString*>(MarkedBlockCage::decode(0, number)); }
     static constexpr size_t numberOfIntegerKeys = 4;
 
@@ -426,7 +420,6 @@ public:
         }
     }
 
-    // As StringKeyCache enters it.
     void enterKey(uint32_t integer, uint32_t numberOfCell)
     {
         m_integerKeys[integer % numberOfIntegerKeys] = static_cast<uint64_t>(integer) << 32 | numberOfCell;
@@ -480,7 +473,6 @@ static void testIntegersOutsideTheCaches()
     strings.checkIsLeftToOperation(firstIntegerInHashedCache);
 }
 
-// The low half of each is a key that the caches hold.
 static void testIntegersBeyondInt32()
 {
     IntegerStrings strings;
@@ -498,7 +490,6 @@ static void testIntegersBeyondInt32()
     strings.checkIsLeftToOperation(int64_t { 0xffffffff });
 }
 
-// The table of keys is asked in front of the hashed cache. What it does not hold, the hashed cache may.
 static void testIntegerKeys()
 {
     constexpr uint32_t numberOfCell = 0x300000;

@@ -56,7 +56,6 @@ static void visitRootsOfCompiledCode(VM& vm, Visitor& visitor)
             continue;
         CacheRegistry& caches = *instance->state->caches;
         caches.visitRoots(visitor, volatility);
-        // "At" runs once per stop of the mutator, so it misses a realm first reached during draining. The GC verifier always needs these roots.
         if (volatility == RootVolatility::GreyedByMarking && (std::is_same_v<Visitor, AbstractSlotVisitor> || !caches.hasVisitedExecutionRoots()))
             caches.visitRoots(visitor, RootVolatility::GreyedByExecution);
     }
@@ -179,7 +178,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CacheRegistry);
 CacheRegistry::CacheRegistry() = default;
 CacheRegistry::~CacheRegistry() = default;
 
-// Reading a zero-filled page that was never written does not commit it. Writing does.
 static void zeroNonzeroPieces(std::span<uint8_t> bytes)
 {
     constexpr size_t pieceSize = 4 * KB;
@@ -245,7 +243,6 @@ void CacheRegistry::visitRoots(Visitor& visitor, RootVolatility volatility)
             entry.visitWithAbstractSlotVisitor(entry, visitor);
     }
 
-    // The GC verifier marks on its own and leaves the state of the real collection alone.
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         if (volatility == RootVolatility::GreyedByExecution)
             m_hasVisitedExecutionRoots = true;
@@ -307,7 +304,6 @@ ALWAYS_INLINE void ImmortalCells::forEachSegment(size_t firstIndex, const Functo
     }
 }
 
-// Needs no lock: a segment never moves, and these cells were added before the visit that deferred them.
 static void visitDeferredSegment(SlotVisitor& visitor, void* segment, size_t begin, size_t end)
 {
     appendRoots(visitor, [&](auto& appender) ALWAYS_INLINE_LAMBDA {

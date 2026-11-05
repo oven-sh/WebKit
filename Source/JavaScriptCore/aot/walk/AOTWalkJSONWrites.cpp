@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// BuiltinCalls with TypedOperations and Guesses: `JSON.stringify(row)` without a replacer and an indent, where the types say what the value reaches. The call, the serializer unit of a layout, the tests, the arms and the cursor.
-// At a suspension: nothing that is written here suspends, and no builder of a JSON text lives past the call. At a throw: a text that calls serializers stands under a handler of its own, which drops the text and runs the call as written.
-// Withheld, in a slow version and in a closed arm: the call goes by its row.
-
 #include "config.h"
 #include "AOTWalkJSONWrites.h"
 
@@ -30,22 +26,16 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp.
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 
-// A reservation is a compare and a branch. One of this size covers some ten short members.
 static constexpr uint32_t leastBytesReservedForJSONText = 512;
 static constexpr uint32_t outcomeResultOfJSONAppendValue = 0;
 static constexpr uint32_t cursorResultOfJSONAppendValue = 1;
-// Closed, the call enters the host, which finds the keys of each object and looks at each value to learn what it is.
 static constexpr uint32_t closedOperationsOfJSONStringify = 2;
-// A member that is written out costs its 30 to 80 bytes at every site. Where the code does not come round, a call of the serializer stands in the place of more members than a call costs.
 static constexpr uint32_t mostJSONMembersWrittenOutOutsideLoops = 4;
 
 static_assert(leastBytesReservedForJSONText <= maxStringBuilderReservation);
 static_assert(mostJSONMembersWrittenOutOutsideLoops <= mostJSONMembersWrittenOutInOneUnit);
-
-// ---- Operations
 
 JSONTextWriter::JSONTextWriter(Walker& walker, Origin origin)
     : m_walker(walker)
@@ -112,8 +102,6 @@ OptionSet<FactOfCell> JSONTextWriter::factsKnownOfCell(Reference object)
     return m_walker.state().factsOfCell(object) | m_walker.state().factsOfCell(firstNameOf(object));
 }
 
-// ---- Control
-
 BlockID JSONTextWriter::addBlock(BlockFrequency frequency)
 {
     BlockID block = m_walker.addBlock(frequency);
@@ -122,8 +110,6 @@ BlockID JSONTextWriter::addBlock(BlockFrequency frequency)
     return block;
 }
 
-// The Walker leads an edge to the handler of the block being walked in front of the first operation that may throw, and only out of a block that has no handler edge.
-// So a block that is entered while m_handler is set gets its edge here, in front of its first operation.
 void JSONTextWriter::standUnderHandler()
 {
     if (!m_handler || m_walker.isUnreachable())
@@ -140,7 +126,6 @@ void JSONTextWriter::continueIn(BlockID block)
     standUnderHandler();
 }
 
-// A jump leaves the walk in its target, which other arms are yet to come to. The target keeps the state that has arrived so far.
 void JSONTextWriter::standNowhere()
 {
     m_walker.continueIn(BlockID());
@@ -293,13 +278,11 @@ ArmOfJSONText JSONTextWriter::armOfShapeTest(Reference& value, LayoutID layout)
     return arm;
 }
 
-// The object has these fields and no other, and got them in this order.
 ArmOfJSONText JSONTextWriter::armOfKeyOrderTest(Reference object, LayoutID layout, std::span<const uint32_t> created)
 {
     ArmOfJSONText arm { AnswerOfJSONTest::No, { }, m_cursor, { }, { }, 0 };
     if (hasStopped())
         return arm;
-    // The test compares the word of the cell with the number that the plan has given the order.
     std::optional<uint32_t> asked = m_walker.plan().keyOrders().findOrderWord(layout, created);
     if (!asked)
         return arm;
@@ -352,8 +335,6 @@ void JSONTextWriter::continueAt(BlockID merge)
     if (!m_walker.hasFailed())
         continueIn(merge);
 }
-
-// ---- The cursor
 
 void JSONTextWriter::ensureCursor(uint32_t bytes)
 {
@@ -416,7 +397,6 @@ void JSONTextWriter::appendKeyOf(const PositionOfJSONText& position)
         return;
     }
 
-    // A name that is long or is not Latin-1 is quoted when the code runs, like any other string.
     if (token)
         appendToken(*token);
     Draft constant = draft(Opcode::String);
@@ -433,7 +413,6 @@ void JSONTextWriter::appendCommaOf(const PositionOfJSONText& position)
         appendToken(JSONToken::Comma);
 }
 
-// m_cursor names what a JSONAppendValue has given.
 void JSONTextWriter::takeResultsOfJSONAppendValue(bool mayBeTurnedAway)
 {
     if (hasStopped())
@@ -443,8 +422,6 @@ void JSONTextWriter::takeResultsOfJSONAppendValue(bool mayBeTurnedAway)
     if (mayBeTurnedAway)
         requireOrTakeSlowPath(buildOperator(Opcode::StrictEq, resultAt(results, outcomeResultOfJSONAppendValue), integer(static_cast<int64_t>(JSONOutcome::Parsed))));
 }
-
-// ---- The text
 
 bool JSONTextWriter::begin(Reference builderOfSurroundingText, uint32_t roomForMembers)
 {
@@ -475,14 +452,12 @@ void JSONTextWriter::writeRoot(Reference value, const JSONValuePlan& plan, bool 
         code.setLoopMarks(handler, m_walker.isInLoop(), false);
         m_handler = handler;
         m_mayCallSerializers = true;
-        // The block that the walk stands in may hold what throws to the handler of the program.
         m_walker.jumpTo(addBlock());
         standUnderHandler();
     }
 
     appendValue(value, plan, PositionOfJSONText { });
     commit();
-    // Finishing a builder throws for a text that is too long. A builder that goes on is asked in its place.
     if (m_lengthInFront) {
         Draft checkLength = draft(Opcode::StringBuilderCheckLength);
         checkLength.setBuilderOperand(m_builder);
@@ -491,7 +466,6 @@ void JSONTextWriter::writeRoot(Reference value, const JSONValuePlan& plan, bool 
     if (!underHandler)
         return;
 
-    // Whatever gives the builder back stands under no handler that gives it back once more.
     m_handler = { };
     m_mayCallSerializers = false;
     BlockID behind = addBlock();
@@ -500,8 +474,6 @@ void JSONTextWriter::writeRoot(Reference value, const JSONValuePlan& plan, bool 
     if (m_walker.hasFailed())
         return;
 
-    // No code of the program has run by the time something is thrown, so the call as written may start from the beginning. It throws what the host throws.
-    // No edge of the Walker's leads to the handler, so it brings no state.
     m_walker.continueIn(handler);
     m_walker.state().clear();
     build(draft(Opcode::CatchValue));
@@ -530,9 +502,6 @@ bool JSONTextWriter::enterSlowPath()
     return !hasStopped();
 }
 
-// ---- Levels
-
-// The host counts an object or a list where it enters it, an empty one too.
 void JSONTextWriter::openLevel()
 {
     ++m_levelsOpen;
@@ -546,15 +515,12 @@ void JSONTextWriter::openLevel()
     requireComparison(Opcode::Less, m_levelsAround, mostJSONLevels - m_levelsOpen + 1);
 }
 
-// Every level that is open has passed openLevel(), so the sum is mostJSONLevels at most.
 Reference JSONTextWriter::levelsOpenHere()
 {
     if (!m_levelsAround)
         return integer(m_levelsOpen);
     return m_levelsOpen ? buildOperator(Opcode::Add, m_levelsAround, integer(m_levelsOpen)) : m_levelsAround;
 }
-
-// ---- The serializer of a layout
 
 void JSONTextWriter::returnOutcome(JSONOutcome outcome)
 {
@@ -564,12 +530,8 @@ void JSONTextWriter::returnOutcome(JSONOutcome outcome)
     m_walker.endWithReturn(singleElementSpan(returned), m_origin);
 }
 
-// `type T = { v: number; next?: T }`: an object that may hold an object of its own layout is written by a function, which calls itself. Nobody keeps a list of the objects that are being written.
-// An object that holds itself has a text without an end, and one of three things ends the writing: the run time is shown the objects that follow once the text has grown long and meets one of them twice,
-// as many objects are open as the host allows, or no string is as long as the text. Each drops the text, and the call as written finds the cycle and throws what the host throws.
 void JSONTextWriter::writeSerializerOf(LayoutID layout)
 {
-    // Whoever builds a JSONAppendObject hands over what lies inside these types.
     TypeID typesOfParameters[numberOfSerializerParameters];
     typesOfParameters[static_cast<unsigned>(SerializerParameter::Object)] = types().forLayout(layout);
     typesOfParameters[static_cast<unsigned>(SerializerParameter::Builder)] = types().forOpaque(OpaqueKind::StringBuilder);
@@ -584,12 +546,10 @@ void JSONTextWriter::writeSerializerOf(LayoutID layout)
     Reference object = parameters[static_cast<unsigned>(SerializerParameter::Object)];
     m_builder = parameters[static_cast<unsigned>(SerializerParameter::Builder)];
     m_levelsAround = parameters[static_cast<unsigned>(SerializerParameter::LevelsAround)];
-    // Whoever called stands under the handler of the call of JSON.stringify(), or was called by one that does.
     m_mayCallSerializers = true;
     m_buildsLoops = true;
     m_slowPath = addBlock(BlockFrequency::Rare);
 
-    // One compare asks for room on the stack and whether the run time wants to see the object: while it does, the limit lies above every frame.
     Draft hasStackSpace = draft(Opcode::JSONHasStackSpace);
     hasStackSpace.setFailsAtWatchedLevels(true);
     BlockID entered = openMerge();
@@ -612,7 +572,6 @@ void JSONTextWriter::writeSerializerOf(LayoutID layout)
     commit();
     returnOutcome(JSONOutcome::Parsed);
 
-    // Whoever has begun the text drops it.
     if (m_slowPathIsReached && !m_walker.hasFailed()) {
         m_walker.continueIn(m_slowPath);
         returnOutcome(JSONOutcome::Unknown);
@@ -625,9 +584,6 @@ bool walkSerializerUnit(Walker& walker)
     return !walker.hasFailed();
 }
 
-// ---- The call
-
-// As CallInWalkBuiltins::findCallee(): the type of the callee names one built-in, or the read that has found the callee finds a member that is never replaced. Canonical. Null: nobody can tell.
 static BuiltinID builtinCalledInJSONWrites(Walker& walker, const BodyValue& call, const InputsOfTypedOperation& inputs)
 {
     TypeArena& types = walker.types();
@@ -648,7 +604,6 @@ static BuiltinID builtinCalledInJSONWrites(Walker& walker, const BodyValue& call
     return named ? walker.program().builtins().canonicalID(named) : BuiltinID();
 }
 
-// The operand that is written. Null: the call is no call of JSON.stringify, or it hands over a replacer or an indent: a function, a list of names, a number, a text.
 static ValueID operandOfJSONStringifyWithoutOptions(Walker& walker, const BodyValue& call, const InputsOfTypedOperation& inputs)
 {
     if (call.opcode() != Opcode::Call || call.isDoneInPlace())
@@ -658,7 +613,6 @@ static ValueID operandOfJSONStringifyWithoutOptions(Walker& walker, const BodyVa
         return { };
     if (builtinCalledInJSONWrites(walker, call, inputs) != walker.program().builtins().canonicalID(Builtins::JSONStringify))
         return { };
-    // A replacer and an indent that are undefined or null are none.
     bool hasNoOptions = std::ranges::all_of(arguments.subspan(1), [&](ValueID argument) {
         TypeID proven = inputs.typeOf(argument);
         if (!proven)
@@ -671,9 +625,7 @@ static ValueID operandOfJSONStringifyWithoutOptions(Walker& walker, const BodyVa
 
 namespace {
 
-// What the site writes, gone through as JSONTextWriter goes through it.
 struct SiteGoneThroughInJSONWrites {
-    // The outermost first.
     Vector<LayoutID, 4> layoutsAround;
     uint32_t membersLeft { 0 };
     bool callsSerializers { false };
@@ -681,22 +633,14 @@ struct SiteGoneThroughInJSONWrites {
 
 } // anonymous namespace
 
-// False: some object that the value reaches has neither room at the site nor a serializer, so the text would be dropped at every call, behind work that was for nothing.
 static bool siteHasRoomInJSONWrites(const AccessContext& context, const JSONValuePlan& plan, SiteGoneThroughInJSONWrites& site)
 {
     switch (plan.kind) {
     case JSONValueKind::Generic:
     case JSONValueKind::Nullish:
+    case JSONValueKind::Scalar:
+    case JSONValueKind::Array:
         return true;
-    case JSONValueKind::Scalar: {
-        constexpr bool sitesWriteDates = true;
-        return sitesWriteDates || plan.row != Opcode::JSONAppendDate;
-    }
-    // The run time writes it.
-    case JSONValueKind::Array: {
-        constexpr bool sitesWriteLists = true;
-        return sitesWriteLists;
-    }
     case JSONValueKind::ObjectParts:
         return std::ranges::all_of(plan.parts, [&](const JSONValuePlan& part) {
             return siteHasRoomInJSONWrites(context, part, site);
@@ -711,8 +655,7 @@ static bool siteHasRoomInJSONWrites(const AccessContext& context, const JSONValu
             continue;
         uint32_t members = numberOfJSONMembersWrittenOutFor(context, *object);
         if (site.layoutsAround.contains(layout) || members > site.membersLeft || holdsListAmongJSONMembers(context, *object)) {
-            constexpr bool sitesCallSerializers = true;
-            if (!sitesCallSerializers || !context.plan.conventions().serializerOf(layout))
+            if (!context.plan.conventions().serializerOf(layout))
                 return false;
             site.callsSerializers = true;
             continue;
@@ -737,17 +680,12 @@ static bool siteHasRoomInJSONWrites(const AccessContext& context, const JSONValu
 
 std::optional<PlanOfJSONCall> planJSONTextOfCall(Walker& walker, const BodyValue& call, const InputsOfTypedOperation& inputs)
 {
-    constexpr bool writesJSONTextsByType = true;
-    if (!writesJSONTextsByType)
-        return std::nullopt;
-    // Every test here rejoins, and the closed arm of one is the call as written.
     if (!walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses())
         return std::nullopt;
     PlanOfJSONCall planned;
     planned.source = operandOfJSONStringifyWithoutOptions(walker, call, inputs);
     if (!planned.source)
         return std::nullopt;
-    // What runs once gains nothing by code of its own.
     FunctionID function = walker.unit().function;
     bool isInLoop = walker.isInLoop();
     if (!isInLoop && (walker.facts().runsAtMostOnce(function) || walker.program().at(function).isModuleBody()))
@@ -766,14 +704,9 @@ std::optional<PlanOfJSONCall> planJSONTextOfCall(Walker& walker, const BodyValue
     planned.plan = planJSONValue(context, planned.proven, planned.expected);
     switch (planned.plan.kind) {
     case JSONValueKind::Generic:
-    // Of undefined there is no text, and null is four characters.
     case JSONValueKind::Nullish:
-        return std::nullopt;
     case JSONValueKind::Scalar:
-        // A string builder for one string, number or boolean costs more than JSON.stringify() needs to write it.
-        if (planned.plan.row != Opcode::JSONAppendDate)
-            return std::nullopt;
-        break;
+        return std::nullopt;
     case JSONValueKind::Array:
     case JSONValueKind::Objects:
     case JSONValueKind::ObjectParts:
@@ -802,7 +735,6 @@ bool paysToWriteJSONText(Walker& walker, const PlanOfJSONCall& planned)
 bool wouldWriteJSONTextOfCall(Walker& walker, const BodyValue& call, const TypesOfInputs& typesAskedAbout)
 {
     std::optional<PlanOfJSONCall> planned = planJSONTextOfCall(walker, call, InputsOfTypedOperation(walker, &typesAskedAbout));
-    // writeJSONTextOfCall() is asked of a call that BuiltinCalls has planned.
     return planned && planned->plan.kind != JSONValueKind::Array && wouldCallBuiltin(walker, call, typesAskedAbout) != BuiltinCallAskedAbout::None;
 }
 
@@ -815,7 +747,6 @@ bool writeJSONTextOfCall(Walker& walker, const BodyValue& call)
         return false;
     if (writeJSONTextIntoJoinFurtherOn(walker, call, *planned))
         return true;
-    // In a body the run time writes a list, as the call as written has it do. Only a text around the list saves something: a string and a copy.
     if (planned->plan.kind == JSONValueKind::Array)
         return false;
 

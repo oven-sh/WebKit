@@ -29,7 +29,6 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .matchesRegExps = matchesRegExps,
         .checksProofs = checksProofs,
         .isPositionIndependent = recorded.form() == ImageForm::PositionIndependent,
-        // In every program, Image gives each name up to the last column of the front tables a column in the table of fields. Whether a later name has one is known only after Compile.
         .maxNameInFieldTable = RowDisplacementTable::maxColumn,
         .targetFeatures = CPUFeatureSet::fromBits(static_cast<uint32_t>(recorded.targetFeatures)),
     };

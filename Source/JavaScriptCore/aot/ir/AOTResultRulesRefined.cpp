@@ -16,13 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Only operations with a fixed natural type belong here. One that the schema types by a table goes to naturalTypeOfOperands() and never reaches this file.
-static constexpr OpcodeSet opcodesRefinedBeyondFixedNatural {
-    Opcode::URShift, Opcode::ToNumber, Opcode::StrictEq, Opcode::ToBoolean, Opcode::LogicalNot, Opcode::ToString, Opcode::ToPropertyKey,
-    Opcode::ToObject, Opcode::ToThis, Opcode::TypeTest, Opcode::GetTypedArrayElement, Opcode::GetStringLength, Opcode::DivideIntegers, Opcode::RemainderOfIntegers, Opcode::ToInt32,
-    Opcode::ToUint32, Opcode::ToIntegerOrInfinity, Opcode::ToLength, Opcode::IntegerBound, Opcode::GetSuperBase
-};
-
 static_assert([] {
     bool allHaveNaturalTypes = true;
     opcodesRefinedBeyondFixedNatural.forEach([&](Opcode opcode) {
@@ -30,11 +23,6 @@ static_assert([] {
     });
     return allHaveNaturalTypes;
 }());
-
-const OpcodeSet& opcodesWithNaturalTypeRefinedByOperation()
-{
-    return opcodesRefinedBeyondFixedNatural;
-}
 
 static TypeID refinedTypeOfToBoolean(TypeArena& types, TypeID operand, TypeID upperBound)
 {
@@ -49,7 +37,6 @@ static TypeID refinedTypeOfStrictEquality(TypeArena& types, TypeID left, TypeID 
 {
     Type leftType = types.at(left);
     Type rightType = types.at(right);
-    // 0 is an Integer and -0 a WholeNumber, so two types that share nothing may still hold equal values.
     auto mayBeZero = [](const Type& type) {
         return type.primitives & Primitive::WholeNumber || type.integers.contains(0);
     };
@@ -61,14 +48,12 @@ static TypeID refinedTypeOfStrictEquality(TypeArena& types, TypeID left, TypeID 
     return upperBound;
 }
 
-// A value inside the tested type can still fail the test.
 static bool typeTestSurelyPassesInResultRules(const TypingContext& context, TypeID value, TypeID tested)
 {
     TypeArena& types = context.types;
     if (!types.isSubset(value, tested) || mayRefuseUntestableBuiltins(context, value, tested))
         return false;
 
-    // Objects of a class below a built-in class have no shape word: a test for their layout turns them away.
     LayoutSetID testedLayouts = types.at(tested).unnamedLayouts;
     if (!testedLayouts || !types.at(value).hasObjects())
         return true;
@@ -95,7 +80,6 @@ static TypeID refinedTypeOfQuotient(TypeArena& types, TypeID dividendID, TypeID 
     return quotient ? quotient : upperBound;
 }
 
-// Rounded up or down, a number between two integers stays between them.
 static TypeID refinedTypeOfIntegerBound(TypeArena& types, TypeID numberID, TypeID upperBound)
 {
     Type number = types.at(numberID);
@@ -111,7 +95,6 @@ static TypeID refinedTypeOfWholeRemainder(TypeArena& types, TypeID dividendID, T
     return wholeRemainderType(types, dividend.integers, divisor.integers);
 }
 
-// A string known to be one of a set of literals has the length of one of them.
 static TypeID refinedTypeOfStringLength(const TypingContext& context, TypeID stringID, TypeID upperBound)
 {
     Type string = context.at(stringID);
@@ -126,7 +109,6 @@ static TypeID refinedTypeOfStringLength(const TypingContext& context, TypeID str
     return lengths.isEmpty() ? upperBound : context.types.integer(lengths);
 }
 
-// `super` in a member of a class: the home object is the class object, or what its `prototype` holds, which nobody can store to.
 static TypeID refinedTypeOfSuperBase(const TypingContext& context, HomeObjectKind homeKind, TypeID home, TypeID upperBound)
 {
     if (context.level != TypeLevel::Proven)
@@ -151,7 +133,6 @@ static TypeID refinedTypeOfSuperBase(const TypingContext& context, HomeObjectKin
 template<typename Operation>
 static TypeID refinedTypeOfTypedArrayElement(const TypingContext& context, const Operation& read, TypeID upperBound)
 {
-    // resultTypeOf() answers for a read that tests its own guess at the level Proven: its failing side is an ElemGet, whose result may lie outside upperBound.
     RELEASE_ASSERT(context.level == TypeLevel::Expected || !testsItsOwnGuess(read));
     if (!isTypedView(read.typedArrayType()))
         return upperBound;
@@ -190,7 +171,6 @@ static TypeID refinedTypeOfConversion(TypeArena& types, Opcode opcode, TypeID op
             return TypeArena::fromPrimitives(Primitive::True);
         return upperBound;
     case Opcode::ToObject:
-        // undefined and null throw. Every other primitive gets a wrapper.
         if (!operand.isJavaScriptValue() || operand.primitives & ~Primitive::UndefinedOrNull)
             return upperBound;
         return types.withOnlyObjects(operandID);
@@ -237,10 +217,9 @@ static TypeID refinedTypeOfOperation(const TypingContext& context, const Operati
     }
 }
 
-// intersectionOf() may answer more than either side holds.
 static TypeID refinedTypeWithin(TypeArena& types, TypeID refined, TypeID upperBound)
 {
-    if (types.isSubset(refined, upperBound))
+    if (refined == upperBound || types.isSubset(refined, upperBound))
         return refined;
     TypeID shared = types.intersectionOf(refined, upperBound);
     return types.isSubset(shared, upperBound) ? shared : upperBound;
@@ -253,7 +232,8 @@ TypeID refineFixedNatural(const TypingContext& context, const Operation& operati
     if (!opcodesRefinedBeyondFixedNatural.contains(opcode))
         return upperBound;
 
-    for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode); ++operandIndex) {
+    uint32_t numberOfNamedOperands = numberOfNamedOperandsOf(opcode);
+    for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperands; ++operandIndex) {
         TypeID operand = operands[operandIndex];
         RELEASE_ASSERT(operand || operandInfoOf(opcode, operandIndex).isOptional);
         if (isNeverType(operand))

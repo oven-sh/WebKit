@@ -21,13 +21,11 @@ static bool isLoadPairOffsetEncodableARM64(Width width, bool loadsNumbers, int32
     return loadsNumbers ? ARM64Assembler::isValidLDPFPImm<64>(offset) : ARM64Assembler::isValidLDPImm<64>(offset);
 }
 
-// A fault record names a single access.
 static bool loadOfPairMayFaultARM64(const Encoder& encoder, const Operation* load)
 {
     return load->traps() || encoder.m_liveness.of(load).has(ValueFlag::TakesOverTrap);
 }
 
-// The two steps follow each other, so nothing is written between the two loads but what the first one loads.
 bool tryEncodePairOfLoads(Encoder& encoder, const Step& first, const Step& second)
 {
     ASSERT(first.kind == StepKind::Execute);
@@ -51,7 +49,6 @@ bool tryEncodePairOfLoads(Encoder& encoder, const Step& first, const Step& secon
     AddressForm secondAddress = encoder.resolveAddress(secondLoad, secondLeaves);
     if (firstAddress.kind != AddressForm::BaseOffset || secondAddress.kind != AddressForm::BaseOffset || firstAddress.base != secondAddress.base)
         return false;
-    // The second load would go through what the first one has loaded.
     if (!loadsNumbers && first.destination.gpr() == firstAddress.base)
         return false;
 

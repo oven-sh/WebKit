@@ -4,7 +4,7 @@
 # RUN: walk f1 f2 f6 mechanisms=none+TypedOperations+DirectCalls+Arrivals
 # REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
-# CHECK: = CallDirect {{*}}function=f9
+# CHECK: = CallDirect {{*}}function=f8
 # CHECK-LABEL: code f2:Body
 # CHECK: = CallDirect {{*}}function=f6
 # CHECK-LABEL: code f6:Body
@@ -13,10 +13,9 @@
 module m0 path="close.mjs" displayPath="close.mjs" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/prelude/iterator-consumers.ts" displayPath="/$bun/js/prelude/iterator-consumers.ts" flags=[IsLibrary]
 entry module=m0
-runtimefunction id=IteratorConsumersCloseIterator function=f9
-runtimefunction id=IteratorConsumersCloseIteratorAfterThrow function=f10
+runtimefunction id=IteratorConsumersCloseIterator function=f8
+runtimefunction id=IteratorConsumersCloseIteratorAfterThrow function=f9
 runtimefunction id=IteratorConsumersOpenIterator function=f7
-runtimefunction id=IteratorConsumersStepIterator function=f8
 layout L0 kind=Instance name="Countdown" module=m0 position=6 constructor=f3 fields=[{key="left" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 layout L1 module=m0 position=137 fields=[{key="done" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 data d0 root=Object{layout=L1 members=[{key="done" value=Boolean{value=true}}, {key="value"}]} module=m0
@@ -188,18 +187,14 @@ function f7 name="openIterator" module=m1 kind=Method role=Library flags=[IsChec
   b0(v0: anything):
     Return v0
 }
-function f8 name="stepIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=IteratorConsumersStepIterator thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
-    Return v0
-}
-function f9 name="closeIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f8 name="closeIterator" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIterator thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="return"
     v2 = Call v1, v0
     v3 = Undefined
     Return v3
 }
-function f10 name="closeIteratorAfterThrow" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIteratorAfterThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f9 name="closeIteratorAfterThrow" module=m1 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorConsumersCloseIteratorAfterThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = PropGet v0 key="return"
     v2 = Call v1, v0

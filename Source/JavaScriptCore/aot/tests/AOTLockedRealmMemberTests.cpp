@@ -61,7 +61,6 @@ struct Statements {
     std::span<const ASCIILiteral> throwing;
     std::span<const ASCIILiteral> returningFalse;
     std::span<const ASCIILiteral> returningTrue;
-    // The object refuses every text that was not opened. Where an image is loaded it refuses only the texts that the build of the image took for absent, and the program of these tests reads no name off a function.
     bool areAboutObjectClosedToOtherNames { false };
 };
 
@@ -702,7 +701,6 @@ void checkSymbols(Realms& realms, JSObject* object, ASCIILiteral source)
     }
 }
 
-// A constructor and a namespace object take a property under a number. A prototype object takes none: an element that an instance lacks is looked for there.
 bool isConstructor(JSObject* object)
 {
     return object->isCallable() && object != object->globalObject()->functionPrototype();
@@ -760,11 +758,9 @@ void checkObjectClosedToOtherNames(Realms& realms, ASCIILiteral source, std::spa
     Structure* structure = prototype->structure();
     checkSymbols(realms, prototype, source);
     checkNames(vm, structure, source, numericKeys, true);
-    // An executable refuses the texts that its build took for absent, and what the engine reads off a function by itself.
     bool takesOtherTexts = !!Options::aotImagePath();
     checkNames(vm, structure, source, ordinaryKeys, !takesOtherTexts);
     checkNames(vm, structure, source, namesReadFromFunctions, true);
-    // `toString` is a name of an object above the three other prototypes, which none of them takes.
     if (hasOpenNames || !takesOtherTexts)
         checkNames(vm, structure, source, openNamesOfFunctionPrototype, !hasOpenNames);
     AOT_TEST_CHECK_FOR_SOURCE(!structure->hasImmutableProperties() && structure->isStructureExtensible(), source);
@@ -783,7 +779,6 @@ void checkPrototypesOfFunctionKinds(Realms& realms)
         checkObjectClosedToOtherNames(realms, source, { }, false);
 }
 
-// An object that is given the names of a holder twice, with other constant members the second time, keeps both.
 void checkNamesGivenTwice(Realms& realms)
 {
     VM& vm = realms.vm();
@@ -801,7 +796,6 @@ void checkNamesGivenTwice(Realms& realms)
     AOT_TEST_CHECK(isFixed("UTC"_s) && isFixed("now"_s) && isFixed("parse"_s) && isFixed("call"_s) && !isFixed("7"_s) && !isFixed("nameNobodyHas"_s));
 }
 
-// A pinned property table does not mean one owner: a run of properties and a cached list of additions give every object with those names the same Structure.
 void checkLockLeavesObjectsWithSameStructure(Realms& realms)
 {
     VM& vm = realms.vm();
@@ -836,7 +830,6 @@ void checkLockLeavesObjectsWithSameStructure(Realms& realms)
     }
 }
 
-// Whoever has found a fixed name keeps its offset, also where a name below it is deleted and the storage of the holder is packed anew.
 void checkFixedNamesKeepOffsetsWhenFlattened(Realms& realms)
 {
     VM& vm = realms.vm();
@@ -896,7 +889,6 @@ void checkPristineInstances(Realms& realms)
     }
 }
 
-// An object that overrides put takes stores to itself, and to whatever lies below it, out of the inline caches: a realm that locks nothing must not pay for that.
 void checkNativeConstructorsOverridePut(Realms& realms)
 {
     for (ASCIILiteral source : { "Array"_s, "Map"_s, "Set"_s, "Error"_s, "TypeError"_s, "RegExp"_s, "Uint8Array"_s, "Intl.Collator"_s }) {

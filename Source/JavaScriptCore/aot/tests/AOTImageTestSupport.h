@@ -46,12 +46,10 @@ inline constexpr std::array<uint8_t, 16> testIdentity { 'a', 'o', 't', '-', 'i',
 
 struct TestOptions {
     unsigned threadCount { 1 };
-    // Null: the loops of the build have a pool of their own.
     const HostThreadPool* hostPool { nullptr };
     Wire::CheckSet checks { };
     Wire::OutputOptions output { };
     Wire::AdmittedCode admittedCode { };
-    // A closed program. Where nothing is excluded, code from disk may come in.
     Wire::ExcludedCode excludedCode { Wire::ExcludedCode::CodeOutsideImage };
 };
 
@@ -105,10 +103,7 @@ public:
     const StubCatalog& stubCatalog() const { return *m_prepared->stubCatalog; }
     CodeUnit genericEntrypointOf(uint32_t function) const;
 
-    // The tables as if no unit had code.
     Vector<uint8_t> encodeTables();
-    // Code for the Body of a module's body function must come with code for genericEntrypointOf() of that function: the table of modules names the entry.
-    // At most once: the errors and statistics of a build stay in the context, and buildImage() adds strings to the program.
     TestImage build(Vector<CompiledCode>&&);
 
     unsigned count(InternalErrorKind);
@@ -126,7 +121,6 @@ private:
 
 unsigned count(BuildContext&, InternalErrorKind);
 unsigned count(BuildContext&, UserDiagnosticKind, LimitID = LimitID::None);
-// Sorts by placeInCode, the order LinkedFunctions requires.
 LinkedFunctions createLinkedFunctions(Vector<CompiledCode>&&, BuildContext&);
 
 template<typename... Code>
@@ -141,7 +135,6 @@ Vector<CompiledCode> bodies(Code... code)
 class CodeSketch {
 public:
     explicit CodeSketch(uint32_t function);
-    // Any role except the bound ones, whose unit indices depend on the plan. For a role other than Body, CompiledCode::function stays null until buildImage() numbers the units.
     explicit CodeSketch(CodeUnit);
 
     CodeSketch& withFrame(unsigned frameSizeInBytes = 16);

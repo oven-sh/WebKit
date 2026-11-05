@@ -35,7 +35,6 @@ static void expectInMemoryTest(bool holds, const Context&... context)
     AOT_TEST_CHECK(holds);
 }
 
-// Accesses go through the middle, so an offset may be negative. Every byte has its sign bit set.
 class MemoryTestBytes {
 public:
     explicit MemoryTestBytes(size_t reach)
@@ -147,7 +146,6 @@ static unsigned occurrencesInMemoryTestText(const String& text, ASCIILiteral wor
     return count;
 }
 
-// Its code stores `value` at the offset from `base`.
 static void appendStoringPatchInMemoryTest(TestProcedure& test, LValue value, LValue base, int32_t offset, const HeapSet& writes)
 {
     PatchOperation* patch = test.out().patchpoint(Void);
@@ -163,12 +161,10 @@ static void appendStoringPatchInMemoryTest(TestProcedure& test, LValue value, LV
 
 static void checkIndexedAccessInMemoryTest(const MemoryTestKind& kind, unsigned shift, IndexExtension extension, int32_t offset)
 {
-    // Bit 31 of an index of 32 bits is set, so the wrong extension misses the bytes. The base makes up for what the bit adds to an index that is extended with zeros.
     int64_t indexFromMiddle = extension == IndexExtension::ZeroExtend32 ? 5 : -3;
     int64_t index = indexFromMiddle;
     if (extension == IndexExtension::ZeroExtend32)
         index += int64_t { 1 } << 31;
-    // The upper half of the register is no part of an index of 32 bits.
     uint64_t indexRegister = static_cast<uint64_t>(index);
     if (extension != IndexExtension::None)
         indexRegister = 0xdeadbeef00000000ull | static_cast<uint32_t>(index);
@@ -248,7 +244,6 @@ static void testMemoryWordsOfInstance()
         AOT_TEST_CHECK(instance.words[4] == 1001);
     }
 
-    // Image alone knows where the word lies, so this one cannot run.
     TestProcedure test;
     Output& out = test.out();
     LValue stored = out.store64(test.argumentGPR(0), out.instanceWord(test.heaps().AOTInstance_mutableFields, 3));
@@ -267,7 +262,6 @@ static void testMemoryConstantData()
     AOT_TEST_CHECK(compileAndRun<uint64_t>(test) == datum);
 }
 
-// Equal bytes are one constant, and it stays what its first maker calls it. A number that the encoder reads from the constants says that it is one.
 static void testMemoryConstantDataSaysWhatItIs()
 {
     uint64_t datum = 0x0123456789abcdefull;
@@ -290,7 +284,6 @@ static void testMemoryConstantDataSaysWhatItIs()
     AOT_TEST_CHECK(described[1].bytes.size() == sizeof(number) && !memcmp(described[1].bytes.span().data(), &number, sizeof(number)));
 }
 
-// list[i + 3]: what is left of the address is that of list[i], so the two share it, and the element lies at a distance.
 static void testMemoryConstantAddedToIndexMovesIntoOffset()
 {
     TestProcedure test;
@@ -309,7 +302,6 @@ static void testMemoryConstantAddedToIndexMovesIntoOffset()
     AOT_TEST_CHECK(byte->offset() == -5);
     AOT_TEST_CHECK(byte->child(0)->opcode() == Add && byte->child(0)->child(0) == base && byte->child(0)->child(1) == index);
 
-    // A distance has 32 bits.
     LValue farAway = out.load8ZeroExt32(out.address(heap, out.add(base, out.shl(out.add(index, int64_t { 1 } << 30), 3))));
     AOT_TEST_CHECK(!farAway->offset());
 
@@ -320,7 +312,6 @@ static void testMemoryConstantAddedToIndexMovesIntoOffset()
     AOT_TEST_CHECK(compileAndRun<uint64_t>(test, bytes.middle(), int64_t { -2 }) == expected);
 }
 
-// table[index >> 5], as ShapeTestEmitter reads a set of bits: the address of the table takes a register, and the load adds the scaled index itself.
 static void testMemoryTableOfImageIsBaseOfIndexedLoad()
 {
     AOT_TEST_CHECK(isEncodableIndexedAddress(Width32, 2, IndexExtension::None, 0));
@@ -342,7 +333,6 @@ static void testMemoryTableOfImageIsBaseOfIndexedLoad()
     AOT_TEST_CHECK(table->opcode() == AddressOf && table->hasNoPosition() && address->child(0) == table);
     AOT_TEST_CHECK(liveness.isFused(address) && liveness.isFused(shifted));
     AOT_TEST_CHECK(!findExecuteStepInMemoryTest(test, address) && !findExecuteStepInMemoryTest(test, shifted));
-    // The leaves: the table, the index, the amount. On x86-64 the extension reads the word itself.
     const Step& step = executeStepInMemoryTest(test, liveness.isFused(loaded) ? result : loaded);
     AOT_TEST_CHECK(step.sources[0].isRegister() && step.sources[1].isRegister() && step.sources[0] != step.sources[1]);
     for (uint64_t index = 0; index < 128; index += 31)
@@ -386,7 +376,6 @@ static void checkAddressWithTwoUsesInMemoryTest(MemoryTestSecondUse secondUse)
     const Liveness& liveness = test.procedure().liveness();
     AOT_TEST_CHECK(usedTwice->useCount() == 2);
     AOT_TEST_CHECK(!liveness.isFused(usedTwice));
-    // A sum that has a place of its own takes in the shift that it alone reads.
     AOT_TEST_CHECK(liveness.isFused(shifted) == (usedTwice == address) && addsScaledIndex(liveness, address) == (usedTwice == address));
     AOT_TEST_CHECK(test.call<uint64_t>(bytes.middle(), int64_t { 2 }) == answer);
     bytes.expectSameAs(expected, "an address with two uses");
@@ -399,8 +388,6 @@ static void testMemoryAddressWithTwoUsesIsNotFused()
     checkAddressWithTwoUsesInMemoryTest(MemoryTestSecondUse::BySecondAccess);
 }
 
-// words[index + 1] with an index of 32 bits: the sum has left the upper half of its register clear, so the register is the extended index on both targets.
-// A Trunc leaves whatever lay above, so its extension is an instruction where the address has no place for one.
 static void testMemoryExtensionOfIndexIsFusedWhereRegisterHoldsIt()
 {
     for (bool upperHalfIsClear : { true, false }) {
@@ -424,7 +411,6 @@ static void testMemoryExtensionOfIndexIsFusedWhereRegisterHoldsIt()
     }
 }
 
-// An integer in a boxed word is its low half. The conversion reads that half of the register that holds the word, which is read again behind it.
 static void testMemoryNumberIsMadeOfLowHalfOfRegister()
 {
     TestProcedure test;
@@ -445,7 +431,6 @@ struct MemoryTestTestedLoad {
     Type type;
     size_t numberOfBytes;
     bool extendsSign;
-    // Each fits the one instruction that reads the word where it lies.
     std::array<int64_t, 4> constants;
 };
 
@@ -458,7 +443,6 @@ static constexpr MemoryTestTestedLoad testedLoadsOfMemoryTest[] = {
     { Load, Int64, 8, true, { std::numeric_limits<int32_t>::min(), -1, 0, 70000 } },
 };
 
-// The word as the load leaves it in a register, as a signed integer of its type.
 static int64_t valueOfTestedLoadInMemoryTest(const MemoryTestTestedLoad& load, uint64_t bits)
 {
     unsigned unusedBits = 64 - 8 * static_cast<unsigned>(load.numberOfBytes);
@@ -501,7 +485,6 @@ static LValue constantOfTypeInMemoryTest(Output& out, Type type, int64_t constan
 enum class MemoryTestUserOfTest : uint8_t { Branch, Select };
 enum class MemoryTestAddress : uint8_t { BaseAndOffset, Indexed };
 
-// makeTest(out, loaded) gives what is tested, and expects(value) says whether it holds of a word.
 template<typename MakeTest, typename Expects, typename... Context>
 static void checkTestOfLoadInMemoryTest(const MemoryTestTestedLoad& load, MemoryTestUserOfTest user, MemoryTestAddress address, const MakeTest& makeTest, const Expects& expects, const Context&... context)
 {
@@ -529,7 +512,6 @@ static void checkTestOfLoadInMemoryTest(const MemoryTestTestedLoad& load, Memory
     compileOrFail(test);
     expectInMemoryTest(isDecided || test.procedure().liveness().isFused(loaded) == isX86_64(), context..., ": the load is fused on x86-64 and nowhere else");
 
-    // The bytes around the word are not zero, so an instruction that reads more of them than the load does is seen.
     MemoryTestBytes bytes(64);
     for (uint64_t bits : { uint64_t { 0 }, uint64_t { 1 }, uint64_t { 2 }, uint64_t { 0x20 }, uint64_t { 0x7f }, uint64_t { 0x80 }, uint64_t { 0xff }, uint64_t { 0x100 }, uint64_t { 0x7fff }, uint64_t { 0x8000 }, uint64_t { 0xffff }, uint64_t { 70000 },
         uint64_t { 0x7fffffff }, uint64_t { 0x80000000 }, uint64_t { 0xe0000000 }, uint64_t { 0xffffffff }, uint64_t { 0x100000000 }, uint64_t { 0xffffffff80000000 }, UINT64_MAX }) {
@@ -590,7 +572,6 @@ static void testMemoryBitTestReadsLoadWhereItLies()
     }
 }
 
-// The instruction reads one of its operands from memory, whichever side the load stands on.
 static void testMemoryComparisonWithRegisterReadsLoadWhereItLies()
 {
     for (Type type : { Type(Int32), Type(Int64) }) {
@@ -623,7 +604,6 @@ static void testMemoryComparisonWithRegisterReadsLoadWhereItLies()
     }
 }
 
-// text.charCodeAt(i) === 32: the text is kept alive behind the read of its characters, by what is no instruction. What declares a write stops the load though it is none either.
 static void testMemoryTestedLoadMovesBehindWhatOnlyKeepsValueAlive()
 {
     for (bool declaresWrite : { false, true }) {
@@ -660,7 +640,6 @@ static void testMemoryTestedLoadMovesBehindWhatOnlyKeepsValueAlive()
     }
 }
 
-// Builder::fence() orders stores for other threads and writes no heap.
 static void testMemoryFenceEndsNoLoad()
 {
     uint64_t words[2] = { 3, 4 };
@@ -680,7 +659,6 @@ static void testMemoryFenceEndsNoLoad()
     AOT_TEST_CHECK(compileAndRun<uint64_t>(test, &words[0]) == 7);
 }
 
-// `faulting` is the access whose instruction faults for `trappingLoad`.
 static void checkRecordOfTrapInMemoryTest(TestProcedure& test, const Operation* trappingLoad, const Operation* faulting)
 {
     std::span<const TrappingAccess> accesses = test.procedure().trappingAccesses();
@@ -724,7 +702,6 @@ static void testMemoryUnusedTrappingLoadStays()
     AOT_TEST_CHECK(test.call<uint64_t>(bytes.middle(), uint64_t { 3 }) == 3);
 }
 
-// The cage base of a test is zero, so no narrow reference names memory that a run could read.
 static void checkTrapThroughNarrowReferenceInMemoryTest(const MemoryTestKind& kind, unsigned shift, int32_t offset)
 {
     TestProcedure test;
@@ -745,7 +722,6 @@ static void checkTrapThroughNarrowReferenceInMemoryTest(const MemoryTestKind& ki
     bool isEncodable = isEncodableIndexedAddress(width, shift, IndexExtension::ZeroExtend32, offset) || isEncodableIndexedAddress(width, shift, IndexExtension::None, offset);
     AOT_TEST_CHECK(!liveness.isDropped(trappingLoad));
     expectInMemoryTest(isFused || !shift || !isEncodable, "the address of a trapping ", kind.opcode, " ", kind.type, ", shift ", shift, ", offset ", offset, " is not fused");
-    // The register that the record names holds the pointer or the narrow word, and nothing between the two.
     AOT_TEST_CHECK(!isFused || !shift || liveness.isFused(scaled));
     checkRecordOfTrapInMemoryTest(test, trappingLoad, trappingLoad);
     AOT_TEST_CHECK(test.procedure().trappingAccesses()[0].referenceIsNarrow == isFused);
@@ -753,7 +729,6 @@ static void checkTrapThroughNarrowReferenceInMemoryTest(const MemoryTestKind& ki
 
 static void testMemoryTrappingLoadNamesItsReference()
 {
-    // ARM64 scales an index by the width of the access alone, so only the wide load is fused on every target.
     static constexpr MemoryTestKind trappingLoads[] = { { Load8Z, Int32 }, { Load, Int64 } };
     AOT_TEST_CHECK(isEncodableIndexedAddress(Width64, cell32Shift, IndexExtension::None, 0));
     for (const MemoryTestKind& kind : trappingLoads) {
@@ -779,7 +754,6 @@ static void testMemoryTrappingLoadNamesItsReference()
     AOT_TEST_CHECK(test.call<uint64_t>(bytes.middle(), int64_t { 2 }) == bytes.read(16, 1));
 }
 
-// appendRest(out, heap, base, otherBase) ends the block and answers the access that might fault in place of the trapping load.
 template<typename Functor>
 static void checkTrapAheadOfAccessInMemoryTest(bool mayBeHandedOver, const Functor& appendRest)
 {
@@ -817,7 +791,6 @@ static void testMemoryTrapIsHandedOverOrStays()
         out.retVoid();
         return stored;
     });
-    // Its last byte lies where a null base need not fault.
     checkTrapAheadOfAccessInMemoryTest(false, [](Output& out, const AbstractHeap& heap, LValue base, LValue) {
         LValue loaded = out.load64(out.address(heap, base, static_cast<ptrdiff_t>(trapReach()) - 4));
         out.ret(loaded);
@@ -828,7 +801,6 @@ static void testMemoryTrapIsHandedOverOrStays()
         out.ret(loaded);
         return loaded;
     });
-    // The store would be seen although the load in front of it faults.
     checkTrapAheadOfAccessInMemoryTest(false, [](Output& out, const AbstractHeap& heap, LValue base, LValue otherBase) {
         out.store64(base, out.address(heap, otherBase));
         LValue loaded = out.load64(out.address(heap, base, 8));
@@ -847,7 +819,6 @@ struct MemoryTestStorePair {
     MemoryTestStore second;
 };
 
-// Answers the bytes of the code outside rare blocks.
 static ptrdiff_t runTwoStoresInMemoryTest(const MemoryTestStorePair& pair)
 {
     constexpr uint64_t firstBits = 0x1112131415161718ull;
@@ -881,7 +852,6 @@ static void testMemoryNeighboringStoresPair()
     ptrdiff_t bytesOfStoresApart = runTwoStoresInMemoryTest({ { Int64, 0 }, { Int64, 24 } });
     AOT_TEST_CHECK(!isARM64() || bytesOfNeighbors + 4 == bytesOfStoresApart);
 
-    // What a pair cannot do, or can do only with care: the far ends of its reach, offsets off its scale, words that overlap, two widths, two banks.
     static constexpr MemoryTestStorePair pairs[] = {
         { { Int64, 8 }, { Int64, 0 } }, { { Int64, -8 }, { Int64, 0 } },
         { { Int64, 504 }, { Int64, 512 } }, { { Int64, 512 }, { Int64, 520 } }, { { Int64, -512 }, { Int64, -504 } }, { { Int64, -520 }, { Int64, -512 } },
@@ -920,7 +890,6 @@ static constexpr int64_t memoryTestInt32Words[] = { 0, 1, -1, 4, 5, 41, 97, 98, 
 static constexpr int64_t memoryTestIntegersAddedTo[] = { 0, 5, -1, -2, 0xffffffffll, 0x100000000ll, 0x1ffffffffll, -0x100000000ll, maxIntegerAddedTo, maxIntegerAddedTo - 1, minIntegerAddedTo, minIntegerAddedTo + 1 };
 static constexpr int64_t memoryTestOperandsOfUpdates[] = { 0, 1, 7, -1, INT32_MAX, INT32_MIN, 0x5eadbeef00000002ll, -0x5eadbeef00000002ll };
 
-// A word is read, the sum of it and something else is tested, and behind the test the sum is stored where the word was read.
 struct MemoryTestTestedUpdate {
     ASCIILiteral name;
     Type typeOfWord;
@@ -928,7 +897,6 @@ struct MemoryTestTestedUpdate {
     bool hasFormOnARM64;
     LValue (*makeSum)(Output&, LValue loaded, LValue operand);
     LValue (*makeTest)(Output&, LValue sum);
-    // Nothing where the sum is not stored.
     std::optional<int64_t> (*wordBehind)(int64_t wordInFront, int64_t operand);
 };
 
@@ -961,7 +929,6 @@ static void checkTestedUpdateInMemoryTest(const MemoryTestTestedUpdate& update)
     LValue stored = out.store(update.typeOfWord == Int32 ? out.castToInt32(sum) : sum, out.address(heap, base, memoryTestOffsetOfUpdatedWord));
     out.ret(out.constInt64(1));
 
-    // Whoever is sent this way finds the word as it was.
     out.appendTo(leaves);
     out.store(out.load(out.address(heap, base, memoryTestOffsetOfUpdatedWord), update.typeOfWord), out.address(heap, base, memoryTestOffsetOfWordFound));
     out.ret(out.constInt64(0));
@@ -1069,7 +1036,6 @@ static void testMemoryTestedSumIsStoredByBranch()
         checkTestedUpdateInMemoryTest(update);
 }
 
-// `readsWholeWord` puts a Load of the word behind the Store.
 static void checkLowHalfBesideWholeReadInMemoryTest(bool readsWholeWord)
 {
     TestProcedure test;
@@ -1104,7 +1070,6 @@ static void checkLowHalfBesideWholeReadInMemoryTest(bool readsWholeWord)
     }
 }
 
-// The word is counted up once for each round of a loop. `readsWholeWord` has something else read the Load, which stands ahead of the Branch and reads what the round before has stored.
 static void checkLowHalfInLoopInMemoryTest(bool readsWholeWord)
 {
     TestProcedure test;
@@ -1226,7 +1191,6 @@ static void checkUpdateBesideInMemoryTest(MemoryTestBesideUpdate beside)
     if (beside == MemoryTestBesideUpdate::PatchStandsBetween)
         appendStoringPatchInMemoryTest(test, other, other, 8, HeapSet::top());
     LValue addend = out.constInt64(2);
-    // On x86-64 a shift by a register is a Patch, which writes nothing.
     if (beside == MemoryTestBesideUpdate::ShiftStandsBetween)
         addend = out.shl(addend, out.castToInt32(other));
     LValue sum = out.add(loaded, addend);
@@ -1239,7 +1203,6 @@ static void checkUpdateBesideInMemoryTest(MemoryTestBesideUpdate beside)
     AOT_TEST_CHECK(liveness.worksInMemory(stored) == (mayWorkInMemory && isX86_64()));
     AOT_TEST_CHECK(beside != MemoryTestBesideUpdate::OldWordIsRead || !liveness.isDropped(loaded));
 
-    // Both bases name one word, so whatever is written between the Load and the Store is written over.
     uint64_t words[3] = { 0, 40, 7 };
     uint64_t addendOfRun = beside == MemoryTestBesideUpdate::ShiftStandsBetween ? uint64_t { 2 } << (reinterpret_cast<uintptr_t>(&words[0]) & 63) : 2;
     uint64_t answer = test.call<uint64_t>(&words[0], &words[0]);

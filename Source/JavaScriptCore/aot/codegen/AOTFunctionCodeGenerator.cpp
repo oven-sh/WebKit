@@ -45,10 +45,8 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
 {
     CodeUnit unit = code.unit();
     const CallingConventions& conventions = inputs.plan.conventions();
-    // The body of an async function in which nothing suspends is an ordinary function: it returns and throws to whoever called it.
     bool isBodyThatMaySuspend = isBodyOfCoroutine(unit.role, conventions.isCoroutine(unit.function)) && !conventions.of(unit.function).coroutineNeverSuspends;
     bool savesFrameOnSuspend = code.hasSuspensions() || isBodyThatMaySuspend;
-    // The stubs that suspend a function return in the place of its frame and drop nothing above its return address.
     RELEASE_ASSERT(!savesFrameOnSuspend || !conventions.spillsArgumentRegisters(unit));
     RELEASE_ASSERT(!savesFrameOnSuspend || !conventions.savesRegistersOfCallers(unit));
     return {
@@ -80,8 +78,6 @@ struct OperationsGivenToEmitters {
 
 } // anonymous namespace
 
-// A unit that polls in full at its prologue may collect there, so every call that can enter it has to say that it may collect: AOTStubsPolls.h.
-// A call goes by what Facts says of the function. A unit in which no operation may collect does not collect in its prologue either.
 static OperationsGivenToEmitters lookAtOperationsGivenToEmitters(const Facts& facts, const Code& code)
 {
     OperationsGivenToEmitters operations;
@@ -163,7 +159,6 @@ static void reportFailureOfMachineProcedure(BuildContext& build, const Program& 
         Wire::SourceLocation location = code.locationOf(program, operation.origin());
         if (hasModule(location))
             error.location = location;
-        // Without a location the numbers of a record are looked up in the body as the front end wrote it, where those of Code mean nothing.
         if (hasModule(error.location)) {
             error.block = operation.block();
             error.value = value;
@@ -199,7 +194,6 @@ bool FunctionCodeGenerator::appendOperations()
     OperationsGivenToEmitters operations = lookAtOperationsGivenToEmitters(m_inputs.facts, m_code);
     m_stackChecks.functionMayCollect = operations.prologueMayCollect;
 
-    // Whether a unit leaves from argument list frames is settled before its code is generated.
     bool unitReadsCallerFrame = readsCallerFrame(m_inputs, m_code);
     m_records.frame.readsCallerFrame = unitReadsCallerFrame;
 
@@ -217,7 +211,6 @@ bool FunctionCodeGenerator::appendOperations()
     return true;
 }
 
-// The procedure holds one terminal patch, which takes the arguments where they arrive and writes the whole body. So the prologue, the stack test, the entries, the link and the description are those of every unit.
 void FunctionCodeGenerator::appendStraightBody(StraightEmitter& emitter)
 {
     CodeUnit unit = m_code.unit();
@@ -237,6 +230,8 @@ void FunctionCodeGenerator::appendStraightBody(StraightEmitter& emitter)
         if (location.kind == ArgumentLocation::Kind::GPR || location.kind == ArgumentLocation::Kind::FPR)
             passed.append(Machine::ConstrainedValue(builder.argumentRegister(location.reg), Machine::ValueRep::reg(location.reg)));
     }
+    if (AOT::hasFlag(m_worker.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime)) [[unlikely]]
+        countEntryIntoCode(builder.patch(Machine::Void));
     Machine::PatchOperation* patch = builder.patch(Machine::Void);
     for (const Machine::ConstrainedValue& value : passed)
         patch->append(value);
@@ -269,7 +264,6 @@ CompiledCode FunctionCodeGenerator::emitCode()
     Statistics& statistics = build.statistics();
 
     enterStepOfCodeGeneration("allocate"_s);
-    // As generateStackCheckAtFrameSetup() goes.
     if (m_stackChecks.stackCheck == StackCheck::CoveredByCallers && !m_records.frame.needsStackCheckForTailCalls)
         m_procedure.setLargestFrameSetUpWithoutStackCheck(maxFrameSizeWithoutStackCheck);
     Machine::prepareForGeneration(m_procedure);
@@ -281,7 +275,6 @@ CompiledCode FunctionCodeGenerator::emitCode()
         return { };
 
     const Machine::Allocation& allocation = m_procedure.allocation();
-    // Order appends too: a Jump for each edge that it splits, and the Upsilons of that edge again.
     statistics.count(StatisticID::MachineOperationsAppended, m_procedure.numberOfOperations());
     statistics.count(StatisticID::MachineOperationsScanned, countMachineOperationsInOrder(m_procedure.order()));
     statistics.count(StatisticID::LoopsRotated, m_procedure.order().numberOfLoopsRotated());
@@ -300,7 +293,6 @@ CompiledCode FunctionCodeGenerator::emitCode()
         reportFailureOfMachineProcedure(build, m_inputs.program, m_code, m_procedure);
         return { };
     }
-    // The preamble that spills the argument registers falls through to the primary entry, and so does a fused call entry, but that of a guard.
     const CallingConventions& conventions = m_inputs.plan.conventions();
     bool holdsFusedCallEntry = conventions.holdsFusedCallEntry(m_code.unit());
     bool isGuard = m_code.unit().role == CodeRole::ParameterGuard;
@@ -314,7 +306,6 @@ CompiledCode FunctionCodeGenerator::emitCode()
     statistics.count(StatisticID::NullChecksFoldedIntoAccesses, m_procedure.numberOfTrapsTakenOver());
 
     emitStackOverflowPaths(m_jit, m_records, m_stackChecks);
-    // The return address of a call at the very end would lie in the code that follows.
     emitPadding(m_jit);
     m_jit.padBeforePatch();
 

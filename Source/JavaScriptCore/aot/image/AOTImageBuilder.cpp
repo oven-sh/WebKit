@@ -22,7 +22,6 @@
 #include "AOTProgramTables.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSectionWriter.h"
-#include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
@@ -65,7 +64,6 @@ static void reportCalleesWithoutCode(const CompiledCode& code, std::span<const O
 {
     BitVector needsCode(resolved.size());
     for (const Relocation& relocation : code.body.relocations) {
-        // A relocation that names no callee at all is the linker's to report.
         if (relocation.space == SymbolSpace::Function && relocation.symbol < resolved.size())
             needsCode.quickSet(relocation.symbol);
     }
@@ -105,7 +103,6 @@ ResolvedCallees resolveCallees(const LinkedFunctions& functions, const Typed::Pl
         bool hasCalleeWithoutCode = false;
         for (size_t index = 0; index < resolved.size(); ++index) {
             CodeUnit callee = code.body.callees[index];
-            // A relocation names the primary entry of a position. Only the word of a closure names a fused call entry.
             bool isFusedCallEntry = callee.role == Typed::CodeRole::GenericCallEntry && conventions.hasFusedCallEntry(callee.function);
             if (std::optional<uint32_t> positionOfCallee = isFusedCallEntry ? std::nullopt : functions.positionOfUnit(callee, conventions.indexOf(callee)))
                 resolved[index] = { *positionOfCallee };
@@ -138,7 +135,6 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
     Vector<StubAddressInImage> addresses;
     for (auto& placement : blob.placements) {
         StubLinkage linkage = descriptorOf(placement.key.family()).linkage;
-        // Only needed where a call pushes its return address: there, walking a stopped thread's stack has to look up the target of a call.
         bool usesCallConvention = isX86_64() && linkage == StubLinkage::CalledByCode && signatureOf(placement.key).usesCallConvention;
         if (usesCallConvention || hasAddressInImage(linkage))
             addresses.append({ placement.key.bits(), placement.offset, usesCallConvention });
@@ -163,7 +159,6 @@ static Vector<uint8_t> encodeSlotHandlers(const StubBlob& blob)
     return bytesOf(offsets);
 }
 
-// A stub that is handed a place and finds no answer there goes on under the name. A site with a Slot is handed its name by the code, so its two bytes say nothing.
 static Vector<uint8_t> encodeNamesOfSites(const ImageNumbers& numbers)
 {
     const NumberedKeys& sites = numbers.siteCaches();
@@ -212,18 +207,12 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const Compile
     OptionSet<ImageFlag> flags;
     for (const auto& record : facts.unseenCode())
         flags.add(imageFlagsAdmittedBy(record.cause));
-    // What is proven of the whole program rests on unseenCodeCanRun(). A record that admits code where that answer is no would let in what those proofs rule out.
     RELEASE_ASSERT(facts.unseenCodeCanRun() || !flags.contains(ImageFlag::AdmitsUnknownJavaScript));
-    // The flow has gone by its own answer, which came first. Where it ran closed, nothing opens the gate behind it.
     RELEASE_ASSERT(!facts.unseenCodeCanRun() || facts.linked().unseenCodeCanRun);
     if (facts.unseenCodeCanRun() || facts.unseenScriptsCanRun())
         flags.add(ImageFlag::AdmitsUnknownJavaScript);
-    if (facts.findsFilesOfProgramByName())
-        flags.add(ImageFlag::FindsDataFilesByName);
     if (facts.storesPathOfMainModule())
         flags.add(ImageFlag::StoresPathOfMainModule);
-    if (facts.reachedFunctionsCountUnreadCode())
-        flags.add(ImageFlag::RunsUnreadCode);
     const Typed::Program& program = facts.program();
     bool holdsMockOfFile = false;
     bool originalMayRun = false;
@@ -233,7 +222,6 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::Facts& facts, const Compile
         holdsMockOfFile = true;
         originalMayRun |= variable.flags.contains(Typed::VariableFlags::OriginalMayRun);
     }
-    // An executable hands bun:test to a text too, which mocks what the build never saw. The doors that an original opens stay shut there unless a variable says that one may run.
     if (!originalMayRun && (holdsMockOfFile || !program.admitsReplacedBuiltins))
         flags.add(ImageFlag::RefusesOriginalsBesideMocks);
     return flags;
@@ -279,10 +267,8 @@ struct StringHeaderNumbers {
     uint64_t sizeOfList() const { return static_cast<uint64_t>(numberOfListedWords) * sizeof(uint32_t); }
 
     ImageForm form { ImageForm::Absolute };
-    // The number of the header of a string that is no identifier's text, or the first word in the image's list of a string without a header.
     Vector<uint32_t> byString;
     Vector<uint32_t> listedWordIndexes;
-    Vector<uint32_t> literalStringWords;
     uint32_t count { 0 };
     uint32_t numberOfListedWords { 0 };
 };
@@ -302,7 +288,6 @@ struct ImageWriterInputs {
 
 } // anonymous namespace
 
-// A step in a lane has a line by the clock alone, under this name. The line of the stage, which the sum of the stage counts, is that of all lanes together.
 static constexpr ASCIILiteral nameOfLaneSteps = "image: lanes"_s;
 
 static bool checksImageWhileBuilding(const BuildContext& context)
@@ -310,7 +295,6 @@ static bool checksImageWhileBuilding(const BuildContext& context)
     return ASSERT_ENABLED || ASAN_ENABLED || context.options().verifiesMachineCode;
 }
 
-// The sets of shapes that stubs and C++ read are the last thing in the program tables: TablePartID::ShapeSets.
 static ShapeSetsOfTables takeShapeSets(Vector<uint8_t>& programTables)
 {
     RELEASE_ASSERT(programTables.size() >= sizeof(ProgramTables));
@@ -345,7 +329,6 @@ static ShapeSetsOfTables takeShapeSets(Vector<uint8_t>& programTables)
     return sets;
 }
 
-// FunctionNumbers::numberOfFunctions(), which follows from the units that have code.
 static size_t countFunctionsInImage(const Typed::Program& program, const LinkedFunctions& functions)
 {
     size_t count = program.functions.size() + functions.fusedCallEntries().size();
@@ -386,7 +369,6 @@ static Vector<uint32_t> measureSideTablesOfFunctions(const SideTables& sideTable
     return sizes;
 }
 
-// The strings in the order in which their text lies, which is by the first function that names each, and behind them every other id.
 static Vector<uint32_t> listStringsInOrderOfText(size_t numberOfStrings, std::span<const StringID> stringsInOrderOfText)
 {
     Vector<uint32_t> order;
@@ -403,27 +385,21 @@ static Vector<uint32_t> listStringsInOrderOfText(size_t numberOfStrings, std::sp
     return order;
 }
 
-// THE HEADERS AND THE LIST LIE IN THE ORDER OF THE TEXT. The ids of strings follow the hashes of their bytes, so in the order of the ids what one function names lies all over both,
-// and each string that a program makes at its start waits for a line of memory of its own.
-static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords& text, std::span<const StringID> stringsInOrderOfText, std::span<const uint32_t> literalStrings, ImageForm form, BuildContext& context)
+static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords& text, std::span<const StringID> stringsInOrderOfText, ImageForm form, BuildContext& context)
 {
     StringHeaderNumbers numbers;
     numbers.form = form;
     numbers.byString.fill(0, text.strings.size());
-    if (numbers.hasRecords()) {
+    if (numbers.hasRecords())
         numbers.listedWordIndexes.fill(0, text.strings.size());
-        numbers.literalStringWords.fill(0, text.strings.size());
-        for (uint32_t number = 0; number < literalStrings.size(); ++number)
-            numbers.literalStringWords[literalStrings[number]] = literalStringWord(number);
-    }
     uint64_t count = text.identifiers.size();
     uint64_t numberOfListedWords = 0;
     for (size_t index : listStringsInOrderOfText(text.strings.size(), stringsInOrderOfText)) {
         const ImageString& string = text.strings[index];
         bool needsRecord = numbers.hasRecords() && string.hasHeader() && string.range(text.longStrings).length;
-        if (needsRecord && (numbers.literalStringWords[index] || !ImageListedString::fitsOneWord(string.range(text.longStrings)))) {
+        if (needsRecord && !ImageListedString::fitsOneWord(string.range(text.longStrings))) {
             numbers.listedWordIndexes[index] = static_cast<uint32_t>(numberOfListedWords);
-            numberOfListedWords += ImageListedString::numberOfWords(string.range(text.longStrings)) + !!numbers.literalStringWords[index];
+            numberOfListedWords += ImageListedString::numberOfWords(string.range(text.longStrings));
         }
         if (!string.hasText() || string.hasIdentifierNumber())
             continue;
@@ -459,10 +435,8 @@ static std::optional<ImageExtent> computeImageExtent(const ImageSections& sectio
             size = stringHeaders.sizeOfList();
         else if (static_cast<ImageSection>(index) == ImageSection::Identifiers)
             size = size / sizeof(ImageIdentifier) * sizeof(ImageIdentifierWord);
-        // An instance has the pages of the method table for its own until it writes to one: mapPrivateCloneOfImagePages().
         bool isClonedByPages = static_cast<ImageSection>(index) == ImageSection::MethodTable && sections.programTables().instanceSizes.sizeOfMethodTable;
         tablesEnd = isClonedByPages ? WTF::roundUpToMultipleOf<imagePageSize>(tablesEnd) : WTF::roundUpToMultipleOf<imageSectionAlignment>(tablesEnd);
-        // An offset that does not fit is never read: the image is then too large for one of the two tests below.
         extent.sections[index] = { static_cast<uint32_t>(tablesEnd), static_cast<uint32_t>(size) };
         tablesEnd += size;
     }
@@ -576,7 +550,6 @@ static void copySections(std::span<uint8_t> image, const ImageWriterInputs& part
             chunks.append({ static_cast<size_t>(offset) + start, source.subspan(start, std::min(bytesInChunkOfImage, source.size() - start)) });
     };
     for (unsigned index = 0; index < numberOfImageSections; ++index) {
-        // writeStrings() makes the three of the encoder's records.
         if (static_cast<ImageSection>(index) != ImageSection::Strings && static_cast<ImageSection>(index) != ImageSection::LongStrings && static_cast<ImageSection>(index) != ImageSection::Identifiers)
             addChunks(extent.sections[index].offset, parts.sections.bytes[index].span());
     }
@@ -628,30 +601,23 @@ static void writeStrings(std::span<uint8_t> image, const TextRecords& text, cons
             RELEASE_ASSERT(text.identifiers[number].kind() == PropertyKeyKind::Text && text.identifiers[number].text() == StringID(index));
         uint32_t hash = isIdentifier ? text.identifiers[number].hashOrSymbol() : string.hashOrIdentifierNumber();
         if (!numbers.hasRecords()) {
-            // The atom with no characters is the engine's own.
             if (range.length || !isIdentifier)
                 headers[number] = ImageStringHeader::create(static_cast<uint64_t>(extent[ImageSection::Text].offset) + range.offset, range.length, hash, string.is16Bit(), isIdentifier ? StringImpl::StringAtom : StringImpl::StringNormal);
             return;
         }
         if (!range.length)
             return;
-        uint32_t literalStringWord = numbers.literalStringWords[index];
         uint32_t rangeOrIndex = numbers.listedWordIndexes[index] << ImageString::lengthBits;
-        if (!literalStringWord && ImageListedString::fitsOneWord(range))
+        if (ImageListedString::fitsOneWord(range))
             ImageListedString::write(std::span { &rangeOrIndex, 1 }, range);
         else {
             std::span words = listedStrings.subspan(numbers.listedWordIndexes[index]);
             ImageListedString::write(words, range);
-            if (literalStringWord)
-                words[ImageListedString::numberOfWords(range)] = literalStringWord;
         }
         records[number] = ImageStringRecord::create(rangeOrIndex, hash, string.is16Bit(), isIdentifier);
-        if (literalStringWord)
-            records[number].hashAndFlags |= ImageStringRecord::isLiteralStringFlag;
     });
 }
 
-// ImageSection::Strings goes by the ids of the strings, which follow the hashes of their bytes. The constants are numbered by the first function that names each, so here what one function names lies side by side.
 static void writeWordsOfStringConstants(std::span<uint8_t> image, const ImageExtent& extent)
 {
     std::span stringsInImage = sectionIn<ImageStringWord>(image, extent, ImageSection::Strings);
@@ -659,21 +625,6 @@ static void writeWordsOfStringConstants(std::span<uint8_t> image, const ImageExt
     size_t count = constants.size() / 2;
     for (size_t number = 0; number < count; ++number)
         constants[number] = stringsInImage[constants[count + number]].bits;
-}
-
-static void writeLiteralStringWords(std::span<ImageStringHeader> headers, const TextRecords& text, const StringHeaderNumbers& numbers, std::span<const uint32_t> literalStrings)
-{
-    RELEASE_ASSERT(!headers.empty() && !headers[0].length);
-    headers[0].literalStringWord = static_cast<uint32_t>(numbers.count * sizeof(ImageStringHeader));
-    for (uint32_t number = 0; number < literalStrings.size(); ++number) {
-        const ImageString& string = text.strings[literalStrings[number]];
-        if (!string.hasText() || !string.hasHeader())
-            continue;
-        uint32_t numberOfHeader = string.hasIdentifierNumber() ? string.hashOrIdentifierNumber() : numbers.byString[literalStrings[number]];
-        ImageStringHeader& header = headers[numberOfHeader];
-        if (header.length)
-            header.literalStringWord = literalStringWord(number);
-    }
 }
 
 static void writeRangeOfShapeSets(std::span<uint8_t> image, const CodeLinkerInputs& linker, const ImageExtent& extent)
@@ -689,7 +640,6 @@ static void writeRangeOfShapeSets(std::span<uint8_t> image, const CodeLinkerInpu
     tables.ranges[static_cast<unsigned>(ProgramTableIndex::shapeSetBits)] = { static_cast<uint32_t>(distance), static_cast<uint32_t>(size / sizeof(uint64_t)) };
 }
 
-// The pages of an image are shared between processes: none is written, and none but those of the string headers holds an address. The run time maps memory of its own over the callback context.
 static void checkImageIsReadOnly(std::span<const uint8_t> code, const FFIStubs& ffiStubs, const CodeLayout& layout, BuildContext& context)
 {
     uint64_t offset = static_cast<uint64_t>(layout.ffiCodeOffset) + ffiStubs.callbackContextOffset;
@@ -711,8 +661,7 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
         spanReinterpretCast<const ImageLongString>(sections[ImageSection::LongStrings].span()),
         spanReinterpretCast<const ImageIdentifier>(sections[ImageSection::Identifiers].span()),
     };
-    std::span<const uint32_t> literalStrings = sections.programTables().literalStrings();
-    std::optional<StringHeaderNumbers> stringHeaders = numberStringHeaders(text, parts.linker.numbers.stringsInOrderOfText(), literalStrings, context.recordedOptions().form(), context);
+    std::optional<StringHeaderNumbers> stringHeaders = numberStringHeaders(text, parts.linker.numbers.stringsInOrderOfText(), context.recordedOptions().form(), context);
     if (!stringHeaders)
         return { };
     std::optional<ImageExtent> extent = computeImageExtent(sections, *stringHeaders, layout.codeSize, context);
@@ -729,8 +678,6 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
 
     writeStrings(image.mutableSpan(), text, *stringHeaders, *extent, loops);
     writeWordsOfStringConstants(image.mutableSpan(), *extent);
-    if (!stringHeaders->hasRecords())
-        writeLiteralStringWords(sectionIn<ImageStringHeader>(image.mutableSpan(), *extent, ImageSection::StringHeaders), text, *stringHeaders, literalStrings);
     writeRangeOfShapeSets(image.mutableSpan(), parts.linker, *extent);
     times.didFinish("write strings"_s);
 
@@ -740,7 +687,6 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
     checkImageIsReadOnly(image.subspan(extent->codeOffset, layout.codeSize), parts.ffiStubs, layout, context);
     if (context.diagnostics().hasErrors())
         return { };
-    // Without the padding up to the page where the code begins.
     context.statistics().count(StatisticID::TableBytesEmitted, extent->tablesEnd);
     context.statistics().count(StatisticID::TextBytesEmitted, (*extent)[ImageSection::Text].size);
     return image;
@@ -767,7 +713,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     result.numbers = makeUniqueWithoutFastMallocCheck<ImageNumbers>();
     ImageNumbers& numbers = *result.numbers;
 
-    // Both steps of the first lane add strings to the program, so one follows the other. Of a body they write the words of its mentions and the texts it made. The second lane reads its callees and relocations, and no string.
     ResolvedCallees callees;
     runLanes(context.parallelLoops(), {
         [&] {
@@ -821,7 +766,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         steps.didFinish("lay out and describe regular expressions"_s);
     };
 
-    // The numbering leaves most threads idle. What asks for no number, and for nothing of a function that applyNumbersToFunctions() writes, runs beside it.
     NumberingInputs numberingInputs { program, inputs.facts, inputs.plan, functions };
     std::optional<GatheredMentions> mentions;
     std::optional<NamesOfTables> namesOfTables;
@@ -846,7 +790,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             steps.didFinish("encode call sites"_s);
             if (diagnostics.hasErrors())
                 return;
-            // Of a body they read neither the bytes nor the relocations, which is all that removeFinalJumps() changes. So they do not wait for the layout.
             sideTables = encodeSideTables(functions, callSites.span(), context);
             steps.didFinish("encode side tables"_s);
             if (diagnostics.hasErrors())
@@ -867,11 +810,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         return result;
     RELEASE_ASSERT(numbers.functions().numberOfFunctions() == numberOfFunctionsInImage);
 
-    // The text asks which strings the image holds and in which order, and the regular expressions ask for their requests. Neither waits for the statics or for the numbers in the functions.
     auto runLanesBehindNumbersInFunctions = [&] {
-    // Each lane reads the functions, the program and the numbers as they stand here, and nothing that another lane makes.
-    // The lane of the tables alone writes to the numbers: the offsets of types and the nodes of data, which no other lane asks for.
-    // The first lane makes a VM, so it is the one that stays on this thread, and it is short, so this thread is soon free for a lane that the pool has not begun. Behind it the longest come first.
     runLanes(context.parallelLoops(), {
         [&] {
             StepTimes steps(context, nameOfLaneSteps);
@@ -897,7 +836,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             steps.didFinish("encode program tables"_s);
             if (diagnostics.hasErrors())
                 return;
-            // The pool begins with the sets of shapes, so it waits for the tables.
             ShapeSetsOfTables shapeSets = takeShapeSets(programTables);
             constants = buildConstantPool(functions, context, { shapeSets.bytes.span(), shapeSets.parts.span() });
             steps.didFinish("build constant pool"_s);
@@ -906,7 +844,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             if (diagnostics.hasErrors())
                 return;
             StepTimes steps(context, nameOfLaneSteps);
-            // The stubs compare a name with the last column of the table of fields, which only the numbering knows.
             StubOptions stubOptions = inputs.stubCatalog.options();
             stubOptions.maxNameInFieldTable = numbers.identifiers().countWithFieldTableColumn() - 1;
             StubPolicy stubPolicy = stubPolicyOf(inputs.plan.slots());
@@ -969,13 +906,11 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
 
     ImageSections sections;
     sections[ImageSection::ProgramTables] = WTF::move(programTables);
-    // Inline frames number the built-in functions behind the functions, and their reader counts the functions by the tables.
     if (sections.programTables().numberOfFunctions() != numbers.functions().numberOfFunctions()) {
         diagnostics.add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .detail = makeString("the tables list "_s, sections.programTables().numberOfFunctions(), " functions, and "_s, numbers.functions().numberOfFunctions(), " have a number"_s) });
         return result;
     }
 
-    // All three ask for the layout. The first writes the bytes and the relocations of bodies, which neither of the others reads.
     EncodedFunctionTables functionTables;
     runLanes(context.parallelLoops(), {
         [&] {
@@ -985,7 +920,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         },
         [&] {
             StepTimes steps(context, nameOfLaneSteps);
-            // The record of a function says where its side tables lie.
             functionTables = encodeFunctionTables({
                 .functions = functions,
                 .numbers = numbers,
@@ -1068,7 +1002,6 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     logSizesOfImageForTestRunReport(result.image.span(), result.bytesOfTableParts, context);
     times.didFinish("check image"_s);
 
-    // The image holds what they held. Two of them are a list or two for each unit, and the third is as large as the tables: the build does not wait for their destructors, which stood in no line of the log.
     destroyInBackground(context.backgroundJobs(), WTF::move(callSites));
     destroyInBackground(context.backgroundJobs(), WTF::move(constants));
     destroyInBackground(context.backgroundJobs(), WTF::move(sections));

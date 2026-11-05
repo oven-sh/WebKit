@@ -31,12 +31,10 @@ public:
     Integer nameIndexOf(const EnumeratorFields& fields, Integer position) { return sub(position, zeroExtended(fields.indexedLength)); }
     Condition isOwnName(const EnumeratorFields& fields, Integer nameIndex) { return below(nameIndex, zeroExtended(fields.endOwnPropertyIndex)); }
     Condition hasCachedKeys(CellPointer enumerator, const EnumeratorFields&, CellPointer object);
-    // An object with the cached keys holds a value for the name, and an ordinary one holds it at the place that the name has among the names.
     Condition isInStructurePart(CellPointer enumerator, Integer nameIndex) { return below(nameIndex, zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endStructurePropertyIndex))); }
     Condition describesOrdinaryObject(CellPointer enumerator) { return isZero(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWordMask)); }
 
 private:
-    // By ForInOpenResult. Without `countsCurrentNames` the number is zero.
     std::array<Operand, 2> openEnumerator(const ValueContext&, bool countsCurrentNames);
 };
 

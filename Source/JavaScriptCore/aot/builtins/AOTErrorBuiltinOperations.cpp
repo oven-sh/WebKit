@@ -17,12 +17,10 @@
 
 namespace JSC { namespace AOT {
 
-// What the constructor does where new.target is the constructor itself: it converts the message, then reads `cause` off the options. Either may run code of the program and throw.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewError, JSCell*, (Instance* instance, uint32_t errorKind, EncodedJSValue message, EncodedJSValue options))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewError);
     auto kind = static_cast<Typed::ErrorKind>(errorKind);
-    // Its constructor takes the errors in front of the message.
     if (kind == Typed::ErrorKind::AggregateError) [[unlikely]]
         crashOnWrongOperand(Entry::operationAOTNewError);
     ErrorType errorType = errorTypeFor(kind);

@@ -19,8 +19,6 @@ struct CellTypeChangeInPlace {
     JSType to;
 };
 
-// The back end is told that the type of a cell never changes (AOTHeaps.h). These do, in place: in row order ClassPrototype::convertToOrdinaryObject, SlimClosure::reify.
-// So a type is tested under that heap only by a range that holds both types of a row or neither.
 static constexpr CellTypeChangeInPlace changesOfCellTypeInPlace[] = {
     { ObjectType, FinalObjectType },
     { SlimClosureType, SlimClosureWithPropertiesType },
@@ -60,10 +58,8 @@ bool isStableCellTypeRange(JSTypeRange range)
 
 Condition PrimitiveEmitter::isUndefinedOrNull(Boxed value, uint16_t occurringPrimitives)
 {
-    // Within the bits of undefined lie undefined, null, the empty value, and UndefinedTag alone, which no value has.
     constexpr int64_t bitsOutsideUndefined = ~static_cast<int64_t>(JSValue::ValueUndefined);
     static_assert(JSValue::ValueUndefined == (JSValue::ValueNull | JSValue::UndefinedTag) && hasOneBitSet(JSValue::ValueNull) && hasOneBitSet(JSValue::UndefinedTag) && !JSValue::ValueEmpty);
-    static_assert(emptyLiteralStringWord > JSValue::ValueUndefined, "a literal string word is tested like a boxed value");
 
     bool mayBeEmpty = occurringPrimitives & Primitive::Absent;
     if (!mayBeEmpty && Machine::isEncodableBitImmediate(Width64, bitsOutsideUndefined))
@@ -113,7 +109,6 @@ Condition PrimitiveEmitter::hasOrHadCellType(CellPointer cell, JSType type)
     return equal(loadCellType(cell), type);
 }
 
-// A type that a cell takes or leaves in place is read as one of the bytes that change: alone, so that the comparison takes it from memory.
 Condition PrimitiveEmitter::hasMutableCellType(CellPointer cell, JSType type)
 {
     constexpr ptrdiff_t offsetInUsefulBytes = JSCell::typeInfoTypeOffset() - JSCell::indexingTypeAndMiscOffset();
@@ -186,7 +181,6 @@ LValue PrimitiveEmitter::countTrailingZerosOfNonZero(LValue bits)
 
 void PrimitiveEmitter::mutatorFence()
 {
-    // Other threads see the stores of one x86-64 thread in program order, and the back end moves no store.
     if (isX86_64())
         return;
 
@@ -212,7 +206,6 @@ void PrimitiveEmitter::ensureStillAliveHere(CellPointer cell)
     patch->onlyKeepsChildrenAlive = true;
 }
 
-// None of the five has a position, so each may be read in every block, behind every entrypoint. The back end finds the register or the word of the instance that holds a tag: Machine::findPinnedConstant().
 void definePinnedValues(Output& out, PinnedValues& pinned)
 {
     pinned.instance = out.argumentRegister(instanceGPR);
@@ -223,18 +216,6 @@ void definePinnedValues(Output& out, PinnedValues& pinned)
 }
 
 static_assert(absentCell32 < undefinedCell32 && nullCell32 < undefinedCell32 && undefinedCell32 < minCell32);
-
-std::optional<NarrowReference> PrimitiveEmitter::narrowWordBehind(LiteralStringWord word)
-{
-    LValue value = word.value();
-    if (value->opcode() != Machine::Select || value->child(2)->opcode() != Machine::ZExt32)
-        return std::nullopt;
-    LValue narrow = value->child(2)->child(0);
-    LValue isReference = value->child(0);
-    if (isReference->opcode() != Machine::AboveEqual || isReference->child(0) != narrow || !isReference->child(1)->isInt32(minCell32))
-        return std::nullopt;
-    return NarrowReference(narrow);
-}
 
 std::optional<Word32> PrimitiveEmitter::narrowWordBehind(OptionalInteger widened)
 {

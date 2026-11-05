@@ -77,7 +77,6 @@ flags ModuleFlags {
     | engine EvaluatesItself
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
-# What fails at the position quotes textOfQuotes[start, end) in its message.
 record QuotedText wire { position: UInt32 start: UInt32 end: UInt32 }
 record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> quotedTexts: Span<QuotedText> sorted by position textOfQuotes: Span<Byte> }
 record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool }
@@ -94,7 +93,7 @@ record Module wire {
     path: String displayPath: String kind: ModuleKind flags: ModuleFlags exportRule: SyntheticExportRule requireResult: RequireResult
     externalKind: ExternalKind typeAttribute: String? runtimeModule: RuntimeModule? referrer: Module(Referrer)? body: Function(Call)? exportsVariable: Variable? data: Data?
     requests: Span<ModuleRequest> exports: Span<ModuleExport> sorted by name syntheticExports: Span<SyntheticExport> sorted by name
-    requiredNames: Span<RequiredName> otherNames: Span<String> positions: SourcePositions functionText: Span<Byte>
+    requiredNames: Span<RequiredName> otherNames: Span<String> namesOfStatements: Span<String> positions: SourcePositions functionText: Span<Byte>
     | engine namespaceLayout: Layout?
 }
 record HostRead wire { exportName: String builtin: Builtin? parameter: UInt32 }
@@ -159,7 +158,6 @@ list openedNames : OpenedName as openedname
 
 enum BlockRole { Ordinary CatchHandler CleanupHandler IterationCleanup DisposalCleanup }
 enum BlockFrequency { | engine Normal Unlikely Rare }
-enum CodeShape { | engine Unchosen Compact Balanced Fast }
 record BlockHead wire wireOnly { parameterCount: UInt32 valueCount: UInt32 role: BlockRole subject: Value? hasHandler: Bool }
 record ParameterHead wire wireOnly { type: Type? }
 record ValueHead wire wireOnly { opcode: UInt32 position: UInt32? }

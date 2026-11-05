@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeRecords.h"
+#include "AOTEffectsNet.h"
 #include "AOTHeaps.h"
 #include "AOTOperationEmitter.h"
 #include "AOTStubAssembler.h"
@@ -51,7 +52,6 @@ public:
     Operand callWithoutSite(RuntimeOperation, std::span<const Operand> arguments, Representation result, const CallOptions& = { });
     Operand callLeaf(RuntimeOperation, std::span<const Operand> arguments, Representation result);
     LValue callEntry(const OperationContext&, AOT::Entry, LType, std::span<const LValue> arguments, const CallOptions& = { });
-    // Each argument as the C function takes it.
     struct HostFrameOfDirectCall {
         LValue thisValue { nullptr };
         LValue callee { nullptr };
@@ -59,27 +59,45 @@ public:
     static bool leavesRegistersForHostFrame(std::span<const LValue> arguments);
     LValue callDirectFunction(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> = std::nullopt, BuiltinID calledBuiltin = { });
     LValue callDirectFunctionReturningNumber(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);
-    // BuiltinDirectFields, in two registers. Such a function neither throws nor allocates.
-    StubCallResult callDirectFunctionReturningFields(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);
 
     StubCallResult callStub(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions& = { });
     StubCallResult callStubWithoutSite(StubKey, std::span<const LValue> operands, const CallOptions& = { });
     void callStubAndBranch(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions&, BranchTargets);
     void callStubWithoutSiteAndBranch(StubKey, std::span<const LValue> operands, const CallOptions&, BranchTargets);
-    // Of what the stub declares that it reads, this call reads the location and what lies beside its buckets. The options name a function of memory:
-    // a later call with the same operands is this one until something writes there, as a load of the location would be.
     LValue callStubThatReads(StubKey, std::span<const LValue> operands, const MemoryLocation&, const CallOptions&);
 
     Machine::PatchOperation* createCallPatchpoint(const OperationContext&, const CallPatchpointRequest&);
     void finishCallPatchpoint(const OperationContext&, Machine::PatchOperation*, uint32_t site, const CallPatchpointRequest&);
     enum class CellConversions : uint8_t { AsEffectsSay, None, WhateverEffectsSay };
     void applyEffects(Machine::PatchOperation*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay);
-    // What both the operation and the callee allow.
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
 
     RegisterSet registersClobberedByCalls() const;
     RecordedSite recordedSiteOf(const OperationContext&, const CallOptions& = { });
     uint32_t addSite(const OperationContext&, const CallOptions& = { });
+
+    struct WatchOfEffects {
+        struct Digest {
+            uint32_t operandIndex { 0 };
+            LValue cell { nullptr };
+            LValue inFront { nullptr };
+        };
+
+        bool isSet() const { return entriesInFront || collectionsInFront || isHeldToThrowNothing || numberOfDigests; }
+
+        uint32_t rows { 0 };
+        LValue entriesInFront { nullptr };
+        LValue collectionsInFront { nullptr };
+        bool isHeldToThrowNothing { false };
+        uint64_t callHeldToThrowNothing { 0 };
+        const WatchOfEffects* around { nullptr };
+        uint8_t lanesNotWritten { 0 };
+        std::array<Digest, 6> digests { };
+        unsigned numberOfDigests { 0 };
+    };
+    void beginWatchOfOperation(const ValueContext&, WatchOfEffects&);
+    void endWatchOfEffects(const OperationContext&, const WatchOfEffects&, LValue behind);
+    void abandonWatchOfOperation(const WatchOfEffects&);
 
     Pointer argumentBuffer(std::span<const Boxed>);
     Pointer uninitializedArgumentBuffer(unsigned numberOfWords);
@@ -127,16 +145,22 @@ private:
     Operand callChecked(const OperationContext*, RuntimeOperation, std::span<const Operand> arguments, Representation result, const CallOptions&);
     StubCallResult emitEntryCall(const OperationContext*, AOT::Entry, std::span<const LValue> arguments, const CallOptions&);
     StubCallResult emitCall(const OperationContext*, const CallRequest&);
+    enum class EntersCompiledCode : bool { No, Yes };
+    void beginWatchOfEffects(const OperationContext&, const Effects&, EntersCompiledCode, uint32_t rows, WatchOfEffects&);
+    LValue readWordForEffectsNet(ptrdiff_t offsetInInstance, std::optional<ptrdiff_t> offsetBehindPointer, LValue behind);
+    LValue readCollectionsForEffectsNet(LValue behind);
+    void noteCallHeldToThrowNothing(uint64_t call, uint32_t rows);
+    void markRowsExercised(uint32_t rows, std::span<const PartOfEffects>);
+    void stopAtFalseEffects(const OperationContext&, uint32_t rows, LValue holds, uint32_t part, LValue differs);
     LType typeOfResult(StubResult);
     StubCallResult resultOfCall(StubResult, LValue call);
     LValue transientBuffer(size_t bytes);
 
+    const WatchOfEffects* m_watchOfOperation { nullptr };
     Machine::StackSlot* m_transientBuffer { nullptr };
     mutable StubCallShapeCache* m_stubCallShapes { nullptr };
     PatchEffectsMemo* m_patchEffectsMemo { nullptr };
-    // One tuple type serves every call of the procedure that returns two words.
     std::optional<LType> m_typeOfTwoWords;
-    // Of applyEffects(), which hands over a copy. It keeps its capacity from one call to the next, so a long list costs no allocation per call.
     HeapList m_scratchHeaps;
 };
 

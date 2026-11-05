@@ -19,7 +19,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The index of a record counts headers, and a shard has 24 bits of them. So the members or entries of a long set lie outside its record: positions run out with the number of sets and not with their length.
 static constexpr uint32_t fewestWordsOfIDSetThatLieOutside = 32;
 
 static constexpr bool wordsOfIDSetLieOutside(IDSetHeader header)
@@ -30,7 +29,6 @@ static constexpr bool wordsOfIDSetLieOutside(IDSetHeader header)
 static uint32_t*& wordsOutsideIDSetRecord(IDSetHeader* header) { return *reinterpret_cast<uint32_t**>(header + 1); }
 static_assert(sizeof(uint32_t*) == sizeof(IDSetHeader));
 
-// IDSetForm::ChunksWithLazyList: a set with chunks has room for a pointer to its list, behind the pointer to its entries where it has one. Null until IDSetTable::listOf() is asked.
 static constexpr bool idSetRecordHasLazyList(IDSetForm form, IDSetHeader header) { return form == IDSetForm::ChunksWithLazyList && header.numberOfChunks; }
 static std::atomic<uint32_t*>& lazyListOfIDSetRecord(IDSetHeader* header) { return *reinterpret_cast<std::atomic<uint32_t*>*>(header + 1 + wordsOfIDSetLieOutside(*header)); }
 static_assert(sizeof(std::atomic<uint32_t*>) == sizeof(IDSetHeader) && alignof(std::atomic<uint32_t*>) <= 2 * alignof(IDSetHeader));
@@ -42,7 +40,6 @@ static constexpr size_t alignmentInIDSetTable = 64;
 static_assert(IDSetTable::numberOfShards == 1u << bitsOfShardInIDSetTable);
 static_assert(sizeof(IDSetHeader) == 2 * sizeof(uint32_t) && sizeof(IDSetChunkEntry) == 2 * sizeof(uint32_t));
 
-// The id of a record or of a chunk: IDHome::Program, the shard, the index within the shard.
 static constexpr uint32_t idInIDSetTable(uint32_t shard, uint32_t index)
 {
     return static_cast<uint32_t>(IDHome::Program) << idHomeShift | shard << bitsOfIndexInIDSetShard | index;
@@ -51,7 +48,6 @@ static constexpr uint32_t idInIDSetTable(uint32_t shard, uint32_t index)
 static constexpr uint32_t shardOfIDInIDSetTable(uint32_t id) { return (id & idPositionMask) >> bitsOfIndexInIDSetShard; }
 static constexpr uint32_t indexOfIDInIDSetTable(uint32_t id) { return id & ((1u << bitsOfIndexInIDSetShard) - 1); }
 
-// The upper bits pick the shard and the lower bits the slot, so each bit has to depend on the whole hash. The mix is a bijection, so it adds no collisions.
 static constexpr uint32_t spreadHashForIDSetTable(uint32_t hash)
 {
     hash ^= hash >> 16;
@@ -63,7 +59,6 @@ static constexpr uint32_t spreadHashForIDSetTable(uint32_t hash)
 
 static constexpr uint32_t shardOfHashInIDSetTable(uint32_t spreadHash) { return spreadHash >> (32 - bitsOfShardInIDSetTable); }
 
-// Elements that never move. Each segment is twice as large as the one before it, so an index names its segment without a search.
 template<typename Element, uint32_t log2OfFirstSegment>
 class IDSetTableSegments {
     WTF_MAKE_NONCOPYABLE(IDSetTableSegments);
@@ -85,20 +80,17 @@ public:
         }
     }
 
-    // A segment is stored before any index into it is published, so a thread that read the index from a published slot, or was handed it with synchronization, sees the segment.
     Element* at(uint32_t index) const
     {
         uint32_t segment = segmentOf(index);
         return m_segments[segment].load(std::memory_order_relaxed) + (index - firstIndexOf(segment));
     }
 
-    // Under the shard's lock. The elements are contiguous.
     uint32_t allocate(size_t count)
     {
         uint32_t segment = segmentOf(m_next);
         while (segment < numberOfSegments && count > firstIndexOf(segment + 1) - m_next)
             m_next = firstIndexOf(++segment);
-        // The thirty bits of a position are used up.
         RELEASE_ASSERT(segment < numberOfSegments);
         if (!m_segments[segment].load(std::memory_order_relaxed)) {
             size_t bytes = (static_cast<size_t>(sizeOfFirstSegment) << segment) * sizeof(Element);
@@ -111,7 +103,6 @@ public:
     }
 
     size_t bytesInUse() const { return static_cast<size_t>(m_numberInUse) * sizeof(Element); }
-    // Every index that was handed out is below it.
 
 private:
     static constexpr uint32_t segmentOf(uint32_t index) { return static_cast<uint32_t>(std::bit_width(index + sizeOfFirstSegment)) - 1 - log2OfFirstSegment; }
@@ -122,8 +113,6 @@ private:
     uint32_t m_numberInUse { 0 };
 };
 
-// From a hash to the ids of one shard. A slot holds the hash in its upper half and the id in its lower half, and no id is 0.
-// Searching takes no lock, so slots that were outgrown stay as they are until the table is frozen or dies: somebody may still be reading them.
 class IDSetTableIndex {
     WTF_MAKE_NONCOPYABLE(IDSetTableIndex);
 public:
@@ -135,7 +124,6 @@ public:
             fastFree(std::exchange(slots, slots->outgrown));
     }
 
-    // 0: it was not there when the search began.
     uint32_t find(uint32_t hash, NOESCAPE const Invocable<bool(uint32_t)> auto& isWanted) const
     {
         Slots* slots = m_slots.load(std::memory_order_acquire);
@@ -150,7 +138,6 @@ public:
         }
     }
 
-    // Under the shard's lock, after a find() under that lock found nothing. The record or chunk the id names is fully written.
     void add(uint32_t hash, uint32_t id)
     {
         Slots* slots = m_slots.load(std::memory_order_relaxed);
@@ -160,7 +147,6 @@ public:
         ++m_size;
     }
 
-    // By one thread, while nobody searches or adds: nobody is left who reads them.
     void freeOutgrownSlots()
     {
         Slots* slots = m_slots.load(std::memory_order_relaxed);
@@ -168,7 +154,6 @@ public:
             fastFree(std::exchange(outgrown, outgrown->outgrown));
     }
 
-    // Under the shard's lock.
     size_t sizeInBytes() const
     {
         size_t size = 0;
@@ -177,7 +162,6 @@ public:
         return size;
     }
 
-    // Both under the shard's lock.
     uint32_t size() const { return m_size; }
     void forEachID(NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
     {
@@ -189,7 +173,6 @@ public:
     }
 
 private:
-    // The slots follow it in memory.
     struct Slots {
         std::atomic<uint64_t>& at(size_t place) { return reinterpret_cast<std::atomic<uint64_t>*>(this + 1)[place]; }
 
@@ -225,7 +208,6 @@ private:
     uint32_t m_size { 0 };
 };
 
-// The words of one shard that lie outside its records. They never move, and they go block by block with the table: nobody goes over the sets to find them.
 class IDSetTableWordBlocks {
     WTF_MAKE_NONCOPYABLE(IDSetTableWordBlocks);
 public:
@@ -237,7 +219,6 @@ public:
             fastFree(std::exchange(block, block->older));
     }
 
-    // Under the shard's lock.
     uint32_t* allocate(size_t numberOfWords)
     {
         if (numberOfWords > m_free.size())
@@ -247,11 +228,9 @@ public:
         return words;
     }
 
-    // Under the shard's lock. The blocks whole, with the room that nothing has taken.
     size_t sizeInBytes() const { return m_sizeInBytes; }
 
 private:
-    // The words follow it in memory.
     struct Block {
         Block* older;
     };
@@ -260,7 +239,6 @@ private:
     uint32_t* allocateInNewBlock(size_t numberOfWords)
     {
         constexpr size_t maxWordsPerBlock = 1 << 16;
-        // What would take much of a block gets one of its own size, and the block that has room left stays the one that is filled.
         bool sharesBlock = numberOfWords <= m_wordsOfNextBlock / 4;
         size_t wordsOfBlock = sharesBlock ? m_wordsOfNextBlock : numberOfWords;
         m_wordsOfNextBlock = std::min(m_wordsOfNextBlock * 2, maxWordsPerBlock);
@@ -282,7 +260,6 @@ private:
 };
 
 struct alignas(alignmentInIDSetTable) IDSetTable::Shard {
-    // Under the shard's lock. Room is handed out in units of one header.
     uint32_t addRecord(IDSetForm form, uint32_t shardIndex, uint32_t hash, IDSetHeader header, std::span<const uint32_t> attachedWords, std::span<const uint32_t> membersOrEntries)
     {
         constexpr size_t wordsOfHeader = sizeof(IDSetHeader) / sizeof(uint32_t);
@@ -307,7 +284,6 @@ struct alignas(alignmentInIDSetTable) IDSetTable::Shard {
         return id;
     }
 
-    // A list of `member` alone that lasts as long as the table. It lies in a record that no id is handed out for: the set stays its own id.
     static const uint32_t* lastingListOfOne(const IDSetTable& table, uint32_t member)
     {
         uint32_t hash = spreadHashForIDSetTable(member);
@@ -336,12 +312,10 @@ struct alignas(alignmentInIDSetTable) IDSetTable::Shard {
     IDSetTableIndex indexOfChunks;
     IDSetTableSegments<IDSetHeader, 8> records;
     IDSetTableSegments<IDSetChunk, 6> chunks;
-    // The members or entries of long sets, and the lazy lists.
     IDSetTableWordBlocks wordsOutsideRecords;
     Lock lock;
 };
 
-// By content: where the ids of two chunks differ, the chunks are compared.
 static bool idSetRecordMatches(const IDSetView& record, const IDSetView& members)
 {
     if (record.size() != members.size() || record.isList() != members.isList())
@@ -372,77 +346,79 @@ void IDSetTable::freeOutgrownSlots()
 
 void IDSetTable::reserveMembers(uint32_t size)
 {
-    // Lists that were handed out point into it, so it is filled once and never moves. viewOf() handles a member past its end another way.
     if (!m_allMembers.isEmpty())
         return;
+    size = std::min(size, idPositionMask + 1);
     m_allMembers.grow(size);
     for (uint32_t member = 0; member < size; ++member)
         m_allMembers[member] = member;
 }
 
-IDSetView IDSetTable::viewOf(uint32_t set) const
+const uint32_t* IDSetTable::lastingListOfOne(uint32_t member) const
+{
+    return Shard::lastingListOfOne(*this, member);
+}
+
+IDSetView IDSetTable::viewOfRecord(uint32_t set) const
 {
     IDSetView view;
     view.m_table = this;
     if (set == UINT32_MAX)
         return view;
 
-    switch (static_cast<IDHome>(set >> idHomeShift)) {
-    case IDHome::Value:
-        view.m_size = 1;
-        view.m_onlyMember = set & idPositionMask;
-        // membersOf() hands out the list of a view that is gone by then, and the reader makes layout sets before reserveMembers() runs.
-        if (view.m_onlyMember < m_allMembers.size())
-            view.m_words = &m_allMembers[view.m_onlyMember];
-        else if (m_form == IDSetForm::ChunksWithLazyList)
-            view.m_words = Shard::lastingListOfOne(*this, view.m_onlyMember);
-        return view;
-    case IDHome::Program: {
-        IDSetHeader* header = m_shards[shardOfIDInIDSetTable(set)].records.at(indexOfIDInIDSetTable(set));
-        RELEASE_ASSERT(header->size);
-        view.m_size = header->size;
-        view.m_numberOfChunks = header->numberOfChunks;
-        view.m_numberOfAttachedWords = m_numberOfAttachedWords;
-        bool wordsLieOutside = wordsOfIDSetLieOutside(*header);
-        view.m_attachedWords = reinterpret_cast<const uint32_t*>(header + 1 + wordsLieOutside + idSetRecordHasLazyList(m_form, *header));
-        view.m_words = wordsLieOutside ? wordsOutsideIDSetRecord(header) : view.m_attachedWords + m_numberOfAttachedWords;
-        return view;
-    }
-    case IDHome::SmallRange:
-    case IDHome::Thread:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_ASSERT(static_cast<IDHome>(set >> idHomeShift) == IDHome::Program);
+    IDSetHeader* header = m_shards[shardOfIDInIDSetTable(set)].records.at(indexOfIDInIDSetTable(set));
+    RELEASE_ASSERT(header->size);
+    view.m_size = header->size;
+    view.m_numberOfChunks = header->numberOfChunks;
+    view.m_numberOfAttachedWords = m_numberOfAttachedWords;
+    bool wordsLieOutside = wordsOfIDSetLieOutside(*header);
+    view.m_attachedWords = reinterpret_cast<const uint32_t*>(header + 1 + wordsLieOutside + idSetRecordHasLazyList(m_form, *header));
+    view.m_words = wordsLieOutside ? wordsOutsideIDSetRecord(header) : view.m_attachedWords + m_numberOfAttachedWords;
+    return view;
 }
 
-std::span<const uint32_t> IDSetTable::listOf(uint32_t set) const
+uint32_t IDSetTable::sizeOfRecord(uint32_t set) const
 {
-    RELEASE_ASSERT(m_form == IDSetForm::ChunksWithLazyList);
-    IDSetView view = viewOf(set);
-    if (view.isEmpty())
+    if (set == UINT32_MAX)
+        return 0;
+    RELEASE_ASSERT(static_cast<IDHome>(set >> idHomeShift) == IDHome::Program);
+    uint32_t size = m_shards[shardOfIDInIDSetTable(set)].records.at(indexOfIDInIDSetTable(set))->size;
+    RELEASE_ASSERT(size);
+    return size;
+}
+
+std::span<const uint32_t> IDSetTable::listOfRecord(uint32_t set) const
+{
+    if (set == UINT32_MAX)
         return { };
-    if (view.isList()) {
-        // Of one member too: viewOf() points at a list that lasts.
-        return unsafeMakeSpan(view.m_words, view.m_size);
+    if (static_cast<IDHome>(set >> idHomeShift) == IDHome::Value)
+        return unsafeMakeSpan(lastingListOfOne(set), 1);
+
+    RELEASE_ASSERT(static_cast<IDHome>(set >> idHomeShift) == IDHome::Program);
+    Shard& shard = m_shards[shardOfIDInIDSetTable(set)];
+    IDSetHeader* header = shard.records.at(indexOfIDInIDSetTable(set));
+    RELEASE_ASSERT(header->size);
+    if (!header->numberOfChunks) {
+        const uint32_t* words = wordsOfIDSetLieOutside(*header) ? wordsOutsideIDSetRecord(header) : reinterpret_cast<const uint32_t*>(header + 1) + m_numberOfAttachedWords;
+        return unsafeMakeSpan(words, header->size);
     }
 
-    Shard& shard = m_shards[shardOfIDInIDSetTable(set)];
-    std::atomic<uint32_t*>& place = lazyListOfIDSetRecord(shard.records.at(indexOfIDInIDSetTable(set)));
+    std::atomic<uint32_t*>& place = lazyListOfIDSetRecord(header);
     uint32_t* list = place.load(std::memory_order_acquire);
     if (!list) {
-        // Whoever asks for the same list meanwhile waits for this one.
         Locker locker { shard.lock };
         list = place.load(std::memory_order_relaxed);
         if (!list) {
-            list = shard.wordsOutsideRecords.allocate(view.size());
+            list = shard.wordsOutsideRecords.allocate(header->size);
             uint32_t* next = list;
-            view.forEach([&](uint32_t member) {
+            viewOfRecord(set).forEach([&](uint32_t member) {
                 *next++ = member;
             });
             place.store(list, std::memory_order_release);
         }
     }
-    return unsafeMakeSpan(list, view.size());
+    return unsafeMakeSpan(list, header->size);
 }
 
 size_t IDSetTable::sizeInBytes() const
@@ -488,7 +464,6 @@ uint32_t IDSetTable::findOrAdd(uint32_t hash, const IDSetView& members, std::spa
     isNew = false;
     RELEASE_ASSERT(!m_isFrozen);
     RELEASE_ASSERT(members.size() > 1 && attachedWords.size() == m_numberOfAttachedWords);
-    // Equal sets have equal ids only while each set has one form.
     RELEASE_ASSERT(members.isList() == (members.size() <= mostMembersOfList));
 
     hash = spreadHashForIDSetTable(hash);
@@ -504,7 +479,6 @@ uint32_t IDSetTable::findOrAdd(uint32_t hash, const IDSetView& members, std::spa
     if (uint32_t found = shard.indexOfRecords.find(hash, isWanted))
         return found;
     RELEASE_ASSERT(!takesNoAdditions());
-    // A chunk of a thread dies with its arena.
     for (const IDSetChunkEntry& entry : members.chunkEntries())
         RELEASE_ASSERT(static_cast<IDHome>(entry.chunk >> idHomeShift) == IDHome::Program);
     size_t numberOfWords = members.isList() ? members.size() : members.chunkEntries().size_bytes() / sizeof(uint32_t);
@@ -528,7 +502,6 @@ uint32_t IDSetTable::findOrAddChunk(uint32_t hash, const IDSetChunk& chunk, bool
 {
     isNew = false;
     RELEASE_ASSERT(!m_isFrozen);
-    // overlap(), compareByContent() and first() assume that no chunk of a set is empty.
     RELEASE_ASSERT(chunk != IDSetChunk { });
 
     hash = spreadHashForIDSetTable(hash);
@@ -565,7 +538,6 @@ bool IDSetView::contains(uint32_t member) const
     return chunkAt(entry->chunk).bits[bit / 64] >> bit % 64 & 1;
 }
 
-// For the empty set, the bits of the null id.
 uint32_t IDSetView::first() const
 {
     if (isEmpty())
@@ -581,7 +553,6 @@ uint32_t IDSetView::first() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// For the empty set, the bits of the null id.
 uint32_t IDSetView::last() const
 {
     if (isEmpty())
@@ -611,8 +582,6 @@ const IDSetChunk& IDSetView::chunkAt(uint32_t encodedChunk) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Goes over a set by stretches of membersPerSetChunk numbers, whichever form it has. The number of a stretch is its first number divided by that size.
-// A stretch of a list is gathered into a chunk here.
 class IDSetReadingCursor {
     WTF_MAKE_NONCOPYABLE(IDSetReadingCursor);
 public:
@@ -630,7 +599,6 @@ public:
     uint32_t number() const { return m_number; }
     const IDSetChunk& chunk() const { return m_set.isList() ? m_gathered : m_set.chunkAt(m_entries[m_index].chunk); }
 
-    // For two cursors at the same number, over sets of one table and one arena. False does not say that the chunks differ: then they have to be read.
     bool holdsSameChunkAs(const IDSetReadingCursor& other) const
     {
         if (m_set.isList() || other.m_set.isList() || m_entries[m_index].chunk != other.m_entries[other.m_index].chunk)
@@ -645,7 +613,6 @@ public:
         settle();
     }
 
-    // To the first stretch from here on whose number is not below `number`.
     void advanceTo(uint32_t number)
     {
         if (isAtEnd() || m_number >= number)
@@ -653,7 +620,6 @@ public:
         auto numberAt = [&](size_t index) {
             return m_set.isList() ? m_members[index] / membersPerSetChunk : m_entries[index].firstMemberDividedBySize;
         };
-        // numberAt(below) is below `number`. notBelow is the end, or numberAt(notBelow) is not below it.
         size_t below = m_next - 1;
         size_t step = 1;
         while (below + step < m_end && numberAt(below + step) < number) {
@@ -694,7 +660,6 @@ private:
     std::span<const uint32_t> m_members;
     std::span<const IDSetChunkEntry> m_entries;
     size_t m_end;
-    // The stretch is the entry at m_index, or the members from m_index up to m_next.
     size_t m_index { 0 };
     size_t m_next { 0 };
     uint32_t m_number { 0 };
@@ -790,7 +755,6 @@ bool overlap(const IDSetView& first, const IDSetView& second)
     return false;
 }
 
-// As two ascending lists of members compare: at the first place where they differ the smaller member comes first, and a list sorts before every longer list that it is a prefix of.
 std::strong_ordering compareByContent(const IDSetView& first, const IDSetView& second)
 {
     if (first.isList() && second.isList()) {
@@ -822,7 +786,6 @@ std::strong_ordering compareByContent(const IDSetView& first, const IDSetView& s
             uint64_t inOneAlone = chunkOfA.bits[word] ^ chunkOfB.bits[word];
             if (!inOneAlone)
                 continue;
-            // The least member that one set alone holds. Up to it the lists are equal, so its holder comes first unless the other list ends here.
             uint64_t bitsUpToMember = inOneAlone ^ (inOneAlone - 1);
             bool isInFirst = chunkOfA.bits[word] & inOneAlone & bitsUpToMember;
             bool otherGoesOn = isInFirst ? hasMemberAfter(b, chunkOfB, word, bitsUpToMember) : hasMemberAfter(a, chunkOfA, word, bitsUpToMember);

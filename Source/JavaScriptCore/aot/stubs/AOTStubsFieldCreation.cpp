@@ -59,7 +59,6 @@ static void computeTransitionHash(StubAssembler& jit, const KeyOrderRegisters& r
 #endif
 }
 
-// The orders that the compiler listed lie in the image. Whoever knows the layout and the index of the field in it saves the way to both.
 static JumpList stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegisters& r, std::optional<FieldOfLayout> known)
 {
     const GPRReg layout = known ? known->layout : r.scratch;
@@ -94,7 +93,6 @@ static JumpList stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegiste
     if (known)
         doesNotApply.append(jit.branch32(CCallHelpers::NotEqual, r.entry, known->fieldIndex));
     else {
-        // An entry from the number of fields on counts extra keys.
         jit.load16(Address(layout, OBJECT_OFFSETOF(LayoutData, numberOfFields)), limit);
         doesNotApply.append(jit.branch32(CCallHelpers::AboveOrEqual, r.entry, limit));
         jit.lshift32(TrustedImm32(4), r.entry);
@@ -123,9 +121,7 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
     jit.load64(Address(r.object, offsetOfOrderWord), r.words);
     Jump hasNoExtraProperties = jit.branchTest32(CCallHelpers::Zero, r.words, TrustedImm32(orderWordHasExtraProperties));
     loadStructure(jit, r.object, r.scratch);
-    // What is cached about the objects below a prototype relies on the run time's report of a field that the prototype gets.
     hasNoTransition.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.scratch, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
-    // The extra keys come in front of the field, so the step also goes by their number, which the Structure says once the run time has counted them.
     jit.load16(Address(r.scratch, CompiledStructure::offsetOfNumberOfExtraKeys()), r.scratch);
     hasNoTransition.append(jit.branch32(CCallHelpers::Equal, r.scratch, TrustedImm32(CompiledStructure::unknownNumberOfExtraKeys)));
     static_assert(transitionKeyFor(5, 3) == (5 | 3 << bitsPerSlotKey));
@@ -164,7 +160,6 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
     isListed.link(&jit);
 }
 
-// The flags of the order word are no part of the index. So what is remembered beside extra keys lies in the other half: an object with extra properties would push out what one without them has left under the same words and key, and the other way round.
 enum class HalfOfKeyOrderRuns : bool { OfIndex, Other };
 
 static void locateKeyOrderRun(StubAssembler& jit, GPRReg wordsBefore, GPRReg keys, GPRReg run, HalfOfKeyOrderRuns half = HalfOfKeyOrderRuns::OfIndex)
@@ -185,7 +180,6 @@ void listCreatedField(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& 
     const GPRReg run = r.entry;
     const Address orderWord(r.object, offsetOfOrderWord);
     JumpList isNotRemembered;
-    // An entry holds the two words without the flags of the order word, so only the words of an object that has no flag set, as nearly every object, are found.
     jit.load64(orderWord, r.words);
     locateKeyOrderRun(jit, r.words, r.slotKey, run);
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), r.words));
@@ -195,7 +189,6 @@ void listCreatedField(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& 
     JumpList isListed;
     isListed.append(jit.jump());
 
-    // `this[kState] = ..; this.id = id`: an object that has extra properties. The step also goes by the number of its extra keys, which its Structure says.
     const GPRReg keys = r.scratch;
     auto loadKeysBesideExtraKeys = [&](JumpList& hasNone) {
         static_assert(CompiledStructure::unknownNumberOfExtraKeys <= slotKeyMask);
@@ -255,7 +248,6 @@ void listCreatedFieldAndReturn(StubAssembler& jit, const KeyOrderRegisters& r, G
     listCreatedField(jit, r, hasNoTransition, known);
     returnAfterStoring(jit, r.object, value);
 
-    // The slot key says where the slot is. The storage is there by now, or the field needs none.
     hasNoTransition.link(&jit);
     OperationCall didCreateField = voidOperationCall;
     didCreateField.secondArgumentIn = r.object;
@@ -270,7 +262,6 @@ void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, cons
     const GPRReg granuleBit = r.secondScratch;
     const GPRReg extension = r.field.address;
     JumpList cannotInsert;
-    // A shift goes by the lowest six bits of its count, so what lies above the offset does not matter.
     jit.urshift32(r.field.slotData, TrustedImm32(3), granule);
     jit.sub32(TrustedImm32(1), granule);
     jit.move(TrustedImm32(1), granuleBit);
@@ -282,13 +273,11 @@ void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, cons
     jit.move(granule, extension);
     jit.jump().linkTo(ways.fromGranule, &jit);
 
-    // Nobody here knows the layout: the stub that does makes the first Extension as large as the layout says, and a later one as large as it has to be.
     cannotInsert.link(&jit);
     const StubKey grow(StubFamily::AllocateExtensionSlow);
     const StubSignature signature = signatureOfAllocateExtensionSlow(grow);
     const GPRReg owner = signature.operands[0].gpr();
     const GPRReg ownerForBarrier = signatureOfWriteBarrier(writeBarrier()).operands[0].gpr();
-    // What the two stubs take and write. The operations that they leave the rest to save all else, and neither touches a floating-point register.
     Vector<GPRReg, 7> kept;
     for (GPRReg written : { extensionMadeBySlowStub, ownerForBarrier, owner, signature.operands[1].gpr(), gprOf(StubRegister::T9), gprOf(StubRegister::T11), gprOf(StubRegister::T12) }) {
         if (written != extension && written != granule && written != granuleBit)
@@ -301,7 +290,6 @@ void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, cons
         jit.shuffleRegisters<GPRReg, 2>({ object, granuleBit }, { owner, signature.operands[1].gpr() });
         jit.callStub(grow);
         jit.move(extensionMadeBySlowStub, extension);
-        // The collector finds a new Extension only through its owner.
         jit.load8(Address(owner, JSCell::cellStateOffset()), state);
         Jump needsNoBarrier = jit.branch32(CCallHelpers::Above, state, Address(instanceGPR, AOT_INSTANCE_OFFSET(barrierThreshold)));
         jit.move(owner, ownerForBarrier);
@@ -312,148 +300,61 @@ void createGranuleOfField(StubAssembler& jit, const FieldStoreRegisters& r, cons
     jit.jump().linkTo(ways.fromExtension, &jit);
 }
 
-static void ensureStorageAndReturn(StubAssembler& jit, GPRReg object, GPRReg granuleBit, GPRReg wordOffset, GPRReg storage)
+StubSignature signatureOfDidCreateField(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+
+void generateDidCreateField(StubAssembler& jit)
 {
-    RELEASE_ASSERT(noOverlap(object, granuleBit, wordOffset, storage));
-    const BaseIndex extensionWord(object, wordOffset, CCallHelpers::TimesOne);
-
-    JumpList slowCases;
-    loadExtensionWordOffset(jit, object, wordOffset);
-    if (jit.options().useWideReferences) {
-        jit.load64(extensionWord, storage);
-        slowCases.append(jit.branchTest64(CCallHelpers::Zero, storage));
-        jit.load64(Address(storage, offsetOfExtensionGranuleBits), storage);
-    } else {
-        jit.load32(extensionWord, storage);
-        decodeCell32(jit, storage, storage);
-        jit.load64(Address(storage, offsetOfEmptyExtensionInCage + offsetOfExtensionGranuleBits), storage);
-    }
-    slowCases.append(jit.branchTest64(CCallHelpers::Zero, storage, granuleBit));
-    jit.returnToCaller();
-
-    slowCases.link(&jit);
-    OperationCall ensureStorage = voidOperationCall;
-    ensureStorage.thirdArgumentIn = granuleBit;
-    jit.callOperationAndReturn(Entry::operationAOTEnsureExtensionGranules, ensureStorage);
-}
-
-enum class AfterCreation : uint8_t { Returns, EnsuresStorage };
-
-// The second operand is one slot key, or a run of them with the first one in the lowest bits.
-static void generateCreation(StubAssembler& jit, bool isRun, AfterCreation after)
-{
-    RELEASE_ASSERT(!isRun || after != AfterCreation::EnsuresStorage);
     const GPRReg object = jit.operand(0);
-    const GPRReg keys = isRun ? jit.clobberOperand(1) : jit.operand(1);
+    const GPRReg slotKey = jit.operand(1);
     const GPRReg words = jit.allocateScratch(StubRegister::T9);
     const GPRReg entry = jit.allocateScratch(StubRegister::T11);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T12);
-    const GPRReg slotKey = isRun ? jit.allocateScratch(StubRegister::T13) : keys;
     const GPRReg wordsBefore = jit.allocateScratch(StubRegister::T10);
     const GPRReg run = entry;
     const KeyOrderRegisters keyOrder { object, slotKey, entry, words, scratch };
-    JumpList isListed;
     JumpList hasNoTransition;
 
-    auto finishListedRun = [&] {
-        if (after == AfterCreation::Returns)
-            jit.returnToCaller();
-        else
-            isListed.append(jit.jump());
-    };
-
-    // A run that is remembered is taken. Elsewhere wordsBefore holds what is remembered below: zero for an object with extra properties, whose runs are not remembered.
-    RELEASE_ASSERT(noOverlap(object, keys, wordsBefore, run, scratch));
+    RELEASE_ASSERT(noOverlap(object, slotKey, wordsBefore, run, scratch));
     JumpList isNotRemembered;
-    // An entry holds the two words without the flags of the order word. So the words of an object that has no flag set, as nearly every object, are compared as they are.
     JumpList mayHaveFlags;
     jit.load64(Address(object, offsetOfOrderWord), wordsBefore);
-    locateKeyOrderRun(jit, wordsBefore, keys, run);
+    locateKeyOrderRun(jit, wordsBefore, slotKey, run);
     mayHaveFlags.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), wordsBefore));
-    mayHaveFlags.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), keys));
+    mayHaveFlags.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), slotKey));
     jit.load32(Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()), scratch);
     jit.store32(scratch, Address(object, offsetOfOrderWord));
-    finishListedRun();
+    jit.returnToCaller();
 
     mayHaveFlags.link(&jit);
     Jump hasExtraProperties = jit.branchTest32(CCallHelpers::NonZero, wordsBefore, TrustedImm32(orderWordHasExtraProperties));
     jit.move(wordsBefore, scratch);
     jit.and64(TrustedImm64(static_cast<int64_t>(orderCountAndShapeMask)), wordsBefore);
-    locateKeyOrderRun(jit, wordsBefore, keys, run);
+    locateKeyOrderRun(jit, wordsBefore, slotKey, run);
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), wordsBefore));
-    isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), keys));
+    isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), slotKey));
     jit.and32(TrustedImm32(static_cast<int32_t>(~orderAndCountMask)), scratch);
     jit.or32(Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()), scratch);
     jit.store32(scratch, Address(object, offsetOfOrderWord));
-    finishListedRun();
+    jit.returnToCaller();
 
     hasExtraProperties.link(&jit);
     jit.move(TrustedImm32(0), wordsBefore);
     isNotRemembered.link(&jit);
 
-#if CPU(ARM64)
-    const GPRReg allKeys = isRun ? jit.allocateScratch(StubRegister::T15) : InvalidGPRReg;
-#endif
-    auto restoreKeys = [&] {
-#if CPU(ARM64)
-        jit.move(allKeys, keys);
-#else
-        jit.pop(keys);
-#endif
-    };
-    if (!isRun)
-        appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
-    else {
-#if CPU(ARM64)
-        jit.move(keys, allKeys);
-#else
-        jit.push(keys);
-#endif
-        Label nextKey = jit.label();
-        jit.and32(TrustedImm32(slotKeyMask), keys, slotKey);
-        appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
-        jit.urshift64(TrustedImm32(bitsPerSlotKey), keys);
-        jit.branchTest64(CCallHelpers::NonZero, keys).linkTo(nextKey, &jit);
-        restoreKeys();
-    }
+    appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
 
     Jump isNotToBeRemembered = jit.branchTest64(CCallHelpers::Zero, wordsBefore);
-    locateKeyOrderRun(jit, wordsBefore, keys, run);
+    locateKeyOrderRun(jit, wordsBefore, slotKey, run);
     jit.store64(wordsBefore, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
-    jit.store64(keys, Address(run, KeyOrderRun::offsetOfSlotKeys()));
+    jit.store64(slotKey, Address(run, KeyOrderRun::offsetOfSlotKeys()));
     jit.load32(Address(object, offsetOfOrderWord), scratch);
     jit.and32(TrustedImm32(static_cast<int32_t>(orderAndCountMask)), scratch);
     jit.store32(scratch, Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()));
     isNotToBeRemembered.link(&jit);
-
-    isListed.link(&jit);
-    if (after == AfterCreation::EnsuresStorage)
-        ensureStorageAndReturn(jit, object, jit.operand(2), words, entry);
-    else
-        jit.returnToCaller();
+    jit.returnToCaller();
 
     hasNoTransition.link(&jit);
-    if (isRun) {
-        restoreKeys();
-        jit.exitOnMiss(Entry::operationAOTDidCreateFieldsAt, voidOperationCall);
-    } else
-        jit.exitOnMiss(after == AfterCreation::EnsuresStorage ? Entry::operationAOTDidCreateFieldOutOfLineAt : Entry::operationAOTDidCreateFieldAt, voidOperationCall);
-}
-
-StubSignature signatureOfDidCreateField(StubKey key)
-{
-    const CreatedFields fields = static_cast<CreatedFields>(key.form());
-    RELEASE_ASSERT(fields <= CreatedFields::Run);
-    if (fields == CreatedFields::OneOutOfLine)
-        return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::R0) });
-    return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
-}
-
-void generateDidCreateField(StubAssembler& jit)
-{
-    const CreatedFields fields = static_cast<CreatedFields>(jit.key().form());
-    RELEASE_ASSERT(fields <= CreatedFields::Run);
-    generateCreation(jit, fields == CreatedFields::Run, fields == CreatedFields::OneOutOfLine ? AfterCreation::EnsuresStorage : AfterCreation::Returns);
+    jit.exitOnMiss(Entry::operationAOTDidCreateFieldAt, voidOperationCall);
 }
 
 StubSignature signatureOfDidCreateFieldOfSlot(StubKey)
@@ -463,11 +364,8 @@ StubSignature signatureOfDidCreateFieldOfSlot(StubKey)
     return signature;
 }
 
-// The immediate: the slot key. Whatever else didCreateField() takes follows from it.
 void generateDidCreateFieldOfSlot(StubAssembler& jit)
 {
-    const CreatedFields fields = static_cast<CreatedFields>(jit.key().form());
-    RELEASE_ASSERT(fields == CreatedFields::One || fields == CreatedFields::OneOutOfLine);
     const std::optional<uint32_t> knownSlotKey = jit.key().immediate();
     const GPRReg object = jit.operand(0);
     const GPRReg slotKey = jit.reuseScratch(StubRegister::A2);
@@ -475,31 +373,10 @@ void generateDidCreateFieldOfSlot(StubAssembler& jit)
         RELEASE_ASSERT(*knownSlotKey != noSlotKey && *knownSlotKey <= slotKeyMask);
         jit.move(TrustedImm32(static_cast<int32_t>(*knownSlotKey)), slotKey);
     }
-    if (fields == CreatedFields::One) {
-        checkStubOperands(didCreateField(fields), { object, slotKey });
-        jit.jumpToStub(didCreateField(fields));
-        return;
-    }
-
-    const GPRReg granuleBit = jit.allocateScratch(StubRegister::R0);
-    if (knownSlotKey) {
-        const uint32_t offset = *knownSlotKey & ~outOfLineSlotKey;
-        RELEASE_ASSERT(*knownSlotKey & outOfLineSlotKey && offset >= offsetOfFirstExtensionSlot && granuleOf(offset) < maxExtensionGranules);
-        jit.move(TrustedImm64(static_cast<int64_t>(granuleBitOf(offset))), granuleBit);
-    } else {
-        const GPRReg granule = jit.allocateScratch(StubRegister::T9);
-        static_assert(granuleOf(offsetOfFirstExtensionSlot) == offsetOfFirstExtensionSlot / 8 - 1 && extensionGranuleSize == 8);
-        jit.and32(TrustedImm32(static_cast<int32_t>(outOfLineSlotKey - 1)), slotKey, granule);
-        jit.urshift32(TrustedImm32(3), granule);
-        jit.sub32(TrustedImm32(1), granule);
-        jit.move(TrustedImm32(1), granuleBit);
-        jit.lshift64(granule, granuleBit);
-    }
-    checkStubOperands(didCreateField(fields), { object, slotKey, granuleBit });
-    jit.jumpToStub(didCreateField(fields));
+    checkStubOperands(didCreateField(), { object, slotKey });
+    jit.jumpToStub(didCreateField());
 }
 
-// The object lies where the barrier takes its owner.
 StubSignature signatureOfPutSlotOrAdd(StubKey key)
 {
     StubSignature signature = StubSignature::withoutResult({ gprOf(firstStubOperandRegister) });
@@ -526,7 +403,6 @@ void generatePutSlotOrAddAtKeyInRegister(StubAssembler& jit)
     jit.jumpToStub(takesKeyAsImmediate);
 }
 
-// An earlier store into the object may have left its barrier to this one, so the barrier does not ask what this one has stored.
 static void returnBehindBarrierOfCreatedField(StubAssembler& jit, GPRReg object, GPRReg state)
 {
     Jump isWithinThreshold = branchIfBarrierIsNeeded(jit, object, state);
@@ -535,15 +411,6 @@ static void returnBehindBarrierOfCreatedField(StubAssembler& jit, GPRReg object,
     isWithinThreshold.link(&jit);
     checkStubOperands(writeBarrier(), { object });
     jit.jumpToStub(writeBarrier());
-}
-
-// A word below the first reference is stored as it is, and a cell as its narrow reference.
-static void narrowLiteralStringOfCreatedField(StubAssembler& jit, GPRReg word, GPRReg result)
-{
-    jit.move(word, result);
-    Jump isNoCell = jit.branch64(CCallHelpers::Below, word, TrustedImm64(static_cast<int64_t>(minCell32)));
-    encodeCell32(jit, word, result);
-    isNoCell.link(&jit);
 }
 
 static void narrowOptionalIntegerOfCreatedField(StubAssembler& jit, GPRReg integerOrMarker, GPRReg result)
@@ -562,7 +429,6 @@ static void narrowOptionalIntegerOfCreatedField(StubAssembler& jit, GPRReg integ
     isInteger.link(&jit);
 }
 
-// Keeps the second operand of the stub and writes scratch.
 template<typename AddressOfSlot>
 static void storeInSlotOfCreatedField(StubAssembler& jit, SlotRepresentation representation, AddressOfSlot slot, GPRReg scratch)
 {
@@ -571,10 +437,7 @@ static void storeInSlotOfCreatedField(StubAssembler& jit, SlotRepresentation rep
         return;
     }
     GPRReg bits = jit.operand(1);
-    if (representation == SlotRepresentation::LiteralString32) {
-        narrowLiteralStringOfCreatedField(jit, bits, scratch);
-        bits = scratch;
-    } else if (representation == SlotRepresentation::OptionalInt32) {
+    if (representation == SlotRepresentation::OptionalInt32) {
         narrowOptionalIntegerOfCreatedField(jit, bits, scratch);
         bits = scratch;
     }
@@ -602,7 +465,6 @@ void generatePutSlotOrAdd(StubAssembler& jit)
     const uint64_t absentBits = traitsOf(representation).absentBits;
     const std::optional<uint32_t> knownSlotKey = jit.key().immediate();
 
-    // The way to a slot out of line is written once for all of them.
     if (knownSlotKey && place == PlaceOfCreatedSlot::OutOfLine) {
         RELEASE_ASSERT(*knownSlotKey & outOfLineSlotKey);
         jit.jumpToStubTakingImmediate();
@@ -612,7 +474,6 @@ void generatePutSlotOrAdd(StubAssembler& jit)
     const GPRReg object = jit.operand(0);
     const GPRReg entry = jit.allocateScratch(StubRegister::T11);
 
-    // The store that finds its field in the cell is written once for each slot, the rest once for all.
     if (knownSlotKey) {
         RELEASE_ASSERT(*knownSlotKey != noSlotKey && !(*knownSlotKey & outOfLineSlotKey));
         const Address slot(object, static_cast<int32_t>(*knownSlotKey));
@@ -641,7 +502,6 @@ void generatePutSlotOrAdd(StubAssembler& jit)
         listCreatedField(jit, { object, slotKey, entry, words, scratch }, hasNoTransition);
         jit.jump().linkTo(isListed, &jit);
 
-        // The operation runs the barrier.
         hasNoTransition.link(&jit);
         OperationCall didCreateField = voidOperationCall;
         didCreateField.secondArgumentIn = object;
@@ -653,7 +513,6 @@ void generatePutSlotOrAdd(StubAssembler& jit)
         return;
     }
 
-    // With the representation known, nothing is asked of the slot's data but the offset's lowest nine bits, which the key has.
     static_assert(maxExtensionSize <= outOfLineSlotKey && !(outOfLineSlotKey % (maxExtensionGranules * extensionGranuleSize)));
     const GPRReg address = jit.allocateScratch(StubRegister::T10);
     const FieldStoreRegisters registers {
@@ -670,7 +529,6 @@ void generatePutSlotOrAdd(StubAssembler& jit)
     computeFieldAddress(jit, registers.field, true, hasNoStorage, &ways, representation);
     storeAndReturn(Address(address));
 
-    // A new granule holds zeros, so the slot then says that the field is absent.
     hasNoStorage.link(&jit);
     createGranuleOfField(jit, registers, ways);
 }

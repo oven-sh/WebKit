@@ -1,2 +1,1 @@
-# codegen/AOTStraightEmitter.cpp: a row of tests that what a module imports is there, as one call.
 runtime ThrowIfImportIsMissing : void (const uint32_t* pairs, uint32_t count) ; reads(all) writes(AllocatorState, RuntimeState) throws collects

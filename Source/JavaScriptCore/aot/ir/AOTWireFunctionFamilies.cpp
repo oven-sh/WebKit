@@ -57,7 +57,6 @@ static std::optional<InternalErrorKind> findErrorInFamilyListsOfFunction(const W
     return std::nullopt;
 }
 
-// The error of the first function that has one.
 static std::optional<InternalError> findFunctionWithInvalidFamilyLists(const ParallelLoops& loops, const Wire::Sections& sections, const BuiltinTable& builtins)
 {
     Vector<InternalError> errors = collectInParallel<InternalError>(loops, static_cast<unsigned>(sections.functions.size()), [&](unsigned index, Vector<InternalError>& found) {
@@ -69,7 +68,6 @@ static std::optional<InternalError> findFunctionWithInvalidFamilyLists(const Par
     return WTF::move(errors.first());
 }
 
-// The types are read after the families, so nobody has checked their lists yet, and BitVector::quickSet() does not check its index.
 static BitVector findFunctionsNamedByWireTypes(const ParallelLoops& loops, const Wire::Sections& sections)
 {
     Vector<uint32_t> named = collectInParallel<uint32_t>(loops, static_cast<unsigned>(sections.types.size()), [&](unsigned type, Vector<uint32_t>& found) {
@@ -87,9 +85,6 @@ static BitVector findFunctionsNamedByWireTypes(const ParallelLoops& loops, const
     return result;
 }
 
-// By function of the wire: the closures and the built-ins that may pass for it: itself, and whatever converts to it in any number of steps. Null: nobody, or no type names the function, so nobody asks.
-// What passes for a function type passes for every function type that it converts to. So A FAMILY IS MADE OF THE FAMILIES OF ALL THAT CONVERTS TO IT, each behind all of those, by one union:
-// a walk upward from every function takes a step for each pair where function types convert to one another in a row, as those of the methods of one name do in a row of classes.
 static Vector<ObjectSetID> collectFunctionFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections, const BuiltinTable& builtins, TypeArena& arena)
 {
     std::span<const Wire::Function> functions = checkedSections.functions;
@@ -97,7 +92,6 @@ static Vector<ObjectSetID> collectFunctionFamilies(const ParallelLoops& loops, c
     const ObjectTable& objects = arena.objects();
     ObjectSets& sets = arena.objectSets();
 
-    // By function type: what converts to it in one step. Only a signature is a function type, so only a signature has a family to wait for.
     Vector<Vector<uint64_t>> sourcesOfTypes(1);
     Vector<uint32_t> numberOfFamiliesLeft(FillWith { }, numberOfFunctions, 0u);
     for (uint32_t index = 0; index < numberOfFunctions; ++index) {
@@ -123,7 +117,6 @@ static Vector<ObjectSetID> collectFunctionFamilies(const ParallelLoops& loops, c
             else
                 membersByThemselves.append(objects.closureOf(FunctionID(source)));
         }
-        // Neither closures nor the objects of built-ins are numbered in the order of what they stand for.
         wholeFamilies.append(sets.ofUnsorted(membersByThemselves.span()));
         return sets.unionOf(wholeFamilies.span());
     };
@@ -141,7 +134,6 @@ static Vector<ObjectSetID> collectFunctionFamilies(const ParallelLoops& loops, c
                 ready.append(functionType);
         }
     }
-    // Function types may convert to one another in a ring. What stands in one, or above one, is made, and made again whenever somebody has joined what converts to it.
     Vector<uint32_t> waiting;
     BitVector isWaiting(numberOfFunctions);
     for (uint32_t index = 0; index < numberOfFunctions; ++index) {
@@ -172,12 +164,9 @@ static Vector<ObjectSetID> collectFunctionFamilies(const ParallelLoops& loops, c
     return families;
 }
 
-// An empty family gets the null id, which readPartsWithoutClasses() treats as any function.
-// It runs beside the families of layouts, whose errors come first: it reports nothing itself.
 void WireTypeReader::computeFunctionFamilies()
 {
     const BuiltinTable& builtins = m_program.builtins();
-    // The reader's line of the families counts all of these.
     StepTimes steps(m_build, "ReadAndVerify: families of functions"_s);
     if (std::optional<InternalError> error = findFunctionWithInvalidFamilyLists(m_build.parallelLoops(), m_sections, builtins)) {
         m_errorInFunctionFamilies = WTF::move(error);
@@ -186,8 +175,6 @@ void WireTypeReader::computeFunctionFamilies()
     }
     steps.didFinish("lists are valid"_s);
 
-    // A type that names a family holds this id, so a family of many functions is stored once however many types name it.
-    // The id of a set follows arrival, here as where readTypes() unites these sets: it is only compared for equality.
     TypeArena arena(m_program.types, ArenaKeeps::InProgram);
     m_functionFamilies = collectFunctionFamilies(m_build.parallelLoops(), m_sections, builtins, arena);
     steps.didFinish("collect families"_s);

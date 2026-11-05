@@ -45,7 +45,6 @@ static constexpr Entry ordinaryLeaf = Entry::operationAOTToInt32;
 static_assert(exists(calledStub) && !neverReturns(calledStub) && !exists(nonexistentStub));
 static_assert(bodyOf(bodyWithTwoEntries) == bodyWithTwoEntries && bodyOf(secondEntry) == bodyWithTwoEntries && bodyOf(calledStub) != bodyWithTwoEntries);
 static_assert(exists(bodyEnteredAtFaults) && exists(bodyEnteredAtFaults.withCallerFrame(CallerFrame::Frameless)));
-// A tail call of an operation that cannot throw but may allocate is no jump.
 static_assert(!isLeaf(RuntimeOperation::ValueAdd) && effectsOf(calledOperation).mayThrow);
 static_assert(isLeaf(RuntimeOperation::StringImplsAreEqual) && preservesMostRegisters(RuntimeOperation::StringImplsAreEqual));
 static_assert(isLeaf(RuntimeOperation::ToInt32) && !preservesMostRegisters(RuntimeOperation::ToInt32));
@@ -364,7 +363,6 @@ static void checkRecordedCalls(StubKey plain, StubRegister scratch)
 static void checkRecordedTailCall()
 {
     constexpr GPRReg function = gprOf(StubRegister::Operation);
-    // The jump goes through this register even where it brought an operand: by then the arguments are in place. Not every CPU has such a body.
     StubKey body = tryFindStubBody([](StubKey candidate, const StubSignature& signature) {
         if (!isPlainStubBody(candidate, signature) || signature.firstResult == Reg(function) || signature.secondResult == Reg(function))
             return false;
@@ -458,7 +456,6 @@ static void checkPreservingCall(StubKey body, StubRegister scratch, bool returns
         lostIntegerRegisters.filter(RegisterSet::allGPRs());
         lostIntegerRegisters.exclude(RegisterSet::macroClobberedGPRs());
         AOT_TEST_CHECK(lostIntegerRegisters == expectedLoss);
-        // Of the floating-point registers that the callee may write, two are stored and loaded.
         RegisterSet keptFloatingPointRegisters = registersClobberedBy(callee);
         keptFloatingPointRegisters.filter(RegisterSet::allFPRs());
         keptFloatingPointRegisters.exclude(recording.clobberedByCallees);
@@ -551,7 +548,6 @@ static void testCallersThatKeepFewerRegisters()
         AOT_TEST_CHECK(registersLostToOperationFor(callerFrame, SavedRegistersAreRead::BeforeReturnToo) == lostToCallerWithFrame);
         AOT_TEST_CHECK(targetOfJumpFor(callerFrame, stubMakingSameResult) == stubMakingSameResult.withCallerFrame(callerFrame));
     }
-    // The result that the body has made lies in a register that the operation of the other stub may write, so that stub has to save it.
     AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::KeepsNoRegisters, stubMakingNoResult) == stubMakingNoResult);
     AOT_TEST_CHECK(targetOfJumpFor(CallerFrame::KeepsNoFPRs, stubMakingNoResult) == stubMakingNoResult.withCallerFrame(CallerFrame::KeepsNoFPRs));
 }
@@ -689,7 +685,6 @@ static void checkLeafAssertion(StubKey plain)
     });
 }
 
-// Whoever holds the scratch register of the assembler forbids the assembler to take it, and a second holder. The first pair was a real fault: the length of a view, compared with 64 bits of immediate.
 static void checkScratchRegisterAssertions(StubKey plain)
 {
     constexpr int32_t largest = std::numeric_limits<int32_t>::max();

@@ -28,16 +28,12 @@ namespace AOT {
 enum class LeafAnswer : size_t { TakeSlowPath, No, Yes };
 enum class LeafPresence : size_t { TakeSlowPath, Absent, Inherited, Own };
 
-// No compiled code calls the reserved ones. The entries behind them keep their numbers.
 #define FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(v, reserved) \
-    v(operationAOTCallEngineCallee) \
     reserved(operationArrayIndexOfValueInt32OrContiguous) \
     reserved(operationArrayIncludesValueInt32OrContiguous) \
     v(operationAOTLookupExceptionHandler) \
     v(operationAOTBytesAllocatedAtPrologueCheck) \
-    v(operationAOTFindLandingOfMisfit) \
-    v(operationAOTCopyDataPropertiesByFieldMap) \
-    v(operationAOTLayOutSlowFrames)
+    v(operationAOTCopyDataPropertiesByFieldMap)
 
 #define FOR_EACH_AOT_THUNK(v) \
     v(HandleException)
@@ -123,7 +119,6 @@ constexpr bool isRawOperation(Entry entry)
     }
 }
 
-// The stub in front of an operation calls it by an entry of its own.
 constexpr Entry operationBehindFrontEnd(Entry entry)
 {
     switch (entry) {
@@ -144,9 +139,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     return ArgumentBufferAccess::ReadsAndWrites;
 }
 
-// The table holds the address of every operation, so each would stay in an executable with all that it reaches. An image lists the entries that it uses, and whoever builds an
-// executable keeps the feature of each of them: an operation with a feature leaves an executable whose image lists none of that feature. These features are for nothing else.
-// What hello world lists has none: the library calls it as it starts. An operation that is not named here has none either, which costs its bytes and nothing else.
 #define FOR_EACH_AOT_OPERATION_IN_FAMILY(v) \
     v(OperationsOfChecks, CountExecution) \
     v(OperationsOnProxies, FinishHasThroughProxy) \
@@ -176,15 +168,10 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnStringBuilders, StringBuilderRollBack) \
     v(OperationsOnStringBuilders, StringBuilderToString) \
     v(OperationsOnTypedArrays, ByteLengthOfAnyValue) \
-    v(OperationsOnTypedArrays, NewObjectOfBuiltinLayout) \
     v(OperationsOnTypedArrays, NewTypedArray) \
     v(OperationsOnTypedArrays, TypedArrayPut) \
-    v(OperationsOnTypedArrays, TypedArrayRange) \
     v(OperationsOnTypedArrays, TypedArraySetOfAnyValue) \
     v(OperationsOnTypedArrays, TypedArraySubarrayOfAnyValue) \
-    v(OperationsOnTypedArrays, ViewByteLength) \
-    v(OperationsOnEncodedText, EncodeTextIntoBytes) \
-    v(OperationsOnEncodedText, EncodeTextToBytes) \
     v(OperationsOnEncodedText, TextOfBytes) \
     v(OperationsOnPrivateNames, BeginMemberGuards) \
     v(OperationsOnPrivateNames, NewClassToken) \
@@ -219,7 +206,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnReExports, TryDefineLiveBinding) \
     v(OperationsOnReExports, TryReExportFields) \
     v(OperationsOnModulesThatFail, AbandonModuleEvaluation) \
-    v(OperationsOnModulesThatFail, FillVariablesOfFiles) \
     v(OperationsOnModulesThatFail, RecordRequire) \
     v(OperationsOnModulesThatFail, SeesMockOf) \
     v(OperationsOnModulesThatFail, StopLoadingBehindFile) \
@@ -270,7 +256,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOnMapsAndSets, NewSetFromIterable) \
     v(OperationsOnMapsAndSets, NewSetIterator) \
     v(OperationsOnMapsAndSets, SetClear) \
-    v(OperationsOnMapsAndSets, SetHas) \
     v(OperationsOnMapsAndSets, SetNext) \
     v(OperationsOnMapsAndSets, TryNewMapFromEntries) \
     v(OperationsOnMapsAndSets, TryNewSetFromIterable) \
@@ -292,7 +277,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatDescribeProperties, DefineAccessor) \
     v(OperationsThatDescribeProperties, DefineAccessors) \
     v(OperationsThatDescribeProperties, DefineOwnProperty) \
-    v(OperationsThatDescribeProperties, FindAccessorOfMember) \
     v(OperationsThatDescribeProperties, GetOwnProperty) \
     v(OperationsThatDescribeProperties, GetOwnPropertyDescriptor) \
     v(OperationsThatDescribeProperties, NewGetterSetter) \
@@ -316,7 +300,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatSearchArrays, ArrayIndexOfInt32) \
     v(OperationsThatSearchArrays, ArrayIndexOfString) \
     v(OperationsThatSearchArrays, ArraySearchOfAnyValue) \
-    v(OperationsThatMakeArrays, AllocateStorage) \
     v(OperationsThatMakeArrays, AppendElements) \
     v(OperationsThatMakeArrays, AppendHole) \
     v(OperationsThatMakeArrays, AppendIterable) \
@@ -324,20 +307,15 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatMakeArrays, ArrayPutAtIndex) \
     v(OperationsThatMakeArrays, ArrayPutAtNumber) \
     v(OperationsThatMakeArrays, ArrayPutNumberAtIndex) \
-    v(OperationsThatMakeArrays, ConvertToDoubleStorage) \
     v(OperationsThatMakeArrays, DestructureIterable) \
-    v(OperationsThatMakeArrays, GrowNewArray) \
     v(OperationsThatMakeArrays, NewArgumentList) \
     v(OperationsThatMakeArrays, NewArrayAtReviewedSite) \
     v(OperationsThatMakeArrays, NewArrayFromDoubles) \
     v(OperationsThatMakeArrays, NewArrayIterator) \
-    v(OperationsThatMakeArrays, NewArrayOfElements) \
     v(OperationsThatMakeArrays, NewArrayOfHoles) \
-    v(OperationsThatMakeArrays, NewArrayOfMembers) \
     v(OperationsThatMakeArrays, NewArrayWithHoles) \
     v(OperationsThatMakeArrays, NewArrayWithIndexingType) \
     v(OperationsThatMakeArrays, ReadsIteratorOfListUnseen) \
-    v(OperationsThatMakeArrays, ReserveArrayCapacity) \
     v(OperationsThatMakeArrays, ReserveWholeArrayCapacity) \
     v(OperationsThatMakeArrays, ThrowIfTooLongForList) \
     v(OperationsThatMakeArrays, ThrowNotIterable) \
@@ -357,13 +335,11 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatMakeStrings, Flatten) \
     v(OperationsThatMakeStrings, Int32ToStringWithRadix) \
     v(OperationsThatMakeStrings, IntToString) \
-    v(OperationsThatMakeStrings, LiteralStringToString) \
     v(OperationsThatMakeStrings, NumberToStringWithRadix) \
     v(OperationsThatMakeStrings, ObjectToStringOfAnyValue) \
     v(OperationsThatMakeStrings, StringOfAnyValue) \
     v(OperationsThatMakeStrings, StringPad) \
     v(OperationsThatMakeStrings, StringRepeat) \
-    v(OperationsThatMakeStrings, ToLiteralString) \
     v(OperationsThatMakeStrings, ToString) \
     v(OperationsThatCompareStrings, CompareStrings) \
     v(OperationsThatCompareStrings, NarrowCharactersOfString) \
@@ -417,16 +393,13 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOfMembershipTests, InByValGeneric) \
     v(OperationsOfMembershipTests, InstanceOfAndCache) \
     v(OperationsOfCalls, Apply) \
-    v(OperationsOfCalls, CallEngineCallee) \
     v(OperationsOfCalls, Construct) \
     v(OperationsOfCalls, ConstructWithArray) \
     v(OperationsOfCalls, LinkTimeConstant) \
     v(OperationsOfCalls, NativeBinding) \
     v(OperationsOfCalls, ReadArgumentList) \
-    v(OperationsOfCalls, RecordCallee) \
     v(OperationsOfCalls, SetFunctionName) \
-    v(OperationsOfCalls, ThrowUnlessCallableNamed) \
-    v(OperationsOfCalls, ThrowUnlessForwardedCalleeIsCallable) \
+    v(OperationsOfCalls, ThrowUnlessForwardedCallCanBeMade) \
     v(OperationsOfErrors, AddressOfThrow) \
     v(OperationsOfErrors, Catch) \
     v(OperationsOfErrors, CatchException) \
@@ -483,7 +456,6 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
     }
 }
 
-// Nobody asks for one of these to be removed, and nothing but the list of an image keeps one.
 constexpr bool isFamilyOfOperations(RemovableFeature feature)
 {
     return feature >= RemovableFeature::OperationsOfChecks && feature <= RemovableFeature::OperationsOfDirectEval;
@@ -501,20 +473,13 @@ static_assert(argumentBufferAccessOf(Entry::operationAOTNewArray) == ArgumentBuf
 static_assert(argumentBufferAccessOf(Entry::operationArrayIndexOfValueInt32OrContiguous) == ArgumentBufferAccess::ReadsAndWrites);
 static_assert(featureOf(Entry::operationAOTRegExpTest) == RemovableFeature::RegExp);
 static_assert(featureOf(Entry::operationAOTValueAdd) == RemovableFeature::OperationsOfArithmetic && isFamilyOfOperations(RemovableFeature::OperationsOfArithmetic));
-static_assert(featureOf(Entry::operationAOTCallEngineCallee) == RemovableFeature::OperationsOfCalls);
+static_assert(featureOf(Entry::operationAOTApply) == RemovableFeature::OperationsOfCalls);
 static_assert(!featureOf(Entry::operationAOTGetById) && !isFamilyOfOperations(RemovableFeature::RegExp));
-// Where the build forbids code from strings the operation is what throws, and the interpreter is left out.
 static_assert(featureOf(Entry::operationAOTDirectEval) == RemovableFeature::OperationsOfDirectEval);
 static_assert(isOperation(Entry::operationArrayIndexOfValueInt32OrContiguous) && !isOperation(Entry::VirtualCallTrampoline));
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM*, Instance*));
-// First how far the stack pointer at the stack check of a frame without a record is below the return address of the frame, zero for a frame that has a record.
-// Second what the entry of the function has put above the return address.
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, UGPRPair, (Instance*, const void* returnAddress));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Instance*, void* returnAddress, EncodedJSValue misfit));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLayOutSlowFrames, void*, (Instance*, uint64_t* registersLaidDown));
-JSC_DECLARE_JIT_OPERATION(operationAOTCallEngineCallee, EncodedJSValue, (Instance*, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* arguments));
-// Takes what operationAOTCopyDataProperties takes. The stub in front of that one calls it where a copy that takes no frame is kept at the place of this one.
 JSC_DECLARE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instance*, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys));
 
 class RuntimeTable {
@@ -529,7 +494,6 @@ public:
     void finishInitialization(VM&);
 
     Structure* compactTableStructure() const { return m_compactTableStructure; }
-    // Of the buffers of growing texts: AOTGrowingText.h. The Structure of a string outlives every string, so it lives as long as the VM.
     Structure* textBufferStructure() const { return m_textBufferStructure; }
     uint32_t compactTableIterationEntry() const { return m_compactTableIterationEntry; }
     void setCompactTableIterationEntry(uint32_t entry) { m_compactTableIterationEntry = entry; }

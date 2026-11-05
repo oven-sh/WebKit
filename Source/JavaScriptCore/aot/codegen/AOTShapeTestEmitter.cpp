@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
-#include "AOTCodeSites.h"
 #include "AOTShapeTest.h"
 #include "AOTSort.h"
 #include "AOTTypeArena.h"
@@ -72,10 +71,8 @@ ShapeTest ShapeTestEmitter::testOf(LayoutSetID tested) const
 
 Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known)
 {
-    // `new.target` may give an object a layout that the type does not list.
     if (!known.hasOnlyLayouts() || known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
         return passes(cell, tested, testOf(tested));
-    // Of a type that has layouts alone both go by the set.
     const ShapeTable& shapes = m_plan.shapes();
     if (m_setWhoseShapesAreKept != known.layouts) {
         m_setWhoseShapesAreKept = known.layouts;
@@ -86,7 +83,6 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
     if (!m_keptSetHoldsCompiledObjectsAlone)
         return passes(cell, tested, testOf(tested));
 
-    // The test tells the tested shapes from the known ones alone. A known layout that is never allocated has no shape, so it counts for nothing.
     ShapeTable::ShapeList testedShapes;
     shapes.appendMemberShapes(membersOf(typeReader(), tested), testedShapes);
     const ShapeTable::ShapeList& knownShapes = m_shapesKept;
@@ -97,31 +93,6 @@ Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, con
             return *passesTest;
     }
     return passes(cell, tested, test);
-}
-
-std::optional<Condition> ShapeTestEmitter::hasShapeInThoughNoCell(Boxed value, LayoutSetID tested, const Type& known)
-{
-    if (!readsOffNoCellFault)
-        return std::nullopt;
-    // As hasShapeIn().
-    if (known.hasOnlyLayouts() && !known.traitsOfNamed.contains(ObjectTrait::MayHaveLayoutBelow))
-        return std::nullopt;
-    ShapeTest test = testOf(tested);
-    switch (test.form) {
-    case ShapeTestForm::OneShape:
-    case ShapeTestForm::UpTo:
-    case ShapeTestForm::Range:
-    case ShapeTestForm::ImmediateBits:
-    case ShapeTestForm::BitSet:
-        break;
-    case ShapeTestForm::NeverPasses:
-    case ShapeTestForm::AlwaysPasses:
-    case ShapeTestForm::From:
-    case ShapeTestForm::Block:
-    case ShapeTestForm::BlockOrEarlier:
-        return std::nullopt;
-    }
-    return passes(Word32(m_out.load32OffWhatMayBeNoCell(value.value(), m_heaps.AOTObject_shapeWord)), tested, test);
 }
 
 Condition ShapeTestEmitter::isShapeOf(Word32 shapeWord, LayoutID layout)
@@ -137,14 +108,12 @@ void ShapeTestEmitter::branchOnShapeIn(CellPointer cell, LayoutSetID tested, con
     branch(hasShapeIn(cell, tested, known), targets);
 }
 
-// The list alone does not say what hasShapeIn() asks of the objects that the type of the operand names.
 void ShapeTestEmitter::branchOnShapeAmongReceivers(const ValueContext& access, CellPointer cell, LayoutSetID tested, BranchTargets targets)
 {
     TypeID known = types().intersectionOf(typeIDOf(access->objectOperand()), types().forLayoutSet(access->receivers()));
     branchOnShapeIn(cell, tested, types().at(known), targets);
 }
 
-// A test of a block reads two bytes of the shape word, and a test that is decided reads none.
 Condition ShapeTestEmitter::passes(CellPointer cell, LayoutSetID tested, const ShapeTest& test)
 {
     switch (test.form) {
@@ -166,7 +135,6 @@ Condition ShapeTestEmitter::passes(CellPointer cell, LayoutSetID tested, const S
     return passes(shapeWordOf(cell), tested, test);
 }
 
-// The word of a cell that is no compiled object lacks compiledObjectShapeBit, which the word of every shape has. It is below each of those words, and the sum of it and a shape does not wrap: every form that holdsForAnyCell() refuses it.
 Condition ShapeTestEmitter::passes(Word32 shapeWord, LayoutSetID tested, const ShapeTest& test)
 {
     switch (test.form) {
@@ -204,12 +172,10 @@ Condition ShapeTestEmitter::passesRange(Word32 shapeWord, const ShapeTest& test)
     return below(add(shapeWord, test.last()), test.count);
 }
 
-// The halfword of a cell that is no compiled object lacks shapeBlockMarker, so it is below that of every block.
 Condition ShapeTestEmitter::passesBlockByte(CellPointer cell, const ShapeTest& test)
 {
     TypedPointer pointer = m_out.address(m_heaps.AOTObject_shapeWord, cell.value(), offsetOfShapeWord + 1);
     uint16_t expectedHalfword = blockTestHalfword(test.blockByte);
-    // Extended by its sign, the halfword of a block that can be tested fits the immediate of a comparison on arm64.
     Word32 halfword(isX86_64() ? m_out.load16ZeroExt32(pointer) : m_out.load16SignExt32(pointer));
     Word32 expected = word32(isX86_64() ? expectedHalfword : static_cast<int16_t>(expectedHalfword));
     if (test.form == ShapeTestForm::Block)
@@ -226,7 +192,6 @@ ShapeTestEmitter::BitSetConstant ShapeTestEmitter::bitSetConstant(LayoutSetID te
     }).iterator->value;
 }
 
-// A shape out of reach takes the bit behind the last one, which is clear. So the test is one bit test: no second exit, and no flag that is made into a value.
 Condition ShapeTestEmitter::passesBitSet(Word32 shapeWord, LayoutSetID tested, const ShapeTest& test)
 {
     Word32 distanceFromLast = add(shapeWord, word32(test.last()));
@@ -236,7 +201,6 @@ Condition ShapeTestEmitter::passesBitSet(Word32 shapeWord, LayoutSetID tested, c
         return m_out.address(m_heaps.AOTImage_tables, offsetBy(words, zeroExtended(element), logSize).value(), offset);
     };
     if (constant.entries == PagedBitSet::Entries::Hashed) {
-        // A shape out of reach finds another number in its slot, like any shape that is no member.
         static_assert(sizeof(PagedBitSet::Slot) == sizeof(uint16_t));
         Word32 slot = shiftRightUnsigned(mul(distanceFromLast, word32(PagedBitSet::multiplierIn(constant.headOfHashedSet))), static_cast<int32_t>(PagedBitSet::shiftIn(constant.headOfHashedSet)));
         Word32 held(m_out.load16ZeroExt32(addressOf(slot, PagedBitSet::logBytesPerSlot, PagedBitSet::offsetOfSlots)));
@@ -244,7 +208,6 @@ Condition ShapeTestEmitter::passesBitSet(Word32 shapeWord, LayoutSetID tested, c
     }
     Word32 index = select(below(distanceFromLast, test.count), distanceFromLast, test.count);
     if (constant.entries == PagedBitSet::Entries::None) {
-        // Both targets are little-endian, so the pages are read by halves: the instructions are shorter.
         constexpr unsigned logBitsPerHalf = PagedBitSet::logBitsPerPage - 1;
         constexpr unsigned logBytesPerHalf = PagedBitSet::logBytesPerWord - 1;
         Word32 half(m_out.load32(addressOf(shiftRightUnsigned(index, word32(logBitsPerHalf)), logBytesPerHalf)));
@@ -256,7 +219,6 @@ Condition ShapeTestEmitter::passesBitSet(Word32 shapeWord, LayoutSetID tested, c
     return hasBits(Integer(m_out.lShr(bits.value(), index.value())), 1);
 }
 
-// No shape that reaches the test is out of reach of a set that has a bit for each known shape, so the distance is the index as it is.
 std::optional<Condition> ShapeTestEmitter::passesBitSetThatHoldsEveryKnownShape(Word32 shapeWord, LayoutSetID tested, LayoutSetID known, std::span<const uint32_t> testedShapes, std::span<const uint32_t> knownShapes)
 {
     constexpr uint32_t maxNumberOfBits = maxPagesInShortShapeSet * PagedBitSet::bitsPerPage;
@@ -305,7 +267,6 @@ void ShapeTestEmitter::switchOnShape(CellPointer cell, std::span<const LayoutSet
             if (tests[index].form == ShapeTestForm::OneShape)
                 switchTargets.append(SwitchTarget { static_cast<int32_t>(AOT::shapeWordOf(tests[index].first)), targets[index] });
         }
-        // switchOn() takes each value once. Equal values stay in the order of the cases, so the first case keeps its shape.
         AOT::stableSort(switchTargets, { }, &SwitchTarget::caseValue);
         switchTargets.shrink(std::ranges::unique(switchTargets, { }, &SwitchTarget::caseValue).begin() - switchTargets.begin());
         if (switchTargets.isEmpty()) {

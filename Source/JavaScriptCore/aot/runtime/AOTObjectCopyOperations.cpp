@@ -44,7 +44,6 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// The keys that a copy leaves out.
 class ExcludedKeys {
     WTF_MAKE_NONCOPYABLE(ExcludedKeys);
 public:
@@ -150,7 +149,6 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
     TypeInfo info = structure->typeInfo();
     if (source->hasNonReifiedStaticProperties() || info.overridesGetOwnPropertySlot() || info.overridesAnyFormOfGetOwnPropertyNames() || structure->hasUnderscoreProtoPropertyExcludingOriginalProto() || hasIndexedProperties(structure->indexingType()))
         return false;
-    // As in the engine's own copy, which takes the keys of such a source names first.
     bool symbolsComeLast = !structure->canPerformFastPropertyEnumerationCommon();
     Vector<std::pair<UniquedStringImpl*, PropertyOffset>, 4> symbols;
     bool everyPropertyIsPlain = true;
@@ -180,11 +178,9 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
     return true;
 }
 
-// What has been read out of a source of any kind is put into an ordinary object, which gets the same Structure each time the names are the same.
 static bool tryAssignCollectedProperties(JSGlobalObject* globalObject, VM& vm, Object& target, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
     static constexpr size_t minNumberOfNames = 4;
-    // With more names than a chain of Structures holds the object would be a dictionary, which has no plan.
     if (names.size() < minNumberOfNames || names.size() > static_cast<size_t>(Structure::s_maxTransitionLength))
         return false;
     for (UniquedStringImpl* name : names) {
@@ -218,7 +214,6 @@ static bool tryCopyPropertiesExcluding(JSGlobalObject* globalObject, VM& vm, JSO
     return true;
 }
 
-// An ordinary object with such a Structure gets a plain property by a store and, for a new name, the next Structure. Nobody has to be told.
 static bool takesPlainPropertiesDirectly(Structure* target)
 {
     return target->typeInfo().type() == FinalObjectType
@@ -315,7 +310,6 @@ static bool tryCopyRecordDataProperties(VM& vm, JSObject* target, JSObject* obje
     return hasOnlyFields && canCopy && tryStoreCopiedProperties(vm, target, copied);
 }
 
-// Of the primitives only a string has own properties. Options that nobody has given are an empty literal.
 static ALWAYS_INLINE bool hasOwnPropertiesToCopy(JSValue source)
 {
     if (!source.isObject())
@@ -327,7 +321,6 @@ static ALWAYS_INLINE bool hasOwnPropertiesToCopy(JSValue source)
     return structure->maxOffset() != invalidOffset || structure->isDictionary() || structure->isCompiledStructure() || hasIndexedProperties(structure->indexingType()) || structure->hasNonReifiedStaticProperties();
 }
 
-// Nothing sees the target before the copy is complete, so what the source runs cannot tell when the properties are defined.
 static NEVER_INLINE void defineCollectedProperties(JSGlobalObject* globalObject, VM& vm, JSObject* target, Object* record, Vector<UniquedStringImpl*, 8>& copiedNames, MarkedArgumentBuffer& copiedValues)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -335,7 +328,6 @@ static NEVER_INLINE void defineCollectedProperties(JSGlobalObject* globalObject,
         return;
     if (record && tryAssignCollectedProperties(globalObject, vm, *record, copiedNames, copiedValues))
         return;
-    // An element is no property that a definition by name knows.
     bool hasIndex = std::ranges::any_of(copiedNames, [](UniquedStringImpl* name) {
         return !!parseIndex(PropertyName(name));
     });
@@ -352,7 +344,6 @@ static NEVER_INLINE void defineCollectedProperties(JSGlobalObject* globalObject,
     }
 }
 
-// None of the ways that run no code takes a getter, and each would walk the source to find that out.
 static NEVER_INLINE bool tryCopyCallingGetters(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* from, const ExcludedKeys& excluded)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -367,13 +358,11 @@ static NEVER_INLINE bool tryCopyCallingGetters(JSGlobalObject* globalObject, VM&
     RETURN_IF_EXCEPTION(scope, false);
     if (result != PropertyWalk::Result::Completed)
         return false;
-    // The walk hands out no element.
     if (!isCompiledObject(target) && takesPlainPropertiesDirectly(target->structure()) && !names.contains(vm.propertyNames->underscoreProto.impl()) && tryStoreCopiedProperties(vm, target, names, values))
         return true;
     RELEASE_AND_RETURN(scope, (defineCollectedProperties(globalObject, vm, target, compiledObjectOrNull(target), names, values), true));
 }
 
-// A record with plain elements copied into a record of another layout: the names at once, then the elements. No code runs, so the order of the two does not show.
 static NEVER_INLINE bool tryCopyNamesThenElements(Instance* instance, JSGlobalObject* globalObject, VM& vm, Object& target, JSObject* from, JSObject* holder)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -434,10 +423,8 @@ static void copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObject* globa
     Object* record = compiledObjectOrNull(target);
     if (record) {
         Object* other = excluded.isEmpty() ? compiledObjectOrNull(from) : nullptr;
-        // An object of the target's own layout is copied word by word.
         if (other && record->shapeWord() == other->shapeWord() && record->tryCopyFieldsOf(vm, *other))
             return;
-        // A plan and the other ways that run no code do not read elements.
         if (other && other->hasExtraProperties() && !(record->orderWord() & orderWordIntegrityBits)) {
             JSObject* holder = PropertyWalk::objectHoldingIndexedProperties(other);
             if (holder && hasIndexedProperties(holder->indexingType())) {
@@ -451,7 +438,6 @@ static void copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObject* globa
             return;
     }
     if (excluded.isEmpty() && target->type() == FinalObjectType && from->type() == FinalObjectType) {
-        // An ordinary object without properties takes the Structure of an ordinary source and its values word by word, as in the engine's own copy.
         bool mayTakeStructure = !target->structure()->isCompiledStructure() && !from->structure()->isCompiledStructure() && !from->hasNonReifiedStaticProperties() && from->structure()->canPerformFastPropertyEnumerationCommon();
         if (mayTakeStructure && objectCloneFast(vm, uncheckedDowncast<JSFinalObject>(target), from))
             return;
@@ -459,19 +445,16 @@ static void copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObject* globa
     if (takesPlainPropertiesDirectly(target->structure()) && tryDefinePropertiesOnOrdinaryObject(vm, *instance->state, target, from, excluded.names()))
         return;
     if (isCompiledObject(from) && PropertyWalk::hasGetterToCall(from)) {
-        // What the getters give is read into an ordinary object, which is copied like any other. Nothing sees the target before the copy is complete.
         auto isExcluded = [&](UniquedStringImpl* name) {
             return excluded.contains(name);
         };
         ScopedLambda<bool(UniquedStringImpl*)> isLeftOut = isExcluded;
-        // A rest is read into the object that was made for it.
         bool isEmptyOrdinaryObject = !excluded.isEmpty() && target->structure() == globalObject->objectStructureForObjectConstructor();
         JSObject* read = PropertyWalk::tryCopyCallingGetters(globalObject, from, PropertyWalk::NewObjectTakes::Definitions, excluded.isEmpty() ? nullptr : &isLeftOut, isEmptyOrdinaryObject ? target : nullptr);
         RETURN_IF_EXCEPTION(scope, void());
         if (read == target)
             return;
         if (read) {
-            // Every name may have been left out.
             if (!hasOwnPropertiesToCopy(read))
                 return;
             if (record && tryRepeatAssignment(vm, *instance->state, target, read, 0) != RepeatedCopy::IsNotDone)
@@ -490,14 +473,12 @@ static void copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObject* globa
     }
     if (excluded.isEmpty() && target->type() == FinalObjectType && tryCopyRecordDataProperties(vm, target, from))
         return;
-    // As in the engine's own copy, which decides the order of the source's keys from here on.
     if (from->hasNonReifiedStaticProperties()) {
         from->reifyAllStaticProperties(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
     }
     auto* ordinary = dynamicDowncast<JSFinalObject>(target);
     bool canPutDirectly = ordinary && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible();
-    // The engine's own copy takes the keys of a source that has elements names first.
     JSObject* holderOfElements = isCompiledObject(from) ? PropertyWalk::objectHoldingIndexedProperties(from) : from;
     bool hasElements = holderOfElements && hasIndexedProperties(holderOfElements->indexingType());
     if (canPutDirectly && excluded.isEmpty() && !hasElements) {
@@ -579,7 +560,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instan
     OPERATION_RETURN(scope);
 }
 
-// A function of its own, so that the copy by a map saves no registers for it.
 static NEVER_INLINE OperationReturnType<void> JIT_OPERATION_ATTRIBUTES copyDataPropertiesFollowingPlan(Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
 {
     if (!count && tryCopyFollowingPlanWithoutFrame(*instance, target, source, excludedRun))
@@ -587,7 +567,6 @@ static NEVER_INLINE OperationReturnType<void> JIT_OPERATION_ATTRIBUTES copyDataP
     AOT_MUST_TAIL_CALL return operationAOTCopyDataProperties(instance, target, source, excludedRun, count, excludedKeys);
 }
 
-// The stub in front calls it where a copy that takes no frame is kept at the place of this one.
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     if (!count && tryCopyByFieldMapWithoutFrame(*instance, target, source, excludedRun)) [[likely]]
@@ -600,19 +579,16 @@ static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObj
     bool canHaveStructureOfSource = !excluded.numberPlusOne && source->type() == FinalObjectType && (!source->structure()->isDictionary() || flattenOnceUnlessCopiedAsDictionary(vm, source)) && source->structure()->canPerformFastPropertyEnumerationCommon();
     if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr)
         return copy;
-    // The engine's clone leaves out a source that never got a property. Its copy is as large as it is: what is copied to be added to keeps its room.
     Structure* structure = source->structure();
     bool isPlainEmptyObject = canHaveStructureOfSource && !structure->didTransition() && !structure->seenProperties().bits() && !source->butterfly() && checkStructureForClone(structure)
         && structure->realm() == globalObject && structure->storedPrototype() == globalObject->objectPrototype();
     if (isPlainEmptyObject)
         return JSFinalObject::create(vm, structure);
-    // The copy below goes by the Structure alone, and no Structure lists elements.
     if (hasIndexedProperties(structure->indexingType()))
         return nullptr;
     return tryCopyAsOrdinaryObject(vm, globalObject, source, excluded);
 }
 
-// A copy of a record is a record: the names have the same places in it, and whoever expects the type of the source finds it.
 // Out of line: the operation keeps nothing alive across the calls in here.
 static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Object& source)
 {
@@ -621,7 +597,6 @@ static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobal
     return tryCopyAsOrdinaryObject(vm, globalObject, &source, ExcludedRun { });
 }
 
-// `const { id, ...rest } = record`: the words of the source, and the slots of the names that are left out emptied. Whoever expects the type of the source finds it.
 static NEVER_INLINE JSObject* tryCopyCompiledObjectWithout(Instance* instance, JSGlobalObject* globalObject, VM& vm, Object& source, ExcludedRun excluded)
 {
     if (&source.state() != instance->state)
@@ -635,7 +610,6 @@ static NEVER_INLINE JSObject* tryCopyCompiledObjectWithout(Instance* instance, J
     Object* copy = Object::tryCreateCopyOfFields(vm, source);
     if (!copy)
         return nullptr;
-    // The copy is new and each of the fields may leave its slot: nothing is thrown.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     for (uint32_t number : excluded.identifiers) {
         DeletePropertySlot slot;
@@ -646,11 +620,9 @@ static NEVER_INLINE JSObject* tryCopyCompiledObjectWithout(Instance* instance, J
     return copy;
 }
 
-// Out of line: the list of excluded keys takes a large frame, which the copies that need no names would pay for.
 static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // None of the ways that run no code takes a getter. A copy that leaves names out asks further on.
     if (!run.numberPlusOne && excludedKeys.empty() && source.isObject() && isCompiledObject(asObject(source)) && PropertyWalk::hasGetterToCall(asObject(source))) {
         JSObject* read = PropertyWalk::tryCopyCallingGetters(globalObject, asObject(source), PropertyWalk::NewObjectTakes::Definitions);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -709,7 +681,6 @@ static bool hasNoGetterAndNoProto(JSObject* ordinary)
         && !ordinary->canHaveExistingOwnIndexedGetterSetterProperties() && !ordinary->hasNonReifiedStaticProperties();
 }
 
-// Object.assign({}, source) makes what { ...source } makes where a store to the new object is a definition all the way: nothing on Object.prototype intercepts one, the source has no name __proto__, and it runs no code that could change that.
 static bool isAssignedAsCopied(VM& vm, JSGlobalObject* globalObject, JSValue source)
 {
     Structure* above = globalObject->objectPrototype()->structure();
@@ -717,7 +688,6 @@ static bool isAssignedAsCopied(VM& vm, JSGlobalObject* globalObject, JSValue sou
         return false;
     if (!source.isObject())
         return true;
-    // Of a source that has room for elements the engine's copy takes names before symbols, and its Object.assign takes both as they were stored.
     JSObject* holderOfElements = isCompiledObject(asObject(source)) ? PropertyWalk::objectHoldingIndexedProperties(asObject(source)) : asObject(source);
     if (holderOfElements && hasIndexedProperties(holderOfElements->indexingType()))
         return false;
@@ -765,7 +735,6 @@ static NEVER_INLINE JSObject* assignToNewObject(JSGlobalObject* globalObject, VM
     return target;
 }
 
-// `Object.assign({}, source)`. Nobody else has the literal, so it is made here.
 JSC_DEFINE_JIT_OPERATION(operationAOTAssignToNewObject, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAssignToNewObject);
@@ -775,13 +744,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAssignToNewObject, JSCell*, (Instance* inst
     OPERATION_RETURN(scope, made);
 }
 
-// Whether every object with this Structure is copied word for word, into an object with the same Structure.
 static bool isCopiedWithItsStructure(JSGlobalObject* globalObject, Structure* structure)
 {
     return checkStructureForClone(structure) && structure->canPerformFastPropertyEnumerationCommon() && structure->realm() == globalObject && structure->storedPrototype() == JSValue(globalObject->objectPrototype());
 }
 
-// The stub in front makes the next copy of an object with this Structure that gets these names.
 static void rememberCopyWithNames(Instance* instance, VM& vm, Structure* structureOfSource, JSObject* copy, std::span<const EncodedJSValue> names)
 {
     static_assert(MarkedSpace::largeCutoff <= UINT16_MAX);
@@ -801,7 +768,6 @@ static void rememberCopyWithNames(Instance* instance, VM& vm, Structure* structu
     auto recordAt = [&](uint32_t offset) -> CopyWithNames& {
         return *reinterpret_cast<CopyWithNames*>(table.subspan(offset, sizeof(CopyWithNames)).data());
     };
-    // When more kinds of copies come here than the table holds, each taking the place of another would cost more than all the table saves: one in many does.
     uint32_t offsetOfPlace = placeOfCopyWithNames(structureOfSource->id().bits(), static_cast<uint32_t>(names[0])) * sizeof(uint32_t);
     if (wordAt(offsetOfPlace) && (++instance->objects.copiesThatFoundTheirPlaceOccupied & copiesThatTakeAnOccupiedPlaceMask))
         return;
@@ -814,7 +780,6 @@ static void rememberCopyWithNames(Instance* instance, VM& vm, Structure* structu
         PropertyOffset offset = structure->get(vm, uid, attributes);
         if (!isValidOffset(offset) || attributes)
             return;
-        // The stub tells nobody that it writes over what the source held under the name.
         if (isValidOffset(structureOfSource->get(vm, uid)))
             structure->didCachePropertyReplacement(vm, offset);
         namesInCopy.append({ number, offsetRelativeToBase(offset) });
@@ -823,7 +788,6 @@ static void rememberCopyWithNames(Instance* instance, VM& vm, Structure* structu
     uint32_t size = sizeof(CopyWithNames) + namesInCopy.size() * sizeof(NameInCopy);
     if (offsetOfFirstCopyWithNames + size > sizeOfCopiesWithNames)
         return;
-    // A record that loses its place to one of the same length gives it its bytes.
     uint32_t offset = wordAt(offsetOfPlace);
     if (!offset || recordAt(offset).count != namesInCopy.size()) {
         if (offsetOfFirstCopyWithNames + wordAt(offsetOfTakenBytesOfCopiesWithNames) + size > sizeOfCopiesWithNames)
@@ -844,7 +808,6 @@ static void rememberCopyWithNames(Instance* instance, VM& vm, Structure* structu
     wordAt(offsetOfPlace) = offset;
 }
 
-// `{ ...source, name, other }`. The list holds the count, the numbers of the names and their values. No name is an index or `__proto__`, and none comes twice.
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyObjectAndDefine, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint32_t, uint32_t count, const EncodedJSValue* list))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyObjectAndDefine);
@@ -877,7 +840,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyObjectAndDefine, JSCell*, (Instance* in
     OPERATION_RETURN(scope, copy);
 }
 
-// `{ ...first, ...second }`. Null: nothing was done that anybody sees, and the caller copies the two one behind the other.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryCopyTwoObjects, JSCell*, (Instance* instance, EncodedJSValue first, EncodedJSValue second))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTTryCopyTwoObjects);

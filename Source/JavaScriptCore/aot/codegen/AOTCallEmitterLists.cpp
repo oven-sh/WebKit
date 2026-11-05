@@ -16,11 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-Boxed CallEmitter::callWithList(const OperationContext& context, Boxed callee, Boxed thisValue, Word32 count, Pointer list, const CallOptions& options)
-{
-    return Boxed(callStub(context, AOT::callWithList(positionOf(context, options)), { callee.value(), thisValue.value(), zeroExtended(count).value(), list.value() }, options).first);
-}
-
 void CallEmitter::generateCallList(const ValueContext& value)
 {
     Boxed callee = in<Boxed>(value->calleeOperand());
@@ -33,8 +28,8 @@ void CallEmitter::generateCallList(const ValueContext& value)
         .thisValue = thisValue.value(),
     };
     if (!value.returnCall()) {
-        if (value->isTailCall && mayForwardCallToReceiver(value))
-            requireCallableBeforeTailCall(value, callee, thisValue);
+        if (mayForwardCallToReceiver(value.value()))
+            requireForwardedCallCanBeMade(value, callee, thisValue, value->isTailCall);
         defineResultOfCallByValue(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee(value) }));
         return;
     }
@@ -60,11 +55,6 @@ Boxed CallEmitter::constructValue(const OperationContext& context, ConstructSynt
     return callByConvention(context, call, { .throwSite = siteThatNamesCallee, .constructs = true });
 }
 
-Boxed CallEmitter::superConstructWithList(const OperationContext& context, Boxed parent, Boxed newTarget, Word32 count, Pointer list)
-{
-    return Boxed(callStub(context, AOT::superConstructWithList(), { parent.value(), newTarget.value(), zeroExtended(count).value(), list.value() }, { .constructs = true }).first);
-}
-
 Boxed CallEmitter::superConstructWithArray(const OperationContext& context, Boxed parent, Boxed newTarget, CellPointer list)
 {
     return Boxed(callStub(context, AOT::superConstructWithArray(), { parent.value(), newTarget.value(), list.value() }, { .constructs = true }).first);
@@ -75,7 +65,6 @@ void CallEmitter::generateConstruct(const ValueContext& value)
     RELEASE_ASSERT(!value.returnCall());
     Boxed callee = in<Boxed>(value->calleeOperand());
 
-    // The entry is entered as the stub ConstructValue enters it, which tests the stack in front of it: new.target is the first argument, and undefined lies in the registers that the entry reads without asking the count.
     Type typeOfCallee = typeOf(value->calleeOperand());
     FunctionID constructor = typeOfCallee.isObject() && !value->newTargetOperand() ? singleFunctionOf(types(), typeOfCallee) : FunctionID();
     CodeUnit entry { constructor, CodeRole::AllocatingConstructEntry };

@@ -60,7 +60,6 @@ static constexpr ASCIILiteral programText =
     "  b0(v0: anything):\n"
     "    Return v0\n"
     "}\n"
-    // A closure keeps only the compiler's own captures in the form of their written types. So the number is a raw double, which is no reference.
     "function f2 name=\"plain\" length=2 captures=[{type=anything}, {type=number flags=[IsFromCompiler]}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {\n"
     "  b0(v0: anything, v1: number, v2: anything, v3: anything):\n"
     "    v4 = Call v0, -, v1, v2, v3\n"
@@ -81,7 +80,6 @@ static constexpr ASCIILiteral programText =
     "    v5 = Call v4 [isNeverInlined]\n"
     "    Return v5\n"
     "}\n"
-    // Whoever got `create` may call it any number of times, so what the closures capture stays in their cells.
     "function f5 name=\"create\" parameters=[{type=anything}] results=[{type=anything}] {\n"
     "  b0(v0: anything):\n"
     "    v1 = ToNumber v0\n"
@@ -193,7 +191,6 @@ static void testCreatedCellsAreSlim(LoadedProgram& program)
         AOT_TEST_CHECK(closure->numberOfReferences() == counts.references);
         AOT_TEST_CHECK(equalSpans(closure->captures(), capturesOf(function, jsNull()).span()));
         AOT_TEST_CHECK(closure->canConstruct() == functionCase.canConstruct);
-        AOT_TEST_CHECK(!closure->isBound());
 
         JSObject* prototype = functionCase.isAsync ? static_cast<JSObject*>(realm->asyncFunctionPrototype()) : realm->functionPrototype();
         AOT_TEST_CHECK(closure->getPrototypeDirect() == JSValue(prototype));
@@ -254,7 +251,6 @@ static void testVisitDuringReify(LoadedProgram& program)
     VM& vm = program.vm();
     FunctionID function = findSlimFunction(program, "plain"_s);
     unsigned numberOfReferences = captureCountsOf(function).references;
-    // Otherwise a visitor that goes on past the references visits the same words as one that stops there.
     AOT_TEST_CHECK(numberOfReferences < captureCountsOf(function).captures);
     JSObject* captured = constructEmptyObject(program.realm());
     SlimClosure* closure = createSlimClosure(program, function, captured);

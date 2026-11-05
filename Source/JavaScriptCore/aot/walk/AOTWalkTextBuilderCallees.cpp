@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Of a text that lies in a builder, where code of the program runs in the middle of a growth.
-// TypedOperations: `s += obj`: every part that may run code is converted where the join stands, in the order of the parts, and only then the first part is appended: whatever the conversions run or throw finds the text as it was.
-// Inlining: `s = join(s, x)`: the callee hands its parameter back with more behind it, so its copy appends. Where the walk makes the call after all, the call takes a string, and the builder is filled anew with what the call gives.
-// At a suspension: no text lies in a builder across one. At a throw in a callee: no text that grows in callees lies in a builder under a handler. Withheld: the call is a reader.
-
 #include "config.h"
 #include "AOTWalkTextBuilders.h"
 
@@ -30,21 +25,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 
 static constexpr uint32_t frontOperandInTextBuilderCallees = 0;
 static_assert(OperandIndex::Add::left == frontOperandInTextBuilderCallees && OperandIndex::Strcat::parts == frontOperandInTextBuilderCallees);
 
-// ---- A part that may run code
-
-bool convertsPartsThatMayRunCode()
-{
-    constexpr bool convertsWhereJoinStands = true;
-    return convertsWhereJoinStands;
-}
-
-// Add converts an object with another hint than Strcat does. A symbol throws in either.
 Reference primitivePartOfStringBuilder(Walker& walker, Opcode join, Reference part, Origin origin)
 {
     if (hasTextByItself(walker.types().at(walker.typeOf(part))))
@@ -73,13 +58,10 @@ static void appendPartsInTextBuilderCallees(Walker& walker, const BodyValue& joi
         appendPartsToStringBuilder(walker, text, name, parts, origin);
 }
 
-// `line += c` with c out of a list that is written number[], `text += `${row.id},${row.title}\n``: what is written of each part that is not proven to have text by itself is tested, every test in front of every append.
-// Where all pass no part runs code, and each is appended in its narrowest form. Where one fails the parts are converted as the join converts them. A test runs no code, so nothing changes its place.
 static bool appendPartsBehindTestsOfWhatIsWrittenInTextBuilderCallees(Walker& walker, const BodyValue& join, std::span<const Reference> parts, Origin origin)
 {
     if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses())
         return false;
-    // The parts are the operands of the join one by one: takePartsInWalkTexts() has refused the join by itself.
     Vector<ValueID, 8> written;
     join.forEachOperand([&](ValueID operand, uint32_t) {
         written.append(operand);
@@ -101,7 +83,6 @@ static bool appendPartsBehindTestsOfWhatIsWrittenInTextBuilderCallees(Walker& wa
         ExpectationOfValue expectation = findExpectation(walker, written[place]);
         if (!expectation.type || isNeverType(expectation.type) || !hasTextByItself(walker.types().at(expectation.type)))
             return false;
-        // In a copy the part may be known to be something else than is written of it.
         if (!walker.types().overlap(walker.typeOf(parts[place]), expectation.type))
             return false;
         if (!shouldOpenGuess(walker, parts[place], expectation.type, expectation.isDeclared, weightOfPartAppendedInLine))
@@ -111,7 +92,6 @@ static bool appendPartsBehindTestsOfWhatIsWrittenInTextBuilderCallees(Walker& wa
     if (guesses.isEmpty())
         return false;
 
-    // Every test is built before a block is made: a test that is decided opens no guess, and nothing is left half built.
     Vector<Reference, 4> tests;
     for (const GuessAtPart& guess : guesses) {
         Draft test(Opcode::TypeTest, origin);

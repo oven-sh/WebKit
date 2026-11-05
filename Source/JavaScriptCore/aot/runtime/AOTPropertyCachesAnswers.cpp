@@ -52,7 +52,6 @@ enum class OutOfLineStorageChange : uint8_t { Unsupported, Stays, IsFirst, Doubl
 
 }
 
-// The stubs double storage out of line that holds no more than this. AOTStubsPropertyExtraProperties.cpp has the same number.
 static constexpr unsigned maxCapacityOfStorageGrownByStub = 32;
 
 static PropertyAnswer uncacheableOnce(SlotAccess access)
@@ -89,10 +88,8 @@ bool isPreparedBeforeLookupsSlow(VM& vm, UniquedStringImpl* symbol)
 
 void prepareForLookup(JSGlobalObject* globalObject, JSObject* compiledObject, UniquedStringImpl* uid)
 {
-    // Each instance registers its own function under the one uid of an engine symbol: the holder's instance answers for it.
     PropertyCaches* caches = &*uncheckedDowncast<Object>(compiledObject)->state().propertyCaches;
     JSObject* function = caches->preparationBeforeLookupsUnder(uid);
-    // What the function itself looks at is in the library's own form. A frozen object was asked when it was frozen, and takes no store since.
     if (!function || caches->isPreparingHolder() || caches->holderLookedAtByName() == compiledObject || uncheckedDowncast<Object>(compiledObject)->isFrozen())
         return;
     caches->setIsPreparingHolder(true);
@@ -134,7 +131,6 @@ void prepareForWalk(JSGlobalObject* globalObject, JSObject* object)
 
 Structure* structureForPrimitive(JSGlobalObject* globalObject, JSValue primitive)
 {
-    // Whoever asks keeps the answer across code that may give the cell another Structure: see putAndCache().
     if (primitive.isCell())
         return WTF::opaque(primitive.asCell()->structure());
     if (primitive.isNumber())
@@ -215,7 +211,6 @@ static PropertyAnswer classifyCustomGetter(const ReadQuery& query)
     const PropertySlot& slot = query.slot;
     if (!query.structureBefore->propertyAccessesAreCacheable() || query.structureBefore->isDictionary())
         return PropertyAnswer::uncacheable(SlotAccess::Read);
-    // Null for a primitive. classifyRead() has answered for what a primitive has of its own.
     JSObject* base = query.base.getObject();
     JSObject* holder = slot.slotBase();
     if (base && base->structure() != query.structureBefore)
@@ -332,7 +327,6 @@ static PropertyAnswer classifyFieldRead(const ReadQuery& query, Object& object, 
         return answer;
     bool mayExistWithoutStorage = field.flags & fieldMayExistWithoutStorage;
     ExtraPropertyLookupResult amongExtraProperties = lookUpExtraProperty(query.globalObject->vm(), object.compiledStructure(), query.uid, query.mode).result;
-    // What the Structure lists among the extra properties lies there in every object of the Structure, whatever the key order says of the field.
     if (amongExtraProperties == ExtraPropertyLookupResult::Unknown && (mayExistWithoutStorage || object.isInSlot(field)))
         return answer;
     if (amongExtraProperties != ExtraPropertyLookupResult::Absent)
@@ -375,7 +369,6 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     std::optional<unsigned> index = moduleNamespace->find(query.uid);
     if (!index) {
-        // `import * as pkg from "a-commonjs-package"; pkg.member`. The object has a Structure of its own, and gets another one when a spy or a mock replaces the value.
         if (JSValue captured = moduleNamespace->capturedValueWithoutAllocating(query.uid))
             return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = captured };
         return PropertyAnswer::uncacheable(SlotAccess::Read);
@@ -383,7 +376,6 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     State& state = State::of(query.structureBefore->realm());
     const ModuleExportData& moduleExport = state.modules->table().exports(moduleNamespace->module())[*index];
     if (moduleExport.kind() == ModuleExportKind::Namespace) {
-        // `export * as inner from "./inner"`: the one namespace object that the realm has for that module. What a spy or a mock replaces is replaced inside it.
         JSValue inner = state.modules->readExportIfInitialized(moduleNamespace->module(), *index);
         if (!inner)
             return uncacheableOnce(SlotAccess::Read);
@@ -391,7 +383,6 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
     }
     if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->mockThatAnswersFor(moduleNamespace->module(), moduleExport))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
-    // The variable has no storage, because nothing is ever stored to it: it is the one closure of a function.
     if (traitsOf(moduleExport.variable.representation()).valueKind == SlotValueKind::DeferredClosure)
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     if (!ProgramStatics::readVariableWithoutAllocating(state.instance, moduleExport.variable))
@@ -401,7 +392,6 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
 
 enum class WordOfTypedArray : uint8_t { None, Length, ByteOffset };
 
-// The typed array getters that return a word of the view unchanged.
 static WordOfTypedArray findWordReturnedByGetter(Structure* receiverStructure, const ChainWalk& walk)
 {
     JSType type = receiverStructure->typeInfo().type();
@@ -425,7 +415,6 @@ static int16_t wordOfInheritedField(JSCell* holder, UniquedStringImpl* uid)
         return 0;
     Object& object = *uncheckedDowncast<Object>(holder);
     const FieldData* field = object.fieldNamed(object.state(), uid);
-    // A very large program numbers more names than an entry of the table of fields can hold.
     if (!field || !FieldTableEntry::hasColumn(field->name))
         return 0;
     FieldTableEntry entry = FieldTableEntry::forField(object.layout(), *field);
@@ -510,7 +499,6 @@ PropertyAnswer classifyRead(const ReadQuery& query)
     if ((structure->typeInfo().prohibitsPropertyCaching() && !structure->isCompiledStructure()) || isProxyType(type) || structure->needImpurePropertyWatchpoint())
         return PropertyAnswer::uncacheable(access);
     if (structure->isDictionary()) {
-        // Nothing of a cacheable dictionary moves when it is made flat: what the look found is where it was found.
         bool staysInPlace = !structure->isUncacheableDictionary();
         bool didFlatten = mayAllocate && flattenOnce(vm, receiver);
         if (!(didFlatten && staysInPlace) && (didFlatten || structure->isUncacheableDictionary() || !slot.isCacheableValue() || slot.slotBase() != receiver))
@@ -679,8 +667,7 @@ static bool isFunctionWithOrdinaryPut(VM& vm, JSCell* base, Structure* structure
 {
     if (isCompiledClosure(base)) {
         auto* closure = uncheckedDowncast<Closure>(base);
-        FunctionKindData kind = closure->kind();
-        if (closure->classData() || kind.callable() == CallableKind::Bound || kind.isConstructor)
+        if (closure->classData() || closure->kind().isConstructor)
             return false;
     } else if (base->type() != SlimClosureWithPropertiesType && (base->type() != JSFunctionType || base->classInfo() != JSBoundFunction::info()))
         return false;
@@ -712,7 +699,6 @@ static std::optional<PropertyAnswer> classifyReplacement(const StoreQuery& query
     Structure* structure = query.structureBefore;
     if (!slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != query.base || query.base->structure() != structure)
         return std::nullopt;
-    // The guard of a class ends when a member of the class gets another value, and a stub replaces a value without a report.
     if (structure->mayBePrototype())
         return std::nullopt;
     bool isDefinition = query.mode == PutMode::Define;
@@ -896,7 +882,6 @@ PropertyAnswer classifyCompiledObjectStore(const StoreQuery& query, Object& obje
     return object.structure() == query.structureBefore ? classifyExtraPropertyReplacement(access, lookup) : classifyExtraPropertyAddition(query, object, lookup);
 }
 
-// The order word says which fields an object has, that none of them lies outside its slot, and that the object is neither sealed nor frozen.
 static PropertyAnswer classifyFieldDeletion(const DeletionQuery& query, const Object& object, const CompiledStructure& before, const FieldData& field)
 {
     constexpr SlotAccess access = SlotAccess::Delete;

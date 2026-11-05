@@ -21,7 +21,6 @@ constexpr std::optional<FrameSlotKind> frameSlotKindOf(Representation representa
 {
     switch (representation) {
     case Representation::JSValue:
-    case Representation::LiteralString:
         return FrameSlotKind::Value;
     case Representation::Cell:
         return FrameSlotKind::Cell;

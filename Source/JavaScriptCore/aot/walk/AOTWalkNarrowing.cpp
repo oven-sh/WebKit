@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// A check that the types pass already, for TypedOperations.
-
 #include "config.h"
 #include "AOTWalk.h"
 

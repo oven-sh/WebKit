@@ -146,7 +146,6 @@ function f10 name="readsJoined" parameters=[{type=anything}] results=[{type=anyt
 
 static constexpr ASCIILiteral answersOfClosuresCapturingNothing = "true\nfalse\ntrue\n5\ntrue\n1\n1\n"_s;
 
-// The closure captures the object it is stored in, so the object is on the heap.
 static constexpr ASCIILiteral closuresCapturingTheirObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=function} flags=[IsRequired]}]
@@ -238,7 +237,6 @@ function f9 name="readsKept" results=[{type=anything}] {
 
 static constexpr ASCIILiteral answersOfClosuresCapturingTheirObject = "true\nfalse\ntrue\n9\ntrue\n"_s;
 
-// One slot takes the closures of two functions, and another a closure that was made over another object. Whoever calls such a field has to read it.
 static constexpr ASCIILiteral closuresOfSeveralKindsInOneSlot = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Handler" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
@@ -314,7 +312,6 @@ function f6 name="callsClosureOverOtherObject" parameters=[{type=anything}] resu
 
 static constexpr ASCIILiteral answersOfClosuresOfSeveralKindsInOneSlot = "1\n2\n5\n"_s;
 
-// An object in a frame holds a 32-bit reference to an object on the heap, which is read there and in a callee, and stored.
 static constexpr ASCIILiteral narrowReferencesInFrames = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Point" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]

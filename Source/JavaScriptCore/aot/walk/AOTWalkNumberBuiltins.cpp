@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// BuiltinCalls with TypedOperations and UnboxedNumbers: a call that goes by one row of Math, Number, String, Boolean, Object or BigInt, where the proven types of its operands leave less to do than the row does.
-// The callee is decided by binding: CallInWalkBuiltins has found the row. Every refusal stands in front of the first operation that is built. With Folding: an operand or a constant stands for the call.
-// At a suspension and at a throw: nothing of its own, whatever it builds is pure. Withheld: the call goes by its row.
-
 #include "config.h"
 #include "AOTWalkNumberForms.h"
 
@@ -24,9 +20,7 @@
 #include <cmath>
 #include <wtf/StdLibExtras.h>
 
-#if __has_include("AOTWalkNumberGuesses.h")
 #include "AOTWalkNumberGuesses.h"
-#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -45,13 +39,11 @@ static bool takesOnlyNumbersInNumberBuiltins(Walker& walker, const CallByOneRow&
     return true;
 }
 
-// The arguments as the body writes them. An argument that is left out is settled as undefined, and `Number()` is not `Number(undefined)`.
 static std::span<const ValueID> argumentsWrittenInNumberBuiltins(const BodyValue& call)
 {
     return call.opcode() == Opcode::Call ? call.argumentsOperands() : std::span<const ValueID>();
 }
 
-// The code in line of the row, on other operands. On numbers none of it reads or writes anything.
 static Draft draftOfCodeInLineInNumberBuiltins(Walker& walker, const CallByOneRow& call, std::span<const Reference> arguments)
 {
     const BuiltinOverload& overload = walker.program().builtins().at(call.overload);
@@ -82,7 +74,6 @@ static ValueID recordBehindNamesInNumberBuiltins(const Code& code, ValueID recor
     return record;
 }
 
-// `Math.abs(Math.abs(x))`: the operand is what the same code in line gave.
 static bool isResultOfCodeInLineInNumberBuiltins(Walker& walker, Reference reference, InlineBuiltin builtin)
 {
     if (!reference.isValue())
@@ -90,8 +81,6 @@ static bool isResultOfCodeInLineInNumberBuiltins(Walker& walker, Reference refer
     const Operation& record = walker.code().at(recordBehindNamesInNumberBuiltins(walker.code(), reference.id()));
     return record.opcode == Opcode::CallInline && record.inlineBuiltin() == builtin;
 }
-
-// ---- A rounded quotient of integers
 
 static std::optional<QuotientRounding> roundingOfBuiltinInNumberBuiltins(BuiltinID builtin)
 {
@@ -115,7 +104,6 @@ struct RoundedQuotientInNumberBuiltins {
 
 } // anonymous namespace
 
-// `Math.floor(a / b)`. The one finder under the builder and under the look at a loop: what it asks of the call is written in the body, and what it asks of the operands holds of every narrower type.
 static std::optional<RoundedQuotientInNumberBuiltins> findRoundedQuotientInNumberBuiltins(Walker& walker, BuiltinID builtin, const BodyValue& call, const InputsOfTypedOperation& inputs)
 {
     std::optional<QuotientRounding> rounding = roundingOfBuiltinInNumberBuiltins(builtin);
@@ -142,7 +130,6 @@ TypeID typeOfCallOnNumbersAhead(Walker& walker, const BodyIndex& index, const Bo
 {
     if (!walker.has(Mechanism::BuiltinCalls) || !hasMechanismsOfNumberForms(walker))
         return { };
-    // findQuotientOfIntegers() and wouldCallBuiltin() read the body that the walk stands in.
     if (&index != &walker.currentBodyIndex() || call.opcode() != Opcode::Call || call.isDoneInPlace())
         return { };
     TypeID typeOfCallee = types(call.calleeOperand());
@@ -159,9 +146,6 @@ TypeID typeOfCallOnNumbersAhead(Walker& walker, const BodyIndex& index, const Bo
     return typeOfDivisionOfIntegers(walker, quotient->rounding, types(quotient->division.dividend), types(quotient->division.divisor));
 }
 
-// ---- Math
-
-// `Math.max(i, 0, i)`, `Math.min(a, 255)`. NaN among the operands is the answer, so an operand that may be NaN stays. Integers are told apart by their ranges, and hold no -0.
 static Reference buildExtremumInNumberBuiltins(Walker& walker, const CallByOneRow& call)
 {
     bool asksForGreatest = *call.codeInLine == InlineBuiltin::MathMax;
@@ -177,7 +161,6 @@ static Reference buildExtremumInNumberBuiltins(Walker& walker, const CallByOneRo
             contenders.append(argument);
     }
 
-    // Read for the greatest. For the least every range is read with its signs turned.
     auto rangeOf = [&](Reference integer) {
         Range range = typeOfBuiltInNumberBuiltins(walker, integer).integers;
         return asksForGreatest ? range : Range { -range.maximum, -range.minimum };
@@ -213,7 +196,6 @@ static Reference buildToInt32InNumberBuiltins(Walker& walker, Reference number, 
     return walker.build(WTF::move(conversion));
 }
 
-// `Math.imul(h, 31)`. The code in line takes two int32, and the function converts each operand as `| 0` does.
 static Reference buildImulInNumberBuiltins(Walker& walker, const CallByOneRow& call)
 {
     if (call.arguments.size() != 2 || !takesOnlyNumbersInNumberBuiltins(walker, call))
@@ -221,13 +203,11 @@ static Reference buildImulInNumberBuiltins(Walker& walker, const CallByOneRow& c
     TypeArena& types = walker.types();
     bool takesOnlyInt32 = true;
     for (Reference factor : call.arguments) {
-        // Whatever the other is, its bits are multiplied by none.
         if (integerKnownInNumberForms(walker, factor) == std::optional<int64_t>(0) && walker.has(Mechanism::Folding))
             return factor;
         takesOnlyInt32 &= typeOfBuiltInNumberBuiltins(walker, factor).isInt32();
     }
     if (takesOnlyInt32) {
-        // A product that stays an int32, and is never -0, is the product.
         OperatorChoice product = chooseOperatorForm(walker.program(), types, Opcode::Mul, { walker.typeOf(call.arguments[0]), walker.typeOf(call.arguments[1]) });
         if (product.form != OperatorForm::Integers || !types.at(product.result).isInt32())
             return { };
@@ -252,7 +232,6 @@ static Reference buildClz32InNumberBuiltins(Walker& walker, const CallByOneRow& 
     if (!type.isNumber())
         return { };
     if (!type.isInt32()) {
-        // ToUint32 has the bits of ToInt32.
         Reference bits = buildToInt32InNumberBuiltins(walker, number, call.origin);
         return bits ? buildCodeInLineInNumberBuiltins(walker, call, singleElementSpan(bits)) : Reference();
     }
@@ -266,7 +245,6 @@ static Reference buildClz32InNumberBuiltins(Walker& walker, const CallByOneRow& 
     return leadingZeros == std::countl_zero(static_cast<uint32_t>(type.integers.maximum)) ? integerInNumberForms(walker, leadingZeros) : Reference();
 }
 
-// `Math.pow(x, 2)` is `x ** 2`.
 static Reference buildPowerInNumberBuiltins(Walker& walker, const CallByOneRow& call)
 {
     if (call.arguments.size() != 2 || !takesOnlyNumbersInNumberBuiltins(walker, call))
@@ -278,13 +256,11 @@ static Reference buildPowerInNumberBuiltins(Walker& walker, const CallByOneRow& 
         return buildOperatorInNumberForms(walker, Opcode::Mul, call.arguments[0], call.arguments[0], call.origin);
     if (!walker.has(Mechanism::Folding))
         return { };
-    // NaN ** 0 is 1.
     if (!exponent.asNumber())
         return integerInNumberForms(walker, 1);
     return exponent.asNumber() == 1 ? call.arguments[0] : Reference();
 }
 
-// One operand, which is a proven number. An operand or a constant that is what the function gives, or a cheaper operation.
 static Reference buildFunctionOfOneNumberInNumberBuiltins(Walker& walker, const CallByOneRow& call)
 {
     if (call.arguments.size() != 1)
@@ -303,12 +279,10 @@ static Reference buildFunctionOfOneNumberInNumberBuiltins(Walker& walker, const 
     case InlineBuiltin::MathCeil:
     case InlineBuiltin::MathTrunc:
     case InlineBuiltin::MathRound:
-        // Each of them keeps -0, NaN and the infinities.
         return mayHandOn && type.isNumberWithoutFraction() ? number : Reference();
     case InlineBuiltin::MathAbs:
         if (mayHandOn && (isResultOfCodeInLineInNumberBuiltins(walker, number, InlineBuiltin::MathAbs) || (type.isInteger() && type.integers.minimum >= 0)))
             return number;
-        // -0 would come of 0.
         if (type.isInteger() && type.integers.maximum < 0)
             return buildOperatorInNumberForms(walker, Opcode::Negate, number, { }, call.origin);
         return { };
@@ -325,7 +299,6 @@ static Reference buildFunctionOfOneNumberInNumberBuiltins(Walker& walker, const 
     }
 }
 
-// `Math.sign(n & 1 | 2)`: all operands are numbers, and the type that the row gives them holds one integer.
 static Reference constantWhereRowLeavesOneIntegerInNumberBuiltins(Walker& walker, const CallByOneRow& call)
 {
     if (!walker.has(Mechanism::Folding) || call.arguments.empty() || !takesOnlyNumbersInNumberBuiltins(walker, call))
@@ -370,8 +343,6 @@ static Reference buildSimplerMathCallInNumberBuiltins(Walker& walker, const Call
     }
 }
 
-// ---- Number(x), String(x), Boolean(x), Object(o), BigInt(b), called and not constructed
-
 static Reference buildConversionByCallInNumberBuiltins(Walker& walker, const CallByOneRow& call)
 {
     BuiltinID builtin = call.builtin;
@@ -415,16 +386,12 @@ static Reference buildConversionByCallInNumberBuiltins(Walker& walker, const Cal
     if (isAlreadyConverted)
         return mayHandOn ? value : Reference();
 
-    // Number(1n) is 1 where ToNumber throws, and an object runs code. Undefined, null and booleans convert as the operation does.
     if (isNumber && type.isNumberLike())
         return buildOperatorInNumberForms(walker, Opcode::ToNumber, value, { }, call.origin);
-    // No value runs code where its truth is asked.
     if (isBoolean)
         return buildOperatorInNumberForms(walker, Opcode::ToBoolean, value, { }, call.origin);
     return { };
 }
-
-// ---- The door
 
 Reference buildCallOnNumbers(Walker& walker, const CallByOneRow& call)
 {
@@ -433,7 +400,6 @@ Reference buildCallOnNumbers(Walker& walker, const CallByOneRow& call)
 
     if (walker.has(Mechanism::Folding)) {
         if (std::optional<PrimitiveKnownToFolding> folded = foldExactly(walker, call)) {
-            // A row that says less than the function does is believed, and the call stays.
             Reference constant = constantInNumberForms(walker, *folded);
             TypeID byRow = walker.resultTypeOf(draftOfCodeInLineInNumberBuiltins(walker, call, call.arguments));
             if (constant && byRow && walker.types().isSubset(walker.typeOf(constant), byRow))

@@ -16,7 +16,6 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTPrimitives.h"
 #include "AOTProgramIdentifiers.h"
-#include "AOTProgramStrings.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTState.h"
@@ -99,7 +98,6 @@ static bool typeAlwaysFits(const RuntimeLayoutTable& layouts, const FieldData& f
     constexpr OptionSet<PrimitiveSet> stringPrimitives { PrimitiveSet::String, PrimitiveSet::LiteralString };
     if (!(fromType.primitiveSet() - toType.primitiveSet() - PrimitiveSet::Absent - stringPrimitives).isEmpty())
         return false;
-    // A type that lists strings takes those and no other. One that lists none takes every string or none.
     if (fromType.primitiveSet().containsAny(stringPrimitives)) {
         if (toType.literalStrings().empty()) {
             if (!toType.primitiveSet().contains(PrimitiveSet::String))
@@ -137,7 +135,7 @@ std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData& to, J
     State& state = target.state();
     std::optional<AcceptedValue> accepted = state.objects->layouts.accept(to, value);
     uint64_t scratch = 0;
-    if (!accepted || !tryWriteSlot(*state.strings, to.slot.representation(), &scratch, value))
+    if (!accepted || !tryWriteSlot(state.instance, to.slot.representation(), &scratch, value))
         return std::nullopt;
     return accepted;
 }
@@ -166,8 +164,6 @@ void FieldMovePlan::appendField(const FieldData& from, PropertyOffset to)
     case SlotRepresentation::OptionalInt32:
     case SlotRepresentation::Boolean:
     case SlotRepresentation::OptionalBoolean:
-    case SlotRepresentation::LiteralString:
-    case SlotRepresentation::LiteralString32:
     case SlotRepresentation::Int32:
     case SlotRepresentation::Double:
     case SlotRepresentation::OptionalDouble:
@@ -218,7 +214,6 @@ bool applyMovesToNewObject(VM& vm, const FieldMovePlan& plan, JSFinalObject* tar
             if (slotHoldsAbsent(move.field->slot.representation(), wordsOfSource + move.from))
                 return false;
             uint32_t word = *reinterpret_cast<const uint32_t*>(wordsOfSource + move.from);
-            // The source may lie in a frame, and that address says nothing about the cage.
             value = word >= minCell32 ? JSValue(decodeCell32(target, word)) : JSValue::decode(word);
         } else {
             Object& object = *uncheckedDowncast<Object>(source);
@@ -315,7 +310,6 @@ namespace {
 
 struct PropertyMovedToOrdinaryCopy {
     UniquedStringImpl* name;
-    // Null for a property of an ordinary object, which lies at the offset.
     const FieldData* field;
     PropertyOffset offset;
 };
@@ -324,7 +318,6 @@ using PropertiesMovedToOrdinaryCopy = Vector<PropertyMovedToOrdinaryCopy, 16>;
 
 } // anonymous namespace
 
-// False where moves alone make no copy: a getter is called, a property that is not enumerable is left out, the library is asked to prepare a field.
 static bool listFieldsMovedToOrdinaryCopy(VM& vm, State& state, const Object& source, PropertiesMovedToOrdinaryCopy& properties)
 {
     ASSERT(!source.hasExtraProperties() && !source.hasOutOfLineKeyOrder());
@@ -363,7 +356,6 @@ static bool listPropertiesMovedToOrdinaryCopy(VM& vm, Structure* source, Propert
     return hasOnlyDataProperties;
 }
 
-// Null unless every property gets a place in the cell under a name that a Structure lists.
 static Structure* structureOfOrdinaryCopy(VM& vm, JSGlobalObject* realm, std::span<const PropertyMovedToOrdinaryCopy> properties)
 {
     constexpr size_t roomForPropertiesAddedLater = 1;
@@ -386,7 +378,6 @@ static Structure* structureOfOrdinaryCopy(VM& vm, JSGlobalObject* realm, std::sp
     return structure;
 }
 
-// The plan is of no use where the copy has to go by the names of the source.
 static std::unique_ptr<FieldMovePlan> createPlanForOrdinaryCopy(VM& vm, State& state, JSGlobalObject* realm, JSObject* source, const ExcludedRun& excluded)
 {
     const Object* compiled = compiledObjectOrNull(source);
@@ -439,7 +430,6 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
     }
 
     DeferGC deferGC(vm);
-    // A dictionary gets a name and keeps its Structure, so its Structure stands for no list of names.
     if (!compiled && source->structure()->isDictionary()) {
         if (excluded.numberPlusOne || source->structure()->storedPrototype() != JSValue(realm->objectPrototype()))
             return nullptr;

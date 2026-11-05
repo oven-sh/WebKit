@@ -104,7 +104,6 @@ MembersUnderKey::MembersUnderKey(const Program& program, PropertyKeyID key)
 {
     if (program.openedNames.isEmpty() || m_kind != PropertyKeyKind::Text) [[likely]]
         return;
-    // A large test run opens names by the hundred thousand, and this is asked for every access by name.
     StringID text = program.at(key).text;
     if (program.isOpenedSomewhere(text)) [[unlikely]]
         m_textOpenedSomewhere = text;
@@ -125,7 +124,6 @@ bool MembersUnderKey::isClosedKey(BuiltinID holder) const
         return m_table.closesIndexKeys(holder);
     bool isClosedToOtherNames = m_table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames) && m_kind == PropertyKeyKind::Text;
     bool isClosed = m_name ? m_table.isClosedKey(holder, m_name) : isClosedToOtherNames;
-    // An executable refuses on such an object the names for which this was answered, and no other. A test run refuses every name that it has not seen a test add.
     if (isClosed && isClosedToOtherNames && !m_program.admitsReplacedBuiltins)
         m_program.noteTakenForAbsent(m_key);
     return isClosed;

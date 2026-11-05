@@ -53,7 +53,6 @@ static std::optional<FormOfFrame> formOfFrameWithoutRecord(const Procedure& proc
     const uint64_t bytesOfSlots = proc.slots().bytesInAll();
     const uint64_t bytesOfOutgoingWords = proc.callArgAreaSizeInBytes();
 
-    // The first word lies at the place of the record, which no size counts.
     const uint64_t bytesInAll = numberOfSaves * bytesOfFrameFormWord + bytesOfSlots + bytesOfOutgoingWords;
     const uint64_t bytesBelowFrameRecord = roundUpBytesOfFrameForm(bytesInAll > bytesOfFrameFormWord ? bytesInAll - bytesOfFrameFormWord : 0);
     if (bytesBelowFrameRecord > maxBytesAllocatedBeforeStackCheck)
@@ -72,10 +71,8 @@ static std::optional<FormOfFrame> formOfFrameWithSavesAtBottom(const Procedure& 
     const ProcedureTraits& traits = proc.traits();
     if (!isX86_64() || !numberOfSaves || traits.savesFrameOnSuspend || traits.savesRegistersOfCallers)
         return std::nullopt;
-    // Without slots the usual form is pushed and popped whole. The outgoing words lie where the stack pointer stands.
     if (!proc.slots().bytesInAll() || proc.callArgAreaSizeInBytes())
         return std::nullopt;
-    // In a larger frame SlotAssigner::bringBusyWordsNearEndsOfFrame() has arranged the words for the usual form.
     if (roundUpBytesOfFrameForm(numberOfSaves * bytesOfFrameFormWord) + proc.slots().bytesInAll() > reachOfOneByteOfOffsetInFrameForm)
         return std::nullopt;
 

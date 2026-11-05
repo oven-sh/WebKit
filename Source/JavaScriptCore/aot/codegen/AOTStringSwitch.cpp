@@ -8,12 +8,9 @@
 
 #if ENABLE(AOT)
 
-#include "AOTConversionEmitter.h"
-#include "AOTLiteralStrings.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTStringEmitter.h"
-#include "AOTTypeTable.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/HashMap.h>
@@ -53,9 +50,6 @@ public:
 
         Operand subject = get(subjectID);
         switch (subject.representation) {
-        case Representation::LiteralString:
-            switchOnLiteralStringWord(subject.as<LiteralStringWord>(), allCases);
-            return;
         case Representation::Cell:
             switchOnValue(boxCell(subject.as<CellPointer>()), type, allCases);
             return;
@@ -85,7 +79,6 @@ private:
     static constexpr size_t mostCharactersWrittenDown = std::tuple_size_v<decltype(NarrowCharactersOfString::characters)>;
     static constexpr uint16_t otherCellPrimitives = cellPrimitives & ~Primitive::AnyString;
 
-    // No two cases have the same text.
     struct SwitchCase {
         StringID string;
         String text;
@@ -104,7 +97,6 @@ private:
     };
     using TextBytes = Vector<uint8_t, 16>;
 
-    // The text as it lies in a string of that width.
     static TextBytes bytesOf(const String& text, bool is8Bit)
     {
         TextBytes bytes;
@@ -185,34 +177,6 @@ private:
         switchOverGroups(zeroExtended(length), groups, emitGroup);
     }
 
-    void switchOnLiteralStringWord(LiteralStringWord subject, const CaseGroup& cases)
-    {
-        ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Vector<SwitchTarget, 8> byWord;
-        CaseGroup casesWithoutWord;
-        for (const SwitchCase* switchCase : cases) {
-            if (std::optional<uint32_t> number = literalStrings().indexOf(switchCase->string))
-                byWord.append(SwitchTarget { literalStringWord(*number), switchCase->target });
-            else
-                casesWithoutWord.append(switchCase);
-        }
-
-        if (!casesWithoutWord.isEmpty()) {
-            // A string without a word is represented by its cell.
-            LBasicBlock cellCase = newBlock();
-            LBasicBlock wordCase = newBlock();
-            branch(conversions.isStringCell(subject), { normalEdge(cellCase), normalEdge(wordCase) });
-            m_out.appendTo(cellCase);
-            switchOnValue(Boxed(subject.value()), m_program.at(TypeTable::string), casesWithoutWord);
-            m_out.appendTo(wordCase);
-        }
-        if (std::optional<NarrowReference> narrow = narrowWordBehind(subject)) {
-            switchOn(conversions.bitsOf(*narrow), byWord.span());
-            return;
-        }
-        switchOn(conversions.bitsOf(subject), byWord.span());
-    }
-
     void switchOnValue(Boxed subject, const Type& type, const CaseGroup& cases)
     {
         if (cases.size() <= maxLiteralsComparedOneByOne) {
@@ -223,7 +187,6 @@ private:
             return;
         }
 
-        // A text with a unit above 0xFF equals no 8-bit string.
         CaseGroup narrowCases;
         for (const SwitchCase* switchCase : cases) {
             m_strings.makeCellsHoldAtomOf(switchCase->string);
@@ -249,7 +212,6 @@ private:
         return cell;
     }
 
-    // A rope and a 16-bit string go elsewhere.
     CharacterView viewOfFlatNarrowStringOrElse(CellPointer string, BlockEdge otherwise)
     {
         Pointer impl = loadField<Pointer>(string, m_heaps.JSString_value);
@@ -259,19 +221,16 @@ private:
         return { characters, loadField<Word32>(impl, m_heaps.StringImpl_length), boolean(true), string };
     }
 
-    // For a text that is too long to be compared in place.
     void compareByCall(CellPointer string, const SwitchCase& switchCase, BlockEdge next)
     {
         m_strings.branchOnEqualsLiteralByStub(m_terminator, ComparedOperand::String, string.value(), switchCase.string, { switchCase.target, next });
     }
 
-    // As bun_core::comptime_string_map! compiles: a jump by the length, then words of the characters against words of the texts. What stands in front is what it takes to have the characters and the length of a string in hand.
     void switchByCharactersOfNarrowString(CellPointer string, const CaseGroup& cases)
     {
         LBasicBlock needsStub = newBlock();
         LBasicBlock hasCharacters = newBlock();
         ScopeFork fork = m_out.forkScope();
-        // Rare: the block that calls sets up a frame of its own and takes it down again, and whoever brings a flat 8-bit string passes through without one.
         CharacterView flat = viewOfFlatNarrowStringOrElse(string, rareEdge(needsStub));
         LValue characters = m_out.phiIn(hasCharacters, flat.characters.value()->type());
         LValue length = m_out.phiIn(hasCharacters, flat.length.value()->type());
@@ -282,7 +241,6 @@ private:
         };
         goOnWith(flat.characters, flat.length);
 
-        // One call for the whole switch, whatever the number of its texts: the stub writes the characters down as 8-bit characters, and the same compares read them. A rope that is made for the switch and dropped behind it is never made flat.
         static_assert(maxLengthOfTextComparedInPlace <= mostCharactersWrittenDown);
         m_out.appendTo(needsStub);
         Pointer answer(callStub(m_terminator, narrowCharactersOfString(), { string.value() }).first);
@@ -303,7 +261,6 @@ private:
         m_out.appendTo(narrow);
         switchOverLengthGroups(string, { view.characters, view.length, boolean(true), view.owner }, narrowCases);
 
-        // Whoever writes a case that only a 16-bit string can equal expects such strings.
         m_out.appendTo(wide);
         switchOverLengthGroups(string, { view.characters, view.length, boolean(false), view.owner }, allCases);
     }
@@ -317,17 +274,14 @@ private:
 
     Word32 loadWord(const CharacterView& viewOfKnownWidth, DistinguishingWord word)
     {
-        // The characters may be what the stub has written down.
         RELEASE_ASSERT(!viewOfKnownWidth.is8Bit.value()->asInt() || word.offset + word.width <= mostCharactersWrittenDown);
         const Machine::AbstractHeap& heap = viewOfKnownWidth.is8Bit.value()->asInt() ? m_heaps.characters8.atAnyIndex() : m_heaps.characters16.atAnyIndex();
         return Word32(loadBytes(m_out, word.width, m_out.address(heap, viewOfKnownWidth.characters.value(), word.offset)));
     }
 
-    // The subject has the length of the texts.
     void emitLengthGroup(CellPointer string, const CharacterView& view, const CaseGroup& group)
     {
         bool is8Bit = view.is8Bit.value()->asInt();
-        // Of a subject that is longer than what the stub writes down no character may be read: such texts are compared off the cell, one after the other.
         if (group[0]->text.length() > mostCharactersWrittenDown) {
             compareSequentially(string, view, group);
             return;
@@ -359,14 +313,12 @@ private:
         });
     }
 
-    // StringEmitter::branchOnTextAt() reads the whole text in words of up to eight bytes, the last of which may lie over the one in front of it.
     static size_t numberOfLoadsOfWholeText(size_t size)
     {
         size_t width = size >= 8 ? 8 : size >= 4 ? 4 : size >= 2 ? 2 : 1;
         return (size + width - 1) / width;
     }
 
-    // The subject has the length of the text, and at `known` it holds the bytes of the text: the switch has looked at them. False, and nothing is emitted: the bytes around them take no fewer loads than the whole text.
     bool tryBranchOnBytesAround(DistinguishingWord known, const CharacterView& view, const SwitchCase& switchCase, BlockEdge next)
     {
         TextBytes text = bytesOf(switchCase.text, view.is8Bit.value()->asInt());

@@ -15,7 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The candidates without which the answer is no, found by halving, the one furthest back first. Nothing: the answer is no beside all of them, or a question has no answer.
 std::optional<Vector<FunctionID>> findBodiesThatCodeDependsOn(std::span<const FunctionID> candidates, NOESCAPE const Invocable<std::optional<bool>(std::span<const FunctionID>)> auto& isSameBeside)
 {
     Vector<FunctionID> dependedOn;

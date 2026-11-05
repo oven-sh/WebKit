@@ -28,7 +28,6 @@ private:
     static constexpr uint32_t bytesPerCell = sizeof(uint32_t);
     static constexpr uint32_t bytesOfFrameRecord = 2 * bytesPerWord;
 
-    // Four bytes of the frame, counted up from the stack pointer.
     using Cell = uint32_t;
 
     struct CellRange {
@@ -44,7 +43,6 @@ private:
     struct SuspensionInOrder {
         Position late { 0 };
         const PatchOperation* patch { nullptr };
-        // In Allocation::suspensions().
         uint32_t index { 0 };
     };
 
@@ -76,11 +74,8 @@ private:
     bool checkPlaces();
 
     bool isKeptAtSuspensions(int64_t offsetFromFP) const { return offsetFromFP + m_bytesBelowFrameRecord >= static_cast<int64_t>(m_frame.bytesDeadAtSuspensions()); }
-    // As PatchOperation::frameWordsDeadAcrossSuspension() counts them.
     static uint32_t wordHolding(int64_t offsetOfByteFromFP) { return static_cast<uint32_t>((bytesPerWord - 1 - offsetOfByteFromFP) / bytesPerWord); }
-    // A saved frame holds whole pairs of words.
     uint32_t lowestWordKeptAtSuspensions() const { return static_cast<uint32_t>((m_bytesBelowFrameRecord - m_frame.bytesDeadAtSuspensions() / stackAlignmentBytes() * stackAlignmentBytes()) / bytesPerWord); }
-    // By a store in front of the suspension, or by whoever suspends the function there for the first time.
     bool isClearedAt(const PatchOperation* suspension, uint32_t word) const
     {
         if (suspension->frameWordsClearedInFrontOfSuspension().get(word))
@@ -100,9 +95,7 @@ private:
     std::span<const SpillFacts> m_spills;
     const int64_t m_bytesBelowFrameRecord;
     const RegisterMask m_calleeSaved;
-    // They hold values of the caller, and nothing puts those back.
     const RegisterMask m_calleeSavesLeftToCaller;
-    // By cell: a callee save, a StackSlot or the outgoing area.
     BitSpan m_isHeldThroughout;
     const Block* m_block { nullptr };
 };
@@ -130,7 +123,6 @@ bool FrameChecker::run()
         if (!checkBlock(block))
             return false;
     }
-    // Nothing names a place, and none may have been given an offset.
     if (!m_frame.hasFrame())
         return true;
     return checkPlaces() && checkSuspensions();
@@ -156,7 +148,6 @@ bool FrameChecker::savedFrameCanDescribe(RegisterMask saves) const
     if (saves & ~m_calleeSaved)
         return false;
 #if CPU(ARM64)
-    // None, or a run of even length that ends in x24: the site word of a suspension counts pairs from x24 down.
     if (!saves)
         return true;
     RegisterMask lowestSave = RegisterMask { 1 } << std::countr_zero(saves);
@@ -176,7 +167,6 @@ bool FrameChecker::checkCalleeSaves()
     if (m_proc.traits().savesFrameOnSuspend && !savedFrameCanDescribe(saves))
         return fail(FailureKind::RegisterLacksItsValue);
 
-    // The unwinder reads one run that ends at the frame record.
     const RegisterAtOffsetList& list = m_frame.calleeSaveRegisterAtOffsetList();
     size_t count = list.registerCount();
     RegisterMask listed = 0;
@@ -232,7 +222,6 @@ bool FrameChecker::isStoredBehindDefinition(const Operation* value) const
     return m_allocation.isStoredBehindDefinition(value);
 }
 
-// A frame is set up on every path to whatever the framed part holds, and nowhere else but where a rare region outside is entered.
 bool FrameChecker::checkFramedPart()
 {
     if (m_frame.coverage() != FrameCoverage::FramedPart)
@@ -255,7 +244,6 @@ bool FrameChecker::checkFramedPart()
         bool isHead = m_allocation.isHeadOfFramedPart(block);
         if (isInFramedPart && !m_frame.holdsStepsOf(block))
             return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, block->last());
-        // Every way to a block of the framed part leads over the one head above it.
         for (const Block* predecessor : m_order.of(block).predecessors) {
             if (!isInFramedPart || isHead)
                 break;
@@ -270,7 +258,6 @@ bool FrameChecker::checkFramedPart()
     return true;
 }
 
-// Whatever the coverage has come to be: the allocation counts on these stores.
 bool FrameChecker::checkStepsAtHeadOfFramedPart()
 {
     for (const Allocation::HeadOfFramedPart& head : m_allocation.headsOfFramedPart()) {
@@ -295,7 +282,6 @@ bool FrameChecker::checkStepsAtHeadOfFramedPart()
     return true;
 }
 
-// The code of the block that the jump names is a teardown and a return. Without a frame that is a return.
 bool FrameChecker::checkReturnInPlaceOfJump(const Block* block)
 {
     const Operation* last = block->last();
@@ -345,7 +331,6 @@ bool FrameChecker::noteLocation(Location location, const Operation* blamed, bool
         needsFrame = true;
         if (location.spillIndex() >= m_spills.size())
             return fail(FailureKind::SpillSlotLacksItsValue, blamed);
-        // On a way around the head nothing has written it.
         return !m_spills[location.spillIndex()].isStoredAtHeadOfFramedPart || m_allocation.isInFramedPart(m_block) || fail(FailureKind::SpillSlotLacksItsValue, blamed);
     case Location::SlotBytes:
         needsFrame = true;
@@ -431,7 +416,6 @@ bool FrameChecker::checkStep(const Step& step, bool frameIsSetUp, bool resultIsS
         return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, operation);
     if (written & m_calleeSavesLeftToCaller)
         return fail(FailureKind::RegisterLacksItsValue, operation);
-    // Ahead of the setup and behind the teardown the saved registers are the caller's as well.
     if (m_frame.coverage() == FrameCoverage::FramedPart && !frameIsSetUp && ((written | writtenByCodeOfPatch) & m_calleeSaved))
         return fail(FailureKind::RegisterLacksItsValue, operation);
     return true;
@@ -467,7 +451,6 @@ bool FrameChecker::checkBlock(const Block* block)
                 return fail(FailureKind::RegisterLacksItsValue, binding.value);
         }
     }
-    // The teardown stands ahead of the last operation. Any other than a Jump writes its own way out, with the frame still in place.
     if (isInFrame && !isLeft && !last->isUnconditionalJump())
         return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, last);
 
@@ -486,7 +469,6 @@ bool FrameChecker::checkBlock(const Block* block)
     if (!checkStep(m_allocation.step(steps.terminator), isLeft, false))
         return false;
 
-    // The result of a Patch that ends its block is stored at the head of the first successor. On the edge to a landing pad it does not exist.
     if (last->opcode() == Patch && block->numSuccessors() && isStoredBehindDefinition(last)) {
         const Block* blockOfStore = block->successor(0).block();
         if (!blockOfStore->isLandingPad() && !runsInFrame(blockOfStore))
@@ -539,7 +521,6 @@ bool FrameChecker::checkPlaces()
         CellRange cells;
         if (!findCells(m_frame.offsetFromFPOf(spill), byteSize, byteSize, cells))
             return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
-        // What a suspension holds it keeps through the gap too.
         if (facts.hasGap() && (facts.livesAcrossSuspension || facts.beginOfGap <= facts.begin || facts.endOfGap < facts.beginOfGap || facts.end <= facts.endOfGap))
             return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
         for (Cell cell = cells.begin; cell < cells.end; ++cell) {
@@ -560,7 +541,6 @@ bool FrameChecker::checkPlaces()
             return a.begin < b.begin;
         return a.spill < b.spill;
     });
-    // While none has overlapped, the one in front ends last of all that begin earlier in its cell.
     for (uint32_t index = 1; index < spillsInCells.size(); ++index) {
         const SpillInCell& earlier = spillsInCells[index - 1];
         const SpillInCell& later = spillsInCells[index];
@@ -570,8 +550,6 @@ bool FrameChecker::checkPlaces()
     return true;
 }
 
-// Of a spill for which spillPlaceIsWrittenBehindDefinitionAlone() holds: whether a path leads from an entrypoint to the suspension without its store.
-// It looks for one along the edges that lead forward in the order. What comes round a loop has run through its head.
 bool FrameChecker::somePathLacksStoreOf(const SpillFacts& facts, const PatchOperation* suspension)
 {
     const Position store = positionOfStoreToSpillPlace(m_proc, facts);
@@ -602,7 +580,6 @@ bool FrameChecker::somePathLacksStoreOf(const SpillFacts& facts, const PatchOper
     return false;
 }
 
-// Behind checkPlaces(): every offset lies in the frame.
 bool FrameChecker::checkSuspensions()
 {
     std::span<PatchOperation* const> listed = m_allocation.suspensions();
@@ -616,7 +593,6 @@ bool FrameChecker::checkSuspensions()
         return a.late < b.late;
     });
 
-    // checkAllocation() has forgotten at each suspension what it does not hold, and has found every read served all the same.
     for (SpillIndex spill = 0; spill < m_spills.size(); ++spill) {
         const SpillFacts& facts = m_spills[spill];
         int64_t offset = m_frame.offsetFromFPOf(spill);
@@ -631,7 +607,6 @@ bool FrameChecker::checkSuspensions()
                 continue;
             if (!facts.livesAcrossSuspension || suspension->patch->frameWordsDeadAcrossSuspension()->get(wordHolding(offset)))
                 return fail(FailureKind::SpillSlotLacksItsValue, facts.value);
-            // A word is cleared ahead of whatever the suspension reads. A step may read a value that no operation reads from there on: where a path leads without its definition, none does.
             if (!isClearedAt(suspension->patch, wordHolding(offset)))
                 continue;
             if (!spillPlaceIsWrittenBehindDefinitionAlone(m_proc, facts) || !somePathLacksStoreOf(facts, suspension->patch))
@@ -639,7 +614,6 @@ bool FrameChecker::checkSuspensions()
         }
     }
 
-    // A function without suspensions has no part that they keep.
     if (suspensions.empty())
         return true;
     for (const StackSlot* slot : m_proc.stackSlots()) {
@@ -659,7 +633,6 @@ bool FrameChecker::checkSuspensions()
         }
     }
 
-    // A saved frame may hold one word below the part that suspensions keep. What the function left there would come back with every resumption.
     auto isKeptWithLastPairAlone = [&](int64_t offsetOfHighestByteFromFP) {
         return !isKeptAtSuspensions(offsetOfHighestByteFromFP) && wordHolding(offsetOfHighestByteFromFP) <= lowestWordKeptAtSuspensions();
     };
@@ -674,7 +647,6 @@ bool FrameChecker::checkSuspensions()
     if (m_proc.callArgAreaSizeInBytes() && isKeptWithLastPairAlone(static_cast<int64_t>(m_proc.callArgAreaSizeInBytes()) - m_bytesBelowFrameRecord - 1))
         return fail(FailureKind::SpillSlotLacksItsValue);
 
-    // No callee save is cleared, and no store in front of a suspension writes what suspensions do not keep: another spill may lie there.
     for (const SuspensionInOrder& suspension : suspensions) {
         for (uint32_t word = 1; word <= m_frame.numberOfCalleeSaves(); ++word) {
             if (isClearedAt(suspension.patch, word))

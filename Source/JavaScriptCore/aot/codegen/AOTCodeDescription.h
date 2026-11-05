@@ -26,16 +26,13 @@ struct StackCheckState;
 
 struct EmittedCode {
     ImageLinkBuffer& buffer;
-    // Encoded.
     Machine::Procedure& procedure;
     const StackCheckState& stackChecks;
     Vector<Relocation> relocations;
 };
 
-// Everything that is left of the unit: AOTCompiledCode.h. It empties the records.
 CompiledCode describeCode(BuildContext&, const CodeGenerationInputs&, const Code&, CodeRecords&, EmittedCode&&);
 
-// BytesOutsideOperations::origin in two words: `Reload Edge` | `End Return` | `Other Nowhere`.
 JS_EXPORT_PRIVATE void printOriginOutsideOperations(PrintStream&, uint32_t origin);
 
 } } } // namespace JSC::AOT::Typed

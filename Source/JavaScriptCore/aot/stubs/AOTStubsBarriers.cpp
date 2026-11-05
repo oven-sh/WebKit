@@ -37,7 +37,6 @@ static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scra
     RELEASE_ASSERT(noOverlap(owner, scratch, top));
     JumpList leftToOperation;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.mutatorMarkStack)), scratch);
-    // The tests of stubs run them on an instance that has no heap.
     leftToOperation.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
     jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfTop()), top);
     leftToOperation.append(jit.branch64(CCallHelpers::AboveOrEqual, top, TrustedImm32(MutatorMarkStackLayout::segmentCapacity)));
@@ -53,14 +52,12 @@ static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scra
     jit.returnToCaller();
     leftToOperation.link(&jit);
 #elif CPU(ARM64)
-    // An addition to a word in memory and the store of a constant take the macro assembler's scratch register, so neither comes while top is in it.
     static_assert(MutatorMarkStackLayout::segmentCapacity < 1 << 12, "The capacity is the immediate of one comparison.");
     const OwnedScratchRegister ownedScratch(jit);
     const GPRReg top = ownedScratch;
     RELEASE_ASSERT(noOverlap(owner, scratch, top));
     JumpList leftToOperation;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.mutatorMarkStack)), scratch);
-    // The tests of stubs run them on an instance that has no heap.
     leftToOperation.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
     jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfTop()), top);
     leftToOperation.append(jit.branch64(CCallHelpers::AboveOrEqual, top, TrustedImm32(MutatorMarkStackLayout::segmentCapacity)));
@@ -115,7 +112,6 @@ void generateWriteBarrier(StubAssembler& jit)
     jit.returnToCaller();
 
     isWithinThreshold.link(&jit);
-    // The test is made where the owner lies. The rest is written once.
     if (jit.key().operandRegister()) {
         if (owner != gprOf(firstStubOperandRegister))
             jit.move(owner, jit.allocateScratch(firstStubOperandRegister));
@@ -160,7 +156,6 @@ void generateRememberElement(StubAssembler& jit)
     slowPath.append(jit.barrierBranchWithoutFence(array, true));
     jit.returnToCaller();
 
-    // StoredCellLog::tryRemember() declines short arrays, so remember the array like any other owner.
     isTooShortForLog.link(&jit);
     returnIfMarkStackTakes(jit, array, scratch);
 
@@ -203,7 +198,6 @@ static void returnIfFencedAndNotBlack(StubAssembler& jit, GPRReg owner)
 
 PreludeExit emitBarrierPrelude(StubAssembler& jit)
 {
-    // A plain call saves no registers, so there is nothing to skip.
     if (jit.key().family() == StubFamily::CallOperationPreservingRegisters)
         returnIfFencedAndNotBlack(jit, operationArgumentGPR(1));
     return PreludeExit::CallsOperation;

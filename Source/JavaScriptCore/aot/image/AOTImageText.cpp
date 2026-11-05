@@ -58,7 +58,6 @@ ImageText::ImageText(const Image& image)
     RELEASE_ASSERT(lazyHeadersCapacity() <= std::numeric_limits<uint32_t>::max());
     auto& arena = *reinterpret_cast<LazyStringHeaderArena*>(m_lazyHeaders);
     arena.end = sizeof(LazyStringHeaderArena);
-    arena.sizeInBytes = static_cast<uint32_t>(lazyHeadersCapacity());
 }
 
 ImageText::~ImageText()
@@ -110,8 +109,6 @@ NEVER_INLINE StringImpl& ImageText::createLazyHeader(uint32_t number) const
     RELEASE_ASSERT(record.hasText());
     ImageLongString range = rangeFor(record);
     ImageStringHeader header = ImageStringHeader::create(std::bit_cast<uint64_t>(m_text.data() + range.offset), range.length, record.hash(), record.is16Bit(), record.isAtom() ? StringImpl::StringAtom : StringImpl::StringNormal);
-    if (record.isLiteralString())
-        header.literalStringWord = literalStringWordFor(record);
     LazyStringHeaderLocker locker(m_lazyHeaders);
     if (StringImpl* existing = tryGetLazyHeader(number)) [[unlikely]]
         return *existing;
@@ -122,12 +119,6 @@ NEVER_INLINE StringImpl& ImageText::createLazyHeader(uint32_t number) const
     created.number = number;
     m_lazyHeaderOffsets[number].store(offset, std::memory_order_release);
     return reinterpret_cast<StringImpl&>(created);
-}
-
-uint32_t ImageText::literalStringWordFor(const ImageStringRecord& record) const
-{
-    std::span<const uint32_t> words = m_listedStrings.subspan(record.rangeOrIndex >> ImageString::lengthBits);
-    return words[ImageListedString::numberOfWords(ImageListedString::read(words))];
 }
 
 #endif

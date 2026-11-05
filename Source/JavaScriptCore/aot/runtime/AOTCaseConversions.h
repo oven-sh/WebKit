@@ -19,13 +19,10 @@ namespace JSC { namespace AOT {
 
 struct State;
 
-// What the conversion of this very string gave the last time: a program lowers the same header names and method names over and over. A string never changes, so the answer holds while both live.
-// Nothing here keeps a string alive. It lies in zeroed pages of the instance, which has its address from the first conversion that is remembered. The heads of the stubs that call the two operations look into it.
 struct CaseConversions {
     enum class LetterCase : uint8_t { Lower, Upper };
 
     static constexpr size_t maxLengthOfRememberedString = 64;
-    // Where a string lies decides its hash, so the strings of one hash have four places, the one that came last in front. The two conversions of one string lie side by side.
     static constexpr uint32_t multiplier = 0x9e3779b1u;
     static constexpr unsigned shift = 25;
     static constexpr size_t ways = 4;
@@ -51,16 +48,13 @@ struct CaseConversions {
         return nullptr;
     }
     void remember(const JSString* source, LetterCase, const JSString* converted);
-    // One string for every conversion that gives these characters: each request brings the names of its headers as new strings, and their conversions are the same few.
     JSString* convertedString(VM&, std::span<const Latin1Character>);
     size_t removeDeadEntries(VM&, CollectionScope);
 
     static constexpr size_t numberOfConvertedStrings = 256;
 
-    // The source above the conversion, both as narrow references. No string has the reference zero.
     uint64_t entries[numberOfEntries];
     uint64_t setsWithEntries[numberOfSets / 64];
-    // The hash of the characters above the string.
     uint64_t convertedStrings[numberOfConvertedStrings];
     uintptr_t cageBase;
 };

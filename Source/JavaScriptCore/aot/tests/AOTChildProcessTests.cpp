@@ -48,6 +48,23 @@ static constexpr ASCIILiteral passingFile =
     "    v1 = Negate v0\n"
     "    Return v1\n"
     "}\n"_s;
+static constexpr ASCIILiteral fileThatOwesCheck =
+    "# TODO: nobody: some day\n"
+    "# RUN: print\n"
+    "# CHECK: Multiply\n"
+    "module m0 path=\"/a.ts\" displayPath=\"a.ts\"\n"
+    "function f0 name=\"negate\" parameters=[{type=number}] results=[{type=number}] {\n"
+    "  b0(v0: number):\n"
+    "    v1 = Negate v0\n"
+    "    Return v1\n"
+    "}\n"_s;
+static constexpr ASCIILiteral fileThatStopsVerifierUnderTodo =
+    "# TODO: nobody: some day\n"
+    "# RUN: verify\n"
+    "module m0 path=\"/a.ts\" displayPath=\"a.ts\"\n"_s;
+static constexpr ASCIILiteral fileThatDiesUnderTodo =
+    "# TODO: nobody: some day\n"
+    "# RUN: crash without-memory-at-no-work\n"_s;
 static constexpr ASCIILiteral fileWithoutMemory = "# RUN: crash without-memory\n"_s;
 static constexpr ASCIILiteral fileWithoutMemoryAtNoWork = "# RUN: crash without-memory-at-no-work\n"_s;
 
@@ -73,7 +90,6 @@ static void setCrashRequest(bool isRequested)
 #endif
 }
 
-// A build has a heap of the engine where it runs code of the program. Too little memory for it is an error of the build, as too little for the compiler's own tables is.
 static void testHeapWithoutMemoryEndsBuildWithError()
 {
     TemporaryFile file(".ir"_s, byteCast<uint8_t>(fileWithoutMemory.span8()));
@@ -94,7 +110,6 @@ static void testShellCrash()
     AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
 }
 
-// Out of memory the process exits with the code of a failed run, as under a sanitizer, and has come to no last line.
 static void testFileWhoseProcessEndsEarlyIsNamed()
 {
     TemporaryFile ending(".ir"_s, byteCast<uint8_t>(fileWithoutMemory.span8()));
@@ -111,6 +126,25 @@ static void testFileWhoseProcessEndsEarlyIsNamed()
     AOT_TEST_CHECK(out.toString().contains(makeString("FAIL "_s, ending.path(), ":1: exited with 1\n"_s)));
 }
 
+static void testTodoOfFileStandsForNoDeath()
+{
+    TemporaryFile owing(".ir"_s, byteCast<uint8_t>(fileThatOwesCheck.span8()));
+    TemporaryFile stopping(".ir"_s, byteCast<uint8_t>(fileThatStopsVerifierUnderTodo.span8()));
+    TemporaryFile dying(".ir"_s, byteCast<uint8_t>(fileThatDiesUnderTodo.span8()));
+    ChildProcessLauncher launcher = createLauncher();
+    TestRunRequest request;
+    request.paths = { owing.path(), stopping.path(), dying.path() };
+    request.launcher = &launcher;
+
+    StringPrintStream out;
+    TestRunSummary summary = runTestFiles(request, out);
+
+    AOT_TEST_CHECK(!summary.passed && summary.failed == 2 && summary.todo == 1);
+    AOT_TEST_CHECK(out.toString().contains(makeString("TODO "_s, owing.path(), ":1: nobody: some day\n"_s)));
+    AOT_TEST_CHECK(out.toString().contains(makeString("FAIL "_s, stopping.path(), ":2: verify: unexpected diagnostic NoEntryPoint: "_s)));
+    AOT_TEST_CHECK(out.toString().contains(makeString("FAIL "_s, dying.path(), ":1: crashed with "_s)));
+}
+
 static constexpr ASCIILiteral fileLeftPrefix = "leaves "_s;
 
 static void testCrashesOnRequest()
@@ -122,13 +156,29 @@ static void testCrashesOnRequest()
     CRASH();
 }
 
-#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+static void testFailsCheckOnRequest()
+{
+    AOT_TEST_CHECK(!getenv(crashRequestVariable));
+}
 
-#endif
+static void testTodoOfNativeTestStandsForNoDeath()
+{
+    static constexpr ASCIILiteral bothOnRequest[] { "crash-on-request/first"_s, "crash-on-request/fails-a-check"_s };
+    ChildProcessLauncher launcher = createLauncher();
+    NativeTestRequest request;
+    request.filter = "crash-on-request/"_s;
+    request.launcher = &launcher;
+    request.testsTakenAsTodo = bothOnRequest;
 
-#if OS(LINUX)
+    setCrashRequest(true);
+    StringPrintStream out;
+    NativeTestSummary summary = runNativeTests(request, out);
+    setCrashRequest(false);
 
-#endif // OS(LINUX)
+    AOT_TEST_CHECK(!summary.passed && summary.failed == 1 && summary.todo == 1);
+    AOT_TEST_CHECK(out.toString().contains("FAIL crash-on-request/first: crashed with "_s));
+    AOT_TEST_CHECK(out.toString().contains("TODO crash-on-request/fails-a-check: "_s));
+}
 
 static void testCrashLeavesNoFiles()
 {
@@ -152,12 +202,11 @@ std::span<const NativeTest> childProcessTests()
         { "child-process/heap-without-memory-ends-build-with-error"_s, testHeapWithoutMemoryEndsBuildWithError },
         { "child-process/shell-crash"_s, testShellCrash },
         { "child-process/crash-leaves-no-files"_s, testCrashLeavesNoFiles },
-#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
-#endif
-#if OS(LINUX)
-#endif
         { "runner/file-whose-process-ends-early"_s, testFileWhoseProcessEndsEarlyIsNamed },
+        { "runner/todo-of-a-file-stands-for-no-death"_s, testTodoOfFileStandsForNoDeath },
+        { "runner/todo-of-a-native-test-stands-for-no-death"_s, testTodoOfNativeTestStandsForNoDeath },
         { "crash-on-request/first"_s, testCrashesOnRequest },
+        { "crash-on-request/fails-a-check"_s, testFailsCheckOnRequest },
     };
     return tests;
 }

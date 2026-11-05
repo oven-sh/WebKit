@@ -15,12 +15,10 @@ import {
   type NativeCallKind,
 } from "./vocabulary.ts";
 
-/** What the sources that the front end of the host compiles use of the lines. A host without a front end has none, and nobody reads its lines. */
 export interface SyntaxUses {
   names: ReadonlyMap<string, ReadonlySet<IntrinsicPosition>>;
   prefixedGlobals: readonly string[];
   privateNames: readonly string[];
-  /** Among privateNames: those that native code never reads or writes. */
   modulePrivateNames: readonly string[];
   errorCodes: readonly { name: string; number: number }[];
   inheritableClasses: readonly { name: string; number: number }[];
@@ -313,7 +311,6 @@ function buildNativeBindings(builder: ModelBuilder, declarations: readonly Sourc
     );
 }
 
-// The engine is compiled with an enumeration of these words, so its own lines say which there are.
 function wordsOfEngine(
   builder: ModelBuilder,
   lines: readonly SyntaxLine[],

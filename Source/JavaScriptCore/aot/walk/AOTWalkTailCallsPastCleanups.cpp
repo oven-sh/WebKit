@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `for (const x of list) f(x)`: the iteration goes by index, so its close builds nothing, and the cleanup block does nothing but throw on. The blocks of the loop lead no edge there.
-// At a suspension: nothing. An iteration by index is synchronous.
-// At a throw: it goes where the cleanup block would have thrown it on to: to the handler of the call around a copy, or out of the unit.
-// Withheld, with TypedOperations: no iteration goes by index, and every block stands under the handler that it names.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -17,43 +12,46 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Of a block of the body being read that names a handler.
-bool Walker::throwsPastHandlerOf(BodyBlock block) const
+ValueID openOfCleanupThatOnlyThrowsOn(const BodyIndex& index, BodyBlock block)
 {
-    if (!has(Mechanism::TypedOperations))
-        return false;
-    const Frame& frame = m_frames.last();
     BodyTarget edge = block.handler();
     if (!edge.arguments().empty())
-        return false;
-    BodyBlock cleanup = frame.index->block(edge.block());
+        return { };
+    BodyBlock cleanup = index.block(edge.block());
     if (cleanup.role() != BlockRole::IterationCleanup || cleanup.numberOfParameters() || cleanup.hasHandler())
-        return false;
+        return { };
 
-    // What it catches, one close of its iteration, and hints, which no run can tell.
     ValueID open = cleanup.subject();
-    if (!open || frame.index->isParameter(open) || frame.index->opcodeOf(open) != Opcode::IteratorOpen)
-        return false;
+    if (!open || index.isParameter(open) || index.opcodeOf(open) != Opcode::IteratorOpen)
+        return { };
     ValueID caught;
     bool closes = false;
     for (BodyValue operation : cleanup.values()) {
         if (!caught) {
             if (!catchOpcodes.contains(operation.opcode()))
-                return false;
+                return { };
             caught = operation.id();
             continue;
         }
         if (operation.opcode() == Opcode::ReleaseHint)
             continue;
         if (closes || operation.opcode() != Opcode::IteratorClose || operation.operand(0) != open || operation.as<Opcode::IteratorClose>().completion() != IteratorCompletion::Throw)
-            return false;
+            return { };
         closes = true;
     }
     BodyTerminator end = cleanup.terminator();
-    if (!closes || end.kind() != TerminatorKind::Rethrow || end.operand(0) != caught)
+    return closes && end.kind() == TerminatorKind::Rethrow && end.operand(0) == caught ? open : ValueID();
+}
+
+bool Walker::throwsPastHandlerOf(BodyBlock block) const
+{
+    if (!has(Mechanism::TypedOperations))
+        return false;
+    const Frame& frame = m_frames.last();
+    ValueID open = openOfCleanupThatOnlyThrowsOn(*frame.index, block);
+    if (!open)
         return false;
 
-    // No iterator was made, so no `return` can be found: BuilderOfIteration::closeByIndex().
     Reference state = frame.references[open.index()];
     if (!state || !state.isVirtual())
         return false;

@@ -12,7 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Interning may move the parts that an id names, so they are copied before anything interns.
 using IntersectionClassParts = Vector<ClassPart, 8>;
 
 static IntersectionClassParts copyClassPartsForIntersection(const TypeArena& arena, ClassPartsID classes)
@@ -40,7 +39,6 @@ static void intersectLiteralSets(TypeParts& result, SetID TypeParts::* literals,
         result.primitives |= literalBit;
 }
 
-// Empty bounds say nothing, so they never stand for fractions that lie nowhere: the bit goes in their place.
 static void intersectBoundsOfFractions(TypeParts& result, const Type& a, const Type& b)
 {
     if (!(result.primitives & Primitive::FractionalNumber))
@@ -73,7 +71,6 @@ static void intersectPrimitiveParts(TypeParts& result, TypeArena& arena, const T
         result.environment = a.environment;
 }
 
-// mayFitUnknownOf() goes by the shape that the table of objects has for the object. What has no shape there may still be an instance of a class.
 static bool mayIntersectUnknownOf(TypeReader reader, ObjectID object, const Type& other, bool otherMayHoldAnyClosure, LayoutsFoundForCellsNobodyDescribes& found)
 {
     if (mayFitUnknownOf(reader, object, other, found))
@@ -85,7 +82,6 @@ static bool mayIntersectUnknownOf(TypeReader reader, ObjectID object, const Type
         classes = reader.at(other.unnamedClasses);
 
     if (BuiltinID builtin = reader.objects().builtinOf(object)) {
-        // An entry of the table that stands for a value may hold a function.
         return other.anyFunction || std::ranges::any_of(classes, [&](const ClassPart& part) {
             return mayBeInstanceOf(builtins, builtin, part.builtinClass);
         });
@@ -94,19 +90,15 @@ static bool mayIntersectUnknownOf(TypeReader reader, ObjectID object, const Type
     const ObjectRecord& record = reader.at(object);
     if (otherMayHoldAnyClosure && record.traits.containsAny({ ObjectTrait::IsClosure, ObjectTrait::IsCallable }))
         return true;
-    // Instances of a class without an instance test cannot be told apart from other objects.
     return record.has(ObjectTrait::HasNoShape) && std::ranges::any_of(classes, [&](const ClassPart& part) {
         return !hasInstanceTest(builtins, part.builtinClass);
     });
 }
 
-// A copy for an instance lies inside its shared form. What is both is the copy, which stays as a member of the set that names it, and the form does not stay for its sake:
-// a closure that has passed the test for its function would otherwise have a type that its type in front of the test does not hold.
 ObjectSetID TypeArena::membersWithAliasIn(ObjectSetID set, ObjectSetID namedByOther)
 {
     if (!set || !namedByOther || set == namedByOther)
         return { };
-    // Two short lists are read again for less than their place in the memo costs: whoever asks remembers the pair of types.
     auto members = at(namedByOther);
     bool isRemembered = !members.isList() || !at(set).isList();
     if (isRemembered) {
@@ -126,12 +118,10 @@ ObjectSetID TypeArena::membersWithAliasIn(ObjectSetID set, ObjectSetID namedByOt
     return result;
 }
 
-// The members of `set` that `other` names, under the same number or under another, and those that fit. `fits` is asked only about a member that `other` does not name.
 template<typename Fits>
 static ObjectSetID membersNamedByOtherOrFitting(TypeArena& arena, ObjectSetID set, ObjectSetID other, bool someMemberMayFit, const Fits& fits)
 {
     ObjectSets& sets = arena.objectSets();
-    // Of two short lists the answer alone is interned: in Facts' solve a set lasts for the build.
     if (arena.at(set).isList() && arena.at(other).isList()) {
         auto namedByOther = arena.at(other);
         ObjectSetAliasIndex index(arena, namedByOther);
@@ -152,10 +142,6 @@ static ObjectSetID membersNamedByOtherOrFitting(TypeArena& arena, ObjectSetID se
     });
 }
 
-// The named objects of a type that may be values of `other` as well: what both name, what `other` names under another number, and what may fit the `unknown` of `other`. Each stays or goes by itself and `other`.
-// A merged form stands only for escaped objects, and so does `unknown`. Where the result keeps all of the `unknown` of `other`, that covers whatever part of a merged form may fit it,
-// so the form stays named only if it surely fits. Otherwise a passed test would prove nothing about a value whose type names the merged form of a base class.
-// Any other object that only may fit stays named, in every arena alike. It need not have escaped, and in Facts' solve a store through `unknown` reaches the cells of escaped objects alone.
 static ObjectSetID askEachNamedObjectOfIntersection(TypeArena& arena, ObjectSetID namedObjects, const Type& other, bool wholeUnknownOfOtherStays, bool otherMayHoldAnyClosure)
 {
     TypeReader reader(arena);
@@ -172,7 +158,6 @@ namespace {
 
 class SharedNamedObjects final : public SharedAnswers::Answer {
 public:
-    // The shorter of the two lists is kept: a test that fails takes a few objects out of many.
     enum class Form : uint8_t { NoObject, EveryObjectOfSet, List, EveryObjectButList };
 
     SharedNamedObjects(Form form, uint32_t list)
@@ -189,7 +174,6 @@ public:
 
 } // anonymous namespace
 
-// Equal sets have one id in an arena, so this is the set that whoever asks each object in this arena would have made.
 static ObjectSetID objectSetOfSharedList(TypeArena& arena, SharedAnswers& answers, uint32_t number)
 {
     constexpr uint8_t question = static_cast<uint8_t>(AnswerKeptInArena::ObjectSetOfList);
@@ -223,7 +207,6 @@ static ObjectSetID filterSetOfProgramOncePerBuild(TypeArena& arena, SharedAnswer
             picked = arena.objectSets().differenceOf(set, objectSetOfSharedList(arena, answers, shared.list));
             break;
         }
-        // Equal sets have one id in an arena.
         if constexpr (SharedAnswers::worksFoundAnswersOutAgain)
             RELEASE_ASSERT(askEachMemberOf(set) == picked);
         return picked;
@@ -256,13 +239,11 @@ ObjectSetID filterMembersOncePerBuild(TypeArena& arena, SharedQuestion kind, Obj
     ObjectSetID ofProgram = answers ? sets.setOfProgramBehind(set) : ObjectSetID();
     if (!ofProgram)
         return askEachMemberOf(set);
-    // Where nobody has asked about the set of the program, each of its members is asked. Whoever holds less than half of them asks its own and leaves that to others.
     if (sets.sizeOf(set) < sets.sizeOf(ofProgram) / 2 && !answers->find({ kind, ofProgram.bits(), words[0], words[1], words[2], words[3] }))
         return askEachMemberOf(set);
 
     ObjectSetID picked = filterSetOfProgramOncePerBuild(arena, *answers, kind, ofProgram, words, askEachMemberOf);
     if (set != ofProgram) {
-        // This holds of any two sets, so nothing rests on the note.
         picked = sets.intersectionOf(picked, set);
         if (ObjectSetID fromElsewhere = sets.differenceOf(set, ofProgram))
             picked = sets.unionOf(picked, askEachMemberOf(fromElsewhere));
@@ -273,14 +254,12 @@ ObjectSetID filterMembersOncePerBuild(TypeArena& arena, SharedQuestion kind, Obj
     return picked;
 }
 
-// Of `other` the answer goes by the parts that make up the words below.
 static ObjectSetID intersectNamedObjects(TypeArena& arena, const Type& type, const Type& other, bool wholeUnknownOfOtherStays)
 {
     if (!type.objects || other.anyObject || type.objects == other.objects)
         return type.objects;
 
     bool otherMayHoldAnyClosure = mayContainAnyClosure(TypeReader(arena), other);
-    // A test against the layouts that have a name: the walk has made the set, and as many functions make the same.
     bool isWide = arena.objectSets().sizeOf(type.objects) > membersPerSetChunk;
     uint32_t objectsOfOther = isWide ? arena.setOfRound(other.objects).word : other.objects.bits();
     uint32_t layoutsOfOther = isWide ? arena.setOfRound(other.unnamedLayouts).word : other.unnamedLayouts.bits();
@@ -302,7 +281,6 @@ static TypeID intersectKnownContents(TypeArena& arena, TypeID first, TypeID seco
     return arena.intersectionOf(first, second);
 }
 
-// Contents are expectations: where they are disjoint the part stays, with contents of never.
 static ClassPart intersectPartsOfOneClass(TypeArena& arena, const ClassPart& first, const ClassPart& second, DeclaredParts declared)
 {
     if (!second.hasWrittenContents())
@@ -316,7 +294,6 @@ static ClassPart intersectPartsOfOneClass(TypeArena& arena, const ClassPart& fir
     return result;
 }
 
-// For a class that the other side has no part for. If the other side has a subclass of it, whatever is both is an instance of the subclass, so only the subclass's part stays.
 static bool classMayIntersectUnknownOf(const BuiltinTable& builtins, BuiltinClassID builtinClass, std::span<const ClassPart> otherParts, bool otherHoldsAnyFunction)
 {
     if (otherHoldsAnyFunction && isFunctionClass(builtins, builtinClass))
@@ -364,7 +341,6 @@ static ClassPartsID intersectClassParts(TypeArena& arena, std::span<const ClassP
     return arena.internClassParts(kept.span());
 }
 
-// An object of one of these layouts that is also an instance of one of those classes is an object of a subclass of such a class.
 static LayoutSetID intersectLayoutsWithClasses(TypeArena& arena, LayoutSetID layouts, std::span<const ClassPart> classes)
 {
     if (!layouts || classes.empty())
@@ -403,8 +379,6 @@ static void intersectUnknownObjects(TypeParts& result, TypeArena& arena, const T
         result.unnamedClasses = intersectClassParts(arena, classesOfFirst.span(), a.anyFunction, classesOfSecond.span(), b.anyFunction, declared);
 }
 
-// DeclaredParts chooses among written contents and decides nothing else. With FromEither the answer for (a, b) must equal the answer for (b, a): the arena's memo sorts the two ids.
-// Apart from written contents, the answer loses no value when an operand grows. It loses a part in one case: a merged form gives way once the operand that names it has gained enough `unknown`.
 TypeParts intersectTypes(TypeArena& arena, const Type& a, const Type& b, DeclaredParts declared)
 {
     TypeParts result;
@@ -452,8 +426,6 @@ static void subtractLiteralSet(TypeParts& result, SetID TypeParts::* literals, S
         result.primitives &= ~literalBit;
 }
 
-// A merged form stands for many objects, so naming it in `removed` does not remove it. Only a shape that surely covers it does.
-// A copy for an instance lies inside its shared form, and goes with it.
 static ObjectSetID subtractNamedObjects(TypeArena& arena, ObjectSetID objects, const Type& removed)
 {
     if (!objects)
@@ -476,7 +448,6 @@ static ObjectSetID subtractNamedObjects(TypeArena& arena, ObjectSetID objects, c
     uint32_t layoutsOfRemoved = isWide ? arena.setOfRound(removed.unnamedLayouts).word : removed.unnamedLayouts.bits();
     if (liesInThread(ObjectSetID::fromBits(objectsOfRemoved)) || liesInThread(LayoutSetID::fromBits(layoutsOfRemoved)) || liesInThread(removed.unnamedClasses))
         return askEachObjectOf(objects);
-    // Of `removed` the answer goes by these parts.
     uint32_t flagsOfRemoved = static_cast<uint32_t>(removed.anyObject) | static_cast<uint32_t>(removed.anyFunction) << 1;
     return filterMembersOncePerBuild(arena, SharedQuestion::NamedObjectsOfDifference, objects, { objectsOfRemoved, layoutsOfRemoved, removed.unnamedClasses.bits(), flagsOfRemoved }, scopedLambda<ObjectSetID(ObjectSetID)>(askEachObjectOf));
 }
@@ -517,7 +488,6 @@ static ClassPartsID subtractClassParts(TypeArena& arena, ClassPartsID classes, c
     return arena.internClassParts(kept.span());
 }
 
-// A part of `value` is removed only if everything it stands for lies inside `removed`. What merely may lie there stays, so the answer grows with `value`.
 TypeParts subtractTypes(TypeArena& arena, const Type& value, const Type& removed)
 {
     TypeParts result = value;
@@ -541,7 +511,6 @@ TypeParts subtractTypes(TypeArena& arena, const Type& value, const Type& removed
         result.unnamedClasses = { };
     } else if (removed.hasObjects()) {
         result.objects = subtractNamedObjects(arena, value.objects, removed);
-        // No type says "any object but these".
         if (!value.anyObject) {
             result.anyFunction = value.anyFunction && !removed.anyFunction;
             result.unnamedLayouts = subtractUnnamedLayouts(arena, value.unnamedLayouts, removed);

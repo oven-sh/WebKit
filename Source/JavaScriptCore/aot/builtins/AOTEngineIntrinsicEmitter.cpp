@@ -53,8 +53,6 @@ void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& valu
         return;
     }
 
-    // A list as its class makes it has no `constructor` of its own and stands below the Array.prototype of its realm, so while the realm watches the species of lists the answer is a new list: speciesConstructArray().
-    // Most lists that map() and filter() are asked for hold one or two, and the call into the run time costs more than all that is done with them.
     LBasicBlock asksRunTime = newBlock();
     Join<Boxed> join(m_out);
     Number number = lengthAsHanded.as<Number>();
@@ -63,18 +61,14 @@ void EngineIntrinsicEmitter::generateArraySpeciesCreate(const ValueContext& valu
     branchUnless(logicalAnd(hasCellType(array, ArrayType), emitter<ElementAccessEmitter>().isPristineArray(array, { PristineAspects::Storage, PristineAspects::Names })), asksRunTime);
     branchUnless(emitter<GuardEmitter>().belongsToInstance(array), asksRunTime);
     branchUnless(emitter<GuardEmitter>().realmWatchesSpeciesOfLists(), asksRunTime);
-    // `list.filter(..)`: the text says how many the new list can come to hold. Most lists that are asked hold one or two, so it has room for as many, and for no more than an empty list has anyway.
     bool isEmpty = count.value()->hasInt64() && !count.value()->asInt64();
     ArrayAllocationEmitter allocation(generator());
-    const ArrayStorageForm& form = arrayStorageFormOf(ArrayStorage::Contiguous);
-    CellPointer list = CellPointer(m_out.int64Zero);
-    if (Operand room = value->roomOperand() ? get(value->roomOperand()) : Operand(); isEmpty && value->roomOperand() && room.is<Number>()) {
-        Integer most = integer(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY);
-        Integer asked = emitter<ConversionEmitter>().toInteger(room.as<Number>());
-        list = allocation.allocateEmptyArrayWithRoom(value, select(below(asked, most), asked, most), form, asksRunTime);
-    } else
-        list = allocation.allocateArrayOfHoles(value, count, form, asksRunTime);
-    join.add(Boxed(list.value()));
+    std::optional<Integer> roomOfEmptyList;
+    if (Operand room = value->roomOperand() ? get(value->roomOperand()) : Operand(); isEmpty && value->roomOperand() && room.is<Number>())
+        roomOfEmptyList = emitter<ConversionEmitter>().toInteger(room.as<Number>());
+    allocation.allocateListLike(value, array, count, roomOfEmptyList, asksRunTime, scopedLambda<void(CellPointer)>([&](CellPointer list) {
+        join.add(Boxed(list.value()));
+    }));
 
     m_out.appendTo(asksRunTime);
     join.add(callOperation<Boxed>(value, RuntimeOperation::ArraySpeciesCreate, { length, array }));
@@ -98,7 +92,6 @@ void EngineIntrinsicEmitter::generateGetOwnProperty(const ValueContext& value)
 void EngineIntrinsicEmitter::generateToLength(const ValueContext& value)
 {
     Boxed operand = boxedOperand(value, value->valueOperand());
-    // Each arm comes in the representation of the result: what was found to be an int32 is not boxed to be asked again what it is.
     define(value, eitherOperand(isInt32(operand), value.representation(), [&] {
         Word32 length = unboxInt32(operand);
         return inRepresentation(value, value.representation(), select(lessThan(length, 0), 0, length), types().at(types().integer(Range { 0, std::numeric_limits<int32_t>::max() })));

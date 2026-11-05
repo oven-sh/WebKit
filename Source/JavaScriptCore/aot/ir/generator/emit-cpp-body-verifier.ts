@@ -1,6 +1,15 @@
 import { engineTypeOf, twoWordScalars } from "./cpp-types.ts";
 import { kindText } from "./hash.ts";
-import { blocks, cppHeader, cppSource, groupedCases, indent, indentation, inNamespace } from "./lines.ts";
+import {
+  blocks,
+  constexprSwitch,
+  cppHeader,
+  cppSource,
+  groupedCases,
+  indent,
+  indentation,
+  inNamespace,
+} from "./lines.ts";
 import type { Entry, External, Kind, Parameter, PayloadField, Schema, SchemaEnum, SchemaRecord } from "./model.ts";
 import { entriesOf, functionLocalIdKinds, innermostKindOf, wireParametersOf } from "./model.ts";
 import { cppColumnFunctionName, cppOperandGetterName, lowerFirst } from "./names.ts";
@@ -9,7 +18,6 @@ import { wireFieldsOf, wireTypesOf } from "./rust-types.ts";
 import { SchemaError, type Location } from "./source.ts";
 import { fieldWordsText, hasFixedSize, wordsPerElementOf } from "./wire-layout.ts";
 
-/** Words that may hold anything. */
 interface Skip {
   readonly tag: "Skip";
   readonly words: number;
@@ -18,14 +26,11 @@ interface Skip {
 interface Take {
   readonly tag: "Take";
   readonly statements: readonly string[];
-  /** Null: a count among the words says how many there are. */
   readonly words: number | null;
 }
 
-/** What verifyFieldWords() does with the next words of a body. */
 type Step = Skip | Take;
 
-/** The field of the schema that a generator error names. */
 interface Subject {
   readonly text: string;
   readonly location: Location;
@@ -36,12 +41,10 @@ interface Cursor {
   readonly type: "BodyValue" | "BodyTerminator";
   readonly subject: "value" | "terminator";
   readonly tag: "opcode" | "kind";
-  /** The C++ expression for the value that a failed rule reports. */
   readonly reportedValue: string;
   readonly entriesIn: (schema: Schema) => readonly Entry[];
 }
 
-/** Two flags of one flag word that must never both be set. */
 interface ExclusiveFlags {
   readonly flagWord: string;
   readonly flags: readonly [string, string];
@@ -100,16 +103,12 @@ function externalTest(external: External): string {
   return `${head} builtins) { return isValid${type.split("::").at(-1)}(word, builtins); }`;
 }
 
-function verifierHeader(schema: Schema): string[] {
-  return cppHeader([], inNamespace("Typed", externalsOnWire(schema).map(externalTest)));
-}
-
 function refuse(subject: Subject, kind: Kind): never {
   throw new SchemaError(subject.location, `${subject.text}: the verifier of bodies cannot check ${kindText(kind)}`);
 }
 
 function failureStatement(error: string): string {
-  return `words.verifier().failAtSubject(InternalErrorKind::${error});`;
+  return `words.failAtSubject(InternalErrorKind::${error});`;
 }
 
 function takeWord(statement: string): Take {
@@ -170,7 +169,7 @@ function exclusiveMaskNameOf(type: SchemaEnum): string {
 }
 
 function takeFlagWord(type: SchemaEnum): Take {
-  const word = `words.takeFlagWord<${type.name}>()`;
+  const word = `words.template takeFlagWord<${type.name}>()`;
   const exclusive = exclusiveFlagsOf(type);
   if (exclusive === null) return takeWord(`${word};`);
   const mask = exclusiveMaskNameOf(type);
@@ -208,13 +207,13 @@ function stepsOf(kind: Kind, isOptional: boolean, subject: Subject): Step[] {
       return twoWordScalars.has(kind.scalar) ? [{ tag: "Skip", words: 2 }] : refuse(subject, kind);
     case "Id":
       if (kind.id.isEngine || functionLocalIdKinds.has(kind.id.name)) return refuse(subject, kind);
-      return [takeWord(`words.takeID<${engineTypeOf(kind)}>(${isOptional});`)];
+      return [takeWord(`words.template takeID<${engineTypeOf(kind)}>(${isOptional});`)];
     case "Enum":
-      return [takeWord(`words.takeEnumerator<${kind.type.name}>(${isOptional ? "true" : ""});`)];
+      return [takeWord(`words.template takeEnumerator<${kind.type.name}>(${isOptional ? "true" : ""});`)];
     case "Flags":
       return [takeFlagWord(kind.type)];
     case "External":
-      return [takeWord(`words.takeExternal<${kind.external.cppType}>(${isOptional});`)];
+      return [takeWord(`words.template takeExternal<${kind.external.cppType}>(${isOptional});`)];
     case "Record":
       return stepsOfRecord(kind.record, subject);
     case "List":
@@ -247,7 +246,8 @@ function wordsFunction(cursor: Cursor, schema: Schema): string[] {
   const entries = cursor.entriesIn(schema);
   const cases = entries.map(entry => ({ label: entry.name, body: [...wordStatementsOf(entry), "return;"] }));
   return [
-    `void verifyFieldWords(CheckedBodyWords& words, ${enumName} ${tag})`,
+    "template<WordsReport report>",
+    `ALWAYS_INLINE void verifyFieldWords(CheckedBodyWords<report>& words, ${enumName} ${tag})`,
     "{",
     `${indentation}switch (${tag}) {`,
     ...groupedCases(enumName, cases),
@@ -284,7 +284,7 @@ function masksOfExclusiveFlags(kinds: readonly Kind[]): string[] {
     const exclusive = exclusiveFlagsOf(type);
     if (exclusive === null) return [];
     const flags = exclusive.flags.map(flag => `${type.name}::${flag}`).join(", ");
-    return [`static constexpr uint32_t ${exclusiveMaskNameOf(type)} = OptionSet<${type.name}> { ${flags} }.toRaw();`];
+    return [`inline constexpr uint32_t ${exclusiveMaskNameOf(type)} = OptionSet<${type.name}> { ${flags} }.toRaw();`];
   });
 }
 
@@ -389,7 +389,6 @@ function rulesFunction(cursor: Cursor, schema: Schema): string[] {
     const operation = `auto operation = ${subject}.as<${enumName}::${entry.name}>();`;
     return [`case ${enumName}::${entry.name}: {`, ...indent([operation, ...rules, "return;"]), "}"];
   });
-  // The words stage lets no entry of the engine through.
   const otherCases = entries
     .filter(({ rules }) => rules.length === 0)
     .map(({ entry }) => ({ label: entry.name, body: [entry.isWire ? "return;" : "RELEASE_ASSERT_NOT_REACHED();"] }));
@@ -408,16 +407,72 @@ function rulesFunction(cursor: Cursor, schema: Schema): string[] {
   ];
 }
 
-function verifierSource(schema: Schema): string[] {
+function operandKindsFunction(cursor: Cursor, schema: Schema): string[] {
+  const { enumName, tag } = cursor;
+  const cases = cursor.entriesIn(schema).map(entry => {
+    const operands =
+      entry.variadicOperand === null ? entry.namedOperands : [...entry.namedOperands, entry.variadicOperand];
+    const numbers = new Map(operands.map((operand): [string, number] => [operand.kind.name, operand.kind.number]));
+    const kinds = [...numbers].sort(([, left], [, right]) => left - right).map(([name]) => `OperandKind::${name}`);
+    return { label: entry.name, value: kinds.length === 0 ? "{ }" : `{ ${kinds.join(", ")} }` };
+  });
+  const signature = `OperandKindSet kindsOfOperandsOf(${enumName} ${tag})`;
+  return [
+    "// Of all the operands that the schema gives the entry, the engine's among them.",
+    ...constexprSwitch({ signature, subject: tag, enumName, cases, defaultValue: "most common" }),
+  ];
+}
+
+function requiresFunctionFlags(entry: Entry): boolean {
+  const value = entry.columns.get("requires");
+  return value?.tag === "Members" && value.members.length > 0;
+}
+
+function rulesPredicate(cursor: Cursor, schema: Schema): string[] {
+  const { enumName, tag } = cursor;
+  const cases = cursor.entriesIn(schema).map(entry => ({
+    label: entry.name,
+    value: String(!entry.isWire || requiresFunctionFlags(entry) || fieldRulesOf(entry).length > 0),
+  }));
+  const signature = `bool hasFieldRulesInEveryFunction(${enumName} ${tag})`;
+  return [
+    "// No: verifyFieldRules() finds no fault with the entry, unless it is an intrinsic outside library code.",
+    ...constexprSwitch({ signature, subject: tag, enumName, cases, defaultValue: "false" }),
+  ];
+}
+
+function takenByTargetsOf(entry: Entry): string {
+  const taken = new Set(
+    entry.targets.map(target => (target.takesProofs ? "Proofs" : target.results.length > 0 ? "Results" : "Nothing")),
+  );
+  const isVariadicBehindFirst = entry.targets.some(target => target.isVariadic && target.index > 0);
+  if (isVariadicBehindFirst || taken.size > 1 || taken.has("Results")) return "TakenByTargets::Differs";
+  return taken.has("Proofs") ? "TakenByTargets::Proofs" : "TakenByTargets::Nothing";
+}
+
+function targetsFunction(schema: Schema): string[] {
+  const cases = schema.terminators.map(entry => ({ label: entry.name, value: takenByTargetsOf(entry) }));
+  const signature = "TakenByTargets takenByTargetsOf(TerminatorKind kind)";
+  return constexprSwitch({ signature, subject: "kind", enumName: "TerminatorKind", cases, defaultValue: null });
+}
+
+function verifierHeader(schema: Schema): string[] {
   const kinds = kindsInBodies(schema);
   const definitions = blocks(
+    externalsOnWire(schema).map(externalTest),
     assertionsOnIDs(kinds),
     masksOfExclusiveFlags(kinds),
     ...cursors.map(cursor => wordsFunction(cursor, schema)),
-    ruleChecker(schema),
-    ...cursors.map(cursor => rulesFunction(cursor, schema)),
+    ...cursors.map(cursor => operandKindsFunction(cursor, schema)),
+    ...cursors.map(cursor => rulesPredicate(cursor, schema)),
+    targetsFunction(schema),
   );
-  return cppSource(['"AOTBodyVerifierInternal.h"', "<type_traits>"], inNamespace("Typed", definitions));
+  return cppHeader(["<type_traits>"], inNamespace("Typed", definitions));
+}
+
+function verifierSource(schema: Schema): string[] {
+  const definitions = blocks(ruleChecker(schema), ...cursors.map(cursor => rulesFunction(cursor, schema)));
+  return cppSource(['"AOTBodyVerifierInternal.h"'], inNamespace("Typed", definitions));
 }
 
 export function emitCppBodyVerifier(context: EmitContext): OutputFile[] {

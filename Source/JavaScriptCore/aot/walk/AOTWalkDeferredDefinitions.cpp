@@ -3,12 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// WHAT A MODULE MAKES AT LOAD AND ONLY STORES IN A VARIABLE IS MADE AT THE FIRST READ: DeferredVariable, plan/AOTPlan.h.
-// The body that defines: the operation that makes the object and the casts behind it are built as nothing, and in the place of the store stands a store of the mark, or nothing.
-// Whoever reads: the read as written . a test for the mark . in a rare block the operation as the body writes it and a store of what it gives . the two meet.
-// What the read is bound to is never the mark. What the variable held in front of its declaration goes on as it is, to the check that is written behind the read.
-// At a suspension: nothing. At a throw: the operation that makes the object throws for lack of memory alone, under the handler of the block being walked.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -23,7 +17,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr OpcodeSet operationsThatMakeDeferredObjects { Opcode::NewRegExp, Opcode::Data };
 static constexpr OpcodeSet opcodesOfDeferredDefinitions = operationsThatMakeDeferredObjects | inputOperationsThatHandOn | OpcodeSet { Opcode::GetModuleVariable, Opcode::PutModuleVariable };
 
-// Of a value of the body being read, behind casts.
 static const DeferredVariable* variableThatValueIsMadeFor(Walker& walker, ValueID value)
 {
     const DeferredDefinitions& definitions = walker.plan().deferredDefinitions();
@@ -59,7 +52,6 @@ static Reference makeObjectOfDeferredVariable(Walker& walker, const DeferredVari
     RELEASE_ASSERT(index);
     BodyValue written = index->value(deferred.made);
     RELEASE_ASSERT(operationsThatMakeDeferredObjects.contains(written.opcode()));
-    // It takes no operand, so nothing of the body that writes it is named.
     written.forEachOperand([](ValueID, uint32_t) {
         RELEASE_ASSERT_NOT_REACHED();
     });
@@ -75,7 +67,6 @@ static Reference findOrMakeObjectOfDeferredVariable(Walker&, const DeferredVaria
 
 static void buildReadOfDeferredVariable(Walker& walker, const BodyValue& read, const DeferredVariable& deferred)
 {
-    // Only what has filled the variable, or was found in it behind the test, is noted under it. Once it is there it stays.
     if (walker.has(Mechanism::Folding)) {
         if (Reference held = walker.state().variable(deferred.variable)) {
             walker.bind(read.id(), held);
@@ -96,7 +87,6 @@ static void buildReadOfDeferredVariable(Walker& walker, const BodyValue& read, c
         walker.bind(read.id(), result);
 }
 
-// `held`: what a read has found in the variable. Null: the walk has failed, or nothing goes on from here.
 static Reference findOrMakeObjectOfDeferredVariable(Walker& walker, const DeferredVariable& deferred, Reference held, Origin origin)
 {
     if (!(walker.types().at(walker.typeOf(held)).primitives & deferred.mark)) {
@@ -135,7 +125,6 @@ static Reference findOrMakeObjectOfDeferredVariable(Walker& walker, const Deferr
         return { };
     walker.jumpTo(meet, std::array { found });
 
-    // What the variable held in front of its declaration is ended by the store as it is written, which the effects of the body name.
     walker.state().noteVariable(deferred.variable, result);
     noteObjectOfVariablePutOff(walker, deferred.variable, result);
     return result;
@@ -181,7 +170,6 @@ bool buildDeferredDefinitionOfItsOpcodes(Walker& walker, const BodyValue& value)
     return !!variableThatValueIsMadeFor(walker, value.id());
 }
 
-// Link ran in front of the plan, so a variable that a read in a callee may fill is not among the writes of the callee, and no row says that the read stores.
 bool isVariableFilledAtFirstRead(const Plan& plan, VariableID variable)
 {
     const DeferredVariable* deferred = plan.deferredDefinitions().findDeferred(variable);

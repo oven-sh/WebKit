@@ -24,7 +24,6 @@
 
 namespace JSC { namespace AOT {
 
-// class C { #a = <initializer of a>; #b = 2; #m() { <body of m> } read() { return { a: this.#a, b: this.#b } } }; show("read()", new C().read())
 static constexpr ASCIILiteral layouts = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="C" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"a"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key=#"b"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}]
@@ -147,7 +146,6 @@ static String runInShell(const PrivateFieldProgram& parts, ASCIILiteral way)
         makeString(script, "runCompiledEntryPoint("_s, output->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], "); drainMicrotasks();"_s),
     };
 
-    // The shell prints what the program throws, and the stack below it.
     ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
     return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
 }
@@ -170,21 +168,18 @@ static void testDefinitionsInOrder()
     checkInEveryWay({ .initializerOfA = callOfMethod }, "read(): {\"a\":5,\"b\":2}\n"_s);
 }
 
-// #a = (this.#b = 1)
 static void testStoreBeforeDefinition()
 {
     checkInEveryWay({ .initializerOfA = "    v2 = Integer integer=1\n    PrivateSet v0, v1, v2 layout=L0 field=2\n"_s, .definitions = definitionsAfterStore }, missingFieldError);
     checkInEveryWay({ .initializerOfA = callOfMethod, .bodyOfMethod = "    v2 = Integer integer=5\n    PrivateSet v0, v1, v2 layout=L0 field=2\n    Return v2\n"_s }, missingFieldError);
 }
 
-// #a = this.#b
 static void testReadBeforeDefinition()
 {
     checkInEveryWay({ .initializerOfA = "    v2 = PrivateGet v0, v1 layout=L0 field=2\n"_s }, missingFieldError);
     checkInEveryWay({ .initializerOfA = callOfMethod, .bodyOfMethod = "    v2 = PrivateGet v0, v1 layout=L0 field=2\n    Return v2\n"_s }, missingFieldError);
 }
 
-// #a = (#b in this)
 static void testMembershipBeforeDefinition()
 {
     checkInEveryWay({ .initializerOfA = "    v2 = PrivateHas v0, v1 layout=L0 field=2\n"_s }, "read(): {\"a\":false,\"b\":2}\n"_s);

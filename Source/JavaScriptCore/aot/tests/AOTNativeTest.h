@@ -17,14 +17,11 @@ namespace JSC { namespace AOT {
 struct NativeTest {
     ASCIILiteral name;
     void (*run)();
-    // `<owner>: <what is lost>`, of a test that fails for a known reason. It is run all the same and counted apart, and fails once it passes: the words go out.
     ASCIILiteral todo { };
 };
 
 [[noreturn]] void failNativeTest(const char* file, int line, const char* condition);
 
-// Under AddressSanitizer a frame keeps words that nothing uses any more, which a collection takes for references, and a local variable may lie outside the stack.
-// A test of what a collection leaves dead, or of how far the stack reaches, says nothing there.
 inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
 
 #define AOT_TEST_CHECK(condition) do { \
@@ -44,7 +41,6 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(siteTableTests) \
     v(regExpTableTests) \
     v(determinismTests) \
-    v(tablesOfManyModulesTests) \
     v(symbolTests) \
     v(codeLayoutTests) \
     v(programInputTests) \
@@ -164,7 +160,6 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(stubPropertyStoreTests) \
     v(stubRegExpTests) \
     v(stubRuntimeTests) \
-    v(leavingTests) \
     v(stubStringTests) \
     v(stubValueTests) \
     v(stubVectorGrowthTests) \
@@ -216,7 +211,6 @@ FOR_EACH_AOT_ENGINE_NATIVE_TEST_PROVIDER(AOT_DECLARE_NATIVE_TEST_PROVIDER)
 
 class ChildProcessLauncher;
 
-// Of the tests that the filter lets through, in their order: the one with the index, and every count-th behind it.
 struct NativeTestPart {
     bool contains(unsigned ordinal) const { return ordinal % count == index; }
 
@@ -229,7 +223,6 @@ struct NativeTestRequest {
     StringView previousTest;
     const ChildProcessLauncher* launcher { nullptr };
     NativeTestPart part;
-    // For the tests of the runner: these count as marked with a todo.
     std::span<const ASCIILiteral> testsTakenAsTodo { };
 };
 

@@ -28,22 +28,17 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// The table lasts as long as the VM, and a realm may end long before. So it holds nothing: whoever has read a stand-in holds it, and one that nobody holds is made anew.
 struct StandIn {
     Weak<JSObject> function;
-    // What a call of it throws.
     String message;
-    // Of a member without a slot: the getter, or the object on which native code answers for the name. It answers the same function each time, as it would answer the same object.
     Weak<JSObject> answeredBy;
     String name;
     bool isKnownToBeFunction { false };
 };
 
 struct MembersLeftOut {
-    // The newest. Once it is dead the handle answers null, so no other object that takes its address is taken for it.
     Weak<JSObject> error;
     String message;
-    // One for each member that was left out and read.
     Vector<StandIn> standIns;
 };
 
@@ -55,8 +50,6 @@ HashMap<VM*, MembersLeftOut>& membersByVM() WTF_REQUIRES_LOCK(membersLock)
     return map;
 }
 
-// Most callers find the exception with exceptionForInspection(), which does not count as a check, so a scope that verifies when it is constructed would fail here.
-// They declare no scope of their own because it would make every caller above them check after each read.
 class UnverifiedExceptionScope final : public ExceptionScope {
 public:
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
@@ -102,7 +95,6 @@ JSC_DEFINE_HOST_FUNCTION(useStandInForValue, (JSGlobalObject* realm, CallFrame* 
     return encodedJSValue();
 }
 
-// What was left out may be an object that the program has under another name. A write to what stands in for it would never arrive there, so it is refused as a call is.
 class StandInForValue final : public InternalFunction {
 public:
     using Base = InternalFunction;
@@ -120,7 +112,6 @@ public:
 
     static bool put(JSCell* cell, JSGlobalObject* realm, PropertyName name, JSValue value, PutPropertySlot& slot)
     {
-        // An object below it takes the store itself.
         if (slot.thisValue() != JSValue(cell))
             return Base::put(cell, realm, name, value, slot);
         return throwMessageOfStandIn(realm, cell);
@@ -159,7 +150,6 @@ void noteErrorOfCodeLeftOut(JSGlobalObject* realm, JSObject* error)
     members.message = WTF::move(text);
 }
 
-// The message of the pending error, which is taken. Null for any other exception.
 static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
 {
     Exception* exception = vm.exceptionForInspection();
@@ -246,7 +236,6 @@ JSValue takeStandInForGetterLeftOut(JSGlobalObject* realm, JSObject* getter)
     auto* function = dynamicDowncast<JSFunction>(getter);
     if (!function || !function->isHostOrBuiltinFunction())
         return { };
-    // Nothing is asked of the getter while what it has thrown is pending: a bound function makes its name when it is first asked for, and clears whatever is pending then.
     String message = takeMessageOfErrorOfCodeLeftOut(vm);
     if (message.isNull())
         return { };
@@ -265,7 +254,6 @@ void explainErrorBehindMemberLeftOut(JSGlobalObject* realm, JSObject* error, JSV
         auto found = membersByVM().find(&vm);
         if (found == membersByVM().end())
             return;
-        // The value is compared and not looked into.
         for (const StandIn& standIn : found->value.standIns) {
             if (base == JSValue(standIn.function.get())) {
                 sentence = standIn.message;

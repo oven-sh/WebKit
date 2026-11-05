@@ -37,7 +37,6 @@ static ThrowKind throwKindOfStraightForm(NullishAccess access)
 static void generateCheckInitialized(StraightEmitter& emitter, const BodyValue& value)
 {
     ValueID checked = value.valueOperand();
-    // A constant has no word in the frame.
     if (std::optional<JSValue> constant = emitter.constantOf(checked)) {
         if (!*constant)
             emitter.throwAt(value.origin(), emitter.throwSiteWithName(ThrowKind::UninitializedBinding, value.name()));
@@ -75,7 +74,6 @@ static void generateRequireObject(StraightEmitter& emitter, const BodyValue& val
     emitter.defineSameAs(value, required);
 }
 
-// The operation takes the value where temporary(1) lies.
 static void generateTypeTest(StraightEmitter& emitter, const BodyValue& value)
 {
     if (std::optional<StraightTest> test = StraightEmitter::testOfWordAlone(value.testedType()); test && emitter.isReadByBranchAlone(value)) {
@@ -107,7 +105,6 @@ void StraightEmitter::generateCast(const BodyValue& value)
     default:
         break;
     }
-    // walk/AOTWalkInt32Promises.cpp, walk/AOTWalkReplacements.cpp: a walk reports a promise that it cannot prove, and proves a claim or builds the test that stops.
     if (value.opcode() == Opcode::Convert) {
         DeclaredType declared = value.as<Opcode::Convert>().declared();
         if (declared.has(PositionFlags::IsInt32Promise) || (declared.has(PositionFlags::IsClaim) && !m_index.isUnused(value.id()))) {

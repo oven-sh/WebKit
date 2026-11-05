@@ -12,7 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Joins paths that each end with one value for every result of an operation.
 template<typename... Results>
 class ResultsJoin {
 public:

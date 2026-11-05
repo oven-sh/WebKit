@@ -16,10 +16,6 @@
 #include <utility>
 #include <wtf/DataLog.h>
 
-// A check that never fails proves nothing. Each test first has every check accept what the back end made of a procedure, then damages one thing
-// and expects one check to refuse the result and to name the operation that can no longer read its value.
-// None of the code is run, so the generators emit nothing.
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
@@ -45,7 +41,6 @@ static bool checkerReportedFailureAt(const Procedure& procedure, FailureKind kin
     });
 }
 
-// The untouched allocation passes.
 static void prepareForCheckerTest(TestProcedure& test)
 {
     prepareOrFail(test);
@@ -74,7 +69,6 @@ static PatchAssignment& patchAssignmentForCheckerTest(TestProcedure& test, const
     return test.procedure().allocationForTesting().patchAssignmentForTesting(index);
 }
 
-// Searches the steps of the block, then the moves of its edge. Given a value, only a step that moves that value matches.
 static uint32_t findStepForCheckerTest(TestProcedure& test, const Block* block, StepKind kind, const Operation* value = nullptr)
 {
     const Allocation& allocation = test.procedure().allocation();
@@ -107,7 +101,6 @@ static void dropStepForCheckerTest(TestProcedure& test, const Block* block, uint
     --end;
 }
 
-// A value is brought into a register for the operation that is executed next.
 static const Operation* readerAfterStepForCheckerTest(TestProcedure& test, const Block* block, uint32_t index)
 {
     const Allocation& allocation = test.procedure().allocation();
@@ -123,7 +116,6 @@ static RegisterMask callerSavedRegistersForCheckerTest(TestProcedure& test)
     return (file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP)) & ~file.calleeSaved;
 }
 
-// It has the effects of a call: it is kept even if nothing reads its result, it may collect, and it needs a frame.
 static PatchOperation* appendPatchForCheckerTest(Output& out, Type type, std::initializer_list<Operation*> operandsInRegisters, RegisterMask clobberedLate = 0)
 {
     PatchOperation* patch = out.patch(type);
@@ -134,7 +126,6 @@ static PatchOperation* appendPatchForCheckerTest(Output& out, Type type, std::in
     return patch;
 }
 
-// More values than there are registers, all defined before the first read. Each is read by its own Patch, which wants it in a register. Returns the block.
 static Block* buildPressureForCheckerTest(TestProcedure& test)
 {
     Output& out = test.out();
@@ -152,7 +143,6 @@ struct CheckerTestDiamond {
     Block* right;
 };
 
-// Both values are read after the join, so the Phi gets a register of its own and each edge gets a move.
 static CheckerTestDiamond buildDiamondForCheckerTest(TestProcedure& test, bool rightHasUpsilon)
 {
     Output& out = test.out();
@@ -184,7 +174,6 @@ struct CheckerTestRareArm {
     PatchOperation* coldReader;
 };
 
-// The values are defined before the rare arm and read after it, and the call in the arm clobbers every register they could stay in. After the call the arm reads the first value from wherever it is.
 static CheckerTestRareArm buildRareArmForCheckerTest(TestProcedure& test)
 {
     Output& out = test.out();
@@ -228,7 +217,6 @@ static void checkerRefusesReadThatNoDefinitionDominates()
     }
 }
 
-// A long row of blocks, each of which may leave for one block that they share.
 static std::optional<uint64_t> checkerTestInstructionsToValidateRowOfGuards(unsigned numberOfGuards)
 {
     TestProcedure test;
@@ -282,8 +270,6 @@ static void checkerRefusesEdgeWithoutUpsilonForPhiBehindBlockPasses()
     }
 }
 
-// Each arm hands the join a constant, and the join only branches on it. threadJumps() leads each arm to where its constant leads:
-// the Upsilons leave the lists of their blocks and go on naming the blocks, and the join stays in the procedure with its edges though nothing leads to it.
 static void checkerLooksOnlyAtWhatBlockPassesLeave()
 {
     for (bool asksAsOfEmittedOperations : { true, false }) {
@@ -372,7 +358,6 @@ static void checkerRefusesDroppedReload()
     expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { reader });
 }
 
-// The register is read at the head of the join, so the failure names the Phi.
 static void checkerRefusesDroppedEdgeMove()
 {
     TestProcedure test;
@@ -383,7 +368,6 @@ static void checkerRefusesDroppedEdgeMove()
     expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { diamond.phi });
 }
 
-// On the back edge each Phi takes the value of the next one, and the last takes the first's. Doing the two swaps in the other order rotates the registers the wrong way, so all three are wrong.
 static void checkerRefusesExchangedMovesOfCycle()
 {
     constexpr unsigned length = 3;
@@ -427,7 +411,6 @@ static void checkerRefusesExchangedMovesOfCycle()
     expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { phis[0], phis[1], phis[2] });
 }
 
-// The move that takes the value out of the way leaves a stale copy in the old register.
 static void checkerRefusesValueLeftInClobberedRegister()
 {
     TestProcedure test;
@@ -439,7 +422,6 @@ static void checkerRefusesValueLeftInClobberedRegister()
     out.ret(difference);
     prepareForCheckerTest(test);
 
-    // The checker also forgets every register that a Patch does not list as used. With the old register listed, the late clobber is the only reason to refuse the read.
     patchAssignmentForCheckerTest(test, patch).usedRegisters |= maskOf(clobbered);
     AOT_CHECKER_TEST_CHECK(test, checkAllocation(test.procedure()));
 
@@ -480,7 +462,6 @@ static void checkerRefusesLandingPadThatReadsCallerSavedRegister()
     expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { landingPad->last() });
 }
 
-// The register is read at the head of the join, so the failure names the value.
 static void checkerRefusesRareRegionThatDoesNotRestore()
 {
     TestProcedure test;
@@ -533,7 +514,6 @@ static void checkerRefusesPatchWithoutTheFrameItNeeds()
     expectCheckerRefusal(test, checkFrame, FailureKind::NeedsFrameWhereNoneIsSetUp, { patch });
 }
 
-// A flag set after allocation means no pointer was stored. checkReferences() goes by the allocation and not by what the scan decided, so it has to report the missing pointer.
 static void checkerRefusesNarrowReferenceWithoutPointer()
 {
     for (bool isMarkedBeforeAllocation : { true, false }) {
@@ -559,8 +539,6 @@ static void checkerRefusesNarrowReferenceWithoutPointer()
     }
 }
 
-// The generator of a suspension may read a late operand after the function has resumed in another frame. Nothing reads the address after the Patch, so that is the only reason to refuse it.
-// AOTMachineFrameTests.cpp has the addresses that live across a suspension.
 static void checkerRefusesFrameAddressReadLateBySuspension()
 {
     ProcedureTraits traits;
@@ -579,15 +557,40 @@ static void checkerRefusesFrameAddressReadLateBySuspension()
     expectCheckerRefusal(test, checkReferences, FailureKind::FrameAddressAcrossSuspension, { address });
 }
 
+static void checkerRefusesShiftedNarrowReferenceWithoutPointer()
+{
+    for (bool isMarkedBeforeAllocation : { true, false }) {
+        TestProcedure test;
+        Output& out = test.out();
+        Operation* reference = out.opaque(out.castToInt32(test.argumentGPR(0)));
+        if (isMarkedBeforeAllocation)
+            reference->markAsNarrowReference();
+        Operation* widened = out.zeroExtPtr(reference);
+        Operation* shifted = out.shl(widened, 3);
+        PatchOperation* safepoint = appendPatchForCheckerTest(out, Void, { shifted });
+        AOT_TEST_CHECK(safepoint->effects.mayCollect);
+        out.ret(shifted);
+        prepareForCheckerTest(test);
+
+        bool hasPointer = std::ranges::any_of(test.procedure().allocation().spills(), [&](const SpillFacts& spill) {
+            return spill.isPointerBesideNarrowReference && spill.value == reference;
+        });
+        AOT_CHECKER_TEST_CHECK(test, hasPointer == isMarkedBeforeAllocation);
+        if (isMarkedBeforeAllocation)
+            continue;
+
+        reference->markAsNarrowReference();
+        expectCheckerRefusal(test, checkReferences, FailureKind::NarrowReferenceWithoutPointer, { widened, shifted });
+    }
+}
+
 struct SumTestedByOverflowForCheckerTest {
     Operation* left;
     Operation* lowHalf;
     Operation* branch;
-    // Nothing reads it.
     Operation* constant;
 };
 
-// The sum of two int32 is tested for int32. The passing side reads its low half, and the failing side, which is rare and returns, reads the left operand.
 static SumTestedByOverflowForCheckerTest buildSumTestedByOverflowForCheckerTest(TestProcedure& test)
 {
     Output& out = test.out();
@@ -609,7 +612,6 @@ static SumTestedByOverflowForCheckerTest buildSumTestedByOverflowForCheckerTest(
     return { left, lowHalf, tests->last(), constant };
 }
 
-// The sum has taken the register of the operand, and the failing successor is entered with the operand there only because the Branch says that the way to it takes the sum back.
 static void checkerRefusesOperandThatIsNotTakenBack()
 {
     TestProcedure test;
@@ -620,7 +622,6 @@ static void checkerRefusesOperandThatIsNotTakenBack()
     expectCheckerRefusal(test, checkAllocation, FailureKind::RegisterLacksItsValue, { built.left });
 }
 
-// On x86-64 zero is made by an instruction that writes the flags, which the Branch has yet to read.
 static void checkerRefusesStepThatMayWriteFlagsAheadOfBranchOnOverflow()
 {
     TestProcedure test;
@@ -655,6 +656,7 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/two-live-spills-in-one-slot"_s, Machine::checkerRefusesTwoLiveSpillsInOneSlot },
         { "machine-checker/patch-without-the-frame-it-needs"_s, Machine::checkerRefusesPatchWithoutTheFrameItNeeds },
         { "machine-checker/narrow-reference-without-its-pointer"_s, Machine::checkerRefusesNarrowReferenceWithoutPointer },
+        { "machine-checker/shifted-narrow-reference-without-its-pointer"_s, Machine::checkerRefusesShiftedNarrowReferenceWithoutPointer },
         { "machine-checker/frame-address-read-late-by-a-suspension"_s, Machine::checkerRefusesFrameAddressReadLateBySuspension },
         { "machine-checker/operand-that-is-not-taken-back"_s, Machine::checkerRefusesOperandThatIsNotTakenBack },
         { "machine-checker/step-that-may-write-the-flags-ahead-of-a-branch-on-overflow"_s, Machine::checkerRefusesStepThatMayWriteFlagsAheadOfBranchOnOverflow },

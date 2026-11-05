@@ -20,7 +20,6 @@ namespace JSC { namespace AOT {
 
 static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2) && gprOf(StubRegister::A3) == operationArgumentGPR(3));
 
-// What JSObject::putByIndex does for an index inside the vector of an array whose storage is its own and has one of the three kinds: no such array has an accessor, a read-only element or a fixed length, on itself or on its prototypes.
 static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butterfly, GPRReg length, JumpList& isBeyondVector, JumpList& callsOperation)
 {
     const GPRReg array = jit.operand(0);
@@ -99,7 +98,6 @@ void generateArrayPutAtIndex(StubAssembler& jit)
     emitStoreInsideVector(jit, kind, butterfly, length, isBeyondVector, callsOperation);
     emitElementBarrierAndReturn(jit, jit.operand(0), jit.operand(1));
 
-    // A store at the length of a full vector is a push. No program can observe the capacity, so the value may still turn out not to fit the kind.
     isBeyondVector.link(&jit);
     jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
     callsOperation.append(jit.branch64(CCallHelpers::NotEqual, jit.operand(2), length));

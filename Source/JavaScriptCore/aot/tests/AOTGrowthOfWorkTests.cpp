@@ -26,7 +26,6 @@ std::span<const NativeTest> growthOfWorkTests();
 
 using namespace Typed;
 
-// class Wide { m0() { return 1 } m1() { return 1 } .. }  const w = new Wide; w.m0(); w.m1(); ..
 static String classWithManyMethodsForGrowthTests(unsigned numberOfMethods)
 {
     StringBuilder text;
@@ -55,11 +54,9 @@ static String classWithManyMethodsForGrowthTests(unsigned numberOfMethods)
     return text.toString();
 }
 
-// One class with as many members as a generated client has calls. Where a lookup goes through the members of the class, this does not end.
 static void testEachOfManyMembersIsFoundByItsKey()
 {
     constexpr uint32_t numberOfKeys = 300000;
-    // No divisor in common with the number of keys: the keys stand in another order than the members.
     constexpr uint32_t step = 7919;
     runOnBuildThread([&] {
         BuildContext build(makeOptionsOfTestedProgram());
@@ -82,8 +79,6 @@ static void testEachOfManyMembersIsFoundByItsKey()
             member.everyWriterIsKnown = true;
             tables.members.append(member);
         };
-        // By the remainder of the number: a method, the two halves of an accessor far from each other, a method that is defined twice.
-        // All but the first are numbers that the program has no key for: a lookup that finds a member asks nothing about its key. Where it finds none it asks what kind of name the key is.
         for (uint32_t number = 1; number < numberOfKeys; ++number)
             append(number % 3 == 1 ? MethodKind::Getter : MethodKind::Method, keyOf(number), FunctionID(number));
         for (uint32_t number = 1; number < numberOfKeys; ++number) {
@@ -142,7 +137,6 @@ static void testPlanGrowsAsMembersOfClassDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// function run(p0, p1, ..) { return p0; }  sink(run)
 static String functionWithManyParametersForGrowthTests(unsigned numberOfParameters)
 {
     StringBuilder text;
@@ -159,7 +153,6 @@ static String functionWithManyParametersForGrowthTests(unsigned numberOfParamete
     return text.toString();
 }
 
-// A convention counts its parameters in sixteen bits. One parameter more stopped the compiler in a cast: 128,000 parameters, "panic: abort() called".
 static void testFunctionWithMoreParametersThanConventionCountsIsRefused()
 {
     for (auto [numberOfParameters, isRefused] : { std::pair { 60000u, false }, std::pair { 70000u, true } }) {
@@ -179,7 +172,6 @@ static void testFunctionWithMoreParametersThanConventionCountsIsRefused()
     }
 }
 
-// class Base { }  class C0 extends Base { constructor() { super(); } }  sink(new C0);  class C1 extends Base ..
 static String classesBelowOneClassForGrowthTests(unsigned numberOfClasses)
 {
     StringBuilder text;
@@ -220,7 +212,6 @@ static std::optional<uint64_t> instructionsOfFactsForGrowthTests(const String& t
     return instructions;
 }
 
-// Each class asks of the constructors above it what they answer with, and what Link knows of a constructor grows with the classes that call it. Where each class has that looked through anew, the work is the square of the classes.
 static void testFactsGrowAsClassesBelowOneClassDo()
 {
     constexpr unsigned numberOfClasses = 3000;
@@ -231,13 +222,10 @@ static void testFactsGrowAsClassesBelowOneClassDo()
 }
 
 enum class LoopInRowForGrowthTests : uint8_t {
-    // while (c) { }
     Empty,
-    // for (const x of list) { }
     OverList,
 };
 
-// function run(c) { const list = [c]; <loop> <loop> .. }  sink(run)
 static String loopsInRowForGrowthTests(LoopInRowForGrowthTests kind, unsigned numberOfLoops)
 {
     StringBuilder text;
@@ -278,7 +266,6 @@ static std::optional<uint64_t> instructionsOfWalkForGrowthTests(const String& te
         std::unique_ptr<Program> parsed = parseProgram(withStandInLibrary(text), build);
         AOT_TEST_CHECK(parsed);
         StagedBuild stages(WTF::move(parsed), build);
-        // The first request runs the whole stage, for what callers leave their callees.
         AOT_TEST_CHECK(stages.code(CodeUnit { function, CodeRole::Body }));
         instructions = instructionsOfAllThreadsIn([&] {
             AOT_TEST_CHECK(stages.code(CodeUnit { function, CodeRole::Body }));
@@ -287,7 +274,6 @@ static std::optional<uint64_t> instructionsOfWalkForGrowthTests(const String& te
     return instructions;
 }
 
-// The looks at a loop keep something for each loop that they come to. Where they make room for every loop of the body, the work is the square of the number of loops.
 static void testWalkGrowsAsLoopsInRowDo()
 {
     constexpr unsigned numberOfLoops = 1500;
@@ -297,7 +283,6 @@ static void testWalkGrowsAsLoopsInRowDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// function run(end) { let sum = 0; for (let i = 0; i < end; i++) sum += i; { let k = 2; while (k-- > 0) sum += k; } .. return sum }  sink(run)
 static String loopsUpToOneBoundForGrowthTests(unsigned numberOfPairs)
 {
     StringBuilder text;
@@ -328,8 +313,6 @@ static String loopsUpToOneBoundForGrowthTests(unsigned numberOfPairs)
     return text.toString();
 }
 
-// Each loop up to `end` narrows `end` for its own turns, and each loop on `k` leaves a name behind that holds in all that follows. Whoever looks for a name of `end` along that list, or asks of each of its names
-// whether the list holds it, does the square of the number of loops.
 static void testWalkGrowsAsLoopsUpToOneBoundDo()
 {
     constexpr unsigned numberOfPairs = 3000;
@@ -339,7 +322,6 @@ static void testWalkGrowsAsLoopsUpToOneBoundDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// The position of an iteration by index comes round in a parameter of its head. Where the head or the edge that comes round goes through the iterations of the whole body, the work is the square of their number.
 static void testWalkGrowsAsIterationsInRowDo()
 {
     constexpr unsigned numberOfLoops = 3000;
@@ -350,15 +332,11 @@ static void testWalkGrowsAsIterationsInRowDo()
 }
 
 enum class StatementInRowForGrowthTests : uint8_t {
-    // const x = make(); if (!x) throw x;
     TestThatLeaves,
-    // const x = make(); while (x) { }
     Loop,
-    // try { const x = make(); .. } catch { }   with all the statements in one try
     UnderOneHandler,
 };
 
-// function run(make) { <statement> <statement> .. return make(x0, x1, ..) }: each value is read at the end, so at each block as many values are live as statements stand in front of it.
 static String valuesReadAtEndForGrowthTests(StatementInRowForGrowthTests kind, unsigned numberOfStatements)
 {
     StringBuilder text;
@@ -429,13 +407,11 @@ static std::optional<uint64_t> instructionsOfLivenessForGrowthTests(const String
         instructions = instructionsOfAllThreadsIn([&] {
             liveness.compute(index);
         });
-        // The first value made is read at the end alone, and is live at the head of the last block in front of it.
         AOT_TEST_CHECK(liveness.lastUse(ValueID(1u)).index() > index.numberOfValues() - 4);
     });
     return instructions;
 }
 
-// A list of what is live at each head holds the square of the statements. So does going through what is live at the head of each loop, and uniting what is live at a handler with each block under it.
 template<StatementInRowForGrowthTests kind>
 static void testLivenessGrowsAsValuesReadAtEndDo()
 {
@@ -446,8 +422,6 @@ static void testLivenessGrowsAsValuesReadAtEndDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// `a + b + c + ..`, `.. + (c + (b + a))` and `"(" + ("(" + .. + ")") + ")"`, each as long as a generated table. A join costs the same however long its pieces are, and only the text that is read is written out.
-// Where every text on the way is written out, they hold the square of the number of joins in bytes, and this does not end.
 static void testChainOfJoinedTextsCostsWhatItsLastTextHolds()
 {
     constexpr uint32_t numberOfJoins = 100000;
@@ -484,13 +458,11 @@ static void testChainOfJoinedTextsCostsWhatItsLastTextHolds()
         AOT_TEST_CHECK(std::ranges::equal(bytesOfWrapped.subspan(5 * numberOfJoins - 5, 23), byteCast<uint8_t>("falsenullundefinedundef"_s.span8())));
         AOT_TEST_CHECK(std::ranges::equal(bytesOfWrapped.first(10), byteCast<uint8_t>("falsefalse"_s.span8())) && std::ranges::equal(bytesOfWrapped.last(9), arena.bytesOf(textOfUndefined)));
 
-        // The same joins again, as the second arm of a guess makes them.
         StringID again = textOfNull;
         for (uint32_t join = 0; join < numberOfJoins; ++join)
             again = arena.internJoinedTexts(again, textOfNull);
         AOT_TEST_CHECK(again == appended);
 
-        // Equal texts get one id, however they were put together.
         StringID leftFirst = arena.internJoinedTexts(arena.internJoinedTexts(textOfTrue, textOfNull), textOfFalse);
         StringID rightFirst = arena.internJoinedTexts(textOfTrue, arena.internJoinedTexts(textOfNull, textOfFalse));
         AOT_TEST_CHECK(leftFirst == rightFirst && spells(leftFirst, "truenullfalse"_s));
@@ -498,7 +470,6 @@ static void testChainOfJoinedTextsCostsWhatItsLastTextHolds()
         StringID ofBytes = arena.internText(byteCast<uint8_t>("falsetrue"_s.span8()));
         AOT_TEST_CHECK(arena.internJoinedTexts(textOfFalse, textOfTrue) == ofBytes && arena.internJoinedTexts(textOfTrue, textOfFalse) != ofBytes);
 
-        // The two halves of a pair are one character of the joined text: U+1F600.
         constexpr std::array<uint8_t, 4> lead { 'a', 0xed, 0xa0, 0xbd };
         constexpr std::array<uint8_t, 4> trail { 0xed, 0xb8, 0x80, 'b' };
         constexpr std::array<uint8_t, 6> pair { 'a', 0xf0, 0x9f, 0x98, 0x80, 'b' };
@@ -513,8 +484,6 @@ static void testChainOfJoinedTextsCostsWhatItsLastTextHolds()
     });
 }
 
-// `s = s + a; use(s); t = t + n; use(t); s = s + a; use(s); ..`: every text on the way is read. Each is laid down behind the one that it adds to while there is room there, and with twice the room where there is none:
-// the texts of a row begin at few places, and hold together what the last one holds, whatever is laid down between them. Where each is written out by itself, they hold the square of the number of joins in bytes, and this does not end.
 static void testTextsThatAddToOneAnotherAndAreEachReadCostWhatLastOneHolds()
 {
     constexpr uint32_t numberOfJoins = 100000;
@@ -534,13 +503,11 @@ static void testTextsThatAddToOneAnotherAndAreEachReadCostWhatLastOneHolds()
         };
         std::array<Row, 2> rows { Row { first }, Row { arena.internJoinedTexts(textOfTrue, textOfTrue) } };
         for (uint32_t join = 0; join < numberOfJoins; ++join) {
-            // A text of its own in every turn, laid down as it is made.
             arena.internText(byteCast<uint8_t>(String::number(join).span8()));
             for (Row& row : rows) {
                 row.text = arena.internJoinedTexts(arena.internJoinedTexts(row.text, textOfNull), textOfTrue);
                 std::span<const uint8_t> bytes = arena.bytesOf(row.text);
                 AOT_TEST_CHECK(bytes.size() == 8 * (static_cast<size_t>(join) + 2) && std::ranges::equal(bytes.last(8), byteCast<uint8_t>("nulltrue"_s.span8())));
-                // The buffer moves as it grows. Where a text lies in it is told from a text that stays where it is.
                 ptrdiff_t place = bytes.data() - arena.bytesOf(first).data();
                 row.numberOfPlaces += place != std::exchange(row.place, place);
                 AOT_TEST_CHECK(row.numberOfPlaces <= 32);
@@ -548,7 +515,6 @@ static void testTextsThatAddToOneAnotherAndAreEachReadCostWhatLastOneHolds()
         }
         AOT_TEST_CHECK(std::ranges::equal(arena.bytesOf(rows[0].text).first(16), byteCast<uint8_t>("nulltruenulltrue"_s.span8())) && std::ranges::equal(arena.bytesOf(rows[1].text).first(16), byteCast<uint8_t>("truetruenulltrue"_s.span8())));
 
-        // Of two texts that add to one text the first is laid down behind it. The second finds something else there, and is written out by itself.
         auto spells = [&](StringID made, ASCIILiteral expected) {
             return std::ranges::equal(arena.bytesOf(made), byteCast<uint8_t>(expected.span8()));
         };
@@ -562,7 +528,6 @@ static void testTextsThatAddToOneAnotherAndAreEachReadCostWhatLastOneHolds()
     });
 }
 
-// function run() { return "ab" + "ab" + "ab" + ..; }  sink(run)
 static String sumOfTextsForGrowthTests(unsigned numberOfTerms)
 {
     StringBuilder text;
@@ -576,7 +541,6 @@ static String sumOfTextsForGrowthTests(unsigned numberOfTerms)
     return text.toString();
 }
 
-// Folding knows every sum on the way. Where it writes each of them out, the work is the square of the number of terms.
 static void testWalkGrowsAsTermsOfSumOfTextsDo()
 {
     constexpr unsigned numberOfTerms = 6000;
@@ -586,8 +550,6 @@ static void testWalkGrowsAsTermsOfSumOfTextsDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// The sum is longer than the longest text that folding makes, so it is joined of several when the program runs. Where each sum on the way leaves a join behind that nobody reads, with a text of its own,
-// or where the known end of the sum is written out anew at each term, the work past that length is many thousand times the work in front of it.
 static void testWalkGrowsAsTermsOfSumOfTextsDoPastLongestTextThatIsMade()
 {
     constexpr unsigned numberOfTerms = 20000;
@@ -597,7 +559,6 @@ static void testWalkGrowsAsTermsOfSumOfTextsDoPastLongestTextThatIsMade()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// begin(); import("./e1.js"); import("./e2.js"); ..; end(import("./eN.js"))        e1.js: import "./e1-1.js"        e1-1.js: import "./e1-2.js"        ..
 static String graphsAskedForInOneJobForGrowthTests(unsigned numberOfGraphs, unsigned modulesOfGraph)
 {
     StringBuilder text;
@@ -619,7 +580,6 @@ static String graphsAskedForInOneJobForGrowthTests(unsigned numberOfGraphs, unsi
     return text.toString();
 }
 
-// Of the thread that runs the program, from its call of begin() until the promise that it hands to end() is fulfilled.
 static std::optional<uint64_t> instructionsOfRunForGrowthTests(const String& text)
 {
     std::unique_ptr<CompileOutput> output;
@@ -648,7 +608,6 @@ static std::optional<uint64_t> instructionsOfRunForGrowthTests(const String& tex
     return instructions;
 }
 
-// Every step that the loader takes for a graph asks about the graphs that are being loaded: how many there are, whether one has this root. Where a step goes through them, the work is the square of their number.
 static void testRunGrowsAsGraphsAskedForInOneJobDo()
 {
     constexpr unsigned numberOfGraphs = 1000;
@@ -657,7 +616,6 @@ static void testRunGrowsAsGraphsAskedForInOneJobDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// A graph of several levels has a way down on which its modules wait, and the plan of each graph asks whether it has found what waits on the way of another.
 static void testRunGrowsAsGraphsOfSeveralLevelsAskedForInOneJobDo()
 {
     constexpr unsigned numberOfGraphs = 1000;
@@ -666,8 +624,6 @@ static void testRunGrowsAsGraphsOfSeveralLevelsAskedForInOneJobDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// async function run() { const calls = [() => 0, () => 0, ..]; let i = 0; for (; i < calls.length; i++) { calls[i](); await null; } return i; }        begin(); run(); end(run())
-// Two run side by side: each finds the job of the other in the queue at every await, so it has to suspend.
 static String awaitsBehindLongListForGrowthTests(unsigned numberOfClosures, unsigned numberListedAtOnce)
 {
     StringBuilder text;
@@ -694,7 +650,6 @@ static String awaitsBehindLongListForGrowthTests(unsigned numberOfClosures, unsi
     return text.toString();
 }
 
-// As the front end writes a long list: the first elements are listed, the others appended as they are made, so that none waits in the frame for the last.
 static void testRunGrowsAsAwaitsBehindLongListDo()
 {
     constexpr unsigned numberOfClosures = 2000;
@@ -703,13 +658,11 @@ static void testRunGrowsAsAwaitsBehindLongListDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// What one operation takes lies in the frame until then, and none of it lives across an await. Where each resumption goes through the whole frame, the work is the square of the number of operands.
 static void testResumptionCostsWhatWasKeptHoweverLargeFrameIs()
 {
     constexpr unsigned numberOfClosures = 2000;
     std::optional<uint64_t> smaller = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(numberOfClosures, numberOfClosures));
     std::optional<uint64_t> large = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(4 * numberOfClosures, 4 * numberOfClosures));
-    // Where instructions cannot be counted the check below holds of itself, and the runner would ask for the todo to go. This line goes with the todo.
     AOT_TEST_CHECK(smaller && large);
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }

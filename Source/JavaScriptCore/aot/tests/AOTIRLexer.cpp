@@ -352,7 +352,6 @@ static void appendCodePoint(Vector<uint8_t>& bytes, char32_t codePoint)
 {
     std::array<uint8_t, U8_MAX_LENGTH> encoded;
     size_t length = 0;
-    // U8_APPEND rejects surrogates, and a program string may hold a lone one.
     U8_APPEND_UNSAFE(encoded, length, codePoint);
     bytes.append(std::span<const uint8_t> { encoded }.first(length));
 }

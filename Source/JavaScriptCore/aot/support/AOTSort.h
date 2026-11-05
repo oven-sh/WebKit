@@ -44,9 +44,6 @@ void sortKeepingEqualElementsInOrder(Range&& range, IsLess isLess, Projection pr
     }
 }
 
-// All four leave equal elements in the order they came in, so that libstdc++ and libc++ give the same bytes wherever a sorted list reaches the image.
-// That does not make an order total: elements that arrive in thread order still need a key that tells them all apart.
-
 template<std::ranges::random_access_range Range, typename IsLess = std::ranges::less, typename Projection = std::identity>
 void sort(Range&& range, IsLess isLess = { }, Projection projection = { })
 {

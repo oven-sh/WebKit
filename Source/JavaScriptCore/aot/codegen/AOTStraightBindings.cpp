@@ -28,7 +28,6 @@ static JSValue markOfVariableFilledAtFirstRead(const DeferredVariable& deferred)
     return deferred.mark == Primitive::Null ? jsNull() : JSValue();
 }
 
-// The operation as its body writes it, at the position of the read, with the slot of the read for what it gives.
 static void makeObjectOfVariableFilledAtFirstRead(StraightEmitter& emitter, const BodyValue& read, const DeferredVariable& deferred)
 {
     const BodyIndex* index = emitter.facts().bodies().find(deferred.body);

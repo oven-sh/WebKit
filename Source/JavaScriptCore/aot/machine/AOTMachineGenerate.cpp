@@ -18,7 +18,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// A check that refused a procedure without reporting a failure would leave it half prepared, and generate() would take it for a finished one.
 static bool runCheckBeforeGeneration(Procedure& procedure, bool (*check)(Procedure&))
 {
     bool foundNothing = check(procedure);
@@ -26,15 +25,12 @@ static bool runCheckBeforeGeneration(Procedure& procedure, bool (*check)(Procedu
     return foundNothing;
 }
 
-// Each step reads the products of the earlier steps from the procedure, and so does whoever prints a procedure that failed.
-// So a product is stored as soon as it exists, before anyone asks whether its step failed.
 void prepareForGeneration(Procedure& procedure)
 {
     if (procedure.failure())
         return;
     RELEASE_ASSERT(!procedure.m_order);
 
-    // There would be nothing to encode, and whoever links the code asks for the label of the primary entry.
     if (procedure.entrypoints().empty()) {
         procedure.fail(FailureKind::MalformedProcedure);
         return;
@@ -84,9 +80,7 @@ void prepareForGeneration(Procedure& procedure)
 void generate(Procedure& procedure, CCallHelpers& jit, RelocationRecorder& relocations)
 {
     RELEASE_ASSERT(!procedure.failure());
-    // The scan and the allocator went by the features in the traits. The assembler picks its instructions by its own.
     RELEASE_ASSERT(jit.policy().features == procedure.traits().features);
-    // The encoder appends to the records of the procedure.
     RELEASE_ASSERT(!procedure.rareCodeStart().isSet());
 
     Encoder encoder(procedure, jit, relocations);

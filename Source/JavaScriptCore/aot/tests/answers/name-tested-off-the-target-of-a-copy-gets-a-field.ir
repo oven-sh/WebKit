@@ -3,6 +3,7 @@
 # console.log(main(globalThis.on));
 # RUN(ANSWER): run-in-shell globalThis.on = true;
 # ANSWER: 87
+# ANSWER-NEXT: exited with 0
 # RUN(OTHER): run-in-shell globalThis.on = false;
 # OTHER: 103
 

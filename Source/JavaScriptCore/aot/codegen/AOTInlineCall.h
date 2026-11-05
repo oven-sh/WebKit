@@ -73,7 +73,6 @@ public:
 
     AccessSiteID accessSite() const { return m_accessSite; }
     AllocationSiteID allocationSite() const { return m_allocationSite; }
-    // The kind of storage that the receiver, or an argument, is proven to have where the call stands, and wherever else the call may be built. Other: nobody has said.
     ArrayStorage storageOfReceiver() const { return m_storageOfReceiver; }
     ArrayStorage storageOfArgument(unsigned index) const { return index < m_storageOfLists.size() ? m_storageOfLists[index] : ArrayStorage::Other; }
 

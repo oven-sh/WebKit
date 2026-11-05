@@ -200,7 +200,6 @@ void TextParser::parseBlockHead(uint32_t blockIndex, Wire::BlockHead& head)
         seenAttributes.add(attribute);
         return true;
     };
-    // The words of the handler's target stand right behind the parameters. No other attribute writes a word of its own.
     while (atField()) {
         if (acceptAttribute("role"_s, BlockAttributeInBodyText::Role))
             head.role = static_cast<uint32_t>(parseEnumerator<BlockRole>());
@@ -260,7 +259,6 @@ void TextParser::parseValue()
         head.position = parseUInt32(largestPositionInBodyText);
         if (acceptWord("tail"_s))
             head.opcode |= Wire::StandsInTailPosition;
-        // `constructs` says that the value is part of a construction whose start the text leaves out. A body says that only with a second position, so nothing is written for it.
         acceptWord("constructs"_s);
         if (accept(TokenKind::At)) {
             head.opcode |= Wire::WrittenPositionFollows;

@@ -65,7 +65,6 @@ static void generatePutCollectionIteratorTable(StraightEmitter& emitter, const B
     emitter.defineSameAs(value, value.valueOperand());
 }
 
-// An integer lies in its slot as an int32 or as a double. The operation reads the low half of the register, which is the int32.
 static void loadEntryOfCollectionStep(StraightEmitter& emitter, ValueID operand, GPRReg entry)
 {
     CCallHelpers& jit = emitter.jit();
@@ -88,7 +87,6 @@ static void generateStepOfCollection(StraightEmitter& emitter, const BodyValue& 
     loadEntryOfCollectionStep(emitter, value.entryOperand(), entry);
     emitter.callOperation(value, operation, { collection, value.tableOperand(), StraightArgument::inRegister(entry), StraightArgument::addressInScratchArea(0) });
 
-    // The library converts one part in front of the next, so the parts do not stand in a row.
     BodyBlock block = emitter.currentBlock();
     for (uint32_t next = value.id().index() + 1; next < block.endOfValues().index(); ++next) {
         BodyValue part = emitter.index().value(ValueID(next));

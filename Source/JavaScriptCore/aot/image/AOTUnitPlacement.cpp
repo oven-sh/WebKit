@@ -67,7 +67,6 @@ private:
     size_t offsetOfLastCopy(uint32_t copyable) const { return m_result.copies[*m_lastCopies[copyable]].offset; }
     bool isInBatch(uint32_t copyable) const { return m_lastCopies[copyable] && *m_lastCopies[copyable] >= m_firstCopyOfBatch; }
 
-    // An upper bound: the padding in front of a copy depends on where the copy is placed.
     size_t paddedSizeOfCopy(uint32_t copyable) const
     {
         const CopyableUnit& unit = m_inputs.copyables[copyable];
@@ -114,7 +113,6 @@ private:
     {
         if (!m_lastCopies[copyable])
             return true;
-        // A batch holds at most one copy of each copyable. Without this test, placeCopiesBeforeUsers() would add copies forever in front of a run that is longer than a use's reach. The linker reports a use that cannot reach its copy.
         if (isInBatch(copyable))
             return false;
         return static_cast<int64_t>(endOfLastSite - offsetOfLastCopy(copyable)) >= reach;
@@ -141,7 +139,6 @@ private:
     {
         for (size_t first = 0; first < numberOfUnits();) {
             RunOfUnits run = findRun(first);
-            // The copy with the shortest reach lies next to its user.
             Vector<CopyableUse, 8> usesByReach(usesOfRun(run));
             if (usesByReach.size() > 1) {
                 AOT::stableSortInLine(usesByReach, [](const CopyableUse& a, const CopyableUse& b) {

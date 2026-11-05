@@ -182,7 +182,6 @@ function parsedList(body: Lines): string[] {
   return [`parser.parseList(${brackets}, [&] {`, ...indent(body), "});"];
 }
 
-/** `engine` takes the record's engine fields. Null in a body, which has none: its text may not name them. */
 function nestedCall(kind: NestedKind, wire: string, engine: string | null): string {
   if (kind.tag === "Variant") return `parseVariant(parser, ${wire});`;
   if (!hasEngineFields(kind)) return `parser.parseRecord([&] { parseFields(parser, ${wire}); });`;

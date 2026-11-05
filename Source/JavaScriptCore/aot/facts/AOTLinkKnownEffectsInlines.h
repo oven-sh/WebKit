@@ -5,10 +5,6 @@
 
 #pragma once
 
-// Members of CalleeSummarizerForLinkEffects, which AOTLinkEffects.cpp declares. That file includes this one at its foot.
-// ONE traversal, callees first: what a function does by whichever exit, what it has written when it returns, and whose objects it writes.
-// On the way it leaves what a function does where its arguments are as expected. No list here holds functions x functions or members x calls.
-
 #if ENABLE(AOT)
 
 #include <tuple>
@@ -16,9 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- What other parts of the scan lay into the summaries. Where one of them is not in the tree the scan says what it says today, and each of these answers that there is nothing.
-
-// key-orders-and-copies: Joins that only objects pass into. An operation of the body runs Protocol::OwnKeys or OwnValues on what lies there.
 template<typename Summary>
 static std::span<const uint32_t> nodesWhoseKeysAreListedForLinkKnownEffects(const Summary& summary)
 {
@@ -28,7 +21,6 @@ static std::span<const uint32_t> nodesWhoseKeysAreListedForLinkKnownEffects(cons
         return { };
 }
 
-// unions-and-narrowing: whose chain an operation walks, whose keys it lists, in the place of Effects::unknownCode() and SummaryTrait::ListsKeys for the whole body. functor(subject, walksChain) answers whether to go on.
 template<typename Summary>
 static constexpr bool hasInspectionsForLinkKnownEffects = requires(const Summary& summary) { summary.inspections; };
 
@@ -45,7 +37,6 @@ static bool forEachInspectionForLinkKnownEffects(const Summary& summary, const F
     return true;
 }
 
-// unions-and-narrowing: of a call by Binding, an argument that a test of the program has cut. The call is entered once something lies there.
 template<typename Call>
 static uint32_t nodeThatCallWaitsForForLinkKnownEffects(const Call& call)
 {
@@ -55,12 +46,8 @@ static uint32_t nodeThatCallWaitsForForLinkKnownEffects(const Call& call)
         return noSummaryNode;
 }
 
-// ---- Whose objects are written
-
-// An object of one of the engine's classes has no bit and needs none: LinkKnownEffects::layoutsWrittenBy().
 uint64_t CalleeSummarizerForLinkEffects::bitsOfLayoutsAt(const LinkType& type)
 {
-    // No layout stands for a closure, for a built-in or for what nobody has seen.
     if (type.functions != LinkType::Functions::None || type.builtin || type.holdsUnseen)
         return objectsOfAnyLayout;
     switch (type.objects) {
@@ -81,13 +68,11 @@ uint64_t CalleeSummarizerForLinkEffects::bitsOfLayoutsAt(const LinkType& type)
 uint64_t CalleeSummarizerForLinkEffects::layoutsWrittenByChange(FunctionID id, const SummaryChange& change)
 {
     uint64_t layouts = bitsOfLayoutsAt(typeAt(id, change.subject));
-    // What is put below a prototype has its link written.
     if (change.kind == SummaryChange::Kind::BecomesPrototype && change.other != noSummaryNode)
         layouts |= bitsOfLayoutsAt(typeAt(id, change.other));
     return layouts;
 }
 
-// `Object.assign(target, source)`, `Object.freeze(o)` by their rows. `itself`: effectsOfCallItself().
 uint64_t CalleeSummarizerForLinkEffects::layoutsChangedByRowsOf(FunctionID id, const ThinSummary& summary, uint32_t index, const Effects& itself)
 {
     const SummaryCall& call = summary.calls[index];
@@ -112,13 +97,10 @@ uint64_t CalleeSummarizerForLinkEffects::layoutsChangedByRowsOf(FunctionID id, c
             return true;
         });
     }
-    // The rows write into objects, and one of them does not say into which.
     if (someRowNamesNoOperand && itself.writes.containsAny(heapsOfObjectsWithLayouts))
         return objectsOfAnyLayout;
     return layouts;
 }
-
-// ---- What runs no code
 
 void CalleeSummarizerForLinkEffects::findLayoutsOfPlainObjects()
 {
@@ -126,8 +108,6 @@ void CalleeSummarizerForLinkEffects::findLayoutsOfPlainObjects()
     m_layoutsOfPlainObjects.ensureSize(numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         const Layout& layout = m_program.layouts[index];
-        // Of any other layout native code makes objects too, a proxy among them. The tables say GetsAccessor of what is done through a lost value as well.
-        // Where a layout has no room for what the classes above it declare, it does not list all that its objects have.
         bool isPlain = isFoundByShapeTest(layout) && !m_flow.escapedLayouts.get(index) && !m_flow.layoutsWithKnownAccessors.get(index)
             && (!writtenBaseOf(layout) || layout.inheritedFields == InheritedFields::AllOfRow)
             && !m_tables.layouts[index].possibleChanges.contains(LayoutChange::GetsAccessor)
@@ -139,24 +119,20 @@ void CalleeSummarizerForLinkEffects::findLayoutsOfPlainObjects()
     }
 }
 
-// Objects of ONE layout of the program that nobody else has got hold of and on which no accessor lies or can come to lie, and nothing else but primitives.
 bool CalleeSummarizerForLinkEffects::holdsOnlyPlainObjectsOfOneLayout(const LinkType& type) const
 {
     return type.objects == LinkType::Objects::Layout && type.functions == LinkType::Functions::None && !mayBeOtherCallableForLinkEffects(type) && m_layoutsOfPlainObjects.get(type.layout.index());
 }
 
-// `for (const k in record)`, `Object.values(record)`, `x instanceof Shape`: only a proxy answers a listing of keys or a step up the chain with code, and only a getter of its own the reading of a value.
 bool CalleeSummarizerForLinkEffects::listingOfKeysMayRunCode(FunctionID id, const ThinSummary& summary) const
 {
     std::span<const uint32_t> nodes = nodesWhoseKeysAreListedForLinkKnownEffects(summary);
-    // The trait is the only record of the operand.
     if (summary.has(SummaryTrait::ListsKeys) && nodes.empty() && !hasInspectionsForLinkKnownEffects<ThinSummary>)
         return true;
     auto mayRunCode = [&](uint32_t node, bool walksChain) {
         LinkType subject = typeAt(id, node);
         if (!mayBeObjectForLinkEffects(subject))
             return false;
-        // What stands above such an object is as the classes are written, up to Object.prototype.
         return !holdsOnlyPlainObjectsOfOneLayout(subject) || (walksChain && m_layoutsThatMayFindAnything.get(subject.layout.index()));
     };
     for (uint32_t node : nodes) {
@@ -168,7 +144,6 @@ bool CalleeSummarizerForLinkEffects::listingOfKeysMayRunCode(FunctionID id, cons
     });
 }
 
-// As findCodeBehindLookup() has it of a store on the objects of one layout, for whoever may change nothing here. The answers by key are all there: indexHolders().
 bool CalleeSummarizerForLinkEffects::storeMayFindCode(LayoutID layout, PropertyKeyID key) const
 {
     if (!key || m_program.isIndexLike(key) || m_keysThatObjectPrototypeNeverAnswers[key.index()] != Answer::Yes)
@@ -178,7 +153,6 @@ bool CalleeSummarizerForLinkEffects::storeMayFindCode(LayoutID layout, PropertyK
     return !found.functions.isEmpty() || found.mayBeLost || found.mayBeUnseen;
 }
 
-// `{ ...state }`, `Object.assign(target, state)`. Where the record does not say that the copy defines, it counts as an assignment, which a setter above the target may take.
 bool CalleeSummarizerForLinkEffects::copyMayRunCode(FunctionID id, const SummaryChange& change) const
 {
     if (change.definesWhatItCopies)
@@ -190,7 +164,6 @@ bool CalleeSummarizerForLinkEffects::copyMayRunCode(FunctionID id, const Summary
         return false;
     if (!holdsOnlyPlainObjectsOfOneLayout(source))
         return true;
-    // A property that lies beside the fields has a name that nobody lists.
     if (m_tables.layouts[source.layout.index()].possibleChanges.contains(LayoutChange::GainsProperty))
         return true;
 
@@ -210,8 +183,6 @@ bool CalleeSummarizerForLinkEffects::copyMayRunCode(FunctionID id, const Summary
     return false;
 }
 
-// `function add(seen, k) { seen.add(k) }`: instances of ONE class that nobody else has got hold of, on which nothing lies under the name or under a name that nobody knows.
-// Whatever changes a prototype or lays a name lets the object flow into unseen code, which fills those slots. So what callObserved() has found in the table is all that the name finds, and the rows speak.
 bool CalleeSummarizerForLinkEffects::membersOfInstancesAreAsTableLists(const LinkType& receiver, PropertyKeyID key) const
 {
     if (!key || receiver.classes != LinkType::Classes::Site || receiver.objects != LinkType::Objects::None || receiver.functions != LinkType::Functions::None || receiver.builtin || receiver.holdsUnseen)
@@ -225,7 +196,6 @@ bool CalleeSummarizerForLinkEffects::membersOfInstancesAreAsTableLists(const Lin
     return holdsNothing(SlotOfContents::under(key)) && holdsNothing(SlotOfContents::underUnknownNames()) && holdsNothing(SlotOfContents::underAnyName());
 }
 
-// The row names a function of the library: a call of the built-in enters that function, and what the function does is what the call does.
 bool CalleeSummarizerForLinkEffects::addLibraryFunctionBehindRow(const BuiltinOverload& row, CodeFound& found) const
 {
     const RuntimeFunctionEntry* held = findRuntimeFunction(m_program, row.libraryFunction());
@@ -241,7 +211,6 @@ bool CalleeSummarizerForLinkEffects::callStillWaits(FunctionID id, const Summary
     return awaited != noSummaryNode && typeAt(id, awaited).isNothing();
 }
 
-// `if (options.trace) log(x)`: nothing ever arrives at what is called or looked into, so no run comes to the operation.
 bool CalleeSummarizerForLinkEffects::callNeverRuns(FunctionID id, const SummaryCall& call) const
 {
     switch (call.callee) {
@@ -257,8 +226,6 @@ bool CalleeSummarizerForLinkEffects::callNeverRuns(FunctionID id, const SummaryC
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ---- Effects
-
 void CalleeSummarizerForLinkEffects::takeKnownEffects(const Effects& all, const LocationMasks& writesOnReturn, uint64_t layoutsWritten, WayInKnownEffects way, EffectsOfComponentInKnownEffects& into)
 {
     into.all.merge(all);
@@ -269,7 +236,6 @@ void CalleeSummarizerForLinkEffects::takeKnownEffects(const Effects& all, const 
     case WayInKnownEffects::ToReturn:
         into.writesOnReturn.merge(writesOnReturn);
         return;
-    // What was entered may have thrown, and the body has caught that and gone on.
     case WayInKnownEffects::ToReturnUnderHandler:
         into.writesOnReturn.merge(all.writes);
         return;
@@ -283,7 +249,6 @@ void CalleeSummarizerForLinkEffects::takeKnownEffectsOfFunction(FunctionID calle
     takeKnownEffects(linked.effectsOnThrow, linked.effectsOnReturn.writes, m_layoutsWrittenByFunction[callee.index()], way, into);
 }
 
-// False: something that is entered stands in the component itself, whose effects are not whole yet.
 bool CalleeSummarizerForLinkEffects::mergeKnownEffectsOfCodeOutside(const CodeEntered& code, uint32_t component, WayInKnownEffects way, EffectsOfComponentInKnownEffects& effects) const
 {
     bool everythingStandsOutside = true;
@@ -307,7 +272,6 @@ bool CalleeSummarizerForLinkEffects::mergeKnownEffectsOfCodeOutside(const CodeEn
     return everythingStandsOutside;
 }
 
-// `(a, b) => a.rank - b.rank`. All or nothing a function.
 void CalleeSummarizerForLinkEffects::addEffectsOfOperatorsLeftApart(FunctionID id, const ThinSummary& summary, EffectsOfComponentInKnownEffects& effects) const
 {
     const Effects* boundOfOperators = summary.knownEffectsApart.ownEffectsOfOperators();
@@ -319,12 +283,10 @@ void CalleeSummarizerForLinkEffects::addEffectsOfOperatorsLeftApart(FunctionID i
     bool mayTakeOtherValues = false;
     for (uint32_t node : summary.knownEffectsApart.operandsOfOperatorsLeftApart()) {
         LinkType type = typeAt(id, node);
-        // A node that holds nothing says that nobody has followed the value, not that there is none.
         mayTakeOtherValues |= type.isNothing() || mayBeObjectForLinkEffects(type) || (type.primitives & ~plainPrimitives);
         mayTakeStrings |= !!(type.primitives & ~whatBecomesNumber);
     }
 
-    // A number, a boolean, undefined and null become numbers without memory, and no operator turns one of them away.
     if (!mayTakeOtherValues && !mayTakeStrings)
         return;
     Effects ofOperators = *boundOfOperators;
@@ -333,7 +295,6 @@ void CalleeSummarizerForLinkEffects::addEffectsOfOperatorsLeftApart(FunctionID i
     takeKnownEffects(ofOperators, ofOperators.writes, 0, WayInKnownEffects::ToReturn, effects);
 }
 
-// Of an access under a key that enters no code, or whose code is counted beside this. `subject`: what it is taken to look into.
 void CalleeSummarizerForLinkEffects::addEffectsOfAccessItself(FunctionID id, const ThinSummary& summary, const SummaryAccess& access, const LinkType& subject, PropertyKeyID key, WayInKnownEffects way, EffectsOfComponentInKnownEffects& effects)
 {
     Effects ofLookup = effectsOfLookupItself(access.kind, key);
@@ -344,21 +305,17 @@ void CalleeSummarizerForLinkEffects::addEffectsOfAccessItself(FunctionID id, con
         break;
     case SummaryAccess::Kind::Store:
     case SummaryAccess::Kind::Define:
-        // `function make(a) { const o = new Box(); o.a = a; return o }`: no caller knows anything of an object that did not exist when it called.
         if (access.isPartOfConstruction && summary.nodes[access.subject].kind == SummaryNode::Kind::Allocation) {
             ofLookup.writes = ofLookup.writes.restrictedTo(heapsWhoseWritesNobodySees);
             break;
         }
         layouts = bitsOfLayoutsAt(subject);
-        // `super.x = v`: where the lookup finds no setter the property is laid on the receiver.
         if (access.receiver != noSummaryNode)
             layouts |= bitsOfLayoutsAt(typeAt(id, access.receiver));
         break;
     }
     takeKnownEffects(ofLookup, ofLookup.writes, layouts, way, effects);
 }
-
-// ---- Effects given the arguments
 
 std::optional<uint32_t> CalleeSummarizerForLinkEffects::entryParameterAt(const ThinSummary& summary, uint32_t node)
 {
@@ -369,7 +326,6 @@ std::optional<uint32_t> CalleeSummarizerForLinkEffects::entryParameterAt(const T
     return found.kind == SummaryNode::Kind::Parameter && found.first < numberOfParametersWithBit ? std::optional(found.first) : std::nullopt;
 }
 
-// Made by hand: LinkFlow::fromTypeID() queues losses and escapes, and the flow has ended. Nothing: more is expected than the objects of one layout beside primitives, or nothing is.
 std::optional<LinkType> CalleeSummarizerForLinkEffects::typeExpectedOfParameter(FunctionID id, uint32_t entryParameter) const
 {
     std::span<const LinkedParameter> parameters = m_tables.parametersOf(id);
@@ -390,7 +346,6 @@ std::optional<LinkType> CalleeSummarizerForLinkEffects::typeExpectedOfParameter(
     return result;
 }
 
-// What was found for a type that Link has not seen arrive. No edge of the graph of callees leads there, so only a component that is closed has its effects.
 bool CalleeSummarizerForLinkEffects::mergeKnownEffectsOfCodeFound(const CodeFound& found, uint32_t component, WayInKnownEffects way, EffectsOfComponentInKnownEffects& effects) const
 {
     if (found.mayBeUnseen || found.mayBeLost)
@@ -403,10 +358,8 @@ bool CalleeSummarizerForLinkEffects::mergeKnownEffectsOfCodeFound(const CodeFoun
     return true;
 }
 
-// As lookInLayout() goes, for what is called where it is found.
 void CalleeSummarizerForLinkEffects::addFunctionsCalledUnder(LayoutID layout, PropertyKeyID key, CodeFound& found) const
 {
-    // A property that lies beside the fields may be any function.
     if (m_tables.layouts[layout.index()].possibleChanges.contains(LayoutChange::GainsProperty))
         found.mayBeUnseen = true;
     if (std::optional<FieldReference> field = findField(m_program, layout, key)) {
@@ -426,7 +379,6 @@ void CalleeSummarizerForLinkEffects::addFunctionsCalledUnder(LayoutID layout, Pr
     }
 }
 
-// `function width(s: Shape) { return s.w }`, handed to code that nobody has seen: anything arrives at `s`. False: what is expected there says no more.
 bool CalleeSummarizerForLinkEffects::judgeAccessGivenArguments(FunctionID id, const ThinSummary& summary, const SummaryAccess& access, PropertyKeyID key, uint32_t component, WayInKnownEffects way, EffectsOfComponentInKnownEffects& effects, GivenArgumentsInKnownEffects& given)
 {
     std::optional<uint32_t> parameter = entryParameterAt(summary, access.subject);
@@ -442,7 +394,6 @@ bool CalleeSummarizerForLinkEffects::judgeAccessGivenArguments(FunctionID id, co
     return true;
 }
 
-// `each(list, visit)`: the call of `visit` is left out, for whoever knows what he hands over. `s.area()`: what the one layout finds.
 bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, const ThinSummary& summary, const SummaryCall& call, uint32_t component, WayInKnownEffects way, EffectsOfComponentInKnownEffects& effects, GivenArgumentsInKnownEffects& given)
 {
     if (call.isConstruction || call.newTarget != noSummaryNode)
@@ -467,7 +418,6 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
     case SummaryCall::Callee::Name: {
         std::optional<uint32_t> parameter = entryParameterAt(summary, call.receiver);
         std::optional<LinkType> expected = parameter ? typeExpectedOfParameter(id, *parameter) : std::nullopt;
-        // A member that the table lists on Object.prototype is found by callObserved(), for what has arrived and for nothing else.
         if (!expected || !call.key || findOwnMember(m_program, m_builtins.canonicalID(Builtins::ObjectPrototype), call.key))
             return false;
         CodeFound found;
@@ -484,15 +434,11 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ---- The traversal
-
-// What the members of the component do to one another is left out: it is united with this.
 auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> EffectsOfComponentInKnownEffects
 {
     FunctionID id(function);
     const ThinSummary& summary = m_flow.summaries.at(id);
     uint32_t component = m_components.componentOfFunction[function];
-    // `async function save(o) { set(o, -1) }`: the ramp of a coroutine catches what its body throws, and the call returns with a promise.
     bool catchesWhatIsThrown = summary.someBlockHasHandler || m_program.at(id).isCoroutine();
     auto wayOf = [&](bool liesOnNoWayToReturn) {
         if (liesOnNoWayToReturn)
@@ -518,7 +464,6 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
         }
     }
 
-    // From the first record on that is judged by what is expected of a parameter, or left out because a parameter is called, `effects` holds what the function does given its arguments. By Link's own word it may then do anything.
     GivenArgumentsInKnownEffects given;
     bool entersOwnComponent = false;
     for (uint32_t index = 0; isKnown && index < summary.calls.size(); ++index) {
@@ -533,7 +478,6 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
             continue;
         }
         EffectsOfComponentInKnownEffects ofCall { itself, itself.writes, layoutsChangedByRowsOf(id, summary, index, itself) };
-        // `new Promise(executor)`, the close of an iterator: native code and the engine's own protocols may catch what the function throws that they have called, and go on.
         bool isEnteredByCallAsWritten = !call.isMadeByProtocol && builtinsEnteredBy(id, summary, index).empty();
         entersOwnComponent |= !mergeKnownEffectsOfCodeOutside(code, component, isEnteredByCallAsWritten ? WayInKnownEffects::ToReturn : WayInKnownEffects::ToReturnUnderHandler, ofCall);
         takeKnownEffects(ofCall.all, ofCall.writesOnReturn, ofCall.layoutsWritten, way, effects);
@@ -542,7 +486,6 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
     for (uint32_t index = 0; isKnown && index < summary.accesses.size(); ++index) {
         const SummaryAccess& access = summary.accesses[index];
         LinkType subject = typeAt(id, access.subject);
-        // ThinSummary::ownEffects has what an access to contents does, and it enters nobody's code. `class Stack extends Array`: what holds the contents may have a layout.
         if (access.isToContents()) {
             if (access.kind == SummaryAccess::Kind::Store || access.kind == SummaryAccess::Kind::Define)
                 effects.layoutsWritten |= bitsOfLayoutsAt(subject);
@@ -552,7 +495,6 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
             continue;
         const CodeEntered& code = codeOfAccess(id, index);
         PropertyKeyID key = m_flow.keyOf(id, access);
-        // The record may stand for a lookup of the engine's own, which catches what an accessor throws and goes on: `then` of what a promise is resolved with.
         WayInKnownEffects way = access.liesOnNoWayToReturn ? WayInKnownEffects::ToNoReturn : WayInKnownEffects::ToReturnUnderHandler;
         if (code.mayBeUnseen) {
             isKnown = judgeAccessGivenArguments(id, summary, access, key, component, way, effects, given);
@@ -566,7 +508,6 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
         return knownEffectsOfUnknownCode();
     if (!given.parametersTakenAsExpected && !given.parametersCalled)
         return effects;
-    // Only where that says less than Link's own word.
     if (!entersOwnComponent && !effects.all.mayCallUnknownCode) {
         finishKnownEffectsOfCall(effects, false);
         Effects onReturn = effects.all;
@@ -578,13 +519,10 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
 
 void CalleeSummarizerForLinkEffects::finishKnownEffectsOfCall(EffectsOfComponentInKnownEffects& effects, bool mayEnterItself)
 {
-    // No caller's check of the stack covers recursive calls: the overflow is an error like any other.
     effects.all.mayThrow |= mayEnterItself ? ThrowEffect(true) : ThrowEffect::onlyStackOverflow();
     // The check of the stack at frame setup is a poll too, and the collector may stop the thread there.
     effects.all.mayCollect = true;
-    // A call never suspends its caller. The sweep and the emitters take an operation that may suspend for a suspension of its own frame.
     effects.all.maySuspend = false;
-    // One member may catch what another has thrown, and nobody has asked which.
     if (mayEnterItself)
         effects.writesOnReturn = effects.all.writes;
 }
@@ -600,7 +538,6 @@ void CalleeSummarizerForLinkEffects::prepareKnownEffects()
         if (FamilyID nearest = families.nearestFamilyOf(LayoutID(layout)))
             m_bitsOfFamilies[nearest.index()] |= m_bitsOfLayouts[layout];
     }
-    // What holds a family has a higher number.
     for (uint32_t family = 0; family < families.size(); ++family) {
         if (FamilyID above = families.nearestFamilyAbove(FamilyID(family)))
             m_bitsOfFamilies[above.index()] |= m_bitsOfFamilies[family];
@@ -608,8 +545,6 @@ void CalleeSummarizerForLinkEffects::prepareKnownEffects()
     findLayoutsOfPlainObjects();
 }
 
-// mergeKnownEffectsOfCodeFound() takes what a component with a lower number does, and no edge of the graph of callees leads there. So that such a component is closed in time, it is listed here, for every record that
-// judgeCallGivenArguments() or judgeAccessGivenArguments() may come to look at. More than they look at: what is listed only puts one component behind another.
 void CalleeSummarizerForLinkEffects::findComponentsThatExpectationsLeadTo()
 {
     m_componentsThatExpectationsLeadTo = collectInParallel<uint64_t>(m_flow.loops, m_numberOfFunctions, [&](unsigned index, Vector<uint64_t>& found) {
@@ -654,7 +589,6 @@ void CalleeSummarizerForLinkEffects::findComponentsThatExpectationsLeadTo()
     std::ranges::sort(m_componentsThatExpectationsLeadTo);
 }
 
-// One more than the highest rank among the components that it leads to. Whatever a component leads to has a lower number, so one look at each in the order of the numbers will do.
 void CalleeSummarizerForLinkEffects::rankComponents()
 {
     const ComponentsOfLinkEffects& components = m_components;
@@ -745,18 +679,7 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffectsOf(uint32_t component,
     closeKnownEffectsOf(component, members, effects);
 }
 
-void CalleeSummarizerForLinkEffects::summarizeValuesOf(uint32_t member)
-{
-    if (isSharedCall(member))
-        summarizeOperandsOfSharedCall(member - nodeOfSharedCall(0));
-    else if (isFunction(member) && isSummarized(member))
-        summarizeValues(FunctionID(member));
-}
-
-// RANK BY RANK, THE COMPONENTS OF ONE RANK ON ALL THREADS: none of them leads to another, and all that they lead to is closed. What a function does and what becomes of what it is handed are summarized in one visit: neither reads what the other writes.
-// What a component does is united over its members, in whichever order. What becomes of values goes member by member: one that has not had its turn stands at its defaults.
-// So the members of a large component are dealt to all threads for the one, while one thread goes through them for the other.
-void CalleeSummarizerForLinkEffects::summarizeKnownEffectsAndValues()
+void CalleeSummarizerForLinkEffects::summarizeKnownEffects()
 {
     prepareKnownEffects();
     findComponentsThatExpectationsLeadTo();
@@ -767,37 +690,29 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffectsAndValues()
     const ParallelLoops& loops = m_flow.loops;
     Vector<HandOfSummarizer> hands(loops.width());
     struct Stretch {
-        enum class Kind : uint8_t { Components, MembersOfLargeComponent, ValuesOfLargeComponent };
+        enum class Kind : uint8_t { Components, MembersOfLargeComponent };
         Kind kind;
-        // Into m_componentsInRanks: the first and the end, or the large component.
         uint32_t first;
         uint32_t end;
-        // Into m_membersInRanks.
         uint32_t firstMember { 0 };
         uint32_t endOfMembers { 0 };
     };
     Vector<Stretch> stretches;
+    Vector<uint32_t> largeComponents;
     Vector<EffectsOfComponentInKnownEffects> effectsOfStretches;
     auto isSkipped = [&](uint32_t place) {
-        // A function that is not summarized was given no callees, so it is alone in its component.
         uint32_t front = m_membersInRanks[m_firstMemberInRanks[place]];
         return isFunction(front) && !isSummarized(front);
     };
 
     for (uint32_t rank = 0; rank + 1 < m_firstComponentOfRank.size(); ++rank) {
         stretches.shrink(0);
+        largeComponents.shrink(0);
         uint32_t endOfRank = m_firstComponentOfRank[rank + 1];
-        bool hasLargeComponent = false;
-        // The longest first.
         for (uint32_t place = m_firstComponentOfRank[rank]; place < endOfRank; ++place) {
             if (m_firstMemberInRanks[place + 1] - m_firstMemberInRanks[place] < membersOfLargeComponent)
                 continue;
-            hasLargeComponent = true;
-            stretches.append(Stretch { Stretch::Kind::ValuesOfLargeComponent, place, place + 1 });
-        }
-        for (uint32_t place = m_firstComponentOfRank[rank]; hasLargeComponent && place < endOfRank; ++place) {
-            if (m_firstMemberInRanks[place + 1] - m_firstMemberInRanks[place] < membersOfLargeComponent)
-                continue;
+            largeComponents.append(place);
             for (uint32_t member = m_firstMemberInRanks[place]; member < m_firstMemberInRanks[place + 1]; member += membersInStretch)
                 stretches.append(Stretch { Stretch::Kind::MembersOfLargeComponent, place, place + 1, member, std::min(member + membersInStretch, m_firstMemberInRanks[place + 1]) });
         }
@@ -815,7 +730,7 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffectsAndValues()
             else
                 ++place;
         }
-        effectsOfStretches.fill(EffectsOfComponentInKnownEffects { }, hasLargeComponent ? stretches.size() : 0);
+        effectsOfStretches.fill(EffectsOfComponentInKnownEffects { }, largeComponents.isEmpty() ? 0 : stretches.size());
 
         forEachIndexInParallel(loops, static_cast<unsigned>(stretches.size()), [&](unsigned index, unsigned worker) {
             s_hand = &hands[worker];
@@ -827,8 +742,6 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffectsAndValues()
                         continue;
                     std::span<const uint32_t> members = m_membersInRanks.span().subspan(m_firstMemberInRanks[place], m_firstMemberInRanks[place + 1] - m_firstMemberInRanks[place]);
                     summarizeKnownEffectsOf(m_componentsInRanks[place], members, m_firstMemberInRanks[place]);
-                    for (uint32_t member : members)
-                        summarizeValuesOf(member);
                 }
                 break;
             case Stretch::Kind::MembersOfLargeComponent:
@@ -838,20 +751,11 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffectsAndValues()
                     takeKnownEffects(ofMember.all, ofMember.writesOnReturn, ofMember.layoutsWritten, WayInKnownEffects::ToReturn, effectsOfStretches[index]);
                 }
                 break;
-            case Stretch::Kind::ValuesOfLargeComponent:
-                for (uint32_t position = m_firstMemberInRanks[stretch.first]; position < m_firstMemberInRanks[stretch.first + 1]; ++position) {
-                    prefetchSummaryOfMemberBehindInRanks(position);
-                    summarizeValuesOf(m_membersInRanks[position]);
-                }
-                break;
             }
             s_hand = nullptr;
         });
 
-        for (size_t index = 0; hasLargeComponent && index < stretches.size(); ++index) {
-            if (stretches[index].kind != Stretch::Kind::ValuesOfLargeComponent)
-                break;
-            uint32_t place = stretches[index].first;
+        for (uint32_t place : largeComponents) {
             uint32_t component = m_componentsInRanks[place];
             EffectsOfComponentInKnownEffects effects;
             for (size_t other = 0; other < stretches.size(); ++other) {
@@ -866,7 +770,6 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffectsAndValues()
         m_effectsGivenArguments.appendVector(WTF::move(hand.effectsGivenArguments));
 }
 
-// On one thread, behind the lanes.
 void CalleeSummarizerForLinkEffects::writeKnownEffects()
 {
     LinkKnownEffects& known = m_tables.known;

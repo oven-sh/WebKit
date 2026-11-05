@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations with LoopInvariants, of a text that lies in a builder: `s.length`, `if (s)`, `!s`, `s === ""` ask the builder how long the text is, and no string is made.
-// A length holds until the next append: it is kept for one block of Code, and its row reads what every append writes, so no turn finds the length of another.
-// At a suspension: no text lies in a builder across one. At a throw: nothing that is built here throws. Withheld: no text lies in a builder, and nobody asks.
-
 #include "config.h"
 #include "AOTWalkTextBuilders.h"
 
@@ -19,9 +15,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-// AOTWalkNumbers.cpp
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet readersOfLengthInTextBuilderReads { Opcode::PropGet, Opcode::ToBoolean, Opcode::StrictEq, Opcode::Eq };
@@ -35,7 +29,6 @@ static bool isEmptyTextInTextBuilderReads(const Walker& walker, Reference refere
     return constant.opcode == Opcode::String && constant.string() == walker.program().strings.emptyString();
 }
 
-// A string that this block has made of the same state is as long as the text. Null: unreachable or failed.
 static Reference lengthOfTextInTextBuilderReads(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)
 {
     origin.isTailCall = false;
@@ -94,7 +87,6 @@ bool readsTextWithoutString(Walker& walker, const BodyValue& reader, TextInStrin
     Origin origin = walker.originOf(reader);
     switch (opcode) {
     case Opcode::PropGet: {
-        // The length of a string is its own, and nothing that the program does stands in front of it.
         if (reader.isFreeName() || reader.key() != walker.program().keyOf(BuiltinNames::length) || !namesText(reader.objectOperand()))
             return false;
         if (Reference length = lengthOfTextInTextBuilderReads(walker, text, name, origin))
@@ -110,7 +102,6 @@ bool readsTextWithoutString(Walker& walker, const BodyValue& reader, TextInStrin
     }
     case Opcode::StrictEq:
     case Opcode::Eq: {
-        // Every state that is read is a string, so `==` asks what `===` asks.
         ValueID left = reader.operand(OperandIndex::StrictEq::left);
         ValueID right = reader.operand(OperandIndex::StrictEq::right);
         bool comparesWithEmptyText = (namesText(left) && isEmptyTextInTextBuilderReads(walker, walker.referenceOf(right))) || (namesText(right) && isEmptyTextInTextBuilderReads(walker, walker.referenceOf(left)));

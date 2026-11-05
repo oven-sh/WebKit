@@ -25,7 +25,6 @@ static constexpr uint16_t testedMarkerPrimitives = Primitive::UndefinedOrNull | 
 static constexpr uint16_t testedMarkerKinds[] = { Primitive::Undefined, Primitive::Null, Primitive::Absent };
 
 static_assert(isNaNConstExpr(std::bit_cast<double>(undefinedDouble)) && isNaNConstExpr(std::bit_cast<double>(nullDouble)) && isNaNConstExpr(std::bit_cast<double>(absentDouble)));
-static_assert(boxedMarkers.absent < boxedMarkers.undefined && boxedMarkers.null < boxedMarkers.undefined && boxedMarkers.undefined < emptyLiteralStringWord);
 static_assert(cell32Markers.absent < minCell32 && cell32Markers.undefined < minCell32 && cell32Markers.null < minCell32);
 static_assert(Primitive::Boolean == (Primitive::True | Primitive::False) && Primitive::UndefinedOrNull == (Primitive::Undefined | Primitive::Null));
 
@@ -61,7 +60,6 @@ void TypeTestEmitter::forEachNonCellCase(Boxed value, const TypeTestPlan& plan, 
         }
     };
 
-    // Callers handle a plan where only some numbers pass before they list the cases.
     RELEASE_ASSERT(verdictOfNumbers(plan) != TypeTestVerdict::NeedsTest);
     if (plan.passingPrimitives & Primitive::Number) {
         visit([&] {
@@ -87,7 +85,6 @@ const TypeTestPlan& TypeTestEmitter::planFor(TypeID from, Representation represe
 
 void TypeTestEmitter::emitBranch(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
 {
-    // What a value is never changes, so a type test declares no read. The words that say what it is do change.
     Machine::DeclaredAccessesSuspension suspension(m_out);
     RELEASE_ASSERT(operand.representation == plan.representation);
     switch (plan.verdict) {
@@ -116,7 +113,6 @@ std::optional<BuiltinID> TypeTestEmitter::onlyBuiltinThatPasses(const TypeTestPl
 {
     if (plan.representation != Representation::JSValue && plan.representation != Representation::Cell)
         return std::nullopt;
-    // branchOnIsBuiltinCell() compares against a word that is zero until the cell is made, and an absent value is zero too.
     if (plan.passingPrimitives || plan.occurringPrimitives() & Primitive::Absent || plan.objects != ObjectsVerdict::NeedTest || plan.cellTests.size() != 1)
         return std::nullopt;
     const CellTest& test = plan.cellTests[0];
@@ -187,14 +183,12 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(Operand operand,
     case Representation::OptionalInt64:
         return decideByMarker(verdictOfNumbers(plan));
     case Representation::OptionalDouble:
-        // A marker is a NaN, so the test for an integer rejects it.
         if (verdictOfNumbers(plan) == TypeTestVerdict::NeedsTest && !(plan.passingPrimitives & (testedMarkerPrimitives | Primitive::Double)))
             return isIntegerIn(emitter<ConversionEmitter>().withoutMarkers(operand).as<Number>(), plan.integers.value_or(Range::full()));
         return decideByMarker(verdictOfNumbers(plan));
     case Representation::Cell:
         return tryGetSingleCondition(operand.as<CellPointer>(), plan);
     case Representation::Cell32:
-    case Representation::LiteralString:
         return decideByMarker(verdictOfCells(plan));
     case Representation::JSValue:
         return tryGetSingleCondition(operand.as<Boxed>(), plan);
@@ -245,7 +239,6 @@ std::optional<Condition> TypeTestEmitter::tryGetConditionWithAbsent(Boxed value,
         return isEmpty(value);
     if (plan.passingPrimitives == (Primitive::Absent | Primitive::Null))
         return belowOrEqual(value, boxedConstant(jsNull()));
-    // Of what a boxed word holds only the markers have no other bit than those of undefined and null.
     constexpr int64_t bitsOfMarkers = JSValue::ValueUndefined | JSValue::ValueNull;
     static_assert((JSValue::ValueFalse & ~bitsOfMarkers) && (JSValue::ValueTrue & ~bitsOfMarkers) && bitsOfMarkers < 16);
     if (!(plan.passingPrimitives & ~testedMarkerPrimitives) && !(plan.failingPrimitives & testedMarkerPrimitives))
@@ -271,7 +264,6 @@ std::optional<Condition> TypeTestEmitter::tryGetNonCellCondition(Boxed value, co
     return onlyCasePasses ? onlyCasePasses : boolean(false);
 }
 
-// A single condition decides Boolean, Int32, Int64 and Double, so they never get here.
 void TypeTestEmitter::test(Operand operand, const TypeTestPlan& plan, BlockEdge failure)
 {
     switch (operand.representation) {
@@ -294,12 +286,6 @@ void TypeTestEmitter::test(Operand operand, const TypeTestPlan& plan, BlockEdge 
     case Representation::OptionalInt64:
         testWithMarkers(operand, plan, failure, [&] {
             leaveUnless(integerPasses(emitter<ConversionEmitter>().withoutMarkers(operand).as<Integer>(), plan), failure);
-        });
-        return;
-    case Representation::LiteralString:
-        // Every producer of a word uses the literal number for a string that has one, so a word that is a cell never equals a string with a literal number.
-        testWithMarkers(operand, plan, failure, [&] {
-            leaveUnless(isOneOfLiteralStringWords(operand.as<LiteralStringWord>(), plan), failure);
         });
         return;
     case Representation::Boolean:
@@ -406,7 +392,6 @@ void TypeTestEmitter::testNonCell(Boxed value, const TypeTestPlan& plan, BlockEd
     m_out.appendToJoin(continuation, fork);
 }
 
-// A boxed int32 is a number, so only the other arm has to ask isNumber().
 void TypeTestEmitter::testBoxedNumber(Boxed value, BoxedValue known, const TypeTestPlan& plan, BlockEdge failure)
 {
     ifElse(isInt32(value), [&] {
@@ -461,10 +446,6 @@ Condition TypeTestEmitter::isMarker(Operand operand)
         return emitter<ConversionEmitter>().isMarker(operand);
     case Representation::Cell32:
         return logicalNot(isCellReference(operand.as<NarrowReference>()));
-    case Representation::LiteralString:
-        if (std::optional<NarrowReference> narrow = narrowWordBehind(operand.as<LiteralStringWord>()))
-            return belowOrEqual(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(boxedMarkers.undefined))));
-        return belowOrEqual(operand.as<LiteralStringWord>(), LiteralStringWord(m_out.constInt64(boxedMarkers.undefined)));
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Boolean:
@@ -565,7 +546,6 @@ Condition TypeTestEmitter::isInRange(Integer value, Range range)
 Condition TypeTestEmitter::isExactIntegerIn(Number number, Integer truncated, Range range)
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    // Converting the low 32 bits back gives the original number only if the integer fits in int32, so one comparison checks both exactness and range.
     if (range == Range::int32()) {
         Integer bitsOfLowHalf = conversions.bitsOf(toNumber(low32(truncated)));
         return equal(bitsOfLowHalf, conversions.bitsOf(number));

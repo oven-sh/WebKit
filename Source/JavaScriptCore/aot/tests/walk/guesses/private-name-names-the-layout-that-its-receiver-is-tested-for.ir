@@ -7,15 +7,15 @@
 # (globalThis as any).kept = p;
 # The object has been handed to code that nobody saw, so nothing is proven of any receiver. An access under a private name says itself what it expects: only an object that went through the class has the name.
 # The shape is the brand, the slot says whether the initializer has run, and whatever fails either goes to the operation as it is written, which throws or finds a name stamped on a foreign object.
-# The closed arm is typed by what Link has proven of the field, so the number stays a number behind the arms.
+# Both arms are typed by what every store under the name is held to, so the number stays a number behind the arms.
 # RUN(READ): walk f4 mechanisms=all-ParameterGuards
 # READ: = ShapeTest v0 layouts=[L0]
 # READ: = IsSlotFilled {{*}}key=#"#x"@L0 receivers=[L0]
 # RUN(READTYPED): walk f4 mechanisms=all-ParameterGuards
-# READTYPED: : int|whole {{*}} = GetSlot {{*}}key=#"#x"@L0 receivers=[L0]
+# READTYPED: : number {{*}} = GetSlot {{*}}key=#"#x"@L0 receivers=[L0]
 # RUN(READCLOSED): walk f4 mechanisms=all-ParameterGuards
 # READCLOSED: frequency=Rare
-# READCLOSED: : int|whole {{*}} = PrivateGet v0,
+# READCLOSED: : number {{*}} = PrivateGet v0,
 # RUN(HAS): walk f5 mechanisms=all-ParameterGuards
 # HAS: = ShapeTest v0 layouts=[L0]
 # RUN(HASTYPED): walk f5 mechanisms=all-ParameterGuards

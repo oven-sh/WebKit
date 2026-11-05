@@ -1,7 +1,7 @@
 # made of 9d315705e5f9d4c9
-# a method of strings on written operands whose answer no operand spells is asked of the engine in the realm of the build: a change of case, a padding, a repetition, a replacement with a RegExp that is written for the call
-# what throws, and what may be longer than a text that folding makes, is left to the run
-# f1 = upper, f3 = padded, f6 = repeated, f7 = replaced, f12 = tooLong, f13 = grown, f14 = tell
+# a method of strings on written operands whose answer no operand spells is asked of the engine in the realm of the build: a change of case, a padding, a repetition
+# what throws, what is handed a RegExp, and what may be longer than a text that folding makes, is left to the run
+# f1 = upper, f3 = padded, f6 = repeated, f12 = tooLong, f13 = grown, f14 = tell
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
 # FORM: = String string=made "ABC"
@@ -11,9 +11,6 @@
 # RUN(REPEATED): walk f6 mechanisms=all
 # REPEATED-LABEL: code f6:Body
 # REPEATED: = String string=made "ababab"
-# RUN(REPLACED): walk f7 mechanisms=all
-# REPLACED-LABEL: code f7:Body
-# REPLACED: = String string=made "a_b_c"
 # 140,000 characters: the count says so before anything is made
 # RUN(LONG): walk f12 mechanisms=all
 # LONG-NOT: string=made

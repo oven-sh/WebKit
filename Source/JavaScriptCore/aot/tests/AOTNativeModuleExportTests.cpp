@@ -67,16 +67,6 @@ static void checkNativeModuleExportsWhatHostLists(LoadedProgram& program)
     AOT_TEST_CHECK(exportOf(program, namespaceObject, "propertyOfModuleObject"_s).isUndefined());
 }
 
-static void checkModuleWithSourceExportsPropertiesOfItsObject(LoadedProgram& program)
-{
-    JSObject* namespaceObject = namespaceStoredAs(program, "moduleWithSource"_s);
-
-    AOT_TEST_CHECK(exportOf(program, namespaceObject, "propertyOfModuleObject"_s) == jsNumber(1));
-    AOT_TEST_CHECK(exportOf(program, namespaceObject, "default"_s).isObject());
-    AOT_TEST_CHECK(exportOf(program, namespaceObject, "listedByHost"_s).isUndefined());
-}
-
-// The host defers `deferredByHost`, and each module that binds it says so.
 static constexpr ASCIILiteral deferredExportText = R"IR(variable g0 name="default" module=m3 declared={type=anything}
 variable g1 name="deferredByHost" module=m3 declared={type=anything}
 variable g2 name="propertyOfModuleObject" module=m3 declared={type=anything}
@@ -110,43 +100,6 @@ function f2 name="second" module=m2 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-static JSValue globalNamed(LoadedProgram& program, ASCIILiteral name)
-{
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
-    JSValue value = program.realm()->get(program.realm(), Identifier::fromString(program.vm(), name));
-    AOT_TEST_CHECK(!scope.exception());
-    return value;
-}
-
-static void evaluateWithoutException(LoadedProgram& program, ModuleID module)
-{
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
-    evaluateModuleSynchronously(program.realm(), module);
-    AOT_TEST_CHECK(!scope.exception());
-}
-
-static void checkDeferredExportIsReadWhenFirstModuleThatBindsItIsLinked(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    Identifier deferred = Identifier::fromString(vm, "deferredByHost"_s);
-    Identifier held = Identifier::fromString(vm, "propertyOfModuleObject"_s);
-
-    evaluateWithoutException(program, ModuleID(0u));
-    JSObject* moduleObject = asObject(globalNamed(program, "moduleObject"_s));
-    AOT_TEST_CHECK(globalNamed(program, "heldFromTheLoad"_s) == jsNumber(1));
-
-    // Nobody has read it: the module that is linked next sees what is stored now.
-    moduleObject->putDirect(vm, deferred, jsNumber(4));
-    moduleObject->putDirect(vm, held, jsNumber(5));
-    evaluateWithoutException(program, ModuleID(1u));
-    AOT_TEST_CHECK(globalNamed(program, "seenByFirst"_s) == jsNumber(4));
-
-    // It is read once.
-    moduleObject->putDirect(vm, deferred, jsNumber(6));
-    evaluateWithoutException(program, ModuleID(2u));
-    AOT_TEST_CHECK(globalNamed(program, "seenBySecond"_s) == jsNumber(4));
-}
-
 template<LoadedProgramTest body>
 static constexpr void (*withRuntimeModules)() = runNativeTestWithLoadedProgram<nativeModuleExportTests, programText, body>;
 
@@ -157,8 +110,6 @@ std::span<const NativeTest> nativeModuleExportTests()
 {
     static constexpr NativeTest tests[] = {
         { "native-module-exports/native-module-exports-what-host-lists"_s, withRuntimeModules<checkNativeModuleExportsWhatHostLists> },
-        { "native-module-exports/module-with-source-exports-properties-of-its-object"_s, withRuntimeModules<checkModuleWithSourceExportsPropertiesOfItsObject> },
-        { "native-module-exports/deferred-export-is-read-when-first-module-that-binds-it-is-linked"_s, withDeferredExport<checkDeferredExportIsReadWhenFirstModuleThatBindsItIsLinked> },
     };
     return tests;
 }

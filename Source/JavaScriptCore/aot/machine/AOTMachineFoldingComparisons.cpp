@@ -18,7 +18,6 @@ enum class ComparisonFoldOrdering : uint8_t {
     Less = 1 << 0,
     Equal = 1 << 1,
     Greater = 1 << 2,
-    // Floating point only: an operand is NaN.
     Unordered = 1 << 3,
 };
 
@@ -70,7 +69,6 @@ static Opcode comparisonFoldUnsignedOrderFor(Opcode opcode)
     return opcode;
 }
 
-// The constant result if the comparison answers the same for every possible ordering, otherwise null.
 static Operation* comparisonFoldAnswerFor(Builder& builder, Opcode opcode, ComparisonFoldOrderings possible)
 {
     ASSERT(!possible.isEmpty());
@@ -88,7 +86,6 @@ static ALWAYS_INLINE IntegerRange comparisonFoldRangeOf(const Operation* operand
         return widestIntegerRangeOf(operand->type());
     if (operand->hasInt())
         return { operand->asInt(), operand->asInt() };
-    // rangeOf() reads an Int32 as its sign extension.
     if (operand->opcode() == SExt32)
         return rangeOf(operand->child(0));
     return rangeBoundedByOpcode(operand);
@@ -99,7 +96,6 @@ struct ComparisonFoldUnsignedRange {
     uint64_t max;
 };
 
-// Sign extension preserves unsigned order, so an Int32 is compared through its sign-extended 64-bit range.
 static ALWAYS_INLINE ComparisonFoldUnsignedRange comparisonFoldUnsignedRangeOf(const Operation* operand)
 {
     IntegerRange range = comparisonFoldRangeOf(operand);
@@ -137,14 +133,12 @@ static ComparisonFoldOrderings comparisonFoldPossibleOrderingsOf(Opcode opcode, 
     return comparisonFoldOrderingsBetween(leftRange.min, leftRange.max, rightRange.min, rightRange.max);
 }
 
-// A floating-point comparison and its opposite are both false when an operand is NaN.
 static bool comparisonFoldHasInvertedComparison(const Operation* operation)
 {
     Opcode opcode = operation->opcode();
     return isComparison(opcode) && opcode != EqualOrUnordered && operation->child(0)->type().isInt();
 }
 
-// The logical negation of a boolean, in the same type, or null if only a new BitXor could express it.
 static Operation* comparisonFoldInverseOf(Builder& builder, Operation* boolean)
 {
     if (comparisonFoldHasInvertedComparison(boolean))
@@ -169,7 +163,6 @@ static Operation* foldMachineComparisonWithZeroOrOne(Builder& builder, Opcode op
     if (!isZero && !isOne)
         return nullptr;
 
-    // PrimitiveEmitter::narrowWordBehind() matches Select(AboveEqual(word, minCell32), _, ZExt32(word)). minCell32 is above 1, so these four rewrites leave that shape alone.
     if ((opcode == BelowEqual && isZero) || (opcode == Below && isOne))
         return builder.binary(Equal, left, builder.constantOfType(left->type(), 0));
     if ((opcode == Above && isZero) || (opcode == AboveEqual && isOne))
@@ -185,19 +178,16 @@ static Operation* foldMachineComparisonWithZeroOrOne(Builder& builder, Opcode op
             return comparisonFoldBooleanOfType(builder, inverse, Int32);
     }
 
-    // The right side is an integer constant, so these are integers. For floating point this would be wrong: Infinity - Infinity is NaN.
     if (isZero && left->opcode() == Sub)
         return builder.binary(opcode, left->child(0), left->child(1));
 
     return nullptr;
 }
 
-// How an Int64 was extended from 32 bits, if it was.
 enum class ComparisonFoldExtension : uint8_t {
     None,
     Sign,
     Zero,
-    // The 32-bit value is not negative, so both extensions give the same Int64.
     Either,
 };
 
@@ -227,7 +217,6 @@ static Operation* comparisonFoldBitsBeforeExtension(Builder& builder, Operation*
     return operand->child(0);
 }
 
-// Sign extension preserves both signed and unsigned order. After zero extension, the signed and the unsigned order of the wide values are both the unsigned order of the 32-bit values.
 static Operation* foldMachineComparisonOfExtensions(Builder& builder, Opcode opcode, Operation* left, Operation* right)
 {
     if (left->type() != Int64)
@@ -269,7 +258,6 @@ static Operation* foldMachineComparisonOfIntegers(Builder& builder, Opcode opcod
     return foldMachineComparisonOfExtensions(builder, opcode, left, right);
 }
 
-// Every Float is exactly representable as a Double, and the conversion preserves order and NaN.
 static double comparisonFoldNumberOf(const Operation* constant)
 {
     return constant->hasDouble() ? constant->asDouble() : constant->asFloat();
@@ -286,7 +274,6 @@ static ComparisonFoldOrdering comparisonFoldOrderingOfNumbers(double left, doubl
     return ComparisonFoldOrdering::Unordered;
 }
 
-// NaN != NaN, so left == right decides nothing.
 static Operation* foldMachineComparisonOfNumbers(Builder& builder, Opcode opcode, Operation* left, Operation* right)
 {
     ASSERT(!comparisonFoldIsUnsignedOrder(opcode));
@@ -341,7 +328,6 @@ Operation* foldSelect(Builder& builder, Operation* predicate, Operation* whenNot
     return nullptr;
 }
 
-// A peeled operation that nothing else reads has counted no use of its child, so the scan can still fuse the child into the test.
 static_assert(countsChildrenAtFirstUse(Equal) && countsChildrenAtFirstUse(NotEqual) && countsChildrenAtFirstUse(BitXor) && countsChildrenAtFirstUse(ZExt32) && countsChildrenAtFirstUse(SExt32) && countsChildrenAtFirstUse(Trunc));
 
 SimplifiedPredicate peelPredicate(Operation* predicate)
@@ -364,7 +350,6 @@ SimplifiedPredicate peelPredicate(Operation* predicate)
             continue;
         }
 
-        // Truncating any other Int64 could drop its only nonzero bits.
         if (opcode == ZExt32 || opcode == SExt32 || (opcode == Trunc && isBoolean(tested->child(0)))) {
             result.predicate = tested->child(0);
             continue;
@@ -374,7 +359,6 @@ SimplifiedPredicate peelPredicate(Operation* predicate)
     }
 }
 
-// Bounded so that building a long BitOr chain, which asks at every link, stays linear.
 static constexpr unsigned levelsSearchedByIsBoolean = 3;
 
 static bool isBooleanWithinLevels(const Operation* operation, unsigned levels)

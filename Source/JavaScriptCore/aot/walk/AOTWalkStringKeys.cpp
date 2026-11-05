@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations, texts as keys: an access under a key that is one known text is the access by that name, a key that is joined of two parts for one read is looked up by its parts,
-// a lookup under any key on plain records keeps its closed form with the effects of a lookup, and a written text that is looked up or compared is an atom.
-// At a suspension and at a throw: nothing is kept from one operation to the next. Each form throws where the access as written throws. Withheld: the access goes by the value of its key.
-
 #include "config.h"
 #include "AOTWalkStringFolds.h"
 
@@ -29,10 +25,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr unsigned mostValuesFollowedBehindTextInStringKeys = 4;
 
-// ---- A key that is one known text
-
-// What the key is wherever the walk stands when it is asked: a look at a loop and the finder of a stretch ask about operations that are yet to be walked, and have to hear what the walk will hear.
-// A primitive that the body writes is read off the body. Any other value is walked once for each frame where it stands in no loop of its body: it is bound for good, or not yet.
 static PrimitiveKnownToFolding keyKnownWhereverAskedInStringKeys(const Walker& walker, ValueID written)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -60,8 +52,6 @@ static PrimitiveKnownToFolding keyKnownWhereverAskedInStringKeys(const Walker& w
     return bound && bound.isRecord() ? primitiveKnownForStrings(walker, bound) : PrimitiveKnownToFolding();
 }
 
-// A number never becomes a name here: -0 is the index 0, and the text of any other number is a key of elements.
-// Image numbers only the keys of the program: a key of the thread's arena dies with the unit.
 static PropertyKeyID nameOfKnownKeyInStringKeys(const Walker& walker, PrimitiveKnownToFolding key)
 {
     const Program& program = walker.program();
@@ -91,7 +81,6 @@ static PropertyKeyID nameOfKnownKeyInStringKeys(const Walker& walker, PrimitiveK
     return name;
 }
 
-// Link saw an access under any key, so it has not listed the unit among the referrers of what lies under the name. A typed access by name may call an accessor and may take what it reads for the closures of a method.
 static bool nameFindsOnlyFunctionsThatUnitLeadsToInStringKeys(const Walker& walker, TypeID lookedAt, PropertyKeyID name)
 {
     const Program& program = walker.program();
@@ -134,9 +123,6 @@ PropertyKeyID keyOfKnownTextThatAccessGoesBy(const Walker& walker, const BodyVal
     return nameThatAccessGoesByInStringKeys(walker, access.propertyOperand(), access.objectOperand());
 }
 
-// ---- A key that is joined of two parts for one read
-
-// By the only-user links of the body, through casts and within the block of the text. Null: something else takes the text.
 static ValueID findReadThatAloneTakesTextAsKeyInStringKeys(const BodyIndex& index, ValueID text)
 {
     BlockID block = index.blockOf(text);
@@ -154,7 +140,6 @@ static ValueID findReadThatAloneTakesTextAsKeyInStringKeys(const BodyIndex& inde
     return { };
 }
 
-// `handlers["on" + type]`. The stub compares each part as it is boxed, and a cell that has text by itself never changes its text. Nobody else reads the joined text, so the sweep drops the join.
 bool buildReadByPartsOfKey(Walker& walker, const BodyValue& read, const InputsOfTypedOperation& inputs)
 {
     if (read.opcode() != Opcode::ElemGet || inputs.areOnlyTypes())
@@ -196,16 +181,6 @@ bool buildReadByPartsOfKey(Walker& walker, const BodyValue& read, const InputsOf
     return true;
 }
 
-// Not built. The caller asks all the same, and hears what claims nothing.
-bool buildAccessUnderOneOfFewTexts(Walker&, const BodyValue&, const InputsOfTypedOperation&)
-{
-    return false;
-}
-
-// ---- A lookup under any key on plain records
-
-// While Object.prototype is locked as a whole, nothing can be laid on it and none of its members can be replaced, and what it has runs no code of the program.
-// A test run that opens a name on it takes that lock away.
 static BuiltinID lockedObjectPrototypeInStringKeys(const Program& program)
 {
     const BuiltinTable& table = program.builtins();
@@ -215,14 +190,12 @@ static BuiltinID lockedObjectPrototypeInStringKeys(const Program& program)
     return isLocked ? objectPrototype : BuiltinID();
 }
 
-// Above a record stands Object.prototype alone. What Object.create() makes has whatever it was handed above it.
 static bool isRecordBelowObjectPrototypeInStringKeys(const Program& program, LayoutID id)
 {
     const Layout& layout = program.at(id);
     return layout.kind == LayoutKind::Record && !layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction) && !layout.has(LayoutFlags::IsOfCreatedObject);
 }
 
-// Null: Link has no word of the layout, or some object of it may come into the hands of code that nobody has seen.
 static const LinkedLayout* layoutThatStaysInSightInStringKeys(const Walker& walker, LayoutID id)
 {
     const LinkTables& linked = walker.facts().linked();
@@ -231,8 +204,6 @@ static const LinkedLayout* layoutThatStaysInSightInStringKeys(const Walker& walk
     return &linked.layout(id);
 }
 
-// `table[name]`, `name in table`. Whatever the key, the receiver itself answers with a value or not at all, and the lookup goes on to Object.prototype.
-// The operation stays as it is written. What the state knows outlives it.
 bool buildLookupUnderAnyKeyOnPlainRecords(Walker& walker, const BodyValue& access, const InputsOfTypedOperation& inputs)
 {
     if ((access.opcode() != Opcode::ElemGet && access.opcode() != Opcode::ElemHas) || inputs.areOnlyTypes())
@@ -243,10 +214,8 @@ bool buildLookupUnderAnyKeyOnPlainRecords(Walker& walker, const BodyValue& acces
     if (!typeOfObject || !typeOfKey)
         return false;
     Type object = types.at(typeOfObject);
-    // A symbol has no text, and in front of a lookup under one the run time may call a function of the library.
     if (!object.isJavaScriptValue() || !object.hasOnlyLayouts() || !hasTextByItself(types.at(typeOfKey)))
         return false;
-    // Whoever asks whether a property is there calls no getter, wherever the property lies.
     if (access.opcode() == Opcode::ElemGet && !lockedObjectPrototypeInStringKeys(walker.program()))
         return false;
     for (LayoutID layout : membersOf(types, object)) {
@@ -255,7 +224,6 @@ bool buildLookupUnderAnyKeyOnPlainRecords(Walker& walker, const BodyValue& acces
             return false;
     }
 
-    // The run time files what it finds.
     Effects effects = Effects::unknownCode();
     effects.writes = effects.writes.restrictedTo(heapsWhoseWritesNobodySees);
     effects.mayThrow = object.mayBeUndefinedOrNull() ? ThrowEffect(true) : ThrowEffect::onlyForLackOfMemory();
@@ -269,22 +237,16 @@ bool buildLookupUnderAnyKeyOnPlainRecords(Walker& walker, const BodyValue& acces
     return true;
 }
 
-// ---- Atoms
-
-// `cache.get("config")`, `Reflect.has(o, "then")`, `x == "auto"`: whoever takes the text looks it up or compares it, which an atom answers by its address.
 static constexpr OpcodeSet opcodesTakingEveryOperandAsKeyInStringKeys {
     Opcode::StrictEq, Opcode::Eq, Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine, Opcode::SuperGet,
     Opcode::SuperSet, Opcode::GetByValWithThis, Opcode::ToPropertyKey, Opcode::CallBuiltin, Opcode::CallInline
 };
 
-// The value of `list[i] = "text"` is only stored: nothing compares it or looks it up.
 static bool isOnlyKeptInStringKeys(OperandUses uses)
 {
     return !uses.isEmpty() && uses.containsOnly({ OperandUse::Retains, OperandUse::Returns });
 }
 
-// The copy is a record of its own, which says what is done with the text here and nothing about the constant elsewhere.
-// With the operations whose rows have an operand of the kind PropertyKey. One that is missing keeps a text that is no atom, which costs a look in the table of atoms at run time and no answer.
 constinit const OpcodeSet opcodesThatTakeTextsAsKeys = opcodesTakingEveryOperandAsKeyInStringKeys
     | OpcodeSet { Opcode::DefineGetter, Opcode::DefineSetter, Opcode::SetFunctionName, Opcode::CopyDataProperties, Opcode::CopyObject, Opcode::DefineMethod, Opcode::DefineOwnProperty };
 
@@ -315,9 +277,6 @@ void takeTextsUsedAsKeysAsAtomsOfItsOpcodes(Walker& walker, Draft& draft)
     }
 }
 
-// ---- Protocols that are resolved from the type of the operand
-
-// The function is native code of the engine, and asks its receiver for nothing but what the protocols that are being resolved ask it for.
 static bool memberRunsNoCodeOfProgramInStringKeys(const BuiltinTable& table, BuiltinID location, Protocols resolved)
 {
     BuiltinID member = table.canonicalID(location);
@@ -336,7 +295,6 @@ static bool memberRunsNoCodeOfProgramInStringKeys(const BuiltinTable& table, Bui
     return hasRowOfCalls;
 }
 
-// No object of the layout has the name, none can get it, and above them nothing answers to it: neither a class of the program nor Object.prototype.
 static bool nameIsFoundNowhereFromObjectsOfInStringKeys(const Walker& walker, LayoutID id, const LinkedLayout& known, PropertyKeyID key)
 {
     const Program& program = walker.program();
@@ -383,7 +341,6 @@ static bool protocolRunsNoCodeOnObjectsOfInStringKeys(const Walker& walker, Layo
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `String(date)`: each name that the protocol reads finds a member of the table that is never replaced, off every object of the type.
 static bool protocolFindsNativeMembersOffInStringKeys(const Walker& walker, TypeID objects, Protocol protocol, Protocols resolved)
 {
     const Program& program = walker.program();
@@ -396,9 +353,7 @@ static bool protocolFindsNativeMembersOffInStringKeys(const Walker& walker, Type
 
 std::optional<Effects> effectsOfProtocolsResolvedOn(Walker& walker, OptionSet<Protocol> protocols, TypeID operand)
 {
-    // Named and CallsNamed read the names that the parameter lists, and Iterate and Species go on with whatever the first name finds.
     constexpr Protocols protocolsNeverResolvedFromType { Protocol::Named, Protocol::CallsNamed, Protocol::Iterate, Protocol::Species };
-    // These look and call nothing but a getter. The first look at the `prototype` of a function creates it, which may end guards.
     constexpr Protocols protocolsThatCallNoMember { Protocol::OwnKeys, Protocol::OwnValues, Protocol::PrototypeChain, Protocol::Thenable };
 
     if (!walker.has(Mechanism::TypedOperations) || protocols.isEmpty() || protocols.containsAny(protocolsNeverResolvedFromType) || !operand)
@@ -426,7 +381,6 @@ std::optional<Effects> effectsOfProtocolsResolvedOn(Walker& walker, OptionSet<Pr
         effects.reads.add(perObjectHeaps);
         effects.writes.add(AbstractHeap::MemberGuards);
     } else {
-        // No row lists the members that a protocol finds. Native code that enters no code of the program stores into no variable of a module and into no environment.
         effects = Effects::unknownCode();
         effects.writes.remove(compiledCodeHeaps);
         effects.mayCallUnknownCode = false;

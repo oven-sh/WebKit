@@ -24,7 +24,6 @@ struct ObjectRecord;
 
 namespace WTF {
 
-// Whoever grows the table of objects writes every new record itself, the sites on many threads side by side: nothing is laid down for them first.
 template<> struct VectorTraits<JSC::AOT::Typed::ObjectRecord> : VectorTraitsBase<false, void> {
     static constexpr bool needsInitialization = false;
     static constexpr bool canMoveWithMemcpy = true;
@@ -41,54 +40,39 @@ namespace Typed {
 
 class Program;
 
-// What stands for the objects of a run. Two ids may stand for one object: mayBeSameObject() in AOTTypeRelations.h.
 enum class ObjectKind : uint8_t {
-    // One: the owner of the cells of `unknown`. It is a member of no set. That a type holds `unknown` is TypeParts' anyObject, anyFunction, unnamedLayouts and unnamedClasses.
     Unknown,
-    // By the table of built-ins.
     Builtin,
     ResultOfBuiltin,
     HostObject,
     EscapedFunctionsOfHolder,
     EscapedOfClass,
-    // Two: one for each MakerOfShapelessObject.
     EscapedWithoutShape,
-    // Five of each function.
     Closure,
     CoroutineResult,
     RestArray,
     FunctionPrototype,
     ConstructedObject,
-    // By the program's other lists.
     Namespace,
     ModuleBuiltin,
     Instance,
     Prototype,
     EscapedOfLayout,
-    // By the scan of bodies.
     Site,
 };
 
 enum class ObjectTrait : uint16_t {
-    // An object has exactly one of these three. One that has a layout has no class here, even where its class extends a built-in class: Layout::writtenBuiltinBase says that.
     HasLayout = 1 << 0,
     HasClass = 1 << 1,
-    // Neither a layout nor a class that a test could ask for: a closure, a prototype object, a dictionary, most built-ins.
     HasNoShape = 1 << 2,
-    // And exactly one of these three.
     IsClosure = 1 << 3,
     IsBuiltin = 1 << 4,
     IsOtherObject = 1 << 5,
     IsCallable = 1 << 6,
-    // It stands for every escaped object of a layout, a class, a holder or a maker of objects without a shape. Beside `unknown` it is a prediction, never a proof.
     IsMerged = 1 << 7,
-    // One cell in a run of one global, which a comparison of pointers finds.
     IsFoundByIdentity = 1 << 8,
-    // `new.target` may give it a layout below the one named here.
     MayHaveLayoutBelow = 1 << 9,
-    // Made for one instance of a small summary. sharedForm names the object of the function's shared nodes.
     IsOfInstance = 1 << 10,
-    // Every row that makes it makes an ordinary object: the records of JSON.parse(), a descriptor. No array, no function, no proxy, no cell of another class.
     IsPlainObjectOfRows = 1 << 11,
 };
 
@@ -97,8 +81,6 @@ inline constexpr OptionSet<ObjectTrait> traitsOfIdentity { ObjectTrait::IsClosur
 
 enum class SiteOrigin : uint8_t { Operation, DataNode, BuiltinResult };
 
-// Who made an object that has neither a layout nor a class and whose record does not call it a function.
-// Of what the host makes nobody says what it is. What an operation, the data of the program or a row of a built-in makes is no function.
 enum class MakerOfShapelessObject : uint8_t { Host, OperationOrRow };
 
 enum class SiteTrait : uint8_t {
@@ -107,7 +89,6 @@ enum class SiteTrait : uint8_t {
     IsDenseArrayLiteral = 1 << 2,
     IsPairLiteral = 1 << 3,
     IsAnswerOfCallWithOneArgumentAtMost = 1 << 4,
-    // The array that NewTemplateObject makes, and the array under its `raw`. Each is one object for its place in the source: no instance of a summary has a copy of it.
     IsTemplateObject = 1 << 5,
 };
 
@@ -115,19 +96,13 @@ struct ObjectRecord {
     ObjectKind kind { ObjectKind::Site };
     SiteOrigin origin { SiteOrigin::Operation };
     OptionSet<ObjectTrait> traits;
-    // Builtin, ResultOfBuiltin, EscapedFunctionsOfHolder, ModuleBuiltin: the canonical BuiltinID. HostObject: the index of its record. EscapedOfClass: the BuiltinClassID. EscapedWithoutShape: the MakerOfShapelessObject.
-    // The five of a function: the FunctionID. Namespace: the ModuleID. Instance, Prototype, EscapedOfLayout: the LayoutID. Site: the ValueID in `owner`.
     uint32_t payload { 0 };
     LayoutID layout;
     BuiltinClassID builtinClass;
-    // ResultOfBuiltin: which of the four. Site: which of the objects that one operation makes, or the node of its data in preorder, where every node counts, leaves and holes too.
     uint32_t ordinal { 0 };
-    // Site: the function whose body holds it. ModuleBuiltin: unused.
     FunctionID owner;
-    // ModuleBuiltin: the module.
     ModuleID module;
     ObjectID sharedForm;
-    // IsOfInstance: ObjectOfInstance::instance.
     uint32_t instance { 0 };
     OptionSet<SiteTrait> siteTraits;
 
@@ -135,8 +110,6 @@ struct ObjectRecord {
     bool has(SiteTrait trait) const { return siteTraits.contains(trait); }
 };
 
-// Behind what a row answers and what lies inside that: the functions that a descriptor of a native accessor holds under `get` and under `set`.
-// One object stands for every function that the engine makes for that half of the accessor. A call of it runs the row of the accessor on the receiver of the call.
 inline constexpr uint32_t ordinalOfGetterFunctionOfAccessor = 2;
 inline constexpr uint32_t ordinalOfSetterFunctionOfAccessor = 3;
 
@@ -145,7 +118,6 @@ inline bool isFunctionOfNativeAccessor(const ObjectRecord& record)
     return record.kind == ObjectKind::ResultOfBuiltin && record.ordinal >= ordinalOfGetterFunctionOfAccessor;
 }
 
-// What the scan says of one allocation in a body. Sorted by (value, ordinal) within a function.
 struct ObjectSite {
     ValueID value;
     uint32_t ordinal { 0 };
@@ -154,30 +126,20 @@ struct ObjectSite {
     LayoutID layout;
     BuiltinClassID builtinClass;
     bool mayHaveLayoutBelow { false };
-    // Of SiteOrigin::DataNode: the record whose node it is.
     DataID data;
 };
 
-// A fresh object: what `sharedForm` stands for where its creator is entered through one call as written. Statements absorbed there and the walk's inline frames name the same object.
-// It is not always all that is made through the call. A copy of the caller in which the creator is one of several callees enters its shared nodes there: the object is `sharedForm`.
-// So an inline frame names the copy only where Facts::copyOf() answers it.
 struct ObjectOfInstance {
-    // The number of that call: an index into FactGraph::callsEnteredThrough(). The solver gives it out in an order that depends on the program alone.
     uint32_t instance { 0 };
     ObjectID sharedForm;
 
     friend constexpr auto operator<=>(const ObjectOfInstance&, const ObjectOfInstance&) = default;
 };
 
-// It evaluates text, loads code or lets in unseen code. `unknown` never stands for such a function, escaped or not.
 bool callOrReadOfBuiltinIsEvent(const BuiltinTable&, BuiltinID canonical);
-// A rule of Facts does something for this very function that it does for no other callee: a call of it opens a typed result. So it stays apart when it escapes, and it stays listed beside `unknown`.
 bool rulesMeetBuiltinByName(const BuiltinTable&, BuiltinID canonical);
 
-// What the wire says of a function before its record is read. A large set pays for each chunk of numbers that it touches, so the objects that stand in large sets lie together:
-// each of the five kinds is numbered group by group, and by function within a group. A signature has no body and none of the five is ever made: its numbers come last.
 struct FunctionInOrderOfObjects {
-    // Of the closure, the prototype object and the constructed object. Ascending.
     enum class Group : uint8_t { PlainFunctionOrClass, Arrow, MethodOrAccessor, EnteredByEngineAlone, WithoutBody };
     static constexpr unsigned numberOfGroups = static_cast<unsigned>(Group::WithoutBody) + 1;
 
@@ -186,23 +148,14 @@ struct FunctionInOrderOfObjects {
     bool hasRestArray { false };
 };
 
-// Every abstract object of the build, numbered kind by kind in the order of ObjectKind, then the objects of instances in the order they were added.
-// The numbers depend on the program alone.
 class ObjectTable {
     WTF_MAKE_NONCOPYABLE(ObjectTable);
 public:
-    // Before a type is read: the objects that a wire type can name are those of built-ins and functions.
-    // The five records of each function are written on every thread of the loops. Null: on the calling thread.
     JS_EXPORT_PRIVATE ObjectTable(const BuiltinTable&, std::span<const FunctionInOrderOfObjects>, const ParallelLoops* = nullptr);
 
-    // Once, when every list of the program is read and no layout will be added.
-    // `require`, `import.meta` and what hangs below them get objects of a module only where a ModuleBuiltin in some body names that module: nothing else brings the first of them into sight.
     JS_EXPORT_PRIVATE void addObjectsOfProgram(const Program&, const BitVector& modulesNamedByModuleBuiltins, const ParallelLoops&);
-    // Once, behind the scan, with a number for each function of the program. Then each function's sites are written by whoever scanned it, in parallel.
     JS_EXPORT_PRIVATE void reserveSites(std::span<const uint32_t> numberOfSitesOfFunctions, const ParallelLoops&);
     JS_EXPORT_PRIVATE void defineSites(FunctionID, std::span<const ObjectSite> sortedByValueAndOrdinal);
-    // Between two rounds of the solve, by one thread. Answers the first of the new numbers, which follow the order of the list: the order in which the solver's logs first asked for them.
-    // Each gets a copy of the record of its shared form, with IsOfInstance, sharedForm and instance.
     JS_EXPORT_PRIVATE ObjectID addObjectsOfInstances(std::span<const ObjectOfInstance> withoutRepeats);
 
     uint32_t size() const { return m_records.size(); }
@@ -215,7 +168,6 @@ public:
     static constexpr ObjectID unknown() { return ObjectID(0u); }
     JS_EXPORT_PRIVATE ObjectID objectOf(BuiltinID) const;
     JS_EXPORT_PRIVATE ObjectID objectOf(BuiltinID, ModuleID) const;
-    // Every object that stands for the entry, ascending: objectOf(canonical), then its object in each module where modules have their own.
     template<size_t inlineCapacity>
     void appendObjectsOf(BuiltinID canonical, Vector<ObjectID, inlineCapacity>& objects) const
     {
@@ -242,25 +194,16 @@ public:
     ObjectID instanceOf(LayoutID layout) const { return ObjectID(m_first[indexOf(ObjectKind::Instance)] + m_placesOfLayouts[layout.index()]); }
     ObjectID prototypeOf(LayoutID layout) const { return ObjectID(m_first[indexOf(ObjectKind::Prototype)] + m_placesOfLayouts[layout.index()]); }
     ObjectID escapedOf(LayoutID layout) const { return ObjectID(m_first[indexOf(ObjectKind::EscapedOfLayout)] + m_placesOfLayouts[layout.index()]); }
-    // Null where the scan described no such site.
     JS_EXPORT_PRIVATE ObjectID siteObject(FunctionID, ValueID, uint32_t ordinal = 0) const;
     std::span<const ObjectRecord> sitesOf(FunctionID function) const LIFETIME_BOUND
     {
         return m_records.span().subspan(m_firstSiteOfFunction[function.index()], m_firstSiteOfFunction[function.index() + 1] - m_firstSiteOfFunction[function.index()]);
     }
 
-    // The function of a closure, of an instance's too. Null for anything else.
     FunctionID closureFunction(ObjectID object) const { return at(object).kind == ObjectKind::Closure ? FunctionID(at(object).payload) : FunctionID(); }
     BuiltinID builtinOf(ObjectID object) const { return at(object).kind == ObjectKind::Builtin || at(object).kind == ObjectKind::ModuleBuiltin ? BuiltinID(at(object).payload) : BuiltinID(); }
-    // Itself, or what it was copied from for an instance.
     ObjectID sharedFormOf(ObjectID object) const { return at(object).sharedForm ? at(object).sharedForm : object; }
-    // What the object turns into once it has escaped. Itself where escaped objects of its kind stay apart: closures and whatever else a call enters, what is found by identity,
-    // what rules and passes tell by its maker or by its record in the table, the families of instances and the prototype objects of functions,
-    // and a built-in function whose call or read is an event (BuiltinTable::letsInUnseenCode(), raisesEventWhenCalled() of facts/AOTFlowRules.h, the loaders of machine code): what `unknown` covers is never one of those.
-    // The native accessor that each module has one of turns into objectOf() of its entry, which stands for the one of whichever module. That object is no merged form: it keeps the rows of the entry.
-    // Of a copy for an instance: the merged form of its layout, its class, its holder or its maker, as for its shared form.
     JS_EXPORT_PRIVATE ObjectID mergedFormOf(ObjectID) const;
-    // For the reader of text. It looks at every object of instances.
     ObjectID findObjectOfInstance(ObjectOfInstance wanted) const
     {
         for (uint32_t index = firstObjectOfInstances(); index < size(); ++index) {
@@ -288,19 +231,14 @@ private:
 
     const BuiltinTable& m_builtins;
     std::array<uint32_t, numberOfKinds + 1> m_first { };
-    // It grows between rounds alone, and room for the whole solve is not known: readers in a round hold no reference across a barrier.
     Vector<ObjectRecord> m_records;
-    // By function: where its object stands among those of a kind.
     Vector<uint32_t> m_placesByGroup;
     Vector<uint32_t> m_placesWithCoroutinesFirst;
     Vector<uint32_t> m_placesWithRestArraysFirst;
-    // By layout, the same.
     Vector<uint32_t> m_placesOfLayouts;
     Vector<uint32_t> m_firstSiteOfFunction;
     Vector<ModuleBuiltin> m_moduleBuiltins;
-    // By canonical built-in: a function that no identity test finds and whose call or read is an event.
     BitVector m_builtinFunctionsThatStayApart;
-    // By function: the body of a module of the library. What it makes may be what the module exports, which is found name by name.
     BitVector m_bodiesOfLibraryModules;
 };
 

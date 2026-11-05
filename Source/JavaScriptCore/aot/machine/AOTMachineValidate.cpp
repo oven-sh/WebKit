@@ -35,7 +35,6 @@ private:
 
     enum class Side : uint8_t { Operand, Result };
 
-    // A block on the path of the depth-first search.
     struct Visit {
         const Block* block;
         unsigned nextSuccessor;
@@ -53,7 +52,6 @@ private:
     bool isLeft(const Block* block) const { return !m_isBehindBlockPasses || m_blockIsLeft.get(block->index()); }
     bool isLeft(const Operation* operation) const { return !m_isBehindBlockPasses || !operation->owner() || m_operationIsLeft.get(operation->index()); }
 
-    // Each leans on what the ones ahead of it have found to hold.
     bool checkMembership();
     bool checkEdges();
     bool checkTerminators();
@@ -79,17 +77,13 @@ private:
     Arena& m_arena;
     const bool m_isBehindBlockPasses;
 
-    // Behind the block passes: the blocks that the entrypoints lead to, by Block::index(), and what they list, by Operation::index().
     BitSpan m_blockIsLeft;
     BitSpan m_operationIsLeft;
 
-    // By Block::index().
     ArenaVector<uint32_t> m_numberOfIncomingEdges;
     BitSpan m_isEntrypoint;
-    // The place in a reverse postorder from the entrypoints. Place zero belongs to a root that leads to all of them.
     ArenaVector<uint32_t> m_placeOf;
 
-    // By place: the number in a preorder of the dominator tree, and how many blocks the block dominates, itself among them.
     ArenaVector<uint32_t> m_preorder;
     ArenaVector<uint32_t> m_sizeOfSubtree;
 };
@@ -305,7 +299,6 @@ bool MachineValidator::hasLegalPosition(const Operation* operation) const
     if (owner)
         return true;
 
-    // It is made again wherever it is read, so it may read only what is the same everywhere.
     if (opcode != Add)
         return false;
     const Operation* base = operation->child(0);
@@ -505,7 +498,6 @@ bool MachineValidator::hasLegalTypes(const Operation* operation) const
     case Phi:
         return type.isNumeric();
     case Extract: {
-        // The child may come behind the Extract, and then it has not been looked at yet.
         if (!hasLegalTupleIndex(typeOfChild(0)))
             return false;
         std::span<const Type> members = m_proc.tupleOf(typeOfChild(0));
@@ -572,18 +564,15 @@ bool MachineValidator::checkOperations()
             continue;
         if (!hasLegalChildren(operation) || !hasLegalPosition(operation) || !hasLegalTypes(operation) || !hasLegalFlags(operation) || !hasInstructionOnTarget(operation))
             return fail(operation);
-        // A pure operation that nothing reads has counted nothing.
         if (countsChildrenAtFirstUse(operation->opcode()) && !operation->useCount())
             continue;
         for (const Operation* child : operation->children()) {
             ++numberOfUses[child->index()];
-            // Without the flag on a Phi, an extension that is handed to it leaves the upper half as it finds it.
             if (operation->opcode() != Trunc && !child->has(OperationFlag::UpperHalfIsRead))
                 return fail(operation);
         }
     }
 
-    // Too high a count only keeps an operation from being fused. Too low a count fuses it into one user and leaves the others without a value.
     for (uint32_t index = 0; index < numberOfOperations; ++index) {
         const Operation* operation = m_proc.operationAt(index);
         if (operation->useCount() < std::min<uint32_t>(numberOfUses[index], std::numeric_limits<uint16_t>::max()))
@@ -594,7 +583,6 @@ bool MachineValidator::checkOperations()
 
 bool MachineValidator::checkUpsilons()
 {
-    // One more than the index of the last block that was seen to lead to the block, or to hand the Phi a value.
     ArenaVector<uint32_t> lastBlockLeadingTo;
     ArenaVector<uint32_t> lastBlockHandingTo;
     lastBlockLeadingTo.fill(m_arena, m_proc.numberOfBlocks(), 0);
@@ -607,7 +595,6 @@ bool MachineValidator::checkUpsilons()
         for (const Edge& edge : block->successors())
             lastBlockLeadingTo[edge.block()->index()] = stamp;
 
-        // A Branch or a Switch on a constant is appended as a Jump. The Upsilons for the edges that it does not take stay behind, and nothing reads them.
         bool mayHaveUpsilonsForUntakenEdges = block->last()->opcode() == Jump;
         for (const Operation* upsilon : block->upsilons()) {
             const Operation* phi = upsilon->phi();
@@ -662,15 +649,12 @@ void MachineValidator::computeDominators()
     for (uint32_t place = 1; place <= numberReached; ++place)
         m_placeOf[blockAt(place)->index()] = place;
 
-    // By place. A block stands behind the block through which the search found it, so it has a dominator here by the time its own edges are followed.
     ArenaVector<uint32_t> dominator;
     dominator.fill(m_arena, numberReached + 1, notReached);
     dominator[0] = 0;
     for (const Entrypoint& entrypoint : m_proc.entrypoints())
         dominator[m_placeOf[entrypoint.block->index()]] = 0;
 
-    // The merge that climbed past a place last. Every place that a merge has climbed past leads to what its predecessors have in common so far, so the next predecessor stops there.
-    // Without it a block that two long rows lead to climbs one of them anew from each of its blocks.
     ArenaVector<uint32_t> lastMergeAt;
     lastMergeAt.fill(m_arena, numberReached + 1, 0);
     uint32_t merge = 0;
@@ -689,7 +673,6 @@ void MachineValidator::computeDominators()
         return common;
     };
 
-    // The places that lead to each place, in rising order. Place zero leads to the entrypoints.
     ArenaVector<uint32_t> firstPredecessorOf;
     firstPredecessorOf.fill(m_arena, numberReached + 2, 0);
     for (const Entrypoint& entrypoint : m_proc.entrypoints())
@@ -717,7 +700,6 @@ void MachineValidator::computeDominators()
     while (changed) {
         changed = false;
         for (uint32_t place = 1; place <= numberReached; ++place) {
-            // The last one first: then what they have in common is never far above the next one, however many blocks of one long row lead here.
             uint32_t next = notReached;
             ++merge;
             for (uint32_t index = firstPredecessorOf[place + 1]; index-- > firstPredecessorOf[place];) {
@@ -731,7 +713,6 @@ void MachineValidator::computeDominators()
         }
     }
 
-    // A dominator stands ahead of what it dominates. So sizes add up from the last place to the first, and numbers are given out from the first to the last.
     m_sizeOfSubtree.fill(m_arena, numberReached + 1, 1);
     for (uint32_t place = numberReached; place; --place)
         m_sizeOfSubtree[dominator[place]] += m_sizeOfSubtree[place];
@@ -765,10 +746,8 @@ bool MachineValidator::checkDominance()
         const Block* block = user->owner();
         if (!block || !isLeft(user))
             continue;
-        // A pure operation that nothing reads has counted nothing and is never encoded. Where two blocks were merged that differ in such an operation alone, the one that stays may name what stands above one of them alone.
         if (m_isBehindBlockPasses && countsChildrenAtFirstUse(user->opcode()) && !user->useCount())
             continue;
-        // Behind a call that never returns the emitters go on in a block that nothing leads to. No block dominates it, and it is never ordered.
         bool isReached = m_placeOf[block->index()] != notReached;
         for (const Operation* child : user->children()) {
             const Block* home = child->owner();

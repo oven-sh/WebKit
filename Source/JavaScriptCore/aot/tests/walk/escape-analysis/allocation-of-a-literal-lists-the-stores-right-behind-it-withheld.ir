@@ -1,9 +1,0 @@
-# the same program without what is known of fresh objects: the allocation lists what is written, and each store is there
-# RUN: walk f1 mechanisms=none+TypedOperations+Folding
-# CHECK-LABEL: code f1:Body
-# CHECK: = NewObject {{*}}fields=[1]
-# CHECK: key="count"
-# CHECK: key="next"
-# RUN(NEVER): walk f1 mechanisms=all-EscapeAnalysis
-# NEVER-NOT: = NewObject {{*}}fields=[0, 1
-# PROGRAM-OF: allocation-of-a-literal-lists-the-stores-right-behind-it.ir

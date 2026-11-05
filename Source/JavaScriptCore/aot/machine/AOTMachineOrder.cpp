@@ -21,7 +21,6 @@ namespace JSC { namespace AOT { namespace Machine {
 
 static_assert(EdgeClass::Normal < EdgeClass::Unlikely && EdgeClass::Unlikely < EdgeClass::Rare);
 
-// A pair for its head and a pair for its Jump.
 static constexpr uint32_t positionsOfBlockSplitLate = 4;
 
 void Order::retarget(Block* from, unsigned successorIndex, Block* newTarget)
@@ -31,7 +30,6 @@ void Order::retarget(Block* from, unsigned successorIndex, Block* newTarget)
     if (oldTarget == newTarget)
         return;
 
-    // An edge that passes its old target by stands for two edges, and is as rare as the rarer of them.
     if (newTarget->m_numberOfIncomingEdges) {
         std::optional<EdgeClass> classOfEdgePassedBy;
         for (const Edge& passedBy : oldTarget->successors()) {
@@ -47,7 +45,6 @@ void Order::retarget(Block* from, unsigned successorIndex, Block* newTarget)
     edge.m_block = newTarget;
     newTarget->didGainIncomingEdge();
 
-    // Once no edge of the block leads to the old target, the block no longer lists the Upsilons for its Phis.
     if (oldTarget->m_phis.isEmpty() || from->m_upsilons.isEmpty())
         return;
     for (const Edge& other : from->successors()) {
@@ -70,7 +67,6 @@ void Order::replaceJumpWithBranch(Block* from, const Operation* phi, bool isInve
     RELEASE_ASSERT(end->opcode() == Jump && from->numSuccessors() == 1 && from->successor(0).block() == join);
     RELEASE_ASSERT(join->last()->opcode() == Branch && join->numSuccessors() == 2);
 
-    // The last Upsilon wins, as in Allocator::incomingValueOf().
     Operation* tested = nullptr;
     for (Operation* upsilon : from->upsilons()) {
         if (upsilon->phi() == phi)
@@ -105,7 +101,6 @@ void Order::makePhiOfTruncationBehindJoin(Block* join, Operation* truncation)
     Operation* own = arena.create<Operation>(Trunc, Int32, truncation->origin());
     own->m_auxiliary = 1;
     own->m_children[0] = wide;
-    // As gainUse() would: the Upsilon below reads it, and is no Trunc.
     own->m_useCount = 1;
     own->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfIsRead);
     own->m_owner = join;
@@ -123,7 +118,6 @@ void Order::makePhiOfTruncationBehindJoin(Block* join, Operation* truncation)
     }
     passing->m_operations.shrink(size - 1);
 
-    // A Trunc leaves above the word whatever lies there.
     truncation->m_opcode = Phi;
     truncation->m_auxiliary = 0;
     truncation->m_children[0] = nullptr;
@@ -155,7 +149,6 @@ void Order::passJoinBy(Block* from, Block* target, Operation* phi, Operation* va
     }
     retarget(from, 0, target);
 
-    // In front of the reads that end: the value may be read by what is read no longer.
     if (phi) {
         RELEASE_ASSERT(phi->opcode() == Phi && phi->owner() == target && phi->type() == value->type());
         Operation* upsilon = arena.create<Operation>(Upsilon, Void, from->last()->origin());
@@ -194,7 +187,6 @@ Block* Order::split(Block* from, unsigned successorIndex)
     };
 
     if (target->m_phis.isEmpty()) {
-        // All that retarget() does where no edge leads to the new target yet and the old one has no Phi.
         ASSERT(target->m_numberOfIncomingEdges);
         --target->m_numberOfIncomingEdges;
         from->m_successors[successorIndex].m_block = middle;
@@ -278,8 +270,6 @@ void Order::joinEdgesToOneBlock(Block* from)
 
 namespace {
 
-// Few procedures have a loop, a rare region or a rare landing pad, but those that do are the large ones and hold most of the blocks. So none of the three is paid for by a pass over all blocks.
-// Until placeBlocks() the order is a list: each block names the one that stands behind it. A cycle or a rare region is put in its place by two links, wherever it belongs.
 class BlockOrderBuilder {
     WTF_MAKE_NONCOPYABLE(BlockOrderBuilder);
 public:
@@ -292,9 +282,7 @@ public:
     void run();
 
     enum class Search : uint8_t {
-        // Goes through every block and is after those outside rare regions.
         ForBlocksOutsideRareRegions,
-        // Stays within rare regions.
         ForRareBlocks,
     };
 
@@ -317,31 +305,20 @@ private:
     enum Flag : uint32_t {
         IsReached = 1 << 0,
         IsRare = 1 << 1,
-        // By the search that goes through every block.
         IsVisited = 1 << 2,
-        // Normal edges alone lead to it from an entrypoint.
         IsLikely = 1 << 3,
-        // Of a rare block: some edge into it comes from a rare block or gets a block whatever else holds of it. So every edge from outside rare regions gets one.
         IsEnteredThroughBlocksOnEdges = 1 << 4,
         HasUnsplitEdge = 1 << 5,
-        // What endsInTestWhoseEdgesMayStayUnsplit() has answered.
         IsAskedWhetherEdgesMayStayUnsplit = 1 << 6,
         EdgesMayStayUnsplit = 1 << 7,
-        // By the search that stays within rare regions. It has a mark of its own, so the first search takes none of its marks back.
         IsVisitedAmongRareBlocks = 1 << 8,
-        // Reached, and it has several successors, a Patch ends it, or some edge of it is rare. findEdgesThatGetBlocks() looks at the edges of no other block.
         MayGetBlocksOnEdges = 1 << 9,
-        // Of a block outside rare regions. Whatever any other edge of such a block leads to is not rare, nor is the block that splitEdges() puts on such an edge.
         HasRareEdge = 1 << 10,
-        // Not reached so far, and listed among the targets of unlikely edges.
         WaitsBehindUnlikelyEdge = 1 << 11,
-        // Of a block outside rare regions: it is the header of a cycle that holds another block outside rare regions.
         HoldsOtherBlocksInCycle = 1 << 12,
         IsRareLandingPad = 1 << 13,
-        // Of a block on the path of a search. With two successors: the one that the search has still to take.
         FirstSuccessorIsLeft = 1 << 14,
         SecondSuccessorIsLeft = 1 << 15,
-        // With more: m_progressThroughManySuccessors says how far the search has come with them.
         ManySuccessorsMayBeLeft = 1 << 16,
         SomeSuccessorMayBeLeft = FirstSuccessorIsLeft | SecondSuccessorIsLeft | ManySuccessorsMayBeLeft,
     };
@@ -352,10 +329,7 @@ private:
     static constexpr Part RarePart = LayoutPart::Rare;
     static constexpr uint32_t numberOfParts = numberOfLayoutParts;
 
-    // What the steps keep of a block, in one record: a step that comes to a block by an edge asks for several of them.
-    // A new record has zeros in its first half and ones in its second, so two stores make it.
     struct BlockState {
-        // It has no header and is none.
         bool standsInNoCycle() const
         {
             static_assert(offsetof(BlockState, firstInCycle) == offsetof(BlockState, cycleHeader) + sizeof(uint32_t));
@@ -365,48 +339,36 @@ private:
         }
 
         uint32_t flags { 0 };
-        // Edges from reached blocks.
         uint32_t numberOfPredecessors { 0 };
         union {
-            // On the path of a search: which it is of the blocks that the search has entered, from one. So it is greater than that of every block above it. Zero off the path, so zero behind a search.
             uint32_t rankOnPath { 0 };
-            // Behind the searches, of the representative of a rare region: how many rare blocks stand no further back than its last landing pad. Zero without one.
             uint32_t rankOfRegion;
         };
         union {
-            // On the path of a search: the block above it there, or none.
             uint32_t blockAboveOnPath { 0 };
-            // Once a search is done with it: the block that stands behind it.
             uint32_t next;
         };
-        // The block through which the search entered the innermost cycle that holds the block. Of such a block itself: the same for the cycle around its own.
         uint32_t cycleHeader { none };
-        // Of a header: the first and the last of the blocks that stand behind it for being in its cycle, as far as the search is done with them.
         uint32_t firstInCycle { none };
         uint32_t lastInCycle { none };
         union {
-            // Of a block outside rare regions.
             uint32_t indexOutsideRareRegions { none };
-            // Of a rare block, from the search among the rare blocks on.
             uint32_t regionLink;
         };
     };
     static_assert(sizeof(BlockState) == 32);
 
-    // Of a block on the path of a search that has more than two successors. They are gone through once for each class of edge, the last one first.
     struct ProgressThroughSuccessors {
         uint32_t successorsLeftInPass;
         uint32_t pass;
     };
 
-    // A rare edge of a block outside rare regions, wherever it leads.
     struct RareEdgeFromOutside {
         Block* from;
         Block* target;
     };
 
     struct EdgeThatGetsBlock {
-        // By Block::index().
         uint32_t from;
         uint32_t successorIndex;
     };
@@ -414,35 +376,27 @@ private:
     struct RegionPlan {
         Block* firstEntry { nullptr };
         bool hasSeveralEntries { false };
-        // Both are indexes into m_blocksOutsideRareRegions.
         uint32_t standsBehind { 0 };
         uint32_t standsAheadOf { none };
-        // By Block::index(). From the one to the other its blocks hang together by BlockState::next.
         uint32_t firstBlock { none };
         uint32_t lastBlock { none };
-        // In m_edgesToRareLandingPads.
         uint32_t firstEdgeIntoOtherRegion { none };
     };
     static_assert(sizeof(RegionPlan) == 32);
 
-    // An edge from a block outside rare regions to a rare block.
     struct EntryOfRareRegion {
         Block* entry;
-        // The index of the block outside in m_blocksOutsideRareRegions.
         uint32_t source;
     };
 
-    // An edge between rare blocks that joins no regions. Both by Block::index().
     struct EdgeToRareLandingPad {
         uint32_t from;
         uint32_t landingPad;
-        // The next edge out of the same region into another one.
         uint32_t nextOutOfRegion;
     };
 
     struct RareLandingPad {
         uint32_t block;
-        // What BlockState::rankOfRegion is where this is the last landing pad of its region.
         uint32_t rank;
     };
 
@@ -494,61 +448,44 @@ private:
     Procedure& m_proc;
     Arena& m_arena;
 
-    // By Block::index().
     ArenaVector<BlockState> m_states;
 
-    // As findReachedBlocks() comes over them.
     ArenaVector<RareEdgeFromOutside> m_rareEdgesFromOutside;
-    // hasOneOfManyEdgesTo(). By Block::index(), of the successors of m_blockWhoseEdgesAreCounted: how many of its edges lead there, without those that are listed to get a block.
     const Block* m_blockWhoseEdgesAreCounted { nullptr };
     ArenaVector<uint32_t> m_numberOfEdgesFromCountedBlock;
-    // As their sources are numbered, and those of one source as it lists them.
     ArenaVector<EdgeThatGetsBlock> m_edgesThatGetBlocks;
     bool m_someRareBlockIsLandingPad { false };
-    // More than two.
     bool m_someBlockHasManySuccessors { false };
-    // Both count reached blocks alone. Every reached block comes to stand in the order, once.
     uint32_t m_numberOfEdges { 0 };
     uint32_t m_numberOfBlocksInPart[numberOfParts] { 0, 0, 0 };
 
-    // One for each block on the path of a search that has more than two successors, that of the block furthest down the path last.
     ArenaVector<ProgressThroughSuccessors> m_progressThroughManySuccessors;
-    // It is counted here, and not in a variable of the search, so that it takes none of the registers that the search goes by.
     size_t m_numberOfRootsLeft { 0 };
-    // By Block::index(), as all below that name a block by a number.
     uint32_t m_firstBlockInOrder { none };
     uint32_t m_firstRareBlock { none };
-    // As they stand in their order.
     const uint32_t* m_blocksOutsideRareRegions { nullptr };
-    // As the blocks outside stand and their edges are listed.
     std::span<const EntryOfRareRegion> m_entriesOfRareRegions;
     uint32_t m_numberOfRareRegions { 0 };
     RegionPlan* m_regionPlans { nullptr };
     ArenaVector<EdgeToRareLandingPad> m_edgesToRareLandingPads;
-    // As they stand among the rare blocks.
     ArenaVector<RareLandingPad> m_rareLandingPads;
-    // placeBlocks(). Few blocks ask for them, so they are kept here and the registers of its loop are left to what every block asks for.
     uint32_t m_nextIndexInUnlikelyPart { 0 };
     uint32_t m_nextIndexInRarePart { 0 };
     ArenaVector<LoopHead> m_loopHeads;
 };
 
-// About one block in four has such an edge, so the list seldom has to grow a second time. A procedure without one asks for no list.
 NEVER_INLINE void BlockOrderBuilder::makeRoomForRareEdgeFromOutside()
 {
     m_rareEdgesFromOutside.reserve(m_arena, std::max(m_rareEdgesFromOutside.capacity() * 2, m_proc.numberOfBlocks() / 4 + 4));
 }
 
-// Which blocks are reached, how likely each is and how many edges lead to it hangs on no order, so the blocks are taken as they were reached and the list of them is never shortened: where a wave ends says how many it has reached.
 void BlockOrderBuilder::findReachedBlocks()
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
-    // splitEdges() appends the blocks that it makes.
     m_states.reserve(m_arena, numberOfBlocks + numberOfBlocks / 2 + 4);
     m_states.fill(m_arena, numberOfBlocks, BlockState { });
     BlockState* const states = m_states.begin();
 
-    // Each of the two lists takes a block once at most.
     Block** const reachedBlocks = m_arena.allocateArray<Block*>(2 * static_cast<size_t>(numberOfBlocks));
     Block** const targetsOfUnlikelyEdges = reachedBlocks + numberOfBlocks;
     Block** nextBlockToTake = reachedBlocks;
@@ -565,7 +502,6 @@ void BlockOrderBuilder::findReachedBlocks()
         *endOfReachedBlocks++ = block;
     };
 
-    // What normal edges alone lead to, then what unlikely ones lead to as well, then the rest.
     enum class Wave : uint8_t {
         Likely,
         Unlikely,
@@ -620,7 +556,6 @@ void BlockOrderBuilder::findReachedBlocks()
 
             const Edge* edges = block->successors().data();
             unsigned numberOfSuccessors = block->numSuccessors();
-            // The edge that stays of two to one block is as likely as the likelier, so its target is as likely and as rare as with both.
             if (numberOfSuccessors == 2 && edges[0].block() == edges[1].block()) [[unlikely]] {
                 Order::joinEdgesToOneBlock(block);
                 numberOfSuccessors = block->numSuccessors();
@@ -672,7 +607,6 @@ void BlockOrderBuilder::findReachedBlocks()
     }
 }
 
-// Outside rare regions, with several successors.
 ALWAYS_INLINE bool BlockOrderBuilder::endsInTestWhoseEdgesMayStayUnsplit(const Block* from, BlockState& stateOfFrom)
 {
     uint32_t flags = stateOfFrom.flags;
@@ -695,8 +629,6 @@ ALWAYS_INLINE bool BlockOrderBuilder::hasOneEdgeTo(const Block* from, const Bloc
     return hasOneOfManyEdgesTo(from, target);
 }
 
-// A Switch may have as many edges as the procedure has blocks, and the question comes once for each of them. So its edges are counted once, by target.
-// No edge has a block yet, so each leads where it led when it was appended.
 NEVER_INLINE void BlockOrderBuilder::countEdgesOf(const Block* from)
 {
     if (m_blockWhoseEdgesAreCounted == from)
@@ -717,22 +649,17 @@ NEVER_INLINE bool BlockOrderBuilder::hasOneOfManyEdgesTo(const Block* from, cons
     return m_numberOfEdgesFromCountedBlock[target->index()] == 1;
 }
 
-// About one block in seven gets a block on one of its edges.
 NEVER_INLINE void BlockOrderBuilder::makeRoomForEdgeThatGetsBlock()
 {
     m_edgesThatGetBlocks.reserve(m_arena, std::max(m_edgesThatGetBlocks.capacity() * 2, m_proc.numberOfBlocks() / 4 + 4));
 }
 
-// Whether an edge gets a block hangs on its two ends as findReachedBlocks() has left them, and on which earlier edges of its source get one.
-// So the edges are listed here, by a loop that seldom calls anything and so keeps in registers what it goes by, and splitEdges() makes the blocks.
 void BlockOrderBuilder::findEdgesThatGetBlocks()
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
     BlockState* const states = m_states.begin();
     Block* const* const blocks = m_proc.blocks().data();
 
-    // A frame that covers a rare region is set up where the region is entered. So the edges from outside into one of its blocks get blocks all together or not at all, and none stays as it is beside an edge from within.
-    // findReachedBlocks() has marked what a rare block leads to.
     for (const RareEdgeFromOutside& edge : m_rareEdgesFromOutside) {
         BlockState& stateOfTarget = states[edge.target->index()];
         if (!(stateOfTarget.flags & IsRare) || stateOfTarget.numberOfPredecessors < 2 || (stateOfTarget.flags & IsEnteredThroughBlocksOnEdges))
@@ -742,14 +669,11 @@ void BlockOrderBuilder::findEdgesThatGetBlocks()
     }
 
     for (uint32_t index = 0; index < numberOfBlocks; ++index) {
-        // A block outside rare regions that a rare block leads to has a predecessor outside too. So the edges out of a rare region from a block with several successors are among the critical ones,
-        // and the one edge of a Patch out of its rare region is among those into a block with several predecessors.
         if (!(states[index].flags & MayGetBlocksOnEdges))
             continue;
         const Block* from = blocks[index];
         const Edge* const edges = from->successors().data();
         unsigned numberOfSuccessors = from->numSuccessors();
-        // They are counted before the first of them is listed, and each that is listed is taken off the count.
         if (numberOfSuccessors > 2) [[unlikely]]
             countEdgesOf(from);
 
@@ -760,18 +684,15 @@ void BlockOrderBuilder::findEdgesThatGetBlocks()
             const BlockState& stateOfTarget = states[indexOfTarget];
             bool isJoin = stateOfTarget.numberOfPredecessors >= 2;
             bool targetHasPhis = !target->phis().empty();
-            // Moves into registers stand ahead of a Jump and nowhere else, and the Phis of a block ask for them however many edges lead to it.
             if (!isJoin && (numberOfSuccessors < 2 || !targetHasPhis))
                 continue;
             if (target->isLandingPad())
                 continue;
 
             if (!isJoin) {
-                // The allocator looks for the Extracts of a Patch that ends its block at the head of the first successor.
                 if (!successorIndex && from->last()->opcode() == Patch && from->last()->type().isTuple())
                     continue;
             } else if (!targetHasPhis) {
-                // An edge that is listed to get a block leads to that block, and no longer to its target.
                 auto isOnlyEdgeToTarget = [&]() ALWAYS_INLINE_LAMBDA -> bool {
                     if (numberOfSuccessors > 2) [[unlikely]]
                         return hasOneOfManyEdgesTo(from, target);
@@ -825,8 +746,6 @@ void BlockOrderBuilder::splitEdges()
         ++numberOfBlocksIn(partOfMiddle);
         ++m_numberOfEdges;
 
-        // The registers at the head of a block are fixed by the first edge into it that is not rare, which has to come from a block ahead of it.
-        // A rare block may have no such edge but this one: the others may all lead back to it from within its region.
         if (edge.isRare() && targetIsRare) {
             middle->clearSuccessors();
             middle->appendSuccessor(Edge(target, EdgeClass::Normal));
@@ -834,8 +753,6 @@ void BlockOrderBuilder::splitEdges()
     }
 }
 
-// Each block gets its piece of the list of predecessors, empty so far. placeBlocks() makes a piece longer by each predecessor that it lists.
-// The places that are kept for Order::splitLate() stay as the arena hands them out: it makes the place of each block that it makes.
 void BlockOrderBuilder::makePlaces()
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
@@ -862,8 +779,6 @@ void BlockOrderBuilder::makePlaces()
 
 ALWAYS_INLINE uint32_t BlockOrderBuilder::passOf(EdgeClass edgeClass, Search search)
 {
-    // What is visited last stands first.
-    // Outside rare regions the rare edges come last all the same: whatever another way leads to is visited by then, so a rare way places only what it alone leads on to.
     bool takesRareEdgesLast = search == Search::ForBlocksOutsideRareRegions;
     switch (edgeClass) {
     case EdgeClass::Rare:
@@ -876,7 +791,6 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::passOf(EdgeClass edgeClass, Search sea
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Of two in one pass the second goes first.
 ALWAYS_INLINE bool BlockOrderBuilder::secondOfTwoEdgesGoesFirst(const Edge& first, const Edge& second, Search search)
 {
     return first.edgeClass() == second.edgeClass() || passOf(second.edgeClass(), search) <= passOf(first.edgeClass(), search);
@@ -889,11 +803,9 @@ NEVER_INLINE Block* BlockOrderBuilder::takeFirstOfManySuccessors(const Block* bl
     return takeNextOfManySuccessors(block, search);
 }
 
-// Of the block at the end of the path. Whatever block with many successors was further down the path has had its last one taken.
 NEVER_INLINE Block* BlockOrderBuilder::takeNextOfManySuccessors(const Block* block, Search search)
 {
     ProgressThroughSuccessors& progress = m_progressThroughManySuccessors.last();
-    // What is visited last stands first. Every case of a Switch is jumped to wherever it stands, and a search through its values ends in front of what no case takes: that falls through where it stands next.
     unsigned numberOfSuccessors = block->numSuccessors();
     bool lastStandsFirst = block->last()->opcode() == Switch;
     for (; progress.pass < numberOfPasses; ++progress.pass, progress.successorsLeftInPass = numberOfSuccessors) {
@@ -908,9 +820,6 @@ NEVER_INLINE Block* BlockOrderBuilder::takeNextOfManySuccessors(const Block* blo
     return nullptr;
 }
 
-// `header` is on the path, above `block`, and `block` leads back to it. Weaves it into the headers that are known of `block`, which are on the path as well, the deeper one within.
-// Only a block on the path is given another header. So the header of a block is settled when the search is done with the block.
-// Wei, Mao, Zou, Chen: A New Algorithm for Identifying Loops in Decompilation.
 NEVER_INLINE void BlockOrderBuilder::noteCycle(uint32_t block, uint32_t header)
 {
     if (header == none || header == block)
@@ -932,33 +841,22 @@ NEVER_INLINE void BlockOrderBuilder::noteCycle(uint32_t block, uint32_t header)
     states[inner].cycleHeader = outer;
 }
 
-// Reverse postorder, the first root first, with the blocks of each cycle moved together behind its header.
-// A block that is moved back over the rest of a cycle leads to no block of the cycle, so every edge that led forward still does.
-// The blocks outside rare regions are ordered by every way there is. One that goes on through rare blocks alone stands ahead of what they rejoin, and in the cycle that they close:
-// were those ways left out, it would stand behind all that, and the edge that rejoins would lead back over it.
-// A block that the search is done with goes in front of all that it was done with before. Returns the first. The search through every block leaves the rare blocks in the order: takeRareBlocksOutOfOrder().
-// The search among the rare blocks comes over each edge between two of them once, and joins the regions of the two as it does.
-// The path lies in the records of its blocks: each names the block above it, and its flags say which of its successors are left.
 template<BlockOrderBuilder::Search search, typename RootAt>
 ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOfRoots, const RootAt& rootAt)
 {
     constexpr bool staysWithinRareRegions = search == Search::ForRareBlocks;
     constexpr uint32_t isVisited = staysWithinRareRegions ? IsVisitedAmongRareBlocks : IsVisited;
 
-    // A landing pad is entered with every value in its slot, so an edge to one may come from another region. Nothing on such an edge sets a frame up or tears one down.
     [[maybe_unused]] const bool landingPadsBeginRegions = m_proc.traits().setsUpFrameAtEntry();
 
     BlockState* const states = m_states.begin();
     Block* const* const blocks = m_proc.blocks().data();
     uint32_t numberOfBlocksEntered = 0;
     uint32_t firstInOrder = none;
-    // The block at the end of the path.
     uint32_t current = none;
     BlockState* stateOfCurrent = nullptr;
-    // The successor of it that the search looks at next.
     Block* successor = nullptr;
 
-    // Puts the block at the end of the path. Returns whether it has a successor, and has the search look at the first to take.
     auto enter = [&](Block* block, uint32_t index, BlockState& state, uint32_t flags) ALWAYS_INLINE_LAMBDA -> bool {
         flags |= isVisited;
         state.rankOnPath = ++numberOfBlocksEntered;
@@ -966,7 +864,6 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
         current = index;
         stateOfCurrent = &state;
         if constexpr (staysWithinRareRegions) {
-            // The rare blocks are searched again, among themselves. Nothing is kept of what the search through every block has found of them.
             state.cycleHeader = none;
             state.firstInCycle = none;
             if (block->isLandingPad()) [[unlikely]] {
@@ -1002,7 +899,6 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
         return true;
     };
 
-    // Of the block at the end of the path. Returns whether one was left, and has the search look at it.
     auto takeSuccessorLeft = [&]() ALWAYS_INLINE_LAMBDA -> bool {
         uint32_t flags = stateOfCurrent->flags;
         if (!(flags & SomeSuccessorMayBeLeft))
@@ -1020,8 +916,6 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
         return true;
     };
 
-    // From a root that has a successor, until the path is empty.
-    // Each turn of the outer loop looks at a successor. What enter() and takeSuccessorLeft() answer is asked where they answer it, and never carried round a loop: there the compiler would keep it as a value and test it again.
     auto searchBelowRoot = [&]() ALWAYS_INLINE_LAMBDA {
         while (true) {
             uint32_t index = successor->index();
@@ -1030,7 +924,6 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
             if (!staysWithinRareRegions || (flags & IsRare)) {
                 if (!(flags & isVisited)) {
                     if constexpr (staysWithinRareRegions) {
-                        // Nothing links to a block that is not visited yet, so it joins a region by its own link.
                         if (landingPadsBeginRegions && successor->isLandingPad()) [[unlikely]] {
                             state.regionLink = index;
                             ++m_numberOfRareRegions;
@@ -1046,7 +939,6 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
                         continue;
                 } else {
                     if constexpr (staysWithinRareRegions) {
-                        // The search has been in the block, so the flag says whether it is a landing pad.
                         if (landingPadsBeginRegions && (flags & IsRareLandingPad)) [[unlikely]]
                             noteEdgeToRareLandingPad(current, index);
                         else if (stateOfCurrent->regionLink != state.regionLink)
@@ -1057,7 +949,6 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
                         while (header != none && !states[header].rankOnPath)
                             header = states[header].cycleHeader;
                         if (header != none && header != current) {
-                            // noteCycle() gives a block without a header the one that it is told.
                             uint32_t headerOfCurrent = stateOfCurrent->cycleHeader;
                             if (headerOfCurrent == none)
                                 stateOfCurrent->cycleHeader = header;
@@ -1077,8 +968,6 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
                     stateOfFinished.next = firstInOrder;
                     firstInOrder = current;
                 } else {
-                    // The search is done with the block, which is a header or has one. So it is done with all that its cycle holds, and not with its header.
-                    // The block and behind it the blocks of its cycle go in front of what stands behind the header so far, or of the whole order where it has no header.
                     uint32_t last = current;
                     if (stateOfFinished.firstInCycle != none) {
                         stateOfFinished.next = stateOfFinished.firstInCycle;
@@ -1095,13 +984,11 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
                             stateOfHeader.lastInCycle = last;
                         states[last].next = firstBehindHeader;
                         stateOfHeader.firstInCycle = current;
-                        // It is asked of blocks outside rare regions alone, which only the search through every block comes to.
                         if constexpr (!staysWithinRareRegions) {
                             if (!(stateOfFinished.flags & IsRare) || (stateOfFinished.flags & HoldsOtherBlocksInCycle))
                                 stateOfHeader.flags |= HoldsOtherBlocksInCycle;
                         }
 
-                        // The header is on the path, so some block is above. It leads back to the header through this one.
                         ASSERT(above != none);
                         if (above != header) {
                             BlockState& stateOfBlockAbove = states[above];
@@ -1138,7 +1025,6 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
             searchBelowRoot();
             continue;
         }
-        // It leads nowhere, so it stands in no cycle.
         stateOfRoot.rankOnPath = 0;
         stateOfRoot.next = firstInOrder;
         firstInOrder = indexOfRoot;
@@ -1149,19 +1035,16 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
     return firstInOrder;
 }
 
-// A rare block has a rare edge from outside on every way to it.
 void BlockOrderBuilder::takeRareBlocksOutOfOrder()
 {
     BlockState* const states = m_states.begin();
     Block* const* const blocks = m_proc.blocks().data();
     uint32_t numberOfBlocksOutside = numberOfBlocksIn(LikelyPart) + numberOfBlocksIn(UnlikelyPart);
     uint32_t* const blocksOutside = m_arena.allocateArray<uint32_t>(numberOfBlocksOutside);
-    // Each is a rare edge of a block outside.
     EntryOfRareRegion* const entries = m_arena.allocateArray<EntryOfRareRegion>(m_rareEdgesFromOutside.size());
     EntryOfRareRegion* endOfEntries = entries;
 
     uint32_t numberOutside = 0;
-    // Where the next block outside is to be named.
     uint32_t* link = &m_firstBlockInOrder;
     for (uint32_t index = m_firstBlockInOrder; index != none;) {
         BlockState& state = states[index];
@@ -1173,7 +1056,6 @@ void BlockOrderBuilder::takeRareBlocksOutOfOrder()
             blocksOutside[numberOutside] = index;
             state.indexOutsideRareRegions = numberOutside;
 
-            // What is kept of the search names no rare block.
             uint32_t header = state.cycleHeader;
             if (header != none) {
                 while (header != none && (states[header].flags & IsRare))
@@ -1215,7 +1097,6 @@ NEVER_INLINE uint32_t BlockOrderBuilder::shortenWayToRepresentativeOf(BlockState
     return block;
 }
 
-// While the search among the rare blocks is under way. No region has a rank yet.
 NEVER_INLINE void BlockOrderBuilder::joinRegionsOf(uint32_t first, uint32_t second)
 {
     BlockState* const states = m_states.begin();
@@ -1234,7 +1115,6 @@ NEVER_INLINE void BlockOrderBuilder::noteEdgeToRareLandingPad(uint32_t from, uin
     m_edgesToRareLandingPads.append(m_arena, EdgeToRareLandingPad { from, landingPad, none });
 }
 
-// The search among the rare blocks has joined what an edge joins. Only an edge that it has listed may lead from one region into another, and only a landing pad gives its region a rank.
 void BlockOrderBuilder::findRareRegions()
 {
     if (!m_someRareBlockIsLandingPad)
@@ -1250,8 +1130,6 @@ void BlockOrderBuilder::findRareRegions()
         }
     }
 
-    // Regions are placed by rising rank, each behind those that lead into it. So ranks have to rise along the edges between regions, as they do where one handler lies within another.
-    // Where they do not, every region with a landing pad is joined with those that it leads into.
     bool ranksRiseAlongEdges = true;
     for (const EdgeToRareLandingPad& edge : m_edgesToRareLandingPads) {
         uint32_t from = representativeOf(states, edge.from);
@@ -1261,7 +1139,6 @@ void BlockOrderBuilder::findRareRegions()
     }
     if (ranksRiseAlongEdges)
         return;
-    // A region without a rank holds no landing pad, so nothing is joined with it and it never comes to have one: in whatever order the edges are gone through, the same ones join.
     for (const EdgeToRareLandingPad& edge : m_edgesToRareLandingPads) {
         uint32_t kept = representativeOf(states, edge.from);
         uint32_t joined = representativeOf(states, edge.landingPad);
@@ -1275,7 +1152,6 @@ void BlockOrderBuilder::findRareRegions()
     }
 }
 
-// The regions without a rank come first, as their first blocks stand among the rare blocks, then the others by rising rank.
 void BlockOrderBuilder::numberRareRegions()
 {
     BlockState* const states = m_states.begin();
@@ -1319,7 +1195,6 @@ void BlockOrderBuilder::numberRareRegions()
     RELEASE_ASSERT(numberOfRareBlocks == numberOfBlocksIn(RarePart));
 }
 
-// Each rare region stands in one piece, behind every block that leads into it. Of those that stand at one place, the one with the lower number comes first.
 void BlockOrderBuilder::placeRareRegions()
 {
     BlockState* const states = m_states.begin();
@@ -1328,7 +1203,6 @@ void BlockOrderBuilder::placeRareRegions()
     RegionPlan* const plans = m_regionPlans;
     uint32_t numberOfRegions = m_numberOfRareRegions;
 
-    // Whether a region has several entries, and behind what it stands, hangs on no order among its entries.
     auto noteEntry = [&](Block* entry, uint32_t standsBehind) ALWAYS_INLINE_LAMBDA {
         BlockPlace& place = places[entry->index()];
         RegionPlan& plan = plans[place.rareRegion];
@@ -1387,7 +1261,6 @@ void BlockOrderBuilder::placeRareRegions()
         }
     }
 
-    // Each goes right behind the block outside that it stands behind, the one with the highest number first: so in front of those that went there before it.
     m_rareRegions.growWithoutInitializing(m_arena, numberOfRegions);
     RareRegion* const rareRegions = m_rareRegions.begin();
     const uint32_t* const blocksOutside = m_blocksOutsideRareRegions;
@@ -1400,8 +1273,6 @@ void BlockOrderBuilder::placeRareRegions()
     }
 }
 
-// The sources come as they stand in the order, so the last one that is noted of a target is the last that leads back to it.
-// Until findLoops() BlockPlace::loop of a loop head is its number in m_loopHeads.
 NEVER_INLINE void BlockOrderBuilder::noteEdgeLeadingBack(BlockPlace& placeOfTarget, uint32_t orderIndexOfSource)
 {
     if (placeOfTarget.isLoopHead) {
@@ -1413,13 +1284,10 @@ NEVER_INLINE void BlockOrderBuilder::noteEdgeLeadingBack(BlockPlace& placeOfTarg
     m_loopHeads.append(m_arena, LoopHead { placeOfTarget.orderIndex, orderIndexOfSource + 1 });
 }
 
-// Goes over the blocks as they stand in the order and gives each all that its place in the order decides, then over their edges.
-// Either loop keeps in registers what it goes by. One loop for both does not.
 void BlockOrderBuilder::placeBlocks()
 {
     uint32_t numberOfBlocks = numberOfBlocksIn(LikelyPart) + numberOfBlocksIn(UnlikelyPart) + numberOfBlocksIn(RarePart);
 
-    // An arm that is unlikely stands behind everything likely, so the likely way falls through to the join and the arm jumps back to it.
     bool likelyPartComesLast = m_proc.traits().fallsIntoWhatLiesBehind;
     uint32_t firstInPart[numberOfParts];
     uint32_t numberOfBlocksInFront = 0;
@@ -1457,7 +1325,6 @@ void BlockOrderBuilder::placeBlocks()
         BlockPlace& place = places[index];
         index = state.next;
 
-        // A place is made with LayoutPart::Likely.
         uint32_t layoutIndex;
         if (flags & IsLikely) [[likely]]
             layoutIndex = nextIndexInLikelyPart++;
@@ -1483,7 +1350,6 @@ void BlockOrderBuilder::placeBlocks()
     RELEASE_ASSERT(position < noPosition);
     m_end = static_cast<Position>(position);
 
-    // Every block has its index by now, so an edge leads back where the index of its target is no greater.
     auto listAsPredecessor = [&](Block* block, uint32_t orderIndex, const Edge& edge) ALWAYS_INLINE_LAMBDA -> Block* const* {
         BlockPlace& placeOfTarget = places[edge.block()->index()];
         Block* const* piece = placeOfTarget.predecessors.data();
@@ -1513,9 +1379,6 @@ void BlockOrderBuilder::placeBlocks()
     }
 }
 
-// From its head to the last block that jumps back to the head, a loop is rotated until it ends with a Branch that leaves it. The jump back then falls through, and a turn takes one branch.
-// It goes by the cycles of the search and not by the Loop intervals, which hold rare blocks too.
-// No block is moved but between the two indexes that it hands back.
 void BlockOrderBuilder::rotateLoops(uint32_t& beginOfMovedBlocks, uint32_t& endOfMovedBlocks)
 {
     enum class ExitPlacement : uint8_t {
@@ -1532,12 +1395,10 @@ void BlockOrderBuilder::rotateLoops(uint32_t& beginOfMovedBlocks, uint32_t& endO
     const Loop* const loops = m_loops.begin();
     uint32_t numberOfBlocks = m_blocksInLayout.size();
 
-    // A block has one of the two flags at most, so two blocks stand in one part of the layout where they agree in both.
     auto flagsOfPartOf = [&](const Block* block) ALWAYS_INLINE_LAMBDA -> uint32_t {
         return states[block->index()].flags & (IsRare | IsLikely);
     };
 
-    // Inner loops first. That moves no direct member of the loop around them, so BlockPlace::layoutIndex still holds of those.
     for (uint32_t loopIndex = m_loops.size(); loopIndex--;) {
         Block* head = blocksInOrder[loops[loopIndex].firstBlock];
         uint32_t flagsOfPart = flagsOfPartOf(head);
@@ -1597,9 +1458,6 @@ void BlockOrderBuilder::rotateLoops(uint32_t& beginOfMovedBlocks, uint32_t& endO
     }
 }
 
-// Every block that an edge leads back to begins a loop of its own: a value that is defined ahead of that block and read behind it is live as far as the edge, whatever other loop both stand in.
-// So where two intervals overlap and neither holds the other, the one that begins first is made to end with the other, and both stay.
-// A place is made with no loop, so it goes over the blocks that stand in a loop and no others.
 void BlockOrderBuilder::findLoops()
 {
     std::sort(m_loopHeads.begin(), m_loopHeads.end(), [](const LoopHead& first, const LoopHead& second) {
@@ -1610,11 +1468,9 @@ void BlockOrderBuilder::findLoops()
     Block* const* const blocksInOrder = m_blocksInOrder.begin();
     const LoopHead* nextHead = m_loopHeads.begin();
     const LoopHead* const endOfHeads = m_loopHeads.end();
-    // One for each head, so the list stays where it lies.
     m_loops.reserve(m_arena, m_loopHeads.size());
     Loop* const loops = m_loops.begin();
 
-    // A loop stays open as long as a loop within it does, and takes over the end of that loop when it closes.
     ArenaVector<uint32_t> openLoops;
     auto closeLoopsEndingAt = [&](uint32_t index) {
         while (!openLoops.isEmpty() && loops[openLoops.last()].endBlock <= index) {
@@ -1639,7 +1495,6 @@ void BlockOrderBuilder::findLoops()
                 ++nextHead;
             }
 
-            // No loop opens ahead of the next head, and none closes as long as the innermost goes on. Both lie behind this block.
             uint32_t innermost = openLoops.last();
             uint32_t endOfRun = loops[innermost].endBlock;
             if (nextHead != endOfHeads)
@@ -1652,7 +1507,6 @@ void BlockOrderBuilder::findLoops()
     }
 }
 
-// Where some edge leads back.
 NEVER_INLINE void BlockOrderBuilder::placeLoops()
 {
     findLoops();
@@ -1711,7 +1565,6 @@ void BlockOrderBuilder::run()
     if (m_proc.failure())
         return;
 
-    // Where the roots are listed is read anew for each root, so that it takes none of the registers that the search goes by.
     m_firstBlockInOrder = orderBlocksReachedFrom<Search::ForBlocksOutsideRareRegions>(m_proc.entrypoints().size(), [&](size_t index) {
         return m_proc.entrypoints().data()[index].block;
     });
@@ -1775,14 +1628,12 @@ Block* Order::splitLate(Procedure& procedure, Block* from, unsigned successorInd
 
     Block* middle = split(from, successorIndex);
     RELEASE_ASSERT(middle->index() < order.m_mostBlocks && middle->last()->index() < order.m_mostOperations);
-    // As where orderBlocks() splits such an edge.
     if (edge.isRare() && order.of(target).isRare()) {
         middle->clearSuccessors();
         middle->appendSuccessor(Edge(target, EdgeClass::Normal));
     }
 
     const BlockPlace& placeOfFrom = order.of(from);
-    // orderBlocks() has kept the room and made no place in it.
     BlockPlace& place = *new (NotNull, &order.m_places[middle->index()]) BlockPlace();
     place.orderIndex = placeOfFrom.orderIndex;
     place.head = order.endOf(from) + positionsOfBlockSplitLate * successorIndex;
@@ -1796,7 +1647,6 @@ Block* Order::splitLate(Procedure& procedure, Block* from, unsigned successorInd
     predecessors[0] = from;
     place.predecessors = predecessors;
 
-    // They stand as their blocks stand in the order, and what was split off late stands where its source stood.
     std::span<Block* const> predecessorsOfTarget = order.of(target).predecessors;
     auto entryOfFrom = std::ranges::lower_bound(predecessorsOfTarget, placeOfFrom.orderIndex, { }, [&](const Block* predecessor) {
         return order.of(predecessor).orderIndex;
@@ -1831,19 +1681,16 @@ void Order::placeBlocksSplitLate(Procedure& procedure)
     std::span<Block*> newBlocks = order.m_blocksSplitLate.span();
     Block* const* const firstNewBlock = newBlocks.data();
     Block* const* const endOfNewBlocks = firstNewBlock + newBlocks.size();
-    // A stable sort leaves blocks whose keys never fall as they stand.
     auto sortNewBlocksBy = [&](const auto& keyOf) {
         if (!std::ranges::is_sorted(newBlocks, { }, keyOf))
             std::ranges::stable_sort(newBlocks, { }, keyOf);
     };
 
-    // So far each has counted as standing where the block that leads to it does.
     sortNewBlocksBy(orderIndexOf);
 
     uint32_t numberOfBlocksSoFar = order.m_blocksInOrder.size();
     uint32_t numberOfBlocks = numberOfBlocksSoFar + static_cast<uint32_t>(newBlocks.size());
 
-    // A block moves back by the new blocks whose sources stand ahead of it. A loop takes in what stands behind its last block.
     auto newIndexOf = [&](uint32_t index) {
         return index + static_cast<uint32_t>(std::ranges::lower_bound(newBlocks, index, { }, orderIndexOf) - newBlocks.begin());
     };
@@ -1852,7 +1699,6 @@ void Order::placeBlocksSplitLate(Procedure& procedure)
         loop.endBlock = newIndexOf(loop.endBlock);
     }
 
-    // Each block is told its index as it is put in its place. The index that a new block has counted by is read before that.
     ArenaVector<Block*> listOfBlocksInOrder;
     listOfBlocksInOrder.growWithoutInitializing(arena, numberOfBlocks);
     Block** const blocksInOrder = listOfBlocksInOrder.begin();
@@ -1860,7 +1706,6 @@ void Order::placeBlocksSplitLate(Procedure& procedure)
     Block* const* nextNewBlock = firstNewBlock;
     uint32_t orderIndexOfNextSource = orderIndexOf(*nextNewBlock);
     RELEASE_ASSERT(orderIndexOfNextSource < numberOfBlocksSoFar);
-    // As far as the first source every block stays where it stands.
     std::copy_n(blocksInOrderSoFar, orderIndexOfNextSource + 1, blocksInOrder);
     uint32_t newOrderIndex = orderIndexOfNextSource + 1;
     for (uint32_t index = orderIndexOfNextSource; ;) {
@@ -1879,7 +1724,6 @@ void Order::placeBlocksSplitLate(Procedure& procedure)
     RELEASE_ASSERT(nextNewBlock == endOfNewBlocks);
 
     sortNewBlocksBy(layoutIndexOfSourceOf);
-    // The sources are told their new indexes below, so where they have stood is kept here.
     uint32_t* const layoutIndexesOfSources = arena.allocateArray<uint32_t>(newBlocks.size());
     const uint32_t* const endOfLayoutIndexesOfSources = layoutIndexesOfSources + newBlocks.size();
     for (size_t index = 0; index < newBlocks.size(); ++index)
@@ -1890,7 +1734,6 @@ void Order::placeBlocksSplitLate(Procedure& procedure)
     Block** const blocksInLayout = listOfBlocksInLayout.begin();
     Block* const* const blocksInLayoutSoFar = order.m_blocksInLayout.begin();
     uint32_t newLayoutIndex = 0;
-    // Each block comes here once at most: one that was there as the list so far is gone through, a new one behind its source or at the end of its part.
     auto appendToLayout = [&](Block* block, BlockPlace& place) ALWAYS_INLINE_LAMBDA {
         place.layoutIndex = newLayoutIndex;
         blocksInLayout[newLayoutIndex++] = block;

@@ -418,7 +418,6 @@ globalThis.printSecondResult = function printSecondResult(work) {
 };
 )js"_s;
 
-// `way` is one of waysToCompilePrograms.
 static std::unique_ptr<CompileOutput> compile(ASCIILiteral way, ASCIILiteral referencesWord)
 {
     std::unique_ptr<CompileOutput> output;
@@ -657,7 +656,6 @@ rejected with: RangeError: made to be thrown
 )"_s);
 }
 
-// What copies properties calls back into compiled code, which throws. The error lists the frames on both sides of the copy, and the handler lies beyond it.
 static void testThrowBelowACopyOfProperties()
 {
     constexpr ASCIILiteral statements = R"js(
@@ -805,7 +803,6 @@ static void testTerminationOfLoopWithoutCalls()
 )"_s);
 }
 
-// The engine's own code looks for a request at the entry of every function, the body of a resumed coroutine included.
 static void testTerminationRequestedAheadOfAnEntryFromNativeCode()
 {
     checkShellOutput(R"js(

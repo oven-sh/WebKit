@@ -225,7 +225,6 @@ generator: throws TypeError: Value could not be cloned.
 )"_s);
 }
 
-// The table has structuredClone as a member of the host. The shell has no host and defines a function of its own under the name, after start-up has locked what the program takes for constants.
 static void testProgramThatNamesTheFunctionOfTheShell()
 {
     for (Wire::AdmittedCode admittedCode : { Wire::AdmittedCode { }, Wire::AdmittedCode::Inspector }) {

@@ -24,12 +24,6 @@ namespace JSC { namespace AOT {
 
 using HeapList = Vector<const Machine::AbstractHeap*, 16>;
 
-// Every list below is v(name, offset, traits) or v(name, offset, traits, parent). The offsets are evaluated in AOTHeaps.cpp alone.
-// A heap is added to the tree behind its parent, so the constructor expands the lists in the order in which the struct below declares them, and within a list a parent stands ahead of its children.
-// The traits are the constants of AOTHeaps::Traits.
-
-// v(name, traits), below the root. To the IR a weak table is a collection like any other. A garbage collection only writes the weak ones, so they have heaps of their own:
-// values read from a Map or a Set stay valid across it.
 #define FOR_EACH_AOT_HEAP_OUTSIDE_IR(v) \
     v(collectorState, OutsideDeclaredEffects) \
     v(argumentBuffer, OutsideDeclaredEffects) \
@@ -38,9 +32,6 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(weakTableStorage, Mutable) \
     v(weakTableEntries, Mutable)
 
-// AOTObject_shapeWord is read of every cell. In one that is no compiled object other things lie there and change. None of them has compiledObjectShapeBit, so every test of the word fails for them all.
-// A word of AOTInstance_fieldsFilledOnce is zero until it gets its value and keeps that value. Whoever reads zero goes the way that needs no word, so a read may stand anywhere.
-// So it is with the one flag of AOTCompiledStructure_flags that is set behind the creation of the Structure: EveryFieldIsBornConfigurable.
 #define FOR_EACH_AOT_FIELD_HEAP_UNDER_ROOT(v) \
     v(AOTInstance_vm, AOT_INSTANCE_OFFSET(vm), Immutable) \
     v(AOTCompiledStructure_flags, CompiledStructure::offsetOfFlags(), FilledOnce) \
@@ -56,12 +47,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(JSPropertyNameEnumerator_endOwnPropertyIndex, JSPropertyNameEnumerator::endOwnPropertyIndexOffset(), Immutable) \
     v(AOTImage_tables, 0, ImmutablePermanentCell)
 
-// AOTObject_hiddenWords and AOTInstance_classGuards lie beside the buckets of their parents, so every mask that names one of those buckets names them too:
-// whatever adds a field may give the object another Extension, and what ends the guard of a class ends the guards of the classes below it.
-// No program can tell whether the closure table has made a closure yet, or whether the value word of a module is filled. Both heaps stay below RuntimeState, so whatever writes that ends a numbered load.
-// Nor can it tell whether the cell of a constant has been made. AOTInstance_stringCells has the words of strings and keys, AOTInstance_constantCells those of every other constant.
 // Both stay below AllocatorState and change: code fills some of these words itself, and a zero that was read ahead of the store must not be found again behind it.
-// Nor can it tell where a class token has found a private name before. A word of AOTClassToken_knownStructures or AOTClassToken_records is zero until it gets its value and keeps that value, and the number of the Structure is the last word of a record to get one.
 #define FOR_EACH_AOT_FIELD_HEAP_UNDER_IR_HEAP(v) \
     v(AOTInstance_mutableFields, 0, Mutable, RuntimeState) \
     v(AOTInstance_stringCells, 0, PermanentCellOutsideDeclaredEffects, AllocatorState) \
@@ -86,8 +72,6 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(JSGlobalObject_globalLexicalBindingEpoch, JSGlobalObject::globalLexicalBindingEpochOffset(), Mutable, RuntimeState) \
     v(TypedArrayProperties, 0, Mutable, TypedArrayElements)
 
-// JSCell_typeInfoType does change in place, between the types of a row of changesOfCellTypeInPlace: PrimitiveEmitter::hasCellTypeIn() keeps every test under this heap to ranges that cannot tell.
-// Nothing writes a field of a JSPropertyNameEnumerator once it is created.
 #define FOR_EACH_JSC_FIELD_HEAP_UNDER_ROOT(v) \
     v(ClassInfo_parentClass, ClassInfo::offsetOfParentClass(), Immutable) \
     v(JSCell_typeInfoType, JSCell::typeInfoTypeOffset(), Immutable) \
@@ -100,7 +84,6 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(Structure_classInfo, Structure::classInfoOffset(), Immutable) \
     v(Structure_realm, Structure::realmOffset(), Immutable)
 
-// No program can tell whether JSRopeString_fiber0 holds a fiber or a StringImpl.
 #define FOR_EACH_JSC_FIELD_HEAP_UNDER_IR_HEAP(v) \
     v(ArrayBuffer_data, ArrayBuffer::offsetOfData(), InnerPointer, TypedArrayStorage) \
     v(ArrayBuffer_sizeInBytes, ArrayBuffer::offsetOfSizeInBytes(), Mutable, TypedArrayStorage) \
@@ -195,19 +178,16 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(VM_heap_barrierThreshold, VM::offsetOfHeapBarrierThreshold(), OutsideDeclaredEffects, VM_heapState) \
     v(VM_heap_mutatorShouldBeFenced, VM::offsetOfHeapMutatorShouldBeFenced(), OutsideDeclaredEffects, VM_heapState)
 
-// An array stays an array, so an array's butterfly word and another object's are separate heaps, and so are the bytes that name the kind of storage. The parent is for a cell that may be either.
 #define FOR_EACH_AOT_FIELD_HEAP_UNDER_FIELD_HEAP(v) \
     v(cards, 0, OutsideDeclaredEffects, collectorState) \
     v(VM_heapState, 0, OutsideDeclaredEffects, collectorState) \
     v(JSArray_butterfly, JSObject::butterflyOffset(), InnerPointer, JSObject_butterfly) \
     v(JSNonArray_butterfly, JSObject::butterflyOffset(), InnerPointer, JSObject_butterfly)
 
-// Behind FOR_EACH_JSC_FIELD_HEAP_UNDER_FIELD_HEAP.
 #define FOR_EACH_AOT_FIELD_HEAP_UNDER_JSC_FIELD_HEAP(v) \
     v(JSArray_indexingTypeAndMisc, JSCell::indexingTypeAndMiscOffset(), Mutable, JSCell_indexingTypeAndMisc) \
     v(JSNonArray_indexingTypeAndMisc, JSCell::indexingTypeAndMiscOffset(), Mutable, JSCell_indexingTypeAndMisc)
 
-// v(name, offset, size of an element, traits, parent), the parent being an expression in the constructor.
 #define FOR_EACH_AOT_INDEXED_HEAP(v) \
     v(AOTClosure_captures, offsetOfClosureCaptures, sizeof(EncodedJSValue), Immutable, entire(Typed::AbstractHeap::EnvironmentFields)) \
     v(AOTSlimClosure_captures, offsetOfSlimClosureCaptures, sizeof(EncodedJSValue), Immutable, entire(Typed::AbstractHeap::EnvironmentFields)) \
@@ -226,7 +206,6 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(characters16, 0, sizeof(char16_t), Mutable, entire(Typed::AbstractHeap::StringStorage)) \
     v(singleCharacterStrings, 0, sizeof(JSString*), ImmutablePermanentCell, root)
 
-// Made once for a build, ahead of Compile. Every thread reads it, and nothing changes it.
 struct AOTHeaps {
     WTF_MAKE_NONCOPYABLE(AOTHeaps);
 
@@ -246,11 +225,9 @@ struct AOTHeaps {
 
     AOTHeaps();
 
-    // What Machine::Procedure takes.
     const Machine::HeapTree& tree() const LIFETIME_BOUND { return m_tree; }
 
     Machine::AbstractHeap root;
-    // Two buckets of Typed::AbstractHeap::Elements, under other names.
     Machine::AbstractHeap elementsOfArrays;
     Machine::AbstractHeap elementsOfArguments;
 
@@ -269,10 +246,8 @@ struct AOTHeaps {
     FOR_EACH_AOT_INDEXED_HEAP(AOT_DECLARE_INDEXED_HEAP)
 #undef AOT_DECLARE_INDEXED_HEAP
 
-    // Below Typed::AbstractHeap::NamedProperties.
     Machine::NumberedAbstractHeap properties;
 
-    // Other names of heaps above. Set last.
     Machine::AbstractHeap JSCell_freeListNext;
     Machine::AbstractHeap ArrayStorage_publicLength;
     Machine::AbstractHeap ArrayStorage_vectorLength;
@@ -282,10 +257,8 @@ struct AOTHeaps {
     const Machine::IndexedAbstractHeap* forIndexingType(IndexingType) const;
 
     const Machine::AbstractHeap& entire(Typed::AbstractHeap heap) const LIFETIME_BOUND { return m_entireHeaps[static_cast<size_t>(heap)]; }
-    // The bucket of the location where it has one, else the entire heap.
     const Machine::AbstractHeap& at(const Typed::Program&, const Typed::MemoryLocation&) const LIFETIME_BOUND;
 
-    // For a mask that names some buckets of a heap: those buckets, and every field heap that lies below the heap beside its buckets. And each heap that several heaps of the IR own, where the masks name one of the owners.
     void appendHeaps(const Typed::LocationMasks&, HeapList&) const;
     void appendHeapsWrittenByCollection(HeapList&) const;
     static bool mayConvertCells(const Typed::Effects& effectsOfCall);
@@ -308,7 +281,6 @@ private:
     Machine::HeapTree m_tree;
     std::array<Machine::AbstractHeap, Typed::numberOfHeaps> m_entireHeaps;
     std::array<Buckets, Typed::numberOfIndexedHeaps> m_buckets;
-    // By the heap of the IR: the members of this struct whose parent is that heap itself.
     std::array<Vector<const Machine::AbstractHeap*>, Typed::numberOfHeaps> m_fieldHeapsBelow;
 };
 

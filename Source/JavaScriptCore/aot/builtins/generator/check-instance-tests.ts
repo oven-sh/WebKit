@@ -44,7 +44,6 @@ function hasLockedPrototypeChain({ prototype }: ModelClass): boolean {
   return false;
 }
 
-// The compiler takes a new instance of such a class for pristine and expects a change of the instance to clear the mark of its Structure, so start-up has to find the Structure.
 function checkInstanceStructure(builtinClass: ModelClass, problems: Problems): void {
   if (builtinClass.origin !== "Host" || builtinClass.isPrimitiveWrapper || builtinClass.isNeverPristine) return;
   if (builtinClass.instanceStructureCppExpression !== null || !hasLockedPrototypeChain(builtinClass)) return;

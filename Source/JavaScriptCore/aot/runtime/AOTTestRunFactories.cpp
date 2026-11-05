@@ -40,8 +40,6 @@ bool Modules::wasLoadedWhenMockWasMade(ModuleID module)
     return m_modulesLoadedBeforeMockThatWaited.get(module.index());
 }
 
-// A graph is loaded before a module of it begins, so a helper that mocks finds what its importer imports beside it linked. The body does not run ahead of an import whose own body is up the stack.
-// True: the module is linked and no load has come to it: whatever imports it met a mock in its own place.
 bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -51,7 +49,6 @@ bool Modules::runBodyOfLinkedModuleAheadOfMock(ModuleID module)
     };
     if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || !hasYetToRun(module) || isMocked(module) || m_modulesWithMockToRun.get(module.index()))
         return false;
-    // Only a graph whose evaluation is under way, or was ended by an error, has linked what it did not come to. A load that met a mock in place of the module never fetched it.
     auto isImportedByGraphUnderEvaluation = [&] {
         BitVector isReached(m_table.size());
         Vector<ModuleID, 16> importers;
@@ -129,7 +126,6 @@ void Modules::runBodyOfRequiredFileAheadOfMock(ModuleID module)
     require(module, ModuleID(), RequiredBy::Program);
 }
 
-// The loader has asked for a module and has yet to run it.
 bool Modules::isLoaderInMiddleOfGraph() const
 {
     for (auto& entry : loader()->moduleMap().values()) {
@@ -150,7 +146,6 @@ bool Modules::isLoaderInMiddleOfGraph() const
     return false;
 }
 
-// Compiled code that requires a module again reads the status of that module and asks nobody where it has run: no load would come by.
 bool Modules::isImportedByModuleThatRequireAnswered(ModuleID imported) const
 {
     BitVector seen(m_table.size());
@@ -183,10 +178,8 @@ void Modules::forgetCallOfMock(ModuleID fileOrModule)
 
 void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
 {
-    // Its factory has failed and it waits again. The load that came to it has left the loader of `bun test`, which makes it anew.
     if (m_modulesWithMockThatWaited.get(module.index()) && !mockInPlace(module) && !hasMockLaidOver(module))
         letGoOfImportersOf(module, ImportersLetGo::All);
-    // Whoever was linked against the earlier mock reads it until the load that this one waits for.
     m_modulesWithMockToRun.set(module.index());
     m_modulesWithMockThatAsksAgain.set(module.index(), afterFailure == AfterFailure::AsksAgain);
     dropErrorsOfLoadsEndedByMockOf(module);
@@ -202,7 +195,6 @@ void Modules::deferMock(ModuleID module, AfterFailure afterFailure)
     }
 }
 
-// What deferMock() did is taken back. The record of a CommonJS file stays: its code goes on asking the run time for its status.
 void Modules::forgetMockThatWaits(ModuleID module)
 {
     m_modulesWithMockToRun.clear(module.index());
@@ -213,7 +205,6 @@ void Modules::forgetMockThatWaits(ModuleID module)
     didEndMock(module);
 }
 
-// It does not wait while its factory runs, which may load the module. A factory that fails leaves nothing in place of the module: the next load asks the mock again, as under `bun test`.
 bool Modules::runMockThatWaitsSlow(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -291,19 +282,16 @@ void Modules::dropErrorOfMockKeptByLoader(ModuleID module)
         ensureLoaded(module).errorOfMockKeptByLoader.set(*this, JSValue());
 }
 
-// A new mock takes the record of the module out of the loader, and with it the records of all that import the module.
 void Modules::dropErrorsOfLoadsEndedByMockOf(ModuleID mocked)
 {
     dropErrorOfMockKeptByLoader(mocked);
     dropErrorsOfLoadsThatCameTo([&](ModuleID module) { return module == mocked; });
-    // A factory that failed waits anew in the middle of the load that it ended: what else of that load asks for the module shares the error.
     if (!m_loaderMayHoldLoadsThatFactoryEnded || m_modulesWhoseFactoryRuns.get(mocked.index()) || isLoaderInMiddleOfGraph()) [[likely]]
         return;
     m_loaderMayHoldLoadsThatFactoryEnded = false;
     takeFailedLoadsOutOfLoader([&](ModuleID module) { return module == mocked; });
 }
 
-// Where the loader itself was asked for the graph, its entries hold the error.
 void Modules::takeFailedLoadsOutOfLoader(const ScopedLambda<bool(ModuleID)>& isMocked)
 {
     Vector<Identifier, 4> failed;
@@ -367,7 +355,6 @@ void Modules::dropErrorsOfLoadsEndedByMocks()
         dropErrorOfLoadEndedByMock(ModuleID(module));
 }
 
-// The loader has made an entry for what a statement asks for, and none yet for what an import() or a require() asks for.
 bool Modules::isFetchedForImportStatement(ModuleID module) const
 {
     ModuleRecord* record = m_records.get(module);
@@ -379,13 +366,11 @@ bool Modules::runMocksBelowModuleThatLoaderFetchesSlow(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     MockDoor door(this, module, "the loader fetches it"_s);
-    // A call that is made again may leave a mock that waits.
     evaluateModulesOwedBelow(module);
     RETURN_IF_EXCEPTION(scope, false);
     scope.release();
     if (m_modulesWithMockToRun.isEmpty()) [[likely]]
         return false;
-    // The entry that a statement left when the factory failed is still there.
     bool isAskedForByImportCall = m_instance.vm->aotState().frameOfImportThatAsksLoader;
     if (isAskedForByImportCall)
         dropErrorOfMockKeptByLoader(module);
@@ -397,7 +382,6 @@ bool Modules::mockFailedBehindImportStatement(ModuleID module)
     return m_modulesWithMockToRun.get(module.index()) && isFetchedForImportStatement(module);
 }
 
-// The calls that were made while the body of the module ran. The host knows which bodies ran at each.
 void Modules::layMocksOfBodyAgain(ModuleID module)
 {
     if (!mocksWaitToBeLaidAgain() || !host().layMocksAgain)
@@ -460,14 +444,12 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
         linkAnewWhoeverReadsEndedMockBelow(root);
     if (m_modulesWithMockToRun.isEmpty()) [[likely]]
         return false;
-    // The walk does nothing where it comes to none of them.
     MocksBelowRoot mocks = mocksBelow(root);
     bool mayComeToOne = false;
     for (size_t module : m_modulesWithMockToRun)
         mayComeToOne |= !isMocked(ModuleID(module)) || !mocks.hides(ModuleID(module));
     if (!mayComeToOne)
         return false;
-    // An import() of a CommonJS file begins at the face of the file.
     std::optional<ModuleID> fileOfRoot = m_table.fileBehindFace(root);
     BitVector reached(m_table.size());
     Vector<ModuleID, 32> work { root };
@@ -480,7 +462,6 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
         if (!kept && isImportedByStatement && m_mockedModulesWithErrorKeptByLoader.get(module.index()))
             kept = loadedIfExists(module)->errorOfMockKeptByLoader.get();
         bool isAskedForByOwnFactory = !kept && !isImportedByStatement && m_moduleThatProgramImportsNow != module && m_mockedModulesWithErrorKeptByLoader.get(module.index()) && m_importsMadeByOwnFactory.removeFirst(module);
-        // The factory gets the module itself. A statement below that asks for the module comes to the mock, which failed.
         if (isAskedForByOwnFactory && importsItselfByStatementsInTestRunFactories(m_table, module)) [[unlikely]]
             kept = loadedIfExists(module)->errorOfMockKeptByLoader.get();
         else if (isAskedForByOwnFactory) [[unlikely]]
@@ -507,9 +488,7 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
         }
         if (isMocked(module))
             continue;
-        // Depth first, in the order of the text: what is taken first is appended last.
         for (const ModuleRequestData& request : m_table.requests(module) | std::views::reverse) {
-            // The load of a module that keeps the module itself does not come to the mock. A require() runs the factory of its own file where it stands; the face of a CommonJS file asks for the file as an import does.
             if (!request.isHoisted && (!request.isRequire || data(module).isFaceOfFile()) && seesMockOf(moduleLoadedBy(request), module))
                 work.append(moduleLoadedBy(request));
         }
@@ -517,7 +496,6 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
     return false;
 }
 
-// Another load may have come to the mock first: `await Promise.all([import("./a"), import("./b")])`.
 JSPromise* Modules::factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy askedBy, JSValue& state)
 {
     if (!host().factoryThatWaits)
@@ -561,11 +539,9 @@ bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, "the mock call"_s);
-    // A mock without a factory is made of the original, and may come into its place long behind its call.
     if (modules) {
         modules->countMocksAnewBehindLoad(module);
         modules->noteCallOfMock(module);
-        // Also a mock that goes straight into the place of one that waited, or is laid over the module: it passes neither deferMock() nor didEndMock().
         modules->dropErrorsOfLoadsEndedByMockOf(module);
     }
     return modules && modules->runBodyOfLinkedModuleAheadOfMock(module);

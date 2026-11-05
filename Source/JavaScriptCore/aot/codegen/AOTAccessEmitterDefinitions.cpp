@@ -43,7 +43,6 @@ static bool operandIsHomeObject(HomeObjectKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// RuntimeOperation::TryReExportFields stores each capture of a closure that it makes as a boxed word. A boxed cell is its address, so a capture that is held as a cell takes the same word.
 static bool captureIsHeldAsBoxedWord(Representation held)
 {
     switch (held) {
@@ -59,7 +58,6 @@ static bool captureIsHeldAsBoxedWord(Representation held)
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         return false;
     }
@@ -108,7 +106,6 @@ void AccessEmitter::generateTryReExportFields(const ValueContext& value)
     auto isHeldAsBoxedWord = [&](unsigned capture) {
         return captureIsHeldAsBoxedWord(closureCaptureRepresentationOf(m_program, conventions(), function, capture));
     };
-    // Where the answer is false, the program's own re-export helper defines every name.
     if (!conventions().exists(conventions().closureEntryOf(function)) || m_program.at(function).captures.size() != 2 || !isHeldAsBoxedWord(0) || !isHeldAsBoxedWord(1)) {
         defineTest(value, boolean(false));
         return;
@@ -162,7 +159,6 @@ void AccessEmitter::generateSetLiteralPrototype(const ValueContext& value)
     Boxed prototype = in<Boxed>(value->prototypeOperand());
     LBasicBlock isUnknown = newBlock();
     LBasicBlock continuation = newBlock();
-    // An object made for Object.create is allocated with the prototype that the site's first call passed, so it often has the right one already.
     LBasicBlock isOther = newBlock();
     branch(equal(prototype, loadField<Boxed>(loadStructure(object), m_heaps.Structure_prototype)), { normalEdge(continuation), normalEdge(isOther) });
     m_out.appendTo(isOther);
@@ -171,14 +167,12 @@ void AccessEmitter::generateSetLiteralPrototype(const ValueContext& value)
     m_out.jump(continuation);
 
     m_out.appendTo(isUnknown);
-    // refusesOtherValues marks a lowered call of Object.create, so the stack trace of the TypeError for a bad prototype lists Object.create.
     callVoidOperation(value, RuntimeOperation::SetLiteralPrototype, { object, prototype, word32(value->refusesOtherValues()) }, { .calledBuiltin = value->refusesOtherValues() ? Builtins::ObjectCreate : BuiltinID(), .isOnRarePath = true });
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
 }
 
-// The keys that the source text names lie in the image as a run, which the operation gets by its number plus one. Zero: there is no run.
 AccessEmitter::ExcludedKeys AccessEmitter::excludedKeysOf(const ValueContext& value)
 {
     static_assert(sizeof(PropertyKeyID) == sizeof(uint32_t));
@@ -188,7 +182,6 @@ AccessEmitter::ExcludedKeys AccessEmitter::excludedKeysOf(const ValueContext& va
     Word32 run = hasRun ? numberOf(m_mentions.add(NumberSpace::PropertyRun, namedKeyWords, 1)) : word32(0);
     Vector<Boxed, 8> keys;
     if (!hasRun) {
-        // A key that the operation takes is a string or a symbol, so a number among the keys is the number of an identifier.
         for (PropertyKeyID key : namedKeys)
             keys.append(boxInt32(identifierNumber(key)));
     }
@@ -215,7 +208,6 @@ void AccessEmitter::copyDataProperties(const ValueContext& value, CellPointer ta
         return;
     }
 
-    // `...(condition && { .. })` spreads false. A value that is no cell has no own properties, and the test is shorter than the call.
     LBasicBlock mayHaveOwnProperties = newBlock();
     LBasicBlock continuation = newBlock();
     branch(isCell(source), { normalEdge(mayHaveOwnProperties), normalEdge(continuation) });
@@ -243,7 +235,6 @@ void AccessEmitter::generateCopyObject(const ValueContext& value)
 {
     Boxed source = in<Boxed>(value->sourceOperand());
     ExcludedKeys excluded = excludedKeysOf(value);
-    // Object.assign({}, source) stores where a copy defines: it runs setters, `__proto__` among them. A stack trace that is taken in one of them lists Object.assign.
     if (value->assigns()) {
         define(value, CellPointer(callStub(value, assignToNewObjectFrontEnd(), { source.value(), excluded.run.value(), excluded.count.value(), excluded.keys.value() }, { .calledBuiltin = Builtins::ObjectAssign }).first));
         return;
@@ -251,8 +242,6 @@ void AccessEmitter::generateCopyObject(const ValueContext& value)
     define(value, copyObject(value, source, excluded));
 }
 
-// The list holds the count, the numbers of the names and their values. The stub in front of the operation reads the low half of a word that holds a number.
-// That stub knows the copies of ordinary objects alone. A compiled object is copied by the stub of the plain copy, and each name is defined by the stub that has the tables of its name.
 void AccessEmitter::generateCopyObjectAndDefine(const ValueContext& value)
 {
     std::span<const PropertyKeyID> keys = value->definedKeys();
@@ -295,8 +284,6 @@ void AccessEmitter::generateCopyObjectAndDefine(const ValueContext& value)
     define(value, join.finish());
 }
 
-// A plan of the run time makes the copy of both at once and runs no code. Where it has none it answers null, and the two are copied one behind the other.
-// The copy of a compiled object is an object of its layout, which only the copy by itself makes: the plan is not asked.
 void AccessEmitter::generateCopyTwoObjects(const ValueContext& value)
 {
     Boxed first = in<Boxed>(value->sourceOperand());
@@ -330,7 +317,6 @@ void AccessEmitter::generateCopyTwoObjects(const ValueContext& value)
     }));
 }
 
-// The copy of a cell has the words of the cell and nothing else. So the layout has one shape, none of its fields lies in an Extension, and none is a closure that the source may not have made yet.
 std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueContext& allocation, const MentionedAllocation& mentioned, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty)
 {
     LayoutID layout = m_code.at(copy).layout();
@@ -353,7 +339,6 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
     LBasicBlock fills = newBlock();
     LBasicBlock continuation = newBlock();
     {
-        // The words of the source are read for the TryCopyFields, which declares the reads and appends none.
         Machine::DeclaredAccessesSuspension readsForCopy(m_out);
         branch(equal(shapeTests.shapeWordOf(source), static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first))), { normalEdge(hasShape), rareEdge(fills) });
 
@@ -379,8 +364,6 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
     return CellPointer(m_out.phi(Machine::pointerType(), copiedCell, emptyCell));
 }
 
-// Only an object of the layout's general shape keeps its key order in its order word. That word then says that the source has nothing but fields, no integrity level, and a key order that the word alone names.
-// What lies in an Extension is copied by the run time.
 void AccessEmitter::generateTryCopyFields(const ValueContext& value)
 {
     if (m_copyAtAllocation && m_copyAtAllocation->copy == value.id()) {
@@ -397,7 +380,6 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
         return;
     }
 
-    // The words that are no fields are zero in a source that is copied.
     std::span<const PlacedSlot> slots = planned.slots.span().first(planned.numberOfFields());
     bool mayCopyCell = std::ranges::any_of(slots, [](const PlacedSlot& slot) {
         return slot.hasStorage() && traitsOf(slot.representation).holdsCell;
@@ -422,7 +404,6 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
             bool isNarrow = traitsOf(extensionWord.representation).isNarrowReference;
             hasOnlyFields = logicalAnd(hasOnlyFields, isNarrow ? isZero(Word32(m_out.load32(address))) : isZero(Integer(m_out.load64(address))));
         }
-        // The copy holds the function objects of the source. One that the source has not made yet is made first, by the operation that copies after a refusal.
         for (const PlacedSlot& slot : slots) {
             if (!slot.hasStorage() || slot.isOutOfLine() || slot.representation != SlotRepresentation::DeferredClosure)
                 continue;
@@ -450,9 +431,7 @@ void AccessEmitter::generateGetSuperBase(const ValueContext& value)
     auto readByOperation = [&](bool isOnRarePath) {
         return callWithoutSite<Boxed>(RuntimeOperation::GetSuperBase, { boxCell(home), word32(static_cast<int32_t>(homeKind)) }, { .isOnRarePath = isOnRarePath });
     };
-    // The operand is the class object, and the search starts above what its `prototype` holds.
     if (!operandIsHomeObject(homeKind)) {
-        // Nobody can give a class another prototype object, and that of a class that is evaluated once is in ClassWords::classPrototypes.
         if (LayoutID classLayout = value->layout(); classLayout && m_plan.hasClassRecord(classLayout) && m_facts.isEvaluatedAtMostOnce(classLayout)) {
             define(value, Boxed(callStub(value, getSuperBaseOfClass(), { boxCell(home).value() }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::ClassRank, classLayout) } }).first));
             return;
@@ -477,7 +456,6 @@ void AccessEmitter::generateSuperGet(const ValueContext& value)
     Boxed base = in<Boxed>(value->baseOperand());
     Boxed receiver = in<Boxed>(value->receiverOperand());
     PropertyKeyID key = value->key();
-    // isSymbolOfRealm(), getById() and the plan's columns go by the program's table of keys.
     bool keyIsThreadLocal = liesInThread(key);
     if (!key || (!keyIsThreadLocal && isSymbolOfRealm(key))) {
         Boxed property = keyOperand(value, key, value->computedKeyOperand());
@@ -485,7 +463,6 @@ void AccessEmitter::generateSuperGet(const ValueContext& value)
         return;
     }
 
-    // A lookup that starts at the receiver is an ordinary read by name. A field whose slot was found empty is read this way.
     if (!keyIsThreadLocal && value->baseOperand() == value->receiverOperand()) {
         define(value, getById(value, receiver, key));
         return;

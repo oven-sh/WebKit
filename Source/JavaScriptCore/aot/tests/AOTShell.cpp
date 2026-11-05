@@ -129,7 +129,6 @@ static std::optional<MappedImage> mapFile(const char* path)
     LARGE_INTEGER size;
     if (file == INVALID_HANDLE_VALUE || !GetFileSizeEx(file, &size))
         return std::nullopt;
-    // As MAP_PRIVATE elsewhere: the image is brought to its address in the process's own copy of the pages.
     HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_WRITECOPY, 0, 0, nullptr);
     void* bytes = mapping ? MapViewOfFile(mapping, FILE_MAP_COPY, 0, 0, 0) : nullptr;
     if (!bytes)
@@ -148,7 +147,6 @@ static std::optional<MappedImage> mapFile(const char* path)
 }
 #endif
 
-// The table of built-ins describes a realm with the globals Bun turns on, and an image may name any of them.
 void enableGlobalsOfBuiltinTable()
 {
     if (!Options::aotImagePath())
@@ -244,7 +242,6 @@ JSC_DEFINE_HOST_FUNCTION(functionOverrideRequire, (JSGlobalObject* globalObject,
     return JSValue::encode(jsUndefined());
 }
 
-// Null in a run that does not count. A name that is no operation, or whose calls nothing counts, would answer 0 for ever.
 JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -276,15 +273,12 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTRuntimeCounters, (JSGlobalObject* globalObje
     return JSValue::encode(jsString(vm, out.toString()));
 }
 
-// Null where the system has no counter of instructions, or refuses one.
 JSC_DEFINE_HOST_FUNCTION(functionAOTInstructionsOfThread, (JSGlobalObject*, CallFrame*))
 {
     std::optional<uint64_t> instructions = InstructionCounts::ofCurrentThread();
     return JSValue::encode(instructions ? jsNumber(static_cast<double>(*instructions)) : jsNull());
 }
 
-// Where a compiled object keeps the property of a name. Compiled code that has seen a slot filled takes what lies there for a value of the field's type, so a test says by this whether a deed has taken the field out.
-// Null for whatever is no compiled object.
 JSC_DEFINE_HOST_FUNCTION(functionAOTPlaceOfProperty, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -304,7 +298,6 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTPlaceOfProperty, (JSGlobalObject* globalObje
     return JSValue::encode(jsNontrivialString(vm, isAmongExtraProperties ? "extra property"_s : "absent, and no field"_s));
 }
 
-// What the cell of a compiled object says has become of it since it was made: the words that compiled code looks at in front of a typed access. Null for whatever is no compiled object.
 JSC_DEFINE_HOST_FUNCTION(functionAOTMarksOfObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -329,8 +322,6 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTMarksOfObject, (JSGlobalObject* globalObject
 }
 
 // A DOOR LEFT OPEN ON PURPOSE, for red controls alone: the value goes into the slot of the field with no look at the type that the slot is held to, as no road of the run time lets it.
-// Compiled code that takes a filled slot for a value of that type then answers wrongly or dies. A test of the doors that passes with this in the place of its deed shows nothing.
-// False where the object has no such field or the form of the slot cannot hold the value.
 JSC_DEFINE_HOST_FUNCTION(functionAOTStoreIntoSlotUntested, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -344,7 +335,6 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTStoreIntoSlotUntested, (JSGlobalObject* glob
     return JSValue::encode(jsBoolean(field && object->store(vm, *field, AcceptedValue::provenAtBuildTime(callFrame->argument(2)))));
 }
 
-// A ROAD THAT NO PROGRAM HAS, for red controls alone: some live object of the layout with the number, out of the heap, whoever holds it.
 // So a test gets hold of an object of which the compiler has proven that nothing but compiled code ever sees it, and does to it what is ruled out: a false proof made on purpose. Null: there is none.
 JSC_DEFINE_HOST_FUNCTION(functionAOTFindObjectOfLayout, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -366,12 +356,10 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTFindObjectOfLayout, (JSGlobalObject* globalO
     return JSValue::encode(found ? JSValue(found) : jsNull());
 }
 
-// The keys of require.cache in a host that lists the files of the program there, as a test run does.
 JSC_DEFINE_HOST_FUNCTION(functionFilesInRequireCache, (JSGlobalObject* globalObject, CallFrame*))
 {
     StringBuilder files;
     forEachEvaluatedFile(globalObject, [&](const String& path) {
-        // A host knows a file by its path.
         if (findModule(path))
             files.append(files.isEmpty() ? ""_s : ","_s, path);
     });
@@ -434,7 +422,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell, (JSGlobalObjec
     return JSValue::encode(result);
 }
 
-// Requests termination when the loader resolves that module, as a watchdog thread would at that moment.
 JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationOnResolve, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -448,7 +435,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationOnResolve, (JSGlobalObject* g
     return JSValue::encode(jsUndefined());
 }
 
-// What a host does for a call with a time limit. Returns whether a termination was pending.
 JSC_DEFINE_HOST_FUNCTION(functionCallAndCancelTermination, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -461,7 +447,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCallAndCancelTermination, (JSGlobalObject* glob
     return JSValue::encode(jsBoolean(wasPending));
 }
 
-// As a watchdog thread that fires behind the last check of a native caller. The callee gets the arguments behind itself.
 template<bool isConstruct>
 static EncodedJSValue requestTerminationAndEnter(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
@@ -491,7 +476,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationAndConstruct, (JSGlobalObject
     return requestTerminationAndEnter<true>(globalObject, callFrame);
 }
 
-// An image locks `console`, so no script can give the shell one that prints.
 class ConsoleOfShell final : public ConsoleClient {
     WTF_MAKE_TZONE_ALLOCATED(ConsoleOfShell);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ConsoleOfShell);
@@ -639,7 +623,6 @@ JSC_DEFINE_CUSTOM_GETTER(getChildrenOfModuleObject, (JSGlobalObject* globalObjec
     return JSValue::encode(areShown ? JSValue(children) : jsUndefined());
 }
 
-// Compiled code calls a function that the table lists under an object of the host without testing that it is there.
 static void addMissingHostFunctions(JSGlobalObject* globalObject, JSObject* object, BuiltinID holder)
 {
     VM& vm = globalObject->vm();
@@ -832,7 +815,6 @@ static JSObject* createAsyncModuleRequiredError(JSGlobalObject* globalObject, co
     return createTypeError(globalObject, makeString("require() async module \""_s, path, "\" is unsupported. use \"await import()\" instead."_s));
 }
 
-// A test names each form of a file by the path, a question mark and the type.
 static std::optional<ModuleID> findModuleWithAttributes(JSGlobalObject* globalObject, const String& path, const ScriptFetchParameters& attributes)
 {
     String pathOfForm = makeString(path, '?', attributes.hostDefinedImportType());

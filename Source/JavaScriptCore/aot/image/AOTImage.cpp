@@ -35,7 +35,6 @@ std::atomic<const Image*> Image::s_lastPublished { nullptr };
 
 static thread_local const Image* t_currentImage { nullptr };
 static thread_local bool t_usesNoImage { false };
-// Set while the process has one image. A thread that has named no image runs that one, or helps a thread that does.
 static std::atomic<const Image*> s_onlyImage { nullptr };
 static Lock s_publishedImagesLock;
 static Vector<const Image*>& publishedImages() WTF_REQUIRES_LOCK(s_publishedImagesLock)
@@ -214,7 +213,6 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
         && numberOfElements(ImageSection::StringHeaders) >= header.numbers.endOfStringHeaders;
 }
 
-// The word `cpu` names another CPU than the engine's own. RecordedOptions::isCompatibleWithProcess() asks whether this one has what the image needs.
 static bool hasStampOfThisRuntime(const ImageHeader& header, size_t size, const std::array<uint8_t, 16>& identity)
 {
     if (header.stamp == imageStamp(CPUFeatureSet::buildTarget(), identity))
@@ -308,7 +306,6 @@ void Image::publish(std::unique_ptr<Image>&& unpublishedImage)
         JSCellButterfly::setStorageOutsideHeap(image->m_bytes);
         Thread::setSurvivesFailedCreation();
     }
-    // JSCellButterfly takes one range of storage outside the heap, and the first image is that range: a process that publishes a second image stops here.
     RELEASE_ASSERT(JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data())) && JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data() + image->m_bytes.size() - 1)));
     t_currentImage = image.get();
     image->m_publishedBefore = s_lastPublished.load(std::memory_order_relaxed);
@@ -390,7 +387,6 @@ const void* Image::stubAddress(StubKey key) const
     return sharedCodeCopy(0) + address->offset;
 }
 
-// The family is the most significant part of a key, so the stubs of a family lie side by side, by form and then by count.
 std::span<const StubAddressInImage> Image::stubAddressesOf(StubFamily family) const
 {
     auto addresses = std::ranges::equal_range(stubAddressesSortedWith(family), family, { }, [](const StubAddressInImage& address) {
@@ -421,7 +417,6 @@ bool Image::hasFrameAtReturnOffset(uint32_t function, const SideTableParts& part
     if (!returnOffset)
         return false;
     if constexpr (!hasFixedInstructionSize) {
-        // The fault handler makes the address of a faulting instruction plus sizeOfNearCall the return address, whatever the length of the instruction.
         constexpr uint8_t opcodeOfNearCall = 0xe8;
         if (returnOffset >= sizeOfNearCall && codeOf(function)[returnOffset - sizeOfNearCall] != opcodeOfNearCall) {
             std::optional<FaultSite> fault = faultSiteAt(codeOf(function) + (returnOffset - sizeOfNearCall));
@@ -445,7 +440,6 @@ bool isCompiledCodePC(const void* pc)
     return !!imageCodeOffset(pc);
 }
 
-// A crashing process also calls this, on any thread. A thread that runs no image may ask about another thread's code.
 static const Image* imageWithCodeAt(const void* address)
 {
     const Image* image = Image::current();

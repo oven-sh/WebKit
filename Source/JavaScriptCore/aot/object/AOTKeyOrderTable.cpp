@@ -39,7 +39,6 @@ static_assert(defaultLimitValue(LimitID::FieldsInKeyOrder, hostArchitecture()) =
 static_assert(maxKeyOrdersPerLayout <= UINT16_MAX);
 
 // This limit is deliberately below maxKeyOrdersPerLayout: it bounds the memory that the orders added to one layout can take. The orders of the image take none of it, and Plan leaves that many numbers free.
-// An object whose order gets no number keeps its order out of line.
 static constexpr uint32_t maxOrdersPerLayout = defaultLimitValue(LimitID::KeyOrdersPerLayout, hostArchitecture());
 static_assert(maxOrdersPerLayout <= maxKeyOrdersPerLayout);
 
@@ -205,7 +204,6 @@ struct OrdersOfLayout {
     uint32_t shape;
     uint32_t numberOfAddedOrders;
     AddedOrder** addedOrders;
-    // Of the objects that left the numbered orders: how many found a Structure that held their order, and how many of those went on to an order that nobody held.
     uint16_t heldOrdersFound;
     uint16_t heldOrdersMadeAfterFindingOne;
     uint32_t heldOrdersMadeWithoutSearch;
@@ -357,7 +355,6 @@ struct KeyOrderTable::Storage {
         ++orders.numberOfAddedOrders;
     }
 
-    // An order that has to move leaves its entries behind as they are, for whoever still reads them.
     void append(AddedOrder*& order, std::span<const uint16_t> entries)
     {
         size_t length = order->length + entries.size();
@@ -408,7 +405,6 @@ struct KeyOrderTable::Storage {
             std::span<Latin1Character> key = remaining.first(sizes[index]);
             remaining = remaining.subspan(sizes[index]);
             UniquedStringImpl* name = properties[index].name;
-            // An escape makes a key longer.
             if (key.size() && key.size() == name->length() + sizeAroundName) {
                 key[0] = ',';
                 key[1] = '"';
@@ -449,13 +445,11 @@ KeyOrderTable::KeyOrderTable(State& state)
     state.immortalCells->add(instance.objects.emptyKeyList);
     instance.objects.keyOrderTransitions = static_cast<KeyOrderTransition*>(state.pages.allocate(initialTransitionTableSize * sizeof(KeyOrderTransition)));
     instance.objects.keyOrderTransitionMask = initialTransitionTableSize - 1;
-    // A transition never changes, so neither table is ever cleared.
     instance.objects.keyOrderRuns = static_cast<KeyOrderRun*>(state.pages.allocate(numberOfKeyOrderRuns * sizeof(KeyOrderRun)));
     instance.objects.enumerators = state.tableArena.allocate<EnumeratorCacheEntry>(numberOfCachedEnumerators);
     state.caches->add(CacheKind::StrongRoots, "key lists"_s, *this);
     state.caches->add(CacheKind::ClearedEachCollection, "key lists by structure"_s, m_keyListsByStructure);
     state.caches->addClearedEachCollection("published enumerators"_s, asWritableBytes(std::span { instance.objects.enumerators, numberOfCachedEnumerators }));
-    // They go by the addresses of an object and of a table, which a collection may give to others.
     state.caches->addClearedEachCollection("places of positioned keys"_s, asWritableBytes(std::span { m_placesOfPositionedKeys }));
 }
 
@@ -548,7 +542,6 @@ bool KeyOrderTable::positionsExtraKeys(const LayoutData& layout, uint32_t orderW
 {
     ASSERT(!isOrderStoredOutOfLine(orderWord));
     uint32_t order = orderOf(orderWord);
-    // The orders of the image list fields alone.
     if (order < layout.numberOfOrders)
         return !numberOfExtraKeys;
     const AddedOrder& added = *m_storage->ordersOf(layout).addedOrders[order - layout.numberOfOrders];
@@ -700,7 +693,6 @@ bool KeyOrderTable::shouldSearchForHeldOrder(const LayoutData& layout)
     return !(++orders.heldOrdersMadeWithoutSearch % ordersMadeBetweenSearches);
 }
 
-// No order continues another from the end of an added one: orderAfterCreating() and orderStartingWith() both make the added order longer there. So nothing is known or published about this step yet.
 std::optional<uint32_t> KeyOrderTable::tryAppendToAddedOrder(const LayoutData& layout, uint32_t orderWord, const FieldData& field)
 {
     ASSERT(!(orderWord & ~orderAndCountMask) && !isOrderStoredOutOfLine(orderWord));
@@ -778,7 +770,6 @@ static KeyOrderTransition& placeOfKeyOrderTransition(KeyOrderTransition* transit
     return transitions[index];
 }
 
-// Only the thread that runs the instance reads and adds transitions, and they name no cell: no lock.
 std::optional<uint32_t> KeyOrderTable::publishedTransition(const LayoutData& layout, uint32_t orderAndCountBefore, const FieldData& field, uint32_t numberOfExtraKeys) const
 {
     ASSERT(!(orderAndCountBefore & ~orderAndCountMask));
@@ -811,7 +802,6 @@ void KeyOrderTable::publishTransition(const LayoutData& layout, uint32_t orderAn
         growTransitions();
 }
 
-// Compiled code loads the table and the mask from the instance for every probe and holds neither across a call, so nobody reads the table that is given back.
 void KeyOrderTable::growTransitions()
 {
     ObjectWords& words = m_state.instance.objects;

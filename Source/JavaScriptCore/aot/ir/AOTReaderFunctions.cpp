@@ -29,7 +29,6 @@ void Reader::readFunctions()
         readFunction(index, m_program.functions[index]);
     });
 
-    // The records are tens of megabytes, of which this reads a word each.
     std::atomic<uint64_t> numberOfValues { 0 };
     forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t first, size_t end) {
         uint64_t numberInRange = 0;
@@ -41,7 +40,6 @@ void Reader::readFunctions()
     m_build.statistics().count(StatisticID::ValuesRead, numberOfValues.load(std::memory_order_relaxed));
 }
 
-// The link leaves a record in the numbers of its unit, but lists the function types in the program's.
 static void readFunctionRecordOfUnit(RecordChecker& checker, const Wire::Function& wire, const UnitIDRemap& unit, FunctionRecord& record)
 {
     Wire::Function withoutFunctionTypes = wire;

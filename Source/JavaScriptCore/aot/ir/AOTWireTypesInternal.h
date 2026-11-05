@@ -23,16 +23,12 @@ struct ExternalFunctionBodies;
 
 namespace Typed {
 
-// Shared by AOTWireFamilies.cpp, AOTWireFunctionFamilies.cpp, AOTWireTypes.cpp and AOTReaderTaggedLayouts.cpp. Nobody else includes this but their test.
-
 class TellingFields {
 public:
     TellingFields(const ParallelLoops&, const Wire::Sections& checkedSections);
 
     bool tellApart(uint32_t layout, uint32_t otherLayout) const;
-    // tellApart(anything, otherLayout) is false.
     bool tellsNothingApartFrom(uint32_t otherLayout) const { return fieldsOf(otherLayout).empty(); }
-    // The names under which the layout itself declares nothing but literals.
     void forEachKeyOfOwnTellingField(uint32_t layout, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
     {
         for (const Field& field : fieldsOf(layout))
@@ -80,7 +76,6 @@ private:
     Vector<Field> m_fields;
     Vector<uint32_t> m_firstField;
     Vector<uint32_t> m_bases;
-    // From each layout up, itself included: the first that has such a field.
     Vector<uint32_t> m_nearestWithFields;
 };
 
@@ -96,17 +91,13 @@ inline bool has(const Wire::Field& field, FieldFlags flag)
 
 constexpr uint64_t pairOfWireIndexes(uint32_t first, uint32_t second) { return static_cast<uint64_t>(first) << 32 | second; }
 
-// For each first of a pair the list of its seconds, in ascending order. Each list of pairs is in the order of its seconds, and so are the lists one after the other.
 template<typename Listed>
 void listSecondsByFirst(const ParallelLoops&, std::span<const Vector<uint64_t>> pairsInOrderOfSeconds, Vector<Vector<Listed>>& lists);
-// A list for each layout or function is a block of memory for each: one thread takes a while to free them.
 template<typename Listed>
 void destroyLists(const ParallelLoops&, Vector<Vector<Listed>>&);
 
-// AOTReaderTaggedLayouts.cpp. `members` are the families by layout of the wire, which gain the new layouts. The first new layout gets the number `firstLayout`.
 Vector<TaggedFamily> planTaggedFamilies(const ParallelLoops&, const Wire::Sections& checkedSections, const ExternalFunctionBodies*, ArenasOfWorkers&, Vector<LayoutSetID>& members, const TellingFields&, uint32_t firstLayout);
 
-// AOTWireFunctionFamilies.cpp.
 bool isSignature(const Wire::Function&);
 
 } } } // namespace JSC::AOT::Typed

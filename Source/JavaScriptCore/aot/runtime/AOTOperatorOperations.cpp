@@ -108,8 +108,6 @@ AOT_DEFINE_UNARY_OPERATION(operationAOTValueBitNot, EncodedJSValue, JSValue::enc
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumber, double, operand.toNumber(globalObject))
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumeric, EncodedJSValue, JSValue::encode(operand.toNumeric(globalObject)))
 
-// What JSObject::toString() calls for an instance of a class with a toString() of its own. The caches of reads by name say what its two reads find, so no chain is walked.
-// Null where they do not say so: nothing has run then, and the generic path starts from the beginning.
 static JSObject* compiledToStringOrNull(Instance* instance, Object& object, CallData& callData)
 {
     VM& vm = *instance->vm;
@@ -132,12 +130,10 @@ static JSObject* compiledToStringOrNull(Instance* instance, Object& object, Call
     JSValue function = valueAtOffset(asObject(method->holder), method->offsetInStorage());
     if (!function.isCell())
         return nullptr;
-    // A class has the type of a closure too, and calling it throws: the generic path says so.
     callData = compiledCallDataOf(function.asCell());
     return callData.type == CallData::Type::Compiled ? asObject(function) : nullptr;
 }
 
-// JSObject::ordinaryToPrimitive() from where toString() has answered with an object.
 static JSValue primitiveFromValueOf(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = globalObject->vm();
@@ -155,7 +151,6 @@ static JSValue primitiveFromValueOf(JSGlobalObject* globalObject, JSObject* obje
     return { };
 }
 
-// Apart from the operation, which most often converts a number: that path saves few registers.
 static NEVER_INLINE JSString* toStringOfCompiledObject(Instance* instance, Object& object)
 {
     VM& vm = *instance->vm;
@@ -180,7 +175,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, Enc
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTToString);
     JSValue operand = JSValue::decode(encodedOperand);
-    // As JSValue::toStringSlowCase(), which asks six questions about a cell before it looks at it.
     if (operand.isCell()) {
         JSCell* cell = operand.asCell();
         if (cell->type() == CompiledObjectType)
@@ -202,7 +196,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, Enc
     OPERATION_RETURN(scope, operand.toString(globalObject));
 }
 
-// The stub finds the text of a small index there the next time.
 AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(operand.isInt32() && static_cast<uint32_t>(operand.asInt32()) < NumericStrings::cacheSize ? JSValue(instance->vm->numericStrings.addJSString(*instance->vm, operand.asInt32())) : operand.toPropertyKeyValue(globalObject)))
 #undef AOT_DEFINE_BINARY_OPERATION
 #undef AOT_DEFINE_NUMERIC_BINARY_OPERATION
@@ -212,7 +205,6 @@ AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(op
 JSC_DEFINE_JIT_OPERATION(operationAOTValueURShift, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValueURShift);
-    // jsURShift gives the 32 bits as an int32: bytecode has op_unsigned behind it.
     JSValue bits = jsURShift(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight));
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(static_cast<uint32_t>(bits.asInt32()))));
@@ -249,7 +241,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsCallable, size_t, (Instance*, JS
     return cell->isCallable();
 }
 
-// Exact for a whole quotient below maxExactQuotient.
 #if CPU(ARM64) || defined(__FMA__)
 static constexpr double maxExactQuotient = 0x1p53;
 static ALWAYS_INLINE double subtractProduct(double dividend, double quotient, double divisor)

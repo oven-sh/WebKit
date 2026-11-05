@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations: a chain of `===` with constants ends its first block in one Switch or SwitchString, a row of `||` that answers in such a switch with two ways, and a switch of which one case is left is a branch.
-// At a suspension: nothing. No block that is passed by holds one.
-// At a throw: every block that is passed by stands under the handler of the first with the same arguments, and the switch has that handler edge.
-// Withheld: each comparison is walked where it is written.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -31,10 +26,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// From this many cases on, a test of bits, a jump table or a hash of the string costs less than the comparisons one behind the other.
 static constexpr uint32_t leastCasesOfUnionSwitches = 3;
 
-// What is left of a comparison of the subject itself. Where the walk has found a cheaper question (a type, a constant), the switch would ask the dearer one.
 static constexpr OpcodeSet equalitiesThatUnionSwitchesStandFor { Opcode::StrictEq, Opcode::StringEqualsLiteral, Opcode::ValueEqualsLiteral };
 
 namespace {
@@ -52,7 +45,6 @@ struct CaseOfUnionSwitches {
 };
 
 struct ReadOfSubjectInUnionSwitches {
-    // Behind casts. Null: no block that is passed by may read the subject anew.
     ValueID object;
     PropertyKeyID key;
 };
@@ -81,7 +73,6 @@ static bool isConstantBehindCastsInUnionSwitches(const BodyIndex& index, ValueID
     return root && !index.isParameter(root) && primitiveConstants.contains(index.opcodeOf(root));
 }
 
-// An integer or a text. -0 and NaN are written as doubles, and the code of a Switch finds no whole number past the integers that types track in a boxed subject: none of those is a case.
 static std::optional<ConstantOfUnionSwitches> caseBehindCastsInUnionSwitches(const BodyIndex& index, ValueID value)
 {
     ValueID root = index.valueBehindCasts(value);
@@ -98,7 +89,6 @@ static std::optional<ConstantOfUnionSwitches> caseBehindCastsInUnionSwitches(con
     return ConstantOfUnionSwitches { false, number, { } };
 }
 
-// Each block hands its handler the locals as they stand at its own head, so the same handler block is not enough.
 static bool standsUnderHandlerOfHeadInUnionSwitches(BodyBlock head, BodyBlock passed)
 {
     if (head.hasHandler() != passed.hasHandler())
@@ -108,7 +98,6 @@ static bool standsUnderHandlerOfHeadInUnionSwitches(BodyBlock head, BodyBlock pa
     return head.handler().block() == passed.handler().block() && std::ranges::equal(head.handler().arguments(), passed.handler().arguments());
 }
 
-// Whoever leads the edges behind such a block at the head runs what the body runs: no other edge comes there, and it lies in the same turns and under the same handler.
 static bool mayBePassedByInUnionSwitches(const BodyIndex& index, BodyBlock head, BodyBlock passed, uint32_t numberOfIncomingEdges)
 {
     BlockID id = passed.id();
@@ -130,8 +119,6 @@ static bool comparesSubjectItselfInUnionSwitches(const Code& code, Reference com
     });
 }
 
-// `if (this.kind === 1) .. else if (this.kind === 2) ..`, `return node.kind === 1 || node.kind === 4 || node.kind === 9`: each comparison reads the field anew. The first block has read it out of its slot, without running code,
-// and nothing that it has built behind the read writes anything that is seen. A block that is passed by does nothing that anybody sees, so the same read off the same object finds the same value there.
 static ReadOfSubjectInUnionSwitches findReadThatMayBeRepeatedInUnionSwitches(const Walker& walker, ValueID rootOfSubject, Reference subject)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -154,7 +141,6 @@ static ReadOfSubjectInUnionSwitches findReadThatMayBeRepeatedInUnionSwitches(con
     return { index.valueBehindCasts(written.objectOperand()), written.key() };
 }
 
-// The first comparison with a constant takes whatever equals it.
 static void removeRepeatedCasesInUnionSwitches(Vector<CaseOfUnionSwitches, 16>& cases)
 {
     Vector<uint32_t, 16> order;
@@ -176,7 +162,6 @@ static void removeRepeatedCasesInUnionSwitches(Vector<CaseOfUnionSwitches, 16>& 
     });
 }
 
-// What the proven type of the subject rules out folds as well where each comparison is walked by itself.
 static void removeCasesThatTypeRulesOutInUnionSwitches(Walker& walker, TypeID typeOfSubject, bool comparesTexts, Vector<CaseOfUnionSwitches, 16>& cases)
 {
     TypingContext typing = walker.typing();
@@ -205,11 +190,6 @@ static TerminatorDraft draftOfSwitchInUnionSwitches(Reference subject, bool comp
 
 namespace {
 
-// `return k === 1 || k === 4 || k === 9`, `const is = k !== 1 && k !== 4 && k !== 9`, as the front end writes a logical operator whose value is taken (lower/expression/logical.rs). For each operator, from the innermost out:
-//     .. e = StrictEq k, c   t = ToBoolean e   Branch t -> taken once(| 0), notTaken on(| 0)
-//     once(p): Jump -> join(p)      on(q): Jump -> next()      next(): f = StrictEq k, d   Jump -> join(f)      join(x): t = ToBoolean x   Branch t -> ..
-// The join of one operator is where the next one asks. Behind `&&` the two edges have changed places, and each comparison stands below a LogicalNot.
-// It looks at blocks that are not walked yet, and builds nothing.
 class RowOfAlternativesInUnionSwitches {
 public:
     RowOfAlternativesInUnionSwitches(Walker& walker, BodyBlock head)
@@ -231,7 +211,6 @@ public:
         m_subject = m_walker.referenceOf(first.subject);
         if (!m_rootOfSubject || !m_subject || !m_subject.isValue())
             return false;
-        // In front of the look at the other alternatives: where the first is refused each join asks in its turn, and looks ahead itself.
         if (!comparesSubjectItselfInUnionSwitches(m_walker.code(), m_walker.referenceOf(first.comparison), m_subject))
             return false;
         m_readOfSubject = findReadThatMayBeRepeatedInUnionSwitches(m_walker, m_rootOfSubject, m_subject);
@@ -248,11 +227,9 @@ public:
     }
 
     bool comparesTexts() const { return m_comparesTexts; }
-    // `||`: whatever equals a constant answers true. `&&`: false.
     bool isDisjunction() const { return m_isDisjunction; }
     Reference subject() const { return m_subject; }
     Vector<CaseOfUnionSwitches, 16>& cases() { return m_cases; }
-    // Of the outermost operator: the block that hands the answer of the left side on to the join, with the parameter that it hands on, and the block of the last comparison, with what that gives.
     BlockID blockThatAnswersAtOnce() const { return m_blockThatAnswersAtOnce; }
     ValueID answerHandedOnAtOnce() const { return m_answerHandedOnAtOnce; }
     BlockID blockOfLastAlternative() const { return m_blockOfLastAlternative; }
@@ -268,7 +245,6 @@ private:
         bool isNegated { false };
     };
 
-    // Null: the block does not end in a Branch on a ToBoolean of its own that the Branch alone reads.
     ValueID valueTestedByBranchOf(BodyBlock block) const
     {
         BodyTerminator terminator = block.terminator();
@@ -314,7 +290,6 @@ private:
         return result && result->subject == tested;
     }
 
-    // The value, behind casts, is a read in the block that finds what the subject was read as.
     bool readsSubjectAnew(BodyBlock block, ValueID value) const
     {
         ValueID root = m_index.valueBehindCasts(value);
@@ -324,7 +299,6 @@ private:
         return !read.isFreeName() && read.key() == m_readOfSubject.key && m_index.valueBehindCasts(read.objectOperand()) == m_readOfSubject.object;
     }
 
-    // Nobody outside the block reads what it makes but for the answer: it dominates no other block.
     bool holdsNothingBesideAlternative(BodyBlock block, const Alternative& alternative) const
     {
         for (BodyValue operation : block.values()) {
@@ -337,7 +311,6 @@ private:
         return true;
     }
 
-    // `block` ends in a Branch on the truth of `tested`. True: it is one more operator of the row, and the members below speak of it. False: nothing has changed.
     bool readOperator(BodyBlock block, ValueID tested)
     {
         BodyTerminator terminator = block.terminator();
@@ -358,7 +331,6 @@ private:
         BodyBlock rightSide = m_index.block(toRightSide.block());
         if (!mayBePassedByInUnionSwitches(m_index, m_head, rightSide, 1) || rightSide.numberOfParameters() != 1 || !m_index.isUnused(rightSide.parameter(0)))
             return false;
-        // The edge has a block of its own, which takes the proof.
         if (!rightSide.numberOfValues()) {
             if (rightSide.terminator().kind() != TerminatorKind::Jump || rightSide.terminator().next().numberOfIncomingValues())
                 return false;
@@ -397,7 +369,6 @@ private:
         return true;
     }
 
-    // Its one parameter, where the join may be passed by: the ToBoolean and the two proofs behind it are all that mentions the parameter. Null: the row ends at the join.
     ValueID parameterThatJoinOnlyTests(BodyBlock join) const
     {
         if (!mayBePassedByInUnionSwitches(m_index, m_head, join, 2) || join.numberOfParameters() != 1 || join.numberOfValues() != 1)
@@ -420,20 +391,15 @@ private:
     BlockID m_blockOfLastAlternative;
     ValueID m_lastAlternative;
     Vector<BlockID, 16> m_blocksPassedBy;
-    // Of the last operator that was read. Null: none was.
     BlockID m_join;
 };
 
 } // anonymous namespace
 
-// ---- A switch over blocks of the walk's own
-
-// The terminator has its subject and its cases. What walkTerminator() does behind its draft, with edges that are closed at once, as those of branch() are.
 void Walker::endWithSwitchOverOwnBlocks(TerminatorDraft& terminator, std::span<const BlockID> targets, BlockID otherwise)
 {
     if (!checkOperandKinds(terminator))
         return;
-    // convertOperands() is a template of AOTWalk.cpp. This is what it does to a terminator.
     WantedRepresentations formsWanted = wantedRepresentationsOf(*this, terminator);
     for (uint32_t operandIndex = 0; operandIndex < terminator.numberOfOperands(); ++operandIndex) {
         if (!hasRegister(formsWanted[operandIndex]))
@@ -470,7 +436,6 @@ void Walker::endWithSwitchOverOwnBlocks(TerminatorDraft& terminator, std::span<c
     settleParametersOf(otherwise);
     m_code.closeEdge(EdgeID(firstEdge + numberOfCases), otherwise, { });
 
-    // Every edge brings the one state, so a block that several lead to takes it once.
     Vector<BlockID, 16> blocksLedTo(targets);
     blocksLedTo.append(otherwise);
     AOT::sort(blocksLedTo);
@@ -504,10 +469,6 @@ void Walker::switchOnTexts(Reference subject, std::span<const StringID> cases, s
     endWithSwitchOverOwnBlocks(terminator, targets, otherwise);
 }
 
-// ---- In the place of terminators of the body
-
-// Nobody enters a block that is passed by, so what it dominates would find no narrower name: standIn() asks the dominator. What holds in the block being walked holds in all that it dominates.
-// A look at a loop has counted on those names.
 void Walker::takeNarrowerNamesPast(std::span<const BlockID> blocksPassedBy)
 {
     size_t frameIndex = m_frames.size() - 1;
@@ -538,7 +499,6 @@ bool Walker::endBlockWithSwitchOverAlternatives(const BodyTerminator& terminator
         return false;
 
     takeNarrowerNamesPast(row.blocksPassedBy());
-    // Two blocks of the walk's own, since every listed case brings the join the same answer: the code of the switch takes cases that lead to one block for one way.
     BlockID equalsSomeConstant = addBlock();
     BlockID equalsNoConstant = addBlock();
     Vector<BlockID, 16> targets;

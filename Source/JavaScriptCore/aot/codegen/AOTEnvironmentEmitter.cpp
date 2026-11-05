@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosuresLent.h"
 #include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
 #include "AOTRepresentationRules.h"
@@ -16,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// In the form in which NewClosure stores the word: ConstantEmitter::captureOf().
 Operand EnvironmentEmitter::closureCapture(CellPointer closure, FunctionID function, unsigned index)
 {
     RepresentationContext context { m_program, m_plan, types(), m_unit };
@@ -30,8 +30,6 @@ void EnvironmentEmitter::generateGetCapture(const ValueContext& value)
 {
     const Operation& closure = m_code.at(value->closureOperand());
     if (const PlacedSlot* scope = generator().slotOfScopeOfClosureWithoutValue(value->closureOperand())) {
-        // The mark of a closure that is not made: the allocation has laid it, with the scope beside it. Whatever else lies in the slot is a closure of the function, made over the scope of this object or stored over the mark
-        // by anybody, the maker among them (`if (from) made.get = from.get`): it says itself what it captures.
         CellPointer holder = in<CellPointer>(closure.objectOperand());
         FieldAccess access = fieldAccessFor(closure.key(), closure.receivers(), false);
         RELEASE_ASSERT(access.hasLocation && !access.findsOffsetByShape && !access.slot.isOutOfLine());
@@ -59,9 +57,27 @@ void EnvironmentEmitter::generateMarkEnvironmentEscaped(const ValueContext& valu
     m_out.store32As8(m_out.constInt32(1), escapeMarkOf(value->environmentOperand()));
 }
 
+void EnvironmentEmitter::markEnvironmentsThatClosureKeeps(const ValueContext& closure)
+{
+    if (findLoanOfClosure(m_program, generator().facts(), m_code, closure.valueID()).loan == LoanOfClosure::ToFunctionEntered)
+        return;
+    for (ValueID capture : closure->capturesOperands()) {
+        if (!capture || m_code.isConstant(capture))
+            continue;
+        TypeID type = m_code.at(capture).type;
+        if (!type || holdsOnlyPrimitives(type))
+            continue;
+        LayoutID environment = typeOf(capture).environment;
+        if (!environment)
+            continue;
+        const PlannedLayout& planned = m_plan.layout(environment);
+        if (planned.isEscapedOffset && !planned.liesOnlyInFrames)
+            m_out.store32As8(m_out.constInt32(1), escapeMarkOf(capture));
+    }
+}
+
 void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
 {
-    // Without the mark something may still read the cell, under this name or another.
     if (!m_code.marksOf(value.id()).contains(SweepMark::ReleasesOperand))
         return;
 

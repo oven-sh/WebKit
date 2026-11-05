@@ -19,10 +19,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class Program;
 
-// What Folding knows of a body without walking it. The rules are those of AOTWalkFolding.cpp, one set for the walk and for the scan.
-// The scan looks into no block that they rule out, and Link hears of nothing that stands there. So the walk rules out at least as much: it asks the same rules, and knows more of the operands.
-
-// A symbol and a BigInt are never known: each is a cell.
 class PrimitiveKnownToFolding {
 public:
     enum class Kind : uint8_t { Unknown, Undefined, Null, Boolean, Number, Text };
@@ -33,13 +29,11 @@ public:
     static PrimitiveKnownToFolding null() { return { Kind::Null, 0 }; }
     static PrimitiveKnownToFolding boolean(bool value) { return { Kind::Boolean, value }; }
     static PrimitiveKnownToFolding number(double value) { return { Kind::Number, std::bit_cast<uint64_t>(purifyNaN(value)) }; }
-    // Integer types reach past 2^53, where not every integer is a number of JavaScript: such an integer is not known.
     static PrimitiveKnownToFolding integer(int64_t value)
     {
         double asNumber = static_cast<double>(value);
         return static_cast<int64_t>(asNumber) == value ? number(asNumber) : PrimitiveKnownToFolding();
     }
-    // Of the program's table, or made by TypeArena::internText(). The two homes may hold one text under two ids: TypeArena::spellSameText().
     static PrimitiveKnownToFolding text(StringID value) { return { Kind::Text, value.bits() }; }
 
     explicit operator bool() const { return m_kind != Kind::Unknown; }
@@ -83,16 +77,11 @@ inline constexpr OpcodeSet operationsOnPrimitivesInFolding = opcodesWhere([](Opc
 });
 inline constexpr OpcodeSet castsOfFolding = opcodesWhere([](Opcode opcode) { return opcodesThatStateTypes.contains(opcode) && hasKnownValueRuleOf(opcode); });
 inline constexpr OpcodeSet primitivesWrittenForFolding { Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String };
-// Of any other operation primitiveMadeOfConstants() knows nothing.
 inline constexpr OpcodeSet operationsThatConstantsMayDecide = primitivesWrittenForFolding | castsOfFolding | operationsOnPrimitivesInFolding;
 
-// What the operation gives in every run: it writes a primitive, or is made of such operations alone and neither throws nor runs code. `heldBy`: what this has answered for the definition of an operand.
-// It makes no text. An operation that would have to is unknown here and known to the walk.
 PrimitiveKnownToFolding primitiveMadeOfConstants(const Program&, const BodyValue&, NOESCAPE const ScopedLambda<PrimitiveKnownToFolding(ValueID)>& heldBy);
 
-// The terminators that an operand may decide.
 inline bool goesByOneOperand(TerminatorKind kind) { return kind == TerminatorKind::Branch || kind == TerminatorKind::Switch || kind == TerminatorKind::SwitchString; }
-// The one target that such a terminator goes to with that operand. Nothing: the operand is not known.
 std::optional<uint32_t> onlyTargetWith(TypeReader, const BodyTerminator&, PrimitiveKnownToFolding operand);
 
 } } } // namespace JSC::AOT::Typed

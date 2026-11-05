@@ -23,6 +23,7 @@ public:
     void generateWasLoadedSynchronously(const ValueContext&);
     void generateSeesMockOf(const ValueContext&);
     void generateMockSeenBy(const ValueContext&);
+    void generateNamespaceSeenBy(const ValueContext&);
     void generateCountExecution(const ValueContext&);
     void generateResolveModule(const ValueContext&);
     void generateThrowModuleFailure(const ValueContext&);
@@ -31,10 +32,9 @@ public:
     void generateResolveDynamic(const ValueContext&);
     void generateBeginModuleEvaluation(const ValueContext&);
     void generateFinishModuleEvaluation(const ValueContext&);
+    void generateEnterBodyThatRunsOnce(const ValueContext&);
     void generateEvaluateRequiredModule(const ValueContext&);
 
-    // Of a ModuleNamespace that neither asks anew nor is of the module itself. False: the read goes by a word of the instance, and asks the run time only where the word is empty.
-    // What lies in the word is what the first asker got, which is not what the run time answers later: the face of a CommonJS file that was imported back in a cycle gets another namespace object when the file has ended.
     static bool asksRunTimeForNamespaceAtEveryRead(const Program&, const Plan&, ModuleID, ImportPhase);
     bool hasSingleNamespaceInValueWord(ModuleID);
     Boxed loadModuleValue(ModuleID);
@@ -44,7 +44,6 @@ private:
     Word32 moduleIndex(ModuleID);
     TypedPointer valueWordOf(ModuleID, int32_t offsetFromValue);
     TypedPointer statusOf(ModuleID);
-    // Only for RequireModule and EvaluateRequiredModule: both have a referrer, a module and a specifier.
     void mentionRequireEdge(const ValueContext&);
 };
 

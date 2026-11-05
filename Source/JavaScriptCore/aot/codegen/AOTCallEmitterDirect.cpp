@@ -33,22 +33,22 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, const 
 
     PlacedArguments placed;
     placed.onStack.fill(nullptr, locations.numberOfStackArguments);
-    // By place among the argument GPRs of the callee. Null: nothing is put there.
     std::array<LValue, numberOfDirectArgumentGPRs> inGPRs { };
     unsigned numberOfGPRs = 0;
-    // The plan counts the stack words of entry 0 of each unit.
     placed.stackWordsToReserve = std::max(conventions().stackWordsReservedByCallersOf(m_program, callee), locations.numberOfStackWords());
+    uint64_t letGoByCallee = returnsResultOfFunction(callee.role) ? generator().facts().summaries().at(callee.function).entryParametersLetGo : 0;
     for (size_t i = 0; i < arguments.size(); ++i) {
         const ArgumentLocation& location = locations.parameters[i];
         if (location.kind == ArgumentLocation::Kind::GPR) {
             RELEASE_ASSERT(numberOfGPRs < numberOfDirectArgumentGPRs && location.reg == Reg(directArgumentGPR(numberOfGPRs)));
             ++numberOfGPRs;
         }
-        // Nobody hands it over, so nobody has made it.
         if (location.kind == ArgumentLocation::Kind::None || !arguments[i].value)
             continue;
         RELEASE_ASSERT(isPassedAs(arguments[i].representation, location.representation));
         LValue argument = arguments[i].value;
+        if (i < 64 && (letGoByCallee >> i & 1) && argument->type() == Machine::Int64 && !argument->hasInt64())
+            placed.letGoByCallee.append(argument);
         switch (location.kind) {
         case ArgumentLocation::Kind::None:
             break;
@@ -86,7 +86,6 @@ Vector<Operand, 2> CallEmitter::callEntry(const OperationContext& context, CodeU
     PlacedArguments placed = placeArguments(callee, locations, arguments);
     Machine::PatchOperation* call = emitCall(context, CallTarget::unit(callee, entry), placed, results, options);
 
-    // emitCall() returns the result itself where one result is passed, and a tuple where several are.
     auto isPassed = [](const ArgumentLocation& result) {
         return result.kind != ArgumentLocation::Kind::None;
     };
@@ -161,8 +160,6 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     defineResultsOfCall(value, locations.results.span(), call);
 }
 
-// The word of a selector is where an object with the shape 0 would find its entry, and the shape word of an object is its shape negated: the entry lies as many words below.
-// An entry is the offset of code in the image, in units of codeOffsetUnit. The run time writes the table where the guard of a class begins or ends, so nothing that was read from it outlives a call.
 void CallEmitter::generateCallTable(const ValueContext& value)
 {
     if (emitter<ShapeTestEmitter>().mayBeOtherThanCompiledObject(typeOf(value->receiverOperand()))) {
@@ -174,7 +171,6 @@ void CallEmitter::generateCallTable(const ValueContext& value)
 
 bool CallEmitter::tryCallThroughMethodTable(const ValueContext& call, PropertyKeyID key)
 {
-    // A unit of the table is where the table leads.
     if (isTableRole(generator().unit().role))
         return false;
     const Type& receiver = typeOf(call->thisValueOperand());
@@ -206,7 +202,6 @@ void CallEmitter::callThroughMethodTable(const ValueContext& value, uint32_t pla
     ArgumentLocations locations = conventions().locationsOf(m_program, takesAndReturnsAlike);
     Vector<Operand, 8> arguments = operandsOf(receiverAndArguments, locations);
 
-    // What the callees do says nothing of what finding them reads. Whatever writes a guard of a class may write the table.
     m_out.clearDeclaredAccesses();
     Word32 shapeWord = shapes.shapeWordOf(arguments[0].as<CellPointer>());
     TypedPointer wordOfSelector = instanceWord(m_heaps.AOTInstance_classGuards, m_mentions.add(NumberSpace::MethodSelector, placeOfSelector));

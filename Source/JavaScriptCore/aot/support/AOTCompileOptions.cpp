@@ -52,7 +52,6 @@ bool RecordedOptions::isCompatibleWithProcess() const
         return false;
     if (!hasOnlyKnownFeatures(targetFeatures))
         return false;
-    // The operating system may report fewer features than the CPU has, and this binary already executes its build target's instructions.
     if (!CPUFeatureSet::fromBits(static_cast<uint32_t>(targetFeatures)).isSubsetOf(CPUFeatureSet::host().unionWith(CPUFeatureSet::buildTarget())))
         return false;
     return useWideReferences() || MarkedBlockCage::isEnabled();
@@ -105,9 +104,6 @@ public:
         readTesting(options);
 
         recorded.admittedCode = static_cast<uint8_t>(m_wire.admittedCode);
-
-        if (m_wire.reserved)
-            reportInvalid(m_wire.reserved);
 
         options.action = m_wire.action;
         options.reports = m_wire.reports;
@@ -185,7 +181,6 @@ private:
 
     void readOutput(CompileOptions& options)
     {
-        // A build makes one image, and what its code assumes holds only in realms that run no other image.
         if (hasFlag(m_wire.output, OutputOptions::SharesRealms))
             reportInvalid(m_wire.output);
         if (m_wire.target.imagesBelow.address || m_wire.target.imagesBelow.size)
@@ -196,6 +191,9 @@ private:
     void readTesting(CompileOptions& options)
     {
         options.testing = m_wire.testing;
+        if (m_wire.rowThatSaysLess && !hasFlag(m_wire.testing, TestingSwitch::RowSaysLess))
+            reportInvalid(m_wire.rowThatSaysLess);
+        options.rowThatSaysLess = m_wire.rowThatSaysLess;
     }
 
     WireOptions m_wire;

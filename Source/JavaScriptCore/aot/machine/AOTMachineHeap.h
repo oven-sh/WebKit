@@ -22,36 +22,26 @@ inline constexpr HeapIndex rootHeapIndex = 0;
 enum class Mutability : uint8_t { Mutable, Immutable };
 
 enum class HeapTrait : uint8_t {
-    // Nothing writes the word once its owner can be read, so a load is a pure operation.
     Immutable = 1 << 0,
-    // A load gives a pointer at what the base of the address owns. The base has to outlive every use of the pointer.
     HoldsInnerPointer = 1 << 1,
-    // A cell named by a word of this heap is a root for as long as the program runs.
     HoldsPermanentCell = 1 << 2,
-    // No program can tell what lies here, so the effects that the schema declares for an operation do not speak of it.
     IsOutsideDeclaredEffects = 1 << 3,
-    // Beside Immutable: the word is zero until it gets its value, once. One load may stand anywhere. Two loads are not one: the first may read zero and the second the value.
     IsFilledOnce = 1 << 4,
 };
 
-// The heaps form a tree. Two accesses may touch the same word only if the heap of one is the heap of the other or lies above it.
-// The tree is made once for a build and is read by every thread.
 class HeapTree {
     WTF_MAKE_NONCOPYABLE(HeapTree);
 public:
     JS_EXPORT_PRIVATE HeapTree();
 
-    // The parent has been added before.
     JS_EXPORT_PRIVATE HeapIndex add(HeapIndex parent, ASCIILiteral name);
 
     unsigned size() const { return m_parents.size(); }
-    // Of the root: the root.
     HeapIndex parentOf(HeapIndex heap) const { return m_parents[heap]; }
     ASCIILiteral nameOf(HeapIndex heap) const { return m_names[heap]; }
 
     bool isSameOrAbove(HeapIndex above, HeapIndex heap) const
     {
-        // A parent has a lower index than its children.
         while (heap > above)
             heap = m_parents[heap];
         return heap == above;
@@ -63,7 +53,6 @@ private:
     Vector<ASCIILiteral> m_names;
 };
 
-// A value: whoever holds one needs nothing else to stay alive.
 class AbstractHeap {
 public:
     constexpr AbstractHeap() = default;
@@ -77,7 +66,6 @@ public:
 
     constexpr bool isInitialized() const { return m_isInitialized; }
     constexpr HeapIndex index() const { return m_index; }
-    // Not every heap has one that means something.
     constexpr ptrdiff_t offset() const { return m_offset; }
     constexpr OptionSet<HeapTrait> traits() const { return m_traits; }
     constexpr Mutability mutability() const { return m_traits.contains(HeapTrait::Immutable) ? Mutability::Immutable : Mutability::Mutable; }
@@ -90,17 +78,13 @@ private:
 };
 static_assert(sizeof(AbstractHeap) == 16);
 
-// The elements of an array. The first few indexes have a heap each, all others share one.
 class IndexedAbstractHeap {
 public:
     static constexpr unsigned numberOfIndexesWithOwnHeap = 16;
 
     IndexedAbstractHeap() = default;
-    // Adds one heap for any index and, below it, numberOfIndexesWithOwnHeap + 1: the last is for every other index.
-    // All of them have the given name, so only their indexes tell them apart.
     JS_EXPORT_PRIVATE IndexedAbstractHeap(HeapTree&, HeapIndex parent, ASCIILiteral name, ptrdiff_t offset, size_t elementSize, OptionSet<HeapTrait> = { });
 
-    // Its offset() is zero whatever the offset of the elements is: the caller adds offset() of this class to the address.
     const AbstractHeap& atAnyIndex() const LIFETIME_BOUND { return m_anyIndex; }
 
     AbstractHeap at(ptrdiff_t index) const
@@ -120,7 +104,6 @@ private:
     HeapIndex m_firstChild { rootHeapIndex };
 };
 
-// Like the above, for things that are numbered and lie at no offset that follows from the number.
 class NumberedAbstractHeap {
 public:
     NumberedAbstractHeap() = default;
@@ -137,7 +120,6 @@ private:
     IndexedAbstractHeap m_heaps;
 };
 
-// What an operation reads or writes. The list lies in the arena of the procedure: Procedure::heapSet().
 class HeapSet {
 public:
     constexpr HeapSet() = default;
@@ -156,7 +138,6 @@ public:
 
     bool isEmpty() const { return !m_isTop && m_heaps.empty(); }
     bool isTop() const { return m_isTop; }
-    // Empty for top().
     std::span<const HeapIndex> heaps() const { return m_heaps; }
 
 private:

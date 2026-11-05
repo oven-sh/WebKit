@@ -40,7 +40,6 @@ struct DirectiveLine {
     std::optional<StringView> parenthesized;
     StringView value;
     unsigned line;
-    // `# NAME: value`: capitals, one blank after the `#`, the colon right after the name.
     bool isWellFormed { true };
     bool hasColon { true };
 };
@@ -80,8 +79,6 @@ private:
         bool requiresWindows { false };
         bool requiresFaultingLoopPolls { false };
         bool requiresCallingLoopPolls { false };
-        bool requiresFaultingReadsOffNoCell { false };
-        bool requiresTestedReadsOffNoCell { false };
         bool requiresCodeOutsideImage { false };
         bool requiresTargetWithoutJSCVT { false };
         bool requiresEntriesOfBun { false };
@@ -134,7 +131,6 @@ private:
     Vector<PendingCheckGroup> m_checkGroups;
     std::optional<unsigned> m_openSourceBlock;
     bool m_hasSourceBlock { false };
-    // Never open while the sources are.
     std::optional<OpenSection> m_openSection;
     StringBuilder m_textOfOpenSection;
     std::optional<GeneratedMarker> m_generated;
@@ -259,7 +255,6 @@ static bool isWordOfCommentCharacter(char16_t character)
     return isASCIIAlphanumeric(character) || character == '-';
 }
 
-// A comment that fills its line and begins with a word. Whether the word makes it a directive is decided once the prefixes of the RUN lines are known.
 static std::optional<DirectiveLine> splitDirective(StringView line, unsigned number)
 {
     unsigned position = skipCharacters(line, 0, isTabOrSpace<char16_t>);
@@ -290,7 +285,6 @@ static std::optional<DirectiveLine> splitDirective(StringView line, unsigned num
     return DirectiveLine { name, parenthesized, hasColon ? line.substring(colon + 1).trim(isTabOrSpace<char16_t>) : StringView(), number, isWellFormed, hasColon };
 }
 
-// Insertions, deletions, replacements, and two neighbors that changed places.
 static unsigned editDistance(StringView a, StringView b)
 {
     Vector<unsigned> beforeLast;
@@ -399,7 +393,6 @@ void TestFileParser::collectDirectiveLines()
         reportSectionWithoutEnd();
 }
 
-// True where the line is a marker, or a line of the sources or of a section between two of them: none of these is a directive.
 bool TestFileParser::parseMarker(StringView line, unsigned number)
 {
     constexpr ASCIILiteral marker = "# --"_s;
@@ -483,7 +476,6 @@ void TestFileParser::openSection(ASCIILiteral name, unsigned number)
     m_textOfOpenSection.clear();
 }
 
-// The text of a line is what follows `# `. A line that is only `#` is an empty line of the text.
 void TestFileParser::appendToOpenSection(StringView line, unsigned number)
 {
     if (m_textOfOpenSection.isEmpty())
@@ -504,8 +496,6 @@ void TestFileParser::reportSectionWithoutEnd()
     m_openSection = std::nullopt;
 }
 
-// Each name is a function of the program, and has its label below the marker.
-// `walk` begins a unit with `code f0:Body`, which has the id alone.
 void TestFileParser::checkGeneratedMarker()
 {
     if (!m_generated)
@@ -545,7 +535,6 @@ bool TestFileParser::isKnownName(StringView name) const
     return findNamedValue(checkSuffixes, suffix) || suffix.startsWith(countSuffix);
 }
 
-// Short names are left out: two edits make most words of three letters of one another.
 std::optional<String> TestFileParser::findNameWithin2Edits(StringView name) const
 {
     Vector<String> known;
@@ -563,8 +552,6 @@ std::optional<String> TestFileParser::findNameWithin2Edits(StringView name) cons
     return std::nullopt;
 }
 
-// A comment whose first word is the name of a directive or a check prefix of this file, in capitals, is that directive: it is written `# NAME: value` or it is an error.
-// So is one whose first word has a colon after it or a suffix (`-NEXT`) and is such a name in another case, or in capitals and within two edits of one.
 void TestFileParser::reportIfMeantAsDirective(const DirectiveLine& directive)
 {
     bool isInCapitals = isASCIIUpper(directive.name[0]) && directive.name.containsOnly<isNameCharacter>();
@@ -713,22 +700,13 @@ void TestFileParser::parseRun(const DirectiveLine& directive)
     m_file.runs.append(RunDirective { prefix.toString(), words[0].toString(), WTF::move(arguments), directive.line });
 }
 
-// An engine built with AddressSanitizer is a checking build: a run that expects sizes or faults may find other code there.
 static constexpr ASCIILiteral unsanitizedCode = "unsanitized-code"_s;
-// For Windows the code of x86-64 follows another calling convention.
 static constexpr ASCIILiteral notWindows = "not-windows"_s;
 static constexpr ASCIILiteral windows = "windows"_s;
-// A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
 static constexpr ASCIILiteral faultingLoopPolls = "faulting-loop-polls"_s;
 static constexpr ASCIILiteral callingLoopPolls = "calling-loop-polls"_s;
-// readsOffNoCellFault: whether a value is a cell is left to the read of the word of its shape. Elsewhere a test stands in front of the read.
-static constexpr ASCIILiteral faultingReadsOffNoCell = "faulting-reads-off-no-cell"_s;
-static constexpr ASCIILiteral testedReadsOffNoCell = "tested-reads-off-no-cell"_s;
-// A hardened engine runs only the code of the image, whatever the options say.
 static constexpr ASCIILiteral codeOutsideImage = "code-outside-image"_s;
-// ARM64 with FEAT_JSCVT converts a number to an int32 in one instruction. Other targets truncate, test the result and have a slow path.
 static constexpr ASCIILiteral noJSCVT = "no-jscvt"_s;
-// The text names entries of Bun, or the lines expect what follows from them. A program that is linked with the table of the stand-in host leaves the run out: hasStandInHost().
 static constexpr ASCIILiteral entriesOfBun = "entries-of-bun"_s;
 #if ASAN_ENABLED
 static constexpr bool isBuiltWithAddressSanitizer = true;
@@ -756,12 +734,12 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
     for (StringView word : words) {
-        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == faultingReadsOffNoCell ? group->requiresFaultingReadsOffNoCell : word == testedReadsOffNoCell ? group->requiresTestedReadsOffNoCell : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : word == entriesOfBun ? group->requiresEntriesOfBun : group->hasRequiredArchitecture;
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : word == entriesOfBun ? group->requiresEntriesOfBun : group->hasRequiredArchitecture;
         if (std::exchange(isGiven, true)) {
             addError(directive.line, "REQUIRES is given twice for "_s, prefix);
             return;
         }
-        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == faultingReadsOffNoCell || word == testedReadsOffNoCell || word == codeOutsideImage || word == noJSCVT || word == entriesOfBun)
+        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == codeOutsideImage || word == noJSCVT || word == entriesOfBun)
             continue;
         group->requiredArchitecture = findNamedValue(targetArchitectures, word);
         if (!group->requiredArchitecture) {
@@ -903,7 +881,7 @@ void TestFileParser::finishCheckGroups()
     for (PendingCheckGroup& group : m_checkGroups) {
         if (!group.hasMalformedLine)
             validateCheckGroup(group);
-        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && isBuiltWithAddressSanitizer) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresWindows && !isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCallingLoopPolls && hasFaultingLoopPolls) || (group.requiresFaultingReadsOffNoCell && !readsOffNoCellFault) || (group.requiresTestedReadsOffNoCell && readsOffNoCellFault) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT) || (group.requiresEntriesOfBun && hasStandInHost())) {
+        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && isBuiltWithAddressSanitizer) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresWindows && !isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCallingLoopPolls && hasFaultingLoopPolls) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT) || (group.requiresEntriesOfBun && hasStandInHost())) {
             m_file.runs.removeAllMatching([&](const RunDirective& run) {
                 return run.prefix == group.prefix;
             });

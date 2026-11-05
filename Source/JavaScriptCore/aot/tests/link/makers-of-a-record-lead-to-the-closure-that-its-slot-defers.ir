@@ -18,6 +18,7 @@
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: false
 # ANSWERS: b
+# ANSWERS-NEXT: exited with 0
 
 module m0 path="makers-of-a-record-lead-to-the-closure-that-its-slot-defers.ts" displayPath="makers-of-a-record-lead-to-the-closure-that-its-slot-defers.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

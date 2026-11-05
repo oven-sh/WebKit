@@ -13,12 +13,8 @@
 #include "AOTVector.h"
 #include <algorithm>
 
-// The table as the build of a test run sees it. It is made once per build, in one look at each entry.
-
 namespace JSC { namespace AOT {
 
-// As lockByNames() does for one object, for all of them in one look at the table. The run time locks every built-in object by its names in a test run: a test may ask whether Object.prototype can be extended.
-// So a member of such an object is locked where the table locks the member itself, and nowhere else.
 void BuiltinTableOfBuild::lockEveryWholeObjectByNames()
 {
     Vector<BuiltinID> wholeObjects;
@@ -66,10 +62,8 @@ void BuiltinTableOfBuild::unlockForTestRun(std::span<const BuiltinID> members, s
     for (BuiltinID member : m_unlockedMembers)
         m_builtins[member.index()].mutability = BuiltinMutability::ConstantUnlessWritten;
 
-    // `put(getPrototypeOf(Uint8Array).prototype, "values", f)`: no file spells the member. Whether it is written is asked of the flow, as it is of Date.now in every build. Until the end of this function m_table reads the table as it was.
     for (uint32_t index = 0; index < m_builtins.size(); ++index) {
         BuiltinID member(index);
-        // The front end has left out a lookup of a member that stays locked. Were the lock left to the program, a store that no file spells would replace the member for some of its readers alone, in silence. It is refused, aloud.
         if (!m_table.canBeReplacedInTestRuns(member) || std::ranges::binary_search(m_unlockedMembers, member) || std::ranges::binary_search(membersThatStayLocked, member))
             continue;
         m_builtins[index].mutability = BuiltinMutability::ConstantUnlessWritten;
@@ -80,7 +74,6 @@ void BuiltinTableOfBuild::unlockForTestRun(std::span<const BuiltinID> members, s
             m_lockedMembers.append(member);
     }
 
-    // Each holder of a new name is among them, or takes other names as it is.
     UNUSED_PARAM(holdersOfNewNames);
     lockEveryWholeObjectByNames();
 

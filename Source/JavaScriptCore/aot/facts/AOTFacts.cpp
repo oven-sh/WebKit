@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
@@ -41,38 +42,11 @@ ASCIILiteral nameOf(FactKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool Facts::everyObjectHas(TypeReader types, TypeID id, ObjectFact fact) const
-{
-    if (!id || holdsOnlyPrimitives(id))
-        return false;
-    Type type = types.at(id);
-    if (!type.hasOnlyNamedObjects())
-        return false;
-    return types.at(type.objects).allOf([&](ObjectID member) {
-        return object(member).facts.contains(fact);
-    });
-}
-
-bool Facts::someObjectHas(TypeReader types, TypeID id, ObjectFact fact) const
-{
-    if (!id || holdsOnlyPrimitives(id))
-        return false;
-    Type type = types.at(id);
-    if (!type.hasNamedObjects())
-        return false;
-    return types.at(type.objects).anyOf([&](ObjectID member) {
-        return object(member).facts.contains(fact);
-    });
-}
-
-// ---- The table of built-ins
-
 RefusedCode refusedCodeOf(const Program& program)
 {
     return {
         .evaluatedText = hasFlag(program.excludedCode, ExcludedCode::EvaluatedText),
         .hostEvaluatedText = hasFlag(program.excludedCode, ExcludedCode::HostEvaluatedText),
-        // An image that admits the inspector loads files from disk whatever else it was built to refuse: Modules::refusesCodeOutsideImage().
         .codeOutsideImage = !program.admitsInspector && (runsOnlyCodeOfImage || hasFlag(program.excludedCode, ExcludedCode::CodeOutsideImage)),
     };
 }
@@ -89,18 +63,15 @@ std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, Buil
 {
     builtin = builtins.canonicalID(builtin);
     OptionSet<BuiltinFlag> flags = builtins.at(builtin).flags;
-    // `module._compile(text)` hands the text a require, so it loads what the text names: nothing where the text is refused.
     if (refusesTextAsUnseenCode(builtins, builtin, refused))
         return std::nullopt;
     bool loadsFromImageAlone = refused.codeOutsideImage || builtin == Builtins::ProcessGetBuiltinModule;
-    // A load of a module of the image runs no code that nobody has read. The text does.
     if (flags.contains(BuiltinFlag::EvaluatesText) && (loadsFromImageAlone || !flags.contains(BuiltinFlag::LoadsModuleByName)))
         return UnseenCodeCause::EvaluatesText;
     if (flags.contains(BuiltinFlag::LoadsModuleByName))
         return loadsFromImageAlone ? UnseenCodeCause::LoadsModuleByName : UnseenCodeCause::LoadsCodeByName;
 
     const BuiltinUnseenCode* row = builtins.unseenCodeOf(builtin);
-    // The call runs unseen code only where an operand has a property of some name.
     if (row && row->condition && row->condition->hasProperty)
         return std::nullopt;
     if (row ? !row->condition || !row->condition->buildAdmitsRuntimeCode : flags.contains(BuiltinFlag::RunsUnseenCode))
@@ -108,7 +79,6 @@ std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, Buil
     return std::nullopt;
 }
 
-// Here yes is the conservative answer: ObjectTable::mergedFormOf() keeps such a function out of what `unknown` covers. So ask as for a build that refuses no code.
 bool raisesEventWhenCalled(const BuiltinTable& builtins, BuiltinID builtin)
 {
     builtin = builtins.canonicalID(builtin);
@@ -132,9 +102,6 @@ bool isMadeWithCodeOfLibrary(const BuiltinTable& builtins, BuiltinID member)
     });
 }
 
-// ---- The stage
-
-// The stable numbers end at the keys of the wire's list and those that the reader has added. Behind them every text gets its key, by StringID, so the program alone decides the numbers.
 static void endStableNumbersOfKeysForFacts(Program& program, const ParallelLoops& loops)
 {
     program.computeLocationBits(loops);
@@ -201,7 +168,6 @@ static Vector<ClassBelowBuiltinClass> findClassesBelowBuiltinClassesForFacts(con
     return classes;
 }
 
-// No TypeArena is alive here: what one remembers of the classes that are noted is stale from here on.
 static void updateProgramBehindIndexesForFacts(Program& program, BodyIndexTable& bodies, const ParallelLoops& loops)
 {
     Vector<uint32_t> numberOfSitesOfFunctions(program.functions.size(), [](size_t) -> uint32_t {
@@ -213,7 +179,6 @@ static void updateProgramBehindIndexesForFacts(Program& program, BodyIndexTable&
     noteSubclassesOfBuiltinClasses(program, classes.span());
 }
 
-// A call never suspends its caller, whatever the callee does with its own frame.
 static Effects effectsSeenByCallerForFacts(Effects effects)
 {
     effects.maySuspend = false;
@@ -253,10 +218,6 @@ static void fillFunctionTablesForFacts(const Program& program, const ThinSummari
     tables.entryParameters.firstRowOfOwner.append(static_cast<uint32_t>(tables.entryParameters.rows.size()));
 }
 
-// A LAYOUT THAT REACHES NO UNSEEN CODE IS READ WITHOUT A LOOK, on the word of linked(). So whatever breaks that word at run time is a false proof, and an emptied slot under such a read would be worse than a stop:
-// the record of the layout has what is ruled out, and validateMutation() ends the process there. Of a layout that reaches unseen code nothing is ruled out: what is held of it is looked at.
-// `function onConnection(socket) { socket.parser = p }`, which unseen code may call: in linked() the parameter holds anything, so the store names no layout there. held() expects a socket and appends the name.
-// The objects get a slot for it all the same. At most maxAppendedFieldsOutOfLine names a layout in all: what is left over is an extra property, as ever.
 static void layKeysThatHeldAloneAppendsOver(LinkTables& linked, const LinkTables& held, size_t numberOfLayouts)
 {
     if (held.appendedKeys.isEmpty())
@@ -298,27 +259,19 @@ static void fillFieldTablesForFacts(const Program& program, const LinkTables& li
         uint32_t numberOfFields = numberDeclared + static_cast<uint32_t>(linked.appendedKeysOf(id).size());
         for (uint32_t field = 0; field < numberOfFields; ++field) {
             FieldFacts facts;
-            // `Object.defineProperty(this, "id", { value: id })`: as with the accessors of a literal below: it chooses how the objects are laid out and claims nothing of what they hold.
             if (const LinkedCell* cell = field >= numberDeclared && holdsAccessorsInSlots ? linked.findCellOfField({ id, field }) : nullptr) {
                 facts.formOfValue = cell->formThatDefinitionsCreate;
                 if (facts.formOfValue.contains(FieldForm::IsAccessor))
                     facts.facts.add(FieldFact::IsAccessor);
             }
-            // `{ get x() { .. } }`: the slot holds the pair of functions, so that laying them fills it. As a plain field it would leave its slot with each object that is made.
-            // It chooses how the objects are laid out and claims nothing of what they hold: the record of the layout says the form, and a property that is created in another form lies beside its slot.
             if (const LinkedCell* cell = holdsAccessorsInSlots ? linked.findCellOfField({ id, field }) : nullptr; cell && cell->isFilledByAccessorsAlone)
                 facts.facts.add(FieldFact::IsAccessor);
             if (!layout.possibleChanges.contains(LayoutChange::LosesProperty))
                 facts.stability.add(FieldStability::IsNeverDeleted);
             if (!layout.reachesUnseenCode) {
-                // A store by name creates a field that is declared with other attributes beside its slot, with no descriptor in sight.
                 bool isDeclaredPlain = field >= numberDeclared ? facts.formOfValue.isEmpty() : fieldAt(program, declarationOf(program, { id, field })).form.isEmpty();
                 if (isDeclaredPlain && !layout.possibleChanges.contains(LayoutChange::GetsAccessor))
                     facts.stability.add(FieldStability::IsNeverRedefined);
-                // Of the proven type. Whether the slot takes all of that type is for whoever knows the slot.
-                const LinkedCell* cell = linked.findCellOfField({ id, field });
-                if (cell && cell->everyWriterIsKnown && cell->proven)
-                    facts.stability.add(FieldStability::IsNeverStoredWithOtherType);
             }
             tables.fields.append(facts);
         }
@@ -326,9 +279,6 @@ static void fillFieldTablesForFacts(const Program& program, const LinkTables& li
     tables.firstFieldOfLayout.append(static_cast<uint32_t>(tables.fields.size()));
 }
 
-// `const counts = {}; counts[word] = 1`. A record that lists no name and is stored under none has no slot: as a compiled object it would hold extra properties alone, and each new key would make it a structure of its own.
-// So its objects are ordinary objects. The answer chooses how the objects of a layout are laid out and claims nothing of what they hold: a wrong one costs speed alone.
-// A layout shares its slots with the layouts above and below it, which need one answer, so only a layout that stands alone is asked.
 static bool mayHoldDictionariesForFacts(const Program& program, LayoutID id)
 {
     const Layout& layout = program.at(id);
@@ -357,12 +307,10 @@ static void fillLayoutTablesForFacts(const Program& program, const LinkTables& l
         for (LayoutID supertype : layout.supertypes)
             holdsDictionaries.quickClear(supertype.index());
     }
-    // Native code makes the objects of a typed answer by their layouts.
     for (const ExpectedResult& expected : program.expectedResults) {
         for (LayoutID layout : expected.layouts)
             holdsDictionaries.quickClear(layout.index());
     }
-    // An object without slots is made empty. `{ 1: "one" }` lists no name either, and what it lists is an element. The loader makes the objects of a module of data by their layouts.
     BitVector isDataOfModule(program.data.size());
     for (const Module& module : program.modules) {
         if (module.data)
@@ -384,9 +332,6 @@ static void fillLayoutTablesForFacts(const Program& program, const LinkTables& l
             }
         }
     }
-    // Link ran while the shape told the objects of every layout from all others: where a written type names a layout, its filters let the objects of the layout through and turned all others away.
-    // An ordinary object has no shape. The guard that the walk builds for such a type would let any object through, and what Link says behind the guard would no longer hold.
-    // Every type that a position, a Convert, a Check or a TypeTest goes by is one of the wire's list.
     const TypeTable& types = program.types;
     for (TypeID type : types.typesOfWireIndexes()) {
         if (!type || holdsOnlyPrimitives(type))
@@ -410,8 +355,6 @@ static void fillVariableTablesForFacts(const LinkTables& linked, FactTables& tab
     }
 }
 
-// `let hook = () => undefined;  function setHook(f) { hook = f }  ..  setHook(realHook)`. By the records of the scan and Link's list of calls alone: an edge into the node of a variable says what is stored there.
-// What comes out of anything else (a call, a field, a join) is not followed and does not count: the table names what a call of the variable tests for, and what else arrives is called as written.
 static void fillFunctionsGivenToVariablesForFacts(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, FactTables& tables)
 {
     if (summaries.size() != program.functions.size() || linked.functions.size() != program.functions.size())
@@ -432,7 +375,6 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
     auto note = [&](uint32_t variable, FunctionID function) {
         noteIn(givenTo, variable, function);
     };
-    // The one function whose closures a node of a summary stands for. Null: it is no such node.
     auto functionAt = [&](const SummaryNode& node) -> FunctionID {
         if (node.kind == SummaryNode::Kind::Closure)
             return FunctionID(node.first);
@@ -453,7 +395,6 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
     BitVector functionsThatStoreParameter;
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         FunctionID function(index);
-        // What the body of a module stores is what the variable starts with: whoever replaces it means the other to be called.
         if (!linked.function(function).isReached || program.at(function).isModuleBody())
             continue;
         const ThinSummary& summary = summaries.at(function);
@@ -476,7 +417,6 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
         if (!functionsThatStoreParameter.get(listed.callee.index()))
             continue;
         const ThinSummary& summary = summaries.at(listed.caller);
-        // The calls of a summary need not stand in the order of their sites, and few functions store a parameter into a variable.
         auto call = std::ranges::find_if(summary.calls, [&](const SummaryCall& candidate) {
             return candidate.site == listed.site && !candidate.isMadeByProtocol;
         });
@@ -486,7 +426,6 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
         for (const ParameterStored& stored : parametersStored) {
             if (stored.function != listed.callee)
                 continue;
-            // By its binding a call lists the entry parameters, else the arguments as they are written.
             uint32_t place = stored.entryParameter;
             if (call->callee != SummaryCall::Callee::Binding) {
                 if (place < firstPositional)
@@ -499,7 +438,6 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
                 note(stored.variable, handed);
         }
     }
-    // What the few variables start with: the bodies of their modules say it.
     GivenByVariable atStart;
     BitVector modulesOfVariables;
     for (const auto& [variable, given] : givenTo) {
@@ -529,10 +467,6 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
     std::ranges::sort(tables.functionsGivenToVariables, { }, &FactTables::FunctionGivenToVariable::variable);
 }
 
-// A class is evaluated at most once in a realm where the program has one NewClass of it, outside of every loop, in the body of a module that the loader enters once,
-// or in a function that Link proves to run at most once: `var Parser = (function () { function Parser() { } Parser.prototype.peek = ..; return Parser; })()`, what a transpiler of classes writes.
-// The class of a constructor function is evaluated where the function object is made: by a NewClosure, or by the loader for a variable that is born as the function.
-// It goes by the records and the bodies alone, reached or not. The run time has no answer to a second evaluation of such a class.
 static void fillClassTablesForFacts(const Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held, FactTables& tables)
 {
     size_t numberOfLayouts = program.layouts.size();
@@ -562,7 +496,6 @@ static void fillClassTablesForFacts(const Program& program, const BodyIndexTable
             tables.classes[evaluated.index()].evaluations = ExecutionCount::AtMostOnce;
     }
 
-    // A summary lists a class once, however often its body evaluates it.
     Vector<uint32_t> numberOfEvaluationsInBody;
     numberOfEvaluationsInBody.fill(0, numberOfLayouts);
     Vector<LayoutID, 16> classesEvaluatedInBody;
@@ -591,13 +524,14 @@ static void fillClassTablesForFacts(const Program& program, const BodyIndexTable
             }
         }
         for (LayoutID evaluated : classesEvaluatedInBody) {
-            if (std::exchange(numberOfEvaluationsInBody[evaluated.index()], 0) == 1 && numberOfEvaluations[evaluated.index()] == 1)
-                tables.classes[evaluated.index()].evaluations = ExecutionCount::AtMostOnce;
+            if (std::exchange(numberOfEvaluationsInBody[evaluated.index()], 0) != 1 || numberOfEvaluations[evaluated.index()] != 1)
+                continue;
+            tables.classes[evaluated.index()].evaluations = ExecutionCount::AtMostOnce;
+            if (!loaderEntersOnce(id))
+                tables.functionsTakenToRunOnce.set(number);
         }
     }
 
-    // `class Socket extends NetSocket { }`, where nobody has written what NetSocket is: the record names what is seen to arrive there.
-    // The run time goes up and down the rows of the records: a row that comes back to itself, which no program can build, names nothing.
     auto heritageSeenToArrive = [&](LayoutID id) {
         bool isAsked = id.index() < held.layouts.size() && !program.at(id).base && program.at(id).has(LayoutFlags::HasHeritage);
         return isAsked ? held.layouts[id.index()].heritage : LayoutID();
@@ -615,8 +549,6 @@ static void fillClassTablesForFacts(const Program& program, const BodyIndexTable
     }
 }
 
-// What the DefineMethods of the program give each class, in the order of the definitions. ONE TABLE FOR THE RECORD OF THE CLASS AND FOR THE WALK: a guard of a class holds while its holders are as the record declares,
-// so whoever asks what stands under a name above an instance asks the list that the record is written from. It goes by the bodies alone, reached or not.
 static void fillMembersOfClassesForFacts(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, FactTables& tables)
 {
     struct DefinedMember {
@@ -654,7 +586,6 @@ static void fillMembersOfClassesForFacts(const Program& program, const ThinSumma
                 rows.rows.append(row.member);
                 continue;
             }
-            // Two bodies evaluate the class. Where they do not say the same of a member, it counts as one under a key that nobody knows, which no record creates.
             ClassMember& listed = rows.rows.last();
             if (listed.key != row.member.key || listed.side != row.member.side || listed.kind != row.member.kind || listed.function != row.member.function) {
                 listed.key = { };
@@ -673,7 +604,6 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
 
 void printBreachesOfClosureOfLink(PrintStream& out, Program& program, BuildContext& build, Mechanisms mechanisms)
 {
-    // As computeFacts() comes to Link.
     const ParallelLoops& loops = build.parallelLoops();
     endStableNumbersOfKeysForFacts(program, loops);
     std::unique_ptr<BodyIndexTable> bodies = indexBodiesForFacts(program, loops, { });
@@ -689,13 +619,66 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, BuildConte
     printBreachesOfClosureOfLink(out, program, summaries, families, *looks, mechanisms, build);
 }
 
-// The lanes of computeFacts() behind Link.
+FunctionID Facts::functionThatCallEntersByBinding(const BodyIndex& index, const BodyValue& call, ValueID* checkThatPasses) const
+{
+    if (call.opcode() == Opcode::CallDirect)
+        return call.function();
+    if (call.opcode() != Opcode::Call)
+        return { };
+    ValueID read = index.valueBehindCasts(call.calleeOperand());
+    if (!index.isParameter(read) && index.opcodeOf(read) == Opcode::CheckInitialized) {
+        if (checkThatPasses)
+            *checkThatPasses = read;
+        read = index.valueBehindCasts(index.value(read).valueOperand());
+    }
+    if (index.isParameter(read) || index.opcodeOf(read) != Opcode::GetModuleVariable)
+        return { };
+    VariableID variable = index.value(read).variable();
+    const Variable& declaration = m_program.at(variable);
+    if (declaration.owner || declaration.initialization != VariableInitialization::Function || variable.index() >= m_linked.variables.size() || m_linked.variable(variable).isStoredInto)
+        return { };
+    return declaration.function;
+}
+
+bool Facts::testMentionsWhatIsOutOfReach(TypeReader types, TypeID tested, NOESCAPE const ScopedLambda<bool(FunctionID)>& isInReach) const
+{
+    Type type = types.at(tested);
+    if (!type.hasObjects())
+        return false;
+    bool mentionsIt = false;
+    types.at(type.layouts).forEach([&](LayoutID layout) {
+        const Layout& record = m_program.at(layout);
+        if (record.kind != LayoutKind::ModuleNamespace)
+            return;
+        FunctionID body = record.namespaceOf ? m_program.at(record.namespaceOf).body : FunctionID();
+        mentionsIt |= !body || !isInReach(body);
+    });
+    types.at(type.objects).forEach([&](ObjectID object) {
+        const ObjectRecord& record = types.at(object);
+        FunctionID behind;
+        switch (record.kind) {
+        case ObjectKind::Closure:
+            behind = FunctionID(record.payload);
+            break;
+        case ObjectKind::Namespace:
+            behind = m_program.at(ModuleID(record.payload)).body;
+            mentionsIt |= !behind;
+            break;
+        default:
+            return;
+        }
+        mentionsIt |= behind && !isInReach(behind);
+    });
+    return mentionsIt;
+}
+
 static void orderFunctionsByReferrersForFacts([[maybe_unused]] Program& program, const ParallelLoops& loops, BuildContext& build, Facts::Parts& parts)
 {
     StepTimes steps(build, "facts"_s);
     layReferrersOfHeldReadingOver(parts.linked, parts.held, loops);
     steps.didFinish("lay referrers over"_s);
     rankReferrersFirst(parts.linked);
+    findParametersThatAreOnlyCalled(program, *parts.bodies, *parts.summaries, loops, parts.mechanisms, parts.linked);
     steps.didFinish("rank referrers"_s);
 }
 
@@ -720,7 +703,6 @@ static void fillTablesOfFieldsLayoutsAndClassesForFacts(const Program& program, 
         fillFunctionsGivenToVariablesForFacts(program, *parts.summaries, parts.linked, parts.tables);
     if (parts.mechanisms.contains(Mechanism::TypedOperations))
         fillClassTablesForFacts(program, *parts.bodies, *parts.summaries, parts.linked, parts.held, parts.tables);
-    // What a record expects on a prototype object is no proof, and what is held sees further: a map of descriptors that native code has had is lost to the other reading.
     fillMembersOfClassesForFacts(program, *parts.summaries, parts.held, parts.tables);
     steps.didFinish("tables of fields, layouts, strings, variables, classes"_s);
 }
@@ -764,7 +746,6 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     steps.didFinish("scan, families"_s);
     OwnedLooksAtBodies looks = lookAtBodies(program, *parts.bodies, *parts.summaries, build);
     steps.didFinish("look at bodies"_s);
-    // ONE FLOW, READ TWICE: link() answers linked() and leaves held() in `turns`.
     TurnsOfReadings turns;
     runLanes(loops, {
         [&] {
@@ -772,13 +753,11 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
             if (parts.mechanisms.contains(Mechanism::Guesses))
                 parts.layoutsByNames = LayoutsByNames(program, parts.linked);
         },
-        // It reads the records of the program, which never move, and writes two lists that nobody else looks at.
         [&] {
             if (parts.mechanisms.contains(Mechanism::BuiltinCalls))
                 workOutRegExpTexts(program, *parts.bodies, *parts.summaries, parts.tables.program);
         },
     });
-    // The lane says nothing itself: Link reports beside it.
     for (const RegExpCallWithoutText& call : parts.tables.program.regExpCallsWithoutText) {
         const BodyIndex& index = *parts.bodies->find(call.function);
         build.diagnostics().add(UserDiagnostic {
@@ -798,7 +777,6 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     build.statistics().count(StatisticID::FactRounds, sizeOfFlow.rounds);
     parts.held = WTF::move(turns.held);
     finishReadingsOfLink(program, parts.mechanisms, turns, parts.linked, parts.held);
-    // The flow is gone, and it was half as large as all that the build holds beside it.
     build.backgroundJobs().add([](const ParallelLoops&) {
         WTF::releaseFastMallocFreeMemory();
     });
@@ -809,26 +787,22 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
     if (hasFailed())
         return nullptr;
 
-    // Each lane fills tables of its own and reads none that another lane fills. Of what is linked the first writes the referrers, the groups, the cycles, the ranks and what of a function goes by them,
-    // the second the keys that held() alone appends and the third the exports that are spied on: no other lane asks for any of it.
     runLanes(loops, {
         [&] { orderFunctionsByReferrersForFacts(program, build.parallelLoops(), build, parts); },
         [&] { fillTablesOfFieldsLayoutsAndClassesForFacts(program, build, parts); },
         [&] { fillTablesOfProgramForFacts(program, looks, build, parts); },
         [&] { fillTablesOfFunctionsForFacts(program, request, build, parts); },
     });
-    // Each closure of a function has a prototype object of its own.
     for (size_t layout = 0; layout < parts.linked.layouts.size() && layout < parts.tables.classes.size(); ++layout) {
         if (parts.tables.classes[layout].evaluations != ExecutionCount::AtMostOnce)
             parts.linked.layouts[layout].prototypeObjectIsSettledAheadOfEveryObject = false;
     }
-    // It interns types, so it runs beside nobody. No lane reads what it writes.
     parts.linked.fieldsReadAsIntegers = fieldsReadAsIntegersIn(*looks);
     parts.linked.fieldsReadForArithmetic = fieldsReadForArithmeticIn(*looks);
     parts.linked.fieldsStoredWhatIsNoInt32 = fieldsStoredWhatIsNoInt32In(*looks);
     parts.linked.fieldsStoredCounts = fieldsStoredCountsIn(*looks, program, parts.linked);
     parts.linked.keysStoredWhatIsNoInt32 = keysStoredWhatIsNoInt32In(*looks);
-    fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables);
+    build.statistics().count(StatisticID::FieldsHeldToWhatIsSeen, fillEnforcedFieldsForFacts(program, parts.linked, parts.held, *parts.families, parts.mechanisms, parts.tables));
     steps.didFinish("referrers beside tables"_s);
     times.didFinish("referrers, tables"_s);
     if (hasFailed())

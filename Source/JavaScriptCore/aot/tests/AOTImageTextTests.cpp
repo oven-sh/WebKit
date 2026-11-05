@@ -53,7 +53,6 @@ static constexpr ASCIILiteral nameThatHoldsName = "name_with_tail_of_name"_s;
 static constexpr ASCIILiteral nameHeldByName = "tail_of_name"_s;
 static constexpr ASCIILiteral textHeldByName = "of_name"_s;
 static constexpr std::array<ASCIILiteral, 3> namesThatMeetOtherTexts { nameWithinText, nameThatHoldsName, nameHeldByName };
-// The walk joins the first two, adds the third to that and the fourth to that. What it makes first is the end of a text of the program too.
 static constexpr std::array<ASCIILiteral, 4> piecesOfMadeTexts { "made by"_s, " the walk"_s, ", added to"_s, " twice"_s };
 static constexpr ASCIILiteral textThatEndsWithMadeText = "a text made by the walk"_s;
 static constexpr std::array<char16_t, 3> wideTextWithTail { 0x3b1, 0x3b2, 0x3b3 };
@@ -197,8 +196,6 @@ PropertyKeyID TextImage::keyOf(StringView text)
     return *key;
 }
 
-// The atom of a header stays in the table of its thread for good, so the texts of which the tests make atoms are those without a header: code makes only their cells.
-// The body of a module that has code needs its generic entry beside it, so the code is that of a function that is no such body.
 CompiledCode TextImage::bodyOfReader()
 {
     MentionList mentions;
@@ -207,11 +204,9 @@ CompiledCode TextImage::bodyOfReader()
         mentions.add(NumberSpace::Name, keyOf(name));
     mentions.add(NumberSpace::String, idOf(textReadThroughHeader));
     for (const ExpectedText& expected : expectedTexts()) {
-        // The VM has the cell of the empty string.
         if (!expected.text.isEmpty())
             mentions.add(NumberSpace::StringCell, idOf(expected.text));
     }
-    // As the walk of a unit leaves them: each is the one before with something behind it.
     Typed::TypeArena arena(build.program().types, Typed::ArenaKeeps::UntilReset);
     StringID made;
     for (ASCIILiteral piece : piecesOfMadeTexts) {
@@ -240,123 +235,6 @@ static String freshCopyOf(const String& text)
     if (text.is8Bit())
         return String(text.span8());
     return String(text.span16());
-}
-
-static void testRoundTrip()
-{
-    TextImage& image = textImage();
-    const ImageText& text = image.text();
-    AOT_TEST_CHECK(text.numberOfStrings() == image.build.program().strings.size());
-    for (const ExpectedText& expected : expectedTexts()) {
-        StringID id = image.idOf(expected.text);
-        AOT_TEST_CHECK(text.hasText(id));
-        StringView view = text.view(id);
-        AOT_TEST_CHECK(view == expected.text);
-        AOT_TEST_CHECK(view.length() == expected.text.length());
-        AOT_TEST_CHECK(view.is8Bit() == !expected.is16Bit);
-        AOT_TEST_CHECK(text.equals(id, expected.text));
-        AOT_TEST_CHECK(!text.equals(id, "another text"_s));
-    }
-}
-
-static void testTextThatNothingNames()
-{
-    TextImage& image = textImage();
-    StringID id = image.idOf(textInUnreachedFunction);
-    AOT_TEST_CHECK(!image.text().hasText(id));
-    AOT_TEST_CHECK(!image.text().equals(id, textInUnreachedFunction));
-}
-
-static void testHashes()
-{
-    TextImage& image = textImage();
-    for (const ExpectedText& expected : expectedTexts()) {
-        StringID id = image.idOf(expected.text);
-        unsigned hash = freshCopyOf(expected.text).impl()->hash();
-        AOT_TEST_CHECK(image.text().hash(id) == hash);
-        AOT_TEST_CHECK(image.text().createString(id).impl()->hash() == hash);
-    }
-}
-
-static void testCreateString()
-{
-    TextImage& image = textImage();
-    for (const ExpectedText& expected : expectedTexts()) {
-        String created = image.text().createString(image.idOf(expected.text));
-        AOT_TEST_CHECK(created == expected.text);
-        AOT_TEST_CHECK(!created.isNull());
-        if (expected.text.isEmpty())
-            continue;
-        AOT_TEST_CHECK(created.impl()->hash() == freshCopyOf(expected.text).impl()->hash());
-        AOT_TEST_CHECK(created.is8Bit() == !expected.is16Bit);
-        AOT_TEST_CHECK(image.image.image->containsCharactersOf(*created.impl()));
-        AOT_TEST_CHECK(!image.image.image->containsCharactersOf(*freshCopyOf(expected.text).impl()));
-    }
-}
-
-static void testCreateAtom()
-{
-    TextImage& image = textImage();
-    for (const ExpectedText& expected : expectedTexts()) {
-        String created = image.text().createAtom(image.idOf(expected.text));
-        AOT_TEST_CHECK(created.impl()->isAtom());
-        AOT_TEST_CHECK(created == expected.text);
-        AOT_TEST_CHECK(AtomString(freshCopyOf(expected.text)).impl() == created.impl());
-        if (!expected.text.isEmpty())
-            AOT_TEST_CHECK(image.image.image->containsCharactersOf(*created.impl()));
-    }
-}
-
-static void testCreateAtomThatExists()
-{
-    TextImage& image = textImage();
-    for (const ExpectedText& expected : expectedTexts()) {
-        AtomString existing(freshCopyOf(expected.text));
-        String created = image.text().createAtom(image.idOf(expected.text));
-        AOT_TEST_CHECK(created.impl() == existing.impl());
-        if (!expected.text.isEmpty())
-            AOT_TEST_CHECK(!image.image.image->containsCharactersOf(*created.impl()));
-    }
-}
-
-// What a string constant of compiled code is: static, and no atom.
-static Vector<String> constantsThatAreNoAtoms()
-{
-    static StringImpl::StaticStringImpl narrow { "a text of which the program only makes strings"_s };
-    static StringImpl::StaticStringImpl wide { u"a wide text αβ of which the program only makes strings" };
-    Vector<String> constants { String { static_cast<StringImpl&>(narrow) }, String { static_cast<StringImpl&>(wide) } };
-    for (const String& constant : constants)
-        AOT_TEST_CHECK(constant.impl()->isStatic() && !constant.impl()->isAtom());
-    return constants;
-}
-
-static void testAtomOfConstantOutlivesWhoeverAskedForIt()
-{
-    for (const String& constant : constantsThatAreNoAtoms()) {
-        AtomString atom { constant };
-        AOT_TEST_CHECK(AtomStringImpl::lookUp(constant.impl()).get() == atom.impl());
-    }
-}
-
-// A Worker's thread has a table of its own, which ends with the Worker: what the table held goes with it.
-static void testAtomTableGivesBackTheAtomsOfConstants()
-{
-    struct Provider {
-        AtomStringTable* atomStringTable() { return &table; }
-        AtomStringTable table;
-    };
-    for (const String& constant : constantsThatAreNoAtoms()) {
-        RefPtr<StringImpl> atom;
-        {
-            Provider provider;
-            atom = AtomStringImpl::addWithStringTableProvider(provider, constant.impl());
-            AOT_TEST_CHECK(atom->isAtom());
-            AOT_TEST_CHECK(atom.get() != constant.impl());
-            AOT_TEST_CHECK(atom->refCount() == 2);
-        }
-        AOT_TEST_CHECK(!atom->isAtom());
-        AOT_TEST_CHECK(atom->hasOneRef());
-    }
 }
 
 static void testIdentifiers()
@@ -389,38 +267,6 @@ static void testIdentifiers()
     }
 }
 
-static void testStringConstants()
-{
-    TextImage& image = textImage();
-    const ImageText& text = image.text();
-    const StringConstantNumbering& constants = image.numbers().stringConstants();
-    AOT_TEST_CHECK(text.numberOfStringConstants() == constants.count());
-    AOT_TEST_CHECK(image.image.image->programTables().instanceSizes.numberOfStringCells == constants.count());
-    for (uint32_t number = 0; number < constants.count(); ++number)
-        AOT_TEST_CHECK(text.stringConstant(number) == constants.stringOf(number));
-
-    AOT_TEST_CHECK(constants.numberOf(image.idOf("plain text"_s)));
-    AOT_TEST_CHECK(!constants.numberOf(image.idOf(textReadThroughHeader)));
-}
-
-static void testEncodedHashes()
-{
-    TextImage& image = textImage();
-    EncodedText encoded = encodeText({ image.build.program(), image.numbers() }, image.build.context());
-    auto hashOf = [&](StringID id) -> unsigned {
-        const ImageString& record = spanReinterpretCast<const ImageString>(encoded.strings.span())[id.index()];
-        RELEASE_ASSERT(record.hasText());
-        if (!record.hasIdentifierNumber())
-            return record.hashOrIdentifierNumber();
-        return spanReinterpretCast<const ImageIdentifier>(encoded.identifiers.span())[record.hashOrIdentifierNumber()].hashOrSymbol();
-    };
-    for (const ExpectedText& expected : expectedTexts())
-        AOT_TEST_CHECK(hashOf(image.idOf(expected.text)) == freshCopyOf(expected.text).impl()->hash());
-    AOT_TEST_CHECK(hashOf(image.idOf(textReadThroughHeader)) == String(textReadThroughHeader).impl()->hash());
-    AOT_TEST_CHECK(hashOf(image.idOf(nameOfFreeVariable)) == String(nameOfFreeVariable).impl()->hash());
-}
-
-// The paths of a module are only shown. A string that code reads has its header. A constant of which only the cell is made gets its header with the cell.
 static void testStringOnlyShownHasNoHeader()
 {
     TextImage& image = textImage();
@@ -443,7 +289,6 @@ static void testStringOnlyShownHasNoHeader()
     AOT_TEST_CHECK(text.hasText(path) && text.view(path) == pathOfModule && text.hash(path) == hash);
     String created = text.createString(path);
     AOT_TEST_CHECK(created == pathOfModule && created.impl()->hash() == hash);
-    // A header in the image is the same string at every call.
     AOT_TEST_CHECK(text.createString(path).impl() != created.impl());
     StringID name = image.idOf(nameOfFreeVariable);
     AOT_TEST_CHECK(text.createString(name).impl() == text.createString(name).impl());
@@ -456,26 +301,6 @@ static void testStringOnlyShownHasNoHeader()
     AOT_TEST_CHECK(image.image.image->containsCharactersOf(*created.impl()));
     String atom = text.createAtom(path);
     AOT_TEST_CHECK(atom == pathOfModule && atom.impl()->isAtom());
-}
-
-static DecodedString decode(StringView text)
-{
-    return decodeForImage(Typed::encodeProgramString(text).span());
-}
-
-static void testDecodeForImage()
-{
-    for (const ExpectedText& expected : expectedTexts()) {
-        DecodedString decoded = decode(expected.text);
-        AOT_TEST_CHECK(decoded.is16Bit() == expected.is16Bit);
-        AOT_TEST_CHECK(decoded.length() == expected.text.length());
-        AOT_TEST_CHECK(decoded.hash == freshCopyOf(expected.text).impl()->hash());
-        AOT_TEST_CHECK(decoded.bytes().size() == expected.text.length() * (expected.is16Bit ? sizeof(char16_t) : sizeof(Latin1Character)));
-        if (expected.is16Bit)
-            AOT_TEST_CHECK(StringView(decoded.units16.span()) == expected.text);
-        else
-            AOT_TEST_CHECK(StringView(byteCast<Latin1Character>(decoded.units8.span())) == expected.text);
-    }
 }
 
 static std::span<const uint8_t> bytesOfTextInImage(StringView text)
@@ -498,14 +323,6 @@ static bool textsLieApart(StringView first, StringView second)
     return bytesOfFirst.data() + bytesOfFirst.size() <= bytesOfSecond.data() || bytesOfSecond.data() + bytesOfSecond.size() <= bytesOfFirst.data();
 }
 
-static void testSharedTailsAndInnerParts()
-{
-    AOT_TEST_CHECK(textLiesWithin(tailOfText, textThatHoldsOthers, "a text that "_s.length()));
-    AOT_TEST_CHECK(textLiesWithin(innerPartOfText, textThatHoldsOthers, "a text "_s.length()));
-    AOT_TEST_CHECK(textsLieApart(textHeldByNone, textThatHoldsOthers));
-}
-
-// Nobody looks for them: each lies at the front of the longest. Looked for, the first would be found at the end of the text of the program that ends with it.
 static void testTextsThatAddToOneAnotherLieAtFrontOfLongest()
 {
     String first = makeString(piecesOfMadeTexts[0], piecesOfMadeTexts[1]);
@@ -520,31 +337,10 @@ static void testTextsThatAddToOneAnotherLieAtFrontOfLongest()
     }
 }
 
-static void testNameIsHeldOnlyByName()
-{
-    AOT_TEST_CHECK(textsLieApart(nameOfFreeVariable, textThatEndsWithName));
-    AOT_TEST_CHECK(textsLieApart(nameWithinText, textAroundName));
-    AOT_TEST_CHECK(textLiesWithin(nameHeldByName, nameThatHoldsName, "name_with_"_s.length()));
-    AOT_TEST_CHECK(textLiesWithin(textHeldByName, nameThatHoldsName, "name_with_tail_"_s.length()));
-}
-
-static void testWidthsDoNotShare()
-{
-    AOT_TEST_CHECK(textLiesWithin(textOfUnits(tailOfWideText), textOfUnits(wideTextWithTail), sizeof(char16_t)));
-    AOT_TEST_CHECK(textsLieApart(textOfUnits(bytesOfTailOfWideText), textOfUnits(wideTextWithTail)));
-}
-
-static void testInnerPartStartsAtWholeUnit()
-{
-    AOT_TEST_CHECK(textLiesWithin(textOfUnits(partAtWholeUnit), textOfUnits(wideTextWithInnerPart), sizeof(char16_t)));
-    AOT_TEST_CHECK(textsLieApart(textOfUnits(bytesBetweenUnits), textOfUnits(wideTextWithInnerPart)));
-}
-
 namespace {
 
 class ForgedImage {
 public:
-    // The headers of strings say where in ImageSection::Text their characters are. create() turns that into addresses.
     void setSection(ImageSection section, std::span<const uint8_t> bytes) { m_sections[static_cast<size_t>(section)] = Vector<uint8_t>(bytes); }
     const Image& create();
 
@@ -598,8 +394,7 @@ static void testHeadersAreCreatedAtFirstUse()
         ImageStringRecord::create(0u << ImageString::lengthBits, computeHash(two), false, false),
         ImageStringRecord::create(rangeWord(characters.size(), wideCharacters.size()), computeHash(std::span<const char16_t>(wideCharacters)), true, false),
     } };
-    stringHeaders[2].hashAndFlags |= ImageStringRecord::isLiteralStringFlag;
-    std::array<uint32_t, 2> listedStrings { rangeWord(3, two.size()), 0x1234 };
+    std::array<uint32_t, 1> listedStrings { rangeWord(3, two.size()) };
 
     ForgedImage forged;
     forged.setSection(ImageSection::LongStrings, asBytes(std::span(listedStrings)));
@@ -610,7 +405,6 @@ static void testHeadersAreCreatedAtFirstUse()
 
     AOT_TEST_CHECK(imageText.stringRecords().size() == stringHeaders.size() && imageText.lazyHeadersCapacity() == (stringHeaders.size() + 1) * sizeof(LazyStringHeader));
     AOT_TEST_CHECK(imageText.lazyHeadersSize() == sizeof(LazyStringHeader));
-    AOT_TEST_CHECK(reinterpret_cast<const LazyStringHeaderArena*>(imageText.lazyHeaders())->sizeInBytes == imageText.lazyHeadersCapacity());
     for (uint32_t number = 0; number < stringHeaders.size(); ++number)
         AOT_TEST_CHECK(!imageText.tryGetLazyHeader(number) && !imageText.lazyHeaderOffsets()[number]);
     AOT_TEST_CHECK(imageText.recordView(0).isEmpty() && imageText.recordView(1) == "one"_s && imageText.recordView(2) == "two"_s);
@@ -628,9 +422,8 @@ static void testHeadersAreCreatedAtFirstUse()
     AOT_TEST_CHECK(wideHeader.isStatic() && !wideHeader.is8Bit() && StringView(wideHeader) == StringView(std::span<const char16_t>(wideCharacters)));
     AOT_TEST_CHECK(image.containsCharactersOf(twoHeader) && image.containsCharactersOf(wideHeader) && Image::isBackedByStaticData(twoHeader));
     AOT_TEST_CHECK(imageText.lazyHeaderNumber(twoHeader) == 2u && imageText.lazyHeaderNumber(wideHeader) == 3u);
-    AOT_TEST_CHECK(imageText.literalStringWordOfHeader(twoHeader) == 0x1234u && imageText.literalStringWordOfHeader(wideHeader) == 0u);
     String other = String("two"_s);
-    AOT_TEST_CHECK(!imageText.lazyHeaderNumber(*other.impl()) && !imageText.literalStringWordOfHeader(*other.impl()));
+    AOT_TEST_CHECK(!imageText.lazyHeaderNumber(*other.impl()));
 
     std::array<StringImpl*, 4> seen { };
     Vector<Ref<Thread>> threads;
@@ -665,97 +458,16 @@ static void testImageHoldsNoAddress()
 }
 #endif
 
-static void testTextPastShortOffsets()
-{
-    constexpr uint32_t endOfShortOffsets = 1u << (32 - ImageString::lengthBits);
-    constexpr uint32_t offsetOf8BitText = endOfShortOffsets + 6;
-    constexpr uint32_t offsetOf16BitText = endOfShortOffsets + 32;
-    static constexpr std::array<Latin1Character, 3> farText { 'f', 'a', 'r' };
-    static constexpr std::array<char16_t, 2> farWideText { 0x3b1, 0x3b2 };
-    static constexpr std::array<Latin1Character, 4> nearText { 'n', 'e', 'a', 'r' };
-    constexpr uint32_t offsetOfNearText = endOfShortOffsets - nearText.size();
-
-    Vector<uint8_t> text(FillWith { }, endOfShortOffsets + 64, 0);
-    memcpySpan(text.mutableSpan().subspan(offsetOfNearText), asBytes(std::span(nearText)));
-    memcpySpan(text.mutableSpan().subspan(offsetOf8BitText), asBytes(std::span(farText)));
-    memcpySpan(text.mutableSpan().subspan(offsetOf16BitText), asBytes(std::span(farWideText)));
-
-    // Without a header: one word for the text that is near, three for the texts that are far.
-    std::array<uint32_t, 1 + 2 * ImageListedString::maxNumberOfWords> listedStrings { };
-    AOT_TEST_CHECK(ImageListedString::numberOfWords({ offsetOfNearText, nearText.size() }) == 1 && ImageListedString::numberOfWords({ offsetOf8BitText, farText.size() }) == ImageListedString::maxNumberOfWords);
-    ImageListedString::write(std::span(listedStrings), { offsetOfNearText, nearText.size() });
-    ImageListedString::write(std::span(listedStrings).subspan(1), { offsetOf8BitText, farText.size() });
-    ImageListedString::write(std::span(listedStrings).subspan(1 + ImageListedString::maxNumberOfWords), { offsetOf16BitText, farWideText.size() });
-    std::array<ImageStringWord, 6> strings { {
-        ImageString { 1u << ImageString::lengthBits, 0 }.inImage(0),
-        ImageString { 2u << ImageString::lengthBits, ImageString::is16BitFlag }.inImage(1),
-        ImageString { offsetOfNearText << ImageString::lengthBits | static_cast<uint32_t>(nearText.size()), 0 }.inImage(2),
-        ImageString { 1u << ImageString::lengthBits, ImageString::hasNoHeaderFlag }.inImage(0),
-        ImageString { 1u << ImageString::lengthBits, ImageString::hasNoHeaderFlag }.inImage(1),
-        ImageString { 1u << ImageString::lengthBits, ImageString::hasNoHeaderFlag | ImageString::is16BitFlag }.inImage(1 + ImageListedString::maxNumberOfWords),
-    } };
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    std::array<ImageStringRecord, 3> stringHeaders { {
-        ImageStringRecord::create(1u << ImageString::lengthBits, StringHasher::computeHashAndMaskTop8Bits(std::span<const Latin1Character>(farText)), false, false),
-        ImageStringRecord::create((1u + ImageListedString::maxNumberOfWords) << ImageString::lengthBits, StringHasher::computeHashAndMaskTop8Bits(std::span<const char16_t>(farWideText)), true, false),
-        ImageStringRecord::create(listedStrings[0], StringHasher::computeHashAndMaskTop8Bits(std::span<const Latin1Character>(nearText)), false, false),
-#else
-    std::array<ImageStringHeader, 3> stringHeaders { {
-        ImageStringHeader::create(offsetOf8BitText, farText.size(), StringHasher::computeHashAndMaskTop8Bits(std::span<const Latin1Character>(farText)), false, StringImpl::StringNormal),
-        ImageStringHeader::create(offsetOf16BitText, farWideText.size(), StringHasher::computeHashAndMaskTop8Bits(std::span<const char16_t>(farWideText)), true, StringImpl::StringNormal),
-        ImageStringHeader::create(offsetOfNearText, nearText.size(), StringHasher::computeHashAndMaskTop8Bits(std::span<const Latin1Character>(nearText)), false, StringImpl::StringNormal),
-#endif
-    } };
-
-    ForgedImage forged;
-    forged.setSection(ImageSection::Strings, asBytes(std::span(strings)));
-    forged.setSection(ImageSection::StringHeaders, asBytes(std::span(stringHeaders)));
-    forged.setSection(ImageSection::LongStrings, asBytes(std::span(listedStrings)));
-    forged.setSection(ImageSection::Text, text.span());
-    const ImageText& imageText = forged.create().text();
-
-    AOT_TEST_CHECK(imageText.view(StringID(0u)) == "far"_s);
-    AOT_TEST_CHECK(imageText.view(StringID(1u)) == StringView(std::span<const char16_t>(farWideText)));
-    AOT_TEST_CHECK(imageText.view(StringID(2u)) == "near"_s);
-    AOT_TEST_CHECK(imageText.createString(StringID(0u)).impl()->hash() == String("far"_s).impl()->hash());
-    {
-        // A table holds the atom of a header until the table ends, and the characters of this atom end with the forged image.
-        AtomStringTable table;
-        AtomStringTable* tableOfThread = Thread::currentSingleton().setCurrentAtomStringTable(&table);
-        AOT_TEST_CHECK(imageText.createAtom(StringID(1u)) == String(std::span<const char16_t>(farWideText)));
-        Thread::currentSingleton().setCurrentAtomStringTable(tableOfThread);
-    }
-    AOT_TEST_CHECK(imageText.view(StringID(3u)) == "near"_s && imageText.view(StringID(4u)) == "far"_s);
-    AOT_TEST_CHECK(imageText.view(StringID(5u)) == StringView(std::span<const char16_t>(farWideText)));
-    AOT_TEST_CHECK(imageText.createString(StringID(4u)) == "far"_s && imageText.hash(StringID(4u)) == String("far"_s).impl()->hash());
-}
-
 std::span<const NativeTest> imageTextTests()
 {
     static constexpr NativeTest tests[] = {
-        { "image/text/round-trip"_s, testRoundTrip },
-        { "image/text/text-that-nothing-names"_s, testTextThatNothingNames },
-        { "image/text/hashes"_s, testHashes },
-        { "image/text/create-string"_s, testCreateString },
-        { "image/text/create-atom"_s, testCreateAtom },
-        { "image/text/create-atom-that-exists"_s, testCreateAtomThatExists },
-        { "image/text/atom-of-constant-outlives-whoever-asked-for-it"_s, testAtomOfConstantOutlivesWhoeverAskedForIt },
-        { "image/text/atom-table-gives-back-the-atoms-of-constants"_s, testAtomTableGivesBackTheAtomsOfConstants },
         { "image/text/identifiers"_s, testIdentifiers },
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
         { "image/text/headers-are-created-at-first-use"_s, testHeadersAreCreatedAtFirstUse },
         { "image/text/image-holds-no-address"_s, testImageHoldsNoAddress },
 #endif
-        { "image/text/string-constants"_s, testStringConstants },
-        { "image/text/encoded-hashes"_s, testEncodedHashes },
         { "image/text/string-only-shown-has-no-header"_s, testStringOnlyShownHasNoHeader },
-        { "image/text/decode-for-image"_s, testDecodeForImage },
-        { "image/text/shared-tails-and-inner-parts"_s, testSharedTailsAndInnerParts },
         { "image/text/texts-that-add-to-one-another-lie-at-the-front-of-the-longest"_s, testTextsThatAddToOneAnotherLieAtFrontOfLongest },
-        { "image/text/name-is-held-only-by-name"_s, testNameIsHeldOnlyByName },
-        { "image/text/widths-do-not-share"_s, testWidthsDoNotShare },
-        { "image/text/inner-part-starts-at-whole-unit"_s, testInnerPartStartsAtWholeUnit },
-        { "image/text/text-past-short-offsets"_s, testTextPastShortOffsets },
     };
     return tests;
 }

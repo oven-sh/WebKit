@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// The helper of H is never inlined: it creates a key of an object that its caller is still constructing. In IR text only Call can say so, not CallDirect.
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="C" constructor=f1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
@@ -204,7 +203,6 @@ function f11 name="walk" parameters=[{type=anything}] results=[{type=anything}] 
 }
 )IR"_s;
 
-// type Record = { a: number, b?: number, c?: number }. addB(o, x) { o.b = x + 1 }, addC(o, x) { o.c = x + 2 }, addBoth(o, x) { o.b = x + 3; o.c = x + 3 }
 static constexpr ASCIILiteral programCreatingFieldsLater = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Record" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number}}, {key="c" declared={type=number}}]
@@ -271,7 +269,6 @@ function f3 name="addBoth" parameters=[{type=L0}, {type=number}] results=[{type=
 }
 )IR"_s;
 
-// B and D as above. No object reaches other code, so the stores of B have both classes as proven receivers.
 static constexpr ASCIILiteral programKeepingObjects = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="B" constructor=f1 fields=[{key="p" declared={type=number} flags=[IsRequired]}, {key="q" declared={type=number} flags=[IsRequired]}]
@@ -332,7 +329,6 @@ function f2 name="D" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{t
 }
 )IR"_s;
 
-// No fill function is inlined, so each run of stores goes into a parameter whose key order the function cannot see.
 static constexpr ASCIILiteral programWithLongRuns = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Wide" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}, {key="d" declared={type=number}}, {key="e" declared={type=number}}, {key="f" declared={type=number}}, {key="g" declared={type=number}}, {key="h" declared={type=number}}, {key="i" declared={type=number}}]

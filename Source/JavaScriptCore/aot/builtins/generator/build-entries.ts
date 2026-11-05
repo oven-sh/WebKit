@@ -273,7 +273,6 @@ function pristineTestOf(builder: ModelBuilder, { name, columns }: ClassDeclarati
   return "Mark";
 }
 
-// The cell type of a typed array says how wide its elements are, and every class below makes cells of that type.
 const isCellTypeOfTypedArray = (jsType: string) =>
   typedArrayTypes.some(type => type !== "NotTypedArray" && type !== "TypeDataView" && jsType === `${type.slice(4)}ArrayType`);
 
@@ -568,7 +567,6 @@ function mergeKinds(objectKind: BuiltinKind, memberKind: MemberKind): BuiltinKin
   }
 }
 
-// A getter says what the binding answers. A function says what the functions in the answer do that have no entry of their own.
 function checkRowsOfNativeBinding(
   builder: ModelBuilder,
   key: BuiltinPath,
@@ -580,7 +578,6 @@ function checkRowsOfNativeBinding(
   }
 }
 
-// `jsc.serialize(value)`: a read of a property of which nothing is written answers a value nobody knows, and a call of that may call whatever has escaped.
 function checkPropertyOverObject(
   builder: ModelBuilder,
   key: BuiltinPath,
@@ -622,7 +619,6 @@ function resolveKind(
   return objectKind;
 }
 
-// The table has one record for each text. What is written differs either by platform or by architecture.
 function resolveTargetTexts(builder: ModelBuilder, written: readonly TargetTextSpec[]): ModelTargetText[] {
   return Array.from(
     Map.groupBy(written, ({ text }) => text),
@@ -659,17 +655,13 @@ function mergeMembers(
 ): void {
   const written = builder.writtenEntryOf(builtin);
   const sourceOfMode = new Map<CallMode, Source>();
-  // A class definition names no parameters, so a signature written by hand takes the place of the one derived from it.
   const isReplaced = (mode: CallMode, source: Source): boolean =>
     source.proof === "ByConstruction" && sourceOfMode.get(mode)?.proof === "HandWritten";
   const handWrittenFirst = members.toSorted(
     (left, right) => Number(right.source.proof === "HandWritten") - Number(left.source.proof === "HandWritten"),
   );
-  // The result that the definition declares is proven or checked where the value leaves native code, whatever the operands were.
   const resultsByConstruction = new Map<CallMode, TypeSpec>();
-  // Where nothing proves the result that the definition declares, nothing proves what a signature written by hand says of the same native code.
   const modesDeclaredOnly = new Set<CallMode>();
-  // Where the definition throws in place of a result outside its type, the same native code does under a signature written by hand.
   const modesHeld = new Set<CallMode>();
   for (const { declaration, source } of members) {
     if (source.proof !== "ByConstruction") continue;
@@ -875,7 +867,6 @@ function createAnswerOf(made: ModelBuiltin): SignatureDeclaration {
   };
 }
 
-// The entry of the binding goes on speaking for the function, for those who come by the function without the compiler.
 function describeFunctionsOfBindings({ builder }: EntryContext): void {
   for (const [made, binding] of builder.bindingsOfFunctions) {
     const written = builder.writtenEntryOf(binding);
@@ -899,7 +890,6 @@ function extendsClass(builtinClass: ModelClass | undefined, ancestor: ModelClass
   return current !== null;
 }
 
-// A signature that writes no receiver takes the instances of the class of its prototype, if a test tells them from other values.
 function takesOnlyInstances(builder: ModelBuilder, receiver: ParameterType | null, instanceClass: ModelClass): boolean {
   if (instanceClass.instanceTest === "None" || instanceClass.isPrimitiveWrapper) return false;
   if (receiver === null) return true;
@@ -943,7 +933,6 @@ function entersNativeSetter(
   return takesOnlyInstances(builder, receiver, instanceClass);
 }
 
-// The native function behind the getter is known, so a read needs neither a lookup by name nor the function object that a descriptor of the property would have.
 function callCustomGetters({ builder }: EntryContext): void {
   for (const builtin of builder.builtins) {
     const symbol = columnOf(builder, builtin, "customGetter");
@@ -1039,8 +1028,6 @@ function linkPrototypes({ builder, sorted }: EntryContext): void {
   }
 }
 
-// The engine and the host create a function with `length` and `name`, which the class Function declares for its instances, and with nothing else but what the table lists under it. aotBuiltinMismatches() compares the own keys of every function that it finds in the realm.
-// A constructor has `prototype` besides. The comparison loads no module, so a constructor that only a module hands out lists what the table knows of it and may have more, and so does one that is itself what a module exports: the module puts members on it when it is loaded.
 function closeFunctions({ builder, ownPropertyLists }: EntryContext): void {
   const moduleObjects = new Set<ModelBuiltin | undefined>(
     builder.modules.map(module => builder.find(joinPath(module.namespace.path))),
@@ -1078,7 +1065,6 @@ function finishEntries(context: EntryContext): void {
       if (columnOf(builder, builtin, column) === true) addFlag(builtin, flag);
     }
     if (holder !== null && holder === compilerHelpers) addFlag(builtin, "IsCompilerHelper");
-    // The global object lists the rows of its tables first, whichever of them it has added.
     builtin.isAddedAtFirstRead =
       columnOf(builder, builtin, "addedAtFirstRead") === true && holder !== null && !holder.flags.includes("IsGlobalObject");
     builtin.isAddedAsEnumerable = builtin.isAddedAtFirstRead && columnOf(builder, builtin, "addedAsEnumerable") === true;
@@ -1286,7 +1272,6 @@ function copyConstructorSignatures(builder: ModelBuilder): void {
     abstractConstructors.add(builder.writtenEntryOf(shared.constructor));
   }
   for (const { target, signatures } of copies) target.signatures.push(...signatures);
-  // The class that lends its signatures is abstract: constructed itself, it throws whatever it is given.
   for (const { signatures } of abstractConstructors) {
     const own = signatures.map(written => ({
       ...written,

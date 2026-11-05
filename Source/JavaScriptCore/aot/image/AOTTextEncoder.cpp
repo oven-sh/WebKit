@@ -44,7 +44,6 @@ static_assert(numberOfEnumerators<Typed::WellKnownSymbol> && numberOfEnumerators
 
 static constexpr size_t textHeadSize = sizeof(uint32_t);
 static constexpr unsigned textHeadSlotBits = 22;
-// What the search for the parts of one text may compare, for each character of that text.
 static constexpr uint64_t maxComparedCharactersPerCharacter = 1024;
 
 namespace {
@@ -55,10 +54,8 @@ struct MeasuredTextOfString {
     uint64_t sizeInBytes() const { return static_cast<uint64_t>(length) * (is16Bit() ? sizeof(char16_t) : sizeof(uint8_t)); }
     std::span<const uint8_t> bytes() const { return { characters, static_cast<size_t>(sizeInBytes()) }; }
 
-    // As the image holds them: in the program where the text is all ASCII, else in ChunkOfEncodedText::decodedStrings.
     const uint8_t* characters { nullptr };
     uint32_t length { 0 };
-    // ImageString::is16BitFlag beside the hash.
     uint32_t hashAndWidth { 0 };
 };
 
@@ -68,10 +65,7 @@ struct TextsOfStrings {
     std::span<const MeasuredTextOfString> measured;
 };
 
-// The text of a string lies within the text of its holder and ends `gap` bytes in front of the holder's end. A string whose text is stored holds itself.
-// A name is held by a name alone. The names come first in ImageNumbers::stringsInOrderOfText(), so their text lies in front of all other text.
 struct TextSharing {
-    // [StringID]
     Vector<uint32_t> holders;
     Vector<uint32_t> gaps;
 };
@@ -82,17 +76,14 @@ struct TextInOrder {
     uint32_t index;
     uint64_t afterHead;
 };
-// encodeText() checks that a list of the largest of them fits.
 static_assert(sizeof(TextInOrder) >= sizeof(MeasuredTextOfString) && sizeof(TextInOrder) >= sizeof(std::pair<uint64_t, uint32_t>) && sizeof(TextInOrder) >= sizeof(ImageString));
 
-// The texts in the index that begin with one head stand side by side.
 struct TextHeadRange {
     bool isEmpty() const { return !end; }
 
     uint32_t head { 0 };
     uint32_t begin { 0 };
     uint32_t end { 0 };
-    // Bit n: some text of the range has textHeadSize + n characters, the last bit: that many or more.
     uint32_t sizesOfBeginnings { 0 };
 };
 
@@ -112,16 +103,11 @@ struct IndexOfTextHeads {
     }
 
     Vector<TextInOrder> textsInOrder;
-    // [place in textsInOrder] TextInOrder::afterHead.
     Vector<uint64_t> afterHeads;
-    // [place in textsInOrder] The longest other text in the index that this one starts with, or noText.
     Vector<uint32_t> longestHeads;
-    // Linear probing.
     Vector<TextHeadRange> headRanges;
     unsigned headRangeShift { 0 };
-    // A bit for slotOfTextHead() of each head.
     Vector<uint64_t> mayBeHead;
-    // A bit for the beginning of each text: all of a text that is shorter than maxSizeOfTextBeginning, else that many characters.
     Vector<uint64_t> mayBeBeginning;
     Vector<uint32_t> fromLongest;
 };
@@ -132,7 +118,6 @@ struct LongStringOfTextChunk {
 };
 
 struct ChunkOfEncodedText {
-    // Even, so that what is left empty between the strings of a chunk does not depend on the chunks in front of it.
     uint64_t startOfText { 0 };
     uint64_t sizeOfText { 0 };
     uint32_t firstLongString { 0 };
@@ -147,7 +132,6 @@ struct RetainedStrings {
             functor(inOrderOfText[place].index());
     }
 
-    // A holder belongs to the chunk of the first string that it holds.
     void forEachHolderInChunk(unsigned chunk, NOESCAPE const Invocable<void(unsigned)> auto& functor) const
     {
         for (unsigned place = division.firstIndexOf[chunk]; place < division.firstIndexOf[chunk + 1]; ++place) {
@@ -159,16 +143,11 @@ struct RetainedStrings {
 
     BitVector isName;
     BitVector isRetained;
-    // ImageNumbers::stringsInOrderOfText(): the retained strings.
     std::span<const StringID> inOrderOfText;
-    // [StringID]
     Vector<MeasuredTextOfString> measured;
     TextSharing sharing;
-    // [StringID] Of a holder: the first place in inOrderOfText of a string that it holds. The holders are written in the order of these places.
     Vector<uint32_t> firstPlacesOfHolders;
-    // [StringID] Of a holder.
     Vector<uint32_t> endsOfText;
-    // Of the places in inOrderOfText.
     ChunksOfIndices division;
     Vector<ChunkOfEncodedText> chunks;
 };
@@ -245,7 +224,6 @@ static uint64_t prefixAfterTextHead(std::span<const uint8_t> text)
 static constexpr size_t maxSizeOfTextBeginning = 2 * textHeadSize;
 static constexpr unsigned textBeginningSlotBits = 23;
 
-// `size` is above textHeadSize and at most maxSizeOfTextBeginning.
 static size_t slotOfTextBeginning(uint32_t head, uint64_t afterHead, size_t size)
 {
     uint64_t charactersAfterHead = afterHead >> (8 * (textHeadSize + sizeof(uint64_t) - size));
@@ -257,7 +235,6 @@ static size_t slotOfTextHead(uint32_t head)
     return static_cast<size_t>((static_cast<uint64_t>(head) + 1) * 0x9e3779b97f4a7c15ULL >> (64 - textHeadSlotBits));
 }
 
-// By the last character, then the one in front of it. Both end with the same sizeof(uint64_t) characters, or one of them is shorter than that.
 static bool endOrdersBefore(std::span<const uint8_t> a, std::span<const uint8_t> b, uint32_t indexOfA, uint32_t indexOfB)
 {
     size_t shorterSize = std::min(a.size(), b.size());
@@ -292,7 +269,6 @@ static void shareTails(const ParallelLoops& loops, TextsOfStrings strings, const
     }, [&](uint32_t a, uint32_t b) {
         return endOrdersBefore(strings[a], strings[b], a, b);
     });
-    // Every text that ends with a given text stands right behind it.
     Vector<uint8_t> isTailOfNext(FillWith { }, byLastCharacters.size(), 0);
     forEachIndexInParallel(loops, static_cast<unsigned>(byLastCharacters.size() - 1), [&](unsigned place) {
         auto tail = strings[byLastCharacters[place]];
@@ -344,7 +320,6 @@ static IndexOfTextHeads buildHeadIndex(const ParallelLoops& loops, TextsOfString
         }
     });
 
-    // A text starts only with texts of its own head, so each range of heads is gone through by itself. A range of indices takes the heads that begin in it.
     result.longestHeads.grow(numberOfTexts);
     result.mayBeBeginning.fill(0, (1 << textBeginningSlotBits) / 64);
     Vector<Vector<TextHeadRange>> headRangesOfLoopRanges(numberOfRangesOfIndices(numberOfTexts));
@@ -409,7 +384,6 @@ static IndexOfTextHeads buildHeadIndex(const ParallelLoops& loops, TextsOfString
     return result;
 }
 
-// Both begin with the same head.
 static bool textOrdersBefore(std::span<const uint8_t> a, uint64_t afterHeadOfA, const TextInOrder& b, uint64_t& charactersCompared)
 {
     constexpr size_t recordedSize = textHeadSize + sizeof(uint64_t);
@@ -438,8 +412,6 @@ static bool textOrdersBefore(std::span<const uint8_t> a, uint64_t afterHeadOfA, 
     return same < b.size && (same == a.size() || a[same] < b.characters[same]);
 }
 
-// Every text in the index that `rest` starts with is this one or one that this one starts with.
-// A text whose characters behind the head order before those of `rest` orders before `rest`, and the other way round. Only where they are the same do the texts themselves decide.
 static uint32_t findLastTextNotAfter(const IndexOfTextHeads& heads, const TextHeadRange& range, std::span<const uint8_t> rest, uint64_t afterHeadOfRest, uint64_t& charactersCompared)
 {
     const uint64_t* afterHeads = heads.afterHeads.span().data();
@@ -484,8 +456,6 @@ static bool startsWithTextInOrder(std::span<const uint8_t> rest, uint64_t afterH
 
 static void findInnerParts(const ParallelLoops& loops, TextsOfStrings strings, const BitVector& isName, const IndexOfTextHeads& heads, size_t unitSize, TextSharing& sharing)
 {
-    // [StringID] Where the text lies in a longer one: one more than the place of that one in fromLongest, above the offset in it. 0: nowhere.
-    // The least of all that are found, so the threads have no say in it.
     Vector<uint64_t> leastFinds(FillWith { }, sharing.holders.size(), 0);
     forEachIndexInParallel(loops, static_cast<unsigned>(heads.fromLongest.size()), [&](unsigned place) {
         uint32_t whole = heads.fromLongest[place];
@@ -493,7 +463,6 @@ static void findInnerParts(const ParallelLoops& loops, TextsOfStrings strings, c
         bool wholeIsName = isName.quickGet(whole);
         uint64_t maxCharactersCompared = maxComparedCharactersPerCharacter * static_cast<uint64_t>(text.size());
         uint64_t charactersCompared = 0;
-        // Nearly every place in a text is passed over here: a slot lies within the list by its number of bits, and nothing is read anew for a place.
         const uint64_t* mayBeHead = heads.mayBeHead.span().data();
         const uint8_t* characters = text.data();
         size_t sizeOfText = text.size();
@@ -552,7 +521,6 @@ static void findInnerParts(const ParallelLoops& loops, TextsOfStrings strings, c
     });
 }
 
-// Texts that begin at one address (StringTable::internKept()): the longest holds the others, each of which ends as far in front of its end as it is shorter. Nobody looks for them again: they leave `hasText`.
 static Vector<uint32_t> shareFrontsOfKeptTexts(TextsOfStrings strings, size_t numberOfStringsAsRead, BitVector& hasText, const BitVector& isName, TextSharing& sharing)
 {
     HashMap<const uint8_t*, uint32_t> longestAtAddresses;
@@ -606,7 +574,6 @@ static TextSharing shareText(const ParallelLoops& loops, std::span<const Measure
         times.didFinish("build the index of heads"_s);
         findInnerParts(loops, strings, isName, heads, unitSize, sharing);
         times.didFinish("find inner parts"_s);
-        // A tail ends where the text that held it ends.
         for (size_t index : hasTextOfWidth) {
             uint32_t holder = holders[index];
             if (holders[holder] == holder)
@@ -614,7 +581,6 @@ static TextSharing shareText(const ParallelLoops& loops, std::span<const Measure
             sharing.gaps[index] = sharing.gaps[holder];
             holders[index] = holders[holder];
         }
-        // A front ends that much further in front of the end of whatever holds the text that held it.
         for (uint32_t index : fronts) {
             uint32_t holder = holders[index];
             sharing.gaps[index] += sharing.gaps[holder];
@@ -635,12 +601,10 @@ static void measureTextOfChunk(const Typed::StringTable& programStrings, Retaine
     Vector<DecodedString>& decodedStrings = strings.chunks[chunkIndex].decodedStrings;
     strings.forEachInChunk(chunkIndex, [&](unsigned index) {
         std::span<const uint8_t> programString = programStrings[StringID(index)];
-        // The image holds such a text byte for byte as the program does.
         if (charactersAreAllASCII(byteCast<Latin1Character>(programString))) {
             strings.measured[index] = { programString.data(), static_cast<uint32_t>(programString.size()), StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(programString)) };
             return;
         }
-        // The characters stay where they are when the list grows.
         decodedStrings.append(decodeForImage(programString));
         const DecodedString& decoded = decodedStrings.last();
         strings.measured[index] = { decoded.bytes().data(), decoded.length(), decoded.hash | (decoded.is16Bit() ? ImageString::is16BitFlag : 0) };
@@ -660,7 +624,6 @@ static void measureHoldersOfTextChunk(RetainedStrings& strings, unsigned chunkIn
 
 [[nodiscard]] static bool placeChunksOfText(RetainedStrings& strings, Vector<uint8_t>& text, BuildContext& context)
 {
-    // No string lies at offset 0.
     uint64_t size = 1;
     for (ChunkOfEncodedText& chunk : strings.chunks) {
         chunk.startOfText = alignForTextOf16Bits(size);
@@ -703,8 +666,6 @@ static void writeStringRecordsOfChunk(const TextInputs& inputs, RetainedStrings&
         bool isName = strings.isName.quickGet(index);
         bool isAtom = isName || numbers.atomsOfStrings().get(index);
         bool isConstant = numbers.stringConstants().numberOf(id).has_value();
-        // The run time assumes that no header it made itself belongs to a literal string: ProgramStrings::findLiteralString(). Every literal string whose text is here is a named string, and none of them is only shown.
-        // So a constant goes without a header in the image only where whatever else names its string only shows it.
         bool isNamed = numbers.namedStrings().get(index);
         bool isReadThroughHeader = isAtom || (isNamed && !numbers.stringsOnlyShown().get(index));
         bool hasHeader = isReadThroughHeader || (!isConstant && !isNamed);
@@ -715,7 +676,6 @@ static void writeStringRecordsOfChunk(const TextInputs& inputs, RetainedStrings&
         }
         if (!hasHeader)
             hashAndFlags |= ImageString::hasNoHeaderFlag;
-        // Whoever makes the cell of the constant makes the header: see ProgramStrings::tryCreateHeader().
         if (isConstant && !hasHeader)
             hashAndFlags |= ImageString::hasListedHashFlag;
         if (string.is16Bit())
@@ -726,7 +686,6 @@ static void writeStringRecordsOfChunk(const TextInputs& inputs, RetainedStrings&
         ImageLongString range { offset, string.length };
         uint32_t location = offset << ImageString::lengthBits | string.length;
         if (!hasHeader || !ImageListedString::fitsOneWord(range)) {
-            // numberLongStringsOfText() fills it in.
             location = 0;
             chunk.longStrings.append({ index, range });
         }
@@ -736,7 +695,6 @@ static void writeStringRecordsOfChunk(const TextInputs& inputs, RetainedStrings&
 
 [[nodiscard]] static bool numberLongStringsOfText(RetainedStrings& strings, std::span<ImageString> records, Vector<ImageLongString>& longStrings, BuildContext& context)
 {
-    // A string whose location is 0 has no text, so none has the first place.
     uint64_t count = 1;
     for (ChunkOfEncodedText& chunk : strings.chunks) {
         chunk.firstLongString = static_cast<uint32_t>(count);
@@ -834,7 +792,6 @@ EncodedText encodeText(const TextInputs& inputs, BuildContext& context)
         writeTextOfChunk(strings, chunkIndex, result.text.mutableSpan());
     });
     times.didFinish("place and write the text"_s);
-    // A holder may lie in another chunk, so the records wait for all of the text.
     Vector<ImageString> records(FillWith { }, numberOfStrings, ImageString { 0, 0 });
     forEachIndexInParallel(loops, strings.division.size(), [&](unsigned chunkIndex) {
         writeStringRecordsOfChunk(inputs, strings, chunkIndex, result.text.span(), records.mutableSpan());
@@ -849,7 +806,6 @@ EncodedText encodeText(const TextInputs& inputs, BuildContext& context)
             return ImageIdentifier { 0, 0 };
         return encodeIdentifier(inputs.program, identifiers.at(static_cast<uint32_t>(number)), strings.measured.span());
     }));
-    // The first half is for the words of the strings, which the writer of the image knows: writeStrings().
     result.stringConstants = bytesOf(Vector<uint32_t>(2 * static_cast<size_t>(constants.count()), [&](size_t place) {
         return place < constants.count() ? 0 : constants.stringOf(static_cast<uint32_t>(place - constants.count())).index();
     }));

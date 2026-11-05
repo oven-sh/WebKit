@@ -30,12 +30,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The shapes of a block share the second and third bytes of their shape words: blockTestHalfword().
 static constexpr uint32_t shapesPerBlockOfShapeTest = 256;
 static constexpr uint32_t maxBlocksOfShapeTest = 128;
-// The word of a greater number has shapeBlockMarker again.
 static constexpr uint32_t maxShapesForBlockShapeTest = shapesPerBlockOfShapeTest << 16;
-// From this number on, the word of a shape does not fit the immediate of a comparison on arm64.
 static constexpr uint32_t firstShapeWithLongConstantInShapeTest = 4096;
 
 static_assert(shapesPerBlockOfShapeTest == 1 << 8);
@@ -43,10 +40,6 @@ static_assert((AOT::shapeWordOf(1) & shapeBlockMarker) == shapeBlockMarker && (A
 static_assert(immediateBitsWindow <= 8 * sizeof(ShapeTest::bits));
 static_assert(numberOfPagesInShapeSet(0) == 1 && numberOfPagesInShapeSet(PagedBitSet::bitsPerPage - 1) == 1 && numberOfPagesInShapeSet(PagedBitSet::bitsPerPage) == 2);
 
-// Compiled code compares shape words, and the word of a greater number is the lower one. No form that reads the whole word passes a word below that of its last shape.
-// Where that word has the bit of compiled objects, every word above it has the bit too, so UpTo passes nothing that canPassShapeTest() refuses.
-// The forms that read the halfword of a block pass nothing without shapeBlockMarker: tryMakeBlockShapeTest().
-// The word of the number 0 is one that other cells hold.
 static constexpr bool shapeTestRefusesCellsWithoutShape(uint32_t first, uint32_t last)
 {
     return first && (AOT::shapeWordOf(last) & compiledObjectShapeBit);
@@ -70,7 +63,6 @@ static constexpr unsigned numberOfNonzeroHalfwordsInShapeTest(uint64_t bits)
     return halfwords;
 }
 
-// It orders the forms: of the forms that pass the same shapes the shortest is taken.
 static constexpr unsigned instructionsForShapeTest(const ShapeTest& test)
 {
     unsigned longConstant = test.count && test.last() >= firstShapeWithLongConstantInShapeTest ? 1 : 0;
@@ -131,7 +123,6 @@ void ShapeTable::appendMemberShapes(std::span<const LayoutID> layouts, ShapeList
     ascendingShapes.shrink(std::ranges::unique(ascendingShapes).begin() - ascendingShapes.begin());
 }
 
-// Both ends count. Where every number is given out, the first look answers.
 static bool someShapeIsAssignedBetween(const ShapeTable& table, uint32_t first, uint32_t last)
 {
     for (uint64_t shape = first; shape <= last; ++shape) {
@@ -152,7 +143,6 @@ static bool listsEveryAssignedShapeItReachesOver(const ShapeTable& table, std::s
     return true;
 }
 
-// The shapes are all that is given out from the first of them to the last. A cell that is no compiled object lacks shapeBlockMarker: canPassShapeTest().
 static std::optional<ShapeTest> tryMakeBlockShapeTest(const ShapeTable& table, std::span<const uint32_t> ascendingShapes)
 {
     uint32_t first = ascendingShapes.front();
@@ -187,14 +177,12 @@ ShapeTest ShapeTable::testOfShapes(std::span<const uint32_t> ascendingShapes) co
     uint32_t last = ascendingShapes.back();
     RELEASE_ASSERT(first <= last && last <= numberOfShapes() && shapeTestRefusesCellsWithoutShape(first, last));
 
-    // A number that is not given out is the shape of no object, so a test may pass it.
     if (!listsEveryAssignedShapeItReachesOver(*this, ascendingShapes)) {
         if (last - first < immediateBitsWindow)
             return makeShapeTestWithImmediateBits(ascendingShapes);
         return makeShapeTest(ShapeTestForm::BitSet, first, last);
     }
 
-    // Of two forms that are equally short the first listed wins.
     Vector<ShapeTest, 4> candidates;
     if (ascendingShapes.size() == 1)
         candidates.append(makeShapeTest(ShapeTestForm::OneShape, first, last));
@@ -213,7 +201,6 @@ static ShapeTest shortenShapeTestForKnownShapes(const ShapeTest& general, std::s
     ShapeTable::ShapeList passing;
     size_t firstPosition = 0;
     size_t lastPosition = 0;
-    // Each tested shape is looked for behind the one before it. One shape among a thousand known ones is found by halves, in ten steps.
     bool testedAreFew = tested.size() < known.size() / 16;
     size_t position = 0;
     for (uint32_t shape : tested) {
@@ -238,7 +225,6 @@ static ShapeTest shortenShapeTestForKnownShapes(const ShapeTest& general, std::s
     if (passing.size() == known.size())
         return { .form = ShapeTestForm::AlwaysPasses };
 
-    // Whatever lies between two known shapes is the shape of no cell that is asked, so shapes that follow one another among the known ones are a range.
     std::optional<ShapeTest> shortened;
     if (passing.size() == lastPosition - firstPosition + 1) {
         ShapeTestForm form = !firstPosition ? ShapeTestForm::UpTo
@@ -263,7 +249,6 @@ ShapeTest ShapeTable::testOf(std::span<const LayoutID> layouts) const
     return testOfShapes(shapes.span());
 }
 
-// Null: nothing is kept of such a set. An entry is never taken away, and its test never changes.
 ShapeTestsOfSets::OfSet* ShapeTable::testsKeptOf(LayoutSetID set, std::span<const LayoutID> members, ShapeTestsOfSets::Part*& part) const
 {
     if (!m_testsOfSets || !set || holdsOneMember(set) || liesInThread(set))
@@ -310,7 +295,6 @@ EncodedShapeSet ShapeTable::encodedShapesOf(LayoutSetID set, std::span<const Lay
     return encoded;
 }
 
-// The same members give the same words in every build: the multipliers are tried in one order.
 static std::optional<EncodedShapeSet> tryHashShapeSet(std::span<const uint32_t> ascendingShapes, size_t maxNumberOfWords)
 {
     constexpr unsigned maxNumberOfTrials = 256;
@@ -336,7 +320,6 @@ static std::optional<EncodedShapeSet> tryHashShapeSet(std::span<const uint32_t> 
             EncodedShapeSet result { Vector<uint64_t>(FillWith { }, PagedBitSet::numberOfWordsOfHashedSet(shift), 0), PagedBitSet::Entries::Hashed };
             result.words[0] = PagedBitSet::headOfHashedSet(multiplier, shift);
             std::span<PagedBitSet::Slot> slots = spanReinterpretCast<PagedBitSet::Slot>(result.words.mutableSpan().subspan(1)).first(PagedBitSet::numberOfSlots(shift));
-            // A slot without a member holds a number of another slot, so whatever asks there finds a number that is not its own.
             for (uint32_t slot = 0; slot < slots.size(); ++slot) {
                 uint32_t numberOfAnotherSlot = PagedBitSet::maxNumberInSlot;
                 while (PagedBitSet::slotOf(numberOfAnotherSlot, multiplier, shift) == slot)
@@ -389,7 +372,6 @@ static EncodedShapeSet encodeShapeSetAsBits(std::span<const uint32_t> ascendingS
     return result;
 }
 
-// The fewest words among plain bits, pages with equal pages kept once, and a perfect hash.
 EncodedShapeSet encodeShapeSet(std::span<const uint32_t> ascendingShapes)
 {
     ASSERT(shapesAscendWithoutRepeats(ascendingShapes));
@@ -418,7 +400,6 @@ uint32_t DistancesByComparison::distanceOf(uint32_t shape) const
     return distance;
 }
 
-// The cell has one of the shapes, so a number between two of them is nobody's: neighbors at one distance are one stretch, however many layouts they are.
 DistancesByComparison distancesByComparison(std::span<const DistanceOfShapes> members)
 {
     RELEASE_ASSERT(!members.empty());
@@ -439,13 +420,11 @@ DistancesByComparison distancesByComparison(std::span<const DistanceOfShapes> me
     return result;
 }
 
-// The first distance. Then for each comparison its distance, the comparison and the choice, and in front of the test of a range the sum.
 unsigned DistancesByComparison::numberOfInstructions() const
 {
     return 1 + static_cast<unsigned>(numberOfComparisons()) * (comparesWithFirstShapes ? 3 : 4);
 }
 
-// On x86-64, behind the load of the shape word.
 static constexpr unsigned distanceTableInstructionCount(DistanceForm form)
 {
     switch (form) {
@@ -466,7 +445,6 @@ unsigned DistancesByShape::numberOfInstructions() const
     return form == DistanceForm::Comparisons ? comparisons.numberOfInstructions() : distanceTableInstructionCount(form);
 }
 
-// Both targets are little-endian.
 static uint32_t readDistanceTableElement(std::span<const uint8_t> table, size_t element, unsigned logBytes)
 {
     uint32_t value = 0;
@@ -502,8 +480,6 @@ uint32_t DistancesByShape::distanceOf(uint32_t shape) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Shapes at one distance may share an element, so the table grows with the shapes that differ from their neighbors, not with the numbers between them.
-// The same members give the same bytes in every build: the lengths and the multipliers are tried in one order.
 static bool tryEncodeHashedDistanceTable(DistancesByShape& result, std::span<const DistanceOfShapes> members, std::span<const DistanceOfShapes> stretches)
 {
     constexpr unsigned trialsPerLength = 64;
@@ -518,7 +494,6 @@ static bool tryEncodeHashedDistanceTable(DistancesByShape& result, std::span<con
         std::span<uint32_t> elements = std::span(distances).first(size_t { 1 } << logLength);
         uint32_t seed = 0x9e3779b1u;
         for (unsigned trial = 0; trial < trialsPerLength; ++trial, seed = seed * 0x2c1b3c6du + 0x297a2d3au) {
-            // Under a small multiplier neighbors share an element.
             uint32_t multiplier = trial % 2 ? seed >> (trial / 2 % spanWidth + 1) : seed;
             std::ranges::fill(elements, unused);
             auto place = [&](uint32_t shape, uint32_t distance) {
@@ -528,7 +503,6 @@ static bool tryEncodeHashedDistanceTable(DistancesByShape& result, std::span<con
                 element = distance;
                 return true;
             };
-            // The first shapes of the stretches go first: most multipliers fail on them.
             bool keepsDistancesApart = std::ranges::all_of(stretches, [&](const DistanceOfShapes& stretch) {
                 return place(stretch.shapes.first, stretch.distance);
             }) && std::ranges::all_of(members, [&](const DistanceOfShapes& member) {
@@ -570,7 +544,6 @@ struct DistancePages {
 
 } // anonymous namespace
 
-// Never 0 or -1, and never the key of a row with one distance.
 static uint64_t hashMixedRowOfDistances(std::span<const uint16_t> row)
 {
     uint64_t hash = 14695981039346656037ull;
@@ -579,7 +552,6 @@ static uint64_t hashMixedRowOfDistances(std::span<const uint16_t> row)
     return hash >> 2 | 1ull << 62;
 }
 
-// A number that no member has gets the distance of a stretch that reaches its page. A page that none reaches has the first row.
 static DistancePages buildDistancePages(std::span<const DistanceOfShapes> stretches, unsigned logShapesPerPage)
 {
     int64_t last = stretches.back().shapes.end() - 1;
@@ -735,8 +707,6 @@ DistancesByShape distancesByShape(std::span<const DistanceOfShapes> members)
     return byTable;
 }
 
-// A layout, then what is written below it: a class and the classes that extend it stand side by side, so the test of such a family is the test of a range.
-// Among layouts with one base, and among those without, the order of the layouts.
 static Vector<uint32_t> layoutsEachInFrontOfThoseBelowForShapeTest(const Program& program)
 {
     constexpr uint32_t none = UINT32_MAX;
@@ -775,14 +745,11 @@ static Vector<uint32_t> layoutsEachInFrontOfThoseBelowForShapeTest(const Program
         if (!writtenBaseOf(program.layouts[index]))
             listWithAllBelow(index);
     }
-    // `class A extends B {}` beside `class B extends A {}`: a ring hangs below nothing.
     for (uint32_t index = 0; index < numberOfLayouts; ++index)
         listWithAllBelow(index);
     return order;
 }
 
-// What linked() rules out of the objects of a layout that reaches no unseen code. Compiled code leans on it without a look, so the run time ends the process at whatever does it all the same: validateMutation().
-// Of a layout that reaches unseen code nothing is ruled out. Link has no word of an object that comes to stand above others.
 static OptionSet<ObjectMutation> mutationsRuledOutForShapeTest(const Program& program, const LinkTables& linked, LayoutID id)
 {
     const LinkedLayout& layout = linked.layout(id);
@@ -800,7 +767,6 @@ static OptionSet<ObjectMutation> mutationsRuledOutForShapeTest(const Program& pr
         if (!layout.possibleChanges.contains(change))
             ruledOut.add(mutation);
     }
-    // A store by name creates a field that is declared with other attributes beside its slot, with no descriptor in sight.
     uint32_t numberDeclared = static_cast<uint32_t>(program.at(id).fields.size());
     for (uint32_t field = 0; field < numberDeclared; ++field) {
         if (!fieldAt(program, declarationOf(program, { id, field })).form.isEmpty())
@@ -809,7 +775,6 @@ static OptionSet<ObjectMutation> mutationsRuledOutForShapeTest(const Program& pr
     return ruledOut;
 }
 
-// planProgram() of AOTPlan.cpp calls it, and declares it for itself.
 ShapeTable computeShapeTable(const Program&, const LinkTables&, const SlotPlan&, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts);
 ShapeTable computeShapeTable(const Program& program, const LinkTables& linked, const SlotPlan& slots, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts)
 {
@@ -822,7 +787,6 @@ ShapeTable computeShapeTable(const Program& program, const LinkTables& linked, c
         parts.shapes.append(PlacedShape { .layout = id });
     };
 
-    // Empty, as with TypedOperations withheld: by the written bases alone.
     Vector<uint32_t> orderByWrittenBases;
     if (orderOfLayouts.empty()) {
         orderByWrittenBases = layoutsEachInFrontOfThoseBelowForShapeTest(program);
@@ -838,13 +802,11 @@ ShapeTable computeShapeTable(const Program& program, const LinkTables& linked, c
     parts.firstEnvironmentShape = static_cast<uint32_t>(parts.shapes.size());
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         LayoutID id(index);
-        // Plan::closureAllocation() names the shape of the layout of closures whatever is said of that layout.
         bool isEnvironmentInUse = slots.layout(id).storage == LayoutStorage::Environment && !slots.isNeverAllocated(id);
         if (isEnvironmentInUse || id == closureLayout)
             giveShapeTo(id);
     }
 
-    // A layout has one shape, and an id of a layout has fewer bits than a shape word: every word has the bit that tells a compiled object from any other cell.
     RELEASE_ASSERT(parts.shapes.size() - 1 <= compiledObjectShapeBit);
     return ShapeTable(WTF::move(parts));
 }

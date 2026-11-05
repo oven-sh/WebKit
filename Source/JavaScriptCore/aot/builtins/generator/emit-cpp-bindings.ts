@@ -20,7 +20,6 @@ import {
 import { compareBytes } from "./paths.ts";
 import type { CppClassRef, DirectEntrySpec, FeatureName, Origin } from "./vocabulary.ts";
 
-/** The statement that records an entry of one of the host's tables of functions for whoever links an executable without a feature. The host writes it. */
 export type FormatTableEntryRecord = (
   table: string,
   feature: FeatureName,
@@ -105,12 +104,10 @@ const checkedNumberAssertions = [
   "#undef CHECK_NUMBER",
 ].join("\n");
 
-// A symbol of `$newCppFunction` is written for GeneratedJS2Native.h, which looks names up in these.
 const namespacesOfHostFunctions = ["Bun", "Bun::Bindgen::Generated", "JSC", "WebCore"]
   .map(namespace => `using namespace ${namespace};`)
   .join("\n");
 
-// The declaration of a thunk spells the types of its parameters with these.
 const headersOfDirectFunctions = ["Bindgen/ExternTraits.h", "Bindgen/IDLConvert.h"];
 
 function inTokenOrder<Item extends { token: string }>(items: readonly Item[]): Item[] {
@@ -161,7 +158,6 @@ function formatClassBinding(builtinClass: ModelClass, id: string): string {
   ]);
 }
 
-/** One function for all the classes: every start of a compiled program asks for the Structures that the realm has made by then. */
 function emitInstanceStructureLookup(classes: readonly ModelClass[]): string {
   return [
     "static void findInstanceStructures(JSC::JSGlobalObject* realm, std::span<JSC::Structure*> structures)",
@@ -225,11 +221,9 @@ function formatHostEntryPointRecord(
   return feature === undefined ? [] : [formatRecord(`Bun::AOTHostBindings::${table}`, feature, stub, symbol)];
 }
 
-// What stands in for a function of a removed feature throws in the realm that it takes first.
 const stubOfDirectFunction = ({ parameters }: DirectEntrySpec) =>
   parameters[0]?.value === "Realm" ? "Throw" : "Abort";
 
-// Nobody calls a native binding. The entry of the function that it makes has the same overloads.
 function findDirectFunctions(model: TableModel): DirectFunctionEntry[] {
   return model.overloads.flatMap(overload => {
     const { directEntry } = overload.code;
@@ -238,14 +232,13 @@ function findDirectFunctions(model: TableModel): DirectFunctionEntry[] {
 }
 
 function formatDirectFunctionBinding({ overload, directEntry }: DirectFunctionEntry): string {
-  const { symbol, parameters, offsetOfNativeObject = null, returnsFields = false, returnsNumber = false } = directEntry;
+  const { symbol, parameters, offsetOfNativeObject = null, returnsNumber = false } = directEntry;
   const values = parameters.map(({ value }) => `BuiltinDirectValue::${value}`);
   return formatAggregate([
     ["overload", formatId("BuiltinOverloadID", overload)],
     ["function", `reinterpret_cast<const void*>(${symbol})`],
     ["parameters", values.length === 0 ? null : `{ ${values.join(", ")} }`],
     ["parameterCount", formatUnlessZero(values.length)],
-    ["returnsFields", returnsFields ? "true" : null],
     ["returnsNumber", returnsNumber ? "true" : null],
     ["offsetOfNativeObject", offsetOfNativeObject],
   ]);
@@ -331,7 +324,6 @@ function emitEngineBindingLists(
   ]);
 }
 
-// Compiled with the engine, so it names an entry by its constant and has none of the table's numbers.
 export function emitEngineBindings(model: TableModel): string {
   const classes = findClassesWithBindings(model, "Engine");
   const nativeFunctions = findNativeFunctions(model, "Engine");
@@ -422,12 +414,11 @@ function emitCallListReference(stamp: string): string {
   return `[[maybe_unused]] __attribute__((used)) static const uint8_t* const nativeCallListStamp = &Bun__js2nativeList_${stamp};`;
 }
 
-// Compiled code enters these the way it enters an operation of the engine, so they have the calling convention of one.
 function emitDirectFormAssertions(directFunctions: readonly DirectFunctionEntry[]): string {
   return sortUnique(
-    directFunctions.map(({ directEntry: { symbol, parameters, returnsFields = false, returnsNumber = false } }) => {
+    directFunctions.map(({ directEntry: { symbol, parameters, returnsNumber = false } }) => {
       const types = parameters.map(({ cppType }) => cppType);
-      const result = returnsFields ? "JSC::AOT::BuiltinDirectFields" : returnsNumber ? "double" : "JSC::EncodedJSValue";
+      const result = returnsNumber ? "double" : "JSC::EncodedJSValue";
       return `static_assert(std::is_same_v<decltype(&${symbol}), ${result} (SYSV_ABI*)(${types.join(", ")})>);`;
     }),
   ).join("\n");

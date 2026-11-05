@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations: the position of a for-in comes round in a parameter of the head of its loop, in place of a cell of heap words, and so does the number of names that are known to be current.
-// Guesses: over what is expected to be a list, a step in the indexed part is a look at the storage, and the accesses of the turn take the index itself.
-// At a suspension: enumerator, position and number are values like any other. At a throw: a for-in has nothing to close.
-// Withheld: buildTypedForIn() is not asked, and Walker::chooseConservativeFields() expands both operations.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -21,13 +16,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-// AOTWalkNumbers.cpp
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet opcodesOfWalkForIn { Opcode::ForInOpen, Opcode::ForInStep };
-// Closed, a step in the indexed part enters the run time and makes a text of the index, and an access of the turn makes an index of the text.
 static constexpr uint32_t closedOperationsOfStepOverListInWalkForIn = 2;
 
 namespace {
@@ -35,7 +27,6 @@ namespace {
 struct LoopOfForInInWalkForIn {
     ValueID step;
     BlockID head;
-    // The open is the last operation of its block, which goes on in the head and nowhere else, and the step asks the object that was opened: what the open has counted holds where the loop is entered.
     bool isEnteredBehindOpen { false };
 };
 
@@ -48,8 +39,6 @@ struct StepInWalkForIn {
 };
 
 }
-
-// ---- What both operations are made of
 
 static Reference integerInWalkForIn(Walker& walker, int64_t value, Origin origin)
 {
@@ -112,7 +101,6 @@ static Reference resultsInWalkForIn(Walker& walker, Reference done, Reference ke
     return buildInWalkForIn(walker, WTF::move(results));
 }
 
-// The walk stands in a block that the taken edge of a branch on the test alone enters.
 static Reference narrowedInWalkForIn(Walker& walker, Reference value, Reference test, uint32_t operandIndex, Origin origin)
 {
     Draft proof(Opcode::Narrowed, origin);
@@ -122,8 +110,6 @@ static Reference narrowedInWalkForIn(Walker& walker, Reference value, Reference 
     proof.setIsOnTakenEdge(true);
     return walker.isUnreachable() ? Reference() : walker.build(WTF::move(proof));
 }
-
-// ---- No key of any object has changed since. The note lies on the enumerator, which no program names, and ends with whatever may write a shape word, an order word or a named property: what IsEnumeratorCurrent reads.
 
 static void noteKeysAreAsEnumeratorFoundThemInWalkForIn(Walker& walker, Reference enumerator)
 {
@@ -135,9 +121,6 @@ static bool keysAreAsEnumeratorFoundThemInWalkForIn(Walker& walker, Reference en
     return walker.state().factsOfCell(enumerator).contains(FactOfCell::IsLikelyAsAllocated);
 }
 
-// THE NUMBER IS SETTLED ON EACH EDGE INTO THE HEAD, as the look at the loop counts the step itself as any code and so ends every note at the head.
-// In front of the loop: what the open has counted enters, and at the head the parameter holds a number that is current there, whichever edge has brought it. So the note is laid anew.
-// On an edge that comes round: true where no key can have changed since the step of the turn. False: the edge brings zero, and the next step looks at the object.
 bool countOfNamesComesRound(Walker& walker, const Walker::IterationByIndex& iteration)
 {
     if (iteration.otherForm != Walker::IterationByIndex::OtherForm::Enumeration || !iteration.count || !iteration.list)
@@ -147,8 +130,6 @@ bool countOfNamesComesRound(Walker& walker, const Walker::IterationByIndex& iter
     noteKeysAreAsEnumeratorFoundThemInWalkForIn(walker, iteration.list);
     return true;
 }
-
-// ---- The open
 
 static std::optional<LoopOfForInInWalkForIn> findLoopOfForInInWalkForIn(const BodyIndex& index, const BodyValue& open)
 {
@@ -172,7 +153,6 @@ static std::optional<LoopOfForInInWalkForIn> findLoopOfForInInWalkForIn(const Bo
     return found;
 }
 
-// Whatever else it may be, the step asks the storage itself: nothing is claimed of the object.
 static bool isExpectedToBeListInWalkForIn(Walker& walker, ValueID input, Reference object, bool& isDeclared)
 {
     TypeArena& types = walker.types();
@@ -204,7 +184,6 @@ static bool openInWalkForIn(Walker& walker, const BodyValue& open)
     iteration.otherForm = Walker::IterationByIndex::OtherForm::Enumeration;
     iteration.subject = object;
     iteration.isDeadBehindLoop = true;
-    // Nothing is enumerated, so no enumerator is asked for and nothing comes round: the one step finds the end.
     if (walker.types().at(walker.typeOf(object)).isUndefinedOrNull()) {
         walker.bind(open.id(), walker.addIterationByIndex(WTF::move(iteration)));
         return true;
@@ -219,7 +198,6 @@ static bool openInWalkForIn(Walker& walker, const BodyValue& open)
         iteration.list = resultAtInWalkForIn(walker, results, static_cast<uint32_t>(ForInOpenResult::Enumerator), origin);
         iteration.count = resultAtInWalkForIn(walker, results, static_cast<uint32_t>(ForInOpenResult::CurrentNames), origin);
     } else {
-        // Not through chooseConservativeFields(), which lays the position in a cell.
         Draft asWritten(Opcode::ForInOpen, origin);
         asWritten.setObjectOperand(object);
         iteration.list = walker.build(WTF::move(asWritten));
@@ -235,8 +213,6 @@ static bool openInWalkForIn(Walker& walker, const BodyValue& open)
     walker.bind(open.id(), walker.addIterationByIndex(WTF::move(iteration)));
     return true;
 }
-
-// ---- The step
 
 static StepInWalkForIn buildStepFromInWalkForIn(Walker& walker, const Walker::IterationByIndex& iteration, Reference object, Reference position, Origin origin)
 {
@@ -258,12 +234,10 @@ static StepInWalkForIn buildStepFromInWalkForIn(Walker& walker, const Walker::It
     if (iteration.count)
         built.count = resultAtInWalkForIn(walker, results, static_cast<uint32_t>(ForInStepResult::CurrentNames), origin);
     built.next = buildOperatorInWalkForIn(walker, Opcode::Increment, built.foundAt, { }, origin);
-    // Where the step has run code of the program it answers with zero.
     noteKeysAreAsEnumeratorFoundThemInWalkForIn(walker, iteration.list);
     return built;
 }
 
-// position < indexedLength, and the object has an element of its own in its storage there: the key is the index, and no run time is entered. Whatever else is the case takes the step as written, from the same position.
 static StepInWalkForIn buildStepOverListInWalkForIn(Walker& walker, Walker::IterationByIndex& iteration, Reference object, Origin origin)
 {
     TypeArena& types = walker.types();
@@ -320,7 +294,6 @@ static bool stepInWalkForIn(Walker& walker, const BodyValue& step)
     Reference state = walker.referenceOf(step.enumeratorOperand());
     if (!state || !state.isVirtual() || walker.iterationByIndex(state).otherForm != Walker::IterationByIndex::OtherForm::Enumeration)
         return false;
-    // THE OPEN HAS DECIDED: there is no cell that a closed step could read its position from.
     Walker::IterationByIndex& iteration = walker.iterationByIndex(state);
     Origin origin = walker.originOf(step);
     iteration.newestStep = step.id();
@@ -335,7 +308,6 @@ static bool stepInWalkForIn(Walker& walker, const BodyValue& step)
         return true;
     }
 
-    // A turn that is written out: Walker::writeOutTurnsOfForIn() has set the position, and has seen that the object has the name that the enumerator lists there.
     if (std::optional<int64_t> turn = integerHeldInWalkForIn(walker, iteration.position); turn && static_cast<uint64_t>(*turn) < iteration.takenAtOpen.size()) {
         iteration.foundAt = iteration.position;
         iteration.position = integerInWalkForIn(walker, *turn + 1, origin);
@@ -349,7 +321,6 @@ static bool stepInWalkForIn(Walker& walker, const BodyValue& step)
         walker.fail("the step of a for-in asks what is no record of Code"_s);
         return true;
     }
-    // Where the head has given the number no parameter, nothing brings it round.
     if (iteration.count && (!iteration.head || walker.code().blockOf(iteration.count.id()) != iteration.head))
         iteration.count = { };
     bool isDeclared = false;
@@ -376,8 +347,6 @@ bool buildTypedForInOfItsOpcodes(Walker& walker, const BodyValue& value)
         return false;
     return value.opcode() == Opcode::ForInOpen ? openInWalkForIn(walker, value) : stepInWalkForIn(walker, value);
 }
-
-// ---- A loop that is built twice steps its iterations twice, each copy from what entered
 
 bool Walker::iterationsSteppedAtMayBeBuiltTwice(BlockID inputHead) const
 {

@@ -35,7 +35,6 @@ void readTagsFromInstance(CCallHelpers& jit)
 #endif
 }
 
-// The stubs count bits with popcnt. Every x86-64 processor that Bun runs on has it: -march=nehalem is the floor.
 static CPUFeatureSet featuresOfStubs(CPUFeatureSet features)
 {
 #if CPU(X86_64)
@@ -122,7 +121,6 @@ void StubAssembler::jumpToOperationCallOf(Entry entry)
 {
     recordCall(entry);
     move(TrustedImm32(offsetInRuntimeTable(entry)), *m_signature.immediate);
-    // argumentGPROfPreservingCall() has the other half.
     if (key().family() == StubFamily::CallOperationPreservingRegisters && preservingCallShapes[key().form()].firstArgument == OperationCall::FirstArgument::Instance && hasPrelude(entryAtOffset(*key().immediate()))) {
         unsigned index = 1;
         for (GPRReg reg : registersThatPreservingCallsTakeArgumentsIn()) {
@@ -522,7 +520,6 @@ void StubAssembler::callStub(StubKey target)
     emitStubCall(target);
 }
 
-// A result that the stub jumped to does not make itself comes back only by being saved.
 static bool formOfJumpTargetKeepsResults(CallerFrame callerFrame, const StubSignature& target, const StubSignature& signature)
 {
     for (Reg result : { signature.firstResult, signature.secondResult }) {
@@ -537,7 +534,6 @@ static bool formOfJumpTargetKeepsResults(CallerFrame callerFrame, const StubSign
 void StubAssembler::linkToStub(Jump jump, StubKey target)
 {
     RELEASE_ASSERT(!m_boxesBooleanAtEveryReturn || target.family() == StubFamily::HandleException);
-    // The stub that is jumped to returns to the same caller.
     if (hasFrameAndKeepsFewerRegisters(m_key.callerFrame()) && target.callerFrame() == CallerFrame::HasFrame) {
         std::optional<StubKey> form = tryWithCallerFrame(target, m_key.callerFrame());
         if (form && formOfJumpTargetKeepsResults(m_key.callerFrame(), signatureOf(target), m_signature))
@@ -694,8 +690,6 @@ void StubAssembler::checkStackBeforeEntering()
     pollIfBelow(trapAwareSoftStackLimitWord(), pollBeforeEntering(PollBeforeEnteringForm::Plain));
 }
 
-// Native code whose allocation fails continues with the reserve. sp is as it was at the stub's entry, so what the poll throws is thrown at the call site.
-// No function is entered here, so an exhausted stack alone is not a reason to throw.
 void StubAssembler::pollBeforeReturningFromNativeCode()
 {
     if (key().callerFrame() == CallerFrame::StubFrame)
@@ -715,7 +709,6 @@ CCallHelpers::Address StubAssembler::pollIsDueWord()
     return Address(instanceGPR, AOT_INSTANCE_OFFSET(pollIsDue));
 }
 
-// One test for the exception that an operation reports in a register and for the poll. Changes the register.
 CCallHelpers::Jump StubAssembler::branchIfNonZeroOrPollIsDue(GPRReg value, GPRReg scratch)
 {
 #if CPU(X86_64)
@@ -729,8 +722,6 @@ CCallHelpers::Jump StubAssembler::branchIfNonZeroOrPollIsDue(GPRReg value, GPRRe
 #endif
 }
 
-// The out-of-line part of a stub that has found a poll due after its operation, with sp as it was at the stub's entry. pollBeforeReturningFromNativeCode() says why.
-// A caller plans for the error of a failed allocation wherever a call may collect, so the poll adds nothing to the effects of the stub.
 void StubAssembler::pollBeforeReturningFromOperation(Label afterPoll)
 {
     branchPtr(Below, stackPointerRegister, softStackLimitWord()).linkTo(afterPoll, this);
@@ -770,7 +761,6 @@ void StubAssembler::pollIfBelow(Address limit, StubKey poll)
     });
 }
 
-// sp is as at the entry of this stub: on x86-64 not aligned for a call, which PollBeforeEntering expects.
 void StubAssembler::pollAtStubEntry(StubKey poll, StubReference::Kind kind)
 {
 #if CPU(ARM64)

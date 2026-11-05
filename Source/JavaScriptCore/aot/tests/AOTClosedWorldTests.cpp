@@ -28,15 +28,12 @@ using Flags = OptionSet<ImageFlag>;
 
 static constexpr Flags refusesOriginals { ImageFlag::RefusesOriginalsBesideMocks };
 static constexpr Flags closed = refusesOriginals;
-// Text may ask process.getBuiltinModule for a module of the library under a name that nobody knows. No file of the program answers to such a name: closed-world/modules/evaluated-text-finds-no-module-by-name.
-static constexpr Flags runsText = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::RunsUnreadCode };
-// A package that the build left out is code from disk, like what a load under an unknown name brings in: letCodeOutsideImageRunForFlowModules().
-static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName, ImageFlag::RunsUnreadCode };
-static constexpr Flags findsModulesByName = refusesOriginals | Flags { ImageFlag::LoadsModulesByName, ImageFlag::FindsDataFilesByName };
+static constexpr Flags runsText = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName };
+static constexpr Flags runsModuleFromOutside = refusesOriginals | Flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
+static constexpr Flags findsModulesByName = refusesOriginals | Flags { ImageFlag::LoadsModulesByName };
 static constexpr Flags loadsCodeFromOutside = runsModuleFromOutside | Flags { ImageFlag::LoadsCodeOutsideImage };
+static constexpr Flags runsTextThatLoadsCode = runsOnlyCodeOfImage ? runsText : loadsCodeFromOutside;
 static constexpr Flags showsWaysBetweenModuleObjects = refusesOriginals | Flags { ImageFlag::ShowsWaysBetweenModuleObjects };
-// Text that a debugger evaluates may name a file outside the image, and an image that admits the inspector loads it whatever else the options exclude: refusedCodeOf().
-// It stores no other path into Bun.main: the front end has decided in the code of these programs which file is the main module.
 static constexpr Flags open = loadsCodeFromOutside;
 
 #define AOT_APPLY_EVALUATOR_TEXT R"IR(function f1 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
@@ -194,6 +191,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = PropGet v0 key="name" [isFreeName]
     v2 = Builtin builtin=Worker
     v3 = Construct v2, -, v1
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral startsTwoWorkersFromUnknownValues = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = Builtin builtin=Worker
+    v3 = Construct v2, -, v1
+    v4 = Construct v2, -, v1
     Return
 }
 )IR"_s;
@@ -366,7 +375,6 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-// A name that the build did not follow finds the entry points and no other file of the image, so the other module is one.
 static constexpr ASCIILiteral otherModuleIsLoadedByUnknownName = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
@@ -474,7 +482,6 @@ entry module=m0
 }
 )IR"_s
 
-// Bun's table has `bun:main` beside `Bun.main`. Two entries that would share a token go by their qualified ones: assignTokens() of builtins/generator/number.ts.
 static constexpr ASCIILiteral storesPathOfMainModuleLeftOpen = AOT_STORES_PATH_OF_MAIN_MODULE("replaceablebuiltin member=Bun_main\n");
 static constexpr ASCIILiteral storesPathOfMainModuleDecidedInCode = AOT_STORES_PATH_OF_MAIN_MODULE("");
 
@@ -524,7 +531,6 @@ function f1 name="mocked" module=m1 kind=CommonJsModule flags=[IsSloppy] results
 }
 )IR"_s;
 
-// As a front end sends it: a function of the library lies in a module of the library, and that module is who asks.
 #define AOT_LIBRARY_LOADS_BY_NAME(operation) R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/other.js" displayPath="other.js" body=f1
 module m2 path="internal:load" displayPath="internal:load" flags=[IsLibrary]
@@ -637,7 +643,6 @@ static void checkFlags(std::initializer_list<ExpectedFlags> expectations)
         Flags found = flagsOf(expected.programText, expected.optionWords);
         if (found == expected.flags)
             continue;
-        // The report of the red tests cuts every printed line but one that starts as a diagnostic does: `Kind: `.
         dataLogLn("ImageFlags: line ", expected.location.line(), ": unexpected [", namesOf(found - expected.flags), "], missing [", namesOf(expected.flags - found), "]");
         if (!mismatchCount++)
             firstMismatch = &expected;
@@ -665,7 +670,6 @@ static void testProgramWithoutEventIsClosed()
     checkFlags({
         { printsSum, closed },
         { otherModuleIsNeverLoaded, closed },
-        // An addon is native code.
         { loadsNativeAddon, closed },
     });
 }
@@ -673,22 +677,23 @@ static void testProgramWithoutEventIsClosed()
 static void testReachableEvaluatorLeavesTheProgramClosed()
 {
     checkFlags({
-        { callsUnknownFunction, closed },
         { evaluatorsFromUnknownCode, closed },
         { evaluatorUnderUnknownKey, closed },
-        { evaluatorUnderUnknownKeyOfGlobalObject, closed },
     });
 }
 
-static void testCallThatStartsUnseenCodeAdmitsNothingElse()
+static void testCallThatStartsUnseenCodeAdmitsWhatTextMayLoad()
 {
     checkFlags({
-        { evaluatesUnknownText, runsText },
-        { constructsFunctionFromUnknownText, runsText },
-        { installsPlugin, runsText },
-        { evaluatesTextBesideOtherModule, runsText },
-        { unseenCodeMayCallLoader, runsText },
-        { evaluatorComesBackFromUnknownCode, runsText },
+        { evaluatesUnknownText, runsText, { "exclude=CodeOutsideImage"_s } },
+        { evaluatesUnknownText, runsTextThatLoadsCode },
+        { constructsFunctionFromUnknownText, runsTextThatLoadsCode },
+        { installsPlugin, runsTextThatLoadsCode },
+        { evaluatesTextBesideOtherModule, runsTextThatLoadsCode },
+        { unseenCodeMayCallLoader, runsTextThatLoadsCode },
+        { evaluatorComesBackFromUnknownCode, runsTextThatLoadsCode },
+        { callsUnknownFunction, runsTextThatLoadsCode },
+        { evaluatorUnderUnknownKeyOfGlobalObject, runsTextThatLoadsCode },
     });
 }
 
@@ -708,7 +713,6 @@ static void testOptionThatAdmitsCodeOpensTheProgram()
     });
 }
 
-// Text that a debugger evaluates names whatever the realm holds. So the executable keeps whatever nobody asked to remove, though the program itself uses next to nothing.
 static void testOptionThatAdmitsCodeKeepsEveryFeature()
 {
     std::unique_ptr<CompileOutput> output;
@@ -740,7 +744,6 @@ static void testOptionThatAdmitsCodeKeepsEveryFeature()
     AOT_TEST_CHECK(locales.size() == 1 && locales[0].kind == Wire::LocaleUseKind::Unknown);
 }
 
-// `bun test --aot` admits code from disk. Each run said "The build can't tell which file this Worker starts from", of no place, about a program that names no Worker.
 static void testCodeThatNobodyHasReadIsNoWorkerStartedWithoutName()
 {
     auto startsWithoutName = [](ASCIILiteral program, std::initializer_list<ASCIILiteral> words) {
@@ -755,9 +758,10 @@ static void testCodeThatNobodyHasReadIsNoWorkerStartedWithoutName()
     AOT_TEST_CHECK(!startsWithoutName(evaluatesUnknownText, { }));
     AOT_TEST_CHECK(startsWithoutName(handsOnConstructorOfWorkers, { }) == 1);
     AOT_TEST_CHECK(startsWithoutName(handsOnConstructorOfWorkers, { "exclude=CodeOutsideImage"_s }) == 1);
+    AOT_TEST_CHECK(startsWithoutName(startsWorkerFromUnknownValue, { }) == 1);
+    AOT_TEST_CHECK(startsWithoutName(startsTwoWorkersFromUnknownValues, { }) == 2);
 }
 
-// `globalThis.listed()` got "The build can't tell which file this Worker starts from". The call hands on a holder above the constructor: the record stays, and names a place, which is what the build warns at, only where the constructor itself was seen.
 static void testStartOfWorkerHasPlaceOnlyWhereConstructorWasSeen()
 {
     auto startHasPlace = [](ASCIILiteral program) -> std::optional<bool> {
@@ -783,7 +787,6 @@ static void testLoadByUnknownNameOnlyExposesModules()
 {
     checkFlags({
         { otherModuleIsLoadedByUnknownName, findsModulesByName, { "exclude=CodeOutsideImage"_s } },
-        // The name may be the path of a file that the build has not seen.
         { otherModuleIsLoadedByUnknownName, runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside },
         { otherModuleIsLoadedByUnknownName, open, { "admit=Inspector"_s, "exclude=CodeOutsideImage"_s } },
     });
@@ -806,7 +809,6 @@ static void testLoadByNameInLibraryFunctionLeavesTheProgramClosed()
     });
 }
 
-// No module of the image is in the module cache, so nothing that is done to the cache changes what the code counts on.
 static void testWhatIsDoneToModuleCacheLeavesTheProgramClosed()
 {
     checkFlags({
@@ -817,7 +819,6 @@ static void testWhatIsDoneToModuleCacheLeavesTheProgramClosed()
     });
 }
 
-// What a program can observe never depends on what Facts knows: the front end says by binding whether a file names a way between module objects, and nobody else is asked.
 static void testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown()
 {
     checkFlags({
@@ -827,7 +828,6 @@ static void testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown()
     });
 }
 
-// The front end decides `require.main === module` and `import.meta.main` in the code unless it lists Bun.main among what the program replaces. A store that Facts sees is taken only then.
 static void testStoreIntoPathOfMainModuleIsTakenWhereFrontEndLeftItOpen()
 {
     AOT_TEST_CHECK(flagsOf(storesPathOfMainModuleLeftOpen).contains(ImageFlag::StoresPathOfMainModule));
@@ -839,8 +839,8 @@ static void testExcludedTextLeavesTheProgramClosed()
 {
     checkFlags({
         { evaluatesUnknownText, closed, { "exclude=EvaluatedText"_s } },
-        { installsPlugin, runsText, { "exclude=EvaluatedText"_s } },
-        { evaluatesUnknownText, runsText, { "exclude=HostEvaluatedText"_s } },
+        { installsPlugin, runsTextThatLoadsCode, { "exclude=EvaluatedText"_s } },
+        { evaluatesUnknownText, runsTextThatLoadsCode, { "exclude=HostEvaluatedText"_s } },
     });
 }
 
@@ -922,7 +922,6 @@ static void testEveryRealmOfClosedProgramRefusesEvaluation()
 
 static void testScriptShadowsNoConstantOfCompiledCode()
 {
-    // Whether parseInt is a constant is up to the analysis. Either the declaration is refused or compiled code sees the binding.
     static constexpr ASCIILiteral declareInScripts = "globalThis.errorOf = script => { try { loadString(script); return null; } catch (error) { return error; } };"
         " globalThis.declare = script => { const error = errorOf(script); if (error) print(error); };"
         " globalThis.text = `declare('let Math = { max: () => \"of the script\" }'); declare('const Math = 1'); declare('class Math { }'); declare('let globalThis = 1');"
@@ -935,6 +934,7 @@ static void testScriptShadowsNoConstantOfCompiledCode()
 
 #define AOT_LOAD_BY_NAME_REFUSED "Cannot load '/other.js': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 
+#define AOT_COMPILED_FILE_REFUSED "Cannot load '/other.js': it was compiled into this executable, and a dynamic path finds a compiled file only if the path is a string somewhere in your code. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 #define AOT_LOADER_CHANGE_REFUSED ": imports in this executable were resolved at build time, so the module loader can't be patched. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 
 static constexpr ASCIILiteral runOtherModule = "globalThis.name = '/other.js'; try { runCompiledEntryPoint(2); drainMicrotasks(); } catch (error) { print(error.message); }"_s;
@@ -947,7 +947,7 @@ static void testClosedProgramFindsNoModuleByName()
 static void testEvaluatedTextFindsNoModuleByName()
 {
     static constexpr ASCIILiteral textThatLoads = "globalThis.text = `for (const change of [() => runCompiledEntryPoint(2), () => overrideRequire(true)]) { try { change(); print('done'); } catch (error) { print(error.message); } }`;"_s;
-    checkShellOutput(evaluatesTextBesideOtherModule, AOT_LOAD_BY_NAME_REFUSED "done\n"_s, textThatLoads);
+    checkShellOutput(evaluatesTextBesideOtherModule, runsOnlyCodeOfImage ? AOT_LOAD_BY_NAME_REFUSED "done\n"_s : AOT_COMPILED_FILE_REFUSED "done\n"_s, textThatLoads);
 }
 
 static void testProgramThatLoadsByNameFindsEntryPoints()
@@ -968,7 +968,6 @@ static void testLibraryFunctionOfClosedProgramFindsNoModuleByName()
 
 static constexpr ASCIILiteral changeLoader = "for (const change of [() => overrideRequire(true), () => setRequireCacheEntry(2, { })]) { try { change(); print('changed'); } catch (error) { print(error.message); } } overrideRequire(false);"_s;
 
-// The code calls the module that each constant name stood for in the build, whatever else the image admits and whatever function the program has put in the loader's place.
 static void testEveryImageTakesHookAndRefusesEntryOfCache()
 {
     static constexpr ASCIILiteral refusals = "changed\nCannot replace '/app/other.cjs' in require.cache" AOT_LOADER_CHANGE_REFUSED "other ran\n"_s;
@@ -977,31 +976,28 @@ static void testEveryImageTakesHookAndRefusesEntryOfCache()
     checkShellOutput(requiresOtherModule, refusals, changeLoader, { "admit=Inspector"_s });
 }
 
-static constexpr ASCIILiteral noFlagsOfClosedWorld = "facts: the flags of a closed program: findsFilesOfProgramByName and reachedFunctionsCountUnreadCode are never computed, and a call of an unknown function admits code"_s;
-static constexpr ASCIILiteral noRefusals = "facts: what a closed program refuses: an evaluator that is found under an unknown key runs, and a text gets another answer where it asks for a module by name"_s;
-
 std::span<const NativeTest> closedWorldTests()
 {
     static constexpr NativeTest tests[] {
-        { "closed-world/flags/program-without-event-is-closed"_s, testProgramWithoutEventIsClosed, noFlagsOfClosedWorld },
-        { "closed-world/flags/reachable-evaluator-leaves-the-program-closed"_s, testReachableEvaluatorLeavesTheProgramClosed, noFlagsOfClosedWorld },
-        { "closed-world/flags/call-that-starts-unseen-code-admits-nothing-else"_s, testCallThatStartsUnseenCodeAdmitsNothingElse, noFlagsOfClosedWorld },
+        { "closed-world/flags/program-without-event-is-closed"_s, testProgramWithoutEventIsClosed },
+        { "closed-world/flags/reachable-evaluator-leaves-the-program-closed"_s, testReachableEvaluatorLeavesTheProgramClosed },
+        { "closed-world/flags/call-that-starts-unseen-code-admits-what-a-text-may-load"_s, testCallThatStartsUnseenCodeAdmitsWhatTextMayLoad },
         { "closed-world/flags/uncompiled-module-opens-the-program"_s, testUncompiledModuleOpensTheProgram },
         { "closed-world/flags/option-that-admits-code-opens-the-program"_s, testOptionThatAdmitsCodeOpensTheProgram },
         { "closed-world/flags/code-that-nobody-has-read-is-no-worker-started-without-a-name"_s, testCodeThatNobodyHasReadIsNoWorkerStartedWithoutName },
         { "closed-world/flags/start-of-worker-has-place-only-where-constructor-was-seen"_s, testStartOfWorkerHasPlaceOnlyWhereConstructorWasSeen },
-        { "closed-world/flags/load-by-unknown-name-only-exposes-modules"_s, testLoadByUnknownNameOnlyExposesModules, noFlagsOfClosedWorld },
-        { "closed-world/flags/loader-called-as-value-loads-by-name"_s, testLoaderCalledAsValueLoadsByName, noFlagsOfClosedWorld },
-        { "closed-world/flags/load-by-name-in-library-function-leaves-the-program-closed"_s, testLoadByNameInLibraryFunctionLeavesTheProgramClosed, noFlagsOfClosedWorld },
-        { "closed-world/flags/what-is-done-to-module-cache-leaves-the-program-closed"_s, testWhatIsDoneToModuleCacheLeavesTheProgramClosed, noFlagsOfClosedWorld },
-        { "closed-world/flags/front-end-alone-says-whether-ways-between-module-objects-are-shown"_s, testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown, noFlagsOfClosedWorld },
+        { "closed-world/flags/load-by-unknown-name-only-exposes-modules"_s, testLoadByUnknownNameOnlyExposesModules },
+        { "closed-world/flags/loader-called-as-value-loads-by-name"_s, testLoaderCalledAsValueLoadsByName },
+        { "closed-world/flags/load-by-name-in-library-function-leaves-the-program-closed"_s, testLoadByNameInLibraryFunctionLeavesTheProgramClosed },
+        { "closed-world/flags/what-is-done-to-module-cache-leaves-the-program-closed"_s, testWhatIsDoneToModuleCacheLeavesTheProgramClosed },
+        { "closed-world/flags/front-end-alone-says-whether-ways-between-module-objects-are-shown"_s, testFrontEndAloneSaysWhetherWaysBetweenModuleObjectsAreShown },
         { "closed-world/flags/store-into-path-of-main-module-is-taken-where-front-end-left-it-open"_s, testStoreIntoPathOfMainModuleIsTakenWhereFrontEndLeftItOpen },
-        { "closed-world/flags/excluded-text-leaves-the-program-closed"_s, testExcludedTextLeavesTheProgramClosed, noFlagsOfClosedWorld },
-        { "closed-world/flags/obfuscation-is-another-flag"_s, testObfuscationIsAnotherFlag, noFlagsOfClosedWorld },
-        { "closed-world/flags/executable-refuses-originals-unless-a-variable-says-that-one-may-run"_s, testExecutableRefusesOriginalsUnlessVariableSaysThatOneMayRun, noFlagsOfClosedWorld },
-        { "closed-world/flags/test-run-refuses-originals-only-beside-a-mock-of-a-file"_s, testTestRunRefusesOriginalsOnlyBesideMockOfFile, noFlagsOfClosedWorld },
-        { "closed-world/flags/mock-of-a-module-of-the-run-time-is-a-mock-of-no-file"_s, testMockOfModuleOfRunTimeIsMockOfNoFile, noFlagsOfClosedWorld },
-        { "closed-world/flags/original-of-a-module-of-the-run-time-is-the-original-of-no-file"_s, testOriginalOfModuleOfRunTimeIsOriginalOfNoFile, noFlagsOfClosedWorld },
+        { "closed-world/flags/excluded-text-leaves-the-program-closed"_s, testExcludedTextLeavesTheProgramClosed },
+        { "closed-world/flags/obfuscation-is-another-flag"_s, testObfuscationIsAnotherFlag },
+        { "closed-world/flags/executable-refuses-originals-unless-a-variable-says-that-one-may-run"_s, testExecutableRefusesOriginalsUnlessVariableSaysThatOneMayRun },
+        { "closed-world/flags/test-run-refuses-originals-only-beside-a-mock-of-a-file"_s, testTestRunRefusesOriginalsOnlyBesideMockOfFile },
+        { "closed-world/flags/mock-of-a-module-of-the-run-time-is-a-mock-of-no-file"_s, testMockOfModuleOfRunTimeIsMockOfNoFile },
+        { "closed-world/flags/original-of-a-module-of-the-run-time-is-the-original-of-no-file"_s, testOriginalOfModuleOfRunTimeIsOriginalOfNoFile },
         { "closed-world/features/option-that-admits-code-keeps-every-feature"_s, testOptionThatAdmitsCodeKeepsEveryFeature },
         { "closed-world/evaluation/closed-program-refuses-every-evaluator"_s, testClosedProgramRefusesEveryEvaluator },
         { "closed-world/evaluation/program-that-evaluates-text-keeps-every-evaluator"_s, testProgramThatEvaluatesTextKeepsEveryEvaluator },
@@ -1011,8 +1007,7 @@ std::span<const NativeTest> closedWorldTests()
         { "closed-world/evaluation/every-realm-of-closed-program-refuses-evaluation"_s, testEveryRealmOfClosedProgramRefusesEvaluation },
         { "closed-world/declarations/script-shadows-no-constant-of-compiled-code"_s, testScriptShadowsNoConstantOfCompiledCode },
         { "closed-world/modules/closed-program-finds-no-module-by-name"_s, testClosedProgramFindsNoModuleByName },
-        // A hardened engine runs only the code of the image, whatever the program's flags say, and refuses the load as the test expects.
-        { "closed-world/modules/evaluated-text-finds-no-module-by-name"_s, testEvaluatedTextFindsNoModuleByName, runsOnlyCodeOfImage ? ASCIILiteral { } : noRefusals },
+        { "closed-world/modules/evaluated-text-finds-no-module-by-name"_s, testEvaluatedTextFindsNoModuleByName },
         { "closed-world/modules/program-that-loads-by-name-finds-entry-points"_s, testProgramThatLoadsByNameFindsEntryPoints },
         { "closed-world/modules/library-function-of-closed-program-finds-no-module-by-name"_s, testLibraryFunctionOfClosedProgramFindsNoModuleByName },
         { "closed-world/modules/every-image-takes-a-hook-and-refuses-an-entry-of-the-cache"_s, testEveryImageTakesHookAndRefusesEntryOfCache },

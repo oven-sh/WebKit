@@ -124,7 +124,6 @@ void branchIfNotExactInt32(StubAssembler& jit, FPRReg number, GPRReg integer, Ju
     }
 #endif
 #if CPU(X86_64)
-    // The integer, made a double again, has the bits of the number, or the number is no int32: the bits of negative zero and of NaN differ from those of any integer.
     const OwnedScratchRegister ownedScratch(jit);
     const GPRReg difference = ownedScratch;
     RELEASE_ASSERT(integer != difference);
@@ -206,7 +205,6 @@ void insertGranule(StubAssembler& jit, GPRReg extension, GPRReg granuleBit, GPRR
     jit.move(last, place);
     Jump isBehindAll = jit.jump();
 
-    // As Extension::tryInsert() leaves it: those above its place move up by one.
     isAmongHeld.link(&jit);
     cannotInsert.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))));
     const GPRReg word = granuleBit;
@@ -228,23 +226,6 @@ void insertGranule(StubAssembler& jit, GPRReg extension, GPRReg granuleBit, GPRR
 void decodeExtension(StubAssembler& jit, GPRReg word, GPRReg result)
 {
     jit.getEffectiveAddress(BaseIndex(cellCageBaseGPR, word, static_cast<CCallHelpers::Scale>(cell32Shift), offsetOfEmptyExtensionInCage), result);
-}
-
-void loadLiteralString(StubAssembler& jit, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated, GPRReg instance)
-{
-    RELEASE_ASSERT(noOverlap(wordAndResult, scratch, instanceGPR) && instance != wordAndResult);
-    if (jit.options().useWideReferences) {
-        static_assert(2 << literalStringShift == sizeof(JSCell*));
-        jit.loadPtr(Address(instance, AOT_INSTANCE_OFFSET(runtime.constants.wideLiteralStrings)), scratch);
-        jit.load64(BaseIndex(scratch, wordAndResult, CCallHelpers::TimesTwo, -2 * static_cast<int32_t>(emptyLiteralStringWord)), wordAndResult);
-        isNotCreated.append(jit.branchTest64(CCallHelpers::Zero, wordAndResult));
-        return;
-    }
-    static_assert(1 << literalStringShift == sizeof(uint32_t));
-    jit.loadPtr(Address(instance, AOT_INSTANCE_OFFSET(runtime.constants.literalStrings)), scratch);
-    jit.load32(BaseIndex(scratch, wordAndResult, CCallHelpers::TimesOne, -static_cast<int32_t>(emptyLiteralStringWord)), wordAndResult);
-    isNotCreated.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult));
-    decodeCell32(jit, wordAndResult, wordAndResult);
 }
 
 void decodeStructureID(CCallHelpers& jit, GPRReg idAndResult)

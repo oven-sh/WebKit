@@ -49,7 +49,6 @@ StubSignature signatureOfStackStringBuilderAppendString(StubKey) { return StubSi
 
 namespace {
 
-// No move reaches beyond the characters: the last one of each length ends where they end, and lies over the one in front of it where it has to.
 struct CopyIntoStringBuilder {
     NEVER_INLINE void moveTwice(unsigned width) const
     {
@@ -86,7 +85,6 @@ struct CopyIntoStringBuilder {
         jit.store64(second, BaseIndex(target, index, CCallHelpers::TimesOne, displacement + 8));
     }
 
-    // Without a list of jumps, returns to the caller of the stub.
     NEVER_INLINE void copy(JumpList* isCopied) const
     {
         auto leave = [&] {
@@ -123,7 +121,6 @@ struct CopyIntoStringBuilder {
             jit.returnToCaller();
     }
 
-    // The source holds the first word of the rope. The target ends behind the last piece. Whoever meets a piece that is itself a rope, or whose storage is 16-bit by now, leaves by the slow path.
     NEVER_INLINE void copyPiecesOfRope(GPRReg rope, JumpList& slowPath) const
     {
         auto copyPiece = [&] {
@@ -159,7 +156,6 @@ struct CopyIntoStringBuilder {
 
 } // anonymous namespace
 
-// A flat string of 8-bit characters that is short enough to be copied and fits into the room that the buffer has left. Everything else is the operation's.
 void generateStringBuilderAppendString(StubAssembler& jit)
 {
     using Storage = StringBuilderStorage;
@@ -193,7 +189,6 @@ void generateStringBuilderAppendString(StubAssembler& jit)
     jit.loadPtr(Address(source, StringImpl::dataOffset()), source);
     characters.copy(nullptr);
 
-    // A short rope of flat 8-bit strings, as `first + " " + last` kept in a field is: its pieces are copied one after the other.
     isRope.link(&jit);
     slowPath.append(jit.branchTestPtr(CCallHelpers::NonZero, source, TrustedImm32(JSRopeString::isSubstringInPointer)));
     jit.load32(Address(string, JSRopeString::offsetOfLength()), length);
@@ -213,7 +208,6 @@ void generateStringBuilderAppendString(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTStringBuilderAppendString, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters });
 }
 
-// A builder without text is as it came out of the pool, and its link to the next one has been null since. Into an empty pool it goes by one store, which is into no cell.
 void generateStringBuilderDiscard(StubAssembler& jit)
 {
     static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1));
@@ -231,7 +225,6 @@ void generateStringBuilderDiscard(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTStringBuilderDiscard, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false });
 }
 
-// The same two kinds of strings as generateStringBuilderAppendString() copies, and a piece of a flat string. The cursor is left alone, so the slow path starts with nothing done.
 void generateStackStringBuilderAppendString(StubAssembler& jit)
 {
     static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2) && gprOf(StubRegister::A3) == operationArgumentGPR(3));
@@ -322,11 +315,9 @@ void generateFlattenString(StubAssembler& jit)
     jit.returnToCaller();
 
     isRope.link(&jit);
-    // The returned impl is unused. Sending it to the scratch register makes the call restore every other register, including the cell's.
     jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = fiber });
 }
 
-// Only bits 0 to 31 of length, codeUnit and position count.
 void generateFindCharacter8(StubAssembler& jit)
 {
     static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
@@ -336,7 +327,6 @@ void generateFindCharacter8(StubAssembler& jit)
     const GPRReg codeUnit = jit.operand(2);
     const GPRReg position = jit.operand(3);
     const GPRReg result = jit.result();
-    // On ARM64 the result shares its register with characters, and the leaf clobbers A4 and A5 anyway.
     const GPRReg index = result == characters ? jit.allocateScratch(StubRegister::A5) : result;
     const GPRReg unit = jit.allocateScratch(StubRegister::A4);
     RELEASE_ASSERT(result == GPRInfo::returnValueGPR);
@@ -375,7 +365,6 @@ void loadStringLength(StubAssembler& jit, GPRReg string, GPRReg fiber, GPRReg le
 static void compareImplsAndReturn(StubAssembler& jit, Entry leaf, GPRReg firstImpl, GPRReg secondImpl)
 {
     static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
-    // On x86-64 the second operand arrives in the register of the leaf's first argument.
     if (jit.operand(1) == leafArgumentGPR(0))
         jit.clobberOperand(1);
     const GPRReg firstArgument = jit.reuseScratch(StubRegister::A0);
@@ -559,28 +548,22 @@ void generateCompareStrings(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTCompareStrings, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = first, .thirdArgumentIn = second });
 }
 
-// As FTL's compileStringLocaleCompare(). The operation orders all other strings.
 PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
 {
-    // A call that preserves registers has none to compare with.
     if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
 
-    // Registers that the operation may write as well, so the call costs its caller no more than it did.
     static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A4, StubRegister::A5, StubRegister::T9, StubRegister::T12));
     static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
     constexpr int32_t wordSize = sizeof(uint64_t);
     constexpr GPRReg left = operationArgumentGPR(1);
     constexpr GPRReg right = operationArgumentGPR(2);
-    // The impls until the characters are loaded. From then on the first character of each string that is not compared yet.
     const GPRReg leftCharacters = jit.allocateScratch(StubRegister::A3);
     const GPRReg rightCharacters = jit.allocateScratch(StubRegister::A4);
-    // How many characters of the shorter string are not compared yet.
     const GPRReg remaining = jit.allocateScratch(StubRegister::A5);
     const GPRReg leftUnit = jit.allocateScratch(StubRegister::T9);
     const GPRReg rightUnit = jit.allocateScratch(StubRegister::T12);
     const GPRReg weights = jit.allocateScratch(StubRegister::R0);
-    // Only while words are compared.
     const GPRReg nonASCIIBits = weights;
 
     JumpList isEqual;
@@ -594,7 +577,6 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
     jit.or64(leftCharacters, rightCharacters, leftUnit);
     callsOperation.append(jit.branchTestPtr(CCallHelpers::NonZero, leftUnit, TrustedImm32(JSString::isRopeInPointer)));
     isEqual.append(jit.branchPtr(CCallHelpers::Equal, leftCharacters, rightCharacters));
-    // Set when the default collator is made, which the operation does, and never cleared.
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), leftUnit);
     callsOperation.append(jit.branchTest8(CCallHelpers::Zero, Address(leftUnit, JSGlobalObject::offsetOfCanDoASCIIUCADUCETLocaleCompare())));
     jit.load32(Address(leftCharacters, StringImpl::flagsOffset()), leftUnit);
@@ -609,7 +591,6 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
     jit.loadPtr(Address(leftCharacters, StringImpl::dataOffset()), leftCharacters);
     jit.loadPtr(Address(rightCharacters, StringImpl::dataOffset()), rightCharacters);
 
-    // Skips the equal ASCII words. The bytes decide about a word that holds anything else.
     comparesBytes.append(jit.branch32(CCallHelpers::Below, remaining, TrustedImm32(wordSize)));
     jit.move(TrustedImm64(0x8080808080808080ll), nonASCIIBits);
     Label wordLoop = jit.label();
@@ -623,7 +604,6 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
     jit.sub32(TrustedImm32(wordSize), remaining);
     jit.branch32(CCallHelpers::AboveOrEqual, remaining, TrustedImm32(wordSize)).linkTo(wordLoop, &jit);
     comparesBytes.append(jit.jump());
-    // The first byte that differs lies within the word, so at least one character remains.
     wordsDiffer.link(&jit);
     jit.xor64(rightUnit, leftUnit);
     jit.countTrailingZeros64(leftUnit, leftUnit);
@@ -647,7 +627,6 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
     jit.branchTest32(CCallHelpers::NonZero, remaining).linkTo(byteLoop, &jit);
     commonPartIsEqual.append(jit.jump());
 
-    // No weight: a control character or no ASCII. The same weight: a letter in both cases.
     bytesDiffer.link(&jit);
     jit.load8(BaseIndex(weights, leftUnit, CCallHelpers::TimesOne), leftUnit);
     jit.load8(BaseIndex(weights, rightUnit, CCallHelpers::TimesOne), rightUnit);
@@ -659,7 +638,6 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
     leftIsGreater.link(&jit);
     returnResult(jit, TrustedImm32(1));
 
-    // The longer string comes last if it goes on with a character that has a weight. Strings of one length differ in case at most.
     commonPartIsEqual.link(&jit);
     jit.loadPtr(Address(left, JSString::offsetOfValue()), leftUnit);
     jit.loadPtr(Address(right, JSString::offsetOfValue()), rightUnit);
@@ -684,7 +662,6 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
     return PreludeExit::CallsOperation;
 }
 
-// CaseConversions::tryFind().
 static void returnRememberedCaseConversion(StubAssembler& jit, CaseConversions::LetterCase letterCase, GPRReg string, GPRReg source, GPRReg index, GPRReg table, GPRReg entry, GPRReg sourceOfEntry)
 {
     RELEASE_ASSERT(noOverlap(string, source, index, table, entry, sourceOfEntry, instanceGPR, cellCageBaseGPR));
@@ -694,7 +671,6 @@ static void returnRememberedCaseConversion(StubAssembler& jit, CaseConversions::
     JumpList isRemembered;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.caseConversions)), table);
     Jump hasNoTable = jit.branchTestPtr(CCallHelpers::Zero, table);
-    // Of a string outside the cage this has more than 32 bits, and equals the upper half of no entry.
     jit.move(string, source);
     jit.sub64(cellCageBaseGPR, source);
     jit.urshift64(TrustedImm32(cell32Shift), source);
@@ -721,7 +697,6 @@ static PreludeExit emitUnchangedCasePrelude(StubAssembler& jit, CaseConversions:
 {
     const uint8_t firstConvertedLetter = letterCase == CaseConversions::LetterCase::Lower ? 'A' : 'a';
     const uint8_t lastConvertedLetter = letterCase == CaseConversions::LetterCase::Lower ? 'Z' : 'z';
-    // A call that preserves registers has none to scan with.
     if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
 
@@ -768,7 +743,6 @@ PreludeExit emitJSONAppendValuePrelude(StubAssembler& jit)
     const GPRReg builder = jit.allocateScratch(StubRegister::A1);
     const GPRReg cursor = jit.allocateScratch(StubRegister::A2);
     const GPRReg value = jit.allocateScratch(StubRegister::A3);
-    // It holds the position until nothing is left to the operation.
     const GPRReg reciprocal = jit.allocateScratch(StubRegister::A4);
     const GPRReg quotient = jit.allocateScratch(StubRegister::A5);
     const GPRReg end = jit.result();

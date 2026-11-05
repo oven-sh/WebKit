@@ -21,14 +21,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- Mocks, by the records alone
-
 static bool namesModuleInTestRunsOfProgram(const Program& program, ModuleID id)
 {
     return id && id.index() < program.modules.size();
 }
 
-// A mock of a CommonJS file stands in place of the file. What the file exports are variables of its face. False: no module has the flag, and the set is left as it was.
 static bool markModulesThatMayBeMockedInTestRunsOfProgram(const Program& program, BitVector& mocked)
 {
     size_t numberOfModules = program.modules.size();
@@ -53,7 +50,6 @@ static bool markModulesThatMayBeMockedInTestRunsOfProgram(const Program& program
     return true;
 }
 
-// `export * as inner from "./inner"`: a mock that is laid over a module that hands the object on gives what it likes in its place, to every module that hands it on.
 static BitVector namespacesHandedOnInTestRunsOfProgram(const Program& program, const BitVector& mocked)
 {
     BitVector handedOn(program.modules.size());
@@ -66,11 +62,9 @@ static BitVector namespacesHandedOnInTestRunsOfProgram(const Program& program, c
     return handedOn;
 }
 
-// Backwards over the requests, from the modules that may be mocked. Each module is taken once, and each request is gone along once.
 static BitVector modulesThatLeadToMocksInTestRunsOfProgram(const Program& program, const BitVector& mocked)
 {
     size_t numberOfModules = program.modules.size();
-    // By target, and one more: where those who request it begin.
     Vector<uint32_t> firstImporter;
     firstImporter.fill(0, numberOfModules + 1);
     for (const Module& module : program.modules) {
@@ -123,10 +117,8 @@ bool mayComeThroughMock(const Program& program, const MocksOfProgram& mocks, Mod
 {
     if (!mocks.isAnyModuleMocked)
         return false;
-    // The names of a mock that comes ahead of the load are the names of the module: those that its factory gives, and no other.
     if (!exporter || mocks.modulesThatMayBeMocked.get(exporter.index()))
         return true;
-    // `export * from "./lib"`, and a mock of lib whose factory gives a name more: the barrel has it too.
     const auto& exports = program.at(exporter).exports;
     if (indexOfExport >= exports.size())
         return mocks.modulesThatLeadToMocks.get(exporter.index());
@@ -134,31 +126,24 @@ bool mayComeThroughMock(const Program& program, const MocksOfProgram& mocks, Mod
     const ModuleExport& entry = exports[indexOfExport];
     switch (entry.kind) {
     case ModuleExportKind::Variable:
-        // Program::appendNamespaceLayouts() asks in front of the check of the records.
         if (!entry.variable || entry.variable.index() >= program.variables.size())
             return true;
-        // `export { sides } from "./shapes"`: the entry names the variable of the module that declares it. A mock may stand in place of a module that hands it on, or of the one that declares it,
-        // and answers for whoever has the name through it. A module lists what somebody reads off its object, so one on the way may lack the name: any mock that the requests lead to may stand on it.
         if (program.at(entry.variable).module != exporter && mocks.modulesThatLeadToMocks.get(exporter.index()))
             return true;
         return false;
     case ModuleExportKind::Namespace:
         if (!entry.module)
             return true;
-        // Under a mock that module may have two objects. Which of them this one hands on goes by when it was linked, and the run time knows that.
         if (mocks.modulesThatMayBeMocked.get(entry.module.index()))
             return true;
         if (mocks.namespacesHandedOnByMockedModules.get(entry.module.index()))
             return true;
         return false;
-    // Nobody here follows the name from module to module.
     case ModuleExportKind::Indirect:
         return mocks.isAnyModuleMocked;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
-
-// ---- Names that tests add to built-ins
 
 bool holderTakesNameInTestRun(const Program& program, BuiltinID canonicalHolder, PropertyKeyID key)
 {
@@ -187,8 +172,6 @@ void openNamesThatTestsAdd(Program& program, Vector<NameAddedByTests>&& ofLinked
     }
 }
 
-// LookupsPastProgramObjects::lostBuiltins, what the reads through such values find on them, and what stands above them where somebody climbs: as WritesOnBuiltinsInProgramFacts::closeOverNamesReadThroughLostBuiltins().
-// Each object is looked at once.
 static BitVector lostBuiltinsInTestRunsOfProgram(const Program& program, const LookupsPastProgramObjects& lookups)
 {
     const BuiltinTable& builtins = program.builtins();
@@ -215,7 +198,6 @@ static BitVector lostBuiltinsInTestRunsOfProgram(const Program& program, const L
     return lost;
 }
 
-// `for (const [, place] of places()) Reflect.set(place, "mark", 1)`: the flow brings several, and the write counts on each.
 static Vector<NameAddedByTests> takeNamesFoundInTestRunsOfProgram(const Program& program, LinkTables& tables)
 {
     Vector<NameAddedByTests> names = std::exchange(tables.namesAddedByTests, { });
@@ -241,7 +223,6 @@ void openNamesFoundByLink(Program& program, BuildContext& build, LinkTables& lin
 {
     if (!program.admitsReplacedBuiltins)
         return;
-    // What the flow has followed to one object. Of a name that only may have come to lie on one of many nothing is said: a large test run stores fifteen thousand names through such values.
     Vector<NameAddedByTests> followed = linked.namesAddedByTests;
     followed.appendVector(held.namesAddedByTests);
     sortNamesInTestRunsOfProgram(followed);
@@ -268,9 +249,6 @@ void openNamesFoundByLink(Program& program, BuildContext& build, LinkTables& lin
     openNamesThatTestsAdd(program, WTF::move(opened), { });
 }
 
-// ---- Behind the facts of the program
-
-// A diagnostic that lies in Bun's own code is taken for a fault of the compiler.
 static bool isWrittenByUserInTestRunsOfProgram(const Program& program, ModuleID id)
 {
     const Module& module = program.at(id);
@@ -289,7 +267,6 @@ static bool isWrittenByUserInTestRunsOfProgram(const Program& program, ModuleID 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The front end has folded by what it opened. What Link alone finds is open nowhere: the door refuses the spy aloud.
 static UserDiagnostic reportOfExportInTestRunsOfProgram(const Program& program, VariableID id)
 {
     const Variable& variable = program.at(id);
@@ -308,13 +285,11 @@ void finishFactsOfTestRun(const Program& program, BuildContext& build, FactTable
     if (!program.admitsReplacedBuiltins)
         return;
 
-    // The run time goes by its own table, which locks each of these, and by the list of the image.
     for (const BuiltinLeftOpen& open : tables.builtinMembersLeftOpen) {
         if (program.isLockLeftToProgram(open.member))
             tables.builtinMembersThatTestsReplace.append(open.member);
     }
     RELEASE_ASSERT(std::ranges::is_sorted(tables.builtinMembersThatTestsReplace));
-    // Code takes a member for a constant only where the program lays the lock, and no member that the image opens has one.
     for (BuiltinID member : program.builtinsWhoseLockIsLeftToProgram()) {
         bool isLocked = tables.builtinMembersLockedAtStartUp.get(member.index());
         RELEASE_ASSERT(isLocked || !tables.constantBuiltinMembers.get(member.index()));
@@ -329,8 +304,6 @@ void finishFactsOfTestRun(const Program& program, BuildContext& build, FactTable
         diagnostics.append(reportOfExportInTestRunsOfProgram(program, variable));
     build.diagnostics().append(WTF::move(diagnostics));
 }
-
-// ---- Files of the product
 
 bool isFileOfProductInTestRun(const Program& program, FunctionID writer)
 {

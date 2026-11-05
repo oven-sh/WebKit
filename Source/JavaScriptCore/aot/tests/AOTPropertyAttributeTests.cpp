@@ -11,8 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// Each function has its own holder layout. A call that defines a property, like Object.defineProperty, must make the compiler stop trusting the fields of the holder's layout.
-// If two functions shared a layout, one such call would end that trust for both, and a call that wrongly leaves the fields trusted would go unnoticed.
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="ValueOnly" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]

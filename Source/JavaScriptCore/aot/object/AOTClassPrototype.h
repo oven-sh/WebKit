@@ -24,7 +24,6 @@ public:
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
-    // memberRow: where the row of the class begins in the field table, or ClassRowEntry::noRow.
     static ClassPrototype* create(VM&, Structure*, uint32_t classNumber, uint32_t memberRow);
 
     DECLARE_INFO;
@@ -48,7 +47,6 @@ public:
     void convertToOrdinaryObject(VM&, Structure* ordinary);
 
     static bool hasMember(JSObject* classPrototype, PropertyName);
-    // LayoutData::index of the class. ClassTable::classOf() finds the class.
     uint32_t classNumber() const { return m_classNumber; }
     JSObject* classObject() const;
     static constexpr ptrdiff_t offsetOfMemberRow() { return OBJECT_OFFSETOF(ClassPrototype, m_memberRow); }

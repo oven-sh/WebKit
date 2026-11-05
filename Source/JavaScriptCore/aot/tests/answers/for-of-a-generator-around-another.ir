@@ -4,6 +4,7 @@
 # LIBRARY: own
 # RUN(ANSWER): run-in-shell
 # ANSWER: 49
+# ANSWER-NEXT: exited with 0
 
 variable g0 name="three" module=m0 declared={type=function} initialization=Function function=f2
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)

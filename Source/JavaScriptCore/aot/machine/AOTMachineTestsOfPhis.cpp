@@ -12,7 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// A test of a boxed value is a comparison of bits of a sum at the deepest.
 static constexpr unsigned levelsOfTestOfPhi = 4;
 
 static int64_t wordOfTestOfPhi(Type type, uint64_t bits)
@@ -40,7 +39,6 @@ static std::optional<int64_t> valueOfTestOfPhiWithinLevels(const Operation* oper
     std::optional<int64_t> left = valueOfTestOfPhiWithinLevels(operation->child(0), phi, brought, levels - 1);
     if (!left)
         return std::nullopt;
-    // An Int32 is held as its sign extension, which is what SExt32 gives and what Trunc makes of the low half.
     if (opcode == SExt32)
         return left;
     if (opcode == ZExt32)
@@ -74,7 +72,6 @@ static std::optional<int64_t> valueOfTestOfPhiWithinLevels(const Operation* oper
     if (opcode == BitXor)
         return wordOfTestOfPhi(type, a ^ b);
 
-    // Sign extension keeps the unsigned order too.
     if (opcode == Equal)
         return *left == *right;
     if (opcode == NotEqual)
@@ -106,7 +103,6 @@ bool holdsNothingButTestOfItsPhi(const Block* join, const Operation* phi)
 {
     const Operation* branch = join->last();
     ASSERT(branch->opcode() == Branch && phi->owner() == join && phi->useCount() == 1);
-    // Which operations it reckons does not hang on the value.
     if (branch->child(0) == phi || !valueOfTestWherePhiHolds(branch->child(0), phi, 0))
         return false;
 
@@ -118,7 +114,6 @@ bool holdsNothingButTestOfItsPhi(const Block* join, const Operation* phi)
             return false;
         ++numberThatStay;
     }
-    // Each is read once. A reader outside the join would leave fewer operations below the Branch than stay in the join.
     uint32_t numberBelowBranch = 0;
     bool readsPhi = false;
     Vector<const Operation*, 8> below { branch };

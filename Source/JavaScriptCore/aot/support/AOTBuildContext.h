@@ -29,7 +29,6 @@ class RegExpSummaries;
 
 namespace Typed {
 class FormatPatternPlans;
-class LeavePoints;
 }
 
 class BuildContext {
@@ -44,10 +43,8 @@ public:
     const RecordedOptions& recordedOptions() const { return m_options.recorded; }
     bool validates() const { return m_options.recorded.validates; }
 
-    // Those of the lane that the thread is in: runLanes(). So the answer is kept no longer than the thread stays in the lane, and goes into no other lane.
     const ParallelLoops& parallelLoops() const { return m_parallelLoops.ofCurrentThread(); }
     unsigned threadCount() const { return m_parallelLoops.width(); }
-    // For what a stage has made and nobody reads any more: the build does not wait for its destructors.
     BackgroundJobs& backgroundJobs() { return m_backgroundJobs.get(); }
 
     CPUFeatureSet targetFeatures() const { return m_assemblerPolicy.features; }
@@ -61,9 +58,7 @@ public:
     void reportLimitExceeded(LimitID, uint64_t needed, const Subject& = { });
 
     RegExpSummaries& regExpSummaries() { return *m_regExpSummaries; }
-    // It only saves work: what it answers follows from what it is asked, whoever has asked before.
     Typed::FormatPatternPlans& formatPatternPlans() { return *m_formatPatternPlans; }
-    Typed::LeavePoints& leavePoints() { return *m_leavePoints; }
 
     const HostFunctionTexts& functionTexts() const { return m_functionTexts; }
     void setFunctionTexts(const HostFunctionTexts& texts) { m_functionTexts = texts; }
@@ -80,7 +75,6 @@ private:
     HostFunctionTexts m_functionTexts;
     std::unique_ptr<RegExpSummaries> m_regExpSummaries;
     std::unique_ptr<Typed::FormatPatternPlans> m_formatPatternPlans;
-    std::unique_ptr<Typed::LeavePoints> m_leavePoints;
 };
 
 } } // namespace JSC::AOT

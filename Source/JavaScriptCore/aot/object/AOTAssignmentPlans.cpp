@@ -47,7 +47,6 @@ AssignmentPlanCache::AssignmentPlanCache(State& state)
 
 AssignmentPlanCache::~AssignmentPlanCache() = default;
 
-// The program holds the names of a run.
 NEVER_INLINE const ExcludedNameList& AssignmentPlanCache::addExcludedNames(const ExcludedRun& run)
 {
     ProgramIdentifiers& identifiers = identifiersOf(m_state.instance);
@@ -182,7 +181,6 @@ static bool hasFormOfItsOwn(const FieldData* fieldOrNull)
     return fieldOrNull && fieldOrNull->flags & fieldAttributeFlags;
 }
 
-// Nothing where reading the properties one behind the other may run code, where one of them is no plain enumerable data property, and where there are elements.
 static std::optional<Vector<AssignedProperty, 16>> listOwnPropertiesOfAssignmentSource(VM& vm, const AssignmentSource& source)
 {
     Vector<AssignedProperty, 16> properties;
@@ -217,7 +215,6 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnPropertiesOfAssignment
         }
         return properties;
     }
-    // A dictionary gets a name and keeps its Structure, so its Structure stands for no list of names. Flattened, it keeps its Structure and is none.
     Structure* sourceStructure = source.object->structure();
     if (sourceStructure->isDictionary() && (!flattenOnce(vm, source.object) || sourceStructure->isDictionary() || source.object->structure() != sourceStructure))
         return std::nullopt;
@@ -283,7 +280,6 @@ bool AssignmentPlanCache::isSecondCopy(uint32_t hash)
     return false;
 }
 
-// The plan stays of no use where it returns early.
 void AssignmentPlanCache::fillPlanForCopyOfTwo(VM& vm, CopyOfTwoPlan& plan, JSGlobalObject* realm, const AssignmentSource* first, const AssignmentSource* second)
 {
     struct PropertyOfCopyOfTwo {
@@ -302,14 +298,12 @@ void AssignmentPlanCache::fillPlanForCopyOfTwo(VM& vm, CopyOfTwoPlan& plan, JSGl
         for (const AssignedProperty& property : *properties) {
             if (parseIndex(PropertyName(property.name)) || property.name == vm.propertyNames->underscoreProto.impl())
                 return;
-            // A name of both keeps the place that the first has given it and gets the value of the second.
             if (size_t place = names.find(property.name); place != notFound) {
                 copied[place] = { property, index };
                 continue;
             }
             names.append(property.name);
             copied.append({ property, index });
-            // Each name is looked for among those before it.
             if (names.size() > JSFinalObject::maxInlineCapacity)
                 return;
         }
@@ -469,7 +463,6 @@ FieldMap::Entry AssignmentPlanCache::describeMappedField(VM& vm, const LayoutDat
     SlotRepresentation representation = to->slot.representation();
     if (from.slot.representation() == SlotRepresentation::DeferredClosure || representation == SlotRepresentation::DeferredClosure)
         return { FieldMap::isNotServed };
-    // A granule starts as zeros, which have to say that the fields in it are absent. The copy fills a granule that holds one field.
     const SlotTraits traits = traitsOf(representation);
     if (to->isOutOfLine() && traits.absentBits && traits.width != extensionGranuleSize)
         return { FieldMap::isNotServed };
@@ -501,7 +494,6 @@ void AssignmentPlanCache::describeMove(VM& vm, AssignmentPlan::FieldStore& store
         store.move = move;
         return;
     }
-    // Where a field lies in an Extension goes by the granules that the Extension has, which no plan knows.
     if (!sharesTypes || store.from->isOutOfLine() || !store.isDirect)
         return;
     FieldMap::Entry entry = describeMappedField(vm, target, *store.from, 0);
@@ -522,13 +514,11 @@ NEVER_INLINE void AssignmentPlanCache::describeMoves(AssignmentPlan& plan)
     plan.hasDescribedMoves = true;
     const LayoutData& layout = uncheckedDowncast<CompiledStructure>(plan.target.decode())->layout();
     for (AssignmentPlan::FieldStore& store : plan.fieldStores) {
-        // A run copies such bits without a move.
         if (!store.copiesBitsUntested)
             describeMove(*m_state.instance.vm, store, layout, plan.sharesTypesWithSource);
     }
 }
 
-// Whether the slot holds integers in two's complement, among them every one from the first to the second.
 static bool slotHoldsIntegersBetween(SlotRepresentation representation, int64_t least, int64_t greatest)
 {
     const SlotTraits traits = traitsOf(representation);
@@ -544,7 +534,6 @@ static bool slotHoldsIntegersBetween(SlotRepresentation representation, int64_t 
     return least >= -(1ll << (bits - 1)) && greatest < 1ll << (bits - 1);
 }
 
-// The plan stays of no use where it returns early.
 void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index, JSObject* target, JSObject* extraProperties, const AssignmentSource& source)
 {
     Object* record = compiledObjectOrNull(target);
@@ -555,7 +544,6 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
     auto properties = listAssignedProperties(vm, source, plan.excludedList);
     if (!properties)
         return;
-    // A source of another realm is listed and read by its own instance, which also makes the closures that its fields defer. Its values are tested like those of an ordinary object.
     bool sharesTypes = source.compiledObject && &source.compiledObject->state() == &m_state;
     plan.sharesTypesWithSource = sharesTypes;
     const LayoutData* layout = record ? &record->layout() : nullptr;
@@ -643,7 +631,6 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             plan.granuleBitsFilled |= granuleBitOf(field->slot.offset);
         namesOfFields.append(property.name);
     }
-    // A store to a field that the target lacks creates it, so what stands above the target is asked about the name of every field.
     auto isIntercepted = [&](UniquedStringImpl* name) {
         return !source.defines && !storeCreatesOwnProperty(realm, target->structure(), target, name, *m_state.chainDependents, ChainDependent { name, index, m_chainDependentOwner });
     };
@@ -668,7 +655,6 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         if (record)
             plan.targetAfter = m_state.objects->structures.withExtraProperties(vm, record->compiledStructure(), extraPropertiesAfter);
     }
-    // A run adds its names by the Structure, so what a store by name reports for each object is reported here for all of them. A guard that a name has cleared stays cleared.
     for (UniquedStringImpl* name : record && layout->isClass() ? addedNames.span() : std::span<UniquedStringImpl* const>())
         m_state.objects->classes.didShadowMember(*layout, name);
     plan.addsExtraProperties = !addedNames.isEmpty();

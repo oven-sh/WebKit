@@ -20,7 +20,6 @@ namespace JSC { namespace AOT {
 
 static_assert(sizeof(PackedSlot) == sizeof(uint64_t));
 static_assert(!Slot::offsetOfStructureID() && Slot::offsetOfPayload() == sizeof(uint64_t));
-// The name comes where the callee takes the count.
 static_assert(gprOf(slotNameRegister) == countGPR && noOverlap(gprOf(slotNameRegister), thisGPR, calleeGPR, gprOf(closureWordRegister)));
 
 StubSignature signatureOfCallMethodById(StubKey)
@@ -30,8 +29,6 @@ StubSignature signatureOfCallMethodById(StubKey)
     return signature;
 }
 
-// `object.name(a, b)`. The hit: the place of the Structure and the name, one comparison, the callee out of its slot, one comparison, and the jump into the code of the image, as far as the place says.
-// Behind a miss the access table is asked as a read asks it, and behind that the stub that reads by name, in a frame of this stub. Either way the stub that calls a value goes on.
 void generateCallMethodById(StubAssembler& jit)
 {
     const unsigned count = jit.key().count();
@@ -55,7 +52,6 @@ void generateCallMethodById(StubAssembler& jit)
     JumpList readsByStub;
     JumpList filesNothing;
 
-    // Only what the convention passes is in use here, which the poll keeps.
     jit.checkStackBeforeEnteringCallee();
     readsByStub.append(jit.branchIfNotCell(thisGPR));
     locatePlaceInAccessTable(jit, PartOfAccessTable::Calls, inTable, count);
@@ -73,7 +69,6 @@ void generateCallMethodById(StubAssembler& jit)
     toCodeAddress(jit, code, place, StackIsTested::Yes);
     jit.farJump(code, JSEntryPtrTag);
 
-    // Each object of a Structure has its own value under a name of its own, so only the place of the value is known.
     isNotInPlaceOfCall.link(&jit);
     locatePlaceInAccessTable(jit, PartOfAccessTable::Reads, inTable);
     loadWordBehindKeyInAccessTable(jit, inTable, OBJECT_OFFSETOF(AccessTable::Read, keyOfOwnValue), calleeGPR, spare, isNoOwnValue);
@@ -85,7 +80,6 @@ void generateCallMethodById(StubAssembler& jit)
     loadWordBehindKeyInAccessTable(jit, inTable, OBJECT_OFFSETOF(AccessTable::Read, keyOfOtherAnswer), calleeGPR, spare, isNotInAccessTable);
     Jump hasForm = jit.branchTest64(CCallHelpers::NonZero, calleeGPR, TrustedImm32(AccessTable::answerHasForm));
     jit.load64(Address(calleeGPR), calleeGPR);
-    // A closure of the program that may be called and declares no more parameters than the call passes arguments is entered as it is.
     filesNothing.append(jit.branchIfNotCell(calleeGPR));
     loadClosureWordOfThisRealm(jit, calleeGPR, registers, filesNothing);
     jit.move(TrustedImm64(ClosureWord::minWordOfCalleeTaking(count)), registers.scratch);
@@ -94,13 +88,11 @@ void generateCallMethodById(StubAssembler& jit)
     filesNothing.link(&jit);
     jit.jumpToStub(callValue(count));
 
-    // A field of another form than a plain value is read by the stub.
     hasForm.link(&jit);
     readByFormOfAnswerInAccessTable(jit, thisGPR, calleeGPR, place, calleeGPR, readsByStub, readsByStub, [&] {
         jit.jumpToStub(callValue(count));
     });
 
-    // `check.state.run(payload)`, where a store by name has laid `run` on a compiled object beside its fields, and objects of many Structures come by: no place of the access table says where such a one lies. The front table does, as for a read.
     isNotInAccessTable.link(&jit);
     readsByStub.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
     jit.load32(Address(thisGPR, JSCell::structureIDOffset()), key);
@@ -150,7 +142,6 @@ void generateTryGetSuperById(StubAssembler& jit)
     jit.move(TrustedImm64(JSValue::ValueUndefined), R0);
     jit.returnToCaller();
 
-    // A data property reads the same for every receiver, so the slot cached for the object where the search starts answers the read. An accessor needs the receiver, which this stub does not have.
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
     auto fieldReadRegisters = [&](GPRReg object, GPRReg slotData) -> FieldReadRegisters {
@@ -208,7 +199,6 @@ void generateTryGetSuperById(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-// What is above the prototype object of a class that is evaluated once: where `super.name` in a method of the class begins to look.
 void generateGetSuperBaseOfClass(StubAssembler& jit)
 {
     const GPRReg rank = jit.immediate();

@@ -110,7 +110,6 @@ private:
 
 RegExpCodeOrFailureReason compileSharedRoutine(const Yarr::SharedRoutine&, const AssemblerPolicy&, BuildContext*);
 
-// Takes the arguments of a body and answers JITCodeFailure, as a body does that gives a match up.
 RegExpCodeOrFailureReason compileFailureRoutine(const AssemblerPolicy&, BuildContext*);
 
 JS_EXPORT_PRIVATE size_t maxPrivateCopySize(const RegExpSymbol&);
@@ -120,7 +119,6 @@ struct CompiledRegExp {
 
     RegExpRecordForm form { RegExpRecordForm::NoMetadata };
     std::optional<RegExpDeclineReason> reason { };
-    // For 8-bit and for 16-bit subjects. Without the second, the failure routine stands at the entry for 16-bit subjects, and RegExp::matchWithImageCode() narrows the subject or refuses it.
     std::array<std::unique_ptr<RegExpCode>, 2> code { };
 };
 
@@ -167,7 +165,6 @@ struct RegExpSection {
     static constexpr size_t alignment = 4 * KB;
 
     Vector<uint8_t> bytes;
-    // A multiple of alignment. All code lies in front of it. Behind it lie tables alone.
     uint32_t dataOffset { 0 };
     Vector<std::array<uint32_t, 2>> entries;
     Vector<RegExpSectionItem> items;
@@ -181,7 +178,6 @@ struct RegExpRecordInputs {
     const RegExpSection& section;
 };
 
-// The match stub stores the start and the end of a match there for a RegExp without a Code record too: an atom, also one created at run time.
 inline constexpr uint32_t regExpOutputSizeWithoutSubpatterns = 2;
 
 struct RegExpSections {

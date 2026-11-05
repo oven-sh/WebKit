@@ -87,7 +87,7 @@ static std::optional<CoroutineKind> coroutineKindWrittenFor(const Function& func
 }
 
 static_assert(!static_cast<unsigned>(MethodKind::Method) && static_cast<unsigned>(MethodKind::Getter) == 1 && static_cast<unsigned>(MethodKind::Setter) == 2 && numberOfEnumerators<MethodKind> <= 1 << 2);
-static_assert(static_cast<unsigned>(CallableKind::Bound) < 1 << 2);
+static_assert(static_cast<unsigned>(CallableKind::Method) < 1 << 2);
 
 static FunctionKindData functionKindDataOfWrittenKind(FunctionKind functionKind)
 {
@@ -125,8 +125,6 @@ static FunctionKindData functionKindDataOfWrittenKind(FunctionKind functionKind)
     return kind;
 }
 
-// A file of library functions is no runtime module.
-// What the bundler imports is evaluated as a file of the program is, so its functions are ordinary function objects.
 static bool functionObjectsLieInRuntimeModule(const Program& program, const Function& function)
 {
     if (function.module && isBundlerHelperModule(program, program.at(function.module)))
@@ -155,7 +153,6 @@ static bool closuresOfKindMayBeSlim(FunctionKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What the stubs and the run time can make slim: a generator function has the layout of a JSFunction, and a slim closure hands its code neither new.target nor itself.
 static bool closuresOfFunctionMayBeSlim(const Function& function)
 {
     if (!closuresOfKindMayBeSlim(function.kind))
@@ -165,7 +162,6 @@ static bool closuresOfFunctionMayBeSlim(const Function& function)
     return function.captures.size() <= ClosureRequest::maxSlimClosureCaptures;
 }
 
-// Most function objects are called and nothing else. One that is written to construct is read for its `prototype`, and the functions of the library are handed out under names and looked at.
 static bool closuresAreExpectedToStayAsMade(const Program& program, const LinkTables& linked, FunctionID id)
 {
     const Function& function = program.at(id);
@@ -176,10 +172,6 @@ static bool closuresAreExpectedToStayAsMade(const Program& program, const LinkTa
     return function.kind != FunctionKind::Plain || function.has(FunctionFlags::IsAsync) || !function.constructedClass;
 }
 
-// A slim closure is a word that names its function, and its captures: 16 bytes and 8 for each capture, where a full one has the layout of a JSFunction, 48 bytes and up.
-// A CLOSURE OF EITHER FORM IS A COMPLETE FUNCTION OBJECT, WHOEVER GETS HOLD OF IT. A slim one answers for `name` and `length` out of the tables, and gets storage of its own when it is asked for anything else that it lacks: SlimClosure::reify().
-// So the form is an expectation and needs no proof: a wrong one costs time and bytes, and never an answer. No mechanism turns it off: without a word of Link it goes by the records alone.
-// planProgram() of AOTPlan.cpp calls it and declares it for itself.
 Vector<ClosureForm> chooseClosureForms(const Program&, const LinkTables&);
 Vector<ClosureForm> chooseClosureForms(const Program& program, const LinkTables& linked)
 {
@@ -188,13 +180,11 @@ Vector<ClosureForm> chooseClosureForms(const Program& program, const LinkTables&
     });
 }
 
-// The parser of the engine says the same of a function that it compiles: AsyncFunctionWithoutAwaitFeature. An `await` of a function that is written inside does not count.
 bool isAsyncFunctionWithoutAwait(const Program&, const Function& source)
 {
     return coroutineKindWrittenFor(source) == CoroutineKind::AsyncFunction && !source.syntax.contains(FunctionSyntax::HasWrittenAwait);
 }
 
-// A unit that no closure word names is described by the function objects of its function.
 static CodeUnit entryNamedByClosureWordsFor(CodeUnit unit)
 {
     switch (unit.role) {
@@ -239,16 +229,13 @@ FunctionKindData functionKindOf(const Program& program, const SlotPlan& slots, c
     return kind;
 }
 
-// A stack reads as in plain Bun whichever units ran: each call of a function shows one frame.
 static TraceVisibility traceVisibilityOfUnit(const Function& function, CodeRole role, bool isBuiltinThatProgramsCall)
 {
-    // What the front end hides is a function of its own that no trace lists, unless it is a built-in that programs can call. What its role hides is a part of a function that traces list.
     if (function.has(FunctionFlags::IsHiddenInStackTraces) && !isBuiltinThatProgramsCall)
         return TraceVisibility::Hidden;
 
     switch (role) {
     case CodeRole::Body:
-        // The ramp.
         if (function.isCoroutine())
             return TraceVisibility::VisibleOnlyOnTop;
         break;
@@ -262,18 +249,14 @@ static TraceVisibility traceVisibilityOfUnit(const Function& function, CodeRole 
     case CodeRole::ParameterGuard:
     case CodeRole::TableEntry:
         return TraceVisibility::VisibleOnlyOnTop;
-    // It is listed under a function that it is no part of. What it does is a part of the call of JSON.stringify.
     case CodeRole::Serializer:
         return TraceVisibility::Hidden;
-    // Its function is the first method of the family, which need not be what the receiver has under the name. What it does is a part of the call as written.
     case CodeRole::TableLookup:
         return TraceVisibility::Hidden;
     }
     return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;
 }
 
-// The stub that rejects returns a promise from the frame, so the frame is one of a unit that returns the promise of the function.
-// The body of an async function in which nothing suspends returns what the promise is resolved with.
 static bool unitRejectsOnThrow(const Function& function, CodeRole role, bool bodyNeverSuspends)
 {
     if (coroutineKindWrittenFor(function) != CoroutineKind::AsyncFunction)
@@ -302,7 +285,6 @@ bool rejectsOnThrow(const Program& program, const CallingConventions& convention
     return unitRejectsOnThrow(program.at(unit.function), unit.role, conventions.of(unit.function).coroutineNeverSuspends);
 }
 
-// StackFrame gives an async frame of such a function no name. The frame of an async function keeps the name the function itself has, not one it takes from a variable or a property.
 static bool frameOfUnitIsNamedByOwner(const Function& function, CodeRole role)
 {
     if (!isBodyOfCoroutine(role, function.isCoroutine()))
@@ -314,7 +296,6 @@ static bool frameOfUnitIsNamedByOwner(const Function& function, CodeRole role)
     bool hasExplicitName = function.has(FunctionFlags::HasExplicitName);
     switch (*kind) {
     case CoroutineKind::AsyncFunction:
-        // The engine goes by the text: it runs the body as a function of its own only where an `await` is written, reached or not.
         return !hasExplicitName && function.syntax.contains(FunctionSyntax::HasWrittenAwait);
     case CoroutineKind::Generator:
     case CoroutineKind::AsyncGenerator:
@@ -351,7 +332,6 @@ static bool overloadOfTracedBuiltinCallsHostFunction(const BuiltinOverload& over
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// In the engine a function written inside a built-in function is built-in code too. A module of the library marks the function that it holds in place of such a one.
 static bool isTracedInsideBuiltinFunction(const BuiltinTable& builtins, const Function& function)
 {
     if (function.syntax.contains(FunctionSyntax::IsShownAsNativeCode))
@@ -374,7 +354,6 @@ static bool isTracedFunctionOfCompiler(const BuiltinTable& builtins, const Funct
     return function.enclosingRuntimeFunction && builtins.at(function.enclosingRuntimeFunction).role == RuntimeFunctionRole::CompilerFunction;
 }
 
-// Only compiled code calls a compiler helper, even one that is implemented in the engine.
 static bool tracedBuiltinIsCalledByPrograms(const BuiltinTable& builtins, const Function& function, std::optional<BuiltinID> builtin)
 {
     return builtin && !isTracedFunctionOfCompiler(builtins, function) && builtins.at(*builtin).holder != Builtins::CompilerHelpers;
@@ -387,7 +366,6 @@ static StackTraceBuiltinKind stackTraceBuiltinKindOf(const BuiltinTable& builtin
         return StackTraceBuiltinKind::JSBuiltinConstructor;
     if (!builtin)
         return isTracedInsideBuiltinFunction(builtins, function) ? StackTraceBuiltinKind::JSBuiltin : StackTraceBuiltinKind::None;
-    // The host has what it does as a function of a module of its own, and a stack trace lists that like any other function: FunctionTraceData::isHelperOfCompiler().
     if (function.syntax.contains(FunctionSyntax::IsShownInModuleOfHelpers))
         return StackTraceBuiltinKind::None;
     if (std::ranges::any_of(builtins.overloadsOf(*builtin), overloadOfTracedBuiltinCallsHostFunction))
@@ -405,7 +383,6 @@ static CodeType codeTypeOfTracedFunction(const Function& function)
 static_assert(static_cast<unsigned>(TraceVisibility::Hidden) < 1 << 2 && static_cast<unsigned>(StackTraceBuiltinKind::HostFunction) < 1 << 2);
 static_assert(static_cast<unsigned>(EvalCode) < 1 << 2 && static_cast<unsigned>(FunctionCode) < 1 << 2 && static_cast<unsigned>(ModuleCode) < 1 << 2);
 
-// All but the visibility, the rejection and the naming by the owner is said of the function, so that every unit of it is shown as that function.
 FunctionTraceRecord functionTraceOf(const Program& program, const CallingConventions& conventions, CodeUnit unit)
 {
     const Function& function = program.at(unit.function);

@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations, of rows of joins: what AOTWalkTypedTexts.cpp leaves out. A text that was made for one join alone gives that join its parts (the `${n}` of a template, the join that a copied callee returns),
-// an operator on proven numbers may stand between two links, `"id-" + x` is tested once for a part that has text by itself (Guesses), and join, concat and String.raw of what is in sight are joins (BuiltinCalls).
-// Nothing is kept from one operation to the next. At a suspension: no row goes past one. At a throw: no part runs code, and a text that is dropped for its parts could not have thrown.
-// Withheld: nobody asks.
-
 #include "config.h"
 #include "AOTWalkTextBuilderRows.h"
 
@@ -25,25 +20,19 @@
 #include "AOTTypeTable.h"
 #include "AOTWalkStrings.h"
 #include "AOTWalkTextBuilders.h"
-#if __has_include("AOTWalkJSONWrites.h")
 #include "AOTWalkJSONWrites.h"
-#endif
 #include <algorithm>
 #include <optional>
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-// AOTWalkTypedTexts.cpp
 bool joinIsLikelyKeyInWalkTexts(Walker&, ValueID join);
 
 using PartsInTextBuilderRows = Vector<Reference, 8>;
 
-// mostPartsOfJoinedText of AOTWalkTypedTexts.cpp: the emitter of a Strcat keeps the text of every part live at once.
 static constexpr size_t mostPartsInTextBuilderRows = 32;
-// With a separator between every two of them.
 static constexpr size_t mostElementsJoinedInTextBuilderRows = (mostPartsInTextBuilderRows + 1) / 2;
 static constexpr size_t mostRecordsLookedAtBehindText = 32;
 static constexpr size_t numberOfOperandsOfSumInTextBuilderRows = 2;
@@ -110,9 +99,6 @@ bool isReadByNoRecordSoFar(const Walker& walker, Reference made)
     return true;
 }
 
-// ---- A text that was made for one join alone
-
-// By the body, back through whatever only hands the text on. It decides what pays, never what is right.
 static bool isWrittenForOneReaderInTextBuilderRows(const BodyIndex& index, ValueID text)
 {
     while (text && !index.isParameter(text) && index.hasOneUse(text)) {
@@ -123,13 +109,8 @@ static bool isWrittenForOneReaderInTextBuilderRows(const BodyIndex& index, Value
     return false;
 }
 
-// `"<" + tag(n) + ">"`, `${n}px`, `(a + n as string) + b`. The record has made its text of parts that have text by themselves, and nobody can tell whether it has run: it cannot throw, so its parts surely fit into a string.
-// A primitive has one text whenever it is asked, so whatever stands between the record and the join changes nothing. The sweep drops the record. It builds nothing.
 bool takePartsOfJoinReturnedByCopy(Walker& walker, ValueID operand, Vector<Reference, 8>& parts)
 {
-    constexpr bool takesApartTextsMadeForOneJoin = true;
-    if (!takesApartTextsMadeForOneJoin)
-        return false;
     Reference text = walker.isUnreachable() ? Reference() : walker.referenceOf(operand);
     if (!text || !text.isValue())
         return false;
@@ -138,7 +119,6 @@ bool takePartsOfJoinReturnedByCopy(Walker& walker, ValueID operand, Vector<Refer
     const Operation& made = code.at(root);
     if (!textsTakenApartInTextBuilderRows.contains(made.opcode) || made.block() != walker.currentBlock() || !made.traits().isRemovableWhenUnused())
         return false;
-    // A text that was made as a key is a name that the run time has at hand.
     if (made.opcode == Opcode::Strcat && made.isLikelyKey())
         return false;
     if (!hasOnlyInTextBuilderRows(walker, Reference::value(root), Primitive::AnyString))
@@ -148,7 +128,6 @@ bool takePartsOfJoinReturnedByCopy(Walker& walker, ValueID operand, Vector<Refer
     ValueID taker = index.onlyUsingValue(operand);
     if (!taker || !isWrittenForOneReaderInTextBuilderRows(index, operand))
         return false;
-    // Each operand of the taker brings a part at least. It is asked once an operand, so it counts none of them.
     size_t numberOfPartsAround = parts.size() + index.value(taker).variadicOperands().size() + numberOfOperandsOfSumInTextBuilderRows;
     if (numberOfPartsAround + made.numberOfOperands() > mostPartsInTextBuilderRows)
         return false;
@@ -175,9 +154,6 @@ bool holdsPartsTakenOutOfTexts(const Walker& walker, const BodyValue& join, std:
     return !standsAsWritten || place != parts.size();
 }
 
-// ---- What may stand between two links
-
-// What stands behind the link is not walked yet, and what it was bound to in another copy says nothing: only a number as it is written is known there.
 static TypeID typeOfOperandInsideRowInTextBuilderRows(const Walker& walker, const BodyIndex& index, ValueID link, ValueID operand)
 {
     if (!operand)
@@ -210,11 +186,7 @@ bool mayStandInsideRowOfJoins(const Walker& walker, const BodyIndex& index, Valu
     return chooseOperatorForm(walker.program(), walker.types(), opcode, operands).effects.isRemovableWhenUnused();
 }
 
-// ---- The operand beside a string
-
-// No bigint: its text may be too long for a string, which throws where the conversion stands.
 static constexpr TypeID typeOfPartGuessedBesideString = typeOfPrimitives(Primitive::NumberLike | Primitive::String);
-// Closed, the sum goes to the run time, which asks both operands what they are, converts the one and joins the two.
 static constexpr uint32_t closedOperationsOfJoinBesideString = 2;
 
 static ValueID findOperandBesideStringInTextBuilderRows(const Walker& walker, const BodyValue& sum)
@@ -230,7 +202,6 @@ static ValueID findOperandBesideStringInTextBuilderRows(const Walker& walker, co
     return { };
 }
 
-// As limitOfStretchOfGuess() of AOTWalkGuesses.cpp: what the end of the block finds by its definition stays behind every stretch, and whoever walks a stretch has asked for no operation behind its end.
 static uint32_t limitOfStretchInTextBuilderRows(const Walker& walker, const BodyIndex& index, const BodyBlock& block)
 {
     uint32_t limit = std::min(block.numberOfValues(), walker.endOfStretchBeingWalked());
@@ -249,8 +220,6 @@ static uint32_t limitOfStretchInTextBuilderRows(const Walker& walker, const Body
     return limit;
 }
 
-// The row as far as the one proof types it: behind written primitives alone, each join alone takes the one in front, and its other parts have text by themselves. A part that needs a test of its own ends the stretch,
-// so no closed arm holds the rest of a row whose arms are yet to come.
 static ValueID findLastJoinTypedByProofInTextBuilderRows(const Walker& walker, const BodyIndex& index, const BodyBlock& block, ValueID first, Reference guessed, uint32_t limit)
 {
     uint32_t endOfStretch = block.firstValue().index() + limit;
@@ -286,8 +255,6 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
 
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(index.blockOf(sum.id()));
-    // `${source.id},${target.id}` that is looked up. The join of a likely key asks the cache of keys by their parts, which knows a number by its value and a string by its cell,
-    // and the string of a number is made anew each time. So the number itself goes on to the join: its text is made there, or never. What is no number is converted here, in its turn.
     ValueID joinOfTemplate = isConversion ? index.onlyUsingValue(sum.id()) : ValueID();
     bool handsPartOnToLikelyKey = joinOfTemplate && block.holds(joinOfTemplate) && index.opcodeOf(joinOfTemplate) == Opcode::Strcat && joinIsLikelyKeyInWalkTexts(walker, joinOfTemplate);
     if (isConversion && !handsPartOnToLikelyKey && !walker.hasTextsInStringBuilders())
@@ -299,8 +266,6 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
         return false;
     ValueID last = findLastJoinTypedByProofInTextBuilderRows(walker, index, block, sum.id(), value, limit);
 
-    // In a loop the guess that goes by what is expected takes whatever leans on the proof, further than a row goes. Not where the row ends in a text that lies in a builder, `line += c + ","`:
-    // the join that grows the text does not mention `c`, so that guess ends in front of it, and every turn makes a string of the part and the comma.
     TypeArena& types = walker.types();
     ExpectationOfValue expectation = findExpectation(walker, guessed);
     bool endsInTextInStringBuilder = last != sum.id() && findTextNamedBy(walker, last);
@@ -319,13 +284,11 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
     TypeID proven = walker.typeOf(value);
     if (!tested || isNeverType(tested) || !types.at(proven).isJavaScriptValue() || types.isSubset(proven, tested) || !types.overlap(proven, tested))
         return false;
-    // The conversion of a number finds its string kept, and the string is copied. The call that takes any primitive is dearer than the two, so the test has to buy the part a form of its own.
     if (isConversion && !partHasFormOfItsOwnInStringBuilder(types.at(tested)))
         return false;
     if (!shouldOpenGuess(walker, value, tested, expectation.isDeclared, closedOperationsOfJoinBesideString))
         return false;
 
-    // `path.startsWith(root + "/")`: the test that alone takes the join is walked with it. In the arm where the part has text the join is never made, buildTestAgainstJoinOfTexts(); what the arms bring is the answer of the test.
     if (last == sum.id()) {
         if (ValueID test = findTestOfEndThatTakesJoinApart(walker, sum, value); test && test.index() < firstValue + limit)
             last = test;
@@ -400,7 +363,6 @@ bool guessThatOperandBesideStringHasTextOfItsOpcodes(Walker& walker, const BodyV
     if (walker.hasFailed())
         return true;
 
-    // Both arms of a growth of a text in a builder bring the builder.
     Reference met;
     if (arms.size() == 2 && arms[0].text && arms[1].text && arms[0].text != arms[1].text) {
         const Code& code = walker.code();
@@ -430,13 +392,9 @@ bool guessThatConvertedPartOfTextInBuilderHasTextOfItsOpcodes(Walker& walker, co
     return guessThatOperandBesideStringHasTextOfItsOpcodes(walker, conversion);
 }
 
-// ---- Built-ins that join
-
 static constexpr uint16_t primitivesJoinedWithoutCode = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnyString | Primitive::BigInt;
-// join() takes undefined and null for nothing.
 static constexpr uint16_t primitivesJoinedAsTheirText = primitivesJoinedWithoutCode & ~Primitive::UndefinedOrNull;
 
-// As CallInWalkBuiltins::findCallee(), which has answered for the call already. Canonical. Null: nothing is sure.
 static BuiltinID findBuiltinCalledInTextBuilderRows(Walker& walker, const BodyValue& call)
 {
     Reference callee = walker.referenceOf(call.calleeOperand());
@@ -456,7 +414,6 @@ static BuiltinID findBuiltinCalledInTextBuilderRows(Walker& walker, const BodyVa
     return named ? walker.program().builtins().canonicalID(named) : BuiltinID();
 }
 
-// The object and its list of raw texts are frozen when they are made. So whoever else has seen the object, its texts are those of its source site.
 static bool collectTextsOfTemplateObjectInTextBuilderRows(const Walker& walker, Reference object, Vector<TemplateString, 8>& texts)
 {
     if (!object || !object.isValue())
@@ -487,7 +444,6 @@ static std::optional<Vector<Reference, 8>> elementsOfJoinedListInTextBuilderRows
     return elements;
 }
 
-// `[a, b].join("-")`. Each element is its own and no hole, so reading it runs no code.
 static bool takePartsOfJoinedListInTextBuilderRows(Walker& walker, const BodyValue& call, PartsInTextBuilderRows& parts)
 {
     std::span<const ValueID> arguments = call.argumentsOperands();
@@ -518,7 +474,6 @@ static bool takePartsOfJoinedListInTextBuilderRows(Walker& walker, const BodyVal
     return true;
 }
 
-// String.raw`${a}/${b}`. A substitution behind the last text is never converted.
 static bool takePartsOfRawTemplateInTextBuilderRows(Walker& walker, const BodyValue& call, PartsInTextBuilderRows& parts)
 {
     std::span<const ValueID> arguments = call.argumentsOperands();
@@ -539,7 +494,6 @@ static bool takePartsOfRawTemplateInTextBuilderRows(Walker& walker, const BodyVa
     return true;
 }
 
-// `a.concat(b, c)`
 static bool takePartsOfConcatInTextBuilderRows(Walker& walker, const BodyValue& call, PartsInTextBuilderRows& parts)
 {
     std::span<const ValueID> arguments = call.argumentsOperands();
@@ -558,9 +512,6 @@ static bool takePartsOfConcatInTextBuilderRows(Walker& walker, const BodyValue& 
 
 bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call)
 {
-    constexpr bool joinsWhatIsInSight = true;
-    if (!joinsWhatIsInSight)
-        return false;
     if (call.opcode() != Opcode::Call || !walker.has(Mechanism::TypedOperations) || walker.isUnreachable())
         return false;
     BuiltinID builtin = findBuiltinCalledInTextBuilderRows(walker, call);
@@ -576,7 +527,6 @@ bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call)
         isJoin = takePartsOfRawTemplateInTextBuilderRows(walker, call, parts);
     else if (builtin == table.canonicalID(Builtins::StringPrototypeConcat))
         isJoin = takePartsOfConcatInTextBuilderRows(walker, call, parts);
-    // Of written parts alone the text is known, which is for whoever folds the call.
     if (!isJoin || std::ranges::all_of(parts, [](Reference part) { return part.isConstant(); }))
         return false;
 
@@ -601,12 +551,10 @@ bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call)
 
 bool buildCallOfBuiltinForTexts(Walker& walker, const BodyValue& call)
 {
-#if __has_include("AOTWalkJSONWrites.h")
-    if (writeJSONTextOfCall(walker, call) || handJSONTextToBuiltin(walker, call)) {
+    if (writeJSONTextOfCall(walker, call)) {
         walker.count(StatisticID::OwnKeyWalksExpanded);
         return true;
     }
-#endif
     return joinOfWhatIsInSight(walker, call);
 }
 

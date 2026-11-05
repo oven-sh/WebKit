@@ -25,26 +25,11 @@ static constexpr OpcodeSet opcodesThatTheWalkLowers {
     Opcode::EvaluateModule
 };
 
-// Every opcode for which no class of codegen/AOTEmitterList.h has generate<Opcode>(). It must equal entriesWithoutEmitter of ir/generator/emit-cpp-dispatch.ts.
-// Parameter is left out: BindingEmitter has generateParameter(), and a parameter is a record of Code.
 static constexpr OpcodeSet opcodesWithoutEmitterByList = opcodesThatStateTypes | opcodesThatTheWalkLowers | OpcodeSet {
-    Opcode::AllGuards, Opcode::Entered, Opcode::Specified,
-    Opcode::RecordCallee, Opcode::KeepCalleeInFrame, Opcode::KeepEnvironmentOfCalleeInFrame, Opcode::AreFunctionNamesUnchanged,
-    Opcode::IsPrototypeOfClass,
-    Opcode::ReadAboveFreshObject, Opcode::DidReadAbove,
     Opcode::ReportMismatch,
-    Opcode::TryPutDoubleIndex, Opcode::HasSpareArrayCapacity,
-    Opcode::ToEnumeratorPosition,
-    Opcode::IsBuiltinLocationUnchanged, Opcode::SubstringOrUndefined,
     Opcode::StringBuilderAppend,
-    // Nobody builds these.
-    Opcode::NewHeapFrame, Opcode::GetResumeIndex, Opcode::SuspendInHeapFrame, Opcode::IsGeneratorRunning, Opcode::IsGeneratorUnstarted, Opcode::IsUnmodifiedAsyncGenerator,
-    Opcode::MarkGeneratorRunning, Opcode::TakeGeneratorStepStatus, Opcode::GetAccessorOfMember, Opcode::GetCachedValue, Opcode::GetOwnPropertyFields,
-    Opcode::GetEncodedModuleVariable, Opcode::ConvertToDoubleStorage, Opcode::GetArrayCapacity, Opcode::HasFixedBytes, Opcode::ReserveArrayCapacity, Opcode::TypedArrayRange,
-    Opcode::NewArrayOfMembers, Opcode::AbandonModuleEvaluation, Opcode::StopLoadingBehindFile, Opcode::TryStrcat, Opcode::CallForwardVarargs,
-    Opcode::ConstructSuperForwardVarargs, Opcode::GetMyArgumentByVal,
-    Opcode::JSONSourceOpen, Opcode::JSONSourceStart, Opcode::JSONSourceClose, Opcode::JSONSourceAbandon, Opcode::JSONGetByte, Opcode::JSONStartsWith, Opcode::JSONAdvance, Opcode::JSONSkipByte, Opcode::JSONSkipWhitespace, Opcode::JSONParseString, Opcode::JSONParseKey,
-    Opcode::JSONParseNumber, Opcode::JSONParseInteger, Opcode::JSONParseValue, Opcode::JSONFindMember, Opcode::JSONMemberRepeats, Opcode::JSONKeyHasEscapes, Opcode::JSONObjectBegin, Opcode::JSONObjectKey, Opcode::JSONObjectFinish, Opcode::JSONParseExtraMembers, Opcode::ExpectRows
+    Opcode::MayBindAnswersOfGetAndSetTraps, Opcode::MayBindAnswersOfHasTraps, Opcode::ValidateAnswerOfGetTrap, Opcode::ValidateDenialOfHasTrap, Opcode::ValidateConsentOfDeleteTrap,
+    Opcode::HasOwnByAnswerOfDescriptorTrap, Opcode::FinishStoreByTrap,
 };
 
 static_assert([]() consteval {
@@ -55,7 +40,6 @@ static_assert([]() consteval {
     return true;
 }(), "The dispatch has no case for an operation that the schema keeps out of Code.");
 
-// A parameter is made by appendParameter() alone.
 static constexpr OpcodeSet opcodesThatCodeNeverAppends = opcodesThatStateTypes | opcodesWithoutEmitterByList | OpcodeSet { Opcode::Parameter };
 
 static constexpr uint64_t mostInlineFramesInCode = defaultLimitValue(LimitID::InlineFramesPerFunction, hostArchitecture());
@@ -84,7 +68,6 @@ bool takesAnyNaN(const Operation& user, uint32_t operandIndex)
         return user.form() == OperatorForm::Numbers;
     if (user.opcode == Opcode::ToInt32 || user.opcode == Opcode::ToUint32)
         return true;
-    // The run time rounds for a Uint8ClampedArray, and is handed a number that it may box.
     if (user.opcode == Opcode::PutTypedArrayElement)
         return operandIndex == OperandIndex::PutTypedArrayElement::value && user.isInsideView() && hasInlineElementAccess(user.typedArrayType()) && !isClamped(user.typedArrayType());
     return handsOnBitsOfNaN(user);
@@ -123,7 +106,6 @@ static constexpr std::array<ShapeOfEntryInCode, numberOfOpcodes> shapesOfOperati
     return shapes;
 }();
 
-// A draft's opcode can be assigned without become(), which would leave its words in the layout of another entry.
 template<typename Entry>
 static ALWAYS_INLINE void checkShapeOfDraftForCode(Entry entry, const DraftWords& draft)
 {
@@ -165,7 +147,6 @@ ALWAYS_INLINE void Code::fill(Instruction& instruction, const DraftWords& draft)
 
     uint32_t* operandWords;
     uint32_t* payloadWords;
-    // The inline form has no count of named operands: all of its operands are named.
     if (numberOfOperands == numberOfNamedOperands && numberOfPayloadWords <= numberOfInlinePayloadWords && numberOfOperands + numberOfPayloadWords <= Instruction::numberOfInlineWords) {
         operandWords = instruction.m_words.data();
         payloadWords = operandWords + numberOfOperands;
@@ -200,18 +181,19 @@ SideWords::~SideWords()
         fastFree(segment.words);
 }
 
-uint32_t* SideWords::allocate(uint32_t numberOfWords)
+uint32_t* SideWords::allocateInAnotherSegment(uint32_t numberOfWords)
 {
     if (m_current < m_segments.size() && numberOfWords > m_segments[m_current].capacity - m_used) {
         ++m_current;
         m_used = 0;
     }
-    // No mark refers to a segment after the current one, so a new segment can be inserted ahead of the spare ones kept there.
     if (m_current == m_segments.size() || numberOfWords > m_segments[m_current].capacity) {
         uint32_t capacity = std::max(numberOfWords, wordsPerSegment);
         m_segments.insert(m_current, Segment { static_cast<uint32_t*>(fastMalloc(static_cast<size_t>(capacity) * sizeof(uint32_t))), capacity });
     }
-    uint32_t* words = m_segments[m_current].words + m_used;
+    m_wordsOfCurrent = m_segments[m_current].words;
+    m_capacityOfCurrent = m_segments[m_current].capacity;
+    uint32_t* words = m_wordsOfCurrent + m_used;
     m_used += numberOfWords;
     return words;
 }
@@ -219,7 +201,6 @@ uint32_t* SideWords::allocate(uint32_t numberOfWords)
 void SideWords::rewindTo(Mark mark)
 {
     RELEASE_ASSERT(mark.segment < m_current || (mark.segment == m_current && mark.used <= m_used));
-    // Only segments of the standard size are kept for reuse.
     for (uint32_t index = m_current; index > mark.segment; --index) {
         if (m_segments[index].capacity > wordsPerSegment) {
             fastFree(m_segments[index].words);
@@ -228,6 +209,22 @@ void SideWords::rewindTo(Mark mark)
     }
     m_current = mark.segment;
     m_used = mark.used;
+    bool hasCurrent = m_current < m_segments.size();
+    m_wordsOfCurrent = hasCurrent ? m_segments[m_current].words : nullptr;
+    m_capacityOfCurrent = hasCurrent ? m_segments[m_current].capacity : 0;
+}
+
+void Code::noteEffectsBelieved(ValueID id, const Effects& effects)
+{
+    while (!m_effectsBelieved.isEmpty() && m_effectsBelieved.last().first.index() >= id.index())
+        m_effectsBelieved.removeLast();
+    m_effectsBelieved.append({ id, effects });
+}
+
+const Effects* Code::effectsBelievedOf(ValueID id) const
+{
+    auto found = std::ranges::lower_bound(m_effectsBelieved, id.index(), { }, [](const auto& noted) { return noted.first.index(); });
+    return found != m_effectsBelieved.end() && found->first == id ? &found->second : nullptr;
 }
 
 void Code::reset(CodeUnit unit)
@@ -240,6 +237,7 @@ void Code::reset(CodeUnit unit)
     m_inlineFrames.shrink(0);
     m_entries.shrink(0);
     m_factUses.shrink(0);
+    m_effectsBelieved.shrink(0);
     m_pollsWithFates.shrink(0);
     m_opcodesOfValues = { };
     m_numberOfFrameWords = 0;
@@ -273,8 +271,6 @@ Wire::SourceLocation Code::locationOf(const Program& program, Origin origin) con
     if (origin.position == Instruction::noPosition)
         return noSourceLocation;
 
-    // A callee without source text is reported at the call made by the nearest enclosing frame that has one.
-    // Error reporting calls this, so a malformed origin gets no location instead of stopping the process.
     uint32_t position = origin.position;
     uint32_t frameIndex = origin.inlineFrame;
     while (frameIndex) {
@@ -320,7 +316,6 @@ void Code::setLoopMarks(BlockID blockID, bool isInLoop, bool isLoopHead)
 {
     RELEASE_ASSERT(!m_isSwept);
     Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
-    // The slow version is built for size: none of its operations takes the form that a loop picks.
     block.isInLoop = isInLoop && m_unit.role != CodeRole::SlowBody;
     block.isLoopHead = isLoopHead;
     if (isInLoop || isLoopHead)
@@ -355,6 +350,14 @@ void Code::setTypeOfJoinParameter(ValueID parameter, TypeID type)
     const Block& block = m_blocks[record.blockIndex];
     RELEASE_ASSERT(record.opcode == Opcode::Parameter && !block.isEntry && !block.isLoopHead && !block.m_last && !block.hasEnded());
     record.type = type;
+}
+
+void Code::makeTypeTestAskInFull(ValueID test)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    Operation& record = m_operations[checkedIndexInCode(test, m_operations.size())];
+    RELEASE_ASSERT(record.opcode == Opcode::TypeTest);
+    record.flags |= *FlagMask::asksInFull(Opcode::TypeTest);
 }
 
 ValueID Code::appendParameter(BlockID blockID, TypeID type, Representation representation, Origin origin)
@@ -448,7 +451,6 @@ ValueID Code::addConstant(const Draft& draft, TypeID proven)
     constant.representation = draft.representation;
     constant.opcode = draft.opcode;
     constant.type = proven;
-    // A constant is emitted again at each use, where only other constants are sure to be available.
     for (ValueID operand : constant.operands())
         RELEASE_ASSERT(!operand || isConstant(operand));
 
@@ -494,6 +496,48 @@ void Code::end(BlockID blockID, const TerminatorDraft& draft, uint32_t numberOfE
     block.terminator = terminator;
 }
 
+EdgeID Code::endWithJump(BlockID blockID, Origin origin)
+{
+    static_assert(mayStandInCode(TerminatorKind::Jump) && !numberOfNamedOperandsOf(TerminatorKind::Jump) && !hasVariadicOperand(TerminatorKind::Jump) && numberOfFixedTargetsOf(TerminatorKind::Jump) == 1u);
+    RELEASE_ASSERT(!m_isSwept);
+    ASSERT(defaultPayloadOf(TerminatorKind::Jump).empty());
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.hasEnded());
+
+    Terminator terminator;
+    copyOriginToRecordOfCode(terminator, origin, m_inlineFrames.size());
+    terminator.kind = TerminatorKind::Jump;
+    terminator.isSet = true;
+    terminator.numberOfEdges = 1;
+    Edge edge;
+    edge.from = blockID;
+    terminator.firstEdge = EdgeID(m_edges.append(edge));
+    block.terminator = terminator;
+    return terminator.firstEdge;
+}
+
+void Code::endWithBranch(BlockID blockID, ValueID condition, Origin origin)
+{
+    static_assert(mayStandInCode(TerminatorKind::Branch) && numberOfNamedOperandsOf(TerminatorKind::Branch) == 1 && !hasVariadicOperand(TerminatorKind::Branch) && numberOfFixedTargetsOf(TerminatorKind::Branch) == 2u);
+    RELEASE_ASSERT(!m_isSwept);
+    ASSERT(defaultPayloadOf(TerminatorKind::Branch).empty());
+    Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
+    RELEASE_ASSERT(!block.hasEnded());
+
+    Terminator terminator;
+    copyOriginToRecordOfCode(terminator, origin, m_inlineFrames.size());
+    terminator.m_words[0] = checkedIndexInCode(condition, m_operations.size());
+    terminator.m_numberOfInlineOperands = 1;
+    terminator.kind = TerminatorKind::Branch;
+    terminator.isSet = true;
+    terminator.numberOfEdges = 2;
+    Edge edge;
+    edge.from = blockID;
+    terminator.firstEdge = EdgeID(m_edges.append(edge));
+    m_edges.append(edge);
+    block.terminator = terminator;
+}
+
 EdgeID Code::addHandlerEdge(BlockID blockID)
 {
     RELEASE_ASSERT(!m_isSwept);
@@ -516,8 +560,12 @@ void Code::closeEdge(EdgeID edgeID, BlockID to, std::span<const ValueID> argumen
         RELEASE_ASSERT(argument.index() < m_operations.size());
     std::span<const ValueID> kept = m_sideWords.copy(arguments);
     edge.to = to;
-    if (Block& entered = m_blocks[to.index()]; !entered.m_firstEdgeIn)
+    Block& entered = m_blocks[to.index()];
+    if (!entered.m_firstEdgeIn)
         entered.m_firstEdgeIn = edgeID;
+    else
+        m_edges[entered.m_lastEdgeIn.index()].m_nextInto = edgeID;
+    entered.m_lastEdgeIn = edgeID;
     edge.m_arguments = kept.data();
     edge.m_numberOfArguments = static_cast<uint32_t>(kept.size());
 }
@@ -526,13 +574,11 @@ uint32_t Code::addInlineFrame(const InlineFrame& frame)
 {
     RELEASE_ASSERT(!m_isSwept);
     bool namesFunctionItself = !frame.calledBuiltin && (!frame.callee || frame.callee == m_unit.function);
-    // reset() already made [0]. A frame for the function itself that arrives before the first block replaces it.
     if (m_blocks.isEmpty() && m_inlineFrames.size() == 1 && namesFunctionItself && !frame.parent) {
         m_inlineFrames[0] = frame;
         m_inlineFrames[0].callee = m_unit.function;
         return 0;
     }
-    // The function being compiled is never walked at a call.
     RELEASE_ASSERT(!namesFunctionItself || !walksInputBody(m_unit.role));
     RELEASE_ASSERT(frame.parent < m_inlineFrames.size());
     RELEASE_ASSERT(m_inlineFrames.size() < mostInlineFramesInCode);

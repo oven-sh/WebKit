@@ -45,7 +45,6 @@ public:
     Vector<uint8_t> finish();
 
 private:
-    // The key is wider than the 32-bit hash it holds, so no hash is the table's empty or deleted key.
     using PositionsByHash = UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
     template<typename WireRecord> uint32_t internRecord(Vector<WireRecord>&, PositionsByHash&, const WireRecord&);
@@ -64,7 +63,6 @@ struct PatchContext {
     TypeID type(uint32_t wireWord) const { return wireWord == Wire::none ? TypeID() : types[wireWord]; }
 };
 
-// For the engine's fields of the program's records. A body has none, so nothing patches a function's code.
 using ProgramPatch = WTF::Function<void(PatchContext&)>;
 
 struct TextItem {

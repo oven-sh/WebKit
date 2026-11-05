@@ -24,7 +24,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The functions make a longer string as a rope.
 static constexpr int64_t maxLengthOfStringMadeFlat = 1024;
 
 std::optional<Condition> StringBuiltinEmitter::isUndefinedArgument(const InlineCall& call, unsigned index)
@@ -49,7 +48,6 @@ std::optional<Number> StringBuiltinEmitter::numberArgument(const InlineCall& cal
     const Type& type = typeOf(argument);
     if (type.hasOnlyPrimitives(Primitive::Undefined))
         return std::nullopt;
-    // Null is a marker too, and it converts to 0 where undefined may stand for the end of the string.
     RELEASE_ASSERT(type.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined));
 
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
@@ -157,7 +155,6 @@ void StringBuiltinEmitter::generateRange(const InlineCall& call, StringRangeMeth
     CellPointer string = stringOperand(call.receiver());
     Word32 length = strings().lengthOf(string);
     Number first = numberArgument(call, 0).value_or(number(0));
-    // Without an end the range goes on to the end of the string, as it does for an end past it.
     CodeUnitRange range = strings().clampRange(method, length, first, numberArgument(call, 1, std::numeric_limits<double>::infinity()));
     finish(call, strings().substring(call.context(), string, range));
 }
@@ -185,7 +182,6 @@ void StringBuiltinEmitter::generateStringFromCodePoint(const InlineCall& call)
         branchUnless(isInt32(boxed), miss);
         return signExtended(unboxInt32(boxed));
     }();
-    // Up to here a code point is one code unit, half of a pair too. A negative number is far above.
     branchUnless(belowOrEqual(codePoint, integer(UINT16_MAX)), miss);
     finish(call, strings().stringFromCodeUnit(call.context(), low32(codePoint)));
 }
@@ -230,7 +226,6 @@ void StringBuiltinEmitter::generateStringRepeat(const InlineCall& call)
     Integer count = countArgument(call, 0);
     Integer length = zeroExtended(strings().lengthOf(string));
     Integer limit = integer(maxLengthOfStringMadeFlat);
-    // A count within the limit times a length is within int64.
     branchUnless(belowOrEqual(count, limit), miss);
     branchUnless(belowOrEqual(mul(count, length), limit), miss);
     finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringRepeat, { string, low32(count) }));
@@ -353,7 +348,6 @@ void StringBuiltinEmitter::generateHasAt(const InlineCall& call, LiteralEnd end)
     }));
 }
 
-// There is room for other at that place in string.
 Condition StringBuiltinEmitter::hasCharactersAt(const InlineCall& call, CellPointer string, CellPointer other, Integer at)
 {
     constexpr unsigned maxLengthComparedInLine = 2 * sizeof(uint64_t);

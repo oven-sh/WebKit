@@ -35,7 +35,6 @@ static KeyComparison keyComparisonForType(const Type& key)
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         return KeyComparison::AnyValue;
     }
@@ -65,14 +64,12 @@ Boxed HashTableBuiltinEmitter::normalizedNumber(Number key)
     LBasicBlock otherwise = newBlock();
     Join<Boxed> join(m_out);
     Word32 truncated = low32(conversions.toInteger(key));
-    // As numbers, not as bits: -0 is the key 0.
     m_out.branch(equal(toNumber(truncated), key).value(), normalEdge(fitsInt32), unlikelyEdge(otherwise));
 
     m_out.appendTo(fitsInt32);
     join.add(boxInt32(truncated));
 
     m_out.appendTo(otherwise);
-    // Every NaN is one key.
     join.add(conversions.boxDouble(conversions.purified(key)));
     return join.finish();
 }

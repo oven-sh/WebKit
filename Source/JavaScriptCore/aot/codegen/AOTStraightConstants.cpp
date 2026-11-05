@@ -103,6 +103,8 @@ static bool tableOfImageTakesMemberInStraightForm(StraightEmitter& emitter, Fiel
         return false;
     FieldFacts facts = emitter.facts().field(field);
     bool isMarkerThatSlotHolds = (value.is<DataNode::Undefined>() || value.is<DataNode::Null>()) && facts.facts.contains(FieldFact::SlotHoldsUndefinedAndNull);
+    if (slot.provenType && !dataFitsTypeOfSlotInStraightForm(emitter, slot.provenType, value))
+        return false;
     return dataFitsTypeOfSlotInStraightForm(emitter, slot.type, value) && (isMarkerThatSlotHolds || dataFitsTypeOfSlotInStraightForm(emitter, facts.slotType, value));
 }
 

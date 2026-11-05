@@ -46,7 +46,6 @@ static void generateHasJSType(StraightEmitter& emitter, const BodyValue& value)
 
 static void generatePutInternalField(StraightEmitter& emitter, const BodyValue& value)
 {
-    // The result is another name of the operand's word: so the operand gets its word first, also where it waits in the result register.
     CCallHelpers& jit = emitter.jit();
     GPRReg object = StraightEmitter::temporary(0);
     GPRReg stored = StraightEmitter::temporary(1);

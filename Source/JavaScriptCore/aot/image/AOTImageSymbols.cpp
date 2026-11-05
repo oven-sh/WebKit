@@ -44,7 +44,6 @@ namespace {
 
 struct ImageSymbol {
     uint32_t offset;
-    // The range ends here, or where the next symbol starts if that comes first.
     uint32_t end;
     uint32_t name;
 };
@@ -80,14 +79,12 @@ public:
             m_names.append(strings[string]);
         else
             m_names.append(byteCast<uint8_t>(strings.toWTFString(string).utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD).span()));
-        // A name ends at its first zero byte, and tools that list symbols print one name per line.
         for (uint8_t& byte : m_names.mutableSpan().subspan(start)) {
             if (isASCII(byte) && !isASCIIPrintable(byte))
                 byte = ' ';
         }
     }
 
-    // Returns the offset of the name appended since the last call.
     uint32_t endName()
     {
         m_names.append(0);
@@ -96,11 +93,8 @@ public:
 
     void add(uint32_t offset, uint32_t end, uint32_t name) { m_symbols.append({ offset, end, name }); }
 
-    // The map file is made of the pieces that names are made of. It ends no name and adds no symbol.
     Vector<uint8_t> takeText() { return std::exchange(m_names, { }); }
 
-    // The format that SymbolTable::parse() in Bun's src/exe_format/elf_symbols.rs reads, in little-endian 32-bit words: the number of symbols, the size of the names, the offset of the code part in the image, and the size of the image from that offset to its end.
-    // Then, for each symbol, its offset in the code part, its size and the offset of its name among the names. Then the names, each null-terminated.
     Vector<uint8_t> encode(const ImageHeader& header)
     {
         constexpr size_t wordsInHeader = 4;
@@ -136,7 +130,6 @@ private:
 
 } // anonymous namespace
 
-// Program::lineColumnFor() returns line 1 for a module without positions.
 static std::optional<unsigned> lineOfFunctionInSymbol(const Typed::Program& program, const Typed::Function& function)
 {
     if (!hasModule(function.declarationLocation()))
@@ -176,7 +169,6 @@ static void addSymbolsOfUnits(ImageSymbolTable& table, const Typed::Program& pro
         if (code.body.bytes.isEmpty())
             continue;
         if (hidesNames) {
-            // obfuscatedPositionOf() reports this number as the line in stack traces of an obfuscated build, so the obfuscation map decodes it.
             table.append("(function "_s);
             table.appendNumber(position + 1);
             table.append(")"_s);
@@ -241,7 +233,6 @@ static void addSymbolsOfSharedCode(ImageSymbolTable& table, const BuiltImage& bu
             table.add(copy + offset, copy + layout.sharedCodeSize, name);
     };
 
-    // The placements are sorted by key. Where several entries share an offset, the one with the smallest key names it.
     Vector<StubPlacement> placements = sharedCode.blob.placements;
     AOT::stableSort(placements, { }, &StubPlacement::offset);
     removeRepeatedElements(placements, [](const StubPlacement& a, const StubPlacement& b) {
@@ -256,7 +247,6 @@ static void addSymbolsOfSharedCode(ImageSymbolTable& table, const BuiltImage& bu
         addInEachCopy(placement.offset, table.endName());
     }
 
-    // The lists of moves are sorted by their words, and the first word is the callee, so the thunks of one callee are adjacent.
     const ArgumentThunks& thunks = sharedCode.argumentThunks;
     RELEASE_ASSERT(thunks.offsets.size() == sharedCode.argumentMoves.size());
     uint64_t calleeOfName = 0;
@@ -278,7 +268,6 @@ static void addSymbolsOfSharedCode(ImageSymbolTable& table, const BuiltImage& bu
     }
 }
 
-// A predicted text that gets neither code nor a record leaves fewer records than requests, so a record is named by what it holds itself.
 static void appendRegExpToSymbolName(ImageSymbolTable& table, const Typed::Program& program, const ImageRegExp& record)
 {
     table.append("/"_s);
@@ -289,17 +278,14 @@ static void appendRegExpToSymbolName(ImageSymbolTable& table, const Typed::Progr
 
 static std::span<const ImageRegExp> regExpRecordsOf(const BuiltImage& built)
 {
-    // The caller must not move BuiltImage::image out before this call.
     RELEASE_ASSERT(built.image.size() >= sizeof(ImageHeader));
     const ImageHeader& header = spanReinterpretCast<const ImageHeader>(built.image.span().first(sizeof(ImageHeader)))[0];
     ImageSectionRange range = header.sections[static_cast<unsigned>(ImageSection::RegExps)];
     return spanReinterpretCast<const ImageRegExp>(built.image.span().subspan(range.offset, range.size));
 }
 
-// encodeRegExpRecords() wrote the entry offsets of each expression's code into the records of the image. Ascending, each offset once: an entry ends where the next begins.
 static Vector<RegExpEntryInSymbols> collectRegExpEntries(std::span<const ImageRegExp> records)
 {
-    // The shared routines before the first body belong to no single expression. Neither does the failure routine, which 16-bit subjects enter when an expression has only 8-bit code.
     Vector<RegExpEntryInSymbols> entries { RegExpEntryInSymbols { 0, RegExpEntryInSymbols::noRegExp, false } };
     for (uint32_t number = 0; number < records.size(); ++number) {
         const ImageRegExp& record = records[number];
@@ -308,7 +294,6 @@ static Vector<RegExpEntryInSymbols> collectRegExpEntries(std::span<const ImageRe
         entries.append({ record.codeFor8Bit, number, false });
         entries.append({ record.codeFor16Bit, record.hasCodeFor8BitSubjectsAlone ? RegExpEntryInSymbols::noRegExp : number, true });
     }
-    // Expressions with equal code share it, and the first of them names it.
     AOT::stableSort(entries, [](const RegExpEntryInSymbols& a, const RegExpEntryInSymbols& b) {
         return std::tie(a.offset, a.regExp) < std::tie(b.offset, b.regExp);
     });
@@ -343,7 +328,6 @@ static void addSymbolsOfRegExps(ImageSymbolTable& table, const Typed::Program& p
 
 Vector<uint8_t> encodeSymbols(const Typed::Program& program, const BuiltImage& built, BuildContext& context)
 {
-    // The caller must not move BuiltImage::image out before this call.
     RELEASE_ASSERT(built.image.size() >= sizeof(ImageHeader));
     const ImageHeader& header = spanReinterpretCast<const ImageHeader>(built.image.span().first(sizeof(ImageHeader)))[0];
     const CodeLayout& layout = built.layout;
@@ -435,7 +419,6 @@ static void appendSharedCodeToMap(ImageSymbolTable& table, const BuiltImage& bui
     }
 }
 
-// This code lies behind the last unit and the last stub. Without rows of its own whoever reads a profile by the map files it under the row in front of it.
 static void appendRegExpCodeToMap(ImageSymbolTable& table, const Typed::Program& program, const BuiltImage& built)
 {
     const uint32_t start = built.layout.regExpCodeOffset;
@@ -463,15 +446,6 @@ static void appendRegExpCodeToMap(ImageSymbolTable& table, const Typed::Program&
     }
 }
 
-// What the tools of Bun's test/aot read. A row a line, its fields parted by tabs. Offsets count from the start of the code part of the image.
-//   F   a unit that has code: position, offset, size, module + 1 or 0, function, role, name, name of the role, number of bound arguments, path, position in the text
-//   FO  behind the row F of its unit, what the code of the unit was made of. For each entry of CompiledCode::bytesByForm: operation, form, number of values. No field where that list is empty
-//   T   a stub, a thunk or the veneers, in each copy of the shared code: offset, name
-//   TN  a stub that never returns: offset
-//   R   where the code of the units ends
-//   N   the stubs that native functions are called through: offset, size
-//   X   the code of a regular expression: offset, size up to the next row, 8 or 16 for the width of its subjects, flags, the expression as it is written. Expressions with equal code share a row
-//   XR  code that regular expressions share: offset, size up to the next row
 Vector<uint8_t> encodeRowsOfMapFile(const Typed::Program& program, const BuiltImage& built)
 {
     const CodeLayout& layout = built.layout;
@@ -507,8 +481,6 @@ void writeMapFile(const UTF8CString& path, const Typed::Program& program, const 
     if (path.isEmpty())
         return;
 
-    // A build with several entry points compiles an image for each: the first map has the name that was asked for, the next ones that name and ".1", ".2" ..
-    // The processes of a test run all get the one name from their environment: "%p" stands for the number of the process.
     String name = makeStringByReplacingAll(String::fromUTF8ReplacingInvalidSequences(path.span()), "%p"_s, String::number(getCurrentProcessID()));
     unsigned number = [&] {
         static Lock lock;

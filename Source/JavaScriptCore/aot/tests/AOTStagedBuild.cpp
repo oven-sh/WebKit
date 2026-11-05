@@ -38,8 +38,6 @@ Vector<TypeID> typesNamedBy(const Program& program, std::optional<FunctionID> fu
     return types;
 }
 
-// ---- Mechanisms
-
 static constinit Mechanisms mechanismsThatProcessAllows = allMechanisms;
 
 void printMechanisms(PrintStream& out, Mechanisms mechanisms)
@@ -107,8 +105,6 @@ Mechanisms mechanismsOfWay(ASCIILiteral way)
         RELEASE_ASSERT(!applyMechanismsWordOfTest(mechanisms, way));
     return mechanisms;
 }
-
-// ---- Names of units
 
 template<typename Number>
 static std::optional<Number> numberInNameOfCodeUnit(StringView digits)
@@ -233,8 +229,6 @@ std::optional<Vector<CodeUnit>> unitsInOrderOfWords(const Program& program, std:
     return units;
 }
 
-// ---- The stages
-
 static InternalErrorKind errorKindOfStagedMachineFailure(Machine::FailureKind kind)
 {
     switch (kind) {
@@ -258,7 +252,6 @@ static InternalErrorKind errorKindOfStagedMachineFailure(Machine::FailureKind ki
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What FunctionCodeGenerator holds while the emitters append.
 struct MachineOperationsOfStagedBuild {
     WTF_MAKE_NONCOPYABLE(MachineOperationsOfStagedBuild);
 
@@ -273,7 +266,6 @@ struct MachineOperationsOfStagedBuild {
     RelocationRecorder relocations;
     CodeRecords records;
     StackCheckState stackChecks;
-    // Its generators point into the members above.
     Machine::Procedure procedure;
 };
 
@@ -289,12 +281,9 @@ struct StagedBuild::State {
 
     bool ensureFacts();
     bool ensurePrepared();
-    // The stage itself, once: which units get code hangs on the order of the queue, which is the driver's.
     bool ensureCompiled();
-    // A callee takes the join of what its callers have left, so every one of them is walked first, as in a build. A walk behind that leaves the same again.
     bool ensureArrivals();
     CompileWorker* ensureWorker();
-    // Whatever an earlier request for a unit answered with is gone.
     CompileWorker* workerFor(CodeUnit);
     const Code* codeOf(CodeUnit);
 
@@ -309,7 +298,6 @@ struct StagedBuild::State {
     std::unique_ptr<TypeArena> typesWithoutWorker;
     std::unique_ptr<CompileWorker> compileWorker;
     Vector<CompiledCode, 2> finished;
-    // Ascending, of ensureCompiled().
     Vector<CodeUnit> unitsWithCode;
     Machine::Arena machineArena;
     std::unique_ptr<MachineOperationsOfStagedBuild> machine;
@@ -341,7 +329,6 @@ void StagedBuild::State::reportFailureOf(const Machine::Procedure& procedure, co
     if (value && value.index() < code.numberOfValues() && code.at(value).hasPosition()) {
         const Operation& operation = code.at(value);
         Wire::SourceLocation location = code.locationOf(*prepared.program, operation.origin());
-        // Without a location the numbers of a record are looked up in the body as the front end wrote it, where those of Code mean nothing.
         if (hasModule(location)) {
             error.value = value;
             error.location = location;
@@ -495,7 +482,6 @@ TypeArena& StagedBuild::types()
     if (CompileWorker* worker = state.ensureWorker())
         return worker->walker().types();
 
-    // Behind an error no thread walks.
     if (!state.typesWithoutWorker) {
         TypeTable& table = program().types;
         state.typesWithoutWorker = makeUniqueWithoutFastMallocCheck<TypeArena>(table, table.isFrozen() ? ArenaKeeps::UntilReset : ArenaKeeps::InProgram);
@@ -549,7 +535,6 @@ Machine::Procedure* StagedBuild::emitMachineOperations(const Code& codeToEmit, M
         break;
     case MachineState::Prepared:
         work.setStep("allocate"_s);
-        // As FunctionCodeGenerator::emitCode() does.
         if (machine.stackChecks.stackCheck == StackCheck::CoveredByCallers && !machine.records.frame.needsStackCheckForTailCalls)
             machine.procedure.setLargestFrameSetUpWithoutStackCheck(maxFrameSizeWithoutStackCheck);
         if (!machine.procedure.failure())
@@ -602,8 +587,6 @@ std::unique_ptr<CompileOutput> compileWithMechanisms(std::unique_ptr<Program> pr
 {
     return compileParsedProgramWithMechanisms(WTF::move(program), build, mechanisms);
 }
-
-// ---- For native tests
 
 std::unique_ptr<Program> createEmptyProgram(BuildContext& build)
 {

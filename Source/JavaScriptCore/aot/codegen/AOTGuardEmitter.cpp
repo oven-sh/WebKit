@@ -35,10 +35,8 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(sizeof(OptionSet<CompiledStructure::Flag>) == sizeof(uint8_t));
 static_assert(sizeof(WatchpointState) == sizeof(uint8_t));
 static_assert(offsetOfFirstField <= MarkedBlock::atomSize);
-// However many of them a test asks for, the encoder tests one byte in memory.
 static_assert(!((orderWordIntegrityBits | orderWordHasExtraProperties | orderWordHasFieldOutsideSlot) & ~(0xffu << 24)));
 
-// Image gives each guard a byte of its own, so the number of its bit is a multiple of eight.
 static constexpr uint8_t maskOfClassGuardInItsByte = maskOfClassGuardBit(0);
 
 struct GuardOfClassAskedByTest {
@@ -46,7 +44,6 @@ struct GuardOfClassAskedByTest {
 
     LayoutID classLayout;
     ClassSide side;
-    // Null: the guard of the side.
     PropertyKeyID name;
     bool isAskedByStoresAlone { false };
 
@@ -62,7 +59,6 @@ void GuardEmitter::failAndDefineFalse(const ValueContext& value, InternalErrorKi
 
 Condition GuardEmitter::isPresentCell(Boxed value, const Type& type)
 {
-    // The empty value has no tag bits, so it passes isCell.
     if (type.primitives & Primitive::Absent) {
         Condition hasNoTagBits = isCell(value);
         return logicalAnd(hasNoTagBits, isNotEmpty(value));
@@ -86,7 +82,6 @@ CellPointer GuardEmitter::untestedCell(const OperationContext& context, ValueID 
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -105,15 +100,10 @@ CellPointer GuardEmitter::cellOrElse(const OperationContext& context, ValueID id
     return untestedCell(context, id);
 }
 
-// A shape is a number of the program: the objects of every instance of the image have it. Behind the passing edge the value counts as an object of the instance that runs:
-// its methods are entered without their function objects, with the variables of that instance, behind the guards of that instance's classes. So an object of another instance is turned away, as by a TypeTest:
-// shapeTestOfTypeTestAsksForInstance(). It goes by name.
 void GuardEmitter::generateShapeTest(const ValueContext& value)
 {
     ValueID object = value->objectOperand();
     bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(object));
-    bool mayBeNoCell = representationOf(object) == Representation::JSValue && (typeOf(object).primitives & ~cellPrimitives);
-    bool leavesCellTestToRead = mayBeNoCell && value->expectsCell() && failingSideBeginsWithAccessThrough(value, object);
     defineTestByBranching(value, [&](BranchTargets targets) {
         BranchTargets targetsOfShape = targets;
         LBasicBlock hasShape = nullptr;
@@ -121,14 +111,8 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
             hasShape = newBlock();
             targetsOfShape = { normalEdge(hasShape), targets.notTaken };
         }
-        std::optional<Condition> hasShapeThoughNoCell;
-        if (leavesCellTestToRead)
-            hasShapeThoughNoCell = emitter<ShapeTestEmitter>().hasShapeInThoughNoCell(in<Boxed>(object), value->layouts(), typeOf(object));
-        CellPointer cell = hasShapeThoughNoCell ? untestedCell(value, object) : cellOrElse(value, object, targets.notTaken);
-        if (hasShapeThoughNoCell)
-            branch(*hasShapeThoughNoCell, targetsOfShape);
-        else
-            emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), typeOf(object), targetsOfShape);
+        CellPointer cell = cellOrElse(value, object, targets.notTaken);
+        emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), typeOf(object), targetsOfShape);
         if (!asksForInstance)
             return;
         m_out.appendTo(hasShape);
@@ -136,31 +120,8 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
     });
 }
 
-// `x.y`, `x.y = v` by name, where the test of the guess about `x` has failed: off undefined and null they throw, so no way of a program that goes on brings those two to the test.
-bool GuardEmitter::failingSideBeginsWithAccessThrough(const ValueContext& test, ValueID object) const
-{
-    static constexpr OpcodeSet accesses { Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PrivateGet, Opcode::PrivateSet };
-    // What brings another operand of the access into its form does nothing that anybody sees.
-    static constexpr OpcodeSet passedOver { Opcode::Narrowed, Opcode::Box, Opcode::Unbox, Opcode::IntegerToNumber, Opcode::NumberToInteger, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::Decode, Opcode::Compress };
-    const Terminator& terminator = m_code.at(test.block()).terminator;
-    if (!test.isBranchCondition() || terminator.kind != TerminatorKind::Branch)
-        return false;
-    auto withoutProofs = [&](ValueID id) {
-        while (m_code.at(id).opcode == Opcode::Narrowed)
-            id = m_code.at(id).valueOperand();
-        return id;
-    };
-    for (ValueID id : m_code.valuesOf(m_code.at(terminator.notTaken()).to)) {
-        const Operation& operation = m_code.at(id);
-        if (!passedOver.contains(operation.opcode))
-            return accesses.contains(operation.opcode) && withoutProofs(operation.objectOperand()) == withoutProofs(object);
-    }
-    return false;
-}
-
 void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
 {
-    // No generic operation answers the question, so there is nothing to do where a guess about the receiver fails.
     if (value->level() == KnowledgeLevel::Expected) {
         failAndDefineFalse(value, InternalErrorKind::OpcodeWithoutCode);
         return;
@@ -195,7 +156,6 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
             branch(isFilled(), targets);
         });
         return;
-    case FieldAccess::Coverage::EveryMemberHasSlot:
     case FieldAccess::Coverage::EveryMember:
         defineTest(value, isFilled());
         return;
@@ -229,7 +189,6 @@ Condition GuardEmitter::orderWordHasNoBits(const ValueContext& value, uint32_t b
     return hasNoBits(orderWord, bits);
 }
 
-// A field that leaves its slot sets the bit of the order word and the mark of the cell.
 void GuardEmitter::generateHasNoFieldOutsideSlot(const ValueContext& value)
 {
     defineTestOfCompiledObject(value, [&] {
@@ -250,7 +209,6 @@ void GuardEmitter::generateHasBirthFieldsFilled(const ValueContext& value)
 
 void GuardEmitter::generateHasKeyOrder(const ValueContext& value)
 {
-    // The walk answers for a list that no order of the image begins with.
     std::optional<uint32_t> expected = m_plan.keyOrders().findOrderWord(value->layout(), value->fields());
     if (!expected) {
         failAndDefineFalse(value, InternalErrorKind::InvalidGuard);
@@ -291,7 +249,6 @@ void GuardEmitter::generateIsPristine(const ValueContext& value)
             defineTest(value, boolean(false));
             return;
         }
-        // Only closures have the tested Structures, so the test needs no test of the class in front of it.
         defineTestByBranching(value, [&](BranchTargets targets) {
             branch(isClosureAsCreated(cellOrElse(value, subject, targets.notTaken), builtinClass, value->aspects()), targets);
         });
@@ -334,7 +291,6 @@ void GuardEmitter::generateIsNotThenable(const ValueContext& value)
 
 void GuardEmitter::generateAreMembersUnchanged(const ValueContext& value)
 {
-    // The walk answers a test without conditions itself, so a list that arrives empty has lost them.
     if (value->conditions().isEmpty()) {
         failAndDefineFalse(value, InternalErrorKind::InvalidGuard);
         return;
@@ -351,7 +307,6 @@ Condition GuardEmitter::areMembersUnchanged(PayloadListView<MemberConditionRecor
     guards.shrink(guards.size() - std::ranges::unique(guards).size());
     RELEASE_ASSERT(!guards.isEmpty());
 
-    // What ends the guard of a side ends the guards of its names, so a name answers for its side.
     auto isAnsweredByGuardOfName = [&](const GuardOfClassAskedByTest& guard) {
         return !guard.name && std::ranges::any_of(guards, [&](const GuardOfClassAskedByTest& other) {
             return other.name && other.isOfSameSideAs(guard);
@@ -365,7 +320,6 @@ Condition GuardEmitter::areMembersUnchanged(PayloadListView<MemberConditionRecor
     };
     Vector<GuardLeftToAsk, 4> guardsLeft;
     StaticsEmitter& statics = emitter<StaticsEmitter>();
-    // The guards of one side stand side by side, and the names among them that are keys of the program have one guard together.
     for (std::span<const GuardOfClassAskedByTest> rest = guards.span(); !rest.empty();) {
         const GuardOfClassAskedByTest& first = rest.front();
         size_t numberOfGuardsOfSide = std::ranges::find_if_not(rest, [&](const GuardOfClassAskedByTest& guard) {
@@ -374,7 +328,6 @@ Condition GuardEmitter::areMembersUnchanged(PayloadListView<MemberConditionRecor
         std::span<const GuardOfClassAskedByTest> guardsOfSide = rest.first(numberOfGuardsOfSide);
         rest = rest.subspan(numberOfGuardsOfSide);
 
-        // The run time ends a guard through the record of its class. Without a record nobody would, so the guard never holds.
         if (!first.classLayout || !m_plan.hasClassRecord(first.classLayout))
             return boolean(false);
 
@@ -408,7 +361,6 @@ Condition GuardEmitter::areMembersUnchanged(PayloadListView<MemberConditionRecor
     if (guardsLeft.size() == 1)
         return eachHoldsByItsByte();
 
-    // However many classes and sides the test lists, it reads one word for them. As with a byte, a read from before a guard began says "does not hold".
     Vector<ClassGuardKey, 4> keys(guardsLeft.size(), [&](size_t index) {
         return guardsLeft[index].key;
     });
@@ -432,7 +384,6 @@ void GuardEmitter::defineWhetherDeclaredMemberIsFound(const ValueContext& value)
         m_out.appendTo(hasShape);
         if (asksForInstance)
             goOnWhere(belongsToInstance(cell));
-        // As generateHasLayoutPrototype() asks.
         goOnWhere(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), JSC::IsPristine));
         Vector<LayoutID, 4> classes;
         for (LayoutID member : membersOf(types(), receivers)) {
@@ -451,7 +402,7 @@ void GuardEmitter::branchOnOwnPropertyByCell(const ValueContext& value, BranchTa
     ValueID object = value->objectOperand();
     LayoutSetID receivers = value->receivers();
     FieldAccess access = fieldAccessFor(value->key(), receivers, false);
-    bool isFieldOfAll = (access.coverage == FieldAccess::Coverage::EveryMember || access.coverage == FieldAccess::Coverage::EveryMemberHasSlot) && access.hasLocation;
+    bool isFieldOfAll = access.coverage == FieldAccess::Coverage::EveryMember && access.hasLocation;
     if (access.coverage != FieldAccess::Coverage::NoMember && !isFieldOfAll) {
         m_out.jump(asksRunTime);
         return;
@@ -487,8 +438,6 @@ void GuardEmitter::generateIsClosureOf(const ValueContext& value)
             m_out.jump(targets.taken);
             return;
         }
-        // Which function a closure belongs to never changes, so the operation declares no read. The words that say so do change.
-        // Taking the operand may declare the accesses anew, so the check of loads is lifted behind it.
         m_out.clearDeclaredAccesses();
         emitter<ClosureTestEmitter>().branchOnIsClosureOf(cell, function, tested, targets);
     });
@@ -496,15 +445,12 @@ void GuardEmitter::generateIsClosureOf(const ValueContext& value)
 
 Condition GuardEmitter::holds(LayoutID classLayout, ClassSide side, PropertyKeyID name, bool isAskedByStoresAlone)
 {
-    // The run time ends a guard through the record of its class. Without a record nobody would, so the guard never holds.
     if (!classLayout || !m_plan.hasClassRecord(classLayout))
         return boolean(false);
     StaticsEmitter& statics = emitter<StaticsEmitter>();
     return guardInByteHolds(classLayout, side, statics.guardByte(name ? statics.keyOfGuard(classLayout, side, name, isAskedByStoresAlone) : statics.keyOfGuard(classLayout, side)));
 }
 
-// A guard may begin to hold without a word to anybody: the first allocation of a constructor function's class defines the class, and no operation says that it writes MemberGuards.
-// A read from before says "does not hold", and the code goes the general way. What ENDS a guard says that it writes them.
 Condition GuardEmitter::guardInByteHolds(LayoutID classLayout, ClassSide side, TypedPointer byteOfGuard)
 {
     Word32 byte(m_out.load8ZeroExt32(byteOfGuard));
@@ -513,7 +459,6 @@ Condition GuardEmitter::guardInByteHolds(LayoutID classLayout, ClassSide side, T
 
 Condition GuardEmitter::isClosureAsCreated(CellPointer cell, BuiltinClassID builtinClass, OptionSet<PristineAspects> aspects)
 {
-    // A new property, another prototype and a change of integrity each give a closure another Structure.
     RELEASE_ASSERT(builtinClass == BuiltinClasses::Function || builtinClass == BuiltinClasses::AsyncFunction);
     FunctionKindData kind { };
     kind.isAsync = builtinClass == BuiltinClasses::AsyncFunction;
@@ -528,7 +473,6 @@ Condition GuardEmitter::isClosureAsCreated(CellPointer cell, BuiltinClassID buil
         RELEASE_ASSERT(below);
         isAsCreated = logicalOr(isAsCreated, isClosureAsCreated(cell, below, PristineAspects::Names));
     }
-    // `Base.call(this)`: a constructor function has its `prototype` property, which hides no other name. A word that is read too early is zero, and the test fails.
     for (unsigned index = 0; index < ClosureWords::numberOfStructuresWithPrototypeProperty; ++index)
         isAsCreated = logicalOr(isAsCreated, equal(structureID, loadFilledOnce32(AOT_INSTANCE_OFFSET(closures.structuresWithPrototypeProperty) + index * sizeof(uint32_t))));
     return isAsCreated;
@@ -565,7 +509,6 @@ void GuardEmitter::branchOnIsNotThenable(Boxed value, const Type& type, BranchTa
     Word32 thenableState = bitAnd(loadField<Word32>(structure, m_heaps.Structure_bitField), Structure::s_definitelyNonThenableStateBits);
     Condition isCachedAsNonThenable = equal(thenableState, word32(static_cast<int32_t>(Structure::DefinitelyNonThenableState::NonThenable) << Structure::s_definitelyNonThenableStateShift));
 
-    // The Structure of a compiled object gets this state only where it lists the extra properties of its objects, or they have none.
     LBasicBlock cachedStateApplies = newBlock();
     branch(logicalAnd(isCachedAsNonThenable, hasInstanceRealm(structure)), { normalEdge(cachedStateApplies), targets.notTaken });
 

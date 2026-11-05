@@ -111,7 +111,6 @@ static void stringTableGrowsShards()
     constexpr unsigned count = 10000;
     TestStrings test;
     StringTable& strings = test.strings;
-    // With their code units in the table, each of the texts below adds itself alone.
     strings.intern(bytesOf("~abcdefghijklmnop"_s));
     size_t size = strings.size();
     Vector<StringID> ids;
@@ -123,10 +122,8 @@ static void stringTableGrowsShards()
     AOT_TEST_CHECK(strings.size() == size + count);
 }
 
-// Each text is the front of the next. Whatever the order in which they are handed over, each is the string that intern() makes of its bytes, with the same number, and lies where it was kept.
 static void stringTableInternsKeptTextsAsAnyOther()
 {
-    // `~` and the letters behind `p` are in no other string. The last characters take two, three and four bytes, and half a pair takes three.
     constexpr std::array<uint8_t, 28> run { '~', 'q', 'r', 'n', 'u', 'l', 'l', 's', 't', 'q', 'u', 'v', 'w', 'x', 'y', 'z', 0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80, 0xed, 0xa0, 0xbd };
     constexpr std::array<size_t, 12> ends { 1, 2, 3, 7, 8, 9, 16, 18, 21, 25, 28, 15 };
     Vector<size_t> ascending(std::span<const size_t> { ends });
@@ -143,7 +140,6 @@ static void stringTableInternsKeptTextsAsAnyOther()
             StringID expected = copied.strings.intern(std::span<const uint8_t> { run }.first(end));
             StringID id = kept.strings.internKept(bytes.first(end), fronts);
             AOT_TEST_CHECK(id == expected && kept.strings.size() == copied.strings.size());
-            // The one character is a code unit of the longer texts, which have brought it where they came first.
             AOT_TEST_CHECK((end == 1 || kept.strings[id].data() == bytes.data()) && kept.strings[id].size() == end);
             AOT_TEST_CHECK(kept.strings.internKept(bytes.first(end), fronts) == id && kept.strings.find(std::span<const uint8_t> { run }.first(end)) == id && kept.strings.intern(std::span<const uint8_t> { run }.first(end)) == id);
             AOT_TEST_CHECK(kept.strings.nameClass(id) == copied.strings.nameClass(expected));
@@ -158,7 +154,6 @@ static void stringTableInternsKeptTextsAsAnyOther()
     }
 }
 
-// The shards grow many times while the texts come, and each growth asks for the hash of every string: it is remembered, so nobody goes through the bytes again.
 static void stringTableFindsKeptTextsBehindGrowthOfShards()
 {
     constexpr size_t count = 20000;

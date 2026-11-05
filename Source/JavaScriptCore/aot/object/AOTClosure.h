@@ -28,7 +28,7 @@ public:
     template<typename CellType, SubspaceAccess mode>
     static CompleteSubspace* subspaceFor(VM& vm) { return vm.heap.aotClosureSpace<mode>(); }
 
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, bool isBound = false);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     static Closure* create(VM&, Structure*, FunctionID, std::span<const uint64_t> captures = { }, unsigned numberOfReferences = 0);
     static Closure* createForCompiledCode(VM&, Structure*, size_t allocationSize);
 
@@ -52,7 +52,6 @@ public:
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
     static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSValue, bool shouldThrow);
     static bool preventExtensions(JSObject*, JSGlobalObject*);
-    static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
     uint32_t closureNumber() const { return ClosureWord::closureNumberOf(m_entry); }
     FunctionKindData kind() const { return kindOfClosureNumber(closureNumber()); }
@@ -64,16 +63,13 @@ public:
     State& state() const;
     const LayoutData* classData() const;
     bool isLazyClassObject() const;
-    // Nothing was ever stored in, defined on or deleted from a closure that has the Structure it was made with, so its name and its length are those of its function.
     bool hasStructureOfNewClosure(VM&) const;
     bool hasOrdinaryDefineOwnProperty(VM&, PropertyName) const;
     static bool isNameThatBuiltinFunctionsRefuse(VM&, UniquedStringImpl*);
     bool refusesOwnProperty(VM&, PropertyName) const;
     bool isBuiltinFunction() const;
     void ensureClassObject(VM&);
-    // Leaves the class object with `prototype` as its only property: what it owned before is the caller's to put back.
     void initializeClassObject(VM&, JSObject* parent, JSObject* prototype);
-    void adoptBoundFunctionStructure(VM&);
     JSValue prototypeProperty(VM&);
     void setPrototypeProperty(VM&, JSObject* prototype, unsigned attributes);
     void setNameProperty(VM&, JSString*, unsigned attributes);
@@ -85,7 +81,6 @@ private:
     {
     }
 
-    void prepareForGenericAccess(VM&);
     bool ensurePrototypeProperty(VM&);
 
     uint64_t m_entry;
@@ -93,6 +88,10 @@ private:
 static_assert(sizeof(JSFunction) == offsetOfClosureEntry && Closure::offsetOfEntry() == offsetOfClosureEntry && sizeof(Closure) == offsetOfClosureCaptures);
 
 ALWAYS_INLINE bool isCompiledClosure(const JSCell* cell) { return cell->type() == CompiledClosureType; }
+
+Structure* createStructureOfScopesInHeapSnapshots(VM&, JSGlobalObject*);
+JSCell* createScopeInHeapSnapshot(VM&, Structure*, JSCell* closure);
+bool hasScopeInHeapSnapshots(JSCell*);
 
 template<typename Visitor>
 ALWAYS_INLINE void Closure::visitFields(Closure* closure, Visitor& visitor)
@@ -106,11 +105,9 @@ ALWAYS_INLINE void Closure::visitFields(Closure* closure, Visitor& visitor)
 JSC_DECLARE_HOST_FUNCTION(callClassConstructor);
 JSC_DECLARE_HOST_FUNCTION(callCompiledClosure);
 JSC_DECLARE_HOST_FUNCTION(constructCompiledClosure);
-JSC_DECLARE_HOST_FUNCTION(constructBoundClosure);
 
 enum class LookupPosition : uint8_t { Receiver, PrototypeChain };
 
-// For DefineMethod. Until its definition ends nothing else has seen the class object or the prototype object of a class, and those of a class that is evaluated once have Structures of their own.
 bool tryDefineClassMemberWithoutTransition(JSGlobalObject*, Closure& classObject, const LayoutData& classLayout, JSObject* holder, PropertyName, JSObject* function, MethodKind);
 bool mayHaveLazyProperty(VM&, JSCell*, UniquedStringImpl*, LookupPosition);
 bool closureHandlesPrototypeProperty(JSCell*);

@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// EscapeAnalysis. `function log() { if (quiet) return; write.apply(null, arguments); }`: a call names an `arguments` that another block has made, that only this code has, and that the body only reads and hands out last.
-// The allocation is walked once more in front of the call, and where no other way needs the first one the sweep drops it.
-// At a suspension: nothing is left to undo. At a throw: never under a handler, which may name the object. Withheld: the call takes the object as it is.
-
 #include "config.h"
 #include "AOTWalkKnown.h"
 
@@ -24,7 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// BodyLiveness::isLiveBefore() says yes where the readers that are left stand on another way. This looks at the rest of the block and at the heads that its edges lead to.
 static bool isNamedBehindInKnownLeaving(const BodyIndex& index, const BodyLiveness& liveness, ValueID value, ValueID point)
 {
     BodyBlock block = index.block(index.blockOf(point));
@@ -42,8 +37,6 @@ static bool isNamedBehindInKnownLeaving(const BodyIndex& index, const BodyLivene
     return isNamed;
 }
 
-// Every mention of the object in the body reads its length, an element or the variable of a parameter, which changes nothing of it, or is a call behind which nothing names it, in no other loop than the one that makes it.
-// So each such call may make its own: no way makes two, and nobody can hold one against another.
 static bool isOnlyReadAndHandedOutLastInKnownLeaving(const BodyIndex& index, const BodyLiveness& liveness, PropertyKeyID length, ValueID arguments)
 {
     uint32_t mentionsLeft = index.useCount(arguments);
@@ -67,7 +60,6 @@ static bool isOnlyReadAndHandedOutLastInKnownLeaving(const BodyIndex& index, con
         if (!opcodesThatMayTakeArgumentsLast.contains(opcode) || index.loopOf(index.blockOf(user.id())) != loop || isNamedBehindInKnownLeaving(index, liveness, arguments, user.id()))
             return false;
     }
-    // What is left stands at the end of a block, on an edge or at a head.
     return !mentionsLeft;
 }
 
@@ -87,11 +79,9 @@ ArgumentsMadeWhereTheyLeave::ArgumentsMadeWhereTheyLeave(Walker& walker, const B
     ValueID cell = rootOfCellInSweptCode(code, bound.id());
     if (code.isConstant(cell) || !opcodesThatMakeArguments.contains(code.at(cell).opcode) || code.at(cell).block() == walker.currentBlock() || !walker.state().isFresh(Reference::value(cell)))
         return;
-    // A rest parameter is a list of the program's, which may have changed since the entry. The language has no name for the hidden list.
     FunctionID function = walker.currentFunction();
     if (!walker.program().at(function).has(FunctionFlags::HasHiddenRest))
         return;
-    // What runs once makes the object once, whichever block makes it.
     if (!walker.isInLoop() && (walker.facts().runsAtMostOnce(function) || walker.program().at(function).isModuleBody()))
         return;
     if (!walker.m_liveness.isComputedFor(index))

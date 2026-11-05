@@ -37,8 +37,6 @@ std::span<const NativeTest> programStaticsTests();
 
 static constexpr unsigned numberOfVariables = 600;
 
-// The cases read the words raw, so each has to start as the bits of undefined. A variable that may be replaced does. Any other may start as zero, which compiled code alone reads as undefined.
-// A variable gets a word where code names it, so nothing in front of the stores may end the body: what they store is a constant.
 static String makeProgramText()
 {
     StringBuilder text;

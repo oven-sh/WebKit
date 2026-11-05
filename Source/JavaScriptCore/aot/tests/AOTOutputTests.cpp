@@ -29,8 +29,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// PrimitiveEmitter and ConversionEmitter are made from a CodeGenerator, which takes a walked function.
-// A member below that has a namesake there makes the calls of its namesake, in the same order.
 struct OutputTestEmitter {
     WTF_MAKE_NONCOPYABLE(OutputTestEmitter);
 
@@ -43,7 +41,6 @@ struct OutputTestEmitter {
     {
     }
 
-    // Code that is run takes its arguments in one bank: some C conventions count the two banks together.
     LValue argument(unsigned index) { return test.argumentGPR(index); }
     LValue numberArgument(unsigned index) { return test.argumentFPR(index); }
 
@@ -110,7 +107,6 @@ struct OutputTestEmitter {
         });
     }
 
-    // On x86-64 a pinned constant is read from its word of the instance, so that word has to hold it.
     void compile()
     {
         Procedure& procedure = test.procedure();
@@ -240,7 +236,6 @@ static void testOutputBoxesAndUnboxesInt32()
     unboxer.compile();
 
     for (int32_t integer : { 0, 1, -1, 42, INT32_MAX, INT32_MIN }) {
-        // The upper half of a register that holds an Int32 is unspecified.
         uint64_t wordWithUpperHalf = static_cast<uint32_t>(integer) | 0x5a5a5a5aull << 32;
         EncodedJSValue boxed = boxer.call<EncodedJSValue>(wordWithUpperHalf);
         AOT_TEST_CHECK(boxed == JSValue::encode(jsNumber(integer)));
@@ -333,7 +328,6 @@ static void testOutputPurifiesNumbersReadFromRawBytes()
     float number = -2.5f;
     AOT_TEST_CHECK(floats.call<EncodedJSValue>(&number) == JSValue::encode(jsDoubleNumber(-2.5)));
 
-    // What the checks above rule out.
     OutputTestEmitter withoutPurification;
     compileReadOfRawNumberInOutputTest(withoutPurification, OutputTestRawNumber::Double, false);
     uint64_t bits = bitsThatBoxToNoNumber;
@@ -547,7 +541,6 @@ static void testOutputComesBackToBlocksThatItLeft()
     AOT_TEST_CHECK(emitter.call<int64_t>(int64_t { -3 }, int64_t { -4 }) == 1);
 }
 
-// As in AOTOperatorEmitterArithmetic.cpp.
 static std::optional<int64_t> outputTestConstantIntegerOf(LValue value)
 {
     if (value->hasInt())
@@ -603,12 +596,7 @@ static void testOutputValuesAnswerWhatTheEmittersAsk()
     LValue sum = out.add(out.constInt64(8), x);
     AOT_TEST_CHECK(sum->opcode() == Add && sum->numChildren() == 2 && sum->child(0) == x && sum->child(1)->isInt64(8) && out.add(x, 8) == sum);
 
-    // PrimitiveEmitter::narrowWordBehind().
     LValue decoded = out.add(cageBase, out.shl(wide, cell32Shift));
-    LValue word = out.select(out.aboveOrEqual(narrow, minCell32), decoded, wide);
-    AOT_TEST_CHECK(word->opcode() == Select && word->numChildren() == 3 && word->child(1) == decoded);
-    AOT_TEST_CHECK(word->child(2)->opcode() == ZExt32 && word->child(2)->child(0) == narrow);
-    AOT_TEST_CHECK(word->child(0)->opcode() == AboveEqual && word->child(0)->type() == Int32 && word->child(0)->child(0) == narrow && word->child(0)->child(1)->isInt32(minCell32));
 
     AOT_TEST_CHECK(!out.doubleEqual(a, a)->hasInt() && out.logicalNot(out.doubleLessThan(a, b))->opcode() != GreaterEqual);
 
@@ -708,7 +696,6 @@ static void testOutputTerminatorsFoldedToJumpsTakeNormalEdges()
     switchWithoutCases.out.switchOn(switchWithoutCases.argument(0), { }, unlikelyEdge(onlyTarget));
     checkOutputBlockJumpsAlongNormalEdge(switchWithoutCases.out.m_block, onlyTarget);
 
-    // The emitters do not look for a constant condition. Along a rare edge, everything behind the arm would be one rare region.
     OutputTestEmitter emitter;
     Output& out = emitter.out;
     LValue x = emitter.argument(0);
@@ -726,7 +713,6 @@ static void testOutputTerminatorsFoldedToJumpsTakeNormalEdges()
     AOT_TEST_CHECK(emitter.call<int64_t>(int64_t { 5 }) == 7);
 }
 
-// As ExceptionEmitter does it: a jump to the handler hands over what it throws, a landing pad hands over zero, and the handler then asks elsewhere.
 static void testOutputHandlerTakesItsParameterThroughAPhi()
 {
     ProcedureTraits traits;

@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Which functions literals lay as the accessors of a field. A guess, written behind the flow, from what the flow ended with.
-
 #include "config.h"
 #include "AOTLinkKeyOrders.h"
 
@@ -48,7 +46,6 @@ void writeAccessorsExpectedInFields(const LinkFlow& flow, LinkTables& tables)
         if (expected.getter || expected.setter)
             tables.accessorsExpectedInFields.append(expected);
         if (expected.getter || expected.setter) {
-            // A literal lists what it lays.
             const Layout& layout = flow.program.at(expected.field.layout);
             if (expected.field.field < layout.fields.size() && !liesInThread(layout.fields[expected.field.field].key))
                 tables.keysOfAccessorsExpectedInFields.set(layout.fields[expected.field.field].key.index());

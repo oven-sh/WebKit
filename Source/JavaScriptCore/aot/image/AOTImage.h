@@ -88,7 +88,6 @@ public:
             return image;
         return currentOfThread();
     }
-    // Null if there is no image or if threads differ: ask current() then. For callers that cannot afford the call in current().
     static const Image* sharedByAllThreads()
     {
         const Image* image = s_current.load(std::memory_order_acquire);
@@ -96,15 +95,11 @@ public:
     }
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
-    // Where setCurrentOfThread() writes on this thread.
     static const Image** addressOfCurrentOfThread();
-    // For a thread whose VM runs no compiled program.
     JS_EXPORT_PRIVATE static void useNoneOnThisThread();
     static bool usesNoneOnThisThread();
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
-    // Takes no lock and does not depend on the calling thread.
     static const Image* findByCodeAddress(const void*);
-    // Calls the functor for every image that any thread has started to use, with that image as the calling thread's current image. Takes no lock.
     static void forEachPublishedImage(const ScopedLambda<IterationStatus(const Image&)>&);
 
     JS_EXPORT_PRIVATE static Wire::ImageVerdict check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity);
@@ -117,10 +112,8 @@ public:
         int descriptor { -1 };
         int64_t offset { 0 };
     };
-    // Where the header lies in a file that stays open. Nothing: no such file is known.
     const std::optional<PositionInFile>& positionInFile() const { return m_positionInFile; }
     void setPositionInFile(const std::optional<PositionInFile>& position) { m_positionInFile = position; }
-    // Where code() lies in a file that was open when the image was taken into use. Nobody promises that it stays open: whoever maps from there compares what it gets.
     const std::optional<PositionInFile>& positionOfCodeInFile() const { return m_positionOfCodeInFile; }
     void setPositionOfCodeInFile(const std::optional<PositionInFile>& position) { m_positionOfCodeInFile = position; }
     unsigned number() const { return m_number; }
@@ -139,9 +132,7 @@ public:
     bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
-    bool findsDataFilesByName() const { return header().has(ImageFlag::FindsDataFilesByName); }
     bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
-    bool runsUnreadCode() const { return header().has(ImageFlag::RunsUnreadCode); }
     bool refusesOriginalsBesideMocks() const { return header().has(ImageFlag::RefusesOriginalsBesideMocks); }
     bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
@@ -161,16 +152,12 @@ public:
     enum class FrequentStub : uint8_t { EnterClosure, EnterSlimClosure, EnterModuleBody, EnterClosureForConstruct, EnterHandlerOfJob, EnterSavedFrame, RejectInFrame, RejectInFrameBelowSpilledArguments };
     template<typename Functor> void* frequentStub(FrequentStub, const Functor&) const;
     JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
-    // The part of ImageSection::StubAddresses that has the stubs of the family, sorted by key.
     std::span<const StubAddressInImage> stubAddressesSortedWith(StubFamily) const;
-    // For the stub that starts at this offset in the shared code. x86-64 only.
     bool usesCallConvention(uint32_t offsetInSharedCode) const;
     std::span<const StubReturnSite> stubReturnSites() const;
     std::span<const uint32_t> sharedCodeCopies() const { return section<uint32_t>(ImageSection::SharedCodeCopies); }
     std::span<const uint32_t> slotHandlerOffsets() const { return section<uint32_t>(ImageSection::SlotHandlers); }
-    // ImageSection::MethodTable begins with what the method table of an instance holds while every class is as it was defined: offsets into the code, in units of codeOffsetUnit.
     std::span<const uint32_t> methodTable() const { return section<uint32_t>(ImageSection::MethodTable).first(programTables().instanceSizes.sizeOfMethodTable / sizeof(uint32_t)); }
-    // Behind it, by the place of the selector in CallingConventions::methodSelectors(): what an entry holds while the guard under it does not hold.
     std::span<const uint32_t> methodLookups() const { return section<uint32_t>(ImageSection::MethodTable).subspan(programTables().instanceSizes.sizeOfMethodTable / sizeof(uint32_t)); }
     const uint8_t* sharedCodeCopy(unsigned index) const;
 
@@ -178,7 +165,6 @@ public:
     static bool isBackedByStaticData(const StringImpl&);
 
     std::optional<uint32_t> imageFunctionFromClosureWord(FunctionID) const;
-    // Sorts every function without a closure word on first use.
     std::optional<uint32_t> imageFunctionOf(FunctionID) const;
     bool hasSortedFunctionIndex() const { return !m_functionsByID.isEmpty(); }
     std::span<const uint32_t> frameMapWords(uint32_t function) const;
@@ -189,10 +175,7 @@ public:
     ReturnSiteInfo returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const;
 
     std::optional<CallSiteRecord> callSiteAt(uint32_t function, uint32_t returnOffset) const;
-    // The function has made the function object that it calls at the site itself and has handed it to nobody. The site of an inline frame stands for the call whose place the frame has taken.
-    // nullopt: the site does not record which function object it calls.
     std::optional<CalleeOfSite> calleeOfSiteAt(uint32_t function, CallSiteIndex) const;
-    // The callee of a direct construct that may leave its frame by a tail call.
     std::optional<FunctionID> constructedCalleeAt(uint32_t function, CallSiteIndex) const;
     std::optional<PrologueCheck> prologueCheckAt(const void* returnAddress) const;
 
@@ -200,7 +183,6 @@ public:
 
     std::optional<SourcePosition> positionOf(uint32_t function, CallSiteIndex) const;
 
-    // False: no module has a path that starts so. A program asks about every path that the disk does not have, and nearly all of them lie in directories without modules.
     bool mayHoldModulePathStartingWith(StringView start) const;
 
 private:

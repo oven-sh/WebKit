@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Guesses, ParameterGuards: what kind of number is expected of a value. The guard at an entry, every guess and the loops that are built twice ask one function, so each tests for int32 in the place of number at once.
-// NOTHING HERE IS A PROOF: Facts::held(), what is written and what the body does with a value only say what a test is to ask. It builds nothing, so a suspension and a throw mean nothing to it.
-// Withheld: nobody asks.
-
 #include "config.h"
 #include "AOTWalkNumberGuesses.h"
 
@@ -38,18 +34,14 @@ static constexpr OpcodeSet operatorsThatMakeFractions { Opcode::Div, Opcode::Pow
 static constexpr OpcodeSet accessesByKeyInNumberExpectations { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
 static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property && OperandIndex::ElemGet::property == OperandIndex::ElemHas::property);
 
-// How many names of a value are followed through the body as written. They may lead round a loop.
 static constexpr unsigned mostNamesFollowedInNumberExpectations = 16;
-// A value that is mentioned more than once has no only-user link: so many operations behind it in its block are looked at for its mentions.
 static constexpr uint32_t mostOperationsSearchedForMentionsInNumberExpectations = 32;
 
 namespace {
 
 struct MentionInNumberExpectations {
-    // The operation that takes the value, as its operand `operandIndex`. Null: the end of the block mentions the value.
     ValueID user;
     uint32_t operandIndex { 0 };
-    // `const d = c ? a.w + a.h : 0`: the parameter that an edge or a test hands the value to. Null: it goes on under no other name.
     ValueID handedOnAs;
 };
 
@@ -57,9 +49,6 @@ using NamesInNumberExpectations = Vector<ValueID, mostNamesFollowedInNumberExpec
 
 } // anonymous namespace
 
-// ---- What is held
-
-// The row's own rule over the types that `typeOfOperand` gives. Null: the row gives no result, or several.
 template<typename TypeOfOperand>
 static TypeID typeByRowInNumberExpectations(const TypingContext& typing, const BodyValue& operation, const TypeOfOperand& typeOfOperand)
 {
@@ -101,7 +90,6 @@ TypeID typeHeldAtPositionOf(Walker& walker, ValueID input)
     const LinkTables& held = walker.facts().held();
     FunctionID function = walker.currentFunction();
     ValueID value = index.valueBehindCasts(input);
-    // `let pos: number` that closures share is read behind a look at its dead zone.
     while (value && !index.isParameter(value) && index.opcodeOf(value) == Opcode::CheckInitialized)
         value = index.valueBehindCasts(index.value(value).operand(0));
     if (!value || function.index() >= held.functions.size())
@@ -118,7 +106,6 @@ TypeID typeHeldAtPositionOf(Walker& walker, ValueID input)
     Opcode opcode = definition.opcode();
     if (callsWithResultsInNumberExpectations.contains(opcode)) {
         FunctionID callee = held.calleeAt(function, definition.id());
-        // What `return` hands over in a coroutine is not what its caller gets.
         if (!callee || callee.index() >= held.functions.size() || walker.program().at(callee).isCoroutine())
             return { };
         return held.function(callee).result;
@@ -126,7 +113,6 @@ TypeID typeHeldAtPositionOf(Walker& walker, ValueID input)
     if (!readsOfPlacesInNumberExpectations.contains(opcode))
         return { };
 
-    // `a.b.n`: the field in what is proven of the receiver, else in what is expected of it. The receiver is defined in front of the read, so every road ends.
     TypeArena& types = walker.types();
     std::optional<uint8_t> placeOfReceiver = receiverOf(opcode);
     TypeID receiver;
@@ -147,8 +133,6 @@ TypeID typeHeldAtPositionOf(Walker& walker, ValueID input)
         return proven ? proven : TypeID(TypeTable::anything);
     });
 }
-
-// ---- The mentions of a value, by the body
 
 template<typename Visit>
 static uint32_t visitMentionsInOperationForNumberExpectations(const BodyValue& user, ValueID value, const Visit& visit)
@@ -194,8 +178,6 @@ static uint32_t visitMentionsAtEndOfBlockForNumberExpectations(const BodyIndex& 
     return found;
 }
 
-// visit(mention) for each mention of the value that is found. A value that is mentioned once has its only-user link. The mentions of any other are looked for behind it in its block, and at the end of that block.
-// False: some mention was not found.
 template<typename Visit>
 static bool visitMentionsForNumberExpectations(const BodyIndex& index, ValueID value, const Visit& visit)
 {
@@ -249,13 +231,11 @@ static bool takesPositionOrCountInNumberExpectations(BuiltinConversion conversio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `s.slice(start)`, `xs.at(i)`, `s.padStart(n)`: what is called is proven one built-in, by binding or by a lock, and every row of its calls that has the argument takes it as a position or a count.
 static bool rowsTakeArgumentAsPositionInNumberExpectations(Walker& walker, const BodyValue& call, uint32_t operandIndex)
 {
     if (call.opcode() != Opcode::Call || operandIndex < numberOfNamedOperandsOf(Opcode::Call))
         return false;
     TypeID typeOfCallee = provenTypeInNumberExpectations(walker, call.calleeOperand());
-    // `text.charCodeAt(pos)`, asked ahead of the walk: nothing is built for the read of the method yet. What is expected of `text` says which member the read would find. No proof, as all here.
     if (saysNothingInNumberExpectations(walker.types(), typeOfCallee)) {
         const BodyIndex& index = walker.currentBodyIndex();
         ValueID read = index.valueBehindCasts(call.calleeOperand());
@@ -298,7 +278,6 @@ bool usesSpeakForInt32(Walker& walker, ValueID input)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     NamesInNumberExpectations names { input };
-    // The names from here on stand for sums that the value goes into.
     Vector<bool, mostNamesFollowedInNumberExpectations> isSum { false };
     bool speaksForInt32 = false;
     bool speaksAgainstInt32 = false;
@@ -319,7 +298,6 @@ bool usesSpeakForInt32(Walker& walker, ValueID input)
             BodyValue user = index.value(mention.user);
             Opcode opcode = user.opcode();
             if (allBitwiseOperators.contains(opcode)) {
-                // `x | 0` is how a program truncates: it is written where x may be a fraction. `(a + b) | 0` is how it adds int32s.
                 bool isTruncation = operatorsWithZeroAsIdentityInNumberExpectations.contains(opcode) && isWrittenZeroInNumberExpectations(index, user.operand(1 - mention.operandIndex));
                 speaksForInt32 |= nameIsSum || !isTruncation;
             } else if (opcodesThatStateTypes.contains(opcode) && !mention.operandIndex)
@@ -371,7 +349,6 @@ static bool turnsStepOrUseEnvironmentFieldAsInt32(Walker& walker, const BodyInde
             BodyValue step = index.value(stored);
             if ((step.opcode() == Opcode::Increment || step.opcode() == Opcode::Decrement) && isReadOfField(step.operand(0)))
                 return true;
-            // `pos += charSize(ch)`
             if ((step.opcode() == Opcode::Add || step.opcode() == Opcode::Sub) && (isReadOfField(step.operand(0)) || (step.opcode() == Opcode::Add && isReadOfField(step.operand(1)))))
                 return true;
         }
@@ -379,13 +356,11 @@ static bool turnsStepOrUseEnvironmentFieldAsInt32(Walker& walker, const BodyInde
     return false;
 }
 
-// By the body: what the turns of the loop do with the variable speaks for an int32: usesSpeakForInt32() of one of its reads, a step (`pos++`, `pos += size`), a relation with a variable that is so stepped.
 static bool turnsTakeEnvironmentFieldForInt32(Walker& walker, LoopID loop, LayoutID layout, uint32_t field)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     if (turnsStepOrUseEnvironmentFieldAsInt32(walker, index, loop, layout, field))
         return true;
-    // `pos < end`
     for (BlockID member : index.membersOf(loop)) {
         for (BodyValue operation : index.block(member).values()) {
             if (!allRelations.contains(operation.opcode()))
@@ -402,14 +377,12 @@ static bool turnsTakeEnvironmentFieldForInt32(Walker& walker, LoopID loop, Layou
     }
     return false;
 }
-// ---- Numbers among what is expected
 
 static bool holdsNumbersBesideNullishAlone(const Type& type)
 {
     return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull | Primitive::Absent);
 }
 
-// Null: none of its integers fits.
 static TypeID withNumbersCutToInt32(TypeArena& types, const Type& type)
 {
     Range insideInt32 = type.integers.intersectWith(Range::int32());
@@ -418,20 +391,15 @@ static TypeID withNumbersCutToInt32(TypeArena& types, const Type& type)
     return types.withPrimitives(types.integer(insideInt32), type.primitives & ~Primitive::Number);
 }
 
-// Link gives integers without a bound to what arithmetic and rounding make, and whole numbers beside them for what outgrows an integer. `at(k + 1)`: such a result seldom outgrows 32 bits.
 static bool holdsOnlyInt32InNumberExpectations(const Type& held)
 {
     if (!held.isJavaScriptValue() || held.hasObjects() || !holdsNumbersBesideNullishAlone(held) || !(held.primitives & Primitive::Integer))
         return false;
-    // NaN, -0 and what outgrows an integer come seldom beside integers: `isLetter(text.charCodeAt(i))`. A fraction says that fractions come.
     if (held.primitives & Primitive::FractionalNumber)
         return false;
     return held.integers == Range::full() || held.integers.isSubsetOf(Range::int32());
 }
 
-// ---- Expectations are cut by tests
-
-// `for (let i = point[depth]; i > 0; i--)`: of a parameter of a block that takes a proof. The rule that cuts the proven type of the value in front of the test cuts what is expected of it.
 static ExpectationOfNumber cutByTestInNumberExpectations(Walker& walker, ValueID input, ExpectationOfNumber found)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -472,8 +440,6 @@ static ExpectationOfNumber cutByTestInNumberExpectations(Walker& walker, ValueID
     return { behind, found.isDeclared, found.isHeld };
 }
 
-// ---- Expected is what is written united with what was seen
-
 static uint16_t kindsOfPrimitivesAmongInNumberExpectations(uint16_t primitives)
 {
     uint16_t kinds = 0;
@@ -491,7 +457,6 @@ static TypeID writtenTypeUnitedWithTypeSeen(TypeArena& types, TypeID written, Ty
         return written;
     uint16_t leftToWrittenType = Primitive::UndefinedOrNull | Primitive::Absent | Primitive::Unspecified | kindsOfPrimitivesAmongInNumberExpectations(type.primitives);
     TypeParts added = types.at(types.withoutPrimitives(seen, leftToWrittenType));
-    // An object says nothing of contents, and in a union that swallows what the other side says of them.
     if (added.unnamedClasses && type.unnamedClasses) {
         Vector<ClassPart, 8> classesNobodyWrote;
         for (const ClassPart& part : types.at(added.unnamedClasses)) {
@@ -503,7 +468,6 @@ static TypeID writtenTypeUnitedWithTypeSeen(TypeArena& types, TypeID written, Ty
     return types.unionOf(written, types.intern(added));
 }
 
-// `size([1, 2])` for `l: { length: number }`: the test lets through what the program does bring. Where no one test tells the union, what is written stands.
 static ExpectationOfNumber unitedWithWhatWasSeenInNumberExpectations(Walker& walker, ValueID input, ExpectationOfNumber found)
 {
     TypeArena& types = walker.types();
@@ -516,7 +480,6 @@ static ExpectationOfNumber unitedWithWhatWasSeenInNumberExpectations(Walker& wal
     if (saysNothingInNumberExpectations(types, seen) || !types.at(seen).isJavaScriptValue() || types.isSubset(types.withOnlyObjects(seen), found.type))
         return found;
 
-    // A test asks for shape numbers, which only a layout that holds compiled objects has.
     Type objectsSeen = types.at(types.describedByShape(types.withOnlyObjects(seen)));
     if (objectsSeen.hasUnboundedUnknown())
         return found;
@@ -525,7 +488,6 @@ static ExpectationOfNumber unitedWithWhatWasSeenInNumberExpectations(Walker& wal
             return found;
     }
 
-    // Where no object is made as any layout that is written, the declaration says which members a value has and nothing of who made it: what was seen stands alone, as a weaker guess.
     bool someWrittenLayoutHasObjects = !written.hasOnlyLayouts();
     for (LayoutID layout : membersOf(types, written))
         someWrittenLayoutHasObjects |= walker.plan().isInUse(layout);
@@ -542,15 +504,10 @@ static ExpectationOfNumber unitedWithWhatWasSeenInNumberExpectations(Walker& wal
     return { united, someWrittenLayoutHasObjects, true };
 }
 
-// ---- Whoever asks with no test behind the answer
-
-// In the list of what is remembered: nothing is known of the value, and what is found of it is left as it is found. findExpectationForGuesses() writes what it finds over the mark.
 static bool isLeftAsFoundInNumberExpectations(const Walker::RememberedExpectation& remembered)
 {
     return !remembered.isKnown && remembered.isHeld;
 }
-
-// ---- A slot that the turns of a loop step
 
 static ValueID readOfSlotBehindNamesInNumberExpectations(const BodyIndex& index, ValueID value)
 {
@@ -605,8 +562,6 @@ ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker& walker, ValueID i
     return { cut, found.isDeclared, found.isHeld };
 }
 
-// ---- The one function
-
 ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, ExpectationOfNumber found)
 {
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers))
@@ -625,12 +580,10 @@ ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, Expectation
         TypeID cut = withNumbersCutToInt32(types, expected);
         if (!cut || (proven && !types.overlap(proven, cut)))
             return found;
-        // A counter seldom outgrows 32 bits.
         if (!(expected.primitives & Primitive::FractionalNumber))
             return { cut, found.isDeclared, found.isHeld };
         if (TypeID held = typeHeldAtPositionOf(walker, input); held && !isNeverType(held) && holdsOnlyInt32InNumberExpectations(types.at(held)))
             return { cut, found.isDeclared, true };
-        // `pos < end`, `pos++`, `pos += size`: each mention of a variable that closures share is a read of its own, and none of them says much alone. What the turns of the loop do with the variable is asked of all of them.
         if (ValueID read = readOfEnvironmentFieldBehindNamesInNumberExpectations(walker.currentBodyIndex(), input)) {
             const BodyIndex& index = walker.currentBodyIndex();
             LoopID loop = index.loopOf(index.blockOf(read));
@@ -642,7 +595,6 @@ ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, Expectation
         return found;
     }
 
-    // Whoever plans the guards of entries has built nothing. What follows opens a guess in a loop and is no reason for a slow version.
     if (!proven)
         return found;
     Type type = types.at(proven);

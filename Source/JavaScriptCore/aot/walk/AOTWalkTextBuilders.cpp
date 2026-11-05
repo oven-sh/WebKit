@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations with LoopInvariants: `for (..) s += "k" + i + ","`. A text that grows in a loop lies in a builder: every name of it is bound to the builder's record, a growth appends its parts,
-// whoever else takes a name gets a string, and every edge out of the loop gives the builder back.
-// At a suspension: no builder is begun for a loop that may suspend. A builder lives from the block in front of its loop to the edges out of it, so none is live where a coroutine suspends. At a throw: what leaves the unit leaves the builder to the collector, and under a handler no builder is begun unless mayKeepTextUnderHandlers().
-// Withheld, either of the two: no builder is begun, and every join is built as it is without this file.
-
 #include "config.h"
 #include "AOTWalkTextBuilders.h"
 
@@ -31,8 +26,6 @@ static_assert(accessesUnderComputedKeys == OpcodeSet { Opcode::ElemGet, Opcode::
 static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property && OperandIndex::ElemGet::property == OperandIndex::ElemHas::property);
 static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemDelete::property && OperandIndex::ElemGet::property == OperandIndex::ElemDefine::property);
 
-// ---- Names
-
 static const NameOfGrowingText* findNameInTextBuilders(const GrowingText& web, ValueID value)
 {
     if (web.names.isEmpty() || value < web.names.first().value || web.names.last().value < value)
@@ -41,7 +34,6 @@ static const NameOfGrowingText* findNameInTextBuilders(const GrowingText& web, V
     return found != web.names.end() && found->value == value ? &*found : nullptr;
 }
 
-// functor(const NameOfGrowingText&)
 template<typename Functor>
 static void forEachNameLiveAtHeadInTextBuilders(const BodyLiveness& liveness, const GrowingText& web, BlockID block, const Functor& functor)
 {
@@ -51,8 +43,6 @@ static void forEachNameLiveAtHeadInTextBuilders(const BodyLiveness& liveness, co
     });
 }
 
-// A record stays when the frame of its body has gone, and the copy of another callee may stand at the same depth. No two copies have one frame of Code.
-// The record that the copy of a callee has of a text of its caller names a builder that was begun further down.
 static bool belongsToFrameOnTopInTextBuilders(const Walker& walker, const TextInStringBuilder& text)
 {
     if (text.frameIndex != walker.indexOfFrameOnTop() || !text.builder.isValue() || text.web.names.isEmpty())
@@ -68,7 +58,6 @@ static bool belongsToFrameOnTopInTextBuilders(const Walker& walker, const TextIn
 
 bool mayKeepTextsInStringBuilders(const Walker& walker)
 {
-    // A copy that is built for size is walked as a closed arm is.
     return walker.has(Mechanism::TypedOperations) && walker.has(Mechanism::LoopInvariants) && walker.unit().role != CodeRole::SlowBody && walker.opensGuesses();
 }
 
@@ -84,7 +73,6 @@ TextInStringBuilder* findTextNamedBy(Walker& walker, ValueID input)
 {
     Vector<TextInStringBuilder, 2>& texts = walker.textsInStringBuilders();
     for (size_t place = texts.size(); place--;) {
-        // A record of a frame further down was made while that frame was on top: it is older than the frame on top, and so is every record in front of it.
         if (texts[place].frameIndex < walker.indexOfFrameOnTop())
             break;
         if (findNameInTextBuilders(texts[place].web, input) && belongsToFrameOnTopInTextBuilders(walker, texts[place]))
@@ -98,7 +86,6 @@ bool isNameOfTextInStringBuilder(Walker& walker, ValueID input)
     return walker.hasTextsInStringBuilders() && findTextNamedBy(walker, input) && isTextInStringBuilder(walker, walker.referenceBoundTo(input));
 }
 
-// While an operation that reads a text is walked, the name that it takes is bound to the string. A link may walk on from there to a growth of the same text.
 static Reference builderBehindNameInTextBuilders(const Walker& walker, Reference bound)
 {
     if (isTextInStringBuilder(walker, bound))
@@ -109,7 +96,6 @@ static Reference builderBehindNameInTextBuilders(const Walker& walker, Reference
     return stringsMadeForReadersInTextBuilders.contains(made.opcode) ? Reference::value(made.builderOperand()) : Reference();
 }
 
-// Of a record that came without the value of the body that it stands for: a part of a row, what enters a loop behind the loop of the text.
 static TextInStringBuilder* findTextByRecordInTextBuilders(Walker& walker, Reference name)
 {
     Vector<TextInStringBuilder, 2>& texts = walker.textsInStringBuilders();
@@ -136,8 +122,6 @@ static TextInStringBuilder* findTextOfOperandInTextBuilders(Walker& walker, Valu
     return text;
 }
 
-// ---- The looks
-
 void typeTextsInStringBuildersForLooks(Walker& walker, std::span<const Reference> entering, Vector<TypeID, 8>& entryTypes)
 {
     for (size_t index = 0; index < entering.size(); ++index) {
@@ -153,9 +137,6 @@ TypeID typeOfRecordForLooks(const Walker& walker, TypeID type)
     return walker.types().at(type).isOpaque(OpaqueKind::StringBuilder) ? TypeTable::string : type;
 }
 
-// ---- At the head of a loop
-
-// The text goes round a loop around as a string: its scan has refused it. A builder for the loop inside would be begun with the whole text at every turn of the outer one.
 static bool comesRoundLoopAroundAsStringInTextBuilders(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t parameterIndex)
 {
     LoopID loop = index.loopOf(inputHead);
@@ -179,13 +160,9 @@ static bool comesRoundLoopAroundAsStringInTextBuilders(Walker& walker, const Bod
 
 static bool passesQuestionsInTextBuilders(Walker& walker, BlockID inputHead, const GrowingText& web)
 {
-    if (web.standsUnderHandlers && !mayKeepTextUnderHandlers(walker, inputHead, web))
-        return false;
-    return !web.hasPartsThatMayRunCode || convertsPartsThatMayRunCode();
+    return !web.standsUnderHandlers || mayKeepTextUnderHandlers(walker, inputHead, web);
 }
 
-// An edge out of the loop brings a string under each name that is read behind it, and the blocks of the loop that stand behind such a block in the stream get the builder back: Frame::valuesBuiltTwice.
-// Only those names: each edge of the body asks of each value in that list whether it is live.
 static void bindNamesReadBehindLoopAnewInTextBuilders(Walker& walker, const BodyIndex& index, const GrowingText& web)
 {
     BodyLiveness liveness;
@@ -205,20 +182,17 @@ static void bindNamesReadBehindLoopAnewInTextBuilders(Walker& walker, const Body
             bindNamesLiveAtHeadOf(target.block());
         if (block.hasHandler())
             bindNamesLiveAtHeadOf(block.handler().block());
-        // takeTextsOutOfStringBuildersAtEndOfWay()
         ValueID returned = terminator.kind() == TerminatorKind::Return ? terminator.operand(0) : ValueID();
         if (returned && findNameInTextBuilders(web, returned))
             walker.bindAnewAtEveryBlock(returned);
     }
 }
 
-// The walk stands in the block in front of the loop. Null: unreachable or failed.
 static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIndex& index, BlockID inputHead, GrowingText&& web, Reference enters, Origin origin)
 {
     TextInStringBuilder text;
     text.web = WTF::move(web);
     text.frameIndex = static_cast<uint32_t>(walker.indexOfFrameOnTop());
-    // The copy of a callee appends through a record of its own, which speaks of no cursor.
     text.liesInFrame = textBegunHereMayLieInFrame(walker, inputHead, text.web);
 
     Draft begin(text.liesInFrame ? Opcode::StackStringBuilderBegin : Opcode::StringBuilderBegin, origin);
@@ -227,7 +201,6 @@ static TextInStringBuilder* beginTextInTextBuilders(Walker& walker, const BodyIn
     if (!text.builder)
         return nullptr;
 
-    // Whoever keeps the cursor goes by the place of the record.
     Vector<TextInStringBuilder, 2>& texts = walker.textsInStringBuilders();
     texts.append(WTF::move(text));
     TextInStringBuilder& begun = texts.last();
@@ -294,7 +267,6 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
         GrowingText* web = placeOfWeb != notFound && passesQuestionsInTextBuilders(walker, inputHead, webs[placeOfWeb]) ? &webs[placeOfWeb] : nullptr;
 
         if (isTextInStringBuilder(walker, enters)) {
-            // The scan of a loop around has named the parameter: the text goes through this loop in its builder, whatever the walk may begin here.
             if (findTextNamedBy(walker, head.parameter(parameterIndex))) {
                 letEnterInBuilder(parameterIndex, enters);
                 continue;
@@ -304,7 +276,6 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
                 walker.fail("a text enters a loop in a builder that nobody has begun"_s);
                 return;
             }
-            // `for (..) s += a; for (..) s += b`: the second loop goes on with the builder of the first.
             if (web && (!before->liesInFrame || textBegunHereMayLieInFrame(walker, inputHead, *web))) {
                 TextInStringBuilder text;
                 text.web = WTF::move(*web);
@@ -327,7 +298,6 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
 
         if (!web || !enters || !enters.isRecord())
             continue;
-        // What is only joined is never looked at as it entered: `let n = 0; for (..) n += "x"`.
         Type typeOfWhatEnters = walker.types().at(walker.typeOf(enters));
         if (!typeOfWhatEnters.isAnyString() && (!web->isOnlyConcatenated || !hasTextByItself(typeOfWhatEnters)))
             continue;
@@ -339,12 +309,9 @@ void beginTextsInStringBuilders(Walker& walker, BlockID inputHead, LoopPreview& 
         letEnterInBuilder(parameterIndex, begun->builder);
     }
 
-    // No row of the input says that a turn writes what a look at a builder reads.
     if (someTextMayGrow)
         preview.effects.merge(declaredBoundInTable(Opcode::StringBuilderAppendValue));
 }
-
-// ---- Names, growths, readers
 
 bool bindCastOfTextInStringBuilder(Walker& walker, const BodyValue& value)
 {
@@ -364,7 +331,6 @@ bool bindCastOfTextInStringBuilder(Walker& walker, const BodyValue& value)
     return true;
 }
 
-// Of the operations among the names only a growth is a version of its own.
 bool isGrowthOfTextInStringBuilder(Walker& walker, const BodyValue& value)
 {
     TextInStringBuilder* text = walker.hasTextsInStringBuilders() ? findTextNamedBy(walker, value.id()) : nullptr;
@@ -395,7 +361,6 @@ StringsInPlaceOfTextsInBuilders::StringsInPlaceOfTextsInBuilders(Walker& walker,
         }
         if (!isTextInStringBuilder(walker, bound))
             return;
-        // It reads nothing, and a hint that names nothing is dropped.
         if (value.opcode() == Opcode::ReleaseHint) {
             bindForLife(operand, bound, { });
             return;
@@ -463,7 +428,6 @@ Reference referenceOfOperandOfTerminator(Walker& walker, ValueID operand)
 Reference stringOfTextInStringBuilder(Walker& walker, TextInStringBuilder& text, Reference name, Origin origin)
 {
     origin.isTailCall = false;
-    // On every edge out of the loop the builder is given back, so behind it nothing is left to read.
     if (walker.indexOfFrameOnTop() == text.frameIndex) {
         const BodyIndex& index = walker.currentBodyIndex();
         if (!index.isInLoop(walker.inputBlockBeingWalked(), index.loopOf(text.web.loopHead))) {
@@ -487,7 +451,6 @@ Reference stringOfTextInStringBuilder(Walker& walker, TextInStringBuilder& text,
     return text.stringOfState;
 }
 
-// The parts stand for the operands of the join one by one only where no row was gathered: each join that a row takes in brings a part more than it takes the place of.
 static void appendPartsBehindFrontInTextBuilders(Walker& walker, TextInStringBuilder& text, Reference name, const BodyValue& join, std::span<const Reference> parts, Origin origin)
 {
     if (text.web.standsUnderHandlers) {
@@ -523,7 +486,6 @@ bool appendRowToTextInStringBuilder(Walker& walker, const BodyValue& join, Vecto
 
     TextInStringBuilder* grown = isGrowthOfTextInStringBuilder(walker, join) ? findTextNamedBy(walker, join.id()) : nullptr;
     Reference name = grown ? builderBehindNameInTextBuilders(walker, parts[0]) : Reference();
-    // `s += "<" + s`: the string is made of the text as it stands in front of the first append.
     for (size_t place = name ? 1 : 0; place < parts.size(); ++place) {
         if (!isTextInStringBuilder(walker, parts[place]))
             continue;
@@ -545,12 +507,8 @@ bool appendRowToTextInStringBuilder(Walker& walker, const BodyValue& join, Vecto
     return true;
 }
 
-// ---- The ways out
-
-// AOTWalkTextBuilderHandlers.cpp. The block being walked, or left by the edge being led, stands under a handler that is handed the text or that goes on with its builder.
 bool handlerInForceReadsTextInStringBuilder(Walker&, const TextInStringBuilder&);
 
-// functor(TextInStringBuilder&) -> IterationStatus: the texts of the frame on top in whose loop `from` lies and `to` does not. Of several records for one parameter of one head the last is the one being walked.
 template<typename Functor>
 static void forEachTextLeftOnEdgeInTextBuilders(Walker& walker, BlockID from, BlockID to, const Functor& functor)
 {
@@ -580,7 +538,6 @@ bool edgeLeavesLoopOfTextInStringBuilder(Walker& walker, BlockID to)
     return leaves;
 }
 
-// By the first mention in the stream, behind whatever only hands the text on. It decides what pays, never what is right: a key is a string like any other.
 static bool isFirstReadAsKeyInTextBuilders(const BodyIndex& index, ValueID text)
 {
     while (true) {
@@ -596,7 +553,6 @@ static bool isFirstReadAsKeyInTextBuilders(const BodyIndex& index, ValueID text)
     }
 }
 
-// Of a name that the loop mentions too: by its last reader.
 static bool isLastReadAsKeyInTextBuilders(const BodyIndex& index, const BodyLiveness& liveness, ValueID text)
 {
     ValueID last = liveness.lastUse(text);
@@ -613,7 +569,6 @@ static Reference finishInTextBuilders(Walker& walker, TextInStringBuilder& text,
     origin.isTailCall = false;
     text.stringOfState = { };
     text.lengthOfState = { };
-    // Whatever throws from here on under such a handler, this operation too, has the string made of the builder once more, or goes on with the builder. So the builder stays out of the pool.
     if (handlerInForceReadsTextInStringBuilder(walker, text))
         return stringOfTextInStringBuilder(walker, text, name, origin);
     if (text.liesInFrame)
@@ -655,7 +610,6 @@ void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget t
     liveness.compute(index);
     Origin origin = walker.originOfOperation();
 
-    // The arguments as written, and behind them the proofs. Whoever leads the edge may stand in another block than the one whose terminator bears the proofs, so a proof is known by its record.
     std::span<const ValueID> written = target.arguments();
     if (written.size() + target.proofs().size() != arguments.size()) {
         walker.fail("the arguments of an edge out of the loop of a text in a builder are not those that are written"_s);
@@ -666,7 +620,6 @@ void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget t
         if (textStaysInStringBuilderOnEdge(walker, text, to, target))
             return IterationStatus::Continue;
 
-        // Every name that is read behind the edge is of the version that is current on it, so all of them stand for what the builder holds here.
         Vector<Reference, 2> records;
         bool everyReaderTakesKey = true;
         auto noteReader = [&](Reference record, bool takesKey) {
@@ -686,7 +639,6 @@ void takeTextsOutOfStringBuildersOnEdge(Walker& walker, BlockID to, BodyTarget t
         });
 
         if (records.isEmpty()) {
-            // The parameter of the head names the builder all over the loop. Where the walk has bound it to a string since, or stands in a copy of the loop whose text lies in no builder, the collector takes what there is.
             Reference builder = walker.referenceBoundTo(text.web.names.first().value);
             if (isTextInStringBuilder(walker, builder))
                 discardTextInStringBuilder(walker, text, builder, origin);
@@ -729,8 +681,6 @@ void takeTextsOutOfStringBuildersAtEndOfWay(Walker& walker, const BodyTerminator
     if (Reference string = stringOfTextInStringBuilder(walker, *text, name, walker.originOfOperation()))
         walker.bind(returned, string);
 }
-
-// ---- The doors in the Walker
 
 bool Walker::isLiveAtHeadOf(ValueID value, BlockID inputBlock)
 {

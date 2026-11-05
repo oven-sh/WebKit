@@ -30,28 +30,19 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// A field that the record of a layout lists: as the program declares it, or as Facts appended it.
 struct FieldOfLayoutRecord {
     PropertyKeyID key;
     OptionSet<Typed::FieldFlags> flags;
     OptionSet<Typed::FieldForm> form;
 };
 
-// What the record of a layout says whatever the shape it is written for, and the lists that lie in front of it.
-// The group appends on one thread. So all of this is asked in a loop in front of that, once a layout.
 struct LayoutRecordParts {
-    // As it lies in the part. Of an object: what LayoutData::prefixSize() counts, the LayoutData, what trailingSize() counts. Of an environment: the EnvironmentData, the described variables.
-    // 0 where the shape decides, and where the place of a list stands. Empty: the layout has no record.
     Vector<uint8_t> record;
-    // One KeyOrderData behind the other. None where no shape of the layout keeps an order.
     Vector<uint16_t> keyOrders;
-    // What referencesOffset leads to. Empty: it is 0.
     Vector<uint32_t> references;
-    // ClassRecordParts::namedGuards.
     std::array<Vector<uint32_t>, numberOfClassSides> namedGuards;
     uint32_t prefixSize { 0 };
     uint32_t numberOfKeyOrders { 0 };
-    // Under which parsedRecordFields lists the fields of the record. 0: it lists none of them.
     uint32_t shapeThatParsersMake { 0 };
 };
 
@@ -73,7 +64,6 @@ static constexpr bool isPrivateNameKindForLayoutRecord(PropertyKeyKind kind)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// The form is the one against which Facts says that a field is never redefined, and by which the walk plans accesses. What definitions alone give a declared field stands in no table of the program.
 static FieldOfLayoutRecord describeFieldOfLayoutRecord(const TableInputs& inputs, Typed::FieldReference reference, const Typed::FieldFacts& facts)
 {
     const Typed::Program& program = inputs.program;
@@ -87,9 +77,7 @@ static FieldOfLayoutRecord describeFieldOfLayoutRecord(const TableInputs& inputs
         field.form.add(declaration.form);
         return field;
     }
-    // No object is required to have an appended field.
     field.key = inputs.plan.slots().keyOf(program, reference);
-    // PlannedLayout::environmentOfDeferredClosures: the compiler keeps it for itself, and no name finds it.
     if (!field.key) {
         field.flags.add(Typed::FieldFlags::IsHidden);
         return field;
@@ -97,7 +85,6 @@ static FieldOfLayoutRecord describeFieldOfLayoutRecord(const TableInputs& inputs
     const Typed::PropertyKey& name = program.at(field.key);
     if (isPrivateNameKindForLayoutRecord(name.kind))
         field.flags.add(Typed::FieldFlags::IsPrivate);
-    // The class that declares a private name says what kind of name an object of another layout holds.
     if (name.kind == PropertyKeyKind::PrivateName) {
         constexpr OptionSet<Typed::FieldFlags> flagsOfPrivateNames { Typed::FieldFlags::IsPrivate, Typed::FieldFlags::IsImmutable, Typed::FieldFlags::IsBrand, Typed::FieldFlags::IsHidden, Typed::FieldFlags::IsBrandOfMethods };
         const Typed::Layout& owner = program.at(name.owner);
@@ -107,20 +94,17 @@ static FieldOfLayoutRecord describeFieldOfLayoutRecord(const TableInputs& inputs
     return field;
 }
 
-// FieldData::type: what the run time tests a value against that it stores into the slot.
 static TypeID typeRecordedForSlot(const Typed::PlacedSlot& slot)
 {
     TypeID type = slot.typeInLayoutRecord();
     return type ? Typed::TypeTable::valuesOf(type) : Typed::TypeTable::anything;
 }
 
-// A class of which no object is ever made is still defined, and the classes below it name it as their parent. So Plan alone says which classes have a record.
 static bool hasRecordOfClass(const TableInputs& inputs, LayoutID id)
 {
     return inputs.program.at(id).kind == LayoutKind::Instance && inputs.plan.hasClassRecord(id);
 }
 
-// The records in the order in which they are written. Shape 0: the record of a class whose objects have no shape.
 static void forEachLayoutRecord(const TableInputs& inputs, NOESCAPE const Invocable<void(LayoutID, uint32_t shape)> auto& functor)
 {
     const Typed::ShapeTable& shapes = inputs.plan.shapes();
@@ -135,7 +119,6 @@ static void forEachLayoutRecord(const TableInputs& inputs, NOESCAPE const Invoca
     }
 }
 
-// The variables that hold a cell, and those whose empty state is not zero.
 static void forEachDescribedVariableOfEnvironment(const TableInputs& inputs, LayoutID id, bool obfuscates, NOESCAPE const Invocable<void(const Typed::PlacedSlot&, StringID shownName)> auto& functor)
 {
     const Typed::Layout& layout = inputs.program.at(id);
@@ -150,8 +133,6 @@ static void forEachDescribedVariableOfEnvironment(const TableInputs& inputs, Lay
         functor(slot, showsVariables && traits.holdsCell ? name : StringID());
     }
 }
-
-// ---- What the tables name
 
 static void nameStringShownByLayoutTables(const TableInputs& inputs, StringID name, NamesOfTables& names)
 {
@@ -182,7 +163,6 @@ static void nameWhatObjectLayoutRecordNames(const TableInputs& inputs, LayoutID 
     nameStringShownByLayoutTables(inputs, layout.name, names);
     if (layout.kind != LayoutKind::Instance)
         return;
-    // For the parts of the record that AOTClassRecords.cpp collects, and for the rows of classes in the table of fields.
     for (const Typed::StaticField& field : layout.staticFields)
         nameKey(field.key);
     for (const Typed::ClassMember& member : inputs.facts.membersOf(id)) {
@@ -212,9 +192,6 @@ void nameWhatLayoutTablesName(const TableInputs& inputs, const GatheredMentions&
     });
 }
 
-// ---- Records of layouts
-
-// A word that is linked changes when the parts are joined. So it is never shared with equal bytes, which may be no offsets.
 static uint32_t appendOffsetsInLayoutTables(TablePart& part, std::span<const uint32_t> words, size_t numberOfWordsInFrontOfOffsets = 0)
 {
     uint32_t place = part.appendUnshared(asBytes(words), alignof(uint32_t));
@@ -229,25 +206,14 @@ static bool slotOfLayoutRecordTakesEveryValue(const Typed::Program& program, con
     return slot.representation == SlotRepresentation::JSValue && program.at(typeRecordedForSlot(slot)).isAnything();
 }
 
-// The run time stops at whatever takes such a field out of the state that it was born in, so this claims no more than Facts has proven.
 static bool fieldOfLayoutRecordKeepsStateOfBirth(const Typed::Program& program, const FieldOfLayoutRecord& field, const Typed::FieldFacts& facts, const Typed::PlacedSlot& slot)
 {
     if (facts.occupancy == Typed::Occupancy::Unknown || !facts.stability.containsAll({ Typed::FieldStability::IsNeverDeleted, Typed::FieldStability::IsNeverRedefined }))
         return false;
-    return facts.stability.contains(Typed::FieldStability::IsNeverStoredWithOtherType) || slotOfLayoutRecordTakesEveryValue(program, field, facts, slot);
+    return slot.everyStoreFits || slotOfLayoutRecordTakesEveryValue(program, field, facts, slot);
 }
 
-// FieldStability::IsNeverStoredWithOtherType speaks of the type that linked() has proven of the field. The run time stops at a value that the SLOT refuses. A slot may be held to less than is proven (Facts::held()):
-// there a value that does not fit is no false proof, the field leaves its slot, and the walk looks: describeFieldOfTypedAccess(), everyStoreFits.
-static bool slotOfLayoutRecordTakesWhatIsProven(const TableEncoder& encoder, Typed::FieldReference reference, const Typed::PlacedSlot& slot)
-{
-    const Typed::LinkedCell* cell = encoder.facts.linked().findCellOfField(reference);
-    if (!cell || !cell->proven)
-        return false;
-    return !slot.type || Typed::isSubset(Typed::TypeReader(encoder.program), encoder.program.at(cell->proven), encoder.program.at(slot.type));
-}
-
-static uint16_t flagsOfFieldInLayoutRecord(const FieldOfLayoutRecord& field, const Typed::FieldFacts& facts, const Typed::PlacedSlot& slot, bool slotTakesWhatIsProven)
+static uint16_t flagsOfFieldInLayoutRecord(const FieldOfLayoutRecord& field, const Typed::FieldFacts& facts, const Typed::PlacedSlot& slot)
 {
     using Typed::FieldFlags;
     using Typed::FieldForm;
@@ -255,7 +221,6 @@ static uint16_t flagsOfFieldInLayoutRecord(const FieldOfLayoutRecord& field, con
     const std::pair<bool, uint16_t> flags[] = {
         { !field.flags.contains(FieldFlags::IsRequired), fieldIsOptional },
         { slot.isOutOfLine(), fieldIsOutOfLine },
-        // Object::tryStore(): a slot without an absent state holds a placeholder until its only store, which may come by name: such a store is like any other.
         { facts.location.stores == Typed::StoreCount::AtMostOnce && canLeaveSlot(slot.representation), fieldIsStoredOnce },
         { slot.mayExistWithoutStorage, fieldMayExistWithoutStorage },
         { slot.deferredClosureCapturesObject, fieldDeferredClosureCapturesObject },
@@ -264,7 +229,7 @@ static uint16_t flagsOfFieldInLayoutRecord(const FieldOfLayoutRecord& field, con
         { field.flags.contains(FieldFlags::IsBrand) && facts.location.reads != Typed::ReadState::NeverRead, fieldIsBrand },
         { facts.stability.contains(FieldStability::IsNeverDeleted), fieldIsNeverDeleted },
         { facts.stability.contains(FieldStability::IsNeverRedefined), fieldIsNeverRedefined },
-        { facts.stability.contains(FieldStability::IsNeverStoredWithOtherType) && slotTakesWhatIsProven, fieldIsNeverStoredWithOtherType },
+        { slot.everyStoreFits, fieldIsNeverStoredWithOtherType },
         { field.form.contains(FieldForm::IsReadOnly), fieldIsReadOnly },
         { field.form.contains(FieldForm::IsNotEnumerable), fieldIsNotEnumerable },
         { field.form.contains(FieldForm::IsNotConfigurable), fieldIsNotConfigurable },
@@ -276,7 +241,6 @@ static uint16_t flagsOfFieldInLayoutRecord(const FieldOfLayoutRecord& field, con
     return result;
 }
 
-// UINT32_MAX: no code makes an object of the layout, so the entry of the function has no code and nothing ever asks for the closure.
 static uint32_t closureNumberForLayoutRecord(const TableEncoder& encoder, FunctionID function, LayoutID owner)
 {
     std::optional<FunctionID> entry = function ? encoder.findEntrypoint(function) : std::nullopt;
@@ -306,7 +270,6 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         const Typed::PlacedSlot& slot = planned.slots[index];
         if (!slot.indexInLayoutRecord)
             continue;
-        // Compiled code has the place of a record by this number: SlotPlan::recordOfStoredField().
         if (*slot.indexInLayoutRecord != fields.size())
             encoder.fail("FieldsOfLayoutRecordAreNotNumberedInOrder"_s, id);
         Typed::FieldReference reference { id, index };
@@ -322,13 +285,16 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         data.isFilledAtBirth = slot.isFilledAtBirth;
         data.holdsRawValueFromBirth = facts.facts.contains(Typed::FieldFact::HoldsRawValueFromBirth);
         data.keepsStateOfBirth = fieldOfLayoutRecordKeepsStateOfBirth(program, field, facts, slot);
-        data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull);
-        data.flags = flagsOfFieldInLayoutRecord(field, facts, slot, slotOfLayoutRecordTakesWhatIsProven(encoder, reference, slot));
+        data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull) && !slot.provenType;
+        data.flags = flagsOfFieldInLayoutRecord(field, facts, slot);
         data.slot = slot.data();
         data.type = encoder.typeOffset(type);
-        // validateMutation(), willLeaveStateOfBirth() and Object::moveFieldToExtraProperties() end the process at what the record rules out. Code that the build has not seen may do anything to what it gets hold of,
-        // and what is held of such an object (Facts::held()) is no proof: there the deed is carried out and leaves its mark.
-        if (reachesUnseenCode && (data.flags & (fieldIsNeverDeleted | fieldIsNeverRedefined | fieldIsNeverStoredWithOtherType) || data.keepsStateOfBirth || (slot.hasStorage() && !data.canLeaveSlot())))
+        if (const Typed::LinkedAccessorsOfField* laid = slot.holdsAccessor ? encoder.facts.linked().findAccessorsExpectedIn(reference) : nullptr) {
+            data.getterIsProven = laid->getterIsProven;
+            data.setterIsProven = laid->setterIsProven;
+        }
+        uint16_t openToUnseenCode = fieldIsNeverDeleted | fieldIsNeverRedefined | (data.flags & fieldIsPrivate ? 0 : fieldIsNeverStoredWithOtherType);
+        if (reachesUnseenCode && (data.flags & openToUnseenCode || data.keepsStateOfBirth || (slot.hasStorage() && !data.canLeaveSlot())))
             encoder.fail("RecordRulesOutWhatUnseenCodeMayDo"_s, id);
         if (slot.representation == SlotRepresentation::DeferredClosure) {
             data.operandIndex = static_cast<uint16_t>(operands.size());
@@ -343,7 +309,6 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         } else if (slot.deferredClosureCapturesEnvironment || slot.deferredClosureCapturesObject)
             encoder.fail("CapturesOfClosureThatIsNotDeferred"_s, id);
 
-        // A store under __proto__ changes the prototype, so a copy by stores looks at that name.
         bool isNamedProto = field.key && program.at(field.key).kind == PropertyKeyKind::Text && program.nameClassOf(field.key) == NameClass::Proto;
         bool isCopiedByWords = !(data.flags & (fieldIsPrivate | fieldIsBrand | fieldAttributeFlags)) && slot.representation != SlotRepresentation::DeferredClosure && !isNamedProto;
         layoutData.isCopiedByWords &= isCopiedByWords;
@@ -482,7 +447,7 @@ static bool isUntypedLayout(const TableInputs& inputs, LayoutID id)
         if (layout.name && layout.name != program.strings.emptyString())
             return false;
         for (FieldIndex field = 0; field < layout.fields.size(); ++field) {
-            if (!program.at(typeRecordedForSlot(inputs.plan.slot(id, field))).isAnything())
+            if (TypeID held = inputs.plan.slot(id, field).type; held && !program.at(Typed::TypeTable::valuesOf(held)).isAnything())
                 return false;
         }
         return true;
@@ -497,8 +462,6 @@ static bool isUntypedLayout(const TableInputs& inputs, LayoutID id)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A constructor function whose closures hold a capture has a function object for each environment. The run time makes none of them by itself, and takes the first one for the class object only of a class that is predicted.
-// As Typed::classHasOneClassObject() has it: a capture that the plan has removed is no word of a closure.
 static bool classOfLayoutRecordIsEvaluatedOnce(const TableInputs& inputs, LayoutID classLayout)
 {
     if (!inputs.facts.isEvaluatedAtMostOnce(classLayout))
@@ -509,7 +472,6 @@ static bool classOfLayoutRecordIsEvaluatedOnce(const TableInputs& inputs, Layout
     return layout.constructor && inputs.program.at(layout.constructor).captures.size() == inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(layout.constructor);
 }
 
-// Facts has counted on parsers that make such objects. The run time asks ObjectBuilder::canBuildWithoutCompilerKnowledge() of the record of each layout that is listed, and tests each value against its slot.
 static uint32_t findShapeThatParsersMake(const TableEncoder& encoder, LayoutID id, std::span<const FieldData> fields)
 {
     const Typed::ShapeTable& shapes = encoder.plan.shapes();
@@ -522,7 +484,6 @@ static uint32_t findShapeThatParsersMake(const TableEncoder& encoder, LayoutID i
         encoder.fail("ShapeDoesNotFitRowOfParsedRecordFields"_s, id);
         return 0;
     }
-    // No text names a field without a key, which has the name 0.
     bool everyFieldHasKey = std::ranges::all_of(fields, [](const FieldData& field) {
         return !!field.name;
     });
@@ -604,7 +565,6 @@ static LayoutRecordParts collectPartsOfObjectLayoutRecord(const TableEncoder& en
     return parts;
 }
 
-// [LayoutID]. Only a layout that forEachLayoutRecord() gives a record is asked about: of any other no type is encoded, and to ask for one stops the build.
 static Vector<LayoutRecordParts> collectLayoutRecordParts(TableEncoder& encoder)
 {
     const Typed::Program& program = encoder.program;
@@ -638,7 +598,6 @@ static Vector<LayoutRecordParts> collectLayoutRecordParts(TableEncoder& encoder)
     return records;
 }
 
-// Both lie in one part, so the distance stays what it is when the parts are joined.
 static int32_t distanceFromLayoutRecord(uint32_t recordOffset, uint32_t targetOffset)
 {
     return targetOffset ? static_cast<int32_t>(targetOffset) - static_cast<int32_t>(recordOffset) : 0;
@@ -722,8 +681,6 @@ static void encodeLayoutRecords(TableEncoder& encoder, std::span<const LayoutRec
             layouts[shape] = shape < shapes.firstEnvironmentShape() ? appendObjectLayoutRecord(encoder, id, parts, shape) : appendEnvironmentRecord(encoder, parts, shape);
     });
 
-    // Two words for every 32 layouts: which of them have a record of a class, and how many such records lie in front of them. Then the records.
-    // Compiled code holds the rank of a class as Image numbered it, and the run time counts it out of these words.
     size_t numberOfGroupWords = (classes.size() + 31) / 32 * 2;
     Vector<uint32_t> classWords(FillWith { }, numberOfGroupWords, 0);
     uint32_t numberOfClasses = 0;
@@ -755,8 +712,6 @@ static void encodeLayoutRecords(TableEncoder& encoder, std::span<const LayoutRec
     part.setTableRange(ProgramTableIndex::classes, appendOffsetsInLayoutTables(part, classWords.span(), numberOfGroupWords), static_cast<uint32_t>(classWords.size()));
 }
 
-// ---- Allocations
-
 static bool allocationRowLeavesFieldOfBirthEmpty(const TableEncoder& encoder, const AllocationKey& key, BitVector& isInitialField)
 {
     LayoutID layout = key.allocation.layout;
@@ -787,7 +742,6 @@ static void encodeAllocationRows(TableEncoder& encoder)
     for (uint32_t row = 0; row < keys.size(); ++row) {
         AllocationKey key = decodeAllocationKey(keys.keyAt(row));
         const Typed::PlacedAllocation& allocation = key.allocation;
-        // A cell that is born finished is read without the test of the cell, so a field of birth that it lacks would be read as a value.
         bool leavesFieldEmpty = allocationRowLeavesFieldOfBirthEmpty(encoder, key, isInitialField);
         if (leavesFieldEmpty && !allocation.isBornUnfinished)
             encoder.fail("AllocationBornFinishedLeavesFieldOfBirthEmpty"_s, allocation.layout);
@@ -813,9 +767,6 @@ static void setSortedLayoutTable(TableEncoder& encoder, ProgramTableIndex index,
     encoder.part.setTable(index, items);
 }
 
-// ---- What the parser of untyped values makes compiled objects of
-
-// findShapeThatParsersMake() has asked. A name whose number is too wide was reported for the record of the layout.
 static void encodeParsedRecordFields(TableEncoder& encoder, std::span<const LayoutRecordParts> records)
 {
     Vector<ParsedRecordFieldData> rows;
@@ -828,8 +779,6 @@ static void encodeParsedRecordFields(TableEncoder& encoder, std::span<const Layo
     }
     setSortedLayoutTable(encoder, ProgramTableIndex::parsedRecordFields, rows, std::ranges::less { }, &ParsedRecordFieldData::key);
 }
-
-// ---- Tables that map a function to its layout
 
 static void encodeConstructorsOfLayouts(TableEncoder& encoder)
 {
@@ -852,7 +801,6 @@ void encodeLayoutTables(TableEncoder& encoder)
     StepTimes times(encoder.build, "image: layout tables"_s);
     Vector<LayoutRecordParts> records = collectLayoutRecordParts(encoder);
     times.didFinish("parts of records"_s);
-    // What appends takes the parts for whole.
     if (encoder.build.diagnostics().hasErrors())
         return;
     encodeLayoutRecords(encoder, records.span());
@@ -867,8 +815,7 @@ void encodeLayoutTables(TableEncoder& encoder)
     encodeAllocationRows(encoder);
     times.didFinish("allocation rows"_s);
     encodeConstructorsOfLayouts(encoder);
-    encoder.part.setTable(ProgramTableIndex::boundFunctions, Vector<BoundFunctionData>());
-    times.didFinish("constructors, bound functions"_s);
+    times.didFinish("constructors"_s);
 }
 
 } } // namespace JSC::AOT

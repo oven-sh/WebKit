@@ -3,12 +3,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// EscapeAnalysis: an allocation lists what the stores right behind it lay, out of values that stand in front of it. The stores are walked as written, find their value in the slot, and build nothing.
-// At a suspension: between the allocation and the last store that it lists stand written constants and casts alone, so none lies there. At a throw: the same, so nobody sees the object with a part of the row.
-// Withheld (EscapeAnalysis; Inlining for a construction; Guesses where a cell has to be looked at): the allocation lists what is written, and each store is built.
-
 #include "config.h"
 #include "AOTWalkBirths.h"
+#include "AOTWalkKnownCalls.h"
 #include "AOTWalkTextBuilders.h"
 
 #if ENABLE(AOT)
@@ -33,7 +30,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet constantsListedAtBirth { Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String };
-// None of them does anything that a store moved up past it could change, or that could see the object.
 static constexpr OpcodeSet operationsBetweenStoresOfBirth = constantsListedAtBirth | opcodesThatStateTypes | OpcodeSet { Opcode::FinishObject };
 
 namespace {
@@ -51,8 +47,6 @@ struct ArmOfBirth {
 
 } // anonymous namespace
 
-// ---- What lies in a slot
-
 static ValueID recordBehindNamesAndFormsInBirths(const Code& code, ValueID record)
 {
     while (opcodesThatGiveSameCell.contains(code.at(record).opcode))
@@ -69,13 +63,10 @@ bool storeLaysWhatSlotOfFreshObjectHolds(Walker& walker, Reference object, Refer
     ValueID second = recordBehindNamesAndFormsInBirths(code, stored.id());
     if (first == second)
         return true;
-    // A use gets a written constant in the form that it wants, which is a record of its own.
     const Operation& one = code.at(first);
     const Operation& other = code.at(second);
     return one.opcode == other.opcode && constantsListedAtBirth.contains(one.opcode) && std::ranges::equal(one.payload(), other.payload());
 }
-
-// ---- The mark
 
 static bool markAnswersForSomeFieldInBirths(const Plan& plan, LayoutID layout)
 {
@@ -100,8 +91,6 @@ bool lookMayFinishBirthOf(const Walker& walker, Reference object)
     });
 }
 
-// ---- The stores behind an allocation, as the body has them
-
 static Reference constantWrittenInBodyForBirths(Walker& walker, const BodyValue& written)
 {
     Opcode opcode = written.opcode();
@@ -124,8 +113,6 @@ static ValueID valueBehindNamesInBodyForBirths(const BodyIndex& index, ValueID v
     return value;
 }
 
-// Operations [begin, end) of the block. `object`: the value of the body that all names of the object come to. `valueInFrontOfAllocation`: what stands for a value of the body where the allocation is built, null where nothing does.
-// True: it has come to `end`. False: it has stopped in front of an operation that is no part of the row.
 static bool collectStoresInBirths(Walker& walker, const BodyIndex& index, const BodyBlock& block, uint32_t begin, uint32_t end, ValueID object, NOESCAPE const ScopedLambda<Reference(ValueID)>& valueInFrontOfAllocation, StoresBehindAllocationInBirths& stores)
 {
     uint32_t firstValue = block.firstValue().index();
@@ -140,7 +127,6 @@ static bool collectStoresInBirths(Walker& walker, const BodyIndex& index, const 
         ValueID root = index.valueBehindCasts(operation.valueOperand());
         bool isWrittenConstant = !index.isParameter(root) && constantsListedAtBirth.contains(index.opcodeOf(root));
         Reference value = isWrittenConstant ? constantWrittenInBodyForBirths(walker, index.value(root)) : valueInFrontOfAllocation(root);
-        // `const mark = { n: i }; mark.seen = line; .. line += ..`: the store is looked at ahead of its turn. So what it stores is still bound to the builder, of which typeOf() says `string`.
         if (value && walker.hasTextsInStringBuilders() && isTextInStringBuilder(walker, value))
             return false;
         TypeID type = value && value.isRecord() ? walker.typeOf(value) : TypeID();
@@ -153,18 +139,6 @@ static bool collectStoresInBirths(Walker& walker, const BodyIndex& index, const 
     return true;
 }
 
-static Vector<uint32_t, 16> sortedKeysOfStoresInBirths(const StoresBehindAllocationInBirths& stores)
-{
-    Vector<uint32_t, 16> sorted;
-    for (PropertyKeyID key : stores.keys)
-        sorted.append(key.bits());
-    std::ranges::sort(sorted);
-    return sorted;
-}
-
-// ---- `new Node(kind, pos, end)`
-
-// The record of the birth. What the head of a body stores, the body has stored wherever it returns, so a body of which nothing is listed has no such head.
 static std::span<const PropertyKeyID> keysThatBodyFillsOfThisInBirths(const ThinSummary& summary)
 {
     for (const SummaryConstruction& construction : summary.constructions) {
@@ -174,7 +148,6 @@ static std::span<const PropertyKeyID> keysThatBodyFillsOfThisInBirths(const Thin
     return { };
 }
 
-// The entry block and the blocks that it only jumps on to.
 static void collectStoresAtHeadOfBodyInBirths(Walker& walker, const BodyIndex& body, const Function& constructor, unsigned thisParameter, std::span<const Reference> handedOver, StoresBehindAllocationInBirths& stores)
 {
     BodyBlock entry = body.block(entryBlock);
@@ -200,7 +173,6 @@ static void collectStoresAtHeadOfBodyInBirths(Walker& walker, const BodyIndex& b
     }
 }
 
-// What Walker::walkInline() asks of the operands before it builds anything.
 static bool copyTakesOperandsInBirths(Walker& walker, FunctionID callee, const Function& constructor, std::span<const Reference> handedOver, unsigned thisParameter, TypeID typeOfThis)
 {
     if (handedOver.size() != constructor.numberOfEntryParameters())
@@ -225,7 +197,6 @@ static bool copyTakesOperandsInBirths(Walker& walker, FunctionID callee, const F
     return true;
 }
 
-// What shouldOpenGuess() says of a test of a shape with a typed store behind it. It is asked about a value, and the object is not made yet.
 static bool looksBehindAllocationPayInBirths(const Walker& walker)
 {
     if (!walker.has(Mechanism::Guesses))
@@ -236,11 +207,10 @@ static bool looksBehindAllocationPayInBirths(const Walker& walker)
     return !walker.facts().runsAtMostOnce(function) && !walker.program().at(function).isModuleBody();
 }
 
-// As walkConstructOfFunctionInWalkCalls() has it, and by the type of what the copy returns. Null: no way leads on.
 static Reference buildWhatConstructionGivesInBirths(Walker& walker, FunctionID callee, Reference returned, Reference object, Origin origin)
 {
     TypeArena& types = walker.types();
-    TypeID provenOfBody = walker.facts().linked().function(callee).result;
+    TypeID provenOfBody = walker.plan().typeHeldOfResult(walker.program(), walker.facts().linked(), callee);
     TypeID typeOfReturned = walker.typeOf(returned);
     if ((provenOfBody && !types.overlap(provenOfBody, TypeTable::object)) || (typeOfReturned && !types.overlap(typeOfReturned, TypeTable::object)))
         return object;
@@ -267,8 +237,6 @@ static Reference buildWhatConstructionGivesInBirths(Walker& walker, FunctionID c
     return result;
 }
 
-// `function Node(kind, pos, end) { this.pos = pos; this.end = end; this.kind = kind; this.id = 0; .. }`. An assignment to a cell that has no property yet creates the property unless something above the cell takes the store.
-// Whether anything does is looked at BEHIND the allocation: nobody has the cell yet, so where a look fails it is dropped, and the construction as written makes its own.
 bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
     if (!walker.has(Mechanism::Inlining) || walker.isUnreachable())
@@ -301,7 +269,6 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     origin.isTailCall = false;
     Vector<Reference, 8> handedOver = operandsHandedToCopy(written, constructor);
 
-    // Asked in front of the look at the body: only a body that is copied here is read here. What is not made yet is no closure of the program.
     Reference standIn = walker.constant(Draft(Opcode::Undefined, origin));
     Vector<Reference, 8> operandsAskedAbout;
     for (Reference operand : handedOver)
@@ -318,10 +285,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     if (stores.keys.isEmpty() || !copyTakesOperandsInBirths(walker, callee, constructor, handedOver.span(), *thisParameter, walker.types().forLayout(constructed)))
         return false;
 
-    // The stores further on in the body find the one look passed, and ask for none of their own.
     StoresListedAtBirth listed = findStoresThatAllocationMayList(walker, constructed, stores.keys.span(), stores.types.span(), keysFilledByBody);
-    // ALL OR NOTHING. A slot that is held to a type ends the list at the first value that is not proven to fit, and the looks behind the allocation cost what two or three listed stores save:
-    // `new Sym(open, name)` with `name` unproven listed one store of four: 3,468 > 3,507 M for 20 M constructions. Whole, the object is also born finished.
     if (listed.fields.size() < stores.keys.size())
         return false;
     if ((listed.asksForLayoutPrototype || !listed.conditions.isEmpty()) && !looksBehindAllocationPayInBirths(walker))
@@ -331,11 +295,28 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
     BodyBlock block = index.block(index.blockOf(call.id()));
     uint32_t place = call.id().index() - block.firstValue().index();
 
+    BlockID closedBlock;
+    auto goOnWhereLookPasses = [&](Reference look) {
+        BlockID passed = walker.addBlock();
+        if (!closedBlock)
+            closedBlock = walker.addBlock(BlockFrequency::Rare);
+        walker.branch(look, passed, closedBlock);
+        walker.continueIn(passed);
+    };
+    Reference guardsHold;
+    if (!listed.conditions.isEmpty()) {
+        Draft look(Opcode::AreMembersUnchanged, origin);
+        look.setConditions(listed.conditions.span());
+        guardsHold = walker.build(WTF::move(look));
+        if (!guardsHold)
+            return true;
+        goOnWhereLookPasses(guardsHold);
+    }
+
     Draft read(Opcode::GetConstructPrototype, origin);
     read.setNewTargetOperand(closure);
     read.setLayout(declaredLayoutOf(program, constructed));
     walker.chooseConservativeFields(read);
-    // As in walkConstructOfFunctionInWalkCalls(): `prototype` of a closure of one plain function is a data property of its own.
     Effects ofRead = declaredBoundOf(Opcode::NewObject);
     ofRead.reads.add(AbstractHeap::NamedProperties);
     Reference prototype = walker.build(WTF::move(read), &ofRead);
@@ -353,14 +334,6 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         return true;
     noteFreshObject(walker, object, listed.fields.size());
 
-    BlockID closedBlock;
-    auto goOnWhereLookPasses = [&](Reference look) {
-        BlockID passed = walker.addBlock();
-        if (!closedBlock)
-            closedBlock = walker.addBlock(BlockFrequency::Rare);
-        walker.branch(look, passed, closedBlock);
-        walker.continueIn(passed);
-    };
     if (listed.asksForLayoutPrototype) {
         Draft look(Opcode::HasLayoutPrototype, origin);
         look.setObjectOperand(object);
@@ -370,15 +343,9 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         goOnWhereLookPasses(passes);
         walker.state().noteFactsOfCell(object, FactOfCell::HasLayoutPrototype);
     }
-    if (!listed.conditions.isEmpty()) {
-        Draft look(Opcode::AreMembersUnchanged, origin);
-        look.setConditions(listed.conditions.span());
-        Reference passes = walker.build(WTF::move(look));
-        if (!passes)
-            return true;
-        goOnWhereLookPasses(passes);
+    if (guardsHold) {
         for (const MemberConditionRecord& condition : listed.conditions)
-            walker.state().noteStoresPassAbove(condition.layout, condition.key, passes);
+            walker.state().noteStoresPassAbove(condition.layout, condition.key, guardsHold);
     }
 
     Vector<ArmOfBirth, 2> arms;
@@ -392,11 +359,18 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         endArm(walker.isUnreachable() ? Reference() : walker.referenceOf(call.id()));
     };
 
+    auto constructAsWritten = [&] {
+        Walker::ClosedArm closedArm(walker);
+        Draft asWritten = walker.draftOf(call);
+        walker.chooseConservativeFields(asWritten);
+        endArm(walker.isUnreachable() ? Reference() : buildCallAsWrittenThatGives(walker, WTF::move(asWritten), typeOfObjectsMadeThroughEntryOf(walker, callee)));
+    };
+
     BlockID typedBlock = walker.currentBlock();
     if (closedBlock) {
         walker.noteGuessOpened();
         walker.continueIn(closedBlock);
-        walkAsWritten();
+        constructAsWritten();
         if (walker.hasFailed())
             return true;
         walker.continueIn(typedBlock);
@@ -445,69 +419,6 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         walker.bind(call.id(), met);
     else if (arms.size() == 1 && arms[0].value)
         walker.bind(call.id(), arms[0].value);
-    return true;
-}
-
-// ---- `const o = { a }; o.b = b; o.c = 0;`
-
-// Above the object of a literal stands Object.prototype alone, and a cell that is handed no prototype stands below that of its layout: nothing is looked at, so there is one way.
-bool listStoresBehindLiteralOfItsOpcodes(Walker& walker, const BodyValue& allocation)
-{
-    auto asWritten = allocation.as<Opcode::NewObject>();
-    const Program& program = walker.program();
-    LayoutID layout = asWritten.layout();
-    if (asWritten.prototypeOperand() || !layout || program.at(layout).kind != LayoutKind::Record || walker.isUnreachable())
-        return false;
-    const BodyIndex& index = walker.currentBodyIndex();
-    BodyBlock block = index.block(walker.inputBlockBeingWalked());
-    if (!block.holds(allocation.id()) || allocation.id().index() < block.firstValue().index())
-        return false;
-
-    uint32_t place = allocation.id().index() - block.firstValue().index();
-    uint32_t end = std::min(block.numberOfValues(), walker.endOfStretchBeingWalked());
-    StoresBehindAllocationInBirths stores;
-    auto valueBuiltInFront = [&](ValueID root) -> Reference {
-        return root.index() < allocation.id().index() ? walker.referenceOf(root) : Reference();
-    };
-    collectStoresInBirths(walker, index, block, place + 1, end, allocation.id(), scopedLambda<Reference(ValueID)>(valueBuiltInFront), stores);
-    if (stores.keys.isEmpty())
-        return false;
-
-    Draft draft = walker.draftOf(allocation);
-    if (walker.hasFailed())
-        return false;
-    size_t numberWritten = draft.fields().size();
-    if (numberWritten != draft.numberOfVariadicOperands())
-        return false;
-    StoresBehindAllocationInBirths all;
-    Vector<uint32_t, 16> keysOfStores = sortedKeysOfStoresInBirths(stores);
-    for (size_t position = 0; position < numberWritten; ++position) {
-        PropertyKeyID key = walker.plan().slots().keyOf(program, FieldReference { layout, draft.fields()[position] });
-        Reference value = draft.variadicOperands()[position];
-        TypeID type = value && value.isRecord() ? walker.typeOf(value) : TypeID();
-        // A store over what the literal lists: the object is left as it is written.
-        if (!key || !type || std::ranges::binary_search(keysOfStores, key.bits()))
-            return false;
-        all.keys.append(key);
-        all.values.append(value);
-        all.types.append(type);
-    }
-    all.keys.appendVector(stores.keys);
-    all.values.appendVector(stores.values);
-    all.types.appendVector(stores.types);
-
-    StoresListedAtBirth listed = findStoresThatAllocationMayList(walker, layout, all.keys.span(), all.types.span(), { });
-    if (listed.fields.size() <= numberWritten || !listed.conditions.isEmpty() || !std::ranges::equal(listed.fields.span().first(numberWritten), draft.fields()))
-        return false;
-
-    draft.setFields(listed.fields.span());
-    draft.setValuesOperands(all.values.span().first(listed.fields.size()));
-    walker.chooseConservativeFields(draft);
-    Reference object = walker.hasFailed() ? Reference() : walker.build(WTF::move(draft));
-    if (!object)
-        return true;
-    walker.bind(allocation.id(), object);
-    noteFreshObject(walker, object, listed.fields.size());
     return true;
 }
 

@@ -19,10 +19,8 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// AnswersOfStub of AOTStubsPropertySiteCaches.cpp, for the one answer by Structure that a place which reads has.
 class AnswersOfGetterStub {
 public:
-    // `place` holds where the answers of the place lie from here on: on x86-64 their index, elsewhere their address. A place without answers finds SiteAnswers::forPlacesWithout().
     AnswersOfGetterStub(StubAssembler& jit, GPRReg distance, GPRReg place)
         : m_place(place)
     {
@@ -41,7 +39,6 @@ public:
     Word word(ptrdiff_t offset) const { return Word(m_place, static_cast<int32_t>(offset)); }
 #endif
 
-    // Where the key of the answer is `key`, falls through with the operand of the answer in `operand`.
     Jump loadOperandUnlessKeyDiffers(StubAssembler& jit, GPRReg key, GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
     {
 #if CPU(X86_64)
@@ -55,7 +52,6 @@ public:
 #endif
     }
 
-    // Where the answer is of the Structure in `key`, falls through with the bits of its form there and its operand in `operand`.
     Jump loadFormAndOperandUnlessStructureDiffers(StubAssembler& jit, GPRReg key, GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
     {
 #if CPU(X86_64)
@@ -70,7 +66,6 @@ public:
 #endif
     }
 
-    // Of Form::GetterInStorageOfHolder.
     Word operandBorrowedOfOtherAnswer() const { return word(OBJECT_OFFSETOF(SiteAnswers, first) + OBJECT_OFFSETOF(SiteAnswers::Answer, operand)); }
 
 private:
@@ -84,7 +79,6 @@ private:
 static void loadNameOfPlaceOfGetter(StubAssembler& jit, GPRReg distance, GPRReg name, GPRReg scratch, NameAtSite nameAtSite)
 {
     RELEASE_ASSERT(noOverlap(distance, scratch) && noOverlap(name, scratch));
-    // loadNameOfSite() of AOTStubsPropertySiteCaches.cpp.
     static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers && RowDisplacementTable::maxColumn <= UINT16_MAX);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.namesOfSitesByDistance)), scratch);
     if (nameAtSite == NameAtSite::HasColumn)
@@ -93,7 +87,6 @@ static void loadNameOfPlaceOfGetter(StubAssembler& jit, GPRReg distance, GPRReg 
         jit.load32(BaseIndex(scratch, distance, CCallHelpers::TimesOne), name);
 }
 
-// fillAnswersAtSite() of AOTStubsPropertySiteCaches.cpp. Every register is as it was behind it.
 static void fillAnswersOfPlaceOfGetter(StubAssembler& jit, GPRReg object, GPRReg name, GPRReg distance)
 {
     jit.preservingCallerSavedRegisters(false, [&](unsigned) {
@@ -119,8 +112,6 @@ StubSignature signatureOfGetterAtSite(StubKey)
     return signature;
 }
 
-// `flags.verbose`, for code that calls the getter itself: where the answers of the place lie, the Structure with the form, one comparison, the word that holds the GetterSetter, and its getter.
-// It runs no code of the program. Undefined: the name finds no getter that the place or the access table knows of, and the read by name that stands behind that files where one lies.
 void generateGetterAtSite(StubAssembler& jit)
 {
     constexpr SiteUse use = SiteUse::Read;
@@ -129,7 +120,6 @@ void generateGetterAtSite(StubAssembler& jit)
     const GPRReg object = jit.operand(0);
     const GPRReg result = jit.result();
     const GPRReg distance = jit.immediate();
-    // As generateReadAtSite() and generateReadBehindSite() lay them.
 #if CPU(X86_64)
     const GPRReg place = jit.allocateScratch(StubRegister::T11);
     const GPRReg key = jit.allocateScratch(StubRegister::T13);
@@ -154,7 +144,6 @@ void generateGetterAtSite(StubAssembler& jit)
         return jit.branch32(CCallHelpers::NotEqual, key, TrustedImm32(static_cast<int32_t>(SiteAnswers::bitsOf(use, form))));
     };
 
-    // An object that descriptors have laid accessors on holds them out of line. The bits of a form are zero in a StructureID, so one comparison finds the Structure and that form.
     constexpr int32_t bitsOfCommonForm = static_cast<int32_t>(SiteAnswers::bitsOf(use, Form::OwnGetterInStorage));
     const AnswersOfGetterStub answers(jit, distance, place);
     jit.load32(Address(object, JSCell::structureIDOffset()), key);
@@ -185,12 +174,10 @@ void generateGetterAtSite(StubAssembler& jit)
     jit.loadPtr(BaseIndex(object, operand, CCallHelpers::TimesOne), key);
     returnGetterOf(key);
 
-    // The place knows the Structure, and under it the name finds a value or nothing.
     isNoGetter.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), result);
     jit.returnToCaller();
 
-    // As countMissAtSite() of AOTStubsPropertySiteCaches.cpp: the misses of all places are counted together, and one in a few is a sample.
     isNotAnswered.link(&jit);
     RELEASE_ASSERT(noOverlap(object, distance, nameBehindMiss, scratchBehindMiss, instanceGPR));
     JumpList isSample;

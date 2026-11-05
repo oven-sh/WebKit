@@ -28,9 +28,9 @@
 # CHECK-LABEL: code f5:Body
 # CHECK: ([[i5]]: int[0, 9007199254740992] @Double) {{*}}isLoopHead=true
 # CHECK: Increment [[i5]] form=Numbers
-# let s = 0; for (let i = 0; i < n; i++) s += i;  the sum still grows in look 2, so it is any number
+# let s = 0; for (let i = 0; i < n; i++) s += i;  the sum still grows in look 2, so it is any number without a fraction
 # CHECK-LABEL: code f6:Body
-# CHECK: ([[s6]]: number @Double, [[i6]]: int[0, 2147483647] @Int32) {{*}}isLoopHead=true
+# CHECK: ([[s6]]: int|whole @Double, [[i6]]: int[0, 2147483647] @Int32) {{*}}isLoopHead=true
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

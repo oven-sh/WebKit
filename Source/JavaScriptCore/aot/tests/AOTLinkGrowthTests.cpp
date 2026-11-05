@@ -22,8 +22,6 @@ std::span<const NativeTest> linkGrowthTests();
 
 using namespace Typed;
 
-// interface Message { type }  function clone(m) { return { ...m }; }  const m1 = { type: 1, k1: 1 }; sink(m1); clone(m1);  const m2 = { type: 1, k2: 1 }; sink(m2); clone(m2);  ..
-// Every literal has a layout of its own that is written as Message, so `m` is known by the family. Each is handed out of sight, so something comes to lie beside the fields of each.
 static String copyThroughFamilyOfManyLayoutsForLinkGrowthTests(unsigned numberOfLayouts)
 {
     StringBuilder text;
@@ -60,7 +58,6 @@ static std::optional<uint64_t> instructionsOfFactsForLinkGrowthTests(const Strin
     return instructions;
 }
 
-// A copy is told by two nodes for each layout of its source. Where it goes through every field of every layout each time, one copy costs the square of the layouts.
 static void testLinkGrowsAsLayoutsOfCopiedFamilyDo()
 {
     constexpr unsigned numberOfLayouts = 1500;

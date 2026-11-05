@@ -26,7 +26,7 @@ inline TypeID storedTypeOf(const AccessContext& context, LayoutSetID receivers, 
         std::optional<FieldIndex> field = slots.findField(context.program, member, key);
         if (!field)
             return TypeTable::never;
-        if (TypeID type = slots.slot(member, *field).type)
+        if (TypeID type = slots.slot(member, *field).typeInLayoutRecord())
             taken = taken ? context.types.intersectionOf(taken, type) : type;
     }
     return taken;
@@ -42,12 +42,11 @@ inline bool storedValueFits(const AccessContext& context, TypeID stored, LayoutS
         std::optional<FieldIndex> field = slots.findField(context.program, member, key);
         if (!field)
             return false;
-        TypeID taken = slots.slot(member, *field).type;
-        return !taken || context.types.isSubset(stored, taken);
+        const PlacedSlot& slot = slots.slot(member, *field);
+        return (!slot.type || context.types.isSubset(stored, slot.type)) && (!slot.provenType || context.types.isSubset(stored, slot.provenType));
     });
 }
 
-// The types of the operands of a DefineOwnProperty. Null for a part that the descriptor leaves out.
 struct DefinitionByDescriptor {
     TypeID object;
     TypeID key;
@@ -57,7 +56,6 @@ struct DefinitionByDescriptor {
     OptionSet<PropertyDescriptorFlags> flags;
 };
 
-// The attributes of a property that did not exist before the definition.
 inline OptionSet<FieldForm> formCreatedBy(OptionSet<PropertyDescriptorFlags> flags)
 {
     OptionSet<FieldForm> form;
@@ -72,7 +70,6 @@ inline OptionSet<FieldForm> formCreatedBy(OptionSet<PropertyDescriptorFlags> fla
     return form;
 }
 
-// The object has one layout, which keeps a field of the name with the attributes that the definition creates, in a slot that takes what is defined. Nothing: the run time defines.
 inline std::optional<FieldAccess> fieldCreatedInSlotBy(const AccessContext& context, const DefinitionByDescriptor& definition)
 {
     const Program& program = context.program;
@@ -88,7 +85,6 @@ inline std::optional<FieldAccess> fieldCreatedInSlotBy(const AccessContext& cont
     if (!field)
         return std::nullopt;
 
-    // A property that lies in its slot has the form that the record of the layout gives the field: describeFieldOfLayoutRecord().
     FieldFacts facts = (*context.facts).field({ layout, *field });
     OptionSet<FieldForm> form = facts.formOfValue;
     if (facts.facts.contains(FieldFact::IsAccessor))
@@ -115,7 +111,7 @@ inline std::optional<FieldAccess> fieldCreatedInSlotBy(const AccessContext& cont
     } else {
         if (slot.holdsAccessor || !definition.value || !types.at(definition.value).isJavaScriptValue() || (types.at(definition.value).primitives & (Primitive::Absent | Primitive::Unspecified)))
             return std::nullopt;
-        if (slot.type && !types.isSubset(definition.value, slot.type))
+        if ((slot.type && !types.isSubset(definition.value, slot.type)) || (slot.provenType && !types.isSubset(definition.value, slot.provenType)))
             return std::nullopt;
     }
     FieldAccess access = slots.fieldAccessOfOneLayout(program, *key, layout);

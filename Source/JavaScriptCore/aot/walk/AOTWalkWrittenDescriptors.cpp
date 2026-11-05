@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `Object.defineProperty(o, "x", { value: 1, enumerable: false })`: the flags become bits, and the value, the getter and the setter operands of one DefineOwnProperty. Nothing names the literal any more, so the sweep drops it.
-
 #include "config.h"
 #include "AOTWalkWrittenDescriptors.h"
 
@@ -86,7 +84,6 @@ static std::optional<unsigned> argumentOfDescriptorCall(const std::optional<Buil
     return operand->argumentIndex();
 }
 
-// DefineOwnProperty answers with the object and throws where the definition is refused. Reflect.defineProperty answers false there.
 static bool descriptorCallReturnsOperand(const BuiltinTable& builtins, const BuiltinOverload& overload, BuiltinOperand operand)
 {
     if (!overload.result.type || !builtins.contains(overload.result.type))
@@ -116,7 +113,6 @@ static std::optional<OperandsOfDescriptorCall> operandsOfDescriptorCall(const Bu
     return OperandsOfDescriptorCall { arguments[*object], arguments[*key], arguments[*descriptor], *descriptor };
 }
 
-// Nothing: the type leaves it open.
 static std::optional<bool> truthinessInDescriptors(Walker& walker, TypeID type)
 {
     TypingContext typing = walker.typing();
@@ -132,10 +128,6 @@ static Reference rootOfObjectInWrittenDescriptors(const Walker& walker, Referenc
     return object && object.isValue() ? Reference::value(rootOfCellInSweptCode(walker.code(), object.id())) : object;
 }
 
-// `{ enumerable: true, get: function () { return a.b; } }` as a file without types has it: an allocation that lists nothing and a definition for each member, which leave an order word that nobody knows.
-// And a literal of a layout to which Link has appended a name, of which propertiesOfFreshObject() says nothing.
-// The literal is written in the place of the operand, so what lies between its allocation and the call is the evaluation of its members, and each literal is gone through once.
-// Every operation there that names the cell gives it another name or stores into a slot of it. Nothing: some other does, or the way from the allocation to the call is not straight.
 static std::optional<Vector<PropertyOfFreshObject, 8>> propertiesDefinedBehindAllocationInWrittenDescriptors(Walker& walker, const BodyValue& call, ValueID written, Reference descriptor)
 {
     static constexpr OpcodeSet storesIntoSlots { Opcode::PutSlot, Opcode::PutSlotOrAdd };
@@ -189,7 +181,6 @@ static std::optional<Vector<PropertyOfFreshObject, 8>> propertiesDefinedBehindAl
     return properties;
 }
 
-// While nothing but this code has the literal, its own properties are what its allocation lists, and all of them hold plain values: reading them runs no code, in whatever order.
 static std::optional<PartsOfWrittenDescriptor> readDescriptorWrittenOut(Walker& walker, const BodyValue& call, ValueID written, Reference descriptor)
 {
     using Flag = PropertyDescriptorFlags;
@@ -200,7 +191,6 @@ static std::optional<PartsOfWrittenDescriptor> readDescriptorWrittenOut(Walker& 
     if (!properties)
         return std::nullopt;
 
-    // `{ __proto__: p, .. }`: what the literal leaves out is looked for above p.
     if (!(walker.state().factsOfCell(descriptor) | walker.state().factsOfCell(rootOfObjectInWrittenDescriptors(walker, descriptor))).contains(FactOfCell::HasLayoutPrototype))
         return std::nullopt;
 
@@ -254,11 +244,9 @@ static std::optional<PartsOfWrittenDescriptor> readDescriptorWrittenOut(Walker& 
             return std::nullopt;
         isOwnMember[static_cast<unsigned>(*member)] = true;
     }
-    // The built-in refuses the pair in its own words.
     if (read.flags.containsAny({ Flag::HasGet, Flag::HasSet }) && read.flags.containsAny({ Flag::HasValue, Flag::HasWritable }))
         return std::nullopt;
 
-    // A member that the literal leaves out is looked for above it. Object.prototype has none of the six names, and gets none but what a test run has opened.
     BuiltinID objectPrototype = program.builtins().canonicalID(Builtins::ObjectPrototype);
     for (unsigned index = 0; index < numberOfMembersOfDescriptor; ++index) {
         PropertyKeyID name = keyOfMemberOfDescriptor(program, static_cast<MemberOfDescriptor>(index));
@@ -268,7 +256,6 @@ static std::optional<PartsOfWrittenDescriptor> readDescriptorWrittenOut(Walker& 
     return read;
 }
 
-// The one row of calls that the call of a built-in goes by, where its callee is proven one built-in whose rows may be believed. Nothing: there is none.
 static std::optional<BuiltinOverloadID> findOnlyRowOfCallOfBuiltinInWrittenDescriptors(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call)
@@ -285,7 +272,7 @@ static std::optional<BuiltinOverloadID> findOnlyRowOfCallOfBuiltinInWrittenDescr
 
     const BuiltinTable& table = walker.program().builtins();
     BuiltinID builtin = table.canonicalID(named);
-    BuiltinTypeContext context { walker.program(), types, &walker.facts() };
+    BuiltinTypeContext context { walker.program(), types };
     auto typeOfOperand = [&](ValueID operand) {
         Reference built = walker.referenceOf(operand);
         return built ? walker.typeOf(built) : TypeID();
@@ -298,7 +285,6 @@ static std::optional<BuiltinOverloadID> findOnlyRowOfCallOfBuiltinInWrittenDescr
     if (!isCallableBuiltin(table, builtin) || hasFeatureGuard(table, builtin) || isCallThatTheWalkMustLower(table, builtin) || !rowsSpeakOfCallOnReceiver(context, builtin, passed.receiver))
         return std::nullopt;
 
-    // The only row of calls speaks of every call, whatever is proven of the operands.
     Vector<BuiltinOverloadID, 4> rows;
     for (BuiltinOverloadID overload : table.overloadIDsOf(builtin)) {
         if (table.at(overload).mode == BuiltinCallMode::Call)
@@ -329,7 +315,6 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
     if (!operands || !operands->object || !operands->key || !operands->descriptor)
         return false;
 
-    // The built-in refuses what is no object in front of the conversion of the key. A key that is no object becomes a name without running anybody's code, so nobody sees the order.
     TypeID provenOfKey = walker.typeOf(operands->key);
     TypeID provenOfObject = walker.typeOf(operands->object);
     if (!provenOfKey || !provenOfObject)
@@ -340,7 +325,6 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
         return false;
     if (!typeOfObject.isJavaScriptValue() || !typeOfObject.hasObjects())
         return false;
-    // The object that takes the property is not the literal that describes it.
     if (rootOfObjectInWrittenDescriptors(walker, operands->object) == rootOfObjectInWrittenDescriptors(walker, operands->descriptor))
         return false;
     std::optional<PartsOfWrittenDescriptor> descriptor = readDescriptorWrittenOut(walker, call, call.argumentsOperands()[operands->argumentOfDescriptor], operands->descriptor);

@@ -16,7 +16,6 @@ namespace JSC { namespace AOT { namespace Machine {
 
 static constexpr unsigned bytesOfPushedFrameWord = sizeof(CPURegister);
 
-// Nothing reads a word that is only allocated, and what the frame pointer register holds names no cell, with a record and without: one byte for four.
 static void allocateWordsOfPushedFrame(CCallHelpers& jit, unsigned numberOfWords)
 {
     if (numberOfWords == 1)
@@ -25,7 +24,6 @@ static void allocateWordsOfPushedFrame(CCallHelpers& jit, unsigned numberOfWords
         jit.sub64(CCallHelpers::TrustedImm32(safeCast<int32_t>(numberOfWords * bytesOfPushedFrameWord)), CCallHelpers::stackPointerRegister);
 }
 
-// The first of the run lies lowest.
 static void pushSavesOfFrame(CCallHelpers& jit, const RegisterAtOffsetList& saves)
 {
     for (size_t index = saves.registerCount(); index--;)
@@ -54,7 +52,6 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& proc, std::span<const GP
     for (size_t index = 0; index < saves.registerCount(); ++index)
         RELEASE_ASSERT(saves.at(index).reg().isGPR() && saves.at(index).offset() == offsetOfFirstSaveOf(frame) + static_cast<ptrdiff_t>(index * bytesOfPushedFrameWord));
 
-    // The stack check may take the assembler's scratch register.
     AllowMacroScratchRegisterUsage allowScratch(jit);
 
     if (frame.hasFrameRecord()) {
@@ -78,7 +75,6 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& proc, std::span<const GP
     if (frame.savesLieAtBottom())
         pushSavesOfFrame(jit, saves);
 
-    // The frame is allocated whole: without a record only its size leads from the check to the caller. A check that leaves by throwing finds the registers as the caller left them.
     if (StackCheckGenerator generator = proc.stackCheckGenerator())
         generator(proc.stackCheckContext(), jit, frame, StackCheckSite { bytesBelowFrameRecord, true, frame.nothingCountsOnStackCheck() });
 }

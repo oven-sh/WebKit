@@ -15,14 +15,12 @@ namespace JSC { namespace AOT { namespace Machine {
 
 static_assert(2 * sizeof(CPURegister) == stackAlignmentBytes(), "pushing the frame record keeps the stack pointer aligned");
 
-// One stp or ldp takes two registers of the same bank and two adjacent words.
 static bool calleeSavesFormPair(const RegisterAtOffset& lower, const RegisterAtOffset& upper)
 {
     return lower.reg().isGPR() == upper.reg().isGPR()
         && upper.offset() == lower.offset() + static_cast<ptrdiff_t>(sizeof(CPURegister));
 }
 
-// Calls accessPair(lower register, upper register, address of the lower word) or accessOne(register, address), from the lowest address up.
 template<typename PairFunctor, typename SingleFunctor>
 static void forEachCalleeSaveAccess(const Frame& frame, const PairFunctor& accessPair, const SingleFunctor& accessOne)
 {
@@ -41,7 +39,6 @@ static void forEachCalleeSaveAccess(const Frame& frame, const PairFunctor& acces
     }
 }
 
-// General registers alone, one word apart, the last right below the record, and below them nothing but the word that makes their number even.
 static bool frameHoldsNothingButSavedGPRs(const Frame& frame)
 {
     constexpr size_t wordSize = sizeof(CPURegister);
@@ -57,7 +54,6 @@ static bool frameHoldsNothingButSavedGPRs(const Frame& frame)
     return true;
 }
 
-// Calls accessPair(lower register, upper register) for each pair of words of such a frame, from the record down or from the stack pointer up. zr stands for the word that holds no register.
 template<typename PairFunctor>
 static void forEachPairOfSavedGPRs(const Frame& frame, bool fromRecordDown, const PairFunctor& accessPair)
 {
@@ -65,14 +61,12 @@ static void forEachPairOfSavedGPRs(const Frame& frame, bool fromRecordDown, cons
     size_t count = saves.registerCount();
     size_t numberOfPairs = (count + 1) / 2;
     for (size_t step = 0; step < numberOfPairs; ++step) {
-        // Counted from the stack pointer up.
         size_t pair = fromRecordDown ? numberOfPairs - 1 - step : step;
         size_t upper = 2 * pair + 1 - count % 2;
         accessPair(upper ? saves.at(upper - 1).reg().gpr() : ARM64Registers::zr, saves.at(upper).reg().gpr());
     }
 }
 
-// [begin, end) are offsets from the frame pointer.
 static void clearFrameWordsAtSetup(CCallHelpers& jit, const Frame& frame, int32_t begin, int32_t end)
 {
     constexpr int32_t wordSize = sizeof(CPURegister);
@@ -94,7 +88,6 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& procedure)
     unsigned bytesBelowFrameRecord = frame.bytesBelowFrameRecord();
     ASSERT(!(bytesBelowFrameRecord % stackAlignmentBytes()));
 
-    // The assembler uses x16 for a frame size that does not fit an immediate and x17 for an offset that is out of range, and the stack check asks it for a scratch register.
     AllowMacroScratchRegisterUsage allowScratch(jit);
 
     jit.tagReturnAddress();
@@ -102,7 +95,6 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& procedure)
     jit.move(CCallHelpers::stackPointerRegister, CCallHelpers::framePointerRegister);
 
     bool allocatesBeforeCheck = bytesBelowFrameRecord <= maxBytesAllocatedBeforeStackCheck;
-    // A check that leaves by throwing finds the registers as the caller left them, whether they are stored or not.
     bool pushesSaves = allocatesBeforeCheck && frameHoldsNothingButSavedGPRs(frame);
     auto allocate = [&] {
         if (pushesSaves) {
@@ -117,7 +109,6 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& procedure)
 
     if (allocatesBeforeCheck)
         allocate();
-    // The check may call a stub, which overwrites the link register, or leave by throwing, which unwinds from the record. Nothing below the record is written yet but the saves.
     if (StackCheckGenerator generator = procedure.stackCheckGenerator())
         generator(procedure.stackCheckContext(), jit, frame, StackCheckSite { bytesBelowFrameRecord, allocatesBeforeCheck, frame.m_nothingCountsOnStackCheck });
     if (!allocatesBeforeCheck)
@@ -163,7 +154,6 @@ void emitCalleeSaveRestore(CCallHelpers& jit, const Frame& frame)
 
 void emitFrameTeardown(CCallHelpers& jit, const Frame& frame)
 {
-    // There is no red zone: the saves are read before the stack pointer passes them.
     if (frameHoldsNothingButSavedGPRs(frame)) {
         forEachPairOfSavedGPRs(frame, false, [&](GPRReg lower, GPRReg upper) {
             jit.popPair(lower, upper);
@@ -173,7 +163,6 @@ void emitFrameTeardown(CCallHelpers& jit, const Frame& frame)
         if (frame.bytesBelowFrameRecord())
             jit.move(CCallHelpers::framePointerRegister, CCallHelpers::stackPointerRegister);
     }
-    // On ARM64E the return address stays signed, which is what ret() authenticates. Code that leaves by a jump must call untagReturnAddress() after the teardown, once lr is reloaded and sp is back at its entry value.
     jit.popPair(CCallHelpers::framePointerRegister, CCallHelpers::linkRegister);
 }
 

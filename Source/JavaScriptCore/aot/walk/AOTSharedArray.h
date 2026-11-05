@@ -17,10 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// An array of plain records that is copied without looking at them: the copy and the original share every part that neither has written since.
-// The records lie in leaves under a tree of branches. Whoever writes a record in a part that somebody else has too gets parts of his own on the way down to it, and no more.
-// Up to inlineCapacity records lie in the array itself, without a tree, and are copied one by one.
-// All the arrays that share parts belong to one thread.
 template<typename T, size_t inlineCapacity, unsigned bitsOfLeaf = 5>
 class SharedArray {
     static_assert(std::is_arithmetic_v<T> || (std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T> && std::is_aggregate_v<T>));
@@ -42,14 +38,17 @@ public:
         return *this;
     }
 
-    // `other` is left with what this array held.
     SharedArray& operator=(SharedArray&& other)
     {
         swap(other);
         return *this;
     }
 
-    ~SharedArray() { release(m_root, m_height); }
+    ~SharedArray()
+    {
+        if (m_root)
+            release(m_root, m_height);
+    }
 
     void swap(SharedArray& other)
     {
@@ -74,7 +73,6 @@ public:
         return static_cast<const Leaf*>(node)->records()[index & (widthOfLeaf - 1)];
     }
 
-    // It holds until the array is appended to, copied or assigned.
     T& mutableAt(uint32_t index)
     {
         ASSERT(index < m_size);
@@ -110,7 +108,6 @@ public:
         m_size = 0;
     }
 
-    // The records from there on are dropped. Their parts stay where they are until others are laid there.
     void shrink(uint32_t size)
     {
         ASSERT(size <= m_size);
@@ -119,7 +116,6 @@ public:
         m_size = size;
     }
 
-    // As many records, all alike. They share one leaf until they are written.
     void fill(const T& record, uint32_t size)
     {
         clear();
@@ -136,15 +132,12 @@ public:
         }
     }
 
-    // Records, all alike, are appended until there are `size`. Whole parts of them are one part until they are written, so this costs what the tree is high and not what is appended.
-    // Whole parts of zeros are the same in every array of the thread: two copies of one array that have each grown by zeros share them, and forEachStretchNotSharedWith() passes them over.
     void grow(const T& record, uint32_t size)
     {
         while (m_size < size && (!m_root || m_size & (widthOfLeaf - 1)))
             append(record);
 
         bool areZeros = isZero(record);
-        // By level: a part that holds nothing else.
         Node* partsAlike[maxHeight] { };
         unsigned numberOfPartsAlike = 0;
         while (m_size < size) {
@@ -154,7 +147,6 @@ public:
                 m_root = root;
                 ++m_height;
             }
-            // The largest part under the root that begins here. It may reach past `size`, as what fill() makes does.
             uint32_t indexOfLeaf = m_size >> bitsOfLeaf;
             unsigned level = 0;
             while (level + 1 < m_height && !childAt(indexOfLeaf, level + 1))
@@ -186,7 +178,6 @@ public:
             release(partsAlike[numberOfPartsAlike], numberOfPartsAlike);
     }
 
-    // How many records are left without the zeros at the end. A whole part of zeros that grow() has laid is passed at once.
     uint32_t sizeWithoutZerosAtEnd() const
     {
         uint32_t size = m_size;
@@ -214,8 +205,6 @@ public:
         return size;
     }
 
-    // For each stretch [begin, end) of positions in a leaf that `other` does not have at those positions. What is passed over holds the same in both.
-    // The functor writes neither array.
     void forEachStretchNotSharedWith(const SharedArray& other, NOESCAPE const Invocable<void(uint32_t begin, uint32_t end)> auto& functor) const
     {
         if (!m_size)
@@ -230,7 +219,6 @@ private:
     static constexpr unsigned bitsOfBranch = 5;
     static constexpr uint32_t widthOfBranch = 1u << bitsOfBranch;
     static constexpr uint32_t widthOfLeaf = 1u << bitsOfLeaf;
-    // No array of 2^32 records is higher.
     static constexpr unsigned maxHeight = (32 - bitsOfLeaf + bitsOfBranch - 1) / bitsOfBranch + 1;
     static_assert(inlineCapacity <= widthOfLeaf);
 
@@ -243,7 +231,6 @@ private:
 
         alignas(T) std::byte storage[sizeof(T) * widthOfLeaf];
     };
-    // A child is null where no record lies under it yet.
     struct Branch : Node {
         Node* children[widthOfBranch] { };
     };
@@ -260,7 +247,6 @@ private:
         return !std::memcmp(&record, zeros, sizeof(T));
     }
 
-    // It is never given back: this list is one of its owners, so nobody writes it.
     static Node* partOfZeros(unsigned level)
     {
         if (Node* part = s_partsOfZeros[level])
@@ -304,7 +290,6 @@ private:
         fastFree(node);
     }
 
-    // Behind it the node in the slot is there, and nobody else has it.
     static void makeOwn(Node*& slot, unsigned level)
     {
         if (!slot) {
@@ -341,7 +326,6 @@ private:
         return *static_cast<Leaf*>(*slot);
     }
 
-    // The node at that level over the leaf. Null: there is none.
     const Node* nodeOver(uint32_t indexOfLeaf, unsigned level) const
     {
         if (level > m_height || static_cast<uint64_t>(indexOfLeaf) << bitsOfLeaf >= capacity())
@@ -369,12 +353,10 @@ private:
         }
     }
 
-    // By level. Null: none was asked for yet.
     static inline thread_local Node* s_partsOfZeros[maxHeight] { };
 
     Node* m_root { nullptr };
     uint32_t m_size { 0 };
-    // Branches between the root and a leaf.
     unsigned m_height { 0 };
     alignas(T) std::byte m_inline[sizeof(T) * std::max<size_t>(inlineCapacity, 1)];
 };

@@ -36,7 +36,6 @@ import {
 } from "./model.ts";
 import { targetPlatforms, type FeatureName } from "./vocabulary.ts";
 
-// A use names a call and a call lists the uses of what it answers, so each is a constant of its own that follows what it names.
 class HostUseConstants {
   readonly #definitions: string[] = [];
   readonly #names = new Map<string, string>();
@@ -334,7 +333,6 @@ function formatStringConstants(builtin: ModelBuiltin): string[] {
   );
 }
 
-// The implementation that ends in a call of the entry's function object, which has the callee and the function of the library.
 function calledImplementationOf(implementation: ModelImplementation): ModelImplementation | null {
   return implementation.how === "Inline" ? implementation.otherwise : implementation;
 }

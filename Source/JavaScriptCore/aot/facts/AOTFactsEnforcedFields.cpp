@@ -13,7 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The plan numbers the names that held() alone appends behind those of linked(), and the table has rows for the latter alone. The new rows claim nothing.
 static void giveRowsToFieldsThatPlanNumbersForFactsOfEnforcedFields(const LinkTables& linked, FactTables& tables)
 {
     if (linked.keysAppendedByHeldAlone.isEmpty())
@@ -34,7 +33,6 @@ static void giveRowsToFieldsThatPlanNumbersForFactsOfEnforcedFields(const LinkTa
     tables.fields = WTF::move(fields);
 }
 
-// `interface Shape { area: number }`: no object is made of it, nothing is written below it and it stands below nothing. So it has no slot and shares none, and what it writes is read off its record.
 static bool hasOrSharesSlotsForFactsOfEnforcedFields(const Program& program, const LinkTables& linked, LayoutID id)
 {
     const Layout& layout = program.at(id);
@@ -49,10 +47,10 @@ static void writeForFactsOfEnforcedFields(FieldFacts& facts, TypeID slotType, bo
     facts.facts.set(FieldFact::SlotHoldsUndefinedAndNull, holdsUndefinedAndNull);
 }
 
-void fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, Mechanisms mechanisms, FactTables& tables)
+uint64_t fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, Mechanisms mechanisms, FactTables& tables)
 {
     if (!withoutMechanismsMissingDependencies(mechanisms).contains(Mechanism::TypedSlots))
-        return;
+        return 0;
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
     RELEASE_ASSERT(linked.layouts.size() == numberOfLayouts && tables.firstFieldOfLayout.size() == numberOfLayouts + 1);
     giveRowsToFieldsThatPlanNumbersForFactsOfEnforcedFields(linked, tables);
@@ -76,12 +74,17 @@ void fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, cons
         }
     };
 
-    // ONE ANSWER A DECLARATION, worked out once. Whoever asks twice may be told two things, and two types for one slot are what no door guards against.
     TypeArena types(program.types, ArenaKeeps::InProgram);
+    uint64_t numberHeldToWhatIsSeen = 0;
+    auto isMadeByLibrary = [&](LayoutID id) {
+        FunctionID constructor = program.at(id).constructor;
+        return constructor && program.at(constructor).role == FunctionRole::Library;
+    };
     forEachFieldWithSlot([&](FieldReference field) {
         if (isTakenFromAbove(field))
             return;
         EnforcedField answer = enforcedTypeOfField(program, linked, held, families, familiesOfInstances, types, field);
+        numberHeldToWhatIsSeen += answer.type && answer.source == SourceOfSlotType::Seen && !isMadeByLibrary(field.layout);
         writeForFactsOfEnforcedFields(rowOf(field), answer.type, answer.holdsUndefinedAndNull);
     });
     forEachFieldWithSlot([&](FieldReference field) {
@@ -90,6 +93,7 @@ void fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, cons
         const FieldFacts& declaration = rowOf(declarationOf(program, field));
         writeForFactsOfEnforcedFields(rowOf(field), declaration.slotType, declaration.facts.contains(FieldFact::SlotHoldsUndefinedAndNull));
     });
+    return numberHeldToWhatIsSeen;
 }
 
 } } } // namespace JSC::AOT::Typed

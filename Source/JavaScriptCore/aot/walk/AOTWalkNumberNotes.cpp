@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// What the rules of numbers keep beside Code: two records that say one thing for good, and what was built in the one block that is appended to. No entry of WalkState.
-// At a suspension: what was built in the block is forgotten, so nothing that no value of the body stands for lives across it. At a throw: nothing, a handler begins another block.
-// Withheld: nobody notes, so nothing is found.
-
 #include "config.h"
 #include "AOTWalkNumberForms.h"
 
@@ -23,20 +19,15 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-// AOTWalkNumbers.cpp
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 void prepareOperandsForFormNumbers(Walker&, Draft&);
-
-// ---- What the files of the package share
 
 bool hasMechanismsOfNumberForms(const Walker& walker)
 {
     return walker.has(Mechanism::TypedOperations) && walker.has(Mechanism::UnboxedNumbers);
 }
 
-// No type tells two doubles apart, and none names a made text: those two are read off the constant.
 PrimitiveKnownToFolding primitiveKnownInNumberForms(const Walker& walker, Reference reference)
 {
     if (!reference || !reference.isRecord())
@@ -84,7 +75,6 @@ std::optional<int64_t> integerKnownInNumberForms(const Walker& walker, Reference
     return type.integers.minimum;
 }
 
-// A number has one constant: an integer that integer types hold is an Integer, any other number a Double.
 Reference constantInNumberForms(Walker& walker, PrimitiveKnownToFolding primitive)
 {
     Draft constant(Opcode::Undefined);
@@ -133,13 +123,10 @@ Reference booleanInNumberForms(Walker& walker, bool boolean)
 
 Reference buildInAllowedFormInNumberForms(Walker& walker, Draft&& draft)
 {
-    // Whoever was to build an operand stood nowhere.
     for (uint32_t operandIndex = 0; operandIndex < draft.numberOfNamedOperands(); ++operandIndex) {
         if (!draft.operand(operandIndex))
             return { };
     }
-    // `h & done` in a loop, where the conversion of h is an operation of its own and the operator is built anew beside a boolean. ToNumber of a boolean, undefined or null runs no code.
-    // What an edge behind a test narrows is an operand of the test, so a test keeps its operands.
     constexpr OpcodeSet convertsOperandsToNumbers = operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative, OperatorKind::Bitwise });
     if (convertsOperandsToNumbers.contains(draft.opcode)) {
         bool isEachNumberLike = true;
@@ -169,7 +156,6 @@ Reference buildOperatorInNumberForms(Walker& walker, Opcode opcode, Reference le
     return buildInAllowedFormInNumberForms(walker, WTF::move(draft));
 }
 
-// Only the condition of a Branch itself has such edges.
 std::optional<uint32_t> operandsNarrowedBehindTestInNumberForms(const Walker& walker, ValueID test)
 {
     const BodyIndex& index = walker.currentBodyIndex();

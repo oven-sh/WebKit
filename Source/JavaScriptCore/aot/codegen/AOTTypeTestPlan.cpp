@@ -23,7 +23,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// The objects that the tested value may be. Made without an arena, the value may be any object.
 class ObjectsUnderTypeTest {
 public:
     ObjectsUnderTypeTest() = default;
@@ -126,7 +125,6 @@ static ObjectsVerdict objectsVerdictOfTypeTest(const ObjectsUnderTypeTest& teste
     return ObjectsVerdict::NeedTest;
 }
 
-// A closure is found by its function, and narrowByTest() allows for a built-in that no test finds. Any other object has to pass by its class or its layout.
 static bool isSurelyFoundByTypeTest(TypeReader reader, const ObjectRecord& record, const Type& to)
 {
     if (record.traits.containsAny({ ObjectTrait::IsClosure, ObjectTrait::IsBuiltin }) || (to.anyFunction && record.has(ObjectTrait::IsCallable)))
@@ -157,7 +155,6 @@ bool holdsOnlyCompiledObjects(TypeReader reader, const Plan& plan, const Type& t
     });
 }
 
-// The objects of every instance of the image have these shapes. Nobody has shown yet that an operand that lists layouts alone need not be asked.
 static bool shapeTestOfTypeTestAsksForInstance(TypeReader reader, const TypeTestContext* context, const Type& from)
 {
     return context && !context->programHasOneInstance && !holdsOnlyCompiledObjects(reader, context->plan, from);
@@ -190,7 +187,6 @@ static void appendObjectTestsOfTypeTest(TypeTestPlan& plan, TypeReader reader, c
         case BuiltinInstanceTest::None:
             break;
         case BuiltinInstanceTest::JSTypeEquals:
-            // Not DerivedArrayType beside ArrayType: that is Array.prototype, whose butterfly has no indexing header.
             append({ .kind = CellTestKind::CellTypeIs, .cellTypes = { builtinClass.type, builtinClass.type } });
             break;
         case BuiltinInstanceTest::ClassInfoInherits:
@@ -198,7 +194,6 @@ static void appendObjectTestsOfTypeTest(TypeTestPlan& plan, TypeReader reader, c
             break;
         case BuiltinInstanceTest::SharingModeEquals: {
             bool isShared = builtinClass.sharingMode == ArrayBufferSharingMode::Shared;
-            // A layout may be the one of a class that extends the other class of buffers.
             if (from.layouts || tested.mayBeInstanceOf(isShared ? BuiltinClasses::ArrayBuffer : BuiltinClasses::SharedArrayBuffer))
                 (isShared ? testsSharedMode : testsDefaultMode) = true;
             else
@@ -236,7 +231,6 @@ static void appendObjectTestsOfTypeTest(TypeTestPlan& plan, TypeReader reader, c
                 append({ .kind = CellTestKind::IsNamespaceOf, .module = layout.namespaceOf });
             continue;
         }
-        // An instance of a class below a built-in class is a cell of that class. It has no shape word, so the test turns it away: narrowByTest() knows.
         if (!layout.writtenBuiltinBase || layout.mayBeOrdinaryObject)
             mayHaveShapes = true;
     }
@@ -268,7 +262,6 @@ static uint32_t subjectOfCellTest(const CellTest& test)
         return static_cast<uint32_t>(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
         return test.module.index();
-    // A plan has one of these at most. The number of a set of layouts follows the arrival of threads.
     case CellTestKind::ShapeIn:
     case CellTestKind::IsObject:
     case CellTestKind::IsCallable:
@@ -280,7 +273,6 @@ static uint32_t subjectOfCellTest(const CellTest& test)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The number of a key without TypeTable::hasStableNumber() follows the arrival of threads. Such keys come last, in the order of what they hold.
 static bool symbolComesEarlierInTypeTest(TypeReader reader, PropertyKeyID a, PropertyKeyID b)
 {
     bool firstHasStableNumber = reader.table().hasStableNumber(a);
@@ -316,7 +308,6 @@ static void fillTypeTestPlan(TypeTestPlan& plan, TypeReader reader, const TypeTe
     classifyPrimitivesForTypeTest(plan, reader, from, to);
     plan.objects = objectsVerdictOfTypeTest(tested, from, to);
     appendObjectTestsOfTypeTest(plan, reader, context, tested, from, to);
-    // The order reaches the code and the tables of the image.
     AOT::stableSortInLine(plan.cellTests, [&](const CellTest& a, const CellTest& b) {
         return cellTestComesEarlier(reader, a, b);
     });

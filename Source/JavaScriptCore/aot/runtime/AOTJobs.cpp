@@ -63,13 +63,11 @@ static ALWAYS_INLINE bool isSavedFrameOf(const Instance& instance, JSValue value
     return value && value.isCell() && value.asCell()->structureID().bits() == static_cast<uint32_t>(instance.coroutines.savedFrameHeader);
 }
 
-// Of any realm.
 static ALWAYS_INLINE SavedFrame* savedFrameIn(JSValue value)
 {
     return value && value.isCell() && value.asCell()->classInfo() == SavedFrame::info() ? uncheckedDowncast<SavedFrame>(value.asCell()) : nullptr;
 }
 
-// What the adapter says about the coroutine or the handler that it has entered last is kept for the entry around this one.
 static AdapterEntry willEnterAdapter(Instance& instance, JSCell* frame, JSCell* asyncGenerator, bool asyncContextIsPutBack)
 {
     instance.vm->didEnterVM = true;
@@ -90,7 +88,6 @@ static LastEnteredByAdapter didLeaveAdapter(Instance& instance, const AdapterEnt
     return { static_cast<SavedFrame*>(std::exchange(coroutines.enteredFrame, entry.outerFrame)), std::exchange(coroutines.enteredAsyncGenerator, entry.outerAsyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, entry.outerPromiseOfHandler) };
 }
 
-// The adapter enters the function of a job only where no async context is in place, and an error is reported under what was in place in front of the job.
 static void reportErrorOfFunctionOfJob(Instance& instance, JSValue exceptionOrValue)
 {
     VM& vm = *instance.vm;
@@ -102,7 +99,6 @@ static void reportErrorOfFunctionOfJob(Instance& instance, JSValue exceptionOrVa
 static void resumeWhenSettled(JSGlobalObject* globalObject, VM& vm, JSValue awaited, SavedFrame* waiter, InternalMicrotask task)
 {
     if (!awaited.isObject()) {
-        // The iterator that was stepped resumes the waiter.
         if (awaited == vm.fastAsyncGeneratorSentinel()) [[unlikely]]
             return;
         globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), awaited, waiter, AsyncContextSwapScope::current(vm, globalObject));
@@ -139,7 +135,6 @@ static void resumeWhenCallSettles(Instance& instance, JSValue awaited, SavedFram
     waiter->queueResumeJob(globalObject, vm, awaited, false, asyncContext);
 }
 
-// The frame is that of an async function that returns next: the job is taken out of the queue, so no code of the program may run before the frame has returned to the adapter.
 static bool tryScheduleImmediateResume(Instance& instance, const uint64_t* frame, JSPromise* promise, JSValue resolution)
 {
     constexpr uint16_t reactionMask = JSPromise::inlineReactionKindMask | JSPromise::inlineReactionMicrotaskMask;
@@ -148,7 +143,6 @@ static bool tryScheduleImmediateResume(Instance& instance, const uint64_t* frame
     CoroutineWords& coroutines = instance.coroutines;
     if (coroutines.waiterToResume || instance.awaitMustSuspend || coroutines.frameThatMayContinue != frame)
         return false;
-    // Whoever resumed an async function resumes the waiter. Whoever enters the body of an async generator, which may go on too, does not.
     SavedFrame* running = SavedFrame::forFrame(instance, frame);
     if (!running || running->kind() != CoroutineKind::AsyncFunction)
         return false;
@@ -187,7 +181,6 @@ static NEVER_INLINE void resumeRemainingWaiters(Instance& instance)
     coroutines.waiterAsyncContext = JSValue::encode(JSValue());
 }
 
-// A step whose consumer is on the stack below the producer, was entered as the last thing of a job, and suspends next unless the step finishes first.
 class AsyncGeneratorStepInProgress {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(AsyncGeneratorStepInProgress);
@@ -209,7 +202,6 @@ public:
     }
 
     JSObject* const driver;
-    // Empty until the step is finished.
     JSValue value;
     bool isDone { false };
 
@@ -266,7 +258,6 @@ AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator* generator,
         return { };
     Instance* instance = Instance::owning(saved);
     instance->coroutines.nextEntryEndsJob = isEnteredByJobLoop;
-    // Only a body that RunAsyncGeneratorStep has entered goes on at an await above its consumer: the frame of that stub tells a stack trace that the consumer waits.
     saved->setIsEnteredByJobLoop(isEnteredByJobLoop);
     return { instance, willEnterAdapter(*instance, saved, generator, instance->coroutines.nextEntryEndsJob && instance->vm->isAsyncContextTrackingEnabled()) };
 }
@@ -318,7 +309,6 @@ JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejecte
     SavedFrame* saved = savedFrameOfDriver(driver);
     if (!saved || isRejected || !resolution.isObject())
         return resolution;
-    // A "then" on Object.prototype can put any object in the place of the engine's. One of this Structure has both members as plain data.
     JSObject* result = asObject(resolution);
     if (result->structure() != result->realm()->iteratorResultObjectStructureConcurrently())
         return resolution;
@@ -327,13 +317,11 @@ JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejecte
         return resolution;
     saved->setStepStatus(done.asBoolean() ? AsyncGeneratorStepStatus::Completed : AsyncGeneratorStepStatus::Yielded);
     JSValue value = result->getDirect(iteratorResultObjectValuePropertyOffset);
-    // While nobody has put a "then" where a result object finds it, the object is the one that the producer keeps for its next step (settleDriverWithIteratorResult in JSMicrotask.cpp), and nobody else has seen it.
     if (result->realm()->promiseThenWatchpointSet().isStillValid()) [[likely]]
         result->putDirectOffset(result->vm(), iteratorResultObjectValuePropertyOffset, jsUndefined());
     return value;
 }
 
-// The generator, if the frame is that of a body that the stub StepAsyncGenerator entered.
 static JSAsyncGenerator* asyncGeneratorEnteredByStub(const Instance& instance, const uint64_t* frame)
 {
     if (std::bit_cast<const void*>(frame[1]) != instance.stubs.returnAddress(StubFrameKind::AsyncGeneratorBody))
@@ -341,7 +329,6 @@ static JSAsyncGenerator* asyncGeneratorEnteredByStub(const Instance& instance, c
     return std::bit_cast<JSAsyncGenerator* const*>(frame[0])[asyncGeneratorSlotInStubFrame];
 }
 
-// The SavedFrame that the frame was restored from, whoever restored it. A coroutine that has not been suspended yet has none.
 static SavedFrame* coroutineOfFrame(const Instance& instance, const uint64_t* frame)
 {
     if (SavedFrame* saved = SavedFrame::forFrame(instance, frame))
@@ -366,15 +353,12 @@ static JSObject* driverOf(const Instance& instance, SavedFrame* coroutine, const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// With the status Result, the value is what the consumer has to await: the sentinel if the producer resumes it, else the promise of an iterator result.
 enum class StepAnswer : uint8_t { ResumesDriver, IsPromise };
 
-// The consumer is the only one that sees the promise, and it awaits the promise next. The job that a step of "for await" ends with stands where the job of that await would stand, and hands over the value and the status in the place of the iterator result.
 static AsyncGeneratorStep awaitPromiseOfStep(Instance& instance, JSValue promise, JSObject* driver)
 {
     VM& vm = *instance.vm;
     JSGlobalObject* globalObject = instance.globalObject;
-    // An await reads "constructor" of the promise where a program could tell.
     if (!driver || promise.asCell()->structureID() != globalObject->promiseStructure()->id() || globalObject->promiseSpeciesWatchpointSet().state() != IsWatched)
         return { promise, AsyncGeneratorStepStatus::Result };
     uncheckedDowncast<JSPromise>(promise)->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, nullptr, driver, AsyncContextSwapScope::current(vm, globalObject));
@@ -385,7 +369,6 @@ static AsyncGeneratorStep stepAsyncIterator(Instance& instance, const uint64_t* 
 {
     JSGlobalObject* globalObject = instance.globalObject;
     MicrotaskCallCache* callCache = &instance.vm->syncResumeCallCache();
-    // A coroutine that has not been suspended yet and got no SavedFrame for this step has nothing that the iterator could resume.
     SavedFrame* coroutine = newSavedFrame ? newSavedFrame : coroutineOfFrame(instance, frame);
     if (!coroutine || answer == StepAnswer::IsPromise) {
         auto scope = DECLARE_THROW_SCOPE(*instance.vm);
@@ -403,13 +386,11 @@ static AsyncGeneratorStep stepAsyncIterator(Instance& instance, const uint64_t* 
     return step.resultOr(asyncIteratorNextWithDriver(globalObject, iterator, driver, sent, callCache));
 }
 
-// `gen.next(); await gen.next()`: a body that ends answers the requests in the order in which they were made, each through its promise.
 static bool endOfBodyAnswersOtherRequestsFirst(const uint64_t* slotsOfStub, JSAsyncGenerator* generator)
 {
     return slotsOfStub[consumerSlotInStubFrame] & consumerOfStepAwaitsCall && !generator->queue().isNull();
 }
 
-// Null: the request that the stub wrote is answered already.
 static JSPromise* tryPutPromiseInPlaceOfDriver(Instance& instance, const uint64_t* slotsOfStub, JSAsyncGenerator* generator)
 {
     if (generator->isQueueEmpty() || generator->resumePromise() != JSValue(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame])))
@@ -439,7 +420,6 @@ static void rejectAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOf
 static AsyncGeneratorStep finishAsyncGeneratorStep(Instance& instance, const uint64_t* slotsOfStub, JSAsyncGenerator* generator, JSValue returned, bool consumerMayContinue)
 {
     VM& vm = *instance.vm;
-    // Whoever returned the sentinel has seen to the rest of the body's call.
     bool isSeenTo = returned == JSValue(vm.fastAsyncGeneratorSentinel());
     if (slotsOfStub[consumerSlotInStubFrame] & consumerOfStepAwaitsPromise || (!isSeenTo && endOfBodyAnswersOtherRequestsFirst(slotsOfStub, generator))) {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -451,7 +431,6 @@ static AsyncGeneratorStep finishAsyncGeneratorStep(Instance& instance, const uin
         return awaitPromiseOfStep(instance, promise, asObject(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame])));
     }
     ASSERT(!isSeenTo);
-    // The request at the head of the queue is the one that the stub wrote, so it names the consumer.
     std::optional<AsyncGeneratorStepInProgress> step;
     if (consumerMayContinue)
         step.emplace(instance, asObject(generator->resumePromise()));
@@ -477,7 +456,6 @@ void settlePromiseOfHandler(VM& vm, JSCell* cell, JSValue returned, JSValue erro
         promise->resolvePromise(promise->realm(), vm, returned);
 }
 
-// Only the restoring of a frame and a handler throw out of the adapter, so the exception is that of what was entered last, and nothing has run since the adapter named it.
 static void finishAdapterEntry(VM& vm, Instance& instance, const AdapterEntry& entry, TopExceptionScope& scope, JSValue returned)
 {
     instance.coroutines.frameThatMayContinue = nullptr;
@@ -531,7 +509,6 @@ static NEVER_INLINE void enterFunctionOfJobInAsyncContext(JSGlobalObject* global
     enterFunctionOfJob(globalObject, vm, promise, function, argument, endsJob, asyncContextIsPutBack);
 }
 
-// runInternalMicrotask() leaves by a tail call to a job function. Link-time optimization would inline the job function there, and the frame it was to leave would stay.
 NEVER_INLINE void runHandlerJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue promise, JSValue handler, JSValue argument, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
 {
     bool endsJob = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
@@ -556,7 +533,6 @@ void resumeSavedAsyncFunction(JSGlobalObject* globalObject, VM& vm, Instance& in
         saved->reject(globalObject, vm, createStackOverflowError(globalObject));
         return;
     }
-    // The adapter goes on with the waiters of functions that finish and with the jobs that follow.
     AdapterEntry entry = willEnterAdapter(instance, saved, nullptr, instance.coroutines.nextEntryEndsJob && vm.isAsyncContextTrackingEnabled());
     JSValue returned = enterSavedFrame(vm, instance, saved, mode, resolution);
     finishAdapterEntry(vm, instance, entry, scope, returned);
@@ -566,7 +542,6 @@ void resumeAsyncFunction(JSGlobalObject* globalObject, VM& vm, JSValue context, 
 {
     auto* saved = uncheckedDowncast<SavedFrame>(context);
     Instance& instance = *saved->realm()->aotInstance();
-    // The loop over the jobs goes back to its caller between jobs of two realms, which the adapter doesn't.
     isEnteredByJobLoop &= globalObject == saved->realm();
     saved->setIsEnteredByJobLoop(isEnteredByJobLoop);
     instance.coroutines.nextEntryEndsJob = isEnteredByJobLoop;
@@ -595,13 +570,11 @@ bool hasCompiledBody(JSAsyncGenerator* generator)
     return savedFrameIn(generator->frame());
 }
 
-// Not a JSValue: Windows returns a class in memory, and the slot for it would be a word of the caller's frame that only this rare path writes.
 static NEVER_INLINE EncodedJSValue stackOverflowErrorOfAsyncGeneratorBody(JSGlobalObject* realm)
 {
     return JSValue::encode(createStackOverflowError(realm));
 }
 
-// asyncGeneratorBodyCall() in JSMicrotask.cpp, for a compiled body.
 static ALWAYS_INLINE void resumeAsyncGeneratorBody(VM& vm, JSAsyncGenerator* generator, JSValue resumeValue, JSGenerator::ResumeMode resumeMode, MicrotaskCallCache* microtaskCallCache)
 {
     SavedFrame* saved = savedFrameIn(generator->frame());
@@ -616,9 +589,7 @@ static ALWAYS_INLINE void resumeAsyncGeneratorBody(VM& vm, JSAsyncGenerator* gen
         error = JSValue::decode(stackOverflowErrorOfAsyncGeneratorBody(saved->realm()));
     else {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        // Built here, so that it takes no words of this frame: SavedFrame::getCallData() would return it in memory and write part of it.
         CallData callData = CallData::forCompiledCode(entry.instance->state->coroutines->savedFrameEntrypoint(), entry.instance->globalObject);
-        // The entry finds the frame in its callee and reads no JSGenerator::Argument::Frame. An odd number of arguments would also leave a word of padding unwritten on x86-64.
         value = enterCompiledCode(vm, callData, saved, generator->thisValue(), generator,
             generator, jsNumber(state >> JSAsyncGenerator::reasonShift), resumeValue, jsNumber(static_cast<int32_t>(resumeMode)));
         if (scope.exception()) [[unlikely]] {
@@ -778,7 +749,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAsyncIteratorStep, EncodedJSValue, (Instanc
     auto* slotsOfStub = std::bit_cast<uint64_t*>(callFrame);
     uint64_t& consumer = slotsOfStub[consumerSlotInStubFrame];
     if (consumer & consumerOfStepNeedsSavedFrame) {
-        // The stack of the consumer ends where the frame record of the stub begins.
         SuspensionWords words { slotsOfStub[siteWordSlotInStubFrame], slotsOfStub[driverSlotInStubFrame] };
         SavedFrame* made = SavedFrame::createForAsyncFunction(vm, *instance, { const_cast<uint64_t*>(frame), slotsOfStub + 2, nullptr, &words });
         slotsOfStub[driverSlotInStubFrame] = std::bit_cast<uint64_t>(made);
@@ -876,7 +846,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* 
     }
     JSObject* generatorFunction = objectArgument(closure, entry);
     JSObject* generator = createGenerator(globalObject, *instance, generatorFunction, isAsync ? CoroutineKind::AsyncGenerator : CoroutineKind::Generator);
-    // The prototype property of a generator function is a data property that cannot be reconfigured, so reading it runs no code.
     scope.releaseAssertNoException();
     return generator;
 }
@@ -918,7 +887,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndYield, JSCell*, (Instance* inst
     RELEASE_ASSERT(!savedFrameOfGenerator(object));
     SuspendedMachineFrame machineFrame { frame, bottom, resumeAddress, reinterpret_cast<const SuspensionWords*>(suspensionWords) };
     SavedFrame* saved = SavedFrame::create(vm, *instance, kind, machineFrame);
-    // Nothing is suspended yet, and the stub does not return to the function.
     if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
         DeferGCForAWhile deferGC(vm);
         if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope))

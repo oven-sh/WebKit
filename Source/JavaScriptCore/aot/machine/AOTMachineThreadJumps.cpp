@@ -23,10 +23,6 @@ namespace JSC { namespace AOT { namespace Machine {
 
 namespace {
 
-// Order::retarget() takes the edge class from the old target's edge to the new target, so each call skips one block.
-// Two calls per edge are enough. A skipped block has no Upsilon, so its successor has no Phi and is not another threadable join.
-// One that has Upsilons is skipped only by a block that leads to its successor by another edge too, and that edge is threaded by itself.
-// An empty jump block is forwarded before any edge into it moves, so its successor is already the end of its chain.
 class JumpThreader {
     WTF_MAKE_NONCOPYABLE(JumpThreader);
 public:
@@ -42,18 +38,14 @@ private:
     enum Flag : uint8_t {
         IsBeingForwarded = 1 << 0,
         IsForwarded = 1 << 1,
-        // An entrypoint leads to the block. findLoopHeads() sets it and markUnreached() clears it.
         IsVisited = 1 << 2,
         IsOnPath = 1 << 3,
         IsLoopHead = 1 << 4,
         HasThreadedOwnJump = 1 << 5,
-        // It is entered for its test alone: holdsNothingButItsTest().
         HoldsNothingButItsTest = 1 << 6,
-        // Its edges may move, and one of them leads to a block with HoldsNothingButItsTest.
         MayBypassTest = 1 << 7,
     };
 
-    // A block on the path of findLoopHeads() that the search has gone on from, and the edges that it has yet to follow.
     struct Visit {
         const Edge* next;
         const Edge* end;
@@ -63,11 +55,9 @@ private:
     struct ThreadableJoin {
         const Operation* phi;
         bool isInverted;
-        // The Branch goes by operations on the Phi and constants: holdsNothingButTestOfItsPhi().
         bool comparesPhi { false };
     };
 
-    // What matchThreadableJoin() has found of a join.
     enum class MatchOfJoin : uint8_t {
         IsNotLookedAt,
         IsNotThreadable,
@@ -76,26 +66,20 @@ private:
         ComparesPhi,
     };
 
-    // What two Branches ask is one test where it is one operation, or the same comparison or BitAnd of the same two operations: they compute one value.
     struct NumberedTest {
         uint64_t operands { 0 };
         uint32_t opcode { 0 };
-        // From 1 on. 0: the place in the table is free.
         uint32_t number { 0 };
     };
 
-    // What the Branch with two ways out asks that ends a block, in the words of NumberedTest.
     struct TestOfBranch {
         uint64_t operands;
-        // Block::index().
         uint32_t block;
         uint8_t opcode;
-        // The test is true on the second way out.
         bool isInverted;
     };
     static_assert(sizeof(TestOfBranch) == 16);
 
-    // By Block::index(), of a block that ends in a Branch with two ways out.
     class TestOfBlock {
     public:
         TestOfBlock() = default;
@@ -104,9 +88,7 @@ private:
         {
         }
 
-        // NumberedTest::number. 0: the block asks no test, or one that no other block asks.
         uint32_t number() const { return m_bits >> 1; }
-        // The test is true on the second way out.
         bool isInverted() const { return m_bits & 1; }
 
     private:
@@ -115,7 +97,6 @@ private:
 
     enum class Answer : uint8_t { Unknown, IsTrue, IsFalse };
 
-    // The block is left by `leavingSuccessor` where `subject relation constant` is what leavesWhenItHolds says.
     struct LeavingTest {
         const Operation* subject;
         Opcode relation;
@@ -127,7 +108,6 @@ private:
     struct BlockOnWay {
         Block* block;
         uint32_t nextChild;
-        // The test whose answer the edge into the block has brought. 0: none, or one that the way knew.
         uint32_t testAnswered;
     };
 
@@ -135,7 +115,6 @@ private:
     void set(const Block* block, uint8_t flags) { m_flags[block->index()] |= flags; }
     void clear(const Block* block, uint8_t flags) { m_flags[block->index()] &= static_cast<uint8_t>(~flags); }
 
-    // isComparison(), by the numbers of the opcodes. It also says of the operation that it is no Patch: its children lie in the operation itself.
     static constexpr bool isComparisonByNumber(Opcode opcode)
     {
         static_assert([] {
@@ -190,11 +169,9 @@ private:
     static NEVER_INLINE void askTestBehindNextThatImpliesIt(Block* first);
     NEVER_INLINE void askTestsBehindNextThatImplyThem();
 
-    // A join that passTestOfUpperHalfBy() has led an edge past.
     struct JoinPassedBy {
         Block* join;
         Block* passing;
-        // The Phi of `passing` that was the Trunc of the Phi of the join. Null: nothing there reads the Phi of the join.
         Operation* lowerHalf;
     };
     static Operation* wordAddedTo(int64_t upperHalf, const Operation* sum);
@@ -203,33 +180,22 @@ private:
     Procedure& m_proc;
     Arena& m_arena;
     ArenaVector<uint8_t> m_flags;
-    // By Block::index(), from findLoopHeads() on: the edges into the block from blocks with IsVisited. An edge that was threaded through a join still counts for the join.
     ArenaVector<uint32_t> m_reachedIncomingEdgeCounts;
-    // By Block::index(), from the first join on that matchThreadableJoin() looks at.
     ArenaVector<MatchOfJoin> m_matchesOfJoins;
     ArenaVector<Block*> m_chain;
     ArenaVector<Block*> m_joinsThatJump;
     ArenaVector<Block*> m_unreachedBlocks;
     ArenaVector<JoinPassedBy> m_joinsPassedBy;
     bool m_hasFoundLoopHeads { false };
-    // Block::index() of the block that run() has come to.
     uint32_t m_indexOfBlockInTurn { 0 };
-    // Behind the loop of run(): one for each block that a Branch with two ways out ends. run() lists a block that it finds with a Branch.
-    // A Jump that becomes a Branch when run() has come to its block or gone past it is listed by duplicateBranchIntoPredecessor().
     ArenaVector<TestOfBranch> m_testsOfBranches;
-    // They stand by rising Block::index(). Only a Jump in a block that run() has gone past ends that.
     bool m_testsOfBranchesAreInOrder { true };
-    // Beside m_testsOfBranches, from numberTests() on.
     TestOfBlock* m_numbersOfTestsOfBranches { nullptr };
     ArenaVector<TestOfBlock> m_testsOfBlocks;
-    // By NumberedTest::number.
     ArenaVector<bool> m_testsAskedTwice;
-    // By NumberedTest::number, on the way from a block that several edges enter down to the block that is being looked at.
     ArenaVector<Answer> m_answersOnWay;
 };
 
-// The allocator cannot place register moves before a terminal Patch, so Order puts a block on the edge of a Patch into a block with several predecessors.
-// Moving such an edge past a jump block would mostly have Order put one back, so a Patch keeps its successors.
 ALWAYS_INLINE bool JumpThreader::canRetargetSuccessors(const Block* block)
 {
     if (block->isEmpty())
@@ -238,13 +204,11 @@ ALWAYS_INLINE bool JumpThreader::canRetargetSuccessors(const Block* block)
     return opcode == Jump || opcode == Branch || opcode == Switch;
 }
 
-// An edge to a landing pad counts as a call (ValueFlag::LivesAcrossCall), which would penalize every value live at the end of the block that gains the edge.
 ALWAYS_INLINE bool JumpThreader::canGainPredecessor(const Block* target)
 {
     return target->phis().empty() && !target->isLandingPad();
 }
 
-// The block may still have Upsilons. A landing pad is entered with every value in its slot, but its successor is not, so a landing pad is never skipped.
 ALWAYS_INLINE bool JumpThreader::isEmptyJumpBlock(const Block* block)
 {
     if (block->size() != 1 || block->last()->opcode() != Jump)
@@ -253,7 +217,6 @@ ALWAYS_INLINE bool JumpThreader::isEmptyJumpBlock(const Block* block)
     return block->phis().empty() && !block->isLandingPad() && !block->isEntry();
 }
 
-// The last Upsilon wins, as in Allocator::incomingValueOf().
 const Operation* JumpThreader::incomingValue(const Operation* phi, const Block* from)
 {
     Operation* const* upsilons = from->upsilons().data();
@@ -264,8 +227,6 @@ const Operation* JumpThreader::incomingValue(const Operation* phi, const Block* 
     return nullptr;
 }
 
-// simplifyPredicate() peels an Equal or a NotEqual with zero, a BitXor, a ZExt32, a SExt32 or a Trunc, and hands back any other operation as it is.
-// Builder::branch() has peeled what most Branches test, so most predicates are not worth the call.
 ALWAYS_INLINE SimplifiedPredicate JumpThreader::simplifyPredicateOfBranch(Operation* predicate)
 {
     Opcode opcode = predicate->opcode();
@@ -278,14 +239,12 @@ ALWAYS_INLINE SimplifiedPredicate JumpThreader::simplifyPredicateOfBranch(Operat
     return SimplifiedPredicate { predicate };
 }
 
-// One search marks the blocks that an entrypoint leads to, counts the edges into each block from those and finds the loop heads.
 void JumpThreader::findLoopHeads()
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
     m_reachedIncomingEdgeCounts.fill(m_arena, numberOfBlocks, 0);
     uint32_t* counts = m_reachedIncomingEdgeCounts.begin();
     uint8_t* flags = m_flags.begin();
-    // A block is on the path once at most, and the block that the search stands in is not listed.
     Visit* const path = m_arena.allocateArray<Visit>(numberOfBlocks);
 
     for (const Entrypoint& entrypoint : m_proc.entrypoints()) {
@@ -327,8 +286,6 @@ void JumpThreader::findLoopHeads()
     }
 }
 
-// Computed on first use, because most procedures have no threadable join.
-// Retargeting adds no cycle, and an edge into a block with a Phi only from a block that leads there already. So it never makes a join a loop head and the result stays valid as edges move.
 ALWAYS_INLINE bool JumpThreader::isLoopHead(const Block* block)
 {
     if (!m_hasFoundLoopHeads) [[unlikely]] {
@@ -338,7 +295,6 @@ ALWAYS_INLINE bool JumpThreader::isLoopHead(const Block* block)
     return has(block, IsLoopHead);
 }
 
-// What matchThreadableJoin() asks of the block, of what ends it and of its Phi, ahead of everything else.
 ALWAYS_INLINE bool JumpThreader::hasFormOfThreadableJoin(const Block* join)
 {
     if (join->phis().size() != 1 || !join->upsilons().empty() || join->isEmpty() || join->isLandingPad())
@@ -347,19 +303,16 @@ ALWAYS_INLINE bool JumpThreader::hasFormOfThreadableJoin(const Block* join)
     return (opcode == Branch || opcode == Switch) && join->phis().data()[0]->useCount() == 1;
 }
 
-// hasFormOfThreadableJoin() holds of the join.
 JumpThreader::MatchOfJoin JumpThreader::lookAtJoin(Block* join)
 {
     Operation* branch = join->last();
     Operation* phi = join->phis().data()[0];
     ASSERT(branch->opcode() == Switch || join->numSuccessors() == 2);
 
-    // A Switch compares the value as it is, so nothing is peeled off it.
     SimplifiedPredicate simplified = branch->opcode() == Branch ? simplifyPredicateOfBranch(branch->child(0)) : SimplifiedPredicate { branch->child(0), false };
     if (simplified.predicate != phi) {
         if (branch->opcode() != Branch)
             return MatchOfJoin::IsNotThreadable;
-        // holdsNothingButTestOfItsPhi() asks this too, behind reckoning the test. Most joins do work of their own, and the first operation says so.
         for (const Operation* operation : join->operations()) {
             if (operation != branch && (operation->useCount() > 1 || operation->mustStay()))
                 return MatchOfJoin::IsNotThreadable;
@@ -369,7 +322,6 @@ JumpThreader::MatchOfJoin JumpThreader::lookAtJoin(Block* join)
         return MatchOfJoin::ComparesPhi;
     }
 
-    // simplifyPredicate() only peels child(0). Every peeled operation must be in the join and feed only the Branch.
     unsigned peeledOperationCount = 0;
     for (const Operation* operation = branch->child(0); operation != phi; operation = operation->child(0)) {
         if (operation->owner() != join || operation->useCount() != 1 || operation->mustStay() || !operation->numChildren())
@@ -377,7 +329,6 @@ JumpThreader::MatchOfJoin JumpThreader::lookAtJoin(Block* join)
         ++peeledOperationCount;
     }
 
-    // The scan drops an operation that nothing reads and that need not stay, such as a wrapper that Builder::branch() has already peeled.
     unsigned keptOperationCount = 0;
     for (const Operation* operation : join->operations()) {
         if (!operation->useCount() && !operation->mustStay())
@@ -392,8 +343,6 @@ JumpThreader::MatchOfJoin JumpThreader::lookAtJoin(Block* join)
     return simplified.isInverted ? MatchOfJoin::TestsInverseOfPhi : MatchOfJoin::TestsPhi;
 }
 
-// Each edge into a join asks, and the answer is found once. A join that has the form keeps it: no block gains an Upsilon, and what ends the join stays a Branch or a Switch until every edge has been threaded.
-// All else that lookAtJoin() goes by stays as it is too: the operations of the join, how often each is read, and which blocks are loop heads once they are found.
 std::optional<JumpThreader::ThreadableJoin> JumpThreader::matchThreadableJoin(Block* join)
 {
     if (!hasFormOfThreadableJoin(join))
@@ -417,7 +366,6 @@ void JumpThreader::retarget(Block* from, unsigned successorIndex, Block* target)
         ++m_reachedIncomingEdgeCounts[target->index()];
 }
 
-// Block has no way to change one edge, so the successors are appended again in their order.
 void JumpThreader::setEdgeClass(Block* from, unsigned successorIndex, EdgeClass edgeClass)
 {
     if (from->successor(successorIndex).edgeClass() == edgeClass)
@@ -429,8 +377,6 @@ void JumpThreader::setEdgeClass(Block* from, unsigned successorIndex, EdgeClass 
         from->appendSuccessor(edge);
 }
 
-// Whatever the block alone led to is no longer reached either.
-// The blocks of a cycle keep each other marked. That only costs an edge the class that threadThroughJoin() would have kept.
 void JumpThreader::markUnreached(Block* block)
 {
     ASSERT(has(block, IsVisited) && m_unreachedBlocks.isEmpty());
@@ -447,14 +393,11 @@ void JumpThreader::markUnreached(Block* block)
     }
 }
 
-// `from` is reached and hands the Phi a value that is no constant. Where a Jump ends it, it tests the value itself: what computes the value is then fused into the test,
-// where it had to be made a word, carried to the join and tested there.
 void JumpThreader::duplicateBranchIntoPredecessor(Block* from, Block* join, const ThreadableJoin& threadable)
 {
     if (from->last()->opcode() != Jump || join->last()->opcode() != Branch)
         return;
     for (const Edge& edge : join->successors()) {
-        // The join has no Upsilon, so its successors have no Phi.
         ASSERT(edge.block()->phis().empty());
         if (!canGainPredecessor(edge.block()))
             return;
@@ -463,7 +406,6 @@ void JumpThreader::duplicateBranchIntoPredecessor(Block* from, Block* join, cons
     Order::replaceJumpWithBranch(from, threadable.phi, threadable.isInverted);
     for (const Edge& edge : from->successors())
         ++m_reachedIncomingEdgeCounts[edge.block()->index()];
-    // run() has yet to come to any other block, and will find the Branch there.
     if (from->index() > m_indexOfBlockInTurn)
         return;
     if (!m_testsOfBranches.isEmpty() && m_testsOfBranches.last().block > from->index())
@@ -471,8 +413,6 @@ void JumpThreader::duplicateBranchIntoPredecessor(Block* from, Block* join, cons
     listTestOfBranch(from->index(), from->last());
 }
 
-// A join that hands its Phi on to a second join ends in a Branch on the Phi once its own Jump is threaded, and only then can the edges into it be threaded.
-// So its Jump goes first, whatever the indexes of the blocks, and the last join of a chain ahead of the others. Each call below finds a marked block or the end of the chain, so it lists nothing.
 void JumpThreader::threadJumpsOfJoinsFrom(Block* join)
 {
     size_t numberListedByCaller = m_joinsThatJump.size();
@@ -487,8 +427,6 @@ void JumpThreader::threadJumpsOfJoinsFrom(Block* join)
     }
 }
 
-// False: threadThroughJoin() would leave an edge to the block as it is, mark nothing, and would not come to ask for the loop heads, which are found as the edges lie at the first question.
-// A join whose own Jump goes first has one Phi, and its Jump has not had its turn. Nothing is threaded through a block that a Jump ends.
 ALWAYS_INLINE bool JumpThreader::wouldThreadThrough(const Block* join) const
 {
     if (join->phis().size() != 1 || join->isEmpty())
@@ -500,8 +438,6 @@ ALWAYS_INLINE bool JumpThreader::wouldThreadThrough(const Block* join) const
     return m_matchesOfJoins.isEmpty() || m_matchesOfJoins[join->index()] != MatchOfJoin::IsNotThreadable;
 }
 
-// False: nothing is left for threadThroughJoin() to do with an edge to the block.
-// Most joins that a Jump ends lead to a block through which nothing is threaded. Of such a join threadJumpsOfJoinsFrom() lists no other, marks it and leaves its Jump, and a Jump still ends it: the mark is all that comes of the call.
 ALWAYS_INLINE bool JumpThreader::mayThreadThrough(const Block* join)
 {
     if (!wouldThreadThrough(join))
@@ -542,13 +478,10 @@ void JumpThreader::threadThroughJoin(Block* from, unsigned successorIndex)
         chosenSuccessor = isNotZero != threadable->isInverted ? 0 : 1;
     }
     Block* target = join->successor(chosenSuccessor).block();
-    // The join has no Upsilon, so its successors have no Phi.
     ASSERT(target->phis().empty());
     if (!canGainPredecessor(target))
         return;
 
-    // Where no other reached block leads to the join, its Branch always goes this way, so the class of this way says nothing and the edge keeps its own.
-    // Builder::branch() drops the class of the way that a constant chooses for the same reason. Otherwise everything behind a rare way would be one rare region on the only path that runs.
     bool isOnlyReachedEdge = m_reachedIncomingEdgeCounts[join->index()] == 1;
     EdgeClass edgeClass = from->successor(successorIndex).edgeClass();
     retarget(from, successorIndex, target);
@@ -557,9 +490,6 @@ void JumpThreader::threadThroughJoin(Block* from, unsigned successorIndex)
     setEdgeClass(from, successorIndex, edgeClass);
     markUnreached(join);
 }
-
-// ---- `node.kind === 80`, where the read is a guess: its typed arm has an int32 and adds the tag to it, to meet what the stub of the closed arm hands back, and the join asks the word for the tag and takes the int32 out again.
-// In the words of this file: C has a clear lower half. C + ZExt32(x) does not wrap, so it is no less than C, and its lower half is x. The arm goes straight to where the test passes, and hands x over.
 
 Operation* JumpThreader::wordAddedTo(int64_t upperHalf, const Operation* sum)
 {
@@ -574,9 +504,6 @@ Operation* JumpThreader::wordAddedTo(int64_t upperHalf, const Operation* sum)
     return extension->opcode() == ZExt32 ? extension->child(0) : nullptr;
 }
 
-// A Jump ends `from`.
-// The join holds its one Phi, `Phi >= C` or `Phi < C`, and the Branch on that. Beside the test the Phi is read by one Trunc at most in the block where the test passes, which nothing else enters,
-// and in the block where it fails, which then nothing else enters either: every read is found, so none lies where the way that passes the join by comes to, on which the Phi is missing.
 void JumpThreader::passTestOfUpperHalfBy(Block* from)
 {
     ASSERT(from->last()->opcode() == Jump && from->numSuccessors() == 1);
@@ -624,7 +551,6 @@ void JumpThreader::passTestOfUpperHalfBy(Block* from)
     }
 
     auto readsCounted = [&](const Operation* operation) {
-        // A pure operation that nothing reads has counted nothing.
         if (countsChildrenAtFirstUse(operation->opcode()) && !operation->useCount())
             return 0u;
         unsigned reads = 0;
@@ -653,7 +579,6 @@ void JumpThreader::passTestOfUpperHalfBy(Block* from)
         reads += upsilon->child(0) == phi;
     if (reads != phi->useCount())
         return;
-    // `list[i]`: whatever fails behind the test of the tag, the bound or the hole, goes where the tag's failing goes, with the index in its box.
     if (reads != readsAheadOfFailingSide && failing->numberOfIncomingEdges() != 1)
         return;
     if (isLoopHead(join) || !has(from, IsVisited))
@@ -673,7 +598,6 @@ ALWAYS_INLINE void JumpThreader::skipEmptyJumpBlock(Block* from, unsigned succes
         skipForwardedBlock(from, successorIndex, skipped);
 }
 
-// The edge leads to `skipped`, an empty jump block with IsForwarded.
 ALWAYS_INLINE void JumpThreader::skipForwardedBlock(Block* from, unsigned successorIndex, Block* skipped)
 {
     ASSERT(from->successor(successorIndex).block() == skipped && isEmptyJumpBlock(skipped) && has(skipped, IsForwarded));
@@ -689,14 +613,12 @@ ALWAYS_INLINE void JumpThreader::skipForwardedBlock(Block* from, unsigned succes
     ++counts[target->index()];
     if (--counts[skipped->index()])
         return;
-    // markUnreached(skipped), whose one edge leads to the target.
     ASSERT(has(skipped, IsVisited));
     clear(skipped, IsVisited);
     if (has(target, IsVisited) && !--counts[target->index()])
         markUnreached(target);
 }
 
-// Of an empty jump block. Most lead to a block that is neither threaded through nor skipped: such a chain is one block long, and its edge stays.
 ALWAYS_INLINE void JumpThreader::forwardEmptyJumpChain(Block* first)
 {
     ASSERT(isEmptyJumpBlock(first));
@@ -710,9 +632,6 @@ ALWAYS_INLINE void JumpThreader::forwardEmptyJumpChain(Block* first)
     set(first, IsBeingForwarded | IsForwarded);
 }
 
-// Forwards the last block of the chain first, so each block is visited once.
-// A block's Upsilons are final only once it is forwarded, because threading its edge through a join removes them.
-// A cycle of empty jump blocks is an infinite loop in the program. The walk stops at a block it has already marked, which leaves a cycle.
 void JumpThreader::forwardEmptyJumpChainFrom(Block* first)
 {
     ASSERT(m_chain.isEmpty());
@@ -736,9 +655,6 @@ void JumpThreader::forwardEmptyJumpChainFrom(Block* first)
     }
 }
 
-// ---- `kind === 243 || kind === 244`, where each comparison asks first whether `kind` is an int32: the way on which it is one goes on to the next comparison of integers, and the other way to the next slow one.
-
-// Of a comparison and the one that says the opposite of integers: invertedComparison(). Any other opcode is handed back.
 ALWAYS_INLINE Opcode JumpThreader::lowerOfComparisonAndItsInverse(Opcode opcode)
 {
     static_assert(Equal < NotEqual && LessThan < GreaterEqual && GreaterThan < LessEqual && Above < BelowEqual && Below < AboveEqual);
@@ -766,7 +682,6 @@ ALWAYS_INLINE Opcode JumpThreader::lowerOfComparisonAndItsInverse(Opcode opcode)
     return lower;
 }
 
-// The Branch, which has two ways out, ends the block. What it asks is read while the block is at hand: no Branch comes to ask anything else.
 ALWAYS_INLINE void JumpThreader::listTestOfBranch(uint32_t indexOfBlock, const Operation* branch)
 {
     SimplifiedPredicate simplified = simplifyPredicateOfBranch(branch->child(0));
@@ -776,7 +691,6 @@ ALWAYS_INLINE void JumpThreader::listTestOfBranch(uint32_t indexOfBlock, const O
     uint8_t opcodeOfTest = 0;
     if (isComparisonByNumber(opcode) || opcode == BitAnd) {
         Operation* const* children = test->children().data();
-        // Of the two comparisons of integers that say the opposite of each other, the one with the lower number stands for both.
         Opcode lower = lowerOfComparisonAndItsInverse(opcode);
         if (lower != opcode && children[0]->type().isInt()) {
             opcode = lower;
@@ -788,7 +702,6 @@ ALWAYS_INLINE void JumpThreader::listTestOfBranch(uint32_t indexOfBlock, const O
     new (NotNull, m_testsOfBranches.appendUninitialized(m_arena)) TestOfBranch { operands, indexOfBlock, opcodeOfTest, simplified.isInverted };
 }
 
-// False: no two Branches ask one test, so no way has decided what it comes to.
 bool JumpThreader::numberTests()
 {
     uint32_t numberOfBranches = m_testsOfBranches.size();
@@ -838,13 +751,10 @@ bool JumpThreader::numberTests()
     return true;
 }
 
-// Whoever passes it by misses nothing: all that stays in it is the Branch and what the Branch alone reads.
 bool JumpThreader::holdsNothingButItsTest(const Block* block)
 {
     if (!block->phis().empty() || !block->upsilons().empty() || block->isLandingPad() || block->isEntry())
         return false;
-    // Each operation that stays, but for the Branch, is read once. Where as many reads by operations that stay find their child in the block, each is read by another that stays in the block.
-    // No operation reads itself through others, so each way from reader to reader ends at the Branch. A reader outside the block, or one that the scan drops, would leave fewer such reads.
     const Operation* branch = block->last();
     uint32_t numberThatStay = 0;
     uint32_t numberOfReadsWithinBlock = 0;
@@ -864,7 +774,6 @@ bool JumpThreader::holdsNothingButItsTest(const Block* block)
     return numberOfReadsWithinBlock + 1 == numberThatStay;
 }
 
-// m_answersOnWay holds what was decided on the way to the end of `from`.
 void JumpThreader::passTestsThatWayHasDecided(Block* from)
 {
     if (!canRetargetSuccessors(from))
@@ -891,8 +800,6 @@ void JumpThreader::passTestsThatWayHasDecided(Block* from)
     }
 }
 
-// No edge moves but one that leads to a block with HoldsNothingButItsTest, and its block moves it by what the blocks above know. Only the block itself moves its edges, so which blocks have such an edge is settled here.
-// The walk goes through those blocks and the blocks above them alone, in the order in which a walk through every block would come to them: whatever else that walk enters it leaves as it found it.
 void JumpThreader::findBlocksThatMayBypassTests(BitSpan isWalked, uint32_t* firstBlocksBelow)
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
@@ -916,8 +823,6 @@ void JumpThreader::findBlocksThatMayBypassTests(BitSpan isWalked, uint32_t* firs
     }
 }
 
-// A block that one edge enters stands below the block that the edge comes out of, and knows what that one knows. The blocks below a block are looked at first:
-// so an edge that passes a test by finds the way out of it where it will stay.
 void JumpThreader::threadEdgesPastDecidedTests()
 {
     if (!numberTests())
@@ -927,7 +832,6 @@ void JumpThreader::threadEdgesPastDecidedTests()
     Block* const* blocks = m_proc.blocks().data();
     uint8_t* flags = m_flags.begin();
 
-    // Nobody looks for the answer to a test that one block alone asks, so such a test is not entered.
     m_testsOfBlocks.fill(m_arena, numberOfBlocks, TestOfBlock());
     TestOfBlock* testsOfBlocks = m_testsOfBlocks.begin();
     const TestOfBranch* tests = m_testsOfBranches.begin();
@@ -950,8 +854,6 @@ void JumpThreader::threadEdgesPastDecidedTests()
         return;
 
     BitSpan isWalked = BitSpan::create(m_arena, numberOfBlocks);
-    // Who stands below whom is settled before any edge moves. An edge that comes to pass a test by brings the arm what the test would have told it, so what an arm knows holds however it is entered in the end.
-    // By Block::index(), of a block that is walked, each an index of a block and one more. 0: none.
     uint32_t* firstBlocksBelow = m_arena.allocateArray<uint32_t>(numberOfBlocks);
     uint32_t* nextBlocksBeside = m_arena.allocateArray<uint32_t>(numberOfBlocks);
     findBlocksThatMayBypassTests(isWalked, firstBlocksBelow);
@@ -986,7 +888,6 @@ void JumpThreader::threadEdgesPastDecidedTests()
                 enter(blocks[below - 1], last.block);
                 continue;
             }
-            // Every way may have come to pass it by since it was listed.
             if ((flags[last.block->index()] & (IsVisited | MayBypassTest)) == (IsVisited | MayBypassTest))
                 passTestsThatWayHasDecided(last.block);
             if (last.testAnswered)
@@ -995,8 +896,6 @@ void JumpThreader::threadEdgesPastDecidedTests()
         }
     }
 }
-
-// ---- `o.flags & 4`: the read asks whether the slot is empty, the word 0, and the operator whether the word has the tag of an int32, which 0 has not. The likely way is asked for the tag alone.
 
 std::optional<JumpThreader::LeavingTest> JumpThreader::describeTestLeavingBy(const Block* block, unsigned leavingSuccessor)
 {
@@ -1068,7 +967,6 @@ bool JumpThreader::secondLeavesForAllThatFirstLeavesFor(const LeavingTest& first
     if (second.subject == first.subject)
         return leavesFor(second, first.constant);
 
-    // The first leaves for the words without a bit of the mask. They lie from zero to the word of all the other bits, and what an unsigned order leaves for has no gap.
     const Operation* masked = first.subject;
     bool secondIsUnsignedOrder = second.relation == Above || second.relation == Below || second.relation == AboveEqual || second.relation == BelowEqual;
     if (first.constant || masked->opcode() != BitAnd || !masked->child(1)->hasInt() || masked->child(0) != second.subject || !secondIsUnsignedOrder)
@@ -1076,7 +974,6 @@ bool JumpThreader::secondLeavesForAllThatFirstLeavesFor(const LeavingTest& first
     return leavesFor(second, 0) && leavesFor(second, ~masked->child(1)->asInt());
 }
 
-// What stands in front of the second Branch comes to run for the value that used to leave before it.
 bool JumpThreader::mayRunForAnyValue(const Block* block)
 {
     if (!block->phis().empty() || !block->upsilons().empty() || block->isLandingPad())
@@ -1091,7 +988,6 @@ bool JumpThreader::mayRunForAnyValue(const Block* block)
     return true;
 }
 
-// False: askTestBehindNextThatImpliesIt() would leave the block as it is. Each refusal here is one that it comes to itself, behind more work, and nearly every Branch meets one.
 ALWAYS_INLINE bool JumpThreader::mayAskTestBehindNext(const Block* first)
 {
     if (first->numSuccessors() != 2 || !first->upsilons().empty() || first->isEmpty() || first->last()->opcode() != Branch)
@@ -1102,7 +998,6 @@ ALWAYS_INLINE bool JumpThreader::mayAskTestBehindNext(const Block* first)
         return false;
     unsigned leavingSuccessor = firstWayIsLikely ? 1 : 0;
 
-    // What it tests is no comparison, so it is described as `word != 0`, and leaves for one value only where it leaves for zero.
     SimplifiedPredicate simplified = simplifyPredicateOfBranch(first->last()->child(0));
     const Operation* word = simplified.predicate;
     bool leavesWhenNotZero = !leavingSuccessor != simplified.isInverted;
@@ -1115,7 +1010,6 @@ ALWAYS_INLINE bool JumpThreader::mayAskTestBehindNext(const Block* first)
     if (second->numSuccessors() != 2 || !second->phis().empty() || !second->upsilons().empty() || second->isLandingPad() || second->isEmpty() || second->last()->opcode() != Branch)
         return false;
 
-    // The subject of the second test is what the Branch tests or, of a comparison, its first child. It has to be the word, or what the word is masked out of.
     const Operation* asked = simplifyPredicateOfBranch(second->last()->child(0)).predicate;
     const Operation* masked = word->opcode() == BitAnd ? word->child(0) : nullptr;
     if (asked == word || asked == masked)
@@ -1134,14 +1028,12 @@ void JumpThreader::askTestBehindNextThatImpliesIt(Block* first)
     if (firstWayIsLikely == (first->successor(1).edgeClass() == EdgeClass::Normal))
         return;
     std::optional<LeavingTest> firstTest = describeTestLeavingBy(first, firstWayIsLikely ? 1 : 0);
-    // A comparison would stay behind in the block, and be made a word there for a reader on the way that leaves.
     if (!firstTest || isComparison(simplifyPredicate(first->last()->child(0)).predicate->opcode()))
         return;
 
     Block* second = first->successor(1 - firstTest->leavingSuccessor).block();
     if (second == first || second->numberOfIncomingEdges() != 1)
         return;
-    // The way out of the second may be a likely one: who takes it is asked two tests as before, in the other order. Who takes the other way is asked one, so that has to be a likely one.
     std::optional<LeavingTest> secondTest;
     for (unsigned leavingSuccessor = 0; leavingSuccessor < 2 && !secondTest; ++leavingSuccessor) {
         if (second->numSuccessors() != 2 || second->successor(1 - leavingSuccessor).edgeClass() != EdgeClass::Normal)
@@ -1160,13 +1052,10 @@ void JumpThreader::askTestBehindNextThatImpliesIt(Block* first)
     Order::askBehind(first, firstTest->leavingSuccessor, second, secondTest->leavingSuccessor);
 }
 
-// The blocks are asked by rising index. Each Order::askBehind() makes a block, of which nothing above knows and nothing here asks, and a Jump of the Branch of a block that was there:
-// so no block comes to end in a Branch that m_testsOfBranches does not list.
 void JumpThreader::askTestsBehindNextThatImplyThem()
 {
     if (m_testsOfBranchesAreInOrder) [[likely]] {
         for (const TestOfBranch& test : m_testsOfBranches) {
-            // It asks a comparison.
             if (test.opcode && test.opcode != BitAnd + 1)
                 continue;
             Block* block = m_proc.blockAt(test.block);
@@ -1186,7 +1075,6 @@ void JumpThreader::run()
 {
     uint32_t numberOfBlocks = m_proc.numberOfBlocks();
     m_flags.fill(m_arena, numberOfBlocks, 0);
-    // No block is made before askTestsBehindNextThatImplyThem().
     Block* const* blocks = m_proc.blocks().data();
     for (uint32_t indexOfBlock = 0; indexOfBlock < numberOfBlocks; ++indexOfBlock) {
         Block* block = blocks[indexOfBlock];
@@ -1199,10 +1087,8 @@ void JumpThreader::run()
         Opcode opcode = last->opcode();
         if (opcode == Jump) [[likely]] {
             if (size == 1) {
-                // Most have been forwarded for an edge that leads to them. Only an empty jump block is marked so, and it is one for as long as a Jump ends it.
                 if (m_flags[indexOfBlock] & (IsBeingForwarded | IsForwarded))
                     continue;
-                // isEmptyJumpBlock().
                 if (block->phis().empty() && !block->isLandingPad() && !block->isEntry()) {
                     forwardEmptyJumpChain(block);
                     continue;
@@ -1220,8 +1106,6 @@ void JumpThreader::run()
         const Edge* successors = block->successors().data();
         const Edge* end = successors + block->numSuccessors();
         for (const Edge* edge = successors; edge != end; ++edge) {
-            // Most edges lead to a block that is neither threaded through nor skipped.
-            // Whatever is called here may make a Branch of the Jump that ends the block, which gives it a second edge and may move its edges to other storage.
             Block* target = edge->block();
             if (mayThreadThrough(target)) [[unlikely]] {
                 unsigned index = static_cast<unsigned>(edge - successors);
@@ -1235,7 +1119,6 @@ void JumpThreader::run()
                 continue;
 
             unsigned index = static_cast<unsigned>(edge - successors);
-            // Only an empty jump block is marked so, and it is one for as long as a Jump ends it.
             if (has(target, IsForwarded))
                 skipForwardedBlock(block, index, target);
             else if (isEmptyJumpBlock(target)) {
@@ -1248,7 +1131,6 @@ void JumpThreader::run()
             edge = successors + index;
         }
     }
-    // Each speaks of two blocks that a Branch with two ways out ends.
     if (m_testsOfBranches.size() < 2)
         return;
     threadEdgesPastDecidedTests();
@@ -1261,7 +1143,6 @@ void threadJumps(Procedure& procedure)
 {
     if (procedure.failure())
         return;
-    // No edge, no work.
     if (procedure.numberOfBlocks() == 1 && !procedure.blockAt(0)->numSuccessors())
         return;
     JumpThreader(procedure).run();

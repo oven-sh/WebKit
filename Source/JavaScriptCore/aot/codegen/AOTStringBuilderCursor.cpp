@@ -26,7 +26,6 @@ static size_t bytesReservedForJSONKey(size_t escapedLength)
     return WTF::roundUpToMultipleOf<8>(escapedLength + maxJSONKeyPunctuationLength);
 }
 
-// Nothing for a name that is not written at the cursor.
 static std::optional<CursorBytes> escapedJSONKey(const TypeArena& types, StringID name)
 {
     if (!name)

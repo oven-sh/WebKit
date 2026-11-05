@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// class Failure extends Error { code, detail, info, describe(), get twice() }, class Deeper extends Failure { level, describe() }
 static constexpr ASCIILiteral errorSubclasses = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Failure" constructor=f1 fields=[{key="code" declared={type=anything}}, {key="detail" declared={type=anything}}, {key="info" declared={type=anything}}] flags=[HasHeritage]
@@ -155,7 +154,6 @@ function f5 name="describe" kind=Method flags=[HasThis] results=[{type=anything}
 }
 )IR"_s;
 
-// class List extends Array { tag, size, label() }, class Registry extends Map { hits, name, lookup(key) }, class Bytes extends Uint8Array { cursor, next() }
 static constexpr ASCIILiteral collectionSubclasses = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="List" constructor=f1 fields=[{key="tag" declared={type=anything}}, {key="size" declared={type=anything}}] flags=[HasHeritage]
@@ -323,7 +321,6 @@ function f6 name="next" kind=Method flags=[HasThis] results=[{type=anything}] {
 }
 )IR"_s;
 
-// class Failure extends Error { constructor(m) { super(m, { cause: 17 }) } get message() { return "from getter" } }, class Stack extends Array { get length() { return 42 } }
 static constexpr ASCIILiteral gettersUnderOwnNames = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Failure" constructor=f1 flags=[HasHeritage]
@@ -380,7 +377,6 @@ function f4 name="length" kind=Getter flags=[HasThis] results=[{type=anything}] 
 }
 )IR"_s;
 
-// class Registry extends Map { lookup(key) }. An instance hides the method, another leaves the class, a plain Map and an ordinary object are put below its prototype object.
 static constexpr ASCIILiteral cellsThatLeaveAndJoinClass = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Registry" constructor=f1 flags=[HasHeritage]
@@ -447,8 +443,6 @@ function f2 name="lookup" kind=Method flags=[HasThis] parameters=[{type=anything
 }
 )IR"_s;
 
-// class Counter extends Map { #n = 0; bump() { this.#n = this.#n + 1; return this.#n } keep() { this.#n = { a: 7 } } read() { return this.#n } }
-// Many instances take the name and use it, one of them behind another property, and at the end a plain Map is asked for it.
 static constexpr ASCIILiteral privateNameOfCollectionSubclass = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key=#"n"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage]

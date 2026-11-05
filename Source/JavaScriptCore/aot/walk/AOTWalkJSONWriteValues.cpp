@@ -3,9 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// What JSONTextWriter writes for a value by its plan: undefined and null, scalars, dates, unions arm by arm, an object of a layout member by member or by the serializer of its layout.
-// Every test of an object stands in front of its first byte, the key that it stands under included. At a suspension and at a throw: AOTWalkJSONWrites.cpp. Withheld: nobody makes a writer.
-
 #include "config.h"
 #include "AOTWalkJSONWrites.h"
 
@@ -29,10 +26,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// An integer takes no more of the reservation than a number does.
 static_assert(jsonIntegerBytes <= jsonNumberBytes);
-
-// ---- Values
 
 void JSONTextWriter::appendValue(Reference value, const JSONValuePlan& plan, const PositionOfJSONText& position)
 {
@@ -42,7 +36,6 @@ void JSONTextWriter::appendValue(Reference value, const JSONValuePlan& plan, con
         appendPlannedValue(value, plan, position);
         return;
     }
-    // Undefined and null are among what fails the test of the plan, which appendGeneric() writes. At the root nothing is left to it: there they get arms where they are proven to come, and go by the call as written where the plan is a guess.
     if (plan.kind != JSONValueKind::Nullish && (position.kind != JSONPosition::Root || plan.isExpected)) {
         appendPlannedValue(value, plan, position);
         return;
@@ -115,7 +108,6 @@ void JSONTextWriter::appendPlannedValue(Reference value, const JSONValuePlan& pl
     continueAt(done);
 }
 
-// The value is proven to have the type that the plan tests for, so it is taken in the form of that type: nothing is boxed, and nothing looks at the value to find out what it is.
 void JSONTextWriter::appendTestedValue(Reference value, const JSONValuePlan& plan, const PositionOfJSONText& position)
 {
     if (hasStopped())
@@ -124,12 +116,7 @@ void JSONTextWriter::appendTestedValue(Reference value, const JSONValuePlan& pla
         appendArray(value, plan, position);
         return;
     }
-    if (plan.row == Opcode::JSONAppendDate) {
-        appendDate(value, position);
-        return;
-    }
 
-    // A number further from zero than an exact integer may be written with an exponent.
     Opcode row = plan.row;
     if (row == Opcode::JSONAppendNumber) {
         Type type = typeOf(value);
@@ -143,7 +130,6 @@ void JSONTextWriter::appendTestedValue(Reference value, const JSONValuePlan& pla
     appendCommaOf(position);
 }
 
-// No plan. A primitive is written in place, and anything else is turned away.
 void JSONTextWriter::appendGeneric(Reference value, const PositionOfJSONText& position)
 {
     if (hasStopped())
@@ -175,7 +161,6 @@ void JSONTextWriter::appendGeneric(Reference value, const PositionOfJSONText& po
         primitive.setJsonPosition(JSONPosition::Element);
         primitive.setValueOperand(tested);
         append(WTF::move(primitive));
-        // A string, a number, a boolean or null always has text.
         takeResultsOfJSONAppendValue(false);
         appendCommaOf(position);
         jumpTo(done);
@@ -206,13 +191,11 @@ void JSONTextWriter::appendGeneric(Reference value, const PositionOfJSONText& po
     continueAt(done);
 }
 
-// ---- Instances of the engine's classes
-
 void JSONTextWriter::requirePristine(Reference value, BuiltinClassID builtinClass, PristineAspectSet aspects)
 {
     if (hasStopped())
         return;
-    PristineAspectSet known = pristineAspectsProvenBy(builtinTypeContextOf(m_context), m_walker.typeOf(value), builtinClass);
+    PristineAspectSet known;
     if (isListAsMade(m_walker, value))
         known.add({ PristineAspects::Storage, PristineAspects::Names, PristineAspects::NamesKeptBelow, PristineAspects::Prototype });
     PristineAspectSet untested = aspects - known;
@@ -227,104 +210,6 @@ void JSONTextWriter::requirePristine(Reference value, BuiltinClassID builtinClas
     if (!hasStopped() && untested.containsAll(aspectsOfArrayWrittenAsJSON))
         noteListAsMade(m_walker, value);
 }
-
-// A holder adds some members when they are first read, which shows where its keys are listed.
-bool JSONTextWriter::firstReadIsSeen(BuiltinID location)
-{
-    const BuiltinTable& table = m_context.program.builtins();
-    if (isMadeWithCodeOfLibrary(table, location))
-        return true;
-    const Builtin& entry = table.at(location);
-    return entry.isAddedAtFirstRead && entry.holder && m_walker.facts().listsKeysOf(table.canonicalID(entry.holder));
-}
-
-void JSONTextWriter::buildFirstReadOf(BuiltinID location)
-{
-    if (hasStopped() || !firstReadIsSeen(location))
-        return;
-    if (m_walker.has(Mechanism::Folding) && m_walker.state().hasReadBuiltin(location))
-        return;
-    Draft initialization = draft(Opcode::InitializeBuiltin);
-    initialization.setBuiltin(location);
-    build(WTF::move(initialization));
-    if (!hasStopped())
-        m_walker.state().noteReadOfBuiltin(location);
-}
-
-// The host reads toJSON and valueOf by name and, for a valid date alone, toISOString.
-void JSONTextWriter::appendFirstReadsOfMembersOfDate(Reference time)
-{
-    buildFirstReadOf(Builtins::DatePrototypeToJSON);
-    buildFirstReadOf(Builtins::DatePrototypeValueOf);
-    BuiltinID toISOString = Builtins::DatePrototypeToISOString;
-    if (hasStopped() || !firstReadIsSeen(toISOString) || (m_walker.has(Mechanism::Folding) && m_walker.state().hasReadBuiltin(toISOString)))
-        return;
-
-    BlockID done = openMerge();
-    ArmOfJSONText isValid = armOfTest(buildOperator(Opcode::StrictEq, time, time), BlockFrequency::Rare);
-    if (isValid.matches != AnswerOfJSONTest::No) {
-        buildFirstReadOf(toISOString);
-        jumpTo(done);
-        if (!continueWithOtherValues(isValid)) {
-            continueAt(done);
-            return;
-        }
-    }
-    jumpTo(done);
-    continueAt(done);
-}
-
-void JSONTextWriter::appendDate(Reference date, const PositionOfJSONText& position)
-{
-    constexpr bool writesDatesInPlace = true;
-    if (!writesDatesInPlace) {
-        takeSlowPath();
-        return;
-    }
-    requirePristine(date, BuiltinClasses::Date, PristineAspectSet { PristineAspects::Names });
-    if (hasStopped())
-        return;
-
-    // The function is called whatever its name finds by now: the host reads the time out of the cell.
-    const BuiltinTable& table = m_context.program.builtins();
-    BuiltinOverloadID getTime = findGetTimeForJSON(m_context);
-    const BuiltinOverload* overload = getTime ? &table.at(getTime) : nullptr;
-    std::optional<InlineBuiltin> codeInLine = overload ? overload->code.implementation.inlineBuiltin : std::nullopt;
-    BuiltinOperandTypes received;
-    received.receiver = m_walker.typeOf(date);
-    bool isHiddenInStackTraces = m_context.program.at(m_walker.currentFunction()).isHiddenInStackTraces();
-    if (!codeInLine || chooseInlineForm({ m_context, *overload, *codeInLine, BuiltinCallForm::Whole, received, !!overload->code.implementation.otherwise, false, isHiddenInStackTraces }) != InlineForm::Whole) {
-        takeSlowPath();
-        return;
-    }
-
-    appendKeyOf(position);
-    Vector<uint32_t, 4> parameters;
-    for (uint8_t parameter : std::span(overload->code.implementation.inlineParameters).first(numberOfParametersOf(*codeInLine)))
-        parameters.append(parameter);
-    Draft call = draft(Opcode::CallInline);
-    call.setInlineBuiltin(*codeInLine);
-    call.setInlineParameters(parameters.span());
-    call.setOverload(getTime);
-    call.setReceiverOperand(date);
-    Effects readsTime = Effects::none();
-    readsTime.reads.add(AbstractHeap::InternalFields);
-    Reference time = build(WTF::move(call), &readsTime);
-    if (hasStopped())
-        return;
-    if (!time || !typeOf(time).isNumber()) {
-        takeSlowPath();
-        return;
-    }
-    appendFirstReadsOfMembersOfDate(time);
-
-    Draft text = draft(Opcode::JSONAppendDate);
-    text.setValueOperand(time);
-    append(WTF::move(text));
-    appendCommaOf(position);
-}
-
-// ---- Objects
 
 void JSONTextWriter::appendObjectParts(Reference value, const JSONValuePlan& plan, const PositionOfJSONText& position)
 {
@@ -388,18 +273,14 @@ void JSONTextWriter::appendObjects(Reference value, const JSONValuePlan& plan, c
     continueAt(done);
 }
 
-// What has to be seen of the cell beside its shape and the order of its keys. The shape word is written once, so nothing of this shows in it.
 void JSONTextWriter::lookAtCell(Reference object, const JSONObjectPlan& plan)
 {
     WalkState& state = m_walker.state();
     OptionSet<FactOfCell> asked = plan.looksAtCell;
-    // A guard of a class speaks of what stands above the prototype object of the class.
     if (!plan.classesGuardedAgainstToJSON.isEmpty())
         asked.add(FactOfCell::HasLayoutPrototype);
     asked.remove(factsKnownOfCell(object));
 
-    // A name that the layout has no field for, an index, and a field that has left its slot (an accessor was laid over it, it is listed no more, it got a value that its slot cannot hold) lie among the extra properties.
-    // One test asks for both. A frozen object passes it, so the state is not told that it knows the whole order word.
     if (asked.containsAny({ FactOfCell::NoFieldOutsideSlot, FactOfCell::OrderWordIsKnown })) {
         Draft hasNothingElse = draft(Opcode::HasNoExtraProperties);
         hasNothingElse.setObjectOperand(object);
@@ -444,7 +325,6 @@ void JSONTextWriter::lookAtCell(Reference object, const JSONObjectPlan& plan)
         state.noteGuardOfReadsHolds(condition.layout, condition.key, passed);
 }
 
-// The shape is proven.
 void JSONTextWriter::appendObjectOfLayout(Reference object, const JSONObjectPlan& plan, const PositionOfJSONText& position)
 {
     if (hasStopped())
@@ -470,7 +350,6 @@ void JSONTextWriter::appendObjectOfLayout(Reference object, const JSONObjectPlan
         if (hasOrder.matches == AnswerOfJSONTest::No)
             continue;
 
-        // The order says which fields the object has, and none of them lies outside its slot: each read finds its slot filled.
         appendKeyOf(position);
         MemberListOfJSONText memberList = notOpened;
         for (const JSONMemberPlan& member : order.members)
@@ -484,13 +363,11 @@ void JSONTextWriter::appendObjectOfLayout(Reference object, const JSONObjectPlan
             return;
         }
     }
-    // An object in an order that has no arm.
     takeSlowPath();
     m_layoutsAround.removeLast();
     continueAt(done);
 }
 
-// The shape is proven. The serializer asks the object whatever else there is to ask, and what it has written by the time it turns an object away is dropped with the rest of the text.
 void JSONTextWriter::appendObjectByCall(Reference object, LayoutID layout, const PositionOfJSONText& position)
 {
     if (hasStopped())
@@ -508,7 +385,6 @@ void JSONTextWriter::appendObjectByCall(Reference object, LayoutID layout, const
     }
 
     appendKeyOf(position);
-    // No cursor crosses a call.
     commit();
     Draft call = draft(Opcode::JSONAppendObject);
     call.setLayout(layout);
@@ -526,7 +402,6 @@ void JSONTextWriter::appendMember(Reference object, LayoutID layout, const JSONM
 {
     if (hasStopped())
         return;
-    // What lies in such a slot is no value.
     const PlacedSlot& slot = m_walker.plan().slot(layout, member.field);
     if (slot.holdsAccessor || slot.deferredFunction || !slot.hasStorage()) {
         takeSlowPath();
@@ -551,7 +426,6 @@ void JSONTextWriter::appendMember(Reference object, LayoutID layout, const JSONM
         return;
     }
 
-    // Nothing reads what was read, so the sweep drops it: the member costs nothing.
     TypeID proven = m_walker.typeOf(value);
     if (hasNoJSONText(m_context, proven))
         return;

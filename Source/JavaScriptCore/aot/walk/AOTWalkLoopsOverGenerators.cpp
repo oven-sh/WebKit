@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `for (.. of ..)` over a generator: what the protocol reads is asked for once, at the open, and the generator itself is the state of the iteration: no cell is made for it. A step resumes the body, a close returns from it.
-// At a suspension nothing is done: the generator is a value like any other, and the frame that is saved holds it. At a throw: a step that throws leaves the loop past its cleanup, as written,
-// and a close behind a throw drops what the body throws. Withheld (TypedOperations, Guesses, BuiltinCalls): the protocol of AOTWalkIteration.cpp.
-
 #include "config.h"
 #include "AOTWalkLoopsOverGenerators.h"
 
@@ -23,14 +19,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// closedOperationsOfProtocol of AOTWalkIteration.cpp.
 static constexpr uint32_t closedOperationsOfProtocolForGenerators = 3;
 
-// ---- What the body says of the loop
-
-// `for (.. of ..)`, by the input alone. One step, by Next, that sends nothing and hides what is returned. The open stands in front of the loop whose head holds the step, or no loop lies between the two.
-// The block of the step ends with the branch on `done`, and each close stands below the edge that is taken while the iterator is not done.
-// So no step follows one that was the last or that threw, and a close finds an iterator that has just handed out a value.
 struct LoopOverIterator {
     ValueID step;
     BlockID blockOfStep;
@@ -89,8 +79,6 @@ static std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex& ind
     return loop;
 }
 
-// ---- What the table says of generators
-
 static bool isConstantLocationForGenerators(const Walker& walker, BuiltinID member)
 {
     const Program& program = walker.program();
@@ -130,7 +118,6 @@ static std::optional<BuiltinID> findMemberAboveForGenerators(const Walker& walke
     }
 }
 
-// What the first read of a member does to its holder is no reason to refuse: it is built where a form leaves the read out.
 static bool findsEngineAnswersForGenerators(const Walker& walker)
 {
     const BuiltinTable& table = walker.program().builtins();
@@ -154,7 +141,6 @@ static bool findsEngineAnswersForGenerators(const Walker& walker)
     return returnsReceiver;
 }
 
-// From %GeneratorPrototype% upward `next` and `return` are the engine's for good, and @@iterator returns its receiver.
 bool engineAnswersForGenerators(Walker& walker)
 {
     std::optional<bool>& answer = walker.loopsOverGenerators().engineAnswers;
@@ -163,9 +149,6 @@ bool engineAnswersForGenerators(Walker& walker)
     return *answer;
 }
 
-// ---- The first reads
-
-// firstReadIsSeenInWalkBuiltins(), of a name of the language.
 static bool firstReadIsSeenForGenerators(const Walker& walker, BuiltinID location)
 {
     const BuiltinTable& table = walker.program().builtins();
@@ -177,7 +160,6 @@ static bool firstReadIsSeenForGenerators(const Walker& walker, BuiltinID locatio
     return walker.facts().listsKeysOf(table.canonicalID(entry.holder));
 }
 
-// What the first read does is done once for an instance: behind one that every way here has passed, another does nothing.
 static void buildFirstReadForGenerators(Walker& walker, BuiltinName name, Origin origin)
 {
     if (walker.isUnreachable())
@@ -208,8 +190,6 @@ static void buildFirstReadThatCloseLeavesOut(Walker& walker, Origin origin)
 }
 
 
-// ---- What all three build with
-
 static Reference buildStepOfGenerator(Walker& walker, BuilderForGenerators& builder, Reference generator, ResumeMode mode, GeneratorStepCheck check)
 {
     if (walker.isUnreachable())
@@ -222,7 +202,6 @@ static Reference buildStepOfGenerator(Walker& walker, BuilderForGenerators& buil
     return builder.build(WTF::move(step));
 }
 
-// A helper of the compiler, or the start of a body, counts as the call of the operation. So walkOperation() leaves nothing for whom Link lists at a step or a close, and the arm of the protocol may enter him.
 static void leaveAnythingForCalleeListedAtForGenerators(Walker& walker, const BodyValue& operation)
 {
     if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), operation.id()))
@@ -238,8 +217,6 @@ static bool isStateOfLoopOverGenerator(Walker& walker, Reference state)
 {
     return state && state.isValue() && walker.loopsOverGenerators().states.contains(state.bits());
 }
-
-// ---- What others ask
 
 GeneratorStepCheck checkLeftToStepOf(Walker& walker, Reference generator)
 {
@@ -260,10 +237,6 @@ Reference buildStepOfGenerator(Walker& walker, Reference generator, ResumeMode m
     return builder.build(WTF::move(step));
 }
 
-// ---- The open
-
-// The class, then the names: nothing lies on the generator or on the object under `prototype` of its function, which stands below %GeneratorPrototype%. Whatever fails either is opened by the protocol:
-// the parameter then holds a list of the iterator and its `next`, which this code alone has. The two ways meet in one parameter, which is what the open is bound to.
 static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
 {
     auto written = open.as<Opcode::IteratorOpen>();
@@ -291,7 +264,6 @@ static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
         return false;
     if (!walker.has(Mechanism::Guesses) || !walker.has(Mechanism::BuiltinCalls) || !walker.opensGuesses() || !hasInstanceTest(walker.program().builtins(), BuiltinClasses::Generator))
         return false;
-    // The tests are asked once in front of a loop whose turns step the generator. Anywhere else the policy of guesses says who pays.
     if (!loop->stepStandsInHeadOfLoop && !shouldOpenGuess(walker, iterable, generators, isDeclared, closedOperationsOfProtocolForGenerators))
         return false;
 
@@ -321,9 +293,6 @@ static bool openLoopOverGenerator(Walker& walker, const BodyValue& open)
     return true;
 }
 
-// ---- A step
-
-// `next` was the engine's when the open read it, so whatever has become of the names since, the step resumes the body.
 static bool stepLoopOverGenerator(Walker& walker, const BodyValue& step)
 {
     Reference state = walker.referenceOf(step.operand(0));
@@ -338,7 +307,6 @@ static bool stepLoopOverGenerator(Walker& walker, const BodyValue& step)
     Reference value = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Value));
     Reference status = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Status));
 
-    // It is running, has ended, or belongs to another realm: the method answers.
     BlockID byMethod = builder.addBlock(BlockFrequency::Rare);
     BlockID isStepped = builder.addBlock();
     builder.branch(builder.isInteger(status, static_cast<int64_t>(GeneratorStepStatus::NotStepped)), byMethod, isStepped);
@@ -362,8 +330,6 @@ static bool stepLoopOverGenerator(Walker& walker, const BodyValue& step)
     return true;
 }
 
-// ---- A close
-
 static void closeGenerator(Walker& walker, BuilderForGenerators& builder, Reference generator, IteratorCompletion completion)
 {
     if (walker.isUnreachable())
@@ -373,7 +339,6 @@ static void closeGenerator(Walker& walker, BuilderForGenerators& builder, Refere
     bool dropsWhatIsThrown = completion == IteratorCompletion::Throw;
     if (dropsWhatIsThrown)
         builder.beginToDropWhatIsThrown();
-    // The protocol reads `return`, then calls it. Only the stub shows whether the names are as they were made, so the read follows the step that was taken.
     Reference stepped = buildStepOfGenerator(walker, builder, generator, ResumeMode::Return, GeneratorStepCheck::IsUnmodified);
     Reference status = builder.resultAt(stepped, static_cast<uint32_t>(StepGeneratorResult::Status));
     BlockID isNotStepped = builder.addBlock(BlockFrequency::Rare);
@@ -384,7 +349,6 @@ static void closeGenerator(Walker& walker, BuilderForGenerators& builder, Refere
     buildFirstReadThatCloseLeavesOut(walker, builder.origin());
     builder.jumpTo(isClosed);
     builder.continueIn(isNotStepped);
-    // Behind a throw this stands where whatever is thrown is dropped, the complaint about what `return` gives with it.
     builder.closeByProtocol(generator, IteratorCompletion::Normal);
     builder.jumpTo(isClosed);
     if (dropsWhatIsThrown)
@@ -413,8 +377,6 @@ static bool closeLoopOverGenerator(Walker& walker, const BodyValue& close)
     leaveAnythingForCalleeListedAtForGenerators(walker, close);
     return true;
 }
-
-// ---- The link
 
 bool buildLoopOverGenerator(Walker& walker, const BodyValue& value)
 {

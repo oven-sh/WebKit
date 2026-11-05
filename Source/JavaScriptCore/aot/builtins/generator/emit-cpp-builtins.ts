@@ -299,7 +299,6 @@ function formatLayout(layout: ModelLayout, layoutFields: Pool): string {
   ]);
 }
 
-// A getter that JSGlobalObject does not have fails the build of the engine.
 function formatRealmStructure({ getter, names }: ModelRealmStructure, realmStructureNames: Pool): string {
   return formatAggregate([
     ["findInitialStructure", `[](JSGlobalObject* realm) -> Structure* { return realm->${getter}(); }`],
@@ -419,7 +418,6 @@ function emitTableData(arrays: DeclaredArrays, lockedMembers: string | null, rea
   return `constinit const BuiltinTableData builtinTableData = ${data};`;
 }
 
-// An executable says with which table it was built: numbers of the table are in the code of a compiled program.
 function emitDescription(model: TableModel): string {
   const description = formatAggregate([
     ["hashOfBuiltinTokens", "builtinTableHashOfBuiltinTokens"],

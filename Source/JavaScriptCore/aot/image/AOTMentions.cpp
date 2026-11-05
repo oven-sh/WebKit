@@ -28,21 +28,16 @@
 
 namespace JSC { namespace AOT {
 
-// ---- The list
-
-// A power of two, like every size of the table.
 static constexpr size_t minimumMentionTableSize = 64;
 static constexpr size_t fewestMentionsWithTable = 16;
 static_assert(2 * (fewestMentionsWithTable + 1) <= minimumMentionTableSize);
 static constexpr size_t fewestWordsOfSiteCacheKey = 4;
 
 static constexpr size_t numberOfAllocationKeyHeaderWords = 7;
-// MentionList::allocation() and decodeAllocationKey() name every member.
 static_assert(sizeof(Typed::PlacedAllocation) == 6 * sizeof(uint32_t));
 static_assert(!layoutWordOfAllocationKey && constructorWordOfAllocationKey == 4);
 static_assert(std::is_same_v<FieldIndex, uint32_t>);
 
-// The null id has the bits of a thread-local id, so it is turned away too.
 static bool mentionWordIsNotThreadLocalID(uint32_t word)
 {
     return Typed::homeOf(TypeID::fromBits(word)) != Typed::IDHome::Thread;
@@ -51,7 +46,6 @@ static bool mentionWordIsNotThreadLocalID(uint32_t word)
 static bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::span<const uint32_t> key)
 {
     switch (space) {
-    // A text that the walk has made is mentioned like a text of the program: copyMadeTextsMentionedBy().
     case NumberSpace::String:
     case NumberSpace::StringCell:
     case NumberSpace::ShownString:
@@ -74,7 +68,6 @@ static bool mentionKeyHasNoThreadLocalIDs(NumberSpace space, std::span<const uin
     case NumberSpace::ClassRank:
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
-    case NumberSpace::Function:
     case NumberSpace::Type:
     case NumberSpace::MethodSelector:
         return key.size() == 1 && mentionWordIsNotThreadLocalID(key[0]);
@@ -224,7 +217,6 @@ uint32_t MentionList::addPair(NumberSpace space, uint32_t first, uint32_t second
     return addKey(space, std::span<const uint32_t, 2>(key), addend);
 }
 
-// Rows lie in the order of their keys, and the run time looks for a record to share among the neighbors of a row that have its shape: the layout comes first, then the shape.
 uint32_t MentionList::allocation(const Typed::PlacedAllocation& allocation, std::span<const FieldIndex> initialFields, int32_t addend)
 {
     const uint32_t words[numberOfAllocationKeyHeaderWords] {
@@ -293,9 +285,6 @@ void MentionList::moveTo(CodeBody& body)
     body.mentionWords = WTF::move(m_words);
 }
 
-// ---- Texts that the walk has made
-
-// The word of a key that names a text which the walk may have made. A name is never one: TypeArena::textKey().
 static std::optional<size_t> placeOfTextInMentionKey(NumberSpace space, std::span<const uint32_t> key)
 {
     switch (space) {
@@ -335,9 +324,7 @@ static void forEachMadeTextAmongMentions(CodeBody& body, NOESCAPE const Invocabl
 
 void copyMadeTextsMentionedBy(CodeBody& body, const Typed::TypeArena& types)
 {
-    // [position in the arena]
     Vector<uint32_t, 8> placesInBodyPlusOne;
-    // [place in the body]
     Vector<StringID, 8> texts;
     forEachMadeTextAmongMentions(body, [&](uint32_t& word) {
         StringID text = StringID::fromBits(word);
@@ -346,7 +333,6 @@ void copyMadeTextsMentionedBy(CodeBody& body, const Typed::TypeArena& types)
         uint32_t& placePlusOne = placesInBodyPlusOne[Typed::positionOf(text)];
         if (!placePlusOne) {
             texts.append(text);
-            // The bytes are laid down, which may move those of the texts in front of it: nobody keeps an address yet.
             types.bytesOf(text);
             placePlusOne = static_cast<uint32_t>(texts.size());
         }
@@ -381,18 +367,15 @@ void internTextsMadeByFunctions(Typed::Program& program, LinkedFunctions& functi
 {
     struct MadeText {
         std::span<const uint8_t> bytes;
-        // Among the texts of all functions, in the order of the functions.
         uint32_t number;
     };
     Vector<MadeText> texts;
-    // [function]
     Vector<uint32_t> numbersOfFirstTexts(functions.size());
     for (size_t index = 0; index < functions.size(); ++index) {
         const CodeBody& body = functions[index].body;
         numbersOfFirstTexts[index] = static_cast<uint32_t>(texts.size());
         if (body.endsOfMadeTexts.isEmpty())
             continue;
-        // What shares bytes in the body shares them in the table.
         std::span<const uint8_t> kept = program.strings.keep(body.bytesOfMadeTexts.span());
         for (uint32_t place = 0; place < body.endsOfMadeTexts.size(); ++place)
             texts.append({ kept.subspan(body.firstsOfMadeTexts[place], body.endsOfMadeTexts[place] - body.firstsOfMadeTexts[place]), static_cast<uint32_t>(texts.size()) });
@@ -400,14 +383,12 @@ void internTextsMadeByFunctions(Typed::Program& program, LinkedFunctions& functi
     if (texts.isEmpty())
         return;
 
-    // A text that the table lacks gets its number in the order of the texts, whichever function made it. Of two that begin at one address the shorter is the front of the longer.
     const ParallelLoops& loops = context.parallelLoops();
     parallelSort(loops, texts.mutableSpan(), [](const MadeText& first, const MadeText& second) {
         if (first.bytes.data() == second.bytes.data())
             return first.bytes.size() < second.bytes.size();
         return std::ranges::lexicographical_compare(first.bytes, second.bytes);
     });
-    // [MadeText::number]
     Vector<StringID> strings(texts.size());
     Typed::StringTable::FrontsOfKeptTexts fronts;
     for (size_t place = 0; place < texts.size(); ++place) {
@@ -490,8 +471,6 @@ std::optional<uint32_t> NumberedKeys::find(std::span<const uint32_t> key) const
     return first;
 }
 
-// ---- The units behind a mention
-
 namespace {
 
 class UnitsBehindMention {
@@ -505,10 +484,7 @@ public:
     {
     }
 
-    void addUnit(CodeUnit) const;
-    // Code names the closure itself, so the plan has its entry: the queue stops the build where it has not.
     void addClosureOf(FunctionID) const;
-    // A table of the image is going to name the closure. It stops the build where it needs an entry that has no code.
     void addClosureIfPlanned(FunctionID) const;
     void addClass(LayoutID) const;
     void addModule(ModuleID) const;
@@ -540,8 +516,6 @@ void UnitsBehindMention::addEntriesIfPlanned(FunctionID function) const
         addEntriesOf(function);
 }
 
-// The record of a class whose constructor has an entry names the entry of each member that it creates, called or not.
-// No NewClass stands in the code for a deferred class: the run time makes it of its record when it makes the closure of the constructor, and first the classes above it of theirs.
 void UnitsBehindMention::addClass(LayoutID classLayout) const
 {
     size_t numberOfLayouts = m_program.layouts.size();
@@ -575,18 +549,6 @@ void UnitsBehindMention::addClosureIfPlanned(FunctionID function) const
         addClosureOf(function);
 }
 
-// Once the entry for calls has code, the tables take the function for one that closures are made of, however the entry was named.
-void UnitsBehindMention::addUnit(CodeUnit unit) const
-{
-    if (unit == m_conventions.closureEntryOf(unit.function)) {
-        addClosureOf(unit.function);
-        return;
-    }
-    m_functor(unit, MentionKind::Call);
-}
-
-// Nothing for a module that compiled code alone evaluates. The loader never enters it, so the table of modules names no entry for it, and the step that calls its body or its start names that unit in a relocation.
-// The loader enters any other module in the generic convention: the table names the entry that the word of a closure would name. A body that Facts never reaches has neither unit.
 void UnitsBehindMention::addModule(ModuleID module) const
 {
     const Typed::ModuleEvaluationPlan& evaluation = m_plan.moduleEvaluation();
@@ -599,13 +561,11 @@ void UnitsBehindMention::addModule(ModuleID module) const
     CodeUnit entered { body, hasStart ? Typed::CodeRole::ModuleStart : Typed::CodeRole::Body };
     if (!body || !m_conventions.exists(entered))
         return;
-    // A start has no code, and what its row calls is among unitsNamedOutsideCode().
     if (!hasStart)
         m_functor(entered, MentionKind::Call);
     addEntriesIfPlanned(body);
 }
 
-// The row of an allocation names the entry of the constructor, by which the run time finds the class of the object. The record of the layout names the entry of each closure that a slot defers.
 void UnitsBehindMention::addAllocation(std::span<const uint32_t> key) const
 {
     Typed::PlacedAllocation allocation = decodeAllocationKey(key).allocation;
@@ -616,8 +576,6 @@ void UnitsBehindMention::addAllocation(std::span<const uint32_t> key) const
 
 } // anonymous namespace
 
-// Null for a request that makes no class.
-// A request for data brings no unit. Its objects have layouts of literals, which no function constructs, and none of their slots holds uncreatedDeferredClosure: only an allocation in code stores that, and it mentions its own row.
 static LayoutID classOfRequestMention(std::span<const uint32_t> key)
 {
     RELEASE_ASSERT(!key.empty());
@@ -651,9 +609,6 @@ void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mention
     case NumberSpace::ClosureCell:
         units.addClosureOf(FunctionID(key[0]));
         return;
-    case NumberSpace::Function:
-        units.addUnit(plan.conventions().unitAt(key[0]));
-        return;
     case NumberSpace::ClassRank:
         units.addClass(LayoutID(key[0]));
         return;
@@ -670,12 +625,10 @@ void forEachUnitBehind(const Mention& mention, std::span<const uint32_t> mention
     case NumberSpace::Allocation:
         units.addAllocation(key);
         return;
-    // The table of variables that are born as functions names the entry for each of them that has a word, and a store alone gives a variable its word.
     case NumberSpace::Variable:
     case NumberSpace::CardOfVariable:
         units.addClosureIfPlanned(plan.variable(VariableID(key[0])).function);
         return;
-    // The table holds a unit for each row of the family, whichever of them the code that mentions the selector may meet.
     case NumberSpace::MethodSelector: {
         const Typed::CallingConventions& conventions = plan.conventions();
         const Typed::MethodSelector& selector = conventions.methodSelector(key[0]);

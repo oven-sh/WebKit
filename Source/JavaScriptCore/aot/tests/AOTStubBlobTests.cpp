@@ -61,8 +61,6 @@ static constexpr std::array stepChecks { GeneratorStepCheck::IsUnmodifiedGenerat
 static_assert(stepChecks.size() == descriptorOf(StubFamily::StepGenerator).numberOfForms);
 static constexpr std::array stepConsumers { StepConsumer::AsyncFunction, StepConsumer::AsyncGenerator, StepConsumer::AsyncFunctionAwaitingCall, StepConsumer::AsyncGeneratorAwaitingCall };
 static_assert(stepConsumers.size() == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
-static constexpr std::array generatorKinds { NewGeneratorKind::Sync, NewGeneratorKind::Async };
-static_assert(generatorKinds.size() == descriptorOf(StubFamily::NewGenerator).numberOfForms);
 
 static StubBlob buildBlob(const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
 {
@@ -313,7 +311,6 @@ static void testBodyEntries()
     checkEntries(catalog, getByValCached(), { getByValCached(), getByValCachedCells(), getByValCachedAtPlace(), getByValCachedBehindPlaces() });
     checkEntries(catalog, getByValKeepingRegisters(), { getByValKeepingRegisters() });
     checkEntries(catalog, getByValCached(RegistersOfCaller::AreKept), { getByValCached(RegistersOfCaller::AreKept), getByValCachedCells(RegistersOfCaller::AreKept), getByValCachedAtPlace(RegistersOfCaller::AreKept), getByValCachedBehindPlaces(RegistersOfCaller::AreKept) });
-    // `sum += table["on" + kind]`: the sum stays in its register, whatever the read does on its way. A read by a key that is given loses every floating-point register that a call loses.
     for (BaseOfKeyedRead base : { BaseOfKeyedRead::IsCell, BaseOfKeyedRead::IsAnyValue }) {
         RegisterSet keptByRead = registersClobberedByOperations();
         keptByRead.exclude(catalog.summaryOf(getByValOfKeyOfPair(base)).clobbered);
@@ -325,7 +322,7 @@ static void testBodyEntries()
     checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure(), enterModuleBody() });
     checkEntries(catalog, runAsyncGeneratorStep(), { runAsyncGeneratorStep(), stepAsyncIteratorInEngine() });
     for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
-        checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueCellWithoutThis(count), callValueNotClosure(count), callValueFunctionOfEngine(count) });
+        checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueCellWithoutThis(count), callValueFunctionOfEngine(count) });
         if (exists(callHostFunctionWithoutBoxedCall(count)))
             checkEntries(catalog, callHostFunction(count), { callHostFunction(count), callHostFunctionWithoutBoxedCall(count) });
         else
@@ -439,7 +436,6 @@ static void testReachability()
     }
 }
 
-// Only an image whose code evaluates a module with a state has the stub, so only such an image lists the operations on modules that fail.
 static void testStartOfModule()
 {
     StubCatalog catalog(StubOptions { });
@@ -476,7 +472,6 @@ static void testMissingKeys()
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepGenerator).withForm(4)));
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::AwaitBySavingFrame).withForm(4)));
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(4)));
-    AOT_TEST_CHECK(!exists(StubKey(StubFamily::NewGenerator).withForm(2)));
     AOT_TEST_CHECK(!exists(callHostFunctionWithoutBoxedCall(BoxedCallEntry::maxArgumentCount).withCount(BoxedCallEntry::maxArgumentCount + 1)));
 }
 
@@ -579,14 +574,12 @@ static void checkClobbersOfRegisterVariants(const StubCatalog& catalog)
             ++numberOfVariants;
         });
         numberOfKeysWithVariants += numberOfVariants > 1;
-        // Asked twice: the second answer is the one that was kept.
         AOT_TEST_CHECK(catalog.clobberedByRegisterVariantsOf(key) == clobbered);
         AOT_TEST_CHECK(catalog.clobberedByRegisterVariantsOf(key) == clobbered);
     });
     AOT_TEST_CHECK(numberOfKeysWithVariants);
 }
 
-// A site that has its result where it likes loses that register and what the stub writes anyway: never the usual register of results, and of a constant nothing at all.
 static void checkClobbersBesideResults(const StubCatalog& catalog)
 {
     RegisterSet scratchRegistersOfAssembler = RegisterSet::macroClobberedGPRs();
@@ -605,7 +598,6 @@ static void checkClobbersBesideResults(const StubCatalog& catalog)
             return;
         const StubSummary& summary = catalog.summaryOf(key);
         const RegisterSet& lost = catalog.clobberedBesideResultByRegisterVariantsOf(key);
-        // Whoever keeps no register has none to lose.
         bool keepsRegisters = key.callerFrame() != CallerFrame::KeepsNoRegisters;
         AOT_TEST_CHECK(summary.signature.firstResult == Reg(GPRInfo::returnValueGPR) && (!keepsRegisters || !containsRegister(lost, GPRInfo::returnValueGPR)));
         forEachRegisterVariant(key, [&](StubKey variant) {
@@ -650,8 +642,7 @@ static void checkCoroutineOperations(const StubCatalog& catalog)
     for (StepConsumer consumer : stepConsumers)
         AOT_TEST_CHECK(operationsCalledBy(catalog, stepAsyncGenerator(consumer)).isEmpty());
     AOT_TEST_CHECK(operationsCalledBy(catalog, runAsyncGeneratorStep()) == entrySetOf({ Entry::operationAOTAsyncIteratorStep, Entry::operationAOTFinishAsyncIteratorStep }));
-    for (NewGeneratorKind kind : generatorKinds)
-        AOT_TEST_CHECK(operationsCalledBy(catalog, newGenerator(kind)) == entrySetOf({ Entry::operationAOTNewGenerator }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, newAsyncGenerator()) == entrySetOf({ Entry::operationAOTNewGenerator }));
 }
 
 static void checkCollectionOperations(const StubCatalog& catalog)
@@ -703,7 +694,6 @@ static void testImmediatesInKeys()
 {
     constexpr StubKey cell = builtinCell().withImmediate(7);
     constexpr StubKey cellForCallerKeepingNoRegisters = cell.withCallerFrame(CallerFrame::KeepsNoRegisters);
-    // One stub matches with every literal: a body for each would be 300 bytes a literal.
     constexpr StubKey match = regExpMatchLiteralWithoutObject(Typed::RegExpMatchForm::Exec);
     static_assert(exists(cell) && exists(cellForCallerKeepingNoRegisters) && exists(match) && !exists(match.withImmediate(1)));
 

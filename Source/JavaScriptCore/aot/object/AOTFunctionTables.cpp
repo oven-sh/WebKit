@@ -91,9 +91,6 @@ static_assert(usesNotConstructibleExecutable({ .isAsync = true, .isGenerator = t
 static_assert(usesNotConstructibleExecutable({ .callableKind = CallableKind::Arrow }));
 static_assert(usesNotConstructibleExecutable({ .callableKind = CallableKind::Method }));
 
-static_assert(FunctionTables::executableKind(functionKindWith({ .callableKind = CallableKind::Bound })) == FunctionTables::ExecutableKind::BoundClosure);
-static_assert(!FunctionTables::canConstruct(functionKindWith({ .callableKind = CallableKind::Bound })));
-
 static_assert(FunctionTables::executableKind(functionKindWith({ .takesNewTarget = true })) == FunctionTables::ExecutableKind::Constructible);
 static_assert(closureWordFlags(functionKindWith({ .takesNewTarget = true })) == ClosureWord::Flags { .takesNewTarget = true });
 
@@ -119,14 +116,6 @@ unsigned functionLengthOf(FunctionID function)
 FunctionID sourceFunctionOf(FunctionID function)
 {
     return FunctionID(programTables().sourceFunctionOf(function.index()));
-}
-
-const BoundFunctionData& boundFunctionData(FunctionID function)
-{
-    auto boundFunctions = programTables().boundFunctions();
-    auto found = std::ranges::lower_bound(boundFunctions, function.index(), { }, &BoundFunctionData::function);
-    RELEASE_ASSERT(found != boundFunctions.end() && found->function == function.index());
-    return *found;
 }
 
 static const uint64_t* closureWordsByNumber(const Image& image)
@@ -175,8 +164,6 @@ static ClosureTable& closureTableOf(JSObject* callee)
 
 static ASCIILiteral initialNamePrefix(FunctionKindData kind)
 {
-    if (kind.isBound())
-        return "bound "_s;
     bool isGetter = kind.accessor() == MethodKind::Getter;
     RELEASE_ASSERT(isGetter || kind.accessor() == MethodKind::Setter);
     return isGetter ? "get "_s : "set "_s;
@@ -206,21 +193,17 @@ JSString* initialNamePropertyString(VM& vm, State& state, FunctionID function)
 
 static String functionNameAsWritten(const FunctionDescription& description)
 {
-    FunctionKindData kind = functionKindData(description.function());
-    if (description.codeType() == ModuleCode || kind.isCommonJSModule)
+    if (description.codeType() == ModuleCode || functionKindData(description.function()).isCommonJSModule)
         return emptyString();
-    String written = writtenFunctionName(description.function());
-    return kind.isBound() ? makeString("bound "_s, written) : written;
+    return writtenFunctionName(description.function());
 }
 
-// The engine names a frame by the property `name` that the function object got when the literal was evaluated, "get " and "set " included. The frame of a generator has no function object to ask.
 static String nameInFramesOfFunctionNamedByComputedKey(FunctionID function)
 {
     FunctionID source = sourceFunctionOf(function);
     return functionKindData(source).isGenerator ? emptyString() : initialNameProperty(source);
 }
 
-// The engine runs the body of a generator, and of an async function that awaits, as a function of its own. It has the name that is written in the function and none that the function takes from a variable or a property.
 static bool runsInBodyWithoutName(const FunctionDescription& description)
 {
     FunctionKindData kind = functionKindData(sourceFunctionOf(description.function()));
@@ -282,7 +265,6 @@ void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, M
     }
 }
 
-// The entries of the functions that implement the closures of the source.
 static std::span<const FunctionTextEntry> functionTextEntriesOfSource(const ProgramTables& tables, uint32_t source)
 {
     auto texts = tables.functionTexts();
@@ -396,8 +378,6 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
     FunctionID function = checkedFunctionOf(callee);
     FunctionKindData kindData = functionKindData(function);
     CallableKind callableKind = kindData.callable();
-    if (callableKind == CallableKind::Bound)
-        RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, "function "_s, writtenFunctionName(function), "() { [native code] }"_s));
     ASCIILiteral async = kindData.isAsync ? "async "_s : ""_s;
     bool isProgramFunction = !kindData.isInRuntimeModule;
     JSString* text = isProgramFunction ? functionSourceText(globalObject, function) : nullptr;
@@ -418,17 +398,11 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
 JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
 {
     FunctionID function = checkedFunctionOf(callee);
-    FunctionKindData kindData = functionKindData(function);
-    if (kindData.isBound() || kindData.isInRuntimeModule)
+    if (functionKindData(function).isInRuntimeModule)
         return nullptr;
     const FunctionTables::TextsByFunction& answered = FunctionTables::of(vm).sourceTexts;
     auto found = answered.find(function);
     return found == answered.end() ? nullptr : found->value.get();
-}
-
-bool isBoundFunction(JSObject* callee)
-{
-    return functionKindData(checkedFunctionOf(callee)).isBound();
 }
 
 FunctionKind kind(JSObject* callee)
@@ -439,22 +413,17 @@ FunctionKind kind(JSObject* callee)
         return FunctionKind::Builtin;
     if (kindData.isConstructor)
         return FunctionKind::Class;
-    CallableKind callableKind = kindData.callable();
-    if (callableKind == CallableKind::Bound)
-        return FunctionKind::Strict;
     if (kindData.isGenerator)
         return kindData.isAsync ? FunctionKind::AsyncGenerator : FunctionKind::Generator;
     if (kindData.isAsync)
         return FunctionKind::Async;
-    switch (callableKind) {
+    switch (kindData.callable()) {
     case CallableKind::Arrow:
         return FunctionKind::Arrow;
     case CallableKind::Method:
         return FunctionKind::Method;
     case CallableKind::Plain:
         return FunctionDescription(function).isStrict() ? FunctionKind::Strict : FunctionKind::Sloppy;
-    case CallableKind::Bound:
-        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -466,10 +435,9 @@ String displayName(JSObject* object)
         return String();
     if (FunctionDescription(*function).isNamedByComputedKey())
         return emptyString();
-    // The engine shows a built-in function by the name in its own text alone.
     FunctionKindData kindData = functionKindData(*function);
     bool takesNameFromOwner = kindData.hasInferredName || kindData.accessor() != MethodKind::Method;
-    if (kindData.isInRuntimeModule && takesNameFromOwner && !kindData.isBound())
+    if (kindData.isInRuntimeModule && takesNameFromOwner)
         return emptyString();
     return writtenFunctionName(*function);
 }
@@ -530,8 +498,6 @@ DeclaredAs declaredAs(JSCell* cell)
     FunctionKindData kindData = functionKindData(*function);
     if (kindData.isConstructor)
         return FunctionDescription(*function).isNakedConstructor() ? DeclaredAs::Function : DeclaredAs::Class;
-    if (kindData.isBound())
-        return DeclaredAs::Function;
     if (kindData.isGenerator)
         return kindData.isAsync ? DeclaredAs::AsyncGeneratorFunction : DeclaredAs::GeneratorFunction;
     return kindData.isAsync ? DeclaredAs::AsyncFunction : DeclaredAs::Function;
@@ -551,8 +517,7 @@ String closureDeclaredName(JSObject* object)
     if (!function)
         return String();
     FunctionKindData kindData = functionKindData(*function);
-    bool takesNameFromOwner = kindData.hasInferredName || kindData.accessor() != MethodKind::Method;
-    if (takesNameFromOwner && !kindData.isBound())
+    if (kindData.hasInferredName || kindData.accessor() != MethodKind::Method)
         return emptyString();
     return writtenFunctionName(*function);
 }
@@ -578,7 +543,6 @@ bool isClosureOf(JSCell* cell, FunctionID function)
     JSObject* object = cell->getObject();
     if (!implemented || !object)
         return false;
-    // A stack walk asks, and allocates nothing. A function object that is yet to be created is not this one.
     JSGlobalObject* realm = object->realmMayBeNull();
     return realm && findExistingBuiltin(realm, BuiltinID(*implemented)) == object;
 }

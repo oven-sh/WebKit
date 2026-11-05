@@ -27,7 +27,6 @@ namespace JSC::AOT {
 
 static constexpr size_t regExpDataAlignment = 8;
 static constexpr unsigned maxRegExpPatternLengthWithCode = Typed::longestRegExpPatternWithCode;
-// Tables are placed after all of the section's code, so a table can be farther from the code that refers to it than the near reach (1 MB on ARM64).
 static constexpr PCRelativeReach reachOfRegExpTables = PCRelativeReach::Far;
 
 static void invalidateIfTempRegister([[maybe_unused]] CCallHelpers& jit, [[maybe_unused]] GPRReg reg)
@@ -128,7 +127,6 @@ void ImageCodeAddressing::canonicalizeLatin1(GPRReg character)
     m_jit.load16(MacroAssembler::BaseIndex(scratch, character, MacroAssembler::TimesTwo), character);
 }
 
-// A constant in memory would be a table, and RelocationKind::Load64 only has near reach. A far address, a load and the constant's eight bytes are no smaller than the moves that build the constant.
 bool ImageCodeAddressing::tryLoadConstant(uint64_t, GPRReg)
 {
     return false;
@@ -243,7 +241,6 @@ RegExpCodeOrFailureReason compileFailureRoutine(const AssemblerPolicy& policy, B
     return addressing.takeCode();
 }
 
-// An upper bound: equal tables are shared, and bit planes and class tables are packed together. Yarr's shared tables and routines are in the section once and are not counted.
 static size_t maxRegExpTableSize(const RegExpSymbol& symbol)
 {
     return WTF::switchOn(symbol,
@@ -364,7 +361,6 @@ NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)
     if (inputs.pattern.length() > maxRegExpPatternLengthWithCode)
         return { .form = RegExpRecordForm::NoCode, .reason = RegExpDeclineReason::PatternTooLong };
 
-    // hasStackForRegExpCompiler() asks for 16 KB more, to cover the frames between its caller and this function.
     RELEASE_ASSERT(StackCheck(Thread::currentSingleton().stack(), regExpCompilerStackSize).isSafeToRecurse());
     Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
     Yarr::YarrPattern yarrPattern(inputs.pattern, inputs.flags, error, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Performed);
@@ -422,7 +418,6 @@ static void applyRegExpSectionSizeLimit(CompiledRegExps& compiled, BuildContext&
     }
 }
 
-// A request has no source location, so the message quotes the pattern.
 static void reportRegExpDecline(const RegExpRequest& request, RegExpDeclineReason reason, BuildContext& context)
 {
     context.diagnostics().add(UserDiagnostic {
@@ -460,10 +455,8 @@ CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpReques
         const RegExpRequest& request = allRequests[index];
         Vector<char16_t> patternBuffer;
         StringView pattern = program.strings.viewOf(request.pattern, patternBuffer);
-        // A thread of the host's pool may have less stack than the compiler needs. The code follows from the pattern, the flags and the policy alone, so it is the same on either thread.
         auto compile = [&] {
             const RegExpSummary& summary = summaries.summaryOf(request.pattern, request.flags, pattern);
-            // Every stub leaves a 16-bit subject for which there is no code to RegExp::matchWithImageCode(), which narrows the subject.
             compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context, RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject });
         };
         if (hasStackForRegExpCompiler())

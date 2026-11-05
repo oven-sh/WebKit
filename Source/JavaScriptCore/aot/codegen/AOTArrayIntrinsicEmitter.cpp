@@ -35,7 +35,6 @@ void ArrayIntrinsicEmitter::generateIsPristineArray(const ValueContext& value)
 
 void ArrayIntrinsicEmitter::generateArrayStorageKind(const ValueContext& value)
 {
-    // The three shapes are two apart and in the order of their kinds. The shape just below them gets 0, which is Other.
     static_assert(int32s.shape + 2 == doubles.shape && doubles.shape + 2 == contiguous.shape && int32s.shape >= 2);
     static_assert(!static_cast<int32_t>(ArrayStorage::Other) && static_cast<int32_t>(ArrayStorage::Int32) == 1 && static_cast<int32_t>(ArrayStorage::Double) == 2 && static_cast<int32_t>(ArrayStorage::Contiguous) == 3);
     Word32 shape = elements().indexingMode(in<CellPointer>(value->arrayOperand()), arrayStorageTestMask);
@@ -66,7 +65,6 @@ Boxed ArrayIntrinsicEmitter::contiguousElementOrEmpty(const ValueContext& access
     LBasicBlock otherwise = newBlock();
     Join<Boxed> join(m_out);
     Word32 shape = elements().indexingMode(array, arrayStorageTestMask);
-    // One test covers both shapes: the distance from the lower one is zero or the single bit by which they differ.
     constexpr IndexingType distance = contiguous.shape - int32s.shape;
     static_assert(contiguous.shape > int32s.shape && hasOneBitSet(distance));
     branchUnless(Condition(m_out.testIsZero32(m_out.sub(shape.value(), int32s.shape), ~static_cast<int32_t>(distance))), otherwise);
@@ -94,7 +92,6 @@ LValue ArrayIntrinsicEmitter::elementFoundByTestInFront(const ValueContext& read
     if (behindNames(test.arrayOperand()) != behindNames(read->arrayOperand()) || behindNames(test.positionOperand()) != behindNames(read->positionOperand()))
         return nullptr;
 
-    // Up the only way into the block, as far as the arm of the Branch that asked. Nothing stands on it but names, so nothing has written since the test.
     BlockID asked = m_code.blockOf(generator().testThatFoundElement);
     for (BlockID block = read.block();;) {
         for (ValueID id : m_code.valuesOf(block)) {
@@ -118,7 +115,6 @@ LValue ArrayIntrinsicEmitter::elementFoundByTestInFront(const ValueContext& read
 void ArrayIntrinsicEmitter::generateHasContiguousIndex(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    // Each test leads to the arm that finds nothing by itself. So the load stands on the only way into the other arm, and the read there takes what it gave: elementFoundByTestInFront().
     if (value.isBranchCondition()) {
         const BranchTargets& targets = value.branchTargets();
         Integer index = integerOperand(value->positionOperand());
@@ -160,7 +156,6 @@ Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext&
     return index;
 }
 
-// The GetOwn and PutOwn operations check nothing: the library's code guarantees the storage kind and that the index is below the length.
 void ArrayIntrinsicEmitter::generateGetOwnContiguousIndex(const ValueContext& value)
 {
     if (LValue found = elementFoundByTestInFront(value)) {
@@ -193,10 +188,9 @@ void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& va
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ValueID stored = value->valueOperand();
     Boxed rawElement = in<Boxed>(stored);
-    // The storage may be Int32 storage: see loadBoxedElement().
     ArrayElements storage = elements().elementsOf(value, array);
     m_out.store64(rawElement.value(), elements().elementOfUnknownForm(storage, positionThatLibraryVouchesFor(value, storage)));
-    barrierAfterStore(value, array, rawElement, typeOf(stored));
+    barrierAfterStore(value, array, typeOf(stored));
 }
 
 void ArrayIntrinsicEmitter::generatePutOwnDoubleIndex(const ValueContext& value)
@@ -206,7 +200,6 @@ void ArrayIntrinsicEmitter::generatePutOwnDoubleIndex(const ValueContext& value)
     elements().storeRawElement(doubles, storage, positionThatLibraryVouchesFor(value, storage), in<Number>(value->valueOperand()));
 }
 
-// The element already holds a boxed int32, so only the low 32 bits are written: the tag in the upper half is the same for every int32.
 void ArrayIntrinsicEmitter::generatePutOwnInt32Index(const ValueContext& value)
 {
     static_assert(std::endian::native == std::endian::little);
@@ -225,7 +218,7 @@ void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArraySt
     ArrayElements storage = elements().elementsOf(value, array);
     elements().storeRawElement(form, storage, positionThatLibraryVouchesFor(value, storage), rawElement);
     if (form.holdsCells)
-        barrierAfterStore(value, array, rawElement, typeOf(stored));
+        barrierAfterStore(value, array, typeOf(stored));
 }
 
 const ArrayStorageForm& ArrayIntrinsicEmitter::formToConstruct(const ValueContext& value) const
@@ -259,7 +252,6 @@ CellPointer ArrayIntrinsicEmitter::sourceOrNull(ValueID id)
     case Representation::Double:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
-    case Representation::LiteralString:
         return null;
     case Representation::Unchosen:
     case Representation::RawWord:
@@ -275,15 +267,12 @@ void ArrayIntrinsicEmitter::newArrayOfHoles(const ValueContext& value, Integer l
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
     ArrayAllocationEmitter allocation(generator());
-    // The runtime operation sets this length too, unless `length` is a capacity.
-    bool setsLengthBehindJoin = !(flags & NewArrayWithHolesFlag::lengthIsCapacity);
-    join.add(allocation.allocateArrayOfHoles(value, length, form, slowPath, ElementsBelowLength::Cleared, setsLengthBehindJoin ? LengthIsSetBy::Caller : LengthIsSetBy::Allocation));
+    join.add(allocation.allocateArrayOfHoles(value, length, form, slowPath, ElementsBelowLength::Cleared, LengthIsSetBy::Caller));
 
     m_out.appendTo(slowPath);
     join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { sourceOrNull(source), length, word32(form.indexingType), word32(flags) }, { .isOnRarePath = true }));
     CellPointer array = join.finish();
-    if (setsLengthBehindJoin)
-        allocation.setLengthOfNewArray(array, length);
+    allocation.setLengthOfNewArray(array, length);
     define(value, array);
 }
 
@@ -296,16 +285,32 @@ void ArrayIntrinsicEmitter::generateNewArrayLike(const ValueContext& value)
 {
     const Type& length = typeOf(value->lengthOperand());
     bool isEmpty = length.isInteger() && length.integers == Range::one(0);
-    newArrayOfHoles(value, isEmpty ? integer(0) : integerOperand(value->lengthOperand()), value->sourceOperand(), formToConstruct(value), 0);
-}
+    Integer count = isEmpty ? integer(0) : integerOperand(value->lengthOperand());
+    if (!value->sourceOperand() || findArrayStorageForm(value->arrayStorage())) {
+        newArrayOfHoles(value, count, value->sourceOperand(), formToConstruct(value), 0);
+        return;
+    }
 
-void ArrayIntrinsicEmitter::generateNewArrayWithCapacity(const ValueContext& value)
-{
-    static constexpr int64_t maxFusedArrayCapacity = 268435456;
-    Integer capacity = integerOperand(value->lengthOperand());
-    Integer maxCapacity = integer(maxFusedArrayCapacity);
-    Integer length = select(below(capacity, maxCapacity), capacity, maxCapacity);
-    newArrayOfHoles(value, length, value->sourceOperand(), formToConstruct(value), NewArrayWithHolesFlag::lengthIsCapacity);
+    LBasicBlock slowPath = newBlock();
+    LBasicBlock isMadeOfNoList = newBlock();
+    Join<CellPointer> join(m_out);
+    ArrayAllocationEmitter allocation(generator());
+    CellPointer source = sourceOrNull(value->sourceOperand());
+    branchUnless(Condition(m_out.notNull(source.value())), isMadeOfNoList);
+    branchUnless(hasCellType(source, ArrayType), isMadeOfNoList);
+    std::optional<Integer> roomOfEmptyList;
+    if (isEmpty && value->roomOperand())
+        roomOfEmptyList = integerOperand(value->roomOperand());
+    allocation.allocateListLike(value, source, count, roomOfEmptyList, isMadeOfNoList, scopedLambda<void(CellPointer)>([&](CellPointer list) {
+        join.add(list);
+    }));
+
+    m_out.appendTo(isMadeOfNoList);
+    join.add(allocation.allocateArrayOfHoles(value, count, contiguous, slowPath));
+
+    m_out.appendTo(slowPath);
+    join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { source, count, word32(contiguous.indexingType), word32(0) }, { .isOnRarePath = true }));
+    define(value, join.finish());
 }
 
 Integer ArrayIntrinsicEmitter::lengthOfArrayStoredInto(const ValueContext& value, const ArrayElements& storage)
@@ -336,7 +341,7 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
     branchUnless(below(index, lengthOfArrayStoredInto(value, storage)), otherwise);
     elements().storeRawElement(form, storage, index, *rawElement);
     if (form.holdsCells)
-        barrierAfterStore(value, array, *rawElement, typeOf(stored));
+        barrierAfterStore(value, array, typeOf(stored));
     join.add(boolean(true));
 
     m_out.appendTo(otherwise);
@@ -351,7 +356,6 @@ void ArrayIntrinsicEmitter::generateTryPutIndex(const ValueContext& value)
     define(value, elements().tryStoreElement(value, array, index, value->valueOperand()));
 }
 
-// The loop has no poll and no barrier: it calls nothing, and the caller runs any barrier after it.
 template<typename Functor>
 void ArrayIntrinsicEmitter::forEachPositionBelow(Integer count, const Functor& functor)
 {
@@ -373,7 +377,6 @@ void ArrayIntrinsicEmitter::forEachPositionBelow(Integer count, const Functor& f
     m_out.appendTo(done);
 }
 
-// One test covers both forms that hold boxed values: the distance from the lower one is zero or the single bit by which they differ.
 Condition ArrayIntrinsicEmitter::isOneOfBoxedForms(Word32 mode, IndexingType ofIntegers, IndexingType ofValues)
 {
     IndexingType distance = ofValues - ofIntegers;
@@ -381,8 +384,6 @@ Condition ArrayIntrinsicEmitter::isOneOfBoxedForms(Word32 mode, IndexingType ofI
     return Condition(m_out.testIsZero32(m_out.sub(mode.value(), ofIntegers), ~static_cast<int32_t>(distance)));
 }
 
-// The library has just allocated `array` with contiguous storage for at least `count` elements, and nothing else can reach it yet. `source` belongs to the program.
-// False if `source` has no Int32, Double or Contiguous storage, is shorter than `count`, or holds a hole or undefined below `count`. `array` then has length 0.
 // No barrier: nothing has run since `array` was allocated, so the collector has not marked it. The barrier would have fenced: so a fence keeps these stores in front of the store that hands `array` on.
 void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& value)
 {
@@ -406,7 +407,6 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
             LBasicBlock mayBeGap = newBlock();
             LBasicBlock isValue = newBlock();
             Boxed word(m_out.load64(elements().elementOfUnknownForm(from, position)));
-            // One test catches a hole, which is 0, and undefined, which is two bits. It also catches null, which is one of those bits: mayBeGap lets it through.
             static_assert(!contiguous.hole && JSValue::ValueUndefined == (JSValue::ValueNull | JSValue::UndefinedTag));
             m_out.branch(m_out.testIsZero64(word.value(), ~static_cast<int64_t>(JSValue::ValueUndefined)), rareEdge(mayBeGap), normalEdge(isValue));
 
@@ -427,7 +427,6 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
         branchUnless(belowOrEqual(count, elements().publicLength(from)), otherwise);
         forEachPositionBelow(count, [&](Integer position) {
             Number number = elements().loadRawElement(doubles, from, position).as<Number>();
-            // In this storage NaN means a hole.
             branchUnless(equal(number, number), otherwise);
             m_out.store64(elements().boxRawElement(doubles, number).value(), elements().elementOfUnknownForm(to, position));
         });
@@ -445,9 +444,6 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
     define(value, join.finish());
 }
 
-// `source` holds boxed values that the library read from `array` earlier. `array` belongs to the program, whose code may have run since.
-// The storage kind of an array only widens: Int32, Double, Contiguous. So if `array` is still Int32, every value is an int32 and none is tested.
-// If `array` is Double now, it may have been Int32 then, so each value is tested and converted. False at the first value that is not a number: the library then stores all of them the ordinary way.
 void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
@@ -494,7 +490,6 @@ void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
     define(value, join.finish());
 }
 
-// The library has just allocated `array` with holes up to its length, and nothing else can reach it yet. False, with nothing stored, if its storage does not hold boxed values.
 // No barrier: nothing has run since `array` was allocated, so the collector has not marked it. The barrier would have fenced: so a fence keeps these stores in front of the store that hands `array` on.
 void ArrayIntrinsicEmitter::generateTryFillNewArray(const ValueContext& value)
 {
@@ -515,11 +510,6 @@ void ArrayIntrinsicEmitter::generateTryFillNewArray(const ValueContext& value)
     define(value, join.finish());
 }
 
-void ArrayIntrinsicEmitter::generateGrowNewArray(const ValueContext& value)
-{
-    callVoidOperation(value, RuntimeOperation::GrowNewArray, { in<CellPointer>(value->arrayOperand()), integerOperand(value->lengthOperand()) });
-}
-
 void ArrayIntrinsicEmitter::generateTruncateNewArray(const ValueContext& value)
 {
     static constexpr int64_t smallUnusedCapacity = 8;
@@ -530,7 +520,6 @@ void ArrayIntrinsicEmitter::generateTruncateNewArray(const ValueContext& value)
     static_assert(ArrayWithInt32 + 2 == ArrayWithDouble && ArrayWithDouble + 2 == ArrayWithContiguous, "an array has no mode between these");
     branchUnless(belowOrEqual(sub(elements().indexingMode(array, IndexingShapeAndWritabilityMask), ArrayWithInt32), ArrayWithContiguous - ArrayWithInt32), slowPath);
     ArrayElements storage = elements().elementsOf(array);
-    // If `length` exceeds the current length, the subtraction wraps to more than any length and both tests fail.
     Integer unusedCapacity = sub(elements().publicLength(storage), length);
     Condition leavesLittleUnused = belowOrEqual(unusedCapacity, smallUnusedCapacity);
     branchUnless(logicalOr(leavesLittleUnused, belowOrEqual(unusedCapacity, length)), slowPath);

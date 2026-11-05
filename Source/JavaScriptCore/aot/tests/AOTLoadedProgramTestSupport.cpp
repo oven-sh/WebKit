@@ -88,7 +88,6 @@ Vector<uint8_t> compileProgramText(ASCIILiteral programText, std::initializer_li
     return image;
 }
 
-// The pages after the copy stand for what follows the image in the segment of an executable.
 static std::span<const uint8_t> leakAlignedCopy(std::span<const uint8_t> bytes)
 {
     std::span copy = unsafeMakeSpan(static_cast<uint8_t*>(fastAlignedMalloc(imageAlignment(), bytes.size() + imageAlignment())), bytes.size());
@@ -96,7 +95,6 @@ static std::span<const uint8_t> leakAlignedCopy(std::span<const uint8_t> bytes)
     return copy;
 }
 
-// On Linux, on macOS and on Windows nothing makes the copy executable: the code is mapped from the file, as it is for an executable. The file stays open for as long as the process lives.
 static std::optional<ImageFile> fileToMapCodeFrom(const String& path)
 {
 #if OS(DARWIN) || OS(LINUX)

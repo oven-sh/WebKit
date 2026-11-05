@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTable.h"
 #include "AOTCompiledFrame.h"
+#include "AOTEffectsNet.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
@@ -16,6 +18,7 @@
 #include "AOTObject.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSort.h"
+#include "AOTStubDescriptor.h"
 #include "AOTVMState.h"
 #include "JSCInlines.h"
 #include "LineColumn.h"
@@ -77,6 +80,42 @@ void writeToStandardError(const String& line)
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RuntimeCounts);
+
+void printRowOfEffectsNet(PrintStream& out, unsigned row)
+{
+    if (row == Typed::noRowInEffectsNet)
+        out.print("what Link says of the callee");
+    else if (row >= Typed::firstRowOfBuiltinsInEffectsNet)
+        out.print("built-in:", BuiltinTable::singleton().textOf(BuiltinID(row - Typed::firstRowOfBuiltinsInEffectsNet)));
+    else if (row >= Typed::firstRowOfStubsInEffectsNet)
+        out.print("stub:", descriptorOf(static_cast<StubFamily>(row - Typed::firstRowOfStubsInEffectsNet)).name);
+    else if (row >= Typed::firstRowOfRuntimeOperationsInEffectsNet)
+        out.print("runtime:", nameOf(static_cast<Entry>(row - Typed::firstRowOfRuntimeOperationsInEffectsNet)));
+    else
+        out.print("operation:", Typed::nameOf(static_cast<Typed::Opcode>(row)));
+}
+
+static Lock s_falseRowsOfEffectsLock;
+static Vector<String>& falseRowsOfEffects() WTF_REQUIRES_LOCK(s_falseRowsOfEffectsLock)
+{
+    static NeverDestroyed<Vector<String>> rows;
+    return rows;
+}
+
+bool noteFalseRowOfEffects(const String& said)
+{
+    Locker locker { s_falseRowsOfEffectsLock };
+    if (falseRowsOfEffects().contains(said))
+        return false;
+    falseRowsOfEffects().append(said.isolatedCopy());
+    return true;
+}
+
+std::span<uint8_t> effectsNetExercised()
+{
+    static uint8_t bytes[Typed::numberOfRowsInEffectsNet * Typed::bytesOfRowInEffectsNet];
+    return bytes;
+}
 
 static Lock s_countsLock;
 static Vector<RuntimeCounts*>& countsOfProcess() WTF_REQUIRES_LOCK(s_countsLock)
@@ -163,6 +202,21 @@ void RuntimeCounts::dump(PrintStream& out) const
     for (Entry entry : countedOperations)
         out.println(numberOfCalls(entry), "\toperation:", nameOf(entry));
 
+    std::span<const uint8_t> exercised = effectsNetExercised();
+    static constexpr std::array<ASCIILiteral, Typed::bytesOfRowInEffectsNet> parts { "runs-no-other-code"_s, "throws-nothing"_s, "leaves-heaps-alone"_s, "does-not-collect"_s };
+    for (unsigned byte = 0; byte < exercised.size(); ++byte) {
+        if (!exercised[byte])
+            continue;
+        out.print("1	effects:", parts[byte % Typed::bytesOfRowInEffectsNet], ":");
+        printRowOfEffectsNet(out, byte / Typed::bytesOfRowInEffectsNet);
+        out.println();
+    }
+    {
+        Locker locker { s_falseRowsOfEffectsLock };
+        for (const String& said : falseRowsOfEffects())
+            out.println("1\tfalse-effects:", said);
+    }
+
     Vector<String> mockTransitions = copyToVector(m_mockTransitions.keys());
     AOT::sort(mockTransitions, [](const String& a, const String& b) {
         return codePointCompareLessThan(a, b);
@@ -238,14 +292,12 @@ static String symbolNameOf(const Image& image, uint32_t function)
 
 void writePerfMap(const Image& image)
 {
-    // Each entry point of an executable has an image of its own, and so has each layer of a test run. Whoever starts one adds its functions to the file.
     static Lock lock;
     static bool hasWrittenInThisProcess;
     Locker locker { lock };
     auto file = FilePrintStream::open(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s).utf8(), std::exchange(hasWrittenInThisProcess, true) ? "a"_s : "w"_s);
     if (!file)
         return;
-    // A function is described by the image that runs, and the one that was just added does not run yet.
     SetForScope runningImage(*Image::addressOfCurrentOfThread(), &image);
     const uint8_t* code = image.code().data();
     Vector<std::pair<size_t, String>> symbols;

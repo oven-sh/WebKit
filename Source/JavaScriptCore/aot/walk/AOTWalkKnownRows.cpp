@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Known rows: what the table of built-ins says of a call that no one row was matched for: a row whose code is a function of the library, a conversion to a text, a sort.
-// At a suspension: no row suspends the frame of its caller.
-// Withheld: every door here stands behind BuiltinCalls. The direct call of a function of the library asks DirectCalls as well: callFunctionDirectly().
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -32,12 +28,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 
-// ---- A function of the library behind a row
-
-// Link has not seen the call. What it says of a function whose callers it has counted does not hold of one more: callFunctionDirectly().
 Effects effectsOfLibraryFunctionBehindRow(const Walker& walker, const BuiltinOverload& row)
 {
     const Program& program = walker.program();
@@ -54,13 +46,11 @@ Effects effectsOfLibraryFunctionBehindRow(const Walker& walker, const BuiltinOve
     effects.mayThrow |= ThrowEffect::onlyStackOverflow();
     if (program.builtins().has(BuiltinMark::MayTerminateProcess, row.builtin))
         effects.mayBeTerminated = true;
-    // The error is allocated on the way to the handler.
     effects.merge(declaredBoundOf(NamedEffectSet::Allocates));
     addVariablesThatStandForFields(walker.plan(), effects);
     return effects;
 }
 
-// Only a string among the elements is compared by its characters, and only with a string.
 std::optional<Effects> effectsOfSearchForWhatIsNoString(const TypeArena& types, InlineBuiltin builtin, TypeID searchedOrNotPassed)
 {
     if (builtin != InlineBuiltin::ArrayIndexOf && builtin != InlineBuiltin::ArrayIncludes)
@@ -73,9 +63,6 @@ std::optional<Effects> effectsOfSearchForWhatIsNoString(const TypeArena& types, 
     return declaredBoundOf(InlineBuiltin::ArrayAt);
 }
 
-// ---- Calls that become something cheaper
-
-// As CallInWalkBuiltins::findCallee(). Canonical.
 static BuiltinID findBuiltinCalledForKnownRows(Walker& walker, const BodyValue& call)
 {
     Reference callee = walker.referenceOf(call.calleeOperand());
@@ -109,7 +96,6 @@ static bool usesDecimalRadixForKnownRows(Walker& walker, std::span<const ValueID
     return type.isInt32() && type.integers.isSubsetOf({ 10, 10 });
 }
 
-// The operator folds over a constant, has a form for each kind of primitive and is a part of a concatenation.
 static bool buildToStringOfPrimitiveForKnownRows(Walker& walker, const BodyValue& call, BuiltinID callee)
 {
     const BuiltinTable& table = walker.program().builtins();
@@ -155,7 +141,6 @@ bool buildToStringOfPrimitiveByRows(Walker& walker, const BodyValue& call)
     return callee && buildToStringOfPrimitiveForKnownRows(walker, call, callee);
 }
 
-// A look at a loop types the call by the rows of the built-in. The direct call is typed by what Link has proven of the function, which need not lie within that: widestTypeOfOperation().
 static bool directCallLiesWithinLooksForKnownRows(Walker& walker, const BodyValue& call, FunctionID function)
 {
     if (!walker.isInLoop())
@@ -168,9 +153,6 @@ static bool directCallLiesWithinLooksForKnownRows(Walker& walker, const BodyValu
     return !widest || (given && walker.types().isSubset(given, widest));
 }
 
-// ---- A sort that calls no comparator
-
-// `(a, b) => a - b`, `(a, b) => b - a`: the body is casts, one subtraction of one parameter from the other, and the return of that. Null: it is something else.
 static BuiltinID sortForComparatorThatIsDifferenceForKnownRows(const Walker& walker, FunctionID comparator)
 {
     constexpr OptionSet<FunctionFlags> otherForms { FunctionFlags::IsAsync, FunctionFlags::IsGenerator, FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest };
@@ -203,8 +185,6 @@ static BuiltinID sortForComparatorThatIsDifferenceForKnownRows(const Walker& wal
     return { };
 }
 
-// `list.sort((a, b) => a - b)`. The library has a function that sorts a short list of numbers where it lies, without one call: on numbers nobody sees such a comparator run. It looks at the list itself, and hands every other list to sort().
-// It takes the list and the comparator as its arguments. Null: the call is no such call, or the program does not hold the function.
 static FunctionID findSortThatCallsNoComparatorForKnownRows(Walker& walker, const BodyValue& call, BuiltinID callee)
 {
     const Program& program = walker.program();
@@ -246,16 +226,12 @@ bool mayBeLeafHandedToMethodOfLists(const Walker& walker, TypeID handedOver)
     return !only || walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
 }
 
-// The function object of such a built-in is the closure of that function, so the call enters the same code with the same operands, and spares the way through the value.
 bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call || call.isDoneInPlace() || !walker.has(Mechanism::BuiltinCalls))
         return false;
     Reference callee = walker.referenceOf(call.calleeOperand());
     FunctionID function = callee ? findLibraryFunctionBehindBuiltin(walker, walker.typeOf(callee)) : FunctionID();
-    // `list.map(f)`: the rows name two texts, and what the function object runs takes whatever comes. Outside of loops it is called: copied at every such call, the code of a large application grew by a quarter.
-    // In a loop the text repeats as the loop does. Where `f` calls nobody the rules of copies decide: `f` goes into the run over the vector, and no closure is made on the way through it.
-    // `list.sort(f)`: the function object is native code, and the function that the rows name which these operands reach does what native code does on them.
     MayCopyFunctionCalledDirectly mayCopy = MayCopyFunctionCalledDirectly::Yes;
     bool isFoundByRowsReached = false;
     bool enteredByValue = false;
@@ -265,7 +241,6 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             function = behind.enteredByValue;
             enteredByValue = true;
             Reference handedOver = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
-            // At a call that the unit's own body writes: in the copy of a callee the text would stand once more for each caller.
             mayCopy = walker.isInLoop() && !walker.depthOfCopies() && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
         } else if (!behind.named.isEmpty())
             function = findLibraryFunctionOfRowsReachedBy(walker, call);
@@ -278,7 +253,6 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     Draft written = walker.draftOf(call);
     if (walker.hasFailed())
         return false;
-    // The rows that the call reaches are those of a list as its class makes it and a comparator that is a function.
     if (FunctionID withoutCalls = isFoundByRowsReached ? findSortThatCallsNoComparatorForKnownRows(walker, call, findBuiltinCalledForKnownRows(walker, call)) : FunctionID(); withoutCalls && directCallLiesWithinLooksForKnownRows(walker, call, withoutCalls)) {
         Reference listAndComparator[] { written.thisValueOperand(), written.argumentsOperands()[0] };
         if (callFunctionDirectly(walker, call, withoutCalls, Reference(), listAndComparator)) {
@@ -287,7 +261,6 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             return true;
         }
     }
-    // The rows name the text on a list for the row of lists alone.
     FunctionID reached = enteredByValue && mayCopy == MayCopyFunctionCalledDirectly::Yes ? findLibraryFunctionOfRowsReachedBy(walker, call) : FunctionID();
     walker.noteThatCopyMakesNewList(reached && reached != function ? function : FunctionID(), written.thisValueOperand());
     bool isBuilt = callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), mayCopy);
@@ -296,8 +269,6 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
         walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);
     return isBuilt;
 }
-
-// ---- Reads
 
 bool isPrivateAliasOfBuiltinMember(const Program& program, PropertyKeyID key)
 {

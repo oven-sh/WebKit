@@ -21,7 +21,6 @@ struct AccessorLaidInField {
     friend constexpr auto operator<=>(const AccessorLaidInField&, const AccessorLaidInField&) = default;
 };
 
-// Behind writeAppendedFields() too, and by itself: LinkTables::accessorsExpectedInFields and keysOfAccessorsExpectedInFields, out of LinkFlow::accessorsLaidInFields alone.
 void writeAccessorsExpectedInFields(const LinkFlow&, LinkTables&);
 
 } } } // namespace JSC::AOT::Typed

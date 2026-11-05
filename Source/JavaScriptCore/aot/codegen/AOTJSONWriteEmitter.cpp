@@ -22,7 +22,6 @@ static_assert(StringBuilderEmitter::maxInlineDigits <= jsonIntegerBytes);
 static_assert(StringBuilderEmitter::maxInlineDigits <= jsonNumberBytes);
 static_assert(sizeof(uint32_t) + sizeof(uint8_t) <= jsonBooleanBytes);
 
-// Some of the room may stay unused, so near the longest text the run time is asked, which holds what is committed against the longest string later.
 void JSONWriteEmitter::generateStringBuilderReserve(const ValueContext& value)
 {
     CellPointer builder = builderOf(value);
@@ -79,7 +78,6 @@ void JSONWriteEmitter::generateJSONAppendToken(const ValueContext& value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Two stores and no branch: "true" or "fals", then the "e" that only "false" keeps.
 void JSONWriteEmitter::generateJSONAppendBoolean(const ValueContext& value)
 {
     Pointer cursor = cursorOf(value);
@@ -105,7 +103,6 @@ void JSONWriteEmitter::appendNumber(const ValueContext& value, bool isInteger)
         return;
     }
 
-    // Minus zero compares equal to zero and is written as "0". NaN and what no integer holds compare unequal to whatever the conversion makes of them.
     Number appended = in<Number>(value->valueOperand());
     Integer whole = emitter<ConversionEmitter>().toInteger(appended);
     Condition isWhole = equal(toNumber(whole), appended);
@@ -151,7 +148,6 @@ void JSONWriteEmitter::generateJSONAppendObject(const ValueContext& value)
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
         return;
     }
-    // In the order of SerializerParameter.
     Operand arguments[] = { in<CellPointer>(value->objectOperand()), builderOf(value), low32(integerOf(value->levelsOperand())) };
     define(value, emitter<CallEmitter>().callDirect(value, serializer, arguments));
 }
@@ -161,8 +157,6 @@ void JSONWriteEmitter::generateJSONHasStackSpace(const ValueContext& value)
     ptrdiff_t offsetOfMirror = value->failsAtWatchedLevels() ? AOT_INSTANCE_OFFSET(jsonLevels.limit) : AOT_INSTANCE_OFFSET(stackMirror);
     TypedPointer limit = instanceField(m_heaps.entire(AbstractHeap::RuntimeState), offsetOfMirror + StackManager::Mirror::offsetOfSoftStackLimit());
     Integer softStackLimit(m_out.load64(limit));
-    // The frame pointer is read where it is compared. A frame that was saved goes on at another address, so nothing that is computed from the pointer is kept.
-    // The room is taken off the pointer: the limit of levels that are watched is the highest address, and nothing can be added to that.
     Integer lowestAddressNeeded(m_out.sub(m_out.framePointer(), m_out.constInt64(stackReservedBelowJSONLevels)));
     defineTest(value, aboveOrEqual(lowestAddressNeeded, softStackLimit));
 }

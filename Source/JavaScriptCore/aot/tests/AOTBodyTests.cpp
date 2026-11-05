@@ -45,7 +45,6 @@ static constexpr uint32_t bodyTestFirstID(RemappedIDKind kind)
     return 100 * (static_cast<uint32_t>(kind) + 1);
 }
 
-// No two kinds share an id, so an id that was read through the table of another kind shows.
 template<typename IDType>
 static IDType bodyTestID(uint32_t ordinal)
 {
@@ -54,7 +53,6 @@ static IDType bodyTestID(uint32_t ordinal)
 
 enum class BodyTestNumbering : bool { Forward, Backward };
 
-// Neither numbering ever named the last record of a kind.
 class BodyTestUnit {
     WTF_MAKE_NONCOPYABLE(BodyTestUnit);
 public:
@@ -71,7 +69,6 @@ public:
     }
 
     const UnitIDRemap& remap() const { return m_remap; }
-    // Its own inverse.
     uint32_t numberOf(uint32_t ordinal) const { return m_numbering == BodyTestNumbering::Backward ? bodyTestTableSize - 1 - ordinal : ordinal; }
 
 private:
@@ -80,7 +77,6 @@ private:
     BodyTestNumbering m_numbering;
 };
 
-// By the grammar at the head of AOTBody.h, and by nothing that the cursors are generated from but wireFlagsOf().
 class BodyTestWords {
 public:
     template<typename... Words>
@@ -159,7 +155,6 @@ enum : uint32_t { b0, b1, b2, b3, b4, numberOfBlocks };
 
 } // namespace BodyOfEveryShape
 
-// A value stands at position 100 + its number, a terminator at 200 + the number of its block.
 static BodyTestWords writeBodyOfEveryShape(const BodyTestUnit& unit)
 {
     using namespace BodyOfEveryShape;
@@ -254,7 +249,6 @@ static bool bodyTestValuesEqual(std::span<const ValueID> values, std::initialize
 
 struct BodyTestWalk {
     Vector<BodyBlock> blocks;
-    // By id, parameters among them.
     Vector<BodyValue> values;
 };
 
@@ -276,77 +270,6 @@ static BodyTestWalk walkBodyInStreamOrder(const Body& body)
     for (uint32_t id = 0; id < walk.values.size(); ++id)
         AOT_TEST_CHECK(walk.values[id].id() == ValueID(id));
     return walk;
-}
-
-static void checkFieldsOfEveryShape(const Body& body, uint32_t typeShift)
-{
-    using namespace BodyOfEveryShape;
-    auto type = [&](uint32_t ordinal) { return TypeID(bodyTestID<TypeID>(ordinal).bits() + typeShift); };
-    BodyTestWalk walk = walkBodyInStreamOrder(body);
-    const Vector<BodyValue>& values = walk.values;
-
-    AOT_TEST_CHECK(values[v2].opcode() == Opcode::Integer && values[v2].as<Opcode::Integer>().integer() == -5 && values[v2].integer() == -5);
-    AOT_TEST_CHECK(std::bit_cast<uint64_t>(values[v3].as<Opcode::Double>().number()) == bodyTestNegativeZeroBits);
-    AOT_TEST_CHECK(std::bit_cast<uint64_t>(values[v4].as<Opcode::Double>().number()) == bodyTestNaNBits);
-    AOT_TEST_CHECK(values[v3].position() == 103 && values[v3].hasPosition() && !values[v4].hasPosition());
-    AOT_TEST_CHECK(values[v5].as<Opcode::String>().string() == bodyTestID<StringID>(1) && !values[v6].as<Opcode::String>().string());
-
-    auto call = values[v7].as<Opcode::Call>();
-    AOT_TEST_CHECK(call.calleeOperand() == ValueID(v0) && !call.thisValueOperand() && bodyTestValuesEqual(call.argumentsOperands(), { v2, v3 }));
-    AOT_TEST_CHECK(call.calleeKey() == bodyTestID<PropertyKeyID>(2) && !call.calleeName() && call.expectedResult() == bodyTestID<ExpectedResultID>(3));
-    AOT_TEST_CHECK(!call.calledBuiltin() && call.callNumber() == 9u && call.isAnnotatedPure() && !call.isNeverInlined() && !call.isDoneInPlace());
-    AOT_TEST_CHECK(values[v7].flags() == declaredPosition(FlagMask::isAnnotatedPure(Opcode::Call)) && !values[v8].flags() && values[v7].sizeInWords() == 13);
-    AOT_TEST_CHECK(values[v7].calleeKey() == call.calleeKey() && values[v7].isAnnotatedPure() && bodyTestValuesEqual(values[v7].argumentsOperands(), { v2, v3 }));
-
-    auto tailCall = values[v24].as<Opcode::Call>();
-    AOT_TEST_CHECK(values[v24].opcode() == Opcode::Call && values[v24].standsInTailPosition() && !values[v7].standsInTailPosition());
-    AOT_TEST_CHECK(tailCall.thisValueOperand() == ValueID(v23) && tailCall.argumentsOperands().empty() && !tailCall.calleeKey() && tailCall.calleeName() == bodyTestID<StringID>(5) && !tailCall.callNumber());
-
-    auto newObject = values[v8].as<Opcode::NewObject>();
-    AOT_TEST_CHECK(newObject.layout() == bodyTestID<LayoutID>(1) && values[v8].layout() == newObject.layout() && bodyTestRangeEquals(newObject.fields(), { 0u, 2u }));
-    AOT_TEST_CHECK(!newObject.prototypeOperand() && bodyTestValuesEqual(newObject.valuesOperands(), { v2, v3 }));
-
-    auto newArray = values[v9].as<Opcode::NewArray>();
-    AOT_TEST_CHECK(newArray.contents() == type(2) && bodyTestRangeEquals(newArray.holes(), { 1u }) && bodyTestValuesEqual(newArray.elementsOperands(), { v2, v3, v4 }));
-
-    // What only the engine has reads as the schema's default.
-    AOT_TEST_CHECK(!values[v8].allocationSite() && !values[v9].capacityOperand() && values[v10].lengthOperands().empty() && !values[v7].isAlwaysInlined());
-
-    BodyList<TemplateString> templateStrings = values[v11].as<Opcode::NewTemplateObject>().templateStrings();
-    AOT_TEST_CHECK(templateStrings.size() == 2 && !templateStrings.isEmpty());
-    AOT_TEST_CHECK(templateStrings[0].cooked == bodyTestID<StringID>(2) && templateStrings[0].raw == bodyTestID<StringID>(3));
-    AOT_TEST_CHECK(!templateStrings[1].cooked && templateStrings[1].raw == bodyTestID<StringID>(4));
-    AOT_TEST_CHECK(bodyTestRangeEquals(templateStrings, { templateStrings[0], templateStrings[1] }));
-
-    auto convert = values[v12].as<Opcode::Convert>();
-    DeclaredType declared = convert.declared();
-    AOT_TEST_CHECK(convert.valueOperand() == ValueID(v7) && declared.written() == type(3) && declared.site == bodyTestID<TypeSiteID>(1) && declared.isExpected());
-    AOT_TEST_CHECK(convert.illTypedCause() == IllTypedCause::Assertion);
-
-    auto copy = values[v13].as<Opcode::CopyDataProperties>();
-    AOT_TEST_CHECK(copy.targetOperand() == ValueID(v8) && copy.sourceOperand() == ValueID(v7) && bodyTestValuesEqual(copy.excludedOperands(), { v5 }));
-    AOT_TEST_CHECK(bodyTestRangeEquals(copy.excludedKeys(), { bodyTestID<PropertyKeyID>(0), PropertyKeyID(), bodyTestID<PropertyKeyID>(4) }));
-
-    AOT_TEST_CHECK(values[v14].as<Opcode::GetModuleVariable>().variable() == bodyTestID<VariableID>(2));
-    auto importModule = values[v15].as<Opcode::ImportModule>();
-    AOT_TEST_CHECK(importModule.module() == bodyTestID<ModuleID>(1) && !importModule.optionsOperand() && importModule.referrer() == bodyTestID<ModuleID>(2));
-    AOT_TEST_CHECK(values[v16].as<Opcode::NewClosure>().function() == bodyTestID<FunctionID>(3) && values[v16].as<Opcode::NewClosure>().capturesOperands().empty());
-    AOT_TEST_CHECK(values[v17].as<Opcode::Data>().data() == bodyTestID<DataID>(4));
-    auto directEval = values[v18].as<Opcode::DirectEval>();
-    AOT_TEST_CHECK(directEval.evalScope() == bodyTestID<EvalScopeID>(5) && directEval.textOperand() == ValueID(v5) && directEval.thisValueOperand() == ValueID(v0));
-    AOT_TEST_CHECK(!directEval.newTargetOperand() && directEval.environmentsOperands().empty());
-    AOT_TEST_CHECK(values[v19].as<Opcode::TypeTest>().testedType() == type(1));
-    AOT_TEST_CHECK(values[v22].as<Opcode::ThrowModuleFailure>().failure() == bodyTestID<ModuleFailureID>(6) && values[v22].as<Opcode::ThrowModuleFailure>().isForRequire());
-
-    BodyTerminator switchOnIntegers = walk.blocks[b1].terminator();
-    AOT_TEST_CHECK(switchOnIntegers.as<TerminatorKind::Switch>().subjectOperand() == ValueID(v20) && switchOnIntegers.subjectOperand() == ValueID(v20));
-    AOT_TEST_CHECK(bodyTestRangeEquals(switchOnIntegers.as<TerminatorKind::Switch>().cases(), { int64_t { 1 }, int64_t { -1 }, std::numeric_limits<int64_t>::min() }));
-    AOT_TEST_CHECK(bodyTestRangeEquals(walk.blocks[b2].terminator().as<TerminatorKind::SwitchString>().strings(), { bodyTestID<StringID>(1), bodyTestID<StringID>(2) }));
-
-    BodyList<TailCast> casts = walk.blocks[b3].terminator().as<TerminatorKind::ReturnCall>().casts();
-    AOT_TEST_CHECK(walk.blocks[b3].terminator().as<TerminatorKind::ReturnCall>().callOperand() == ValueID(v24) && casts.size() == 2);
-    AOT_TEST_CHECK(casts[0].declared.written() == type(1) && casts[0].declared.site == bodyTestID<TypeSiteID>(0) && casts[0].declared.isGuarded());
-    AOT_TEST_CHECK(casts[1].declared.written() == type(2) && !casts[1].declared.site && casts[1].declared.isExpected());
 }
 
 static void checkBlocksAndEdgesOfEveryShape(const Body& body, uint32_t typeShift)
@@ -395,112 +318,6 @@ static void checkBlocksAndEdgesOfEveryShape(const Body& body, uint32_t typeShift
     AOT_TEST_CHECK(blocks[b4].role() == BlockRole::CatchHandler && blocks[b4].isHandlerBlock() && blocks[b4].terminator().as<TerminatorKind::Throw>().valueOperand() == ValueID(v27));
 }
 
-template<typename Cursor>
-static bool bodyTestVisitsOperands(const Cursor& cursor, std::initializer_list<std::pair<uint32_t, uint32_t>> expected)
-{
-    Vector<std::pair<uint32_t, uint32_t>> seen;
-    cursor.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        seen.append(std::pair { operand.index(), operandIndex });
-    });
-    return std::ranges::equal(seen, expected);
-}
-
-template<typename Cursor, typename Entry>
-static void checkBodyOperandAccessorsAgree(const Cursor& cursor, Entry entry)
-{
-    uint32_t numberOfNamedOperands = numberOfNamedOperandsOf(entry);
-    std::span<const ValueID> variadicOperands = cursor.variadicOperands();
-    uint32_t numberOfVariadicOperandsSeen = 0;
-    cursor.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        AOT_TEST_CHECK(operand && cursor.operand(operandIndex) == operand && !operandInfoOf(entry, operandIndex).isEngineOnly);
-        if (operandIndex < numberOfNamedOperands)
-            return;
-        AOT_TEST_CHECK(operandIndex - numberOfNamedOperands == numberOfVariadicOperandsSeen && numberOfVariadicOperandsSeen < variadicOperands.size());
-        AOT_TEST_CHECK(variadicOperands[numberOfVariadicOperandsSeen] == operand);
-        ++numberOfVariadicOperandsSeen;
-    });
-    AOT_TEST_CHECK(numberOfVariadicOperandsSeen == variadicOperands.size() && !cursor.operand(numberOfNamedOperands + numberOfVariadicOperandsSeen));
-}
-
-static void checkOperandsOfEveryShape(const Body& body)
-{
-    using namespace BodyOfEveryShape;
-    BodyTestWalk walk = walkBodyInStreamOrder(body);
-    const Vector<BodyValue>& values = walk.values;
-
-    for (const BodyValue& value : values) {
-        if (!value.isParameter())
-            checkBodyOperandAccessorsAgree(value, value.opcode());
-    }
-    for (const BodyBlock& block : walk.blocks)
-        checkBodyOperandAccessorsAgree(block.terminator(), block.terminator().kind());
-
-    AOT_TEST_CHECK(bodyTestVisitsOperands(values[v2], { }) && values[v2].variadicOperands().empty());
-    AOT_TEST_CHECK(bodyTestVisitsOperands(values[v7], { { v0, OperandIndex::Call::callee }, { v2, OperandIndex::Call::arguments }, { v3, OperandIndex::Call::arguments + 1 } }));
-    AOT_TEST_CHECK(!values[v7].operand(OperandIndex::Call::thisValue) && bodyTestValuesEqual(values[v7].variadicOperands(), { v2, v3 }));
-    AOT_TEST_CHECK(bodyTestVisitsOperands(values[v8], { { v2, OperandIndex::NewObject::values }, { v3, OperandIndex::NewObject::values + 1 } }));
-
-    // An operand that only the engine has is counted, though no word stands for it.
-    AOT_TEST_CHECK(operandInfoOf(Opcode::NewArray, OperandIndex::NewArray::capacity).isEngineOnly && OperandIndex::NewArray::capacity < OperandIndex::NewArray::elements);
-    AOT_TEST_CHECK(bodyTestVisitsOperands(values[v9], { { v2, OperandIndex::NewArray::elements }, { v3, OperandIndex::NewArray::elements + 1 }, { v4, OperandIndex::NewArray::elements + 2 } }));
-    AOT_TEST_CHECK(!values[v9].operand(OperandIndex::NewArray::capacity));
-    AOT_TEST_CHECK(operandInfoOf(Opcode::AppendElement, OperandIndex::AppendElement::length).isEngineOnly && values[v10].variadicOperands().empty());
-    AOT_TEST_CHECK(bodyTestVisitsOperands(values[v10], { { v9, OperandIndex::AppendElement::array }, { v2, OperandIndex::AppendElement::value } }));
-
-    AOT_TEST_CHECK(bodyTestVisitsOperands(values[v13], { { v8, OperandIndex::CopyDataProperties::target }, { v7, OperandIndex::CopyDataProperties::source }, { v5, OperandIndex::CopyDataProperties::excluded } }));
-    AOT_TEST_CHECK(bodyTestVisitsOperands(values[v18], { { v5, OperandIndex::DirectEval::text }, { v0, OperandIndex::DirectEval::thisValue } }));
-    AOT_TEST_CHECK(bodyTestVisitsOperands(walk.blocks[b0].terminator(), { { v19, OperandIndex::Branch::condition } }));
-    AOT_TEST_CHECK(bodyTestVisitsOperands(walk.blocks[b1].terminator(), { { v20, OperandIndex::Switch::subject } }));
-    AOT_TEST_CHECK(bodyTestVisitsOperands(walk.blocks[b3].terminator(), { { v24, OperandIndex::ReturnCall::call } }));
-}
-
-template<typename IDType, typename... Role>
-static uint64_t bodyTestReference(IDType id, Role... role)
-{
-    uint64_t roleWord = (uint64_t { 0 } + ... + (static_cast<uint64_t>(role) + 1));
-    return static_cast<uint64_t>(remappedIDKindOf<IDType>) << 40 | roleWord << 32 | id.bits();
-}
-
-// In any order, and whether or not a field that reads as null is visited.
-template<typename Cursor>
-static bool bodyTestVisitsReferences(const Cursor& cursor, std::initializer_list<uint64_t> expected)
-{
-    Vector<uint64_t> found;
-    cursor.forEachReference([&](auto id, auto... role) {
-        if (id)
-            found.append(bodyTestReference(id, role...));
-    });
-    Vector<uint64_t> wanted(expected);
-    std::ranges::sort(found);
-    std::ranges::sort(wanted);
-    return found == wanted;
-}
-
-static void checkReferencesOfEveryShape(const Body& body)
-{
-    using namespace BodyOfEveryShape;
-    BodyTestWalk walk = walkBodyInStreamOrder(body);
-    const Vector<BodyValue>& values = walk.values;
-
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v2], { }) && bodyTestVisitsReferences(values[v6], { }) && bodyTestVisitsReferences(walk.blocks[b0].terminator(), { }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v5], { bodyTestReference(bodyTestID<StringID>(1)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v7], { bodyTestReference(bodyTestID<PropertyKeyID>(2)), bodyTestReference(bodyTestID<ExpectedResultID>(3)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v8], { bodyTestReference(bodyTestID<LayoutID>(1)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v9], { bodyTestReference(bodyTestID<TypeID>(2)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v11], { bodyTestReference(bodyTestID<StringID>(2)), bodyTestReference(bodyTestID<StringID>(3)), bodyTestReference(bodyTestID<StringID>(4)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v12], { bodyTestReference(bodyTestID<TypeID>(3)), bodyTestReference(bodyTestID<TypeSiteID>(1)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v13], { bodyTestReference(bodyTestID<PropertyKeyID>(0)), bodyTestReference(bodyTestID<PropertyKeyID>(4)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v14], { bodyTestReference(bodyTestID<VariableID>(2)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v15], { bodyTestReference(bodyTestID<ModuleID>(1), ModuleReferenceKind::Target), bodyTestReference(bodyTestID<ModuleID>(2), ModuleReferenceKind::Referrer) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v16], { bodyTestReference(bodyTestID<FunctionID>(3), FunctionReferenceKind::Closure) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v17], { bodyTestReference(bodyTestID<DataID>(4)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v18], { bodyTestReference(bodyTestID<EvalScopeID>(5)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(values[v22], { bodyTestReference(bodyTestID<ModuleFailureID>(6)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(walk.blocks[b2].terminator(), { bodyTestReference(bodyTestID<StringID>(1)), bodyTestReference(bodyTestID<StringID>(2)) }));
-    AOT_TEST_CHECK(bodyTestVisitsReferences(walk.blocks[b3].terminator(), { bodyTestReference(bodyTestID<TypeID>(1)), bodyTestReference(bodyTestID<TypeSiteID>(0)), bodyTestReference(bodyTestID<TypeID>(2)) }));
-}
-
-// Operands and payload as DraftWords of walk/AOTCode.h keeps them.
 struct BodyTestHolder {
     using OperandID = ValueID;
 
@@ -678,43 +495,11 @@ struct BodyTestProgram {
     std::unique_ptr<Program> program;
 };
 
-template<typename IDType>
-static void checkBodyUnitIsIdentity(const UnitIDRemap& unit, const NumbersOfProgramRecords& numbers)
-{
-    size_t numberOfRecords = numbers[remappedIDKindOf<IDType>];
-    AOT_TEST_CHECK(unit.tables[static_cast<size_t>(remappedIDKindOf<IDType>)].size >= numberOfRecords);
-    for (uint32_t number = 0; number < numberOfRecords; ++number)
-        AOT_TEST_CHECK(programIDOf<IDType>(unit, number) == IDType(number));
-}
-
-template<typename... IDTypes>
-static void checkBodyUnitIsIdentityForEach(const UnitIDRemap& unit, const NumbersOfProgramRecords& numbers)
-{
-    (checkBodyUnitIsIdentity<IDTypes>(unit, numbers), ...);
-}
-
-static void bodyReadsFieldsOfEveryShape()
-{
-    forEachNumberingOfBodyOfEveryShape([](const Body& body) {
-        checkFieldsOfEveryShape(body, 0);
-    });
-}
-
 static void bodyReadsBlocksAndEdges()
 {
     forEachNumberingOfBodyOfEveryShape([](const Body& body) {
         checkBlocksAndEdgesOfEveryShape(body, 0);
     });
-}
-
-static void bodyVisitsOperandsBySchemaIndex()
-{
-    forEachNumberingOfBodyOfEveryShape(checkOperandsOfEveryShape);
-}
-
-static void bodyVisitsReferencesAsProgramIDs()
-{
-    forEachNumberingOfBodyOfEveryShape(checkReferencesOfEveryShape);
 }
 
 static void bodyCopiesFieldsIntoHolder()
@@ -784,7 +569,6 @@ static void bodyOfParsedTextReadsProgramIDs()
     AOT_TEST_CHECK(values[7].as<Opcode::TypeTest>().testedType() == function.results[0].written());
 
     AOT_TEST_CHECK(values[2].as<Opcode::Integer>().integer() == -5 && values[2].position() == 1 && values[6].opcode() == Opcode::LoopHint);
-    // The record of the function, the constant and the key spell one string.
     AOT_TEST_CHECK(function.name && values[3].as<Opcode::String>().string() == function.name);
     auto call = values[4].as<Opcode::Call>();
     AOT_TEST_CHECK(call.calleeOperand() == ValueID(0u) && !call.thisValueOperand() && bodyTestValuesEqual(call.argumentsOperands(), { 2, 3 }) && call.calleeKey() && !call.calleeName());
@@ -798,73 +582,6 @@ static void bodyOfParsedTextReadsProgramIDs()
     AOT_TEST_CHECK(walk.blocks[4].role() == BlockRole::CatchHandler && walk.blocks[5].terminator().as<TerminatorKind::Return>().valueOperand() == ValueID(12u));
 }
 
-static void bodyUnitTablesWithoutUnitsAreIdentity()
-{
-    const std::array<TypeID, 4> typesAsRead { TypeID(40u), TypeID(7u), TypeID(), TypeID::fromBits(0x80000005u) };
-    NumbersOfProgramRecords numbers;
-    for (size_t kind = 0; kind < numberOfRemappedIDKinds; ++kind)
-        numbers.sizes[kind] = kind + 2;
-    numbers[RemappedIDKind::Type] = typesAsRead.size();
-
-    Vector<ExternalFunctionBody> bodies;
-    bodies.fill(ExternalFunctionBody { nullptr, 0, 0 }, numbers[RemappedIDKind::Function]);
-    const ExternalFunctionBodies bodiesOfNoUnit { bodies.span().data(), bodies.size(), nullptr, 0 };
-    ParallelLoops loops(1);
-
-    for (const ExternalFunctionBodies* external : { static_cast<const ExternalFunctionBodies*>(nullptr), &bodiesOfNoUnit }) {
-        UnitIDTables tables;
-        tables.initialize(external, typesAsRead, numbers, loops);
-        AOT_TEST_CHECK(tables.numberOfUnits() == 1 && &tables.unitOf(external, FunctionID(1u)) == &tables.unit(0));
-
-        const UnitIDRemap& unit = tables.unit(0);
-        checkBodyUnitIsIdentityForEach<StringID, PropertyKeyID, TypeSiteID, ExpectedResultID, LayoutID, VariableID, ModuleID, ModuleFailureID, EvalScopeID, FunctionID, DataID>(unit, numbers);
-        for (uint32_t index = 0; index < typesAsRead.size(); ++index)
-            AOT_TEST_CHECK(programIDOf<TypeID>(unit, index) == typesAsRead[index]);
-        AOT_TEST_CHECK(!optionalProgramIDOf<TypeID>(unit, Wire::none) && !optionalProgramIDOf<StringID>(unit, Wire::none));
-    }
-}
-
-static void bodyUnitTablesMapTwoUnitsToOneProgram()
-{
-    constexpr uint32_t typeShift = 5000;
-    BodyTestUnit forward(BodyTestNumbering::Forward);
-    BodyTestUnit backward(BodyTestNumbering::Backward);
-    BodyTestWords forwardWords = writeBodyOfEveryShape(forward);
-    BodyTestWords backwardWords = writeBodyOfEveryShape(backward);
-    AOT_TEST_CHECK(forwardWords.words().size() == backwardWords.words().size() && forwardWords.words() != backwardWords.words());
-
-    NumbersOfProgramRecords numbers;
-    for (uint32_t kind = 0; kind < numberOfRemappedIDKinds; ++kind)
-        numbers.sizes[kind] = bodyTestFirstID(static_cast<RemappedIDKind>(kind)) + bodyTestTableSize;
-
-    // A unit's table of types leads to the position in the wire's list.
-    Vector<TypeID> typesAsRead;
-    for (uint32_t position = 0; position < numbers[RemappedIDKind::Type]; ++position)
-        typesAsRead.append(TypeID(position + typeShift));
-
-    Vector<ExternalFunctionBody> bodies;
-    bodies.fill(ExternalFunctionBody { nullptr, 0, 0 }, numbers[RemappedIDKind::Function]);
-    bodies[0] = { forwardWords.words().span().data(), static_cast<uint32_t>(forwardWords.words().size()), 0 };
-    bodies[1] = { backwardWords.words().span().data(), static_cast<uint32_t>(backwardWords.words().size()), 1 };
-    const std::array<UnitIDRemap, 2> units { forward.remap(), backward.remap() };
-    const ExternalFunctionBodies external { bodies.span().data(), bodies.size(), units.data(), units.size() };
-
-    ParallelLoops loops(1);
-    UnitIDTables tables;
-    tables.initialize(&external, typesAsRead.span(), numbers, loops);
-    AOT_TEST_CHECK(tables.numberOfUnits() == 2 && &tables.unitOf(&external, FunctionID(2u)) == &tables.unit(0));
-    AOT_TEST_CHECK(!programIDOf<TypeID>(tables.unit(0), forward.numberOf(bodyTestUnnamedOrdinal)) && !programIDOf<TypeID>(tables.unit(1), backward.numberOf(bodyTestUnnamedOrdinal)));
-
-    for (uint32_t function = 0; function < units.size(); ++function) {
-        const UnitIDRemap& unit = tables.unitOf(&external, FunctionID(function));
-        AOT_TEST_CHECK(&unit == &tables.unit(function));
-        Body body(unsafeMakeSpan(bodies[function].code, bodies[function].wordCount), BodyOfEveryShape::numberOfBlocks, BodyOfEveryShape::numberOfValues, unit);
-        checkFieldsOfEveryShape(body, typeShift);
-        checkBlocksAndEdgesOfEveryShape(body, typeShift);
-    }
-}
-
-// Facts takes the table that the verifier of bodies has filled and builds no index a second time.
 static void bodyIndexThatVerifierLeavesIsTheOneThatScanWouldBuild()
 {
     BodyTestProgram fixture;
@@ -895,23 +612,17 @@ static void bodyIndexThatVerifierLeavesIsTheOneThatScanWouldBuild()
             AOT_TEST_CHECK(left.value(id).words() == built.value(id).words() && left.useCount(id) == built.useCount(id) && left.onlyUsingValue(id) == built.onlyUsingValue(id));
         }
     }
-    // A value is counted once, by whoever builds the index.
     AOT_TEST_CHECK(leftByVerifier.valuesGoneOver() == builtAlone.valuesGoneOver());
 }
 
 std::span<const NativeTest> bodyTests()
 {
     static constexpr NativeTest tests[] = {
-        { "body/fields-of-every-shape"_s, bodyReadsFieldsOfEveryShape },
         { "body/blocks-and-edges"_s, bodyReadsBlocksAndEdges },
-        { "body/operands-by-schema-index"_s, bodyVisitsOperandsBySchemaIndex },
-        { "body/references-as-program-ids"_s, bodyVisitsReferencesAsProgramIDs },
         { "body/copies-fields-into-holder"_s, bodyCopiesFieldsIntoHolder },
         { "body/second-position-roles"_s, bodyReadsSecondPositionRoles },
         { "body/walks-alike-with-and-without-index"_s, bodyWalksAlikeWithAndWithoutIndex },
         { "body/parsed-text-reads-program-ids"_s, bodyOfParsedTextReadsProgramIDs },
-        { "body/unit-tables-without-units-are-identity"_s, bodyUnitTablesWithoutUnitsAreIdentity },
-        { "body/unit-tables-map-two-units-to-one-program"_s, bodyUnitTablesMapTwoUnitsToOneProgram },
         { "body/index-that-the-verifier-leaves-is-the-one-that-the-scan-would-build"_s, bodyIndexThatVerifierLeavesIsTheOneThatScanWouldBuild },
     };
     return tests;

@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Handlers, of a text that lies in a builder: `try { for (..) s += f(x) } catch { log(s) }`, `for (..) { try { s += f(x) } catch { n++ } }`.
-// At a throw: wherever a block can throw, the builder holds the text at the head of the block, which is what the handler edge names: nothing that may throw stands behind an append in its block, and an append of several parts that fails half way is rolled back.
-// A handler block in the loop goes on with the builder. One behind the loop is handed a string, which is made behind the throw, in a block of Code's own that throws on. One that is handed nothing lets the builder go.
-// At a suspension: no text lies in a builder across one. Withheld: no text under a handler lies in a builder.
-
 #include "config.h"
 #include "AOTWalkTextBuilders.h"
 
@@ -28,11 +23,8 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 enum class HandlerOfTextInBuilder : uint8_t {
-    // It lies behind the loop and is handed no name of the text, which is dead there.
     LetsTextGo,
-    // It lies behind the loop and is handed the text.
     TakesString,
-    // It lies in the loop.
     GoesOnInBuilder,
 };
 
@@ -55,7 +47,6 @@ static HandlerOfTextInBuilder classifyHandlerInTextBuilderHandlers(const BodyInd
     return HandlerOfTextInBuilder::LetsTextGo;
 }
 
-// Under a handler whatever may collect may throw for lack of memory.
 static bool mayThrowUnderHandlerInTextBuilderHandlers(const Effects& bound)
 {
     return bound.mayThrow || bound.mayCollect;
@@ -63,8 +54,6 @@ static bool mayThrowUnderHandlerInTextBuilderHandlers(const Effects& bound)
 
 namespace {
 
-// One forward scan of the blocks of the loop, for one text whose names are given. It follows the edges to handlers, which findGrowingTexts() does not,
-// and holds every block that it comes to, the handler blocks and what only they lead to among them, to the laws (a) to (c) of that scan.
 class HandlersOfTextScan {
     WTF_MAKE_NONCOPYABLE(HandlersOfTextScan);
 public:
@@ -97,7 +86,6 @@ public:
     }
 
 private:
-    // Of the names that are live at the head of a block: whether there are any, and the one version that they all have.
     struct NamesLiveAtHead {
         BlockID block;
         ValueID version;
@@ -137,7 +125,6 @@ private:
         return !live.isAnyLive || (!live.haveSeveralVersions && live.version == version);
     }
 
-    // `taking`: the parameter of the block that the edge hands the text. Of the parameters of the block that one, and no other, names the text.
     bool arriveAt(BodyBlock entered, std::optional<uint32_t> taking, ValueID arriving)
     {
         if (taking && *taking >= entered.numberOfParameters())
@@ -181,7 +168,6 @@ private:
             std::optional<BodyEdgeResult> result = m_index.edgeResult(terminator, targetIndex, target, proofIndex);
             if (!result)
                 continue;
-            // Both edges of a branch on a test bear a proof, whether or not anybody reads the parameter that takes it.
             if (m_index.isUnused(result->parameter) ? !mentionsOnly(result->subject, current) : !passOver(result->subject, static_cast<uint32_t>(arguments.size()) + proofIndex))
                 return false;
         }
@@ -192,7 +178,6 @@ private:
         return arriveAt(m_index.block(to), taking, current);
     }
 
-    // A throw can leave the block at any of its operations, and the handler can name only what is available at the head of the block: it takes the version that enters the block.
     bool followHandlerEdge(BodyBlock block, ValueID atEntry, bool mayThrowBehindGrowth)
     {
         BodyTarget handler = block.handler();
@@ -209,13 +194,11 @@ private:
 
         BlockID to = handler.block();
         if (!m_index.isInLoop(to, m_loop)) {
-            // The string comes to the handler block as an argument of the edge, and by no other way.
             if (namesLiveAtHeadOf(to).isAnyLive)
                 return false;
             return !taking || !mayThrowBehindGrowth;
         }
 
-        // A throw that becomes a jump brings the handler block what nobody has looked at here.
         TerminatorKind end = block.terminator().kind();
         if (mayThrowBehindGrowth || end == TerminatorKind::Throw || end == TerminatorKind::Rethrow)
             return false;
@@ -231,7 +214,6 @@ private:
         ValueID current = atEntry;
         bool mayThrowBehindGrowth = false;
         for (BodyValue operation : block.values()) {
-            // It reads nothing: no value is live for the sake of a hint.
             if (operation.opcode() == Opcode::ReleaseHint)
                 continue;
             mayThrowBehindGrowth |= current != atEntry && mayThrowUnderHandlerInTextBuilderHandlers(declaredBoundInTable(operation.opcode()));
@@ -272,7 +254,6 @@ private:
     const GrowingText& m_web;
     BlockID m_head;
     LoopID m_loop;
-    // By block, less the head. Null: no edge has arrived yet.
     Vector<ValueID, 32> m_versionsAtEntries;
     Vector<NamesLiveAtHead, 4> m_namesLiveAtHeads;
 };
@@ -281,14 +262,9 @@ private:
 
 bool mayKeepTextUnderHandlers(Walker& walker, BlockID inputHead, const GrowingText& web)
 {
-    // True where Walker::leadHandlerEdge() and Walker::enterHandlerBlock() ask this file. Without those lines an edge to a handler brings the cell of the builder.
-    constexpr bool handlerEdgesAskAboutTexts = true;
-    if (!handlerEdgesAskAboutTexts)
-        return false;
     const BodyIndex& index = walker.currentBodyIndex();
     if (!walker.has(Mechanism::Handlers) || !index.isLoopHead(inputHead) || index.hasIrreducibleFlow())
         return false;
-    // The builder is begun in front of the loop, where the walk stands under the handler of the head. An edge from there to a handler block of the loop would enter the loop past its head, and without a builder.
     BodyBlock head = index.block(inputHead);
     if (head.hasHandler() && index.isInLoop(head.handler().block(), index.loopOf(inputHead)))
         return false;
@@ -313,8 +289,6 @@ bool everyHandlerLetsTextGo(Walker& walker, const GrowingText& web)
     return true;
 }
 
-// ---- An append of several parts
-
 static bool writesCharactersInTextBuilderHandlers(const Walker& walker, Reference part)
 {
     if (!part.isConstant())
@@ -337,7 +311,6 @@ bool handlerInForceReadsTextInStringBuilder(Walker& walker, const TextInStringBu
     return text.web.standsUnderHandlers && handlerInForceReadsTextInTextBuilderHandlers(walker, text);
 }
 
-// The parts are written one after the other, and each of them may find that the text gets too long or that there is no memory for it. Whoever goes on with the text behind the throw wants it as it was in front of the append.
 void appendPartsRolledBackWhereTheyFail(Walker& walker, TextInStringBuilder& text, Reference name, std::span<const Reference> parts, Origin origin)
 {
     size_t numberOfPartsWritten = std::ranges::count_if(parts, [&](Reference part) {
@@ -370,14 +343,12 @@ void appendPartsRolledBackWhereTheyFail(Walker& walker, TextInStringBuilder& tex
     appendPartsToStringBuilder(walker, text, name, parts, origin);
     if (walker.hasFailed())
         return;
-    // A part that went on in another block would throw past the handler.
     if (!walker.isUnreachable() && walker.currentBlock() != stretch) {
         walker.fail("the parts of an append that is rolled back where it fails do not stand in one block"_s);
         return;
     }
     walker.jumpTo(behind);
 
-    // No edge of the Walker's leads there, so it brings no state.
     walker.continueIn(handler);
     walker.state() = WTF::move(stateInFront);
     walker.state().invalidate(declaredBoundInTable(Opcode::StringBuilderAppendValue));
@@ -392,8 +363,6 @@ void appendPartsRolledBackWhereTheyFail(Walker& walker, TextInStringBuilder& tex
     walker.continueIn(behind);
 }
 
-// ---- The doors in the Walker
-
 void Walker::endWithRethrow(Reference exception, Origin origin)
 {
     TerminatorDraft draft(TerminatorKind::Rethrow, origin);
@@ -401,12 +370,9 @@ void Walker::endWithRethrow(Reference exception, Origin origin)
     endWithoutEdges(draft);
 }
 
-// The place in m_textsInStringBuilders of the text that lies in its builder where the walk stands in the frame, and that the value names. A record stays to the end of the unit, and another copy may stand at the same depth:
-// the origin of the builder names the frame of Code in which it was begun.
 std::optional<size_t> Walker::findTextHeldInFrame(size_t frameIndex, ValueID value) const
 {
     const Frame& frame = m_frames[frameIndex];
-    // In a walk of the loop whose text lies in no builder the name is bound to a string that no look at a builder has made. An argument of the handler edge is live all over its block, so it is bound as this walk has bound it.
     Reference bound = frame.references[value.index()];
     if (!isTextInStringBuilder(*this, bound) && !(bound.isValue() && m_code.at(bound.id()).opcode == Opcode::StringBuilderToString))
         return std::nullopt;
@@ -420,10 +386,6 @@ std::optional<size_t> Walker::findTextHeldInFrame(size_t frameIndex, ValueID val
     return std::nullopt;
 }
 
-// leadHandlerEdge(), once the arguments are collected. What a name is bound to says nothing here: a reader that is being walked has its operand bound to a string for a while. So the builder itself is taken.
-// A handler block in the loop is handed the builder. False: whoever asked leads the edge, with the arguments as they are by now.
-// For one behind the loop the block that may throw gets a handler block of Code's own. There a string is made of each text, the builder is left to the collector, and what was thrown is thrown on to the handler, with the strings. True: the edge is led.
-// StringBuilderToString, not StringBuilderFinish: the block on an edge out of the loop gives the builder back by itself, and where that fails the builder is back in the pool. Where the string cannot be made for lack of memory, that error leaves the unit.
 bool Walker::leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget target, Vector<Reference, 4>& arguments, Vector<TypeID, 4>& types)
 {
     const BodyIndex& index = *m_frames[frameIndex].index;
@@ -446,7 +408,6 @@ bool Walker::leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget t
 
     BlockID throwing = m_block;
     WalkState stateAtThrow = m_state;
-    // The blocks stand behind the loop, and no look at it has to count on them.
     SetForScope isWalkingAccess(m_isWalkingAccess, false);
     Origin origin = m_origin;
     origin.isTailCall = false;
@@ -474,7 +435,6 @@ bool Walker::leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget t
         types[place] = ownTypeOf(made);
     }
 
-    // What the handler edge of a block brings is made in front of whatever may throw in the block.
     BlockID rethrowing = m_code.addBlock(BlockRole::Ordinary, BlockFrequency::Rare);
     m_code.setLoopMarks(rethrowing, false, false);
     m_code.end(landing, TerminatorDraft(TerminatorKind::Jump, origin), 1);
@@ -492,7 +452,6 @@ bool Walker::leadHandlerEdgeBehindStringsOfTexts(size_t frameIndex, BodyTarget t
     return goOnWhereBlockMayThrow();
 }
 
-// enterHandlerBlock(), behind the edges. A handler edge brings no name, and a block behind the loop that stands in front of the handler block in the stream has bound the names that it reads to the string.
 void Walker::bindTextsAtHeadOfHandlerBlock(BlockID inputBlock)
 {
     size_t frameIndex = m_frames.size() - 1;
@@ -502,7 +461,6 @@ void Walker::bindTextsAtHeadOfHandlerBlock(BlockID inputBlock)
         const TextInStringBuilder& text = m_textsInStringBuilders[place];
         if (text.frameIndex != frameIndex || !text.builder.isValue() || m_code.at(text.builder.id()).origin().inlineFrame != m_frames[frameIndex].inlineFrame)
             continue;
-        // The later record of a text is the one being walked.
         if (text.web.names.isEmpty() || !index.isInLoop(inputBlock, index.loopOf(text.web.loopHead)) || parametersOfHeadsSeen.contains(text.web.names[0].value))
             continue;
         parametersOfHeadsSeen.append(text.web.names[0].value);

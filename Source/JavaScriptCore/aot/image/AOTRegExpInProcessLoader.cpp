@@ -28,7 +28,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if ENABLE(JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES)
 
-// Tables hold runs of zero bytes, which performJITMemcpy rejects in this configuration.
 const uint8_t* loadRegExpSection(const RegExpSection&)
 {
     return nullptr;

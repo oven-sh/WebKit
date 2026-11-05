@@ -21,7 +21,6 @@
 
 namespace JSC { namespace AOT {
 
-// at() and substr() get their forms with the rows of aot/builtins/string.builtins.ts. Until then no key has them.
 template<typename Forms>
 static bool isFormOfStringAt(uint8_t form)
 {
@@ -40,7 +39,6 @@ static bool isFormOfStringSubstr(uint8_t form)
         return false;
 }
 
-// Where the call goes by the name nobody has looked the callee up, and a string finds it in the realm that runs.
 static void checkRealmOfCalleeOfString(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     StubFamily family = jit.key().family();
@@ -50,7 +48,6 @@ static void checkRealmOfCalleeOfString(StubAssembler& jit, GPRReg scratch, JumpL
     callsHostFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
 }
 
-// Outside the string charCodeAt() gives NaN and codePointAt() undefined. A lead surrogate with a trail surrogate behind it is one code point.
 void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     constexpr int32_t surrogateMask = 0xfc00;
@@ -105,7 +102,6 @@ void emitStringCodeUnitAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHos
     jit.returnToCaller();
 }
 
-// Outside the string charAt() gives the empty string. at() counts a negative index from the end and gives undefined there.
 void emitStringCharacterAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     static_assert(noOverlap(gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), thisGPR, calleeGPR, argumentGPR(0)));
@@ -140,8 +136,6 @@ void emitStringCharacterAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
     jit.returnToCaller();
 }
 
-// slice() and substr() count a negative index from the end. slice() gives nothing where the start lies behind the end, substr() takes a length for its second argument.
-// substring() takes a negative index for zero and puts the smaller index first.
 void emitStringPiece(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     const bool countsFromEnd = jit.key().form() != static_cast<uint8_t>(BoxedCallForm::StringSubstring);
@@ -204,7 +198,6 @@ void emitStringPiece(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunc
     jit.jumpToStub(substring());
 }
 
-// Without a position the search begins at the end.
 void emitStringLastIndexOf(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     static_assert(argumentGPR(0) == operationArgumentGPR(0) && noOverlap(thisGPR, calleeGPR, operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3)));

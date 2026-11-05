@@ -53,7 +53,6 @@ public:
 
 } // anonymous namespace
 
-// Compiled code takes `f.call`, `f.apply`, `f.bind` and `x instanceof f` on a function of the engine for the members of Function.prototype (BuiltinTable::isFunctionOfEngine).
 Structure* structureOfHostFunctions(JSGlobalObject* realm, Structure* structure)
 {
     if (!locksBuiltins(realm))
@@ -166,7 +165,6 @@ void didCreateRealm(JSGlobalObject* realm)
 {
     refuseEvaluationUnlessAdmitted(realm);
     Instance* instance = Instance::of(realm);
-    // The engine's text of next(), return() and throw() takes the engine's own generators alone. A host brings the three compiled.
     if (!instance || (!BuiltinBindings::hasHost() && !hasBuiltinFunction(realm->vm(), static_cast<uint32_t>(BuiltinCodeIndex::generatorPrototypeNextCode))))
         installGeneratorMethodsForCompiledGenerators(realm);
     if (!instance)
@@ -174,7 +172,6 @@ void didCreateRealm(JSGlobalObject* realm)
 
     makeBuiltinsImmutable(*instance);
     Instance::create(realm);
-    // A host installs its globals after this and then calls hostDidCreateRealm().
     if (BuiltinBindings::hasHost())
         return;
     didInstallBuiltins(*instance);

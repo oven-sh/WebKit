@@ -50,7 +50,6 @@ public:
     LValue storageOf(CellPointer owner) { return m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), owner.value(), JSMap::offsetOfStorage())); }
     TypedPointer tableField(LValue table, ptrdiff_t offset) { return m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), table, offset); }
 
-    // The VM creates the cell in its constructor, keeps it as a root and never replaces it.
     LValue closedMark() { return m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, vm().value(), VM::offsetOfOrderedHashTableSentinel())); }
 
     LValue keysOf(LValue table)
@@ -96,8 +95,6 @@ public:
         LValue keyWord { nullptr };
     };
 
-    // Most tables have no deleted entries, so the first entry is checked inline and the loop that skips deleted entries is off the likely path.
-    // A step that may be the first of its walk names the owner: CompactTable::deletedPrefixOf(). From a deleted entry at or in front of the mark it goes on at the mark, and writes down where it has found an entry alive.
     AliveEntry firstAliveEntry(std::optional<CellPointer> ownerOfWalkFromFront, CompactTable::Width keyWidth, LValue keys, LValue start, LValue used, LBasicBlock hasNoEntry)
     {
         std::optional<TypedPointer> deletedPrefix;
@@ -194,11 +191,9 @@ public:
 
     Condition hasKeysOfWidth(CompactTable::Width keyWidth, LValue table)
     {
-        // The bit for wide keys is the sign of the byte.
         static_assert(CompactTable::keysAreWide == 0x80);
         if (keyWidth == CompactTable::Width::Wide)
             return Condition(m_out.lessThan(m_out.load8SignExt32(tableField(table, CompactTable::offsetOfKeysShift())), m_out.int32Zero));
-        // A table in the image has no column of either width.
         return hasNoBits(Word32(m_out.load8ZeroExt32(tableField(table, CompactTable::offsetOfKeysShift()))), CompactTable::keysAreWide | CompactTable::keysAreInImage);
     }
 };
@@ -208,7 +203,6 @@ CollectionIntrinsicEmitter::InlineWidths CollectionIntrinsicEmitter::inlineWidth
     const PositionTypes& positions = PositionTypes::knowingNothing();
     TypingContext expecting { m_program, types(), positions, TypeLevel::Expected };
     constexpr uint16_t primitivesOfEitherWidth = Primitive::Undefined | Primitive::Null | Primitive::Boolean;
-    // A number never fits a short key, and a table with one wide key has wide keys only: the type of the keys says which of the two widths is read in line. The other one is the operation's.
     const TypeID typeOfKeys = typeOfContentsRead(expecting, typeIDOf(collection), kind == Collection::Map ? ContentsSlot::Key : ContentsSlot::Element);
     const Type keys = types().at(typeOfKeys);
     InlineWidths widths;
@@ -251,11 +245,9 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     LBasicBlock hasNoEntry = newBlock();
     LBasicBlock slowPath = newBlock();
     CollectionStepJoin join(m_out);
-    // A first step takes the table that the collection holds now.
     const bool takesCurrentTable = opcodeOf(value->tableOperand()) == Opcode::Null;
     LValue storage = reader.storageOf(owner);
     auto loadUsed = [&] { return m_out.zeroExtPtr(m_out.load32(reader.tableField(storage, CompactTable::offsetOfUsed()))); };
-    // From an entry on the walk stands behind it. The mark is bookkeeping that only clear() reads, which comes after a step as a write of the table comes after a read. The other bits of the byte never change.
     TypedPointer byteWithMark = m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), storage, CompactTable::offsetOfKeysShift());
     auto markAsWalked = [&](Word32 flagsAndMark) {
         LBasicBlock marks = newBlock();
@@ -269,8 +261,6 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
         m_out.appendTo(isMarked);
     };
 
-    // A step in a loop has its entry from the step before. One that is written to begin at the front is the first of its walk, and often the only one: `map.keys().next()`, `const [first] = set`.
-    // One that has its entry out of an iterator object may be the first. Naming the owner is right for any step: the answer only says whether it is worth the code.
     ValueID entryToBeginAt = definitionOf(value->entryOperand());
     while (conversionsOfForm.contains(opcodeOf(entryToBeginAt)))
         entryToBeginAt = definitionOf(operationAt(entryToBeginAt).valueOperand());
@@ -293,7 +283,6 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     }
 
     m_out.appendTo(isCurrent);
-    // The tables that compiled code makes are compact, and one that was reserved may hold no entry yet. The operation handles the other kind of table.
     m_out.branch(hasCellType(CellPointer(storage), JSCellButterflyType).value(), rareEdge(slowPath), normalEdge(isCompact));
 
     m_out.appendTo(isCompact);
@@ -319,7 +308,6 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
         ValueFromBlock expectedValues = kind == Collection::Map ? m_out.anchor(reader.valuesBehind(keyWidth, storage, column)) : ValueFromBlock();
         m_out.jump(found);
 
-        // The operation takes a table in the image, and skips deleted entries.
         m_out.appendTo(hasOtherWidth);
         branchUnless(reader.hasKeysOfWidth(otherWidth, storage), slowPath);
         LBasicBlock isUsed = newBlock();
@@ -375,13 +363,11 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     }
 }
 
-// What a closed iterator holds in place of a table.
 void CollectionIntrinsicEmitter::generateCollectionIteratorClosedMark(const ValueContext& value)
 {
     define(value, Boxed(TableReader(generator()).closedMark()));
 }
 
-// An iterator made for a collection without a table holds no value at all. In compiled code that is null.
 void CollectionIntrinsicEmitter::generateGetCollectionIteratorTable(const ValueContext& value)
 {
     LValue table = m_out.load64(m_out.address(in<CellPointer>(value->objectOperand()).value(), m_heaps.JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(JSSetIterator::Field::Storage)]));
@@ -394,13 +380,12 @@ void CollectionIntrinsicEmitter::generatePutCollectionIteratorTable(const ValueC
     LValue stored = m_out.select(m_out.equal(table.value(), m_out.constInt64(JSValue::encode(jsNull()))), m_out.constInt64(0), table.value());
     CellPointer iterator = in<CellPointer>(value->objectOperand());
     m_out.store64(stored, m_out.address(iterator.value(), m_heaps.JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(JSSetIterator::Field::Storage)]));
-    barrierAfterStore(value, iterator, table, typeOf(value->valueOperand()));
+    barrierAfterStore(value, iterator, typeOf(value->valueOperand()));
     define(value, emitter<ConversionEmitter>().inRepresentation(value, table, typeOf(value->valueOperand()), value.representation()));
 }
 
 void CollectionIntrinsicEmitter::generateIsCollectionIteratorClosedMark(const ValueContext& value)
 {
-    // An iterator that has made no step.
     if (opcodeOf(value->tableOperand()) == Opcode::Null) {
         defineTest(value, boolean(false));
         return;

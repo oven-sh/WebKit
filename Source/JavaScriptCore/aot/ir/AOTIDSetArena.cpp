@@ -20,8 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-using UntypedSetID = ID<struct UntypedSetIDTag>;
-
 static constexpr uint32_t emptyIDSet = UntypedSetID().bits();
 static constexpr size_t wordsOfIDSetHeader = sizeof(IDSetHeader) / sizeof(uint32_t);
 static constexpr size_t wordsOfIDSetChunkEntry = sizeof(IDSetChunkEntry) / sizeof(uint32_t);
@@ -34,21 +32,10 @@ static constexpr uint32_t largestEpochOfIDSetArena = (1u << (32 - bitsOfQuestion
 static_assert(!offsetof(IDSetHeader, size) && offsetof(IDSetHeader, numberOfChunks) == sizeof(uint32_t) && wordsOfIDSetHeader == 2);
 static_assert(std::has_single_bit(entriesOfIDSetMemoUntilReset));
 
-static constexpr bool idSetLiesInThread(uint32_t set) { return liesInThread(UntypedSetID::fromBits(set)); }
 static constexpr bool idSetHoldsOneMember(uint32_t set) { return holdsOneMember(UntypedSetID::fromBits(set)); }
-// For a one-member set, the position is the member.
 static constexpr uint32_t positionOfIDSet(uint32_t set) { return positionOf(UntypedSetID::fromBits(set)); }
 static constexpr uint32_t idSetOfOne(uint32_t member) { return idAt<UntypedSetID>(IDHome::Value, member).bits(); }
 static constexpr uint32_t idSetInThread(uint32_t position) { return idAt<UntypedSetID>(IDHome::Thread, position).bits(); }
-
-static constexpr uint64_t mixBitsForIDSets(uint64_t bits)
-{
-    bits ^= bits >> 33;
-    bits *= 0xff51afd7ed558ccdull;
-    bits ^= bits >> 33;
-    bits *= 0xc4ceb9fe1a85ec53ull;
-    return bits ^ bits >> 33;
-}
 
 static uint32_t hashOfIDSetWords(std::span<const uint32_t> words)
 {
@@ -89,7 +76,6 @@ static bool idSetMembersAreStrictlyAscending(std::span<const uint32_t> members)
     return std::ranges::adjacent_find(members, std::ranges::greater_equal { }) == members.end();
 }
 
-// The members of a list, or the entries of a set with chunks. Chunks are interned, so two sets of the same form are equal exactly when these words are equal.
 static std::span<const uint32_t> wordsOfIDSetMembers(const IDSetView& members)
 {
     if (members.isList())
@@ -98,8 +84,6 @@ static std::span<const uint32_t> wordsOfIDSetMembers(const IDSetView& members)
     return unsafeMakeSpan(reinterpret_cast<const uint32_t*>(entries.data()), entries.size() * wordsOfIDSetChunkEntry);
 }
 
-// An open-addressed index. A slot holds a position and the epoch that stored it. A slot from another epoch is free,
-// so starting a new epoch empties the index without touching it. No epoch is 0.
 static std::optional<uint32_t> findInEpochIndex(const Vector<uint32_t>& index, uint32_t epoch, uint32_t hash, NOESCAPE const Invocable<bool(uint32_t)> auto& matches)
 {
     if (index.isEmpty())
@@ -123,7 +107,6 @@ static void putIntoFreeSlotOfEpochIndex(Vector<uint32_t>& index, uint32_t epoch,
     index[slot * wordsOfEpochIndexSlot + 1] = epoch;
 }
 
-// The index must already hold every position below `position` for this epoch.
 static void addToEpochIndex(Vector<uint32_t>& index, uint32_t epoch, uint32_t hash, uint32_t position, NOESCAPE const Invocable<uint32_t(uint32_t)> auto& hashAtPosition)
 {
     constexpr size_t fewestSlots = 64;
@@ -136,7 +119,6 @@ static void addToEpochIndex(Vector<uint32_t>& index, uint32_t epoch, uint32_t ha
     putIntoFreeSlotOfEpochIndex(index, epoch, hash, position);
 }
 
-// Views that were handed out point into the buffer, so an outgrown buffer is kept alive. Nothing in it changes once written, so it stays correct.
 template<typename T>
 static void makeRoomKeepingOutgrownBuffer(Vector<T>& vector, Vector<Vector<T>>& outgrown, size_t numberToAdd)
 {
@@ -177,7 +159,6 @@ static size_t firstIDSetChunkEntryNotBelow(std::span<const IDSetChunkEntry> entr
     return gallopingLowerBound(entries, from, number, &IDSetChunkEntry::firstMemberDividedBySize);
 }
 
-// From here to listCombinedIDSets(): an intersection or a difference. A union goes another way: IDSetArena::unionOfDistinct().
 static IDSetChunk combineIDSetChunks(IDSetOperation operation, const IDSetChunk& first, const IDSetChunk& second)
 {
     ASSERT(operation != IDSetOperation::Union);
@@ -187,7 +168,6 @@ static IDSetChunk combineIDSetChunks(IDSetOperation operation, const IDSetChunk&
     return combined;
 }
 
-// Walks a set chunk by chunk, whichever form it has. The chunks of a list are gathered here and are not interned.
 class IDSetChunkCursor {
     WTF_MAKE_NONCOPYABLE(IDSetChunkCursor);
 public:
@@ -223,7 +203,6 @@ public:
         loadCurrentChunk();
     }
 
-    // Advances to the first chunk whose number is at least `number`. The current chunk's number must be below it.
     void advanceTo(uint32_t number)
     {
         ASSERT(!m_isAtEnd && m_number < number);
@@ -235,7 +214,6 @@ public:
     }
 
 private:
-    // For a list, this leaves m_index just past the gathered members. For chunk entries, m_index stays at the current entry.
     void loadCurrentChunk()
     {
         m_interned = nullptr;
@@ -269,9 +247,6 @@ private:
     IDSetChunk m_gathered;
 };
 
-// Visits, in ascending order of chunk number, the chunks that can contribute to the result of the operation.
-// Difference: every chunk of the first. Intersection: the chunks whose number both sets have.
-// The functor gets null for the second set where it has no chunk with that number.
 static void forEachChunkOfIDSets(IDSetOperation operation, const IDSetView& first, const IDSetView& second, NOESCAPE const Invocable<void(IDSetChunkCursor*, IDSetChunkCursor*)> auto& functor)
 {
     RELEASE_ASSERT(operation != IDSetOperation::Union);
@@ -326,7 +301,6 @@ static uint32_t sizeOfCombinedIDSets(IDSetOperation operation, const IDSetView& 
     case IDSetOperation::Intersection:
         return countCommonMembersOfIDSets(first, second);
     case IDSetOperation::Difference:
-        // Either way a chunk that both sets hold is passed over unread, and the chunks that the larger set alone holds are too.
         if (first.size() >= second.size())
             return first.size() - second.size() + countMembersOnlyInFirstIDSet(second, first);
         return countMembersOnlyInFirstIDSet(first, second);
@@ -334,7 +308,6 @@ static uint32_t sizeOfCombinedIDSets(IDSetOperation operation, const IDSetView& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Handles one call from forEachChunkOfIDSets(): the result reuses one of the two chunks, gets a new chunk, or has no chunk with this number.
 static void combineChunksWithSameNumber(IDSetOperation operation, IDSetChunkCursor* first, IDSetChunkCursor* second, NOESCAPE const Invocable<void(IDSetChunkCursor&)> auto& reuseChunk, NOESCAPE const Invocable<void(uint32_t, const IDSetChunk&)> auto& addNewChunk)
 {
     if (!second) {
@@ -359,7 +332,6 @@ static void combineChunksWithSameNumber(IDSetOperation operation, IDSetChunkCurs
         addNewChunk(first->number(), combined);
 }
 
-// `members` has room for exactly the members of the result.
 static void listCombinedIDSets(IDSetOperation operation, const IDSetView& first, const IDSetView& second, std::span<uint32_t> members)
 {
     size_t count = 0;
@@ -399,33 +371,14 @@ static bool isWellFormedIDSet(const IDSetView& members)
 #endif
 
 static constexpr size_t initialSlotsOfIDMemo = 1 << 10;
-// What a Vector holds.
 static constexpr size_t mostBytesOfIDMemoThatDoubles = UINT32_MAX / 2;
-
-static constexpr size_t slotForIDPair(uint32_t questionPlusOne, uint32_t first, uint32_t second, size_t numberOfSlots)
-{
-    return static_cast<size_t>(mixBitsForIDSets((static_cast<uint64_t>(first) << 32 | second) + questionPlusOne * 0x9e3779b97f4a7c15ull) >> 32) & (numberOfSlots - 1);
-}
-
-const IDPairMemo::Entry* IDPairMemo::Generation::find(uint32_t questionPlusOne, uint32_t first, uint32_t second) const
-{
-    if (slots.isEmpty())
-        return nullptr;
-    size_t mask = slots.size() - 1;
-    for (size_t slot = slotForIDPair(questionPlusOne, first, second, slots.size()); slots[slot].questionPlusOne; slot = (slot + 1) & mask) {
-        const Entry& entry = slots[slot];
-        if (entry.first == first && entry.second == second && entry.questionPlusOne == questionPlusOne)
-            return &entry;
-    }
-    return nullptr;
-}
 
 void IDPairMemo::Generation::add(const Entry& added)
 {
     if ((size + 1) * 2 > slots.size())
         grow();
     size_t mask = slots.size() - 1;
-    size_t slot = slotForIDPair(added.questionPlusOne, added.first, added.second, slots.size());
+    size_t slot = hashOfQuestion(added.questionPlusOne, added.first, added.second) & mask;
     for (; slots[slot].questionPlusOne; slot = (slot + 1) & mask) {
         Entry& entry = slots[slot];
         if (entry.first != added.first || entry.second != added.second || entry.questionPlusOne != added.questionPlusOne)
@@ -453,29 +406,18 @@ void IDPairMemo::Generation::grow()
     for (const Entry& entry : former) {
         if (!entry.questionPlusOne)
             continue;
-        size_t slot = slotForIDPair(entry.questionPlusOne, entry.first, entry.second, slots.size());
+        size_t slot = hashOfQuestion(entry.questionPlusOne, entry.first, entry.second) & mask;
         while (slots[slot].questionPlusOne)
             slot = (slot + 1) & mask;
         slots[slot] = entry;
     }
 }
 
-std::optional<uint32_t> IDPairMemo::find(uint32_t question, uint32_t first, uint32_t second)
+uint32_t IDPairMemo::moveToRecentGeneration(const Entry& entry)
 {
-    const Entry* entry = m_recent.find(question + 1, first, second);
-    if (!entry) {
-        entry = m_older.find(question + 1, first, second);
-        if (!entry)
-            return std::nullopt;
-        m_recent.add(*entry);
-        ++m_numberMoved;
-    }
-#if ASSERT_ENABLED || ASAN_ENABLED
-    // The answer is worked out again, and add() holds it against the one that is kept.
-    if (!(++m_numberOfHits % 16))
-        return std::nullopt;
-#endif
-    return entry->answer;
+    m_recent.add(entry);
+    ++m_numberMoved;
+    return entry.answer;
 }
 
 void IDPairMemo::add(uint32_t question, uint32_t first, uint32_t second, uint32_t answer)
@@ -604,7 +546,6 @@ void IDSetArena::noteSetOfProgramBehind(uint32_t set, uint32_t madeFrom)
     m_setOfProgramBehindRecord[position] = ofProgram;
 }
 
-// The members of a chunk are a set too, and a long set is the union of those sets. What was cut out of another set shares most chunks with it, and the words of their sets stand until reset().
 void IDSetArena::annotateChunkByChunk(const IDSetView& members, std::span<uint32_t> attachedWords)
 {
     Vector<IDSetChunkEntry, 64> entries;
@@ -634,7 +575,6 @@ void IDSetArena::reset()
     RELEASE_ASSERT(!m_depthOfInterning);
     ASSERT(m_scratch.isEmpty() && m_scratchEntries.isEmpty());
     forgetEarlierStates();
-    // With no records there are no ids of this thread, so no memo entry holds one either.
     if (m_firstWordOfRecord.isEmpty() && m_chunks.isEmpty())
         return;
 
@@ -654,11 +594,8 @@ void IDSetArena::reset()
     m_outgrownChunks.shrink(0);
 }
 
-IDSetView IDSetArena::viewOf(uint32_t set) const
+IDSetView IDSetArena::viewOfRecordInThread(uint32_t set) const
 {
-    if (!idSetLiesInThread(set))
-        return m_table.viewOf(set);
-
     std::span<const uint32_t> record = m_words.subspan(m_firstWordOfRecord[positionOfIDSet(set)]);
     uint32_t numberOfAttachedWords = m_table.numberOfAttachedWords();
     IDSetView view;
@@ -672,13 +609,9 @@ IDSetView IDSetArena::viewOf(uint32_t set) const
     return view;
 }
 
-std::span<const uint32_t> IDSetArena::listOf(uint32_t set)
+std::span<const uint32_t> IDSetArena::listOfRecordInThread(uint32_t set)
 {
-    if (!idSetLiesInThread(set))
-        return m_table.listOf(set);
-
-    // A record of the arena has at least two members, so its list lies in m_words and not in the view.
-    IDSetView view = viewOf(set);
+    IDSetView view = viewOfRecordInThread(set);
     if (view.isList())
         return unsafeMakeSpan(view.m_words, view.m_size);
 
@@ -686,7 +619,6 @@ std::span<const uint32_t> IDSetArena::listOf(uint32_t set)
     if (position >= m_lazyListStart.size())
         m_lazyListStart.insertFill(m_lazyListStart.size(), UINT32_MAX, position + 1 - m_lazyListStart.size());
     if (m_lazyListStart[position] == UINT32_MAX) {
-        // The view points into the buffer as it stands, which is kept where it is outgrown.
         makeRoomKeepingOutgrownBuffer(m_words, m_outgrownWords, view.size());
         m_lazyListStart[position] = static_cast<uint32_t>(m_words.size());
         view.forEach([&](uint32_t member) {
@@ -763,7 +695,6 @@ uint32_t IDSetArena::unionOf(uint32_t first, uint32_t second)
     return compute(IDSetOperation::Union, std::min(first, second), std::max(first, second));
 }
 
-// An entry of a union in the making names a chunk of the table or of the arena, or one that lies in scratch.
 static constexpr bool idSetChunkLiesInScratch(uint32_t chunk) { return idSetHoldsOneMember(chunk); }
 static constexpr uint32_t idSetChunkInScratch(size_t position) { return idSetOfOne(static_cast<uint32_t>(position)); }
 
@@ -858,13 +789,11 @@ static void sortIDSetChunksByNumberThenID(Vector<IDSetChunkEntry>& chunks, Vecto
 uint32_t IDSetArena::unionOf(std::span<const uint32_t> sets, std::span<const uint32_t> earlierStates)
 {
     RELEASE_ASSERT(earlierStates.empty() || earlierStates.size() == sets.size());
-    // By set. The earlier state of a set stands in the lower half.
     Vector<uint64_t, 16> pairs;
     for (size_t index = 0; index < sets.size(); ++index) {
         if (sets[index] != emptyIDSet)
             pairs.append(static_cast<uint64_t>(sets[index]) << 32 | (earlierStates.empty() ? emptyIDSet : earlierStates[index]));
     }
-    // Where a set comes several times the greatest number stays, which is that of the empty set wherever one of them says nothing: the set may be the very one that holds the earlier states of the others.
     static_assert(emptyIDSet == UINT32_MAX);
     std::ranges::sort(pairs, std::greater<>());
     Vector<uint32_t, 16> operands;
@@ -934,7 +863,6 @@ std::span<const IDSetChunkEntry> IDSetArena::entriesSince(uint32_t set, uint32_t
     return m_entriesSinceEarlierStates.subspan(compared.first, compared.count);
 }
 
-// Two sets or more. None is empty and no two are the same. One earlier state a set.
 uint32_t IDSetArena::unionOfDistinct(std::span<const uint32_t> operands, std::span<const uint32_t> earlierStates)
 {
     RELEASE_ASSERT(!m_depthOfInterning);
@@ -999,7 +927,6 @@ uint32_t IDSetArena::unionOfDistinct(std::span<const uint32_t> operands, std::sp
             noteSetOfProgramBehind(result, operand);
     }
 #if ASSERT_ENABLED
-    // Where it fails, an earlier state was handed in that no other operand holds.
     for (uint32_t operand : operands)
         ASSERT(Typed::isSubset(viewOf(operand), viewOf(result)));
 #endif
@@ -1034,7 +961,6 @@ void IDSetArena::collectCandidateChunks(UnionScratch& scratch, uint32_t largest,
         size_t from = 0;
         for (const IDSetChunkEntry& entry : entries)
             hasCandidates |= addCandidate(from, entry);
-        // What was passed over lies in the union and need not lie in the largest set.
         if (!memoizesSubsets || entries.size() != numberOfEntries)
             continue;
         if (hasCandidates)
@@ -1082,7 +1008,6 @@ uint32_t IDSetArena::uniteCandidateChunks(UnionScratch& scratch, std::span<const
     for (size_t index = 0; index < candidates.size();) {
         uint32_t number = candidates[index].firstMemberDividedBySize;
         const IDSetChunkEntry* entryOfLargest = findIDSetChunkEntry(entriesOfLargest, from, number);
-        // No entry of the largest set names a chunk in scratch, so nothing that is added to scratch below moves it.
         const IDSetChunk* chunkOfLargest = entryOfLargest ? &resolveChunk(entryOfLargest->chunk) : nullptr;
         IDSetChunk united = chunkOfLargest ? *chunkOfLargest : IDSetChunk { };
         size_t first = index;
@@ -1109,7 +1034,6 @@ uint32_t IDSetArena::uniteCandidateChunks(UnionScratch& scratch, std::span<const
         }
         scratch.changedEntries.append(IDSetChunkEntry { number, chunkOfUnion });
 
-        // No set holds a chunk that lies in scratch, and the append above may have moved those.
         for (size_t place = 0; memoizesSubsets && place < chunksOfNumber.size(); ++place) {
             const IDSetChunkEntry& candidate = candidates[first + place];
             if (chunksOfNumber[place] && !idSetChunkLiesInScratch(candidate.chunk) && !(chunkOfLargest && idSetChunkIsSubsetOf(*chunksOfNumber[place], *chunkOfLargest)))
@@ -1203,13 +1127,10 @@ bool IDSetArena::overlap(uint32_t first, uint32_t second)
     return answer;
 }
 
-// The functors of filtered() and replaced() may reenter this arena. So the scratch vector is a stack: whoever appends to it removes what it appended,
-// and nobody holds a pointer into it across a call to a functor.
 uint32_t IDSetArena::filtered(uint32_t set, NOESCAPE const ScopedLambda<bool(uint32_t)>& keeps)
 {
     RELEASE_ASSERT(!m_depthOfInterning);
     IDSetView view = viewOf(set);
-    // For a list, collect the members that stay. For chunks, collect the members that go, so an untouched chunk is reused without being read.
     bool collectsKeptMembers = view.isList();
     size_t first = m_scratch.size();
     view.forEach([&](uint32_t member) {
@@ -1248,7 +1169,6 @@ uint32_t IDSetArena::replaced(uint32_t set, NOESCAPE const ScopedLambda<uint32_t
     return makeFromEndOfScratch(first);
 }
 
-// `members` is an ascending list of any length, or the entries of a set that is too large for a list. It may point into a scratch vector.
 uint32_t IDSetArena::intern(const IDSetView& members, std::optional<IDSetOperation> operation, uint32_t firstOperand, uint32_t secondOperand)
 {
     std::array<uint32_t, 2> operands { firstOperand, secondOperand };
@@ -1291,7 +1211,6 @@ uint32_t IDSetArena::intern(const IDSetView& members, std::optional<IDSetOperati
 
     switch (m_keeps) {
     case ArenaKeeps::InProgram:
-        // findOrAdd() stops the build on a frozen table, also for a set that the table holds. So a frozen table is searched first, as TypeArena does.
         if (!numberOfAttachedWords && !m_table.isFrozen())
             return addToTable({ });
         if (std::optional<uint32_t> found = m_table.find(hash, members))
@@ -1379,7 +1298,6 @@ uint32_t IDSetArena::internChunk(const IDSetChunk& chunk, std::optional<IDSetOpe
     return encodedChunk;
 }
 
-// Neither set is empty and the two ids differ. Union and Intersection get the smaller id first, which is how the memo stores them.
 uint32_t IDSetArena::compute(IDSetOperation operation, uint32_t first, uint32_t second)
 {
     static_assert(static_cast<uint8_t>(Question::Union) == static_cast<uint8_t>(IDSetOperation::Union));
@@ -1401,7 +1319,6 @@ uint32_t IDSetArena::compute(IDSetOperation operation, uint32_t first, uint32_t 
         std::array<uint32_t, 2> earlierStates { emptyIDSet, emptyIDSet };
         result = unionOfDistinct(operands, earlierStates);
     } else {
-        // Counting the size first shows whether the result is one of the operands, and a result that fits a list interns no chunks.
         uint32_t size = sizeOfCombinedIDSets(operation, firstView, secondView);
         if (size == firstView.size())
             result = first;
@@ -1424,7 +1341,6 @@ uint32_t IDSetArena::combineLists(IDSetOperation operation, uint32_t first, cons
     std::span<const uint32_t> x = firstView.list();
     std::span<const uint32_t> y = secondView.list();
 
-    // Two different sets of the same size: neither contains the other.
     if (operation == IDSetOperation::Union && x.size() != y.size()) {
         bool firstIsLarger = x.size() > y.size();
         if (Typed::isSubset(firstIsLarger ? secondView : firstView, firstIsLarger ? firstView : secondView))
@@ -1472,7 +1388,6 @@ uint32_t IDSetArena::combineLists(IDSetOperation operation, uint32_t first, cons
     return result;
 }
 
-// An intersection or a difference. Either set may be a list of any length. `size` is the number of members of the result.
 uint32_t IDSetArena::internCombination(IDSetOperation operation, const IDSetView& first, const IDSetView& second, uint32_t size, std::optional<IDSetOperation> operationForAnnotator, uint32_t firstOperand, uint32_t secondOperand)
 {
     RELEASE_ASSERT(operation != IDSetOperation::Union && !m_depthOfInterning);
@@ -1515,7 +1430,6 @@ std::optional<uint32_t> IDSetArena::remembered(Question question, uint32_t first
 void IDSetArena::remember(Question question, uint32_t first, uint32_t second, uint32_t answer)
 {
     static_assert(static_cast<uint32_t>(Question::Overlap) < 1u << bitsOfQuestionInIDSetMemo);
-    // A yes or no answer has the bits of a one-member set, which never lies in a thread.
     if (!idSetLiesInThread(first) && !idSetLiesInThread(second) && !idSetLiesInThread(answer)) {
         m_lastingMemo.add(static_cast<uint32_t>(question), first, second, answer);
         return;

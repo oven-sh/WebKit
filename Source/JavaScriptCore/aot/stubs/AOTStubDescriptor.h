@@ -28,7 +28,6 @@ namespace JSC { namespace AOT {
 
 class StubAssembler;
 
-// FrontEnd: it stands in the run-time table in the place of an operation, is called like that operation, and calls the operation itself by an entry of its own where it has no answer.
 enum class StubLinkage : uint8_t { CalledByCode, EnteredByRuntime, FrontEnd, Handler, InternalEntry };
 
 enum class StubAxis : uint8_t {
@@ -39,8 +38,6 @@ enum class StubAxis : uint8_t {
     Immediate = 16,
     StubFrame = 32,
     NeverReturns = 64,
-    // However long the program runs, its slow path comes again: a block of cells runs out, a number has no text yet. In the other families it ends once a cache holds the answer or the site has run once.
-    // So what the stub saves around the operation is felt, and it has a form for callers that keep no floating-point register. A stub that is needed in two forms has its fast path twice.
     SlowPathRecurs = 128,
 };
 
@@ -54,19 +51,11 @@ constexpr StubISA currentStubISA = StubISA::X86_64;
 #error "AOT stubs are generated for ARM64 and x86-64 only"
 #endif
 
-// AlternateReceivers: the stub has a variant for each register of alternateReceiverGPRs(), which takes its one operand there.
-// AnyAllocatableRegister: the same for each of allocatableGPRs, so the operand is taken wherever it lies and the site moves nothing. CreateConstantAtSite hands its result back there.
-// A stub without an operand takes its immediate there and hands its result back there, so the result is born where it is wanted and the site loses no other register: CreateConstant.
-// AlternateResults: the stub has a variant for each register of alternateResultGPRs(), which hands its result back there and keeps the register that the stub itself hands it back in. Its operands lie where they always do.
-// FewAlternateResults: the same for fewAlternateResultGPRs().
 enum class OperandRegisterChoice : uint8_t { NoChoice, AlternateReceivers, AnyAllocatableRegister, AlternateResults, FewAlternateResults };
 
 constexpr bool namesRegisterOfResult(OperandRegisterChoice choice) { return choice == OperandRegisterChoice::AlternateResults || choice == OperandRegisterChoice::FewAlternateResults; }
-// Every: each immediate has a stub of its own, so the site moves none. The stub without an immediate stands for all of them: a bound one writes no register and has no effect that it lacks.
-// InThunk: the stub takes the immediate in its register, and a number that Image gives is moved there by a thunk that all sites with that number share. A jump more, six bytes a site less: for a stub that is called where code does not come again.
 enum class ImmediateBinding : uint8_t { Never, Every, OperationOffset, InThunk };
 enum class StubResult : uint8_t { None, GPR, FPR, TwoGPRs, Flags };
-// CallsOnlyBookkeeping: what it calls allocates no cell, throws nothing and walks no stack, so nobody asks who called the stub.
 enum class StubLeafness : uint8_t { MayCall, Leaf, CallsOnlyBookkeeping };
 enum class StubClobbers : uint8_t { ClobbersLikeCall, ClobbersOnlyScratch };
 
@@ -116,7 +105,6 @@ struct StubSignature {
         return signature;
     }
 
-    // Of a variant that names the register of its result.
     constexpr StubSignature withResultIn(std::optional<GPRReg> reg) const
     {
         StubSignature signature = *this;
@@ -153,7 +141,6 @@ struct StubDescriptor {
     StubOwnEffects ownEffects;
 };
 
-// A compiled program reads the descriptors: its fault handler asks exists(). Only the compiler reads the generators, so the code that emits stubs leaves an executable together with the compiler.
 struct StubGenerator {
     void (*generate)(StubAssembler&);
     StubSignature (*signature)(StubKey);
@@ -246,7 +233,6 @@ constexpr const StubDescriptor& descriptorOf(StubFamily family)
     return StubFamilyTokens::descriptors[static_cast<size_t>(family)];
 }
 
-// See StubAddressInImage. The run time finds every other handler by its place in ImageSection::SlotHandlers.
 constexpr bool isFoundByKey(StubFamily family)
 {
     StubLinkage linkage = descriptorOf(family).linkage;
@@ -280,7 +266,6 @@ constexpr bool hasConsistentColumns(const StubDescriptor& descriptor)
     return axes.contains(StubAxis::Immediate) == (descriptor.binding == ImmediateBinding::Every || descriptor.binding == ImmediateBinding::OperationOffset);
 }
 
-// bodyOf() keeps the form, so form i of an entry is form i of its body.
 constexpr bool hasFormsOfBody(const StubDescriptor& entry, const StubDescriptor& body)
 {
     size_t numberOfFormNames = entry.formNames.size();
@@ -351,7 +336,6 @@ constexpr bool hasOperandRegisterVariant(const StubDescriptor& descriptor, GPRRe
     return std::ranges::find(registers, reg) != registers.end();
 }
 
-// Asked at every call of a stub that the compiler emits.
 inline constexpr std::array<bool, numberOfStubFamilies> familiesThatAreOnlyEntryOfTheirBody = [] {
     std::array<unsigned, numberOfStubFamilies> entries { };
     for (const StubDescriptor& descriptor : StubFamilyTokens::descriptors)
@@ -426,7 +410,6 @@ constexpr std::optional<StubKey> tryWithCallerFrame(StubKey key, CallerFrame cal
     return candidate;
 }
 
-// The key itself, where it exists, and then its variants.
 template<typename Functor>
 void forEachRegisterVariant(StubKey key, const Functor& functor)
 {
@@ -435,7 +418,6 @@ void forEachRegisterVariant(StubKey key, const Functor& functor)
     functor(key);
     if (operandRegistersOf(descriptorOf(key.family()).operandRegisters).empty())
         return;
-    // In register order, which is key order. The lists of AOTStubRegisters.h are in no order.
     for (Reg reg = Reg::first(); reg.isGPR(); reg = reg.next()) {
         if (std::optional<StubKey> variant = tryWithOperandRegister(key, reg.gpr()))
             functor(*variant);

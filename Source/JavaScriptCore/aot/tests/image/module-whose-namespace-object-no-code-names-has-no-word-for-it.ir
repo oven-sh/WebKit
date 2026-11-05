@@ -1,0 +1,41 @@
+# -- source: main.mjs
+# import { one } from "./named.mjs";
+# print("one: " + one());
+# -- source: named.mjs
+# export function one() { return 1; }
+# -- end of source
+# The word for the value of an ES module holds its namespace object for the code that asks for it. Here the names are imported one by one and no code asks: neither module has the word, and the statics hold nothing that the collector visits.
+# Should the run time come to make the object, it keeps it itself. With every mechanism on: without them the variable of `one` has a word, which the collector visits.
+# RUN(TABLES): image ProgramTables mechanisms=all
+# TABLES-LABEL: ProgramTables:
+# TABLES-NOT: staticsRoots
+# RUN(SHELL): run-in-shell
+# SHELL: one: 1
+
+module m0 path="named.mjs" displayPath="named.mjs" body=f0 namespaceLayout=L(m0)
+module m1 path="main.mjs" displayPath="main.mjs" body=f2 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+variable g0 name="one" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @0
+    Return v0 @0
+}
+function f1 name="one" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1 @31
+    Return v0 @31
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @35
+    v1 = PropGet v0 key="print" [isFreeName] @35
+    v2 = String string="one: " @41
+    v3 = GetModuleVariable variable=g0 @51
+    v4 = CheckInitialized v3 name="one" @51
+    v5 = Call v4 calleeName="one" @51
+    v6 = Add v2, v5 @51
+    v7 = Call v1, -, v6 calleeName="print" @35
+    v8 = Undefined @35
+    Return v8 @35
+}

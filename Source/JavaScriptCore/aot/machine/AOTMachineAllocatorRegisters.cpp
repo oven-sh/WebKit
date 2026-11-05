@@ -15,9 +15,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// Ordered from the most expensive to evict to the cheapest.
 enum class RegisterFileVictim : uint8_t {
-    // One of the registers that a Patch with several results has written. Nothing can store it before its Extract is reached.
     IsMemberOfTuple,
     NeedsStore,
     LiesInMemory,
@@ -27,7 +25,6 @@ enum class RegisterFileVictim : uint8_t {
 };
 
 struct RegisterFileSearch {
-    // The cheapest to evict among those that are not dead.
     Reg victim;
     RegisterFileVictim classOfVictim { RegisterFileVictim::IsMemberOfTuple };
     RegisterMask dead { 0 };
@@ -38,7 +35,6 @@ static ALWAYS_INLINE RegisterFileVictim classifyRegisterFileVictim(const Allocat
     const Operation* value = allocator.m_valueIn[reg.index()];
     if (nextUse == noPosition)
         return RegisterFileVictim::IsDead;
-    // Its registers hold different members, not copies.
     if (!value->type().isNumeric())
         return RegisterFileVictim::IsMemberOfTuple;
 
@@ -52,7 +48,6 @@ static ALWAYS_INLINE RegisterFileVictim classifyRegisterFileVictim(const Allocat
     return RegisterFileVictim::NeedsStore;
 }
 
-// Of a victim that lies in memory. Only a Save in this block is known to have run: a path may reach the block without the Save that another block of the region has made.
 static bool memoryCopyOfRegisterFileVictimIsValid(const Allocator& allocator, const Operation* value)
 {
     if (allocator.spillHoldsValueIn(allocator.m_block, value))
@@ -62,7 +57,6 @@ static bool memoryCopyOfRegisterFileVictimIsValid(const Allocator& allocator, co
     return allocator.m_allocation.spills()[save].begin >= allocator.m_order.headOf(allocator.m_block);
 }
 
-// Whoever takes the register without evict() loses the value.
 static bool registerFileHoldsOnlyCopy(const Allocator& allocator, Reg reg)
 {
     const Operation* value = allocator.m_valueIn[reg.index()];
@@ -72,13 +66,11 @@ static bool registerFileHoldsOnlyCopy(const Allocator& allocator, Reg reg)
     return classOfValue <= RegisterFileVictim::NeedsStore;
 }
 
-// Neither a store now nor a load later.
 static ALWAYS_INLINE bool canDropFromRegisterFileForFree(const Allocator& allocator, Reg reg)
 {
     return classifyRegisterFileVictim(allocator, reg, allocator.nextUseOf(allocator.m_valueIn[reg.index()])) >= RegisterFileVictim::IsMadeAgain;
 }
 
-// Every candidate is bound.
 static RegisterFileSearch searchRegisterFileForVictim(const Allocator& allocator, RegisterMask candidates)
 {
     RegisterFileSearch search;
@@ -195,10 +187,8 @@ Reg Allocator::takeRegisterAfterSearch(Bank bank, RegisterMask allowed, Reg pref
 {
     RegisterMask candidates = registersThatMayBeTaken(bank, allowed);
     if (!candidates) [[unlikely]] {
-        // The constraints of one operation in a rare region have locked everything that the region may take. The function then saves one register more.
         candidates = allowed & m_file.allocatableIn(bank);
         if (!candidates) {
-            // The walk goes on until the failure is seen, and needs a register until then.
             m_proc.fail(FailureKind::OutOfRegisters, currentOperationForRegisterFileFailure(*this));
             candidates = m_file.allocatableIn(bank);
         }
@@ -207,16 +197,13 @@ Reg Allocator::takeRegisterAfterSearch(Bank bank, RegisterMask allowed, Reg pref
     RegisterMask freeRegisters = candidates & ~m_bound;
     Reg chosen = chooseFreeRegisterWithoutNewCalleeSave(freeRegisters, preferred);
     if (!chosen) {
-        // passUse() leaves a value bound whose range was extended to the end of a loop, and it stays bound behind that end. One search frees all that have piled up.
         RegisterFileSearch search = searchRegisterFileForVictim(*this, candidates & m_bound);
         for (RegisterMask dead = search.dead; dead; dead &= dead - 1)
             unbind(lowestRegisterIn(dead));
         chosen = chooseFreeRegisterWithoutNewCalleeSave(freeRegisters | search.dead, preferred);
 
         if (!chosen) {
-            // A callee-saved register that is taken for the first time costs a store, a load and perhaps the only frame of the function. Making a constant again costs less.
             if (freeRegisters && (!search.victim || search.classOfVictim < RegisterFileVictim::IsMadeAgain)) {
-                // The saves of a function that saves its frame are a run that ends in x24, so the highest register adds the fewest pairs.
                 if (isARM64() && m_file.calleeSavedClobberedAtSuspensions)
                     chosen = Reg::fromIndex(static_cast<unsigned>(63 - std::countl_zero(freeRegisters)));
                 else
@@ -229,7 +216,6 @@ Reg Allocator::takeRegisterAfterSearch(Bank bank, RegisterMask allowed, Reg pref
     }
 
     ASSERT(chosen && !m_valueIn[chosen.index()]);
-    // A scratch register is written and never bound.
     noteCalleeSaveUse(chosen);
     return chosen;
 }
@@ -268,7 +254,6 @@ void Allocator::evict(Reg reg)
     case RegisterFileVictim::LiesInMemory:
         if (memoryCopyOfRegisterFileVictimIsValid(*this, value))
             break;
-        // A step behind the operation that ends the block belongs to no block.
         if (m_allocation.stepsOf(m_block).terminator != UINT32_MAX) {
             markSpilled(value);
             break;
@@ -288,7 +273,6 @@ Reg Allocator::bringIntoRegister(Operation* value, RegisterMask allowed, Reg pre
 {
     ASSERT(!(allowed & ~m_file.allocatableIn(bankOf(value->type()))) && !(stateOf(value).registers & allowed));
 
-    // It lies outside `allowed`, so taking a register leaves it alone.
     Reg source = anyRegisterOf(value, ~RegisterMask { 0 });
     Reg destination = takeRegister(bankOf(value->type()), allowed, preferred);
 
@@ -313,7 +297,6 @@ Reg Allocator::bringIntoRegister(Operation* value, RegisterMask allowed, Reg pre
 
 SpillIndex Allocator::markSpilled(Operation* value)
 {
-    // A rare region that asks for it counts on the spill from here on, on ways that have passed no Save of the region too. So the value is stored behind its definition.
     if (m_isAheadOfFramedPart && isInRareRegion() && isStoredAtHeadsOfFramedPart(value)) {
         m_allocation.m_needsFrameAheadOfFramedPart = true;
         m_allocation.m_needsFrameOutsideRareRegions = true;
@@ -327,7 +310,6 @@ SpillIndex Allocator::markSpilled(Operation* value)
     spillFacts.value = value;
 
     if (value->hasNoPosition() || facts.definition == noPosition || !value->type().isNumeric()) [[unlikely]] {
-        // Nothing would ever store it. The walk goes on until the failure is seen.
         m_proc.fail(FailureKind::SpillSlotLacksItsValue, value);
         spillFacts.begin = m_position;
         spillFacts.end = m_position;
@@ -336,7 +318,6 @@ SpillIndex Allocator::markSpilled(Operation* value)
         spillFacts.begin = facts.definition;
         spillFacts.end = facts.lastUse == noPosition ? facts.definition : std::max(facts.definition, facts.lastUse);
 
-        // A Phi without a register is written by the moves of its incoming edges, at the ends of its predecessors.
         // Its place is taken from the first of them to the last: a spill that those moves read must not share it, since the moves are ordered by spill and not by place.
         if (value->opcode() == Phi && !m_allocation.m_registerAtDefinition[value->index()]) {
             for (const Block* predecessor : m_order.of(value->owner()).predecessors) {
@@ -349,7 +330,6 @@ SpillIndex Allocator::markSpilled(Operation* value)
 
     spill = addSpill(spillFacts);
     m_allocation.m_spillOfValue[value->index()] = spill;
-    // The spill holds the value on every path through the function, a Save only behind the Save. memoryLocationOf() asks for the save first, and must answer with the spill from here on.
     stateOf(value).saveInRareRegion = noSpill;
     return spill;
 }

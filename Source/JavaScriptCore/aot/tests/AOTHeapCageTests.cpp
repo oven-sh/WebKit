@@ -343,7 +343,6 @@ static void testRangeReservedWholeHasAccessInItsSegmentsOnly()
     AOT_TEST_CHECK(range && range->size() == size && range->reservedSize() == size && range->initialSegmentSize() == size);
     AOT_TEST_CHECK(!canRead(range->start()) && canRead(range->start() + blockSize) && !canRead(range->start() + size / 2) && !canRead(range->start() + size - blockSize));
 
-    // Larger than the first segment.
     void* large = range->tryAllocate(200 * MB);
     AOT_TEST_CHECK(large && isInside(*range, large, 200 * MB));
     fill(large, 64, 7);
@@ -361,7 +360,6 @@ static void testRangeReservedWholeHasAccessInItsSegmentsOnly()
     for (size_t index = 0; index < blocks.size(); ++index)
         AOT_TEST_CHECK(isFilled(blocks[index], 64, static_cast<uint8_t>(index)));
 
-    // The last segment ends where the range ends.
     while (range->tryAllocateAligned(blockSize, blockSize)) { }
     AOT_TEST_CHECK(canRead(range->start() + size - blockSize));
 }
@@ -382,7 +380,6 @@ static void testRangeThatCommitsOnDemandHasAccessToWhatIsUsed()
         .initialAccess = ReservedRangeHeap::InitialAccess::None,
     });
     AOT_TEST_CHECK(range && range->size() == size && range->reservedSize() == size);
-    // Well inside what would be the first segment.
     AOT_TEST_CHECK(!canRead(range->start() + 32 * MB) && !canRead(range->start() + size - blockSize));
 
     void* block = range->tryAllocateAligned(blockSize, blockSize);
@@ -390,7 +387,6 @@ static void testRangeThatCommitsOnDemandHasAccessToWhatIsUsed()
     fill(block, blockSize, 7);
     AOT_TEST_CHECK(isFilled(block, blockSize, 7) && !canRead(range->start() + 32 * MB));
 
-    // One piece of memory for malloc: larger than any segment but the last would be.
     void* large = range->tryAllocate(600 * MB);
     AOT_TEST_CHECK(large && isInside(*range, large, 600 * MB));
     range->free(large);
@@ -398,7 +394,6 @@ static void testRangeThatCommitsOnDemandHasAccessToWhatIsUsed()
     ReservedRangeHeap::setCommitsOnDemand(false);
 }
 
-// A range returns its free memory at malloc's pace and touches nothing that another range has freed, so threads that end together do not wait for one another.
 static void testReleasingFreeMemoryPurgesNoOtherRange()
 {
     if (!bmalloc::api::isEnabled())
@@ -416,7 +411,6 @@ static void testReleasingFreeMemoryPurgesNoOtherRange()
     void* memory = first.tryAllocate(4 * MB);
     AOT_TEST_CHECK(memory);
     fill(memory, 4 * MB, 3);
-    // malloc may start a large block anywhere in a page.
     void* page = std::bit_cast<void*>(roundDownToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(memory) + 2 * MB));
     AOT_TEST_CHECK(isResident(page));
     first.free(memory);
@@ -471,7 +465,6 @@ static void testPiecesOfOneMappingGoTogether()
     AOT_TEST_CHECK(!isMapped(first) && !isMapped(second) && !isMapped(first + MB - pageSize()));
 }
 
-// Something else may be mapped where a piece was released, so nothing there is touched again.
 static void testEarlyReleasedPieceLeavesNeighbors()
 {
     constexpr size_t pieceSize = 64 * KB;
@@ -590,11 +583,9 @@ static void runInProcessWithCage()
     }
 }
 
-// libpas maps a gigabyte at its first allocation, so a process that uses it ends in main() under the limits on address space of these tests.
 #if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
 static constexpr ASCIILiteral markStackTest = "heap-cage/cage/mark-stack-that-cannot-grow-says-why"_s;
 
-// A collection at the end of what a limit on address space leaves finds no memory for its mark stack. It cannot go on, and the process says what it ran out of and exits.
 static void testMarkStackThatCannotGrowSaysWhy()
 {
     if (MarkedBlockCage::isEnabled()) {
@@ -625,7 +616,6 @@ static void testMarkStackThatCannotGrowSaysWhy()
 #if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
 static constexpr ASCIILiteral frameLinePrefix = "frame 0x"_s;
 
-// Addresses alone: there may be no memory to name them with.
 static void printFramesAndEnd(int signalNumber, siginfo_t* info, void* context)
 {
     auto print = [](ASCIILiteral prefix, uintptr_t value) {
@@ -665,7 +655,6 @@ static void printFramesAtSignals()
         AOT_TEST_CHECK(!sigaction(signalNumber, &action, nullptr));
 }
 
-// The process ran this executable, so its addresses are named by the symbols of this one.
 static String withNamedFrames(const String& output)
 {
     int file = open("/proc/self/exe", O_RDONLY);
@@ -709,7 +698,6 @@ static String withNamedFrames(const String& output)
     return result.toString();
 }
 
-// Within a limit on address space every cage of the process takes from one range.
 template<void (*body)()>
 static void runInProcessWithSharedRange()
 {
@@ -760,7 +748,6 @@ static Vector<void*, 128> takeBlocksOfSharedReserve(MarkedBlockCage& cage)
     return blocks;
 }
 
-// A cage takes every block of the reserve that the cages of a range share, an out-of-memory error is thrown, and the cage goes away. A cage that was there all along finds as many.
 static void checkSharedReserveIsWholeAgainBehindCageThatThrew()
 {
     MarkedBlockCage first;
@@ -781,13 +768,11 @@ static void checkSharedReserveIsWholeAgainBehindCageThatThrew()
     AOT_TEST_CHECK(takeBlocksOfSharedReserve(waiting).size() == whole);
 }
 
-// The same where the cage stays: it gives a block back for each block that it takes from the range.
 static void checkSharedReserveIsWholeAgainBehindCageThatStays()
 {
     MarkedBlockCage first;
     MarkedBlockCage waiting;
     MarkedBlockCage cage;
-    // Room for what the cage keeps for itself.
     std::array<void*, 8> spare;
     for (void*& block : spare)
         block = first.tryAllocateAligned(blockSize, blockSize);
@@ -806,7 +791,6 @@ static void checkSharedReserveIsWholeAgainBehindCageThatStays()
     AOT_TEST_CHECK(takeBlocksOfSharedReserve(waiting).size() == whole);
 }
 
-// Four cages at once get a cell that is larger than a block, and what they free is there for the next.
 static void checkSharedReserveHoldsLargeCellsOfSeveralCages()
 {
     MarkedBlockCage first;
@@ -818,7 +802,6 @@ static void checkSharedReserveHoldsLargeCellsOfSeveralCages()
     }
     takeAllRoom(first);
 
-    // What a cage kept for itself goes back to the range. Whether that is room for such a cell is up to the range, so another cage takes it.
     for (MarkedBlockCage& cage : cages) {
         AOT_TEST_CHECK(!cage.tryAllocate(sizeOfCellLargerThanBlock) && cage.releaseLastReserve());
         takeAllRoom(first);
@@ -868,7 +851,6 @@ struct MallocFailingOnRequest : FastMalloc {
     static inline bool s_refuses { false };
 };
 
-// A table that reserved room for one more key does not grow when the key is added. If the allocation fails, it reports that and keeps its contents.
 static void checkTableIsUnchangedWhenGrowthFails()
 {
     using Map = HashMap<unsigned, unsigned, DefaultHash<unsigned>, HashTraits<unsigned>, HashTraits<unsigned>, WTF::HashTableTraits, WTF::ShouldValidateKey::Yes, MallocFailingOnRequest>;
@@ -904,7 +886,6 @@ static void checkTableIsUnchangedWhenGrowthFails()
     AOT_TEST_CHECK(map.capacity() == capacity);
     AOT_TEST_CHECK(holdsKeysUpTo(key));
 
-    // Removed keys leave deleted buckets, which a rehash at the same size drops. That also needs memory.
     for (unsigned removed = key; removed > key - 100; --removed)
         map.remove(removed);
     key -= 100;
@@ -1045,7 +1026,6 @@ static void checkSecondHeapGetsItsOwnBase()
     AOT_TEST_CHECK(second.cage().contains(cellOfSecond) && !second.cage().contains(cellOfFirst));
 }
 
-// What is held back so that a full cage can end in an error: nothing until the cage is half full, then a block for each block that the heap takes.
 static void checkReserveIsKeptOnceHalfFull()
 {
     TestVM test;
@@ -1068,7 +1048,6 @@ static void checkReserveIsKeptOnceHalfFull()
         cage.keepReserveOnceHalfFull();
     AOT_TEST_CHECK(cage.reserveSize() == whole);
 
-    // A quarter stays behind for a thread that finds no place to throw the error and has to be ended.
     AOT_TEST_CHECK(cage.releaseReserve() && cage.reserveSize() == whole / 4 && !cage.releaseReserve());
     cage.keepReserveOnceHalfFull();
     AOT_TEST_CHECK(cage.reserveSize() == whole / 4);
@@ -1082,7 +1061,6 @@ static void checkReserveIsKeptOnceHalfFull()
         cage.free(block);
 }
 
-// In the scope, a fallible allocation in a full cage uses the reserve instead of returning null.
 static void checkInfallibleScopeUsesReserve()
 {
     TestVM test;
@@ -1133,7 +1111,6 @@ static void checkConstantsAreCompiledInFullCage()
     AOT_TEST_CHECK(!exception && result.isInt32() && result.asInt32() == 5);
 }
 
-// An error that waits for the next function entry holds the limit that entries test, not the polls of loops, and an ordinary stop that comes and goes leaves it waiting.
 static void checkErrorWaitsAtFunctionEntriesAlone()
 {
     TestVM test;
@@ -1168,7 +1145,6 @@ static void checkErrorWaitsAtFunctionEntriesAlone()
     traps.unregisterMirror(mirror);
 }
 
-// A heap that stays almost full of live objects finds no room again and again, with little allocated in between. The fourth time in a row the error is owed.
 static void checkErrorIsOwedOnceCollectionsBuyNextToNothing()
 {
     TestVM test;
@@ -1193,18 +1169,15 @@ static void checkErrorIsOwedOnceCollectionsBuyNextToNothing()
     AOT_TEST_CHECK(much() > 1);
 
     AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(much()) && !isOwedAfterThreeTimesLittle());
-    // One request tries again after its collection.
     AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(0) && !isOwedWhenNoRoomIsFoundAfterAllocating(0));
     AOT_TEST_CHECK(isOwedWhenNoRoomIsFoundAfterAllocating(1));
     traps.setNeedsOutOfMemoryError(false);
 
-    // A collection that bought much starts the count anew.
     AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(much()) && !isOwedAfterThreeTimesLittle());
     AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(much()) && !isOwedAfterThreeTimesLittle());
     AOT_TEST_CHECK(isOwedWhenNoRoomIsFoundAfterAllocating(much() - 1));
     traps.setNeedsOutOfMemoryError(false);
 
-    // So does an error that the program is given in another way.
     AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(much()) && !isOwedAfterThreeTimesLittle());
     AOT_TEST_CHECK(createOutOfMemoryError(realm));
     AOT_TEST_CHECK(!isOwedAfterThreeTimesLittle());
@@ -1212,7 +1185,6 @@ static void checkErrorIsOwedOnceCollectionsBuyNextToNothing()
     traps.setNeedsOutOfMemoryError(false);
 }
 
-// A request for storage that fails gives the program an error of its own. Cells in a range of a fixed size have nothing to do with it. Cells in a range that grows lack the same room.
 template<bool isSettled>
 static void checkErrorOfAnotherRequestAndErrorOwedForCells()
 {
@@ -1223,7 +1195,6 @@ static void checkErrorOfAnotherRequestAndErrorOwedForCells()
         vm.heap.didAllocate(bytes);
         test.cage().didFindNoRoom(vm, MarkedBlockCage::ExhaustedHeap::Cells);
     };
-    // Much has been allocated since the last time, which starts the count anew.
     findNoRoomAfterAllocating(vm.heap.objectSpace().capacity() / 64);
     for (unsigned times = 0; times < 4; ++times)
         findNoRoomAfterAllocating(1);
@@ -1233,7 +1204,6 @@ static void checkErrorOfAnotherRequestAndErrorOwedForCells()
     vm.traps().setNeedsOutOfMemoryError(false);
 }
 
-// The error that barren collections owe is offered to a poll first: one more full collection runs there. If little can be allocated behind that one too, the error is owed again and is anybody's to throw.
 static void checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce()
 {
     TestVM test;
@@ -1259,7 +1229,6 @@ static void checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce()
     AOT_TEST_CHECK(!cage.tryTakeBackOutOfMemoryErrorAtPoll(vm) && traps.needsOutOfMemoryError());
     traps.setNeedsOutOfMemoryError(false);
 
-    // No poll came by before the next barren collection.
     findNoRoomAfterAllocating(vm.heap.objectSpace().capacity() / 64);
     for (unsigned times = 0; times < 4; ++times)
         findNoRoomAfterAllocating(1);
@@ -1271,7 +1240,6 @@ static void checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce()
 
 static void runOutOfStructures(VM& vm)
 {
-    // A whole reserve, as the allocator keeps once a quarter of its heap is in use.
     StructureAlignedMemoryAllocator::releaseReserve();
     AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
 
@@ -1292,7 +1260,6 @@ static bool throwErrorIfOwed(VM& vm, JSGlobalObject* realm)
     return hasThrown;
 }
 
-// The allocator of Structures has given out its reserve, and keeps one again once it hears that the error was thrown. The next poll fills it.
 static void checkErrorOwedForStructuresIsHeardOfByTheirAllocator()
 {
     TestVM test;
@@ -1304,10 +1271,8 @@ static void checkErrorOwedForStructuresIsHeardOfByTheirAllocator()
 
     AOT_TEST_CHECK(throwErrorIfOwed(vm, realm));
     AOT_TEST_CHECK(!throwErrorIfOwed(vm, realm) && !test.cage().describeExhaustedLimit().contains("Structures"_s));
-    // Only an allocator that still waits for the error takes back what it gave out.
     AOT_TEST_CHECK(!StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
 
-    // No error is owed, and the polls are still on.
     AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().errorWaitsForPoll());
     AOT_TEST_CHECK(test.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm));
     AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().errorWaitsForPoll());
@@ -1328,7 +1293,6 @@ static void checkRangeIsReused()
     AOT_TEST_CHECK(baseOfFirst && second.cage().base() == baseOfFirst);
 }
 
-// Far more blocks than the helper thread keeps, with pauses in which it fills its supply: some come from the supply and some straight from the cage.
 static void checkBlocksToFillAreFreshBlocksOfTheCage()
 {
     uintptr_t base;
@@ -1355,7 +1319,6 @@ static void checkBlocksToFillAreFreshBlocksOfTheCage()
         for (void* block : blocks)
             allocator.freeAlignedMemory(block);
     }
-    // The helper has ended and has given back what it held, so the range serves the next heap.
     CagedAlignedMemoryAllocator next;
     AOT_TEST_CHECK(next.cage().base() == base);
     void* block = next.tryAllocateBlockToFill();
@@ -1364,7 +1327,6 @@ static void checkBlocksToFillAreFreshBlocksOfTheCage()
 }
 
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)
-// The blocks of array storage come from the other allocator, which waits for as many requests of its own. The cage's count starts its supply too.
 static void checkOtherAllocatorWarmsUpWithTheCage()
 {
     auto takeBlockOutsideTheCage = [] {

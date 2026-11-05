@@ -83,7 +83,6 @@ struct RingState {
     friend bool operator==(const RingState&, const RingState&) = default;
 };
 
-// The words of a MicrotaskQueue that the stubs read and write, at the offsets that the stubs use.
 class Ring {
 public:
     explicit Ring(MicrotaskQueue& queue)
@@ -149,7 +148,6 @@ static QueuedTask makeJob(JSGlobalObject* globalObject, InternalMicrotask task, 
 
 namespace {
 
-// A real VM, realm and queue, and an Instance that no program was loaded for. Every condition of the stubs holds until a test changes one.
 class JobTestRealm {
     WTF_MAKE_NONCOPYABLE(JobTestRealm);
 public:
@@ -185,7 +183,6 @@ public:
 
     VM& vm() { return *m_vm; }
     JSGlobalObject* globalObject() { return m_globalObject.get(); }
-    // Stands in for a SavedFrame of the instance: the stubs tell one by its Structure.
     JSObject* waiter() { return m_waiter.get(); }
     MicrotaskQueue& queue() { return *m_queue; }
     Ring ring() { return Ring(*m_queue); }
@@ -272,8 +269,6 @@ static void emitReturnToC(StubAssembler& jit, std::span<const GPRReg> calleeSave
 
 namespace {
 
-// A function callable from C++, wrapped around code that either falls through or leaves through its JumpList. It returns which of the two happened and stores the given registers on both paths.
-// The code is emitted outside any stub body, so no register is an operand or a result, and out-of-line parts are never emitted.
 class Snippet {
 public:
     using Emitter = ScopedLambda<void(StubAssembler&, JumpList& leaves)>;
@@ -301,7 +296,6 @@ public:
             jit.store64(gprOf(stored), registerAfterwardsSlot(index++));
         emitReturnToC(jit, calleeSaves.span());
 
-        // No stub entry is bound, so linking crashes on any reference to a stub.
         jit.linkJumpsBetweenStubs();
         ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
         AOT_TEST_CHECK(!buffer.didFailToAllocate());
@@ -380,7 +374,6 @@ static Snippet assembleTake()
     });
 }
 
-// Whichever way the code goes, what comes next still needs the operands.
 static Path push(JobTestRealm& realm, const Snippet& snippet, JSValue resolution)
 {
     JobEnvironment& environment = realm.environment();
@@ -589,7 +582,6 @@ static void testJobsThatStayInTheQueue()
     checkNoJobIsTaken(realm, snippet);
     realm.instance().awaitMustSuspend = 0;
 
-    // While the VM tracks async contexts, a job runs under the context it captured. If that differs from the current one, the stub installs it only when asyncContextIsPutBack says the caller restores the old context afterward. Otherwise the job is left to the job loop.
     realm.vm().m_asyncContextTrackingEnabled = true;
     enqueueAlone(makeJob(realm.globalObject(), InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled, jsNumber(1), realm.waiter(), jsNumber(7)));
     checkNoJobIsTaken(realm, snippet);

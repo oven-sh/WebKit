@@ -34,13 +34,10 @@ static void decrementScanCount(uint16_t& count)
 
 static constexpr uint16_t scanBitOf(ValueFlag flag) { return static_cast<uint16_t>(flag); }
 
-// forEachLeaf() lists the leaves of an operation with one of these in a way of its own and not by the children.
 static constexpr uint16_t flagsOfScannedOperationWithLeavesOfItsOwn = scanBitOf(ValueFlag::WorksInMemory) | scanBitOf(ValueFlag::GoesByOverflow);
 
-// A hint goes from hand to hand as its Reg::index(). This is that of no register.
 static constexpr unsigned noHintOfScannedRead = Reg().index();
 
-// functor(unsigned bank), once for each register that the value takes.
 template<typename Functor>
 static ALWAYS_INLINE void forEachBankOfScannedValue(const Procedure& proc, const Operation* value, const Functor& functor)
 {
@@ -60,24 +57,16 @@ static constexpr bool resultOfScannedOpcodeMayOverwriteFirstChild(Opcode opcode)
     return !isMemoryAccess(opcode) && !isComparison(opcode) && opcode != Select && opcode != Extract;
 }
 
-// Whether Operation::inlineChildren() may be asked.
 static constexpr bool childrenOfScannedOpcodeLieInLine(Opcode opcode)
 {
     return opcode != Patch && opcode != Check && !namesSymbol(opcode);
 }
 
-// What the scan asks of an opcode, one byte for all of it. The table below is made of the functions that are named here, so it says what they say.
 enum TraitOfScannedOpcode : uint8_t {
-    // OpcodeTrait::HasEffects.
     ScannedOpcodeHasEffects = 1 << 0,
-    // isLoad().
     ScannedOpcodeIsLoad = 1 << 1,
-    // resultOfScannedOpcodeMayOverwriteFirstChild(), and resultPrefersRegisterOfFirstChild() or changesWidthOfInteger().
-    // In the register of its child an extension or a Trunc may be no instruction at all: isFreeInRegisterOfChild().
     ScannedOpcodeHandsHintOnToFirstChild = 1 << 2,
-    // Not childrenOfScannedOpcodeLieInLine(), or a Return, of whose reads hintOfScannedRead() says more than the bit above: readLeavesOfScannedOperationTheLongWay() reads its leaves.
     ScannedOpcodeIsReadTheLongWay = 1 << 3,
-    // Not childrenOfScannedOpcodeLieInLine(), or Operation::isUnconditionalJump() may hold: where it is fused, readLeavesBelowScannedOperation() reads its leaves.
     ScannedOpcodeIsReadTheLongWayWhereFused = 1 << 4,
 };
 
@@ -105,7 +94,6 @@ static constexpr TraitsOfScannedOpcodes traitsOfScannedOpcodes = [] {
     return traits;
 }();
 
-// Null in a procedure without loops, where nobody asks what stands around a position.
 static const BlockPlace* placeAroundScanPosition(const Order& order, Position position)
 {
     if (order.loops().empty() || position >= order.endOfProcedure())
@@ -136,10 +124,6 @@ static uint32_t rareRegionOfScannedLoop(const Order& order, uint32_t loop)
     return order.of(order.blocksInOrder().data()[order.loops().data()[loop].firstBlock]).rareRegion;
 }
 
-// Liveness::mostLiveIn() is the greatest count that stands behind the scan of some operation of the block.
-// While one operation is scanned a count falls only where its range closes, which comes ahead of its reads. So a look anywhere behind that finds no more than stands at the end.
-// And a count stands higher at the end than behind the operation before only where a read has revived a value: a read of the operation itself, which looks at the count that it raises,
-// or one that BackwardScan::addUse() makes while the range closes, behind which closeScannedRange() looks. What remains is the first operation that the scan comes to, the one that ends the block.
 static ALWAYS_INLINE void lookAtCountsOfScan(BackwardScan& scan)
 {
     static_assert(numberOfBanks == 2);
@@ -169,7 +153,6 @@ static void endCountOfPhiReadOnlyBehindLoop(BackwardScan& scan, const Operation*
     decrementScanCount(scan.m_loopStates[scan.m_order.of(phi->owner()).loop].phisReadOnlyBehindLoop[static_cast<unsigned>(bankOf(phi->type()))]);
 }
 
-// The innermost loop around the head of a loop is that loop.
 static NEVER_INLINE void noteScannedReadOfPhi(BackwardScan& scan, const Operation* phi, Position position, bool revives)
 {
     const BlockPlace& home = scan.m_order.of(phi->owner());
@@ -183,7 +166,6 @@ static NEVER_INLINE void noteScannedReadOfPhi(BackwardScan& scan, const Operatio
     endCountOfPhiReadOnlyBehindLoop(scan, phi);
 }
 
-// The blocks come in rising order, so the last one to write counts.
 static void findLastExitingBlocksOfScannedLoops(BackwardScan& scan)
 {
     const Order& order = scan.m_order;
@@ -205,7 +187,6 @@ static void findLastExitingBlocksOfScannedLoops(BackwardScan& scan)
     }
 }
 
-// `loop` is the innermost one around a read that has been recorded. A loop holds whole blocks, so the head of the block of the value says on which side of a loop's start it is defined.
 static void extendScannedRangeFrom(BackwardScan& scan, const Operation* value, uint32_t loop)
 {
     if (loop == noLoop)
@@ -217,8 +198,6 @@ static void extendScannedRangeFrom(BackwardScan& scan, const Operation* value, u
         read.lastUse = std::max(read.lastUse, loops[loop].end);
 }
 
-// Counts the value once for each loop around the read that it is defined ahead of. `readAhead` and `readBehind` are its neighbors in the chain of uses.
-// A value that this read revives is live to the end of each such loop, where the scan has not counted it.
 static void countScannedReadInsideLoops(BackwardScan& scan, const Operation* value, uint32_t loop, Position readAhead, Position readBehind, bool revives)
 {
     if (loop == noLoop || scan.m_loopCountedFor[value->index()] == loop)
@@ -227,7 +206,6 @@ static void countScannedReadInsideLoops(BackwardScan& scan, const Operation* val
     Position home = scan.m_order.headOf(value->owner());
     uint32_t outermost = noLoop;
     for (; loop != noLoop && loops[loop].begin > home; loop = loops[loop].parent) {
-        // A neighbor inside the loop has counted the value for it and for every loop around it.
         if (readBehind < loops[loop].end || (readAhead != noPosition && readAhead >= loops[loop].begin))
             return;
         BackwardScan::LoopState& state = scan.m_loopStates[loop];
@@ -242,7 +220,6 @@ static void countScannedReadInsideLoops(BackwardScan& scan, const Operation* val
         scan.m_loopCountedFor[value->index()] = outermost;
 }
 
-// A read lists the value for every loop around it that the value is defined ahead of. So a loop that holds the loop of the last read that listed it has it already, and so has every loop around that one.
 static NEVER_INLINE void listScannedReadFromOutsideLoops(BackwardScan& scan, Operation* value, const PlaceOfScannedReads& at)
 {
     if (!at.countsForLoops)
@@ -259,14 +236,12 @@ static NEVER_INLINE void listScannedReadFromOutsideLoops(BackwardScan& scan, Ope
     loopOfLastListedRead = at.loop;
 }
 
-// As Allocator::placeLeaf() decides. Where a constant lies in a pinned register or in a word of the instance, no register is worth keeping for it.
 static bool scannedLeafWithoutPositionNeedsRegister(const Liveness& liveness, const Operation* user, unsigned childIndex, const Operation* leaf)
 {
     if (leaf->opcode() == ArgumentReg || user->as<PatchOperation>())
         return false;
     if ((leaf->hasInt64() || leaf->hasDouble()) && findPinnedConstant(static_cast<uint64_t>(leaf->constantBits())))
         return false;
-    // The result takes the register of the leaf over, so the user needs a copy of its own. On x86-64 one instruction makes an integer, which is what a copy costs.
     if (isX86_64() && !childIndex && !liveness.isFused(user) && !leaf->type().isFloat()) {
         Opcode opcode = user->opcode();
         if ((resultOverwritesFirstChild(opcode) && !isCommutative(opcode)) || isFreeInRegisterOfChild(liveness, user))
@@ -288,7 +263,6 @@ static ALWAYS_INLINE const Block* blockThatScannedBlockBranchesOff(const Backwar
     return place.isRare() ? scan.m_liveness.blockThatRareBlockBranchesOff(block) : nullptr;
 }
 
-// `origin`: blockThatScannedBlockBranchesOff().
 static ALWAYS_INLINE Position headOfBlockPassedOnEveryPathToScannedBlock(const BackwardScan& scan, const BlockPlace& place, const Block* origin)
 {
     const Block* passed = origin;
@@ -297,8 +271,6 @@ static ALWAYS_INLINE Position headOfBlockPassedOnEveryPathToScannedBlock(const B
     return passed ? scan.m_places[passed->index()].head : noPosition;
 }
 
-// `place` is that of the block, `origin` its blockThatScannedBlockBranchesOff(). Both null in a procedure without loops, for a read that no operation makes.
-// Each word of `at` is written once, but for the two that speak of something that is not there.
 static ALWAYS_INLINE void findPlaceOfReadsInScannedBlock(const BackwardScan& scan, PlaceOfScannedReads& at, const BlockPlace* place, const Block* origin, Position passedOnEveryPath)
 {
     at.passedOnEveryPath = passedOnEveryPath;
@@ -324,13 +296,10 @@ static ALWAYS_INLINE void findPlaceOfReadsInScannedBlock(const BackwardScan& sca
 }
 
 struct NeighborsOfScannedRead {
-    // The read that it stands ahead of, zero if there is none.
     uint32_t behind;
-    // Where the read stands that it stands behind.
     Position readAhead;
 };
 
-// The read stands behind the first one that is known.
 static NEVER_INLINE NeighborsOfScannedRead linkScannedReadBehindEarlierReads(Use* uses, uint32_t first, uint32_t newUse, Position position, Position passedOnEveryPath)
 {
     uint32_t ahead = first;
@@ -356,7 +325,6 @@ static NEVER_INLINE void makeRoomForScannedReads(BackwardScan& scan)
     scan.traitsOfUses() = traits;
 }
 
-// BackwardScan::noteRegionOfUse(), for whoever knows the rare region of the block that reads. `regionOfUses` is BackwardScan::SummaryOfReads::regionOfUses of the value.
 static ALWAYS_INLINE void noteRegionOfScannedUse(uint32_t& regionOfUses, uint32_t region)
 {
     if (region == noRareRegion || (regionOfUses != noRareRegion && regionOfUses != region))
@@ -365,7 +333,6 @@ static ALWAYS_INLINE void noteRegionOfScannedUse(uint32_t& regionOfUses, uint32_
         regionOfUses = region;
 }
 
-// What recordScannedRead() does and answers where the scan has been at the definition of the value.
 static NEVER_INLINE bool failScannedRead(BackwardScan& scan, const PlaceOfScannedReads& at, const Operation* value, bool notesRegion)
 {
     scan.m_proc.fail(FailureKind::MalformedProcedure, value);
@@ -376,7 +343,6 @@ static NEVER_INLINE bool failScannedRead(BackwardScan& scan, const PlaceOfScanne
     return at.loop != noLoop && scan.m_order.headOf(value->owner()) < at.beginOfLoop;
 }
 
-// `loop` is the innermost one around the position at which the read counts for calls.
 static Position extendScannedReadOverLoopsForCalls(const BackwardScan& scan, const Operation* value, uint32_t loop, Position position)
 {
     std::span<const Loop> loops = scan.m_order.loops();
@@ -387,22 +353,16 @@ static Position extendScannedReadOverLoopsForCalls(const BackwardScan& scan, con
 }
 
 enum class KindOfScannedRead : uint8_t {
-    // An operation of the block of the scan makes it.
     ByOperation,
-    // An Upsilon of that block makes it. The scan has not come to an operation of the block, so it looks at no count: lookAtCountsOfScan().
     ByUpsilon,
-    // BackwardScan::addUse(). It counts for BackwardScan::SummaryOfReads::regionOfUses only where the caller says so.
     Added,
 };
 
-// Any read. `read` is BackwardScan::facts() of the value, `hint` the Reg::index() of the register that the read would like it in.
-// Returns whether the value has a position and is defined ahead of the innermost loop around the read.
 template<KindOfScannedRead kind>
 static ALWAYS_INLINE bool recordScannedRead(BackwardScan& scan, const PlaceOfScannedReads& at, Operation* value, ValueFacts& read, Position position, unsigned hint, bool readsUpperHalf)
 {
     constexpr bool notesRegion = kind != KindOfScannedRead::Added;
 
-    // Whatever reads a value stands behind it in the order, so the scan has not been at its definition.
     uint16_t flags = read.flags;
     if (read.definition != noPosition || (flags & scanBitOf(ValueFlag::IsDropped))) [[unlikely]]
         return failScannedRead(scan, at, value, notesRegion);
@@ -416,7 +376,6 @@ static ALWAYS_INLINE bool recordScannedRead(BackwardScan& scan, const PlaceOfSca
         makeRoomForScannedReads(scan);
     Use* firstOfUses = uses.begin();
 
-    // The scan goes back through the order, so nearly every read stands ahead of those that are known.
     Position readAhead = noPosition;
     uint32_t behind = read.firstUse;
     if (behind && firstOfUses[behind].position < position) {
@@ -439,7 +398,6 @@ static ALWAYS_INLINE bool recordScannedRead(BackwardScan& scan, const PlaceOfSca
     Type type = value->type();
     const Block* owner = value->owner();
     if (hint != noHintOfScannedRead && type.isNumeric() && bankOf(Reg::fromIndex(hint)) == bankOf(type)) {
-        // What a rare region would like of a value from outside gives way to what a read elsewhere would like, however far on: the move then stands in the region.
         bool isHintOfRareRegion = at.isRare() && owner && scan.m_places[owner->index()].rareRegion != at.rareRegion;
         if (isFirstRead ? !isHintOfRareRegion || !read.hint || (flags & scanBitOf(ValueFlag::HintIsOfRareRegion)) : !read.hint) {
             constexpr uint16_t flag = scanBitOf(ValueFlag::HintIsOfRareRegion);
@@ -465,10 +423,8 @@ static ALWAYS_INLINE bool recordScannedRead(BackwardScan& scan, const PlaceOfSca
         if constexpr (kind == KindOfScannedRead::ByOperation)
             lookAtCountsOfScan(scan);
     }
-    // No Phi stands at the head of a loop where there is no loop.
     if (scan.m_hasLoops && value->opcode() == Phi)
         noteScannedReadOfPhi(scan, value, position, revives);
-    // Loops nest, so a read ahead of the end of the range lies in no loop that the value is defined ahead of and that ends behind the range.
     bool isDefinedAheadOfLoop = at.loop != noLoop && scan.m_places[owner->index()].head < at.beginOfLoop;
     if (revives || position >= lastUse) {
         read.lastUse = position;
@@ -494,7 +450,6 @@ static ALWAYS_INLINE bool recordScannedRead(BackwardScan& scan, const PlaceOfSca
     return isDefinedAheadOfLoop;
 }
 
-// Any read that stands in the block of the scan, and of an operation's read what the loops around the block are told of a value with a position.
 template<KindOfScannedRead kind>
 static NEVER_INLINE void readValueInScannedBlockTheLongWay(BackwardScan& scan, Operation* value, ValueFacts& read, Position position, unsigned hint, bool readsUpperHalf)
 {
@@ -503,7 +458,6 @@ static NEVER_INLINE void readValueInScannedBlockTheLongWay(BackwardScan& scan, O
     if constexpr (kind == KindOfScannedRead::ByOperation) {
         if (!at.countsForLoops || value->hasNoPosition())
             return;
-        // For what is defined in the innermost loop listScannedReadFromOutsideLoops() lists nothing and notes the loop.
         if (isDefinedAheadOfLoop)
             listScannedReadFromOutsideLoops(scan, value, at);
         else
@@ -511,7 +465,6 @@ static NEVER_INLINE void readValueInScannedBlockTheLongWay(BackwardScan& scan, O
     }
 }
 
-// The end of readValueInScannedBlock() for a read in a rare region, of what is defined outside it, that counts for calls at a place with a loop around it.
 static NEVER_INLINE void noteScannedReadThatCountsForCallsInLoop(BackwardScan& scan, const Operation* value)
 {
     const PlaceOfScannedReads& at = scan.m_placeOfReads;
@@ -520,9 +473,6 @@ static NEVER_INLINE void noteScannedReadThatCountsForCallsInLoop(BackwardScan& s
     noteRegionOfScannedUse(summary.regionOfUses, at.rareRegion);
 }
 
-// What readValueInScannedBlockTheLongWay() does, for nearly every read: of a number whose definition the scan has not been at, ahead of the reads that are known, with room for it in the list,
-// of no Phi at the head of a loop and of nothing that is defined ahead of the innermost loop around the block.
-// It asks all of that before it writes anything, so whatever else comes goes the long way from the start. It calls nothing that it has to come back from, so it needs no register saved.
 template<KindOfScannedRead kind>
 static NEVER_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation* value, ValueFacts& read, Position position, unsigned hint, bool readsUpperHalf)
 {
@@ -537,13 +487,11 @@ static NEVER_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation* 
     uint32_t behind = read.firstUse;
     Use* firstOfUses = uses.begin();
 
-    // Entry zero of the list has noPosition for its position, so a value of which no read is known passes the last test.
     if (read.definition != noPosition || (flags & scanBitOf(ValueFlag::IsDropped)) || !type.isNumeric() || newUse == uses.capacity() || firstOfUses[behind].position < position) [[unlikely]]
         return readValueInScannedBlockTheLongWay<kind>(scan, value, read, position, hint, readsUpperHalf);
     if (owner) {
         if (at.loop != noLoop && scan.m_places[owner->index()].head < at.beginOfLoop) [[unlikely]]
             return readValueInScannedBlockTheLongWay<kind>(scan, value, read, position, hint, readsUpperHalf);
-        // Of a Phi that stands elsewhere noteScannedReadOfPhi() notes nothing.
         if (value->opcode() == Phi && scan.m_hasLoops && scan.m_places[owner->index()].isLoopHead) [[unlikely]]
             return readValueInScannedBlockTheLongWay<kind>(scan, value, read, position, hint, readsUpperHalf);
     }
@@ -559,7 +507,6 @@ static NEVER_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation* 
     if (readsUpperHalf)
         flags |= scanBitOf(ValueFlag::UpperHalfIsRead);
     if (hint != noHintOfScannedRead && bankOf(Reg::fromIndex(hint)) == bankOf(type)) {
-        // What a rare region would like of a value from outside gives way to what a read elsewhere would like, however far on: the move then stands in the region.
         bool isHintOfRareRegion = at.isRare() && owner && scan.m_places[owner->index()].rareRegion != at.rareRegion;
         if (!isHintOfRareRegion || !read.hint || (flags & scanBitOf(ValueFlag::HintIsOfRareRegion))) {
             constexpr uint16_t flag = scanBitOf(ValueFlag::HintIsOfRareRegion);
@@ -575,7 +522,6 @@ static NEVER_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation* 
             read.lastUse = std::max(lastUse, position);
             return;
         }
-        // markScannedOperationWithoutPosition(), which has more to do only where there are children.
         read.flags = static_cast<uint16_t>(flags | scanBitOf(ValueFlag::IsRematerialized));
         read.lastUse = position;
         if (value->numChildren()) [[unlikely]]
@@ -588,7 +534,6 @@ static NEVER_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation* 
         uint16_t& numberLive = scan.m_numberLive[bank];
         incrementScanCount(numberLive);
         if constexpr (kind == KindOfScannedRead::ByOperation) {
-            // lookAtCountsOfScan(), at the one count that has changed.
             uint16_t& mostLive = scan.m_mostLiveInBlock.data()[bank];
             mostLive = std::max(mostLive, numberLive);
         }
@@ -613,7 +558,6 @@ static NEVER_INLINE void readValueInScannedBlock(BackwardScan& scan, Operation* 
     noteRegionOfScannedUse(summary.regionOfUses, at.rareRegion);
 }
 
-// BackwardScan::define(). `regionOfBlock`: BlockPlace::rareRegion of the block that the operation was appended to.
 static ALWAYS_INLINE void defineScannedValue(BackwardScan& scan, Operation* operation, ValueFacts& own, Position position, uint32_t regionOfBlock)
 {
     own.definition = position;
@@ -621,7 +565,6 @@ static ALWAYS_INLINE void defineScannedValue(BackwardScan& scan, Operation* oper
     if (lastUse == noPosition)
         return;
 
-    // What sank stands behind the place of the scan. Between it and its reads lie the calls of its region alone, and the scan has been through all of that region.
     uint16_t flags = own.flags;
     bool isSunk = flags & static_cast<uint16_t>(ValueFlag::IsSunk);
     uint32_t region = isSunk ? scan.m_summariesOfReads[operation->index()].regionOfUses : regionOfBlock;
@@ -633,7 +576,6 @@ static ALWAYS_INLINE void defineScannedValue(BackwardScan& scan, Operation* oper
         if (lastReadCountedForCalls > nextCall)
             flags |= static_cast<uint16_t>(ValueFlag::LivesAcrossCall);
     });
-    // For what sank these three may lie ahead of it, which claims more and never less.
     if (lastUse > scan.m_nextSafepoint)
         flags |= static_cast<uint16_t>(ValueFlag::LivesAcrossSafepoint);
     if (lastUse > scan.m_nextSuspension)
@@ -642,12 +584,10 @@ static ALWAYS_INLINE void defineScannedValue(BackwardScan& scan, Operation* oper
         flags |= static_cast<uint16_t>(ValueFlag::LivesIntoLandingPad);
     own.flags = flags;
 
-    // It does nothing for any other value.
     if (operation->has(OperationFlag::IsInnerPointer) || (flags & static_cast<uint16_t>(ValueFlag::LivesAcrossSafepoint)))
         scan.applyCollectorRules(operation);
 }
 
-// Whatever the operation is.
 static NEVER_INLINE void closeScannedRangeTheLongWay(BackwardScan& scan, Operation* operation, ValueFacts& own, Position definition, uint32_t regionOfBlock)
 {
     defineScannedValue(scan, operation, own, definition, regionOfBlock);
@@ -656,13 +596,11 @@ static NEVER_INLINE void closeScannedRangeTheLongWay(BackwardScan& scan, Operati
     forEachBankOfScannedValue(scan.m_proc, operation, [&](unsigned bank) {
         decrementScanCount(scan.m_numberLive[bank]);
     });
-    // BackwardScan::trySink() and BackwardScan::applyCollectorRules() may have added reads.
     lookAtCountsOfScan(scan);
     if (scan.m_hasLoops)
         endCountOfPhiReadOnlyBehindLoop(scan, operation);
 }
 
-// In line: defineScannedValue() and what stands behind it above, for a number that has not sunk.
 static ALWAYS_INLINE void closeScannedRange(BackwardScan& scan, Operation* operation, ValueFacts& own, Position definition, uint32_t regionOfBlock)
 {
     Position lastUse = own.lastUse;
@@ -680,7 +618,6 @@ static ALWAYS_INLINE void closeScannedRange(BackwardScan& scan, Operation* opera
     own.definition = definition;
     unsigned bank = static_cast<unsigned>(bankOf(type));
     Position lastReadCountedForCalls = scan.m_summariesOfReads.isEmpty() ? lastUse : scan.m_summariesOfReads[operation->index()].lastReadCountedForCalls;
-    // Each of the positions asked about below stands no nearer than BackwardScan::m_nearestEventBehind.
     if (std::max(lastUse, lastReadCountedForCalls) >= scan.m_nearestEventBehind) {
         Position nextCall = scan.m_nextCall[bank];
         if (regionOfBlock < scan.m_regions.size())
@@ -696,20 +633,16 @@ static ALWAYS_INLINE void closeScannedRange(BackwardScan& scan, Operation* opera
         own.flags = flags;
     }
 
-    // It does nothing for any other value. It never takes the last use away, so the range is one that closes. It may add reads, which revive what they read.
     bool isSubjectToCollectorRules = operation->has(OperationFlag::IsInnerPointer) || (flags & scanBitOf(ValueFlag::LivesAcrossSafepoint));
     if (isSubjectToCollectorRules)
         scan.applyCollectorRules(operation);
     decrementScanCount(scan.m_numberLive[bank]);
     if (isSubjectToCollectorRules)
         lookAtCountsOfScan(scan);
-    // noteScannedReadOfPhi() alone sets a bit of BackwardScan::m_isPhiReadOnlyBehindLoop, and it is called for a Phi.
     if (operation->opcode() == Phi && scan.m_hasLoops)
         endCountOfPhiReadOnlyBehindLoop(scan, operation);
 }
 
-// An Upsilon that Order left behind when it retargeted or split an edge feeds nothing. Neither does one whose Phi stands behind it and has turned out unread.
-// The Phi of a back edge has not been scanned, so its Upsilon stays.
 static ALWAYS_INLINE bool upsilonStaysInScan(const BackwardScan& scan, const Block* block, const Operation* upsilon, Position position)
 {
     const Operation* phi = upsilon->phi();
@@ -741,7 +674,6 @@ static ALWAYS_INLINE Reg hintOfScannedRead(const Operation* operation, const Pat
     return Reg();
 }
 
-// `operation` stays, or is read where its user stands.
 static ALWAYS_INLINE void noteScannedReadOfWholeWord(BackwardScan& scan, const Operation* operation)
 {
     if (scan.m_wordsReadWhole.isEmpty() || operation->opcode() != Load || operation->type() != Int64 || scan.m_order.of(operation->owner()).isRare())
@@ -749,7 +681,6 @@ static ALWAYS_INLINE void noteScannedReadOfWholeWord(BackwardScan& scan, const O
     scan.m_wordsReadWhole[operation->lastChild()->index()] |= BackwardScan::bitOfWord(operation->offset());
 }
 
-// It throws or stops the program, so it runs once at most each time the function is entered, and what it costs is bytes.
 static bool functionEndsBehindScannedPatch(const PatchOperation* patch)
 {
     const Block* block = patch->owner();
@@ -758,7 +689,6 @@ static bool functionEndsBehindScannedPatch(const PatchOperation* patch)
     return patch->indexInBlock() + 2 == block->size() && block->last()->opcode() == Oops;
 }
 
-// `loop` is the innermost one around the block, `region` the rare region of the block, `clobbered` what the Patch clobbers late.
 static NEVER_INLINE void noteRegistersTakenByScannedCallInLoops(BackwardScan& scan, const PatchOperation* patch, const Block* block, uint32_t loop, uint32_t region, RegisterMask clobbered)
 {
     RegisterMask taken = clobbered | patch->earlyClobberedMask();
@@ -790,12 +720,10 @@ static NEVER_INLINE void makeListsOfLastCallsInScannedBlocks(BackwardScan& scan)
     scan.nextCallsBehindEnds().fill(scan.m_proc.arena(), scan.m_order.mostBlocks(), std::array<Position, numberOfBanks> { noPosition, noPosition });
 }
 
-// BackwardScan::noteCall(). `region` and `loop` are BlockPlace::rareRegion and BlockPlace::loop of the block. `isReachedByScan`: the scan stands at the Patch, behind the close of its range.
 static ALWAYS_INLINE void noteScannedCall(BackwardScan& scan, const PatchOperation* patch, Position late, const Block* block, uint32_t region, uint32_t loop, bool isReachedByScan)
 {
     bool leadsToLandingPad = false;
     if (patch->effects.terminal) {
-        // It is the first operation of its block that the scan comes to.
         if (isReachedByScan)
             lookAtCountsOfScan(scan);
         for (const Edge& edge : block->successors())
@@ -814,8 +742,6 @@ static ALWAYS_INLINE void noteScannedCall(BackwardScan& scan, const PatchOperati
         if (leadsToLandingPad || takesSecondBank)
             nextCall[1] = late;
         if (region == noRareRegion && (takesFirstBank || takesSecondBank)) {
-            // Liveness::lastCallIn() and nextCallBehindEndOf(), ahead of the line that makes the call the nearest one.
-            // The scan meets the last call of a block first, and the nearest call until then stands behind the block.
             if (scan.lastCallsInBlocks().isEmpty()) [[unlikely]]
                 makeListsOfLastCallsInScannedBlocks(scan);
             uint32_t blockIndex = block->index();
@@ -853,7 +779,6 @@ static ALWAYS_INLINE void noteScannedCall(BackwardScan& scan, const PatchOperati
         noteRegistersTakenByScannedCallInLoops(scan, patch, block, loop, region, clobbered);
 }
 
-// `read` is BackwardScan::facts() of the leaf. `userIsPatch`: of such a user scannedLeafWithoutPositionNeedsRegister() says no.
 static ALWAYS_INLINE void readLeafOfScannedOperation(BackwardScan& scan, const Operation* user, unsigned childIndex, Operation* leaf, ValueFacts& read, Position early, unsigned hint, bool readsUpperHalf, bool userIsPatch = false)
 {
     readValueInScannedBlock<KindOfScannedRead::ByOperation>(scan, leaf, read, early, hint, readsUpperHalf);
@@ -863,29 +788,24 @@ static ALWAYS_INLINE void readLeafOfScannedOperation(BackwardScan& scan, const O
         listScannedReadFromOutsideLoops(scan, leaf, scan.m_placeOfReads);
 }
 
-// The leaves that forEachLeafBelow() lists for `below` and `selectAbove`: what is fused into the operation, or the operation itself where it works in memory or goes by overflow.
 static NEVER_INLINE void readLeavesBelowScannedOperation(BackwardScan& scan, Operation* operation, const Operation* below, const Operation* selectAbove, Position early)
 {
     const ValueFacts& own = scan.facts(operation);
     const PatchOperation* patch = operation->as<PatchOperation>();
     Reg hintOfResult = own.hint;
-    // The Branch reads the sum where its register holds the low half alone. The first leaf of the sum lies where its first child would.
     bool isBranchOnOverflow = own.has(ValueFlag::GoesByOverflow) && operation->opcode() == Branch;
     bool nextLeafStandsForFirstChild = own.has(ValueFlag::GoesByOverflow) && !isBranchOnOverflow;
     forEachLeafBelow(scan.m_liveness, below, [&](const Operation* user, unsigned childIndex, Operation* leaf) {
-        // A fused Trunc has one child, which lies where the Trunc would.
         bool standsForFirstChild = (user->opcode() == Trunc && user == operation->child(0)) || std::exchange(nextLeafStandsForFirstChild, false);
         Reg hint = user == operation || standsForFirstChild ? hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult) : Reg();
         readLeafOfScannedOperation(scan, user, childIndex, leaf, scan.facts(leaf), early, hint.index(), user->opcode() != Trunc && !isBranchOnOverflow);
     }, selectAbove);
 }
 
-// What stands behind the close of the range of any operation that stays, but for what a Patch is noted for.
 static NEVER_INLINE void readLeavesOfScannedOperationTheLongWay(BackwardScan& scan, Operation* operation, Position early)
 {
     if (!operation->numChildren() || operation->isUnconditionalJump())
         return;
-    // Nothing is fused into a Patch.
     if (operation->opcode() != Patch)
         scan.fuseInto(operation);
     const PatchOperation* patch = operation->as<PatchOperation>();
@@ -894,7 +814,6 @@ static NEVER_INLINE void readLeavesOfScannedOperationTheLongWay(BackwardScan& sc
     forEachLeafInParts(scan.m_liveness, operation, [&](unsigned childIndex, Operation* leaf) ALWAYS_INLINE_LAMBDA {
         readLeafOfScannedOperation(scan, operation, childIndex, leaf, scan.facts(leaf), early, hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult).index(), readsUpperHalf);
     }, [&](const Operation* user, unsigned childIndex, Operation* leaf) ALWAYS_INLINE_LAMBDA {
-        // A fused Trunc has one child, which lies where the Trunc would.
         bool isBelowTrunc = user->opcode() == Trunc;
         Reg hint = isBelowTrunc && user == operation->child(0) ? hintOfScannedRead(operation, patch, childIndex, leaf, hintOfResult) : Reg();
         readLeafOfScannedOperation(scan, user, childIndex, leaf, scan.facts(leaf), early, hint.index(), !isBelowTrunc);
@@ -903,7 +822,6 @@ static NEVER_INLINE void readLeavesOfScannedOperationTheLongWay(BackwardScan& sc
     });
 }
 
-// As forEachLeaf() lists them. `own` is BackwardScan::facts() of the Patch.
 static ALWAYS_INLINE void readOperandsOfScannedPatch(BackwardScan& scan, PatchOperation* patch, const ValueFacts& own, Position early)
 {
     std::span<Operation* const> operands = patch->operands();
@@ -924,14 +842,12 @@ static ALWAYS_INLINE void readOperandsOfScannedPatch(BackwardScan& scan, PatchOp
             readLeavesBelowScannedOperation(scan, patch, leaf, nullptr, early);
             continue;
         }
-        // hintOfScannedRead().
         const ValueRep& constraint = constraints[index];
         Reg hint = constraint.isReg() ? constraint.reg() : patch->registerToBringOperandTo(index);
         readLeafOfScannedOperation(scan, patch, index, leaf, read, early, hint.index(), true, true);
     }
 }
 
-// Operation::mustStay(). And the Branch behind a sum that goes by overflow reads the flags that it leaves.
 static ALWAYS_INLINE bool scannedOperationMustStay(const Operation* operation, Opcode opcode, unsigned traits, const ValueFacts& own)
 {
     bool mustStay = opcode == Patch ? static_cast<const PatchOperation*>(operation)->effects.mustStay() : (traits & ScannedOpcodeHasEffects) || operation->traps();
@@ -939,8 +855,6 @@ static ALWAYS_INLINE bool scannedOperationMustStay(const Operation* operation, O
     return mustStay || own.has(ValueFlag::GoesByOverflow);
 }
 
-// The operation stands in the block of the scan.
-// Returns false where the operation is fused or dropped. Then no read was recorded and no range closed, so every count of live values is what it was.
 static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block, Operation* operation, Position early)
 {
     const PlaceOfScannedReads& at = scan.m_placeOfReads;
@@ -952,7 +866,6 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
     }
 
     Opcode opcode = operation->opcode();
-    // It stays, and nothing is read by it or of it. It ends the block.
     if (opcode == Jump && own.lastUse == noPosition) {
         own.definition = early + 1;
         lookAtCountsOfScan(scan);
@@ -978,21 +891,17 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
         }
     }
 
-    // The results of a call do not live across it, so they are defined ahead of noting it.
     noteScannedReadOfWholeWord(scan, operation);
     closeScannedRange(scan, operation, own, early + 1, at.rareRegion);
     if (opcode == Patch) {
         PatchOperation* patch = static_cast<PatchOperation*>(operation);
-        // In a loop a jump more at every turn counts. Elsewhere the bytes of the moves do, at every site.
         if (patch->bringsOperandsToTheirRegisters() && (at.isRare() || at.loop == noLoop || functionEndsBehindScannedPatch(patch)))
             patch->leaveOperandsWhereTheyLie();
         noteScannedCall(scan, patch, early + 1, block, at.rareRegion, at.loop, true);
-        // Nothing is fused into a Patch.
         readOperandsOfScannedPatch(scan, patch, own, early);
         return true;
     }
 
-    // Of no other opcode does Operation::isUnconditionalJump() hold. What ends the block is the first of its operations that the scan comes to.
     if (isTerminal(opcode)) {
         lookAtCountsOfScan(scan);
         if (operation->isUnconditionalJump())
@@ -1007,12 +916,10 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
         return true;
     scan.fuseInto(operation);
 
-    // From here on as forEachLeafInParts() goes through the leaves, with what hintOfScannedRead() says of an operation that is no Patch, Check or Return.
     if (own.flags & flagsOfScannedOperationWithLeavesOfItsOwn) [[unlikely]] {
         readLeavesBelowScannedOperation(scan, operation, operation, nullptr, early);
         return true;
     }
-    // A read leaves its hint with a number alone, so what is no number has none to hand on.
     ASSERT(operation->type().isNumeric() || !own.hint);
     unsigned hintOfFirstChild = (traits & ScannedOpcodeHandsHintOnToFirstChild) ? own.hint.index() : noHintOfScannedRead;
     bool readsUpperHalf = opcode != Trunc;
@@ -1030,7 +937,6 @@ static ALWAYS_INLINE bool scanOperationOfBlock(BackwardScan& scan, Block* block,
             readLeavesBelowScannedOperation(scan, operation, below, opcode == Select ? operation : nullptr, early);
             continue;
         }
-        // A comparison below a Branch and a sum below a load are most of what is fused. A fused Trunc has one child, which lies where the Trunc would.
         bool isBelowTrunc = opcodeBelow == Trunc;
         unsigned hintOfFirstChildBelow = isBelowTrunc && below == child[0] ? hintOfFirstChild : noHintOfScannedRead;
         Operation* const* childBelow = below->inlineChildren();
@@ -1114,7 +1020,6 @@ BackwardScan::BackwardScan(Procedure& proc, Liveness& liveness)
 #endif
 }
 
-// run() alone calls it.
 ALWAYS_INLINE void BackwardScan::scanBlock(Block* block)
 {
     ASSERT(block->isTerminated());
@@ -1130,7 +1035,6 @@ ALWAYS_INLINE void BackwardScan::scanBlock(Block* block)
             enterLoopsEndingAt(loop.end);
     }
 
-    // The Upsilons read at the place of the last operation and are scanned ahead of it: a result of that operation which one of them hands on has then been read when it is defined.
     Position early = end - 2;
     const PlaceOfReads& at = m_placeOfReads;
     const Block* origin = blockThatScannedBlockBranchesOff(*this, block, place);
@@ -1141,7 +1045,6 @@ ALWAYS_INLINE void BackwardScan::scanBlock(Block* block)
             factsOfUpsilon.flags |= scanBitOf(ValueFlag::IsDropped);
             continue;
         }
-        // define() does no more for what nothing reads.
         if (factsOfUpsilon.lastUse == noPosition) [[likely]]
             factsOfUpsilon.definition = early + 1;
         else
@@ -1156,7 +1059,6 @@ ALWAYS_INLINE void BackwardScan::scanBlock(Block* block)
     m_mostLiveInBlock = { 0, 0 };
     Operation* const* operations = block->operations().data();
     for (unsigned index = block->size(); index--; early -= 2) {
-        // Where no count has changed since the last sample, another finds nothing. What ends the block is neither fused nor dropped, so there is a first one.
         if (scanOperationOfBlock(*this, block, operations[index], early) && countsForPressureOfLoop)
             samplePressureOfScan(*this, at.loop, standsBehindLastExit);
     }
@@ -1187,7 +1089,6 @@ void BackwardScan::run()
     for (size_t index = blocks.size(); index--;)
         scanBlock(firstBlock[index]);
 
-    // Liveness::sunkInto() lists them as they were appended, and the scan meets the last one first.
     for (ArenaVector<Operation*>& sunk : m_liveness.m_sunk) {
         std::sort(sunk.begin(), sunk.end(), [](const Operation* left, const Operation* right) {
             return left->index() < right->index();
@@ -1197,7 +1098,6 @@ void BackwardScan::run()
 
 void BackwardScan::addUse(Operation* value, Position position, Reg hint)
 {
-    // The last block whose head does not stand behind the position, in a procedure without loops too.
     std::span<Block* const> blocks = m_order.blocksInOrder();
     auto behind = std::ranges::upper_bound(blocks, position, { }, [&](const Block* block) {
         return m_order.headOf(block);
@@ -1223,7 +1123,6 @@ void BackwardScan::noteCall(const PatchOperation* patch, Position late, const Bl
     noteScannedCall(*this, patch, late, block, place.rareRegion, place.loop, false);
 }
 
-// A predecessor stands ahead of the block here, so it has its answer.
 void BackwardScan::findBlocksThatRareBlocksBranchOff()
 {
     ArenaVector<const Block*>& origins = m_liveness.m_blocksThatRareBlocksBranchOff;
@@ -1256,7 +1155,6 @@ void BackwardScan::leaveLoopsBeginningAt(Position begin)
         const LoopState& state = m_loopStates[loop];
         LoopFacts& result = m_liveness.m_loops[loop];
         for (unsigned bank = 0; bank < numberOfBanks; ++bank) {
-            // Whatever is live here is defined ahead of the loop.
             unsigned liveThrough = m_numberLive[bank] > state.outerValuesRead[bank] ? m_numberLive[bank] - state.outerValuesRead[bank] : 0;
             result.pressure[bank] = static_cast<uint16_t>(state.mostLive[bank] > liveThrough ? state.mostLive[bank] - liveThrough : 0);
         }

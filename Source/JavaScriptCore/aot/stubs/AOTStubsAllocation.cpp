@@ -66,7 +66,6 @@ static void storeChunk(StubAssembler& jit, GPRReg base, int32_t offset, std::opt
 }
 #endif
 
-// Only ARM64 uses the scratches.
 static void copyChunk(StubAssembler& jit, Address from, Address to, GPRReg firstScratch, GPRReg secondScratch)
 {
 #if CPU(X86_64)
@@ -82,7 +81,6 @@ static void copyChunk(StubAssembler& jit, Address from, Address to, GPRReg first
 
 static constexpr int32_t distanceToEmptyRecord = -static_cast<int32_t>(sizeof(AllocationSiteRecord));
 
-// ARM64 adds a register or a number to a register, not both at once. There the number is left to the offset of each access.
 #if CPU(ARM64)
 static constexpr int32_t distanceLeftToOffsets = distanceToEmptyRecord;
 #else
@@ -128,7 +126,6 @@ static AllocationSiteRegisters allocateSiteRegisters(StubAssembler& jit)
     return allocateCellWithLateRefill(jit, cell, allocator, scratch, slowPath, cellSize);
 }
 
-// The first chunk is left to whoever stores the header.
 static void zeroBehindFirstChunk(StubAssembler& jit, const AllocationSiteRegisters& registers, std::optional<unsigned> cellSize)
 {
     const auto [cell, allocation, record, allocator, scratch] = registers;
@@ -207,7 +204,6 @@ void generateAllocateCellFromTemplate(StubAssembler& jit)
     static_assert(offsetOfFirstEnvironmentVariable == sizeof(JSCell) && cellSizeStep == copyChunkBytes);
     const auto initialization = static_cast<CellInitialization>(jit.key().form());
     const unsigned size = jit.key().count() * copyChunkBytes;
-    // Up to MarkedSpace::preciseCutoff the cells of an allocator are as large as what is asked for, in whole steps.
     const std::optional<unsigned> cellSize = size <= maxCellSizeInKey ? std::optional<unsigned>(size) : std::nullopt;
     JumpList slowPath;
     const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, registers, slowPath, cellSize);
@@ -256,7 +252,6 @@ void generateInitializeObjectInFrame(StubAssembler& jit)
     jit.returnToCaller();
 
     hasNoHeader.link(&jit);
-    // Sending the result to a scratch register makes the call restore every other register, including the cell's.
     auto initializeFromFilledRecord = [&] {
         loadRecord();
         initialize();
@@ -299,7 +294,6 @@ void generateAllocateInstance(StubAssembler& jit)
     jit.jumpToStub(StubKey(StubFamily::AllocateInstanceOutOfLine));
 }
 
-// The third operand is the record of the allocation.
 StubSignature signatureOfAllocateInstanceOutOfLine(StubKey key)
 {
     StubSignature signature = signatureOfAllocateInstance(key);
@@ -317,12 +311,9 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
     RELEASE_ASSERT(record == jit.secondResult() && noOverlap(cell, allocation, prototype, record, scratch, instanceGPR));
     static_assert(operationArgumentGPR(2) == gprOf(StubRegister::A2));
 
-    // The allocator of the record had no room. The record, which is not zero, stays in the register of the second result.
     JumpList allocatesSlowly;
     allocatesSlowly.append(jit.branchPtr(CCallHelpers::Equal, Address(record, AllocationSiteRecord::offsetOfPrototype()), prototype));
 
-    // What is saved around the operation comes back, the second result with it.
-    // On ARM64 the first result and the first argument are one register: what is read while the arguments are laid out is in neither.
     const GPRReg setsPrototype = scratch;
     static_assert(areDistinctOnEveryISA(StubRegister::T9, StubRegister::T13, StubRegister::A0, StubRegister::A1, StubRegister::A3, StubRegister::A4));
     RELEASE_ASSERT(allocation == gprOf(StubRegister::T9) && setsPrototype == gprOf(StubRegister::T13));
@@ -366,7 +357,6 @@ void generateAllocateExtension(StubAssembler& jit)
     const BaseIndex extensionWord(owner, wordOffset, CCallHelpers::TimesOne);
     const bool isNarrow = traitsOf(hiddenReferenceRepresentation(jit.options().useWideReferences)).isNarrowReference;
     JumpList slowPath;
-    // An Extension that lacks the granules gets one in the room it has, or the operation replaces it.
     Jump hasNone;
     if (isNarrow) {
         jit.load32(extensionWord, storage);
@@ -377,14 +367,12 @@ void generateAllocateExtension(StubAssembler& jit)
         jit.load64(extensionWord, storage);
         hasNone = jit.branchTest64(CCallHelpers::Zero, storage);
     }
-    // A site asks for the granules of the first Extension along with its own, and this one has had them since it was made.
     jit.load64(Address(storage, offsetOfExtensionGranuleBits), temporary);
     jit.not64(temporary);
     jit.and64(temporary, granuleBits);
     appendGranule(jit, storage, granuleBits, temporary, allocator, slowPath);
     jit.returnToCaller();
     hasNone.link(&jit);
-    // The owner names its Extension by a narrow reference.
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cagedAuxiliarySpace)), allocator);
     jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(size) * sizeof(Allocator)), allocator);
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
@@ -414,7 +402,6 @@ StubSignature signatureOfAllocateExtensionSlow(StubKey)
     return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
 }
 
-// Sixteen bytes are a unit. An entry is four bits wide.
 static constexpr uint64_t extensionUnitsByNumberOfGranules = [] {
     uint64_t units = 0;
     for (unsigned count = 1; count <= maxGranulesOfExtensionFromStub; ++count)
@@ -433,7 +420,6 @@ void loadUnitsOfExtensionWith(StubAssembler& jit, GPRReg granuleBits, GPRReg uni
     jit.and32(TrustedImm32(15), units);
 }
 
-// LayoutData::granulesOfFirstExtension() of an object whose layout has an Extension. They are the last words in front of the record, or in front of the slot of the extra properties.
 static void loadGranulesOfFirstExtension(StubAssembler& jit, GPRReg object, GPRReg result)
 {
     RELEASE_ASSERT(object != result);
@@ -448,7 +434,6 @@ static void loadGranulesOfFirstExtension(StubAssembler& jit, GPRReg object, GPRR
     jit.load64(Address(result, -static_cast<int32_t>(sizeof(uint64_t))), result);
 }
 
-// As Object::ensureExtensionGranules().
 static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg granuleBits, GPRReg replacement, JumpList& givesUp)
 {
     const GPRReg allocator = jit.allocateScratch(StubRegister::T12);
@@ -459,7 +444,6 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
     const GPRReg to = allocator;
     RELEASE_ASSERT(noOverlap(owner, granuleBits, replacement, allocator, scratch, from, held, remaining));
 
-    // replacement is zero behind it where the operation is to do it.
     jit.preserving({ from, held, remaining }, [&] {
         JumpList cannot;
         JumpList isDone;
@@ -483,11 +467,9 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.move(held, remaining);
         jit.or64(granuleBits, remaining);
         Jump hasOne = jit.jump();
-        // Nothing is held, so nothing below reads through `from`.
         hasNone.link(&jit);
         loadGranulesOfFirstExtension(jit, owner, remaining);
         jit.or64(granuleBits, remaining);
-        // The first Extension of one granule, which is a third of all growth: no counting and no loops.
         jit.countPopulation64(remaining, scratch, CCallHelpers::fpTempRegister);
         Jump getsSeveral = jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(1));
         static_assert(extensionCellSizeFor(1) == offsetOfFirstExtensionSlot + extensionGranuleSize);
@@ -501,7 +483,6 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.countPopulation64(remaining, scratch, CCallHelpers::fpTempRegister);
         cannot.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(maxGranulesOfExtensionFromStub)));
 
-        // One granule becomes two, which is nearly half of all growth: no counting and no loops.
         JumpList isFilled;
         {
             static_assert(extensionCapacityFor(1) == 1 && extensionCapacityFor(2) == 3 && extensionCellSizeFor(2) == offsetOfFirstExtensionSlot + 3 * extensionGranuleSize);
@@ -532,7 +513,6 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         loadUnitsOfExtensionWith(jit, held, replacement, scratch);
         Jump hasNoRoom = jit.branch32(CCallHelpers::NotEqual, allocator, replacement);
 
-        // The lowest of the new ones is above all that are held: what is behind those is zero.
         jit.move(from, replacement);
         jit.xor64(held, remaining, scratch);
         jit.move(scratch, allocator);
@@ -542,7 +522,6 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.store64(remaining, Address(from, offsetOfExtensionGranuleBits));
         isDone.append(jit.jump());
 
-        // As Extension::tryInsert() leaves it. One new granule after the other, the lowest first: those above its place move up by one.
         isAmongHeld.link(&jit);
         Jump collectorMayVisit = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
         {
@@ -601,7 +580,6 @@ static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg gran
         jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), from);
         jit.addPtr(TrustedImm32(offsetOfFirstExtensionSlot), replacement, to);
         Label places = jit.label();
-        // The lowest bit that is left.
         jit.move(remaining, scratch);
         jit.neg64(scratch);
         jit.and64(remaining, scratch);
@@ -655,7 +633,6 @@ StubSignature signatureOfNewTypedArray(StubKey)
     return StubSignature::withGPRResult({ gprOf(StubRegister::A1), FPRInfo::argumentFPR0 });
 }
 
-// A view of one element or more whose bytes are few lies beside its bytes in the heap. The operation makes every other one, throws for what is no length, and fills the record of the type.
 void generateNewTypedArray(StubAssembler& jit)
 {
     const GPRReg result = jit.result();

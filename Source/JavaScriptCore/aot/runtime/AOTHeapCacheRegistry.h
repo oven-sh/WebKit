@@ -78,7 +78,6 @@ private:
 extern template void CacheRegistry::visitRoots<SlotVisitor>(SlotVisitor&, RootVolatility);
 extern template void CacheRegistry::visitRoots<AbstractSlotVisitor>(AbstractSlotVisitor&, RootVolatility);
 
-// What the kind needs, the owner must have.
 template<typename Owner>
 void CacheRegistry::add(CacheKind kind, ASCIILiteral name, Owner& owner, RootVolatility volatility)
 {

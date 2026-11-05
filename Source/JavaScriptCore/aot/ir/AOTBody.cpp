@@ -66,7 +66,11 @@ std::optional<ConstructionStart> BodyValue::constructionStart() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A TypeID can be any bit pattern. The null id wraps to zero, which programIDOf() reads back as the null id.
+Origin BodyValue::originWithSecondPosition() const
+{
+    return { .position = position(), .inlineFrame = 0, .isTailCall = standsInTailPosition(), .isPartOfConstruction = isPartOfConstruction() };
+}
+
 static uint32_t unitTableEntryOf(TypeID type)
 {
     return type.bits() + 1u;
@@ -82,7 +86,6 @@ static void composeTypesOfUnit(const IDRemapTable& placesInWireList, std::span<c
             composed[index] = 0;
             continue;
         }
-        // Once composed, an entry can be any bit pattern, so this is the last place an out-of-range position in the wire's list of types can be caught.
         RELEASE_ASSERT(place <= typesAsRead.size());
         composed[index] = unitTableEntryOf(typesAsRead[place - 1]);
     }
@@ -102,7 +105,6 @@ void UnitIDTables::initialize(const ExternalFunctionBodies* bodies, std::span<co
                 longestList = std::max(longestList, numbers.sizes[kind]);
         }
 
-        // Sized once: the tables point into it.
         m_entries.grow(longestList + typesAsRead.size());
         std::span<uint32_t> ownNumbers = m_entries.mutableSpan().first(longestList);
         std::span<uint32_t> entriesOfTypes = m_entries.mutableSpan().subspan(longestList);
@@ -132,7 +134,6 @@ void UnitIDTables::initialize(const ExternalFunctionBodies* bodies, std::span<co
         numberOfEntries += unit.tables[types].size;
     }
 
-    // Sized once: the tables point into it.
     m_entries.grow(numberOfEntries);
     std::span<uint32_t> entries = m_entries.mutableSpan();
     forEachIndexInParallel(loops, numberOfUnits(), [&](unsigned index) {

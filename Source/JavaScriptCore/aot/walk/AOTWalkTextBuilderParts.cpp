@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations with LoopInvariants, what is appended to a text in a builder: `s += ", "` writes bytes, `s += i` digits, `s += name` goes through a stub, and what may be any primitive is told apart at run time.
-// Every part is a primitive by its proven type, so no append runs code of the program. At a suspension: no text lies in a builder across one. At a throw: an append completes or leaves the builder as it was.
-// Withheld: no text lies in a builder, and nobody asks.
-
 #include "config.h"
 #include "AOTWalkTextBuilders.h"
 
@@ -18,7 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A symbol throws where it is appended, as it does where it is joined.
 static constexpr uint16_t primitivesTakenInTextBuilderParts = Primitive::All | Primitive::LiteralString | Primitive::LiteralSymbol;
 
 static Opcode narrowestFormInTextBuilderParts(const Type& type)
@@ -31,7 +26,6 @@ static Opcode narrowestFormInTextBuilderParts(const Type& type)
         return Opcode::StringBuilderAppendBoolean;
     if (type.isAnyString())
         return Opcode::StringBuilderAppendString;
-    // Its code takes every cell for a string, and whatever is no cell for undefined or null.
     if (type.hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull))
         return Opcode::StringBuilderAppendStringOrNullish;
     return Opcode::StringBuilderAppendValue;
@@ -67,7 +61,6 @@ StringID textOfKnownPartOfStringBuilder(Walker& walker, Reference part)
 {
     if (!part || !part.isRecord())
         return { };
-    // No type names a text that the walk has made.
     const Operation& record = walker.code().at(part.id());
     if (record.opcode == Opcode::String)
         return record.string();
@@ -95,13 +88,11 @@ StringID textOfKnownPartOfStringBuilder(Walker& walker, Reference part)
     }
 }
 
-// `constant`: the text of an AppendConstant. Null: the form takes `value`.
 static void buildPartInTextBuilderParts(Walker& walker, TextInStringBuilder& text, Reference name, Opcode form, Reference value, StringID constant, Origin origin)
 {
     Draft part(form, origin);
     walker.chooseConservativeFields(part);
     part.setBuilderOperand(name);
-    // A draft that becomes another operation loses what it held but for what the question sets.
     bool liesInFrame = becomeOperationOfStringBuilderInFrame(walker, text, name, part, formInFrameInTextBuilderParts(form));
     if (walker.isUnreachable())
         return;
@@ -135,14 +126,12 @@ static void appendPartInTextBuilderParts(Walker& walker, TextInStringBuilder& te
         walker.fail("a part of a text in a builder may run code"_s);
         return;
     }
-    // The text of -0 is "0".
     if (const Operation& record = walker.code().at(part.id()); record.opcode == Opcode::Double && !record.number()) {
         part = walker.constant(Draft(Opcode::Integer, origin));
         type = walker.types().at(walker.typeOf(part));
     }
 
     Opcode form = narrowestFormInTextBuilderParts(type);
-    // A number that somebody has taken out of its box is at hand in the box too, and the code of the part asks the tag of that: a small integer goes straight to its digits, without the way to a double and back.
     if (const Operation& record = walker.code().at(part.id()); form == Opcode::StringBuilderAppendNumber && record.opcode == Opcode::Unbox && part.isValue()) {
         Reference boxed = Reference::value(record.valueOperand());
         if (walker.representationOf(boxed) == Representation::JSValue && walker.types().at(walker.typeOf(boxed)).isNumber())

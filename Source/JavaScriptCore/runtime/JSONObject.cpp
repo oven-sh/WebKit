@@ -2611,8 +2611,6 @@ static ALWAYS_INLINE FieldsWrittenBySlot writeFieldsBySlotInline(Latin1Character
         case AOT::SlotRepresentation::Int16:
         case AOT::SlotRepresentation::Uint32:
         case AOT::SlotRepresentation::Float:
-        case AOT::SlotRepresentation::LiteralString:
-        case AOT::SlotRepresentation::LiteralString32:
         case AOT::SlotRepresentation::DeferredClosure:
             return { next, field };
         }

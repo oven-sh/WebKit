@@ -79,7 +79,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v58 = Convert v57 declared={type=number flags=[IsExpected]}
     v59 = Add v40, v58
     v60 = Convert v59 declared={type=number flags=[IsExpected]}
-    v61 = InstanceOf v54, v26 writtenExpression="made instanceof First"
+    v61 = InstanceOf v54, v26
     v62 = ToBoolean v61
     Branch v62 -> taken b7(| 0), notTaken b9(| 0)
   b7(v63):
@@ -97,7 +97,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b9(v72):
     Jump -> next b10(v54, v41, v42)
   b10(v73, v74, v75):
-    v76 = InstanceOf v73, v27 writtenExpression="made instanceof Second"
+    v76 = InstanceOf v73, v27
     v77 = ToBoolean v76
     Branch v77 -> taken b11(| 0), notTaken b13(| 0)
   b11(v78):

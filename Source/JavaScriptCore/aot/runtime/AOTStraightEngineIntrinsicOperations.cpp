@@ -24,7 +24,6 @@ static UGPRPair doneAndValueOfStraightStep(bool hasValue, JSValue value)
     return makeUGPRPair(JSValue::encode(jsBoolean(!hasValue)), JSValue::encode(hasValue ? value : jsUndefined()));
 }
 
-// buildStepOfArrayIteratorAsReplacement() of walk/AOTWalkReplacements.cpp, operation by operation. JSArrayIterator::next() steps over a list alone.
 static bool stepArrayIteratorForStraightCode(JSGlobalObject* globalObject, JSArrayIterator* iterator, JSValue& value)
 {
     VM& vm = globalObject->vm();

@@ -89,13 +89,14 @@ String quotedTextOfFailedExpression(VM& vm)
             quoted = findQuotedText(position->source, position->lineColumn);
             if (quoted.isNull() && position->constructionStart.line)
                 quoted = findQuotedText(position->source, position->constructionStart);
+        } else if (position && position->lineColumn == superCallOfDefaultConstructor) {
+            quoted = "super(...args)"_s;
         }
         return IterationStatus::Done;
     });
     return quoted;
 }
 
-// `spelled` stands where the engine quotes the source text of the expression that failed, unless the image holds that text. Null: nothing is spelled.
 static JSObject* createTypeErrorQuoting(JSGlobalObject* globalObject, JSValue value, const String& description, ASCIILiteral complaint, ErrorInstance::SourceAppender appender, const String& spelled)
 {
     String expression = quotedTextOfFailedExpression(globalObject->vm());
@@ -109,7 +110,6 @@ static JSObject* createTypeErrorQuoting(JSGlobalObject* globalObject, JSValue va
     return createTypeError(globalObject, appender(message, expression, runtimeTypeForValue(value), ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource));
 }
 
-// The engine quotes a call that failed whatever Error.stackTraceLimit is, and anything else only in an error whose trace has a frame: ErrorInstance::finishCreation().
 static JSObject* createNotAnObjectErrorQuoting(JSGlobalObject* globalObject, JSValue base, const String& description, const String& spelled)
 {
     if (!globalObject->stackTraceLimit().value_or(0))
@@ -117,7 +117,6 @@ static JSObject* createNotAnObjectErrorQuoting(JSGlobalObject* globalObject, JSV
     return createTypeErrorQuoting(globalObject, base, description, "is not an object"_s, defaultSourceAppender, spelled);
 }
 
-// `o.name`, `o.#name`. Any other key goes in brackets: `o["two words"]`.
 static bool canFollowDotInErrorMessage(StringView member)
 {
     if (member.isEmpty() || isASCIIDigit(member[0]))
@@ -155,7 +154,6 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, con
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSValue key)
 {
-    // An object is described by its class, which is not the key that it would become.
     if (!key || key.isObject())
         return JSC::createNotAnObjectError(globalObject, base);
     String description = describeForErrorMessage(globalObject, base);
@@ -209,8 +207,7 @@ JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, 
 
 JSObject* createParentNotAConstructorError(JSGlobalObject* globalObject, JSValue parent)
 {
-    // So reads the constructor that the engine gives a derived class without one. The image has no text for it.
-    return createTypeErrorQuoting(globalObject, parent, describeForErrorMessage(globalObject, parent), "is not a constructor"_s, defaultSourceAppender, "super(...args)"_str);
+    return createTypeErrorQuoting(globalObject, parent, describeForErrorMessage(globalObject, parent), "is not a constructor"_s, defaultSourceAppender, String());
 }
 
 JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue callee, StringView name)
@@ -279,7 +276,6 @@ static JSObject* createErrorWithCode(JSGlobalObject* globalObject, const String&
 
 JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView name, ASCIILiteral code)
 {
-    // A module of Bun's is no file that could be another entry point. The call went through a value that the compiler did not follow to the loader.
     bool isModuleOfBun = name.startsWith("node:"_s) || name.startsWith("bun:"_s);
     const Image* image = Image::current();
     if (!isModuleOfBun && image && hasFlag(image->header().options.admitted(), AdmittedCode::ReplacedBuiltins))
@@ -302,7 +298,6 @@ JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView
 
 JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
 {
-    // Only a test run takes files out, and only those that its build saw taken out.
     if (change == LoaderChange::TakeOutOfRequireCache)
         return createError(globalObject, makeString("Cannot take '"_s, changed, "' out of require.cache: the build found nothing that does, so the code that imports it was compiled for a module that loads once. Spell the path where it is deleted, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
     if (change == LoaderChange::StoreUnderNameOfModuleInRequireCache)
@@ -388,7 +383,6 @@ String callOfBuiltinChangedBeforeFirstUseMessage(const String& property)
 
 String assignmentThatBuildDidNotSeeMessage(const String& property)
 {
-    // The build never sees a file that is loaded from disk, so spelling the assignment out there would not help.
     if (const Image* image = Image::current(); image && image->loadsCodeOutsideImage())
         return withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable, and the build saw no assignment to this one. Code that is loaded from disk can replace it only where the executable's own code assigns to it too, spelled out as in "_s, property, " = value"_s));
     return withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in "_s, property, " = value"_s));
@@ -408,7 +402,6 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
     BuiltinName name = table.nameOf(vm, key);
     BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
     bool isText = !key->isSymbol() && !parseIndex(*key);
-    // A member that is constant unless written is locked only where the build has followed no write to it.
     bool canBeOpened = found ? table.canBeReplacedInTestRuns(found) || table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isText && table.canTakeNameInTestRuns(holder, name);
     ASCIILiteral does = found ? "replace"_s : "add"_s;
     if (!canBeOpened)
@@ -421,7 +414,6 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
     return makeString(change, member, " because built-in objects are read-only in compiled code, and the build didn't see a test "_s, does, " this one. Spell out the object and the name where the test does it, as in "_s, example, pageOnCompiledTests);
 }
 
-// `new Function("Buffer.isEncoding = f")`: the text has the origin of the file that has it evaluated. Code from disk has its own.
 static bool textOnTopIsOfFileOfProduct(VM& vm)
 {
     std::optional<bool> answer;
@@ -444,11 +436,9 @@ static bool textOnTopIsOfFileOfProduct(VM& vm)
 
 bool isWrittenByFileOfProduct(VM& vm)
 {
-    // Compiled code writes itself, or calls a built-in function that does. Code from disk writes for itself: no compiled frame is on top then.
     std::optional<bool> answer;
     forEachShownFrameOfRunAtTop(vm, [&](const TraceFrame& frame) {
         std::optional<SourcePosition> position = positionOf(frame);
-        // Bun's own code writes for whoever has called it.
         if (position && position->source)
             answer = findsBuiltinsReadOnly(position->source);
         return answer ? IterationStatus::Done : IterationStatus::Continue;
@@ -463,7 +453,6 @@ String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringI
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(vm, key);
     BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
-    // A new name that would shadow a member inherited from a prototype is refused however the assignment is written.
     bool isNewName = !key->isSymbol() && !parseIndex(*key) && !found && (!name || table.findMember(holder, name).outcome != BuiltinMemberLookup::Outcome::Found);
     bool isOpenWhereBuildSeesWrite = found ? table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isNewName && table.canonicalID(holder) != Builtins::ObjectPrototype && table.canTakeNameInTestRuns(holder, name);
     if (isOpenWhereBuildSeesWrite)

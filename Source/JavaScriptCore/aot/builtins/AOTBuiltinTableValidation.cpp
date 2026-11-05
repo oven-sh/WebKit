@@ -474,7 +474,6 @@ static void checkMembersAddedAtFirstRead(RealmComparison& comparison)
                 comparison.report(member, "is not added to its holder when it is first read, and the table says it is"_s);
             if (!isAddedAtFirstRead)
                 continue;
-            // Asks the static table alone: a look at the object would add the member.
             auto row = object->structure()->findPropertyHashEntry(key);
             if (row && entry.isAddedAsEnumerable != !(row->value->attributes() & PropertyAttribute::DontEnum))
                 comparison.report(member, entry.isAddedAsEnumerable ? "is not enumerable, and the table says it is"_s : "is enumerable, and the table says it is not"_s);

@@ -15,7 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A class that shares the type of its cells has no test of its own. Its cells have that type all the same.
 static BuiltinInstanceTest testThatCellsOfClassWouldPass(const BuiltinClass& builtinClass)
 {
     bool sharesCellType = builtinClass.instanceTest == BuiltinInstanceTest::None && builtinClass.type != CellType;
@@ -82,7 +81,6 @@ bool isTestableBuiltin(const BuiltinTable& builtins, BuiltinID id)
 
 bool hasInstanceTest(const BuiltinTable& builtins, BuiltinClassID id)
 {
-    // A closure that stands for an instance has the cell of a closure, which the test of the class refuses.
     const BuiltinClass& builtinClass = builtins.at(id);
     return builtinClass.instanceTest != BuiltinInstanceTest::None && !builtinClass.hasClosureInstances;
 }
@@ -122,7 +120,6 @@ static bool inheritsFromPrototypeOfClass(const BuiltinTable& builtins, BuiltinID
     }
 }
 
-// Array.prototype is an array to the language. Its cell has a type of its own, DerivedArrayType, and a butterfly without an indexing header, so the test of the class refuses it.
 static bool instanceTestRefusesPrototypeOfClass(const BuiltinTable& builtins, BuiltinClassID builtinClass)
 {
     const BuiltinClass& tested = builtins.at(builtinClass);
@@ -133,7 +130,6 @@ static bool isFilledWithValueOfLibrary(const BuiltinTable&, BuiltinID entry);
 
 bool mayBeInstanceOf(const BuiltinTable& builtins, BuiltinID builtin, BuiltinClassID builtinClass)
 {
-    // No function of the table is a proxy: BuiltinTable::mismatches() compares.
     if (isCallableBuiltin(builtins, builtin))
         return holdsOnlyCallables(builtins, builtinClass);
     BuiltinID object = builtins.canonicalID(builtin);
@@ -144,12 +140,10 @@ bool mayBeInstanceOf(const BuiltinTable& builtins, BuiltinID builtin, BuiltinCla
             return true;
         if (builtins.isSameOrSubclassOf(entry.instanceClass, builtinClass) && !(entry.instanceClass == builtinClass && instanceTestRefusesPrototypeOfClass(builtins, builtinClass)))
             return true;
-        // Native code makes the prototype object of a class with the class, and none of them as a proxy: BuiltinTable::mismatches() compares. No object stands above every proxy, by which the walk below could tell.
         if (builtins.at(builtinClass).type == ProxyObjectType)
             return false;
         return inheritsFromPrototypeOfClass(builtins, object, builtinClass);
     case BuiltinKind::Namespace: {
-        // Native code makes no proxy: BuiltinTable::mismatches() compares. The library makes `require.cache` as one.
         bool isMadeByNativeCode = entry.prototypeLink != BuiltinPrototypeLink::Unknown && !isFilledWithValueOfLibrary(builtins, object);
         if (builtins.at(builtinClass).type == ProxyObjectType && isMadeByNativeCode)
             return false;
@@ -185,7 +179,6 @@ static bool hostUsesPutValueInto(const BuiltinTable& builtins, const BuiltinHost
     });
 }
 
-// Native code takes what a module of the library exports, or what one of its functions answers, and makes it the value of the entry. The table does not say which function.
 static bool isFilledWithValueOfLibrary(const BuiltinTable& builtins, BuiltinID entry)
 {
     bool isExport = std::ranges::any_of(builtins.moduleLoadsOf(entry), [&](const BuiltinModuleLoad& load) {
@@ -238,7 +231,6 @@ const ClassPart* findPartHolding(TypeReader reader, std::span<const ClassPart> p
     return nullptr;
 }
 
-// Objects of such a layout are cells of a built-in class and have no shape word: the class written above the layout, or Object where the layout holds dictionaries.
 static BuiltinClassID builtinClassOfCells(const Layout& layout)
 {
     if (layout.holdsOrdinaryObjects)
@@ -252,7 +244,6 @@ BuiltinClassID builtinClassWrittenAbove(TypeReader reader, LayoutID layout)
     return program ? builtinClassOfCells(program->at(layout)) : BuiltinClassID();
 }
 
-// What one class's constructor creates is an instance of its superclasses. It passes for an instance of another class if that class's test cannot distinguish the two.
 bool mayHoldConstructedInstances(const BuiltinTable& builtins, BuiltinClassID holder, BuiltinClassID constructed)
 {
     if (builtins.isSameOrSubclassOf(constructed, holder) || builtins.isSameOrSubclassOf(holder, constructed))
@@ -290,7 +281,6 @@ static std::span<const ClassPart> unnamedClassPartsOf(TypeReader reader, const T
     return type.unnamedClasses ? reader.at(type.unnamedClasses) : std::span<const ClassPart>();
 }
 
-// Whatever escapes merges into the form of the layout that its record names, with whatever layout `new.target` gave it.
 static bool mayHaveLayoutBelowTheOneNamed(const ObjectTable& objects, const ObjectRecord& record)
 {
     if (record.has(ObjectTrait::MayHaveLayoutBelow))
@@ -298,7 +288,6 @@ static bool mayHaveLayoutBelowTheOneNamed(const ObjectTable& objects, const Obje
     return record.kind == ObjectKind::EscapedOfLayout && objects.at(objects.instanceOf(record.layout)).has(ObjectTrait::MayHaveLayoutBelow);
 }
 
-// The constructor of a tagged family makes an object of the member that its argument names, and the record names the layout of the maker.
 template<typename Predicate>
 static bool anyPossibleLayoutOf(const ObjectTable& objects, const Program& program, const ObjectRecord& record, const Predicate& matches)
 {
@@ -324,8 +313,6 @@ static bool everyPossibleLayoutOf(const ObjectTable& objects, const Program& pro
     });
 }
 
-// Code that the build did not compile made the cell, or may have, so a test may find more than the record says.
-// A constructor of the engine makes the instances of the classes that the program writes below it. What `super()` gets from a parent that nobody knows is a site without a shape.
 static bool mayBeCellNobodyDescribes(const ObjectRecord& record)
 {
     switch (record.kind) {
@@ -380,7 +367,6 @@ bool surelyFitsUnknownOf(TypeReader reader, ObjectID object, const Type& type)
     });
 }
 
-// The table gives an entry that is no object of its own a value that nobody knows, so any built-in may be a function.
 static bool mayBeCallableObject(const BuiltinTable& builtins, const ObjectRecord& record)
 {
     if (record.has(ObjectTrait::IsCallable) || record.has(ObjectTrait::IsBuiltin))
@@ -390,8 +376,6 @@ static bool mayBeCallableObject(const BuiltinTable& builtins, const ObjectRecord
     return record.has(ObjectTrait::HasNoShape) && mayBeCellNobodyDescribes(record);
 }
 
-// Some class at or above the layout names its parent by an expression that nobody followed.
-// Whichever constructor that turns out to be, it allocates with the layout of new.target's class: ClassTable::createThis().
 static bool mayStandBelowAnyConstructor(const Program& program, LayoutID layout)
 {
     for (size_t steps = 0; layout && steps <= program.layouts.size(); ++steps) {
@@ -403,7 +387,6 @@ static bool mayStandBelowAnyConstructor(const Program& program, LayoutID layout)
     return true;
 }
 
-// `made` has no layout in its record, and mayBeCellNobodyDescribes().
 static bool mayBeMadeWithLayout(const BuiltinTable& builtins, const Program& program, const ObjectRecord& made, LayoutID layout)
 {
     const Layout& candidate = program.at(layout);
@@ -441,10 +424,8 @@ static bool mayHaveLayoutAmong(TypeReader reader, const ObjectRecord& record, co
     return mayHaveListedLayout;
 }
 
-// Of an object without a layout. Any object passes for a class that has no instance test.
 static bool mayBeOfClass(const BuiltinTable& builtins, const ObjectRecord& record, BuiltinClassID builtinClass)
 {
-    // A cell that can be called has the type of no class whose cells cannot be: the bound function that `format` of an Intl.DateTimeFormat answers is no array, though no test tells its class.
     if (record.has(ObjectTrait::IsCallable) && !isFunctionClass(builtins, builtinClass) && builtins.at(builtinClass).instanceTest == BuiltinInstanceTest::JSTypeEquals)
         return false;
     if (record.has(ObjectTrait::HasClass))
@@ -455,7 +436,6 @@ static bool mayBeOfClass(const BuiltinTable& builtins, const ObjectRecord& recor
     case ObjectKind::ModuleBuiltin:
         return mayBeInstanceOf(builtins, BuiltinID(record.payload), builtinClass);
     case ObjectKind::Closure:
-        // What stands for an instance of such a class is a closure of no function of the program.
         return holdsOnlyCallables(builtins, builtinClass) && !builtins.at(builtinClass).hasClosureInstances;
     case ObjectKind::EscapedFunctionsOfHolder:
         return holdsOnlyCallables(builtins, builtinClass);
@@ -518,7 +498,6 @@ bool mayFitUnknownOf(TypeReader reader, ObjectID object, const Type& type, Layou
     return type.unnamedClasses && mayFitSomeClassPart(reader, record, reader.at(type.unnamedClasses));
 }
 
-// Two numbers that are each a closure or a site must stay apart, except for a copy for an instance and its shared form: ObjectSetAliasIndex never asks about such a pair.
 static bool distinctIDsOfKindAreDistinctObjects(ObjectKind kind)
 {
     switch (kind) {
@@ -546,7 +525,6 @@ static bool distinctIDsOfKindAreDistinctObjects(ObjectKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `entry` is a Builtin or a ModuleBuiltin, and `other` is of another kind. A type of the wire names a built-in that each module has one of without saying whose.
 static bool mayBeBuiltinUnderAnotherName(TypeReader reader, const ObjectRecord& entry, const ObjectRecord& other)
 {
     switch (other.kind) {
@@ -579,14 +557,12 @@ static bool mayBeBuiltinUnderAnotherName(TypeReader reader, const ObjectRecord& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A member of the library that no identity test finds stands among the escaped functions of its holder once it has escaped, and its closure keeps its own number.
 static bool mayBeEscapedFunctionOfLibrary(TypeReader reader, FunctionID function)
 {
     const Program* program = reader.program();
     return !program || isLibraryCode(*program, program->at(function));
 }
 
-// `prototype` is the Prototype of a layout. The `.prototype` of the function that constructs the class is the same object, and a tagged layout has the prototype of its maker.
 static bool mayBePrototypeUnderAnotherName(TypeReader reader, const ObjectRecord& prototype, const ObjectRecord& other)
 {
     if (other.kind != ObjectKind::Prototype && other.kind != ObjectKind::FunctionPrototype)
@@ -617,7 +593,6 @@ static bool mayHaveOneLayout(TypeReader reader, const ObjectRecord& a, const Obj
     });
 }
 
-// `made` has no layout in its record, and mayBeCellNobodyDescribes().
 static bool mayBeInstanceWithLayout(TypeReader reader, const ObjectRecord& made, const ObjectRecord& instance)
 {
     const Program* program = reader.program();
@@ -628,7 +603,6 @@ static bool mayBeInstanceWithLayout(TypeReader reader, const ObjectRecord& made,
     });
 }
 
-// Two numbers that are two views of what is made: the instances of a class and what one operation or one function makes, what native code makes and what a call of it answers.
 static bool mayBeOneObjectByShape(TypeReader reader, const ObjectRecord& a, const ObjectRecord& b)
 {
     bool firstHasLayout = a.has(ObjectTrait::HasLayout);
@@ -651,7 +625,6 @@ static bool namesEntryOfBuiltinTable(ObjectKind kind)
     return kind == ObjectKind::Builtin || kind == ObjectKind::ModuleBuiltin;
 }
 
-// ObjectSetAliasIndex answers the same from a set that it reads once: whoever changes this function or one that it calls changes both.
 bool mayBeSameObject(TypeReader reader, ObjectID first, ObjectID second)
 {
     if (first == second || first == ObjectTable::unknown() || second == ObjectTable::unknown())
@@ -663,7 +636,6 @@ bool mayBeSameObject(TypeReader reader, ObjectID first, ObjectID second)
     if (a.sharedForm || b.sharedForm) {
         if (a.sharedForm == second || b.sharedForm == first)
             return true;
-        // One run of the creator is entered through one call as written.
         if (objects.sharedFormOf(first) == objects.sharedFormOf(second))
             return false;
     }
@@ -687,12 +659,10 @@ bool mayBeSameObject(TypeReader reader, ObjectID first, ObjectID second)
     return mayBeOneObjectByShape(reader, a, b);
 }
 
-// What mayBeSameObject() may say yes to for a closure that is no copy, and for a site that is no copy.
 static constexpr ObjectKinds kindsThatMayBeClosure = kindsWith(ObjectKind::Builtin) | kindsWith(ObjectKind::ModuleBuiltin) | kindsWith(ObjectKind::EscapedFunctionsOfHolder);
 static constexpr ObjectKinds kindsNeverComparedByShape = kindsWith(ObjectKind::Builtin) | kindsWith(ObjectKind::ModuleBuiltin) | kindsWith(ObjectKind::Closure) | kindsWith(ObjectKind::Prototype);
 static constexpr ObjectKinds kindsThatAreNeverSite = kindsNeverComparedByShape | kindsWith(ObjectKind::Site);
 
-// It merges into the form of its layout, and mayBeOneObjectByShape() says yes of the two.
 static bool isFoundBesideMergedFormByShape(const ObjectRecord& record)
 {
     return record.has(ObjectTrait::HasLayout) && !(kindsWith(record.kind) & kindsNeverComparedByShape);
@@ -842,7 +812,6 @@ void ObjectSetAliasIndex::noteLayout(LayoutID layout, const ObjectRecord& ofMemb
         known.kinds |= kind;
     }
 
-    // Whoever asks for these has no layout, so it is the shared form of no member that has one.
     const Program& program = *m_reader.program();
     if (!(m_kindsWithLayoutOfCellWithoutClass & kind) && mayBeMadeWithLayout(m_reader.builtins(), program, ObjectRecord { }, layout))
         m_kindsWithLayoutOfCellWithoutClass |= kind;
@@ -886,7 +855,6 @@ void ObjectSetAliasIndex::noteFunctionPrototype(const ObjectRecord& record)
         m_layouts.at(declared.index()).isOfPrototypeOfConstructor = true;
 }
 
-// mayBePrototypeUnderAnotherName() of the Prototype and some member.
 bool ObjectSetAliasIndex::namesPrototypeUnderAnotherName(ObjectID sharedForm, const ObjectRecord& prototype)
 {
     const Program& program = *m_reader.program();
@@ -900,7 +868,6 @@ bool ObjectSetAliasIndex::namesPrototypeUnderAnotherName(ObjectID sharedForm, co
     return constructor && m_functionsOfFunctionPrototypes.find(constructor.index());
 }
 
-// mayBePrototypeUnderAnotherName() of some member that is a Prototype and the FunctionPrototype of the function.
 bool ObjectSetAliasIndex::namesPrototypeOfClassOf(FunctionID constructor)
 {
     if (m_constructorsOfPrototypes.find(constructor.index()))
@@ -916,7 +883,6 @@ bool ObjectSetAliasIndex::namesPrototypeOfClassOf(FunctionID constructor)
     return ofMembers && (ofMembers->isOfPrototype || ofMembers->copiesOfPrototypes.holdOtherThan({ }));
 }
 
-// mayBeClosureOf() of some member that is a built-in and the function.
 bool ObjectSetAliasIndex::namesBuiltinThatMayBeClosureOf(FunctionID ofLibrary)
 {
     if (m_builtins.isEmpty())
@@ -933,7 +899,6 @@ bool ObjectSetAliasIndex::namesBuiltinThatMayBeClosureOf(FunctionID ofLibrary)
                     m_functionsThatMayBeBuiltins.at(entry->function.index());
             }
         }
-        // The first entry of a function is its record: findTableRecordOfLibraryFunction().
         SlotsByNumber<NoValue> functionsWithRecord;
         for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
             if (!entry.function || functionsWithRecord.find(entry.function.index()))
@@ -951,7 +916,6 @@ bool ObjectSetAliasIndex::namesBuiltinThatMayBeClosureOf(FunctionID ofLibrary)
     return m_namesBuiltinFilledWithValueOfLibrary || m_functionsThatMayBeBuiltins.find(ofLibrary.index());
 }
 
-// mayBeClosureOf() of the built-in and the function of some member that is a closure.
 bool ObjectSetAliasIndex::namesClosureThatMayBe(BuiltinID builtin)
 {
     std::span<const ObjectID> closures = closuresOfLibrary();
@@ -962,7 +926,6 @@ bool ObjectSetAliasIndex::namesClosureThatMayBe(BuiltinID builtin)
     if (!std::exchange(m_hasReadClosuresForBuiltins, true)) {
         for (ObjectID closure : closures)
             m_functionsOfClosuresOfLibrary.at(m_reader.at(closure).payload);
-        // The first entry of a function is its record: findTableRecordOfLibraryFunction().
         for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
             if (!entry.function)
                 continue;
@@ -1001,7 +964,6 @@ std::span<const ObjectID> ObjectSetAliasIndex::closuresOfLibrary()
     return m_closuresOfLibrary.span();
 }
 
-// mayBeOneObjectByShape() of the object and some member that mayBeSameObject() compares so. A member of the object's own kind is none where two numbers of the kind are two objects.
 bool ObjectSetAliasIndex::namesObjectOfShape(ObjectID sharedForm, const ObjectRecord& record)
 {
     const BuiltinTable& builtins = m_reader.builtins();
@@ -1015,7 +977,6 @@ bool ObjectSetAliasIndex::namesObjectOfShape(ObjectID sharedForm, const ObjectRe
         const ObjectTable& objects = m_reader.objects();
         const Program& program = *m_reader.program();
         bool mayLieBelow = mayHaveLayoutBelowTheOneNamed(objects, record);
-        // Of a kind in which two numbers may be one object, one shared form has the layout in its record: all that share the answer leave out the same copies.
         ASSERT(distinctIDsOfKindAreDistinctObjects(record.kind) || sharedForm == objects.instanceOf(record.layout) || sharedForm == objects.escapedOf(record.layout));
         const LayoutOfMembers& known = m_layouts.at(record.layout.index());
         if (known.kindsAsked[mayLieBelow] & kind)
@@ -1052,7 +1013,6 @@ bool ObjectSetAliasIndex::namesAliasOf(ObjectID object)
 {
     bool answer = answerFromWhatWasRead(object);
 #if ASSERT_ENABLED || ASAN_ENABLED
-    // Held against each member, so seldom that it costs no more than one pair for each answer.
     static thread_local size_t numberOfAnswersSinceCheck = 0;
     if (++numberOfAnswersSinceCheck >= 16 + m_members.size()) {
         numberOfAnswersSinceCheck = 0;
@@ -1072,7 +1032,6 @@ bool ObjectSetAliasIndex::answerFromWhatWasRead(ObjectID object)
         ++m_numberOfPairsAsked;
         return objects.at(member).sharedForm != object && mayBeSameObject(m_reader, object, member);
     };
-    // Without a program nothing says which layouts an object may have.
     if (!m_reader.program() || object == ObjectTable::unknown())
         return m_members.anyOf(mayBeThisObject);
 
@@ -1101,7 +1060,6 @@ bool ObjectSetAliasIndex::answerFromWhatWasRead(ObjectID object)
             return true;
     }
 
-    // As mayBeBuiltinUnderAnotherName(), mayBeEscapedFunctionOfLibrary() and mayBePrototypeUnderAnotherName() relate the kinds.
     ObjectID sharedForm = record.sharedForm ? record.sharedForm : object;
     switch (record.kind) {
     case ObjectKind::Builtin:

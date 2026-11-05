@@ -22,7 +22,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// InternalErrorKind::InvalidModuleEvaluation reports the number.
 enum class EvaluationSiteRule : uint32_t {
     TargetIsFileThatEndsAtOnce = 1,
     ReferrerRequestsTarget,
@@ -36,7 +35,6 @@ enum class EvaluationSiteRule : uint32_t {
 
 } // anonymous namespace
 
-// Terminates: the flow stage has checked that every operand is defined before its user.
 static BodyValue stripCastsForCallRules(const BodyIndex& index, ValueID id)
 {
     BodyValue value = index.value(id);
@@ -45,7 +43,6 @@ static BodyValue stripCastsForCallRules(const BodyIndex& index, ValueID id)
     return value;
 }
 
-// The front end's link step does not report a record that a file names and no committed file defines. Such a name reads as the null id.
 template<typename IDType>
 static bool requireRecordForCallRules(BodyVerifier& verifier, const BodyBlock& block, const BodyValue& value, IDType id)
 {
@@ -55,7 +52,6 @@ static bool requireRecordForCallRules(BodyVerifier& verifier, const BodyBlock& b
     return false;
 }
 
-// A signature is a type, and an initializer is only ever called directly.
 static bool canBeNamedByClosureOperation(const Function& function)
 {
     return hasSourceBodyOf(function.role) && function.kind != FunctionKind::Initializer;
@@ -95,7 +91,6 @@ static bool mergesAllocationsOfConstructedClass(const Program& program, const Fu
     return mergesOnlyAllocations;
 }
 
-// An initializer assumes without a test that its `this` is an object.
 static bool isLegalThisOfInitializer(const Program& program, const Function& caller, const BodyIndex& index, ValueID thisValue)
 {
     BodyValue object = stripCastsForCallRules(index, thisValue);
@@ -135,7 +130,6 @@ static bool mayBeNamedByBuiltinConstant(const BuiltinTable& table, Opcode opcode
     return entry.kind == BuiltinKind::DataProperty && table.at(table.rootOf(builtin)).scope == BuiltinScope::Module;
 }
 
-// An EvalScope names no function. Its flags say where the text is evaluated: in an arrow function they are IsInArrowFunction and the flags of the enclosing function.
 static bool mayHoldEvalScope(FunctionKind kind, OptionSet<EvalScopeFlags> flags)
 {
     bool isArrow = kind == FunctionKind::Arrow;
@@ -145,7 +139,6 @@ static bool mayHoldEvalScope(FunctionKind kind, OptionSet<EvalScopeFlags> flags)
         return true;
     if (flags.contains(EvalScopeFlags::IsInDerivedConstructor))
         return kind == FunctionKind::DerivedConstructor;
-    // A super call in evaluated text calls the instance initializer by value, and an initializer that is called by value is a method.
     if (flags.contains(EvalScopeFlags::IsInFieldInitializer))
         return kind == FunctionKind::Initializer || kind == FunctionKind::Method;
     return true;
@@ -170,7 +163,6 @@ void BodyVerifier::verifyClosureOperation(const BodyBlock& block, const BodyValu
 
     Opcode opcode = value.opcode();
     if (opcode == Opcode::NewClosure) {
-        // Operand i fills capture i.
         size_t numberOfCaptures = value.as<Opcode::NewClosure>().capturesOperands().size();
         if (numberOfCaptures != callee.captures.size())
             fail(InternalErrorKind::ArgumentCountMismatch, block.id(), value.id(), static_cast<uint32_t>(numberOfCaptures));
@@ -216,7 +208,6 @@ void BodyVerifier::verifyDirectCall(const BodyBlock& block, const BodyValue& val
         return;
     }
 
-    // `new.target` may select another class, and a parent may return any object. An established position is entered without a test, so of what a constructor has made no more is laid down than that it is an object.
     const DeclaredType* declaredThis = callee.declaredEntryParameter(*thisParameter);
     if (!declaredThis || !declaredThis->isEstablished() || stripCastsForCallRules(index(), thisValue).opcode() == Opcode::NewClass)
         return;
@@ -226,7 +217,6 @@ void BodyVerifier::verifyDirectCall(const BodyBlock& block, const BodyValue& val
 
 void BodyVerifier::verifyArgumentsOperation(const BodyBlock& block, const BodyValue& value)
 {
-    // A closure reads and writes the enclosing function's parameters through that function's arguments object, so GetMappedArgument and SetMappedArgument may appear in any function.
     Opcode opcode = value.opcode();
     bool isMapped = opcode == Opcode::CreateMappedArguments;
     if (!isMapped && opcode != Opcode::CreateUnmappedArguments)
@@ -238,7 +228,6 @@ void BodyVerifier::verifyArgumentsOperation(const BodyBlock& block, const BodyVa
         return;
     }
 
-    // The rest list starts after the last positional parameter, so the operation lists every positional parameter.
     size_t numberOfListedParameters = value.variadicOperands().size();
     if (numberOfListedParameters + function().has(FunctionFlags::HasRestParameter) != function().parameters.size())
         fail(InternalErrorKind::ArgumentCountMismatch, block.id(), value.id(), static_cast<uint32_t>(numberOfListedParameters));
@@ -303,7 +292,6 @@ void BodyVerifier::verifySuspension(const BodyBlock& block, const BodyValue& val
         fail(InternalErrorKind::InvalidSuspension, block.id(), value.id());
 }
 
-// Code before InitialYield runs when the generator function is called, before there is a generator to yield from.
 void BodyVerifier::verifyGeneratorStart()
 {
     if (hasFailed() || !function().has(FunctionFlags::IsGenerator))
@@ -409,8 +397,6 @@ void BodyVerifier::verifyModuleEvaluation(const BodyBlock& block, const BodyValu
         failRule(EvaluationSiteRule::BareSiteRunsOnce);
 }
 
-// The sites were gathered in stream order, in which a block comes after every block that dominates it.
-// The block of a bare site has no handler, so control that leaves it for another block has passed the site.
 void BodyVerifier::verifyBareEvaluations()
 {
     if (hasFailed())

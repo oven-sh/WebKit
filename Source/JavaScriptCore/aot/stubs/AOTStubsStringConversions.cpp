@@ -35,7 +35,6 @@ StubSignature signatureOfConcatenateKeyOfPair(StubKey)
 void locateKeysOfPair(StubAssembler& jit, GPRReg first, GPRReg second, GPRReg set, GPRReg scratch)
 {
     RELEASE_ASSERT(noOverlap(first, second, set, scratch));
-    // StringKeyCache::hashOfPair().
     jit.getEffectiveAddress(BaseIndex(first, second, CCallHelpers::TimesEight), set);
     jit.mul32(TrustedImm32(static_cast<int32_t>(StringKeyCache::keyOfPairMultiplier)), set, set);
     jit.urshift32(TrustedImm32(StringKeyCache::keyOfPairHashShift), set);
@@ -49,7 +48,6 @@ void locateKeysOfPair(StubAssembler& jit, GPRReg first, GPRReg second, GPRReg se
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.keysOfPairs)), set);
 }
 
-// The operation joins the parts and enters the pair.
 void generateConcatenateKeyOfPair(StubAssembler& jit)
 {
     const GPRReg first = jit.operand(0);
@@ -77,7 +75,6 @@ void generateConcatenateKeyOfPair(StubAssembler& jit)
     });
 }
 
-// The caches hold int32 keys. The operation takes every integer.
 void generateIntegerToString(StubAssembler& jit)
 {
     const GPRReg result = jit.result();
@@ -97,7 +94,6 @@ void generateIntegerToString(StubAssembler& jit)
     Jump isSmall = jit.branch64(CCallHelpers::Below, value, TrustedImm32(NumericStrings::cacheSize));
     jit.signExtend32ToPtr(value, first);
     slow.append(jit.branch64(CCallHelpers::NotEqual, first, value));
-    // StringKeyCache::tryFindIntegerKey().
     if (!jit.options().useWideReferences) {
         JumpList isNoIntegerKey;
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.integerKeys)), second);

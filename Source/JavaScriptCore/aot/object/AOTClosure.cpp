@@ -23,7 +23,6 @@
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
-#include "AOTProgramStrings.h"
 #include "AOTPropertyWalk.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
@@ -60,13 +59,108 @@ const ClassInfo Closure::s_info = { "Function"_s, &Base::s_info, nullptr, nullpt
 const ClassInfo SlimClosure::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SlimClosure) };
 const ClassInfo ReifiedSlimClosure::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ReifiedSlimClosure) };
 
+template<typename Visitor>
+static void visitReferencesOfClosure(JSCell* closure, Visitor& visitor)
+{
+    if (isCompiledClosure(closure))
+        Closure::visitFields(uncheckedDowncast<Closure>(closure), visitor);
+    else if (closure->type() == SlimClosureType)
+        SlimClosure::tryVisitFields(uncheckedDowncast<SlimClosure>(closure), visitor);
+    else
+        ReifiedSlimClosure::visitFields(uncheckedDowncast<ReifiedSlimClosure>(closure), visitor);
+}
+
+namespace {
+
+class ScopeInHeapSnapshot final : public JSCell {
+public:
+    using Base = JSCell;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
+
+    static ScopeInHeapSnapshot* create(VM& vm, Structure* structure, JSCell* closure)
+    {
+        auto* scope = new (NotNull, allocateCell<ScopeInHeapSnapshot>(vm)) ScopeInHeapSnapshot(vm, structure, closure);
+        scope->finishCreation(vm);
+        return scope;
+    }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+private:
+    ScopeInHeapSnapshot(VM& vm, Structure* structure, JSCell* closure)
+        : Base(vm, structure)
+        , m_closure(closure)
+    {
+    }
+
+    JSCell* m_closure;
+};
+
+const ClassInfo ScopeInHeapSnapshot::s_info = { "JSLexicalEnvironment"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ScopeInHeapSnapshot) };
+
+template<typename Visitor>
+void ScopeInHeapSnapshot::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    Base::visitChildren(cell, visitor);
+    JSCell* closure = uncheckedDowncast<ScopeInHeapSnapshot>(cell)->m_closure;
+    visitor.appendUnbarriered(closure);
+    if (visitor.isAnalyzingHeap())
+        visitReferencesOfClosure(closure, visitor);
+}
+
+DEFINE_VISIT_CHILDREN(ScopeInHeapSnapshot);
+
+} // anonymous namespace
+
+Structure* createStructureOfScopesInHeapSnapshots(VM& vm, JSGlobalObject* globalObject)
+{
+    return Structure::create(vm, globalObject, jsNull(), TypeInfo(CellType, ScopeInHeapSnapshot::StructureFlags), ScopeInHeapSnapshot::info());
+}
+
+JSCell* createScopeInHeapSnapshot(VM& vm, Structure* structure, JSCell* closure)
+{
+    return ScopeInHeapSnapshot::create(vm, structure, closure);
+}
+
+bool hasScopeInHeapSnapshots(JSCell* cell)
+{
+    if (!CompiledCallee::isCompiledCallee(cell))
+        return false;
+    struct {
+        void appendUnbarriered(JSValue value) { found |= value && value.isCell(); }
+        bool found { false };
+    } finder;
+    visitReferencesOfClosure(cell, finder);
+    return finder.found;
+}
+
+static JSCell* scopeInHeapSnapshotOf(JSCell* closure)
+{
+    Instance* instance = closure->structure()->realm()->aotInstance();
+    return instance ? instance->state->statics->scopeInHeapSnapshotOf(closure) : nullptr;
+}
+
+template<typename Visitor>
+static bool visitScopeInHeapSnapshot(JSCell* closure, Visitor& visitor)
+{
+    JSCell* scope = visitor.isAnalyzingHeap() ? scopeInHeapSnapshotOf(closure) : nullptr;
+    if (scope)
+        visitor.appendUnbarriered(scope);
+    return scope;
+}
+
 static void analyzeCaptures(JSCell* cell, uint32_t closureNumber, std::span<const uint64_t> captures, unsigned numberOfReferences, HeapAnalyzer& analyzer)
 {
-    // Under the interpreter a function holds the scope that it was made in, and that scope leads to the environment of its module.
+    JSCell* scope = scopeInHeapSnapshotOf(cell);
+    JSCell* holder = scope ? scope : cell;
     Instance* instance = cell->structure()->realm()->aotInstance();
     if (JSCell* environment = instance ? instance->state->statics->environmentOfModuleThatDefines(closureNumber) : nullptr)
-        analyzer.analyzeEdge(cell, environment, RootMarkReason::None);
-    // A snapshot asks a JSFunction for its name by itself.
+        analyzer.analyzeEdge(holder, environment, RootMarkReason::None);
     if (String name = cell->inherits<JSFunction>() ? String() : CompiledCallee::displayName(asObject(cell)); !name.isEmpty())
         analyzer.setLabelForCell(cell, name);
     const ProgramIdentifiers& identifiers = *cell->vm().aotState().identifiers;
@@ -75,9 +169,9 @@ static void analyzeCaptures(JSCell* cell, uint32_t closureNumber, std::span<cons
         if (!reference || !reference.isCell())
             continue;
         if (UniquedStringImpl* name = identifiers.nameInHeapSnapshots(closureNumber, i))
-            analyzer.analyzeVariableNameEdge(cell, reference.asCell(), name);
+            analyzer.analyzeVariableNameEdge(holder, reference.asCell(), name);
         else
-            analyzer.analyzeIndexEdge(cell, reference.asCell(), i);
+            analyzer.analyzeIndexEdge(holder, reference.asCell(), i);
     }
 }
 
@@ -93,17 +187,14 @@ static CallData nativeCallData(TaggedNativeFunction function)
 
 static CallData constructDataOf(JSCell* cell, uint32_t closureNumber)
 {
-    FunctionKindData kind = programTables().kindOfClosureNumber(closureNumber);
-    if (kind.isBound())
-        return boundFunctionData(closureFunctionWithNumber(closureNumber)).constructs ? nativeCallData(constructBoundClosure) : CallData();
-    if (!FunctionTables::canConstruct(kind))
+    if (!FunctionTables::canConstruct(programTables().kindOfClosureNumber(closureNumber)))
         return CallData();
     return CallData::forCompiledCode(constructEntrypoint().taggedPtr(), cell->structure()->realm());
 }
 
-Structure* Closure::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, bool isBound)
+Structure* Closure::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(CompiledClosureType, isBound ? StructureFlags & ~ImplementsDefaultHasInstance : StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(CompiledClosureType, StructureFlags), info());
 }
 
 Closure* Closure::create(VM& vm, Structure* structure, FunctionID function, std::span<const uint64_t> captures, unsigned numberOfReferences)
@@ -135,7 +226,8 @@ template<typename Visitor>
 void Closure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     Base::visitChildren(cell, visitor);
-    visitFields(uncheckedDowncast<Closure>(cell), visitor);
+    if (!visitScopeInHeapSnapshot(cell, visitor))
+        visitFields(uncheckedDowncast<Closure>(cell), visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Closure);
@@ -161,7 +253,6 @@ JSC_DEFINE_HOST_FUNCTION(callClassConstructor, (JSGlobalObject* globalObject, Ca
 
 CallData Closure::getCallData(JSCell* cell)
 {
-    // The word of the closure says it as well as the record of its function, and lies in the cell.
     ASSERT(uncheckedDowncast<Closure>(cell)->kind().isConstructor == !!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit));
     if (!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit))
         return CallData::forCompiledCode(closureEntrypoint().taggedPtr(), cell->structure()->realm());
@@ -254,28 +345,17 @@ static NEVER_INLINE void createClassObject(Closure* classObject)
     state.objects->classes.createClassPart(state.instance.globalObject, classObject, ClassTable::ClassPart::ClassObject);
 }
 
-void Closure::adoptBoundFunctionStructure(VM& vm)
-{
-    ClosureTable& closures = state().objects->closures;
-    Structure* unbound = closures.closureStructureFor(vm, function());
-    if (structure() != unbound)
-        return;
-    setStructure(vm, closures.boundClosureStructure(vm, function()));
-}
-
 void Closure::ensureClassObject(VM&)
 {
     if (isLazyClassObject())
         createClassObject(this);
 }
 
-// Static methods are put on the class object without a transition, and a cache repeats a store to a static field by the Structure alone. So a class with static members shares its Structure with no other class.
 static Structure* structureSharedWithClassesInheritingFrom(VM& vm, const Closure& classObject, JSObject* parent)
 {
     const LayoutData& classLayout = *classObject.classData();
     if (!classLayout.staticMethods().empty() || !classLayout.staticFields().empty())
         return nullptr;
-    // The table keeps each parent alive, so it is asked for the parents of which a program has a fixed number.
     State& state = classObject.state();
     if (parent != state.instance.globalObject->functionPrototype() && classLayout.evaluation() != EvaluationState::ProvenOnce)
         return nullptr;
@@ -304,14 +384,6 @@ void Closure::initializeClassObject(VM& vm, JSObject* parent, JSObject* prototyp
         didBecomePrototype(vm);
 }
 
-void Closure::prepareForGenericAccess(VM& vm)
-{
-    if (kind().isBound()) [[unlikely]]
-        adoptBoundFunctionStructure(vm);
-    else
-        ensureClassObject(vm);
-}
-
 JSValue Closure::prototypeProperty(VM& vm)
 {
     if (JSValue stored = getDirect(vm, vm.propertyNames->prototype))
@@ -322,7 +394,6 @@ JSValue Closure::prototypeProperty(VM& vm)
     return getDirect(vm, vm.propertyNames->prototype);
 }
 
-// The object is marked as a prototype from the start, so the names that the program adds before the first construction are not followed by a transition for the mark.
 static JSObject* createPrototypeObjectOfFunction(VM& vm, JSGlobalObject* globalObject, JSObject* function)
 {
     PropertyOffset offset;
@@ -337,7 +408,7 @@ bool Closure::ensurePrototypeProperty(VM& vm)
 {
     if (getDirect(vm, vm.propertyNames->prototype))
         return true;
-    prepareForGenericAccess(vm);
+    ensureClassObject(vm);
     if (getDirect(vm, vm.propertyNames->prototype))
         return true;
     if (kind().isConstructor || !FunctionTables::hasPrototypePropertyAtCreation(kind()))
@@ -357,7 +428,6 @@ bool Closure::ensurePrototypeProperty(VM& vm)
 void Closure::setPrototypeProperty(VM& vm, JSObject* prototype, unsigned attributes)
 {
     RELEASE_ASSERT(!kind().isConstructor);
-    prepareForGenericAccess(vm);
     if (FunctionRareData* rareData = this->rareData())
         rareData->clear("Store to prototype property of a function");
     putDirect(vm, vm.propertyNames->prototype, prototype, attributes);
@@ -365,7 +435,7 @@ void Closure::setPrototypeProperty(VM& vm, JSObject* prototype, unsigned attribu
 
 void Closure::setNameProperty(VM& vm, JSString* name, unsigned attributes)
 {
-    prepareForGenericAccess(vm);
+    ensureClassObject(vm);
     putDirect(vm, vm.propertyNames->name, name, attributes);
     FunctionRareData* rareData = ensureRareData(vm);
     rareData->setHasReifiedName();
@@ -398,7 +468,6 @@ bool tryDefineClassMemberWithoutTransition(JSGlobalObject* globalObject, Closure
     if (!structure->isStructureExtensible() || structure->isImmutableProperty(key.uid()))
         return false;
 
-    // Between NewClass and the end of the definition no code of the program can name the class, so no object inherits from its holders and no cache has walked past them.
     bool isMarkedAsPrototype = structure->mayBePrototype();
     if (isMarkedAsPrototype)
         structure->setMayBePrototype(false);
@@ -434,74 +503,12 @@ bool tryDefineClassMemberWithoutTransition(JSGlobalObject* globalObject, Closure
     return true;
 }
 
-static JSObject* boundFunctionTarget(VM& vm, State& state, FunctionID function, std::span<const uint64_t> captures, unsigned numberOfReferences)
-{
-    const BoundFunctionData& bound = boundFunctionData(function);
-    std::optional<unsigned> slot = bound.targetClosureSlot();
-    if (!slot)
-        return asObject(state.objects->closures.closure(vm, FunctionID(bound.target)));
-    RELEASE_ASSERT(*slot < numberOfReferences && numberOfReferences <= captures.size());
-    return std::bit_cast<JSObject*>(captures[*slot]);
-}
-
-JSC_DEFINE_HOST_FUNCTION(constructBoundClosure, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* callee = callFrame->jsCallee();
-    FunctionID function;
-    std::span<const uint64_t> captures;
-    unsigned numberOfReferences = 0;
-    State* state = nullptr;
-    auto take = [&](auto* closure) {
-        function = closure->function();
-        captures = closure->captures();
-        numberOfReferences = closure->numberOfReferences();
-        state = &closure->state();
-    };
-    if (auto* slim = dynamicDowncast<SlimClosure>(callee))
-        take(slim);
-    else if (auto* reified = dynamicDowncast<ReifiedSlimClosure>(callee))
-        take(reified);
-    else
-        take(uncheckedDowncast<Closure>(callee));
-
-    const BoundFunctionData& bound = boundFunctionData(function);
-    RELEASE_ASSERT(bound.constructs && bound.firstArgumentSlot + bound.numberOfCapturedArguments <= numberOfReferences);
-    JSObject* target = boundFunctionTarget(vm, *state, function, captures, numberOfReferences);
-    MarkedArgumentBuffer arguments;
-    for (unsigned index = 0; index < bound.numberOfCapturedArguments; ++index) {
-        // An argument whose type lists its strings lies there as the number of the string.
-        uint64_t word = captures[bound.firstArgumentSlot + index];
-        arguments.append(isLiteralStringWord(word) ? JSValue(state->strings->stringForLiteralStringWord(word)) : JSValue::decode(word));
-    }
-    if (bound.numberOfCapturedArguments == bound.numberOfBoundArguments) {
-        for (unsigned index = 0; index < callFrame->argumentCount(); ++index)
-            arguments.append(callFrame->uncheckedArgument(index));
-    }
-    if (arguments.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return encodedJSValue();
-    }
-    JSValue newTarget = callFrame->newTarget();
-    if (newTarget == JSValue(callee))
-        newTarget = target;
-    RELEASE_AND_RETURN(scope, JSValue::encode(constructAllowingPrimitiveResult(globalObject, target, JSC::getConstructData(target), arguments, newTarget)));
-}
-
-bool Closure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
-{
-    Closure* closure = uncheckedDowncast<Closure>(object);
-    return boundFunctionTarget(globalObject->vm(), closure->state(), closure->function(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
-}
-
 void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
     VM& vm = globalObject->vm();
-    // The base class clears whatever its lookups throw.
     DeferTerminationForAWhile deferTermination(vm);
     Closure* closure = uncheckedDowncast<Closure>(object);
-    closure->prepareForGenericAccess(vm);
+    closure->ensureClassObject(vm);
     Base::getOwnSpecialPropertyNames(object, globalObject, names, mode);
     if (mode == DontEnumPropertiesMode::Include && FunctionTables::hasPrototypePropertyAtCreation(closure->kind()) && closure->ensurePrototypeProperty(vm))
         names.add(vm.propertyNames->prototype);
@@ -515,12 +522,10 @@ static void didChangePrototypeProperty(Closure* closure)
     ClassTable& classes = closure->state().objects->classes;
     if (const LayoutData* constructed = classes.classConstructedBy(classes.functionOfOwnClosure(*closure))) {
         classes.didChangeMember(*constructed, ClassSide::Static, vm.propertyNames->prototype.impl());
-        // The class of a constructor function is defined with the prototype object that the function has then, and its guards speak of that object.
         JSObject* prototypeOfClass = classes.isDefinedByClass(*constructed) ? nullptr : classes.classPrototypeIfExists(*constructed);
         if (prototypeOfClass && closure->getDirect(vm, vm.propertyNames->prototype) != JSValue(prototypeOfClass))
             classes.disarmMemberGuards(*constructed);
     }
-    // A construction whose result nobody uses is not compiled, so the object counts as a prototype from here on, as the one that the function is created with does.
     if (JSValue prototype = closure->getDirect(vm, vm.propertyNames->prototype); prototype && prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
 }
@@ -562,9 +567,7 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
         return closure->ensurePrototypeProperty(vm) && JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot);
     bool isLength = propertyName == vm.propertyNames->length;
     bool isName = propertyName == vm.propertyNames->name;
-    if ((propertyName == vm.propertyNames->hasInstanceSymbol || isLength || isName) && closure->kind().isBound()) [[unlikely]]
-        closure->adoptBoundFunctionStructure(vm);
-    else if ((isLength || (isName && !closure->kind().hasInitialNamePrefix())) && closure->hasStructureOfNewClosure(vm)) {
+    if ((isLength || (isName && !closure->kind().hasInitialNamePrefix())) && closure->hasStructureOfNewClosure(vm)) {
         JSValue value = isLength ? jsNumber(functionLengthOf(closure->function())) : JSValue(initialNamePropertyString(vm, closure->state(), closure->function()));
         slot.setValue(closure, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, value);
         return true;
@@ -590,8 +593,6 @@ bool Closure::isBuiltinFunction() const
     return ModuleTable(state().instance.tables()).isRuntimeFunction(function());
 }
 
-// Below another closure JSObject::putInlineSlow() hands the store to the put of that closure, which ends by defining the property on the receiver with a descriptor.
-// Where the store replaces a plain property of the closure, or nothing above has a say, it is an ordinary put.
 static bool storesPropertyOfClosureBelowClosure(VM& vm, Closure& closure, PropertyName name, const PutPropertySlot& slot)
 {
     JSObject* above = closure.getPrototypeDirect().getObject();
@@ -616,7 +617,6 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     if (slot.thisValue() == JSValue(closure) && closure->refusesOwnProperty(vm, name)) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         slot.disableCaching();
-        // Function.prototype[Symbol.hasInstance] is read-only, so the language itself refuses that store, and says nothing of it in sloppy code.
         bool isTold = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && name != vm.propertyNames->hasInstanceSymbol);
         return typeError(globalObject, scope, isTold, assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid()));
     }
@@ -625,12 +625,11 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     bool isStoreToClassObject = classLayout && slot.thisValue() == JSValue(closure);
     if (isStoreToClassObject && StaticFields::tryStore(*closure, name.uid(), value))
         return true;
-    closure->prepareForGenericAccess(vm);
+    closure->ensureClassObject(vm);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = storesPropertyOfClosureBelowClosure(vm, *closure, name, slot) ? closure->putInlineFast(globalObject, name, value, slot) : Base::put(cell, globalObject, name, value, slot);
     if (isStoreToClassObject) {
-        // No guard speaks of the value of a property that the class does not declare, so the next store to it may go past this function.
         bool replacesUndeclaredProperty = slot.type() == PutPropertySlot::ExistingProperty && !classes.hasStaticMethodNamed(*classLayout, name.uid());
         if (!replacesUndeclaredProperty)
             slot.disableCaching();
@@ -646,7 +645,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
 
 bool Closure::hasOrdinaryDefineOwnProperty(VM& vm, PropertyName name) const
 {
-    return !classData() && !kind().isBound() && !refusesOwnProperty(vm, name) && ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(vm, name);
+    return !classData() && !refusesOwnProperty(vm, name) && ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(vm, name);
 }
 
 static bool leavesStaticFieldPlain(const PropertyDescriptor& descriptor)
@@ -681,7 +680,7 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     const LayoutData* classLayout = closure->classData();
     if (classLayout && tryDefineStaticFieldInVariable(*closure, name, descriptor))
         return true;
-    closure->prepareForGenericAccess(vm);
+    closure->ensureClassObject(vm);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
@@ -698,7 +697,7 @@ bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
     const LayoutData* classLayout = closure->classData();
-    closure->prepareForGenericAccess(vm);
+    closure->ensureClassObject(vm);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = Base::deleteProperty(cell, globalObject, name, slot);
@@ -713,7 +712,7 @@ bool Closure::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned in
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
-    closure->prepareForGenericAccess(vm);
+    closure->ensureClassObject(vm);
     return Base::putByIndex(cell, globalObject, index, value, shouldThrow);
 }
 
@@ -721,7 +720,7 @@ bool Closure::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
-    closure->prepareForGenericAccess(vm);
+    closure->ensureClassObject(vm);
     if (const LayoutData* classLayout = closure->classData())
         closure->state().objects->classes.didChangeEveryMember(*classLayout, ClassSide::Static);
     return Base::preventExtensions(object, globalObject);
@@ -731,19 +730,16 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
-    // A name that the function refuses as its own could be planted one step up.
     if (object->getPrototypeDirect() != prototype && closure->isBuiltinFunction()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         return typeError(globalObject, scope, shouldThrow, prototypeChangeOfLockedBuiltinMessage("a built-in function"_s));
     }
-    closure->prepareForGenericAccess(vm);
+    closure->ensureClassObject(vm);
     if (const LayoutData* classLayout = closure->classData(); classLayout && object->getPrototypeDirect() != prototype)
         closure->state().objects->classes.didChangePrototypeLink(*classLayout, ClassSide::Static);
     return Base::setPrototype(object, globalObject, prototype, shouldThrow);
 }
 
-// JSObject::putDirect() consults no method table: that is how Error.captureStackTrace(SomeClass) adds `stack` to a class object.
-// The guards of a class that is left to its record hold before its class object is entered, so a put on a lazy class object is reported too.
 void PropertyWalk::didPutDirectOnClosure(VM&, JSObject* object, UniquedStringImpl* uid)
 {
     Closure* closure = uncheckedDowncast<Closure>(object);
@@ -762,10 +758,9 @@ Structure* SlimClosure::createStructure(VM& vm, JSGlobalObject* realm, JSValue p
     return Structure::create(vm, realm, prototype, TypeInfo(SlimClosureType, StructureFlags), info(), NonArray, 0);
 }
 
-Structure* ReifiedSlimClosure::createStructure(VM& vm, JSGlobalObject* realm, JSValue prototype, Variant variant)
+Structure* ReifiedSlimClosure::createStructure(VM& vm, JSGlobalObject* realm, JSValue prototype)
 {
-    unsigned flags = variant == Variant::Bound ? StructureFlags & ~ImplementsDefaultHasInstance : StructureFlags;
-    return Structure::create(vm, realm, prototype, TypeInfo(SlimClosureWithPropertiesType, flags), info(), NonArray, 0);
+    return Structure::create(vm, realm, prototype, TypeInfo(SlimClosureWithPropertiesType, StructureFlags), info(), NonArray, 0);
 }
 
 SlimClosure* SlimClosure::create(VM& vm, Structure* structure, FunctionID function, std::span<const uint64_t> captures, unsigned numberOfReferences)
@@ -804,16 +799,11 @@ State& SlimClosure::state() const
     return stateOfClosure(this);
 }
 
-State& ReifiedSlimClosure::state() const
-{
-    return stateOfClosure(this);
-}
-
 template<typename Visitor>
 void SlimClosure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     SlimClosure* closure = uncheckedDowncast<SlimClosure>(cell);
-    if (!tryVisitFields(closure, visitor)) {
+    if (!visitScopeInHeapSnapshot(cell, visitor) && !tryVisitFields(closure, visitor)) {
         visitor.didRace(cell, "SlimClosure::reify");
         return;
     }
@@ -827,7 +817,8 @@ void ReifiedSlimClosure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     ReifiedSlimClosure* closure = uncheckedDowncast<ReifiedSlimClosure>(cell);
     Base::visitChildren(cell, visitor);
-    visitFields(closure, visitor);
+    if (!visitScopeInHeapSnapshot(cell, visitor))
+        visitFields(closure, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(ReifiedSlimClosure);
@@ -891,7 +882,6 @@ ReifiedSlimClosure* SlimClosure::becomeReified(VM& vm, Structure* structure, std
     Butterfly* butterfly = Butterfly::createUninitialized(vm, this, 0, values.size(), false, 0);
     for (unsigned i = 0; i < values.size(); ++i)
         butterfly->propertyStorage()[offsetInOutOfLineStorage(firstOutOfLineOffset + i)].setWithoutWriteBarrier(values[i]);
-    // JSObject's own setters assert on butterfly(), which is null until the cell's type changes.
     setStructureIDDirectly(structureID().nuke());
     WTF::storeStoreFence();
     m_word = std::bit_cast<uint64_t>(butterfly);
@@ -929,23 +919,10 @@ JSC_DEFINE_CUSTOM_GETTER(createPrototypeProperty, (JSGlobalObject*, EncodedJSVal
     JSObject* closure = asObject(JSValue::decode(encodedClosure));
     VM& vm = closure->vm();
     JSObject* prototype = createPrototypeObjectOfFunction(vm, closure->structure()->realm(), closure);
-    // The closure may have been frozen since.
     unsigned attributes = 0;
     closure->getDirect(vm, vm.propertyNames->prototype, attributes);
     closure->putDirect(vm, vm.propertyNames->prototype, prototype, attributes & ~PropertyAttribute::CustomValue);
     return JSValue::encode(prototype);
-}
-
-bool SlimClosure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
-{
-    SlimClosure* closure = uncheckedDowncast<SlimClosure>(object);
-    return boundFunctionTarget(globalObject->vm(), closure->state(), closure->function(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
-}
-
-bool ReifiedSlimClosure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
-{
-    ReifiedSlimClosure* closure = uncheckedDowncast<ReifiedSlimClosure>(object);
-    return boundFunctionTarget(globalObject->vm(), closure->state(), closure->function(), closure->captures(), closure->numberOfReferences())->hasInstance(globalObject, value);
 }
 
 bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
@@ -960,11 +937,9 @@ bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
         slot.setValue(object, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, initialNamePropertyString(vm, closure->state(), closure->function()));
         return true;
     }
-    bool isPrototype = name == vm.propertyNames->prototype && FunctionTables::hasPrototypePropertyAtCreation(closure->kind());
-    bool isBoundHasInstance = name == vm.propertyNames->hasInstanceSymbol && closure->isBound();
-    if (!isPrototype && !isBoundHasInstance)
+    if (name != vm.propertyNames->prototype || !FunctionTables::hasPrototypePropertyAtCreation(closure->kind()))
         return false;
-    closure->reify(vm, isPrototype ? PrototypeObject::MadeNow : PrototypeObject::MadeAtFirstRead);
+    closure->reify(vm, PrototypeObject::MadeNow);
     return JSObject::getOwnPropertySlot(object, globalObject, name, slot);
 }
 

@@ -20,7 +20,6 @@ using namespace Typed;
 
 namespace {
 
-// What WalkState means, said with four lists that are gone through from end to end. No state here has the program, so every place rests on the whole of its heap.
 class PlainListsOfWalkStateTests {
 public:
     enum class Kind : uint8_t { Slot, Variable, EnvironmentField, Element, GuardOfStores, GuardOfReads };
@@ -115,7 +114,6 @@ public:
         });
     }
 
-    // As the comments at FactOfCell have it.
     static OptionSet<FactOfCell> factsThatRestOn(AbstractHeapSet written)
     {
         OptionSet<FactOfCell> facts;
@@ -151,7 +149,6 @@ public:
 
     void note(Kind kind, Reference base, uint32_t first, uint32_t second, Reference value)
     {
-        // A note about a fresh object is a store into it, which may have overwritten what lies under another layout or another index.
         bool maySharePlaceWithOthers = kind == Kind::Slot || kind == Kind::Element;
         if (maySharePlaceWithOthers && isFresh(base) && (!value || valueOf(kind, base, first, second) != value)) {
             places.removeAllMatching([&](const Place& place) {
@@ -188,7 +185,6 @@ public:
         });
     }
 
-    // What hangs on an object and rests on a heap of the object ends where the object may be written, a guard where its class says so, and whatever else by its heap.
     void invalidate(AbstractHeapSet written, NOESCAPE const Invocable<bool(Reference)> auto& mayBeWritten, NOESCAPE const Invocable<bool(LayoutID)> auto& mayEndGuard)
     {
         constexpr AbstractHeapSet underElements { AbstractHeap::Elements, AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage };
@@ -211,7 +207,6 @@ public:
             case Kind::EnvironmentField:
                 return written.contains(AbstractHeap::EnvironmentFields) && isWritten(place.base);
             case Kind::Element:
-                // What lies under a typed array goes by its heap.
                 if (written.containsAny(underElements - underElementsOfObjects))
                     return written.containsAny(underElements - perObjectHeaps) || !isFresh(place.base);
                 return written.containsAny(underElementsOfObjects) && isWritten(place.base);
@@ -287,10 +282,8 @@ static Effects effectsThatWriteInWalkStateTests(AbstractHeapSet written)
     return effects;
 }
 
-// Where much is known the slots are listed by the last six bits of their layout: two pairs that share a list, and no layout at all beside the one that it shares a list with.
 static constexpr uint32_t layoutsOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX };
 
-// Every question that can be asked about the numbers in use, and both ways round: the state holds what the lists hold and nothing else.
 static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, uint32_t numberOfObjects, uint32_t numberOfFields)
 {
     using Kind = PlainListsOfWalkStateTests::Kind;
@@ -321,7 +314,6 @@ static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, u
     }
 }
 
-// Few objects: lists that are searched one by one. Many: tables, records that are dropped in between, and the lists of what may end.
 static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjects, uint32_t numberOfSteps, uint32_t stepsBetweenChecks)
 {
     using Kind = PlainListsOfWalkStateTests::Kind;
@@ -343,7 +335,6 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
     auto object = [&] {
         return valueOfWalkStateTests(random.getUint32(numberOfObjects));
     };
-    // One time in four: the place is no longer known.
     auto value = [&] {
         return random.getUint32(4) ? valueOfWalkStateTests(random.getUint32(3)) : Reference();
     };
@@ -351,7 +342,6 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
         return layoutsOfWalkStateTests[random.getUint32(numberOfLayouts)];
     };
 
-    // A state that has gone through a row of holders often enough lists what may end, and goes by the lists until it holds nothing. Half of the steps are to be taken by such states.
     constexpr uint32_t holdersInRow = 12;
     constexpr uint32_t timesThroughRow = 400;
     constexpr uint32_t stepsBetweenRows = 64;
@@ -461,7 +451,6 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
             pair.lists.invalidateHeap();
             break;
         case 22: {
-            // On an edge the state is copied or moved.
             size_t from = random.getUint32(numberOfStates);
             if (from == place)
                 break;
@@ -543,8 +532,6 @@ static void testAnswersAsPlainListsDo()
     }
 }
 
-// The body of a module that knows ever more variables and makes an object after another, each of which leaves at once and is forgotten with the next call.
-// What has ended is dropped when it outnumbers all that is left. Where the few holders count for themselves, all the variables are gone through for every few objects, and this takes ten minutes and not a second.
 static void testObjectsThatLeaveCostNoMoreBesideManyVariables()
 {
     constexpr uint32_t numberOfStatements = 600000;

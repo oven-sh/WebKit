@@ -167,7 +167,6 @@ public:
         at<uint32_t>(CompactTable::offsetOfAliveCount())--;
     }
     Vector<uint8_t> copyOfBytes() const { return Vector<uint8_t>(std::span<const uint8_t>(m_bytes, m_size)); }
-    // A search for a place to insert marks the home slot that it leaves, whoever inserts the key in the end. The mark says that a key may lie elsewhere, and nothing of the entries.
     Vector<uint8_t> copyOfBytesWithoutMarksOfHomeSlots() const
     {
         Vector<uint8_t> bytes = copyOfBytes();
@@ -200,7 +199,6 @@ public:
         });
     }
 
-    // In a table that has slots.
     uint32_t slotOf(uint32_t entry, unsigned hash) const
     {
         for (uint32_t slot = 0; slot < 1u << m_indexBits; ++slot) {
@@ -435,7 +433,6 @@ static void testStringKeys()
     }
 }
 
-// On its way to each string the search comes by a key of another kind, or by the place of a deleted key, that has the hash of the string.
 static void testStringsBesideOtherKeys()
 {
     Collections collections;
@@ -976,7 +973,6 @@ struct RoomForTable {
 
 } // anonymous namespace
 
-// What the run time hands to the stub describes a table with room for one more key, in the words that such a table has.
 static void testGrowthPlansOfRunTime()
 {
     FakeHeap heap;
@@ -1095,7 +1091,6 @@ static void testTablesNotGrownByStubs()
         checkTableIsNotGrown(collections, plans, full, stringEntry(std::nullopt));
     }
     for (Width valueWidth : { Width::None, Width::Narrow, Width::Wide }) {
-        // The index is made anew, and the hash of a BigInt is neither in the cell nor made of its address.
         FullTable full(collections, 8, Width::Narrow, valueWidth, 1, HeapBigIntType);
         checkTableIsNotGrown(collections, plans, full, stringEntry(createValue(heap, 0, valueWidth)), true);
     }

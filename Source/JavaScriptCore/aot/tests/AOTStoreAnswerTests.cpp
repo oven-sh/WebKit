@@ -121,7 +121,6 @@ static bool isLastingRefusal(const PropertyAnswer& answer)
     return answer.kind == PropertyAnswerKind::Uncacheable && !answer.didFlatten;
 }
 
-// The guard of a class ends when a member of the class gets another value (AOTClassGuards.h), and a stub would replace the value without a report.
 static void testReplacementOnPrototypeIsNotCached()
 {
     Realm realm;
@@ -141,7 +140,6 @@ static void testReplacementOnPrototypeIsNotCached()
 
 static void testAdditionNamesTheCapacityItGrowsTo()
 {
-    // maxCapacityOfStorageGrownByStub of AOTPropertyCachesAnswers.cpp.
     constexpr unsigned maxCapacityGrown = 32;
     Realm realm;
     VM& vm = realm.vm();
@@ -187,7 +185,6 @@ static void testAdditionBesideElementsNamesTheIndexingHeader()
         AOT_TEST_CHECK(numberOfGrowths >= 2 && object->getIndexQuickly(0) == firstElement);
     }
 
-    // A store copies shared elements first, so the array leaves the Structure it had by two steps. A definition takes one step, which changes the indexing mode.
     Identifier field = Identifier::fromString(vm, "field"_s);
     JSArray* storedTo = realms.array(realm, "[1, 2]"_s);
     JSArray* definedOn = realms.array(realm, "[1, 2]"_s);
@@ -208,7 +205,6 @@ static void testDictionaryIsFlattenedOnce()
     object->convertToDictionary(vm);
     AOT_TEST_CHECK(object->structure()->isDictionary());
 
-    // A cacheable dictionary says where a property is. A property it gets leaves its Structure as it is.
     AOT_TEST_CHECK(isOwnValueAt(storeAndClassify(realm.globalObject(), object, name, jsNumber(2)), object->structure()->get(vm, name)));
     AOT_TEST_CHECK(object->structure()->isDictionary());
     PropertyAnswer first = storeAndClassify(realm.globalObject(), object, added, jsNumber(2));

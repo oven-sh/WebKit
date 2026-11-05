@@ -22,7 +22,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr uint8_t laterBarrierCoversMarkOfSweep = static_cast<uint8_t>(SweepMark::LaterBarrierCovers);
 static constexpr uint8_t ownerIsYoungMarkOfSweep = static_cast<uint8_t>(SweepMark::OwnerIsYoung);
 
-// A callee checks the stack and polls where it sets up its frame, whatever its summary says of its body.
 static constexpr OpcodeSet callsAmongSweptOperations = [] {
     OpcodeSet opcodes;
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -33,17 +32,7 @@ static constexpr OpcodeSet callsAmongSweptOperations = [] {
     return opcodes;
 }();
 
-// The barrier of any other store remembers the stored element alone, so it stands for no other store, and its emitter omits it for no other barrier.
-static constexpr OpcodeSet sweptStoresThatRememberOwner = [] {
-    OpcodeSet opcodes;
-    for (Opcode opcode : allMembersOf<Opcode>) {
-        if (runsOwnerBarrierOf(opcode) && remembersOwnerOf(opcode))
-            opcodes.add(opcode);
-    }
-    return opcodes;
-}();
-
-constexpr OpcodeSet sweptOperationsWithOwnerBarriers = sweptStoresThatRememberOwner;
+static constexpr OpcodeSet sweptStoresThatRememberOwner = sweptOperationsWithOwnerBarriers;
 
 static constexpr OpcodeSet sweptConstantsThatMayExitSidewaysOrCollect = [] {
     OpcodeSet opcodes;
@@ -65,7 +54,6 @@ static constexpr TerminatorKindSet sweptTerminatorsThatMayExitSidewaysOrCollect 
     return kinds;
 }();
 
-// A constant lies in no block and has no traits: it is made anew where it is used.
 static bool makingSweptConstantsMayExitSidewaysOrCollect(const Code& code, std::span<const ValueID> used)
 {
     for (ValueID id : used) {
@@ -80,16 +68,13 @@ static bool makingSweptConstantsMayExitSidewaysOrCollect(const Code& code, std::
     return false;
 }
 
-// An operation whose allocation fails throws when it returns, so whatever may collect may exit sideways as well.
 static bool sweptOperationMayExitSidewaysOrCollect(const Code& code, const Operation& operation)
 {
     EffectTraits traits = operation.traits();
     if (traits.mayExitSideways() || traits.mayCollect() || callsAmongSweptOperations.contains(operation.opcode))
         return true;
-    // Its failing side does the generic operation.
     if (testsItsOwnGuess(operation))
         return true;
-    // A store that adds a field cannot throw when its allocation fails. This poll throws for the stores in front of it.
     if (operation.opcode == Opcode::LoopHint && operation.throwsOwedError())
         return true;
     return makingSweptConstantsMayExitSidewaysOrCollect(code, operation.operands());
@@ -108,28 +93,23 @@ static bool sweptTerminatorMayThrowToHandler(const Code& code, const Terminator&
     return false;
 }
 
-// The block has just been reached, and none of its operations is known to be needed.
-void Sweep::giveUpHandlerOf(BlockID id)
+void Sweep::giveUpHandlerOf(BlockID id, const Block& block)
 {
     Code& code = *m_code;
-    if (!m_hasGivenUpHandlers) {
-        m_hasGivenUpHandlers = true;
-        m_handlersLookedAt.clearAll();
-        m_handlersLookedAt.ensureSize(code.numberOfBlocks());
-        m_handlersThatOnlyThrowOutOfUnit.clearAll();
-        m_handlersThatOnlyThrowOutOfUnit.ensureSize(code.numberOfBlocks());
-    }
+    m_states[id.index()] |= sweptBlockHasGivenUpHandler;
     code.m_blocksWithoutThrows.quickSet(id.index());
-    if (sweptTerminatorMayThrowToHandler(code, code.at(id).terminator))
+    if (sweptTerminatorMayThrowToHandler(code, block.terminator))
         keepHandlerOf(id);
 }
 
 bool Sweep::handlerOnlyThrowsOutOfUnit(BlockID handler)
 {
     const Code& code = *m_code;
-    // A handler block that comes round to itself finds the answer no.
-    if (m_handlersLookedAt.quickSet(handler.index()))
-        return m_handlersThatOnlyThrowOutOfUnit.quickGet(handler.index());
+    RELEASE_ASSERT(handler);
+    uint8_t& stateOfHandler = m_states[handler.index()];
+    if (stateOfHandler & sweptHandlerWasLookedAt)
+        return stateOfHandler & sweptHandlerOnlyThrowsOutOfUnit;
+    stateOfHandler |= sweptHandlerWasLookedAt;
 
     ValueID caught;
     Vector<EdgeID, 4> way;
@@ -151,14 +131,12 @@ bool Sweep::handlerOnlyThrowsOutOfUnit(BlockID handler)
                 caught = value;
                 continue;
             }
-            // Whatever else stands here is read by nothing that stays: no block behind the handler block is reached but through these, and the last of them reads what was caught.
             if (isRoot(operation))
                 return false;
         }
         if (block.terminator.kind != TerminatorKind::Jump)
             break;
         EdgeID next = block.terminator.next();
-        // Numbers that rise come to an end.
         if (code.at(next).to <= id)
             return false;
         way.append(next);
@@ -171,7 +149,6 @@ bool Sweep::handlerOnlyThrowsOutOfUnit(BlockID handler)
     ValueID thrown;
     if (terminator.kind == TerminatorKind::Rethrow && code.at(caught).opcode == Opcode::CatchException)
         thrown = terminator.exceptionOperand();
-    // A `catch` of the program that throws the value again begins another throw, whose frames whoever catches it outside may list.
     else if (terminator.kind == TerminatorKind::Throw && code.at(caught).opcode == Opcode::CatchValue && code.at(handler).role != BlockRole::CatchHandler)
         thrown = terminator.valueOperand();
     for (size_t index = way.size(); index-- && thrown;) {
@@ -184,25 +161,27 @@ bool Sweep::handlerOnlyThrowsOutOfUnit(BlockID handler)
     if (thrown != caught)
         return false;
 
-    m_handlersThatOnlyThrowOutOfUnit.quickSet(handler.index());
+    stateOfHandler |= sweptHandlerOnlyThrowsOutOfUnit;
     return true;
 }
 
 void Sweep::keepHandlerOf(BlockID id)
 {
     Code& code = *m_code;
-    if (handlerOnlyThrowsOutOfUnit(code.at(code.at(id).handler).to))
-        return;
-    code.m_blocksWithoutThrows.quickClear(id.index());
     EdgeID handler = code.at(id).handler;
     BlockID to = code.at(handler).to;
     RELEASE_ASSERT(to);
+    if (handlerOnlyThrowsOutOfUnit(to)) {
+        m_states[id.index()] |= sweptBlockNeedsNoHandler;
+        return;
+    }
+    m_states[id.index()] &= static_cast<uint8_t>(~sweptBlockHasGivenUpHandler);
+    code.m_blocksWithoutThrows.quickClear(id.index());
     needArgumentsOn(handler);
-    if (!code.isReached(to))
+    if (!(m_states[to.index()] & sweptBlockIsReached))
         m_blocksToReach.append(to);
 }
 
-// Its block has given its handler up.
 void Sweep::keepHandlerIfThrows(const Operation& needed)
 {
     if (sweptOperationMayExitSidewaysOrCollect(*m_code, needed))
@@ -212,30 +191,17 @@ void Sweep::keepHandlerIfThrows(const Operation& needed)
 namespace {
 
 struct BarrierOfSweptStore {
-    // The root of the cell that is stored into. Null: the store waits for no later barrier and stands for no earlier store.
     ValueID owner;
-    // Whatever the store meets at run time, it ends in the barrier that remembers the owner.
     bool alwaysRuns { false };
 };
 
 } // anonymous namespace
-
-ValueID rootOfCellInSweptCode(const Code& code, ValueID cell)
-{
-    while (opcodesThatGiveSameCell.contains(code.at(cell).opcode)) {
-        ASSERT(code.at(cell).operandUses(0).contains(OperandUse::Returns));
-        cell = code.at(cell).operand(0);
-    }
-    return cell;
-}
 
 static bool sweptStoreMayAddField(const Operation& store)
 {
     return store.opcode == Opcode::PutSlotOrAdd;
 }
 
-// `store` is one of sweptStoresThatRememberOwner and neither exits sideways nor collects.
-// alwaysRuns claims no more than BarrierEmitter does: each reason for which barrierAfterStore() or the emitter of a slot store omits the barrier, or tests before it runs, is named here.
 static BarrierOfSweptStore describeBarrierOfSweptStore(const Code& code, const TypeArena& types, const Operation& store)
 {
     if (store.ownerCannotBeMarked())
@@ -258,18 +224,13 @@ static BarrierOfSweptStore describeBarrierOfSweptStore(const Code& code, const T
             everyStoredTypeIsKnown = false;
             return;
         }
-        // The VM marks some of its strings whoever holds them, and a store of those alone runs no barrier: BarrierEmitter::storesOnlyStringsOfVM().
         bool isStringOfVM = stored.opcode == Opcode::String && hasCellOfVM(types.bytesOf(stored.string()));
         storesCells |= !isStringOfVM && types.at(stored.type).hasCells();
-        // The word of a literal string is tested first, and names a cell only sometimes.
-        mayOmitBarrier |= stored.representation == Representation::LiteralString;
-        // The slot names the function already, so the store writes no cell.
         const Operation& made = code.at(rootOfCellInSweptCode(code, operand));
         mayOmitBarrier |= made.opcode == Opcode::NewClosure && made.closureForm() == ClosureForm::Deferred;
     });
     if (!ownerIndex || !hasOneOwner || !everyStoredTypeIsKnown)
         return { };
-    // A store that makes room for its value stores the Extension in the owner, whatever the value is.
     if (!storesCells && !sweptStoreMayAddField(store))
         return { };
 
@@ -277,19 +238,14 @@ static BarrierOfSweptStore describeBarrierOfSweptStore(const Code& code, const T
     if (!ownerOperand)
         return { };
     ValueID owner = rootOfCellInSweptCode(code, ownerOperand);
-    // Two uses of one constant may make two cells.
     if (code.isConstant(owner))
         return { };
-    // No store into a cell of the frame runs a barrier.
     const Operation& definition = code.at(owner);
     if (PayloadWord::storage(definition.opcode) && definition.storage() != AllocationStorage::Heap)
         return { };
     return { owner, storesCells && !mayOmitBarrier };
 }
 
-// The collector looks at a remembered owner again as a whole. So the last barrier on a way on which nothing can exit sideways or collect does for every store into that owner on the way.
-// An operation that may throw ends the way like one that may collect: behind the throw the later barrier never runs.
-// False: the unit holds no store that could wait for another.
 bool Sweep::beginLookingForCoveredBarriers()
 {
     const Code& code = *m_code;
@@ -299,6 +255,7 @@ bool Sweep::beginLookingForCoveredBarriers()
     m_coveredOwners.shrink(0);
     m_ownersCovered.clearAll();
     m_ownersCovered.ensureSize(code.numberOfValues());
+    m_storeWhoseOwnerIsKnown = { };
     m_coveredAtHeads.shrink(0);
     m_storesThatAwaitBirth.shrink(0);
     m_birthsAwaited.clearAll();
@@ -323,14 +280,11 @@ void Sweep::strikeCoveredOwners()
     m_coveredOwners.shrink(0);
 }
 
-// What is covered at the head of every block that the terminator leads to. A block that has not been visited lies behind a back edge and counts as one that covers nothing.
-// The handler edge needs no look: whatever may take it ends the way by itself.
 void Sweep::beginCoverageAtEndOf(BlockID id)
 {
     const Code& code = *m_code;
     ASSERT(m_coveredOwners.isEmpty());
     const Terminator& terminator = code.at(id).terminator;
-    // Behind a terminator that leaves the unit no barrier of the unit runs.
     if (!terminator.numberOfEdges || m_coveredAtHeads.isEmpty())
         return;
 
@@ -354,7 +308,6 @@ void Sweep::beginCoverageAtEndOf(BlockID id)
     }
 }
 
-// `operation` is needed. The operations of a block come last to first.
 void Sweep::lookForCoveredBarrier(ValueID id, const Operation& operation)
 {
     Code& code = *m_code;
@@ -365,12 +318,13 @@ void Sweep::lookForCoveredBarrier(ValueID id, const Operation& operation)
         strikeCoveredOwners();
         return;
     }
-    // In front of its definition the value names the cell of another turn of a loop. A store may give a value too: PutInternalField.
     strikeCoveredOwner(id);
     if (!isStore)
         return;
 
     BarrierOfSweptStore barrier = describeBarrierOfSweptStore(code, m_inputs->types, operation);
+    m_storeWhoseOwnerIsKnown = id;
+    m_ownerOfThatStore = barrier.owner;
     if (!barrier.owner)
         return;
     if (m_ownersCovered.quickGet(barrier.owner.index())) {
@@ -383,7 +337,6 @@ void Sweep::lookForCoveredBarrier(ValueID id, const Operation& operation)
     }
 }
 
-// The run time allocates nothing behind the cell of any of them, and hands it on new or remembered: newCellForCompiledCode().
 static constexpr OpcodeSet sweptAllocationsThatLeaveYoungCell = opcodesWhere([](Opcode opcode) {
     return allocatesAfterLastSafepointOf(opcode) && interpretedOf(opcode) == Interpretation::Allocation && effectRuleOf(opcode) == EffectRule::Declared;
 });
@@ -400,23 +353,19 @@ static bool sweptAllocationLeavesYoungCell(const Plan& plan, const Operation& ma
     // An environment cell that was handed back is an old one, which the collector may have marked.
     if (layout.isEscapedOffset)
         return false;
-    // The run time makes an object with a prototype of its own, and an ordinary object, in several steps.
     return !made.prototypeOperand() && layout.hasSlots();
 }
 
-// What only throws ends nothing: behind the throw the store does not run.
 static bool sweptOperationMayCollectOrRunOtherCode(const Code& code, const Operation& operation)
 {
     EffectTraits traits = operation.traits();
     if (traits.mayCollect() || traits.mayRunOtherCode() || callsAmongSweptOperations.contains(operation.opcode))
         return true;
-    // Its failing side does the generic operation. A poll stops for the collector.
     if (testsItsOwnGuess(operation) || operation.opcode == Opcode::LoopHint)
         return true;
     return makingSweptConstantsMayExitSidewaysOrCollect(code, operation.operands());
 }
 
-// Whatever the effects say: an operation that writes nothing may retain. What hands its operand on under a name that rootOfCellInSweptCode() does not follow back counts as one that keeps it: whoever lays that name in memory lays the cell there.
 static constexpr OperandUses usesThatLetSweptCellBeSeen { OperandUse::Retains, OperandUse::Calls, OperandUse::PassesToUserCode };
 static constexpr OperandUses usesThatLetSweptCellBeSeenOrGiveAnotherName { OperandUse::Retains, OperandUse::Calls, OperandUse::PassesToUserCode, OperandUse::Returns };
 
@@ -443,11 +392,6 @@ void Sweep::forgetStoresThatAwaitBirth()
     m_storesThatAwaitBirth.shrink(0);
 }
 
-// The collector marks a cell that it finds in the frame only where the program stops for it, and a cell that it finds in memory at any time. So of a cell that was made behind the last place where the program may stop,
-// and that no memory and no unfollowed name holds, it has marked nothing: a store into it needs no barrier. dfg/DFGStoreBarrierInsertionPhase.cpp has the same two halves.
-// Where the heap is full one collection may run behind the cell all the same. The cell is remembered then: newCellForCompiledCode().
-// `operation` is needed. The operations of a block come last to first, so a store waits until the way comes to the allocation, and whatever ends the youth of the cell on the way there ends the wait.
-// No further than the block: at a head several ways meet, and the way backward follows one.
 void Sweep::lookForBirthOfOwner(ValueID id, const Operation& operation)
 {
     Code& code = *m_code;
@@ -462,7 +406,6 @@ void Sweep::lookForBirthOfOwner(ValueID id, const Operation& operation)
                 return true;
             });
         }
-        // An allocation may collect in front of its cell, so no older cell is young behind it.
         if (mayCollect) {
             forgetStoresThatAwaitBirth();
             return;
@@ -482,7 +425,7 @@ void Sweep::lookForBirthOfOwner(ValueID id, const Operation& operation)
     }
     if (mayCollect || !sweptStoresThatRememberOwner.contains(operation.opcode))
         return;
-    ValueID owner = describeBarrierOfSweptStore(code, m_inputs->types, operation).owner;
+    ValueID owner = m_storeWhoseOwnerIsKnown == id ? m_ownerOfThatStore : describeBarrierOfSweptStore(code, m_inputs->types, operation).owner;
     if (!owner)
         return;
     const Operation& made = code.at(owner);
@@ -504,11 +447,6 @@ void Sweep::endCoverageAtHeadOf(BlockID id)
 
 static constexpr uint8_t laterFenceCoversMarkOfSweep = static_cast<uint8_t>(SweepMark::LaterFenceCovers);
 
-// The allocations whose code describeFenceOfSweptOperation() knows. Any other one keeps its fence and stands for no earlier one.
-constexpr OpcodeSet sweptAllocationsWithFences { Opcode::NewObject, Opcode::NewClosure, Opcode::NewArray, Opcode::CreateRest };
-
-// By the schema it writes the state of the allocator alone, and what it keeps of its operands it keeps in its result. So a cell that it hands on is one that it has made, and whoever makes a cell fences in front of handing it on.
-// The state of the run time is no such heap.
 static bool sweptOperationHandsOnNoOperand(Opcode opcode)
 {
     static constexpr OperandUses usesThatHandNothingOn { OperandUse::Inspects, OperandUse::Returns, OperandUse::ReadsContents, OperandUse::Retains };
@@ -528,22 +466,14 @@ static bool sweptOperationHandsOnNoOperand(Opcode opcode)
 namespace {
 
 struct FenceOfSweptOperation {
-    // It may hand a cell on to where the collector finds it, or leave the way for code that may.
     bool mayHandCellOn { false };
-    // Whatever it meets at run time, it fences behind the stores that fill its new cell, and hands no cell on in front of that fence.
     bool alwaysFences { false };
-    // It hands no cell on at all, and wherever its code fences in line its emitter asks for the mark: BarrierEmitter::fenceAfterInitialization(const OperationContext&).
     bool mayLeaveFenceToLaterOne { false };
 };
 
 } // anonymous namespace
 
 // A fence keeps the stores that fill a new cell in front of the store that hands the cell on, which the collector may follow while the program runs. It keeps every earlier store of the thread there too.
-// So the last of several allocations fences for all of them, as long as nothing in between hands a cell on.
-// A store into a cell that is older than the allocation does: whatever may collect in between may have handed the older cell to the collector.
-// What an allocation stores into its own new cell does not: that cell reaches the collector behind the later fence, or where the program stops for the collector, which orders all that stands in front.
-// A constant, which is made where it is used, names no value of the unit: it hands on at most a cell that it has made and fenced itself.
-// An allocation that throws for lack of memory makes the error behind the stores, and whoever makes a cell fences.
 static FenceOfSweptOperation describeFenceOfSweptOperation(const Program& program, const Plan& plan, const Operation& operation)
 {
     EffectTraits traits = operation.traits();
@@ -553,14 +483,11 @@ static FenceOfSweptOperation describeFenceOfSweptOperation(const Program& progra
     switch (operation.opcode) {
     case Opcode::NewObject: {
         bool fences = newObjectFencesBeforeHandingCellOn(program, plan, operation);
-        // The run time takes the prototype. A cell of the heap of which the emitter does not say so may be one that the collector knows. A cell of the frame is filled where the collector does not look.
         if (operation.prototypeOperand() || (!fences && operation.storage() == AllocationStorage::Heap))
             return { .mayHandCellOn = true, .alwaysFences = fences };
         return { .alwaysFences = fences, .mayLeaveFenceToLaterOne = fences };
     }
     case Opcode::NewClosure: {
-        // The fence stands in line, in the stub, or in the operation behind the stub: ConstantEmitter::newFullClosure(), generateNewClosure(), generateNewSlimClosure(), operationAOTNewClosureSlow.
-        // A singleton is made once, and a deferred closure is not made here.
         bool isMadeInHeap = operation.storage() == AllocationStorage::Heap && (operation.closureForm() == ClosureForm::Full || operation.closureForm() == ClosureForm::Slim);
         return { .alwaysFences = isMadeInHeap, .mayLeaveFenceToLaterOne = isMadeInHeap };
     }
@@ -569,14 +496,12 @@ static FenceOfSweptOperation describeFenceOfSweptOperation(const Program& progra
     case Opcode::CreateRest:
         return { .mayLeaveFenceToLaterOne = operation.storage() == AllocationStorage::Heap };
     default: {
-        // What writes where no program sees may still write where the collector looks.
         bool allocatesOrWrites = traits.mayCollect() || (traits.mayTouchMemory() && !declaredBoundInTable(operation.opcode).writes.isEmpty());
         return { .mayHandCellOn = allocatesOrWrites && !sweptOperationHandsOnNoOperand(operation.opcode) };
     }
     }
 }
 
-// False: the unit holds no allocation whose fence could wait for another or stand for one.
 bool Sweep::beginLookingForCoveredFences()
 {
     const Code& code = *m_code;
@@ -589,18 +514,16 @@ bool Sweep::beginLookingForCoveredFences()
     return true;
 }
 
-// A block that has not been visited lies behind a back edge and counts as one that covers nothing. Behind a terminator that leaves the unit no fence of the unit runs.
 void Sweep::beginFenceCoverageAtEndOf(BlockID id)
 {
     const Code& code = *m_code;
     const Terminator& terminator = code.at(id).terminator;
-    m_laterFenceCovers = !!terminator.numberOfEdges;
-    for (uint32_t targetIndex = 0; targetIndex < terminator.numberOfEdges && m_laterFenceCovers; ++targetIndex)
-        m_laterFenceCovers = m_laterFenceCoversAtHeads.quickGet(code.at(terminator.edge(targetIndex)).to.index());
-    m_laterFenceCovers = m_laterFenceCovers && !sweptTerminatorMayThrowToHandler(code, terminator);
+    bool laterFenceCovers = !!terminator.numberOfEdges;
+    for (uint32_t targetIndex = 0; targetIndex < terminator.numberOfEdges && laterFenceCovers; ++targetIndex)
+        laterFenceCovers = m_laterFenceCoversAtHeads.quickGet(code.at(terminator.edge(targetIndex)).to.index());
+    m_laterFenceCovers = laterFenceCovers && !sweptTerminatorMayThrowToHandler(code, terminator);
 }
 
-// `operation` is needed. The operations of a block come last to first.
 void Sweep::lookForCoveredFence(ValueID id, const Operation& operation)
 {
     if (!m_laterFenceCovers && !sweptAllocationsWithFences.contains(operation.opcode))
@@ -624,7 +547,6 @@ void Sweep::endFenceCoverageAtHeadOf(BlockID id)
     m_laterFenceCoversAtHeads.quickSet(id.index());
 }
 
-// An operation that is no store and ends no way is looked at for being an owner alone. A store into an owner needs the owner, and stands behind it: so the way has found the owner needed where it came by it.
 bool Sweep::mayChangeWhatIsCovered(const Operation& operation) const
 {
     if (m_looksForCoveredBarriers) {
@@ -645,27 +567,36 @@ void Sweep::lookForCoverageAgain()
         marks &= static_cast<uint8_t>(~(laterBarrierCoversMarkOfSweep | laterFenceCoversMarkOfSweep | ownerIsYoungMarkOfSweep));
     m_looksForCoveredBarriers = beginLookingForCoveredBarriers();
     m_looksForCoveredFences = beginLookingForCoveredFences();
+    const bool looksForCoveredBarriers = m_looksForCoveredBarriers;
+    const bool looksForCoveredFences = m_looksForCoveredFences;
     for (BlockID id : m_reachedInPostorder) {
-        if (m_looksForCoveredBarriers)
+        if (looksForCoveredBarriers && !m_coveredAtHeads.isEmpty())
             beginCoverageAtEndOf(id);
-        if (m_looksForCoveredFences)
-            beginFenceCoverageAtEndOf(id);
+        if (looksForCoveredFences) {
+            if (m_laterFenceCoversAtSomeHead)
+                beginFenceCoverageAtEndOf(id);
+            else
+                m_laterFenceCovers = false;
+        }
         std::span<const ValueID> order = code.valuesOf(id);
         for (size_t index = order.size(); index--;) {
             ++m_totals.operationsSwept;
             const Operation& operation = code.at(order[index]);
-            if (m_looksForCoveredBarriers) {
-                lookForCoveredBarrier(order[index], operation);
-                if (!m_storesThatAwaitBirth.isEmpty() || sweptOperationsWithOwnerBarriers.contains(operation.opcode))
+            if (looksForCoveredBarriers) {
+                bool hasOwnerBarrier = sweptOperationsWithOwnerBarriers.contains(operation.opcode);
+                if (hasOwnerBarrier || !m_coveredOwners.isEmpty())
+                    lookForCoveredBarrier(order[index], operation);
+                if (hasOwnerBarrier || !m_storesThatAwaitBirth.isEmpty())
                     lookForBirthOfOwner(order[index], operation);
             }
-            if (m_looksForCoveredFences)
+            if (looksForCoveredFences && (m_laterFenceCovers || sweptAllocationsWithFences.contains(operation.opcode)))
                 lookForCoveredFence(order[index], operation);
         }
-        if (m_looksForCoveredBarriers)
+        if (looksForCoveredBarriers && !m_coveredOwners.isEmpty())
             endCoverageAtHeadOf(id);
-        forgetStoresThatAwaitBirth();
-        if (m_looksForCoveredFences)
+        if (!m_storesThatAwaitBirth.isEmpty())
+            forgetStoresThatAwaitBirth();
+        if (looksForCoveredFences && m_laterFenceCovers)
             endFenceCoverageAtHeadOf(id);
     }
 }

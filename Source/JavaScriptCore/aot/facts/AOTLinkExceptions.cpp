@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Handlers: what a function throws flows to whoever may catch it, the handler around the call or what the caller throws in turn. It flows into unseen code too, whoever has thrown it: StateOfLinkReach::bringAlive() of AOTLinkReach.cpp lays thrown(id) > unseen() for every function that comes alive.
-// At a throw: that is all of it. At a suspension: what a coroutine throws goes into its promise or to whoever steps it, which that edge covers.
-// Withheld: the flow is the same, and LinkTables::catches is empty.
-
 #include "config.h"
 #include "AOTLinkExceptions.h"
 

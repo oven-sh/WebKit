@@ -17,7 +17,6 @@ static uint16_t primitivesOfTypeInStraightTest(const TypeArena& types, TypeID te
     return holdsOnlyPrimitives(tested) ? primitivesInID(tested) : types.recordOf(tested).primitives;
 }
 
-// The masks that the word alone answers in no more room than a call takes. It may write `boxed`.
 static bool tryTestWordInStraightForm(CCallHelpers& jit, GPRReg boxed, TypeID tested, GPRReg zeroOrOne)
 {
     if (!holdsOnlyPrimitives(tested))
@@ -79,7 +78,6 @@ std::optional<StraightTest> StraightEmitter::testOfWordAlone(TypeID tested)
     }
 }
 
-// Image gives no record to a type of a thread's arena, and the record of a type asks for its TypeArena::testablePartOf().
 bool StraightEmitter::canTestType(TypeID tested)
 {
     if (!tested || liesInThread(tested))
@@ -102,7 +100,6 @@ void StraightEmitter::testType(GPRReg boxed, TypeID tested, GPRReg zeroOrOne)
     if (tryTestWordInStraightForm(jit, boxed, tested, zeroOrOne))
         return;
 
-    // No record holds Absent, and RuntimeLayoutTable::valueHasType() turns the empty word away.
     bool absentPasses = primitivesOfTypeInStraightTest(m_types, tested) & Primitive::Absent;
     CCallHelpers::Jump isAbsent;
     if (absentPasses)
@@ -116,6 +113,38 @@ void StraightEmitter::testType(GPRReg boxed, TypeID tested, GPRReg zeroOrOne)
     isAbsent.link(&jit);
     jit.move(CCallHelpers::TrustedImm32(1), zeroOrOne);
     isTested.link(&jit);
+}
+
+void StraightEmitter::trapUnlessOfType(ValueID value, TypeID tested, ProofSource source, Origin origin)
+{
+    if (m_types.isSubset(TypeTable::anything, tested))
+        return;
+    uint16_t primitives = primitivesOfTypeInStraightTest(m_types, tested);
+    if (std::optional<JSValue> constant = value ? constantOf(value) : std::optional<JSValue>(jsUndefined())) {
+        if ((constant->isUndefined() && (primitives & Primitive::Undefined)) || (constant->isNull() && (primitives & Primitive::Null)) || (constant->isBoolean() && (primitives & (constant->asBoolean() ? Primitive::True : Primitive::False))))
+            return;
+    }
+    origin.isTailCall = false;
+    auto stopByName = [&](StraightArgument found) {
+        StraightArgument arguments[] { found, StraightArgument::word(function().index()), StraightArgument::word(origin.position), StraightArgument::word(static_cast<uint32_t>(source)) };
+        callOperation(origin, RuntimeOperation::StopAtFalseProof, arguments, { .neverReturns = true });
+        m_jit->breakpoint();
+    };
+    if (!value) {
+        storeWhatWaitsInRegister();
+        stopByName(StraightArgument::boxed(jsUndefined()));
+        return;
+    }
+    storeWhatWaitsInRegister();
+    GPRReg boxed = temporary(1);
+    load(value, boxed);
+    GPRReg passes = takeResultRegister();
+    testType(boxed, tested, passes);
+    if (m_hasFailed)
+        return;
+    CCallHelpers::Jump isOfType = m_jit->branchTest32(CCallHelpers::NonZero, passes);
+    stopByName(StraightArgument(value));
+    isOfType.link(m_jit);
 }
 
 } } } // namespace JSC::AOT::Typed

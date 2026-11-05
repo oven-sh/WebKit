@@ -53,9 +53,7 @@ const pristineCatch = (onRejected: b.TableType, contents: Contents) =>
 
 const resolveImplementation = b.inline("PromiseResolve", { otherwise: b.hostCall });
 
-// The operand is iterated over, and each value that it hands out is asked for `then`. What a promise among them holds is taken out, and nothing is asked of it.
 const elementProtocols = [b.runsTransitively("Iterate", "Thenable"), b.contentsOfContentsOnlyStored];
-// The promise settles as the first element that settles does: with what a promise among the elements holds, not with the promise.
 const adoptedElement = b.settled("iterable");
 const settlementRecord = b.union(
   b.ordinaryObjectOf("PromiseFulfilledResult"),
@@ -81,7 +79,6 @@ const disposalOf = (...disposed: readonly b.TableType[]) => [
   b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: disposed, result: "Escapes" }),
 ];
 const stackFunction = (name: string) => b.compiled("AsyncDisposableStackPrototype", name);
-// AsyncDisposableStackConstructor.cpp: the stack is pending, and its list is empty. The functions of AsyncDisposableStackPrototype.ts fill the list.
 const fieldsOfNewStack = {
   state: b.state("InternalFields", b.int(0, 1)),
   capability: b.state("InternalFields", b.instance("Array").holding({ element: b.never }).fresh),
@@ -100,7 +97,6 @@ export default b.declarations(
     jsType: "JSPromiseType",
     constructorCallee: "Function",
     constructorOnlyReadsPrototypeOfNewTarget: true,
-    // The row of RejectPromise names the reason by that number.
     slots: { value: b.contents("Value", promiseState), reason: b.internalField(1, promiseState) },
     lockedMembers: ["constructor", "prototype"],
     types: [b.viewType("Promise", "value"), b.viewType("PromiseLike", "value")],
@@ -136,7 +132,6 @@ export default b.declarations(
           args: { reason: b.any.optional },
           returns: newPromiseHolding({ value: b.never }),
           capability: "heap",
-          // The host hands the reason of a promise that nobody handles to the listeners for unhandled rejections, and Promise.any puts it among the errors of what it rejects with.
           uses: { this: b.inspected, reason: [b.storedIn(b.resultSlot("reason")), b.retained] },
           writes: [promiseState],
           requiresHolderAsThis: true,
@@ -169,7 +164,6 @@ export default b.declarations(
           writes: [promiseState],
           implementation: resolveImplementation,
         },
-        // No primitive is a thenable, so nothing rejects the promise.
         {
           args: { value: b.primitiveValue.optional },
           returns: newPromiseHolding({ value: b.operand("value"), reason: b.never }),
@@ -220,7 +214,6 @@ export default b.declarations(
     proto: {
       then: [
         { ...pristineThen(b.callable, b.callable, { value: eitherHandlerResult }), privateAlias: true },
-        // What onFulfilled throws, and what a promise that it returns is rejected with, is a reason of the new promise too: no reason is listed.
         pristineThen(b.callable, b.any.optional, { value: b.callbackResult("onFulfilled") }),
         pristineThen(b.any, b.callable, { value: valueOrHandlerResult }),
         pristineThen(b.any.optional, b.any.optional, { value: settledValue, reason: settledReason }),
@@ -255,8 +248,6 @@ export default b.declarations(
           args: { onFinally: b.any.optional },
           returns: newPromiseHolding({ value: settledValue }),
           uses: {
-            // The new promise is rejected with the reason of this one, with what onFinally throws, or with what a promise that it returns is rejected with.
-            // Whatever has become a reason has left the sight of the program where it became one, so the slot is said to hold anything.
             this: [...contentsUpdate, b.createdIn(b.any, b.resultSlot("reason"))],
             onFinally: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: [], result: "Stored", resultTo: b.resultSlot("value") })],
           },
@@ -351,6 +342,5 @@ export default b.declarations(
   }),
   b.same("AsyncDisposableStack.prototype.@@asyncDispose", "AsyncDisposableStack.prototype.disposeAsync"),
 
-  // `import "core-js"` replaces it without a test, from 3.22 to 3.37.
   b.replacedByPackages("Promise.try"),
 );

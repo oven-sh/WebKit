@@ -24,21 +24,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet opcodesOfTailCallsInBodies { Opcode::Call, Opcode::CallList, Opcode::CallDirect };
-const OpcodeSet& opcodesThatTakeAnyValueInVerifiedBodies()
-{
-    static const OpcodeSet opcodes = opcodesWhere([](Opcode opcode) {
-        uint32_t numberOfOperandInfos = numberOfNamedOperandsOf(opcode) + hasVariadicOperand(opcode);
-        for (uint32_t operandIndex = 0; operandIndex < numberOfOperandInfos; ++operandIndex) {
-            OperandKind kind = operandKindOf(opcode, operandIndex);
-            if (mustBeDefinition(kind) || kind == OperandKind::Results || kind == OperandKind::IteratorState || kind == OperandKind::Enumerator)
-                return false;
-        }
-        return true;
-    });
-    return opcodes;
-}
 
-// The link reports no record that a file names and no committed file defines. Such a name reads as the null id.
+
 template<typename IDType>
 static bool requireRecordOfVerifiedOperation(BodyVerifier& verifier, const BodyBlock& block, ValueID value, IDType id)
 {
@@ -59,7 +46,7 @@ static BodyValue definitionThroughUpcastsInVerifiedBody(const BodyIndex& index, 
 static std::optional<uint32_t> numberOfResultsOfVerifiedDefinition(const Program& program, const BodyValue& definition)
 {
     Opcode opcode = definition.opcode();
-    if (!opcodesThatMayHaveSeveralResults.contains(opcode))
+    if (!definitionsThatMayGiveSeveralResultsInVerifiedBodies.contains(opcode))
         return std::nullopt;
     if (opcode == Opcode::Results)
         return static_cast<uint32_t>(definition.as<Opcode::Results>().valuesOperands().size());
@@ -104,7 +91,6 @@ static bool mayThrowOrCallAtVerifiedPosition(Opcode opcode)
     return false;
 }
 
-// A body written by hand as text names positions only where its test looks at them, and its module has no table of lines.
 static bool verifiedFunctionReportsLineNumbers(const Program& program, const Function& function)
 {
     if (!function.module || function.isHiddenInStackTraces())
@@ -151,12 +137,14 @@ void BodyVerifier::verifyOperations()
         if (hasFailed())
             return;
     }
-    // The fault that verifyUsesAndOperations() found is one of verifyDominance() or of the loop above.
     RELEASE_ASSERT(m_operationsAreVerified);
 
-    verifyMethodIndexes();
-    if (!hasFailed())
+    if (!m_methodDefinitions.isEmpty())
+        verifyMethodIndexes();
+    if (!hasFailed() && function().has(FunctionFlags::IsGenerator))
         verifyGeneratorStart();
+    if (m_moduleEvaluations.isEmpty())
+        return;
     if (!hasFailed())
         verifyBareEvaluations();
     if (!hasFailed())
@@ -175,24 +163,20 @@ void BodyVerifier::verifyOperation(const BodyBlock& block, uint32_t indexInBlock
 void BodyVerifier::verifyOperationByOpcode(const BodyBlock& block, uint32_t indexInBlock, const BodyValue& value)
 {
     verifyPositions(block, value);
-    if (hasFailed())
-        return;
+    if (!hasFailed() && opcodesWithRuleOfTheirOwnInVerifiedBodies.contains(value.opcode()))
+        verifyRuleOfOpcode(block, indexInBlock, value);
+}
 
+void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBlock, const BodyValue& value)
+{
     switch (value.opcode()) {
     case Opcode::CatchValue:
     case Opcode::CatchException:
         verifyCatch(block, indexInBlock, value);
         return;
 
-    case Opcode::Upcast:
-    case Opcode::NarrowByField:
     case Opcode::NarrowByTest:
-    case Opcode::Check:
     case Opcode::Convert:
-    case Opcode::CheckInitialized:
-    case Opcode::RequireObjectCoercible:
-    case Opcode::RequireObject:
-    case Opcode::TypeTest:
         verifyCast(block, value);
         return;
 
@@ -297,6 +281,7 @@ void BodyVerifier::verifyOperationByOpcode(const BodyBlock& block, uint32_t inde
         return;
     }
 
+    case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::Check: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::TypeTest:
     case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double: case Opcode::String: case Opcode::BigInt: case Opcode::Data:
     case Opcode::GetModuleVariable: case Opcode::PutModuleVariable: case Opcode::ScopeHasBinding:
     case Opcode::NewDictionary: case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::NewRegExp: case Opcode::NewTemplateObject:
@@ -314,7 +299,7 @@ void BodyVerifier::verifyOperationByOpcode(const BodyBlock& block, uint32_t inde
     case Opcode::LoopHint: case Opcode::ReleaseHint:
     case Opcode::ResolveHeritage: case Opcode::NewClassToken: case Opcode::GetConstructPrototype:
     case Opcode::IteratorOpen: case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::ForInOpen: case Opcode::ForInStep: case Opcode::ReadScope:
-    case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule: case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::MockSeenBy:
+    case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule: case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy:
     case Opcode::AreLoaderFunctionsStored: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure: case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic:
     case Opcode::IsConstructor: case Opcode::ReadsIteratorOfListUnseen: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ToLength:
     case Opcode::ThrowNewError: case Opcode::ResumeGenerator: case Opcode::StepGenerator: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator:
@@ -324,48 +309,43 @@ void BodyVerifier::verifyOperationByOpcode(const BodyBlock& block, uint32_t inde
     case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex:
     case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::GetOwnContiguousIndex: case Opcode::GetOwnDoubleIndex: case Opcode::GetOwnInt32Index:
     case Opcode::PutOwnContiguousIndex: case Opcode::PutOwnDoubleIndex: case Opcode::PutOwnInt32Index:
-    case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity:
-    case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray: case Opcode::TryPutDoubleIndex:
-    case Opcode::GrowNewArray: case Opcode::TruncateNewArray:
+    case Opcode::NewContiguousArray: case Opcode::NewArrayLike:
+    case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray:
+    case Opcode::TruncateNewArray:
     case Opcode::CollectionTable: case Opcode::CollectionIteratorClosedMark: case Opcode::GetCollectionIteratorTable: case Opcode::PutCollectionIteratorTable:
     case Opcode::IsCollectionIteratorClosedMark: case Opcode::MapNext: case Opcode::SetNext:
-        return;
-
-    case Opcode::KeyConstant: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::Parameter: case Opcode::GetEncodedModuleVariable:
+    case Opcode::KeyConstant: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::Parameter:
     case Opcode::CopyObjectAndDefine: case Opcode::CopyTwoObjects:
     case Opcode::Expect: case Opcode::AssumeType: case Opcode::ReportMismatch: case Opcode::CallTable: case Opcode::BeginMemberGuards: case Opcode::ForInOpenCountingNames:
     case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::HasBirthFieldsFilled: case Opcode::IsNotFrozen:
-    case Opcode::HasLayoutPrototype: case Opcode::BelongsToInstance: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsElementPresent:
-    case Opcode::IsInsideView: case Opcode::IsPrototypeOfClass: case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder:
+    case Opcode::HasLayoutPrototype: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsInBounds: case Opcode::IsElementPresent:
+    case Opcode::IsInsideView: case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::HasKeyOrder:
     case Opcode::IsEnumeratorCurrent:
-    case Opcode::AllGuards: case Opcode::Entered: case Opcode::Specified:
     case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetSlotSetter: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
-    case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::NewArrayOfElements: case Opcode::PropHasOwn: case Opcode::GetOwnPropertyFields:
-    case Opcode::ReadAboveFreshObject: case Opcode::DidReadAbove: case Opcode::MayBindAnswersOfGetAndSetTraps: case Opcode::MayBindAnswersOfHasTraps:
+    case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::PropHasOwn:
+    case Opcode::MayBindAnswersOfGetAndSetTraps: case Opcode::MayBindAnswersOfHasTraps:
     case Opcode::ValidateAnswerOfGetTrap: case Opcode::ValidateDenialOfHasTrap: case Opcode::ValidateConsentOfDeleteTrap: case Opcode::HasOwnByAnswerOfDescriptorTrap: case Opcode::FinishStoreByTrap:
-    case Opcode::TryCopyFields: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetCachedGetter: case Opcode::GetAccessorOfMember: case Opcode::GetCachedValue:
+    case Opcode::TryCopyFields: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetCachedGetter:
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField:
     case Opcode::ElemGetByKeyParts:
-    case Opcode::GetArrayLength: case Opcode::GetArrayCapacity: case Opcode::GetArrayStorage: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::AppendMembers:
-    case Opcode::NewArrayOfMembers: case Opcode::HasSpareArrayCapacity: case Opcode::ReserveArrayCapacity: case Opcode::ConvertToDoubleStorage:
-    case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement: case Opcode::HasFixedBytes:
-    case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::ToEnumeratorPosition: case Opcode::TypedArrayRange: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
-    case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest: case Opcode::GetMyArgumentByVal: case Opcode::CallForwardVarargs: case Opcode::ConstructSuperForwardVarargs:
-    case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment: case Opcode::RecordCallee: case Opcode::KeepCalleeInFrame:
-    case Opcode::KeepEnvironmentOfCalleeInFrame: case Opcode::AreFunctionNamesUnchanged:
+    case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::AppendMembers:
+    case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
+    case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:
+    case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest:
+    case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
     case Opcode::CallBuiltin: case Opcode::DivideIntegers: case Opcode::RemainderOfIntegers: case Opcode::ToInt32: case Opcode::ToUint32: case Opcode::ToIntegerOrInfinity: case Opcode::NewSetFromData: case Opcode::NewMapFromData:
     case Opcode::NewFormatterWithPattern: case Opcode::SetUpFormatterWithOptions: case Opcode::FormatDateWithPattern: case Opcode::FormatNumberWithPattern: case Opcode::NewArgumentList:
-    case Opcode::SharedRegExpLiteral: case Opcode::IsBuiltinLocationUnchanged: case Opcode::IsFunctionOfBuiltin: case Opcode::GetBuiltinValue: case Opcode::GetWatchedBuiltinValue: case Opcode::InitializeBuiltin:
+    case Opcode::SharedRegExpLiteral: case Opcode::GetBuiltinValue: case Opcode::GetWatchedBuiltinValue: case Opcode::InitializeBuiltin:
     case Opcode::DestructureIterable: case Opcode::AppendIterable: case Opcode::EnumeratorGetByVal: case Opcode::RequireAttachedTypedArray: case Opcode::RequireLengthFitsList: case Opcode::CreateAsyncFromSyncIterator:
     case Opcode::ThrowNotIterable:
-    case Opcode::NewGenerator: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype: case Opcode::IsGeneratorUnstarted: case Opcode::IsGeneratorRunning: case Opcode::MarkGeneratorRunning:
-    case Opcode::TakeGeneratorStepStatus: case Opcode::IsUnmodifiedAsyncGenerator: case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
-    case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::NewHeapFrame: case Opcode::GetHeapFrameWord: case Opcode::PutHeapFrameWord: case Opcode::NewHeapWords:
-    case Opcode::GetResumeIndex: case Opcode::SuspendInHeapFrame: case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements:
+    case Opcode::NewGenerator: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype:
+    case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
+    case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::GetHeapFrameWord: case Opcode::PutHeapFrameWord: case Opcode::NewHeapWords:
+    case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements:
     case Opcode::HasInPrototypeChain:
-    case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::StopLoadingBehindFile: case Opcode::EvaluateRequiredModule: case Opcode::AbandonModuleEvaluation:
+    case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::EvaluateRequiredModule: case Opcode::EnterBodyThatRunsOnce:
     case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: case Opcode::IntegerBound: case Opcode::FulfillFreshPromise:
-    case Opcode::TryStrcat: case Opcode::Substring: case Opcode::SubstringOrUndefined: case Opcode::FlattenString: case Opcode::StringRange: case Opcode::StringOrder: case Opcode::StringOrderToCharacter:
+    case Opcode::Substring: case Opcode::FlattenString: case Opcode::StringRange: case Opcode::StringOrder: case Opcode::StringOrderToCharacter:
     case Opcode::StringEqualsLiteral: case Opcode::ValueEqualsLiteral: case Opcode::ValueLooselyEqualsLiteral: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
     case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
     case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt:
@@ -383,12 +363,7 @@ void BodyVerifier::verifyOperationByOpcode(const BodyBlock& block, uint32_t inde
     case Opcode::StackStringBuilderAppendStringRange: case Opcode::StackStringBuilderAppendBoolean: case Opcode::StackStringBuilderAppendStringOrNullish: case Opcode::StackStringBuilderAppendValue:
     case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::RegExpMatchLiteral: case Opcode::CallInline:
     case Opcode::Box: case Opcode::Unbox: case Opcode::IntegerToNumber: case Opcode::NumberToInteger: case Opcode::WidenInteger: case Opcode::NarrowInteger: case Opcode::Decode: case Opcode::Compress:
-    case Opcode::JSONSourceOpen: case Opcode::JSONSourceStart: case Opcode::JSONSourceClose: case Opcode::JSONSourceAbandon: case Opcode::JSONGetByte: case Opcode::JSONStartsWith: case Opcode::JSONAdvance:
-    case Opcode::JSONSkipByte: case Opcode::JSONSkipWhitespace: case Opcode::JSONParseString: case Opcode::JSONParseKey: case Opcode::JSONParseNumber: case Opcode::JSONParseInteger: case Opcode::JSONParseValue:
-    case Opcode::JSONFindMember: case Opcode::JSONMemberRepeats: case Opcode::JSONKeyHasEscapes: case Opcode::JSONObjectBegin: case Opcode::JSONObjectKey:
-    case Opcode::JSONObjectFinish: case Opcode::JSONParseExtraMembers: case Opcode::ExpectRows:
-    case Opcode::Narrowed: case Opcode::ClearFrameCell: case Opcode::CheckProof: case Opcode::Leave:
-    case Opcode::LeaveCopies:
+    case Opcode::Narrowed: case Opcode::ClearFrameCell: case Opcode::CheckProof:
         RELEASE_ASSERT_NOT_REACHED();
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -399,7 +374,7 @@ void BodyVerifier::verifyTerminatorOperation(const BodyBlock& block, const BodyT
     verifyFieldRules(*this, block, terminator);
     if (!hasFailed())
         verifyTerminatorOperandsAndEdgeArgumentsOfVerifiedBlock(*this, block, terminator);
-    if (hasFailed())
+    if (hasFailed() || !terminatorsWithRuleOfTheirOwnInVerifiedBodies.contains(terminator.kind()))
         return;
 
     switch (terminator.kind()) {
@@ -430,7 +405,6 @@ void BodyVerifier::verifyTerminatorOperation(const BodyBlock& block, const BodyT
     case TerminatorKind::Throw:
     case TerminatorKind::Rethrow:
     case TerminatorKind::Unreachable:
-        return;
     case TerminatorKind::SwitchOnShape:
     case TerminatorKind::TryCallInline:
     case TerminatorKind::TestAndBranch:
@@ -441,8 +415,7 @@ void BodyVerifier::verifyTerminatorOperation(const BodyBlock& block, const BodyT
 
 void BodyVerifier::verifyOperandDefinitions(const BodyBlock& block, const BodyValue& value)
 {
-    // Nearly every operation: nothing below finds fault with it.
-    if (m_scratch.opcodesThatTakeAnyValue.contains(value.opcode())) [[likely]] {
+    if (opcodesThatTakeAnyValueInVerifiedBodies.contains(value.opcode())) [[likely]] {
         bool namesWhatFewOperandsTake = false;
         value.forEachOperand([&](ValueID operand, uint32_t) {
             namesWhatFewOperandsTake |= definitionsThatFewOperandsTakeInVerifiedBodies.contains(index().opcodeOf(operand));
@@ -473,7 +446,6 @@ void BodyVerifier::verifyOperandDefinitionsOneByOne(const BodyBlock& block, cons
 
         std::optional<uint32_t> numberOfResults = numberOfResultsOfVerifiedDefinition(program(), definition);
         bool isOfKind = true;
-        // What Results gathers leaves with a Return and is read by nobody in the body.
         if (kind == OperandKind::Results)
             isOfKind = numberOfResults && definition.opcode() != Opcode::Results;
         else if (numberOfResults)
@@ -527,45 +499,33 @@ void BodyVerifier::verifyCatch(const BodyBlock& block, uint32_t indexInBlock, co
 
 void BodyVerifier::verifyCast(const BodyBlock& block, const BodyValue& value)
 {
-    Opcode opcode = value.opcode();
-    if (opcode == Opcode::Convert) {
-        if (requireRecordOfVerifiedOperation(*this, block, value.id(), value.as<Opcode::Convert>().declared().written()))
-            verifyConvertedAllocation(block, value);
+    if (value.opcode() == Opcode::Convert) {
+        verifyConvertedAllocation(block, value);
         return;
     }
-    if (opcode == Opcode::Upcast)
-        requireRecordOfVerifiedOperation(*this, block, value.id(), value.as<Opcode::Upcast>().castType());
-    else if (opcode == Opcode::Check)
-        requireRecordOfVerifiedOperation(*this, block, value.id(), value.as<Opcode::Check>().expectedType().predicted());
-    else if (opcode == Opcode::TypeTest)
-        requireRecordOfVerifiedOperation(*this, block, value.id(), value.as<Opcode::TypeTest>().testedType());
-    else if (opcode == Opcode::NarrowByField)
-        requireRecordOfVerifiedOperation(*this, block, value.id(), value.as<Opcode::NarrowByField>().key());
-    else if (opcode == Opcode::CheckInitialized)
-        requireRecordOfVerifiedOperation(*this, block, value.id(), value.as<Opcode::CheckInitialized>().name());
-    else if (opcode == Opcode::NarrowByTest) {
-        // The walk goes on with `left`, and whoever asks what the value is goes by `value`.
-        auto behindTests = [&](ValueID named) {
-            named = index().valueBehindCasts(named);
-            while (ValueID tested = index().valueNarrowedInto(named))
-                named = index().valueBehindCasts(tested);
-            return named;
-        };
-        ValueID left = value.as<Opcode::NarrowByTest>().leftOperand();
-        ValueID behindLeft = left ? behindTests(left) : ValueID();
-        bool isJoin = behindLeft && index().isParameter(behindLeft) && index().blockOf(behindLeft) != entryBlock && index().numberOfIncomingEdges(index().blockOf(behindLeft)) > 1;
-        if (!behindLeft || (!isJoin && behindLeft != behindTests(value.as<Opcode::NarrowByTest>().valueOperand())))
-            fail(InternalErrorKind::InvalidProof, block.id(), value.id());
-    }
+
+    ASSERT(value.opcode() == Opcode::NarrowByTest);
+    auto behindTests = [&](ValueID named) {
+        named = index().valueBehindCasts(named);
+        while (ValueID tested = index().valueNarrowedInto(named))
+            named = index().valueBehindCasts(tested);
+        return named;
+    };
+    ValueID left = value.as<Opcode::NarrowByTest>().leftOperand();
+    ValueID behindLeft = left ? behindTests(left) : ValueID();
+    bool isJoin = behindLeft && index().isParameter(behindLeft) && index().blockOf(behindLeft) != entryBlock && index().numberOfIncomingEdges(index().blockOf(behindLeft)) > 1;
+    if (!behindLeft || (!isJoin && behindLeft != behindTests(value.as<Opcode::NarrowByTest>().valueOperand())))
+        fail(InternalErrorKind::InvalidProof, block.id(), value.id());
 }
 
-// An established position is read without a test, so what is stored there is among the layouts that its type lists.
 void BodyVerifier::verifyConvertedAllocation(const BodyBlock& block, const BodyValue& value)
 {
     auto conversion = value.as<Opcode::Convert>();
     BodyValue converted = index().value(conversion.valueOperand());
+    if (converted.opcode() != Opcode::NewObject || conversion.illTypedCause() != IllTypedCause::None)
+        return;
     DeclaredType declared = conversion.declared();
-    if (converted.opcode() != Opcode::NewObject || conversion.illTypedCause() != IllTypedCause::None || !declared.isEstablished())
+    if (!declared.isEstablished())
         return;
 
     LayoutID allocated = converted.as<Opcode::NewObject>().layout();
@@ -599,7 +559,6 @@ void BodyVerifier::verifyAllocation(const BodyBlock& block, const BodyValue& val
     if (hasFailed())
         return;
 
-    // The slot of an accessor holds the pair of its functions, which the definition of the accessor makes.
     const auto& fields = program().at(allocation.layout()).fields;
     for (uint32_t listed : allocation.fields()) {
         if (listed >= fields.size() || !fields[listed].form.contains(FieldForm::IsAccessor))
@@ -624,7 +583,6 @@ void BodyVerifier::verifyObjectUnderConstruction(const BodyBlock& block, const B
         m_methodDefinitions.append({ head.id(), value.as<Opcode::DefineMethod>().index(), block.id(), value.id() });
 }
 
-// The definitions were gathered in the order of the stream, and the sort keeps those of one class in it.
 void BodyVerifier::verifyMethodIndexes()
 {
     AOT::sort(m_methodDefinitions, { }, &MethodDefinitionInBody::classObject);
@@ -647,7 +605,6 @@ void BodyVerifier::verifyReturn(const BodyBlock& block, const BodyTerminator& te
     ValueID returned = terminator.as<TerminatorKind::Return>().valueOperand();
     std::optional<uint32_t> numberOfReturnedResults = returned ? numberOfResultsOfVerifiedDefinition(program(), index().value(returned)) : std::nullopt;
 
-    // A coroutine returns what its promise or its iterator result takes, not what a caller gets.
     bool returnsInnerValue = function().isCoroutine();
     if (!returnsInnerValue && function().results.size() != 1) {
         if (!numberOfReturnedResults || *numberOfReturnedResults != function().results.size())

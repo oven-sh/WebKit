@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// What a turn of a for-in does with its key. Guesses: `o[k]`, `k in o`, `o.hasOwnProperty(k)` on the object that is enumerated ask IsEnumeratorCurrent; behind it the read is a load and the two questions are true.
-// The operation as written is the other arm, and the two meet: nothing is left behind them. TypedOperations: an access takes the index that a step over a list has found, or the name of a turn that is written out.
-// At a suspension and at a throw: no value of these forms outlives the operation. Withheld: neither function is asked, and each access goes by the text of its key.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -24,7 +20,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet usesOfKeyBehindTestInWalkForInKeys { Opcode::ElemGet, Opcode::ElemHas, Opcode::Call };
 static constexpr OpcodeSet accessesUnderKeyInWalkForInKeys { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete };
-// Closed, each is a lookup under a text out of a stub.
 static constexpr uint32_t closedOperationsOfUseOfKeyInWalkForInKeys = 1;
 
 namespace {
@@ -60,7 +55,6 @@ Walker::IterationByIndex* findForInThatHandedOut(Walker& walker, ValueID key)
     return &iteration;
 }
 
-// Behind the loop the copies of a loop that was built twice have met, and what the newest step has built stands above one of them alone.
 static bool standsInTurnInWalkForInKeys(Walker& walker, const Walker::IterationByIndex& iteration, const BodyValue& operation)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -73,7 +67,6 @@ static bool asksObjectOfStepInWalkForInKeys(Walker& walker, const Walker::Iterat
     return object && index.valueBehindCasts(object) == index.valueBehindCasts(index.value(iteration.newestStep).objectOperand());
 }
 
-// `Object.hasOwn(o, k)`, `o.hasOwnProperty(k)`: what is called is proven to be one built-in, each of whose rows for a call asks that one question.
 static std::optional<UseOfKeyInWalkForInKeys> findQuestionOfCallInWalkForInKeys(Walker& walker, const BodyValue& call)
 {
     Reference callee = walker.referenceOf(call.calleeOperand());
@@ -99,7 +92,6 @@ static std::optional<UseOfKeyInWalkForInKeys> findQuestionOfCallInWalkForInKeys(
     size_t placeOfKey = *asksReceiver ? 0 : 1;
     if (arguments.size() <= placeOfKey)
         return std::nullopt;
-    // A call that its block returns at once has no value behind the arms.
     const BodyIndex& index = walker.currentBodyIndex();
     BodyTerminator end = index.terminator(index.blockOf(call.id()));
     if (end.kind() == TerminatorKind::ReturnCall && end.operand(0) == call.id())
@@ -112,21 +104,18 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     Opcode opcode = operation.opcode();
     if (!usesOfKeyBehindTestInWalkForInKeys.contains(opcode) || !walker.has(Mechanism::Guesses) || !walker.has(Mechanism::TypedOperations))
         return false;
-    // The key is a result of a step of this very body. A body without a for-in pays this one word for each of its calls and reads by key.
     if (!walker.currentBodyIndex().holdsAnyOf(OpcodeSet { Opcode::ForInStep }))
         return false;
     std::optional<UseOfKeyInWalkForInKeys> use = opcode == Opcode::Call ? findQuestionOfCallInWalkForInKeys(walker, operation) : std::optional(UseOfKeyInWalkForInKeys { operation.objectOperand(), operation.propertyOperand() });
     Walker::IterationByIndex* iteration = use ? findForInThatHandedOut(walker, use->key) : nullptr;
     if (!iteration || !standsInTurnInWalkForInKeys(walker, *iteration, operation) || !asksObjectOfStepInWalkForInKeys(walker, *iteration, use->object))
         return false;
-    // A list is expected, whose keys lie in front of the part that the test asks for.
     if (iteration->keyForAccesses)
         return false;
     Reference object = walker.referenceOf(use->object);
     Reference key = walker.referenceOf(use->key);
     if (!object || !object.isValue() || !key || !key.isValue() || !walker.types().at(walker.typeOf(object)).hasObjects())
         return false;
-    // The load gives whatever lies there, and in a loop no more may be bound to a read than its look has counted on.
     if (opcode == Opcode::ElemGet && !walker.types().at(widestTypeOfOperation(walker, operation)).isAnything())
         return false;
     if (!shouldOpenGuess(walker, object, TypeTable::object, true, closedOperationsOfUseOfKeyInWalkForInKeys))
@@ -147,7 +136,6 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     if (!isCurrent)
         return true;
 
-    // The record may move: walking the operation as written may open iterations of its own.
     Reference enumerator = iteration->list;
     Reference foundAt = iteration->foundAt;
     BlockID current = walker.addBlock();
@@ -221,7 +209,6 @@ bool useKeyOfForInBehindTestOfItsOpcodes(Walker& walker, const BodyValue& operat
     return true;
 }
 
-// `o["x"]` is `o.x`: the same operation in another closed form, which every link takes as an access by name, under the id and with the operands of the one that is written.
 static bool walkAccessByNameInWalkForInKeys(Walker& walker, const BodyValue& written, PropertyKeyID key)
 {
     AccessUnderProvenKey access(written, key);
@@ -243,7 +230,6 @@ bool buildAccessUnderIndexOfForInOfItsOpcodes(Walker& walker, const BodyValue& a
     Reference bound = walker.referenceBoundTo(property);
     if (!bound)
         return false;
-    // A turn that is written out has handed out a name.
     if (!iteration->takenAtOpen.isEmpty() && bound.isConstant() && walker.code().at(bound.id()).opcode == Opcode::String) {
         StringID name = walker.code().at(bound.id()).string();
         PropertyKeyID key = liesInThread(name) ? PropertyKeyID() : walker.types().textKey(name);
@@ -252,11 +238,9 @@ bool buildAccessUnderIndexOfForInOfItsOpcodes(Walker& walker, const BodyValue& a
         return walkAccessByNameInWalkForInKeys(walker, access, key);
     }
 
-    // The second time round the key is what it was bound to here, and the access goes on down the chain.
     Reference index = iteration->keyForAccesses;
     if (!index || bound == index)
         return false;
-    // One value of the body has one name at a time: `o[k] = k` stores the text.
     if (property == access.objectOperand() || (access.opcode() == Opcode::ElemSet && property == access.valueOperand()))
         return false;
     const BodyIndex& body = walker.currentBodyIndex();

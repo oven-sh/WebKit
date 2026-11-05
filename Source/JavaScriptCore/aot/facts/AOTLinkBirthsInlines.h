@@ -3,15 +3,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// THE FIELDS OF THE BIRTH: LinkedCell::isOfBirth. Every construction in sight has defined the field when it is through with the object: AOTScanBirthsInlines.h.
-// NO PROOF, in either reading: it is what the plan lets the mark of the cell answer for (PlacedSlot::isFilledAtBirth), and any answer is safe: an object that lacks such a field keeps its mark, and typed code that meets it goes the closed way.
-// It asks the summaries and the program alone, so it hangs on no order of the worklist. It grows as functions are reached, like LinkFlow::fieldsThatMayBeEmpty.
-
 #pragma once
 
 #if ENABLE(AOT)
-
-// For the foot of AOTLinkLayouts.cpp alone, which declares RowOfConstructorsInLinkLayouts.
 
 namespace JSC { namespace AOT { namespace Typed {
 

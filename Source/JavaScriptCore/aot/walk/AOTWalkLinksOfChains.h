@@ -7,8 +7,6 @@
 
 #if ENABLE(AOT)
 
-// AOTWalkLinks.h says what a link is. These are the links that AOTWalk.h declares, each with the operations that it takes. AOTWalk.h includes this file at its end.
-
 namespace JSC { namespace AOT { namespace Typed {
 
 extern const OpcodeSet opcodesThatBuildDeferredDefinitionTakes;

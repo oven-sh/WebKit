@@ -15,14 +15,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A question about a layout is settled at the layout, or it has the answer of one other layout, mostly the class above.
 struct StepAlongRow {
     std::optional<bool> answer;
     LayoutID next;
 };
 
-// Each layout is asked once, however long the rows of classes are: a walk to the top of its row for each class takes a step for each pair of classes.
-// A walk that comes back to where it has been meets no answer. For whoever asks about some of the layouts, one at a time, always with the same step.
 class AnswersAlongRows {
 public:
     AnswersAlongRows(size_t numberOfLayouts, bool answerInRing)
@@ -65,7 +62,6 @@ private:
     bool m_answerInRing;
 };
 
-// The layouts for which the answer is yes.
 BitVector answerAlongRows(size_t numberOfLayouts, bool answerInRing, NOESCAPE const Invocable<StepAlongRow(LayoutID)> auto& step)
 {
     AnswersAlongRows answers(numberOfLayouts, answerInRing);
@@ -77,8 +73,6 @@ BitVector answerAlongRows(size_t numberOfLayouts, bool answerInRing, NOESCAPE co
     return result;
 }
 
-// For each layout the nearest layout above it that is wanted, or none: whoever goes from one to the next takes a step for each layout that he wants, not for each class of the row.
-// In a ring, and on the way into one, a layout names the one above it, wanted or not.
 Vector<LayoutID> findNearestWantedAbove(size_t numberOfLayouts, NOESCAPE const Invocable<LayoutID(LayoutID)> auto& layoutAbove, NOESCAPE const Invocable<bool(LayoutID)> auto& isWanted)
 {
     enum class State : uint8_t { Unknown, OnTheWay, Known };

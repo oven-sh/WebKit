@@ -15,8 +15,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// A range in the order of allocation also covers blocks that no path from the definition reaches, and there the allocator owes the value nothing.
-// So liveness is computed again along the edges: from each read up through the predecessors to the defining block.
 class CollectorRulesChecker {
     WTF_MAKE_NONCOPYABLE(CollectorRulesChecker);
 public:
@@ -27,14 +25,12 @@ private:
     static constexpr uint32_t none = UINT32_MAX;
     static constexpr unsigned numberOfRegisters = 64;
 
-    // A value that one of the three rules applies to.
     struct WatchedValue {
         const Operation* value;
         const Block* block;
         Position definition;
         uint32_t firstRead { none };
         SpillIndex pointerBeside { noSpill };
-        // At heads of the framed part. Every path to a safepoint below a head passes that head, and no path to any other has to.
         bool pointerIsKeptInFramedPartAlone { false };
     };
     struct Read {
@@ -42,7 +38,6 @@ private:
         Position position;
         uint32_t next;
     };
-    // The part of one block in which a watched value is live.
     struct LiveRange {
         uint32_t watched;
         Position begin;
@@ -122,21 +117,16 @@ private:
     ArenaVector<Read> m_reads;
     ArenaVector<LiveRange> m_liveRanges;
     ArenaVector<const Block*> m_blocksToEnter;
-    // By Operation::index().
     ArenaVector<uint32_t> m_watchedOf;
     ArenaVector<SpillIndex> m_saveOf;
-    // Operation::index() of the latest suspension passed that has the value as a root.
     ArenaVector<uint32_t> m_rootOfSuspension;
     BitSpan m_isDisplaced;
     BitSpan m_isFrameAddress;
-    // By Block::index(). The first is valid only for the value whose live ranges are being computed.
     ArenaVector<uint32_t> m_liveRangeIn;
     ArenaVector<uint32_t> m_firstLiveRangeIn;
-    // By SpillIndex.
     BitSpan m_isCleared;
 
     const Block* m_block { nullptr };
-    // By Reg::index().
     const Operation* m_valueIn[numberOfRegisters] { };
     bool m_failed { false };
 };
@@ -191,7 +181,6 @@ bool CollectorRulesChecker::isComputedFromFrameAddress(const Operation* value) c
     return false;
 }
 
-// What has to be kept for as long as the value is read: the reference that a displaced one is computed from, the owner of an inner pointer.
 const Operation* CollectorRulesChecker::keeperOf(const Operation* value) const
 {
     if (m_isDisplaced.get(value->index())) {
@@ -216,7 +205,6 @@ const Operation* CollectorRulesChecker::keeperOf(const Operation* value) const
             owner = owner->child(0);
     }
 
-    // The collector does not treat an offset into the cage as a pointer, so a place that holds one keeps no cell alive.
     if (isOffsetInCage && m_proc.traits().usesNarrowReferences) {
         for (const Operation* word = owner; !word->hasNoPosition(); word = word->child(0)) {
             if (word->isNarrowReference())
@@ -233,7 +221,6 @@ void CollectorRulesChecker::findFrameAddresses()
     if (!m_proc.traits().savesFrameOnSuspend)
         return;
 
-    // A back edge can bring an address to a Phi after everything that reads the Phi has been passed. Each further round marks at least one such Phi.
     bool markedPhiAlreadyPassed;
     do {
         markedPhiAlreadyPassed = false;
@@ -251,6 +238,23 @@ void CollectorRulesChecker::findFrameAddresses()
             }
         }
     } while (markedPhiAlreadyPassed);
+}
+
+static bool holdsBitsOfItsChildren(const Operation* value)
+{
+    switch (value->opcode()) {
+    case Add:
+        return !value->child(0)->isArgumentReg(Reg(cellCageBaseGPR)) && !value->child(1)->isArgumentReg(Reg(cellCageBaseGPR));
+    case Sub:
+    case Opaque:
+    case Shl:
+    case SExt32:
+    case ZExt32:
+    case Trunc:
+        return true;
+    default:
+        return false;
+    }
 }
 
 void CollectorRulesChecker::findWatchedValues()
@@ -284,11 +288,10 @@ void CollectorRulesChecker::findWatchedValues()
     }
 }
 
-// A definition precedes its reads in the order, so the children have already been defined.
 void CollectorRulesChecker::define(const Operation* value, const Block* block, Position definition)
 {
     uint32_t index = value->index();
-    if ((value->opcode() == Add || value->opcode() == Sub) && !value->isNarrowReference()) {
+    if (holdsBitsOfItsChildren(value) && !value->isNarrowReference()) {
         for (const Operation* child : value->children()) {
             if (needsPointerBeside(child) || m_isDisplaced.get(child->index()))
                 m_isDisplaced.set(index);
@@ -310,8 +313,6 @@ void CollectorRulesChecker::noteRead(const Operation* value, const Block* block,
     firstRead = m_reads.size() - 1;
 }
 
-// Whether the word equals a constant does not depend on the cell that it names: no constant names a cell that the collector frees. Nothing gets from such a read to the cell,
-// so the cell need not outlive it. `closed === "outage"` behind an await compares the word of the slot with the number of the text, and the widened word is the root.
 static bool comparesNarrowReferenceWithConstant(const Operation* user, unsigned childIndex, const Operation* leaf)
 {
     if (!leaf->isNarrowReference())
@@ -379,7 +380,6 @@ void CollectorRulesChecker::passSteps(uint32_t begin, uint32_t end)
         pass(steps[index]);
 }
 
-// Only a step there runs on every path to every point where the reference is live.
 bool CollectorRulesChecker::followsDefinitionOf(const WatchedValue& watched) const
 {
     if (watched.block == m_block)
@@ -444,7 +444,6 @@ void CollectorRulesChecker::execute(const Step& step)
         return;
 
     const PatchOperation* patch = operation->as<PatchOperation>();
-    // A Check writes them on its late path alone.
     RegisterMask overwritten = patch && patch->opcode() == Patch ? patch->earlyClobberedMask() | patch->lateClobberedMask() : 0;
     std::span<const Location> results;
     if (step.patchAssignment != UINT32_MAX) {
@@ -452,7 +451,6 @@ void CollectorRulesChecker::execute(const Step& step)
         overwritten |= assignment.gpScratch | assignment.fpScratch;
         if (patch) {
             results = assignment.locations.first(std::min<size_t>(m_proc.resultCount(patch->type()), assignment.locations.size()));
-            // Its generator may write every other register.
             if (patch->opcode() == Patch && !patch->onlyKeepsChildrenAlive)
                 overwritten |= ~assignment.usedRegisters;
         }
@@ -468,7 +466,6 @@ void CollectorRulesChecker::execute(const Step& step)
         put(step.destination, operation);
         return;
     }
-    // The member of a tuple is the value of its Extract, which has a step of its own.
     for (Location result : results)
         put(result, patch->type().isTuple() ? nullptr : patch);
 
@@ -483,7 +480,6 @@ void CollectorRulesChecker::checkSafepoint(const Safepoint& safepoint)
     if (safepoint.patch->isSuspension() && !checkOperandsOfSuspension(safepoint.patch))
         return;
 
-    // The list rises by begin, and the safepoints of a block are passed in rising order. So a range that has ended is never needed again.
     uint32_t* link = &m_firstLiveRangeIn[m_block->index()];
     while (*link != none) {
         LiveRange& range = m_liveRanges[*link];
@@ -499,7 +495,6 @@ void CollectorRulesChecker::checkSafepoint(const Safepoint& safepoint)
     }
 }
 
-// The generator may read a late operand after the function has resumed in another frame.
 bool CollectorRulesChecker::checkOperandsOfSuspension(const PatchOperation* suspension)
 {
     for (unsigned child = 0; child < suspension->numberOfOperands(); ++child) {
@@ -521,14 +516,12 @@ bool CollectorRulesChecker::checkAcross(const Operation* value, const Safepoint&
     if (isSuspension && m_isFrameAddress.get(value->index()))
         return fail(FailureKind::FrameAddressAcrossSuspension, value);
 
-    // A pointer between an inner pointer and its cell keeps nothing alive by itself.
     const Operation* keeper = value;
     while (const Operation* next = keeperOf(keeper))
         keeper = next;
 
     bool isKept;
     if (needsPointerBeside(keeper)) {
-        // The pointer keeps the cell alive while the frame is on the stack. A saved frame is visited by its map, which lists the roots and not the pointer.
         uint32_t watched = m_watchedOf[keeper->index()];
         bool hasPointer = watched != none && spillHolds(m_watched[watched].pointerBeside, keeper, true, safepoint)
             && (!m_watched[watched].pointerIsKeptInFramedPartAlone || (m_allocation.isInFramedPart(m_block) && std::ranges::any_of(m_pointersKeptAtHeads, [&](const PointerKeptAtHead& kept) {
@@ -571,7 +564,6 @@ bool CollectorRulesChecker::run()
 {
     findFrameAddresses();
     findWatchedValues();
-    // Values are watched in rising order of definition, and extendTo() adds at the front. Taken from the last value to the first, each block's list rises by begin.
     for (uint32_t watched = m_watched.size(); watched--;)
         findLiveRangesOf(watched);
     if (m_liveRanges.isEmpty())

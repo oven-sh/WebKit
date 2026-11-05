@@ -184,7 +184,6 @@ export interface SchemaRecord {
   readonly isCustomEngine: boolean;
   readonly isCustomText: boolean;
   readonly isExtendedEngine: boolean;
-  // The struct stands in AOT<name>.h with the same fields, and what is generated for it is its friend.
   readonly isHandwrittenStruct: boolean;
   readonly fields: readonly Field[];
   readonly wireFields: readonly Field[];
@@ -209,19 +208,16 @@ export interface PackedField {
   readonly name: string;
   readonly kind: PackedKind;
   readonly shift: number;
-  /** Null: all the bits that the fields in front of it leave. */
   readonly width: number | null;
   readonly location: Location;
 }
 
-/** A Bool field of an earlier word, or a Bool column of an enumerator there. */
 export interface PackedCondition {
   readonly field: PackedField;
   readonly column: EnumColumn | null;
   readonly isNegated: boolean;
 }
 
-/** What the bits above the common fields hold goes by one of those fields. */
 export interface PackedArms {
   readonly condition: PackedField;
   readonly whenTrue: readonly PackedField[];
@@ -510,11 +506,9 @@ export interface InlineBuiltin {
   readonly effects: Effects;
   readonly family: string;
   readonly hasOptionalSlowPath: boolean;
-  readonly isFormOnly: boolean;
   readonly location: Location;
 }
 
-/** The fields from the record of the options down to the member. */
 export type OptionMember = readonly Field[];
 
 export type OptionWordAction =

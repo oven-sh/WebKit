@@ -17,13 +17,11 @@ namespace JSC { namespace AOT { namespace Machine {
 
 static_assert(2 * sizeof(CPURegister) == stackAlignmentBytes(), "the return address and the pushed frame pointer together leave the stack pointer aligned behind the frame record");
 
-// rbp has to point at this frame's record wherever a restore or a teardown is written.
 static CCallHelpers::Address x86FrameWordAt(ptrdiff_t offsetFromFP)
 {
     return CCallHelpers::Address(CCallHelpers::framePointerRegister, safeCast<int32_t>(offsetFromFP));
 }
 
-// [begin, end) are offsets from the frame pointer. There is no red zone: what lies below the stack pointer belongs to whoever interrupts the function.
 static bool x86FrameHoldsWords(const Frame& frame, ptrdiff_t begin, ptrdiff_t end)
 {
     constexpr ptrdiff_t wordSize = sizeof(CPURegister);
@@ -44,7 +42,6 @@ static void clearWordsOfX86Frame(CCallHelpers& jit, int32_t begin, int32_t end)
         jit.store64(zero, x86FrameWordAt(offset));
 }
 
-// General registers alone, one word apart, the last right below the record.
 static bool x86FrameSavesCanBePushed(const RegisterAtOffsetList& saves)
 {
     constexpr ptrdiff_t wordSize = sizeof(CPURegister);
@@ -57,7 +54,6 @@ static bool x86FrameSavesCanBePushed(const RegisterAtOffsetList& saves)
     return true;
 }
 
-// Below the saves lies nothing, or the one word that makes their number even. A pop of each word then takes one or two bytes for the four of a load.
 static bool x86FrameHoldsNothingButPushedSaves(const Frame& frame)
 {
     constexpr size_t wordSize = sizeof(CPURegister);
@@ -78,15 +74,12 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& proc)
     const unsigned bytesBelowFrameRecord = frame.bytesBelowFrameRecord();
     RELEASE_ASSERT(!(bytesBelowFrameRecord % stackAlignmentBytes()));
 
-    // Clearing words takes the assembler's scratch register, and the stack check may too.
     AllowMacroScratchRegisterUsage allowScratch(jit);
 
     jit.push(CCallHelpers::framePointerRegister);
     jit.move(CCallHelpers::stackPointerRegister, CCallHelpers::framePointerRegister);
 
     const bool allocatesBeforeCheck = bytesBelowFrameRecord <= maxBytesAllocatedBeforeStackCheck;
-    // The run of saves ends at the record, so a push of each, the last of the run first, stores it where it belongs: one or two bytes for four.
-    // A check that leaves by throwing finds the registers as the caller left them, whether they are stored or not.
     const RegisterAtOffsetList& saves = frame.calleeSaveRegisterAtOffsetList();
     const bool pushesSaves = allocatesBeforeCheck && x86FrameSavesCanBePushed(saves);
     unsigned bytesPushed = 0;
@@ -98,7 +91,6 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& proc)
     }
     RELEASE_ASSERT(bytesPushed <= bytesBelowFrameRecord);
     auto allocate = [&] {
-        // Nothing reads the word that makes the number of saves even, and the frame pointer names no cell: one byte for four.
         if (bytesPushed && bytesBelowFrameRecord - bytesPushed == wordSize)
             jit.push(CCallHelpers::framePointerRegister);
         else if (bytesBelowFrameRecord != bytesPushed)
@@ -107,7 +99,6 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& proc)
 
     if (allocatesBeforeCheck)
         allocate();
-    // The check may call a stub, whose return address lands below the stack pointer, or leave by throwing, which unwinds from the record. Nothing below the record is written yet but the saves.
     if (StackCheckGenerator generator = proc.stackCheckGenerator())
         generator(proc.stackCheckContext(), jit, frame, StackCheckSite { bytesBelowFrameRecord, allocatesBeforeCheck, frame.m_nothingCountsOnStackCheck });
     if (!allocatesBeforeCheck)
@@ -134,7 +125,6 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& proc)
 void emitCalleeSaveRestore(CCallHelpers& jit, const Frame& frame)
 {
     RELEASE_ASSERT(frame.hasFrame());
-    // Whoever restores the saves and goes on reading the frame needs the record, and says so.
     RELEASE_ASSERT(frame.hasFrameRecord());
     for (const RegisterAtOffset& save : frame.calleeSaveRegisterAtOffsetList()) {
         ASSERT(save.width() == Width64);
@@ -162,10 +152,8 @@ void emitFrameTeardown(CCallHelpers& jit, const Frame& frame)
         return;
     }
 
-    // There is no red zone: the saves are read before the stack pointer passes them.
     emitCalleeSaveRestore(jit, frame);
 
-    // leave is mov rsp, rbp; pop rbp in one byte. The macro assembler has no name for it.
     if (frame.bytesBelowFrameRecord())
         jit.m_assembler.leave();
     else

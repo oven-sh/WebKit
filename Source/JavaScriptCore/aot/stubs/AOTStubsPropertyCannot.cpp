@@ -67,7 +67,6 @@ StubSignature signatureOfCallGetterOfAnswer(StubKey)
     return StubSignature::withGPRResult({ gprOf(firstStubOperandRegister), gprOf(getterSetterRegister) });
 }
 
-// As the handler of Slot::Kind::Getter behind its load. The finisher of a getter reads neither word of a slot.
 void generateCallGetterOfAnswer(StubAssembler& jit)
 {
     const SlotOrigin origin = jit.key().callerFrame() == CallerFrame::StubFrame ? SlotOrigin::ByIdInStubFrame : SlotOrigin::ById;
@@ -86,7 +85,6 @@ StubSignature signatureOfGetterByAccessTable(StubKey)
     return signature;
 }
 
-// It runs nothing and files nothing: the read by name that stands behind a miss comes to the handler of the getter, which files.
 void generateGetterByAccessTable(StubAssembler& jit)
 {
     const GPRReg object = jit.operand(0);
@@ -113,7 +111,6 @@ void generateGetterByAccessTable(StubAssembler& jit)
 
 static void setUpSetterCall(StubAssembler& jit, PutMode mode, OperationCall& call)
 {
-    // On x86-64 the GetterSetter arrives in the register of the fifth argument. The constants are set after the registers are moved.
     call.thirdArgumentIn = jit.operand(firstOperandOfFinisher);
     call.fourthArgumentIn = jit.operand(firstOperandOfFinisher + 1);
     call.constantArguments[0] = OperationCall::ConstantArgument { operationArgumentGPR(4), static_cast<uint32_t>(mode) };

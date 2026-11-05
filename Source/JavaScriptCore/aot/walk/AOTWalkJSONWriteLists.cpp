@@ -3,9 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Lists in a JSON text. In a serializer unit the elements are written by a loop that this file makes; the walk builds no loop in a body, so there the run time writes the list behind the cursor. A list of numbers is one call either way.
-// At a suspension: nothing here suspends. At a throw: nothing in a serializer unit catches: AOTWalkJSONWrites.cpp. Withheld: nobody makes a writer.
-
 #include "config.h"
 #include "AOTWalkJSONWrites.h"
 
@@ -22,9 +19,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- The loop
-
-// As Walker::convert(), which is private. Null: the walk stands nowhere or has failed.
 static Reference inFormForLoopOfSerializers(Walker& walker, Reference reference, Representation wanted, Origin origin)
 {
     Representation held = walker.representationOf(reference);
@@ -33,10 +27,9 @@ static Reference inFormForLoopOfSerializers(Walker& walker, Reference reference,
 
     TypeArena& types = walker.types();
     if (reference.isConstant()) {
-        // A constant has no form of its own: each use gets a copy in the form that it wants.
         const Operation& record = walker.code().at(reference.id());
         bool hasCopyInForm = constantsInFormOfUses.contains(record.opcode) && isLegalRepresentation(types.at(record.type), wanted)
-            && wanted != Representation::Cell32 && wanted != Representation::LiteralString;
+            && wanted != Representation::Cell32;
         if (hasCopyInForm) {
             Draft copy(record.opcode, record.origin());
             copy.flags = static_cast<uint8_t>(record.flags);
@@ -89,7 +82,6 @@ BuiltLoopOfSerializers::BuiltLoopOfSerializers(Walker& walker, std::span<const R
         m_head = { };
         return;
     }
-    // The Walker has never seen the block, so it enters it with the empty state.
     walker.continueIn(m_head);
     Draft poll(Opcode::LoopHint, origin);
     walker.chooseConservativeFields(poll);
@@ -112,7 +104,6 @@ bool BuiltLoopOfSerializers::leadToHead(std::span<const Reference> values)
             m_walker.fail("what is handed to the head of a loop of a serializer lies outside the type of its parameter"_s);
             return false;
         }
-        // An edge hands over a word, so it takes a cell for its boxed form and the other way round.
         if (!isSameWord(m_walker.representationOf(value), form))
             value = inFormForLoopOfSerializers(m_walker, value, form, origin);
         if (!value || m_walker.isUnreachable())
@@ -144,17 +135,12 @@ void BuiltLoopOfSerializers::close()
     }
     if (m_hasBackEdge)
         return;
-    // No edge has come back. The head lies in no loop of its own, its parameters keep the types that were said, and its poll polls for nothing.
     Code& code = m_walker.code();
     code.setLoopMarks(m_head, m_standsInLoopAround, true);
     if (m_poll)
         code.addFateOfPoll(m_poll, FateOfPoll::IsDropped);
 }
 
-// ---- Lists
-
-// `levelsAround`: how many objects and lists are open around the list. Null: the list holds numbers and holes alone.
-// The run time writes all of it behind the cursor, compiled objects slot by slot, or answers that code of the program would have to run.
 void JSONTextWriter::appendListByRunTime(Reference array, Reference levelsAround, const PositionOfJSONText& position)
 {
     appendKeyOf(position);
@@ -170,11 +156,6 @@ void JSONTextWriter::appendListByRunTime(Reference array, Reference levelsAround
 
 void JSONTextWriter::appendArray(Reference array, const JSONValuePlan& plan, const PositionOfJSONText& position)
 {
-    constexpr bool writesListsByType = true;
-    if (!writesListsByType) {
-        takeSlowPath();
-        return;
-    }
     LevelScope level(*this);
     if (hasStopped())
         return;
@@ -232,7 +213,6 @@ void JSONTextWriter::appendArray(Reference array, const JSONValuePlan& plan, con
             continue;
 
         if (!form.holdsCells) {
-            // Nothing but numbers and holes: the run time writes the list in one call, in fewer instructions a number than a loop here takes. It goes by the mark of the cell, which Facts may know more than.
             appendListByRunTime(array, { }, position);
         } else {
             appendKeyOf(position);
@@ -251,7 +231,6 @@ void JSONTextWriter::appendArray(Reference array, const JSONValuePlan& plan, con
     continueAt(done);
 }
 
-// The list is pristine, has the storage and holds an element or a hole at the index, and nothing that is built for an element can change that: no code of the program runs.
 void JSONTextWriter::appendArrayElement(Reference array, Reference index, ArrayStorage storage, TypeID writtenElementType)
 {
     if (hasStopped())
@@ -271,11 +250,9 @@ void JSONTextWriter::appendArrayElement(Reference array, Reference index, ArrayS
         return;
     }
 
-    // A hole of a pristine list reads as undefined, which is written as null like any other undefined element.
     appendValue(element, planJSONValue(m_context, m_walker.typeOf(element), writtenElementType), PositionOfJSONText { JSONPosition::Element, { }, afterSeparator });
 }
 
-// The list is pristine, has the storage and is not empty. So the tests in front of the loop hold in every turn.
 void JSONTextWriter::appendArrayElements(Reference array, Reference length, ArrayStorage storage, TypeID writtenElementType)
 {
     if (hasStopped())
@@ -285,13 +262,11 @@ void JSONTextWriter::appendArrayElements(Reference array, Reference length, Arra
         takeSlowPath();
         return;
     }
-    // `[row]`: no turn comes round.
     if (lengthType.integers.maximum < 2) {
         appendArrayElement(array, integer(0), storage, writtenElementType);
         return;
     }
 
-    // No cursor goes round, and the way out of the loop leads to a block that is older than the loop.
     commit();
     BlockID behindLastElement = openMerge();
     Reference firstIndex = integer(0);
@@ -317,7 +292,6 @@ void JSONTextWriter::appendArrayElements(Reference array, Reference length, Arra
         BlockID lastTurn = addBlock();
         m_walker.branch(hasNext, nextTurn, lastTurn);
         continueIn(nextTurn);
-        // Below the length, so within the type of the index.
         Reference comingRound = narrowed(next, hasNext, OperandIndex::Less::left, true);
         m_cursor = afterElement;
         appendToken(JSONToken::Comma);

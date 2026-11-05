@@ -28,7 +28,6 @@ namespace JSC::AOT {
 
 std::span<const NativeTest> interpreterSiteCacheTests();
 
-// The store under a key that nobody can name gives its layout a word for extra properties, and may put anything in any of its fields.
 static constexpr ASCIILiteral programText =
     "layout L0 name=\"Part\" module=m0 fields=[{key=\"id\" declared={type=number} flags=[IsRequired]}]\n"
     "layout L1 name=\"Mixed\" module=m0 fields=[{key=\"any\" declared={type=anything} flags=[IsRequired]}, {key=\"count\" declared={type=number} flags=[IsRequired]}, {key=\"flag\" declared={type=boolean} flags=[IsRequired]}, {key=\"part\" declared={type=L0} flags=[IsRequired]}, {key=\"text\" declared={type=string} flags=[IsRequired]}]\n"
@@ -85,7 +84,6 @@ static Object* createMixedObject(LoadedProgram& program)
     return object;
 }
 
-// A name is filed once it has been missed a few times: PropertyCaches::shouldFile().
 static constexpr unsigned readsUntilNameIsFiled = 16;
 
 static std::optional<PropertyOffset> placeOnceFiled(LoadedProgram& program, Object* object, const Identifier& name)
@@ -123,7 +121,6 @@ static void testPlaceOfEachRepresentation(LoadedProgram& program)
             break;
         case SlotRepresentation::Cell32:
         case SlotRepresentation::OptionalCell32:
-        case SlotRepresentation::LiteralString32:
         case SlotRepresentation::DeferredClosure:
             sawNarrowReference = true;
             AOT_TEST_CHECK(*place == Interpreter::narrowReferenceInSiteCache + static_cast<PropertyOffset>(field->slot.offset));
@@ -182,7 +179,6 @@ static JSValue callWith(LoadedProgram& program, JSFunction* function, JSValue ar
     return result;
 }
 
-// What no program sees: the read of text holds the place of the field at its own site, under the Structure of the compiled object.
 static void testReadOfTextFillsItsSite(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -202,7 +198,6 @@ static void testReadOfTextFillsItsSite(LoadedProgram& program)
     AOT_TEST_CHECK(callWith(program, readsAny, object) == jsNumber(8));
 }
 
-// JSON.parse() makes an ordinary object of a shape that it sees for the first time and records from then on. The site goes over to what keeps coming by, and each wait is twice as long as the one in front of it.
 static void testSiteGoesOverToWhatKeepsComingBy(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -228,7 +223,6 @@ static void testSiteGoesOverToWhatKeepsComingBy(LoadedProgram& program)
     AOT_TEST_CHECK(holds(object));
     AOT_TEST_CHECK(callWith(program, readsAny, object) == jsNumber(7));
 
-    // An ordinary object takes a site over at once, as it does in every process. The wait that begins there is the third.
     AOT_TEST_CHECK(callWith(program, readsAny, ordinary) == jsNumber(3));
     AOT_TEST_CHECK(holds(ordinary.asCell()));
     for (unsigned turn = 1; turn < 4 * shortestWait; ++turn) {
@@ -276,7 +270,6 @@ static void storeWith(LoadedProgram& program, JSFunction* function, JSValue obje
     AOT_TEST_CHECK(!program.vm().exceptionForInspection());
 }
 
-// From then on llint_aot_op_put_by_id finds the field in the hashed table and goes by the type in its record.
 static void storeUntilNameIsFiled(LoadedProgram& program, JSFunction* function, Object* object, const Identifier& name, JSValue fitting)
 {
     for (unsigned turn = 0; turn < readsUntilNameIsFiled; ++turn)
@@ -284,7 +277,6 @@ static void storeUntilNameIsFiled(LoadedProgram& program, JSFunction* function, 
     AOT_TEST_CHECK(program.state().propertyCaches->findByKey(object->structure(), name.impl(), SlotAccess::Store));
 }
 
-// Compiled code takes what lies in such a slot of a cell without the mark for a number or a boolean, so the marker of undefined or null comes with the mark.
 static void testMarkerStoredByTextMarksCell(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -318,7 +310,6 @@ static void testMarkerStoredByTextMarksCell(LoadedProgram& program)
     AOT_TEST_CHECK(sawRawField);
 }
 
-// `note?: string`: the form of the slot has a marker for null, and the field never takes it. Whatever the cell says, the store moves the field out of its slot.
 static void testMarkerThatFieldNeverTakesLeavesSlot(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -338,7 +329,6 @@ static void testMarkerThatFieldNeverTakesLeavesSlot(LoadedProgram& program)
     AOT_TEST_CHECK(object->get(program.realm(), note) == jsNull());
 }
 
-// No object of the layout leaves the program, so Link knows every writer of its fields, and those that hold numbers alone lie unboxed: `ratio` as a double, `whole` as an integer.
 static constexpr ASCIILiteral programWithUnboxedNumbers =
     "layout L0 name=\"Measured\" module=m0 fields=[{key=\"ratio\" declared={type=number} flags=[IsRequired]}, {key=\"whole\" declared={type=number} flags=[IsRequired]}, {key=\"any\" declared={type=anything} flags=[IsRequired]}]\n"
     "variable g0 name=\"measured\" module=m0 declared={type=anything} initialization=Undefined\n"
@@ -372,12 +362,10 @@ static bool isSameValue(LoadedProgram& program, JSValue first, JSValue second)
     return sameValue(program.realm(), first, second);
 }
 
-// Text stores into an unboxed slot through the hashed table, by the type in the record of the field. What fits lies in the slot, what does not fit takes the field out of it, and text and the run time read back what was stored either way.
 static void testTextStoresIntoUnboxedSlots(LoadedProgram& program)
 {
     VM& vm = program.vm();
     DeferGC deferGC(vm);
-    // The record rules out what Link has proven that nobody does to these objects. The test does it all the same.
     vm.aotState().nativeTestChangesObjectsUnseen = true;
     RuntimeLayoutTable& layouts = program.state().objects->layouts;
     JSValue text = jsNontrivialString(vm, "no number"_s);

@@ -30,10 +30,8 @@ namespace JSC { namespace AOT { namespace Machine {
 
 namespace {
 
-// Integers: a and b are Int64, i and j their low words. Numbers: x and y are Double, f and g the same as Float.
 enum class FoldingTestOperands : uint8_t { Integers, Numbers };
 
-// Unfolded: each operand of each request goes through an Opaque of its own, so no rule sees what it is, nor that two operands are one value.
 enum class FoldingTestForm : uint8_t { Folded, Unfolded };
 
 enum class FoldingTestAnswers : uint8_t { Compared, NotCompared };
@@ -50,12 +48,9 @@ static constexpr double foldingTestInfinity = std::numeric_limits<double>::infin
 static constexpr int64_t foldingTestTag = static_cast<int64_t>(0xfffe000000000000ull);
 static constexpr ASCIILiteral foldingTestTextOfPureNaN = "ConstDouble(NaN(0x7ff8000000000000))"_s;
 static constexpr ASCIILiteral foldingTestTextOfNegativeNaN = "ConstDouble(NaN(0xfff8000000000000))"_s;
-// An invalid operation makes a NaN with the sign set on x86-64 and clear on ARM64.
 static constexpr ASCIILiteral foldingTestTextOfInvalidOperation = isX86_64() ? foldingTestTextOfNegativeNaN : foldingTestTextOfPureNaN;
-// More than one outcome is right, or the outcome depends on the target. The answers are still compared.
 static constexpr ASCIILiteral foldingTestAnyText { };
 
-// On x86-64 the builder turns a division, a MulHigh and a shift by an amount in a register into a Patch, whose text names registers.
 static constexpr ASCIILiteral foldingTestTextOnARM64(ASCIILiteral text)
 {
     return isARM64() ? text : ASCIILiteral();
@@ -88,7 +83,6 @@ static constexpr FoldingTestOperand foldingTestEdgeValues[] = {
     { INT64_MIN, foldingTestNaN },
 };
 
-// The machine and a fold may give a NaN different payloads, but not different signs.
 static uint64_t foldingTestBitsOf(double number)
 {
     return std::bit_cast<uint64_t>(std::isnan(number) ? std::copysign(foldingTestNaN, number) : number);
@@ -178,7 +172,6 @@ public:
 
     LValue make(Opcode opcode, LValue value) { return out().unary(opcode, use(value)); }
     LValue make(Opcode opcode, LValue left, LValue right) { return out().binary(opcode, use(left), use(right)); }
-    // A number stands for a constant of the other operand's type, or for an Int32 where it is the amount of a shift.
     template<typename T> requires std::is_arithmetic_v<T>
     LValue make(Opcode opcode, LValue left, T right)
     {
@@ -208,8 +201,6 @@ public:
     }
     LValue result() const { return m_result; }
 
-    // printedProcedure(), read from one operation down: each @index gives way to the text that defines it, and an operand to its name.
-    // So the text does not follow how many constants a rule made on its way, nor what it left unused in the block.
     String treeOf(const Operation* root)
     {
         String printed = m_test.printedProcedure();
@@ -297,7 +288,6 @@ private:
         return operand;
     }
 
-    // Builder::opaque() returns an Opaque unchanged, so a value that is hidden again at each use must not already be one.
     LValue derived(LValue value) { return m_form == FoldingTestForm::Folded ? out().opaque(value) : value; }
     LValue use(LValue value) { return m_form == FoldingTestForm::Unfolded ? out().opaque(value) : value; }
 
@@ -430,7 +420,6 @@ static void testMachineFoldingOfDivisions()
     };
     checkFoldingTestCases(FoldingTestOperands::Integers, cases);
 
-    // The emitter has promised that these are never reached. No answer is made up for them.
     FoldingTest v(FoldingTestOperands::Integers, FoldingTestForm::Folded);
     AOT_TEST_CHECK(!v.make(Div, v.int64(7), 0)->isConstant());
     AOT_TEST_CHECK(!v.make(UDiv, v.int64(7), 0)->isConstant());
@@ -579,7 +568,6 @@ static void testMachineFoldingOfIntegerConversions()
         { "Trunc(Add(a, Const64(1)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(Add, v.a, 1)); } },
         { "Trunc(BitAnd(a, Const64(2147483647)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(BitAnd, v.a, 0x7fffffff)); } },
 
-        // A sum that is tested for int32 is read whole as well, and memoryUpdateOf() knows the test by this Trunc.
         { "Trunc(Add(SExt32(i), SExt32(j)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(Add, v.make(SExt32, v.i), v.make(SExt32, v.j))); } },
         { "Trunc(Add(SExt32(i), Const64(1)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(Add, v.make(SExt32, v.i), 1)); } },
         { "Trunc(Sub(SExt32(i), SExt32(j)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(Sub, v.make(SExt32, v.i), v.make(SExt32, v.j))); } },
@@ -605,7 +593,6 @@ static void testMachineFoldingOfIntegerConversions()
         { "Trunc(SShr(SExt32(i), Const32(1)))"_s, [](FoldingTest& v) { return v.lowWord(v.make(SShr, v.make(SExt32, v.i), 1)); } },
         { foldingTestAnyText, [](FoldingTest& v) { return v.lowWord(v.make(Shl, v.make(SExt32, v.i), v.j)); } },
 
-        // An Add puts the operand that was made first on the left.
         { "Add(j, Sub(Shl(i, Const32(5)), i))"_s, [](FoldingTest& v) {
             LValue difference = v.make(Sub, v.make(SExt32, v.make(Shl, v.i, 5)), v.make(SExt32, v.i));
             return v.lowWord(v.make(Add, difference, v.make(SExt32, v.j)));
@@ -634,7 +621,6 @@ static void testMachineFoldingOfIntegerConversions()
                 difference = v.make(Sub, difference, v.make(SExt32, v.j));
             return v.lowWord(difference);
         } },
-        // 2^40 ways lead to the first sum.
         { foldingTestAnyText, [](FoldingTest& v) {
             LValue sum = v.make(SExt32, v.i);
             for (unsigned level = 0; level < 40; ++level) {
@@ -693,7 +679,6 @@ static void testMachineFoldingOfIntegerConversions()
         { "IToD(i)"_s, [](FoldingTest& v) { return v.make(FTrunc, v.make(IToD, v.i)); } },
         { "Sqrt(IToD(i))"_s, [](FoldingTest& v) { return v.make(Sqrt, v.make(IToD, v.i)); } },
 
-        // A statement each: an Add puts the operand that was made first on the left.
         { "IToD(Add(SExt32(i), SExt32(j)))"_s, [](FoldingTest& v) {
             LValue left = v.make(IToD, v.i);
             return v.make(Add, left, v.make(IToD, v.j));
@@ -703,7 +688,6 @@ static void testMachineFoldingOfIntegerConversions()
         { "Sub(IToD(i), IToD(ZShr(a, Const32(11))))"_s, [](FoldingTest& v) { return v.make(Sub, v.make(IToD, v.i), v.make(IToD, v.make(ZShr, v.a, 11))); } },
         { "Sub(IToD(a), IToD(b))"_s, [](FoldingTest& v) { return v.make(Sub, v.make(IToD, v.a), v.make(IToD, v.b)); } },
 
-        // This equals i only because of where the cage lies, and the base register tells a fold nothing about that.
         { "Trunc(ZShr(Add(cage, Shl(ZExt32(i), Const32(3))), Const32(3)))"_s, [](FoldingTest& v) { return v.make(Trunc, v.make(ZShr, v.make(Add, v.cage, v.make(Shl, v.make(ZExt32, v.i), 3)), 3)); } },
     };
     checkFoldingTestCases(FoldingTestOperands::Integers, cases);
@@ -830,9 +814,6 @@ static void testMachineFoldingOfSelects()
         { "Select(Trunc(a), i, j)"_s, [](FoldingTest& v) { return v.select(v.make(Trunc, v.a), v.i, v.j); } },
         { "Select(Equal(i, Const32(1)), a, b)"_s, [](FoldingTest& v) { return v.select(v.make(Equal, v.i, 1), v.a, v.b); } },
         { "Select(BitAnd(a, Const64(12)), j, i)"_s, [](FoldingTest& v) { return v.select(v.make(Equal, v.make(BitAnd, v.a, 12), 0), v.i, v.j); } },
-
-        // PrimitiveEmitter::narrowWordBehind() looks for this shape.
-        { "Select(AboveEqual(i, Const32(16)), a, ZExt32(i))"_s, [](FoldingTest& v) { return v.select(v.make(AboveEqual, v.i, 16), v.a, v.make(ZExt32, v.i)); } },
     };
     checkFoldingTestCases(FoldingTestOperands::Integers, cases);
 }
@@ -1002,7 +983,6 @@ static void testMachineFoldingOfBranchesAndChecks()
     v.expectTree(first->last(), makeString("Branch(i) -> #"_s, third->index(), ", rare #"_s, fourth->index()));
 
     out.appendTo(second);
-    // The block takes its only way out whenever it runs, so the edge is no longer rare.
     out.branch(out.equal(v.a, v.a), rareEdge(third), fourth);
     v.expectTree(second->last(), makeString("Jump() -> #"_s, third->index()));
 
@@ -1017,11 +997,9 @@ static void testMachineFoldingOfBranchesAndChecks()
     AOT_TEST_CHECK(check->owner() == fourth && check->child(0)->opcode() == NotEqual);
     AOT_TEST_CHECK(out.check(out.equal(v.a, v.a))->owner() == fourth);
     AOT_TEST_CHECK(out.check(out.notZero32(v.i))->child(0) == v.i);
-    // A Check has one way out, so it cannot test the inverse.
     AOT_TEST_CHECK(out.check(out.isZero32(v.i))->child(0)->opcode() == Equal);
 
     out.appendTo(fifth);
-    // The scan fuses the BitAnd into the Branch only if the BitAnd is read once. Nothing reads what the Branch peeled, so that has counted no use of the BitAnd.
     LValue hasLowBit = out.testNonZero64(v.a, 1);
     out.branch(hasLowBit, first, second);
     v.expectTree(fifth->last(), makeString("Branch(BitAnd(a, Const64(1))) -> #"_s, first->index(), ", #"_s, second->index()));

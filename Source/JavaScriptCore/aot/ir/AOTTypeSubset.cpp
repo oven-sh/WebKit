@@ -72,7 +72,6 @@ bool mayContainAnyClosure(TypeReader reader, const Type& type)
 
 bool mayContainBuiltin(TypeReader reader, const Type& type, BuiltinID builtin)
 {
-    // An entry of the table that stands for a value may hold a function.
     if (type.anyFunction)
         return true;
 
@@ -134,7 +133,6 @@ static bool areNamedObjectsSubset(TypeReader reader, const Type& type, const Typ
 {
     if (isInternedSetSubset(reader, type.objects, of.objects))
         return true;
-    // A copy for an instance is what its shared form stands for where the creator is entered through one call. A type of the wire names the shared form alone.
     bool namesCopies = type.traitsOfNamed.contains(ObjectTrait::IsOfInstance);
     if (!of.hasUnknown() && !namesCopies)
         return false;
@@ -149,7 +147,6 @@ static bool areNamedObjectsSubset(TypeReader reader, const Type& type, const Typ
     return allAreInside;
 }
 
-// `unknown` lies inside `unknown` alone: the objects that the holder names are not all the objects of their layouts and classes.
 static bool areObjectsSubset(TypeReader reader, const Type& type, const Type& of)
 {
     if (!type.hasObjects() || of.anyObject)
@@ -231,21 +228,18 @@ static bool unknownObjectsOverlap(TypeReader reader, const Type& a, const Type& 
         || classesOverlap(builtins, classesOfFirst, classesOfSecond);
 }
 
-// Answers as mayIntersectUnknownOf() in AOTTypeIntersection.cpp does: overlap() may not say no where intersectTypes() keeps the object.
 static bool namedObjectOverlapsUnknownOf(TypeReader reader, ObjectID object, const Type& other, std::span<const ClassPart> classesOfOther, bool otherMayHoldAnyClosure, LayoutsFoundForCellsNobodyDescribes& found)
 {
     if (mayFitUnknownOf(reader, object, other, found))
         return true;
 
     const BuiltinTable& builtins = reader.builtins();
-    // An entry of the table that stands for a value may hold a function.
     if (BuiltinID builtin = reader.objects().builtinOf(object))
         return other.anyFunction || builtinOverlapsClasses(builtins, builtin, classesOfOther);
 
     const ObjectRecord& record = reader.at(object);
     if (otherMayHoldAnyClosure && record.traits.containsAny({ ObjectTrait::IsClosure, ObjectTrait::IsCallable }))
         return true;
-    // Instances of a class without an instance test cannot be told apart from other objects.
     return record.has(ObjectTrait::HasNoShape) && std::ranges::any_of(classesOfOther, [&](const ClassPart& part) {
         return !hasInstanceTest(builtins, part.builtinClass);
     });
@@ -266,8 +260,6 @@ static bool namedObjectsOverlapUnknownOf(TypeReader reader, const Type& type, co
     });
 }
 
-// For two sets that share no member: whether mayBeSameObject(TypeReader, ObjectID, ObjectID) says yes for any pair of their members.
-// The second set is read once. What the index leaves out, a member of the second that is a copy of a member of the first, is looked up.
 static bool namedObjectsMayBeSameObject(TypeReader reader, ObjectSetID a, ObjectSetID b)
 {
     if (!a || !b)
@@ -298,7 +290,6 @@ static bool objectsOverlap(TypeReader reader, const Type& a, const Type& b)
         || namedObjectsMayBeSameObject(reader, a.objects, b.objects);
 }
 
-// Answers as intersectBoundsOfFractions() in AOTTypeIntersection.cpp does.
 static bool fractionsLieApart(const Type& a, const Type& b)
 {
     if (a.boundsOfFractions.isEmpty() || b.boundsOfFractions.isEmpty())

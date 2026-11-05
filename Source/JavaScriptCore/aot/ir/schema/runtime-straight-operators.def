@@ -1,2 +1,1 @@
-# The text that a Strcat of the parts gives, whatever the parts are. Each is converted in its turn, and its text is written over it.
 runtime ConcatenateValues : JSCell* (uint32_t count, EncodedJSValue* parts) ; unknownCode

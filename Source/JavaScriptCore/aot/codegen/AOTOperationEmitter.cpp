@@ -26,7 +26,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr uint32_t doneTargetOfInlineCall = 0;
 static constexpr uint32_t missTargetOfInlineCall = 1;
 
-// The parameter of the block behind `done` that the arguments of the edge do not fill. Null where nobody asked for the result.
 static ValueID resultParameterOfInlineCall(const Code& code, const TerminatorContext& terminator)
 {
     const Edge& done = code.at(terminator->done());
@@ -57,7 +56,6 @@ ValueID OperationEmitter::definitionOf(ValueID id) const
 
 void OperationEmitter::defineNarrowed(const ValueContext& value, Operand operand)
 {
-    // No conversion leads to Void: a value in that form has no word.
     if (value.representation() == Representation::Void) {
         define(value, Operand());
         return;
@@ -137,9 +135,9 @@ void OperationEmitter::branchOnType(Operand operand, const TypeTestPlan& plan, B
     emitter<TypeTestEmitter>().emitBranch(operand, plan, targets);
 }
 
-void OperationEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, Operand stored, const Type& storedType)
+void OperationEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, const Type& storedType)
 {
-    emitter<BarrierEmitter>().barrierAfterStore(store, owner, stored, storedType);
+    emitter<BarrierEmitter>().barrierAfterStore(store, owner, storedType);
 }
 
 Representation OperationEmitter::resultRepresentationOf(const InlineCall& call) const
@@ -179,7 +177,6 @@ void OperationEmitter::finishInlineCall(const InlineCall& call, Operand result)
         define(*value, result);
         return;
     }
-    // The edge takes as many declared results as the block behind it has parameters left, whatever form they are in.
     const TerminatorContext& terminator = *call.terminator();
     std::span<const Operand> declaredResults;
     if (resultParameterOfInlineCall(m_code, terminator))
@@ -197,7 +194,6 @@ uint32_t OperationEmitter::mentionOfName(PropertyKeyID key)
     RELEASE_ASSERT(key);
     if (!liesInThread(key))
         return m_mentions.add(NumberSpace::Name, key);
-    // Image counts the keys of the program. A key of the thread's arena dies with the unit, so code names it by its text.
     const PropertyKey& threadLocalKey = types().at(key);
     RELEASE_ASSERT(threadLocalKey.kind == PropertyKeyKind::Text);
     return m_mentions.add(NumberSpace::NameOfText, threadLocalKey.text);
@@ -210,7 +206,6 @@ Word32 OperationEmitter::identifierNumber(PropertyKeyID key)
 
 std::optional<Vector<uint32_t, 12>> OperationEmitter::modulesAndPositionsOf(const OperationContext& context) const
 {
-    // From the operation out, each place as its position and then its module: the answer has them the other way round.
     std::optional<Vector<uint32_t, 12>> places { std::in_place };
     Origin origin = context.origin();
     auto frame = origin.inlineFrame;

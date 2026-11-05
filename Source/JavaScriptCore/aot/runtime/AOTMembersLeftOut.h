@@ -21,13 +21,8 @@ class VM;
 
 namespace AOT {
 
-// A NAME NEVER THROWS.
-
-// The error is about to be thrown because code of the library that is not in the image was to run.
 void noteErrorOfCodeLeftOut(JSGlobalObject*, JSObject* error);
-// Where the host was making or getting a member and an exception is pending.
 JS_EXPORT_PRIVATE JSValue takeStandInForMemberLeftOut(JSGlobalObject*, const String& nameOfMember, JSObject* answeredBy = nullptr);
-// The same where the host knows that the member is a function, and how it shows: a stand-in looks like what it stands for.
 struct FunctionLeftOut {
     ASCIILiteral name;
     unsigned length { 0 };
@@ -35,9 +30,7 @@ struct FunctionLeftOut {
 };
 JS_EXPORT_PRIVATE JSValue takeStandInForFunctionLeftOut(JSGlobalObject*, const FunctionLeftOut&, JSObject* answeredBy);
 bool standsInForFunction(JSCell*);
-// The same for a getter of the host that needs code of the library to make what it answers (`require.main`).
 JSValue takeStandInForGetterLeftOut(JSGlobalObject*, JSObject* getter);
-// The error says that what was read from `base` is no function.
 void explainErrorBehindMemberLeftOut(JSGlobalObject*, JSObject* error, JSValue base);
 void forgetErrorOfCodeLeftOut(VM&);
 

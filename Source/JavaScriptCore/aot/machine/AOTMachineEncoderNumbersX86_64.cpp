@@ -14,8 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// scratchFPR is MacroAssembler::fpTempRegister: without AVX, the three-operand forms of sub, div, min and max save a right operand that lies in the destination there, over whatever it holds.
-
 namespace {
 
 struct X86NumberSource {
@@ -23,7 +21,6 @@ struct X86NumberSource {
     bool isBaseOffset() const { return !isRegister() && memory.kind == AddressForm::BaseOffset; }
 
     Reg reg;
-    // Without a register: a spill, an outgoing word, a word of the instance, or the address of a fused load.
     AddressForm memory;
 };
 
@@ -33,9 +30,7 @@ static X86NumberSource takeX86NumberSource(Encoder& encoder, const Operation* us
 {
     X86NumberSource source;
     const Operation* child = user->child(childIndex);
-    // The leaf of a fused Trunc is the Int64, which lies in a register.
     if (encoder.m_liveness.isFused(child) && child->opcode() != Trunc) {
-        // The instruction reads as many bytes as its operand has, so a load that extends cannot stand in it.
         RELEASE_ASSERT(child->opcode() == Load);
         source.memory = encoder.resolveAddress(child, cursor);
         return source;
@@ -136,7 +131,6 @@ static FPRReg x86NumberInRegister(Encoder& encoder, const X86NumberSource& sourc
     return registerIfInMemory;
 }
 
-// emit(operand) writes the destination from an FPRReg or a MacroAssembler::Address.
 template<typename Functor>
 static void encodeX86NumberUnary(Encoder& encoder, const X86NumberSource& source, Width widthOfSource, FPRReg destination, const Functor& emit)
 {
@@ -281,7 +275,6 @@ static void encodeX86NumberNegOrAbs(Encoder& encoder, Opcode opcode, Width width
     combineIntoDestination(scratchFPR);
 }
 
-// For a CPU without SSE4.1. Writes scratchGPR and scratchFPR.
 static void roundX86NumberThroughInteger(Encoder& encoder, Opcode opcode, Width width, FPRReg value)
 {
     CCallHelpers& jit = encoder.m_jit;
@@ -310,7 +303,6 @@ static void roundX86NumberThroughInteger(Encoder& encoder, Opcode opcode, Width 
     else
         jit.urshift32(CCallHelpers::TrustedImm32(numberOfFractionBits), scratchGPR);
     jit.and32(CCallHelpers::TrustedImm32(exponentMask), scratchGPR);
-    // From this exponent on a number has no fraction, or is an infinity or a NaN. Below it the whole part fits the integer and comes back exactly.
     MacroAssembler::Jump needsNoRounding = jit.branch32(MacroAssembler::AboveOrEqual, scratchGPR, CCallHelpers::TrustedImm32(exponentBias + numberOfFractionBits));
 
     if (isDouble)
@@ -334,7 +326,6 @@ static void roundX86NumberThroughInteger(Encoder& encoder, Opcode opcode, Width 
         needsNoAdjustment.link(&jit);
     }
 
-    // The integer has lost the sign of a zero: -0 stays -0, and Ceil(-0.5) is -0. Every other result has the sign of the value already.
     moveBitsToScratch();
     if (isDouble) {
         jit.urshift64(CCallHelpers::TrustedImm32(63), scratchGPR);
@@ -388,7 +379,6 @@ static void encodeX86NumberMinOrMax(Encoder& encoder, Opcode opcode, Width width
     bool isMin = opcode == FMin;
     ASSERT(isMin || opcode == FMax);
 
-    // Each of the three arms gives the same number for (a, b) and (b, a).
     if (!left.isRegister())
         std::swap(left, right);
     FPRReg leftFPR = x86NumberInRegister(encoder, left, width, destination);
@@ -399,10 +389,8 @@ static void encodeX86NumberMinOrMax(Encoder& encoder, Opcode opcode, Width width
     };
 
     MacroAssembler::Jump orderedAndDifferent = branchIf(MacroAssembler::DoubleNotEqualAndOrdered);
-    // What arrives here is equal or unordered, so this asks for unordered alone.
     MacroAssembler::Jump unordered = branchIf(MacroAssembler::DoubleLessThanOrUnordered);
 
-    // Equal operands differ in their bits only as -0 and +0 do.
     if (isMin) {
         if (isDouble)
             jit.orDouble(leftFPR, rightFPR, destination);
@@ -416,7 +404,6 @@ static void encodeX86NumberMinOrMax(Encoder& encoder, Opcode opcode, Width width
     }
     MacroAssembler::Jump doneWithEqual = jit.jump();
 
-    // A sum, not the joined bits: those of a NaN and a number can be a NaN that boxing takes for another kind of value.
     unordered.link(&jit);
     if (isDouble)
         jit.addDouble(leftFPR, rightFPR, destination);
@@ -450,7 +437,6 @@ static void encodeX86NumberFromInteger(Encoder& encoder, Width widthOfInteger, c
             jit.convertInt32ToDouble(operand, destination);
     };
 
-    // The conversion keeps the upper half of the destination, so it would wait for whatever wrote that register last.
     jit.moveZeroToDouble(destination);
     if (source.isRegister()) {
         convert(source.reg.gpr());

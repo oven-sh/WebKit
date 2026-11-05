@@ -22,7 +22,6 @@ void loadSubstringBaseAndOffset(StubAssembler& jit, GPRReg string, GPRReg base, 
 {
     using CompactFibers = JSRopeString::CompactFibers;
     RELEASE_ASSERT(noOverlap(string, base, offset));
-    // The six bytes of fiber 1 end a word that begins two bytes in front of them, inside the length.
     constexpr int32_t bytesInFrontOfFiber1 = sizeof(uint64_t) - 6;
     static_assert(CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16 && JSRopeString::offsetOfFiber2() == JSRopeString::offsetOfFiber1Lower() + 4);
     static_assert(std::endian::native == std::endian::little && JSRopeString::offsetOfFiber1Lower() - bytesInFrontOfFiber1 >= JSRopeString::offsetOfLength());
@@ -93,7 +92,6 @@ static void loadZeroExtended(StubAssembler& jit, unsigned width, auto address, G
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// visit(width, addressIn) emits code for one word of that many bytes, at addressIn(start) for each of the starts.
 static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg> starts, GPRReg size, const auto& visit)
 {
     auto atStart = [](GPRReg bytes) {
@@ -161,7 +159,6 @@ void branchUnlessASCIIOutsideRange(StubAssembler& jit, const ScannedBytes& scann
     constexpr uint64_t oneInEachByte = 0x0101010101010101ULL;
     constexpr uint64_t topBitOfEachByte = 0x80 * oneInEachByte;
 
-    // Added to an ASCII byte, the addend sets the top bit from the given byte on, and carries nothing into the next byte.
     jit.move(TrustedImm64((0x80 - first) * oneInEachByte), addendForFirst);
     jit.move(TrustedImm64((0x80 - (last + 1)) * oneInEachByte), addendForLast);
     forEachWordCovering(jit, { bytes }, size, [&](unsigned width, auto addressIn) {
@@ -178,7 +175,6 @@ void flattenSubject(StubAssembler& jit, GPRReg string, std::initializer_list<GPR
 {
     const GPRReg exception = jit.reuseScratch(StubRegister::T9);
     RELEASE_ASSERT(std::ranges::find(preservedGPRs, exception) == preservedGPRs.end());
-    // The frame record is also what aligns sp for the call on x86-64.
     jit.emitFunctionPrologue();
     jit.preserving(preservedGPRs, [&] {
         jit.move(string, operationArgumentGPR(1));

@@ -159,7 +159,6 @@ static JSValue createMatchValue(Instance* instance, RegExpMatchForm form, RegExp
     return createRegExpMatchesArrayForPlainRegExp(vm, globalObject, subject, result, offsets, numSubpatterns);
 }
 
-// Advances match to the next match, or to a failed match if there is none.
 static ALWAYS_INLINE void findNextMatch(JSGlobalObject* globalObject, RegExp* regExp, JSString* string, StringView source, MatchResult& match)
 {
     uint64_t start = match.empty() ? advanceStringIndex(source, source.length(), match.end, regExp->eitherUnicode()) : match.end;
@@ -176,7 +175,6 @@ static void recordLastMatch(JSGlobalObject* globalObject, VM& vm, RegExp* regExp
     globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, MatchResult { matches[matches.size() - 2], matches.last() }, false);
 }
 
-// What String.prototype.match answers for a global RegExp that is one set or a run of one set. Empty: it has to search match by match.
 static JSValue matchEveryPlaceInOnePass(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* subject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -202,7 +200,6 @@ static JSValue matchEveryPlaceInOnePass(JSGlobalObject* globalObject, VM& vm, Re
     return array;
 }
 
-// What String.prototype.match answers for a global RegExp whose first match in the subject is known.
 static JSValue collectMatchesFrom(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* subject, MatchResult match)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -288,7 +285,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteralWithoutObject, EncodedJSV
     OPERATION_RETURN(scope, JSValue::encode(createMatchValue(instance, static_cast<RegExpMatchForm>(form), regExp, subject, result, offsets)));
 }
 
-// A cell of the statics holds the object of one literal: one place in the source, one pattern, one set of flags. Compiled code takes the RegExp out of that object without asking which it is.
 static RegExpObject* ensureSharedRegExpLiteral(VM& vm, Instance* instance, uint32_t staticsOffset, RegExp* regExp)
 {
     ProgramStatics& statics = *instance->state->statics;
@@ -308,7 +304,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpLiteral, JSCell*, (Instance* insta
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewRegExpLiteral);
     RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, RegExpRecordID(regExpRecord), OptionSet<Yarr::Flags>::fromRaw(flags));
     ASSERT(regExp->isValid());
-    // The program never gets the object in the cell from here: each evaluation has an object of its own.
     if (staticsOffset != noSharedRegExpOffset)
         ensureSharedRegExpLiteral(vm, instance, staticsOffset, regExp);
     Structure* structure = WTF::opaque(globalObject->regExpStructure());
@@ -359,7 +354,6 @@ static JSString* replaceMatchesGeneric(JSGlobalObject* globalObject, VM& vm, JSS
     return asString(result);
 }
 
-// A global replace with plain text of a pattern that is one set or a run of one set. hasReplaced false: it has to search match by match.
 static JSString* replaceInOnePass(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExpObject* object, JSString* replacement, const String& replacementText, bool& hasReplaced)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -538,7 +532,6 @@ static JSString* replaceEveryMatchWithTemplate(JSGlobalObject* globalObject, VM&
     RELEASE_AND_RETURN(scope, jsString(vm, result.toString()));
 }
 
-// The caller has searched the subject from its start for a RegExp that is not sticky, and offsets are those of the match. lastIndex of a global RegExp is 0.
 static JSString* replaceFromFirstMatch(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExp* regExp, JSString* replacement, const String& replacementText, const int* offsets)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -557,7 +550,6 @@ static JSString* replaceFromFirstMatch(JSGlobalObject* globalObject, VM& vm, JSS
     RELEASE_AND_RETURN(scope, replaceEveryMatchWithTemplate(globalObject, vm, string, source, regExp, replacementText, dollar, match, offsets));
 }
 
-// startOfFirstMatchPlusOne is 0 if nobody has searched. Otherwise the caller has searched the subject from its start, and a pattern with code has left the offsets of the match in VMState::regExpMatchOutput.
 JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instance* instance, JSCell* string, JSCell* regExp, JSCell* replacementCell, uint32_t startOfFirstMatchPlusOne))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringReplaceRegExpString);
@@ -578,7 +570,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instan
         if (hasReplaced)
             OPERATION_RETURN(scope, result);
     }
-    // replaceUsingRegExpSearch() removes every occurrence of an atom in one pass, so the search starts over even though the first match is known.
     if (!startOfFirstMatchPlusOne || (isAtom && pattern->global() && replacementText->isEmpty()))
         OPERATION_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, subject, regExpObject, callData, replacementText, replacement));
     if (!isAtom)
@@ -588,16 +579,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instan
     OPERATION_RETURN(scope, replaceFromFirstMatch(globalObject, vm, subject, pattern, replacement, replacementText, offsets.data()));
 }
 
-// The stub has found a match, or has left the search to others. The function of the program runs below a frame of String.prototype.replace, which a stack trace lists.
 JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpWithFunction, JSCell*, (Instance* instance, JSCell* string, JSCell* regExp, JSCell* replacement))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringReplaceRegExpWithFunction);
     auto* subject = cellArgument<JSString>(string, Entry::operationAOTStringReplaceRegExpWithFunction);
     auto* regExpObject = cellArgument<RegExpObject>(regExp, Entry::operationAOTStringReplaceRegExpWithFunction);
-    // That function asks the pattern for its Symbol.replace, and what a test has laid there may answer anything.
     if (!regExpObject->isSymbolReplaceFastAndNonObservable(globalObject)) [[unlikely]]
         OPERATION_RETURN(scope, replaceMatches(globalObject, vm, subject, regExpObject, replacement));
-    // The engine's own, whatever lies under its name by now: in a test run a spy may.
     JSValue result = callMethodInEngine(instance, Builtins::StringPrototypeReplace, subject, regExpObject, replacement);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, result.asCell());
@@ -727,7 +715,6 @@ RegExpNamedGroups decodeRegExpNamedGroups(VM& vm, const ImageRegExp& record)
 template<typename Visitor>
 void RegExpLiterals::visitRoots(Visitor& visitor)
 {
-    // A cell lasts as long as the program. One that a collection has marked is old, and only the next full collection has to mark it again.
     size_t first = 0;
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         if (visitor.collectionScope() == CollectionScope::Full && m_lastFullVisitVersion != visitor.markingVersion())

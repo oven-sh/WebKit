@@ -47,7 +47,6 @@ static void storeBytesOfStringBuilder(Output& out, unsigned width, LValue value,
 
 void StringBuilderEmitter::generateStringBuilderBegin(const ValueContext& value)
 {
-    // Every collection clears the word.
     TypedPointer pool = instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(stringBuilder.freeStorage));
     Integer head(m_out.load64(pool));
     define(value, either<CellPointer>(isNotZero(head), [&] {
@@ -66,7 +65,6 @@ void StringBuilderEmitter::generateStringBuilderLength(const ValueContext& value
     define(value, lengthOf(in<CellPointer>(value->builderOperand())));
 }
 
-// The text that was made last is the text until something is appended: StringBuilderStorage::validLastString().
 void StringBuilderEmitter::generateStringBuilderToString(const ValueContext& value)
 {
     CellPointer builder = in<CellPointer>(value->builderOperand());
@@ -88,7 +86,6 @@ void StringBuilderEmitter::generateStringBuilderFinish(const ValueContext& value
 
 void StringBuilderEmitter::generateStringBuilderDiscard(const ValueContext& value)
 {
-    // The builder goes back to the pool, whose word is collector state, and nothing collects.
     callStub(value, stringBuilderDiscard(), { in<CellPointer>(value->builderOperand()).value() }, { .accessesCollectorState = true });
 }
 
@@ -104,7 +101,6 @@ void StringBuilderEmitter::generateStringBuilderRollBack(const ValueContext& val
     callVoidOperation(value, RuntimeOperation::StringBuilderRollBack, { builder, checkpoint });
 }
 
-// The limit lies past the longest string only behind a reservation of which some may stay unused, and by no more than that reservation: the sum does not wrap. Any other limit has let in nothing longer.
 void StringBuilderEmitter::generateStringBuilderCheckLength(const ValueContext& value)
 {
     CellPointer builder = in<CellPointer>(value->builderOperand());
@@ -116,7 +112,6 @@ void StringBuilderEmitter::generateStringBuilderCheckLength(const ValueContext& 
     });
 }
 
-// The operation has one slot, however often it runs: the walk lets no builder outlive the turn of the loop in which it was begun.
 void StringBuilderEmitter::generateStackStringBuilderBegin(const ValueContext& value)
 {
     LValue slot = m_out.lockedStackSlot(sizeof(StackStringBuilder));
@@ -139,7 +134,6 @@ void StringBuilderEmitter::generateStackStringBuilderCursor(const ValueContext& 
     define(value, Pointer(m_out.loadPtr(recordField(recordOf(value), OBJECT_OFFSETOF(StackStringBuilder, savedCursor)))));
 }
 
-// StackStringBuilderCursor alone reads the cursor in the record: the run time is handed the cursor, and behind a part that has thrown nobody uses the record.
 void StringBuilderEmitter::defineCursorBehindPart(const ValueContext& value, Pointer record, Pointer cursor, unsigned constantsWrittenAhead)
 {
     std::span<const ValueID> behind = value.operationsBehind();
@@ -175,7 +169,6 @@ void StringBuilderEmitter::generateStackStringBuilderFinish(const ValueContext& 
         return;
     }
 
-    // A flat first part behind which nothing has characters is the text. A builder that has left the frame takes long strings without moving its cursor.
     CellPointer firstPart = in<CellPointer>(value->firstPartOperand());
     LBasicBlock firstMayBeAll = newBlock();
     LBasicBlock byCall = newBlock();
@@ -197,7 +190,6 @@ void StringBuilderEmitter::generateStackStringBuilderDiscard(const ValueContext&
 {
     Pointer record = recordOf(value);
     Pointer limit = limitOf(record);
-    // The storage goes back to the pool, whose word is collector state, and nothing collects.
     ifElse(equal(limit, limitOnStack(record)), [] { }, [&] {
         callVoidOperation(value, RuntimeOperation::StackStringBuilderDiscard, { record }, { .isOnRarePath = true, .accessesCollectorState = true });
     });
@@ -271,7 +263,6 @@ Pointer StringBuilderEmitter::writeBytes(Pointer cursor, std::span<const Latin1C
     return offsetBy(cursor, static_cast<ptrdiff_t>(bytes.size()));
 }
 
-// Eight digits at once, each in a byte of one word, the first in the lowest. The zeros in front are shifted out.
 Pointer StringBuilderEmitter::writeDigits(Pointer cursor, Word32 value)
 {
     static_assert(maxInlineDigits == sizeof(uint64_t));
@@ -320,7 +311,6 @@ Pointer StringBuilderEmitter::writeDigits(Pointer cursor, Word32 value)
 
 Pointer StringBuilderEmitter::copyLatin1Characters(Pointer cursor, Pointer source, Word32 length)
 {
-    // The short copy covers two words at most, and the last move of the loop reaches one whole move back from the end.
     constexpr int32_t bytesPerMove = 2 * sizeof(uint64_t);
     Condition isShort = belowOrEqual(length, word32(bytesPerMove));
     if (isShort.value()->hasInt() && isShort.value()->asInt())
@@ -360,7 +350,6 @@ Pointer StringBuilderEmitter::copyLatin1Characters(Pointer cursor, Pointer sourc
     return end.finishBehind(fork);
 }
 
-// No move reaches beyond the characters: the second of each width ends where they end, and lies over the first where it has to.
 Pointer StringBuilderEmitter::copyShortLatin1Characters(Pointer cursor, Pointer source, Word32 length)
 {
     const Machine::AbstractHeap& characters = m_heaps.characters8.atAnyIndex();

@@ -82,10 +82,11 @@ function f3 name="setScale" module=m0 length=2 thisType={type=anything} paramete
     v2 = TypeTest v0 testedType=L2|L3
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3):
-    PropSet v3, v1 key="scale"
+    v4 = String string="wide"
+    PropSet v3, v4 key="scale"
     Return v1
-  b2(v5):
-    Return v5
+  b2(v6):
+    Return v6
 }
 function f4 name="hasScale" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

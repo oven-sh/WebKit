@@ -338,7 +338,6 @@ static void testInstanceLayoutOffsets()
         AOT_TEST_CHECK(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance(sizes)) <= cards);
         AOT_TEST_CHECK(cards < statics && statics < pollPage && prefix < 0);
         AOT_TEST_CHECK(statics + static_cast<ptrdiff_t>(sizes.sizeOfStatics) <= pollPage);
-        // Below the prefix, or between the instance and the tables above it, where one load of ARM64 reaches it.
         ptrdiff_t endOfPollPage = pollPage + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage);
         if (pollPage < 0)
             AOT_TEST_CHECK(endOfPollPage <= prefix);
@@ -350,16 +349,13 @@ static void testInstanceLayoutOffsets()
         size_t stringCells = InstanceLayout::offsetOfStringCell(0);
         size_t end = InstanceLayout::bytesReservedFromInstance(sizes);
         AOT_TEST_CHECK(sizeof(Instance) <= stringCells && stringCells == 384 * KB + InstanceLayout::shiftAboveLoopPollPage);
-        // Whatever is protected or mapped by itself begins at a page of the largest size that the system may have, and so does the whole.
         AOT_TEST_CHECK(InstanceLayout::beginsAtPage(pollPage) && InstanceLayout::beginsAtPage(statics));
         AOT_TEST_CHECK(InstanceLayout::beginsAtPage(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance(sizes))) && InstanceLayout::beginsAtPage(end));
         AOT_TEST_CHECK(!(InstanceLayout::bytesReservedForLoopPollPage % InstanceLayout::largestPageSize));
         AOT_TEST_CHECK(CeilingOnPageSize <= InstanceLayout::largestPageSize || !hasFaultingLoopPolls);
-        // The records of global names follow the string cells, however many there are of either.
         size_t bindings = InstanceLayout::offsetOfGlobalBindings(sizes);
         AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(sizes.numberOfStringCells) <= bindings && !(bindings % alignof(GlobalBinding)));
         AOT_TEST_CHECK(bindings + sizes.numberOfGlobalBindings * sizeof(GlobalBinding) <= end);
-        // The method table follows in pages of its own. The sites, which take the most room, come last.
         size_t methodTable = InstanceLayout::offsetOfMethodTable(sizes);
         size_t sites = InstanceLayout::offsetOfSiteCaches(sizes);
         AOT_TEST_CHECK(InstanceLayout::endOfGlobalBindings(sizes) <= methodTable && InstanceLayout::beginsAtPage(methodTable));
@@ -371,7 +367,6 @@ static void testInstanceLayoutOffsets()
     AOT_TEST_CHECK(InstanceLayout::offsetOfStatics({ 64 * KB + 1, 0, 0 }) < InstanceLayout::offsetOfStatics({ 64 * KB, 0, 0 }));
     AOT_TEST_CHECK(InstanceLayout::bytesReservedFromInstance({ 0, 0, 1 }) < InstanceLayout::bytesReservedFromInstance({ 0, 0, 100000 }));
 
-    // The small tables in front of the string cells: each ends where the next begins, and a table that is one entry too large is not held.
     size_t mostKeys = (InstanceLayout::offsetOfBuiltinValues - InstanceLayout::offsetOfBuiltinCells) / sizeof(JSCell*);
     AOT_TEST_CHECK(InstanceLayout::holdsBuiltinCells(mostKeys) && !InstanceLayout::holdsBuiltinCells(mostKeys + 1));
     AOT_TEST_CHECK(InstanceLayout::offsetOfBuiltinValues + mostKeys * sizeof(EncodedJSValue) == InstanceLayout::offsetOfStringCells);

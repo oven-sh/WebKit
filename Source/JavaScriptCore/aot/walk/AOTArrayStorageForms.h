@@ -76,36 +76,23 @@ constexpr Representation elementRepresentationOf(ArrayStorage kind)
 
 inline constexpr IndexingType arrayStorageTestMask = IndexingShapeMask;
 
-// The most operands for which concat() has code in line, and the most elements that splice() and toSpliced() insert in line. The walk chooses the form by them, and the emitter writes one copy or one store for each.
 inline constexpr size_t maxInlineConcatOperands = 3;
 inline constexpr size_t maxInlineSpliceInsertions = 2;
-// The most elements that splice() takes out in line. As many as the stub for a literal takes in registers, at most. A call that takes out more is made by a function that lists them.
 inline constexpr int64_t maxRemovedByInlineSplice = 2;
 
-// AOTArrayStorageForms.cpp: pure functions of types.
 ArrayStorage arrayStorageHolding(const TypeArena&, TypeID elements);
 ArrayStorage arrayStorageHolding(TypeReader, TypeID elements);
-// The kind that the declared element type gives an array, for its creators and its readers alike. Other: nothing is declared.
 Expected<ArrayStorage> arrayStorageDeclaredBy(const Program&, TypeReader, TypeID array);
-// What is written of the elements is numbers and nothing else. No kind is declared by that: the list has storage for int32 or for doubles, whichever the numbers so far have given it.
 bool isDeclaredToHoldNumbersAlone(const Program&, TypeReader, TypeID array);
-// Of a GetArrayElement that testsItsOwnGuess(): the list is proven one and the position an integer, so neither is tested, and the position is taken as the integer that it is.
 bool isProvenToBeList(TypeReader, TypeID array);
 bool readTakesIndexOfProvenList(TypeReader, TypeID array, TypeID position);
-// Of a PutArrayElement that testsItsOwnGuess(): the same, and a number is taken as it is held where storage for numbers takes it so.
 inline bool storeTakesIndexOfProvenList(TypeReader types, TypeID array, TypeID position) { return readTakesIndexOfProvenList(types, array, position); }
-ArrayStorage arrayStorageAtAllocation(const TypeArena&, TypeID elements);
 
-// The kind that an array of constant data has once it is made, in the table of the image too.
 JS_EXPORT_PRIVATE ArrayStorage arrayStorageOfData(const Program&, const DataNode::Array&);
-// No element is a cell, so what the table of the image holds is what the storage of the array holds, and the array points at it until it is written to.
 JS_EXPORT_PRIVATE bool isStorageOfArray(const DataNode::Array&);
-// A tree of constant data of at most this many nodes is written out as allocations.
 inline constexpr uint32_t maxNodesOfExpandedData = 16;
-// NaN marks a hole in Double storage, so an array that is given one gets the storage that holds everything.
 bool canStoreWithoutConversion(const TypeArena&, ArrayStorage, TypeID stored);
 bool canStoreWithoutConversion(ArrayStorage, double stored);
-// A literal that names no storage is born with the kind that is declared for it where all its elements fit that kind, and with Contiguous otherwise.
 bool fitsStorageOfLiteral(const TypeArena&, ArrayStorage, TypeID element);
 TypeID typeOfElementRead(ArrayStorage);
 

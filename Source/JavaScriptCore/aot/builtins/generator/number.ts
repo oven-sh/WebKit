@@ -245,7 +245,6 @@ function closedKeysOf(
   return { holder, keys: inNumberOrder(closed), openNames: inNumberOrder(openNames) };
 }
 
-// A constructor of the engine without a lock of its own is called like every built-in function: `Error.call(this, message)`, `x instanceof Error`.
 function isConstructorWithoutLock({ kind, origin, holder, flags, sameObjectAs }: ModelBuiltin): boolean {
   return (
     kind === "Constructor" &&

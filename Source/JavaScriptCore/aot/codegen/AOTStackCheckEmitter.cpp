@@ -60,7 +60,6 @@ static CCallHelpers::Address wordOfStackLimit(StackLimit limit)
 static void emitSmallFrameCheck(CCallHelpers& jit, PendingStackCheck& check)
 {
     check.limit = StackLimit::TrapAwareSoft;
-    // The stack pointer is the left operand: ARM64 compares it only there, and copies it into the scratch register otherwise.
     check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, wordOfStackLimit(check.limit)));
 }
 
@@ -77,7 +76,6 @@ static void generateStackCheckAtFrameSetup(void* context, CCallHelpers& jit, con
 {
     StackCheckState& state = *static_cast<StackCheckState*>(context);
     unsigned frameSize = frame.frameSize();
-    // A small frame goes untested where the callers have counted it, and where the function calls nothing and jumps to nothing: checkUncheckedStackUsage() counts both.
     bool fitsByProof = (state.stackCheck == StackCheck::CoveredByCallers || site.nothingCountsOnCheck) && frameSize <= maxFrameSizeWithoutStackCheck;
     state.isProvenToFitOnStack |= fitsByProof;
     if (fitsByProof && !state.frame->needsStackCheckForTailCalls)
@@ -105,7 +103,6 @@ void setStackCheckGenerator(Machine::Procedure& proc, StackCheck stackCheck, con
 void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckState& state)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
-    // Each of these stands behind the push of a frame record, and the way out takes the stack pointer from the frame pointer, so one serves them all.
     CCallHelpers::JumpList doesNotFit;
     for (const PendingStackCheck& check : state.pending) {
         RELEASE_ASSERT(!check.doesNotFit.empty() && check.resume.isSet());
@@ -115,9 +112,7 @@ void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckS
             break;
         case StackLimit::TrapAwareSoft: {
             check.doesNotFit.link(&jit);
-            // The allocator takes no frame setup for a safepoint. Behind the entry, narrow references are live without their pointers.
             bool mayCollect = state.functionMayCollect && check.isAtEntry;
-            // The stub returns to the resume offset of the PrologueCheck, never to the address after the call.
             CCallHelpers::Label call = jit.label();
             records.stubCalls.call(jit, pollAtPrologue(mayCollect), OptionalIndex { });
             records.traps.stackChecks.append({ call, check.resume });
@@ -129,7 +124,6 @@ void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckS
         return;
 
     doesNotFit.link(&jit);
-    // A caller without a frame record is found by the stack pointer alone, so the stub has to find the stack as that caller left it.
     if (isX86_64() && records.frame.spillsArgumentRegisters) {
         jit.emitFunctionEpilogue();
         emitDropSpilledArgumentRegisters(jit);

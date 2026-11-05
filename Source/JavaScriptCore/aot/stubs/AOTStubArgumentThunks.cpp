@@ -49,8 +49,6 @@ static bool isOperandOfThunkCallee(StubKey key, const StubSignature& signature, 
     return false;
 }
 
-// The scratch registers of the assembler are dead at every call, so none of them is a source.
-// The swap that breaks a cycle and a load far from its base write them. So one that the callee takes an operand in gets a constant: those are moved behind the loads.
 static bool areThunkMovesSound(StubKey key, const StubSignature& signature, bool movesImmediate, std::span<const uint64_t> moves)
 {
     RegisterSet scratchRegisters = RegisterSet::macroClobberedGPRs();
@@ -67,7 +65,6 @@ static bool areThunkMovesSound(StubKey key, const StubSignature& signature, bool
             areSound = false;
         if (source == ArgumentSource::Register && (payload >= MacroAssembler::numberOfRegisters() || scratchRegisters.contains(static_cast<GPRReg>(payload), IgnoreVectors)))
             areSound = false;
-        // A mention means something in its function alone.
         if (source == ArgumentSource::ThrowWordWithMention)
             areSound = false;
         destinations.add(destination, IgnoreVectors);
@@ -93,7 +90,6 @@ static void emitRegisterMovesOfThunk(CCallHelpers& jit, std::span<const uint64_t
             pending.removeAt(unread);
             continue;
         }
-        // No two moves have one destination, and each destination that is left is a source. So each source is a destination, and the swap writes destinations alone.
         auto [source, destination] = pending.takeLast();
         jit.swap(source, destination);
         for (auto& other : pending) {
@@ -108,7 +104,6 @@ static void emitRegisterMovesOfThunk(CCallHelpers& jit, std::span<const uint64_t
     }
 }
 
-// The thunk pushes nothing, so the stack pointer is as at its entry.
 static void emitLoadsOfThunk(CCallHelpers& jit, std::span<const uint64_t> moves)
 {
     forEachThunkMove(moves, [&](ArgumentSource source, GPRReg destination, uint64_t payload) {
@@ -146,7 +141,6 @@ static void emitConstantsOfThunk(CCallHelpers& jit, std::span<const uint64_t> mo
     });
 }
 
-// `stubKeyIndexes[i]`: where the key of `lists[i]` stands in ArgumentThunks::stubKeys. A thunk begins with a label and ends with a jump out of the code, so its bytes do not depend on the thunks around it.
 static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(BuildContext& context, const StubCatalog& catalog, std::span<const ArgumentMoves* const> lists, std::span<const uint32_t> stubKeyIndexes)
 {
     ArgumentThunks result;
@@ -199,7 +193,6 @@ std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext& 
         return std::ranges::lexicographical_compare(*a, *b);
     }));
 
-    // The key is the first word of a list, so the lists of one key stand side by side.
     Vector<uint32_t> stubKeyIndexes;
     stubKeyIndexes.reserveInitialCapacity(all.size());
     for (const ArgumentMoves* list : all) {

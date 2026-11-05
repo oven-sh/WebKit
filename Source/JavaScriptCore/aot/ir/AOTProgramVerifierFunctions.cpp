@@ -46,7 +46,6 @@ std::optional<InternalErrorKind> findErrorInFlagsOfFunctionRecord(OptionSet<Flag
     return std::nullopt;
 }
 
-// The reader converts these words and checks none of them.
 std::optional<InternalErrorKind> findErrorInWordsOfFunctionRecord(const Function& function)
 {
     if (auto kind = findErrorInEnumeratorOfFunctionRecord(function.role))
@@ -58,7 +57,6 @@ std::optional<InternalErrorKind> findErrorInWordsOfFunctionRecord(const Function
     return findErrorInFlagsOfFunctionRecord(function.syntax);
 }
 
-// What the front end sends for a position with no written type. It has no flags, and every DeclaredType constructor that takes a type sets one: compare the parts, not a constructed value.
 bool isUntypedPositionOfFunctionRecord(const DeclaredType& declared)
 {
     return declared.written() == TypeTable::anything && !declared.site && declared.writtenFlags().isEmpty();
@@ -81,7 +79,6 @@ bool hasDerivedFunctionFields(const Function& function)
     return !function.creator.is<CreatorRecord::None>() || function.derivation != Derivation { } || !function.inlineFrames.isEmpty();
 }
 
-// Call only after findErrorInWordsOfFunctionRecord() finds nothing: capabilitiesOf() and hasSourceBodyOf() index by role. Returns null if no rule is broken.
 ASCIILiteral findBrokenRuleOfFunctionRecord(const Program& program, FunctionID id, const Function& function)
 {
     if (hasDerivedFunctionFields(function))

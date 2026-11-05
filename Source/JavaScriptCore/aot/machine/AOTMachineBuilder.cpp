@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCodeSites.h"
 #include "AOTMachineFolding.h"
 #include "AOTMachineTarget.h"
 #include <algorithm>
@@ -20,7 +19,6 @@
 namespace JSC { namespace AOT { namespace Machine {
 
 enum class MachineBuilderFoldFamily : uint8_t {
-    // Of integers or of numbers, by the type.
     Arithmetic,
     IntegerArithmetic,
     Bitwise,
@@ -209,11 +207,9 @@ static ALWAYS_INLINE Operation* machineBuilderFold(Builder& builder, Opcode opco
 }
 
 #if CPU(ARM64)
-// A chill Div and a plain one of the same children have different flags, so they are two values.
 static constexpr uint64_t machineBuilderPayloadOfChill = 1;
 #endif
 
-// A ZExt32 with OperationFlag::ExtendsWordThatIsNotNegative and a plain one of the same word are two values.
 static constexpr uint64_t machineBuilderPayloadOfWordThatIsNotNegative = 1;
 
 static ALWAYS_INLINE NumberingKey machineBuilderKeyOf(Opcode opcode, Type type, Operation* first, Operation* second = nullptr, Operation* third = nullptr, uint64_t payload = 0)
@@ -236,7 +232,6 @@ static NumberingKey machineBuilderKeyOfLoad(const Operation* load, Operation* ba
     return machineBuilderKeyOf(load->opcode(), load->type(), base, nullptr, nullptr, machineBuilderPayloadOfAccess(load->offset(), load->heap()));
 }
 
-// Rules 1 to 4, 6 and 7 of AOTMachineLiveness.h, which hold while one operation reads it. A second reader in a later block would cost it the fusion and a register up to there.
 static bool machineBuilderMayBeFusedIntoItsUser(const Operation* operation)
 {
     Opcode opcode = operation->opcode();
@@ -262,7 +257,6 @@ static bool machineBuilderIsBaseOfAddWithoutPosition(const Operation* operation)
     return operation->opcode() == FramePointer || operation->opcode() == SlotBase || (operation->opcode() == ArgumentReg && operation->hasNoPosition());
 }
 
-// The collector's rules take the first child of a sum for the owner, and an address takes it for the base, whichever operand was made first.
 static unsigned machineBuilderRankAmongOperands(const Operation* operation)
 {
     if (operation->has(OperationFlag::IsInnerPointer))
@@ -305,7 +299,6 @@ static MachineBuilderAddress machineBuilderAddressOf(Builder& builder, Operation
         distance += constant;
         base = base->child(0);
     }
-    // `base + ((index + constant) << amount)`: the constant goes into the distance too, and what is left of the sum is the same whatever the constant.
     if (mayChangeBase && base->opcode() == Add) {
         Operation* index = base->child(1);
         Operation* amount = index->opcode() == Shl && index->child(1)->hasInt32() ? index->child(1) : nullptr;
@@ -356,8 +349,6 @@ static bool machineBuilderCovers(const HeapTree& tree, const HeapSet& declared, 
     return false;
 }
 
-// Of a Branch or a Switch with one way left. The block takes it whenever it runs, so the class that set it apart from the other ways says nothing now.
-// Kept rare, it would make one rare region of everything behind the block.
 static Edge machineBuilderUnconditionalEdge(Edge onlyWayLeft)
 {
     return Edge(onlyWayLeft.block(), EdgeClass::Normal);
@@ -382,7 +373,6 @@ Builder::Builder(Procedure& procedure)
 
 ALWAYS_INLINE void Builder::append(Operation* operation, bool mayEndBlock)
 {
-    // Whether a Patch ends its block is asked of the Patch each time: emitters say so after they have left the block and come back.
     Block* block = m_block;
     RELEASE_ASSERT(block && block->mayBeAppendedTo());
     block->m_lastOperationMayEndBlock = mayEndBlock;
@@ -448,7 +438,6 @@ ALWAYS_INLINE Operation* Builder::appendNewComputation(Opcode opcode, Type type,
     return appendNewWithChildren<3, true>(opcode, type, first, second, third);
 }
 
-// It is shared by every origin that asks for it, so it has none.
 Operation* Builder::createNewWithoutPosition(Opcode opcode, Type type, uint64_t payload, uint32_t hash)
 {
     Operation* result = m_proc.arena().create<Operation>(opcode, type, Origin());
@@ -515,7 +504,6 @@ ScopeFork Builder::forkScope()
     return { m_numbering.mark(), m_block };
 }
 
-// A branch on a constant is a jump, so a block that the emitters made as a continuation or as an arm may have no edge at all. Nothing reaches it then, and it is not marked.
 void Builder::appendToContinuation(Block* block)
 {
     sealPendingPatch();
@@ -562,7 +550,6 @@ void Builder::appendToSuccessor(Block* block, const ScopeFork& fork)
     m_block = block;
 }
 
-// An operand that the emitters were handed as a value of Code has a register of its own, so only what a request has found is copied.
 Operation* Builder::duplicateInheritedFindIfFusable(Operation* operand)
 {
     ASSERT(wasFoundInInheritedScope(operand));
@@ -571,7 +558,6 @@ Operation* Builder::duplicateInheritedFindIfFusable(Operation* operand)
 
     Operation* copy;
     if (isLoad(operand->opcode())) {
-        // Where a write since the request has ended the load, the operand is what the word held.
         if (!m_numbering.isStillValid(machineBuilderKeyOfLoad(operand, operand->child(0)), operand))
             return operand;
         copy = reload(operand);
@@ -584,13 +570,11 @@ Operation* Builder::duplicateInheritedFindIfFusable(Operation* operand)
         else
             copy = operand->has(OperationFlag::ExtendsWordThatIsNotNegative) ? extendWordThatIsNotNegative(first) : unary(operand->opcode(), first);
     }
-    // The emitters have marked the operation that their request found.
     if (operand->isNarrowReference() && !copy->isConstant())
         copy->markAsNarrowReference();
     return copy;
 }
 
-// The requests for an operation without position leave a pending Patch alone: emitters make constants while they set a Patch up, and nothing here reads or ends a numbered load.
 Operation* Builder::const32(int32_t value)
 {
     return createWithoutPosition(Const32, Int32, static_cast<uint64_t>(static_cast<int64_t>(value)));
@@ -624,7 +608,6 @@ Operation* Builder::unary(Opcode opcode, Operation* value)
     uint32_t hash = Numbering::hashOf(key);
     if (Operation* existing = findNumbered(key, hash))
         return existing;
-    // One that was asked for with proof that the word is not negative gives the same.
     if (opcode == ZExt32) {
         NumberingKey keyWithProof = machineBuilderKeyOf(opcode, type, value, nullptr, nullptr, machineBuilderPayloadOfWordThatIsNotNegative);
         if (Operation* existing = findNumbered(keyWithProof, Numbering::hashOf(keyWithProof)))
@@ -640,7 +623,6 @@ Operation* Builder::unary(Opcode opcode, Operation* value)
 Operation* Builder::extendWordThatIsNotNegative(Operation* word)
 {
     ASSERT(word->type() == Int32);
-    // What the operations say by themselves needs no mark.
     if (rangeOf(word).min >= 0)
         return unary(ZExt32, word);
     sealPendingPatch();
@@ -760,7 +742,6 @@ Operation* Builder::chill(Opcode opcode, Operation* numerator, Operation* denomi
         return binary(opcode, numerator, denominator);
 
 #if CPU(ARM64)
-    // The instruction answers as a chill Div does. None of the folds of a plain Div, which may lean on its promises, has seen this one.
     if (opcode == Div) {
         NumberingKey key = machineBuilderKeyOf(Div, type, numerator, denominator, nullptr, machineBuilderPayloadOfChill);
         uint32_t hash = Numbering::hashOf(key);
@@ -771,10 +752,8 @@ Operation* Builder::chill(Opcode opcode, Operation* numerator, Operation* denomi
         m_numbering.add(key, hash, quotient);
         return quotient;
     }
-    // Zero alone needs an answer: the least integer by -1 is itself, which times -1 is itself again, so the remainder is zero.
     Operation* denominatorIsSafe = denominator;
 #else
-    // Neither 0 nor -1.
     Operation* one = constantOfType(type, 1);
     Operation* denominatorIsSafe = binary(Above, binary(Add, denominator, one), one);
 #endif
@@ -799,7 +778,6 @@ Operation* Builder::chill(Opcode opcode, Operation* numerator, Operation* denomi
     appendToArm(unsafeCase, fork);
     Operation* unsafeResult = zero;
 #if !CPU(ARM64)
-    // By -1 the quotient is the negation, which leaves the least integer as it is.
     if (opcode == Div)
         unsafeResult = select(denominator, unary(Neg, numerator), zero);
 #endif
@@ -835,7 +813,6 @@ Operation* Builder::select(Operation* predicate, Operation* whenNotZero, Operati
     ASSERT(whenNotZero->type() == whenZero->type());
     sealPendingPatch();
 
-    // Ahead of the peeling: Select(NotEqual(x, 0), 1, 0) is its predicate, and x is no boolean.
     if (Operation* folded = foldSelect(*this, predicate, whenNotZero, whenZero))
         return folded;
 
@@ -868,7 +845,6 @@ Operation* Builder::extract(Operation* tuple, unsigned index)
     ASSERT(tuple->type().isTuple() && index < m_proc.resultCount(tuple->type()));
     sealPendingPatch();
 
-    // The allocator binds an Extract to the place of the member, so one member has one Extract where the emitters ask twice in a row.
     for (unsigned place = m_block->size(); place--;) {
         Operation* previous = m_block->at(place);
         if (previous->opcode() != Extract || previous->child(0) != tuple)
@@ -950,7 +926,6 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
         RELEASE_ASSERT(offset >= 0 && static_cast<uint64_t>(offset) + bytesForWidth(accessWidthOf(opcode, type)) <= trapReach());
     }
 
-    // The handler of a fault reads the tested word out of the base register, so a load that traps keeps its base.
     MachineBuilderAddress address = machineBuilderAddressOf(*this, base, offset, !traps);
     NumberingKey key = machineBuilderKeyOf(opcode, type, address.base, nullptr, nullptr, machineBuilderPayloadOfAccess(address.offset, heap.index()));
     uint32_t hash = 0;
@@ -973,20 +948,6 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
         result->m_flags |= static_cast<uint16_t>(OperationFlag::Traps);
     else
         m_numbering.addLoad(key, hash, result);
-    return result;
-}
-
-Operation* Builder::load32OffWhatMayBeNoCell(Operation* base, ptrdiff_t offset, const AbstractHeap& heap)
-{
-    RELEASE_ASSERT(readsOffNoCellFault && heap.isInitialized() && base->type() == pointerType() && isRepresentableAs<int8_t>(static_cast<int64_t>(offset)));
-    sealPendingPatch();
-    checkAccess(heap, false);
-
-    // The handler of the fault reads the tested word out of the base register, so the load keeps its base. It is made anew nowhere, so it says nothing of its heap, and no other load stands for it.
-    Operation* result = appendNew(Load, Int32, base);
-    result->m_payload.memory.offset = static_cast<int32_t>(offset);
-    result->m_payload.memory.heap = heap.index();
-    result->m_flags |= static_cast<uint16_t>(OperationFlag::ReadsZeroOffNoCell);
     return result;
 }
 
@@ -1048,7 +1009,6 @@ void Builder::verifyInheritedLoads(HeapIndex writtenByOtherThreads, Function<voi
     m_verifierOfInheritedLoads = WTF::move(verifier);
 }
 
-// Nothing here is folded, numbered or copied: the comparison reads the very operation that the request was handed.
 void Builder::verifyInheritedLoad(Operation* load)
 {
     if (m_isVerifyingInheritedLoad || !wasFoundInInheritedScope(load) || load->has(OperationFlag::ReadsImmutableHeap))
@@ -1116,7 +1076,6 @@ void Builder::checkDeclaredAccess(const AbstractHeap& heap, bool isStore)
         return;
     if (!isStore && machineBuilderCovers(tree, m_declaredReads, heap.index()))
         return;
-    // A failure takes its origin from an operation, and a load that is found by its number has the origin of an earlier request.
     m_proc.fail(FailureKind::AccessOutsideDeclaredEffects, appendNew(Nop, Void));
 }
 
@@ -1172,7 +1131,6 @@ void Builder::setPhi(Operation* upsilon, Operation* phi)
     RELEASE_ASSERT(!upsilon->m_payload.phi);
     RELEASE_ASSERT(upsilon->child(0)->type() == phi->type());
 #if ASSERT_ENABLED
-    // A Jump may stand for a Branch on a constant, whose other way the Upsilon was made for: it is dead then. A Patch that ends its block may still be given successors.
     const Block* block = upsilon->owner();
     if (block->isTerminated() && (block->last()->opcode() == Branch || block->last()->opcode() == Switch))
         ASSERT(machineBuilderEdgeBetween(block, phi->owner()));
@@ -1197,14 +1155,12 @@ PatchOperation* Builder::check(Operation* predicate)
     ASSERT(predicate->type().isInt());
     sealPendingPatch();
 
-    // A Check has one way out, so it cannot test the inverse.
     SimplifiedPredicate simplified = simplifyPredicate(predicate);
     if (!simplified.isInverted)
         predicate = simplified.predicate;
     predicate = duplicateIfFusable(predicate);
 
     PatchOperation* result = PatchOperation::create(m_proc, Check, Void, m_origin);
-    // The late path leaves the function, so the code behind the Check sees nothing of what it does.
     result->effects = Effects::none();
     result->effects.exitsSideways = true;
     result->effects.reads = HeapSet::top();
@@ -1229,7 +1185,6 @@ Operation* Builder::findPurePatch(const PureFunction& function, Type type, std::
         Operation* integer = operands[0]->child(0);
         if (integer->type() == Int32)
             return unary(SExt32, integer);
-        // Every integer of magnitude up to 2^53 is exactly representable as a double.
         constexpr int64_t limit = int64_t { 1 } << 53;
         IntegerRange range = rangeOf(integer);
         if (range.min >= -limit && range.max <= limit)
@@ -1372,7 +1327,6 @@ void Builder::sealPatch()
 {
     PatchOperation* patch = std::exchange(m_pendingPatch, nullptr);
     ASSERT(!patch->effects.terminal || patch->owner()->last() == patch);
-    // Other code runs during a suspension, and the frame comes back without the slots that are dead there, whatever the effects say.
     m_numbering.didWrite(patch->isSuspension() ? HeapSet::top() : patch->effects.writes);
     if (patch->isSuspension())
         m_numbering.didSuspend();

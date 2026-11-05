@@ -30,8 +30,6 @@
 # WALK: ReturnCall
 
 module m0 path="ring-of-tail-calls-that-goes-through-a-built-in-that-forwards-the-call.ts" displayPath="ring-of-tail-calls-that-goes-through-a-built-in-that-forwards-the-call.ts" body=f0 namespaceLayout=L(m0)
-module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
-module m2 path="/$bun/js/engine/ReflectObject.ts" displayPath="/$bun/js/engine/ReflectObject.ts" flags=[IsLibrary] namespaceLayout=L(m2)
 entry module=m0
 variable g0 name="ping" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="pong" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
@@ -236,43 +234,3 @@ function f5 name="floor" module=m0 position=328 flags=[IsChecked, HasExplicitNam
     v22 = Call v19, v18, v21 calleeName="Math.floor" @427
     ReturnCall v22 casts=[{declared={type=number}}, {declared={type=number}}] @427
 }
-function f6 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything, v1: anything, v2: anything):
-    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
-    v4 = StrictEq v0, v3 @1248
-    Branch v4 -> taken b2(), notTaken b1() @1248
-  b1():
-    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
-    v6 = StrictEq v0, v5 @1283
-    Branch v6 -> taken b2(), notTaken b3() @1283
-  b2():
-    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
-    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
-    ReturnCall v8 @1333
-  b3():
-    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
-    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
-    ReturnCall v10 @1414
-}
-function f7 name="apply" module=m2 position=1385 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=ReflectObjectApply thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything, v1: anything, v2: anything):
-    v3 = TypeTest v0 testedType=function @1474
-    Branch v3 -> taken b1(| 0), notTaken b4(| 0) @1474
-  b1(v4):
-    v5 = NarrowByTest v0, v4 @1474
-    v6 = TypeTest v2 testedType=object @1589
-    Branch v6 -> taken b2(| 0), notTaken b3(| 0) @1589
-  b2(v7):
-    v8 = NarrowByTest v2, v7 @1589
-    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1710
-    v10 = Call v9, v5, v1, v8 [isDoneInPlace] @1710
-    ReturnCall v10 @1710
-  b3(v11):
-    v12 = ThrowNewError errorKind=TypeError message="Reflect.apply requires the third argument be an object" @1623
-    Unreachable @1623
-  b4(v13):
-    v14 = ThrowNewError errorKind=TypeError message="Reflect.apply requires the first argument be a function" @1503
-    Unreachable @1503
-}
-runtimefunction id=FunctionPrototypeApply function=f6
-runtimefunction id=ReflectObjectApply function=f7

@@ -15,7 +15,6 @@
 #include "AOTPlan.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
-#include "AOTSlowFrames.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
 #include <utility>
@@ -27,7 +26,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// No fact is asked. Which entry parameters get no word, what a slot is laid out for, and what a variable holds whose object waits in the variable beside it, is Plan's to say, as it is for the walk.
 class PositionsOfCodeVerifier final : public PositionTypes {
     WTF_MAKE_NONCOPYABLE(PositionsOfCodeVerifier);
 public:
@@ -47,8 +45,6 @@ public:
     }
 
     TypeID environmentField(TypeLevel, LayoutID, uint32_t) const final { return { }; }
-    // As Walker::PositionsOfWalk::slot() answers. No answer would hold a store to what is written of the field, and a field of the result of a built-in is written as the built-in fills it:
-    // the program may store anything there, and then the slot is laid out for more, and read as more.
     TypeID slot(TypeLevel, LayoutID layout, uint32_t field) const final
     {
         if (!m_plan)
@@ -96,8 +92,6 @@ private:
     std::span<const ValueID> operationsOf(BlockID) const;
     std::span<const EdgeID> incomingEdgesOf(BlockID) const;
 
-    // A throw leaves a block in front of whatever the block defines from its first operation that may throw on.
-    // So a block is two nodes of the flow graph. The handler edge leaves the head, which holds the parameters and the operations in front of that one. The edges of the end leave the tail.
     static uint32_t headOf(BlockID block) { return block.index() * 2; }
     static uint32_t tailOf(BlockID block) { return block.index() * 2 + 1; }
     static bool isTail(uint32_t node) { return node & 1; }
@@ -132,7 +126,6 @@ private:
     void verifyReturn(BlockID, const Terminator&);
     void verifyArguments(BlockID from, const Edge&, uint32_t place, uint32_t numberOfDeclaredResults, bool isHandlerEdge);
     void verifyNarrowed(BlockID, ValueID, const Operation&);
-    void verifyLeave(BlockID, ValueID, const Operation&);
     void verifyPointerIntoStorage(BlockID, ValueID access, ValueID pointer, Opcode readOfPointer, ValueID owner);
     void verifyFramePointersTakenBy(BlockID, ValueID, const Operation&);
     void verifyFramePointersTakenByEnd(BlockID, const Terminator&);
@@ -172,28 +165,22 @@ private:
     String m_failure;
     InternalErrorKind m_kindOfFailure { InternalErrorKind::OpcodeNotInForm };
 
-    // By record. A parameter has the place zero. The operations of a block count from one on.
     Vector<uint32_t> m_places;
     BitVector m_isOwnedByEnd;
     BitVector m_mayPointIntoFrame;
-    // By block.
     Vector<uint32_t> m_firstOperation;
     Vector<uint32_t> m_placeOfFirstThrow;
     Vector<uint32_t> m_firstIncomingEdge;
-    // By node.
     Vector<uint32_t> m_numbers;
     Vector<uint32_t> m_dominators;
-    // The dominator tree is numbered in preorder: what a node dominates has the numbers from the first to the last.
     Vector<uint32_t> m_firstNumberOfSubtree;
     Vector<uint32_t> m_lastNumberOfSubtree;
 
     Vector<ValueID> m_operations;
     Vector<EdgeID> m_incomingEdges;
     Vector<BlockID, 2> m_entryBlocks;
-    // In reverse postorder.
     Vector<uint32_t> m_nodesInOrder;
     Vector<BlockID> m_reachedBlocks;
-    // Of the record being verified, by the schema's operand index.
     Vector<TypeID, 16> m_operandTypes;
     Vector<Representation, 16> m_operandForms;
 };
@@ -239,7 +226,6 @@ void CodeVerifier::fail(BlockID block, ValueID record, ASCIILiteral rule, ValueI
         return;
     m_kindOfFailure = kind;
     StringBuilder text;
-    // Code is gone when the text is read, so each number brings the name of what it stood for.
     auto appendRecord = [&](ASCIILiteral prefix, ValueID id) {
         text.append(prefix, id.index());
         if (isRecord(id) && static_cast<unsigned>(m_code.at(id).opcode) < numberOfEnumerators<Opcode>)
@@ -475,9 +461,6 @@ void CodeVerifier::computeDominators()
     m_dominators.fill(notReached, m_numbers.size());
     m_dominators[root()] = root();
 
-    // By node: the epoch in which a climb last left it. Each search for the dominator of one node is an epoch.
-    // Whatever a climb has left in an epoch lies below the dominator found so far, and so does a predecessor that climbs to such a node.
-    // So all the blocks that throw to one handler block cost one climb together, and not one each.
     Vector<uint32_t> epochOfLastClimb;
     epochOfLastClimb.fill(0, m_numbers.size());
     uint32_t epoch = 0;
@@ -526,7 +509,6 @@ void CodeVerifier::numberDominatorTree()
 {
     uint32_t numberOfNodes = m_numbers.size();
 
-    // In m_nodesInOrder a dominator stands in front of whatever it dominates.
     Vector<uint32_t> sizeOfSubtree;
     sizeOfSubtree.fill(1, numberOfNodes);
     for (size_t index = m_nodesInOrder.size(); --index;) {
@@ -695,7 +677,6 @@ void CodeVerifier::verifyFormsOfOperands(BlockID block, ValueID id, const Record
     }
 }
 
-// What has no register holds no value, whatever its type: a closure that its slot leaves unmade. A use that needs the value asks for a form that has a register.
 bool CodeVerifier::hasLegalForm(const Operation& record) const
 {
     if (!record.type || record.representation == Representation::Unchosen)
@@ -705,7 +686,6 @@ bool CodeVerifier::hasLegalForm(const Operation& record) const
     return isLegalRepresentation(m_types.at(record.type), record.representation);
 }
 
-// Nothing: how many results a direct call hands back is Plan's to say, and there is no plan.
 std::optional<uint32_t> CodeVerifier::numberOfResultsGivenBy(const Operation& producer) const
 {
     if (producer.opcode != Opcode::CallDirect)
@@ -716,7 +696,6 @@ std::optional<uint32_t> CodeVerifier::numberOfResultsGivenBy(const Operation& pr
     return conventions.numberOfResults(conventions.unitEnteredBy(producer));
 }
 
-// By its type such a record is undefined, which passes under every kind that takes a value of JavaScript. Its word holds none of the results: a ResultAt reads one, and an end that returns hands all of them on.
 bool CodeVerifier::holdsNoneOfItsResults(const Operation& producer) const
 {
     if (!opcodesThatMayHaveSeveralResults.contains(producer.opcode))
@@ -741,7 +720,6 @@ EffectTraits CodeVerifier::boundOnTraitsOf(const Operation& operation)
         if (!protocolsOf(opcode, operandIndex).isEmpty() || operandUsesOf(opcode, operandIndex).containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly }))
             bound |= EffectTraits(Effects::unknownCode());
     }
-    // Under a handler whatever may collect may throw for lack of memory: Walker::append().
     if (bound.mayCollect()) {
         Effects ofFailedAllocation = Effects::none();
         ofFailedAllocation.mayThrow = ThrowEffect::onlyForLackOfMemory();
@@ -798,7 +776,6 @@ ValueID CodeVerifier::cellBehindNames(ValueID id) const
     return id;
 }
 
-// Known::setLatest(): a parameter of a join whose every argument is a name of one value is a name of it too. So two names of one value have the same answer here: whatever the edges bring, behind names and parameters, ascending.
 void CodeVerifier::collectCellsThatArriveUnder(ValueID name, Vector<ValueID, 4>& cells) const
 {
     Vector<ValueID, 8> waiting { name };
@@ -812,7 +789,6 @@ void CodeVerifier::collectCellsThatArriveUnder(ValueID name, Vector<ValueID, 4>&
             index = std::ranges::find(parameters, cell) - parameters.begin();
             incoming = incomingEdgesOf(m_code.blockOf(cell));
         }
-        // What is left stands for a result that the end of a block declares.
         bool isFilledByArguments = !incoming.empty() && std::ranges::all_of(incoming, [&](EdgeID edge) { return index < m_code.at(edge).arguments().size(); });
         if (!isFilledByArguments) {
             if (!cells.contains(cell))
@@ -828,7 +804,6 @@ void CodeVerifier::collectCellsThatArriveUnder(ValueID name, Vector<ValueID, 4>&
     std::ranges::sort(cells, { }, &ValueID::index);
 }
 
-// The emitter loads and stores through the pointer and never looks at the cell. That nothing has made the storage anew in between is Known's to say.
 void CodeVerifier::verifyPointerIntoStorage(BlockID block, ValueID access, ValueID pointer, Opcode readOfPointer, ValueID owner)
 {
     if (!pointer)
@@ -870,7 +845,6 @@ size_t CodeVerifier::numberOfWrittenCasesOf(const Terminator& end)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Most lists of results are read by ResultAt alone and take their values as they are. The one that the unit returns lies where the convention of the unit says.
 void CodeVerifier::verifyReturn(BlockID block, const Terminator& end)
 {
     ValueID returned = end.valueOperand();
@@ -883,7 +857,6 @@ void CodeVerifier::verifyReturn(BlockID block, const Terminator& end)
         return fail(block, returned, "the unit returns another number of results than its convention has"_s);
     for (uint32_t index = 0; index < values.size(); ++index) {
         Representation planned = conventions.resultRepresentation(unit, index);
-        // Nobody takes a result that has no word, so what stands in its place says nothing: appendResultOfSplitReturn().
         if (values[index] && planned == Representation::Void)
             continue;
         if (!values[index] || !isSameWord(m_code.at(values[index]).representation, planned))
@@ -973,79 +946,8 @@ void CodeVerifier::verifyEnd(BlockID block, uint32_t place)
         verifyArguments(block, m_code.at(handler), place, 0, true);
         return;
     }
-    // A handler block that only throws on what it takes is given up by every block that throws to it, so nothing reaches it: Sweep::handlerOnlyThrowsOutOfUnit().
     if (contents.handler && isReached(m_code.at(contents.handler).to) && (m_placeOfFirstThrow[block.index()] < place || declaredBoundOf(end.kind).mayThrow))
         fail(block, { }, "the block stands under a handler, may throw, and has lost its handler edge"_s);
-}
-
-// Nothing is claimed of a value that crosses: the slow body takes each for anything. What is asked: the words speak of as many values as there are operands, each frame names a function and lists values of its body, ascending,
-// and each operand has a form that the row of a point takes.
-void CodeVerifier::verifyLeave(BlockID block, ValueID id, const Operation& leave)
-{
-    std::span<const uint32_t> words = leave.frames();
-    std::span<const ValueID> values = leave.valuesOperands();
-    size_t numberOfValues = 0;
-    if (words.empty())
-        return fail(block, id, "a Leave names no frame"_s);
-    if (leave.opcode == Opcode::LeaveCopies && (words.size() < 3 || !(words[2] & (1u << 16))))
-        return fail(block, id, "copies are left for frames that are not entered at their heads"_s);
-    while (!words.empty()) {
-        if (words.size() < 4 || words.size() - 4 < words[3])
-            return fail(block, id, "the words of a Leave end in the middle of a frame"_s);
-        // Between the frame of a constructor and that of its caller: `this` and nothing else.
-        if (words[0] == UINT32_MAX) {
-            if (words[3] != 1 || words.data() == leave.frames().data() || words.size() == 5)
-                return fail(block, id, "the frame of a Leave that selects the result of a construction does not hold one value between two frames"_s);
-            ++numberOfValues;
-            words = words.subspan(5);
-            continue;
-        }
-        constexpr uint32_t arrivesAtHead = 1u << 16;
-        constexpr uint32_t isArgument = 1u << 31;
-        constexpr uint32_t isThisOfConstruction = 1u << 30;
-        if (words[0] >= m_program.functions.size() || words[2] > (UINT16_MAX | arrivesAtHead))
-            return fail(block, id, "a frame of a Leave names no function, or an entry that no unit can have"_s);
-        // The slow body is entered at its head. So are all frames of the record or none. Two more words: the number of heap words of the cell, and one more than the word of the operation in whose place the copy above stood.
-        // Its list: arguments, ascending by entry parameter, then the heap words that are filled, ascending, then `this` where that copy stood for a construction.
-        bool isInnermost = words.data() == leave.frames().data();
-        if (!isInnermost && !!(words[2] & arrivesAtHead) != !!(leave.frames()[2] & arrivesAtHead))
-            return fail(block, id, "a frame of a Leave that arrives at the head of a slow body stands beside one that does not"_s);
-        if (words[2] & arrivesAtHead) {
-            if (words.size() < 6 || words.size() - 6 < words[3] || words[2] != arrivesAtHead || words[1] > static_cast<uint32_t>(INT32_MAX))
-                return fail(block, id, "a frame of a Leave that arrives at the head of a slow body ends in the middle, or names an entry, or a number that is no int32"_s);
-            std::span<const uint32_t> list = words.subspan(6, words[3]);
-            uint32_t numberOfHeapWords = words[4];
-            bool hasThis = !list.empty() && list.back() == isThisOfConstruction;
-            if (isInnermost ? words[5] || hasThis : !words[4])
-                return fail(block, id, "the innermost frame of a Leave waits for a copy to return, or another frame has no cell"_s);
-            if (words[5] > words[4])
-                return fail(block, id, "what a copy returns goes into a word that the cell of its caller does not have"_s);
-            numberOfValues += list.size();
-            words = words.subspan(6 + list.size());
-            list = list.first(list.size() - hasThis);
-            for (size_t index = 0; index < list.size(); ++index) {
-                bool isArgumentHere = list[index] & isArgument;
-                bool isInOrder = !index || (list[index - 1] < list[index] && isArgumentHere == !!(list[index - 1] & isArgument)) || (!isArgumentHere && (list[index - 1] & isArgument));
-                if (!isInOrder || (!isArgumentHere && list[index] >= numberOfHeapWords))
-                    return fail(block, id, "the list of a Leave that arrives at a head does not hold arguments, ascending, and then words of the cell, ascending"_s);
-            }
-            continue;
-        }
-        uint32_t numberOfValuesOfBody = m_program.at(FunctionID(words[0])).body.numberOfValues();
-        std::span<const uint32_t> liveList = words.subspan(4, words[3]);
-        for (size_t index = 0; index < liveList.size(); ++index) {
-            if (liveList[index] >= numberOfValuesOfBody || (index && liveList[index - 1] >= liveList[index]))
-                return fail(block, id, "the live list of a frame of a Leave does not ascend through values of the body"_s);
-        }
-        numberOfValues += liveList.size();
-        words = words.subspan(4 + liveList.size());
-    }
-    if (numberOfValues != values.size())
-        return fail(block, id, "a Leave has another number of operands than its frames list"_s);
-    for (ValueID value : values) {
-        if (!value || !crossesInItsForm(m_code.at(value).representation))
-            return fail(block, id, "an operand of a Leave has a form that does not cross"_s, value);
-    }
 }
 
 void CodeVerifier::verifyBlock(BlockID block)
@@ -1057,24 +959,10 @@ void CodeVerifier::verifyBlock(BlockID block)
     }
 
     bool standsAtHead = true;
-    ValueID leave;
     bool followsOnlyCatches = true;
     uint32_t place = 0;
     for (ValueID id : operationsOf(block)) {
         const Operation& operation = m_code.at(id);
-        if (leave)
-            return fail(block, id, "an operation stands behind a Leave"_s, leave);
-        if (operation.opcode == Opcode::LeaveCopies) {
-            verifyLeave(block, id, operation);
-            if (hasFailed())
-                return;
-        }
-        if (operation.opcode == Opcode::Leave) {
-            leave = id;
-            verifyLeave(block, id, operation);
-            if (hasFailed())
-                return;
-        }
         if (operation.opcode != Opcode::Narrowed)
             standsAtHead &= operationsThatStandAmongNarrowedValues.contains(operation.opcode);
         else if (!standsAtHead)
@@ -1087,8 +975,6 @@ void CodeVerifier::verifyBlock(BlockID block)
         if (hasFailed())
             return;
     }
-    if (leave && contents.terminator.kind != TerminatorKind::Unreachable)
-        return fail(block, leave, "the block of a Leave does not end in Unreachable"_s);
     verifyEnd(block, ++place);
 }
 
@@ -1119,7 +1005,6 @@ ValueID CodeVerifier::valueBeforeConversions(ValueID id) const
     }
 }
 
-// typeOfNarrowed() goes by the same reads. Null: `id` is none of them.
 ValueID CodeVerifier::holderOfSlotRead(ValueID id) const
 {
     const Operation& read = m_code.at(id);
@@ -1140,7 +1025,6 @@ void CodeVerifier::verifyNarrowed(BlockID block, ValueID id, const Operation& na
     uint32_t targetIndex = incoming[0].index() - end.firstEdge.index();
     ValueID value = valueBeforeConversions(narrowed.valueOperand());
 
-    // Its code tests nothing: the word of the value is handed on as it is, as a narrow reference that stays one, or goes through conversions that are right for the narrower type.
     Representation formOfValue = m_code.at(narrowed.valueOperand()).representation;
     if (hasRegister(narrowed.representation) && !findConversion(m_types, narrowed.type, formOfValue, narrowed.representation))
         return fail(block, id, "no conversion leads from the form of the value of a Narrowed to the form of the Narrowed"_s, narrowed.valueOperand());
@@ -1171,7 +1055,6 @@ void CodeVerifier::verifyNarrowed(BlockID block, ValueID id, const Operation& na
         return fail(block, id, "a Narrowed stands on the side of the branch on which its test has the other outcome"_s, test);
 
     if (narrowed.narrowsOtherResultOfOperand()) {
-        // Which producers, and which of their results, is typeOfNarrowed()'s question.
         ValueID producer = operandAt(m_code.at(test), narrowed.operandIndex());
         bool readOneProducer = producer && m_code.at(test).opcode == Opcode::ResultAt && m_code.at(value).opcode == Opcode::ResultAt && m_code.at(value).resultsOperand() == producer;
         if (!readOneProducer || value == test || narrowed.narrowsHolderOfOperand())
@@ -1202,7 +1085,6 @@ void CodeVerifier::verifyNarrowedValues()
     }
 }
 
-// What a callee does with an argument is its summary's to say, and Facts has allowed the frame by it.
 bool CodeVerifier::handsOperandsToCallee(Opcode opcode)
 {
     switch (effectRuleOf(opcode)) {
@@ -1227,7 +1109,6 @@ bool CodeVerifier::handsOperandsToCallee(Opcode opcode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The operand that the result surely is. Where the schema calls the result unknown, what is handed back is only one of the values that may come: DirectEval gives its text, or what the text evaluates to.
 ValueID CodeVerifier::operandHandedBackBy(const Operation& operation)
 {
     if (handsOperandsToCallee(operation.opcode) || resultRuleOf(operation.opcode) == ResultRule::Unknown)
@@ -1265,7 +1146,6 @@ bool CodeVerifier::handsBackPointerIntoFrame(const Operation& operation) const
 void CodeVerifier::verifyFramePointersTakenBy(BlockID block, ValueID id, const Operation& operation)
 {
     if (handsOperandsToCallee(operation.opcode)) {
-        // No callee is handed what an awaited call holds: the saved frame of this function keeps it, and comes back at another address.
         for (uint32_t operandIndex = 0; operandIndex < operation.numberOfOperands(); ++operandIndex) {
             ValueID operand = operation.operand(operandIndex);
             if (operand && mayPointIntoFrame(operand) && isHeldOperand(operation, operandIndex))
@@ -1277,7 +1157,6 @@ void CodeVerifier::verifyFramePointersTakenBy(BlockID block, ValueID id, const O
         ValueID operand = operation.operand(operandIndex);
         if (!operand || !mayPointIntoFrame(operand))
             continue;
-        // A Narrowed, or a check that hands its operand on, may give it another form as a Compress does.
         bool handsOnAsNarrowReference = operation.representation == Representation::Cell32 && operation.operandUses(operandIndex).contains(OperandUse::Returns);
         if (operation.opcode == Opcode::Compress || handsOnAsNarrowReference)
             return fail(block, id, "the address of a cell of the frame is made a 32-bit reference"_s, operand);
@@ -1310,7 +1189,6 @@ void CodeVerifier::verifyFramePointersTakenByEnd(BlockID block, const Terminator
     switch (end.kind) {
     case TerminatorKind::ReturnCall:
         m_code.at(end.callOperand()).forEachChild([&](ValueID operand) {
-            // NewClosure[isLent]: the code of a tail call by value keeps the frame, or hands over a copy on the heap.
             const Operation& made = m_code.at(cellBeforeForwarding(operand));
             bool isMovedOutOfFrame = m_code.at(end.callOperand()).opcode == Opcode::Call && made.opcode == Opcode::NewClosure && made.isLent();
             if (mayPointIntoFrame(operand) && !isMovedOutOfFrame)
@@ -1388,8 +1266,6 @@ void CodeVerifier::verifyFrameCells()
             return;
     }
 
-    // The copy of an environment that a call is lent dies with the call and the reads behind it: behind a parameter of a block nobody could tell it from the environment itself.
-    // An environment whose layout lies only in frames is no copy, and its type says where it lies behind any parameter.
     for (BlockID block : m_reachedBlocks) {
         m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
             for (ValueID argument : edge.arguments()) {
@@ -1404,12 +1280,9 @@ void CodeVerifier::verifyFrameCells()
             return;
     }
 
-    // A saved frame resumes at another address. So nothing suspends on any way from what makes a pointer into the frame to whatever reads it.
-    // The end of a block is no suspension: the edge to a handler ends the block between a closure that is left to the stub of a call and the call.
     if (!isBodyOfCoroutine(m_code.role(), m_program.at(m_code.function()).isCoroutine()))
         return;
 
-    // By block. Zero: nothing in the block suspends.
     Vector<uint32_t> placeOfLastSuspension;
     placeOfLastSuspension.fill(0, m_code.numberOfBlocks());
     for (BlockID block : m_reachedBlocks) {
@@ -1421,7 +1294,6 @@ void CodeVerifier::verifyFrameCells()
         }
     }
 
-    // The maker dominates the reader, so every way back from the head of the reader ends at the maker. A reader in a loop that the maker stands in front of lies on such a way itself.
     BitVector isOnWay(m_code.numberOfBlocks());
     Vector<BlockID, 16> blocksToLookAt;
     auto maySuspendBetweenMakerAndHeadOf = [&](BlockID reader, ValueID made) {
@@ -1450,7 +1322,6 @@ void CodeVerifier::verifyFrameCells()
         return false;
     };
 
-    // The emitter holds the characters of a flat string by a raw pointer. While the body is suspended the text may become a key, which gives it other characters, and nothing on a stack keeps the old ones.
     auto isFlatString = [&](ValueID id) {
         TypeID type = m_code.at(id).type;
         return type && m_types.at(type).isOpaque(OpaqueKind::FlatString);

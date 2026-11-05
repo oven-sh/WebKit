@@ -56,7 +56,6 @@ using Typed::TypeSiteKind;
 template<typename T>
 inline constexpr bool isImageRecord = std::is_trivially_copyable_v<T> && std::is_standard_layout_v<T> && std::has_unique_object_representations_v<T>;
 
-// A number under 2^24 in a table of the image.
 struct Number24 {
     static constexpr uint32_t max = (1u << 24) - 1;
 
@@ -74,7 +73,6 @@ struct Number24 {
 static_assert(sizeof(Number24) == 3 && alignof(Number24) == 1 && isImageRecord<Number24>);
 static_assert(Number24(0xabcdef) == 0xabcdefu && Number24(Number24::max) == Number24::max && !Number24());
 
-// Lies at any address, so a record of these and of Number24 has no padding.
 struct Number32 {
     constexpr Number32() = default;
     explicit constexpr Number32(uint32_t number)

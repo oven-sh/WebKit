@@ -37,7 +37,6 @@ static constexpr OperandUses usesThatReachPastOperandsOfHeldBackStore {
     OperandUse::AppliesToContents,
 };
 
-// Each clears a mark in the cell that its operand names. The schema files that under RuntimeState, so no use of the operand says that it is written.
 static constexpr OpcodeSet heldBackOpcodesThatWriteWordOfTheirCell { Opcode::FinishBirth, Opcode::TryFinishBirth };
 static_assert(OperandIndex::FinishBirth::object == OperandIndex::TryFinishBirth::object);
 
@@ -55,14 +54,11 @@ static constexpr bool writesReceiverOfHeldBackStore(Access access)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// The one named operand that the operation writes into, where the roles of its operands let it reach no other object.
-// Which heaps it writes lies with the operands it has: the traits of the record say that. They do not say whose objects a function writes that a protocol has been found to call.
 static std::optional<uint32_t> operandWrittenByHeldBackStore(Opcode opcode)
 {
     if (heldBackOpcodesThatWriteWordOfTheirCell.contains(opcode))
         return OperandIndex::FinishBirth::object;
 
-    // One array links an allocation to its stores and the stores to each other, so no record may be both.
     if (resultRuleOf(opcode) == ResultRule::Allocation || opcode == Opcode::NewClosure)
         return std::nullopt;
 
@@ -102,33 +98,18 @@ static std::optional<uint32_t> operandWrittenByHeldBackStore(Opcode opcode)
     return written;
 }
 
-// The row of the overload says that each call makes what it answers with. Where a species may make it instead, the traits do not say whose function that is.
 static bool isCallOfBuiltinWhoseStoresAreHeldBack(const BuiltinTable& builtins, const Operation& call)
 {
     const BuiltinOverload& overload = builtins.at(call.overload());
     bool answersAsRowSays = call.opcode == Opcode::CallBuiltin ? call.builtinCallForm() == BuiltinCallForm::Whole : overload.code.implementation.inlineBuiltin == call.inlineBuiltin();
-    // Done in place, it answers with the cell of its receiver.
     if (!answersAsRowSays || call.isDoneInPlace() || !builtins.contains(overload.result.type))
         return false;
     return builtins.at(overload.result.type).freshness == BuiltinFreshness::Yes;
 }
 
-// When it has run, no memory and no other value names its result.
-// None of these is a store for operandWrittenByHeldBackStore(): an operand that is kept in the result or called ends the question there, and Data has no operand.
-static bool isAllocationWhoseStoresAreHeldBack(const BuiltinTable& builtins, const Operation& made)
+static bool isOpcodeOfAllocationWhoseStoresAreHeldBack(Opcode opcode)
 {
-    EffectTraits traits = made.traits();
-    if (traits.mayWriteWhatIsSeen() || traits.mayRunOtherCode())
-        return false;
-
-    Opcode opcode = made.opcode;
-    if (opcode == Opcode::CallBuiltin || opcode == Opcode::CallInline)
-        return isCallOfBuiltinWhoseStoresAreHeldBack(builtins, made);
-    // A closure is asked about by itself: isClosureWhoseStoresAreHeldBack().
     if (opcode == Opcode::NewClosure || effectRuleOf(opcode) != EffectRule::Declared || boundToOf(opcode) == BoundTo::Site)
-        return false;
-    // Every evaluation hands out the one cell of the place.
-    if ((opcode == Opcode::Data || opcode == Opcode::NewRegExp) && made.isNeverToldApart())
         return false;
 
     bool keepsOperandInResult = false;
@@ -139,11 +120,30 @@ static bool isAllocationWhoseStoresAreHeldBack(const BuiltinTable& builtins, con
             return false;
         keepsOperandInResult |= info.uses.contains(OperandUse::Retains) && info.retainedIn == RetainedIn::Result;
     }
-    // Whatever keeps an operand in its result has made the result.
     return resultRuleOf(opcode) == ResultRule::Allocation || keepsOperandInResult || opcode == Opcode::Data;
 }
 
-// The same of a closure, whose rule is that of a constant. The closure table hands its one cell to whoever reads the function elsewhere, and a closure on demand is the mark in a slot whose first read makes the cell.
+static constexpr uint8_t opcodeOfHeldBackAllocationIsNotLookedUp = 0;
+static constexpr uint8_t isNoOpcodeOfHeldBackAllocation = 1;
+static constexpr uint8_t isOpcodeOfHeldBackAllocation = 2;
+
+static bool isAllocationWhoseStoresAreHeldBack(const BuiltinTable& builtins, const Operation& made, std::array<uint8_t, numberOfEnumerators<Opcode>>& answersOfSchema)
+{
+    EffectTraits traits = made.traits();
+    if (traits.mayWriteWhatIsSeen() || traits.mayRunOtherCode())
+        return false;
+
+    Opcode opcode = made.opcode;
+    if (opcode == Opcode::CallBuiltin || opcode == Opcode::CallInline)
+        return isCallOfBuiltinWhoseStoresAreHeldBack(builtins, made);
+    uint8_t& answerOfSchema = answersOfSchema[static_cast<unsigned>(opcode)];
+    if (answerOfSchema == opcodeOfHeldBackAllocationIsNotLookedUp)
+        answerOfSchema = isOpcodeOfAllocationWhoseStoresAreHeldBack(opcode) ? isOpcodeOfHeldBackAllocation : isNoOpcodeOfHeldBackAllocation;
+    if (answerOfSchema == isNoOpcodeOfHeldBackAllocation)
+        return false;
+    return !((opcode == Opcode::Data || opcode == Opcode::NewRegExp) && made.isNeverToldApart());
+}
+
 static bool isClosureWhoseStoresAreHeldBack(const Operation& made)
 {
     if (made.opcode != Opcode::NewClosure || made.isHeldByClosureTable() || made.isMadeOnDemand())
@@ -167,15 +167,11 @@ static constexpr uint8_t firstOperandWrittenByHeldBackStore = 2;
 
 bool Sweep::isStoreIntoOwnObject(const Operation& operation, ValueID& object)
 {
-    // The effects of such a store are those of a definition, which may be refused. The walk has found that this one is not.
     bool isPlainStoreToClosure = operation.opcode == Opcode::PropSet && operation.isPlainStoreToClosure();
 
-    // A store by name or by key may end in a setter, which writes into objects of its own choice. The traits do not tell those from the receiver.
-    // A definition looks for no setter. A store by key goes out in operandWrittenByHeldBackStore(), for the protocol on its key.
     if (effectRuleOf(operation.opcode) == EffectRule::Access && accessOf(operation.opcode) == Access::Store && !isPlainStoreToClosure)
         return false;
 
-    // An access that tests its own guess has the traits of the generic operation on its failing side, and goes out here.
     EffectTraits traits = operation.traits();
     if ((traits.mayThrowByRule() && !isPlainStoreToClosure) || traits.mayBeTerminated() || traits.mayRunOtherCode() || traits.mayWriteOutsideObjects())
         return false;
@@ -191,14 +187,11 @@ bool Sweep::isStoreIntoOwnObject(const Operation& operation, ValueID& object)
     if (!name)
         return false;
 
-    // Whatever needs another name of the object needs the allocation through it. A store through a parameter of a block stays a root.
-    // A constant bears no traits to go by.
     ValueID allocation = rootOfCellInSweptCode(*m_code, name);
-    if (m_code->isConstant(allocation))
-        return false;
-    // Of all that writes into a closure, only what the walk has marked waits for it.
     const Operation& made = m_code->at(allocation);
-    if (isPlainStoreToClosure ? !isClosureWhoseStoresAreHeldBack(made) : !isAllocationWhoseStoresAreHeldBack(m_inputs->program.builtins(), made))
+    if (made.blockIndex == Operation::noBlock)
+        return false;
+    if (isPlainStoreToClosure ? !isClosureWhoseStoresAreHeldBack(made) : !isAllocationWhoseStoresAreHeldBack(m_inputs->program.builtins(), made, m_opcodesOfAllocationsWhoseStoresAreHeldBack))
         return false;
 
     object = allocation;
@@ -225,7 +218,6 @@ void Sweep::holdBackUntilNeeded(ValueID store, ValueID object)
     m_waitingStores[object.index()] = store;
 }
 
-// `object` has left the worklist: whatever is held back for it from here on finds it needed.
 void Sweep::needStoresHeldBackFor(ValueID object)
 {
     if (!m_holdsBackStores || m_heldBack.quickGet(object.index()))

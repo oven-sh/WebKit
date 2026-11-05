@@ -18,9 +18,7 @@ namespace JSC { namespace AOT { namespace Machine {
 
 
 struct FrameAtBlock {
-    // The state at the label of the block.
     bool isEnteredInFrame() const { return runsInFrame && !isSetUpAtHead; }
-    // The state on the edges to its successors.
     bool isLeftInFrame() const { return runsInFrame && !isTornDownAtEnd; }
 
     bool runsInFrame;
@@ -73,7 +71,6 @@ static NEVER_INLINE void encodeOpaqueNumber(Encoder& encoder, const Step& step)
         encoder.m_jit.moveDouble(source, destination);
 }
 
-// On x86-64 a jump that reaches far takes four bytes more, and most tests of a function jump to its rare code: X86JumpShortener::chainJumpsIntoRareCode().
 static void noteStartOfRareCode(CCallHelpers& jit)
 {
 #if CPU(X86_64)
@@ -106,7 +103,6 @@ static CodeOfBackEnd codeOfBackEndIn(StepKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Of a step that executes nothing.
 static Origin originOfStepOfAllocator(const Encoder& encoder, uint32_t stepIndex)
 {
     ASSERT(encoder.m_notesRangesOfOrigins);
@@ -170,7 +166,6 @@ static bool blockThatJumpsOnlyJumpsOn(const Encoder& encoder, const Block* block
 {
     ASSERT(block->last()->opcode() == Jump);
 
-    // Most blocks are told apart by their steps.
     const Allocation& allocation = encoder.m_allocation;
     const BlockSteps& steps = allocation.stepsOf(block);
     if (steps.beginOfEdgeMoves != steps.endOfEdgeMoves)
@@ -201,7 +196,6 @@ static bool blockThatJumpsOnlyJumpsOn(const Encoder& encoder, const Block* block
     if (!encoder.m_hasSpills)
         return true;
 
-    // What storeSpilledValuesDefinedAtHead() stores.
     for (const Operation* phi : block->phis()) {
         if (allocation.isSpilled(phi) && !encoder.m_liveness.isDropped(phi))
             return false;
@@ -247,7 +241,6 @@ void Encoder::findBlocksWithoutCode()
     m_nextLayoutIndexWithCode[numberOfBlocksInLayout] = numberOfBlocksInLayout;
     m_numberOfBlocksWithCode = numberOfBlocksInLayout;
 
-    // Each ends at a block that has code. A ring of blocks that only jump on is a loop of the program: the block at which the way comes round keeps its jump.
     for (uint32_t index : layoutIndexesOfBlocksThatOnlyJumpOn) {
         const Block* block = layout[index];
         const Block* entered = block;
@@ -272,7 +265,6 @@ void Encoder::findBlocksWithoutCode()
 
 namespace {
 
-// Encoder::placeColdCodeNearItsJumps().
 class OrderOfWriting {
 public:
     explicit OrderOfWriting(Encoder& encoder)
@@ -287,7 +279,6 @@ public:
     {
     }
 
-    // False where the layout stands.
     bool run();
     uint32_t beginOfRareCode() const { return m_beginOfRareCode; }
 
@@ -297,9 +288,7 @@ private:
     static constexpr uint32_t mostBytesOfPiece = 64;
     static constexpr uint32_t noPiece = UINT32_MAX;
 
-    // What may be written anywhere: a rare region, or a run of unlikely blocks that nothing falls into and nothing falls out of.
     struct Piece {
-        // In the layout.
         uint32_t begin { 0 };
         uint32_t end { 0 };
         bool isRun { false };
@@ -309,7 +298,6 @@ private:
     struct Entrance {
         uint32_t piece;
         uint32_t bytesOfPiece;
-        // From the head of the run to the end of the block that jumps.
         uint32_t bytesInFront;
     };
 
@@ -344,7 +332,6 @@ private:
     }
 
     void findPieces();
-    // Writes the blocks from there on up to one that nothing falls out of, `limit` at the latest, and the pieces that find a place beside them. Returns where it has come to in the layout.
     uint32_t writeRun(uint32_t index, uint32_t limit, bool nothingFallsIn);
     void writePiece(Piece&);
 
@@ -357,9 +344,7 @@ private:
     UncheckedSpan<const uint32_t> m_next;
     ArenaVector<Block*>& m_written;
     ArenaVector<Piece> m_pieces;
-    // A stack: each run that is being written has its own on top.
     ArenaVector<Entrance> m_entrances;
-    // By the place in the unlikely part of the layout.
     UncheckedSpan<uint32_t> m_runsOfUnlikelyBlocks;
     uint32_t m_beginOfUnlikelyPart { 0 };
     uint32_t m_beginOfRarePart { 0 };
@@ -435,7 +420,6 @@ uint32_t OrderOfWriting::writeRun(uint32_t index, uint32_t limit, bool nothingFa
     while (somethingFallsOut && index < limit) {
         Block* block = m_layout[index];
         m_written.append(m_arena, block);
-        // Whoever jumps to the run from here on, a block of the run itself among them, finds it written.
         if (uint32_t number = pieceAheadOfRarePart(index); number != noPiece) {
             m_pieces[number].isEntered = true;
             m_pieces[number].isPlaced = true;
@@ -466,7 +450,6 @@ uint32_t OrderOfWriting::writeRun(uint32_t index, uint32_t limit, bool nothingFa
 
     const uint32_t endOfRun = m_written.size();
     if (nothingFallsIn) {
-        // They are appended, and then change places with the run.
         uint32_t bytesOfPieces = 0;
         for (size_t number = firstEntrance; number < endOfEntrances; ++number) {
             Entrance entrance = m_entrances[number];
@@ -528,7 +511,6 @@ void Encoder::placeColdCodeNearItsJumps()
 {
     if (!isX86_64() || m_proc.traits().fallsIntoWhatLiesBehind)
         return;
-    // Every jump is short.
     if (m_allocation.steps().size() <= 30)
         return;
     if (m_order.rareRegions().empty() && m_order.of(m_order.blocksInLayout().back()).layoutPart == LayoutPart::Likely)
@@ -538,7 +520,6 @@ void Encoder::placeColdCodeNearItsJumps()
     if (!order.run())
         return;
     m_beginOfRareCodeAsWritten = order.beginOfRareCode();
-    // Each block with code is written once: a second copy takes the label, and the first falls into whatever comes to stand behind it.
     const uint32_t numberOfBlocksAsWritten = m_blocksAsWritten.size();
     RELEASE_ASSERT(numberOfBlocksAsWritten && numberOfBlocksAsWritten == m_numberOfBlocksWithCode);
     m_indexAsWritten = m_arena.createSpan<uint32_t>(m_proc.numberOfBlocks());
@@ -644,7 +625,6 @@ void Encoder::encodeBlock(Block* block)
 
     m_block = block;
     label = m_jit.label();
-    // Where the rare code comes first nothing lies behind its start but all of the function.
     if (place.isRare() && !m_proc.m_rareCodeStart.isSet() && !m_isAmongOtherCode && !m_proc.traits().fallsIntoWhatLiesBehind) {
         m_proc.m_rareCodeStart = label;
         noteStartOfRareCode(m_jit);
@@ -686,13 +666,11 @@ void Encoder::encodeBlock(Block* block)
             RELEASE_ASSERT(frameAtBlock(*this, edge.block()).isEnteredInFrame() == m_blockIsLeftInFrame);
     }
     if (frame.isTornDownAtEnd) {
-        // A Patch writes its own way out, which leaves no place for the teardown behind it.
         RELEASE_ASSERT(terminator.operation->isUnconditionalJump());
         ASSERT(m_frameIsSetUp);
         leaveFrameIfSetUp();
     }
 
-    // A result of a Patch that ends the block is stored at the head of the first successor.
     noteOrigin(terminator.operation->origin(), terminator.operation->index());
     ++m_proc.m_numberOfOperationsEncoded;
     if (frame.returnsInPlaceOfJump) {
@@ -711,7 +689,6 @@ void Encoder::encodeSteps(uint32_t begin, uint32_t end)
 
     for (uint32_t index = begin; index < end; ++index) {
         const Step& step = m_allocation.step(index);
-        // An operation without position has the origin of whoever asked for it first in the function, so a Materialize is not booked to it.
         if (m_notesRangesOfOrigins) [[unlikely]] {
             if (step.kind == StepKind::Execute)
                 noteOrigin(step.operation->origin(), step.operation->index());
@@ -907,7 +884,6 @@ ALWAYS_INLINE void Encoder::encodeExecuteInline(const Step& step)
         encodeTerminator(m_block, step);
         return;
 
-    // Made again at each use by a Materialize, or taken by an instruction as part of itself.
     case Const32:
     case Const64:
     case ConstFloat:
@@ -917,7 +893,6 @@ ALWAYS_INLINE void Encoder::encodeExecuteInline(const Step& step)
     case AddressOf:
     case NumberOf:
     case InstanceAddressOf:
-    // The builder appends neither on any target.
     case Mod:
     case UMod:
         break;
@@ -929,14 +904,12 @@ void Encoder::storeToSpill(const Operation* value)
 {
     SpillIndex spill = m_allocation.spillOf(value);
     ASSERT(spill != noSpill);
-    // Without a register at its definition, steps write the spill.
     Reg source = m_allocation.registerAtDefinitionOf(value);
-    if (!source || m_allocation.spills()[spill].isStoredAtHeadOfFramedPart || setupHasPushed(spill))
+    if (!source || m_allocation.spills()[spill].isStoredAtHeadOfFramedPart || m_allocation.isWrittenByEdges(value) || setupHasPushed(spill))
         return;
 
     RELEASE_ASSERT(m_frameIsSetUp);
     ASSERT(m_allocation.spills()[spill].width == widthOf(value->type()));
-    // Like a Save, the store is the allocator's.
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::StoreBehindDefinition));
     MacroAssembler::Address address = addressOf(Location::spill(spill));
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
@@ -967,10 +940,8 @@ void Encoder::storeSpilledValuesDefinedAtHead(Block* block, const BlockPlace& pl
             storeToSpill(phi);
     }
 
-    // On the edge to a landing pad the results of the Patch do not exist.
     if (block->isLandingPad() || !m_blocksThatStoreResultOfPatchAtHead.get(block->index()))
         return;
-    // On any other edge into the block the register holds something else.
     std::span<Block* const> predecessors = place.predecessors;
     RELEASE_ASSERT(predecessors.size() == 1);
     Block* predecessor = predecessors[0];
@@ -1022,7 +993,6 @@ void Encoder::noteOriginInRanges(Origin origin, uint32_t operation)
     ArenaVector<RangeOfOrigin>& ranges = m_proc.m_rangesOfOrigins;
     if (!ranges.isEmpty() && ranges.last().origin == origin && ranges.last().operation == operation && !isOriginOfBackEnd(origin))
         return;
-    // label() forgets what the scratch registers hold, and the bytes behind it would differ.
     MacroAssembler::Label here = m_jit.labelIgnoringWatchpoints();
     if (!ranges.isEmpty())
         ranges.last().end = here;
@@ -1048,7 +1018,6 @@ bool Encoder::blockRunsInFrame(const Block* block) const
 
 void Encoder::runLatePaths()
 {
-    // A late path may add late paths, which moves the list.
     for (uint32_t index = 0; index < m_latePaths.size(); ++index) {
         PendingLatePath pending = m_latePaths[index];
         noteFrameState(pending.frameIsSetUp);
@@ -1077,7 +1046,6 @@ void Encoder::linkPendingJumps()
     m_pendingJumpTables.clear();
 }
 
-// A return is no longer than a jump to one.
 void Encoder::jumpTo(const Block* target)
 {
     if (!m_frameIsSetUp && m_blocksThatOnlyReturnWithoutFrame.get(blockEnteredThrough(target)->index())) {

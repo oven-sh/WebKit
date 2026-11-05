@@ -22,9 +22,9 @@ OpcodeSet StraightEmitter::opcodesOfArrayIntrinsics()
     return {
         Opcode::IsPristineArray, Opcode::ArrayStorageKind,
         Opcode::HasContiguousIndex, Opcode::GetContiguousIndex, Opcode::GetDoubleIndex,
-        Opcode::NewContiguousArray, Opcode::NewDoubleArray, Opcode::NewArrayLike, Opcode::NewArrayWithCapacity,
+        Opcode::NewContiguousArray, Opcode::NewArrayLike,
         Opcode::TryPutByValDirect, Opcode::TryPutIndex, Opcode::TryCopyFilledElements, Opcode::TryPutElements, Opcode::TryFillNewArray,
-        Opcode::GrowNewArray, Opcode::TruncateNewArray,
+        Opcode::TruncateNewArray,
     };
 }
 
@@ -42,7 +42,6 @@ static_assert([] {
 static_assert(!arrayStorageFormOf(ArrayStorage::Int32).hole && !arrayStorageFormOf(ArrayStorage::Contiguous).hole);
 static_assert(std::endian::native == std::endian::little);
 
-// An integer lies in its slot as an int32 or as a double.
 static void loadIntegerOperandOfList(StraightEmitter& emitter, ValueID operand, GPRReg integer)
 {
     CCallHelpers& jit = emitter.jit();
@@ -135,7 +134,6 @@ static void generateArrayStorageKind(StraightEmitter& emitter, const BodyValue& 
 
 static void generateNewArrayOfHoles(StraightEmitter& emitter, const BodyValue& value, ValueID source, ArrayStorage kind, uint32_t flags)
 {
-    static constexpr int32_t maxFusedArrayCapacity = 268435456;
     CCallHelpers& jit = emitter.jit();
     GPRReg sourceCell = operationArgumentGPR(1);
     GPRReg length = operationArgumentGPR(2);
@@ -148,11 +146,6 @@ static void generateNewArrayOfHoles(StraightEmitter& emitter, const BodyValue& v
         sourceOrNull = StraightArgument::inRegister(sourceCell);
     }
     loadIntegerOperandOfList(emitter, value.lengthOperand(), length);
-    if (flags & NewArrayWithHolesFlag::lengthIsCapacity) {
-        CCallHelpers::Jump fits = jit.branch64(CCallHelpers::Below, length, CCallHelpers::TrustedImm32(maxFusedArrayCapacity));
-        jit.move(CCallHelpers::TrustedImm32(maxFusedArrayCapacity), length);
-        fits.link(&jit);
-    }
     emitter.callOperation(value, RuntimeOperation::NewArrayWithHoles, { sourceOrNull, StraightArgument::inRegister(length), StraightArgument::word(arrayStorageFormOf(kind).indexingType), StraightArgument::word(flags) });
     emitter.define(value);
 }
@@ -201,16 +194,9 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
     case Opcode::NewContiguousArray:
         generateNewArrayOfHoles(*this, value, ValueID(), ArrayStorage::Contiguous, NewArrayWithHolesFlag::mustHaveIndexingType);
         return;
-    case Opcode::NewDoubleArray:
-        generateNewArrayOfHoles(*this, value, ValueID(), ArrayStorage::Double, NewArrayWithHolesFlag::mustHaveIndexingType);
-        return;
     case Opcode::NewArrayLike:
         generateNewArrayOfHoles(*this, value, value.sourceOperand(), ArrayStorage::Contiguous, 0);
         return;
-    case Opcode::NewArrayWithCapacity:
-        generateNewArrayOfHoles(*this, value, value.sourceOperand(), ArrayStorage::Contiguous, NewArrayWithHolesFlag::lengthIsCapacity);
-        return;
-    // Behind a no the library stores the ordinary way, which is right for every list. A list that was not filled has length 0.
     case Opcode::TryCopyFilledElements:
         load(value.arrayOperand(), temporary(1));
         jit().loadPtr(CCallHelpers::Address(temporary(1), JSObject::butterflyOffset()), temporary(1));
@@ -222,9 +208,6 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
     case Opcode::TryFillNewArray:
         jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), takeResultRegister());
         define(value);
-        return;
-    case Opcode::GrowNewArray:
-        callWithListAndLength(*this, value, RuntimeOperation::GrowNewArray);
         return;
     case Opcode::TruncateNewArray:
         callWithListAndLength(*this, value, RuntimeOperation::TruncateNewArray);

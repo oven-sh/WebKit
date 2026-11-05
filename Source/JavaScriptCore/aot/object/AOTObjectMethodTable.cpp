@@ -34,7 +34,6 @@
 
 namespace JSC { namespace AOT {
 
-// A stub repeats a store of another type that was carried out here once, and counts nothing.
 static constexpr RuntimeCounterID counterFor(SlotExitReason reason)
 {
     switch (reason) {
@@ -136,7 +135,6 @@ bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
     return true;
 }
 
-// The flag of the order word stays set: compiled code may have tested it on behalf of an access that came before.
 bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
 {
     JSObject* extra = extraProperties();
@@ -164,7 +162,6 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
 
 bool Object::hasEveryFieldOfBirth() const
 {
-    // Fields are mostly filled in the order of the layout, so an unfinished object is told soonest by its last fields.
     return std::ranges::all_of(layout().fields() | std::views::reverse, [&](const FieldData& field) {
         if (field.holdsRawValueFromBirth) {
             const void* slot = slotOf(field);
@@ -207,7 +204,6 @@ static Object::LeavingProperty createPropertyFromDescriptor(JSGlobalObject* glob
     return { GetterSetter::create(globalObject->vm(), globalObject, getter, setter), (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor };
 }
 
-// The property after a valid redefinition, as putDescriptor() in JSObject.cpp stores it.
 static Object::LeavingProperty redefinedProperty(JSGlobalObject* globalObject, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
 {
     unsigned attributes = descriptor.attributesOverridingCurrent(current);
@@ -220,7 +216,6 @@ static Object::LeavingProperty redefinedProperty(JSGlobalObject* globalObject, c
     return { GetterSetter::create(globalObject->vm(), globalObject, getter, setter), (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor };
 }
 
-// The slot holds the property only if its attributes match the ones the layout gives the field.
 static void createField(VM& vm, Object& object, const FieldData& field, Object::LeavingProperty created)
 {
     bool fitsSlot = created.attributes == object.attributesOf(field);
@@ -294,6 +289,9 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
         auto* held = uncheckedDowncast<GetterSetter>(current.valueOrAccessor);
         JSObject* getter = descriptor.getterPresent() ? descriptor.getterObject() : held->isGetterNull() ? nullptr : held->getter();
         JSObject* setter = descriptor.setterPresent() ? descriptor.setterObject() : held->isSetterNull() ? nullptr : held->setter();
+        bool replacesProvenHalf = (field.getterIsProven && !held->isGetterNull() && getter != held->getter()) || (field.setterIsProven && !held->isSetterNull() && setter != held->setter());
+        if (replacesProvenHalf && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]]
+            crashOnImpossibleMutation(vm, *object, field, ObjectMutation::RedefineProperty);
         if (object->tryStore(vm, field, GetterSetter::create(vm, globalObject, getter, setter))) {
             didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Change, name.uid());
             return true;
@@ -429,7 +427,6 @@ bool Object::tryDefineAccessorsOfLiteral(VM& vm, JSGlobalObject* globalObject, s
     size_t count = keysAndFunctions.size() / 2;
     if (!count || count >= AccessorDefinitionPlan::noDefinition)
         return false;
-    // Nothing is written before every function is known to find its slot.
     if (hasFlagsInOrderWord() || hasOutOfLineKeyOrder() || structure()->mayBePrototype())
         return false;
     RuntimeLayoutTable& layouts = state.objects->layouts;
@@ -454,12 +451,10 @@ bool Object::tryDefineAccessorsOfLiteral(VM& vm, JSGlobalObject* globalObject, s
         }
         (isGetter ? made.slots[place].getter : made.slots[place].setter) = static_cast<uint8_t>(index);
     }
-    // Compiled code calls the getter that it finds in a filled slot as one of those that the type of the field lists.
     for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots) {
         if (!slot.isFilledBefore && slot.getter == AccessorDefinitionPlan::noDefinition && !layouts.objectHasType(layouts.typeOf(*slot.field), globalObject->nullGetterFunction()))
             return false;
     }
-    ProgramStrings& strings = *state.strings;
     for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots.span()) {
         JSObject* getter = nullptr;
         JSObject* setter = nullptr;
@@ -473,7 +468,7 @@ bool Object::tryDefineAccessorsOfLiteral(VM& vm, JSGlobalObject* globalObject, s
         if (slot.setter != AccessorDefinitionPlan::noDefinition)
             setter = asObject(JSValue::decode(keysAndFunctions[slot.setter * 2 + 1]));
         auto* accessor = GetterSetter::create(vm, globalObject, getter, setter);
-        bool isWritten = tryWriteSlot(strings, slot.field->slot.representation(), slotOf(*slot.field), accessor);
+        bool isWritten = tryWriteSlot(state.instance, slot.field->slot.representation(), slotOf(*slot.field), accessor);
         RELEASE_ASSERT(isWritten);
         vm.writeBarrier(this, accessor);
         if (!slot.isFilledBefore)
@@ -547,7 +542,6 @@ bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueO
     JSObject* extra = extraProperties();
     AddedExtraProperty added { .name = name.uid(), .structureBefore = structureID(), .extraPropertiesBefore = extra ? extra->structureID() : StructureID(), .orderWordBefore = orderWord(), .attributes = attributes };
     willAddExtraProperty(vm, name);
-    // The first property is added before the object gets its extra properties, so the object changes Structure only once.
     bool isFirst = !extra;
     if (isFirst)
         extra = constructEmptyObject(vm, Instance::of(structure()->realm())->realm.emptyExtraPropertiesStructure);
@@ -682,7 +676,6 @@ bool Object::testIntegrity(VM& vm, Integrity integrity) const
         }
         return true;
     };
-    // The bits speak for the fields alone: native code may define an extra property on an object that is closed.
     if (!(testsFrozen ? isFrozen() : isSealed()) && !fieldsHaveIntegrity())
         return false;
     JSObject* extra = extraProperties();
@@ -754,7 +747,6 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Whether the property lies in a slot is the plan's choice: a name that is stored late has one where there is room.
     if (name.isSymbol() && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) [[unlikely]] {
         prepareForLookup(globalObject, object, name.uid());
         RETURN_IF_EXCEPTION(scope, false);
@@ -775,11 +767,9 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
     }
     if (object->hasExtraProperties()) {
         if (std::optional<Object*> source = sourceOfPendingBinding(vm, *object, name.uid())) {
-            // An object whose stars wait has no other extra property.
             if (!*source)
                 return false;
             if (slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
-                // What had the name as its own at the star may have lost it since, and have it from a star now.
                 if (!vm.isSafeToRecurse()) [[unlikely]] {
                     throwStackOverflowError(globalObject, scope);
                     return false;
@@ -790,7 +780,6 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
                 slot.disableCaching();
                 return true;
             }
-            // Whoever asks whether the name is there reads no value and calls no getter, as with a module namespace object. A slot that holds a value is no accessor's.
             if (slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty) {
                 slot.setValue(object, attributesOfStarBinding & ~PropertyAttribute::Accessor, jsUndefined());
                 slot.disableCaching();
@@ -809,7 +798,6 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
 
 bool Object::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
 {
-    // No star binds an element.
     JSObject* extra = extraPropertiesIfMade(*uncheckedDowncast<Object>(cell));
     if (!extra)
         return false;
@@ -830,7 +818,6 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
     ASSERT(!extra || extra->type() == FinalObjectType);
     if (extra)
         extra->getOwnIndexedPropertyNames(globalObject, names, mode);
-    // The keys of one object are unique, so an empty list needs no lookups. add() does not find what addUnchecked() appended after it.
     bool knownUnique = names.canAddKnownUniqueForStructure();
     auto add = [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
         if (knownUnique) [[likely]]
@@ -895,7 +882,6 @@ static bool ordinarySet(JSGlobalObject* globalObject, Object* object, PropertyNa
             if (isIntercepted)
                 return isStored;
         }
-        // The words of JSObject::putByIndex().
         if (index && object->isNotExtensible())
             return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
         ownDescriptor = PropertyDescriptor(jsUndefined(), static_cast<unsigned>(PropertyAttribute::None));
@@ -939,7 +925,6 @@ static bool hasNeitherTrapOfDefinitions(VM& vm, State& state, JSObject* handler)
         if (const Slot* filed = state.propertyCaches->findByKey(handler->structure(), uid, SlotAccess::Read)) {
             if (filed->kind == Slot::Kind::Absent)
                 continue;
-            // The layout has a field of the name, and this object may lack it.
             if (filed->kind != Slot::Kind::Field || !filed->has(Slot::absentIsUndefined) || handler->type() != CompiledObjectType)
                 return false;
             const Object* compiledHandler = uncheckedDowncast<Object>(handler);
@@ -948,7 +933,6 @@ static bool hasNeitherTrapOfDefinitions(VM& vm, State& state, JSObject* handler)
                 return false;
             continue;
         }
-        // The question files its answer for the next time. It runs no code unless a proxy is asked.
         for (JSObject* object = handler; object; object = object->getPrototypeDirect().getObject()) {
             if (object->type() == ProxyObjectType || object->structure()->typeInfo().overridesGetPrototype())
                 return false;
@@ -966,7 +950,6 @@ JSObject* RuntimeHooks::targetThatProxyDefinesOn(VM& vm, JSValue receiver)
     if (!receiver.isCell() || receiver.asCell()->type() != ProxyObjectType)
         return nullptr;
     ProxyObject* proxy = uncheckedDowncast<ProxyObject>(receiver.asCell());
-    // A proxy that has been revoked holds null for both.
     if (!proxy->handler().isObject())
         return nullptr;
     JSObject* handler = asObject(proxy->handler());
@@ -975,7 +958,6 @@ JSObject* RuntimeHooks::targetThatProxyDefinesOn(VM& vm, JSValue receiver)
     if (!compiled)
         return nullptr;
     State& state = compiled->state();
-    // A compiled object as it was born, right below an Object.prototype that takes neither name, has one of the two traps only in the slot of its field.
     auto handlerHasTrapsOnlyInSlots = [&] {
         if (!compiledHandler || compiledHandler->hasFlagsInOrderWord())
             return false;
@@ -1025,7 +1007,6 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
         RETURN_IF_EXCEPTION(scope, false);
         if (definesHere && object->tryStore(vm, *field, value))
             return true;
-        // The field is a writable data property, and no field is named by an index.
         RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, name, value, slot));
     }
     if (slot.thisValue() != JSValue(object) || parseIndex(name)) [[unlikely]]
@@ -1110,7 +1091,6 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
                 object->deleteField(vm, *field);
                 return true;
             }
-            // The Structure of the extra properties goes on saying that there has been an accessor, as that of an ordinary object does.
             object->moveFieldToExtraProperties(vm, *field, { current.valueOrAccessor, current.attributes }, SlotExitReason::Delete);
         }
     }

@@ -13,37 +13,42 @@
 #include "AOTDiagnostics.h"
 #include "AOTIR.h"
 #include "AOTResultRules.h"
+#include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Shared by AOTBodyVerifier.cpp, AOTBodyVerifierFlow.cpp, AOTBodyVerifierOperations.cpp, AOTBodyVerifierCalls.cpp and the generated AOTSchemaBodyVerifier.cpp. Nobody else includes this.
-
 class BodyVerifier;
 
-// Specialized in the generated AOTSchemaBodyVerifier.h for each external kind that a wire record or entry names.
 template<typename External> bool isValidExternal(uint32_t word, const BuiltinTable&);
 
-// The words of a body, taken one after the other. No word is read that is not there, and after the first failure every take answers zero.
+using OperandKindSet = EnumeratorBitSet<OperandKind, numberOfEnumerators<OperandKind>>;
+
+enum class TakenByTargets : uint8_t { Differs, Nothing, Proofs };
+
+enum class WordsReport : bool { No, Yes };
+
+template<WordsReport report>
 class CheckedBodyWords {
 public:
     CheckedBodyWords(BodyVerifier&, const Body&);
 
-    bool isAtEnd() const { return m_offset == m_words.size(); }
+    bool isAtEnd() const { return m_offset == m_numberOfWords; }
     uint32_t offset() const { return static_cast<uint32_t>(m_offset); }
-    BodyVerifier& verifier() const { return m_verifier; }
+
+    bool hasFailed() const;
+    void setSubject(BlockID, ValueID);
+    void failAtSubject(InternalErrorKind);
 
     uint32_t take();
     void skip(uint32_t numberOfWords);
-    // The count of a list whose elements have at least that many words each. It fails where so many words are not left.
     uint32_t takeCount(uint32_t minWordsPerElement = 1);
 
     void takeOperand(bool isOptional);
     void takeVariadicOperands();
     uint32_t takeBlock();
-    // In the unit's table, with an entry that is not zero and, where the verifier has a program, a record of that number.
     template<typename IDType> void takeID(bool isOptional);
     template<typename E> uint32_t takeEnumerator(bool isOptional = false);
     template<typename F> uint32_t takeFlagWord();
@@ -54,20 +59,20 @@ public:
 private:
     bool hasWords(uint64_t count) const { return count <= m_end - m_offset; }
     void checkID(RemappedIDKind, uint32_t word);
-    // From then on no word is left.
     void fail(InternalErrorKind);
-    NEVER_INLINE uint32_t failForLackOfWords();
+    uint32_t failForLackOfWords();
 
     BodyVerifier& m_verifier;
-    std::span<const uint32_t> m_words;
+    const uint32_t* m_words;
     const UnitIDRemap& m_unit;
-    // By RemappedIDKind. Without a program no number bounds an id.
     const NumbersOfProgramRecords& m_numbersOfRecords;
+    const BuiltinTable& m_builtins;
     uint32_t m_numberOfValues;
     uint32_t m_numberOfBlocks;
+    size_t m_numberOfWords;
     size_t m_offset { 0 };
-    // Behind the last word, until the first failure. Then m_offset.
     size_t m_end;
+    bool m_hasFailed { false };
 };
 
 class FlowGraphOfVerifiedBody {
@@ -78,11 +83,8 @@ public:
     void build(const BodyIndex&);
 
     uint32_t numberOfBlocks() const { return static_cast<uint32_t>(m_firstSuccessor.size()) - 1; }
-    // The targets of the terminator in order, then the handler.
     std::span<const BlockID> successors(BlockID block) const { return listOf(block, m_successors, m_firstSuccessor); }
-    // Ascending. A block with two edges to this one is listed twice.
     std::span<const BlockID> predecessors(BlockID block) const { return listOf(block, m_predecessors, m_firstPredecessor); }
-    // Some edge does not lead forward in the stream. Without one there is no cycle.
     bool hasRetreatingEdge() const { return m_hasRetreatingEdge; }
 
 private:
@@ -100,24 +102,43 @@ private:
     bool m_hasRetreatingEdge { false };
 };
 
-// What the look at one body leaves for the look at the next to use again: memory, and what is the same for every body of a program. One for each thread at work.
+class NoteOnVerifiedValue {
+public:
+    NoteOnVerifiedValue() = default;
+    static NoteOnVerifiedValue ofParameter(BlockID block) { return NoteOnVerifiedValue(block.index() << numberOfMarks | isParameterMark); }
+    static NoteOnVerifiedValue ofOperation(BlockID block, bool mayBeTakenByFewUses) { return NoteOnVerifiedValue(block.index() << numberOfMarks | (mayBeTakenByFewUses ? mayBeTakenByFewUsesMark : 0)); }
+
+    BlockID block() const { return BlockID(m_bits >> numberOfMarks); }
+    bool isParameter() const { return m_bits & isParameterMark; }
+    bool mayBeTakenByFewUses() const { return m_bits & mayBeTakenByFewUsesMark; }
+
+private:
+    static constexpr uint32_t isParameterMark = 1 << 0;
+    static constexpr uint32_t mayBeTakenByFewUsesMark = 1 << 1;
+    static constexpr uint32_t numberOfMarks = 2;
+
+    explicit NoteOnVerifiedValue(uint32_t bits)
+        : m_bits(bits)
+    {
+    }
+
+    uint32_t m_bits { 0 };
+};
+
 struct BodyVerifierScratch {
     WTF_MAKE_NONCOPYABLE(BodyVerifierScratch);
 public:
-    // Null: ids are checked against the unit's tables only.
     explicit BodyVerifierScratch(const Program*);
 
     NumbersOfProgramRecords numbersOfRecords;
-    // Each operand of theirs takes whatever has one result and opens no iteration, a parameter of a block too.
-    const OpcodeSet& opcodesThatTakeAnyValue;
+    const BuiltinTable& builtins;
 
-    // Built behind verifyEdges().
     FlowGraphOfVerifiedBody graph;
-    // By value, from the words alone.
-    Vector<BlockID> blocksOfValues;
+    Vector<uint64_t> targetsOfEarlierBlocks;
+    Vector<NoteOnVerifiedValue> notesOnValues;
+    Vector<ValueID> subjectsOfProofs;
     Vector<uint32_t> numbersOfUses;
     Vector<BodyUser> firstUsers;
-    // By block.
     Vector<BlockID> dominators;
     Vector<uint32_t> lastRoundsThatClimbedPast;
     Vector<uint32_t> firstChildren;
@@ -148,28 +169,23 @@ struct ModuleEvaluationInBody {
 class BodyVerifier {
     WTF_MAKE_NONCOPYABLE(BodyVerifier);
 public:
-    // Without a program and a function, only runWords() and failWhereOrderMisleadsBodyIndex() may be called. The scratch is made with the same program.
     BodyVerifier(const Program*, FunctionID, const Function*, const Body&, BodyVerifierScratch&);
     ~BodyVerifier();
 
-    // In front of run(): the index is built in this table, under the number of the function, and outlives the verifier. `worker`: as for BodyIndexTable::build().
     void keepIndexIn(BodyIndexTable& table, unsigned worker)
     {
         m_tableThatKeepsIndex = &table;
         m_workerOfTableThatKeepsIndex = worker;
     }
-    // In front of run().
     void leaveIndexUncompared() { m_comparesIndexWithPlainComputation = false; }
 
     bool runWords();
-    // Behind runWords(), which has looked for it on its way: BodyIndexTable::build() stops the process at a block that only later blocks lead to, and it looks for the test of a Branch among the values in front of the Branch.
     bool failWhereOrderMisleadsBodyIndex();
     bool run();
     Vector<InternalError> takeErrors();
 
     void fail(InternalErrorKind, BlockID = { }, ValueID = { }, uint32_t count = 0);
     bool hasFailed() const { return !m_errors.isEmpty(); }
-    // The block and the value that the words stage is checking.
     void setSubject(BlockID block, ValueID value)
     {
         m_block = block;
@@ -182,51 +198,49 @@ public:
     FunctionID id() const { return m_id; }
     const Function& function() const { return *m_function; }
     const Body& body() const { return m_body; }
-    // Only after the words stage.
     const BodyIndex& index() const { return *m_index; }
     BodyVerifierScratch& scratch() const { return m_scratch; }
     bool isValidField(LayoutID, uint32_t field) const;
 
 private:
-    // AOTBodyVerifier.cpp
     void verifyWords();
-    void verifyWordsOfBlock(CheckedBodyWords&, BlockID, uint32_t& nextValue);
-    void verifyWordsOfValue(CheckedBodyWords&, BlockID, ValueID);
-    void verifyWordsOfTerminator(CheckedBodyWords&, BlockID, uint32_t endOfValues);
-    void verifyWordsOfTarget(CheckedBodyWords&, BlockID from);
+    template<WordsReport> bool verifyWordsInOrder();
+    template<WordsReport report> void verifyWordsOfBlock(CheckedBodyWords<report>&, BlockID, uint32_t& nextValue);
+    template<WordsReport report> void verifyWordsOfValue(CheckedBodyWords<report>&, BlockID, ValueID, NoteOnVerifiedValue&);
+    template<WordsReport report> void verifyWordsOfTerminator(CheckedBodyWords<report>&, BlockID, uint32_t endOfValues);
+    template<WordsReport report> void verifyWordsOfTarget(CheckedBodyWords<report>&, BlockID from);
+    bool isTargetOfEarlierBlock(uint32_t block) const { return m_scratch.targetsOfEarlierBlocks.span().data()[block / 64] >> (block % 64) & 1; }
+    void noteTargetOfEarlierBlock(uint32_t block) { m_scratch.targetsOfEarlierBlocks.mutableSpan().data()[block / 64] |= uint64_t { 1 } << (block % 64); }
     void noteOrderThatMisleadsBodyIndex(InternalErrorKind, BlockID, ValueID = { });
     void buildIndex();
 
-    // AOTBodyVerifierFlow.cpp
     void verifyFlow();
+    const FlowGraphOfVerifiedBody& flowGraph();
     void verifyBlockOrder();
     void verifyDominance();
-    // verifyDominance() and the loop of verifyOperations() at once: each value is read once. It finds a fault exactly where one of the two does.
     void verifyUsesAndOperations();
-    // Every path to `to` goes through the terminator of `from`, not only its head: a block that is reached through the handler of `from` sees none of the values of `from`.
+    void lookAtUsesAndOperations();
+    void verifyOperandsStepByStep(const BodyBlock&, const BodyValue&);
+    bool givesOneValue(ValueID) const;
+    bool isAvailableInOtherBlock(NoteOnVerifiedValue definition, BlockID blockOfUse);
     bool terminatorDominates(BlockID from, BlockID to);
-    // `mayHaveToNameDefinition`: no, where the caller knows that a parameter of a block will do. It answers with the opcode of the definition.
-    Opcode verifyUse(ValueID used, BodyUseKind, BlockID blockOfUse, ValueID user, uint32_t operandIndex, bool mayHaveToNameDefinition);
     void verifyUseStepByStep(ValueID used, BodyUseKind, BlockID blockOfUse, ValueID user, uint32_t operandIndex);
     void verifyEdges();
-    void verifyEdge(const BodyBlock& from, uint32_t targetIndex, BodyTarget);
+    bool verifyTargetCount(const BodyBlock&, const BodyTerminator&);
+    bool verifyEdge(const BodyBlock& from, const BodyTerminator&, TakenByTargets, uint32_t targetIndex, BodyTarget, const BodyBlock& to);
     void verifyHandler(const BodyBlock&);
     void verifyBlockRole(const BodyBlock&);
-    void verifyHandlerBlocksAreEnteredByHandlerEdges();
-    void verifyTargetCount(const BodyBlock&);
     void verifyLoopMarks();
     void verifyEntryParameters();
     void verifyIndexAgainstPlainComputation();
 
-    // AOTBodyVerifierOperations.cpp
     void verifyOperations();
     void verifyOperation(const BodyBlock&, uint32_t indexInBlock, const BodyValue&);
-    // All of verifyOperation() behind the look at the fields and at the definitions of the operands.
     void verifyOperationByOpcode(const BodyBlock&, uint32_t indexInBlock, const BodyValue&);
+    void verifyRuleOfOpcode(const BodyBlock&, uint32_t indexInBlock, const BodyValue&);
     void verifyTerminatorOperation(const BodyBlock&, const BodyTerminator&);
     void verifyOperandDefinitions(const BodyBlock&, const BodyValue&);
     void verifyOperandDefinitionsOneByOne(const BodyBlock&, const BodyValue&);
-    // Of a definition among definitionsThatFewOperandsTakeInVerifiedBodies. No: it gives one value like any other, as a direct call of a function with one result does.
     bool isTakenByFewOperands(const BodyValue& definition) const;
     void verifyNumberOfVariadicOperands(const BodyBlock&, const BodyValue&);
     void verifyCatch(const BodyBlock&, uint32_t indexInBlock, const BodyValue&);
@@ -239,7 +253,6 @@ private:
     void verifyReturnCall(const BodyBlock&, const BodyTerminator&);
     void verifyPositions(const BodyBlock&, const BodyValue&);
 
-    // AOTBodyVerifierCalls.cpp
     void verifyClosureOperation(const BodyBlock&, const BodyValue&);
     void verifyDirectCall(const BodyBlock&, const BodyValue&);
     void verifyArgumentsOperation(const BodyBlock&, const BodyValue&);
@@ -264,13 +277,8 @@ private:
     unsigned m_workerOfTableThatKeepsIndex { 0 };
     const BodyIndex* m_index { nullptr };
     Vector<InternalError> m_errors;
-    BitVector m_isTargetOfEarlierBlock;
-    // By the words stage. Without such an edge there is no cycle.
-    bool m_hasEdgeThatDoesNotLeadForward { false };
-    bool m_hasHandlerBlock { false };
-    // verifyUsesAndOperations() has found no fault.
+    bool m_hasFlowGraph { false };
     bool m_operationsAreVerified { false };
-    // The first that the words stage met. InternalErrorKind::Unknown: none.
     InternalErrorKind m_kindOfOrderThatMisleadsBodyIndex { InternalErrorKind::Unknown };
     BlockID m_blockOfOrderThatMisleadsBodyIndex;
     ValueID m_valueOfOrderThatMisleadsBodyIndex;
@@ -283,45 +291,90 @@ private:
     std::optional<BitVector> m_blocksReachedFromHandlerOfDominator;
 };
 
-// AOTBodyVerifierOperations.cpp
-const OpcodeSet& opcodesThatTakeAnyValueInVerifiedBodies();
-
-// What they give is no value of JavaScript: only the operations of the iteration take it, and what holds values across a suspension.
+inline constexpr OpcodeSet opcodesWithoutResultInVerifiedBodies = opcodesWhere([](Opcode opcode) { return resultRuleOf(opcode) == ResultRule::None; });
 inline constexpr OpcodeSet opcodesThatOpenIterationsInVerifiedBodies { Opcode::IteratorOpen, Opcode::ForInOpen };
-inline constexpr OpcodeSet definitionsThatFewOperandsTakeInVerifiedBodies = opcodesThatMayHaveSeveralResults | opcodesThatOpenIterationsInVerifiedBodies;
+inline constexpr OpcodeSet definitionsThatMayGiveSeveralResultsInVerifiedBodies = opcodesWhere([](Opcode opcode) {
+    return opcodesThatMayHaveSeveralResults.contains(opcode) && (resultRuleOf(opcode) == ResultRule::Results || opcode == Opcode::Results || opcode == Opcode::CallDirect);
+});
+inline constexpr OpcodeSet definitionsThatFewOperandsTakeInVerifiedBodies = definitionsThatMayGiveSeveralResultsInVerifiedBodies | opcodesThatOpenIterationsInVerifiedBodies;
 
-// Generated: AOTSchemaBodyVerifier.cpp. They take the fields of one entry, in declared order, and check each word by its kind.
-void verifyFieldWords(CheckedBodyWords&, Opcode);
-void verifyFieldWords(CheckedBodyWords&, TerminatorKind);
-// After the words stage: what the schema's columns require of the fields together. exactlyOneOf, and a Field that its Layout has.
+inline constexpr OpcodeSet opcodesWithRuleOfTheirOwnInVerifiedBodies {
+    Opcode::CatchValue, Opcode::CatchException, Opcode::NarrowByTest, Opcode::Convert, Opcode::NewObject, Opcode::NewArray,
+    Opcode::FinishObject, Opcode::GetClassPrototype, Opcode::DefineMethod, Opcode::FinishClass, Opcode::NewClass, Opcode::SuperConstruct, Opcode::SuperConstructList,
+    Opcode::NewClosure, Opcode::GetCapture, Opcode::IsClosureOf, Opcode::CallDirect, Opcode::Results,
+    Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments, Opcode::GetMappedArgument, Opcode::SetMappedArgument,
+    Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas, Opcode::Await, Opcode::Yield, Opcode::InitialYield,
+    Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::NativeBinding, Opcode::DirectEval, Opcode::EvaluateModule, Opcode::RecordRequire,
+    Opcode::GetEnvironmentField, Opcode::PutEnvironmentField, Opcode::CountExecution
+};
+inline constexpr TerminatorKindSet terminatorsWithRuleOfTheirOwnInVerifiedBodies { TerminatorKind::Switch, TerminatorKind::SwitchString, TerminatorKind::Return, TerminatorKind::ReturnCall };
+
 void verifyFieldRules(BodyVerifier&, const BodyBlock&, const BodyValue&);
 void verifyFieldRules(BodyVerifier&, const BodyBlock&, const BodyTerminator&);
 
-inline CheckedBodyWords::CheckedBodyWords(BodyVerifier& verifier, const Body& body)
+template<WordsReport report>
+inline CheckedBodyWords<report>::CheckedBodyWords(BodyVerifier& verifier, const Body& body)
     : m_verifier(verifier)
-    , m_words(body.words())
+    , m_words(body.words().data())
     , m_unit(body.unit())
     , m_numbersOfRecords(verifier.scratch().numbersOfRecords)
+    , m_builtins(verifier.scratch().builtins)
     , m_numberOfValues(body.numberOfValues())
     , m_numberOfBlocks(body.numberOfBlocks())
-    , m_end(m_words.size())
+    , m_numberOfWords(body.words().size())
+    , m_end(m_numberOfWords)
 {
 }
 
-inline void CheckedBodyWords::fail(InternalErrorKind kind)
+template<WordsReport report>
+ALWAYS_INLINE bool CheckedBodyWords<report>::hasFailed() const
 {
-    m_verifier.failAtSubject(kind);
+    if constexpr (report == WordsReport::Yes)
+        return m_verifier.hasFailed();
+    else
+        return m_hasFailed;
+}
+
+template<WordsReport report>
+ALWAYS_INLINE void CheckedBodyWords<report>::setSubject(BlockID block, ValueID value)
+{
+    if constexpr (report == WordsReport::Yes)
+        m_verifier.setSubject(block, value);
+}
+
+template<WordsReport report>
+ALWAYS_INLINE void CheckedBodyWords<report>::failAtSubject(InternalErrorKind kind)
+{
+    if constexpr (report == WordsReport::Yes)
+        m_verifier.failAtSubject(kind);
+    else
+        m_hasFailed = true;
+}
+
+template<WordsReport report>
+ALWAYS_INLINE void CheckedBodyWords<report>::fail(InternalErrorKind kind)
+{
+    failAtSubject(kind);
     m_end = m_offset;
 }
 
-ALWAYS_INLINE uint32_t CheckedBodyWords::take()
+template<WordsReport report>
+ALWAYS_INLINE uint32_t CheckedBodyWords<report>::failForLackOfWords()
+{
+    fail(InternalErrorKind::ListOutOfBounds);
+    return 0;
+}
+
+template<WordsReport report>
+ALWAYS_INLINE uint32_t CheckedBodyWords<report>::take()
 {
     if (m_offset == m_end) [[unlikely]]
         return failForLackOfWords();
     return m_words[m_offset++];
 }
 
-ALWAYS_INLINE void CheckedBodyWords::skip(uint32_t numberOfWords)
+template<WordsReport report>
+ALWAYS_INLINE void CheckedBodyWords<report>::skip(uint32_t numberOfWords)
 {
     if (!hasWords(numberOfWords)) [[unlikely]] {
         failForLackOfWords();
@@ -330,7 +383,8 @@ ALWAYS_INLINE void CheckedBodyWords::skip(uint32_t numberOfWords)
     m_offset += numberOfWords;
 }
 
-ALWAYS_INLINE uint32_t CheckedBodyWords::takeCount(uint32_t minWordsPerElement)
+template<WordsReport report>
+ALWAYS_INLINE uint32_t CheckedBodyWords<report>::takeCount(uint32_t minWordsPerElement)
 {
     uint32_t count = take();
     if (hasWords(static_cast<uint64_t>(count) * minWordsPerElement)) [[likely]]
@@ -338,7 +392,8 @@ ALWAYS_INLINE uint32_t CheckedBodyWords::takeCount(uint32_t minWordsPerElement)
     return failForLackOfWords();
 }
 
-ALWAYS_INLINE void CheckedBodyWords::takeOperand(bool isOptional)
+template<WordsReport report>
+ALWAYS_INLINE void CheckedBodyWords<report>::takeOperand(bool isOptional)
 {
     uint32_t word = take();
     if (word < m_numberOfValues) [[likely]]
@@ -349,13 +404,15 @@ ALWAYS_INLINE void CheckedBodyWords::takeOperand(bool isOptional)
         fail(InternalErrorKind::OperandMissing);
 }
 
-inline void CheckedBodyWords::takeVariadicOperands()
+template<WordsReport report>
+ALWAYS_INLINE void CheckedBodyWords<report>::takeVariadicOperands()
 {
     for (uint32_t remaining = takeCount(); remaining; --remaining)
         takeOperand(false);
 }
 
-ALWAYS_INLINE uint32_t CheckedBodyWords::takeBlock()
+template<WordsReport report>
+ALWAYS_INLINE uint32_t CheckedBodyWords<report>::takeBlock()
 {
     uint32_t word = take();
     if (word >= m_numberOfBlocks) [[unlikely]]
@@ -363,7 +420,8 @@ ALWAYS_INLINE uint32_t CheckedBodyWords::takeBlock()
     return word;
 }
 
-ALWAYS_INLINE uint32_t CheckedBodyWords::takeFlags(uint32_t wireMask)
+template<WordsReport report>
+ALWAYS_INLINE uint32_t CheckedBodyWords<report>::takeFlags(uint32_t wireMask)
 {
     uint32_t word = take();
     if (word & ~wireMask) [[unlikely]]
@@ -371,7 +429,8 @@ ALWAYS_INLINE uint32_t CheckedBodyWords::takeFlags(uint32_t wireMask)
     return word;
 }
 
-ALWAYS_INLINE bool CheckedBodyWords::takeBoolean()
+template<WordsReport report>
+ALWAYS_INLINE bool CheckedBodyWords<report>::takeBoolean()
 {
     uint32_t word = take();
     if (word > 1) [[unlikely]]
@@ -379,16 +438,17 @@ ALWAYS_INLINE bool CheckedBodyWords::takeBoolean()
     return word == 1;
 }
 
-ALWAYS_INLINE void CheckedBodyWords::checkID(RemappedIDKind kind, uint32_t word)
+template<WordsReport report>
+ALWAYS_INLINE void CheckedBodyWords<report>::checkID(RemappedIDKind kind, uint32_t word)
 {
     const IDRemapTable& table = m_unit.tables[static_cast<size_t>(kind)];
-    // An entry of the table of types holds the bits of a TypeID, which are no index, so no number bounds it.
     if (word >= table.size || static_cast<size_t>(table.entries[word]) - 1 >= m_numbersOfRecords[kind]) [[unlikely]]
         fail(InternalErrorKind::IdOutOfRange);
 }
 
+template<WordsReport report>
 template<typename IDType>
-void CheckedBodyWords::takeID(bool isOptional)
+ALWAYS_INLINE void CheckedBodyWords<report>::takeID(bool isOptional)
 {
     uint32_t word = take();
     if (isOptional && word == Wire::none)
@@ -396,8 +456,9 @@ void CheckedBodyWords::takeID(bool isOptional)
     checkID(remappedIDKindOf<IDType>, word);
 }
 
+template<WordsReport report>
 template<typename E>
-uint32_t CheckedBodyWords::takeEnumerator(bool isOptional)
+ALWAYS_INLINE uint32_t CheckedBodyWords<report>::takeEnumerator(bool isOptional)
 {
     static_assert(numberOfEnumerators<E> && !isFlagWord<E>);
     uint32_t word = take();
@@ -410,8 +471,9 @@ uint32_t CheckedBodyWords::takeEnumerator(bool isOptional)
     return word;
 }
 
+template<WordsReport report>
 template<typename F>
-uint32_t CheckedBodyWords::takeFlagWord()
+ALWAYS_INLINE uint32_t CheckedBodyWords<report>::takeFlagWord()
 {
     static_assert(isFlagWord<F> && numberOfEnumerators<F> <= 32);
     constexpr uint64_t declaredMask = (uint64_t { 1 } << numberOfEnumerators<F>) - 1;
@@ -424,18 +486,68 @@ uint32_t CheckedBodyWords::takeFlagWord()
     return word;
 }
 
+template<WordsReport report>
 template<typename External>
-void CheckedBodyWords::takeExternal(bool isOptional)
+ALWAYS_INLINE void CheckedBodyWords<report>::takeExternal(bool isOptional)
 {
     uint32_t word = take();
     if (isOptional && word == Wire::none)
         return;
-    if (!isValidExternal<External>(word, BuiltinTable::singleton())) [[unlikely]]
+    if (!isValidExternal<External>(word, m_builtins)) [[unlikely]]
         fail(InternalErrorKind::IdOutOfRange);
 }
 
 } } } // namespace JSC::AOT::Typed
 
 #include "AOTSchemaBodyVerifier.h"
+
+namespace JSC { namespace AOT { namespace Typed {
+
+inline constexpr OperandKindSet operandKindsThatFewDefinitionsFitInVerifiedBodies { OperandKind::Results, OperandKind::IteratorState, OperandKind::Enumerator };
+static_assert(std::ranges::none_of(allMembersOf<OperandKind>, [](OperandKind kind) { return mustBeDefinition(kind) && !operandKindsThatFewDefinitionsFitInVerifiedBodies.contains(kind); }));
+
+inline constexpr OpcodeSet opcodesThatTakeAnyValueInVerifiedBodies = opcodesWhere([](Opcode opcode) { return !kindsOfOperandsOf(opcode).intersects(operandKindsThatFewDefinitionsFitInVerifiedBodies); });
+
+template<typename Holds>
+constexpr TerminatorKindSet terminatorsInVerifiedBodiesWhere(const Holds& holds)
+{
+    TerminatorKindSet kinds;
+    for (TerminatorKind kind : allMembersOf<TerminatorKind>) {
+        if (holds(kind))
+            kinds.add(kind);
+    }
+    return kinds;
+}
+
+inline constexpr TerminatorKindSet terminatorsThatTakeAnyValueInVerifiedBodies = terminatorsInVerifiedBodiesWhere([](TerminatorKind kind) { return !kindsOfOperandsOf(kind).intersects(operandKindsThatFewDefinitionsFitInVerifiedBodies); });
+inline constexpr TerminatorKindSet terminatorsAskedOnlyForTheirUsesInVerifiedBodies = terminatorsInVerifiedBodiesWhere([](TerminatorKind kind) {
+    return !hasFieldRulesInEveryFunction(kind) && !isIntrinsicOf(kind) && !terminatorsWithRuleOfTheirOwnInVerifiedBodies.contains(kind);
+});
+
+struct QuestionsOfVerifiedOperation {
+    static constexpr uint8_t kindsOfOperands = 1 << 0;
+    static constexpr uint8_t fieldRules = 1 << 1;
+    static constexpr uint8_t libraryCode = 1 << 2;
+    static constexpr uint8_t convertedAllocation = 1 << 3;
+    static constexpr uint8_t ruleOfOpcode = 1 << 4;
+};
+
+constexpr uint8_t questionsOfVerifiedOperation(Opcode opcode)
+{
+    uint8_t questions = 0;
+    if (!opcodesThatTakeAnyValueInVerifiedBodies.contains(opcode))
+        questions |= QuestionsOfVerifiedOperation::kindsOfOperands;
+    if (hasFieldRulesInEveryFunction(opcode))
+        questions |= QuestionsOfVerifiedOperation::fieldRules;
+    if (isIntrinsicOf(opcode))
+        questions |= QuestionsOfVerifiedOperation::libraryCode;
+    if (opcode == Opcode::Convert)
+        questions |= QuestionsOfVerifiedOperation::convertedAllocation;
+    else if (opcodesWithRuleOfTheirOwnInVerifiedBodies.contains(opcode))
+        questions |= QuestionsOfVerifiedOperation::ruleOfOpcode;
+    return questions;
+}
+
+} } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

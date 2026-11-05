@@ -21,8 +21,6 @@ std::array<uint32_t, 4> keyOfClassGuardUnderMethodTableRow(const Typed::MethodFa
     return { row.guardedClass.index(), static_cast<uint32_t>(ClassSide::Prototype), static_cast<uint32_t>(NumberSpace::Name), family.key.index() };
 }
 
-// A call through the method table tests no guard, so each entry of a row that stands on one is listed for the run time, which puts the lookup there when the guard ends.
-// A selector that no code mentions has no entries.
 void encodeMethodTableDependents(TableEncoder& encoder)
 {
     const Typed::CallingConventions& conventions = encoder.plan.conventions();

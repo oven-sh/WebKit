@@ -1,5 +1,5 @@
 # `s[i]` of a proven text under a proven integer is written out: the bounds, the character inside, undefined outside. Beside the character meets its code unit, -1 outside,
-# and a comparison with a written text, with undefined or with another character asks the integer. The character that nobody else reads is never made
+# and a comparison with a written text or with another character asks the integer. The character that nobody else reads is never made
 # function letter(s, i) { if (typeof s === "string" && (i | 0) === i) return [s[i]]; }
 # RUN: walk f1 mechanisms=none+TypedOperations
 # CHECK-LABEL: code f1:Body
@@ -18,14 +18,6 @@
 # COMMA: = StrictEq {{*}}form=Integers
 # RUN(UNMADE): walk f2 mechanisms=none+TypedOperations
 # UNMADE-NOT: = Substring
-# function isBehindEnd(s, i) { if (typeof s === "string" && (i | 0) === i) return [s[i] === undefined]; }
-# RUN(END): walk f3 mechanisms=none+TypedOperations
-# END-LABEL: code f3:Body
-# END: = GetStringCodeUnit
-# END-NOT: = TypeTest
-# END: = NewArray
-# RUN(ENDUNMADE): walk f3 mechanisms=none+TypedOperations
-# ENDUNMADE-NOT: = Substring
 # -0 names the first character and 1.5 none, and neither is an integer: function underNumber(s, i) { if (typeof s === "string" && typeof i === "number") return [s[i]]; }
 # RUN(FRACTION): walk f4 mechanisms=none+TypedOperations
 # FRACTION-LABEL: code f4:Body

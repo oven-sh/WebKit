@@ -18,7 +18,6 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
-#include "AOTProgramStrings.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
@@ -104,7 +103,6 @@ static ALWAYS_INLINE size_t findString(const CharacterType* characters, uint32_t
     auto rest = unsafeMakeSpan(other + 1, otherLength - 1);
     auto starts = unsafeMakeSpan(characters, length - otherLength + 1);
     if constexpr (std::is_same_v<CharacterType, Latin1Character>) {
-        // A place where the text may begin has its first character, and its last one as far behind as the text is long. In ordinary text few places have both.
         constexpr size_t stride = SIMD::stride<uint8_t>;
         const uint8_t* firsts = byteCast<uint8_t>(characters);
         const uint8_t* lasts = firsts + otherLength - 1;
@@ -245,7 +243,6 @@ extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTHashStringImpl(v
     return static_cast<StringImpl*>(impl)->hash();
 }
 
-// jsSubstringOfResolved() keeps the string that it makes of two ASCII characters. Makes none: 0 where none is kept.
 extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTFindKeptStringOfTwoCharacters(void* vmPointer, uint32_t units)
 {
     VM& vm = *static_cast<VM*>(vmPointer);
@@ -270,18 +267,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringReverseFindLiteral8, size_t,
     if (!other.is8Bit()) [[unlikely]]
         return StringView(std::span { characters, length }).reverseFind(other, std::max(position, 0));
     return operationAOTStringReverseFind8(characters, length, other.span8().data(), other.length(), position);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToLiteralString, EncodedJSValue, (Instance* instance, EncodedJSValue encoded))
-{
-    JSValue value = JSValue::decode(encoded);
-    return value && value.isString() ? static_cast<EncodedJSValue>(instance->state->strings->literalStringWordFor(asString(value))) : encoded;
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLiteralStringToString, JSCell*, (Instance* instance, uint64_t word))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTLiteralStringToString);
-    OPERATION_RETURN(scope, instance->state->strings->stringForLiteralStringWord(word));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConcat, JSCell*, (Instance* instance, JSCell* left, JSCell* right))
@@ -345,16 +330,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringsAreEqual, size_t, (Instance
     OPERATION_RETURN(scope, firstString->equalResolvingRopes(secondString));
 }
 
-// Only compared, never dereferenced.
 static thread_local std::array<const JSString*, 4> ropesComparedInPieces;
 
-// A rope made for one question is garbage after it. One that is asked about again is kept by somebody, and is flattened.
 static bool isAskedAboutForTheFirstTime(const JSString* rope)
 {
     return rope->isNonSubstringRope() && std::exchange(ropesComparedInPieces[(std::bit_cast<uintptr_t>(rope) / sizeof(JSRopeString)) % ropesComparedInPieces.size()], rope) != rope;
 }
 
-// Whether `argument` stands in `base` at `position`, where it fits. False behind an exception.
 static bool standsAt(JSGlobalObject* globalObject, JSString* base, JSString* argument, unsigned position)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -417,7 +399,6 @@ static ALWAYS_INLINE size_t findNarrowStringInWideOne(const char16_t* characters
     }
 }
 
-// Both are flat, as nearly all are: nothing is made, nothing throws, and no table of a searcher is set up for a text of a few characters. Nothing: a rope, or a wide text that is looked for in a narrow one.
 static ALWAYS_INLINE std::optional<size_t> tryFindInFlatString(JSCell* string, JSCell* other, uint32_t start)
 {
     const StringImpl* base = uncheckedDowncast<JSString>(string)->tryGetValueImpl();
@@ -499,7 +480,6 @@ static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES
     JSString* argument = cellArgument<JSString>(other, Entry::operationAOTStringEndsWith);
     if (base->length() < argument->length())
         OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
-    // `text.endsWith(key + "=")` in a function that is handed both: the rope was made for this one question.
     bool answer = standsAt(globalObject, base, argument, base->length() - argument->length());
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(answer)));
@@ -638,7 +618,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteralInRegister, siz
             characters[i] = static_cast<Latin1Character>(units[i]);
         }
     }
-    // As packStringIntoRegister packs.
     if (length == 7)
         return (WTF::unalignedLoad<uint32_t>(characters.data()) | static_cast<uint64_t>(WTF::unalignedLoad<uint32_t>(characters.data() + 3)) << 32) == text;
     return WTF::unalignedLoad<uint64_t>(characters.data()) == text;
@@ -646,7 +625,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteralInRegister, siz
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNarrowCharactersOfString, size_t, (Instance*, JSCell* cell))
 {
-    // Nothing runs between the call and the compares that read it.
     static thread_local NarrowCharactersOfString answer;
     auto* string = cellArgument<JSString>(cell, Entry::operationAOTNarrowCharactersOfString);
     unsigned length = string->length();
@@ -696,7 +674,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIntToString, JSCell*, (Instance* i
     OPERATION_RETURN(scope, jsString(vm, String::number(static_cast<double>(value))));
 }
 
-// Most numbers that become text are ids and counts. Their text is asked for by the integer, as the stub IntegerToString asks, so that every road gives the same string.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToString, JSCell*, (Instance* instance, double value))
 {
     int32_t integer = truncateDoubleToInt32(value);
@@ -946,7 +923,6 @@ static JSString* createRepeatedString(JSGlobalObject* globalObject, StringView p
     RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
-// The string stays as it is: a 16-bit rope may have 8-bit parts.
 static JSString* repeatAsRope(JSGlobalObject* globalObject, JSString* string, unsigned count)
 {
     VM& vm = globalObject->vm();
@@ -1016,10 +992,8 @@ static JSString* createPaddedString(JSGlobalObject* globalObject, StringView str
     RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
-// String.prototype.padStart and padEnd make a longer string as a rope.
 static constexpr unsigned maxLengthOfFlatPaddedString = 1024;
 
-// The string and what fills the room beside it are the two parts of a rope: one of them may be an 8-bit string.
 static JSString* padAsRope(JSGlobalObject* globalObject, JSString* string, JSString* filler, unsigned length, bool isAtStart)
 {
     VM& vm = globalObject->vm();
@@ -1140,7 +1114,6 @@ static JSString* replaceRanges(JSGlobalObject* globalObject, VM& vm, StringView 
     RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
-// A text that is sought as it stands in an 8-bit string and an 8-bit replacement that stands for itself: the two literals of most calls.
 static JSString* tryReplaceAllWithPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, JSString* search, JSString* replacement)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1235,7 +1208,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllString, JSCell*, (Instance*
     [[clang::musttail]] return replaceAllOfText(instance, stringCell, searchCell, replacementCell);
 }
 
-// An 8-bit text cut at a flat text that is not empty.
 static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, JSString* separator, uint32_t limit)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1248,7 +1220,6 @@ static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSStri
             if (auto* butterfly = cache->getForKeys(impl, separatorImpl))
                 return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous), butterfly->toButterfly());
         }
-        // stringSplitFast() keeps the answer.
         if (impl->isAtom() || (canBeCached && StringSplitCache::isWorthCaching(*impl)))
             return nullptr;
     }
@@ -1282,7 +1253,6 @@ static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSStri
         result->butterfly()->contiguous().at(result, 0).set(vm, result, string);
         return result;
     }
-    // view() has made every rope flat but a piece of another string, whose pieces are pieces of that string.
     JSString* base = string;
     unsigned start = 0;
     if (string->isSubstring()) {
@@ -1319,7 +1289,6 @@ struct ShortKeyCharacters {
 };
 static_assert(StringKeyCache::maxCachedKeyLength >= StringKeyCache::minReadableBytes);
 
-// The text of 8-bit strings and int32 numbers that fit together.
 static ALWAYS_INLINE bool tryWriteShortKey(std::span<const EncodedJSValue> primitives, ShortKeyCharacters& key)
 {
     size_t length = 0;
@@ -1411,7 +1380,6 @@ static JSString* concatenatePrimitives(JSGlobalObject* globalObject, Instance& i
     }
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue first = primitives.empty() ? JSValue() : JSValue::decode(primitives.front());
-    // The pieces lie in the frame, where the collector sees them.
     constexpr size_t maxNumberOfPiecesAddedAtOnce = 8;
     if (first && first.isString() && asString(first)->isRope() && asString(first)->length() >= minLengthOfGrowingText && primitives.size() <= maxNumberOfPiecesAddedAtOnce + 1) {
         std::array<JSString*, maxNumberOfPiecesAddedAtOnce> pieces;
@@ -1459,10 +1427,8 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
     OPERATION_RETURN(scope, concatenatePrimitives(globalObject, *instance, unsafeMakeSpan(parts, count), useOfJoinedTextOf(isLikelyKey)));
 }
 
-// No number, boolean, undefined or null has a longer text: "-0.0000012345678901234567" has 25 characters.
 static constexpr uint64_t boundOnTextOfPrimitiveThatIsNoCell = 32;
 
-// Of a BigInt only the conversion tells how long its text is.
 static bool textsSurelyFitInOneString(std::span<const EncodedJSValue> primitives)
 {
     uint64_t length = 0;
@@ -1478,24 +1444,11 @@ static bool textsSurelyFitInOneString(std::span<const EncodedJSValue> primitives
     return length <= JSString::MaxLength;
 }
 
-// Behind that question only the lack of memory is left to throw for.
-JSC_DEFINE_JIT_OPERATION(operationAOTTryConcatenate, EncodedJSValue, (Instance* instance, uint32_t count, const EncodedJSValue* parts))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTTryConcatenate);
-    std::span<const EncodedJSValue> primitives = unsafeMakeSpan(parts, count);
-    if (!textsSurelyFitInOneString(primitives))
-        OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
-    JSString* text = concatenatePrimitives(globalObject, *instance, primitives, UseOfJoinedText::LikelyKey);
-    OPERATION_RETURN(scope, text ? JSValue::encode(text) : encodedJSValue());
-}
-
-// Whoever comes here has left in lastLookupByParts() what it looked for in vain.
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateShortStringKey(Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey)
 {
     ShortKeyCharacters characters;
     StringKeyCache& keys = *instance->state->stringKeys;
     if (tryWriteShortKey(unsafeMakeSpan(parts, count), characters) && characters.length >= 2) [[likely]] {
-        // A rope is made anew each time, so nobody asks for these parts again.
         if (characters.hasRopePart)
             keys.lastLookupByParts().countAndKinds = 0;
         JSString* key;
@@ -1537,7 +1490,6 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
     AOT_MUST_TAIL_CALL return concatenateShortStringKey(instance, count, parts, isLikelyKey);
 }
 
-// The usual road calls nothing, so it saves no registers.
 JSC_DEFINE_JIT_OPERATION(operationAOTConcatenate, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey))
 {
     if (!isLikelyKey) [[unlikely]]
@@ -1566,7 +1518,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcatenate, JSCell*, (Instance* instance, 
     AOT_MUST_TAIL_CALL return concatenateShortStringKey(instance, count, parts, isLikelyKey);
 }
 
-// The stub ConcatenateKeyOfPair has looked for the pair. An operation begins in its own frame, so this one leaves by a tail call as the others do.
 JSC_DEFINE_JIT_OPERATION(operationAOTConcatenatePair, JSCell*, (Instance* instance, uint32_t isLikelyKey, const EncodedJSValue* parts, uint32_t))
 {
     instance->state->stringKeys->lastLookupByParts().takePair(parts[0], parts[1]);
@@ -1586,15 +1537,10 @@ static ALWAYS_INLINE JSString* numberToJSONText(VM& vm, JSValue value)
     return vm.numericStrings.addJSString(vm, number);
 }
 
-// ---- JSON.stringify of a string. Most texts have nothing to escape: such a text is copied once, into a string of its own length and two quotes, and looked through on the way.
-
 static constexpr size_t numberOfQuotesInJSON = 2;
 static constexpr size_t maxLengthOfEscapedCharacterInJSON = 6;
-// The engine reserves room for the longest escaped form of a string before it reads the string, and throws if no string is that long.
 static constexpr size_t maxLengthOfStringQuotedHere = (String::MaxLength - numberOfQuotesInJSON) / maxLengthOfEscapedCharacterInJSON;
-// A longer text pays for the engine's set-up many times over, and the room for its longest escaped form is no small thing.
 static constexpr size_t maxLengthOfStringEscapedHere = 16 * KB;
-// It is checked in a few instructions, and one that has something to escape is spared an allocation that it cannot use.
 static constexpr size_t maxLengthOfStringCheckedFirst = SIMD::stride<uint8_t> - 1;
 
 using BytesOfJSONText = decltype(SIMD::load(static_cast<const uint8_t*>(nullptr)));
@@ -1613,7 +1559,6 @@ static ALWAYS_INLINE bool needsEscapeInJSON(uint64_t first, uint64_t last)
     return SIMD::isNonZero(findEscapesInJSON(SIMD::load(std::bit_cast<const uint8_t*>(words.data()))));
 }
 
-// Whether something of it has to be escaped.
 static ALWAYS_INLINE bool copyAndCheckForEscapes(std::span<const Latin1Character> characters, Latin1Character* to)
 {
     static_assert(maxLengthOfStringCheckedFirst + 1 == SIMD::stride<uint8_t>);
@@ -1628,7 +1573,6 @@ static ALWAYS_INLINE bool copyAndCheckForEscapes(std::span<const Latin1Character
         found = SIMD::bitOr(found, findEscapesInJSON(input));
     };
     size_t offset = 0;
-    // A long text that has something to escape mostly has it early, and all that was copied is copied again.
     for (; offset + 4 * stride <= size; offset += 4 * stride) {
         take(offset);
         take(offset + stride);
@@ -1682,7 +1626,6 @@ static ALWAYS_INLINE void copyShortString(std::span<const Latin1Character> chara
         to[i] = from[i];
 }
 
-// `text` has room for the longest escaped form.
 template<typename CharacterType>
 static ALWAYS_INLINE JSString* quoteStringWithEscapesIn(VM& vm, std::span<CharacterType> text, std::span<const CharacterType> characters)
 {
@@ -1753,7 +1696,6 @@ static JSString* quoteString(JSGlobalObject* globalObject, JSString* string)
                     return text;
             }
         } else if (!view->is8Bit() && view->length() <= maxLengthOfStringEscapedHere && !WTF::charactersAreAllLatin1(view->span16())) {
-            // The engine writes a wide text that has narrow characters alone as a narrow one.
             if (JSString* text = tryQuoteStringWithEscapes(vm, view->span16())) [[likely]]
                 return text;
         }

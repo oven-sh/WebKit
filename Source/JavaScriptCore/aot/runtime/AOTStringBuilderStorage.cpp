@@ -50,7 +50,6 @@ NEVER_INLINE void StringBuilderStorage::throwOutOfMemory(JSGlobalObject* globalO
     throwOutOfMemoryError(globalObject, scope);
 }
 
-// The word that compiled code reads. The next change of the limit of the stack overwrites it.
 void StringBuilderStorage::setLevelLimit(void* limit)
 {
     *std::bit_cast<void**>(std::bit_cast<uintptr_t>(&m_levelLimit) + StackManager::Mirror::offsetOfSoftStackLimit()) = limit;
@@ -76,10 +75,8 @@ bool StringBuilderStorage::enterWatchedLevel(EncodedJSValue holder, void* frame)
 {
     if (std::bit_cast<uintptr_t>(frame) - stackReservedBelowJSONLevels < std::bit_cast<uintptr_t>(vm().softStackLimit()))
         return false;
-    // Without a watch of its own: another builder has grown.
     bool goesOn = true;
     if (m_watchedLevels.isWatching()) {
-        // A builder that ends with a short text goes back to the pool as it is.
         if (length() < m_lengthWhenWatchBegan) {
             m_watchedLevels.forgetLevels();
             m_lengthWhenWatchBegan = 0;
@@ -157,12 +154,11 @@ void StringBuilderStorage::release(Instance& instance)
 
 void StringBuilderStorage::returnToPool(Instance& instance)
 {
-    ASSERT(!length() && m_segments.isEmpty() && !m_lastString && !m_sharedLength);
+    ASSERT(!length() && m_segments.isEmpty() && !m_lastString && !m_sharedLength && !m_positionJoinedIntoFirstSegment);
     VM& vm = *instance.vm;
     StringBuilderWords& words = instance.stringBuilder;
     StringBuilderStorage* head = words.freeStorage;
     ASSERT(head != this);
-    // A builder may be laid into the empty pool by one store, which writes no depth: the builder that has none below it is the first, whatever it says.
     unsigned depth = !head ? 1 : head->m_nextFree ? head->m_poolDepth + 1 : 2;
     if (depth > maxPooledBuilders) [[unlikely]] {
         dropBuffer();
@@ -181,6 +177,7 @@ void StringBuilderStorage::reset()
     }
     size_t longestTextInBuffer = std::max(m_position, std::exchange(m_positionWhenSegmentsWereJoined, 0));
     m_position = 0;
+    m_positionJoinedIntoFirstSegment = 0;
     m_lengthOutsideBuffer = 0;
     m_lengthOfLastString = 0;
     m_lastString.clear();
@@ -207,7 +204,6 @@ bool StringBuilderStorage::canGrowBy(size_t added) const
     return static_cast<uint64_t>(length()) + added <= String::MaxLength;
 }
 
-// The bytes that are written behind the characters that are appended want room in the buffer. They are no part of the text, so the longest text says nothing about them.
 bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
 {
     ASSERT(length <= bytesWritten);
@@ -255,7 +251,6 @@ NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
     m_characters = characters.data();
     m_sharedLength = 0;
     updateLimit();
-    // An empty builder gets the buffer that the last text of its size took. No text has grown.
     if (length())
         watchLevelsAfterGrowth(newCapacity);
     vm().heap.reportExtraMemoryAllocated(this, newCapacity);
@@ -273,7 +268,6 @@ void StringBuilderStorage::dropBuffer()
     updateLimit();
 }
 
-// A builder is emptied where compiled code counts on no collection, so the buffer that fits is made by the next write.
 void StringBuilderStorage::dropLargeBuffer(size_t longestTextInBuffer)
 {
     size_t fittingCapacity = longestTextInBuffer > capacity() / 2 ? capacity() : std::max<size_t>(roundUpToPowerOfTwo(longestTextInBuffer), minCapacity);
@@ -324,7 +318,6 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string
     if (!length)
         return AppendResult::Appended;
     bool wasEmpty = !this->length();
-    // What a builder begins with has been built before. Copying it would cost a loop that begins a builder with its own last result the whole text at every turn.
     uint32_t minLengthByReference = wasEmpty ? minLengthOfStringBuilderFiber : minLengthAppendedByReference;
     bool isAppendedByReference = length >= minLengthByReference || !string->is8Bit();
     AppendResult result = isAppendedByReference ? addSegment(globalObject, string) : appendCharactersOf(globalObject, string);
@@ -413,7 +406,6 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
     return AppendResult::Appended;
 }
 
-// Compiled code writes whole words.
 Latin1Character* StringBuilderStorage::tryReserve(size_t length)
 {
     return tryEnsureRoom(length, roundUpToMultipleOf<sizeof(uint64_t)>(length)) ? m_characters + m_position : nullptr;
@@ -488,7 +480,7 @@ void StringBuilderStorage::rollBack(uint32_t length)
 template<typename Functor>
 void StringBuilderStorage::forEachPiece(const Functor& functor) const
 {
-    uint32_t taken = 0;
+    uint32_t taken = m_positionJoinedIntoFirstSegment;
     for (const Segment& segment : m_segments) {
         if (segment.offsetInBuffer > taken)
             functor(Piece { nullptr, taken, segment.offsetInBuffer - taken });
@@ -619,11 +611,12 @@ JSString* StringBuilderStorage::createStringFromPieces(JSGlobalObject* globalObj
     forEachPiece([&](const Piece& piece) {
         pieces.append(piece);
     });
+    if (length() < minLengthOfStringBuilderFiber)
+        RELEASE_AND_RETURN(scope, createFlatRun(globalObject, pieces.span()));
 
     auto is8Bit = [](const Piece& piece) {
         return !piece.string || piece.string->is8Bit();
     };
-    // A 16-bit rope may have 8-bit parts, and a piece of the text that lies in an 8-bit part is an 8-bit string.
     auto isFiber = [&](const Piece& piece) {
         return piece.string && (piece.length >= minLengthOfStringBuilderFiber || (!piece.string->is8Bit() && piece.string->isRope() && !piece.string->isSubstring()));
     };
@@ -670,10 +663,24 @@ bool StringBuilderStorage::collapseSegments(JSGlobalObject* globalObject)
     m_lengthOutsideBuffer = length;
     m_positionWhenSegmentsWereJoined = std::max(m_positionWhenSegmentsWereJoined, m_position);
     m_position = 0;
+    m_positionJoinedIntoFirstSegment = 0;
     m_lastString.set(vm, this, all);
     m_lengthOfLastString = length;
     updateLimit();
     return true;
+}
+
+void StringBuilderStorage::joinPiecesInto(VM& vm, JSString* all)
+{
+    ASSERT(all->length() == length());
+    {
+        Locker locker { cellLock() };
+        m_segments.shrink(0);
+        m_segments.append(Segment { m_position, all->length(), WriteBarrier<JSString>(vm, this, all) });
+    }
+    m_positionJoinedIntoFirstSegment = m_position;
+    m_lastString.set(vm, this, all);
+    m_lengthOfLastString = all->length();
 }
 
 JSString* StringBuilderStorage::createString(JSGlobalObject* globalObject, Instance& instance, StringUse use, bool mayGiveBufferAway)
@@ -789,7 +796,6 @@ void StackStringBuilder::abandonChangeOfStorage(Instance& instance, StringBuilde
         changed.release(instance);
 }
 
-// StringBuilderStorage::toString() joins the segments and moves the position, which would leave the cursor behind.
 JSString* StackStringBuilder::toString(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor)
 {
     VM& vm = globalObject->vm();
@@ -809,7 +815,10 @@ JSString* StackStringBuilder::toString(JSGlobalObject* globalObject, Instance& i
         return jsEmptyString(vm);
     if (storage->m_segments.isEmpty())
         return storage->createStringFromBuffer(globalObject, instance, StringBuilderStorage::StringUse::Unknown, false);
-    return storage->createStringFromPieces(globalObject);
+    JSString* all = storage->createStringFromPieces(globalObject);
+    if (all) [[likely]]
+        storage->joinPiecesInto(vm, all);
+    return all;
 }
 
 JSString* StackStringBuilder::finish(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor, StringBuilderStorage::StringUse use)
@@ -873,7 +882,6 @@ struct NarrowPartOfWideString {
     size_t length;
 };
 
-// A part of a 16-bit string is an 8-bit string if it is one Latin-1 unit or two ASCII units.
 static ALWAYS_INLINE std::optional<NarrowPartOfWideString> narrowPartOfWideString(std::span<const char16_t> units)
 {
     if (units.size() == 1 && units[0] <= maxSingleCharacterString)
@@ -889,7 +897,6 @@ static void appendStringRangeToBuilder(JSGlobalObject* globalObject, StringBuild
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!length)
         return;
-    // A piece of a 16-bit rope may lie in an 8-bit part of it.
     bool mayHaveNarrowParts = !base->is8Bit() && base->isRope() && !base->isSubstring();
     if (length < StringBuilderStorage::minLengthAppendedByReference && !mayHaveNarrowParts) {
         auto view = base->view(globalObject);
@@ -966,7 +973,6 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
     OPERATION_RETURN(scope, uncheckedDowncast<StringBuilderStorage>(builder)->finishWithNewKey(globalObject, *instance, hash));
 }
 
-// A short text is looked for among the keys whatever it is for: a program builds the same short texts over and over.
 JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderFinish, JSCell*, (Instance* instance, JSCell* builder, uint32_t isLikelyKey))
 {
     JSString* key;
@@ -1016,7 +1022,6 @@ static NEVER_INLINE OperationReturnType<uint8_t*> JIT_OPERATION_ATTRIBUTES appen
     OPERATION_RETURN(scope, byteCast<uint8_t>(next));
 }
 
-// The usual road calls nothing, so it saves no registers.
 JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppend, uint8_t*, (Instance* instance, uint8_t* builder, uint8_t* cursor, EncodedJSValue primitive))
 {
     constexpr size_t maxLengthOfInt32 = 11;
@@ -1042,7 +1047,6 @@ static NEVER_INLINE OperationReturnType<uint8_t*> JIT_OPERATION_ATTRIBUTES appen
     JSString* base = cellArgument<JSString>(string, entry);
     if (start < 0 || end < start || static_cast<unsigned>(end) > base->length()) [[unlikely]]
         crashOnWrongOperand(entry);
-    // `"" + text.slice(start, end)` is the slice.
     if (stackBuilder.isOnStack() && byteCast<Latin1Character>(cursor) == stackBuilder.buffer && start < end) {
         JSString* range = jsSubstring(globalObject, base, start, end - start);
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1095,7 +1099,6 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
     OPERATION_RETURN(scope, key);
 }
 
-// As operationAOTStringBuilderFinish: a short text is looked for among the keys whatever it is for.
 JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey))
 {
     auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);

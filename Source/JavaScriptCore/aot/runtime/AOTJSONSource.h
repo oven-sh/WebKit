@@ -23,7 +23,6 @@ static constexpr size_t minJSONSourceCapacity = 1 * KB;
 static constexpr size_t maxRetainedJSONSourceCapacity = 64 * KB;
 inline constexpr uint8_t saturatedJSONCharacter = 0xff;
 
-// One source is open at a time. Opening a second one overwrites the first without an error, so nothing that runs while a scope lives may parse JSON.
 class JSONSourceScope {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(JSONSourceScope);

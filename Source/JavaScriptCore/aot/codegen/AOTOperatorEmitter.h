@@ -62,7 +62,6 @@ public:
     void generateToThis(const ValueContext&);
 
     Number pow(Number, Number);
-    // CodeGenerator::sumBoxedBy().
     Boxed boxedSum(ValueID sum);
     CellPointer toString(const OperationContext&, Operand, const Type&);
     Operand failWithZero(const ValueContext&);
@@ -83,7 +82,6 @@ private:
     template<typename T, typename Functor> T passingOrConverted(Boxed, const TypeTestPlan&, Form formOfConversion, const Functor& convert);
 
     LValue callBinaryStub(const ValueContext&, BinaryOperator, Boxed left, Boxed right);
-    // The closed arm of a guess, the way of what is no number: it is there for what a test in line would turn away, so nothing stands in line in front of the stub.
     bool standsInRareBlock(const ValueContext& value) const { return m_code.at(value.block()).frequency == BlockFrequency::Rare; }
     Operand arithmeticOnIntegers(const ValueContext&, ArithmeticOperator);
     Operand arithmeticOnCheckedIntegers(const ValueContext&, ArithmeticOperator);
@@ -98,14 +96,12 @@ private:
     Operand unaryOnNumbers(UnaryOperator, ValueID operand);
     Word32 bitwiseOnWords(BitwiseOperator, Word32, Word32);
 
-    // Without a relation the operands are compared for equality.
     template<typename T> Condition compare(std::optional<Relation>, T, T);
     void generateComparisonOfNumbers(const ValueContext&, std::optional<Relation>);
     Condition relationOnStringCells(const ValueContext&, Relation, CellPointer left, CellPointer right);
     Condition relationOnNullableStrings(const ValueContext&, Relation);
     enum class ValueInRelation : uint8_t { MayBeInt32, IsNoInt32 };
     Condition relationOnValues(const ValueContext&, Relation, ValueInRelation = ValueInRelation::MayBeInt32);
-    // False, and nothing generated: no operand is a written integer that an int32 holds, or the other can be no int32.
     bool generateRelationOfIntegerAndValue(const ValueContext&, Relation);
     bool generateRelationOfBoxedNumberAndValue(const ValueContext&, Relation);
     bool generateRelationOfValuesThatAreLikelyInt32s(const ValueContext&, Relation);

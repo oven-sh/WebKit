@@ -85,7 +85,6 @@ struct PropertyAnswer {
     SlotData variable { };
     uint32_t customAccessor { 0 };
     JSValue constant { };
-    // Of an access that is not cacheable because the receiver is a proxy: what the trap is handed as the key.
     JSCell* keyForTrap { nullptr };
     uint16_t columnOfNameForTrap { 0 };
     ChainObjects changeableObjects { };
@@ -110,7 +109,6 @@ struct StoreQuery {
     PutMode mode;
 };
 
-// The deletion has been made and has succeeded.
 struct DeletionQuery {
     JSGlobalObject* globalObject;
     JSObject* base;
@@ -126,7 +124,6 @@ PropertyAnswer classifyDeletion(const DeletionQuery&);
 PropertyAnswer classifyCompiledObjectStore(const StoreQuery&, Object&);
 PropertyAnswer classifyNamespaceRead(const ReadQuery&);
 PropertyAnswer classifyGlobalProxyRead(const ReadQuery&);
-// The objects that what classifyGlobalProxyRead() filed in the slot depends on. It allocates nothing. Unknown: the slot holds no longer, or is of another realm.
 ChainWalk walkChainThroughGlobalProxy(JSGlobalObject*, const Slot&, UniquedStringImpl*);
 bool repeatsPropertyAddition(Structure*, UniquedStringImpl*);
 
@@ -137,7 +134,6 @@ enum class LazyPrototypeReadResult : uint8_t { NotApplicable, Answered, Continue
 struct LazyPrototypeRead {
     LazyPrototypeReadResult result { LazyPrototypeReadResult::NotApplicable };
     PropertyAnswer answer;
-    // Of ContinuesAbove: neither the receiver nor a class prototype between the two has the name, and none of them was asked.
     JSObject* firstObjectAbove { nullptr };
 };
 
@@ -147,14 +143,10 @@ JSValue readThroughAnswer(JSGlobalObject*, JSValue base, const PropertyAnswer&);
 Structure* structureForPrimitive(JSGlobalObject*, JSValue primitive);
 constexpr bool isProxyType(JSType type) { return type == ProxyObjectType || type == GlobalProxyType; }
 bool isNeverCachedName(VM&, UniquedStringImpl*);
-// See PropertyCaches::prepareHoldersBeforeLookupsUnder().
 bool isPreparedBeforeLookupsSlow(VM&, UniquedStringImpl* symbol);
 ALWAYS_INLINE bool isPreparedBeforeLookups(VM& vm, UniquedStringImpl* uid) { return uid->isSymbol() && isPreparedBeforeLookupsSlow(vm, uid); }
-// Calls what the library has registered for the name, if anything, on the compiled object. May throw.
 void prepareForLookup(JSGlobalObject*, JSObject* compiledObject, UniquedStringImpl*);
-// The same for each field of the object, before its values are handed out one after the other.
 void prepareForWalk(JSGlobalObject*, JSObject*);
-// An operation of compiled code that names the property. Only the text of the library names one by such a symbol, and it finds there what the library keeps there: while one of these lives, the object is not asked.
 class LookByName {
     WTF_MAKE_NONCOPYABLE(LookByName);
 public:
@@ -184,7 +176,6 @@ bool isHostObjectOverridingPut(Structure*);
 bool flattenOnce(VM&, JSObject*);
 bool flattenForListing(VM&, JSObject*);
 bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*);
-// For an addition that leads from one Structure to the next. Zero: the storage out of line stays. Nothing: no stub makes the addition.
 std::optional<uint32_t> capacityOfStorageGrownByStub(VM&, Structure* before, Structure* after, PropertyOffset);
 
 } } // namespace JSC::AOT

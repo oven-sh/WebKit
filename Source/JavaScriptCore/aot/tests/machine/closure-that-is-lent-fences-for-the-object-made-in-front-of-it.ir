@@ -1,0 +1,121 @@
+# `boxed` makes an object and an arrow over it, which `twice` only calls: the arrow lies in the frame. The sweep has left the fence of the object to the closure, so the code of the closure fences though it allocates nothing: the arrow lays the object in a list.
+# f1 = twice, f2 = boxed
+# -- source: closure-that-is-lent-fences-for-the-object-made-in-front-of-it.ts
+# declare function sink(...values: unknown[]): void;
+# const kept: object[] = [];
+# function twice(a: number, f: (x: number) => number): number { let t = a; for (let i = 0; i < 2; i++) t = f(t); return t; }
+# function boxed(a: number) { const box = { v: a, w: a + 1 }; const t = twice(a, x => { kept.push(box); return x + box.v; }); return t + 1; }
+# sink(boxed(1), boxed(2), kept);
+# -- end of source
+# records of fd44a31fa230c793
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK: NewObject {{*}}LaterFenceCovers
+# CHECK: NewClosure
+# REQUIRES(EMIT): arm64
+# RUN(EMIT): emit f2 mechanisms=all-Inlining
+# EMIT: Fence
+
+module m0 path="closure-that-is-lent-fences-for-the-object-made-in-front-of-it.ts" displayPath="closure-that-is-lent-fences-for-the-object-made-in-front-of-it.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 module=m0 position=241 fields=[{key="v" declared={type=anything} flags=[IsRequired]}, {key="w" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Array{contents=undefined|null|object} module=m0
+variable g0 name="twice" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="kept" module=m0 declared={type=undefined|null|absent|Array<undefined|null|object> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Data data=d0 @74
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|object> flags=[OmitsNull, OmitsUndefined]} @74
+    PutModuleVariable v3 variable=g1 @57
+    v5 = Builtin builtin=GlobalThis @341
+    v6 = PropGet v5 key="sink" [isFreeName] @341
+    v7 = Integer integer=1 @352
+    v8 = Call v1, -, v7 calleeName="boxed" @346
+    v9 = Integer integer=2 @362
+    v10 = Call v1, -, v9 calleeName="boxed" @356
+    v11 = Call v6, -, v8, v10, v3 calleeName="sink" @341
+    v12 = Undefined @341
+    Return v12 @341
+}
+function f1 name="twice" module=m0 position=78 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|function):
+    v2 = Convert v0 declared={type=number} @148
+    v3 = Integer @164
+    v4 = Convert v3 declared={type=number} @164
+    Jump -> next b1(v2, v4) @160
+  b1(v5: number, v6: number):
+    LoopHint @160
+    v8 = Integer integer=2 @171
+    v9 = Less v6, v8 @171
+    Branch v9 -> taken b2(), notTaken b3() @171
+  b2():
+    v10 = Call v1, -, v5 calleeName="f" @183
+    v11 = Convert v10 declared={type=number} @179
+    v12 = Increment v6 @174
+    v13 = Convert v12 declared={type=number} @174
+    Jump -> next b1(v11, v13) @174
+  b3():
+    v14 = Convert v5 declared={type=number} @196
+    Return v14 @196
+}
+function f2 name="boxed" module=m0 position=201 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=1 @256
+    v2 = Add v0, v1 @256
+    v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1] @241
+    v4 = FinishObject v3 @241
+    v5 = GetModuleVariable variable=g0 @271
+    v6 = NewClosure v4 function=f3 @280
+    v7 = Call v5, -, v0, v6 calleeName="twice" @271
+    v8 = Integer integer=1 @336
+    v9 = Add v7, v8 @336
+    Return v9 @336
+}
+function f3 module=m0 position=280 kind=Arrow flags=[IsChecked] length=1 captures=[{type=anything variableName="box"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: number):
+    v2 = GetModuleVariable variable=g1 @287
+    v3 = CheckInitialized v2 name="kept" @287
+    v4 = PropGet v3 key="push" @287
+    v5 = Call v4, v3, v0 calleeKey="push" calleeName="kept.push" @292
+    v6 = Convert v5 declared={type=number} illTypedCause=DeclarationWithoutBody @287
+    v7 = PropGet v0 key="v" @314
+    v8 = Add v1, v7 @314
+    Return v8 @314
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f6 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f6
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

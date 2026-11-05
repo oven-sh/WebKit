@@ -201,7 +201,6 @@ const DeclaredType* Function::declaredEntryParameter(unsigned entryParameterInde
 OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function& function)
 {
     OptionSet<FunctionCapabilities> capabilities = capabilitiesOf(function.role);
-    // The frame of a coroutine's body is saved at each suspension and entered again.
     if (hasSourceBodyOf(function.role) && function.isCoroutine())
         capabilities.remove({ FunctionCapabilities::MayBeInlined, FunctionCapabilities::HasOrdinaryFrame });
     return capabilities;

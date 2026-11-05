@@ -30,7 +30,6 @@ static uint32_t numberOfObfuscatedFrames(const CompiledCode& code)
     return std::max<uint32_t>(code.sites.inlineFrames.size(), 1);
 }
 
-// CompiledCode::function is the number of the unit in the image, which is no function of the program for any unit but a body.
 static FunctionID functionOfObfuscatedFrame(const CompiledCode& code, uint32_t frame)
 {
     return frame ? code.body.callees[code.sites.inlineFrames[frame].callee].function : code.unit.function;

@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Folding, of a call that goes by one row of a built-in on numbers: `Math.max(1, 2)`, `Math.abs(-3)`, `Number.isInteger(i)`, `parseInt("ff", 16)`.
-// Only what IEEE 754 and ECMAScript decide to the last bit. No function of the C library whose last bit differs between machines is ever called: sin, exp, log, pow and their kind stay calls.
-// It computes and builds nothing. At a suspension and at a throw: nothing. Withheld: the call goes by its row.
-
 #include "config.h"
 #include "AOTWalkNumberForms.h"
 
@@ -30,7 +26,6 @@ enum class TestOfNumberInFolds : uint8_t { IsNaN, IsFinite, IsInteger, IsSafeInt
 
 struct TestAskedInFolds {
     TestOfNumberInFolds test;
-    // isNaN() and isFinite() of the global object. Those of Number say false of what is no number.
     bool converts { false };
 };
 
@@ -58,7 +53,6 @@ static std::optional<TestAskedInFolds> testOfNumberAskedInFolds(InlineBuiltin bu
     }
 }
 
-// ToNumber of a known primitive.
 static std::optional<double> numberOfKnownPrimitiveInFolds(Walker& walker, PrimitiveKnownToFolding known)
 {
     switch (known.kind()) {
@@ -95,7 +89,6 @@ static bool numberPassesTestInFolds(TestOfNumberInFolds test, double number)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Of a value that is not known: the answer where every value of the type gets the same. -0, NaN, the infinities and what lies beyond the tracked integers are one primitive, which passes and fails each test.
 static std::optional<bool> answerOfTestByTypeInFolds(TestAskedInFolds asked, const Type& type)
 {
     if (type.isNever() || !type.isJavaScriptValue() || type.mayBeUnspecified() || type.primitives & Primitive::Absent)
@@ -136,7 +129,6 @@ static std::optional<bool> answerOfTestByTypeInFolds(TestAskedInFolds asked, con
     return mayPass;
 }
 
-// A NaN that the processor makes has a sign on some processors and none on others, and the program can read the sign out of a Float64Array. A NaN that an operand brings goes through as it is.
 static PrimitiveKnownToFolding numberComputedInFolds(double result, std::span<const double> operands)
 {
     if (std::isnan(result)) {
@@ -149,11 +141,9 @@ static PrimitiveKnownToFolding numberComputedInFolds(double result, std::span<co
     return PrimitiveKnownToFolding::number(result);
 }
 
-// Math.round(-0.2) is -0, and Math.round(2.5) is 3.
 static double roundedAsMathRoundDoesInFolds(double number)
 {
     double integer = std::ceil(number);
-    // Half below a whole number is exact. What lies between the whole number and the operand is not: of 0.49999999999999994 it rounds to a half.
     return integer - (integer - 0.5 > number);
 }
 
@@ -187,7 +177,6 @@ static std::optional<double> resultOfExactFunctionInFolds(InlineBuiltin builtin,
     }
 }
 
-// Math.max(0, -0) is 0 and Math.min(0, -0) is -0.
 static double strongerOfTwoInFolds(bool asksForGreatest, double left, double right)
 {
     if (std::isnan(left))
@@ -215,7 +204,6 @@ static PrimitiveKnownToFolding foldCallOnKnownNumbersInFolds(InlineBuiltin built
         return PrimitiveKnownToFolding::number(strongest);
     }
     case InlineBuiltin::MathHypot:
-        // Of more numbers the sum of the squares is rounded, and in which order is the engine's to choose.
         if (numbers.empty())
             return PrimitiveKnownToFolding::integer(0);
         return numbers.size() == 1 ? PrimitiveKnownToFolding::number(std::abs(numbers[0])) : PrimitiveKnownToFolding();
@@ -228,7 +216,6 @@ static PrimitiveKnownToFolding foldCallOnKnownNumbersInFolds(InlineBuiltin built
     return result ? numberComputedInFolds(*result, numbers.first(1)) : PrimitiveKnownToFolding();
 }
 
-// `parseInt("ff", 16)`, `parseInt("12px")`.
 static PrimitiveKnownToFolding foldParseIntInFolds(Walker& walker, std::span<const PrimitiveKnownToFolding> known)
 {
     if (known.empty() || !known[0].isText())
@@ -281,7 +268,6 @@ std::optional<PrimitiveKnownToFolding> foldExactly(Walker& walker, const CallByO
     else {
         Vector<double, 4> numbers;
         for (PrimitiveKnownToFolding argument : known) {
-            // The row has converted what it converts. Whatever else is no number is not for here.
             if (argument.kind() != PrimitiveKnownToFolding::Kind::Number)
                 return std::nullopt;
             numbers.append(argument.asNumber());

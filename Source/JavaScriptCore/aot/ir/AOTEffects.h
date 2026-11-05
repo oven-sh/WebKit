@@ -27,7 +27,6 @@ public:
         return result;
     }
 
-    // Entering a function overflows the stack.
     static constexpr ThrowEffect onlyStackOverflow()
     {
         ThrowEffect result = onlyForLackOfMemory();
@@ -87,7 +86,6 @@ struct Effects {
 
     constexpr bool isPure() const { return reads.isEmpty() && writes.isEmpty() && mayThrow == ThrowEffect(false) && !mayCollect && !mayCallUnknownCode && !maySuspend && !mayBeTerminated; }
     constexpr bool isRemovableWhenUnused() const { return writes.containsOnly(heapsWhoseWritesNobodySees) && !mayThrowByRule() && !mayBeTerminated && !mayRunOtherCode(); }
-    // Whoever runs it a second time with nothing written in between finds what the first time found, and nobody has seen the first. Where it throws, the second time is never reached.
     constexpr bool mayBeRunAgainUnseen() const { return writes.containsOnly(heapsWhoseWritesNobodySees) && !mayRunOtherCode(); }
     constexpr bool isUnobservable() const { return isRemovableWhenUnused() && !mayThrow; }
     constexpr bool mayThrowByRule() const { return mayThrow.byRule(); }
@@ -107,7 +105,6 @@ struct Effects {
         mayBeTerminated |= other.mayBeTerminated;
     }
 
-    // What both allow. Two bounds on one operation both hold, so their intersection does.
     constexpr void intersect(const Effects& other)
     {
         reads.intersect(other.reads);
@@ -195,7 +192,6 @@ public:
     constexpr bool mayExitSideways() const { return m_bits & (throws | isTerminated | suspends | callsUnknownCode); }
     constexpr bool mayWriteWhatIsSeen() const { return m_bits & writesWhatIsSeen; }
     constexpr bool mayTouchMemory() const { return m_bits & touchesMemory; }
-    // Something that is seen and is no part of an object: a variable, the bytes under a view, the state of the host.
     constexpr bool mayWriteOutsideObjects() const { return m_bits & writesOutsideObjects; }
 
     constexpr EffectTraits& operator|=(EffectTraits other)

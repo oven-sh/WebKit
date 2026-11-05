@@ -200,7 +200,6 @@ function isWrittenForPristine(parameter: ModelParameter | null, atom: Atom): boo
   );
 }
 
-// `list.sort()`: the overloads for a pristine receiver take between them every call that a wider overload takes. A call that they leave to it gets its answer, which is that for any object.
 function checkPristineReceivers(overloads: readonly ModelOverload[], root: ModelDispatchTarget, problems: Problems): void {
   const argumentCount = longestParameterList(overloads);
   const isTotal = [...targetsOf(root)].every(
@@ -223,7 +222,6 @@ function checkPristineReceivers(overloads: readonly ModelOverload[], root: Model
   }
 }
 
-// A call passes no argument after the first optional parameter that it leaves out.
 function checkParameterOrder(overloads: readonly ModelOverload[], problems: Problems): void {
   for (const overload of overloads) {
     const firstOptional = overload.parameters.findIndex(parameter => parameter.mode !== "Required");
@@ -237,7 +235,6 @@ function checkParameterOrder(overloads: readonly ModelOverload[], problems: Prob
   }
 }
 
-// Placement plans the cell of a layout from the allocations in compiled code. A function of the engine or of the host makes an ordinary object with the same properties.
 export function checkResultLayouts(overloads: readonly ModelOverload[], problems: Problems): void {
   for (const overload of overloads) {
     const isCompiled = overload.code.implementation.how === "Compiled";
@@ -271,7 +268,6 @@ function namesPlainObjects(type: ModelType): boolean {
   );
 }
 
-// A literal in compiled code makes a cell of a compiled layout, which has a cell type of its own.
 export function checkPlainObjectsOfCompiledRows(overloads: readonly ModelOverload[], problems: Problems): void {
   for (const overload of overloads) {
     if (overload.code.implementation.how !== "Compiled" || !namesPlainObjects(overload.result.type)) continue;
@@ -307,7 +303,6 @@ function checkSpecialCases(overloads: readonly ModelOverload[], problems: Proble
   }
 }
 
-// The function object of an entry that a function of the library implements runs that function.
 function checkHostCallees(overloads: readonly ModelOverload[], problems: Problems): void {
   for (const overload of overloads) {
     const { implementation } = overload.code;

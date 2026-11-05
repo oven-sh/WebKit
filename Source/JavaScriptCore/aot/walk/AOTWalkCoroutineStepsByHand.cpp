@@ -152,9 +152,7 @@ static bool calleeIsNextOfEngineInStepsByHand(Walker& walker, const BodyValue& c
         return false;
 
     BuiltinClassID builtinClass = isAsync ? BuiltinClasses::AsyncGenerator : BuiltinClasses::Generator;
-    bool isAsItsClassMakesIt = isAsync
-        ? pristineAspectsProvenBy(BuiltinTypeContext { program, types, &walker.facts() }, walker.typeOf(generator), builtinClass).contains(PristineAspects::Names)
-        : checkLeftToStepOf(walker, generator) == GeneratorStepCheck::None;
+    bool isAsItsClassMakesIt = !isAsync && checkLeftToStepOf(walker, generator) == GeneratorStepCheck::None;
     BuiltinID prototype = table.at(builtinClass).prototype;
     if (!isAsItsClassMakesIt || !prototype)
         return false;

@@ -36,7 +36,6 @@ struct RopeRegisters {
     GPRReg allocator;
 };
 
-// `mayGrow`: of the string that the others are added to. What is added to a long substring may have room behind it in a buffer: AOTGrowingText.h.
 static void loadFlagsAndLength(StubAssembler& jit, GPRReg string, GPRReg flags, GPRReg length, JumpList* mayGrow = nullptr)
 {
     jit.loadPtr(Address(string, JSString::offsetOfValue()), flags);
@@ -82,10 +81,6 @@ static void loadFlagsAndLength(StubAssembler& jit, GPRReg string, GPRReg flags, 
     return refill;
 }
 
-// The first string is a substring of at least minLengthOfGrowingText, `flags` is its first word and `length` its length.
-// Where it ends the text of an 8-bit buffer that has room for the other strings, and those are flat, 8-bit and short, they are written behind it, and the substring that holds them too is returned.
-// Whatever else is the case leaves by `other`. Nothing was written then, and the strings lie where they lay: they become a rope like any others.
-// The operation that a stub without cells calls writes all such ropes behind the text at once.
 [[nodiscard]] static AssemblyHelpers::FreeListRefill appendInBufferAndReturn(StubAssembler& jit, const RopeRegisters& registers, JumpList& other)
 {
     const auto [text, second, third, flags, length, scratch, rope, allocator] = registers;
@@ -135,7 +130,6 @@ static void loadFlagsAndLength(StubAssembler& jit, GPRReg string, GPRReg flags, 
     const GPRReg destination = characters;
     jit.addPtr(scratch, destination);
 
-    // The new substring has the buffer and the offset of the old one.
     jit.load64(Address(text, JSRopeString::offsetOfLength()), scratch);
     jit.add64(lengthOfPieces, scratch);
     jit.load64(Address(text, JSRopeString::offsetOfFiber2()), allocator);
@@ -144,7 +138,6 @@ static void loadFlagsAndLength(StubAssembler& jit, GPRReg string, GPRReg flags, 
     jit.move(TrustedImm32(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer), allocator);
     jit.storePair64(scratch, allocator, rope, TrustedImm32(0));
 
-    // From the last piece to the first, and each from its last character to its first. Each piece was flat above, and a flat string stays flat.
     JumpList pieceHasBecomeRope;
     for (size_t index = pieces.size(); index--;) {
         const GPRReg source = length;
@@ -252,7 +245,6 @@ void generateConcatenate(StubAssembler& jit)
     static_assert(gprOf(StubRegister::A3) == operationArgumentGPR(3));
     JumpList slow;
     Vector<AssemblyHelpers::FreeListRefill, 4> refills;
-    // Returns the jump that an empty string takes.
     auto addLengthOf = [&](GPRReg string) {
         loadFlagsAndLength(jit, string, scratch, lengthOfNext);
         Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, lengthOfNext);
@@ -288,7 +280,6 @@ void generateConcatenate(StubAssembler& jit)
         refills.append(allocateAndFillRope(jit, registers, slow));
         returnResult(jit, rope);
 
-        // An empty string is no part of a rope: whoever reads the text of `path + "" + ""` would copy the path into a buffer of its own.
         firstIsEmpty.link(&jit);
         joinTwoAndReturn(second, *third, false);
         secondIsEmpty.link(&jit);

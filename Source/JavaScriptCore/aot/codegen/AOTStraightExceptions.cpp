@@ -38,7 +38,6 @@ void StraightEmitter::generateException(const BodyValue& value)
         return;
     case Opcode::CatchValue:
         if (exception) {
-            // It is no operand of this operation: where nothing else reads it, it has no word.
             if (exception.index() > value.id().index() || m_index.isUnused(exception)) {
                 fail(value);
                 return;

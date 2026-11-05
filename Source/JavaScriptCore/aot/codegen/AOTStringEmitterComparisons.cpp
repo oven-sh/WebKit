@@ -44,7 +44,6 @@ LValue loadBytes(Output& out, unsigned width, TypedPointer pointer)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The text as it lies in a 16-bit string.
 static Vector<uint8_t, 64> bytesOfTextInWideString(const String& text)
 {
     Vector<uint8_t, 64> bytes;
@@ -61,7 +60,6 @@ uint64_t packStringIntoRegister(StringView text)
     RELEASE_ASSERT(text.length() <= sizeof(uint64_t));
     RELEASE_ASSERT(text.is8Bit() || WTF::charactersAreAllLatin1(text.span16()));
     uint64_t packed = 0;
-    // The stub reads seven units as two words of four that overlap in the fourth unit.
     if (text.length() == 7) {
         for (unsigned i = 0; i < 4; ++i)
             packed |= static_cast<uint64_t>(text[i]) << (8 * i) | static_cast<uint64_t>(text[3 + i]) << (32 + 8 * i);
@@ -117,7 +115,6 @@ void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context,
 {
     String text = textOf(literal);
     if (!comparedTextFitsInRegister(text)) {
-        // Only a string that is mentioned has a record in the image for the stub to read.
         branch(Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::String, literal) } }).first)), targets);
         return;
     }
@@ -125,7 +122,6 @@ void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context,
     emitter<RuntimeCallEmitter>().callStubAndBranch(context, equalsLiteralOfLength(operand, text.length()), operands, { }, targets);
 }
 
-// ProgramIdentifiers::uid(). Image numbers the name: what comes in is the mention of it, in NumberSpace::Name, NameOfText or AtomOfComparedText.
 StringEmitter::AtomOfName StringEmitter::atomOfName(uint32_t mentionOfName)
 {
     Integer name = zeroExtended(numberOf(mentionOfName));
@@ -133,14 +129,11 @@ StringEmitter::AtomOfName StringEmitter::atomOfName(uint32_t mentionOfName)
         Pointer atoms = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.programIdentifiers));
         return { offsetBy(atoms, mul(name, static_cast<int64_t>(sizeof(UniquedStringImpl))), 0), std::nullopt };
     }
-    // The header of the atom is made when the text first becomes an atom. Until then its offset is zero, where no header lies.
     Pointer offsets = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets));
     Word32 offset(m_out.load32(m_out.baseIndex(m_heaps.AOTInstance_fieldsFilledOnce, offsets.value(), name.value(), ScaleFour)));
     return { offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(lazyStrings.headers)), zeroExtended(offset), 0), isNotZero(offset) };
 }
 
-// The type of a cell and its flags lie side by side, and the strings have one Structure: one comparison says that the cell is a string and holds an atom.
-// Of the two bytes only the flags change in a string.
 static_assert(JSCell::typeInfoFlagsOffset() == JSCell::typeInfoTypeOffset() + 1);
 static constexpr uint32_t typeAndFlagsOfAtom = StringType | (TypeInfo(StringType, JSString::StructureFlags).inlineTypeFlags() | TypeInfoPerCellBit) << 8;
 
@@ -148,7 +141,6 @@ static constexpr OpcodeSet comparisonsWithLiteral { Opcode::StringEqualsLiteral,
 
 void StringEmitter::makeCellsHoldAtomOf(StringID literal)
 {
-    // The stub tells a longer text by the header that the image has of it, and an atom of such a text is another object. The cells of the VM are atoms already.
     if (comparesLiteralInPlace(textOf(literal)) && !hasCellOfVM(types().bytesOf(literal)))
         m_mentions.add(NumberSpace::AtomOfString, literal);
 }
@@ -164,9 +156,6 @@ bool StringEmitter::readsCharactersInLine(const OperationContext& context)
     return named.form == Form::Open;
 }
 
-// A short string out of JSON.parse, a key and a text that the program compares are atoms. The mention makes the text a name of the image, and a name of the image has one atom (ProgramIdentifiers::findAtom()),
-// so an atom is that text if and only if it is that pointer. A cell whose bit is clear may still hold an atom, so nothing but the characters says no to it.
-// Nothing is looked up under the text here, which the space says: a text that is only compared comes behind every name that is looked up.
 CellPointer StringEmitter::branchOnAtomOfLiteral(ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool isString, Machine::EdgeClass frequencyWithoutAtom)
 {
     BlockEdge withoutAtom(newBlock(), frequencyWithoutAtom);
@@ -203,7 +192,6 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
         branch(equal(Boxed(subject), boxCell(emptyString())), targets);
         return;
     }
-    // Nothing but a string is as long as a text.
     if (lengthOfSubject) {
         continueIf(equal(*lengthOfSubject, text.length()), targets.notTaken);
         if (operand == ComparedOperand::Value) {
@@ -229,13 +217,10 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
         if (!isString)
             continueIf(hasCellType(string, StringType), targets.notTaken);
     } else {
-        // Few subjects are as long as the text, and for those the characters answer in as many steps as the atom.
         m_out.noteFormOf(comparisonsWithLiteral, Form::Open, known);
         makeCellsHoldAtomOf(literal);
     }
 
-    // A rope of the same length and a 16-bit string without a unit above 0xFF may equal the text: the stub answers for them without flattening.
-    // What nobody has read yet is read where it is asked for, so that it becomes the memory operand of the compare that uses it.
     LBasicBlock slow = newBlock();
     auto openedString = subjectIsFlat ? m_openedStrings.find(string.value()) : m_openedStrings.end();
     const CharacterSource* source = openedString != m_openedStrings.end() ? &openedString->value.source : nullptr;
@@ -363,7 +348,6 @@ void StringEmitter::branchOnTextAt(const CharacterView& view, Word32 offset, Str
             branchOnBytesAt(offsetBy(view.characters, zeroExtended(offset), 1), bytesOfTextInWideString(text).span(), m_heaps.characters16.atAnyIndex(), view.owner, targets);
             return;
         }
-        // A text with a unit above 0xFF equals no 8-bit string.
         if (!text.is8Bit()) {
             m_out.jump(targets.notTaken);
             return;
@@ -427,7 +411,6 @@ Word32 StringEmitter::findCodeUnit(const CharacterView& subject, Word32 codeUnit
             return search(RuntimeOperation::StringReverseFindCharacter8);
         if (codeUnit.value()->hasInt() && static_cast<uint64_t>(codeUnit.value()->asInt()) > 0xFF)
             return word32(-1);
-        // The stub walks a short string itself and hands a long one to the leaf. Like the leaf it reads 32 bits of all but the first operand.
         LValue operands[] = { subject.characters.value(), subject.length.value(), codeUnit.value(), position.value() };
         return low32(Integer(emitter<RuntimeCallEmitter>().callStubWithoutSite(findCharacter8(), operands).first));
     });
@@ -442,7 +425,6 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
     StringID literal = value->literal();
     String text = textOf(literal);
     Word32 position = word32Of(value->positionOperand());
-    // Backward from position 0 the text is found at the start or not at all.
     if (!isForward && position.value()->isInt32(0) && canCompareInline(literal)) {
         CharacterView view = viewOf(value, string);
         Word32 length = word32(text.length());
@@ -454,7 +436,6 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
         return;
     }
 
-    // Only a string that is mentioned has a record in the image for the functions to read.
     Word32 numberOfText = numberOf(m_mentions.add(NumberSpace::String, literal));
     auto findInCell = [&] {
         RuntimeOperation operation = isForward ? RuntimeOperation::StringIndexOfLiteral : RuntimeOperation::StringLastIndexOfLiteral;
@@ -467,7 +448,6 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
 
     CharacterView view = viewOf(value, string);
     if (!isForward && text.length() == 1) {
-        // A position in front of the string stands for its start, and the leaf finds nothing from there.
         Word32 codeUnit = word32(text[0]);
         define(value, findCodeUnit(view, codeUnit, select(lessThan(position, 0), 0, position), direction));
         return;
@@ -504,7 +484,6 @@ void StringEmitter::generateStringIndexOfCharacter(const ValueContext& value)
     m_out.appendToArm(flat, fork);
     join.add(findCodeUnit(viewOfFlatString(cell), codeUnit, position, SearchDirection::Forward));
 
-    // The operation searches a long rope without flattening it.
     m_out.appendToArm(rope, fork);
     join.add(low32(callOperation<Integer>(value, RuntimeOperation::StringIndexOfCharacter, { cell, codeUnit, position })));
     define(value, join.finishBehind(fork));

@@ -19,21 +19,17 @@ class StraightEmitter;
 
 Machine::ProcedureTraits machineTraitsOf(const BuildContext&, const CodeGenerationInputs&, const Code&);
 
-// One unit, from swept Code to CompiledCode. It lives on the stack of generateCode().
 class FunctionCodeGenerator {
     WTF_MAKE_NONCOPYABLE(FunctionCodeGenerator);
 public:
     FunctionCodeGenerator(const CodeGenerationWorker&, const CodeGenerationInputs&, const Code&, CodeGenerationTotals&);
 
-    // Empty after a failure.
     CompiledCode run();
     std::optional<CompiledCode> runStraight(const BodyIndex&);
 
 private:
-    // Append: the emitters.
     bool appendOperations();
     void appendStraightBody(StraightEmitter&);
-    // Order, scan, allocate, slots, frame, encode, link, describe.
     CompiledCode emitCode();
     bool frameFitsImage();
     void reportLinkFailure(LinkFailure);
@@ -46,7 +42,6 @@ private:
     CodeRecords m_records;
     StackCheckState m_stackChecks;
     StraightEmitter* m_straightEmitter { nullptr };
-    // Its generators point into the members above.
     Machine::Procedure m_procedure;
 };
 

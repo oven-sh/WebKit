@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// The scan in front of AOTWalkTextBuilders.cpp: which parameters of the head of a loop hold a text that only grows, and which values of the loop name it. It reads the blocks of the loop once and builds nothing.
-// At a suspension: nobody asks it about a loop that may suspend. At a throw: an edge to a handler brings the text as it stood at the head of the block that throws.
-// Withheld, TypedOperations or LoopInvariants: nobody asks it.
-
 #include "config.h"
 #include "AOTWalkTextBuilders.h"
 
@@ -32,10 +28,8 @@ static constexpr uint32_t frontOperandInTextBuilderWebs = 0;
 static_assert(OperandIndex::Add::left == frontOperandInTextBuilderWebs);
 static_assert(OperandIndex::Strcat::parts == frontOperandInTextBuilderWebs);
 
-// A text is initialized, and is neither undefined nor null: each of them hands it on and does nothing else. RequireObject throws for a text, so it reads.
 static constexpr OpcodeSet castsInTextBuilderWebs = opcodesThatStateTypes | OpcodeSet { Opcode::CheckInitialized, Opcode::RequireObjectCoercible };
 
-// For a claim the walk builds a test, and a promise of an int32 is held against what enters the position: both look at a string.
 static bool passesOperandThroughInTextBuilderWebs(const BodyValue& operation, uint32_t operandIndex)
 {
     Opcode opcode = operation.opcode();
@@ -59,11 +53,9 @@ static ValueID operandPassedThroughInTextBuilderWebs(const BodyValue& cast)
 
 namespace {
 
-// A value of the loop that holds a text. Names of one version hold the same characters.
 struct NameInTextBuilderWeb {
     ValueID value;
     uint32_t text { 0 };
-    // The head parameter, a growth, or a parameter where several edges meet.
     ValueID version;
 };
 
@@ -73,13 +65,8 @@ struct CandidateInTextBuilderWeb {
     bool isRefused { false };
     bool isOnlyConcatenated { true };
     bool takesTextOfJSONStringify { false };
-    bool hasPartsThatMayRunCode { false };
 };
 
-// One forward scan of the blocks of a loop of the input, for all the parameters of its head at once.
-// A builder holds one text. So at each point in the loop a text has one current version, and only names of that version may be mentioned there: a mention of an older name means that two states are live at once.
-// Blocks come in reverse postorder and the flow is reducible, so some edge has brought each text to a block by the time the block is scanned.
-// An edge that arrives later is a back edge of a loop inside, and has to bring what the first edge brought.
 class TextBuilderWebScan {
     WTF_MAKE_NONCOPYABLE(TextBuilderWebScan);
 public:
@@ -97,32 +84,23 @@ private:
     void findCandidates();
     void scanBlock(BodyBlock);
     void scanOperation(const BodyValue&);
-    // What holds in every turn. Of a value from in front of the loop: the type of what the walk has built for it.
     TypeID typeInLooks(ValueID) const;
     bool isProvenToBeText(ValueID) const;
-    bool hasTextByItselfInLooks(ValueID) const;
-    // The walk makes a jump of a terminator whose operand is a constant by then. Of a value from in front of the loop that is known now, and the walk asks the same function. Nothing: it may lead every edge.
     std::optional<uint32_t> onlyTargetThatWalkLeadsTo(const BodyTerminator&) const;
     void passOverEdge(ValueID, uint32_t parameterIndex);
     void followEdge(const BodyTerminator&, uint32_t targetIndex, BodyTarget);
     void holdBackEdgeToBringingTexts();
     void followHandlerEdge(BodyBlock);
     void arriveAt(BlockID, uint32_t text, uint32_t parameterIndex);
-    // functor(const NameInTextBuilderWeb&). Whatever is live there dominates the block, so the scan has come by it.
     template<typename Functor> void forEachNameLiveAtHeadOf(BlockID, const Functor&);
 
     NameInTextBuilderWeb* findName(ValueID);
-    // Null: the value names no text that is still a candidate.
     NameInTextBuilderWeb* noteMention(ValueID);
     void giveName(ValueID, uint32_t text, ValueID version);
     void refuse(uint32_t text);
     void refuseTextNamedBy(ValueID);
-    // `log(s + ": " + x)`: what the join makes goes, through casts, conversions to a text and joins that have it in front, to one operation that hands it on to nobody.
-    // So it is never the variable again, and the join reads the text.
     bool makesTextThatIsOnlyRead(const BodyValue& join);
-    // Among the parts behind the first, through casts, conversions to a text and joins. Each value on the way has one mention, so no value is looked at twice.
     bool takesTextOfJSONStringifyBehindFront(const BodyValue& join);
-    // The name is looked at as it stands, or goes where the scan does not follow it. Behind a growth it is a string whatever has entered the loop.
     void noteThatStateIsSeen(const NameInTextBuilderWeb& name) { m_candidates[name.text].isOnlyConcatenated &= !m_index.isParameter(name.version); }
 
     Walker& m_walker;
@@ -131,9 +109,7 @@ private:
     LoopID m_loop;
     BodyBlock m_head;
     BlockID m_last;
-    // The loop's values are numbered from here on.
     uint32_t m_firstValue;
-    // ThinSummary::blocksNeverEntered: the walk leads no edge there.
     std::span<const BlockID> m_blocksNeverEntered;
     BodyLiveness m_liveness;
     bool m_standsUnderHandlers { false };
@@ -141,23 +117,14 @@ private:
     Vector<CandidateInTextBuilderWeb, 2> m_candidates;
     uint32_t m_numberOfOpenCandidates { 0 };
     Vector<NameInTextBuilderWeb, 16> m_names;
-    // Indexed by value minus m_firstValue: the index in m_names.
     Vector<uint32_t, 128> m_namesOfValues;
-    // Indexed by value minus m_firstValue: makesTextThatIsOnlyRead() has come by the value. So a row of n joins is followed once, not n times.
     Vector<bool, 128> m_isInRowThatWasFollowed;
-    // Indexed by block minus the head, then by text. Null: no edge has arrived yet.
     Vector<ValueID, 32> m_versionsAtEntries;
-    // Indexed by text: the current version where the scan stands.
     Vector<ValueID, 2> m_versions;
-    // Indexed by text: the parameter of the target that takes the text on the edge being followed.
     Vector<uint32_t, 2> m_parametersThatTakeTexts;
-    // Indexed by text: in the block being scanned, something that may throw stands behind a growth.
     Vector<bool, 2> m_mayThrowBehindGrowth;
-    // The texts that have grown in the block being scanned since the last operation that may throw.
     Vector<uint32_t, 2> m_textsGrownSinceSomethingMayHaveThrown;
-    // Indexed by text: the handler of the block being scanned reads a name that it is not handed.
     Vector<bool, 2> m_isReadByHandler;
-    // While takesTextOfJSONStringifyBehindFront() runs: what is still to be looked at.
     Vector<ValueID, 8> m_partsToLookAt;
 };
 
@@ -250,12 +217,6 @@ bool TextBuilderWebScan::isProvenToBeText(ValueID value) const
     return type && m_walker.types().at(type).isAnyString();
 }
 
-bool TextBuilderWebScan::hasTextByItselfInLooks(ValueID value) const
-{
-    TypeID type = typeInLooks(value);
-    return type && hasTextByItself(m_walker.types().at(type));
-}
-
 std::optional<uint32_t> TextBuilderWebScan::onlyTargetThatWalkLeadsTo(const BodyTerminator& terminator) const
 {
     ValueID operand = terminator.numberOfTargets() > 1 ? terminator.operand(0) : ValueID();
@@ -264,7 +225,6 @@ std::optional<uint32_t> TextBuilderWebScan::onlyTargetThatWalkLeadsTo(const Body
     return onlyTargetKnownToFolding(m_walker, terminator);
 }
 
-// Decided by the back edges alone, so a loop in which no text grows costs one look at its terminators.
 void TextBuilderWebScan::findCandidates()
 {
     uint32_t numberOfParameters = m_head.numberOfParameters();
@@ -272,13 +232,11 @@ void TextBuilderWebScan::findCandidates()
     Vector<bool, 8> changesOnSomeBackEdge;
     cannotGrow.fill(false, numberOfParameters);
     changesOnSomeBackEdge.fill(false, numberOfParameters);
-    // `let n = 0; for (..) n += "x"`. A counter is written so too, and a loop that only counts is not scanned: what comes round has to be joined to a text where it is made.
     Vector<bool, 8> isWrittenWithoutText;
     isWrittenWithoutText.fill(false, numberOfParameters);
     for (uint32_t parameterIndex = 0; parameterIndex < numberOfParameters; ++parameterIndex) {
         TypeID written = m_head.parameterType(parameterIndex);
         isWrittenWithoutText[parameterIndex] = written && holdsOnlyPrimitives(written) && !(primitivesInID(written) & Primitive::String);
-        // The scan of a loop around has given the names of this loop too.
         cannotGrow[parameterIndex] = isNameOfTextInStringBuilder(m_walker, m_head.parameter(parameterIndex));
     }
     auto joinsText = [&](ValueID root) {
@@ -324,7 +282,6 @@ bool TextBuilderWebScan::makesTextThatIsOnlyRead(const BodyValue& join)
 {
     ValueID made = join.id();
     for (;;) {
-        // Only a row that goes on to be the variable has the text in front a second time.
         uint32_t place = made.index() - m_firstValue;
         if (place < m_isInRowThatWasFollowed.size() && std::exchange(m_isInRowThatWasFollowed[place], true))
             return false;
@@ -382,11 +339,9 @@ bool TextBuilderWebScan::takesTextOfJSONStringifyBehindFront(const BodyValue& jo
     return false;
 }
 
-// Any other use of the current version than a cast, a conversion to a text and a growth is a read, and refuses nothing: `if (x.flush) out.push(s)`. The walk has a string made of what the builder holds there, and the builder goes on.
 void TextBuilderWebScan::scanOperation(const BodyValue& operation)
 {
     Opcode opcode = operation.opcode();
-    // It reads nothing: no value is live for the sake of a hint.
     if (opcode == Opcode::ReleaseHint)
         return;
 
@@ -404,7 +359,6 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
             if (opcode == Opcode::Convert || opcode == Opcode::ToString || checksThatHandOnOrThrow.contains(opcode))
                 noteThatStateIsSeen(*name);
         }
-        // `s += s`: no text is appended to itself.
         else if (textInFront == name->text)
             refuse(name->text);
         else
@@ -420,17 +374,12 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
         return;
     }
 
-    // An Add joins only where one of its operands is a string. Nobody looks again: a sum that is not proven to give a string in every turn is no growth.
     bool givesText = opcode == Opcode::Add ? isProvenToBeText(operation.id()) : operation.variadicOperands().size() > 1;
     if (!givesText) {
         refuse(textInFront);
         return;
     }
     CandidateInTextBuilderWeb& candidate = m_candidates[textInFront];
-    operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (operandIndex != frontOperandInTextBuilderWebs)
-            candidate.hasPartsThatMayRunCode |= !hasTextByItselfInLooks(operand);
-    });
     giveName(operation.id(), textInFront, operation.id());
     m_versions[textInFront] = operation.id();
     m_textsGrownSinceSomethingMayHaveThrown.append(textInFront);
@@ -457,7 +406,6 @@ void TextBuilderWebScan::arriveAt(BlockID block, uint32_t text, uint32_t paramet
     ValueID& atEntry = versionsAtEntryOf(block)[text];
     if (!atEntry)
         atEntry = arriving;
-    // An edge that comes round a loop inside and hands the parameter that took the text something else brings the text to nobody.
     else if (atEntry != arriving || (parameterIndex == none && m_index.block(block).indexOfParameter(atEntry)))
         refuse(text);
 }
@@ -480,7 +428,6 @@ void TextBuilderWebScan::holdBackEdgeToBringingTexts()
     }
 }
 
-// `if (s)` hands the text on to the target under another name: the parameter that takes the proof.
 void TextBuilderWebScan::followEdge(const BodyTerminator& terminator, uint32_t targetIndex, BodyTarget target)
 {
     m_parametersThatTakeTexts.fill(none, m_candidates.size());
@@ -491,7 +438,6 @@ void TextBuilderWebScan::followEdge(const BodyTerminator& terminator, uint32_t t
         std::optional<BodyEdgeResult> result = m_index.edgeResult(terminator, targetIndex, target, proofIndex);
         if (!result)
             continue;
-        // Both edges of a branch on a test bear a proof, whether or not anybody reads the parameter that takes it.
         if (m_index.isUnused(result->parameter))
             noteMention(result->subject);
         else
@@ -511,7 +457,6 @@ void TextBuilderWebScan::followEdge(const BodyTerminator& terminator, uint32_t t
         return;
     }
 
-    // The string is made on the edge, of what the builder holds there. Whoever reads an older name behind the edge would read that.
     for (uint32_t text = 0; text < m_candidates.size(); ++text) {
         if (isOpen(text) && m_parametersThatTakeTexts[text] != none)
             noteThatStateIsSeen(*findName(m_versions[text]));
@@ -526,9 +471,6 @@ void TextBuilderWebScan::followEdge(const BodyTerminator& terminator, uint32_t t
     });
 }
 
-// A throw can leave the block at any of its operations, and the handler can name only what is available at the head of the block: it is handed the version that enters the block.
-// The builder holds that version wherever the block can throw, unless something that may throw stands behind a growth of the block. The append itself completes or leaves the builder as it was.
-// A handler block in the loop goes on with the builder. One behind the loop reads the string, which is made behind the throw.
 void TextBuilderWebScan::followHandlerEdge(BodyBlock block)
 {
     BodyTarget handler = block.handler();
@@ -582,7 +524,6 @@ void TextBuilderWebScan::followHandlerEdge(BodyBlock block)
 void TextBuilderWebScan::scanBlock(BodyBlock block)
 {
     std::span<const ValueID> atEntry = versionsAtEntryOf(block.id());
-    // An edge that is followed brings every text that is still a candidate. So only edges that the walk does not lead come here.
     if (std::ranges::none_of(atEntry, [](ValueID version) { return !!version; }))
         return;
     for (uint32_t text = 0; text < m_candidates.size(); ++text) {
@@ -592,7 +533,6 @@ void TextBuilderWebScan::scanBlock(BodyBlock block)
     }
     m_mayThrowBehindGrowth.fill(false, m_candidates.size());
     m_textsGrownSinceSomethingMayHaveThrown.shrink(0);
-    // A version that has left the one at the entry does not come back to it.
     auto noteWhatMayThrow = [&](bool mayThrowHere) {
         if (!mayThrowHere)
             return;
@@ -659,12 +599,10 @@ void TextBuilderWebScan::run(Vector<GrowingText, 2>& texts)
         grown.isOnlyConcatenated = candidate.isOnlyConcatenated;
         grown.takesTextOfJSONStringify = candidate.takesTextOfJSONStringify;
         grown.standsUnderHandlers = m_standsUnderHandlers;
-        grown.hasPartsThatMayRunCode = candidate.hasPartsThatMayRunCode;
         for (const NameInTextBuilderWeb& name : m_names) {
             if (name.text != text)
                 continue;
             grown.names.append(NameOfGrowingText { name.value, name.version });
-            // Several edges meet at the head of a loop, so the parameter that takes the text there is a version of its own: arriveAt().
             if (name.value != name.version || !m_index.isParameter(name.value))
                 continue;
             BlockID block = m_index.blockOf(name.value);
@@ -681,7 +619,6 @@ void TextBuilderWebScan::run(Vector<GrowingText, 2>& texts)
 void findGrowingTexts(Walker& walker, BlockID inputHead, const LoopPreview& preview, Vector<GrowingText, 2>& texts)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    // The looks found no invariant: nothing is known of what a sum gives.
     if (preview.typesOfValues.isEmpty() || !index.holdsAnyOf(operationsThatJoinTexts) || index.hasIrreducibleFlow())
         return;
     if (!index.isLoopHead(inputHead) || index.isEnteredByHandlerEdge(inputHead))

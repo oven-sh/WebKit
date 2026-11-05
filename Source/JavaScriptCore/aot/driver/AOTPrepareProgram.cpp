@@ -32,7 +32,6 @@ static Typed::FactsRequest factsRequestForPreparedProgram(const CompileOptions& 
 {
     Typed::FactsRequest request;
     request.mechanisms = Typed::withoutMechanismsMissingDependencies(mechanisms);
-    // Link answers the same in every order of its worklist and on any number of lanes. One thread tells a small program, so what only lanes get wrong shows in large ones alone, unless a test asks for lanes.
     if (hasFlag(options.testing, Wire::TestingSwitch::DelayFlowRules))
         request.orderOfWorklist = Typed::OrderOfWorklist::Scattered;
     else if (hasFlag(options.testing, Wire::TestingSwitch::DelayOtherFlowRules))
@@ -40,7 +39,6 @@ static Typed::FactsRequest factsRequestForPreparedProgram(const CompileOptions& 
     return request;
 }
 
-// The verifier of bodies goes over an index of each body, and the scan of Facts over the same index: it is built once, and Facts keeps it.
 static bool verifyProgramToPrepare(const Typed::Program& program, BuildContext& build, std::unique_ptr<Typed::BodyIndexTable>& bodyIndexes)
 {
     PhaseTimes times(build, Stage::ReadAndVerify);
@@ -84,7 +82,6 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
     Typed::Program& program = *prepared.program;
     const Typed::Facts& facts = *prepared.facts;
 
-    // A TypeArena sees the program and not Facts. None is alive here: what one remembers of these layouts would be stale.
     BitVector layoutsOfDictionaries = findDictionariesOfPreparedProgram(program, facts);
     Typed::noteLayoutsOfDictionaries(program, layoutsOfDictionaries);
 
@@ -96,7 +93,6 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
     if (prepared.changePlan)
         prepared.changePlan(*prepared.plan);
 
-    // An ordinary object has no shape word. A type that still named its layout would be tested by that word, and a read of a field without storage folds to undefined.
     for (size_t index : layoutsOfDictionaries) {
         Typed::LayoutID layout(index);
         RELEASE_ASSERT(prepared.plan->layout(layout).storage != Typed::LayoutStorage::OrdinaryObject || Typed::builtinClassWrittenAbove(program, layout));
@@ -129,11 +125,9 @@ static void makeCompileInputsOfPreparedProgram(PreparedProgram& prepared, BuildC
 bool prepareProgram(PreparedProgram& prepared, BuildContext& build)
 {
     RELEASE_ASSERT(prepared.program && !prepared.plan);
-    // A type that Facts or Plan makes behind freeze() dies with the arena that made it, and the tables that name it live on.
     RELEASE_ASSERT(!prepared.program->types.isFrozen());
 
     if (!prepared.facts) {
-        // The verifiers hold the tables to what the front end sends, and computeFacts() changes them. Its scan is also the first reader of the bodies.
         std::unique_ptr<Typed::BodyIndexTable> bodyIndexes;
         if (!verifyProgramToPrepare(*prepared.program, build, bodyIndexes))
             return false;
@@ -152,11 +146,9 @@ bool prepareProgram(PreparedProgram& prepared, BuildContext& build)
 void checkPlanOfPreparedProgram(const PreparedProgram& prepared, BuildContext& build)
 {
     RELEASE_ASSERT(prepared.checkOfPlan == CheckOfPlan::LeftToCaller && prepared.compileInputs);
-    // After freeze() no arena adds to the table of types or leaves a memo in it, whatever it keeps: this lane and Compile only read the table.
     RELEASE_ASSERT(prepared.program->types.isFrozen());
 
     CurrentWorkScope work("check the plan"_s);
-    // It only logs: the caller's PhaseTimes already counts this time for the stage that runs beside the lane.
     StepTimes times(build, nameOf(Stage::PlanSlots));
     Typed::checkPlan(*prepared.program, *prepared.facts, *prepared.plan, build);
     Typed::checkStackTests(*prepared.program, *prepared.facts, *prepared.plan, build);

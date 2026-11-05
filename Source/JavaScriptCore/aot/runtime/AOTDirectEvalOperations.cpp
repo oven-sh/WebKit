@@ -19,7 +19,6 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStatics.h"
-#include "AOTProgramStrings.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "BuiltinNames.h"
@@ -97,7 +96,7 @@ static JSValue readBinding(Instance* instance, JSCellButterfly* operands, const 
     case EvalBindingForm::ModuleVariable:
         return ProgramStatics::readVariable(*instance, binding.slot);
     case EvalBindingForm::EnvironmentSlot:
-        return readSlot(binding.slot.representation(), &cellOperandOf<Environment>(operands, binding)->at<uint8_t>(binding.slot.offset), *instance->state->strings);
+        return readSlot(binding.slot.representation(), &cellOperandOf<Environment>(operands, binding)->at<uint8_t>(binding.slot.offset), *instance);
     case EvalBindingForm::MappedArgument:
         return mappedArgumentsOf(operands, binding)->argument(DirectArgumentsOffset(binding.slot.offset)).get();
     case EvalBindingForm::Operand:
@@ -111,7 +110,6 @@ static JSValue boundThisOrEmpty(JSValue thisValue, bool isInDerivedConstructor)
     return isInDerivedConstructor && thisValue.isUndefined() ? JSValue() : thisValue;
 }
 
-// `this` of a derived constructor names the constructor, and lies where compiled code reads it again.
 static bool canBeBoundByText(const EvalBindingData& thisBinding)
 {
     return thisBinding.function != EvalBindingData::noOperand && formOf(thisBinding) == EvalBindingForm::EnvironmentSlot;
@@ -198,7 +196,6 @@ static JSObject* createAccessorPair(VM& vm, JSGlobalObject* globalObject, JSValu
     return pair;
 }
 
-// What evaluated text finds as the derived constructor. `super()` constructs its prototype: that of the class at that moment.
 class DerivedConstructorStandIn final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -431,23 +428,20 @@ bool EvalBindings::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
 
 void EvalBindings::writeBinding(VM& vm, const EvalBindingData& binding, JSValue value)
 {
-    ProgramStrings& strings = *m_instance->state->strings;
     SlotRepresentation representation = binding.slot.representation();
     uint32_t offset = binding.slot.offset;
     switch (formOf(binding)) {
     case EvalBindingForm::ModuleVariable: {
         RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
         ProgramStatics& statics = *m_instance->state->statics;
-        statics.ensureProgramStaticsInitialized();
-        statics.ensureVariableIsFilled(offset);
-        RELEASE_ASSERT(tryWriteSlot(strings, representation, m_instance->statics() + offset, value));
+        RELEASE_ASSERT(tryWriteSlot(*m_instance, representation, m_instance->statics() + offset, value));
         if (traitsOf(representation).holdsCell)
             statics.didStoreRootInStatics(offset);
         return;
     }
     case EvalBindingForm::EnvironmentSlot: {
         auto* environment = cellOperandOf<Environment>(m_operands.get(), binding);
-        RELEASE_ASSERT(tryWriteSlot(strings, representation, &environment->at<uint8_t>(offset), value));
+        RELEASE_ASSERT(tryWriteSlot(*m_instance, representation, &environment->at<uint8_t>(offset), value));
         vm.writeBarrier(environment, value);
         return;
     }
@@ -669,7 +663,6 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
         return asObject(object);
     };
 
-    // The bindings of the class follow those of its constructor.
     auto parentOfClass = [&](const EvalBindingData& bindingOfConstructor) {
         const EvalBindingData* classObject = findBinding(bindings.subspan(&bindingOfConstructor - bindings.data()), EvalBindingKind::ClassObject);
         RELEASE_ASSERT(classObject);
@@ -722,7 +715,6 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
         if (std::optional<PrivateNameEntry> entry = privateNameEntryOf(binding))
             privateNames.add(RefPtr<UniquedStringImpl> { identifierAt(instance, binding.name).impl() }, *entry);
     }
-    // An eval inside the evaluated source collects the private names in scope from the symbol tables of the scope chain. This scope binds nothing, so it stands outside the others.
     if (!privateNames.isEmpty())
         pushVariableScope(ScopeType::LexicalScope, { .ownBindings = createBindings({ }), .privateNames = &privateNames });
 

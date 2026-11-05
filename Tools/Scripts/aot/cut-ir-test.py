@@ -211,7 +211,7 @@ def write_out(test, kept, roots):
 def with_answers_shown(text):
     """A test of aot/tests/answers says how many answers are those of the shell's own run of the text, not what they are. And a built-in that is written in JavaScript
     and has no `runtimefunction` line gets a stand-in that returns undefined (withStandInLibrary()), in the compiled program and in the shell's own run alike: the count stays.
-    So each such RUN prints its answers here, in the control and in the cut."""
+    run-in-shell fails a run in which the stand-in is called. What else may leave the count as it is shows here: each such RUN prints its answers, in the control and in the cut."""
     shown = 'print("answers: " + got.join(" | ")); print(same + " of "'
     return "\n".join(line.replace('print(same + " of "', shown) if SHELL_RUN.match(line) else line for line in text.split("\n"))
 

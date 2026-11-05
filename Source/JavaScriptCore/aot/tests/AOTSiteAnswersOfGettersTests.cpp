@@ -17,7 +17,6 @@ std::span<const NativeTest> siteAnswersOfGettersTests();
 static constexpr uintptr_t cageBaseForSiteAnswersOfGettersTests = 1ull << 36;
 static constexpr uintptr_t bytesToHolderForSiteAnswersOfGettersTests = 4096;
 
-// What the tables hold for `leaf.size`, where an object above the leaf has the accessor. No word of the holder is read.
 static Slot getterAboveForSiteAnswersOfGettersTests(uintptr_t bytesToHolder, int16_t wordIndex, uint8_t flags)
 {
     Slot slot = Slot::create(StructureID(), Slot::Kind::Getter, flags | Slot::dependsOnChain, static_cast<uint16_t>(wordIndex));
@@ -37,9 +36,7 @@ static void testGetterInCellOfHolderIsNamedByItsWordInCage()
 static void testWhatNoOperandNamesIsNotRemembered()
 {
     Slot slot = getterAboveForSiteAnswersOfGettersTests(bytesToHolderForSiteAnswersOfGettersTests, 3, 0);
-    // A place that calls would take the GetterSetter for the callee.
     AOT_TEST_CHECK(!findWordOfGetterForSiteAnswers(SiteUse::Call, slot, cageBaseForSiteAnswersOfGettersTests, false));
-    // No reference of 32 bits names a holder then.
     AOT_TEST_CHECK(!findWordOfGetterForSiteAnswers(SiteUse::Read, slot, cageBaseForSiteAnswersOfGettersTests, true));
     Slot farAway = getterAboveForSiteAnswersOfGettersTests(static_cast<uintptr_t>(UINT32_MAX) * sizeof(EncodedJSValue), 3, 0);
     AOT_TEST_CHECK(!findWordOfGetterForSiteAnswers(SiteUse::Read, farAway, cageBaseForSiteAnswersOfGettersTests, false));
@@ -48,7 +45,6 @@ static void testWhatNoOperandNamesIsNotRemembered()
     AOT_TEST_CHECK(!findWordOfGetterForSiteAnswers(SiteUse::Read, withoutHolder, cageBaseForSiteAnswersOfGettersTests, false));
 }
 
-// Under a limit on address space the heap of Structures is small and begins at a multiple of its own size, so every StructureID of a process may have the top bit.
 static void testStructureIDWithTopBitIsRemembered()
 {
     using Form = SiteAnswers::Form;
@@ -59,7 +55,6 @@ static void testStructureIDWithTopBitIsRemembered()
             AOT_TEST_CHECK(answer->structureID().bits() == bits && SiteAnswers::formOf(use, answer->key) == Form::OwnValueInCell);
         }
     }
-    // What could be taken for a key by shape, and the key of no shape.
     for (uint32_t bits : { 0xff004040u, 0xbf004040u, 0xfd004040u, 0x80000000u })
         AOT_TEST_CHECK(!SiteAnswers::tryByStructure(SiteUse::Call, std::bit_cast<StructureID>(bits), Form::OwnValueInCell, 16));
     for (uint32_t shape : { 1u, 2u, 65536u, static_cast<uint32_t>(Number24::max) }) {

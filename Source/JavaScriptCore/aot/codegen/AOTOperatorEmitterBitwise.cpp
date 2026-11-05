@@ -53,7 +53,6 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
     auto isMaskOfLowestBits = [&](ValueID id) {
         return op == BitwiseOperator::And && isMaskOfLowestBitsOfInt32(typeOf(id));
     };
-    // A constant has no form of its own: in<T>() makes it in the form that is asked for.
     auto formOfNumber = [&](ValueID id) {
         if (!constantsInFormOfUses.contains(opcodeOf(id)))
             return representationOf(id);
@@ -84,7 +83,6 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         case Representation::Boolean:
         case Representation::Cell:
         case Representation::Cell32:
-        case Representation::LiteralString:
         case Representation::RawWord:
             break;
         }
@@ -114,7 +112,6 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
         Boxed x = in<Boxed>(left);
         Boxed y = in<Boxed>(right);
-        // Two int32 are worked on in place, behind one test for each operand that is no written integer. The stub takes the rest.
         bool mayBothBeInt32 = typeOf(left).primitives & Primitive::Integer && typeOf(right).primitives & Primitive::Integer;
         if (!isUnsigned && mayBothBeInt32 && !standsInRareBlock(value)) {
             auto isWrittenInt32 = [&](ValueID id) {
@@ -144,7 +141,6 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
             return boxedJoin.finishBehind(fork);
         }
         Boxed result(callBinaryStub(value, traitsOfBitwiseOperator(op).stub, x, y));
-        // A result from 2^31 on comes back as a double.
         if (isUnsigned)
             return emitter<ConversionEmitter>().unbox(result, typeOf(value.id()), value.representation());
         return value.representation() == Representation::Int32 ? Operand(unboxInt32(result)) : Operand(result);

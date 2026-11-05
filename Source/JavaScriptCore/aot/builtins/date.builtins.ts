@@ -91,7 +91,6 @@ const formatted = (zone: Zone) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// Without options, and without a locale or with a well-formed one, there is nothing to refuse and nothing to ask.
 const localized = [
   {
     args: { locales: b.hostLocaleOrWellFormedTag, options: b.undefined.optional },
@@ -120,7 +119,6 @@ const localized = [
 ] satisfies b.FunctionField[];
 
 export default b.declarations(
-  // Date.prototype.toJSON calls toISOString, and a conversion calls toString and valueOf, without operands. So does Object.prototype.toLocaleString.
   b.namedMemberCall("toISOString", []),
   b.namedMemberCall("toString", []),
   b.namedMemberCall("valueOf", []),
@@ -128,7 +126,6 @@ export default b.declarations(
     jsType: "JSDateType",
     slots: { time: b.state("InternalFields", b.f64) },
     lockedMembers: ["constructor", "prototype"],
-    // datejs: `Date.today().next().friday()`.
     openNamesOfPrototype: ["next"],
     types: [b.exactType("Date")],
     constructorTable: b.staticTable("runtime/DateConstructor.cpp", "dateConstructorTable"),
@@ -283,7 +280,6 @@ export default b.declarations(
       toLocaleTimeString: localized,
       toJSON: [
         {
-          // A pristine date finds the built-in @@toPrimitive, valueOf and toISOString. The host call answers null for an invalid date.
           this: b.instance("Date").pristine("Names"),
           args: { key: b.any.optional },
           returns: b.union(b.string, b.null),
@@ -328,7 +324,6 @@ export default b.declarations(
   }),
   b.same("Date.prototype.toGMTString", "Date.prototype.toUTCString"),
 
-  // Tests spy on Date.now, and datejs replaces Date.parse and Date.prototype.toString. @formatjs/intl-datetimeformat/polyfill-force replaces the three methods that format for a locale.
   b.replacedByPackages(
     "Date.now",
     "Date.parse",

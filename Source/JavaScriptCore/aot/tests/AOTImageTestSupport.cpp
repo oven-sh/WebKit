@@ -34,7 +34,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC::AOT::ImageTests {
 
-// With wide references, unlike makeOptionsOfTestedProgram(): these images are checked in the process of testaot itself, which runs no image and so reserves no cage for cells, and Image::check() turns a narrow one away there.
 Wire::CompileOptions wireOptions(const TestOptions& testOptions)
 {
     Wire::CompileOptions options = makeDefaultCompileOptions();
@@ -95,7 +94,6 @@ AlignedBytes::AlignedBytes(std::span<const uint8_t> bytes)
 {
     if (bytes.empty())
         return;
-    // aligned_alloc(), which serves this under AddressSanitizer, takes multiples of the alignment.
     m_bytes = { static_cast<uint8_t*>(fastAlignedMalloc(imagePageSize, roundUpToMultipleOf(imagePageSize, bytes.size()))), bytes.size() };
     memcpySpan(m_bytes, bytes);
 }
@@ -257,7 +255,6 @@ LinkedFunctions createLinkedFunctions(Vector<CompiledCode>&& code, BuildContext&
     return LinkedFunctions(WTF::move(code));
 }
 
-// Equals CallingConventions::indexOf(unit) for every plan.
 static uint32_t unitIndexOfSketch(CodeUnit unit)
 {
     AOT_TEST_CHECK(unit.function);

@@ -31,7 +31,6 @@ const Machine::AbstractHeap& DateBuiltinEmitter::cachedDateTimeIn(TimeZone zone)
 
 Number DateBuiltinEmitter::timeValueOf(CellPointer date)
 {
-    // Not purified: JSC's dateProtoFuncGetTime() boxes internalNumber() as is, so a DateInstance never holds an impure NaN.
     return Number(m_out.loadDouble(date.value(), m_heaps.DateInstance_internalNumber));
 }
 
@@ -56,10 +55,8 @@ void DateBuiltinEmitter::generateDateSetTime(const InlineCall& call)
     CellPointer date = cellOperand(call.receiver());
     Number unclippedTime = numberOperand(call.argument(0));
     Condition isInRange = lessThanOrEqual(abs(unclippedTime), WTF::maxECMAScriptTime);
-    // The sum turns -0 into 0.
     Number time = select(isInRange, add(trunc(unclippedTime), 0), PNaN);
     m_out.storeDouble(time.value(), date.value(), m_heaps.DateInstance_internalNumber);
-    // As DateInstance::setInternalNumber() leaves them.
     LValue stale = m_out.constInt64(PlainGregorianDateTime::staleMarker().payload());
     m_out.store64(stale, date.value(), m_heaps.DateInstance_cachedGregorianDateTime);
     m_out.store64(stale, date.value(), m_heaps.DateInstance_cachedGregorianDateTimeUTC);
@@ -68,7 +65,6 @@ void DateBuiltinEmitter::generateDateSetTime(const InlineCall& call)
 
 void DateBuiltinEmitter::generateDateToISOString(const InlineCall& call)
 {
-    // An invalid date misses: toISOString() throws for it, and toJSON() answers null.
     Number timeValue = timeValueOf(cellOperand(call.receiver()));
     missUnless(call, equal(timeValue, timeValue));
     CellPointer text = callOperation<CellPointer>(call.context(), RuntimeOperation::DateToISOString, { timeValue });
@@ -109,7 +105,6 @@ void DateBuiltinEmitter::generateDateGetField(const InlineCall& call)
     bool hasOnlyLocalForm = field == DateField::TimezoneOffset || field == DateField::Year;
     RELEASE_ASSERT(!hasOnlyLocalForm || zone == TimeZone::Local);
 
-    // The date misses until the host has taken its time value apart, and for good where that is NaN.
     BitField bitField = bitFieldOf(field);
     Integer payload(m_out.load64(cellOperand(call.receiver()).value(), cachedDateTimeIn(zone)));
     missUnless(call, hasBits(payload, static_cast<int64_t>(PlainGregorianDateTime::validityMask)));

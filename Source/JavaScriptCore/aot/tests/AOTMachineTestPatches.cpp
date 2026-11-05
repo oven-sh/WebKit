@@ -22,7 +22,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// The word at a negative offset from pointer() lies in wordsBelow.
 static_assert(OBJECT_OFFSETOF(TestInstance, words) == sizeof(TestInstance::wordsBelow));
 
 void TestInstance::fillPinnedConstants()
@@ -32,7 +31,6 @@ void TestInstance::fillPinnedConstants()
     for (uint64_t bits : bitsOfPinnedConstants()) {
         std::optional<PinnedConstant> pinned = findPinnedConstant(bits);
         AOT_TEST_CHECK(pinned);
-        // It lies in a register.
         if (!pinned->offset)
             continue;
 
@@ -46,7 +44,6 @@ void TestInstance::fillPinnedConstants()
     }
 }
 
-// Native tests may run on several threads.
 static TestInstance& sharedTestInstance()
 {
     static TestInstance instance;
@@ -81,25 +78,19 @@ void compileOrFail(TestProcedure& test, void* instance)
         failWithTextOfTestProcedure(test, "the back end compiles the procedure");
 }
 
-// ---- The code of the patches.
-
-// The sum, and the operand that is being added to it.
 static constexpr uint8_t numberOfWorkingRegistersOfTestPatch = 2;
 
 struct TestPatchCode {
     TestPatchKind kind { TestPatchKind::Sum };
     RegisterMask earlyClobbers { 0 };
     RegisterMask lateClobbers { 0 };
-    // Of SumThroughCall. The working registers are taken from these, less those that hold a parameter.
     RegisterMask temporaries { 0 };
     int64_t callee { 0 };
-    // Of SumOrThrow.
     RegisterMask lostOnWayToLandingPad { 0 };
 };
 
 static uint64_t JIT_OPERATION_ATTRIBUTES passSumThroughCallOfTestPatch(uint64_t sum)
 {
-    // Nothing of the caller lies below its stack pointer.
     volatile uint64_t wordsBelowCaller[64];
     for (volatile uint64_t& word : wordsBelowCaller)
         word = poison;
@@ -123,7 +114,6 @@ static RegisterMask registersTestPatchMayPoison(const RegisterFile& file)
     return (file.allocatableIn(Bank::GP) | file.allocatableIn(Bank::FP)) & ~kept;
 }
 
-// The code may write `holder`, which holds the poison afterwards.
 static void emitPoisonOfTestPatch(CCallHelpers& jit, RegisterMask registers, GPRReg holder)
 {
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(poison)), holder);
@@ -151,7 +141,6 @@ static void addOperandsOfTestPatch(CCallHelpers& jit, const PatchParameters& par
         if (patch->constraintOf(index).isLate() != areReadLate)
             continue;
         parameters[numberOfResults + index].emitRestore(jit, word);
-        // The upper half of a place that holds 32 bits is unspecified.
         if (widthOf(patch->child(index)->type()) == Width32)
             jit.zeroExtend32ToWord(word, word);
         jit.add64(word, sum);
@@ -178,9 +167,6 @@ static void moveSumToResultOfTestPatch(CCallHelpers& jit, GPRReg sum, const Valu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Each register is written as early as its constraint allows, so that a value which the allocator has left there is lost:
-// the early clobbers ahead of every read, the late clobbers, the scratch registers and the register of the result behind the reads of the operands that are not read late.
-// The result is written last: a result with a register of its own may lie among the late clobbers.
 static void generateTestPatch(CCallHelpers& jit, const PatchParameters& parameters, const TestPatchCode& code)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -217,7 +203,6 @@ static void generateTestPatch(CCallHelpers& jit, const PatchParameters& paramete
     if (code.kind == TestPatchKind::SumThroughCall) {
         AOT_TEST_CHECK(parameters.frameIsSetUp());
         jit.move(sum, GPRInfo::argumentGPR0);
-        // As a TrustedImmPtr it would be taken for an address of this process on its way into an image, which fails the link.
         jit.move(CCallHelpers::TrustedImm64(code.callee), word);
         jit.call(word, OperationPtrTag);
         sum = GPRInfo::returnValueGPR;
@@ -252,7 +237,6 @@ static void generateTestPatch(CCallHelpers& jit, const PatchParameters& paramete
     });
 }
 
-// No request goes to the builder between patch() and the last word of the setup: the next request seals the Patch.
 PatchOperation* appendTestPatch(TestProcedure& test, const TestPatch& testPatch)
 {
     Procedure& procedure = test.procedure();
@@ -287,14 +271,12 @@ PatchOperation* appendTestPatch(TestProcedure& test, const TestPatch& testPatch)
 
     switch (testPatch.kind) {
     case TestPatchKind::Sum:
-        // It stays though nothing reads its result: what it poisons is what a test appends it for.
         patch->effects = Effects::none();
         patch->effects.writesLocalState = true;
         patch->setRunsWithoutFrame(!namesOutgoingWords);
         patch->numGPScratchRegisters = std::max(patch->numGPScratchRegisters, numberOfWorkingRegistersOfTestPatch);
         break;
     case TestPatchKind::SumThroughCall: {
-        // A scratch register lies outside every clobber set. In a rare region there may be no such register, so the working registers come from what the callee writes.
         RegisterMask writtenByCallee = maskOf(registersClobberedByOperations());
         patch->effects = Effects::forCall();
         patch->setRunsWithoutFrame(false);
@@ -325,8 +307,6 @@ PatchOperation* appendTestPatch(TestProcedure& test, const TestPatch& testPatch)
     return patch;
 }
 
-// ---- Values that make pressure.
-
 static Operation* seedOfTestValues(Output& out, Operation* seed, Type type)
 {
     if (seed->type() == type)
@@ -349,7 +329,6 @@ static Operation* seedOfTestValues(Output& out, Operation* seed, Type type)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// x86-64 reads the number 1.0 from a word of the instance, and a test that calls TestProcedure::compile() itself may run without an instance.
 static Operation* addendOfTestValue(Output& out, Type type, unsigned index)
 {
     switch (type.kind()) {
@@ -367,7 +346,6 @@ static Operation* addendOfTestValue(Output& out, Type type, unsigned index)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The seed, brought to the type, plus 1, 2 and so on, and for a number plus 1.5, 2.5 and so on. Nothing can compute a value again, so each needs a place of its own while it is live.
 Vector<Operation*> defineValues(TestProcedure& test, Operation* seed, unsigned count, Type type)
 {
     Output& out = test.out();

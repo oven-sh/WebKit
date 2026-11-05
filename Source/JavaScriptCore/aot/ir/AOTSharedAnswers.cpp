@@ -60,7 +60,6 @@ static uint64_t hashOfSharedQuestion(const SharedAnswers::Question& question)
     return mixWordOfSharedAnswers(hash, 0);
 }
 
-// The upper bits pick the shard, so the lower ones are left to pick the slot.
 static constexpr unsigned shardOfHashInSharedAnswers(uint64_t hash, unsigned bitsOfShard)
 {
     return static_cast<unsigned>(hash >> (64 - bitsOfShard));

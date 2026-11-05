@@ -23,9 +23,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// A tree of statements over at most 64 variables. The emitter turns it into operations, with a Phi wherever two definitions of a variable meet, and the interpreter runs the same tree.
-// The tree depends on the options and on nothing of the machine: a register is named by an ordinal, which the emitter maps to the registers that there are.
-// A variable of a floating point type never holds NaN: which NaN an instruction gives depends on the order of its operands, and the bits of every variable reach the answer.
 struct RandomProgram {
     static constexpr unsigned maxVariables = 64;
     static constexpr unsigned numberOfMemoryWords = 16;
@@ -46,8 +43,6 @@ struct RandomProgram {
         IsBottomTested = 1 << 4,
         KeepsScope = 1 << 5,
         ReturnsEverything = 1 << 6,
-        // Of a Compute into an Int64: operands[0] + (index << immediate). The index is operands[1], an Int32 below the extension that secondRelation names.
-        // Where the opcode is Select, that sum or the index, by the condition, which reads operands[1].
         ScalesSecondOperand = 1 << 7,
     };
 
@@ -55,7 +50,6 @@ struct RandomProgram {
         Kind kind { Kind::Split };
         Opcode opcode { Nop };
         Opcode relation { Equal };
-        // Of an If whose opcode is BitAnd or BitOr: it tests a second comparison too, of operands[0] with operands[1] or the immediate.
         Opcode secondRelation { Equal };
         uint8_t flags { 0 };
         uint8_t destination { 0 };
@@ -64,12 +58,10 @@ struct RandomProgram {
         std::array<EdgeClass, 2> classes { EdgeClass::Normal, EdgeClass::Normal };
         uint32_t next { none };
         std::array<uint32_t, 2> children { none, none };
-        // In patches, or the first in cases.
         uint32_t record { 0 };
         uint32_t count { 0 };
         uint64_t immediate { 0 };
         uint64_t comparedImmediate { 0 };
-        // The variables that it or anything below it defines.
         uint64_t assigned { 0 };
     };
 
@@ -79,7 +71,6 @@ struct RandomProgram {
         uint8_t variable { 0 };
         bool isConstant { false };
         bool goesThroughEmitRestore { false };
-        // The ordinal of a register, or a word of the outgoing area.
         uint32_t place { 0 };
         uint64_t bits { 0 };
     };
@@ -125,7 +116,6 @@ struct RandomProgram {
     bool usesMemory { false };
     uint32_t body { none };
     std::array<TypeKind, maxVariables> types { };
-    // A witness holds the same bits wherever it is defined, which no fold can see.
     std::array<bool, maxVariables> isWitness { };
     std::array<uint64_t, maxVariables> witnessBits { };
     ArenaVector<Statement> statements;
@@ -175,8 +165,6 @@ static void forEachRandomVariable(uint64_t mask, const Functor& functor)
     for (; mask; mask &= mask - 1)
         functor(static_cast<unsigned>(std::countr_zero(mask)));
 }
-
-// ---- What the operations mean.
 
 template<typename T, bool = std::is_integral_v<T>>
 struct RandomWrappingType {
@@ -433,7 +421,6 @@ static uint64_t evaluateRandomOperationOn(Opcode opcode, T left, T right)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `type` is that of the first operand. The amount of a shift is an Int32 whatever is shifted.
 static uint64_t evaluateRandomOperation(Opcode opcode, TypeKind type, uint64_t left, uint64_t right)
 {
     switch (type) {
@@ -451,8 +438,6 @@ static uint64_t evaluateRandomOperation(Opcode opcode, TypeKind type, uint64_t l
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
-
-// ---- The code of Patches and Checks.
 
 namespace {
 
@@ -563,7 +548,6 @@ static void loadBitsOfRandomOperand(CCallHelpers& jit, const ValueRep& rep, cons
         jit.zeroExtend32ToWord(destination, destination);
 }
 
-// Where the bits are known while the procedure is built, the code compares. On a difference it reports the seed and leaves the procedure with an answer that no caller expects.
 static void readRandomOperand(CCallHelpers& jit, const PatchParameters& params, const RandomPatchShape& shape, unsigned operand, GPRReg destination)
 {
     const RandomPatchSlot& slot = shape.operands[operand];
@@ -579,7 +563,6 @@ static void readRandomOperand(CCallHelpers& jit, const PatchParameters& params, 
     jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(shape.number)), GPRInfo::argumentGPR1);
     jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(operand)), GPRInfo::argumentGPR2);
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(slot.expectedBits)), GPRInfo::argumentGPR4);
-    // Code that holds a TrustedImmPtr does not link under the policy for an image.
     jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(shape.report)), GPRInfo::nonPreservedNonArgumentGPR0);
     jit.call(GPRInfo::nonPreservedNonArgumentGPR0, OperationPtrTag);
     if (!params.frameIsSetUp())
@@ -635,8 +618,6 @@ static void storeRandomResult(CCallHelpers& jit, const ValueRep& rep, TypeKind t
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The sum of the early operands decides the results and, where the Patch may throw, the way out.
-// Whatever the constraints let the code write is written with trash at the earliest time they allow, so that a value which the allocator left there is lost.
 static void generateRandomPatch(CCallHelpers& jit, const PatchParameters& params, const RandomPatchShape& shape)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -706,7 +687,6 @@ static void generateRandomPatch(CCallHelpers& jit, const PatchParameters& params
         storeRandomResult(jit, params[result], shape.results[result].type, temporary, numberTemporary, shape.seed);
     }
 
-    // PatchOperation::leaveOperandsWhereTheyLie(): a generator that is told an operand anywhere but in the register where it belongs writes that register.
     RegisterMask writtenForOperands = 0;
     for (unsigned operand = 0; operand < numberOfOperands; ++operand) {
         Reg reg = params.value()->registerToBringOperandTo(operand);
@@ -715,7 +695,6 @@ static void generateRandomPatch(CCallHelpers& jit, const PatchParameters& params
             writtenForOperands |= maskOf(reg);
     }
 
-    // A call that preserves registers saves those of usedRegisters() and no others, so every other register is lost behind it.
     RegisterMask available = shape.allocatable & ~maskOf(params.unavailableRegisters()) & ~results & ~lateOperands;
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(trashOfRandomProcedure)), temporary);
     trashRandomRegisters(jit, (shape.lateClobbered & ~fixedResults) | (writtenForOperands & ~results) | available | scratch, temporary);
@@ -745,7 +724,6 @@ static void generateRandomPatch(CCallHelpers& jit, const PatchParameters& params
     });
 }
 
-// The late path of a Check: the procedure answers with the sum of the operands.
 static void generateRandomCheck(CCallHelpers& jit, const PatchParameters& params, const RandomPatchShape& shape)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -767,8 +745,6 @@ static void generateRandomCheck(CCallHelpers& jit, const PatchParameters& params
 }
 
 namespace {
-
-// ---- The tree.
 
 class RandomProgramGenerator {
 public:
@@ -838,7 +814,6 @@ private:
         list.assigned |= s.assigned;
     }
 
-    // More of each bank than ARM64 has registers at the highest pressure. The middle one is around what x86-64 has.
     void chooseVariables()
     {
         unsigned pressure = pick(3);
@@ -1019,7 +994,6 @@ private:
         return s;
     }
 
-    // Each variable comes from the arguments, so that no fold makes a constant of it.
     Statement initializationOf(unsigned variable)
     {
         Statement s = computationInto(variable);
@@ -1110,8 +1084,6 @@ private:
         s.relation = relationOf(Int32);
     }
 
-    // A divisor in a variable is brought into 1 to 127 by the emitter and the interpreter alike. None is zero, and none is -1.
-    // The builder does not see that range, so a chill operation by a variable tests the divisor and has a rare arm. By a constant it is the plain operation.
     void setDivision(Statement& s, TypeKind type)
     {
         static constexpr std::array operations { Div, UDiv, Mod, UMod };
@@ -1275,7 +1247,6 @@ private:
         return value;
     }
 
-    // Its bits are known while the procedure is built.
     PatchValue randomKnownOperand()
     {
         PatchValue value = m_numberOfWitnesses && chance(75) ? variableOperand(m_witnesses[pick(m_numberOfWitnesses)]) : constantOperand();
@@ -1294,7 +1265,6 @@ private:
 
     void append(const PatchValue& value) { m_program.patchValues.append(m_program.arena, value); }
 
-    // The numbers of operands, results and scratch registers that want a register stay below the nine GPRs that no callee saves on x86-64: a rare region may have no others.
     void addPatch(List& list, const Surroundings& around, bool mustThrow)
     {
         RandomProgram::PatchRecord record;
@@ -1320,7 +1290,6 @@ private:
                 value.constraint = ValueRep::StackArgument;
                 wantsRegister = false;
             }
-            // The code of a call takes its temporaries from what the call clobbers and no operand lies in.
             if (record.isCall && (value.constraint == ValueRep::WarmAny || value.constraint == ValueRep::ColdAny) && operandsAnywhere++ >= 2)
                 value.constraint = ValueRep::StackArgument;
             if (wantsRegister) {
@@ -1368,7 +1337,6 @@ private:
                 value.place = takeOutgoingWord(wordsOfResults);
                 usesOutgoingWords = true;
             } else {
-                // Of a call: which of the return registers of the bank.
                 value.place = record.isCall ? resultsInRegisters[bank] : m_random.getUint32();
                 ++resultsInRegisters[bank];
             }
@@ -1457,7 +1425,6 @@ private:
         add(list, s);
     }
 
-    // At most one of the two edges is other than normal: what only rare edges lead to is rare itself, and so would be everything behind the join.
     void addIf(List& list, unsigned depth, const Surroundings& around)
     {
         Statement s;
@@ -1481,7 +1448,6 @@ private:
         add(list, s);
     }
 
-    // The counter is no variable, so nothing in the body writes it. It falls by one each time round and starts at six or less.
     void addLoop(List& list, unsigned depth, const Surroundings& around)
     {
         Statement s;
@@ -1556,7 +1522,6 @@ private:
         add(list, s);
     }
 
-    // The body begins with a Patch that may throw, so an edge leads to the handler.
     void addTry(List& list, unsigned depth, const Surroundings& around)
     {
         Statement s;
@@ -1594,7 +1559,6 @@ private:
             addIf(list, depth, around);
     }
 
-    // Says whether the list ends in a Return. Nothing else keeps control from reaching the end of a list.
     bool fill(List& list, unsigned depth, const Surroundings& around, unsigned percentOfReturns)
     {
         for (;;) {
@@ -1621,13 +1585,10 @@ private:
     bool m_hasLandingPads;
     std::array<unsigned, numberOfRandomTypeKinds> m_first { };
     std::array<unsigned, numberOfRandomTypeKinds> m_count { };
-    // Those of a type that are no witnesses come first.
     std::array<unsigned, numberOfRandomTypeKinds> m_plain { };
     std::array<uint8_t, 8> m_witnesses { };
     unsigned m_numberOfWitnesses { 0 };
 };
-
-// ---- From the tree to operations.
 
 class RandomProgramEmitter {
 public:
@@ -1677,7 +1638,6 @@ private:
     struct HandlerContext {
         const Join* join;
         HandlerContext* outer;
-        // The newest landing pad, and what it hands to the handler. A site at which the variables hold the same values shares it.
         Block* landingPad { nullptr };
         Values valuesAtLandingPad { };
     };
@@ -1759,7 +1719,6 @@ private:
         return m_out.binary(s.relation, left, right);
     }
 
-    // A branch on a constant would be a jump, and the Upsilons for the way that is not taken would name a Phi of no successor.
     LValue unfolded(LValue value) { return value->isConstant() ? m_out.opaque(value) : value; }
     LValue condition(const Statement& s) { return unfolded(conditionThatMayFold(s)); }
 
@@ -1807,7 +1766,6 @@ private:
         return withoutNaN(m_out.binary(s.opcode, first, second));
     }
 
-    // A word with a constant index has the heap of that index, any other the heap above them all.
     TypedPointer wordOf(const Statement& s)
     {
         const IndexedAbstractHeap& heap = m_test.heaps().indexedContiguousProperties;
@@ -2018,7 +1976,6 @@ private:
         return ordinal ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR;
     }
 
-    // `fixed` grows by a register that is named, `demand` by one for a register that the allocator chooses.
     ValueRep constraintOf(const PatchValue& value, bool isResultOfCall, RegisterMask& fixed, unsigned& demand)
     {
         switch (value.constraint) {
@@ -2119,7 +2076,6 @@ private:
         return handler.landingPad;
     }
 
-    // Behind patch() nothing is asked of the builder until the Patch is set up: the next request reads its effects.
     void emitPatch(const Statement& s)
     {
         const PatchRecord& record = m_program.patches[s.record];
@@ -2145,7 +2101,6 @@ private:
             resultConstraints.append(m_procedure.arena(), constraintOf(results[index], record.isCall, fixedResults[bank], demand[bank]));
         }
 
-        // As many registers that no callee saves stay unclobbered as the allocator has to find. A register that an operand is bound to may be clobbered late, one that a result is bound to at either time.
         for (unsigned bank = 0; bank < numberOfBanks; ++bank) {
             if (record.isCall) {
                 shape->lateClobbered |= m_callerSaved[bank];
@@ -2186,7 +2141,6 @@ private:
         patch->numGPScratchRegisters = record.numberOfGPScratchRegisters;
         patch->numFPScratchRegisters = record.numberOfFPScratchRegisters;
         patch->setRunsWithoutFrame(record.runsWithoutFrame);
-        // Every other Patch, so that no seed draws anything new.
         patch->setBringsOperandsToTheirRegisters(!(shape->number % 2));
         patch->setGenerator([shape](CCallHelpers& jit, const PatchParameters& params) {
             generateRandomPatch(jit, params, *shape);
@@ -2226,7 +2180,6 @@ private:
         });
     }
 
-    // Says whether control reaches the end.
     bool emitList(uint32_t index)
     {
         for (; index != RandomProgram::none; index = m_program.statements[index].next) {
@@ -2296,14 +2249,11 @@ private:
     void* m_report;
     std::array<RegisterMask, numberOfBanks> m_callerSaved { 0, 0 };
     RegisterMask m_allocatable { 0 };
-    // The definition of each variable that reaches the place of the emitter.
     Values m_current { };
     LValue m_memory { nullptr };
     LoopContext* m_loop { nullptr };
     HandlerContext* m_handler { nullptr };
 };
-
-// ---- What the tree answers.
 
 class RandomProgramInterpreter {
 public:
@@ -2524,7 +2474,6 @@ static void destroyRandomProgram(RandomProgram* program)
     delete program;
 }
 
-// A function with landing pads is one that has handlers, and the traits of the procedure have said which it is before the first operation.
 std::unique_ptr<RandomProgram, void (*)(RandomProgram*)> buildRandomProcedure(TestProcedure& test, const RandomProcedureOptions& options)
 {
     std::unique_ptr<RandomProgram, void (*)(RandomProgram*)> program(new RandomProgram, destroyRandomProgram);

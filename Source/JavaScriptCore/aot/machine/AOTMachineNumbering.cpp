@@ -23,15 +23,12 @@ static bool machineNumberingIsAddressInFrame(const Operation* operation)
     return operation->opcode() == FramePointer || operation->opcode() == SlotBase;
 }
 
-// A saved frame goes on at another address, so nothing computed from an address in the frame may live across a suspension. Held, it would be handed to a request behind one.
-// What is computed from it in turn names it as a child, which no request behind the suspension can. A load gives what the frame holds, and the suspension ends it as a write does.
 bool Numbering::isComputedFromAddressInFrame(const Operation* operation)
 {
     ASSERT(!isLoad(operation->opcode()));
     return std::ranges::any_of(operation->children(), machineNumberingIsAddressInFrame);
 }
 
-// The entries are linked again from the oldest to the newest, so each chain still runs from new to old, and taking the newest entry off still leaves the chain that was there before it.
 template<typename EntryType>
 static void machineNumberingGrowBuckets(Arena& arena, ArenaVector<EntryType>& entries, ArenaVector<uint32_t>& buckets)
 {
@@ -114,7 +111,6 @@ void Numbering::addPurePatch(const NumberingKeyOfPurePatch& key, PatchOperation*
     ASSERT(matches(key, m_log.last()));
 }
 
-// No request is numbered as a Phi, so a Phi in the log is one of these.
 void Numbering::addInPlaceOfPurePatch(const NumberingKeyOfPurePatch& key, Operation* phi)
 {
     RELEASE_ASSERT(key.operands.empty() && phi->opcode() == Phi && phi->type() == key.type);
@@ -158,13 +154,11 @@ void Numbering::forgetSuspendedBlocksFrom(uint32_t numberKept)
     while (m_suspendedBlocks.size() > numberKept) {
         uint32_t place = m_suspendedBlocks.size();
         uint32_t& placeOfBlock = m_placeOfSuspendedBlock[m_suspendedBlocks.takeLast().block->index()];
-        // A block that was left twice is found at the later place alone.
         if (placeOfBlock == place)
             placeOfBlock = 0;
     }
 }
 
-// An operation is added once, so the place of an entry that has gone holds another operation or none. Whatever lies below an entry that has stayed has stayed too, the blocks that wait there with it.
 bool Numbering::canRestore(const ScopeMark& mark) const
 {
     if (mark.floor == mark.logSize || mark.logSize > m_log.size())
@@ -185,12 +179,10 @@ void Numbering::switchBlocksThatMayWait(Block* from, Block* to)
         ASSERT(m_suspendedBlocks[placeOfTarget - 1].block == to);
         ScopeMark markOfTarget = m_suspendedBlocks[placeOfTarget - 1].mark;
         ASSERT(markOfTarget.numberOfSuspendedBlocks == placeOfTarget - 1);
-        // What `from` has numbered lies behind that mark, so it goes, and `from` starts with an empty scope if the emitters come back to it.
         restore(markOfTarget);
         return;
     }
 
-    // Nothing is appended to a block that has ended, so nobody would read its scope.
     if (!from->isTerminated()) {
         if (from->index() >= m_placeOfSuspendedBlock.size())
             m_placeOfSuspendedBlock.grow(m_arena, std::max(from->index() + 1, m_placeOfSuspendedBlock.size() * 2));

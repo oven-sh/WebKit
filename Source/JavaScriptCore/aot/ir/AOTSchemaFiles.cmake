@@ -28,7 +28,6 @@ set(JavaScriptCore_AOT_SCHEMA_INPUTS
     aot/ir/schema/runtime-straight-operators.def
     aot/ir/schema/runtime-straight-type-tests.def
     aot/ir/schema/limits.def
-    aot/ir/schema/passes.def
     aot/ir/schema/statistics.def
     aot/ir/schema/diagnostics.def
     aot/ir/schema/compile-call.def

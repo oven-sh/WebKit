@@ -18,18 +18,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// A generic call entry that something mentions and that is fused into its target: CallingConventions::hasFusedCallEntry(). It has a closure number and no CompiledCode.
 struct FusedCallEntry {
     Typed::CodeUnit unit;
-    // CallingConventions::indexOf(unit) and placeInCodeOf(unit, unitIndex).
     uint32_t unitIndex;
     uint32_t place;
-    // CompiledCode::placeInCode of the target.
     uint32_t placeOfTarget;
     EntryDescription entry;
 };
 
-// Records that BlocksOfUnits::keep() has answered, in the order in which they were appended. The list owns none of them.
 class ListOfKeptCode {
 public:
     template<typename Code>
@@ -83,19 +79,16 @@ private:
     Vector<CompiledCode*> m_code;
 };
 
-// What Compile hands on. The records ascend by placeInCode, `placesInCode` are theirs, and they lie in the blocks.
 struct CodeInBlocks {
     ListOfKeptCode code;
     Vector<uint32_t> placesInCode;
     Vector<BlocksOfUnits> blocks;
 };
 
-// The code of every unit that was compiled, ascending by CompiledCode::placeInCode. That is the order of the functions of the program, with the units of one function side by side, and the order in which the code lies in the image.
 class LinkedFunctions {
     WTF_MAKE_NONCOPYABLE(LinkedFunctions);
 public:
     LinkedFunctions() = default;
-    // `fusedCallEntries` ascend by place.
     explicit LinkedFunctions(CodeInBlocks&& functions, Vector<FusedCallEntry>&& fusedCallEntries = { })
         : m_functions(WTF::move(functions.code))
         , m_placesInCode(WTF::move(functions.placesInCode))
@@ -133,7 +126,6 @@ public:
     auto end() const { return m_functions.end(); }
     std::span<const BlocksOfUnits> blocks() const { return m_blocks.span(); }
 
-    // On all threads.
     void clear(const ParallelLoops& loops)
     {
         forEachRangeOfIndicesInParallel(loops, size(), [&](size_t first, size_t end) {
@@ -149,7 +141,6 @@ public:
 
     std::span<const FusedCallEntry> fusedCallEntries() const { return m_fusedCallEntries.span(); }
 
-    // The place of the code that whoever names the unit enters, by binary search. A fused call entry is entered at Typed::fusedCallEntry of that code, any other unit at its primary entry.
     std::optional<uint32_t> positionOfUnit(Typed::CodeUnit unit, uint32_t unitIndex) const
     {
         uint32_t place = placeInCodeOf(unit, unitIndex);
@@ -187,11 +178,9 @@ private:
     Vector<FusedCallEntry> m_fusedCallEntries;
 };
 
-// The positions of the callees of each function. None for a callee without code, which only an inline frame or a site names.
 struct ResolvedCallees {
     OptionalIndex at(uint32_t position, uint32_t callee) const { return positions[firstCallee[position] + callee]; }
 
-    // [position], and one more for the end.
     Vector<uint32_t> firstCallee;
     Vector<OptionalIndex> positions;
 };
@@ -232,7 +221,6 @@ Vector<OptionalIndex> indexByFunction(const auto& elements, const ParallelLoops*
     return indices;
 }
 
-// Valid for one order of the bodies: a step that removes or moves a body needs a new index afterwards.
 class CodeIndex {
 public:
     explicit CodeIndex(const LinkedFunctions& functions, const ParallelLoops* loops = nullptr)

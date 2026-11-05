@@ -42,7 +42,6 @@ bool checkListSize(uint64_t count, size_t sizeOfElement, BuildContext& context)
 void growSectionTo(Vector<uint8_t>& bytes, size_t newSize)
 {
     ASSERT(newSize <= maxWrittenVectorSize);
-    // Vector::grow() reserves more than it needs, and crashes when that is more than a Vector can hold.
     if (newSize > bytes.capacity())
         bytes.reserveCapacity(std::min(maxWrittenVectorSize, std::max(newSize, bytes.capacity() + bytes.capacity() / 2)));
     bytes.grow(newSize);
@@ -116,7 +115,6 @@ Vector<uint32_t> SectionWriter::appendAll(std::span<const Vector<uint8_t>> strea
 
     const ParallelLoops& loops = m_context.parallelLoops();
     Vector<HashedStream> entries = sortStreamsByHash(loops, streams);
-    // The first stream with the same bytes: the stream itself where its bytes are stored.
     Vector<uint32_t> firstEqualStream(streams.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });

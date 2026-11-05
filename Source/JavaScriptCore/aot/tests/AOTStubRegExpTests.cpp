@@ -351,7 +351,6 @@ static void testMatchArrays()
     Ref<StringImpl> text = StringImpl::create("abcdef"_span);
     FakeSubject subject(text.get());
     {
-        // A part, one unit, a group that took no part, an empty group.
         matches.reset({ }, jsNumber(9), 3);
         MatchArrayMemory memory(matches, 3);
         matches.script.answer = 1;
@@ -366,7 +365,6 @@ static void testMatchArrays()
         AOT_TEST_CHECK(matches.hasRecorded(subject, 1, 5) && matches.lastIndex() == bitsOfValue(jsNumber(9)));
     }
     {
-        // The whole subject is its own part, and a global RegExp goes on behind the match.
         matches.reset({ Yarr::Flags::Global }, jsNumber(0), 1);
         MatchArrayMemory memory(matches, 1);
         matches.script.answer = 0;
@@ -378,7 +376,6 @@ static void testMatchArrays()
         AOT_TEST_CHECK(matches.hasRecorded(subject, 0, 6) && matches.lastIndex() == bitsOfValue(jsNumber(6)));
     }
     {
-        // The barrier of the record keeps the array.
         matches.reset({ }, jsNumber(0), 0);
         matches.markGlobalObjectBlack();
         MatchArrayMemory memory(matches, 0);
@@ -402,7 +399,6 @@ static void testWideUnitsInMatchArrays()
     codeBlock.at<void*>(Yarr::YarrCodeBlock::offsetOf16BitCode()) = tagCFunctionPtr<void*, Yarr16BitPtrTag>(runMatchingCodeScript);
     matches.regExp.at<void*>(RegExp::offsetOfRegExpJITCode()) = codeBlock.bytes.data();
 
-    // A unit outside Latin-1 has no shared string.
     matches.reset({ }, jsNumber(0), 2);
     MatchArrayMemory memory(matches, 2);
     matches.script.answer = 0;
@@ -432,7 +428,6 @@ static void testMatchArraysLeftToOperation()
         StubRun run = matches.match(RegExpMatchResult::Array, subject);
         matches.runner.countCallsOf(Entry::operationAOTRegExpMatchLiteral);
         const RecordedArguments expected { matches.regExpObject.address(), subject.address(), noRegExpRecord, static_cast<uint64_t>(Typed::RegExpMatchForm::Exec), run.recordedArguments[4] };
-        // The operation moves lastIndex and records the match.
         return run.numberOfRecordedCalls == 1 && run.result == 0x1234 && static_cast<uint32_t>(run.recordedArguments[2]) == noRegExpRecord
             && run.recordedArguments[0] == expected[0] && run.recordedArguments[1] == expected[1] && static_cast<uint32_t>(run.recordedArguments[3]) == expected[3]
             && matches.hasRecordedNothing() && matches.lastIndex() == bitsOfValue(jsNumber(0));
@@ -492,7 +487,6 @@ static void testMatchArraysWithoutObject()
     AOT_TEST_CHECK(isLeftToOperation(1, [&] { matches.runner.instance().allocation.inlineAllocations[Matches::kindOfMatchArray] = { }; }));
 }
 
-// RegExp::takeCodeFromImage() gives a RegExp whose record has code for 8-bit subjects alone no code for the others.
 static void testSubjectsWithoutCodeAreLeftToOperation()
 {
     Matches matches;
@@ -606,7 +600,6 @@ static void testWideSubjectsOfLiterals()
     AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == 0x1234 && !matches.script.numberOfCalls);
     AOT_TEST_CHECK(run.recordedArguments[0] == wide.address() && static_cast<uint32_t>(run.recordedArguments[1]) == withCodeFor8BitSubjectsAlone && static_cast<uint32_t>(run.recordedArguments[2]) == static_cast<uint32_t>(RegExpMatchForm::Test));
 
-    // The stub for any RegExp finds no code for the subject either. Nobody has touched lastIndex when the operation reads it.
     for (bool isGlobal : { false, true }) {
         auto testWithObject = [&](const FakeSubject& subject, uint32_t record) {
             prepare(isGlobal ? OptionSet<Yarr::Flags> { Yarr::Flags::Global } : OptionSet<Yarr::Flags> { }, jsNumber(0), Entry::operationAOTRegExpTestBoxed);

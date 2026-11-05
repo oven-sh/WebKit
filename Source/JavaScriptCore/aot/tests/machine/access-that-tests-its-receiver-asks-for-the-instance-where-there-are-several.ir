@@ -7,7 +7,8 @@
 # function tagOnce(box) { return box.held.tag; }
 # sink(box, tagOnce, tagOnce(box()));
 # OPTIONS: several-realms
-# RUN: emit f2:Body mechanisms=all
+# (the slot of `held` would be held to what is seen stored in it, a Thing, and the second read would know its receiver: so the typed slots are withheld.)
+# RUN: emit f2:Body mechanisms=-TypedSlots
 # CHECK: Structure_realm
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)

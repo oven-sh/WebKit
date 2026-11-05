@@ -1,0 +1,87 @@
+# what is seen stored in `format` is a function of the program and a built-in, and held() leaves the built-in out of its type: a guess may go by the rest. A slot is held to all that arrives or to nothing:
+# held to the one function, it would be left by every object that gets the other. So `format` is held to nothing. `name` beside it is held.
+# -- source: a-slot-is-not-held-to-a-part-of-what-is-seen-stored.js
+# function plain(value) { return String(value); }
+# function Writer(asJson, name) { this.format = asJson ? JSON.stringify : plain; this.name = name; this.next = null; }
+# const one = new Writer(true, "a"), other = new Writer(false, "b");
+# one.next = other;
+# console.log(one.format(1) + other.format(2) + one.name + String(one.next === other));
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: "name" source=seen
+# RUN(PART): facts enforced mechanisms=all
+# REQUIRES(PART): entries-of-bun
+# PART-NOT: "format"
+# the flow has both, and the proving reading names both.
+# RUN(LINKED): link fields mechanisms=all
+# REQUIRES(LINKED): entries-of-bun
+# LINKED: "format" proven=f{{*}}|builtin(JSONStringify)
+# RUN(HELD): link held fields mechanisms=all
+# REQUIRES(HELD): entries-of-bun
+# HELD-NOT: builtin(JSONStringify)
+
+module m0 path="a-slot-is-not-held-to-a-part-of-what-is-seen-stored.js" displayPath="a-slot-is-not-held-to-a-part-of-what-is-seen-stored.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Writer" module=m0 position=48 constructor=f2 fields=[{key="format" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=3
+variable g0 name="plain" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Boolean boolean=true @188
+    v3 = String string="a" @194
+    v4 = Construct v1, -, v2, v3 calleeName="Writer" @181
+    v5 = Boolean @219
+    v6 = String string="b" @226
+    v7 = Construct v1, -, v5, v6 calleeName="Writer" @212
+    PropSet v4, v7 key="next" @232
+    v9 = Builtin builtin=GlobalThis @250
+    v10 = PropGet v9 key="console" [isFreeName] @250
+    v11 = Convert v10 declared={type=builtin(Console) flags=[IsExpected]} @250
+    v12 = PropGet v11 key="log" @250
+    v13 = Convert v12 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @250
+    v14 = PropGet v4 key="format" @262
+    v15 = Integer integer=1 @273
+    v16 = Call v14, v4, v15 calleeKey="format" calleeName="one.format" @266
+    v17 = PropGet v7 key="format" @278
+    v18 = Integer integer=2 @291
+    v19 = Call v17, v7, v18 calleeKey="format" calleeName="other.format" @284
+    v20 = Add v16, v19 @278
+    v21 = PropGet v4 key="name" @296
+    v22 = Add v20, v21 @296
+    v23 = Builtin builtin=String @307
+    v24 = PropGet v4 key="next" @314
+    v25 = StrictEq v24, v7 @327
+    v26 = Call v23, -, v25 calleeName="String" @307
+    v27 = Add v22, v26 @307
+    v28 = Call v13, v11, v27 calleeKey="log" calleeName="console.log" @258
+    v29 = Undefined @250
+    Return v29 @250
+}
+function f1 name="plain" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=String @31
+    v2 = Call v1, -, v0 calleeName="String" @31
+    ReturnCall v2 @31
+}
+function f2 name="Writer" module=m0 position=48 flags=[HasThis, HasExplicitName] length=2 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything, v2: anything):
+    v3 = ToBoolean v1 @94
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0) @94
+  b1(v4):
+    v5 = Builtin builtin=JSON @103
+    v6 = PropGet v5 key="stringify" @103
+    v7 = Convert v6 declared={type=builtin(JSONStringify) flags=[IsExpected]} @103
+    Jump -> next b3(v7) @103
+  b2(v8):
+    v9 = GetModuleVariable variable=g0 @120
+    Jump -> next b3(v9) @120
+  b3(v10):
+    PropSet v0, v10 key="format" @80
+    PropSet v0, v2 key="name" @127
+    v13 = Null @157
+    PropSet v0, v13 key="next" @145
+    v15 = Undefined @145
+    Return v15 @145
+}

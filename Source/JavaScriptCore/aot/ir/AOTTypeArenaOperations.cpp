@@ -18,7 +18,26 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static TypeID typeOfPrimitivesInArena(TypeArena& arena, uint16_t primitives, Range integers)
+static NEVER_INLINE TypeID internTypeOfPrimitivesInArena(TypeArena& arena, uint16_t primitives, Range integers)
+{
+    bool isKept = primitives == Primitive::Integer && integers.isSubsetOf(Range::int32());
+    uint32_t minimum = static_cast<uint32_t>(integers.minimum);
+    uint32_t maximum = static_cast<uint32_t>(integers.maximum);
+    if (isKept) {
+        if (TypeID made = arena.typeMadeBefore(MakerOfType::Integers, minimum, maximum))
+            return made;
+    }
+
+    TypeParts parts;
+    parts.primitives = primitives;
+    parts.integers = integers;
+    TypeID result = arena.intern(parts);
+    if (isKept)
+        arena.noteTypeMade(MakerOfType::Integers, minimum, maximum, result, !liesInThread(result));
+    return result;
+}
+
+static ALWAYS_INLINE TypeID typeOfPrimitivesInArena(TypeArena& arena, uint16_t primitives, Range integers)
 {
     primitives &= Primitive::Defined;
     integers = primitives & Primitive::Integer ? integers.intersectWith(Range::full()) : Range::empty();
@@ -28,11 +47,7 @@ static TypeID typeOfPrimitivesInArena(TypeArena& arena, uint16_t primitives, Ran
     }
     if (std::optional<TypeID> type = tryMakeTypeOfPrimitives(primitives, integers))
         return *type;
-
-    TypeParts parts;
-    parts.primitives = primitives;
-    parts.integers = integers;
-    return arena.intern(parts);
+    return internTypeOfPrimitivesInArena(arena, primitives, integers);
 }
 
 static Range integersOfTypeInArena(const TypeArena& arena, TypeID type)
@@ -40,7 +55,6 @@ static Range integersOfTypeInArena(const TypeArena& arena, TypeID type)
     return holdsOnlyPrimitives(type) ? integersInID(type) : arena.at(type).integers;
 }
 
-// A range has no holes, so only a stretch at one of its ends can go.
 static constexpr Range integersLeftWhereTestFailed(Range integers, Range removed)
 {
     if (integers.isEmpty() || removed.isEmpty())
@@ -60,7 +74,6 @@ static_assert(integersLeftWhereTestFailed({ 0, 9 }, { 3, 5 }) == Range { 0, 9 })
 static_assert(integersLeftWhereTestFailed({ 0, 9 }, { -1, 9 }) == Range::empty());
 static_assert(integersLeftWhereTestFailed({ 0, 9 }, Range::empty()) == Range { 0, 9 });
 
-// Ids follow thread arrival, so their order picks the memo's key and nothing else: the operation takes its operands as the caller gave them.
 static std::pair<uint32_t, uint32_t> memoKeyOfSymmetricOperation(TypeID a, TypeID b)
 {
     return std::minmax({ a.bits(), b.bits() });
@@ -71,7 +84,6 @@ TypeID TypeArena::integer(Range range)
     return typeOfPrimitivesInArena(*this, Primitive::Integer, range);
 }
 
-// The least type that holds the number. So wherever an operation is folded, the constant lies within whatever the row of the operation says of its result: `7 / 3` lies between 2 and 3.
 TypeID TypeArena::number(double value)
 {
     PrimitiveSet primitive = primitiveOfNumber(value);
@@ -102,11 +114,15 @@ TypeID TypeArena::stringLiteral(StringID string)
         return TypeTable::string;
     if (TypeID kept = m_table.typeOfLiteralString(string))
         return kept;
+    if (TypeID made = typeMadeBefore(MakerOfType::StringLiteral, string.bits(), 0))
+        return made;
 
     TypeParts parts;
     parts.primitives = Primitive::LiteralString;
     parts.stringLiterals = StringSets::of(string);
-    return intern(parts);
+    TypeID result = intern(parts);
+    noteTypeMade(MakerOfType::StringLiteral, string.bits(), 0, result, !liesInThread(result));
+    return result;
 }
 
 TypeID TypeArena::symbolLiteral(PropertyKeyID symbol)
@@ -123,9 +139,14 @@ TypeID TypeArena::symbolLiteral(PropertyKeyID symbol)
 TypeID TypeArena::forObject(ObjectID object)
 {
     RELEASE_ASSERT(object != ObjectTable::unknown());
+    if (TypeID made = typeMadeBefore(MakerOfType::ForObject, object.bits(), 0))
+        return made;
+
     TypeParts parts;
     parts.objects = ObjectSets::of(object);
-    return intern(parts);
+    TypeID result = intern(parts);
+    noteTypeMade(MakerOfType::ForObject, object.bits(), 0, result, !liesInThread(result));
+    return result;
 }
 
 TypeID TypeArena::forObjects(ObjectSetID set)
@@ -150,23 +171,33 @@ TypeID TypeArena::forLayouts(std::span<const LayoutID> unsorted)
 
 TypeID TypeArena::forLayoutSet(LayoutSetID set)
 {
+    if (TypeID made = typeMadeBefore(MakerOfType::ForLayoutSet, set.bits(), 0))
+        return made;
+
     TypeParts parts;
     parts.unnamedLayouts = set;
-    return intern(parts);
+    TypeID result = intern(parts);
+    noteTypeMade(MakerOfType::ForLayoutSet, set.bits(), 0, result, !liesInThread(set) && !liesInThread(result));
+    return result;
 }
 
 TypeID TypeArena::builtinClass(BuiltinClassID classID, std::span<const TypeID> writtenContents)
 {
     TypeParts parts;
-    if (writtenContents.empty())
+    if (writtenContents.empty()) {
+        if (TypeID made = typeMadeBefore(MakerOfType::BuiltinClass, classID.index(), 0))
+            return made;
         parts.unnamedClasses = partsOf(classID);
-    else {
-        RELEASE_ASSERT(writtenContents.size() <= mostContentsOfClass);
-        ClassPart part;
-        part.builtinClass = classID;
-        std::ranges::copy(writtenContents, part.writtenContents.begin());
-        parts.unnamedClasses = internClassParts(singleElementSpan(part));
+        TypeID result = intern(parts);
+        noteTypeMade(MakerOfType::BuiltinClass, classID.index(), 0, result, !liesInThread(result));
+        return result;
     }
+
+    RELEASE_ASSERT(writtenContents.size() <= mostContentsOfClass);
+    ClassPart part;
+    part.builtinClass = classID;
+    std::ranges::copy(writtenContents, part.writtenContents.begin());
+    parts.unnamedClasses = internClassParts(singleElementSpan(part));
     return intern(parts);
 }
 
@@ -184,19 +215,18 @@ TypeID TypeArena::forOpaque(OpaqueKind kind)
     return intern(parts);
 }
 
-TypeID TypeArena::anything(UnknownSeed seed)
+TypeID TypeArena::makeAnything(UnknownSeed seed)
 {
-    TypeID& known = m_anythingOfSeed[std::countr_zero(static_cast<uint16_t>(seed))];
-    if (known)
-        return known;
     TypeParts parts;
     parts.primitives = Primitive::All;
     parts.integers = Range::full();
     parts.seeds = seed;
     parts.anyObject = true;
     parts.anyFunction = true;
-    known = intern(parts);
-    return known;
+    TypeID made = intern(parts);
+    m_anythingOfSeed[std::countr_zero(static_cast<uint16_t>(seed))] = made;
+    m_someAnythingOfSeedLiesInThread |= liesInThread(made);
+    return made;
 }
 
 TypeID TypeArena::object(UnknownSeed seed)
@@ -216,31 +246,27 @@ TypeID TypeArena::function(UnknownSeed seed)
     return intern(parts);
 }
 
-TypeID TypeArena::unionOf(TypeID a, TypeID b)
+TypeID TypeArena::unionOfDifferentTypes(TypeID a, TypeID b)
 {
-    ASSERT(a && b);
-    if (a == b || isNeverType(b))
-        return a;
-    if (isNeverType(a))
-        return b;
     if (holdsOnlyPrimitives(a) && holdsOnlyPrimitives(b))
         return typeOfPrimitivesInArena(*this, primitivesInID(a) | primitivesInID(b), integersInID(a).unionWith(integersInID(b)));
 
     auto [first, second] = memoKeyOfSymmetricOperation(a, b);
     if (std::optional<uint32_t> known = remembered(Operation::Union, first, second))
         return TypeID::fromBits(*known);
+    return uniteAndRemember(a, b);
+}
+
+NEVER_INLINE TypeID TypeArena::uniteAndRemember(TypeID a, TypeID b)
+{
+    auto [first, second] = memoKeyOfSymmetricOperation(a, b);
     TypeID result = intern(uniteTypes(*this, at(a), at(b)));
     remember(Operation::Union, first, second, result.bits());
     return result;
 }
 
-TypeID TypeArena::intersectionOf(TypeID a, TypeID b, DeclaredParts declared)
+TypeID TypeArena::intersectionOfDifferentTypes(TypeID a, TypeID b, DeclaredParts declared)
 {
-    ASSERT(a && b);
-    if (a == b)
-        return a;
-    if (isNeverType(a) || isNeverType(b))
-        return TypeTable::never;
     if (holdsOnlyPrimitives(a) && holdsOnlyPrimitives(b))
         return typeOfPrimitivesInArena(*this, primitivesInID(a) & primitivesInID(b), integersInID(a).intersectWith(integersInID(b)));
 
@@ -249,59 +275,69 @@ TypeID TypeArena::intersectionOf(TypeID a, TypeID b, DeclaredParts declared)
     auto [first, second] = isCast ? std::pair { a.bits(), b.bits() } : memoKeyOfSymmetricOperation(a, b);
     if (std::optional<uint32_t> known = remembered(operation, first, second))
         return TypeID::fromBits(*known);
+    return intersectAndRemember(a, b, declared);
+}
+
+NEVER_INLINE TypeID TypeArena::intersectAndRemember(TypeID a, TypeID b, DeclaredParts declared)
+{
+    bool isCast = declared == DeclaredParts::FromSecond;
+    Operation operation = isCast ? Operation::Cast : Operation::Intersection;
+    auto [first, second] = isCast ? std::pair { a.bits(), b.bits() } : memoKeyOfSymmetricOperation(a, b);
     TypeID result = intern(intersectTypes(*this, at(a), at(b), declared));
     remember(operation, first, second, result.bits());
     return result;
 }
 
-TypeID TypeArena::differenceOf(TypeID value, TypeID removed)
+TypeID TypeArena::differenceOfTypesWithValues(TypeID value, TypeID removed)
 {
-    ASSERT(value && removed);
-    if (isNeverType(value) || isNeverType(removed))
-        return value;
     if (holdsOnlyPrimitives(value) && holdsOnlyPrimitives(removed)) {
         uint16_t primitives = primitivesInID(value) & ~(primitivesInID(removed) & ~Primitive::Integer);
         return typeOfPrimitivesInArena(*this, primitives, integersLeftWhereTestFailed(integersInID(value), integersInID(removed)));
     }
 
-    // No shortcut for equal records: a test may refuse an object that it names, and subtractTypes() removes only what would surely have passed.
     if (std::optional<uint32_t> known = remembered(Operation::Difference, value.bits(), removed.bits()))
         return TypeID::fromBits(*known);
+    return subtractAndRemember(value, removed);
+}
+
+NEVER_INLINE TypeID TypeArena::subtractAndRemember(TypeID value, TypeID removed)
+{
     TypeID result = intern(subtractTypes(*this, at(value), at(removed)));
     remember(Operation::Difference, value.bits(), removed.bits(), result.bits());
     return result;
 }
 
-bool TypeArena::isSubset(TypeID type, TypeID of)
+bool TypeArena::isSubsetOfDifferentType(TypeID type, TypeID of)
 {
-    ASSERT(type && of);
-    if (type == of || isNeverType(type))
-        return true;
-    if (isNeverType(of))
-        return false;
     if (holdsOnlyPrimitives(type) && holdsOnlyPrimitives(of))
         return !(primitivesInID(type) & ~primitivesInID(of)) && integersInID(type).isSubsetOf(integersInID(of));
 
     if (std::optional<uint32_t> known = remembered(Operation::Subset, type.bits(), of.bits()))
         return !!*known;
+    return workOutSubsetAndRemember(type, of);
+}
+
+NEVER_INLINE bool TypeArena::workOutSubsetAndRemember(TypeID type, TypeID of)
+{
     bool result = Typed::isSubset(*this, at(type), at(of));
     remember(Operation::Subset, type.bits(), of.bits(), result);
     return result;
 }
 
-bool TypeArena::overlap(TypeID a, TypeID b)
+bool TypeArena::overlapOfDifferentTypes(TypeID a, TypeID b)
 {
-    ASSERT(a && b);
-    if (isNeverType(a) || isNeverType(b))
-        return false;
-    if (a == b)
-        return true;
     if (holdsOnlyPrimitives(a) && holdsOnlyPrimitives(b))
         return (primitivesInID(a) & primitivesInID(b) & ~Primitive::Integer) || !integersInID(a).intersectWith(integersInID(b)).isEmpty();
 
     auto [first, second] = memoKeyOfSymmetricOperation(a, b);
     if (std::optional<uint32_t> known = remembered(Operation::Overlap, first, second))
         return !!*known;
+    return workOutOverlapAndRemember(a, b);
+}
+
+NEVER_INLINE bool TypeArena::workOutOverlapAndRemember(TypeID a, TypeID b)
+{
+    auto [first, second] = memoKeyOfSymmetricOperation(a, b);
     bool result = Typed::overlap(*this, at(a), at(b));
     remember(Operation::Overlap, first, second, result);
     return result;
@@ -345,19 +381,15 @@ TypeID TypeArena::withPrimitives(TypeID type, uint16_t added)
     return intern(parts);
 }
 
-TypeID TypeArena::withoutPrimitives(TypeID type, uint16_t removed)
+TypeID TypeArena::withoutPrimitivesHeld(TypeID type, uint16_t removed)
 {
     if (holdsOnlyPrimitives(type))
         return typeOfPrimitivesInArena(*this, primitivesInID(type) & ~removed, integersInID(type));
 
-    Type record = at(type);
-    if (!(record.primitives & removed))
-        return type;
-    // The walk takes undefined and null off the same few types at every access.
     bool isRemembered = m_keeps == ArenaKeeps::UntilReset;
     if (std::optional<uint32_t> known = isRemembered ? remembered(Operation::WithoutPrimitives, type.bits(), removed) : std::nullopt)
         return TypeID::fromBits(*known);
-    TypeParts parts = record;
+    TypeParts parts = recordOf(type);
     parts.primitives &= ~removed;
     if (!(parts.primitives & Primitive::Integer))
         parts.integers = Range::empty();
@@ -371,12 +403,9 @@ TypeID TypeArena::withoutPrimitives(TypeID type, uint16_t removed)
     return result;
 }
 
-TypeID TypeArena::withoutObjects(TypeID type)
+TypeID TypeArena::withoutObjectsOfRecord(TypeID type)
 {
-    if (holdsOnlyPrimitives(type))
-        return type;
-
-    Type record = at(type);
+    const Type& record = recordOf(type);
     if (!record.hasObjects())
         return type;
     TypeParts parts = record;
@@ -423,14 +452,12 @@ TypeID TypeArena::withIntegers(TypeID type, Range integers)
     return intern(parts);
 }
 
-TypeID TypeArena::withoutBoundsOfFractions(TypeID type)
+TypeID TypeArena::withoutBoundsOfFractionsOfRecord(TypeID type)
 {
-    if (holdsOnlyPrimitives(type))
+    const Type& record = recordOf(type);
+    if (record.boundsOfFractions.isEmpty())
         return type;
-
-    TypeParts parts = at(type);
-    if (parts.boundsOfFractions.isEmpty())
-        return type;
+    TypeParts parts = record;
     parts.boundsOfFractions = Range::empty();
     return intern(parts);
 }
@@ -448,17 +475,19 @@ TypeID TypeArena::withLiteralStringsWidened(TypeID type)
     return intern(parts);
 }
 
-TypeID TypeArena::withSeeds(TypeID type, UnknownSeeds added)
+TypeID TypeArena::withSeedsOnRecord(TypeID type, UnknownSeeds added)
 {
-    if (holdsOnlyPrimitives(type))
-        return type;
+    if (TypeID made = typeMadeBefore(MakerOfType::WithSeeds, type.bits(), added.toRaw()))
+        return made;
 
-    Type record = at(type);
+    const Type& record = recordOf(type);
     if (!record.hasUnknown() || record.seeds.containsAll(added))
         return type;
     TypeParts parts = record;
     parts.seeds.add(added);
-    return intern(parts);
+    TypeID result = intern(parts);
+    noteTypeMade(MakerOfType::WithSeeds, type.bits(), added.toRaw(), result, !liesInThread(type) && !liesInThread(result));
+    return result;
 }
 
 TypeID TypeArena::widenedFrom(TypeID now, TypeID previous)
@@ -488,8 +517,6 @@ static std::strong_ordering compareSetsOfTypes(const TypeArena& arena, SetID a, 
     return compareByContent(arena.at(a).untyped(), arena.at(b).untyped());
 }
 
-// The number of a key without a stable number follows the arrival of threads. Such keys come behind the others, in the order of what they hold.
-// A member of a set is a key of the program, never of the thread: symbolLiteral().
 static std::strong_ordering compareKeysOfTypes(const TypeArena& arena, PropertyKeyID a, PropertyKeyID b)
 {
     if (a == b)

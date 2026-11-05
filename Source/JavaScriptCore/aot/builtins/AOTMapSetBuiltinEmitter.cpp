@@ -79,7 +79,6 @@ void MapSetBuiltinEmitter::lookUpWeakTable(const InlineCall& call, WeakLookup lo
     finish(call, join.finish());
 }
 
-// It ends the block. The caller goes on in `found`, where `bucket` is that of the key, and in `absent`.
 MapSetBuiltinEmitter::WeakProbe MapSetBuiltinEmitter::probeWeakTable(WeakLookup lookup, CellPointer table, Boxed key, const Type& typeOfKey)
 {
     using MapBucket = WeakMapBucket<WeakMapBucketDataKeyValue>;

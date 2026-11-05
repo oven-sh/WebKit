@@ -3,12 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Guesses and DirectCalls, an accessor in a slot: `{ get total() { .. } }.total`. The slot holds the pair of functions, and whichever lies there is the one that the access would call: behind a look whether the slot is filled
-// the half is loaded and called, directly where it is the function that Link has seen laid there. An empty slot, or another shape: the access as written. Nothing is kept past the access. Withheld: the access as written.
-// DirectCalls, where Link has proven the half (LinkedAccessorsOfField::getterIsProven): the access is the call, with no look, no load and no other arm; a function that needs its closure loads it behind the look and tests nothing.
-// Folding, a lookup past own names: `f.cache`, `"x" in f`, `list.nope`, where the object is proven or seen to have only the names it was made with, and the table of built-ins shows that nothing above it answers.
-// TypedSlots, a store that creates a property which nobody lists: a plain store.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -29,12 +23,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Closed, such an access is a lookup and a call out of a stub, which saves every register round it.
 static constexpr uint32_t closedOperationsOfAccessThatCallsAccessorInKeyOrdersAccessors = 2;
-
-// ---- A store that creates a property which nobody lists
-
-// ---- An accessor in a slot
 
 static LayoutID onlyLayoutOfInKeyOrdersAccessors(const Walker& walker, TypeID listed)
 {
@@ -46,7 +35,6 @@ static LayoutID onlyLayoutOfInKeyOrdersAccessors(const Walker& walker, TypeID li
     return singleLayoutOf(walker.types(), type);
 }
 
-// The field of the layout whose slot holds the functions of an accessor under the key.
 static std::optional<FieldReference> findAccessorSlotInKeyOrdersAccessors(const Walker& walker, LayoutID layout, PropertyKeyID key)
 {
     const Program& program = walker.program();
@@ -61,7 +49,6 @@ static std::optional<FieldReference> findAccessorSlotInKeyOrdersAccessors(const 
     return FieldReference { layout, *field };
 }
 
-// What Link has seen laid there, where this unit may name it. A guess: a test stands in front of whatever is built on it.
 static FunctionID findAccessorExpectedInKeyOrdersAccessors(const Walker& walker, FieldReference field, bool isStore)
 {
     const LinkTables& linked = walker.facts().linked();
@@ -70,14 +57,12 @@ static FunctionID findAccessorExpectedInKeyOrdersAccessors(const Walker& walker,
     return accessor && linked.mayBeMentionedBy(walker.unit(), accessor) ? accessor : FunctionID();
 }
 
-// LinkedAccessorsOfField::getterIsProven, setterIsProven.
 static bool isProvenHalfInKeyOrdersAccessors(const Walker& walker, FieldReference field, bool isStore)
 {
     const LinkedAccessorsOfField* laid = walker.facts().linked().findAccessorsExpectedIn(field);
     return laid && (isStore ? laid->setterIsProven : laid->getterIsProven);
 }
 
-// TestingSwitch::CheckProofsAtRunTime. The call leans on Link's word with no record that has the type. So the half is loaded for its check alone: build() asks the slot whether it is filled, and what it holds whether it is a closure of the function.
 static void checkProvenHalfInKeyOrdersAccessors(Walker& walker, const BodyValue& access, Reference object, FieldReference field)
 {
     if (!walker.checksProofs())
@@ -95,14 +80,11 @@ static void checkProvenHalfInKeyOrdersAccessors(Walker& walker, const BodyValue&
     walker.build(WTF::move(load));
 }
 
-// Off an object that is proven to be of the layout the access IS a call of the one function, with the object as `this`. Nothing is asked of the object, and there is no other arm.
-// A function that needs its closure finds it in the slot, which the run time fills object by object: callAccessorInSlot().
 bool callProvenAccessorOfItsOpcodes(Walker& walker, const BodyValue& access)
 {
     bool isStore = access.opcode() == Opcode::PropSet;
     if (access.isFreeName())
         return false;
-    // Nearly every name says no here.
     PropertyKeyID key = access.key();
     if (!key || liesInThread(key) || !walker.facts().linked().keysOfAccessorsExpectedInFields.get(key.index()))
         return false;
@@ -146,7 +128,6 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
     bool isStore = opcode == Opcode::PropSet;
     if ((opcode != Opcode::PropGet && !isStore) || access.isFreeName())
         return false;
-    // Nearly every name says no here.
     if (PropertyKeyID name = access.key(); !name || liesInThread(name) || !walker.facts().linked().keysOfAccessorsExpectedInFields.get(name.index()))
         return false;
     if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::TypedOperations))
@@ -156,7 +137,6 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
     if (!object || !object.isValue() || (isStore && !stored))
         return false;
 
-    // The receiver is proven to be of the one layout, or declared to be.
     TypeArena& types = walker.types();
     TypeID proven = walker.typeOf(object);
     LayoutID layout = onlyLayoutOfInKeyOrdersAccessors(walker, proven);
@@ -170,7 +150,6 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
     }
     PropertyKeyID key = access.key();
     std::optional<FieldReference> field = findAccessorSlotInKeyOrdersAccessors(walker, layout, key);
-    // Off a proven receiver callProvenAccessor() has had its turn: the function needs its closure.
     bool halfIsProven = field && isProvenHalfInKeyOrdersAccessors(walker, *field, isStore);
     FunctionID provenHalf = halfIsProven ? findAccessorExpectedInKeyOrdersAccessors(walker, *field, isStore) : FunctionID();
     if (!field || !shouldOpenGuess(walker, object, types.forLayout(layout), true, closedOperationsOfAccessThatCallsAccessorInKeyOrdersAccessors))
@@ -211,7 +190,6 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
         proof.setIsOnTakenEdge(true);
         return walker.build(WTF::move(proof));
     };
-    // Whatever function lies there is the one that the access would call, with the object as `this`.
     auto callByValue = [&](Reference half) {
         Draft call(Opcode::Call, origin);
         if (!isStore)
@@ -233,7 +211,6 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
         if (goesOn) {
             object = buildProof(object, hasShape, OperandIndex::ShapeTest::object);
             goesOn = !!object;
-            // Behind the test of the shape the half is proven as well.
             if (goesOn && provenHalf)
                 checkProvenHalfInKeyOrdersAccessors(walker, access, object, *field);
             if (goesOn && provenHalf && callAccessor(walker, access, provenHalf, object, stored)) {
@@ -254,7 +231,6 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
         if (isStore)
             load.setIsInStrictCode(access.mode() == ECMAMode::Strict);
         else {
-            // The row types the getter by what the property gives, which is any value, and a cell is no form of that.
             if (!halfIsProven)
                 load.representation = Representation::JSValue;
         }
@@ -263,7 +239,6 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
     if (walker.hasFailed())
         return true;
 
-    // The function needs its closure: what the filled slot holds is one.
     if (half && provenHalf) {
         if (callAccessor(walker, access, provenHalf, object, stored, half))
             endArm(isStore || walker.isUnreachable() ? Reference() : walker.referenceOf(access.id()));
@@ -340,11 +315,6 @@ bool callAccessorInSlot(Walker& walker, const BodyValue& access)
     return true;
 }
 
-// ---- A static field in its variable
-
-// `class Meter { static raw = 0 }`. While the class object is not made, a static field that has been defined lies in the variable that the record of the class names for it (object/AOTStaticFields.h).
-// No proof: the read asks the run time's own two questions at run time, and where either says no the access goes as it is written. What has to hold of the text: the receiver is THE class object of the class
-// that declares the field (the variables belong to the class object of the one evaluation), and the name is none that a function has of itself.
 static VariableID findVariableOfStaticFieldInKeyOrdersAccessors(Walker& walker, TypeID receiver, PropertyKeyID key)
 {
     const Program& program = walker.program();
@@ -352,7 +322,6 @@ static VariableID findVariableOfStaticFieldInKeyOrdersAccessors(Walker& walker, 
         return { };
     TypeArena& types = walker.types();
     Type type = types.at(receiver);
-    // Nearly every receiver says no here.
     if (!type.isObject() || type.primitives || !type.hasOnlyClosures())
         return { };
     FunctionID constructor = singleFunctionOf(types, type);
@@ -361,7 +330,6 @@ static VariableID findVariableOfStaticFieldInKeyOrdersAccessors(Walker& walker, 
         return { };
     const Layout& record = program.at(classLayout);
     std::optional<uint32_t> field = record.findStaticField(key);
-    // One under a computed key answers to a name that nobody knows.
     if (!field || std::ranges::any_of(record.staticFields, [](const StaticField& other) { return !other.key; }))
         return { };
     if (classHolderIsMadeWithName(program, ClassSide::Static, key))
@@ -379,7 +347,6 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     bool isStore = opcode == Opcode::PropSet;
     if ((opcode != Opcode::PropGet && !isStore) || access.isFreeName())
         return false;
-    // Nearly every name says no here.
     if (PropertyKeyID name = access.key(); !name || liesInThread(name) || !walker.facts().linked().keysOfStaticFields.get(name.index()))
         return false;
     if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses() || !walker.has(Mechanism::TypedOperations))
@@ -489,8 +456,6 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
         walker.bind(access.id(), arms[0].value);
     return true;
 }
-
-// ---- A lookup past own names
 
 } } } // namespace JSC::AOT::Typed
 

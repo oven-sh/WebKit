@@ -24,7 +24,6 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// positionPlusOne is zero for a part of the shared constants, so among equal constants that part comes first.
 struct PooledConstant {
     bool isShared() const { return !positionPlusOne; }
     size_t alignment() const { return imageConstantsAlignment >> (alignmentRankAndSize >> 32); }
@@ -32,7 +31,6 @@ struct PooledConstant {
 
     // The upper half ranks the alignment, largest first: in this order a constant whose size is a multiple of its alignment needs no padding.
     uint64_t alignmentRankAndSize;
-    // Big-endian, so comparing two of these compares the bytes in order. A constant shorter than eight bytes is padded with zeros.
     uint64_t firstEightBytes;
     uint32_t positionPlusOne;
     uint32_t index;
@@ -82,7 +80,6 @@ ConstantPool buildConstantPool(const LinkedFunctions& functions, BuildContext& c
     auto offsetOf = [&](const PooledConstant& constant) -> uint32_t& {
         return pool.constantOffsetsByBody[constant.positionPlusOne - 1][constant.index];
     };
-    // By alignment, then size, then bytes.
     auto compareContents = [&](const PooledConstant& a, const PooledConstant& b) -> std::strong_ordering {
         if (a.alignmentRankAndSize != b.alignmentRankAndSize)
             return a.alignmentRankAndSize <=> b.alignmentRankAndSize;
@@ -112,8 +109,6 @@ ConstantPool buildConstantPool(const LinkedFunctions& functions, BuildContext& c
         return std::tie(a.positionPlusOne, a.index) < std::tie(b.positionPlusOne, b.index);
     });
 
-    // Equal constants stand side by side, a part of the shared constants in front. What compares bytes and what writes to the lists of the bodies, which lie all over memory, has all threads.
-    // Only the sum of the sizes goes through the constants one by one, and it reads nothing but the list.
     Vector<uint8_t> hasBytesOfConstantInFront;
     hasBytesOfConstantInFront.grow(constants.size());
     forEachRangeOfIndicesInParallel(loops, constants.size(), [&](size_t first, size_t end) {
@@ -144,7 +139,6 @@ ConstantPool buildConstantPool(const LinkedFunctions& functions, BuildContext& c
         }
     });
 
-    // A word of a jump table is a distance from the table, so each table has a place of its own. The tables are laid out in the order of the code.
     uint64_t sizeOfJumpTables = 0;
     for (size_t position = 0; position < functions.size(); ++position) {
         Vector<uint32_t, 0>& offsets = pool.jumpTableOffsetsByBody[position];
@@ -164,7 +158,6 @@ ConstantPool buildConstantPool(const LinkedFunctions& functions, BuildContext& c
     pool.sizeOfSharedConstants = static_cast<uint32_t>(shared.bytes.size());
     std::span<uint8_t> bytes = pool.bytes.mutableSpan();
     memcpySpan(bytes, shared.bytes);
-    // Bytes that several bodies name count as what the first of those bodies calls them.
     forEachRangeOfIndicesInParallel(loops, constants.size(), [&](size_t first, size_t end) {
         std::array<uint64_t, numberOfConstantKinds> bytesByKind { };
         for (size_t index = first; index < end; ++index) {

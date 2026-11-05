@@ -42,8 +42,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(numberOfArgumentGPRs <= StubKey::maxCount);
 
-// The built-in's own stub for boxed operands. A call by value finds it through the callee's executable; a call that names the built-in finds it in the table.
-// The stub takes the call's registers and falls back to the host function by itself.
 static std::optional<StubKey> boxedCallStubFor(const BuiltinTable& builtins, BuiltinID builtin, unsigned count)
 {
     std::optional<BuiltinBoxedStub> boxedStub = builtins.boxedCallStubOf(builtin);
@@ -111,7 +109,6 @@ static void failBuiltinOperationWithZero(CodeGenerator& generator, const ValueCo
     generator.define(value, generator.emitter<ConstantEmitter>().zeroOf(value.representation()));
 }
 
-// The module of the function of the operation's inline frame, and the position in it. Code::locationOf() serves reports: for a function without a text it answers with the call in the frame around it, where several literals would meet.
 static std::optional<Wire::SourceLocation> placeWhereRegExpLiteralIsWritten(const Program& program, const Code& code, const Operation& literal)
 {
     FunctionID writtenIn = code.inlineFrames()[literal.inlineFrame].callee;
@@ -128,8 +125,6 @@ BuiltinCallEmitter::BuiltinCallEmitter(CodeGenerator& generator)
 {
 }
 
-// The type of the call is what the row of the built-in says, and whatever is built on it may take away every look at the value.
-// So the code of the call holds what native code answers against the kinds of values that the row writes, in every build, and ends the process where it is of another kind.
 void BuiltinCallEmitter::stopUnlessNativeResultIsAsWritten(const ValueContext& value, Boxed result, BuiltinID called, bool constructs)
 {
     using Written = WrittenNativeResult;
@@ -181,14 +176,6 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
     };
     auto callFunction = [&] {
         std::optional<uint32_t> number = value->builtinCallForm() == BuiltinCallForm::Whole ? BuiltinBindings::directFunctionNumberOf(id, arguments.size()) : std::nullopt;
-        // A direct entry that answers fields makes no object. Where every view is whole, the function itself makes it. Bounds of parts of views are taken by the direct entry alone.
-        if (number && BuiltinBindings::directFunctionAt(*number).returnsFields) {
-            if (BuiltinBindings::directFunctionAt(*number).numberOfBounds()) {
-                defineResult(boxCell(makeObjectOfDirectEntry(value, *number)));
-                return;
-            }
-            number = std::nullopt;
-        }
         if (number && BuiltinBindings::directFunctionAt(*number).returnsNumber) {
             DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(*number));
             defineAs(value, Number(emitter<RuntimeCallEmitter>().callDirectFunctionReturningNumber(value, *number, operands.words.span(), operands.keptAlive.span())), typeOf(value.id()));
@@ -199,7 +186,6 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return;
         }
         BuiltinID builtin = m_builtins.canonicalID(overload.builtin);
-        // Bytecode makes the array of `Array(length)` in the caller, so the stack has no frame of Array.
         if (builtin == Builtins::Array && value->isDoneInPlace() && arguments.size() == 1) {
             defineResult(boxCell(callOperation<CellPointer>(value, RuntimeOperation::ArrayOfLengthOrElement, { boxedOperand(value, arguments[0]) })));
             return;
@@ -243,7 +229,6 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             Type type = typeOf(argument);
             return !type.isNever() && type.hasOnlyPrimitives(primitives);
         };
-        // Such a value is asked for no toJSON and always has text, and neither undefined nor null is a replacer or an indent.
         bool writesOnePrimitive = builtin == Builtins::JSONStringify && isCall && !arguments.empty()
             && holdsOnly(arguments[0], Primitive::AnyString | Primitive::Number | Primitive::Boolean | Primitive::Null)
             && std::ranges::all_of(arguments.subspan(1), [&](ValueID option) { return holdsOnly(option, Primitive::UndefinedOrNull); });
@@ -251,12 +236,10 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             defineResult(boxCell(callOperation<CellPointer>(value, RuntimeOperation::JSONStringifyPrimitive, { boxedArguments[0] }, { .calledBuiltin = builtin })));
             return;
         }
-        // The run time's own loop opens no rope among the elements, and leaves long elements joined as a rope. The function is called where the text of an element may come from code of the program.
         if (builtin == Builtins::ArrayPrototypeJoin && isCall && receiver && arguments.size() <= 1) {
             defineResult(callOperation<Boxed>(value, RuntimeOperation::ArrayJoinOfAnyReceiver, { *boxedReceiver, argumentOrUndefined(0), calleeOf(value, overload) }));
             return;
         }
-        // `const nodes = list.slice(); nodes.pos = pos`: the first named property of a list asks for storage of its own, unless the list was born with the room.
         if (builtin == Builtins::ArrayPrototypeSlice && isCall && receiver && arguments.empty() && generator().isStoredIntoByName(value.id())) {
             LBasicBlock closed = newBlock();
             OperandJoin answersMeet(m_out, Representation::JSValue);
@@ -280,11 +263,6 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         };
         if (builtin == Builtins::BufferPrototypeToString && isCall && receiver && arguments.size() <= 3 && (arguments.empty() || !isEncodingForTheHost(arguments[0])))
             return answerOrCallFunction(RuntimeOperation::TextOfBytes, { *boxedReceiver, argumentOrUndefined(0), argumentOrUndefined(1), argumentOrUndefined(2) });
-        bool isCalledOnEncoder = isCall && receiver && types().isSubset(typeIDOf(receiver), types().builtinClass(BuiltinClasses::TextEncoder));
-        if (builtin == Builtins::TextEncoderPrototypeEncode && isCalledOnEncoder && arguments.size() == 1)
-            return answerOrCallFunction(RuntimeOperation::EncodeTextToBytes, { boxedArguments[0] });
-        if (builtin == Builtins::TextEncoderPrototypeEncodeInto && isCalledOnEncoder && arguments.size() == 2)
-            return answerOrCallFunction(RuntimeOperation::EncodeTextIntoBytes, { boxedArguments[0], boxedArguments[1] });
         auto mayBeBytes = [&](ValueID view) {
             TypeID type = typeIDOf(view);
             return types().overlap(type, types().builtinClass(BuiltinClasses::Uint8Array)) || types().overlap(type, types().builtinClass(BuiltinClasses::Buffer));
@@ -305,19 +283,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
     };
 
     switch (value->builtinCallForm()) {
-    case BuiltinCallForm::Fields:
-    case BuiltinCallForm::Prefix:
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-        return;
-    case BuiltinCallForm::List:
-        if (receiver || arguments.size() != 1 || overload.mode != BuiltinCallMode::Call) {
-            failBuiltinOperationWithZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
-            return;
-        }
-        defineResult(callOperation<Boxed>(value, RuntimeOperation::Apply, { boxCell(calleeOf(value, overload)), undefined(), boxedOperand(value, arguments[0]) }));
-        return;
     case BuiltinCallForm::AnyReceiver:
-        // A member that is a slot of the object itself, a number or a cell has no accessor function to call.
         if (overload.mode == BuiltinCallMode::Get && receiver && !BuiltinCellKey::getter(overload.builtin).hasCell(m_builtins)) {
             defineResult(emitter<AccessEmitter>().getById(value, boxedOperand(value, receiver), keyOf(overload)));
             return;
@@ -392,7 +358,6 @@ Boxed BuiltinCallEmitter::builtinValue(const OperationContext& context, BuiltinC
         fail(context, InternalErrorKind::OpcodeWithoutCode);
         return undefined();
     }
-    // A value has the number of its key, as a cell has, and a table of its own.
     static_assert(sizeof(EncodedJSValue) == 1 << logScale(ScaleEight));
     Pointer values = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.hostValues));
     Integer number = zeroExtended(numberOf(m_mentions.builtinCell(key)));
@@ -428,7 +393,6 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
         return callCustomGetter(context, id, *receiver, receiverIsMatched);
     }
 
-    // The function that an accessor has bound to the receiver. The accessor is asked for it, whatever the receiver has under the name by now.
     if (overload.mode == BuiltinCallMode::Call && m_builtins.at(overload.builtin).kind == BuiltinKind::Accessor) {
         RELEASE_ASSERT(receiver);
         Boxed holder = boxCell(builtinCell(context, BuiltinCellKey::object(m_builtins.at(overload.builtin).holder)));
@@ -460,66 +424,15 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
     return calls.callValue(context, { callee, thisValue, arguments }, options);
 }
 
-// The address of the first byte and the number of bytes, as they are now. A view that has lost its memory has none.
-// Bounds were taken when the program cut the part out. The view had a fixed length then, so since then it can only have lost its memory.
-void BuiltinCallEmitter::appendBytesOf(DirectOperands& operands, ValueID id, std::span<const ValueID> bounds)
-{
-    CellPointer view = cellOperand(id);
-    TypedArrayType type = typedArrayTypeOf(BuiltinTypeContext { m_program, types() }, typeIDOf(id));
-    auto askView = [&] {
-        return callLeaf<Integer>(RuntimeOperation::ViewByteLength, { view });
-    };
-    Integer size;
-    if (isTypedView(type)) {
-        LBasicBlock isNotFixedLength = newBlock();
-        Join<Integer> join(m_out);
-        Integer length = emitter<ElementAccessEmitter>().typedArrayElementsOf(view, isNotFixedLength).length;
-        join.add(Integer(m_out.shl(length.value(), m_out.constInt32(logElementSize(type)))));
-        m_out.appendTo(isNotFixedLength);
-        join.add(askView());
-        size = join.finish();
-    } else
-        size = askView();
-    Pointer first = loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector);
-    if (!bounds.empty()) {
-        auto atMost = [&](Integer value, Integer limit) {
-            return select(below(value, limit), value, limit);
-        };
-        Integer end = atMost(integerOperand(bounds[1]), size);
-        Integer start = atMost(integerOperand(bounds[0]), end);
-        first = offsetBy(first, start, 0);
-        size = sub(end, start);
-    }
-    operands.words.append(first.value());
-    operands.words.append(size.value());
-    operands.keptAlive.append(view.value());
-}
-
 BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const ValueContext& value, const BuiltinDirectFunctionBinding& binding)
 {
     RELEASE_ASSERT(value->argumentsOperands().size() >= binding.minArgumentCount());
     RELEASE_ASSERT(!binding.takesReceiver() || value->receiverOperand());
-    std::span<const ValueID> bounds = value->argumentsOperands().last(binding.numberOfBounds());
-    std::span<const ValueID> arguments = value->argumentsOperands().first(value->argumentsOperands().size() - bounds.size());
-    auto takeBounds = [&] {
-        std::span<const ValueID> taken = bounds.first(2);
-        bounds = bounds.subspan(2);
-        return taken;
-    };
+    std::span<const ValueID> arguments = value->argumentsOperands();
     std::span<const BuiltinDirectValue> parameters = std::span(binding.parameters).first(binding.parameterCount);
 
-    // A rope is resolved first: that allocates, and no address is taken before it.
-    Vector<CharacterView, 1> characters;
-    size_t next = 0;
-    for (BuiltinDirectValue parameter : parameters) {
-        if (parameter == BuiltinDirectValue::Characters)
-            characters.append(emitter<StringEmitter>().viewOf(value, arguments[next]));
-        next += BuiltinDirectFunctionBinding::takesArgument(parameter) && next < arguments.size();
-    }
-
     DirectOperands operands;
-    size_t nextCharacters = 0;
-    next = 0;
+    size_t next = 0;
     for (BuiltinDirectValue parameter : parameters) {
         switch (parameter) {
         case BuiltinDirectValue::Realm:
@@ -566,27 +479,6 @@ BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const Va
         case BuiltinDirectValue::Double:
             operands.words.append(numberOperand(arguments[next++]).value());
             break;
-        case BuiltinDirectValue::Bytes:
-            appendBytesOf(operands, arguments[next++]);
-            break;
-        case BuiltinDirectValue::BytesOfReceiver:
-            appendBytesOf(operands, value->receiverOperand());
-            break;
-        case BuiltinDirectValue::Characters: {
-            const CharacterView& view = characters[nextCharacters++];
-            Integer address(view.characters.value());
-            operands.words.append(select(view.is8Bit, address, bitOr(address, integer(static_cast<int64_t>(wideCharactersBit)))).value());
-            operands.words.append(zeroExtended(view.length).value());
-            operands.keptAlive.append(view.owner.value());
-            ++next;
-            break;
-        }
-        case BuiltinDirectValue::BytesInRange:
-            appendBytesOf(operands, arguments[next++], takeBounds());
-            break;
-        case BuiltinDirectValue::BytesOfReceiverInRange:
-            appendBytesOf(operands, value->receiverOperand(), takeBounds());
-            break;
         }
     }
     if (binding.takesReceiver())
@@ -599,37 +491,17 @@ Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t
 {
     DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(number));
     const BuiltinOverload& overload = m_builtins.at(value->overload());
-    // An error that the function makes lists the function in its stack, so the function needs a frame of its own.
     bool makesErrors = overload.throws() && !overload.onlyPropagatesErrors() && !groupsFunctionsOfCompiledCode(m_builtins.at(overload.builtin).holder);
     bool hasFunctionObject = BuiltinCellKey::object(overload.builtin).hasCell(m_builtins);
     bool canMakeFrame = hasFunctionObject && RuntimeCallEmitter::leavesRegistersForHostFrame(operands.words.span());
     std::optional<RuntimeCallEmitter::HostFrameOfDirectCall> hostFrame;
     if (operands.takesFrame || (makesErrors && canMakeFrame))
         hostFrame = RuntimeCallEmitter::HostFrameOfDirectCall { (value->receiverOperand() ? boxedOperand(value, value->receiverOperand()) : undefined()).value(), calleeOf(value, overload).value() };
-    // Where there is no such frame, the site says which function it calls.
     BuiltinID callee = m_builtins.canonicalID(overload.builtin);
     std::optional<BuiltinNativeFunction> nativeFunction = BuiltinBindings::nativeFunctionOf(callee);
     bool hasNameInFrames = hasFunctionObject || (nativeFunction && !nativeFunction->name.isNull());
     BuiltinID listedAtSite = makesErrors && !hostFrame && hasNameInFrames ? callee : BuiltinID();
     return Boxed(emitter<RuntimeCallEmitter>().callDirectFunction(value, number, operands.words.span(), operands.keptAlive.span(), hostFrame, listedAtSite));
-}
-
-StubCallResult BuiltinCallEmitter::callDirectFunctionReturningFields(const ValueContext& value, uint32_t number)
-{
-    DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(number));
-    return emitter<RuntimeCallEmitter>().callDirectFunctionReturningFields(value, number, operands.words.span(), operands.keptAlive.span());
-}
-
-// For a program that keeps the object.
-CellPointer BuiltinCallEmitter::makeObjectOfDirectEntry(const ValueContext& value, uint32_t number)
-{
-    const BuiltinType& result = m_builtins.at(m_builtins.at(value->overload()).result.type);
-    RELEASE_ASSERT(result.parts.size() == 1 && result.parts[0].kind == BuiltinTypePartKind::Layout);
-    StubCallResult fields = callDirectFunctionReturningFields(value, number);
-    auto boxed = [&](LValue field) {
-        return emitter<ConversionEmitter>().boxInteger(Integer(field), Range { 0, static_cast<int64_t>(maxSafeInteger()) });
-    };
-    return callOperation<CellPointer>(value, RuntimeOperation::NewObjectOfBuiltinLayout, { word32(static_cast<int32_t>(result.parts[0].layout.index())), boxed(fields.first), boxed(fields.second) });
 }
 
 void BuiltinCallEmitter::generateNewSetFromData(const ValueContext& value)
@@ -675,7 +547,6 @@ bool BuiltinCallEmitter::canShareRegExpLiteral(const Operation& literal) const
 }
 void BuiltinCallEmitter::generateSharedRegExpLiteral(const ValueContext& value)
 {
-    // The walk shares a literal only where it is written in the text of its function.
     std::optional<Wire::SourceLocation> written = placeWhereRegExpLiteralIsWritten(m_program, m_code, value.value());
     if (!written) {
         failBuiltinOperationWithZero(generator(), value, InternalErrorKind::OpcodeWithoutCode);
@@ -688,7 +559,6 @@ CellPointer BuiltinCallEmitter::sharedRegExpLiteral(const ValueContext& at, cons
 {
     Wire::SourceLocation written = *placeWhereRegExpLiteralIsWritten(m_program, m_code, literal);
     OptionSet<Yarr::Flags> flags = toYarrFlags(literal.regExpFlags());
-    // The key that NewRegExp has for the same literal, so that both find one object. The call gets the object out of the cell, so the pattern and the flags are part of the key.
     uint32_t cell = m_mentions.regExpLiteralCell(written, literal.pattern(), flags);
     uint32_t record = m_mentions.regExp(literal.pattern(), flags);
     Integer shared(m_out.load64(instanceWord(m_heaps.entire(AbstractHeap::AllocatorState), cell)));
@@ -696,67 +566,6 @@ CellPointer BuiltinCallEmitter::sharedRegExpLiteral(const ValueContext& at, cons
         return CellPointer(shared.value());
     }, [&] {
         return callOperation<CellPointer>(at, RuntimeOperation::SharedRegExpLiteral, { numberOf(cell), numberOf(record), word32(flags.toRaw()) }, { .isOnRarePath = true });
-    });
-}
-
-void BuiltinCallEmitter::generateIsFunctionOfBuiltin(const ValueContext& value)
-{
-    // The edge not taken takes the built-in out of the type, so the test may refuse nothing that is the built-in.
-    // A realm has one object of a testable built-in. Of any other each module has a function of its own, and they all run the same native code.
-    BuiltinID member = m_builtins.canonicalID(value->member());
-    bool isOneObject = isTestableBuiltin(m_builtins, member);
-    std::optional<uint32_t> number = isOneObject ? std::nullopt : BuiltinBindings::nativeFunctionNumberOf(member);
-    if (!isOneObject && !number) {
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-        return;
-    }
-    ValueID tested = value->valueOperand();
-    Boxed operand = boxedOperand(value, tested);
-    defineTestByBranching(value, [&](BranchTargets targets) {
-        if (isOneObject) {
-            // The word of a cell that is yet to be made is zero, and so is an absent value.
-            if (typeOf(tested).primitives & Primitive::Absent) {
-                LBasicBlock isPresent = newBlock();
-                branch(isNotEmpty(operand), { normalEdge(isPresent), targets.notTaken });
-                m_out.appendToContinuation(isPresent);
-            }
-            emitter<ConstantEmitter>().branchOnIsBuiltinCell(operand.value(), member, targets);
-            return;
-        }
-        LBasicBlock isCellCase = newBlock();
-        LBasicBlock isFunction = newBlock();
-        LBasicBlock holdsExecutable = newBlock();
-        LBasicBlock holdsRareData = newBlock();
-        LBasicBlock isHostFunction = newBlock();
-        branch(isCell(operand), { normalEdge(isCellCase), targets.notTaken });
-
-        m_out.appendTo(isCellCase);
-        CellPointer function = unboxCell(operand);
-        branch(hasCellType(function, JSFunctionType), { normalEdge(isFunction), targets.notTaken });
-
-        // The edge not taken says that the value is another function, so the answer may not depend on the properties that the function has got since it was made.
-        // The word changes once, from the executable to the rare data that names the same executable. What was read before the change leads to the same answer, so the read may stand anywhere.
-        m_out.appendTo(isFunction);
-        const Machine::AbstractHeap& fixed = m_heaps.AOTInstance_fixedFields;
-        Pointer executableOrRareData(m_out.loadPtr(m_out.address(fixed, function.value(), JSFunction::offsetOfExecutableOrRareData())));
-        OperandJoin executables(m_out, CellPointer::representation);
-        branch(Condition(m_out.testIsZeroPtr(executableOrRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), { normalEdge(holdsExecutable), normalEdge(holdsRareData) });
-
-        m_out.appendTo(holdsExecutable);
-        executables.add(CellPointer(executableOrRareData.value()));
-
-        m_out.appendTo(holdsRareData);
-        executables.add(CellPointer(m_out.loadPtr(m_out.address(fixed, executableOrRareData.value(), FunctionRareData::offsetOfExecutable() - static_cast<ptrdiff_t>(JSFunction::rareDataTag)))));
-
-        CellPointer executable = executables.finish().as<CellPointer>();
-        branch(hasCellType(executable, NativeExecutableType), { normalEdge(isHostFunction), targets.notTaken });
-
-        m_out.appendTo(isHostFunction);
-        Pointer code(m_out.loadPtr(m_out.address(fixed, executable.value(), NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall))));
-        Pointer bindings = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtinBindings.nativeFunctionsOfHost));
-        ptrdiff_t offsetOfExpectedCode = *number * static_cast<ptrdiff_t>(sizeof(BuiltinNativeFunctionBinding)) + static_cast<ptrdiff_t>(OBJECT_OFFSETOF(BuiltinNativeFunctionBinding, function));
-        Pointer expected(m_out.loadPtr(m_out.address(fixed, bindings.value(), offsetOfExpectedCode)));
-        branch(equal(code, expected), targets);
     });
 }
 

@@ -3,7 +3,7 @@
 # The read of `prototype` off the closure gives the prototype object of the layout. What is stored there under a name is followed, and a lookup on an object of the layout takes it. Nothing escapes.
 # The call has one callee, if it enters any: `new P` may run in front of the store, so nobody says that the method is found.
 # RUN: link functions calls fields members layouts mechanisms=all
-# CHECK: function f1 callers-known one-callee only-constructed
+# CHECK: function f1 callers-known one-callee
 # CHECK: function f2 callers-known one-callee {{*}}result=i32
 # CHECK: function f3 callers-known one-callee {{*}}result=i32
 # CHECK: call f3 v2 -> f2

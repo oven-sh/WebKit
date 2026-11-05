@@ -15,12 +15,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet stepsByOneOfCountersOfLoops { Opcode::Increment, Opcode::Decrement };
 static constexpr OpcodeSet stepsByNumberOfCountersOfLoops { Opcode::Add, Opcode::Sub };
-// The names that a counter has in the turns: the parameter, what states a type of it, what a test narrows it into, what a step makes of it, what joins those.
 static constexpr size_t mostNamesOfCounterOfLoop = 16;
 
 using NamesOfCounterOfLoop = Vector<ValueID, mostNamesOfCounterOfLoop>;
 
-// A box of which a test for an int32 says something: it may hold one, and it may hold what is no number.
 static bool isBoxThatMayHoldInt32InCountersOfLoops(const Walker& walker, Reference value)
 {
     if (!value || !value.isValue() || walker.representationOf(value) != Representation::JSValue)
@@ -35,8 +33,6 @@ static bool isWholeNumberAsWrittenInCountersOfLoops(const BodyIndex& index, Valu
     return written && !index.isParameter(written) && index.opcodeOf(written) == Opcode::Integer;
 }
 
-// One pass over the blocks of the loop in their order: a definition stands in front of its uses. What a loop inside brings round to its own head is no name.
-// False: some way round brings the head something else, or no turn steps the parameter.
 static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t position, NamesOfCounterOfLoop& names)
 {
     LoopID loop = index.loopOf(inputHead);
@@ -97,7 +93,6 @@ static bool isSteppedAllRoundInCountersOfLoops(Walker& walker, const BodyIndex& 
     return true;
 }
 
-// GuessInFrontOfLoop::names.
 static Vector<ValueID, 2> namesInFrontThatLoopMentionsInCountersOfLoops(const Walker& walker, const BodyIndex& index, LoopID loop, uint32_t firstValueOfLoop, Reference value)
 {
     Vector<ValueID, 2> names;
@@ -128,7 +123,6 @@ static Vector<ValueID, 2> namesInFrontThatLoopMentionsInCountersOfLoops(const Wa
     return names;
 }
 
-// `index < end`: below an int32 a counter that begins as one stays one, and the step needs no test of what it makes.
 static void guessBoundsInCountersOfLoops(Walker& walker, const BodyIndex& index, BlockID inputHead, const NamesOfCounterOfLoop& names, std::span<const Reference> entering, Vector<GuessInFrontOfLoop, 4>& guesses)
 {
     LoopID loop = index.loopOf(inputHead);
@@ -144,7 +138,6 @@ static void guessBoundsInCountersOfLoops(Walker& walker, const BodyIndex& index,
                 if (!bound || bound.index() >= firstValueOfLoop)
                     continue;
                 Reference value = walker.referenceOf(bound);
-                // What enters the head as well has its test there, or none.
                 if (!isBoxThatMayHoldInt32InCountersOfLoops(walker, value) || std::ranges::find(entering, value) != entering.end())
                     continue;
                 bool isListed = guesses.containsIf([&](const GuessInFrontOfLoop& guess) {
@@ -170,7 +163,6 @@ Vector<CounterTestedInFrontOfLoop, 2> findCountersTestedInFrontOfLoop(Walker& wa
         Reference enters = entering[position];
         if (!isBoxThatMayHoldInt32InCountersOfLoops(walker, enters))
             continue;
-        // One test a value.
         bool isTestedAlready = std::ranges::find(entering.first(position), enters) != entering.first(position).end() || guesses.containsIf([&](const GuessInFrontOfLoop& guess) {
             return guess.value == enters;
         });

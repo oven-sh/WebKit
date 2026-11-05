@@ -74,7 +74,6 @@ uint32_t ExceptionEmitter::findOrAddLandingPad(const Edge& handler)
     return added;
 }
 
-// A cleanup that takes the value hands it from block to block, to the Throw at its end.
 void ExceptionEmitter::findValuesCaughtByCleanups()
 {
     struct Caught {
@@ -134,7 +133,6 @@ void ExceptionEmitter::findValuesCaughtByCleanups()
     findCleanupsThatKeepException();
 }
 
-// Where the function itself ends what the cleanup throws on, nobody lists the frames of the throw. What a suspended frame holds beside its values is not kept alive.
 void ExceptionEmitter::findCleanupsThatKeepException()
 {
     if (functionSuspends())
@@ -155,7 +153,6 @@ void ExceptionEmitter::findCleanupsThatKeepException()
         throws.append({ cleanup, handlerOf(id) });
     });
 
-    // What a cleanup throws on leaves the function, is ended by a handler of the function, or goes to another cleanup that throws it on.
     Vector<BlockID, 4> worklist;
     Vector<ThrowOfCleanup, 4> throwsIntoCleanups;
     for (ThrowOfCleanup thrown : throws) {
@@ -243,7 +240,6 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, Machine
 
         if (!records->landingPads[landingPadNumber]) {
             MacroAssembler::Label* headOfLandingPad = labels[landingPadSuccessor];
-            // On x86-64 the stub that jumps to a landing pad has set the stack pointer.
             if (isX86_64())
                 records->landingPads[landingPadNumber] = headOfLandingPad;
             else {
@@ -280,7 +276,6 @@ const ExceptionEmitter::LandingPad& ExceptionEmitter::landingPadFor(BlockID bloc
 
     LBasicBlock siteBlock = m_out.m_block;
     m_out.appendTo(landingPad.block);
-    // No operation of such a handler takes the pending exception from the run time.
     if (handlerTypeOf(handler.to) == HandlerType::SynthesizedCatch)
         callWithoutSite<Boxed>(RuntimeOperation::Catch, { }, { .isOnRarePath = true, .followsThrow = true });
     generator().passHandlerArguments(handler);
@@ -304,7 +299,6 @@ void ExceptionEmitter::passCaughtWord(BlockID handler, LValue caught)
     m_out.upsilon(caught, caughtPhiOf(handler));
 }
 
-// Only a throw writes the word, so that a way through the cleanup on which nothing was thrown pays nothing.
 TypedPointer ExceptionEmitter::wordKeptBy(BlockID cleanup)
 {
     Machine::StackSlot*& slot = m_keptWords[cleanup.index()];
@@ -319,7 +313,6 @@ void ExceptionEmitter::keep(BlockID cleanup, LValue kept)
     m_out.store64(kept, wordKeptBy(cleanup));
 }
 
-// Zero unless the value comes from one cleanup, which keeps something.
 LValue ExceptionEmitter::keptBy(ValueID thrown)
 {
     BlockID cleanup = cleanupThatCaught(thrown);
@@ -331,7 +324,6 @@ LValue ExceptionEmitter::keptBy(ValueID thrown)
 LValue ExceptionEmitter::caughtWord(const ValueContext& value)
 {
     BlockID handler = value.block();
-    // The landing pad of a handler leaves what was thrown to the head of that handler and to nobody else.
     RELEASE_ASSERT(m_code.at(handler).isHandlerBlock());
     if (LValue caught = m_caughtWords[handler.index()])
         return caught;
@@ -355,7 +347,6 @@ LValue ExceptionEmitter::caughtWord(const ValueContext& value)
     return caught;
 }
 
-// Nothing writes the word once the exception is made. Rethrow, which reads it, declares no reads.
 Boxed ExceptionEmitter::valueOfException(CellPointer exception)
 {
     Machine::AbstractHeap valueOfAnyException(m_heaps.entire(AbstractHeap::RuntimeState).index(), JSC::Exception::valueOffset(), AOTHeaps::Traits::Immutable);
@@ -386,7 +377,6 @@ void ExceptionEmitter::generateCatchException(const ValueContext& value)
 
 void ExceptionEmitter::jumpToHandler(const Edge& handler, LValue caught)
 {
-    // Every pad of the handler hands its Phi a word too.
     RELEASE_ASSERT(isEnteredByJump(handler.to));
     generator().passHandlerArguments(handler);
     passCaughtWord(handler.to, caught);

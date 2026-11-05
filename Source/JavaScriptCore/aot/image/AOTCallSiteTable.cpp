@@ -55,7 +55,6 @@ struct SiteWithCode {
     uint32_t firstReadColumnDelta { 0 };
 };
 
-// What CallSiteDetails::frame holds in a row of the kind FirstRead: the frame of a read that has a site, or the columns from a read without one to the site of the row, which is plain and in the frame of the site in front.
 struct FirstReadDetails {
     static FirstReadDetails decode(uint32_t bits) { return { !!(bits & 1), bits >> 1 }; }
     uint32_t encode() const { return value << 1 | hasNoSite; }
@@ -117,7 +116,6 @@ static Vector<SiteWithCode, 32> collectReturnSites(const CompiledCode& code)
     RELEASE_ASSERT(firstReadSites.empty());
     if (!std::ranges::is_sorted(returnSites, { }, &SiteWithCode::returnOffset))
         AOT::stableSortInLine(returnSites, { }, &SiteWithCode::returnOffset);
-    // findCallSite() hands a return address the site in front of it only if that site says nothing but where it is.
     for (size_t i = 1; i < returnSites.size(); ++i)
         RELEASE_ASSERT(returnSites[i].site != returnSites[i - 1].site || !std::ranges::binary_search(code.sites.flaggedSites, returnSites[i].site, { }, &FlaggedSite::site));
     returnSites.shrink(std::ranges::unique(returnSites, { }, &SiteWithCode::site).begin() - returnSites.begin());
@@ -394,7 +392,6 @@ static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32
     uint64_t number = head->numberOfSitesWithoutCode;
     unsigned frame = 0;
     uint64_t count = head->numberOfSites;
-    // The comparison is strict so that the scan starts before the first of two reads at one offset, even when a checkpoint separates them.
     uint64_t precedingCount = 0;
     for (uint64_t end = SiteCheckpoint::numberFor(count); precedingCount < end;) {
         uint64_t middle = precedingCount + (end - precedingCount) / 2;
@@ -413,7 +410,6 @@ static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32
         number += precedingCount * SiteCheckpoint::sitesBetween;
         count -= precedingCount * SiteCheckpoint::sitesBetween;
     }
-    // A return address without a site of its own has the site in front of it, unless that one says more than where it is.
     bool hasSiteInFront = false;
     uint64_t numberInFront = 0;
     unsigned frameInFront = 0;
@@ -488,7 +484,6 @@ ReturnSiteInfo Image::returnSiteInfoAt(uint32_t function, uint32_t returnOffset)
 
 std::optional<PrologueCheck> Image::prologueCheckAt(const void* returnAddress) const
 {
-    // Looks up a byte of the call itself: the call may be the last instruction of its body, so the return address may belong to the next body.
     CodeLocation location = locate(static_cast<const uint8_t*>(returnAddress) - 1);
     if (location.kind != CodeKind::Function)
         return std::nullopt;
@@ -559,14 +554,7 @@ bool catchesExceptions(const Image& image, uint32_t function)
     const ImageFunction& record = image.function(function);
     if (!record.has(ImageFunctionFlag::HasHandlers))
         return false;
-    std::span<const uint8_t> handlers = SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).handlers;
-    const uint8_t* cursor = handlers.data();
-    const uint8_t* end = cursor + handlers.size();
-    while (cursor < end) {
-        if (HandlerRecord { 0, HandlerRow::read(cursor).type }.catchesExceptions())
-            return true;
-    }
-    return false;
+    return !SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).handlers.empty();
 }
 
 static constexpr size_t maxZerosInFrontOfStart = 3;
@@ -616,7 +604,6 @@ static void appendPosition(Vector<uint8_t>& stream, PositionState& last, const S
     bool startsOnSameLine = position.constructionStartLine == position.line;
     bool startsInFront = startsOnSameLine ? position.constructionStartColumn < position.column : position.constructionStartLine < position.line;
     if (position.startIsWhereWritten) {
-        // The same row behind three zeros, counted forward from the site.
         bool startsBehind = startsOnSameLine ? position.constructionStartColumn > position.column : position.constructionStartLine > position.line;
         if (startsBehind) {
             for (size_t zeros = 0; zeros < maxZerosInFrontOfStart; ++zeros)
@@ -631,9 +618,7 @@ static void appendPosition(Vector<uint8_t>& stream, PositionState& last, const S
             start.append(stream);
         }
     } else if (position.constructionStartLine && (startsInFront || position.startIsForCallers)) {
-        // That a site has a place for callers says what the site is, so it is written wherever that place lies.
         stream.append(0);
-        // No row begins with a zero: a start on another line is at least one line back.
         if (position.startIsForCallers)
             stream.append(0);
         startsOnSameLine |= !startsInFront;
@@ -672,14 +657,12 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, cons
     size_t numberOfSitesWithoutCode = sites.numberOfSitesWithoutCode;
     RELEASE_ASSERT(numberOfInlineFrames <= numberOfSitesWithoutCode && numberOfSitesWithoutCode < count);
     bool followsInlineFrames = sites.hasEncodedInlineFrames();
-    // The decoder's only way to learn the frame of a site.
     SiteFrames frames(followsInlineFrames ? callSites : nullptr);
 
     PositionState start { sites.positions[0].line, sites.positions[0].column, sourceNumber(sites.positions[0]) };
     Vector<uint8_t> checkpoints;
     Vector<uint8_t> positions;
     size_t lastRunEnd = 0;
-    // Each frame begins anew behind a checkpoint. A unit with many sites has many frames, so a frame is set back when a site first names it there, not all of them at each checkpoint.
     Vector<PositionState, 8> states;
     states.fill(start, followsInlineFrames ? numberOfInlineFrames + 1 : 1);
     Vector<uint32_t, 8> checkpointsOfStates;
@@ -818,7 +801,6 @@ std::optional<SourcePosition> decodePosition(const Image& image, uint32_t functi
 }
 
 static Lock rememberedPositionsLock;
-// The position of site n is read through the n - 1 in front of it. A program that throws much captures the same few hundred frames again and again: 64 places held a tenth of them.
 static constinit std::array<RememberedPosition, 1024> rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock) { };
 
 void forgetRememberedPositions()

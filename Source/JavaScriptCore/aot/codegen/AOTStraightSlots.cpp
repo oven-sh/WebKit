@@ -18,7 +18,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Boxed, undefined, null and absent are 10, 2 and 0. In a slot of numbers the three follow each other in that order, in the upper 16 bits.
 static constexpr unsigned shiftOfMarkerInNumberSlot = 48;
 
 static constexpr uint32_t addendOfMarkerInNumberSlot(SlotMarkers markers)
@@ -151,7 +150,6 @@ void StraightEmitter::loadVariable(VariableID variable, GPRReg boxedResult)
             return;
         isStored = m_jit->branchTest64(CCallHelpers::NonZero, boxedResult);
     }
-    // The stub alone reads the cell of the closure table, and Image numbers the cells that code mentions.
     mentions().add(NumberSpace::ClosureCell, planned.function);
     callStub(Origin { }, closureOfTable(), { }, { .numberedImmediate = NumberedImmediate { mentions().add(NumberSpace::ClosureFunction, planned.function) } });
     m_jit->move(resultOfCall(), boxedResult);

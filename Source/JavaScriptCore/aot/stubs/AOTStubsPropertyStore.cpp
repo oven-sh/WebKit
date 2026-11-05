@@ -119,12 +119,9 @@ void generatePutById(StubAssembler& jit)
     JumpList isNotInFieldTable;
     Label start = jit.label();
     miss.append(jit.branchIfNotCell(R0));
-    // No cache stands in front of the two tables. A probe of either is no longer than a hit in the access table was, and every store that the access table does not take, one that adds a property among them, paid for the miss.
     storeFieldByTable(jit, { R0, number, structureID, cell, true, true }, A1, row, operationFor(mode), isNotInFieldTable);
     isNotInFieldTable.link(&jit);
-    // The table of fields takes names that have no column in the front table.
     Jump hasNoFrontColumn = jit.branch32(CCallHelpers::Above, number, TrustedImm32(RowDisplacementTable::maxColumn));
-    // The receiver is a cell.
     jit.bindEntry(putByIdBehindFieldTable(mode));
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
     loadFrontCell(jit, accessFor(mode), { structureID, number, row, cell, T10 });
@@ -144,7 +141,6 @@ void generatePutById(StubAssembler& jit)
     const GPRReg payload = T13;
     const GPRReg entry = T14;
     jit.bindEntry(putByIdHashed(mode));
-    // Where columns are left over, a name that was promised none has a number with one, and the run time files its slots in the front table.
     jit.branch32(CCallHelpers::BelowOrEqual, number, TrustedImm32(RowDisplacementTable::maxColumn)).linkTo(start, &jit);
     miss.append(jit.branchIfNotCell(R0));
     hasOtherName.link(&jit);
@@ -155,10 +151,8 @@ void generatePutById(StubAssembler& jit)
     findHashedSlot(jit, accessFor(mode), { structureID, uid, entry, header, payload, payload }, isInNoTable);
     jumpToSlotHandler(jit, handlerTable(SlotForm::Slot), header, uid);
 
-    // No table has the Structure and the name.
     isInNoTable.link(&jit);
     countMissOfPair(jit, structureID, uid, header, miss);
-    // HashedSlot::keyFor(): the search has put the access into the low bits of the name.
     jit.xor64(TrustedImm32(static_cast<int32_t>(accessFor(mode))), uid);
     replaceOwnValueAndReturn(jit, operationFor(mode), {
         .receiver = R0,
@@ -171,7 +165,6 @@ void generatePutById(StubAssembler& jit)
         .index = IndexRegisterOfObjectLookup(jit),
     }, ObjectLookupName::IsGivenByNumber, A1, miss);
 
-    // Here and in getByIdOfSymbolOfRealm(): the stubs that the table of fields hands on to go on by the number. Their receiver is an object of the realm that runs, where the number names the symbol, and no cell in front is filed under it: frontColumnFor().
     jit.bindEntry(putByIdOfSymbolOfRealm(mode));
     if (jit.options().hasOneInstance)
         jit.breakpoint();

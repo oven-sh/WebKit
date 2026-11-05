@@ -3,32 +3,6 @@ enum JSONMemberSearch { | engine Unknown Found Absent }
 enum JSONPosition { | engine Root Property Element }
 enum JSONToken { | engine OpenObject CloseObject OpenArray CloseArray Comma Colon Null EmptyObject EmptyArray CloseObjectOverComma }
 
-family JSONParse Prepared..Placed
-operation JSONSourceOpen (text: Any/inspects) -> natural(boolean) ; none ; form = Open
-operation JSONSourceStart () -> natural(Cursor) ; none ; form = Open
-operation JSONSourceClose (cursor: Cursor/inspects) -> natural(boolean) ; none ; form = Open
-operation JSONSourceAbandon () -> none ; none ; form = Open
-operation JSONGetByte (cursor: Cursor/inspects) -> natural(int[0, 255]) ; none ; form = Open
-operation JSONStartsWith (string?: String, cursor: Cursor/inspects) [isLikely] -> natural(boolean) ; none ; form = Open
-operation JSONAdvance (string?: String, cursor: Cursor/inspects) -> natural(Cursor) ; none ; form = Open
-operation JSONSkipByte (cursor: Cursor/inspects) -> natural(Cursor) ; none ; form = Open
-operation JSONSkipWhitespace (cursor: Cursor/inspects) -> natural(Cursor) ; none ; form = Open
-operation JSONParseString (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; none ; form = Open
-operation JSONParseKey (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; none ; form = Open
-operation JSONParseNumber (cursor: Cursor/inspects) -> results(natural(boolean), natural(number), natural(Cursor)) ; none ; form = Open
-operation JSONParseInteger (cursor: Cursor/inspects) -> results(natural(boolean), natural(int[-9007199254740991, 9007199254740991]), natural(Cursor)) ; none ; form = Open
-operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), natural(null | boolean | number | string | object), natural(Cursor)) ; none ; form = Open
-operation JSONFindMember (key: PropertyKey, cursor: Cursor/inspects) -> results(natural(JSONMemberSearch), natural(Cursor)) ; none ; form = Open
-operation JSONMemberRepeats (key: PropertyKey, valueStart: Cursor/inspects) -> natural(boolean) ; none ; form = Open
-operation JSONKeyHasEscapes (cursor: Cursor/inspects) -> natural(boolean) ; none ; form = Open
-operation JSONObjectBegin (layout: Layout) -> natural(KeyOrder) ; none ; form = Open
-operation JSONObjectKey (order: KeyOrder/inspects, layout: Layout, field: Field) -> natural(KeyOrder) ; none ; form = Open
-operation JSONObjectFinish (order: KeyOrder/inspects, object: Layout/inspects, extra: Any/retains(object), layout: Layout) -> natural(JSONOutcome) ; none ; form = Open
-operation JSONParseExtraMembers (layout: Layout, cursor: Cursor/inspects, extra: Any/returns, order: KeyOrder/inspects) -> results(natural(JSONOutcome), unknown, natural(Cursor), natural(KeyOrder)) ; none ; form = Open
-
-family ExpectedRows Prepared..Placed
-operation ExpectRows (target: Any/inspects, layout: Layout) -> none ; none ; form = Open
-
 family JSONWrite Prepared..Placed ; base = builder
 operation StringBuilderReserve (builder: StringBuilder/inspects, size: UInt32) -> natural(BuilderCursor) ; Allocates reads(StringBuilderContents) writes(StringBuilderContents, RuntimeState) throws ; runtime = StringBuilderReserve ; form = Open
 operation StringBuilderCommit (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> none ; reads(StringBuilderContents) writes(StringBuilderContents) ; form = Open
@@ -40,11 +14,8 @@ operation JSONAppendInteger (builder: StringBuilder/inspects, cursor: BuilderCur
 operation JSONAppendNumber (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Number/inspects) -> natural(BuilderCursor) ; writes(StringBuilderContents) ; runtime = JSONAppendNumber ; form = Open
 operation JSONAppendDate (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Number/inspects) -> natural(BuilderCursor) ; writes(StringBuilderContents) ; runtime = JSONAppendDate ; form = Runtime
 operation JSONAppendString (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: String/inspects) -> natural(BuilderCursor) ; AppendsToBuilder ; runtime = JSONAppendString ; form = Runtime
-# levels: the value is a list of objects. The run time writes all of it behind the cursor, compiled objects slot by slot, or answers Unknown where code of the program would have to run. How many objects and lists are open around the list.
 operation JSONAppendValue (jsonPosition: JSONPosition, builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Any/inspects, engine levels?: Integer/inspects) -> results(natural(JSONOutcome), natural(BuilderCursor)) ; AppendsToBuilder ReadsObjectGraph reads(PrototypeLinks, MemberGuards, InternalFields) ; runtime = JSONAppendValue ; form = Runtime
-# Calls the serializer of the layout: CodeRole::Serializer. levels: how many objects and lists are open around the object. No cursor is open across it.
 engine operation JSONAppendObject (layout: Layout, builder: StringBuilder/inspects, object: Layout/inspects, levels: Integer/inspects) -> natural(JSONOutcome) ; AppendsToBuilder ReadsObjectGraph reads(PrototypeLinks, MemberGuards, InternalFields) terminates ; form = Open
 
 family JSONWrite Prepared..Placed
-# Whoever calls itself for what a value holds enters a container only while this much stack is left. failsAtWatchedLevels: it also fails where the levels are watched, so that the run time takes over there.
 operation JSONHasStackSpace () [failsAtWatchedLevels] -> natural(boolean) ; reads(RuntimeState) ; form = Open

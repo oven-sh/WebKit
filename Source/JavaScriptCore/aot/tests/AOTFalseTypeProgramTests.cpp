@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// function double(n: number) { return n * 2 } try { print(double("4" as any)) } catch (e) { print(e.name) } print("after")
 static constexpr ASCIILiteral onlyFalseArgument = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=17 kind=Parameter
@@ -42,7 +41,6 @@ function f1 name="double" parameters=[{type=undefined|null|number site=w0}] resu
 }
 )IR"_s;
 
-// The same, and nothing uses what the call returns: try { double("4" as any) } catch (e) { print(e.name) }
 static constexpr ASCIILiteral resultUnused = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=17 kind=Parameter
@@ -71,7 +69,6 @@ function f1 name="ignore" parameters=[{type=undefined|null|number site=w0}] resu
 }
 )IR"_s;
 
-// const untyped = id(double); try { print(untyped("4")) } catch (e) { print(e.name) }
 static constexpr ASCIILiteral calleeFromUnknownCode = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=17 kind=Parameter
@@ -102,7 +99,6 @@ function f1 name="double" parameters=[{type=undefined|null|number site=w0}] resu
 }
 )IR"_s;
 
-// print(double(4)); try { print(double("4" as any)) } catch (e) { print(e.name) } print(double(undefined)); print(double(4.5))
 static constexpr ASCIILiteral fittingAndFalseArguments = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=17 kind=Parameter
@@ -140,7 +136,6 @@ function f1 name="double" parameters=[{type=undefined|null|number site=w0}] resu
 }
 )IR"_s;
 
-// function show(n: number) { return String(n) } try { print(show("4" as any)) } catch (e) { print(e.name) }
 static constexpr ASCIILiteral builtinInDeadBody = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=15 kind=Parameter
@@ -170,7 +165,6 @@ function f1 name="show" parameters=[{type=undefined|null|number site=w0}] result
 }
 )IR"_s;
 
-// function shout(this: string) { return this + "!" } try { print(shout.call(5)) } catch (e) { print(e.name) }, the call written with its receiver
 static constexpr ASCIILiteral falseReceiver = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=15 kind=This
@@ -199,8 +193,6 @@ function f1 name="shout" flags=[HasThis] thisType={type=undefined|null|string si
 }
 )IR"_s;
 
-// function addOne(x: any) { function pick(y: any): number { print("pick"); return y } return pick(x) + 1 } const untyped = id(addOne); print(untyped(4)); print(untyped("4"))
-// The result is tested after the print, so a call that restarts instead of resuming there prints "pick" twice.
 static constexpr ASCIILiteral falseResult = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=26 kind=Result
@@ -235,7 +227,6 @@ function f2 name="pick" parameters=[{type=anything}] results=[{type=undefined|nu
 }
 )IR"_s;
 
-// function fail() { throw "always" } try { print(String(fail())) } catch (e) { print(e) }
 static constexpr ASCIILiteral builtinBehindCallThatThrows = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {

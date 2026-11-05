@@ -10,15 +10,12 @@ import { offsetText, wireRecordsInFields, wireSlotsOf } from "./wire-layout.ts";
 
 type WireForm = "ID" | "Word" | "WordPair" | "Record";
 
-/** Where each parameter that is on the wire starts, in the text of wire-layout.ts: `3 + word(1)`. */
 type Offsets = ReadonlyMap<Parameter, string>;
 
-/** From `idAt<LayoutID>` and `3 + word(1)`, the call that reads the field. */
 type Read = (accessor: string, offset: string) => string;
 
 interface Shape {
   readonly type: string;
-  /** What the getter answers for an entry that has the parameter in the engine alone. */
   readonly engineDefault: string;
 }
 
@@ -53,7 +50,6 @@ function readThrough(fields: string): Read {
 }
 
 const readOwnFields = readThrough("");
-// BodyOperation is specialized behind BodyValue and BodyTerminator, so their getters cannot go through as<>().
 const readFieldWords = readThrough("fieldWords().");
 
 function refuse(location: Location, subject: string, kind: Kind): never {
@@ -108,7 +104,6 @@ function emptyOf(type: string): Shape {
   return { type, engineDefault: `${type}()` };
 }
 
-// A list that no body holds has the type of Code's getter: BodyList would ask for a BodyElement of an engine kind.
 function shapeOfList(element: Kind, isOnWire: boolean): Shape {
   const type = engineTypeOf(element);
   if (isOnWire && !isNumber(element)) return emptyOf(`BodyList<${type}>`);
@@ -215,7 +210,6 @@ function payloadWordsFromWire(record: SchemaRecord, firstWord: number): string[]
 
 function decodeStatements(record: SchemaRecord): string[] {
   const type = engineRecordNameOf(record);
-  // Only PayloadWords is a friend of a struct that is written by hand.
   if (record.isHandwrittenStruct) {
     return [
       `std::array<uint32_t, PayloadWords<${type}>::count> payload { ${payloadWordsFromWire(record, 0).join(", ")} };`,
@@ -319,7 +313,6 @@ function gettersOfFlags(entries: readonly Entry[]): NamedGetter[] {
   });
 }
 
-// A getter's type goes by every entry that has the name, operations and terminators alike, as for the getters of Code.
 function gettersByName(schema: Schema, offsets: Offsets): NamedGetter[] {
   const entries = entriesOf(schema);
   const getters = [

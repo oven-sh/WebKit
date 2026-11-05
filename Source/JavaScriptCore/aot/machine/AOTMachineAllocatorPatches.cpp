@@ -60,7 +60,6 @@ static RegisterMask registersOfFixedPatchResults(const PatchOperation* patch)
     return registers;
 }
 
-// What sank into a block reads at the head, all of it at one position, and is allocated with the walk ahead of the head. So what a later one reads there is live behind this one.
 static Position earlyPositionOfAllocatedPatch(const Allocator& allocator, const PatchOperation* patch)
 {
     if (allocator.m_liveness.isSunk(patch))
@@ -79,7 +78,6 @@ static Reg hintOfPatchResultAmong(Reg hint, RegisterMask allowed)
     return hint && (maskOf(hint) & allowed) ? hint : Reg();
 }
 
-// `value` is null for a result that nothing names.
 static Reg takeRegisterForPatchResult(Allocator& allocator, Bank bank, RegisterMask allowed, const Operation* value)
 {
     if (!allowed)
@@ -109,8 +107,6 @@ static ALWAYS_INLINE void appendMoveForPatchAllocation(Allocator& allocator, Ste
     allocator.appendStep(step);
 }
 
-// Allocator::spillHoldsValueIn() the block of the walk, for as long as the walk is in it.
-// allocateBlock() sets Allocator::m_isAheadOfFramedPart by that block. The framed part is found ahead of the walk, and no block leaves it. So where the flag is down, whatever has a spill lies in it.
 static ALWAYS_INLINE bool spillHoldsValueWherePatchStands(const Allocator& allocator, const Operation* value)
 {
     bool holdsValue = allocator.m_allocation.isSpilled(value) && (!allocator.m_isAheadOfFramedPart || allocator.spillHoldsValueIn(allocator.m_block, value));
@@ -120,7 +116,6 @@ static ALWAYS_INLINE bool spillHoldsValueWherePatchStands(const Allocator& alloc
 
 static bool liesInMemoryForPatchAllocation(Allocator& allocator, const Operation* value)
 {
-    // What has lost its register ahead of the framed part is read from its spill: settleFramedPart() finds the read, and the frame is set up at the entry.
     if (allocator.m_allocation.isSpilled(value) && !allocator.stateOf(value).registers)
         return true;
     return spillHoldsValueWherePatchStands(allocator, value) || allocator.stateOf(value).saveInRareRegion != noSpill;
@@ -128,7 +123,6 @@ static bool liesInMemoryForPatchAllocation(Allocator& allocator, const Operation
 
 static Location memoryHomeOfPatchOperand(Allocator& allocator, Operation* value)
 {
-    // memoryLocationOf() asks the same first. noteFrameUse() may make a spill hold what it did not hold before, and never the other way round.
     if (spillHoldsValueWherePatchStands(allocator, value)) {
         allocator.noteFrameUse();
         return Location::spill(allocator.m_allocation.spillOf(value));
@@ -140,7 +134,6 @@ static Location memoryHomeOfPatchOperand(Allocator& allocator, Operation* value)
         else
             allocator.markSpilled(value);
     } else if (allocator.stateOf(value).registers) {
-        // As in evict(): only a Save in this block is known to have run.
         SpillIndex save = allocator.stateOf(value).saveInRareRegion;
         if (allocator.m_allocation.spills()[save].begin < allocator.m_order.headOf(allocator.m_block))
             appendMoveForPatchAllocation(allocator, StepKind::Save, value, Location::spill(save), Location::reg(allocator.anyRegisterOf(value, allocator.stateOf(value).registers)));
@@ -149,7 +142,6 @@ static Location memoryHomeOfPatchOperand(Allocator& allocator, Operation* value)
     return allocator.memoryLocationOf(value);
 }
 
-// `placedKind`: placedKindOfPatchOperand().
 static ALWAYS_INLINE bool patchOperandTakesRegister(ValueRep::Kind placedKind, const Operation* value, bool onlyKeepsChildrenAlive)
 {
     if (!patchOperandMayLieAnywhere(placedKind))
@@ -157,8 +149,6 @@ static ALWAYS_INLINE bool patchOperandTakesRegister(ValueRep::Kind placedKind, c
     return value->hasNoPosition() && !value->isConstant() && !onlyKeepsChildrenAlive;
 }
 
-// The registers of the bank that the Patch takes beside those of its operands: the scratch registers and the results that share a register with no operand.
-// An operand that is read late shares its register with no result at all. The one result in an outgoing word takes its register behind the Patch.
 static unsigned numberOfRegistersPatchTakesBesideOperand(const Procedure& procedure, const PatchOperation* patch, Bank bank, bool operandIsReadLate)
 {
     unsigned number = bank == Bank::GP ? patch->numGPScratchRegisters : patch->numFPScratchRegisters;
@@ -174,25 +164,20 @@ static unsigned numberOfRegistersPatchTakesBesideOperand(const Procedure& proced
     return number;
 }
 
-// `numberStillToLock`: registers that the operand will take and that `locked` does not name yet.
 static bool patchKeepsRegistersBesideOperand(const Allocator& allocator, const PatchOperation* patch, Bank bank, RegisterMask locked, unsigned numberStillToLock, bool operandIsReadLate)
 {
     unsigned numberTaken = numberStillToLock + numberOfRegistersPatchTakesBesideOperand(allocator.m_proc, patch, bank, operandIsReadLate);
     if (!numberTaken)
         return true;
-    // The operand gives way before a rare region takes a callee-saved register that the code outside does not save.
     RegisterMask registers = allocator.m_file.allocatableIn(bank) & (~allocator.m_file.calleeSaved | allocator.calleeSavesThatMayBeTaken());
     RegisterMask unavailable = locked | patch->earlyClobberedMask() | patch->lateClobberedMask() | registersOfFixedPatchResults(patch);
     return static_cast<unsigned>(std::popcount(registers & ~unavailable)) >= numberTaken;
 }
 
-// Of a value in `reg` that is read behind the operation and lies in none but the registers that are vacated: `held`. It goes to a free register outside `unavailable`, else by evict().
-// `spillHoldsValue`: spillHoldsValueWherePatchStands().
 static NEVER_INLINE void moveValueOutOfRegistersVacatedForPatch(Allocator& allocator, Reg reg, Operation* value, RegisterMask held, RegisterMask unavailable, bool spillHoldsValue)
 {
     Bank bank = bankOf(reg);
     RegisterMask allowed = allocator.m_file.allocatableIn(bank) & ~unavailable;
-    // liesInMemoryForPatchAllocation(), of a value that lies in a register.
     ASSERT(held && held == allocator.stateOf(value).registers);
     bool staysReachable = value->hasNoPosition() || spillHoldsValue || allocator.stateOf(value).saveInRareRegion != noSpill;
     ASSERT(staysReachable == (value->hasNoPosition() || liesInMemoryForPatchAllocation(allocator, value)));
@@ -206,7 +191,6 @@ static NEVER_INLINE void moveValueOutOfRegistersVacatedForPatch(Allocator& alloc
         return;
     }
 
-    // takeRegister() has noted the use of a callee-saved register that it hands out, and bind() notes it once more.
     appendMoveForPatchAllocation(allocator, StepKind::Move, value, Location::reg(target), Location::reg(reg));
     allocator.bind(target, value);
     forEachRegister(held, [&](Reg holder) {
@@ -214,14 +198,12 @@ static NEVER_INLINE void moveValueOutOfRegistersVacatedForPatch(Allocator& alloc
     });
 }
 
-// No value goes to a register in `unavailable`: an operand that has been placed there is read only when the operation runs.
 static ALWAYS_INLINE void vacateRegistersForPatchInLine(Allocator& allocator, RegisterMask registers, Position behind, RegisterMask unavailable)
 {
     unavailable |= registers;
     for (RegisterMask remaining = registers & allocator.m_bound; remaining; remaining &= remaining - 1) {
         Reg reg = Allocator::lowestRegisterIn(remaining);
         Operation* value = allocator.m_valueIn[reg.index()];
-        // What was moved out of another of the registers has given this one up too.
         if (!value)
             continue;
         RegisterMask held = allocator.stateOf(value).registers;
@@ -229,8 +211,6 @@ static ALWAYS_INLINE void vacateRegistersForPatchInLine(Allocator& allocator, Re
             allocator.unbind(reg);
             continue;
         }
-        // A number that is made again or that its spill holds stays reachable, so it gets no other register.
-        // And evict() stores nothing for it, whether it finds it dead, held twice, made again or in memory: it frees the register.
         const bool isNumeric = value->type().isNumeric();
         if (isNumeric && value->hasNoPosition() && allocator.m_valueFacts[value->index()].has(ValueFlag::IsRematerialized)) {
             allocator.unbind(reg);
@@ -250,7 +230,6 @@ static NEVER_INLINE void vacateRegistersForPatch(Allocator& allocator, RegisterM
     vacateRegistersForPatchInLine(allocator, registers, behind, unavailable);
 }
 
-// functor(Operation* extract) for the Extracts that stand right behind the Patch: at the head of its first successor where it ends its block.
 template<typename Functor>
 static void forEachExtractBehindPatch(const Allocator& allocator, const PatchOperation* patch, const Functor& functor)
 {
@@ -272,7 +251,6 @@ static void forEachExtractBehindPatch(const Allocator& allocator, const PatchOpe
     }
 }
 
-// The operation that later operations name for the result. Null for a member of a tuple that nothing extracts.
 static Operation* allocatedValueOfPatchResult(const Allocator& allocator, PatchOperation* patch, unsigned index)
 {
     if (!patch->type().isTuple())
@@ -285,8 +263,6 @@ static Operation* allocatedValueOfPatchResult(const Allocator& allocator, PatchO
     return value;
 }
 
-// An Extract is bound where its Patch is allocated, and a spilled one is stored where it stands itself.
-// So nothing that takes a register may stand between the two, and a register holds one value: a member is extracted once.
 static bool extractsStandBehindPatch(const Allocator& allocator, PatchOperation* patch)
 {
     const Liveness& liveness = allocator.m_liveness;
@@ -344,22 +320,18 @@ static Location sourceOfFixedPatchOperand(Allocator& allocator, Operation* value
     return allocator.memoryLocationOf(value);
 }
 
-// A member that is read, lies in an outgoing word, and found every register given to another member.
 static bool patchResultBorrowsRegister(const Allocator& allocator, const Operation* value, Location definedIn)
 {
     return value->opcode() == Extract && definedIn.kind() == Location::Outgoing && allocator.m_liveness.of(value).lastUse != noPosition && !allocator.m_allocation.registerAtDefinitionOf(value);
 }
 
-// `borrowed`: for a member of which patchResultBorrowsRegister() holds.
 static void appendStepsBehindPatchResult(Allocator& allocator, Operation* value, Location definedIn, Reg borrowed = Reg())
 {
     const ValueFacts& facts = allocator.m_liveness.of(value);
     if (facts.lastUse == noPosition)
         return;
-    // These steps stand behind the Patch, and so ahead of the Extract that defines a member.
     const bool isMember = value->opcode() == Extract;
 
-    // The next call reuses the outgoing area.
     if (definedIn.kind() == Location::Outgoing && !allocator.stateOf(value).registers) {
         Bank bank = bankOf(value->type());
         Reg reg = borrowed;
@@ -370,7 +342,6 @@ static void appendStepsBehindPatchResult(Allocator& allocator, Operation* value,
         appendMoveForPatchAllocation(allocator, StepKind::Reload, value, Location::reg(reg), definedIn);
         allocator.bind(reg, value);
         SpillIndex spill = allocator.markSpilled(value);
-        // A member with a register of its own is stored from it behind its Extract, where its spill begins. Any other result has no register where it is defined, so nobody else stores it.
         if (!isMember || borrowed)
             appendMoveForPatchAllocation(allocator, StepKind::Save, value, Location::spill(spill), Location::reg(reg));
         allocator.noteFrameUse();
@@ -391,7 +362,6 @@ static void appendStepsBehindPatchResult(Allocator& allocator, Operation* value,
         allocator.unbind(borrowed);
 }
 
-// The members that borrow go first: the register that another member in an outgoing word is loaded into holds nothing until then.
 static NEVER_INLINE void appendStepsBehindMembersOfPatchResult(Allocator& allocator, PatchOperation* patch, std::span<const Location> locationsOfResults)
 {
     Reg registerToBorrow[numberOfBanks];
@@ -428,7 +398,6 @@ static ALWAYS_INLINE void appendStepsBehindPatchResults(Allocator& allocator, Pa
     }
     if (locationsOfResults.empty())
         return;
-    // The one result is the Patch itself, and only a member borrows. Nothing follows a result that nobody reads, nor one in a register that needs no pointer beside it.
     const ValueFacts& facts = allocator.m_liveness.of(patch);
     if (facts.lastUse != noPosition && (locationsOfResults[0].kind() == Location::Outgoing || facts.has(ValueFlag::NeedsPointerBesideIt)))
         appendStepsBehindPatchResult(allocator, patch, locationsOfResults[0]);
@@ -452,7 +421,6 @@ void finishResultsOfPatchThatEndedPredecessor(Allocator& allocator, Block* block
         return;
     Block* predecessor = predecessors[0];
     Operation* last = predecessor->last();
-    // A Check ends no block, and a Patch without a result leaves nothing to finish.
     if (last->opcode() != Patch || last->type() == Void)
         return;
     if (!last->endsBlock() || predecessor->successor(0).block() != block)
@@ -460,8 +428,6 @@ void finishResultsOfPatchThatEndedPredecessor(Allocator& allocator, Block* block
     finishResultsOfPatchThatEndedBlock(allocator, static_cast<PatchOperation*>(last), predecessor);
 }
 
-// Of a Patch that ends the block. The moves of the edge go by the registers as they are behind the Patch, and the child of an Upsilon counts as read where the Patch reads its operands.
-// One that nothing reads behind the Patch loses its register to an operand, a clobber or a result without being moved. So it gets a place in memory while the register still holds it.
 static NEVER_INLINE void keepValuesHandedOnBehindPatchInMemory(Allocator& allocator, const Block* block, Position late)
 {
     for (Operation* upsilon : block->upsilons()) {
@@ -473,7 +439,6 @@ static NEVER_INLINE void keepValuesHandedOnBehindPatchInMemory(Allocator& alloca
     }
 }
 
-// `sources` has room for maxLeaves. How many it has filled.
 static NEVER_INLINE unsigned placeLeavesOfCheckPredicate(Allocator& allocator, PatchOperation* check, Location* sources, RegisterMask& locked)
 {
     unsigned numberOfSources = 0;
@@ -493,7 +458,6 @@ static NEVER_INLINE unsigned placeLeavesOfCheckPredicate(Allocator& allocator, P
     return numberOfSources;
 }
 
-// `placedKind`: placedKindOfPatchOperand().
 static void placeOperandOfPatchUnder(Allocator& allocator, PatchOperation* patch, ValueRep::Kind placedKind, Operation* value, Location& location, RegisterMask& locked)
 {
     bool needsRegister = false;
@@ -534,7 +498,6 @@ static void placeOperandOfPatchUnder(Allocator& allocator, PatchOperation* patch
             location = Location::reg(value->argumentReg());
             return;
         }
-        // A generator is told of a register, a word of the frame or a constant. An address that is made again is none of the last two.
         needsRegister = true;
     }
 
@@ -544,10 +507,8 @@ static void placeOperandOfPatchUnder(Allocator& allocator, PatchOperation* patch
     if (isLate)
         forbidden |= patch->lateClobberedMask() | registersOfFixedPatchResults(patch);
 
-    // An operand that may lie anywhere keeps or gets a register only while the Patch can still have what it takes beside its operands.
     if (Reg reg = allocator.anyRegisterOf(value, allocatableInBank & ~forbidden)) {
         bool isLockedAlready = !isLate && (locked & maskOf(reg));
-        // prepareSuspension() has given no place in the frame to a root that lies in the register which the suspension keeps.
         bool isRootInKeptRegister = isLate && patch->isSuspension();
         if (needsRegister || isLockedAlready || isRootInKeptRegister || patchKeepsRegistersBesideOperand(allocator, patch, bank, locked | maskOf(reg), 0, isLate)) {
             location = Location::reg(reg);
@@ -595,12 +556,9 @@ static ALWAYS_INLINE RegisterMask takeScratchRegistersInLine(Allocator& allocato
 struct RegistersPatchTakesBesideOperands {
     RegisterMask gpScratch { 0 };
     RegisterMask fpScratch { 0 };
-    // Of the results under SomeEarlyRegister.
     RegisterMask earlyResults { 0 };
 };
 
-// Of a Patch that takes a scratch register or has a result under SomeEarlyRegister. Such a result gets its location here. `strictlyLocked`: what none of them may be.
-// Whoever calls asks for a failure behind it.
 static NEVER_INLINE RegistersPatchTakesBesideOperands takeRegistersOfPatchBesideOperands(Allocator& allocator, PatchOperation* patch, std::span<Location> locationsOfResults, RegisterMask strictlyLocked)
 {
     RegistersPatchTakesBesideOperands taken;
@@ -640,8 +598,6 @@ static NEVER_INLINE RegistersPatchTakesBesideOperands takeRegistersOfPatchBeside
     return taken;
 }
 
-// `locked`: the scratch registers, the registers of operands that are read late, and those of results that have their location already.
-// `registersAtDefinitions`: what Allocation::registerAtDefinitionOf() reads. `fixedResults`: registersOfFixedPatchResults().
 static NEVER_INLINE void placeResultsOfPatch(Allocator& allocator, PatchOperation* patch, ArenaVector<Reg>& registersAtDefinitions, RegisterMask fixedResults, std::span<Location> locationsOfResults, RegisterMask locked)
 {
     const Type type = patch->type();
@@ -650,7 +606,6 @@ static NEVER_INLINE void placeResultsOfPatch(Allocator& allocator, PatchOperatio
     RegisterMask given = 0;
     RegisterMask loadedBehindPatch = 0;
     for (unsigned index = 0; index < locationsOfResults.size(); ++index) {
-        // placedConstraintOfPatchResult(). A constraint that names a register or a word is one that was set.
         const ValueRep::Kind kind = index < constraints.size() ? constraints[index].kind() : ValueRep::SomeRegister;
         Bank bank = bankOf(allocator.m_proc.resultType(type, index));
         Operation* value = type.isTuple() ? allocatedValueOfPatchResult(allocator, patch, index) : patch;
@@ -667,7 +622,6 @@ static NEVER_INLINE void placeResultsOfPatch(Allocator& allocator, PatchOperatio
             reg = takeRegisterForPatchResult(allocator, bank, available & ~patch->lateClobberedMask() & patch->registersOfResults(), value);
             break;
         case ValueRep::SomeEarlyRegister:
-            // allocatePatch() has chosen it: `locked` does not name the operands that it has to differ from.
             if (locationsOfResults[index].isRegister())
                 reg = locationsOfResults[index].reg();
             break;
@@ -679,13 +633,10 @@ static NEVER_INLINE void placeResultsOfPatch(Allocator& allocator, PatchOperatio
             }
             locationsOfResults[index] = Location::outgoing(static_cast<uint32_t>(constraint.offsetFromSP()));
             allocator.noteFrameUse();
-            // appendStepsBehindPatchResult() loads it. The register of a member is chosen here, so that it takes that of no other member: none of them can be stored ahead of its Extract.
             if (!isRead || value == patch)
                 continue;
-            // The load stands behind the Patch, so a register that is clobbered late serves. The others are left to the results that the Patch itself writes.
             RegisterMask clobberedLate = available & patch->lateClobberedMask();
             reg = takeRegisterForPatchResult(allocator, bank, clobberedLate ? clobberedLate : available, value);
-            // With every register given away the member goes to its spill through the register of another, ahead of the load into that one.
             if (!reg && (loadedBehindPatch & allocator.m_file.allocatableIn(bank))) {
                 allocator.stateOf(value).nextUse = facts->firstUse;
                 continue;
@@ -724,14 +675,12 @@ static NEVER_INLINE void placeResultsOfPatch(Allocator& allocator, PatchOperatio
         if (allocator.m_bound & maskOf(reg))
             allocator.evict(reg);
         allocator.bind(reg, value);
-        // While a callee-saved register is free, a result that is held to another register is left for the next call to move there.
         bool isLostAtNextCall = facts->has(ValueFlag::LivesAcrossCall) && !allocator.leavesValuesAcrossCallsToFramedPart() && !(maskOf(reg) & allocator.m_file.calleeSaved) && !allocator.hasFreeRegister(bank, allocator.m_file.calleeSavedIn(bank) & ~taken) && callStandsOnWayFromDefinitionToRead(allocator, value);
         if (facts->has(ValueFlag::LivesIntoLandingPad) || facts->has(ValueFlag::LivesAcrossSuspension) || isLostAtNextCall)
             allocator.markSpilled(value);
     }
 }
 
-// takeRegisterForPatchResult(), for whoever has Liveness::of() the result at hand.
 static ALWAYS_INLINE Reg takeRegisterForPatchResultWithFacts(Allocator& allocator, Bank bank, RegisterMask allowed, const Operation* value, const ValueFacts& facts)
 {
     if (!allowed || facts.has(ValueFlag::LivesAcrossCall))
@@ -739,9 +688,6 @@ static ALWAYS_INLINE Reg takeRegisterForPatchResultWithFacts(Allocator& allocato
     return allocator.takeRegister(bank, allowed, hintOfPatchResultAmong(allocator.hintOf(value), allowed));
 }
 
-// What placeFixedOperands() does once it knows which operand is wanted where, for a Patch that holds no operand to an outgoing word, while nothing is locked.
-// `wantedIn`: by Reg::index(), for the registers in `wanted`. `registersToFill`: those of them that do not hold what is wanted there, each where the first operand that is held to it stands among the operands.
-// A register that holds what is wanted there is left alone: it is neither cleared nor taken for a value that gives way, and nothing is moved to it or bound to it.
 static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocator, PatchOperation* patch, Operation* const* wantedIn, RegisterMask wanted, const uint8_t* registersToFill, unsigned numberOfRegistersToFill, ArenaVector<Step>& steps)
 {
     const Position early = allocator.m_position;
@@ -759,7 +705,6 @@ static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocat
     }
 
     if (numberOfRegistersToFill == 1) {
-        // One move waits for no other. resolveParallelMoves() is left to deal with a move that has no source.
         const Reg reg = Reg::fromIndex(registersToFill[0]);
         Operation* value = wantedIn[reg.index()];
         if (!(allocator.stateOf(value).registers & maskOf(reg))) {
@@ -774,14 +719,11 @@ static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocat
             }
         }
     } else {
-        // The registers that the moves fill, by where the value comes from, and those that they read.
         RegisterMask filledFromRegisters = 0;
         RegisterMask filledFromElsewhere = 0;
         RegisterMask registersRead = 0;
-        // By Reg::index() of the destination. Only the entries of the registers that the moves fill are set.
         alignas(Location) std::byte storageOfSources[64 * sizeof(Location)];
         Location* const sourceInto = reinterpret_cast<Location*>(storageOfSources);
-        // A move has no source, or two of them read one source.
         bool movesNeedResolver = false;
         for (unsigned place = 0; place < numberOfRegistersToFill; ++place) {
             const unsigned index = registersToFill[place];
@@ -807,12 +749,8 @@ static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocat
             sourceInto[index] = source;
         }
 
-        // The order in which resolveParallelMoves() performs moves into registers no two of which read one source, by the destinations.
-        // A move is ready once nothing is left to read its destination. Those out of registers go first, each kind in the order in which its moves became ready:
-        // by destination for those that are ready from the start, then as the move that reads the destination is performed. What is left at the end goes round in cycles.
         const RegisterMask filled = filledFromRegisters | filledFromElsewhere;
         if (!movesNeedResolver && !(filled & registersRead)) {
-            // No move reads a register that another fills, so all of them are ready from the start.
             for (RegisterMask remaining = filledFromRegisters; remaining; remaining &= remaining - 1) {
                 unsigned index = static_cast<unsigned>(std::countr_zero(remaining));
                 appendMoveForPatchAllocation(allocator, StepKind::Move, wantedIn[index], Location::reg(Reg::fromIndex(index)), sourceInto[index]);
@@ -841,7 +779,6 @@ static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocat
             }
 
             if (movesNeedResolver || numberOutOfRegisters + numberFromElsewhere != static_cast<unsigned>(std::popcount(filled))) {
-                // It sorts the moves by their destinations itself.
                 allocator.m_pendingMoves.clear();
                 for (RegisterMask remaining = filled; remaining; remaining &= remaining - 1) {
                     Reg reg = Allocator::lowestRegisterIn(remaining);
@@ -862,7 +799,6 @@ static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocat
         }
     }
 
-    // What is done to one register leaves the others as they are, so each is unbound and bound in one go.
     for (unsigned place = 0; place < numberOfRegistersToFill; ++place) {
         Reg reg = Reg::fromIndex(registersToFill[place]);
         Operation* value = wantedIn[reg.index()];
@@ -878,9 +814,6 @@ static NEVER_INLINE void bringOperandsOfPatchToNamedRegisters(Allocator& allocat
 
 void Allocator::allocatePatch(PatchOperation* patch)
 {
-    // Nearly every Patch is plain: it has at most one result, in a register, and each of its operands is held to a register by name, takes some register or lies where it lies.
-    // For such a Patch this does what the rest of the function does for every Patch and Check: the same steps in the same order, less those that have nothing to do for it.
-    // False: the Patch is not plain. Nothing is done by then but what the rest of the function does again to the same effect: flags that only rise, and memory of the arena that nobody names.
     auto allocatePlainPatch = [&]() ALWAYS_INLINE_LAMBDA -> bool {
         const uint16_t bits = patch->m_bits;
         const Type type = patch->type();
@@ -904,7 +837,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
                 return false;
         }
 
-        // allocateBlock() has set the position of the walk to the one at which the operation that it hands over reads.
         ASSERT(m_position == earlyPositionOfAllocatedPatch(*this, patch));
 
         constexpr uint16_t bitsThatSpeakOfFrame = PatchOperation::RunsWithoutFrame | PatchOperation::FollowsFrameSetup | PatchOperation::NeedsFrameRecord;
@@ -922,42 +854,30 @@ void Allocator::allocatePatch(PatchOperation* patch)
         } else if (patch->effects.terminal && !patch->owner()->numSuccessors() && !(bits & PatchOperation::LeavesByReturning))
             m_allocation.m_holdsPatchThatCountsOnStackCheck = true;
 
-        // Each location is written before the assignment names them.
         Location* locations = nullptr;
         if (const unsigned numberOfLocations = numberOfResults + patch->m_operands.size())
             locations = m_arena.allocateArray<Location>(numberOfLocations);
 
-        // One look at the operands: which kinds there are, the registers that are named for them, and which operand is wanted in which register, as placeFixedOperands() finds it.
-        // None of what it asks of the Patch changes while the Patch is allocated.
-        // It also finds the place of each operand that stays where it lies: in a register, in its spill, or in the code as a constant. To find such a place does nothing, and no other operand is asked about.
-        // So this is the place that the operand is given in its turn, unless a register changes hands before that. What follows from the places waits until it is known that they hold.
         enum : unsigned {
             SomeOperandTakesRegister = 1 << 0,
             SomeOperandMayLieAnywhere = 1 << 1,
-            // The look has not found its place, or what was done since may have changed it.
             SomeOperandIsPlacedInItsTurn = 1 << 2,
             SomeOperandStaysInItsSpill = 1 << 3,
-            // registersMatterBehindPatch() says no.
             RegistersAreLostBehindPatch = 1 << 4,
         };
         unsigned traitsOfPatch = 0;
-        // With `wanted`: the registers that are named for operands.
         RegisterMask registersNamedBesideWanted = 0;
         RegisterMask writtenForOperands = 0;
-        // By Reg::index(). Only the entries of the registers in `wanted` are set.
         Operation* wantedIn[64];
         RegisterMask wanted = 0;
-        // Those of them that do not hold the operand that is wanted there, in the order of the operands.
         uint8_t registersToFill[64];
         unsigned numberOfRegistersToFill = 0;
-        // Of the operands that stay where they lie: their registers, and the registers that the generator writes because it is told of another place.
         RegisterMask registersOfOperandsThatStay = 0;
         RegisterMask writtenForOperandsToldElsewhere = 0;
         if (const unsigned numberOfChildren = patch->m_operands.size()) {
             ASSERT(patch->m_constraints.size() == numberOfChildren);
             Operation* const* const children = patch->m_operands.begin();
             const ValueRep* const constraints = patch->m_constraints.begin();
-            // PatchOperation::registerToBringOperandTo() names a register for no operand from this one on.
             const unsigned endOfOperandsBroughtToRegisters = std::min<unsigned>(patch->m_registersToBringOperandsTo.size(), numberOfChildren);
             const Reg* const registersToBringOperandsTo = patch->m_registersToBringOperandsTo.begin();
             Location* const placesOfOperands = locations + numberOfResults;
@@ -996,16 +916,13 @@ void Allocator::allocatePatch(PatchOperation* patch)
                 if (registerToBringTo) {
                     maskToBringTo = maskOf(registerToBringTo);
                     registersNamedBesideWanted |= maskToBringTo;
-                    // This holds until a register changes hands: until an operand is brought to a register that it is held to.
                     if (!(registersOfValue & maskToBringTo))
                         writtenForOperands |= maskToBringTo;
                 }
 
-                // A value is bound to allocatable registers of its own bank alone, so none of its registers has to be asked whether it is one.
                 const RegisterMask held = registersOfValue & ~earlyClobbered;
                 ASSERT(!(held & ~m_file.allocatableIn(bankOf(value->type()))));
                 Location& place = placesOfOperands[child];
-                // The generator is told one place of an operand. Told any other than the register where the operand belongs, it writes that register.
                 auto letOperandStayInRegister = [&]() ALWAYS_INLINE_LAMBDA {
                     const Reg reg = lowestRegisterIn(held);
                     place = Location::reg(reg);
@@ -1027,7 +944,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
                     if (held && kind != ValueRep::LateColdAny)
                         letOperandStayInRegister();
                     else if (!held && kind == ValueRep::ColdAny && spillHoldsValueWherePatchStands(*this, value)) {
-                        // A spill that holds its value goes on holding it. memoryHomeOfPatchOperand() answers with it and notes the use of the frame.
                         traitsOfPatch |= SomeOperandStaysInItsSpill;
                         place = Location::spill(m_allocation.spillOf(value));
                         writtenForOperandsToldElsewhere |= maskToBringTo;
@@ -1045,10 +961,8 @@ void Allocator::allocatePatch(PatchOperation* patch)
             }
         }
 
-        // A suspension hands the registers that it does not keep back to whoever resumes. A function that names none of them has nothing of its caller's to save.
         RegisterMask written = patch->m_earlyClobbered | patch->m_lateClobbered;
         if (patch->effects.terminal && !patch->m_successorClobbers.isEmpty()) {
-            // PatchOperation::lateClobberedOnSuccessor() of each successor: clobberLateOnSuccessor() keeps one entry for a successor.
             const unsigned numberOfSuccessors = patch->owner()->numSuccessors();
             for (const auto& clobber : patch->m_successorClobbers) {
                 if (clobber.successorIndex < numberOfSuccessors)
@@ -1062,7 +976,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
             forEachRegister(written, [&](Reg reg) {
                 noteCalleeSaveUse(reg);
             });
-            // A frame that covers rare regions alone saves no register.
             if (isInRareRegion() && (written & ~m_calleeSavesTakenOutsideRareRegions))
                 m_allocation.m_needsFrameOutsideRareRegions = true;
         }
@@ -1078,7 +991,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
             }
         }
 
-        // Where each register holds the operand that is wanted there, placeFixedOperands() finds nothing to clear, to move or to bind. No register has changed hands since the look at the operands.
         if (numberOfRegistersToFill) {
             bringOperandsOfPatchToNamedRegisters(*this, patch, wantedIn, wanted, registersToFill, numberOfRegistersToFill, m_allocation.m_steps);
             if (m_proc.failure()) [[unlikely]]
@@ -1090,10 +1002,8 @@ void Allocator::allocatePatch(PatchOperation* patch)
         if (const unsigned numberOfChildren = patch->m_operands.size()) {
             Operation* const* const children = patch->m_operands.begin();
 
-            // PatchOperation::leaveOperandsWhereTheyLie(). Whatever the generator writes over an operand that lies in its register is the operand.
             const bool bringsOperandsToTheirRegisters = patch->bringsOperandsToTheirRegisters();
             if (bringsOperandsToTheirRegisters) {
-                // Registers have changed hands since the look at the operands.
                 if (numberOfRegistersToFill) {
                     const unsigned endOfOperandsBroughtToRegisters = std::min<unsigned>(patch->m_registersToBringOperandsTo.size(), numberOfChildren);
                     const Reg* const registersToBringOperandsTo = patch->m_registersToBringOperandsTo.begin();
@@ -1108,13 +1018,10 @@ void Allocator::allocatePatch(PatchOperation* patch)
             }
 
             if (traitsOfPatch & (SomeOperandTakesRegister | SomeOperandMayLieAnywhere)) {
-                // Then patchKeepsRegistersBesideOperand() says yes to an operand that is not read late and takes no register that `locked` does not name.
                 const bool takesNothingBesideOperands = !patch->numGPScratchRegisters && !patch->numFPScratchRegisters && kindOfResult != ValueRep::SomeEarlyRegister;
 
                 bool operandsStayWhereTheyLie = !(traitsOfPatch & SomeOperandIsPlacedInItsTurn) && !numberOfRegistersToFill;
                 if (operandsStayWhereTheyLie && !takesNothingBesideOperands && (traitsOfPatch & SomeOperandMayLieAnywhere)) {
-                    // An operand that may lie anywhere keeps its register if the Patch can still have what it takes beside its operands with that register locked and those that were locked ahead of it.
-                    // No more registers are left with all of them locked. So where the Patch can have its own even then, each operand is told yes in its turn.
                     for (Bank bank : { Bank::GP, Bank::FP }) {
                         if ((registersOfOperandsThatStay & m_file.allocatableIn(bank)) && !patchKeepsRegistersBesideOperand(*this, patch, bank, wanted | registersOfOperandsThatStay, 0, false))
                             operandsStayWhereTheyLie = false;
@@ -1128,7 +1035,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
                         m_allocation.m_holdsPatchThatCountsOnFrameRecord = true;
                     }
                 } else {
-                    // Each operand is placed in its turn, whatever the look has found for it.
                     const ValueRep* const constraints = patch->m_constraints.begin();
                     Location* const placesOfOperands = locations + patch->resultConstraints.size();
                     const RegisterMask earlyClobbered = patch->m_earlyClobbered;
@@ -1141,11 +1047,9 @@ void Allocator::allocatePatch(PatchOperation* patch)
                         placeOperandOfPatchUnder(*this, patch, kind, value, place, lockedBehindOperand);
                         locked = lockedBehindOperand;
                     };
-                    // No operand that is held to a register by name lies in the frame, is brought anywhere or is read late.
                     auto notePlaceOfOperand = [&](unsigned child, ValueRep::Kind kind, Location place) ALWAYS_INLINE_LAMBDA {
                         if (place.isSpill())
                             m_allocation.m_holdsPatchThatCountsOnFrameRecord = true;
-                        // The generator is told one place of an operand. Told any other than the register where the operand belongs, it writes that register, which is not locked then, whatever lay there.
                         if (child < endOfOperandsBroughtToRegisters) {
                             Reg reg = registersToBringOperandsTo[child];
                             if (reg && !(place.isRegister() && place.reg() == reg))
@@ -1155,7 +1059,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
                             heldLate |= maskOf(place.reg());
                     };
 
-                    // Those that take a register come first: `locked` then names all of their registers when an operand that may lie anywhere is asked whether it keeps its own.
                     if (traitsOfPatch & SomeOperandTakesRegister) {
                         for (unsigned child = 0; child < numberOfChildren; ++child) {
                             const ValueRep::Kind kind = constraints[child].kind();
@@ -1185,7 +1088,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
                                 continue;
                             Location& place = placesOfOperands[child];
                             if (value->hasNoPosition()) {
-                                // A constant.
                                 place = Location::immediate();
                                 notePlaceOfOperand(child, kind, place);
                                 continue;
@@ -1216,7 +1118,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
                     patch->m_lateClobbered |= writtenForOperandsToldElsewhere & ~fixedResults;
             }
 
-            // What passUsesOf() does for an operation whose leaves go by its children. No Patch works in memory or goes by overflow.
             Operation* const* const endOfChildren = children + numberOfChildren;
             for (Operation* const* child = children; child != endOfChildren; ++child) {
                 Operation* value = *child;
@@ -1227,10 +1128,8 @@ void Allocator::allocatePatch(PatchOperation* patch)
             }
         }
 
-        // The Patch names what was added for its operands among the registers that it clobbers late.
         const RegisterMask registersToVacate = ((patch->m_earlyClobbered | patch->m_lateClobbered) & allocatable) | fixedResults;
         if (traitsOfPatch & RegistersAreLostBehindPatch) [[unlikely]] {
-            // A landing pad is entered with every value in its slot, so no block takes the registers from here.
             forEachRegister(m_bound, [&](Reg reg) {
                 unbind(reg);
             });
@@ -1242,7 +1141,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
         if (patch->numGPScratchRegisters || patch->numFPScratchRegisters)
             besideOperands = takeRegistersOfPatchBesideOperands(*this, patch, std::span<Location>(locations, patch->resultConstraints.size()), locked | registersToVacate);
         else if (kindOfResult == ValueRep::SomeEarlyRegister) {
-            // takeRegistersOfPatchBesideOperands(), where one register is all that is taken: there are enough if there is one that the result may have.
             const Bank bank = bankOf(patch->type());
             const RegisterMask allowed = m_file.allocatableIn(bank) & ~(locked | registersToVacate) & patch->registersOfResults();
             Reg reg = takeRegisterForPatchResultWithFacts(*this, bank, allowed, patch, factsOfResult);
@@ -1255,12 +1153,10 @@ void Allocator::allocatePatch(PatchOperation* patch)
         if (m_proc.failure()) [[unlikely]]
             return true;
 
-        // placeResultsOfPatch(), for the one result.
         RegisterMask registerOfResult = 0;
         Location locationOfResult;
         bool needsPointerBesideResult = false;
         if (patch->resultConstraints.size()) {
-            // Few results ask for these.
             auto registersTakenBesideResult = [&]() ALWAYS_INLINE_LAMBDA -> RegisterMask {
                 return besideOperands.gpScratch | besideOperands.fpScratch | besideOperands.earlyResults | heldLate | fixedResults;
             };
@@ -1289,7 +1185,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
                 if (m_bound & registerOfResult)
                     evict(reg);
                 bind(reg, patch);
-                // While a callee-saved register is free, a result that is held to another register is left for the next call to move there.
                 bool isLostAtNextCall = false;
                 if (flagsOfResult & bitOf(ValueFlag::LivesAcrossCall)) {
                     const Bank bank = bankOf(patch->type());
@@ -1302,7 +1197,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
                 return true;
         }
 
-        // Whatever is bound is taken to keep its value, also what could be made again.
         const RegisterMask usedRegisters = m_bound | registerOfResult;
         ArenaVector<PatchAssignment>& assignments = m_allocation.m_patchAssignments;
         const uint32_t indexOfAssignment = assignments.size();
@@ -1312,7 +1206,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
         Step step;
         step.kind = StepKind::Execute;
         step.patchAssignment = indexOfAssignment;
-        // No location where there is no result.
         step.destination = locationOfResult;
         step.operation = patch;
         appendStep(step);
@@ -1324,7 +1217,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
             return true;
         }
 
-        // appendStepsBehindPatchResults(), for a result that lies in a register.
         if (needsPointerBesideResult) [[unlikely]]
             appendStepsBehindPatchResult(*this, patch, locationOfResult);
         return true;
@@ -1333,10 +1225,8 @@ void Allocator::allocatePatch(PatchOperation* patch)
         return;
 
     const bool isCheck = patch->opcode() == Check;
-    // A Check ends no block.
     const bool endsBlock = !isCheck && patch->effects.terminal;
     ASSERT(endsBlock == patch->endsBlock());
-    // allocateBlock() has set the position of the walk to the one at which the operation that it hands over reads.
     const Position early = m_position;
     ASSERT(early == earlyPositionOfAllocatedPatch(*this, patch));
     const Position late = early + 1;
@@ -1348,7 +1238,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
     ASSERT(patch->m_constraints.size() == numberOfChildren);
     Operation* const* const children = patch->m_operands.begin();
     const ValueRep* const constraints = patch->m_constraints.begin();
-    // PatchOperation::registerToBringOperandTo() names a register for no operand from this one on.
     const unsigned endOfOperandsBroughtToRegisters = std::min<unsigned>(patch->m_registersToBringOperandsTo.size(), numberOfChildren);
     const Reg* const registersToBringOperandsTo = patch->m_registersToBringOperandsTo.begin();
     const unsigned numberOfResults = m_proc.resultCount(type);
@@ -1356,7 +1245,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
     const RegisterMask clobberedAsAppended = patch->earlyClobberedMask() | patch->lateClobberedMask();
     RegisterMask clobbered = clobberedAsAppended & allocatable;
 
-    // registersOfFixedPatchResults(), and whether placedConstraintOfPatchResult() says SomeEarlyRegister of a result.
     RegisterMask fixedResults = 0;
     bool hasEarlyResults = false;
     const std::span<const ValueRep> resultConstraints = patch->resultConstraints.span();
@@ -1388,7 +1276,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
     if (needsFrame || followsFrameSetup || (endsBlock && !patch->owner()->numSuccessors() && !(bits & PatchOperation::LeavesByReturning)))
         m_allocation.m_holdsPatchThatCountsOnStackCheck = true;
 
-    // One look at the operands says which of the steps below have anything to do. None of what it asks changes while the Patch is allocated.
     RegisterMask registersNamedForOperands = 0;
     bool someOperandIsFixed = false;
     bool someOperandTakesRegister = false;
@@ -1417,10 +1304,8 @@ void Allocator::allocatePatch(PatchOperation* patch)
         someOperandIsReadLate |= patchOperandIsReadLate(kind);
     }
 
-    // A suspension hands the registers that it does not keep back to whoever resumes. A function that names none of them has nothing of its caller's to save.
     RegisterMask written = clobberedAsAppended;
     if (endsBlock && !patch->m_successorClobbers.isEmpty()) {
-        // PatchOperation::lateClobberedOnSuccessor() of each successor: clobberLateOnSuccessor() keeps one entry for a successor.
         const unsigned numberOfSuccessors = patch->owner()->numSuccessors();
         for (const auto& clobber : patch->m_successorClobbers) {
             if (clobber.successorIndex < numberOfSuccessors)
@@ -1434,7 +1319,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
         forEachRegister(written, [&](Reg reg) {
             noteCalleeSaveUse(reg);
         });
-        // A frame that covers rare regions alone saves no register.
         if (isInRareRegion() && (written & ~m_calleeSavesTakenOutsideRareRegions))
             m_allocation.m_needsFrameOutsideRareRegions = true;
     }
@@ -1458,7 +1342,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
     if (someOperandIsFixed)
         placeFixedOperands(patch, locationsOfOperands, locked);
 
-    // PatchOperation::leaveOperandsWhereTheyLie(). Whatever the generator writes over an operand that lies in its register is the operand.
     const bool bringsOperandsToTheirRegisters = (bits & PatchOperation::BringsOperandsToTheirRegisters) && endOfOperandsBroughtToRegisters;
     if (bringsOperandsToTheirRegisters) {
         RegisterMask writtenForOperands = 0;
@@ -1476,13 +1359,11 @@ void Allocator::allocatePatch(PatchOperation* patch)
     if (isCheck && !m_proc.failure())
         numberOfSources = placeLeavesOfCheckPredicate(*this, patch, sources, locked);
 
-    // Those that take a register come first: `locked` then names all of their registers when an operand that may lie anywhere is asked whether it keeps its own.
     for (bool takesRegister : { true, false }) {
         if (!(takesRegister ? someOperandTakesRegister : someOperandMayLieAnywhere))
             continue;
         for (unsigned child = firstChild; child < numberOfChildren && !m_proc.failure(); ++child) {
             ValueRep::Kind kind = placedKindOfPatchOperandUnder(constraints[child].kind(), onlyKeepsChildrenAlive, isCheck);
-            // placeFixedOperands() has placed it.
             if (kind == ValueRep::Register || kind == ValueRep::StackArgument)
                 continue;
             if (patchOperandTakesRegister(kind, children[child], onlyKeepsChildrenAlive) == takesRegister)
@@ -1492,7 +1373,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
     if (m_proc.failure()) [[unlikely]]
         return;
 
-    // The generator is told one place of an operand. Told any other than the register where the operand belongs, it writes that register, which is not locked then, whatever lay there.
     if (bringsOperandsToTheirRegisters) {
         RegisterMask writtenForOperands = 0;
         for (unsigned child = firstChild; child < endOfOperandsBroughtToRegisters; ++child) {
@@ -1529,12 +1409,10 @@ void Allocator::allocatePatch(PatchOperation* patch)
     if (!patch->m_childrenLetGoByCallee.isEmpty())
         releaseChildrenLetGoByCallee(patch, locationsOfOperands, early, locked);
 
-    // An operation without children has no leaf.
     if (numberOfChildren)
         passUsesOf(patch, early);
 
     if (!registersMatterBehind) {
-        // A landing pad is entered with every value in its slot, so no block takes the registers from here.
         forEachRegister(m_bound, [&](Reg reg) {
             unbind(reg);
         });
@@ -1553,7 +1431,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
             return;
     }
 
-    // Whatever is bound is taken to keep its value, also what could be made again.
     RegisterMask usedRegisters = m_bound;
     for (Location location : locationsOfResults) {
         if (location.isRegister())
@@ -1584,7 +1461,6 @@ void Allocator::allocatePatch(PatchOperation* patch)
 
 void Allocator::placeFixedOperands(PatchOperation* patch, std::span<Location> locationsOfOperands, RegisterMask& locked)
 {
-    // Each of its operands may lie anywhere. Of any other Patch placedKindOfPatchOperand() says Register or StackArgument just where the constraint does.
     if (patch->onlyKeepsChildrenAlive)
         return;
 
@@ -1596,7 +1472,6 @@ void Allocator::placeFixedOperands(PatchOperation* patch, std::span<Location> lo
     Location* const placesOfOperands = locationsOfOperands.data();
     const RegisterMask allocatable = m_file.allocatableIn(Bank::GP) | m_file.allocatableIn(Bank::FP);
 
-    // By Reg::index(). Only the entries of the registers in `wanted` are set.
     Operation* wantedIn[64];
     RegisterMask wanted = 0;
     bool hasFixedOperands = false;
@@ -1622,7 +1497,6 @@ void Allocator::placeFixedOperands(PatchOperation* patch, std::span<Location> lo
     if (!hasFixedOperands)
         return;
 
-    // As in allocatePatch().
     const Position early = m_position;
     ASSERT(early == earlyPositionOfAllocatedPatch(*this, patch));
 
@@ -1639,13 +1513,10 @@ void Allocator::placeFixedOperands(PatchOperation* patch, std::span<Location> lo
 
     m_pendingMoves.clear();
     RegisterMask filled = 0;
-    // The registers that the moves fill, by where the value comes from, and those that they read.
     RegisterMask filledFromRegisters = 0;
     RegisterMask filledFromElsewhere = 0;
     RegisterMask registersRead = 0;
-    // By Reg::index() of the destination: the place of the move in m_pendingMoves. Only the entries of the registers that the moves fill are set.
     uint8_t placeOfMoveInto[64];
-    // A move has no register as its destination or no source, or two of them read one source.
     bool movesNeedResolver = false;
     for (unsigned child = firstChild; child < numberOfChildren; ++child) {
         const ValueRep& constraint = constraints[child];
@@ -1693,8 +1564,6 @@ void Allocator::placeFixedOperands(PatchOperation* patch, std::span<Location> lo
         if (movesNeedResolver || ((filledFromRegisters | filledFromElsewhere) & registersRead))
             resolveParallelMoves(m_arena, m_pendingMoves.span(), m_allocation.m_steps);
         else {
-            // What resolveParallelMoves() makes of moves into registers none of which writes what another reads and no two of which read one source:
-            // one step for each, those out of registers first, and each kind in the order of the destinations.
             forEachRegister(filledFromRegisters, [&](Reg reg) {
                 const PendingMove& move = m_pendingMoves[placeOfMoveInto[reg.index()]];
                 appendMoveForPatchAllocation(*this, StepKind::Move, move.value, move.destination, move.source);
@@ -1706,7 +1575,6 @@ void Allocator::placeFixedOperands(PatchOperation* patch, std::span<Location> lo
         }
     }
 
-    // What is done to one register leaves the others as they are, so each is unbound and bound in one go.
     forEachRegister(wanted, [&](Reg reg) {
         Operation* value = wantedIn[reg.index()];
         Operation* holder = m_valueIn[reg.index()];
@@ -1754,7 +1622,6 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
     if (released->opcode() != Phi)
         return 0;
 
-    // Behind a suspension the frame holds what the suspension kept, and a range that reached over one would make it keep the word.
     std::span<PatchOperation* const> suspensions = m_allocation.suspensions();
     const Position lastSuspension = suspensions.empty() ? 0 : m_order.latePositionOf(suspensions.back());
 
@@ -1767,7 +1634,6 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
                 Operation* handedOn = upsilon->child(0);
                 if (upsilon->phi() != phis[index] || handedOn->hasNoPosition())
                     continue;
-                // What comes round a loop is made further on.
                 const ValueFacts& facts = m_liveness.of(handedOn);
                 if (facts.definition == noPosition || facts.definition >= position || facts.lastUse == noPosition)
                     continue;
@@ -1788,9 +1654,10 @@ RegisterMask Allocator::clearPlacesOfValuesHandedTo(Operation* released, Positio
                 if (spill == noSpill)
                     continue;
                 SpillFacts& place = m_allocation.m_spills[spill];
+                if (place.isSharedByPhis)
+                    continue;
                 if (place.end < lastSuspension)
                     continue;
-                // The other arms read the spill up to the end of its range.
                 if (!isReadFurtherOn) {
                     if (place.end >= position)
                         continue;
@@ -1833,12 +1700,28 @@ bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
             return true;
     }
 
+    findBlocksThatLeadToReadsOf(value);
+    return std::ranges::any_of(m_block->successors(), [&](const Edge& successor) {
+        return m_lastSearchThatReachedBlock[successor.block()->index()] == m_numberOfSearchesForWays;
+    });
+}
+
+bool Allocator::isReadOnSomeWayFromHeadOf(const Operation* value, const Block* block)
+{
+    if (m_liveness.of(value).has(ValueFlag::IsKeptForCollector))
+        return true;
+    findBlocksThatLeadToReadsOf(value);
+    return m_lastSearchThatReachedBlock[block->index()] == m_numberOfSearchesForWays;
+}
+
+void Allocator::findBlocksThatLeadToReadsOf(const Operation* value)
+{
+    const uint32_t firstUse = m_liveness.of(value).firstUse;
     if (m_valueOfLastSearchForWays != value) {
         m_valueOfLastSearchForWays = value;
         if (m_lastSearchThatReachedBlock.isEmpty())
             m_lastSearchThatReachedBlock.fill(m_arena, m_order.mostBlocks(), 0);
         ++m_numberOfSearchesForWays;
-        // A way into the block of the definition leads past the definition.
         ArenaVector<const Block*> reached;
         auto reach = [&](const Block* block) {
             uint32_t& last = m_lastSearchThatReachedBlock[block->index()];
@@ -1859,19 +1742,14 @@ bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
                 reach(predecessor);
         }
     }
-    return std::ranges::any_of(m_block->successors(), [&](const Edge& successor) {
-        return m_lastSearchThatReachedBlock[successor.block()->index()] == m_numberOfSearchesForWays;
-    });
 }
 
-// allocatePatch() has put the registers that held the child into m_registersToRelease, ahead of the pass over the uses that freed them.
 void Allocator::releaseDeadValue(PatchOperation* patch)
 {
     patch->m_registersToRelease |= registersWhereReleasedValueMayHaveWaited();
     patch->m_registersToRelease &= ~m_bound;
     Operation* released = patch->child(firstPlacedChildOfPatch(patch));
     clearMemoryOfReleasedValue(*this, released);
-    // The assignment of the Patch, which is the last one, counts them as in use: they were bound when it was made.
     RegisterMask freed = clearPlacesOfValuesHandedTo(released, earlyPositionOfAllocatedPatch(*this, patch) + 1);
     patch->m_registersToRelease |= freed;
     m_allocation.m_patchAssignments.last().usedRegisters &= ~freed;
@@ -1881,14 +1759,12 @@ void Allocator::releaseChildrenLetGoByCallee(PatchOperation* patch, std::span<co
 {
     ASSERT(patch->opcode() == Patch);
 
-    // The generator reads such an operand where it lies, whether or not the child is marked: an operand that is appended behind the arguments may be the same value.
     ArenaVector<const Operation*> readFromMemory;
     for (unsigned child = 0; child < patch->numChildren(); ++child) {
         if (locationsOfOperands[child].kind() == Location::Spill)
             readFromMemory.append(m_arena, patch->child(child));
     }
 
-    // The child of an Upsilon counts as read where a Patch that ends the block reads its operands, and the moves of the edge read it behind the Patch.
     auto isHandedOnByEdge = [&](const Operation* value) {
         if (!patch->endsBlock())
             return false;

@@ -38,7 +38,6 @@ static RelationTraits traitsOfRelation(Relation relation)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Both operands arrive in one width. A constant has no form of its own: it is made in the width of the operand beside it.
 static Representation widthOfComparedIntegers(const CodeGenerator& generator, const Operation& comparison)
 {
     bool fitInt32 = true;
@@ -67,7 +66,6 @@ static Condition withIntegerOperands(Operand left, Operand right, const Functor&
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -109,7 +107,6 @@ Condition OperatorEmitter::compare(std::optional<Relation> relation, T left, T r
 
 void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std::optional<Relation> relation)
 {
-    // No number stands in a relation to a NaN or equals one, whatever its bits.
     Operand left = generator().getWithAnyNaN(value->leftOperand());
     Operand right = generator().getWithAnyNaN(value->rightOperand());
     const Type& leftType = typeOf(value->leftOperand());
@@ -226,19 +223,16 @@ void OperatorEmitter::generateIntegerBound(const ValueContext& value)
         return;
     }
 
-    // As the comparison reads with the integer on the left. i < 2.5 is i < 3 and i >= 2.5 is i >= 3. i <= 2.5 is i <= 2 and i > 2.5 is i > 2.
     bool asksForGreaterInteger = asksForGreaterOnLeft != value->numberIsOnLeft();
     bool roundsUp = asksForGreaterInteger == admitsEquality;
     constexpr int64_t least = -maxTrackedInteger;
     constexpr int64_t greatest = maxTrackedInteger;
     static_assert(static_cast<double>(greatest + 1) == 0x1p62);
-    // No integer stands in a relation to NaN: the end that no integer lies beyond.
     int64_t boundForNaN = asksForGreaterInteger ? greatest : least;
 
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Number number = in<Number>(value->numberOperand());
     Integer rounded = conversions.toInteger(roundsUp ? ceil(number) : floor(number));
-    // The bound is an int32 by its type only where the number lies between two of them.
     if (value.representation() == Representation::Int32) {
         define(value, conversions.narrow(rounded));
         return;
@@ -271,9 +265,6 @@ Condition OperatorEmitter::relationOnNullableStrings(const ValueContext& value, 
     return join.finishBehind(fork);
 }
 
-// `node.kind >= 80`, `i < end`. The value is an int32 wherever such code runs, so that is asked first, and two integers are compared, a written one in the instruction.
-// Beside an int32 any other value goes to ONE stub out of line, which compares doubles, texts and whatever else: nothing of that stands at the site. Beside a wider integer it goes the way of relationOnValues(), which compares doubles.
-// The number is in the form of an integer where wantedRepresentationsOf() has found all of this.
 bool OperatorEmitter::generateRelationOfIntegerAndValue(const ValueContext& value, Relation relation)
 {
     bool numberIsOnRight = !typeOf(value->leftOperand()).isNumber();
@@ -310,8 +301,6 @@ bool OperatorEmitter::generateRelationOfIntegerAndValue(const ValueContext& valu
     return true;
 }
 
-// `pos < end`, and all that is known is that `pos` is a number, which lies boxed. Both are int32s wherever such code runs: one test asks both tags, and two integers are compared.
-// By doubles the number was asked for its tag and converted, the value asked twice and converted, and two doubles compared: seventeen instructions for five.
 bool OperatorEmitter::generateRelationOfBoxedNumberAndValue(const ValueContext& value, Relation relation)
 {
     bool numberIsOnRight = !typeOf(value->leftOperand()).isNumber();
@@ -365,7 +354,6 @@ Condition OperatorEmitter::relationOnValues(const ValueContext& value, Relation 
         return Condition(m_out.castToInt32(callBinaryStub(value, traitsOfRelation(relation).stub, x, y)));
     }
 
-    // One operand is a number by its type and the other is not: two numbers have the form Numbers. A constant has no form of its own to go by.
     bool numberIsOnRight = !typeOf(left).isNumber();
     ValueID otherID = numberIsOnRight ? left : right;
     ValueID numberID = numberIsOnRight ? right : left;

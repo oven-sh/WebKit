@@ -23,25 +23,14 @@ enum class LinkFailure : uint8_t {
     OutOfMemory,
 };
 
-// What the index of a symbol counts, in the code of a function | in shared code, which is made once everything has its number:
 enum class SymbolSpace : uint8_t {
-    // CodeBody::callees | never
     Function,
-    // CodeBody::stubKeys | ArgumentThunks::stubKeys. A stub reaches another stub without a relocation.
     Stub,
-    // CodeBody::argumentMoves | never
     ArgumentThunk,
-    // CodeBody::constants | never
     Constant,
-    // CodeBody::jumpTables | never
     JumpTable,
-    // CodeBody::mentions: the symbol stands for the 32 bits that ImageNumbers::valueOf() answers | never
     Number,
-    // CodeBody::mentions: the symbol stands for the word of the instance that lies valueOf() bytes from the instance register, a signed distance | never
     InstanceWord,
-    // CodeBody::mentions, of NumberSpace::RegExp | the number of the record
-    // Either way the symbol stands for the code of the expression, at the entry that CodeSymbol::entry names.
-    // A function takes that address, through Output::relocatable(). Shared code calls it, through StubAssembler::callCode(). Only a call or jump from shared code gets a veneer.
     RegExp,
     WebAssembly,
     FFI,
@@ -49,7 +38,6 @@ enum class SymbolSpace : uint8_t {
 static constexpr unsigned numberOfSymbolSpaces = 10;
 static_assert(static_cast<unsigned>(SymbolSpace::FFI) + 1 == numberOfSymbolSpaces);
 
-// What a constant of CodeBody::constants is, as its maker says. No code follows from it: the pool counts its bytes by it.
 enum class ConstantKind : uint8_t {
     Unlabeled,
     Number,
@@ -109,12 +97,10 @@ private:
     bool m_didFinalize { false };
 };
 
-// One unit of what lies where no code does. It faults, and not with a signal that programs listen for.
 JS_EXPORT_PRIVATE void emitPadding(CCallHelpers&);
 
 enum class InstanceWordWidth : uint8_t { Byte, Word32, Word64 };
 
-// A Number symbol resolves to a 32-bit number, an InstanceWord symbol to a 32-bit distance from the instance register, and every other symbol to an offset in the code. The kind says how the site is patched with that value, so it has to agree with the space.
 constexpr bool relocationMayName(RelocationKind kind, SymbolSpace space)
 {
     switch (kind) {
@@ -142,7 +128,6 @@ constexpr bool relocationMayName(RelocationKind kind, SymbolSpace space)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// Every sequence has one length whatever the number turns out to be, so the bytes of a function do not depend on the rest of the program.
 class JS_EXPORT_PRIVATE RelocationRecorder {
     WTF_MAKE_NONCOPYABLE(RelocationRecorder);
 public:
@@ -163,26 +148,15 @@ public:
         return append(site, RelocationKind::Jump, symbol);
     }
 
-    // SymbolSpace::Number, RelocationKind::Number32. The upper half of dest is zero. ARM64: movz, movk. x86-64: mov r32, imm32.
     void moveNumber(CodeSymbol symbol, GPRReg dest) { append(m_jit.moveNumber32WithPatch(dest), RelocationKind::Number32, symbol); }
-    // SymbolSpace::Number, RelocationKind::NumberWord. Four bytes of data in the code that hold the number itself: a word after a call that says what to throw.
     void emitNumber32(CodeSymbol);
 
-    // SymbolSpace::InstanceWord, at any signed 32-bit distance. What follows is what the assembler writes, and on ARM64 that holds a distance from 16 MB - 4 KB below the instance to less than 16 MB above it.
-    // For a word beyond that applyRelocation() answers false and writes nothing: isFarInstanceWord() below.
-    // RelocationKind::InstanceOffset. ARM64: add or sub of the upper twelve bits, then add of the lower twelve. x86-64: lea with a 32-bit displacement.
     void moveInstanceAddress(CodeSymbol, GPRReg instance, GPRReg dest);
-    // RelocationKind::InstanceAccess. ARM64: add or sub of the upper twelve bits, into dest or, for an FPR, into the assembler's memory scratch register,
-    // then a load with the lower twelve bits as its offset. x86-64: one load with a 32-bit displacement. A Byte and a Word32 are zero-extended.
-    // ARM64 counts that offset in units of the width, so the distance is a multiple of the width.
     void loadInstanceWord(CodeSymbol, InstanceWordWidth, GPRReg instance, GPRReg dest);
     void loadInstanceDouble(CodeSymbol, GPRReg instance, FPRReg dest);
-    // ARM64 writes the assembler's memory scratch register.
     void storeInstanceWord(CodeSymbol, InstanceWordWidth, GPRReg source, GPRReg instance);
     void storeInstanceDouble(CodeSymbol, FPRReg source, GPRReg instance);
 #if CPU(X86_64)
-    // RelocationKind::InstanceAccess. The functor is given the word as a memory operand and emits ONE instruction that reads or writes it there, or nothing. An immediate may follow the displacement.
-    // In front of a displacement stand prefixes, the opcode and the ModRM byte alone, so the first four bytes of the instruction that hold the placeholder are the displacement.
     template<typename Functor>
     auto withInstanceWordAsOperand(CodeSymbol symbol, GPRReg instance, const Functor& functor)
     {
@@ -212,7 +186,6 @@ public:
 
 private:
 #if CPU(X86_64)
-    // Too large for a displacement of one byte, so the assembler writes four.
     static constexpr int32_t placeholderOfInstanceWordDistance = 0x12345678;
 #endif
 
@@ -238,16 +211,11 @@ private:
     Vector<PendingRelocation, 32> m_pending;
 };
 
-// AddressFar is page relative on ARM64: code must be loaded at a multiple of 4 KB.
-// For Number32, NumberWord, InstanceOffset and InstanceAccess the target is not an offset into the code. It is the 32-bit number, zero-extended.
 [[nodiscard]] ALWAYS_INLINE bool applyRelocation(std::span<uint8_t> code, size_t bodyStart, const Relocation& relocation, size_t target)
 {
     return MacroAssembler::applyRelocation(relocation.kind, code, bodyStart + relocation.offset, target);
 }
 
-// A word whose distance from the instance the instructions of InstanceOffset and InstanceAccess do not hold. There is none on x86-64.
-// Image, which alone knows the distance, writes the two instructions of ARM64 anew, so the length stays: ldr w, <the distance>, then the add, load or store with [instance, w, sxtw].
-// The distance lies in a word that Image puts behind the body. A site that lies further in front of that word than the ldr reaches jumps to a detour behind the body in its place: movz, movk, b back.
 ALWAYS_INLINE bool isFarInstanceWord([[maybe_unused]] int32_t distance)
 {
 #if CPU(ARM64)
@@ -265,7 +233,6 @@ static constexpr size_t reachOfReadOfFarInstanceWord = 0;
 static constexpr size_t sizeOfDetourToFarInstanceWord = 0;
 #endif
 
-// `placeOfDistance` and `detour` are offsets into the code. The caller writes the word at the one. The other is written here.
 [[nodiscard]] ALWAYS_INLINE bool applyRelocationReadingDistance([[maybe_unused]] std::span<uint8_t> code, [[maybe_unused]] size_t bodyStart, [[maybe_unused]] const Relocation& relocation, [[maybe_unused]] size_t placeOfDistance)
 {
 #if CPU(ARM64)

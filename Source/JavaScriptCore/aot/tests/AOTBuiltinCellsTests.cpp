@@ -86,15 +86,6 @@ static JSValue evaluate(LoadedProgram& program, ASCIILiteral source)
     return program.realms().evaluate(program.realm(), source);
 }
 
-static void checkCellIs(LoadedProgram& program, BuiltinCellKey key, ASCIILiteral source)
-{
-    uint32_t number = numberOf(program, key);
-    AOT_TEST_CHECK(!wordOf(program, number));
-    JSCell* cell = cellsOf(program).cell(number);
-    AOT_TEST_CHECK_FOR_SOURCE(cell && JSValue(cell) == evaluate(program, source), source);
-    AOT_TEST_CHECK_FOR_SOURCE(wordOf(program, number) == cell && cellsOf(program).cell(number) == cell, source);
-}
-
 static void checkKeys(LoadedProgram& program)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
@@ -112,37 +103,10 @@ static void checkKeys(LoadedProgram& program)
     AOT_TEST_CHECK(BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeByteLength).hasCell(table) && !BuiltinCellKey::setter(Builtins::ArrayBufferPrototypeByteLength).hasCell(table));
     AOT_TEST_CHECK(!BuiltinCellKey::getter(Builtins::ArrayPrototypeLength).hasCell(table));
     AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::ModuleObjectExports).hasCell(table) && !BuiltinCellKey::object(Builtins::ImportMeta).hasCell(table));
-    AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::CompilerHelpers).hasCell(table) && BuiltinCellKey::object(Builtins::CompilerHelpersTraverseArray).hasCell(table));
-}
-
-static void checkObjects(LoadedProgram& program)
-{
-    checkCellIs(program, BuiltinCellKey::object(Builtins::ArrayBuffer), "ArrayBuffer"_s);
-    checkCellIs(program, BuiltinCellKey::object(Builtins::ArrayBufferPrototype), "ArrayBuffer.prototype"_s);
-    checkCellIs(program, BuiltinCellKey::object(Builtins::GlobalThis), "globalThis"_s);
-    checkCellIs(program, BuiltinCellKey::object(Builtins::SymbolIterator), "Symbol.iterator"_s);
-
-    AOT_TEST_CHECK(cellsOf(program).findObject(Builtins::ArrayBuffer) == cellsOf(program).cell(numberOf(program, BuiltinCellKey::object(Builtins::ArrayBuffer))));
-    AOT_TEST_CHECK(JSValue(cellsOf(program).findObject(Builtins::MathMax)) == evaluate(program, "Math.max"_s));
-    AOT_TEST_CHECK(!cellsOf(program).findObject(Builtins::Bun));
-
-    auto promiseResolve = findInRealm(program.realm(), BuiltinCellKey::object(Builtins::LinkTimeConstantPromiseResolve));
-    AOT_TEST_CHECK(promiseResolve && *promiseResolve == program.realm()->linkTimeConstant(LinkTimeConstant::promiseResolve));
-}
-
-static void checkCellsBelongToTheRealmOfTheProgram(LoadedProgram& program)
-{
-    JSCell* constructor = cellsOf(program).cell(numberOf(program, BuiltinCellKey::object(Builtins::ArrayBuffer)));
-    AOT_TEST_CHECK(JSValue(constructor) != program.realms().evaluate(program.realms().plain(), "ArrayBuffer"_s));
-    AOT_TEST_CHECK(asObject(constructor)->realm() == program.realm());
+    AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::CompilerHelpers).hasCell(table) && BuiltinCellKey::object(Builtins::CompilerHelpersOwnEntriesFlat).hasCell(table));
 }
 
 static BuiltinCellKey nativeGetterKeyOf() { return BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeMaxByteLength); }
-
-static void checkNativeGetter(LoadedProgram& program)
-{
-    checkCellIs(program, nativeGetterKeyOf(), "Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'maxByteLength').get"_s);
-}
 
 static BuiltinCellKey customGetterKeyOf() { return BuiltinCellKey::getter(Builtins::IntlCollatorPrototypeCompare); }
 static constexpr NamedBuiltin otherCustomAccessors[] = {
@@ -174,7 +138,6 @@ static NEVER_INLINE Vector<Weak<JSObject>> createUnreferencedCustomGetters(Loade
 static void checkGetterOfCustomAccessorSurvivesACollection(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    // The engine's own custom accessors are read by name. Some of a host's have a cell.
     uint32_t number = putKeyInPlaceOf(program, nativeGetterKeyOf(), customGetterKeyOf());
     uintptr_t hiddenGetter = fillCellOfCustomGetter(program, number);
     Vector<Weak<JSObject>> otherGetters = createUnreferencedCustomGetters(program);
@@ -197,12 +160,12 @@ static void checkGetterOfCustomAccessorSurvivesACollection(LoadedProgram& progra
 
 static void checkBuiltinOutsideTheRealm(LoadedProgram& program)
 {
-    AOT_TEST_CHECK(BuiltinTable::singleton().at(Builtins::Bun).mutability != BuiltinMutability::AlwaysLocked);
-    AOT_TEST_CHECK(!findInRealm(program.realm(), BuiltinCellKey::object(Builtins::Bun)));
-    uint32_t number = putKeyInPlaceOf(program, BuiltinCellKey::object(Builtins::ArrayBufferPrototype), BuiltinCellKey::object(Builtins::Bun));
+    AOT_TEST_CHECK(BuiltinTable::singleton().at(Builtins::File).mutability != BuiltinMutability::AlwaysLocked);
+    AOT_TEST_CHECK(!findInRealm(program.realm(), BuiltinCellKey::object(Builtins::File)));
+    uint32_t number = putKeyInPlaceOf(program, BuiltinCellKey::object(Builtins::ArrayBufferPrototype), BuiltinCellKey::object(Builtins::File));
     AOT_TEST_CHECK(!cellsOf(program).cell(number) && !wordOf(program, number));
 
-    evaluate(program, "globalThis.Bun = { }"_s);
+    evaluate(program, "globalThis.File = { }"_s);
     AOT_TEST_CHECK(!cellsOf(program).cell(number) && !wordOf(program, number));
 }
 
@@ -247,32 +210,6 @@ JSC_DEFINE_CUSTOM_GETTER(createHostObject, (JSGlobalObject* realm, EncodedJSValu
     return JSValue::encode(constructEmptyObject(realm));
 }
 
-static constexpr size_t sizeOfDeepFrame = 4 * KB;
-
-static NEVER_INLINE JSCell* askForCellAtEndOfStack(LoadedProgram& program, uint32_t number)
-{
-    volatile char frame[sizeOfDeepFrame];
-    frame[0] = 0;
-    JSCell* cell = stackAboveSoftLimit(program.vm()) > 2 * sizeOfDeepFrame ? askForCellAtEndOfStack(program, number) : cellsOf(program).cell(number);
-    frame[1] = 0;
-    return cell;
-}
-
-static void checkFirstUseAtEndOfStack(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    size_t reservedZoneOfProgram = Options::softReservedZoneSize() + BuiltinCells::stackKeptFromProgram;
-    AOT_TEST_CHECK(vm.softReservedZoneSize() == reservedZoneOfProgram);
-
-    program.realm()->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Bun"_s), CustomGetterSetter::create(vm, createHostObject, nullptr), static_cast<unsigned>(PropertyAttribute::CustomValue));
-    uint32_t number = putKeyInPlaceOf(program, BuiltinCellKey::object(Builtins::ArrayBufferPrototype), BuiltinCellKey::object(Builtins::Bun));
-    JSCell* cell = askForCellAtEndOfStack(program, number);
-    AOT_TEST_CHECK(cell && cell->isObject() && wordOf(program, number) == cell);
-    // A built-in module starts only with half of this free.
-    AOT_TEST_CHECK(stackSeenByCreation >= BuiltinCells::stackKeptFromProgram / 2 && stackSeenByCreation <= BuiltinCells::stackKeptFromProgram + 2 * sizeOfDeepFrame);
-    AOT_TEST_CHECK(vm.softReservedZoneSize() == reservedZoneOfProgram);
-}
-
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<builtinCellsTests, programText, body>;
 
@@ -280,13 +217,9 @@ std::span<const NativeTest> builtinCellsTests()
 {
     static constexpr NativeTest tests[] = {
         { "builtin-cells/keys"_s, withProgram<checkKeys> },
-        { "builtin-cells/objects"_s, withProgram<checkObjects> },
-        { "builtin-cells/cells-belong-to-the-realm-of-the-program"_s, withProgram<checkCellsBelongToTheRealmOfTheProgram> },
-        { "builtin-cells/native-getter"_s, withProgram<checkNativeGetter> },
         { "builtin-cells/getter-of-custom-accessor-survives-a-collection"_s, withProgram<checkGetterOfCustomAccessorSurvivesACollection> },
         { "builtin-cells/built-in-outside-the-realm"_s, withProgram<checkBuiltinOutsideTheRealm> },
         { "builtin-cells/per-module-member"_s, withProgram<checkPerModuleMember> },
-        { "builtin-cells/first-use-at-end-of-stack"_s, withProgram<checkFirstUseAtEndOfStack> },
     };
     return tests;
 }

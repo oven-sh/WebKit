@@ -88,7 +88,6 @@ static ALWAYS_INLINE uint64_t& wordOfModuleStartFrame(CallFrame* frameOfStart, p
     return *reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(frameOfStart) + offset);
 }
 
-// The stub StartModule stands in for a cleanup that takes the Exception and throws it on.
 static ALWAYS_INLINE bool abandonsModuleOnThrow(CallFrame* frameOfStart)
 {
     return wordOfModuleStartFrame(frameOfStart, ModuleStartFrame::offsetOfModuleToAbandon);
@@ -126,7 +125,6 @@ static ALWAYS_INLINE void finishAtHandler(CompiledUnwindResult& result, Instance
     result.handler = handler;
 }
 
-// The stub takes the thrown value, hands it to whoever waits for the coroutine and returns from the frame.
 static void finishInRejectingStub(CompiledUnwindResult& result, Instance& instance, CallFrame* callFrame, const ImageFrame& frame)
 {
     bool liesBelowSpilledArguments = frame.liesBelowSpilledArguments();
@@ -154,7 +152,6 @@ static NEVER_INLINE Instance* findInstanceOfRun(VM& vm, const ReturnSiteInRun& s
     return frames && !frames->isAtEnd() ? frames->instance() : nullptr;
 }
 
-// The frame is the outermost of the run, if the walk has left any.
 static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, CallFrame* leftFrame, ImageFrame leftImageFrame, VMEntryRecord& record, const int8_t* bufferSlots, bool isTermination)
 {
     if (result.runEnd.resumesSavedFrame && leftFrame && !isTermination) {
@@ -164,7 +161,6 @@ static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, C
 
     if (result.runEnd.adapterFrame) {
         copyStubSavedRegisters(record, bufferSlots, result.runEnd.adapterFrame, AdapterFrame::savedRegisters);
-        // The return label of the adapter, which clears the word, is not run.
         if (leftFrame)
             instance->coroutines.frameThatMayContinue = nullptr;
     }
@@ -173,7 +169,6 @@ static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, C
     result.status = result.exit.crossedEntryFrame ? CompiledUnwindStatus::ReachedEntryFrame : CompiledUnwindStatus::LeftCompiledCode;
 }
 
-// Goes over the machine frames of one run as CompiledFrameIterator does. It reads the frame records and the call site cache, and leaves every frame in front of the handler.
 static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft, Instance* instance)
 {
     CompiledUnwindResult result;
@@ -208,7 +203,6 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
         CallFrame* callFrame = frameAtReturnSite(site->frame, place.stackPointer, place.framePointer);
         if (!site->isStubReturnSite()) [[likely]] {
             if (!isTermination) [[likely]] {
-                // The consumer of an async generator never sees what the body throws: the step ends as a rejection.
                 if (asyncGeneratorBodyFrameLeft) [[unlikely]] {
                     finishInRejectingStub(result, *instance, asyncGeneratorBodyFrameLeft, asyncGeneratorBodyFrameLeft == leftFrame ? leftImageFrame : ImageFrame { });
                     return result;
@@ -297,7 +291,6 @@ CompiledUnwindResult unwindRunOfThrow(VM& vm, Instance& instanceThatThrows, cons
     return unwindFramesOfRun(vm, start, entryFrame, record, false, nullptr, &instanceThatThrows);
 }
 
-// The iterator has passed the frames of stubs in front of the frame that it is at.
 CompiledUnwindResult unwindCompiledFrames(VM& vm, const CompiledFrameIterator& frames, VMEntryRecord& record, bool isTermination)
 {
     const int8_t* bufferSlots = bufferSlotsByRegisterIndex();
@@ -326,7 +319,6 @@ void unwindBeyondCompiledFrames(VM& vm, CallFrame* frameRecord, CompiledUnwindSt
         genericUnwind(vm, frameRecord);
         return;
     case CompiledUnwindStatus::ReachedEntryFrame:
-        // This entry into the VM has no frame left to look at, so the frames are not walked a second time. These are the targets genericUnwind() sets when it finds no handler.
         vm.callFrameForCatch = frameRecord;
         vm.targetMachinePCForThrow = LLInt::handleUncaughtException(vm).code().taggedPtr();
         vm.targetMachinePCAfterCatch = nullptr;
@@ -338,7 +330,6 @@ void unwindBeyondCompiledFrames(VM& vm, CallFrame* frameRecord, CompiledUnwindSt
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// True spares the Exception its stack trace, which looks at no more frames than the limit. A longer search costs more than it can save, and false is always right.
 static bool findCatchInRun(CompiledFrameIterator& frames)
 {
     Instance* instance = nullptr;
@@ -359,7 +350,6 @@ static bool findCatchInRun(CompiledFrameIterator& frames)
     }
     if (!lastFrame || !frames.runEnd().resumesSavedFrame)
         return false;
-    // The body of a generator throws on to whoever resumed it.
     SavedFrame* saved = SavedFrame::forFrame(*instance, std::bit_cast<const uint64_t*>(lastFrame));
     return !saved || saved->kind() == CoroutineKind::AsyncFunction;
 }
@@ -371,7 +361,6 @@ bool isCaughtByCompiledCode(VM&, CompiledFrameIterator frames)
 
 enum class HandlerSearch : bool { Nearest, NearestThatEndsThrow };
 
-// Looks at the callers of `callee` in its run of compiled frames. A frame that turns a throw into a rejection counts as a `catch`. Nothing is no answer: the run may go on in ways that this walk does not follow.
 template<HandlerSearch search>
 static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFrame* callee, void* stackPointer, void* framePointer, EntryFrame* entryFrame)
 {
@@ -414,7 +403,6 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
 std::optional<HandlerType> findNearestHandler(VM& vm, CallFrame* stubFrame)
 {
     EntryFrame* entryFrame = vm.topEntryFrame;
-    // An operation of compiled code has entered the VM for a built-in function, as for a getter that `super.name` finds. It hands the throw on to the code that called it.
     if (stubFrame->callerFrameOrEntryFrame() == entryFrame && !isOperationFrameRecord(vm, stubFrame)) {
         if (stubFrame->isNativeCalleeFrame() || stubFrame->codeBlock())
             return std::nullopt;
@@ -427,7 +415,6 @@ std::optional<HandlerType> findNearestHandler(VM& vm, CallFrame* stubFrame)
     return findHandlerInRun<HandlerSearch::Nearest>(vm, stubFrame, stackPointerOfCaller(stubFrame), stubFrame->callerFrameOrEntryFrame(), entryFrame);
 }
 
-// Asked before every error of a throw site is created.
 bool nearestHandlerIgnoresValue(VM& vm, const Instance&, CallFrame* stubFrame)
 {
     return findNearestHandler(vm, stubFrame) == HandlerType::SynthesizedCatch;
@@ -468,13 +455,11 @@ static bool isAddressInCompiledCode(uint64_t word)
     return word - std::bit_cast<uintptr_t>(code.data()) < code.size();
 }
 
-// Native code has called the run that the throw leaves, and hands the exception on to its own caller unless it reports it.
 static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
 {
     for (unsigned remainingRuns = Options::exceptionStackTraceLimit(); remainingRuns && exit.callFrame; --remainingRuns) {
         if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
             return false;
-        // Code of another realm that runs the image has called the run, with no native code between.
         if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeCodePtrTag(exit.returnPC))))
             return false;
         if (void* taker = vm.aotState().stackPointerOfExceptionTaker; taker && taker < static_cast<void*>(exit.callFrame))
@@ -506,18 +491,14 @@ NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, con
     using Action = Exception::StackCaptureAction;
     if (removeCodePtrTag(frameRecordOfOperation->callerFrame->rawReturnPC()) == instance.state->returnAddressOfThrowAfterCleanup) {
         uint64_t kept = instance.state->keptByCleanup;
-        // The program threw the value somewhere else, and an Error keeps the stack that it holds.
         if (!isAddressInCompiledCode(kept))
             return Action::CaptureStack;
-        // The `throw` stands in this frame, and nothing returns to the end of the cleanup.
         frameRecordOfOperation->callerFrame->setReturnPC(std::bit_cast<void*>(kept));
     }
     if (!runWithoutHandler || needsExceptionForEveryThrow(instance))
         return Action::CaptureStackOfThrow;
-    // The promise of the handler is rejected with the value.
     if (runWithoutHandler->runEnd.hasCalledHandlerOfJob && instance.coroutines.promiseOfEnteredHandler)
         return Action::DoNotCaptureStack;
-    // For what holds no stack of its own the frames are walked either way.
     auto* error = dynamicDowncast<ErrorInstance>(thrown);
     if (!error || !error->returnAddresses())
         return Action::CaptureStackOfThrow;

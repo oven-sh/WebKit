@@ -26,7 +26,6 @@ struct Steps {
 
     enum class Step : uint8_t { Resolved, Selected, JumpsFound, LaidOut, JumpsRemoved };
 
-    // Does not read CodeBody::mentions. A mention can name a string of build.program(), which this constructor creates, so a test adds such mentions to the bodies in functions afterward.
     Steps(Vector<CompiledCode>&&, const TestOptions& = { });
 
     void select();
@@ -46,7 +45,6 @@ struct Steps {
     SharedCode sharedCode;
     ConstantPool constants;
     Vector<FinalJump> finalJumps;
-    // A test that has numbers fills it in front of layOut(): findFarInstanceWords().
     Vector<FarInstanceWords> farInstanceWords;
     RegExpSection regExpSection;
     size_t webAssemblyCodeSize { 0 };

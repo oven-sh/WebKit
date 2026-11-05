@@ -15,7 +15,6 @@ OpcodeSet StraightEmitter::opcodesOfIterations()
     return { Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose };
 }
 
-// As BuilderOfIteration gives every record of the protocol.
 static StraightCallOptions optionsOfIterationInStraightForm(const BodyValue& value)
 {
     Origin origin = value.origin();

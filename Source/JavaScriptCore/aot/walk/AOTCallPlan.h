@@ -17,8 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Of a constructor function: nothing but its guards says that `prototype` of its one function object holds the object that the class begins with.
-// The function is made once and holds no capture, so it has one function object, and its class has a record, so the run time enters the object for the class and hears of every store to `prototype`.
 inline bool prototypeOfConstructorFunctionIsLeftToGuards(const AccessContext& context, LayoutID classLayout)
 {
     const Layout& layout = context.program.at(classLayout);

@@ -22,7 +22,6 @@ struct ObfuscatedSites {
     Vector<uint8_t> names;
 };
 
-// A place of a tail call is listed as the one site of a function of its own, behind the functions that have code.
 ObfuscatedSites collectObfuscatedSites(const LinkedFunctions&, const Typed::Program&, BuildContext&, std::span<const WrittenTailCall> = { });
 
 } } // namespace JSC::AOT

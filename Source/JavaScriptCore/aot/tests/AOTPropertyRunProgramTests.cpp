@@ -67,7 +67,6 @@ static void testRunOverwritesExistingProperties()
         { }, statementsWithExistingProperties);
 }
 
-// Each object is new and gets the six names: under no prototype, under prototypes that can change, where the cell has no room for all six, and in cells of other classes.
 static constexpr ASCIILiteral statementsWithNewObjects = R"JS(
 globalThis.publish = storeSix => {
     const storeAndPrint = (what, create) => {

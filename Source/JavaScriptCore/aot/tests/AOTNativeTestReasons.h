@@ -20,8 +20,6 @@
 
 namespace JSC { namespace AOT {
 
-// Whoever lists the red tests shows the line of the failed check and nothing that was printed in front of it. So what the check alone does not say goes into that line.
-
 inline String joinLinesOfReason(StringView text)
 {
     StringBuilder line;
@@ -44,7 +42,6 @@ inline String optionWordsOfReason(OptionWords optionWords)
     return words.isEmpty() ? String("no option word"_s) : words.toString();
 }
 
-// With a word that the test hands over by itself in front: one of waysToCompilePrograms, the width of references.
 inline String optionWordsOfReason(ASCIILiteral firstWord, OptionWords optionWords)
 {
     if (firstWord.isEmpty())
@@ -69,7 +66,6 @@ inline String optionWordsOfReason(ASCIILiteral firstWord, OptionWords optionWord
     failNativeTestBecause(file, line, makeString("the compiler made no image ("_s, optionWords, "): "_s, diagnostics.toString()));
 }
 
-// The first line that differs in front, for a reader who sees the start of the reason alone.
 inline String differenceOfPrintedLines(StringView printed, StringView expected)
 {
     Vector<StringView> printedLines;

@@ -27,7 +27,6 @@ void ClassEmitter::generateResolveHeritage(const ValueContext& value)
 
 void ClassEmitter::generateNewClass(const ValueContext& value)
 {
-    // The run time defines the class by its record.
     LayoutID classLayout = value->layout();
     if (!m_plan.hasClassRecord(classLayout)) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
@@ -42,8 +41,6 @@ void ClassEmitter::generateNewClass(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewClass, { request, constructor, heritage, prototypeParent }));
 }
 
-// The run time enters the prototype object of a class that is evaluated once in ClassWords::classPrototypes: at the definition of a class, at the first construction by a constructor function.
-// A constructor function that captures something has a function object for each environment, and each of those has a prototype object of its own.
 std::optional<Word32> ClassEmitter::rankOfClassWithOnePrototypeObject(const ValueContext& value)
 {
     LayoutID classLayout = declaredLayoutOf(m_program, value->layout());
@@ -66,8 +63,6 @@ void ClassEmitter::generateGetClassPrototype(const ValueContext& value)
     }
     m_out.noteForm(Form::Open, StateOfKnowledge::PrototypeInTable);
 
-    // The word is empty until the prototype object exists, and whoever reads it empty asks the operation. A filled word keeps its cell, which the run time keeps alive.
-    // The operation reads the property, and the walk keeps the read behind whatever may store to that: walkGetClassPrototype().
     static_assert(sizeof(JSCell*) == 1u << logScale(ScalePtr));
     Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
     CellPointer prototype(m_out.load64(m_out.baseIndex(m_heaps.AOTInstance_fieldsFilledOnce, prototypes.value(), zeroExtended(*rank).value(), ScalePtr)));
@@ -93,7 +88,6 @@ void ClassEmitter::generateFinishClass(const ValueContext& value)
     define(value, get(value->classObjectOperand()));
 }
 
-// The guard of a side that holds says that the class has begun, and ending the guard of a name ends neither. So a program that has replaced a method pays two bytes here, and no call.
 void ClassEmitter::generateBeginMemberGuards(const ValueContext& value)
 {
     LayoutID constructorFunction = value->layout();
@@ -123,7 +117,6 @@ void ClassEmitter::generateNewClassToken(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewClassToken, { word32(value->layout().index()) }));
 }
 
-// The prototype property of a function of the program is a data property, so reading it runs no code and the operation may read it once more.
 static bool newTargetIsAlwaysProgramFunction(const Type& newTarget)
 {
     return newTarget.isObject() && newTarget.hasOnlyClosures();
@@ -140,10 +133,6 @@ void ClassEmitter::generateGetConstructPrototype(const ValueContext& value)
         return;
     }
 
-    // `Below.prototype = Object.create(Base.prototype)`, and `new Below()`: walkGetConstructPrototype() has left the one function object of a constructor function to its guards.
-    // While the guard of `prototype` holds, nobody has stored there since the class began, so the property holds the object that the run time entered for the class.
-    // Only the run time knows which object that is: a function that became a base first was entered with what it held then. So the word is read, and no store of the program is taken for it.
-    // The failing side reads the property: for the first object, which begins the guards, and for every object once the program has stored to `prototype` again.
     LayoutID classLayout = declaredLayoutOf(m_program, value->layout());
     FunctionID constructor = singleFunctionOf(types(), typeOf(value->newTargetOperand()));
     AccessContext context { m_program, WalkFacts(m_facts), m_plan, types(), { } };

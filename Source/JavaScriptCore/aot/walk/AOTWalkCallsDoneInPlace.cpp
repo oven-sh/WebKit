@@ -3,12 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `f.$apply(..)` of the library: a call that names a built-in and is marked as done in place. No frame of the built-in stands there: the engine itself calls or constructs the operand that the row forwards the call to.
-// At a suspension: nothing. What is built is a call like any other.
-// At a throw: it throws where the call as written threw, under the handler of the block being walked. A list is read in front of the call, in the frame of the caller.
-// It is never withheld: the library's Function.prototype.apply is `this.$apply(..)`, which as a call of the built-in would enter itself without end.
-// `f.apply(..)` of a program is forwarded the same way, by BuiltinCalls where the callee is proven and by Guesses behind a test of it. Withheld: it is a call of the built-in.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -34,9 +28,7 @@ struct OperandsOfForwardedCall {
     BuiltinOperand callee;
     std::optional<BuiltinOperand> thisValue;
     std::optional<BuiltinOperand> newTarget;
-    // Its own values are the arguments.
     std::optional<BuiltinOperand> list;
-    // What is passed from here on are the arguments.
     std::optional<unsigned> firstArgument;
     bool constructs { false };
 };
@@ -47,8 +39,6 @@ struct RowOfForwardedCall {
 };
 
 } // anonymous namespace
-
-// ---- What the row says
 
 static bool isSingleOperandOfForwardedCall(BuiltinOperand operand)
 {
@@ -69,7 +59,6 @@ static std::optional<BuiltinOperand> findSingleOperandOfForwardedCall(const Buil
     return place.operand;
 }
 
-// The built-in does nothing but call one operand once, or construct it, and return what that returns.
 static const BuiltinCallback* findCallbackOfForwardedCall(const BuiltinOverload& overload)
 {
     const BuiltinFlow& flow = overload.flow;
@@ -125,13 +114,11 @@ static std::optional<OperandsOfForwardedCall> findOperandsOfForwardedCall(const 
     return operands;
 }
 
-// `builtin`: canonical. It is what the call calls.
 static std::optional<RowOfForwardedCall> findRowOfCallOfBuiltin(Walker& walker, const BodyValue& call, BuiltinID builtin)
 {
     auto written = call.as<Opcode::Call>();
     const BuiltinTable& table = walker.program().builtins();
 
-    // The only row of calls speaks of every call, whatever is proven of the operands.
     Vector<BuiltinOverloadID, 4> rows;
     for (BuiltinOverloadID overload : table.overloadIDsOf(builtin)) {
         if (table.at(overload).mode == BuiltinCallMode::Call)
@@ -147,7 +134,7 @@ static std::optional<RowOfForwardedCall> findRowOfCallOfBuiltin(Walker& walker, 
             passed.receiver = typeOfOperand(thisValue);
         for (ValueID argument : written.argumentsOperands())
             passed.arguments.append(typeOfOperand(argument));
-        rows = overloadsReachedBy({ walker.program(), walker.types(), &walker.facts() }, builtin, BuiltinCallMode::Call, passed);
+        rows = overloadsReachedBy({ walker.program(), walker.types() }, builtin, BuiltinCallMode::Call, passed);
     }
     if (rows.size() != 1)
         return std::nullopt;
@@ -157,7 +144,6 @@ static std::optional<RowOfForwardedCall> findRowOfCallOfBuiltin(Walker& walker, 
     return RowOfForwardedCall { rows[0], *operands };
 }
 
-// The built-in is found by binding: the front end names it where it marks the call.
 static std::optional<RowOfForwardedCall> findRowOfForwardedCall(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call || !call.isDoneInPlace() || walker.isUnreachable())
@@ -169,8 +155,6 @@ static std::optional<RowOfForwardedCall> findRowOfForwardedCall(Walker& walker, 
     return findRowOfCallOfBuiltin(walker, call, walker.program().builtins().canonicalID(index.value(callee).as<Opcode::Builtin>().builtin()));
 }
 
-// ---- What is built
-
 static Reference operandOfForwardedCall(const Draft& written, BuiltinOperand operand)
 {
     if (operand.isReceiver())
@@ -179,10 +163,9 @@ static Reference operandOfForwardedCall(const Draft& written, BuiltinOperand ope
     return operand.argumentIndex() < arguments.size() ? arguments[operand.argumentIndex()] : Reference();
 }
 
-// The built-in refuses an argument that its row does not take, in its own words. A receiver that cannot be called is refused by the call itself.
 static bool rowTakesArgumentsOfForwardedCall(Walker& walker, const Draft& written, const BuiltinOverload& overload)
 {
-    BuiltinTypeContext context { walker.program(), walker.types(), &walker.facts() };
+    BuiltinTypeContext context { walker.program(), walker.types() };
     std::span<const Reference> arguments = written.argumentsOperands();
     auto takes = [&](const BuiltinParameter& parameter, Reference argumentOrNotPassed) {
         OperandFit fit = fitOf(context, argumentOrNotPassed ? walker.typeOf(argumentOrNotPassed) : TypeID(), parameter.accepted);
@@ -200,7 +183,6 @@ static bool rowTakesArgumentsOfForwardedCall(Walker& walker, const Draft& writte
     });
 }
 
-// False, here and below: nothing was built, and the call stays as it is written.
 static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draft& written, const RowOfForwardedCall& row)
 {
     TypeArena& types = walker.types();
@@ -208,11 +190,9 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
     if (!callee)
         return false;
 
-    // A row that takes undefined and null there takes them for an empty list.
     Reference list = row.operands.list ? operandOfForwardedCall(written, *row.operands.list) : Reference();
     if (list && isNullishType(walker.typeOf(list)))
         list = { };
-    // `f.apply(this, arguments)`: what apply reads out of an `arguments` that nothing else has is what the caller handed over.
     std::optional<Vector<Reference, 8>> elements;
     if (list && !hasKind(types, walker.typeOf(list), OperandKind::Array)) {
         if (Reference standing = listStandingForFreshArguments(walker, list))
@@ -225,7 +205,6 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
             return true;
         Origin originBeforeCall = written.origin();
         originBeforeCall.isTailCall = false;
-        // What turns out to be an array goes on as it is: the stub of the call copies its elements onto the stack, once.
         TypeID arrays = types.builtinClass(BuiltinClasses::Array);
         BlockID behindList;
         Reference listOfCall;
@@ -254,7 +233,6 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
                 walker.jumpTo(behindList, singleElementSpan(array));
             walker.continueIn(isReadFirst);
         }
-        // Function.prototype.apply up to the call. It says of a value that is no list what apply says.
         Draft newList(Opcode::NewArgumentList, originBeforeCall);
         walker.chooseConservativeFields(newList);
         newList.setArrayLikeOperand(list);
@@ -294,17 +272,14 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
     return true;
 }
 
-// The built-in refuses a callee and a new.target that are no constructors, and a list that is no object, in its own words and in a frame of its own.
-// The code in line of its row misses on them, and there the call is made as it is written. A construction is never a tail call.
 static bool buildForwardedConstruction(Walker& walker, const BodyValue& call, const Draft& written, const RowOfForwardedCall& row)
 {
     const BuiltinImplementation& implementation = walker.program().builtins().at(row.overload).code.implementation;
-    if (implementation.kind != BuiltinImplementationKind::Inline || !implementation.inlineBuiltin || !implementation.otherwise || isFormOnly(*implementation.inlineBuiltin))
+    if (implementation.kind != BuiltinImplementationKind::Inline || !implementation.inlineBuiltin || !implementation.otherwise)
         return false;
     if (row.operands.callee.isReceiver() || !row.operands.list || row.operands.list->isReceiver() || (row.operands.newTarget && row.operands.newTarget->isReceiver()))
         return false;
 
-    // The code in line takes the operands that the row names and no other.
     unsigned numberOfArguments = std::max(row.operands.callee.argumentIndex(), row.operands.list->argumentIndex()) + 1;
     if (row.operands.newTarget)
         numberOfArguments = std::max(numberOfArguments, row.operands.newTarget->argumentIndex() + 1);
@@ -348,8 +323,6 @@ bool isCallForwardedInPlace(Walker& walker, const BodyValue& call)
     return findRowOfForwardedCall(walker, call).has_value();
 }
 
-// ---- A call that a program writes
-
 bool forwardCallOfBuiltin(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call || call.isDoneInPlace() || walker.isUnreachable())
@@ -372,14 +345,11 @@ bool forwardCallOfBuiltin(Walker& walker, const BodyValue& call)
     return buildForwardedCall(walker, call, written, *row);
 }
 
-// The call of the built-in and the call that its text makes become one call.
 static constexpr uint32_t closedOperationsOfForwardedCall = 2;
 
 static constexpr OpcodeSet argumentsObjectsOfForwardedCall { Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments };
 static constexpr OpcodeSet listsMadeAgainForForwardedCall = argumentsObjectsOfForwardedCall | OpcodeSet { Opcode::NewArray };
 
-// `return f.apply(this, arguments)`, `f.apply(t, [a, b])`: the forwarded call takes what the list holds and not the list, so the call as written alone needs the object.
-// Where the body names it nowhere else and nothing but this code has it, it is made where that call stands, and the sweep drops the one in front of the test.
 static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, const RowOfForwardedCall& row, Draft& asWritten)
 {
     if (!row.operands.list || row.operands.list->isReceiver())
@@ -398,7 +368,6 @@ static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, cons
     if (!user || user->kind != BodyUseKind::Operand || user->value != call.id() || timesNamedByCall != 1)
         return;
     Reference built = walker.referenceOf(object);
-    // A rest parameter is a list of the program's, which may have changed since the entry. The language has no name for the hidden list.
     bool isArgumentsObject = argumentsObjectsOfForwardedCall.contains(index.opcodeOf(object));
     std::optional<Vector<Reference, 8>> elements = isArgumentsObject ? std::nullopt : elementsOfFreshList(walker, built);
     if (isArgumentsObject ? !lengthOfFreshArguments(walker, built) || !listBehindParametersOfFreshArguments(walker, built, true) : !elements)
@@ -407,7 +376,6 @@ static void makeListForCallAsWritten(Walker& walker, const BodyValue& call, cons
     Draft again = walker.draftOf(index.value(object));
     again.standsForNoValueOfInput = true;
     again.inputValueGiven = { };
-    // `f.apply(t, [line, i])`, where `line` grows in a loop: the literal is not the operation being walked, so its operand is bound to the builder again, which may have grown. The list holds the string.
     if (elements)
         again.setElementsOperands(elements->span());
     walker.chooseConservativeFields(again);
@@ -447,7 +415,6 @@ bool forwardCallBehindTestOfCallee(Walker& walker, const BodyValue& call)
     TypeID expected = types.forBuiltin(builtin);
     if (!callee || !callee.isValue() || !receiver || !types.overlap(walker.typeOf(callee), expected))
         return false;
-    // The source writes the name, and the table declares what lies under it above every function.
     if (!shouldOpenGuess(walker, callee, expected, true, closedOperationsOfForwardedCall))
         return false;
     Draft written = walker.draftOf(call);
@@ -467,7 +434,6 @@ bool forwardCallBehindTestOfCallee(Walker& walker, const BodyValue& call)
     BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
     walker.branch(isExpected, forwarding, asWritten);
 
-    // Whoever Link lists for the call may be entered from either arm with whatever the call as written hands over.
     if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), call.id()))
         walker.arrivals().leaveAnything(listed);
 

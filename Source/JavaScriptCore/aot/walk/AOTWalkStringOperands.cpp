@@ -3,12 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Guesses at a call of a known built-in: ONE operand keeps the call from going by one row, so that operand is tested, and the call as written stands where the test fails.
-// What is tested for comes from the rows: it is no proof of anything, and behind the rejoin nothing is left of it. The arms are openGuess()'s, which knows what a suspension and a throw mean to a stretch.
-// Where the row takes the operand only as its class makes it they are those of AOTWalkStringOperandsAsMade.cpp, which looks at the cell too.
-// And what the rows, the library's own text and the kind of the callee let one expect of the result of a call: an expectation, which a test of a guess asks at each use.
-// Withheld (Guesses): the call enters the native code on any operands, and nothing is expected of a result of which nothing is written or held.
-
 #include "config.h"
 #include "AOTWalkStrings.h"
 
@@ -26,21 +20,17 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Closed, the call is 25 to 40 instructions in CallBoxedBuiltin against 8 to 12 by its row.
 static constexpr uint32_t weightOfCallByOneRowForStrings = 2;
-
-// ---- What an operand is tested for
 
 static bool convertsToIntegerForStringOperands(BuiltinConversion conversion)
 {
     return conversion == BuiltinConversion::ToIntegerOrInfinity || conversion == BuiltinConversion::ToInt32 || conversion == BuiltinConversion::ToUint32;
 }
 
-// An int32 where the rows convert to an integer, else the type that every row takes unconverted. Null: the rows do not agree, or none has code in line.
 static TypeID typeThatEveryRowTakesForStringOperands(Walker& walker, BuiltinID builtin, BuiltinOperand position)
 {
     const BuiltinTable& table = walker.program().builtins();
-    BuiltinTypeContext context { walker.program(), walker.types(), &walker.facts() };
+    BuiltinTypeContext context { walker.program(), walker.types() };
     TypeID taken;
     bool someRowHasCodeInLine = false;
     for (const BuiltinOverload& overload : table.overloadsOf(builtin)) {
@@ -58,8 +48,6 @@ static TypeID typeThatEveryRowTakesForStringOperands(Walker& walker, BuiltinID b
     return someRowHasCodeInLine ? taken : TypeID();
 }
 
-// `text.replace(pattern, "")` with `pattern: RegExp | null`: the rows refuse undefined and null there, and one takes what is left. Null: absence is an answer that some row takes.
-// What is left of what is proven, cut by what is expected: of a parameter that the guard passes by nothing is proven, and what is written of it says what it is where it is there. `expected` may be null.
 static TypeID presentTypeThatRowsTakeForStringOperands(Walker& walker, BuiltinID builtin, BuiltinOperand position, TypeID proven, TypeID expected)
 {
     TypeArena& types = walker.types();
@@ -70,7 +58,7 @@ static TypeID presentTypeThatRowsTakeForStringOperands(Walker& walker, BuiltinID
         return { };
 
     const BuiltinTable& table = walker.program().builtins();
-    BuiltinTypeContext context { walker.program(), types, &walker.facts() };
+    BuiltinTypeContext context { walker.program(), types };
     bool everyRowRefusesAbsence = true;
     bool someRowTakesPresence = false;
     for (const BuiltinOverload& overload : table.overloadsOf(builtin)) {
@@ -84,8 +72,6 @@ static TypeID presentTypeThatRowsTakeForStringOperands(Walker& walker, BuiltinID
     }
     return someRowTakesPresence && (everyRowRefusesAbsence || types.at(present).isObject()) ? present : TypeID();
 }
-
-// ---- The guess
 
 static bool openGuessAtOperandForStringOperands(Walker& walker, const BodyValue& call, BuiltinID builtin, ValueID operand, BuiltinOperand position)
 {
@@ -113,7 +99,6 @@ static bool openGuessAtOperandForStringOperands(Walker& walker, const BodyValue&
             return behindTest;
         return reference ? walker.typeOf(reference) : TypeID();
     };
-    // Asked ahead, nothing is seen of an object: a row that takes it only as its class makes it is not reached by its type.
     bool typeAloneDecides = wouldCallBuiltin(walker, call, TypesOfInputs(typeOfInput)) == BuiltinCallAskedAbout::ByOneRow;
     if (!typeAloneDecides && !goesByOneRowOnOperandAsMade(walker, call, builtin, value, behindTest))
         return false;
@@ -122,7 +107,6 @@ static bool openGuessAtOperandForStringOperands(Walker& walker, const BodyValue&
     BlockID inputBlock = index.blockOf(call.id());
     uint32_t place = call.id().index() - index.block(inputBlock).firstValue().index();
 
-    // Both arms come by here again. Where no test can be chosen the call is walked once more as it stands.
     NotesOfStrings& notes = notesOfStrings(walker);
     ValueID callBefore = std::exchange(notes.callWhoseOperandIsTested, call.id());
     size_t depthBefore = std::exchange(notes.depthOfCopiesAroundThatCall, walker.depthOfCopies());
@@ -163,9 +147,6 @@ bool openGuessAtOperandOfBuiltinCall(Walker& walker, const BodyValue& call)
     return false;
 }
 
-// ---- What is expected of a result
-
-// Whoever asks what is expected goes from a value to older ones alone, so the questions end.
 static TypeID typeProvenOrExpectedForStringOperands(Walker& walker, ValueID input, ValueID call)
 {
     Reference reference = walker.referenceOf(input);
@@ -176,7 +157,6 @@ static TypeID typeProvenOrExpectedForStringOperands(Walker& walker, ValueID inpu
     return !proven || walker.types().isSubset(expected, proven) ? expected : proven;
 }
 
-// The built-in that the call is proven or expected to enter, and what is expected of its receiver.
 static BuiltinID builtinExpectedToBeCalledForStringOperands(Walker& walker, const BodyValue& call)
 {
     TypeArena& types = walker.types();
@@ -209,7 +189,6 @@ TypeID typeExpectedOfResultOfCall(Walker& walker, const BodyValue& call)
     const Program& program = walker.program();
     const LinkTables& held = walker.facts().held();
 
-    // What `return` hands over in a coroutine is not what its caller gets: he gets what the ramp makes.
     if (FunctionID callee = held.calleeAt(walker.currentFunction(), call.id())) {
         if (opcode == Opcode::Call && program.at(callee).isCoroutine())
             return types.builtinClass(classHandedOutByRampForStringOperands(program.at(callee)));
@@ -233,13 +212,11 @@ TypeID typeExpectedOfResultOfCall(Walker& walker, const BodyValue& call)
             return { };
     }
 
-    // `x.slice(1).length`, x only expected to be a string: the rows, applied to what is expected of the operands.
-    BuiltinTypeContext context { program, types, &walker.facts(), nullptr, TypeLevel::Expected };
+    BuiltinTypeContext context { program, types, nullptr, TypeLevel::Expected };
     TypeID byRows = resultTypeOfReachableOverloads(context, builtin, mode, operands);
     if (byRows && byRows != TypeID(TypeTable::anything) && !isNeverType(byRows))
         return byRows;
 
-    // `Buffer.from(s).toJSON()`: what Link holds of the result of the library's own text.
     TypeID byLibrary;
     for (BuiltinOverloadID id : overloadsReachedBy(context, builtin, mode, operands)) {
         const RuntimeFunctionEntry* entry = table.at(id).libraryFunction() ? findRuntimeFunction(program, table.at(id).libraryFunction()) : nullptr;

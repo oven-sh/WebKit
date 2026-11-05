@@ -51,89 +51,13 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static OperandUses usesOfNamedOperandsInResultRules(Opcode opcode)
-{
-    OperandUses uses;
-    for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode); ++operandIndex)
-        uses.add(operandUsesOf(opcode, operandIndex));
-    return uses;
-}
-
-static UnknownSeed seedOfUnknownResultByRow(Opcode opcode)
-{
-    switch (raisesOf(opcode)) {
-    case ProgramEvent::EvaluatesText:
-    case ProgramEvent::LoadsModule:
-        return UnknownSeed::UnseenCode;
-    case ProgramEvent::None:
-        break;
+static_assert([] {
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (!static_cast<uint16_t>(seedOfUnknownResultByRowOf(opcode)))
+            return false;
     }
-
-    switch (effectRuleOf(opcode)) {
-    case EffectRule::Call:
-        return UnknownSeed::ResultOfUnknownCallee;
-    case EffectRule::Access:
-        return UnknownSeed::ContentsOfEscapedObject;
-    case EffectRule::Builtin:
-    case EffectRule::Inline:
-        return UnknownSeed::UndescribedNativeResult;
-    case EffectRule::Declared:
-    case EffectRule::Operator:
-        break;
-    }
-
-    switch (accessOf(opcode)) {
-    case Access::Read:
-        return UnknownSeed::ContentsOfEscapedObject;
-    case Access::None:
-    case Access::Store:
-    case Access::Define:
-    case Access::Has:
-        break;
-    }
-
-    switch (accessClassOf(opcode)) {
-    case AccessClass::DirectCall:
-    case AccessClass::IndirectCall:
-        return UnknownSeed::ResultOfUnknownCallee;
-    case AccessClass::Slot:
-    case AccessClass::ByName:
-        return UnknownSeed::ContentsOfEscapedObject;
-    case AccessClass::None:
-        break;
-    }
-
-    OperationFamily family = familyOf(opcode);
-    if (family == OperationFamily::Exception)
-        return UnknownSeed::CaughtException;
-    if (family == OperationFamily::Arguments)
-        return UnknownSeed::ParameterOfEscapedFunction;
-    if (family == OperationFamily::JSONParse)
-        return UnknownSeed::DataFromOutside;
-    if (family == OperationFamily::Binding || family == OperationFamily::Access)
-        return UnknownSeed::ContentsOfEscapedObject;
-
-    OperandUses uses = usesOfNamedOperandsInResultRules(opcode);
-    if (uses.contains(OperandUse::Calls))
-        return UnknownSeed::ResultOfUnknownCallee;
-    if (uses.contains(OperandUse::ReadsContents) || interpretedOf(opcode) == Interpretation::Read)
-        return UnknownSeed::ContentsOfEscapedObject;
-    return UnknownSeed::UndescribedNativeResult;
-}
-
-// It follows from the row alone, and nearly every rule asks for it. Zero: nobody has asked yet. Whoever fills a place writes what everybody else would.
-UnknownSeed seedOfUnknownResultOf(Opcode opcode)
-{
-    static_assert(sizeof(UnknownSeed) == sizeof(uint16_t));
-    static std::array<std::atomic<uint16_t>, numberOfOpcodes> seedsByOpcode;
-    std::atomic<uint16_t>& place = seedsByOpcode[static_cast<unsigned>(opcode)];
-    if (uint16_t known = place.load(std::memory_order_relaxed))
-        return static_cast<UnknownSeed>(known);
-    UnknownSeed seed = seedOfUnknownResultByRow(opcode);
-    RELEASE_ASSERT(static_cast<uint16_t>(seed));
-    place.store(static_cast<uint16_t>(seed), std::memory_order_relaxed);
-    return seed;
-}
+    return true;
+}());
 
 TypeID ResultRules::provenOrUnknown(TypeID type, UnknownSeed seed)
 {
@@ -147,7 +71,7 @@ TypeID ResultRules::provenOrUnknown(TypeID type, UnknownSeed seed)
 static constexpr OpcodeSet callsOfNamedFunctionInResultRules { Opcode::CallDirect, Opcode::CallTable };
 
 template<typename Operation>
-std::optional<uint32_t> numberOfResultsOf(const Program& program, const Operation& operation)
+std::optional<uint32_t> numberOfCountedResultsOf(const Program& program, const Operation& operation)
 {
     Opcode opcode = opcodeOf(operation);
     if (!opcodesThatMayHaveSeveralResults.contains(opcode))
@@ -168,7 +92,6 @@ std::optional<uint32_t> numberOfResultsOf(const Program& program, const Operatio
 template<typename Operation>
 static bool hasRuleForResultAt(const Program& program, const Operation& operation, uint32_t resultIndex)
 {
-    // How many results a direct call hands back is Plan's to say. The rule asks PositionTypes, which may know, and bounds the index itself.
     if (callsOfNamedFunctionInResultRules.contains(opcodeOf(operation)))
         return true;
     return resultIndex < numberOfResultsOf(program, operation).value_or(1);
@@ -181,7 +104,6 @@ static bool holdsNeverAmongOperandsOfRule(OperandTypes operands)
     });
 }
 
-// They have the schema's rule Cast and state no type: each throws for what it turns away, so what goes on is the rest of its operand.
 static constexpr OpcodeSet checksThatThrowInResultRules = checksThatHandOnOrThrow;
 static_assert(OperandIndex::CheckInitialized::value == OperandIndex::RequireObjectCoercible::value && OperandIndex::CheckInitialized::value == OperandIndex::RequireObject::value);
 
@@ -197,7 +119,6 @@ static TypeID resultTypeOfCheckThatThrows(TypeArena& types, Opcode check, TypeID
     return types.withOnlyObjects(checked);
 }
 
-// An access that tests its own guess is typed as its generic operation. Where that one's result is not unknown, the access has the same rule, which then answers for both sides.
 static_assert([] {
     for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
         Opcode access = static_cast<Opcode>(index);
@@ -208,8 +129,6 @@ static_assert([] {
     return true;
 }());
 
-// Every other opcode has one rule for both sides, which answers the same when it is asked again.
-// Of a result among several no column says whether it has two rules. Results lists none: each of its results is an operand.
 static constexpr OpcodeSet opcodesWithOtherResultRuleWhereUnproven = []() consteval {
     OpcodeSet opcodes;
     for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
@@ -226,8 +145,6 @@ static_assert(!opcodesWithOtherResultRuleWhereUnproven.contains(Opcode::GetModul
 static_assert(OperandIndex::GetArrayElement::array == OperandIndex::ElemGet::object && OperandIndex::GetArrayElement::position == OperandIndex::ElemGet::property);
 static_assert(OperandIndex::GetTypedArrayElement::view == OperandIndex::ElemGet::object && OperandIndex::GetTypedArrayElement::position == OperandIndex::ElemGet::property);
 
-// Both sides of a read that tests its own guess read one member of one receiver, so what the rule of the generic operation proves of these operands holds of what either side finds.
-// What the read itself names is only guessed: the layouts, the kind of storage. Null: nothing is proven.
 template<typename Operation>
 static TypeID tryProvenTypeOfReadThatTestsItsOwnGuess(const TypingContext& context, const Operation& read, Opcode generic, OperandTypes operands)
 {
@@ -237,6 +154,17 @@ static TypeID tryProvenTypeOfReadThatTestsItsOwnGuess(const TypingContext& conte
     return tryTypeOfElementRead(context, operands[OperandIndex::ElemGet::object], operands[OperandIndex::ElemGet::property]);
 }
 
+static constexpr OpcodeSet opcodesLookedAtInFrontOfResultRules = []() consteval {
+    OpcodeSet opcodes = checksThatThrowInResultRules | callsOfNamedFunctionInResultRules | opcodesWithCountedResults;
+    opcodes.add(Opcode::PropGet);
+    opcodes.add(Opcode::Call);
+    for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
+        if (genericOperationOf(static_cast<Opcode>(index)))
+            opcodes.add(static_cast<Opcode>(index));
+    }
+    return opcodes;
+}();
+
 template<typename Operation>
 TypeID resultTypeOf(const TypingContext& context, const Operation& operation, OperandTypes operands, ObjectID created, uint32_t resultIndex)
 {
@@ -244,29 +172,31 @@ TypeID resultTypeOf(const TypingContext& context, const Operation& operation, Op
         return TypeTable::never;
 
     Opcode opcode = opcodeOf(operation);
-    // `unknown` without a bound among what is read off or called: no cell, no layout and no row proves anything, so each rule below comes to the same end by a longer way.
-    if (context.level == TypeLevel::Proven && (opcode == Opcode::PropGet || opcode == Opcode::Call) && !resultIndex) {
-        static_assert(!OperandIndex::PropGet::object && !OperandIndex::Call::callee);
-        TypeID subject = operands[0];
-        bool looksAtSubject = opcode == Opcode::Call || !operation.isFreeName();
-        if (looksAtSubject && subject && !holdsOnlyPrimitives(subject)) {
-            Type type = context.at(subject);
-            if (type.hasUnboundedUnknown() && type.isJavaScriptValue()) {
-                TypeID applied = opcode == Opcode::Call ? context.positions.resultOfCallBeingTyped(context.level, 0) : TypeID();
-                return applied ? applied : context.types.anything(seedOfUnknownResultOf(opcode));
+    if (opcodesLookedAtInFrontOfResultRules.contains(opcode)) {
+        if (context.level == TypeLevel::Proven && (opcode == Opcode::PropGet || opcode == Opcode::Call) && !resultIndex) {
+            static_assert(!OperandIndex::PropGet::object && !OperandIndex::Call::callee);
+            TypeID subject = operands[0];
+            bool looksAtSubject = opcode == Opcode::Call || !operation.isFreeName();
+            if (looksAtSubject && subject && !holdsOnlyPrimitives(subject)) {
+                const Type& type = context.types.recordOf(subject);
+                if (type.hasUnboundedUnknown() && type.isJavaScriptValue()) {
+                    TypeID applied = opcode == Opcode::Call ? context.positions.resultOfCallBeingTyped(context.level, 0) : TypeID();
+                    return applied ? applied : context.types.anything(seedOfUnknownResultOf(opcode));
+                }
             }
         }
-    }
-    if (context.level == TypeLevel::Proven && testsItsOwnGuess(operation)) {
-        Opcode generic = *genericOperationOf(opcode);
-        if (resultRuleOf(generic) == ResultRule::Unknown) {
-            TypeID proven = tryProvenTypeOfReadThatTestsItsOwnGuess(context, operation, generic, operands);
-            return proven ? proven : context.types.anything(seedOfUnknownResultOf(generic));
+        if (context.level == TypeLevel::Proven && testsItsOwnGuess(operation)) {
+            Opcode generic = *genericOperationOf(opcode);
+            if (resultRuleOf(generic) == ResultRule::Unknown) {
+                TypeID proven = tryProvenTypeOfReadThatTestsItsOwnGuess(context, operation, generic, operands);
+                return proven ? proven : context.types.anything(seedOfUnknownResultOf(generic));
+            }
         }
-    }
-    if (checksThatThrowInResultRules.contains(opcode))
-        return resultTypeOfCheckThatThrows(context.types, opcode, operands[OperandIndex::CheckInitialized::value]);
-    if (!hasRuleForResultAt(context.program, operation, resultIndex))
+        if (checksThatThrowInResultRules.contains(opcode))
+            return resultTypeOfCheckThatThrows(context.types, opcode, operands[OperandIndex::CheckInitialized::value]);
+        if (!hasRuleForResultAt(context.program, operation, resultIndex))
+            return context.types.anything(seedOfUnknownResultOf(opcode));
+    } else if (resultIndex)
         return context.types.anything(seedOfUnknownResultOf(opcode));
 
     ResultRules rules { context, operands, created };
@@ -292,7 +222,6 @@ TypeID edgeResultTypeOf(const TypingContext& context, const Terminator& terminat
     return applyEdgeResultRule(rules, terminator, targetIndex, resultIndex, ResultSide::Unproven);
 }
 
-// What `return` hands over in a coroutine is not what its caller gets, and a constructor's caller gets the object where the result is none.
 static bool calleeHandsBackItsDeclaredResult(const Function& function)
 {
     if (!canBeCalledByValueOf(function.role) || function.isCoroutine() || function.results.size() != 1)
@@ -319,10 +248,8 @@ FunctionID onlyCalleeOf(const TypingContext& context, TypeID callee)
     if (!callee || holdsOnlyPrimitives(callee))
         return { };
     Type type = context.at(callee);
-    // Beside `unknown` no function is the only one.
     if (!type.isJavaScriptValue() || type.hasUnknown())
         return { };
-    // A call of what is no object throws.
     FunctionID only = singleFunctionOf(context.types, type.isObject() ? type : context.at(context.types.withOnlyObjects(callee)));
     if (!only || !calleeHandsBackItsDeclaredResult(context.program.at(only)))
         return { };
@@ -335,7 +262,6 @@ static bool mayLieAtOrBelowClassOfAllocation(const Program& program, LayoutID la
         if (layout == written)
             return true;
         const Layout& record = program.at(layout);
-        // A heritage that names neither a class of the program nor one of the engine may turn out to be any class.
         if (!record.base)
             return record.has(LayoutFlags::HasHeritage) && !record.writtenBuiltinBase;
         layout = record.base;
@@ -345,7 +271,6 @@ static bool mayLieAtOrBelowClassOfAllocation(const Program& program, LayoutID la
 
 LayoutSetID layoutsSelectedByNewTarget(const TypingContext& context, LayoutID written, TypeID newTarget)
 {
-    // That a class has the base it was written with is Facts' to prove, and the `prototype` of a plain function may be stored to. So the answer is a guess.
     if (context.level == TypeLevel::Proven)
         return { };
     if (!written || !newTarget || holdsOnlyPrimitives(newTarget))
@@ -376,8 +301,8 @@ template TypeID resultTypeOf<Draft>(const TypingContext&, const Draft&, OperandT
 template TypeID resultTypeOf<Operation>(const TypingContext&, const Operation&, OperandTypes, ObjectID, uint32_t);
 template TypeID edgeResultTypeOf<TerminatorDraft>(const TypingContext&, const TerminatorDraft&, OperandTypes, uint32_t, uint32_t);
 template TypeID edgeResultTypeOf<Terminator>(const TypingContext&, const Terminator&, OperandTypes, uint32_t, uint32_t);
-template std::optional<uint32_t> numberOfResultsOf<Draft>(const Program&, const Draft&);
-template std::optional<uint32_t> numberOfResultsOf<Operation>(const Program&, const Operation&);
+template std::optional<uint32_t> numberOfCountedResultsOf<Draft>(const Program&, const Draft&);
+template std::optional<uint32_t> numberOfCountedResultsOf<Operation>(const Program&, const Operation&);
 
 } } } // namespace JSC::AOT::Typed
 

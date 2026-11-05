@@ -18,13 +18,8 @@
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
-// No request goes to the builder between patch() and the last word of the setup: the next request seals the Patch.
-// No constant here is one that findPinnedConstant() knows: the tests run without an instance.
-// The wrapper of TestProcedure restores every register that the C convention wants kept, so a test that asks whether compiled code restores them has to look before it returns.
-
 namespace JSC { namespace AOT { namespace Machine {
 
-// Only behind a prepare() or compile() that went well.
 [[noreturn]] static void failFrameTest(const TestProcedure& test, const char* file, int line, const char* condition)
 {
     dataLogLn(test.printedProcedure(), test.printedAllocation(), test.printedFrame());
@@ -37,7 +32,6 @@ namespace JSC { namespace AOT { namespace Machine {
     } while (false)
 
 static constexpr int32_t bytesOfFrameTestWord = sizeof(uint64_t);
-// The frame pointer lies this far below the stack pointer of the entry: the record, less the return address where the call has pushed it.
 static constexpr int32_t bytesPushedByFrameTestSetup = isX86_64() ? bytesOfFrameTestWord : 2 * bytesOfFrameTestWord;
 
 static RegisterFile registerFileOfFrameTest(TestProcedure& test)
@@ -56,7 +50,6 @@ static unsigned numberOfFrameTestRegisters(RegisterMask mask)
     return static_cast<unsigned>(std::popcount(mask));
 }
 
-// The same whatever the traits.
 static unsigned numberOfCalleeSavedGPRsInFrameTests()
 {
     return numberOfFrameTestRegisters(registerFileFor(ProcedureTraits()).calleeSavedIn(Bank::GP));
@@ -70,7 +63,6 @@ static uint64_t sumOfFrameTestValues(uint64_t seed, unsigned count)
     return sum;
 }
 
-// The seed plus 1, 2 and so on. Nothing can compute one again, so each needs a place of its own while it is live.
 static Vector<Operation*> defineFrameTestValues(Output& out, Operation* seed, unsigned count)
 {
     Vector<Operation*> values;
@@ -103,7 +95,6 @@ static void emitFrameTestPoison(CCallHelpers& jit, RegisterMask registers)
     });
 }
 
-// Writes every register that no callee saves. The collector may run in it.
 static PatchOperation* appendFrameTestCall(TestProcedure& test)
 {
     RegisterMask clobbered = callerSavedRegistersOfFrameTest(test);
@@ -137,7 +128,6 @@ static PatchOperation* appendFrameTestMark(Output& out, FrameTestMark& mark, boo
     return patch;
 }
 
-// Zero where the stack pointer is aligned and lies as far below the frame pointer as the frame says.
 static PatchOperation* appendFrameTestProbe(Output& out)
 {
     PatchOperation* probe = out.patch(Int64);
@@ -164,7 +154,6 @@ struct FrameTestSetups {
     bool sizesAgree { true };
 };
 
-// A setup may write nothing more behind the check, and the range of the frame begins where the setup ends. The nop keeps the label ahead of it.
 static void noteFrameTestSetup(void* context, CCallHelpers& jit, const Frame& frame, const StackCheckSite& site)
 {
     FrameTestSetups& setups = *static_cast<FrameTestSetups*>(context);
@@ -199,14 +188,12 @@ static int32_t topOfFrameTestSlots(const Frame& frame)
     return frame.savesLieAtBottom() ? 0 : -bytesOfFrameTestWord * static_cast<int32_t>(roundUpToMultipleOf<2>(frame.numberOfCalleeSaves()));
 }
 
-// The words of a frame are counted down from the frame pointer, the first being 1.
 static bool frameTestWordHolds(unsigned location, intptr_t offsetFromFP, unsigned numberOfBytes)
 {
     intptr_t begin = -static_cast<intptr_t>(bytesOfFrameTestWord) * static_cast<intptr_t>(location);
     return offsetFromFP < begin + bytesOfFrameTestWord && offsetFromFP + static_cast<intptr_t>(numberOfBytes) > begin;
 }
 
-// The one form of a frame: the run of callee saves below the record, then what SlotAssignment lays out, then the outgoing words.
 static void checkFrameTestLayout(TestProcedure& test)
 {
     Procedure& proc = test.procedure();
@@ -254,7 +241,6 @@ static void checkFrameTestLayout(TestProcedure& test)
         addPlace(slot->offsetFromFP(), slot->byteSize(), slot->byteSize() >= 16 ? 16 : 8, slots.distanceOf(slot), 0, noPosition);
 }
 
-// Where the first argument is odd: a rare block with a call that comes back. Where its bit 1 is set: a rare block with a call that returns 1000. Else the sum of both arguments.
 struct FrameTestWithRareCalls {
     explicit FrameTestWithRareCalls(const ProcedureTraits& traits)
         : test(traits)
@@ -338,7 +324,6 @@ static void testMachineFrameCoversRareBlocksAlone()
     function.checkAnswers();
 }
 
-// A long function with two ways that return. The block that the first way seldom jumps into is small: on x86-64 it stands behind the Return of that way, within reach of a short jump, and not behind the second way.
 static void testMachineSmallColdBlockStandsNearItsJump(bool isRare)
 {
     constexpr unsigned numberOfSums = 40;
@@ -430,7 +415,6 @@ static void testMachineFrameIsSetUpAtEntryWhereTraitsAskForIt()
     }
 }
 
-// By Reg::index(): what each callee-saved register held at the entry. Then the frame pointer of the function, then the sum that it computed.
 static constexpr unsigned framePointerInFrameTestRecord = 64;
 static constexpr unsigned sumInFrameTestRecord = 65;
 using FrameTestRecord = std::array<uint64_t, 66>;
@@ -451,7 +435,6 @@ static unsigned runFrameTestOfCalleeSaves(unsigned numberOfIntegers, unsigned nu
     Operation* argumentWithRecord = test.argumentGPR(1);
     Operation* seedOfNumbers = test.argumentFPR(0);
 
-    // Nothing that is defined ahead of it lives across a call, so no callee-saved register has been written yet.
     PatchOperation* atEntry = out.patch(Void);
     atEntry->appendSomeRegister(argumentWithRecord);
     atEntry->setGenerator([calleeSaved](CCallHelpers& jit, const PatchParameters& params) {
@@ -477,7 +460,6 @@ static unsigned runFrameTestOfCalleeSaves(unsigned numberOfIntegers, unsigned nu
     Operation* sum = out.add(addUpFrameTestValues(out, out.int64Zero, integers.span()), out.bitCast(sumOfNumbers, Int64));
     out.store64(sum, out.address(test.heaps().argumentBuffer, record, sumInFrameTestRecord * sizeof(uint64_t)));
 
-    // Returns zero where the save area holds what the registers held at the entry, and the teardown puts all of it back.
     PatchOperation* leave = out.patch(Void);
     leave->append(record, ValueRep::reg(GPRInfo::argumentGPR1));
     leave->effects.terminal = true;
@@ -554,16 +536,13 @@ static RegisterMask registersLostAtFrameTestSuspension(TestProcedure& test)
     return lost;
 }
 
-// Stands for what an earlier call has left where the frame comes to lie.
 static constexpr uint64_t leftoverInFrameTest = 0x1ef701ef701ef701ull;
 
-// A saved frame holds whole pairs of words: SavedFrame::numberOfWordsSkippedFor() leaves it the word below a kept part with an odd number of words.
 static unsigned lowestFrameTestWordKept(const Frame& frame)
 {
     return frame.bytesBelowFrameRecord() / bytesOfFrameTestWord - SavedFrame::numberOfWordsSkippedFor(frame.bytesDeadAtSuspensions() / bytesOfFrameTestWord);
 }
 
-// The words of a saved frame that the back end keeps free of leftovers. Every resumption writes the callee saves anew, and the StackSlots are the emitters'.
 static bool isFrameTestWordKeptClean(const Procedure& proc, unsigned location)
 {
     const Frame& frame = proc.frame();
@@ -576,7 +555,6 @@ static bool isFrameTestWordKeptClean(const Procedure& proc, unsigned location)
     return true;
 }
 
-// Fills those words. Nothing has been stored to the frame where it stands. What the setup has cleared stays cleared.
 static PatchOperation* appendFrameTestLeftovers(Output& out)
 {
     PatchOperation* patch = out.patch(Void);
@@ -598,7 +576,6 @@ static PatchOperation* appendFrameTestLeftovers(Output& out)
     return patch;
 }
 
-// Adds to `count` how many of those words hold the leftover. Writes the other two registers.
 static void emitFrameTestCountOfLeftovers(CCallHelpers& jit, const Procedure& proc, uint64_t leftover, GPRReg count, GPRReg word, GPRReg pattern)
 {
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(leftover)), pattern);
@@ -612,7 +589,6 @@ static void emitFrameTestCountOfLeftovers(CCallHelpers& jit, const Procedure& pr
     }
 }
 
-// By a store in front of the suspension, or by whoever suspends the function there for the first time.
 static bool isFrameTestWordClearedAt(const Frame& frame, const PatchOperation* suspension, unsigned location)
 {
     unsigned lowestWordKept = lowestFrameTestWordKept(frame);
@@ -630,16 +606,11 @@ static unsigned numberOfFrameTestWordsClearedInFrontOf(const PatchOperation* sus
 }
 
 enum class FrameTestSuspension : uint8_t {
-    // The function goes on without being suspended, as at an await whose value is there already. The frame stays as it is.
     GoesOn,
-    // Nobody has suspended the function before. It clears what emitAllocateSavedFrame() clears.
-    // The two words behind the one that `sumOfRoots` points at get the number of leftovers that the saved frame keeps, and the number that were there before it cleared anything.
     IsFirst,
     IsLater,
 };
 
-// Stands for a suspension and the resumption behind it: whatever a saved frame does not keep comes back as poison.
-// Then it adds each root, read from the place that the Patch is told, to the word that `sumOfRoots` points at, which is a root as well.
 static PatchOperation* appendFrameTestSuspension(TestProcedure& test, Operation* sumOfRoots, std::span<Operation* const> roots, FrameTestSuspension kind = FrameTestSuspension::IsLater, uint64_t leftover = leftoverInFrameTest)
 {
     RegisterMask lost = registersLostAtFrameTestSuspension(test);
@@ -715,7 +686,6 @@ static void checkFrameTestSavesOfSavedFrame(TestProcedure& test)
     AOT_FRAME_TEST_CHECK(test, !file.calleeSavedIn(Bank::FP) && !(saves & ~file.calleeSavedIn(Bank::GP)));
     AOT_FRAME_TEST_CHECK(test, maskOf(frame.calleeSavesClobberedAtSuspensions()) == (saves & file.calleeSavedClobberedAtSuspensions));
 #if CPU(ARM64)
-    // emitMoveRegistersSavedInFrame() counts pairs from the end of the list.
     RegisterMask shortestRun = 0;
     for (size_t index = suspensionClobberedGPRs.size(); (used & ~shortestRun) && index; index -= 2)
         shortestRun |= maskOf(Reg(suspensionClobberedGPRs[index - 1])) | maskOf(Reg(suspensionClobberedGPRs[index - 2]));
@@ -748,12 +718,9 @@ static void checkFrameTestPartsOfSavedFrame(TestProcedure& test)
         else
             AOT_FRAME_TEST_CHECK(test, slot->offsetFromFP() >= bottomOfKeptPart);
     }
-    // A call that returns ahead of its first suspension pays nothing for the words that suspensions keep.
     AOT_FRAME_TEST_CHECK(test, frame.beginOfWordsClearedAtSetup() == frame.endOfWordsClearedAtSetup() && !test.printedFrame().contains("wordsClearedAtSetup"_s));
 }
 
-// Answers how many words of the part that suspensions keep are listed as dead, over all suspensions.
-// The range of `valueNotDefinedOnEveryPath` may reach over a suspension at which the value is not defined. Its word may be cleared there.
 static unsigned checkFrameTestDeadWords(TestProcedure& test, const Operation* valueNotDefinedOnEveryPath = nullptr)
 {
     Procedure& proc = test.procedure();
@@ -767,7 +734,6 @@ static unsigned checkFrameTestDeadWords(TestProcedure& test, const Operation* va
     std::span<PatchOperation* const> suspensions = proc.allocation().suspensions();
     for (uint32_t indexOfSuspension = 0; indexOfSuspension < suspensions.size(); ++indexOfSuspension) {
         const PatchOperation* suspension = suspensions[indexOfSuspension];
-        // A range goes by the order. Whether a path leads on from the suspension to a read is for the run to show: what a suspension does not hold comes back as poison.
         const BitSpan& spillsHeld = proc.allocation().spillsHeldAt(indexOfSuspension);
         const std::optional<BitSpan>& deadWords = suspension->frameWordsDeadAcrossSuspension();
         Position early = proc.order().earlyPositionOf(suspension);
@@ -801,7 +767,6 @@ static unsigned checkFrameTestDeadWords(TestProcedure& test, const Operation* va
             }
             AOT_FRAME_TEST_CHECK(test, !isHeld || !deadWords->get(location));
             AOT_FRAME_TEST_CHECK(test, mayBeHeld || deadWords->get(location));
-            // What the suspension defines is written behind it, so its word may be cleared.
             AOT_FRAME_TEST_CHECK(test, !isHeldInFront || !isCleared(location));
             numberOfDeadWords += deadWords->get(location);
         }
@@ -809,13 +774,11 @@ static unsigned checkFrameTestDeadWords(TestProcedure& test, const Operation* va
     return numberOfDeadWords;
 }
 
-// More values live across the second suspension than places have become free by then, so some of their words are new: at the first suspension nothing has stored to those.
 static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, unsigned numberAcrossSecond, bool firstSuspensionGoesOn)
 {
     constexpr uint64_t a = 5000;
     constexpr unsigned numberAcrossBoth = 2;
     constexpr unsigned numberAcrossFirst = 4;
-    // Beside those four, a root that dies at the first suspension and a sum that is read behind it.
     constexpr unsigned mostPlacesFreeBehindFirst = numberAcrossFirst + 2;
     AOT_TEST_CHECK(numberAcrossSecond > mostPlacesFreeBehindFirst);
     ProcedureTraits traits;
@@ -829,7 +792,6 @@ static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, u
     StackSlot* deadSlot = proc.addStackSlot(sizeof(uint64_t));
     deadSlot->setIsDeadAtSuspensions(true);
 
-    // Neither argument lives across anything, so nothing has been stored to the frame where its words are filled.
     Operation* seed = test.argumentGPR(0);
     Operation* argumentWithSums = test.argumentGPR(1);
     appendFrameTestLeftovers(out);
@@ -870,7 +832,6 @@ static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, u
     checkFrameTestPartsOfSavedFrame(test);
     AOT_FRAME_TEST_CHECK(test, checkFrameTestDeadWords(test));
 
-    // The new words lie at the bottom, so a number names them as far as it reaches. Stores clear the others.
     unsigned fewestNewWords = numberAcrossSecond - mostPlacesFreeBehindFirst;
     unsigned numberOfWordsToClear = first->numberOfFrameWordsToClearAtFirstSuspension();
     AOT_FRAME_TEST_CHECK(test, numberOfWordsToClear >= std::min<unsigned>(fewestNewWords, SavedFrame::maxClearedWords));
@@ -891,7 +852,6 @@ static void runFrameTestOfFunctionThatSavesItsFrame(unsigned numberAcrossCall, u
     std::array<uint64_t, 3> words { 0, poison, poison };
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data()) == a + 7 + livingToTheEnd);
     AOT_FRAME_TEST_CHECK(test, words[0] == expectedSumOfRoots && !words[1]);
-    // Where the first suspension is the first to suspend the function, it finds the new words as the earlier call left them.
     AOT_FRAME_TEST_CHECK(test, firstSuspensionGoesOn || words[2] >= std::min<unsigned>(fewestNewWords, SavedFrame::maxClearedWords) - 1);
 }
 
@@ -905,7 +865,6 @@ static void testMachineFrameOfFunctionThatSavesItsFrame()
     }
 }
 
-// The arm stores to words that the way around it leaves as the earlier call left them. The suspension behind the join keeps them either way.
 static void runFrameTestOfWordsStoredOnOnePath(bool takesArm)
 {
     constexpr uint64_t a = 7000;
@@ -954,8 +913,6 @@ static void testMachineFrameClearsWordsStoredOnOnePath()
     runFrameTestOfWordsStoredOnOnePath(true);
 }
 
-// In the order of allocation the shared block may stand between the definition of the value and its last read, though no path leads from the one through it to the other.
-// The range of the value then reaches over the suspension there, which a path gets to without the store. Nothing reads the value from there on, so its word is cleared like one that nothing holds.
 static void testMachineFrameKeepsNoLeftoverInWordHeldByRangeAlone()
 {
     constexpr uint64_t a = 9000;
@@ -999,15 +956,12 @@ static void testMachineFrameKeepsNoLeftoverInWordHeldByRangeAlone()
     AOT_FRAME_TEST_CHECK(test, !isFrameTestWordClearedAt(frame, suspensionInReading, location));
     AOT_FRAME_TEST_CHECK(test, !rangeReachesOverShared || isFrameTestWordClearedAt(frame, suspensionInShared, location));
 
-    // The first run leaves the value where the frame of the second one comes to lie.
     std::array<uint64_t, 3> words { 0, poison, poison };
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 3 }) == a + 1 && words[0] == a + 1);
     words = { 0, poison, poison };
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 0 }) == a && !words[0] && !words[1]);
 }
 
-// The block that reads the value stands behind the block with the suspension, as a landing pad stands behind every block that leads to it. So the range of the value reaches over the suspension.
-// Every path to the suspension has stored the value, and none leads on from it to the read. A suspension that kept the word would put the value back on the stack with every resumption.
 static void testMachineFrameKeepsNoSpillThatNoPathReadsBehindSuspension()
 {
     constexpr uint64_t a = 13000;
@@ -1049,7 +1003,6 @@ static void testMachineFrameKeepsNoSpillThatNoPathReadsBehindSuspension()
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 0 }) == a && !words[0]);
 }
 
-// More spills than a word of a set has bits. The block of the suspension names none of them. Those that are read behind the join are live through it. Those that the other way alone reads are not.
 static void testMachineFrameKeepsManySpillsThatLiveThroughBlockOfSuspension()
 {
     constexpr uint64_t a = 17000;
@@ -1098,8 +1051,6 @@ static void testMachineFrameKeepsManySpillsThatLiveThroughBlockOfSuspension()
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), uint64_t { 1 }) == sumOfFrameTestValues(a, numberOfEach) + sumOfFrameTestValues(a + 1000, numberOfEach));
 }
 
-// More spills than a word of a set has bits, defined in front of a loop. The block with the suspension reads every second one and names none of the others, which are read behind the loop.
-// So the block is left by its head for the ones that it reads, and then the edge that leads back brings it the others.
 static void testMachineFrameKeepsManySpillsThatLiveRoundLoopWithSuspension()
 {
     constexpr uint64_t a = 19000;
@@ -1151,7 +1102,6 @@ static void testMachineFrameKeepsManySpillsThatLiveRoundLoopWithSuspension()
     checkFrameTestLayout(test);
     checkFrameTestDeadWords(test);
     AOT_FRAME_TEST_CHECK(test, allocation.spills().size() > 128);
-    // The suspension poisons every register that it loses and every word that it does not keep, so a value that is not kept shows in the sum.
     constexpr uint64_t sumOfWhatLoopReads = numberOfEach * a + numberOfEach * numberOfEach;
     constexpr uint64_t sumOfWhatIsReadBehindLoop = numberOfEach * a + numberOfEach * (numberOfEach + 1);
     for (uint64_t numberOfRounds : { 0, 1, 3 }) {
@@ -1159,7 +1109,6 @@ static void testMachineFrameKeepsManySpillsThatLiveRoundLoopWithSuspension()
         AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(a, words.data(), numberOfRounds) == sumOfFrameTestValues(a + 1000, numberOfEach) + numberOfRounds * sumOfWhatLoopReads + sumOfWhatIsReadBehindLoop);
     }
 
-    // A suspension leaves one register as it is. The value that goes round the loop in it has no spill, or one that is written behind the loop.
     unsigned numberKeptOutsideSpills = 0;
     for (const Vector<Operation*>& values : { readInLoop, readBehindLoop }) {
         for (Operation* value : values) {
@@ -1173,7 +1122,6 @@ static void testMachineFrameKeepsManySpillsThatLiveRoundLoopWithSuspension()
         AOT_FRAME_TEST_CHECK(test, !allocation.isSpilled(value) || !allocation.spillsHeldAt(0).get(allocation.spillOf(value)));
 }
 
-// On x86-64.
 static bool oneByteReachesFrameTestSpill(TestProcedure& test, const Operation* value)
 {
     const Frame& frame = test.procedure().frame();
@@ -1181,11 +1129,6 @@ static bool oneByteReachesFrameTestSpill(TestProcedure& test, const Operation* v
     return isRepresentableAs<int8_t>(static_cast<int64_t>(address.offset));
 }
 
-// A frame that is saved, each part of it larger than one byte of offset reaches.
-//  - Three instructions name a StackSlot of twenty words that suspensions keep and that was made first. It gives way to the words that more instructions name, and what it holds is read back behind both suspensions.
-//  - A StackSlot of two words that no suspension keeps is named in front of and behind each of twelve calls, so the stack pointer reaches it.
-//  - One of four half words that suspensions keep is read behind each of twelve calls. The one that shares its word goes with it.
-//  - The later half of the values that suspensions keep is read once more than the earlier half. Those out of reach still lie in the order in which they were spilled.
 static void testMachineFrameThatIsSavedMovesStackSlotsAndHalfWordsWhole()
 {
     constexpr uint64_t a = 31000;
@@ -1289,8 +1232,6 @@ static void testMachineFrameThatIsSavedMovesStackSlotsAndHalfWordsWhole()
     AOT_FRAME_TEST_CHECK(test, words[0] == 2 * (sumOfKept + sumOfHalfWords) && !words[1]);
 }
 
-// An immediate in the code of a suspension holds the index of the word of one operand. That operand is defined last and read least, so by the order of the spills and by its readers alike it would lie far down.
-// More instructions name the StackSlot than any word, so it lies in reach of the frame pointer, and the operand still comes first.
 static void testMachineFrameWordThatSuspensionNamesByNumberComesFirst()
 {
     constexpr uint64_t a = 29000;
@@ -1309,7 +1250,6 @@ static void testMachineFrameWordThatSuspensionNamesByNumberComesFirst()
     Vector<Operation*> roots = defineFrameTestValues(out, seed, numberOfOthers);
     Operation* named = out.opaque(out.add(seed, 500));
     roots.append(named);
-    // The first operand is `sums`.
     constexpr unsigned childThatIsNamed = numberOfOthers + 1;
     PatchOperation* suspension = appendFrameTestSuspension(test, sums, roots.span());
     suspension->setOperandEncodedAsFrameWordIndex(childThatIsNamed);
@@ -1344,8 +1284,6 @@ static void testMachineFrameWordThatSuspensionNamesByNumberComesFirst()
     AOT_FRAME_TEST_CHECK(test, words[0] == sumOfOthers + a + 500);
 }
 
-// A root from outside a rare region that dies at the suspension there is saved in the region, wherever it loses its register. No position says that every path has written its place,
-// so the word can be neither relied on nor cleared at the suspension.
 static void testMachineFrameClearsAtSetupWordsThatSavesWrite()
 {
     constexpr uint64_t a = 11000;
@@ -1360,7 +1298,6 @@ static void testMachineFrameClearsAtSetupWordsThatSavesWrite()
     appendFrameTestLeftovers(out);
     Operation* value = out.opaque(out.add(argumentWithSeed, 1));
     Operation* sums = out.opaque(argumentWithSums);
-    // Both are read outside the region too, so neither sinks into it.
     out.store64(value, out.address(test.heaps().argumentBuffer, sums, 3 * sizeof(uint64_t)));
     Block* rare = out.newBlock();
     Block* end = out.newBlock();
@@ -1430,7 +1367,6 @@ static bool frameTestReferenceGetsPointer(FrameTestReference kind)
         reference = out.opaque(out.castToInt32(argument));
     if (kind != FrameTestReference::IsNotMarked)
         reference->markAsNarrowReference();
-    // A copy, an extension, a shift or a sum still names the cell, and the reference lives as long as it does. One bit of it names nothing.
     Operation* returned = kind == FrameTestReference::DiesAheadOfSafepoint ? out.opaque(out.bitAnd(reference, 1)) : reference;
     PatchOperation* call = appendFrameTestCall(test);
     call->effects.mayCollect = kind != FrameTestReference::LivesAcrossPatchThatCannotCollect;
@@ -1451,7 +1387,6 @@ static void testMachineFrameKeepsPointerOnlyWhereCollectorNeedsIt()
     AOT_TEST_CHECK(!frameTestReferenceGetsPointer(FrameTestReference::IsNotMarked));
 }
 
-// The sum sinks to the head of a rare block, ahead of a safepoint there, and takes in its shift and its extension. The rules of the collector come to it behind that.
 static void testMachineFrameSunkSumOfNarrowReferenceLivesAcrossSafepoint()
 {
     constexpr uint32_t word = 0x80000100u;
@@ -1491,7 +1426,6 @@ static void testMachineFrameSunkSumOfNarrowReferenceLivesAcrossSafepoint()
     }
 }
 
-// The owner is read for the last time ahead of the call. What it owns is read behind it.
 static void runFrameTestOfPointerIntoStorage(bool heapHoldsInnerPointer)
 {
     std::array<uint64_t, 3> elements { 11, 22, 33 };
@@ -1539,7 +1473,6 @@ enum class FrameTestAddressCarrier : uint8_t {
     HeadOfLoop,
 };
 
-// None of the carriers is a sum, and each has a range of its own.
 static std::optional<FailureKind> failureOfFrameTestWithCarriedAddress(FrameTestAddressCarrier carrier, bool isReadBehindSuspension)
 {
     ProcedureTraits traits;
@@ -1574,7 +1507,6 @@ static std::optional<FailureKind> failureOfFrameTestWithCarriedAddress(FrameTest
         break;
     }
     case FrameTestAddressCarrier::HeadOfLoop: {
-        // The back edge alone brings the address, and it stands behind the head in the order.
         Block* head = out.newBlock();
         Block* body = out.newBlock();
         Block* end = out.newBlock();
@@ -1620,7 +1552,6 @@ static void testMachineFrameAddressCarriedAcrossSuspensionIsRefused()
     AOT_TEST_CHECK(!failureOfFrameTestWithCarriedAddress(FrameTestAddressCarrier::HeadOfLoop, false));
 }
 
-// A saved frame is visited by its map, which lists the roots. The pointer beside a reference keeps the cell alive only while the frame is on the stack.
 static void runFrameTestOfNarrowReferenceAcrossSuspension(bool isListedAsRoot)
 {
     constexpr uint64_t word = (uint64_t { 7 } << 32) + 0x80000100u;
@@ -1690,7 +1621,6 @@ static void testMachineFrameKeepsStackPointerAligned()
     }
 }
 
-// The probe stands behind the setup, so it finds a stack pointer that was moved once, on whichever side of the check.
 static void runFrameTestOfStackCheck(unsigned bytesOfSlot, bool isAllocatedAheadOfCheck)
 {
     constexpr uint64_t a = 1200;
@@ -1728,7 +1658,6 @@ static void noteAndCountFrameTestSetup(void* context, CCallHelpers& jit, const F
 {
     FrameTestSetupsThatCount& counted = *static_cast<FrameTestSetupsThatCount*>(context);
     noteFrameTestSetup(&counted.setups, jit, frame, site);
-    // Every register but the scratch registers may hold a value here.
     constexpr GPRReg address = GPRInfo::argumentGPR0;
     constexpr GPRReg count = GPRInfo::argumentGPR1;
     jit.pushToSave(address);
@@ -1741,8 +1670,6 @@ static void noteAndCountFrameTestSetup(void* context, CCallHelpers& jit, const F
     jit.popToRestore(address);
 }
 
-// Two parts call, each behind a test that needs no frame, and the way past both returns at once: each part sets the frame up at its own head. Each has a rare way out behind its call, and the two meet in one rare block,
-// which stands below the head of neither.
 static void runFrameTestOfRareBlockSharedByTwoFramedParts(bool sharedBlockReads, bool sharedBlockGoesOnWithoutFrame = false)
 {
     TestProcedure test;
@@ -1762,7 +1689,6 @@ static void runFrameTestOfRareBlockSharedByTwoFramedParts(bool sharedBlockReads,
         out.branch(out.testNonZero64(a, 4), rareEdge(arm), normalEdge(goesOn));
         out.appendTo(goesOn);
         out.ret(out.add(out.add(a, b), 10 + part));
-        // The arm calls too, so its rare region needs the frame.
         out.appendTo(arm);
         appendFrameTestCall(test);
         out.branch(out.testNonZero64(a, 8), normalEdge(leaves), normalEdge(shared));
@@ -1786,7 +1712,6 @@ static void runFrameTestOfRareBlockSharedByTwoFramedParts(bool sharedBlockReads,
     const Procedure& proc = test.procedure();
     const Allocation& allocation = proc.allocation();
     AOT_FRAME_TEST_CHECK(test, sharedBlockGoesOnWithoutFrame || (allocation.headsOfFramedPart().size() == 2 && allocation.usedCalleeSaves() && proc.order().of(shared).isRare() && !allocation.isInFramedPart(shared)));
-    // Its rare region needs the frame, so it runs in the frame that whichever part has set up, and sets none up.
     AOT_FRAME_TEST_CHECK(test, sharedBlockGoesOnWithoutFrame || (proc.frame().coverage() == FrameCoverage::FramedPart && proc.frame().holdsStepsOf(shared) && !proc.frame().isSetUpAtHeadOf(shared)));
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0 }, uint64_t { 7 }) == 7 + 1000);
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 1 }, uint64_t { 7 }) == 1 + 7 + 10);
@@ -1806,7 +1731,68 @@ static void runFrameTestOfRareBlockSharedByTwoFramedParts(bool sharedBlockReads,
 
 static void testMachineFrameRareBlockSharedByTwoFramedPartsReadsWhatLivesAcrossTheirCalls() { runFrameTestOfRareBlockSharedByTwoFramedParts(true); }
 
-// An odd first argument returns the second at once. Otherwise a loop calls once for every two of the first argument.
+static void testMachineFrameRareBlockThatWaysOutOfTwoFramedPartsEnterReadsWhatLivesAcrossTheirCalls()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    uint64_t noted = 0;
+    uint64_t notedOnOtherWay = 0;
+    Operation* a = test.argumentGPR(0);
+    Operation* b = test.argumentGPR(1);
+    Block* shared = out.newBlock();
+    Block* first = out.newBlock();
+    Block* rareJoin = out.newBlock();
+    Block* begin = out.newBlock();
+    auto appendReader = [&](Operation* value, uint64_t* place) {
+        PatchOperation* reader = out.patch(Void);
+        reader->effects = Effects::none();
+        reader->effects.writesLocalState = true;
+        reader->setRunsWithoutFrame(true);
+        reader->appendSomeRegister(value);
+        reader->setGenerator([place](CCallHelpers& jit, const PatchParameters& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg address = jit.scratchRegister();
+            jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(place)), address);
+            jit.store64(params[0].gpr(), CCallHelpers::Address(address));
+        });
+    };
+    out.branch(out.testNonZero64(a, 16), rareEdge(first), normalEdge(begin));
+    out.appendTo(begin);
+    for (unsigned part = 0; part < 2; ++part) {
+        Block* calls = out.newBlock();
+        Block* goesOn = out.newBlock();
+        Block* past = out.newBlock();
+        out.branch(out.testNonZero64(a, uint64_t { 1 } << part), normalEdge(calls), normalEdge(past));
+        out.appendTo(calls);
+        appendFrameTestCall(test);
+        out.branch(out.testNonZero64(a, 4), rareEdge(shared), normalEdge(goesOn));
+        out.appendTo(goesOn);
+        out.ret(out.add(out.add(a, b), 10 + part));
+        out.appendTo(past);
+    }
+    out.ret(out.add(out.add(a, b), 1000));
+    out.appendTo(first);
+    appendReader(b, &notedOnOtherWay);
+    out.jump(normalEdge(rareJoin));
+    out.appendTo(shared);
+    appendReader(out.add(a, b), &noted);
+    out.jump(normalEdge(rareJoin));
+    out.appendTo(rareJoin);
+    out.ret(out.constInt64(7));
+    compileOrFail(test);
+
+    const Procedure& proc = test.procedure();
+    const Order& order = proc.order();
+    AOT_FRAME_TEST_CHECK(test, order.of(shared).isRare() && order.of(shared).entersRareRegion && order.of(shared).rareRegion == order.of(first).rareRegion && order.headOf(first) < order.headOf(shared));
+    AOT_FRAME_TEST_CHECK(test, proc.allocation().headsOfFramedPart().size() == 2 && proc.allocation().usedCalleeSaves());
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 5 }, uint64_t { 7 }) == 7 && noted == 12);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 6 }, uint64_t { 8 }) == 7 && noted == 14);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 16 }, uint64_t { 9 }) == 7 && noted == 14 && notedOnOtherWay == 9);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 1 }, uint64_t { 7 }) == 1 + 7 + 10);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 2 }, uint64_t { 7 }) == 2 + 7 + 11);
+    AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 0 }, uint64_t { 7 }) == 7 + 1000);
+}
+
 static void testMachineFrameIsSetUpAheadOfLoopThatNeedsIt()
 {
     TestProcedure test;
@@ -1851,8 +1837,6 @@ static void testMachineFrameIsSetUpAheadOfLoopThatNeedsIt()
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 6 }, uint64_t { 100 }) == 112 && setups.numberRun == 1);
 }
 
-// A setup may stop the function for lack of stack. Whoever catches that must not find half of the function done.
-// `largestFrameSetUpWithoutStackCheck`: a setup of such a frame stops nothing, and the store may stand ahead of it.
 static void runFrameTestOfStoreBesideGuard(bool storeStandsAheadOfGuard, unsigned largestFrameSetUpWithoutStackCheck = 0)
 {
     TestProcedure test;
@@ -1893,7 +1877,6 @@ static void testMachineFrameIsSetUpAheadOfWhateverWritesOnWayToIt()
     runFrameTestOfStoreBesideGuard(false);
     runFrameTestOfStoreBesideGuard(true, 240);
     runFrameTestOfStoreBesideGuard(false, 240);
-    // The frame comes out larger than what goes untested, so it is set up at the entry after all.
     runFrameTestOfStoreBesideGuard(true, 8);
 }
 
@@ -1913,7 +1896,6 @@ static void buildFrameTestWithValuesDefinedAheadOfGuard(TestProcedure& test, uns
     out.ret(out.add(addUpFrameTestValues(out, out.int64Zero, values.span()), out.bitCast(number, Int64)));
 }
 
-// More values than callees save are defined ahead of the guard and read behind the call. None is stored on the way that returns at once.
 static void testMachineFrameStoresAtHeadWhatIsDefinedAheadOfIt()
 {
     constexpr uint64_t b = 5000;
@@ -1948,8 +1930,6 @@ static void testMachineFrameStoresAtHeadWhatIsDefinedAheadOfIt()
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 2 }, b, x) == sumOfFrameTestValues(b, count) + std::bit_cast<uint64_t>(x + 1.5));
 }
 
-// The first argument is a narrow reference, made ahead of the guard and read behind a safepoint. An odd one returns at once.
-// `passesRareSafepoint`: ahead of the guard a rare block that comes back may collect as well, where bit 1 is set.
 static void runFrameTestOfNarrowReferenceAheadOfGuard(bool passesRareSafepoint)
 {
     TestProcedure test;
@@ -2018,7 +1998,6 @@ static void runFrameTestOfNarrowReferenceAheadOfGuard(bool passesRareSafepoint)
 static void testMachineFrameKeepsPointerAtHeadOfFramedPart() { runFrameTestOfNarrowReferenceAheadOfGuard(false); }
 static void testMachineFrameKeepsPointerAtDefinitionForSafepointAheadOfFramedPart() { runFrameTestOfNarrowReferenceAheadOfGuard(true); }
 
-// No call anywhere. One arm holds more values at one place than there are registers that no caller counts on: it is framed by itself, and the way around it runs in the frame of the caller.
 static void testMachineFrameIsSetUpForArmThatRunsOutOfRegisters()
 {
     constexpr uint64_t word = 0x1000;
@@ -2051,8 +2030,6 @@ static void testMachineFrameIsSetUpForArmThatRunsOutOfRegisters()
     AOT_FRAME_TEST_CHECK(test, test.call<uint64_t>(word) == expected);
 }
 
-// A value that the head of the framed part stores has lost its register ahead of a rare region. Each of two siblings in the region loads it, saves it around a call and reads it again:
-// the one that the walk comes to second comes in without the save of the first. `pressure`: how many more values are alive where the region is entered.
 static void runFrameTestOfSiblingsInRareRegion(unsigned pressure, bool& valueCameInWithoutRegister)
 {
     TestProcedure test;
@@ -2114,8 +2091,6 @@ static void testMachineFrameBlockOfRareRegionDoesNotReadWhatItsSiblingSaved()
     AOT_TEST_CHECK(valueCameInWithoutRegister);
 }
 
-// `if (a & 1) call(); if (a & 2) call(); [call();] return a + b`: a way leads from the first part that calls to the second. Where the way past both calls nothing, each part has its head.
-// Where every way calls in the end, one head stands above all of it, behind the guard.
 static void runFrameTestOfPartsThatLeadToOneAnother(bool everyWayCalls)
 {
     TestProcedure test;
@@ -2223,7 +2198,6 @@ static void testMachineFrameOfRareRegionAheadOfFramedPartIsItsOwn()
     }
 }
 
-// Both ways meet in a block that computes on. With a StackSlot an address in the frame may live as long as the function runs, so the frame stays to the end.
 static void runFrameTestOfWaysThatMeet(bool hasStackSlot)
 {
     TestProcedure test;
@@ -2266,7 +2240,6 @@ static void testMachineFrameIsTornDownWhereWayLeavesFramedPart()
     runFrameTestOfWaysThatMeet(true);
 }
 
-// Both ways hand their answer to one block that returns it. The ways in the frame share its teardown, and the way without a frame returns where it stands.
 static void testMachineFrameWayWithoutFrameReturnsInPlaceOfJump()
 {
     TestProcedure test;
@@ -2312,7 +2285,6 @@ static void testMachineFrameWayWithoutFrameReturnsInPlaceOfJump()
 
 } // namespace Machine
 
-// x0 takes the first argument and the result. rdi and rax are two.
 static constexpr ASCIILiteral argumentLiesInReturnRegister = isARM64() ? "machine/AOTMachineAllocator*.cpp: a way that returns at once takes the register of an argument that other ways read: the argument is stored ahead of the guards, so the frame covers the whole function, and a Phi that is returned gets another register"_s : ASCIILiteral();
 
 std::span<const NativeTest> machineFrameTests()
@@ -2340,6 +2312,7 @@ std::span<const NativeTest> machineFrameTests()
         { "machine/frame/stack-pointer-stays-aligned"_s, Machine::testMachineFrameKeepsStackPointerAligned },
         { "machine/frame/frame-is-allocated-on-either-side-of-its-stack-check"_s, Machine::testMachineFrameIsAllocatedOnEitherSideOfStackCheck },
         { "machine/frame/rare-block-that-two-framed-parts-share-reads-what-lives-across-their-calls"_s, Machine::testMachineFrameRareBlockSharedByTwoFramedPartsReadsWhatLivesAcrossTheirCalls },
+        { "machine/frame/rare-block-that-ways-out-of-two-framed-parts-enter-reads-what-lives-across-their-calls"_s, Machine::testMachineFrameRareBlockThatWaysOutOfTwoFramedPartsEnterReadsWhatLivesAcrossTheirCalls },
         { "machine/frame/loop-that-needs-it-finds-it-set-up"_s, Machine::testMachineFrameIsSetUpAheadOfLoopThatNeedsIt },
         { "machine/frame/whatever-writes-on-the-way-to-it-follows-the-setup"_s, Machine::testMachineFrameIsSetUpAheadOfWhateverWritesOnWayToIt },
         { "machine/frame/what-is-defined-ahead-of-it-is-stored-at-its-head"_s, Machine::testMachineFrameStoresAtHeadWhatIsDefinedAheadOfIt },

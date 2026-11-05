@@ -35,7 +35,6 @@ void PromiseIntrinsicEmitter::generateCreatePromise(const ValueContext& value)
     }
 
     Boxed constructor = in<Boxed>(value->constructorOperand());
-    // The word is empty until operationAOTCreatePromise or operationAOTLinkTimeConstant fills it, both with the same cell, and no value is empty.
     constexpr ptrdiff_t offset = AOT_INSTANCE_OFFSET(realm.linkTimeConstants) + static_cast<size_t>(LinkTimeConstant::Promise) * sizeof(EncodedJSValue);
     Condition isPromiseConstructor = equal(constructor, Boxed(m_out.load64(instanceField(m_heaps.AOTInstance_fieldsFilledOnce, offset))));
     define(value, either<CellPointer>(isPromiseConstructor, [&] {
@@ -60,7 +59,7 @@ void PromiseIntrinsicEmitter::fulfillWithoutBarrier(CellPointer promise, Boxed v
 void PromiseIntrinsicEmitter::fulfillAtStore(const ValueContext& store, CellPointer promise, Boxed value, const Type& valueType)
 {
     fulfillWithoutBarrier(promise, value);
-    barrierAfterStore(store, promise, value, valueType);
+    barrierAfterStore(store, promise, valueType);
 }
 
 void PromiseIntrinsicEmitter::generateResolvePromise(const ValueContext& value)
@@ -83,7 +82,6 @@ void PromiseIntrinsicEmitter::generateResolvePromise(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
-// The walk has seen that the promise is as it was allocated and that the value has no `then`, so neither is asked here.
 void PromiseIntrinsicEmitter::generateFulfillFreshPromise(const ValueContext& value)
 {
     ValueID fulfillment = value->valueOperand();

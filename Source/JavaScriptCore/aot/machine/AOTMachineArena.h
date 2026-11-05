@@ -26,7 +26,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// One per compiling thread. Everything the back end makes for a function lies here and dies at reset().
 class Arena {
     WTF_MAKE_NONCOPYABLE(Arena);
 public:
@@ -43,7 +42,6 @@ public:
         return reinterpret_cast<void*>(start);
     }
 
-    // An object whose destructor does something is destroyed at reset(), newest first.
     template<typename T, typename... Arguments>
     T* create(Arguments&&... arguments)
     {
@@ -53,7 +51,6 @@ public:
         return object;
     }
 
-    // Room for `count` objects, each of which the caller constructs before anything reads it.
     template<typename T>
     T* allocateArray(size_t count)
     {
@@ -84,12 +81,10 @@ public:
         return { first, source.size() };
     }
 
-    // Keeps the largest chunk, so that a thread stops asking the heap once it has met its largest function.
     JS_EXPORT_PRIVATE void reset();
 
     size_t bytesAllocatedSinceReset() const { return m_bytesInFullChunks + (m_cursor - m_begin); }
 
-    // One object of each type, value-initialized at the first request. It dies with the arena.
     template<typename T>
     T& objectKeptAcrossResets()
     {
@@ -135,8 +130,6 @@ private:
     KeptObject* m_keptObjects { nullptr };
 };
 
-// Grows by doubling and leaves the old storage to the arena.
-// Elements are copied by their constructors: an AssemblerLabel may be signed with its own address.
 template<typename T>
 class ArenaVector {
     static_assert(std::is_trivially_destructible_v<T>);
@@ -182,7 +175,6 @@ public:
         new (NotNull, m_data + m_size++) T(value);
     }
 
-    // Room for one more element, which the caller constructs at once at the address returned.
     T* appendUninitialized(Arena& arena)
     {
         if (m_size == m_capacity) [[unlikely]]
@@ -190,7 +182,6 @@ public:
         return m_data + m_size++;
     }
 
-    // The same for `count` more.
     T* appendUninitialized(Arena& arena, uint32_t count)
     {
         if (m_capacity - m_size < count) [[unlikely]]
@@ -207,21 +198,19 @@ public:
         m_capacity = capacity;
     }
 
-    // New elements are value-initialized.
     void grow(Arena& arena, uint32_t newSize)
     {
         ASSERT(newSize >= m_size);
-        reserve(arena, newSize);
+        reserveForGrowth(arena, newSize);
         std::uninitialized_value_construct_n(m_data + m_size, newSize - m_size);
         m_size = newSize;
     }
 
-    // New elements are left as the arena hands them out: for a list every entry of which is written before it is read.
     void growWithoutInitializing(Arena& arena, uint32_t newSize)
     {
         static_assert(std::is_trivially_copyable_v<T>);
         ASSERT(newSize >= m_size);
-        reserve(arena, newSize);
+        reserveForGrowth(arena, newSize);
         m_size = newSize;
     }
 
@@ -260,6 +249,12 @@ public:
     }
 
 private:
+    void reserveForGrowth(Arena& arena, uint32_t capacity)
+    {
+        if (capacity > m_capacity)
+            reserve(arena, std::max(capacity, m_capacity * 2));
+    }
+
     static constexpr uint32_t smallestCapacity = 4;
 
     T* m_data { nullptr };
@@ -267,7 +262,6 @@ private:
     uint32_t m_capacity { 0 };
 };
 
-// Bits in the arena, for what is asked by index and never grows.
 class BitSpan {
 public:
     BitSpan() = default;
@@ -290,7 +284,6 @@ public:
         ASSERT(bit < size());
         m_words[bit / 64] &= ~(uint64_t { 1 } << (bit % 64));
     }
-    // In rising order.
     template<typename Functor>
     void forEachSetBit(const Functor& functor) const
     {

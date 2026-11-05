@@ -27,7 +27,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// The conversion of an addend or of a part of a text is a part of the form of that operation.
 constexpr OpcodeSet conversionsToString { Opcode::ToString };
 
 class ToStringEmitter final : public OperationEmitter {
@@ -43,7 +42,6 @@ public:
             m_out.noteFormOf(conversionsToString, Form::Open, StateOfKnowledge::Booleans);
             return textOfBoolean(context, operand);
         }
-        // A cell and its boxed form are one word: an operand that is wanted as one may come as the other. Only the type says whether a cell is a string.
         if (operand.is<CellPointer>())
             operand = boxCell(operand.as<CellPointer>());
 
@@ -79,7 +77,6 @@ public:
             case Representation::Cell:
             case Representation::Cell32:
             case Representation::JSValue:
-            case Representation::LiteralString:
             case Representation::RawWord:
                 break;
             }
@@ -123,7 +120,6 @@ public:
         return convertByType(context, get(id), typeIDOf(id));
     }
 
-    // A value without a ToString operation of its own, such as a part of a Strcat or an addend of an Add, has no OperatorForm chosen for it. The operand may be in any representation its type allows.
     CellPointer convertByType(const OperationContext& context, Operand operand, TypeID typeID)
     {
         Type type = types().at(typeID);
@@ -133,14 +129,12 @@ public:
         if (!isUnboxedNumber || !type.isNumber())
             operand = emitter<ConversionEmitter>().box(context, operand, type);
         OperatorForm form = chooseConversionForm(m_program, types(), Opcode::ToString, typeID);
-        // The form for a number takes it unboxed.
         if (operand.is<Boxed>() && form == OperatorForm::Number)
             form = OperatorForm::NullableNumber;
         return convert(context, operand, type, form);
     }
 
 private:
-    // Every program's table holds the two texts.
     CellPointer textOfBoolean(const OperationContext& context, Operand operand)
     {
         Condition isTrue = operand.is<Condition>() ? operand.as<Condition>() : unboxBoolean(operand.as<Boxed>());
@@ -209,7 +203,6 @@ private:
 
 } // anonymous namespace
 
-// By the index of a part: the index of the first part that is the same value. There is at least one part.
 static Vector<uint32_t, 8> firstOccurrencesOfStrcatParts(std::span<const ValueID> parts)
 {
     Vector<uint32_t, 8> indexesByValue(parts.size(), [](size_t index) {
@@ -237,7 +230,6 @@ void OperatorEmitter::generateToBoolean(const ValueContext& value)
     case OperatorForm::Generic:
         if (value.isBranchCondition()) {
             Operand operand = get(tested);
-            // Of a boxed value branchOnTruthinessOfAnyValue() says the form.
             if (!operand.is<Boxed>())
                 m_out.noteForm(Form::Open, StateOfKnowledge::Bits);
             truthiness.branchOnTruthiness(value, operand, typeOf(tested), value.branchTargets());
@@ -320,7 +312,6 @@ Operand OperatorEmitter::addStrings(const ValueContext& value)
     ToStringEmitter toStrings(generator());
     ValueID left = value->leftOperand();
     ValueID right = value->rightOperand();
-    // undefined + null is a number, so only a form with an operand that is always a string has a cell as its result.
     bool resultIsBoxed = value.representation() == Representation::JSValue;
     switch (value->form()) {
     case OperatorForm::Strings:

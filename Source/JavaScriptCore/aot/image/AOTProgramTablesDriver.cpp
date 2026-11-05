@@ -55,7 +55,6 @@ static ASCIILiteral phaseNameOfTableGroup(TablePartID part)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The longest group asks where Types and Data have put a record, so those two run in front of it, and every other group beside it. The texts of functions wait for nobody.
 static constexpr bool runsBehindTypesAndData(TablePartID part)
 {
     return part != TablePartID::Types && part != TablePartID::Data && part != TablePartID::FunctionTexts;
@@ -75,7 +74,6 @@ NamesOfTables nameWhatTablesName(const TableInputs& inputs, const GatheredMentio
         namer(inputs, mentions, namesOfGroups[static_cast<unsigned>(part)].emplace(inputs.program));
         timesOfGroup.didFinish("name"_s);
     };
-    // The longest come first, so that they are begun first where there are fewer threads than lanes. The names are merged in the order of the parts.
     runLanes(build.parallelLoops(), {
         [&] { name(TablePartID::Modules, nameWhatModuleTablesName); },
         [&] { name(TablePartID::Functions, nameWhatFunctionTablesName); },
@@ -104,7 +102,6 @@ static ProgramTables makeHeaderOfProgramTables(const TableInputs& inputs, const 
 
     ProgramTables header { };
     header.magic = ProgramTables::expectedMagic;
-    // Unproven means the pessimistic flag: a second instance may start, and RegExp.$1 and the like may be read.
     if (!inputs.facts.hasOneInstance())
         header.flags |= ProgramTables::mayRunInMultipleInstances;
     if (!inputs.facts.mayReadLegacyRegExpStatics())
@@ -112,13 +109,10 @@ static ProgramTables makeHeaderOfProgramTables(const TableInputs& inputs, const 
     header.instanceSizes = numbers.instanceSizes();
     header.numberOfShapes = shapes.numberOfShapes();
     header.firstEnvironmentShape = shapes.firstEnvironmentShape();
-    // encodeLayoutTables() gives the table of classes a bit for each layout of the program.
     header.numberOfLayoutIndices = static_cast<uint32_t>(inputs.program.layouts.size());
-    // encodeFieldTable() writes one word per object shape, then the rows, each with one entry per name that has a column.
     header.numberOfFieldTableRows = shapes.firstEnvironmentShape() - 1;
     header.numberOfFieldTableColumns = numbers.identifiers().countWithFieldTableColumn();
     header.numberOfClosureCells = numbers.numberOfClosureCells();
-    // ImageSection::ClosureWords begins with the word of the first function that closures are made of.
     header.closureFunctions = { firstClosureFunction, functions.endOfClosureFunctions().index(), firstClosureFunction };
     return header;
 }
@@ -143,7 +137,6 @@ Vector<uint8_t> encodeProgramTables(const TableInputs& inputs, ImageNumbers& num
     Vector<TableEncoder, numberOfTableParts> encoders;
     for (unsigned index = 0; index < numberOfTableParts; ++index) {
         auto part = static_cast<TablePartID>(index);
-        // Types and Data run concurrently, so neither may ask where the other put a record.
         encoders.constructAndAppend(inputs, numbers, runsBehindTypesAndData(part) ? &firstParts : nullptr, part, build);
     }
     auto encode = [&](TablePartID part, const auto& encodeGroup) {
@@ -153,8 +146,6 @@ Vector<uint8_t> encodeProgramTables(const TableInputs& inputs, ImageNumbers& num
         timesOfGroup.didFinish("encode"_s);
     };
 
-    // Each group is a lane: it appends to its part on one thread, and what it asks in front of that it may ask in loops.
-    // The texts of functions ask where no other group has put a record, and no group asks where they lie. The way through the longest group stays on this thread, so it waits for no thread of the pool.
     runLanes(build.parallelLoops(), {
         [&] {
             runLanes(build.parallelLoops(), {
@@ -173,7 +164,6 @@ Vector<uint8_t> encodeProgramTables(const TableInputs& inputs, ImageNumbers& num
             if (diagnostics.hasErrors())
                 return;
 
-            // The longest come first, so that they are begun first where there are fewer threads than lanes.
             runLanes(build.parallelLoops(), {
                 [&] { encode(TablePartID::Layouts, encodeLayoutTables); },
                 [&] { encode(TablePartID::Functions, encodeFunctionProgramTables); },
@@ -207,9 +197,7 @@ Vector<uint8_t> encodeProgramTables(const TableInputs& inputs, ImageNumbers& num
     for (unsigned index = 0; index < numberOfTableParts; ++index)
         bytesOfParts[index] = parts[index].size();
     numbers.setOffsetsOfTypes(typeOffsetsInJoinedTables(parts.span(), firstParts));
-    // No group runs any more, so nobody asks dataNodeOf().
     numbers.setNodesOfData(WTF::move(firstParts.dataNodes));
-    // A part holds its bytes once more, an entry for whatever it was handed to share and a word for each link. The build does not wait for their destructors.
     destroyInBackground(build.backgroundJobs(), WTF::move(parts));
     destroyInBackground(build.backgroundJobs(), WTF::move(firstParts.fieldsOfLayoutRecords));
     times.didFinish("hand on the parts"_s);

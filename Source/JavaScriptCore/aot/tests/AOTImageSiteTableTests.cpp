@@ -89,7 +89,6 @@ static void checkCallSites(const TestImage& image, uint32_t function, const Vect
             return site.returnOffset == offset;
         });
     };
-    // An address without a site of its own has the site in front of it, unless that one says more than where it is.
     auto checkSiteInFrontOf = [&](uint32_t offset) {
         const ExpectedSite* inFront = nullptr;
         for (const ExpectedSite& site : sites) {

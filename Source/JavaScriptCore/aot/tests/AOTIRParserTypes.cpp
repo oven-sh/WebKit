@@ -211,7 +211,6 @@ bool TextParser::TypeParts::isAtSymbolKey(const TextParser& parser)
     if (parser.nextToken().kind != TokenKind::At)
         return false;
 
-    // "symbol @12" is the primitive followed by a position.
     Lexer lexer = parser.m_cursor.lexer;
     Token afterAt = lexer.next();
     return afterAt.kind == TokenKind::Minus || (afterAt.kind == TokenKind::ID && afterAt.prefix == IDPrefix::Module);
@@ -230,7 +229,6 @@ bool TextParser::TypeParts::hasMixedInternalValue(const Wire::Type& wire) const
     return !strings.isEmpty() || !layouts.isEmpty() || !builtins.isEmpty() || !classes.isEmpty() || !functions.isEmpty();
 }
 
-// The wire has every number or a range of integers.
 bool TextParser::TypeParts::hasPrimitivesThatWireLacks(const Wire::Type& wire) const
 {
     if (numberBits & Primitive::Unspecified)
@@ -346,7 +344,6 @@ static std::optional<OpaqueKind> findOpaqueKindNamedAt(const TextParser& parser)
     return std::nullopt;
 }
 
-// The front end writes `iteratorstate`, ir/AOTTypeText.h `opaque(IteratorState)`.
 static bool parseOpaquePart(TextParser& parser, Wire::Type& wire)
 {
     if (!parser.at(TokenKind::Word))
@@ -444,7 +441,6 @@ void TextParser::parseTypePart(Wire::Type& wire, TypeParts& parts)
         parts.functions.append(parseIDWordUnderLimit(*this, IDPrefix::Function, countOf(ProgramList::Functions)));
         return;
     }
-    // The wire has no list of symbols.
     if (TypeParts::isAtSymbolKey(*this)) {
         fail();
         return;
@@ -480,7 +476,6 @@ void TextParser::parseClassPart(TypeParts& parts, BuiltinClassID builtinClass)
     if (hasFailed())
         return;
 
-    // Contents that are left out at the end are anything.
     if (contents.size() < arity) {
         uint32_t anything = typeWordOfAnything();
         while (contents.size() < arity)
@@ -515,7 +510,6 @@ LayoutSetID TextParser::parseLayoutSet()
     if (members.size() == 1)
         return LayoutSets::of(members.first());
 
-    // A set of several layouts is a record of a table: run() makes the program in front of the items and reads the bytes into that one.
     RELEASE_ASSERT(m_program);
     TypeArena arena(m_program->types, ArenaKeeps::InProgram);
     return arena.layoutSets().ofSorted(members.span());

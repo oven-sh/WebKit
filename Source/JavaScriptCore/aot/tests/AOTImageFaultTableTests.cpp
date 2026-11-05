@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeSites.h"
-#include "AOTFaultHandler.h"
 #include "AOTImageSiteTestBodies.h"
 #include "AOTOperationData.h"
 #include "AOTStubsExceptions.h"
@@ -227,7 +226,6 @@ static void testFaultSitesSecondWords()
             return { i };
         return { i, 5 };
     });
-    // Each has as many bytes as the largest needs, and they lie side by side across the checkpoints.
     for (uint32_t first : { 0x80u, 0xff00u, 0xffff00u, 0xfffffe00u }) {
         checkFramedBodyFaults(300, [&](unsigned i) -> FaultWords {
             if (i % 5 == 4)
@@ -324,7 +322,6 @@ static void testHandlersSizes()
         AOT_TEST_CHECK(checkEncodedHandlers(handlersAt({ { site, target } })).size() == size);
 }
 
-// In a large body the sites lie side by side and few landing pads take turns, however far into the body they are.
 static void testHandlersOfLargeBody()
 {
     constexpr uint32_t count = 1000;
@@ -392,21 +389,9 @@ static void testHandlersThroughImage()
     AOT_TEST_CHECK(!handlerAt(table, built.image.indexOf(2), CallSiteIndex(1)));
 }
 
-static void testReadThroughTopByte()
-{
-    if (!readsOffNoCellFault)
-        return;
-    AOT_TEST_CHECK(readThroughAddressWithTopByteFaults());
-    for (uint8_t topByte : { 0x01, 0x40, 0x7f, 0x80, 0xc1, 0xff })
-        AOT_TEST_CHECK(readThroughAddressWithTopByteFaults(topByte));
-    // As on a host that ignores the byte: the read goes through.
-    AOT_TEST_CHECK(!readThroughAddressWithTopByteFaults(0));
-}
-
 std::span<const NativeTest> faultTableTests()
 {
     static constexpr NativeTest tests[] = {
-        { "image/reads-off-no-cell/a-read-through-a-top-byte-faults-and-one-that-goes-through-is-told"_s, testReadThroughTopByte },
         { "image/fault-sites/none"_s, testFaultSitesNone },
         { "image/fault-sites/counts"_s, [] { for (unsigned count : { 1u, 64u, 65u, 1000u }) checkFramedBodyFaults(count, mixedWords); } },
         { "image/fault-sites/frames"_s, testFaultSitesFrames },

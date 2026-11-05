@@ -13,7 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// It writes into the Effects of whoever asks, which come in as none().
 class EffectsBuilder {
 public:
     EffectsBuilder(const Program& program, Effects& effects)
@@ -30,8 +29,6 @@ public:
     void suspends() { m_effects.maySuspend = true; }
     void terminates() { m_effects.mayBeTerminated = true; }
     void unknownCode() { m_effects.merge(Effects::unknownCode()); }
-    // An inline built-in whose row says asOverload has the effects of the overload it stands for, which no table of opcodes knows: walk/AOTWalkBuiltins.cpp works them out from the row.
-    // For everybody else it may do anything.
     void asOverload() { unknownCode(); }
 
 private:
@@ -61,7 +58,7 @@ private:
 
 inline constexpr OpcodeSet opcodesThrowingOnlyForLackOfMemory {
     Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::LoopHint,
-    Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::FlattenString, Opcode::TryStrcat, Opcode::StringOrder, Opcode::StringStartsWithLiteral, Opcode::StringEndsWithLiteral,
+    Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::FlattenString, Opcode::StringOrder, Opcode::StringStartsWithLiteral, Opcode::StringEndsWithLiteral,
     Opcode::StringOrderToCharacter, Opcode::StringIndexOfLiteral, Opcode::StringIndexOfCharacter, Opcode::StringLastIndexOfLiteral,
     Opcode::StringRangeEqualsLiteral, Opcode::StringRangeToNumber, Opcode::StringRangeParseInt
 };
@@ -75,11 +72,8 @@ constexpr Effects withDeclaredKindOfThrow(Opcode opcode, Effects effects)
 
 const Effects* findDeclaredEffectsOfEveryValue(Opcode);
 
-// Whoever gives an object an extra property, or moves a field out of its slot, writes a property by name. Neither changes whether the object is frozen.
 inline constexpr AbstractHeapSet heapsThatOnlyFlagsOfIsNotFrozenRead { AbstractHeap::NamedProperties };
 
-// `Operation` and `Terminator` are anything with the schema's getters under their names: Draft, Operation, TerminatorDraft and Terminator of walk/AOTCode.h, BodyValue and BodyTerminator of AOTBody.h.
-// The generated forEachDeclaredEffect() is a template over them as well.
 template<typename Operation>
 Effects declaredEffectsOfOperation(const Program& program, Opcode opcode, const Operation& operation)
 {
@@ -98,7 +92,6 @@ Effects declaredEffectsOfOperation(const Program& program, Opcode opcode, const 
     return effects;
 }
 
-// Without a copy where the effects are those of every operation with the opcode. Otherwise the answer is `storage`.
 template<typename Operation>
 const Effects& declaredEffectsOfOperation(const Program& program, Opcode opcode, const Operation& operation, Effects& storage)
 {
@@ -120,9 +113,9 @@ Effects declaredEffectsOfTerminator(const Program& program, const Terminator& te
 }
 
 const Effects& declaredBoundInTable(Opcode);
-// declaredBoundInTable() of each isPure().
 extern const OpcodeSet opcodesWithPureBoundInTable;
 inline const OpcodeSet& opcodesWithPureDeclaredBound() { return opcodesWithPureBoundInTable; }
+extern const OpcodeSet opcodesWithSuspendingBoundInTable;
 
 template<typename Entry>
 constexpr Effects declaredBoundOf(Entry entry)
@@ -139,7 +132,12 @@ constexpr Effects declaredBoundOf(Entry entry)
         return builder.effects();
 }
 
-constexpr bool maySuspend(Opcode opcode) { return declaredBoundOf(opcode).maySuspend; }
+constexpr bool maySuspend(Opcode opcode)
+{
+    if (!std::is_constant_evaluated())
+        return opcodesWithSuspendingBoundInTable.contains(opcode);
+    return declaredBoundOf(opcode).maySuspend;
+}
 constexpr bool mayThrow(Opcode opcode) { return declaredBoundOf(opcode).mayThrow; }
 constexpr bool mayCollect(Opcode opcode) { return declaredBoundOf(opcode).mayCollect; }
 

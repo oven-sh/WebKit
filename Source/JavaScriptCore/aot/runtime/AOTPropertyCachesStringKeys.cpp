@@ -157,12 +157,10 @@ void StringKeyCache::publishKeysOfPairs()
     m_instance.realm.keyOfPairMask = keyOfPairMaskFor(m_keysOfPairs.size());
 }
 
-// Whether it took the place of another.
 bool StringKeyCache::addKeyOfPair(const KeyOfPair& added)
 {
     KeyOfPair* set = m_keysOfPairs.mutableSpan().data() + (hashOfPair(added.first, added.second) & keyOfPairMaskFor(m_keysOfPairs.size())) / sizeof(KeyOfPair);
     bool evicts = set[0].key && set[1].key;
-    // The one that came last stands in front.
     if (set[0].key)
         set[1] = set[0];
     set[0] = added;
@@ -207,7 +205,6 @@ void StringKeyCache::growKeysOfPairs()
     if (!former)
         return;
     publishKeysOfPairs();
-    // From the back of each set, so that the one that came last stands in front again.
     for (const KeyOfPair& entry : *former | std::views::reverse) {
         if (entry.key)
             m_keyOfPairEvictionCount += addKeyOfPair(entry);
@@ -302,7 +299,6 @@ size_t StringKeyCache::removeDeadIntegerKeys(VM& vm)
         entry = 0;
         ++removedCount;
     }
-    // A text that died is found no more, so the table has to hold what is alive and what will be entered until the next sweep, which is taken to be as much as since the last one.
     size_t wantedSize = std::max(minTableSize, roundUpToPowerOfTwo((aliveCount + m_integerKeysEnteredSinceSweep) * 2));
     m_integerKeysEnteredSinceSweep = 0;
     if (wantedSize < m_integerKeys.size())
@@ -312,7 +308,6 @@ size_t StringKeyCache::removeDeadIntegerKeys(VM& vm)
 
 size_t StringKeyCache::removeDeadEntries(VM& vm, CollectionScope scope)
 {
-    // A Structure may have died, as for the places themselves, which are cleared at every collection.
     forgetPlacesOfPairs();
     size_t removedCount = 0;
     m_writtenSinceCollection.forEachRegionToSweep(scope, [&](size_t, size_t) {

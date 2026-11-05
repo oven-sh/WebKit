@@ -13,6 +13,7 @@
 #include "AOTCompiledCall.h"
 #include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
+#include "AOTEffectsNet.h"
 #include "AOTErrorMessages.h"
 #include "AOTFunctionTables.h"
 #include "AOTHeapCacheRegistry.h"
@@ -90,7 +91,6 @@ static bool canReadRestQuickly(const ArgumentsObjectSource& source)
     return (hasContiguous(type) || hasInt32(type)) && !containsHole(source.rest->butterfly()->contiguous().data(), restLength);
 }
 
-// The object adds `callee` and Symbol.iterator to itself when they are first listed or changed. Until then it asks its callee whether the code is strict.
 static JSFunction* calleeOfStrictCode(JSGlobalObject* globalObject)
 {
     return globalObject->arrayProtoValuesFunction();
@@ -171,7 +171,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateMappedArguments, JSCell*, (Instance* 
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCreateMappedArguments);
     Closure* closure = cellArgument<Closure>(callee, Entry::operationAOTCreateMappedArguments);
     ArgumentsObjectSource source = createArgumentSource(count, rest, parameters, Entry::operationAOTCreateMappedArguments);
-    // A function with a mapped arguments object has a simple parameter list, so its length is its number of parameters: so many words lie at `parameters`.
     unsigned numberOfParameters = functionLengthOf(closure->function());
     if (source.numberInFrame > numberOfParameters) [[unlikely]]
         crashOnWrongOperand(Entry::operationAOTCreateMappedArguments);
@@ -184,7 +183,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateMappedArguments, JSCell*, (Instance* 
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
         result->argument(DirectArgumentsOffset(i)).set(vm, result, value);
     }
-    // A parameter that was not passed lives in its slot too, and an object created late takes the value the parameter has by then.
     for (uint32_t i = count; i < capacity; ++i)
         result->argument(DirectArgumentsOffset(i)).set(vm, result, JSValue::decode(parameters[i]));
     OPERATION_RETURN(scope, result);
@@ -215,7 +213,6 @@ void throwNotAFunctionError(JSGlobalObject* globalObject, ThrowScope& scope, JSV
     throwException(globalObject, scope, createNotAFunctionError(globalObject, callee, StringView()));
 }
 
-// How the callee is written at the place in a function that the operation on top returns to: CallEmitter::siteThatNamesCallee() has left it in the fault table.
 static StringView nameOfCalleeAtCallSite(VM& vm)
 {
     const void* returnAddress = CompiledFrameIterator::findReturnAddressInFunctionAtTop(vm);
@@ -246,7 +243,6 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
         return false;
     }
     JSObject* object = asObject(list);
-    // A mapped arguments object with nothing overridden holds its length and elements as plain data.
     auto* mapped = dynamicDowncast<DirectArguments>(object);
     if (mapped && mapped->overrodeThings())
         mapped = nullptr;
@@ -298,13 +294,11 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, ErrorInstance::create(globalObject, structure, arguments.at(0), arguments.at(1), nullptr, TypeNothing, ErrorType::Error, true, asObject(newTarget)));
     }
-    // Compiled code relies on super() returning an object. A host constructor may return a primitive from `new`.
     if constexpr (isParent)
         RELEASE_AND_RETURN(scope, JSC::construct(globalObject, callee, constructData, arguments, newTarget));
     RELEASE_AND_RETURN(scope, constructAllowingPrimitiveResult(globalObject, callee, constructData, arguments, newTarget));
 }
 
-// The argument values stay on the caller's stack for as long as the call lasts.
 JSC_DEFINE_JIT_OPERATION(operationAOTConstruct, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* argumentValues))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConstruct);
@@ -329,7 +323,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance,
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, callData, JSValue::decode(thisValue), arguments)));
 }
 
-// The stub makes the call itself: behind a tail call no frame of an operation stays on the stack.
 JSC_DEFINE_JIT_OPERATION(operationAOTReadArgumentList, JSCell*, (Instance* instance, JSCell* list))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTReadArgumentList);
@@ -344,20 +337,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadArgumentList, JSCell*, (Instance* insta
     OPERATION_RETURN(scope, words);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCallEngineCallee, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* argumentValues))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCallEngineCallee);
-    ArgList arguments(const_cast<EncodedJSValue*>(argumentValues), count);
-    JSValue function = JSValue::decode(callee);
-    auto callData = JSC::getCallData(function);
-    if (callData.type == CallData::Type::None) {
-        throwNotAFunctionError(globalObject, scope, function);
-        OPERATION_RETURN(scope, encodedJSValue());
-    }
-    OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, callData, JSValue::decode(thisValue), arguments)));
-}
-
-// An unmapped arguments object that still has the Structure it was created with holds its length and elements as plain data, so reading them runs no code.
 static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
 {
     VM& vm = *instance->vm;
@@ -383,7 +362,6 @@ static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
     return list;
 }
 
-// A mapped arguments object with nothing overridden holds its length and elements as plain data, so reading them runs no code.
 static JSArray* tryCopyMappedArguments(Instance* instance, JSValue arrayLike)
 {
     VM& vm = *instance->vm;
@@ -405,7 +383,6 @@ static JSArray* tryCopyMappedArguments(Instance* instance, JSValue arrayLike)
     return list;
 }
 
-// `f.apply(t, list)` up to the call. The list is read whatever f is: the call that follows looks at f, as call_varargs does.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instance, EncodedJSValue arrayLike))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArgumentList);
@@ -456,7 +433,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
-// The same error as Interpreter::executeConstruct() throws.
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowBecauseParentMadeNoObject, EncodedJSValue, (Instance* instance))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowBecauseParentMadeNoObject);
@@ -479,32 +455,30 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallable, void, (Instance* insta
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallableNamed, void, (Instance* instance, EncodedJSValue callee, uint32_t name))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowUnlessCallableNamed);
-    JSValue value = calleeOfDecodedReference(instance, callee);
-    if (!value.isCallable()) {
-        StringView nameAtCallSite = nameOfCalleeAtCallSite(vm);
-        throwException(globalObject, scope, nameAtCallSite.isNull() ? createNotAFunctionError(globalObject, value, identifierAt(instance, name)) : createNotAFunctionError(globalObject, value, nameAtCallSite));
-    }
-    OPERATION_RETURN(scope);
-}
-
-static bool forwardsCallToReceiver(JSValue callee)
+static BuiltinID builtinThatForwardsCallToReceiver(JSValue callee)
 {
     std::optional<FunctionID> function = functionOf(callee.asCell());
     if (!function)
-        return false;
+        return { };
     std::optional<uint32_t> builtin = Image::current()->programTables().builtinImplementedBy(sourceFunctionOf(*function).index());
-    return builtin && (BuiltinID(*builtin) == Builtins::FunctionPrototypeCall || BuiltinID(*builtin) == Builtins::FunctionPrototypeApply);
+    if (!builtin || (BuiltinID(*builtin) != Builtins::FunctionPrototypeCall && BuiltinID(*builtin) != Builtins::FunctionPrototypeApply))
+        return { };
+    return BuiltinID(*builtin);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessForwardedCalleeIsCallable, void, (Instance* instance, EncodedJSValue callee, EncodedJSValue receiver))
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessForwardedCallCanBeMade, void, (Instance* instance, EncodedJSValue callee, EncodedJSValue receiver, EncodedJSValue list))
 {
-    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowUnlessForwardedCalleeIsCallable);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowUnlessForwardedCallCanBeMade);
     JSValue value = calleeOfDecodedReference(instance, callee);
-    if (value.isCallable() && forwardsCallToReceiver(value))
+    if (BuiltinID forwards = value.isCallable() ? builtinThatForwardsCallToReceiver(value) : BuiltinID()) {
         value = calleeOfDecodedReference(instance, receiver);
+        JSValue applied = JSValue::decode(list);
+        if (forwards == Builtins::FunctionPrototypeApply && (!value.isCallable() || (!applied.isUndefinedOrNull() && !applied.isObject()))) {
+            MarkedArgumentBuffer read;
+            appendArrayLike(globalObject, vm, read, applied);
+            OPERATION_RETURN_IF_EXCEPTION(scope);
+        }
+    }
     if (!value.isCallable())
         throwException(globalObject, scope, createNotAFunctionError(globalObject, value, nameOfCalleeAtCallSite(vm)));
     OPERATION_RETURN(scope);
@@ -561,7 +535,6 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
             if (rethrownException)
                 return codeAndFrame;
             stackIsUnobserved = isCaughtAboveCleanup(vm, found.siteOfHandler);
-            // The handler receives the thrown value and, if it needs an Exception, makes a call to create one.
             if (stackIsUnobserved)
                 return codeAndFrame;
         }
@@ -587,12 +560,22 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
     return makeUGPRPair(0, 0);
 }
 
+static bool isCountedAsThrownByEffects(VM& vm)
+{
+    Exception* exception = vm.exceptionForInspection();
+    if (!exception || vm.isTerminationException(exception))
+        return false;
+    auto* error = dynamicDowncast<ErrorInstance>(exception->value());
+    return !error || (!error->isOutOfMemoryError() && !error->isStackOverflowError());
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM* vm, Instance* instance))
 {
+    if (uint64_t held = std::exchange(instance->effectsNet.callHeldToThrowNothing, 0); held && isCountedAsThrownByEffects(*vm)) [[unlikely]]
+        operationAOTStopAtFalseEffects(instance, static_cast<uint32_t>(held >> 32 & INT32_MAX), static_cast<uint32_t>(held), static_cast<uint32_t>(Typed::PartOfEffects::Throws), static_cast<uint32_t>(instance->effectsNet.rowsOfCallHeldToThrowNothing), 0);
     return lookupExceptionHandler(*vm, instance, AOT_OPERATION_FRAME_RECORD());
 }
 
-// First what the function has allocated below its return address, zero if it has a frame record. Second what its entry has put above its return address.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, UGPRPair, (Instance*, const void* returnAddress))
 {
     const Image& image = *Image::current();
@@ -602,50 +585,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, UGP
     size_t bytesBelowReturnAddress = frame.hasFrameRecord() ? 0 : frame.frameSizeInBytes() + sizeof(void*);
     size_t bytesAboveReturnAddress = image.function(check->function).has(ImageFunctionFlag::SpillsArgumentRegisters) ? sizeOfSpilledArgumentRegisters : 0;
     return makeUGPRPair(bytesBelowReturnAddress, bytesAboveReturnAddress);
-}
-
-static bool tryListLandingOfMisfit(LandingsOfMisfits& landings, const LandingOfMisfit& listed)
-{
-    if ((landings.numberOfEntriesFilled + 1) * 2 > landings.numberOfPlaces())
-        return false;
-    LandingOfMisfit* entry = landings.placeOf(listed.returnAddress);
-    while (entry->returnAddress)
-        ++entry;
-    if (entry == landings.entries + 2 * landings.numberOfPlaces() - 1)
-        return false;
-    *entry = listed;
-    ++landings.numberOfEntriesFilled;
-    return true;
-}
-
-static void listLandingOfMisfit(Instance& instance, const LandingOfMisfit& listed)
-{
-    LandingsOfMisfits& landings = instance.misfits.landings;
-    while (!tryListLandingOfMisfit(landings, listed)) {
-        std::span former = unsafeMakeSpan(landings.entries, landings.numberOfEntriesFilled ? 2 * landings.numberOfPlaces() : 0);
-        for (size_t numberOfPlaces = std::max(LandingsOfMisfits::leastNumberOfPlaces, 2 * landings.numberOfPlaces());; numberOfPlaces *= 2) {
-            landings = { instance.state->tableArena.allocate<LandingOfMisfit>(2 * numberOfPlaces), (numberOfPlaces - 1) << LandingsOfMisfits::shiftOfAddress, 0, { } };
-            if (std::ranges::all_of(former, [&](const LandingOfMisfit& entry) { return !entry.returnAddress || tryListLandingOfMisfit(landings, entry); }))
-                break;
-        }
-    }
-}
-
-// A caller that relies on the type has a landing for what is not of it. Any other caller takes whatever is returned, at its return address.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Instance* instance, void* returnAddress, EncodedJSValue misfit))
-{
-    const VMState& state = instance->vm->aotState();
-    const CallSiteCache::Entry* site = state.callSiteCache->find(returnAddress);
-    if (!site)
-        site = state.callSiteCache->resolve(*state.image, returnAddress);
-    void* landing = returnAddress;
-    if (site && !site->isStubReturnSite() && site->handler && !site->handler->catchesExceptions()) {
-        instance->misfits.misfit = misfit;
-        landing = const_cast<uint8_t*>(state.image->codeOf(site->code.index())) + site->handler->codeOffset;
-    }
-    // The stub finds it there the next time.
-    listLandingOfMisfit(*instance, { returnAddress, landing });
-    return landing;
 }
 
 static NEVER_INLINE JSValue enterWithManyArguments(VM& vm, const CallData& callData, JSObject* callee, JSValue thisSlot, JSCell* context, const ArgList& args)
@@ -685,7 +624,6 @@ static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callD
     }
 }
 
-// Enters compiled code the way Interpreter::executeCall and Interpreter::executeConstruct enter a function of the engine.
 template<bool isConstruct>
 static NEVER_INLINE JSValue enterFromEngine(VM& vm, JSObject* callee, const CallData& callData, JSValue thisSlot, JSCell* context, const ArgList& args)
 {
@@ -721,7 +659,6 @@ static NEVER_INLINE JSValue enterFromEngine(VM& vm, JSObject* callee, const Call
 
 JSValue callCompiledCode(VM& vm, JSObject* callee, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
-    // A callback of a native function called from JavaScript: a scope is open and the arguments fit in the entry's registers and stack words, so this needs no frame of its own to speak of.
     if (!vm.entryScope || !vm.isSafeToRecurseSoft() || vm.disallowVMEntryCount || args.size() > 6) [[unlikely]]
         return enterFromEngine<false>(vm, callee, callData, thisValue, context, args);
     ASSERT(!vm.isCollectorBusyOnCurrentThread());

@@ -15,12 +15,8 @@
 #include <limits>
 #include <wtf/DataLog.h>
 
-// No request goes to the builder between patchpoint() and the last word of the setup: the next request seals the Patch.
-// No constant here is one that findPinnedConstant() knows: the tests run without an instance.
-
 namespace JSC { namespace AOT { namespace Machine {
 
-// The entry block reads three arguments, whether or not the test does: the texts below count on it.
 struct OrderTest {
     explicit OrderTest(const ProcedureTraits& traits = { })
         : testProcedure(traits)
@@ -35,7 +31,6 @@ struct OrderTest {
     Procedure& procedure() { return testProcedure.procedure(); }
     String printedOrder() const { return testProcedure.printedOrder(); }
 
-    // Each fills a block whole. The caller has made the values, so they stand in other blocks or have no position.
     void returnValue(LBasicBlock block, LValue value)
     {
         out.appendTo(block);
@@ -49,7 +44,6 @@ struct OrderTest {
         out.jump(target);
     }
 
-    // One of the two, once: compile() prepares too. Both check what holds of every order.
     const Order& prepare();
     const Order& compile();
     int64_t run(int64_t firstArgument, int64_t secondArgument = 0, int64_t thirdArgument = 0) { return testProcedure.call<int64_t>(firstArgument, secondArgument, thirdArgument); }
@@ -62,7 +56,6 @@ struct OrderTest {
     LValue third;
 };
 
-// Only behind a prepare() or compile() that went well.
 [[noreturn]] static void failOrderTest(const OrderTest& test, const char* file, int line, const char* condition)
 {
     dataLogLn(test.testProcedure.printedProcedure(), test.printedOrder());
@@ -74,7 +67,6 @@ struct OrderTest {
             failOrderTest(test, __FILE__, __LINE__, #__VA_ARGS__); \
     } while (false)
 
-// By Block::index(): normal edges alone lead to the block from an entrypoint.
 static Vector<bool> orderTestFindLikelyBlocks(OrderTest& test)
 {
     Vector<bool> isLikely;
@@ -97,13 +89,11 @@ static Vector<bool> orderTestFindLikelyBlocks(OrderTest& test)
     return isLikely;
 }
 
-// The three parts follow each other. Within a part the blocks stand as in the order of allocation, but that the blocks of an outermost loop, which stand in one piece, may be rotated.
 static void orderTestCheckLayout(OrderTest& test)
 {
     const Order& order = test.procedure().order();
     std::span<Block* const> layout = order.blocksInLayout();
     Vector<bool> isLikely = orderTestFindLikelyBlocks(test);
-    // A block that was split late on a rare edge belongs to no rare region and stands in the rare part all the same.
     auto partOf = [&](const Block* block) {
         const BlockPlace& place = order.of(block);
         bool standsOnRareEdge = place.wasSplitLate && std::ranges::any_of(place.predecessors.front()->successors(), [&](const Edge& edge) {
@@ -123,7 +113,6 @@ static void orderTestCheckLayout(OrderTest& test)
     for (uint32_t index = 0; index < layout.size(); ++index) {
         AOT_ORDER_TEST_CHECK(test, static_cast<int>(order.of(layout[index]).layoutPart) == partOf(layout[index]));
         AOT_ORDER_TEST_CHECK(test, !index || partOf(layout[index - 1]) <= partOf(layout[index]));
-        // One that was split late stands right behind the block that leads to it, or behind everything else in its part.
         if (order.of(layout[index]).wasSplitLate)
             continue;
         AOT_ORDER_TEST_CHECK(test, !lastBlockPlacedByOrder || partOf(lastBlockPlacedByOrder) != partOf(layout[index]) || rankOf(lastBlockPlacedByOrder) <= rankOf(layout[index]));
@@ -142,7 +131,6 @@ static void orderTestCheckPlaces(OrderTest& test)
     Position position = 0;
     for (uint32_t index = 0; index < blocks.size(); ++index) {
         const BlockPlace& place = order.of(blocks[index]);
-        // Behind a block with an unsplit edge positions are left free, and a block that was split late has some of them.
         bool followsBlockWithSeveralSuccessors = index && (place.wasSplitLate ? place.predecessors.front() : blocks[index - 1])->numSuccessors() > 1;
         AOT_ORDER_TEST_CHECK(test, place.orderIndex == index && (place.head == position || (place.head > position && (followsBlockWithSeveralSuccessors || order.of(blocks[index - 1]).wasSplitLate))));
         AOT_ORDER_TEST_CHECK(test, !place.wasSplitLate || (place.predecessors.size() == 1 && blocks[index]->size() == 1 && blocks[index]->last()->opcode() == Jump && order.of(place.predecessors.front()).orderIndex < index));
@@ -168,7 +156,6 @@ static void orderTestCheckPlaces(OrderTest& test)
     AOT_ORDER_TEST_CHECK(test, numberReached == blocks.size());
 }
 
-// A value that is defined ahead of the target of an edge that leads back, and read behind it, has to live as far as the edge. So each such target begins a loop of its own that holds the source.
 static void orderTestCheckEdges(OrderTest& test)
 {
     const Order& order = test.procedure().order();
@@ -192,7 +179,6 @@ static void orderTestCheckEdges(OrderTest& test)
             AOT_ORDER_TEST_CHECK(test, edge.block()->isLandingPad() || block->numSuccessors() == 1 || target.predecessors.size() == 1 || isUnsplit);
             AOT_ORDER_TEST_CHECK(test, !isUnsplit || (!place.isRare() && edge.block()->phis().empty() && block->upsilons().empty() && edge.isRare() == target.isRare()));
 
-            // Moves into registers stand ahead of a Jump and nowhere else.
             bool holdsExtractsOfBlock = endsInPatch && block->last()->type().isTuple() && &edge == &block->successor(0);
             AOT_ORDER_TEST_CHECK(test, edge.block()->isLandingPad() || block->numSuccessors() == 1 || edge.block()->phis().empty() || holdsExtractsOfBlock);
             AOT_ORDER_TEST_CHECK(test, edge.block()->isLandingPad() || !endsInPatch || target.predecessors.size() == 1);
@@ -253,7 +239,6 @@ static void orderTestCheckRareRegions(OrderTest& test)
         AOT_ORDER_TEST_CHECK(test, !place.isRare() || place.rareRegion < regions.size());
         if (!place.isRare() || !place.entersRareRegion)
             continue;
-        // Each unsplit edge is a way in of its own.
         numberOfEntries[place.rareRegion] += block->isLandingPad() ? 1 : place.predecessors.size();
         lastEntry[place.rareRegion] = block;
     }
@@ -282,7 +267,6 @@ const Order& OrderTest::compile()
     return orderTestCheckedOrder(*this);
 }
 
-// Where an edge leads in the end, past the blocks that hold a Jump alone: Order puts such a block on an edge that it splits, and threadJumps() may leave one behind.
 static Block* orderTestTargetOf(const Block* from, unsigned successorIndex)
 {
     Block* target = from->successor(successorIndex).block();
@@ -311,7 +295,6 @@ static bool orderTestLoopHoldsExactly(const Order& order, uint32_t loop, std::in
     });
 }
 
-// An unlikely arm in a loop stands outside the loop, which is rotated as if the arm were not there.
 static void testMachineOrderTakesUnlikelyArmOutOfLoop()
 {
     OrderTest test;
@@ -342,7 +325,6 @@ static void testMachineOrderTakesUnlikelyArmOutOfLoop()
     AOT_ORDER_TEST_CHECK(test, test.run(5, 3) == 6 && test.run(5, 9) == 5);
 }
 
-// As a twin is entered: behind the head of a loop.
 static void testMachineOrderStartsAtEveryEntrypoint()
 {
     OrderTest test;
@@ -373,7 +355,6 @@ static void testMachineOrderStartsAtEveryEntrypoint()
     AOT_ORDER_TEST_CHECK(test, order.of(test.entry).loop == noLoop && order.of(laterEntry).loop == noLoop && order.of(exit).loop == noLoop);
 }
 
-// An unlikely arm of a loop goes round through a rare block alone. It is one of the loop, so what stands behind the loop is not in the interval.
 static void testMachineOrderKeepsArmThatGoesRoundThroughRareBlockWithinItsLoop()
 {
     OrderTest test;
@@ -441,7 +422,6 @@ static void testMachineOrderSplitsCriticalEdge()
     }
 }
 
-// One Upsilon serves both edges until the second of them has a block of its own.
 static void testMachineOrderSplitsEachOfTwoEdgesToOneBlock()
 {
     OrderTest test;
@@ -466,7 +446,6 @@ static void testMachineOrderSplitsEachOfTwoEdgesToOneBlock()
     AOT_ORDER_TEST_CHECK(test, test.run(0, 7) == 7 && test.run(1, 7) == 7 && test.run(2, 7) == 20);
 }
 
-// A table with many rows that come to a few answers.
 static std::optional<uint64_t> orderTestInstructionsForSwitchWith(unsigned numberOfCases)
 {
     constexpr unsigned numberOfAnswers = 3;
@@ -485,7 +464,6 @@ static std::optional<uint64_t> orderTestInstructionsForSwitchWith(unsigned numbe
         out.ret(out.add(test.second, out.constInt64(answer)));
     }
     test.returnConstant(otherwise, -1);
-    // Not OrderTest::prepare(): what it checks of every order goes through the predecessors of a block for each edge into it.
     std::optional<uint64_t> instructions = instructionsOfCurrentThreadIn([&] {
         prepareOrFail(test.testProcedure);
     });
@@ -500,7 +478,6 @@ static std::optional<uint64_t> orderTestInstructionsForSwitchWith(unsigned numbe
     return instructions;
 }
 
-// Each edge costs the same however many the Switch has. Where its edges are gone through for each of them, the work is the square of their number.
 static void testMachineOrderGrowsAsEdgesOfSwitchDo()
 {
     constexpr unsigned numberOfCases = 5000;
@@ -516,13 +493,11 @@ static ProcedureTraits orderTestTraitsWithHandlers()
     return traits;
 }
 
-// The tests that use it only prepare: its code never runs.
 static PatchGenerator* orderTestCreateCallGenerator(OrderTest& test)
 {
     return test.procedure().createGenerator([](CCallHelpers&, const PatchParameters&) { });
 }
 
-// Ends the block that Output stands in.
 static void orderTestAppendThrowingCall(Output& out, PatchGenerator* generator, LBasicBlock continuation, LBasicBlock landingPad)
 {
     PatchOperation* call = out.patchpoint(Void);
@@ -533,7 +508,6 @@ static void orderTestAppendThrowingCall(Output& out, PatchGenerator* generator, 
     call->effects.terminal = true;
 }
 
-// The allocator looks for the Extracts at the head of the first successor. In a block on the edge it would find none.
 static void testMachineOrderLeavesEdgeThatHoldsExtractsWhole()
 {
     OrderTest test(orderTestTraitsWithHandlers());
@@ -563,7 +537,6 @@ static void testMachineOrderLeavesEdgeThatHoldsExtractsWhole()
     AOT_ORDER_TEST_CHECK(test, test.procedure().numberOfBlocks() == 3);
 }
 
-// if (condition) call(), with the call on a slow arm. Behind the call the arm jumps to the rejoin, where Output stands afterwards.
 struct OrderTestThrowingArm {
     OrderTestThrowingArm(OrderTest& test, LValue condition, PatchGenerator* generator, LBasicBlock landingPad)
         : call(test.out.newBlock())
@@ -594,7 +567,6 @@ struct OrderTestThrowingArm {
 
 enum class OrderTestCallBehindArms : bool { No, Yes };
 
-// Two arms in a row. Every call leads to the same landing pad.
 struct OrderTestTwoThrowingArms {
     OrderTestTwoThrowingArms(OrderTest& test, OrderTestCallBehindArms callBehindArms)
         : pad(test.out.newBlock())
@@ -618,7 +590,6 @@ struct OrderTestTwoThrowingArms {
     OrderTestThrowingArm second;
 };
 
-// try { try { call(); } catch { call(); } call(); } catch { }
 static void testMachineOrderPlacesNestedHandlerAheadOfItsRejoin()
 {
     OrderTest test(orderTestTraitsWithHandlers());
@@ -650,7 +621,6 @@ static void testMachineOrderPlacesNestedHandlerAheadOfItsRejoin()
     AOT_ORDER_TEST_CHECK(test, order.of(outerPad).orderIndex == order.of(rejoin).orderIndex + 1);
 }
 
-// The second landing pad leads back to the call that leads to the first one. As two regions, each would have to stand behind the other.
 static void testMachineOrderJoinsLandingPadsThatLeadIntoEachOther()
 {
     OrderTest test(orderTestTraitsWithHandlers());
@@ -682,7 +652,6 @@ static void testMachineOrderJoinsLandingPadsThatLeadIntoEachOther()
     AOT_ORDER_TEST_CHECK(test, order.loops().size() == 1 && orderTestLoopHoldsExactly(order, order.of(head).loop, { head, firstPad, secondPad }));
 }
 
-// An edge between two regions would have to set a frame up or tear one down. The one region stands behind the last call, so each arm leads back to its rejoin.
 static void testMachineOrderJoinsThrowingArmsWithoutFrameAtEntry()
 {
     OrderTest test;
@@ -695,14 +664,12 @@ static void testMachineOrderJoinsThrowingArmsWithoutFrameAtEntry()
     AOT_ORDER_TEST_CHECK(test, order.loops().size() == 2 && order.of(arms.first.rejoin).isLoopHead && order.of(arms.second.rejoin).isLoopHead);
 }
 
-// What PrimitiveEmitter::asBoolean() makes of a comparison of the first two arguments. Output stands in the join, which holds the Phi alone so far.
 struct OrderTestBooleanJoin {
     explicit OrderTestBooleanJoin(OrderTest& test)
         : OrderTestBooleanJoin(test, test.out.below(test.first, test.second), EdgeClass::Normal)
     {
     }
 
-    // Of any other value, tested where Output stands.
     OrderTestBooleanJoin(OrderTest& test, LValue tested, EdgeClass classOfFalseWay)
         : taken(test.out.newBlock())
         , notTaken(test.out.newBlock())
@@ -727,7 +694,6 @@ struct OrderTestBooleanJoin {
     LValue condition;
 };
 
-// The arms are made as ifElse() makes them: each as the continuation of the join alone, which an edge that passes the join by then enters too.
 static void testMachineThreadingResolvesBranchOnJoinOfConstants()
 {
     for (EdgeClass classOfFalseWay : { EdgeClass::Normal, EdgeClass::Unlikely, EdgeClass::Rare }) {
@@ -751,8 +717,6 @@ static void testMachineThreadingResolvesBranchOnJoinOfConstants()
     }
 }
 
-// asBoolean() of a constant, then ifElse() with a rare way for false. Nothing reaches the block that passes true, so the rare way is the only path that runs.
-// With a second join the arms of the first Branch pass it constants in turn, and the arm that passes true is no longer reached either.
 template<unsigned numberOfJoins>
 static void testMachineThreadingKeepsClassOfOnlyReachedEdge()
 {
@@ -778,7 +742,6 @@ static void testMachineThreadingKeepsClassOfOnlyReachedEdge()
     AOT_ORDER_TEST_CHECK(test, test.run(0) == 20);
 }
 
-// c ? a < b : a == b, then a Branch on the answer. Each arm compares and branches, and no answer is made a word. The join tests for zero, so the ways change places.
 static void testMachineThreadingFusesComparisonsAheadOfJoin()
 {
     OrderTest test;
@@ -812,7 +775,6 @@ static void testMachineThreadingFusesComparisonsAheadOfJoin()
     AOT_ORDER_TEST_CHECK(test, test.run(1, 2, 1) == 10 && test.run(2, 1, 1) == 20 && test.run(2, 2, 0) == 10 && test.run(1, 2, 0) == 20);
 }
 
-// A Branch has no place for a second test, so its edge goes on to the join.
 static void testMachineThreadingLeavesEdgeOfBranchThatPassesNoConstant()
 {
     OrderTest test;
@@ -836,8 +798,6 @@ static void testMachineThreadingLeavesEdgeOfBranchThatPassesNoConstant()
     AOT_ORDER_TEST_CHECK(test, test.run(0, 1) == 20 && test.run(1, 1) == 10 && test.run(1, 0) == 20);
 }
 
-// c && a < b: the answer of the comparison is made a boolean, handed on to a second join, which another block passes false, and tested there.
-// The blocks that pass the first join its constants come ahead of it, and go to the arms of the second all the same. No boolean is made.
 static void testMachineThreadingPassesJoinThatHandsItsPhiOn()
 {
     OrderTest test;
@@ -912,7 +872,6 @@ static void testMachineThreadingLeavesHeadOfLoop()
     AOT_ORDER_TEST_CHECK(test, test.run(reinterpret_cast<int64_t>(&rounds)) == 7 && !rounds);
 }
 
-// `kind === 1 || kind === 2` on a boxed value. The entry asks whether first is above second, each of its two ways asks something of its own and comes to `again`, which asks what the entry has asked.
 enum class OrderTestSecondTest : uint8_t {
     IsAlone,
     IsAskedTheOtherWayRound,
@@ -985,7 +944,6 @@ static TypedPointer orderTestWordOf(OrderTest& test, LValue object, OrderTestWor
     return test.out.address(test.testProcedure.heaps().argumentBuffer, object, word * sizeof(int64_t));
 }
 
-// `if (flag) a.n = 8; else b.n = 9; if (flag) return a.n * 100 + b.n; return b.n * 100 + a.n;`: each arm has decided the second test and passes it by. What stands behind the test reads the words again.
 static void testMachineThreadingPastTestBehindArmsThatStore()
 {
     OrderTest test;
@@ -1020,7 +978,6 @@ static void testMachineThreadingPastTestBehindArmsThatStore()
     }
 }
 
-// The head of the loop asks in each turn what the entry has asked. The edge that comes round has decided it too, and the head stays the one way into the loop.
 static void testMachineThreadingLeavesDecidedTestAtHeadOfLoop()
 {
     OrderTest test;
@@ -1044,7 +1001,6 @@ static void testMachineThreadingLeavesDecidedTestAtHeadOfLoop()
     AOT_ORDER_TEST_CHECK(test, test.run(2, 1, reinterpret_cast<int64_t>(&rounds)) == 7 && !rounds);
 }
 
-// A row of `first === n`, each behind the question whether first is above second. With `sameTest` false each asks that of another bound, so no way has decided anything and every answer is kept to the end of the row.
 static std::optional<uint64_t> orderTestInstructionsForRowOfTests(unsigned numberOfTerms, bool sameTest)
 {
     OrderTest test;
@@ -1087,7 +1043,6 @@ static void testMachineThreadingGrowsAsTestsInRowDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// `o.flags & 4`: the entry leaves for `empty` where first is 0, and the next block leaves for `slow` where first is below 1000.
 enum class OrderTestNextTest : uint8_t {
     LeavesForZeroToo,
     LeavesForZeroTooByItsFirstWay,
@@ -1113,7 +1068,6 @@ static void testMachineThreadingOfTestThatNextTestImplies()
     else
         out.jump(start);
     out.appendTo(start);
-    // Without a bit at or above 1024 the word is below 1000 or from 1000 to 1023: with the mask that starts at 512 all such words are below 1000.
     if (nextTest == OrderTestNextTest::FollowsTestOfBits)
         out.branch(out.bitAnd(test.first, out.constInt64(~static_cast<int64_t>(511))), normalEdge(next), rareEdge(empty));
     else if (nextTest == OrderTestNextTest::FollowsTestOfBitsThatReachAboveItsBound)
@@ -1176,7 +1130,6 @@ static void testMachineThreadingEndsInCycleOfJumps()
     AOT_ORDER_TEST_CHECK(test, test.run(0) == 7);
 }
 
-// Leaves the function. The answer is the origin of the Patch plus the addend, so a Patch that stands in for one with another origin is seen.
 static PatchGenerator* orderTestCreateThrowGenerator(OrderTest& test, int64_t addend)
 {
     return test.procedure().createGenerator([addend](CCallHelpers& jit, const PatchParameters& parameters) {
@@ -1227,7 +1180,6 @@ static void testMachineMergingOfThrowBlocks()
     AOT_ORDER_TEST_CHECK(test, test.run(1, 0) == 11 && test.run(0, 1) == answerOfSecondThrow && test.run(0, 0) == 7);
 }
 
-// The block that stays is as likely as the likeliest way into either.
 static void testMachineMergingOfRareArmWithLikelyArm()
 {
     OrderTest test;
@@ -1236,7 +1188,6 @@ static void testMachineMergingOfRareArmWithLikelyArm()
     LBasicBlock next = out.newBlock();
     LBasicBlock often = out.newBlock();
     LBasicBlock done = out.newBlock();
-    // A scope that holds nothing is handed to nobody.
     LValue sum = out.add(test.first, test.second);
     out.branch(test.first, rareEdge(seldom), normalEdge(next));
     ScopeFork outer = out.forkScope();
@@ -1258,7 +1209,6 @@ static void testMachineMergingOfRareArmWithLikelyArm()
     AOT_ORDER_TEST_CHECK(test, test.run(1, 0, 10) == 15 && test.run(0, 1, 10) == 15 && test.run(0, 0, 10) == 10);
 }
 
-// less = a < b; if (c) return less ? a : b; if (a) return less ? a : b; return 7. The test has two readers, so it would be a value in a register. One arm stands for both, and the branch that is left makes the test itself.
 static void testMachineMergingLeavesTestToItsOneReader()
 {
     OrderTest test;
@@ -1292,7 +1242,6 @@ static void testMachineMergingLeavesTestToItsOneReader()
     AOT_ORDER_TEST_CHECK(test, test.run(2, 3, 1) == 2 && test.run(5, 4, 1) == 4 && test.run(2, 3, 0) == 2 && test.run(5, 4, 0) == 4 && test.run(0, 3, 0) == 7);
 }
 
-// function f(o: A | B) { return o.x }, with x at one offset in both: the arms load the same word, so one stands for both and nothing is left to choose between.
 static void testMachineOrderDropsTestWhoseArmsMerge()
 {
     OrderTest test;
@@ -1319,7 +1268,6 @@ static void testMachineOrderDropsTestWhoseArmsMerge()
     AOT_ORDER_TEST_CHECK(test, test.run(1, 2, reinterpret_cast<int64_t>(words)) == 5 && test.run(-1, 2, reinterpret_cast<int64_t>(words)) == 5);
 }
 
-// if (a < b) { } else { }. What is tested for nothing stays where something else reads it, and so does whatever else the block does.
 static void testMachineOrderKeepsWhatElseReadsTestedValue()
 {
     OrderTest test;
@@ -1345,7 +1293,6 @@ static void testMachineOrderKeepsWhatElseReadsTestedValue()
     AOT_ORDER_TEST_CHECK(test, test.run(1, 2, reinterpret_cast<int64_t>(&count)) == 1 && !test.run(2, 1, reinterpret_cast<int64_t>(&count)) && count == 2);
 }
 
-// The number would keep a register of its bank as far as the Branch, where the answer keeps one of the other bank.
 static void testMachineFusionLeavesComparisonOfNumberThatIsNotReadAgain()
 {
     OrderTest test;
@@ -1375,7 +1322,6 @@ static void testMachineFusionLeavesComparisonOfNumberThatIsNotReadAgain()
     AOT_ORDER_TEST_CHECK(test, run(1, 3.5) == 2 && run(0, 3.5) == 5 && run(1, 4) == -1);
 }
 
-// if (*p < 4 && b == c), if (a < 4 && *q == c), if (*p < 4 && *q == c). On x86-64 one of the two comparisons reads its word where it lies.
 template<Opcode combination>
 static void testMachineFusionOfLoadBelowTwoComparisons()
 {
@@ -1411,8 +1357,6 @@ static void testMachineFusionOfLoadBelowTwoComparisons()
     }
 }
 
-// if ((word >> amount) & 1), as ShapeTestEmitter asks a set of bits. On x86-64 the Branch tests the bit itself: nothing is shifted, and the amount lies in any register.
-// Where the shifted word is read again, it is shifted.
 template<Opcode shift, TypeKind type>
 static void testMachineFusionOfShiftBelowBitTest()
 {
@@ -1451,7 +1395,6 @@ static void testMachineFusionOfShiftBelowBitTest()
     }
 }
 
-// distance < 8 && (0xf9 >> distance) & 1, as ShapeTestEmitter asks for one of a few shapes. Neither answer is made a word, and on x86-64 nothing is shifted.
 template<Opcode combination>
 static void testMachineFusionOfComparisonBesideBitTest()
 {
@@ -1480,7 +1423,6 @@ static void testMachineFusionOfComparisonBesideBitTest()
     }
 }
 
-// (*byte & 64) != 0 && a >= 0. The bits are no word either, and on x86-64 the byte is tested where it lies.
 template<Opcode combination>
 static void testMachineFusionOfBitsOfLoadBesideComparison()
 {

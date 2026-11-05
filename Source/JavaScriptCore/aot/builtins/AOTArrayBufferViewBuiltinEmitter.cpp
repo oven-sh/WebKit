@@ -69,7 +69,6 @@ void ArrayBufferViewBuiltinEmitter::moveBytes(const OperationContext& context, C
     ScopeFork fork = m_out.forkScope();
     m_out.branch(areFew.value(), normalEdge(few), normalEdge(many));
 
-    // The stub preserves all but two registers, so nothing is saved around the call.
     m_out.appendToArm(few, fork);
     callStub(context, moveFewBytes(), { to.value(), from.value(), count.value() });
     m_out.jump(moved);
@@ -125,7 +124,6 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call
     CellPointer target = cellOperand(call.receiver());
     CellPointer source = cellOperand(call.argument(0));
     ValueID offset = call.argumentOrNull(1);
-    // A fractional part is truncated, and a number that is not a valid index into the view falls back to the function.
     Integer position = !offset ? integer(0) : typeOf(offset).isInteger() ? integerOperand(offset) : emitter<ConversionEmitter>().toInteger(numberOperand(offset));
     missUnless(call, haveFixedLength(target, source));
     Integer count = lengthOf(source);
@@ -144,7 +142,6 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call
     moveBytes(call.context(), target, targetOffset, source, integer(0), numberOfBytes);
     m_out.jump(done);
 
-    // A view of a detached buffer has no elements; the function throws for it.
     m_out.appendTo(nothingToMove);
     Condition targetHasMemory = isNotZero(Integer(vectorOf(target).value()));
     Condition sourceHasMemory = isNotZero(Integer(vectorOf(source).value()));
@@ -153,68 +150,6 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call
 
     m_out.appendTo(done);
     finishWithUndefined(call);
-}
-
-// `Array.from(bytes)`: the list gets the storage that holds the elements of the view, which are numbers.
-// A view whose length follows its buffer misses. So does a view without elements: where its buffer is detached the function throws.
-void ArrayBufferViewBuiltinEmitter::generateArrayFrom(const InlineCall& call)
-{
-    // More elements than these are copied by the operation.
-    static constexpr int64_t maxElementsOfViewCopiedInLine = 512;
-    ValueID items = call.argument(0);
-    TypedArrayType arrayType = typedArrayTypeOf(BuiltinTypeContext { m_program, types() }, typeIDOf(items));
-    RELEASE_ASSERT(hasInlineElementAccess(arrayType));
-    Type elementType = types().at(elementTypeOf(arrayType));
-    ArrayAllocationEmitter allocation(generator());
-    ElementAccessEmitter& elementAccess = emitter<ElementAccessEmitter>();
-    const ArrayStorageForm& form = arrayStorageFormOf(arrayStorageAtAllocation(types(), elementTypeOf(arrayType)));
-    RELEASE_ASSERT(!form.holdsCells);
-    // Storage of int32 holds boxed values.
-    Representation rawRepresentation = form.element == Representation::Double ? Representation::Double : Representation::JSValue;
-    LBasicBlock isShort = newBlock();
-    LBasicBlock outOfLine = newBlock();
-    LBasicBlock copyLoop = newBlock();
-    LBasicBlock copy = newBlock();
-    LBasicBlock copied = newBlock();
-    Join<CellPointer> join(m_out);
-
-    CellPointer source = cellOperand(items);
-    missUnless(call, hasFixedLength(source));
-    Integer count = lengthOf(source);
-    missUnless(call, isNotZero(count));
-    m_out.branch(belowOrEqual(count, integer(maxElementsOfViewCopiedInLine)).value(), normalEdge(isShort), unlikelyEdge(outOfLine));
-
-    m_out.appendTo(isShort);
-    CellPointer array = allocation.allocateArrayOfHoles(call.context(), count, form, outOfLine);
-    {
-        CodeGenerator::InitializationScope scope(generator());
-        ArrayElements elements = elementAccess.elementsOf(array);
-        TypedArrayElements viewed { source, count, vectorOf(source) };
-        ValueFromBlock firstIndex = m_out.anchor(integer(0).value());
-        m_out.jump(copyLoop);
-
-        m_out.appendTo(copyLoop);
-        Integer index(m_out.phi(Machine::Int64, firstIndex));
-        m_out.branch(below(index, count).value(), normalEdge(copy), normalEdge(copied));
-
-        m_out.appendTo(copy);
-        Operand element = inRepresentation(call.context(), rawRepresentation, elementAccess.loadTypedArrayElement(viewed, index, arrayType), elementType);
-        // NaN marks a hole in storage of doubles. The operation makes the list that holds one, and nobody has seen this one.
-        if (element.is<Number>() && !elementType.isInteger())
-            branchUnless(equal(element.as<Number>(), element.as<Number>()), outOfLine);
-        elementAccess.storeRawElement(form, elements, index, element);
-        m_out.addIncomingToPhi(index.value(), m_out.anchor(add(index, integer(1)).value()));
-        m_out.jump(copyLoop);
-
-        m_out.appendTo(copied);
-    }
-    emitter<BarrierEmitter>().fenceAfterInitialization();
-    ensureStillAliveHere(source);
-    join.add(array);
-
-    m_out.appendTo(outOfLine);
-    join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::ArrayFromTypedArray, { source, word32(form.indexingType) }));
-    finish(call, join.finish());
 }
 
 } } } // namespace JSC::AOT::Typed

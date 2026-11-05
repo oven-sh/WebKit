@@ -414,8 +414,6 @@ function buildResult(context: OverloadContext): ModelResult {
   };
 }
 
-// The built-in throws for a negative index before it converts the operands behind the index. A conversion of one of them that ran
-// before the call would run code that the call never runs.
 export function mayRefuseValueBeforeConversion(
   operands: readonly Pick<ModelParameter, "conversion" | "admitted">[],
 ): boolean {
@@ -471,15 +469,7 @@ function buildOverload(context: OverloadContext, constantImplementation: ModelIm
     code: {
       implementation: constantImplementation ?? resolveImplementation(context, signature.implementation),
       directEntry: signature.directEntry ?? null,
-      inRanges: null,
       model: resolveModel(context),
-      fieldsForm: signature.fieldsForm ?? (signature.directEntry?.returnsFields ? "FieldsOfDirectEntry" : null),
-      prefixForm: signature.prefixForm ?? null,
-      prefixProperties: (signature.prefixProperties ?? []).map(({ name, type }) => ({
-        name: context.builder.internComponent(name),
-        type: context.types.intern(type, context, source),
-      })),
-      listForm: signature.listForm ?? null,
     },
   };
 }
@@ -563,7 +553,6 @@ function modesOf(
 const kindsOfFunctions: readonly BuiltinKind[] = ["Constructor", "Function", "Method"];
 const lengthOfFunction = b.int(0, 2 ** 31 - 1);
 
-// ECMAScript and WebIDL create every built-in function with a `length` that is a whole number and a `name` that is a string, and every @@toStringTag that they create as a data property holds a string.
 export function typeOfPropertyWithoutWrittenType({ name, holder }: Pick<ModelBuiltin, "name" | "holder">): TypeSpec {
   if (name.kind === "WellKnownSymbol") return name.text === "toStringTag" ? b.string.spec : b.any.spec;
   if (name.kind !== "Text" || holder === null || !kindsOfFunctions.includes(holder.kind)) return b.any.spec;
@@ -687,7 +676,6 @@ function entryFlagsOf(overloads: readonly ModelOverload[]): Set<BuiltinFlag> {
   return flags;
 }
 
-// A function refuses only what none of its overloads takes: an overload that takes anything in one place, and in every other place all that this one takes.
 function describeOnlyWhatEveryOverloadRefuses(overloads: readonly ModelOverload[]): void {
   const takesAllOf = (wide: ModelParameter | null, narrow: ModelParameter | null) =>
     wide === null || narrow === null || wide.accepted.isAnything || wide.accepted.key === narrow.accepted.key;

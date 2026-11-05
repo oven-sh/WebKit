@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// LoopInvariants with Guesses: the tests of all guesses at values that a loop does not change stand in a row in front of it. Where all pass the loop is walked with the proofs bound all round.
-// Where one fails a closed copy of the loop runs, built for size, in which no guess is opened and no loop is built twice. Behind the loop the two meet as any two edges do, and the proofs are gone.
-// At a suspension: a loop that may suspend is built once. At a throw: each copy throws to the handlers of its blocks as any block does. A handler gets no name of what the loop has defined: such a loop is built once.
-// Withheld, either of the two: every loop is built once.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -23,7 +18,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// In operations of the body. The closed copy costs about as many bytes as the loop has closed operations, and it is run where a written type is wrong.
 static constexpr uint32_t largestLoopBuiltTwice = 100;
 
 bool Walker::leavesLoopBeingBuiltTwice(size_t frameIndex, BlockID to) const
@@ -34,7 +28,6 @@ bool Walker::leavesLoopBeingBuiltTwice(size_t frameIndex, BlockID to) const
     });
 }
 
-// What is read behind an edge is defined on every way to it, so something stands for it where the edge leaves.
 void Walker::takeNamesOntoEdge(OpenEdge& edge, size_t frameIndex, BlockID to)
 {
     const Frame& frame = m_frames[frameIndex];
@@ -48,7 +41,6 @@ void Walker::takeNamesOntoEdge(OpenEdge& edge, size_t frameIndex, BlockID to)
     }
 }
 
-// No value is live for the sake of a hint, so no edge has brought the block being walked what stands for it here.
 bool Walker::isWithoutNameBehindLoopBuiltTwice(ValueID value)
 {
     const Frame& frame = m_frames.last();
@@ -59,14 +51,12 @@ bool Walker::isWithoutNameBehindLoopBuiltTwice(ValueID value)
     return !m_liveness.isLiveAtHead(value, frame.block);
 }
 
-// The walk stands in a block without an end, which enters the copy alone.
 void Walker::walkCopyOfLoop(BlockID inputHead, std::span<const Reference> entering)
 {
     size_t frameIndex = m_frames.size() - 1;
     const BodyIndex& index = *m_frames[frameIndex].index;
     LoopID loop = index.loopOf(inputHead);
 
-    // The names that hold at the head come from in front of the loop.
     uint32_t namesAtHead = inputBlock(frameIndex, inputHead).firstNarrowerName;
     for (BlockID member : index.membersOf(loop))
         inputBlock(frameIndex, member) = InputBlock { };
@@ -102,7 +92,6 @@ ValueID Walker::findReadAskedAtHeadOfLoop(BlockID inputHead, std::span<const std
 {
     const BodyIndex& index = currentBodyIndex();
     BodyBlock head = index.block(inputHead);
-    // A text in its builder and the position of an iteration by index have no value for the head of the closed copy.
     if (!has(Mechanism::TypedOperations) || !has(Mechanism::EscapeAnalysis) || hasTextsInStringBuilders() || m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames.last().inlineFrame, inputHead)))
         return { };
     for (BodyValue written : head.values()) {
@@ -136,7 +125,6 @@ bool Walker::askObjectAtHeadOfTypedCopy(const BodyValue& read)
     if (findReadAskedAtHeadOfLoop(way.inputHead, { }) != read.id())
         return false;
 
-    // What the head holds at this turn is what the closed copy would hold at it: both are the same program, and nothing of the turn has run.
     BodyBlock head = currentBodyIndex().block(way.inputHead);
     std::span<const ValueID> taken = m_code.at(way.entry).parameters();
     if (taken.size() != head.numberOfParameters())
@@ -170,7 +158,6 @@ bool Walker::askObjectAtHeadOfTypedCopy(const BodyValue& read)
 
 void Walker::noteHeadOfTurn(BlockID inputHead)
 {
-    // A turn of a loop inside is no part of the turn that is run once.
     m_state.noteSomethingWasDoneInTurn();
     if (m_waysIntoClosedCopies.isEmpty() || m_numberOfCopiesBuiltForSize || isUnreachable())
         return;
@@ -214,7 +201,6 @@ bool Walker::turnsOfTypedCopyMayBeginAgain(BlockID inputHead, const LoopPreview&
     if (!preview.effects.mayRunOtherCode() || hasTextsInStringBuilders() || m_numberOfCopiesBuiltForSize || isUnderHandler()
         || m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)) || isLoopThatMayDoAnything(currentFunction(), inputHead))
         return false;
-    // A loop inside is looked at as it stands, and seldom runs nothing.
     return !preview.otherCodeRunsInLoopInside && currentBodyIndex().loop(currentBodyIndex().loopOf(inputHead)).numberOfLoopsWithin <= 1;
 }
 
@@ -222,7 +208,6 @@ std::unique_ptr<LoopPreview> Walker::previewTypedCopy(BlockID inputHead, const L
 {
     if (!turnsOfTypedCopyMayBeginAgain(inputHead, preview))
         return nullptr;
-    // `items[i].price`: behind the row in front of the loop the read out of the list runs no code, and the look that has found the lists has come through the whole turn.
     ListsNotedAsTestedForLook noted(*this, lists);
     if (ValueID first = lists.empty() ? preview.firstOperationThatRunsOtherCode : ValueID()) {
         auto typeInLooks = [&](ValueID input) -> TypeID {
@@ -241,7 +226,6 @@ std::unique_ptr<LoopPreview> Walker::previewTypedCopy(BlockID inputHead, const L
     LoopPreview ofTypedCopy = previewLoop(*this, inputHead, entryTypes.span(), preview.typesOfParameters.span());
     if (m_hasFailed || ofTypedCopy.effects.mayRunOtherCode())
         return nullptr;
-    // `text = text + "b"`: beginTextsInStringBuilders() lets the text go round in a builder, which the head of the other copy does not take: with a text in a builder no turn begins again.
     if (mayKeepTextsInStringBuilders(*this) && !ofTypedCopy.effects.maySuspend) {
         Vector<GrowingText, 2> texts;
         findGrowingTexts(*this, inputHead, ofTypedCopy, texts);
@@ -253,7 +237,6 @@ std::unique_ptr<LoopPreview> Walker::previewTypedCopy(BlockID inputHead, const L
 
 bool Walker::mayBeginTurnAgainInClosedCopy() const
 {
-    // The other copy of the loop itself is walked before there is a way into it, and at the head of a loop inside something counts as done.
     return !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().isEntered && !isUnreachable() && m_state.nothingWasDoneInTurn(m_waysIntoClosedCopies.last().numberOfTurn) && !isUnderHandler() && !hasTextsInStringBuilders();
 }
 
@@ -276,7 +259,6 @@ std::optional<uint32_t> Walker::openLoopOfTypedCopy() const
 bool Walker::standsInFrontOfTypedCopy(Reference reference) const
 {
     std::optional<uint32_t> loop = openLoopOfTypedCopy();
-    // What the state knows of it beyond its own type may have been learned in the loop.
     return loop && reference && reference.isRecord() && standsInFrontOfLoop(*loop, reference) && typeOf(reference) == ownTypeOf(reference);
 }
 
@@ -348,12 +330,10 @@ bool Walker::layFrameForLookIntoCopy(FunctionID callee, const BodyIndex& body)
     frame.body = &body.body();
     frame.index = &body;
     frame.references.fill(Reference(), body.numberOfValues());
-    // The call stands in the loop that is looked at.
     frame.loopDepthAtCall = m_frames.last().loopDepthAtCall + 1;
     frame.inlineFrame = m_frames.last().inlineFrame;
     frame.block = entryBlock;
     m_frames.append(WTF::move(frame));
-    // As walkInline() counts, so that the look is told of a callee of the copy what the walk will be told.
     if (!m_numberOfFramesLaidForLooks++)
         m_operationsCopiedAtWrittenCallInWalk = std::exchange(m_operationsCopiedAtWrittenCall, 0);
     m_operationsCopiedAtWrittenCall += facts().summaries().at(callee).numberOfOperations;
@@ -383,26 +363,21 @@ void Walker::beginTurnAgainInClosedCopy()
     ++m_numberOfTurnsThatBeginAgain;
 }
 
-bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering)
+bool Walker::mayBuildLoopSeveralTimes(BlockID inputHead)
 {
     size_t frameIndex = m_frames.size() - 1;
     const BodyIndex& index = *m_frames[frameIndex].index;
     if (!has(Mechanism::Guesses) || !m_opensGuesses || !index.isLoopHead(inputHead) || index.hasIrreducibleFlow() || index.isEnteredByHandlerEdge(inputHead))
         return false;
-    // An edge brings such a parameter what nothing reads, so no edge behind the loop would have a name for it.
     if (index.holdsParametersReadByReleaseHintsAlone())
         return false;
     LoopID loop = index.loopOf(inputHead);
-    if (m_frames[frameIndex].loopsBeingBuiltTwice.contains(loop))
-        return false;
-    // The position of an iteration by index that was opened in front of the loop comes round in a parameter of the one head.
     if (m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)) && !iterationsSteppedAtMayBeBuiltTwice(inputHead))
         return false;
 
     uint32_t numberOfOperations = 0;
     for (BlockID member : index.membersOf(loop)) {
         BodyBlock block = index.block(member);
-        // The block of a return throws to a handler of the loop. In the copy of a callee it stays open for walkInline(), which takes it up behind a walkBlock() of its own.
         TerminatorKind end = block.terminator().kind();
         if (frameIndex && !m_frames[frameIndex].returnsInPlaceOfUnit && (end == TerminatorKind::Return || end == TerminatorKind::ReturnCall))
             return false;
@@ -414,119 +389,14 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 return false;
         }
     }
+    return true;
+}
 
-    Vector<GuessInFrontOfLoop, 4> guesses = findGuessesInFrontOfLoop(*this, inputHead, preview);
-    // The looks that are tried for the lists count on what the look at the typed copy will count on.
-    BlockID headOfLooksTriedForLists = turnsOfTypedCopyMayBeginAgain(inputHead, preview) ? inputHead : m_inputHeadAskedAboutTypedCopy;
-    ListsReadInLoop listsRead;
-    {
-        SetForScope asked(m_inputHeadAskedAboutTypedCopy, headOfLooksTriedForLists);
-        listsRead = findListsReadInLoop(*this, inputHead, preview, entering, guesses);
-    }
-    Vector<CounterTestedInFrontOfLoop, 2> counters = findCountersTestedInFrontOfLoop(*this, inputHead, entering, guesses);
-    Vector<std::pair<Reference, TypeID>, 4> testedInFront;
-    for (const GuessInFrontOfLoop& guess : guesses)
-        testedInFront.append({ guess.value, guess.tested });
-    bool asksAtHead = !!findReadAskedAtHeadOfLoop(inputHead, testedInFront.span());
-    // `for (..) total += new Point(i, 2).sum()`: each turn checks the dead zone of `Point`. A variable of a body that runs once never goes back into its dead zone, whatever the turns run: it is asked once, in front.
-    // Where it is empty the other copy runs, which checks in its turns and throws where the program does.
-    Vector<VariableID, 4> variablesCheckedInTurns;
-    for (BlockID member : index.membersOf(loop)) {
-        if (!has(Mechanism::Folding) || m_numberOfCopiesBuiltForSize)
-            break;
-        for (BodyValue operation : index.block(member).values()) {
-            ValueID read = operation.opcode() == Opcode::CheckInitialized ? index.valueBehindCasts(operation.operand(0)) : ValueID();
-            if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::GetModuleVariable)
-                continue;
-            VariableID variable = index.value(read).variable();
-            if (variablesCheckedInTurns.contains(variable) || !leavesDeadZoneForGood(program(), variable) || m_state.isPastDeadZone(variable))
-                continue;
-            // The empty word is the mark of such a variable.
-            const DeferredVariable* deferred = plan().deferredDefinitions().findDeferred(variable);
-            if (deferred && deferred->mark == Primitive::Absent)
-                continue;
-            TypeID widest = widestTypeOfOperation(*this, index.value(read));
-            if (widest && (m_types.at(widest).primitives & Primitive::Absent))
-                variablesCheckedInTurns.append(variable);
-        }
-    }
-    bool hasTestInFront = !guesses.isEmpty() || !listsRead.lists.isEmpty() || !counters.isEmpty() || asksAtHead;
-    bool otherCopyOpensItsGuesses = guesses.isEmpty() && counters.isEmpty() && !asksAtHead;
-    // `const point = new Point(..); total += point.sum();`: of an object that the turn itself makes nothing is asked but the guard of the member. In one copy the arm as written takes the object, so every turn makes it.
-    Vector<MemberConditionRecord, 4> guardsAskedOfObjectsOfTurns;
-    for (BlockID member : index.membersOf(loop)) {
-        for (BodyValue operation : index.block(member).values()) {
-            if (operation.opcode() != Opcode::PropGet || operation.isFreeName())
-                continue;
-            ValueID object = index.valueBehindCasts(operation.objectOperand());
-            if (index.isParameter(object) || index.opcodeOf(object) != Opcode::Construct || !index.isInLoop(index.blockOf(object), loop))
-                continue;
-            FunctionID constructor = facts().linked().calleeAt(currentFunction(), object);
-            if (TypeID made = constructor ? typeOfObjectsMadeBy(*this, constructor) : TypeID())
-                findGuardsOfMethodAboveObjectsOf(*this, made, operation.key(), guardsAskedOfObjectsOfTurns);
-        }
-    }
-    hasTestInFront |= !guardsAskedOfObjectsOfTurns.isEmpty();
-    otherCopyOpensItsGuesses &= guardsAskedOfObjectsOfTurns.isEmpty();
-    // The look is told of the lists whether or not a look has found them left as they are: it asks that by itself (LooksAtLoops::preview()), and claims nothing where a turn writes one.
-    std::unique_ptr<LoopPreview> ofTypedCopy = previewTypedCopy(inputHead, preview, entering, listsRead.lists.span());
-    if (!hasTestInFront && variablesCheckedInTurns.isEmpty() && !ofTypedCopy)
-        return false;
-    // Nobody expects a loop to be entered in the dead zone of what it reads: a copy that is there for that alone is built for its size.
-    otherCopyOpensItsGuesses &= variablesCheckedInTurns.isEmpty() || ofTypedCopy || !listsRead.lists.isEmpty();
-    // `total += area(box)`: what a turn expects of a parameter of the head is asked of what enters, once. What comes round is typed by the turns.
-    for (size_t place = 0; ofTypedCopy && place < ofTypedCopy->guessesCountedOn.size(); ++place) {
-        ValueID parameter = index.valueBehindCasts(ofTypedCopy->guessesCountedOn[place].operand);
-        BodyBlock head = index.block(inputHead);
-        if (!index.isParameter(parameter) || index.blockOf(parameter) != inputHead)
-            continue;
-        uint32_t position = parameter.index() - head.firstParameter().index();
-        if (position >= entering.size())
-            continue;
-        Reference enters = entering[position];
-        bool isTestedAlready = std::ranges::find(entering.first(position), enters) != entering.first(position).end()
-            || counters.containsIf([&](const CounterTestedInFrontOfLoop& counter) { return counter.position == position; })
-            || guesses.containsIf([&](const GuessInFrontOfLoop& guess) { return guess.value == enters; });
-        if (isTestedAlready)
-            continue;
-        if (TypeID tested = typeThatTypeTestAsksForWhereExpected(*this, enters, ofTypedCopy->guessesCountedOn[place].expected))
-            counters.append({ position, tested });
-    }
-    // A SECOND COPY PAYS WHERE SOMETHING LEAVES THE TURNS: a test that answers the same in every turn, with the reads behind it, or the box of what goes round. `while (node) node = node.parent` asks each turn anew in either copy.
-    if (!hasTestInFront && variablesCheckedInTurns.isEmpty() && counters.isEmpty()) {
-        uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
-        const Effects& ofTurns = ofTypedCopy->effects;
-        auto isTheSameInEveryTurn = [&](auto& self, ValueID written, unsigned depth) -> bool {
-            ValueID value = index.valueBehindCasts(written);
-            if (value.index() < firstValueOfLoop)
-                return true;
-            if (!depth || index.isParameter(value))
-                return false;
-            BodyValue definition = index.value(value);
-            if (definition.opcode() == Opcode::CheckInitialized)
-                return self(self, definition.operand(0), depth - 1);
-            // `while (pos < end && text.charCodeAt(pos) === 32) pos++`, all three variables of a module or shared by closures: the turns write `pos` alone.
-            if (definition.opcode() == Opcode::GetModuleVariable)
-                return !declaredEffectsOfOperation(program(), Opcode::GetModuleVariable, definition).reads.overlaps(ofTurns.writes);
-            if (definition.opcode() == Opcode::GetEnvironmentField)
-                return !declaredEffectsOfOperation(program(), Opcode::GetEnvironmentField, definition).reads.overlaps(ofTurns.writes) && self(self, definition.environmentOperand(), depth - 1);
-            if (definition.opcode() != Opcode::PropGet || definition.isFreeName())
-                return false;
-            // `for (source.position = 0; source.position < source.text.length; source.position++)`: the turns write under one name and read under another.
-            LocationMasks slot;
-            slot.add(program(), MemoryLocation::objectField(definition.key()));
-            if (slot.overlaps(ofTurns.writes))
-                return false;
-            return self(self, definition.objectOperand(), depth - 1);
-        };
-        bool somethingLeavesTheTurns = ofTypedCopy->guessesCountedOn.containsIf([&](const GuessCountedOnByLooks& guess) {
-            return isTheSameInEveryTurn(isTheSameInEveryTurn, guess.operand, 4);
-        });
-        if (!somethingLeavesTheTurns)
-            return false;
-    }
-
-    // What the loop defines and code behind it reads.
+std::optional<Vector<ValueID, 8>> Walker::findValuesOfLoopReadBehindIt(BlockID inputHead)
+{
+    size_t frameIndex = m_frames.size() - 1;
+    const BodyIndex& index = *m_frames[frameIndex].index;
+    LoopID loop = index.loopOf(inputHead);
     if (!m_liveness.isComputedFor(index))
         m_liveness.compute(index);
     uint32_t firstValue = index.block(inputHead).firstParameter().index();
@@ -560,11 +430,241 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             readsWhatLoopDefines |= isDefinedInLoop(live);
         });
         if (readsWhatLoopDefines)
+            return std::nullopt;
+    }
+    return readBehindLoop;
+}
+
+void Walker::forgetValuesOfLoop(BlockID inputHead)
+{
+    Frame& frame = m_frames.last();
+    const BodyIndex& index = *frame.index;
+    for (BlockID member : index.membersOf(index.loopOf(inputHead))) {
+        BodyBlock block = index.block(member);
+        for (uint32_t value = block.firstParameter().index(); value < block.endOfValues().index(); ++value)
+            frame.references[value] = Reference();
+    }
+}
+
+bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering)
+{
+    size_t frameIndex = m_frames.size() - 1;
+    const BodyIndex& index = *m_frames[frameIndex].index;
+    if (m_numberOfCopiesBuiltForSize || !m_closedCopiesShared.isEmpty() || isUnreachable() || hasTextsInStringBuilders())
+        return false;
+    LoopID loop = index.loopOf(inputHead);
+    if (m_frames[frameIndex].loopsBeingBuiltTwice.contains(loop) || m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)))
+        return false;
+    Vector<GuessInFrontOfLoop, 4> members = findMembersToldApartInFrontOfLoop(*this, inputHead, preview);
+    if (members.size() < 2)
+        return false;
+    std::optional<Vector<ValueID, 8>> readBehindLoop = findValuesOfLoopReadBehindIt(inputHead);
+    if (!readBehindLoop)
+        return false;
+
+    struct StartOfCopy {
+        BlockID block;
+        WalkState state;
+        Reference proof;
+    };
+    Origin origin = m_origin;
+    Vector<StartOfCopy, 4> starts;
+    for (const GuessInFrontOfLoop& member : members) {
+        Reference test = isUnreachable() ? Reference() : buildTestInFrontOfLoop(*this, member, origin);
+        if (!test)
+            continue;
+        BlockID passed = addBlock();
+        BlockID next = addBlock();
+        branch(test, passed, next);
+        continueIn(passed);
+        Reference proof = buildProofInFrontOfLoop(*this, member, test, origin);
+        if (proof && !isUnreachable())
+            starts.append(StartOfCopy { m_block, m_state, proof });
+        continueIn(next);
+    }
+    if (m_hasFailed)
+        return true;
+    noteGuessOpened();
+    ++m_numberOfLoopsBuiltTwice;
+
+    BlockID closedStart = addBlock(BlockFrequency::Rare);
+    jumpTo(closedStart, { });
+    m_block = closedStart;
+    m_state.clear();
+    BlockID entryOfClosedCopy = addBlock(BlockFrequency::Rare);
+    Vector<Reference, 8> enteringClosedCopy;
+    for (size_t place = 0; place < entering.size(); ++place) {
+        TypeID type = joinTypes(preview.typesOfParameters[place], ownTypeOf(entering[place]));
+        enteringClosedCopy.append(addParameter(entryOfClosedCopy, type, formOfParameter(type, { })));
+    }
+    settleParametersOf(entryOfClosedCopy);
+
+    for (ValueID value : *readBehindLoop) {
+        if (!m_frames[frameIndex].valuesBuiltTwice.contains(value))
+            m_frames[frameIndex].valuesBuiltTwice.append(value);
+    }
+    m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
+    uint32_t namesInFrontOfLoop = inputBlock(frameIndex, inputHead).firstNarrowerName;
+
+    endWithJumpInto(entryOfClosedCopy, entering);
+    m_block = entryOfClosedCopy;
+    m_state.clear();
+    {
+        ClosedArm closedArm(*this);
+        ++m_numberOfCopiesBuiltForSize;
+        walkCopyOfLoop(inputHead, enteringClosedCopy.span());
+        --m_numberOfCopiesBuiltForSize;
+    }
+    forgetValuesOfLoop(inputHead);
+
+    m_closedCopiesShared.append(ClosedCopyShared { frameIndex, inputHead, closedStart, entryOfClosedCopy, false });
+    for (StartOfCopy& start : starts) {
+        if (m_hasFailed)
+            break;
+        m_block = start.block;
+        m_state = WTF::move(start.state);
+        Vector<std::pair<ValueID, Reference>, 8> boundBefore;
+        for (ValueID name : members[0].names) {
+            boundBefore.append({ name, referenceBoundTo(name) });
+            bind(name, start.proof);
+        }
+        m_closedCopiesShared.last().isAboutToBeTaken = true;
+        m_waysIntoClosedCopies.append(WayIntoClosedCopy { frameIndex, inputHead, entryOfClosedCopy, { }, closedStart, { }, false });
+        walkCopyOfLoop(inputHead, entering);
+        m_waysIntoClosedCopies.removeLast();
+        m_closedCopiesShared.last().isAboutToBeTaken = false;
+        for (auto [name, reference] : boundBefore)
+            bind(name, reference);
+        forgetValuesOfLoop(inputHead);
+    }
+    m_closedCopiesShared.removeLast();
+
+    for (BlockID member : index.membersOf(loop))
+        inputBlock(frameIndex, member).firstNarrowerName = namesInFrontOfLoop;
+    m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
+    m_block = { };
+    m_state.clear();
+    return true;
+}
+
+bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::span<const Reference> entering)
+{
+    size_t frameIndex = m_frames.size() - 1;
+    const BodyIndex& index = *m_frames[frameIndex].index;
+    LoopID loop = index.loopOf(inputHead);
+    ClosedCopyShared* shared = !m_closedCopiesShared.isEmpty() && m_closedCopiesShared.last().frameIndex == frameIndex && m_closedCopiesShared.last().inputHead == inputHead && std::exchange(m_closedCopiesShared.last().isAboutToBeTaken, false) ? &m_closedCopiesShared.last() : nullptr;
+    if (!shared && m_frames[frameIndex].loopsBeingBuiltTwice.contains(loop))
+        return false;
+    BlockID sharedStart = shared ? shared->start : BlockID();
+    BlockID sharedEntry = shared ? shared->entry : BlockID();
+
+    Vector<GuessInFrontOfLoop, 4> guesses = findGuessesInFrontOfLoop(*this, inputHead, preview);
+    BlockID headOfLooksTriedForLists = turnsOfTypedCopyMayBeginAgain(inputHead, preview) ? inputHead : m_inputHeadAskedAboutTypedCopy;
+    ListsReadInLoop listsRead;
+    {
+        SetForScope asked(m_inputHeadAskedAboutTypedCopy, headOfLooksTriedForLists);
+        listsRead = findListsReadInLoop(*this, inputHead, preview, entering, guesses);
+    }
+    Vector<CounterTestedInFrontOfLoop, 2> counters = findCountersTestedInFrontOfLoop(*this, inputHead, entering, guesses);
+    Vector<std::pair<Reference, TypeID>, 4> testedInFront;
+    for (const GuessInFrontOfLoop& guess : guesses)
+        testedInFront.append({ guess.value, guess.tested });
+    bool asksAtHead = !!findReadAskedAtHeadOfLoop(inputHead, testedInFront.span());
+    Vector<VariableID, 4> variablesCheckedInTurns;
+    for (BlockID member : index.membersOf(loop)) {
+        if (!has(Mechanism::Folding) || m_numberOfCopiesBuiltForSize)
+            break;
+        for (BodyValue operation : index.block(member).values()) {
+            ValueID read = operation.opcode() == Opcode::CheckInitialized ? index.valueBehindCasts(operation.operand(0)) : ValueID();
+            if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::GetModuleVariable)
+                continue;
+            VariableID variable = index.value(read).variable();
+            if (variablesCheckedInTurns.contains(variable) || !leavesDeadZoneForGood(program(), variable) || m_state.isPastDeadZone(variable))
+                continue;
+            const DeferredVariable* deferred = plan().deferredDefinitions().findDeferred(variable);
+            if (deferred && deferred->mark == Primitive::Absent)
+                continue;
+            TypeID widest = widestTypeOfOperation(*this, index.value(read));
+            if (widest && (m_types.at(widest).primitives & Primitive::Absent))
+                variablesCheckedInTurns.append(variable);
+        }
+    }
+    bool hasTestInFront = !guesses.isEmpty() || !listsRead.lists.isEmpty() || !counters.isEmpty() || asksAtHead;
+    bool otherCopyOpensItsGuesses = guesses.isEmpty() && counters.isEmpty() && !asksAtHead;
+    Vector<MemberConditionRecord, 4> guardsAskedOfObjectsOfTurns;
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() != Opcode::PropGet || operation.isFreeName())
+                continue;
+            ValueID object = index.valueBehindCasts(operation.objectOperand());
+            if (index.isParameter(object) || index.opcodeOf(object) != Opcode::Construct || !index.isInLoop(index.blockOf(object), loop))
+                continue;
+            FunctionID constructor = facts().linked().calleeAt(currentFunction(), object);
+            if (TypeID made = constructor ? typeOfObjectsMadeBy(*this, constructor) : TypeID())
+                findGuardsOfMethodAboveObjectsOf(*this, made, operation.key(), guardsAskedOfObjectsOfTurns);
+        }
+    }
+    hasTestInFront |= !guardsAskedOfObjectsOfTurns.isEmpty();
+    otherCopyOpensItsGuesses &= guardsAskedOfObjectsOfTurns.isEmpty();
+    std::unique_ptr<LoopPreview> ofTypedCopy = previewTypedCopy(inputHead, preview, entering, listsRead.lists.span());
+    if (!hasTestInFront && variablesCheckedInTurns.isEmpty() && !ofTypedCopy)
+        return false;
+    otherCopyOpensItsGuesses &= variablesCheckedInTurns.isEmpty() || ofTypedCopy || !listsRead.lists.isEmpty();
+    for (size_t place = 0; ofTypedCopy && place < ofTypedCopy->guessesCountedOn.size(); ++place) {
+        ValueID parameter = index.valueBehindCasts(ofTypedCopy->guessesCountedOn[place].operand);
+        BodyBlock head = index.block(inputHead);
+        if (!index.isParameter(parameter) || index.blockOf(parameter) != inputHead)
+            continue;
+        uint32_t position = parameter.index() - head.firstParameter().index();
+        if (position >= entering.size())
+            continue;
+        Reference enters = entering[position];
+        bool isTestedAlready = std::ranges::find(entering.first(position), enters) != entering.first(position).end()
+            || counters.containsIf([&](const CounterTestedInFrontOfLoop& counter) { return counter.position == position; })
+            || guesses.containsIf([&](const GuessInFrontOfLoop& guess) { return guess.value == enters; });
+        if (isTestedAlready)
+            continue;
+        if (TypeID tested = typeThatTypeTestAsksForWhereExpected(*this, enters, ofTypedCopy->guessesCountedOn[place].expected))
+            counters.append({ position, tested });
+    }
+    if (!hasTestInFront && variablesCheckedInTurns.isEmpty() && counters.isEmpty()) {
+        uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+        const Effects& ofTurns = ofTypedCopy->effects;
+        auto isTheSameInEveryTurn = [&](auto& self, ValueID written, unsigned depth) -> bool {
+            ValueID value = index.valueBehindCasts(written);
+            if (value.index() < firstValueOfLoop)
+                return true;
+            if (!depth || index.isParameter(value))
+                return false;
+            BodyValue definition = index.value(value);
+            if (definition.opcode() == Opcode::CheckInitialized)
+                return self(self, definition.operand(0), depth - 1);
+            if (definition.opcode() == Opcode::GetModuleVariable)
+                return !declaredEffectsOfOperation(program(), Opcode::GetModuleVariable, definition).reads.overlaps(ofTurns.writes);
+            if (definition.opcode() == Opcode::GetEnvironmentField)
+                return !declaredEffectsOfOperation(program(), Opcode::GetEnvironmentField, definition).reads.overlaps(ofTurns.writes) && self(self, definition.environmentOperand(), depth - 1);
+            if (definition.opcode() != Opcode::PropGet || definition.isFreeName())
+                return false;
+            LocationMasks slot;
+            slot.add(program(), MemoryLocation::objectField(definition.key()));
+            if (slot.overlaps(ofTurns.writes))
+                return false;
+            return self(self, definition.objectOperand(), depth - 1);
+        };
+        bool somethingLeavesTheTurns = ofTypedCopy->guessesCountedOn.containsIf([&](const GuessCountedOnByLooks& guess) {
+            return isTheSameInEveryTurn(isTheSameInEveryTurn, guess.operand, 4);
+        });
+        if (!somethingLeavesTheTurns)
             return false;
     }
 
+    std::optional<Vector<ValueID, 8>> foundBehindLoop = findValuesOfLoopReadBehindIt(inputHead);
+    if (!foundBehindLoop)
+        return false;
+    Vector<ValueID, 8> readBehindLoop = WTF::move(*foundBehindLoop);
+
     Origin origin = m_origin;
-    BlockID closedStart;
+    BlockID closedStart = sharedStart;
     for (VariableID variable : variablesCheckedInTurns) {
         Draft read(Opcode::GetModuleVariable, origin);
         read.setVariable(variable);
@@ -596,11 +696,9 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         m_state.noteVariable(variable, held);
         noteValueOfStableBinding(*this, variable, held);
     }
-    // Nothing but reads was built.
-    if (!closedStart && !hasTestInFront && !ofTypedCopy)
+    if (closedStart == sharedStart && !hasTestInFront && !ofTypedCopy)
         return false;
     if (!guardsAskedOfObjectsOfTurns.isEmpty() && !isUnreachable()) {
-        // The first object begins the guards of a constructor function, and the typed turns make none.
         Vector<LayoutID, 4> begun;
         for (const MemberConditionRecord& condition : guardsAskedOfObjectsOfTurns) {
             if (!program().at(condition.layout).has(LayoutFlags::IsConstructorFunction) || begun.contains(condition.layout))
@@ -661,11 +759,9 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     }
     noteGuessOpened();
     ++m_numberOfLoopsBuiltTwice;
-    // Whatever stands between it and the head of the closed copy is built behind it, so it holds on every way in.
-    BlockID entryOfClosedCopy;
+    BlockID entryOfClosedCopy = sharedEntry;
     Vector<Reference, 8> enteringClosedCopy;
-    // A text in its builder and the position of an iteration by index have no value for the head of the closed copy.
-    if (asksAtHead || (!hasTextsInStringBuilders() && !m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)))) {
+    if (!sharedEntry && (asksAtHead || (!hasTextsInStringBuilders() && !m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead))))) {
         entryOfClosedCopy = addBlock(otherCopyOpensItsGuesses ? BlockFrequency::Normal : BlockFrequency::Rare);
         for (size_t index = 0; index < entering.size(); ++index) {
             TypeID type = joinTypes(preview.typesOfParameters[index], ownTypeOf(entering[index]));
@@ -674,54 +770,41 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         settleParametersOf(entryOfClosedCopy);
     }
 
-    // A loop inside a copy may have listed some of them.
     for (ValueID value : readBehindLoop) {
         if (!m_frames[frameIndex].valuesBuiltTwice.contains(value))
             m_frames[frameIndex].valuesBuiltTwice.append(value);
     }
     m_frames[frameIndex].loopsBeingBuiltTwice.append(loop);
     uint32_t namesInFrontOfLoop = inputBlock(frameIndex, inputHead).firstNarrowerName;
-    // The second copy begins as the first: nothing stands for a value of the loop yet. A link that looks ahead in the text would find what the other copy has bound.
-    auto forgetValuesOfLoop = [&] {
-        for (BlockID member : index.membersOf(loop)) {
-            BodyBlock block = index.block(member);
-            for (uint32_t value = block.firstParameter().index(); value < block.endOfValues().index(); ++value)
-                m_frames[frameIndex].references[value] = Reference();
-        }
-    };
 
-    // walkBlock() forgets the blocks that wait, with their states.
     BlockID typedStart = isUnreachable() ? BlockID() : m_block;
     WalkState stateWhereTestsPassed = m_state;
     IterationsSteppedAtHead steppedAtHead = takeIterationsSteppedAt(inputHead);
-    if (closedStart)
-        continueIn(closedStart);
-    else {
-        // Whatever test is asked in front of the typed copy later on fails to here.
-        if (entryOfClosedCopy)
-            closedStart = addBlock(BlockFrequency::Rare);
-        m_block = closedStart;
-        m_state.clear();
+    if (!sharedEntry) {
+        if (closedStart)
+            continueIn(closedStart);
+        else {
+            if (entryOfClosedCopy)
+                closedStart = addBlock(BlockFrequency::Rare);
+            m_block = closedStart;
+            m_state.clear();
+        }
+        if (entryOfClosedCopy) {
+            if (!isUnreachable())
+                endWithJumpInto(entryOfClosedCopy, entering);
+            m_block = entryOfClosedCopy;
+            m_state.clear();
+        }
+        if (otherCopyOpensItsGuesses)
+            walkCopyOfLoop(inputHead, entryOfClosedCopy ? enteringClosedCopy.span() : entering);
+        else {
+            ClosedArm closedArm(*this);
+            ++m_numberOfCopiesBuiltForSize;
+            walkCopyOfLoop(inputHead, entryOfClosedCopy ? enteringClosedCopy.span() : entering);
+            --m_numberOfCopiesBuiltForSize;
+        }
     }
-    if (entryOfClosedCopy) {
-        if (!isUnreachable())
-            endWithJumpInto(entryOfClosedCopy, entering);
-        // A turn of the typed copy may have ended what held in front of the loop.
-        m_block = entryOfClosedCopy;
-        m_state.clear();
-    }
-    // Nothing was asked in front of the loop but the kinds of the lists that it reads. What is written of the elements of a list is no more than a guess at its kind, and one text among the numbers fails it for every turn.
-    // So the other copy is the loop as it is built without the row, with the guesses of its own turns.
-    // Or nothing at all, or what enters for a parameter of the head: whatever fails in the typed copy meets what the walk has always built of the loop.
-    if (otherCopyOpensItsGuesses)
-        walkCopyOfLoop(inputHead, entryOfClosedCopy ? enteringClosedCopy.span() : entering);
-    else {
-        ClosedArm closedArm(*this);
-        ++m_numberOfCopiesBuiltForSize;
-        walkCopyOfLoop(inputHead, entryOfClosedCopy ? enteringClosedCopy.span() : entering);
-        --m_numberOfCopiesBuiltForSize;
-    }
-    forgetValuesOfLoop();
+    forgetValuesOfLoop(inputHead);
 
     if (typedStart && !m_hasFailed) {
         m_block = typedStart;
@@ -738,7 +821,6 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         }
         if (entryOfClosedCopy)
             m_waysIntoClosedCopies.append(WayIntoClosedCopy { frameIndex, inputHead, entryOfClosedCopy, { }, closedStart, { }, ofTypedCopy || (listsRead.areTested && headOfLooksTriedForLists == inputHead) });
-        // Nothing was tested in front of the loop: the typed copy is entered under the types that the look began with.
         if (entryOfClosedCopy && !hasTestInFront && counters.isEmpty())
             m_previewOfTypedCopyAboutToBeEntered = WTF::move(ofTypedCopy);
         walkCopyOfLoop(inputHead, enteringTypedCopy.span());
@@ -749,10 +831,9 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             bind(name, reference);
     }
 
-    // Behind the loop nothing of either copy is at hand but what the edges bring: neither what stands for a value of the loop, nor a narrower name that holds in a block of a copy.
     for (BlockID member : index.membersOf(loop))
         inputBlock(frameIndex, member).firstNarrowerName = namesInFrontOfLoop;
-    forgetValuesOfLoop();
+    forgetValuesOfLoop(inputHead);
     m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
     m_block = { };
     m_state.clear();

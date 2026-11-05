@@ -27,8 +27,6 @@ struct FormatterOption {
     double number { 0 };
 };
 
-// `new Intl.DateTimeFormat("en-US", { year: "numeric" })`, `new Intl.NumberFormat("de")`, or the formatter that a call of toLocaleString makes for itself.
-// The options are sorted by name, and no name comes twice.
 struct FormatterRequest {
     FormatPatternKind kind;
     String locale;
@@ -38,14 +36,11 @@ struct FormatterRequest {
     IntlDateTimeFormat::Defaults defaults { IntlDateTimeFormat::Defaults::Date };
 };
 
-// The patterns of a build. A pattern is a function of its request and of the ICU of the build, and of nothing else: whichever thread asks first only saves the others the work.
 class FormatPatternPlans {
     WTF_MAKE_NONCOPYABLE(FormatPatternPlans);
 public:
     FormatPatternPlans() = default;
 
-    // A FormatPatternHeader and what follows it, in words. Null where ICU has to format: a calendar, digits, a field or a rounding that a pattern does not have,
-    // or a pattern that writes another text than ICU for one of the samples.
     const WTF::Vector<uint32_t>* planFor(ScratchRealm& ofThisThread, const FormatterRequest&);
 
 private:

@@ -41,8 +41,6 @@ struct DefinitionInClassRow {
 
 } // anonymous namespace
 
-// ClassData::base where it is proven, ClassData::expectedBase where it is not. The lists of subclasses are the inverse of this function and of nothing else:
-// a class that is missing from the list of the parent that its record names keeps its guards when that parent changes.
 static ParentInClassRecord parentNamedByClassRecord(const TableInputs& inputs, LayoutID id)
 {
     const Typed::Layout& layout = inputs.program.at(id);
@@ -62,7 +60,6 @@ static ParentInClassRecord parentNamedByClassRecord(const TableInputs& inputs, L
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The run time finds a class by its index, and keeps the state of its guards by its rank, only where it has a rank.
 static bool isRankedAmongClassRecords(const TableEncoder& encoder, LayoutID id)
 {
     return encoder.program.at(id).kind == LayoutKind::Instance && encoder.numbers.rankOfClass(id);
@@ -88,7 +85,6 @@ void groupClassesByParentInClassRecords(TableEncoder& encoder, std::span<const L
     encoder.firstClassBelow = WTF::move(firstClassBelow);
 }
 
-// Ascending.
 static std::span<const uint32_t> classesBelowInClassRecords(const TableEncoder& encoder, LayoutID parent)
 {
     uint32_t begin = encoder.firstClassBelow[parent.index()];
@@ -121,7 +117,6 @@ static LayoutID environmentHeldByClassObject(const Typed::Program& program, cons
     return program.at(captures[0].written()).environment;
 }
 
-// ClassTable::createMethodClosure() has nothing to give the closure of a member but the one capture of the class object.
 static bool memberCapturesAtMostEnvironmentOfClassObject(const Typed::Program& program, const Typed::Layout& layout, LayoutID environmentOfClassObject, FunctionID member)
 {
     const auto& captures = program.at(member).captures;
@@ -163,7 +158,6 @@ static uint32_t guardBitInClassRecord(const TableEncoder& encoder, LayoutID clas
     return index < bits.size() ? bits[index] : noClassGuardBit;
 }
 
-// ClassData::namedGuardsOffset. The run time knows a name by its number, so the list goes by that, whichever way code spelled the name.
 static Vector<uint32_t> collectGuardsOfNamesInClassRecord(const TableEncoder& encoder, LayoutID classLayout, ClassSide side)
 {
     auto sideOfGuard = [](const PlacedClassGuardOfName& guard) {
@@ -214,7 +208,6 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
     ClassRecordParts parts;
     ClassData& data = parts.data;
 
-    // Nothing ever defines a class whose constructor has no code.
     if (classConstructor || layout.has(Typed::LayoutFlags::IsOfCreatedObject)) {
         std::span<const Typed::ClassMember> members = encoder.facts.membersOf(classLayout);
         parts.methods.reserveInitialCapacity(members.size());
@@ -228,7 +221,6 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
         }
     }
 
-    // In the order in which the class defines them. The slot is the variable where the field lies until the class object is made (object/AOTStaticFields.h): a boxed word, which takes every value, so there is no type to test.
     const Vector<PlacedVariable>& variables = encoder.numbers.statics().variables;
     for (const Typed::StaticField& field : layout.staticFields) {
         if (!field.key)
@@ -283,7 +275,6 @@ void appendListsOfClassRecord(TableEncoder& encoder, LayoutID classLayout, const
     }
 }
 
-// 0: the function has no cell, or none that an entry of the row can hold.
 static uint32_t closureCellForClassRow(const TableEncoder& encoder, FunctionID function)
 {
     uint32_t cell = function ? encoder.numbers.closureCellNumber(function) : 0;
@@ -296,7 +287,6 @@ std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(const Tab
     const Typed::Layout& layout = program.at(classLayout);
     const Typed::ClassCreationPlan& creation = encoder.plan.slots().classCreation(classLayout);
     const IdentifierNumbering& identifiers = encoder.numbers.identifiers();
-    // Only a ClassPrototype reads the row, and only such a class has one. A list of members that Plan has not taken for the whole class says nothing of what the list lacks.
     if (!creation.createsMembersLazily || !layout.constructor || !encoder.findEntrypoint(layout.constructor))
         return std::nullopt;
 
@@ -314,7 +304,6 @@ std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(const Tab
             definitions.append({ name, member.kind, cell });
     }
 
-    // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
     AOT::stableSort(definitions, { }, &DefinitionInClassRow::name);
     Vector<DeclaredClassMember> declared;
     for (const DefinitionInClassRow& definition : definitions) {

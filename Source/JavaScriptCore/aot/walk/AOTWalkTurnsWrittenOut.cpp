@@ -16,11 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// `function sum(...values) { let s = 0; for (let i = 0; i < values.length; i++) s += values[i]; return s; }`, called as `sum(a, 1, 2)`; `for (let i = 0; i < 4; i++) out += row[i]`.
-// A counter that enters with a known integer, that every way round steps by a known integer, and that the head holds against a known integer stays a known number of times.
-// The blocks of such a loop are walked once for each turn and once more for the test that fails. No loop is open, so an edge that comes round is an edge forward, into the head of the next turn:
-// the counter is a constant in each turn, its test folds, a read under it out of a list that nothing else has is the element, and the list is never made.
-// IT IS RIGHT WHATEVER WAS FORESEEN: a turn written out is a turn of the loop. Whatever still comes round behind the last of them enters the loop as it is written.
 static constexpr uint32_t mostTurnsWrittenOut = 8;
 static constexpr uint32_t mostOperationsWalkedForTurnsWrittenOut = 256;
 
@@ -30,7 +25,6 @@ static constexpr OpcodeSet argumentsObjectsOfTurnsWrittenOut { Opcode::CreateUnm
 
 namespace {
 
-// What the text of a body makes of known integers. It goes by the operations alone: `leaf` answers for what stands in front (a value from in front of the loop, an entry parameter), `lengthOf` for the list that a length is read off.
 struct IntegersByText {
     const BodyIndex& index;
     PropertyKeyID keyOfLength;
@@ -86,8 +80,6 @@ static uint32_t numberOfOperationsOfLoopWrittenOut(const BodyIndex& index, LoopI
     return numberOfOperations;
 }
 
-// How often the test at the head holds. Nothing: the text does not say, or more often than is written out.
-// `entering`: what enters the head for the parameter at a position.
 static std::optional<uint32_t> foreseeTurnsByText(const IntegersByText& integers, LoopID loop, const WTF::Function<std::optional<int64_t>(uint32_t)>& entering)
 {
     const BodyIndex& index = integers.index;
@@ -112,7 +104,6 @@ static std::optional<uint32_t> foreseeTurnsByText(const IntegersByText& integers
     if (!bound || !start || !Range::int32().contains(*bound) || !Range::int32().contains(*start))
         return std::nullopt;
 
-    // Every way round brings the counter of the turn, stepped by one known integer.
     std::optional<int64_t> step;
     for (BlockID member : index.membersOf(loop)) {
         for (BodyTarget target : index.terminator(member).targets()) {
@@ -172,26 +163,23 @@ static std::optional<uint32_t> foreseeTurnsByText(const IntegersByText& integers
     return stays;
 }
 
-// What the text of the loop says, whoever walks it. `isCopy`: the body is that of a callee that does not return in the place of the unit.
-static bool textAdmitsTurnsWrittenOut(const BodyIndex& index, BodyLiveness& liveness, LoopID loop, bool isCopy, std::span<const BlockID> handlerBlocks)
+static bool textAdmitsTurnsWrittenOut(const BodyIndex& index, BodyLiveness& liveness, LoopID loop, bool isCopy, std::span<const BlockID> handlerBlocks, ValueID openSteppedByIndex = { })
 {
     BlockID head = index.loop(loop).head;
     if (index.hasIrreducibleFlow() || index.isEnteredByHandlerEdge(head) || index.holdsParametersReadByReleaseHintsAlone() || index.loop(loop).numberOfLoopsWithin != 1)
         return false;
     for (BlockID member : index.membersOf(loop)) {
         BodyBlock block = index.block(member);
-        // As of a loop that is built twice: the block of a return stays open for walkInline().
         TerminatorKind end = block.terminator().kind();
         if (isCopy && (end == TerminatorKind::Return || end == TerminatorKind::ReturnCall))
             return false;
-        if (block.hasHandler() || block.isHandlerBlock())
+        if (block.isHandlerBlock() || (block.hasHandler() && (!openSteppedByIndex || openOfCleanupThatOnlyThrowsOn(index, block) != openSteppedByIndex)))
             return false;
         for (BodyValue operation : block.values()) {
             if (maySuspendAsWritten(operation))
                 return false;
         }
     }
-    // A handler block takes no names from an edge.
     if (!liveness.isComputedFor(index))
         liveness.compute(index);
     uint32_t firstValue = index.block(head).firstParameter().index();
@@ -214,10 +202,7 @@ static std::optional<int64_t> integerBuiltForTurnsWrittenOut(const Walker& walke
     return walker.code().at(reference.id()).integer();
 }
 
-// ---- The callee whose loops run through the list of a call
-
-// Every mention of the list in the body reads its length or an element, which changes nothing of it and hands it to nobody. So in a copy it stays what the call has made, and nothing but the copy has it.
-static bool bodyOnlyReadsListOfCall(const BodyIndex& index, PropertyKeyID keyOfLength, ValueID list)
+static bool bodyOnlyReadsListOfCall(const Walker& walker, const BodyIndex& index, PropertyKeyID keyOfLength, ValueID list)
 {
     uint32_t mentionsLeft = index.useCount(list);
     if (mentionsLeft == BodyIndex::maxCountedUses)
@@ -234,18 +219,18 @@ static bool bodyOnlyReadsListOfCall(const BodyIndex& index, PropertyKeyID keyOfL
             continue;
         mentionsLeft -= mentions;
         Opcode opcode = user.opcode();
+        if (opcode == Opcode::IteratorOpen && openOverListAsMadeGoesByIndex(const_cast<Walker&>(walker), index, user.id()))
+            continue;
         if (opcode == Opcode::ReleaseHint || (opcode == Opcode::PropGet && !user.isFreeName() && user.key() == keyOfLength) || (opcode == Opcode::ElemGet && user.propertyOperand() != list))
             continue;
         return false;
     }
-    // What is left stands at the end of a block or on an edge.
     return !mentionsLeft;
 }
 
 std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker, FunctionID callee, std::span<const std::optional<int64_t>> integersHandedOver, std::span<const std::optional<uint32_t>> lengthsOfListsHandedOver)
 {
     const BodyIndex* found = walker.facts().bodies().find(callee);
-    // The turns only add to what the body has, so a larger body is not read at all: what one question costs does not grow with the callee.
     if (!found || !found->hasLoops() || found->hasIrreducibleFlow() || walker.facts().summaries().at(callee).numberOfOperations > mostOperationsWalkedForTurnsWrittenOut)
         return std::nullopt;
     BodyLiveness liveness;
@@ -254,8 +239,6 @@ std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker,
     PropertyKeyID keyOfLength = walker.program().keyOf(BuiltinNames::length);
     BodyBlock entry = index.block(entryBlock);
 
-    // THE CALLEE IS READ WITH WHAT THE CALL HANDS OVER, block by block in the order of the stream, in which every edge but one that comes round leads forward.
-    // A Branch on a known answer leads one way, and a parameter that every way in brings the same integer is that integer. By value of the body, behind casts.
     Vector<std::optional<int64_t>> known;
     Vector<std::optional<bool>> answers;
     known.fill(std::nullopt, index.numberOfValues());
@@ -271,14 +254,13 @@ std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker,
         return known[value.index()];
     };
     WTF::Function<std::optional<int64_t>(ValueID)> lengthOf = [&](ValueID list) -> std::optional<int64_t> {
-        if (!list || !bodyOnlyReadsListOfCall(index, keyOfLength, list))
+        if (!list || !bodyOnlyReadsListOfCall(walker, index, keyOfLength, list))
             return std::nullopt;
         if (std::optional<uint32_t> parameter = entry.indexOfParameter(list)) {
             if (*parameter >= lengthsOfListsHandedOver.size() || !lengthsOfListsHandedOver[*parameter])
                 return std::nullopt;
             return *lengthsOfListsHandedOver[*parameter];
         }
-        // `arguments.length`.
         if (index.isParameter(list) || !argumentsObjectsOfTurnsWrittenOut.contains(index.opcodeOf(list)))
             return std::nullopt;
         ValueID count = index.valueBehindCasts(index.value(list).countOperand());
@@ -303,6 +285,7 @@ std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker,
         if (index.block(BlockID(number)).isHandlerBlock())
             handlerBlocks.append(BlockID(number));
     }
+    Vector<ValueID, 2> opensSteppedByIndex;
     uint32_t numberOfOperations = walker.facts().summaries().at(callee).numberOfOperations;
     turns.fill(0, index.numberOfLoops());
     for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
@@ -311,16 +294,21 @@ std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker,
         BodyBlock block = index.block(BlockID(number));
         LoopID loop = index.loopOf(block.id());
         if (loop && index.loop(loop).head == block.id()) {
-            if (index.loop(loop).parent || !textAdmitsTurnsWrittenOut(index, liveness, loop, true, handlerBlocks.span()))
+            std::optional<ForOfByText> forOf = findForOfSteppedAtHead(index, loop);
+            if (index.loop(loop).parent || !textAdmitsTurnsWrittenOut(index, liveness, loop, true, handlerBlocks.span(), forOf ? forOf->open : ValueID()))
                 return std::nullopt;
-            // What the ways in have told is what enters. In the loop the parameters are other values in every turn.
             Vector<std::optional<int64_t>, 8> entering;
             for (uint32_t parameter = 0; parameter < block.numberOfParameters(); ++parameter)
                 entering.append(std::exchange(known[block.parameter(parameter).index()], std::nullopt));
             WTF::Function<std::optional<int64_t>(uint32_t)> whatEnters = [&](uint32_t position) -> std::optional<int64_t> {
                 return position < entering.size() ? entering[position] : std::nullopt;
             };
-            std::optional<uint32_t> stays = foreseeTurnsByText(integers, loop, whatEnters);
+            std::optional<uint32_t> stays = forOf ? std::nullopt : foreseeTurnsByText(integers, loop, whatEnters);
+            ValueID iterated = forOf ? index.valueBehindCasts(index.value(forOf->open).operand(0)) : ValueID();
+            if (std::optional<int64_t> length = iterated && entry.indexOfParameter(iterated) ? lengthOf(iterated) : std::nullopt; length && *length <= mostTurnsWrittenOut) {
+                stays = static_cast<uint32_t>(*length);
+                opensSteppedByIndex.append(forOf->open);
+            }
             if (!stays)
                 return std::nullopt;
             numberOfOperations += numberOfOperationsOfLoopWrittenOut(index, loop) * *stays;
@@ -356,7 +344,6 @@ std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker,
         }
 
         auto tell = [&](BodyTarget target) {
-            // What comes round.
             if (target.block().index() <= number)
                 return;
             BodyBlock to = index.block(target.block());
@@ -371,7 +358,7 @@ std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker,
                     held = std::nullopt;
             }
         };
-        if (block.hasHandler())
+        if (block.hasHandler() && !opensSteppedByIndex.contains(openOfCleanupThatOnlyThrowsOn(index, block)))
             tell(block.handler());
         BodyTerminator end = block.terminator();
         std::optional<bool> answer = !loop && end.isConditionalBranch() ? answerAt(end.operand(0)) : std::nullopt;
@@ -387,8 +374,6 @@ std::optional<TextOfCopyRead> turnsOfLoopsOfCopyWrittenOut(const Walker& walker,
         return std::nullopt;
     return TextOfCopyRead { WTF::move(turns), WTF::move(isEntered), WTF::move(leadsToTakenAlone), WTF::move(leadsToNotTakenAlone) };
 }
-
-// ---- The turns
 
 bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> entering)
 {
@@ -449,9 +434,7 @@ void Walker::beginTurnsWrittenOut(BlockID inputHead)
     const BodyIndex& index = *m_frames[frameIndex].index;
     LoopID loop = index.loopOf(inputHead);
     uint32_t firstValue = index.block(inputHead).firstParameter().index();
-    // The values of the loop have the numbers up to the end of its last block: what one loop costs does not grow with the body.
     ValueID endOfValues = index.block(index.loop(loop).last).endOfValues();
-    // What the loop defines and code behind it reads: each turn has its own, so each edge that leaves brings them. Walker::buildLoopTwice().
     if (!m_liveness.isComputedFor(index))
         m_liveness.compute(index);
     Vector<ValueID, 8> readBehindLoop;
@@ -508,10 +491,8 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
     const BodyIndex& index = *m_frames[frameIndex].index;
     LoopID loop = index.loopOf(inputHead);
     uint32_t namesInFrontOfLoop = inputBlock(frameIndex, inputHead).firstNarrowerName;
-    // No loop stands inside this one, but a copy of a callee has a frame of its own: nobody writes over the list meanwhile.
     Vector<ValueID, 4> listedForTheseTurns = std::exchange(m_frames[frameIndex].valuesListedForTurnsWrittenOut, { });
 
-    // The block in front enters the first turn alone.
     BlockID from = m_block;
     inputBlock(frameIndex, inputHead) = InputBlock { };
     if (from)
@@ -530,7 +511,6 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
     m_block = { };
     m_state.clear();
 
-    // Each walk of the loop begins as the first: nothing stands for a value of the loop yet. A link that looks ahead in the text would find what the turn before has bound.
     auto beginWalkOfLoop = [&] {
         uint32_t cameRound = inputBlock(frameIndex, inputHead).firstOpenEdge;
         for (BlockID member : index.membersOf(loop)) {
@@ -558,7 +538,6 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
     m_frames[frameIndex].headOfTurnsWrittenOut = headBefore;
     m_frames[frameIndex].turnsOfForIn = forInBefore;
 
-    // The loop as written steps the enumeration from wherever an edge has left the turns.
     if (forIn && !m_hasFailed) {
         IterationByIndex& iteration = m_iterationsByIndex[forIn->place];
         for (uint32_t cameRound = inputBlock(frameIndex, inputHead).firstOpenEdge; cameRound != noOpenEdge; cameRound = m_openEdges[cameRound].next)
@@ -570,7 +549,6 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
         m_frames[frameIndex].placeOfForInWhosePositionEdgesBring = forIn->place;
     }
 
-    // Whatever still comes round enters the loop as it is written.
     if (!m_hasFailed && inputBlock(frameIndex, inputHead).firstOpenEdge != noOpenEdge) {
         beginWalkOfLoop();
         for (BlockID member : index.membersOf(loop)) {
@@ -581,7 +559,6 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
         endBlocksInFrontOfLoopsFrom(numberOfLoopsAround);
     }
 
-    // Behind the loop nothing of a turn is at hand but what the edges bring.
     for (BlockID member : index.membersOf(loop)) {
         inputBlock(frameIndex, member).firstNarrowerName = namesInFrontOfLoop;
         BodyBlock block = index.block(member);
@@ -590,9 +567,6 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
     }
     m_frames[frameIndex].loopsBeingBuiltTwice.removeLast();
     m_frames[frameIndex].stepWhosePositionEdgesBring = { };
-    // Every edge asks each listed value whether it is read behind it. Where ONE block takes all that leaves the loop, every edge into it is led by now, and it dominates whatever reads a value of the loop:
-    // the join there gives each its name for good, and no later edge need bring it. So a body of many such loops lists a few values and not all of them.
-    // Whoever walks that block for some of its ways alone lists them again: KnownThreading::letTerminatorBeWalkedForEachWay().
     BlockID onlyWayOut;
     bool leavesByOneBlock = true;
     for (BlockID member : index.membersOf(loop)) {
@@ -612,9 +586,6 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
     m_state.clear();
 }
 
-// ---- The turns of a for-in
-
-// What the head of a turn has seen of the object holds at the step: nothing that anybody sees stands between the two.
 static ValueID stepInFrontOfEffectsInTurnsWrittenOut(const BodyIndex& index, BodyBlock head)
 {
     for (uint32_t number = head.firstValue().index(); number < head.endOfValues().index(); ++number) {
@@ -630,7 +601,8 @@ static ValueID stepInFrontOfEffectsInTurnsWrittenOut(const BodyIndex& index, Bod
 void Walker::standAtHeadOfTurnOfForIn(BlockID inputHead)
 {
     TurnsOfForInWrittenOut& turns = *m_frames.last().turnsOfForIn;
-    // No key of any object can have changed since the tests, or since the step of the turn before.
+    if (!turns.enumerator)
+        return;
     bool noKeyHasChangedSince = m_state.factsOfCell(turns.enumerator).contains(FactOfCell::IsLikelyAsAllocated);
     bool isFirstTurn = !std::exchange(turns.enumeratorIsAsked, true);
     if (!isFirstTurn && noKeyHasChangedSince)
@@ -638,7 +610,6 @@ void Walker::standAtHeadOfTurnOfForIn(BlockID inputHead)
     Reference position = m_iterationsByIndex[turns.place].position;
     Reference isCurrent;
     if (isFirstTurn && noKeyHasChangedSince && turns.namesCountedByOpen) {
-        // So many names were current where the open answered, none where it has entered the run time, and no key has changed since.
         Draft names(Opcode::Integer, m_origin);
         names.setInteger(turns.numberOfNames);
         Draft test(Opcode::GreaterEq, m_origin);
@@ -648,7 +619,6 @@ void Walker::standAtHeadOfTurnOfForIn(BlockID inputHead)
         test.setForm(formAllowedForTypedOperator(*this, test));
         isCurrent = build(WTF::move(test));
     } else {
-        // What a step asks before it hands out a name without entering the run time.
         Draft test(Opcode::IsEnumeratorCurrent, m_origin);
         test.setEnumeratorOperand(turns.enumerator);
         test.setObjectOperand(turns.object);
@@ -708,7 +678,6 @@ bool Walker::writeOutTurnsOfForIn(BlockID inputHead, std::span<const Reference> 
     Reference firstPosition = asItEntered.position;
     if (integerBuiltForTurnsWrittenOut(*this, firstPosition) != std::optional<int64_t>(0))
         return false;
-    // The tests say which keys the object has here, and the enumerator lists those that it had at the open.
     if (!m_state.factsOfCell(turns.enumerator).contains(FactOfCell::IsLikelyAsAllocated))
         return false;
     Reference object = referenceOf(objectInBody);
@@ -719,7 +688,6 @@ bool Walker::writeOutTurnsOfForIn(BlockID inputHead, std::span<const Reference> 
     OwnKeyPlan planned = inSight ? OwnKeyPlan() : planOwnKeyWalk(*this, objectInBody, object);
     if (!inSight && !planned)
         return false;
-    // The likeliest order. The objects of the others take the loop as written.
     const OwnKeyOrder& order = inSight ? *inSight : planned.orders[0];
     uint32_t numberOfNames = static_cast<uint32_t>(order.fields.size());
     if (!order.layout || !numberOfNames || numberOfNames > mostTurnsWrittenOut || numberOfOperationsOfLoopWrittenOut(index, loop) * (numberOfNames + 1) > mostOperationsWalkedForTurnsWrittenOut)
@@ -733,7 +701,6 @@ bool Walker::writeOutTurnsOfForIn(BlockID inputHead, std::span<const Reference> 
     Vector<Reference, 4> names;
     for (FieldIndex field : order.fields) {
         PropertyKeyID key = plan().slots().keyOf(program(), FieldReference { order.layout, field });
-        // An index is listed in front of every name, whenever the object got it.
         if (!key || liesInThread(key) || program().at(key).kind != PropertyKeyKind::Text || program().isIndexLike(key))
             return false;
         Draft name(Opcode::String, origin);
@@ -754,18 +721,59 @@ bool Walker::writeOutTurnsOfForIn(BlockID inputHead, std::span<const Reference> 
             leadIntoLoopAsWrittenBehindTurns(turns, inputHead, entering, firstPosition);
         m_block = passed;
         m_state = WTF::move(stateWhereTestsPassed);
-        // Wherever this state comes to, the object goes by the name behind the test of its shape. The edges into the loop as written do not all bring it.
         if (passed && turns.object != object && !m_state.checkedNameOf(object))
             m_state.noteCheckedName(object, turns.object);
     }
     if (m_hasFailed)
         return true;
     m_iterationsByIndex[turns.place].takenAtOpen = names;
-    // What comes round behind the turns is the position alone.
     turns.namesCountedByOpen = std::exchange(m_iterationsByIndex[turns.place].count, Reference());
     turns.numberOfNames = numberOfNames;
     count(StatisticID::OwnKeyWalksExpanded);
     walkTurnsWrittenOut(inputHead, entering, numberOfNames, &turns);
+    return true;
+}
+
+bool Walker::writeOutTurnsOfForOf(BlockID inputHead, std::span<const Reference> entering)
+{
+    size_t frameIndex = m_frames.size() - 1;
+    if (!frameIndex || !m_frames[frameIndex].loopDepthAtCall)
+        return false;
+    const BodyIndex& index = *m_frames[frameIndex].index;
+    if (!has(Mechanism::Folding) || !has(Mechanism::TypedOperations) || !has(Mechanism::LoopInvariants) || !has(Mechanism::EscapeAnalysis) || isUnreachable() || hasTextsInStringBuilders())
+        return false;
+    if (!index.isLoopHead(inputHead) || !m_inputHeadsOfIterations.contains(inputHeadInFrame(m_frames[frameIndex].inlineFrame, inputHead)))
+        return false;
+    LoopID loop = index.loopOf(inputHead);
+    if (m_frames[frameIndex].loopsBeingBuiltTwice.contains(loop))
+        return false;
+    std::optional<ForOfByText> forOf = findForOfSteppedAtHead(index, loop);
+    Reference state = forOf ? referenceOf(forOf->open) : Reference();
+    if (!state || !state.isVirtual())
+        return false;
+
+    TurnsOfForInWrittenOut turns;
+    turns.place = state.object().index();
+    turns.step = forOf->step;
+    const IterationByIndex& asItEntered = m_iterationsByIndex[turns.place];
+    bool isOpenedInFrontOfThisLoop = asItEntered.otherForm == IterationByIndex::OtherForm::None && !asItEntered.head && asItEntered.inputHead == inputHead && asItEntered.inlineFrame == m_frames[frameIndex].inlineFrame;
+    bool goesThroughListByIndexAlone = asItEntered.list && asItEntered.contents == IterationByIndex::Contents::List && asItEntered.kind == JSC::IterationKind::Values
+        && !asItEntered.mayGoByProtocol && !asItEntered.isTakenAtOpen && !asItEntered.holdsFlatEntries && !asItEntered.table;
+    if (!isOpenedInFrontOfThisLoop || !goesThroughListByIndexAlone || integerBuiltForTurnsWrittenOut(*this, asItEntered.position) != std::optional<int64_t>(0))
+        return false;
+    std::optional<uint32_t> length = lengthOfListInSight(*this, asItEntered.list);
+    if (!length || *length > mostTurnsWrittenOut || numberOfOperationsOfLoopWrittenOut(index, loop) * (*length + 1) > mostOperationsWalkedForTurnsWrittenOut)
+        return false;
+    if (!textAdmitsTurnsWrittenOut(index, m_liveness, loop, !m_frames[frameIndex].returnsInPlaceOfUnit, handlerBlocksOfFrameOnTop(), forOf->open))
+        return false;
+
+    beginTurnsWrittenOut(inputHead);
+    walkTurnsWrittenOut(inputHead, entering, *length + 1, &turns);
+    IterationByIndex& iteration = m_iterationsByIndex[turns.place];
+    if (!m_hasFailed && !iteration.head && iteration.inputHead) {
+        iteration.inputHead = { };
+        --m_numberOfIterationsInFrontOfTheirLoops;
+    }
     return true;
 }
 

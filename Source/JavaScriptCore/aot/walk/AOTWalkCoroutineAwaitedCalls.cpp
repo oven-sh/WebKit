@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `await load(x)`: the Call of one known async function looks ahead to the Await that alone takes what it gives, and one operation enters the body without a promise and waits for it.
-// At a suspension: the frame of the caller is saved once, and the callee's saved frame resumes it. At a throw: the callee hands back a rejected promise, which the stub awaits, so the throw arrives at the await.
-// Withheld (DirectCalls, Inlining for the way through a copy, Guesses for the arms): the ramp is called and its promise is awaited.
-
 #include "config.h"
 #include "AOTWalkCoroutineCalls.h"
 
@@ -24,9 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- The wait, by the input
-
-// It is walked in front of the call and the await that it is written between. So it reads nothing that the callee may write, and nobody can tell whether it has run.
 static bool mayStandInFrontOfCallInAwaitedCalls(Opcode opcode)
 {
     if (opcodesThatStateTypes.contains(opcode))
@@ -57,7 +50,6 @@ std::optional<WaitOfCallInCoroutine> findWaitOfCallInCoroutine(Walker& walker, c
         ValueID between(firstValue + place);
         if (!mayStandInFrontOfCallInAwaitedCalls(index.opcodeOf(between)))
             return std::nullopt;
-        // For such a read the walk builds more than the row says: the holder gets the member, which the order of its keys shows.
         if (index.opcodeOf(between) == Opcode::Builtin && firstReadOfNamedBuiltinIsSeen(walker, index.value(between)))
             return std::nullopt;
     }
@@ -70,7 +62,6 @@ bool walkUpToAwaitOfCall(Walker& walker, const BodyIndex& index, BodyBlock block
     ValueID call(firstValue + wait.placeOfCall);
     for (uint32_t place = wait.placeOfCall + 1; place < wait.endOfWait; ++place) {
         ValueID between(firstValue + place);
-        // A cast of what the call gives has no operand yet, and builds nothing.
         if (opcodesThatStateTypes.contains(index.opcodeOf(between)) && index.valueBehindCasts(between) == call)
             continue;
         walker.walkStretch(block.id(), place, place + 1);
@@ -96,9 +87,6 @@ void finishWaitOfCall(Walker& walker, BodyBlock block, const WaitOfCallInCorouti
     walker.walkStretch(block.id(), wait.endOfWait + 1, wait.endOfWait + 1);
 }
 
-// ---- C2
-
-// `await`: null in a copy, whose values are not those of the unit's body.
 static Reference buildAwaitCallInAwaitedCalls(Walker& walker, const BodyValue& call, FunctionID callee, std::span<const Reference> operands, Reference driver, std::span<const Reference> held, ValueID await)
 {
     Draft fused = draftOfCoroutineCalls(walker, Opcode::AwaitCallBySavingFrame, walker.originOf(call));
@@ -139,7 +127,6 @@ static Reference buildAwaitOfNewPromiseInAwaitedCalls(Walker& walker, Opcode set
     return buildAwaitBySavingFrame(walker, promise, held, false, origin);
 }
 
-// The body returns and throws like a plain function: its ramp alone made a promise of either. A value without `then` fulfills a promise as it is, and awaiting the value takes as many turns of the job queue as awaiting that promise.
 static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyValue& call, FunctionID callee, std::span<const Reference> operands, std::span<const Reference> held, Origin originOfAwait)
 {
     Origin origin = walker.originOf(call);
@@ -156,7 +143,6 @@ static Reference buildAwaitOfPlainBodyInAwaitedCalls(Walker& walker, const BodyV
             behind = walker.addBlock();
             walker.jumpTo(behind);
         }
-        // Nothing fulfills a promise that is rejected: the function goes on in the handler of the await or not at all.
         Reference caught = catchInHandlerOfCoroutineCalls(walker, handler, origin);
         if (caught && buildAwaitOfNewPromiseInAwaitedCalls(walker, Opcode::RejectPromise, caught, held, originOfAwait))
             walker.endAsUnreachable(originOfAwait);
@@ -201,15 +187,11 @@ static bool isAsyncFunctionInAwaitedCalls(const Function& function)
     return function.has(FunctionFlags::IsAsync) && !function.has(FunctionFlags::IsGenerator);
 }
 
-// ---- C3
-
-// `const get = id => load(id); await get(1)`. Where the callee is copied, the call that its body returns at once is the call that the Await waits for.
 static void noteAwaitForCopyInAwaitedCalls(Walker& walker, const BodyIndex& index, BodyBlock block, const BodyValue& call, const WaitOfCallInCoroutine& wait, Reference driver)
 {
     if (!walker.has(Mechanism::Inlining) || call.isDoneInPlace())
         return;
     FunctionID callee = findOnlyCallee(walker, call, walker.referenceOf(call.calleeOperand()));
-    // Beside the copy of a function with a guard stands a call of its slow version, which awaits nothing.
     if (!callee || walker.program().at(callee).isCoroutine() || walker.plan().conventions().hasParameterGuard(callee))
         return;
 
@@ -245,11 +227,9 @@ static bool hasOneReturnInAwaitedCalls(const BodyIndex& index)
 static bool buildCallOfCopyInAwaitedCalls(Walker& walker, const BodyValue& call)
 {
     KeptByCallsOfCoroutines* kept = findKeptByCallsOfCoroutines(walker);
-    // In an arm of a guess: as in findWaitOfCallInCoroutine(). The copy would return the awaited value on one way and a promise on the other, and the await behind it is taken for both.
     if (walker.walksStretchInsideAnother() || walker.depthOfCopies() != 1 || !kept || !kept->awaitOfCallThatMayBeCopied || kept->awaitOfCallThatMayBeCopied->callee != walker.currentFunction())
         return false;
 
-    // A rejection arrives at the await, which no handler of the copied function stands round.
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(index.blockOf(call.id()));
     BodyTerminator end = block.terminator();
@@ -264,7 +244,7 @@ static bool buildCallOfCopyInAwaitedCalls(Walker& walker, const BodyValue& call)
     const Function& function = walker.program().at(callee);
     if (!isAsyncFunctionInAwaitedCalls(function) || walker.plan().conventions().of(callee).coroutineNeverSuspends)
         return false;
-    if (!writtenOperandsMayStartBodyOfCoroutine(walker, walker.draftOf(call), callee))
+    if (!writtenOperandsMayStartBodyOfCoroutine(walker, walker.draftOf(call)))
         return false;
 
     std::optional<Vector<Reference, 8>> operands = layOutEntryOperandsOfCall(walker, call, callee, { callee, CodeRole::CoroutineBody });
@@ -282,8 +262,6 @@ static bool buildCallOfCopyInAwaitedCalls(Walker& walker, const BodyValue& call)
     kept->awaitsTakenInCopies.append(note.await);
     return true;
 }
-
-// ---- The link
 
 bool buildAwaitedCall(Walker& walker, const BodyValue& call)
 {
@@ -307,9 +285,8 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
         return false;
     }
     const Function& function = walker.program().at(callee);
-    if (!isAsyncFunctionInAwaitedCalls(function) || !writtenOperandsMayStartBodyOfCoroutine(walker, walker.draftOf(call), callee))
+    if (!isAsyncFunctionInAwaitedCalls(function) || !writtenOperandsMayStartBodyOfCoroutine(walker, walker.draftOf(call)))
         return false;
-    // The fused operation is no longer than the call and the await that it stands for. The arms round a body that never suspends are: they stand in loops, and wherever no handler is among them.
     bool neverSuspends = walker.plan().conventions().of(callee).coroutineNeverSuspends;
     if (neverSuspends && !walker.isInLoop() && bodyMayThrowInAwaitedCalls(walker, callee))
         return false;
@@ -330,10 +307,6 @@ bool buildAwaitedCall(Walker& walker, const BodyValue& call)
         finishWaitOfCall(walker, block, *wait, given);
     return true;
 }
-
-// ---- C4
-
-// ---- Where the walk comes to an Await that a call in a copy has awaited for
 
 bool takeWhatCallInCopyHasAwaited(Walker& walker, const BodyValue& await)
 {

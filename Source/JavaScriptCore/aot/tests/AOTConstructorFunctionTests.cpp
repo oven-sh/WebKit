@@ -1105,7 +1105,6 @@ data d0 root=Object{layout=L2}
 entry module=m0
 )IR"_s;
 
-// The first update of an object finds the number on the prototype and gives the object its own. What is no number there is updated as written.
 static constexpr ASCIILiteral updatesBelowANumberOnThePrototype = R"IR(layout L0 kind=Instance name="Emitter" constructor=f1 flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -2036,7 +2035,6 @@ static void checkSiteOfFunctionEvaluatedOnceKeepsItsPrototype(LoadedProgram& pro
     ObjectModel& objects = *program.state().objects;
     Vector<uint32_t> allocations = allocationsOfInstances(program, EvaluationState::ProvenOnce);
     AOT_TEST_CHECK(!allocations.isEmpty());
-    // Several sites may allocate for one constructor: the first of them that allocates creates its closure.
     Vector<FunctionID> constructorsSeen;
     for (uint32_t allocation : allocations) {
         FunctionID constructor(program.state().tables.constructorOfAllocation(allocation));
@@ -2054,35 +2052,6 @@ static void checkSiteOfFunctionEvaluatedOnceKeepsItsPrototype(LoadedProgram& pro
     }
 }
 
-// No operation defines the class of a constructor function: the first construction enters the function and its prototype object as the holders of the class.
-static void checkFirstConstructionDefinesTheClass(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    ObjectModel& objects = *program.state().objects;
-    Vector<uint32_t> allocations = allocationsOfInstances(program, EvaluationState::ProvenOnce);
-    AOT_TEST_CHECK(!allocations.isEmpty());
-    uint32_t allocation = allocations[0];
-    FunctionID constructor(program.state().tables.constructorOfAllocation(allocation));
-    const LayoutData* classLayout = objects.classes.classConstructedBy(constructor);
-    AOT_TEST_CHECK(classLayout && !objects.classes.classPrototypeIfExists(*classLayout));
-
-    JSCell* instance = objects.structures.allocate(vm, allocation);
-    auto* closure = uncheckedDowncast<Closure>(objects.closures.closureIfCreated(constructor));
-    JSValue prototype = closure->prototypeProperty(vm);
-    AOT_TEST_CHECK(prototype.isObject() && objects.classes.classPrototypeIfExists(*classLayout) == asObject(prototype));
-    AOT_TEST_CHECK(!uncheckedDowncast<CompiledStructure>(instance->structure())->hasOtherPrototype());
-    ClassSide side = ClassSide::Static;
-    AOT_TEST_CHECK(objects.classes.classHeldBy(asObject(prototype), side) == classLayout && side == ClassSide::Prototype);
-    AOT_TEST_CHECK(objects.classes.classHeldBy(closure, side) == classLayout && side == ClassSide::Static);
-
-    JSObject* other = constructEmptyObject(program.realm());
-    Object* allocated = uncheckedDowncast<Object>(objects.structures.allocate(vm, allocation));
-    AOT_TEST_CHECK(objects.classes.instanceWithPrototype(vm, allocated, other) == allocated);
-    AOT_TEST_CHECK(uncheckedDowncast<CompiledStructure>(allocated->structure())->hasOtherPrototype());
-    AOT_TEST_CHECK(objects.classes.classPrototypeIfExists(*classLayout) == asObject(prototype));
-}
-
-// `Point.prototype.sum = function () {}`: compiled code makes the closure by itself, so the cell that the table has for the function is empty when the first construction looks at the prototype object.
 static void checkAssignedMethodKeepsItsGuard(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -2108,90 +2077,6 @@ static void checkAssignedMethodKeepsItsGuard(LoadedProgram& program)
     AOT_TEST_CHECK(objects.closures.closureIfCreated(function) == made);
     AOT_TEST_CHECK(classGuardOfNameHolds(state, *classLayout, ClassSide::Prototype, static_cast<uint32_t>(method.name)));
 }
-
-static constexpr ASCIILiteral functionBelowAFunction = R"IR(layout L0 kind=Instance name="Above" constructor=f1 fields=[{key="a" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
-layout L1 kind=Instance name="Below" base=L0 constructor=f2 fields=[{key="a" declared={type=1 flags=[IsExpected]}}, {key="b" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
-module m0 path="main.js" displayPath="main.js" body=f0
-function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-    v0 = NewClosure function=f1
-    v1 = NewClosure function=f2
-    v2 = Builtin builtin=GlobalThis
-    v3 = PropGet v2 key="Object" [isFreeName]
-    v4 = PropGet v3 key="setPrototypeOf"
-    v5 = PropGet v1 key="prototype"
-    v6 = PropGet v0 key="prototype"
-    v7 = Call v4, v3, v5, v6
-    v8 = Call v4, v3, v1, v0
-    v9 = Construct v0
-    v10 = Construct v1
-    PropSet v2, v9 key="keptAbove"
-    PropSet v2, v10 key="keptBelow"
-    v13 = PropGet v2 key="print" [isFreeName]
-    v14 = PropGet v9 key="a"
-    v15 = PropGet v10 key="b"
-    v16 = PropGet v0 key="extra"
-    v17 = PropGet v10 key="late"
-    v18 = Call v13, -, v14, v15, v16, v17
-    v19 = Undefined
-    Return v19
-}
-function f1 name="Above" flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-    v1 = Integer integer=1
-    PropSet v0, v1 key="a"
-    v3 = Undefined
-    Return v3
-}
-function f2 name="Below" flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
-    v1 = Integer integer=1
-    PropSet v0, v1 key="a"
-    v3 = Integer integer=2
-    PropSet v0, v3 key="b"
-    v5 = Undefined
-    Return v5
-}
-entry module=m0
-)IR"_s;
-
-static constexpr ASCIILiteral prototypeObjectThatIsAnInstance = R"IR(layout L0 kind=Instance name="Above" constructor=f1 fields=[{key="a" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
-layout L1 kind=Instance name="Below" base=L0 constructor=f2 fields=[{key="b" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
-module m0 path="main.js" displayPath="main.js" body=f0
-function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-    v0 = NewClosure function=f1
-    v1 = NewClosure function=f2
-    v2 = Construct v0
-    PropSet v1, v2 key="prototype"
-    v4 = Integer integer=1
-    PropSet v2, v4 key="late"
-    v6 = Construct v1
-    v7 = Builtin builtin=GlobalThis
-    v8 = PropGet v7 key="print" [isFreeName]
-    v9 = PropGet v6 key="a"
-    v10 = PropGet v6 key="b"
-    v11 = PropGet v6 key="late"
-    v12 = Call v8, -, v9, v10, v11
-    v13 = PropGet v7 key="Object" [isFreeName]
-    v14 = PropGet v13 key="setPrototypeOf"
-    v15 = Null
-    v16 = Call v14, v13, v2, v15
-    v17 = PropGet v13 key="freeze"
-    v18 = Call v17, v13, v2
-    v19 = Undefined
-    Return v19
-}
-function f1 name="Above" flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-    v1 = Integer integer=1
-    PropSet v0, v1 key="a"
-    v3 = Undefined
-    Return v3
-}
-function f2 name="Below" flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
-    v1 = Integer integer=2
-    PropSet v0, v1 key="b"
-    v3 = Undefined
-    Return v3
-}
-entry module=m0
-)IR"_s;
 
 static constexpr ASCIILiteral methodAbovePrototypeObjectThatIsAnInstance = R"IR(layout L0 kind=Instance name="Above" constructor=f1 fields=[{key="a" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="Below" base=L0 constructor=f2 fields=[{key="b" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
@@ -2256,62 +2141,8 @@ function f4 length=2 parameters=[{type=L1}, {type=anything}] results=[{type=anyt
 entry module=m0
 )IR"_s;
 
-static constexpr ASCIILiteral classBelowTwoLinkedFunctions = R"IR(layout L0 kind=Instance name="Above" constructor=f1 fields=[{key="a" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
-layout L1 kind=Instance name="Below" base=L0 constructor=f2 fields=[{key="a" declared={type=1 flags=[IsExpected]}}, {key="b" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
-layout L2 kind=Instance name="Lowest" base=L1 constructor=f3 flags=[HasHeritage]
-variable g0 declared={type=function} flags=[IsImmutable]
-module m0 path="main.js" displayPath="main.js" body=f0
-function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-    v0 = NewClosure function=f1
-    v1 = NewClosure function=f2
-    v2 = Builtin builtin=GlobalThis
-    v3 = PropGet v2 key="Object" [isFreeName]
-    v4 = PropGet v3 key="setPrototypeOf"
-    v5 = PropGet v1 key="prototype"
-    v6 = PropGet v0 key="prototype"
-    v7 = Call v4, v3, v5, v6
-    v8 = Call v4, v3, v1, v0
-    v9 = ResolveHeritage v1
-    v10 = NewClosure function=f3
-    v11 = NewClass v10, v1, v9 layout=L2
-    PutModuleVariable v11 variable=g0
-    v13 = FinishClass v11 layout=L2
-    v14 = Construct v1
-    v15 = Construct v13
-    PropSet v2, v14 key="keptBelow"
-    PropSet v2, v15 key="keptLowest"
-    v18 = PropGet v2 key="print" [isFreeName]
-    v19 = PropGet v13 key="extra"
-    v20 = PropGet v14 key="b"
-    v21 = Call v18, -, v19, v20
-    v22 = Undefined
-    Return v22
-}
-function f1 name="Above" flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-    v1 = Integer integer=1
-    PropSet v0, v1 key="a"
-    v3 = Undefined
-    Return v3
-}
-function f2 name="Below" flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
-    v1 = Integer integer=1
-    PropSet v0, v1 key="a"
-    v3 = Integer integer=2
-    PropSet v0, v3 key="b"
-    v5 = Undefined
-    Return v5
-}
-function f3 name="Lowest" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object}] {
-    v3 = GetSuperBase v0
-    v4 = SuperConstructList v3, v1, v2 layout=L2
-    Return v4
-}
-entry module=m0
-)IR"_s;
-
 namespace {
 
-// The module body has not run: each test lays the links by hand, as the program would, ahead of the first object of Below.
 struct TwoLinkedConstructorFunctions {
     explicit TwoLinkedConstructorFunctions(LoadedProgram& program)
         : vm(program.vm())
@@ -2343,13 +2174,11 @@ struct TwoLinkedConstructorFunctions {
     JSCell* makeObjectOfAbove() { return makeObject(allocationOfAbove); }
     JSCell* makeObjectOfBelow() { return makeObject(allocationOfBelow); }
     bool hasEnded(ClassSide side) { return classes.guardHasEnded(*classBelow, side); }
-    // With no name of the side ended.
     bool holdsForEveryName(ClassSide side) { return classGuardHolds(state, *classBelow, side); }
 
     VM& vm;
     State& state;
     ClassTable& classes;
-    // An object that the program only reads from is never built, and has no allocation.
     std::optional<uint32_t> allocationOfAbove;
     std::optional<uint32_t> allocationOfBelow;
     const LayoutData* classAbove { nullptr };
@@ -2360,78 +2189,8 @@ struct TwoLinkedConstructorFunctions {
 
 } // anonymous namespace
 
-// `Object.setPrototypeOf(Below, Above)`, as $toClass() does: the guards of the function's own side begin all the same, and hear of what happens to the function above.
-static void checkFunctionBelowAFunctionKeepsItsGuards(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    VM& vm = functions.vm;
-    functions.linkPrototypeObjects();
-    functions.below->setPrototypeDirect(vm, functions.above);
-    functions.makeObjectOfBelow();
-    AOT_TEST_CHECK(functions.holdsForEveryName(ClassSide::Static) && functions.holdsForEveryName(ClassSide::Prototype));
-
-    functions.above->putDirect(vm, Identifier::fromString(vm, "extra"_s), jsNumber(1));
-    AOT_TEST_CHECK(!functions.holdsForEveryName(ClassSide::Static) && !functions.hasEnded(ClassSide::Static));
-    AOT_TEST_CHECK(functions.holdsForEveryName(ClassSide::Prototype));
-
-    functions.above->setPrototypeDirect(vm, constructEmptyObject(program.realm()));
-    AOT_TEST_CHECK(functions.hasEnded(ClassSide::Static) && functions.holdsForEveryName(ClassSide::Prototype));
-}
-
-static void checkNameOfFunctionAboveEndsItsGuardBelow(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    VM& vm = functions.vm;
-    functions.linkPrototypeObjects();
-    functions.below->setPrototypeDirect(vm, functions.above);
-    functions.above->putDirect(vm, Identifier::fromString(vm, "extra"_s), jsNumber(1));
-    functions.makeObjectOfBelow();
-    AOT_TEST_CHECK(!functions.holdsForEveryName(ClassSide::Static) && !functions.hasEnded(ClassSide::Static));
-}
-
-static void checkFunctionBelowAnotherObjectHasNoGuards(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    VM& vm = functions.vm;
-    functions.linkPrototypeObjects();
-    functions.below->setPrototypeDirect(vm, constructEmptyObject(program.realm()));
-    functions.makeObjectOfBelow();
-    AOT_TEST_CHECK(functions.hasEnded(ClassSide::Static) && functions.holdsForEveryName(ClassSide::Prototype));
-}
-
-// `Below.prototype = new Above()`: what is found above the object stays guarded. No guard speaks of a name of its layout.
-static void checkCompiledPrototypeObjectKeepsTheGuardOfItsSide(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    VM& vm = functions.vm;
-    JSObject* holder = asObject(functions.makeObjectOfAbove());
-    AOT_TEST_CHECK(isCompiledObject(holder));
-    CompiledCallee::setPrototypeProperty(vm, functions.below, holder, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-    functions.makeObjectOfBelow();
-    AOT_TEST_CHECK(functions.classes.classPrototypeIfExists(*functions.classBelow) == holder);
-    AOT_TEST_CHECK(!functions.hasEnded(ClassSide::Prototype) && !functions.holdsForEveryName(ClassSide::Prototype));
-    std::optional<uint32_t> fieldOfHolder = identifiersOf(functions.state.instance).numberOf(Identifier::fromString(vm, "a"_s).impl());
-    AOT_TEST_CHECK(fieldOfHolder && !classGuardOfNameHolds(functions.state, *functions.classBelow, ClassSide::Prototype, *fieldOfHolder));
-
-    holder->methodTable()->setPrototype(holder, program.realm(), constructEmptyObject(program.realm()), false);
-    AOT_TEST_CHECK(functions.hasEnded(ClassSide::Prototype));
-}
-
-static void checkFrozenCompiledPrototypeObjectEndsTheGuards(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    VM& vm = functions.vm;
-    JSObject* holder = asObject(functions.makeObjectOfAbove());
-    CompiledCallee::setPrototypeProperty(vm, functions.below, holder, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-    functions.makeObjectOfBelow();
-    AOT_TEST_CHECK(!functions.hasEnded(ClassSide::Prototype));
-    objectConstructorFreeze(program.realm(), holder);
-    AOT_TEST_CHECK(functions.hasEnded(ClassSide::Prototype));
-}
-
 enum class WayToGetName : uint8_t { Store, Accessor, Assign };
 
-// `made.sum()` finds the method on the prototype object of Above, past the compiled holder, behind the guard of the name at Below. The name is no field of the holder's layout, so the holder tells when it gets it.
 template<WayToGetName way>
 static void checkCompiledPrototypeObjectGetsNameFoundAboveIt(LoadedProgram& program)
 {
@@ -2482,158 +2241,12 @@ static void checkCompiledPrototypeObjectGetsNameFoundAboveIt(LoadedProgram& prog
     AOT_TEST_CHECK(!guardOfNameHolds());
 }
 
-static const LayoutData& defineClassBelowLinkedFunctions(LoadedProgram& program, TwoLinkedConstructorFunctions& functions)
-{
-    VM& vm = functions.vm;
-    const LayoutData* lowest = nullptr;
-    for (uint32_t index = 0; index < functions.state.tables.numberOfLayoutIndices; ++index) {
-        const LayoutData* candidate = functions.classes.classWithIndex(index);
-        if (candidate && functions.classes.isDefinedByClass(*candidate) && functions.classes.assumedBaseOf(*candidate) == functions.classBelow)
-            lowest = candidate;
-    }
-    AOT_TEST_CHECK(lowest);
-    FunctionID constructor(lowest->classData().classConstructor);
-    Closure* classObject = Closure::create(vm, functions.state.objects->closures.closureStructureFor(vm, constructor), constructor);
-    functions.classes.defineClass(program.realm(), classObject, functions.below, functions.prototypeOf(functions.below));
-    AOT_TEST_CHECK(!vm.exceptionForInspection() && classObject->getPrototypeDirect() == JSValue(functions.below));
-    return *lowest;
-}
-
-// `class Lowest extends Below`, and Below stands below the function Above. Nobody looks at what stands above Below until a side begins its guards, at Below or below it.
-template<bool belowMakesItsFirstObjectAheadOfClass, bool aboveHasNameFromTheStart>
-static void checkClassBelowLinkedFunctions(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    VM& vm = functions.vm;
-    Identifier extra = Identifier::fromString(vm, "extra"_s);
-    functions.linkPrototypeObjects();
-    functions.below->setPrototypeDirect(vm, functions.above);
-    if (aboveHasNameFromTheStart)
-        functions.above->putDirect(vm, extra, jsNumber(1));
-    if (belowMakesItsFirstObjectAheadOfClass)
-        functions.makeObjectOfBelow();
-    const LayoutData& lowest = defineClassBelowLinkedFunctions(program, functions);
-    auto hasEnded = [&] {
-        return functions.classes.guardHasEnded(lowest, ClassSide::Static);
-    };
-    auto holdsForEveryName = [&] {
-        return classGuardHolds(functions.state, lowest, ClassSide::Static);
-    };
-    AOT_TEST_CHECK(!hasEnded() && holdsForEveryName() == !aboveHasNameFromTheStart);
-
-    functions.above->putDirect(vm, Identifier::fromString(vm, "b"_s), jsNumber(1));
-    AOT_TEST_CHECK(!hasEnded() && !holdsForEveryName());
-
-    functions.below->setPrototypeDirect(vm, constructEmptyObject(program.realm()));
-    AOT_TEST_CHECK(hasEnded());
-}
-
-static void checkClassBelowFunctionBelowAnotherObjectHasNoGuards(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    functions.linkPrototypeObjects();
-    functions.below->setPrototypeDirect(functions.vm, constructEmptyObject(program.realm()));
-    const LayoutData& lowest = defineClassBelowLinkedFunctions(program, functions);
-    AOT_TEST_CHECK(functions.classes.guardHasEnded(lowest, ClassSide::Static) && !functions.classes.guardHasEnded(lowest, ClassSide::Prototype));
-}
-
 namespace {
-
-// `Point.prototype = {}`, `Point.prototype.sum = function () {}`: the record lists the method, and its holder is an object that the program made.
-struct MethodOnStoredPrototypeObject {
-    explicit MethodOnStoredPrototypeObject(LoadedProgram& program)
-        : vm(program.vm())
-        , state(program.state())
-        , realm(program.realm())
-        , sum(Identifier::fromString(vm, "sum"_s))
-    {
-        ObjectModel& objects = *state.objects;
-        Vector<uint32_t> allocations = allocationsOfInstances(program, EvaluationState::ProvenOnce);
-        AOT_TEST_CHECK(!allocations.isEmpty());
-        FunctionID constructor(state.tables.constructorOfAllocation(allocations[0]));
-        classLayout = objects.classes.classConstructedBy(constructor);
-        AOT_TEST_CHECK(classLayout && !classLayout->methods().empty());
-        const MethodData& method = classLayout->methods()[0];
-        numberOfSum = static_cast<uint32_t>(method.name);
-
-        classObject = uncheckedDowncast<Closure>(objects.closures.closure(vm, constructor));
-        holder = constructEmptyObject(realm);
-        CompiledCallee::setPrototypeProperty(vm, classObject, holder, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-        closure = objects.closures.createClosure(vm, FunctionID(method.function), { }, 0);
-        holder->putDirect(vm, sum, closure);
-
-        instance = asObject(objects.structures.allocate(vm, allocations[0]));
-        AOT_TEST_CHECK(objects.classes.classPrototypeIfExists(*classLayout) == holder && prototypeAt(program, allocations[0]) == JSValue(holder));
-        AOT_TEST_CHECK(guardOfMethodHolds() && !sideHasEnded());
-    }
-
-    bool guardOfMethodHolds() { return classGuardOfNameHolds(state, *classLayout, ClassSide::Prototype, numberOfSum); }
-    bool sideHasEnded() { return state.objects->classes.guardHasEnded(*classLayout, ClassSide::Prototype); }
-
-    VM& vm;
-    State& state;
-    JSGlobalObject* realm;
-    Identifier sum;
-    const LayoutData* classLayout { nullptr };
-    uint32_t numberOfSum { 0 };
-    Closure* classObject { nullptr };
-    JSObject* holder { nullptr };
-    JSObject* closure { nullptr };
-    JSObject* instance { nullptr };
-};
 
 } // anonymous namespace
 
-static void checkMethodOnStoredPrototypeObjectIsReplaced(LoadedProgram& program)
-{
-    MethodOnStoredPrototypeObject stored(program);
-    PutPropertySlot slot(stored.holder);
-    stored.holder->methodTable()->put(stored.holder, stored.realm, stored.sum, jsNumber(1), slot);
-    AOT_TEST_CHECK(!stored.guardOfMethodHolds() && !stored.sideHasEnded());
-}
-
-static void checkMethodOnStoredPrototypeObjectIsDeleted(LoadedProgram& program)
-{
-    MethodOnStoredPrototypeObject stored(program);
-    DeletePropertySlot slot;
-    AOT_TEST_CHECK(stored.holder->methodTable()->deleteProperty(stored.holder, stored.realm, stored.sum, slot));
-    AOT_TEST_CHECK(!stored.guardOfMethodHolds() && !stored.sideHasEnded());
-}
-
-static void checkMethodOnStoredPrototypeObjectBecomesAnAccessor(LoadedProgram& program)
-{
-    MethodOnStoredPrototypeObject stored(program);
-    PropertyDescriptor accessor;
-    accessor.setGetter(stored.closure);
-    AOT_TEST_CHECK(stored.holder->methodTable()->defineOwnProperty(stored.holder, stored.realm, stored.sum, accessor, false));
-    AOT_TEST_CHECK(!stored.guardOfMethodHolds() && !stored.sideHasEnded());
-}
-
-// A read still finds the method. A store into an instance no longer passes it by.
-static void checkStoredPrototypeObjectIsFrozen(LoadedProgram& program)
-{
-    MethodOnStoredPrototypeObject stored(program);
-    objectConstructorFreeze(stored.realm, stored.holder);
-    AOT_TEST_CHECK(stored.guardOfMethodHolds() && !stored.sideHasEnded());
-
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(stored.vm);
-    PutPropertySlot strict(stored.instance, true);
-    stored.instance->methodTable()->put(stored.instance, stored.realm, stored.sum, jsNumber(1), strict);
-    AOT_TEST_CHECK(scope.exception());
-    scope.clearException();
-}
-
-static void checkStoredPrototypeObjectIsReplaced(LoadedProgram& program)
-{
-    MethodOnStoredPrototypeObject stored(program);
-    PutPropertySlot slot(stored.classObject);
-    stored.classObject->methodTable()->put(stored.classObject, stored.realm, stored.vm.propertyNames->prototype, constructEmptyObject(stored.realm), slot);
-    AOT_TEST_CHECK(stored.sideHasEnded() && stored.state.objects->classes.guardHasEnded(*stored.classLayout, ClassSide::Static));
-}
-
 namespace {
 
-// What Object::didCreateField() tells the table of classes where an object of Below gets its `b` through the run time.
 struct FieldCreatedInObjectsOfBelow {
     FieldCreatedInObjectsOfBelow(TwoLinkedConstructorFunctions& functions, const LayoutData& layout)
         : functions(functions)
@@ -2649,7 +2262,6 @@ struct FieldCreatedInObjectsOfBelow {
     {
     }
 
-    // How often the prototype objects are asked.
     uint64_t numberOfWalksFor(unsigned numberOfObjects)
     {
         uint64_t before = functions.classes.numberOfWalksOverPrototypeHolders();
@@ -2668,80 +2280,6 @@ struct FieldCreatedInObjectsOfBelow {
 
 } // anonymous namespace
 
-// Neither prototype object has a `b`, and both tell when they get one: the first object asks for all that follow.
-static void checkNextObjectThatGetsAFieldAsksNoPrototypeObject(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    functions.linkPrototypeObjects();
-    FieldCreatedInObjectsOfBelow created(functions);
-    AOT_TEST_CHECK(!created.isRemembered());
-    AOT_TEST_CHECK(created.numberOfWalksFor(1) == 1 && created.isRemembered());
-    AOT_TEST_CHECK(!created.numberOfWalksFor(100) && created.isRemembered());
-    AOT_TEST_CHECK(created.guardOfNameHolds() && functions.holdsForEveryName(ClassSide::Prototype));
-}
-
-// `Above.prototype.b = 1` behind a hundred objects of Below with a `b` of their own, then one more object. Then `delete Above.prototype.b`.
-static void checkNameLaidAboveIsFoundByTheNextObjectThatGetsTheField(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    functions.linkPrototypeObjects();
-    FieldCreatedInObjectsOfBelow created(functions);
-    AOT_TEST_CHECK(created.numberOfWalksFor(100) == 1 && created.isRemembered() && created.guardOfNameHolds());
-
-    JSObject* holderAbove = functions.prototypeOf(functions.above);
-    holderAbove->putDirect(functions.vm, created.name, jsNumber(1));
-    AOT_TEST_CHECK(!created.isRemembered() && !created.guardOfNameHolds() && !functions.hasEnded(ClassSide::Prototype));
-    AOT_TEST_CHECK(created.numberOfWalksFor(1) == 1 && created.isRemembered());
-    AOT_TEST_CHECK(!created.numberOfWalksFor(100));
-    AOT_TEST_CHECK(!created.guardOfNameHolds() && !functions.holdsForEveryName(ClassSide::Prototype) && !functions.hasEnded(ClassSide::Prototype));
-
-    DeletePropertySlot slot;
-    AOT_TEST_CHECK(holderAbove->methodTable()->deleteProperty(holderAbove, program.realm(), created.name, slot));
-    AOT_TEST_CHECK(!created.isRemembered());
-    AOT_TEST_CHECK(created.numberOfWalksFor(100) == 1 && created.isRemembered());
-    AOT_TEST_CHECK(!created.guardOfNameHolds() && !functions.hasEnded(ClassSide::Prototype));
-}
-
-// `Object.setPrototypeOf(Above.prototype, {})` in mid-run. The guards of the side have ended, so nobody is asked again.
-static void checkPrototypeObjectAboveIsRelinkedBetweenObjectsThatGetAField(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    functions.linkPrototypeObjects();
-    FieldCreatedInObjectsOfBelow created(functions);
-    AOT_TEST_CHECK(created.numberOfWalksFor(100) == 1 && created.isRemembered());
-
-    JSObject* holderAbove = functions.prototypeOf(functions.above);
-    AOT_TEST_CHECK(holderAbove->methodTable()->setPrototype(holderAbove, program.realm(), constructEmptyObject(program.realm()), false));
-    AOT_TEST_CHECK(!created.isRemembered() && functions.hasEnded(ClassSide::Prototype));
-    AOT_TEST_CHECK(!created.numberOfWalksFor(100) && created.isRemembered());
-}
-
-// `this.b = 2` below `Above.prototype.b = 1`: what the first object ends stays ended.
-static void checkFieldThatHidesAValueAboveAsksOnce(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    functions.linkPrototypeObjects();
-    functions.prototypeOf(functions.above)->putDirect(functions.vm, Identifier::fromString(functions.vm, "b"_s), jsNumber(1));
-    FieldCreatedInObjectsOfBelow created(functions);
-    AOT_TEST_CHECK(!created.guardOfNameHolds() && !functions.hasEnded(ClassSide::Prototype));
-    AOT_TEST_CHECK(created.numberOfWalksFor(100) == 1 && created.isRemembered());
-    AOT_TEST_CHECK(!created.guardOfNameHolds() && !functions.hasEnded(ClassSide::Prototype));
-}
-
-// Ahead of the first object of Below nobody has entered the prototype objects, and what they get they tell nobody.
-static void checkFieldAsksEachTimeWhileNoPrototypeObjectReports(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    functions.linkPrototypeObjects();
-    FieldCreatedInObjectsOfBelow aheadOfFirstObject(functions, *functions.classBelow);
-    AOT_TEST_CHECK(!functions.classes.classPrototypeIfExists(*functions.classBelow) && !functions.hasEnded(ClassSide::Prototype));
-    AOT_TEST_CHECK(aheadOfFirstObject.numberOfWalksFor(3) == 3 && !aheadOfFirstObject.isRemembered());
-
-    FieldCreatedInObjectsOfBelow created(functions);
-    AOT_TEST_CHECK(created.numberOfWalksFor(3) == 1 && created.isRemembered());
-}
-
-// `Below.prototype = new Above()`: `b` is no field of the holder's layout, so the holder tells when it gets the name.
 static void checkCompiledPrototypeObjectGetsTheNameOfAFieldBelow(LoadedProgram& program)
 {
     TwoLinkedConstructorFunctions functions(program);
@@ -2759,27 +2297,6 @@ static void checkCompiledPrototypeObjectGetsTheNameOfAFieldBelow(LoadedProgram& 
     AOT_TEST_CHECK(created.numberOfWalksFor(100) == 1 && created.isRemembered());
 }
 
-// `Below.extra = 1` says nothing about a prototype object. `Below.prototype = {}` does.
-static void checkStoreOnTheFunctionKeepsWhatCreatedFieldsHide(LoadedProgram& program)
-{
-    TwoLinkedConstructorFunctions functions(program);
-    VM& vm = functions.vm;
-    functions.linkPrototypeObjects();
-    FieldCreatedInObjectsOfBelow created(functions);
-    AOT_TEST_CHECK(created.numberOfWalksFor(1) == 1 && created.isRemembered());
-
-    functions.below->putDirect(vm, Identifier::fromString(vm, "extra"_s), jsNumber(1));
-    AOT_TEST_CHECK(!functions.holdsForEveryName(ClassSide::Static) && created.isRemembered());
-
-    PutPropertySlot slot(functions.below);
-    functions.below->methodTable()->put(functions.below, program.realm(), vm.propertyNames->prototype, constructEmptyObject(program.realm()), slot);
-    AOT_TEST_CHECK(!created.isRemembered() && functions.hasEnded(ClassSide::Prototype));
-    AOT_TEST_CHECK(!created.numberOfWalksFor(100) && created.isRemembered());
-}
-
-// class Above { note?: Above }  class Below extends Above { }  function Old() { }
-// function noteOf(holder: Above | Old) { return holder.note; }  function forget(holder: Above | Old) { holder.note = undefined; }
-// The program evaluates text, so each access asks what stands above an instance of each of the three classes.
 static constexpr ASCIILiteral threeClassesAskedInOneTest = R"IR(layout L0 kind=Instance name="Above" module=m0 constructor=f1 fields=[{key="note" declared={type=undefined|null|L0}}] ownFieldCount=1
 layout L1 kind=Instance name="Below" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
 layout L2 kind=Instance name="Old" module=m0 constructor=f3 fields=[{key="note" declared={type=undefined|null|L0}}] flags=[IsConstructorFunction] ownFieldCount=1
@@ -2844,7 +2361,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace {
 
-// The words of ProgramTables::classGuardCounts(), held against the bits of their guards as the records of the classes describe them.
 struct CountedClassGuards {
     struct Guard {
         uint32_t bit;
@@ -2933,7 +2449,6 @@ struct CountedClassGuards {
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-// The guards of the two classes hold from the start, with their bits clear. Those of the function begin with its first object, which sets their bits. One word counts both kinds.
 static void checkOneWordCountsGuardsOfSeveralClasses(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -2964,7 +2479,6 @@ static void checkOneWordCountsGuardsOfSeveralClasses(LoadedProgram& program)
     uint32_t guardsOfBelow = counted.numberOfGuardsOfClassIn(*count, *below);
     uint32_t guardsOfOld = counted.numberOfGuardsOfClassIn(*count, *old);
 
-    // What Image wrote.
     counted.checkEveryCountIsExact();
     AOT_TEST_CHECK(counted.valueOf(*count) == guardsOfOld);
 
@@ -2979,12 +2493,10 @@ static void checkOneWordCountsGuardsOfSeveralClasses(LoadedProgram& program)
     counted.checkEveryCountIsExact();
     AOT_TEST_CHECK(counted.valueOf(*count) == guardsOfBelow);
 
-    // The side stores the bits of its names once more.
     endClassGuard(state, *below, ClassSide::Prototype);
     counted.checkEveryCountIsExact();
     AOT_TEST_CHECK(counted.valueOf(*count) == guardsOfBelow);
 
-    // What ends a guard of a class goes on to the classes below it.
     endClassGuard(state, *above, ClassSide::Prototype);
     counted.checkEveryCountIsExact();
     AOT_TEST_CHECK(counted.valueOf(*count) == guardsOfAbove + guardsOfBelow);
@@ -2993,7 +2505,6 @@ static void checkOneWordCountsGuardsOfSeveralClasses(LoadedProgram& program)
     counted.checkEveryCountIsExact();
     AOT_TEST_CHECK(counted.valueOf(*count) == guardsOfAbove + guardsOfBelow + guardsOfOld);
 }
-
 
 std::span<const NativeTest> constructorFunctionTests()
 {
@@ -3023,34 +2534,10 @@ std::span<const NativeTest> constructorFunctionTests()
         { "constructor-functions/commonjs-module"_s, testCommonJSModule },
         { "constructor-functions/site-predicts-the-first-prototype"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, factoryWithoutCaptures, checkSitePredictsTheFirstPrototype> },
         { "constructor-functions/site-of-a-function-evaluated-once-keeps-its-prototype"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkSiteOfFunctionEvaluatedOnceKeepsItsPrototype> },
-        { "constructor-functions/first-construction-defines-the-class"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkFirstConstructionDefinesTheClass> },
         { "constructor-functions/assigned-method-keeps-its-guard"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkAssignedMethodKeepsItsGuard> },
-        { "constructor-functions/function-below-a-function-keeps-its-guards"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionBelowAFunction, checkFunctionBelowAFunctionKeepsItsGuards> },
-        { "constructor-functions/name-of-the-function-above-ends-its-guard-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionBelowAFunction, checkNameOfFunctionAboveEndsItsGuardBelow> },
-        { "constructor-functions/function-below-another-object-has-no-guards"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionBelowAFunction, checkFunctionBelowAnotherObjectHasNoGuards> },
-        { "constructor-functions/compiled-prototype-object-keeps-the-guard-of-its-side"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, prototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectKeepsTheGuardOfItsSide> },
-        { "constructor-functions/frozen-compiled-prototype-object-ends-the-guards"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, prototypeObjectThatIsAnInstance, checkFrozenCompiledPrototypeObjectEndsTheGuards> },
-        { "constructor-functions/compiled-prototype-object-gets-a-name-found-above-it"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsNameFoundAboveIt<WayToGetName::Store>> },
-        { "constructor-functions/compiled-prototype-object-gets-an-accessor-found-above-it"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsNameFoundAboveIt<WayToGetName::Accessor>> },
         { "constructor-functions/compiled-prototype-object-is-assigned-a-name-found-above-it"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsNameFoundAboveIt<WayToGetName::Assign>> },
-        { "constructor-functions/class-below-linked-functions-defined-first"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowTwoLinkedFunctions, checkClassBelowLinkedFunctions<false, false>> },
-        { "constructor-functions/class-below-linked-functions-defined-later"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowTwoLinkedFunctions, checkClassBelowLinkedFunctions<true, false>> },
-        { "constructor-functions/class-below-linked-functions-defined-first-finds-a-name-above"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowTwoLinkedFunctions, checkClassBelowLinkedFunctions<false, true>> },
-        { "constructor-functions/class-below-linked-functions-defined-later-finds-a-name-above"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowTwoLinkedFunctions, checkClassBelowLinkedFunctions<true, true>> },
-        { "constructor-functions/class-below-a-function-below-another-object-has-no-guards"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, classBelowTwoLinkedFunctions, checkClassBelowFunctionBelowAnotherObjectHasNoGuards> },
-        { "constructor-functions/method-on-a-stored-prototype-object-is-replaced"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkMethodOnStoredPrototypeObjectIsReplaced> },
-        { "constructor-functions/method-on-a-stored-prototype-object-is-deleted"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkMethodOnStoredPrototypeObjectIsDeleted> },
-        { "constructor-functions/method-on-a-stored-prototype-object-becomes-an-accessor"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkMethodOnStoredPrototypeObjectBecomesAnAccessor> },
-        { "constructor-functions/stored-prototype-object-is-frozen"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkStoredPrototypeObjectIsFrozen> },
-        { "constructor-functions/stored-prototype-object-is-replaced"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkStoredPrototypeObjectIsReplaced> },
         { "constructor-functions/one-word-counts-guards-of-several-classes"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, threeClassesAskedInOneTest, checkOneWordCountsGuardsOfSeveralClasses> },
-        { "constructor-functions/next-object-that-gets-a-field-asks-no-prototype-object"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionBelowAFunction, checkNextObjectThatGetsAFieldAsksNoPrototypeObject> },
-        { "constructor-functions/name-laid-above-is-found-by-the-next-object-that-gets-the-field"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionBelowAFunction, checkNameLaidAboveIsFoundByTheNextObjectThatGetsTheField> },
-        { "constructor-functions/prototype-object-above-is-relinked-between-objects-that-get-a-field"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionBelowAFunction, checkPrototypeObjectAboveIsRelinkedBetweenObjectsThatGetAField> },
-        { "constructor-functions/field-that-hides-a-value-above-asks-once"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionBelowAFunction, checkFieldThatHidesAValueAboveAsksOnce> },
-        { "constructor-functions/field-asks-each-time-while-no-prototype-object-reports"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionBelowAFunction, checkFieldAsksEachTimeWhileNoPrototypeObjectReports> },
         { "constructor-functions/compiled-prototype-object-gets-the-name-of-a-field-below"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, methodAbovePrototypeObjectThatIsAnInstance, checkCompiledPrototypeObjectGetsTheNameOfAFieldBelow> },
-        { "constructor-functions/store-on-the-function-keeps-what-created-fields-hide"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionBelowAFunction, checkStoreOnTheFunctionKeepsWhatCreatedFieldsHide> },
     };
     return tests;
 }

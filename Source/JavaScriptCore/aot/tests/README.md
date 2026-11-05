@@ -45,7 +45,7 @@ Every boundary between two stages is text. So a bug gets a test at the stage tha
 testaot all <folder>                                              native tests, then every *.ir under the folder, in parallel
 testaot run <file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--single-process] [--option=<option word>].. [--only-diagnostic=<kind>]
 testaot native [<filter>] [--after=<name>] [--part=<i>/<n>] [--single-process]
-testaot list commands|options|mechanisms|statistics|diagnostics|image-format
+testaot list commands|options|mechanisms|statistics|diagnostics|image-format|rows-of-effects
 testaot <command> <program> { argument } { option word } [mechanisms=<list>] [--program-of-tag]
 testaot print <program> --wire
 testaot compile <program> --output=<image> { option word | statistic } [mechanisms=<list>] [--program-of-tag]     prints "statistic <name> <value>" for each StatisticID named, then "entry <i> <id>" for each entry point
@@ -57,7 +57,8 @@ testaot fuzz-allocation [--seed=<n>] [--count=<n>] [--blocks=<n>] [--show=<seed>
 tag wrote: the hash of the schema is not compared. See "From a program to running code".
 
 `<command>` is any name that `testaot list commands` prints: `testaot emit f.ir f3`. It is what a `RUN` line runs, without the check
-lines. The words are read differently. On a `RUN` line every word is an argument of the command. On the command line:
+lines. The words are read differently. On a `RUN` line every word is an argument of the command, but `mechanisms=` and `testing=`, which are
+applied behind the `OPTIONS`: so one file holds a program and each lie about it. On the command line:
 
 - A word that begins with `--` is a flag of `testaot` or a JSC option. So the shell options of `run-in-shell` come only from a `RUN` line.
 - Every other word is first tried as an option word. A word that the options refuse is an argument of the command if it holds no `=`, and an
@@ -197,6 +198,8 @@ A line that begins with `# --` is a marker. Any marker but these is an error.
 Bun's `test/aot/tools/update-ir-tests.ts` rewrites the IR text from the source, and everything below `# -- generated:` from what the
 runs print. List the functions the test is about, and a library function (`role=Library`) only if the test is about it. In a source, print
 strings: `console.log` of a value of unknown type keeps about 500 library functions reachable, which is 1.6 MB of IR text.
+`Tools/Scripts/aot/cut-ir-test.py --testaot <testaot> --write <file>` then takes out what rides along of the library and the program's own files do not
+reach, and proves the cut: the test passes, every `RUN` prints what it printed, and it fails with the function under test emptied.
 
 Each `RUN` parses the file again (directives are comments to the parser) and verifies the program: first its records, then its bodies.
 `print` and `verify` get the program unverified, because they report on it themselves. A verified program has an entry point. So every file
@@ -207,10 +210,11 @@ the IR: the wire IR, as a front end sends it. `OPTIONS`, `JSC-OPTIONS`, `TYPES`,
 
 **`LIBRARY`.** A front end always sends the library functions that the built-ins table names. So that a test need not, the Machine commands
 and the commands on whole builds get a stand-in library: one more module without a body (`flags=[IsLibrary]`) and in it one function,
-`role=Library`, that returns `undefined`, registered for every runtime function that the text has no `runtimefunction` line for,
+`role=Library`, that says that it was called (`printErr`) and returns `undefined`, registered for every runtime function that the text has no `runtimefunction` line for,
 but for the helpers of the compiler (the entries under `CompilerHelpers`: steps of an iteration, sorts, splits, spreads).
 `testaot compile` on IR text and the native tests that compile IR text do the same. In such a program every built-in that is written in
-JavaScript (`Array.prototype.map`, `new Promise`, `Object.entries`) and that the program can come by returns `undefined`. A test that runs one writes the `runtimefunction`
+JavaScript (`Array.prototype.map`, `new Promise`, `Object.entries`) and that the program can come by returns `undefined`, and `run-in-shell` fails a run in which one was called,
+whatever its check lines say: a twin in the statements of the shell gets the same `undefined`, so the answers would agree and hold nothing. A test that runs one writes the `runtimefunction`
 lines of the functions it uses. The line `# LIBRARY: own`, written exactly like that, says that the text brings all it needs: nothing is added.
 The stand-in answers for the statements of the shell too, wherever the build has compiled it: for the built-ins that the program can come by (`link/library-*.ir`),
 which is all of them once unseen code can run. So a test whose
@@ -450,17 +454,17 @@ every unit that the build compiles: entries and units of the library too.
   `counts`, only where it is named: how much Link has proven of the whole program, in numbers alone.
   `lookups`: `LookupsPastProgramObjects`, field by field, a line an entry: `lookup name-read "size"`, `lookup name-called "push"`, `lookup read | called | let-go | called-out-of-sight ArrayPrototypePush`, `lookup taken-for-constant | written | written-under-any-name | lost | at-unseen DateNow`, `lookup write Date at f0 v3`, `lookup instance-at-unseen Map`, the names and flags of reads and writes through lost built-ins and through what is unseen.
   The uses of built-ins, the locks and the reports are made of it. It is among the parts that `link` prints without a word, so `run` holds it against the other orders of the worklist too.
-  A line says only what is claimed: `function f1 callers-known one-callee fresh-result cycle=2 rank=1 result=number returns=[..] throws=none`, `function f2 unreached ..`,
-  `parameter 0 expected=number declared proven=i32 kept`, `referrers f0, shared call 0`, behind the functions `group shared call 0 cycle=1 rank=0` (or `anybody`, `constructors of F1`) with its own `referrers`, `call f0 v5 -> f1`,
+  A line says only what is claimed: `function f1 callers-known one-callee cycle=2 rank=1 result=number returns=[..] throws=none`, `function f2 unreached ..`,
+  `parameter 0 expected=number declared proven=i32`, `referrers f0, shared call 0`, behind the functions `group shared call 0 cycle=1 rank=0` (or `anybody`, `constructors of F1`) with its own `referrers`, `call f0 v5 -> f1`,
   `access f1 v2 under symbol("depth")@m0:0` (an access under a computed key that can only be that one symbol: the walk builds it by the name),
   `field L0.1 "x" proven=number writers-known written-at-construction-alone` (`filled-by-accessors-alone`: only accessors that literals lay are seen to fill it), `variable g0 proven=f1 writers-known`, `capture f2.0 proven=L1 writers-known`,
   `member L0 Prototype 0 Method "size" function=f2 writers-known`, `layout L0 family=F1 changes=[GainsProperty]`, `layout L3 never-allocated changes=[]`, `layout L2 changes=[GainsProperty] filled-under-computed-keys` (`counts[word] = 1`), `layout L4 changes=[] heritage=L2` (`class Socket extends NetSocket`, written without a base: what arrives), `on-prototype L0 "width" getter=f4 setter=f5` (what a descriptor written in the body lays: expected), `family F1 [L0, L2]`.
   `keys-never-listed`, at the end of the line of a layout: nothing ever sees in which order its objects got their keys. `closures-stay-as-made`, at the end of the line of a function: `LinkedFunction::closuresStayAsMade`.
   `only-given-undefined`, on the line of a field: its makers give it the constant undefined alone. `accessors L0.0 "total" getter=f2 setter=f3`, among the accesses: the one function that literals lay there as either half.
   `summary f1` has `lists-keys-of n4, n7`: the objects on which an operation of the body runs OwnKeys or OwnValues.
-  The parameters are the entry parameters: captures, `this`, the callee and the new target come in front of what is written. `kept`: the parameter does not escape.
-  `coroutines`, one more word for a table: `coroutine f1 fulfilled=L0 returned=L0 as-made`, `coroutine f2 yielded=i32 sent=undefined as-made only-iterated`: `LinkedCoroutine`, a line for each coroutine that is reached. `never`: nothing ever arrives.
-  In `summary`: `only-iterated` at the end of a `call` (`SummaryCall::resultIsOnlyIterated`), and `Contents yielded of ClassInstance Generator`, `Contents returned of ClassInstance Promise` for what the body yields and returns, whoever has the object.
+  The parameters are the entry parameters: captures, `this`, the callee and the new target come in front of what is written.
+  `coroutines`, one more word for a table: `coroutine f1 returned=L0`, under `link held`: `coroutine f1 fulfilled=L0 returned=L0`: `LinkedCoroutine`, a line for each coroutine that is reached. `never`: nothing ever arrives.
+  In `summary`: `Contents returned of ClassInstance Promise` for what the body returns, whoever has the object.
   `catch f1 b3 caught=L0`, behind the functions: what was seen to arrive at the handler block beside whatever nobody knows. A guess in both readings. No line: nothing was seen.
   `runs-once`, at the end of the line of a function: in one realm it runs at most once. `in-queue-from-start`: `LinkedFunction::isInQueueFromStart`. `takes-arrivals`: every caller known, every call with one callee, no referrer in its own cycle.
   `ring-by-value`, at the end of the line of a function: it stands in a ring of calls in tail position of which one goes through an entry by value, so it returns boxed values.
@@ -471,8 +475,8 @@ every unit that the build compiles: entries and units of the library too.
 
 **Plan** (`AOTPlanTestCommands.cpp`)
 
-- `plan [layouts|variables|deferred|shapes|units|module-starts|literal-strings|orders|classes]..` prints `mechanisms <list>`, then the named parts or all of them:
-  `layout L0 CompiledObject size=32 shapes=1..1`, `slot 0 "x" OptionalDouble Inline offset=24 record=0 type=undefined|null|number` (`accessor`: it holds the pair of functions, and no value), `variable g0 Statics JSValue Plain`,
+- `plan [layouts|variables|deferred|shapes|units|module-starts|orders|classes]..` prints `mechanisms <list>`, then the named parts or all of them:
+  `layout L0 CompiledObject size=32 shapes=1..1`, `slot 0 "x" OptionalDouble Inline offset=24 record=0 type=undefined|null|number doors=number` (`doors`: what the record holds a store to, where that is less than `type`: `PlacedSlot::provenType`; `accessor`: it holds the pair of functions, and no value), `variable g0 Statics JSValue Plain`,
   `deferred g8 made-by f8 v11 NewRegExp mark=undefined at-declaration` (a variable whose object its first read makes: `DeferredVariable`),
   `shape 1 L0`, `unit f1:Body (JSValue, JSValue) -> (JSValue)`, `unit f1:GenericCallEntry -> f1:Body`,
   `unit f2:CoroutineBody (JSValue, JSValue) -> (JSValue) never-suspends` (an async function in which nothing suspends),
@@ -582,6 +586,22 @@ If you write a command:
 Without the word the image lets one global of a VM have an instance, and an import in a second one throws.
 
 `erase-types` is a word of the front end. Bun's tests of whole programs run it.
+
+**`testing=CheckEffectsAtRunTime`: the rows of effects are held against what runs** (`ir/AOTEffectsNet.h`). No option of a build. What an operation, a stub, an
+operation of the run time, a built-in or a callee is said NOT to do is believed by the walk, the sweep and the back end. Under the word each call is held to it, and the
+process ends by name: `AOT: f2 at 715: the rows of effects of operation:CallDirect and of what Link says of the callee say that the call will not write ObjectFields, and
+those words of operand 0 are others behind it. This is a bug in Bun.`
+- Two doors: every call of a stub or of an operation of the run time, held to the row of the operation cut by that of the callee (`RuntimeCallEmitter::emitCall()`); every
+  operation under the rules `Call`, `Builtin` and `Inline`, held to what the walk took for its effects (`Code::effectsBelievedOf()`).
+- Runs no other code: every unit counts its entries. Writes: the words of the operands that are cells, by heap, are hashed in front and behind. Throws nothing: whoever looks
+  for a handler asks whether such a call is under way; lack of memory, a full stack and a termination do not count. Does not collect: the heap's count of collections, which
+  sees every allocation of the engine under `--slowPathAllocsBetweenGCs=1`.
+- It does not see: a write to what is no operand (a variable, a scope, a buffer of the caller), the named properties of an object of the engine, code that the interpreter
+  runs, and whether a call of compiled code runs unknown code.
+- `testing=RowSaysLess:<Operation|RuntimeOperation|Stub|Builtin|Callee>/<row>/<RunsOtherCode|Throws|Collects|a heap>` lays one row false, for the red controls:
+  `answers/false-rows-of-effects-are-stopped-by-name.ir`.
+- `BUN_AOT_EFFECTS_NET_GOES_ON=1`: each false row is told once and the run goes on. With `aotCountsPath` the file lists `effects:<part>:<row>` for each part of a row that a
+  call was held to, and `false-effects:` for each false one; `testaot list rows-of-effects` lists what there is to hold.
 
 **`testing=CheckProofsAtRunTime`: Link's proofs are held against what runs.** No option of a build: tests, `testaot` and health set it
 (`--option=testing=CheckProofsAtRunTime` for a folder, `--aot-testing=CheckProofsAtRunTime` for `bun build`). The walk builds a `CheckProof` on a value, which

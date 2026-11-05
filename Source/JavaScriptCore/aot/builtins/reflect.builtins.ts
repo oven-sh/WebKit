@@ -4,7 +4,6 @@ const ownProperties = ["ObjectFields", "NamedProperties", "Elements", "ArrayStor
 const inheritedProperties = [...ownProperties, "PrototypeLinks"];
 const prototypeLink = ["ShapeWords", "NamedProperties", "PrototypeLinks"];
 const memberGuards = ["MemberGuards"];
-// An array under a prototype that may hold indexed accessors gets a storage that asks it at every store.
 const prototypeChange = [...prototypeLink, ...memberGuards, "ArrayStorage"];
 
 const operandCodeEffects = { capability: "js", runsOnlyOperandCode: true } as const;
@@ -99,7 +98,6 @@ export default b.declarations(
           args: { ...keyedArguments, receiver: b.any },
           returns: b.any,
           throws: true,
-          // The getter found on the target runs with the receiver as `this`, and the receiver need not inherit from the object that holds the getter.
           uses: { target: [b.everything, b.readByKey(key), b.accessorReadByKey("Getter", key, b.nativeMemory)], receiver: [b.everything] },
           implementation: b.compiled("ReflectObject", "get"),
         },
@@ -178,7 +176,6 @@ export default b.declarations(
           args: { ...keyedArguments, value: b.any, receiver: b.any },
           returns: b.bool,
           throws: true,
-          // As in `get`: the setter that is found on the target runs with the receiver as `this`. Where none is found the value is defined on the receiver.
           uses: {
             target: [
               b.accessorReadByKey("Setter", key, b.nativeCell(setterForReceiverCell)),
@@ -188,7 +185,6 @@ export default b.declarations(
                 args: [b.operand("value")],
                 result: "Ignored",
               }),
-              // The receiver may be the target itself, or a proxy of it.
               b.definesName(key, b.operand("value")),
               b.storedByKey(key, b.operand("value")),
               ...b.ownPropertyTraps,

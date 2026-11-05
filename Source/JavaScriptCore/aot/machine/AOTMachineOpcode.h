@@ -31,7 +31,6 @@ public:
         : m_kind(kind)
     {
     }
-    // Procedure::addTuple() makes these.
     static constexpr Type tuple(uint16_t index)
     {
         Type result(Tuple);
@@ -73,10 +72,6 @@ constexpr Width widthOf(Type type)
 
 constexpr unsigned sizeOf(Type type) { return bytesForWidth(widthOf(type)); }
 
-// v(name, number of children, traits). A child count of variableChildren: the operation says.
-// On x86-64 the builder makes a Patch of Div, UDiv, Mod, UMod, MulHigh, UMulHigh and of a shift by an amount that is no constant, so none of them is appended there.
-// On ARM64 it makes Sub(a, Mul(Div(a, b), b)) of Mod and UMod.
-// An ArgumentReg of a pinned register has no position either, and neither has an Add of a constant to a pinned register, the FramePointer or a SlotBase: Operation::hasNoPosition().
 #define FOR_EACH_AOT_MACHINE_OPCODE(v) \
     v(Nop, 0, HasEffects) \
     v(Opaque, 1, IsNeverNumbered) \
@@ -184,11 +179,8 @@ enum : uint16_t {
     IsLoad = 1 << 2,
     IsStore = 1 << 3,
     IsTerminal = 1 << 4,
-    // Stays though nothing uses its result. A Patch says for itself: Effects::mustStay(). So does a load that traps.
     HasEffects = 1 << 5,
-    // One for the whole procedure. It belongs to no block and is made again wherever it is used.
     HasNoPosition = 1 << 6,
-    // Numbering is not handed one. A Patch says for itself: PatchOperation::pureFunction. The builder finds an equal Extract itself, among those at the end of the block.
     IsNeverNumbered = 1 << 7,
 };
 }
@@ -247,10 +239,8 @@ static_assert([] {
 }());
 constexpr bool hasNoPosition(Opcode opcode) { return hasTrait(opcode, OpcodeTrait::HasNoPosition); }
 constexpr bool isConstant(Opcode opcode) { return opcode == Const32 || opcode == Const64 || opcode == ConstFloat || opcode == ConstDouble; }
-// AddressOf: the address of code or of read-only data, Int64. NumberOf: the 32 bits that Image gives a mention, Int32. InstanceAddressOf: the address of the word of the instance that Image gives a mention, Int64.
 constexpr bool namesSymbol(Opcode opcode) { return opcode == AddressOf || opcode == NumberOf || opcode == InstanceAddressOf; }
 
-// A computation from values to a value, without effects. It counts the uses of its children when it gains its own first use, so one that nothing reads has counted nothing.
 constexpr bool countsChildrenAtFirstUse(Opcode opcode)
 {
     return !hasTrait(opcode, OpcodeTrait::IsLoad | OpcodeTrait::IsStore | OpcodeTrait::IsTerminal | OpcodeTrait::HasEffects | OpcodeTrait::HasNoPosition | OpcodeTrait::IsNeverNumbered);
@@ -258,9 +248,7 @@ constexpr bool countsChildrenAtFirstUse(Opcode opcode)
 static_assert(countsChildrenAtFirstUse(Add) && countsChildrenAtFirstUse(Div) && countsChildrenAtFirstUse(BitAnd) && countsChildrenAtFirstUse(FMax) && countsChildrenAtFirstUse(BitwiseCast) && countsChildrenAtFirstUse(EqualOrUnordered) && countsChildrenAtFirstUse(Select));
 static_assert(!countsChildrenAtFirstUse(Load) && !countsChildrenAtFirstUse(Opaque) && !countsChildrenAtFirstUse(Extract) && !countsChildrenAtFirstUse(Phi) && !countsChildrenAtFirstUse(ArgumentReg) && !countsChildrenAtFirstUse(Patch) && !countsChildrenAtFirstUse(Check) && !countsChildrenAtFirstUse(Upsilon));
 
-// Of a comparison of integers. A comparison of numbers has no inverse: both sides are false of NaN.
 JS_EXPORT_PRIVATE Opcode invertedComparison(Opcode);
-// The comparison that says of (b, a) what this one says of (a, b).
 JS_EXPORT_PRIVATE Opcode flippedComparison(Opcode);
 
 constexpr Width accessWidthOf(Opcode opcode, Type typeOfWord)

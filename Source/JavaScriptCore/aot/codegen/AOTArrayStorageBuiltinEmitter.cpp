@@ -31,8 +31,6 @@ void ArrayStorageBuiltinEmitter::generateArrayLength(const InlineCall& call)
     finishInlineCall(call, lengthResult(call, elements().arrayLength(in<CellPointer>(call.receiver()))));
 }
 
-// The code in line stores a length inside the vector of storage that is the array's own and has a form, and puts holes where elements were.
-// Any other store (a length that is no index, which throws, or that needs room, or an array whose length is fixed) misses, or goes by name as strict code stores it.
 void ArrayStorageBuiltinEmitter::generateArraySetLength(const InlineCall& call)
 {
     static constexpr int64_t maxInlineClearedElements = 64;
@@ -100,7 +98,6 @@ void ArrayStorageBuiltinEmitter::generateArrayPush(const InlineCall& call)
         pushOne(call, in<CellPointer>(call.receiver()));
         return;
     }
-    // The inline code stores exactly one value. Any other argument count goes to the host function on the miss edge.
     if (!call.canMiss()) {
         fail(call.context(), InternalErrorKind::OpcodeWithoutCode);
         finishInlineCall(call, emitter<ConstantEmitter>().zeroOf(resultRepresentationOf(call)));
@@ -115,7 +112,6 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver())).kind;
     ArrayStorage declared = arrayStorageDeclaredBy(m_program, types(), typeIDOf(call.receiver())).predicted();
     ArrayStorageFormList forms = elements().candidateFormsFor(pushed, expected);
-    // Only the storage kind that the element type declares gets an inline arm. Every other kind goes to the stub, which handles all of them.
     if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
         forms.shrink(1);
     bool goesByKindOfNumbers = !hasArrayStorageForm(declared) && elements().goesByKindOfListOfNumbers(call.receiver(), pushed);
@@ -129,11 +125,9 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     ArrayElements storage = elements().elementsOf(array);
     Integer length = elements().publicLength(storage);
     branchUnless(below(length, elements().vectorLength(storage)), slowPath);
-    // Loaded in the block that compares it, so that the compare can read the byte from memory.
     Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
     elements().forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, slowPath, [&](const ArrayStorageForm& form) {
         Operand rawElement = *elements().rawElementToStore(form, pushed, slowPath);
-        // An array that needs a barrier goes to the stub, which remembers the pushed element rather than the array.
         if (form.holdsCells && mayPushCell)
             branchUnless(emitter<BarrierEmitter>().isBeyondBarrierThreshold(array), slowPath);
         elements().storeRawElement(form, storage, length, rawElement);

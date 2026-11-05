@@ -57,7 +57,6 @@ void MathBuiltinEmitter::testNumber(const InlineCall& call, NumberTest test)
     }));
 }
 
-// isNaN(undefined) is true and Number.isNaN(undefined) is false: the global functions take what ToNumber has made of the argument.
 void MathBuiltinEmitter::generateIsNaN(const InlineCall& call)
 {
     finish(call, testNumber(numberOperand(call.argument(0)), NumberTest::IsNaN));

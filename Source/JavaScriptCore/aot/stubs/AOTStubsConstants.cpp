@@ -22,7 +22,6 @@
 
 namespace JSC { namespace AOT {
 
-// On x86-64 the immediate and the result share a register.
 static StubSignature signatureOfConstant()
 {
     StubSignature signature = StubSignature::withGPRResult({ });
@@ -80,7 +79,6 @@ static void returnCellFromTable(StubAssembler& jit, int32_t offsetOfTable, CellR
     createConstantAndReturn(jit, createOperation, index);
 }
 
-// A variant takes the number in the register of its key and hands the cell back there.
 StubSignature signatureOfCreateConstant(StubKey key)
 {
     StubSignature signature = signatureOfConstant();
@@ -91,7 +89,6 @@ StubSignature signatureOfCreateConstant(StubKey key)
     return signature;
 }
 
-// Three registers that are given back as they were. They are none of allocateConstantRegisters().
 #if CPU(X86_64)
 static constexpr StubRegister newCellRegister = StubRegister::T10;
 static constexpr StubRegister allocatorRegister = StubRegister::T11;
@@ -102,7 +99,6 @@ static constexpr StubRegister allocatorRegister = StubRegister::T14;
 static constexpr StubRegister allocationScratchRegister = StubRegister::T15;
 #endif
 
-// Takes the lock as LazyStringHeaderLocker does, but does not wait for it.
 static void lockUnlessLocked(StubAssembler& jit, Address lock, GPRReg scratch, JumpList& isLocked)
 {
 #if CPU(X86_64)
@@ -122,7 +118,6 @@ static void lockUnlessLocked(StubAssembler& jit, Address lock, GPRReg scratch, J
 #endif
 }
 
-// Whoever reads the word sees every store made before it. May write the base of the address.
 static void storeRelease32(StubAssembler& jit, GPRReg value, BaseIndex address)
 {
 #if CPU(X86_64)
@@ -148,7 +143,6 @@ void createLazyHeader(StubAssembler& jit, const LazyHeaderRegisters& r, unsigned
     const GPRReg headerNumber = r.number;
     const GPRReg record = r.record;
     const GPRReg offset = r.offset;
-    const GPRReg literalStringWord = offset;
     const GPRReg lazyHeaders = r.lazyHeaders;
     const GPRReg newHeader = lazyHeaders;
     const GPRReg word = r.word;
@@ -157,27 +151,11 @@ void createLazyHeader(StubAssembler& jit, const LazyHeaderRegisters& r, unsigned
     static_assert(StringImpl::hashAndFlagsOfStaticString(0, true, StringImpl::StringNormal) == (flagsFor16Bit | StringImpl::flagIs8Bit()));
     static_assert(StringImpl::hashAndFlagsOfStaticString(0, true, StringImpl::StringAtom) == (flagsFor16Bit | atomFlags | StringImpl::flagIs8Bit()) && !(atomFlags & flagsFor16Bit));
     static_assert(sizeof(ImageStringRecord) == sizeof(uint64_t) && !OBJECT_OFFSETOF(ImageStringRecord, rangeOrIndex) && OBJECT_OFFSETOF(ImageStringRecord, hashAndFlags) == sizeof(uint32_t));
-    static_assert(OBJECT_OFFSETOF(ImageStringHeader, length) == sizeof(uint32_t) && OBJECT_OFFSETOF(ImageStringHeader, literalStringWord) == OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags) + sizeof(uint32_t));
+    static_assert(OBJECT_OFFSETOF(ImageStringHeader, length) == sizeof(uint32_t) && OBJECT_OFFSETOF(ImageStringHeader, unused) == OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags) + sizeof(uint32_t));
     RELEASE_ASSERT(jit.options().isPositionIndependent && noOverlap(headerNumber, record, offset, lazyHeaders, word, instanceGPR));
 
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringRecords)), record);
     jit.load64(BaseIndex(record, headerNumber, CCallHelpers::TimesEight), record);
-    Jump hasInlineRange = jit.branchTest32(CCallHelpers::NonZero, record, TrustedImm32(ImageString::lengthMask));
-#if CPU(X86_64)
-    cannot.append(jit.branchTestBit64(CCallHelpers::Zero, record, TrustedImm32(32 + WTF::fastLog2(ImageStringRecord::isLiteralStringFlag))));
-#else
-    cannot.append(jit.branchTest64(CCallHelpers::Zero, record, TrustedImm64(static_cast<int64_t>(ImageStringRecord::isLiteralStringFlag) << 32)));
-#endif
-    jit.zeroExtend32ToWord(record, word);
-    jit.urshift32(TrustedImm32(ImageString::lengthBits), word);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.listedStrings)), literalStringWord);
-    jit.load64(BaseIndex(literalStringWord, word, CCallHelpers::TimesFour), literalStringWord);
-    jit.urshift64(TrustedImm32(32), record);
-    jit.lshift64(TrustedImm32(32), record);
-    jit.zeroExtend32ToWord(literalStringWord, word);
-    jit.or64(word, record);
-    jit.urshift64(TrustedImm32(32), literalStringWord);
-    hasInlineRange.link(&jit);
     jit.move(record, word);
     jit.and32(TrustedImm32(ImageString::lengthMask), word);
     cannot.append(jit.branch32(CCallHelpers::BelowOrEqual, word, TrustedImm32(longestTextWithoutHeader)));
@@ -207,8 +185,6 @@ void createLazyHeader(StubAssembler& jit, const LazyHeaderRegisters& r, unsigned
     Jump isNotAtom = jit.branchTest32(CCallHelpers::Zero, record, TrustedImm32(ImageString::isAtomFlag));
     jit.or32(TrustedImm32(atomFlags), word);
     isNotAtom.link(&jit);
-    jit.lshift64(TrustedImm32(32), literalStringWord);
-    jit.or64(literalStringWord, word);
     jit.store64(word, Address(newHeader, OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags)));
     jit.store64(headerNumber, Address(newHeader, OBJECT_OFFSETOF(LazyStringHeader, number)));
     jit.move(newHeader, offset);
@@ -223,10 +199,8 @@ void createLazyHeader(StubAssembler& jit, const LazyHeaderRegisters& r, unsigned
     unlock(jit, Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked)));
 }
 
-// IsSaidByWordInScratch: `scratch` holds the ImageStringWord of a string with a header in the image. The header of an identifier's text is the atom, and no other header of an image is one: writeStrings().
 enum class AtomnessOfHeader : uint8_t { IsReadFromHeader, IsSaidByWordInScratch };
 
-// ProgramStrings::string(), for a string whose StringImpl is static: nobody counts references to it.
 template<typename Functor>
 static void createCellOfHeaderAndReturn(StubAssembler& jit, GPRReg headerAndResult, GPRReg scratch, GPRReg number, JumpList& cannot, const Functor& prepareHeader, AtomnessOfHeader atomness = AtomnessOfHeader::IsReadFromHeader)
 {
@@ -245,7 +219,6 @@ static void createCellOfHeaderAndReturn(StubAssembler& jit, GPRReg headerAndResu
         if (atomness == AtomnessOfHeader::IsSaidByWordInScratch)
             jit.move(scratch, allocationScratch);
         jit.load64(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(stringHeader)), scratch);
-        // JSString::typeInfoBlobForAtomness(): whoever looks for the name of a key need not ask the StringImpl.
         constexpr unsigned shiftOfAtomFlagToCellBit = (JSCell::typeInfoFlagsOffset() * 8 + getLSBSet(static_cast<unsigned>(TypeInfoPerCellBit))) - getLSBSet(StringImpl::flagIsAtom());
         static_assert(hasOneBitSet(StringImpl::flagIsAtom()) && hasOneBitSet(static_cast<unsigned>(TypeInfoPerCellBit)));
         if (atomness == AtomnessOfHeader::IsSaidByWordInScratch) {
@@ -279,7 +252,6 @@ static void createCellOfHeaderAndReturn(StubAssembler& jit, GPRReg headerAndResu
     jit.returnToCaller();
 }
 
-// wordAndResult holds the ImageStringWord of the string.
 static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndResult, GPRReg scratch, GPRReg number, JumpList& cannot)
 {
     const GPRReg header = wordAndResult;
@@ -289,7 +261,6 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
     static_assert(sizeof(ImageStringHeader) == 24 && ImageString::hashMask * sizeof(ImageStringHeader) <= INT32_MAX);
 
     cannot.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult, TrustedImm32(ImageString::hasTextFlag)));
-    // ImageText::createAtom(): the header of an identifier's text is the atom. Any other atom is the one in the table of the thread.
     jit.move(wordAndResult, scratch);
     jit.and32(TrustedImm32(ImageString::isAtomFlag | ImageString::hasIdentifierNumberFlag), scratch);
     cannot.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(ImageString::isAtomFlag)));
@@ -313,7 +284,6 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
             cannotAllocate.append(jit.branch32(CCallHelpers::BelowOrEqual, Address(header, StringImpl::lengthMemoryOffset()), TrustedImm32(1)));
         });
     } else {
-        // The empty string and the strings of one character have their cells in the VM. The word says so, and says whether the header is an atom: the header itself, a line of memory that nobody has touched yet, is not read.
         cannot.append(jit.branchTest32(CCallHelpers::NonZero, wordAndResult, TrustedImm32(ImageString::isShorterThanTwoFlag)));
         jit.move(wordAndResult, scratch);
         jit.and32(TrustedImm32(ImageString::hashMask), wordAndResult);
@@ -331,14 +301,13 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
         constexpr unsigned flagsOf16BitText = StringImpl::hashAndFlagsOfStaticString(0, false, StringImpl::StringNormal);
         static_assert(StringImpl::hashAndFlagsOfStaticString(0, true, StringImpl::StringNormal) == (flagsOf16BitText | StringImpl::flagIs8Bit()));
         static_assert(OBJECT_OFFSETOF(ImageStringHeader, length) == sizeof(uint32_t) && OBJECT_OFFSETOF(ImageStringHeader, characters) == sizeof(uint64_t));
-        static_assert(OBJECT_OFFSETOF(ImageStringHeader, literalStringWord) == OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags) + sizeof(uint32_t));
+        static_assert(OBJECT_OFFSETOF(ImageStringHeader, unused) == OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags) + sizeof(uint32_t));
         cannotAllocate.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult, TrustedImm32(ImageString::hasListedHashFlag)));
         jit.move(wordAndResult, characters);
         jit.and32(TrustedImm32(ImageString::hashMask), characters);
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.listedStrings)), hashAndFlags);
         jit.getEffectiveAddress(BaseIndex(hashAndFlags, characters, CCallHelpers::TimesFour), hashAndFlags);
         jit.load32(Address(hashAndFlags), characters);
-        // ImageListedString: the offset above the length, and behind that word the hash. No length: the string is long or far. One character: the VM may have the cell.
         jit.move(characters, length);
         jit.and32(TrustedImm32(ImageString::lengthMask), length);
         cannotAllocate.append(jit.branch32(CCallHelpers::BelowOrEqual, length, TrustedImm32(1)));
@@ -387,22 +356,18 @@ static void returnStringConstant(StubAssembler& jit)
         JumpList cannot;
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringConstants)), address);
         jit.load32(BaseIndex(address, index, CCallHelpers::TimesFour), result);
-        // That is the ImageStringWord of the string: the section begins with the words, in the order of the constants.
         createCellOfImageStringAndReturn(jit, result, address, index, cannot);
         cannot.link(&jit);
     }
     createConstantAndReturn(jit, Entry::operationAOTStringConstant, index);
 }
 
-// What those stubs write beside the scratch registers of the assembler: the registers of signatureOfConstant() and of allocateConstantRegisters().
-// One that is missing here is lost to the site, which learns of it from the catalog.
 #if CPU(X86_64)
 static constexpr StubRegister registersWrittenByMakersOfConstants[] = { StubRegister::R0, StubRegister::T9 };
 #else
 static constexpr StubRegister registersWrittenByMakersOfConstants[] = { StubRegister::R0, stubImmediateRegister, StubRegister::T11, StubRegister::T12 };
 #endif
 
-// `emitNumber` leaves the number where the maker takes it. The cell comes back in `result`, and every other register is as it was.
 static void callMakerOfConstantAndReturn(StubAssembler& jit, StubKey maker, GPRReg result, NOESCAPE const Invocable<void(GPRReg number)> auto& emitNumber)
 {
     const StubSignature signatureOfMaker = signatureOfConstant();
@@ -421,7 +386,6 @@ static void callMakerOfConstantAndReturn(StubAssembler& jit, StubKey maker, GPRR
     jit.emitFunctionEpilogueWithEmptyFrame();
 }
 
-// The word of the cell is read through a scratch register of the assembler, so a site loses nothing but the register that it names.
 static void returnConstantInRegisterOfKey(StubAssembler& jit, CreatedConstant constant)
 {
     const GPRReg numberAndResult = jit.result();
@@ -506,26 +470,10 @@ void generateBuiltinCell(StubAssembler& jit)
     jit.jumpToStubTakingImmediate();
 }
 
-StubSignature signatureOfLiteralStringCell(StubKey)
-{
-    return signatureOfConstant();
-}
-
-// Whoever comes here has read the word of the cell and found it empty. The operation fills it.
-void generateLiteralStringCell(StubAssembler& jit)
-{
-    const auto [literalStringWord, result, table, word] = allocateConstantRegisters(jit);
-    RELEASE_ASSERT(noOverlap(result, table, word));
-    jit.zeroExtend32ToWord(literalStringWord, word);
-    createConstantAndReturn(jit, Entry::operationAOTLiteralStringToString, word);
-}
-
 StubSignature signatureOfCreateConstantAtSite(StubKey key)
 {
     StubSignature signature = StubSignature::withGPRResult({ });
     signature.firstResult = key.operandRegister().value_or(GPRInfo::returnValueGPR);
-    if (!readsNumberBehindCall(static_cast<ConstantAtSite>(key.form())))
-        signature.addOperand(signature.firstResult);
     return signature;
 }
 
@@ -538,9 +486,6 @@ static StubKey makerOfConstantAtSite(ConstantAtSite constant)
         return createConstant(CreatedConstant::Key);
     case ConstantAtSite::BuiltinCell:
         return builtinCell();
-    case ConstantAtSite::LiteralString:
-    case ConstantAtSite::LiteralStringInRegister:
-        return literalStringCell();
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -551,15 +496,11 @@ void generateCreateConstantAtSite(StubAssembler& jit)
     const GPRReg result = jit.result();
 
     callMakerOfConstantAndReturn(jit, makerOfConstantAtSite(constant), result, [&](GPRReg number) {
-        if (readsNumberBehindCall(constant)) {
-            jit.loadPtr(Address(fp, sizeof(CPURegister)), number);
-            jit.load32(Address(number, offsetOfNumberBehindCall), number);
-        } else
-            jit.move(result, number);
+        jit.loadPtr(Address(fp, sizeof(CPURegister)), number);
+        jit.load32(Address(number, offsetOfNumberBehindCall), number);
     });
 #if CPU(ARM64)
-    if (readsNumberBehindCall(constant))
-        jit.add64(TrustedImm32(sizeof(uint32_t)), CCallHelpers::linkRegister);
+    jit.add64(TrustedImm32(sizeof(uint32_t)), CCallHelpers::linkRegister);
 #endif
     jit.returnToCaller();
 }
@@ -569,7 +510,6 @@ StubSignature signatureOfGetGlobalBinding(StubKey)
     return signatureOfConstant();
 }
 
-// What the record holds: a constant, or the place of a value under the Structure, and the epoch of the scripts' bindings, that it was filed under. A record that holds nothing has a Structure that no object has.
 void generateGetGlobalBinding(StubAssembler& jit)
 {
     const auto scope = static_cast<GlobalBindingScope>(jit.key().form());
@@ -614,7 +554,6 @@ void generateGetGlobalBinding(StubAssembler& jit)
     jit.callOperationAndReturn(operation, { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = number });
 }
 
-// The number and the value arrive where the operation takes them, so a call of the stub is as long as a call of the operation.
 StubSignature signatureOfSetGlobalBinding(StubKey)
 {
     StubSignature signature = StubSignature::withoutResult({ gprOf(StubRegister::A2) });
@@ -622,7 +561,6 @@ StubSignature signatureOfSetGlobalBinding(StubKey)
     return signature;
 }
 
-// The record of a store holds the place of a writable property or variable, filed by the operation under the Structure, and the epoch, that it found it under. The test is the one that the operation begins with.
 void generateSetGlobalBinding(StubAssembler& jit)
 {
     static constexpr Entry operations[] = { Entry::operationAOTSetGlobalBinding, Entry::operationAOTSetGlobalBindingSloppy, Entry::operationAOTSetGlobalObjectBinding, Entry::operationAOTSetGlobalObjectBindingSloppy };

@@ -94,7 +94,6 @@ function formatCheckedNumber({ value, cppExpression }: ModelBound): string[] {
   return [`${isInt64 ? formatInt64(value) : formatDouble(value)}, (${cppExpression})`];
 }
 
-// FNV-1a over the text.
 function hashOfText(text: string): bigint {
   let hash = 0xcbf29ce484222325n;
   for (const byte of Buffer.from(text, "utf8")) hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
@@ -109,7 +108,6 @@ export function engineListStampOf(idsHeader: string): string {
   return stamp;
 }
 
-// What code that is compiled with the engine takes from the table at compile time. Only the declarations of the engine decide what is in it.
 export function emitCppIds(model: TableModel): string {
   const problems = new Problems();
   const { checkedJSTypes, linkTimeConstants } = model.syntax;
@@ -179,7 +177,6 @@ function isLockedObject({ flags }: ModelBuiltin): boolean {
   return flags.includes("IsLockedObject");
 }
 
-/** The names under which some entry of the table is an accessor of native code, ascending. */
 export function namesOfNativeAccessors({ builtins }: TableModel): ModelName[] {
   const names = new Set(builtins.filter(({ kind }) => kind === "Accessor").map(({ name }) => name));
   return [...names].sort((left, right) => left.number - right.number);
@@ -261,7 +258,6 @@ export function emitCppArraysHeader(model: TableModel, engineListStamp: string):
   const declarations = collectArrayDeclarations(model)
     .filter(([, , count]) => count > 0)
     .flatMap(([cppType, name, count]) => [
-      // lookup.rs in src/aot/builtins/table reads the text names where they lie.
       name === textNamesArray
         ? `extern "C" const ${cppType} ${name};`
         : name === classTokensArray

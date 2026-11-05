@@ -17,7 +17,6 @@ IntlBuiltinEmitter::IntlBuiltinEmitter(CodeGenerator& generator)
 {
 }
 
-// The operation hands back null, and has done nothing that the program can see, for a receiver that is no formatter as the realm makes them and for a value that the formatter refuses.
 void IntlBuiltinEmitter::finishWithTextOrMiss(const InlineCall& call, CellPointer textOrNull)
 {
     missUnless(call, isNotZero(Integer(textOrNull.value())));

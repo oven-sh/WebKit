@@ -23,14 +23,12 @@ static bool encodedMoveIsWide(Width width)
     return width == Width64;
 }
 
-// The assembler reaches far addresses through the second scratch register, so no step names it.
 static void checkRegisterOfEncodedMove(Reg reg)
 {
     RELEASE_ASSERT(reg);
     RELEASE_ASSERT(!reg.isGPR() || reg.gpr() != secondScratchGPR);
 }
 
-// On ARM64 the assembler remembers the constant that it has put into the scratch register, until it is asked for the register again.
 static void willWriteRegisterOfEncodedMove(CCallHelpers& jit, Reg destination)
 {
     checkRegisterOfEncodedMove(destination);
@@ -60,7 +58,6 @@ static void checkMemoryOfEncodedMove(const Encoder& encoder, Location memory, Wi
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The register's bank picks the instruction, not the value's type: on x86-64 an integer goes from memory to memory through the scratch FPR.
 static void loadForEncodedMove(CCallHelpers& jit, MacroAssembler::Address source, Width width, Reg destination)
 {
     bool isWide = encodedMoveIsWide(width);
@@ -95,7 +92,6 @@ static void storeForEncodedMove(CCallHelpers& jit, Reg source, Width width, Macr
         jit.storeFloat(source.fpr(), destination);
 }
 
-// The upper half of a register that holds a reference is unspecified.
 static void decodeKeptReference(CCallHelpers& jit, GPRReg reference, GPRReg pointer)
 {
     static_assert(cell32Shift <= static_cast<unsigned>(CCallHelpers::TimesEight));
@@ -148,7 +144,6 @@ static void materializeSumOfBaseAndOffset(CCallHelpers& jit, BaseOfMaterializedA
     jit.add64(address.base, destination);
 }
 
-// ARM64 makes a boxed int32 of two or three halfwords, an instruction each. The tag lies in a register, and one addition to it makes every small one.
 static bool tryMaterializeBitsBesidePinnedRegister(CCallHelpers& jit, uint64_t bits, GPRReg destination)
 {
     if (!isARM64())
@@ -187,7 +182,6 @@ static void materializeBitsInGPR(CCallHelpers& jit, uint64_t bits, Width width, 
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(bits)), destination);
 }
 
-// The alternative is to take the address of a pooled constant and load from it: three instructions on ARM64, twelve bytes on x86-64, plus the eight bytes of the constant.
 static bool bitsAreCheapestFromImmediates(uint64_t bits)
 {
 #if CPU(ARM64)
@@ -224,7 +218,6 @@ static void materializeBitsInFPR(Encoder& encoder, uint64_t bits, Width width, F
         return;
     }
 
-    // The constants of all functions lie in one pool, which a load relative to the pc does not reach on ARM64.
     std::array<uint8_t, sizeof(uint64_t)> bytes = std::bit_cast<std::array<uint8_t, sizeof(uint64_t)>>(bits);
     uint32_t index = encoder.m_proc.addConstantData(std::span<const uint8_t>(bytes), sizeof(uint64_t), ConstantKind::Number);
     GPRReg address = jit.scratchRegister();
@@ -304,7 +297,6 @@ void Encoder::encodeSave(const Step& step)
     storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination));
 }
 
-// The whole registers change places, so the two values need not have one width.
 void Encoder::encodeSwap(const Step& step)
 {
     ASSERT(step.kind == StepKind::Swap);
@@ -364,8 +356,6 @@ void Encoder::encodeKeepPointer(const Step& step)
     m_jit.store64(pointer, addressOf(step.destination));
 }
 
-// On x86-64 it may write the flags: a zero is made by xor, and a sum that no lea reaches by add.
-// It may write the scratch GPR wherever the destination is an FPR, and on ARM64 for a sum as well.
 void Encoder::encodeMaterialize(const Operation* operation, Reg destination)
 {
     RELEASE_ASSERT(operation->hasNoPosition());
@@ -417,7 +407,6 @@ bool Encoder::tryEncodePairOfMoves(const Step& first, const Step& second)
     Reg secondRegister = secondPlace.reg();
     if (bankOf(firstRegister) != bankOf(secondRegister))
         return false;
-    // There is no load of a pair into one register.
     if (!isSave && firstRegister == secondRegister)
         return false;
 

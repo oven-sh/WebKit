@@ -19,7 +19,6 @@ namespace JSC { namespace AOT {
 class TemporaryFile {
     WTF_MAKE_NONCOPYABLE(TemporaryFile);
 public:
-    // Only Cocoa's createTemporaryFile() takes a suffix. The file without it keeps the name from anybody else.
     TemporaryFile(ASCIILiteral suffix, std::span<const uint8_t> contents)
         : m_pathWithoutSuffix(FileSystem::createTemporaryFile("testaot"_s, { }))
         , m_path(makeString(m_pathWithoutSuffix, suffix))

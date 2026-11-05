@@ -105,7 +105,6 @@ static uint32_t findNumberOfSymbolWithoutDescription()
     });
 }
 
-// Every other number has a header without a length: the run time makes or finds that name.
 static bool isAtomOfImage(uint32_t number)
 {
     const ImageIdentifierWord& record = imageText().identifier(number);
@@ -139,7 +138,6 @@ static bool hasNoHeader(uint32_t number)
 #endif
 }
 
-// Where the image may run in several instances, only the table of a realm makes a symbol that the program creates. Such a table has this one below it.
 static ProgramIdentifiers* identifiersOfVM(LoadedProgram& program)
 {
     return program.vm().aotState().identifiers.get();
@@ -242,7 +240,6 @@ static void testNameOutsideProgramHasNoNumber(LoadedProgram& program)
     checkBothHaveNoNumber();
 }
 
-// Every name in a slot of the table is found by a copy of its text, and two names share a bucket.
 static void testNamesOfOneBucket(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -266,12 +263,45 @@ static void testNamesOfOneBucket(LoadedProgram& program)
     AOT_TEST_CHECK(mostNamesInBucket > 1);
 }
 
+static void testNameIsAskedForAgainAndAgain(LoadedProgram&)
+{
+    IdentifierTable byHash(Image::current()->programTables().identifiersByHash());
+    unsigned numberOfNames = 0;
+    unsigned numberOfHashesWithoutName = 0;
+    for (unsigned round = 0; round < 3; ++round) {
+        for (uint32_t entry : byHash.slots()) {
+            if (!entry || !isAtomOfImage(byHash.numberIn(entry)))
+                continue;
+            UniquedStringImpl* atom = atomOfImage(byHash.numberIn(entry));
+            unsigned hash = atom->existingHash();
+            String copy = copyOfText(byHash.numberIn(entry));
+            ++numberOfNames;
+            for (unsigned time = 0; time < 2; ++time) {
+                AOT_TEST_CHECK(ProgramIdentifiers::findAtom(copy, hash) == atom);
+                AOT_TEST_CHECK(!ProgramIdentifiers::findAtom(makeString(copy.left(copy.length() - 1), copy[copy.length() - 1] == '~' ? '!' : '~'), hash));
+                AOT_TEST_CHECK(!ProgramIdentifiers::findAtom(makeString(copy, '~'), hash));
+                Vector<char16_t> wide;
+                for (unsigned index = 0; index < copy.length(); ++index)
+                    wide.append(copy[index]);
+                AOT_TEST_CHECK(ProgramIdentifiers::findAtom(String(wide.span()), hash) == atom);
+            }
+        }
+        for (unsigned hash = 1; hash < 4096; ++hash) {
+            if (byHash.inSlotFor(hash))
+                continue;
+            ++numberOfHashesWithoutName;
+            for (unsigned time = 0; time < 2; ++time)
+                AOT_TEST_CHECK(!ProgramIdentifiers::findAtom("nameThatNoProgramHas"_s, hash));
+        }
+    }
+    AOT_TEST_CHECK(numberOfNames && numberOfHashesWithoutName > 3 * 64);
+}
+
 static void testTableOfIdentifiers()
 {
     AOT_TEST_CHECK(IdentifierTable::create({ }).isEmpty());
     AOT_TEST_CHECK(!IdentifierTable({ }).find(7, [](uint32_t) { return true; }));
 
-    // Hashes of 24 bits. Three identifiers have one hash, and some hashes differ only above the bits that choose the bucket, or only below the bits that the entry keeps.
     Vector<IdentifierTable::Key> keys;
     for (uint32_t number = 1; number <= 5000; ++number)
         keys.append({ (number * 0x9e3779b1u) >> 8, number });
@@ -292,7 +322,6 @@ static void testTableOfIdentifiers()
         });
         AOT_TEST_CHECK(found == key.number && numberOfLooks <= (key.hash == 0x123456 ? 3u : 1u));
     }
-    // A text that no identifier has: with a hash of the table every identifier of that hash is looked at, with another hash next to none.
     unsigned numberOfLooks = 0;
     auto isNoText = [&](uint32_t) {
         ++numberOfLooks;
@@ -393,7 +422,6 @@ static Vector<char> createProgramWithManySymbols()
     for (unsigned layout = 0; layout < numberOfLayoutsWithSymbols; ++layout)
         builder.append(layout ? ", v"_s : "v"_s, layout + 1);
     builder.append(" contents=anything\n    Return v"_s, numberOfLayoutsWithSymbols + 1, "\n}\n"_s);
-    // String::ascii() makes a question mark of every line break.
     String text = builder.toString();
     Vector<char> characters;
     for (Latin1Character character : text.span8())
@@ -458,6 +486,7 @@ std::span<const NativeTest> programIdentifiersTests()
         { "program-identifiers/reader-sees-null-or-complete-entry"_s, withTextNames<testReaderSeesNullOrCompleteEntry> },
         { "program-identifiers/name-outside-program-has-no-number"_s, withTextNames<testNameOutsideProgramHasNoNumber> },
         { "program-identifiers/names-of-one-bucket"_s, withTextNames<testNamesOfOneBucket> },
+        { "program-identifiers/name-is-asked-for-again-and-again"_s, withTextNames<testNameIsAskedForAgainAndAgain> },
         { "program-identifiers/table-of-identifiers"_s, testTableOfIdentifiers },
         { "program-identifiers/symbol-is-created-once"_s, withSymbols<testSymbolIsCreatedOnce> },
         { "program-identifiers/empty-text-is-the-engines"_s, withSymbols<testEmptyTextIsTheEngines> },

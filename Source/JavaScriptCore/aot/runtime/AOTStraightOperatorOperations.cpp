@@ -16,7 +16,6 @@
 
 namespace JSC { namespace AOT {
 
-// Every part is converted before anything is joined. The texts take the places of the parts, in the frame of the caller, where the collector sees them.
 JSC_DEFINE_JIT_OPERATION(operationAOTConcatenateValues, JSCell*, (Instance* instance, uint32_t count, EncodedJSValue* parts))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatenateValues);

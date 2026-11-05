@@ -1,0 +1,193 @@
+# `twice` only calls what arrives: the arrow of `scaled` is written into the frame, no stub makes it. `keep` lays it in a variable, and `last` returns at once what `twice` gives: both arrows are made in the heap.
+# f1 = twice, f2 = keep, f3 = scaled, f4 = kept, f5 = last
+# -- source: closure-that-one-call-takes-lies-in-the-frame-where-the-callee-only-calls-it.ts
+# declare function sink(...values: unknown[]): void;
+# let held: ((x: number) => number) | undefined;
+# function twice(a: number, f: (x: number) => number): number { let t = a; for (let i = 0; i < 2; i++) t = f(t); return t; }
+# function keep(a: number, f: (x: number) => number): number { let t = a; for (let i = 0; i < 2; i++) t = f(t); held = f; return t; }
+# function scaled(a: number, k: number) { const t = twice(a, x => x * k); return t + 1; }
+# function kept(a: number, k: number) { const t = keep(a, x => x * k); return t + 1; }
+# function last(a: number, k: number) { return twice(a, x => x - k); }
+# sink(scaled(1, 2), scaled(2, 3), kept(1, 2), kept(2, 3), last(1, 2), last(2, 3), () => held);
+# -- end of source
+# records of b7919ceab664899c
+# RUN: bytes f3 mechanisms=all-Inlining
+# CHECK-NOT: NewSlimClosure
+# RUN(KEPT): bytes f4 mechanisms=all-Inlining
+# KEPT: NewSlimClosure
+# RUN(LAST): bytes f5 mechanisms=all-Inlining
+# LAST: NewSlimClosure
+# RUN(WITHHELD): bytes f3 mechanisms=all-Inlining-CellsInFrames
+# WITHHELD: NewSlimClosure
+
+module m0 path="closure-that-one-call-takes-lies-in-the-frame-where-the-callee-only-calls-it.ts" displayPath="closure-that-one-call-takes-lies-in-the-frame-where-the-callee-only-calls-it.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+variable g0 name="twice" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="keep" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="held" module=m0 declared={type=undefined|null|function|absent flags=[OmitsNull]}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} @0
+    v6 = Undefined @51
+    v7 = Convert v6 declared={type=undefined|null|function flags=[OmitsNull]} @51
+    PutModuleVariable v7 variable=g2 @51
+    v9 = Builtin builtin=GlobalThis @595
+    v10 = PropGet v9 key="sink" [isFreeName] @595
+    v11 = Integer integer=1 @607
+    v12 = Integer integer=2 @610
+    v13 = Call v1, -, v11, v12 calleeName="scaled" @600
+    v14 = Integer integer=2 @621
+    v15 = Integer integer=3 @624
+    v16 = Call v1, -, v14, v15 calleeName="scaled" @614
+    v17 = Integer integer=1 @633
+    v18 = Integer integer=2 @636
+    v19 = Call v3, -, v17, v18 calleeName="kept" @628
+    v20 = Integer integer=2 @645
+    v21 = Integer integer=3 @648
+    v22 = Call v3, -, v20, v21 calleeName="kept" @640
+    v23 = Integer integer=1 @657
+    v24 = Integer integer=2 @660
+    v25 = Call v5, -, v23, v24 calleeName="last" @652
+    v26 = Integer integer=2 @669
+    v27 = Integer integer=3 @672
+    v28 = Call v5, -, v26, v27 calleeName="last" @664
+    v29 = NewClosure function=f6 @676
+    v30 = Call v10, -, v13, v16, v19, v22, v25, v28, v29 calleeName="sink" @595
+    v31 = Undefined @595
+    Return v31 @595
+}
+function f1 name="twice" module=m0 position=98 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|function):
+    v2 = Convert v0 declared={type=number} @168
+    v3 = Integer @184
+    v4 = Convert v3 declared={type=number} @184
+    Jump -> next b1(v2, v4) @180
+  b1(v5: number, v6: number):
+    LoopHint @180
+    v8 = Integer integer=2 @191
+    v9 = Less v6, v8 @191
+    Branch v9 -> taken b2(), notTaken b3() @191
+  b2():
+    v10 = Call v1, -, v5 calleeName="f" @203
+    v11 = Convert v10 declared={type=number} @199
+    v12 = Increment v6 @194
+    v13 = Convert v12 declared={type=number} @194
+    Jump -> next b1(v11, v13) @194
+  b3():
+    v14 = Convert v5 declared={type=number} @216
+    Return v14 @216
+}
+function f2 name="keep" module=m0 position=221 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|function):
+    v2 = Convert v0 declared={type=number} @290
+    v3 = Integer @306
+    v4 = Convert v3 declared={type=number} @306
+    Jump -> next b1(v2, v4) @302
+  b1(v5: number, v6: number):
+    LoopHint @302
+    v8 = Integer integer=2 @313
+    v9 = Less v6, v8 @313
+    Branch v9 -> taken b2(), notTaken b3() @313
+  b2():
+    v10 = Call v1, -, v5 calleeName="f" @325
+    v11 = Convert v10 declared={type=number} @321
+    v12 = Increment v6 @316
+    v13 = Convert v12 declared={type=number} @316
+    Jump -> next b1(v11, v13) @316
+  b3():
+    v14 = GetModuleVariable variable=g2 @331
+    v15 = CheckInitialized v14 name="held" @331
+    v16 = Convert v1 declared={type=undefined|null|function flags=[OmitsNull]} @331
+    PutModuleVariable v16 variable=g2 @331
+    v18 = Convert v5 declared={type=number} @348
+    Return v18 @348
+}
+function f3 name="scaled" module=m0 position=353 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = GetModuleVariable variable=g0 @403
+    v3 = NewClosure v1 function=f7 @412
+    v4 = Call v2, -, v0, v3 calleeName="twice" @403
+    v5 = Integer integer=1 @436
+    v6 = Add v4, v5 @436
+    Return v6 @436
+}
+function f4 name="kept" module=m0 position=441 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = GetModuleVariable variable=g1 @489
+    v3 = NewClosure v1 function=f8 @497
+    v4 = Call v2, -, v0, v3 calleeName="keep" @489
+    v5 = Integer integer=1 @521
+    v6 = Add v4, v5 @521
+    Return v6 @521
+}
+function f5 name="last" module=m0 position=526 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = GetModuleVariable variable=g0 @571
+    v3 = NewClosure v1 function=f9 @580
+    v4 = Call v2, -, v0, v3 calleeName="twice" @571
+    ReturnCall v4 @571
+}
+function f6 module=m0 position=676 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g2 @682
+    v1 = CheckInitialized v0 name="held" @682
+    Return v1 @682
+}
+function f7 module=m0 position=412 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number variableName="k"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Mul v1, v0 @421
+    Return v2 @421
+}
+function f8 module=m0 position=497 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number variableName="k"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Mul v1, v0 @506
+    Return v2 @506
+}
+function f9 module=m0 position=580 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number variableName="k"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Sub v1, v0 @589
+    Return v2 @589
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f14 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f14
+runtimefunction id=ArrayIteratorPrototypeNext function=f13 visibility=Private

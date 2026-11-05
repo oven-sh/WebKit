@@ -62,7 +62,6 @@ interface Written<T> {
   source: Source;
 }
 
-// A site in native code says that it reads an export and nothing more: the row for the same export says what becomes of it.
 type WrittenHostUses = ModelHostUses | "Unsaid";
 
 interface WrittenExportRead {
@@ -79,7 +78,6 @@ interface NativeLoads {
   atStartup: readonly WrittenModuleLoad[];
 }
 
-// BuiltinForms::literalPartNames has room for as many.
 const maxLiteralPartNames = 4;
 
 type NativeCalls = ReadonlyMap<ModelBuiltin, readonly Written<readonly CalledFunctionSpec[]>[]>;
@@ -174,7 +172,7 @@ function resolveOperand(
   return isConsistent ? operand : null;
 }
 
-const conditionOnNoOperand: ModelCondition = {
+export const conditionOnNoOperand: ModelCondition = {
   operand: null,
   isOneOf: [],
   startsWith: [],
@@ -283,7 +281,6 @@ function resolveFeatureUse(
   return condition === null ? null : { feature, overload, isGuard: false, condition };
 }
 
-// A program comes to it by names alone, and reading a name gives what it gives in an executable that has every feature: no feature guards it.
 const isAccessorReadByName = ({ kind, holder, path }: ModelBuiltin): boolean =>
   kind === "Accessor" && holder !== null && holder.kind !== "Prototype" && !isHiddenRootComponent(path[0]);
 
@@ -302,7 +299,6 @@ function buildFeatureUses(context: AttachmentContext, builtin: ModelBuiltin): Mo
   for (const { overload, spec, source } of written) {
     const use = resolveFeatureUse(context, builtin, overload, spec, source);
     if (use === null) continue;
-    // Lines with different conditions are alternatives: the feature is used where one of them holds.
     const repeats = (other: ModelFeatureUse) =>
       other.feature === use.feature &&
       other.overload === overload &&
@@ -349,7 +345,6 @@ function holdsOnlyPrimitives({ kind, flags, overloads }: ModelBuiltin): boolean 
   return overloads.every(({ mode, result }) => mode === "Get" && isPrimitive(result.type));
 }
 
-// `typeof AbortController.AbortSignal`: what the read hands out has an entry of its own, which names the features for whoever calls it.
 function holdsOnlyBuiltinsThatName(uses: readonly ModelFeatureUse[], { kind, flags, overloads }: ModelBuiltin): boolean {
   if (kind !== "DataProperty" || flags.includes("IsLazilyCreated") || overloads.length === 0) return false;
   const namesThem = (held: ModelBuiltin): boolean =>
@@ -362,7 +357,6 @@ function holdsOnlyBuiltinsThatName(uses: readonly ModelFeatureUse[], { kind, fla
   );
 }
 
-// The object is there as soon as its constructor is. The flow analysis lets the constructor escape where the property is read.
 const holdsPrototypeObjectOfConstructor = ({ kind, holder, name }: ModelBuiltin): boolean =>
   kind === "DataProperty" && holder?.kind === "Constructor" && name.kind === "Text" && name.text === "prototype";
 
@@ -417,7 +411,6 @@ function describeHostUse(use: ModelHostUse): string {
   }
 }
 
-// Rows add up, and one that does not say what native code does leaves it open.
 function mergeHostUses(left: ModelHostUses, right: ModelHostUses): ModelHostUses {
   if (left === null || right === null) return null;
   const seen = new Set(left.map(describeHostUse));
@@ -516,7 +509,6 @@ function resolveHostUsesAt(
   return resolved.includes(null) ? null : resolved.flatMap(uses => uses ?? []);
 }
 
-// null: a reference did not resolve, and the problem is reported.
 function resolveHostUses(
   context: AttachmentContext,
   specs: readonly HostUseSpec[],
@@ -633,13 +625,13 @@ const describeCondition = ({
     operand,
     isOneOf.map(name => name.text),
     startsWith.map(name => name.text),
-    calledOn === null ? null : calledOn.id,
+    calledOn === null ? null : calledOn.token,
     hasProperty === null ? null : [hasProperty.kind, hasProperty.text],
-    programStores === null ? null : programStores.id,
+    programStores === null ? null : programStores.token,
     flags,
   ]);
 
-function addCalledFunction(records: Map<string, ModelCalledFunction>, called: ModelCalledFunction): void {
+export function addCalledFunction(records: Map<string, ModelCalledFunction>, called: ModelCalledFunction): void {
   const key = `${called.function.id} ${called.condition === null ? "" : describeCondition(called.condition)}`;
   const previous = records.get(key);
   records.set(key, previous === undefined ? called : { ...called, uses: mergeHostUses(previous.uses, called.uses) });
@@ -665,7 +657,6 @@ function buildCalledFunctions(context: AttachmentContext, builtin: ModelBuiltin)
   for (const record of records.values()) {
     if (record.condition === null) unconditional.set(record.function, record);
   }
-  // What holds without a condition holds with one, so the record without one takes in what the others say.
   for (const record of records.values()) {
     const general = unconditional.get(record.function);
     if (general === undefined || general === record) continue;
@@ -701,7 +692,6 @@ function buildLiteralPartsForm(
   };
 }
 
-// The form is linked into an executable exactly when the entry that it stands in for is.
 function finishLiteralPartsForms({ builder }: AttachmentContext): void {
   for (const builtin of builder.builtins) {
     const { literalPartsForm, featureUses } = builtin.attachments;
@@ -740,7 +730,6 @@ function findFunctionObjectCode(
   builtin: ModelBuiltin,
   { value: { symbol, header, name }, source }: Written<NativeCodeRef>,
 ): ModelNativeFunction | null {
-  // What is written for a native binding describes the function that it makes, which has an entry of its own.
   if (builtin.kind === "NativeBinding") return null;
   const length = builder.lengthOf(builtin);
   if (length !== null) return { symbol, length, header: header ?? null, name: name ?? null };

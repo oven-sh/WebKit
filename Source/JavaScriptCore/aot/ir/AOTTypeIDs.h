@@ -20,10 +20,6 @@ using StringSetID = ID<struct StringSetIDTag>;
 using KeySetID = ID<struct KeySetIDTag>;
 using ClassPartsID = ID<struct ClassPartsIDTag>;
 
-// TypeID, LayoutSetID, ObjectSetID, StringSetID, KeySetID and ClassPartsID share one encoding. A PropertyKeyID and a StringID are their numbers in the program's tables, or IDHome::Thread and a position.
-// The two upper bits say where the record lies, the lower thirty are the value itself or a position.
-// A number in the program's table or in a thread's arena follows the order in which threads arrived: it may be compared for equality and hashed for a memo.
-// It must never be sorted by, never decide an answer, and never reach the image.
 enum class IDHome : uint8_t {
     Value = 0,
     SmallRange = 1,
@@ -33,7 +29,6 @@ enum class IDHome : uint8_t {
 
 inline constexpr uint32_t idHomeShift = 30;
 inline constexpr uint32_t idPositionMask = (1u << idHomeShift) - 1;
-// The null id and the deleted id of hash tables read as the last two positions of a thread's arena.
 inline constexpr uint32_t largestIDPosition = idPositionMask - 2;
 
 template<typename Tag> constexpr IDHome homeOf(ID<Tag> id) { return static_cast<IDHome>(id.bits() >> idHomeShift); }
@@ -49,7 +44,6 @@ constexpr IDType idAt(IDHome home, uint32_t position)
     return IDType::fromBits(static_cast<uint32_t>(home) << idHomeShift | position);
 }
 
-// A set id. Null: the empty set. IDHome::Value: the one member. Otherwise a record of an IDSetTable or an IDSetArena.
 template<typename SetID, typename MemberID>
 constexpr SetID setOfOne(MemberID member)
 {
@@ -57,11 +51,6 @@ constexpr SetID setOfOne(MemberID member)
 }
 template<typename Tag> constexpr bool holdsOneMember(ID<Tag> set) { return homeOf(set) == IDHome::Value; }
 
-// A type id.
-// IDHome::Value: primitive bits alone. Bits 0 to 13 are the PrimitiveSet, without LiteralString and LiteralSymbol. With Integer among them, bits 14 and 15
-// name the lower bound and bits 16 to 18 the upper bound among the landmarks below.
-// IDHome::SmallRange: integers alone. Bits 0 to 14 are the lower bound and bits 15 to 29 the upper bound, both signed.
-// A type has one id: SmallRange where it fits, else Value where it fits, else a record.
 inline constexpr std::array<int64_t, 4> minimumLandmarks { 0, INT32_MIN, -maxExactInteger, -maxTrackedInteger };
 inline constexpr std::array<int64_t, 7> maximumLandmarks { 0, INT32_MAX, UINT32_MAX, maxTypedArrayLength, maxExactInteger - 1, maxExactInteger, maxTrackedInteger };
 inline constexpr uint32_t minimumLandmarkShift = 14;
@@ -83,7 +72,6 @@ constexpr std::optional<uint32_t> landmarkIndexOf(const std::array<int64_t, size
     return std::nullopt;
 }
 
-// `primitives` and `integers` are canonical: the range is empty exactly where Integer is absent, and lies inside Range::full().
 constexpr std::optional<TypeID> tryMakeTypeOfPrimitives(uint16_t primitives, Range integers)
 {
     if (primitives & primitivesWithLists)
@@ -109,13 +97,12 @@ constexpr TypeID typeOfPrimitives(uint16_t primitives)
 
 constexpr bool holdsOnlyPrimitives(TypeID type) { return isItsOwnValue(type); }
 
-// Both for a type that holdsOnlyPrimitives().
 constexpr uint16_t primitivesInID(TypeID type)
 {
     return homeOf(type) == IDHome::SmallRange ? Primitive::Integer : static_cast<uint16_t>(type.bits() & Primitive::Defined);
 }
 
-constexpr Range integersInID(TypeID type)
+ALWAYS_INLINE constexpr Range integersInID(TypeID type)
 {
     auto signedBound = [](uint32_t bits) {
         return static_cast<int64_t>(static_cast<int32_t>(bits << (32 - smallBoundBits)) >> (32 - smallBoundBits));
@@ -127,7 +114,6 @@ constexpr Range integersInID(TypeID type)
     return { minimumLandmarks[type.bits() >> minimumLandmarkShift & 3], maximumLandmarks[type.bits() >> maximumLandmarkShift & 7] };
 }
 
-// The questions that need no table. Each answers no for a type that is a record.
 constexpr bool hasOnlyPrimitivesIn(TypeID type, uint16_t allowed) { return holdsOnlyPrimitives(type) && !(primitivesInID(type) & ~allowed); }
 constexpr bool isNeverType(TypeID type) { return !type.bits(); }
 constexpr bool isIntegerType(TypeID type) { return !isNeverType(type) && hasOnlyPrimitivesIn(type, Primitive::Integer); }

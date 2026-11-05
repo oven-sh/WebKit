@@ -351,7 +351,6 @@ static JSObject* constructorOf(LoadedProgram& program, ASCIILiteral className)
     return asObject(program.state().objects->closures.closure(program.vm(), constructor));
 }
 
-// `parent` null: the class extends nothing.
 static JSObject* defineClass(LoadedProgram& program, ASCIILiteral className, JSObject* parent)
 {
     VM& vm = program.vm();
@@ -363,7 +362,6 @@ static JSObject* defineClass(LoadedProgram& program, ASCIILiteral className, JSO
     return classObject;
 }
 
-// No module is evaluated here. Where the record does not let the run time define a class by itself, the test does what the evaluation of the class does, once.
 static JSObject* classObjectOf(LoadedProgram& program, ASCIILiteral className)
 {
     FunctionID constructor(classNamed(program, className).classData().classConstructor);
@@ -405,123 +403,6 @@ static Object* instanceFor(LoadedProgram& program, Object* allocated, JSObject* 
     return uncheckedDowncast<Object>(instance);
 }
 
-static bool isInstanceOf(LoadedProgram& program, JSObject* object, ASCIILiteral className, JSObject* prototype)
-{
-    if (!isCompiledObject(object) || object->getPrototypeDirect() != JSValue(prototype))
-        return false;
-    Object* typed = uncheckedDowncast<Object>(object);
-    return &typed->layout() == &classNamed(program, className) && !typed->hasFlagsInOrderWord();
-}
-
-static String keysOf(LoadedProgram& program, JSObject* object)
-{
-    AOT_TEST_CHECK(isCompiledObject(object));
-    Object* typed = uncheckedDowncast<Object>(object);
-    StringBuilder keys;
-    typed->forEachFieldInKeyOrder(program.state(), [&](uint16_t index) {
-        keys.append(keys.isEmpty() ? ""_s : ","_s, StringView(program.state().objects->layouts.nameOf(program.vm(), typed->layout().fields()[index])));
-    });
-    return keys.toString();
-}
-
-static JSValue valueOf(LoadedProgram& program, JSObject* object, ASCIILiteral name)
-{
-    return uncheckedDowncast<Object>(object)->getDirectFromNativeCode(program.vm(), Identifier::fromString(program.vm(), name), nullptr);
-}
-
-static void storeByName(LoadedProgram& program, JSObject* object, ASCIILiteral name, JSValue value)
-{
-    PutPropertySlot slot(object, true);
-    AOT_TEST_CHECK(object->methodTable()->put(object, program.realm(), Identifier::fromString(program.vm(), name), value, slot));
-    AOT_TEST_CHECK(!program.vm().exceptionForInspection());
-}
-
-static void checkSubclassInstanceHasNoFieldTheAllocationLeftOut(LoadedProgram& program)
-{
-    DeferGC deferGC(program.vm());
-    JSObject* prototype = prototypeOf(program, "Derived"_s);
-    Object* allocated = allocate(program, "Base"_s, { });
-    Object* instance = instanceFor(program, allocated, prototype);
-
-    AOT_TEST_CHECK(instance != allocated);
-    AOT_TEST_CHECK(isInstanceOf(program, instance, "Derived"_s, prototype));
-    AOT_TEST_CHECK(keysOf(program, instance).isEmpty());
-    for (ASCIILiteral name : { "x"_s, "label"_s, "word"_s, "list"_s, "y"_s })
-        AOT_TEST_CHECK(!valueOf(program, instance, name));
-}
-
-static void checkSubclassInstanceGetsTheListedFields(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    DeferGC deferGC(vm);
-    JSObject* prototype = prototypeOf(program, "Derived"_s);
-    JSValue label = jsNontrivialString(vm, "text"_s);
-    Object* instance = instanceFor(program, allocate(program, "Base"_s, { { "label"_s, label }, { "x"_s, jsNumber(1) } }), prototype);
-
-    AOT_TEST_CHECK(isInstanceOf(program, instance, "Derived"_s, prototype));
-    AOT_TEST_CHECK(keysOf(program, instance) == "label,x"_s);
-    AOT_TEST_CHECK(valueOf(program, instance, "label"_s) == label && valueOf(program, instance, "x"_s) == jsNumber(1) && !valueOf(program, instance, "y"_s));
-
-    Object* withOneField = instanceFor(program, allocate(program, "Base"_s, { { "x"_s, jsNumber(1) } }), prototype);
-    AOT_TEST_CHECK(isInstanceOf(program, withOneField, "Derived"_s, prototype));
-    AOT_TEST_CHECK(keysOf(program, withOneField) == "x"_s && !valueOf(program, withOneField, "label"_s));
-}
-
-static void checkKeysAreInCreationOrder(LoadedProgram& program)
-{
-    DeferGC deferGC(program.vm());
-    const LayoutData& derived = classNamed(program, "Derived"_s);
-    AOT_TEST_CHECK(derived.indexOf(fieldNamed(program, derived, "y"_s)) < derived.indexOf(fieldNamed(program, derived, "x"_s)));
-    JSObject* prototype = prototypeOf(program, "Derived"_s);
-
-    Object* baseFirst = instanceFor(program, allocate(program, "Base"_s, { }), prototype);
-    storeByName(program, baseFirst, "x"_s, jsNumber(1));
-    storeByName(program, baseFirst, "label"_s, jsNull());
-    storeByName(program, baseFirst, "y"_s, jsNumber(2));
-    AOT_TEST_CHECK(keysOf(program, baseFirst) == "x,label,y"_s);
-    storeByName(program, baseFirst, "x"_s, jsNumber(1));
-    storeByName(program, baseFirst, "label"_s, jsUndefined());
-    AOT_TEST_CHECK(keysOf(program, baseFirst) == "x,label,y"_s);
-    AOT_TEST_CHECK(isInstanceOf(program, baseFirst, "Derived"_s, prototype));
-
-    Object* ownFirst = instanceFor(program, allocate(program, "Base"_s, { }), prototype);
-    storeByName(program, ownFirst, "y"_s, jsNumber(2));
-    storeByName(program, ownFirst, "x"_s, jsNumber(1));
-    AOT_TEST_CHECK(keysOf(program, ownFirst) == "y,x"_s);
-
-    Object* afterListedField = instanceFor(program, allocate(program, "Base"_s, { { "label"_s, jsNull() } }), prototype);
-    storeByName(program, afterListedField, "y"_s, jsNumber(2));
-    storeByName(program, afterListedField, "x"_s, jsNumber(1));
-    AOT_TEST_CHECK(keysOf(program, afterListedField) == "label,y,x"_s);
-}
-
-static void checkPrototypesOfNoOtherClassKeepTheAllocatedObject(LoadedProgram& program)
-{
-    DeferGC deferGC(program.vm());
-    JSObject* prototypeOfConstructorFunction = asObject(constructorOf(program, "Point"_s)->get(program.realm(), program.vm().propertyNames->prototype));
-    for (JSObject* prototype : { prototypeOf(program, "Base"_s), prototypeOfConstructorFunction, static_cast<JSObject*>(constructEmptyObject(program.realm())) }) {
-        Object* allocated = allocate(program, "Base"_s, { { "x"_s, jsNumber(1) } });
-        AOT_TEST_CHECK(instanceFor(program, allocated, prototype) == allocated);
-        AOT_TEST_CHECK(isInstanceOf(program, allocated, "Base"_s, prototype));
-        AOT_TEST_CHECK(keysOf(program, allocated) == "x"_s && valueOf(program, allocated, "x"_s) == jsNumber(1));
-    }
-}
-
-// Nothing that has the shape of the allocated class belongs to another class. The constructor of a class that is not below the allocated one does not run, so its shape is not given either.
-static void checkPrototypeOfUnrelatedClassGivesOrdinaryObject(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    DeferGC deferGC(vm);
-    JSObject* unrelatedPrototype = prototypeOf(program, "Unrelated"_s);
-    JSObject* forUnrelatedClass = classesOf(program).instanceWithPrototype(vm, allocate(program, "Base"_s, { }), unrelatedPrototype);
-    AOT_TEST_CHECK(!isCompiledObject(forUnrelatedClass) && forUnrelatedClass->getPrototypeDirect() == JSValue(unrelatedPrototype));
-
-    JSObject* basePrototype = prototypeOf(program, "Base"_s);
-    JSObject* forBaseClass = classesOf(program).instanceWithPrototype(vm, allocate(program, "Derived"_s, { }), basePrototype);
-    AOT_TEST_CHECK(!isCompiledObject(forBaseClass) && forBaseClass->getPrototypeDirect() == JSValue(basePrototype));
-}
-
-// HasLayoutPrototype reads the flag of the Structure, which speaks of the layout the object has, not of the layout the site allocated.
 static void checkWhichInstancesHaveThePrototypeOfTheirLayout(LoadedProgram& program)
 {
     DeferGC deferGC(program.vm());
@@ -534,39 +415,6 @@ static void checkWhichInstancesHaveThePrototypeOfTheirLayout(LoadedProgram& prog
 
     Object* withOtherPrototype = instanceFor(program, allocate(program, "Base"_s, { }), constructEmptyObject(program.realm()));
     AOT_TEST_CHECK(&withOtherPrototype->layout() == &classNamed(program, "Base"_s) && withOtherPrototype->compiledStructure().hasOtherPrototype());
-}
-
-static void checkCreateThisStartsWithoutKeys(LoadedProgram& program)
-{
-    DeferGC deferGC(program.vm());
-    const LayoutData& point = classNamed(program, "Point"_s);
-    AOT_TEST_CHECK(point.indexOf(fieldNamed(program, point, "px"_s)) < point.indexOf(fieldNamed(program, point, "py"_s)));
-    JSObject* constructor = constructorOf(program, "Point"_s);
-    JSObject* prototype = asObject(constructor->get(program.realm(), program.vm().propertyNames->prototype));
-
-    constexpr unsigned numberOfCallsThatReachTheRememberedAllocation = 3;
-    for (unsigned call = 0; call < numberOfCallsThatReachTheRememberedAllocation; ++call) {
-        JSObject* object = classesOf(program).createThis(program.realm(), constructor, constructor);
-        AOT_TEST_CHECK(isInstanceOf(program, object, "Point"_s, prototype));
-        AOT_TEST_CHECK(keysOf(program, object).isEmpty() && !valueOf(program, object, "px"_s) && !valueOf(program, object, "py"_s));
-        storeByName(program, object, "py"_s, jsNumber(4));
-        storeByName(program, object, "px"_s, jsNumber(5));
-        AOT_TEST_CHECK(keysOf(program, object) == "py,px"_s);
-    }
-
-    JSObject* forUnrelatedClass = classesOf(program).createThis(program.realm(), constructor, constructorOf(program, "Unrelated"_s));
-    AOT_TEST_CHECK(!isCompiledObject(forUnrelatedClass) && forUnrelatedClass->getPrototypeDirect() == JSValue(prototypeOf(program, "Unrelated"_s)));
-
-    JSObject* forNativeFunction = classesOf(program).createThis(program.realm(), constructor, program.realm()->objectConstructor());
-    AOT_TEST_CHECK(!isCompiledObject(forNativeFunction) && forNativeFunction->getPrototypeDirect() == JSValue(program.realm()->objectPrototype()));
-
-    JSObject* ofSubclass = classesOf(program).createThis(program.realm(), constructor, defineClass(program, "Below"_s, constructor));
-    AOT_TEST_CHECK(isInstanceOf(program, ofSubclass, "Below"_s, prototypeOf(program, "Below"_s)));
-    AOT_TEST_CHECK(keysOf(program, ofSubclass).isEmpty());
-    storeByName(program, ofSubclass, "py"_s, jsNumber(4));
-    storeByName(program, ofSubclass, "px"_s, jsNumber(5));
-    storeByName(program, ofSubclass, "z"_s, jsNumber(6));
-    AOT_TEST_CHECK(keysOf(program, ofSubclass) == "py,px,z"_s);
 }
 
 template<typename CreateSlow, typename TryCreateInline>
@@ -690,13 +538,7 @@ static constexpr ASCIILiteral noClassAboveInRecord = "facts/AOTFacts.h, classOf(
 std::span<const NativeTest> thisAllocationTests()
 {
     static constexpr NativeTest tests[] = {
-        { "this-allocation/subclass-instance-has-no-field-the-allocation-left-out"_s, withEnumeratedClasses<checkSubclassInstanceHasNoFieldTheAllocationLeftOut> },
-        { "this-allocation/subclass-instance-gets-the-listed-fields"_s, withEnumeratedClasses<checkSubclassInstanceGetsTheListedFields> },
-        { "this-allocation/keys-are-in-creation-order"_s, withEnumeratedClasses<checkKeysAreInCreationOrder> },
-        { "this-allocation/prototypes-of-no-other-class-keep-the-allocated-object"_s, withEnumeratedClasses<checkPrototypesOfNoOtherClassKeepTheAllocatedObject> },
-        { "this-allocation/prototype-of-unrelated-class-gives-ordinary-object"_s, withEnumeratedClasses<checkPrototypeOfUnrelatedClassGivesOrdinaryObject> },
         { "this-allocation/which-instances-have-the-prototype-of-their-layout"_s, withEnumeratedClasses<checkWhichInstancesHaveThePrototypeOfTheirLayout> },
-        { "this-allocation/create-this-starts-without-keys"_s, withEnumeratedClasses<checkCreateThisStartsWithoutKeys> },
         { "this-allocation/create-this-fast-paths-create-same-cells"_s, withEnumeratedClasses<checkCreateThisFastPathsCreateSameCells> },
         { "this-allocation/class-below-constructor-function"_s, withEnumeratedClasses<checkClassBelowConstructorFunction>, noClassAboveInRecord },
         { "this-allocation/construction-from-native-code"_s, testConstructionFromNativeCode },

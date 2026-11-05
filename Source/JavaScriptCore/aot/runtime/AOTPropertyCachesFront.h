@@ -55,7 +55,6 @@ class RowDisplacementTable {
     WTF_MAKE_NONCOPYABLE(RowDisplacementTable);
     WTF_MAKE_TZONE_ALLOCATED(RowDisplacementTable);
 public:
-    // Every name that a cell can hold but rowMarkerTag. Neither a power of two nor a multiple of 64.
     static constexpr uint32_t numberOfColumns = UINT16_MAX;
     static constexpr uint32_t maxColumn = numberOfColumns - 1;
     static constexpr uint32_t maxNumberOfBases = 1u << 21;
@@ -78,7 +77,6 @@ public:
     ~RowDisplacementTable();
 
     const PackedSlot* plane(SlotAccess access) const { return &m_planes[static_cast<unsigned>(access)]->get(); }
-    // Whoever keeps the addresses of the planes reads them again.
     bool takeDidMovePlanes() { return std::exchange(m_didMovePlanes, false); }
 
     bool trySet(Structure*, uint32_t column, SlotAccess, const Slot&);
@@ -106,7 +104,6 @@ private:
         std::span<const uint16_t> span() const { return { const_cast<RowColumns*>(this)->storage(), m_size }; }
         const uint16_t* begin() const { return span().data(); }
         const uint16_t* end() const { return span().data() + m_size; }
-        // False: there is no memory for one more, and nothing has changed.
         bool tryMakeRoomForOneMore();
         bool tryAppend(uint16_t);
         void clear();
@@ -133,10 +130,6 @@ private:
     };
     static_assert(sizeof(Row) == 16);
 
-    // THE TABLE IS A CACHE, AND MAY GO WITHOUT. With the address space used up, the first read by name that came to file its answer ended the process in malloc, where the program was on its way to a RangeError of its own.
-    // So whatever here takes memory is asked for it by a call that may fail, in front of any change. Where it fails nothing is filed. Nobody asks again for less.
-
-    // They lie in segments, which never move.
     class Rows {
         WTF_MAKE_NONCOPYABLE(Rows);
     public:
@@ -153,7 +146,6 @@ private:
         uint32_t m_size { 0 };
     };
 
-    // A set of numbers of rows, or of cells. set() takes a number for which there is room.
     class Bits {
     public:
         size_t size() const { return m_words.size() * 64; }
@@ -202,9 +194,7 @@ private:
     bool tryGrow();
     void reserve(uint32_t index, PackedSlot);
     void vacate(uint32_t index);
-    // One more row, in the list of free rows, with room for its number wherever rows are numbered.
     bool tryAddRow();
-    // Each answers 0 where there is no memory. The table is whole then, and may have lost rows.
     uint32_t createRow(Structure*, uint16_t column);
     uint32_t moveRow(uint32_t base, std::optional<uint16_t> columnToAdd);
     uint32_t ensureIndex(Structure*, uint16_t column);
@@ -223,13 +213,11 @@ private:
     uint64_t* m_occupied { nullptr };
     uint32_t m_limitOfBases { 0 };
     uint32_t m_capacityOfBases { 0 };
-    // Of each plane, and of the occupied bits.
     std::array<uint32_t, numberOfSlotAccesses + 1> m_numbersOfBasesWithPages { };
     bool m_didMovePlanes { false };
     uint32_t m_nextBase { firstBase };
     uint32_t m_endOfBases { firstBase };
     Rows m_rows;
-    // It has room for every row: release() asks for nothing.
     Vector<uint32_t> m_freeRows;
     Bits m_rowsThatCanOutliveWhatTheyName;
     Bits m_rowsWrittenSinceLastSweep;

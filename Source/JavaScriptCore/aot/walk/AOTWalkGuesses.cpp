@@ -3,12 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Guesses: tests of ours, the stretch of one input block that leans on them built with the proof, the same stretch built closed, and a block where the two meet. Behind that block the proof is gone.
-// The tests stand in a row in front of both arms: what the value is, then whether the slots that the stretch goes to are filled. Each leads to the one closed arm where it fails.
-// At a suspension: a stretch ends in front of it, so no arm is open where a frame is saved.
-// At a throw: either arm throws to the handler of the input block as any block does. The proof lies in the names and the state of the typed run, and a handler gets neither.
-// Withheld: shouldOpenGuess() says no and nothing is built. What is not proven takes its closed form.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -40,6 +34,7 @@
 #include "AOTWalkNumberGuesses.h"
 #include "AOTWalkStrings.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <optional>
 #include <wtf/BitVector.h>
@@ -48,18 +43,13 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkLoops.cpp
 TypeID topsOfKindsInLoops(TypeArena&, TypeID);
-// ir/AOTResultRulesDeclared.cpp
 TypeID tryTypeOfFieldRead(const TypingContext&, TypeID receiver, PropertyKeyID);
 
-// How many operations a guess has to turn from closed into typed.
 static constexpr uint32_t minimumOperationsPerGuess = 2;
 static constexpr uint32_t minimumOperationsPerGuessInLoop = 1;
-// A test of a shape in front of one access to a slot is a cache whose shape is known when the program is built: a few instructions and a load in the place of the twenty of a closed read, and no memory that is written.
 static constexpr uint32_t minimumOperationsPerGuessOfShape = 1;
 
-// What callDirectly() takes by the type of the callee.
 static constexpr OpcodeSet constructionsOfParentForGuesses { Opcode::SuperConstruct, Opcode::SuperConstructList };
 static constexpr OpcodeSet callsOfValuesForGuesses = constructionsOfParentForGuesses | OpcodeSet { Opcode::Call, Opcode::Construct, Opcode::CallList };
 static constexpr OpcodeSet operationsThatOpenGuesses = opcodesOfFamily(OperationFamily::Access) | opcodesOfFamily(OperationFamily::PrivateAccess)
@@ -72,104 +62,82 @@ static constexpr OpcodeSet accessesUnderPrivateNamesForGuesses = opcodesOfFamily
 static constexpr OpcodeSet accessesToSlotsForGuesses = OpcodeSet { Opcode::PropGet, Opcode::PropSet, Opcode::PropHas, Opcode::PropDefine } | accessesUnderPrivateNamesForGuesses;
 static constexpr OpcodeSet storesIntoSlotsForGuesses { Opcode::PropSet, Opcode::PropDefine };
 static constexpr OpcodeSet readsOutOfSlotsForGuesses { Opcode::PropGet, Opcode::PrivateGet };
-// Typed, they write at most the slot that they name, but for TypedForm::BuiltAsCall. Any other typed form may have its closed operation inside it, or enters a function.
 static constexpr OpcodeSet operationsWhoseTypedFormsRunNoCodeForGuesses = accessesToSlotsForGuesses | opcodesOfFamily(OperationFamily::Operator) | OpcodeSet { Opcode::RequireObjectCoercible };
-// What makes the arguments of a call. They may run code, which changes shapes and no primitive. The making of an object is none of them: behind the rejoin nobody knows any more that it is being made.
 static constexpr OpcodeSet operationsThatEndNoProofOfPrimitiveForGuesses = opcodesOfFamily(OperationFamily::Operator) | OpcodeSet { Opcode::PropGet, Opcode::PrivateGet, Opcode::ElemGet, Opcode::RequireObjectCoercible };
 
 namespace {
 
 struct ExpectationForGuesses {
     TypeID type;
-    // The source declares it, or Link holds it. A weaker one is what was seen to arrive beside `unknown`.
     bool isDeclared { false };
-    // Somewhere on the road to it nothing was written, and Facts::held() answered.
     bool isHeld { false };
-    // Of what was expected in front of the cut to `type`. False too where nobody has looked.
     bool admitsNoNumberOrBoolean { false };
 };
 
 struct TestOfGuess {
     TypeID tested;
-    // Null: a TypeTest.
     LayoutSetID layouts;
-    // The value is proven to be that. Only its slots are looked at.
     bool isPassedAlready { false };
-    // Where the test fails the value is asked for this in its turn, and the stretch is walked once more behind that test. Null: the failing side is the closed arm at once.
     TypeID failingSideAsksFor;
-    // The stretch is the truth of the value alone. Whoever asks for that expects nothing as well: where the test fails, undefined and null are asked for in front of the closed operation.
     bool failingSideAsksForNothing { false };
-    // The value is a proven list of which numbers alone are written, and the first operation of the stretch reads it under an integer. In front of the arms it is asked for storage that holds numbers alone and for an element at the position.
     bool asksForElementOfNumbers { false };
-    // ExpectationForGuesses::admitsNoNumberOrBoolean of the guess: `expectsCell` of the test.
     bool expectsCell { false };
-    // All that is expected of the value passes, so nobody expects the test to fail: in the typed copy of a loop the turn begins again there. Walker::mayBeginTurnAgainInClosedCopy().
     bool admitsAllThatIsExpected { false };
-    // Beside failingSideAsksFor: nobody knows which of the two a run meets more often. The failing side is no rare block, and the typed run behind its test opens guesses as that of the first does.
     bool failingSideIsAsLikely { false };
-    // Of the test on such a failing side, which stands under the ClosedArm of the first.
     bool typedRunOpensGuesses { false };
 };
 
 struct LookAtSlotOfGuess {
-    // The first access of the stretch that goes to the slot.
     ValueID access;
-    // `a.b.c`: the access further up in the row whose look has loaded the object that has the slot. Null: the value of the guess has it.
     ValueID holder;
-    // `this.handler(n)`: what the look loads is called, and the slot is held to the closures of one function or nothing. It is asked whether it is there.
     bool isCalled { false };
-    // `scanner.scan()`: what the look loads is called, the slot is held to nothing, and one function was seen to arrive at the field. What is loaded is compared with it.
     TypeID calleeSeenToArrive;
 };
 
 struct TestOfStoredValueOfGuess {
-    // It is defined in front of the stretch.
     ValueID value;
-    // What the slots take that the stretch stores it into.
     TypeID tested;
 };
 
 struct StretchOfGuess {
-    // Behind the last operation that is counted.
     uint32_t end { 0 };
-    // Built typed with the proof, and closed without it.
     uint32_t numberOfTypedOperations { 0 };
-    // Behind the operators that stand right behind `end` and take what the stretch has read. 0: there is none. They are typed either way, so they count for nothing, and whoever builds arms walks them in each arm.
     uint32_t endOfOperatorsBehind { 0 };
-    // One for each slot that is looked at in front of the arms: TypedForm::BuiltBehindFilledSlot.
     Vector<LookAtSlotOfGuess, 4> firstAccessesToSlots;
-    // In front of the arms the value is asked whether it is as its class makes it: TypedForm::BuiltOnObjectAsMade.
     bool looksWhetherValueIsAsMade { false };
-    // In front of the arms the cell of the value is asked, once for all of them, whether it takes these stores: TypedForm::BuiltBehindLookAtCell, BuiltBehindFilledSlotAndLookAtCell.
     Vector<ValueID, 4> storesThatLookAtCell;
-    // In front of the arms each value is asked whether it fits the slots that the stretch stores it into: a typed store writes the bits as they are.
     Vector<TestOfStoredValueOfGuess, 4> testsOfStoredValues;
-    // The one test of a guess inside the typed run of another: whether the value lists its keys as a maker of the program leaves them. Who fails it goes through the stretch with all that the outer tests have shown.
     std::optional<uint32_t> orderWordAskedFor;
-    // Of a guess that asksForElementOfNumbers, by place from the begin on: of what the operation gives the typed run knows more than the closed arm. Where the arms meet such a value is boxed.
     BitVector placesThatRestOnProof;
-    // By place from the begin on: the typed run is known to give a type that says something, and the closed arm is not known to give as much.
     BitVector placesThatTypedRunKnowsBetter;
 };
 
-// An arm that has come through the stretch.
 struct ArmOfGuess {
-    // Left open.
     BlockID lastBlock;
-    // What it has built for each value that is read behind the stretch.
     Vector<Reference, 8> values;
 };
 
-} // anonymous namespace
+struct FirstOperationOfGuessAsItStands {
+    const uint32_t* words { nullptr };
+    TypedForm form { TypedForm::None };
+    Walker::FormAskedAhead askedAhead;
+    TypeID askedOfStoredValue;
+};
 
-// ---- What is expected of a value
+struct BranchOfGuessAskedAbout {
+    bool isAsked { false };
+    uint32_t end { 0 };
+    Reference value;
+    bool isTaken { false };
+};
+
+} // anonymous namespace
 
 static bool saysNothingForGuesses(const TypeArena& types, TypeID type)
 {
     return types.saysNothing(type);
 }
 
-// `Node | string`, and a Node that was seen to arrive beside anything, where every primitive is listed too: no one test tells such a type. The objects are what has members to find.
 static TypeID partThatOneTestTellsForGuesses(TypeArena& types, TypeID expected)
 {
     Type type = types.at(expected);
@@ -196,15 +164,11 @@ static ExpectationForGuesses expectationOfEntryParameterForGuesses(const Walker&
     std::span<const LinkedParameter> parameters = link.parametersOf(function);
     if (entryParameter >= parameters.size())
         return { };
-    // `function Node(this: Node, kind) { this.kind = kind; .. }`: whatever is written of `this`, `new` hands the function an object of the layout that it constructs.
     const Function& record = walker.program().at(function);
     if (record.takesThisFromConstruction() && record.constructedClass && record.thisParameterIndex() == entryParameter && walker.plan().isInUse(record.constructedClass)) {
         TypeID expected = typeOfObjectsMadeBy(walker, function);
-        // `function Below(a, b) { Base.call(this, a); .. }`, `_super.call(this, a) || this`: a function that is called too is handed the objects of the functions below it.
-        // `class Below extends Base { constructor() { super(..) } }`: the construction hands it an object of the class.
-        bool isCalledToo = !link.function(function).everyEntryIsConstruction;
         for (LayoutID below : walker.program().layoutsExpectedBelow(record.constructedClass)) {
-            if ((isCalledToo || !walker.program().at(below).has(LayoutFlags::IsConstructorFunction)) && walker.plan().isInUse(below))
+            if (walker.plan().isInUse(below))
                 expected = walker.types().unionOf(expected, walker.types().forLayout(below));
         }
         return { expected, true };
@@ -212,7 +176,6 @@ static ExpectationForGuesses expectationOfEntryParameterForGuesses(const Walker&
     return { parameters[entryParameter].expected, parameters[entryParameter].expectedIsDeclared };
 }
 
-// `const sig = new Signature(..); sig.declaration = ..`: whatever is no function throws, and what the one function is entered for is an object of the layout that it constructs.
 static ExpectationForGuesses expectationOfConstructionForGuesses(const Walker& walker, const BodyValue& construction)
 {
     if (construction.as<Opcode::Construct>().newTargetOperand())
@@ -238,7 +201,6 @@ static ExpectationForGuesses expectationOfCallForGuesses(Walker& walker, const B
 
     if (ExpectedResultID id = call.expectedResult()) {
         const ExpectedResult& expected = program.at(id);
-        // Under the flag the type is that of what the result settles to. It says nothing of the result.
         if (!expected.flags.contains(ExpectedResultFlags::IsRowsOfQuery))
             return { expected.type, resultIsAnnotated };
         if (TypeID promise = typeOfPromiseExpectedToGive(walker, expected.type))
@@ -249,7 +211,6 @@ static ExpectationForGuesses expectationOfCallForGuesses(Walker& walker, const B
     return { };
 }
 
-// `getSignaturesOfType(type, kind).length`: the call names its callee. What is written of the result there is expected of it, else what Link holds.
 static ExpectationForGuesses expectationOfDirectCallForGuesses(const Walker& walker, const BodyValue& call)
 {
     FunctionID callee = call.as<Opcode::CallDirect>().function();
@@ -262,36 +223,54 @@ static ExpectationForGuesses expectationOfDirectCallForGuesses(const Walker& wal
     return { callee.index() < held.functions.size() ? held.function(callee).result : TypeID(), true, true };
 }
 
-// The row's own rule over the types that `typeOfOperand` gives. Null: the row gives no result, or one that is read through ResultAt.
+static constexpr OpcodeSet operationsWithoutTypeByRowForGuesses = opcodesWhere([](Opcode opcode) {
+    return resultRuleOf(opcode) == ResultRule::None || opcode == Opcode::ResultAt;
+});
+
 template<typename TypeOfOperand>
-static TypeID typeByRowForGuesses(const TypingContext& typing, const BodyValue& operation, const TypeOfOperand& typeOfOperand)
+static TypeID typeByRowForGuesses(const TypingContext& typing, const BodyValue& operation, const TypeOfOperand& typeOfOperand, std::optional<Draft>& draftOfRow)
 {
     Opcode opcode = operation.opcode();
     if (opcode == Opcode::NarrowByTest)
         return typeOfOperand(operation.operand(OperandIndex::NarrowByTest::left), OperandIndex::NarrowByTest::left);
     if (opcodesThatStateTypes.contains(opcode))
         return typeOfOperand(operation.operand(0), 0);
-    if (resultRuleOf(opcode) == ResultRule::None || opcode == Opcode::ResultAt)
+    if (operationsWithoutTypeByRowForGuesses.contains(opcode))
         return { };
 
-    // A rule asks of an operand whether it is there, and its type. It never follows the reference.
-    Draft draft(opcode);
-    draft.flags = static_cast<uint8_t>(operation.flags());
-    copyFields(operation, draft, [](ValueID operand) {
-        return Reference::value(operand);
-    });
-    if (opcodesThatMayHaveSeveralResults.contains(opcode) && numberOfResultsOf(typing.program, draft))
+    if (!draftOfRow) {
+        draftOfRow.emplace(opcode);
+        draftOfRow->flags = static_cast<uint8_t>(operation.flags());
+        copyFields(operation, *draftOfRow, [](ValueID operand) {
+            return Reference::value(operand);
+        });
+    }
+    if (opcodesThatMayHaveSeveralResults.contains(opcode) && numberOfResultsOf(typing.program, *draftOfRow))
         return { };
 
-    Vector<TypeID, 8> operandTypes;
-    operandTypes.fill(TypeID(), numberOfNamedOperandsOf(opcode) + operation.variadicOperands().size());
+    size_t numberOfOperands = numberOfNamedOperandsOf(opcode) + operation.variadicOperands().size();
+    std::array<TypeID, 8> typesOfFewOperands;
+    Vector<TypeID> typesOfManyOperands;
+    std::span<TypeID> operandTypes;
+    if (numberOfOperands <= typesOfFewOperands.size()) [[likely]]
+        operandTypes = std::span(typesOfFewOperands).first(numberOfOperands);
+    else {
+        typesOfManyOperands.fill(TypeID(), numberOfOperands);
+        operandTypes = typesOfManyOperands.mutableSpan();
+    }
     operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         operandTypes[operandIndex] = typeOfOperand(operand, operandIndex);
     });
-    return resultTypeOf(typing, draft, OperandTypes { operandTypes.span() });
+    return resultTypeOf(typing, *draftOfRow, OperandTypes { operandTypes });
 }
 
-// What is awaited is read like a receiver: the rule gives what a promise of the written type settles to.
+template<typename TypeOfOperand>
+static TypeID typeByRowForGuesses(const TypingContext& typing, const BodyValue& operation, const TypeOfOperand& typeOfOperand)
+{
+    std::optional<Draft> draftOfRow;
+    return typeByRowForGuesses(typing, operation, typeOfOperand, draftOfRow);
+}
+
 static std::optional<uint8_t> placeOfReceiverForGuesses(Opcode opcode)
 {
     if (opcode == Opcode::Await)
@@ -299,10 +278,8 @@ static std::optional<uint8_t> placeOfReceiverForGuesses(Opcode opcode)
     return receiverOf(opcode);
 }
 
-// At the level Expected the rule goes by what is written of the field, the variable, the capture or the contents. `receiver`: what is expected of the receiver. Null: what is proven of it.
 static TypeID typeOfReadForGuesses(Walker& walker, const TypingContext& typing, const BodyValue& read, TypeID receiver)
 {
-    // The row of a read by name comes to this, or to `unknown`, which says nothing to whoever asks here: ResultRules::declared(operation, key).
     if (read.opcode() == Opcode::PropGet && !read.isFreeName()) {
         TypeID object = receiver ? receiver : provenTypeOfInputForGuesses(walker, read.objectOperand());
         return isNeverType(object) ? object : tryTypeOfFieldRead(typing, object, read.key());
@@ -319,8 +296,6 @@ static TypeID typeOfReadAtLevelExpectedForGuesses(Walker& walker, const BodyValu
     return typeOfReadForGuesses(walker, { walker.program(), walker.types(), walker.positionsKnowingNothing(), TypeLevel::Expected }, read, receiver);
 }
 
-// WHERE NOTHING IS WRITTEN, WHAT LINK HOLDS IS EXPECTED (Facts::held()): its flow read as if unseen code only read and called. It is no proof, and a guess needs none: its test stands at each use.
-// The rows answer as they do for what is proven, from the other tables.
 static TypeID typeOfReadByWhatIsHeldForGuesses(Walker& walker, const BodyValue& read, TypeID receiver)
 {
     return typeOfReadForGuesses(walker, { walker.program(), walker.types(), walker.heldPositions(), TypeLevel::Proven }, read, receiver);
@@ -340,7 +315,6 @@ static TypeID typeHeldOfResultOfCallForGuesses(const Walker& walker, const BodyV
 {
     const LinkTables& held = walker.facts().held();
     FunctionID callee = held.calleeAt(walker.currentFunction(), call.id());
-    // What `return` hands over in a coroutine is not what its caller gets.
     if (callee && callee.index() < held.functions.size() && walker.program().at(callee).isCoroutine())
         return typeHeldOfResultOfCoroutine(walker, callee);
     if (!callee || callee.index() >= held.functions.size())
@@ -348,7 +322,6 @@ static TypeID typeHeldOfResultOfCallForGuesses(const Walker& walker, const BodyV
     return held.function(callee).result;
 }
 
-// `for (const item of items)`: what a step hands out is read off what is iterated, like `items[i]`. Null: the value is no such result.
 static ValueID iterableThatStepReadsForGuesses(const BodyIndex& index, const BodyValue& result)
 {
     auto read = result.as<Opcode::ResultAt>();
@@ -364,17 +337,12 @@ static ValueID iterableThatStepReadsForGuesses(const BodyIndex& index, const Bod
 namespace {
 
 struct KeptWithBodyForGuesses final : KeptWithBodyIndex {
-    // By block, and one more: where the list of the block begins in incomingEdges.
     Vector<uint32_t> firstIncomingEdges;
     Vector<BodyIncomingEdge> incomingEdges;
-    // By value of the body: the value that it stands for. Empty: the body asks no value for a name.
     Vector<uint32_t> rootsOfValues;
-    // The names, and beside each the value that is asked for it, ascending.
     Vector<uint32_t> rootsAskedForNames;
     Vector<PropertyKeyID> namesUsedOffValues;
-    // The value above each Convert that hands it on, ascending.
     Vector<uint64_t> castsOfRoots;
-    // Each of the two is made when it is first asked for, by one thread, and never changes then: most bodies are asked for one of them or for none.
     Lock lockOfLists;
     std::atomic<bool> hasIncomingEdges { false };
     std::atomic<bool> hasNamesUsedOffValues { false };
@@ -401,7 +369,6 @@ static void listIncomingEdgesForGuesses(const BodyIndex& index, KeptWithBodyForG
     for (uint32_t next = 1; next <= numberOfBlocks; ++next)
         kept.firstIncomingEdges[next] += kept.firstIncomingEdges[next - 1];
     kept.incomingEdges.resize(kept.firstIncomingEdges.last());
-    // Each list is filled from its begin, which moves to its end, the begin of the next.
     forEachEdge([&](const BodyIncomingEdge& edge) {
         kept.incomingEdges[kept.firstIncomingEdges[edge.target.block().index()]++] = edge;
     });
@@ -410,9 +377,6 @@ static void listIncomingEdgesForGuesses(const BodyIndex& index, KeptWithBodyForG
     kept.firstIncomingEdges[0] = 0;
 }
 
-// The walker stands in the body.
-// `(location as SourceFile).locals`, `case SyntaxKind.ModuleDeclaration: location.body`: behind a written type that names layouts and behind a test of a field, the value is asked for what one member of its type has.
-// That says nothing of the value in front. What is asked there narrows what is expected of the value behind.
 static bool showsValueUnderAnotherViewForGuesses(const Program& program, const BodyValue& operation)
 {
     switch (operation.opcode()) {
@@ -434,11 +398,8 @@ static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& in
     if (!index.holdsAnyOf(operationsThatAskForNames))
         return;
     uint32_t numberOfValues = index.numberOfValues();
-    // What only hands a value on stands for it.
     Vector<uint32_t> roots(numberOfValues, [](size_t number) { return static_cast<uint32_t>(number); });
-    // The value above the name.
     Vector<uint64_t> uses;
-    // The value that is handed over above the parameter that takes it.
     Vector<uint64_t> arrivals;
     Vector<uint64_t> casts;
     auto use = [&](ValueID object, PropertyKeyID name) {
@@ -449,7 +410,6 @@ static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& in
         if (!index.isReachable(BlockID(number)))
             continue;
         BodyBlock block = index.block(BlockID(number));
-        // BodyIndex::valueNarrowedInto() of each parameter, with one look at the edge for all of them. It answers by the first proof that fills the parameter.
         if (std::optional<BodyIncomingEdge> edge = number && block.numberOfParameters() ? index.onlyIncomingEdge(BlockID(number)) : std::nullopt) {
             for (uint32_t proofIndex = static_cast<uint32_t>(edge->target.proofs().size()); proofIndex--;) {
                 std::optional<BodyEdgeResult> result = index.edgeResult(edge->from, edge->targetIndex, edge->target, proofIndex);
@@ -458,7 +418,6 @@ static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& in
                 roots[result->parameter.index()] = result->subject && result->subject < result->parameter ? roots[result->subject.index()] : result->parameter.index();
             }
         }
-        // The index knows where each operation begins: nobody has to measure the one in front of it.
         uint32_t firstValue = block.firstValue().index();
         for (uint32_t place = 0; place < block.numberOfValues(); ++place) {
             BodyValue operation = index.value(ValueID(firstValue + place));
@@ -474,13 +433,17 @@ static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& in
             case Opcode::Call:
                 use(operation.as<Opcode::Call>().thisValueOperand(), operation.as<Opcode::Call>().calleeKey());
                 break;
-            default:
-                // Under whatever view the cast shows the value: it is the same value.
-                if (opcode == Opcode::Convert && operation.operand(0) && operation.operand(0) < operation.id())
-                    casts.append(static_cast<uint64_t>(roots[operation.operand(0).index()]) << 32 | operation.id().index());
-                if (ValueID handedOn = inputOperationsThatHandOn.contains(opcode) ? operation.operand(0) : ValueID(); handedOn && handedOn < operation.id() && !showsValueUnderAnotherViewForGuesses(walker.program(), operation))
+            default: {
+                bool handsOn = inputOperationsThatHandOn.contains(opcode);
+                ValueID handedOn = handsOn || opcode == Opcode::Convert ? operation.operand(0) : ValueID();
+                if (!handedOn || handedOn >= operation.id())
+                    break;
+                if (opcode == Opcode::Convert)
+                    casts.append(static_cast<uint64_t>(roots[handedOn.index()]) << 32 | operation.id().index());
+                if (handsOn && !showsValueUnderAnotherViewForGuesses(walker.program(), operation))
                     roots[operation.id().index()] = roots[handedOn.index()];
                 break;
+            }
             }
         }
         for (BodyTarget target : block.terminator().targets()) {
@@ -501,7 +464,6 @@ static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& in
     if (uses.isEmpty())
         return;
     sortWithoutRepeats(uses);
-    // `const t = c ? a : b; t.x`: whichever of the two it is, it is asked for `x`. Through a row of such parameters as far as the blocks are deep: each round goes one further.
     for (size_t sizeBefore = 0; !arrivals.isEmpty() && sizeBefore != uses.size();) {
         sizeBefore = uses.size();
         for (uint64_t arrival : arrivals) {
@@ -528,7 +490,6 @@ static void listNamesUsedOffValuesForGuesses(Walker& walker, const BodyIndex& in
     kept.rootsOfValues = WTF::move(roots);
 }
 
-// Both follow from the body as it is written, so a copy of the function in another unit asks for nothing anew.
 static KeptWithBodyForGuesses& keptWithBodyForGuesses(const BodyIndex& index)
 {
     const KeptWithBodyIndex* kept = index.keptByWalk();
@@ -562,7 +523,7 @@ std::span<const BodyIncomingEdge> Walker::incomingEdgesOf(const BodyIndex& index
 Walker::RememberedExpectation& Walker::rememberedExpectationOf(ValueID value)
 {
     Frame& frame = m_frames.last();
-    if (frame.expectations.isEmpty())
+    if (frame.expectations.isEmpty()) [[unlikely]]
         frame.expectations.fill({ }, frame.index->numberOfValues());
     return frame.expectations[value.index()];
 }
@@ -583,6 +544,8 @@ std::span<const PropertyKeyID> Walker::namesUsedOff(ValueID value)
 std::span<const uint64_t> Walker::castsOf(ValueID value)
 {
     const BodyIndex& index = *m_frames.last().index;
+    if (!index.opcodes().contains(Opcode::Convert))
+        return { };
     KeptWithBodyForGuesses& kept = keptWithBodyForGuesses(index);
     makeListKeptWithBodyForGuesses(kept, kept.hasNamesUsedOffValues, [&] {
         listNamesUsedOffValuesForGuesses(*this, index, kept);
@@ -593,7 +556,6 @@ std::span<const uint64_t> Walker::castsOf(ValueID value)
     return kept.castsOfRoots.span().subspan(found.begin() - kept.castsOfRoots.begin(), found.size());
 }
 
-// A round over fewer layouts costs less than the look for its answer.
 static constexpr uint32_t fewestLayoutsOfSetWhoseRoundsWalkerKeeps = 8;
 
 bool Walker::keepsRoundsOver(const TypeArena& types, LayoutSetID set)
@@ -633,7 +595,6 @@ uint32_t Walker::numberOfListOfNames(std::span<const PropertyKeyID> names)
     return numbers.last();
 }
 
-// One of the names that namesUsedOff() lists for the value, found without the list: what the first mention of the value asks it for, through what only hands the value on. Null: the first mention asks for none.
 static PropertyKeyID findNameUsedOffValueForGuesses(const Program& program, const BodyIndex& index, ValueID value)
 {
     while (true) {
@@ -661,28 +622,23 @@ static PropertyKeyID findNameUsedOffValueForGuesses(const Program& program, cons
             value = operation.id();
             continue;
         }
-        // The list leaves out what stands in a block that nothing reaches.
         return name && index.isReachable(index.blockOf(operation.id())) ? name : PropertyKeyID();
     }
 }
 
-// The last resort: facts/AOTLayoutsByNames.h.
 static ExpectationForGuesses expectationByNamesUsedForGuesses(Walker& walker, ValueID input)
 {
-    // Most values are asked for a name that no instance has, and the first mention shows it: the list of the body's names is not made for that.
     if (PropertyKeyID name = findNameUsedOffValueForGuesses(walker.program(), walker.currentBodyIndex(), input); name && !walker.facts().layoutsByNames().isNameOfSomeInstance(name))
         return { };
     LayoutID only = walker.facts().layoutsByNames().findOnlyLayoutWithAll(walker.namesUsedOff(input));
     return only ? ExpectationForGuesses { walker.types().forLayout(only), false } : ExpectationForGuesses();
 }
 
-// `node.child` is written or held to be one of two layouts. There may be no one test for the two, or a name that is read off it may be a field of one alone, so that no typed form serves both.
-// What is read there is asked for names that one of the two alone has: that one is expected.
 static TypeID narrowedByNamesUsedForGuesses(Walker& walker, ValueID input, TypeID expected)
 {
     TypeArena& types = walker.types();
     Type type = types.at(expected);
-    if (!type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures())
+    if (!type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures() || holdsOneMember(type.layouts))
         return expected;
     std::span<const LayoutID> layouts = types.listOf(type.layouts);
     if (layouts.size() < 2)
@@ -690,7 +646,6 @@ static TypeID narrowedByNamesUsedForGuesses(Walker& walker, ValueID input, TypeI
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
     if (names.empty())
         return expected;
-    // Null: the type stays as it is.
     auto narrowedTo = [&](LayoutID only) {
         return only ? types.forLayout(only) : expected;
     };
@@ -705,9 +660,7 @@ static TypeID narrowedByNamesUsedForGuesses(Walker& walker, ValueID input, TypeI
             walker.keepRound(Walker::RoundKeptByWalker::OnlyLayoutWithAllNames, type.layouts, numberOfNames, only.bits());
         return narrowedTo(only);
     };
-    // A layout of which no object is made arrives nowhere: it neither stays nor goes.
     const LayoutsByNames& index = walker.facts().layoutsByNames();
-    // A name that one of them alone has settles it without a look at the others: each of them lacks that name. A family may be every layout of the program that has the names that a written type requires.
     for (PropertyKeyID name : names) {
         LayoutID holder = index.findOnlyHolderAmong(name, layouts);
         if (!holder)
@@ -735,14 +688,22 @@ static TypeID narrowedByNamesUsedForGuesses(Walker& walker, ValueID input, TypeI
     return answer(someLayoutLacksName ? only : LayoutID());
 }
 
-// `if (x.kind === 1) s += x.a; else s += x.b;`, x: A | B. All the names that the body uses off `x` no member has, so narrowedByNamesUsedForGuesses() leaves the union as it is, and no typed form of `x.a` serves a B.
-// Behind the program's own test of a tag the members are cut by their written tags, cutExpectationByTestedField(); a stranger whose tag nobody wrote stays. Of what is left, AT THE ACCESS, the one member in use that has the name is expected. Several have it, or all: it stays.
+static bool holdsLayoutsBesideOtherObjectsForGuesses(const Type& type)
+{
+    return type.layouts && !type.hasOnlyLayouts() && !type.hasUnboundedUnknown() && !(type.primitives & ~Primitive::UndefinedOrNull);
+}
+
 static TypeID narrowedByNameAskedForGuesses(Walker& walker, TypeID expected, PropertyKeyID name)
 {
     TypeArena& types = walker.types();
     if (!expected || !name)
         return expected;
     Type type = types.at(expected);
+    if (holdsLayoutsBesideOtherObjectsForGuesses(type)) {
+        bool isAnsweredByBuiltin = liesInThread(name) || walker.program().builtinNameOf(name);
+        LayoutID only = isAnsweredByBuiltin ? LayoutID() : walker.facts().layoutsByNames().findOnlyHolderAmong(name, types.listOf(type.layouts));
+        return only ? types.forLayout(only) : expected;
+    }
     if (!type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures())
         return expected;
     std::span<const LayoutID> layouts = types.listOf(type.layouts);
@@ -758,7 +719,6 @@ static TypeID narrowedByNameAskedForGuesses(Walker& walker, TypeID expected, Pro
     }
     const LayoutsByNames& index = walker.facts().layoutsByNames();
     LayoutID only = index.findOnlyHolderAmong(name, layouts);
-    // A layout of which no object is made arrives nowhere: it neither stays nor goes. Where no other member is in use nothing is told apart.
     if (only && std::ranges::none_of(layouts, [&](LayoutID layout) { return layout != only && index.isInUse(layout); }))
         only = { };
     if (isKept)
@@ -768,13 +728,11 @@ static TypeID narrowedByNameAskedForGuesses(Walker& walker, TypeID expected, Pro
 
 static ExpectationForGuesses findExpectationForGuesses(Walker&, ValueID input);
 
-// Undefined and null apart: whoever reads or stores through them throws.
 static bool admitsNoNumberOrBooleanForGuesses(const TypeArena& types, TypeID expected)
 {
     return expected && !(types.at(expected).primitives & ~(cellPrimitives | Primitive::UndefinedOrNull));
 }
 
-// What is proven of a value is expected of it. `user` is defined behind `input`, so every road ends.
 static ExpectationForGuesses findWhatIsProvenOrExpectedForGuesses(Walker& walker, ValueID input, ValueID user)
 {
     ExpectationForGuesses proven { provenTypeOfInputForGuesses(walker, input), true };
@@ -784,7 +742,6 @@ static ExpectationForGuesses findWhatIsProvenOrExpectedForGuesses(Walker& walker
     if (saysNothingForGuesses(walker.types(), proven.type))
         return findExpectationForGuesses(walker, input);
 
-    // `const list = holder.nodes; .. list[i].kind`: of what the field holds Link proves the class, and a type never proves contents. What is written of them stands in what is expected of the value.
     TypeArena& types = walker.types();
     Type provenType = types.at(types.withoutNullish(proven.type));
     const ClassPart* provenClass = provenType.isObject() ? singleBuiltinClassOf(types, provenType) : nullptr;
@@ -801,9 +758,6 @@ static ExpectationForGuesses findWhatIsProvenOrExpectedForGuesses(Walker& walker
     return { expectedObject, expected.isDeclared, expected.isHeld, expected.admitsNoNumberOrBoolean };
 }
 
-// A parameter of a block has a type where the source declares that of the variable. Of any other, what is expected of the values that arrive is expected: `const t = c ? a : b`, `for (let n = first; n; n = n.next)`.
-// What comes round a loop is made of the parameter itself and is left out. So which number, text or boolean enters says nothing of the next turn, and only its kind is expected: `let sum = 0`.
-// An edge that brings a value of which nothing is expected makes the guess a weaker one.
 static ExpectationForGuesses findExpectationOfWhatArrivesForGuesses(Walker& walker, ValueID parameter)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -835,7 +789,6 @@ static ExpectationForGuesses findExpectationOfWhatArrivesForGuesses(Walker& walk
     return joined;
 }
 
-// `function textOf(node: Identifier | Literal) { return node.text; }`: Link expects the family around the two, and a Block has no `text`: no typed form serves the family. There what is written is expected as it is written.
 static ExpectationForGuesses asWrittenWhereFamilyLacksNamesForGuesses(Walker& walker, ValueID input, ExpectationForGuesses expectation)
 {
     if (!expectation.type || !expectation.isDeclared || expectation.isHeld)
@@ -865,7 +818,6 @@ static ExpectationForGuesses asWrittenWhereFamilyLacksNamesForGuesses(Walker& wa
     return expectation;
 }
 
-// The edge on which `Array.isArray(..)` has said yes, or the jump out of a block that this edge alone enters.
 static bool comesFromWhereIsArraySaysYesForGuesses(const BodyIndex& index, const BodyIncomingEdge& arriving)
 {
     BlockID from = arriving.from;
@@ -890,7 +842,6 @@ static bool comesFromWhereIsArraySaysYesForGuesses(const BodyIndex& index, const
     return callee && !index.isParameter(callee) && index.opcodeOf(callee) == Opcode::Builtin && index.value(callee).as<Opcode::Builtin>().builtin() == Builtins::ArrayIsArray;
 }
 
-// What fills the parameter, where that is what a test of a type hands over on an edge.
 static std::optional<BodyEdgeResult> findProofOfTypeTestForGuesses(const BodyIndex& index, ValueID parameter)
 {
     std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(index.blockOf(parameter));
@@ -910,7 +861,6 @@ static std::optional<BodyEdgeResult> findProofOfTypeTestForGuesses(const BodyInd
 
 static ExpectationForGuesses findWholeExpectationForGuesses(Walker&, ValueID input);
 
-// Of a parameter that no test of a type fills.
 static ExpectationForGuesses findWholeExpectationOfParameterForGuesses(Walker& walker, ValueID input)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -925,7 +875,6 @@ static ExpectationForGuesses findWholeExpectationOfParameterForGuesses(Walker& w
             expectation.type = types.unionOf(expectation.type, held);
         return expectation;
     }
-    // `Array.isArray(x)`: the ways on which the answer is yes meet.
     if (index.numberOfIncomingEdges(block) < 2 || index.isEnteredByHandlerEdge(block) || index.isLoopHead(block))
         return findExpectationForGuesses(walker, input);
     uint32_t position = input.index() - index.block(block).parameter(0).index();
@@ -935,7 +884,6 @@ static ExpectationForGuesses findWholeExpectationOfParameterForGuesses(Walker& w
         ExpectationForGuesses whole = position < arguments.size() && arguments[position] < input ? findWholeExpectationForGuesses(walker, arguments[position]) : ExpectationForGuesses();
         if (saysNothingForGuesses(types, whole.type))
             return { };
-        // The function has said yes to what the look at the cell had turned away. That is expected of nothing.
         if (comesFromWhereIsArraySaysYesForGuesses(index, arriving) && !types.overlap(whole.type, types.builtinClass(BuiltinClasses::Array)))
             continue;
         if (joined.type)
@@ -945,9 +893,6 @@ static ExpectationForGuesses findWholeExpectationOfParameterForGuesses(Walker& w
     return joined;
 }
 
-// `function size(x: string | string[]) { return typeof x === "string" ? x.length : x[0].length; }`: what is expected of `x` leaves out the text, because no one test tells a text or a list.
-// The program tells them apart itself: behind its tests each arm has its part of ALL that is written or held of an entry parameter, and of what is expected of any other value.
-// A row of tests of one value is gone through from the last back to the first of which the answer is kept, and forward again: each keeps its own.
 static ExpectationForGuesses findWholeExpectationForGuesses(Walker& walker, ValueID input)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -982,7 +927,6 @@ static ExpectationForGuesses findWholeExpectationForGuesses(Walker& walker, Valu
     }
     TypingContext expecting { walker.program(), types, walker.positionsKnowingNothing(), TypeLevel::Expected };
     for (const BodyEdgeResult& proof : proofs | std::views::reverse) {
-        // Whoever guesses leaves undefined and null out, so a test for the two cuts nothing that a guess goes by.
         TypeID tested = index.value(proof.test).as<Opcode::TypeTest>().testedType();
         if (saysNothingForGuesses(types, whole.type))
             whole = { };
@@ -1002,7 +946,6 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
     BodyValue definition = walker.asWalked(index.value(input));
     Opcode opcode = definition.opcode();
     ExpectationForGuesses expectation;
-    // Each arrival has been cut by itself.
     bool isJoinOfArrivals = false;
     ValueID behind;
     if (definition.isParameter()) {
@@ -1042,7 +985,6 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
     } else if (opcode == Opcode::CallDirect)
         expectation = expectationOfDirectCallForGuesses(walker, definition);
     else if (readsOfDeclaredPlacesForGuesses.contains(opcode)) {
-        // `a.b.c`: what is written of the field, in what is expected of the receiver.
         ExpectationForGuesses ofReceiver { { }, true };
         std::optional<uint8_t> receiver = placeOfReceiverForGuesses(opcode);
         if (receiver)
@@ -1052,7 +994,6 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
             if (saysNothingForGuesses(types, expectation.type))
                 expectation = { typeOfReadByWhatIsHeldForGuesses(walker, definition, ofReceiver.type), ofReceiver.isDeclared, true };
         }
-        // `items[i]`, of a list of which nothing is written and that unseen code has: what the program was seen to put into it.
         if (opcode == Opcode::ElemGet && saysNothingForGuesses(types, expectation.type))
             expectation = { walker.facts().held().resultOfReadByKey(walker.currentFunction(), input), true, true };
     } else if (opcode == Opcode::ResultAt) {
@@ -1063,6 +1004,8 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
                 TypeID pairs = typeOfPairsThatStepsHandOut(walker, iterated);
                 expectation = { pairs ? pairs : typeOfContentsRead(expecting, iterated, ContentsSlot::Element), ofIterable.isDeclared, ofIterable.isHeld };
             }
+            if (saysNothingForGuesses(types, expectation.type))
+                expectation = { walker.facts().held().resultOfReadByKey(walker.currentFunction(), definition.operand(0)), true, true };
         }
     }
 
@@ -1077,7 +1020,6 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
     }
     if (!behind && !definition.isParameter() && inputOperationsThatHandOn.contains(opcode))
         behind = definition.operand(0);
-    // `ToObject(this)`: by its row the operation returns its operand or makes something of it. What is expected to be an object is expected to be returned.
     if (!behind && !definition.isParameter() && numberOfNamedOperandsOf(opcode) == 1 && !hasVariadicOperand(opcode) && definition.operandUses(0).containsOnly({ OperandUse::Returns }))
         behind = definition.operand(0);
     if (behind && behind < input) {
@@ -1085,18 +1027,12 @@ static ExpectationForGuesses findExpectationAnewForGuesses(Walker& walker, Value
         if (!saysNothingForGuesses(types, ofValueBehind.type))
             return ofValueBehind;
     }
-    // `function createBaseDeclaration<T extends Declaration>(kind) { const node = createBaseNode(kind); node.symbol = undefined; .. return node; }`, copied in: of `node` the helper writes its own `T`, which says nothing.
-    // It is what the copy hands back, and whoever called has written what he expects of the answer.
-    // Of objects alone, as below: whether a number is an int32 is for whoever holds it to show. `function size(): int32 { return box.size; }`, copied in: what the caller expects of the answer is the callee's own `int32`:
-    // stated of `box.size` the promise would vouch for itself, and the build would not stop where it has to (TS100031; docs/compiler/types.mdx: "Where it can't, it stops").
     if (TypeID ofAnswer = walker.typeExpectedOfAnswerOfCopy(); ofAnswer && types.at(ofAnswer).hasObjects() && admitsNoNumberOrBooleanForGuesses(types, ofAnswer) && walker.copyHandsBack(input)) {
         ExpectationForGuesses stated { ofAnswer, walker.answerOfCopyIsDeclared() };
         stated.admitsNoNumberOrBoolean = admitsNoNumberOrBooleanForGuesses(types, stated.type);
         stated.type = narrowedByNamesUsedForGuesses(walker, input, partThatOneTestTellsForGuesses(types, stated.type));
         return stated;
     }
-    // `const node = flow.node; matches(reference, node); .. node.parent.kind`: nothing is written of the field, and the parameter that takes the value declares a node. It is one value wherever it is used, and what is stated of it at one use is expected at every other.
-    // Of objects alone: whether a number is an int32 is for whoever holds it to show.
     for (uint64_t cast : walker.castsOf(input)) {
         DeclaredType declared = index.value(ValueID(static_cast<uint32_t>(cast))).as<Opcode::Convert>().declared();
         ExpectationForGuesses stated { targetOfConvert(expecting, declared), !declared.isExpected() };
@@ -1113,26 +1049,23 @@ ExpectationOfValue expectationOfAnswerOfCallBeingCopied(Walker& walker, const Bo
 {
     if (!walker.has(Mechanism::Guesses) || !walker.opensGuesses())
         return { };
-    // A look may stand in the body of a callee, whose values have numbers of their own.
     const BodyIndex& index = walker.currentBodyIndex();
     if (call.id().index() >= index.numberOfValues() || index.value(call.id()).words() != call.words())
         return { };
-    // All that the caller would be told of the answer behind the call: what the call writes, a cast that is stated of it later, and, where the answer is what the caller's own copy hands back, what is expected of that.
     ExpectationForGuesses expected = findExpectationForGuesses(walker, call.id());
     if (saysNothingForGuesses(walker.types(), expected.type))
         return { };
     return { expected.type, expected.isDeclared };
 }
 
-// It is a guess, so it may be kept though more has been proven of a receiver on the road since.
 static ExpectationForGuesses findExpectationForGuesses(Walker& walker, ValueID input)
 {
-    if (Walker::RememberedExpectation remembered = walker.rememberedExpectationOf(input); remembered.isKnown)
+    Walker::RememberedExpectation& remembered = walker.rememberedExpectationOf(input);
+    if (remembered.isKnown)
         return { remembered.type, remembered.isDeclared, remembered.isHeld, remembered.admitsNoNumberOrBoolean };
     ExpectationForGuesses expectation = findExpectationAnewForGuesses(walker, input);
     refineExpectationOfValue(walker, input, expectation.type, expectation.isDeclared);
-    // A test for a closure mentions the function.
-    if (expectation.type) {
+    if (expectation.type && !holdsOnlyPrimitives(expectation.type) && walker.types().recordOf(expectation.type).traitsOfNamed.contains(ObjectTrait::IsClosure)) {
         bool mayBeTestedFor = true;
         forEachFunctionOf(walker.types(), walker.types().at(expectation.type), scopedLambda<void(FunctionID)>([&](FunctionID named) {
             mayBeTestedFor = mayBeTestedFor && walker.facts().linked().mayBeMentionedBy(walker.unit(), named);
@@ -1140,7 +1073,7 @@ static ExpectationForGuesses findExpectationForGuesses(Walker& walker, ValueID i
         if (!mayBeTestedFor)
             expectation = { };
     }
-    walker.rememberedExpectationOf(input) = { expectation.type, expectation.isDeclared, expectation.isHeld, true, expectation.admitsNoNumberOrBoolean };
+    remembered = { expectation.type, expectation.isDeclared, expectation.isHeld, true, expectation.admitsNoNumberOrBoolean };
     if (Vector<ValueID, 16>* rememberedForLook = walker.expectationsRememberedForLook())
         rememberedForLook->append(input);
     return expectation;
@@ -1169,7 +1102,6 @@ ExpectationOfValue findExpectation(Walker& walker, ValueID input)
     return { expectation.type, expectation.isDeclared };
 }
 
-// All that the value can be: closures of one function, beside built-ins. Null: anything else.
 static FunctionID onlyFunctionBesideBuiltinsForGuesses(const TypeArena& types, const Type& type)
 {
     if (!type.isObject() || !type.isJavaScriptValue() || !type.hasOnlyNamedObjects() || type.hasOnlyClosures())
@@ -1188,7 +1120,6 @@ static FunctionID onlyFunctionBesideBuiltinsForGuesses(const TypeArena& types, c
     return namesNothingElse ? only : FunctionID();
 }
 
-// `total += a * b`: of what nobody knows the product is a number or a big integer. Beside a number the operator throws for a big integer, so a number is what goes on.
 static ExpectationForGuesses expectationOfOperandForGuesses(Walker& walker, const BodyValue& operation, ValueID operand)
 {
     ExpectationForGuesses expectation = findExpectationForGuesses(walker, operand);
@@ -1205,37 +1136,30 @@ static ExpectationForGuesses expectationOfOperandForGuesses(Walker& walker, cons
     return standsBesideNumber ? ExpectationForGuesses { TypeTable::number, false } : expectation;
 }
 
-// Link says who a call enters, not that what is called is a closure of that function. That is the guess, and nobody wrote it.
 static ExpectationForGuesses expectationOfCalleeForGuesses(Walker& walker, const BodyValue& call, uint32_t operandIndex)
 {
     if (!walker.has(Mechanism::DirectCalls) || !call.operandUses(operandIndex).contains(OperandUse::Calls))
         return { };
     if (FunctionID callee = walker.facts().linked().calleeAt(walker.currentFunction(), call.id()))
         return { walker.types().forFunction(callee), false };
-    // `super(..)`: what is written behind `extends`. Whoever has the class object in hand may lay another function above it, so it is a guess.
     if (constructionsOfParentForGuesses.contains(call.opcode())) {
         LayoutID above = walker.program().at(call.layout()).base;
         FunctionID constructor = above ? walker.program().at(above).constructor : FunctionID();
         if (!constructor)
             return { };
-        // Whoever takes the result goes by the rule that a construction hands back an object. Behind the test it is what the body of the constructor returns, called or copied,
-        // which the compiler establishes as an object for every class that it lowers. Where nobody has, the closed form stays, which asks.
-        TypeID returned = walker.facts().linked().function(constructor).result;
+        TypeID returned = walker.plan().typeHeldOfResult(walker.program(), walker.facts().linked(), constructor);
         if (isClassConstructorOf(walker.program().at(constructor).kind) && (!returned || !walker.types().isSubset(returned, TypeTable::object)))
             return { };
         return { walker.types().forFunction(constructor), true };
     }
-    // `const { F } = require("./f")`: what comes out of another file's record is held to be what that file puts there.
     if (FunctionID callee = walker.facts().held().calleeAt(walker.currentFunction(), call.id()))
         return { walker.types().forFunction(callee), true, true };
 
-    // `table.handler(x)`: the read has given a value of which Link has proven all that it can be. The test tells the closures from the built-ins, and what it refuses is left to the rows of those.
     if (Reference value = walker.referenceOf(call.operand(operandIndex)); value && value.isValue()) {
         if (FunctionID callee = onlyFunctionBesideBuiltinsForGuesses(walker.types(), walker.types().at(walker.typeOf(value))); callee && walker.facts().linked().mayBeMentionedBy(walker.unit(), callee))
             return { walker.types().forFunction(callee), false };
     }
 
-    // `table.handler(x)`: LinkTables::callsThatFindBuiltins. Where the read has a form of its own the value is at hand: takeApartCallThatFindsBuiltinForGuesses(). Closed, the call reads the method itself.
     if (const LinkedCallThatFindsBuiltin* found = walker.facts().held().findCallThatFindsBuiltin(walker.currentFunction(), call.id())) {
         Reference value = walker.referenceOf(call.operand(operandIndex));
         if (value && value.isValue() && walker.code().at(value.id()).opcode != Opcode::PropGet && walker.has(Mechanism::BuiltinCalls)) {
@@ -1246,11 +1170,8 @@ static ExpectationForGuesses expectationOfCalleeForGuesses(Walker& walker, const
         }
     }
 
-    // `const join = Array.prototype.join; .. join.call(list, ",")`: Link lists nobody, and what is written of the value that is called names one built-in. Where nothing locks the place that it was read from, that is a guess as well.
-    // `list.join(",")` is one operation in closed code, which reads the method and calls it. A test between the two would take them apart.
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID called = index.valueBehindCasts(call.operand(operandIndex));
-    // `isNaN(x)`: a free name is read through the record of its binding and called by value, two operations in closed code too.
     bool isFreeName = called && !index.isParameter(called) && index.opcodeOf(called) == Opcode::PropGet && index.value(called).isFreeName() && call.opcode() == Opcode::Call;
     if (!walker.has(Mechanism::BuiltinCalls) || !called || (!index.isParameter(called) && index.opcodeOf(called) == Opcode::PropGet && !isFreeName))
         return { };
@@ -1264,7 +1185,6 @@ static ExpectationForGuesses expectationOfCalleeForGuesses(Walker& walker, const
     if (!builtin || !isTestableBuiltin(table, table.canonicalID(builtin)))
         return { };
     if (isFreeName) {
-        // The name is bound to the member of the global object whoever writes its type. The test pays where code of the built-in's own stands behind it: in line, or the operation in front of the four functions that code addresses.
         BuiltinID function = table.canonicalID(builtin);
         bool codesAddresses = function == Builtins::DecodeURI || function == Builtins::DecodeURIComponent || function == Builtins::EncodeURI || function == Builtins::EncodeURIComponent;
         bool hasCodeInLine = std::ranges::any_of(table.overloadsOf(function), [](const BuiltinOverload& row) {
@@ -1278,7 +1198,6 @@ static ExpectationForGuesses expectationOfCalleeForGuesses(Walker& walker, const
     return { types.forBuiltin(table.canonicalID(builtin)), written.isDeclared, written.isHeld };
 }
 
-// `o.#x`: the class declares the name, and the access throws on whatever has not gone through the construction of the class or of a class below. What is written of `o` counts where it says no less.
 static ExpectationForGuesses expectationOfHolderOfPrivateNameForGuesses(Walker& walker, const BodyValue& access, const ExpectationForGuesses& written)
 {
     TypeArena& types = walker.types();
@@ -1289,8 +1208,6 @@ static ExpectationForGuesses expectationOfHolderOfPrivateNameForGuesses(Walker& 
         return written;
     return { holders, true };
 }
-
-// ---- The test
 
 static bool standsBehindTestOfGuess(const Code& code, Reference value, const TestOfGuess& chosen)
 {
@@ -1303,11 +1220,9 @@ static bool standsBehindTestOfGuess(const Code& code, Reference value, const Tes
     return test.opcode == Opcode::TypeTest && test.testedType() == chosen.tested;
 }
 
-// The test asks for shape numbers, so it refuses every object of a layout that is in use and has none. What is left of a family without such a layout is no family.
 enum class ShapesOfLayoutsForGuesses : uint8_t { SomeLayoutInUseHasNone, NoLayoutHasAny, Testable };
 static ShapesOfLayoutsForGuesses askEachLayoutForShapesForGuesses(const Walker&, LayoutSetID);
 
-// The plan is done, so the round over a set is made once for the build: TypeArena::rememberRound(). AOTWalk.cpp has the fifty numbers in front of this one.
 static ShapesOfLayoutsForGuesses shapesOfLayoutsForGuesses(const Walker& walker, LayoutSetID layouts)
 {
     static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::FirstOfWalk) + 50;
@@ -1345,8 +1260,6 @@ static ShapesOfLayoutsForGuesses askEachLayoutForShapesForGuesses(const Walker& 
     return someShapePasses ? ShapesOfLayoutsForGuesses::Testable : ShapesOfLayoutsForGuesses::NoLayoutHasAny;
 }
 
-// The source may declare a type that no object is made as: `ObjectType`, an interface below `Type`, which is what the maker of the objects is written as.
-// Then the type speaks of the objects of the nearest types above it, by supertypes and bases, that have any. Null: there are none.
 static TypeID findLayoutsWithObjectsAboveForGuesses(Walker& walker, LayoutSetID withoutObjects)
 {
     const Program& program = walker.program();
@@ -1388,10 +1301,6 @@ static TypeID findLayoutsWithObjectsAboveForGuesses(Walker& walker, LayoutSetID 
     return { };
 }
 
-// `function nameOf(access: PropertyAccessExpression)`, where the type names three of the four hundred layouts that are written as `Node`: the test asks for those three,
-// and what only they have is a slot behind it. A test for the whole family would leave the name a field of some layouts only, which has no typed form.
-// `PropertyAccessExpression` names a member below each of `Node`, `Token` and `Identifier`, and the factories are seen to fill that of `Node` alone: the image has an order for it that goes on as they store.
-// The test asks for such members where the set has any: a guess, like the order. The others go through the closed arm.
 static TypeID partOfWrittenSetThatFactoriesFill(Walker& walker, TypeID expected, LayoutSetID set)
 {
     static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::FirstOfWalk) + 53;
@@ -1441,7 +1350,6 @@ static TypeID widenedForTestOfGuess(Walker& walker, TypeID expected)
 {
     TypeArena& types = walker.types();
     TypeID widened = widenedToFamily(types, walker.facts().families(), expected);
-    // Most of what is written is a family, and nobody goes over its members to hear so.
     if (widened == expected || !types.at(expected).hasObjects())
         return widened;
     Type objects = types.at(types.withOnlyObjects(expected));
@@ -1450,15 +1358,12 @@ static TypeID widenedForTestOfGuess(Walker& walker, TypeID expected)
     return widened;
 }
 
-// Nothing: no test for the type is worth its code.
 static std::optional<TestOfGuess> chooseTestOfTypeAnewForGuesses(Walker& walker, TypeID expected)
 {
     TypeArena& types = walker.types();
     TypeID tested = widenedForTestOfGuess(walker, expected);
-    // Where a member is asked for, undefined and null throw, off a text or a number as off an object: the closed arm does that.
     if (TypeID neitherUndefinedNorNull = types.withoutNullish(tested); !isNeverType(neitherUndefinedNorNull))
         tested = neitherUndefinedNorNull;
-    // To find which of the listed texts a text is takes a search.
     tested = types.testablePartOf(types.withLiteralStringsWidened(tested));
 
     Type type = types.at(tested);
@@ -1482,7 +1387,6 @@ static std::optional<TestOfGuess> chooseTestOfTypeAnewForGuesses(Walker& walker,
     return chosen;
 }
 
-// It follows from the type, the families and the plan, and every operation that looks at a value asks: it is found once for the build.
 static std::optional<TestOfGuess> chooseTestOfTypeForGuesses(Walker& walker, TypeID expected)
 {
     constexpr uint8_t numberOfType = static_cast<uint8_t>(AnswerKeptInArena::TestOfGuess);
@@ -1500,7 +1404,6 @@ static std::optional<TestOfGuess> chooseTestOfTypeForGuesses(Walker& walker, Typ
     return chosen;
 }
 
-// Nothing: no test for the type is worth its code, it would tell nothing new of the value, or it would never pass.
 static std::optional<TestOfGuess> chooseTestOfGuess(Walker& walker, Reference value, TypeID expected)
 {
     if (!value || !value.isValue() || !expected)
@@ -1512,8 +1415,8 @@ static std::optional<TestOfGuess> chooseTestOfGuess(Walker& walker, Reference va
         return std::nullopt;
     TestOfGuess chosen = *ofType;
 
-    // A test that the door would cut is not worth its arms.
-    if (walker.withoutFunctionsThatMayNotBeMentioned(chosen.tested) != chosen.tested)
+    bool namesClosures = !holdsOnlyPrimitives(chosen.tested) && types.recordOf(chosen.tested).traitsOfNamed.contains(ObjectTrait::IsClosure);
+    if (namesClosures && walker.withoutFunctionsThatMayNotBeMentioned(chosen.tested) != chosen.tested)
         return std::nullopt;
     TypeID proven = walker.typeOf(value);
     if (types.isSubset(proven, chosen.tested) || !types.overlap(proven, chosen.tested) || standsBehindTestOfGuess(walker.code(), value, chosen))
@@ -1521,19 +1424,14 @@ static std::optional<TestOfGuess> chooseTestOfGuess(Walker& walker, Reference va
     return chosen;
 }
 
-// `function Response(req) { http.ServerResponse.call(this, req); .. }   util.inherits(Response, http.ServerResponse)`, in a module that may run again: the guards of such a class never begin,
-// so nobody answers for what stands above its objects, and a store that may create a field has no typed form on them, nor on a set of layouts that they are among: whoAnswersForWhatStandsAboveObjectsOf().
-// What is left where they are taken out of what is expected. They go through the closed arm then.
 static TypeID partWhoseClassesHaveGuardsForGuesses(Walker& walker, TypeID expected)
 {
-    // The round over a set is made once for the build, as that of shapesOfLayoutsForGuesses() is.
     static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::FirstOfWalk) + 51;
     static_assert(number < static_cast<uint8_t>(AnswerKeptInArena::CellsOfFieldArm));
     TypeArena& types = walker.types();
     Type type = types.at(expected);
     if (!type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures() || holdsOneMember(type.layouts))
         return expected;
-    // Null: all are left, or none.
     auto askEachLayout = [&]() -> TypeID {
         const Program& program = walker.program();
         Vector<LayoutID, 16> left;
@@ -1561,8 +1459,6 @@ static TypeID partWhoseClassesHaveGuardsForGuesses(Walker& walker, TypeID expect
     return part ? part : expected;
 }
 
-// `location.locals`, location: Node: sixty of four hundred layouts have the name, so no typed form serves all that is expected of the value, or all that is proven of it.
-// Whoever asks for the name expects one of the sixty. What is left where the members in use that lack the name are taken out: they go through the closed arm. All have it, or none has: the type as it is.
 static TypeID partThatHasNameAskedForGuesses(Walker& walker, TypeID expected, PropertyKeyID name)
 {
     static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::FirstOfWalk) + 54;
@@ -1573,14 +1469,11 @@ static TypeID partThatHasNameAskedForGuesses(Walker& walker, TypeID expected, Pr
     Type type = types.at(expected);
     if (!type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures() || holdsOneMember(type.layouts))
         return expected;
-    // Null: all have the name, or none.
     auto askEachLayout = [&]() -> TypeID {
         const LayoutsByNames& index = walker.facts().layoutsByNames();
         std::span<const LayoutID> layouts = types.listOf(type.layouts);
         Vector<LayoutID, 16> holders;
         index.appendHoldersAmong(name, layouts, holders);
-        // `function Node(kind) { .. }`, whose own layout keeps a name that factories append out of line, beside the kinds of nodes below it, which keep it in the cell: no one access serves all.
-        // One serves those that keep it in the cell in one form, wherever in the cell: the form that most of them have, and of two such the first.
         const Program& program = walker.program();
         const SlotPlan& slots = walker.plan().slots();
         if (holders.size() > 1 && !slots.fieldAccess(program, name, holders.span(), false).hasLocation) {
@@ -1663,10 +1556,6 @@ static Reference buildProofOfGuess(Walker& walker, Reference value, Reference te
     return proven;
 }
 
-// ---- The stretch
-
-// WHERE A SLOT IS HELD TO A TYPE A STORE LOOKS AT WHAT IT STORES: typed, it writes the bits as they are, so the value has to be proven to fit. Closed, the stub tests it.
-// What the slots take. Null: the store asks nothing of its value, the value fits as it is, or none that fits can arrive.
 static TypeID typeAskedOfStoredValueForGuesses(Walker& walker, const BodyValue& store, TypeID typeOfObject, TypeID typeOfValue)
 {
     if (!storesIntoSlotsForGuesses.contains(store.opcode()) || !typeOfObject || !typeOfValue)
@@ -1693,15 +1582,18 @@ static bool namesByDefinitionForGuesses(const User& user, ValueID value)
     return namesByDefinition;
 }
 
-// No parameter of a block can stand for it. Whatever gives several results or opens an iteration is named so by every user, so the first one tells.
-static bool mustBeNamedByDefinitionForGuesses(const BodyIndex& index, ValueID value)
+static bool isWrittenListThatPatternTakesApartForGuesses(const BodyIndex& index, ValueID value, const BodyValue& user)
 {
-    std::optional<BodyUser> user = index.firstUser(value);
+    return user.opcode() == Opcode::IteratorOpen && user.as<Opcode::IteratorOpen>().isDestructuring() && index.opcodeOf(value) == Opcode::NewArray && index.hasOneUse(value);
+}
+
+static bool mustBeNamedByDefinitionForGuesses(const BodyIndex& index, ValueID value, const std::optional<BodyUser>& user)
+{
     if (!user)
         return false;
     switch (user->kind) {
     case BodyUseKind::Operand:
-        return namesByDefinitionForGuesses(index.value(user->value), value);
+        return namesByDefinitionForGuesses(index.value(user->value), value) || isWrittenListThatPatternTakesApartForGuesses(index, value, index.value(user->value));
     case BodyUseKind::TerminatorOperand:
         return namesByDefinitionForGuesses(index.terminator(user->block), value);
     case BodyUseKind::BlockSubject:
@@ -1714,10 +1606,8 @@ static bool mustBeNamedByDefinitionForGuesses(const BodyIndex& index, ValueID va
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isReturnedAtOnceForGuesses(const BodyIndex& index, ValueID call)
+static bool isReturnedAtOnceForGuesses(const BodyIndex& index, ValueID call, const std::optional<BodyUser>& user)
 {
-    // The end of its block is the first to mention it.
-    std::optional<BodyUser> user = index.firstUser(call);
     if (!user || user->kind != BodyUseKind::TerminatorOperand)
         return false;
     BodyBlock block = index.block(user->block);
@@ -1725,21 +1615,34 @@ static bool isReturnedAtOnceForGuesses(const BodyIndex& index, ValueID call)
     return end.kind() == TerminatorKind::ReturnCall && end.operand(0) == call && block.holds(call);
 }
 
-static bool standsInNoStretchOfGuess(const BodyIndex& index, const BodyValue& operation)
+static bool isReturnedAtOnceForGuesses(const BodyIndex& index, ValueID call)
 {
-    Opcode opcode = operation.opcode();
-    if (maySuspend(opcode))
-        return true;
-    // What the walk replaces by operations and blocks of its own, but for a cast, which becomes its operand.
-    if (opcodesWithoutEmitter().contains(opcode) && !inputOperationsThatHandOn.contains(opcode))
-        return true;
-    // Each arm returns what it has built for the call: openGuessWithTest().
-    if (isReturnedAtOnceForGuesses(index, operation.id()))
-        return false;
-    return mustBeNamedByDefinitionForGuesses(index, operation.id());
+    return isReturnedAtOnceForGuesses(index, call, index.firstUser(call));
 }
 
-// In its closed form.
+static constexpr OpcodeSet operationsThatMaySuspendForGuesses = opcodesWhere([](Opcode opcode) {
+    return maySuspend(opcode);
+});
+
+static bool endsEveryStretchOfGuess(Opcode opcode)
+{
+    if (operationsThatMaySuspendForGuesses.contains(opcode))
+        return true;
+    return opcodesWithoutEmitter().contains(opcode) && !inputOperationsThatHandOn.contains(opcode);
+}
+
+static bool standsInNoStretchOfGuessByItsUsers(const BodyIndex& index, ValueID operation, const std::optional<BodyUser>& firstUser)
+{
+    if (isReturnedAtOnceForGuesses(index, operation, firstUser))
+        return false;
+    return mustBeNamedByDefinitionForGuesses(index, operation, firstUser);
+}
+
+static bool standsInNoStretchOfGuess(const BodyIndex& index, const BodyValue& operation)
+{
+    return endsEveryStretchOfGuess(operation.opcode()) || standsInNoStretchOfGuessByItsUsers(index, operation.id(), index.firstUser(operation.id()));
+}
+
 static bool mayEndProofOfGuess(Opcode opcode)
 {
     static const OpcodeSet operationsThatMayEndProof = opcodesWhere([](Opcode opcode) {
@@ -1749,7 +1652,6 @@ static bool mayEndProofOfGuess(Opcode opcode)
     return operationsThatMayEndProof.contains(opcode);
 }
 
-// What the end of the block finds by its definition stays behind every stretch: the test whose outcome the edges hand on as proofs, which no parameter can stand for.
 static uint32_t placeTakenByEndOfBlockForGuesses(const BodyIndex& index, const BodyBlock& block)
 {
     uint32_t place = block.numberOfValues();
@@ -1760,7 +1662,6 @@ static uint32_t placeTakenByEndOfBlockForGuesses(const BodyIndex& index, const B
 
     BodyTerminator end = block.terminator();
     if (end.isConditionalBranch()) {
-        // A proof that nothing reads is handed on to nobody: `if (type.flags & mask)`, `if (!type.members)`.
         index.forEachEdgeResult(block.id(), [&](const BodyEdgeResult& result) {
             if (!result.parameter || index.useCount(result.parameter))
                 keepBehindStretches(result.test);
@@ -1769,15 +1670,12 @@ static uint32_t placeTakenByEndOfBlockForGuesses(const BodyIndex& index, const B
     return place;
 }
 
-// Whoever walks a stretch, the typed run of another guess among them, has asked for no operation behind its end.
 static uint32_t limitOfStretchOfGuess(Walker& walker, const BodyBlock& block)
 {
-    // Every operation of the block asks.
     Walker::PlaceTakenByEndOfBlock& askedLast = walker.placeTakenByEndOfBlockAskedLast();
     if (askedLast.block != block.id())
         askedLast = { block.id(), placeTakenByEndOfBlockForGuesses(walker.currentBodyIndex(), block) };
     uint32_t limit = std::min(askedLast.place, walker.endOfStretchBeingWalked());
-    // The edges narrow by the record of the relation, as they do by a test whose outcome they hand on. It is the condition of the branch: where that stands behind the limit, or in another block, nobody asks what it proves.
     BodyTerminator end = block.terminator();
     ValueID condition = end.isConditionalBranch() ? end.operand(0) : ValueID();
     if (condition && condition >= block.firstValue() && block.holds(condition) && condition.index() - block.firstValue().index() < limit && relationThatNarrowsBehind(walker, end))
@@ -1785,7 +1683,6 @@ static uint32_t limitOfStretchOfGuess(Walker& walker, const BodyBlock& block)
     return limit;
 }
 
-// What a guess of its own, opened in the typed run, would prove of another operand of the operation at which this one is opened: `a + b`, where nothing is proven of either.
 static TypeID typeThatGuessWouldProveForGuesses(Walker& walker, ValueID input)
 {
     Reference built = walker.referenceOf(input);
@@ -1796,7 +1693,6 @@ static TypeID typeThatGuessWouldProveForGuesses(Walker& walker, ValueID input)
     return chosen ? walker.types().intersectionOf(walker.typeOf(built), chosen->tested) : TypeID();
 }
 
-// `{ kind, parent }`: an allocation fills its slots without a test. What is not proven to fit its slot is defined by name behind the allocation, with all that is written behind it: settleAllocationOfObjectInChoices().
 static bool allocationFillsAllItsSlotsForGuesses(Walker& walker, const BodyValue& operation, const TypesOfInputs& types)
 {
     auto allocation = operation.as<Opcode::NewObject>();
@@ -1804,15 +1700,13 @@ static bool allocationFillsAllItsSlotsForGuesses(Walker& walker, const BodyValue
     if (!walker.plan().layout(allocation.layout()).holdsCompiledObjects() || allocation.fields().size() != values.size())
         return false;
     for (size_t index = 0; index < values.size(); ++index) {
-        TypeID held = walker.plan().slot(allocation.layout(), allocation.fields()[index]).type;
+        TypeID held = walker.plan().slot(allocation.layout(), allocation.fields()[index]).typeInLayoutRecord();
         if (held && !walker.types().isSubset(types(values[index]), held))
             return false;
     }
     return true;
 }
 
-// What the links of the chain make of the operation with operands of these types. They answer themselves: typedFormOf(), findOnlyCallee().
-// `callOfBuiltin`: wouldCallBuiltin() of the same, where the caller has asked.
 static TypedForm typedFormForGuesses(Walker& walker, const BodyValue& operation, const TypesOfInputs& types, std::optional<BuiltinCallAskedAbout> callOfBuiltin = std::nullopt)
 {
     if (operation.opcode() == Opcode::NewObject)
@@ -1830,13 +1724,11 @@ static TypedForm typedFormForGuesses(Walker& walker, const BodyValue& operation,
         if (operation.operandUses(operandIndex).contains(OperandUse::Calls))
             callee = findOnlyCallee(walker, operation, types(operand));
     });
-    // A constructor above that counts its arguments, or keeps the rest of them, takes a list of unknown length as it is: the test would stand in front of two closed calls.
     if (callee && operation.opcode() == Opcode::SuperConstructList && !listOfSuperCallCanBeHandedOver(walker, operation, callee))
         return TypedForm::None;
     return callee ? TypedForm::Built : TypedForm::None;
 }
 
-// `list.push(x)`: closed, the call reads the method itself, so a typed read saves nothing by itself. The two are the one operation that they are in the source, and the call is what counts.
 static bool isReadOfMethodForItsCallForGuesses(const BodyIndex& index, const BodyValue& read)
 {
     if (read.opcode() != Opcode::PropGet)
@@ -1845,8 +1737,6 @@ static bool isReadOfMethodForItsCallForGuesses(const BodyIndex& index, const Bod
     return user && callsOfValuesForGuesses.contains(index.opcodeOf(user)) && !constructionsOfParentForGuesses.contains(index.opcodeOf(user)) && index.value(user).calleeOperand() == read.id();
 }
 
-// `members.forEach((symbol, id) => ..)`: the call is handed a closure that was made for it alone. A method of a built-in class that takes one runs it for each element: THE CALL IS A LOOP, wherever it stands.
-// Closed, the closure goes to a callee that nobody knows, so it and the scope that it captures are cells of the heap at every call.
 static bool callOfMethodIsHandedClosureMadeForItForGuesses(const BodyIndex& index, const BodyValue& read)
 {
     if (!isReadOfMethodForItsCallForGuesses(index, read))
@@ -1861,8 +1751,6 @@ static bool callOfMethodIsHandedClosureMadeForItForGuesses(const BodyIndex& inde
     return false;
 }
 
-// ONE OPERATION ALONE. What findStretchOfGuess() counts takes the value, or what such an operation gives, and stands in front of whatever ends every stretch. So many there are at most, and no link of the chain is asked:
-// `a + 1` and nothing more of `a`, `list.push(x)` and nothing more of `list`, outside a loop, where two have to count.
 static uint32_t mostOperationsThatStretchCountsForGuesses(Walker& walker, Reference value, bool isPassedAlready, const BodyBlock& block, uint32_t begin, uint32_t limit, uint32_t enough)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -1872,7 +1760,7 @@ static uint32_t mostOperationsThatStretchCountsForGuesses(Walker& walker, Refere
     for (uint32_t place = begin; place < limit && most < enough; ++place) {
         BodyValue operation = walker.asWalked(index.value(ValueID(first + place - begin)));
         Opcode opcode = operation.opcode();
-        if (maySuspend(opcode) || (opcodesWithoutEmitter().contains(opcode) && !inputOperationsThatHandOn.contains(opcode)))
+        if (endsEveryStretchOfGuess(opcode))
             break;
         bool takesWhatMayRestOnProof = false;
         if (opcode != Opcode::ReleaseHint) {
@@ -1892,33 +1780,54 @@ static uint32_t mostOperationsThatStretchCountsForGuesses(Walker& walker, Refere
     return most;
 }
 
-// An operation leans on the proof where it looks at the value, or at a result of which the rows give more with the proof than without it.
-// Behind the first, it does not lean where it also looks at what nothing is proven of: it stands behind the rejoin and opens a guess of its own.
-// It counts where it is built typed with the proof and closed without it. The first operation has to count, and the stretch ends behind the last that does: what stays closed either way is built once.
-static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const TestOfGuess& chosen, const BodyBlock& block, uint32_t begin, uint32_t limit)
+static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const TestOfGuess& chosen, const BodyBlock& block, uint32_t begin, uint32_t limit, const FirstOperationOfGuessAsItStands* firstAsItStands = nullptr)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     TypeArena& types = walker.types();
     TypingContext typing { walker.program(), types, walker.positions(), TypeLevel::Proven };
-    TypeID typeBehindTest = types.intersectionOf(walker.typeOf(value), chosen.tested);
+    TypeID typeOfValue = walker.typeOf(value);
+    TypeID typeBehindTest = types.intersectionOf(typeOfValue, chosen.tested);
     uint32_t first = block.firstValue().index() + begin;
 
-    // The other operands of the first operation of which nothing is proven, with what is guessed of them.
+    ValueID nameOfValueFoundLast;
+    ValueID otherInputFoundLast;
+    TypeID typeOfOtherInputFoundLast;
+    auto namesValueOfGuess = [&](ValueID operand) {
+        if (operand == nameOfValueFoundLast)
+            return true;
+        if (operand == otherInputFoundLast)
+            return false;
+        if (walker.referenceOf(operand) == value) {
+            nameOfValueFoundLast = operand;
+            return true;
+        }
+        otherInputFoundLast = operand;
+        typeOfOtherInputFoundLast = { };
+        return false;
+    };
+    auto provenTypeOfInput = [&](ValueID operand) -> TypeID {
+        if (namesValueOfGuess(operand))
+            return typeOfValue;
+        if (!typeOfOtherInputFoundLast)
+            typeOfOtherInputFoundLast = provenTypeOfInputForGuesses(walker, operand);
+        return typeOfOtherInputFoundLast;
+    };
+
     Vector<std::pair<ValueID, TypeID>, 2> typesOfGuessesInside;
-    index.value(ValueID(first)).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (isOnlyHandedOnForGuesses(index.value(ValueID(first)), operandIndex) || walker.referenceOf(operand) == value || !saysNothingForGuesses(types, provenTypeOfInputForGuesses(walker, operand)))
+    BodyValue firstAsWritten = index.value(ValueID(first));
+    firstAsWritten.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        if (isOnlyHandedOnForGuesses(firstAsWritten, operandIndex) || namesValueOfGuess(operand) || !saysNothingForGuesses(types, provenTypeOfInput(operand)))
             return;
         if (TypeID guessed = typeThatGuessWouldProveForGuesses(walker, operand))
             typesOfGuessesInside.append({ operand, guessed });
     });
 
-    // StretchOfGuess::testsOfStoredValues, and behind them the one that is being asked about.
-    Vector<TestOfStoredValueOfGuess, 4> testsOfStoredValues;
-    // By place in the stretch.
+    StretchOfGuess stretch { begin, 0, { } };
+    Vector<TestOfStoredValueOfGuess, 4>& testsOfStoredValues = stretch.testsOfStoredValues;
     Vector<TypeID, 32> typesInTypedRun;
     Vector<TypeID, 32> typesInClosedArm;
     BitVector restsOnProof;
-    BitVector knownBetter;
+    BitVector& knownBetter = stretch.placesThatTypedRunKnowsBetter;
     auto typeAmong = [&](const Vector<TypeID, 32>& typesOfStretch, ValueID operand) -> TypeID {
         TypeID type = typesOfStretch[operand.index() - first];
         return type ? type : TypeID(TypeTable::anything);
@@ -1926,13 +1835,13 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
     auto typeInTypedRun = [&](ValueID operand, uint32_t) -> TypeID {
         if (operand.index() >= first)
             return typeAmong(typesInTypedRun, operand);
-        if (walker.referenceOf(operand) == value)
+        if (namesValueOfGuess(operand))
             return typeBehindTest;
         for (auto [guessedOperand, guessed] : typesOfGuessesInside) {
             if (guessedOperand == operand)
                 return guessed;
         }
-        TypeID proven = provenTypeOfInputForGuesses(walker, operand);
+        TypeID proven = provenTypeOfInput(operand);
         for (const TestOfStoredValueOfGuess& test : testsOfStoredValues) {
             if (test.value == operand)
                 proven = types.intersectionOf(proven, test.tested);
@@ -1940,7 +1849,7 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         return proven;
     };
     auto typeInClosedArm = [&](ValueID operand, uint32_t) -> TypeID {
-        return operand.index() >= first ? typeAmong(typesInClosedArm, operand) : provenTypeOfInputForGuesses(walker, operand);
+        return operand.index() >= first ? typeAmong(typesInClosedArm, operand) : provenTypeOfInput(operand);
     };
     auto typeOfInputInTypedRun = [&](ValueID operand) {
         return typeInTypedRun(operand, 0);
@@ -1951,23 +1860,22 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
     TypesOfInputs inputsOfTypedRun(typeOfInputInTypedRun);
     TypesOfInputs inputsOfClosedArm(typeOfInputInClosedArm);
 
-    StretchOfGuess stretch { begin, 0, { } };
-    // What a look at a slot has found holds until something may write the field.
+
     bool slotsAreAsFound = true;
-    // The slots into which the stretch has stored so far. Behind the store the slot is filled, as long as a look at it would hold.
     Vector<std::pair<ValueID, PropertyKeyID>, 8> slotsStoredInStretch;
-    // The reads of the stretch that find what a look in front of the arms has loaded, each with the access that stands for the look.
     Vector<std::pair<ValueID, ValueID>, 8> readsAnsweredByLooks;
-    // The call of the last method that was read off what rests on the proof. In front of it stands what makes its arguments.
     ValueID callAwaited;
     for (uint32_t place = begin; place < limit; ++place) {
         BodyValue operation = walker.asWalked(index.value(ValueID(first + place - begin)));
         Opcode opcode = operation.opcode();
-        if (standsInNoStretchOfGuess(index, operation))
+        if (endsEveryStretchOfGuess(opcode))
+            break;
+        std::optional<BodyUser> firstUser = index.firstUser(operation.id());
+        if (standsInNoStretchOfGuessByItsUsers(index, operation.id(), firstUser))
             break;
 
         auto restsOnProofOfGuess = [&](ValueID operand) {
-            return operand.index() >= first ? restsOnProof.get(operand.index() - first) : walker.referenceOf(operand) == value;
+            return operand.index() >= first ? restsOnProof.get(operand.index() - first) : namesValueOfGuess(operand);
         };
         bool takesWhatRestsOnProof = false;
         if (opcode != Opcode::ReleaseHint) {
@@ -1977,7 +1885,6 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         }
         bool leans = false;
         bool looksAtWhatNothingIsProvenOf = false;
-        // A call of a built-in looks at what it is handed: its rows go by the types of the operands. What takes nothing that rests on the proof leans on nothing, whatever it calls.
         bool mayCallBuiltin = takesWhatRestsOnProof && callsOfValuesForGuesses.contains(opcode) && walker.has(Mechanism::DirectCalls) && walker.has(Mechanism::BuiltinCalls);
         bool codeOfRowStandsInLine = false;
         BuiltinCallAskedAbout callOfBuiltinInTypedRun = mayCallBuiltin ? wouldCallBuiltin(walker, operation, inputsOfTypedRun, &codeOfRowStandsInLine) : BuiltinCallAskedAbout::None;
@@ -1993,8 +1900,6 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         }
         if (place > begin && looksAtWhatNothingIsProvenOf)
             leans = false;
-        // `isModifierKind(node.kind)`: the typed run has the copy of the callee, and the closed arm calls: Walker::walkInline(). What the copy makes of its parameter goes by what the run knows of the argument:
-        // where the arms met in front of the call, the copy switched on a box.
         bool handsWhatRestsOnProofToCopy = false;
         if (takesWhatRestsOnProof && place > begin && opcode == Opcode::Call && callOfBuiltinInTypedRun == BuiltinCallAskedAbout::None && walker.has(Mechanism::Inlining) && walker.opensGuesses() && !restsOnProofOfGuess(operation.calleeOperand())) {
             bool someArgumentRestsOnProof = std::ranges::any_of(operation.variadicOperands(), restsOnProofOfGuess);
@@ -2009,20 +1914,19 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
             }
         }
         leans |= handsWhatRestsOnProofToCopy;
-        // `s.charCodeAt(i - 1)`: between the read of a method and its call stands what makes the arguments. What is built typed without the proof too, and runs no code so, ends nothing.
         bool isTypedEitherWay = !leans && operationsWhoseTypedFormsRunNoCodeForGuesses.contains(opcode) && typedFormForGuesses(walker, operation, inputsOfClosedArm) == TypedForm::Built;
-        // `source.text.charCodeAt(source.position)`: the read of the position may run a getter. A string stays a string whatever runs, and nothing asks whether it is as its class makes it.
-        // No further than the call: whoever went on to the end of the block for every guess would look at each of its places once for each of them.
         bool endsNoProofOfPrimitive = callAwaited && operation.id() < callAwaited && operationsThatEndNoProofOfPrimitiveForGuesses.contains(opcode) && !types.at(chosen.tested).hasObjects();
         if (!leans && !isTypedEitherWay && !endsNoProofOfPrimitive && mayEndProofOfGuess(opcode))
             break;
-        if (leans && isReadOfMethodForItsCallForGuesses(index, operation))
+        bool readsMethodForItsCall = leans && isReadOfMethodForItsCallForGuesses(index, operation);
+        if (readsMethodForItsCall)
             callAwaited = index.onlyUsingValue(operation.id());
 
-        // The test of a value from in front of the stretch stands in the row in front of the arms. One that the stretch makes is typed by what makes it.
+        bool isAskedAboutAsItStands = firstAsItStands && place == begin && typeBehindTest == typeOfValue && typesOfGuessesInside.isEmpty() && firstAsItStands->words == operation.words();
+
         size_t numberOfTestsOfStoredValuesInFront = testsOfStoredValues.size();
         if (leans && storesIntoSlotsForGuesses.contains(opcode) && operation.valueOperand().index() < first && walker.referenceOf(operation.valueOperand()).isValue()) {
-            if (TypeID asked = typeAskedOfStoredValueForGuesses(walker, operation, typeInTypedRun(operation.objectOperand(), 0), typeInTypedRun(operation.valueOperand(), 0)))
+            if (TypeID asked = isAskedAboutAsItStands ? firstAsItStands->askedOfStoredValue : typeAskedOfStoredValueForGuesses(walker, operation, typeInTypedRun(operation.objectOperand(), 0), typeInTypedRun(operation.valueOperand(), 0)))
                 testsOfStoredValues.append({ operation.valueOperand(), asked });
         }
 
@@ -2036,17 +1940,14 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         TypeID givenByTypedForm;
         if (leans) {
             walker.takeFormAskedAhead();
-            TypedForm form = typedFormForGuesses(walker, operation, inputsOfTypedRun, mayCallBuiltin ? std::optional(callOfBuiltinInTypedRun) : std::nullopt);
-            // `list[0] = a`: at the level Expected the operation asks the list itself for all that it needs and has the closed operation inside it: three hundred bytes a store. That pays where it comes again and again.
-            Walker::FormAskedAhead askedAhead = walker.takeFormAskedAhead();
+            bool formIsAskedAsItStands = isAskedAboutAsItStands && (testsOfStoredValues.isEmpty() ? !firstAsItStands->askedOfStoredValue : !namesValueOfGuess(operation.valueOperand()));
+            TypedForm form = formIsAskedAsItStands ? firstAsItStands->form : typedFormForGuesses(walker, operation, inputsOfTypedRun, mayCallBuiltin ? std::optional(callOfBuiltinInTypedRun) : std::nullopt);
+            Walker::FormAskedAhead askedAhead = formIsAskedAsItStands ? firstAsItStands->askedAhead : walker.takeFormAskedAhead();
             if (askedAhead.level == KnowledgeLevel::Expected && !walker.isInLoop())
                 form = TypedForm::None;
-            // `parts[parts.length - 1]`: the row of the read by name says nothing of a length. The operation that takes its place does, and the difference leans on that.
             if (form == TypedForm::Built && opcode == Opcode::PropGet && askedAhead.level == KnowledgeLevel::Proven)
                 givenByTypedForm = widestPrimitiveResultOf(askedAhead.opcode);
-            // The half of an accessor that is run behind looks counts as running none: most read or store a field. Where one does more the state forgets what the looks have found, and the accesses behind it ask anew.
             runsNoCode = form != TypedForm::BuiltAsCall && operationsWhoseTypedFormsRunNoCodeForGuesses.contains(opcode);
-            // `list[i]`: behind the tests of the storage and of the element the read is a load, and what it gives is a number whoever has written the list.
             if (chosen.asksForElementOfNumbers && place == begin) {
                 form = TypedForm::None;
                 counts = true;
@@ -2059,26 +1960,16 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
             case TypedForm::Built:
             case TypedForm::BuiltAsCall: {
                 std::optional<BuiltinCallAskedAbout> callOfBuiltinInClosedArm = mayCallBuiltin ? std::optional(wouldCallBuiltin(walker, operation, inputsOfClosedArm)) : std::nullopt;
-                // The chain has just been asked about the first operation as it stands.
                 counts = place == begin || typedFormForGuesses(walker, operation, inputsOfClosedArm, callOfBuiltinInClosedArm) == TypedForm::None;
-                // `list[i] = list[i] + 1`: the store takes a number as it is held (storeTakesIndexOfProvenList()). Where the arms met in front of it, it took a box of which nobody knows that it holds a number.
                 counts |= chosen.asksForElementOfNumbers && opcode == Opcode::ElemSet && restsOnProofOfGuess(operation.valueOperand()) && types.at(typeInTypedRun(operation.valueOperand(), 0)).isNumber();
-                // `list[i] / 2`: closed, the operator asks what it is handed whether it is a number, and converts it out of line. Behind the tests it takes a double.
                 counts |= chosen.asksForElementOfNumbers && operatorsThatMakeNumbers.contains(opcode);
-                // Without the proof the native code converts the operands itself.
                 counts |= callOfBuiltinInClosedArm && callOfBuiltinInTypedRun > *callOfBuiltinInClosedArm;
-                // `node.kind === 3`, `type.flags & mask`: typed either way. In the typed run it takes the word as it comes out of the slot. Behind the rejoin that word is boxed for the join, and the operator asks at once what it is.
-                // Whoever takes a text decides behind the join in what form its parts come.
                 goesWithWhatItTakes = !counts && form == TypedForm::Built && familyOf(opcode) == OperationFamily::Operator && opcode != Opcode::ToString;
-                // `stack.pop()`, `text.charCodeAt(at)`: closed, a stub reads the method and enters the function of the host. Behind the test the code of the row stands in line.
-                // Of a primitive alone: its test is one look, and nothing asks whether it is as its class makes it.
                 countsForTwo |= counts && codeOfRowStandsInLine && callOfBuiltinInClosedArm == BuiltinCallAskedAbout::None && !types.at(chosen.tested).hasObjects();
-                // `new F(..)`: closed, a stub finds the entry, the run time makes `this`, and nothing is known of what comes back, so every access to the new object is closed too. Behind the test the object is made here under its layout.
                 if (opcode == Opcode::Construct && callOfBuiltinInTypedRun == BuiltinCallAskedAbout::None) {
                     FunctionID constructor = findOnlyCallee(walker, operation, typeInTypedRun(operation.calleeOperand(), 0));
                     countsForTwo |= constructor && makesThisOfConstruction(walker, constructor);
                 }
-                // `super(..)`: closed, the run time finds the constructor above, its entry and the prototype of new.target.
                 countsForTwo |= counts && constructionsOfParentForGuesses.contains(opcode);
                 break;
             }
@@ -2086,7 +1977,6 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
             case TypedForm::BuiltBehindEmptySlot:
             case TypedForm::BuiltBehindLookAtCell:
             case TypedForm::BuiltBehindFilledSlotAndLookAtCell: {
-                // The looks stand in a row in front of the arms, where the value itself is at hand, and what a look further up in the row has loaded: `a.b.c`. A cast becomes its operand.
                 ValueID object = operation.objectOperand();
                 while (object.index() >= first && inputOperationsThatHandOn.contains(index.opcodeOf(object)))
                     object = index.value(object).operand(0);
@@ -2095,7 +1985,7 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                     if (read == object)
                         holder = look;
                 }
-                bool isAtHand = object.index() < first ? walker.referenceOf(object) == value : holder && form == TypedForm::BuiltBehindFilledSlot;
+                bool isAtHand = object.index() < first ? namesValueOfGuess(object) : holder && form == TypedForm::BuiltBehindFilledSlot;
                 counts = slotsAreAsFound && isAtHand;
                 PropertyKeyID key = keyOfAccessToSlot(walker.program(), operation);
                 bool isStoredInStretch = slotsStoredInStretch.contains(std::pair { holder, key });
@@ -2103,37 +1993,30 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                     return earlier.holder == holder && keyOfAccessToSlot(walker.program(), walker.asWalked(index.value(earlier.access))) == key;
                 });
                 bool isLookedAtAlready = form == TypedForm::BuiltBehindLookAtCell || (form != TypedForm::BuiltBehindEmptySlot && isStoredInStretch) || placeOfLook != notFound;
-                // `this.x = x` in a constructor: the slot is about to be filled for the first time, and a look at it fails.
                 if (!isLookedAtAlready && storesIntoSlotsForGuesses.contains(opcode) && looksAtSlotOfObjectBeingMade(walker, operation))
                     counts = false;
                 if (counts && !isLookedAtAlready)
                     stretch.firstAccessesToSlots.append({ operation.id(), holder });
-                // What the order word shows holds as long as what a slot shows: until something may run code or change shapes.
                 if (counts && (form == TypedForm::BuiltBehindLookAtCell || form == TypedForm::BuiltBehindFilledSlotAndLookAtCell))
                     stretch.storesThatLookAtCell.append(operation.id());
                 if (counts && form == TypedForm::BuiltBehindLookAtCell)
                     methodFoundBehindLooks = typeOfMethodFoundBehindLooks(walker, operation, typeBehindTest);
                 if (counts && storesIntoSlotsForGuesses.contains(opcode))
                     slotsStoredInStretch.append({ holder, key });
-                // A filled slot holds a value of the type that its stores are held to.
                 if (counts && form == TypedForm::BuiltBehindFilledSlot && readsOutOfSlotsForGuesses.contains(opcode) && !isStoredInStretch) {
                     readsAnsweredByLooks.append({ operation.id(), placeOfLook != notFound ? stretch.firstAccessesToSlots[placeOfLook].access : operation.id() });
                     foundInFilledSlot = typeFoundInFilledSlot(walker, operation, types.withoutNullish(typeInTypedRun(operation.objectOperand(), 0)));
-                    // Where the holder itself is a guess, a wrong one would cost a call by name, which asks nothing, its test.
-                    if (chosen.isPassedAlready && saysNothingForGuesses(types, foundInFilledSlot) && isReadOfMethodForItsCallForGuesses(index, operation)) {
+                    if (chosen.isPassedAlready && saysNothingForGuesses(types, foundInFilledSlot) && readsMethodForItsCall) {
                         TypeID seenToArrive = typeSeenToArriveInFilledSlot(walker, operation, types.withoutNullish(typeInTypedRun(operation.objectOperand(), 0)));
-                        // A call of what is no object throws, which the closed arm does in its turn.
                         TypeID function = seenToArrive ? types.withOnlyObjects(seenToArrive) : TypeID();
                         FunctionID seen = function && !isNeverType(function) && types.at(function).isObject() ? singleFunctionOf(types, types.at(function)) : FunctionID();
-                        // A test for a closure mentions the function, and the flow may never have seen the layout arrive at this read: then nothing leads from here to what its field holds.
                         if (seen && walker.facts().linked().mayBeMentionedBy(walker.unit(), seen)) {
                             foundInFilledSlot = function;
                             stretch.firstAccessesToSlots[placeOfLook != notFound ? placeOfLook : stretch.firstAccessesToSlots.size() - 1].calleeSeenToArrive = function;
                         }
                     }
-                    // A call of undefined or null throws, which the closed arm does in its turn. Behind the question the call enters the function: findOnlyCallee().
                     TypeID functions = foundInFilledSlot ? types.withoutNullish(foundInFilledSlot) : TypeID();
-                    if (functions && functions != foundInFilledSlot && !isNeverType(functions) && types.at(functions).hasOnlyClosures() && isReadOfMethodForItsCallForGuesses(index, operation)) {
+                    if (functions && functions != foundInFilledSlot && !isNeverType(functions) && types.at(functions).hasOnlyClosures() && readsMethodForItsCall) {
                         foundInFilledSlot = functions;
                         stretch.firstAccessesToSlots[placeOfLook != notFound ? placeOfLook : stretch.firstAccessesToSlots.size() - 1].isCalled = true;
                     }
@@ -2141,15 +2024,13 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                 break;
             }
             case TypedForm::BuiltOnObjectAsMade: {
-                // As a look at a slot: it stands in front of the arms, and what it finds holds until something may change shapes.
                 ValueID object = operation.objectOperand();
                 while (object.index() >= first && inputOperationsThatHandOn.contains(index.opcodeOf(object)))
                     object = index.value(object).operand(0);
-                counts = slotsAreAsFound && object.index() < first && walker.referenceOf(object) == value;
+                counts = slotsAreAsFound && object.index() < first && namesValueOfGuess(object);
                 if (counts) {
                     stretch.looksWhetherValueIsAsMade = true;
                     foundOnObjectAsMade = typeFoundOnObjectAsMade(walker, operation, typeBehindTest);
-                    // `set.size` on what is proven a Set: closed, it is a lookup and the call of a native function out of a stub, which saves every register around it. Against that stands a look at one bit.
                     countsForTwo = chosen.isPassedAlready && readOffObjectAsMadeCallsGetter(walker, operation, typeBehindTest);
                 }
                 break;
@@ -2160,15 +2041,14 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         if (!counts)
             testsOfStoredValues.shrink(numberOfTestsOfStoredValuesInFront);
         if (place == begin && !counts)
-            return { begin, 0, { } };
+            return stretch;
         if (mayEndProofOfGuess(opcode) && !(counts && runsNoCode) && !isTypedEitherWay)
             slotsAreAsFound = false;
 
-        // Only a later operation of the stretch asks what this one gives.
-        std::optional<BodyUser> firstUser = index.firstUser(operation.id());
         bool isReadInStretch = firstUser && (firstUser->kind == BodyUseKind::Operand ? firstUser->value.index() - first < limit - begin : !index.hasOneUse(operation.id()));
-        TypeID inClosedArm = isReadInStretch ? typeByRowForGuesses(typing, operation, typeInClosedArm) : TypeID();
-        TypeID inTypedRun = isReadInStretch && takesWhatRestsOnProof ? typeByRowForGuesses(typing, operation, typeInTypedRun) : inClosedArm;
+        std::optional<Draft> draftOfRow;
+        TypeID inClosedArm = isReadInStretch ? typeByRowForGuesses(typing, operation, typeInClosedArm, draftOfRow) : TypeID();
+        TypeID inTypedRun = isReadInStretch && takesWhatRestsOnProof ? typeByRowForGuesses(typing, operation, typeInTypedRun, draftOfRow) : inClosedArm;
         if (foundOnObjectAsMade)
             inTypedRun = foundOnObjectAsMade;
         if (methodFoundBehindLooks)
@@ -2185,11 +2065,10 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
             restsOnProof.set(place - begin);
         if (opcode == Opcode::RequireObjectCoercible)
             counts = false;
-        if (counts && !isReadOfMethodForItsCallForGuesses(index, operation)) {
+        if (counts && !readsMethodForItsCall) {
             stretch.numberOfTypedOperations += countsForTwo ? 2 : 1;
             stretch.end = place + 1;
         }
-        // Nothing but constants stands between it and what the arms hold already: what stays closed either way is built once.
         if (goesWithWhatItTakes && stretch.numberOfTypedOperations) {
             uint32_t reached = std::max(stretch.end, stretch.endOfOperatorsBehind);
             bool standsRightBehind = true;
@@ -2199,14 +2078,11 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
                 stretch.endOfOperatorsBehind = place + 1;
         }
     }
-    stretch.testsOfStoredValues = WTF::move(testsOfStoredValues);
-    stretch.placesThatTypedRunKnowsBetter = WTF::move(knownBetter);
+
     if (chosen.asksForElementOfNumbers)
         stretch.placesThatRestOnProof = WTF::move(restsOnProof);
     return stretch;
 }
-
-// ---- The arms
 
 static TestOfGuess secondTestOfGuess(const TestOfGuess& first)
 {
@@ -2217,7 +2093,6 @@ static TestOfGuess secondTestOfGuess(const TestOfGuess& first)
 
 static constexpr AbstractHeapSet heapsUnderNumberReadOutOfListForGuesses { AbstractHeap::ArrayStorage, AbstractHeap::Elements };
 
-// Once for each kind that holds numbers alone: HasArrayStorage > IsElementPresent > GetArrayElement [isPresent]. Each failing edge leads to `closedBlock`. The walk goes on where the ways meet, with the number noted.
 static void buildReadOfElementOfNumbersForGuesses(Walker& walker, const BodyValue& read, Reference list, Origin origin, BlockID closedBlock)
 {
     Reference position = walker.referenceOf(read.propertyOperand());
@@ -2231,8 +2106,6 @@ static void buildReadOfElementOfNumbersForGuesses(Walker& walker, const BodyValu
         hasKind.setArrayOperand(list);
         hasKind.setArrayStorage(kind);
         Reference hasStorage = walker.build(WTF::move(hasKind));
-        if (!hasStorage)
-            return;
         BlockID passed = walker.addBlock();
         walker.branch(hasStorage, passed, otherKind);
         walker.continueIn(passed);
@@ -2244,8 +2117,6 @@ static void buildReadOfElementOfNumbersForGuesses(Walker& walker, const BodyValu
         isPresent.setKeyIsIntegral(true);
         isPresent.setIsInBounds(isInBounds);
         Reference test = walker.build(WTF::move(isPresent));
-        if (!test)
-            return;
         BlockID found = walker.addBlock();
         walker.branch(test, found, closedBlock);
         walker.continueIn(found);
@@ -2259,8 +2130,6 @@ static void buildReadOfElementOfNumbersForGuesses(Walker& walker, const BodyValu
         element.setKeyIsIntegral(true);
         element.setIsPresent(true);
         Reference loaded = walker.build(WTF::move(element));
-        if (!loaded)
-            return;
         walker.jumpTo(meetingBlock, singleElementSpan(loaded));
         if (walker.hasFailed())
             return;
@@ -2272,13 +2141,8 @@ static void buildReadOfElementOfNumbersForGuesses(Walker& walker, const BodyValu
         noteKnown(walker, KnownNote::NumberReadOutOfList, list, position, 0, LocationMasks(heapsUnderNumberReadOutOfListForGuesses), number.bits());
 }
 
-// ---- `switch (node.kind)`: the arms meet on a raw integer
-
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 
-// The block ends in a Switch over int32 on the value, and behind the operations up to `end` nobody else takes it: no operation of the block, no edge, no block behind.
-// Nor what an edge hands on of it: the rest may be anything, and `case 0` takes -0 too, which `1 / tag` tells from 0.
 static bool isTakenBySwitchAloneForGuesses(Walker& walker, BlockID inputBlock, ValueID subject, uint32_t end)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -2304,7 +2168,6 @@ static bool isTakenBySwitchAloneForGuesses(Walker& walker, BlockID inputBlock, V
     index.forEachEdgeResult(inputBlock, [&](const BodyEdgeResult& result) {
         if (result.subject != subject || index.isUnused(result.parameter))
             return;
-        // `case Kind.Call: .. (node as Call).callee`: the front end states that the holder has what the case has compared. That cuts types and reads nothing.
         std::optional<BodyUser> user = index.onlyUser(result.parameter);
         bool onlyCutsHolder = user && user->kind == BodyUseKind::Operand && index.opcodeOf(user->value) == Opcode::NarrowByField && index.value(user->value).operand(OperandIndex::NarrowByField::value) != result.parameter;
         isTakenElsewhere |= !onlyCutsHolder;
@@ -2312,8 +2175,6 @@ static bool isTakenBySwitchAloneForGuesses(Walker& walker, BlockID inputBlock, V
     return !isTakenElsewhere;
 }
 
-// In the closed arm: the int32 that takes the case which the value takes. A case is compared as `===` compares: what is no number takes none, nor does a fraction, NaN, or what outgrows an int32;
-// a double that holds an int32 passes the test for one; -0 equals 0. Whatever takes no case becomes an int32 that no case names. Null: nothing was built.
 static Reference buildIntegerThatSwitchTakesForGuesses(Walker& walker, const BodyTerminator& terminator, Reference subject, Origin origin)
 {
     if (!subject || !subject.isValue() || walker.isUnreachable())
@@ -2379,7 +2240,30 @@ static Reference buildIntegerThatSwitchTakesForGuesses(Walker& walker, const Bod
     return walker.hasFailed() ? Reference() : integer;
 }
 
-static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess& chosen, BlockID inputBlock, uint32_t begin, const StretchOfGuess& stretch)
+static bool armsOfGuessTakeBranch(Walker& walker, BlockID inputBlock, uint32_t begin, uint32_t end, Reference value, const BitVector& placesThatTypedRunKnowsBetter, BranchOfGuessAskedAbout* askedAbout)
+{
+    if (askedAbout && askedAbout->isAsked && askedAbout->end == end && askedAbout->value == value)
+        return askedAbout->isTaken;
+    bool isTaken = walker.armsTakeBranchForProofOf(inputBlock, begin, end, value, placesThatTypedRunKnowsBetter);
+    if (askedAbout)
+        *askedAbout = { true, end, value, isTaken };
+    return isTaken;
+}
+
+static Origin originInFrontOfOperationForGuesses(Walker& walker, const BodyValue& operation)
+{
+    bool lacksOperand = false;
+    operation.forEachOperand([&](ValueID operand, uint32_t) {
+        lacksOperand |= !walker.referenceOf(operand);
+    });
+    if (lacksOperand && operation.opcode() != Opcode::ReleaseHint && !walker.isUnreachable())
+        walker.fail("an operation takes a value of the body that nothing was built for"_s);
+    Origin origin = walker.originOf(operation);
+    origin.isTailCall = false;
+    return origin;
+}
+
+static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess& chosen, BlockID inputBlock, uint32_t begin, const StretchOfGuess& stretch, BranchOfGuessAskedAbout* branchAskedAbout = nullptr)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     Code& code = walker.code();
@@ -2387,11 +2271,9 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     uint32_t end = std::max(stretch.end, stretch.endOfOperatorsBehind);
     uint32_t size = end - begin;
     bool takesInCallReturnedAtOnce = size && isReturnedAtOnceForGuesses(index, ValueID(first + size - 1));
-    // Asked in front of the first test: none of them does anything. No way of a closed arm comes back, so nothing has to be kept apart from it.
     bool failingWayBeginsTurnAgain = chosen.admitsAllThatIsExpected && !chosen.failingSideAsksFor && !chosen.failingSideAsksForNothing && walker.mayBeginTurnAgainInClosedCopy();
-    bool takesInBranch = !failingWayBeginsTurnAgain && walker.armsTakeBranchForProofOf(inputBlock, begin, end, chosen.isPassedAlready ? Reference() : value, stretch.placesThatTypedRunKnowsBetter);
+    bool takesInBranch = !failingWayBeginsTurnAgain && armsOfGuessTakeBranch(walker, inputBlock, begin, end, chosen.isPassedAlready ? Reference() : value, stretch.placesThatTypedRunKnowsBetter, branchAskedAbout);
 
-    // The names under which the stretch takes the value, and how often it mentions what it defines.
     Vector<ValueID, 4> names;
     Vector<uint32_t, 32> mentions;
     mentions.fill(0, size);
@@ -2410,10 +2292,8 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
             valuesMentionedLater.append(ValueID(first + place));
     }
 
-    // What the closed arm reads is anything, so the typed run boxed its int32 for the meeting, and the Switch behind it asked the box for its tag. The closed arm finds the integer instead.
     ValueID subjectOfSwitch;
     if (ValueID subject = index.terminator(inputBlock).kind() == TerminatorKind::Switch ? index.terminator(inputBlock).operand(0) : ValueID(); !takesInBranch && subject && valuesMentionedLater.contains(subject) && walker.has(Mechanism::UnboxedNumbers)) {
-        // The typed run loads it out of a slot of the value that is held to an int32.
         bool isLoadedByLook = stretch.firstAccessesToSlots.containsIf([&](const LookAtSlotOfGuess& look) {
             return look.access == subject && !look.holder;
         });
@@ -2422,12 +2302,10 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
             subjectOfSwitch = subject;
     }
 
-    Origin origin = walker.draftOf(index.value(ValueID(first))).origin();
-    origin.isTailCall = false;
+    Origin origin = originInFrontOfOperationForGuesses(walker, index.value(ValueID(first)));
     BlockID closedBlock;
     Reference lastTest;
     unsigned numberOfTests = 0;
-    // The branch on the last test stands in front of the typed copy of the loop, so what leans on the test alone may stand there too.
     bool lastTestIsAskedInFront = false;
     auto goOnWhereTestPasses = [&](Reference test, bool passesWithYes = true) {
         lastTest = passesWithYes ? test : Reference();
@@ -2442,7 +2320,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         walker.continueIn(passed);
     };
 
-    // A test of a type or of a shape looks at the value and at words that are written once.
     auto buildTestWhereItMayStand = [&](Reference tested, const TestOfGuess& asked) {
         Walker::InFrontOfTypedCopy inFront(walker, failingWayBeginsTurnAgain && walker.standsInFrontOfTypedCopy(tested));
         return buildTestOfGuess(walker, tested, asked, origin);
@@ -2452,8 +2329,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         return buildProofOfGuess(walker, tested, test, asked, origin);
     };
 
-    // None of them writes anything, so what held in front of the first holds wherever one fails.
-    // No proof and no failure: nothing is left of the value behind the test, and the block behind it has ended as one that is never reached.
     Reference proven = value;
     if (!chosen.isPassedAlready) {
         Reference test = buildTestWhereItMayStand(value, chosen);
@@ -2461,7 +2336,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
             return;
         goOnWhereTestPasses(test);
         proven = buildProofWhereTestWasAsked(value, test, chosen);
-        // Where the arms part for good the proof goes on with the passing way, as a checked name in its state. It is not noted for every guess: where the arms meet, the meet drops it.
         if ((takesInBranch || failingWayBeginsTurnAgain) && proven && proven.isValue() && value.isValue() && !walker.isUnreachable()) {
             Reference last = value;
             while (Reference checked = walker.state().checkedNameOf(last))
@@ -2491,7 +2365,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         if (Reference fitting = buildProofWhereTestWasAsked(stored, test, fitsSlots))
             walker.state().noteCheckedName(stored, fitting);
     }
-    // Off undefined and null an access throws, and so does a call of them, which the closed arm does in its turn. Nothing: no test could be built.
     auto askWhetherLoadedValueIsThere = [&](Reference loaded) -> std::optional<Reference> {
         TypeID held = loaded ? walker.typeOf(loaded) : TypeID();
         TypeID rest = held ? walker.types().withoutNullish(held) : TypeID();
@@ -2507,7 +2380,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
             walker.state().noteCheckedName(loaded, rested);
         return rested;
     };
-    // Whatever else the slot holds is called by the closed arm, which reads it again by its name: nothing has run in between, and a filled slot is read without running anything.
     auto askWhetherLoadedValueIsClosureOf = [&](Reference loaded, TypeID function) {
         if (!loaded || !loaded.isValue())
             return false;
@@ -2522,7 +2394,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
             walker.state().noteCheckedName(loaded, closure);
         return true;
     };
-    // By the access that stands for the look.
     Vector<std::pair<ValueID, Reference>, 4> loadedByLooks;
     for (const LookAtSlotOfGuess& look : stretch.firstAccessesToSlots) {
         Reference holder = proven;
@@ -2541,11 +2412,9 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         Reference test = holder ? buildTestOfSlot(walker, walker.asWalked(index.value(look.access)), holder) : Reference();
         if (!test)
             break;
-        // Only a definition under a private name asks for an empty slot.
         bool asksForFilledSlot = index.opcodeOf(look.access) != Opcode::PrivateDefine;
         goOnWhereTestPasses(test, asksForFilledSlot);
         if (asksForFilledSlot) {
-            // The look has found the slot filled in front of the loop, and no turn writes what the look has read.
             Reference loaded;
             {
                 Walker::InFrontOfTypedCopy inFront(walker, lastTestIsAskedInFront);
@@ -2580,7 +2449,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     BlockID meetingBlock = walker.addBlock();
     walker.noteGuessOpened();
 
-    // What an arm has to hand on shows only when the other has come through.
     Vector<ArmOfGuess, 2> arms;
     auto endArm = [&](bool isClosedArm) {
         if (takesInBranch)
@@ -2603,7 +2471,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         arms.append(WTF::move(arm));
     };
 
-    // Every test is asked in front of the loop: no way of the turn fails.
     if (closedBlock) {
         walker.continueIn(closedBlock);
         Walker::ClosedArm closedArm(walker, failingWayBeginsTurnAgain);
@@ -2629,7 +2496,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         std::optional<Walker::OpenArm> openArm;
         if (chosen.typedRunOpensGuesses)
             openArm.emplace(walker);
-        // What the typed run of the second test has made of the values of the stretch was expected of them there, and is not what this run makes of them.
         if (chosen.failingSideIsAsLikely) {
             for (uint32_t place = 0; place < size; ++place)
                 walker.rememberedExpectationOf(ValueID(first + place)) = { };
@@ -2650,7 +2516,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
             walker.walkStretch(inputBlock, begin, end);
         if (takesInCallReturnedAtOnce)
             walker.endArmWithReturnOf(inputBlock);
-        // The arms part for good, each with the branch. What the typed run brings is expected behind it as it is behind a rejoin.
         for (ValueID mentioned : valuesMentionedLater) {
             Reference brought = takesInBranch && !walker.isUnreachable() ? walker.referenceOf(mentioned) : Reference();
             TypeID broughtByTypedRun = brought && brought.isValue() ? code.at(brought.id()).type : TypeID();
@@ -2664,27 +2529,21 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
     if (walker.hasFailed())
         return;
 
-    // `const floor = kit.math.floor; noise(); floor(2.5)`: the arm that was walked last has bound `kit.math` to what IT has proven, and the body never mentions that value again, so the meeting binds nothing in its place.
-    // Whoever looks back from the call through the read of `floor` would find it, and take the proof of one arm for what holds behind both. So nothing stands for such a value any more: not known.
-    // `if (math) return floor(2.5) + kit.bias;`: each arm has ended with the branch of the block, so none comes through and the meeting binds nothing. What the targets read arrives as names on their edges.
     for (uint32_t place = 0; place < size; ++place) {
         if (arms.isEmpty() || !valuesMentionedLater.contains(ValueID(first + place)))
             walker.bind(ValueID(first + place), Reference());
     }
 
-    // As at any join, what arrives under one name keeps it: a constant, a value from in front of the test, all that a single arm brings.
     Vector<size_t, 8> positionsOfParameters;
     for (size_t position = 0; position < valuesMentionedLater.size() && !arms.isEmpty(); ++position) {
         Reference one = arms.first().values[position];
         Reference other = arms.last().values[position];
         Reference met = one;
         if (one != other) {
-            // The values' own types: what the state knows beyond them ends where the arms meet.
             TypeID type = joinOf(walker.types(), walker.facts().families(), code.at(one.id()).type, code.at(other.id()).type);
             Representation forms[] { walker.representationOf(one), walker.representationOf(other) };
             met = walker.addParameter(meetingBlock, type, walker.formOfParameter(type, forms));
             positionsOfParameters.append(position);
-            // `symbol.links = links; symbol.links.flags = 0;`: the typed run, which is walked last, knows what it brings, and it is the arm that is expected to be taken. So where nothing else is expected of the value, that is.
             TypeID broughtByTypedRun = code.at(other.id()).type;
             if (saysNothingForGuesses(walker.types(), type) && !saysNothingForGuesses(walker.types(), broughtByTypedRun) && !findExpectationForGuesses(walker, valuesMentionedLater[position]).type)
                 walker.rememberedExpectationOf(valuesMentionedLater[position]) = { partThatOneTestTellsForGuesses(walker.types(), broughtByTypedRun), false, false, true };
@@ -2692,7 +2551,6 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         walker.bind(valuesMentionedLater[position], met);
     }
 
-    // jumpTo() lets leave whatever a parameter becomes a second name of, brings each argument into the parameter's form, and meets the states of the arms.
     Vector<Reference, 8> arguments;
     for (const ArmOfGuess& arm : arms) {
         arguments.shrink(0);
@@ -2703,17 +2561,12 @@ static void openGuessWithTest(Walker& walker, Reference value, const TestOfGuess
         if (walker.hasFailed())
             return;
     }
-    // Neither arm comes through: the walk stands nowhere, and what is behind the stretch is not built.
     walker.continueIn(meetingBlock);
 }
 
-// `if (node.parent)`, `links.type || ..`, `list[i] && ..`: THE TRUTH OF WHAT IS EXPECTED TO BE AN OBJECT, where nobody behind reads what a test of its shape would prove.
-// No more is asked than the answer needs: an object of any shape is true. Whoever asks for the truth expects nothing as well: undefined and null are false, in line. What is neither goes by the closed operation.
-// None of the three does anything, so there is no stretch to walk and nothing to meet but the answer.
 static void buildTruthOfObjectOrNothing(Walker& walker, const BodyValue& operation, Reference value, BlockID inputBlock, uint32_t begin)
 {
-    Origin origin = walker.draftOf(operation).origin();
-    origin.isTailCall = false;
+    Origin origin = originInFrontOfOperationForGuesses(walker, operation);
     auto answerWith = [&](BlockID meetingBlock, bool answer) {
         Draft written(Opcode::Boolean, origin);
         written.setBoolean(answer);
@@ -2756,12 +2609,6 @@ static void buildTruthOfObjectOrNothing(Walker& walker, const BodyValue& operati
     walker.bind(operation.id(), met);
 }
 
-// ---- What the walk asks
-
-// Zero: no number of operations opens it.
-// `leaning`: the operation at which the guess would open. One operation pays for the test where its closed form is a call with a lookup or a row of tests behind it and its typed form a load or a compare.
-// Arithmetic on a written number does not: the typed form goes by doubles where the stub adds two int32 (TypeScript 6 +0.26 G with it). Calls, keys, relations and equalities buy nothing.
-// The read of a method for its call does not either: 0.26% of that program's run for 1.27 G of a large application's build and 0.68 MB of its code.
 static bool oneOperationPaysForGuess(const Walker& walker, TypeID expected, Opcode leaning, bool readsMethodForItsCall)
 {
     static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine };
@@ -2773,26 +2620,28 @@ static bool oneOperationPaysForGuess(const Walker& walker, TypeID expected, Opco
     return asksForTruth ? present.isObject() || present.isNumber() : present.isAnyString();
 }
 
+static uint32_t leastOperationsThatOpenGuessOutsideLoops(const Walker& walker, TypeID expected, bool isDeclaredInSource, std::optional<Opcode> leaning, bool leaningReadsMethodForItsCall)
+{
+    Type type = walker.types().at(expected);
+    if (type.hasObjects() && !(type.primitives & ~Primitive::UndefinedOrNull) && type.hasOnlyLayouts() && !type.hasOnlyClosures())
+        return minimumOperationsPerGuessOfShape;
+    if (isDeclaredInSource && type.isObject() && singleBuiltinOf(walker.types(), type))
+        return minimumOperationsPerGuessOfShape;
+    if (!isDeclaredInSource)
+        return 0;
+    return leaning && oneOperationPaysForGuess(walker, expected, *leaning, leaningReadsMethodForItsCall) ? 1 : minimumOperationsPerGuess;
+}
+
 static uint32_t leastOperationsThatOpenGuess(const Walker& walker, Reference value, TypeID expected, bool isDeclaredInSource, std::optional<Opcode> leaning = std::nullopt, bool leaningReadsMethodForItsCall = false)
 {
     if (!walker.has(Mechanism::Guesses) || !value || !value.isValue() || !expected)
         return 0;
     if (walker.isInLoop())
         return minimumOperationsPerGuessInLoop;
-    // What runs once gains nothing by a test in front of it: AccessEmitter::comesAgain().
     FunctionID function = walker.unit().function;
     if (walker.facts().runsAtMostOnce(function) || walker.program().at(function).isModuleBody())
         return 0;
-    // A test of a shape is cheap enough for a weaker guess too: what was only seen to arrive.
-    Type type = walker.types().at(expected);
-    if (type.hasObjects() && !(type.primitives & ~Primitive::UndefinedOrNull) && type.hasOnlyLayouts() && !type.hasOnlyClosures())
-        return minimumOperationsPerGuessOfShape;
-    // A test for one built-in compares the value with a cell.
-    if (isDeclaredInSource && type.isObject() && singleBuiltinOf(walker.types(), type))
-        return minimumOperationsPerGuessOfShape;
-    if (!isDeclaredInSource)
-        return 0;
-    return leaning && oneOperationPaysForGuess(walker, expected, *leaning, leaningReadsMethodForItsCall) ? 1 : minimumOperationsPerGuess;
+    return leastOperationsThatOpenGuessOutsideLoops(walker, expected, isDeclaredInSource, leaning, leaningReadsMethodForItsCall);
 }
 
 bool shouldOpenGuess(const Walker& walker, Reference value, TypeID expected, bool isDeclaredInSource, uint32_t numberOfTypedOperations)
@@ -2809,8 +2658,6 @@ void openGuess(Walker& walker, Reference value, TypeID expected, BlockID inputBl
         walker.walkStretch(inputBlock, begin, end);
 }
 
-// A GUESS OF ONE READ IS ONE OPERATION. `node.kind`, outside a loop, with nothing else in the stretch: the test of the shape, the look at the slot, the load and the closed read on a rare path are what the arms come to as well, byte for byte,
-// and behind the rejoin nothing is left of the proof. So the read is built at KnowledgeLevel::Expected and does all that by itself (codegen/AOTGuessedAccessEmitter.h): no blocks, no parameter, no second and third walk of the operation.
 static bool testOfGuessStaysOperationOfItsOwn(const Walker& walker, Reference value)
 {
     if (!walker.isInLoop())
@@ -2819,25 +2666,23 @@ static bool testOfGuessStaysOperationOfItsOwn(const Walker& walker, Reference va
     return !innermost || walker.standsInFrontOfOpenLoop(*innermost, value) || walker.mayBeginTurnAgainInClosedCopy();
 }
 
-static bool buildLoneReadOfGuess(Walker& walker, const BodyValue& operation, Reference value, const TestOfGuess& chosen, uint32_t begin, const StretchOfGuess& stretch)
+static bool buildLoneReadOfGuess(Walker& walker, const BodyValue& operation, Reference value, const TestOfGuess& chosen, BlockID inputBlock, uint32_t begin, const StretchOfGuess& stretch, BranchOfGuessAskedAbout& branchAskedAbout)
 {
     if (operation.opcode() != Opcode::PropGet || stretch.end != begin + 1 || (!chosen.layouts && !chosen.isPassedAlready) || testOfGuessStaysOperationOfItsOwn(walker, value))
         return false;
-    // A target of the branch of the block looks at the value again. An operation that tests for itself proves nothing to anybody.
-    if (walker.armsTakeBranchForProofOf(walker.currentBodyIndex().blockOf(operation.id()), begin, stretch.end, chosen.isPassedAlready ? Reference() : value, stretch.placesThatTypedRunKnowsBetter))
+    if (armsOfGuessTakeBranch(walker, inputBlock, begin, stretch.end, chosen.isPassedAlready ? Reference() : value, stretch.placesThatTypedRunKnowsBetter, &branchAskedAbout))
         return false;
-    // `switch (node.kind)`: one operation gives a box, which the Switch asks for its tag. Behind arms the slot's int32 goes into the Switch as it lies.
-    if (walker.has(Mechanism::UnboxedNumbers) && isTakenBySwitchAloneForGuesses(walker, walker.currentBodyIndex().blockOf(operation.id()), operation.id(), stretch.end)) {
+    if (walker.has(Mechanism::UnboxedNumbers) && isTakenBySwitchAloneForGuesses(walker, inputBlock, operation.id(), stretch.end)) {
         TypeID found = typeFoundInFilledSlot(walker, operation, walker.types().withoutNullish(walker.types().intersectionOf(walker.typeOf(value), chosen.tested)));
         if (found && !isNeverType(found) && walker.types().at(found).isInt32())
             return false;
     }
-    // The operation makes the tests that would stand in front of the arms, and no others.
     bool looksAtSlot = stretch.firstAccessesToSlots.size() == 1 && stretch.firstAccessesToSlots[0].access == operation.id() && !stretch.firstAccessesToSlots[0].holder && stretch.storesThatLookAtCell.isEmpty();
     bool looksAtCell = stretch.firstAccessesToSlots.isEmpty() && stretch.storesThatLookAtCell.size() == 1 && stretch.storesThatLookAtCell[0] == operation.id();
     if ((!looksAtSlot && !looksAtCell) || stretch.looksWhetherValueIsAsMade || !stretch.testsOfStoredValues.isEmpty())
         return false;
     TypeID guessed = walker.types().intersectionOf(walker.typeOf(value), chosen.tested);
+    branchAskedAbout.isAsked = false;
     Reference read = looksAtSlot ? buildReadThatTestsShapeAndSlot(walker, operation, value, guessed, chosen.expectsCell) : buildReadThatTestsShapeAndCell(walker, operation, value, guessed, chosen.expectsCell);
     if (!read)
         return false;
@@ -2846,26 +2691,24 @@ static bool buildLoneReadOfGuess(Walker& walker, const BodyValue& operation, Ref
     return true;
 }
 
-static bool buildLoneStoreOfGuess(Walker& walker, const BodyValue& operation, Reference value, const TestOfGuess& chosen, uint32_t begin, const StretchOfGuess& stretch)
+static bool buildLoneStoreOfGuess(Walker& walker, const BodyValue& operation, Reference value, const TestOfGuess& chosen, BlockID inputBlock, uint32_t begin, const StretchOfGuess& stretch, BranchOfGuessAskedAbout& branchAskedAbout)
 {
     if (operation.opcode() != Opcode::PropSet || stretch.end != begin + 1 || (!chosen.layouts && !chosen.isPassedAlready) || testOfGuessStaysOperationOfItsOwn(walker, value))
         return false;
-    if (!chosen.isPassedAlready && walker.armsTakeBranchForProofOf(walker.currentBodyIndex().blockOf(operation.id()), begin, stretch.end, value, stretch.placesThatTypedRunKnowsBetter))
+    if (!chosen.isPassedAlready && armsOfGuessTakeBranch(walker, inputBlock, begin, stretch.end, value, stretch.placesThatTypedRunKnowsBetter, &branchAskedAbout))
         return false;
-    // The operation makes the tests that would stand in front of the arms, and no others.
     bool looksAtOwnSlotAlone = stretch.firstAccessesToSlots.isEmpty() || (stretch.firstAccessesToSlots.size() == 1 && stretch.firstAccessesToSlots[0].access == operation.id() && !stretch.firstAccessesToSlots[0].holder);
     bool looksAtCellForItselfAlone = stretch.storesThatLookAtCell.isEmpty() || (stretch.storesThatLookAtCell.size() == 1 && stretch.storesThatLookAtCell[0] == operation.id());
     bool testsOwnValueAlone = stretch.testsOfStoredValues.isEmpty() || (stretch.testsOfStoredValues.size() == 1 && stretch.testsOfStoredValues[0].value == operation.valueOperand());
     if (!looksAtOwnSlotAlone || !looksAtCellForItselfAlone || !testsOwnValueAlone || stretch.looksWhetherValueIsAsMade || stretch.orderWordAskedFor)
         return false;
+    branchAskedAbout.isAsked = false;
     if (!buildStoreThatTestsForItself(walker, operation, value, walker.types().intersectionOf(walker.typeOf(value), chosen.tested), chosen.expectsCell))
         return false;
     walker.noteGuessOpened();
     return true;
 }
 
-// `signature.parameters[pos]`, `declarations[0]`, outside a loop, off what is written a list, where too little leans on the list for arms. Code in line is 38 bytes a read more than the call of a stub, at sixty thousand reads of a large application.
-// So the read stays a call of five bytes, of another stub: the closed read asks first whether the key is a text and looks for a name; this one looks for an element of a list first, and keeps the registers of the code around it.
 static bool buildLoneReadOfElementOfGuess(Walker& walker, const BodyValue& operation, ValueID operand, Reference value, const ExpectationForGuesses& expectation)
 {
     if (walker.isInLoop() || operation.opcode() != Opcode::ElemGet || operand != operation.objectOperand() || !expectation.type || !expectation.isDeclared || !walker.has(Mechanism::TypedOperations))
@@ -2875,7 +2718,6 @@ static bool buildLoneReadOfElementOfGuess(Walker& walker, const BodyValue& opera
     const ClassPart* onlyClass = expected.isObject() ? singleBuiltinClassOf(types, expected) : nullptr;
     if (!onlyClass || onlyClass->builtinClass != BuiltinClasses::Array)
         return false;
-    // Only a number is an index.
     if (!(types.at(provenTypeOfInputForGuesses(walker, operation.propertyOperand())).primitives & Primitive::Integer))
         return false;
     if (TypeID expectedOfKey = findExpectationForGuesses(walker, operation.propertyOperand()).type; expectedOfKey && !(types.at(expectedOfKey).primitives & Primitive::Integer))
@@ -2887,8 +2729,6 @@ static bool buildLoneReadOfElementOfGuess(Walker& walker, const BodyValue& opera
     return true;
 }
 
-// `return join.call(list, ",")`: nothing meets behind the call that a ReturnCall returns, so it stands in no stretch. Native code comes back to its caller: behind the test the unit returns what the built-in gave,
-// and where the test fails the call leaves as it is written. In a copy that does not return in place of the unit the two meet behind the call.
 static bool openGuessAtCalleeOfReturnedCall(Walker& walker, const BodyValue& call)
 {
     if (call.opcode() != Opcode::Call)
@@ -2961,7 +2801,6 @@ static bool openGuessAtCalleeOfReturnedCall(Walker& walker, const BodyValue& cal
     return true;
 }
 
-// `overrides()`: of the variable nothing is proven; it starts with one function, and stores behind the start are seen to bring one other (Facts::findFunctionGivenTo()). Each is tested for and called directly; whatever else is there is called by value.
 bool callFunctionGivenToVariableOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
     if (!walker.has(Mechanism::DirectCalls) || call.isDoneInPlace())
@@ -2974,7 +2813,6 @@ bool callFunctionGivenToVariableOfItsOpcodes(Walker& walker, const BodyValue& ca
     Type proven = types.at(walker.typeOf(callee));
     TypeID tested;
     TypeID testedOnFailingSide;
-    // What is proven to be closures is callDirectly()'s.
     if (proven.isObject() && proven.hasOnlyClosures())
         return false;
     {
@@ -2986,12 +2824,10 @@ bool callFunctionGivenToVariableOfItsOpcodes(Walker& walker, const BodyValue& ca
         const FactTables::FunctionGivenToVariable* given = walker.facts().findFunctionGivenTo(index.value(source).as<Opcode::GetModuleVariable>().variable());
         if (!given)
             return false;
-        // Nobody knows which of the two a run meets more often. Each is one compare away.
         tested = types.forFunction(given->atStart ? given->atStart : given->function);
         if (given->atStart)
             testedOnFailingSide = walker.withoutFunctionsThatMayNotBeMentioned(types.forFunction(given->function)) == types.forFunction(given->function) ? types.forFunction(given->function) : TypeID();
     }
-    // What runs once gains nothing by a test in front of it.
     FunctionID function = walker.unit().function;
     if (walker.facts().runsAtMostOnce(function) || walker.program().at(function).isModuleBody())
         return false;
@@ -3010,32 +2846,29 @@ bool callFunctionGivenToVariableOfItsOpcodes(Walker& walker, const BodyValue& ca
     return true;
 }
 
-// THE CLOSED ROAD: nothing is expected of any value that the operation looks at, so the round over its operands below opens nothing: it is asked here, in front of all else that the round needs.
-// What is expected of a value is kept with the value, so whoever goes on pays a look at what is kept. A call goes by who is listed for it, a private name says whose it is,
-// and an access by name whose receiver is proven to be something may lack nothing but a look at its slot.
-static bool nothingIsExpectedOfOperandsForGuesses(Walker& walker, const BodyValue& operation)
+static bool nothingIsExpectedOfOperandsForGuesses(Walker& walker, const BodyValue& operation, ExpectationForGuesses& firstExpected, uint32_t& indexOfFirstExpected)
 {
-    Opcode opcode = operation.opcode();
-    if (accessesUnderPrivateNamesForGuesses.contains(opcode))
-        return false;
-    if (accessesToSlotsForGuesses.contains(opcode) && !saysNothingForGuesses(walker.types(), provenTypeOfInputForGuesses(walker, operation.objectOperand())))
-        return false;
-    bool isCall = callsOfValuesForGuesses.contains(opcode);
+    bool isCall = callsOfValuesForGuesses.contains(operation.opcode());
     bool nothingIsExpected = true;
     operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (!nothingIsExpected || isOnlyHandedOnForGuesses(operation, operandIndex))
             return;
         Reference value = walker.referenceOf(operand);
-        if (value && value.isValue())
-            nothingIsExpected = !(isCall ? expectationOfCalleeForGuesses(walker, operation, operandIndex) : expectationOfOperandForGuesses(walker, operation, operand)).type;
+        if (!value || !value.isValue())
+            return;
+        ExpectationForGuesses expectation = isCall ? expectationOfCalleeForGuesses(walker, operation, operandIndex) : expectationOfOperandForGuesses(walker, operation, operand);
+        if (!expectation.type)
+            return;
+        nothingIsExpected = false;
+        firstExpected = expectation;
+        indexOfFirstExpected = operandIndex;
     });
     return nothingIsExpected;
 }
 
-// WHAT RUNS ONCE GAINS NOTHING BY A TEST IN FRONT OF IT: leastOperationsThatOpenGuess() answers zero there whatever is expected, and every road of openGuessAt() asks shouldOpenGuess() in front of its first build().
-static bool noGuessIsOpenedWhereWalkStandsForGuesses(const Walker& walker)
+static bool noGuessIsOpenedWhereWalkStandsForGuesses(const Walker& walker, bool isInLoop)
 {
-    if (walker.isInLoop())
+    if (isInLoop)
         return false;
     FunctionID function = walker.unit().function;
     return walker.facts().runsAtMostOnce(function) || walker.program().at(function).isModuleBody();
@@ -3049,7 +2882,6 @@ static bool isReadOfVariableForGuesses(const BodyIndex& index, ValueID value)
     return value && !index.isParameter(value) && (index.opcodeOf(value) == Opcode::GetEnvironmentField || index.opcodeOf(value) == Opcode::GetModuleVariable);
 }
 
-// All that is expected of the operand passes the test. A written type that holds references holds undefined and null as well: off the two an access throws, and so does a call of them, which nobody expects either.
 static bool testAdmitsAllThatIsExpectedForGuesses(Walker& walker, const BodyValue& operation, ValueID operand, uint32_t operandIndex, TypeID expected, TypeID tested)
 {
     static constexpr OpcodeSet accessesThatThrowOffNothing { Opcode::PropGet, Opcode::PropSet, Opcode::ElemGet, Opcode::ElemSet };
@@ -3059,14 +2891,11 @@ static bool testAdmitsAllThatIsExpectedForGuesses(Walker& walker, const BodyValu
         ? operand == operation.objectOperand() && !(accessesByName.contains(opcode) && operation.isFreeName())
         : callsOfValuesForGuesses.contains(opcode) && operation.operandUses(operandIndex).contains(OperandUse::Calls);
     TypeArena& types = walker.types();
-    // `let pos: number;` holds undefined until the first store, so what is written of a binding holds it too. The checker lets no operator on numbers take what may be undefined or null: nobody expects the two there.
     static constexpr OpcodeSet operatorsOnNumbers = allRelations | allBitwiseOperators | operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative });
     bool takesNumbersAlone = operatorsOnNumbers.contains(opcode) && types.at(types.withoutNullish(expected)).hasOnlyPrimitives(Primitive::Number | Primitive::Absent);
     return types.isSubset(throwsOffNothing || takesNumbersAlone ? types.withoutNullish(expected) : expected, tested);
 }
 
-// `list[i]`: the class of the list is proven, numbers alone are written of its elements, and the position is an integer. Of what it holds nothing is proven: whoever has the list may have stored anything. The kind of its storage says what it holds.
-// No effect ends what is noted of a fresh list, and an append that the state follows changes its kind in silence: such a list is left to the forms that it has.
 bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& read)
 {
     if (!walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers) || !walker.has(Mechanism::Folding))
@@ -3078,7 +2907,6 @@ bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& re
     TypeID typeOfList = walker.typeOf(list);
     if (!readTakesIndexOfProvenList(walker.types(), typeOfList, walker.typeOf(position)))
         return false;
-    // The kind is a guess, so what is only expected of the list may name it: what is proven of a parameter need not keep what is written of the elements.
     if (!isDeclaredToHoldNumbersAlone(walker.program(), walker.types(), typeOfList)) {
         TypeID expected = findExpectationForGuesses(walker, read.objectOperand()).type;
         if (!expected || !isDeclaredToHoldNumbersAlone(walker.program(), walker.types(), walker.types().withoutNullish(expected)))
@@ -3086,10 +2914,8 @@ bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& re
     }
     if (findKnown(walker, KnownNote::NumberReadOutOfList, list, position))
         return false;
-    // A row in front of the loop has asked the list for all of it.
     if (findListTestedInFrontOfLoop(walker, read))
         return false;
-    // Link has seen all that comes out of the read, and the read is typed by that.
     if (TypeID proven = walker.facts().linked().resultOfReadByKey(walker.currentFunction(), read.id()); proven && !saysNothingForGuesses(walker.types(), proven))
         return false;
     ValueID cell = rootOfCellInSweptCode(walker.code(), list.id());
@@ -3112,17 +2938,13 @@ bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& re
     StretchOfGuess stretch = findStretchOfGuess(walker, list, chosen, block, begin, limit);
     if (stretch.numberOfTypedOperations < least)
         return false;
-    // WHERE THE ARMS MEET A NUMBER IS BOXED: the closed arm brings what nobody knows. `s += list[i]`: the sum goes round the loop in a box, and the typed arm would unbox it, add, and box it again with the question for an int32.
-    // So whatever the typed run knows more of than the closed arm is used up in the stretch. `list[i] / 2` is a number in both arms, and held as a double in both.
     uint32_t first = block.firstValue().index();
-    // `line += list[i] + ","`: the writer of texts asks a box for its tag, and writes an int32 without a call. Of a double it makes a string by the run time.
     for (uint32_t place = begin + 1; place < stretch.end; ++place) {
         BodyValue operation = index.value(ValueID(first + place));
         if (!operationsThatJoinTexts.contains(operation.opcode()))
             continue;
         bool joinsNumbersAlone = true;
         operation.forEachOperand([&](ValueID operand, uint32_t) {
-            // What the stretch itself makes: the element, what an operator has made of numbers, a number that is written.
             if (operand.index() >= first + begin) {
                 Opcode maker = index.opcodeOf(operand);
                 joinsNumbersAlone &= operand == read.id() || operatorsThatMakeNumbers.contains(maker) || maker == Opcode::Integer || maker == Opcode::Double || inputOperationsThatOnlyHandOn.contains(maker);
@@ -3152,7 +2974,6 @@ bool openGuessAtElementOfNumbersOfItsOpcodes(Walker& walker, const BodyValue& re
     return true;
 }
 
-// Behind the last operation of the block, in front of `limit`, that takes what the operation at `place` gives, itself or through others.
 static uint32_t endOfWhatTakesResultForGuesses(Walker& walker, const BodyBlock& block, uint32_t place, uint32_t limit)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -3176,8 +2997,6 @@ static uint32_t endOfWhatTakesResultForGuesses(Walker& walker, const BodyBlock& 
     return end;
 }
 
-// `table.handler(x)`: LinkTables::callsThatFindBuiltins. The read of the method and its call are one operation in closed code, and a typed read saves nothing by itself. Here the call has something to ask the value for:
-// so behind a look at the slot the value is loaded, and the stretch from the read to the call is walked with it. An empty slot: the call as written.
 static bool takeApartCallThatFindsBuiltinForGuesses(Walker& walker, const BodyValue& read)
 {
     if (!walker.facts().held().callersThatFindBuiltins.get(walker.currentFunction().index()) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::DirectCalls))
@@ -3207,27 +3026,49 @@ static bool takeApartCallThatFindsBuiltinForGuesses(Walker& walker, const BodyVa
     return true;
 }
 
+static bool nameMayOpenGuessOfKeyOrdersForGuesses(const Walker& walker, const BodyValue& access)
+{
+    if (access.isFreeName())
+        return false;
+    PropertyKeyID name = access.key();
+    if (!name || liesInThread(name))
+        return false;
+    const LinkTables& linked = walker.facts().linked();
+    return linked.keysOfAccessorsExpectedInFields.get(name.index()) || linked.keysOfStaticFields.get(name.index());
+}
+
 constinit const OpcodeSet opcodesThatOpenGuessAtTakes = operationsThatOpenGuesses;
 
 GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
 {
-    if (!operationsThatOpenGuesses.contains(operation.opcode()))
+    Opcode opcode = operation.opcode();
+    if (!operationsThatOpenGuesses.contains(opcode))
         return GuessOpened::None;
     if (guessThatOperandBesideStringHasText(walker, operation))
         return GuessOpened::WithArms;
-    if (noGuessIsOpenedWhereWalkStandsForGuesses(walker))
+    bool isInLoop = walker.isInLoop();
+    if (noGuessIsOpenedWhereWalkStandsForGuesses(walker, isInLoop))
         return GuessOpened::None;
-    if (forwardCallBehindTestOfCallee(walker, operation) || openGuessAtCalleeOfReturnedCall(walker, operation) || openGuessOfKeyOrders(walker, operation) || callGetterExpectedAtRead(walker, operation))
+    if (opcode == Opcode::Call && (forwardCallBehindTestOfCallee(walker, operation) || openGuessAtCalleeOfReturnedCall(walker, operation)))
         return GuessOpened::WithArms;
-    if (takeApartCallThatFindsBuiltinForGuesses(walker, operation))
+    if (opcodesThatOpenGuessOfKeyOrdersTakes.contains(opcode) && nameMayOpenGuessOfKeyOrdersForGuesses(walker, operation) && openGuessOfKeyOrders(walker, operation))
+        return GuessOpened::WithArms;
+    if (opcode == Opcode::PropGet && (callGetterExpectedAtRead(walker, operation) || takeApartCallThatFindsBuiltinForGuesses(walker, operation)))
         return GuessOpened::WithArms;
     if (callFunctionGivenToVariable(walker, operation))
         return GuessOpened::WithArms;
-    if (nothingIsExpectedOfOperandsForGuesses(walker, operation))
+
+    bool accessesSlot = accessesToSlotsForGuesses.contains(opcode);
+    bool isUnderPrivateName = accessesUnderPrivateNamesForGuesses.contains(opcode);
+    ValueID object = accessesSlot ? operation.objectOperand() : ValueID();
+    TypeID provenOfObject = accessesSlot && !isUnderPrivateName ? provenTypeOfInputForGuesses(walker, object) : TypeID();
+    bool mayHaveTypedForm = accessesSlot && (isUnderPrivateName || !saysNothingForGuesses(walker.types(), provenOfObject));
+    ExpectationForGuesses firstExpected;
+    uint32_t indexOfFirstExpected = UINT32_MAX;
+    if (!mayHaveTypedForm && nothingIsExpectedOfOperandsForGuesses(walker, operation, firstExpected, indexOfFirstExpected))
         return GuessOpened::None;
 
     const BodyIndex& index = walker.currentBodyIndex();
-    // The block being walked, without a search for it.
     BodyBlock block = index.block(walker.inputBlockBeingWalked());
     if (!block.holds(operation.id()))
         block = index.block(index.blockOf(operation.id()));
@@ -3236,22 +3077,24 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
     if (begin >= limit)
         return GuessOpened::None;
 
-    // The layouts of the receiver are proven, and all that the access lacks is a look at its slot. That the property is there is what the source says.
-    // Or the class of the receiver is proven, and all that the read lacks is a look at whether the object is as its class makes it. That the class answers to the name is what the source says.
-    // Or all that a store lacks beside that is a test of what it stores.
-    // No access by name has a typed form on a receiver of which nothing is proven. A private name says whose it is.
-    bool mayHaveTypedForm = accessesToSlotsForGuesses.contains(operation.opcode())
-        && (accessesUnderPrivateNamesForGuesses.contains(operation.opcode()) || !saysNothingForGuesses(walker.types(), provenTypeOfInputForGuesses(walker, operation.objectOperand())));
     TypeID askedOfStoredValue;
-    if (mayHaveTypedForm && storesIntoSlotsForGuesses.contains(operation.opcode()) && walker.referenceOf(operation.valueOperand()).isValue())
-        askedOfStoredValue = typeAskedOfStoredValueForGuesses(walker, operation, provenTypeOfInputForGuesses(walker, operation.objectOperand()), provenTypeOfInputForGuesses(walker, operation.valueOperand()));
-    TypedForm formAsItStands = mayHaveTypedForm ? typedFormOf(walker, operation, [&](ValueID input) {
-        TypeID proven = provenTypeOfInputForGuesses(walker, input);
-        return askedOfStoredValue && input == operation.valueOperand() ? walker.types().intersectionOf(proven, askedOfStoredValue) : proven;
-    }) : TypedForm::None;
+    if (mayHaveTypedForm && storesIntoSlotsForGuesses.contains(opcode) && walker.referenceOf(operation.valueOperand()).isValue())
+        askedOfStoredValue = typeAskedOfStoredValueForGuesses(walker, operation, provenOfObject, provenTypeOfInputForGuesses(walker, operation.valueOperand()));
+    FirstOperationOfGuessAsItStands asItStands { operation.words(), TypedForm::None, { }, askedOfStoredValue };
+    if (mayHaveTypedForm) {
+        walker.takeFormAskedAhead();
+        asItStands.form = typedFormOf(walker, operation, [&](ValueID input) {
+            TypeID proven = provenOfObject && input == object ? provenOfObject : provenTypeOfInputForGuesses(walker, input);
+            return askedOfStoredValue && input == operation.valueOperand() ? walker.types().intersectionOf(proven, askedOfStoredValue) : proven;
+        });
+        asItStands.askedAhead = walker.takeFormAskedAhead();
+    }
+    TypedForm formAsItStands = asItStands.form;
     bool lacksOnlyFilledSlot = formAsItStands == TypedForm::BuiltBehindFilledSlot || formAsItStands == TypedForm::BuiltBehindEmptySlot || formAsItStands == TypedForm::BuiltOnObjectAsMade
         || formAsItStands == TypedForm::BuiltBehindLookAtCell || formAsItStands == TypedForm::BuiltBehindFilledSlotAndLookAtCell || (askedOfStoredValue && formAsItStands == TypedForm::Built);
 
+    bool isCall = callsOfValuesForGuesses.contains(opcode);
+    bool readsMethodForItsCall = isReadOfMethodForItsCallForGuesses(index, operation);
     GuessOpened opened = GuessOpened::None;
     operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (opened != GuessOpened::None || isOnlyHandedOnForGuesses(operation, operandIndex))
@@ -3263,24 +3106,28 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
         ExpectationForGuesses expectation;
         std::optional<TestOfGuess> chosen;
         if (lacksOnlyFilledSlot) {
-            if (operand != operation.objectOperand())
+            if (operand != object)
                 return;
             expectation = { walker.typeOf(value), true };
             chosen = TestOfGuess { expectation.type, { }, true };
         } else {
-            expectation = callsOfValuesForGuesses.contains(operation.opcode())
-                ? expectationOfCalleeForGuesses(walker, operation, operandIndex)
-                : expectationOfOperandForGuesses(walker, operation, operand);
-            // In the copy of a callee the looks list no guess: the walk opens it here, and asks for what they have counted on: forEachTypeThatGuessWouldProveAt().
-            if (expectation.type && walker.standsInTurnThatLooksCountOn() && !callsOfValuesForGuesses.contains(operation.opcode())) {
+            if (operandIndex == indexOfFirstExpected)
+                expectation = firstExpected;
+            else {
+                expectation = isCall
+                    ? expectationOfCalleeForGuesses(walker, operation, operandIndex)
+                    : expectationOfOperandForGuesses(walker, operation, operand);
+            }
+            if (expectation.type && walker.standsInTurnThatLooksCountOn() && !isCall) {
                 ExpectationOfNumber found { expectation.type, expectation.isDeclared, expectation.isHeld };
                 expectation.type = (isReadOfVariableForGuesses(index, operand) ? numbersExpectedOf(walker, operand, found) : numbersExpectedOfSlotThatTurnsStep(walker, operand, found)).type;
             }
-            if (accessesUnderPrivateNamesForGuesses.contains(operation.opcode()) && operand == operation.objectOperand())
+            if (isUnderPrivateName && operand == object)
                 expectation = expectationOfHolderOfPrivateNameForGuesses(walker, operation, expectation);
-            else if (accessesToSlotsForGuesses.contains(operation.opcode()) && operand == operation.objectOperand() && !index.isParameter(operand) && index.opcodeOf(operand) == Opcode::NarrowByField) {
+            else if (operand == object && expectation.type && holdsLayoutsBesideOtherObjectsForGuesses(walker.types().at(expectation.type)))
+                expectation.type = narrowedByNameAskedForGuesses(walker, expectation.type, operation.key());
+            else if (operand == object && !index.isParameter(operand) && index.opcodeOf(operand) == Opcode::NarrowByField) {
                 TypeID narrowed = narrowedByNameAskedForGuesses(walker, expectation.type, operation.key());
-                // Several of the members that the tag leaves have the name. Such a set stands in no table: it is asked member by member, and seldom answers by one slot. What is expected of the holder in front of the test stands.
                 bool isOneLayout = narrowed && walker.types().at(narrowed).hasOnlyLayouts() && holdsOneMember(walker.types().at(narrowed).layouts);
                 if (isOneLayout)
                     expectation.type = narrowed;
@@ -3288,20 +3135,17 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
                     expectation = findExpectationForGuesses(walker, index.value(operand).as<Opcode::NarrowByField>().valueOperand());
             }
         }
-        // Where no number of operations would open it, the stretch is not looked at. None counts for more than two.
-        uint32_t least = leastOperationsThatOpenGuess(walker, value, expectation.type, expectation.isDeclared, operation.opcode(), isReadOfMethodForItsCallForGuesses(index, operation));
-        // `list.push(x)`, one call, outside of loops, and the walk has PROVEN that it is a list: one bit of the cell is asked, and behind it stands the method's own code, in line or entered with raw operands,
-        // in the place of two stubs that ask for the class, for the bit and for the kind of storage. A table's method is entered by the same stub either way: there the look buys nothing.
-        if (least > 1 && formAsItStands == TypedForm::BuiltOnObjectAsMade && isReadOfMethodForItsCallForGuesses(index, operation)) {
+        uint32_t least = 0;
+        if (walker.has(Mechanism::Guesses) && expectation.type)
+            least = isInLoop ? minimumOperationsPerGuessInLoop : leastOperationsThatOpenGuessOutsideLoops(walker, expectation.type, expectation.isDeclared, opcode, readsMethodForItsCall);
+        if (least > 1 && formAsItStands == TypedForm::BuiltOnObjectAsMade && readsMethodForItsCall) {
             const ClassPart* onlyClass = singleBuiltinClassOf(walker.types(), walker.types().at(walker.types().withoutNullish(expectation.type)));
             if (onlyClass && onlyClass->builtinClass == BuiltinClasses::Array)
                 least = 1;
         }
-        // Of a Map and a Set: behind the tests the method of the library is copied to where it is called, the closure's body into its loop, and the closure is never made.
         bool callIsLoopOverTable = false;
-        if (expectation.isDeclared && walker.has(Mechanism::Guesses) && walker.has(Mechanism::Inlining) && callOfMethodIsHandedClosureMadeForItForGuesses(index, operation)) {
+        if (readsMethodForItsCall && expectation.isDeclared && walker.has(Mechanism::Guesses) && walker.has(Mechanism::Inlining) && callOfMethodIsHandedClosureMadeForItForGuesses(index, operation)) {
             const ClassPart* onlyClass = singleBuiltinClassOf(walker.types(), walker.types().at(walker.types().withoutNullish(expectation.type)));
-            // `table.forEach(f, size(table) > 1 ? a : b)`: the call stands behind a branch, in another block. A stretch ends in the block in which it begins, below the limit, and holds nothing that stands in no stretch.
             ValueID call = index.onlyUsingValue(operation.id());
             uint32_t firstValue = block.firstValue().index();
             bool stretchReachesCall = block.holds(call) && call.index() - firstValue < limit;
@@ -3319,13 +3163,11 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
         };
         if (least > 2 * (limit - begin))
             return buildAsOneOperationOrLeaveClosed();
-        if ((least > 1 || isReadOfMethodForItsCallForGuesses(index, operation)) && mostOperationsThatStretchCountsForGuesses(walker, value, lacksOnlyFilledSlot, block, begin, limit, least) < least)
+        if ((least > 1 || readsMethodForItsCall) && mostOperationsThatStretchCountsForGuesses(walker, value, lacksOnlyFilledSlot, block, begin, limit, least) < least)
             return buildAsOneOperationOrLeaveClosed();
         if (!chosen)
             chosen = chooseTestOfGuess(walker, value, expectation.type);
-        StretchOfGuess stretch;
-        if (chosen)
-            stretch = findStretchOfGuess(walker, value, *chosen, block, begin, limit);
+        StretchOfGuess stretch = chosen ? findStretchOfGuess(walker, value, *chosen, block, begin, limit, lacksOnlyFilledSlot ? &asItStands : nullptr) : StretchOfGuess();
         if (TypeID part = lacksOnlyFilledSlot || !chosen ? expectation.type : partWhoseClassesHaveGuardsForGuesses(walker, expectation.type); part != expectation.type) {
             if (std::optional<TestOfGuess> testOfPart = chooseTestOfGuess(walker, value, part)) {
                 StretchOfGuess stretchOfPart = findStretchOfGuess(walker, value, *testOfPart, block, begin, limit);
@@ -3335,12 +3177,7 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
                 }
             }
         }
-        // No test for all that is expected opens anything here, be it that the value has passed it already. The members that have the name are asked for.
-        // Of what the source declares anywhere, of what was only seen to arrive or is held in a loop alone, as every weaker guess.
-        bool asksForNameOfSomeMembers = ((expectation.isDeclared && !expectation.isHeld) || walker.isInLoop()) && !lacksOnlyFilledSlot && stretch.numberOfTypedOperations < least && accessesToSlotsForGuesses.contains(operation.opcode())
-            && !accessesUnderPrivateNamesForGuesses.contains(operation.opcode()) && operand == operation.objectOperand();
-        // `const step = it.next(); step.done`: what a callee that nobody knows has answered with may well be an object of the engine, which no test for layouts lets pass. Only what is written speaks for the members,
-        // and for some of them it says less than for all.
+        bool asksForNameOfSomeMembers = ((expectation.isDeclared && !expectation.isHeld) || isInLoop) && !lacksOnlyFilledSlot && stretch.numberOfTypedOperations < least && !isUnderPrivateName && operand == object;
         if (asksForNameOfSomeMembers) {
             UnknownSeeds seeds = walker.types().at(walker.typeOf(value)).seeds;
             asksForNameOfSomeMembers = seeds.isEmpty() || !seeds.containsOnly({ UnknownSeed::ResultOfUnknownCallee, UnknownSeed::UndescribedNativeResult });
@@ -3356,13 +3193,11 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
         }
         if (!chosen)
             return;
-        // `text.startsWith(roots[i] + "/")`: the test that alone takes the join at the end of the stretch is walked with it: in the typed arm the join is never made, buildTestAgainstJoinOfTexts().
         if (stretch.end > begin) {
             uint32_t firstValue = block.firstValue().index();
             if (ValueID test = findTestOfEndThatTakesJoinApart(walker, index.value(ValueID(firstValue + stretch.end - 1)), value); test && test.index() < firstValue + limit)
                 stretch.end = test.index() + 1 - firstValue;
         }
-        // A stretch counts what is built typed with the proof and closed without it, and a method of the library, which is entered either way, counts for nothing. Here the arm is wanted for what the copy of the method makes of the closure.
         if (callIsLoopOverTable && stretch.numberOfTypedOperations < least) {
             stretch.end = index.onlyUsingValue(operation.id()).index() + 1 - block.firstValue().index();
             stretch.numberOfTypedOperations = least;
@@ -3371,29 +3206,27 @@ GuessOpened openGuessAtOfItsOpcodes(Walker& walker, const BodyValue& operation)
             return buildAsOneOperationOrLeaveClosed();
         chosen->expectsCell = expectation.admitsNoNumberOrBoolean;
         chosen->admitsAllThatIsExpected = testAdmitsAllThatIsExpectedForGuesses(walker, operation, operand, operandIndex, expectation.type, chosen->tested);
-        // The closure is asked for first, and where that fails the built-in.
         if (const LinkedCallThatFindsBuiltin* found = callsOfValuesForGuesses.contains(operation.opcode()) ? walker.facts().held().findCallThatFindsBuiltin(walker.currentFunction(), operation.id()) : nullptr) {
             if (found->callee && chosen->tested == walker.types().forFunction(found->callee) && operand == operation.calleeOperand() && isTestableBuiltin(walker.program().builtins(), found->builtin)) {
                 chosen->failingSideAsksFor = walker.types().forBuiltin(found->builtin);
                 chosen->failingSideIsAsLikely = true;
             }
-            // What the closed arm gives is anything. Each arm goes on to the last operation that takes the answer, so that what the typed runs know of it is not lost where they meet the closed one.
             stretch.end = std::max(stretch.end, endOfWhatTakesResultForGuesses(walker, block, begin, limit));
         }
-        if (operation.opcode() == Opcode::ToBoolean && !chosen->isPassedAlready && stretch.end == begin + 1 && walker.types().at(chosen->tested).isObject()) {
-            if (chosen->layouts && !walker.armsTakeBranchForProofOf(block.id(), begin, stretch.end, value, stretch.placesThatTypedRunKnowsBetter) && !standsBehindTestOfGuess(walker.code(), value, TestOfGuess { TypeTable::object, { } })) {
+        BranchOfGuessAskedAbout branchAskedAbout;
+        if (opcode == Opcode::ToBoolean && !chosen->isPassedAlready && stretch.end == begin + 1 && walker.types().at(chosen->tested).isObject()) {
+            if (chosen->layouts && !armsOfGuessTakeBranch(walker, block.id(), begin, stretch.end, value, stretch.placesThatTypedRunKnowsBetter, &branchAskedAbout) && !standsBehindTestOfGuess(walker.code(), value, TestOfGuess { TypeTable::object, { } })) {
                 buildTruthOfObjectOrNothing(walker, operation, value, block.id(), begin);
                 opened = GuessOpened::WithArms;
                 return;
             }
             chosen->failingSideAsksForNothing = true;
         }
-        // One operation that tests for itself does the closed operation where its test fails, and a turn that may begin again does not.
-        if (!(chosen->admitsAllThatIsExpected && walker.mayBeginTurnAgainInClosedCopy()) && (buildLoneReadOfGuess(walker, operation, value, *chosen, begin, stretch) || buildLoneStoreOfGuess(walker, operation, value, *chosen, begin, stretch))) {
+        if (!(chosen->admitsAllThatIsExpected && walker.mayBeginTurnAgainInClosedCopy()) && (buildLoneReadOfGuess(walker, operation, value, *chosen, block.id(), begin, stretch, branchAskedAbout) || buildLoneStoreOfGuess(walker, operation, value, *chosen, block.id(), begin, stretch, branchAskedAbout))) {
             opened = GuessOpened::AsOneOperation;
             return;
         }
-        openGuessWithTest(walker, value, *chosen, block.id(), begin, stretch);
+        openGuessWithTest(walker, value, *chosen, block.id(), begin, stretch, &branchAskedAbout);
         opened = GuessOpened::WithArms;
     });
     return opened;
@@ -3404,7 +3237,6 @@ void forEachTypeThatGuessWouldProveAt(Walker& walker, const BodyValue& operation
     if (!operationsThatOpenGuesses.contains(operation.opcode()) || accessesUnderPrivateNamesForGuesses.contains(operation.opcode()))
         return;
     TypeArena& types = walker.types();
-    // The looks of one preview remember among themselves, and forget behind the preview.
     Vector<ValueID, 16> remembered;
     bool forgetsItself = !walker.expectationsRememberedForLook();
     if (forgetsItself)
@@ -3421,14 +3253,11 @@ void forEachTypeThatGuessWouldProveAt(Walker& walker, const BodyValue& operation
             toForget.shrink(numberToForget);
         if (!expectation.type)
             return;
-        // `let pos: number`, a variable that closures share, of which Link has seen whole numbers alone. The failing side is the other copy: no arm, nothing comes back boxed, so an int32 is asked for where one is likely.
-        // Of a read of a variable alone: what the turn itself has computed is typed as it is, and a test on it would only stand in the way of the turns.
         if (isReadOfVariableForGuesses(walker.currentBodyIndex(), operand))
             expectation.type = numbersExpectedOf(walker, operand, { expectation.type, expectation.isDeclared, expectation.isHeld }).type;
         else
             expectation.type = numbersExpectedOfSlotThatTurnsStep(walker, operand, { expectation.type, expectation.isDeclared, expectation.isHeld }).type;
         std::optional<TestOfGuess> chosen = chooseTestOfTypeForGuesses(walker, expectation.type);
-        // Whatever is expected and fails would leave the typed copy for good.
         if (!chosen || chosen->failingSideAsksFor || !testAdmitsAllThatIsExpectedForGuesses(walker, operation, operand, operandIndex, expectation.type, chosen->tested) || walker.withoutFunctionsThatMayNotBeMentioned(chosen->tested) != chosen->tested)
             return;
         TypeID held = typesOfInputs(operand);
@@ -3505,7 +3334,6 @@ bool guessesMayTypeOperationInCleanTurn(Walker& walker, const BodyValue& operati
     const BodyIndex& index = walker.currentBodyIndex();
     Opcode opcode = operation.opcode();
     if (callsOfValuesForGuesses.contains(opcode)) {
-        // Who is entered is known, held or guessed: what the callee does shows where it is looked at.
         if (walker.facts().linked().calleeAt(walker.currentFunction(), operation.id()) || walker.facts().held().calleeAt(walker.currentFunction(), operation.id()))
             return true;
         static_assert(OperandIndex::SuperConstruct::parent == OperandIndex::Call::callee && OperandIndex::SuperConstructList::parent == OperandIndex::Call::callee);
@@ -3538,7 +3366,6 @@ bool guessesMayTypeOperationInCleanTurn(Walker& walker, const BodyValue& operati
     FunctionID halfRunBehindLooks;
     std::optional<Effects> effects = effectsOfTypedFormAhead(walker, operation, TypesOfInputs(typeBehindTests), &halfRunBehindLooks);
     walker.setLooksTakeFormsBehindLooksAsBuilt(false);
-    // As of a call: what the half does shows where it is looked at.
     return halfRunBehindLooks || (effects && !effects->mayRunOtherCode());
 }
 
@@ -3568,7 +3395,6 @@ bool askGuardsAboutDeclaredMember(Walker& walker, const BodyValue& operation)
     return true;
 }
 
-// Closed, the question is a call of a stub with a look into two tables behind it.
 static constexpr uint32_t closedOperationsOfQuestionAboutOwnProperty = 2;
 
 LayoutSetID receiversWhoseCellsAnswerForOwnProperty(Walker& walker, ValueID input, PropertyKeyID key)
@@ -3592,7 +3418,6 @@ LayoutSetID receiversWhoseCellsAnswerForOwnProperty(Walker& walker, ValueID inpu
     return type.layouts;
 }
 
-// The values that are not proven to fit their slots are tested in a row. All pass: the allocation lists all that is written. One fails: the allocation as it is built without the tests.
 bool openGuessAtAllocation(Walker& walker, const BodyValue& operation)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -3608,14 +3433,13 @@ bool openGuessAtAllocation(Walker& walker, const BodyValue& operation)
     TypeArena& types = walker.types();
     StretchOfGuess stretch { begin + 1, 0, { } };
     for (size_t place = 0; place < values.size(); ++place) {
-        TypeID held = walker.plan().slot(allocation.layout(), allocation.fields()[place]).type;
+        TypeID held = walker.plan().slot(allocation.layout(), allocation.fields()[place]).typeInLayoutRecord();
         Reference value = walker.referenceOf(values[place]);
         TypeID proven = value ? walker.typeOf(value) : TypeID();
         if (!held || !proven || types.isSubset(proven, held))
             continue;
         if (!value.isValue() || !types.overlap(proven, held) || standsBehindTestOfGuess(walker.code(), value, TestOfGuess { held, { } }))
             return false;
-        // From here on each field would be defined by name.
         if (!stretch.numberOfTypedOperations)
             stretch.numberOfTypedOperations = static_cast<uint32_t>(values.size() - place);
         stretch.testsOfStoredValues.append({ values[place], held });
@@ -3626,16 +3450,12 @@ bool openGuessAtAllocation(Walker& walker, const BodyValue& operation)
     TestOfStoredValueOfGuess first = stretch.testsOfStoredValues[0];
     stretch.testsOfStoredValues.removeAt(0);
     Reference value = walker.referenceOf(first.value);
-    // A definition by name tests the value in its stub, so one of them pays for the test.
     if (!shouldOpenGuess(walker, value, first.tested, true, std::max(stretch.numberOfTypedOperations, minimumOperationsPerGuess)))
         return false;
     openGuessWithTest(walker, value, TestOfGuess { first.tested, { } }, block.id(), begin, stretch);
     return true;
 }
 
-// ---- In front of a loop that is built twice
-
-// A cast becomes its operand.
 static ValueID valueBehindCastsOfLoopForGuesses(const BodyIndex& index, ValueID value, uint32_t firstValueOfLoop)
 {
     while (value.index() >= firstValueOfLoop && !index.isParameter(value) && inputOperationsThatHandOn.contains(index.opcodeOf(value)) && index.value(value).operand(0))
@@ -3643,7 +3463,6 @@ static ValueID valueBehindCastsOfLoopForGuesses(const BodyIndex& index, ValueID 
     return value;
 }
 
-// `i < n`: beside a number a relation asks a value of which nothing is known in line, and converts what is no number, which may run code. So the look at the loop has to count on any code.
 static bool mayRunCodeAsOperatorForGuesses(Walker& walker, const BodyValue& operation, const TypesOfInputs& types)
 {
     if (effectRuleOf(operation.opcode()) != EffectRule::Operator)
@@ -3660,7 +3479,6 @@ static bool mayRunCodeAsOperatorForGuesses(Walker& walker, const BodyValue& oper
     return effectsOfOperator(walker.typing(), operation.opcode(), operandTypes.span(), result).mayRunOtherCode();
 }
 
-// The types of the look hold in every turn. An operation counts where it is built typed with the proof and closed with the types of the look alone, or where only the proof says that it runs no code.
 Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID inputHead, const LoopPreview& preview)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -3708,7 +3526,6 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
                 std::optional<TestOfGuess> chosen = expectation.type ? chooseTestOfGuess(walker, value, expectation.type) : std::nullopt;
                 if (!chosen)
                     return;
-                // The guard at the entry lets undefined and null pass. So each turn has the check that traps in front of the access, and what hangs on the check stays in the loop.
                 bool rulesOutNullish = accessesToSlotsForGuesses.contains(operation.opcode()) && operand == operation.objectOperand() && types.withoutNullish(walker.typeOf(value)) != walker.typeOf(value);
                 TypeID typeBehindTest = types.intersectionOf(walker.typeOf(value), chosen->tested);
                 auto typeWithProof = [&](ValueID input) -> TypeID {
@@ -3746,6 +3563,121 @@ Vector<GuessInFrontOfLoop, 4> findGuessesInFrontOfLoop(Walker& walker, BlockID i
     return guesses;
 }
 
+static constexpr size_t mostMembersToldApartInFrontOfLoop = 4;
+static constexpr OpcodeSet accessesToldApartInFrontOfLoop { Opcode::PropGet, Opcode::PropSet, Opcode::ElemGet, Opcode::ElemSet };
+
+static Vector<TypeID, mostMembersToldApartInFrontOfLoop> membersOfSetForGuesses(Walker& walker, TypeID expected)
+{
+    TypeArena& types = walker.types();
+    TypeID objects = types.withOnlyObjects(expected);
+    Type type = types.at(objects);
+    if (!type.hasObjects() || type.hasUnboundedUnknown() || type.hasOnlyClosures())
+        return { };
+    std::span<const ClassPart> classes = types.at(type.classes);
+    std::span<const LayoutID> layouts = types.listOf(type.layouts);
+    if (classes.size() + layouts.size() < 2 || classes.size() + layouts.size() > mostMembersToldApartInFrontOfLoop)
+        return { };
+    Vector<TypeID, mostMembersToldApartInFrontOfLoop> members;
+    for (size_t place = 0; place < classes.size(); ++place)
+        members.append(types.intersectionOf(objects, types.builtinClass(types.at(type.classes)[place].builtinClass)));
+    for (size_t place = 0; place < layouts.size(); ++place)
+        members.append(types.intersectionOf(objects, types.forLayout(types.listOf(type.layouts)[place])));
+    for (size_t place = 0; place < members.size(); ++place) {
+        if (!members[place] || isNeverType(members[place]))
+            return { };
+        for (size_t other = 0; other < place; ++other) {
+            if (types.overlap(members[place], members[other]))
+                return { };
+        }
+    }
+    return members;
+}
+
+Vector<GuessInFrontOfLoop, 4> findMembersToldApartInFrontOfLoop(Walker& walker, BlockID inputHead, const LoopPreview& preview)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    TypeArena& types = walker.types();
+    LoopID loop = index.loopOf(inputHead);
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+
+    auto typeInLook = [&](ValueID input) -> TypeID {
+        if (input.index() < firstValueOfLoop)
+            return provenTypeOfInputForGuesses(walker, input);
+        size_t place = input.index() - preview.firstValue;
+        TypeID type = input.index() >= preview.firstValue && place < preview.typesOfValues.size() ? preview.typesOfValues[place] : TypeID();
+        return type ? type : TypeID(TypeTable::anything);
+    };
+    TypesOfInputs typesOfLook(typeInLook);
+
+    Vector<GuessInFrontOfLoop, 4> members;
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (!accessesToldApartInFrontOfLoop.contains(operation.opcode()))
+                continue;
+            ValueID operand = operation.objectOperand();
+            ValueID inFront = operand ? valueBehindCastsOfLoopForGuesses(index, operand, firstValueOfLoop) : ValueID();
+            if (!inFront || inFront.index() >= firstValueOfLoop)
+                continue;
+            if ((operation.opcode() == Opcode::PropGet || operation.opcode() == Opcode::PropSet) && operation.isFreeName())
+                continue;
+            Reference value = walker.referenceOf(inFront);
+            if (!value || !value.isValue() || typedFormForGuesses(walker, operation, typesOfLook) != TypedForm::None)
+                continue;
+            TypeID proven = walker.typeOf(value);
+            TypeID expected = saysNothingForGuesses(types, proven) ? findExpectationForGuesses(walker, operand).type : proven;
+            if (!expected)
+                continue;
+            for (TypeID part : membersOfSetForGuesses(walker, expected)) {
+                std::optional<TestOfGuess> chosen = chooseTestOfGuess(walker, value, part);
+                TypeID typeBehindTest = chosen ? types.intersectionOf(proven, chosen->tested) : TypeID();
+                auto typeWithProof = [&](ValueID input) -> TypeID {
+                    ValueID behindCasts = valueBehindCastsOfLoopForGuesses(index, input, firstValueOfLoop);
+                    return behindCasts.index() < firstValueOfLoop && walker.referenceOf(behindCasts) == value ? typeBehindTest : typeInLook(input);
+                };
+                TypesOfInputs typesWithProof(typeWithProof);
+                if (chosen && typedFormForGuesses(walker, operation, typesWithProof) != TypedForm::None)
+                    members.append(GuessInFrontOfLoop { value, chosen->tested, chosen->layouts, { } });
+            }
+            if (members.size() >= 2)
+                break;
+            members.shrink(0);
+        }
+        if (!members.isEmpty())
+            break;
+    }
+    if (members.isEmpty())
+        return members;
+
+    Vector<ValueID, 2> names;
+    auto mention = [&](ValueID operand) {
+        if (operand && operand.index() < firstValueOfLoop && !names.contains(operand) && walker.referenceOf(operand) == members[0].value)
+            names.append(operand);
+    };
+    for (BlockID member : index.membersOf(loop)) {
+        BodyBlock block = index.block(member);
+        for (BodyValue operation : block.values()) {
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                mention(operand);
+            });
+        }
+        BodyTerminator end = block.terminator();
+        end.forEachOperand([&](ValueID operand, uint32_t) {
+            mention(operand);
+        });
+        for (BodyTarget target : end.targets()) {
+            for (ValueID argument : target.arguments())
+                mention(argument);
+        }
+        if (block.hasHandler()) {
+            for (ValueID argument : block.handler().arguments())
+                mention(argument);
+        }
+    }
+    for (GuessInFrontOfLoop& member : members)
+        member.names = names;
+    return members;
+}
+
 Reference buildTestInFrontOfLoop(Walker& walker, const GuessInFrontOfLoop& guess, Origin origin)
 {
     return buildTestOfGuess(walker, guess.value, TestOfGuess { guess.tested, guess.layouts }, origin);
@@ -3756,24 +3688,18 @@ Reference buildProofInFrontOfLoop(Walker& walker, const GuessInFrontOfLoop& gues
     return buildProofOfGuess(walker, guess.value, test, TestOfGuess { guess.tested, guess.layouts }, origin);
 }
 
-// ---- The guard at the entry of a function
-
 OperatorForm formAllowedForTypedOperator(Walker&, Opcode, const BodyValue&, const InputsOfTypedOperation&);
 
 namespace {
 
 struct ParameterOfGuard {
     uint32_t entryParameter { 0 };
-    // What the guard lets through.
     TypeID tested;
-    // What is proven of the parameter in front of the guard, and behind it.
     TypeID inFrontOfGuard;
     TypeID behindGuard;
     bool isLeanedOn { false };
-    // With the primitives that stand beside the objects in what is written or held. Null: there are none, or no test tells the whole.
     TypeID testedWithPrimitives;
     bool isToldApartByBody { false };
-    // Of undefined and null, which were cut away with those primitives: what a test of the body asks for by itself.
     uint16_t nullishAskedFor { 0 };
 };
 
@@ -3792,7 +3718,6 @@ struct WorkerOfParameterGuards {
 
 } // anonymous namespace
 
-// The ramp of a coroutine hands its parameters on to a body that is entered again and again, the body of a module takes none, and whoever runs an initializer is making `this`: each keeps its one body.
 static bool mayHaveParameterGuard(const Walker& walker, FunctionID id)
 {
     const Function& function = walker.program().at(id);
@@ -3828,19 +3753,16 @@ static bool describesBagOfOptionsForGuesses(Walker& walker, TypeID expected)
     return describesBag;
 }
 
-// What is written holds undefined and null wherever it holds a reference, so the two pass. Null: no test for the type is worth its code, it would tell nothing new of the parameter, or it would never pass.
 static TypeID typeTestedByParameterGuard(Walker& walker, TypeID expected, TypeID inFrontOfGuard)
 {
     TypeArena& types = walker.types();
     if (saysNothingForGuesses(types, expected) || describesBagOfOptionsForGuesses(walker, expected) || !types.at(inFrontOfGuard).isJavaScriptValue())
         return { };
-    // To find which of the listed texts a text is takes a search.
     TypeID tested = types.testablePartOf(types.withLiteralStringsWidened(widenedForTestOfGuess(walker, expected)));
     Type type = types.at(tested);
     if (type.isNever() || !type.isJavaScriptValue() || type.hasUnboundedUnknown() || !changesCodeWhereProven(types, tested))
         return { };
 
-    // As chooseTestOfGuess() has it: a type that no object is made as speaks of the objects of the nearest types above it.
     if (type.hasObjects() && type.hasOnlyLayouts() && !type.hasOnlyClosures()) {
         ShapesOfLayoutsForGuesses shapes = shapesOfLayoutsForGuesses(walker, type.layouts);
         if (shapes == ShapesOfLayoutsForGuesses::NoLayoutHasAny) {
@@ -3855,29 +3777,23 @@ static TypeID typeTestedByParameterGuard(Walker& walker, TypeID expected, TypeID
     }
     if (types.isSubset(inFrontOfGuard, tested) || !types.overlap(inFrontOfGuard, tested))
         return { };
-    // An object of a built-in class that is also of a layout: no type says what is left behind the test.
     return types.isSubset(types.intersectionOf(inFrontOfGuard, tested), tested) ? tested : TypeID();
 }
 
-// A slow version costs about as many bytes as the body has operations, and a guard gains about as many instructions as operations lean on it. So many operations of the body may stand against one that leans.
-// One in a loop counts as often as a loop is taken to go round.
 static constexpr uint32_t mostOperationsOfBodyForOneThatLeans = 4;
 static constexpr uint32_t roundsOfLoopForParameterGuards = 8;
 
-// An operation leans on a parameter where it looks at it, is built typed with what the guard proves and is closed without it: the code that builds it answers. It answers with how many lean, each in a loop counted for its rounds.
 static uint32_t findParametersThatBodyLeansOn(Walker& walker, std::span<ParameterOfGuard> parameters, std::span<const TypeID> typesInFrontOfGuard)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     TypeArena& types = walker.types();
     TypingContext typing { walker.program(), types, walker.positions(), TypeLevel::Proven };
 
-    // By value of the body. One more than the place of the parameter that the value is a name of: the parameter itself, a cast of it, what a test on the one edge into a block leaves of it.
     Vector<uint16_t, 256> namedParameters;
     namedParameters.fill(0, index.numberOfValues());
     for (size_t place = 0; place < parameters.size(); ++place)
         namedParameters[parameters[place].entryParameter] = static_cast<uint16_t>(place + 1);
 
-    // Nothing is built yet, so of any other operand no more is known than what it is made of: a constant, or what the source declares of the place that it is read from, which a guess of its own may prove where the walk comes to it.
     auto typeOfOtherInput = [&](ValueID input) -> TypeID {
         if (input.index() < typesInFrontOfGuard.size())
             return typesInFrontOfGuard[input.index()];
@@ -3901,17 +3817,13 @@ static uint32_t findParametersThatBodyLeansOn(Walker& walker, std::span<Paramete
         uint16_t named = namedParameters[input.index()];
         return named ? parameters[named - 1].inFrontOfGuard : typeOfOtherInput(input);
     };
-    // What a test of a type has left of a parameter that the body tells apart.
     struct NarrowedName {
         TypeID behindGuard;
         TypeID inFrontOfGuard;
     };
     UncheckedKeyHashMap<uint32_t, NarrowedName, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> narrowedNames;
-    // Behind the guard `Array.isArray(x)` says no to all that the look at the cell has left: the edge on which it says yes leads nowhere.
     BitVector blocksThatNoRunEnters;
-    // By the block that ends in the branch: the edge itself, where it leads to a block that other edges enter too.
     std::array<BitVector, 2> branchesWithEdgeThatNoRunTakes;
-    // By IteratorOpen.
     BitVector iterationsThatLean;
     auto findNarrowedName = [&](ValueID input) -> const NarrowedName* {
         if (narrowedNames.isEmpty())
@@ -3937,7 +3849,6 @@ static uint32_t findParametersThatBodyLeansOn(Walker& walker, std::span<Paramete
         BodyBlock block = index.block(BlockID(number));
         if (blocksThatNoRunEnters.get(number))
             continue;
-        // `Array.isArray(x)`: the ways on which the answer is yes meet, and each brings the parameter as its tests have left it.
         if (!narrowedNames.isEmpty() && index.numberOfIncomingEdges(block.id()) > 1 && !index.isLoopHead(block.id()) && !index.isEnteredByHandlerEdge(block.id())) {
             for (uint32_t position = 0; position < block.numberOfParameters(); ++position) {
                 NarrowedName met { TypeTable::never, TypeTable::never };
@@ -3981,7 +3892,6 @@ static uint32_t findParametersThatBodyLeansOn(Walker& walker, std::span<Paramete
                 }
                 continue;
             }
-            // `else for (const unit of value)`: by the guard alone the arm has the proof that lets the iteration go by index without a test and without the protocol beside it, and each step goes by that.
             uint32_t weight = index.loopDepthOf(block.id()) ? roundsOfLoopForParameterGuards : 1;
             if (opcode == Opcode::IteratorOpen && firstNamed && parameters[firstNamed - 1].isToldApartByBody
                 && iterationGoesByIndexWithoutTest(walker, typeOfNameBehindGuard(operation.operand(0))) && !iterationGoesByIndexWithoutTest(walker, typeOfNameInFrontOfGuard(operation.operand(0)))) {
@@ -3996,7 +3906,6 @@ static uint32_t findParametersThatBodyLeansOn(Walker& walker, std::span<Paramete
                 continue;
             if (typedFormForGuesses(walker, operation, inputsBehindGuard) == TypedForm::None)
                 continue;
-            // An operator that takes one operand as any value asks that operand in line, each time. With the proof it has another form, which asks nothing.
             if (typedFormForGuesses(walker, operation, inputsInFrontOfGuard) != TypedForm::None) {
                 static constexpr OpcodeSet operators = opcodesOfFamily(OperationFamily::Operator);
                 if (!operators.contains(opcode))
@@ -4004,7 +3913,6 @@ static uint32_t findParametersThatBodyLeansOn(Walker& walker, std::span<Paramete
                 OperatorForm formInFrontOfGuard = formAllowedForTypedOperator(walker, opcode, operation, InputsOfTypedOperation(walker, &inputsInFrontOfGuard));
                 if (formAllowedForTypedOperator(walker, opcode, operation, InputsOfTypedOperation(walker, &inputsBehindGuard)) == formInFrontOfGuard)
                     continue;
-                // `x * y` of numbers asks nothing either. That they are integers saves a conversion at most, and whatever arrives with a fraction pays for it with the slow version.
                 if (!mayCallRuntime(opcode, formInFrontOfGuard))
                     continue;
             }
@@ -4045,7 +3953,6 @@ static uint32_t findParametersThatBodyLeansOn(Walker& walker, std::span<Paramete
     return numberThatLean;
 }
 
-// `function size(x: string | string[]) { return typeof x === "string" ? x.length : x[0].length; }`: the body asks which member it has. Where the guard lets all of them through, each arm has its proof and no member runs in the slow version.
 static void findParametersThatBodyTellsApart(Walker& walker, std::span<ParameterOfGuard> parameters)
 {
     if (std::ranges::none_of(parameters, [](const ParameterOfGuard& parameter) { return !!parameter.testedWithPrimitives; }))
@@ -4065,7 +3972,6 @@ static void findParametersThatBodyTellsApart(Walker& walker, std::span<Parameter
             for (ParameterOfGuard& parameter : parameters) {
                 if (!parameter.testedWithPrimitives || parameter.isToldApartByBody || subject.index() != parameter.entryParameter)
                     continue;
-                // `function filter(list, f) { if (list !== undefined) { for (..) .. list[i] .. } }`: that test passes every member or none: it tells no member from another.
                 TypeID members = types.withoutNullish(parameter.testedWithPrimitives);
                 parameter.isToldApartByBody = types.overlap(asked, members) && !types.isSubset(members, asked);
                 if (!types.overlap(asked, members))
@@ -4081,8 +3987,6 @@ static void findParametersThatBodyTellsApart(Walker& walker, std::span<Parameter
     }
 }
 
-// `function each(list, f) { if (list !== undefined) { for (..) f(list[i]); } }` is handed undefined as often as a list. A guard for the list alone sent every such call into the slow version.
-// What the body itself sends another way passes the guard, and behind the test of the body the list is proven as before. null, for which this body does not ask, would stand beside the list in all of the loop.
 static void letThroughNullishThatBodyAsksFor(TypeArena& types, ParameterOfGuard& parameter)
 {
     if (parameter.isToldApartByBody || !parameter.nullishAskedFor)
@@ -4091,7 +3995,6 @@ static void letThroughNullishThatBodyAsksFor(TypeArena& types, ParameterOfGuard&
     parameter.behindGuard = types.intersectionOf(parameter.inFrontOfGuard, parameter.tested);
 }
 
-// The operations that findParametersThatBodyLeansOn() would ask about, each in a loop counted for its rounds: no more than these can lean. It goes through the body as that does, and asks nobody.
 static uint32_t countOperationsThatLookAtParameters(Walker& walker, std::span<const ParameterOfGuard> parameters)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -4122,7 +4025,6 @@ static uint32_t countOperationsThatLookAtParameters(Walker& walker, std::span<co
             }
             if (looksAtParameter && (operationsThatOpenGuesses.contains(opcode) || opcode == Opcode::NewObject))
                 numberThatLook += index.loopDepthOf(block.id()) ? roundsOfLoopForParameterGuards : 1;
-            // The open, and its steps in their loop.
             if (firstIsNamed && opcode == Opcode::IteratorOpen)
                 numberThatLook += 2 * roundsOfLoopForParameterGuards;
         }
@@ -4149,7 +4051,6 @@ Vector<TypeID, 8> typesBehindParameterGuard(Walker& walker, FunctionID id)
     if (!walker.standInFrontOfBodyOf(id) || walker.currentBodyIndex().block(entryBlock).numberOfParameters() != numberOfEntryParameters)
         return { };
 
-    // Nobody has left anything yet, so what arrives is what Link has proven of every caller.
     TypeArena& types = walker.types();
     uint32_t firstPositionalParameter = function.firstParameterIndex();
     uint32_t endOfPositionalParameters = firstPositionalParameter + function.numberOfPositionalParameters();
@@ -4158,7 +4059,6 @@ Vector<TypeID, 8> typesBehindParameterGuard(Walker& walker, FunctionID id)
     for (uint32_t index = 0; index < numberOfEntryParameters; ++index) {
         typesInFrontOfGuard.append(walker.typeArrivingAtEntryParameter(index));
         bool isTested = function.entryParameterKind(index) == EntryParameter::This || (index >= firstPositionalParameter && index < endOfPositionalParameters);
-        // What a guess would expect of it: what is written, `this` of a function that `new` enters, else what Link holds.
         TypeID tested = isTested ? typeTestedByParameterGuard(walker, findExpectationForGuesses(walker, ValueID(index)).type, typesInFrontOfGuard.last()) : TypeID();
         tested = typeTestedInPlaceOfWrittenType(walker, id, index, tested);
         if (tested && isNeverType(types.intersectionOf(typesInFrontOfGuard.last(), tested)))
@@ -4166,7 +4066,6 @@ Vector<TypeID, 8> typesBehindParameterGuard(Walker& walker, FunctionID id)
         if (!tested)
             continue;
         parameters.append(ParameterOfGuard { index, tested, typesInFrontOfGuard.last(), types.intersectionOf(typesInFrontOfGuard.last(), tested), false, { }, false });
-        // Only beside objects are primitives left out of what is expected.
         TypeID whole = types.at(tested).hasObjects() ? findWholeExpectationForGuesses(walker, ValueID(index)).type : TypeID();
         if (!saysNothingForGuesses(types, whole) && partThatOneTestTellsForGuesses(types, whole) != whole)
             parameters.last().testedWithPrimitives = typeTestedByParameterGuard(walker, whole, typesInFrontOfGuard.last());
@@ -4180,7 +4079,6 @@ Vector<TypeID, 8> typesBehindParameterGuard(Walker& walker, FunctionID id)
     for (ParameterOfGuard& parameter : parameters)
         letThroughNullishThatBodyAsksFor(types, parameter);
     uint32_t numberThatLean = findParametersThatBodyLeansOn(walker, parameters.mutableSpan(), typesInFrontOfGuard.span());
-    // With all of its union let through nothing leans on the parameter. A test for the members that one test tells may pay all the same, as it does in a body that asks nothing.
     bool someGoBack = false;
     for (size_t place = 0; place < parameters.size(); ++place) {
         if (!parameters[place].isToldApartByBody || parameters[place].isLeanedOn)
@@ -4259,7 +4157,6 @@ static ASCIILiteral whereValueComesFromForExplanation(Walker& walker, const Body
     }
 }
 
-// The fields of explainClosedAccess(). The subject of `x.m(..)` is x, of every other call what is called.
 static void explainClosedCall(Walker& walker, const BodyValue& operation, PrintStream& out)
 {
     TypeArena& types = walker.types();
@@ -4276,7 +4173,6 @@ static void explainClosedCall(Walker& walker, const BodyValue& operation, PrintS
     TypeID proven = provenTypeOfInputForGuesses(walker, subject);
     ExpectationForGuesses expectation = findExpectationForGuesses(walker, subject);
 
-    // What the emitter asks of the records that are built (AccessEmitter::isReadOfMethodCalledNext()), asked of the input: it says where the read and the call are two operations at run time.
     bool standsApartFromRead = false;
     if (isByName) {
         standsApartFromRead = index.blockOf(read) != index.blockOf(operation.id());
@@ -4385,8 +4281,6 @@ static void explainClosedCall(Walker& walker, const BodyValue& operation, PrintS
     out.println(line.toString());
 }
 
-// Fields, with tabs between: unit . inline frame . position . operation . where the receiver comes from . how far the walk came . why it came no further . what is proven of the receiver . what is expected of it.
-// How far: the receiver's layouts are PROVEN . NOTHING is EXPECTED of it . what is expected says nothing, is a bag of options or has no test . it is DECLARED or SEEN TO ARRIVE, and with that taken for proven the access has a typed form or none.
 void explainClosedAccess(Walker& walker, const BodyValue& operation, PrintStream& out)
 {
     constexpr OpcodeSet accessesByName { Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine };
@@ -4482,7 +4376,6 @@ void explainClosedAccess(Walker& walker, const BodyValue& operation, PrintStream
     line.print("\t");
     if (expectation.type)
         printType(line, types, expectation.type);
-    // A site without a position is found by its unit and its name. By key: what is proven of the key.
     line.print("\t");
     if (isByName) {
         Vector<char16_t> buffer;

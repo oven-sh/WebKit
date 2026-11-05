@@ -86,7 +86,6 @@ private:
     CellList m_cells;
 };
 
-// As a collection stands once it has followed everything that the program still holds: all is marked but what the program dropped.
 class VisitorBehindMarking final : public AbstractSlotVisitor {
 public:
     VisitorBehindMarking(VM& vm, std::initializer_list<JSCell*> dropped)

@@ -24,7 +24,6 @@ enum class ModuleProperty : uint8_t {
     HasEvaluationWork = 1 << 3,
 };
 
-// A link follows every request. An evaluation follows the imports: what a module requires runs inside its body.
 enum class FollowedRequests : uint8_t { All, Imports };
 
 struct FollowedTargets {
@@ -33,7 +32,6 @@ struct FollowedTargets {
     FollowedRequests followed;
 
     size_t size() const { return requests.size(); }
-    // A request that is not followed leads nowhere.
     uint32_t operator[](size_t index) const { return followed == FollowedRequests::Imports && requests[index].isRequire ? importer : requests[index].target(); }
 };
 
@@ -50,7 +48,6 @@ struct ModuleGraph {
         return requests.subspan(first, modulesAndEndRecord[module + 1].firstRequest - first);
     }
 
-    // The synthetic exports of a module that captures exports are the names it captures.
     bool resolvesNames(unsigned module) const
     {
         const ModuleData& record = modulesAndEndRecord[module];
@@ -60,7 +57,6 @@ struct ModuleGraph {
         return record.firstSyntheticExport != nextRecord.firstSyntheticExport || record.firstRequiredName != nextRecord.firstRequiredName;
     }
 
-    // A component has a higher number than every component it requests.
     Typed::StronglyConnectedComponents computeComponents(FollowedRequests followed) const
     {
         return Typed::computeStronglyConnectedComponents(size(), [&](unsigned module) {
@@ -81,7 +77,6 @@ static OptionSet<ModuleProperty> ownPropertiesOf(const ModuleGraph& graph, unsig
         properties.add(ModuleProperty::HasLinkWork);
     if (module.isUncompiledCode())
         properties.add(ModuleProperty::IsUncompiledCode);
-    // A module of the library runs when its importer is linked.
     bool isFileOfProgram = module.hasExportTable() || module.kind == ModuleKind::CommonJs;
     if (module.isUncompiledCode() || (isFileOfProgram && (module.bodyFunction() || module.hasTopLevelAwait())))
         properties.add(ModuleProperty::HasEvaluationWork);

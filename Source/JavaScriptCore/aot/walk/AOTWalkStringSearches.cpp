@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Strings: startsWith, endsWith, indexOf, lastIndexOf and includes of a text that is written, a RegExp that is one text, and a test against two joined texts part by part.
-// The text goes into the operation, so no cell is made or loaded for it and its characters are compared where the emitter writes them.
-// Nothing is kept, so a suspension means nothing. Each operation throws only for lack of memory, as the call does. Withheld (BuiltinCalls): the call goes by its row.
-
 #include "config.h"
 #include "AOTWalkStrings.h"
 
@@ -28,10 +24,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkNumbers.cpp
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
-// With any of them a match is more than a search for the text from the start of the string.
 static constexpr OptionSet<RegExpFlags> flagsOfRegExpsThatSearchForNoText { RegExpFlags::Global, RegExpFlags::Sticky, RegExpFlags::IgnoreCase, RegExpFlags::Unicode, RegExpFlags::UnicodeSets };
 
 static Reference booleanForStringSearches(Walker& walker, bool value)
@@ -39,14 +33,11 @@ static Reference booleanForStringSearches(Walker& walker, bool value)
     return constantForStrings(walker, PrimitiveKnownToFolding::boolean(value));
 }
 
-// These look at the bounds themselves, so each may stand wherever its operands do.
 static Reference stringReadByStringSearches(Walker& walker, Reference string, Origin origin)
 {
     Reference flat = flatStringForReaderOfCharacters(walker, string, origin);
     return flat ? flat : string;
 }
-
-// ---- startsWith, endsWith
 
 static Reference buildTestOfWrittenEndForStringSearches(Walker& walker, Reference string, StringID text, bool testsStart, Origin origin)
 {
@@ -56,9 +47,6 @@ static Reference buildTestOfWrittenEndForStringSearches(Walker& walker, Referenc
     return walker.isUnreachable() ? Reference() : walker.build(WTF::move(test));
 }
 
-// `path.startsWith(dir + "/")`, `name.endsWith("." + extension)`, where the join is made by now because something stands between it and the call: AOTWalkStringJoins.cpp has the row in which it is never made.
-// The call is walked again on the part that lies at the end of the string, and the one code unit that is written is read beside it.
-// The joined text is read by nobody. Where it may be too long for a string it is still joined, as a rope that is never made flat.
 static bool buildTestOfJoinedTextsForStringSearches(Walker& walker, const CallByOneRow& call, bool testsStart)
 {
     if (call.call.opcode() != Opcode::Call || call.call.argumentsOperands().empty())
@@ -69,13 +57,11 @@ static bool buildTestOfJoinedTextsForStringSearches(Walker& walker, const CallBy
     if (!joined.isValue() || !index.hasOneUse(written) || rootForStrings(walker, walker.referenceBoundTo(written)) != joined)
         return false;
     const Operation& record = walker.code().at(joined.id());
-    // One join written with `+` stays an Add. A closed arm holds the call as it is written.
     if (!operationsThatJoinTexts.contains(record.opcode) || record.numberOfOperands() != 2 || !walker.opensGuesses())
         return false;
     if (!walker.isInLoop() && !record.traits().isRemovableWhenUnused())
         return false;
 
-    // With a text on one side `+` joins, and a part that has text by itself runs no code to give it.
     Reference atEnd = referenceToRecordForStrings(walker, record.operand(testsStart ? 0 : 1));
     Reference beside = referenceToRecordForStrings(walker, record.operand(testsStart ? 1 : 0));
     StringID textBeside = textKnownForStrings(walker, beside);
@@ -124,9 +110,6 @@ bool buildTestOfEndOfString(Walker& walker, const CallByOneRow& call)
     return true;
 }
 
-// ---- indexOf, lastIndexOf, includes
-
-// Where a search from the front begins: the position clamped into 0 .. length.
 static Reference buildStartOfSearchForStringSearches(Walker& walker, Reference string, Reference position, Origin origin)
 {
     if (position == integerForStrings(walker, 0))
@@ -145,7 +128,6 @@ static Reference buildStartOfSearchForStringSearches(Walker& walker, Reference s
     return buildResultOfRangeForStrings(walker, walker.build(WTF::move(range)), startOfStringRange, origin);
 }
 
-// The text is not empty. `position`: an int32, not negative for a search from the front.
 static Reference buildSearchForWrittenTextForStringSearches(Walker& walker, Reference string, StringID text, Reference position, bool searchesFromEnd, Origin origin)
 {
     if (walker.isUnreachable() || !position)
@@ -187,7 +169,6 @@ bool buildSearchInString(Walker& walker, const CallByOneRow& call)
     Reference position = integerForStrings(walker, searchesFromEnd ? std::numeric_limits<int32_t>::max() : 0);
     if (hasPosition) {
         Type type = walker.types().at(walker.typeOf(call.arguments[1]));
-        // NaN searches from the end of the string, which no integer says.
         if (searchesFromEnd ? !type.isInt32() : !type.isNumber())
             return false;
         position = searchesFromEnd ? call.arguments[1] : buildStartOfSearchForStringSearches(walker, call.receiver, call.arguments[1], origin);
@@ -201,11 +182,8 @@ bool buildSearchInString(Walker& walker, const CallByOneRow& call)
     return true;
 }
 
-// ---- A RegExp that is one text
-
 Reference buildSearchForAtomOfRegExp(Walker& walker, const BodyValue&, BuiltinOverloadID overload, const RegExpWrittenForCall& regExp, Reference string, Origin origin)
 {
-    // A search leaves no record of a match.
     if (walker.facts().mayReadLegacyRegExpStatics())
         return { };
     if (regExp.flags.containsAny(flagsOfRegExpsThatSearchForNoText))
@@ -225,7 +203,6 @@ Reference buildSearchForAtomOfRegExp(Walker& walker, const BodyValue&, BuiltinOv
     if (!summary.canBeCreated() || !summary.isValid() || summary.atom.isEmpty())
         return { };
 
-    // `/a\.b/` searches for another text than it is spelled with.
     StringID text = pattern == StringView(summary.atom) ? regExp.pattern : walker.types().internText(encodeProgramString(StringView(summary.atom)).span());
     Reference found = buildSearchForWrittenTextForStringSearches(walker, string, text, integerForStrings(walker, 0), false, origin);
     if (!found)

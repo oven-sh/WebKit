@@ -74,8 +74,6 @@ void ArgumentsEmitter::generateCreateRest(const ValueContext& value)
         define(value, cells.newArrayFromBuffer(value, restLength(firstArgument), restList(firstArgument)));
         return;
     case AllocationStorage::Frame:
-        // The frame has room for so many elements whether or not they come, and a longer list lies in the heap. A store into a cell of the frame runs no barrier, so only a unit that stores nothing into the cell asks for the frame:
-        // a generic entry, which hands it to a function that only reads it, and a body that lends its list to a call.
         define(value, cells.newArrayInFrameFromBuffer(value, restLength(firstArgument), restList(firstArgument), maxLengthOfArrayInFrame));
         return;
     }

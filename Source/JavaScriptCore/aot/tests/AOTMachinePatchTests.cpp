@@ -12,8 +12,6 @@
 #include <array>
 #include <bit>
 
-// No request goes to the builder between patch() or check() and the last word of the setup: the next request seals the Patch.
-
 namespace JSC { namespace AOT { namespace Machine {
 
 struct PatchTestObservation {
@@ -99,7 +97,6 @@ static uint64_t sumOfBitsOfPatchTestNumbers(double seed, unsigned count)
     return sum;
 }
 
-// patchTestInteger() or patchTestNumber() of the seed. Nothing can compute one again, so each needs a place of its own while it is live.
 static Vector<Operation*> definePatchTestValues(Output& out, Operation* seed, unsigned count)
 {
     Vector<Operation*> values;
@@ -144,7 +141,6 @@ static void emitReturnInPatchTest(CCallHelpers& jit, const PatchParameters& para
     jit.ret();
 }
 
-// To the second successor where the low bit of the register is set, writing the registers on the way. To the first otherwise.
 static void emitJumpsToSuccessorsInPatchTest(CCallHelpers& jit, const PatchParameters& params, GPRReg tested, RegisterMask writtenOnTheWay)
 {
     AOT_TEST_CHECK(params.successorLabels().size() == 2);
@@ -181,7 +177,6 @@ static unsigned numberOfStepsInPatchTest(const Allocation& allocation, StepKind 
     return result;
 }
 
-// The operand plus the addend.
 static PatchOperation* appendPatchTestIncrement(Output& out, Operation* operand, int32_t addend, PatchTestObservation& seen)
 {
     PatchOperation* patch = out.patch(Int64);
@@ -194,7 +189,6 @@ static PatchOperation* appendPatchTestIncrement(Output& out, Operation* operand,
     return patch;
 }
 
-// Writes every register that no callee saves.
 static PatchOperation* appendPatchTestCallWithoutOperands(TestProcedure& test)
 {
     RegisterMask clobbered = callerSavedRegistersOfPatchTest(test);
@@ -235,7 +229,6 @@ static void testMachinePatchRegistersOfNumbers()
     AOT_TEST_CHECK(test.call<double>(10.5, 0.25) == 21.25);
 }
 
-// Under pressure every register holds an operand, so the scratch registers and the result are had only by answering some operands with their places in the frame.
 static void runPatchTestOfOperandsAnywhere(ValueRep::Kind kind, bool isUnderPressure)
 {
     constexpr int64_t a = (int64_t { 5 } << 32) + 1000;
@@ -354,7 +347,6 @@ static void checkMachinePatchTupleWithMoreMembersThanRegisters(bool endsBlock)
         AllowMacroScratchRegisterUsage allowScratch(jit);
         ++runs;
         AOT_TEST_CHECK(params.size() == count + 1);
-        // Member number n is the argument plus n.
         GPRReg next = params.gpScratch(0);
         jit.move(params[count].gpr(), next);
         for (unsigned index = 0; index < count; ++index) {
@@ -434,7 +426,6 @@ static void testMachinePatchClobbersOnSuccessor()
     AOT_TEST_CHECK(landingPad->isLandingPad() && !continuation->isLandingPad());
     AOT_TEST_CHECK(patch->lateClobberedOnSuccessor(1) == writtenOnTheWay && !patch->lateClobberedOnSuccessor(0));
 
-    // The result, which is defined where the continuation begins, has to outlive a call there.
     out.appendTo(continuation);
     appendPatchTestCallWithoutOperands(test);
     out.ret(addUpPatchTestValues(out, patch, values));
@@ -491,7 +482,6 @@ static void testMachinePatchSuccessorLabelsAndFallThrough()
     AOT_TEST_CHECK(test.call<int64_t>(int64_t { 11 }) == 1);
 }
 
-// Each edge from a Patch to the join has a block of its own, and the allocation has nothing to move in either. Such a block has no code: whoever jumps to it jumps to the join.
 static void testMachinePatchEntersJoinThroughBlocksWithoutCode()
 {
     TestProcedure test;
@@ -576,7 +566,6 @@ static void testMachinePatchCheckHandsOverOperands()
     AOT_TEST_CHECK(test.call<uint64_t>(int64_t { 4 }, int64_t { 9 }, x) == 13 + std::bit_cast<uint64_t>(x) + 13);
 }
 
-// One Check for each constant. It fails where the argument is its index, and its late path returns the constant. Answers how many late paths were written.
 static unsigned countLatePathsOfPatchTestChecks(bool sharesLatePath, std::span<const int64_t> constants)
 {
     TestProcedure test;
@@ -713,7 +702,6 @@ static void testMachinePatchReleasesValueInFrame()
     Operation* seed = test.argumentGPR(0);
     unsigned count = numberOfRegistersInPatchTest(test, Bank::GP) + 2;
 
-    // Of everything that is live while the values are defined, the cell is read last, so it is the first to lose its register.
     Operation* cell = out.opaque(out.add(seed, 5));
     Operation* sum = addUpPatchTestValues(out, seed, definePatchTestValues(out, seed, count));
     PatchTestObservation seen;
@@ -755,7 +743,6 @@ static void testMachinePatchReleasesNothingThatIsReadAgain()
     AOT_TEST_CHECK(test.call<int64_t>(int64_t { 37 }) == 42);
 }
 
-// The cell waits across a call in a register that callees save. An edge hands it to a Phi that lies in another, and nothing takes the first again.
 static void testMachinePatchReleasesRegisterOfAnotherName()
 {
     TestProcedure test;
@@ -784,7 +771,6 @@ static void testMachinePatchReleasesRegisterOfAnotherName()
     call->append(cell, ValueRep::reg(second));
     out.branch(out.testNonZero64(part, 1), normalEdge(made), normalEdge(waited));
 
-    // The cell keeps its register while the other value of the Phi is given one.
     out.appendTo(made);
     PatchTestObservation seenBesideOther;
     ValueFromBlock fromMade = out.anchor(out.opaque(out.add(part, 100)));
@@ -819,8 +805,6 @@ static void testMachinePatchReleasesRegisterOfAnotherName()
     AOT_TEST_CHECK(!test.call<int64_t>(int64_t { 37 }));
 }
 
-// The cell is spilled. One arm hands it to a Phi and releases that, the other reads it further on in the order, and no way leads from the first to the second.
-// Where it is read behind both arms as well, the spill stays.
 static void testMachinePatchClearsSpillThatAnotherArmReads()
 {
     for (bool isReadBehindArms : { false, true }) {
@@ -883,8 +867,6 @@ static void testMachinePatchClearsSpillThatAnotherArmReads()
     }
 }
 
-// The first release asks whether its cell is read on some way on, and the list of such searches is made, by the index of the block. The edge from `joined` straight to `behind` gets moves and so a block,
-// whose index lies above every index of then. The second release asks of another cell, and its search goes back through that block.
 static void testMachinePatchSearchesForWaysThroughBlockSplitLate()
 {
     TestProcedure test;
@@ -935,7 +917,6 @@ static void testMachinePatchSearchesForWaysThroughBlockSplitLate()
     appendReader(left, first, right, second);
     out.branch(out.testNonZero64(a, 2), normalEdge(arm), normalEdge(behind));
 
-    // The arm exchanges the two and fixes the head of `behind`.
     out.appendTo(arm);
     appendReader(left, second, right, first);
     out.jump(behind);
@@ -967,7 +948,6 @@ static void testMachinePatchSearchesForWaysThroughBlockSplitLate()
     AOT_TEST_CHECK(middle != behind && order.of(middle).wasSplitLate && middle->index() > done->index());
     AOT_TEST_CHECK(std::ranges::find(order.of(behind).predecessors, middle) != order.of(behind).predecessors.end());
     AOT_TEST_CHECK(order.latePositionOf(firstHint) < order.headOf(middle) && order.headOf(middle) < order.latePositionOf(secondHint));
-    // Each is asked about: it has a spill, and is read further on and in no block that releases.
     AOT_TEST_CHECK(allocation.isSpilled(firstCell) && proc.liveness().of(firstCell).lastUse > order.endOf(joined));
     AOT_TEST_CHECK(allocation.isSpilled(secondCell) && proc.liveness().of(secondCell).lastUse > order.endOf(joinedAgain));
     AOT_TEST_CHECK(seenFirst.runs == 1 && seenSecond.runs == 1 && !numberOfStepsInPatchTest(allocation, StepKind::ClearSpill));

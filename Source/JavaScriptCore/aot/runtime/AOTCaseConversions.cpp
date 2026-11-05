@@ -51,7 +51,6 @@ JSString* CaseConversions::convertedString(VM& vm, std::span<const Latin1Charact
     uint64_t& entry = convertedStrings[hash % numberOfConvertedStrings];
     if (entry && entry >> 32 == hash) {
         JSString* candidate = uncheckedDowncast<JSString>(MarkedBlockCage::decode(cageBase, static_cast<uint32_t>(entry)));
-        // A string that has named a property holds the atom of its characters, which may be a 16-bit string.
         if (equal(candidate->tryGetValueImpl(), characters))
             return candidate;
     }

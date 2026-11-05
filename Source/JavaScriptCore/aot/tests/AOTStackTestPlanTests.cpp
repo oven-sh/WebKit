@@ -27,9 +27,7 @@ std::span<const NativeTest> stackTestPlanTests();
 using namespace Typed;
 
 enum class CallInChainForStackTestPlanTests : uint8_t {
-    // function c1(v) { return c2(v).x }
     ComesBack,
-    // function c1(v) { return c2(v) }
     InTailPosition,
 };
 
@@ -45,7 +43,6 @@ static void appendHeadOfFunctionForStackTestPlanTests(StringBuilder& text, unsig
     text.append("function f"_s, function, " name=\"c"_s, function, "\" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n"_s);
 }
 
-// sink(c1)  function c1(v) { .. c2(v) .. }  function c2(v) { .. c3(v) .. }  ..  function cN(v) { return v.x }
 static String chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests kind, unsigned numberOfFunctions)
 {
     StringBuilder text;

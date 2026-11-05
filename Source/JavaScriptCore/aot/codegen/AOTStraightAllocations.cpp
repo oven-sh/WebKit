@@ -66,14 +66,13 @@ static std::optional<uint64_t> bitsOfConstantInSlotOfStraightAllocation(SlotRepr
     return isWritten ? std::optional(bits) : std::nullopt;
 }
 
-// valueFitsSlotInChoices() of walk/AOTWalkChoices.cpp for a value of which nothing is known: the slot takes any value as it is, or the value is written in the body.
 static bool allocationListsFieldInStraightForm(StraightEmitter& emitter, FieldReference field, ValueID value)
 {
     const PlacedSlot& slot = emitter.plan().slot(field.layout, field.field);
     FieldFacts facts = emitter.facts().field(field);
     if (slot.storage != SlotStorage::Inline || slot.holdsAccessor || emitter.plan().layout(field.layout).holdsRawValueFromBirth(field.field))
         return false;
-    if (facts.facts.contains(FieldFact::IsAccessor) || facts.slotType)
+    if (facts.facts.contains(FieldFact::IsAccessor) || facts.slotType || slot.provenType)
         return false;
     if (slot.representation == SlotRepresentation::JSValue)
         return !slot.type;
@@ -81,7 +80,6 @@ static bool allocationListsFieldInStraightForm(StraightEmitter& emitter, FieldRe
     return constant && bitsOfConstantInSlotOfStraightAllocation(slot.representation, *constant);
 }
 
-// keyDefinedBehindAllocationInChoices() of walk/AOTWalkChoices.cpp. Null: only an allocation fills the field.
 static PropertyKeyID keyDefinedBehindStraightAllocation(StraightEmitter& emitter, FieldReference field)
 {
     const Program& program = emitter.program();
@@ -105,7 +103,6 @@ static StubKey stubThatDefinesBehindStraightAllocation(StraightEmitter& emitter,
     return emitter.plan().slots().hasColumn(key) ? AOT::putById(PutMode::Define) : putByIdHashed(PutMode::Define);
 }
 
-// The object comes and goes in the result register. Its own slot is written last, so until then it waits in a word that none of these stubs is handed.
 static void defineBehindStraightAllocation(StraightEmitter& emitter, const BodyValue& value, std::span<const PropertyKeyID> keys, std::span<const ValueID> values)
 {
     CCallHelpers& jit = emitter.jit();
@@ -149,7 +146,6 @@ static void storeWhatEmptySlotsHoldInStraightAllocation(StraightEmitter& emitter
     }
 }
 
-// settleAllocationOfObjectInChoices() and chooseAllocationOfObjectInChoices() of walk/AOTWalkChoices.cpp: the allocation lists the longest beginning of what is written that it can, and the rest is defined by name, in the order written.
 static void generateNewObject(StraightEmitter& emitter, const BodyValue& value)
 {
     auto operation = value.as<Opcode::NewObject>();
@@ -247,7 +243,6 @@ static void generateNewObject(StraightEmitter& emitter, const BodyValue& value)
 
 static void generateNewRegExp(StraightEmitter& emitter, const BodyValue& value)
 {
-    // The body does not make it: the first read of the variable does (walk/AOTWalkDeferredDefinitions.cpp).
     if (emitter.plan().deferredDefinitions().findMadeBy(emitter.function(), value.id())) {
         emitter.fail(value);
         return;

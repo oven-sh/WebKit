@@ -38,7 +38,6 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     RELEASE_ASSERT(getter == jit.reuseScratch(StubRegister::T11) && noOverlap(receiver, getter, scratch) && jit.result() == GPRInfo::returnValueGPR);
 
 #if CPU(X86_64)
-    // A closure of this Instance that declares no parameter is entered from here: its Structure says what the test of the type and CallValue would find out.
     static_assert(ClosureWord::offsetUnit == 1 && ClosureWord::numberOfOffsetBits == 32);
     auto branchIfTopByteRefusesCall = [&](ptrdiff_t offsetOfWord) {
         return jit.branch8(CCallHelpers::LessThan, Address(getter, offsetOfWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(0)));
@@ -73,7 +72,6 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     });
     isNotCommonCase.link(&jit);
 #else
-    // The same. The whole word is loaded, and compared as the top byte is there.
     static_assert(ClosureWord::numberOfOffsetBits == 32);
     constexpr TrustedImm64 minWord(ClosureWord::minWordOfCalleeTaking(0));
     JumpList isNotCommonCase;
@@ -119,7 +117,6 @@ void callSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value, GPRR
 
     jit.loadPtr(Address(getterSetter, GetterSetter::offsetOfSetter()), setter);
     cannot.append(branchIfNotFunctionType(jit, setter, scratch));
-    // The function that stands for an absent setter ignores the call. Strict code has to throw.
     cannot.append(jit.branchIfType(setter, NullSetterFunctionType));
     jit.checkStackBeforeEntering();
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = false, .checksException = true }, [&] {
@@ -134,7 +131,6 @@ static void loadCustomAccessorRecord(StubAssembler& jit, GPRReg accessorIndexAnd
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.customAccessors)), accessorIndexAndRecord);
 }
 
-// A0 is set last: on ARM64 it is the receiver's register.
 static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg record, GPRReg uid, std::optional<GPRReg> storedValue, std::optional<GPRReg> keyCell)
 {
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::HostFunction, .returnsValue = !storedValue, .checksException = true, .cellToKeep = keyCell }, [&] {

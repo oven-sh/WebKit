@@ -32,29 +32,22 @@ public:
     Structure* slimClosureStructure(VM&, FunctionID function) { return slimClosureStructure(m_tables.kindOfFunction(function.index())); }
     Structure* reifiedSlimClosureStructure(VM&, FunctionID);
     JSCell* uncreatedPrototypeProperty() const { return m_uncreatedPrototypeProperty; }
-    Structure* boundClosureStructure(VM&, FunctionID);
     Structure* asyncBoundFunctionStructure() const { return m_asyncBoundFunctionStructure; }
     void setAsyncBoundFunctionStructure(Structure*);
-    // The first lookup of `prototype`, the first construction and the guards of a constructor function each give the closure another Structure. None of them changes what any other name finds.
     void didGivePrototypePropertyTo(VM&, JSObject* closure);
 
-    // A region is what the collector visits of the table once one of its cells was written.
     static constexpr unsigned regionShift = 8;
 
     JSCell* closure(VM&, FunctionID);
     JSCell* closureIfCreated(FunctionID) const;
     bool hasCellFor(FunctionID) const;
-    // True for a class or constructor function that is evaluated once and captures nothing: closure() creates its class object for whoever asks first.
     bool hasSingletonClosure(FunctionID) const;
     void registerClassObject(Closure*);
-    // `F.prototype.m = function () {}`: the program has made the closure by itself, and the cell of the function is empty. From here on whoever asks the table gets this one.
     void registerClosureOfMember(FunctionID, JSCell*);
     void forgetClosures(uint32_t firstCell, uint32_t numberOfCells);
     JSObject* createClosure(VM&, FunctionID, std::span<const uint64_t> captures, unsigned numberOfReferences);
     JSObject* createClosureOver(VM&, FunctionID, JSValue captured);
-    // For a function that captures nothing and that no value of the program names, as the body of a module: the table does not keep the closure.
     JSObject* createClosureForOneCall(VM&, FunctionID);
-    // What the frame that enters the body of an ES module has as its callee. Such a body never looks at it, so the bodies of the instance share the closure of the first one.
     JSObject* calleeOfModuleBodies(VM&, FunctionID body);
     template<typename Visitor> void visitRoots(Visitor&);
 
@@ -68,8 +61,7 @@ private:
     RememberedSlotSet m_writtenRegions;
     Structure* m_closureStructures[numberOfClosureStructures] { };
     Structure* m_slimClosureStructures[numberOfSlimClosureKinds] { };
-    Structure* m_reifiedSlimClosureStructures[2][3] { };
-    Structure* m_boundClosureStructures[2] { };
+    Structure* m_reifiedSlimClosureStructures[2][2] { };
     Structure* m_asyncBoundFunctionStructure { nullptr };
     RefPtr<PrivateSymbolImpl> m_functionIndexPrivateName;
     JSCell* m_uncreatedPrototypeProperty { nullptr };

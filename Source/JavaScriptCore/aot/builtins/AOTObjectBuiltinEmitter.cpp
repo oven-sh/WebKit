@@ -47,7 +47,6 @@ CellPointer ObjectBuiltinEmitter::createObjectWithPrototype(const InlineCall& ca
     static_assert(ObjectBuiltinWords::objectCreateIndex(0x7f40) == ((0x7f40 >> ObjectBuiltinWords::objectCreateShift) & (ObjectBuiltinWords::objectCreateSize - 1)));
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    // A collection empties the cache, so an entry is read under the heap that a collection writes.
     TypedPointer cache = instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(builtins.objects.objectCreate));
     LValue offset = m_out.bitAnd(m_out.lShr(prototype.value(), ObjectBuiltinWords::objectCreateShift - logEntrySize), (ObjectBuiltinWords::objectCreateSize - 1) << logEntrySize);
     LValue entry = m_out.add(cache.base(), offset);

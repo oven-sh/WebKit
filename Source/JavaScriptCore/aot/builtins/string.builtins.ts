@@ -101,7 +101,6 @@ const indexSearch = (inlineBuiltin: string, startingPosition: b.TableType) =>
     implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
 
-// A text of a length that every string may have is never refused.
 const padded = (inlineBuiltin: string, nativeSymbol: string) =>
   [
     {
@@ -506,7 +505,6 @@ export default b.declarations(
   b.same("String.prototype.trimLeft", "String.prototype.trimStart"),
   b.same("String.prototype.trimRight", "String.prototype.trimEnd"),
 
-  // core-js 2 counts U+180E as white space, finds that the engine does not, and replaces all five.
   b.replacedByPackages(
     "String.prototype.trim",
     "String.prototype.trimEnd",

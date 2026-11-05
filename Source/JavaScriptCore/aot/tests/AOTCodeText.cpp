@@ -104,8 +104,6 @@ static ASCIILiteral nameInCodeText(FateOfPoll fate)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Whatever the sweep adds stands behind a `#`, which the lexer of IR text skips.
-// Of a swept Code only what the emitters read has a line of its own. What the sweep dropped is listed by number, so a text with something dropped has gaps in its numbers and does not parse.
 class CodeTextWriter {
     WTF_MAKE_NONCOPYABLE(CodeTextWriter);
 public:
@@ -181,7 +179,6 @@ void CodeTextWriter::write()
     m_out.print("}\n"_s);
 }
 
-// Both fill from the back, so that each chain ascends.
 void CodeTextWriter::chainFactUsesByRecord()
 {
     std::span<const FactUse> uses = m_code.factUses();
@@ -456,7 +453,6 @@ void CodeTextWriter::writeFactUse(ASCIILiteral indentation, const FactUse& use)
     m_printer.endLine();
 }
 
-// The code is right only while these hold too: a constant that decided a branch bears the fact that gave it, and nothing uses it any more.
 void CodeTextWriter::writeFactUsesOfRecordsWithoutLine()
 {
     std::span<const FactUse> uses = m_code.factUses();
@@ -466,7 +462,6 @@ void CodeTextWriter::writeFactUsesOfRecordsWithoutLine()
     }
 }
 
-// The sweep turns each into a mark, or drops the poll.
 void CodeTextWriter::writeFatesOfPolls()
 {
     if (m_isSwept)

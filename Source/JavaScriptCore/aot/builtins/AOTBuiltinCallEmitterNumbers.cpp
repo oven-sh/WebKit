@@ -25,15 +25,12 @@ Integer BuiltinCallEmitter::divide(Integer dividend, Range dividends, Integer di
     if (dividends.minimum >= 0 && divisors.minimum > 0 && dividends.isSubsetOf(Range::uint32()) && divisors.isSubsetOf(Range::uint32())) {
         if (divisors.isSingleValue() && !hasOneBitSet(divisors.minimum)) {
             uint32_t constantDivisor = static_cast<uint32_t>(divisors.minimum);
-            // computeUnsignedDivisionMagic() takes no more leading zeros than the divisor has.
             unsigned leadingZeros = std::countl_zero(std::max(static_cast<uint32_t>(dividends.maximum), constantDivisor));
             B3::DivisionMagic<uint32_t> magic = B3::computeUnsignedDivisionMagic(constantDivisor, leadingZeros);
             if (magic.add) {
-                // The multiplier has 33 bits. With it moved to the top of the word, the high half of the product is the quotient.
                 uint64_t multiplier = ((1ull << 32) | magic.magicMultiplier) << (31 - magic.shift);
                 return Integer(m_out.uMulHigh(dividend.value(), m_out.constInt64(static_cast<int64_t>(multiplier))));
             }
-            // Both factors are below 2^32, so the product fits 64 bits.
             Integer shifted = magic.preShift ? Integer(m_out.lShr(dividend.value(), magic.preShift)) : dividend;
             return Integer(m_out.lShr(mul(shifted, integer(magic.magicMultiplier)).value(), 32 + magic.shift));
         }
@@ -58,7 +55,6 @@ Integer BuiltinCallEmitter::divide(Integer dividend, Range dividends, Integer di
     if (dividends.isSubsetOf(Range::int32()) && divisors.isSubsetOf(Range::int32()) && (dividends.minimum > INT32_MIN || divisors.minimum > 0)) {
         if (divisors.isSingleValue() && (divisors.minimum > 1 || (divisors.minimum < -1 && divisors.minimum > INT32_MIN))) {
             B3::DivisionMagic<int32_t> magic = B3::computeSignedDivisionMagic(static_cast<int32_t>(divisors.minimum));
-            // The multiplier is a signed number of 33 bits, handed over cut to 32. Whole, it needs none of the corrections of the 32-bit sequence, and its product with an int32 fits 64 bits.
             int64_t multiplier = static_cast<uint32_t>(magic.magicMultiplier);
             if (divisors.minimum < 0)
                 multiplier -= 1ll << 32;
@@ -70,7 +66,6 @@ Integer BuiltinCallEmitter::divide(Integer dividend, Range dividends, Integer di
         return signExtended(Word32(m_out.div(narrowDividend.value(), low32(divisor).value())));
     }
     if (divisors.isSingleValue() && (divisors.minimum > 1 || divisors.minimum < -1)) {
-        // Here the multiplier is a signed number of 65 bits cut to 64. Adding or subtracting the dividend makes up for the bit that was cut.
         B3::DivisionMagic<int64_t> magic = B3::computeSignedDivisionMagic(divisors.minimum);
         Integer quotient(m_out.mulHigh(dividend.value(), m_out.constInt64(magic.magicMultiplier)));
         if (divisors.minimum > 0 && magic.magicMultiplier < 0)
@@ -167,13 +162,11 @@ void BuiltinCallEmitter::generateDivideIntegers(const ValueContext& value)
     defineAs(value, low32(Integer(m_out.chillDiv(dividend.value(), divisor.value()))), type);
 }
 
-// Takes a divisor above one. A remainder has the sign of its dividend, whatever the sign of the divisor.
 Integer BuiltinCallEmitter::remainderByConstant(Integer dividend, Range dividends, int64_t magnitudeOfDivisor)
 {
     if (hasOneBitSet(magnitudeOfDivisor)) {
         if (dividends.minimum >= 0)
             return bitAnd(dividend, integer(magnitudeOfDivisor - 1));
-        // The quotient is rounded toward zero: a dividend below zero is raised by the divisor less one before its low bits are dropped.
         unsigned shift = WTF::fastLog2(static_cast<uint64_t>(magnitudeOfDivisor));
         Integer raised = add(dividend, Integer(m_out.lShr(m_out.aShr(dividend.value(), 63), 64 - shift)));
         return sub(dividend, bitAnd(raised, integer(-magnitudeOfDivisor)));
@@ -196,7 +189,6 @@ void BuiltinCallEmitter::generateRemainderOfIntegers(const ValueContext& value)
     Integer divisor = integerOperand(value->divisorOperand());
     const Type& type = typeOf(value.id());
 
-    // Output::mod() takes no divisor that is zero and no quotient that does not fit, and what is appended to a block that never runs is folded like anything else.
     std::optional<int64_t> constantDivisor;
     if (divisors.isSingleValue())
         constantDivisor = divisors.minimum;
@@ -220,7 +212,6 @@ void BuiltinCallEmitter::generateRemainderOfIntegers(const ValueContext& value)
             defineAs(value, remainder(), type);
             return;
         }
-        // What -1 divides leaves nothing.
         Condition isOrdinary = mayOverflow ? above(add(narrowDivisor, word32(1)), word32(1)) : isNotZero(narrowDivisor);
         defineAs(value, either<Word32>(isOrdinary, remainder, [&] {
             return word32(0);
@@ -247,7 +238,6 @@ Word32 BuiltinCallEmitter::int32BitsOf(ValueID operand, bool givesOnlyLowestBits
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     if (representationOf(operand) == Representation::JSValue)
         return conversions.toInt32OfBoxedNumber(in<Boxed>(operand));
-    // Every NaN is 0.
     Number number = generator().holdsAnyNaN(operand) ? generator().getWithAnyNaN(operand).as<Number>() : numberOperand(operand);
     return conversions.toInt32(number, givesOnlyLowestBits ? ConversionEmitter::BitsOfInt32::Lowest : ConversionEmitter::BitsOfInt32::All);
 }

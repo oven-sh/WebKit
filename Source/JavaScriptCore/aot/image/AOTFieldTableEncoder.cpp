@@ -27,7 +27,6 @@
 
 namespace JSC { namespace AOT {
 
-// Where every row without entries starts. No other row starts here, so a lookup in such a row finds only entries of other rows, which store other names.
 static constexpr uint32_t fieldTableRowWithoutEntries = 0;
 
 namespace {
@@ -40,23 +39,18 @@ struct FieldTableRowEntry {
     uint32_t name;
     uint32_t entry;
     uint16_t recordIndex;
-    // Of a field that is stored by its record: the record. It is not written. Rows that say the same are held once, and what a stub remembers under the index of such an entry holds of one type, one slot and one set of flags: AcceptedKindOfValue::isEntryOfFieldTable.
     WordsOfFieldRecord recordThatStoresGoBy { };
 };
 
-// What the shapes of one layout that stand side by side read, or what one class reads.
 struct FieldTableRow {
     uint32_t numberOfReaders() const { return firstShape ? endOfShapes - firstShape : 1; }
 
-    // 0: the row of a class.
     uint32_t firstShape { 0 };
     uint32_t endOfShapes { 0 };
     uint32_t rankOfClass { 0 };
     uint32_t size { 0 };
-    // Among the entries of all rows, where the row has room for as many as it can get. It fills the first `size` of them.
     size_t begin { 0 };
     uint32_t firstEntry { fieldTableRowWithoutEntries };
-    // Once the rows are sorted: it has the entries of the row in front of it.
     bool repeatsRowInFront { false };
 };
 
@@ -64,26 +58,21 @@ struct FieldTableRows {
     std::span<const FieldTableRowEntry> entriesOf(const FieldTableRow& row) const { return entries.span().subspan(row.begin, row.size); }
 
     Vector<FieldTableRowEntry> entries;
-    // A row without entries is not listed.
     Vector<FieldTableRow> rows;
 };
 
 struct ClassInFieldTable {
-    // Those that have a column. None: the class has no row.
     std::optional<Vector<DeclaredClassMember>> members;
     uint32_t numberOfAccessors { 0 };
-    // In ProgramTables::classAccessors().
     uint32_t firstAccessor { 0 };
 };
 
-// LayoutData::extensionSlot() reads the ExtensionLayoutData right before the record.
 struct LayoutRecordForFieldTable {
     ExtensionLayoutData extension { };
     LayoutData layout { };
 };
 static_assert(offsetof(LayoutRecordForFieldTable, layout) == sizeof(ExtensionLayoutData));
 
-// RuntimeType::integerRange() reads the range right after the record, which here has neither cell tests nor literal strings.
 struct TypeRecordForFieldTable {
     RuntimeType header { };
     std::array<uint32_t, 4> integerRange { };
@@ -94,7 +83,6 @@ class FieldTableBits {
 public:
     static constexpr uint32_t bitsPerWindow = 64;
 
-    // Bit n of the answer is set where the bit at index + n is clear.
     uint64_t clearBitsInWindowAt(uint32_t index) const
     {
         size_t word = index / 64;
@@ -147,12 +135,9 @@ private:
     }
 
     Vector<uint64_t> m_words;
-    // Bit n is set when every bit of m_words[n] is set.
     Vector<uint64_t> m_fullWords;
 };
 
-// Row displacement: all rows overlap in one array. The entry for name n of a row lies n entries after the row's start, and a row is placed where the entries of all its names are free.
-// An entry stores its name n, so it belongs to the row that starts n entries before it. So no two rows may start at the same entry.
 class FieldTablePacker {
 public:
     explicit FieldTablePacker(size_t numberOfEntriesOfAllRows)
@@ -163,11 +148,8 @@ public:
 
     uint32_t highestFirstEntry() const { return m_highestFirstEntry; }
 
-    // Expects rows in descending order of size, and rows of equal size in the order of their names. Returns nullopt when the table has outgrown 32-bit byte offsets.
     std::optional<uint32_t> place(std::span<const FieldTableRowEntry> row)
     {
-        // The search resumes where the previous row was placed. A row of a different size, or a row with a single name, which fits into any gap, is tried from the start of the table.
-        // When most rows differ in size that costs rows times entries, so once the searches have cost maxTestsPerEntry tests for each entry, no search starts over.
         bool startsOver = row.size() != m_sizeOfLastRow || row.size() == 1;
         if (startsOver && m_numberOfTests <= m_maxNumberOfTests)
             m_entryOfFirstNameOfLastRow = 0;
@@ -186,7 +168,6 @@ public:
                 firstEntry += WTF::ctz(fitting);
                 break;
             }
-            // The row can only fit where the entry of the name that ruled out this window is free.
             firstEntry += FieldTableBits::bitsPerWindow;
             if (numberOfNamesTried) {
                 uint32_t name = row[numberOfNamesTried - 1].name;
@@ -207,7 +188,6 @@ public:
 private:
     static constexpr uint64_t maxTestsPerEntry = 32;
     static constexpr uint64_t fewestTestsAllowed = 1 << 24;
-    // Offsets into the tables are 32-bit byte counts.
     static constexpr uint32_t maxFirstEntry = UINT32_MAX / sizeof(FieldTableEntry);
 
     FieldTableBits m_occupiedEntries;
@@ -231,7 +211,6 @@ static LayoutRecordForFieldTable describeLayoutForFieldTable(const Typed::Plan& 
     return record;
 }
 
-// The record at FieldData::type lies in another part. FieldRecordIndex::create() reads only the primitives and the integer range of that record, which are those of the type.
 static TypeRecordForFieldTable describeTypeForFieldTable(const Typed::Type& type)
 {
     auto lowHalf = [](int64_t integer) { return static_cast<uint32_t>(integer); };
@@ -246,7 +225,6 @@ static TypeRecordForFieldTable describeTypeForFieldTable(const Typed::Type& type
     return record;
 }
 
-// As in AOTLayoutTables.cpp: these are the shapes that have a record. Null: the shape has none.
 static LayoutID layoutOfRecordForFieldTable(const TableEncoder& encoder, uint32_t shape)
 {
     const Typed::ShapeTable& shapes = encoder.plan.shapes();
@@ -255,7 +233,6 @@ static LayoutID layoutOfRecordForFieldTable(const TableEncoder& encoder, uint32_
     return shapes.shape(shape).layout;
 }
 
-// The stubs treat a row as complete: if a name that has a column finds no entry, the record has no field of that name.
 static void fillFieldTableRowOfShapes(const TableEncoder& encoder, uint32_t highestObjectShape, uint32_t typeOfAnyValue, FieldTableRow& row, std::span<FieldTableRowEntry> entriesOfAllRows)
 {
     const IdentifierNumbering& identifiers = encoder.numbers.identifiers();
@@ -272,11 +249,9 @@ static void fillFieldTableRowOfShapes(const TableEncoder& encoder, uint32_t high
         if (!slot.indexInLayoutRecord || *slot.indexInLayoutRecord >= fields.size())
             continue;
         const FieldData& field = fields[*slot.indexInLayoutRecord];
-        // A field without a key has the name 0, under which nothing is looked up.
         if (!field.name || !identifiers.hasFieldTableColumn(field.name))
             continue;
-        TypeRecordForFieldTable type = describeTypeForFieldTable(encoder.program.at(slot.type ? slot.typeInLayoutRecord() : Typed::TypeTable::anything));
-        // collectFieldsOfLayoutRecords() has seen that each field of the record belongs to one slot.
+        TypeRecordForFieldTable type = describeTypeForFieldTable(encoder.program.at(slot.typeInLayoutRecord() ? slot.typeInLayoutRecord() : TypeID(Typed::TypeTable::anything)));
         RELEASE_ASSERT(row.size < room.size());
         const uint16_t recordIndex = FieldRecordIndex::create(field, *slot.indexInLayoutRecord, type.header, typeOfAnyValue).bits;
         room[row.size++] = { field.name, FieldTableEntry::forField(record.layout, field).bits, recordIndex, recordIndex & FieldRecordIndex::isStoredWithoutTypeTest ? WordsOfFieldRecord { } : std::bit_cast<WordsOfFieldRecord>(field) };
@@ -301,7 +276,6 @@ static void fillFieldTableRowOfClass(const ClassInFieldTable& declared, FieldTab
     AOT::sortInLine(room);
 }
 
-// [rank]. No answer after a broken rule.
 static std::optional<Vector<ClassInFieldTable>> collectClassesForFieldTable(const TableEncoder& encoder)
 {
     const ParallelLoops& loops = encoder.build.parallelLoops();
@@ -322,7 +296,6 @@ static std::optional<Vector<ClassInFieldTable>> collectClassesForFieldTable(cons
         declared.members = collectDeclaredClassMembers(encoder, LayoutID(layouts[rank]));
         if (!declared.members)
             return;
-        // Lookups only ask the table for names that have a column.
         declared.members->removeAllMatching([&](const DeclaredClassMember& member) {
             return !identifiers.hasFieldTableColumn(member.name);
         });
@@ -336,7 +309,6 @@ static std::optional<Vector<ClassInFieldTable>> collectClassesForFieldTable(cons
     return classes;
 }
 
-// Where a row lies among the entries, and an accessor among the accessors, is known before either is written: each row is filled by whichever thread comes to it.
 static FieldTableRows collectFieldTableRows(const TableEncoder& encoder, uint32_t highestObjectShape, std::span<const ClassInFieldTable> classes, std::span<uint64_t> accessors)
 {
     const ParallelLoops& loops = encoder.build.parallelLoops();
@@ -344,7 +316,6 @@ static FieldTableRows collectFieldTableRows(const TableEncoder& encoder, uint32_
     const Vector<FieldsOfLayoutRecord>& fieldsOfLayoutRecords = encoder.firstParts->fieldsOfLayoutRecords;
     const uint32_t typeOfAnyValue = encoder.typeOffset(Typed::TypeTable::anything);
 
-    // A row says what the record of the layout says, and the shapes of a layout stand side by side: they have one row.
     Vector<uint32_t> firstShapes = findIndicesInParallel(loops, highestObjectShape + 1, [&](unsigned shape) {
         LayoutID id = layoutOfRecordForFieldTable(encoder, shape);
         return id && id != layoutOfRecordForFieldTable(encoder, shape - 1);
@@ -380,7 +351,6 @@ static FieldTableRows collectFieldTableRows(const TableEncoder& encoder, uint32_
     return rows;
 }
 
-// Rows with equal entries come to stand side by side, whether shapes or classes read them.
 static void sortFieldTableRows(const ParallelLoops& loops, FieldTableRows& rows)
 {
     parallelSort(loops, rows.rows.mutableSpan(), [&](const FieldTableRow& a, const FieldTableRow& b) {
@@ -397,7 +367,6 @@ static void sortFieldTableRows(const ParallelLoops& loops, FieldTableRows& rows)
     });
 }
 
-// Where a row fits depends on all that were placed in front of it, so this is the one step that has one thread. False when the table has outgrown 32-bit byte offsets.
 static bool placeFieldTableRows(FieldTableRows& rows, FieldTablePacker& packer)
 {
     for (size_t index = 0; index < rows.rows.size(); ++index) {
@@ -414,7 +383,6 @@ static bool placeFieldTableRows(FieldTableRows& rows, FieldTablePacker& packer)
     return true;
 }
 
-// No two rows that are placed have an entry at one index, so no two threads write one word.
 template<typename Word>
 static void writeEntriesOfFieldTableRows(const ParallelLoops& loops, const FieldTableRows& rows, std::span<Word> entries, Word FieldTableRowEntry::* member)
 {
@@ -437,7 +405,6 @@ static void zeroWordsOfFieldTable(const ParallelLoops& loops, std::span<Word> wo
 
 void encodeFieldTable(TableEncoder& encoder)
 {
-    // The header has both numbers: numberOfFieldTableRows and numberOfFieldTableColumns.
     RELEASE_ASSERT(encoder.plan.shapes().firstEnvironmentShape());
     const uint32_t highestObjectShape = encoder.plan.shapes().firstEnvironmentShape() - 1;
     const uint32_t numberOfColumns = encoder.numbers.identifiers().countWithFieldTableColumn();
@@ -455,7 +422,6 @@ void encodeFieldTable(TableEncoder& encoder)
     sortFieldTableRows(loops, rows);
     times.didFinish("sort rows"_s);
 
-    // How long the packer searches goes by the entries that the readers of all rows have between them.
     size_t numberOfEntriesOfAllReaders = 0;
     for (const FieldTableRow& row : rows.rows)
         numberOfEntriesOfAllReaders += static_cast<size_t>(row.size) * row.numberOfReaders();
@@ -473,17 +439,14 @@ void encodeFieldTable(TableEncoder& encoder)
     }
     times.didFinish("place rows"_s);
 
-    // A lookup checks no bounds, so the start of every row is followed by an entry for every name that has a column.
     const uint32_t numberOfEntries = packer.highestFirstEntry() + numberOfColumns;
     const size_t numberOfWords = static_cast<size_t>(highestObjectShape) + numberOfEntries;
     constexpr size_t mostBytesInFrontOfTable = 8;
     encoder.part.reserveRoomFor(numberOfWords * sizeof(uint32_t) + numberOfEntries * sizeof(uint16_t) + firstEntryOfClass.size() * sizeof(uint32_t) + accessors.size() * sizeof(uint64_t) + 4 * mostBytesInFrontOfTable);
 
-    // None of these words is an offset, so none is linked.
     encoder.part.setTableWrittenInPlace<uint32_t>(ProgramTableIndex::fieldTable, numberOfWords, [&](std::span<uint32_t> table) {
         static_assert(!fieldTableRowWithoutEntries);
         zeroWordsOfFieldTable(loops, table);
-        // A shape word is the negated shape, and the stubs index from the first entry by it: ProgramTables::fieldTableRowOf().
         forEachIndexInParallel(loops, static_cast<unsigned>(rows.rows.size()), [&](unsigned index) {
             const FieldTableRow& row = rows.rows[index];
             for (uint32_t shape = row.firstShape; shape < row.endOfShapes; ++shape)

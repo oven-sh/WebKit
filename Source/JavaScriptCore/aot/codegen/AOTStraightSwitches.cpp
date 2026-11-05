@@ -43,7 +43,6 @@ bool StraightEmitter::coversSwitchesOnStrings()
     return true;
 }
 
-// The texts that StringEmitter::branchOnEqualsLiteralByStub() hands over in a register.
 static std::optional<TextPackedForStraightSwitch> tryPackTextForStraightSwitch(std::span<const uint8_t> programString)
 {
     constexpr size_t maxLength = descriptorOf(StubFamily::ValueEqualsLiteralOfLength).maxCount;
@@ -57,13 +56,11 @@ static std::optional<TextPackedForStraightSwitch> tryPackTextForStraightSwitch(s
     return TextPackedForStraightSwitch { text.length(), packStringIntoRegister(text) };
 }
 
-// callStub() takes the form that keeps no registers where a stub has one.
 static bool keepsSubjectOfStraightSwitch(StubKey stub, const StubSummary& summary)
 {
     return !exists(stub.withCallerFrame(CallerFrame::KeepsNoRegisters)) && !summary.clobbered.contains(subjectOfStraightSwitchGPR, IgnoreVectors);
 }
 
-// The subject lies in its register. As StringEmitter::branchOnEqualsLiteral() compares a value of which it knows nothing, outside loops.
 static TestOfStraightSwitch testCaseOfStraightSwitch(StraightEmitter& emitter, Origin origin, StringID literal, bool jumpsIfEqual)
 {
     CCallHelpers& jit = emitter.jit();
@@ -91,7 +88,6 @@ void StraightEmitter::generateSwitchOnString(const BodyTerminator& terminator)
     auto literals = terminator.strings();
     RELEASE_ASSERT(terminator.numberOfTargets() == literals.size() + 1);
 
-    // Like the walk it leads no edge into a block that the scan has passed over. No run takes such an edge, so the last of the others needs no test.
     std::span<const BlockID> passedOverByScan = facts().summaries().at(function()).blocksNeverEntered.span();
     Vector<EdgeOfStraightSwitch, 16> edges;
     uint32_t targetIndex = 0;

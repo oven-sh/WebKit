@@ -37,7 +37,6 @@ static_assert(defaultLimitValue(LimitID::RegExpClassTableClusterSize, hostArchit
 
 namespace {
 
-// Equal values get equal dense numbers, in order of first use. A hash only finds candidates. The values must outlive the numbering.
 template<typename T>
 class RegExpValueNumbering {
 public:
@@ -143,7 +142,6 @@ public:
             reportFailure(linked.error());
             return std::nullopt;
         }
-        // A veneer clobbers a register that a routine may take an argument in. Only routines are called.
         if (linked->numberOfVeneers) {
             reportFailure({ SectionLinkError::OutOfPCRelativeReach, 0, 0 });
             return std::nullopt;
@@ -225,7 +223,6 @@ private:
         return addUnit(kind, alignment, code.bytes.span(), regExp, code.relocations.span());
     }
 
-    // The buffer of the inner vector does not move when the outer vector grows.
     std::span<uint8_t> ownBytes(Vector<uint8_t>&& bytes)
     {
         m_ownedBytes.append(WTF::move(bytes));
@@ -242,7 +239,6 @@ private:
 
     const RegExpUnit& routineUnit(uint32_t symbol) const { return m_routines[*m_symbolStates[symbol].routine].unit; }
 
-    // Symbols are numbered only for bodies and for the routines among the symbols, so every symbol has a user and needs a place.
     void addTablesAndRoutines()
     {
         for (Yarr::SharedTableID id : Yarr::allSharedTableIDs) {
@@ -294,7 +290,6 @@ private:
         }
     }
 
-    // A thunk is bound to a literal before anybody knows whether the literal gets code, and it takes JITCodeFailure to the generic operation.
     [[nodiscard]] bool addFailureRoutine()
     {
         auto withoutCode = std::ranges::find_if(m_regExps, [](const CompiledRegExp& regExp) {
@@ -411,9 +406,8 @@ private:
     RegExpValueNumbering<RegExpSymbol> m_symbols;
     Vector<SymbolState> m_symbolStates;
     Vector<Routine> m_routines;
-    Vector<Body> m_bodies; // In placement order.
-    Vector<uint32_t> m_unitOfBody; // By Body::number.
-    // A body that serves both widths counts as one for 8-bit subjects.
+    Vector<Body> m_bodies;
+    Vector<uint32_t> m_unitOfBody;
     uint64_t m_sizeOf16BitBodies { 0 };
 
     Vector<LinkUnit> m_units;
@@ -497,7 +491,6 @@ static ImageRegExp createRegExpRecord(const RegExpRequest& request, const Compil
         record.codeFor8Bit = entries[0];
         record.codeFor16Bit = entries[1];
         record.hasCodeFor8BitSubjectsAlone = !compiled.code[1];
-        // RegExp::matchWithImageCode() answers "no match" for a subject with a wide character on the strength of this bit.
         RELEASE_ASSERT(!record.hasCodeFor8BitSubjectsAlone || !compiled.code[0] || summary.matchesOnlyWhole8BitSubjects);
         record.handsLongSearchesOver = std::ranges::any_of(compiled.code, [](auto& code) { return code && code->handsLongSearchesOver; });
         break;
@@ -518,7 +511,6 @@ static bool hasRegExpRecord(RegExpRequestOrigin origin, RegExpRecordForm form)
     case RegExpRecordForm::Code:
     case RegExpRecordForm::Atom:
         return true;
-    // With the record the run time need not parse the text to create the object. That pays for a text that surely arrives.
     case RegExpRecordForm::NoCode:
         return origin != RegExpRequestOrigin::Candidate;
     case RegExpRecordForm::NoMetadata:
@@ -527,8 +519,6 @@ static bool hasRegExpRecord(RegExpRequestOrigin origin, RegExpRecordForm form)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The number of a literal's record is the place of its request, which is what code names it by: RegExpRequests::recordOf(). So a literal has a record whatever its form.
-// The predicted texts stand behind the literals, and nothing names the record of one by its number.
 RegExpSections encodeRegExpRecords(const RegExpRecordInputs& inputs, BuildContext& context)
 {
     std::span<const RegExpRequest> requests = inputs.requests.all();

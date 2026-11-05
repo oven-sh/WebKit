@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Strings: `s[i]`, charAt, at, charCodeAt and codePointAt written out: the tests of the bounds, the read inside, the answer of the language outside.
-// Beside a character or a char code that may lie outside meets its code unit, -1 outside: the two are parameters of one block, so the tie outlives a suspension and a throw as the two values do.
-// The reads throw only for lack of memory. Withheld (BuiltinCalls for the methods, TypedOperations for `s[i]`): the call goes by its row, the read is the closed ElemGet.
-
 #include "config.h"
 #include "AOTWalkStrings.h"
 
@@ -25,8 +21,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// How far behind a character read its mentions are looked for: O/walk/AOTWalkElementReads.cpp, InputUsesOfElementRead.
-static constexpr uint32_t operationsSearchedBehindCharacterRead = 32;
 
 namespace {
 
@@ -44,7 +38,6 @@ public:
     {
     }
 
-    // True: what stands for the read is bound, or the walk stands nowhere. False: nothing was built.
     bool build(Reference position);
 
 private:
@@ -71,7 +64,6 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // Ends the block on the test. The walk goes on where it passes, and every test that fails leads to one block.
     void goOnWhere(Reference test)
     {
         if (!test || m_walker.isUnreachable())
@@ -88,7 +80,6 @@ private:
         return operate(Opcode::StrictEq, operate(Opcode::BitAnd, codeUnit, integer(0xFC00)), integer(firstOfKind));
     }
 
-    // `s.slice(a, b).charCodeAt(i)`: the characters are read where they lie, so a piece that nobody else reads is never cut.
     Reference codeUnitAt(Reference position)
     {
         return buildCodeUnitOfString(m_walker, m_stringRead, placeInStringRead(position), m_origin);
@@ -112,7 +103,6 @@ private:
     const BodyValue& m_value;
     CharacterReadInWalkStrings m_method;
     Reference m_string;
-    // The string itself, or what it is a piece of from `m_startOfPiece` on.
     Reference m_stringRead;
     Reference m_startOfPiece;
     Reference m_length;
@@ -122,7 +112,6 @@ private:
 
 } // anonymous namespace
 
-// at() counts a negative position from the end.
 Reference BuilderOfCharacterRead::countedFromEnd(Reference position)
 {
     Type type = m_walker.types().at(m_walker.typeOf(position));
@@ -141,7 +130,6 @@ Reference BuilderOfCharacterRead::countedFromEnd(Reference position)
     return isBuilt ? counted[0] : Reference();
 }
 
-// Two code units where a trail surrogate stands behind a lead surrogate, else one. `position` lies inside the string.
 Reference BuilderOfCharacterRead::codePointAt(Reference position)
 {
     Reference unit = codeUnitAt(position);
@@ -251,19 +239,6 @@ bool BuilderOfCharacterRead::build(Reference position)
     if (!position || !types.at(m_walker.typeOf(position)).isNumber())
         return false;
 
-    // `for (const ch of text) ch.codePointAt(0)`: the step has read it.
-    if (m_method == CharacterReadInWalkStrings::CodePointAt && primitiveKnownForStrings(m_walker, position).kind() == Known::Kind::Number && !primitiveKnownForStrings(m_walker, position).asNumber()) {
-        Reference piece = rootForStrings(m_walker, m_string);
-        if (piece.isValue()) {
-            auto& stepped = notesOfStrings(m_walker).codePointsOfSteppedPieces;
-            if (auto noted = stepped.find(piece.id().index()); noted != stepped.end()) {
-                bindForStrings(m_walker, m_value.id(), noted->value.codePoint, m_origin);
-                return true;
-            }
-        }
-    }
-
-    // Of a piece whose end lies in front of its start the difference is negative, and no position lies below it: the piece is empty.
     if (std::optional<PieceOfString> piece = pieceInSight(m_walker, m_string)) {
         m_stringRead = piece->string;
         m_startOfPiece = piece->start;
@@ -273,7 +248,6 @@ bool BuilderOfCharacterRead::build(Reference position)
     if (!m_length)
         return true;
 
-    // Whatever is no int32 behind ToIntegerOrInfinity lies outside every string.
     if (!types.at(m_walker.typeOf(position)).isInteger()) {
         Reference root = rootForStrings(m_walker, position);
         if (!root.isValue() || m_walker.code().at(root.id()).opcode != Opcode::ToIntegerOrInfinity)
@@ -310,13 +284,11 @@ bool BuilderOfCharacterRead::build(Reference position)
         return true;
     }
 
-    bool isInside = type.integers.minimum >= 0 && (isBelowLength || nameProvesPositionBelowLengthForStrings(m_walker, position, m_string) || testThatLedHereProvesPositionBelowLength(m_walker, m_value, m_string, position));
-    // at() may have counted from the end, and reads at another value than the test has seen.
+    bool isInside = type.integers.minimum >= 0 && (isBelowLength || nameProvesPositionBelowLengthForStrings(m_walker, position, m_string));
     isInside = isInside || (m_method != CharacterReadInWalkStrings::At && type.integers.minimum >= 0 && testOfBodyHoldsPositionOfCharacterReadBelowLength(m_walker, m_value));
     if (isInside && !m_walker.testsEveryPosition())
         m_walker.count(StatisticID::RangeChecksRemoved);
     if (!isInside) {
-        // As an unsigned word a negative int32 lies behind every length.
         if (type.integers.minimum < 0 && type.isInt32())
             position = operate(Opcode::URShift, position, integer(0));
         else if (type.integers.minimum < 0) {
@@ -336,9 +308,6 @@ bool BuilderOfCharacterRead::build(Reference position)
     return true;
 }
 
-// ---- The doors
-
-// Outside the text the read asks the prototypes, from String.prototype upward. The run time refuses every index on them (ImmutablePropertyNames::Part::NumericKeys), but for a name that a test run has opened.
 static bool indexesAreAbsentAboveStringsForStringCharacters(const Walker& walker)
 {
     const Program& program = walker.program();
@@ -360,75 +329,8 @@ static bool indexesAreAbsentAboveStringsForStringCharacters(const Walker& walker
     }
 }
 
-// A mention of the character that its code unit answers as well: a test of its type, an equality with a written text, undefined or null, a relation with a written text of one code unit.
-static bool asksWhatCodeUnitAnswersForStringCharacters(const BodyIndex& index, const BodyValue& user, uint32_t operandIndex)
-{
-    Opcode opcode = user.opcode();
-    if (opcode == Opcode::TypeTest)
-        return true;
-    bool isEquality = allEqualities.contains(opcode);
-    if (!isEquality && !allRelations.contains(opcode))
-        return false;
-    ValueID other = index.valueBehindCasts(user.operand(1 - operandIndex));
-    if (!other || index.isParameter(other))
-        return false;
-    switch (index.opcodeOf(other)) {
-    case Opcode::String:
-        return true;
-    case Opcode::Undefined:
-    case Opcode::Null:
-        return isEquality;
-    default:
-        return false;
-    }
-}
-
-// Every mention of the value stands in its block, close behind it, and asks what the code unit answers.
-static bool isOnlyAskedAboutForStringCharacters(Walker& walker, ValueID character)
-{
-    const BodyIndex& index = walker.currentBodyIndex();
-    if (index.isUnused(character))
-        return false;
-    Vector<ValueID, 4> names { character };
-    uint32_t mentionsLeft = index.useCount(character);
-    if (mentionsLeft == BodyIndex::maxCountedUses)
-        return false;
-
-    uint32_t end = std::min(index.block(index.blockOf(character)).endOfValues().index(), character.index() + 1 + operationsSearchedBehindCharacterRead);
-    bool everyMentionAsks = true;
-    for (uint32_t place = character.index() + 1; place < end && mentionsLeft && everyMentionAsks; ++place) {
-        BodyValue user = index.value(ValueID(place));
-        bool handsOn = false;
-        user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            if (!names.contains(operand))
-                return;
-            --mentionsLeft;
-            if (opcodesThatStateTypes.contains(user.opcode()) && !operandIndex)
-                handsOn = true;
-            else if (!asksWhatCodeUnitAnswersForStringCharacters(index, user, operandIndex))
-                everyMentionAsks = false;
-        });
-        if (!handsOn)
-            continue;
-        uint32_t mentions = index.useCount(user.id());
-        if (mentions == BodyIndex::maxCountedUses)
-            return false;
-        names.append(user.id());
-        mentionsLeft += mentions;
-    }
-    return everyMentionAsks && !mentionsLeft;
-}
-
-static void noteWhetherCharacterIsOnlyAskedAbout(Walker& walker, const BodyValue& value)
-{
-    Reference character = walker.isUnreachable() ? Reference() : rootForStrings(walker, walker.referenceBoundTo(value.id()));
-    if (character.isValue() && notesOfStrings(walker).codeUnitsBesideCharacters.contains(character.id().index()) && isOnlyAskedAboutForStringCharacters(walker, value.id()))
-        notesOfStrings(walker).charactersOnlyAskedAbout.add(character.id().index());
-}
-
 bool buildCharacterByIndex(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
-    // -0 names the first character and is no integer.
     if (!isProvenString(walker, inputs.typeOf(value.objectOperand())) || !walker.types().at(inputs.typeOf(value.propertyOperand())).isInteger())
         return false;
     if (!indexesAreAbsentAboveStringsForStringCharacters(walker))
@@ -445,7 +347,6 @@ bool buildCharacterByIndex(Walker& walker, const BodyValue& value, const InputsO
     BuilderOfCharacterRead read(walker, value, CharacterReadInWalkStrings::Element, walker.referenceOf(value.objectOperand()), origin);
     if (!read.build(walker.referenceOf(value.propertyOperand())))
         return false;
-    noteWhetherCharacterIsOnlyAskedAbout(walker, value);
     return true;
 }
 
@@ -474,11 +375,8 @@ bool buildCharacterReadByMethod(Walker& walker, const CallByOneRow& call)
     BuilderOfCharacterRead read(walker, call.call, method, call.receiver, call.origin);
     if (!read.build(call.arguments.empty() ? constantForStrings(walker, PrimitiveKnownToFolding::undefined()) : call.arguments[0]))
         return false;
-    noteWhetherCharacterIsOnlyAskedAbout(walker, call.call);
     return true;
 }
-
-// ---- What a read has left
 
 Reference codeUnitOfCharacterInSight(Walker& walker, Reference character)
 {

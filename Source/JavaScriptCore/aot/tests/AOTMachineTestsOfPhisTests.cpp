@@ -14,8 +14,6 @@
 #include <limits>
 #include <wtf/DataLog.h>
 
-// No constant here is one that findPinnedConstant() knows: the tests run without an instance of their own.
-
 namespace JSC { namespace AOT { namespace Machine {
 
 struct TestOfPhiTest {
@@ -68,8 +66,6 @@ static Block* targetInTestOfPhiTest(const Block* from, unsigned successorIndex)
     return target;
 }
 
-// ---- T1
-
 enum class KindOfTestOfPhi : uint8_t {
     ComparesWithConstant,
     TestsBitsOfSum,
@@ -79,7 +75,6 @@ enum class KindOfTestOfPhi : uint8_t {
     StandsBesideWhatIsReadBehindIt,
 };
 
-// const held = c ? 5 : second; if (held === 5) ..
 template<KindOfTestOfPhi kind>
 static void testJoinThatComparesItsPhiIsPassedBy()
 {
@@ -148,8 +143,6 @@ static void testValueOfTestWherePhiHolds()
     out.ret(wide);
 }
 
-// ---- T2: a word of 32 bits that is added to an upper half passes by the join that asks for the upper half
-
 enum class KindOfWordInBox : uint8_t {
     IsAskedWhetherAtLeast,
     IsAskedWhetherBelow,
@@ -163,8 +156,6 @@ enum class KindOfWordInBox : uint8_t {
     IsExtendedWithItsSign,
 };
 
-// const held = c ? box(second) : third; return isBox(held) ? unbox(held) : held + 1;
-// What passes is handed back without its sign in 64 bits, or is the index of a byte: whatever lay above the word would be seen.
 template<KindOfWordInBox kind>
 static void testWordInBoxPassesByJoinThatAsksForBox()
 {
@@ -189,7 +180,6 @@ static void testWordInBoxPassesByJoinThatAsksForBox()
     };
     out.branch(out.equal(test.first, out.constInt64(1)), normalEdge(boxes), normalEdge(doesNotBox));
     out.appendTo(boxes);
-    // The index is made by an operation that clears what lies above it, as a load of 32 bits does: only what comes through the join has anything there.
     out.upsilon(box(kind == KindOfWordInBox::IsIndexWhereItPasses ? out.bitAnd(out.castToInt32(test.second), out.constInt32(15)) : out.castToInt32(test.second)), held);
     out.jump(join);
     out.appendTo(doesNotBox);
@@ -250,7 +240,6 @@ static void testWordInBoxPassesByJoinThatAsksForBox()
         uint64_t extended = kind == KindOfWordInBox::IsExtendedWithItsSign ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(word))) : static_cast<uint32_t>(word);
         return extended + static_cast<uint64_t>(upperHalf);
     };
-    // The register that brings the word has all ones or the bound itself above it.
     for (int64_t word : { int64_t { 0 }, int64_t { 1 }, int64_t { 6 }, int64_t { 7 }, int64_t { -1 }, int64_t { -2 }, int64_t { std::numeric_limits<int32_t>::max() }, int64_t { std::numeric_limits<int32_t>::min() }, upperHalf + 5, (int64_t { 1 } << 32) + 7 }) {
         AOT_TEST_OF_PHI_CHECK(test, test.run(1, word, 0) == expected(boxOf(kind == KindOfWordInBox::IsIndexWhereItPasses ? word & 15 : word)));
         if (kind == KindOfWordInBox::ComesByTwoArms)
@@ -264,8 +253,6 @@ static void testWordInBoxPassesByJoinThatAsksForBox()
             AOT_TEST_OF_PHI_CHECK(test, test.run(2, 0, brought) == expected(static_cast<uint64_t>(brought) + 0x100));
     }
 }
-
-// ---- S1: what the encoder writes. The bytes of two procedures that differ in the one thing are held against each other.
 
 static size_t bytesOfStoresInTestOfPhiTest(Type type, int64_t lower, int64_t upper, ptrdiff_t offsetOfUpper, unsigned numberOfPairs)
 {
@@ -306,7 +293,6 @@ static void testNeighboringStoresOfConstantsAreOneStore()
     size_t emptyNeighbors = bytesOfStoresInTestOfPhiTest(Int64, 0, 0, 8, 1);
     size_t emptyApart = bytesOfStoresInTestOfPhiTest(Int64, 0, 0, 16, 1);
     size_t filledNeighbors = bytesOfStoresInTestOfPhiTest(Int64, 0, 3, 8, 1);
-    // The second pair finds the register cleared.
     bytesOfStoresInTestOfPhiTest(Int64, 0, 0, 8, 3);
     if (!isX86_64())
         return;

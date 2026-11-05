@@ -19,7 +19,6 @@
 # CHECK: = PropGet [[element]] key="a"
 
 module m0 path="copy-tests-for-no-family-that-link-has-proven.ts" displayPath="copy-tests-for-no-family-that-link-has-proven.ts" body=f0 namespaceLayout=L(m0)
-module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
 entry module=m0
 layout L0 module=m0 position=129 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
 layout L1 module=m0 position=118 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
@@ -117,36 +116,3 @@ function f2 name="run" module=m0 position=184 flags=[IsChecked, HasExplicitName]
   b5():
     Return v4 @276
 }
-function f3 name="at" module=m1 position=20924 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeAt thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything, v1: anything):
-    Jump -> next b1() @20924
-  b1():
-    v2 = Undefined @20943
-    v3 = ToObject v0 message="Array.prototype.at requires that |this| not be null or undefined" @20987
-    v4 = PropGet v3 key="length" @21099
-    v5 = ToLength v4 @21089
-    v6 = Builtin builtin=LinkTimeConstantToIntegerOrInfinity [isNotReadFromHolder] @21127
-    v7 = Call v6, -, v1 @21127
-    v8 = Integer @21168
-    v9 = Less v7, v8 @21168
-    Branch v9 -> taken b2(), notTaken b3(v7) @21168
-  b2():
-    v10 = Add v7, v5 @21184
-    Jump -> next b3(v10) @21179
-  b3(v11):
-    v12 = Integer @21210
-    v13 = GreaterEq v11, v12 @21210
-    Branch v13 -> taken b4(), notTaken b6() @21210
-  b4():
-    v14 = Less v11, v5 @21219
-    Branch v14 -> taken b5(), notTaken b6() @21219
-  b5():
-    v15 = ElemGet v3, v11 @21229
-    Jump -> next b7(v15) @21229
-  b6():
-    v16 = Undefined @21240
-    Jump -> next b7(v16) @21240
-  b7(v17):
-    Return v17 @21240
-}
-runtimefunction id=ArrayPrototypeAt function=f3

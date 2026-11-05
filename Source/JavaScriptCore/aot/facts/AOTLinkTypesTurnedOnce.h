@@ -11,8 +11,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The writers of Link turn what stands at each position into a type of the program, one position after the other, and most positions hold what another holds.
-// LinkFlow::toTypeID() answers the same for the same type as long as a writer writes: the flow has ended, and whom the tables may name is settled. The first of a kind makes the types, in its turn.
 class TypesOfFlowTurnedOnce {
 public:
     TypeID turn(const LinkFlow& flow, TypeArena& types, const LinkType& type)

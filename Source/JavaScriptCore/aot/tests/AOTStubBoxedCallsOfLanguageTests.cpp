@@ -69,7 +69,6 @@ static bool callsOperationInLanguageCallTests(const StubCatalog& catalog, StubKe
     });
 }
 
-// E1, M1. Where the program matches no RegExp the handlers of every image name nothing of RemovableFeature::RegExp.
 static void testFormsThatMatchInLanguageCallTests()
 {
     StubCatalog matches(StubOptions { });
@@ -89,7 +88,6 @@ static void testFormsThatMatchInLanguageCallTests()
     }
 }
 
-// W1.
 static void testIsWellFormedInLanguageCallTests()
 {
     StubRunner runner;
@@ -119,7 +117,6 @@ static void testIsWellFormedInLanguageCallTests()
     }
 }
 
-// S1.
 static void testSearchesFromPositionInLanguageCallTests()
 {
     StubRunner runner;
@@ -191,7 +188,6 @@ static void testSearchesFromPositionInLanguageCallTests()
     }
 }
 
-// P1.
 static void testPushesOfSeveralValuesInLanguageCallTests()
 {
     StubRunner runner;
@@ -217,7 +213,6 @@ static void testPushesOfSeveralValuesInLanguageCallTests()
     check(Entry::operationAOTArrayPushFour, { int32InLanguageCallTests(1), int32InLanguageCallTests(2), int32InLanguageCallTests(3), int32InLanguageCallTests(4) });
     AOT_TEST_CHECK(!acceptsArgumentCount(BoxedCallForm::ArrayPush, 0));
 
-    // A list that has names of its own may have a `push` of its own.
     list.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = 0;
     StubRun run = runner.runCall(tryCallMethodOfBuiltinClass(BoxedCallForm::ArrayPush, 2), callee.address(), list.address(), { int32InLanguageCallTests(1), int32InLanguageCallTests(2) });
     AOT_TEST_CHECK(run.result == nothingDoneInLanguageCallTests && !run.calledOperation);
@@ -233,7 +228,6 @@ JSC_DEFINE_HOST_FUNCTION(countHostCallInLanguageCallTests, (JSGlobalObject*, Cal
     return static_cast<EncodedJSValue>(resultOfHostFunctionInLanguageCallTests);
 }
 
-// B1.
 static void testBooleanCalledByValueInLanguageCallTests()
 {
     StubRunner runner;

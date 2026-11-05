@@ -3,6 +3,7 @@
 # OPTIONS: exclude=CodeOutsideImage
 # DIAGNOSTIC: LoaderIsHeldByUnseenCode 1
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: function f0
 
 module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs body=f0

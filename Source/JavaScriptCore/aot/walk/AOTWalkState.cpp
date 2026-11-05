@@ -17,10 +17,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The ElementBase of an element comes from the type of its object, which the state does not have: an element rests on the whole of its heaps.
 static constexpr AbstractHeapSet heapsUnderElementsInWalkState { AbstractHeap::Elements, AbstractHeap::ArrayStorage, AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage };
 static constexpr AbstractHeapSet heapsUnderPlacesInWalkState = heapsUnderElementsInWalkState | AbstractHeapSet { AbstractHeap::ObjectFields, AbstractHeap::EnvironmentFields, AbstractHeap::ModuleVariables, AbstractHeap::MemberGuards };
-// The bytes under a view are no part of it: a view made here may share them with one that other code holds.
 static constexpr AbstractHeapSet heapsUnderElementsOutsideObjectsInWalkState = heapsUnderElementsInWalkState - perObjectHeaps;
 static_assert(perObjectHeaps.containsAll(heapsUnderPlacesInWalkState - heapsUnderElementsOutsideObjectsInWalkState - AbstractHeapSet { AbstractHeap::ModuleVariables, AbstractHeap::MemberGuards }));
 static_assert(perObjectHeaps.contains(AbstractHeap::ShapeWords));
@@ -50,7 +48,6 @@ static unsigned hashOfPlaceInWalkState(uint32_t holder, unsigned kind, uint32_t 
     return WTF::pairIntHash(WTF::pairIntHash(holder, kind), WTF::pairIntHash(first, second));
 }
 
-// The position that `isSought` says yes to, or none.
 uint32_t WalkState::Held::findInTable(const Table& table, unsigned hash, NOESCAPE const Invocable<bool(uint32_t)> auto& isSought)
 {
     uint32_t mask = table.size() - 1;
@@ -70,28 +67,18 @@ void WalkState::Held::addToTable(Table& table, unsigned hash, uint32_t position)
     table.mutableAt(entry) = position;
 }
 
-// ---- Where much is known
-
-// WHATEVER ENDS KNOWLEDGE GOES THROUGH WHAT MAY END, AND THROUGH NOTHING ELSE. A body that is one long row of statements comes to know something of thousands of objects and variables,
-// and each of its stores went through all of them. So whatever hangs on a holder that effects reach stands in a list of all that ends together with it:
-// a place by its heap and its bit, a slot by its layout too, a holder by each fact of its cell, by its shape and by its elements.
-// WHATEVER HAS NOT ENDED AND IS REACHED BY EFFECTS STANDS IN ITS LISTS. A list may hold more: what has ended, and what hangs on a holder that has become fresh. Whoever goes through it takes that out.
-// A list goes through a table: the heads of all the lists, and behind them as many entries for each record as there are lists that it may stand in. An entry holds the next record, `none` in the last, notListed where the record does not stand in the list.
 struct WalkState::Held::Lists {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Lists);
 
     static constexpr uint32_t notListed = none - 1;
 
-    // One for each bit of the heap, and one for the places that rest on all of it.
     static constexpr uint32_t listsOfOneHeap = Place::entireHeap + 1;
     static constexpr uint32_t firstListOfVariables = 0;
     static constexpr uint32_t firstListOfSlots = firstListOfVariables + listsOfOneHeap;
     static constexpr uint32_t firstListOfEnvironmentFields = firstListOfSlots + listsOfOneHeap;
     static constexpr uint32_t listOfGuards = firstListOfEnvironmentFields + listsOfOneHeap;
-    // The slots once more, by the last bits of their layout.
     static constexpr uint32_t listsByLayout = 64;
     static constexpr uint32_t firstListByLayout = listOfGuards + 1;
-    // No head: the one layout that the slots of such a list lie under, or severalLayouts. It says nothing of an empty list.
     static constexpr uint32_t firstLayoutOfList = firstListByLayout + listsByLayout;
     static constexpr uint32_t severalLayouts = notListed;
     static constexpr uint32_t headsOfPlaces = firstLayoutOfList + listsByLayout;
@@ -99,7 +86,6 @@ struct WalkState::Held::Lists {
     static constexpr uint32_t entryByBit = 0;
     static constexpr uint32_t entryByLayout = 1;
 
-    // The first ones: by the bit of a FactOfCell.
     static constexpr uint32_t listOfShapes = 8 * sizeof(OptionSet<FactOfCell>::StorageType);
     static constexpr uint32_t listOfElements = listOfShapes + 1;
     static constexpr uint32_t listsOfHolders = listOfElements + 1;
@@ -116,7 +102,6 @@ struct WalkState::Held::Lists {
         table.mutableAt(entry) = next;
         return true;
     }
-    // `stays` adds to no list.
     static void goThrough(Table& table, uint32_t list, uint32_t entryOfFirstRecord, uint32_t entriesOfRecord, NOESCAPE const Invocable<bool(uint32_t record)> auto& stays)
     {
         uint32_t entryOfPrevious = list;
@@ -137,7 +122,6 @@ struct WalkState::Held::Lists {
     void addHolder(uint32_t list, uint32_t holder) { add(holders, list, listsOfHolders + holder * listsOfHolders + list, holder); }
     void goThroughPlaces(uint32_t list, uint32_t whichEntry, NOESCAPE const Invocable<bool(uint32_t place)> auto& stays) { goThrough(places, list, headsOfPlaces + whichEntry, entriesOfPlace, stays); }
     void goThroughHolders(uint32_t list, NOESCAPE const Invocable<bool(uint32_t holder)> auto& stays) { goThrough(holders, list, listsOfHolders + list, listsOfHolders, stays); }
-    // Of one heap: the places under the bits that are written, and those that rest on all of the heap.
     void goThroughPlacesUnder(uint32_t firstList, uint64_t written, NOESCAPE const Invocable<bool(uint32_t place)> auto& stays)
     {
         if (!written)
@@ -185,7 +169,6 @@ void WalkState::takeHeldOfOwn()
         m_held = new Held;
         return;
     }
-    // The copy goes through the holders that are not fresh, and whoever copies is about to write.
     if (m_held->m_holdersReachedByEffects.size() > holdersFoundWithoutTable && !m_held->m_lists) [[unlikely]] {
         m_held->m_recordsGoneThrough += m_held->m_holdersReachedByEffects.size();
         m_held->makeListsIfDue();
@@ -206,8 +189,18 @@ void WalkState::shareWhatIsHeldBy(const WalkState& other)
     m_held = other.m_held;
 }
 
+Reference WalkState::checkedNameHeldFrom(uint32_t place) const
+{
+    for (; place; place = m_program.numbers->checkedName(place - 1).older) {
+        if (m_held->m_checkedNames.contains(place - 1))
+            return m_program.numbers->checkedName(place - 1).name;
+    }
+    return { };
+}
+
 void WalkState::dropWhatIsHeld()
 {
+    m_marks.hasCheckedNames = false;
     if (m_held->numberOfOwners == 1) {
         m_held->clear();
         return;
@@ -273,28 +266,54 @@ uint8_t WalkState::Held::bitOfSlot(const ProgramOfState& program, FieldReference
     return key ? bitOf(program, MemoryLocation::objectField(key)) : Place::entireHeap;
 }
 
-// ---- Records. A record is written through mutableAt() and only where it changes: whatever is written is shared no longer.
-
-uint32_t WalkState::Held::findRecordOfHolder(Reference object) const
+NEVER_INLINE uint32_t WalkState::Held::findRecordOfHolderInTable(Reference object) const
 {
-    if (!(m_filterOfHolders & bitInFilterOfHolders(object)))
-        return none;
-    auto isSought = [&](uint32_t position) {
+    return findInTable(m_tableOfHolders, hashOfHolderInWalkState(object), [&](uint32_t position) {
         return m_holders[position].object == object;
-    };
+    });
+}
+
+NEVER_INLINE auto WalkState::Held::findRecordOfHolderThatHasNotEndedInTable(Reference object) const -> const Holder*
+{
+    const Holder* found = nullptr;
+    findInTable(m_tableOfHolders, hashOfHolderInWalkState(object), [&](uint32_t position) {
+        const Holder& record = m_holders[position];
+        if (record.object != object)
+            return false;
+        found = &record;
+        return true;
+    });
+    return found && !found->hasEnded ? found : nullptr;
+}
+
+ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfHolder(Reference object) const
+{
+    if (!mayHaveRecordOf(object))
+        return none;
     if (!m_tableOfHolders.isEmpty())
-        return findInTable(m_tableOfHolders, hashOfHolderInWalkState(object), isSought);
+        return findRecordOfHolderInTable(object);
     for (uint32_t position = m_holders.size(); position--;) {
-        if (isSought(position))
+        if (m_holders[position].object == object)
             return position;
     }
     return none;
 }
 
-uint32_t WalkState::Held::findHolder(Reference object) const
+ALWAYS_INLINE uint32_t WalkState::Held::findHolder(Reference object) const
 {
     uint32_t position = findRecordOfHolder(object);
     return position != none && !m_holders[position].hasEnded ? position : none;
+}
+
+ALWAYS_INLINE auto WalkState::Held::findRecordOfHolderThatHasNotEnded(Reference object) const -> const Holder*
+{
+    if (!m_tableOfHolders.isEmpty())
+        return findRecordOfHolderThatHasNotEndedInTable(object);
+    for (uint32_t position = m_holders.size(); position--;) {
+        if (const Holder& record = m_holders[position]; record.object == object)
+            return record.hasEnded ? nullptr : &record;
+    }
+    return nullptr;
 }
 
 void WalkState::Held::fillTableOfHolders()
@@ -342,22 +361,27 @@ uint32_t WalkState::Held::findOrAddHolder(Reference object)
     return position;
 }
 
-uint32_t WalkState::Held::findRecordOfPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
+NEVER_INLINE uint32_t WalkState::Held::findRecordOfPlaceInTable(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
 {
-    auto isSought = [&](uint32_t position) {
+    return findInTable(m_tableOfPlaces, hashOfPlaceInWalkState(holder, static_cast<unsigned>(kind), first, second), [&](uint32_t position) {
         const Place& place = m_places[position];
         return place.holder == holder && place.kind == kind && place.first == first && place.second == second;
-    };
+    });
+}
+
+ALWAYS_INLINE uint32_t WalkState::Held::findRecordOfPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
+{
     if (!m_tableOfPlaces.isEmpty())
-        return findInTable(m_tableOfPlaces, hashOfPlaceInWalkState(holder, static_cast<unsigned>(kind), first, second), isSought);
+        return findRecordOfPlaceInTable(holder, kind, first, second);
     for (uint32_t position = m_places.size(); position--;) {
-        if (isSought(position))
+        const Place& place = m_places[position];
+        if (place.holder == holder && place.kind == kind && place.first == first && place.second == second)
             return position;
     }
     return none;
 }
 
-uint32_t WalkState::Held::findPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
+ALWAYS_INLINE uint32_t WalkState::Held::findPlace(uint32_t holder, PlaceKind kind, uint32_t first, uint32_t second) const
 {
     uint32_t position = findRecordOfPlace(holder, kind, first, second);
     return position != none && m_places[position].value ? position : none;
@@ -484,7 +508,6 @@ void WalkState::Held::endPlacesOf(uint32_t holder, ListOfPlaces list, NOESCAPE c
     }
 }
 
-// An inherited field has a FieldReference under each layout of its row of classes: under two layouts, two references may name one slot.
 void WalkState::Held::endSlotsUnderOtherLayouts(uint32_t holder, uint32_t layout)
 {
     const Holder& record = m_holders[holder];
@@ -614,28 +637,15 @@ void WalkState::Held::forEachHolderReachedByEffects(NOESCAPE const Invocable<voi
             maskOfPlaces |= record.maskOfPlaces;
             ++index;
         } else
-            endHolder(holder); // Another stands in its place now.
+            endHolder(holder);
     }
     m_factsOfCellReachedByEffects = facts;
     m_kindsOfPlacesReachedByEffects = kindsOfPlaces;
     m_maskOfPlacesReachedByEffects = maskOfPlaces;
 }
 
-// To drop them is to go through the holders and the places that are left, so both count together. Where each counted for itself, a body that knows many variables
-// and makes an object after another went through all the variables for every few objects.
-// What no effect ends is no record: it stays.
-bool WalkState::Held::hasManyEndedRecords() const
+void WalkState::Held::dropManyEndedRecords()
 {
-    if (!m_numberOfHolders)
-        return !holdsNoRecord();
-    size_t numberLeft = m_numberOfPlaces + m_numberOfHolders;
-    return m_places.size() + m_holders.size() - numberLeft > numberLeft + placesFoundWithoutTable + holdersFoundWithoutTable;
-}
-
-void WalkState::Held::dropEndedRecordsIfMany()
-{
-    if (!hasManyEndedRecords())
-        return;
     if (!m_numberOfHolders)
         dropAllRecords();
     else
@@ -715,8 +725,6 @@ void WalkState::Held::dropEndedRecords()
         makeLists();
 }
 
-// ---- Shapes and freshness
-
 void WalkState::Held::noteShape(Reference object, TypeID proven)
 {
     ASSERT(object);
@@ -742,8 +750,8 @@ void WalkState::Held::noteShape(Reference object, TypeID proven)
 
 TypeID WalkState::Held::shapeOfHolderOf(Reference object) const
 {
-    uint32_t holder = findHolder(object);
-    return holder != none ? m_holders[holder].shape : TypeID();
+    const Holder* record = findRecordOfHolderThatHasNotEnded(object);
+    return record ? record->shape : TypeID();
 }
 
 void WalkState::Held::noteFactsOfCell(Reference object, OptionSet<FactOfCell> facts)
@@ -770,8 +778,8 @@ void WalkState::Held::noteFactsOfCell(Reference object, OptionSet<FactOfCell> fa
 
 OptionSet<FactOfCell> WalkState::Held::factsOfCellOfHolderOf(Reference object) const
 {
-    uint32_t holder = findHolder(object);
-    return holder != none ? m_holders[holder].factsOfCell : OptionSet<FactOfCell>();
+    const Holder* record = findRecordOfHolderThatHasNotEnded(object);
+    return record ? record->factsOfCell : OptionSet<FactOfCell>();
 }
 
 void WalkState::Held::noteOrderWord(Reference object, std::optional<uint32_t> orderWord)
@@ -792,10 +800,10 @@ std::optional<uint32_t> WalkState::Held::orderWordOf(Reference object) const
 {
     if (!m_numberOfHoldersWithFactsOfCell)
         return std::nullopt;
-    uint32_t holder = findHolder(object);
-    if (holder == none || !m_holders[holder].factsOfCell.contains(FactOfCell::OrderWordIsKnown))
+    const Holder* record = findRecordOfHolderThatHasNotEnded(object);
+    if (!record || !record->factsOfCell.contains(FactOfCell::OrderWordIsKnown))
         return std::nullopt;
-    return m_holders[holder].orderWord;
+    return record->orderWord;
 }
 
 void WalkState::Held::noteFresh(Reference object)
@@ -814,8 +822,21 @@ void WalkState::Held::noteFresh(Reference object)
 
 bool WalkState::Held::holderIsFresh(Reference object) const
 {
-    uint32_t holder = findHolder(object);
-    return holder != none && m_holders[holder].isFresh;
+    const Holder* record = findRecordOfHolderThatHasNotEnded(object);
+    return record && record->isFresh;
+}
+
+void WalkState::letFreshObjectsLeave()
+{
+    if (!holdsFreshObjects())
+        return;
+    Vector<Reference, 8> fresh;
+    for (uint32_t holder = 0; holder < m_held->m_holders.size(); ++holder) {
+        if (m_held->m_holders[holder].isFresh)
+            fresh.append(m_held->m_holders[holder].object);
+    }
+    for (Reference object : fresh)
+        markEscaped(object);
 }
 
 bool WalkState::Held::letLeaveIfFresh(Reference object)
@@ -827,13 +848,10 @@ bool WalkState::Held::letLeaveIfFresh(Reference object)
     return true;
 }
 
-// ---- Places
-
 void WalkState::Held::noteSlot(const ProgramOfState& program, Reference object, FieldReference field, Reference value)
 {
     ASSERT(object);
     uint32_t layout = field.layout.index();
-    // No write through another value ends the places of a fresh object, so a store through itself must end here whatever it may have overwritten.
     if (m_numberOfFreshHolders) {
         uint32_t holder = findHolder(object);
         if (holder != none && m_holders[holder].isFresh && (!value || valueOfPlace(PlaceKind::Slot, object, layout, field.field) != value))
@@ -865,7 +883,6 @@ void WalkState::Held::noteEnvironmentField(const ProgramOfState& program, Refere
 void WalkState::Held::noteElement(Reference object, Reference index, Reference value)
 {
     ASSERT(object && index);
-    // As in noteSlot(). Two indexes may be one number, two constants too: Code holds a constant as often as it was added.
     if (m_numberOfFreshHolders) {
         uint32_t holder = findHolder(object);
         if (holder != none && m_holders[holder].isFresh && (!value || valueOfPlace(PlaceKind::Element, object, index.bits(), 0) != value)) {
@@ -895,8 +912,6 @@ void WalkState::Held::noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID 
     });
     dropEndedRecordsIfMany();
 }
-
-// ---- How knowledge ends
 
 void WalkState::Held::makeLists()
 {
@@ -930,7 +945,6 @@ void WalkState::Held::listPlace(uint32_t position)
         m_lists->addPlace(Lists::listOfGuards, Lists::entryByBit, position);
         return;
     }
-    // goesByLists(): while effects reach a place of a kind that has no list, nobody goes by the lists.
     if (place.kind != PlaceKind::Slot)
         return;
     m_lists->addPlace(Lists::firstListOfSlots + place.bit, Lists::entryByBit, position);
@@ -985,7 +999,6 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
         }
         return lastAnswer;
     };
-    // `has` is asked of a holder that effects reach, `end` of one that is written.
     auto goThroughHolders = [&](uint32_t list, const auto& has, const auto& end) {
         m_lists->goThroughHolders(list, [&](uint32_t holder) {
             const Holder& record = m_holders[holder];
@@ -1058,7 +1071,6 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
         endHolderIfNothingHangsOn(holder);
 }
 
-// WalkState::Held::invalidateAliasedSlots(): of every holder that effects reach but `own`, the same field under the same layout and every slot under another layout.
 void WalkState::Held::invalidateAliasedSlotsByLists(uint32_t own, uint8_t bit, FieldReference field, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject)
 {
     uint32_t layout = field.layout.index();
@@ -1072,7 +1084,6 @@ void WalkState::Held::invalidateAliasedSlotsByLists(uint32_t own, uint8_t bit, F
         }
         return lastAnswer;
     };
-    // True: it stays in the list.
     auto endIf = [&](uint32_t position, const auto& isMeant) {
         const Place& place = m_places[position];
         uint32_t holder = place.holder;
@@ -1093,7 +1104,6 @@ void WalkState::Held::invalidateAliasedSlotsByLists(uint32_t own, uint8_t bit, F
             return endIf(position, isSameField);
         });
     };
-    // A state that did not have the program when it noted the slot has given it no bit, and one that does not have it now cannot tell the bit.
     if (bit == Place::entireHeap) {
         for (uint32_t list = 0; list < Lists::listsOfOneHeap; ++list)
             endSameFieldIn(Lists::firstListOfSlots + list);
@@ -1105,7 +1115,6 @@ void WalkState::Held::invalidateAliasedSlotsByLists(uint32_t own, uint8_t bit, F
     for (uint32_t byLayout = 0; byLayout < Lists::listsByLayout; ++byLayout) {
         if (m_lists->places[Lists::firstListByLayout + byLayout] == none || m_lists->places[Lists::firstLayoutOfList + byLayout] == layout)
             continue;
-        // No layout at all is a layout like any other here.
         bool someStay = false;
         uint32_t layoutOfList = none;
         m_lists->goThroughPlaces(Lists::firstListByLayout + byLayout, Lists::entryByLayout, [&](uint32_t position) {
@@ -1151,7 +1160,6 @@ void WalkState::Held::invalidateAliasedSlots(const ProgramOfState& program, Refe
         if (holder == own || record.layoutsOfSlots == LayoutsOfSlots::None)
             return;
         Reference other = record.object;
-        // Another field under the same layout is another slot.
         if (record.layoutsOfSlots == LayoutsOfSlots::One && record.layoutOfSlots == layout) {
             uint32_t sameField = findPlace(holder, PlaceKind::Slot, layout, field.field);
             if (sameField != none && mayBeSameObject(other))
@@ -1237,7 +1245,6 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects)
         return true;
     };
     auto endWhatHangsOn = [&](uint32_t holder) {
-        // Most holders are looked at once and left as they are.
         const Holder& record = m_holders[holder];
         uint64_t written = 0;
         for (PlaceKind kind : { PlaceKind::Slot, PlaceKind::Variable, PlaceKind::EnvironmentField, PlaceKind::GuardOfStores, PlaceKind::GuardOfReads }) {
@@ -1309,7 +1316,6 @@ void WalkState::Held::dropAllRecords()
     m_places.clear();
     m_holdersReachedByEffects.shrink(0);
     m_firstFreshHolderWithElements = none;
-    // Most states have neither.
     if (!m_tableOfHolders.isEmpty())
         m_tableOfHolders.clear();
     if (!m_tableOfPlaces.isEmpty())
@@ -1343,23 +1349,18 @@ bool leavesDeadZoneForGood(const Program& program, VariableID id)
     const Variable& variable = program.at(id);
     if (variable.initialization != VariableInitialization::Uninitialized || variable.owner || !variable.module)
         return false;
-    // `let`, and a name that the loader takes off what a CommonJS file exports, too: a store gives such a variable another value and never takes its value away.
     if (variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
         return false;
     const Module& module = program.at(variable.module);
     return isEvaluatedAtMostOnceOf(module.kind) && !module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeEvicted, ModuleFlags::MayBeMocked });
 }
 
-// A part that the two states share holds the same records in both, none of them written since the states were one. A place in it has not ended in either, so neither has its holder.
-void SharedSetOfNumbers::keepMembersOf(const SharedSetOfNumbers& other)
+void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)
 {
-    if (!m_size)
-        return;
     if (!other.m_size) {
         clear();
         return;
     }
-    // The one with fewer words is gone through: what the other holds past its end does not stay.
     if (other.m_words.size() < m_words.size()) {
         SharedSetOfNumbers shorter = other;
         shorter.keepMembersOf(*this);
@@ -1392,14 +1393,16 @@ void WalkState::meetWith(const WalkState& other)
     if (&other == this)
         return;
     m_answers.meetWith(other.m_answers);
-    if (m_turnInWhichNothingWasDone != other.m_turnInWhichNothingWasDone)
-        m_turnInWhichNothingWasDone = 0;
+    if (m_marks.turnInWhichNothingWasDone != other.m_marks.turnInWhichNothingWasDone)
+        m_marks.turnInWhichNothingWasDone = 0;
     if (m_held == other.m_held || holdsNothing())
         return;
-    if (other.holdsNothing())
+    if (other.holdsNothing()) {
         dropWhatIsHeld();
-    else
-        heldToWrite().meetWith(*other.m_held);
+        return;
+    }
+    heldToWrite().meetWith(*other.m_held);
+    m_marks.hasCheckedNames = !m_held->m_checkedNames.isEmpty();
 }
 
 void WalkState::Held::meetWith(const Held& other)
@@ -1421,7 +1424,6 @@ void WalkState::Held::meetWith(const Held& other)
     auto noteStretch = [&](uint32_t begin, uint32_t end) {
         stretches.append({ begin, end });
     };
-    // What both have from the state that they once were lies at one position in both, unless one of them has made its lists anew. There is one record at most for an object, and for a place.
     auto findHolderInOther = [&](uint32_t holder, Reference object) {
         if (holder < other.m_holders.size()) {
             if (const Holder& same = other.m_holders[holder]; same.object == object)
@@ -1475,7 +1477,6 @@ void WalkState::Held::meetWith(const Held& other)
         }
     }
     dropEndedRecordsIfMany();
-    // What either has spent counts: a row of branches that each write a copy and meet again would else never have spent enough.
     if (other.m_recordsGoneThrough | m_recordsGoneThrough) [[unlikely]] {
         m_recordsGoneThrough = std::max(m_recordsGoneThrough, other.m_recordsGoneThrough);
         makeListsIfDue();

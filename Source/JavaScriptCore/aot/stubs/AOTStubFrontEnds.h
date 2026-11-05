@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeTable.h"
+#include "AOTStubDescriptor.h"
 #include "AOTStubKey.h"
 #include <span>
 
@@ -47,16 +48,14 @@ consteval bool operationFrontEndsAreWellFormed()
 }
 static_assert(operationFrontEndsAreWellFormed());
 
-// Argument 0, the Instance*, is not an operand: a front end reads instanceGPR, and tailCallOperation sets the argument again.
 StubSignature operationFrontEndSignature(unsigned numberOfOperands);
 
 enum class PreludeExit : bool { CallsOperation, Returns };
 
-// Stands in the head of every stub that calls the operation, with the arguments in the registers of the operation and the stack as at the entry of the stub.
-// It answers the usual case and returns to the caller of the stub. Where it falls through, the arguments are as they came and the operation is called.
 struct OperationPrelude {
     Entry operation;
     PreludeExit (*emit)(StubAssembler&);
+    StubOwnEffects ownEffects;
 };
 
 std::span<const OperationPrelude> operationPreludes();

@@ -25,15 +25,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// As large a body as Inlining copies in a loop. It decides what pays alone: a copy of a larger body brings calls that nobody has counted, and its unit tests.
 static constexpr uint32_t mostOperationsOfBodyBuiltIntoFrameOfCaller = 40;
 
 static_assert(maxNestedFunctionsWithoutStackCheck <= std::numeric_limits<uint8_t>::max());
 
-// Besides the frames counted here, three entry frames may stand below a stack check: that of a generic entry, which is entered right after the check made by whoever calls through the word of a closure,
-// that of an entry of the method table above a method that tests, and that of a parameter guard in front of the version that makes the next check.
-// The body that a generic entry leads to may be covered too. Its frames are among those counted here.
-// The room that is left has to hold the argument registers that a generic entry spills, and the frame of a stub or the frame record that a function pushes before its own check.
 static constexpr size_t maxEntryFramesWithoutStackCheck = 3;
 static_assert((maxNestedFunctionsWithoutStackCheck + maxEntryFramesWithoutStackCheck) * (maxFrameSizeWithoutStackCheck + 2 * sizeof(void*)) + sizeOfSpilledArgumentRegisters + maxUncheckedFrameSize + 2 * sizeof(void*) <= maxStackUsedWithoutCheck);
 
@@ -41,7 +36,6 @@ namespace {
 
 using CallAtBareSiteForStackTests = std::pair<FunctionID, FunctionID>;
 
-// By function: whom the calls enter that linked() or held() lists under it, each once, and the bodies that the steps at its bare sites call.
 class CallsListedForStackTests {
     WTF_MAKE_NONCOPYABLE(CallsListedForStackTests);
 public:
@@ -105,12 +99,9 @@ public:
 
 private:
     enum class BodyTrait : uint8_t {
-        // Everything but the number of frames below the body allows it.
         MayBeCovered = 1 << 0,
         MayBeInlined = 1 << 1,
-        // Code calls it from the start of a module and at the bare sites of other bodies, and nowhere else: a listed call that names it leads to a start or to the loader.
         IsBodyOfModule = 1 << 2,
-        // Of an async function in which nothing suspends. Its ramp enters its body, and so does every caller that has the ramp written out at the call, past whatever test the ramp makes.
         HasBodyThatNeverSuspends = 1 << 3,
     };
 
@@ -126,7 +117,6 @@ private:
     bool bodyMaySuspend(FunctionID id) const { return m_conventions.of(id).has(CodeRole::CoroutineBody) && !m_conventions.of(id).coroutineNeverSuspends; }
     OptionSet<BodyTrait> traitsOf(FunctionID, const StronglyConnectedComponents& cyclesOfCountedCalls, const BitVector& methodsOfTable) const;
     bool needsNoCount(FunctionID id) const { return m_traits[id.index()].isEmpty() || m_counts[id.index()] == Count::Done; }
-    // The unit that a call of it enters tests the stack, and its body is built into no caller. It is counted as a root, for what stands below that unit.
     bool addsNothingBelowCaller(FunctionID id) const { return needsNoCount(id) || !m_traits[id.index()].containsAny({ BodyTrait::MayBeCovered, BodyTrait::MayBeInlined }); }
     std::span<const FunctionID> calleesCountedBelow(FunctionID) const;
     void beginCount(FunctionID);
@@ -140,7 +130,6 @@ private:
     CallsListedForStackTests m_calls;
     StackTestPlan m_plan;
 
-    // By function. None: the function tests the stack in a frame of its own in front of whatever it calls.
     Vector<OptionSet<BodyTrait>> m_traits;
     Vector<Count> m_counts;
     Vector<CountInProgress> m_countsInProgress;
@@ -168,22 +157,15 @@ auto CounterOfCoveredFrames::traitsOf(FunctionID id, const StronglyConnectedComp
     const Function& function = m_program.at(id);
     FunctionConvention convention = m_conventions.of(id);
     bool isCoroutine = function.isCoroutine();
-    // The Body of a coroutine is its ramp, which suspends nowhere. The loader enters that of a module's body.
     if (!convention.has(CodeRole::Body) || (isCoroutine ? function.isModuleBody() : m_facts.summaries().at(id).has(SummaryTrait::Suspends)))
         return { };
-    // A start tests the stack in its own frame, the calls at bare sites are counted, and the run time enters by value, right behind the check of whoever calls through the word of a closure.
     if (function.isModuleBody())
         return { BodyTrait::MayBeCovered, BodyTrait::IsBodyOfModule };
 
     OptionSet<BodyTrait> traits;
-    // On a cycle of calls a caller may be counted in front of a callee, which then tests for itself. Nothing is counted for the body of such a member where it is built into a frame: the walk takes none of its calls for counted.
-    // A member that ends up covered was counted in front of every caller, with a frame of its own above what it calls, so the walk takes its calls for counted wherever its body is built.
     bool isSmallEnough = m_facts.summaries().at(id).numberOfOperations <= mostOperationsOfBodyBuiltIntoFrameOfCaller || isLibraryCode(m_program, function);
     if (!cyclesOfCountedCalls.isInCycle.get(id.index()) && isSmallEnough && !bodyMaySuspend(id))
         traits.add(BodyTrait::MayBeInlined);
-    // Every way into the body leads past a test. A call that is listed is counted by whoever makes it. Whoever enters through the word of a closure, the host among them, tests right in front of the generic entry.
-    // A unit that makes a call which nobody has counted for it tests in its own frame: Code::holdsCallThatPlanHasNotCounted().
-    // An emitter calls through the method table with no test in front and no note of the walk.
     if (!methodsOfTable.get(id.index()))
         traits.add(BodyTrait::MayBeCovered);
     if (convention.coroutineNeverSuspends)
@@ -191,7 +173,6 @@ auto CounterOfCoveredFrames::traitsOf(FunctionID id, const StronglyConnectedComp
     return traits;
 }
 
-// What is listed under a coroutine is called by its body. One that may suspend tests the stack for itself, so nothing is counted below its ramp, and no cycle of calls leads on through it untested.
 std::span<const FunctionID> CounterOfCoveredFrames::calleesCountedBelow(FunctionID id) const
 {
     if (bodyMaySuspend(id))
@@ -205,7 +186,6 @@ void CounterOfCoveredFrames::beginCount(FunctionID id)
     m_countsInProgress.append(CountInProgress { id, m_calls.stepsAtBareSitesOf(id) });
 }
 
-// What the function on top may call and is not counted yet.
 FunctionID CounterOfCoveredFrames::takeNextCalleeToCount()
 {
     CountInProgress& top = m_countsInProgress.last();
@@ -223,7 +203,6 @@ FunctionID CounterOfCoveredFrames::takeNextCalleeToCount()
     return { };
 }
 
-// Whatever the function may call is counted, or is being counted and tests for itself.
 void CounterOfCoveredFrames::finishCount(const CountInProgress& finished)
 {
     FunctionID id = finished.function;
@@ -237,13 +216,10 @@ void CounterOfCoveredFrames::finishCount(const CountInProgress& finished)
     for (const CallAtBareSiteForStackTests& step : finished.stepsAtBareSites)
         framesBelow = std::max<unsigned>(framesBelow, m_plan.coveredFramesOfCall[step.second.index()]);
 
-    // The slow version calls what the function calls as it is written, and is entered by a jump: the one frame is that of either version.
     unsigned framesOfCall = framesBelow + 1;
     bool isCoroutine = m_conventions.of(id).has(CodeRole::CoroutineBody);
     bool coversBodyOfCoroutine = false;
     if (isCoroutine) {
-        // So far the frame is that of the body. The ramp waits above it, and below a body that tests for itself nothing is counted.
-        // A body never counts on the test of its ramp, which a caller may pass by: it is covered only where the ramp is, by whoever counts both.
         coversBodyOfCoroutine = traits.containsAll({ BodyTrait::HasBodyThatNeverSuspends, BodyTrait::MayBeCovered }) && framesOfCall < maxNestedFunctionsWithoutStackCheck;
         framesOfCall = coversBodyOfCoroutine ? framesOfCall + 1 : 1;
     }
@@ -255,12 +231,9 @@ void CounterOfCoveredFrames::finishCount(const CountInProgress& finished)
     }
     if (coversBodyOfCoroutine)
         m_plan.coroutineBodiesCoveredByCallers.quickSet(id.index());
-    // An inlined body has neither a frame nor a stack check: what it calls stands right below the frame that it was built into.
-    // The frames of a call leave that out where the body of a coroutine tests for itself.
     if (traits.contains(BodyTrait::MayBeInlined))
         counted = std::max(counted, static_cast<uint8_t>(framesBelow));
     bool frameOfBodyIsCounted = isCoroutine ? coversBodyOfCoroutine : isCovered;
-    // The slow version of a coroutine is started by the ramp and resumed like the body. Below a ramp whose body may suspend nothing is counted, so there it tests as that body does.
     if (frameOfBodyIsCounted)
         m_plan.slowBodiesCoveredByCallers.quickSet(id.index());
     if (!traits.contains(BodyTrait::IsBodyOfModule) && (traits.contains(BodyTrait::MayBeInlined) || frameOfBodyIsCounted))
@@ -269,7 +242,6 @@ void CounterOfCoveredFrames::finishCount(const CountInProgress& finished)
     m_plan.coveredFramesOfCall[id.index()] = counted;
 }
 
-// Each edge is gone over once, in an order that the program alone decides: it says which member of a cycle tests.
 void CounterOfCoveredFrames::countCoveredFrames()
 {
     for (uint32_t index = 0; index < m_traits.size(); ++index) {
@@ -284,7 +256,6 @@ void CounterOfCoveredFrames::countCoveredFrames()
             else if (m_counts[callee.index()] == Count::NotBegun)
                 beginCount(callee);
             else {
-                // It closes a cycle of calls. Every cycle has such a member, so every turn of it tests the stack, and the other members may count on that.
                 m_traits[callee.index()].remove(BodyTrait::MayBeCovered);
             }
         }
@@ -315,9 +286,6 @@ StackTestPlan planStackTests(const Program& program, const Facts& facts, const P
     return CounterOfCoveredFrames(program, facts, plan).run();
 }
 
-// ---- The check
-
-// Behind a stack check there is room for maxNestedFunctionsWithoutStackCheck frames of covered bodies. An inlined body brings no check along, so what it calls stands right below the frame that it was inlined into.
 void checkStackTests(const Program& program, const Facts& facts, const Plan& plan, BuildContext& build)
 {
     const CallingConventions& conventions = plan.conventions();
@@ -347,7 +315,6 @@ void checkStackTests(const Program& program, const Facts& facts, const Plan& pla
         FunctionID id(index);
         const Function& function = program.at(id);
         FunctionConvention convention = conventions.of(id);
-        // A caller that has the ramp written out at the call enters a body that never suspends past whatever test the ramp makes. So the body counts on whoever the ramp counts on.
         expect(!bodyOfCoroutineIsCovered(id) || (convention.has(CodeRole::CoroutineBody) && convention.coroutineNeverSuspends && isCovered(id)), id, 0, "the body of a coroutine makes no stack test, and it may suspend or its ramp tests"_s);
         expect(!isCovered(id) || (convention.has(CodeRole::Body) && !(function.isCoroutine() && function.isModuleBody())), id, 0, "a body makes no stack test, and somebody enters it whom nobody counts"_s);
         expect(!tests.slowBodiesCoveredByCallers.get(index) || (isCovered(id) && (!convention.has(CodeRole::CoroutineBody) || bodyOfCoroutineIsCovered(id))), id, 0, "a slow version makes no stack test, and the body whose place it takes tests"_s);
@@ -357,7 +324,6 @@ void checkStackTests(const Program& program, const Facts& facts, const Plan& pla
             expect(!isCovered(method), method, 0, "a method of the method table makes no stack test"_s);
     }
 
-    // The heights speak of the calls that are listed. A unit into which the walk builds any other call of a covered body tests the stack for itself.
     enum class Height : uint8_t { NotBegun, InProgress, Known };
     struct CallerOnPath {
         FunctionID function;
@@ -371,7 +337,6 @@ void checkStackTests(const Program& program, const Facts& facts, const Plan& pla
     Vector<uint32_t> framesOfCall(FillWith { }, numberOfFunctions, 0u);
     Vector<CallerOnPath> path;
 
-    // What is listed under a coroutine is called by its body. One that tests the stack for itself leaves nothing below the ramp.
     auto bodyOfCoroutineTestsForItself = [&](FunctionID function) {
         return conventions.of(function).has(CodeRole::CoroutineBody) && !bodyOfCoroutineIsCovered(function);
     };
@@ -412,17 +377,14 @@ void checkStackTests(const Program& program, const Facts& facts, const Plan& pla
         for (const CallAtBareSiteForStackTests& step : caller.stepsAtBareSites)
             framesBelow = std::max(framesBelow, framesOfCall[step.second.index()]);
 
-        // A ramp waits above the body of its coroutine.
         uint32_t height = (bodyOfCoroutineTestsForItself(function) ? 0 : framesBelow) + isCovered(function) + bodyOfCoroutineIsCovered(function);
         heights[function.index()] = Height::Known;
         expect(!isCovered(function) || height <= maxNestedFunctionsWithoutStackCheck, function, height, "more frames without a stack test stand below a test than there is room for"_s);
-        // Built into a caller, such a body brings no test along.
         height = std::max(height, framesBelow);
         expect(height <= tests.coveredFramesOfCall[function.index()], function, height, "a call puts more frames without a stack test below its caller than the plan has counted"_s);
         framesOfCall[function.index()] = height;
     };
 
-    // The path holds nothing that is sure to test the stack.
     for (uint32_t index = 0; index < numberOfFunctions; ++index) {
         if (addsNothingBelowCaller(FunctionID(index)))
             continue;

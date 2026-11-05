@@ -5,10 +5,6 @@
 
 #pragma once
 
-// Members of ScanOfBody, which AOTScan.cpp declares. That file includes this one at its foot.
-// The scan leaves effects that Link can cut: what has a record under a written key is left out of ThinSummary::ownEffects, operators on operands that Link types lie apart,
-// and each record says whether it lies on a way to a Return. The body is read once: behind it comes one go backward over its edges.
-
 #if ENABLE(AOT)
 
 #include "AOTLinkKnownEffects.h"
@@ -16,10 +12,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A number, a boolean, undefined and null become numbers without memory, a string becomes one without a rule that could turn it away, and no operator makes anything else of them.
 static constexpr uint16_t plainPrimitivesInScanKnownEffects = Primitive::NumberLike | Primitive::AnyString;
 
-// As readAccess() finds it.
 static PropertyKeyID keyWrittenAtInScanKnownEffects(const Program& program, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
@@ -41,7 +35,6 @@ void ScanOfBody::noteWritesIn(uint32_t block, const LocationMasks& writes)
     blocks.append(KnownEffectsOfScan::WritesOfBlock { block, writes });
 }
 
-// ThinSummary::layoutsOfOwnWrites. An allocation fills what it makes, and no caller knows anything of that.
 void ScanOfBody::noteObjectsWrittenBy(const BodyValue& value, const Effects& effects)
 {
     Opcode opcode = value.opcode();
@@ -49,16 +42,13 @@ void ScanOfBody::noteObjectsWrittenBy(const BodyValue& value, const Effects& eff
         LayoutID layout = PayloadWord::layout(opcode) ? value.layout() : LayoutID();
         m_summary.layoutsOfOwnWrites |= layout ? bitOfLayoutInKnownEffects(m_program, layout) : objectsOfAnyLayout;
     }
-    // Whether it leaves a record whose subject says whose object is written is known behind the body: finishKnownEffects().
     if (effects.writes.containsAny(heapsOfPartsOfObjects))
         m_knownEffects.sitesThatWriteIntoObjects.append(value.id());
 }
 
-// `(a, b) => a.rank - b.rank`. The bound that the row declares holds for a symbol and a BigInt among the operands too. Which primitives arrive only Link can tell.
 const Effects& ScanOfBody::noteOwnEffectsOfOperator(const BodyValue& value, uint32_t block, const Effects& effects, Effects& storage)
 {
     Opcode opcode = value.opcode();
-    // `a === b`, `a == b`: neither turns a symbol or a BigInt away. What the conversion of an object runs and throws is counted with its calls, which stand in the summary by themselves.
     if (provesOf(opcode) == Proof::Equality) {
         noteWritesIn(block, effects.writes);
         if (!effects.mayThrow)
@@ -76,7 +66,6 @@ const Effects& ScanOfBody::noteOwnEffectsOfOperator(const BodyValue& value, uint
         ++numberOfOperandsAtHand;
     });
     if (!widest || hasVariadicOperand(opcode) || effects.mayRunOtherCode() || numberOfOperandsAtHand != numberOfOperands) {
-        // What it gives may be an operand of another operator, and nobody has looked at where it comes from.
         m_knownEffects.operatorsStayInOwnEffects = true;
         noteWritesIn(block, effects.writes);
         return effects;
@@ -89,10 +78,8 @@ const Effects& ScanOfBody::noteOwnEffectsOfOperator(const BodyValue& value, uint
         leaveApart(listOf(operand));
     });
     uint16_t given = primitivesInID(widest);
-    // `String(n)`: it makes a text whatever it is handed.
     if (!(given & Primitive::NumberLike))
         leaveApart(listOfNode(constant(TypeTable::string)));
-    // `a + b`: the text may come out longer than a string can be.
     if ((given & Primitive::AnyString) && numberOfOperands > 1)
         m_summary.operatorsLeftApartMayJoinTexts = true;
     m_knownEffects.ofOperators.merge(effects);
@@ -100,19 +87,15 @@ const Effects& ScanOfBody::noteOwnEffectsOfOperator(const BodyValue& value, uint
     return noEffectsInScan;
 }
 
-// It answers with what ThinSummary::ownEffects takes.
 const Effects& ScanOfBody::noteOwnEffects(const BodyValue& value, uint32_t block, std::optional<SummaryAccess::Kind> access, const Effects& effects, Effects& storage)
 {
     Opcode opcode = value.opcode();
-    // `const w = box.width; bump(counter); return w + box.width`: the access leaves a record, or the call by name that stands for it does, and Link says what a lookup under that key does where something arrives at its subject.
-    // A store that becomes an edge leaves none: noteStoreThatBecameEdge(). Under a computed key ownEffects stays the only word.
     if (access && declaredBoundInTable(opcode).mayCallUnknownCode && keyWrittenAtInScanKnownEffects(m_program, value)) {
         m_knownEffects.whatIsLeftApartMayThrow = true;
         return noEffectsInScan;
     }
     if (effectRuleOf(opcode) == EffectRule::Operator)
         return noteOwnEffectsOfOperator(value, block, effects, storage);
-    // The record of an access names its subject.
     if (!access)
         noteObjectsWrittenBy(value, effects);
     noteWritesIn(block, effects.writes);
@@ -136,11 +119,9 @@ void ScanOfBody::noteEdgeBetweenBlocks(uint32_t from, uint32_t to, KindOfEdgeInS
         m_summary.someBlockHasHandler = true;
 }
 
-// `function make(a) { const o = {}; o.a = a; return o }`: the object was made by this very call and nothing else has it yet, so no caller knows anything of what is written.
-// What is left is what the definition of a property does beside that.
 void ScanOfBody::noteStoreThatBecameEdge(const StoreInScan& store)
 {
-    constexpr Effects ofDefinition = declaredBoundOf(Opcode::DefineGetter);
+    constexpr Effects ofDefinition = declaredBoundOf(NamedEffectSet::DefinesProperty);
     Effects effects = declaredBoundOf(NamedEffectSet::Allocates);
     effects.merge(declaredBoundOf(NamedEffectSet::UsesRuntime));
     effects.reads.merge(ofDefinition.reads);
@@ -151,7 +132,6 @@ void ScanOfBody::noteStoreThatBecameEdge(const StoreInScan& store)
     noteWritesIn(store.block, effects.writes);
 }
 
-// The nodes that the operands of the operators come from, through the parameters of blocks. No node is made for it but the constant that stands for a text.
 void ScanOfBody::listOperandsOfOperatorsLeftApart()
 {
     KnownEffectsOfScan& known = m_knownEffects;
@@ -163,7 +143,6 @@ void ScanOfBody::listOperandsOfOperatorsLeftApart()
     known.parametersLookedAt.fill(false, m_numberOfParameters);
     known.parametersToLookAt.shrink(0);
     auto lookAt = [&](uint32_t first, uint32_t count) {
-        // A value that comes from nowhere is one that this scan knows nothing of.
         known.operatorsStayInOwnEffects |= !count;
         for (uint32_t position = 0; position < count; ++position) {
             uint32_t atom = m_atoms[first + position];
@@ -175,7 +154,6 @@ void ScanOfBody::listOperandsOfOperatorsLeftApart()
             }
             if (atom & operatorBit) {
                 Opcode opcode = m_operators[atom & ~operatorBit].opcode;
-                // It is left apart itself. So it gives a plain primitive where its operands are plain primitives, and those are looked at on their own.
                 if (effectRuleOf(opcode) == EffectRule::Operator)
                     continue;
                 TypeID widest = widestPrimitiveResultOf(opcode);
@@ -217,7 +195,6 @@ void ScanOfBody::listOperandsOfOperatorsLeftApart()
     }
     std::sort(sources.begin(), sources.end());
     sources.shrink(std::unique(sources.begin(), sources.end()) - sources.begin());
-    // A list that grows by itself begins with room for sixteen.
     ThinSummary::KnownEffectsApart::Lists& lists = m_summary.knownEffectsApart.ensureLists();
     lists.operandsOfOperatorsLeftApart.reserveInitialCapacity(sources.size());
     lists.operandsOfOperatorsLeftApart.appendVector(sources);
@@ -225,19 +202,15 @@ void ScanOfBody::listOperandsOfOperatorsLeftApart()
     lists.ownEffectsOfOperators.append(known.ofOperators);
 }
 
-// `function set(o, v) { if (v < 0) { o.bad = v; throw new RangeError() } o.v = v }`: whoever gets an answer from set() finds `bad` as it was.
 void ScanOfBody::tellWaysToReturnApart()
 {
     KnownEffectsOfScan& known = m_knownEffects;
-    // A coroutine comes back to its caller at each suspension.
     if (!known.someBlockEndsWithoutReturning || m_function->isCoroutine())
         return;
 
     known.leadsToReturn.fill(false, m_function->body.numberOfBlocks());
     for (uint32_t block : known.blocksThatReturn)
         known.leadsToReturn[block] = true;
-    // Blocks stand in reverse postorder and the edges in the order of their sources, so whoever goes backward has judged the target of every edge that leads forward.
-    // An edge that leads back counts as one that leads to a Return: nobody has judged the head of its loop yet.
     for (size_t place = known.edges.size(); place--;) {
         KnownEffectsOfScan::Edge edge = known.edges[place];
         if (edge.to <= edge.from || known.leadsToReturn[edge.to])
@@ -247,7 +220,6 @@ void ScanOfBody::tellWaysToReturnApart()
     auto liesOnNoWayToReturn = [&](ValueID site) {
         return site && !known.leadsToReturn[m_blocks[site.index()]];
     };
-    // The calls of a conversion are left once, at the first operation that converts the value: they stand for every later one too.
     for (SummaryCall& call : m_summary.calls)
         call.liesOnNoWayToReturn = !call.isMadeByProtocol && liesOnNoWayToReturn(call.site);
     for (SummaryAccess& access : m_summary.accesses)
@@ -273,13 +245,11 @@ void ScanOfBody::finishKnownEffects()
 {
     listOperandsOfOperatorsLeftApart();
     tellWaysToReturnApart();
-    // What is left out of ownEffects may throw all the same. finish() says this of ownEffects.
     if (m_knownEffects.whatIsLeftApartMayThrow && !m_summary.ownEffects.mayThrow) {
         m_summary.traits.add(SummaryTrait::MayThrow);
         addEdge(0, nodeFor(SummaryNode::Kind::Thrown));
     }
 
-    // An operation that has left neither a change nor a store writes in an object that nobody names: a class object, a prototype object.
     KnownEffectsOfScan& known = m_knownEffects;
     if (known.sitesThatWriteIntoObjects.isEmpty())
         return;
@@ -297,8 +267,6 @@ void ScanOfBody::finishKnownEffects()
     }
 }
 
-// `const s = typeof a === "string" ? a : b.name; if (typeof s === "string") ..`: what has passed both tests is of both types. The scan runs beside others and makes no type,
-// so it keeps the narrower where one lies within the other, and the newer where neither does. Where the two have nothing in common nothing passes.
 OriginInScan ScanOfBody::narrowerOfTwoTests(OriginInScan origin, TypeID passes)
 {
     if (!origin.passes || origin.passes == passes)

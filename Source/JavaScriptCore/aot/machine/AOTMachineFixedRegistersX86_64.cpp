@@ -10,9 +10,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// parameters[0] is the result, parameters[1] the left operand and parameters[2] the right operand.
-// The upper half of a register that holds an Int32 is unspecified. Nothing below reads it: 32-bit instructions read only the low halves, and every shift takes its amount from cl.
-
 template<Opcode opcode, Width width>
 struct FixedRegisterDivisionGenerator {
     static_assert(opcode == Div || opcode == UDiv || opcode == Mod || opcode == UMod);
@@ -94,8 +91,6 @@ struct FixedRegisterShiftGenerator {
     }
 };
 
-// Builder::lowerForTarget() looks this id up with { left, right }, so every Patch here appends exactly those two operands, in that order.
-// NumberingKey holds the type, so the id does not encode the width.
 static PatchOperation* beginFixedRegisterPatch(Builder& builder, Opcode opcode, Type type)
 {
     PatchOperation* patch = builder.patch(type);
@@ -116,7 +111,6 @@ static PatchOperation* finishFixedRegisterPatch(Builder& builder, PatchOperation
     return patch;
 }
 
-// The caller guarantees a nonzero divisor and a quotient that fits the type. Otherwise the instruction faults.
 template<Opcode opcode>
 static PatchOperation* appendFixedRegisterDivision(Builder& builder, Type type, Operation* dividend, Operation* divisor)
 {
@@ -129,14 +123,11 @@ static PatchOperation* appendFixedRegisterDivision(Builder& builder, Type type, 
     patch->append(dividend, ValueRep::reg(X86Registers::eax));
     patch->append(divisor, ValueRep::SomeLateRegister);
     patch->resultConstraints = { ValueRep::reg(result) };
-    // cdq, cqo or xor writes rdx before the division reads the divisor.
     patch->clobberEarly(maskOf(Reg(X86Registers::edx)));
     patch->clobberLate(maskOf(Reg(byproduct)));
     return finishFixedRegisterPatch<FixedRegisterDivisionGenerator<opcode, Width32>, FixedRegisterDivisionGenerator<opcode, Width64>>(builder, patch);
 }
 
-// Builder::binary() puts a constant factor on the right, so it is materialized directly in rax, which the instruction overwrites anyway.
-// The instruction reads both factors before it writes rdx, so the left factor may be in rdx.
 template<Opcode opcode>
 static PatchOperation* appendFixedRegisterMultiplication(Builder& builder, Type type, Operation* left, Operation* right)
 {

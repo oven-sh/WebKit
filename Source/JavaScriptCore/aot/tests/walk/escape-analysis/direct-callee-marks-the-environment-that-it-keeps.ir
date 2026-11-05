@@ -2,8 +2,10 @@
 # function watch(start) { let seen = start; function note(keep) { seen++; if (keep) hold(() => seen); } note(false); note(true); return seen; }  sink(watch);
 # RUN: walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # CHECK-LABEL: code f2:Body
-# CHECK: MarkEnvironmentEscaped
+# CHECK-NOT: MarkEnvironmentEscaped
 # CHECK: = NewClosure {{*}}function=f3
+# RUN(EMIT): emit f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
+# EMIT: Store8({{*}}collectorState
 # RUN(NEVER): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls
 # NEVER-NOT: ReleaseEnvironment
 # RUN(MAKER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames+DirectCalls

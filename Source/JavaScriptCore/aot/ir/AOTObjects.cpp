@@ -49,14 +49,12 @@ static void setClassOfObjectRecord(ObjectRecord& record, const BuiltinTable& bui
 {
     record.traits.remove(traitsOfShape);
     record.traits.add(ObjectTrait::HasClass);
-    // A proxy is callable only where its target is.
     if (isFunctionClass(builtins, builtinClass) && builtins.at(builtinClass).type != ProxyObjectType)
         record.traits.add(ObjectTrait::IsCallable);
     record.layout = { };
     record.builtinClass = builtinClass;
 }
 
-// The record must have HasNoShape. A type has no part for a class whose instances are closures: it says any function.
 static void makeObjectRecordInstanceOf(ObjectRecord& record, const BuiltinTable& builtins, BuiltinClassID builtinClass)
 {
     if (builtins.at(builtinClass).hasClosureInstances)
@@ -75,7 +73,6 @@ static ObjectRecord objectRecordOfBuiltin(const BuiltinTable& builtins, ObjectKi
     return objectRecordOfKind(kind, canonical.index(), traits);
 }
 
-// One object stands for all that the rows of a built-in make in one place. It has a class only where every row that makes it agrees.
 class ObjectShapeInRows {
 public:
     void noteInstanceOf(const BuiltinTable& builtins, BuiltinClassID builtinClass)
@@ -178,7 +175,6 @@ static void noteObjectShapesInside(const BuiltinTable& builtins, BuiltinID built
         noteObjectShapeOfPart(builtins, builtin, part, shapes.contents, shapes);
 }
 
-// The second object of these is the list in which the engine hands the arguments on. No type of their rows names it.
 static bool handsArgumentsOnInListOfEngine(const BuiltinTable& builtins, BuiltinID canonical)
 {
     constexpr NamedBuiltin builtinsThatHandArgumentsOn[] { Builtins::FunctionPrototypeBind, Builtins::FunctionPrototypeCall, Builtins::FunctionPrototypeApply, Builtins::ReflectApply, Builtins::ReflectConstruct };
@@ -207,7 +203,6 @@ static ObjectShapesOfBuiltin objectShapesInRowsOf(const BuiltinTable& builtins, 
     for (const BuiltinOverload& overload : builtins.overloadsOf(canonical)) {
         if (BuiltinTypeID resultType = overload.result.type) {
             const BuiltinType& type = builtins.at(resultType);
-            // For plain data, the first result object stands for the objects and the second for the arrays.
             if (type.flags.contains(BuiltinTypeFlag::HasPlainData)) {
                 shapes.result.notePlainObject();
                 shapes.contents.noteInstanceOf(builtins, BuiltinClasses::Array);
@@ -217,7 +212,6 @@ static ObjectShapesOfBuiltin objectShapesInRowsOf(const BuiltinTable& builtins, 
         }
         for (const BuiltinResultProperty& property : overload.result.properties)
             noteObjectShapesInside(builtins, canonical, property.type, shapes);
-        // The second object of a row that iterates by entries is the pair that a step hands out.
         if (overload.result.iteratedOperand && overload.result.iterationKind == JSC::IterationKind::Entries)
             shapes.contents.noteInstanceOf(builtins, BuiltinClasses::Array);
 
@@ -241,7 +235,6 @@ static ObjectShapesOfBuiltin objectShapesInRowsOf(const BuiltinTable& builtins, 
             notePlace(action.value);
     }
 
-    // The records of module loads and called functions do not give a type for everything the host passes to library code.
     if (!builtins.moduleLoadsOf(canonical).empty() || !builtins.calledFunctionsOf(canonical).empty())
         shapes.contents.noteObjectThatNoRowDescribes();
     return shapes;
@@ -268,7 +261,6 @@ bool callOrReadOfBuiltinIsEvent(const BuiltinTable& builtins, BuiltinID canonica
         if (isThisBuiltin(loader.callee) || isThisBuiltin(loader.named))
             return true;
     }
-    // letsInUnseenCode() and raisesEventWhenCalled() skip a row that runs unseen code only if an operand has some property. Whoever calls it is asked for that operand, so it stands for itself too.
     return builtins.letsInUnseenCode(canonical) || builtins.unseenCodeOf(canonical) || raisesEventWhenCalled(builtins, canonical);
 }
 
@@ -288,7 +280,6 @@ static Vector<uint32_t> placesOfFunctionsByGroup(std::span<const FunctionInOrder
     return places;
 }
 
-// Each index once, in no particular order. Null: on the calling thread.
 static void forEachObjectRecordInParallel(const ParallelLoops* loops, uint32_t count, NOESCAPE const Invocable<void(uint32_t)> auto& write)
 {
     constexpr uint32_t recordsWrittenAtOnce = 1 << 12;
@@ -304,7 +295,6 @@ static void forEachObjectRecordInParallel(const ParallelLoops* loops, uint32_t c
     });
 }
 
-// The list moves to where it has more room. What takes the time is the first touch of each page there, so many threads carry the records over.
 static void carryObjectRecordsOver(std::span<const ObjectRecord> from, std::span<ObjectRecord> to, const ParallelLoops& loops)
 {
     constexpr size_t recordsCarriedAtOnce = 1 << 14;
@@ -341,7 +331,6 @@ ObjectTable::ObjectTable(const BuiltinTable& builtins, std::span<const FunctionI
         begin(record.kind);
         uint32_t first = size();
         m_records.grow(first + numberOfFunctions);
-        // Whoever writes a new record touches its page for the first time, and that is what takes the time.
         forEachObjectRecordInParallel(loops, numberOfFunctions, [&](uint32_t function) {
             ObjectRecord recordOfFunction = record;
             recordOfFunction.payload = function;
@@ -352,7 +341,6 @@ ObjectTable::ObjectTable(const BuiltinTable& builtins, std::span<const FunctionI
     begin(ObjectKind::Unknown);
     m_records.append(objectRecordOfKind(ObjectKind::Unknown, 0, { ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject }));
 
-    // The place of an entry that names the object of another entry is never handed out. It holds the record of that other entry.
     begin(ObjectKind::Builtin);
     for (uint32_t index = 0; index < numberOfBuiltins; ++index)
         m_records.append(objectRecordOfBuiltin(builtins, ObjectKind::Builtin, builtins.canonicalID(BuiltinID(index))));
@@ -374,7 +362,6 @@ ObjectTable::ObjectTable(const BuiltinTable& builtins, std::span<const FunctionI
             record.ordinal = ordinal;
             if (!isFunctionOfNativeAccessor(record))
                 (ordinal ? shapes.contents : shapes.result).applyTo(record, builtins);
-            // The functions that `new Promise` hands its executor.
             if (isFunctionOfNativeAccessor(record) || (ordinal == 1 && canonical == builtins.canonicalID(Builtins::Promise)))
                 record.traits.add(ObjectTrait::IsCallable);
             m_records.append(record);
@@ -403,12 +390,10 @@ ObjectTable::ObjectTable(const BuiltinTable& builtins, std::span<const FunctionI
     begin(ObjectKind::EscapedWithoutShape);
     for (MakerOfShapelessObject maker : { MakerOfShapelessObject::Host, MakerOfShapelessObject::OperationOrRow }) {
         ObjectRecord record = objectRecordOfKind(ObjectKind::EscapedWithoutShape, static_cast<uint32_t>(maker), { ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject, ObjectTrait::IsMerged });
-        // Either stands for objects that native code has made.
         record.origin = SiteOrigin::BuiltinResult;
         m_records.append(record);
     }
 
-    // What a coroutine answers with and what a construction makes get their shapes once the program is read.
     ObjectRecord restArray = objectRecordOfKind(ObjectKind::RestArray, 0, { ObjectTrait::HasNoShape, ObjectTrait::IsOtherObject });
     setClassOfObjectRecord(restArray, builtins, BuiltinClasses::Array);
     appendForEachFunction(objectRecordOfKind(ObjectKind::Closure, 0, { ObjectTrait::HasNoShape, ObjectTrait::IsClosure, ObjectTrait::IsCallable }), m_placesByGroup);
@@ -434,7 +419,6 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
         m_first[indexOf(kind)] = size();
     };
 
-    // As for functions: classes, then the other layouts that objects are made with. An environment is no value and nothing has a layout that is never allocated, so their numbers come last.
     constexpr unsigned numberOfGroupsOfLayouts = 3;
     auto groupOfLayout = [](const Layout& layout) -> unsigned {
         if (!isObjectLayoutOf(layout.kind) || layout.has(LayoutFlags::IsNeverAllocated) || layout.has(LayoutFlags::IsTypeParameter))
@@ -442,7 +426,6 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
         return layout.kind != LayoutKind::Instance;
     };
 
-    // The layouts are tens of megabytes. Every thread reads some of them, once, and lays down the few words of each that the loops of one thread below go by.
     enum class DeclaredAs : uint8_t { NoClass, ConstructorFunction, OtherClass };
     struct WordsOfLayout {
         LayoutID writtenBase;
@@ -452,7 +435,6 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
     };
     Vector<WordsOfLayout> wordsOfLayouts;
     wordsOfLayouts.grow(numberOfLayouts);
-    // This reads only the written layouts, which are complete here. Program::indexClasses() fills the derived tables later.
     forEachRangeOfIndicesInParallel(loops, numberOfLayouts, [&](size_t first, size_t end) {
         for (size_t index = first; index < end; ++index) {
             const Layout& layout = program.layouts[index];
@@ -476,12 +458,10 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
         DeclaredAs declaredAs = wordsOfLayouts[index].declaredAs;
         if (declaredAs == DeclaredAs::NoClass)
             continue;
-        // Nobody has followed heritages yet: a class may stand below any other. By the layout alone, as Program::prototypeMaySelectOtherClass(): the trait reaches Compile.
         if (hasLayoutRightBelow.quickGet(index) || declaredAs == DeclaredAs::OtherClass)
             mayHaveLayoutBelow.quickSet(index);
     }
 
-    // Each function has a record of its own.
     forEachObjectRecordInParallel(&loops, numberOfFunctions, [&](uint32_t index) {
         const Function& function = program.functions[index];
         ObjectRecord& result = m_records[coroutineResultOf(FunctionID(index)).index()];
@@ -492,7 +472,6 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
             setClassOfObjectRecord(result, m_builtins, BuiltinClasses::Promise);
     });
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        // verifyRecords() reports an id outside its table, and it runs behind the read.
         FunctionID constructor = wordsOfLayouts[index].constructor;
         if (constructor && constructor.index() < numberOfFunctions)
             setLayoutOfObjectRecord(m_records[constructedObjectOf(constructor).index()], LayoutID(index), mayHaveLayoutBelow.quickGet(index));
@@ -513,9 +492,7 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
         BuiltinID builtin(index);
         if (m_builtins.canonicalID(builtin) != builtin || m_builtins.at(builtin).scope != BuiltinScope::Module)
             continue;
-        // Only a native binding answers with such a function, and only code of the library names a native binding.
         bool isMadeForLibraryAlone = m_builtins.isUnder(builtin, Builtins::NativeFunctions);
-        // The run time makes the module object of any other file when require() first answers for it, and objectOf() stands for those: moduleObjectOfCommonJSFile() of facts/AOTFlowRulesCommonJS.cpp.
         bool isMadeForCommonJSFilesAlone = m_builtins.isUnder(builtin, Builtins::ModuleObject);
         for (uint32_t module = 0; module < numberOfModules; ++module) {
             if (isMadeForLibraryAlone && !isModuleOfLibrary[module])
@@ -536,7 +513,6 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
     carryObjectRecordsOver(m_records.span(), records.mutableSpan(), loops);
     m_records = WTF::move(records);
 
-    // A test run may hold several namespaces of one file, and so may a program that loads a file once more from disk.
     constexpr OptionSet<ModuleFlags> flagsOfModulesWithSeveralNamespaces { ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted };
     begin(ObjectKind::Namespace);
     for (uint32_t index = 0; index < numberOfModules; ++index) {
@@ -574,7 +550,6 @@ void ObjectTable::addObjectsOfProgram(const Program& program, const BitVector& m
         begin(kind);
         uint32_t first = size();
         m_records.grow(first + numberOfLayouts);
-        // The first touch of each page, as for the records of functions.
         forEachObjectRecordInParallel(&loops, numberOfLayouts, [&](uint32_t index) {
             ObjectRecord record = objectRecordOfKind(kind, index, traits);
             if (hasLayout)
@@ -726,23 +701,19 @@ static bool isProxy(const ObjectRecord& record)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Nothing: an escaped object of the record stays apart.
 std::optional<MakerOfShapelessObject> ObjectTable::makerOfShapelessObjectThatMerges(ObjectID object) const
 {
     const ObjectRecord& record = at(object);
     ASSERT(record.has(ObjectTrait::HasNoShape));
-    // `f()` behind `register(f)`: a bound function is entered as a closure is. A proxy is told by what made it.
     if (record.has(ObjectTrait::IsCallable) || isProxy(record))
         return std::nullopt;
 
     switch (record.kind) {
     case ObjectKind::ResultOfBuiltin:
-        // No row makes these. The rules that fill them name them.
         if (BuiltinID(record.payload) == m_builtins.canonicalID(Builtins::UndeclaredNativeCode))
             return std::nullopt;
         return MakerOfShapelessObject::OperationOrRow;
     case ObjectKind::HostObject: {
-        // What is stored on these is not what is read, or is refused, and only the record says so.
         const BuiltinHostObject& hostObject = m_builtins.hostObjects()[record.payload];
         if (hostObject.keepsStringsOfStoredValues || !hostObject.nativeAccessors.empty() || !hostObject.lockedNames.empty() || hostObject.holder)
             return std::nullopt;
@@ -754,7 +725,6 @@ std::optional<MakerOfShapelessObject> ObjectTable::makerOfShapelessObjectThatMer
         if (m_bodiesOfLibraryModules.get(record.owner.index()))
             return std::nullopt;
         return MakerOfShapelessObject::OperationOrRow;
-    // What a constructor function makes is a family, and what stands above a family is found name by name.
     case ObjectKind::CoroutineResult:
     case ObjectKind::RestArray:
     case ObjectKind::FunctionPrototype:
@@ -776,7 +746,6 @@ std::optional<MakerOfShapelessObject> ObjectTable::makerOfShapelessObjectThatMer
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ObjectSetAliasIndex in AOTTypeRelations.cpp rests on this: what has a layout turns into escapedOf() of that layout or stays itself, and the answer for a copy is itself or the answer for its shared form.
 ObjectID ObjectTable::mergedFormOf(ObjectID object) const
 {
     const ObjectRecord& record = at(object);
@@ -795,7 +764,6 @@ ObjectID ObjectTable::mergedFormOf(ObjectID object) const
             return object;
         BuiltinID builtin(record.payload);
         if (!record.has(ObjectTrait::IsCallable)) {
-            // `module.exports`: an object holds what its own module has stored on it. An entry that is no object stands for the native code of an accessor, which is the same in every module.
             if (isObjectKind(m_builtins.at(builtin).kind))
                 return object;
             ObjectID ofWhicheverModule = objectOf(builtin);
@@ -827,7 +795,6 @@ ObjectID ObjectTable::mergedFormOf(ObjectID object) const
         std::optional<MakerOfShapelessObject> maker = makerOfShapelessObjectThatMerges(object);
         return maker ? escapedWithoutShape(*maker) : object;
     }
-    // A merged form claims no more of the layouts of its objects than each of them does.
     if (record.has(ObjectTrait::MayHaveLayoutBelow) && !at(merged).has(ObjectTrait::MayHaveLayoutBelow))
         return object;
     return merged;

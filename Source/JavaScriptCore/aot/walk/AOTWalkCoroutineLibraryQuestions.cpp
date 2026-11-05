@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Folding, what the text of the library asks of a cell: `$isPromise(x)`, `$isJSArray(x)`, `$readsIteratorOfListUnseen(x)`. A constant where the type or the state decides, so that the branch on it is a jump.
-// It keeps nothing: the kind of a cell is for life, and that a list is as it was made is asked of the state where the walk stands, which a suspension and a throw end as they end all else.
-// Withheld: each question is copied as it is written.
-
 #include "config.h"
 #include "AOTWalkCoroutinePromises.h"
 
@@ -27,13 +23,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkCoroutinePromises.h declares it not: buildPromiseOperation() alone asks.
 bool answerLibraryQuestionOfCoroutines(Walker&, const BodyValue&);
 
-// Each makes a cell of the engine's own kind for arrays, whatever the program has done to Array.
 static constexpr OpcodeSet makersOfArraysOfLibraryQuestions {
     Opcode::NewArray, Opcode::Data, Opcode::NewTemplateObject, Opcode::CreateRest,
-    Opcode::NewContiguousArray, Opcode::NewDoubleArray, Opcode::NewArrayLike, Opcode::NewArrayWithCapacity,
+    Opcode::NewContiguousArray, Opcode::NewArrayLike,
 };
 
 static void bindAnswerOfLibraryQuestion(Walker& walker, const BodyValue& question, bool answer)
@@ -42,8 +36,6 @@ static void bindAnswerOfLibraryQuestion(Walker& walker, const BodyValue& questio
     constant.setBoolean(answer);
     walker.bind(question.id(), walker.constant(WTF::move(constant)));
 }
-
-// ---- Arrays as they were made
 
 static bool mayBeArrayOfLibraryQuestions(TypeArena& types, TypeID id)
 {
@@ -73,7 +65,7 @@ static bool answerWhetherIteratorIsReadUnseenOfLibraryQuestions(Walker& walker, 
 
     if (!holdsOnlyArraysOfLibraryQuestions(types, type) || !walker.program().builtins().mayHavePristineInstances(BuiltinClasses::Array))
         return false;
-    if (!isListAsMade(walker, value) && !walker.facts().everyObjectHas(types, type, ObjectFact::IsPristine))
+    if (!isListAsMade(walker, value))
         return false;
     if (!listsAreIteratedUnseen(walker))
         return false;
@@ -81,9 +73,6 @@ static bool answerWhetherIteratorIsReadUnseenOfLibraryQuestions(Walker& walker, 
     return true;
 }
 
-// ---- HasJSType
-
-// The classes whose instances are exactly the cells of the kinds from `first` to `last`. Null where some kind among them has no such class.
 static TypeID typeOfCellsWithKindsOfLibraryQuestions(Walker& walker, JSType first, JSType last)
 {
     unsigned numberOfKinds = static_cast<unsigned>(last) - static_cast<unsigned>(first) + 1;
@@ -105,7 +94,6 @@ static TypeID typeOfCellsWithKindsOfLibraryQuestions(Walker& walker, JSType firs
     return kindsWithClass == everyKind ? tested : TypeID();
 }
 
-// The constructor above a derived class makes the cell, and that constructor may be one of the engine's.
 static bool mayBeInstanceOfDerivedClassOfLibraryQuestions(Walker& walker, const Type& type)
 {
     const Program& program = walker.program();
@@ -114,7 +102,6 @@ static bool mayBeInstanceOfDerivedClassOfLibraryQuestions(Walker& walker, const 
     });
 }
 
-// An instance of a class below Array has another kind of cell, and no type tells it from an array that was made as one. Nothing: the cell has to be asked.
 static std::optional<bool> hasCellKindOfArraysOfLibraryQuestions(Walker& walker, Reference value, TypeID id)
 {
     TypeArena& types = walker.types();
@@ -175,7 +162,6 @@ static bool answerWhetherCellHasKindOfLibraryQuestions(Walker& walker, const Bod
     if (!tested)
         return false;
 
-    // The side Taken narrows to what may pass, the side NotTaken takes away only what would surely have passed: a side that leaves nothing decides.
     TypingContext typing = walker.typing();
     if (isNeverType(narrowByTest(typing, id, tested, EdgeSide::Taken))) {
         bindAnswerOfLibraryQuestion(walker, question, false);

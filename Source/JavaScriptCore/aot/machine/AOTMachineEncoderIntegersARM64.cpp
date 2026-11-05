@@ -12,7 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// Where `constant` is set it is the second source, and `right` names no register.
 struct IntegerSources {
     GPRReg left { InvalidGPRReg };
     GPRReg right { InvalidGPRReg };
@@ -29,7 +28,6 @@ static MacroAssembler::TrustedImm64 integerConstant64Of(const Operation* constan
     return MacroAssembler::TrustedImm64(constant->asInt());
 }
 
-// An operation without position that the instruction has no field for is made in x16, so at most one source of an operation comes this way.
 static GPRReg registerOfIntegerSource(Encoder& encoder, Location source, const Operation* child)
 {
     if (source.isRegister())
@@ -70,7 +68,6 @@ static IntegerSources integerSourcesOrConstant(Encoder& encoder, const Step& ste
     if (!right.isImmediate() || !second->hasInt())
         return integerSourcesInRegisters(encoder, step);
 
-    // MacroAssembler makes a constant that fits no field of the instruction in x16.
     RELEASE_ASSERT(left.isRegister());
     IntegerSources sources;
     sources.left = left.gpr();
@@ -83,7 +80,6 @@ static void encodeARM64ScaledSum(Encoder& encoder, const Step& step)
     LeafCursor leaves(step);
     AddressForm form = encoder.resolveScaledSum(step.operation, leaves);
     GPRReg destination = step.destination.gpr();
-    // In an addition of a shifted register the number of the stack pointer names the zero register.
     RELEASE_ASSERT(!form.offset && form.base != MacroAssembler::stackPointerRegister && form.index != MacroAssembler::stackPointerRegister && destination != MacroAssembler::stackPointerRegister);
 
     switch (form.extension) {
@@ -114,7 +110,6 @@ void Encoder::encodeSumThatSetsFlags(const Step& step)
     bool subtracts = test.subtracts();
 
     if (step.sources[1].isImmediate()) {
-        // acceptsImmediate() has allowed it: twelve bits, shifted by twelve or not. One below zero goes the other way, which overflows for the same operands.
         int64_t constant = test.right()->asInt();
         uint64_t magnitude = constant < 0 ? uint64_t { 0 } - static_cast<uint64_t>(constant) : static_cast<uint64_t>(constant);
         if (constant < 0)
@@ -137,7 +132,6 @@ void Encoder::encodeSumThatSetsFlags(const Step& step)
         m_jit.m_assembler.add<32, ARM64Assembler::S>(destination, left, right);
 }
 
-// As MacroAssemblerARM64::makeBranch() writes it.
 MacroAssembler::Jump Encoder::jumpOnOverflow(bool whenItOverflowed)
 {
     ARM64Assembler::Condition condition = whenItOverflowed ? ARM64Assembler::ConditionVS : ARM64Assembler::ConditionVC;
@@ -240,7 +234,6 @@ void Encoder::encodeInteger(const Step& step)
         return;
     }
 
-    // The instruction gives 0 for a division by 0 and the least integer for the least integer by -1, which is what a chill Div asks.
     case Div: {
         IntegerSources sources = integerSourcesInRegisters(*this, step);
         if (is32)
@@ -307,7 +300,6 @@ void Encoder::encodeInteger(const Step& step)
         return;
     }
 
-    // The amount is an Int32 whatever the width. The instruction takes it modulo the width, and so does MacroAssembler with a constant.
     case Shl: {
         IntegerSources sources = integerSourcesOrConstant(*this, step);
         if (sources.constant && is32)
@@ -383,7 +375,6 @@ void Encoder::encodeInteger(const Step& step)
         return;
     }
 
-    // The upper half of a register that holds an Int32 is unspecified, so an extension is an instruction where the registers agree too, unless isFreeInRegisterOfChild() says otherwise.
     case SExt32: {
         ASSERT(operation->type() == Int64 && operation->child(0)->type() == Int32);
         GPRReg source = integerSourceInRegister(*this, step);

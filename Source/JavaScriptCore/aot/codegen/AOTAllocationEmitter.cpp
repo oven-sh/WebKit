@@ -29,7 +29,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The fields that Facts appended follow the declared ones, and the layout's own record does not list them.
 static MemoryLocation locationOfField(const Program& program, const SlotPlan& slots, LayoutID layout, FieldIndex field)
 {
     if (program.at(layout).isEnvironment())
@@ -63,7 +62,6 @@ static bool newObjectMayHaveOtherLayout(const Program& program, const Operation&
 }
 
 // A cell of the frame gets no fence. A cell that was handed back is an old one, which the collector may look at while it is filled: takeCellHandedBackOrAllocate().
-// allocateInstance() hands the prototype to its stub in front of the fence: looksAtPrototypeBeforeAllocating().
 bool newObjectFencesBeforeHandingCellOn(const Program& program, const Plan& plan, const Operation& newObject)
 {
     UNUSED_PARAM(program);
@@ -72,7 +70,6 @@ bool newObjectFencesBeforeHandingCellOn(const Program& program, const Plan& plan
     return !newObject.prototypeOperand() || !newObject.fields().empty();
 }
 
-// In line: 75 bytes a site. By the stub: 18 bytes and 3.5 instructions more.
 bool AllocationEmitter::initializesFrameObjectInStub(const ValueContext& value, LayoutID layout)
 {
     if (!isObjectLayout(m_program.at(layout).kind)) {
@@ -99,7 +96,6 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, cons
     branchUnless(isNotZero(headerInRecord), hasNoRecord);
     headerOfHeapCells.add(headerInRecord);
 
-    // The operation fills the record of the site and allocates no cell.
     m_out.appendTo(hasNoRecord);
     headerOfHeapCells.add(callOperation<Integer>(value, RuntimeOperation::GetHeaderOfAllocation, { numberOf(allocation.mention) }, { .isOnRarePath = true }));
     Integer header = headerOfHeapCells.finish();
@@ -112,7 +108,6 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, cons
     return cell;
 }
 
-// `{ ...source }`: the TryCopyFields that the block generates right behind the allocation of a literal without fields, and that fills the literal. Null: there is none.
 static ValueID findCopyThatFillsNewObject(const CodeGenerator& generator, const ValueContext& value)
 {
     if (value->storage() != AllocationStorage::Heap || value->prototypeOperand() || !value->fields().empty())
@@ -158,7 +153,6 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
 
 void AllocationEmitter::generateNewDictionary(const ValueContext& value)
 {
-    // A run of definitions is stored by what its site remembers only where the cell has room for all of it.
     unsigned numberOfNames = value->roomForNames().value_or(0);
     unsigned addedPairsOfSlots = numberOfNames > JSFinalObject::defaultInlineCapacity ? (numberOfNames - JSFinalObject::defaultInlineCapacity + 1) / 2 : 0;
     define(value, CellPointer(callStub(value, newDictionary(std::min(addedPairsOfSlots, numberOfRoomierFinalObjects)), { }).first));
@@ -191,7 +185,6 @@ using BirthFieldsToCheck = Vector<BirthFieldToCheck, 8>;
 
 } // anonymous namespace
 
-// Mirrors Object::hasEveryFieldOfBirth(). Nothing: a field lies outside the cell, so only the run time can look.
 static std::optional<BirthFieldsToCheck> birthFieldsToCheck(const Plan& plan, LayoutID layout)
 {
     const PlannedLayout& planned = plan.layout(layout);
@@ -212,8 +205,6 @@ static std::optional<BirthFieldsToCheck> birthFieldsToCheck(const Plan& plan, La
     return fields;
 }
 
-// `instance(B)` stands for whatever new.target makes of a B, an object of a class below among it, and a test that has passed leaves the name in the type.
-// A compiled object keeps its shape for life, so the layouts that the test lists are those of the cell under each name that its passing edge has given out. Null: no such test stands behind the name.
 static LayoutSetID layoutsListedByPassedShapeTest(const Code& code, ValueID name)
 {
     while (name && code.at(name).opcode == Opcode::Narrowed) {
@@ -323,13 +314,12 @@ static bool isZeroWhileEmpty(SlotRepresentation representation)
 
 ZeroedBy AllocationEmitter::whoZeroesBodyOfFreshCell(const ValueContext& value, const MentionedAllocation& allocation, const BitVector& isInitialField, AllocationStorage storage)
 {
-    // A cell that was handed back holds what it held.
     LayoutID layout = allocation.placed.layout;
     const SlotPlan& plan = m_plan.slots();
     if (storage != AllocationStorage::Heap || plan.layout(layout).isEscapedOffset)
         return ZeroedBy::Nobody;
 
-    unsigned storesOfZero = static_cast<unsigned>(plan.layout(layout).bytesKeptZero.size());
+    unsigned storesOfZero = 0;
     unsigned storesOfOtherPatterns = 0;
     auto countStoreInto = [&](const PlacedSlot& slot) {
         ++(isZeroWhileEmpty(slot.representation) ? storesOfZero : storesOfOtherPatterns);
@@ -377,7 +367,6 @@ CellPointer AllocationEmitter::allocateCell(const ValueContext& value, const Men
 void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout, AllocationStorage storage, ZeroedBy zeroedBy, bool hasStateOfFrameCell)
 {
     // A store whose receiver may also be on the heap runs its barrier, which must not mistake a frame cell for a marked one.
-    // No store into an environment that lies only in frames runs one.
     const SlotPlan& plan = m_plan.slots();
     bool someBarrierMayReadState = !plan.layout(layout).liesOnlyInFrames;
     if (storage != AllocationStorage::Heap && !hasStateOfFrameCell && someBarrierMayReadState)
@@ -397,7 +386,6 @@ Representation AllocationEmitter::representationWantedBy(const InitialField& fie
     return field.slot->representation == SlotRepresentation::DeferredClosure ? Representation::Cell32 : Typed::representationOf(field.slot->representation);
 }
 
-// wantedRepresentationOf() leaves such a reference wide: narrowed in front of the allocation, all the narrow forms would be held at one time.
 bool AllocationEmitter::isNarrowedWhereStored(const InitialField& field) const
 {
     return representationOf(field.value) == Representation::Cell && representationWantedBy(field) == Representation::Cell32;
@@ -411,6 +399,40 @@ Operand AllocationEmitter::takeForSlot(const InitialField& field)
 void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
+    struct WordStoredOften {
+        int64_t bits { 0 };
+        unsigned numberOfStores { 0 };
+        LValue inRegister { nullptr };
+    };
+    constexpr unsigned storesThatPayForRegister = 3;
+    Vector<WordStoredOften, 4> words;
+    auto findWordWrittenInto = [&](const InitialField& field) -> WordStoredOften* {
+        static constexpr OpcodeSet wordsWithoutCode { Opcode::Undefined, Opcode::Null, Opcode::Boolean };
+        if (!isX86_64() || field.slot->isOutOfLine() || field.slot->representation != SlotRepresentation::JSValue || !m_code.isConstant(field.value) || !wordsWithoutCode.contains(opcodeOf(field.value)))
+            return nullptr;
+        LValue written = get(field.value).value;
+        if (!written->hasInt() || !written->asInt() || !isRepresentableAs<int32_t>(written->asInt()))
+            return nullptr;
+        for (WordStoredOften& word : words) {
+            if (word.bits == written->asInt())
+                return &word;
+        }
+        words.append(WordStoredOften { written->asInt() });
+        return &words.last();
+    };
+    for (const InitialField& field : initialFields) {
+        if (WordStoredOften* word = findWordWrittenInto(field))
+            ++word->numberOfStores;
+    }
+    auto takeWordOrValue = [&](const InitialField& field) {
+        Operand taken = takeForSlot(field);
+        WordStoredOften* word = findWordWrittenInto(field);
+        if (!word || word->numberOfStores < storesThatPayForRegister)
+            return taken;
+        if (!word->inRegister)
+            word->inRegister = m_out.opaque(taken.value);
+        return Operand(taken.representation, word->inRegister);
+    };
     for (const InitialField& field : initialFields) {
         if (m_plan.layout(layout).holdsRawValueFromBirth(field.field))
             slots.markCellIfMarkerIsStored(cell, field.value);
@@ -418,7 +440,7 @@ void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, co
             continue;
         MemoryLocation location = locationOfField(m_program, m_plan.slots(), layout, field.field);
         if (field.slot->representation != SlotRepresentation::DeferredClosure)
-            slots.storeSlot(cell, *field.slot, location, takeForSlot(field), nullptr, typeOf(field.value));
+            slots.storeSlot(cell, *field.slot, location, takeWordOrValue(field), nullptr, typeOf(field.value));
         else if (isDeferredClosure(field.value)) {
             LValue uncreated = m_out.constInt32(uncreatedDeferredClosure);
             m_out.store32(uncreated, slots.addressOf(cell, *field.slot, location));
@@ -487,17 +509,10 @@ void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, const
         else
             storeZero(m_out, address, traits.width);
     });
-
-    if (zeroedBy != ZeroedBy::Nobody)
-        return;
-    // A read whose receiver may have another layout loads them under the name of the field that lies there in that layout.
-    for (ReservedBytes bytes : m_plan.layout(layout).bytesKeptZero)
-        storeZero(m_out, m_out.address(m_heaps.entire(AbstractHeap::ObjectFields), cell.value(), bytes.offset), bytes.width);
 }
 
 void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPointer cell, LayoutID layout, const InitialFields& initialFields)
 {
-    // `this.exports = undefined`: the order of keys says that the property is there, and a read that finds no granule gives undefined.
     auto takesGranule = [&](const InitialField& field) {
         return field.slot->isOutOfLine() && needsStorageFor(*field.slot, typeOf(field.value));
     };
@@ -508,10 +523,8 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
     }
     if (!granuleBits)
         return;
-    // What the other makers of the object go on to store finds its granule.
     granuleBits |= m_plan.layout(layout).granulesOfFirstExtension;
 
-    // A fresh cell has no Extension, and NewObject declares no read of a field: nothing is tested in front of the call.
     const PlacedSlot& extensionWord = m_plan.slots().extensionWord(layout);
     if (value->storage() == AllocationStorage::Heap && AOT::hasFlag(generator().build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))
         emitter<BarrierEmitter>().stopIfCellIsOldAndNotRemembered(value, cell);
@@ -531,7 +544,6 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
     ensureStillAliveHere(cell);
 }
 
-// An object of another layout takes the place of one in which nothing is stored yet, so that one need not be made. Outside of loops the stub compares every prototype, so that the site need not.
 bool AllocationEmitter::looksAtPrototypeBeforeAllocating(const ValueContext& value)
 {
     if (!value->prototypeOperand() || !value->fields().empty() || value->storage() != AllocationStorage::Heap || !m_plan.layout(value->layout()).hasSlots())
@@ -560,7 +572,6 @@ CellPointer AllocationEmitter::allocateInstance(const ValueContext& value, const
     return cell;
 }
 
-// The operation returns the object to use: the prototype of a subclass selects the layout of that subclass.
 void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer cell, ValueID prototype)
 {
     CellPointer requested = in<CellPointer>(prototype);
@@ -570,7 +581,6 @@ void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer ce
         return cell;
     };
     auto setByOperation = [&] {
-        // The mention that generateNewObject() made: equal mentions get one index.
         MentionedAllocation allocation = emitter<CellAllocationEmitter>().allocationOf(value, value->layout(), value->allocationClass(), value->fields());
         return callOperation<CellPointer>(value, RuntimeOperation::SetConstructPrototype, { cell, requested, numberOf(allocation.mention), word32(value->fields().empty()) }, { .isOnRarePath = true });
     };
@@ -579,7 +589,6 @@ void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer ce
         return;
     }
 
-    // Each evaluation of a class and each closure of a constructor function has a prototype object of its own, and the site knows one of them.
     define(value, selectByBranch<CellPointer>(hasSitePrototype, useCell, [&] {
         LBasicBlock isUnknown = newBlock();
         Join<CellPointer> join(m_out);

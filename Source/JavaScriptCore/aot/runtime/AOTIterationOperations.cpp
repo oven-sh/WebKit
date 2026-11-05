@@ -51,9 +51,7 @@ JSPropertyNameEnumerator* enumeratorFor(JSGlobalObject* globalObject, JSValue va
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (Object* compiled = compiledObjectOrNull(object))
         RELEASE_AND_RETURN(scope, compiled->propertyNameEnumerator(globalObject));
-    // The enumerator lists the own names from the structure that the object has when it is asked for.
     PropertyWalk::materializeLazyProperties(vm, object);
-    // No enumerator is kept for a dictionary.
     if (object->structure()->isDictionary()) [[unlikely]]
         flattenForListing(vm, object);
     RELEASE_AND_RETURN(scope, JSC::propertyNameEnumerator(globalObject, object));
@@ -86,7 +84,6 @@ EnumeratedKey findEnumeratedKey(JSGlobalObject* globalObject, JSPropertyNameEnum
     return { key, mode == JSPropertyNameEnumerator::IndexedMode ? index : indexedLength + index };
 }
 
-// Nobody can see such a list being iterated, by the engine's own test, and a read of it runs no code: what lies in a hole or behind the end is undefined.
 static bool isReadByIndexUnseen(JSValue iterable)
 {
     JSArray* list = iterable.isCell() ? dynamicDowncast<JSArray>(iterable.asCell()) : nullptr;
@@ -107,8 +104,6 @@ namespace {
 
 enum class WordingOfIteration : uint8_t { Pattern, Spread };
 
-// An iteration that the run time opens, steps and closes for compiled code. What the program can see of it is what the protocol does.
-// An iterator of the engine whose `next` is the engine's own is stepped without a call and without a result object: that object has `done` and `value` as plain properties of its own, and nobody but the consumer ever has it.
 class IterationInRunTime {
 public:
     IterationInRunTime(Instance& instance, JSGlobalObject* globalObject)
@@ -118,11 +113,8 @@ public:
     {
     }
 
-    // `iterable` is neither undefined nor null. False: it has thrown.
     bool open(JSValue iterable, WordingOfIteration);
-    // The first thing that open() tries, for whoever has something else to try behind it. True: it is open, in the words of a pattern. False: nothing has happened.
     bool tryOpenUnseen(JSValue iterable);
-    // False: the iterator is done, or the step has thrown.
     bool step(JSValue&);
     void close();
 
@@ -135,14 +127,12 @@ private:
     Instance& m_instance;
     JSGlobalObject* m_globalObject;
     VM& m_vm;
-    // A spread takes whatever the method under @@iterator answers, and asks a number for `next` as it asks an object.
     JSValue m_iterator;
     JSValue m_next;
     Stepper m_stepper { Stepper::Protocol };
     WordingOfIteration m_wording { WordingOfIteration::Pattern };
 };
 
-// By the engine's own tests nobody can see that the method under @@iterator is looked for and called, and `next` read: each is what the realm was made with.
 bool IterationInRunTime::tryOpenUnseen(JSValue iterable)
 {
     if (!iterable.isCell())
@@ -156,7 +146,6 @@ bool IterationInRunTime::tryOpenUnseen(JSValue iterable)
         m_stepper = Stepper::ArrayIterator;
         return true;
     case JSMapType:
-        // What its steps hand out are lists, which belong to the realm of the `next` that makes them. A Set, a list and a text hand out what they hold.
         if (uncheckedDowncast<JSMap>(cell)->realm() != m_globalObject || !uncheckedDowncast<JSMap>(cell)->isIteratorProtocolFastAndNonObservable())
             return false;
         m_iterator = JSMapIterator::create(m_vm, m_globalObject->mapIteratorStructure(), uncheckedDowncast<JSMap>(cell), IterationKind::Entries);
@@ -196,7 +185,6 @@ IterationInRunTime::Stepper IterationInRunTime::findStepper()
     case JSStringIteratorType:
         return isOwnFunctionOfEngine(m_next, Builtins::StringIteratorPrototypeNext) ? Stepper::StringIterator : Stepper::Protocol;
     case JSArrayIteratorType:
-        // JSArrayIterator::next() steps over a list alone.
         return isJSArray(uncheckedDowncast<JSArrayIterator>(m_iterator.asCell())->iteratedObject()) && isOwnFunctionOfEngine(m_next, Builtins::ArrayIteratorPrototypeNext) ? Stepper::ArrayIterator : Stepper::Protocol;
     default:
         return Stepper::Protocol;
@@ -227,7 +215,6 @@ bool IterationInRunTime::open(JSValue iterable, WordingOfIteration wording)
         break;
     }
 
-    // `[...map.keys()]`: the method above every iterator of the engine hands back its receiver.
     JSValue iterator = iterable;
     if (!iterable.isObject() || !isOwnFunctionOfEngine(method, Builtins::IteratorPrototypeSymbolIterator)) {
         iterator = call(m_globalObject, method, JSC::getCallData(method), iterable, ArgList());
@@ -283,7 +270,6 @@ bool IterationInRunTime::step(JSValue& value)
     return true;
 }
 
-// `return` is looked for as the protocol looks for it, whoever has stepped.
 void IterationInRunTime::close()
 {
     auto scope = DECLARE_THROW_SCOPE(m_vm);
@@ -305,7 +291,6 @@ void IterationInRunTime::close()
 
 static JSFunction* makeFunctionOfLibrary(JSGlobalObject*, BuiltinID);
 
-// builtinFunction() makes a function object each time that it is asked.
 static ALWAYS_INLINE JSFunction* functionOfLibrary(JSGlobalObject* globalObject, JSCell*& kept, BuiltinID helper)
 {
     if (!kept) [[unlikely]]
@@ -313,7 +298,6 @@ static ALWAYS_INLINE JSFunction* functionOfLibrary(JSGlobalObject* globalObject,
     return uncheckedDowncast<JSFunction>(kept);
 }
 
-// An iterable or an iterator of the engine: IterationInRunTime may step it without a call.
 static ALWAYS_INLINE bool mayBeSteppedByRunTime(JSValue iterable)
 {
     if (!iterable.isCell())
@@ -350,10 +334,7 @@ static void destructureIterable(Instance& instance, JSGlobalObject* globalObject
         element = JSValue::encode(jsUndefined());
 
     IterationInRunTime iteration(instance, globalObject);
-    // What the run time opens unseen, a Set, a Map, a text, passes through here as ever.
     if (!iteration.tryOpenUnseen(iterable)) {
-        // Whatever else is taken apart is stepped and closed by code of the program or of the host. From here each call would enter it anew: the function of the library is entered once and does the same in compiled code.
-        // Nothing has been looked for yet that a program could see. A pattern without a place steps nothing, and stays here.
         if (!elements.empty() && !mayBeSteppedByRunTime(iterable)) {
             if (JSFunction* takes = functionOfLibrary(globalObject, instance.iteration.functionThatTakesFromIterable, Builtins::CompilerHelpersTakeFromIterable)) {
                 MarkedArgumentBuffer arguments;
@@ -362,9 +343,7 @@ static void destructureIterable(Instance& instance, JSGlobalObject* globalObject
                 ASSERT(!arguments.hasOverflowed());
                 JSValue taken = call(globalObject, takes, JSC::getCallData(takes), jsUndefined(), arguments);
                 RETURN_IF_EXCEPTION(scope, void());
-                // The list is the library's own, and no code of the program has seen it.
                 JSArray* list = asArray(taken);
-                // What quotes the pattern is thrown from here, where the pattern stands.
                 if (list->length() && list->getIndexQuickly(0) == JSValue(vm.orderedHashTableSentinel())) [[unlikely]] {
                     if (list->length() == 1)
                         throwTypeError(globalObject, scope, getIteratorErrorMessage(validateIterable(vm, iterable, jsUndefined()), iterable));
@@ -407,7 +386,6 @@ static uint32_t placeAmongListsWithoutNames(Structure* structure)
     return (structure->indexingType() & IndexingShapeMask) >> 1 & (ArrayWords::numberOfStructuresWithoutNames - 1);
 }
 
-// An array without holes and without named properties, on it or on its prototype chain, has an enumerator that only records the number of indexes. Arrays with the same Structure and length share it.
 static JSPropertyNameEnumerator* enumeratorOfListWithoutNames(Instance& instance, JSArray* list)
 {
     VM& vm = *instance.vm;
@@ -428,7 +406,6 @@ static JSPropertyNameEnumerator* enumeratorOfListWithoutNames(Instance& instance
     return enumerator;
 }
 
-// An object's enumerated keys only change with its Structure, unless it is a dictionary, has elements, or implements its own property lookup. An array only does that for `length`, which no loop enumerates.
 static bool otherNamesRequireAnotherStructure(Structure* structure)
 {
     if (structure->isDictionary() || hasIndexedProperties(structure->indexingType()))
@@ -534,7 +511,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowNotIterable, void, (Instance* instance
     OPERATION_RETURN(scope);
 }
 
-// A surrogate pair makes one element. The width of the characters is that of their storage now.
 size_t numberOfElementsSpreadFrom(JSGlobalObject* globalObject, JSString* string)
 {
     VM& vm = globalObject->vm();
@@ -554,7 +530,6 @@ size_t numberOfElementsSpreadFrom(JSGlobalObject* globalObject, JSString* string
     return count;
 }
 
-// What the engine's spread lists in one piece: a text, or a view whose iteration nothing has replaced.
 static void throwIfTooLongForList(JSGlobalObject* globalObject, JSCell* source)
 {
     VM& vm = globalObject->vm();
@@ -582,10 +557,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTooLongForList, void, (Instance* ins
     OPERATION_RETURN(scope);
 }
 
-// appendIterable() of the library (src/aot/prelude/iterator-consumers.ts in Bun), which goes by the protocol as a spread does, in compiled code. Null: the image does not hold it.
 static JSFunction* makeFunctionOfLibrary(JSGlobalObject* globalObject, BuiltinID helper)
 {
-    // Not by overloadsOf(): the first question unpacks every overload of the table, a megabyte that stays, and the packed array would otherwise leave the executable with the compiler.
     for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
         if (std::ranges::find(function.implements, helper) != function.implements.end())
             return builtinFunction(globalObject, function.id.index());
@@ -594,14 +567,11 @@ static JSFunction* makeFunctionOfLibrary(JSGlobalObject* globalObject, BuiltinID
 }
 
 
-// `[...items]`, `f(...items)`: what the iteration hands out goes behind the elements of the list that the spread fills, which no code of the program has seen. `iterable` is neither undefined nor null.
-// Nothing closes the iterator of a spread.
 static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSArray* target, JSValue iterable)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // What the engine's own spread lists in one piece, by its own tests.
     if (iterable.isCell()) {
         JSCell* cell = iterable.asCell();
         if (isReadByIndexUnseen(iterable))
@@ -620,7 +590,6 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
                 return;
             if (cell->type() == JSMapType && uncheckedDowncast<JSMap>(cell)->isIteratorProtocolFastAndNonObservable() && tryAppendPairsOfMap(globalObject, target, uncheckedDowncast<JSMap>(cell)))
                 return;
-            // `arguments`, a Set, the keys or the values of a Map or a Set.
             JSArray* list = tryCreateArrayFromIterableFast(globalObject, iterable);
             RETURN_IF_EXCEPTION(scope, void());
             if (list)
@@ -629,8 +598,6 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
     }
 
     IterationInRunTime iteration(instance, globalObject);
-    // Whatever else is spread is stepped by code of the program or of the host. From here each step would enter it anew, and `done` and `value` would be read as native code reads them:
-    // the function of the library is entered once and does the same in compiled code. Nothing has been looked for yet that a program could see.
     if (!mayBeSteppedByRunTime(iterable)) {
         if (JSFunction* appends = functionOfLibrary(globalObject, instance.iteration.functionThatAppendsIterable, Builtins::CompilerHelpersAppendIterable)) {
             MarkedArgumentBuffer arguments;
@@ -646,7 +613,6 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
     EXCEPTION_ASSERT(!!scope.exception() == !isOpen);
     if (!isOpen)
         return;
-    // No code of the program has seen the list, so nobody can tell when it gets what the steps hand out.
     MarkedArgumentBuffer values;
     while (true) {
         JSValue value;

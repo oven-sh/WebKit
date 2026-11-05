@@ -32,7 +32,6 @@ const recordIncludes = [
   "<wtf/Variant.h>",
 ];
 
-// Without AOTVector.h in front, `Vector` would name the class of WTF here and the compiler's own in whoever reads a record.
 const listsAreOfTheCompiler = "static_assert(std::is_same_v<Vector<uint32_t>, AOT::Vector<uint32_t>>);";
 
 function fieldDecl(field: Field): string {
@@ -43,7 +42,6 @@ function isDouble(field: Field): boolean {
   return field.kind.tag === "Scalar" && field.kind.scalar === "Double";
 }
 
-// Two records are equal when they hold the same bits: 0 is not -0, and a NaN equals itself.
 function comparisonOf(name: string, fields: readonly Field[]): string[] {
   if (!fields.some(isDouble)) return [`friend bool operator==(const ${name}&, const ${name}&) = default;`];
   const terms = fields.map(field =>
@@ -130,7 +128,6 @@ function schemaFileOf(type: SchemaType): string {
   return (type.tag === "Record" ? type.record : type.variant).file.path;
 }
 
-// The records of the first schema file depend on no later file, so they come first in dependency order and get a header of their own.
 function recordsHeaders(schema: Schema): OutputFile[] {
   const types = engineTypesInDependencyOrder(schema);
   const firstOfOtherFile = types.findIndex(type => schemaFileOf(type) !== schemaFileOf(types[0]));

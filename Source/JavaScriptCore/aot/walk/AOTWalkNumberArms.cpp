@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Guesses, for numbers: tests of the kind of a number in a row, the stretch with every proof bound, ONE other arm with the values as they stand, and a block where the two meet.
-// At a suspension: no stretch holds an operation that may suspend. At a throw: either arm throws to the handler of the input block as any block does.
-// Withheld (Guesses, TypedOperations): nothing is built, and each operation takes the form that the chain gives it.
-
 #include "config.h"
 #include "AOTWalkNumberGuesses.h"
 
@@ -32,13 +28,11 @@ namespace {
 struct NumberTestedInArms {
     Reference value;
     TypeID tested;
-    // The values of the body under which the stretch takes it.
     Vector<ValueID, 2> names;
     Vector<Reference, 2> boundBefore;
     Reference proven;
 };
 
-// An arm that has come through the stretch.
 struct ArmOfNumbers {
     BlockID lastBlock;
     Vector<Reference, 8> values;
@@ -46,8 +40,6 @@ struct ArmOfNumbers {
 
 } // anonymous namespace
 
-// What the end of the block finds by its definition stays behind every stretch: a test whose outcome the edges hand on as proofs that somebody reads, and a relation by whose record the edges narrow.
-// The looks at loops count on both. Whoever walks a stretch has asked for no operation behind its end.
 uint32_t limitOfStretchOfNumbers(const Walker& walker, const BodyBlock& block)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -76,7 +68,6 @@ Reference buildTestOfNumber(Walker& walker, Reference value, TypeID tested, Orig
     return walker.build(WTF::move(test));
 }
 
-// Where the test has passed.
 Reference buildProofOfNumber(Walker& walker, Reference value, Reference test, Origin origin)
 {
     Draft narrowed(Opcode::Narrowed, origin);
@@ -94,7 +85,6 @@ static bool isReturnedAtOnceInNumberArms(const BodyIndex& index, BlockID block, 
     return end.kind() == TerminatorKind::ReturnCall && end.operand(0) == value;
 }
 
-// As at any join, what both arms bring under one name keeps it. Any other value that is read behind the stretch gets a parameter of the block where they meet, under the join of its two types.
 static void letArmsOfNumbersMeet(Walker& walker, std::span<const ArmOfNumbers> arms, std::span<const ValueID> valuesMentionedLater, BlockID meetingBlock)
 {
     Code& code = walker.code();
@@ -134,7 +124,6 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
     uint32_t first = index.block(inputBlock).firstValue().index() + begin;
     uint32_t size = end - begin;
 
-    // `x * x`: one value is tested once, under whichever names the stretch takes it.
     Vector<NumberTestedInArms, 8> numbers;
     for (const TestOfNumber& test : tests) {
         Reference value = walker.referenceOf(test.input);
@@ -180,7 +169,6 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
     Origin origin = walker.originOf(index.value(ValueID(first)));
     origin.isTailCall = false;
 
-    // None of the tests writes anything, so what held in front of the first holds wherever one fails.
     BlockID otherBlock;
     for (NumberTestedInArms& number : numbers) {
         Reference test = buildTestOfNumber(walker, number.value, number.tested, origin);
@@ -246,7 +234,6 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
     if (walker.hasFailed())
         return true;
 
-    // As where the arms of a guess meet: what the last arm has bound to a value that the body never mentions again is the proof of one arm.
     for (uint32_t place = 0; place < size; ++place) {
         if (arms.isEmpty() || !valuesMentionedLater.contains(ValueID(first + place)))
             walker.bind(ValueID(first + place), Reference());

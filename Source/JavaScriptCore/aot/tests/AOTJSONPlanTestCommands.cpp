@@ -36,10 +36,6 @@ static ASCIILiteral nameOfRowInJSONPlanText(Opcode row)
     }
 }
 
-//     Scalar JSONAppendInteger
-//     Array of string nullish
-//     Objects [L0, L1] expected
-//     Parts (Scalar JSONAppendDate, Objects [L0])
 static void printJSONValuePlan(IRPrinter& printer, const JSONValuePlan& plan)
 {
     PrintStream& out = printer.out();
@@ -114,12 +110,6 @@ static void printLooksOfJSONObjectPlan(IRPrinter& printer, const JSONObjectPlan&
     out.print("]"_s);
 }
 
-//     object L0 looks=[] guards=[] members-written-out=2 whole
-//       order "id" "name"
-//         "id": Scalar JSONAppendInteger
-//         "name": Scalar JSONAppendString
-//     code L0 runs-no-code cannot-throw
-// `object L1 has no plan`. `whole`: writesWholeJSONValue() of a value that is proven to be an object of the layout, and ` calls-serializers` behind it. `code`: codeRunByJSONStringifyOf() of the same.
 static void printJSONPlanOfLayout(IRPrinter& printer, const AccessContext& context, LayoutID layout)
 {
     PrintStream& out = printer.out();
@@ -166,7 +156,6 @@ static void printJSONPlanOfLayout(IRPrinter& printer, const AccessContext& conte
     out.println(!code.runsNoCode ? " may-run-code"_s : code.cannotThrow ? " runs-no-code cannot-throw"_s : " runs-no-code may-throw"_s);
 }
 
-// The first line is `mechanisms <list>`. Then each record and each instance layout in use, in the order of the layouts.
 static void runJSONPlanCommand(TestCommandContext& context)
 {
     if (!context.arguments.empty()) {

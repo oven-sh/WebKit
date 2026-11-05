@@ -154,7 +154,6 @@ TellingFields::TellingFields(const ParallelLoops& loops, const Wire::Sections& c
             m_nearestWithFields[current] = isBeingVisited;
             visited.append(current);
         }
-        // A cycle of bases has no such field.
         uint32_t nearest = current == Wire::none || m_nearestWithFields[current] == isBeingVisited ? Wire::none : m_nearestWithFields[current];
         for (uint32_t layout : visited)
             m_nearestWithFields[layout] = nearest;
@@ -214,7 +213,6 @@ std::span<const Wire::Field> TaggedLayoutPlanner::fieldsOf(const Wire::Layout& l
     return fields.subspan(layout.fields.start, layout.fields.count);
 }
 
-// A constructor function or a class without heritage: planTaggedAllocations() gives a tagged allocation to either.
 bool TaggedLayoutPlanner::isMaker(const Wire::Layout& layout) const
 {
     return static_cast<LayoutKind>(layout.kind) == LayoutKind::Instance
@@ -223,7 +221,6 @@ bool TaggedLayoutPlanner::isMaker(const Wire::Layout& layout) const
         && layout.supertypes.count;
 }
 
-// The link leaves the record of a function in the numbers of its unit.
 std::optional<uint32_t> TaggedLayoutPlanner::typeNamedByRecordOf(size_t function, uint32_t type) const
 {
     if (!m_externalBodies || !m_externalBodies->unitCount)
@@ -242,7 +239,6 @@ std::optional<uint32_t> TaggedLayoutPlanner::typeNamedByRecordOf(size_t function
     return entry - 1;
 }
 
-// planTaggedAllocations() refuses a constructor that calls an initializer. The objects of such a class would keep the maker's layout, which applyAdditions() takes out of families.
 Vector<uint8_t> TaggedLayoutPlanner::findClassesWithInitializer() const
 {
     constexpr size_t functionsPerTask = 2048;
@@ -464,7 +460,6 @@ void TaggedLayoutPlanner::applyAdditions()
     }
     LayoutSetID allAddedBelow = m_arenas.of(0).layoutSets().ofSorted(layoutsAddedBelow.span());
 
-    // Of a family only the members that something is added below are looked at.
     forEachIndexInParallel(m_loops, static_cast<unsigned>(m_members.size()), [&](unsigned type, unsigned worker) {
         LayoutSets& sets = m_arenas.of(worker).layoutSets();
         Vector<LayoutID, 8> added;
@@ -487,7 +482,6 @@ void TaggedLayoutPlanner::applyAdditions()
     });
 }
 
-// Makers are taken in ascending order and get their new layouts one after the other, so the families ascend by maker and the numbers follow the program alone.
 Vector<TaggedFamily> TaggedLayoutPlanner::plan()
 {
     collectLiteralFields();

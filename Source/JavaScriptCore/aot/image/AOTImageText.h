@@ -41,7 +41,6 @@ struct ImageString {
     static constexpr uint32_t hasNoHeaderFlag = 1u << 27;
     static constexpr uint32_t hasTextFlag = 1u << 28;
     static constexpr uint32_t hasListedHashFlag = 1u << 29;
-    // In an ImageStringWord alone: the text has no character or one. The VM has the cells of such strings, and whoever makes a cell learns it without a look at the header.
     static constexpr uint32_t isShorterThanTwoFlag = 1u << 30;
 
     bool hasText() const { return !!location; }
@@ -82,7 +81,6 @@ inline ImageStringWord ImageString::inImage(uint32_t number) const
     return { flags | number };
 }
 
-// ImageSection::LongStrings in an image: where the strings without a header are. One word, the offset above the length, or a zero word, the offset and the length.
 struct ImageListedString {
     static constexpr unsigned maxNumberOfWords = 3;
 
@@ -116,8 +114,6 @@ inline ImageLongString ImageString::range(std::span<const ImageLongString> longS
 }
 
 struct ImageStringRecord {
-    static constexpr uint32_t isLiteralStringFlag = 1u << 30;
-
     static ImageStringRecord create(uint32_t rangeOrIndex, uint32_t hash, bool is16Bit, bool isAtom)
     {
         return { rangeOrIndex, hash | ImageString::hasTextFlag | (is16Bit ? ImageString::is16BitFlag : 0) | (isAtom ? ImageString::isAtomFlag : 0) };
@@ -126,7 +122,6 @@ struct ImageStringRecord {
     bool hasText() const { return !!hashAndFlags; }
     bool is16Bit() const { return hashAndFlags & ImageString::is16BitFlag; }
     bool isAtom() const { return hashAndFlags & ImageString::isAtomFlag; }
-    bool isLiteralString() const { return hashAndFlags & isLiteralStringFlag; }
     uint32_t hash() const { return hashAndFlags & ImageString::hashMask; }
 
     uint32_t rangeOrIndex;
@@ -134,7 +129,6 @@ struct ImageStringRecord {
 };
 static_assert(sizeof(ImageStringRecord) == 8 && isImageRecord<ImageStringRecord>);
 
-// The words of a WTF::StaticStringImpl.
 struct ImageStringHeader {
     static ImageStringHeader create(uint64_t characters, uint32_t length, uint32_t hash, bool is16Bit, StringImpl::StringKind kind)
     {
@@ -147,7 +141,7 @@ struct ImageStringHeader {
     uint32_t length;
     uint64_t characters;
     uint32_t hashAndFlags;
-    uint32_t literalStringWord;
+    uint32_t unused;
 };
 static_assert(sizeof(ImageStringHeader) == sizeof(StringImpl) && alignof(ImageStringHeader) == alignof(StringImpl) && isImageRecord<ImageStringHeader>);
 static_assert(offsetof(ImageStringHeader, length) == static_cast<size_t>(StringImpl::lengthMemoryOffset()));
@@ -165,11 +159,10 @@ struct LazyStringHeaderArena {
     uint64_t unused;
     uint32_t end;
     std::atomic<uint32_t> isLocked;
-    uint32_t unused2;
-    uint32_t sizeInBytes;
+    uint64_t unused2;
     uint64_t unused3;
 };
-static_assert(sizeof(LazyStringHeaderArena) == sizeof(LazyStringHeader) && offsetof(LazyStringHeaderArena, sizeInBytes) == offsetof(ImageStringHeader, literalStringWord));
+static_assert(sizeof(LazyStringHeaderArena) == sizeof(LazyStringHeader));
 
 struct ImageIdentifierWord;
 
@@ -266,14 +259,12 @@ public:
 #endif
     StringID stringConstant(uint32_t number) const { return StringID(m_stringConstants[numberOfStringConstants() + number]); }
     bool hasListedHash(StringID string) const { return m_strings[string.index()].hasListedHash(); }
-    std::optional<uint32_t> literalStringWordOfHeader(const StringImpl&) const;
 
 private:
     bool hasHeader(StringID string) const { return !m_strings[string.index()].hasText() || m_strings[string.index()].hasHeader(); }
     StringImpl* headerOf(StringID) const;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     ImageLongString rangeFor(const ImageStringRecord&) const;
-    uint32_t literalStringWordFor(const ImageStringRecord&) const;
     JS_EXPORT_PRIVATE StringImpl& createLazyHeader(uint32_t number) const;
     size_t lazyHeaderOffsetsSize() const;
     size_t lazyHeadersReservationSize() const;
@@ -341,18 +332,6 @@ inline std::optional<uint32_t> ImageText::lazyHeaderNumber(const StringImpl& str
 }
 #endif
 
-inline std::optional<uint32_t> ImageText::literalStringWordOfHeader(const StringImpl& string) const
-{
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    if (!lazyHeaderNumber(string))
-#else
-    uintptr_t offset = std::bit_cast<uintptr_t>(&string) - std::bit_cast<uintptr_t>(m_stringHeaders.data());
-    if (offset >= m_stringHeaders.size_bytes())
-#endif
-        return std::nullopt;
-    return reinterpret_cast<const ImageStringHeader&>(string).literalStringWord;
-}
-
 inline StringImpl* ImageText::tryGetHeader(StringID string) const
 {
     ImageStringWord word = m_strings[string.index()];
@@ -375,8 +354,6 @@ inline StringImpl* ImageText::tryGetHeader(StringID string) const
 #endif
 }
 
-// An image holds addresses in two kinds of places, and nowhere else: ImageHeader::address, which is the address of the image itself, and ImageStringHeader::characters.
-// A position-independent image holds none.
 JS_EXPORT_PRIVATE void relocateImage(std::span<uint8_t> image, uint64_t address);
 
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)

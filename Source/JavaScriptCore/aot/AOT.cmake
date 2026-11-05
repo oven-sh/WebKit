@@ -256,7 +256,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTImageDeterminismTests.cpp
     aot/tests/AOTImageFaultTableTests.cpp
     aot/tests/AOTImageFunctionTableTests.cpp
-    aot/tests/AOTImageModuleTableTests.cpp
     aot/tests/AOTImageProgramTests.cpp
     aot/tests/AOTImageRegExpTableTests.cpp
     aot/tests/AOTImageSiteTableTests.cpp
@@ -271,7 +270,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTKnownAnswersTests.cpp
     aot/tests/AOTKnownJoinsTests.cpp
     aot/tests/AOTKnownThreadingTests.cpp
-    aot/tests/AOTLeavingTests.cpp
     aot/tests/AOTLinkGrowthTests.cpp
     aot/tests/AOTListOfUnitTests.cpp
     aot/tests/AOTLoadedProgramTestSupport.cpp

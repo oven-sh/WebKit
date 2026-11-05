@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations: an operation that runs no other code ends what it writes in the objects that it writes it in, and the guards of the classes that it names. Every other object and class keeps what is known of it.
-// At a suspension, and wherever other code may run: WalkState::invalidate(effects), as ever.
-// At a throw: a writer that is judged here and throws has done no more than one that returns, so what is left standing holds on the edge to a handler too.
-// Withheld: WalkState::invalidate(effects), by heap, for every holder that is not fresh.
-
 #include "config.h"
 #include "AOTWalkKnown.h"
 
@@ -25,10 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- WalkState::endWhatIsWritten() with two questions: same lists, same costs
-
-// WHAT IS JUDGED HERE, by holder or by class. Whatever else an operation writes goes to WalkState::endWhatIsWritten(), by heap, as ever: a variable, the bytes under a view, the entries of a collection,
-// and whatever another file teaches WalkState to rest on such a heap.
 static constexpr AbstractHeapSet heapsOfObjectsJudgedInKnownWriters {
     AbstractHeap::ObjectFields, AbstractHeap::EnvironmentFields, AbstractHeap::ShapeWords, AbstractHeap::NamedProperties, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks, AbstractHeap::Elements, AbstractHeap::ArrayStorage
 };
@@ -41,7 +32,6 @@ static constexpr OptionSet<FactOfCell> factsOfCellKnownInKnownWriters {
     FactOfCell::NotFrozen, FactOfCell::NoFieldOutsideSlot, FactOfCell::NoExtraProperties, FactOfCell::HasLayoutPrototype, FactOfCell::OrderWordIsKnown, FactOfCell::IsLikelyAsAllocated, FactOfCell::IsLikelyAsConstructed
 };
 
-// factsOfCellEndedInWalkState(). A fact that another file has added since rests on what this file does not know: it ends with any write into its holder.
 static OptionSet<FactOfCell> factsOfCellEndedInKnownWriters(const LocationMasks& writes)
 {
     OptionSet<FactOfCell> ended = OptionSet<FactOfCell>::fromRaw(static_cast<OptionSet<FactOfCell>::StorageType>(~factsOfCellKnownInKnownWriters.toRaw()));
@@ -94,14 +84,11 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const Sc
     uint64_t environmentFieldsWritten = writes.maskOf(AbstractHeap::EnvironmentFields);
     uint64_t guardsWritten = writes.maskOf(AbstractHeap::MemberGuards);
     bool endsElements = endsPlaces && writes.containsAny(heapsUnderElementsOfObjectsInKnownWriters);
-    // As wide as the member is, however many kinds there are by now.
     using KindsOfPlaces = decltype(Holder::kindsOfPlaces);
     auto bitOfKind = [](PlaceKind kind) {
         return static_cast<KindsOfPlaces>(KindsOfPlaces(1) << static_cast<unsigned>(kind));
     };
-    // A variable rests on a heap that is not judged here. A KIND OF PLACE THAT ANOTHER FILE HAS ADDED SINCE rests on what this file does not know: where it is a part of the holder, it ends with any write into the holder.
     KindsOfPlaces kindsThatRestOnWhatIsKnown = bitOfKind(PlaceKind::Slot) | bitOfKind(PlaceKind::Variable) | bitOfKind(PlaceKind::EnvironmentField) | bitOfKind(PlaceKind::Element) | bitOfKind(PlaceKind::GuardOfStores) | bitOfKind(PlaceKind::GuardOfReads);
-    // WalkState::endPlacesOf().
     auto endPlacesWhere = [&](uint32_t holder, bool isListOfElements, const auto& ends) {
         uint32_t previous = none;
         for (uint32_t position = isListOfElements ? m_holders[holder].firstElement : m_holders[holder].firstPlace; position != none;) {
@@ -153,7 +140,6 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const Sc
     for (size_t index = 0; index < m_holdersReachedByEffects.size();) {
         uint32_t holder = m_holdersReachedByEffects[index];
         Reference object = m_holders[holder].object;
-        // Asked once, and only where something of the holder lies in what is written. On no object hang the variables and the guards.
         std::optional<bool> isKnownToBeWritten;
         auto isWritten = [&] {
             if (!isKnownToBeWritten)
@@ -209,15 +195,13 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const Sc
             maskOfPlacesLeft |= record.maskOfPlaces;
             ++index;
         } else
-            endHolder(holder); // Another stands in its place now.
+            endHolder(holder);
     }
     m_factsOfCellReachedByEffects = factsLeft;
     m_kindsOfPlacesReachedByEffects = kindsOfPlacesLeft;
     m_maskOfPlacesReachedByEffects = maskOfPlacesLeft;
     dropEndedRecordsIfMany();
 }
-
-// ---- K6: who may be who
 
 static Reference rootInKnownWriters(const Code& code, Reference name)
 {
@@ -227,16 +211,9 @@ static Reference rootInKnownWriters(const Code& code, Reference name)
     return code.isConstant(root) ? Reference::constant(root) : Reference::value(root);
 }
 
-// When it has run, its result is a cell that was not there before. TruncateNewArray has the rule of an allocation and hands its operand on. A template object is one cell for each site, and so is a RegExp that is never told apart.
-// A call of a function of which Link says that each return hands over a cell that the call has made and that nothing else holds. What a coroutine returns goes to whoever steps it.
-static bool makesNewCellInKnownWriters(const Walker& walker, const Operation& made)
+static bool makesNewCellInKnownWriters(const Operation& made)
 {
     Opcode opcode = made.opcode;
-    if (opcode == Opcode::CallDirect) {
-        if (!returnsResultOfFunction(made.role()) || walker.program().at(made.function()).isCoroutine())
-            return false;
-        return walker.facts().linked().function(made.function()).resultIsFresh;
-    }
     if (resultRuleOf(opcode) != ResultRule::Allocation || boundToOf(opcode) == BoundTo::Site || made.traits().mayRunOtherCode())
         return false;
     if (opcode == Opcode::NewRegExp && made.isNeverToldApart())
@@ -259,10 +236,8 @@ bool mayBeSameObject(Walker& walker, Reference first, Reference second)
     if (first == second)
         return true;
 
-    // Both values are in sight at one point, so the definition of one dominates that of the other, and the value of the one that comes first was there when the cell was made. In a loop it holds at most the cell that an earlier turn has made.
-    // Numbers follow that order but for what is built in front of a loop, which bears a later number than it should. For `other` that only loses the answer, and a cell is never made there: an allocation writes.
     auto isMadeBehind = [&](Reference cell, Reference other) {
-        if (!cell.isValue() || !makesNewCellInKnownWriters(walker, code.at(cell.id())))
+        if (!cell.isValue() || !makesNewCellInKnownWriters(code.at(cell.id())))
             return false;
         return other.isConstant() || other.id().index() < cell.id().index();
     };
@@ -274,12 +249,9 @@ bool mayBeSameObject(Walker& walker, Reference first, Reference second)
     if (typeOfFirst && typeOfSecond && !walker.types().mayBeSameObject(typeOfFirst, typeOfSecond))
         return false;
 
-    // A fresh object lies in no cell and in no variable, and has no name that the state does not follow. So whatever else is read, or handed back by a call, is another object.
     WalkState& state = walker.state();
     return !state.isFresh(first) && !state.isFresh(second);
 }
-
-// ---- K6: through which operands an operation writes
 
 namespace {
 
@@ -295,7 +267,6 @@ static constexpr OperandUses usesThatCallOperandInKnownWriters { OperandUse::Cal
 static constexpr OperandUses usesThatWriteOperandInKnownWriters {
     OperandUse::WritesContents, OperandUse::MovesElements, OperandUse::StoresByKey, OperandUse::DeletesByKey, OperandUse::AssignsFrom, OperandUse::ChangesIntegrity
 };
-// Whatever does one of these may write a cell that is no operand: what stands above or below the operand, what it holds, what code of the program has at hand.
 static constexpr OperandUses usesThatReachBeyondOperandInKnownWriters {
     OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode, OperandUse::AppliesTransitively, OperandUse::AppliesToContents
 };
@@ -305,9 +276,9 @@ static uint32_t numberOfDeclaredOperandsInKnownWriters(Opcode opcode)
     return numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
 }
 
-static bool opcodeMayRunCodeOfOperandsInKnownWriters(Opcode opcode)
+static bool opcodeMayRunCodeOfOperandsInKnownWriters(Opcode opcode, uint32_t numberOfDeclaredOperands)
 {
-    for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperandsInKnownWriters(opcode); ++operandIndex) {
+    for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
         const OperandInfo& info = operandInfoOf(opcode, operandIndex);
         if (!info.protocols.isEmpty() || info.uses.containsAny(usesThatCallOperandInKnownWriters))
             return true;
@@ -315,42 +286,41 @@ static bool opcodeMayRunCodeOfOperandsInKnownWriters(Opcode opcode)
     return false;
 }
 
-static bool writesThroughDeclaredOperandInKnownWriters(Opcode opcode, uint32_t declaredIndex)
+static bool writesThroughDeclaredOperandInKnownWriters(Opcode opcode, uint32_t declaredIndex, uint32_t numberOfDeclaredOperands)
 {
     if (operandUsesOf(opcode, declaredIndex).containsAny(usesThatWriteOperandInKnownWriters))
         return true;
     Access access = accessOf(opcode);
     if ((access == Access::Store || access == Access::Define) && receiverOf(opcode) == declaredIndex)
         return true;
-    for (uint32_t retainedIndex = 0; retainedIndex < numberOfDeclaredOperandsInKnownWriters(opcode); ++retainedIndex) {
+    for (uint32_t retainedIndex = 0; retainedIndex < numberOfDeclaredOperands; ++retainedIndex) {
         if (retainedInOf(opcode, retainedIndex) == RetainedIn::Operand && retainingOperandOf(opcode, retainedIndex) == declaredIndex)
             return true;
     }
     return false;
 }
 
-// An opcode that names no operand that it writes through writes a cell that it finds by itself.
-static bool writesThroughDeclaredOperandsAloneInKnownWriters(Opcode opcode)
+static bool writesThroughDeclaredOperandsAloneInKnownWriters(Opcode opcode, Vector<bool, 8>& writtenThrough)
 {
-    if (opcodeMayRunCodeOfOperandsInKnownWriters(opcode))
+    uint32_t numberOfDeclaredOperands = numberOfDeclaredOperandsInKnownWriters(opcode);
+    if (opcodeMayRunCodeOfOperandsInKnownWriters(opcode, numberOfDeclaredOperands))
         return false;
     bool namesWrittenOperand = false;
-    for (uint32_t declaredIndex = 0; declaredIndex < numberOfDeclaredOperandsInKnownWriters(opcode); ++declaredIndex) {
+    for (uint32_t declaredIndex = 0; declaredIndex < numberOfDeclaredOperands; ++declaredIndex) {
         if (operandUsesOf(opcode, declaredIndex).containsAny(usesThatReachBeyondOperandInKnownWriters))
             return false;
-        namesWrittenOperand |= writesThroughDeclaredOperandInKnownWriters(opcode, declaredIndex);
+        bool isWrittenThrough = writesThroughDeclaredOperandInKnownWriters(opcode, declaredIndex, numberOfDeclaredOperands);
+        writtenThrough.append(isWrittenThrough);
+        namesWrittenOperand |= isWrittenThrough;
     }
     return namesWrittenOperand;
 }
 
-// The one object that the writer defines a property on. `effects` say that it runs no other code. Null: it may reach anything.
-// DefineMethod, NewClass and BeginMemberGuards are not among them: they write the prototype object of a class, which is no operand of theirs.
 static Reference onlyObjectDefinedOnInKnownWriters(Walker& walker, const Draft& writer)
 {
     static constexpr OpcodeSet definitionsOnOneObject { Opcode::DefineGetter, Opcode::DefineSetter, Opcode::DefineAccessors, Opcode::PropDefine };
     if (definitionsOnOneObject.contains(writer.opcode))
         return writer.objectOperand();
-    // A compiled object is defined on as an ordinary one. Anything else may be a proxy.
     if (writer.opcode == Opcode::DefineOwnProperty) {
         TypeID type = walker.typeOf(writer.objectOperand());
         return type && walker.types().at(type).hasOnlyLayouts() ? writer.objectOperand() : Reference();
@@ -370,13 +340,10 @@ static std::optional<ElementStoreInKnownWriters> findElementStoreWithoutOtherCod
     return ElementStoreInKnownWriters { writer.objectOperand() };
 }
 
-// `counts[k] = 1; out.push(k)`, `p.z = 1; o.c`: whatever the writer writes of the heaps that belong to one object, it writes in these. Nothing: nobody can tell.
 static std::optional<ObjectsWrittenAloneInKnownWriters> objectsWrittenAloneByInKnownWriters(Walker& walker, const Draft& writer, const Effects& effects, const std::optional<ElementStoreInKnownWriters>& elementStore)
 {
-    // What a callee writes it may find through what it captures.
     if (testsItsOwnGuess(writer) || effectRuleOf(writer.opcode) == EffectRule::Call)
         return std::nullopt;
-    // An object remembers that it has been a prototype.
     if (writer.opcode == Opcode::SetLiteralPrototype)
         return ObjectsWrittenAloneInKnownWriters { writer.objectOperand(), writer.prototypeOperand() };
     if (writer.opcode == Opcode::TryCopyFields)
@@ -385,20 +352,23 @@ static std::optional<ObjectsWrittenAloneInKnownWriters> objectsWrittenAloneByInK
         return ObjectsWrittenAloneInKnownWriters { object };
     if (elementStore)
         return ObjectsWrittenAloneInKnownWriters { elementStore->array };
-    if (!writesThroughDeclaredOperandsAloneInKnownWriters(writer.opcode))
+    Vector<bool, 8> writtenThrough;
+    if (!writesThroughDeclaredOperandsAloneInKnownWriters(writer.opcode, writtenThrough))
         return std::nullopt;
     UNUSED_PARAM(effects);
 
     ObjectsWrittenAloneInKnownWriters written;
+    uint32_t numberOfDeclaredOperands = writtenThrough.size();
     uint32_t numberOfNamedOperands = numberOfNamedOperandsOf(writer.opcode);
     for (uint32_t operandIndex = 0; operandIndex < writer.numberOfOperands(); ++operandIndex) {
-        if (writer.operand(operandIndex) && writesThroughDeclaredOperandInKnownWriters(writer.opcode, std::min(operandIndex, numberOfNamedOperands)))
+        if (!writer.operand(operandIndex))
+            continue;
+        uint32_t declaredIndex = std::min(operandIndex, numberOfNamedOperands);
+        if (declaredIndex < numberOfDeclaredOperands ? writtenThrough[declaredIndex] : writesThroughDeclaredOperandInKnownWriters(writer.opcode, declaredIndex, numberOfDeclaredOperands))
             written.append(writer.operand(operandIndex));
     }
     return written;
 }
-
-// ---- K8: the guards of which classes a writer may end
 
 namespace {
 
@@ -411,7 +381,6 @@ struct GuardsEndedInKnownWriters {
 
 } // anonymous namespace
 
-// By every word that says what stands above a class: whoever answers for what stands above an object goes up by one of them (findParentNamedByClassRecordForTypedAccess()).
 static bool rowAboveHoldsInKnownWriters(const Walker& walker, LayoutID from, LayoutID sought)
 {
     const Program& program = walker.program();
@@ -433,7 +402,6 @@ static bool rowAboveHoldsInKnownWriters(const Walker& walker, LayoutID from, Lay
     return false;
 }
 
-// A test that has passed goes on passing.
 static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walker, const Draft& writer)
 {
     using Which = GuardsEndedInKnownWriters::Which;
@@ -442,10 +410,8 @@ static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walke
     const Program& program = walker.program();
     if (writer.opcode == Opcode::NewObject) {
         LayoutID classLayout = declaredLayoutOf(program, writer.layout());
-        // The guards of a class speak of every instance, so the first instance with another prototype ends them.
         if (writer.prototypeOperand())
             return program.prototypeMaySelectOtherClass(writer.layout()) ? GuardsEndedInKnownWriters { } : GuardsEndedInKnownWriters { Which::OfClassesInRowOf, classLayout };
-        // The class of a constructor function begins with its first object. Until then a guard takes what it says of that class to speak of no object, so the first object may end it.
         if (program.at(classLayout).has(LayoutFlags::IsConstructorFunction))
             return { Which::OfClassesInRowOf, classLayout };
         return { Which::None, { } };
@@ -455,7 +421,6 @@ static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walke
     return { };
 }
 
-// `function Below(a, b) { Base.call(this, a); this.b = b; }`, copied into a turn: a store into an object that this very turn has made is gone with the object where the turn begins again.
 static bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& draft, const Effects& effects)
 {
     if (effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !walker.mayBeginTurnAgainInClosedCopy())
@@ -471,19 +436,14 @@ static bool writesObjectsOfTurnAloneInKnownWriters(Walker& walker, const Draft& 
     });
 }
 
-// ---- What build() asks
-
 static constexpr AbstractHeapSet heapsEndedByWriterInKnownWriters = perObjectHeaps | AbstractHeapSet { AbstractHeap::MemberGuards };
-// objectsOfAnyLayout of facts/AOTLinkKnownEffects.h.
 static constexpr uint64_t objectsOfAnyLayoutInKnownWriters = UINT64_MAX;
 
-void endWhatOperationWrites(Walker& walker, const Draft& draft, const Effects& effects)
+void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
 {
     WalkState& state = walker.state();
-    // The effects as they are: below, what is written into a fresh object is taken out of them, and an object that is fresh since in front of the loop would be written twice.
     if (!writesObjectsOfTurnAloneInKnownWriters(walker, draft, effects))
         state.noteWhatOperationDoes(effects);
-    // What hands memory back does it once, though nobody sees what it writes: the other copy would be handed a released cell.
     if (draft.opcode == Opcode::ReleaseEnvironment)
         state.noteSomethingWasDoneInTurn();
     if (!walker.has(Mechanism::TypedOperations) || effects.mayRunOtherCode() || !effects.writes.containsAny(heapsEndedByWriterInKnownWriters) || state.isEmpty()) {
@@ -516,8 +476,6 @@ void endWhatOperationWrites(Walker& walker, const Draft& draft, const Effects& e
     std::optional<ObjectsWrittenAloneInKnownWriters> written = objectsWrittenAloneByInKnownWriters(walker, draft, effects, elementStore);
     uint64_t layoutsWritten = !written && effectRuleOf(draft.opcode) == EffectRule::Call ? layoutsWrittenBy(walker, draft) : objectsOfAnyLayoutInKnownWriters;
 
-    // `const n = new Node(); n.left = a; n.right = b`, a thousand times over: nothing else can be a fresh object, so nobody else is asked, however much the state holds.
-    // What WalkState itself knows of a fresh object no effect ends: markEscapingOperands() has followed the store.
     bool everyObjectWrittenIsFresh = written && std::ranges::all_of(*written, [&](Reference object) {
         return state.isFresh(rootInKnownWriters(code, object));
     });
@@ -530,7 +488,6 @@ void endWhatOperationWrites(Walker& walker, const Draft& draft, const Effects& e
         };
         state.invalidate(ended, noOtherObjectIsWritten, mayEndGuard);
     } else {
-        // An operand that is fresh and stays so: markEscapingOperands() has followed a store into it, of which the answers know nothing.
         Vector<Reference, 4> freshOperands;
         if (!written) {
             for (Reference operand : draft.operands()) {
@@ -539,7 +496,6 @@ void endWhatOperationWrites(Walker& walker, const Draft& draft, const Effects& e
                     freshOperands.append(root);
             }
         }
-        // What rests on a fresh object is passed by below, and nothing else can be that object.
         if (written) {
             for (Reference object : *written) {
                 if (Reference root = rootInKnownWriters(code, object); state.isFresh(root))
@@ -549,7 +505,6 @@ void endWhatOperationWrites(Walker& walker, const Draft& draft, const Effects& e
         for (Reference root : freshOperands)
             state.answers().endWhatIsWrittenIn(root, ended);
         auto mayBeWritten = [&](Reference holder) {
-            // What is noted of the enumerator of a for-in speaks of the keys of other objects.
             if (TypeID type = walker.typeOf(holder); type && walker.types().at(type).isOpaque(OpaqueKind::Enumerator))
                 return true;
             if (written) {
@@ -557,7 +512,6 @@ void endWhatOperationWrites(Walker& walker, const Draft& draft, const Effects& e
                     return mayBeSameObject(walker, object, holder);
                 });
             }
-            // Whatever reaches beyond its operands finds no fresh object.
             if (Reference root = rootInKnownWriters(code, holder); state.isFresh(root))
                 return freshOperands.contains(root);
             if (layoutsWritten == objectsOfAnyLayoutInKnownWriters)

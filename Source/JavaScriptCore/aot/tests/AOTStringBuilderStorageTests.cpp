@@ -214,7 +214,6 @@ static void testSharersDie(LoadedProgram& program)
 static void testFinishGivesLargeBufferAway(LoadedProgram& program)
 {
     uint32_t retained = StringBuilderStorage::maxRetainedCapacity;
-    // reserve() makes room for whole words.
     uint32_t large = roundUpToMultipleOf<sizeof(uint64_t)>(retained + 1);
     Builder builder(program);
     AOT_TEST_CHECK(builder->reserve(program.realm(), large));
@@ -314,7 +313,6 @@ static void testNextLargeTextGrowsOnce(LoadedProgram& program)
     afterWide->release(program.instance());
 }
 
-// A collection that has been asked for runs at the next place where the collector may run.
 static void testDiscardLeavesNextBufferToNextWrite(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -417,6 +415,127 @@ static void testRollBackEverywhere(LoadedProgram& program)
     }
 }
 
+namespace {
+
+class BuilderInFrame {
+public:
+    explicit BuilderInFrame(LoadedProgram& program)
+        : m_program(program)
+    {
+        m_record.savedCursor = m_record.buffer;
+        m_record.limit = m_record.buffer + StackStringBuilder::capacity;
+        m_record.lengthOrigin = m_record.buffer;
+        m_cursor = m_record.buffer;
+    }
+
+    void write(char character)
+    {
+        if (m_cursor >= m_record.limit)
+            takeCursorBehind([](StringBuilderStorage&) { });
+        *m_cursor++ = static_cast<Latin1Character>(character);
+        m_expected.append(character);
+    }
+    void append(std::span<const char16_t> wide)
+    {
+        takeCursorBehind([&](StringBuilderStorage& storage) {
+            AOT_TEST_CHECK(storage.append(m_program.realm(), jsString(m_program.vm(), String(wide))) == AppendResult::Appended);
+        });
+        m_expected.append(wide);
+    }
+    JSString* toString()
+    {
+        JSString* result = m_record.toString(m_program.realm(), m_program.instance(), m_cursor);
+        AOT_TEST_CHECK(result && static_cast<size_t>(m_cursor - m_record.lengthOrigin) == result->length());
+        return result;
+    }
+    JSString* finish() { return m_record.finish(m_program.realm(), m_program.instance(), m_cursor, StringBuilderStorage::StringUse::Unknown); }
+    StringBuilderStorage& moveToStorage()
+    {
+        StringBuilderStorage* storage = m_record.moveToStorage(m_program.realm(), m_program.instance(), m_cursor);
+        AOT_TEST_CHECK(storage);
+        return *storage;
+    }
+    String expected() { return m_expected.toString(); }
+
+private:
+    void takeCursorBehind(const Invocable<void(StringBuilderStorage&)> auto& change)
+    {
+        StringBuilderStorage& storage = moveToStorage();
+        change(storage);
+        m_cursor = m_record.didChangeStorage(m_program.realm(), storage);
+        AOT_TEST_CHECK(m_cursor);
+    }
+
+    LoadedProgram& m_program;
+    StackStringBuilder m_record;
+    Latin1Character* m_cursor;
+    WTF::StringBuilder m_expected;
+};
+
+} // anonymous namespace
+
+static void testTextInFrameIsReadAtEachTurn(LoadedProgram& program)
+{
+    for (unsigned turns : { 40u, 9000u }) {
+        BuilderInFrame builder(program);
+        Vector<std::pair<JSString*, String>> read;
+        MarkedArgumentBuffer kept;
+        for (unsigned turn = 0; turn < turns; ++turn) {
+            if (turn % 3 == 1)
+                builder.append(std::span(japan));
+            else
+                builder.write('a' + turn % 26);
+            JSString* text = builder.toString();
+            AOT_TEST_CHECK(turn >= 40 || !text->isRope());
+            AOT_TEST_CHECK(textOf(program, text) == builder.expected());
+            AOT_TEST_CHECK(builder.toString() == text);
+            if (turn && turn < 40) {
+                kept.append(text);
+                read.append({ text, builder.expected() });
+            }
+        }
+        for (unsigned part = 0; part < StringBuilderStorage::maxSegments + 8; ++part) {
+            builder.append(std::span(japan));
+            builder.write('-');
+        }
+        AOT_TEST_CHECK(textOf(program, builder.toString()) == builder.expected());
+        JSString* whole = builder.finish();
+        AOT_TEST_CHECK(whole && textOf(program, whole) == builder.expected());
+        for (auto& [text, expected] : read)
+            AOT_TEST_CHECK(textOf(program, text) == expected);
+    }
+}
+
+static void testRollBackBehindReadOfTextInFrame(LoadedProgram& program)
+{
+    auto fill = [](BuilderInFrame& builder) {
+        for (char character : { 'a', 'b', 'c' })
+            builder.write(character);
+        builder.append(std::span(japan));
+        builder.write('d');
+        builder.toString();
+        builder.write('e');
+        builder.append(std::span(japan));
+        builder.write('f');
+        builder.toString();
+        builder.write('g');
+        builder.write('h');
+    };
+    for (uint32_t length = 0; length <= 12; ++length) {
+        BuilderInFrame builder(program);
+        fill(builder);
+        String expected = builder.expected();
+        AOT_TEST_CHECK(expected.length() == 12);
+        StringBuilderStorage& storage = builder.moveToStorage();
+        storage.rollBack(length);
+        AOT_TEST_CHECK(storage.length() == length);
+        AOT_TEST_CHECK(storage.append(program.realm(), "+"_s.span8()) == AppendResult::Appended);
+        AOT_TEST_CHECK(storage.append(program.realm(), std::span(japan)) == AppendResult::Appended);
+        JSString* result = storage.finish(program.realm(), program.instance());
+        AOT_TEST_CHECK(result && textOf(program, result) == makeString(expected.left(length), '+', String(std::span(japan))));
+    }
+}
+
 static void testAppendValuesIsAtomic(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -494,7 +613,6 @@ static String quotedForJSON(const String& text)
     return quoted.toString();
 }
 
-// As compiled code calls it: maxStringBuilderReservation bytes of room are at the cursor, and behind the text again.
 static void appendJSONString(LoadedProgram& program, Builder& builder, const String& text)
 {
     Latin1Character* cursor = builder->reserve(program.realm(), { .length = 0, .maxLengthOfRest = maxStringBuilderReservation });
@@ -505,7 +623,6 @@ static void appendJSONString(LoadedProgram& program, Builder& builder, const Str
     AOT_TEST_CHECK(builder.limit() - builder.position() >= maxStringBuilderReservation);
 }
 
-// A builder with the least buffer, whatever the texts before it took.
 static void forgetBuilders(LoadedProgram& program)
 {
     program.instance().stringBuilder.freeStorage = nullptr;
@@ -533,13 +650,11 @@ static void testLongEscapedTextGetsNoRoomForItsLongestForm(LoadedProgram& progra
         builder->release(program.instance());
         return left;
     };
-    // All that the escapes of 4,096 characters can take, what compiled code is owed, and a word's rounding.
     constexpr size_t roomMadeAhead = 5 * 4096 + maxStringBuilderReservation + sizeof(uint64_t);
     AOT_TEST_CHECK(roomLeftBehind(repeated('x', length)) <= roomMadeAhead);
     AOT_TEST_CHECK(roomLeftBehind(textWithEscapes(length, length, '\n')) <= roomMadeAhead);
     AOT_TEST_CHECK(roomLeftBehind(makeString(repeated('x', length), '"')) <= roomMadeAhead);
     AOT_TEST_CHECK(roomLeftBehind(textWithEscapes(length, 60, '\n')) <= roomMadeAhead);
-    // A buffer that has to grow doubles.
     AOT_TEST_CHECK(roomLeftBehind(textWithEscapes(length, 1, '\\')) <= 2 * length + roomMadeAhead);
     AOT_TEST_CHECK(roomLeftBehind(textWithEscapes(length, 1, '\x01')) <= 6 * length + roomMadeAhead);
 }
@@ -562,7 +677,6 @@ static void testTextEscapedInPiecesReadsAsOneEscapedWhole(LoadedProgram& program
         return String(characters.span());
     };
 
-    // The room is there for the text as it stands, and runs out on the way.
     for (size_t length : { 1, 700, 5000, 43007, 43008, 70000, 300000 }) {
         for (size_t distance : { 1, 7, 60, 4096 }) {
             for (char escaped : { '\n', '\x1f' })
@@ -570,7 +684,6 @@ static void testTextEscapedInPiecesReadsAsOneEscapedWhole(LoadedProgram& program
         }
     }
 
-    // In the first pattern 262,144 characters end between the halves of a pair.
     static constexpr char16_t pairs[] = { 0xd83d, 0xde00, 0x3042 };
     static constexpr char16_t halves[] = { 0xd83d, 'x', 0xde00, 0x3042, '\n' };
     static constexpr char16_t leads[] = { 0xd83d };
@@ -679,6 +792,8 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/finish-gives-large-buffer-away"_s, withInstance<testFinishGivesLargeBufferAway> },
         { "string-builder-storage/next-large-text-grows-once"_s, withInstance<testNextLargeTextGrowsOnce> },
         { "string-builder-storage/roll-back-everywhere"_s, withInstance<testRollBackEverywhere> },
+        { "string-builder-storage/text-in-frame-is-read-at-each-turn"_s, withInstance<testTextInFrameIsReadAtEachTurn> },
+        { "string-builder-storage/roll-back-behind-read-of-text-in-frame"_s, withInstance<testRollBackBehindReadOfTextInFrame> },
         { "string-builder-storage/append-values-is-atomic"_s, withInstance<testAppendValuesIsAtomic> },
         { "string-builder-storage/room-that-may-stay-unused"_s, withInstance<testRoomThatMayStayUnused> },
         { "string-builder-storage/long-escaped-text-gets-no-room-for-its-longest-form"_s, withInstance<testLongEscapedTextGetsNoRoomForItsLongestForm> },

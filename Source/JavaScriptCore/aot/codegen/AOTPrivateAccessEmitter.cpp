@@ -40,10 +40,9 @@ std::optional<FieldAccess> PrivateAccessEmitter::findBoxedSlotInCellOfEveryRecei
     const PlacedSlot& slot = access.slot;
     if (slot.storage != SlotStorage::Inline || slot.mayExistWithoutStorage || slot.representation != SlotRepresentation::JSValue || slot.type)
         return std::nullopt;
-    // The type of the merged slot is none where the members do not share one, which says nothing of what a store may bring.
     for (LayoutID member : access.membersWithField) {
         std::optional<FieldIndex> field = m_plan.slots().findField(m_program, member, key);
-        if (!m_plan.layout(member).holdsCompiledObjects() || !field || m_plan.slot(member, *field).type)
+        if (!m_plan.layout(member).holdsCompiledObjects() || !field || m_plan.slot(member, *field).type || (isStore && m_plan.slot(member, *field).provenType))
             return std::nullopt;
     }
     return access;
@@ -54,8 +53,6 @@ TypedPointer PrivateAccessEmitter::addressOfSlot(CellPointer object, const Field
     return emitter<SlotEmitter>().addressOf(object, access.slot, MemoryLocation::objectField(access.key));
 }
 
-// The object is proven to be of layouts that keep the name, and the brand of its class, in slots of the cell. The evaluations of a class share the layout, in every realm that runs the image,
-// and the brand in its slot is the token of the one that made the object. Where that is the token at hand, the name lies in its slot or the object lacks it: tryReadFromSlot() in runtime/AOTClassOperations.cpp.
 std::optional<PrivateAccessEmitter::SlotsOfProvenReceiver> PrivateAccessEmitter::findSlotsOfProvenReceiver(const ValueContext& value, bool isStore)
 {
     const Type& receiver = typeOf(value->objectOperand());
@@ -92,13 +89,11 @@ TypedPointer PrivateAccessEmitter::slotOfNameIfEvaluationMadeObject(const SlotsO
     return addressOfSlot(object, slots.name);
 }
 
-// An instance of a class below a built-in class is a cell of that class and keeps the name as a property. The stub handles every other object.
 bool PrivateAccessEmitter::findsLocationInLine(const ValueContext& value)
 {
     return m_plan.layout(value->layout()).isRecordAlone;
 }
 
-// Reads the first record of the field. A record is empty until it is filled and keeps what it holds.
 TypedPointer PrivateAccessEmitter::locationInKnownStructure(const ValueContext& value, Boxed boxedObject, CellPointer token, LBasicBlock isUnknown)
 {
     if (!typeOf(value->objectOperand()).isObject())
@@ -112,7 +107,6 @@ TypedPointer PrivateAccessEmitter::locationInKnownStructure(const ValueContext& 
     branchUnless(Condition(m_out.notNull(records.value())), isUnknown);
     Word32 structureID = loadStructureID(object);
     branchUnless(equal(structureID, wordOfRecord(records, ClassToken::StructureNumber)), isUnknown);
-    // The brand tells the evaluations of a class apart, and the stub compares it.
     if (!isEvaluatedOnce(value))
         branchUnless(isZero(wordOfRecord(records, ClassToken::LocationOfBrand)), isUnknown);
     Integer location = signExtended(wordOfRecord(records, ClassToken::LocationOfValue));
@@ -125,7 +119,6 @@ Boxed PrivateAccessEmitter::callPrivateGet(const ValueContext& value, Boxed obje
 {
     StubKey stub = privateGet();
     uint32_t immediate = indexInLayoutRecord(value);
-    // The stub compares the layout of the object with the declaring one, whose slots are known here.
     const PlacedSlot& slot = m_plan.slot(value->layout(), value->field());
     const Field& declaration = fieldAt(m_program, declarationOf(m_program, FieldReference { value->layout(), value->field() }));
     bool isPlainSlotInCell = slot.storage == SlotStorage::Inline && !slot.mayExistWithoutStorage && !declaration.form.contains(FieldForm::IsAccessor);
@@ -191,13 +184,12 @@ void PrivateAccessEmitter::generatePrivateSet(const ValueContext& value)
     ScopeFork fork = m_out.forkScope();
     if (slots) {
         m_out.noteForm(Form::Open, StateOfKnowledge::NameInCell);
-        // The store throws where the object lacks the name.
         TypedPointer slot = slotOfNameIfEvaluationMadeObject(*slots, unboxCell(object), token, isUnknown);
         branchUnless(Condition(m_out.notNull(m_out.load64(slot))), isUnknown);
         m_out.store64(stored.value(), slot);
     } else
         m_out.store64(stored.value(), locationInKnownStructure(value, object, token, isUnknown));
-    barrierAfterStore(value, unboxCell(object), stored, typeOf(value->valueOperand()));
+    barrierAfterStore(value, unboxCell(object), typeOf(value->valueOperand()));
     m_out.jump(continuation);
 
     m_out.appendTo(isUnknown);
@@ -222,7 +214,6 @@ void PrivateAccessEmitter::generatePrivateDefine(const ValueContext& value)
     LBasicBlock asksRunTime = newBlock();
     LBasicBlock continuation = newBlock();
     ScopeFork fork = m_out.forkScope();
-    // The brand is what makes the object one of the evaluation, and it goes into the slot that it finds empty: tryDefineInEmptySlot(). The definition throws where the object has the name.
     bool isBrand = slots->name.key == slots->brand.key;
     TypedPointer slot = isBrand ? addressOfSlot(object, slots->name) : slotOfNameIfEvaluationMadeObject(*slots, object, token, asksRunTime);
     branchUnless(Condition(m_out.isNull(m_out.load64(slot))), asksRunTime);
@@ -233,7 +224,7 @@ void PrivateAccessEmitter::generatePrivateDefine(const ValueContext& value)
         });
     }
     m_out.store64(stored.value(), slot);
-    barrierAfterStore(value, object, stored, typeOf(value->valueOperand()));
+    barrierAfterStore(value, object, typeOf(value->valueOperand()));
     m_out.jump(continuation);
 
     m_out.appendTo(asksRunTime);
@@ -270,7 +261,6 @@ void PrivateAccessEmitter::generatePrivateHas(const ValueContext& value)
         m_out.branch(m_out.equal(brand, token.value()), normalEdge(isOfEvaluation), normalEdge(isOfNoneOrAnother));
         m_out.appendTo(isOfEvaluation);
         branch(Condition(m_out.notNull(m_out.load64(addressOfSlot(cell, slots->name)))), targets);
-        // The brand comes first and goes into the slot that it finds empty, so an object whose slot is empty has no name of any evaluation.
         m_out.appendTo(isOfNoneOrAnother);
         m_out.branch(m_out.isNull(brand), targets.notTaken, rareEdge(asksRunTime));
         m_out.appendTo(asksRunTime);

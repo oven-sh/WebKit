@@ -1,11 +1,12 @@
-# the one property changed: the promise is handed to code that nobody has seen. Its family holds anything in every slot and it is not as made. What the body returns is the body's, and stays known
+# the one property changed: the promise is handed to code that nobody has seen. Its family holds anything in every slot, so nothing is expected of what it is fulfilled with. What the body returns is the body's, and stays known
 # async function make(o) { return o; }  sink(make({ x: "a" }));
 # the object has escaped with its promise, and a proof names no layout that has escaped, so it is written as an object of unseen code. A node that the escape had opened would hold anything, and nothing would be printed
 # RUN: link coroutines mechanisms=all
 # CHECK: coroutine f1 returned=object?UnseenCode
-# RUN(NOT): link coroutines mechanisms=all
+# RUN(HELD): link held coroutines mechanisms=all
+# HELD: coroutine f1 returned=L0
+# RUN(NOT): link held coroutines mechanisms=all
 # NOT-NOT: fulfilled=
-# NOT-NOT: as-made
 
 layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0

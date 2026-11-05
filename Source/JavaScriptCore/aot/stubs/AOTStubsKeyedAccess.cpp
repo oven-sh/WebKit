@@ -115,7 +115,6 @@ void callLeafLookup(StubAssembler& jit, Entry entry, GPRReg second, std::optiona
         jit.move(base, baseAfterCall);
         jit.emitFunctionPrologue();
 #if CPU(X86_64)
-        // The caller may have pushed. preservingRegistersClobberedBy expects the stack pointer of a stub's entry.
         jit.andPtr(TrustedImm32(-static_cast<int32_t>(stackAlignmentBytes())), CCallHelpers::stackPointerRegister);
         jit.subPtr(TrustedImm32(sizeof(CPURegister)), CCallHelpers::stackPointerRegister);
 #endif
@@ -169,7 +168,6 @@ static KeyedProbeRegisters allocateKeyedProbeRegisters(StubAssembler& jit)
     };
 }
 
-// Goes on where the base may have elements and the key is the text of an index of at most four digits, with the index in registers.entry. Preserves base and key.
 enum class ElementUnderText : bool { IsLookedFor, MayBeAdded };
 
 static void loadIndexOfText(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& isNoSuchKey, ElementUnderText element = ElementUnderText::IsLookedFor)
@@ -182,7 +180,6 @@ static void loadIndexOfText(StubAssembler& jit, const KeyedProbeRegisters& regis
     const GPRReg position = registers.payload;
     static constexpr int32_t maxDigits = 4;
 
-    // The elements of a compiled object are those of its extra properties.
     Jump hasIndexedStorage = jit.branchTest8(CCallHelpers::NonZero, Address(registers.base, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask));
     isNoSuchKey.append(branchIfNotCompiledObjectOfThisImage(jit, registers.base));
     if (element == ElementUnderText::IsLookedFor)
@@ -200,7 +197,6 @@ static void loadIndexOfText(StubAssembler& jit, const KeyedProbeRegisters& regis
     jit.sub32(TrustedImm32('0'), index);
     isNoSuchKey.append(jit.branch32(CCallHelpers::Above, index, TrustedImm32(9)));
     Jump hasOneDigit = jit.branch32(CCallHelpers::Equal, length, TrustedImm32(1));
-    // "01" is a name.
     isNoSuchKey.append(jit.branchTest32(CCallHelpers::Zero, index));
     jit.move(TrustedImm32(1), position);
     Label nextDigit = jit.label();
@@ -214,7 +210,6 @@ static void loadIndexOfText(StubAssembler& jit, const KeyedProbeRegisters& regis
     hasOneDigit.link(&jit);
 }
 
-// characters and length say a text of 8-bit characters. Leaves the name that PropertyCacheWords::namesOfTexts has for it in uid. Overwrites all its registers.
 static void findNameOfText(StubAssembler& jit, GPRReg characters, GPRReg length, GPRReg first, GPRReg last, GPRReg uid, JumpList& isNotFound)
 {
     RELEASE_ASSERT(noOverlap(characters, length, first, last, uid, instanceGPR));
@@ -267,7 +262,6 @@ static constexpr int32_t offsetOfKeyedValuePlacesFor(SlotAccess access)
     return static_cast<int32_t>(InstanceLayout::offsetOfKeyedValuePlaces + KeyedValuePlace::offsetOfFirst(access));
 }
 
-// One operand of x86-64 reaches a place by its distance from the instance. Elsewhere the register of the place has its address.
 #if CPU(X86_64)
 static BaseIndex inKeyedValuePlace(GPRReg place, SlotAccess access, ptrdiff_t offset)
 {
@@ -292,7 +286,6 @@ static void locateKeyedValuePlace(StubAssembler& jit, SlotAccess access, GPRReg 
 #endif
 }
 
-// The base and the key are cells. Leaves Slot::wordIndexFor() of the value in wordIndex. Hands back the jump that is taken where the place is of the key and not of a value of the Structure.
 static Jump findKeyedValuePlace(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, GPRReg wordIndex, JumpList& isNotFound, std::optional<StubKey> entryAtPlace = std::nullopt)
 {
     RELEASE_ASSERT(wordIndex != registers.entry);
@@ -306,7 +299,6 @@ static Jump findKeyedValuePlace(StubAssembler& jit, SlotAccess access, const Key
     return isOfNoValue;
 }
 
-// The place is of the key. Goes on where it says that the objects of the Structure find nothing under the key.
 static void branchUnlessPlaceSaysAbsent(StubAssembler& jit, const KeyedProbeRegisters& registers, GPRReg scratch, JumpList& doesNotSay)
 {
     RELEASE_ASSERT(noOverlap(scratch, registers.base, registers.key, registers.structureID, registers.entry));
@@ -314,8 +306,6 @@ static void branchUnlessPlaceSaysAbsent(StubAssembler& jit, const KeyedProbeRegi
     doesNotSay.append(jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), scratch));
 }
 
-// The place is of the key. Goes on where it says in which slot of the cell the objects of the Structure have their field, with the address and the representation of that slot.
-// At doesNotSay the registers are unchanged. At isNotInCell the place register is clobbered.
 static FieldAddressRegisters findFieldByPlace(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& doesNotSay, JumpList& isNotInCell)
 {
     const FieldAddressRegisters field {
@@ -332,7 +322,6 @@ static FieldAddressRegisters findFieldByPlace(StubAssembler& jit, const KeyedPro
     return field;
 }
 
-// A slot of the hashed table names a field. In which slot of the cell a field lies holds for as long as the Structure lives. What an empty slot means is left to the tables.
 static void rememberFieldOfKey(StubAssembler& jit, const KeyedProbeRegisters& registers, const ProbedSlot& slot)
 {
     Jump isOutOfLine = CachedSlot(slot.form, Slot::Kind::Field, slot.header, slot.payload).branchIfFlag(jit, Slot::isOutOfLine);
@@ -369,7 +358,6 @@ void rememberOwnGetterOfKey(StubAssembler& jit, GPRReg key, GPRReg header, GPRRe
     jit.store32(wordIndex, inKeyedValuePlace(place, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, wordIndex)));
 }
 
-// A slot of the hashed table has said where the own value is. What it says holds for as long as the Structure lives.
 static void rememberKeyedValuePlace(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, GPRReg wordIndex)
 {
     RELEASE_ASSERT(noOverlap(wordIndex, registers.base, registers.key, registers.structureID, registers.entry));
@@ -379,7 +367,6 @@ static void rememberKeyedValuePlace(StubAssembler& jit, SlotAccess access, const
     jit.store32(wordIndex, inKeyedValuePlace(registers.entry, access, OBJECT_OFFSETOF(KeyedValuePlace, wordIndex)));
 }
 
-// A word index below zero counts from the out-of-line storage.
 static void returnOwnValueAt(StubAssembler& jit, GPRReg base, GPRReg wordIndex)
 {
     Jump isOutOfLine = jit.branchTest64(CCallHelpers::Signed, wordIndex);
@@ -392,8 +379,6 @@ static void returnOwnValueAt(StubAssembler& jit, GPRReg base, GPRReg wordIndex)
     jit.returnToCaller();
 }
 
-// The place belongs to the key. Goes on if the place records where objects of the Structure keep the value among their extra properties, with the object that holds them in registers.payload and Slot::wordIndexFor() in registers.header.
-// Where the returned jump is taken the base, key, StructureID and place are unchanged.
 static Jump findExtraPropertyByPlace(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, JumpList& hasNoExtraProperties)
 {
     const GPRReg hiddenWordOffset = registers.uid;
@@ -417,7 +402,6 @@ static void returnExtraPropertyByPlace(StubAssembler& jit, const KeyedProbeRegis
     doesNotSay.link(&jit);
 }
 
-// A slot of the hashed table names an extra property of a compiled object. The object's Structure identifies the Structure of the object that holds the extra properties, so the property's location is valid for as long as the Structure lives.
 void rememberPlaceOfExtraProperty(StubAssembler& jit, SlotAccess access, const CachedSlot& extraProperty, GPRReg object, GPRReg key, GPRReg place, GPRReg structureID)
 {
     RELEASE_ASSERT(extraProperty.kind() == Slot::Kind::ExtraProperty && noOverlap(extraProperty.header(), object, key, place, structureID, instanceGPR));
@@ -499,7 +483,6 @@ void rememberAcceptedKindOfValue(StubAssembler& jit, GPRReg value, GPRReg type, 
     const GPRReg end = secondScratch;
     const GPRReg kindOfTest = scratch;
     RELEASE_ASSERT(noOverlap(value, type, filedInPlaceOfType, place, scratch, secondScratch, instanceGPR));
-    // As rememberPlaceOfValueInField(): nothing is kept of a type that asks more of a value than its kind.
     JumpList asksMoreThanKind;
     jit.zeroExtend32ToWord(type, record);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), record);
@@ -523,7 +506,6 @@ void rememberAcceptedKindOfValue(StubAssembler& jit, GPRReg value, GPRReg type, 
     asksMoreThanKind.link(&jit);
 }
 
-// AcceptedKindOfValue: leaves the kind of the value and where the type and that kind are looked for.
 static void locateAcceptedKind(StubAssembler& jit, GPRReg value, GPRReg type, GPRReg kind, GPRReg entry)
 {
     RELEASE_ASSERT(noOverlap(value, type, kind, entry, instanceGPR));
@@ -543,7 +525,6 @@ static void locateAcceptedKind(StubAssembler& jit, GPRReg value, GPRReg type, GP
     hasKind.append(jit.jump());
 
     isCell.link(&jit);
-    // The word and the number are those of the image. The Structure is of one realm.
     Jump isOfOtherRealm;
     if (!jit.options().hasOneInstance) {
         loadStructure(jit, value, entry);
@@ -601,14 +582,11 @@ void rememberPlaceOfValueInField(StubAssembler& jit, GPRReg object, GPRReg key, 
     const GPRReg entry = place;
     RELEASE_ASSERT(noOverlap(object, key, value, type, address, classOfSlot, place, scratch, secondScratch, instanceGPR));
     static_assert(alignof(RuntimeType) >= 4);
-    // A place is for a type that asks nothing but the kind of whatever value, so that no value looks in vain each time:
-    // no range of integers, no listed texts, and no test of cells that branchUnlessTypeAccepts() leaves to the run time.
     JumpList asksMoreThanKind;
     jit.zeroExtend32ToWord(type, record);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), record);
     asksMoreThanKind.append(jit.branchTest8(CCallHelpers::NonZero, Address(record, RuntimeType::offsetOfFlags()), TrustedImm32(RuntimeType::hasIntegerRange)));
     asksMoreThanKind.append(jit.branchTest16(CCallHelpers::NonZero, Address(record, RuntimeType::offsetOfNumberOfLiteralStrings())));
-    // The tests for one function each stand behind the others.
     jit.load8(Address(record, OBJECT_OFFSETOF(RuntimeType, numberOfTestsOfMoreThanOneFunctionIfFew)), end);
     asksMoreThanKind.append(jit.branch32(CCallHelpers::Equal, end, TrustedImm32(RuntimeType::hasManyTestsOfMoreThanOneFunction)));
     jit.getEffectiveAddress(BaseIndex(record, end, CCallHelpers::TimesEight, static_cast<int32_t>(RuntimeType::offsetOfCellTests())), end);
@@ -641,8 +619,6 @@ void rememberPlaceOfValueInField(StubAssembler& jit, GPRReg object, GPRReg key, 
     asksMoreThanKind.link(&jit);
 }
 
-// The place is of the key. As the handlers of Slot::Kind::Field and FieldCreation store in a filled slot, but for the test of the type, which has accepted a value of this kind.
-// At isLeftToSlot the base, the key and the StructureID are unchanged.
 static void storeInFieldAtPlaceAndReturn(StubAssembler& jit, SlotOperation operation, const KeyedProbeRegisters& registers, GPRReg value, JumpList& isLeftToSlot)
 {
     const GPRReg base = registers.base;
@@ -700,7 +676,6 @@ void rememberPlaceOfAddition(StubAssembler& jit, const CachedSlot& addition, GPR
     wouldPushAnotherOut.link(&jit);
 }
 
-// The place is of the key. As the handler of Slot::Kind::Transition adds where the storage has room.
 static void addAtPlaceAndReturn(StubAssembler& jit, const KeyedProbeRegisters& registers, GPRReg value)
 {
     const GPRReg base = registers.base;
@@ -748,7 +723,6 @@ static void storeAtPlaceInGlobalObjectAndReturn(StubAssembler& jit, const KeyedP
 
 enum class StructureIDOfBase : bool { IsNotLoaded, IsLoaded };
 
-// Overwrites the registers of the probe but the base and the key, and the StructureID where that is loaded.
 static void loadNameOfKeyCell(StubAssembler& jit, const KeyedProbeRegisters& registers, StructureIDOfBase structureIDOfBase, JumpList& hasNoName)
 {
     const GPRReg key = registers.key;
@@ -756,13 +730,11 @@ static void loadNameOfKeyCell(StubAssembler& jit, const KeyedProbeRegisters& reg
     RELEASE_ASSERT(noOverlap(key, uid, instanceGPR));
     Jump isString = jit.branchIfString(key);
     hasNoName.append(jit.branchIfNotSymbol(key));
-    // PropertyCaches::prepareHoldersBeforeLookupsUnder(): the run time sees each look by value under such a symbol.
     hasNoName.append(jit.branchTest8(CCallHelpers::NonZero, Address(key, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit)));
     hasNoName.append(jit.loadCacheableIdentifierImpl(key, uid, false, true));
     Jump isLoaded = jit.jump();
 
     isString.link(&jit);
-    // AssemblyHelpers::branchIfNotAtomStringImpl(), and where it leaves the text of the key is looked at: a flat string, or a piece of one.
     const GPRReg characters = registers.entry;
     const GPRReg length = registers.structureID;
     jit.loadPtr(Address(key, JSString::offsetOfValue()), uid);
@@ -776,7 +748,6 @@ static void loadNameOfKeyCell(StubAssembler& jit, const KeyedProbeRegisters& reg
 
     isRope.link(&jit);
     hasNoName.append(jit.branchTestPtr(CCallHelpers::Zero, uid, TrustedImm32(JSRopeString::isSubstringInPointer)));
-    // The first word of a piece holds its three flags and nothing else, so the bits above them count how often the piece has come here. The third time it leaves for the operation, which puts the name in its place.
     constexpr int32_t oneVisitOfPiece = 1 << 3;
     constexpr int32_t twoVisitsOfPiece = 2 * oneVisitOfPiece;
     static_assert(!(~JSRopeString::stringMask & (oneVisitOfPiece | twoVisitsOfPiece)) && (~JSRopeString::stringMask | oneVisitOfPiece | twoVisitsOfPiece) <= UINT8_MAX);
@@ -797,7 +768,6 @@ static void loadNameOfKeyCell(StubAssembler& jit, const KeyedProbeRegisters& reg
     isLoaded.link(&jit);
 }
 
-// The base and the key are cells. Leaves the kind of the slot in the register of the name. At isInNoTable that register has HashedSlot::keyFor() of the name and structureID the StructureID of the base.
 static ProbedSlot findKeyedSlot(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, StructureIDOfBase structureIDOfBase, JumpList& hasNoName, JumpList& isInNoTable)
 {
     loadNameOfKeyCell(jit, registers, structureIDOfBase, hasNoName);
@@ -829,11 +799,8 @@ static ObjectLookupRegisters lookupRegistersOf(const KeyedProbeRegisters& regist
     };
 }
 
-// The property table of lookup.object has listed a plain value, with the offset above the eight bits of the attributes in lookup.structure, which is kept. Writes size, vector and index.
-// Where the objects of a Structure keep a value stays for as long as the Structure lives, unless it is a dictionary that gives a name up and remains the same Structure.
 static void rememberPlaceOfListedValue(StubAssembler& jit, SlotAccess access, const KeyedProbeRegisters& registers, const ObjectLookupRegisters& lookup)
 {
-    // Structure::isUncacheableDictionary(): of the two bits of the kind, the upper one.
     constexpr int32_t uncachedDictionary = 2 << Structure::s_dictionaryKindShift;
     static_assert(Structure::s_dictionaryKindMask == 3);
     const GPRReg offsetAndAttributes = lookup.structure;
@@ -844,7 +811,6 @@ static void rememberPlaceOfListedValue(StubAssembler& jit, SlotAccess access, co
     loadStructure(jit, lookup.receiver, place);
     Jump mayGiveNamesUp = jit.branchTest32(CCallHelpers::NonZero, Address(place, Structure::bitFieldOffset()), TrustedImm32(uncachedDictionary));
     jit.load32(Address(lookup.receiver, JSCell::structureIDOffset()), structureID);
-    // Slot::wordIndexFor().
     jit.urshift32(offsetAndAttributes, TrustedImm32(8), wordIndex);
     Jump isOutOfLine = jit.branch32(CCallHelpers::AboveOrEqual, wordIndex, TrustedImm32(firstOutOfLineOffset));
     jit.add32(TrustedImm32(Slot::wordIndexFor(0)), wordIndex);
@@ -863,7 +829,6 @@ static void rememberPlaceOfListedValue(StubAssembler& jit, SlotAccess access, co
     mayGiveNamesUp.link(&jit);
 }
 
-// No table has the Structure and the name: mostly because they meet for the first time, as where an object serves as a dictionary. The objects themselves answer, and nothing is filed.
 static void answerKeyFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const KeyedProbeRegisters& registers, JumpList& isInNoTable, JumpList& miss)
 {
     isInNoTable.link(&jit);
@@ -887,8 +852,6 @@ struct KeyedValueRead {
     Label readFieldByPlace;
 };
 
-// The base and the key are cells. Returns the own value or the field that a place names, undefined where the place says so, and the value that a slot of the hashed table names. Goes on with a slot of another kind.
-// A field whose slot does not say its value is asked of the hashed table, or left to emptyFieldSlot.
 static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& hasNoName, JumpList& isInNoTable, JumpList* emptyFieldSlot, std::optional<StubKey> entryAtPlace = std::nullopt, std::optional<StubKey> entryBehindPlaces = std::nullopt, bool baseIsReceiver = false)
 {
     const GPRReg base = registers.base;
@@ -918,7 +881,6 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
 
     placeDoesNotSayAbsent.link(&jit);
     if (baseIsReceiver) {
-        // `settings[name]`, where each name is an accessor that a descriptor has laid on the object.
         const GPRReg getterSetter = registers.uid;
         jit.add32(TrustedImm32(KeyedValuePlace::getterBit), registers.structureID, header);
         Jump placeIsOfNoGetter = jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), header);
@@ -932,7 +894,6 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
         hasGetterSetter.link(&jit);
         JumpList cannotCallGetter;
         callGetterAndReturn(jit, base, getterSetter, cannotCallGetter);
-        // The tables lead to the handler of getters, which hands such a one to the run time.
         cannotCallGetter.link(&jit);
         jit.load32(Address(base, JSCell::structureIDOffset()), registers.structureID);
         hasNoPlace.append(jit.jump());
@@ -952,7 +913,6 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
         jit.bindEntry(*entryBehindPlaces);
     const ProbedSlot slot = findKeyedSlot(jit, SlotAccess::Read, registers, StructureIDOfBase::IsLoaded, hasNoName, isInNoTable);
     Jump isNotValue = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Value);
-    // An own property has no holder: Slot::createInStorage().
     Jump isInherited = jit.branchTest64(CCallHelpers::NonZero, slot.payload);
     jit.rshift64(TrustedImm32(Slot::locationShiftInHeader), header);
     rememberKeyedValuePlace(jit, SlotAccess::Read, registers, header);
@@ -1018,8 +978,6 @@ void generateGetByValCachedKeepingRegisters(StubAssembler& jit)
     generateGetByValCached(jit, RegistersOfCaller::AreKept);
 }
 
-// base[first + second], where the sum is a string that nothing else uses. The pair of the parts has the key, and beside it what the place of the key says of one Structure, so such a read asks one table and not two.
-// Whatever the pair does not say is left to the read by the key.
 void generateGetByValOfKeyOfPair(StubAssembler& jit)
 {
     static_assert(gprOf(keyCellRegister) == operationArgumentGPR(1) && gprOf(storedValueByValRegister) == operationArgumentGPR(2));
@@ -1030,7 +988,6 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
     const GPRReg second = jit.operand(2);
     const GPRReg pair = jit.allocateScratch(StubRegister::T15);
     const GPRReg structureID = jit.allocateScratch(StubRegister::T11);
-    // What the read writes is named ahead of the call that joins the parts, which then neither saves nor restores it.
     const GPRReg scratch = jit.allocateScratch(StubRegister::T10);
     const GPRReg entry = jit.allocateScratch(StubRegister::T14);
     const GPRReg header = jit.allocateScratch(slotHeaderRegister);
@@ -1051,7 +1008,6 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
         if (way + 1 < StringKeyCache::waysOfKeysOfPairs)
             jit.addPtr(TrustedImm32(sizeof(StringKeyCache::KeyOfPair)), pair);
     }
-    // The base is back in its register when the parts are joined.
     jit.callOperationAndReturn(Entry::operationAOTConcatenatePair, {
         .returns = OperationCall::Returns::Value,
         .saves = OperationCall::Saves::CallerSavedGPRsAndFewFPRs,
@@ -1104,9 +1060,7 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
         asksTables.append(fieldIsNotRead.cannot);
     };
 
-    // Doubled, the word is the offset in bytes. Each jump goes by one of the two bits that stood at the top.
 #if CPU(X86_64)
-    // The upper one is shifted out into the carry flag. The lower one becomes the sign and stays in the word. The displacement of the load takes off what stays.
     constexpr int32_t displacementUnderLowerBit = INT32_MIN;
     constexpr int32_t displacementOfNarrowReference = -2 * static_cast<int32_t>(StringKeyCache::KeyOfPair::isNarrowReference);
     jit.add32(slot, slot);
@@ -1146,7 +1100,6 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
 #endif
     readKnownFieldAndReturn(SlotRepresentation::OptionalCell32, displacementOfNarrowReference);
 
-    // From here on the word is shifted up by three, so the lower bit of OtherRead is its sign.
     isOther.link(&jit);
 #if CPU(X86_64)
     jit.lshift32(TrustedImm32(2), slot);
@@ -1170,7 +1123,6 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
         .commonRepresentations = CommonRepresentations::AreReadElsewhere,
     }, fieldIsNotRead);
 
-    // The index is below zero, so the mark above it extends its sign. Shifted up by three it counts bytes.
     isValueOutOfLine.link(&jit);
     jit.signExtend32ToPtr(slot, slot);
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), base);
@@ -1198,7 +1150,6 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
     jit.move(slot, base);
     returnOwnValueAt(jit, base, header);
 
-    // The read by the key fills the place of the key where there can be one. The next read by the parts finds it there.
     absenceIsForgotten.link(&jit);
     jit.store32(TrustedImm32(0), inPair(OBJECT_OFFSETOF(StringKeyCache::KeyOfPair, structureIDOfPlace)));
     saysNothingOfStructure.link(&jit);
@@ -1238,7 +1189,6 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
     jit.or32(marks(StringKeyCache::KeyOfPair::markOf(OtherRead::ValueOutOfLine)), slot);
     isEncoded.append(jit.jump());
 
-    // SlotData::bits(): the representation above the offset.
     placeIsOfField.link(&jit);
     static_assert(SlotData::offsetBits == 24 && SlotData::maxOffset == (1u << SlotData::offsetBits) - 1);
     static_assert(!(static_cast<uint32_t>(representationsReadAsEncodedValues.back()) / 2) && static_cast<uint32_t>(representationsReadAsNarrowReferences.front()) / 2 == StringKeyCache::KeyOfPair::isNarrowReference && static_cast<uint32_t>(representationsReadAsNarrowReferences.back()) == 3);
@@ -1301,7 +1251,6 @@ void generateGetByValOfKeyOfPair(StubAssembler& jit)
     }
 }
 
-// Looks a key up in one object for another receiver, as super[key] and Reflect.get() do. A data property is the same for every receiver, so whatever is filed for the object that the search starts at says it. A getter gets the receiver.
 void generateGetSuperByVal(StubAssembler& jit)
 {
     const KeyedProbeRegisters registers = allocateKeyedProbeRegisters(jit);
@@ -1355,7 +1304,6 @@ void generateGetSuperByVal(StubAssembler& jit)
         jit.jump().linkTo(callGetter, &jit);
     }
 
-    // Own data properties, which the handlers of reads by key read without a look at anything else.
     isNotFieldGetter.link(&jit);
     JumpList handlerAnswers;
     for (Slot::Kind kind : { Slot::Kind::ArrayLength, Slot::Kind::FarValue, Slot::Kind::Constant })
@@ -1364,10 +1312,8 @@ void generateGetSuperByVal(StubAssembler& jit)
     handlerAnswers.link(&jit);
     jumpToSlotHandlerOfKind(jit, SlotHandlerTable::ReadByVal, read.slot.header, registers.uid);
 
-    // It calls nothing, so what it answers hangs on no receiver: an element under a text that reads as an index, and a data property, which it files. The receiver is kept across the call as the value of a store is.
     nothingIsFiled.link(&jit);
     jit.move(start, base);
-    // An element in plain storage is the same for every receiver.
     JumpList leafAnswers;
     {
         const GPRReg index = registers.entry;
@@ -1390,7 +1336,6 @@ void generateGetSuperByVal(StubAssembler& jit)
         jit.move(storage, jit.result());
         jit.returnToCaller();
 
-        // The index itself for a key. One below zero is above every length.
         keyIsNoCell.link(&jit);
         whatIsFiledDoesNotAnswer.append(jit.branchIfNotInt32(key));
         jit.zeroExtend32ToWord(key, index);
@@ -1425,7 +1370,6 @@ void generateGetSuperByVal(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTGetByValWithThis, { .secondArgumentIn = base, .thirdArgumentIn = receiver, .fourthArgumentIn = key });
 }
 
-// An element in the object's own storage answers both questions. Where there is none, what stands above the object says whether the index may be found in another way.
 static void returnPresenceOfElement(StubAssembler& jit, PresenceQuestion question, const KeyedProbeRegisters& registers, JumpList& isUnknown, JumpList* isProxy = nullptr)
 {
     const GPRReg base = registers.base;
@@ -1438,7 +1382,6 @@ static void returnPresenceOfElement(StubAssembler& jit, PresenceQuestion questio
     const GPRReg type = registers.entry;
     const bool asksIn = question == PresenceQuestion::In;
 
-    // Leaves by hasOtherStorage with the shape in its register.
     auto returnTrueForElementOf = [&](GPRReg owner, bool mayHoldUnboxedNumbers, JumpList& isAbsent, JumpList& hasOtherStorage) {
         Jump isDouble;
         jit.load8(Address(owner, JSCell::indexingTypeAndMiscOffset()), shape);
@@ -1476,19 +1419,16 @@ static void returnPresenceOfElement(StubAssembler& jit, PresenceQuestion questio
     isUnknown.append(jit.branchIfNotCell(base));
     returnTrueForElementOf(base, true, isAbsentInOwnStorage, hasNoSuchStorage);
 
-    // An array answers for its length and leaves its elements to its storage.
     isAbsentInOwnStorage.link(&jit);
     Jump baseIsArray = jit.branchIfType(base, ArrayType);
     Label isOrdinaryUnlessFlagged = jit.label();
     isUnknown.append(jit.branchTest8(CCallHelpers::NonZero, Address(base, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetOwnPropertySlot)));
 
-    // A negative key is a name.
     baseIsArray.link(&jit);
     Label hasNoElement = jit.label();
     isUnknown.append(jit.branch32(CCallHelpers::LessThan, key, TrustedImm32(0)));
     JumpList isFoundNowhere;
     if (asksIn) {
-        // As a read of an absent element: nothing above a pristine array has elements, and the Object.prototype of the realm has none and takes none. Whatever else stands above is looked at.
         const GPRReg above = structure;
         loadStructure(jit, base, structure);
         isFoundNowhere.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasPristineElementsBits)));
@@ -1496,7 +1436,6 @@ static void returnPresenceOfElement(StubAssembler& jit, PresenceQuestion questio
         jit.load64(Address(structure, Structure::prototypeOffset()), above);
         isFoundNowhere.append(jit.branch64(CCallHelpers::Equal, above, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype))));
         Jump isNotCell = jit.branchIfNotCell(above);
-        // Where each object has its own prototype the word is empty.
         isUnknown.append(jit.branchTest64(CCallHelpers::Zero, above));
         isUnknown.append(jit.branchTest8(CCallHelpers::NonZero, Address(above, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetOwnPropertySlot)));
         isUnknown.append(jit.branchTest8(CCallHelpers::NonZero, Address(above, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
@@ -1515,7 +1454,6 @@ static void returnPresenceOfElement(StubAssembler& jit, PresenceQuestion questio
     jit.load8(Address(base, JSCell::typeInfoTypeOffset()), type);
     JumpList isNotCompiledObject;
     isNotCompiledObject.append(jit.branch32(CCallHelpers::NotEqual, type, TrustedImm32(CompiledObjectType)));
-    // The elements of a compiled object are those of its extra properties.
     JumpList isAbsentInExtraProperties;
     JumpList extraPropertiesHaveOtherStorage;
     const GPRReg hiddenWordOffset = type;
@@ -1545,7 +1483,6 @@ static void returnPresenceOfElement(StubAssembler& jit, PresenceQuestion questio
     jit.compare64(CCallHelpers::Below, index, length, jit.result());
     jit.returnToCaller();
 
-    // `in` throws for what is no object.
     isNotTypedArray.link(&jit);
     isUnknown.append(jit.branch32(CCallHelpers::Below, type, TrustedImm32(ObjectType)));
     jit.jump().linkTo(isOrdinaryUnlessFlagged, &jit);
@@ -1583,7 +1520,6 @@ void generateInByValCached(StubAssembler& jit)
 
     keyIsCell.link(&jit);
     needsOperation.append(jit.branchIfNotCell(base));
-    // A read of a string, a symbol or a bigint fills a place too, and `in` throws for those.
     needsOperation.append(jit.branchIfNotObject(base));
     Label asksBase = jit.label();
     JumpList hasNoPlace;
@@ -1596,7 +1532,6 @@ void generateInByValCached(StubAssembler& jit)
 
     placeIsOfNoValue.link(&jit);
     if (!asksIn) {
-        // `hasOwn(request, kSocket)`, where the key is found above: what guards ask most.
         jit.add32(TrustedImm32(KeyedValuePlace::notOwnBits), registers.structureID, header);
         Jump doesNotSayThatNothingIsOwn = jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), header);
         jit.move(TrustedImm32(0), jit.result());
@@ -1628,7 +1563,6 @@ void generateInByValCached(StubAssembler& jit)
 
     isNotField.link(&jit);
     JumpList kindIsUnknown;
-    // A slot that names a holder above is filed for a Structure alone that says what its objects have of their own: for no dictionary.
     auto emitRememberingThatNothingIsOwn = [&] {
         locateKeyedValuePlace(jit, SlotAccess::Read, key, registers.structureID, registers.entry);
         jit.storePtr(key, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, key)));
@@ -1677,7 +1611,6 @@ static void returnThatPropertyIsGone(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-// While a collector marks, every cell owes a barrier, so nothing here is seen half done.
 static void removeBySlotAndReturn(StubAssembler& jit, const KeyedProbeRegisters& registers, const ProbedSlot& probed, JumpList& needsOperation)
 {
     const GPRReg base = registers.base;
@@ -1791,12 +1724,10 @@ static void removeBySlotAndReturn(StubAssembler& jit, const KeyedProbeRegisters&
     returnThatPropertyIsGone(jit);
 }
 
-// The base is a cell and its name is in registers.uid, where it stays for the operation. The register of the key is free.
 static void removeNamedPropertyAndReturn(StubAssembler& jit, const KeyedProbeRegisters& registers)
 {
     JumpList needsOperation;
     JumpList isInNoTable;
-    // A dictionary gives a name up and remains the same Structure.
     loadStructure(jit, registers.base, registers.entry);
     needsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(registers.entry, Structure::bitFieldOffset()), TrustedImm32(Structure::s_dictionaryKindMask << Structure::s_dictionaryKindShift)));
     jit.load32(Address(registers.base, JSCell::structureIDOffset()), registers.structureID);
@@ -1814,7 +1745,6 @@ static void removeNamedPropertyAndReturn(StubAssembler& jit, const KeyedProbeReg
     isInNoTable.link(&jit);
     countMissOfPair(jit, registers.structureID, registers.uid, registers.header, needsOperation);
     needsOperation.link(&jit);
-    // HashedSlot::keyFor(): the search has put the access into the low bits of the name.
     jit.and64(TrustedImm32(~static_cast<int32_t>(HashedSlot::accessMask)), registers.uid);
     jit.exitOnMiss(static_cast<PutMode>(jit.key().form()) == PutMode::Sloppy ? Entry::operationAOTDeleteByNameSloppy : Entry::operationAOTDeleteByName, { .secondArgumentIn = registers.base, .thirdArgumentIn = registers.uid });
 }
@@ -1847,12 +1777,10 @@ void generateDeleteByValCached(StubAssembler& jit)
     jit.exitOnMiss(static_cast<PutMode>(jit.key().form()) == PutMode::Sloppy ? Entry::operationAOTDeleteByValSloppy : Entry::operationAOTDeleteByVal, { .secondArgumentIn = registers.base, .thirdArgumentIn = registers.key });
 }
 
-// No table has the Structure and the name.
 static void replaceOwnValueOfKeyAndReturn(StubAssembler& jit, SlotOperation operation, const KeyedProbeRegisters& registers, GPRReg value, JumpList& isInNoTable, JumpList& miss)
 {
     isInNoTable.link(&jit);
     countMissOfPair(jit, registers.structureID, registers.uid, registers.header, miss);
-    // HashedSlot::keyFor(): the search has put the access into the low bits of the name.
     jit.xor64(TrustedImm32(static_cast<int32_t>(accessOf(operation))), registers.uid);
     const IndexRegisterOfObjectLookup index(jit);
     const ObjectLookupRegisters lookup = lookupRegistersOf(registers, jit.reuseScratch(StubRegister::T9), index);
@@ -2013,7 +1941,6 @@ void generateDefineByValCached(StubAssembler& jit)
     JumpList isNotFiled;
     storeByKeyedSlot(jit, SlotOperation::Define, registers, value, isNotFiled);
 
-    // `{ [key]: value }` makes a text of an index before the value is worked out.
     isNotFiled.link(&jit);
     loadIndexOfText(jit, registers, miss, ElementUnderText::MayBeAdded);
     boxInt32(jit, registers.entry, registers.key);

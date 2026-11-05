@@ -63,7 +63,6 @@ static bool guessedElementAccessHasTypedSide(const Operation& access)
     return !isGuessedAccessToView(access.opcode) || hasInlineElementAccess(access.typedArrayType());
 }
 
-// The kinds of storage that an access to an array has code for. Where no kind is guessed it goes by the kind that it finds, and a store by the kinds that may take the value: in a loop by all of them, elsewhere by the one that is expected to.
 static ArrayStorageFormList formsOfGuessedAccess(ElementAccessEmitter& elements, const ValueContext& access)
 {
     ArrayStorageFormList forms;
@@ -87,7 +86,6 @@ static void continueGuessedAccessIf(Output& out, Condition condition, BlockEdge 
     out.appendToContinuation(next);
 }
 
-// Continues only where the array has its own element at the index. An own element wins over whatever the prototypes hold.
 static Operand ownElementOfGuessedArrayOrElse(ElementAccessEmitter& elements, Output& out, const ArrayStorageForm& form, CellPointer array, Word32 index, LBasicBlock isAbsent)
 {
     ArrayElements storage = elements.elementsOf(array);
@@ -104,25 +102,14 @@ CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxe
 {
     Type known = typeOf(value->objectOperand());
     CellPointer cell = unboxCell(object);
-    // The access throws off undefined and null, and no number or boolean is expected.
-    std::optional<Condition> hasShapeThoughNoCell;
-    static constexpr OpcodeSet accessesThatSayWhetherCellIsExpected { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::PutSlot, Opcode::PutSlotOrAdd };
-    bool expectsCell = accessesThatSayWhetherCellIsExpected.contains(value.opcode()) && value->expectsCell();
-    if (expectsCell && (known.primitives & ~cellPrimitives))
-        hasShapeThoughNoCell = emitter<ShapeTestEmitter>().hasShapeInThoughNoCell(object, receivers, known);
-    if (hasShapeThoughNoCell)
-        branchUnless(*hasShapeThoughNoCell, failure);
-    else {
-        if (known.primitives & ~cellPrimitives) {
-            // The empty value has no tag bits, so it passes isCell.
-            Condition isPresentCell = isCell(object);
-            if (known.primitives & Primitive::Absent)
-                isPresentCell = logicalAnd(isPresentCell, isNotEmpty(object));
-            branchUnless(isPresentCell, failure);
-        }
-        branchUnless(emitter<ShapeTestEmitter>().hasShapeIn(cell, receivers, known), failure);
+    if (known.primitives & ~cellPrimitives) {
+        // The empty value has no tag bits, so it passes isCell.
+        Condition isPresentCell = isCell(object);
+        if (known.primitives & Primitive::Absent)
+            isPresentCell = logicalAnd(isPresentCell, isNotEmpty(object));
+        branchUnless(isPresentCell, failure);
     }
-    // As GuardEmitter::generateShapeTest(). What a store has tested fits the slots of the instance that runs, and what a read finds counts as that instance's: the stubs leave a holder of another instance to the run time too.
+    branchUnless(emitter<ShapeTestEmitter>().hasShapeIn(cell, receivers, known), failure);
     if (!hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known))
         branchUnless(emitter<GuardEmitter>().belongsToInstance(cell), failure);
     return cell;
@@ -146,7 +133,6 @@ CellPointer GuessedAccessEmitter::elementsOwnerOrElse(const ValueContext& value,
 
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     branchUnless(hasCellType(owner, ArrayType), failure);
-    // Whoever has code for several kinds tells them apart where it reads or writes.
     ArrayStorageFormList forms = formsOfGuessedAccess(elements, value);
     if (value.opcode() != Opcode::PutArrayElement) {
         if (forms.size() == 1)
@@ -155,7 +141,6 @@ CellPointer GuessedAccessEmitter::elementsOwnerOrElse(const ValueContext& value,
     }
     if (forms.size() == 1)
         branchUnless(elements.hasWritableShape(elements.indexingMode(owner, IndexingShapeAndWritabilityMask), *forms[0]), failure);
-    // A store into a hole asks the prototypes for a setter.
     branchUnless(emitter<TypeTestEmitter>().isPristine(owner, BuiltinClasses::Array, PristineAspects::Storage), failure);
     return owner;
 }
@@ -191,30 +176,25 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     LBasicBlock failure = newBlock();
     Join<Boxed> join(m_out);
 
-    // A receiver without the field has no slot to look into.
     CellPointer cell = receiverOrElse(value, object, types().layoutSets().ofSorted(access.membersWithField.span()), failure);
     CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(cell, access);
     if (slot.representation == SlotRepresentation::DeferredClosure) {
-        // The generic read creates a closure that has not been created yet.
         NarrowReference word(m_out.load32(slots.addressOf(base, slot, location, extensionWord)));
         branchUnless(above(word, NarrowReference(m_out.constInt32(absentDeferredClosure))), failure);
         join.add(conversions.decode(word, types().at(TypeTable::cellOrMarker), Representation::JSValue).as<Boxed>());
     } else if (value.opcode() == Opcode::GetSlot && value->holdsDeclaredType()) {
-        // One compare tells a value from absent, undefined and null, and what is loaded behind it is boxed without a look at it. Whoever finds a mark reads by name.
         continueGuessedAccessIf(m_out, slots.holdsDeclaredType(base, slot, location, extensionWord), rareEdge(failure));
-        Type loaded = types().at(slot.type);
+        Type loaded = types().at(slot.type ? slot.type : widestTypeOf(Typed::representationOf(slot.representation)));
         loaded.primitives &= ~(Primitive::UndefinedOrNull | Primitive::Absent);
         join.add(conversions.box(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded));
     } else {
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
         continueGuessedAccessIf(m_out, slots.holdsValue(base, slot, location, extensionWord), slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure));
         Operand held = slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
-        // The receivers' slots share a representation, not a type.
         join.add(conversions.box(value, held, types().at(widestTypeOf(held.representation))));
 
         if (slotIsEmpty) {
             m_out.appendTo(slotIsEmpty);
-            // A field that leaves its slot sets the mark of the cell, and an object that is laid below another prototype says so beside it: one byte. What has become of the objects above it the guards of its classes say.
             branchUnless(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), TypeInfoPerCellBit | JSC::IsPristine), failure);
             if (!value->conditions().isEmpty())
                 branchUnless(emitter<GuardEmitter>().areMembersUnchanged(value->conditions()), failure);
@@ -275,7 +255,6 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
     LBasicBlock failure = newBlock();
     LBasicBlock done = newBlock();
 
-    // Every test stands in front of the first effect: the failing side does the whole store.
     CellPointer cell = receiverOrElse(value, object, holders, failure);
     bool mayCreate = value.opcode() == Opcode::PutSlotOrAdd;
     branchUnless(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), mayCreate ? orderWordIntegrityBits | orderWordHasFieldOutsideSlot : orderWordIntegrityBits), failure);
@@ -321,7 +300,6 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
     if (mayCreate && slot.isOutOfLine() && needsStorage)
         slots.ensureExtensionHolds(value, cell, access.extensionWord, granuleBitOf(slot.offset), slotAccesses.granuleBitsWithFieldsBehind(access), emitter<BarrierEmitter>().barrierOfExtension(value));
 
-    // The key is listed first, while the slot still says whether the field is missing.
     if (mayCreate && slotAccesses.mayCreateListedField(access)) {
         auto listFieldIfMissing = [&] {
             LBasicBlock creates = newBlock();
@@ -348,19 +326,15 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
             m_out.store32(inFormOfSlot.value, slots.addressOf(base, slot, location, extensionWord));
         else
             slots.storeSlot(base, slot, location, inFormOfSlot, extensionWord, storedType);
-        barrierAfterStore(value, cell, inFormOfSlot, storedType);
+        barrierAfterStore(value, cell, storedType);
     }
     finish();
 }
 
-// Nothing is left to test but what the list holds at the index. An element of its own in the guessed storage is read in line. Where no kind is guessed: in storage that holds boxed values.
-// The stub answers for every other kind of storage, and for what the list lacks: it asks the cell whether anything may stand under an index above the list.
 void GuessedAccessEmitter::readElementOfProvenList(const ValueContext& value)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     CellPointer list = in<CellPointer>(value->arrayOperand());
-    // A key that is not proven an integer comes boxed, and only an int32 is taken for an index here. One call stands out of line: the closed operation, which answers for every other key and for what the list lacks.
-    // A number without a fraction that is held raw is truncated. What is no index of the list then lies behind its length.
     bool keyIsRawNumber = representationOf(value->positionOperand()) == Representation::Double;
     bool keyIsBoxed = !keyIsRawNumber && !typeOf(value->positionOperand()).isInteger();
     LBasicBlock outOfLine = newBlock();
@@ -381,7 +355,6 @@ void GuessedAccessEmitter::readElementOfProvenList(const ValueContext& value)
     };
     if (!findArrayStorageForm(value->arrayStorage())) {
         LBasicBlock holdsBoxed = newBlock();
-        // A list of numbers has storage for doubles as soon as it has taken a fraction.
         LBasicBlock holdsUnboxed = isDeclaredToHoldNumbersAlone(m_program, types(), typeIDOf(value->arrayOperand())) ? newBlock() : nullptr;
         m_out.branch(elements.holdsBoxedElements(list).value(), normalEdge(holdsBoxed), holdsUnboxed ? normalEdge(holdsUnboxed) : rareEdge(outOfLine));
         if (holdsUnboxed) {
@@ -409,8 +382,6 @@ void GuessedAccessEmitter::readElementOfProvenList(const ValueContext& value)
     define(value, join.finish());
 }
 
-// Numbers alone come out of the read, and undefined where the list lacks an element: that is proven. An element of the list's own in storage for doubles or for int32 comes as the double that it is.
-// The stub answers for whatever else, and what it gives is unboxed by the proven type.
 void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
@@ -433,7 +404,6 @@ void GuessedAccessEmitter::readNumberOfProvenList(const ValueContext& value)
     }, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
 
     m_out.appendTo(outOfLine);
-    // Of a list that is proven as made the stub asks nothing more.
     Boxed answer(callStub(value, testsForItself(value) ? arrayGetAtIndex(AOT::ArrayRead::OfAnyList) : arrayGetAtIndex(), { list.value(), index.value() }).first);
     join.add(emitter<ConversionEmitter>().unbox(answer, result, representation));
     define(value, join.finish());
@@ -461,7 +431,6 @@ void GuessedAccessEmitter::generateElementRead(const ValueContext& value)
         readElementOfProvenList(value);
         return;
     }
-    // Of what is only expected to be a list nothing is asked in line: the stub looks for an element of a list first, answers for whatever else it is handed, and keeps the registers of the code around the call.
     if (value.opcode() == Opcode::GetArrayElement) {
         define(value, Boxed(callStub(value, getByValKeepingRegisters(), { in<Boxed>(value->arrayOperand()).value(), in<Boxed>(value->positionOperand()).value() }).first));
         return;
@@ -494,8 +463,6 @@ void GuessedAccessEmitter::generateElementRead(const ValueContext& value)
     define(value, join.finish());
 }
 
-// As ElementAccessEmitter::storeInProvenList(), under a key that is not proven an integer: it comes boxed, and only an int32 is taken for an index. One call stands out of line: the closed store, which does the whole store for every other key,
-// for another kind of storage, for a value that the kind refuses and for a position behind the end.
 void GuessedAccessEmitter::storeInProvenListUnderAnyKey(const ValueContext& value)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
@@ -567,7 +534,6 @@ void GuessedAccessEmitter::generateElementStore(const ValueContext& value)
         TypedArrayType type = value->typedArrayType();
         Operand element;
         if (isClamped(type)) {
-            // The run time rounds a number that has a fraction.
             branchUnless(isInt32(stored), failure);
             element = unboxInt32(stored);
         } else {

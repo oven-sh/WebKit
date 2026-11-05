@@ -38,7 +38,6 @@ static std::optional<int64_t> constantIntegerOf(LValue value)
     return std::nullopt;
 }
 
-// A remainder has the sign of its dividend, whatever the sign of the divisor. Nothing for zero, and nothing for the least integer of the width, whose magnitude does not fit.
 static std::optional<int64_t> magnitudeOfConstantDivisor(LValue divisor)
 {
     std::optional<int64_t> constantDivisor = constantIntegerOf(divisor);
@@ -77,10 +76,8 @@ class InlineMathEmitter : public OperationEmitter {
 protected:
     using OperationEmitter::OperationEmitter;
 
-    // An invalid operation produces a NaN with the sign bit set on x86-64 and clear on ARM64. A C library function may pick either.
     static bool matchesHardwareNaN(double libraryNaN) { return std::signbit(libraryNaN) == isX86_64(); }
 
-    // What the function answers when a program calls it. A C++ compiler that sees the callee and constant operands computes the result itself, and its NaN may have the other sign.
     template<typename Function>
     static double resultAtRunTime(Function* function, double left, double right) { return WTF::opaque(function)(left, right); }
 
@@ -101,7 +98,6 @@ public:
     {
     }
 
-    // Both operands arrive in one width. A constant has no form of its own: in<T>() makes it in the width of the operand beside it.
     Representation widthOfOperands(const ValueContext& value)
     {
         bool fitInt32 = true;
@@ -172,7 +168,6 @@ public:
             return hasSignOfDividend ? select(lessThan(dividend, constant<T>(0)), number(remainderByZero(-1)), number(remainderByZero(1))) : number(remainderByZero(1));
         };
 
-        // Output::mod() takes no divisor that is zero and no quotient that does not fit, and what is appended to a block that never runs is folded like anything else.
         if (std::optional<int64_t> constantDivisor = constantIntegerOf(divisor.value())) {
             if (!*constantDivisor)
                 return remainderOfDivisionByZero();
@@ -210,7 +205,6 @@ public:
         Number ofZero = remainderOfDivisionByZero();
         join.add(mayOverflow ? select(answerIsNumber, zeroWithSignOfDividend(), ofZero) : ofZero);
         Number result = join.finishBehind(fork);
-        // A branch on a constant is a jump: every way here leads through the division.
         if (isOrdinary.value()->hasInt() && isOrdinary.value()->asInt())
             emitter<ConversionEmitter>().noteIntegerBehind(result, remainder.value());
         return result;
@@ -267,7 +261,6 @@ private:
         double quotientLimit;
     };
 
-    // A quotient below the limit times either half is exact, and the reciprocal is rounded up, so the quotient is the true one or one more.
     static std::optional<SplitDivisor> splitDivisor(double divisor)
     {
         constexpr unsigned precision = std::numeric_limits<double>::digits;
@@ -283,7 +276,6 @@ private:
         return SplitDivisor { magnitude, high, low, std::nextafter(1 / magnitude, std::numeric_limits<double>::infinity()), std::ldexp(1.0, quotientBits) };
     }
 
-    // NaN and the infinities fail both comparisons, so the library answers for them.
     Number remainderBySplitDivisor(Number dividend, Number divisor, const SplitDivisor& split)
     {
         Number magnitude = abs(dividend);
@@ -340,7 +332,6 @@ private:
         return binary<T>(&Output::mod, dividend, divisor);
     }
 
-    // The divisor is not zero, and the quotient fits.
     template<typename T>
     T signedRemainder(T dividend, T divisor)
     {
@@ -354,16 +345,13 @@ private:
         return binary<T>(&Output::mod, dividend, divisor);
     }
 
-    // Both take any dividend and a divisor above one.
     Word32 signedRemainderByConstant(Word32 dividend, int32_t divisor)
     {
         if (hasOneBitSet(static_cast<uint32_t>(divisor))) {
-            // The quotient is rounded toward zero: a dividend below zero is raised by the divisor less one before its low bits are dropped.
             unsigned shift = WTF::fastLog2(static_cast<uint64_t>(divisor));
             Word32 raised = add(dividend, Word32(m_out.lShr(m_out.aShr(dividend.value(), 31), 32 - shift)));
             return sub(dividend, bitAnd(raised, word32(-divisor)));
         }
-        // Read as unsigned, the multiplier needs none of the corrections of the 32-bit sequence, and its product with an int32 fits 64 bits.
         B3::DivisionMagic<int32_t> magic = B3::computeSignedDivisionMagic(divisor);
         Integer product = mul(signExtended(dividend), integer(static_cast<uint32_t>(magic.magicMultiplier)));
         Integer roundedDown(m_out.aShr(product.value(), 32 + magic.shift));
@@ -383,8 +371,6 @@ private:
         return sub(dividend, mul(quotient, integer(divisor)));
     }
 
-    // Both take a dividend that is not negative and a divisor above one.
-    // Read as unsigned, the multiplier of signed division is below 2^32 and needs no correction, and its product with a dividend below 2^31 fits 64 bits.
     Word32 remainderByConstant(Word32 dividend, int64_t divisor)
     {
         B3::DivisionMagic<int32_t> magic = B3::computeSignedDivisionMagic(static_cast<int32_t>(divisor));
@@ -399,8 +385,6 @@ private:
         return sub(dividend, mul(quotient, integer(divisor)));
     }
 
-    // Takes a divisor above one. The quotient, and one less than the quotient where the dividend is below zero.
-    // The multiplier has 65 bits and arrives cut to 64. Adding the dividend makes up for the bit that was cut.
     Integer uncorrectedQuotient(Integer dividend, int64_t divisor)
     {
         B3::DivisionMagic<int64_t> magic = B3::computeSignedDivisionMagic(divisor);
@@ -496,7 +480,6 @@ public:
     }
 
 private:
-    // What operationMathPow does for such an exponent, in the same order of multiplications.
     Number powerWithWholeExponent(Number base, Number exponent)
     {
         LBasicBlock test = newBlock();
@@ -627,7 +610,6 @@ Number OperatorEmitter::asNumber(Operand operand, const Type& type)
 
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Number number(unboxed.value);
-    // A marker is a NaN with a payload. Arithmetic hands the payload on to its result, and a Double has none: stored beside markers, such a result would be read as the marker.
     if (type.primitives & ~(Primitive::Number | Primitive::Null))
         number = conversions.withoutPayload(number);
     if (!(type.primitives & Primitive::Null))
@@ -639,7 +621,6 @@ Number OperatorEmitter::asNumber(Operand operand, const Type& type)
 Number OperatorEmitter::asNumericOperand(ValueID id)
 {
     Representation representation = representationOf(id);
-    // A constant has no form of its own: in<T>() makes it in the form that is asked for.
     if (constantsInFormOfUses.contains(opcodeOf(id))) {
         const Type& type = typeOf(id);
         representation = type.isNumber() ? Representation::Double : type.isBoolean() ? Representation::Boolean : Representation::OptionalDouble;
@@ -661,7 +642,6 @@ Number OperatorEmitter::asNumericOperand(ValueID id)
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -699,7 +679,6 @@ Boxed OperatorEmitter::sumOfBoxedNumbers(ArithmeticOperator op, Operand left, co
     join.add(conversions.boxInteger(exact, { 2 * static_cast<int64_t>(INT32_MIN), 2 * static_cast<int64_t>(INT32_MAX) + 1 }));
 
     m_out.appendToArm(numberCase, fork);
-    // `pos++`: one boxed number was asked, and here it is no int32: it is a double. Asked again, the test would have two users, and the branch above would take it out of a register as a boolean: `xor ; cmp ; setae ; test ; je` for `cmp ; jb`.
     bool oneAloneWasAsked = left.is<Boxed>() != right.is<Boxed>();
     auto numberIn = [&](Operand operand, const Type& type) {
         return oneAloneWasAsked && operand.is<Boxed>() && type.isNumber() ? unboxDouble(operand.as<Boxed>()) : asNumber(operand, type);
@@ -752,7 +731,6 @@ Operand OperatorEmitter::arithmeticOnIntegers(const ValueContext& value, Arithme
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -778,7 +756,6 @@ Operand OperatorEmitter::arithmeticOnCheckedIntegers(const ValueContext& value, 
     case Representation::Cell:
     case Representation::Cell32:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         return failWithZero(value);
     }

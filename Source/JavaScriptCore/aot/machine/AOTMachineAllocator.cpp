@@ -15,32 +15,21 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// forEachLeaf() lists the leaves of an operation with one of these, and of an unconditional jump, in a way of its own and not by the children.
 static constexpr uint16_t flagsOfOperationWithLeavesOfItsOwn = Allocator::bitOf(ValueFlag::WorksInMemory) | Allocator::bitOf(ValueFlag::GoesByOverflow);
 
-// numberOfScratchGPRsOf() says zero of every other operation, on both targets.
 static constexpr bool allocatedOperationMayTakeScratchRegisters(Opcode opcode)
 {
     return opcode == Switch || opcode == PopCount;
 }
 
-// What allocateOperation() asks of an opcode, one byte for all of it. Where a function is named here the table below is made of it, so it says what the function says.
 enum TraitOfAllocatedOpcode : uint8_t {
-    // Allocator::allocateOperation() hands it over at once. Every Patch, every Check and whatever names a symbol is among these, so any other operation has its children in itself.
     AllocatedOpcodeGoesTheLongWay = 1 << 0,
-    // Operation::isUnconditionalJump() may hold of it.
     AllocatedOpcodeMayJumpUnconditionally = 1 << 1,
-    // isLoad().
     AllocatedOpcodeIsLoad = 1 << 2,
-    // It is no load or store, and its children may be leaves of an address all the same: isLeafOfAddress(), addsScaledIndex().
     AllocatedOpcodeIsFusedIntoAddresses = 1 << 3,
-    // resultPrefersRegisterOfFirstChild() and resultOverwritesFirstChild().
     AllocatedOpcodeOverwritesFirstChild = 1 << 4,
-    // isCommutative().
     AllocatedOpcodeIsCommutative = 1 << 5,
-    // changesWidthOfInteger().
     AllocatedOpcodeChangesWidthOfInteger = 1 << 6,
-    // isMemoryAccess().
     AllocatedOpcodeIsMemoryAccess = 1 << 7,
 };
 
@@ -53,7 +42,6 @@ static constexpr TraitsOfAllocatedOpcodes traitsOfAllocatedOpcodes = [] {
     for (unsigned index = 0; index < numberOfOpcodes; ++index) {
         Opcode opcode = static_cast<Opcode>(index);
         unsigned bits = 0;
-        // Allocator::allocateBlock() has a Branch allocated by Allocator::allocateBranch().
         if (opcode == Nop || opcode == ArgumentReg || opcode == Extract || opcode == Phi || opcode == Upsilon || opcode == Patch || opcode == Check || opcode == Jump || opcode == Branch
             || hasNoPosition(opcode) || allocatedOperationMayTakeScratchRegisters(opcode))
             bits |= AllocatedOpcodeGoesTheLongWay;
@@ -86,7 +74,6 @@ static_assert([] {
 }());
 static_assert(Operation::maxInlineChildren <= maxLeaves);
 
-// Which function allocateOperation() hands an opcode to.
 enum class KindOfAllocatedOpcode : uint8_t {
     GoesTheLongWay,
     IsPatchOrCheck,
@@ -124,10 +111,8 @@ static constexpr KindsOfAllocatedOpcodes kindsOfAllocatedOpcodes = [] {
     return kinds;
 }();
 
-// Beside the traits above in `traitsOfKind` of Allocator::allocateWithChildrenForLeaves(): a Branch.
 static constexpr unsigned kindOfAllocatedOperationHasNoResult = 1 << 8;
 
-// Both of an operation that is no Patch or Check and names no symbol.
 static ALWAYS_INLINE Operation* const* inlineChildrenOfAllocatedOperation(const Operation* operation)
 {
     ASSERT(!operation->as<PatchOperation>() && !namesSymbol(operation->opcode()));
@@ -154,7 +139,6 @@ static bool allocatedOperationHasFusedLoad(const Liveness& liveness, const Opera
     return false;
 }
 
-// What forEachLeaf() hands its functor, leaf by leaf. Whoever lists leaves sets `size` and `hasFusedLoad` first.
 struct LeavesOfAllocatedOperation {
     ALWAYS_INLINE void append(const Operation* user, unsigned childIndex, Operation* leaf)
     {
@@ -169,14 +153,11 @@ struct LeavesOfAllocatedOperation {
     const Operation* users[maxLeaves];
     unsigned childIndexes[maxLeaves];
     unsigned size;
-    // What allocatedOperationHasFusedLoad() says of the operation.
     bool hasFusedLoad;
 };
 
 static void listLeavesOfOperationFusedIntoAllocatedOperation(const Liveness&, const ValueFacts*, const Operation* fused, const Operation* selectAbove, LeavesOfAllocatedOperation&);
 
-// One walk over the children finds what forEachLeaf() lists, in its order, and what allocatedOperationHasFusedLoad() looks for: both go down through the fused children and no others.
-// Of an operation whose leaves go by its children.
 static ALWAYS_INLINE void listLeavesAmongChildrenOfAllocatedOperation(const Liveness& liveness, const ValueFacts* facts, const Operation* operation, const Operation* selectAbove, LeavesOfAllocatedOperation& leaves)
 {
     std::span<Operation* const> children = operation->children();
@@ -261,8 +242,6 @@ static NEVER_INLINE SpillIndex keepPointerBesideAllocatedReferenceThatNeedsIt(Al
     return spill;
 }
 
-// Called behind the definition, wherever that stands.
-// `spill`: where another head of the framed part keeps it. The spill that holds the pointer, if it is kept here.
 static ALWAYS_INLINE SpillIndex keepPointerBesideAllocatedReference(Allocator& allocator, Operation* reference, SpillIndex spill = noSpill)
 {
     if (!allocator.m_valueFacts[reference->index()].has(ValueFlag::NeedsPointerBesideIt)) [[likely]]
@@ -270,7 +249,6 @@ static ALWAYS_INLINE SpillIndex keepPointerBesideAllocatedReference(Allocator& a
     return keepPointerBesideAllocatedReferenceThatNeedsIt(allocator, reference, spill);
 }
 
-// An ArgumentReg is defined where it stands, and other operations may stand in front of it. So each register is bound at the head, to the last operation that reads it.
 static NEVER_INLINE void bindArgumentRegistersOfEntry(Allocator& allocator, Block* entry)
 {
     allocator.m_lastDefinitionOfArgumentRegister = 0;
@@ -291,7 +269,6 @@ static NEVER_INLINE void bindArgumentRegistersOfEntry(Allocator& allocator, Bloc
     }
 }
 
-// Its Execute reads the register, and the store of a spilled one stands behind that. Until then nothing else is placed there.
 static RegisterMask argumentRegistersNotYetRead(const Allocator& allocator)
 {
     RegisterMask registers = 0;
@@ -303,15 +280,12 @@ static RegisterMask argumentRegistersNotYetRead(const Allocator& allocator)
     return registers;
 }
 
-// What no leaf, scratch register or result of the operation at the position of the walk takes.
 static ALWAYS_INLINE RegisterMask registersReservedAtAllocatedOperation(const Allocator& allocator)
 {
-    // Behind the last ArgumentReg of an entrypoint, which may be most of a function, there is none to look for.
     bool someArgumentRegisterMayWait = allocator.m_position + 1 < allocator.m_lastDefinitionOfArgumentRegister && allocator.m_block->isEntry();
     return (someArgumentRegisterMayWait ? argumentRegistersNotYetRead(allocator) : 0) | allocator.m_registersReadOnWayToFailingSuccessor;
 }
 
-// functor(index) for each index below `count`, in rising order. A loop that writes one short entry a turn spends as much on counting as on writing, so four entries share a turn.
 template<typename Functor>
 static ALWAYS_INLINE void forEachIndexOfListOfAllocator(uint32_t count, const Functor& functor)
 {
@@ -355,7 +329,6 @@ Allocator::Allocator(Procedure& proc, Allocation& allocation)
 
     Arena& arena = proc.arena();
     uint32_t numberOfOperations = proc.numberOfOperations();
-    // With room for what splitEdge() adds.
     uint32_t numberOfBlocks = m_order.mostBlocks();
     uint32_t mostOperations = m_order.mostOperations();
 
@@ -376,7 +349,6 @@ Allocator::Allocator(Procedure& proc, Allocation& allocation)
     forEachIndexOfListOfAllocator(numberOfBlocks, [&](uint32_t index) ALWAYS_INLINE_LAMBDA {
         new (NotNull, stepsOfBlocks + index) BlockSteps;
     });
-    // The list is copied each time it outgrows its storage, which it leaves to the arena. A function has about one assignment for seven operations.
     allocation.m_patchAssignments.reserve(arena, numberOfOperations / 4 + 4);
     allocation.m_registersAtHead.grow(arena, numberOfBlocks);
     allocation.m_spillOfValue.fill(arena, mostOperations, noSpill);
@@ -398,12 +370,10 @@ void Allocator::run()
     findSpillsHeldAtSuspensions();
     for (const SpillFacts& spill : m_allocation.m_spills) {
         const Operation* value = spill.value;
-        // The store behind the definition has no step. What sank is stored in the block it sank into: the sweep over the blocks below notes that.
         if (spill.isSaveInRareRegion || spill.isPointerBesideNarrowReference || m_liveness.isSunk(value))
             continue;
         const Block* blockOfStore = value->endsBlock() ? value->owner()->successor(0).block() : value->owner();
         standIn(blockOfStore);
-        // settleFramedPart() finds out where it is stored.
         if (!leavesValuesAcrossCallsToFramedPart())
             noteFrameUse();
     }
@@ -413,12 +383,10 @@ void Allocator::run()
         if (allocatedLocationLiesInFrame(step.destination))
             return true;
         if (step.kind != StepKind::Execute) {
-            // Such a step has one source.
             if (allocatedLocationLiesInFrame(step.sources[0]))
                 return true;
             return step.kind == StepKind::Materialize && allocatedLeafNamesFrame(step.operation);
         }
-        // The leaves have the first sources, each a location. The others have none.
         for (Location source : step.sources) {
             if (!source)
                 break;
@@ -444,7 +412,6 @@ void Allocator::run()
         return false;
     };
     const bool hasFramedPart = m_allocation.hasFramedPart();
-    // The sweep passes over each block of which that is known, and it only ever comes to be known of more.
     auto everyBlockIsKnownToNeedFrame = [&] {
         if (!m_allocation.needsFrameOutsideRareRegions() || (hasFramedPart && !m_allocation.needsFrameAheadOfFramedPart()))
             return false;
@@ -488,7 +455,6 @@ void Allocator::run()
     findGapsAheadOfLandingPads();
 }
 
-// run() alone calls it, once for each block.
 ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
 {
     Allocation& allocation = m_allocation;
@@ -521,7 +487,6 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
     m_operandTakenBackByBranch = nullptr;
     m_registersReadOnWayToFailingSuccessor = 0;
     steps.begin = allocation.m_steps.size();
-    // It does nothing for a block that holds more than its Jump.
     if (size == 1 && passThroughBlockThatOnlyJumps(block))
         return;
     enterBlock(block);
@@ -529,13 +494,13 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
     if (failure) [[unlikely]]
         return;
     ASSERT(m_rareRegion == place.rareRegion);
+    if (standsAheadOfFramedPart && place.entersRareRegion && (m_bound & m_file.calleeSaved)) [[unlikely]]
+        allocation.m_needsFrameAheadOfFramedPart = true;
 
     auto allocate = [&](Operation* operation) ALWAYS_INLINE_LAMBDA {
         allocateByKindOfOpcode<true>(operation);
     };
 
-    // Most blocks have none of the four. The first failure is the one that is kept, so nothing is lost by stopping at it.
-    // It does nothing unless a Patch with a result ends the one predecessor and has its step.
     if (m_somePatchWithResultHasEndedBlock && place.predecessors.size() == 1 && place.predecessors.data()[0]->last()->opcode() == Patch) [[unlikely]] {
         finishResultsOfPatchThatEndedPredecessor(*this, block);
         if (failure) [[unlikely]]
@@ -560,7 +525,6 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
 
     std::span<Operation* const> sunk = m_liveness.sunkInto(block);
     if (!sunk.empty()) [[unlikely]] {
-        // All of them read at the head. Allocated one pair of positions ahead of it, none takes for dead what a later one reads.
         m_position = head - 2;
         for (Operation* operation : sunk) {
             allocate(operation);
@@ -572,7 +536,6 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
             passUsesOf(operation, head + 1);
     }
 
-    // Nothing is appended to a block that is being allocated, and the scan is over.
     constexpr uint16_t absent = bitOf(ValueFlag::IsDropped) | bitOf(ValueFlag::IsFused) | bitOf(ValueFlag::IsSunk);
     const ValueFacts* facts = m_valueFacts;
     Operation* const* operations = block->operations().data();
@@ -593,13 +556,11 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
     m_position = head + 2 * size;
     const Opcode opcodeOfLast = last->opcode();
     if (opcodeOfLast == Jump) {
-        // It reads nothing, writes nothing and takes no register.
         uint32_t indexOfStep = allocation.m_steps.size();
         appendStep(StepKind::Execute, last);
         steps.terminator = indexOfStep;
         steps.end = indexOfStep;
     } else if (opcodeOfLast == Branch) {
-        // What allocateTerminator() does with it.
         allocateBranch(last);
         if (failure) [[unlikely]]
             return;
@@ -609,7 +570,6 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
         allocatePatch(patch);
         if (failure) [[unlikely]]
             return;
-        // What follows the definition of its results stands at the head of the first successor.
         RELEASE_ASSERT(allocation.m_steps.size() > steps.begin && allocation.m_steps.last().kind == StepKind::Execute && allocation.m_steps.last().operation == patch);
         steps.terminator = allocation.m_steps.size() - 1;
         steps.end = steps.terminator;
@@ -622,7 +582,6 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
     leaveBlock(block);
 }
 
-// A value with one of these asks defineResult() for more than a register.
 static constexpr uint16_t flagsOfAllocatedValueThatAsksForMoreThanRegister = Allocator::bitOf(ValueFlag::LivesAcrossCall) | Allocator::bitOf(ValueFlag::LivesIntoLandingPad) | Allocator::bitOf(ValueFlag::LivesAcrossSuspension);
 
 NEVER_INLINE void Allocator::allocateArgumentRegister(Operation* operation)
@@ -643,7 +602,6 @@ NEVER_INLINE void Allocator::allocateArgumentRegister(Operation* operation)
         const ValueFacts& facts = m_valueFacts[operation->index()];
         unbindAll(operation);
         if (!(facts.flags & flagsOfAllocatedValueThatAsksForMoreThanRegister) && (maskOf(reg) & m_file.allocatableIn(bankOf(operation->type())) & ~m_file.calleeSaved)) [[likely]] {
-            // defineResult(), where takeRegister() has one register to take, which is free now, may be taken in any block and adds nothing to the frame.
             ASSERT(registerFileIsConsistent());
             ASSERT(!m_valueIn[reg.index()]);
             m_allocation.m_registerAtDefinition[operation->index()] = reg;
@@ -667,10 +625,8 @@ NEVER_INLINE void Allocator::allocateArgumentRegister(Operation* operation)
 
 static NEVER_INLINE void allocateExtractBehindItsPatch(Allocator& allocator, Operation* operation)
 {
-    // placeResults() has bound it. The store of a spilled one stands behind this Execute, so the register has to hold it still.
     Reg reg = allocator.m_allocation.registerAtDefinitionOf(operation);
     if (!reg && allocator.m_allocation.isSpilled(operation)) {
-        // It found no register, and the steps behind the Patch have copied it from its outgoing word.
         allocator.passUse(operation->child(0), allocator.m_position);
         Step& step = allocator.appendStep(StepKind::Execute, operation);
         step.destination = Location::spill(allocator.m_allocation.spillOf(operation));
@@ -687,23 +643,17 @@ static NEVER_INLINE void allocateExtractBehindItsPatch(Allocator& allocator, Ope
     step.sources[0] = Location::reg(reg);
 }
 
-// What the leaves of one operation have taken so far.
 struct PlacesTakenByAllocatedLeaves {
-    // No later leaf, scratch register or reload of the operation takes one of these.
     RegisterMask locked;
-    // The instruction reads memory: for a leaf that has its place, or through a load that is fused into the operation.
     bool hasMemoryOperand;
-    // On x86-64. Not null: loads may be fused into this operation that hasMemoryOperand does not count yet. Whoever is about to answer with memory looks for them first: allocatedOperationHasFusedLoad().
     const Operation* operationNotSearchedForFusedLoads;
 };
 
-// Whether the leaf is read in memory. Then the instruction has its memory operand.
 static ALWAYS_INLINE bool takeMemoryOperandForAllocatedLeaf(const Allocator& allocator, const Operation* user, unsigned childIndex, PlacesTakenByAllocatedLeaves& taken)
 {
     if (taken.hasMemoryOperand)
         return false;
     const Liveness& liveness = allocator.m_liveness;
-    // No child of any other operation is the leaf of an address.
     if ((traitsOfAllocatedOpcodes.of[user->opcode()] & (AllocatedOpcodeIsMemoryAccess | AllocatedOpcodeIsFusedIntoAddresses)) && isLeafOfAddress(liveness, user, childIndex))
         return false;
     ASSERT(!isLeafOfAddress(liveness, user, childIndex));
@@ -727,7 +677,6 @@ static ALWAYS_INLINE bool takeMemoryOperandForAllocatedLeaf(const Allocator& all
     return true;
 }
 
-// The end of placeLeaf(): for a leaf that neither stands in the instruction nor lies in a pinned register or in a word of the instance.
 static NEVER_INLINE Location placeAllocatedLeafInRegisterOrMemory(Allocator& allocator, const Operation* user, unsigned childIndex, Operation* leaf, PlacesTakenByAllocatedLeaves& taken)
 {
     Bank bank = bankOf(leaf->type());
@@ -754,7 +703,6 @@ static NEVER_INLINE Location placeAllocatedLeafInRegisterOrMemory(Allocator& all
     return Location::reg(reg);
 }
 
-// Of a leaf without position of which standsInInstruction() holds.
 static NEVER_INLINE Location placeAllocatedLeafThatStandsInInstruction(Allocator& allocator, const Operation* leaf)
 {
     if (allocatedLeafNamesFrame(leaf))
@@ -762,7 +710,6 @@ static NEVER_INLINE Location placeAllocatedLeafThatStandsInInstruction(Allocator
     return leaf->opcode() == SlotBase ? Location::slotBytes(leaf->slot()->index()) : Location::immediate();
 }
 
-// All of placeLeaf() for a leaf without position.
 static NEVER_INLINE Location placeAllocatedLeafWithoutPosition(Allocator& allocator, const Operation* user, unsigned childIndex, Operation* leaf, PlacesTakenByAllocatedLeaves& taken)
 {
     ASSERT(leaf->hasNoPosition());
@@ -770,7 +717,6 @@ static NEVER_INLINE Location placeAllocatedLeafWithoutPosition(Allocator& alloca
     if (opcodeOfLeaf == ArgumentReg)
         return Location::reg(leaf->argumentReg());
 
-    // No child of any other operation is the leaf of an address in which it may not stand, so standsInInstruction() comes down to what the target says.
     bool isImmediate = (traitsOfAllocatedOpcodes.of[user->opcode()] & AllocatedOpcodeIsFusedIntoAddresses) ? standsInInstruction(allocator.m_liveness, user, childIndex, leaf) : acceptsImmediate(*user, childIndex, *leaf);
     ASSERT(isImmediate == standsInInstruction(allocator.m_liveness, user, childIndex, leaf));
     if (opcodeOfLeaf == Const64 || opcodeOfLeaf == ConstDouble) {
@@ -799,7 +745,6 @@ static NEVER_INLINE Location placeAllocatedLeafWithoutPosition(Allocator& alloca
 
 static ALWAYS_INLINE Location placeLeafOfAllocatedOperation(Allocator& allocator, const Operation* user, unsigned childIndex, Operation* leaf, RegisterMask& locked, bool& hasMemoryOperand)
 {
-    // Nothing is asked of the user where a value with a position lies in a register, nor of a pinned register.
     const bool leafHasNoPosition = leaf->hasNoPosition();
     if (!leafHasNoPosition) {
         if (RegisterMask holding = allocator.stateOf(leaf).registers & allocator.m_file.allocatableIn(bankOf(leaf->type()))) [[likely]] {
@@ -809,7 +754,6 @@ static ALWAYS_INLINE Location placeLeafOfAllocatedOperation(Allocator& allocator
         }
     } else if (leaf->opcode() == ArgumentReg)
         return Location::reg(leaf->argumentReg());
-    // The caller has counted the fused loads.
     PlacesTakenByAllocatedLeaves taken { locked, hasMemoryOperand, nullptr };
     Location location = leafHasNoPosition ? placeAllocatedLeafWithoutPosition(allocator, user, childIndex, leaf, taken) : placeAllocatedLeafInRegisterOrMemory(allocator, user, childIndex, leaf, taken);
     locked = taken.locked;
@@ -848,7 +792,6 @@ ALWAYS_INLINE Location Allocator::defineResultWithFacts(Operation* operation, co
         if (calleeSavedCandidates && hasFreeRegister(bank, calleeSavedCandidates))
             reg = takeRegister(bank, calleeSavedCandidates, hintIfAmong(preferred, calleeSavedCandidates));
         else if (calleeSavedCandidates || !calleeSaved || !hasFreeRegister(bank, calleeSaved)) {
-            // A result that is held to other registers is left for vacate() to move while a callee-saved one is free.
             isSpilledAtOnce = true;
         }
     }
@@ -875,22 +818,15 @@ ALWAYS_INLINE Location Allocator::defineResultWithFacts(Operation* operation, co
     return Location::reg(reg);
 }
 
-// The leaves of one operation in the order of forEachLeaf(), as allocateOperation() and allocateBranch() place them and then pass their uses.
 struct PlacedLeavesOfAllocatedOperation {
-    // placeLeavesOfAllocatedOperation() counts the leaves behind the last one. Until then children of the operation may stand behind as many leaves as an operation may have.
     static constexpr unsigned capacity = maxLeaves + Operation::maxInlineChildren;
 
-    // Where leaf n is read. The entries behind the leaves hold no location.
     Location sources[capacity];
     Operation* leaves[capacity];
     unsigned size;
     PlacesTakenByAllocatedLeaves taken;
 };
 
-// placeLeaf(), where no register is reserved, for a leaf that has no position or lies in no register.
-// `targetAloneSaysWhatStandsInInstruction`: standsInInstruction() comes down to acceptsImmediate() for this child of `user`.
-// That holds of a child of an operation that is not fused and has no fused child, and of a child of any operation that is no part of an address.
-// noteFusedLoadsNotCounted() sets PlacesTakenByAllocatedLeaves::operationNotSearchedForFusedLoads, ahead of whatever may answer with memory.
 template<typename Functor>
 static ALWAYS_INLINE Location placeAllocatedLeafOutsideRegisters(Allocator& allocator, const Operation* user, unsigned childIndex, Operation* leaf, bool targetAloneSaysWhatStandsInInstruction, PlacesTakenByAllocatedLeaves& taken, const Functor& noteFusedLoadsNotCounted)
 {
@@ -901,13 +837,11 @@ static ALWAYS_INLINE Location placeAllocatedLeafOutsideRegisters(Allocator& allo
     const Opcode opcodeOfLeaf = leaf->opcode();
     if (opcodeOfLeaf == ArgumentReg)
         return Location::reg(leaf->argumentReg());
-    // What is no pinned constant stands in the instruction wherever that takes it, and anywhere else it lies in a register: nothing without position is read in memory there.
     const bool mayBePinnedConstant = (opcodeOfLeaf == Const64 || opcodeOfLeaf == ConstDouble) && static_cast<uint64_t>(leaf->constantBits()) >= allocator.m_smallestPinnedConstant;
     if (targetAloneSaysWhatStandsInInstruction && !mayBePinnedConstant) {
         ASSERT(acceptsImmediate(*user, childIndex, *leaf) == standsInInstruction(allocator.m_liveness, user, childIndex, leaf));
         if (!acceptsImmediate(*user, childIndex, *leaf))
             return placeAllocatedLeafInRegisterOrMemory(allocator, user, childIndex, leaf, taken);
-        // A constant names no frame.
         if (isConstant(opcodeOfLeaf))
             return Location::immediate();
         return placeAllocatedLeafThatStandsInInstruction(allocator, leaf);
@@ -916,7 +850,6 @@ static ALWAYS_INLINE Location placeAllocatedLeafOutsideRegisters(Allocator& allo
     return placeAllocatedLeafWithoutPosition(allocator, user, childIndex, leaf, taken);
 }
 
-// Whoever calls it has set PlacesTakenByAllocatedLeaves::operationNotSearchedForFusedLoads.
 static ALWAYS_INLINE void placeNextLeafOfAllocatedOperation(Allocator& allocator, const Operation* user, unsigned childIndex, Operation* leaf, bool targetAloneSaysWhatStandsInInstruction, PlacedLeavesOfAllocatedOperation& placed)
 {
     RELEASE_ASSERT(placed.size < maxLeaves);
@@ -932,7 +865,6 @@ static ALWAYS_INLINE void placeNextLeafOfAllocatedOperation(Allocator& allocator
     ++placed.size;
 }
 
-// Places what forEachLeafBelow() lists for the two, in its order. It counts each load that it comes by, so behind it PlacesTakenByAllocatedLeaves::hasMemoryOperand knows of every load at or below `fused`.
 static NEVER_INLINE void placeLeavesBelowOperationFusedIntoAllocatedOperation(Allocator& allocator, const Operation* fused, const Operation* selectAbove, PlacedLeavesOfAllocatedOperation& placed)
 {
     const Liveness& liveness = allocator.m_liveness;
@@ -965,10 +897,6 @@ static NEVER_INLINE void placeLeavesBelowOperationFusedIntoAllocatedOperation(Al
     }
 }
 
-// placeLeaf() for each leaf of `operation` in turn, where no register is reserved.
-// The leaves are the children of `user`, with what stands below a fused child in the place of that child. `user` is the operation itself, or its one child where that is fused and its leaves go by its children.
-// `firstChildThatTargetAloneJudges`: from this child of `user` on standsInInstruction() comes down to acceptsImmediate(). Where it is not the first child, that holds only as long as no child is fused.
-// `fusedChildren` gets bit n for child n. The caller has set what the leaves have taken, a load that `user` is among it. False: the procedure has failed.
 static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, const Operation* operation, const Operation* user, Operation* const* children, unsigned numberOfChildren, unsigned firstChildThatTargetAloneJudges, unsigned& fusedChildren, PlacedLeavesOfAllocatedOperation& placed)
 {
     const ValueFacts* const facts = allocator.m_valueFacts;
@@ -987,7 +915,6 @@ static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, 
                 firstChildThatTargetAloneJudges = numberOfChildren;
             const unsigned traitsOfFused = traitsOfAllocatedOpcodes.of[fused->opcode()];
             const Operation* selectAbove = user->opcode() == Select ? user : nullptr;
-            // Most of what is fused this far down has one child, which is a leaf: a load, a Trunc.
             Operation* onlyChild = nullptr;
             if (!selectAbove && !(traitsOfFused & (AllocatedOpcodeGoesTheLongWay | AllocatedOpcodeMayJumpUnconditionally)) && !(flags & flagsOfOperationWithLeavesOfItsOwn) && numberOfInlineChildrenOfAllocatedOperation(fused) == 1)
                 onlyChild = inlineChildrenOfAllocatedOperation(fused)[0];
@@ -1010,7 +937,6 @@ static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, 
 
         placed.leaves[size] = leaf;
         if (RegisterMask holding = leaf->hasNoPosition() ? 0 : allocator.stateOf(leaf).registers) [[likely]] {
-            // Whatever register is bound to a value is an allocatable one of its bank: bind().
             ASSERT(!(holding & ~allocator.m_file.allocatableIn(bankOf(leaf->type()))));
             Reg reg = Allocator::lowestRegisterIn(holding);
             placed.taken.locked |= maskOf(reg);
@@ -1020,7 +946,6 @@ static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, 
         placed.sources[size++] = placeAllocatedLeafOutsideRegisters(allocator, userOfLeaf, childIndex, leaf, targetAloneSaysWhatStandsInInstruction, placed.taken, [&]() ALWAYS_INLINE_LAMBDA {
             if (!isX86_64())
                 return;
-            // Every load that is fused at or below a child up to this one is counted.
             const Operation* notSearched = nullptr;
             for (unsigned later = index + 1; later < numberOfChildren; ++later) {
                 if (facts[children[later]->index()].has(ValueFlag::IsFused))
@@ -1028,7 +953,6 @@ static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, 
             }
             placed.taken.operationNotSearchedForFusedLoads = notSearched;
         });
-        // Nothing else on the way fails. The first failure is the one that is kept, so nothing is lost by stopping at it.
         if (failure) [[unlikely]]
             return false;
     }
@@ -1037,9 +961,6 @@ static ALWAYS_INLINE bool placeLeavesOfAllocatedOperation(Allocator& allocator, 
     return true;
 }
 
-// The step of allocateOperationTheLongWay() that defines the result, where no register is reserved, no scratch register is taken and nothing goes by overflow. Nothing, for an operation without a result.
-// The leaves have their places, the first two in `firstSource` and `secondSource`, and their uses are passed. `traits`: those of the opcode. `fusedChildren`: bit n for child n.
-// Whoever knows some of that where it is compiled gets the text without what that makes false. False: the procedure has failed.
 ALWAYS_INLINE bool Allocator::defineResultBehindLeaves(Operation* operation, unsigned traits, unsigned fusedChildren, RegisterMask operandRegisters, Location& firstSource, Location secondSource, Position position, Location& destination)
 {
     const Type type = operation->type();
@@ -1052,14 +973,22 @@ ALWAYS_INLINE bool Allocator::defineResultBehindLeaves(Operation* operation, uns
     bool maySwapChildren = false;
     RegisterMask bound;
     RegisterMask avoided;
-    // No instruction now is worth more than a move that the hint may save later. One bit, or none where nothing is preferred.
     RegisterMask preferred = 0;
     if (!(traits & (AllocatedOpcodeOverwritesFirstChild | AllocatedOpcodeChangesWidthOfInteger))) {
-        // What stands below with none of the three the case.
         bound = m_bound;
         avoided = operandRegisters & bound;
-        if (Reg hint = hintOf(operation))
+        if (Reg hint = hintOf(operation)) {
             preferred = maskOf(hint) & ~bound;
+            if (!preferred && (operandRegisters & maskOf(hint))) {
+                Operation* held = m_valueIn[hint.index()];
+                if (held && factsOfValues[held->index()].has(ValueFlag::IsRematerialized) && !isKeptThroughLoopAround(hint, held, position)) {
+                    unbind(hint);
+                    bound = m_bound;
+                    avoided = operandRegisters & bound;
+                    preferred = maskOf(hint);
+                }
+            }
+        }
         if (!preferred && firstSource.isRegister())
             preferred = maskOf(firstSource.reg()) & ~bound;
     } else {
@@ -1067,7 +996,6 @@ ALWAYS_INLINE bool Allocator::defineResultBehindLeaves(Operation* operation, uns
         const RegisterMask registerOfFirstSource = firstSourceIsRegister ? maskOf(firstSource.reg()) : 0;
         bool isFreeInRegisterOfFirstChild = false;
         if (firstSourceIsRegister && !(fusedChildren & 1)) {
-            // Only a fused child makes a scaled index of an Add.
             overwritesFirstChild = (traits & AllocatedOpcodeOverwritesFirstChild) && !(fusedChildren && addsScaledIndex(m_liveness, operation));
             maySwapChildren = overwritesFirstChild && (traits & AllocatedOpcodeIsCommutative) && !(fusedChildren & 2) && secondSource.isRegister();
             isFreeInRegisterOfFirstChild = (traits & AllocatedOpcodeChangesWidthOfInteger) && isFreeInRegisterOfChild(m_liveness, operation);
@@ -1095,8 +1023,6 @@ ALWAYS_INLINE bool Allocator::defineResultBehindLeaves(Operation* operation, uns
             preferred = maskOf(secondSource.reg()) & ~bound;
     }
 
-    // defineResult(), where the value asks for no more than a register and takeRegister() finds one free that adds nothing to the frame.
-    // What is preferred is not bound. So where nothing is, the hint is bound or there is none, and takeRegister() would not get to take it either.
     const RegisterMask allocatable = m_file.allocatableIn(bankOf(type));
     RegisterMask freeRegisters = allocatable & ~avoided & ~bound;
     if (m_isAheadOfFramedPart || isInRareRegion()) [[unlikely]]
@@ -1141,7 +1067,6 @@ ALWAYS_INLINE bool Allocator::defineResultBehindLeaves(Operation* operation, uns
     return true;
 }
 
-// Each step below is the step of allocateOperationTheLongWay() with what cannot be the case here left out: no register is reserved, no scratch register is taken, nothing goes by overflow.
 NEVER_INLINE void Allocator::allocateOperationWithAnyLeaves(Operation* operation)
 {
     const Opcode opcode = operation->opcode();
@@ -1162,12 +1087,9 @@ NEVER_INLINE void Allocator::allocateOperationWithAnyLeaves(Operation* operation
     placed.taken.locked = 0;
     placed.taken.hasMemoryOperand = false;
     const unsigned numberOfChildren = numberOfInlineChildrenOfAllocatedOperation(operation);
-    // Bit n: child n.
     unsigned fusedChildren = 0;
-    // Only a fused child makes a scaled index of an Add. At its last child every other one has been looked at.
     if (!placeLeavesOfAllocatedOperation(*this, operation, operation, inlineChildrenOfAllocatedOperation(operation), numberOfChildren, (traits & AllocatedOpcodeIsFusedIntoAddresses) ? numberOfChildren - 1 : 0, fusedChildren, placed))
         return;
-    // Neither the operations nor what the scan says of them change on the way, so the leaves that are placed are the leaves whose uses are passed.
     for (unsigned index = 0, numberOfLeaves = placed.size; index < numberOfLeaves; ++index)
         passUseReachedByWalk(placed.leaves[index], position);
 
@@ -1180,9 +1102,6 @@ NEVER_INLINE void Allocator::allocateOperationWithAnyLeaves(Operation* operation
         keepPointerBesideAllocatedReferenceThatNeedsIt(*this, operation, noSpill);
 }
 
-// The steps of allocateOperationWithAnyLeaves() and of allocateBranchWithAnyLeaves(), for one leaf or two that are known to be the children of `user` once none of them is found to be fused.
-// Nothing is listed and nothing counted: each leaf has its own text. The caller has seen to it that no register is reserved and that neither the operation nor `user` has leaves of its own.
-// Where `user` is fused it is no part of an address. `traitsOfKind`: those of the traits of the opcode that defineResultBehindLeaves() asks for, but for isCommutative().
 template<unsigned numberOfLeaves, unsigned traitsOfKind>
 ALWAYS_INLINE bool Allocator::allocateWithChildrenForLeaves(Operation* operation, const Operation* user, bool userIsFusedLoad)
 {
@@ -1209,19 +1128,16 @@ ALWAYS_INLINE bool Allocator::allocateWithChildrenForLeaves(Operation* operation
     auto place = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
         Operation* leaf = leaves[index];
         if (RegisterMask holding = leaf->hasNoPosition() ? 0 : states[indexes[index]].registers) [[likely]] {
-            // Whatever register is bound to a value is an allocatable one of its bank: bind().
             ASSERT(!(holding & ~m_file.allocatableIn(bankOf(leaf->type()))));
             Reg reg = lowestRegisterIn(holding);
             locked |= maskOf(reg);
             sources[index] = Location::reg(reg);
             return true;
         }
-        // No child of `user` is fused. So the target alone says what stands in the instruction, and no load is fused but `user` itself, which is counted.
         PlacesTakenByAllocatedLeaves taken { locked, hasMemoryOperand, nullptr };
         sources[index] = placeAllocatedLeafOutsideRegisters(*this, user, index, leaf, true, taken, [] { });
         locked = taken.locked;
         hasMemoryOperand = taken.hasMemoryOperand;
-        // Nothing else on the way fails. The first failure is the one that is kept, so nothing is lost by stopping at it.
         return !m_proc.failure();
     };
     if (!place(0)) [[unlikely]]
@@ -1302,12 +1218,10 @@ void Allocator::allocateOperation(Operation* operation)
     allocateByKindOfOpcode<false>(operation);
 }
 
-// allocateOperation(), with what a Branch never asks for left out: it has one child and no result.
 NEVER_INLINE void Allocator::allocateBranch(Operation* branch)
 {
     ASSERT(branch->opcode() == Branch && branch->numChildren() == 1 && branch->type() == Void && branch == m_block->last());
     const ValueFacts* const factsOfValues = m_valueFacts;
-    // Every ArgumentReg of the block stands ahead of the Branch, and positions rise along the walk. So no argument register waits to be read.
     ASSERT(m_position + 1 >= m_lastDefinitionOfArgumentRegister);
     if (factsOfValues[branch->index()].flags & flagsOfOperationWithLeavesOfItsOwn) [[unlikely]]
         return allocateOperationTheLongWay(branch);
@@ -1316,7 +1230,6 @@ NEVER_INLINE void Allocator::allocateBranch(Operation* branch)
     if (branch->owner()->numSuccessors() == 1) [[unlikely]]
         return allocateBranchWithAnyLeaves(branch);
 
-    // Most of them test a comparison or a BitAnd that is fused into them, whose children are the leaves.
     const Operation* user = branch;
     unsigned numberOfLeaves = 1;
     bool userIsFusedLoad = false;
@@ -1340,13 +1253,11 @@ NEVER_INLINE void Allocator::allocateBranch(Operation* branch)
     allocateBranchWithAnyLeaves(branch);
 }
 
-// Whatever is fused into it. No register is reserved, and it has no leaves of its own.
 NEVER_INLINE void Allocator::allocateBranchWithAnyLeaves(Operation* branch)
 {
     const ValueFacts* const factsOfValues = m_valueFacts;
     const Position position = m_position;
     PlacedLeavesOfAllocatedOperation placed;
-    // With one successor it tests nothing.
     if (branch->owner()->numSuccessors() != 1) [[likely]] {
         placed.taken.locked = 0;
         placed.taken.hasMemoryOperand = false;
@@ -1354,7 +1265,6 @@ NEVER_INLINE void Allocator::allocateBranchWithAnyLeaves(Operation* branch)
         Operation* const* children = inlineChildrenOfAllocatedOperation(branch);
         unsigned numberOfChildren = 1;
         unsigned firstChildThatTargetAloneJudges = 0;
-        // Most of them test a comparison or a BitAnd that is fused into them, whose children are the leaves.
         const Operation* predicate = children[0];
         const uint16_t flagsOfPredicate = factsOfValues[predicate->index()].flags;
         if (flagsOfPredicate & bitOf(ValueFlag::IsFused)) {
@@ -1401,7 +1311,6 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
     leaves.hasFusedLoad = false;
     bool hasMemoryOperand;
     if (facts.flags & flagsOfOperationWithLeavesOfItsOwn) {
-        // Such a Branch reads its sum in a register.
         hasMemoryOperand = isX86_64() && (facts.has(ValueFlag::WorksInMemory) || (goesByOverflow && opcode == Branch) || allocatedOperationHasFusedLoad(m_liveness, operation));
         forEachLeaf(m_liveness, operation, [&](const Operation* user, unsigned childIndex, Operation* leaf) {
             leaves.append(user, childIndex, leaf);
@@ -1412,7 +1321,6 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
         hasMemoryOperand = isX86_64() && leaves.hasFusedLoad;
     }
 
-    // Neither the operations nor what the scan says of them change on the way, so the leaves that are placed are the leaves whose uses are passed.
     Location sources[maxLeaves];
     const unsigned numberOfLeaves = leaves.size;
     RegisterMask locked = reserved;
@@ -1466,7 +1374,6 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
         if (overwritesFirstChild && !maySwapChildren)
             avoided |= operandRegisters & ~maskOf(sources[0].reg());
 
-        // No instruction now is worth more than a move that the hint may save later.
         Reg preferred = operandTakenBack.reg;
         if (!preferred && isFreeInRegisterOfFirstChild)
             preferred = hintIfAmong(sources[0].reg(), ~m_bound);
@@ -1487,7 +1394,6 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
                 bind(operandTakenBack.reg, operandTakenBack.value);
         }
 
-        // The encoder of a sum that goes by overflow copies the first operand itself.
         bool hasThreeAddressForm = goesByOverflow || (operation->type().isInt()
             && ((opcode == Add && (maySwapChildren || sources[1].isImmediate())) || (opcode == Mul && sources[1].isImmediate())));
         if (overwritesFirstChild && !hasThreeAddressForm && destination != sources[0] && !(maySwapChildren && destination == sources[1])) {
@@ -1502,7 +1408,6 @@ NEVER_INLINE void Allocator::allocateOperationTheLongWay(Operation* operation)
     step.kind = StepKind::Execute;
     step.patchAssignment = scratchAssignment;
     step.destination = destination;
-    // Behind the leaves neither list holds a location.
     std::copy_n(sources, maxLeaves, step.sources);
     step.operation = operation;
     if (goesByOverflow && opcode == Branch)
@@ -1517,7 +1422,6 @@ void Allocator::allocateTerminator(Block* block, Operation* operation)
 {
     Opcode opcode = operation->opcode();
     if (opcode == Jump) {
-        // It reads nothing, writes nothing and takes no register.
         appendStep(StepKind::Execute, operation);
     } else if (opcode == Return && operation->numChildren()) {
         if (operation->numChildren() > 1) {
@@ -1526,6 +1430,8 @@ void Allocator::allocateTerminator(Block* block, Operation* operation)
         }
         Operation* value = operation->child(0);
         Reg target = bankOf(value->type()) == Bank::GP ? Reg(GPRInfo::returnValueGPR) : Reg(FPRInfo::returnValueFPR);
+        if (Operation* held = m_valueIn[target.index()]; held && held != value)
+            unbind(target);
         if (ensureInRegister(value, maskOf(target), target) != target) {
             m_proc.fail(FailureKind::OutOfRegisters, operation);
             return;
@@ -1547,7 +1453,6 @@ Location Allocator::placeLeaf(const Operation* user, unsigned childIndex, Operat
     return placeLeafOfAllocatedOperation(*this, user, childIndex, leaf, locked, hasMemoryOperand);
 }
 
-// What forEachLeafBelow() lists: the leaves below a fused child, or those of an operation that has leaves of its own.
 static NEVER_INLINE void passUsesOfLeavesBelowAllocatedOperation(Allocator& allocator, const Operation* below, const Operation* selectAbove, Position position)
 {
     forEachLeafBelow(allocator.m_liveness, below, [&](const Operation*, unsigned, Operation* leaf) {
@@ -1557,7 +1462,6 @@ static NEVER_INLINE void passUsesOfLeavesBelowAllocatedOperation(Allocator& allo
 
 void Allocator::passUsesOf(const Operation* operation, Position position)
 {
-    // As in passUse(). The walk does not move while the leaves are passed.
     position = std::min(position, m_position + 1);
     forEachLeafInParts(m_liveness, operation, [&](unsigned, Operation* leaf) ALWAYS_INLINE_LAMBDA {
         passUseReachedByWalk(leaf, position);
@@ -1568,7 +1472,6 @@ void Allocator::passUsesOf(const Operation* operation, Position position)
 
 void Allocator::passUse(Operation* value, Position position)
 {
-    // Nothing is passed ahead of the walk, which stands ahead of the head while it allocates what sank into the block.
     passUseReachedByWalk(value, std::min(position, m_position + 1));
 }
 
@@ -1579,7 +1482,6 @@ Location Allocator::defineResult(Operation* operation, RegisterMask allowed, Reg
 
 void Allocator::enterFramedPart()
 {
-    // One that has lost its register all the same lies in its spill, which holds no pointer either.
     for (ReferenceWhosePointerWaits& waiting : m_referencesWhosePointersWaitForFramedPart) {
         Operation* reference = waiting.reference;
         if (stateOf(reference).registers || (m_allocation.isSpilled(reference) && isLiveBehind(reference, m_position) && !isDeadOnEveryPathFrom(reference, m_block, m_headOfBlock)))

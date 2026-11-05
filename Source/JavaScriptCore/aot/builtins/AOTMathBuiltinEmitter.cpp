@@ -52,70 +52,6 @@ MathBuiltinEmitter::MathBuiltinEmitter(CodeGenerator& generator)
 {
 }
 
-Number MathBuiltinEmitter::extremumOfElements(Extremum kind, CellPointer array, Pointer butterfly, Integer length, LBasicBlock otherwise)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    ArrayElements storage { array, butterfly };
-    bool isMax = kind == Extremum::Max;
-    Join<Number> join(m_out);
-    auto fold = [&](const ArrayStorageForm& form) {
-        bool foldPropagatesHoles = form.element == Representation::Double;
-        LBasicBlock loop = newBlock();
-        LBasicBlock element = newBlock();
-        LBasicBlock done = newBlock();
-        ValueFromBlock firstIndex = m_out.anchor(integer(0).value());
-        ValueFromBlock initialValue = m_out.anchor(number(extremumOfNoValues(isMax)).value());
-        m_out.jump(loop);
-        m_out.appendTo(loop);
-        Integer index(m_out.phi(Machine::Int64, firstIndex));
-        Number chosen(m_out.phi(Machine::Double, initialValue));
-        branch(below(index, length), { normalEdge(element), normalEdge(done) });
-        m_out.appendTo(element);
-        Operand raw = elements.loadRawElement(form, storage, index);
-        if (form.element == Representation::JSValue)
-            branchUnless(isNumber(raw.as<Boxed>()), otherwise);
-        else if (!foldPropagatesHoles)
-            branchUnless(logicalNot(elements.isHole(form, raw)), otherwise);
-        Number next = elements.convertRawElement(form, raw, Representation::Double, m_program.at(TypeTable::number)).as<Number>();
-        m_out.addIncomingToPhi(index.value(), m_out.anchor(add(index, integer(1)).value()));
-        m_out.addIncomingToPhi(chosen.value(), m_out.anchor((isMax ? max(chosen, next) : min(chosen, next)).value()));
-        m_out.jump(loop);
-        m_out.appendTo(done);
-        if (foldPropagatesHoles)
-            branchUnless(logicalNot(elements.isHole(form, chosen)), otherwise);
-        join.add(chosen);
-    };
-    const ArrayStorageForm& doubleForm = arrayStorageFormOf(ArrayStorage::Double);
-    const ArrayStorageForm& int32Form = arrayStorageFormOf(ArrayStorage::Int32);
-    const ArrayStorageForm& boxedForm = arrayStorageFormOf(ArrayStorage::Contiguous);
-    Word32 mode = elements.indexingMode(array, arrayStorageTestMask);
-    LBasicBlock doubles = newBlock();
-    LBasicBlock notDoubles = newBlock();
-    LBasicBlock int32s = newBlock();
-    LBasicBlock notInt32s = newBlock();
-    branch(elements.hasShape(mode, doubleForm), { normalEdge(doubles), normalEdge(notDoubles) });
-    m_out.appendTo(doubles);
-    fold(doubleForm);
-    m_out.appendTo(notDoubles);
-    branch(elements.hasShape(mode, int32Form), { normalEdge(int32s), normalEdge(notInt32s) });
-    m_out.appendTo(int32s);
-    fold(int32Form);
-    m_out.appendTo(notInt32s);
-    branchUnless(elements.hasShape(mode, boxedForm), otherwise);
-    fold(boxedForm);
-    return join.finish();
-}
-
-void MathBuiltinEmitter::extremumOfArray(const InlineCall& call, Extremum kind)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    ArrayElements storage = elements.elementsOf(cellOperand(call.argument(0)));
-    Integer length = elements.publicLength(storage);
-    // The call refuses a list that does not fit on the stack.
-    branchUnless(below(length, integer(static_cast<int64_t>(build().limit(LimitID::MaxReservedStackArguments)) + 1)), missBlockOf(call));
-    finish(call, extremumOfElements(kind, storage.array, storage.butterfly, length, missBlockOf(call)));
-}
-
 void MathBuiltinEmitter::round(const InlineCall& call, Rounding rounding)
 {
     Number x = numberOperand(call.argument(0));
@@ -277,7 +213,6 @@ void MathBuiltinEmitter::extremum(const InlineCall& call, Extremum kind)
         finish(call, number(extremumOfNoValues(isMax)));
         return;
     }
-    // Int32 operands are compared and selected directly, without extending and truncating.
     if (mathArgumentsAreIntegers(m_code, call) && std::ranges::all_of(arguments, [&](ValueID argument) { return typeOf(argument).isInt32(); })) {
         Word32 chosen = int32Operand(arguments[0]);
         Range range = typeOf(arguments[0]).integers;
@@ -316,16 +251,6 @@ void MathBuiltinEmitter::generateMathMin(const InlineCall& call)
 void MathBuiltinEmitter::generateMathMax(const InlineCall& call)
 {
     extremum(call, Extremum::Max);
-}
-
-void MathBuiltinEmitter::generateMathMinOfArray(const InlineCall& call)
-{
-    extremumOfArray(call, Extremum::Min);
-}
-
-void MathBuiltinEmitter::generateMathMaxOfArray(const InlineCall& call)
-{
-    extremumOfArray(call, Extremum::Max);
 }
 
 void MathBuiltinEmitter::generateMathImul(const InlineCall& call)

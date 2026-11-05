@@ -23,8 +23,6 @@ std::span<const NativeTest> guessesGrowthTests();
 
 using namespace Typed;
 
-// type U0 = { a, kind } | { kind, b } | { x, parent, y } | { p, q }   function f0(u: U0) { return u.kind + u.parent; }   type U1 = the same names again ..
-// Every record passes for the record of the same names in every other union, so what is written of each parameter names all the layouts of the program. No layout has both names that the function asks for.
 static String manyUnionsOfRecordsThatAreAlikeForGuessesGrowthTests(unsigned numberOfUnions)
 {
     StringBuilder text;
@@ -95,7 +93,6 @@ static std::optional<uint64_t> instructionsOfPlanForGuessesGrowthTests(const Str
     return instructions;
 }
 
-// Whoever plans the guard of a function asks what is expected of its parameters. Where that goes through every layout that the written type names, for each function anew, the plan costs the square of the records.
 static void testPlanGrowsAsUnionsOfRecordsThatAreAlikeDo()
 {
     constexpr unsigned numberOfUnions = 400;

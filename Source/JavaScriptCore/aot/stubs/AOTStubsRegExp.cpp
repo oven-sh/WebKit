@@ -55,12 +55,10 @@ struct MatchOperands {
     std::array<GPRReg, 2> all() const { return { regExpObject, string }; }
 };
 
-// Whoever creates the array of a match reads the VM's. Code that asks for Found reads the RegExp's, where operationAOTRegExpFind leaves the offsets too.
 enum class OffsetVectorOwner : bool { VM, RegExp };
 
 struct MatchAnswers {
     Entry generic;
-    // Without one the answer is the array of the match.
     std::optional<int64_t> match;
     int64_t miss;
     OffsetVectorOwner offsetVectorOwner;
@@ -254,7 +252,6 @@ static void matchSubstringForArray(StubAssembler& jit, const MatchRegisters& reg
     Label isMiss = jit.label();
     returnResult(jit, TrustedImm64(answers.miss));
 
-    // Whoever creates the array takes a string that is no rope. The offsets of the match are the same in the flat string.
     didNotMiss.link(&jit);
     slowCases.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm64(0)));
     flattenSubject(jit, operands.string, { operands.regExpObject, operands.string }, hasFound);
@@ -263,7 +260,6 @@ static void matchSubstringForArray(StubAssembler& jit, const MatchRegisters& reg
     loadAtom(jit, registers, slowCases);
     searchForAtom(jit, registers, operands.all());
     jit.branch64(CCallHelpers::Equal, scratch, TrustedImm64(noMatch)).linkTo(isMiss, &jit);
-    // The search leaves no offsets.
     needsFlatSubject.append(jit.jump());
 }
 
@@ -322,7 +318,6 @@ static void advanceLastIndexAndRecordMatch(StubAssembler& jit, GPRReg regExpObje
     loadRegExp(jit, regExpObject, registers.regExp);
     jit.load16(Address(registers.regExp, RegExp::offsetOfFlags()), flags);
     loadOffsetVector(jit, owner, registers.regExp, registers.offsets);
-    // Whoever starts at lastIndex has seen that it is writable.
     Jump keepsLastIndex = jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(globalFlag | stickyFlag));
     storeEndOfMatchInLastIndex(jit, regExpObject, registers.offsets, registers.scratch);
     keepsLastIndex.link(&jit);
@@ -364,7 +359,6 @@ static Address matchArrayProperty(GPRReg butterfly, PropertyOffset offset)
     return Address(butterfly, static_cast<int32_t>(offsetInButterfly(offset) * static_cast<intptr_t>(sizeof(EncodedJSValue))));
 }
 
-// start arrives with the number of groups. Nothing here calls anything, so the collector sees either the whole array or none of its parts. Leaves 0 in array when an allocator has no room.
 static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& registers)
 {
     static_assert(MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
@@ -446,7 +440,6 @@ void generateFinishRegExpExec(StubAssembler& jit)
     if (hasObject) {
         loadRegExp(jit, objectOrRecord, regExp);
         needsOperation.append(jit.branchTest16(CCallHelpers::NonZero, Address(regExp, RegExp::offsetOfFlags()), TrustedImm32(hasIndicesFlag)));
-        // Only a RegExp with rare data has named groups.
         needsOperation.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(regExp, RegExp::offsetOfRareData())));
         jit.load32(Address(regExp, RegExp::offsetOfNumSubpatterns()), numberOfGroups);
     }
@@ -502,7 +495,6 @@ void generateRegExpMatch(StubAssembler& jit)
     slowCases.append(jit.branchIfNotNumber(scratch));
     loadRegExpAndFlags(jit, registers, regExpObject);
     Jump usesLastIndex = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag | stickyFlag));
-    // A pattern takes its code from the image at the first subject that is long enough. A router asks each of its routes about each path, and most are longer than the path.
     Jump isTooShort = jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize()));
     Jump hasNoCode = branchIfNotCompiled(jit, regExp);
     loadMatchingCode(jit, registers, slowCases);
@@ -619,7 +611,6 @@ void generateStringReplaceRegExpMayNotMatch(StubAssembler& jit)
     Jump isNoText = jit.branchIfNotString(replacement);
     jit.callOperationAndReturn(Entry::operationAOTStringReplaceRegExpString, { });
 
-    // A function. It is handed each match with its groups, so the search starts over.
     isNoText.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStringReplaceRegExpWithFunction, { });
 }

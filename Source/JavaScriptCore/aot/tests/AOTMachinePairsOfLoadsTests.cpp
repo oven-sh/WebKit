@@ -24,7 +24,6 @@ static TypedPointer pairsOfLoadsTestWordAt(TestProcedure& test, LValue base, uns
     return test.out().address(test.heaps().argumentBuffer, base, static_cast<ptrdiff_t>(index * sizeof(uint64_t)));
 }
 
-// ldp of two X registers with a signed offset.
 static unsigned pairsOfLoadsTestNumberOfLoadPairs(TestProcedure& test)
 {
     std::span<const uint8_t> code = test.linkedCode();

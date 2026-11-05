@@ -25,12 +25,10 @@ static constexpr uint32_t bytesPerPlaceHalf = sizeof(uint32_t);
 
 struct SpillPlaceRange {
     bool hasGap() const { return beginOfGap != noPosition; }
-    // Behind it the place goes back to the free places.
     Position endOfFirstPart() const { return hasGap() ? beginOfGap - 1 : end; }
 
     Position begin;
     Position end;
-    // SpillFacts::beginOfGap and endOfGap.
     Position beginOfGap { noPosition };
     Position endOfGap { noPosition };
 };
@@ -63,13 +61,10 @@ static SlotAssigner::Size sizeOfSpillPlace(const SpillFacts& facts)
     return facts.width == Width32 ? SlotAssigner::Half : SlotAssigner::Word;
 }
 
-// From the first write to the place to the last read of it: never less than SpillFacts::begin to end.
-// No check sees a write to a place that another spill holds: checkAllocation() goes by spills, and checkFrame() by their ranges.
 static SpillPlaceRange rangeOfSpillPlace(const Procedure& proc, const SpillFacts& facts)
 {
     SpillPlaceRange range { facts.begin, std::max(facts.begin, facts.end), facts.beginOfGap, facts.endOfGap };
 
-    // The Save stands ahead of the operation that took the register, at whichever of the two positions of that operation the range begins.
     if (facts.isSaveInRareRegion) {
         if (range.begin)
             --range.begin;
@@ -82,7 +77,6 @@ static SpillPlaceRange rangeOfSpillPlace(const Procedure& proc, const SpillFacts
     if (proc.allocation().registerAtDefinitionOf(value).isSet())
         return range;
 
-    // The moves of the incoming edges write it. They stand at the ends of the predecessors.
     const Order& order = proc.order();
     for (const Block* predecessor : order.of(value->owner()).predecessors) {
         Position endOfPredecessor = order.endOf(predecessor);
@@ -107,7 +101,6 @@ static constexpr uint32_t indexInPlaceSortKey(uint64_t key)
     return static_cast<uint32_t>(key);
 }
 
-// By the late position. The index is the one in Allocation::suspensions().
 static std::span<const uint64_t> sortSuspensionsForPlaces(Procedure& proc)
 {
     std::span<PatchOperation* const> suspensions = proc.allocation().suspensions();
@@ -123,10 +116,8 @@ Position positionOfStoreToSpillPlace(const Procedure& proc, const SpillFacts& fa
     const Operation* value = facts.value;
     if (facts.isSaveInRareRegion || !value)
         return noPosition;
-    // It is stored at the head of the block that it sank into, where it is defined.
     if (proc.liveness().isSunk(value))
         return facts.begin;
-    // The result of a Patch that ends its block is stored at the head of the first successor. The moves of the incoming edges have written a Phi without a register where its block begins.
     const Block* block = value->endsBlock() ? value->owner()->successor(0).block() : value->owner();
     return std::max(facts.begin, proc.order().headOf(block));
 }
@@ -136,7 +127,6 @@ bool spillPlaceIsWrittenBehindDefinitionAlone(const Procedure& proc, const Spill
     const Operation* value = facts.value;
     if (facts.isSaveInRareRegion || !value)
         return false;
-    // The moves of the incoming edges write a Phi without a register, ahead of whatever ends the predecessors. The pointer beside it is stored at the head of its block like any other.
     return facts.isPointerBesideNarrowReference || value->opcode() != Phi || proc.allocation().registerAtDefinitionOf(value).isSet();
 }
 
@@ -147,8 +137,6 @@ static bool spillPlaceIsFreedLater(const SlotAssigner::Holder& a, const SlotAssi
     return a.distanceWithinPart > b.distanceWithinPart;
 }
 
-// A distance is a multiple of four, so the part and the size have room below it. The places that are free again behind one position go back to the free places in the order of these numbers.
-// No two holders that go back to one free list have the same distance, so the order of each free list follows from the position and the distance alone.
 static constexpr uint32_t makeHeldPlace(uint32_t distanceWithinPart, SlotAssigner::Part part, SlotAssigner::Size size)
 {
     ASSERT_UNDER_CONSTEXPR_CONTEXT(!(distanceWithinPart % bytesPerPlaceHalf));
@@ -187,7 +175,6 @@ void SlotAssigner::run()
 
     placeStackSlots();
     sortSpillsByBegin();
-    // The scan comes to each spill once and writes both entries.
     m_partOfSpill.growWithoutInitializing(m_arena, numberOfSpills);
     m_slots.m_distanceOfSpill.growWithoutInitializing(m_arena, numberOfSpills);
 
@@ -201,7 +188,6 @@ void SlotAssigner::run()
         const SpillPlaceRange range = rangesOfSpillPlaces[spill];
         releasePlacesFreeAt(range.begin);
 
-        // A range that reaches over a suspension does not say that anything reads the spill from there on. What lies in the second part is gone behind the next resumption, and nothing holds on to it.
         Part part = savesFrame && facts.livesAcrossSuspension ? KeptAtSuspensions : DeadAtSuspensions;
         Size size = sizeOfSpillPlace(facts);
         uint32_t distance = takePlace(part, size, range.begin, range.endOfFirstPart(), range.hasGap() ? range.endOfGap + 1 : noPosition, range.end);
@@ -218,7 +204,6 @@ void SlotAssigner::run()
 
 void SlotAssigner::bringBusyWordsNearEndsOfFrame()
 {
-    // As planFrame() lays the frame out.
     constexpr uint32_t reachOfOneByte = 128;
     const uint32_t numberOfWords = m_slots.m_bytesInAll / bytesPerPlaceWord;
     const uint32_t bytesOfSaves = roundUpPlaceDistance(static_cast<uint32_t>(std::popcount(m_allocation.usedCalleeSaves())) * bytesPerPlaceWord, stackAlignmentBytes());
@@ -239,7 +224,6 @@ void SlotAssigner::bringBusyWordsNearEndsOfFrame()
     const uint32_t numberOfWordsKept = m_slots.numberOfWordsKeptAtSuspensions();
     uint32_t endOfWordsKeptThatMayMove = 0;
     if (m_slots.m_firstWordClearedAtSetup >= m_slots.m_endOfWordsClearedAtSetup) {
-        // The word below a first part with an odd number of words is the lowest of them.
         uint32_t numberOfLowestWordsCleared = numberOfWordsKept % 2;
         for (const WordsClearedAtSuspension& cleared : m_slots.m_wordsClearedAtSuspension)
             numberOfLowestWordsCleared = std::max(numberOfLowestWordsCleared, cleared.numberOfLowestWords);
@@ -283,19 +267,15 @@ void SlotAssigner::bringBusyWordsNearEndsOfFrame()
     }
 }
 
-// The destination of a step and its sources lie side by side: three words of 64 bits with two locations each.
 static_assert(sizeof(Location) == sizeof(uint32_t));
 static_assert(offsetof(Step, sources) == offsetof(Step, destination) + sizeof(Location));
 static_assert((1 + maxLeaves) * sizeof(Location) == 3 * sizeof(uint64_t));
-// A location holds its kind above its payload. Every spill and all bytes of a StackSlot have this bit of the kind, and no register has it.
-// An immediate has it too, with the bit above it, which those two lack.
 static constexpr uint64_t bitOfLocationInFrame = std::bit_cast<uint32_t>(Location::spill(0));
 static_assert(std::has_single_bit(bitOfLocationInFrame));
 static_assert(std::bit_cast<uint32_t>(Location::slotBytes(0)) & bitOfLocationInFrame);
 static_assert(!((std::bit_cast<uint32_t>(Location::spill(0)) | std::bit_cast<uint32_t>(Location::slotBytes(0))) & bitOfLocationInFrame << 1));
 static constexpr uint64_t bitsOfPairWithLocationInFrame = bitOfLocationInFrame << 32 | bitOfLocationInFrame;
 
-// Not zero where one of the two locations may be a spill or the bytes of a StackSlot.
 static constexpr uint64_t pairMayHoldLocationInFrame(uint64_t pair)
 {
     return pair & ~(pair >> 1) & bitsOfPairWithLocationInFrame;
@@ -318,14 +298,12 @@ void SlotAssigner::countAccessesToFrame(FrameWords& words)
             ++numberOfAccessesToStackSlot[location.indexOfStackSlot()];
     };
 
-    // The store behind a definition has no step.
     for (SpillIndex spill = 0; spill < spills.size(); ++spill) {
         const SpillFacts& facts = spills[spill];
         if (facts.value && !facts.isSaveInRareRegion && !facts.isPointerBesideNarrowReference && m_allocation.isStoredBehindDefinition(facts.value))
             note(Location::spill(spill));
     }
 
-    // Most steps name registers alone.
     auto noteLocationsOf = [&](const Step& step) ALWAYS_INLINE_LAMBDA {
         uint64_t pairs[3];
         memcpy(pairs, reinterpret_cast<const char*>(&step) + offsetof(Step, destination), sizeof(pairs));
@@ -354,12 +332,10 @@ void SlotAssigner::countAccessesToFrame(FrameWords& words)
 
     std::span<const Step> steps = m_allocation.steps();
     if (m_proc.stackSlots().empty()) {
-        // No operation is a SlotBase.
         for (const Step& step : steps)
             noteLocationsOf(step);
     } else {
         for (const Step& step : steps) {
-            // A Materialize goes into a register, and its source is no place.
             if (step.kind != StepKind::Materialize) {
                 noteLocationsOf(step);
                 continue;
@@ -372,8 +348,6 @@ void SlotAssigner::countAccessesToFrame(FrameWords& words)
         }
     }
 
-    // No code of this function reads an operand of a Patch where it lies in the frame: a map lists it, or a thunk that many functions share loads it.
-    // Allocation::suspensions() lists each suspension that has a step. It has one, among those of its block.
     ArenaVector<uint32_t> wordsEncodedAsIndex;
     for (const PatchOperation* patch : m_allocation.suspensions()) {
         if (!patch->operandEncodedAsFrameWordIndex())
@@ -399,7 +373,6 @@ void SlotAssigner::countAccessesToFrame(FrameWords& words)
 void SlotAssigner::arrangeWordsOfPart(FrameWords& words, Part part, uint32_t begin, uint32_t end)
 {
     RELEASE_ASSERT(begin <= end && !(begin % 2));
-    // From begin on: the words near the frame pointer, those far from both ends, those near the stack pointer.
     const uint32_t endOfHighWords = std::clamp(words.endOfReachOfFramePointer, begin, end);
     const uint32_t beginOfLowWords = std::clamp(words.beginOfReachOfStackPointer, endOfHighWords, end);
     if ((begin < endOfHighWords) + (endOfHighWords < beginOfLowWords) + (beginOfLowWords < end) < 2)
@@ -430,8 +403,6 @@ void SlotAssigner::arrangeWordsOfPart(FrameWords& words, Part part, uint32_t beg
         slots.append(m_arena, StackSlotInPart { numberOfWords, words.numberOfAccessesToStackSlot[slot->index()], firstWord, firstWord, alignmentOfStackSlotPlace(slot) > bytesPerPlaceWord, false });
     }
 
-    // Among equals the word that lies higher comes first, so equal procedures get equal frames.
-    // A key holds how far the word falls short of the most accesses that can be counted, above the word.
     uint64_t* const keysOfWords = static_cast<uint64_t*>(m_arena.allocate(static_cast<size_t>(end - begin) * sizeof(uint64_t), alignof(uint64_t)));
     uint32_t numberOfWordsWithoutStackSlot = 0;
     for (uint32_t word = begin; word < end; ++word) {
@@ -457,12 +428,10 @@ void SlotAssigner::arrangeWordsOfPart(FrameWords& words, Part part, uint32_t beg
             return left != right ? left > right : a < b;
         });
 
-        // However the slots without a place come to lie: they begin at an even word, and each may leave a word free in front of it.
         uint32_t mostWordsOfSlotsWithoutPlace = 1;
         for (const StackSlotInPart& slot : slots)
             mostWordsOfSlotsWithoutPlace += slot.numberOfWords + slot.endsAtEvenWord;
 
-        // Words and slots take their turns, whichever has the most accesses to a word first: down from the top as far as the frame pointer reaches, then up from the bottom as far as the stack pointer reaches.
         uint32_t nextWord = numberOfWordsEncodedAsIndex;
         uint32_t top = begin + numberOfWordsEncodedAsIndex;
         uint32_t bottom = end;
@@ -494,7 +463,6 @@ void SlotAssigner::arrangeWordsOfPart(FrameWords& words, Part part, uint32_t beg
             mostWordsOfSlotsWithoutPlace = mostWordsOfOthers;
         }
 
-        // The others follow each other as placeStackSlots() has laid them out, behind the reach of the frame pointer where there is room.
         uint32_t numberOfWordsBetween = 0;
         for (StackSlotInPart& slot : slots) {
             if (slot.liesNearEnd)
@@ -533,7 +501,6 @@ void SlotAssigner::arrangeWordsOfPart(FrameWords& words, Part part, uint32_t beg
         }
     }
 
-    // Among words that are equally near the order of the scan stays: the map of a suspension is as long as the last word that it lists is far down.
     uint32_t numberOfWordsGivenOut = 0;
     uint32_t firstOfEquallyNear = numberOfWordsEncodedAsIndex;
     auto giveOutWords = [&](uint32_t first, uint32_t last) {
@@ -616,7 +583,6 @@ ALWAYS_INLINE void SlotAssigner::releasePlacesFreeAt(Position position)
         releasePlacesOfNextSpillsFreeAt(position);
 }
 
-// The next spill in m_spillsByEndOfHold is one of them.
 NEVER_INLINE void SlotAssigner::releasePlacesOfNextSpillsFreeAt(Position position)
 {
     uint64_t* const keys = m_spillsByEndOfHold;
@@ -635,7 +601,6 @@ NEVER_INLINE void SlotAssigner::releasePlacesOfNextSpillsFreeAt(Position positio
         if (endOfEquals == next + 1)
             release(placesOfSpills[indexInPlaceSortKey(keys[next])]);
         else {
-            // Nobody reads these keys again: each makes room for the place of its spill.
             for (uint32_t index = next; index < endOfEquals; ++index)
                 keys[index] = placesOfSpills[indexInPlaceSortKey(keys[index])];
             std::sort(keys + next, keys + endOfEquals);
@@ -647,7 +612,6 @@ NEVER_INLINE void SlotAssigner::releasePlacesOfNextSpillsFreeAt(Position positio
     m_nextSpillToLetGo = next;
 }
 
-// `beginBehindGap`: noPosition for a spill without a gap.
 ALWAYS_INLINE uint32_t SlotAssigner::takePlace(Part part, Size size, Position begin, Position endOfFirstPart, Position beginBehindGap, Position end)
 {
     ArenaVector<PositionsTakenBehindGaps>& taken = m_positionsTakenBehindGaps[part];
@@ -701,8 +665,6 @@ void SlotAssigner::joinParts()
 {
     std::span<StackSlot* const> stackSlots = m_proc.stackSlots();
     const uint32_t bytesKept = m_bytesOfPart[KeptAtSuspensions];
-    // A suspension keeps whole pairs of words. Whatever the function left in the other word of the last pair would be kept with it, and every resumption would put it back on the stack.
-    // So nothing lies there: no spill, no StackSlot, no outgoing word.
     uint32_t topOfSecondPart = roundUpPlaceDistance(bytesKept, 2 * bytesPerPlaceWord);
     for (const StackSlot* slot : stackSlots) {
         if (m_partOfStackSlot[slot->index()] == DeadAtSuspensions)
@@ -777,7 +739,6 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
         }
     };
 
-    // The half words that every path to the place of the scan has stored to since the frame was set up: two bits to a word of the first part, the upper half first, and two for the word above the first part.
     const uint32_t wordAboveFirstPart = numberOfWords;
     std::span<uint64_t> bitsOfStoredHalfWords = m_arena.createSpan<uint64_t>((2 * (numberOfWords + 1) + 63) / 64);
     BitSpan storedHalfWords(bitsOfStoredHalfWords);
@@ -797,7 +758,6 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
 
     uint32_t firstWordClearedAtSetup = numberOfWords;
     uint32_t endOfWordsClearedAtSetup = 0;
-    // A half word that does not pass for stored has a path to the place of the scan without a store to it. While this holds, that path begins at an entrypoint.
     bool everyPathBeginsAtEntrypoint = true;
     ArenaVector<uint32_t> wordsHeldByRangeAlone;
     ArenaVector<uint32_t> wordsNotHeldHere;
@@ -813,7 +773,6 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
         }
 
         for (const Holder& holder : m_holders) {
-            // The place stays its own, and from here no path leads to a read of it.
             if (!spillsHeldHere.get(holder.spill)) {
                 letGo(wordHoldingPlace(holder.distanceWithinPart));
                 wordsNotHeldHere.append(m_arena, wordHoldingPlace(holder.distanceWithinPart));
@@ -835,7 +794,6 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
             endOfWordsClearedAtSetup = std::max(endOfWordsClearedAtSetup, word + 1);
         }
 
-        // Nothing ever stores to the word below a first part with an odd number of words: joinParts().
         WordsClearedAtSuspension& cleared = m_slots.m_wordsClearedAtSuspension[indexInPlaceSortKey(key)];
         uint32_t numberOfLowestWordsHeldByNothing = numberOfWords % 2;
         cleared.numberOfLowestWords = numberOfLowestWordsHeldByNothing;
@@ -846,8 +804,6 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
                 cleared.numberOfLowestWords = numberOfLowestWordsHeldByNothing;
         }
 
-        // The suspension may go on without suspending the function, and then nobody has cleared the lowest words. The stores in front of it run either way.
-        // What is done for one of the words above changes nothing for another, so they are taken as the bits of the dead words list them.
         const uint32_t endOfOtherWords = word;
         for (uint32_t firstWordOfBits = 0; firstWordOfBits < endOfOtherWords; firstWordOfBits += 64) {
             uint64_t otherDeadWords = bitsOfDeadWords[firstWordOfBits / 64];
@@ -866,7 +822,6 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
         cleared.wordAboveFirstPart = !isStoredTo(wordAboveFirstPart);
         noteStoreTo(wordAboveFirstPart);
 
-        // The list of dead words goes by what the suspension holds, as checkFrame() does.
         for (uint32_t wordHeldAgain : wordsHeldByRangeAlone)
             hold(wordHeldAgain);
         wordsHeldByRangeAlone.clear();
@@ -896,11 +851,8 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
         }
     };
 
-    // Each block is visited once, behind the blocks in front of it that lead to it. What comes round a loop has run through its head, so an edge that leads back takes nothing away.
-    // Where such an edge leads to a block that does not dominate it, a word may pass for stored that is not: it is cleared nowhere then, and no word is cleared that should not be.
     const Order& order = m_proc.order();
     std::span<Block* const> blocks = order.blocksInOrder();
-    // There is at least one word of bits, and seldom another: whatever goes over all of them does the first in line.
     const size_t numberOfWordsOfBits = bitsOfStoredHalfWords.size();
     uint64_t* const storedHere = bitsOfStoredHalfWords.data();
     auto copyBitsOfStoredHalfWords = [&](uint64_t* to, const uint64_t* from) {
@@ -908,7 +860,6 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
         for (size_t wordOfBits = 1; wordOfBits < numberOfWordsOfBits; ++wordOfBits)
             to[wordOfBits] = from[wordOfBits];
     };
-    // By the place in the order. A block asks for the blocks in front of it alone, and each of those has written its entry.
     const uint64_t** const storedAtEndOfBlock = m_arena.allocateArray<const uint64_t*>(blocks.size());
     Block* const* const blocksInOrder = blocks.data();
     const uint32_t numberOfBlocks = static_cast<uint32_t>(blocks.size());
@@ -916,15 +867,12 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
     const uint64_t* const keysOfSuspensions = suspensions.data();
     const size_t numberOfSuspensions = suspensions.size();
     size_t nextSuspension = 0;
-    // The next suspension or the next store, whichever comes first. Only a block that holds one of them moves it on.
     auto findNextSuspensionOrStore = [&] {
         Position position = nextSuspension < numberOfSuspensions ? positionInPlaceSortKey(keysOfSuspensions[nextSuspension]) : noPosition;
         return nextStore < stores.size() ? std::min(position, positionInPlaceSortKey(stores[nextStore])) : position;
     };
     Position nextSuspensionOrStore = findNextSuspensionOrStore();
     for (uint32_t index = 0; nextSuspension < numberOfSuspensions; ++index) {
-        // Most blocks have one predecessor, which stands in front of them, and hold neither a suspension nor a store: what is stored at their end is what was stored at its end.
-        // Every other block begins by writing all of storedHere. A run of such blocks moves no suspension on, so one is still to come behind it.
         for (;; ++index) {
             RELEASE_ASSERT(index < numberOfBlocks);
             const Block* plainBlock = blocksInOrder[index];
@@ -940,7 +888,6 @@ void SlotAssigner::findWordsDeadAcrossSuspensions()
         const Block* block = blocksInOrder[index];
         const BlockPlace& place = places[block->index()];
         std::span<Block* const> predecessors = place.predecessors;
-        // Order::endOf().
         const Position endOfBlock = place.head + 2 * (block->size() + 1);
 
         const uint64_t* storedAtEndOfFirstPredecessor = nullptr;
@@ -1006,7 +953,6 @@ void SlotAssigner::publishDeadWords(Procedure& proc, unsigned numberOfCalleeSave
     const uint32_t bytesBelowFrameRecord = roundUpPlaceDistance(numberOfWordsAboveSlots * bytesPerPlaceWord + slots.bytesInAll() + proc.callArgAreaSizeInBytes(), stackAlignmentBytes());
     const uint32_t numberOfWordsInFrame = bytesBelowFrameRecord / bytesPerPlaceWord;
 
-    // A suspension keeps whole pairs of words, so it may keep the first word below the first part.
     std::span<uint64_t> bitsOfWordsAlwaysDead = arena.createSpan<uint64_t>(numberOfWordsInFrame / 64 + 1);
     BitSpan wordsAlwaysDead(bitsOfWordsAlwaysDead);
     if (numberOfCalleeSaves % 2)
@@ -1042,7 +988,6 @@ void SlotAssigner::publishDeadWords(Procedure& proc, unsigned numberOfCalleeSave
 SlotAssignment* assignSlots(Procedure& proc)
 {
     SlotAssignment* slots = proc.arena().create<SlotAssignment>();
-    // Most functions have nothing to place and nothing to say of a suspension: the assignment stays as it was made.
     const Allocation& allocation = proc.allocation();
     if (allocation.spills().empty() && proc.stackSlots().empty() && allocation.suspensions().empty())
         return slots;

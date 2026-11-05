@@ -20,18 +20,13 @@ static_assert(static_cast<uint32_t>(SiteAnswers::Form::GetterInStorageOfHolder) 
 struct WordOfGetterForSiteAnswers {
     SiteAnswers::Form form;
     uint32_t operand;
-    // Of Form::GetterInStorageOfHolder.
     int32_t indexInStorageOfHolder { 0 };
 };
 
-// For answerOfSlot() of AOTPropertyCaches.cpp, of a Slot::Kind::Getter that the tables hold: THE WORD THAT HOLDS THE GetterSetter, named as the forms of a value name the word that holds the value.
-// The stub loads the word at every read, so the answer says no more than the Slot does, and ends where the Slot ends: with the Structure, and where an object above the receiver changes.
-// No own getter of a compiled object comes here: a field of such an object may leave its slot under one Structure. PropertyCaches::fillSiteAnswers() sees to that.
 inline std::optional<WordOfGetterForSiteAnswers> findWordOfGetterForSiteAnswers(SiteUse use, const Slot& slot, uintptr_t cageBase, bool usesWideReferences)
 {
     using Form = SiteAnswers::Form;
     static_assert(Slot::payloadOf(Slot::Kind::Getter) == SlotPayload::Holder && Slot::locationOf(Slot::Kind::Getter) == SlotLocation::WordIndex);
-    // A place that calls has no form for what has to be called first.
     if (use != SiteUse::Read)
         return std::nullopt;
     int32_t wordIndex = slot.wordIndex();

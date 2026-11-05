@@ -27,7 +27,9 @@
 #include "JSCInlines.h"
 #include "LLIntData.h"
 #include "NativeExecutable.h"
+#include "TopExceptionScope.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -64,12 +66,39 @@ JSValue evaluateBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
     return builtinModules.evaluate(*module);
 }
 
+JSValue evaluateEveryBuiltinModuleForTesting(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Instance* instance = Instance::of(globalObject);
+    JSArray* asked = constructEmptyArray(globalObject, nullptr);
+    if (!instance || !instance->state || !asked)
+        return asked;
+    Modules& modules = *instance->state->modules;
+    for (unsigned index = 0; index < modules.table().size(); ++index) {
+        ModuleID module(index);
+        if (modules.table().data(module).kind != ModuleKind::RuntimeSource)
+            continue;
+        modules.require(module);
+        String line = modules.table().pathText(module);
+        if (Exception* exception = scope.exception()) {
+            JSValue thrown = exception->value();
+            scope.clearException();
+            String text = thrown.toWTFString(globalObject);
+            scope.clearException();
+            line = makeString(line, ' ', text);
+        }
+        asked->push(globalObject, jsString(vm, line));
+        scope.clearException();
+    }
+    return asked;
+}
+
 void fillWordsOfCompiledMethodsOfArray(Instance& instance)
 {
     const ProgramTables& tables = instance.tables();
     ModuleTable modules(tables);
     for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
-        // What the function object of the built-in runs. A function of the compiler (`filterOfList`) implements a row of the same built-in, for whoever the walk has shown a list: an image need not hold it.
         if (function.role != RuntimeFunctionRole::EngineBuiltin)
             continue;
         for (BuiltinID builtin : function.implements) {
@@ -156,7 +185,6 @@ JSC_DEFINE_HOST_FUNCTION(callCompiledBuiltin, (JSGlobalObject* globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(constructCompiledBuiltin, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     JSObject* closure = compiledClosureOfCallee(globalObject, callFrame);
-    // Compiled code of the realm goes to the closure by itself from now on.
     if (RealmWords& words = Instance::of(globalObject)->realm; !words.functionOfEngineOverCompiledFunction) [[unlikely]] {
         words.compiledFunctionUnderFunctionOfEngine = closure;
         words.functionOfEngineOverCompiledFunction = callFrame->jsCallee();
@@ -169,7 +197,6 @@ NativeExecutable* builtinExecutable(JSGlobalObject* globalObject, uint32_t id)
     std::optional<FunctionID> function = findCompiledFunction(globalObject, id);
     if (!function)
         return nullptr;
-    // Private hides only the host function's frame. A stack trace shows the frame of the compiled function it calls.
     return NativeExecutable::create(globalObject->vm(),
         adoptRef(*new CompiledBuiltinJITCode(LLInt::getCodeRef<JSEntryPtrTag>(llint_native_call_trampoline), *function)), toTagged(callCompiledBuiltin),
         adoptRef(*new NativeJITCode(LLInt::getCodeRef<JSEntryPtrTag>(llint_native_construct_trampoline), JITType::HostCallThunk, NoIntrinsic)), toTagged(FunctionTables::canConstruct(functionKindData(*function)) ? constructCompiledBuiltin : callHostFunctionAsConstructor),
@@ -201,7 +228,6 @@ static bool isTextOfHostLibrary(ScriptExecutable& executable)
     return !id || *id >= numberOfBuiltinCodes;
 }
 
-// The id of a function of the library is the same in every VM of the process.
 static Lock s_functionsOfTestRunnerLock;
 static Vector<uint32_t, 1>& functionsOfTestRunner() WTF_REQUIRES_LOCK(s_functionsOfTestRunnerLock)
 {
@@ -242,8 +268,7 @@ bool isNeededByNothingThatRuns(JSFunction* function)
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
     if (!executable || !Instance::of(function->realm()) || !isTextOfHostLibrary(*executable))
         return false;
-    const Image* image = Image::current();
-    return !image->admitsLibraryText() || !image->runsUnreadCode();
+    return !Image::current()->admitsLibraryText();
 }
 
 static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
@@ -253,7 +278,6 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
     if (!table.contains(function))
         return names;
 
-    // The built-in that a function implements also lists it among the functions it calls.
     auto add = [&](BuiltinID builtin) {
         if (table.isUnder(builtin, Builtins::GlobalThis) && !names.contains(table.textOf(builtin)))
             names.append(table.textOf(builtin));
@@ -287,7 +311,6 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
     if (id && std::ranges::contains(table.moduleLoaderFunctions(), RuntimeFunctionID(*id)))
         names = { "The module loader"_str };
     JSObject* error = names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span());
-    // Reading an accessor is calling its getter. What it answers may be a number, and a function in the place of a number is a wrong answer: the read is refused.
     bool isGetterOfAccessor = id && table.contains(RuntimeFunctionID(*id)) && std::ranges::any_of(table.at(RuntimeFunctionID(*id)).implements, [&](BuiltinID builtin) {
         return table.at(builtin).kind == BuiltinKind::Accessor;
     });

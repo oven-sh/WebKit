@@ -1,14 +1,17 @@
-# the cell of `counter`'s scope has the byte. The closure that is returned is a cell of the heap and holds the environment, so the byte is set in front of it. On the way that keeps nothing the cell is proposed for the next call
+# the cell of `counter`'s scope has the byte. The closure that is returned is a cell of the heap and holds the environment: ITS OWN CODE sets the byte, in front of the stub that makes it, so the walk builds no operation for that: a closure that nobody needs in the end leaves no mark behind. On the way that keeps nothing the cell is proposed for the next call.
 # function counter(keep) { let id = 0; function bump() { id++; } bump(); if (keep) return () => ++id; return id; }  sink(counter);
 # RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis+CellsInFrames
 # CHECK-LABEL: code f1:Body
 # CHECK: = NewObject {{*}}layout=L0
-# CHECK: MarkEnvironmentEscaped
+# CHECK-NOT: MarkEnvironmentEscaped
 # CHECK: = NewClosure {{*}}function=f2
 # RUN(ALL): walk f1 mechanisms=all
 # ALL-LABEL: code f1:Body
-# ALL: MarkEnvironmentEscaped
+# ALL-NOT: MarkEnvironmentEscaped
 # ALL: = NewClosure {{*}}function=f2
+# RUN(EMIT): emit f1 mechanisms=all
+# EMIT: Store8({{*}}collectorState
+# EMIT: Store8({{*}}collectorState
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="id"}] ownFieldCount=1
 module m0 path="main.js" displayPath="main.js" body=f0

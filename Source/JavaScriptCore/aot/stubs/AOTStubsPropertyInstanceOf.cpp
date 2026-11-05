@@ -21,7 +21,6 @@ namespace JSC { namespace AOT {
 void generateInstanceOf(StubAssembler& jit)
 {
     const bool isGivenPrototype = static_cast<InstanceOfOperand>(jit.key().form()) == InstanceOfOperand::Prototype;
-    // The prototype of a constructor is read into the register of the constructor.
     const GPRReg prototype = isGivenPrototype ? jit.operand(1) : jit.clobberOperand(1);
     const GPRReg constructor = prototype;
     const GPRReg current = jit.allocateScratch(StubRegister::T11);
@@ -35,7 +34,6 @@ void generateInstanceOf(StubAssembler& jit)
         jit.move(TrustedImm32(result), jit.result());
         jit.returnToCaller();
     };
-    // value and prototype are intact on slowCases.
     auto followPrototypeChainAndReturn = [&] {
         struct Link {
             Jump hasPolyProto;
@@ -94,7 +92,6 @@ void generateInstanceOf(StubAssembler& jit)
         Jump isNotValue;
         Label isDone;
     };
-    // The name is in probe.uid. The constructor is intact on miss and on isNotValue, also where it is the result.
     auto readFromConstructor = [&](GPRReg result) {
         SlotRead read { result, { }, { } };
         jit.load32(Address(constructor, JSCell::structureIDOffset()), probe.structureID);

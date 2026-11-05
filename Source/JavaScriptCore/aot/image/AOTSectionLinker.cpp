@@ -28,7 +28,6 @@ struct SectionUnitGraph {
     Vector<Vector<UnitTarget, 0>> targets;
     Vector<uint32_t> unitsByPlace;
     Vector<uint32_t> placeOfUnit;
-    // The places from this one on hold data.
     size_t firstPlaceOfData { 0 };
     size_t dataAlignment { 1 };
 };
@@ -47,7 +46,6 @@ struct SectionLayout {
 
 } // anonymous namespace
 
-// The target of any other kind is a number, which no unit stands for.
 static constexpr bool namesPlaceInSection(RelocationKind kind)
 {
     switch (kind) {

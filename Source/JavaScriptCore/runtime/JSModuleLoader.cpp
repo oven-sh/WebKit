@@ -1170,6 +1170,10 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     unsigned jobsUntilLoadHearsOfFailure = 0;
                     if (compiled)
                         loadOfRequest = compiled->loadThatWaitsFor(request.m_specifier, state, jobsUntilLoadHearsOfFailure);
+                    if (!loadOfRequest) {
+                        compiled->didAskHostForRequest(flagsBefore);
+                        continue;
+                    }
 #endif
                     JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, loadOfRequest, state->scriptFetcher(), useImportMap);
 #if ENABLE(AOT)

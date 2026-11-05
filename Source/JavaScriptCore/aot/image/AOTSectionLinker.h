@@ -21,7 +21,6 @@ struct LinkUnit {
     std::span<const uint8_t> bytes;
     std::span<const Relocation> relocations;
     uint32_t alignment { 1 };
-    // A unit that is data lies behind everything else, whatever its place in SectionLinkInputs::units.
     bool isData { false };
 };
 
@@ -30,12 +29,10 @@ struct UnitTarget {
     uint32_t offset { 0 };
 };
 
-// uniqueUnitOffsets is indexed like SectionLinkInputs::units.
 struct LinkedSection {
     Vector<uint8_t> bytes;
     Vector<uint32_t> uniqueUnitOffsets;
     uint32_t numberOfVeneers { 0 };
-    // A multiple of SectionLinkInputs::dataAlignment. All code lies in front of it, and behind it lie the units that are data and nothing else.
     uint32_t dataOffset { 0 };
 };
 

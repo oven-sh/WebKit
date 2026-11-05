@@ -73,12 +73,9 @@ struct alignas(4) RuntimeType {
     static constexpr uint8_t hasIntegerRange = 1;
     static constexpr uint8_t hasContents = 2;
     static constexpr uint8_t hasLayoutSet = 4;
-    // A listed string without a word is found by its text alone, which the image holds. One with a word may go without its text.
-    static constexpr uint8_t hasLiteralStringWithoutWord = 16;
 
     uint16_t primitives;
     uint8_t flags;
-    // Those that stand in front of testsOfOneFunctionEach(): a type has a handful. With more than fit here it says so, and they are counted.
     static constexpr uint8_t hasManyTestsOfMoreThanOneFunction = UINT8_MAX;
     uint8_t numberOfTestsOfMoreThanOneFunctionIfFew;
     uint16_t numberOfCellTests;
@@ -91,7 +88,6 @@ struct alignas(4) RuntimeType {
         return { reinterpret_cast<const RuntimeCellTest*>(this + 1), numberOfCellTests };
     }
 
-    // A member that holds one of many functions has a test for each of them. They stand behind all other tests, by rising number.
     size_t numberOfTestsOfMoreThanOneFunction() const
     {
         if (numberOfTestsOfMoreThanOneFunctionIfFew != hasManyTestsOfMoreThanOneFunction) [[likely]]

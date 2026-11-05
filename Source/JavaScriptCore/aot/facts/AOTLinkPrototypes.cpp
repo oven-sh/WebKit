@@ -49,7 +49,6 @@ static uint64_t wordOfNameInLinkPrototypes(LayoutID layout, PropertyKeyID key)
     return static_cast<uint64_t>(layout.index()) << 32 | key.bits();
 }
 
-// The layout names the function and the function the layout. The layout of a function that the front end found dead names none, and nobody follows what lies above its objects: namesMayBeIncomplete().
 void LinkFlow::indexConstructorFunctions()
 {
     size_t numberOfLayouts = program.layouts.size();
@@ -99,7 +98,6 @@ bool LinkFlow::mayLieOnPrototypeAbove(LayoutID layout, PropertyKeyID key, bool c
     return false;
 }
 
-// An edge delivers at once, and what it delivers may ask for another record: nobody holds a reference to one across a call.
 uint32_t LinkFlow::recordOfNameOnPrototype(LayoutID layout, PropertyKeyID key)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
@@ -114,7 +112,6 @@ uint32_t LinkFlow::recordOfNameOnPrototype(LayoutID layout, PropertyKeyID key)
     m_namesOnPrototypes.append(NameOnPrototype { layout, key, stored, storedInSight });
     addEdge(storedInSight, stored);
     if (key) {
-        // Two methods that meet at one node are lost. So they meet only where somebody reads under a key that nobody knows.
         if (const NameOnPrototype* underAnyKey = findNameOnPrototype(layout, { }); underAnyKey && underAnyKey->isReadUnderAnyKey)
             addEdge(stored, underAnyKey->stored);
         if (m_prototypesAboveLostLayouts.get(layout.index()) || mayBeNamedByNumber(key))
@@ -133,7 +130,6 @@ FlowNodeID LinkFlow::storedOnPrototypeOf(LayoutID layout, PropertyKeyID key)
     RELEASE_ASSERT(key);
     uint32_t record = recordOfNameOnPrototype(layout, key);
     if (!std::exchange(m_namesOnPrototypes[record].isStoredInto, true)) {
-        // A name above that has become read only refuses the assignment below it, as a method of a class does: RowOfConstructorsInLinkLayouts.
         auto noteFieldBelow = [&](LayoutID below) {
             if (std::optional<uint32_t> field = program.at(below).findField(key))
                 noteFieldMayBeEmpty({ below, *field });
@@ -147,7 +143,6 @@ FlowNodeID LinkFlow::storedOnPrototypeOf(LayoutID layout, PropertyKeyID key)
 
 void LinkFlow::forEachPrototypePassedAbove(LayoutID layout, PropertyKeyID key, const Invocable<void(uint32_t record)> auto& functor)
 {
-    // `class A extends B {}` beside `class B extends A {}` compiles.
     size_t stepsLeft = program.layouts.size();
     for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
         if (isOfConstructorFunction(current)) {
@@ -161,11 +156,9 @@ void LinkFlow::forEachPrototypePassedAbove(LayoutID layout, PropertyKeyID key, c
                 const NameOnPrototype* underSomeKey = findNameOnPrototype(current, { });
                 mayFindAccessor = m_namesOnPrototypes[record].isDefinedByDescriptor || (underSomeKey && underSomeKey->isDefinedByDescriptor);
             }
-            // With it go the layouts below, that of the receiver among them.
             if (mayFindAccessor)
                 deferEscape(current);
         }
-        // A member of a class lies there from the evaluation of the class on.
         if (key && !std::ranges::equal_range(membersOf(current, ClassSide::Prototype), key, { }, &MemberOfClass::key).empty())
             break;
     }
@@ -174,7 +167,6 @@ void LinkFlow::forEachPrototypePassedAbove(LayoutID layout, PropertyKeyID key, c
 
 FlowNodeID LinkFlow::foundOnPrototypesAbove(LayoutID layout, PropertyKeyID key)
 {
-    // The set is filled before the flow starts.
     if (!m_layoutsBelowConstructorFunctions.get(layout.index()))
         return { };
     return nodeAskedOnceByLane(MadeOnDemand::FoundOnPrototypesAbove, static_cast<uint64_t>(layout.index()) << 32 | key.bits(), [&]() -> FlowNodeID {
@@ -228,7 +220,6 @@ void LinkFlow::passPrototypesAboveUnderNumbers(LayoutID layout)
 
 void LinkFlow::lookForSetterOnPrototypesAbove(LayoutID layout, PropertyKeyID key)
 {
-    // The set is filled before the flow starts.
     if (!m_layoutsBelowConstructorFunctions.get(layout.index()))
         return;
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
@@ -282,7 +273,6 @@ void LinkFlow::defineOnPrototypeOf(LayoutID layout, PropertyKeyID key)
     settle();
 }
 
-// An aggregate of Lost ties the members that list the key, and takes the rest from foundBesideFieldsUnder(). No layout lists what lies on a prototype object, so that goes there too.
 void LinkFlow::tiePrototypesAboveLostLayout(LayoutID lost)
 {
     if (!m_layoutsBelowConstructorFunctions.get(lost.index()))
@@ -299,7 +289,6 @@ void LinkFlow::tiePrototypesAboveLostLayout(LayoutID lost)
     }
 }
 
-// A lookup through a lost value comes by the prototype objects above every member, and notes it at none.
 bool LinkFlow::letPrototypesFoundThroughLostEscape()
 {
     bool hasDeferred = false;
@@ -307,7 +296,6 @@ bool LinkFlow::letPrototypesFoundThroughLostEscape()
         NameOnPrototype name = m_namesOnPrototypes[record];
         if (!name.isDefinedByDescriptor || !m_prototypesAboveLostLayouts.get(name.layout.index()) || escapedLayouts.get(name.layout.index()))
             continue;
-        // Through whichever family of lost layouts.
         bool isLookedUp = m_anyFieldIsReadThroughLost || (name.key ? m_keysLookedUpThroughLost.contains(name.key.index()) : !m_keysLookedUpThroughLost.isEmpty());
         if (isLookedUp)
             hasDeferred |= deferEscape(name.layout);

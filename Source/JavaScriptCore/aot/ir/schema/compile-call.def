@@ -18,40 +18,10 @@ enum FeatureUseKind { Named Unnamed }
 enum LocaleUseKind { Unknown HostDefault Constant }
 enum TypeTestFailure { TakesGenericPath Throws Leaves }
 enum CodeForm { Open Closed Generic }
-enum ArrivalStamp { None Open Complete }
-flags ArrivalLayoutFlags { IsDerived }
-flags ArrivalFieldFlags { IsOptional }
 
 enum ImageVerdict {
     Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned AlreadyInUse LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
     MalformedTables StampMismatch IdentityMismatch CodeAtFixedAddress OutsideItsSegments CannotReadExecutable TopByteOfAddressIgnored
-}
-enum DeclineKind (| engine reason: Type) {
-    Unknown(none) HotCallNotInlined(none) HotCallNotResolved(CallDeclineReason) GeneratorLoopNotFused(GeneratorFusionDeclineReason)
-    ArrayChainNotFused(ArrayChainDeclineReason) StringBuilderNotCreated(StringBuilderDeclineReason) StringBuildersNotJoined(none)
-    AllocationNotSunk(AllocationEscapeReason) TypedResultNotSelected(TypedResultDeclineReason) IterationNotExpandedByClass(none)
-    LoopNotVersioned(LoopDeclineReason) LoopBoundNotClamped(LoopDeclineReason) StretchNotGuarded(none) ResultNodeInterpreted(InterpretedCause)
-    TagLookupKeyNotConstant(none)
-}
-enum TypedResultDeclineReason {
-    None NoTarget TargetIsNotModeledByFlow TargetHasNoTypedPart PromiseIsNotAwaitedAtOnce HostHasNoBytesForm RowsHaveSeveralLayouts AnotherSourceIsOpen
-}
-enum CallDeclineReason { None UnknownCallee CalleeNotCallable CalleeNeedsClosure UnknownMember NeedsTest EffectsBeforeCall TooManyCallees }
-enum GeneratorFusionDeclineReason {
-    Unknown None BodyIsNotDescribed HasNoStep SeveralLiveInstances StepMayReachOtherGenerator MayEscapeBeforeStep BodyIsBoundToFrame BodyIsTooLarge
-    CallerIsTooLarge InlineDepth
-}
-enum ArrayChainDeclineReason {
-    Unknown None SourceIsNotPristine CallbackIsNotAFunction CalleeIsUnknown CallbackSeesIntermediateArray CallbacksInterfere SkippedCallIsObservable
-    CallbackWritesSource ValueBetweenLinksInterferes
-}
-enum StringBuilderDeclineReason { Unknown Created TooFewAppends TwoStatesLive StateIsNotFirstOperand WebLimit }
-enum LoopDeclineReason {
-    None NotInnermost SeveralEntries NoSingleLikelyPath UncloneableValue NothingToHoist NotCounted CounterMayWrap BoundNotInvariant TestNotOnLikelyPath
-    EffectsBeforeTopTest LimitReached
-}
-enum InterpretedCause {
-    None RepeatedRecursion LayoutIsNotModeled FieldTypeIsNotTestable
 }
 flags AllocationEscapeReason {
     Returned Thrown StoredInUnknownMemory PassedToUnknownCode RetainedByCallee StoredInEscapingObject LeakedByContainer LimitReached
@@ -70,7 +40,7 @@ enum ResultSection {
     Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed WorkerEntries Accesses AccessCounts TypeTests RemainingChecks
     Declines AllocationRemarks Losses Functions OperationCounts PassTimes Statistics LimitValues Symbols ObfuscatedSites
     ArrivalSites ArrivalSiteLayouts ArrivalLayouts ArrivalLayoutFields
-    LibraryFunctionsLacked OtherOrigins ExportsThatSpiesReplace WorkerStartsWithoutName BuiltinsThatTestsReplace NamesThatTestsAdd
+    LibraryFunctionsLacked ExportsThatSpiesReplace WorkerStartsWithoutName BuiltinsThatTestsReplace NamesThatTestsAdd
     BytesByForm BytesByModule
     FunctionNames LayoutNames
     URLsThatStartWorkers
@@ -93,143 +63,47 @@ record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness
 record LackedFunctionRecord abi { function: UInt32 }
 record LackedModuleRecord abi { module: Module }
 record LackedRuntimeModuleRecord abi { module: RuntimeModule }
-record ReplacedExportRecord abi { variable: UInt32 }
-record ReplacedBuiltinRecord abi { member: Builtin }
-record AddedNameRecord abi { holder: Builtin name: TextRange }
 record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness kind: FeatureUseKind }
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
 record WorkerEntryRecord abi { path: TextRange isGuess: UInt32 hasOptions: UInt32 witness: Witness }
 record WorkerStartRecord abi { witness: Witness }
 record WorkerURLRecord abi { witness: Witness }
 record AccessRecord abi {
-    location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause layout: Layout? copies: UInt32 distance: UInt32 witness: Witness
-    function: Function? illTypedCause: IllTypedCause cost: AccessCost hasOtherRoots: UInt32 otherOrigins: UInt32 loopDepth: UInt32
+    location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause layout: Layout? copies: UInt32 witness: Witness
+    function: Function? illTypedCause: IllTypedCause cost: AccessCost loopDepth: UInt32
 }
-record OtherOriginsRecord abi { locations: SourceLocation[3] }
 record AccessCountRecord abi { module: Module accesses: UInt32[3] calls: UInt32[3] typeTests: UInt32 accessCosts: UInt32[4] }
 record TypeTestRecord abi {
     location: SourceLocation function: Function? failure: TypeTestFailure copies: UInt32 cause: UnprovenCause illTypedCause: IllTypedCause layout: Layout?
     witness: Witness
 }
-record RemainingCheckRecord abi { id: UInt64 witness: Witness origin: SourceLocation cause: CheckCause siteKind: TypeSiteKind }
-record DeclineRecord abi { kind: DeclineKind limit: LimitID count: UInt32 reason: UInt32 witness: Witness }
 record AllocationRemarkRecord abi {
     location: SourceLocation forcedBy: SourceLocation outcome: AllocationOutcome copies: UInt32 forcingOperation: TextRange reasons: AllocationEscapeReason
     function: Function? kind: AllocationKind cause: AllocationHeapCause
 }
-record LossRecord abi { limit: LimitID stage: Stage layout: Layout? count: UInt32 witness: Witness }
-record FunctionReportRecord abi {
-    source: Function? role: TextRange codeBytes: UInt32 accesses: UInt32[3] calls: UInt32[3] firstOperation: UInt32 operationCount: UInt32
-    accessCosts: UInt32[4]
-}
-record OperationCountRecord abi { name: TextRange count: UInt32 }
 record FormBytesRecord abi { operation: TextRange form: CodeForm count: UInt32 bytes: UInt64 }
 record ModuleBytesRecord abi { module: Module functions: UInt32 codeBytes: UInt64 tableBytes: UInt64 }
 record FunctionNameRecord abi { function: Function module: Module? name: TextRange }
 record LayoutNameRecord abi { layout: Layout name: TextRange }
-record PassTimeRecord abi { pass: PassID reserved: UInt32 runs: UInt64 wallNanoseconds: UInt64 cpuNanoseconds: UInt64 }
 record ObfuscatedSiteRecord abi { function: UInt32 site: UInt32 location: SourceLocation name: TextRange }
-record ArrivalSiteRecord abi {
-    number: UInt32 location: SourceLocation function: Function? operation: TextRange kind: AccessKind level: KnowledgeLevel cause: UnprovenCause
-    firstExpectedLayout: UInt32 expectedLayoutCount: UInt32 stamp: ArrivalStamp
-}
-record ArrivalLayoutRecord abi {
-    layout: Layout base: Layout? kind: TextRange name: TextRange firstField: UInt32 fieldCount: UInt32 flags: ArrivalLayoutFlags
-}
-record ArrivalLayoutFieldRecord abi { name: TextRange flags: ArrivalFieldFlags }
 
 enum CompileAction { Compile VerifyOnly CheckOnly }
 enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
-enum MismatchPolicy { Silent Report }
-enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest Shuffled ReadOffStructure }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons SpillSlots AllocatedRegisters ClaimsOfFlow KeepGoing }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals AccessCounts Statistics }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes NobodyLooksAtNewInstances NativeCodeAnswersNullish WalksNothingAtCalls CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside }
-enum Sabotage {
-    None
-    NoCallCollects StoresNeedNoBarrier
-    NoCallWrites FieldsNeverChange ClosureInFrameKeepsNoCaptures RangesEndOneEarly
-    WritesMayRunTwice SharedPatternsReachCalls SharedPatternsAreSticky SharedPatternsAdvance SharedPatternsAreUsedInUnknownWays FirstStepsStandUnderHandlers GeneratorsAreReadBeforeTheirFirstStep StepsInCyclesAreFirstSteps RemovedLoopsHaveEffects PromotedEnvironmentsAreMadeOften FlooredQuotientsHaveAnyDivisor RoundedQuotientsHaveAnySign SkippedBlocksHaveEffects RemovedFieldsHaveUnknownReaders ProofsOutlastWritesToTheirSubject
-    RemovedLoopsMayNotEnd GeneratorHeadsHaveEffects
-    ProofsOutlastWritesToEverything ErasedValuesHaveEffects
-    WalkedLiteralsAreAsTheyWereMade WalkedKeysStandInTheFirstOrder WrittenRecordsHaveTheirKeysInOneOrder WrittenRecordsStayAsTheyWere TaggedMakersAreOnlyConstructed TaggedMakersAnswerWithTheirOwnObject FusedConversionsRunCode UnfinishedObjectsPassForFinished BirthsEndWithoutALook
-    FunctionPassFailsAssertion FunctionPassReadsBadAddress FunctionPassRunsOutOfStack FunctionPassNeverEnds ProgramPassFailsAssertion FlowAnalysisFailsAssertion CodeGenerationFailsAssertion ImageBuildingFailsAssertion LoweringPanics LoweringOverflowsStack ListsOfPiecesEndInAPiece
-    HoistedReadsAreStoredInTheirLoops CarriedVariablesAreWrittenByOthers DelayedStoresAreLeftOut TailCallsSwapTheirLastArguments RememberedReadsOutlastStoresThroughOtherNames RememberedReadsOutlastWrites FusedGeneratorsAreSeenByOthers DelayedStoresPassWhatMayThrow ParsedMembersComeOnce GrowingTextsAreHeldInOneState
-    PartsOfViewsEndOneLater
-    StoredValuesAreNeverRead
-    WhatIsGivenTakesThePlaceOfWhatComes
-    MergedLoadsOutlastWritesOnUnlikelyPaths
-    StridedIndexesStayInRange CountedIndexesStayInRange
-    SlotsOfSitesStayAsTheyAre
-    WordsReadAgainOutlastWrites
-    VectorTurnsMeetNoOtherAccess
-    LanesHoldWhateverIsComputed
-    SumsOfNumbersAreWhole
-    SignsOfComparedLanesDoNotMatter
-    FramesAlwaysFit
-    CallbacksOfOneChainShareNoMemory WalkedArraysStayAsTheyWereOpened HeadsThatAreCopiedLeaveNoTrace ConversionsOfStorageEndNoProofs CopiedReadsKeepTheirProof ReadsOfListsThatMayHoldUndefinedAreCopied ChangedKindsOfStorageKeepTheirProofs ListsWrittenInLoopsAreLeftAlone WhatRunsAgainLeavesNoTrace GettersInSlotsHaveNoEffects ReadsOfCalleesSinkPastWrites RemovedTestsOutlastWrites
-    VariablesReadAgainInLoopsOutlastWrites
-    LoadsFoldedIntoTheirUsersOutlastWrites PairedLoadsOutlastWrites
-    WrittenOutTurnsAlwaysFit
-    CallsThatThrowHaveNoSite
-    CallersKeepNoFPRs
-    BoundsReadTwiceOutlastWrites
-    ChangedClosuresFailEveryTest
-    KeysOfStarsAreHeldAsStrings
-    CallsGiveNoArrayOtherStorage
-    CellsThatAreKeptLieInFrames
-    ClassesBelowBuiltinsHaveSlots
-    LiveRangesSplitTwiceHaveNoColdUses
-    StoresBehindClustersAreNotNeeded LoadsAheadOfClustersAreNotNeeded StoresAheadOfCallsAreNotNeeded LoadsBehindCallsAreNotNeeded StoresBehindSpilledDefinitionsAreNotNeeded
-    MemoryRunsOutWhenCounted MemoryRunsOutWhenCountedByRule
-    EntryChecksAlwaysPass
-    WordsCarriedAroundLoopsOutlastWrites
-    PassesDropCalls PassesChangeNothing IdlePassesAddValuesToNoBlock IdlePassesLoseValuesOfNoBlock
-    AssignmentsPutOffAskNobodyAbove WhatInitializersTakeNeverChanges
-    GetsBehindHasOutlastWrites ObjectsWithTheTagOfAnotherAreAbsent
-    ListsOfBuiltinsEndWithWhatIsKept
-    DelayedStoresAreSeenByOthers SlotsNeedNoAbsentState
-    CopiesNameNoFile
-    FusedCallsEnterOnlyUnknownCode
-    StoresOfConstantsAlwaysLand ConstantFieldsAreStoredOnce DefinitionsPutOffHaveNoDeadZone ClosuresInFieldsCaptureTheirHolder LiteralsOfConstantsAreNeverToldApart
-    TalliesOutrunTheirCounters
-    BuiltinsLookAtTheirOperandsAlone AccessorsCopiedOntoTheRealmStayHidden
-    NothingClimbsAboveInstances
-    ListsThatAreKeptLieInFrames EnvironmentsThatAreKeptAreHandedBack MakersKeepEnvironmentsThatWereCopied
-    ReceiversThatLeaveAreInstances
-    StoresBehindFormerEntryChecksSayNothing
-    ClosuresMadeBehindAllocationsHaveEffects
-    ObjectsOfModulesCountAsLocked
-    TestsKeepTheTypesTheyWereMadeWith
-    PassesDropStores
-    StoresUnderUnknownKeysEnterNoSetterThatEscaped
-    MovedBodiesAreNotAnnounced
-    EmittersTakeStringsForFlat
-    ReadsEnterNoGetterThatEscaped
-    RopesPassForFlatStrings
-    EscapedObjectsBearOnlyTheirOwnMarks
-    FunctionsMarkNoCard
-}
-flags Instrumentation { CountBranches CountArrivals }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes NobodyLooksAtNewInstances NativeCodeAnswersNullish WalksNothingAtCalls CheckProofsAtRunTime UnseenCodeAnswersUndefined WritesBodiesStraight CheckProofsAtEntries CheckProofsAtEntriesAndFields KeepsCellsOutOfFrames TestsEveryPosition PositionsAreTakenToLieInside CheckEffectsAtRunTime RowSaysLess }
 flags AdmittedCode { Inspector ReplacedBuiltins }
 flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FilesOfImageForCodeOutside }
 flags OutputOptions { Obfuscate SharesRealms RunsInSeveralRealms RunsInPlaceOfFiles }
-record SwitchRange abi { firstID: UInt32 count: UInt32 }
-record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }
-record FlowScheduleWords abi { number: UInt32 seedOfObjectNumbers: UInt32 }
-record BisectionSwitches abi {
-    disabledFlowResults: UInt64 disabledPasses: UInt64[4] disabledSelectionRules: UInt64 disabledBackEndSwitches: UInt64 switchRange: SwitchRange
-    droppedGuard: DroppedGuardWords flowSchedule: FlowScheduleWords
-}
 record ImagesBelowWords abi { address: UInt64 size: UInt64 }
 record TargetOptions abi { features: UInt64 featuresKeptOnlyWhenNamed: UInt64[8] imagesBelow: ImagesBelowWords architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
 record CompileOptions abi {
-    bisection: BisectionSwitches target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
-    action: CompileAction mismatchPolicy: MismatchPolicy checks: CheckSet reports: ReportSet testing: TestingSwitch instrumentation: Instrumentation
-    heatOverride: HeatOverride loweredLimit: LimitID threadCount: UInt32 layoutSeed: UInt32 admittedCode: AdmittedCode output: OutputOptions
-    excludedCode: ExcludedCode sabotage: Sabotage reserved: UInt32
+    target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
+    action: CompileAction checks: CheckSet reports: ReportSet testing: TestingSwitch 
+    loweredLimit: LimitID threadCount: UInt32 layoutSeed: UInt32 admittedCode: AdmittedCode output: OutputOptions
+    excludedCode: ExcludedCode rowThatSaysLess: UInt32
 }
 
 word "check" "<name>,.." "check" custom applyCheck listChecks

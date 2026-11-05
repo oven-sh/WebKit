@@ -58,7 +58,6 @@ static void copyAndClearPair(StubAssembler& jit, GPRReg oldValues, GPRReg copied
 #endif
 }
 
-// From its base upward the storage has oldCapacity new slots, highest index first, then the oldCapacity old values.
 static void emitDoubledStorageInitialization(StubAssembler& jit, const StorageGrowth& growth)
 {
     static_assert(!(initialOutOfLineCapacity % 2) && outOfLineGrowthFactor == 2);
@@ -82,8 +81,6 @@ static void emitDoubledStorageInitialization(StubAssembler& jit, const StorageGr
     jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), copiedValues, growth.storage);
 }
 
-// The caller has proven that the object has no indexing header, and that either oldCapacity is zero and newCapacity is initialOutOfLineCapacity,
-// or oldCapacity is at least initialOutOfLineCapacity, newCapacity is 2 * oldCapacity, and newCapacity * sizeof(EncodedJSValue) is at most MarkedSpace::largeCutoff.
 void growOutOfLineStorage(StubAssembler& jit, const StorageGrowth& growth, JumpList& slowPath)
 {
     const GPRReg object = growth.object;
@@ -91,7 +88,6 @@ void growOutOfLineStorage(StubAssembler& jit, const StorageGrowth& growth, JumpL
     const GPRReg allocator = growth.scratch;
     RELEASE_ASSERT(noOverlap(object, growth.newStructureID, growth.oldCapacity, growth.newCapacity, storage, allocator, growth.addedValue.value_or(InvalidGPRReg), instanceGPR));
 
-    // The allocator for newCapacity values is entry newCapacity / 2, at byte newCapacity * 4.
     static_assert(MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*) && !(initialOutOfLineCapacity % 2));
     jit.loadPtr(Address(object, JSObject::butterflyOffset()), storage);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), allocator);
@@ -117,7 +113,6 @@ void growOutOfLineStorage(StubAssembler& jit, const StorageGrowth& growth, JumpL
     jit.store32(growth.newStructureID, Address(object, JSCell::structureIDOffset()));
 }
 
-// The butterfly of an array with an original array structure holds the indexing header and the vector and nothing else, and the vector is the array's own.
 static void branchUnlessHasOriginalArrayStructure(StubAssembler& jit, GPRReg array, GPRReg structureID, JumpList& otherwise)
 {
     JumpList hasOriginalStructure;
@@ -128,7 +123,6 @@ static void branchUnlessHasOriginalArrayStructure(StubAssembler& jit, GPRReg arr
     hasOriginalStructure.link(&jit);
 }
 
-// The allocator that Butterfly::optimalContiguousVectorLength(0, nextLength(length + 1)) rounds up to, or the same for nextLength(neededLength).
 static void loadAllocatorOfNextVector(StubAssembler& jit, const VectorGrowth& growth, std::optional<GPRReg> neededLength, JumpList& slowPath)
 {
     static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue) && MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
@@ -181,7 +175,6 @@ static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::opti
     RELEASE_ASSERT(!neededLength || noOverlap(*neededLength, array, butterfly, length, storage, allocator, scratch, instanceGPR));
 
     slowPath.append(jit.branch32(CCallHelpers::Above, neededLength.value_or(length), TrustedImm32(maxLengthForElementwiseCopy)));
-    // Only the array leads to the new vector, so an array that the collector will not visit again is left to C++.
     slowPath.append(branchIfBarrierIsNeeded(jit, array, scratch));
     branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
     loadAllocatorOfNextVector(jit, growth, neededLength, slowPath);

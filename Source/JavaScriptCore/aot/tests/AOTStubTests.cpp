@@ -16,6 +16,8 @@
 #include "AOTStubCalls.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubFrames.h"
+#include "AOTStubFrontEnds.h"
+#include "AOTStubRecording.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
@@ -552,7 +554,6 @@ static void testStubCallsWithNumbersInKeys()
     });
     const CodeBody& body = assembled.body;
 
-    // Each key waits for the number of its mention, and no site moves one.
     AOT_TEST_CHECK(body.stubKeys == (Vector<StubKey> { key.withImmediate(0), key.withImmediate(0), keyForCallerKeepingNoRegisters.withImmediate(0) }));
     constexpr uint32_t expectedSymbols[] = { 0, 1, 0, 2 };
     AOT_TEST_CHECK(body.relocations.size() == std::size(expectedSymbols));
@@ -687,8 +688,6 @@ static void runInMappingOfThisProcess(std::span<const uint8_t> code)
     std::bit_cast<void (SYSV_ABI *)()>(tagCodePtr<CFunctionPtrTag>(memory))();
 }
 
-// The child listens for breakpoints as a program does that has process.on("SIGTRAP"): its handler notes the signal and returns.
-// It leaves at any other signal by itself: a death by the signal would have the system write a core file of this process.
 static int signalThatEndsListener(std::span<const uint8_t> code)
 {
     constexpr unsigned timeoutInSeconds = 10;
@@ -769,7 +768,29 @@ static void testRegistersLiveAcrossReads()
     }
 }
 
-static constexpr std::array constantsAtSites { ConstantAtSite::String, ConstantAtSite::Key, ConstantAtSite::BuiltinCell, ConstantAtSite::LiteralString, ConstantAtSite::LiteralStringInRegister };
+static void testHeadsOfOperationsWriteWhatRowsName()
+{
+    for (const StubOptions& options : stubOptionVariants()) {
+        StubCatalog catalog(options);
+        unsigned numberOfHeads = 0;
+        forEachKeyWithoutImmediate([&](StubKey key) {
+            if (descriptorOf(key.family()).binding != ImmediateBinding::OperationOffset)
+                return;
+            for (const OperationPrelude& prelude : operationPreludes()) {
+                StubKey head = key.withImmediate(offsetInRuntimeTable(prelude.operation));
+                if (!exists(head))
+                    continue;
+                ++numberOfHeads;
+                AOT_TEST_CHECK(catalog.effectsOf(head).writes.isSubsetOf(effectsOf(prelude.operation).writes));
+            }
+        });
+        AOT_TEST_CHECK(numberOfHeads >= operationPreludes().size());
+        for (unsigned count = 0; count <= numberOfArgumentGPRs + 1; ++count)
+            AOT_TEST_CHECK(!catalog.effectsOf(resolveCallValue(count)).mayCollect);
+    }
+}
+
+static constexpr std::array constantsAtSites { ConstantAtSite::String, ConstantAtSite::Key, ConstantAtSite::BuiltinCell };
 
 static void testConstantsAtSitesLoseNoRegister()
 {
@@ -783,7 +804,7 @@ static void testConstantsAtSitesLoseNoRegister()
                 AOT_TEST_CHECK(exists(key));
                 const StubSummary& summary = catalog.summaryOf(key);
                 AOT_TEST_CHECK(summary.signature.result == StubResult::GPR && summary.signature.firstResult == Reg(result) && !summary.signature.immediate);
-                AOT_TEST_CHECK(summary.signature.numberOfOperands == (readsNumberBehindCall(constant) ? 0 : 1));
+                AOT_TEST_CHECK(!summary.signature.numberOfOperands);
                 RegisterSet lost = summary.clobbered;
                 lost.remove(result);
                 lost.exclude(scratch);
@@ -798,9 +819,9 @@ static void testConstantsAtSitesLoseNoRegister()
 using RegistersAtSite = std::array<uint64_t, allocatableGPRs.size()>;
 
 static constexpr uint64_t valueKeptAtSiteIn(size_t index) { return 0x0a0b0c0d00000000ull + index; }
+static constexpr uint32_t numberOfConstantAtSite = 5;
 
-// Fills every register that compiled code keeps values in, calls the stub as a site does, and answers what the registers hold where the code goes on.
-static RegistersAtSite callStubAtSite(StubRunner& runner, StubKey key, std::optional<uint32_t> numberBehindCall, std::optional<uint64_t> operand = std::nullopt)
+static RegistersAtSite callStubAtSite(StubRunner& runner, StubKey key)
 {
     Vector<GPRReg> savedRegisters;
     RegisterSet::vmCalleeSaveRegisters().forEach([&](Reg reg) {
@@ -827,16 +848,12 @@ static RegistersAtSite callStubAtSite(StubRunner& runner, StubKey key, std::opti
     jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(cellCageBase)), cellCageBaseGPR);
     for (size_t index = 0; index < allocatableGPRs.size(); ++index)
         jit.move(CCallHelpers::TrustedImm64(valueKeptAtSiteIn(index)), allocatableGPRs[index]);
-    if (operand)
-        jit.move(CCallHelpers::TrustedImm64(*operand), *key.operandRegister());
 
     jit.call(CCallHelpers::Address(instanceGPR, offsetOfStub), JITThunkPtrTag);
-    if (numberBehindCall) {
 #if CPU(X86_64)
-        jit.m_assembler.buffer().putByte(static_cast<int8_t>(ThrowSiteWord::opcodeInFrontOfWordBehindCall));
+    jit.m_assembler.buffer().putByte(static_cast<int8_t>(ThrowSiteWord::opcodeInFrontOfWordBehindCall));
 #endif
-        jit.m_assembler.buffer().putInt(*numberBehindCall);
-    }
+    jit.m_assembler.buffer().putInt(numberOfConstantAtSite);
 
     for (size_t index = 0; index < allocatableGPRs.size(); ++index)
         jit.store64(allocatableGPRs[index], slotOf(firstSlotOfRegisters + index));
@@ -870,25 +887,20 @@ static void checkRegistersAtSite(const RegistersAtSite& registers, GPRReg result
         AOT_TEST_CHECK(registers[index] == (allocatableGPRs[index] == result ? expectedResult : valueKeptAtSiteIn(index)));
 }
 
-static constexpr uint32_t numberOfConstantAtSite = 5;
 static constexpr size_t numberOfCellWordsAtSites = 8;
 static constexpr uint32_t narrowWordOfCellAtSite = 0x4321;
 static constexpr uint64_t cellBehindNarrowWordAtSite = static_cast<uint64_t>(narrowWordOfCellAtSite) << cell32Shift;
 
-// On ARM64 a return to the number itself would run it as an instruction, and it is none.
 static void testConstantsAtSitesTakeNumberBehindCall()
 {
     constexpr uint64_t madeCell = 0x123456780;
     struct Site {
         ConstantAtSite constant;
         Entry operation;
-        uint32_t number;
     };
     constexpr Site sites[] = {
-        { ConstantAtSite::Key, Entry::operationAOTKeyConstant, numberOfConstantAtSite },
-        { ConstantAtSite::BuiltinCell, Entry::operationAOTBuiltinCell, numberOfConstantAtSite },
-        { ConstantAtSite::LiteralString, Entry::operationAOTLiteralStringToString, literalStringWord(numberOfConstantAtSite) },
-        { ConstantAtSite::LiteralStringInRegister, Entry::operationAOTLiteralStringToString, literalStringWord(numberOfConstantAtSite) },
+        { ConstantAtSite::Key, Entry::operationAOTKeyConstant },
+        { ConstantAtSite::BuiltinCell, Entry::operationAOTBuiltinCell },
     };
 
     StubRunner runner;
@@ -902,9 +914,9 @@ static void testConstantsAtSitesTakeNumberBehindCall()
         runner.recordCallsOf(site.operation);
         for (GPRReg result : allocatableGPRs) {
             StubKey key = createConstantAtSite(site.constant).withOperandRegister(result);
-            RegistersAtSite registers = readsNumberBehindCall(site.constant) ? callStubAtSite(runner, key, site.number) : callStubAtSite(runner, key, std::nullopt, site.number);
+            RegistersAtSite registers = callStubAtSite(runner, key);
             checkRegistersAtSite(registers, result, madeCell);
-            AOT_TEST_CHECK(environment.numberOfRecordedCalls == 1 && environment.recordedArguments[0] == site.number);
+            AOT_TEST_CHECK(environment.numberOfRecordedCalls == 1 && environment.recordedArguments[0] == numberOfConstantAtSite);
         }
     }
 }
@@ -923,7 +935,7 @@ static void testConstantsAtSitesReadFilledWord()
     builtinCells[numberOfConstantAtSite] = std::bit_cast<JSCell*>(builtinCell);
     for (ConstantAtSite constant : { ConstantAtSite::String, ConstantAtSite::Key, ConstantAtSite::BuiltinCell }) {
         for (GPRReg result : allocatableGPRs) {
-            RegistersAtSite registers = callStubAtSite(runner, createConstantAtSite(constant).withOperandRegister(result), numberOfConstantAtSite);
+            RegistersAtSite registers = callStubAtSite(runner, createConstantAtSite(constant).withOperandRegister(result));
             checkRegistersAtSite(registers, result, constant == ConstantAtSite::BuiltinCell ? builtinCell : cellBehindNarrowWordAtSite);
             AOT_TEST_CHECK(!environment.numberOfOperationCalls);
         }
@@ -946,7 +958,7 @@ static void testConstantAtSiteIsMadeOnce()
     runner.install(Entry::operationAOTKeyConstant, makeKeyAndFillWordAtSite);
     bool isMade = false;
     for (GPRReg result : allocatableGPRs) {
-        RegistersAtSite registers = callStubAtSite(runner, createConstantAtSite(ConstantAtSite::Key).withOperandRegister(result), numberOfConstantAtSite);
+        RegistersAtSite registers = callStubAtSite(runner, createConstantAtSite(ConstantAtSite::Key).withOperandRegister(result));
         checkRegistersAtSite(registers, result, cellBehindNarrowWordAtSite);
         AOT_TEST_CHECK(environment.numberOfOperationCalls == (isMade ? 0u : 1u));
         AOT_TEST_CHECK(keyCells[numberOfConstantAtSite] == narrowWordOfCellAtSite);
@@ -978,6 +990,7 @@ std::span<const NativeTest> stubTests()
         { "stubs/alignment-is-padding"_s, testAlignmentOfStubsIsPadding },
 #endif
         { "stubs/registers-live-across-reads"_s, testRegistersLiveAcrossReads },
+        { "stubs/heads-of-operations-write-what-their-rows-name"_s, testHeadsOfOperationsWriteWhatRowsName },
         { "stubs/constants-at-sites-lose-no-register"_s, testConstantsAtSitesLoseNoRegister },
         { "stubs/constants-at-sites-take-the-number-behind-the-call"_s, testConstantsAtSitesTakeNumberBehindCall },
         { "stubs/constants-at-sites-read-a-filled-word"_s, testConstantsAtSitesReadFilledWord },

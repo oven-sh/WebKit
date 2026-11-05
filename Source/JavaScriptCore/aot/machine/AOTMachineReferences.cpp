@@ -15,10 +15,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT { namespace Machine {
 
 enum class CollectorRuleForm : uint8_t {
-    // The base of its address is its last child.
     Load,
     Sum,
-    // The bits of its first child, widened, cut or shifted.
     BitsOfFirstChild,
     Other,
 };
@@ -111,11 +109,8 @@ static constexpr CollectorRuleForm collectorRuleFormOf(Opcode opcode)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// The collector scans the registers and the frame. A word there keeps a cell alive only if it is the address of that cell.
-// A pointer at what a cell owns, a narrow reference and an offset into the cage keep nothing alive, so whatever does is read once more where they are last read.
 static void keepAliveForCollector(BackwardScan& scan, Operation* value, Position until)
 {
-    // What an address has absorbed has no range of its own. Its leaves stand in for it.
     if (scan.m_liveness.isFused(value)) {
         forEachLeaf(scan.m_liveness, value, [&](const Operation*, unsigned, Operation* leaf) {
             keepAliveForCollector(scan, leaf, until);
@@ -131,17 +126,13 @@ static void keepAliveForCollector(BackwardScan& scan, Operation* value, Position
         scan.addUse(value, until);
 }
 
-// With a constant added to the cage base the sum points into the cell, which keeps nothing alive.
 static bool decodesNarrowReferenceForCollector(const Operation* sum)
 {
     return sum->opcode() == Add && (sum->child(0)->isArgumentReg(cellCageBaseGPR) || sum->child(1)->isArgumentReg(cellCageBaseGPR));
 }
 
-// A decode is an extension, a shift and a sum with the cage base, and a constant may be added ahead of each of them.
 static constexpr unsigned maxStepsFromWordToNarrowReference = 5;
 
-// A decode that is shared with other code, or whose end has sunk into a rare region, leaves its extension or its shift alive across a safepoint that the reference does not reach.
-// The reference then lives as long as they do, and gets its pointer when the scan comes to it.
 static void keepNarrowReferencesBehindWord(BackwardScan& scan, Operation* word, Position until, unsigned stepsLeft)
 {
     if (word->isNarrowReference()) {
@@ -201,7 +192,6 @@ static NEVER_INLINE void applyCollectorRulesToMarkedValue(BackwardScan& scan, Op
         scan.set(operation, ValueFlag::NeedsPointerBesideIt);
 }
 
-// By the opcode: whether keepNarrowReferencesBehindWord() looks below a word that is no narrow reference itself.
 static constexpr std::array<bool, numberOfOpcodes> collectorRulesLookBelowOpcode = [] {
     std::array<bool, numberOfOpcodes> looksBelow { };
     for (unsigned index = 0; index < numberOfOpcodes; ++index) {
@@ -213,8 +203,6 @@ static constexpr std::array<bool, numberOfOpcodes> collectorRulesLookBelowOpcode
 
 void BackwardScan::applyCollectorRules(Operation* operation)
 {
-    // The rules speak of an inner pointer, and of what lives across a safepoint and is a narrow reference or may be made of one. They do nothing for any other value.
-    // Whoever calls has the operation at hand and has often asked about the safepoint already, so the operation is asked first: it answers for most values.
     if (!operation->has(OperationFlag::IsInnerPointer)) [[likely]] {
         if (!operation->isNarrowReference() && !collectorRulesLookBelowOpcode.data()[operation->opcode()])
             return;

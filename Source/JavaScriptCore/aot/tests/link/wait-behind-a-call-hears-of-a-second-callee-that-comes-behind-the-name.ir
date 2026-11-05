@@ -31,7 +31,7 @@
 # records of ac0d59fd0c7babc5
 # RUN(LINK): link functions mechanisms=all
 # LINK: function f1
-# LINK-NEXT: parameter 0 kept
+# LINK-NEXT: parameter 0
 
 module m0 path="wait-behind-a-call-hears-of-a-second-callee-that-comes-behind-the-name.js" displayPath="wait-behind-a-call-hears-of-a-second-callee-that-comes-behind-the-name.js" body=f0 namespaceLayout=L(m0)
 entry module=m0

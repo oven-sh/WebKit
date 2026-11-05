@@ -1,0 +1,127 @@
+# a field that hides a field of the class above lies in its slot. `x: any`, stored what nobody has seen made, takes every value in the objects of Below: no form could be chosen for the place by a type that holds in Above alone.
+# so no row of the place is held to anything. Facts still says what is written of the one field. `y` beside it, which nothing hides, is held in both layouts.
+# -- source: row-that-is-stored-what-nobody-has-seen-leaves-its-place-no-type.ts
+# declare function sink(...values: unknown[]): void;
+# declare function source(): any;
+# class Above { x: string; y: string; constructor(x: string, y: string) { this.x = x; this.y = y; } }
+# class Below extends Above { x: any = source(); }
+# sink(Above, Below);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK-COUNT-2: "y" {{*}} type=undefined|null|string
+# RUN(NEVER): plan layouts mechanisms=all
+# NEVER-NOT: "x" {{*}} type=
+# RUN(FACTS): facts enforced mechanisms=all
+# FACTS: field {{*}} "x" source=written type=undefined|null|string slot=JSValue
+# RUN(SAME): facts enforced mechanisms=all
+# SAME-NOT: "x" {{*}} held=
+# SAME-NOT: differs-from-table
+
+module m0 path="row-that-is-stored-what-nobody-has-seen-leaves-its-place-no-type.ts" displayPath="row-that-is-stored-what-nobody-has-seen-leaves-its-place-no-type.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Above" module=m0 position=89 constructor=f1 fields=[{key="x" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="y" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Below" module=m0 position=189 base=L0 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired] originLayout=L0 originField=0}, {key="y" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired, IsInherited] originLayout=L0 originField=1}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @83
+    v1 = NewClass v0 layout=L0 @83
+    PutModuleVariable v1 variable=g0 @83
+    v3 = FinishClass v1 layout=L0 @83
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @83
+    v5 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @83
+    v6 = ResolveHeritage v5 @203
+    v7 = NewClosure function=f2 @183
+    v8 = NewClass v7, v5, v6 layout=L1 @183
+    PutModuleVariable v8 variable=g1 @183
+    v10 = FinishClass v8 layout=L1 @183
+    v11 = Convert v10 declared={type=f2 flags=[IsFromCompiler]} @183
+    v12 = Convert v10 declared={type=f2 flags=[IsFromCompiler]} @183
+    v13 = Builtin builtin=GlobalThis @232
+    v14 = PropGet v13 key="sink" [isFreeName] @232
+    v15 = Call v14, -, v5, v12 calleeName="sink" @232
+    v16 = Undefined @232
+    Return v16 @232
+}
+function f1 name="Above" module=m0 position=130 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: undefined|null|string, v2: undefined|null|string):
+    v3 = GetConstructPrototype v0 layout=L0 @130
+    v4 = NewObject v3 layout=L0 @130
+    v5 = Convert v4 declared={type=L0} @130
+    v6 = CallDirect v5 function=f3 @130
+    PropSet v5, v1 key="x" @155
+    PropSet v5, v2 key="y" @167
+    v9 = Undefined @167
+    v10 = TypeTest v9 testedType=object @167
+    Branch v10 -> taken b1(| 0), notTaken b2(v5) @167
+  b1(v11):
+    Jump -> next b2(v11) @167
+  b2(v12):
+    Return v12 @167
+}
+function f2 name="Below" module=m0 position=189 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @189
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @189
+    v5 = Convert v4 declared={type=L1} @189
+    v6 = CallDirect v5 function=f4 @189
+    Return v5 @189
+}
+function f3 module=m0 position=89 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @89
+    v2 = Undefined @89
+    PropDefine v1, v2 key="x" @97
+    v4 = Undefined @89
+    PropDefine v1, v4 key="y" @108
+    v6 = Undefined @89
+    Return v6 @89
+}
+function f4 module=m0 position=189 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @189
+    v2 = Builtin builtin=GlobalThis @220
+    v3 = PropGet v2 key="source" [isFreeName] @220
+    v4 = Call v3 calleeName="source" @220
+    PropDefine v1, v4 key="x" @211
+    v6 = Undefined @189
+    Return v6 @189
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+function f7 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f8 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f8
+runtimefunction id=ArrayIteratorPrototypeNext function=f7 visibility=Private

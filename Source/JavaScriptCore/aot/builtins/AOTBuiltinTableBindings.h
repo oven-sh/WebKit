@@ -61,37 +61,19 @@ enum class BuiltinDirectValue : uint8_t {
     Boolean,
     Int32,
     Double,
-    // An address and a count, in two registers. The function has the memory until it returns, and never the cell.
-    Bytes,
-    BytesOfReceiver,
-    // A part of a view. Where it starts and ends, in bytes, are the last arguments of the call: two for each such parameter, in their order.
-    BytesInRange,
-    BytesOfReceiverInRange,
-    Characters,
-};
-
-// Set in the address of characters that have 16 bits each.
-inline constexpr uintptr_t wideCharactersBit = static_cast<uintptr_t>(1) << 63;
-
-// What a function with returnsFields answers: the fields of the layout that its row returns.
-struct BuiltinDirectFields {
-    uint64_t first;
-    uint64_t second;
 };
 
 struct BuiltinDirectFunctionBinding {
     static constexpr unsigned maxParameterCount = 6;
 
-    static constexpr bool takesReceiver(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::NativeObjectOfReceiver || parameter == BuiltinDirectValue::Receiver || parameter == BuiltinDirectValue::BytesOfReceiver || parameter == BuiltinDirectValue::BytesOfReceiverInRange || parameter == BuiltinDirectValue::FrameOfValues; }
-    static constexpr bool takesBounds(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::BytesInRange || parameter == BuiltinDirectValue::BytesOfReceiverInRange; }
+    static constexpr bool takesReceiver(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::NativeObjectOfReceiver || parameter == BuiltinDirectValue::Receiver || parameter == BuiltinDirectValue::FrameOfValues; }
     static constexpr bool takesArgument(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::FrameOfValues || (parameter != BuiltinDirectValue::Realm && !takesReceiver(parameter)); }
     bool takesReceiver() const { return std::ranges::any_of(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) { return takesReceiver(parameter); }); }
     bool takesFrame() const { return std::ranges::contains(std::span(parameters).first(parameterCount), BuiltinDirectValue::FrameOfValues); }
     bool entersHostFunction() const { return parameterCount == 2 && parameters[0] == BuiltinDirectValue::Realm && parameters[1] == BuiltinDirectValue::FrameOfValues; }
-    size_t numberOfBounds() const { return 2 * std::ranges::count_if(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) { return takesBounds(parameter); }); }
     size_t minArgumentCount() const
     {
-        return numberOfBounds() + std::ranges::count_if(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) {
+        return std::ranges::count_if(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) {
             return takesArgument(parameter) && parameter != BuiltinDirectValue::RestOfValues && parameter != BuiltinDirectValue::FrameOfValues && parameter != BuiltinDirectValue::ValueOrEmpty;
         });
     }
@@ -100,8 +82,6 @@ struct BuiltinDirectFunctionBinding {
     const void* function { nullptr };
     std::array<BuiltinDirectValue, maxParameterCount> parameters { };
     uint8_t parameterCount { 0 };
-    bool returnsFields { false };
-    // Returns a double in the floating-point return register. It cannot fail.
     bool returnsNumber { false };
     uint16_t offsetOfNativeObject { 0 };
 };
@@ -120,7 +100,6 @@ struct BuiltinHostNumberBinding {
 
 struct BuiltinBindingSet {
     std::span<const BuiltinClassBinding> classes { };
-    // Stores the Structure of the instances of each of the classes that names it and whose Structure the realm has made, at the index of the class. One function for all: every start of a program asks.
     void (*findInstanceStructures)(JSGlobalObject*, std::span<Structure*>) { nullptr };
     std::span<const BuiltinCachedGetterBinding> cachedGetters { };
     std::span<const BuiltinCustomGetterBinding> customGetters { };
@@ -157,7 +136,6 @@ extern const EngineBindingSet engineBuiltinBindings;
 struct BuiltinNativeFunction {
     NativeFunction::Ptr function { nullptr };
     unsigned length { 0 };
-    // Of the function object. A stack trace lists the function under it, and lists none that has no name here.
     ASCIILiteral name { };
 };
 
@@ -165,7 +143,6 @@ class BuiltinBindings {
 public:
     JS_EXPORT_PRIVATE static void registerHost(const BuiltinBindingSet&);
     JS_EXPORT_PRIVATE static bool hasHost();
-    // A host lists the native helpers of the engine among its direct functions. A program without a host calls this before it compiles or runs anything.
     JS_EXPORT_PRIVATE static void bindNativeHelpersOfEngine();
     static bool provides(BuiltinOrigin);
 
@@ -189,7 +166,6 @@ public:
     static std::optional<LinkTimeConstant> linkTimeConstantOf(BuiltinID);
 };
 
-// Nothing where the class has no test, or its test asks for a ClassInfo that nothing has bound.
 std::optional<bool> passesInstanceTest(const BuiltinTable&, BuiltinClassID, JSCell*);
 
 } // namespace AOT

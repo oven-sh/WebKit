@@ -28,7 +28,6 @@ static void noteStoreBehindSetup(Encoder& encoder, ArenaVector<StoreBehindSetup>
         stores.append(encoder.m_arena, StoreBehindSetup { spill, source.gpr() });
 }
 
-// The Saves of a head run right behind its setup, from the registers that the head is entered with, at a position in the range of each spill.
 static void findSavesBehindSetupOfHead(Encoder& encoder, const Block* block, ArenaVector<StoreBehindSetup>& stores)
 {
     const Allocation::HeadOfFramedPart& head = encoder.m_allocation.headOfFramedPartAbove(block);
@@ -39,8 +38,6 @@ static void findSavesBehindSetupOfHead(Encoder& encoder, const Block* block, Are
     }
 }
 
-// An ArgumentReg is what its register holds where the function is entered, wherever in the entrypoint it stands.
-// A push writes the place ahead of the range of the spill. Among the steps that begin the block and belong to ArgumentRegs alone no other range has ended yet: nothing there reads anything. So no other spill has had the place.
 static void findStoresOfArgumentsBehindSetupOfEntry(Encoder& encoder, const Block* block, ArenaVector<StoreBehindSetup>& stores)
 {
     const Allocation& allocation = encoder.m_allocation;
@@ -79,7 +76,6 @@ std::span<const GPRReg> Encoder::findRegistersThatSetupPushes(const Block* block
     if (stores.isEmpty())
         return { };
 
-    // By the word of the place, counted down from the top of what SlotAssignment lays out. Only a row of words that begins with the first is pushed, so a word further down than there are stores is none of them.
     const uint32_t numberOfStores = stores.size();
     m_registersPushedAtSetup.fill(m_arena, numberOfStores, InvalidGPRReg);
     m_spillsPushedAtSetup.fill(m_arena, numberOfStores, noSpill);
@@ -94,7 +90,6 @@ std::span<const GPRReg> Encoder::findRegistersThatSetupPushes(const Block* block
     while (numberOfWordsPushed < numberOfStores && m_spillsPushedAtSetup[numberOfWordsPushed] != noSpill)
         ++numberOfWordsPushed;
 
-    // Each stretch of words that is not pushed costs a move of the stack pointer, and the stores cost one in all. The setup takes no more instructions than with the stores.
     const unsigned wordsAboveSlots = numberOfWordsAboveSlotsOf(m_frame);
     const bool wordsAreLeftBelow = numberOfWordsBesideSavesOf(m_frame) > wordsAboveSlots + numberOfWordsPushed;
     if (wordsAboveSlots && wordsAreLeftBelow)

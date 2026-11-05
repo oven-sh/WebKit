@@ -21,7 +21,6 @@
 
 namespace JSC { namespace AOT {
 
-// A store by name into a compiled object that has a field of the name.
 StubSignature signatureOfPutKnownField(StubKey)
 {
     StubSignature signature = StubSignature::withoutResult({ gprOf(firstStubOperandRegister), gprOf(storedValueByIdRegister) });
@@ -34,7 +33,6 @@ StubSignature signatureOfCreateKnownField(StubKey key)
     return signatureOfPutKnownField(key);
 }
 
-// The record's second word: the flags are its low half.
 static constexpr ptrdiff_t offsetOfFlagsWord = OBJECT_OFFSETOF(FieldData, flags);
 static_assert(offsetOfFlagsWord == sizeof(uint32_t) && OBJECT_OFFSETOF(FieldData, operandIndex) == offsetOfFlagsWord + sizeof(uint16_t) && FieldData::nameBits < 32);
 static_assert(std::endian::native == std::endian::little);
@@ -45,7 +43,6 @@ static void loadNameOfField(StubAssembler& jit, GPRReg record, GPRReg name)
     jit.and32(TrustedImm32((1 << FieldData::nameBits) - 1), name);
 }
 
-// Goes on where no object above the receiver has an accessor or a property that cannot be written under the name, so that a store creates the receiver's own property.
 static void branchIfChainMayHaveName(StubAssembler& jit, GPRReg object, GPRReg structure, GPRReg name, GPRReg filter, GPRReg scratch, JumpList& mayHaveName)
 {
     RELEASE_ASSERT(noOverlap(object, structure, name, filter, scratch, instanceGPR));
@@ -54,7 +51,6 @@ static void branchIfChainMayHaveName(StubAssembler& jit, GPRReg object, GPRReg s
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesOfObjectPrototypes)), filter);
     jit.urshift32(name, TrustedImm32(6), scratch);
     jit.load64(BaseIndex(filter, scratch, CCallHelpers::TimesEight), scratch);
-    // A shift takes the low six bits of its count.
     jit.urshift64(name, scratch);
     mayHaveName.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
     Jump isAbsent = jit.jump();
@@ -75,7 +71,6 @@ static void branchIfChainMayHaveName(StubAssembler& jit, GPRReg object, GPRReg s
     jit.load64(BaseIndex(filter, scratch, CCallHelpers::TimesEight, OBJECT_OFFSETOF(AbsenceFilter, namesThatStopStores)), scratch);
     jit.urshift64(name, scratch);
     mayHaveName.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
-    // What has happened to a name since the filter was made.
     jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.changesUnderNamesOnChains)), scratch);
     Jump filterIsCurrent = jit.branch32(CCallHelpers::Equal, Address(filter, OBJECT_OFFSETOF(AbsenceFilter, changesUnderNames)), scratch);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesChangedOnChains)), filter);
@@ -88,7 +83,6 @@ static void branchIfChainMayHaveName(StubAssembler& jit, GPRReg object, GPRReg s
     isAbsent.link(&jit);
 }
 
-// The caller knows more: the slot lies in the cell and holds any value as it is, and the type of the field is that of any value.
 static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
 {
     const PutMode mode = static_cast<PutMode>(jit.key().form());
@@ -114,16 +108,13 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), offset);
     jit.and32(TrustedImm32(SlotData::maxOffset), offset);
     Jump isAbsent = jit.branchTest64(CCallHelpers::Zero, slot);
-    // Object::tryStore(): the one store of a field that is stored once creates it.
     isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, flagsOfField, TrustedImm32(fieldIsStoredOnce)));
     jit.store64(value, slot);
     returnAfterStoring(jit, object, value);
 
-    // The field is created, as the stub for any field creates it.
     isAbsent.link(&jit);
     isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot))));
     isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
-    // The key order names a field by its slot key, which for a slot in the cell is its offset.
     isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, offset, TrustedImm32(offsetBitsWithoutSlotKey)));
     if (mode != PutMode::Define) {
         const GPRReg nameOfField = T14;
@@ -145,7 +136,6 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
 }
 
-// The caller knows more: the slot lies in the cell, in this representation, and the type of the field accepts every number. Whatever is no number, and a field that is yet to be created, is left to the stub for any field.
 static void generatePutKnownFieldAcceptingAnyNumber(StubAssembler& jit, SlotRepresentation representation)
 {
     static_assert(traitsOf(SlotRepresentation::OptionalDouble).absentBits == absentDouble && !traitsOf(SlotRepresentation::Double).hasAbsent);
@@ -225,7 +215,6 @@ void generatePutKnownField(StubAssembler& jit)
         .number = jit.allocateScratch(FPRInfo::fpRegT0),
     };
     const Address orderWord(object, offsetOfOrderWord);
-    // A plain data property. What the layout gives another form is left to the run time.
     constexpr uint32_t flagsLeftToRunTime = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand;
     JumpList goesByName;
     using WordsOfField = std::array<uint32_t, sizeof(FieldData) / sizeof(uint32_t)>;
@@ -245,13 +234,11 @@ void generatePutKnownField(StubAssembler& jit)
     computeFieldAddress(jit, registers.field, false, hasNoStorage);
     RELEASE_ASSERT(hasNoStorage.empty());
     Label hasAddress = jit.label();
-    // Object::tryStore(): the one store of a field that is stored once creates it. A store that finds the slot filled is left to the run time, which takes the property out of its slot.
     Jump isNotStoredOnce = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsStoredOnce));
     JumpList slotIsEmpty;
     branchOnFieldPresence(jit, registers.field, registers.scratch, goesByName, slotIsEmpty);
     slotIsEmpty.link(&jit);
     isNotStoredOnce.link(&jit);
-    // storeFieldByTable() asks the accepted kinds in the place of the type of a narrow reference.
     auto emitRememberingOfKind = [&](GPRReg) {
         JumpList isNotRemembered;
         const GPRReg nameOfField = registers.field.representation;
@@ -280,31 +267,24 @@ void generatePutKnownField(StubAssembler& jit)
     FieldStoreExits creationExits;
     JumpList stored;
 
-    // A field that is about to be created has no granule yet. With one it is a field that has storage and is absent.
     hasNoStorage.link(&jit);
     goesByName.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot))));
-    // Where the key order alone says that the field exists, a field without a granule reads as undefined, so that value asks for none: the key is listed and nothing is stored.
     Jump alwaysNeedsStorage = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldMayExistWithoutStorage));
-    // The field may be listed already. The step in the key order then leads to the same order.
     Jump needsNoStorage = jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueUndefined));
     alwaysNeedsStorage.link(&jit);
     createGranuleOfField(jit, registers, ways);
 
-    // While no field lies outside its slot an empty slot says that the object has no such property. What is cached about the objects below a prototype relies on the run time's report of a field that the prototype gets.
     auto leaveUnlessFieldIsCreatedHere = [&] {
         goesByName.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot))));
         goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
-        // The key order names a field by its slot key.
         goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, OBJECT_OFFSETOF(FieldData, slot)), TrustedImm32(offsetBitsWithoutSlotKey)));
         if (mode != PutMode::Define) {
-            // The type has passed, and the store below takes its register for a scratch register.
             const GPRReg nameOfField = registers.type;
             loadNameOfField(jit, record, nameOfField);
             branchIfChainMayHaveName(jit, object, structure, nameOfField, registers.secondScratch, registers.scratch, goesByName);
         }
     };
 
-    // RuntimeLayoutTable::accept() and Object::store(): the type has to take undefined, and for a field whose raw value the mark of the cell answers for the run time sets the mark.
     needsNoStorage.link(&jit);
     FieldData fieldWithRawValue { };
     fieldWithRawValue.holdsRawValueFromBirth = 1;
@@ -328,7 +308,6 @@ void generatePutKnownField(StubAssembler& jit)
     isInCell.link(&jit);
     listCreatedFieldAndReturn(jit, keyOrder, value);
 
-    // The caller has seen that the slot, which lies in the cell, is empty, and that the field takes the value: its type does and its slot does.
     jit.bindEntry(createKnownField(mode));
     loadStructure(jit, object, structure);
     jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), record);
@@ -349,7 +328,6 @@ void generatePutKnownField(StubAssembler& jit)
     jit.jumpToStub(putByIdBehindFieldTable(mode));
 }
 
-// A store by name in code that runs once. What a table remembers pays where the access comes again, so only the table of fields is asked, which is there from the start.
 StubSignature signatureOfPutByIdOnce(StubKey key)
 {
     return signatureOfPutKnownField(key);

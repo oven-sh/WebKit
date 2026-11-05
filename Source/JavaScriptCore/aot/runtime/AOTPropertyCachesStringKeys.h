@@ -31,16 +31,12 @@ namespace JSC { namespace AOT {
 struct Instance;
 struct State;
 
-// What compiled code passes as isLikelyKey to operationAOTConcatenate and operationAOTConcatenatePair.
 enum class UseOfJoinedText : uint8_t {
     Unknown,
     LikelyKey,
-    // A key of properties alone. What is made for it is a name at once, and is not made one by the first access.
     LikelyName,
 };
 
-// The short texts that a program joins to look something up with. Each is one flat string, found again by its parts, by its characters or by the integer that it spells.
-// Nothing here keeps a string alive: an entry goes with the first of its cells that dies.
 class StringKeyCache {
     WTF_MAKE_NONCOPYABLE(StringKeyCache);
     WTF_MAKE_TZONE_ALLOCATED(StringKeyCache);
@@ -63,7 +59,6 @@ public:
                 part = static_cast<uint32_t>(distance >> MarkedBlockCage::shift);
                 areCells |= 1u << index;
             } else if (std::optional<int32_t> integer = value.tryGetAsInt32()) {
-                // A number that compiled code holds as a double is spelled as the integer that it is, -0 as 0.
                 part = *integer;
             } else
                 return false;
@@ -93,7 +88,6 @@ public:
             return true;
         }
 
-        // No parts look like a place that holds nothing.
         bool tryTake(uintptr_t cageBase, std::span<const EncodedJSValue> values)
         {
             if (values.empty() || values.size() > maxNumberOfParts)
@@ -109,7 +103,6 @@ public:
             return true;
         }
 
-        // Two parts as they are encoded, for the table of pairs.
         static constexpr uint32_t pairMark = 1u << 31;
         void takePair(EncodedJSValue first, EncodedJSValue second)
         {
@@ -145,31 +138,18 @@ public:
     }
     void cacheKeyByParts(const KeyByParts&, JSString*);
 
-    // The key of two parts that were joined before. A part is compared as it is encoded: a cell by its address, any other value by its bits. The stub ConcatenateKeyOfPair looks it up.
-    // Beside the key: what KeyedValuePlace says of the key and one Structure, so that a read by the two parts asks one table. The stub GetByValOfKeyOfPair copies it from there.
-    // It holds for as long as the place it was copied from would: forgetPlacesOfPairs().
     struct KeyOfPair {
-        // The two top bits of slotOfPlace say how the value is read, so that the usual reads compare nothing. x86-64 gets both from the flags of one shift.
-        // Under the first three kinds lies half the offset of the word in the cell, which is even.
         enum class Read : uint32_t {
-            // A field with the SlotRepresentation of that name.
             Int32,
             OptionalInt32,
-            // A whole word that holds an encoded value: a field with SlotRepresentation::JSValue or Cell, or an own value that lies in the cell.
-            // With isNarrowReference: a field with SlotRepresentation::Cell32 or OptionalCell32.
             EncodedValueOrNarrowReference,
             Other,
         };
         static constexpr uint32_t isNarrowReference = 1;
-        // The next two bits of Read::Other, above 28 bits.
         enum class OtherRead : uint32_t {
-            // Any other field that lies in the cell: its offset above the eight bits of its representation.
             Field,
-            // Slot::wordIndexFor() of an own value out of line, which is below zero.
             ValueOutOfLine,
-            // PropertyCacheWords::timesAbsencesWereForgotten as it was when nothing was found.
             Absence,
-            // hiddenWordOffset above wordIndex of a KeyedValuePlace::ExtraProperty.
             ExtraProperty,
         };
         static constexpr unsigned bitsBelowRead = 30;
@@ -179,7 +159,6 @@ public:
         static constexpr uint32_t maxOffsetOfOtherField = (1u << (bitsBelowOtherRead - bitsOfRepresentation)) - 1;
         static constexpr uint32_t markOf(Read read) { return static_cast<uint32_t>(read) << bitsBelowRead; }
         static constexpr uint32_t markOf(OtherRead read) { return markOf(Read::Other) | static_cast<uint32_t>(read) << bitsBelowOtherRead; }
-        // The place of one Structure gives way at every eighth read of an object of another. Objects of two that are read in turns would else write over one another at every read.
         static constexpr int32_t stepOfMisses = (UINT8_MAX + 1) / 8;
 
         EncodedJSValue first { 0 };
@@ -194,19 +173,15 @@ public:
     static constexpr uint32_t keyOfPairMultiplier = 0x9e3779b1u;
     static constexpr unsigned keyOfPairHashShift = 13;
     static constexpr uint64_t keyOfPairMaskFor(size_t tableSize) { return (tableSize / waysOfKeysOfPairs - 1) << keyOfPairSetShift; }
-    // Under the mask: how many bytes behind the start of the table the set of the pair lies.
     static constexpr uint32_t hashOfPair(EncodedJSValue first, EncodedJSValue second)
     {
         uint32_t mixed = static_cast<uint32_t>(static_cast<uint64_t>(first) + (static_cast<uint64_t>(second) << 3));
         return mixed * keyOfPairMultiplier >> keyOfPairHashShift;
     }
-    // One empty set, for an instance that has joined nothing yet.
     JS_EXPORT_PRIVATE static const KeyOfPair* noKeysOfPairs();
     void cacheKeyOfPair(EncodedJSValue first, EncodedJSValue second, JSString* key);
     void forgetPlacesOfPairs();
-    // By the words of the instance. A stub sets pairsHavePlaces only where it has written into a table of the instance's own.
     JS_EXPORT_PRIVATE static void forgetPlacesOfPairs(Instance&);
-    // What the last lookup by parts took and did not find, for whoever makes the key. No parts: countAndKinds is zero.
     KeyByParts& lastLookupByParts() { return m_lastLookupByParts; }
 
     ALWAYS_INLINE JSString* tryFindIntegerKey(uint32_t integer) const
@@ -219,10 +194,8 @@ public:
             return nullptr;
         return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)));
     }
-    // Every road to the text of an integer asks for it by the integer first, so the text is entered in no table by its characters.
     JSString* textOfInt32(VM&, int32_t);
 
-    // Null where there is no memory for the text.
     JSString* findOrAdd(VM&, std::span<const Latin1Character>);
     ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
     {
@@ -239,7 +212,6 @@ public:
             return findAmongEqualHashes(pair, characters);
         return matchingKey(entry, characters);
     }
-    // Null where there is no memory for the text.
     JSString* makeKey(VM&, std::span<const Latin1Character>, unsigned hash);
     ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts, bool isName)
     {
@@ -258,7 +230,6 @@ public:
 
     static constexpr size_t maxIndexLength = 10;
     static constexpr size_t minReadableBytes = sizeof(uint64_t);
-    // Reads minReadableBytes whatever the length is.
     static ALWAYS_INLINE std::optional<uint32_t> tryParseIndex(std::span<const Latin1Character> characters)
     {
         size_t length = characters.size();
@@ -277,7 +248,6 @@ public:
     }
 
     enum class Lookup : uint8_t { Found, Absent, AbsentIndex };
-    // The hash is set when the result is Absent.
     ALWAYS_INLINE Lookup findKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const
     {
         ASSERT(characters.size() >= 2 && characters.size() <= maxCachedKeyLength);
@@ -343,7 +313,6 @@ private:
         if (evicts && ++m_keysByPartsEvictionCount > tableSize / 4) [[unlikely]]
             growKeysByParts();
     }
-    // A key that has named a property holds the atom of its characters, which may be a 16-bit string.
     ALWAYS_INLINE JSString* matchingKey(uint64_t entry, std::span<const Latin1Character> characters) const
     {
         JSString* candidate = uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)));
@@ -353,14 +322,12 @@ private:
         return CompactTable::hasCharacters<Latin1Character>(impl, characters) ? candidate : nullptr;
     }
     JSString* findAmongEqualHashes(const uint64_t* pair, std::span<const Latin1Character>) const;
-    // False where the table cannot name the key.
     bool cacheIntegerKey(uint32_t integer, JSString* key);
     size_t removeDeadCachedKeys(VM&);
     size_t removeDeadKeysByParts(VM&);
     size_t removeDeadKeysOfPairs(VM&);
     size_t removeDeadIntegerKeys(VM&);
     void resizeIntegerKeys(size_t tableSize);
-    // The table becomes an empty one of that size and its former entries are handed back. Where there is no memory for it, the table stays as it is: what it does not hold is made again.
     template<typename T>
     static std::optional<Vector<T>> tryResize(Vector<T>& table, size_t size)
     {

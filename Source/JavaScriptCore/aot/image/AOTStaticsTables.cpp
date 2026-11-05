@@ -22,27 +22,22 @@
 
 namespace JSC { namespace AOT {
 
-// No table of this part holds an offset into the tables, so nothing here is linked: the offsets are those of the statics.
-
 static constexpr uint32_t sizeOfStaticsWord = sizeof(uint64_t);
 static constexpr unsigned bitsInByteOfStatics = 8;
 
 static_assert(defaultLimitValue(LimitID::MaxIdentifiers, hostArchitecture()) <= GlobalBindings::identifierMask);
 
-// Whoever finds the word empty takes it for the one closure of the function, which lies in the closure table.
 static bool isFunctionVariableInStatics(const Typed::PlannedVariable& planned)
 {
     return planned.hasWordInStatics() && planned.encoding == Typed::VariableEncoding::FunctionAsZero;
 }
 
-// Where the run time is the first to read such a variable, it makes that closure and keeps it in the cell of the function.
 static bool runTimeMayMakeClosureOfVariable(const Typed::PlannedVariable& planned)
 {
     if (planned.encoding != Typed::VariableEncoding::FunctionAsZero)
         return false;
     switch (planned.storage) {
     case Typed::VariableStorage::Statics:
-        // Whether the variable gets a word depends on what the other groups name, and they are naming it at this moment. One cell too many costs four bytes.
         return true;
     case Typed::VariableStorage::ClosureTable:
         return planned.isDescribedToRunTime;
@@ -50,8 +45,6 @@ static bool runTimeMayMakeClosureOfVariable(const Typed::PlannedVariable& planne
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A variable that the plan added has the module and the name of what it stands for: a variable with a dead zone, a field of an environment that is never made, what the closures of a function that runs once would hold.
-// Null: a heap snapshot shows nothing under the variable. A static field is shown with its class.
 static StringID nameOfVariableInHeapSnapshots(const TableInputs& inputs, VariableID id, ModuleID& module)
 {
     const Typed::Program& program = inputs.program;
@@ -72,7 +65,6 @@ static bool mayHoldCellForHeapSnapshots(const Typed::PlannedVariable& planned)
 {
     switch (planned.storage) {
     case Typed::VariableStorage::Statics:
-        // In a row of the table that representation says that the closure lies in the closure table.
         return traitsOf(planned.representation).holdsCell && planned.representation != SlotRepresentation::DeferredClosure;
     case Typed::VariableStorage::ClosureTable:
         return true;
@@ -99,8 +91,6 @@ void nameWhatStaticsTablesName(const TableInputs& inputs, const GatheredMentions
     }
 }
 
-// `function helper() { }` that only code which is left out calls: nothing names the variable, it gets no word, and its name is in no table. A name that no table holds could be read out of the executable.
-// So this runs behind the groups: what all of them have named says which variables get a word.
 void nameVariablesThatHeapSnapshotsShow(const TableInputs& inputs, const GatheredMentions& mentions, const ParallelLoops& loops, NamesOfTables& names)
 {
     const Typed::Program& program = inputs.program;
@@ -160,7 +150,6 @@ public:
 
         TablePart& part = m_encoder.part;
         part.setTable(ProgramTableIndex::staticsRuns, collectRuns());
-        // The words of modules, of module built-in cells, of data and of literals are among these. They have no table of their own here: each starts empty.
         part.setTable(ProgramTableIndex::staticsRoots, joinAdjacentRoots(m_statics.roots.span(), sizeOfStaticsWord));
         AOT::sort(m_narrowRoots);
         part.setTable(ProgramTableIndex::staticsNarrowRoots, joinAdjacentRoots(m_narrowRoots.span(), sizeof(uint32_t)));
@@ -169,14 +158,12 @@ public:
     }
 
 private:
-    // One broken row says that the layout is broken. The rows behind it would say the same thing.
     void fail(ASCIILiteral rule, RowOwner owner = { })
     {
         if (!std::exchange(m_hasFailed, true))
             m_encoder.fail(rule, owner);
     }
 
-    // Null where the slot is recorded, else the rule that it breaks.
     ASCIILiteral recordSlot(uint32_t offset, SlotRepresentation representation, uint64_t initialWord)
     {
         SlotTraits traits = traitsOf(representation);
@@ -184,7 +171,6 @@ private:
             return "SlotOutsideStatics"_s;
         if (traits.width < sizeOfStaticsWord && initialWord >> (bitsInByteOfStatics * traits.width))
             return "InitialWordWiderThanSlot"_s;
-        // The layout lists the words that the collector visits whole. The narrow references are listed here.
         if (traits.isNarrowReference)
             m_narrowRoots.append(offset);
         else if (traits.holdsCell && !std::ranges::binary_search(m_statics.roots, offset))
@@ -201,9 +187,6 @@ private:
             fail(brokenRule, id);
             return;
         }
-        // The words in front are read-only until the program is entered.
-        if (placed.offset < m_statics.sizeFilledAtProgramEntry)
-            fail("VariableOutsideItsRegionOfStatics"_s, id);
         if (isFunctionVariableInStatics(placed.plan))
             recordFunctionVariable(id, placed);
     }
@@ -212,37 +195,32 @@ private:
     {
         uint32_t entrypoint = m_encoder.entrypointOf(placed.function, "what the first read makes of the variable"_s, id);
         m_functionVariables.append({ placed.offset, entrypoint });
-        // The run time keeps the closure in the cell that the table of closure functions has for the entry.
         const FunctionNumbers& functions = m_encoder.numbers.functions();
         bool isClosureFunction = entrypoint >= functions.firstClosureFunction().index() && entrypoint < functions.endOfClosureFunctions().index();
         if (!isClosureFunction || !m_encoder.numbers.closureCellNumber(placed.function))
             fail("FunctionVariableWithoutClosureCell"_s, id);
     }
 
-    // The run time counts from the first class on, so the word is writable and filled from the start of the instance.
     void recordClassGuardCount(const PlacedClassGuardCount& count)
     {
         uint32_t word = count.offset / sizeOfStaticsWord;
         bool liesInStatics = !(count.offset % sizeof(uint32_t)) && static_cast<uint64_t>(count.offset) + sizeof(uint32_t) <= m_statics.size;
-        bool isFilledWithInstance = count.offset >= m_statics.sizeFilledAtProgramEntry;
-        if (!liesInStatics || !isFilledWithInstance) {
+        if (!liesInStatics) {
             fail("ClassGuardCountOutsideWordsFilledWithInstance"_s);
             return;
         }
         m_initialWords[word] |= static_cast<uint64_t>(count.firstValue) << (bitsInByteOfStatics * (count.offset % sizeOfStaticsWord));
     }
 
-    // Divided as ProgramStatics divides the words.
     Vector<StaticsRun> collectRuns() const
     {
-        uint32_t firstWordFilledAtInstanceCreation = m_statics.sizeFilledAtProgramEntry / sizeOfStaticsWord;
         uint32_t numberOfWords = static_cast<uint32_t>(m_initialWords.size());
         Vector<StaticsRun> runs;
         for (uint32_t first = 0; first < numberOfWords;) {
             uint64_t bits = m_initialWords[first];
             uint32_t end = first + 1;
             if (bits) {
-                while (end < numberOfWords && m_initialWords[end] == bits && end != firstWordFilledAtInstanceCreation)
+                while (end < numberOfWords && m_initialWords[end] == bits)
                     ++end;
                 runs.append({ first, end - first, static_cast<uint32_t>(bits), static_cast<uint32_t>(bits >> 32) });
             }
@@ -253,7 +231,6 @@ private:
 
     TableEncoder& m_encoder;
     const PlacedStatics& m_statics;
-    // [word of the statics]
     Vector<uint64_t> m_initialWords;
     Vector<uint32_t> m_narrowRoots;
     Vector<FunctionVariableData> m_functionVariables;
@@ -280,7 +257,6 @@ static void encodeTableOfGlobalBindings(TableEncoder& encoder)
     }));
 }
 
-// Where ProgramStatics::cellIn() looks. Nothing: no cell ever lies there.
 static std::optional<SlotData> slotOfVariableInHeapSnapshots(const TableEncoder& encoder, VariableID id, const PlacedVariable& placed)
 {
     if (!mayHoldCellForHeapSnapshots(placed.plan))
@@ -290,7 +266,6 @@ static std::optional<SlotData> slotOfVariableInHeapSnapshots(const TableEncoder&
     FunctionID function = placed.function;
     if (!function && id.index() < encoder.program.variables.size())
         function = encoder.program.at(id).function;
-    // Without the entry and the cell nothing ever makes the closure of the table.
     std::optional<FunctionID> entry = encoder.numbers.closureCellNumber(function) ? encoder.findEntrypoint(function) : std::nullopt;
     return entry && entry->index() <= SlotData::maxOffset ? std::optional(SlotData::create(entry->index(), SlotRepresentation::DeferredClosure)) : std::nullopt;
 }
@@ -313,7 +288,6 @@ static void encodeNamesOfVariables(TableEncoder& encoder)
         return std::tuple(variable.module, variable.data.name, variable.data.slot.encoded());
     });
 
-    // [module]
     Vector<Vector<uint32_t>> closureNumbers(encoder.program.modules.size());
     uint32_t firstClosureFunction = encoder.numbers.functions().firstClosureFunction().index();
     uint32_t endOfClosureFunctions = encoder.numbers.functions().endOfClosureFunctions().index();
@@ -324,7 +298,6 @@ static void encodeNamesOfVariables(TableEncoder& encoder)
             closureNumbers[module.index()].append(entry->index() - firstClosureFunction);
     }
 
-    // A module without such a variable is listed too: its functions lead to the cell that stands for it.
     NamedVariablesWriter writer;
     size_t first = 0;
     for (uint32_t module = 0; module < encoder.program.modules.size(); ++module) {
@@ -349,11 +322,8 @@ void encodeStaticsTables(TableEncoder& encoder)
 {
     const PlacedStatics& statics = encoder.numbers.statics();
     StaticsLayout layout { };
-    layout.sizeFilledAtProgramEntry = statics.sizeFilledAtProgramEntry;
     layout.distanceFromArrayProfileToLastArray = statics.distanceFromArrayProfileToLastArray;
     encoder.part.setTable(ProgramTableIndex::staticsLayout, Vector<StaticsLayout, 1> { layout });
-    encoder.part.setTable(ProgramTableIndex::staticsOfFiles, Vector<StaticsOfFiles> { });
-    encoder.part.setTable(ProgramTableIndex::staticsOfImportedFiles, Vector<uint32_t> { });
     StaticsWordTables(encoder).encode();
     encodeNamesOfVariables(encoder);
     encoder.part.setTable(ProgramTableIndex::staticsClearedEachCollection, statics.clearedEachCollection);

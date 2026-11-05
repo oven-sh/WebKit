@@ -63,7 +63,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PropertyCaches);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HashedSlotTable);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RowDisplacementTable);
 
-// The planes, and a bit for each cell of a plane. A cell is the base of a row plus a column. A plane ends with a whole word of bits, and one more word follows: freeCellsFrom() reads two.
 struct PagesOfPlanes {
     explicit constexpr PagesOfPlanes(uint32_t numberOfBases)
         : sizeOfCellsInPlane(roundUpToMultipleOf<64>(static_cast<size_t>(numberOfBases) + RowDisplacementTable::numberOfColumns) * sizeof(PackedSlot))
@@ -92,7 +91,6 @@ static void* reservePagesOfTable(VM& vm, size_t size)
 #if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
 static constexpr bool pagesOfTablesCanGrow = true;
 
-// What the pages held stays, what is added is zero. A refusal changes nothing.
 static void* tryGrowPagesOfTable(VM& vm, void* pages, size_t size, size_t newSize)
 {
     void* result = mremap(pages, size, newSize, MREMAP_MAYMOVE);
@@ -115,7 +113,6 @@ static uint32_t numberOfBasesAtStart(uint32_t limitOfBases)
     return pagesOfTablesCanGrow ? std::min(RowDisplacementTable::initialNumberOfBases, limitOfBases) : limitOfBases;
 }
 
-// The structure heap is the process's, and a Structure is its VM's alone: the VMs write to different words.
 StructureRows& StructureRows::singleton()
 {
     static StructureRows* rows;
@@ -137,7 +134,6 @@ StructureRows::StructureRows()
 #if OS(LINUX)
     while (madvise(words, sizeOfWords, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
 #endif
-    // SAFETY: The pointer lies outside the allocation. It is only indexed with the bits of a StructureID shifted by granuleShift: the low 32 bits of an address in the structure heap, which does not cross a 4 GB boundary.
     m_rowsForStructureIDZero = static_cast<uint32_t*>(words) - (static_cast<uint32_t>(start) >> StructureRowWords::granuleShift);
 }
 
@@ -180,7 +176,6 @@ RowDisplacementTable::~RowDisplacementTable()
     pages.release(m_occupied, PagesOfPlanes(m_numbersOfBasesWithPages[numberOfSlotAccesses]).sizeOfOccupied);
 }
 
-// Where there is no room for more pages the table stays as large as it is, and rows give way to rows as they do at the limit.
 bool RowDisplacementTable::tryGrow()
 {
     if (m_capacityOfBases >= m_limitOfBases)
@@ -586,7 +581,6 @@ uint32_t RowDisplacementTable::createRow(Structure* structure, uint16_t column)
     m_rows[number].owner = structure->id();
     m_rowsWrittenSinceLastSweep.set(number);
     last = { column, number };
-    // A free row has no columns, and the first few lie in the row itself.
     bool hadRoom = m_rows[number].columns.tryAppend(column);
     ASSERT_UNUSED(hadRoom, hadRoom);
     reserve(base, markerOfRow(number));
@@ -789,8 +783,6 @@ auto HashedSlotTable::findChainDependentEntry(StructureID structureID, UniquedSt
     return entry && entry->get().slot.has(Slot::dependsOnChain) ? entry : nullptr;
 }
 
-// A stub copies what a slot says about an addition or a field into a place, which is found by the cell of the key: nothing leads from the name to the places. Whoever is told about a change asks this table whether it still has the slot,
-// so a place may not outlive it, whether it is removed, replaced or pushed out.
 NEVER_INLINE void HashedSlotTable::forgetPlacesCopiedFromSlotForStores(const Slot& slot)
 {
     if (slot.kind != Slot::Kind::Transition && slot.kind != Slot::Kind::Field && slot.kind != Slot::Kind::FieldCreation)
@@ -940,7 +932,6 @@ static std::optional<uint32_t> columnForNumber(std::optional<uint32_t> identifie
     return identifierNumber && RowDisplacementTable::hasColumn(*identifierNumber) ? identifierNumber : std::nullopt;
 }
 
-// The cells in front are those of every realm of the VM and go by the number. A symbol that each realm creates for itself is filed by the symbol, in the hashed table.
 static std::optional<uint32_t> frontColumnFor(VM& vm, const CachedName& name)
 {
     std::optional<uint32_t> column = columnForNumber(name.identifierNumber);
@@ -964,7 +955,6 @@ VMPropertyCaches::VMPropertyCaches(VM& vm)
     vm.aotState().caches->add(CacheKind::WeakByKey, "absence filters"_s, *this);
 }
 
-// A filter names its Structure by its number, and the number of one that has ended goes to another.
 size_t VMPropertyCaches::removeDeadEntries(VM& vm, CollectionScope)
 {
     size_t numberRemoved = 0;
@@ -1155,8 +1145,6 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
             return;
         m_filteredObjects.add(holder);
     }
-    // A compiled object's filter is only queried for the names of its own fields, and many names share a bit. A field whose bit is set is looked up directly, so that it does not pay for another name: the accessor
-    // `__proto__` of Object.prototype alone is above nearly every object.
     if (const Object* receiver = compiledObjectOrNull(object)) {
         AbsenceFilter ofAllNames = std::exchange(filled, AbsenceFilter { filled.structureID, filled.generationForStores, { }, filled.changesUnderNames, 0 });
         for (const FieldData& field : receiver->layout().fields()) {
@@ -1190,7 +1178,6 @@ bool VMPropertyCaches::addFilterAndCheckStoreCreatesOwnField(JSGlobalObject* glo
     return storeCreatesOwnField(object, name);
 }
 
-// A filter lets a field's name pass where a plain property lower on the chain hides an accessor, so a name that is gone from `changed` may stop stores as well.
 static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
 {
     Structure* structure = changed->structure();
@@ -1244,14 +1231,12 @@ void VMPropertyCaches::didChangeFilteredObject(JSObject* changed, UniquedStringI
 
 void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
-    // Most objects that report a change are still being filled, and no filter has been built from them yet.
     if (!changed || m_filteredObjects.mayContain(changed))
         didChangeFilteredObject(changed, uidOrNull);
     for (Instance* instance : m_vm.aotState().instances) {
         instance->propertyCaches.accessTable.didChangeObjectOnSomeChain();
         if (std::exchange(instance->propertyCaches.placesSayAbsence, 0)) {
             zeroSpan(instance->keyedValuePlaces().first<KeyedValuePlace::numberOfPlacesPerAccess>());
-            // A pair keeps the low bits of the count beside an absence. Where they come round, no pair keeps one.
             if (!(++instance->propertyCaches.timesAbsencesWereForgotten & StringKeyCache::KeyOfPair::maskBelowOtherRead)) [[unlikely]]
                 StringKeyCache::forgetPlacesOfPairs(*instance);
         }
@@ -1289,8 +1274,6 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
         }
         m_front.remove(id, *column, access);
     }
-    // Evaluated text reads by value what this table holds. The cells in front are for accesses by name alone. No store by value comes here under such a symbol: loadNameOfKeyCell(), Interpreter::tryPutByVal().
-    // So what a store by name has found is filed: a cell in front has no room for an addition, and a store that is filed nowhere comes to the run time every time.
     if (access == SlotAccess::Read && isPreparedBeforeLookups(m_vm, name.uid))
         return;
     if (m_hashedTable.set(name.uid, access, slot) == HashedSlotTable::SetResult::Stored)
@@ -1335,8 +1318,6 @@ bool VMPropertyCaches::hasChainDependent(VM&, uint32_t structureIDBits, UniquedS
     return (column && m_front.hasChainDependentCell(id, *column)) || m_hashedTable.hasChainDependentEntry(id, uid);
 }
 
-// What the slot says now that the prototype object has the member of this name at the offset. Nothing: the name is looked for again.
-// The value of a member of an ordinary object is replaced without a report, so a slot may not go on naming the word of a holder that has the member as it was declared.
 static std::optional<Slot> slotBehindCreatedMember(const Slot& slot, const CreatedMembers& created, UniquedStringImpl* uid, PropertyOffset offset, unsigned attributes)
 {
     if (!slot.structureID || slot.kind == Slot::Kind::Uncacheable)
@@ -1375,7 +1356,6 @@ static std::optional<Slot> slotBehindCreatedMember(const Slot& slot, const Creat
 
 static bool belongsToOneObject(Structure*);
 
-// A walk passes a prototype object without members under a name that its class does not declare, and the object lacks that name as before.
 bool VMPropertyCaches::keepChainDependent(VM& vm, uint32_t structureIDBits, UniquedStringImpl* uid, const CreatedMembers& created)
 {
     ASSERT(uid);
@@ -1606,7 +1586,6 @@ void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& ans
         didAddProperty(structure, answer.newStructure);
 }
 
-// By what the name says, not by where it lies. The list of the keys of a structure is asked for under no name.
 static unsigned hashOfName(UniquedStringImpl* uidOrNull)
 {
     return uidOrNull ? uidOrNull->existingSymbolAwareHash() : 0;
@@ -1615,7 +1594,6 @@ static unsigned hashOfName(UniquedStringImpl* uidOrNull)
 bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid, SlotAccess access)
 {
     m_counterOfPairToFile = nullptr;
-    // The stub has answered the misses of the pair from the objects, and sends this one to be filed.
     if (std::exchange(m_state.instance.propertyCaches.missIsDueForFiling, 0))
         return true;
     if (m_shouldForgetMisses.load(std::memory_order_relaxed)) [[unlikely]] {
@@ -1627,7 +1605,6 @@ bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid,
     constexpr uint32_t countersOfPair = 4;
     static_assert(hasOneBitSet(numberOfMissCounters) && numberOfMissCounters <= 1u << 24 && missesBeforeFiling < wasFiled && storeMissesBeforeFiling < wasFiled);
     static_assert(hasOneBitSet(countersOfPair) && countersOfPair <= numberOfMissCounters);
-    // Two pairs that fall together count as one. Which do is the same in every run.
     uint32_t hash = WTF::pairIntHash(structureID.bits(), hashOfName(uid) + static_cast<uint32_t>(access));
     uint32_t first = hash % numberOfMissCounters;
     uint8_t bitsOfPair = static_cast<uint8_t>(hash >> 24) & ~maskOfCount;
@@ -1680,7 +1657,6 @@ bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl
 {
     if (structure->id() == m_structureMade)
         return true;
-    // A pair that came once has the highest bit set. One that came again has it clear: it is still found once nothing holds its Structure any more, until a newcomer takes its place. Zero stands for no pair.
     constexpr uint32_t cameOnce = 1u << 31;
     uint32_t hash = WTF::pairIntHash(structure->id().bits(), uid->existingSymbolAwareHash()) | cameOnce;
     constexpr uint32_t numberOfSets = numberOfPairs / pairsPerSet;
@@ -1697,7 +1673,6 @@ bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl
         return SIMD::equal(SIMD::bitOr(words, SIMD::splat32(cameOnce)), SIMD::splat32(hash));
     };
     if (uint32_t* found = findInSet(holdsPair)) {
-        // Newcomers take the lowest place that they may, so it moves above the free ones.
         *found = 0;
         uint32_t* highestFree = set + pairsPerSet - 1;
         while (*highestFree)
@@ -1710,7 +1685,6 @@ bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl
     };
     uint32_t* place = findInSet(isForNewcomers);
     if (!place) {
-        // Each place of a full set is replaced half as often as the one before it, so a pair is remembered until it returns whether few or many others arrive in between.
         m_evictionSeed = m_evictionSeed * 1664525 + 1013904223;
         place = set + std::min<uint32_t>(std::countl_zero(m_evictionSeed), pairsPerSet - 1);
     }
@@ -1718,8 +1692,6 @@ bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl
     return false;
 }
 
-// What was a dictionary only while it was given its names has not grown into one: its Structure is like any other. Other objects may share it, what is added to them is remembered in it,
-// and it may still grow into a dictionary, which is then made flat once.
 void didFinishFilling(Structure* structure)
 {
     ASSERT(!structure->isDictionary());
@@ -1733,7 +1705,6 @@ bool hasFewEnoughNamesToBeFilled(Structure* structure)
     return numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity()) <= maxNamesCopiedIntoTable;
 }
 
-// Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated.
 static void makeFlatWhatWasFilled(VM& vm, JSObject* object)
 {
     if (!object)
@@ -1819,8 +1790,6 @@ void PropertyCaches::fillSiteCacheFromTables(SiteCache site, JSCell* base, uint3
         m_siteCaches.fill(site, *slot, name.uid, { });
         return;
     }
-    // The tables drop their slot when an object of the chain changes, and know of no copy of it: the site waits for the same objects by itself.
-    // They report to the instance of their realm, as canCache() has it.
     JSGlobalObject* globalObject = m_state.instance.globalObject;
     if (JSGlobalObject* realm = structure->realm(); realm && Instance::of(realm) != &m_state.instance) {
         m_siteCaches.didFailToFill(site);
@@ -1857,7 +1826,6 @@ SiteCaches::SiteCaches(State& state, const CustomAccessorTable& customAccessors)
     , m_ownerID(state.chainDependents->addOwner(*this))
     , m_writtenRegions(asByteSpan(m_slots), regionShift, allocateCardsOfSiteCaches(state, m_slots.size_bytes()))
 {
-    // A stub reads the word only behind a site that holds a slot, and only this class fills one.
     state.instance.propertyCaches.siteCacheStates = m_states;
     state.caches->add(CacheKind::WeakByKey, "SiteCaches"_s, *this);
     state.caches->add(CacheKind::StrongRoots, "Structures that sites name"_s, *this);
@@ -1881,7 +1849,6 @@ void SiteCaches::waitLongerForNextFill(const void* site)
 
 bool SiteCaches::didWaitForSamples(const void* site)
 {
-    // The state counts misses.
     uint16_t& missesLeft = stateOf(site).missesLeft;
     if (missesLeft < SiteCacheState::missesOfEmptySitesPerSample)
         return true;
@@ -1897,7 +1864,6 @@ void SiteCaches::forgetHowOftenItWasFilled(const void* site)
 
 void SiteCaches::didFailToFill(SiteCache site)
 {
-    // The misses of all empty sites are counted together, and one in a few asks. With a slot that fits no object the site counts its own, and asks more and more seldom.
     if (site->get().isEmpty()) {
         site->set(m_writtenRegions, Slot::createWithoutPayload(StructureID(), Slot::Kind::Uncacheable, 0));
         m_wasWrittenSinceLastSweep = true;
@@ -1905,7 +1871,6 @@ void SiteCaches::didFailToFill(SiteCache site)
     waitLongerForNextFill(site);
 }
 
-// A slot without a Structure fits no object: didFailToFill() put it there.
 static void countIfRefill(State& state, SiteCache site)
 {
     if (!site->get().isEmpty() && site->get().structureID)
@@ -1926,11 +1891,9 @@ void SiteCaches::fill(SiteCache site, const Slot& slot, UniquedStringImpl* uid, 
 void SiteCaches::clear(SiteCache site)
 {
     site->clear();
-    // What it held holds no more: that says nothing about how many Structures it meets.
     forgetHowOftenItWasFilled(site);
 }
 
-// The site may have been filled again since, for another Structure. A slot that depends on no chain stays.
 void SiteCaches::dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl*)
 {
     if (m_slots[siteIndex].get().has(Slot::dependsOnChain))
@@ -1992,8 +1955,6 @@ static void forEachStructureNamedBySlotOfSite(const Slot& slot, const Invocable<
     }
 }
 
-// A Structure that a site names lives on while what it leads to lives: objects of it come again, `for (const row of JSON.parse(text))`, and between two such texts no object has it.
-// No second object comes with the Structure of one object, so that one ends with its object, and the names that it lists with it.
 template<typename Visitor>
 void SiteCaches::visitRoots(Visitor& visitor)
 {
@@ -2074,7 +2035,6 @@ AnswersAtSites::AnswersAtSites(State& state, SiteCaches& states)
     , m_requestsOfPages(state.tableArena.allocate<uint8_t>((m_indices.size() >> m_placesInPageShift) + 1))
     , m_ownerID(state.chainDependents->addOwner(*this))
 {
-    // The first are SiteAnswers::forPlacesWithout().
     m_places.append(UINT32_MAX);
     state.caches->add(CacheKind::WeakByKey, "AnswersAtSites"_s, *this);
 }
@@ -2094,13 +2054,11 @@ bool AnswersAtSites::isDueForFilling(uint32_t place)
     if (!(std::exchange(word, word | bit) & bit))
         return false;
     if (!answersOf(place)) {
-        // The first answer among the places of a page of indices makes the page the process's own. A page is worth that where several of its places ask.
         uint8_t& requests = m_requestsOfPages[place >> m_placesInPageShift];
         if (requests < requestsThatOpenPage) {
             ++requests;
             return false;
         }
-        // The states are shared by many places. One that has nothing to wait for does not ask.
         if (!(m_placesThatFailed[missBit / 64] & bit))
             return true;
     }
@@ -2131,7 +2089,6 @@ void AnswersAtSites::giveBackIfEmpty(uint32_t number)
     SiteAnswers& answers = m_answers[number];
     if (!answers.isEmpty() || m_places[number] == UINT32_MAX)
         return;
-    // An answer without a key may still hold the operand that it lent.
     answers = { };
     m_indices[m_places[number]] = 0;
     m_places[number] = UINT32_MAX;
@@ -2164,13 +2121,11 @@ void AnswersAtSites::fill(uint32_t place, SiteUse use, const AnswerByStructure& 
     SiteAnswers::Answer& other = answers->besideNewestByStructure(use);
     const bool otherIsFirst = &other == &answers->first;
     bool didBorrow = borrowsOperandOfOtherAnswer(use, newest);
-    // Nobody meets the new operand under the old key.
     if (didBorrow)
         newest = { };
     if (borrowsOperandOfOtherAnswer(use, filled.answer))
         other = SiteAnswers::withoutKey(use, otherIsFirst, static_cast<uint32_t>(filled.indexInStorageOfHolder));
     else if (use == SiteUse::Call) {
-        // A place that calls keeps the answer that it got last in front of the one before.
         other = newest;
     } else if (didBorrow)
         other = SiteAnswers::withoutKey(use, otherIsFirst);
@@ -2192,7 +2147,6 @@ void AnswersAtSites::fillByShape(uint32_t place, SiteAnswers::Answer answer)
     answers->first = answer;
 }
 
-// The place may have been filled again since, for another Structure: that answer goes as well, and comes again with the next miss.
 void AnswersAtSites::dropChainDependent(VM&, uint32_t place, UniquedStringImpl*)
 {
     SiteAnswers* answers = answersOf(place);
@@ -2223,7 +2177,6 @@ size_t AnswersAtSites::removeDeadEntries(VM& vm, CollectionScope scope)
         SiteAnswers& answers = m_answers[number];
         bool didClear = false;
         for (SiteAnswers::Answer* answer : { &answers.first, &answers.second }) {
-            // What an answer names above the receiver is held by the Structure of the receiver, through the prototypes.
             if (!answer->isByStructure() || vm.heap.isMarked(answer->structureID().decode()))
                 continue;
             *answer = { };
@@ -2276,7 +2229,6 @@ static std::optional<AnswersAtSites::AnswerByStructure> answerOfSlot(SiteUse use
         if (slot.has(Slot::isOwn)) {
             if (slot.has(Slot::isOutOfLine))
                 return answer(Form::OwnValueInStorage, static_cast<uint32_t>(wordIndex));
-            // A place that calls looks whether the word holds a value in either case.
             return answer(use == SiteUse::Read ? Form::OwnValueInCell : Form::OwnFieldInCell, static_cast<uint32_t>(wordIndex) * sizeof(EncodedJSValue));
         }
         if (!slot.holder || usesWideReferences)
@@ -2323,10 +2275,8 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     if (compiledObjectStructureOrNull(structure)) {
         auto* object = uncheckedDowncast<Object>(base);
         const FieldData* field = object->fieldNamed(m_state, name.uid);
-        // The shape says where the slot lies, whatever this object holds there: of an object that leaves the property out the stub answers by the object's own marks.
         bool isLeftOut = field && use == SiteUse::Read && !object->isInSlot(*field) && !(object->orderWord() & orderWordHasFieldOutsideSlot);
         if (std::optional<uint32_t> offset = field ? offsetOfPlainValueInCell(*field) : std::nullopt; offset && (object->isInSlot(*field) || isLeftOut)) {
-            // Objects of two layouts come in turns: the second layout is remembered by the Structure of its object.
             const SiteAnswers* answers = m_answersAtSites.answersOf(place);
             bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != object->shapeWord() && !answers->second.key;
             if (use == SiteUse::Read && !hasRoomOnlyByStructure) {
@@ -2340,7 +2290,6 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
             return;
         }
         if (std::optional<SiteAnswers::Answer> answer = field && use == SiteUse::Read ? answerForTypedSlotInCell(*object, *field) : std::nullopt; answer && (object->isInSlot(*field) || isLeftOut)) {
-            // As above, where a form by Structure reads such a slot.
             const SiteAnswers* answers = m_answersAtSites.answersOf(place);
             bool hasRoomOnlyByStructure = answers && answers->holdsShape() && answers->first.key != answer->key && !answers->second.key;
             std::optional<SiteAnswers::Form> form = hasRoomOnlyByStructure ? SiteAnswers::formByStructureOfSlotInCell(field->slot.representation()) : std::nullopt;
@@ -2358,10 +2307,8 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     }
 
     std::optional<Slot> slot = m_tables.find(id, name, SlotAccess::Read);
-    // What the extra properties of one object are may change under its Structure.
     if (slot && slot->kind == Slot::Kind::ExtraProperty && belongsToOneObject(structure))
         slot = std::nullopt;
-    // A field of a compiled object may leave its slot under one Structure.
     if (slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure))
         slot = std::nullopt;
     std::optional<AnswersAtSites::AnswerByStructure> answer = slot ? answerOfSlot(use, *slot, m_vm.heap.cage().base(), m_state.instance.options().useWideReferences(), m_state.objectThatHoldsUndefined) : std::nullopt;
@@ -2373,7 +2320,6 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
         m_answersAtSites.fill(place, use, *answer, name.uid, { });
         return;
     }
-    // As for a site with a Slot: the tables drop theirs when an object of the chain changes, and know of no copy of it.
     JSGlobalObject* globalObject = m_state.instance.globalObject;
     if (JSGlobalObject* realm = structure->realm(); (realm && Instance::of(realm) != &m_state.instance) || structure->typeInfo().type() == GlobalProxyType) {
         m_answersAtSites.didFailToFill(place);
@@ -2415,7 +2361,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCallSetterOfSlot, void, (Instance* instance
 static void addPropertyByTransition(VM& vm, JSObject* target, Structure* newStructure, PropertyOffset offset, JSValue value)
 {
     ASSERT(newStructure->isValidOffset(offset) && newStructure->inlineCapacity() == target->structure()->inlineCapacity() && newStructure->storedPrototype() == target->structure()->storedPrototype());
-    // As the handler of the store: the room lies in front of the indexing header of an array that was born with it.
     bool hasRoomInOwnCell = !target->structure()->outOfLineCapacity() && newStructure->outOfLineCapacity() == initialOutOfLineCapacity
         && std::bit_cast<char*>(target->butterfly()) == std::bit_cast<char*>(target) + sizeOfArrayWithStorage(0, propertyRoomOfArray);
     if (!hasRoomInOwnCell)
@@ -2436,7 +2381,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddPropertyBySlot, void, (Instance
     RELEASE_ASSERT(slot.kind == Slot::Kind::ExtraPropertyAddition);
     Object* receiver = uncheckedDowncast<Object>(object);
     // The slot is a copy out of a weak cache, and no object need have this Structure yet: this pointer alone keeps it alive while the extra properties are allocated.
-    // The collector knows no StructureID on the stack, so the compiler must not make the pointer anew from the ID behind the call.
     Structure* newStructure = WTF::opaque(slot.extraPropertyAddition.newStructureID.decode());
     JSObject* extraProperties = receiver->ensureExtraProperties(vm);
     RELEASE_ASSERT(extraProperties);

@@ -28,7 +28,6 @@ enum class NameForm : uint8_t { AsWritten, InFrames };
 
 JS_EXPORT_PRIVATE String functionName(const FunctionDescription&, NameForm);
 JSString* functionSourceText(JSGlobalObject*, FunctionID);
-// UTF-8. Empty where the executable does not hold the text.
 std::span<const Latin1Character> functionSourceBytes(FunctionID);
 
 String writtenFunctionName(FunctionID);

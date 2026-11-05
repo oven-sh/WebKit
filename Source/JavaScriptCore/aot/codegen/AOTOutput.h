@@ -18,34 +18,6 @@
 #include <span>
 #include <type_traits>
 
-// The language of the emitters. Each method appends to the block Output::m_block, through the one chain of Machine::Builder: fold, find by number, lower for the target, append.
-//
-// For a reader who knows B3 and FTL::Output. Opcodes, types and everything not listed keep their names in Machine: B3::Add is Machine::Add, B3::Int64 is Machine::Int64.
-//
-//     B3::Value, B3::MemoryValue, B3::Const64Value, ...    Machine::Operation: no subclasses but PatchOperation. as<B3::ArgumentRegValue>() is isArgumentReg(reg), opcode() == Machine::ArgumentReg
-//     B3::BasicBlock                                       Machine::Block
-//     B3::PatchpointValue, B3::CheckValue                  Machine::PatchOperation
-//     B3::StackmapGenerationParams                         Machine::PatchParameters
-//     B3::StackmapGenerator, RefPtr of it                  Machine::PatchGenerator, a plain pointer: Procedure::createGenerator(functor)
-//     B3::FrequentedBlock, .frequency()                    BlockEdge, .edgeClass()
-//     B3::FrequencyClass                                   Machine::EdgeClass
-//     B3::HeapRange::top(), B3::HeapRange()                Machine::HeapSet::top(), Machine::HeapSet()
-//     B3::Air::StackSlot                                   Machine::StackSlot
-//     B3::Variable, B3::Set, B3::Get                       a Phi of the block that reads it: phiIn(block, type), with anchor() and addIncomingToPhi() in each block that leads there
-//     B3::RelocationSymbol, RelocationSpace                CodeSymbol, SymbolSpace
-//     block->appendNew<B3::Value>(proc, B3::UDiv, ...)     uDiv(), mulHigh(), jump(), phiIn(), upsilon(), slotBase(): nothing is appended past the chain
-//     params.code()                                        params.frame()
-//     params.context().frameIsSetUp                        params.frameIsSetUp()
-//     params.successorLabels(): Vector<Box<Label>>         std::span<MacroAssembler::Label* const>. The pointers may be kept by late paths and by records until the function is linked
-//     code.frameLayout(), code.frameSize()                 Machine::Frame
-//     B3::Air::emitFrameTeardown(jit, code, reg)           Machine::emitFrameTeardown(jit, frame)
-//     B3::Air::emitCalleeSaveRestore(jit, code)            Machine::emitCalleeSaveRestore(jit, frame)
-//     B3::Air::Arg::isValidBitImm64Form(bits)              Machine::isEncodableBitImmediate(Width64, bits)
-//     proc.pinRegister(), proc.setReleasesDeadValues(), out.initialize(), out.initializeConstants(), out.applyBlockOrder(),
-//     heaps.computeRangesAndDecorateInstructions(), proc.deleteOrphans(), B3::ClientPhase, B3::Policy                          gone: delete the call
-//     FTL::ScaleEight, FTL::Output::add                    ScaleEight, Output::add
-//     FTL::Output::fence(read, write)                      fence(): it orders stores and names no heap. What ends loads is a Patch whose effects say what it writes
-
 namespace JSC { namespace AOT {
 
 using LBasicBlock = Machine::Block*;
@@ -55,7 +27,6 @@ using BlockEdge = Machine::Edge;
 using SwitchTarget = Machine::SwitchCase;
 using ScopeFork = Machine::ScopeFork;
 
-// The class of an edge says what the emitter knows of the operation it is generating: which arm is the one that the operation exists for. It is no prediction of how often code runs.
 inline BlockEdge normalEdge(LBasicBlock block) { return BlockEdge(block, Machine::EdgeClass::Normal); }
 inline BlockEdge unlikelyEdge(LBasicBlock block) { return BlockEdge(block, Machine::EdgeClass::Unlikely); }
 inline BlockEdge rareEdge(LBasicBlock block) { return BlockEdge(block, Machine::EdgeClass::Rare); }
@@ -106,7 +77,6 @@ private:
     ptrdiff_t m_offset { 0 };
 };
 
-// A value at the end of a block, on its way to a Phi of a successor.
 class ValueFromBlock {
 public:
     ValueFromBlock() = default;
@@ -138,14 +108,6 @@ public:
         , intPtrEight(const64(8))
     {
     }
-
-    // From Builder, under the names that the emitters call:
-    //     newBlock(), appendTo(), setOrigin(), origin(), m_block
-    //     appendToContinuation(), forkScope(), appendToArm(), appendToJoin()
-    //     phi(type), phiIn(block, type), upsilon(), setPhi(), opaque(), extract(), select(), lowWord()
-    //     argumentRegister(), framePointer(), slotBase()
-    //     jump(), ret(), retVoid(), switchOn()
-    //     findPurePatch(), recordPurePatch(), setDeclaredAccesses(), clearDeclaredAccesses(), suspendDeclaredAccesses(), resumeDeclaredAccesses()
 
     const LValue booleanTrue;
     const LValue booleanFalse;
@@ -195,7 +157,6 @@ public:
     LValue mul(LValue left, LValue right) { return binary(Machine::Mul, left, right); }
     LValue mulHigh(LValue left, LValue right) { return binary(Machine::MulHigh, left, right); }
     LValue uMulHigh(LValue left, LValue right) { return binary(Machine::UMulHigh, left, right); }
-    // The divisor is not zero, and the quotient fits.
     LValue div(LValue left, LValue right) { return binary(Machine::Div, left, right); }
     LValue uDiv(LValue left, LValue right) { return binary(Machine::UDiv, left, right); }
     LValue mod(LValue left, LValue right) { return binary(Machine::Mod, left, right); }
@@ -218,7 +179,6 @@ public:
     LValue bitAnd(LValue left, LValue right) { return binary(Machine::BitAnd, left, right); }
     LValue bitOr(LValue left, LValue right) { return binary(Machine::BitOr, left, right); }
     LValue bitXor(LValue left, LValue right) { return binary(Machine::BitXor, left, right); }
-    // The amount is an Int32, of which the machine reads the low five or six bits.
     LValue shl(LValue value, LValue amount) { return binary(Machine::Shl, value, amount); }
     LValue aShr(LValue value, LValue amount) { return binary(Machine::SShr, value, amount); }
     LValue lShr(LValue value, LValue amount) { return binary(Machine::ZShr, value, amount); }
@@ -249,7 +209,6 @@ public:
     LValue lessThan(LValue left, LValue right) { return binary(Machine::LessThan, left, right); }
     LValue lessThanOrEqual(LValue left, LValue right) { return binary(Machine::LessEqual, left, right); }
 
-    // Of numbers, Equal and the four orders are false where an operand is NaN, and NotEqual is true.
     LValue doubleEqual(LValue left, LValue right) { return equal(left, right); }
     LValue doubleEqualOrUnordered(LValue left, LValue right) { return binary(Machine::EqualOrUnordered, left, right); }
     LValue doubleNotEqualOrUnordered(LValue left, LValue right) { return notEqual(left, right); }
@@ -272,7 +231,6 @@ public:
     LValue testIsZeroPtr(LValue value, LValue mask) { return isNull(bitAnd(value, mask)); }
     LValue testNonZeroPtr(LValue value, LValue mask) { return notNull(bitAnd(value, mask)); }
 
-    // An operand that is written as a number becomes a constant of the type of the operand before it.
     template<typename T> static constexpr bool isImmediate = std::is_integral_v<T> || std::is_enum_v<T>;
     LValue constantOfTypeOf(LValue value, int64_t constant) { return constantOfType(value->type(), constant); }
 #define AOT_DEFINE_OPERATION_WITH_IMMEDIATE(name) \
@@ -332,7 +290,6 @@ public:
     LValue loadPtr(TypedPointer pointer) { return load(pointer, Machine::pointerType()); }
     LValue loadFloat(TypedPointer pointer) { return load(pointer, Machine::Float); }
     LValue loadDouble(TypedPointer pointer) { return load(pointer, Machine::Double); }
-    // The caller has asked valueKnownToBeReadThrough() and was told nothing. The load stays though nothing reads its result, and Procedure::trappingAccesses() lists it with the origin that is set now.
     LValue load8ZeroExt32Trapping(TypedPointer pointer) { return loadAs(Machine::Load8Z, Machine::Int32, pointer, Trapping::Yes); }
     std::optional<int64_t> valueKnownToBeReadThrough(TypedPointer pointer) { return Machine::Builder::valueKnownToBeReadThrough(pointer.base()); }
     LValue load8SignExt32(LValue base, const Machine::AbstractHeap& field) { return load8SignExt32(address(base, field)); }
@@ -344,11 +301,6 @@ public:
     LValue loadPtr(LValue base, const Machine::AbstractHeap& field) { return loadPtr(address(base, field)); }
     LValue loadDouble(LValue base, const Machine::AbstractHeap& field) { return loadDouble(address(base, field)); }
     LValue load8ZeroExt32Trapping(LValue base, const Machine::AbstractHeap& field) { return load8ZeroExt32Trapping(address(base, field)); }
-    LValue load32OffWhatMayBeNoCell(LValue base, const Machine::AbstractHeap& field)
-    {
-        TypedPointer pointer = address(base, field);
-        return Machine::Builder::load32OffWhatMayBeNoCell(pointer.base(), pointer.offset(), *pointer.heap());
-    }
 
     LValue store(LValue value, TypedPointer pointer) { return storeAs(Machine::Store, value, pointer); }
     LValue store32As8(LValue value, TypedPointer pointer) { return storeAs(Machine::Store8, value, pointer); }
@@ -390,28 +342,20 @@ public:
     unsigned minCasesForJumpTable() const { return Machine::minCasesForJumpTable; }
 
     Machine::PatchOperation* patchpoint(LType type) { return patch(type); }
-    // Two blocks merge only where their Patches share one generator object, so a Patch with a generator of its own has a record of its own.
     Machine::PatchOperation* patchpointWithUniqueRecord(LType type) { return patch(type); }
-    // The generator writes the late path, which is entered where the condition is not zero.
     Machine::PatchOperation* checkIsZero(LValue failureCondition) { return check(failureCondition); }
 
-    // The address of code or of read-only data: SymbolSpace::Function, Stub, Constant, JumpTable, RegExp.
     LValue relocatable(SymbolSpace space, uint32_t index, uint16_t entry = primaryEntry) { return addressOf(CodeSymbol { space, index, entry }); }
-    // `mention` is an index that MentionList::add() gave. The number that Image gives the thing, as an Int32.
     LValue number(uint32_t mention) { return numberOf(CodeSymbol { SymbolSpace::Number, mention }); }
-    // The word of the instance that Image gives the thing. A load or a store through it takes no register for the address.
     TypedPointer instanceWord(const Machine::AbstractHeap& heap, uint32_t mention) { return TypedPointer(heap, instanceAddressOf(CodeSymbol { SymbolSpace::InstanceWord, mention })); }
 
-    // The index of the constant: relocatable(SymbolSpace::Constant, index).
     uint32_t addConstantData(std::span<const uint8_t> bytes, ConstantKind kind) { return m_proc.addConstantData(bytes, alignmentOfConstant(bytes.size()), kind); }
 
-    // The emitter of the operation that is being generated says which form it writes and what it knows, at the head of the arm. A place: where the operation stands has picked the form.
     void noteForm(Typed::Form form, Typed::StateOfKnowledge state, Typed::Place place = Typed::Place::Anywhere)
     {
         if (m_formsSaid) [[unlikely]]
             m_formsSaid->say(form, state, place);
     }
-    // In code that several operations share: it speaks for these alone. For any other it is a part of that one's form.
     void noteFormOf(const Typed::OpcodeSet& operations, Typed::Form form, Typed::StateOfKnowledge state, Typed::Place place = Typed::Place::Anywhere)
     {
         if (!m_formsSaid) [[likely]]

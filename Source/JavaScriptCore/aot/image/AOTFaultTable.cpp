@@ -17,7 +17,6 @@
 #include "AOTInstanceLayout.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTOperationData.h"
-#include "AOTRuntimeReporter.h"
 #include "AOTSectionWriter.h"
 #include "AOTState.h"
 #include "AOTStubDescriptor.h"
@@ -71,12 +70,10 @@ struct FaultTableHeader {
     uint32_t numberOfSecondWords;
     uint32_t defaultSecondWord;
     uint32_t numberOfThirdWords;
-    // As many as the largest of them needs.
     uint32_t bytesOfSecondWord;
     uint32_t reserved;
 };
 
-// Most null checks of a large program name a text whose number does not fit the first word. So the second words lie side by side, in the order of their sites, and a bit for each site says whether it has one.
 struct FaultCheckpoint {
     bool hasSecondWord(uint32_t siteBehindCheckpoint) const { return sitesWithSecondWord[siteBehindCheckpoint / 32] >> (siteBehindCheckpoint % 32) & 1; }
     uint32_t numberOfSecondWordsInFrontOf(uint32_t siteBehindCheckpoint) const
@@ -210,7 +207,6 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
             previousOffset = site.offset;
             nullChecksInBlock += site.isNullCheck();
         }
-        // Until the sums are made, firstNullCheck counts the null checks of the block.
         checkpoints[block] = { offsetBeforeBlock, 0, nullChecksInBlock, 0, { 0, 0 } };
     });
     size_t sizeOfSteps = 0;
@@ -240,7 +236,6 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
     };
     Vector<uint32_t> firstWords = collectWords(0);
     sortAndRemoveDuplicates(loops, firstWords);
-    // Nobody reads the registerNumber of a call site that leaves it zero. The site takes the next word where that differs in nothing else.
     for (size_t i = 0; i + 1 < firstWords.size(); ++i) {
         ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(firstWords[i]);
         if (word.isCallSite() && !word.registerNumber && word.differsOnlyInRegisterNumber(std::bit_cast<ThrowSiteWord>(firstWords[i + 1])))
@@ -386,7 +381,6 @@ Vector<uint8_t> encodeFaultSites(const LinkedFunctions& functions, std::span<con
     if (!numberOfSites)
         return { };
 
-    // Once a Vector can hold this many bytes, no list of the encoder overflows and every count fits 32 bits.
     uint64_t maxSectionSize = FaultTableLayout(numberOfSites, numberOfNullChecks, numberOfNullChecks, numberOfNullChecks, sizeof(uint32_t), numberOfNullChecks).sizeWithSteps(numberOfSites * FaultStep::maxSize);
     if (!checkSectionSize(std::max<uint64_t>(maxSectionSize, numberOfSites * sizeof(CollectedSite)), context))
         return { };
@@ -482,14 +476,12 @@ static void* findStub(const Image& image, StubKey key)
 
 static bool handleNullCheck(const Fault& fault, PlatformRegisters& registers)
 {
-    // A null 32-bit reference decodes to the base of the cell cage.
     if (fault.address >= FaultSite::reach && fault.address - registerOf(registers, cellCageBaseGPR) >= FaultSite::reach)
         return false;
     void* target = findStub(fault.image, throwAtSite(ThrowSiteSource::FaultSite, fault.callerFrame));
     if (!target)
         return false;
 
-    // The call-site table and ThrowAtSite treat the faulting instruction as a near call, whatever its length.
     uintptr_t returnAddress = fault.pc + sizeOfNearCall;
     uint64_t& registerBeforeFault = std::bit_cast<Instance*>(registerOf(registers, instanceGPR))->state->registerBeforeFault;
 #if CPU(ARM64)
@@ -521,7 +513,6 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
     if (leavesOwedError)
         std::bit_cast<Instance*>(instance)->runtime.exceptions.pollLeavesOwedError = 1;
 
-    // The stub is entered as if the load had called it, from a function with a frame record.
     uintptr_t returnAddress = fault.pc + sizeOfLoopPoll;
 #if CPU(ARM64)
     uintptr_t& link = registerOf(registers, ARM64Registers::lr);
@@ -550,133 +541,6 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 }
 #endif
 
-#if AOT_READS_OFF_NO_CELL_FAULT
-static uintptr_t& registerByNumber(PlatformRegisters& registers, unsigned number)
-{
-    static constexpr std::array<int, 16> places { REG_RAX, REG_RCX, REG_RDX, REG_RBX, REG_RSP, REG_RBP, REG_RSI, REG_RDI, REG_R8, REG_R9, REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15 };
-    return reinterpret_cast<uintptr_t&>(registers.machineContext.gregs[places[number]]);
-}
-
-// markOfReadOffNoCell, and behind it `cmpl $constant, offset(base)` or `movl offset(base), destination`: what the encoder writes for OperationFlag::ReadsZeroOffNoCell. The instruction is done as if it had read zero.
-// A base that is a cell by its bits has faulted for another reason: that fault is nobody's.
-static bool handleReadOffNoCell(const uint8_t* pc, PlatformRegisters& registers, bool isInCompiledCode)
-{
-    const uint8_t* cursor = pc;
-    if (*cursor++ != markOfReadOffNoCell)
-        return false;
-    uint8_t rex = (*cursor & 0xf0) == 0x40 ? *cursor++ : 0;
-    constexpr uint8_t rexW = 8;
-    constexpr uint8_t rexR = 4;
-    constexpr uint8_t rexX = 2;
-    constexpr uint8_t rexB = 1;
-    uint8_t opcode = *cursor++;
-    uint8_t modRM = *cursor++;
-    unsigned mode = modRM >> 6;
-    unsigned middle = modRM >> 3 & 7;
-    unsigned base = modRM & 7;
-    if ((rex & rexW) || (mode != 1 && mode != 2))
-        return false;
-    if (base == 4) {
-        uint8_t scaleIndexBase = *cursor++;
-        bool hasIndex = (scaleIndexBase >> 3 & 7) != 4 || (rex & rexX);
-        if (hasIndex)
-            return false;
-        base = scaleIndexBase & 7;
-    }
-    if (rex & rexB)
-        base += 8;
-    cursor += mode == 1 ? 1 : 4;
-
-    uint64_t word = registerByNumber(registers, base);
-    if (word && !(word & JSValue::NotCellMask))
-        return false;
-
-    constexpr uint8_t moveFromMemory = 0x8b;
-    constexpr uint8_t groupOneWithConstantOf32Bits = 0x81;
-    constexpr uint8_t groupOneWithConstantOf8Bits = 0x83;
-    constexpr unsigned compareInGroupOne = 7;
-    if (opcode == moveFromMemory)
-        registerByNumber(registers, middle + (rex & rexR ? 8 : 0)) = 0;
-    else if ((opcode == groupOneWithConstantOf32Bits || opcode == groupOneWithConstantOf8Bits) && middle == compareInGroupOne) {
-        uint32_t constant;
-        if (opcode == groupOneWithConstantOf8Bits)
-            constant = static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(*cursor++)));
-        else {
-            memcpy(&constant, cursor, sizeof(constant));
-            cursor += sizeof(constant);
-        }
-        // The flags of 0 - constant.
-        uint32_t difference = 0 - constant;
-        constexpr uintptr_t carry = 1 << 0;
-        constexpr uintptr_t parity = 1 << 2;
-        constexpr uintptr_t auxiliaryCarry = 1 << 4;
-        constexpr uintptr_t zero = 1 << 6;
-        constexpr uintptr_t sign = 1 << 7;
-        constexpr uintptr_t overflow = 1 << 11;
-        uintptr_t flags = 0;
-        if (constant)
-            flags |= carry;
-        if (!(std::popcount(difference & 0xff) & 1))
-            flags |= parity;
-        if (constant & 0xf)
-            flags |= auxiliaryCarry;
-        if (!difference)
-            flags |= zero;
-        if (difference >> 31)
-            flags |= sign;
-        if (constant == 0x80000000u)
-            flags |= overflow;
-        uintptr_t& flagsOfThread = reinterpret_cast<uintptr_t&>(registers.machineContext.gregs[REG_EFL]);
-        flagsOfThread = (flagsOfThread & ~(carry | parity | auxiliaryCarry | zero | sign | overflow)) | flags;
-    } else
-        return false;
-
-    // Each costs microseconds where the test that is left out costs two instructions.
-    if (isInCompiledCode)
-        countEvent(*std::bit_cast<Instance*>(registerOf(registers, instanceGPR))->vm, RuntimeCounterID::ReadsOffNoCellThatFaulted);
-    MachineContext::setInstructionPointer(registers, const_cast<uint8_t*>(cursor));
-    return true;
-}
-
-static void handleFaultOfProbe(int signalNumber, siginfo_t*, void* context)
-{
-    PlatformRegisters& registers = WTF::registersFromUContext(static_cast<ucontext_t*>(context));
-    auto instructionPointer = MachineContext::instructionPointer(registers);
-    if (instructionPointer && handleReadOffNoCell(static_cast<const uint8_t*>(instructionPointer->untaggedPtr()), registers, false))
-        return;
-    // Any other fault is nobody's. It comes again, under the default action.
-    signal(signalNumber, SIG_DFL);
-}
-
-// An image is used before the engine is set up, so no handler of the engine's is in force: the read has an action of its own, and the one that was there comes back behind it.
-NEVER_INLINE bool readThroughAddressWithTopByteFaults(uint8_t topByte)
-{
-    static const uint32_t words[4] { 1, 1, 1, 1 };
-    static_assert(markOfReadOffNoCell == 0x3e);
-    struct sigaction action { };
-    struct sigaction previous;
-    action.sa_sigaction = handleFaultOfProbe;
-    action.sa_flags = SA_SIGINFO;
-    sigemptyset(&action.sa_mask);
-    RELEASE_ASSERT(!sigaction(SIGSEGV, &action, &previous));
-    uintptr_t base = std::bit_cast<uintptr_t>(&words[0]) | static_cast<uintptr_t>(topByte) << 56;
-    uint32_t word;
-    asm volatile(
-        ".byte 0x3e\n"
-        "movl 12(%[base]), %[word]\n"
-        : [word] "=r"(word)
-        : [base] "r"(base)
-        : "memory");
-    RELEASE_ASSERT(!sigaction(SIGSEGV, &previous, nullptr));
-    return !word;
-}
-#else
-bool readThroughAddressWithTopByteFaults(uint8_t)
-{
-    return true;
-}
-#endif
-
 bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
 {
     auto instructionPointer = MachineContext::instructionPointer(registers);
@@ -684,19 +548,13 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
         return false;
     if (!Image::isRegistered())
         return false;
-    // This may run on another thread than the code it is about, so the registers say which image that code belongs to.
     void* pc = instructionPointer->untaggedPtr();
     const Image* image = Image::findByCodeAddress(pc);
     if (!image)
         return false;
     std::optional<FaultSite> site = image->faultSiteAt(pc);
-    if (!site) {
-#if AOT_READS_OFF_NO_CELL_FAULT
-        return handleReadOffNoCell(static_cast<const uint8_t*>(pc), registers, true);
-#else
+    if (!site)
         return false;
-#endif
-    }
 
     Fault fault {
         .image = *image,
@@ -760,7 +618,6 @@ struct SignalStackOfThread {
 
 } // anonymous namespace
 
-// The handler of another component keeps the stack that it asked for.
 static bool isCodeOfThisProgram(const void* address)
 {
 #if OS(DARWIN)
@@ -774,7 +631,6 @@ static bool isCodeOfThisProgram(const void* address)
 
 void takeFaultsOfThisThreadOnAnotherStack()
 {
-    // The host gives the main thread its stack.
     stack_t current { };
     if (!isMainThread() && !sigaltstack(nullptr, &current) && (current.ss_flags & SS_DISABLE)) {
         WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local SignalStackOfThread stack;

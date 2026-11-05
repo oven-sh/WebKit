@@ -249,7 +249,6 @@ JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
             return nullptr;
         return createClassPrototype(vm, classLayout, parent);
     }
-    // The evaluation of such a class brings its own class object, and until then the class has no prototype.
     if (isDefinedByClass(classLayout) && !canBeDefinedFromRecord(classLayout))
         return nullptr;
     if (hasOneClassObject(classLayout))
@@ -297,7 +296,6 @@ JSObject* ClassTable::defineClassOfConstructorFunction(VM& vm, const LayoutData&
     prototype->structure()->dropTransitionChain(vm);
     if (const LayoutData* base = assumedBaseOf(classLayout))
         classPrototypeOfBase(vm, *base);
-    // Where the guards hold from the start, code may have passed their test already, so the holders are looked at now.
     if (use == UseOfFunction::MakesObjects || classLayout.classData().guardsHoldWhileClear) {
         armGuardsOfConstructorFunction(vm, classLayout, prototype, classObject);
         return prototype;
@@ -309,7 +307,6 @@ JSObject* ClassTable::defineClassOfConstructorFunction(VM& vm, const LayoutData&
     return prototype;
 }
 
-// What stands above the function itself is looked at by whoever begins guards of that side, at the function or below it: armMemberGuards().
 void ClassTable::checkParentOfPrototypeObject(const LayoutData& classLayout, JSObject* prototype)
 {
     const LayoutData* base = assumedBaseOf(classLayout);
@@ -448,7 +445,6 @@ std::optional<ClassTable::LazyPrototypeLookupResult> ClassTable::findFromLazyPro
     if (name == vm.propertyNames->underscoreProto.impl() || parseIndex(PropertyName(name)))
         return std::nullopt;
     for (; prototype && prototype->classInfo() == ClassPrototype::info() && !prototype->butterfly(); prototype = prototype->getPrototypeDirect().getObject()) {
-        // The class of another realm is in the table of that realm, and its members are closures of that realm.
         if (Instance* owner = Instance::owning(prototype); owner != &m_state.instance) [[unlikely]]
             return owner->state->objects->classes.findFromLazyPrototype(vm, prototype, name, creation);
         const LayoutData& classLayout = *classOf(*uncheckedDowncast<ClassPrototype>(prototype));
@@ -474,7 +470,6 @@ std::optional<ClassTable::DeclaredMemberLocation> ClassTable::declaredMemberLoca
     if (!known && creation == MemberCreation::Forbidden)
         return std::nullopt;
     if (!known) {
-        // The Structure of a holder names no property, so a collection does not look at the words of a holder. The table of closures keeps a closure.
         JSCell* member = accessorOrNull ? static_cast<JSCell*>(createDeclaredGetterSetter(vm, m_state, *accessorOrNull)) : closureObject(vm, m_state, key);
         if (accessorOrNull)
             m_state.immortalCells->add(member);
@@ -515,7 +510,6 @@ void ClassStructureCache::add(uint32_t classIndex, JSObject* classObjectParentOr
     m_writes.recordAll();
 }
 
-// A Structure keeps the object that it names as the prototype, so the parents in the key of an entry that stays are alive.
 size_t ClassStructureCache::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     size_t sizeBefore = m_structures.size();
@@ -561,9 +555,7 @@ private:
     void defineMember(JSObject* target, const MethodData&, const Identifier& key, JSObject* function);
     bool hasAssumedBase() const;
     void armGuards();
-#if ASSERT_ENABLED
     bool hasMemberEnvironment() const;
-#endif
 
     void storeShared(JSObject* target, UniquedStringImpl* key, JSValue);
 
@@ -657,7 +649,6 @@ void ClassDefinition::EarlyStores::restoreTo(JSGlobalObject* globalObject, JSObj
     }
 }
 
-#if ASSERT_ENABLED
 bool ClassDefinition::hasMemberEnvironment() const
 {
     if (m_classLayout.classData().environment != LayoutData::noBase)
@@ -667,16 +658,13 @@ bool ClassDefinition::hasMemberEnvironment() const
     };
     return std::ranges::none_of(m_classLayout.methods(), takesEnvironment) && std::ranges::none_of(m_classLayout.staticMethods(), takesEnvironment);
 }
-#endif
 
 void ClassDefinition::run(JSValue heritage, JSValue prototypeParent)
 {
     auto scope = DECLARE_THROW_SCOPE(m_vm);
-    if (!m_classObject->kind().isInRuntimeModule)
-        m_state.statics->ensureProgramStaticsInitialized();
     ASSERT(m_requestedPart == ClassPart::Everything || m_classLayout.createsMembersLazily);
     ASSERT(!createsClassObject() || !m_classObject->getDirect(m_vm, m_vm.propertyNames->prototype));
-    ASSERT(hasMemberEnvironment());
+    RELEASE_ASSERT(hasMemberEnvironment());
 
     if (resolveParents(heritage, prototypeParent) == ParentResolution::BaseNotDefined)
         return;
@@ -866,7 +854,6 @@ void ClassDefinition::defineMember(JSObject* target, const MethodData& method, c
         bool isGetter = kind == MethodKind::Getter;
         return GetterSetter::create(m_vm, m_globalObject, isGetter ? function : nullptr, isGetter ? nullptr : function);
     };
-    // Structures are kept only where each member was the first under its name.
     if (isShared()) {
         storeShared(target, key.impl(), kind == MethodKind::Method ? static_cast<JSCell*>(function) : createAccessor());
         return;
@@ -940,7 +927,6 @@ void ClassDefinition::armGuards()
         m_classes.classPrototypeOfBase(m_vm, *base);
     m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Prototype, m_prototype, createsPrototypeMembers() ? stateOfPrototype : HolderState::NotTouched);
     m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Static, m_classObject, createsClassObject() ? stateOfClassObject : HolderState::NotTouched);
-    // What was stored on a holder before its members were made is back on it, and the record declares none of that.
     if (!m_earlyPrototypeStores.keysAndAttributes.isEmpty())
         endClassGuard(m_state, m_classLayout, ClassSide::Prototype);
     if (!m_earlyStores.keysAndAttributes.isEmpty())
@@ -959,7 +945,6 @@ JSValue ClassTable::resolveHeritage(JSGlobalObject* globalObject, JSValue herita
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (heritage.isNull())
         return jsNull();
-    // Nothing can change or remove the prototype property of a class object.
     if (auto* classObject = heritage.isCell() ? dynamicDowncast<Closure>(heritage.asCell()) : nullptr; classObject && classObject->kind().isConstructor) {
         if (JSValue prototype = classObject->getDirect(vm, vm.propertyNames->prototype))
             return prototype;
@@ -1043,7 +1028,6 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
     return true;
 }
 
-// A class without members that is evaluated again is two cells and two stores.
 bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue heritage, JSValue prototypeParent)
 {
     VM& vm = globalObject->vm();
@@ -1069,8 +1053,6 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
     PropertyOffset offsetOfConstructor = kept.prototypeStructure->get(vm, vm.propertyNames->constructor);
     RELEASE_ASSERT(isValidOffset(offsetOfPrototype) && isValidOffset(offsetOfConstructor));
 
-    if (!classObject->kind().isInRuntimeModule)
-        m_state.statics->ensureProgramStaticsInitialized();
     if (parentOfPrototype.isObject())
         asObject(parentOfPrototype)->didBecomePrototype(vm);
     JSObject* prototype = JSFinalObject::createWithButterfly(vm, kept.prototypeStructure, allocateOutOfLineStorageOfClassHolder(vm, kept.prototypeStructure));
@@ -1086,7 +1068,6 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
     return true;
 }
 
-// The run time may make the one class object of a class before the program evaluates the class. The evaluation then continues with that object, not with the one it allocated.
 Closure* ClassTable::classObjectForEvaluation(Closure* allocated, const LayoutData& classLayout) const
 {
     if (!hasOneClassObject(classLayout))
@@ -1103,7 +1084,6 @@ void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject,
     bool isProvenOnce = classLayout.evaluation() == EvaluationState::ProvenOnce;
     ClosureTable& closures = m_state.objects->closures;
     JSCell* registered = closures.closureIfCreated(functionOfOwnClosure(*classObject));
-    // The build has proven that the class is evaluated once, and forty places take its class object, its prototype object and its shapes for the only ones. A second class object stops here, aloud.
     RELEASE_ASSERT(!isProvenOnce || !registered || registered == classObject);
     if (isProvenOnce && (classObject->getDirect(vm, vm.propertyNames->prototype) || (!classLayout.createsPrototypeBeforeClassObject && classPrototypeIfExists(classLayout))))
         return;
@@ -1129,7 +1109,6 @@ void ClassTable::forgetEvaluationOf(const LayoutData& classLayout)
     FunctionID constructor(classLayout.classData().classConstructor);
     if (!classPrototypeIfExists(classLayout) && !(constructor && m_state.objects->closures.hasCellFor(constructor) && m_state.objects->closures.closureIfCreated(constructor)))
         return;
-    // The variables of the static fields go on to serve the next evaluation.
     if (!classLayout.staticFields().empty() && constructor && m_state.objects->closures.hasCellFor(constructor)) {
         if (auto* classObject = dynamicDowncast<Closure>(m_state.objects->closures.closureIfCreated(constructor)))
             classObject->ensureClassObject(*m_state.instance.vm);
@@ -1217,12 +1196,10 @@ void ClassPrototype::createMembers(JSObject* object)
     State& state = stateOf(object);
     ClassTable& classes = state.objects->classes;
     Closure* classObject = uncheckedDowncast<Closure>(uncheckedDowncast<ClassPrototype>(object)->classObject());
-    // JSObject::putDirect() goes past the method table, so the object may have been given what no class declares.
     bool answersAsBefore = !object->butterfly();
     classes.createClassPart(state.instance.globalObject, classObject, ClassTable::ClassPart::PrototypeMembers);
     RELEASE_ASSERT(object->type() == FinalObjectType);
     CreatedMembers created { object, classes.structureOfDeclaredMemberHolders() };
-    // An object of any realm may have this one above it. From now on the value of a member is replaced without a report, so whoever names a word of a holder has to hear of this.
     for (Instance* instance : object->vm().aotState().instances) {
         instance->propertyCaches.accessTable.didChangeObjectOnSomeChain();
         State* stateOfRealm = instance->state;
@@ -1358,18 +1335,15 @@ static const FieldData* findFieldOfLazyClassObject(const Closure& classObject, U
     const LayoutData* classLayout = classObject.classData();
     if (!classLayout || classLayout->staticFields().empty() || !classObject.isLazyClassObject())
         return nullptr;
-    // An access by index asks nobody for a name, and elements come first among the keys.
     if (parseIndex(PropertyName(uid)))
         return nullptr;
     State& state = classObject.state();
     ClassTable& classes = state.objects->classes;
-    // The variables belong to the class object of the one evaluation.
     if (state.objects->closures.closureIfCreated(classes.functionOfOwnClosure(classObject)) != &classObject)
         return nullptr;
     return classes.staticField(*classLayout, uid);
 }
 
-// JSObject::putDirect() asks nobody. What it has left on the class object came behind every field that lies in a variable, and stands in front of one of the same name.
 static const FieldData* findFieldOfBareClassObject(const Closure& classObject, UniquedStringImpl* uid)
 {
     return classObject.butterfly() ? nullptr : findFieldOfLazyClassObject(classObject, uid);
@@ -1406,10 +1380,8 @@ bool tryCreate(Closure& classObject, UniquedStringImpl* uid, JSValue value)
         return false;
     ClassTable& classes = classObject.state().objects->classes;
     const LayoutData& classLayout = *classObject.classData();
-    // Whoever writes a stack trace looks for `displayName` in the Structure of the function and asks nobody.
     if (uid == classObject.vm().propertyNames->displayName.impl() || classes.hasStaticMethodNamed(classLayout, uid))
         return false;
-    // moveToProperties() goes by the order of the record, so that has to be the order in which the fields have come.
     std::span<const FieldData> fields = classLayout.staticFields();
     for (const FieldData& other : fields.subspan(static_cast<size_t>(field - fields.data()))) {
         if (classes.readStaticField(other))

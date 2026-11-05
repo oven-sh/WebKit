@@ -49,7 +49,6 @@ static void addClobbersOfEveryStubCall(RegisterSet& clobbered, const StubSignatu
         clobbered.add(*signature.immediate, IgnoreVectors);
 }
 
-// Such a leaf takes no instance, so the shared body writes no argument register in front of it.
 static bool stubHeadTailCallsPreserveMostLeaf(StubKey head)
 {
     if (head.withoutImmediate() != tailCallOperation(OperationCall::FirstArgument::None))
@@ -109,14 +108,11 @@ StubCatalog::Node::Node(StubRecording&& generated)
 
 bool StubCatalog::Node::mergeReference(const StubReference& reference, const Node& target)
 {
-    // The caller of this stub calls the address, and states the effects of that call itself.
     if (reference.kind == StubReference::Kind::ReturnedAddress)
         return false;
     bool changed = false;
 
-    // The head of an operation call recorded its operation: to this head, the body all heads share calls nothing unknown.
     bool entersSharedBody = isOperationCallHead(recording.body) && reference.target == recording.body.withoutImmediate();
-    // A caller plans for the error of a failed allocation wherever a call may collect. What the poll does is not an effect of the stub.
     bool isPollAfterOperation = reference.kind == StubReference::Kind::PollAfterOperation;
     RELEASE_ASSERT(!isPollAfterOperation || leavesStubs);
     if (!entersSharedBody && !isPollAfterOperation)
@@ -127,7 +123,6 @@ bool StubCatalog::Node::mergeReference(const StubReference& reference, const Nod
         changed = true;
     }
 
-    // A clobber set describes the normal return.
     if (neverReturns(reference.target))
         return changed;
 
@@ -139,7 +134,6 @@ bool StubCatalog::Node::mergeReference(const StubReference& reference, const Nod
         restored = reference.savedAround;
         break;
     case StubReference::Kind::Address:
-        // Whoever gets the address may call it after the saved registers are restored.
         break;
     case StubReference::Kind::ReturnedAddress:
         RELEASE_ASSERT_NOT_REACHED();
@@ -153,7 +147,6 @@ bool StubCatalog::Node::mergeReference(const StubReference& reference, const Nod
     };
     RegisterSet clobberedByTarget = target.clobbered;
     if (entersSharedBody && stubHeadTailCallsPreserveMostLeaf(recording.body)) {
-        // The shared body has the clobbers of any operation. It loads the function into a register that such a leaf preserves.
         clobberedByTarget = target.clobberedInline;
         clobberedByTarget.merge(registersClobberedByPreserveMostLeaves());
         clobberedByTarget.add(gprOf(StubRegister::Operation), IgnoreVectors);
@@ -163,7 +156,6 @@ bool StubCatalog::Node::mergeReference(const StubReference& reference, const Nod
     return changed;
 }
 
-// Every merge only adds, so the result is the least one that holds, in whichever order the nodes stand.
 template<typename FindNode>
 void StubCatalog::Node::closeOverReferences(std::span<Node* const> nodes, const FindNode& findNode)
 {
@@ -311,7 +303,6 @@ void StubCatalog::checkDeclarations(std::span<Node* const> nodes)
         case StubClobbers::ClobbersLikeCall:
             break;
         case StubClobbers::ClobbersOnlyScratch: {
-            // Its caller keeps none of what the callee may clobber.
             if (hasFrameAndKeepsFewerRegisters(body.callerFrame()))
                 break;
             RegisterSet lost = node.clobbered;
@@ -334,7 +325,6 @@ void StubCatalog::checkDeclarations(std::span<Node* const> nodes)
 
 #endif // ASSERT_ENABLED
 
-// Every stub that a stub refers to is listed. What a closed node says is final: all that it reaches is closed with it.
 NEVER_INLINE void StubCatalog::generateAndClose(unsigned first) const
 {
     Locker locker { m_lock };
@@ -357,10 +347,22 @@ NEVER_INLINE void StubCatalog::generateAndClose(unsigned first) const
     Node::closeOverReferences(addedNodes.span(), [&](StubKey body) -> const Node& {
         return *m_nodes[findIndexInStubCatalog(m_nodeOfBody, body)];
     });
+    for (const Node* node : addedNodes) {
+        StubKey body = node->recording.body;
+        RELEASE_ASSERT(!isOperationCallHead(body) || node->effects.writes.isSubsetOf(AOT::effectsOf(entryAtOffset(*body.immediate())).writes));
+        for (const StubReference& reference : node->recording.references) {
+            if (reference.kind != StubReference::Kind::ReturnedAddress)
+                continue;
+            RegisterSet lost = m_nodes[findIndexInStubCatalog(m_nodeOfBody, bodyOf(reference.target))]->clobbered;
+            lost.filter(RegisterSet::fromIterable(allocatableGPRs).merge(RegisterSet::allFPRs()));
+            lost.exclude(registersClobberedByCompiledCalls());
+            lost.exclude(RegisterSet::macroClobberedFPRs());
+            RELEASE_ASSERT(lost.isEmpty());
+        }
+    }
 
 #if ASSERT_ENABLED
     checkDeclarations(addedNodes.span());
-    // The stubs of an image are generated with another maxNameInFieldTable than the one that the functions calling them were compiled with.
     StubOptions optionsWithOtherFieldTable = m_options;
     optionsWithOtherFieldTable.maxNameInFieldTable = m_options.maxNameInFieldTable ? 0 : UINT16_MAX;
     StubAssembler jitWithOtherFieldTable(optionsWithOtherFieldTable, *this);
@@ -394,10 +396,8 @@ const StubCatalog::Node& StubCatalog::nodeOf(StubKey body) const
     return closedNodeAt(findIndexInStubCatalog(m_nodeOfBody, body));
 }
 
-// The answer for the key itself: every key without an immediate has one, and the entries of the bodies that are listed with theirs.
 const StubCatalog::Answer* StubCatalog::tryFindOwnAnswer(StubKey key) const
 {
-    // generateAndClose() lists the answers of the keys without an immediate first, as listBodies() has listed the keys.
     if (!key.immediate()) {
         auto place = m_answerOfKeyWithoutImmediate.find(key.bits());
         if (place == m_answerOfKeyWithoutImmediate.end())
@@ -417,8 +417,6 @@ const StubCatalog::Answer* StubCatalog::tryFindOwnAnswer(StubKey key) const
     return nullptr;
 }
 
-// A head that is not listed writes its immediate register and enters the shared body, whose answer holds for whichever operation.
-// Of a stub that ImmediateBinding::Every binds, Compile has the immediate 0 in place of a number that Image gives. answersCover() checks the stubs of the image against this.
 const StubCatalog::Answer& StubCatalog::answerFor(StubKey key) const
 {
     RELEASE_ASSERT(exists(key));
@@ -438,7 +436,6 @@ const StubSummary& StubCatalog::summaryOf(StubKey key) const
 
 const RegisterSet& StubCatalog::clobberedByRegisterVariantsOf(StubKey key) const
 {
-    // exists(): it has no variant.
     if (key.immediate())
         return summaryOf(key).clobbered;
 
@@ -468,7 +465,6 @@ const RegisterSet& StubCatalog::clobberedBesideResultByRegisterVariantsOf(StubKe
     if (!m_knowsWhatRegisterVariantsClobberBesideResult[number].load(std::memory_order_acquire)) [[unlikely]] {
         RegisterSet clobbered;
         forEachRegisterVariant(key, [&](StubKey variant) {
-            // A stub that has a variant for the usual register of results too is called by its variants alone.
             if (variant == key && !namesRegisterOfResult(descriptorOf(key.family()).operandRegisters))
                 return;
             const StubSummary& summary = summaryOf(variant);

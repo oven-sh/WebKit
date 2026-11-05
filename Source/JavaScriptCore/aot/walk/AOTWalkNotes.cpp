@@ -49,7 +49,6 @@ static AccessKind kindOfAccessWithoutColumnInWalkNote(const Operation& access)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Unknown: --explain has no line for the operation.
 static AccessKind accessKindInWalkNote(const Operation& operation)
 {
     Opcode opcode = operation.opcode;
@@ -135,7 +134,6 @@ static AccessCost costOfWalkNoteKind(WalkNoteKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Of an operation that was not resolved. An operator without a typed form lacks no fact: the driver has a word for that.
 static UnprovenCause causeInWalkNote(AccessKind access)
 {
     switch (access) {
@@ -163,7 +161,6 @@ static UnprovenCause causeInWalkNote(AccessKind access)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// False: the operation stands at no place of the source.
 static bool placeWalkNote(const Code& code, const Operation& operation, Origin& origin, FunctionID& writtenIn)
 {
     std::span<const InlineFrame> frames = code.inlineFrames();

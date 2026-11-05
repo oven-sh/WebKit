@@ -30,8 +30,6 @@ const symbolKeys = (...symbols: readonly string[]) =>
 
 const textEvaluators = ["Function", "%AsyncFunction%", "%GeneratorFunction%", "%AsyncGeneratorFunction%", "eval"];
 
-// No object holds these. The interpreter calls them for text that never names them: a spread without a fast path, and `using`.
-// There is text once an evaluator is called. `Function.prototype` and `x instanceof Function` evaluate none.
 const functionsCalledForEvaluatedText = [
   b.functionIn("IteratorHelpers", "performIteration"),
   b.functionIn("DisposableStackPrototype", "getDisposeMethod"),
@@ -227,7 +225,6 @@ export default b.declarations(
     "removeFirstFromList",
     "someFrom",
   ]),
-  // The engine emits these two in line, and so does the front end: the call then belongs to the built-in that makes it.
   b.intrinsic("iteratorGenericClose", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericClose" }),
   b.intrinsic("iteratorGenericNext", "Call", { intrinsic: "LinkedFunction", expansion: "IteratorGenericNext" }),
   intrinsics("Value", { intrinsic: "LinkedFunction" }, [

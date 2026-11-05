@@ -35,7 +35,6 @@ static_assert(numberOfEnumerators<ErrorKind> <= ThrowSiteWord::numberOfRegisters
 static_assert(JSValue::ValueNull < JSValue::ValueUndefined && static_cast<uintptr_t>(JSValue::ValueUndefined + JSCell::typeInfoTypeOffset()) < FaultSite::reach);
 static_assert(nullCell32 < undefinedCell32 && (static_cast<uintptr_t>(undefinedCell32) << cell32Shift) + JSCell::typeInfoTypeOffset() < FaultSite::reach);
 static_assert(nullCell32 == JSValue::ValueNull && undefinedCell32 == JSValue::ValueUndefined);
-static_assert(traitsOf(SlotRepresentation::LiteralString).undefinedBits == JSValue::ValueUndefined && traitsOf(SlotRepresentation::LiteralString).nullBits == JSValue::ValueNull);
 
 static constexpr std::array<ThrowKind, numberOfEnumerators<NullishAccess>> throwKindOfNullishAccess { ThrowKind::NullishRead, ThrowKind::NullishWrite, ThrowKind::NullishIterate, ThrowKind::NullishSpread, ThrowKind::NullishUpdate };
 static_assert(allMembersOf<NullishAccess> == std::array { NullishAccess::Read, NullishAccess::Write, NullishAccess::Iterate, NullishAccess::Spread, NullishAccess::Update });
@@ -47,7 +46,6 @@ struct ThrowSiteCode {
     Representation representation;
     unsigned registerNumberWithoutOperand;
     uint32_t callSite;
-    // The stub makes an Error at one position and throws it at another, as a stub that reads twice reads at two.
     OptionalIndex siteOfNewError { };
 };
 
@@ -57,7 +55,7 @@ static_assert(std::is_trivially_destructible_v<ThrowSiteCode>);
 
 Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation representation, unsigned registerNumber)
 {
-    RELEASE_ASSERT(representation != Representation::LiteralString && representation != Representation::Boolean);
+    RELEASE_ASSERT(representation != Representation::Boolean);
     RELEASE_ASSERT(registerNumber < ThrowSiteWord::numberOfRegistersPerBank);
     RELEASE_ASSERT(!site.aIsMention || site.a != ThrowSiteWord::none);
     bool hasWideA = site.aIsMention || (site.a > ThrowSiteWord::maxNarrowA && site.a != ThrowSiteWord::none);
@@ -99,10 +97,8 @@ static void emitThrowSiteCode(CCallHelpers& jit, CodeRecords& records, const Thr
     uint8_t wordsThatAreMentions = mentionsAmongThrowSiteWords(code.site, words.size());
 
     AllowMacroScratchRegisterUsage allowScratch(jit);
-    // The register has room for the first word and for the word of a wide `a`. The thunk is generated behind the numbering, so the site is one call whatever the number of a name is.
     ThrowSiteSource source = !code.site.b && !valueIsInThrowWordRegister ? ThrowSiteSource::WordInRegister : ThrowSiteSource::WordsAfterCall;
     StubKey key = throwAtSite(source, CallerFrame::HasFrame);
-    // The path never returns, and nothing is saved yet: a bare frame record makes the function visible to the stack walk.
     if (!params.frameIsSetUp())
         jit.emitFunctionPrologue();
     if (source == ThrowSiteSource::WordInRegister) {
@@ -183,8 +179,6 @@ Operand ThrowEmitter::inFormNamedByThrowWords(const OperationContext& context, O
         return signExtended(operand.as<Word32>());
     case Representation::Cell32:
         return emitter<ConversionEmitter>().decode(operand.as<NarrowReference>(), types().at(widestTypeOf(Representation::Cell32)), Representation::JSValue);
-    case Representation::LiteralString:
-        return emitter<ConversionEmitter>().boxLiteralString(context, operand.as<LiteralStringWord>(), types().at(widestTypeOf(Representation::LiteralString)));
     case Representation::JSValue:
     case Representation::Int64:
     case Representation::Double:
@@ -248,7 +242,6 @@ void ThrowEmitter::requireOrThrow(const OperationContext& context, Condition mus
     RELEASE_ASSERT(!generator().isInitializingCell());
     if (mustHold.value()->isInt32(1))
         return;
-    // Nothing behind the emitters ends a block at a Check that always fails.
     if (mustHold.value()->isInt32(0)) {
         throwAt(context, site, operand);
         return;
@@ -276,7 +269,6 @@ void ThrowEmitter::requireOrThrow(const OperationContext& context, Condition mus
     check->setGenerator(generatorOfCheckedThrowSite(context, checkedThrowSite(site), representationInThrowWords(operand)));
 }
 
-// Tests that fail the same way at the same position have one generator, and so one late path.
 Machine::PatchGenerator* ThrowEmitter::generatorOfCheckedThrowSite(const OperationContext& context, const ThrowSite& site, Representation representation)
 {
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
@@ -312,7 +304,6 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
         return;
     case Representation::Cell32: {
         NarrowReference word = operand.as<NarrowReference>();
-        // The first pages of the cage of cells are never mapped, and a marker is a small word: what it decodes to lies in them.
         if (isCellOrNullish(type) && canTrapAt(context))
             trapThrough(context, decode(word).value(), Representation::Cell, site);
         else if (isCellOrNullish(type))
@@ -322,12 +313,6 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
             Condition isUndefined = equal(word, NarrowReference(m_out.constInt32(undefinedCell32)));
             requireOrThrow(context, logicalNot(logicalOr(isNull, isUndefined)), site, operand);
         }
-        return;
-    }
-    case Representation::LiteralString: {
-        // A word that fails is a marker, and a marker is its own boxed form.
-        Boxed marker(operand.value);
-        requireOrThrow(context, logicalNot(isUndefinedOrNull(marker, type.primitives)), site, Operand(marker));
         return;
     }
     case Representation::OptionalInt64:
@@ -355,10 +340,8 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
 
 bool ThrowEmitter::canTrapAt(const OperationContext& context)
 {
-    // A load ends no block, so under a handler a fault would have no edge to the landing pad.
     if (!context.valueID() || emitter<ExceptionEmitter>().unwindsWithinFunction(context))
         return false;
-    // The record of a trapping access is found by the operation that its origin names.
     const Vector<TrapSite>& trapSites = m_records.traps.trapSites;
     return trapSites.isEmpty() || trapSites.last().value != context.valueID();
 }
@@ -370,7 +353,6 @@ void ThrowEmitter::trapThrough(const OperationContext& context, LValue pointer, 
     RELEASE_ASSERT(!site.b);
     TypedPointer typeOfCell = m_out.address(pointer, m_heaps.JSCell_typeInfoType);
     if (std::optional<int64_t> known = m_out.valueKnownToBeReadThrough(typeOfCell)) {
-        // What is added to the base of the cage is a narrow word, shifted.
         unsigned shift = pointer->hasInt64() ? 0 : cell32Shift;
         bool isNull = *known == static_cast<int64_t>(JSValue::ValueNull) << shift;
         bool isUndefined = *known == static_cast<int64_t>(JSValue::ValueUndefined) << shift;
@@ -391,7 +373,6 @@ void ThrowEmitter::requireInitialized(const OperationContext& context, Operand o
         throwAt(context, site, std::nullopt);
         return;
     }
-    // Absent is the word zero, and nothing is mapped there. Where whatever else the binding holds is a cell, the type of that cell is read: no test, no branch and no late path.
     bool isCellOrAbsent = !(type.primitives & ~(cellPrimitives | Primitive::Absent));
     if (isCellOrAbsent && operand.representation == Representation::JSValue && !ConversionEmitter::markerBits(Primitive::Absent, Representation::JSValue) && !operand.value->hasInt64() && canTrapAt(context)) {
         trapThrough(context, operand.value, Representation::JSValue, site);

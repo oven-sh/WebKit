@@ -5,8 +5,8 @@
 # The front end puts the variable of the file in place of `lib.kA` only behind a site that evaluates the file, and says of each request whether the file has run to its end behind every such site (completes). Where it has, whoever names its variable
 # finds what the body stored and never the `undefined` that the variable held at first: the key is one symbol, and the access goes by its name. On a cycle the file may be in the middle of its body: early.cjs finds undefined, and so may anybody.
 # RUN: link variables mechanisms=all
-# CHECK: variable g0 proven=symbol writers-known
-# CHECK: variable g1 proven=undefined|symbol writers-known
+# CHECK: variable g0 proven=symbol("a")@m0:0 writers-known
+# CHECK: variable g1 proven=undefined|symbol("b")@m2:1 writers-known
 # RUN(NAMED): walk f4 mechanisms=all-Inlining
 # NAMED-LABEL: code f4:Body
 # NAMED: PropGet {{*}}key=symbol("a")@m0:0

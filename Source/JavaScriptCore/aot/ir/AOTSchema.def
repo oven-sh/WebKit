@@ -10,7 +10,6 @@ enum EffectRule (| engine callsBuiltin: Bool) {
     | engine Declared(false) Operator(false) Access(false) Call(false) Builtin(true) Inline(true)
 }
 enum RetainedIn { | engine UnknownMemory Result Operand }
-# Where in an object of one of the engine's classes an operation reads or stores. InternalField: the one that the field `index` of the operation names, or else the column fieldOfHolder.
 enum SlotOfHolder { | engine None Element Key Value InternalField }
 enum Branches { | engine No May Only }
 enum Access { | engine None Read Store Define Has }
@@ -20,32 +19,11 @@ enum FlowRule { | engine General Arithmetic Await Call ConversionToObject Conver
 enum BoundTo { | engine Nothing Frame Function Site }
 enum ProgramEvent { | engine None EvaluatesText LoadsModule }
 enum AccessClass { | engine None Slot ByName DirectCall IndirectCall }
-# What the operation gives is its first operand: the same value of JavaScript, and nothing is made. ir/AOTOpcodeSets.h has the sets, and no file keeps a list of its own.
-# Form: in another form. NarrowerType: under the type that a test has left of it.
-# UnclaimedType, ClaimedType, TestedField: under another type in the input, and no such operation stands in Code.
-# UnclaimedType: it marks a position that the value enters, only widens, or guesses. ClaimedType: the input states the type, and whoever reads the result takes it for granted.
-# TestedField: the input states none: the type is what a test of a field that was read out of the value leaves of it.
-# PassedCheck: or it throws. Mark: it marks a place in the input and does nothing.
 enum HandedOn { | engine Nothing Form NarrowerType UnclaimedType ClaimedType TestedField PassedCheck Mark }
 enum OperatorKind { | engine None Additive Multiplicative Bitwise Relation Equality NumberConversion }
-# It enters whatever function its callee operand holds.
 enum EntryByValue { | engine None Call Construction }
-# One form for each operation and state of knowledge. Open: in line. Closed: a near call of a stub. Runtime: the call of the C++ function that stands behind both, with nothing in front of it.
-# An arm that is seldom taken and calls is part of the form that it stands behind.
 enum Form { | engine Open Closed Runtime }
-# Where an operation stands. Loop: in a loop of the unit, after inlining. UnlikelyBlock, RareBlock: the mark of its block. CodeThatRunsOnce: outside every loop of a unit that runs once.
 enum Place { | engine Anywhere Loop UnlikelyBlock RareBlock CodeThatRunsOnce }
-# What an emitter knows where it picks a form: Output::noteForm(). Always: the opcode says all.
-# From Generic to MayBeStringOrNumber: the members of OperatorForm. NumberAndOtherValue: beside the number stands a value that is never a number.
-# NumbersAndDivisorOne to NumbersAndWholeExponent: what is known of the divisor of Mod, and of the exponent and the base of Pow. NumberWithFraction: the number is no integer by its form. PassesTest, FailsTest, NeedsTest: what the type of the operand says of the kind that the operation wants.
-# BranchOnTestedKinds, BranchOnOtherKinds: the answer goes to a branch, and the type of the value holds objects, undefined, null or booleans, or none of them.
-# ReadOnlyTree, CopyOnWriteArray, MadeOnce: the members of DataEncoding. From SlimOnHeap to Singleton: ClosureForm and AllocationStorage. FullWithOwnStructure: no stub fills such a closure.
-# LiteralComparedInPlace, LiteralComparedByStub: how long the written text is that a value is compared with. StringsAsLiteralWords: both operands are kept as LiteralString.
-# EmptyLiteral: the written text is empty. LengthOfSubject, FlatSubject: the comparison with a written text is handed that operand.
-# FieldInExtension: the slot lies out of line, where the stub ReadFieldInExtension finds it. ValueNeverFitsStorage: the kind of storage that the store names never takes what is stored.
-# BirthFieldsInCell: every field that a birth fills lies in the cell, at one place in each layout that the object may have. ObjectInFrame: an object in the frame that may get fields after its construction. CellInFrameFilledOnce: any other cell in the frame.
-# PrototypeInTable: the class has one prototype object, and a word of the instance for it. PrototypeReadByName: new.target is a function of the program, so `prototype` is a data property.
-# NameInCell: the receiver is proven to be of layouts that keep the private name, and the brand of its class, in slots of the cell.
 enum StateOfKnowledge {
     | engine Always
     Generic Integers CheckedIntegers Numbers NumberAndValue Bits Booleans BigInts Strings StringAndValue Int32AndValue
@@ -55,7 +33,7 @@ enum StateOfKnowledge {
     NumbersAndConstantExponent NumbersAndConstantBase NumbersAndWholeExponent NumberWithFraction
     PassesTest FailsTest NeedsTest BranchOnTestedKinds BranchOnOtherKinds FreeName
     ReadOnlyTree CopyOnWriteArray MadeOnce SlimOnHeap SlimInFrame FullOnHeap FullInFrame FullWithOwnStructure Singleton
-    LiteralComparedInPlace LiteralComparedByStub StringsAsLiteralWords EmptyLiteral LengthOfSubject FlatSubject FieldInExtension ValueNeverFitsStorage
+    LiteralComparedInPlace LiteralComparedByStub EmptyLiteral LengthOfSubject FlatSubject FieldInExtension FieldLeftOutByMakers ValueNeverFitsStorage
     BirthFieldsInCell ObjectInFrame CellInFrameFilledOnce PrototypeInTable PrototypeReadByName NameInCell
 }
 enum FunctionReferenceKind { Call Closure Constructor Dispatch }
@@ -65,7 +43,7 @@ enum Representation (holdsCells: Bool, isPassedInFPR: Bool, canBeKey: Bool, canB
     Unchosen(false, false, false, false) Void(false, false, false, false) Boolean(false, false, false, false)
     Int32(false, false, true, false) Int64(false, false, true, true) Double(false, true, true, true)
     OptionalInt64(false, false, false, true) OptionalDouble(false, true, false, true) Cell(true, false, false, true)
-    Cell32(true, false, false, false) JSValue(true, false, true, true) LiteralString(true, false, false, false)
+    Cell32(true, false, false, false) JSValue(true, false, true, true)
     RawWord(false, false, false, false)
 }
 
@@ -166,8 +144,6 @@ external IterationKind : enum, engine = JSC::IterationKind ; below "static_cast<
 column access : Access
 column receiver : Operand
 column stored : Operand
-# holder: the operand whose contents the operation reads (interpreted = Read: its result is what lies there) or stores into (what it retains in that operand is what is stored). slotOfHolder says where in it.
-# A row with slotOfHolder and no holder: the holder is the object that the running coroutine has handed its caller.
 column holder : Operand
 column slotOfHolder : SlotOfHolder
 column fieldOfHolder : UInt32
@@ -190,7 +166,6 @@ column siteCaches : UInt32
 column replaces : Operations
 column exactlyOneOf : Parameters
 column requires : FunctionFlags
-column removedBy : PassID
 column isIntrinsic : Bool
 column allocatesInline : Bool
 column allocatesAfterLastSafepoint : Bool
@@ -208,11 +183,7 @@ column handsOn : HandedOn
 column operatorKind : OperatorKind
 column joinsTexts : Bool
 column entersByValue : EntryByValue
-# Where an operation stands does not choose its form, with one exception: "am I in a loop of this function, after inlining". A row that sets this has above it what justifies the question: Walker::isInLoopForFormOf().
 column formDependsOnLoop : Bool
-# The form of the code. `form`: of an operation that has one, whatever is known. Otherwise each state that its emitter says stands in one of the three lists, Always among them where an arm knows no more than the opcode.
-# openIn, closedIn, runtimeIn: the form where the emitter says that the place has picked it, whatever the state. A row that sets one has above it the measurement that justifies the question.
-# The design allows the question for Loop alone, so every other place in these lists is a difference from it. What is said and not named here: `testaot bytes-by-form`, codegen/AOTFormsSaid.h.
 column form : Form
 column openUnder : StatesOfKnowledge
 column closedUnder : StatesOfKnowledge
@@ -246,7 +217,6 @@ include "schema/runtime-straight-modules.def"
 include "schema/runtime-straight-operators.def"
 include "schema/runtime-straight-type-tests.def"
 include "schema/limits.def" abi
-include "schema/passes.def" abi
 include "schema/statistics.def" abi
 include "schema/diagnostics.def" abi
 include "schema/compile-call.def" abi

@@ -57,7 +57,6 @@ inline RegisterSet registersClobberedByPreserveMostLeaves()
 {
     RegisterSet clobbered = registersClobberedByOperations();
 #if AOT_LEAVES_PRESERVE_MOST && CPU(X86_64)
-    // preserve_most also saves rax and rdx in a function that returns nothing in them. No stub relies on that.
     clobbered.exclude(RegisterSet(X86Registers::ecx, X86Registers::esi, X86Registers::edi, X86Registers::r8, X86Registers::r9, X86Registers::r10));
 #elif AOT_LEAVES_PRESERVE_MOST && CPU(ARM64)
     clobbered.exclude(RegisterSet(ARM64Registers::x9, ARM64Registers::x10, ARM64Registers::x11, ARM64Registers::x12, ARM64Registers::x13, ARM64Registers::x14, ARM64Registers::x15));
@@ -140,7 +139,6 @@ constexpr GPRReg gprOf(StubRegister reg)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// The numbers of the machine registers behind the names on both ISAs, whichever one this build is for: what a stub says of its registers is said of both.
 inline constexpr unsigned numberOfStubRegisters = static_cast<unsigned>(StubRegister::Operation) + 1;
 inline constexpr uint8_t noMachineRegister = 0xff;
 inline constexpr std::array<uint8_t, numberOfStubRegisters> stubRegistersOnX86_64 { 0, 7, 6, 2, 1, 8, 9, noMachineRegister, noMachineRegister, 10, 8, 9, 7, 12, 1, 10, 1, 2, 0 };
@@ -199,7 +197,6 @@ constexpr std::span<const GPRReg> alternateReceiverGPRs()
 #endif
 }
 
-// Where a stub with OperandRegisterChoice::AlternateResults hands its result back beside the usual register. Such a stub writes none of them otherwise, so they are none of T9, T11, T12 and T13.
 constexpr std::span<const GPRReg> alternateResultGPRs()
 {
 #if CPU(X86_64)
@@ -210,7 +207,6 @@ constexpr std::span<const GPRReg> alternateResultGPRs()
 #endif
 }
 
-// Those of them that are neither T10 nor hold the third or a later argument of an operation: for a stub that takes operands there.
 constexpr std::span<const GPRReg> fewAlternateResultGPRs()
 {
 #if CPU(X86_64)
@@ -221,8 +217,6 @@ constexpr std::span<const GPRReg> fewAlternateResultGPRs()
 #endif
 }
 
-// The registers that compiled code keeps values in: machine/AOTMachineTarget*.cpp hold the allocator to this list.
-// scratchImmediateGPR is none of them, and no veneer on the way to a stub writes it.
 #if CPU(X86_64)
 inline constexpr std::array<GPRReg, 11> allocatableGPRs { X86Registers::eax, X86Registers::ecx, X86Registers::edx, X86Registers::ebx, X86Registers::esi, X86Registers::edi, X86Registers::r8, X86Registers::r9, X86Registers::r10, X86Registers::r12, X86Registers::r15 };
 inline constexpr GPRReg scratchImmediateGPR = MacroAssembler::s_scratchRegister;
@@ -237,7 +231,6 @@ inline constexpr GPRReg scratchImmediateGPR = MacroAssembler::memoryTempRegister
 
 inline constexpr StubRegister firstStubOperandRegister = StubRegister::R0;
 inline constexpr StubRegister stubImmediateRegister = StubRegister::T9;
-// On x86-64 the move of a number has five bytes into T12 and six into T9. So a stub with many sites that writes both takes its number in the first of these, and has the second to write.
 #if CPU(X86_64)
 inline constexpr StubRegister shortStubImmediateRegister = StubRegister::T12;
 inline constexpr StubRegister scratchBesideShortStubImmediate = StubRegister::T9;

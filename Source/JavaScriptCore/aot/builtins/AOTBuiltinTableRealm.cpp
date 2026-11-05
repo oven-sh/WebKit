@@ -56,7 +56,6 @@ static bool hasValueCell(const BuiltinTable& table, BuiltinID id)
     const Builtin& member = table.at(id);
     if (member.scope != BuiltinScope::Realm)
         return false;
-    // Its holder adds it when the program first reads it. Compiled code may have the object, or know the value, long before.
     if (member.isAddedAtFirstRead)
         return true;
     return member.kind == BuiltinKind::DataProperty
@@ -86,7 +85,6 @@ bool groupsFunctionsOfCompiledCode(BuiltinID id)
 
 static bool hasObjectCell(const BuiltinTable& table, BuiltinID id)
 {
-    // The second stands for native code that nothing describes, and where it is handed on, for an object that nobody knows.
     if (groupsFunctionsOfCompiledCode(id) || id == Builtins::UndeclaredNativeCode)
         return false;
     BuiltinKind kind = table.at(id).kind;
@@ -378,7 +376,6 @@ static JSObject* findConstructorOfLazyClass(JSGlobalObject* realm, const Identif
     return constructor;
 }
 
-// The second argument of the visitor answers the Structure, or null while the realm has not made it.
 template<typename Visitor>
 static ALWAYS_INLINE void visitInstanceStructuresOfEngine(JSGlobalObject* realm, const Visitor& visit)
 {
@@ -424,7 +421,6 @@ static ALWAYS_INLINE void forEachInstanceStructureOfEngine(JSGlobalObject* realm
 
 bool engineNamesInstanceStructureOf(BuiltinClassID builtinClass)
 {
-    // Not a BitVector: that keeps the address of its words shifted, and a leak checker takes words that nothing points to for lost.
     static NeverDestroyed<FastBitVector> namedClasses = [] {
         FastBitVector classes(BuiltinTable::singleton().classCount());
         visitInstanceStructuresOfEngine(nullptr, [&](BuiltinClassID named, const auto&) ALWAYS_INLINE_LAMBDA {
@@ -967,7 +963,6 @@ public:
     {
         const BuiltinTable& table = BuiltinTable::singleton();
         BuiltinName name = table.nameOf(m_vm, uid);
-        // The strings of such an object are closed by Part::OtherStrings.
         if (table.at(m_holder).flags.contains(BuiltinFlag::IsLockedObject)) {
             if (!uid->isSymbol() || static_cast<SymbolImpl*>(uid)->isPrivate())
                 return false;
@@ -990,7 +985,6 @@ public:
     }
 
 private:
-    // Reflect is told of a refusal in a test run, and nowhere else.
     LockedIn lockedIn() const { return m_reflectThrows && !isWrittenByFileOfProduct(m_vm) ? LockedIn::TestRun : LockedIn::Executable; }
 
     bool isTakenForAbsent(UniquedStringImpl* uid) const
@@ -1043,7 +1037,6 @@ Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, s
         parts.add(ImmutablePropertyNames::Part::Prototype);
 
     IdentifierSet openStrings;
-    // A whole object that is locked by its names stays closed to every text that was not opened.
     if (table.at(holder).flags.contains(BuiltinFlag::IsLockedObject) || !table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames))
         namesTakenForAbsent = std::nullopt;
     if (!namesTakenForAbsent && table.at(holder).flags.containsAny({ BuiltinFlag::IsClosedToOtherNames, BuiltinFlag::IsLockedObject })) {

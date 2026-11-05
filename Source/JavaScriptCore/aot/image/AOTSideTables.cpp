@@ -28,7 +28,6 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// Filled anew for each function of a chunk.
 struct SideTableScratch {
     Vector<uint32_t, 32> offsetsAskedForFrame;
     Vector<CodeRange, 8> rangesWithFrame;
@@ -43,9 +42,7 @@ struct HashedFrameMaps {
 };
 
 struct FrameMapPlaces {
-    // [position], of a function that has frame maps: its first word in ImageSection::FrameMaps.
     Vector<uint32_t> firstWordOf;
-    // By position. Any other function with frame maps has the words of a function in front of it.
     BitVector storesOwnWords;
     uint64_t numberOfWords { 0 };
 };
@@ -75,7 +72,6 @@ static void encodeFrameRanges(SideTableScratch& scratch, const CompiledCode& cod
     bytes.shrink(0);
     if (!code.frame.hasFrame())
         return;
-    // A function may set its frame up in thousands of places. The offsets ascend, so one walk through the sorted ranges answers for all of them.
     Vector<CodeRange, 8>& ranges = scratch.rangesWithFrame;
     ranges.shrink(0);
     ranges.append(code.frame.frameRanges.span());
@@ -106,11 +102,9 @@ static uint64_t hashFrameMapWords(std::span<const uint32_t> words)
     uint64_t hash = 1469598103934665603ull;
     for (uint32_t word : words)
         hash = (hash ^ word) * 1099511628211ull;
-    // The two greatest keys are the hash table's own.
     return hash >> 1;
 }
 
-// Most functions that wait have the frame maps of many others. Equal ones are held once, where the first function that has them comes.
 static FrameMapPlaces findPlacesOfFrameMaps(const LinkedFunctions& functions, const ParallelLoops& loops)
 {
     Vector<HashedFrameMaps> hashed = collectInParallel<HashedFrameMaps>(loops, static_cast<unsigned>(functions.size()), [&](unsigned position, Vector<HashedFrameMaps>& found) {
@@ -130,7 +124,6 @@ static FrameMapPlaces findPlacesOfFrameMaps(const LinkedFunctions& functions, co
             places.firstWordOf[position] = places.firstWordOf[first];
             continue;
         }
-        // A number that does not fit is never read: the section is then too large.
         places.firstWordOf[position] = static_cast<uint32_t>(places.numberOfWords);
         places.storesOwnWords.quickSet(position);
         places.numberOfWords += words.size();
@@ -138,7 +131,6 @@ static FrameMapPlaces findPlacesOfFrameMaps(const LinkedFunctions& functions, co
     return places;
 }
 
-// placesInChunks[group]: where the entry of the first function of the group begins among the positions of its chunk.
 static Vector<uint8_t> joinPositionsOfChunks(const ChunksOfIndices& chunks, std::span<const Vector<uint8_t>> positionsOfChunks, std::span<const uint32_t> placesInChunks, BuildContext& context)
 {
     RELEASE_ASSERT(positionsOfChunks.size() == chunks.size());
@@ -213,7 +205,6 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
             encodeHandlers(scratch.handlers, sites.handlers.span());
             scratch.constructedCallees.shrink(0);
             for (const ConstructedCallee& row : sites.constructedCallees) {
-                // In the image a function of the program has the id that it has in the program, whether or not its Body has code.
                 CodeUnit callee = code.body.callees[row.callee];
                 RELEASE_ASSERT(callee);
                 scratch.constructedCallees.append({ row.site, callee.function.index() });

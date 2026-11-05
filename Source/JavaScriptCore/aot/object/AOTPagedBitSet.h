@@ -16,7 +16,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// A set of numbers, cut into pages of 64.
 struct PagedBitSet {
     enum class Entries : uint8_t { None, Narrow, Wide, Hashed };
 
@@ -26,7 +25,6 @@ struct PagedBitSet {
     static constexpr unsigned logBytesPerNarrowEntry = 0;
     static constexpr unsigned logBytesPerWideEntry = 1;
 
-    // A location is the offset in bytes of the first word in the table that holds the sets, with one of these bits set where the set has entries.
     static constexpr uint32_t narrowEntriesInLocation = static_cast<uint32_t>(Entries::Narrow);
     static constexpr uint32_t wideEntriesInLocation = static_cast<uint32_t>(Entries::Wide);
     static constexpr uint32_t hashedInLocation = static_cast<uint32_t>(Entries::Hashed);
@@ -36,7 +34,6 @@ struct PagedBitSet {
     static constexpr Entries entriesAt(uint32_t location) { return static_cast<Entries>(location & entriesMaskInLocation); }
 
     static constexpr uint64_t numberOfPages(uint64_t endOfNumbers) { return (endOfNumbers + bitsPerPage - 1) >> logBitsPerPage; }
-    // With entries, equal pages are kept once: the entry of a page is the word that holds its bits, counted from the first word of the set. The entries come first.
     static constexpr uint64_t numberOfEntryWords(uint64_t numberOfPages, Entries entries)
     {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(entries != Entries::Hashed);
@@ -45,7 +42,6 @@ struct PagedBitSet {
         unsigned logEntriesPerWord = logBytesPerWord - (entries == Entries::Wide ? logBytesPerWideEntry : logBytesPerNarrowEntry);
         return (numberOfPages + (1u << logEntriesPerWord) - 1) >> logEntriesPerWord;
     }
-    // What an entry can name.
     static constexpr uint64_t maxNumberOfWords(Entries entries) { return 1ull << (8u << (entries == Entries::Wide ? logBytesPerWideEntry : logBytesPerNarrowEntry)); }
 
     static uint64_t wordOfPage(const uint64_t* words, Entries entries, uint64_t page)
@@ -63,7 +59,6 @@ struct PagedBitSet {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // A slot holds a member: its distance from the last one. A set whose first member lies further from its last than a slot can say is not hashed.
     using Slot = uint16_t;
     static constexpr unsigned logBytesPerSlot = 1;
     static constexpr uint32_t maxNumberInSlot = std::numeric_limits<Slot>::max();

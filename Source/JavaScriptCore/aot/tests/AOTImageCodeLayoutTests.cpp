@@ -33,7 +33,6 @@ static constexpr size_t maxRunSize = 1 * MB;
 static constexpr uint16_t secondEntry = 1;
 
 #if CPU(ARM64)
-// On x86-64 a near call reaches 2 GB, and an image holds no more code than that: nothing there is ever out of reach.
 static constexpr uint64_t reachOfNearCall = MacroAssembler::relocationReach(RelocationKind::Call);
 static constexpr size_t sizeOfLongFiller = reachOfNearCall / 8 * 5;
 static constexpr uint32_t numberOfFarBodies = 5;
@@ -41,7 +40,6 @@ static constexpr uint32_t firstLongFarBody = 3;
 static constexpr uint32_t lastLongFarBody = numberOfFarBodies - 1;
 static constexpr uint32_t numberOfLargeBodies = 4;
 static_assert((lastLongFarBody - firstLongFarBody + 1) * sizeOfLongFiller > reachOfNearCall);
-// A copy of the shared code serves at most what lies within the reach on either side of it.
 static_assert(numberOfLargeBodies * sizeOfLongFiller > 2 * reachOfNearCall);
 #endif
 
@@ -404,7 +402,6 @@ static void testFarCallsGetVeneers()
     checkCodeIsDisjoint(steps);
 }
 
-// linkCode() finds a veneer by binary search: the veneers lie in the order of their callees, then of the entries, whatever the order of the calls.
 static void testOrderOfVeneers()
 {
     Steps steps(farBodies([](uint32_t function, CodeSketch& sketch) {

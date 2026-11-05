@@ -3,9 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations and Guesses, what comes out of the object that a call of a coroutine answers with: LinkTables::coroutines in the words of PositionTypes and of an expectation.
-// It builds nothing and keeps nothing. At a suspension and at a throw: nothing, an answer speaks of every run of the function. Withheld: the table is empty, and every answer is null.
-
 #include "config.h"
 #include "AOTWalkCoroutinePositions.h"
 
@@ -37,28 +34,15 @@ static const LinkedCoroutine* findCoroutineInWalkCoroutinePositions(const Object
     return function ? tables.findCoroutine(function) : nullptr;
 }
 
-// A type without values says that what stands behind the operation never runs. Nobody who asks here is told that much.
 static TypeID unlessNeverInWalkCoroutinePositions(TypeID type)
 {
     return type && !isNeverType(type) ? type : TypeID();
 }
 
-TypeID awaitedOfObjectOfCoroutine(TypeArena& types, const LinkTables& tables, bool tablesAreProof, ObjectID object)
+TypeID awaitedOfObjectOfCoroutine(TypeArena& types, const LinkTables& held, ObjectID object)
 {
-    const LinkedCoroutine* coroutine = findCoroutineInWalkCoroutinePositions(types.objects(), tables, object);
-    if (!coroutine)
-        return { };
-    if (tablesAreProof && (!coroutine->objectsStayAsMade || !types.builtins().mayHavePristineInstances(types.objects().classOf(object))))
-        return { };
-    return unlessNeverInWalkCoroutinePositions(coroutine->fulfilledWith);
-}
-
-TypeID returnedByBodyThatNeverSuspends(const CallingConventions& conventions, const LinkTables& tables, FunctionID function)
-{
-    if (!conventions.of(function).coroutineNeverSuspends)
-        return { };
-    const LinkedCoroutine* coroutine = tables.findCoroutine(function);
-    return coroutine ? unlessNeverInWalkCoroutinePositions(coroutine->returned) : TypeID();
+    const LinkedCoroutine* coroutine = findCoroutineInWalkCoroutinePositions(types.objects(), held, object);
+    return coroutine ? unlessNeverInWalkCoroutinePositions(coroutine->fulfilledWith) : TypeID();
 }
 
 TypeID typeHeldOfResultOfCoroutine(const Walker& walker, FunctionID callee)

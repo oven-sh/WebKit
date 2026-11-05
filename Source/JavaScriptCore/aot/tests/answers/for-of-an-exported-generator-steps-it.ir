@@ -1,7 +1,9 @@
 # export function* exported() { yield 1; }     import * as self from "./main.js"; report(self);
 # function sum() { let total = 0; for (const value of exported()) total += value; return total; }
+# LIBRARY: own
 # RUN(ANSWER): run-in-shell globalThis.report = () => { };
 # ANSWER: 1
+# ANSWER-NEXT: exited with 0
 
 variable g0 name="exported" module=m0 declared={type=function} initialization=Function function=f2
 module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="exported" variable=g0}] namespaceLayout=L(m0)

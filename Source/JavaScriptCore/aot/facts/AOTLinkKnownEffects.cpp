@@ -15,10 +15,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// new.target may select a class below the one that an allocation names, and a store through a base class lands in an object of any class below it. So the whole row answers to one bit.
 uint64_t bitOfLayoutInKnownEffects(const Program& program, LayoutID layout)
 {
-    // `class A extends B {}` beside `class B extends A {}` compiles.
     size_t stepsLeft = program.layouts.size();
     LayoutID top = layout;
     for (LayoutID above = writtenBaseOf(program.at(top)); above; above = writtenBaseOf(program.at(top))) {
@@ -33,7 +31,6 @@ uint64_t bitOfLayoutInKnownEffects(const Program& program, LayoutID layout)
 Vector<uint64_t> bitsOfLayoutsInKnownEffects(const Program& program)
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
-    // Every layout has a bit at least: nothing says that nobody has come to it.
     Vector<uint64_t> bits;
     bits.fill(0, numberOfLayouts);
     BitVector isOnTheWay(numberOfLayouts);
@@ -44,7 +41,6 @@ Vector<uint64_t> bitsOfLayoutsInKnownEffects(const Program& program)
             LayoutID above = writtenBaseOf(program.at(current));
             if (bits[current.index()])
                 found = bits[current.index()];
-            // `class A extends B {}` beside `class B extends A {}` compiles.
             else if (isOnTheWay.quickSet(current.index()))
                 found = objectsOfAnyLayout;
             else {

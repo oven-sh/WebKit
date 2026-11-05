@@ -344,7 +344,6 @@ static void testProxiesHandPrivateNamesToTheirTarget()
         return object->methodTable()->defineOwnProperty(object, realm, name, descriptor, false);
     };
 
-    // The last handler throws as soon as any trap is looked for.
     ASCIILiteral proxies[] = {
         "new Proxy(target, {})"_s,
         "new Proxy(new Proxy(target, {}), {})"_s,
@@ -551,7 +550,6 @@ static void testCreateWithProperties(LoadedProgram& program)
     AOT_TEST_CHECK(!Structure::createWithProperties(vm, created, present));
 }
 
-// Structures for one set of names in very many orders are made and die: now many, now few, now none. What remembers them grows and shrinks at the collections in between.
 static void testStructuresWithPropertiesComeAndGo(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -588,7 +586,6 @@ static void testStructuresWithPropertiesComeAndGo(LoadedProgram& program)
         for (unsigned index = 0; index < count; index += 7)
             AOT_TEST_CHECK(isRemembered(first + index));
         vm.heap.collectNow(Sync, CollectionScope::Full);
-        // The stack may still hold a few.
         AOT_TEST_CHECK(cache.size() <= sizeAtRest + 16);
         for (unsigned index = 0; index < count; index += 11)
             AOT_TEST_CHECK(isRemembered(first + index));

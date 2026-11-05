@@ -33,15 +33,12 @@ namespace JSC { namespace AOT { namespace Typed {
     FOR_EACH_AOT_INLINE_BUILTIN_IN_ERROR_BUILTIN(v) \
     FOR_EACH_AOT_INLINE_BUILTIN_IN_INTL_BUILTIN(v)
 
-// A row of these may have no slow path, so the inline code must handle every operand that such a row accepts.
 static_assert(hasOptionalSlowPath(InlineBuiltin::ArrayIterator) && hasOptionalSlowPath(InlineBuiltin::ArrayLength) && hasOptionalSlowPath(InlineBuiltin::TypedArrayWithLength));
-// The inline code of these may miss, so every row has a slow path.
 static_assert(!hasOptionalSlowPath(InlineBuiltin::ArrayAt) && !hasOptionalSlowPath(InlineBuiltin::ArrayPop) && !hasOptionalSlowPath(InlineBuiltin::ArrayPush) && !hasOptionalSlowPath(InlineBuiltin::ArrayIsArray));
 static_assert(!hasOptionalSlowPath(InlineBuiltin::TypedArrayLength) && !hasOptionalSlowPath(InlineBuiltin::TypedArrayByteLength) && !hasOptionalSlowPath(InlineBuiltin::TypedArrayByteOffset) && !hasOptionalSlowPath(InlineBuiltin::TypedArraySet));
 
 namespace {
 
-// The inline code takes each operand for what the case below proves it to be. It converts nothing and tests only what the case leaves open.
 class ArrayFormChooser {
 public:
     explicit ArrayFormChooser(const InlineBuiltinQuery& query)
@@ -62,7 +59,6 @@ private:
     TypeID receiver() const { return m_query.receiver(); }
     TypeID argument(unsigned index) const { return m_query.argument(index); }
     unsigned numberOfArguments() const { return m_query.numberOfArguments(); }
-    // No emitter of these families takes its arguments out of a list.
     bool passesArgumentsOneByOne() const { return m_query.form == BuiltinCallForm::Whole; }
 
     bool isValue(TypeID type) const { return type && !isNeverType(type) && m_types.isSubset(type, TypeTable::anything); }
@@ -97,8 +93,6 @@ private:
 
 } // anonymous namespace
 
-// ---- Array.prototype
-
 static constexpr unsigned numberOfRangeArgumentsOfSplice = 2;
 
 bool ArrayFormChooser::areNumbers(unsigned numberOfLeadingArguments) const
@@ -119,8 +113,6 @@ bool ArrayFormChooser::areValuesFrom(unsigned firstArgument) const
     return true;
 }
 
-// The inline code serves a number, and what is compared by identity: an object, a function, a symbol, a boolean, undefined, null.
-// Of a value that may be either it asks which it is, and misses on a number or a BigInt among values.
 bool ArrayFormChooser::canSearchInline() const
 {
     constexpr uint16_t comparedByValue = Primitive::Number | Primitive::AnyString | Primitive::BigInt;
@@ -132,7 +124,6 @@ bool ArrayFormChooser::canSearchInline() const
     return searched.hasObjects() || searched.primitives & ~comparedByValue;
 }
 
-// A primitive is an element of the new array. An object that is no array may be spread or not, which only a read of @@isConcatSpreadable tells.
 bool ArrayFormChooser::canConcatenateInline() const
 {
     if (numberOfArguments() > maxInlineConcatOperands)
@@ -164,36 +155,27 @@ InlineForm ArrayFormChooser::formOfArrayBuiltin() const
         return InlineForm::Call;
 
     switch (m_query.builtin) {
-    // A fractional index misses, and so does storage that is not Int32, Double or Contiguous.
     case InlineBuiltin::ArrayAt:
         return twoWayIf(isNumber(argument(0)));
-    // A hole at the end misses, and so does storage that is shared with a literal.
     case InlineBuiltin::ArrayPop:
         return twoWayIf(true);
-    // The methods of %TypedArray%.prototype throw on a detached or out-of-bounds view, which the inline code does not test.
     case InlineBuiltin::ArrayIterator:
         return InlineForm::Whole;
-    // The stub that looks for a string answers for every kind of storage. From a start that is negative or fractional the search misses.
     case InlineBuiltin::ArrayIndexOf:
     case InlineBuiltin::ArrayIncludes:
         if (searchesForString())
             return InlineForm::Whole;
         return twoWayIf(searchesForStringFromStart() || canSearchInline());
-    // An element whose conversion may run code misses.
     case InlineBuiltin::ArrayJoin:
         return twoWayIf(canJoinInline());
-    // An array that is not as it was made misses, and so does a result that is long.
     case InlineBuiltin::ArrayConcat:
         return twoWayIf(canConcatenateInline());
-    // A hole at the start misses, and so do an array that is long and storage that is shared with a literal.
     case InlineBuiltin::ArrayShift:
         return twoWayIf(true);
-    // A fractional bound misses.
     case InlineBuiltin::ArraySlice:
         return twoWayIf(canSliceInline());
     case InlineBuiltin::ArraySplice:
         return twoWayIf(canSpliceInline());
-    // A hole misses: the copy reads undefined there, which storage of numbers does not hold.
     case InlineBuiltin::ArrayWith:
         return twoWayIf(numberOfArguments() == 2 && isNumber(argument(0)) && isValue(argument(1)));
     case InlineBuiltin::ArrayToReversed:
@@ -202,9 +184,6 @@ InlineForm ArrayFormChooser::formOfArrayBuiltin() const
         return twoWayIf(canCopySplicedInline());
     case InlineBuiltin::ArrayUnshift:
         return twoWayIf(numberOfArguments() == 1 && isValue(argument(0)));
-    // No call in the form Whole names it. Where only the first elements of what is taken out are read, trySimplifyArrayCall() reads them in front of an ArraySplice whose list nobody takes.
-    case InlineBuiltin::ArraySplicePrefix:
-        return InlineForm::Call;
     FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_STORAGE_BUILTIN(AOT_CASE_IN_FORMS_OF_ARRAYS)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUFFER_VIEW_BUILTIN(AOT_CASE_IN_FORMS_OF_ARRAYS)
     FOR_EACH_AOT_INLINE_BUILTIN_OUTSIDE_FORMS_OF_ARRAYS(AOT_CASE_IN_FORMS_OF_ARRAYS)
@@ -213,9 +192,6 @@ InlineForm ArrayFormChooser::formOfArrayBuiltin() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ---- The storage of arrays
-
-// Nobody says of a list what its storage is for good.
 bool ArrayFormChooser::isPristineArrayWithStorageForm(TypeID) const
 {
     return false;
@@ -223,7 +199,6 @@ bool ArrayFormChooser::isPristineArrayWithStorageForm(TypeID) const
 
 InlineForm ArrayFormChooser::formOfPush() const
 {
-    // The inline code stores one value. push() without operands still stores the length, which an array with a fixed length refuses.
     if (numberOfArguments() != 1 || !isArray(receiver()) || !isValue(argument(0)))
         return InlineForm::Call;
     return isPristineArrayWithStorageForm(receiver()) ? InlineForm::Whole : twoWayIf(true);
@@ -234,7 +209,6 @@ InlineForm ArrayFormChooser::formOfIsArray() const
     TypeID tested = argument(0);
     if (!isValue(tested))
         return InlineForm::Call;
-    // A proxy misses: the function asks its target.
     return m_types.at(tested).hasObjects() ? twoWayIf(true) : InlineForm::Whole;
 }
 
@@ -250,15 +224,10 @@ InlineForm ArrayFormChooser::formOfArrayStorageBuiltin() const
         return formOfIsArray();
     case InlineBuiltin::ArrayLength:
         return wholeIf(isArray(receiver()));
-    // What the inline code does not store itself (a length that is no index or lies beyond the vector, storage without a form) it stores by name where the row names no function.
     case InlineBuiltin::ArraySetLength: {
         bool storesNumberInArray = isArray(receiver()) && isNumber(argument(0));
         return m_query.hasSlowPath ? twoWayIf(storesNumberInArray) : wholeIf(storesNumberInArray);
     }
-    // trySimplifyArrayCall() makes them of NewArrayLike and NewArray, which have the storage that the walk chooses. ArrayStorageBuiltinEmitter generates nothing for them.
-    case InlineBuiltin::ArrayWithLength:
-    case InlineBuiltin::ArrayOf:
-        return InlineForm::Call;
     FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUILTIN(AOT_CASE_IN_FORMS_OF_ARRAYS)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUFFER_VIEW_BUILTIN(AOT_CASE_IN_FORMS_OF_ARRAYS)
     FOR_EACH_AOT_INLINE_BUILTIN_OUTSIDE_FORMS_OF_ARRAYS(AOT_CASE_IN_FORMS_OF_ARRAYS)
@@ -267,10 +236,6 @@ InlineForm ArrayFormChooser::formOfArrayStorageBuiltin() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ---- Views of array buffers
-
-// The inline code reads the fields of a view off the cell.
-// TypeArena::isSubset() never places Uint8Array inside %TypedArray%, because %TypedArray% has no instance test, so engine classes go by the table's class hierarchy. A class of the program that extends a typed array goes by isSubset().
 bool ArrayFormChooser::isInstanceOfReceiverClass(TypeID view) const
 {
     BuiltinClassID receiverClass = table().receiverClassOf(m_query.overload.builtin);
@@ -286,7 +251,6 @@ bool ArrayFormChooser::isInstanceOfReceiverClass(TypeID view) const
     });
 }
 
-// NotTypedArray unless every value of the type is a typed array, and all of them have elements of one type.
 TypedArrayType ArrayFormChooser::elementTypeOfView(TypeID view) const
 {
     if (!view || !m_types.at(view).isObject())
@@ -295,14 +259,12 @@ TypedArrayType ArrayFormChooser::elementTypeOfView(TypeID view) const
     return isTypedView(elements) ? elements : NotTypedArray;
 }
 
-// %TypedArray% is abstract, and a host class below Uint8Array, such as Buffer, has its own constructor.
 bool ArrayFormChooser::constructsViewOfOneElementType() const
 {
     BuiltinClassID constructed = table().at(m_query.overload.builtin).instanceClass;
     return constructed && isTypedView(table().typedArrayTypeOf(constructed)) && table().typedArrayClassOf(constructed) == constructed;
 }
 
-// Elements copied into a typed array of the same element type are copied as raw bytes.
 bool ArrayFormChooser::movesElementsOfOneType() const
 {
     if (!numberOfArguments() || numberOfArguments() > 2)
@@ -319,7 +281,6 @@ InlineForm ArrayFormChooser::formOfArrayBufferViewBuiltin() const
         return InlineForm::Call;
 
     switch (m_query.builtin) {
-    // A view whose length follows its buffer misses.
     case InlineBuiltin::TypedArrayLength:
     case InlineBuiltin::TypedArrayByteOffset:
         return twoWayIf(isInstanceOfReceiverClass(receiver()));
@@ -327,12 +288,8 @@ InlineForm ArrayFormChooser::formOfArrayBufferViewBuiltin() const
         return twoWayIf(elementTypeOfView(receiver()) != NotTypedArray);
     case InlineBuiltin::TypedArrayWithLength:
         return wholeIf(constructsViewOfOneElementType() && isNumber(argument(0)));
-    // A range that does not fit misses, and so does a view of a detached buffer: the function throws.
     case InlineBuiltin::TypedArraySet:
         return twoWayIf(movesElementsOfOneType());
-    // A view whose length follows its buffer misses, and so does a view without elements: where its buffer is detached the function throws.
-    case InlineBuiltin::ArrayFrom:
-        return twoWayIf(numberOfArguments() == 1 && hasInlineElementAccess(elementTypeOfView(argument(0))));
     FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUILTIN(AOT_CASE_IN_FORMS_OF_ARRAYS)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_STORAGE_BUILTIN(AOT_CASE_IN_FORMS_OF_ARRAYS)
     FOR_EACH_AOT_INLINE_BUILTIN_OUTSIDE_FORMS_OF_ARRAYS(AOT_CASE_IN_FORMS_OF_ARRAYS)

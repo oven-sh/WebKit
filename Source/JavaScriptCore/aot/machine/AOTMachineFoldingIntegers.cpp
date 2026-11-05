@@ -24,7 +24,6 @@ static IntegerRange integerRangeKeptWithin(const IntegerRange& bounds, const Int
     return bounds.contains(range) ? range : bounds;
 }
 
-// The bounds are those of the exact result. Where they leave the type, some result may wrap, and then nothing is known.
 static IntegerRange integerRangeOrWidest(Type type, CheckedInt64 min, CheckedInt64 max)
 {
     IntegerRange widest = widestIntegerRangeOf(type);
@@ -69,7 +68,6 @@ static IntegerRange computeIntegerRange(const Operation* operation, unsigned lev
     IntegerRange widest = widestIntegerRangeOf(type);
     unsigned widthInBits = 8 * sizeOf(type);
 
-    // A constant costs no level.
     auto rangeOfChild = [&](unsigned index) {
         const Operation* child = operation->child(index);
         if (!levelsOfChildren && !child->hasInt())
@@ -227,7 +225,6 @@ public:
 
     Operation* foldAdd(Operation* left, Operation* right)
     {
-        // The collector rules look for the marked word under whatever is made of it: keepNarrowReferencesBehindWord().
         auto addsConstant = [](const Operation* sum) {
             return sum->opcode() == Add && sum->child(1)->hasInt() && !sum->isNarrowReference();
         };
@@ -255,7 +252,6 @@ public:
         if (right->opcode() == Sub && right->child(1) == left)
             return right->child(0);
 
-        // (x + c1) + (y + c2) = (x + y) + (c1 + c2): wrapping sums reassociate. Int64 sums carry IsInnerPointer and addWithoutPosition(), and stay as their emitters laid them out.
         if (m_type != Int32)
             return nullptr;
         if (addsConstant(left) && addsConstant(right))
@@ -336,9 +332,6 @@ public:
         return constant(static_cast<uint64_t>(product >> widthInBits));
     }
 
-    // Without chill the emitter has promised that the divisor is not zero and that the quotient fits.
-    // Constants that break the promise stand in code that is never reached, and the operation stays as it was asked for.
-    // Turning division by any other constant into a multiplication is left to the emitters, here and in foldUnsignedDivision(). They know the dividend's range from its type, which rangeOf() cannot see through a Phi.
     Operation* foldSignedDivision(Opcode opcode, Operation* dividend, Operation* divisor, bool isChill)
     {
         bool isQuotient = opcode == Div;
@@ -384,7 +377,6 @@ public:
     }
 
 private:
-    // The low bits of a sum, a difference or a product follow from the low bits of the operands alone. So these are computed in 64 bits, where they wrap, and cut to the width of the type.
     Operation* constant(uint64_t bits) { return m_builder.constantOfType(m_type, static_cast<int64_t>(bits)); }
     static uint64_t bitsOf(const Operation* operation) { return static_cast<uint64_t>(operation->asInt()); }
     uint64_t unsignedValueOf(const Operation* operation) const { return bitsOf(operation) & JSC::mask(widthOf(m_type)); }

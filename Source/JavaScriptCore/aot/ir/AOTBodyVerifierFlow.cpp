@@ -21,12 +21,32 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static ValueID subjectOfProofInBody(const BodyIndex& index, const BodyTerminator& terminator, uint32_t proofWord)
-{
-    if (terminator.isConditionalBranch())
-        return index.value(terminator.as<TerminatorKind::Branch>().conditionOperand()).operand(proofWord);
-    return terminator.operand(proofWord);
-}
+namespace {
+
+class SubjectsOfProofsInVerifiedBody {
+public:
+    SubjectsOfProofsInVerifiedBody(const BodyIndex& index, const BodyTerminator& terminator)
+        : m_terminator(terminator)
+    {
+        if (terminator.isConditionalBranch())
+            m_test = index.value(terminator.as<TerminatorKind::Branch>().conditionOperand());
+        m_provesSomething = (m_test ? provesOf(m_test.opcode()) : provesOf(terminator.kind())) != Proof::None;
+    }
+
+    ValueID named(uint32_t proofWord) const
+    {
+        if (!m_provesSomething)
+            return { };
+        return m_test ? m_test.operand(proofWord) : m_terminator.operand(proofWord);
+    }
+
+private:
+    BodyTerminator m_terminator;
+    BodyValue m_test;
+    bool m_provesSomething { false };
+};
+
+} // anonymous namespace
 
 void FlowGraphOfVerifiedBody::build(const BodyIndex& index)
 {
@@ -68,8 +88,6 @@ struct DifferenceInBodyIndex {
     uint32_t plain { 0 };
 };
 
-// Keeps the first difference it meets. Everything but comparePlaces() runs after verifyEdges() and verifyBlockOrder():
-// each proof names an operand, every block is reached, and every block but the entry has a predecessor in front of it.
 class BodyIndexComparison {
     WTF_MAKE_NONCOPYABLE(BodyIndexComparison);
 public:
@@ -81,12 +99,10 @@ public:
 
     const std::optional<DifferenceInBodyIndex>& difference() const { return m_difference; }
 
-    // It leaves BodyVerifierScratch::blocksOfValues.
     void comparePlaces();
     void compareUses();
     void compareIncomingEdges(const FlowGraphOfVerifiedBody&);
     void compareDominators(const FlowGraphOfVerifiedBody&);
-    // After compareIncomingEdges() and compareDominators(): the index answers from what those two compare.
     void compareOnlyIncomingEdges(const FlowGraphOfVerifiedBody&);
     void compareLoops(const FlowGraphOfVerifiedBody&);
 
@@ -119,14 +135,13 @@ void BodyIndexComparison::comparePlaces()
         return static_cast<uint64_t>(words - start);
     };
 
-    Vector<BlockID>& blocksOfValues = m_scratch.blocksOfValues;
-    blocksOfValues.fill(BlockID(), body.numberOfValues());
+
     OpcodeSet opcodes;
     BodyBlock block = body.entry();
     for (uint32_t blockIndex = 0; blockIndex < body.numberOfBlocks(); ++blockIndex) {
         BlockID id(blockIndex);
         auto compareValue = [&](const BodyValue& value) {
-            blocksOfValues[value.id().index()] = id;
+
             compareAnswers("the place of the value"_s, id, value.id(), offsetOf(m_index.value(value.id()).words()), offsetOf(value.words()));
             compareAnswers("whether the value is a parameter"_s, id, value.id(), m_index.isParameter(value.id()), value.isParameter());
         };
@@ -145,7 +160,6 @@ void BodyIndexComparison::comparePlaces()
         BodyTerminator terminator(cursor.words(), unit, id);
         compareAnswers("the place of the terminator"_s, id, { }, offsetOf(indexed.terminator().words()), offsetOf(terminator.words()));
 
-        // The index finds the block of a value by bisection over the first values of the blocks, which have just been compared. So the ends of a block speak for what lies between them.
         if (block.firstParameter() != block.endOfValues()) {
             ValueID last(block.endOfValues().index() - 1);
             compareAnswers("the block of the value"_s, id, block.firstParameter(), m_index.blockOf(block.firstParameter()).bits(), id.bits());
@@ -154,7 +168,6 @@ void BodyIndexComparison::comparePlaces()
         block = BodyBlock(terminator.end(), nullptr, unit, BlockID(blockIndex + 1), block.endOfValues());
     }
 
-    // A parameter is no operation, so whether the set lists Opcode::Parameter says nothing.
     constexpr OpcodeSet opcodeOfParameters { Opcode::Parameter };
     compareAnswers("the set of opcodes"_s, entryBlock, { }, (m_index.opcodes() | opcodeOfParameters) == (opcodes | opcodeOfParameters), true);
 }
@@ -166,7 +179,6 @@ void BodyIndexComparison::compareUses()
 
     Vector<uint32_t>& counts = m_scratch.numbersOfUses;
     counts.fill(0, m_index.numberOfValues());
-    // An entry is read only behind the mention that has written it.
     Vector<BodyUser>& firstUsers = m_scratch.firstUsers;
     firstUsers.grow(std::max<size_t>(firstUsers.size(), m_index.numberOfValues()));
     auto mention = [&](ValueID used, BodyUseKind kind, ValueID user, BlockID block) {
@@ -193,6 +205,7 @@ void BodyIndexComparison::compareUses()
             mention(operand, BodyUseKind::TerminatorOperand, { }, block.id());
         });
         ValueID test = terminator.isConditionalBranch() ? terminator.as<TerminatorKind::Branch>().conditionOperand() : ValueID();
+        SubjectsOfProofsInVerifiedBody subjects(m_index, terminator);
         uint32_t targetIndex = 0;
         for (BodyTarget target : terminator.targets()) {
             for (ValueID argument : target.arguments())
@@ -201,7 +214,7 @@ void BodyIndexComparison::compareUses()
             std::span<const uint32_t> proofs = target.proofs();
             uint32_t firstParameterOfProofs = m_index.block(target.block()).firstParameter().index() + static_cast<uint32_t>(target.arguments().size());
             for (uint32_t proofIndex = 0; proofIndex < proofs.size(); ++proofIndex) {
-                ValueID subject = subjectOfProofInBody(m_index, terminator, proofs[proofIndex]);
+                ValueID subject = subjects.named(proofs[proofIndex]);
                 std::optional<BodyEdgeResult> result = m_index.edgeResult(terminator, targetIndex, target, proofIndex);
                 compareAnswers("whether the proof names an operand"_s, block.id(), { }, result.has_value(), !!subject);
                 if (hasDifference())
@@ -263,7 +276,6 @@ void BodyIndexComparison::compareDominators(const FlowGraphOfVerifiedBody& graph
     uint32_t numberOfBlocks = graph.numberOfBlocks();
     Vector<BlockID>& dominatorOf = m_scratch.dominators;
     dominatorOf.fill(BlockID(), numberOfBlocks);
-    // A round is the work for one block in one pass.
     Vector<uint32_t>& lastRoundThatClimbedPast = m_scratch.lastRoundsThatClimbedPast;
     lastRoundThatClimbedPast.fill(0, numberOfBlocks);
     uint32_t currentRound = 0;
@@ -280,8 +292,6 @@ void BodyIndexComparison::compareDominators(const FlowGraphOfVerifiedBody& graph
                     common = predecessor;
                     continue;
                 }
-                // Of two blocks the later one is never a dominator of both, so it climbs.
-                // Every block that a climb of this round has passed lies below `common`, so a climb that comes to one would end at `common`.
                 BlockID other = predecessor;
                 while (other != common) {
                     BlockID& later = other.index() > common.index() ? other : common;
@@ -295,7 +305,6 @@ void BodyIndexComparison::compareDominators(const FlowGraphOfVerifiedBody& graph
             dominatorOf[block] = common;
             didChange = true;
         }
-        // Where every edge leads forward, each block comes behind all its predecessors, and one pass settles it.
     } while (didChange && graph.hasRetreatingEdge());
 
     for (uint32_t block = 0; block < numberOfBlocks; ++block)
@@ -368,7 +377,6 @@ void BodyIndexComparison::compareOnlyIncomingEdges(const FlowGraphOfVerifiedBody
     if (hasDifference())
         return;
 
-    // The arguments stand right behind the head of a target, so their place tells where the target stands.
     auto placeOf = [start = m_index.body().words().data()](BodyTarget target) {
         return static_cast<uint64_t>(reinterpret_cast<const uint32_t*>(target.arguments().data()) - start);
     };
@@ -388,8 +396,6 @@ void BodyIndexComparison::compareOnlyIncomingEdges(const FlowGraphOfVerifiedBody
     }
 }
 
-// A strongly connected region is a loop, and its first block in the stream is its head. What stays strongly connected without the edges to the head are the loops inside it.
-// The flow is reducible exactly where no region at any depth is entered from outside at another block than its head, and there these regions are the natural loops.
 void BodyIndexComparison::compareLoops(const FlowGraphOfVerifiedBody& graph)
 {
     if (hasDifference())
@@ -493,7 +499,6 @@ void BodyIndexComparison::compareLoops(const FlowGraphOfVerifiedBody& graph)
         compareAnswers("the loop around the loop"_s, plain.head, { }, indexed.parent.bits(), numberOf(plain.parent));
         compareAnswers("the depth of the loop"_s, plain.head, { }, indexed.depth, plain.depth);
     }
-    // By what the plain computation says of each block and of the loop around each loop.
     Vector<uint32_t> numbersOfMembersFound;
     numbersOfMembersFound.fill(0, loops.size());
     for (uint32_t blockIndex = 0; blockIndex < numberOfBlocks && !hasDifference(); ++blockIndex) {
@@ -522,7 +527,6 @@ static String describeDifferenceInBodyIndex(const DifferenceInBodyIndex& differe
     return makeString(difference.part, ": the index says "_s, textOf(difference.indexed), ", a plain computation gives "_s, textOf(difference.plain));
 }
 
-// For a record that says the places in the index are wrong. Left without a place, Diagnostics would look for it through an index of its own, made by the same builder.
 static void setPlaceOfErrorWithoutBodyIndex(InternalError& error, const Function& function, const Body& body)
 {
     body.forEachBlock([&](const BodyBlock& block) {
@@ -555,7 +559,6 @@ static uint32_t numberOfCasesListedInBody(const BodyTerminator& terminator)
 {
     if (terminator.kind() == TerminatorKind::Switch)
         return terminator.as<TerminatorKind::Switch>().cases().size();
-    // The other terminators with cases are the engine's, and the words stage lets none of those through.
     RELEASE_ASSERT(terminator.kind() == TerminatorKind::SwitchString);
     return terminator.as<TerminatorKind::SwitchString>().strings().size();
 }
@@ -582,20 +585,11 @@ void BodyVerifier::verifyFlow()
     if (!m_body)
         return;
 
-    // Every step below finds blocks and values through the places in the index.
     BodyIndexComparison places(index(), m_scratch);
     if (m_comparesIndexWithPlainComputation)
         places.comparePlaces();
-    else {
-        Vector<BlockID>& blocksOfValues = m_scratch.blocksOfValues;
-        blocksOfValues.grow(std::max<size_t>(blocksOfValues.size(), m_body.numberOfValues()));
-        for (uint32_t blockIndex = 0; blockIndex < index().numberOfBlocks(); ++blockIndex) {
-            BodyBlock block = index().block(BlockID(blockIndex));
-            std::ranges::fill(blocksOfValues.mutableSpan().subspan(block.firstParameter().index(), block.endOfValues().index() - block.firstParameter().index()), BlockID(blockIndex));
-        }
-    }
+
     if (places.difference()) {
-        // Given the value, fail() would read it at the place that has just turned out wrong.
         fail(InternalErrorKind::BodyIndexMismatch, places.difference()->block);
         InternalError& error = m_errors.last();
         error.value = places.difference()->value;
@@ -604,17 +598,9 @@ void BodyVerifier::verifyFlow()
         return;
     }
 
-    verifyEdges();
-    if (hasFailed())
-        return;
-    // Where every edge leads forward, the words stage has seen all that verifyBlockOrder() asks, and nothing else below looks at the graph.
-    bool looksAtGraph = m_hasEdgeThatDoesNotLeadForward || m_comparesIndexWithPlainComputation;
-    if (looksAtGraph)
-        m_scratch.graph.build(index());
-
-    // verifyUsesAndOperations() and verifyLoopMarks() lean on the dominators and loops of the index, so they run after the comparison.
     using Step = void (BodyVerifier::*)();
     static constexpr Step steps[] = {
+        &BodyVerifier::verifyEdges,
         &BodyVerifier::verifyBlockOrder,
         &BodyVerifier::verifyIndexAgainstPlainComputation,
         &BodyVerifier::verifyUsesAndOperations,
@@ -622,19 +608,27 @@ void BodyVerifier::verifyFlow()
         &BodyVerifier::verifyEntryParameters,
     };
     for (Step step : steps) {
-        if (step == &BodyVerifier::verifyBlockOrder && !looksAtGraph)
-            continue;
         (this->*step)();
         if (hasFailed())
             return;
     }
 }
 
-// What a reverse postorder gives and every reader of the order leans on: the edges that lead forward in the stream reach every block,
-// and an edge that does not lead forward closes a cycle with them. Then the flow is reducible exactly where each such edge goes to a dominator of its source.
+const FlowGraphOfVerifiedBody& BodyVerifier::flowGraph()
+{
+    if (!m_hasFlowGraph) {
+        m_scratch.graph.build(index());
+        m_hasFlowGraph = true;
+    }
+    return m_scratch.graph;
+}
+
 void BodyVerifier::verifyBlockOrder()
 {
-    const FlowGraphOfVerifiedBody& graph = m_scratch.graph;
+    if (!index().hasIrreducibleFlow())
+        return;
+
+    const FlowGraphOfVerifiedBody& graph = flowGraph();
     uint32_t numberOfBlocks = graph.numberOfBlocks();
     for (uint32_t block = 1; block < numberOfBlocks; ++block) {
         std::span<const BlockID> predecessors = graph.predecessors(BlockID(block));
@@ -646,14 +640,10 @@ void BodyVerifier::verifyBlockOrder()
     if (!graph.hasRetreatingEdge())
         return;
 
-    // The stretch of the stream from a head to its last source may be as long as the body, for every loop of a row of loops. So the way is looked for among the blocks behind the head that lead forward to a source:
-    // in a reducible flow those are the members of the loop and no others.
     Vector<uint32_t>& marks = m_scratch.lastLoopHeadsThatReach;
     marks.fill(UINT32_MAX, numberOfBlocks);
     Vector<BlockID>& worklist = m_scratch.worklist;
     worklist.shrink(0);
-    // The first predecessor of each block stands in front of it, so those edges are a tree of edges that lead forward. A head that stands above a source in the tree reaches it,
-    // and a head that every way to the source passes stands above it in any such tree: loops in loops are not gone through once for each loop around them.
     Vector<uint32_t> numberBelowInTree;
     numberBelowInTree.fill(1, numberOfBlocks);
     for (uint32_t block = numberOfBlocks; --block;)
@@ -713,89 +703,191 @@ void BodyVerifier::verifyBlockOrder()
     }
 }
 
-// A dominator stands in front of what it dominates: verifyBlockOrder(). So a definition that is available at a use also stands in front of it in the stream.
 void BodyVerifier::verifyDominance()
 {
     for (uint32_t blockIndex = 0; blockIndex < index().numberOfBlocks() && !hasFailed(); ++blockIndex) {
         BodyBlock block = index().block(BlockID(blockIndex));
         BlockID id = block.id();
         if (ValueID subject = block.subject())
-            verifyUse(subject, BodyUseKind::BlockSubject, id, { }, 0, true);
+            verifyUseStepByStep(subject, BodyUseKind::BlockSubject, id, { }, 0);
         if (block.hasHandler()) {
             uint32_t argumentIndex = 0;
             for (ValueID argument : block.handler().arguments())
-                verifyUse(argument, BodyUseKind::HandlerArgument, id, { }, argumentIndex++, false);
+                verifyUseStepByStep(argument, BodyUseKind::HandlerArgument, id, { }, argumentIndex++);
         }
         for (BodyValue value : block.values()) {
-            bool mayHaveToNameDefinition = !m_scratch.opcodesThatTakeAnyValue.contains(value.opcode());
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                verifyUse(operand, BodyUseKind::Operand, id, value.id(), operandIndex, mayHaveToNameDefinition);
+                verifyUseStepByStep(operand, BodyUseKind::Operand, id, value.id(), operandIndex);
             });
         }
         BodyTerminator terminator = block.terminator();
         terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            verifyUse(operand, BodyUseKind::TerminatorOperand, id, { }, operandIndex, true);
+            verifyUseStepByStep(operand, BodyUseKind::TerminatorOperand, id, { }, operandIndex);
         });
         for (BodyTarget target : terminator.targets()) {
             uint32_t argumentIndex = 0;
             for (ValueID argument : target.arguments())
-                verifyUse(argument, BodyUseKind::EdgeArgument, id, { }, argumentIndex++, false);
+                verifyUseStepByStep(argument, BodyUseKind::EdgeArgument, id, { }, argumentIndex++);
         }
         index().forEachEdgeResult(id, [&](const BodyEdgeResult& result) {
-            verifyUse(result.subject, BodyUseKind::EdgeProof, id, { }, result.operandIndex, false);
+            verifyUseStepByStep(result.subject, BodyUseKind::EdgeProof, id, { }, result.operandIndex);
         });
     }
 }
 
-// In the order of the stream, so what a check of an operation follows back through operands and proofs has been looked at: it ends as it does behind verifyDominance().
-// Which fault a body is refused for is for the steps to say, each behind the other as ever: where there is one, what was found here is dropped and they look.
-void BodyVerifier::verifyUsesAndOperations()
+static ALWAYS_INLINE bool hasOnePositionInVerifiedBody(const BodyValue& value)
 {
-    for (uint32_t blockIndex = 0; blockIndex < index().numberOfBlocks() && !hasFailed(); ++blockIndex) {
-        BodyBlock block = index().block(BlockID(blockIndex));
+    return !(value.words()[0] & Wire::WrittenPositionFollows) && value.hasPosition();
+}
+
+void BodyVerifier::verifyOperandsStepByStep(const BodyBlock& block, const BodyValue& value)
+{
+    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        verifyUseStepByStep(operand, BodyUseKind::Operand, block.id(), value.id(), operandIndex);
+    });
+    if (!hasFailed())
+        verifyOperandDefinitionsOneByOne(block, value);
+}
+
+bool BodyVerifier::givesOneValue(ValueID used) const
+{
+    BodyValue definition = index().value(used);
+    return !opcodesWithoutResultInVerifiedBodies.contains(definition.opcode()) && !isTakenByFewOperands(definition);
+}
+
+bool BodyVerifier::isAvailableInOtherBlock(NoteOnVerifiedValue definition, BlockID blockOfUse)
+{
+    BlockID blockOfDefinition = definition.block();
+    if (blockOfDefinition == blockOfUse || !index().dominates(blockOfDefinition, blockOfUse))
+        return false;
+    return definition.isParameter() || !index().block(blockOfDefinition).hasHandler() || terminatorDominates(blockOfDefinition, blockOfUse);
+}
+
+void BodyVerifier::lookAtUsesAndOperations()
+{
+    using Questions = QuestionsOfVerifiedOperation;
+    static_assert(!hasFieldRulesInEveryFunction(TerminatorKind::Return) && !isIntrinsicOf(TerminatorKind::Return));
+
+    const BodyIndex& bodyIndex = index();
+    const UnitIDRemap* unit = &m_body.unit();
+    const NoteOnVerifiedValue* notes = m_scratch.notesOnValues.span().data();
+    const ValueID* subjectOfNextProof = m_scratch.subjectsOfProofs.span().data();
+    uint8_t questionsInFunction = UINT8_MAX;
+    if (function().role != FunctionRole::Source)
+        questionsInFunction &= ~Questions::libraryCode;
+    bool returnsOneValue = function().isCoroutine() || function().results.size() == 1;
+
+    for (uint32_t blockIndex = 0; blockIndex < bodyIndex.numberOfBlocks(); ++blockIndex) {
+        BodyBlock block = bodyIndex.block(BlockID(blockIndex));
         BlockID id = block.id();
-        if (ValueID subject = block.subject())
-            verifyUse(subject, BodyUseKind::BlockSubject, id, { }, 0, true);
+        uint32_t firstOfBlock = block.firstParameter().index();
+        uint32_t firstValue = block.firstValue().index();
+        uint32_t endOfValues = block.endOfValues().index();
+
+        auto isPlainUse = [&](ValueID used, uint32_t end) ALWAYS_INLINE_LAMBDA {
+            NoteOnVerifiedValue definition = notes[used.index()];
+            if (definition.mayBeTakenByFewUses() && !givesOneValue(used)) [[unlikely]]
+                return false;
+            return used.index() - firstOfBlock < end - firstOfBlock || isAvailableInOtherBlock(definition, id);
+        };
+
+        if (ValueID subject = block.subject()) {
+            verifyUseStepByStep(subject, BodyUseKind::BlockSubject, id, { }, 0);
+            if (hasFailed())
+                return;
+        }
+        bool usesOfEdgesArePlain = true;
         if (block.hasHandler()) {
             uint32_t argumentIndex = 0;
-            for (ValueID argument : block.handler().arguments())
-                verifyUse(argument, BodyUseKind::HandlerArgument, id, { }, argumentIndex++, false);
+            for (ValueID argument : block.handler().arguments()) {
+                if (!isPlainUse(argument, firstValue)) {
+                    usesOfEdgesArePlain = false;
+                    verifyUseStepByStep(argument, BodyUseKind::HandlerArgument, id, { }, argumentIndex);
+                }
+                ++argumentIndex;
+            }
+            if (!usesOfEdgesArePlain && hasFailed())
+                return;
         }
-        uint32_t indexInBlock = 0;
-        for (BodyValue value : block.values()) {
-            bool takesAnyValue = m_scratch.opcodesThatTakeAnyValue.contains(value.opcode());
-            bool namesWhatFewOperandsTake = false;
-            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                if (definitionsThatFewOperandsTakeInVerifiedBodies.contains(verifyUse(operand, BodyUseKind::Operand, id, value.id(), operandIndex, !takesAnyValue)))
-                    namesWhatFewOperandsTake |= isTakenByFewOperands(index().value(operand));
+
+        for (uint32_t valueIndex = firstValue; valueIndex < endOfValues; ++valueIndex) {
+            ValueID valueID(valueIndex);
+            BodyValue value = BodyValue::operation(bodyIndex.value(valueID).words(), unit, valueID);
+            uint8_t questions = CaseTable<Opcode, questionsOfVerifiedOperation>::at(value.opcode()) & questionsInFunction;
+            bool operandsArePlain = !(questions & Questions::kindsOfOperands);
+            value.forEachOperand([&](ValueID operand, uint32_t) ALWAYS_INLINE_LAMBDA {
+                operandsArePlain &= isPlainUse(operand, valueIndex);
             });
-            if (!hasFailed())
+            if (!operandsArePlain) [[unlikely]] {
+                verifyOperandsStepByStep(block, value);
+                if (hasFailed())
+                    return;
+            }
+            if (!hasOnePositionInVerifiedBody(value)) [[unlikely]] {
+                verifyPositions(block, value);
+                if (hasFailed())
+                    return;
+            }
+            if (questions & (Questions::fieldRules | Questions::libraryCode)) {
                 verifyFieldRules(*this, block, value);
-            if (!hasFailed() && (!takesAnyValue || namesWhatFewOperandsTake))
-                verifyOperandDefinitionsOneByOne(block, value);
-            if (!hasFailed())
-                verifyOperationByOpcode(block, indexInBlock, value);
-            if (hasFailed())
-                break;
-            ++indexInBlock;
+                if (hasFailed())
+                    return;
+            }
+            if (questions & Questions::convertedAllocation) {
+                if (bodyIndex.opcodeOf(value.as<Opcode::Convert>().valueOperand()) != Opcode::NewObject) [[likely]]
+                    continue;
+                verifyConvertedAllocation(block, value);
+                if (hasFailed())
+                    return;
+            }
+            if (questions & Questions::ruleOfOpcode) {
+                verifyRuleOfOpcode(block, valueIndex - firstValue, value);
+                if (hasFailed())
+                    return;
+            }
         }
-        if (hasFailed())
-            break;
+
         BodyTerminator terminator = block.terminator();
+        TerminatorKind kind = terminator.kind();
+        bool takesAnyValue = terminatorsThatTakeAnyValueInVerifiedBodies.contains(kind);
         terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            verifyUse(operand, BodyUseKind::TerminatorOperand, id, { }, operandIndex, true);
+            if (isPlainUse(operand, endOfValues) && (takesAnyValue || !notes[operand.index()].isParameter())) [[likely]]
+                return;
+            usesOfEdgesArePlain = false;
+            verifyUseStepByStep(operand, BodyUseKind::TerminatorOperand, id, { }, operandIndex);
         });
         for (BodyTarget target : terminator.targets()) {
             uint32_t argumentIndex = 0;
-            for (ValueID argument : target.arguments())
-                verifyUse(argument, BodyUseKind::EdgeArgument, id, { }, argumentIndex++, false);
+            for (ValueID argument : target.arguments()) {
+                if (!isPlainUse(argument, endOfValues)) {
+                    usesOfEdgesArePlain = false;
+                    verifyUseStepByStep(argument, BodyUseKind::EdgeArgument, id, { }, argumentIndex);
+                }
+                ++argumentIndex;
+            }
+            for (uint32_t operandIndex : target.proofs()) {
+                ValueID subject = *subjectOfNextProof++;
+                if (!isPlainUse(subject, endOfValues)) {
+                    usesOfEdgesArePlain = false;
+                    verifyUseStepByStep(subject, BodyUseKind::EdgeProof, id, { }, operandIndex);
+                }
+            }
         }
-        index().forEachEdgeResult(id, [&](const BodyEdgeResult& result) {
-            verifyUse(result.subject, BodyUseKind::EdgeProof, id, { }, result.operandIndex, false);
-        });
+
+        bool isAskedOnlyForUses = terminatorsAskedOnlyForTheirUsesInVerifiedBodies.contains(kind)
+            || (kind == TerminatorKind::Return && returnsOneValue && terminator.as<TerminatorKind::Return>().valueOperand());
+        if (usesOfEdgesArePlain && isAskedOnlyForUses) [[likely]]
+            continue;
         if (!hasFailed())
             verifyTerminatorOperation(block, terminator);
+        if (hasFailed())
+            return;
     }
+}
+
+void BodyVerifier::verifyUsesAndOperations()
+{
+    lookAtUsesAndOperations();
     m_operationsAreVerified = !hasFailed();
     if (m_operationsAreVerified)
         return;
@@ -808,7 +900,6 @@ void BodyVerifier::verifyUsesAndOperations()
     verifyDominance();
 }
 
-// A bit stands for a child in the dominator tree, and with it for everything below the child: the handler of the parent leads there and does not pass through the parent again.
 static BitVector findBlocksReachedFromHandlerOfDominator(const BodyIndex& index)
 {
     struct EdgeBetweenSiblings {
@@ -821,7 +912,6 @@ static BitVector findBlocksReachedFromHandlerOfDominator(const BodyIndex& index)
     Vector<EdgeBetweenSiblings> edges;
     Vector<uint32_t> depthOf;
     depthOf.fill(0, numberOfBlocks);
-    // The block at work and its dominators, by depth.
     Vector<BlockID> path;
     for (BlockID block : index.blocksInDominatorOrder()) {
         uint32_t depth = block == entryBlock ? 0 : depthOf[index.immediateDominator(block).index()] + 1;
@@ -829,7 +919,6 @@ static BitVector findBlocksReachedFromHandlerOfDominator(const BodyIndex& index)
         path.shrink(depth);
         path.append(block);
         index.block(block).forEachOutgoingEdge([&](BodyTarget target, bool isHandlerEdge) {
-            // The immediate dominator of the successor dominates `block`. Where it is another block, the edge leads out of the subtree of one of its children into the successor, which is its child too.
             BlockID successor = target.block();
             BlockID dominator = index.immediateDominator(successor);
             if (dominator != block)
@@ -865,7 +954,6 @@ bool BodyVerifier::terminatorDominates(BlockID from, BlockID to)
 {
     if (!index().strictlyDominates(from, to))
         return false;
-    // A handler that `from` does not dominate immediately is entered past `from` as well. Whatever it leads to and `from` dominates, it leads to through the whole of `from`.
     BodyBlock block = index().block(from);
     if (!block.hasHandler() || index().immediateDominator(block.handler().block()) != from)
         return true;
@@ -881,33 +969,12 @@ bool BodyVerifier::terminatorDominates(BlockID from, BlockID to)
     return !m_blocksReachedFromHandlerOfDominator->quickGet(child.index());
 }
 
-static constexpr OpcodeSet opcodesWithoutResultInVerifiedBodies = opcodesWhere([](Opcode opcode) { return resultRuleOf(opcode) == ResultRule::None; });
-
-// Nothing in verifyUseStepByStep() finds fault with nearly every use.
-ALWAYS_INLINE Opcode BodyVerifier::verifyUse(ValueID used, BodyUseKind kind, BlockID blockOfUse, ValueID user, uint32_t operandIndex, bool mayHaveToNameDefinition)
-{
-    BodyValue definition = index().value(used);
-    Opcode opcode = definition.opcode();
-    BlockID blockOfDefinition = m_scratch.blocksOfValues[used.index()];
-    bool isAvailable = false;
-    if (blockOfDefinition != blockOfUse)
-        isAvailable = definition.isParameter() ? index().dominates(blockOfDefinition, blockOfUse) : terminatorDominates(blockOfDefinition, blockOfUse);
-    else if (kind == BodyUseKind::Operand)
-        isAvailable = used.index() < user.index();
-    else
-        isAvailable = definition.isParameter() || (kind != BodyUseKind::HandlerArgument && kind != BodyUseKind::BlockSubject);
-    if (isAvailable && !(definition.isParameter() && mayHaveToNameDefinition) && !opcodesWithoutResultInVerifiedBodies.contains(opcode)) [[likely]]
-        return opcode;
-    verifyUseStepByStep(used, kind, blockOfUse, user, operandIndex);
-    return opcode;
-}
-
 void BodyVerifier::verifyUseStepByStep(ValueID used, BodyUseKind kind, BlockID blockOfUse, ValueID user, uint32_t operandIndex)
 {
     if (hasFailed())
         return;
 
-    BlockID blockOfDefinition = m_scratch.blocksOfValues[used.index()];
+    BlockID blockOfDefinition = m_scratch.notesOnValues[used.index()].block();
     bool isParameter = index().isParameter(used);
     bool isAvailable = false;
     if (blockOfDefinition != blockOfUse)
@@ -947,62 +1014,81 @@ void BodyVerifier::verifyUseStepByStep(ValueID used, BodyUseKind kind, BlockID b
 
 void BodyVerifier::verifyEdges()
 {
+    m_scratch.subjectsOfProofs.shrink(0);
+    BlockID sourceOfEdgeToHandlerBlock;
+    BlockID handlerBlockThatEdgeEnters;
     for (uint32_t blockIndex = 0; blockIndex < index().numberOfBlocks(); ++blockIndex) {
         BodyBlock block = index().block(BlockID(blockIndex));
-        verifyTargetCount(block);
-        if (hasFailed())
+        BodyTerminator terminator = block.terminator();
+        if (!verifyTargetCount(block, terminator))
             return;
+        TakenByTargets takenByTargets = takenByTargetsOf(terminator.kind());
         uint32_t targetIndex = 0;
-        for (BodyTarget target : block.terminator().targets()) {
-            verifyEdge(block, targetIndex++, target);
+        for (BodyTarget target : terminator.targets()) {
+            BodyBlock to = index().block(target.block());
+            if (!verifyEdge(block, terminator, takenByTargets, targetIndex++, target, to))
+                return;
+            if (to.isHandlerBlock() && !sourceOfEdgeToHandlerBlock) [[unlikely]] {
+                sourceOfEdgeToHandlerBlock = block.id();
+                handlerBlockThatEdgeEnters = target.block();
+            }
+        }
+        if (block.hasHandler()) {
+            verifyHandler(block);
             if (hasFailed())
                 return;
         }
-        verifyHandler(block);
-        if (hasFailed())
-            return;
-        verifyBlockRole(block);
-        if (hasFailed())
-            return;
+        if (block.role() != BlockRole::Ordinary || block.subject()) {
+            verifyBlockRole(block);
+            if (hasFailed())
+                return;
+        }
     }
-    verifyHandlerBlocksAreEnteredByHandlerEdges();
+    if (sourceOfEdgeToHandlerBlock)
+        fail(InternalErrorKind::InvalidHandler, sourceOfEdgeToHandlerBlock, { }, handlerBlockThatEdgeEnters.index());
 }
 
-void BodyVerifier::verifyEdge(const BodyBlock& from, uint32_t targetIndex, BodyTarget target)
+ALWAYS_INLINE bool BodyVerifier::verifyEdge(const BodyBlock& from, const BodyTerminator& terminator, TakenByTargets takenByTargets, uint32_t targetIndex, BodyTarget target, const BodyBlock& to)
 {
-    if (target.block() == entryBlock) {
+    if (target.block() == entryBlock) [[unlikely]] {
         fail(InternalErrorKind::EdgeToEntryBlock, from.id());
-        return;
+        return false;
     }
 
-    BodyTerminator terminator = from.terminator();
-    TargetResults results = targetResultsOf(terminator.kind(), targetIndex, terminator.numberOfTargets());
-    if (!target.proofs().empty() && results != TargetResults::Proofs) {
+    TargetResults results = takenByTargets == TakenByTargets::Nothing ? TargetResults::None
+        : takenByTargets == TakenByTargets::Proofs ? TargetResults::Proofs
+        : targetResultsOf(terminator.kind(), targetIndex, terminator.numberOfTargets());
+    ASSERT(results == targetResultsOf(terminator.kind(), targetIndex, terminator.numberOfTargets()));
+    std::span<const uint32_t> proofs = target.proofs();
+    if (!proofs.empty() && results != TargetResults::Proofs) [[unlikely]] {
         fail(InternalErrorKind::InvalidProof, from.id());
-        return;
+        return false;
     }
 
     uint64_t numberOfIncomingValues = target.numberOfIncomingValues();
     if (results == TargetResults::DeclaredResults)
         numberOfIncomingValues += infoOfTarget(terminator.kind(), targetIndex, terminator.numberOfTargets())->numberOfResults;
-    if (numberOfIncomingValues != index().block(target.block()).numberOfParameters()) {
+    if (numberOfIncomingValues != to.numberOfParameters()) [[unlikely]] {
         fail(InternalErrorKind::EdgeArgumentCountMismatch, from.id(), { }, target.block().index());
-        return;
+        return false;
     }
 
-    for (uint32_t proofIndex = 0; proofIndex < target.proofs().size(); ++proofIndex) {
-        if (index().edgeResult(terminator, targetIndex, target, proofIndex))
-            continue;
-        fail(InternalErrorKind::InvalidProof, from.id(), { }, proofIndex);
-        return;
+    if (proofs.empty())
+        return true;
+    SubjectsOfProofsInVerifiedBody subjects(index(), terminator);
+    for (uint32_t proofIndex = 0; proofIndex < proofs.size(); ++proofIndex) {
+        ValueID subject = subjects.named(proofs[proofIndex]);
+        if (!subject) [[unlikely]] {
+            fail(InternalErrorKind::InvalidProof, from.id(), { }, proofIndex);
+            return false;
+        }
+        m_scratch.subjectsOfProofs.append(subject);
     }
+    return true;
 }
 
 void BodyVerifier::verifyHandler(const BodyBlock& block)
 {
-    if (!block.hasHandler())
-        return;
-
     BodyTarget handler = block.handler();
     if (handler.block() == entryBlock) {
         fail(InternalErrorKind::EdgeToEntryBlock, block.id());
@@ -1043,29 +1129,25 @@ void BodyVerifier::verifyBlockRole(const BodyBlock& block)
         fail(InternalErrorKind::InvalidBlockRole, block.id(), subject);
 }
 
-void BodyVerifier::verifyHandlerBlocksAreEnteredByHandlerEdges()
+ALWAYS_INLINE bool BodyVerifier::verifyTargetCount(const BodyBlock& block, const BodyTerminator& terminator)
 {
-    if (!m_hasHandlerBlock)
-        return;
-    for (uint32_t blockIndex = 0; blockIndex < index().numberOfBlocks(); ++blockIndex) {
-        for (BodyTarget target : index().terminator(BlockID(blockIndex)).targets()) {
-            if (!index().block(target.block()).isHandlerBlock())
-                continue;
-            fail(InternalErrorKind::InvalidHandler, BlockID(blockIndex), { }, target.block().index());
-            return;
-        }
-    }
-}
-
-void BodyVerifier::verifyTargetCount(const BodyBlock& block)
-{
-    BodyTerminator terminator = block.terminator();
     std::optional<uint32_t> numberOfFixedTargets = numberOfFixedTargetsOf(terminator.kind());
     uint64_t expectedNumber = numberOfFixedTargets
         ? *numberOfFixedTargets
         : numberOfCasesListedInBody(terminator) + static_cast<uint64_t>(std::ranges::count(targetInfosOf(terminator.kind()), false, &TargetInfo::isVariadic));
-    if (terminator.numberOfTargets() != expectedNumber)
-        fail(InternalErrorKind::TargetCountMismatch, block.id(), { }, terminator.numberOfTargets());
+    if (terminator.numberOfTargets() == expectedNumber) [[likely]]
+        return true;
+    fail(InternalErrorKind::TargetCountMismatch, block.id(), { }, terminator.numberOfTargets());
+    return false;
+}
+
+static bool holdsLoopMarkInVerifiedBody(const BodyBlock& block)
+{
+    for (BodyValue value : block.values()) {
+        if (value.opcode() == Opcode::LoopHint)
+            return true;
+    }
+    return false;
 }
 
 void BodyVerifier::verifyLoopMarks()
@@ -1073,17 +1155,17 @@ void BodyVerifier::verifyLoopMarks()
     if (!index().hasLoops())
         return;
 
-    const FlowGraphOfVerifiedBody& graph = m_scratch.graph;
+    bool everyHeadHoldsLoopMark = !index().hasIrreducibleFlow();
+    for (uint32_t loop = 0; loop < index().numberOfLoops() && everyHeadHoldsLoopMark; ++loop)
+        everyHeadHoldsLoopMark = holdsLoopMarkInVerifiedBody(index().block(index().loop(LoopID(loop)).head));
+    if (everyHeadHoldsLoopMark)
+        return;
+
+    const FlowGraphOfVerifiedBody& graph = flowGraph();
     BitVector holdsLoopMark(graph.numberOfBlocks());
     for (uint32_t blockIndex = 0; blockIndex < graph.numberOfBlocks(); ++blockIndex) {
-        if (!index().loopOf(BlockID(blockIndex)))
-            continue;
-        for (BodyValue value : index().block(BlockID(blockIndex)).values()) {
-            if (value.opcode() != Opcode::LoopHint)
-                continue;
+        if (index().loopOf(BlockID(blockIndex)) && holdsLoopMarkInVerifiedBody(index().block(BlockID(blockIndex))))
             holdsLoopMark.quickSet(blockIndex);
-            break;
-        }
     }
 
     StronglyConnectedComponents components = computeStronglyConnectedComponents(graph.numberOfBlocks(), [&](unsigned blockIndex) -> std::span<const BlockID> {
@@ -1104,7 +1186,6 @@ void BodyVerifier::verifyEntryParameters()
         return;
     }
 
-    // The front end writes beside each entry parameter the type that the record declares for the position. Two sides that order the positions differently show here.
     for (unsigned parameterIndex = 0; parameterIndex < numberOfEntryParameters; ++parameterIndex) {
         const DeclaredType* declared = function().declaredEntryParameter(parameterIndex);
         if (!declared || entry.parameterType(parameterIndex) == declared->written())
@@ -1118,7 +1199,7 @@ void BodyVerifier::verifyIndexAgainstPlainComputation()
 {
     if (!m_comparesIndexWithPlainComputation)
         return;
-    const FlowGraphOfVerifiedBody& graph = m_scratch.graph;
+    const FlowGraphOfVerifiedBody& graph = flowGraph();
     BodyIndexComparison comparison(index(), m_scratch);
     comparison.compareUses();
     comparison.compareIncomingEdges(graph);

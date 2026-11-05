@@ -34,7 +34,6 @@ static std::optional<uint32_t> firstArgumentInMemory(EntryConvention convention)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The word of a closure tells callers this number: whoever passes fewer arguments puts undefined in the registers of the others, so the entry reads that many without asking the count.
 static uint8_t numberOfRegisterParameters(const CodeGenerationInputs& inputs, CodeUnit unit)
 {
     const CallingConventions& conventions = inputs.plan.conventions();
@@ -55,6 +54,18 @@ static uint8_t numberOfRegisterParameters(const CodeGenerationInputs& inputs, Co
     return static_cast<uint8_t>(std::min<size_t>(numberOfArguments, numberOfArgumentGPRs));
 }
 
+void countEntryIntoCode(Machine::PatchOperation* count)
+{
+    count->effects = Machine::Effects::none();
+    count->effects.writesLocalState = true;
+    count->setRunsWithoutFrame(true);
+    count->clobber(RegisterSet::macroClobberedGPRs());
+    count->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters&) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        jit.add64(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(effectsNet.entriesIntoCode)));
+    });
+}
+
 void EntryEmitter::generateEntries()
 {
     generateEntry(0, conventions().locationsOf(m_program, m_unit));
@@ -73,7 +84,6 @@ void EntryEmitter::generateEntry(uint16_t entry, const ArgumentLocations& locati
         m_indexOfFirstArgumentInList = *firstArgument;
     }
 
-    // A register is read in the block of the entrypoint alone, and reading a stack word may leave that block.
     Vector<Operand, 8> passed(parameters.size());
     for (bool readsStackWords : { false, true }) {
         for (size_t index = 0; index < parameters.size(); ++index) {
@@ -82,9 +92,10 @@ void EntryEmitter::generateEntry(uint16_t entry, const ArgumentLocations& locati
                 passed[index] = read(location, locations.convention);
         }
     }
-    // A form that is no spelling of the parameter's own word fails the build there.
     for (size_t index = 0; index < parameters.size(); ++index)
         generator().defineParameter(parameters[index], passed[index]);
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime)) [[unlikely]]
+        countEntryIntoCode(m_out.patchpoint(Machine::Void));
     m_out.jump(generator().blockFor(block));
 }
 
@@ -183,7 +194,6 @@ bool readsCallerFrame(const CodeGenerationInputs& inputs, const Code& code)
     CodeUnit unit = code.unit();
     if (conventions.entryConventionOf(unit) != EntryConvention::Direct)
         return true;
-    // The words of entry 0.
     if (conventions.stackWordsReservedByCallersOf(inputs.program, unit))
         return true;
     return passesStackWordsInTailCall(inputs, code);
@@ -194,7 +204,6 @@ static uint8_t argumentsBorrowedThrough(const CodeGenerationInputs& inputs, Code
     return unit.role == CodeRole::GenericCallEntry ? inputs.plan.conventions().genericEntry(unit).borrowedArguments : 0;
 }
 
-// The entry goes on to its function by one tail call, and from there on the row is the function's.
 static bool rowOfTailCallsThroughEntryEnds(const CodeGenerationInputs& inputs, CodeUnit unit)
 {
     return unit.role == CodeRole::GenericCallEntry && inputs.plan.endsItsTailCalls(unit.function);
@@ -227,7 +236,6 @@ struct PendingCallEntryMove {
     bool reads(Reg reg) const { return kind != Kind::Undefined && Reg(source) == reg; }
 
     Kind kind { Kind::Undefined };
-    // Register: what is moved. Load: the closure.
     GPRReg source { InvalidGPRReg };
     int32_t offset { 0 };
     ArgumentLocation destination;
@@ -258,7 +266,6 @@ static void emitCallEntryMove(CCallHelpers& jit, const PendingCallEntryMove& mov
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// False: nothing has to move.
 static bool emitFusedCallEntry(CCallHelpers& jit, const CodeGenerationInputs& inputs, FunctionID function)
 {
 #if CPU(X86_64)
@@ -312,7 +319,6 @@ static bool emitFusedCallEntry(CCallHelpers& jit, const CodeGenerationInputs& in
             pending.removeAt(ready);
             continue;
         }
-        // Each move reads one register and no two write the same one, so what is left are rings. The moves of a ring that is cut open are all emitted before the next one is.
         Reg overwritten = pending[0].destination.reg;
         for (PendingCallEntryMove& move : pending) {
             RELEASE_ASSERT(!move.reads(Reg(scratch)));

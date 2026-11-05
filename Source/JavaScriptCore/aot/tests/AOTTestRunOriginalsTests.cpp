@@ -19,7 +19,6 @@ namespace JSC { namespace AOT {
 
 std::span<const NativeTest> testRunOriginalsTests();
 
-// The host of the tests gives an importer under node_modules the original: givesOriginalToPackages().
 static constexpr ASCIILiteral programText = R"IR(variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 module=m1 declared={type=anything|absent} flags=[IsReplaceable, HoldsMock]
 variable g2 name="exports" module=m4 declared={type=anything} initialization=Undefined
@@ -97,7 +96,6 @@ static void checkPackageGetsOriginalAndBodyRunsOnce(LoadedProgram& program)
 
     AOT_TEST_CHECK(setMock(realm, dep, constructEmptyObject(realm), answerOfMock));
     AOT_TEST_CHECK(!scope.exception());
-    // Twice: an answer that has settled is given without a look at who asks.
     AOT_TEST_CHECK(required(program, project) == answerOfMock);
     AOT_TEST_CHECK(required(program, project) == answerOfMock);
     AOT_TEST_CHECK(globalNamed(program, "ranOnce"_s).isUndefined());
@@ -107,7 +105,6 @@ static void checkPackageGetsOriginalAndBodyRunsOnce(LoadedProgram& program)
     AOT_TEST_CHECK(required(program, project) == answerOfMock);
     AOT_TEST_CHECK(required(program, package) == original);
 
-    // What the body exported beside the mock is the file's once the mock has ended.
     AOT_TEST_CHECK(setMock(realm, dep, nullptr, { }));
     AOT_TEST_CHECK(!scope.exception());
     AOT_TEST_CHECK(required(program, project) == original);
@@ -137,7 +134,6 @@ static void installHook(LoadedProgram& program)
     program.realm()->putDirectCustomAccessor(vm, Identifier::fromString(vm, "hook"_s), CustomGetterSetter::create(vm, hookOfBody, nullptr), static_cast<unsigned>(PropertyAttribute::CustomAccessor));
 }
 
-// The file may be evicted, and a CommonJS file of that kind whose body throws is left to the host. Not under a mock: the project goes on getting the mock.
 static void checkOriginalThatThrowsLeavesMockAndRunsAgain(LoadedProgram& program)
 {
     JSGlobalObject* realm = program.realm();
@@ -160,7 +156,6 @@ static void checkOriginalThatThrowsLeavesMockAndRunsAgain(LoadedProgram& program
     AOT_TEST_CHECK(globalNamed(program, "ranTwice"_s).isUndefined());
 }
 
-// The hook stands at the head of the body: nothing is exported yet.
 static void checkProjectThatAsksWhileOriginalRunsGetsMock(LoadedProgram& program)
 {
     JSGlobalObject* realm = program.realm();

@@ -386,7 +386,7 @@ export function map(callback /*, thisArg */)
     if (length > 0 && $isJSArray(array) && $isJSArray(result)) {
         for (; i < length && $hasContiguousIndex(array, i); i++) {
             var made = callback.$call(thisArg, $getOwnContiguousIndex(array, i), i, array);
-            if (!$tryPutByValDirect(result, i, made))
+            if (!$tryPutByValDirect(result, i, made) && !$tryPutIndex(result, i, made))
                 $putByValDirect(result, i, made);
         }
     }

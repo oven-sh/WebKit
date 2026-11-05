@@ -20,14 +20,9 @@
 # EQUALS-LABEL: code f4:Body
 # EQUALS: = StrictEq
 # EQUALS: = StrictEq
-# The same operand in both questions: the second is answered by the edge: function again(path, dir) { if (typeof path !== "string" || typeof dir !== "string") return; if (path.startsWith(dir)) return 2; return path.startsWith(dir); }
-# RUN(AGAIN): walk f5 mechanisms=all
-# AGAIN-LABEL: code f5:Body
-# AGAIN: StringPrototypeStartsWith
-# AGAIN-NOT: StringPrototypeStartsWith
 # As the first, behind tests: function untyped(path, dir) { if (typeof path !== "string" || typeof dir !== "string") return; if (path.startsWith(dir + "/")) return 2; return path.startsWith(dir); }
-# RUN(UNTYPED): walk f6 mechanisms=all
-# UNTYPED-LABEL: code f6:Body
+# RUN(UNTYPED): walk f5 mechanisms=all
+# UNTYPED-LABEL: code f5:Body
 # UNTYPED: = GetStringCodeUnit
 # UNTYPED: StringPrototypeStartsWith
 
@@ -42,9 +37,8 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v4 = NewClosure function=f3
     v5 = NewClosure function=f4
     v6 = NewClosure function=f5
-    v7 = NewClosure function=f6
-    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
-    Return v8
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return v7
 }
 function f1 name="starts" module=m0 length=2 thisType={type=anything} parameters=[{type=string}, {type=string}] results=[{type=anything}] {
   b0(v0: string, v1: string):
@@ -104,29 +98,7 @@ function f4 name="equals" module=m0 length=2 thisType={type=anything} parameters
     v6 = StrictEq v0, v1
     Return v6
 }
-function f5 name="again" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
-    v2 = TypeTest v0 testedType=string
-    Branch v2 -> taken b1(| 0), notTaken b5()
-  b1(v3):
-    v4 = TypeTest v1 testedType=string
-    Branch v4 -> taken b2(| 0), notTaken b5()
-  b2(v5):
-    v6 = PropGet v3 key="startsWith"
-    v7 = Call v6, v3, v5 calleeKey="startsWith"
-    Branch v7 -> taken b3(), notTaken b4()
-  b3():
-    v8 = Integer integer=2
-    Return v8
-  b4():
-    v9 = PropGet v3 key="startsWith"
-    v10 = Call v9, v3, v5 calleeKey="startsWith"
-    Return v10
-  b5():
-    v11 = Undefined
-    Return v11
-}
-function f6 name="untyped" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f5 name="untyped" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b5()

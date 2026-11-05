@@ -25,11 +25,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A root lies in a word of the frame, or two narrow ones in one. Nothing else about a map depends on how many there are.
 static_assert(defaultLimitValue(LimitID::MaxFrameMapRoots, hostArchitecture()) == SavedFrame::maxNumberOfWords);
 static_assert(defaultLimitValue(LimitID::MaxFrameMapWords, hostArchitecture()) == 1u << SavedFrame::liveSlotMapOffsetBits);
 
-// The frame is planned behind the allocation, so the registers that the allocator hands out are asked of the target.
 static Machine::RegisterMask registersClobberedBySuspension(const Machine::ProcedureTraits& traits)
 {
     Machine::RegisterFile file = Machine::registerFileFor(traits);
@@ -48,8 +46,6 @@ static bool rootPointsIntoFrame(const Machine::Operation* root)
 
 FrameMapEmitter::Roots FrameMapEmitter::appendRoots(Machine::PatchOperation* patch, const ValueContext& suspension)
 {
-    // The sweep lists what is live behind an operation that may suspend, and behind no other. An empty list for any other would say that nothing is live.
-    // The allocator keeps to the registers and saves that a saved frame can describe only where the traits say that the function saves its frame.
     if (!suspension->traits().maySuspend() || !m_proc.traits().savesFrameOnSuspend)
         fail(suspension, InternalErrorKind::InvalidSuspension);
 
@@ -59,8 +55,6 @@ FrameMapEmitter::Roots FrameMapEmitter::appendRoots(Machine::PatchOperation* pat
         if (!kind)
             return;
         RELEASE_ASSERT(operand.value && operand.value->type() == machineTypeOf(operand.representation));
-        // It is made again at each use from constants and pinned registers: no word of the frame holds it, and the collector frees nothing that it names.
-        // The allocator has no place for it either, where every register dies.
         if (operand.value->hasNoPosition()) {
             if (rootPointsIntoFrame(operand.value))
                 fail(suspension, InternalErrorKind::FramePointerAcrossSuspension);
@@ -69,15 +63,12 @@ FrameMapEmitter::Roots FrameMapEmitter::appendRoots(Machine::PatchOperation* pat
         patch->append(operand.value, Machine::ValueRep::LateColdAny);
         result.kinds.append(*kind);
     };
-    // Counted as CallEmitter::defineResultsOfCall() counts: by the convention of the unit that the call enters, not by the record of the function.
-    // A callee that hands back the fields of its object lists one result there, and an entry that returns one boxed value may stand in front of a function that lists several.
     auto numberOfResultsDefinedBy = [&](const Operation& producer) -> std::optional<uint32_t> {
         if (producer.opcode != Opcode::CallDirect)
             return numberOfResultsOf(m_program, producer);
         unsigned numberOfResults = conventions().numberOfResults(conventions().unitEnteredBy(producer));
         return numberOfResults > 1 ? std::optional<uint32_t>(numberOfResults) : std::nullopt;
     };
-    // The Patch stands in its block already, so nothing here may append an operation: a constant, which get() would make, is left out.
     auto addRoot = [&](ValueID id) {
         if (!id || id == suspension.id() || m_code.isConstant(id) || isDeferredClosure(id))
             return;
@@ -110,7 +101,6 @@ static bool isRootFoldedToConstant(const Machine::Frame& frame, const Machine::V
 {
     if (rep.isConstant())
         return true;
-    // Compiled code on x86-64 allocates notCellMaskRegister, so only a pinned register holds a constant.
     if (!rep.isGPR() || !frame.isPinned(rep.reg()))
         return false;
     return rep.gpr() == GPRInfo::numberTagRegister || rep.gpr() == GPRInfo::notCellMaskRegister;
@@ -139,7 +129,6 @@ static std::optional<uint32_t> locationInSavedFrame(const Machine::ValueRep& rep
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What emitMoveRegistersSavedInFrame() reads. It moves the registers that the word names between the machine and fixed words below the frame pointer, so a frame that saves others, or elsewhere, has no word.
 static std::optional<uint32_t> savedRegistersWordOf(const Machine::Frame& frame)
 {
     const RegisterAtOffsetList& saves = frame.calleeSaveRegisterAtOffsetList();
@@ -149,7 +138,6 @@ static std::optional<uint32_t> savedRegistersWordOf(const Machine::Frame& frame)
             return std::nullopt;
     }
 #if CPU(ARM64)
-    // The word counts pairs from the end of the list: one pair is the last two registers.
     constexpr size_t maxCount = suspensionClobberedGPRs.size();
     static_assert(!(maxCount % 2) && !((maxCount / 2) >> SavedFrame::savedRegisterBits));
     if (count > maxCount || count % 2)
@@ -175,8 +163,6 @@ static std::optional<uint32_t> savedRegistersWordOf(const Machine::Frame& frame)
 #endif
 }
 
-// The function owns the register, and nothing reads what it holds here. Until the function's first store to it that is what the caller left in it.
-// The suspension would keep that value, and the resumption would put it back into the register.
 bool FrameMapEmitter::savesDeadPreservedRegister(const Machine::PatchParameters& params)
 {
     if constexpr (SavedFrame::preservedRegister == InvalidGPRReg)
@@ -238,7 +224,6 @@ std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, c
     size_t numberOfWordsInFrame = frame.bytesBelowFrameRecord() / sizeof(uint64_t);
     RELEASE_ASSERT(numberOfSaves >= SavedFrame::skippedAtTopFor(*savedRegisters) && deadWordsAtBottom <= numberOfWordsInFrame);
     uint32_t lastLocationKept = static_cast<uint32_t>(numberOfWordsInFrame) - SavedFrame::numberOfWordsSkippedFor(deadWordsAtBottom);
-    // Every restore writes the save area anew, and no SavedFrame has the words skipped at the bottom: the collector stops at a map that names one of them.
     auto isKeptForFunction = [&](uint32_t location) {
         return location == SavedFrame::locationInRegister || (location > numberOfSaves && location <= lastLocationKept);
     };

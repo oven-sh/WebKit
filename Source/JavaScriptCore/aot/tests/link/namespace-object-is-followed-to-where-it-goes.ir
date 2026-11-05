@@ -1,14 +1,18 @@
-# Naming the namespace object of a module hands nothing out: the scan follows the object to where it goes. What the record of the module lists has escaped all the same: the image shows it to whoever gets hold of the object,
-# and the front end lists no more than what somebody may read off it
+# If naming the namespace object of a module let every export escape, one `Barrel.run()` would keep all that the barrel shows in the executable: also what only code that the build has folded away would have called
 # library.js: export function called() { return 1 } export function read() { return 2 } export function idle() { return 3 }
 # main.js: import * as ns from "./library.js"; ns.called(); const f = ns.read; f()
-# `ns.called()` hands the object to the callee as `this`, which the callee does not take. `ns.read` is a read by name of the variable behind the export.
+# `ns.called()` hands the object to the callee as `this`, which the callee does not take. `ns.read` is a read by name of the variable behind the export. Nothing comes to `idle`.
+# A name that code which runs reads off the object is shown by the object to whoever gets hold of it, so what lies under it has escaped: `read`. `called` is read by its binding, and the object is only its `this`.
+# Every name that is not shown stays in: the run time hands its value to nobody.
 # RUN: summary f0
 # CHECK: summary f0
 # CHECK-NOT: hands-out
 # RUN(REACH): link functions mechanisms=all
-# REACH-NOT: callers-known
-# REACH-NOT: unreached
+# REACH: function f2 callers-known
+# REACH-NOT: function f3 {{*}}callers-known
+# REACH: function f4 unreached
+# RUN(NONE): link functions mechanisms=none
+# NONE: function f4 unreached
 # RUN(RUNS): run-in-shell mechanisms=all
 # RUNS: 1
 # RUNS-NEXT: 2

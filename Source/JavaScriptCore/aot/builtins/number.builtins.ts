@@ -60,7 +60,6 @@ const hostToString = (receiver: b.TableType) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// A count within the bounds is never refused.
 const withDigitCount = (parameter: string, minimum: number) =>
   [
     {
@@ -209,6 +208,5 @@ export default b.declarations(
     },
   }),
 
-  // core-js 2 counts U+180E as white space, finds that the engine does not, and replaces both.
   b.replacedByPackages("Number.parseFloat", "Number.parseInt"),
 );

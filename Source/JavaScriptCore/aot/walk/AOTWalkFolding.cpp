@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Folding. An operation whose answer is known where the walk stands is bound to that answer. Nothing is built for it, but for a check that may still throw.
-// At a suspension and at a throw it does nothing of its own: the state has lost what either may change by the time it is asked, and constants and proven types outlive both.
-// It takes away only what neither throws nor runs code with the operands at hand. Withheld: every operation goes on down the chain, and every branch keeps both sides.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -46,12 +42,9 @@ static_assert(testsThatTypesDecideInFolding == OpcodeSet { Opcode::TypeTest, Opc
 static constexpr OpcodeSet readsOfFolding { Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::PropGet, Opcode::ElemGet };
 static constexpr OpcodeSet storesThatStateFollowsForFolding { Opcode::PutModuleVariable, Opcode::PutEnvironmentField };
 static constexpr OpcodeSet placesThatStateFollowsForFolding = storesThatStateFollowsForFolding | OpcodeSet { Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
-// An object is its own object, and a length is its own length.
 static constexpr OpcodeSet conversionsToObjectsInFolding { Opcode::ToObject, Opcode::ToThis };
 static constexpr OpcodeSet opcodesOfFolding = operationsOnPrimitivesInFolding | testsThatTypesDecideInFolding | castsOfFolding | readsOfFolding | storesThatStateFollowsForFolding | checksThatHandOnOrThrow
     | conversionsToObjectsInFolding | OpcodeSet { Opcode::TypeOf, Opcode::ToLength };
-
-// ---- Known primitives
 
 static PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, TypeID id)
 {
@@ -81,7 +74,6 @@ static PrimitiveKnownToFolding onlyValueOfTypeInFolding(const TypeArena& types, 
     }
 }
 
-// No type tells two doubles apart, and none names a made text: those two are read off the constant.
 static PrimitiveKnownToFolding primitiveHeldInFolding(Walker& walker, Reference reference)
 {
     if (!reference)
@@ -96,7 +88,6 @@ static PrimitiveKnownToFolding primitiveHeldInFolding(Walker& walker, Reference 
     return onlyValueOfTypeInFolding(walker.types(), walker.typeOf(reference));
 }
 
-// A number has one constant: an integer that integer types hold is an Integer, any other number a Double.
 static Reference constantForFolding(Walker& walker, PrimitiveKnownToFolding primitive)
 {
     Draft constant(Opcode::Undefined);
@@ -129,9 +120,6 @@ static Reference constantForFolding(Walker& walker, PrimitiveKnownToFolding prim
     return walker.constant(WTF::move(constant));
 }
 
-// ---- The rules of the rows that have hasKnownValueRule, over known primitives. None of them throws or runs code there.
-
-// A text is not read as a number here.
 static std::optional<double> toNumberInFolding(PrimitiveKnownToFolding primitive)
 {
     switch (primitive.kind()) {
@@ -168,8 +156,6 @@ static bool isTruthyInFolding(TypeReader texts, PrimitiveKnownToFolding primitiv
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A NaN that an operand brings goes through an operation as it is. One that the processor makes has a sign on some processors and none on others,
-// the program may be built on one and run on the other, and it can read the sign out of a Float64Array.
 static PrimitiveKnownToFolding numberComputedInFolding(double result, double left, double right)
 {
     if (std::isnan(result) && ((!std::isnan(left) && !std::isnan(right)) || std::signbit(result)))
@@ -181,7 +167,6 @@ static PrimitiveKnownToFolding powerInFolding(double base, double exponent)
 {
     if (std::isnan(exponent) || (std::abs(base) == 1 && std::isinf(exponent)))
         return PrimitiveKnownToFolding::number(PNaN);
-    // With such an exponent the power is made of multiplications alone. Any other goes to the C library, whose answer where the program is built need not be its answer where the program runs.
     if (!(exponent >= 0 && exponent <= maxExponentForIntegerMathPow) || exponent != std::trunc(exponent))
         return { };
     return numberComputedInFolding(operationMathPow(base, exponent), base, exponent);
@@ -271,7 +256,6 @@ static PrimitiveKnownToFolding relationInFolding(TypeReader texts, Opcode relati
     return PrimitiveKnownToFolding::boolean(relationHoldsInFolding(relation, *leftNumber, *rightNumber));
 }
 
-// As TypeArena::spellSameText().
 static bool spellSameTextInFolding(TypeReader texts, StringID a, StringID b)
 {
     return a == b || (liesInThread(a) != liesInThread(b) && std::ranges::equal(texts.bytesOf(a), texts.bytesOf(b)));
@@ -290,7 +274,6 @@ static PrimitiveKnownToFolding equalityInFolding(TypeReader texts, PrimitiveKnow
     return PrimitiveKnownToFolding::boolean(*toNumberInFolding(left) == *toNumberInFolding(right));
 }
 
-// Null for a number, whose text the table need not hold.
 static StringID textInEveryProgramForFolding(const StringTable& strings, PrimitiveKnownToFolding primitive)
 {
     switch (primitive.kind()) {
@@ -310,14 +293,9 @@ static StringID textInEveryProgramForFolding(const StringTable& strings, Primiti
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Each part as ToString spells it. A text of the table where that is the whole answer: it goes by its id like one that was written. Else a made text.
-// Unknown for narrow parts beside wide ones: a piece of such a text that lies in an 8-bit part is an 8-bit string, a piece of a 16-bit literal is not.
-// `maker` is null: unknown too where the text would have to be made.
 static PrimitiveKnownToFolding joinTextsInFolding(const Program& program, TypeReader texts, TypeArena* maker, std::span<const PrimitiveKnownToFolding> parts)
 {
-    // Nothing here goes through the bytes of a made text: in `a + b + c + ..` each sum is a part of the next.
     struct Part {
-        // Null: a number.
         StringID text;
         double number { 0 };
     };
@@ -354,7 +332,6 @@ static PrimitiveKnownToFolding joinTextsInFolding(const Program& program, TypeRe
     return PrimitiveKnownToFolding::text(joined);
 }
 
-// `right` is unknown where the operation has one operand.
 static PrimitiveKnownToFolding evaluateInFolding(const Program& program, TypeReader texts, TypeArena* maker, Opcode opcode, PrimitiveKnownToFolding left, PrimitiveKnownToFolding right)
 {
     switch (opcode) {
@@ -432,8 +409,6 @@ static Reference foldOverKnownPrimitivesInFolding(Walker& walker, const BodyValu
     return constantForFolding(walker, evaluateInFolding(walker.program(), walker.types(), &walker.types(), value.opcode(), operands[0], operands[1]));
 }
 
-// ---- Without a walk
-
 static_assert(primitivesWrittenForFolding == OpcodeSet { Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String });
 
 static PrimitiveKnownToFolding primitiveWrittenByInFolding(const BodyValue& value)
@@ -456,7 +431,6 @@ static PrimitiveKnownToFolding primitiveWrittenByInFolding(const BodyValue& valu
     }
 }
 
-// As answerKnownToFolding() goes for operands that are constants: a cast is its operand, and foldOverKnownPrimitivesInFolding().
 PrimitiveKnownToFolding primitiveMadeOfConstants(const Program& program, const BodyValue& value, NOESCAPE const ScopedLambda<PrimitiveKnownToFolding(ValueID)>& heldBy)
 {
     Opcode opcode = value.opcode();
@@ -526,15 +500,11 @@ std::optional<uint32_t> onlyTargetKnownToFolding(Walker& walker, const BodyTermi
     return onlyTargetWith(walker.types(), terminator, primitiveHeldInFolding(walker, operand));
 }
 
-// ---- What proven types decide
-
-// No rule asked here reads a position.
 static TypingContext typingForFolding(Walker& walker)
 {
     return { walker.program(), walker.types(), PositionTypes::knowingNothing() };
 }
 
-// Null where nothing may be concluded from the type: no run comes here, or the word may be anything.
 static TypeID typeToJudgeByInFolding(Walker& walker, Reference reference)
 {
     if (!reference)
@@ -545,7 +515,6 @@ static TypeID typeToJudgeByInFolding(Walker& walker, Reference reference)
     return type;
 }
 
-// `S.#count` asks whether S is the class object that declares the name. A class that is evaluated at most once has one class object in the one realm that runs the image.
 static bool areOneClassObjectInFolding(Walker& walker, TypeID left, TypeID right)
 {
     if (left != right || !walker.plan().hasOneInstance())
@@ -556,8 +525,6 @@ static bool areOneClassObjectInFolding(Walker& walker, TypeID left, TypeID right
     return classLayout && walker.facts().isEvaluatedAtMostOnce(classLayout);
 }
 
-// The side Taken narrows to what may pass, the side NotTaken takes away only what would surely have passed (ir/AOTTypeNarrowing.h). So an operand that one side leaves nothing of decides the test.
-// Where that happens the operands are such that the test converts nothing: it neither throws nor runs code.
 static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const BodyValue& test)
 {
     if (std::optional<bool> answer = answerOfRelationWithoutCompare(walker, test))
@@ -573,7 +540,6 @@ static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const 
             return std::nullopt;
     }
 
-    // Of values of which nothing is said both answers are open: no edge leaves `never`.
     TypeArena& types = walker.types();
     if (types.saysNothing(typesOfOperands[0])) {
         if (test.opcode() == Opcode::ToBoolean || (test.opcode() == Opcode::TypeTest && !types.saysNothing(test.testedType())) || (numberOfOperands == 2 && types.saysNothing(typesOfOperands[1])))
@@ -594,7 +560,6 @@ static std::optional<bool> answerThatTypesDecideInFolding(Walker& walker, const 
     return std::nullopt;
 }
 
-// CheckInitialized, RequireObjectCoercible, RequireObject: each throws for what it turns away, and its result rule gives the rest of its operand. Where that is all of the operand it turns nothing away.
 static Reference operandOfCheckThatPassesInFolding(Walker& walker, const BodyValue& check)
 {
     static_assert(!OperandIndex::CheckInitialized::value && !OperandIndex::RequireObjectCoercible::value && !OperandIndex::RequireObject::value);
@@ -602,14 +567,12 @@ static Reference operandOfCheckThatPassesInFolding(Walker& walker, const BodyVal
     TypeID type = typeToJudgeByInFolding(walker, checked);
     if (!type)
         return { };
-    // The rule goes by the opcode and the type of the operand.
     Draft draft(check.opcode());
     draft.setOperand(0, checked);
     TypeID passing = resultTypeOf(typingForFolding(walker), draft, OperandTypes { std::span<const TypeID>(&type, 1) });
     return passing == type ? checked : Reference();
 }
 
-// Not ToBoolean: the branch behind it narrows its operand by the record of the test, so a boolean too keeps that record.
 static uint16_t primitivesThatConversionHandsOnInFolding(Opcode conversion)
 {
     switch (conversion) {
@@ -646,7 +609,6 @@ static Reference operandThatConversionHandsOnInFolding(Walker& walker, const Bod
     return type.hasOnlyPrimitives(handedOn) ? operand : Reference();
 }
 
-// The texts are names of the built-ins' table, which every program holds.
 static Reference foldTypeOfInFolding(Walker& walker, const BodyValue& typeOf)
 {
     TypeID id = typeToJudgeByInFolding(walker, walker.referenceOf(typeOf.as<Opcode::TypeOf>().valueOperand()));
@@ -681,9 +643,6 @@ static Reference foldTypeOfInFolding(Walker& walker, const BodyValue& typeOf)
     return answer ? constantForFolding(walker, PrimitiveKnownToFolding::text(answer)) : Reference();
 }
 
-// ---- Reads
-
-// Link's tables may be shorter than the program's. What has no entry claims nothing.
 static LinkedCell cellOfVariableInFolding(const Walker& walker, VariableID variable)
 {
     const LinkTables& linked = walker.facts().linked();
@@ -695,18 +654,15 @@ static bool isStoredBeforeEveryReadInFolding(const LocationFacts& location)
     return location.initialization != InitializationState::Unknown;
 }
 
-// LinkedCell::proven is the join of what the writers bring. A read in front of the first store finds the cell empty, and of that it says nothing.
 static Reference onlyValueOfCellInFolding(Walker& walker, const LinkedCell& cell, bool isFilledAtEveryRead)
 {
     if (!isFilledAtEveryRead || !cell.proven || !cell.everyWriterIsKnown)
         return { };
-    // The read is built, so that what it finds can be held against the proof. Whoever takes its result goes by the type all the same.
     if (walker.checksProofs())
         return { };
     return constantForFolding(walker, onlyValueOfTypeInFolding(walker.types(), cell.proven));
 }
 
-// An empty slot and a hole are absent, and a read by name or by index then goes on above the object.
 static Reference unlessAbsentInFolding(Walker& walker, Reference held)
 {
     TypeID type = typeToJudgeByInFolding(walker, held);
@@ -719,7 +675,6 @@ static bool holdsAccessorInFolding(Walker& walker, FieldReference field)
     return fieldAt(walker.program(), field).form.contains(FieldForm::IsAccessor) || facts.formOfValue.contains(FieldForm::IsAccessor) || facts.facts.contains(FieldFact::IsAccessor);
 }
 
-// Whoever noted the slot had the object in hand with the field in its slot, so the read finds an own data property and neither throws nor runs code.
 static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<Opcode::PropGet>& read)
 {
     if (read.isFreeName())
@@ -739,7 +694,6 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
     return held ? unlessAbsentInFolding(walker, held) : Reference();
 }
 
-// An index that is a number is converted without code.
 static Reference elementAnsweredByStateInFolding(Walker& walker, const BodyOperation<Opcode::ElemGet>& read)
 {
     Reference index = walker.referenceOf(read.propertyOperand());
@@ -764,7 +718,6 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
             return held;
         if (Reference kept = valueOfStableBinding(walker, value))
             return kept;
-        // What a variable starts with other than nothing is among what Link has joined.
         bool isFilled = walker.program().at(variable).initialization != VariableInitialization::Uninitialized || isStoredBeforeEveryReadInFolding(walker.facts().variable(variable).location);
         return onlyValueOfCellInFolding(walker, cellOfVariableInFolding(walker, variable), isFilled);
     }
@@ -786,9 +739,6 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
     }
 }
 
-// `for (..) sum = table.handler(sum)`, `table` a constant of the module: no turn writes it, so its read stands in front of the typed copy of the loop, and what the check finds of it there it finds in every turn.
-// A check throws, so it stays where it is written, and whatever looks at what it hands on stays in the turn with it. So it is a look like the others, asked once in front:
-// where the place is empty the way leads into the other copy, which checks in its turn and throws where the program does. Null: the walk stands in no such turn, or the read stands in it.
 static Reference lookAtCellInFrontOfTypedCopyInFolding(Walker& walker, const BodyValue& check, Reference checked)
 {
     if (!walker.standsInFrontOfTypedCopy(checked))
@@ -815,7 +765,6 @@ static Reference lookAtCellInFrontOfTypedCopyInFolding(Walker& walker, const Bod
     return walker.build(WTF::move(filled));
 }
 
-// The check is built as it was written. Whoever reads the place again while the state still has it finds what has passed, so a second check turns nothing away.
 static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
 {
     Reference checked = walker.referenceOf(check.operand(OperandIndex::CheckInitialized::value));
@@ -861,8 +810,6 @@ static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
     return true;
 }
 
-// ---- The link of the chain
-
 static Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
 {
     Opcode opcode = value.opcode();
@@ -885,15 +832,12 @@ static Reference answerKnownToFolding(Walker& walker, const BodyValue& value)
         if (std::optional<bool> answer = answerThatTypesDecideInFolding(walker, value))
             return constantForFolding(walker, PrimitiveKnownToFolding::boolean(*answer));
     }
-    // The function behind the look answers for a list too. Where it has to be asked of what is left in any case, the look would only be one more: every value goes the way of the function.
     if (opcode == Opcode::TypeTest && isLookAtCellInFrontOfIsArray(walker, walker.currentBodyIndex(), value)) {
         Reference asked = walker.referenceOf(value.operand(0));
         if (!asked || !cellAnswersWhetherValueIsArray(walker, walker.typeOf(asked)))
             return constantForFolding(walker, PrimitiveKnownToFolding::boolean(false));
     }
     if (Reference answer = opcode == Opcode::StrictEq && !walker.isAskedByBranchOfItsBlock(value) ? walker.buildTestOfTagAsTestOfShape(value) : Reference())
-        return answer;
-    if (Reference answer = answerKnownOfTexts(walker, value))
         return answer;
     return operandThatConversionHandsOnInFolding(walker, value);
 }
@@ -911,8 +855,6 @@ bool foldOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
     }
     if (opcode == Opcode::CheckInitialized)
         return buildCheckOfCellInFolding(walker, value);
-    // The state answers a read only where somebody has told it what the place holds. buildTypedAccess() builds these four as they are written and tells it.
-    // With TypedOperations on it is asked further down the chain.
     return placesThatStateFollowsForFolding.contains(opcode) && !walker.has(Mechanism::TypedOperations) && buildTypedAccess(walker, value);
 }
 

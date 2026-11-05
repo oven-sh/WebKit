@@ -16,7 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// The parameters of a Check wait in the arena for its late path, and nothing destroys them.
 static_assert(std::is_trivially_destructible_v<PatchParameters>);
 
 static constexpr uint32_t emptySharedLatePathSlot = UINT32_MAX;
@@ -52,7 +51,6 @@ static ALWAYS_INLINE bool patchRegisterAnswersConstraint(const ValueRep& answer,
     return constraint.kind() < ValueRep::Register || answer == constraint;
 }
 
-// The address of a generator differs from run to run, and so does the slot. Only the length of a search follows from it: no two late paths in the list are alike, so at most one matches.
 static size_t firstSharedLatePathSlotOf(std::span<const uint32_t> slots, const PatchGenerator* generator)
 {
     ASSERT(hasOneBitSet(slots.size()));
@@ -78,7 +76,6 @@ static void addSharedLatePath(Encoder& encoder, const Encoder::SharedLatePath& l
     uint32_t index = encoder.m_sharedLatePaths.size();
     encoder.m_sharedLatePaths.append(encoder.m_arena, latePath);
 
-    // Half of the slots stay empty, so every search ends.
     size_t numberOfSlotsNeeded = 2 * (static_cast<size_t>(index) + 1);
     if (numberOfSlotsNeeded <= encoder.m_sharedLatePathSlots.size()) {
         noteSharedLatePathInSlots(encoder, index);
@@ -129,7 +126,6 @@ static void restoreValueRepFromConstant(CCallHelpers& jit, int64_t bits, Reg des
     jit.move64ToDouble(scratch, destination.fpr());
 }
 
-// Nothing holds the words here, so no operand lies in one. Like a ClearSpill, a store writes no register but the one through which ARM64 reaches a far slot.
 static void clearFrameWordsInFrontOfSuspension(Encoder& encoder, const PatchOperation* suspension)
 {
     const BitSpan& words = suspension->frameWordsClearedInFrontOfSuspension();
@@ -145,7 +141,6 @@ static void clearFrameWordsInFrontOfSuspension(Encoder& encoder, const PatchOper
         if (!words.get(word))
             continue;
 #if CPU(ARM64)
-        // The next word lies below this one.
         if (words.get(word + 1)) {
             encoder.m_jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, addressOfWord(++word));
             continue;
@@ -213,7 +208,6 @@ void Encoder::encodeCheck(const Step& step, PatchOperation* check)
     PatchParameters* parameters = new (NotNull, m_arena.allocate(sizeof(PatchParameters), alignof(PatchParameters))) PatchParameters(*this, check);
     fillParameters(*parameters, step, check);
 
-    // Late paths run in the order of adding, so the entry has its place by the time this one runs. It emits nothing.
     if (const SharedLatePath* shared = findSharedLatePath(check, parameters->m_reps)) {
         auto linkToSharedLatePath = [jumps, entry = shared->entry](CCallHelpers& jit) {
             RELEASE_ASSERT(entry->isSet());
@@ -324,7 +318,6 @@ Encoder::SharedLatePath* Encoder::findSharedLatePath(PatchOperation* check, std:
 
 RegisterSet PatchParameters::unavailableRegisters() const
 {
-    // A register that the platform's calling convention has the callee save holds a caller's value, even where the allocator never hands it out.
     RegisterMask unsavedCalleeSaves = maskOf(RegisterSet::calleeSaveRegisters()) | registerFileFor(proc().traits()).calleeSaved;
     if (m_frameIsSetUp)
         unsavedCalleeSaves &= ~frame().calleeSavesMask();
@@ -360,7 +353,6 @@ Procedure& PatchParameters::proc() const
 
 void ValueRep::emitRestore(CCallHelpers& jit, Reg destination) const
 {
-    // On ARM64 a distant word of the frame is reached through a scratch register. On both targets a constant goes to an FPR through one.
     AllowMacroScratchRegisterUsage allowScratch(jit);
     switch (m_kind) {
     case Register:

@@ -277,7 +277,6 @@ function formatParameter(parameter: ModelParameter, pools: Pools): string {
   ]);
 }
 
-// The table is compiled for one platform, so a record holds the type that the result has there.
 function formatResultType({ type, typesByPlatform }: ModelResult): string {
   const [first, ...others] = typesByPlatform;
   if (first === undefined) return formatId("BuiltinTypeID", type);
@@ -397,12 +396,6 @@ function formatCode(code: ModelCode, pools: Pools): string | null {
   return formatUnlessEmpty([
     ["implementation", formatImplementation(code.implementation)],
     ["model", formatId("RuntimeFunctionID", code.model)],
-    ["fieldsForm", formatInlineBuiltin(code.fieldsForm)],
-    ["prefixForm", formatInlineBuiltin(code.prefixForm)],
-    ["prefixProperties", pools.resultProperties.addStretch(code.prefixProperties.map(formatResultProperty))],
-    ["listForm", formatInlineBuiltin(code.listForm)],
-    ["overloadInRanges", formatId("BuiltinOverloadID", code.inRanges === null ? null : code.inRanges.overload)],
-    ["operandsTakenAsBytes", code.inRanges === null ? null : `{ ${code.inRanges.views.map(view => formatOperand(view)).join(", ")} }`],
   ]);
 }
 

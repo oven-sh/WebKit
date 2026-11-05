@@ -11,8 +11,6 @@
 
 namespace JSC { namespace AOT { namespace PropertyWalk {
 
-// tryAssign() for a call of Object.assign() that may have more sources. goesOnKeyByKey: the engine goes through this source key by key, names first and then symbols: a string, an array, a function, an object with an accessor.
-// It then goes through every later source of the call so too, so none of those comes here.
 bool tryAssign(VM&, JSObject* compiledTarget, JSObject* source, bool& goesOnKeyByKey);
 
 ALWAYS_INLINE std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrder(const JSObject* compiledObject)
@@ -33,26 +31,22 @@ ALWAYS_INLINE bool hasExtraProperties(const JSObject* compiledObject)
     return uncheckedDowncast<Object>(compiledObject)->hasExtraProperties();
 }
 
-// Empty for a field that is not in its slot.
 ALWAYS_INLINE JSValue readListedProperty(const JSObject* compiledObject, const PropertyListEntry& property, JSObject* extraProperties)
 {
     return property.field ? uncheckedDowncast<Object>(compiledObject)->readInline(*property.field) : extraProperties->getDirect(property.offsetInExtraProperties);
 }
 
-// Empty for a field that is absent.
 ALWAYS_INLINE JSValue readListedField(const JSObject* compiledObject, const FieldAsProperty& property)
 {
     return uncheckedDowncast<Object>(compiledObject)->readListedField(property);
 }
 
-// As Object::readInlineUnboxed. An empty value also stands for a field that holds undefined and has no storage.
 template<typename Functor>
 ALWAYS_INLINE auto readListedFieldUnboxed(const JSObject* compiledObject, const FieldAsProperty& property, const Functor& functor)
 {
     return uncheckedDowncast<Object>(compiledObject)->readInlineUnboxed(*property.field, functor);
 }
 
-// The narrow references of an object in a frame are not read by cellInNarrowSlot().
 ALWAYS_INLINE bool isInFrame(const JSObject* compiledObject)
 {
     return uncheckedDowncast<Object>(compiledObject)->isInFrame();

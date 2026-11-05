@@ -61,7 +61,6 @@ static JSCell* tryNewSetFromSideEffectFreeIterable(JSGlobalObject* globalObject,
         return nullptr;
     JSCellButterfly* walked = nullptr;
     {
-        // What is too long for one list is walked step by step.
         auto listScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         walked = CommonSlowPaths::trySpreadFast(globalObject, iterable.asCell());
         if (listScope.exception()) [[unlikely]] {
@@ -154,7 +153,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTryNewMapFromEntries, JSCell*, (Instance* i
     OPERATION_RETURN(scope, tryNewMapFromPairs(globalObject, globalObject->mapStructure(), JSValue::decode(iterable)));
 }
 
-// Whatever the short ways above leave is handed to the constructor itself.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewSetFromIterable, JSCell*, (Instance* instance, EncodedJSValue encodedIterable))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSetFromIterable);
@@ -186,7 +184,6 @@ static ALWAYS_INLINE UGPRPair hasEntryAndIndex(bool hasEntry, uint32_t entry)
     return makeUGPRPair(hasEntry, entry);
 }
 
-// Code that walks or searches a table in line reads its columns, and a table in the image has none. Without memory for them the table stays where it is, and the run time goes on answering for it.
 template<typename Collection>
 static void moveWalkedTableToHeap(JSGlobalObject* globalObject, Collection* collection, JSCell* storage)
 {
@@ -245,7 +242,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetNext, UGPRPair, (Instance* inst
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSSet>(collection, Entry::operationAOTSetNext), JSValue::decode(table), entry, results));
 }
 
-// The members in the order of a walk from the first entry on. The caller defers collection.
 template<typename Functor>
 static void forEachMemberOfSet(VM& vm, JSSet* set, NOESCAPE const Functor& functor)
 {
@@ -256,10 +252,8 @@ static void forEachMemberOfSet(VM& vm, JSSet* set, NOESCAPE const Functor& funct
         functor(next.key);
 }
 
-// Straight into a vector that takes every member: no second list is made, and the table is walked once.
 static bool tryAppendMembersInPlace(VM& vm, JSArray* target, JSSet* source)
 {
-    // The mode includes the copy-on-write bit, so shared storage is not taken.
     IndexingType mode = target->indexingMode();
     if (mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
         return false;
@@ -268,7 +262,6 @@ static bool tryAppendMembersInPlace(VM& vm, JSArray* target, JSSet* source)
     if (newLength > MAX_STORAGE_VECTOR_LENGTH || !target->ensureLength(vm, static_cast<unsigned>(newLength)))
         return false;
 
-    // The new places are holes until they are written.
     DeferGCForAWhile deferGC(vm);
     Butterfly* butterfly = target->butterfly();
     unsigned index = length;
@@ -286,7 +279,6 @@ static bool tryAppendMembersInPlace(VM& vm, JSArray* target, JSSet* source)
         });
     } else {
         forEachMemberOfSet(vm, source, [&](JSValue member) {
-            // NaN would read as a hole.
             double number = member.isNumber() ? member.asNumber() : PNaN;
             takesAll &= number == number;
             butterfly->contiguousDouble().atUnsafe(index++) = number;
@@ -308,9 +300,7 @@ void appendMembersOfSet(JSGlobalObject* globalObject, JSArray* target, JSSet* so
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // As the first step of a walk does: the next time the stub walks the table.
     moveWalkedTableToHeap(globalObject, source, source->storage());
-    // No dense storage holds more, and element by element the rest would go into a sparse map.
     if (static_cast<uint64_t>(target->length()) + source->size() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return;
@@ -333,16 +323,12 @@ void appendMembersOfSet(JSGlobalObject* globalObject, JSArray* target, JSSet* so
     }
 }
 
-// `[...map]`, while nobody can see the iterator: room for every pair at once, the table walked once, and each pair one cell. Nothing of the program runs in between, so the table stays what it is.
-// A pair lies in the list as soon as it is made: the collector visits the elements below the length, which are holes until then.
 bool tryAppendPairsOfMap(JSGlobalObject* globalObject, JSArray* target, JSMap* source)
 {
     VM& vm = globalObject->vm();
-    // A pair is a list, and a list belongs to a realm: that of the `next` which makes it, which a Map that nobody has changed finds in the realm that it was made in. "Nobody can see it" is asked of that realm, and says nothing of this one.
     if (source->realm() != globalObject) [[unlikely]]
         return false;
     if (target->indexingMode() != ArrayWithContiguous || globalObject->isHavingABadTime()) [[unlikely]] {
-        // No code of the program has seen the list. Where its site has not learned yet what its lists come to hold, the first pair that was pushed would give it this storage.
         if (globalObject->isHavingABadTime() || !source->size() || !target->tryMakeWritableContiguous(vm).data() || target->indexingMode() != ArrayWithContiguous)
             return false;
     }
@@ -355,7 +341,6 @@ bool tryAppendPairsOfMap(JSGlobalObject* globalObject, JSArray* target, JSMap* s
     if (newLength > MAX_STORAGE_VECTOR_LENGTH || !target->ensureLength(vm, static_cast<unsigned>(newLength)))
         return false;
 
-    // The new places are holes until they are written, and no collection comes in between: one barrier behind the last.
     DeferGCForAWhile deferGC(vm);
     ArraysMadeInARow pairs(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 2, 3);
     auto* elements = target->butterfly()->contiguous().data();
@@ -379,12 +364,9 @@ bool tryAppendPairsOfMap(JSGlobalObject* globalObject, JSArray* target, JSMap* s
     return true;
 }
 
-// An iterator that has not been stepped stands in front of the first entry. Whatever has become of the table that it was made over, replaced or cleared, nothing lies in front of that place that could have been taken away:
-// so its steps would hand out what the Map holds now, from the first entry to the last. The program may hold the iterator, and finds it closed.
 bool tryAppendPairsLeftIn(JSGlobalObject* globalObject, JSArray* target, JSMapIterator* entries)
 {
     VM& vm = globalObject->vm();
-    // The iterator is of the realm of the method that has made it, whichever realm its Map is of, and so is its `next`.
     if (entries->realm() != globalObject || entries->kind() != IterationKind::Entries || entries->entry() || entries->tryGetStorage() == vm.orderedHashTableSentinel() || !mapIteratorProtocolIsFastAndNonObservable(vm, entries))
         return false;
     if (!tryAppendPairsOfMap(globalObject, target, entries->iteratedObject()))
@@ -410,61 +392,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendMembers, void, (Instance* instance, J
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendMembers);
     appendMembersOfSet(globalObject, cellArgument<JSArray>(cell, Entry::operationAOTAppendMembers), cellArgument<JSSet>(sourceCell, Entry::operationAOTAppendMembers));
     OPERATION_RETURN(scope);
-}
-
-// Of the kind asked for, or of the least kind that takes every member.
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfMembers, JSCell*, (Instance* instance, JSCell* sourceCell, uint64_t wantedIndexingType))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfMembers);
-    JSSet* source = cellArgument<JSSet>(sourceCell, Entry::operationAOTNewArrayOfMembers);
-    RELEASE_ASSERT(wantedIndexingType == ArrayWithInt32 || wantedIndexingType == ArrayWithDouble || wantedIndexingType == ArrayWithContiguous);
-    static_assert(ArrayWithInt32 < ArrayWithDouble && ArrayWithDouble < ArrayWithContiguous);
-    IndexingType indexingType = static_cast<IndexingType>(wantedIndexingType);
-    moveWalkedTableToHeap(globalObject, source, source->storage());
-    uint64_t length = 0;
-    {
-        DeferGCForAWhile deferGC(vm);
-        forEachMemberOfSet(vm, source, [&](JSValue member) {
-            // NaN would read as a hole among doubles.
-            bool isStoredAsDouble = member.isDouble() && member.asDouble() == member.asDouble();
-            indexingType = std::max<IndexingType>(indexingType, member.isInt32() ? ArrayWithInt32 : isStoredAsDouble ? ArrayWithDouble : ArrayWithContiguous);
-            ++length;
-        });
-    }
-    JSArray* array = length > MAX_STORAGE_VECTOR_LENGTH ? nullptr : JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), static_cast<unsigned>(length));
-    if (!array) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        OPERATION_RETURN(scope, nullptr);
-    }
-
-    if (array->indexingType() != indexingType) [[unlikely]] {
-        MarkedArgumentBuffer members;
-        {
-            DeferGCForAWhile deferGC(vm);
-            forEachMemberOfSet(vm, source, [&](JSValue member) { members.append(member); });
-        }
-        if (members.hasOverflowed()) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            OPERATION_RETURN(scope, nullptr);
-        }
-        for (size_t index = 0; index < members.size(); ++index) {
-            array->putDirectIndex(globalObject, static_cast<unsigned>(index), members.at(index));
-            OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-        OPERATION_RETURN(scope, array);
-    }
-
-    // The places are holes until they are written.
-    DeferGCForAWhile deferGC(vm);
-    Butterfly* butterfly = array->butterfly();
-    unsigned index = 0;
-    if (indexingType == ArrayWithDouble)
-        forEachMemberOfSet(vm, source, [&](JSValue member) { butterfly->contiguousDouble().atUnsafe(index++) = member.asNumber(); });
-    else {
-        forEachMemberOfSet(vm, source, [&](JSValue member) { butterfly->contiguous().atUnsafe(index++).setWithoutWriteBarrier(member); });
-        vm.writeBarrier(array);
-    }
-    OPERATION_RETURN(scope, array);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMapDelete, EncodedJSValue, (Instance* instance, JSCell* collection, EncodedJSValue lookupKey))

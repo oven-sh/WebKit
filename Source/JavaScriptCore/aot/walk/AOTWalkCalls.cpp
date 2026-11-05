@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// At a suspension: nothing. A direct call of a coroutine enters its ramp, which returns like any other function.
-// At a throw: a direct call throws under the handler of the block being walked, as the call that it stands for. A call that may throw in front of the callee's body stays closed.
-// Withheld: every call is copied in its closed form, and the walk's core leaves "anything" for the calls that Link lists.
-// Never withheld: replaceCallOfCompiledBuiltin(). A built-in without a function object has no closed form, so a direct call of the function that its rows name is that form.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -34,11 +29,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 
 static constexpr OpcodeSet opcodesOfWalkCalls { Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::CallList, Opcode::CallDirect, Opcode::ConstructList, Opcode::SuperConstructList };
-// As many arguments as a call can write out.
 static constexpr int64_t lengthOfShortListInWalkCalls = defaultLimitValue(LimitID::MaxReservedStackArguments, hostArchitecture());
 static constexpr OpcodeSet appendsToListInWalkCalls { Opcode::AppendElement, Opcode::AppendSpread };
 static_assert(!OperandIndex::AppendElement::array && !OperandIndex::AppendSpread::array);
@@ -47,21 +40,16 @@ namespace {
 
 struct CallInWalkCalls {
     FunctionID callee;
-    // Null: the call has no function object in hand, so the callee may take nothing of one.
     Reference closure;
     Reference thisValue;
-    // In place of `thisValue`, for planOperandsInWalkCalls(): the object is made once the plan stands.
     TypeID typeOfThisToBeMade;
     Reference newTarget;
     std::span<const Reference> arguments;
-    // In place of `arguments`: a list that was made for this call alone. The callee has no positional parameter and does not count its arguments.
     Reference restList;
-    // The list of a CallList, where only the run shows how long it is. The call as written lays it out on the stack, and throws in front of the callee where it finds no room there.
     Reference listOfUnknownLength;
     BuiltinID calledBuiltin;
     bool isConstruction { false };
     bool isNeverInlined { false };
-    // It comes back to its caller whatever it is handed. So in tail position a frame that stays below it costs one frame, and the call need not leave by a jump.
     bool calleeComesBack { false };
 };
 
@@ -69,19 +57,13 @@ enum class OperandSourceInWalkCalls : uint8_t { Given, Capture, Undefined, Absen
 
 struct OperandInWalkCalls {
     OperandSourceInWalkCalls source { OperandSourceInWalkCalls::Undefined };
-    // Of a capture: what the NewClosure in sight lists. Null: it is read off the closure.
     Reference given;
     uint32_t capture { 0 };
-    // Of what is given and not made yet.
     TypeID typeToBeGiven;
 };
 
 } // anonymous namespace
 
-// ---- Who is called
-
-// Link says who is entered, not that anybody is: what is called may be no function, and a bound function or a proxy in front of the callee holds none of its captures.
-// So its word counts only where all that the value can be are named closures.
 FunctionID findOnlyCallee(Walker& walker, const BodyValue& call, Reference callee)
 {
     return findOnlyCallee(walker, call, callee ? walker.typeOf(callee) : TypeID());
@@ -97,29 +79,12 @@ FunctionID findOnlyCallee(Walker& walker, const BodyValue& call, TypeID proven)
         return { };
     const LinkTables& link = walker.facts().linked();
     FunctionID listed = link.calleeAt(walker.currentFunction(), call.id());
-    // The function whose body this is names the one callee of its call, and whoever has a copy of the body leads to that function or to all that it names.
     if (FunctionID only = singleFunctionOf(types, type))
         return only == listed || link.mayBeMentionedBy(walker.unit(), only) ? only : FunctionID();
 
-    if (!listed || !type.hasOnlyClosures() || !namesFunction(types, type, listed))
-        return { };
-    return listed;
+    return { };
 }
 
-void checkProofOfOnlyCallee(Walker& walker, Reference callee, FunctionID only, Origin origin)
-{
-    if (!walker.checksProofs() || !callee || !callee.isValue())
-        return;
-    TypeArena& types = walker.types();
-    TypeID proven = walker.typeOf(callee);
-    Type type = types.at(proven);
-    if (type.isObject() && type.hasOnlyClosures() && !singleFunctionOf(types, type))
-        walker.checkProof(callee, types.forFunction(only), proven, ProofSource::Callee, origin);
-}
-
-// ---- What may be entered
-
-// A call of the constructor of a class throws in front of the body.
 static bool bodyRunsWhenCalledInWalkCalls(FunctionKind kind)
 {
     switch (kind) {
@@ -152,8 +117,6 @@ static bool isReturnedByTailCallInWalkCalls(const BodyIndex& index, ValueID call
     return user && user->kind == BodyUseKind::TerminatorOperand && index.terminator(user->block).kind() == TerminatorKind::ReturnCall;
 }
 
-// Where they do not, nothing that is entered can return in place of the unit: the entry by value of a callee that returns a raw value calls it and boxes, and a unit that returns a raw value takes no boxed one.
-// No ring of calls in tail position has such a pair (LinkedFunction::ringsOfTailCallsAreListed), so the frame that stays is one of a bounded number.
 static bool unitsReturnInOneFormInWalkCalls(Walker& walker, CodeUnit entered)
 {
     const CallingConventions& conventions = walker.plan().conventions();
@@ -163,7 +126,6 @@ static bool unitsReturnInOneFormInWalkCalls(Walker& walker, CodeUnit entered)
     return haveSameRegisterRepresentation(conventions.resultRepresentation(entered), conventions.resultRepresentation(unit));
 }
 
-// CallEmitter::emitTailCall() asks the same of the two units. Where the answer is no the call stays one of the value, which leaves by a stub.
 static bool unitMayLeaveByCallInWalkCalls(Walker& walker, CodeUnit entered)
 {
     const CallingConventions& conventions = walker.plan().conventions();
@@ -174,8 +136,6 @@ static bool unitMayLeaveByCallInWalkCalls(Walker& walker, CodeUnit entered)
         return false;
     return conventions.numberOfResults(unit) == 1 && conventions.numberOfResults(entered) == 1;
 }
-
-// ---- Laying out the operands
 
 static bool findCapturesInSightInWalkCalls(const Code& code, FunctionID function, Reference closure, size_t numberOfCaptures, Vector<Reference, 8>& captures)
 {
@@ -221,10 +181,8 @@ static bool hasProvenWhatGuardTestsInWalkCalls(Walker& walker, FunctionID callee
     return own && walker.types().isSubset(own, tested);
 }
 
-// Walker::build() stops the compile at an operand that does not fit, so whatever it would turn away is turned away here, where the closed form can still take the call.
 static bool bodyTakesOperandInWalkCalls(Walker& walker, CodeUnit entered, unsigned entryParameter, const OperandInWalkCalls& operand)
 {
-    // A closure holds a capture in the form in which the body takes it.
     if (operand.source == OperandSourceInWalkCalls::Capture)
         return true;
     TypeID handedOver = typeHandedOverInWalkCalls(walker, operand);
@@ -234,21 +192,18 @@ static bool bodyTakesOperandInWalkCalls(Walker& walker, CodeUnit entered, unsign
     Type type = types.at(handedOver);
     if (type.mayBeUnspecified())
         return false;
-    // requiredTypeOfOperand() of a CallDirect. Only the entry behind the guard asks for what the guard tests.
     TypingContext typing { walker.program(), types, entered.role == CodeRole::Body ? walker.positions() : PositionTypes::knowingNothing(), TypeLevel::Proven };
     if (!walker.positions().entryParameterIsLeftOutOfCalls(entered.function, entryParameter)) {
         TypeID required = declaredEntryTypeOf(typing, entered.function, entryParameter);
         if (required && !types.isSubset(handedOver, required))
             return false;
     }
-    // What the callee takes for proven to its end is the record's own type, which never ends. What the state knows beyond that has no witness in Code.
     if (entered.role == CodeRole::Body && operand.source == OperandSourceInWalkCalls::Given && !hasProvenWhatGuardTestsInWalkCalls(walker, entered.function, entryParameter, operand.given))
         return false;
     Representation taken = walker.plan().conventions().parameterRepresentation(walker.program(), entered, entryParameter);
     return !hasRegister(taken) || isLegalRepresentation(type, taken);
 }
 
-// It builds nothing.
 static bool planOperandsInWalkCalls(Walker& walker, const CallInWalkCalls& request, const Function& callee, CodeUnit entered, Vector<OperandInWalkCalls, 8>& operands)
 {
     using Source = OperandSourceInWalkCalls;
@@ -304,7 +259,6 @@ static bool planOperandsInWalkCalls(Walker& walker, const CallInWalkCalls& reque
         case EntryParameter::HiddenRest:
             if (request.restList)
                 return false;
-            // The language has no name for the list, and a body only reads it out into `arguments`. So nothing tells one empty list from another, and no cell is made for the call.
             operand.source = request.arguments.size() > numberOfPositionalParameters ? Source::ListOfOtherArguments : Source::SharedEmptyList;
             break;
         }
@@ -317,7 +271,6 @@ static bool planOperandsInWalkCalls(Walker& walker, const CallInWalkCalls& reque
     return true;
 }
 
-// Null: the walk has failed.
 static Reference buildOperandInWalkCalls(Walker& walker, const CallInWalkCalls& request, const Function& callee, Origin origin, const OperandInWalkCalls& operand)
 {
     switch (operand.source) {
@@ -351,7 +304,6 @@ static Reference buildOperandInWalkCalls(Walker& walker, const CallInWalkCalls& 
         list.setContents(TypeTable::anything);
         list.setVariadicOperands(request.arguments.subspan(std::min<size_t>(callee.numberOfPositionalParameters(), request.arguments.size())));
         Reference built = walker.build(WTF::move(list));
-        // No operation of the input stands behind it, so buildFreshObject() never comes to it.
         noteFreshList(walker, built);
         return built;
     }
@@ -365,9 +317,6 @@ static Reference buildOperandInWalkCalls(Walker& walker, const CallInWalkCalls& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A callee that is handed the list itself, or nothing of it, would take a list of any length. So a long list goes by the call as written, out of the way, and the walk goes on where the list is short.
-// `behindCall`: where the two ways meet, with what the call gives as its parameter. Null: the unit returns that at once, and the long way has done so.
-// False: the walk cannot go on.
 static bool buildCallAsWrittenForLongListInWalkCalls(Walker& walker, const Draft& written, const CallInWalkCalls& request, Origin originInFrontOfCall, BlockID& behindCall, Reference& resultBehindCall)
 {
     Draft length(Opcode::GetArrayLength, originInFrontOfCall);
@@ -427,7 +376,21 @@ Reference callSlowVersion(Walker& walker, const Draft& site, FunctionID callee, 
     return walker.build(WTF::move(direct), &effects);
 }
 
-// `written`: the draft of the call as it stands in the input. False: nothing was built.
+static Reference proveResultThatPassesNoReturnInWalkCalls(Walker& walker, const BodyValue& call, FunctionID callee, Reference result, Origin origin)
+{
+    TypeArena& types = walker.types();
+    if (!walker.plan().resultsPassNoReturn(callee) || walker.program().at(callee).isCoroutine() || !result.isValue() || !walker.currentBodyIndex().useCount(call.id()))
+        return result;
+    TypeID proven = walker.facts().linked().function(callee).result;
+    TypeID own = walker.typeOf(result);
+    if (!proven || !types.at(proven).isJavaScriptValue() || !types.at(own).isJavaScriptValue() || types.isSubset(own, proven))
+        return result;
+    TypeID tested = walker.typeThatUnitMayTestFor(types.testablePartOf(proven));
+    if (types.isSubset(own, tested))
+        return result;
+    return walker.proveOrTrap(result, tested, ProofSource::ResultOfCall, origin);
+}
+
 static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, const Draft& written, const CallInWalkCalls& request)
 {
     const Function& callee = walker.program().at(request.callee);
@@ -437,7 +400,6 @@ static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, co
         return false;
     if (!request.calleeComesBack && !walker.plan().endsItsTailCalls(request.callee) && isReturnedByTailCallInWalkCalls(walker.currentBodyIndex(), call.id()) && unitsReturnInOneFormInWalkCalls(walker, entered) && !unitMayLeaveByCallInWalkCalls(walker, entered))
         return false;
-    // A caller that has proven its arguments enters behind the guard. Every other enters at the guard.
     Vector<OperandInWalkCalls, 8> planned;
     if (!planOperandsInWalkCalls(walker, request, callee, entered, planned)) {
         if (!conventions.hasParameterGuard(request.callee))
@@ -450,7 +412,6 @@ static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, co
 
     Origin originInFrontOfCall = written.origin();
     originInFrontOfCall.isTailCall = false;
-    checkProofOfOnlyCallee(walker, request.closure, request.callee, originInFrontOfCall);
     BlockID behindCall;
     Reference resultBehindCall;
     if (request.listOfUnknownLength && !buildCallAsWrittenForLongListInWalkCalls(walker, written, request, originInFrontOfCall, behindCall, resultBehindCall))
@@ -480,6 +441,8 @@ static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, co
     Reference result = walker.build(WTF::move(direct), &effects);
     if (result)
         walker.leaveArrivals(request.callee, operands.span());
+    if (result && !walker.unitReturnsAtOnce(written))
+        result = proveResultThatPassesNoReturnInWalkCalls(walker, call, request.callee, result, originInFrontOfCall);
     if (behindCall) {
         if (result)
             walker.jumpTo(behindCall, singleElementSpan(result));
@@ -492,12 +455,10 @@ static bool buildDirectCallInWalkCalls(Walker& walker, const BodyValue& call, co
     return true;
 }
 
-// ---- Helpers of the compiler
-
-// A function of the library that the walk enters where no operation of the body calls it. Link has entered it for anybody: ScanOfBody::readIteration().
 bool canCallCompilerHelper(Walker& walker, FunctionID helper)
 {
-    if (!helper || !walker.has(Mechanism::DirectCalls) || !walker.facts().linked().function(helper).isReached)
+    const LinkTables& link = walker.facts().linked();
+    if (!helper || helper.index() >= link.functions.size() || !walker.has(Mechanism::DirectCalls) || !link.function(helper).isReached || link.function(helper).everyCallerIsKnown)
         return false;
     const Function& callee = walker.program().at(helper);
     if (!bodyRunsWhenCalledInWalkCalls(callee.kind) || !callee.captures.isEmpty() || callee.has(FunctionFlags::TakesCallee))
@@ -505,7 +466,6 @@ bool canCallCompilerHelper(Walker& walker, FunctionID helper)
     return admitsDirectEntryInWalkCalls(walker, callee, walker.plan().conventions().directEntryOf(helper));
 }
 
-// Null: no way leads on.
 Reference callCompilerHelper(Walker& walker, FunctionID helper, std::span<const Reference> arguments, Origin origin)
 {
     const Function& callee = walker.program().at(helper);
@@ -541,9 +501,6 @@ Reference callCompilerHelper(Walker& walker, FunctionID helper, std::span<const 
     return result;
 }
 
-// ---- The operations
-
-// walkConstructInWalkCalls() has a form for it, or the emitter goes straight to the unit that makes `this`: CallEmitter::generateConstruct().
 static bool isConstructedWithoutStubInWalkCalls(const Walker& walker, FunctionID id)
 {
     const Function& constructor = walker.program().at(id);
@@ -552,7 +509,6 @@ static bool isConstructedWithoutStubInWalkCalls(const Walker& walker, FunctionID
     return makesThisOfConstruction(walker, id) || walker.plan().conventions().exists(CodeUnit { id, CodeRole::AllocatingConstructEntry });
 }
 
-// Whoever asks for the test below binds the callee back when the call is built.
 struct BindingOfCalleeInWalkCalls {
     ~BindingOfCalleeInWalkCalls()
     {
@@ -564,11 +520,6 @@ struct BindingOfCalleeInWalkCalls {
     Reference asBoundBefore;
 };
 
-// What is called is proven to be a closure of one function or no object at all: `p.m()`, where `F.prototype.m = function () { .. }` may not have run yet. A call of what is no object throws.
-// The same of one built-in function: `var is = Object.is`, read by a function that may run in front of the statement.
-// So one test stands in front of the call, nothing comes back from the side that fails it, and behind it the callee is known as the closure. False: nothing was built.
-// The callee is bound to a value that stands on one side of a branch, and a binding lasts for the rest of the walk: whoever asks for the test binds the callee back when the call is built.
-// `var NodeConstructor; function start() { NodeConstructor = Node; }   new NodeConstructor(kind)`: a construction of what is no object throws as well.
 static bool testCalleeThatMayBeNoObjectInWalkCalls(Walker& walker, const BodyValue& call)
 {
     bool isConstruction = call.opcode() == Opcode::Construct;
@@ -599,6 +550,8 @@ static bool testCalleeThatMayBeNoObjectInWalkCalls(Walker& walker, const BodyVal
         if (!only || !isConstructedWithoutStubInWalkCalls(walker, only))
             return false;
     } else if (only ? !bodyRunsWhenCalledInWalkCalls(walker.program().at(only).kind) : !isCalledByRowsOfBuiltin())
+        return false;
+    if (walker.withoutFunctionsThatMayNotBeMentioned(closures) != closures)
         return false;
 
     Draft asWritten = walker.draftOf(call);
@@ -639,7 +592,6 @@ static bool walkCallInWalkCalls(Walker& walker, const BodyValue& call)
 {
     CallInWalkCalls request;
     request.closure = walker.referenceOf(call.as<Opcode::Call>().calleeOperand());
-    // What may be any object at all names no function, with the primitives beside it or without them.
     if (walker.nothingIsProvenOf(request.closure))
         return false;
     request.callee = findOnlyCallee(walker, call, request.closure);
@@ -657,19 +609,12 @@ static bool walkCallInWalkCalls(Walker& walker, const BodyValue& call)
 
     Draft written = walker.draftOf(call);
     request.thisValue = written.thisValueOperand();
-    Vector<Reference, 8> arguments(written.argumentsOperands());
-    if (walker.depthOfCopies()) {
-        for (Reference& argument : arguments)
-            argument = walker.closureMadeWhereCopyHandsItOn(call, argument);
-    }
-    request.arguments = arguments.span();
+    request.arguments = written.argumentsOperands();
     request.calledBuiltin = written.calledBuiltin();
     request.isNeverInlined = written.isNeverInlined();
     return buildDirectCallInWalkCalls(walker, call, written, request);
 }
 
-// The objects of the class are compiled objects, and whoever constructs the function makes one and hands it over. As constructEntryAllocatesThisOf() of plan/AOTCallingConventions.cpp asks, but for two things that are about entries by value alone:
-// a function of the library, which the run time constructs by name, and a function that reads new.target, for which the run time makes `this` in front of the entry, have no unit that allocates. Here the body is entered directly, with both.
 bool makesThisOfConstruction(const Walker& walker, FunctionID id)
 {
     const Function& constructor = walker.program().at(id);
@@ -681,7 +626,6 @@ bool makesThisOfConstruction(const Walker& walker, FunctionID id)
     return declared && program.at(declared).has(LayoutFlags::IsConstructorFunction) && slots.holdsCompiledObjects(constructor.constructedClass) && !slots.isNeverAllocated(constructor.constructedClass);
 }
 
-// The class whose class object is all that the value can be.
 static LayoutID classOfClassObjectAtInWalkCalls(Walker& walker, Reference value)
 {
     TypeID proven = value ? walker.typeOf(value) : TypeID();
@@ -701,9 +645,6 @@ static bool isWrittenAtOrBelowInWalkCalls(const Program& program, LayoutID layou
     return false;
 }
 
-// `new F(..)` of a function that is constructed: what the unit AllocatingConstructEntry does, in the place of the call: BuilderOfEntries::allocateThis() and returnWhatWasConstructed(). new.target is the closure itself.
-// So the walk knows the object by its layout, the body is entered directly or copied, and nothing is asked behind it where the body is proven to return no object.
-// `class Below extends F { constructor() { super(..) } }`: `classObjectBelow`: new.target of the `super(..)`, the one class object of a class that is written below F: the object is one of that class.
 static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& call, CallInWalkCalls& request, Reference classObjectBelow = { })
 {
     const Program& program = walker.program();
@@ -722,7 +663,6 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
         return false;
     TypeArena& types = walker.types();
 
-    // The call gives what the body returns, which is not what the construction gives.
     Draft written = walker.draftOf(call);
     written.expected = { };
     written.inputValueGiven = { };
@@ -745,10 +685,8 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
         read.setLayout(declaredLayoutOf(program, constructed));
     }
     walker.chooseConservativeFields(read);
-    // What is constructed is a closure of one plain function. Its `prototype` is a data property of its own that nothing can turn into an accessor, so the read runs nobody's code; the run time may make the object at the first read.
     Effects ofRead = declaredBoundOf(Opcode::NewObject);
     ofRead.reads.add(AbstractHeap::NamedProperties);
-    // A class that is evaluated once has one prototype object, which an allocation without the operand names: buildTypedConstructionOfItsOpcodes().
     bool allocationNamesPrototype = classObjectBelow && walker.facts().isEvaluatedAtMostOnce(constructed) && walker.plan().hasClassRecord(constructed);
     Reference prototype = allocationNamesPrototype ? Reference() : walker.build(WTF::move(read), &ofRead);
     if (!prototype && !allocationNamesPrototype)
@@ -764,10 +702,8 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
         return true;
     request.thisValue = object;
     request.typeOfThisToBeMade = { };
-    // Nothing else names the cell yet: it is not frozen, no field lies outside its slot, and its order word lists nothing. Whether it stands below the prototype object of its layout is for whoever stores to ask: `F.prototype` can be stored into.
     noteFreshObject(walker, object, 0);
 
-    // Copied, the body stores into an object that the walk has in sight.
     bool isCopied = false;
     if (walker.has(Mechanism::Inlining) && !constructor.isHiddenInStackTraces() && !constructor.has(FunctionFlags::HasRestParameter)) {
         planned.shrink(0);
@@ -775,7 +711,6 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
             walker.fail("the body of a constructor function does not take the object that was made for it"_s);
             return true;
         }
-        // Beside the object and what the call hands over they are constants, which the direct call finds again.
         Vector<Reference, 8> operands;
         for (const OperandInWalkCalls& operand : planned) {
             Reference built = buildOperandInWalkCalls(walker, request, constructor, origin, operand);
@@ -797,14 +732,13 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     if (!returned)
         return true;
 
-    // The construction is over: whoever sees the object from here on may ask whether it is finished.
     Draft finish(Opcode::TryFinishBirth, origin);
     finish.setObjectOperand(object);
     walker.chooseConservativeFields(finish);
     if (lookMayFinishBirthOf(walker, object))
         walker.build(WTF::move(finish));
 
-    TypeID provenOfBody = walker.facts().linked().function(request.callee).result;
+    TypeID provenOfBody = walker.plan().typeHeldOfResult(walker.program(), walker.facts().linked(), request.callee);
     TypeID ofWhatCameBack = walker.typeOf(returned);
     if ((provenOfBody && !types.overlap(provenOfBody, TypeTable::object)) || (ofWhatCameBack && !types.overlap(ofWhatCameBack, TypeTable::object))) {
         walker.bind(call.id(), object);
@@ -842,8 +776,6 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     return true;
 }
 
-// The construction stays as written. Where the type names the constructor it goes straight to the unit that makes `this` (CallEmitter::generateConstruct()), and what that unit makes is known: `new Node(kind)`, where the tag picks one of several layouts.
-// `isBehindTest`: the callee is bound to what the test has left of it, which lasts no longer than the caller. False: nothing is known, and nothing was built.
 static bool constructAsWrittenInWalkCalls(Walker& walker, const BodyValue& call, FunctionID constructor, bool isBehindTest)
 {
     TypeID made = constructor ? typeOfObjectsMadeThroughEntryOf(walker, constructor) : TypeID();
@@ -858,11 +790,9 @@ static bool constructAsWrittenInWalkCalls(Walker& walker, const BodyValue& call,
     return true;
 }
 
-// The constructor of a class makes its own object, and what it returns is what was constructed.
 static bool walkConstructInWalkCalls(Walker& walker, const BodyValue& call)
 {
     auto operation = call.as<Opcode::Construct>();
-    // Whether another new.target can construct is for the closed form to ask.
     if (operation.newTargetOperand() && operation.newTargetOperand() != operation.calleeOperand())
         return false;
 
@@ -872,7 +802,6 @@ static bool walkConstructInWalkCalls(Walker& walker, const BodyValue& call)
     BindingOfCalleeInWalkCalls bindingOfCallee { walker, { }, walker.referenceBoundTo(operation.calleeOperand()) };
     if (!request.callee && !walker.nothingIsProvenOf(request.closure) && testCalleeThatMayBeNoObjectInWalkCalls(walker, call)) {
         bindingOfCallee.input = operation.calleeOperand();
-        // The link of the chain that stands in front of this one for a construction, and that has passed what was no closure for sure.
         if (walker.isUnreachable() || (walker.has(Mechanism::EscapeAnalysis) && walker.opensGuesses() && listStoresOfCopiedConstructor(walker, call)))
             return true;
         request.closure = walker.referenceOf(operation.calleeOperand());
@@ -894,7 +823,6 @@ static bool walkConstructInWalkCalls(Walker& walker, const BodyValue& call)
     return buildDirectCallInWalkCalls(walker, call, written, request);
 }
 
-// `super(..)`: what stands above the class object is the one class object of the class above. new.target has constructed to get here, so it can.
 static bool walkSuperConstructInWalkCalls(Walker& walker, const BodyValue& call)
 {
     auto operation = call.as<Opcode::SuperConstruct>();
@@ -916,7 +844,6 @@ static bool walkSuperConstructInWalkCalls(Walker& walker, const BodyValue& call)
     return buildDirectCallInWalkCalls(walker, call, written, request);
 }
 
-// A parameter is the element at its position, or undefined behind the end. Out of a list that is as it was made, and that nothing else has, the read runs no code.
 static bool parametersAreReadOutOfListInWalkCalls(Walker& walker, const Function& callee, Reference list)
 {
     if (!list || callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter }))
@@ -924,7 +851,6 @@ static bool parametersAreReadOutOfListInWalkCalls(Walker& walker, const Function
     return !callee.numberOfPositionalParameters() || (walker.has(Mechanism::TypedOperations) && isFreshListAsMade(walker, list));
 }
 
-// False: the walk cannot go on.
 static bool readParametersOutOfListInWalkCalls(Walker& walker, const Function& callee, Reference list, Origin originInFrontOfCall, Vector<Reference, 8>& elements)
 {
     unsigned numberOfParameters = callee.numberOfPositionalParameters();
@@ -957,7 +883,6 @@ bool listOfSuperCallCanBeHandedOver(Walker& walker, const BodyValue& call, Funct
     return elementsOfFreshList(walker, list) || parametersAreReadOutOfListInWalkCalls(walker, constructor, list);
 }
 
-// `super(...args)`, `new C(...[a, b])`: the state knows what the list holds, so the constructor of a class is entered as by the construction that writes the elements out.
 static bool walkConstructionOfListInWalkCalls(Walker& walker, const BodyValue& call)
 {
     bool isSuperCall = call.opcode() == Opcode::SuperConstructList;
@@ -972,7 +897,6 @@ static bool walkConstructionOfListInWalkCalls(Walker& walker, const BodyValue& c
     std::optional<Draft> written = draftOfCallWithListWrittenOut(walker, call);
     Vector<Reference, 8> elements;
     if (!written) {
-        // `constructor(...args) { super(...args); }` entered by whoever has the class object: how many arguments the list stands for is known only when the call runs.
         written = walker.draftOf(call);
         if (!isSuperCall || !parametersAreReadOutOfListInWalkCalls(walker, constructor, written->listOperand()))
             return false;
@@ -980,7 +904,6 @@ static bool walkConstructionOfListInWalkCalls(Walker& walker, const BodyValue& c
         if (!readParametersOutOfListInWalkCalls(walker, constructor, request.listOfUnknownLength, written->origin(), elements))
             return true;
     }
-    // Whether another new.target can construct is for the closed form to ask.
     if (!isSuperCall && written->newTargetOperand() && written->newTargetOperand() != written->calleeOperand())
         return false;
     request.newTarget = isSuperCall ? written->newTargetOperand() : request.closure;
@@ -994,8 +917,6 @@ static bool isLiteralWithoutHolesInWalkCalls(const BodyIndex& index, ValueID lis
     return !index.isParameter(list) && index.opcodeOf(list) == Opcode::NewArray && index.value(list).as<Opcode::NewArray>().holes().empty();
 }
 
-// The callee keeps the list as its own array. By the counts of the input every mention of the literal but the call is an append to it that stands in front of the call:
-// an append hands the list to nobody and leaves no hole, and nothing reads the list behind the call. Each run of the call has a literal of its own.
 static bool listIsMadeForCallAloneInWalkCalls(const BodyIndex& index, ValueID list, ValueID call)
 {
     if (index.hasIrreducibleFlow() || !isLiteralWithoutHolesInWalkCalls(index, list) || index.loopOf(index.blockOf(list)) != index.loopOf(index.blockOf(call)))
@@ -1041,7 +962,6 @@ static bool walkCallListInWalkCalls(Walker& walker, const BodyValue& call)
         elements = WTF::move(*known);
         request.arguments = elements.span();
     } else {
-        // How many arguments the list stands for is known only when the call runs.
         if (callee.numberOfPositionalParameters() || callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
             return false;
         request.listOfUnknownLength = walker.referenceOf(list);
@@ -1069,33 +989,6 @@ static bool hasProvenWhatGuardTestsInWalkCalls(Walker& walker, FunctionID callee
     return true;
 }
 
-// The front end has found the callee and laid out the operands. It is copied, and says what it hands over.
-// Link has proven what every caller hands over, this one among them, and the plan chose the forms of the parameters by that. Where the walk has seen less of an operand a test gives it the proof:
-// it is no guess and has no closed arm, only a fault of the compiler takes the failing side. BuilderOfEntries::inFormThatUnitTakes() does the same for whoever comes by value. Null: no way leads on.
-static Reference proveOperandOrTrapInWalkCalls(Walker& walker, Origin origin, Reference operand, TypeID promised)
-{
-    Draft test(Opcode::TypeTest, origin);
-    test.setValueOperand(operand);
-    test.setTestedType(walker.types().testablePartOf(promised));
-    Reference passes = walker.build(WTF::move(test));
-    if (!passes)
-        return { };
-
-    BlockID passing = walker.addBlock();
-    BlockID failing = walker.addBlock(BlockFrequency::Rare);
-    walker.branch(passes, passing, failing);
-    walker.continueIn(failing);
-    walker.endAsUnreachable(origin);
-    walker.continueIn(passing);
-
-    Draft narrowed(Opcode::Narrowed, origin);
-    narrowed.setValueOperand(operand);
-    narrowed.setTestOperand(passes);
-    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
-    narrowed.setIsOnTakenEdge(true);
-    return walker.build(WTF::move(narrowed));
-}
-
 static bool bringOperandsIntoFormsOfCalleeInWalkCalls(Walker& walker, Origin origin, CodeUnit entered, Vector<Reference, 8>& operands)
 {
     TypeArena& types = walker.types();
@@ -1105,11 +998,10 @@ static bool bringOperandsIntoFormsOfCalleeInWalkCalls(Walker& walker, Origin ori
         Type seen = types.at(walker.typeOf(operands[index]));
         if (!hasRegister(wanted) || isLegalRepresentation(seen, wanted))
             continue;
-        // A test asks a value of JavaScript for a type of such values. Of anything else Walker::build() names the misfit.
         TypeID promised = walker.facts().typeOfEntryParameter(entered.function, index).proven;
         if (!promised || !types.at(promised).isJavaScriptValue() || !seen.isJavaScriptValue() || seen.mayBeUnspecified())
             continue;
-        operands[index] = proveOperandOrTrapInWalkCalls(walker, origin, operands[index], promised);
+        operands[index] = walker.proveOrTrap(operands[index], types.testablePartOf(promised), ProofSource::EntryParameter, origin);
         if (!operands[index])
             return false;
     }
@@ -1122,11 +1014,6 @@ static bool walkDirectCallOfInputInWalkCalls(Walker& walker, const BodyValue& ca
     walker.chooseConservativeFields(direct);
     FunctionID callee = direct.function();
     Vector<Reference, 8> operands(direct.variadicOperands());
-    if (walker.depthOfCopies()) {
-        for (Reference& operand : operands)
-            operand = walker.closureMadeWhereCopyHandsItOn(call, operand);
-        direct.setVariadicOperands(operands.span());
-    }
     if (returnsResultOfFunction(direct.role())) {
         if (!bringOperandsIntoFormsOfCalleeInWalkCalls(walker, walker.originOf(call), CodeUnit { callee, direct.role() }, operands))
             return true;
@@ -1147,12 +1034,8 @@ static bool walkDirectCallOfInputInWalkCalls(Walker& walker, const BodyValue& ca
     return true;
 }
 
-// ---- What the constructor of a class allocates
-
 static constexpr OpcodeSet opcodesOfConstructionInWalkCalls { Opcode::GetConstructPrototype, Opcode::NewObject };
 
-// Nobody can store to `prototype` of a class or define it anew, so the read runs no code. For the prototype object of a class that is written at or below the class of the allocation the run time makes an object of that class:
-// ClassTable::instanceWithPrototype(). So the allocation names that layout. A class that is evaluated once has one prototype object, which an allocation without the operand names: nothing is looked up when it runs.
 constinit const OpcodeSet opcodesThatBuildTypedConstructionTakes = opcodesOfConstructionInWalkCalls;
 
 bool buildTypedConstructionOfItsOpcodes(Walker& walker, const BodyValue& value)
@@ -1204,9 +1087,6 @@ bool buildTypedConstructionOfItsOpcodes(Walker& walker, const BodyValue& value)
     return true;
 }
 
-// ---- What is written as something else than a call of the callee
-
-// `value`: the operation in whose place the callee is entered. `written`: as for buildDirectCallInWalkCalls(). False: nothing was built.
 static bool copyOrCallDirectlyInWalkCalls(Walker& walker, const BodyValue& value, const Draft& written, const CallInWalkCalls& request)
 {
     const Function& callee = walker.program().at(request.callee);
@@ -1214,7 +1094,6 @@ static bool copyOrCallDirectlyInWalkCalls(Walker& walker, const BodyValue& value
     Vector<OperandInWalkCalls, 8> planned;
     bool mayBeCopied = walker.has(Mechanism::Inlining) && !request.isNeverInlined && !request.listOfUnknownLength && admitsDirectEntryInWalkCalls(walker, callee, entered) && planOperandsInWalkCalls(walker, request, callee, entered, planned);
     if (mayBeCopied) {
-        // What is not made yet is no closure of the program.
         Vector<Reference, 8> operands;
         for (const OperandInWalkCalls& operand : planned)
             operands.append(operand.source == OperandSourceInWalkCalls::Given && operand.given ? operand.given : walker.constant(Draft(Opcode::Undefined, written.origin())));
@@ -1222,7 +1101,6 @@ static bool copyOrCallDirectlyInWalkCalls(Walker& walker, const BodyValue& value
         site.setFunction(request.callee);
         site.setVariadicOperands(operands.span());
         mayBeCopied = shouldCopyCallee(walker, site, request.callee, operands.span());
-        // `sum.apply(null, [a, 1, 2])`: the call that is forwarded, as a program would write it.
         if (!mayBeCopied && !walker.hasTextsInStringBuilders() && walker.currentFunction() == walker.unit().function) {
             Draft asWrittenOut(Opcode::Call, written.origin());
             asWrittenOut.setArgumentsOperands(request.arguments);
@@ -1239,7 +1117,6 @@ static bool copyOrCallDirectlyInWalkCalls(Walker& walker, const BodyValue& value
                 return true;
             operands.append(built);
         }
-        // What was made for a copy that is not walked after all nobody needs, and the sweep drops it.
         if (walker.walkInline(value, request.callee, operands.span()))
             return true;
     }
@@ -1263,7 +1140,6 @@ bool callAccessor(Walker& walker, const BodyValue& access, FunctionID accessor, 
     const Function& callee = walker.program().at(accessor);
     if (!thisValue || !bodyRunsWhenCalledInWalkCalls(callee.kind))
         return false;
-    // A frame of the library names the built-in that was called, and an access names none.
     request.isNeverInlined = callee.isHiddenInStackTraces();
     return copyOrCallDirectlyInWalkCalls(walker, access, walker.draftOf(access), request);
 }
@@ -1284,7 +1160,6 @@ std::optional<Vector<Reference, 8>> layOutEntryOperandsOfCall(Walker& walker, co
         return std::nullopt;
     Origin origin = written.origin();
     origin.isTailCall = false;
-    checkProofOfOnlyCallee(walker, request.closure, function, origin);
     Vector<Reference, 8> operands;
     for (const OperandInWalkCalls& operand : planned) {
         Reference built = buildOperandInWalkCalls(walker, request, callee, origin, operand);
@@ -1297,9 +1172,7 @@ std::optional<Vector<Reference, 8>> layOutEntryOperandsOfCall(Walker& walker, co
 
 bool callFunctionDirectly(Walker& walker, const BodyValue& operation, FunctionID function, Reference thisValue, std::span<const Reference> arguments, MayCopyFunctionCalledDirectly mayCopy)
 {
-    // Link has not seen the call. What it says of a function whose callers it has counted does not hold of one more.
-    const LinkTables& link = walker.facts().linked();
-    if (!function || function.index() >= link.functions.size() || link.function(function).everyCallerIsKnown || !canCallCompilerHelper(walker, function))
+    if (!canCallCompilerHelper(walker, function))
         return false;
     Draft written = walker.draftOf(operation);
     if (walker.hasFailed())
@@ -1308,7 +1181,6 @@ bool callFunctionDirectly(Walker& walker, const BodyValue& operation, FunctionID
     request.callee = function;
     request.thisValue = thisValue;
     request.arguments = arguments;
-    // A frame of the library names the built-in that was called, and only a call names one.
     if (operation.opcode() == Opcode::Call)
         request.calledBuiltin = written.calledBuiltin();
     else
@@ -1318,14 +1190,12 @@ bool callFunctionDirectly(Walker& walker, const BodyValue& operation, FunctionID
     return copyOrCallDirectlyInWalkCalls(walker, operation, written, request);
 }
 
-// Closed, such a read is a lookup and a call out of a stub, which saves every register round it.
 static constexpr uint32_t closedOperationsOfReadThatCallsGetter = 2;
 
 bool callGetterExpectedAtRead(Walker& walker, const BodyValue& read)
 {
     if (read.opcode() != Opcode::PropGet)
         return false;
-    // The reads of the function are found once.
     Walker::GettersExpectedInFunction& expected = walker.gettersExpectedInFunction;
     if (FunctionID function = walker.currentFunction(); expected.function != function) {
         auto reads = std::ranges::equal_range(walker.facts().held().gettersExpectedAtReads, function, { }, &LinkedGetterAtRead::function);
@@ -1453,8 +1323,6 @@ bool callForwardedDirectly(Walker& walker, const BodyValue& call, const Draft& f
         elements = WTF::move(*known);
         request.arguments = elements.span();
     } else {
-        // As in walkCallListInWalkCalls(). The list has a name in the program, so no callee keeps it as its own.
-        // `apply` reads every element, whatever the callee takes: what no parameter takes stays unread only where the read runs no code.
         request.listOfUnknownLength = forwarded.listOperand();
         if (!isFreshListAsMade(walker, request.listOfUnknownLength) || !parametersAreReadOutOfListInWalkCalls(walker, callee, request.listOfUnknownLength))
             return false;
@@ -1469,9 +1337,6 @@ bool callForwardedDirectly(Walker& walker, const BodyValue& call, const Draft& f
     return copyOrCallDirectlyInWalkCalls(walker, call, forwarded, request);
 }
 
-// ---- A built-in whose body is compiled
-
-// Null: the rows name no function, several, or one that the program does not hold.
 static FunctionID findFunctionThatRowsNameInWalkCalls(const Program& program, BuiltinID builtin)
 {
     FunctionID named;
@@ -1486,7 +1351,6 @@ static FunctionID findFunctionThatRowsNameInWalkCalls(const Program& program, Bu
     return named;
 }
 
-// `builtin`: canonical.
 static FunctionID findLibraryFunctionOfBuiltinInWalkCalls(const Program& program, BuiltinID builtin)
 {
     FunctionID named = findFunctionThatRowsNameInWalkCalls(program, builtin);
@@ -1502,8 +1366,6 @@ bool takesNothingOfFunctionObject(const Program& program, FunctionID named)
     return bodyRunsWhenCalledInWalkCalls(function.kind) && function.captures.isEmpty() && !function.has(FunctionFlags::TakesCallee);
 }
 
-// `list.map(f)`: the library has a text of its own for a receiver that is known for a list, which a row names, and one that takes whatever comes: that is what the function object of the built-in runs, so a call by value enters it.
-// `list.sort(f)`: the function object is native code, and one row names a function of the library.
 LibraryFunctionsBehindBuiltin findLibraryFunctionsBehindBuiltin(const Walker& walker, TypeID typeOfCallee)
 {
     LibraryFunctionsBehindBuiltin found;
@@ -1570,7 +1432,6 @@ FunctionID findFunctionBehindCompiledBuiltin(const Walker& walker, TypeID typeOf
     return builtin ? findFunctionThatRowsNameInWalkCalls(walker.program(), walker.program().builtins().canonicalID(builtin)) : FunctionID();
 }
 
-// The run time has nothing to enter for such a built-in: isCallThatTheWalkMustLower(). The function takes whatever the call hands over, as its generic entry would.
 bool replaceCallOfCompiledBuiltin(Walker& walker, const BodyValue& call)
 {
     Reference callee = walker.referenceOf(call.calleeOperand());

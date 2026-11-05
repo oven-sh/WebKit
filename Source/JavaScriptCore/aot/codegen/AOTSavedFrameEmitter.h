@@ -24,10 +24,6 @@ public:
     void generateAwaitBySavingFrame(const ValueContext&);
     void generateAwaitCallBySavingFrame(const ValueContext&);
     void generateYieldBySavingFrame(const ValueContext&);
-    // AOTSavedFrameEmitterLeaving.cpp
-    void generateLeave(const ValueContext&);
-    void generateLeaveCopies(const ValueContext&);
-    void leaveForSlowBodies(const ValueContext&, bool comesBack);
     void generateAsyncGeneratorYield(const ValueContext&);
     void generateReturnAsyncResult(const ValueContext&);
     void generatePromiseAllOfElements(const ValueContext&);
@@ -35,7 +31,6 @@ public:
     void generateStepGenerator(const ValueContext&);
     void generateIsUnmodifiedGenerator(const ValueContext&);
 
-    // Values of a long async function that live in words of the heap, so that a suspension does not copy them.
     void generateNewHeapWords(const ValueContext&);
     void generateGetHeapFrameWord(const ValueContext&);
     void generatePutHeapFrameWord(const ValueContext&);

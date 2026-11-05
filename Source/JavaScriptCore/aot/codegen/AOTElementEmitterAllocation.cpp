@@ -27,7 +27,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr unsigned maxInlineArrayLiteralLength = 16;
-// The stub takes the length and the capacity in one word of 32 bits.
 static constexpr int64_t maxCapacityInStubOperand = (1 << (32 - holeArrayCapacityShift)) - 1;
 
 static_assert(maxInlineArrayLiteralLength < (1u << holeArrayCapacityShift));
@@ -51,7 +50,6 @@ static ArrayElementKind elementKindOfForm(const ArrayStorageForm& form)
     return arrayElementKindOf(form.indexingType);
 }
 
-// The stub knows its size and its allocator, and never answers 0.
 static std::optional<EmptyArray> emptyArrayStubWithRoom(const ArrayStorageForm& form, uint64_t room)
 {
     if (room != 1 && room != 3)
@@ -80,8 +78,6 @@ static EmptyArray emptyNumberArray(const ArrayStorageForm& form)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The last word of a key of NumberSpace::ArrayProfile, behind OperationEmitter::modulesAndPositionsOf(). Nothing: the literal takes nothing from its site.
-// Arrays of a kind that is decided for the program share no words with arrays that may turn into another kind, so their site never learns another.
 static std::optional<uint32_t> kindOfEmptyArrayLiteralAtSite(const Operation& literal, const ArrayStorageForm& form)
 {
     bool kindIsDecided = false;
@@ -137,17 +133,14 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationCon
     return arrayStorageFormOf(ArrayStorage::Contiguous);
 }
 
-// Null where the named storage cannot hold the elements.
 const ArrayStorageForm* ArrayAllocationEmitter::findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named)
 {
-    // A literal with an element that never arrives is never made.
     bool isNeverMade = std::ranges::any_of(elements, [&](ValueID element) {
         return isNeverType(typeIDOf(element));
     });
     if (isNeverMade)
         return &arrayStorageFormOf(ArrayStorage::Contiguous);
 
-    // A NaN among doubles is found when the literal runs, and the array then gets storage for every value. The walk takes the named kind for proven only where no element may be one.
     if (const ArrayStorageForm* namedForm = findArrayStorageForm(named)) {
         bool fitsNamedStorage = std::ranges::all_of(elements, [&](ValueID element) {
             return fitsStorageOfLiteral(types(), named, typeIDOf(element));
@@ -162,8 +155,6 @@ const ArrayStorageForm* ArrayAllocationEmitter::findFormOfLiteral(std::span<cons
     return canHoldElements ? &form : &arrayStorageFormOf(ArrayStorage::Contiguous);
 }
 
-// The literals that newLiteral() and newArrayInForm() send to the arm of CellAllocationEmitter::newArrayOf() which fills the array in line and has no way round its fence.
-// Any other literal is made by a stub, or has a way on which the run time makes it.
 bool newArrayFencesBeforeHandingCellOn(const Operation& newArray)
 {
     size_t length = newArray.elementsOperands().size();
@@ -173,14 +164,9 @@ bool newArrayFencesBeforeHandingCellOn(const Operation& newArray)
 
 CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
 {
-    // Where the realm has no header for it the array lies on the heap all the same. A store into a cell of the frame runs no barrier, so the walk asks for the frame only where nothing is stored into the cell: for a call that it lends the list to.
     if (value->storage() == AllocationStorage::Frame) {
-        std::span<const ValueID> values = value->elementsOperands();
-        if (!value->holes().empty() || value->capacityOperand() || value->arrayStorage() != ArrayStorage::Contiguous || values.size() > maxLengthOfArrayInFrame) {
-            generator().fail(value, InternalErrorKind::OpcodeWithoutCode, "the frame has no form for this array literal"_s);
-            return CellPointer(m_out.int64Zero);
-        }
-        return emitter<CellAllocationEmitter>().newArrayInFrameOf(value, boxElements<Boxed>(generator(), value, values).span());
+        generator().fail(value, InternalErrorKind::OpcodeWithoutCode, "the frame has no form for an array literal"_s);
+        return CellPointer(m_out.int64Zero);
     }
 
     if (!value->holes().empty())
@@ -188,7 +174,6 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
     std::span<const ValueID> elements = value->elementsOperands();
     const ArrayStorageForm& form = formOfLiteral(value, elements, typeOf(value.id()), value->arrayStorage());
     unsigned length = elements.size();
-    // Where nothing says what the lists of the site will hold, the first of them begin with the narrowest storage, as an empty list of the engine does, and the site learns what they turn into.
     TypeArena& arena = m_generator.inputs().types;
     bool storageIsDeclared = hasArrayStorageForm(value->arrayStorage()) || hasArrayStorageForm(arrayStorageDeclaredBy(m_program, arena, typeIDOf(value.id())).predicted());
     const ArrayStorageForm& formAtSite = storageIsDeclared ? form : arrayStorageFormOf(ArrayStorage::Int32);
@@ -197,11 +182,9 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         site->append(*kindAtSite);
         return newLiteralAtSite(value, formAtSite, site->span());
     }
-    // A site that makes one list learns nothing, and its list begins so too: what is appended to it decides, as in the engine. Storage for any value says nothing of the elements to whoever tests the kind in front of a loop.
     if (!value->capacityOperand() || length > maxInlineArrayLiteralLength)
         return newArrayInForm(value, elements, length ? form : formAtSite);
 
-    // Room is a hint that no program sees: where it cannot be had, the array is made without it.
     Integer capacity = integerOf(value->capacityOperand());
     if (!length && capacity.value()->hasInt64()) {
         uint64_t room = static_cast<uint64_t>(capacity.value()->asInt64()) | 1;
@@ -221,7 +204,6 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         return CellPointer(m_out.int64Zero);
     }
     branchUnless(belowOrEqual(capacity, integer(maxCapacityInStubOperand)), withoutRoom);
-    // The elements are stored without a look at the vector.
     Integer room = length ? select(below(capacity, integer(length)), integer(length), capacity) : capacity;
     Integer lengthAndCapacity(m_out.shl(bitOr(room, integer(1)).value(), m_out.constInt32(holeArrayCapacityShift)));
     if (length)
@@ -233,7 +215,6 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
 
     m_out.appendTo(withoutRoom);
     CellPointer madeWithoutRoom = newArrayOutOfLine(value, elements, form);
-    // Every place is going to be filled, so the room is made in one step however much it is.
     if (value->isFilledToCapacity()) {
         LBasicBlock reserves = newBlock();
         LBasicBlock isMade = newBlock();
@@ -252,23 +233,6 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
     return join.finish();
 }
 
-// The stub never answers 0. It makes room for what the source holds whatever it is told, so room that cannot be had is not asked for.
-CellPointer ArrayAllocationEmitter::newLiteralOfElements(const ValueContext& value)
-{
-    const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
-    if (!form) {
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-        return CellPointer(m_out.int64Zero);
-    }
-    Integer room = integer(0);
-    if (value->capacityOperand()) {
-        Integer capacity = integerOf(value->capacityOperand());
-        room = select(belowOrEqual(capacity, integer(maxCapacityInStubOperand)), capacity, room);
-    }
-    return CellPointer(callStub(value, newArrayOfElements(elementKindOfForm(*form)), { in<CellPointer>(value->sourceOperand()).value(), room.value() }).first);
-}
-
-// The stub never answers 0.
 CellPointer ArrayAllocationEmitter::newLiteralAtSite(const ValueContext& value, const ArrayStorageForm& form, std::span<const uint32_t> site)
 {
     LValue profile = m_out.valueOf(instanceWord(m_heaps.entire(AbstractHeap::RuntimeState), m_mentions.add(NumberSpace::ArrayProfile, site)));
@@ -303,7 +267,6 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
             setLengthOfNewArray(array, length);
         return array;
     };
-    // `new Array(3)`: the stub for an empty array with that room knows its size and its allocator.
     if (length.value()->hasInt64() && length.value()->asInt64() >= 1 && length.value()->asInt64() <= 3 && elementKindOfForm(form) != ArrayElementKind::Int32) {
         bool holdsOne = length.value()->asInt64() == 1;
         if (elementKindOfForm(form) == ArrayElementKind::Double)
@@ -311,11 +274,9 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
         return setLength(callNewEmptyArray(context, holdsOne ? EmptyArray::ContiguousCapacity1 : EmptyArray::ContiguousCapacity3));
     }
     branchUnless(belowOrEqual(length, integer(maxHoleArrayCapacity)), slowPath);
-    // Nobody makes an array of no elements to leave it so.
     bool isEmpty = length.value()->hasInt64() && !length.value()->asInt64();
     Integer capacity = isEmpty ? integer(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 1) : bitOr(length, integer(1));
     Integer lengthAndCapacity(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift)));
-    // The stub sets the length that it is handed and puts holes behind it.
     static_assert(maxHoleArrayCapacity < 1 << holeArrayCapacityShift);
     if (elementsBelowLength == ElementsBelowLength::NotCleared)
         lengthAndCapacity = bitOr(lengthAndCapacity, length);
@@ -331,6 +292,19 @@ CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithRoom(const OperationCo
     CellPointer array = callNewArrayWithLength(context, form, Integer(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift))));
     branchUnless(Condition(m_out.notNull(array.value())), slowPath);
     return array;
+}
+
+void ArrayAllocationEmitter::allocateListLike(const OperationContext& context, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>& take)
+{
+    if (roomOfEmptyList) {
+        Integer most = integer(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY);
+        roomOfEmptyList = select(below(*roomOfEmptyList, most), *roomOfEmptyList, most);
+    }
+    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
+    ArrayStorageFormList kinds { &arrayStorageFormOf(ArrayStorage::Contiguous), &arrayStorageFormOf(ArrayStorage::Int32), &arrayStorageFormOf(ArrayStorage::Double) };
+    elements.forEachFormByShape(elements.indexingMode(source, IndexingShapeMask), &ElementAccessEmitter::hasShape, kinds, slowPath, scopedLambda<void(const ArrayStorageForm&)>([&](const ArrayStorageForm& form) {
+        take(roomOfEmptyList ? allocateEmptyArrayWithRoom(context, *roomOfEmptyList, form, slowPath) : allocateArrayOfHoles(context, length, form, slowPath));
+    }));
 }
 
 CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, BuiltinID calledBuiltin)
@@ -374,7 +348,6 @@ Number ArrayAllocationEmitter::numberOrMarker(ValueID element)
     case Representation::OptionalInt64:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         break;
     }
@@ -426,7 +399,6 @@ CellPointer ArrayAllocationEmitter::newArrayOfNumbers(const OperationContext& co
     return newDoubleLiteral(context, numbers, (1u << numbers.size()) - 1);
 }
 
-// An element that never fits is left out, so a result shorter than the list means the form cannot hold the list.
 ArrayAllocationEmitter::RawElements ArrayAllocationEmitter::rawElementsOf(std::span<const ValueID> elements, const ArrayStorageForm& form, LBasicBlock doesNotFit)
 {
     ElementAccessEmitter& access = emitter<ElementAccessEmitter>();
@@ -532,7 +504,6 @@ CellPointer ArrayAllocationEmitter::newLiteralWithHoles(const ValueContext& valu
     join.add(newArray);
 
     m_out.appendTo(slowPath);
-    // Where every element is stored as it is, the walk takes the named kind for proven, so the array has that kind on this path too.
     bool mustHaveForm = value->keepsLength() || hasArrayStorageForm(value->arrayStorage());
     uint32_t flags = mustHaveForm ? NewArrayWithHolesFlag::mustHaveIndexingType : 0;
     CellPointer arrayOfHoles = callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), integer(length), word32(form.indexingType), word32(flags) }, { .isOnRarePath = true });

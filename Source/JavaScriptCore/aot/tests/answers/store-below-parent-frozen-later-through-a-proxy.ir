@@ -5,6 +5,7 @@
 # CHECK: 1
 # CHECK-NEXT: TypeError: Attempted to assign to readonly property
 # CHECK-NOT: exited with 0
+# CHECK: exited with 3
 # A value that is sealed, or lies on an object that takes no more properties, is still written past: the store makes a property of the object's own.
 # RUN(SEALED): run-in-shell globalThis.register = parent => { Object.seal(new Proxy(parent, {})); };
 # SEALED: 1

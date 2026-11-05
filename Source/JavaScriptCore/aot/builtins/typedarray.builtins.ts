@@ -5,7 +5,6 @@ const storage = "TypedArrayStorage";
 
 const maximumBufferLength = b.checked(2 ** 32, "MAX_ARRAY_BUFFER_SIZE");
 const bufferLength = b.int(0, maximumBufferLength);
-// An element takes eight bytes at most.
 const lengthOfAnyElementSize = b.int(0, 2 ** 29);
 const indexOrNotFound = b.int(-1, maximumBufferLength);
 const element = b.union(b.f64, b.bigint);
@@ -474,7 +473,6 @@ export default b.declarations(
     uses: { this: [readsElements] },
   }),
 
-  // `core-js/actual` replaces them without a test, from 3.35 to 3.37.
   b.replacedByPackages(
     "Uint8Array.fromBase64",
     "Uint8Array.fromHex",

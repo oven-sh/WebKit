@@ -37,8 +37,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Image gives a name that has a column (SlotPlan::hasColumn()) a number of at most RowDisplacementTable::maxColumn. getById() and putById() look in the access table and then in the field table under that number, and do not test that the number fits an entry there.
-// Where columns are left over, a name without a promise gets such a number too, and the run time files its slots by the number. getByIdCheckingColumn() and putByIdHashed() ask the number, and go on as the two above where it has a column.
 static_assert(RowDisplacementTable::maxColumn <= FieldTableEntry::maxName);
 
 bool AccessEmitter::isSymbolOfRealm(PropertyKeyID key) const
@@ -51,15 +49,11 @@ Boxed AccessEmitter::cellOfKey(const OperationContext& context, PropertyKeyID ke
     return boxCell(emitter<ConstantEmitter>().keyConstant(context, key));
 }
 
-// What a table remembers of an access pays where the access comes again. The body of a CommonJS module is not proven to run once, and runs again only after its entry left the cache of `require`.
-// It chooses between two roads to one answer, so nothing goes wrong where the program runs in several instances.
 bool AccessEmitter::comesAgain(const OperationContext& context) const
 {
     return m_generator.isInLoop(context.block()) || !(m_facts.runsAtMostOnce(m_id) || m_program.at(m_id).isModuleBody());
 }
 
-// A site pays where one kind of receiver comes again and again, which is in a loop. Elsewhere the front tables answer for every Structure alike, in about what a hit at a site and the operand that names the site cost together.
-// A name without a column in them is looked for by its hash. Outside of loops the call names the property and nothing else.
 std::optional<Pointer> AccessEmitter::siteOf(const OperationContext& context, PropertyKeyID key, SlotAccess access)
 {
     if (isSymbolOfRealm(key) || !m_generator.paysForCodeInLine(context.block()))
@@ -67,7 +61,6 @@ std::optional<Pointer> AccessEmitter::siteOf(const OperationContext& context, Pr
     return siteCacheAddress(context, key, access);
 }
 
-// A store has no answers at its place, and in front of the handler that adds a property the shared tables are asked three times over: 57 instructions against the dozen of a site.
 std::optional<Pointer> AccessEmitter::siteOfStore(const OperationContext& context, PropertyKeyID key, SlotAccess access)
 {
     if (isSymbolOfRealm(key) || !comesAgain(context))
@@ -81,7 +74,6 @@ std::optional<NumberedImmediate> AccessEmitter::answersOf(const OperationContext
 {
     if (isSymbolOfRealm(key) || !comesAgain(context))
         return std::nullopt;
-    // The arm behind a test that seldom fails: it is come by too seldom for the bytes of a place of its own. So is the closed side of an operation that tests its own guess.
     if (m_code.at(context.block()).frequency == BlockFrequency::Rare || (context.valueID() && testsItsOwnGuess(m_code.at(context.valueID()))))
         return std::nullopt;
     return answersAtSite(context, key, use);
@@ -94,17 +86,13 @@ StubKey AccessEmitter::stubThatReadsAtSite(PropertyKeyID key, ValueID receiver)
     return receiver && typeOf(receiver).isObject() ? getByIdOfObjectAtSite() : getByIdAtSite();
 }
 
-Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, PropertyKeyID key, std::optional<Pointer> site, ValueID receiverID)
+Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, PropertyKeyID key, ValueID receiverID)
 {
     if (isSymbolOfRealm(key))
         return Boxed(callStub(context, getByIdOfSymbolOfRealm(), { receiver.value() }, { .numberedImmediate = NumberedImmediate { mentionOfName(key) } }).first);
     CallOptions options { .numberedImmediate = NumberedImmediate { mentionOfName(key) } };
     const bool hasColumn = m_plan.slots().hasColumn(key);
     const bool isLength = hasColumn && m_program.nameClassOf(key) == NameClass::Length;
-    if (site) {
-        StubKey stub = isLength ? getLengthWithSite() : stubThatReadsAtSite(key, receiverID);
-        return Boxed(callStub(context, stub, { receiver.value(), site->value() }, options).first);
-    }
     if (std::optional<NumberedImmediate> answers = answersOf(context, key, SiteUse::Read)) {
         NameAtSite name = hasColumn ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
         ReceiverAtSite receiverIs = receiverID && typeOf(receiverID).isObject() ? ReceiverAtSite::IsCell : ReceiverAtSite::IsAnyValue;
@@ -139,7 +127,6 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
     CallOptions options { .numberedImmediate = NumberedImmediate { mentionOfName(key) } };
     const bool hasColumn = m_plan.slots().hasColumn(key);
     if (!comesAgain(context)) {
-        // The table of fields answers for a compiled object without a first time. Nothing else is asked, and nothing is filed.
         if (hasColumn) {
             callStub(context, putByIdOnce(mode), { receiver.value(), value.value() }, options);
             return;
@@ -150,7 +137,8 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
         return;
     }
     if (site) {
-        callStub(context, putByIdAtSite(mode), { receiver.value(), value.value(), site->value() }, options);
+        NameOfStoreAtSite name = !m_plan.slots().namesField(key) ? NameOfStoreAtSite::NamesNoField : hasColumn ? NameOfStoreAtSite::NamesFieldWithColumn : NameOfStoreAtSite::NamesField;
+        callStub(context, putByIdAtSite(mode, name), { receiver.value(), value.value(), site->value() }, options);
         return;
     }
     StubKey stub = hasColumn ? AOT::putById(mode) : putByIdHashed(mode);
@@ -160,14 +148,12 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
 Boxed AccessEmitter::loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure)
 {
     RELEASE_ASSERT(Slot::payloadOf(kind) == SlotPayload::Holder && Slot::locationOf(kind) == SlotLocation::WordIndex);
-    // Each part of the slot is compared where it lies.
     auto partOfSlot = [&](ptrdiff_t offset) {
         return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
     };
     Word32 structureIDOfSlot(m_out.load32(partOfSlot(Slot::offsetOfStructureID())));
     branchUnless(equal(structureIDOfSlot, loadStructureID(object)), whenSlotIsOfOtherStructure);
     branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), static_cast<int32_t>(kind)), whenSlotIsOfOtherKind);
-    // An own property has no holder.
     Pointer holder(m_out.load64(partOfSlot(Slot::offsetOfPayload())));
     Pointer owner = select(isZero(Integer(holder.value())), asPointer(object), holder);
     Pointer butterfly = loadField<Pointer>(owner, m_heaps.JSObject_butterfly);
@@ -176,13 +162,11 @@ Boxed AccessEmitter::loadBySlotAtSite(CellPointer object, Pointer site, Slot::Ki
     return Boxed(m_out.load64(m_out.address(m_heaps.root, offsetBy(storage, wordIndex, 3).value())));
 }
 
-// No layout of the receivers has the name, so the answer lies above the object: `class Job extends EventEmitter { }`, `job.listenerCount`. The site is asked in line.
 Boxed AccessEmitter::getMemberAboveLayouts(const ValueContext& value, Boxed receiver, Pointer site)
 {
     LBasicBlock asksStub = newBlock();
     Join<Boxed> join(m_out);
     {
-        // The holder may keep the value in a field or among its properties, and the effects of the read name neither.
         Machine::DeclaredAccessesSuspension suspension(m_out);
         join.add(loadBySlotAtSite(unboxCell(receiver), site, Slot::Kind::Value, asksStub, asksStub));
     }
@@ -205,7 +189,6 @@ std::optional<PlacedSlot> AccessEmitter::findSlotInCellOfEveryReceiver(const Typ
     for (LayoutID member : access.membersWithField) {
         if (!m_plan.layout(member).holdsCompiledObjects())
             return std::nullopt;
-        // The slot of an accessor holds its functions, and a field that is declared with other attributes than an assignment gives is created beside its slot. A field that Link appended has no record.
         std::optional<FieldIndex> index = m_plan.slots().findField(m_program, member, key);
         const Layout& layout = m_program.at(member);
         if (!index || (*index < layout.fields.size() && !layout.fields[*index].form.isEmpty()))
@@ -214,15 +197,12 @@ std::optional<PlacedSlot> AccessEmitter::findSlotInCellOfEveryReceiver(const Typ
     return slot;
 }
 
-// Every receiver has the slot of the field at one place in its cell, and what it holds is the value as it is. Filled, it is the answer.
-// `Message.prototype.retries = 3`: empty, the object may still have the property elsewhere, or something above it has, and the read goes by name.
 Boxed AccessEmitter::getMemberInSlotOrByName(const ValueContext& value, Boxed receiver, const PlacedSlot& slot)
 {
     PropertyKeyID key = value->key();
     LBasicBlock isFilled = newBlock();
     LBasicBlock isEmpty = newBlock();
     Join<Boxed> join(m_out);
-    // The operation says that it reads whatever there is, and names no field.
     Boxed word(m_out.load64(m_out.address(m_heaps.root, unboxCell(receiver).value(), slot.offset)));
     ScopeFork fork = m_out.forkScope();
     m_out.branch(isZero(Integer(word.value())).value(), unlikelyEdge(isEmpty), normalEdge(isFilled));
@@ -230,7 +210,7 @@ Boxed AccessEmitter::getMemberInSlotOrByName(const ValueContext& value, Boxed re
     join.add(word);
 
     m_out.appendToArm(isEmpty, fork);
-    join.add(getById(value, receiver, key, std::nullopt, value->objectOperand()));
+    join.add(getById(value, receiver, key, value->objectOperand()));
     return join.finish();
 }
 
@@ -248,13 +228,12 @@ Boxed AccessEmitter::getNamedProperty(const ValueContext& value)
         return getMemberInSlotOrByName(value, receiver, *slot);
     }
     std::optional<Pointer> site = asksSiteInLine ? siteOf(value, key, SlotAccess::Read) : std::nullopt;
-    if (!site || !asksSiteInLine) {
+    if (!site) {
         m_out.noteForm(Form::Closed, StateOfKnowledge::Always);
-        return getById(value, receiver, key, site, receiverID);
+        return getById(value, receiver, key, receiverID);
     }
     m_out.noteForm(Form::Open, StateOfKnowledge::Always, Place::Loop);
 
-    // What a slot says changes wherever the run time comes by, and no effect of an operation speaks of that: what one look at the site has read, no other look finds again.
     Pointer siteOfThisLook(m_out.opaque(site->value()));
     return getMemberAboveLayouts(value, receiver, siteOfThisLook);
 }
@@ -324,7 +303,6 @@ void AccessEmitter::generateGetGlobalBinding(const ValueContext& value)
     if (isForTypeOf)
         flags.add(GlobalBindingFlags::IsForTypeOf);
 
-    // The stub looks at the record's constant and then at the filed location. A record that files its location alone has no constant but the undefined that typeof answers.
     if (!m_generator.takesOpenForm(value)) {
         GlobalBindingScope scope = seesScriptBindings ? GlobalBindingScope::ScriptsAndGlobalObject : GlobalBindingScope::GlobalObject;
         define(value, Boxed(callStub(value, AOT::getGlobalBinding(scope), { }, { .numberedImmediate = NumberedImmediate { m_mentions.globalBinding(key, flags) } }).first));
@@ -335,8 +313,6 @@ void AccessEmitter::generateGetGlobalBinding(const ValueContext& value)
     LBasicBlock slowPath = newBlock();
     Join<Boxed> join(m_out);
 
-    // For a name that nothing is bound to, the run time files the undefined that typeof answers as the record's constant (GlobalBindings::fileAbsence()), even if the program stores to the name through a binding.
-    // A name that the program does not store through a binding is read as the record's constant, and else at the filed location.
     bool filesLocationAlone = m_plan.globalName(key).isStoredThroughBinding;
     if (isForTypeOf || !filesLocationAlone) {
         LBasicBlock constantCase = newBlock();
@@ -372,7 +348,6 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
     RuntimeOperation operation = seesScriptBindings
         ? forMode(value->mode(), RuntimeOperation::SetGlobalBinding, RuntimeOperation::SetGlobalBindingSloppy)
         : forMode(value->mode(), RuntimeOperation::SetGlobalObjectBinding, RuntimeOperation::SetGlobalObjectBindingSloppy);
-    // The first store through a record files it, so a store that never comes again has nothing to find there.
     if (!comesAgain(value)) {
         m_out.noteForm(Form::Runtime, StateOfKnowledge::Always, Place::CodeThatRunsOnce);
         callVoidOperation(value, operation, { numberOf(m_mentions.globalBinding(key, flags)), stored });
@@ -387,7 +362,7 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
     LBasicBlock slowPath = newBlock();
     LBasicBlock continuation = newBlock();
     m_out.store64(stored.value(), globalBindingLocationOrElse(globalBindingAddress(key, flags), seesScriptBindings, slowPath));
-    barrierAfterStore(value, globalObject(), stored, typeOf(value->valueOperand()));
+    barrierAfterStore(value, globalObject(), typeOf(value->valueOperand()));
     m_out.jump(continuation);
 
     m_out.appendTo(slowPath);
@@ -409,7 +384,6 @@ void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
         return;
     }
 
-    // AccessTable::answerOfGetterInOwnStorage(): the read by name behind a miss comes to the handler of the getter, which files it.
     CellPointer object = in<CellPointer>(value->objectOperand());
     if (std::optional<NumberedImmediate> answers = answersOf(value, key, SiteUse::Read)) {
         NameAtSite name = m_plan.slots().hasColumn(key) ? NameAtSite::HasColumn : NameAtSite::IsAnyName;
@@ -432,15 +406,14 @@ bool AccessEmitter::isReadOfMethodCalledNext(const ValueContext& read)
     const Operation& call = operationAt(onlyUser);
     if (call.opcode != Opcode::Call || call.calleeOperand() != read.id() || !call.thisValueOperand() || inFrontOfBox(call.thisValueOperand()) != inFrontOfBox(read->objectOperand()) || call.calleeKey() != read->key())
         return false;
-    // In a copy the mark of a tail call says what a stack trace lists. A call that the unit itself ends with is returnWhatMethodOfBuiltinClassGives()'s.
+    if (emitter<CallEmitter>().mayForwardCallToReceiver(call))
+        return false;
     const Terminator& terminator = m_code.at(read.block()).terminator;
     bool endsUnit = terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == behind.front();
     if (call.isTailCall && (endsUnit || !findPatternLeftToCall(read)))
         return false;
     if (isSymbolOfRealm(read->key()) || !typeOf(read.id()).hasObjects())
         return false;
-    // `list.map(x => x + 1)`, `table.get(key)` on a cell, `text.slice(i + 1)`: a closure that is made, a value that is put into another form and whatever touches no memory and cannot throw
-    // do nothing that the read could see, and see nothing that the read could do.
     auto standsUnseenInBetween = [&](const Operation& operation) {
         return operation.opcode == Opcode::Box || operation.opcode == Opcode::NewClosure || operation.opcode == Opcode::NewRegExp || operation.traits().isPure();
     };
@@ -454,7 +427,6 @@ bool AccessEmitter::isReadOfMethodCalledNext(const ValueContext& read)
     for (ValueID argument : arguments) {
         if (argument == read.id())
             return false;
-        // A closure that is lent goes through the stub that knows whether the callee borrows it.
         const Operation* made = &operationAt(argument);
         if (made->opcode == Opcode::Box)
             made = &operationAt(made->operand(0));
@@ -464,7 +436,6 @@ bool AccessEmitter::isReadOfMethodCalledNext(const ValueContext& read)
     return true;
 }
 
-// isReadOfMethodCalledNext() has said yes. `text.replace(/a/g, "b")`: the pattern is written for the call alone, and the stub that goes by the class of the receiver hands it to nobody and leaves it as it was made.
 ValueID AccessEmitter::findPatternLeftToCall(const ValueContext& read)
 {
     ValueID callID = m_code.onlyUserOf(read.id());
@@ -480,7 +451,6 @@ ValueID AccessEmitter::findPatternLeftToCall(const ValueContext& read)
     const Operation& pattern = operationAt(made);
     if (pattern.opcode != Opcode::NewRegExp || pattern.isNeverToldApart() || pattern.regExpFlags().contains(RegExpFlags::Sticky) || m_code.onlyUserOf(made) != boxed)
         return { };
-    // What stands in front of the read is made already.
     if (!std::ranges::contains(read.operationsBehind(), made) || !emitter<BuiltinCallEmitter>().canShareRegExpLiteral(pattern))
         return { };
     return made;
@@ -497,7 +467,6 @@ void AccessEmitter::returnWhatMethodOfBuiltinClassGives(const ValueContext& read
     };
     if (call.opcode != Opcode::Call || !call.methodOfReceiverAsMade() || call.calleeOperand() != read.id() || !call.thisValueOperand() || inFrontOfBox(call.thisValueOperand()) != inFrontOfBox(read->objectOperand()))
         return;
-    // Whoever is handed a pattern under such a name is a string, whatever else has a method of that name.
     ValueID pattern = findPatternLeftToCall(read);
     if (call.methodIsNamedByKeyAlone() && !pattern)
         return;
@@ -509,7 +478,6 @@ void AccessEmitter::returnWhatMethodOfBuiltinClassGives(const ValueContext& read
     if (own.results.size() != 1 || own.results[0].representation != Representation::JSValue || m_plan.conventions().spillsArgumentRegisters(m_unit))
         return;
 
-    // Behind the read stands only what nobody sees, and each operand is at hand already, but for its boxed form.
     std::span<const ValueID> behind = read.operationsBehind();
     for (ValueID id : behind) {
         const Operation& operation = operationAt(id);
@@ -559,13 +527,9 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
     for (ValueID argument : call->argumentsOperands())
         arguments.append(in<Boxed>(argument).value());
     const unsigned count = static_cast<unsigned>(arguments.size());
-    // The stub of such a place has no form for a name without a column, whose number may not fit the two bytes that ImageSection::NamesOfSites has for a number.
-    // The walk has named what a receiver as its class makes it finds under the name: the stub looks at the receiver, and needs no words at the site.
     std::optional<BuiltinBoxedStub> boxedCall = call->methodOfReceiverAsMade() ? m_program.builtins().boxedCallStubOf(call->methodOfReceiverAsMade()) : std::nullopt;
     bool goesByClass = boxedCall && servesCallsByName(*boxedCall, count);
-    // The body of the method is compiled: the stub looks at the receiver and enters it.
     std::optional<CompiledMethodOfArray> compiledMethod = !goesByClass && call->methodOfReceiverAsMade() && count <= maxArgumentCountOfCompiledMethodOfArray ? compiledMethodOfArray(call->methodOfReceiverAsMade()) : std::nullopt;
-    // Where only the name speaks for the class, most receivers are of another: they find the words of the site as before.
     std::optional<NumberedImmediate> answers = (!goesByClass || call->methodIsNamedByKeyAlone()) && !compiledMethod && m_plan.slots().hasColumn(read.key) ? answersOf(call, read.key, SiteUse::Call) : std::nullopt;
     RELEASE_ASSERT(!read.pattern || goesByClass);
     StubKey byClass = !goesByClass ? StubKey() : read.pattern ? (answers ? callMethodOfBuiltinClassAtSiteWithSharedPattern(*boxedCall, count) : callMethodOfBuiltinClassWithSharedPattern(*boxedCall, count))
@@ -575,7 +539,6 @@ bool AccessEmitter::tryCallMethodByName(const ValueContext& call)
         .thisValue = in<Boxed>(call->thisValueOperand()).value(),
         .arguments = arguments.span(),
     };
-    // `const nodes = list.slice(); nodes.pos = pos`: the first named property of a list asks for storage of its own, unless the list was born with the room.
     if (goesByClass && !read.pattern && *boxedCall == BuiltinBoxedStub::ArraySlice && !count && generator().isStoredIntoByName(call.id())) {
         LBasicBlock closed = newBlock();
         OperandJoin answersMeet(m_out, Representation::JSValue);
@@ -608,7 +571,6 @@ void AccessEmitter::generatePropGet(const ValueContext& value)
         return;
     }
     if (isReadOfMethodCalledNext(value)) {
-        // Nobody looks at it: the call reads.
         m_out.noteForm(Form::Closed, StateOfKnowledge::Always);
         m_readLeftToCall = ReadLeftToCall { value.id(), value->key(), value.origin(), findPatternLeftToCall(value) };
         define(value, undefined());
@@ -620,7 +582,6 @@ void AccessEmitter::generatePropGet(const ValueContext& value)
 
 std::optional<AccessEmitter::StoreOfKnownField> AccessEmitter::findStoreOfKnownField(const Type& receiver, PropertyKeyID key, PutMode mode)
 {
-    // A type that lists layouts does not say that the receiver is of the realm that runs, where alone the number names the symbol.
     if (isSymbolOfRealm(key) || !receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts())
         return std::nullopt;
     std::span<const LayoutID> receivers = membersOf(types(), receiver);
@@ -665,7 +626,6 @@ void AccessEmitter::generatePropSet(const ValueContext& value)
 void AccessEmitter::generatePropDefine(const ValueContext& value)
 {
     Boxed object = boxCell(in<CellPointer>(value->objectOperand()));
-    // `{ 2: value }` defines an element.
     const PropertyKey& name = types().at(value->key());
     if (name.kind == PropertyKeyKind::Text && m_program.nameClass(name.text) == NameClass::Index) {
         std::optional<uint32_t> index = parseIndex(byteCast<Latin1Character>(m_program.strings[name.text]));
@@ -695,7 +655,6 @@ void AccessEmitter::generatePropDelete(const ValueContext& value)
         return;
     }
     Boxed object = in<Boxed>(value->objectOperand());
-    // The tables have slots for objects alone.
     if (!typeOf(value->objectOperand()).hasObjects()) {
         define(value, callOperation<Condition>(value, forMode(value->mode(), RuntimeOperation::DeleteById, RuntimeOperation::DeleteByIdSloppy), { object, key }));
         return;
@@ -747,7 +706,6 @@ std::optional<AccessEmitter::ElementKey> AccessEmitter::elementKeyOf(const Value
     case Representation::OptionalDouble:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         return std::nullopt;
@@ -755,7 +713,6 @@ std::optional<AccessEmitter::ElementKey> AccessEmitter::elementKeyOf(const Value
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A stub that expects one kind of view goes on to the stub that takes everything where it meets anything else.
 static std::optional<AOT::ExpectedElements> stubFormOfExpectedElements(ExpectedElements expected)
 {
     switch (expected) {
@@ -801,7 +758,6 @@ void AccessEmitter::generateElemGet(const ValueContext& value)
         index = signExtended(unboxInt32(boxedKey));
     }
     {
-        // The elements lie in another object than the receiver, and the effects of the read speak of the receiver.
         Machine::DeclaredAccessesSuspension suspension(m_out);
         join.add(elements.readElementOfExtraProperties(unboxCell(object), *extraPropertiesWord, index, outOfLine));
     }

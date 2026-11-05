@@ -87,7 +87,6 @@ bool StraightEmitter::covers(const CodeGenerationInputs& inputs, CodeUnit unit, 
     index.body().forEachBlock([&](BodyBlock block) {
         if (std::ranges::binary_search(blocksNeverEntered, block.id()))
             return;
-        // StraightEmitter::generateModule() asks the run time.
         for (BodyValue value : block.values()) {
             if (!opcodes.contains(Opcode::ModuleNamespace))
                 break;
@@ -121,29 +120,46 @@ const CallingConventions& StraightEmitter::conventions() const
     return m_inputs.plan.conventions();
 }
 
-// What only makes a value is left out where nobody reads the value, and with it what it alone read: a closure that nobody reads mentions no function.
 void StraightEmitter::findValuesNobodyReads()
 {
     static constexpr OpcodeSet operationsThatOnlyMakeValues = inputOperationsThatOnlyHandOn | opcodesWithoutCodeOfTheirOwn
         | OpcodeSet { Opcode::String, Opcode::BigInt, Opcode::Data, Opcode::NewClosure, Opcode::GetModuleVariable, Opcode::TypeTest };
     uint32_t numberOfValues = m_index.numberOfValues();
     Vector<uint32_t, 128> readsLeft;
+    BitVector checksThatPass;
+    auto countReads = [&] {
+        if (!readsLeft.isEmpty())
+            return;
+        readsLeft.grow(numberOfValues);
+        for (uint32_t other = 0; other < numberOfValues; ++other)
+            readsLeft[other] = m_index.useCount(ValueID(other));
+        m_valuesNobodyReads.ensureSize(numberOfValues);
+    };
     for (uint32_t place = numberOfValues; place--;) {
         ValueID id(place);
-        if (m_index.isParameter(id) || !operationsThatOnlyMakeValues.contains(m_index.opcodeOf(id)))
+        ValueID checkThatPasses;
+        if (!m_index.isParameter(id) && m_index.opcodeOf(id) == Opcode::Call && mayCallOnlyCalleeDirectly(m_index.value(id), checkThatPasses)) {
+            countReads();
+            if (checkThatPasses) {
+                checksThatPass.ensureSize(numberOfValues);
+                checksThatPass.quickSet(checkThatPasses.index());
+            }
+            m_callsOfOnlyCallees.ensureSize(numberOfValues);
+            m_callsOfOnlyCallees.quickSet(place);
+            m_entersUnits = true;
+            uint32_t callee = m_index.value(id).calleeOperand().index();
+            if (readsLeft[callee] && readsLeft[callee] < BodyIndex::maxCountedUses)
+                --readsLeft[callee];
+            continue;
+        }
+        if (m_index.isParameter(id) || !(operationsThatOnlyMakeValues.contains(m_index.opcodeOf(id)) || (place < checksThatPass.size() && checksThatPass.quickGet(place))))
             continue;
         if (readsLeft.isEmpty() ? !m_index.isUnused(id) : !!readsLeft[place])
             continue;
         BodyValue value = m_index.value(id);
-        // A walk reports a promise whoever reads what was promised.
         if (value.opcode() == Opcode::Convert && value.as<Opcode::Convert>().declared().has(PositionFlags::IsInt32Promise))
             continue;
-        if (readsLeft.isEmpty()) {
-            readsLeft.grow(numberOfValues);
-            for (uint32_t other = 0; other < numberOfValues; ++other)
-                readsLeft[other] = m_index.useCount(ValueID(other));
-            m_valuesNobodyReads.ensureSize(numberOfValues);
-        }
+        countReads();
         m_valuesNobodyReads.quickSet(place);
         value.forEachOperand([&](ValueID operand, uint32_t) {
             if (operand && readsLeft[operand.index()] && readsLeft[operand.index()] < BodyIndex::maxCountedUses)
@@ -152,7 +168,6 @@ void StraightEmitter::findValuesNobodyReads()
     }
 }
 
-// No more words than these are taken: a word for each value that is read beyond its block or more than once, and for the block with the most of them a word for each other value.
 void StraightEmitter::measureFrame()
 {
     static constexpr OpcodeSet opcodesThatEnterUnits { Opcode::CallDirect, Opcode::EvaluateModule };
@@ -182,7 +197,6 @@ void StraightEmitter::measureFrame()
     });
     m_numberOfSlots = lasting + mostPassing;
     m_wordsOfScratchArea = static_cast<uint32_t>((longestList + 5) & ~static_cast<size_t>(1));
-    // The other road keeps values in registers and gives words up: what is large here need not be large there.
     if (m_numberOfSlots + m_wordsOfScratchArea > mostWordsOfFrame) {
         fail(Opcode::Undefined);
         m_numberOfSlots = 0;
@@ -240,7 +254,6 @@ CCallHelpers::Address StraightEmitter::addressOfSlot(ValueID value)
     return CCallHelpers::Address(GPRInfo::callFrameRegister, -static_cast<int32_t>(sizeof(EncodedJSValue)) * static_cast<int32_t>(slot));
 }
 
-// Of a value of the block being generated that one operation of the block, or its terminator, reads and nothing else does. Its word serves the next value from there on.
 std::optional<uint32_t> StraightEmitter::positionOfLastReadInBlock(ValueID value) const
 {
     ValueID root = rootOf(value);
@@ -262,7 +275,6 @@ std::optional<uint32_t> StraightEmitter::positionOfLastReadInBlock(ValueID value
     }
 }
 
-// By position a chain of the values whose words are free behind it: nothing is searched, however many wait.
 void StraightEmitter::giveBackSlotAt(uint32_t position, ValueID root)
 {
     m_nextValueGivenBack[root.index()] = std::exchange(m_firstValueGivenBackAt[position], root.index() + 1);
@@ -280,7 +292,6 @@ CCallHelpers::Address StraightEmitter::slotOf(ValueID value)
     return addressOfSlot(value);
 }
 
-// A proof on an edge out of the block that fills a parameter nobody reads is a mention and no read.
 std::optional<BodyUser> StraightEmitter::onlyReader(ValueID value) const
 {
     if (value != m_subjectOfProofsNobodyReads)
@@ -330,8 +341,7 @@ bool StraightEmitter::isReadByNextCodeAlone(const BodyValue& value) const
         if (user->kind == BodyUseKind::Operand) {
             if (!m_block.holds(user->value) || user->value == m_returnedCall)
                 return false;
-            // Such a reader gets no code, so nothing would ever take the value out of the register.
-            if (isReadByNobody(user->value) || m_index.opcodeOf(user->value) == Opcode::ReleaseHint)
+            if (isReadByNobody(user->value))
                 return false;
             reader = user->value.index();
         } else if (user->kind != BodyUseKind::TerminatorOperand || user->block != m_block.id())
@@ -372,7 +382,6 @@ void StraightEmitter::storeWhatWaitsInRegister()
     noteCopyInRegister(stored);
 }
 
-// While no code has followed the store, the register still holds what was stored.
 void StraightEmitter::noteCopyInRegister(ValueID value)
 {
     m_valueCopiedInRegister = rootOf(value);
@@ -414,7 +423,6 @@ void StraightEmitter::load(ValueID value, GPRReg destination)
 
 bool StraightEmitter::leavesArgumentsToThunk(StubKey key, const StraightCallOptions& options) const
 {
-    // Such a thunk is one of its name already: with the places of the operands in it hardly two sites would share one.
     return !(options.numberedImmediate && descriptorOf(key.family()).binding == ImmediateBinding::InThunk);
 }
 
@@ -457,7 +465,6 @@ void StraightEmitter::bringAll(std::span<const StraightArgument> arguments, NOES
             continue;
         const StraightArgument& argument = arguments[i];
         if (!goesIntoThunk(argument)) {
-            // A register that is handed on is read here: nothing that was brought ahead of it may lie there.
             for (size_t earlier = 0; argument.kind == StraightArgument::Kind::Register && earlier < arguments.size(); ++earlier)
                 RELEASE_ASSERT(!(earlier == broughtFirst || (earlier < i && !goesIntoThunk(arguments[earlier]))) || registerOf(earlier) != static_cast<GPRReg>(argument.bits));
             bring(argument, registerOf(i));
@@ -471,7 +478,6 @@ void StraightEmitter::bringAll(std::span<const StraightArgument> arguments, NOES
             appendArgumentMove(*leftToThunk, registerOf(i), ArgumentSource::Stack64, static_cast<uint64_t>(static_cast<int64_t>(addressOfSlot(argument.value).offset)));
     }
 
-    // Under Validate. Each value that was brought here is read again out of its word and held against its register. What was taken out of the result register has no word.
     if (!m_build.options().recorded.validates) [[likely]]
         return;
     AllowMacroScratchRegisterUsage allowScratch(*m_jit);
@@ -541,7 +547,6 @@ void StraightEmitter::storeInScratchArea(ValueID value, uint32_t word)
 
 void StraightEmitter::define(const BodyValue& value, GPRReg boxed)
 {
-    // Whoever writes the result register stores what waits there first. What still waits here has been written over, and to bring it into its boxed form would change the new value.
     if (m_valueInRegister && isResultRegister(boxed)) {
         fail(value);
         return;
@@ -567,7 +572,6 @@ void StraightEmitter::defineTest(const BodyValue& value, StraightTest test)
     m_testInRegister = test;
 }
 
-// The value stays where it lies, in its word or in the register.
 void StraightEmitter::throwIfEmpty(const BodyValue& check, ValueID checked, const ThrowSite& throwSite)
 {
     bool waits = waitsInRegister(checked);
@@ -639,7 +643,6 @@ void StraightEmitter::boxDouble(FPRReg number, GPRReg boxed)
 {
     StubKey key = boxNumber(BoxedNumberForm::Double);
     const StubSignature& signature = m_inputs.stubCatalog.summaryOf(key).signature;
-    // On x86-64 the stub answers in the result register, whatever `boxed` is.
     if (isResultRegister(signature.firstResult.gpr()))
         takeResultRegister();
     m_jit->moveDouble(number, signature.operands[0].fpr());
@@ -660,7 +663,6 @@ void StraightEmitter::unboxNumber(GPRReg boxedNumber, FPRReg number)
 void StraightEmitter::defineSameAs(const BodyValue& value, ValueID other)
 {
     m_roots[value.id().index()] = m_roots[other.index()];
-    // The word was to be free behind this operation, its only reader: now it is as long in use as the new name.
     uint32_t root = rootOf(other).index();
     for (uint32_t* link = &m_firstValueGivenBackAt[value.id().index()]; *link; link = &m_nextValueGivenBack[*link - 1]) {
         if (*link != root + 1)
@@ -705,7 +707,6 @@ void StraightEmitter::unboxIntoForm(Representation representation, GPRReg word)
     case Representation::Cell:
         return;
     case Representation::Int32: {
-        // What is read out of a slot of doubles comes boxed as a double even where it is an int32. A call converts its integers behind its numbers, which lie in the argument FPRs by then: resultFPR is the first of them.
         CCallHelpers::Jump isInt32 = m_jit->branchIfInt32(word);
         m_jit->unboxDoubleWithoutAssertions(word, word, conversionFPR);
         m_jit->truncateDoubleToInt32(conversionFPR, word);
@@ -770,7 +771,6 @@ void StraightEmitter::noteSiteMayThrow(uint32_t site)
 
 void StraightEmitter::generateLandingPads(unsigned bytesBelowFrameRecord)
 {
-    // A call in a pad whose handler block has a handler of its own adds a pad to the list.
     for (size_t index = 0; index < m_landingPads.size(); ++index) {
         LandingPad pad = m_landingPads[index];
         m_landingPadOfBlockPlusOne = 0;
@@ -1040,7 +1040,6 @@ void StraightEmitter::takeParameters(const ArgumentLocations& locations)
             }
         }
     }
-    // walk/AOTWalkEnvironmentCells.cpp: whoever may let something hold an environment that it was handed sets the byte first.
     for (uint32_t index = 0; index < entry.numberOfParameters(); ++index) {
         ValueID parameter = entry.parameter(index);
         TypeID type = entry.parameterType(index);
@@ -1114,7 +1113,6 @@ void StraightEmitter::generate(CCallHelpers& jit, const ArgumentLocations& locat
     writeListsOfImportChecks();
 }
 
-// `v = GetModuleVariable . t = TypeTest v absent . Branch t -> the next block: ThrowModuleFailure . Unreachable | the block behind it`: what the front end writes for a name that a CommonJS file may not export.
 std::optional<StraightEmitter::ImportCheck> StraightEmitter::importCheckIn(BodyBlock block) const
 {
     uint32_t place = block.id().index();
@@ -1133,7 +1131,6 @@ std::optional<StraightEmitter::ImportCheck> StraightEmitter::importCheckIn(BodyB
         return std::nullopt;
     if (isNeverEntered(taken.block()) || isNeverEntered(notTaken.block()) || !m_index.onlyIncomingEdge(taken.block()) || !m_index.onlyIncomingEdge(notTaken.block()))
         return std::nullopt;
-    // Beside the test, proofs alone mention what was read, and nobody reads what they fill.
     BodyBlock failing = m_index.block(taken.block());
     BodyBlock next = m_index.block(notTaken.block());
     uint32_t numberOfProofs = static_cast<uint32_t>(taken.proofs().size() + notTaken.proofs().size());
@@ -1190,7 +1187,6 @@ void StraightEmitter::generateImportChecks(BodyBlock first, uint32_t numberOfChe
     m_listsOfImportChecks.append(WTF::move(list));
 }
 
-// They lie behind the code of the unit, where nothing runs into them.
 void StraightEmitter::writeListsOfImportChecks()
 {
     for (const ListOfImportChecks& list : m_listsOfImportChecks) {
@@ -1212,7 +1208,6 @@ void StraightEmitter::generateBlock(BodyBlock block)
     m_returnedCall = terminator.kind() == TerminatorKind::ReturnCall ? terminator.callOperand() : ValueID();
     m_valueCopiedInRegister = { };
     findProofsNobodyReads(terminator);
-    // A parameter is filled before the block begins, also by a landing pad that is written behind every block.
     for (uint32_t index = 0; index < block.numberOfParameters(); ++index) {
         if (!m_index.isUnused(block.parameter(index)))
             addressOfSlot(block.parameter(index));
@@ -1229,7 +1224,6 @@ void StraightEmitter::generateBlock(BodyBlock block)
     giveBackSlotsReadLastAt(block.endOfValues().index());
 }
 
-// walk/AOTWalkDeferredDefinitions.cpp: what a module makes at load and only stores in a variable is made at the first read.
 bool StraightEmitter::leavesDefinitionToFirstRead(const BodyValue& value)
 {
     static constexpr OpcodeSet opcodesOfDefinitions = inputOperationsThatHandOn | OpcodeSet { Opcode::NewRegExp, Opcode::Data, Opcode::PutModuleVariable };
@@ -1265,8 +1259,7 @@ void StraightEmitter::generateOperation(const BodyValue& value)
 {
     if (isReadByNobody(value.id()) || leavesDefinitionToFirstRead(value))
         return;
-    // A value waits in the result register for the next operation that gets code. Where that operation does not read it, it is stored first: no emitter has to know what it is about to write over.
-    if (m_valueInRegister && !inputOperationsThatOnlyHandOn.contains(value.opcode()) && !opcodesWithoutCodeOfTheirOwn.contains(value.opcode()) && value.opcode() != Opcode::ReleaseHint && !readsWhatWaitsInRegister(value))
+    if (m_valueInRegister && !inputOperationsThatOnlyHandOn.contains(value.opcode()) && !opcodesWithoutCodeOfTheirOwn.contains(value.opcode()) && !readsWhatWaitsInRegister(value))
         storeWhatWaitsInRegister();
     switch (familyOf(value.opcode())) {
     case OperationFamily::Constant:
@@ -1457,15 +1450,20 @@ bool StraightEmitter::givesBoolean(ValueID value) const
 
 void StraightEmitter::generateReturn(const BodyTerminator& terminator)
 {
-    if (ValueID value = terminator.valueOperand())
-        loadIntoResultRegister(value);
-    else
-        m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), takeResultRegister());
-    returnToCaller();
+    returnToCaller(terminator.valueOperand(), terminator.origin());
 }
 
-void StraightEmitter::returnToCaller()
+void StraightEmitter::returnToCaller(ValueID returned, Origin origin)
 {
+    if (TypeID held = plan().typeHeldOfResult(program(), facts().linked(), m_unit); held && m_types.at(held).isJavaScriptValue()) {
+        trapUnlessOfType(returned, m_types.testablePartOf(held), ProofSource::ResultOfCall, origin);
+        if (m_hasFailed)
+            return;
+    }
+    if (returned)
+        loadIntoResultRegister(returned);
+    else
+        m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), takeResultRegister());
     Representation representation = conventions().resultRepresentation(m_unit);
     if (representation == Representation::Double)
         unboxNumber(resultGPR, resultFPR);
@@ -1596,7 +1594,6 @@ void StraightEmitter::generateSwitch(BodyBlock block, const BodyTerminator& term
 
     GPRReg subject = temporary(0);
     load(terminator.subjectOperand(), subject);
-    // One arm writes it and on the other the operation leaves its answer there.
     GPRReg integer = takeResultRegister();
     CCallHelpers::JumpList goesToOtherwise;
     CCallHelpers::Jump isInt32 = m_jit->branchIfInt32(subject);

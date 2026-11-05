@@ -32,7 +32,6 @@ struct ClosureFunctionWithText {
     FunctionID closureEntry;
 };
 
-// A range of the text of a module that the image holds.
 struct KeptFunctionText {
     static uint64_t placeOf(ModuleID module, uint32_t offset) { return static_cast<uint64_t>(module.index()) << 32 | offset; }
     uint64_t place() const { return placeOf(module, start); }
@@ -44,7 +43,6 @@ struct KeptFunctionText {
     uint32_t offsetInKeptText { 0 };
 };
 
-// The ranges of one module among all that are kept.
 struct KeptTextsOfModule {
     ModuleID module;
     uint32_t first;
@@ -56,21 +54,16 @@ struct HashedRunOfText {
     uint32_t run;
 };
 
-// Where each of a list of runs of bytes lies in a text that holds them in their order, equal ones once.
 struct PlacedRunsOfText {
     bool storesOwnBytes(size_t run) const { return firstEqualRun[run] == run; }
 
-    // [run]
     Vector<uint32_t> offsets;
-    // [run]: the run itself where the text holds its bytes.
     Vector<uint32_t> firstEqualRun;
     uint64_t size { 0 };
 };
 
 } // anonymous namespace
 
-// A run lies where the first run with its hash and its size lies, if it has the bytes of that one. Any other run has a place of its own.
-// An offset that does not fit is never read: whoever asks looks at the size first.
 static PlacedRunsOfText placeRunsOfText(const ParallelLoops& loops, std::span<const std::span<const uint8_t>> runs)
 {
     PlacedRunsOfText placed;
@@ -87,7 +80,6 @@ static PlacedRunsOfText placeRunsOfText(const ParallelLoops& loops, std::span<co
         return a.hashAndSize != b.hashAndSize ? a.hashAndSize < b.hashAndSize : a.run < b.run;
     });
     forEachRangeOfIndicesInParallel(loops, hashed.size(), [&](size_t at, size_t end) {
-        // The runs with one hash and size belong to the range in which the first of them stands.
         while (at && at < end && hashed[at].hashAndSize == hashed[at - 1].hashAndSize)
             ++at;
         while (at < end) {
@@ -137,7 +129,6 @@ static bool mayShowFunctionText(const Typed::Program& program, const Typed::Func
     return Typed::showsSourceTextOf(function.role) && !function.enclosingRuntimeFunction && module.kind != ModuleKind::RuntimeSource;
 }
 
-// [ModuleID]. The host keeps the text of a module that the program lacks.
 static Vector<size_t> measureFunctionTextsOfModules(const Typed::Program& program, const HostFunctionTexts& host)
 {
     return Vector<size_t>(program.modules.size(), [&](size_t index) {
@@ -148,7 +139,6 @@ static Vector<size_t> measureFunctionTextsOfModules(const Typed::Program& progra
     });
 }
 
-// In the order of the functions of the program, which is the order of the sources of their entries: the run time searches the entries by source.
 static Vector<ClosureFunctionWithText> collectClosureFunctionsWithText(const TableEncoder& encoder, std::span<const size_t> sizesOfTexts)
 {
     const Typed::Program& program = encoder.program;
@@ -158,7 +148,6 @@ static Vector<ClosureFunctionWithText> collectClosureFunctionsWithText(const Tab
         if (function.text.start >= function.text.end || !mayShowFunctionText(program, function))
             return;
         FunctionID id(index);
-        // Only a function object is asked for its text, and it asks under the number of its entry.
         std::optional<FunctionID> closureEntry = encoder.findEntrypoint(id);
         if (!closureEntry || *closureEntry < numbers.firstClosureFunction() || *closureEntry >= numbers.endOfClosureFunctions())
             return;
@@ -170,7 +159,6 @@ static Vector<ClosureFunctionWithText> collectClosureFunctionsWithText(const Tab
     });
 }
 
-// Leaves them ascending by place. A function lies inside the text of the function that it is written in.
 static void mergeKeptFunctionTexts(const ParallelLoops& loops, Vector<KeptFunctionText>& kept)
 {
     parallelSort(loops, kept.mutableSpan(), [](const KeptFunctionText& a, const KeptFunctionText& b) {
@@ -224,22 +212,17 @@ struct OutermostQuotedText {
     uint32_t end;
 };
 
-// The places of the quoted texts of every module, those of one module side by side.
 struct PlacesOfQuotedTexts {
     static uint64_t placeOf(uint32_t line, uint32_t column) { return static_cast<uint64_t>(line) << 32 | column; }
     std::span<const uint64_t> placesOf(size_t module) const { return places.span().subspan(firstOfModule[module], firstOfModule[module + 1] - firstOfModule[module]); }
 
-    // [ModuleID], and one more for the end.
     Vector<size_t> firstOfModule;
-    // Both in the order of the texts of the modules. The places ascend within a module: the run time searches the rows by place.
     Vector<uint64_t> places;
     Vector<uint8_t> isReported;
 };
 
 struct QuotedTextsOfModule {
-    // What code reports, in the order of the module.
     Vector<QuotedTextAtPlace> quoted;
-    // Ascending, none within another.
     Vector<OutermostQuotedText> outermost;
     size_t firstRun { 0 };
     Vector<QuotedTextGroupData> groups;
@@ -287,7 +270,6 @@ static std::optional<PlacesOfQuotedTexts> findPlacesOfQuotedTexts(const TableEnc
     return result;
 }
 
-// Nothing fails anywhere else, so nobody asks for the text of any other place. Whether code reports any place at all.
 static bool markQuotedTextsThatCodeReports(const TableEncoder& encoder, PlacesOfQuotedTexts& texts)
 {
     const LinkedFunctions& functions = encoder.inputs.functions;
@@ -296,7 +278,6 @@ static bool markQuotedTextsThatCodeReports(const TableEncoder& encoder, PlacesOf
     forEachIndexInParallel(encoder.build.parallelLoops(), static_cast<unsigned>(functions.size()), [&](unsigned position) {
         size_t lastModule = numberOfModules;
         uint64_t lastPlace = 0;
-        // One operation of the program is often several sites in a row.
         auto report = [&](size_t module, uint64_t place) {
             if (module >= numberOfModules || (module == lastModule && place == lastPlace))
                 return;
@@ -324,7 +305,6 @@ static bool markQuotedTextsThatCodeReports(const TableEncoder& encoder, PlacesOf
     return reportsPlace.load(std::memory_order_relaxed);
 }
 
-// What one expression holds is quoted as a part of its text: only a text that lies in no other is a run of its own.
 static void collectQuotedTextsOfModule(const TableEncoder& encoder, const PlacesOfQuotedTexts& texts, size_t index, QuotedTextsOfModule& result)
 {
     const Typed::SourcePositions& positions = encoder.program.modules[index].positions;
@@ -393,12 +373,10 @@ static void setEmptyQuotedTexts(TableEncoder& encoder)
     encoder.part.setTableRange(ProgramTableIndex::textOfQuotes, encoder.part.allocate(0), 0);
 }
 
-// Copies of a package quote the same: each text that lies in no other is held once.
 static void encodeQuotedTexts(TableEncoder& encoder, StepTimes& times)
 {
     const Typed::Program& program = encoder.program;
     const ParallelLoops& loops = encoder.build.parallelLoops();
-    // What a message quotes is source text. Without it the message spells what failed from the value and the name: 'undefined.title'.
     if (leavesOutFunctionTexts(encoder)) {
         setEmptyQuotedTexts(encoder);
         return;
@@ -510,7 +488,6 @@ void encodeFunctionTexts(TableEncoder& encoder)
         return;
     }
 
-    // Copies of a package hold the same functions. Their text is held once.
     Vector<KeptTextsOfModule> modules = groupKeptFunctionTextsByModule(kept.span());
     Vector<Vector<uint8_t>> textsOfHost(modules.size());
     Vector<std::span<const uint8_t>> runs;

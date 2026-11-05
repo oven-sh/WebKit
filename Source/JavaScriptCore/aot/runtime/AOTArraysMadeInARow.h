@@ -16,7 +16,6 @@
 
 namespace JSC { namespace AOT {
 
-// Arrays of one shape, one behind the other, each one cell as tryCreateArrayWithStorage() makes it: what that asks of the structure and looks up in the heap for every array is asked and looked up once.
 class ArraysMadeInARow {
 public:
     ArraysMadeInARow(VM& vm, Structure* structure, unsigned length, unsigned vectorLength)
@@ -31,7 +30,6 @@ public:
         static_assert(sizeOfArrayWithStorage(0) == sizeof(JSArray) + sizeof(IndexingHeader));
     }
 
-    // functor(the elements): it fills the first `length` of them, and runs nothing that allocates. The others are holes.
     template<typename Functor>
     ALWAYS_INLINE JSArray* make(NOESCAPE const Functor& functor)
     {

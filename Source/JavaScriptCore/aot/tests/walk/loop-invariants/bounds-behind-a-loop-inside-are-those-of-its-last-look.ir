@@ -3,8 +3,8 @@
 # function run(n) { let s = 0; for (let i = 0; i < n; i++) for (let j = 0; j < i; j++) s += j; return s; }
 # RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
 # CHECK-LABEL: code f1:Body
-# CHECK: ([[s]]: number @Double, [[i]]: int[0, 2147483647] @Int32) {{*}}isLoopHead=true
-# CHECK: ({{*}}: number @Double, [[j]]: int[0, 2147483646] @Int32) {{*}}isLoopHead=true
+# CHECK: ([[s]]: int|whole @Double, [[i]]: int[0, 2147483647] @Int32) {{*}}isLoopHead=true
+# CHECK: ({{*}}: int|whole @Double, [[j]]: int[0, 2147483646] @Int32) {{*}}isLoopHead=true
 # CHECK: int[1, 2147483647] @Int32 = Increment {{*}}form=Integers
 
 module m0 path="main.js" displayPath="main.js" body=f0

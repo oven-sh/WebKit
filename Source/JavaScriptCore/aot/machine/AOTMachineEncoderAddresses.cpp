@@ -38,7 +38,6 @@ static GPRReg resolvedAddressRegisterOf(Location leaf)
     return leaf.gpr();
 }
 
-// The allocator gave this base no register, which it does only where acceptsImmediate() allows it.
 static AddressForm resolvedAddressOfBaseWithoutPosition(const Encoder& encoder, const Operation* base, int32_t offsetOfAccess)
 {
     RELEASE_ASSERT(base->hasNoPosition());
@@ -69,7 +68,6 @@ static AddressForm resolvedAddressOfBaseWithoutPosition(const Encoder& encoder, 
         return resolvedAddressAt(MacroAssembler::framePointerRegister, offset.value());
     }
 
-    // A constant is never a base, because code holds no absolute address, and the allocator puts the address of code in a register.
     RELEASE_ASSERT(base->opcode() == ArgumentReg && base->hasNoPosition());
     Reg reg = base->argumentReg();
     RELEASE_ASSERT(reg.isGPR() && isPinned(reg));
@@ -109,7 +107,6 @@ static void resolveIndexOfAddress(const Liveness& liveness, AddressForm& form, c
         RELEASE_ASSERT(index->opcode() == ZExt32 || index->opcode() == SExt32);
         form.extension = index->opcode() == ZExt32 ? IndexExtension::ZeroExtend32 : IndexExtension::SignExtend32;
         index = index->child(0);
-        // The register holds the extended word already, and the scan has asked for the form without an extension.
         if (form.extension == IndexExtension::ZeroExtend32 && clearsUpperHalfOfRegister(index))
             form.extension = IndexExtension::None;
     }
@@ -117,7 +114,6 @@ static void resolveIndexOfAddress(const Liveness& liveness, AddressForm& form, c
     form.index = resolvedAddressRegisterOf(leaves.take());
 
     if (shift) {
-        // The amount is the Shl's second child, so its leaf comes after the leaf of the shifted value.
         const Operation* amount = shift->child(1);
         RELEASE_ASSERT(amount->hasInt32() && !liveness.isFused(amount));
         leaves.take();
@@ -125,7 +121,6 @@ static void resolveIndexOfAddress(const Liveness& liveness, AddressForm& form, c
     }
 }
 
-// It emits nothing: tryEncodePairOfStores() resolves addresses and may then leave both stores to encodeStore().
 AddressForm Encoder::resolveAddress(const Operation* access, LeafCursor& leaves)
 {
     RELEASE_ASSERT(isMemoryAccess(access->opcode()));
@@ -186,7 +181,6 @@ MacroAssembler::Address Encoder::addressOf(Location memory) const
     case Location::InstanceWord:
         return MacroAssembler::Address(instanceGPR, memory.offsetInInstance());
 
-    // SlotBytes is an address, not a word that holds a value.
     case Location::None:
     case Location::Register:
     case Location::SlotBytes:
@@ -209,8 +203,6 @@ std::pair<GPRReg, bool> Encoder::referenceOf(const Operation* access, const Addr
         break;
 
     case AddressForm::BaseIndex:
-        // [cage base + (word << cell32Shift) + offset]: the reference was never made a pointer.
-        // With any other base, the index could move the address of a null reference out of the pages that fault.
         RELEASE_ASSERT(address.base == cellCageBaseGPR && address.shift == cell32Shift && address.extension != IndexExtension::SignExtend32);
         reference = address.index;
         isNarrow = true;
@@ -220,7 +212,6 @@ std::pair<GPRReg, bool> Encoder::referenceOf(const Operation* access, const Addr
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // The reference is read after the fault handler has overwritten a scratch register.
     RELEASE_ASSERT(reference != InvalidGPRReg && reference != scratchGPR && reference != secondScratchGPR);
     return { reference, isNarrow };
 }
@@ -230,7 +221,6 @@ void Encoder::recordTrappingAccess(const Operation* access, const AddressForm& a
     RELEASE_ASSERT(instruction.isSet());
     ASSERT(access->offset() >= 0 && static_cast<uint64_t>(access->offset()) + bytesForWidth(access->accessWidth()) <= trapReach());
 
-    // An access has one record, and so one origin.
     const Operation* trappingLoad = access;
     if (m_liveness.of(access).has(ValueFlag::TakesOverTrap)) {
         RELEASE_ASSERT(!access->traps());

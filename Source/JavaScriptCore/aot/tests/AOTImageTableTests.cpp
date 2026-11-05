@@ -54,7 +54,6 @@ using Verdict = Wire::ImageVerdict;
 
 namespace {
 
-// Each layout is made once and handed out. Of three layouts in a row the last has the fields of the one in front of it.
 struct SizeOfProgramWithRecords {
     uint32_t numberOfLayouts;
     uint32_t numberOfNames;
@@ -67,7 +66,6 @@ static constexpr uint32_t sizeOfConstant = 8;
 static constexpr uint8_t byteOfConstant = 0x5a;
 
 static constexpr std::array<unsigned, 3> threadCountsOfTableGroups { 1, 3, 8 };
-// parallelSort() sorts a shorter list on the thread that calls it.
 static constexpr size_t fewestSortedOnPoolForTableGroups = 1 << 13;
 static constexpr SizeOfProgramWithRecords recordsThatShareNames { 9000, 300, 12 };
 static constexpr SizeOfProgramWithRecords recordsWithOneName { 13000, 13000, 1 };
@@ -110,14 +108,12 @@ static CompiledCode bodyWithConstantAndRegExp(uint32_t function, StringID patter
     return code;
 }
 
-// An image has the stubs for foreign calls only where code that the build does not see may make such calls: here the text that the program evaluates. This program holds no WebAssembly module, so its image has no code of one.
 static const TestImage& imageWithEveryCodePart()
 {
     static NeverDestroyed<TestImage> shared([] {
         TestBuild build(makeString(regExpProgramText, runtimeFunctionsText(1)), { });
         StringID pattern = build.program().strings.find(Typed::encodeProgramString(patternOfRegExpProgram).span());
         AOT_TEST_CHECK(pattern);
-        // The table of modules names the entry of a body that has code.
         TestImage image = builtImage(build, bodies(entryOfBody(build, 0), bodyWithConstantAndRegExp(0, pattern)));
         AOT_TEST_CHECK(image.built.contents.numberOfRegExpsWithCode == 1);
         return image;
@@ -462,7 +458,6 @@ static void testConstantsAndFFICode()
     const ImageHeader& header = loaded.header();
     const ImageCodeRanges& ranges = header.code;
     const uint8_t* code = loaded.code().data();
-    // The sets of shapes that the tables name come first.
     std::span<const uint8_t> constants = loaded.code().subspan(ranges.constantsOffset, ranges.constantsSize);
     AOT_TEST_CHECK(constants.size() >= sizeOfConstant);
     AOT_TEST_CHECK(std::ranges::all_of(constants.last(sizeOfConstant), [](uint8_t byte) { return byte == byteOfConstant; }));
@@ -575,7 +570,6 @@ static CompiledCode bodyWithConstants(uint32_t function, Vector<ConstantData>&& 
     return sketch.take();
 }
 
-// The pool begins with the shared constants as they are. A constant of a body that equals a part is that part; one that equals only a piece of a part, or two parts in a row, has bytes of its own.
 static void testConstantsOfBodiesAreFoundAmongSharedConstants()
 {
     std::array<double, 4> shared { 0.25, 0.5, 0.75, 0 };
@@ -650,7 +644,6 @@ static String textOfProgramWithRecords(SizeOfProgramWithRecords size)
     return text.toString();
 }
 
-// An image in memory holds addresses inside itself. Two images are compared as the compiler wrote them: for the address 0.
 static Vector<uint8_t> bytesOfImageForAddressZero(const TestImage& image)
 {
     Vector<uint8_t> bytes(image.bytes.span());
@@ -666,7 +659,6 @@ static void checkSameBytesOnThreadsOfTableGroups(const BuildBytes& buildBytes)
         AOT_TEST_CHECK(buildBytes(threadCount) == expected);
 }
 
-// All that the table says: under every name that has a column, every shape finds the field of that name in the record of its layout, or nothing. And no entry belongs to a row that nobody reads.
 static void checkFieldTableReadsBack(const ProgramTables& tables, SizeOfProgramWithRecords size)
 {
     constexpr uint16_t noField = UINT16_MAX;
@@ -675,7 +667,6 @@ static void checkFieldTableReadsBack(const ProgramTables& tables, SizeOfProgramW
     AOT_TEST_CHECK(numberOfColumns > size.numberOfNames && tables.numberOfFieldTableRows >= size.numberOfLayouts);
     AOT_TEST_CHECK(tables.fieldRecordIndices().size() == entries.size());
 
-    // An entry stores its name, so it says where its row starts.
     Vector<uint32_t> numberOfEntriesOfRow(FillWith { }, entries.size(), 0u);
     for (uint32_t index = 0; index < entries.size(); ++index) {
         FieldTableEntry entry { entries[index] };
@@ -721,7 +712,6 @@ static void checkFieldTableReadsBack(const ProgramTables& tables, SizeOfProgramW
     }
     for (uint32_t row = 0; row < entries.size(); ++row)
         AOT_TEST_CHECK(!numberOfEntriesOfRow[row] || rowsWithReader.get(row));
-    // Of three layouts in a row two have the same fields, and rows that say the same are held once.
     AOT_TEST_CHECK(numberOfShapesWithEntries >= size.numberOfLayouts && numberOfRowsOfShapes < numberOfShapesWithEntries);
 }
 
@@ -777,7 +767,6 @@ static Vector<uint8_t> bytesOfImageWithLongConstantTables(unsigned threadCount)
 
 static void testLongConstantTables() { checkSameBytesOnThreadsOfTableGroups(bytesOfImageWithLongConstantTables); }
 
-// class Above { }  class Below extends Above { }  function Old() { }
 static constexpr ASCIILiteral textOfProgramWithThreeClasses = "module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\n"
     "entry module=m0\n"
     "layout L0 kind=Instance name=\"Above\" constructor=f2\n"
@@ -825,7 +814,6 @@ static constexpr ASCIILiteral textOfProgramWithThreeClasses = "module m0 path=\"
     "    Return v1\n"
     "}\n"_s;
 
-// A body mentions one word for three guards, of three classes and both sides, in two orders, and one word for two of them.
 static void testWordsThatCountClassGuards()
 {
     TestBuild build(makeString(textOfProgramWithThreeClasses, runtimeFunctionsText(5)), { });

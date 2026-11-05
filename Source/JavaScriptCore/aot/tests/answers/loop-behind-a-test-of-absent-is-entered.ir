@@ -3,6 +3,7 @@
 # ANSWER: 0,1,2
 # ANSWER-NEXT: 0,1,2
 # ANSWER-NEXT: 0
+# ANSWER-NEXT: exited with 0
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
 entry module=m0

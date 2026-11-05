@@ -116,14 +116,12 @@ static_assert([] {
     return true;
 }());
 
-// replacesImmediates pays off only with a one-byte displacement: test [r13 + disp8], reg is then shorter than test reg, imm32.
 static_assert(AOT_INSTANCE_PREFIX_OFFSET(notUndefinedOrNullMask) >= std::numeric_limits<int8_t>::min() && AOT_INSTANCE_PREFIX_OFFSET(notUndefinedOrNullMask) <= std::numeric_limits<int8_t>::max());
 
 static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueUndefined == undefinedCell32, "a trapping access faults for these two bases, and for what these two words decode to");
 static_assert((undefinedCell32 << cell32Shift) < FaultSite::reach);
 static constexpr uint32_t x86TargetTrapReach = static_cast<uint32_t>(FaultSite::reach - (undefinedCell32 << cell32Shift));
 
-// Offsets within the frame are not known until after register allocation. This bound leaves 2^30 bytes of the int32 displacement for them, more than any frame needs.
 static constexpr int64_t x86TargetMaxDistanceFromFrameAddress = int64_t { 1 } << 30;
 
 static constexpr bool fitsX86TargetImmediate(int64_t value)
@@ -157,7 +155,6 @@ static bool x86TargetAddressAcceptsBase(const Operation& access, const Operation
     return distance >= -x86TargetMaxDistanceFromFrameAddress && distance <= x86TargetMaxDistanceFromFrameAddress;
 }
 
-// Must match how Encoder::encodeSwitch() finds its jump tables: a run keeps growing while its values are dense: maxEntriesOfJumpTablePerCase.
 static bool x86TargetSwitchHasDenseRun(std::span<const int64_t> values)
 {
     for (size_t begin = 0; begin + minCasesForJumpTable <= values.size(); ++begin) {
@@ -176,7 +173,6 @@ static bool x86TargetSwitchHasDenseRun(std::span<const int64_t> values)
 
 RegisterFile registerFileFor(const ProcedureTraits& traits)
 {
-    // An ImageFrame lists what unwinding restores as one run of slots, among which such a function would save other registers. So it writes neither rbx nor r15.
     if (traits.savesRegistersOfCallers) {
         RegisterMask allocatableGPRs = x86TargetAllocatableGPRs & ~x86TargetCalleeSavedGPRs;
         return {
@@ -257,11 +253,9 @@ bool acceptsImmediate(const Operation& user, unsigned childIndex, const Operatio
             return x86TargetAddressAcceptsBase(user, constant);
         return isX86TargetImmediate(constant);
 
-    // Encoder::encodeCheck() turns a constant predicate into a jump or into nothing, and never reads its location.
     case Check:
         return !childIndex && constant.hasInt();
 
-    // The encoder makes the constant in the register of the result. Allocator::placeLeaf() answers a SlotBase with the bytes of the slot, which is no place to take an address from.
     case Opaque:
         return user.type().isInt() && constant.opcode() != SlotBase;
 
@@ -338,7 +332,6 @@ bool acceptsMemoryOperand(const Operation& user, unsigned childIndex)
     case Div:
         return childIndex == 1 && user.type().isFloat();
 
-    // Fused into a Branch, Select or Check, it becomes a test instruction, which can read either operand from memory. Unfused, it is commutative, so the encoder swaps the operands.
     case BitAnd:
         return true;
 

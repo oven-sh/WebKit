@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// BuiltinCalls, with EscapeAnalysis. `new RegExp("a+")` is the literal, which has a record and code in the image. A RegExp that the body writes for one call alone, where the row of the call hands it to nobody and leaves it as it was made,
-// is the one object that all evaluations share, and a match with it enters the code of its record.
-// At a suspension: nothing, no match suspends. At a throw: what is built throws where the call threw. A text of which no RegExp can be made stays a call, which throws.
-// Withheld: the call goes by its row with the object that was made for it, or is copied in its closed form.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -28,7 +23,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(numberOfEnumerators<RegExpFlags> == Yarr::numberOfFlags);
 
-// Null: nobody has handed the walk the summaries of the build, and nothing is claimed of any text.
 static const RegExpSummary* summaryInWalkRegExps(Walker& walker, StringID pattern, OptionSet<RegExpFlags> flags)
 {
     RegExpSummaries* summaries = walker.regExpSummaries();
@@ -37,8 +31,6 @@ static const RegExpSummary* summaryInWalkRegExps(Walker& walker, StringID patter
     Vector<char16_t> buffer;
     return &summaries->summaryOf(pattern, toYarrFlags(flags), walker.types().viewOf(pattern, buffer));
 }
-
-// ---- new RegExp(text, flags), RegExp(text, flags)
 
 static StringID textKnownInWalkRegExps(Walker& walker, Reference reference)
 {
@@ -70,7 +62,6 @@ static std::optional<OptionSet<RegExpFlags>> flagsKnownInWalkRegExps(Walker& wal
     return flags;
 }
 
-// With the metadata of its record the run time builds no pattern, so making the object cannot throw.
 Reference buildRegExpOfKnownTexts(Walker& walker, Reference pattern, Reference flagsOrNull, Origin origin)
 {
     StringID text = textOfKnownPatternOfRegExp(walker, pattern);
@@ -88,9 +79,6 @@ Reference buildRegExpOfKnownTexts(Walker& walker, Reference pattern, Reference f
     return walker.build(WTF::move(creation));
 }
 
-// ---- A RegExp that is written for one call
-
-// Every mention of what `operand` stands for is that one operand of the call or the object of the read that finds the callee, behind operations that state types alone.
 static bool isMentionedByCallAloneInWalkRegExps(const BodyIndex& index, const BodyValue& call, ValueID operand)
 {
     ValueID read = index.valueBehindCasts(call.calleeOperand());
@@ -130,11 +118,8 @@ std::optional<RegExpWrittenForCall> findRegExpWrittenForCall(Walker& walker, con
 
 namespace {
 
-// What a row does with a RegExp that it is handed.
 enum class UseOfRegExpByRow : uint8_t {
-    // It reads pattern and flags, and puts back what it stores.
     OnlyInspects,
-    // Under g it stores 0 as lastIndex first, and stops at the failed match that stores 0 again.
     MatchesFromStart,
     MatchesFromLastIndex,
     Other,
@@ -142,7 +127,6 @@ enum class UseOfRegExpByRow : uint8_t {
 
 } // anonymous namespace
 
-// AppliesToContents: the protocols of the row run on what lastIndex holds, which in a RegExp that is as it was made is a number.
 static UseOfRegExpByRow useOfRegExpByRowInWalkRegExps(const BuiltinTable& table, const BuiltinOverload& row, BuiltinOperand operand)
 {
     constexpr OperandUses usesOfContents { OperandUse::ReadsContents, OperandUse::WritesContents };
@@ -185,7 +169,6 @@ static bool leavesRegExpAsMadeInWalkRegExps(UseOfRegExpByRow use, OptionSet<RegE
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The cell is found by the place where the RegExp is written, its pattern and its flags. For a function without a text several literals would meet at the place of the call around it.
 Reference buildRegExpSharedForCall(Walker& walker, BuiltinOverloadID overload, BuiltinOperand operand, const RegExpWrittenForCall& regExp)
 {
     const BuiltinTable& table = walker.program().builtins();
@@ -220,8 +203,6 @@ static std::optional<RegExpMatchForm> matchFormInWalkRegExps(const BuiltinOverlo
     }
 }
 
-// A pattern that is one text has no code: whoever matches with its object searches for the text.
-// A match without the object begins at the start of the string and leaves no record of itself, so nothing may ever read `RegExp.$1` and its like.
 Reference buildMatchByCodeOfRegExp(Walker& walker, const BodyValue& call, BuiltinOverloadID overload, const RegExpWrittenForCall& regExp, Reference objectOfCall, Reference string, Origin origin, ExpectedType expected)
 {
     std::optional<RegExpMatchForm> form = matchFormInWalkRegExps(walker.program().builtins().at(overload));

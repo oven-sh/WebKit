@@ -24,7 +24,6 @@ public:
 private:
     struct SlotsOfProvenReceiver {
         FieldAccess name;
-        // No key: the layout tells who has the name.
         FieldAccess brand;
     };
 

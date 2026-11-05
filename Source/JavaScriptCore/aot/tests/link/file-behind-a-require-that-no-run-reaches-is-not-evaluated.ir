@@ -1,12 +1,12 @@
-# If every request of a module were evaluated as soon as any of its code is reached, a file that only a `require()` in a ruled-out block loads would run in Link's eyes
+# If every request of a module were evaluated as soon as any of its code is reached, a file that only a `require()` in a ruled-out block loads would run in Link's eyes, and all that it exports would escape
 # main.js: enum Mode { On = 1 }  if (Mode.On !== 1) require("./behind.js").dead();  require("./loaded.js").live();
 # A request of the kind Require stands for sites in bodies. Each site is an operation that names the file, so Link hears of it from the summary of whoever holds the operation.
 # RUN: summary f0 mechanisms=all
 # CHECK: names-where-no-run-comes m1
 # CHECK: never-entered b1
 # RUN(LINK): link functions mechanisms=all
-# What the record of behind.js lists has escaped all the same: the image shows `dead` to whoever gets hold of the object.
 # LINK: function f1 unreached
+# LINK: function f2 unreached
 # LINK-NOT: unreached
 # RUN(BOTH): link functions mechanisms=-Folding
 # BOTH-NOT: unreached

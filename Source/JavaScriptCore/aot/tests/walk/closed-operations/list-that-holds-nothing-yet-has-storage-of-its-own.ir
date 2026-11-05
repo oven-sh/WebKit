@@ -1,0 +1,40 @@
+# main.ts: function make() { keep([undefined, undefined]); keep([null]); keep([undefined, "a"]) }
+# `stack: [undefined, undefined]`: a list that holds undefined and null alone keeps places free for what is stored later, as an empty list is written to be filled.
+# Around shared storage the first store would copy it in the run time, for every list that the site makes. A list that holds something else too shares its storage as before.
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: data=d0
+# CHECK: = NewArray {{*}}, {{*}} contents=anything
+# CHECK-NOT: data=d1
+# CHECK: = NewArray {{*}} contents=anything
+# CHECK: Data data=d2 {{*}}encoding=CopyOnWriteArray
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-COUNT-2: = NewArray
+# ALL-COUNT-1: encoding=CopyOnWriteArray
+
+data d0 root=Array{contents=anything elements=[Undefined, Undefined]} module=m0
+data d1 root=Array{contents=anything elements=[Null]} module=m0
+data d2 root=Array{contents=anything elements=[Undefined, String{value="a"}]} module=m0
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="make" mode=Strict
+    v3 = Undefined
+    Return v3
+}
+function f1 name="make" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="keep" [isFreeName]
+    v2 = Data data=d0
+    v3 = Call v1, -, v2 calleeName="keep"
+    v4 = Data data=d1
+    v5 = Call v1, -, v4 calleeName="keep"
+    v6 = Data data=d2
+    v7 = Call v1, -, v6 calleeName="keep"
+    v8 = Undefined
+    Return v8
+}
+entry module=m0

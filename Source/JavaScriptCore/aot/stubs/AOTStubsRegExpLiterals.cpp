@@ -29,7 +29,6 @@
 namespace JSC { namespace AOT {
 
 struct LiteralMatchRegisters {
-    // None for a match that leaves nothing behind.
     std::optional<GPRReg> regExpObject;
     GPRReg string;
     GPRReg recordNumber;
@@ -38,18 +37,15 @@ struct LiteralMatchRegisters {
     GPRReg subjectLength;
 };
 
-// The object is as created, so lastIndex holds a number, and nothing observes the conversion that RegExpBuiltinExec applies to it.
 struct LastIndexUseOfLiteral {
     bool isRead { false };
     bool isReset { false };
-    // Nobody sees the stores, unless the object refuses them.
     bool isStoredAndPutBack { false };
 };
 
 struct MatchFormTraits {
     bool createsCell;
     JSValue miss;
-    // What matches with the object of any RegExp: a stub, or an operation that takes the string first.
     std::optional<RegExpMatchResult> resultOfStubForAnyRegExp;
     std::optional<Entry> operationForAnyRegExp;
 };
@@ -127,7 +123,6 @@ static LastIndexUseOfLiteral lastIndexUseOfLiteral(RegExpMatchForm form, bool is
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What comes here most often is a subject that is a rope. With the object, the stub for any RegExp makes it flat and runs the code that the RegExp has. What it cannot do either it hands to the generic operation.
 static void matchLiteralOutOfLineAndReturn(StubAssembler& jit, RegExpMatchForm form, std::optional<GPRReg> regExpObject, GPRReg string)
 {
     static_assert(operationArgumentGPR(2) == gprOf(StubRegister::A2) && operationArgumentGPR(3) == gprOf(StubRegister::A3));
@@ -156,11 +151,9 @@ static void loadRecordOfLiteral(StubAssembler& jit, GPRReg recordNumber, GPRReg 
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.regExps)), record);
 }
 
-// record arrives with the address of the record and leaves with the address of the code for the subject.
 static void loadMatchingCodeOfLiteral(StubAssembler& jit, GPRReg impl, GPRReg record, JumpList& hasNoCode)
 {
     const GPRReg code = record;
-    // In a record of any other form both offsets are 0, where the code of another pattern may lie.
     hasNoCode.append(jit.branchTest8(CCallHelpers::NonZero, Address(record, offsetOfLiteralRecordBitFields), TrustedImm32(literalRecordFormBits())));
     Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
     jit.load32(Address(record, OBJECT_OFFSETOF(ImageRegExp, codeFor8Bit)), code);
@@ -173,7 +166,6 @@ static void loadMatchingCodeOfLiteral(StubAssembler& jit, GPRReg impl, GPRReg re
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.regExpCode)), code);
 }
 
-// Returns the register that has the index where the match starts. Without one the match starts at 0.
 static std::optional<GPRReg> loadStartOfLiteralMatch(StubAssembler& jit, const LiteralMatchRegisters& registers, LastIndexUseOfLiteral lastIndexUse, JumpList& outOfLine)
 {
     if (!lastIndexUse.isRead)
@@ -186,7 +178,6 @@ static std::optional<GPRReg> loadStartOfLiteralMatch(StubAssembler& jit, const L
     return start;
 }
 
-// registers.scratch arrives with the address of the code. It leaves with the answer of the code.
 static void matchLiteral(StubAssembler& jit, const LiteralMatchRegisters& registers, std::optional<GPRReg> start)
 {
     Vector<GPRReg, maxSavedOperandsOfMatch> savedOperands;
@@ -202,7 +193,6 @@ static void matchLiteral(StubAssembler& jit, const LiteralMatchRegisters& regist
     });
 }
 
-// registers.scratch has the index where the match starts.
 static void finishLiteralMatchWithoutCellAndReturn(StubAssembler& jit, RegExpMatchForm form, const LiteralMatchRegisters& registers, bool advancesLastIndex, bool recordsMatch)
 {
     const GPRReg result = jit.result();
@@ -230,7 +220,6 @@ static void finishLiteralMatchWithoutCellAndReturn(StubAssembler& jit, RegExpMat
 static void finishLiteralMatchWithObjectAndReturn(StubAssembler& jit, RegExpMatchForm form, bool isGlobal, const LiteralMatchRegisters& registers)
 {
     static_assert(operationArgumentGPR(3) == gprOf(StubRegister::A3) && operationArgumentGPR(4) == gprOf(StubRegister::A4));
-    // String.prototype.match with a RegExp that is not global answers what exec answers.
     if (form == RegExpMatchForm::Exec || !isGlobal) {
         checkStubOperands(finishRegExpExec(FinishRegExpExecForm::WithObject), { *registers.regExpObject, registers.string });
         jit.jumpToStub(finishRegExpExec(FinishRegExpExecForm::WithObject));
@@ -274,7 +263,6 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
     const bool isGlobal = matchesGlobalLiteral(jit.key());
     const std::optional<GPRReg> regExpObject = takesObject ? std::optional<GPRReg>(jit.clobberOperand(0)) : std::nullopt;
     const GPRReg string = jit.clobberOperand(takesObject ? 1 : 0);
-    // Whether the literal is sticky is asked of the record, and a sticky one that is not global is matched out of line.
     const bool usesLastIndex = takesObject && isGlobal;
     const LastIndexUseOfLiteral lastIndexUse = lastIndexUseOfLiteral(form, isGlobal, usesLastIndex);
     const GPRReg recordNumber = jit.immediate();

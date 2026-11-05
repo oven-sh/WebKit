@@ -1,0 +1,112 @@
+# `i++; i--;`: what broke the promise went on as it came, one past the range, and the step down brought it back: ONE OF THE TWO WAS REPORTED, and the other only by the build behind the mend of the first
+# f1 upAndDown is called once, with 1 . f2 upAndDownOpen: the same, and nobody knows who calls: there the walk's own type speaks, which has the same sum in it
+# f3 boundedInFront: THE CONTROL THAT OWES NOTHING: a step that keeps the promise leaves the variable as it came, 1 to 100, and the step down is proven
+# -- source: a-step-behind-a-step-that-broke-the-promise-is-reported-too-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function upAndDown(n: Bun.int32): Bun.int32 { let i: Bun.int32 = n; i++; i--; return i; }
+# function upAndDownOpen(n: Bun.int32): Bun.int32 { let i: Bun.int32 = n; i++; i--; return i; }
+# function boundedInFront(n: Bun.int32): Bun.int32 { let i: Bun.int32 = n; if (i < 0 || i > 99) return 0; i++; i--; return i; }
+# sink(upAndDown(1));
+# sink(upAndDownOpen, boundedInFront);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 4
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK: the walk of f1:Body failed
+
+module m0 path="a-step-behind-a-step-that-broke-the-promise-is-reported-too-from-source.ts" displayPath="a-step-behind-a-step-that-broke-the-promise-is-reported-too-from-source.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=GlobalThis @361
+    v7 = PropGet v6 key="sink" [isFreeName] @361
+    v8 = Integer integer=1 @376
+    v9 = Convert v8 declared={type=i32} @376
+    v10 = Call v1, -, v9 calleeName="upAndDown" @366
+    v11 = Convert v10 declared={type=i32} @366
+    v12 = Call v7, -, v11 calleeName="sink" @361
+    v13 = Builtin builtin=GlobalThis @381
+    v14 = PropGet v13 key="sink" [isFreeName] @381
+    v15 = Call v14, -, v3, v5 calleeName="sink" @381
+    v16 = Undefined @381
+    Return v16 @381
+}
+function f1 name="upAndDown" module=m0 position=51 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Convert v0 declared={type=i32} @116
+    v2 = Increment v1 @119
+    v3 = Convert v2 declared={type=i32 flags=[IsInt32Promise]} @119
+    v4 = Decrement v3 @124
+    v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @124
+    Return v5 @136
+}
+function f2 name="upAndDownOpen" module=m0 position=141 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Convert v0 declared={type=i32} @210
+    v2 = Increment v1 @213
+    v3 = Convert v2 declared={type=i32 flags=[IsInt32Promise]} @213
+    v4 = Decrement v3 @218
+    v5 = Convert v4 declared={type=i32 flags=[IsInt32Promise]} @218
+    Return v5 @230
+}
+function f3 name="boundedInFront" module=m0 position=235 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = Convert v0 declared={type=i32} @305
+    v2 = Integer @316
+    v3 = Less v1, v2 @316
+    Branch v3 -> taken b2(), notTaken b1() @316
+  b1():
+    v4 = Integer integer=99 @325
+    v5 = Greater v1, v4 @325
+    Branch v5 -> taken b2(), notTaken b3() @325
+  b2():
+    v6 = Integer @336
+    v7 = Convert v6 declared={type=i32} @336
+    Return v7 @336
+  b3():
+    v8 = Increment v1 @339
+    v9 = Convert v8 declared={type=i32 flags=[IsInt32Promise]} @339
+    v10 = Decrement v9 @344
+    v11 = Convert v10 declared={type=i32 flags=[IsInt32Promise]} @344
+    Return v11 @356
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f5 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f5
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

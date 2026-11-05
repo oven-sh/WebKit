@@ -41,17 +41,13 @@ struct SharedHeap {
     Typed::AbstractHeapSet otherOwners;
 };
 
-// A Structure transition rewrites the cell header, an out-of-line property moves the butterfly, and a bit of the order word says "has extra properties".
 static constexpr SharedHeap sharedHeaps[] = {
     { &AOTHeaps::JSCell_header, { IRHeap::NamedProperties, IRHeap::PrototypeLinks, IRHeap::ArrayStorage } },
     { &AOTHeaps::JSObject_butterfly, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTObject_orderWord, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTSlimClosure_word, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },
-    // The bits of a Structure that generated code tests speak of the properties of its objects and of the objects above them.
     { &AOTHeaps::Structure_bitField, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },
-    // The bit of a string's cell that says it holds an atom is set when the word of the string is replaced.
     { &AOTHeaps::JSCell_typeInfoFlags, { IRHeap::StringStorage } },
-    // To the IR a weak table is a collection like any other. A garbage collection only writes the weak ones, so they get a separate heap: values read from a Map or a Set stay valid across it.
     { &AOTHeaps::weakTableStorage, { IRHeap::CollectionStorage } },
     { &AOTHeaps::weakTableEntries, { IRHeap::CollectionEntries } },
 };
@@ -122,7 +118,6 @@ AOTHeaps::AOTHeaps()
     JSString_value = JSRopeString_fiber0;
     JSWrapperObject_internalValue = JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(JSWrapperObject::Field::WrappedValue)];
 
-    // JSCell_usefulBytes is read as one aligned word of these four bytes.
     RELEASE_ASSERT(!(JSCell_indexingTypeAndMisc.offset() & (sizeof(int32_t) - 1)));
     RELEASE_ASSERT(JSCell_indexingTypeAndMisc.offset() + 1 == JSCell_typeInfoType.offset());
     RELEASE_ASSERT(JSCell_indexingTypeAndMisc.offset() + 2 == JSCell_typeInfoFlags.offset());
@@ -130,7 +125,6 @@ AOTHeaps::AOTHeaps()
     RELEASE_ASSERT(!JSCell_freeListNext.offset());
 }
 
-// A parent that was not added yet has the index of the root, and its child would pass for a heap that meets nothing but the root.
 Machine::AbstractHeap AOTHeaps::addHeap(const Machine::AbstractHeap& parent, ASCIILiteral name, ptrdiff_t offset, Traits::Set traits)
 {
     RELEASE_ASSERT(parent.isInitialized());
@@ -199,15 +193,12 @@ void AOTHeaps::appendHeaps(const LocationMasks& masks, HeapList& list) const
     }
 }
 
-// The effects of the IR say what a program can tell.
 bool AOTHeaps::mayConvertCells(const Typed::Effects& effectsOfCall)
 {
     constexpr Typed::AbstractHeapSet heapsOfObjects { IRHeap::NamedProperties, IRHeap::ObjectFields, IRHeap::ShapeWords, IRHeap::OrderWords, IRHeap::PrototypeLinks };
     return !effectsOfCall.writes.isEmpty() || effectsOfCall.mayCollect || effectsOfCall.mayExitSideways() || effectsOfCall.reads.containsAny(heapsOfObjects);
 }
 
-// An array's storage is replaced when its elements or length are written, when it gains or loses a property or becomes a prototype, and when a lookup by name reorganizes the properties of an object it visits.
-// A garbage collection does not move storage while a register or a stack word points into it.
 bool AOTHeaps::mayReplaceStorageOfArrays(const Typed::Effects& effectsOfCall)
 {
     constexpr Typed::AbstractHeapSet heapsWrittenWithStorage { IRHeap::ArrayStorage, IRHeap::Elements, IRHeap::NamedProperties, IRHeap::PrototypeLinks };
@@ -220,7 +211,6 @@ void AOTHeaps::appendHeapsOfConvertedCells(HeapList& list, ConvertedCells cells)
         list.append(&JSCell_header);
         list.append(&JSObject_butterfly);
     } else {
-        // What leaves the storage of arrays alone leaves its kind alone too.
         list.append(&JSCell_structureID);
         list.append(&JSNonArray_indexingTypeAndMisc);
         list.append(&JSCell_typeInfoFlags);
@@ -229,7 +219,6 @@ void AOTHeaps::appendHeapsOfConvertedCells(HeapList& list, ConvertedCells cells)
     list.append(&AOTSlimClosure_word);
 }
 
-// The end of a collection removes the dead entries of weak tables, and may replace their buffers.
 void AOTHeaps::appendHeapsWrittenByCollection(HeapList& list) const
 {
     list.append(&collectorState);

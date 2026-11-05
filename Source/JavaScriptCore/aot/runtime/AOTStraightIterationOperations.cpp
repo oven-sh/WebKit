@@ -23,10 +23,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// Each operation does what BuilderOfIteration in walk/AOTWalkIteration.cpp writes out for a synchronous iteration of the source, in that order, on the cell of heap words that it makes.
 enum class WordOfStraightIteration : uint32_t { Iterator, Next, IsDone };
 static constexpr size_t numberOfWordsOfStraightIteration = 3;
-// The closed walk holds an enumerator and a cell with the position. A slot holds one value, so one cell holds both.
 enum class WordOfStraightEnumeration : uint32_t { Enumerator, Position };
 static constexpr size_t numberOfWordsOfStraightEnumeration = 2;
 
@@ -115,7 +113,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTOpenIteration, JSCell*, (Instance* instance
     OPERATION_RETURN(scope, state);
 }
 
-// First `done`, second `value`, both boxed. A step that throws leaves the state done.
 JSC_DEFINE_JIT_OPERATION(operationAOTStepIteration, UGPRPair, (Instance* instance, JSCell* cell))
 {
     constexpr Entry entry = Entry::operationAOTStepIteration;
@@ -149,7 +146,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCloseIteration, void, (Instance* instance, 
     OPERATION_RETURN(scope);
 }
 
-// The error that is already being thrown wins. No handler of compiled code catches a termination, so that one goes on.
 JSC_DEFINE_JIT_OPERATION(operationAOTCloseIterationAfterThrow, void, (Instance* instance, JSCell* cell))
 {
     constexpr Entry entry = Entry::operationAOTCloseIterationAfterThrow;
@@ -170,7 +166,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTOpenEnumeration, JSCell*, (Instance* instan
     OPERATION_RETURN(scope, state);
 }
 
-// First `done`, second the key, both boxed. Behind the last key the key is the empty string, as ForInEmitter::generateForInStep() gives it.
 JSC_DEFINE_JIT_OPERATION(operationAOTStepEnumeration, UGPRPair, (Instance* instance, JSCell* cell, EncodedJSValue object))
 {
     constexpr Entry entry = Entry::operationAOTStepEnumeration;

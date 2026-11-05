@@ -17,7 +17,6 @@ namespace JSC { namespace AOT { namespace Machine {
 static uint32_t describedOffsetOf(const LinkBuffer& linkBuffer, MacroAssembler::Label label)
 {
     RELEASE_ASSERT(label.isSet());
-    // LinkBuffer's offsetOf changes nothing in the buffer, but is not declared const.
     uint32_t offset = const_cast<LinkBuffer&>(linkBuffer).offsetOf(label);
     RELEASE_ASSERT(offset <= linkBuffer.size(), offset, linkBuffer.size());
     return offset;
@@ -46,7 +45,6 @@ static Vector<CodeRange, 1> describedFrameRangesOf(const Procedure& procedure, c
 
 void describeConstants(const Procedure& procedure, decltype(CodeBody::constants)& constants)
 {
-    // A symbol names a constant by its index in the procedure.
     RELEASE_ASSERT(constants.isEmpty());
 
     std::span<const ConstantDataRecord> records = procedure.constantData();
@@ -60,7 +58,6 @@ void describeConstants(const Procedure& procedure, decltype(CodeBody::constants)
 
 void describeJumpTables(const Procedure& procedure, const LinkBuffer& linkBuffer, decltype(CodeBody::jumpTables)& jumpTables)
 {
-    // A symbol names a table by its index in the procedure.
     RELEASE_ASSERT(jumpTables.isEmpty());
 
     std::span<const JumpTableRecord> records = procedure.jumpTables();
@@ -89,9 +86,7 @@ void describeFrame(const Procedure& procedure, const LinkBuffer& linkBuffer, Fra
     Vector<CodeRange, 1> ranges = describedFrameRangesOf(procedure, linkBuffer);
 
     RELEASE_ASSERT(frame.hasFrame() || (ranges.isEmpty() && !frame.frameSize() && !frame.bytesDeadAtSuspensions()));
-    // The unwinder restores callee saves only inside a frame range.
     RELEASE_ASSERT(!ranges.isEmpty() || !frame.numberOfCalleeSaves());
-    // ImageFrame counts the size in units of the alignment.
     RELEASE_ASSERT(!(frame.frameSize() % stackAlignmentBytes()), frame.frameSize());
     RELEASE_ASSERT(frame.bytesDeadAtSuspensions() <= frame.frameSize(), frame.bytesDeadAtSuspensions(), frame.frameSize());
 
@@ -109,7 +104,6 @@ void describeTrappingAccesses(const Procedure& procedure, const LinkBuffer& link
     accesses.reserveCapacity(accesses.size() + records.size());
     for (const TrappingAccess& record : records) {
         uint32_t codeOffset = describedOffsetOf(linkBuffer, record.instruction);
-        // The fault handler looks up a record by the address of the faulting instruction, so each instruction has at most one record.
         RELEASE_ASSERT(accesses.isEmpty() || accesses.last().codeOffset < codeOffset, codeOffset);
         RELEASE_ASSERT(record.reference != InvalidGPRReg);
         accesses.append(LinkedTrappingAccess { codeOffset, record.origin, record.reference, record.referenceIsNarrow });

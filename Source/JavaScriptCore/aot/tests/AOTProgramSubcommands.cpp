@@ -43,7 +43,6 @@ struct SubcommandFlag {
 
 struct ProgramArguments {
     String programPath;
-    // What follows the program, in the order of the command line.
     Vector<String> words;
     Vector<SubcommandFlag> flags;
 };
@@ -67,7 +66,6 @@ static constexpr ASCIILiteral wireFlag = "--wire"_s;
 static constexpr ASCIILiteral outputFlag = "--output"_s;
 static constexpr ASCIILiteral programOfTagFlag = "--program-of-tag"_s;
 
-// What AOTTestRunner.cpp puts in front of the OPTIONS of every file: a command prints here what it prints under `run`.
 static constexpr ASCIILiteral checksOfEveryTestRun = "check=VerifyEachStage,ValidateReferences"_s;
 
 static String unknownFlagSentence(StringView name)
@@ -137,7 +135,6 @@ static std::expected<FlagsOfProgramSubcommand, String> parseFlagsOfProgramSubcom
     return result;
 }
 
-// A null argumentsOfCommand means the subcommand takes no arguments, so a word that is not an option word is an error.
 static std::optional<String> applyWordsOfCommandLine(Wire::CompileOptions& options, Mechanisms& mechanisms, std::span<const String> words, Vector<String>* argumentsOfCommand)
 {
     for (const String& word : words) {
@@ -168,7 +165,6 @@ static int reportDiagnostics(const Diagnostics& diagnostics, PrintStream& errors
     return exitCodeForFailure;
 }
 
-// What ends a build, and the one warning that stands for an error: of an int32 that a dependency declares.
 static bool saysWhatTestsOfFrontEndWaitFor(const CompileOutput& output)
 {
     for (const Wire::UserDiagnosticRecord& record : output.records<Wire::UserDiagnosticRecord>(Wire::ResultSection::UserDiagnostics)) {
@@ -180,8 +176,6 @@ static bool saysWhatTestsOfFrontEndWaitFor(const CompileOutput& output)
 
 static bool takeDirectivesOfProgramText(const TestCommand& command, const ProgramFile& file, const String& path, InputsOfCommand& inputs, PrintStream& errors)
 {
-    // parseTestFile() refuses a file without a RUN line, and a program that is no test has none: the command line stands for that line.
-    // The bytes are the file as it lies on disk, so the lines are the file's own. ProgramFile::text is written out already.
     TestFile test = parseTestFile(makeString(String::fromUTF8(file.bytes.span()), "\n# RUN: "_s, command.name, '\n'), hostArchitecture(), FileSystem::parentPath(path));
     for (const TestFileError& error : test.errors)
         errors.println(path, ":", error.line, ": ", error.message);
@@ -197,7 +191,7 @@ static bool takeDirectivesOfProgramText(const TestCommand& command, const Progra
         }
     }
     for (const OptionWord& option : test.jscOptions) {
-        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), /* verify = */ false)) {
+        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), false)) {
             errors.println(path, ":", option.line, ": unknown JSC option ", option.word);
             isUsable = false;
         }
@@ -208,7 +202,6 @@ static bool takeDirectivesOfProgramText(const TestCommand& command, const Progra
     return isUsable;
 }
 
-// As under `run`: `verify` prints what the verifiers find, and `print` shows programs that they refuse.
 static bool isHandedUnverifiedProgram(const TestCommand& command)
 {
     return command.name == "verify"_s || command.name == "print"_s;
@@ -223,7 +216,6 @@ static int runCommandOnProgramFile(const TestCommand& command, ProgramFile&& fil
     String programText;
     std::unique_ptr<Program> program;
     if (command.program != ProgramOfCommand::None) {
-        // Bytes hold the library that the front end sent.
         if (command.program == ProgramOfCommand::WithLibrary && file.kind == ProgramFile::Kind::Text)
             file.text = withStandInLibrary(file.text);
         programText = file.text;
@@ -269,7 +261,6 @@ int runCommandSubcommand(StringView name, std::span<const String> arguments)
     if (!file)
         return exitCodeForFailure;
 
-    // The words of the command line come behind those of the file, as those of --option do under `run`.
     InputsOfCommand inputs;
     RELEASE_ASSERT(!applyOptionWord(inputs.options, checksOfEveryTestRun));
     if (file->kind == ProgramFile::Kind::Text && !takeDirectivesOfProgramText(*command, *file, path, inputs, errors))
@@ -289,7 +280,6 @@ static int printWire(ProgramFile&& file, Wire::CompileOptions options, Mechanism
     FilePrintStream out(stdout, FilePrintStream::Borrow);
     FilePrintStream errors(stderr, FilePrintStream::Borrow);
 
-    // An image wants the texts of the modules, which the file does not hold.
     options.action = Wire::CompileAction::CheckOnly;
     BuildContext build(options);
     std::unique_ptr<Program> program = createProgram(WTF::move(file), build, schemaHashCheck);
@@ -300,7 +290,6 @@ static int printWire(ProgramFile&& file, Wire::CompileOptions options, Mechanism
     StringPrintStream text;
     printProgram(text, *program, PrintedFields::WireOnly);
 
-    // The walk says what the verifiers do not: that an int32 is not proven.
     std::unique_ptr<CompileOutput> output = compileWithMechanisms(WTF::move(program), build, mechanisms);
     if (saysWhatTestsOfFrontEndWaitFor(*output)) {
         printDiagnosticsOf(*output, errors);
@@ -348,7 +337,6 @@ static std::unique_ptr<CompileOutput> compileProgramFile(ProgramFile&& file, con
 {
     switch (file.kind) {
     case ProgramFile::Kind::Bytes:
-        // It holds every program to the hash of this schema, as compileProgram() does.
         if (schemaHashCheck == SchemaHashCheck::Required)
             return compileProgramWithMechanisms(file.bytes.span(), options, mechanisms);
         break;
@@ -359,7 +347,6 @@ static std::unique_ptr<CompileOutput> compileProgramFile(ProgramFile&& file, con
 
     BuildContext build(options);
     std::unique_ptr<Program> program = createProgram(WTF::move(file), build, schemaHashCheck);
-    // The driver verifies what it is handed.
     if (!program) {
         build.diagnostics().finish(program.get());
         printDiagnostics(build.diagnostics(), errors);

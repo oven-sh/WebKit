@@ -131,7 +131,6 @@ void loadExtraPropertyByFrontCell(StubAssembler& jit, const BaseIndex& cell, boo
     jit.load32(hiddenWord, word);
     hasNone.append(jit.branchTest32(CCallHelpers::Zero, word));
     if (!isOutOfLine) {
-        // A reference counts words of eight bytes from the base of the cage, and the property lies in the cell that it names.
         jit.add32(inCell(PackedSlot::offsetOfPayload()), word);
         jit.load64(BaseIndex(cellCageBaseGPR, word, CCallHelpers::TimesEight), result);
         return;
@@ -249,7 +248,6 @@ void addExtraPropertyInNewStorage(StubAssembler& jit, const CachedSlot& slot, co
     RELEASE_ASSERT(slot.kind() == Slot::Kind::ExtraPropertyAddition && slot.form() == SlotForm::Slot);
     RELEASE_ASSERT(noOverlap(value, r.object, r.extraProperties, r.wordIndex, r.scratch, growth.oldCapacity, growth.storage, growth.scratch));
     cannot.append(slot.branchIfFlag(jit, Slot::storageHasIndexingHeader));
-    // Storage grows when it is full, so the index of the added property is the capacity that the storage had.
     jit.move(r.wordIndex, growth.oldCapacity);
     jit.neg32(growth.oldCapacity);
     jit.sub32(TrustedImm32(2), growth.oldCapacity);

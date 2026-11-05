@@ -79,7 +79,6 @@ static void emitClampToLength(StubAssembler& jit, GPRReg unclamped, GPRReg lengt
     isStart.link(&jit);
 }
 
-// Copies count elements, at least one, from source to the elements of storage. Only storage and shape survive.
 static void emitCopyElements(StubAssembler& jit, const ArrayCopyRegisters& registers)
 {
     const auto [result, shape, source, count, storage, scratch] = registers;
@@ -146,7 +145,6 @@ void generateArraySlice(StubAssembler& jit)
     const bool isWhole = range == ArraySliceRange::Whole || range == ArraySliceRange::WholeWithPropertyRoom || range == ArraySliceRange::WholeAsDoubles;
     const bool makesDoubles = range == ArraySliceRange::BoundedAsDoubles || range == ArraySliceRange::WholeAsDoubles;
     const unsigned propertyRoom = range == ArraySliceRange::BoundedWithPropertyRoom || range == ArraySliceRange::WholeWithPropertyRoom ? propertyRoomOfArray : 0;
-    // Turns the cell into the address of the indexing header.
     auto skipCellAndPropertyRoom = [&](GPRReg cell) {
         for (unsigned offset = 0; offset < propertyRoom; offset += sizeof(EncodedJSValue))
             jit.store64(TrustedImm32(0), Address(cell, sizeof(JSArray) + offset));
@@ -308,7 +306,6 @@ void generateCreateArguments(StubAssembler& jit)
     const GPRReg count = jit.operand(0);
     const GPRReg rest = jit.operand(1);
     const GPRReg parameters = jit.operand(2);
-    // Asked once, in front of all else. x86-64 has no register to spare for it behind that.
     const GPRReg wordsAtParameters = jit.clobberOperand(3);
     const GPRReg source = wordsAtParameters;
     const GPRReg result = jit.result();
@@ -329,7 +326,6 @@ void generateCreateArguments(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(count, rest, parameters, result, position, source, restLength, storage, scratch));
 
     JumpList slowPath;
-    // What does not come out of the list comes out of the buffer. The operation reads by the same two numbers, so no way leads into it but from behind these tests.
     JumpList wouldReadPastParameters;
     jit.loadPtr(Address(rest, JSObject::butterflyOffset()), storage);
     jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), restLength);
@@ -446,7 +442,6 @@ void generateCreateMappedArguments(StubAssembler& jit)
     jit.loadPtr(Address(rest, JSObject::butterflyOffset()), source);
     jit.load32(Address(source, Butterfly::offsetOfPublicLength()), restLength);
     Jump holdsEveryArgument = jit.branch32(CCallHelpers::AboveOrEqual, capacity, count);
-    // So many arguments lie behind the parameters, and the list holds no fewer. The operation stops the process.
     jit.move(count, scratch);
     jit.sub32(capacity, scratch);
     slowPath.append(jit.branch32(CCallHelpers::Below, restLength, scratch));

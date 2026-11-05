@@ -139,7 +139,6 @@ static void testRecords()
         AOT_TEST_CHECK(loaded.function(image.indexOf(function)).function() == function);
 }
 
-// The stack of a thread stopped in native code: function 2 called function 1, which called the native code.
 static SUPPRESS_ASAN void testSampleInNativeCode()
 {
     TestBuild build(4);
@@ -178,30 +177,23 @@ static SUPPRESS_ASAN void testSampleInNativeCode()
     SampledRegisters withoutFrameRecord { &stack[recordOfCaller], nativeCode, nullptr, &stack[endOfNativeFrame - 8] };
     AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
     if constexpr (isX86_64()) {
-        // A stale word from a frame of another size.
         stack[endOfNativeFrame - 6] = returnAddressIn(3);
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
-        // An address in the function that no call returns to.
         stack[endOfNativeFrame - 1] = const_cast<uint8_t*>(image.address(1, sizeof(uint32_t)));
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
         stack[endOfNativeFrame - 1] = returnAddressIn(1);
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
-        // A word of function 3, which had its frame record where function 1's is and has returned. The call names function 1.
         constexpr size_t endOfLargerFrame = recordOfCaller - 64 / sizeof(void*);
         stack[endOfLargerFrame - 1] = returnAddressIn(3);
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
-        // An indirect call names no callee.
         stack[recordOfCaller + 1] = const_cast<uint8_t*>(image.address(2, afterIndirectCall));
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, image.address(2, afterIndirectCall)));
-        // A word after a call to a function: that call did not enter native code.
         stack[endOfLargerFrame - 1] = const_cast<uint8_t*>(image.address(3, afterCallInLargerFrame));
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
-        // Function 3, which the call names, tail-called function 1.
         stack[recordOfCaller + 1] = const_cast<uint8_t*>(image.address(2, afterCallToOtherFunction));
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
     }
 
-    // Function 1 has returned, and the native code that function 2 called since has its frame record where function 1's was. The word below is stale, from function 1.
     void* afterNativeCall = const_cast<uint8_t*>(image.address(2, afterCallToNativeCode));
     stack[endOfNativeFrame - 1] = returnAddressIn(1);
     stack[recordOfCaller + 1] = afterNativeCall;
@@ -224,7 +216,6 @@ static SUPPRESS_ASAN void testSampleInNativeCode()
         };
         check(returnAddressIn(1));
 #if CPU(ARM64) && !OS(DARWIN)
-        // PACIAZ signs the link register. On a processor without pointer authentication it does nothing, and this repeats the check above.
         uintptr_t signedReturnAddress = std::bit_cast<uintptr_t>(returnAddressIn(1));
         asm("mov x30, %0\n"
             "hint #24\n"
@@ -359,7 +350,6 @@ static void checkFrameAtFaultingAccesses(unsigned sizeOfAccess)
     AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, returnOffsetInFrame));
 }
 
-// The access is the only site of the function, and the frame ends behind it. The function in front has another frame.
 static void checkFrameOfLoneFaultingAccess(unsigned sizeOfAccess)
 {
     Vector<uint32_t> returnOffsets;
@@ -479,18 +469,15 @@ static void testNameNumberPastFifteenBits()
     AOT_TEST_CHECK(numberOfNamesPastFifteenBits >= numberOfNames - firstNumberPastFifteenBits);
 }
 
-// f1 to the last of these differ in all that the tables of AOTFunctionProgramTables.cpp say of a function. No step is a divisor of a range of a loop or of a group of names.
 static constexpr uint32_t numberOfVariedFunctions = 9000;
 static constexpr uint32_t closuresHandedToOneCall = 50;
 static constexpr std::array<unsigned, 3> threadCountsOfFunctionTables { 1, 2, 16 };
 static constexpr std::array flagsOfVariedFunctions { "IsSloppy"_s, "IsHiddenInStackTraces"_s, "HasExplicitName"_s, "IsNamedByComputedKey"_s };
 static constexpr std::array syntaxOfVariedFunctions { "IsEvaluatedScript"_s, "IsShownAsNativeCode"_s, "IsShownInModuleOfHelpers"_s };
-// Each set of the flags, evaluated or not, an arrow function or not, and shown as written, as native code or in the module of helpers.
 static constexpr uint32_t numberOfWrittenForms = (1u << flagsOfVariedFunctions.size()) * 2 * 2 * 3;
 static constexpr uint32_t lengthThatFitsNoByte = 300;
 static constexpr unsigned numberOfCapturesThatFitNoHalfByte = 16;
 static_assert(numberOfVariedFunctions > 2 * indicesInRangeOfLoop);
-// A form that stack traces list has one record for its body and one for its entry, a hidden one has one for both.
 static_assert(numberOfWrittenForms / 2 * 3 > functionRecordIsListedByFunction);
 
 static bool variedFunctionHasName(uint32_t function) { return function % 3; }
@@ -614,7 +601,6 @@ static bool lieInSeveralRangesOfLoop(uint32_t firstFunction, uint32_t lastFuncti
     return firstFunction / indicesInRangeOfLoop != lastFunction / indicesInRangeOfLoop;
 }
 
-// One function after the other, each asked for through the tables as the run time asks, against what the program and the plan say of it.
 static void checkTablesOfVariedFunctions(const TestBuild& build, const TestImage& image, const BodyFactsForTables& bodyFacts)
 {
     const Typed::Program& program = build.program();
@@ -642,7 +628,6 @@ static void checkTablesOfVariedFunctions(const TestBuild& build, const TestImage
         AOT_TEST_CHECK(tables.builtinImplementedBy(index).has_value() == trace.implements().has_value());
 
         bool isShownByName = source && source <= numberOfVariedFunctions && variedFunctionHasCode(source);
-        // A function that was written without a name has no row, as one that is not shown by name: whoever finds none takes the name for empty.
         std::optional<uint32_t> name = isShownByName && function.name && function.name != program.strings.emptyString() ? std::optional(function.name.index()) : std::nullopt;
         AOT_TEST_CHECK(tables.nameOfFunction(index) == name);
         numberOfNames += name && index < functions.firstDerived();
@@ -690,7 +675,6 @@ static void checkTablesOfVariedFunctions(const TestBuild& build, const TestImage
     AOT_TEST_CHECK(lieInSeveralRangesOfLoop(closureFunctions.first + namedCaptures.first().closureNumber, closureFunctions.first + namedCaptures.last().closureNumber));
 }
 
-// As joinTableParts() places it.
 static std::span<const uint8_t> partOfProgramTables(const TestImage& image, TablePartID id)
 {
     uint64_t end = 0;
@@ -700,7 +684,6 @@ static std::span<const uint8_t> partOfProgramTables(const TestImage& image, Tabl
     return { tables + roundUpToMultipleOf<8>(end), static_cast<size_t>(image.built.bytesOfTableParts[static_cast<unsigned>(id)]) };
 }
 
-// The part as the group writes it where its loops have every thread of the build, and behind it the strings that the group names.
 static Vector<uint8_t> encodeTablesOfVariedFunctions(unsigned threadCount)
 {
     AOT_TEST_CHECK(!ParallelLoops::isInsideLoop());
@@ -742,7 +725,6 @@ static void checkNamedVariablesAsBytes(const Vector<Vector<VariableData>>& modul
     auto numberOf = [](size_t place) {
         return static_cast<uint32_t>(3 * place);
     };
-    // Of the module at an even place: two runs, the second in front of what the module before has. At an odd place: none.
     auto closureNumbersOf = [](size_t place) {
         uint32_t first = static_cast<uint32_t>(1000 - 10 * place);
         return place % 2 ? Vector<uint32_t> { } : Vector<uint32_t> { first, first + 1, first + 2, first + 5 };
@@ -794,17 +776,13 @@ static void testNamedVariablesAsBytes()
         return VariableData { name, SlotData::create(function, SlotRepresentation::DeferredClosure) };
     };
     checkNamedVariablesAsBytes({ }, 0);
-    // The closure numbers of the module at the first place take six bytes, those of the others at an even place five.
     checkNamedVariablesAsBytes({ { inStatics(1, 0) } }, 4 + 6);
     checkNamedVariablesAsBytes({ { inStatics(VariableData::noName - 1, SlotData::maxOffset - 7) } }, 2 + 5 + 4 + 6);
-    // A module without a variable and without a function: three bytes.
     checkNamedVariablesAsBytes({ { }, { }, { inStatics(1, 0) }, { } }, 2 + 6 + 3 + 4 + 5 + 3);
-    // Neighbors in the statics with neighboring names: two bytes each.
     Vector<VariableData> neighbors;
     for (uint32_t index = 0; index < 50; ++index)
         neighbors.append(inStatics(600000 + index, 80000 + 8 * (index ^ 1)));
     checkNamedVariablesAsBytes({ neighbors }, 2 + 3 + 3 + 2 * 49 + 6);
-    // The places of closures are numbers of functions and go their own way. A representation is written where it changes, across modules too.
     checkNamedVariablesAsBytes({
         { inStatics(5, 64), closureOf(6, 12345), inStatics(7, 72), closureOf(9, 12347) },
         { closureOf(2, 3), inStatics(3, 4, SlotRepresentation::Cell32), inStatics(3, 8, SlotRepresentation::Cell32), inStatics(400, 16, SlotRepresentation::Cell) },
@@ -816,13 +794,11 @@ static void testNamedVariablesAsBytes()
         return !forEachNamedVariable(copy.span(), [](uint32_t, size_t) { }, [](const VariableData&) { }, [](uint32_t, uint32_t) { });
     };
     AOT_TEST_CHECK(!isRefused({ 4, 0, 0 }));
-    // A module without its counts, the same module twice, a run in front of the first closure number, a run of no length.
     AOT_TEST_CHECK(isRefused({ 0 }));
     AOT_TEST_CHECK(isRefused({ 0, 0 }));
     AOT_TEST_CHECK(isRefused({ 4, 0, 0, 0, 0, 0 }));
     AOT_TEST_CHECK(isRefused({ 0, 0, 1, 1, 1 }));
     AOT_TEST_CHECK(isRefused({ 0, 0, 1, 2, 0 }));
-    // A place in front of the statics, a representation that is none, a name that is none.
     AOT_TEST_CHECK(isRefused({ 0, 1, 1, 2, 0 }));
     AOT_TEST_CHECK(isRefused({ 0, 1, 1, 1, 0x7f, 0 }));
     AOT_TEST_CHECK(isRefused({ 0, 1, 0xff, 0xff, 0xff, 0xff, 0x0f, 0, 0 }));

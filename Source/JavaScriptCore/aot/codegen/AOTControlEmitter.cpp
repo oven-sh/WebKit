@@ -70,7 +70,6 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
     case Representation::OptionalDouble:
     case Representation::Cell:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         fail(terminator, InternalErrorKind::OpcodeWithoutCode);
         m_out.unreachable();
@@ -120,7 +119,6 @@ void ControlEmitter::switchOnBoxedInteger(const TerminatorContext& terminator, B
         branch(isNumber(subject), { normalEdge(isDoubleSubject), otherwise });
         m_out.appendTo(isDoubleSubject);
     }
-    // For a double that is not an integer within maxTrackedInteger, the operation returns the minimum int64, which is never a case.
     join.add(callLeaf<Integer>(RuntimeOperation::TryConvertToInteger, { subject }));
 
     switchOnInteger(terminator, join.finish().value(), Machine::Int64, otherwise);

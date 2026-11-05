@@ -82,7 +82,6 @@ static bool isUncompiledCode(const Module& module)
     return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
 }
 
-// The names of such a module are known only at run time, or the host creates an export when it is first read.
 static bool findsNamesAtRunTime(const Module& module)
 {
     return isUncompiledCode(module) || module.kind == ModuleKind::Runtime || module.requests.containsIf([](const ModuleRequest& request) {
@@ -90,7 +89,6 @@ static bool findsNamesAtRunTime(const Module& module)
     });
 }
 
-// A mock that stands in place of such a module answers for every name, also for one that the module lacks.
 static BitVector findModulesWithVariableThatHoldsMock(const Program& program)
 {
     BitVector modules(program.modules.size());
@@ -316,7 +314,6 @@ template<typename Functor>
 static void forEachNamedModule(const Program& program, const Module& module, const Functor& functor)
 {
     for (auto& entry : module.exports) {
-        // The body of its module fills a variable that the table shows.
         ModuleID named = entry.module ? entry.module : program.at(entry.variable).module;
         if (named && &program.at(named) != &module)
             functor(named);
@@ -334,8 +331,6 @@ struct NameFurtherOff {
 
 } // anonymous namespace
 
-// What each module names and does not lead to in one step, module after module. `targetsOf` gives what a module leads to in one step.
-// Most names are modules that their holder asks for itself. To ask which module a name stands for misses the cache, so every thread asks for some of the modules, once.
 static Vector<NameFurtherOff> findNamesFurtherOff(const ParallelLoops& loops, unsigned numberOfModules, const auto& targetsOf, const auto& forEachNamed)
 {
     return collectInParallel<NameFurtherOff>(loops, numberOfModules, [&](unsigned index, Vector<NameFurtherOff>& found) {
@@ -351,9 +346,6 @@ static Vector<NameFurtherOff> findNamesFurtherOff(const ParallelLoops& loops, un
     });
 }
 
-// The modules that name a module to which nothing leads from them, ascending.
-// Each name costs a bit for every component, and each edge between two components unites the bits of one with those of the other.
-// So the names are cut into slices of a cache line a component. A task has a slice: its bits stay in the cache of its thread while it goes over all the edges.
 static Vector<uint32_t> findUnreachedNames(const ParallelLoops& loops, unsigned numberOfModules, const auto& targetsOf, std::span<const NameFurtherOff> namesFurtherOff)
 {
     constexpr size_t wordsPerSlice = 8;
@@ -362,7 +354,6 @@ static Vector<uint32_t> findUnreachedNames(const ParallelLoops& loops, unsigned 
     if (namesFurtherOff.empty())
         return { };
 
-    // The modules that are named are numbered in their order.
     Vector<uint32_t> rankOfModule(FillWith { }, numberOfModules, isNotNamed);
     for (const NameFurtherOff& name : namesFurtherOff)
         rankOfModule[name.named.index()] = 0;
@@ -374,7 +365,6 @@ static Vector<uint32_t> findUnreachedNames(const ParallelLoops& loops, unsigned 
         namedModules.append(module);
     }
 
-    // A component has a higher number than every other component that it leads to.
     auto components = computeStronglyConnectedComponents(numberOfModules, targetsOf);
     auto& componentOf = components.componentOf;
     struct EdgeBetweenComponents {
@@ -455,7 +445,6 @@ static Vector<MentionInCode> findMentionsInCode(const Program& program, const Pa
             if (other.index() < program.modules.size() && other != file && !std::ranges::contains(found.span().subspan(first), mention))
                 found.append(mention);
         };
-        // A module that stands beside a file has code of the file as its body.
         if (ModuleID beside = moduleWithBody[index]; beside && beside != file) {
             add(MentionInCode::Kind::LoadsModule, beside);
             found.append({ MentionInCode::Kind::LoadsModule, beside, file });
@@ -463,7 +452,6 @@ static Vector<MentionInCode> findMentionsInCode(const Program& program, const Pa
         auto isTarget = [](ModuleReferenceKind kind) {
             return kind == ModuleReferenceKind::Target;
         };
-        // A record that a file names and no committed file defines reads as the null id.
         const Body& body = function.body;
         BodyBlock block = body.entry();
         for (uint32_t blockIndex = 0; blockIndex < body.numberOfBlocks(); ++blockIndex) {
@@ -492,7 +480,6 @@ static Vector<MentionInCode> findMentionsInCode(const Program& program, const Pa
 void ProgramVerifier::verifyModuleGraph()
 {
     auto& modules = m_program.modules;
-    // The verifier's line of the module graph counts all of these.
     StepTimes steps(m_build, "ReadAndVerify: module graph"_s);
     for (unsigned index = 0; index < modules.size(); ++index) {
         if (modules[index].flags.contains(ModuleFlags::IsLibrary) && !modules[index].requests.isEmpty())
@@ -522,7 +509,6 @@ void ProgramVerifier::verifyModulesNamedInBodies()
     Vector<MentionInCode> mentions = findMentionsInCode(m_program, loops);
     steps.didFinish("mentions in code"_s);
 
-    // A variable has its first state once its file, or a file that leads there, has been entered (image/AOTStaticsLayout.cpp).
     auto mentionsOf = [&](MentionInCode::Kind kind, unsigned index) {
         return std::ranges::equal_range(mentions, std::pair { kind, ModuleID(index) }, { }, [](const MentionInCode& mention) {
             return std::pair { mention.kind, mention.file };
@@ -593,7 +579,6 @@ void ProgramVerifier::verifyEntries()
     }
 }
 
-// How deeply arrays and objects may nest, counting the outermost. The front end enforces the same limit (MaxDataNestingDepth in limits.def), and so does the reader, which recurses once per level.
 static constexpr uint32_t maxNestingDepthOfDataTree = 2000;
 
 static bool isDecimalInteger(std::span<const uint8_t> text)
@@ -766,8 +751,6 @@ static bool isValidExpectedResult(const Program& program, const ExpectedResult& 
     });
 }
 
-// No program names such a function. The walk calls it in place of what a program has written and goes by what it answers: that a step answers the mark of a closed iterator where the iterator is done.
-// Nobody can check that here. A function that stands for two entries keeps the word of at most one. A program that lacks the function is compiled as it is written.
 static bool isHelperOfCompiler(const BuiltinTable& builtins, RuntimeFunctionID id)
 {
     return std::ranges::any_of(builtins.at(id).implements, [&](BuiltinID implemented) {

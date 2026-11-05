@@ -175,9 +175,7 @@ export class ModelBuilder {
   readonly schema: Schema;
   readonly engineFiles: readonly ModelEngineFile[];
   readonly fixedProperties = new Set<ModelBuiltin>();
-  /** Objects of modules that are functions by observation alone: nothing says what makes them or what they inherit from. */
   readonly functionsOfUnknownClass = new Set<ModelBuiltin>();
-  /** The entry of the function that a native binding makes, and the entry of the binding. */
   readonly bindingsOfFunctions = new Map<ModelBuiltin, ModelBuiltin>();
   readonly openNames = new Map<ModelBuiltin, readonly ModelName[]>();
   readonly namesReadByNativeCode = new Map<ModelBuiltin, Omit<ModelNamesReadByNativeCode, "holder">>();
@@ -356,7 +354,6 @@ export class ModelBuilder {
     return components.some((_, index) => this.#leftOut.has(joinPath(components.slice(0, index + 1))));
   }
 
-  /** A declaration names what nothing declares. */
   reportUnknown(source: Source, message: string): null {
     if (!this.#mayNameWhatIsLeftOut && !this.#reported.has(message)) {
       this.#reported.add(message);

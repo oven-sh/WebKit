@@ -127,7 +127,6 @@ void generateArrayPush(StubAssembler& jit)
     boxInt32(jit, length, length);
     emitElementBarrierAndReturn(jit, array, value);
 
-    // No program can observe the capacity, so the value may still turn out not to fit the kind.
     isFull.link(&jit);
     growFullVector(jit, { array, butterfly, length, savedNumber, kind, jit.reuseScratch(StubRegister::T9) }, slowPath);
     jit.jump().linkTo(loadKind, &jit);
@@ -146,14 +145,12 @@ StubSignature signatureOfAppendElements(StubKey)
     return signature;
 }
 
-// A short source, and a target that can hold what the source holds and has room or may be given room here.
 void generateAppendElements(StubAssembler& jit)
 {
     const GPRReg array = jit.operand(0);
     const GPRReg source = jit.operand(1);
     const GPRReg newLength = jit.allocateScratch(StubRegister::T9);
     const GPRReg target = jit.allocateScratch(StubRegister::T10);
-    // Moved back by the length of the target, so that one position serves both.
     const GPRReg elements = jit.allocateScratch(StubRegister::T11);
     const GPRReg kind = jit.allocateScratch(StubRegister::T12);
     const GPRReg position = jit.allocateScratch(StubRegister::T14);
@@ -204,7 +201,6 @@ void generateAppendElements(StubAssembler& jit)
     Jump copiesValues = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(ContiguousShape));
     slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(Int32Shape)));
     copiesValues.link(&jit);
-    // The collector visits the elements below the length, which are holes until they are copied.
     jit.store32(newLength, lengthOfTarget);
     forEachElement([&] {
         jit.load64(read, element);
@@ -218,7 +214,6 @@ void generateAppendElements(StubAssembler& jit)
     holdsNoCells.link(&jit);
     jit.returnToCaller();
 
-    // Array.prototype.push stores the length also where it appends nothing, and an array whose length is fixed refuses that.
     static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape && CopyOnWrite > ContiguousShape);
     isEmpty.link(&jit);
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
@@ -226,7 +221,6 @@ void generateAppendElements(StubAssembler& jit)
     Jump mayRefuse = jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ContiguousShape));
     jit.returnToCaller();
 
-    // One that shares its elements, as the answer of Object.keys() does, goes on sharing them. It refuses only where they are frozen in place.
     mayRefuse.link(&jit);
     slowPath.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(CopyOnWrite)));
     loadStructure(jit, array, target);
@@ -293,7 +287,6 @@ void generateAppendElements(StubAssembler& jit)
     });
     setLengthAndReturn();
 
-    // The source may store its numbers as boxed values. A hole is not a number, and NaN would read as a hole in the target.
     convertsValues.link(&jit);
     forEachElement([&] {
         jit.load64(read, element);
@@ -309,7 +302,6 @@ void generateAppendElements(StubAssembler& jit)
     });
     setLengthAndReturn();
 
-    // Whatever lies between the length and the end of the vector is a hole.
     hasHole.link(&jit);
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
     jit.and32(TrustedImm32(IndexingShapeMask), kind);
@@ -323,7 +315,6 @@ void generateAppendElements(StubAssembler& jit)
     jit.store64(element, written);
     jit.jump().linkTo(clear, &jit);
 
-    // No program can observe the capacity, so the target may still turn out not to hold what the source holds.
     hasNoRoom.link(&jit);
     growVectorFor(jit, { array, target, position, elements, kind, element }, newLength, slowPath);
     jit.jump().linkTo(start, &jit);
@@ -340,7 +331,6 @@ StubSignature signatureOfAppendIterable(StubKey)
     return signature;
 }
 
-// A list that is as it was made goes where a spread of what is known to be one goes. The run time takes whatever else is spread.
 void generateAppendIterable(StubAssembler& jit)
 {
     const GPRReg array = jit.operand(0);
@@ -366,7 +356,6 @@ StubSignature signatureOfDestructureIterable(StubKey)
     return signature;
 }
 
-// A list that is as it was made is read here: what lies in a hole or behind the end is undefined. The run time takes whatever else is iterated.
 void generateDestructureIterable(StubAssembler& jit)
 {
     const GPRReg iterable = jit.operand(0);
@@ -381,7 +370,6 @@ void generateDestructureIterable(StubAssembler& jit)
     const BaseIndex read(elements, position, CCallHelpers::TimesEight);
     JumpList isNoSuchList;
 
-    // `loadElement` leaves by `isAbsent` where it finds a hole.
     auto takeElements = [&](const auto& loadElement) {
         JumpList isAbsent;
         Label loop = jit.label();
@@ -433,7 +421,6 @@ StubSignature signatureOfAppendMembers(StubKey)
     return signature;
 }
 
-// A table on the heap, and a target that can hold the members and has room or may be given room here. The table is walked in one go: nothing runs in between, so nobody is left standing behind an entry.
 void generateAppendMembers(StubAssembler& jit)
 {
     const GPRReg array = jit.operand(0);
@@ -473,11 +460,9 @@ void generateAppendMembers(StubAssembler& jit)
     jit.add64(table, column);
     jit.addPtr(TrustedImm32(CompactTable::offsetOfIndex()), column);
 
-    // Behind this the table has given up its register.
     auto forEachMember = [&](bool keysAreWide, NOESCAPE const Invocable<void()> auto& store, NOESCAPE const Invocable<void()> auto& finish) {
         jit.load32(Address(table, CompactTable::offsetOfUsed()), used);
         Jump hasDeletedEntries = jit.branch32(CCallHelpers::NotEqual, used, Address(table, CompactTable::offsetOfAliveCount()));
-        // The column is moved back by the length of the target, so that one position serves both.
         jit.lshift64(position, TrustedImm32(keysAreWide ? 3 : 2), member);
         jit.subPtr(member, column);
         Label copy = jit.label();
@@ -490,7 +475,6 @@ void generateAppendMembers(StubAssembler& jit)
         jit.branch32(CCallHelpers::Below, position, newLength).linkTo(copy, &jit);
         finish();
 
-        // An entry whose key is 0 was deleted.
         hasDeletedEntries.link(&jit);
         jit.move(TrustedImm32(0), entry);
         Label loop = jit.label();
@@ -521,7 +505,6 @@ void generateAppendMembers(StubAssembler& jit)
     Jump targetHoldsDoubles = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(DoubleShape));
     Jump targetHoldsInt32 = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
     slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(ContiguousShape)));
-    // The collector visits the elements below the length, which are holes until they are copied.
     jit.store32(newLength, lengthOfTarget);
     Jump keysAreWide = jit.branchTest8(CCallHelpers::NonZero, flags, TrustedImm32(CompactTable::keysAreWide));
     forEachMember(false, [&] {
@@ -540,7 +523,6 @@ void generateAppendMembers(StubAssembler& jit)
     jit.move(array, member);
     jit.jumpToStub(writeBarrier());
 
-    // A number never fits a narrow key.
     targetHoldsInt32.link(&jit);
     slowPath.append(jit.branchTest8(CCallHelpers::Zero, flags, TrustedImm32(CompactTable::keysAreWide)));
     forEachMember(true, [&] {
@@ -554,7 +536,6 @@ void generateAppendMembers(StubAssembler& jit)
         Jump isInt32 = jit.branchIfInt32(member);
         findsOtherKind.append(jit.branchIfNotNumber(member));
         unboxDouble(jit, member, member, number);
-        // It would read as a hole.
         findsOtherKind.append(jit.branchIfNaN(number));
         Jump isDouble = jit.jump();
         isInt32.link(&jit);
@@ -563,12 +544,10 @@ void generateAppendMembers(StubAssembler& jit)
         jit.storeDouble(number, written);
     }, setLengthAndReturn);
 
-    // A list that a spread appends to takes any length.
     hasNoTable.link(&jit);
     isEmpty.link(&jit);
     jit.returnToCaller();
 
-    // Whatever lies between the length and the end of the vector is a hole.
     findsOtherKind.link(&jit);
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
     jit.and32(TrustedImm32(IndexingShapeMask), kind);
@@ -582,7 +561,6 @@ void generateAppendMembers(StubAssembler& jit)
     jit.store64(member, written);
     jit.jump().linkTo(clear, &jit);
 
-    // No program can observe the capacity, so the target may still turn out not to hold what the set holds.
     hasNoRoom.link(&jit);
     growVectorFor(jit, { array, target, position, column, used, member }, newLength, slowPath);
     jit.jump().linkTo(start, &jit);

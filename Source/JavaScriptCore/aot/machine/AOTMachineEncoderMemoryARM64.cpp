@@ -13,7 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// One of the two is set. Zero is stored from zr, which Reg cannot name.
 struct StoreSourceARM64 {
     bool isNumber() const { return fpr != InvalidFPRReg; }
 
@@ -26,7 +25,6 @@ static bool memoryAccessMayFaultARM64(const Encoder& encoder, const Operation* a
     return access->traps() || encoder.m_liveness.of(access).has(ValueFlag::TakesOverTrap);
 }
 
-// Mirrors MacroAssembler's own test: an offset that fails it is reached through x17, which takes a second instruction.
 static bool isMemoryOffsetEncodableARM64(Width width, int32_t offset)
 {
     if (ARM64Assembler::canEncodeSImmOffset(offset))
@@ -47,7 +45,6 @@ static bool isMemoryOffsetEncodableARM64(Width width, int32_t offset)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// After this call the access encodes as one instruction, so a label taken right after the call marks the instruction that faults.
 static AddressForm makeMemoryAddressEncodableARM64(Encoder& encoder, const AddressForm& address, Width width)
 {
     switch (address.kind) {
@@ -165,7 +162,6 @@ static void emitMemoryStoreARM64(CCallHelpers& jit, Width width, StoreSourceARM6
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// RelocationRecorder has no form for a 16-bit access or for a Float in an FPR.
 static MacroAssembler::Address materializeInstanceWordAddressARM64(Encoder& encoder, CodeSymbol symbol)
 {
     GPRReg scratch = encoder.m_jit.getCachedMemoryTempRegisterIDAndInvalidate();
@@ -242,7 +238,6 @@ static void emitInstanceWordStoreARM64(Encoder& encoder, Width width, StoreSourc
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The register that already holds the bits to store, if any.
 static std::optional<StoreSourceARM64> tryGetStoreSourceARM64(const Operation* store, Location location)
 {
     const Operation* value = store->child(0);
@@ -274,7 +269,6 @@ static std::optional<StoreSourceARM64> tryGetStoreSourceARM64(const Operation* s
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A store has no immediate field, so a value that is not zero and has no register is materialized in x16. That leaves x17 for the address.
 static StoreSourceARM64 materializeStoreSourceARM64(Encoder& encoder, const Operation* store, Location location)
 {
     if (std::optional<StoreSourceARM64> source = tryGetStoreSourceARM64(store, location))
@@ -370,7 +364,6 @@ void Encoder::encodeFence()
     m_jit.storeFence();
 }
 
-// The two steps are adjacent and a store writes no register, so the registers the second store reads already hold their values at the first.
 bool Encoder::tryEncodePairOfStores(const Step& first, const Step& second)
 {
     ASSERT(first.kind == StepKind::Execute && second.kind == StepKind::Execute);
@@ -381,7 +374,6 @@ bool Encoder::tryEncodePairOfStores(const Step& first, const Step& second)
     Width width = firstStore->accessWidth();
     if (secondStore->accessWidth() != width)
         return false;
-    // A fault record names a single access.
     if (memoryAccessMayFaultARM64(*this, firstStore) || memoryAccessMayFaultARM64(*this, secondStore))
         return false;
 
@@ -426,7 +418,6 @@ bool Encoder::tryEncodePairOfStores(const Step& first, const Step& second)
     return true;
 }
 
-// The word is stored behind the tests, so nothing has to be taken back. x17 is left for an offset that no access has a field for, which each access makes for itself.
 void Encoder::encodeBranchInMemory(Block* block, const Step& step)
 {
     MemoryUpdate update = memoryUpdateOf(m_liveness, step.operation);
@@ -437,7 +428,6 @@ void Encoder::encodeBranchInMemory(Block* block, const Step& step)
     LeafCursor leaves(step);
     AddressForm address = resolveAddress(update.load, leaves);
     Location operand = leaves.take();
-    // The Load and the Store both read the base, so nothing was fused into the address.
     RELEASE_ASSERT(address.kind != AddressForm::BaseIndex);
     bool isNamedBySymbol = address.kind == AddressForm::InstanceSymbol;
 
@@ -461,7 +451,6 @@ void Encoder::encodeBranchInMemory(Block* block, const Step& step)
     addPendingJump(overflows, fails);
 
     if (update.comparesWord) {
-        // The bound is no immediate. The sum lies below it just where the sum less the distance of the bound from the least int32 is no int32.
         int64_t distance = update.bound - std::numeric_limits<int32_t>::min();
         RELEASE_ASSERT(update.relation == GreaterEqual && distance > 0 && distance <= maxConstantAddedInScratchRegister);
         GPRReg difference = m_jit.getCachedMemoryTempRegisterIDAndInvalidate();

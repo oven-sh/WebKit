@@ -129,7 +129,6 @@ static bool hasItemAt(const RegExpSection& section, Kind kind, uint32_t offset)
     });
 }
 
-// Between two units lie breakpoints where the code lies, and zeros where the data lies.
 static bool isPadding(const RegExpSection& section, size_t begin, size_t end)
 {
     static const NeverDestroyed<Vector<uint8_t>> breakpoint = CodeTemplates::create(policyFor(nullptr), nullptr)->breakpoint;
@@ -562,7 +561,6 @@ static void testEntryWithoutCodeGivesMatchUp()
 
 static void checkUsersFarApartShareUnit(const RegExpSymbol& symbol)
 {
-    // More than a near reference spans on ARM64.
     constexpr size_t fillerSize = 1 * MB + 64 * KB;
     Kind kind = WTF::holdsAlternative<Yarr::SharedRoutine>(symbol) ? Kind::Routine : Kind::Table;
     std::array<CompiledRegExp, 3> regExps {
@@ -582,8 +580,6 @@ static void testUsersFarApartShareUnit()
     checkUsersFarApartShareUnit(makeClassTable(1, 4));
 }
 
-// The code of such a pattern makes nine turns a unit of the subject and 65,537, and no more than Yarr::matchLimit, and then gives the match to whoever called it. The turns of this pattern double with each x,
-// and pass matchLimit at the 27th. It reads nothing behind the c, so only the first page of the subject is there.
 static void testLongSubjectAllowsMatchLimitTurns()
 {
     Source source { "^(x+)+y"_s, { } };
@@ -608,10 +604,8 @@ static void testLongSubjectAllowsMatchLimitTurns()
     };
     constexpr size_t noMatch = WTF::notFound;
     constexpr size_t givenToCaller = static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure);
-    // 65,537 and nine times 40 turns lie between those of 15 and of 17 x.
     AOT_TEST_CHECK(answerAt(15, 40) == noMatch);
     AOT_TEST_CHECK(answerAt(17, 40) == givenToCaller);
-    // The sum is 4,294,967,291 at the first of these lengths, four more than 32 bits hold at the second, and twice what they hold at the third.
     for (size_t length : { size_t { 477211306 }, size_t { 477211307 }, greatestLength }) {
         AOT_TEST_CHECK(answerAt(26, length) == noMatch);
         AOT_TEST_CHECK(answerAt(27, length) == givenToCaller);

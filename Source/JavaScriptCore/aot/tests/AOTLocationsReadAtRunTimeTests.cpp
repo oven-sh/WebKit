@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// const amount = { valueOf() { return 5 }, unused: 1 }; print(amount + 1); print(amount < 6); print(String({ toString() { return "label" } }))
 static constexpr ASCIILiteral methodsRunByConversions = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Amount" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
@@ -43,7 +42,6 @@ function f2 name="toString" flags=[HasThis] thisType={type=anything} results=[{t
 }
 )IR"_s;
 
-// const amount = { valueOf: () => 5 }; print(amount + 1); const hinted = { [Symbol.toPrimitive]: hint => hint }; print(hinted + 1)
 static constexpr ASCIILiteral arrowFunctionsRunByConversions = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Amount" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
@@ -71,7 +69,6 @@ function f2 name="toPrimitive" kind=Arrow length=1 parameters=[{type=anything}] 
 }
 )IR"_s;
 
-// const parent = { m() { return 7 }, unused: 1 }, heir = { x: 1 }; Object.setPrototypeOf(heir, parent); print(heir.m()); print(Object.create(Object.create(parent)).m())
 static constexpr ASCIILiteral methodCalledThroughHeirs = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Heir" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
@@ -102,7 +99,6 @@ function f1 name="m" results=[{type=anything}] {
 }
 )IR"_s;
 
-// const label = { toString() { return "label" } }; print(label.toLocaleString())
 static constexpr ASCIILiteral methodCalledByBuiltinFunction = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Label" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
@@ -122,7 +118,6 @@ function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{t
 }
 )IR"_s;
 
-// const parent = { listed: 1 }; for (const key in Object.create(Object.create(parent))) print(key)
 static constexpr ASCIILiteral keyListedThroughHeirs = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Parent" fields=[{key="listed" declared={type=anything} flags=[IsRequired]}]
@@ -150,7 +145,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
-// function five() { return 5 } function twice() { return five() + five() } print(twice())
 static constexpr ASCIILiteral declarationThatIsOnlyCalled = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 variable g0 name="five" module=m0 declared={type=function} initialization=Function function=f1
@@ -177,7 +171,6 @@ function f2 name="twice" results=[{type=anything}] {
 }
 )IR"_s;
 
-// library.js: export function five() { return 5 }. main.js: import * as library from "library.js"; print(Object.create(library).five())
 static constexpr ASCIILiteral exportCalledThroughHeirOfNamespace = R"IR(module m0 path="library.js" displayPath="library.js" body=f1 exports=[{name="five" variable=g0}]
 module m1 path="main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
 entry module=m1
@@ -202,7 +195,6 @@ function f2 name="five" module=m0 results=[{type=anything}] {
 }
 )IR"_s;
 
-// print(JSON.parse("1", (key, value) => 5)); print(JSON.stringify(1, (key, value) => 2))
 static constexpr ASCIILiteral callbacksOfNativeCode = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -230,7 +222,6 @@ function f2 name="replacer" kind=Arrow length=2 parameters=[{type=anything}, {ty
 }
 )IR"_s;
 
-// const holder = { m: () => 8 }; function run(x) { return x.m() } print(run(holder), run(outside))
 static constexpr ASCIILiteral methodCalledOnKnownAndUnknownReceivers = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Holder" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]

@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Inlining: a callee is walked in the place of its call. It is decided from the callee's thin summary before anything is built, and never taken back.
-// A suspension: a callee that suspends is never copied, so a copy holds none. In the body of a coroutine a copy is code of that body like any other.
-// A throw: Walker::leadHandlerEdge() goes up the frames, so a block of the copy without a handler of its own stands under the handler of the call. The inline frame names the callee for the stack trace.
-// Withheld: the call goes on down the chain.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -20,29 +15,23 @@
 #include "AOTLinkTables.h"
 #include "AOTSweep.h"
 #include "AOTThinSummary.h"
+#include "AOTTypeNarrowing.h"
 #include "AOTWalkCoroutinePromises.h"
 #include "AOTWalkKnown.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What a call costs where it stands, in operations as the scan counts them, each operand that it hands over added.
 static constexpr uint32_t inlineLimitOutsideLoops = 6;
 static constexpr uint32_t inlineLimitInLoops = 40;
-// In a loop, where no object can fall away in the copy. From here to 40 the TypeScript compiler ran no fewer instructions for 1.5% more code.
 static constexpr uint32_t inlineLimitInLoopsWithoutObjects = 24;
-// All that copies in copies may add at one call that the unit's own body writes, and at one that it writes in a loop.
 static constexpr uint32_t inlineWindowOfWrittenCall = 40;
 static constexpr uint32_t inlineWindowOfWrittenCallInLoops = 120;
-// By LinkedFunction::weightAsLeaf.
 static constexpr uint32_t inlineLimitOfLeaves = 12;
-// At a call that a function writes which recursion may enter again.
 static constexpr uint32_t inlineLimitInRecursion = 10;
-// A helper that calls what it is handed in a loop, and what such helpers and their callbacks may add at one written call.
 static constexpr uint32_t inlineLimitOfHelpers = 40;
 static constexpr uint32_t inlineWindowOfHelpers = 120;
 
-// Instruction::inlineFrame has no more bits.
 static constexpr uint64_t mostInlineFramesAtInlining = defaultLimitValue(LimitID::InlineFramesPerFunction, hostArchitecture());
 
 static constexpr OpcodeSet opcodesOfInlining { Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::CallDirect };
@@ -51,15 +40,12 @@ static constexpr OpcodeSet callsOfListsAtInlining { Opcode::CallList, Opcode::Co
 
 struct CallOfInlining {
     FunctionID callee;
-    // Null: a CallDirect. Whoever wrote it listed an operand for every entry parameter, and nothing is made for it.
     Reference closure;
     Reference thisValue;
     Reference newTarget;
-    // As written.
     std::span<const Reference> arguments;
 };
 
-// Of a Call, a Construct or a SuperConstruct.
 static Reference closureCalledAtInlining(const Draft& site)
 {
     return site.opcode == Opcode::SuperConstruct ? site.parentOperand() : site.calleeOperand();
@@ -70,9 +56,6 @@ static bool endsInReturnAtInlining(BodyTerminator end)
     return end.kind() == TerminatorKind::Return || end.kind() == TerminatorKind::ReturnCall;
 }
 
-// No function on the stack of frames is copied, so a body of the unit's function is the unit's own.
-// The allowance of a loop is for the calls written there: granted again in every copy, it would let a unit grow by the depth of the calls. In a copy a callee is walked only where it is no larger than its call.
-// A call that the body writes stays a call, or something no larger stands in its place.
 static bool isNoLargerThanCallWithItsOwnCallsAtInlining(const ThinSummary& summary, size_t numberOfOperands)
 {
     size_t size = summary.numberOfOperations;
@@ -83,11 +66,9 @@ static bool isNoLargerThanCallWithItsOwnCallsAtInlining(const ThinSummary& summa
     return size <= inlineLimitOutsideLoops + numberOfOperands;
 }
 
-// `render({ width: i })`, `const [value, set] = useState(0)`, `function pick({ size = 1 } = {}) { .. }`: an object that is made for the call, by the callee or as its answer may fall away in a copy.
-// `handedOver`: null: whatever the operands are.
 static bool copyMayLetObjectFallAwayAtInlining(const Walker& walker, FunctionID callee, const std::span<const Reference>* handedOver)
 {
-    if (!handedOver || walker.facts().linked().function(callee).resultIsFresh)
+    if (!handedOver)
         return true;
     auto isMadeHere = [](const SummaryNode& node) {
         return node.kind == SummaryNode::Kind::Allocation || node.kind == SummaryNode::Kind::ClassInstance || node.kind == SummaryNode::Kind::Closure;
@@ -102,30 +83,78 @@ static bool copyMayLetObjectFallAwayAtInlining(const Walker& walker, FunctionID 
     });
 }
 
+static bool isOnlyCalledAtInlining(const BodyIndex& body, ValueID parameter)
+{
+    uint32_t calls = 0;
+    for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
+        for (BodyValue operation : body.block(BlockID(number)).values()) {
+            if (operation.opcode() == Opcode::Call && operation.calleeOperand() == parameter)
+                ++calls;
+        }
+    }
+    return calls && calls == body.useCount(parameter);
+}
+
+static bool onlyHandsFunctionToHelperThatCallsItAtInlining(const Walker& walker, FunctionID forwarder)
+{
+    const ThinSummary& summary = walker.facts().summaries().at(forwarder);
+    if (summary.calls.size() != 1 || summary.has(SummaryTrait::HasLoops))
+        return false;
+    const SummaryCall& call = summary.calls[0];
+    if (!call.isInTailPosition || call.isConstruction || call.passesList || call.isMadeByProtocol || summary.numberOfOperations > inlineLimitOutsideLoops + call.numberOfArguments)
+        return false;
+    const LinkTables& link = walker.facts().linked();
+    FunctionID helper = link.calleeAt(forwarder, call.site);
+    if (!helper || helper == forwarder)
+        return false;
+    const ThinSummary& summaryOfHelper = walker.facts().summaries().at(helper);
+    if (summaryOfHelper.has(SummaryTrait::HasLoops) || summaryOfHelper.numberOfOperations > inlineLimitInLoops)
+        return false;
+    const BodyIndex* body = walker.facts().bodies().find(forwarder);
+    const BodyIndex* bodyOfHelper = walker.facts().bodies().find(helper);
+    if (!body || !bodyOfHelper || body->opcodeOf(call.site) != Opcode::Call)
+        return false;
+
+    const Function& function = walker.program().at(helper);
+    BodyBlock entry = bodyOfHelper->block(entryBlock);
+    std::span<const ValueID> written = body->value(call.site).as<Opcode::Call>().argumentsOperands();
+    for (unsigned index = function.firstParameterIndex(); index < function.numberOfEntryParameters() && index < entry.numberOfParameters() && index - function.firstParameterIndex() < written.size(); ++index) {
+        if (function.entryParameterKind(index) != EntryParameter::Parameter)
+            continue;
+        ValueID argument = body->valueBehindCasts(written[index - function.firstParameterIndex()]);
+        while (argument && !body->isParameter(argument) && body->opcodeOf(argument) == Opcode::CheckInitialized)
+            argument = body->valueBehindCasts(body->value(argument).operand(0));
+        if (!argument || body->isParameter(argument))
+            continue;
+        bool isOneFunction = body->opcodeOf(argument) == Opcode::NewClosure;
+        if (body->opcodeOf(argument) == Opcode::GetModuleVariable) {
+            TypeID proven = link.variable(body->value(argument).as<Opcode::GetModuleVariable>().variable()).proven;
+            Type type = walker.types().at(proven ? proven : TypeID(TypeTable::anything));
+            isOneFunction = type.isObject() && type.isJavaScriptValue() && singleFunctionOf(walker.types(), type);
+        }
+        if (isOneFunction && isOnlyCalledAtInlining(*bodyOfHelper, entry.parameter(index)))
+            return true;
+    }
+    return false;
+}
+
 static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t numberOfOperands, const PlaceOfCall& place, const std::span<const Reference>* handedOver)
 {
+    if (!place.isInLoop && onlyHandsFunctionToHelperThatCallsItAtInlining(walker, callee))
+        return false;
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     uint32_t window = place.isInLoop ? inlineWindowOfWrittenCallInLoops : inlineWindowOfWrittenCall;
     if (summary.numberOfOperations <= inlineLimitOutsideLoops + numberOfOperands
         && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= window || isNoLargerThanCallWithItsOwnCallsAtInlining(summary, numberOfOperands)))
         return true;
-    // A leaf brings nothing along. What it calls are leaves, which the same line lets in.
     if (uint32_t weight = walker.facts().linked().function(callee).weightAsLeaf; weight <= inlineLimitOfLeaves + numberOfOperands
         && (place.caller == walker.unit().function || walker.operationsCopiedAtWrittenCall() + weight <= window)
-        // A copy that adds code pays where it is repeated: in a loop of the unit, or in a function that may be entered again from below itself (LinkedFunction::isNamedInItsCycle): words on the text, no heat.
-        // Elsewhere leaves cost the application 21 G of build for each G that TypeScript 6 ran less, here 5. So the body of a module, too, is the same code in an executable and in a test run.
-        && (place.isInLoop || walker.facts().linked().function(walker.unit().function).isNamedInItsCycle)
-        // TODO: an object that the unit's own code makes outside of loops and hands to a call stays in sight of the collector from the unit's frame while the callee runs; what a call answers does not.
-        // `parameter(make())`, test/aot/parallel/gc/: until that is mended where it is, a callee that answers with an object of its own making is called.
-        && (place.isInLoop || !walker.facts().linked().function(callee).resultIsFresh))
+        && (place.isInLoop || walker.facts().linked().function(walker.unit().function).isNamedInItsCycle))
         return true;
-    // Only the constructor of its class calls an initializer, behind the allocation or behind `super()`, and only the evaluation of the class that of its static members:
-    // the copy stands in the place of the body, and the stores go to an object that the walk has just seen made.
     if (walker.program().at(callee).kind == FunctionKind::Initializer)
         return summary.numberOfOperations <= inlineLimitInLoops && !summary.has(SummaryTrait::HasLoops);
     if (place.caller == walker.unit().function && !place.isInLoop && walker.facts().linked().function(place.caller).isNamedInItsCycle)
-        return summary.numberOfOperations <= inlineLimitInRecursion && !summary.has(SummaryTrait::HasLoops) && !walker.facts().linked().function(callee).resultIsFresh;
-    // `measured(box)` > `checked(box, 2)` > `area(box)`, in a turn that may begin again: a call that stays a call runs other code by Link's word, which speaks for every caller, and with it the whole loop does.
+        return summary.numberOfOperations <= inlineLimitInRecursion && !summary.has(SummaryTrait::HasLoops);
     if (place.caller != walker.unit().function && place.isInLoop && walker.standsInTurnThatLooksCountOn())
         return walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations <= window && !summary.has(SummaryTrait::HasLoops);
     if (place.caller != walker.unit().function || !place.isInLoop || summary.has(SummaryTrait::HasLoops))
@@ -133,10 +162,6 @@ static bool copyPaysAtInlining(const Walker& walker, FunctionID callee, size_t n
     return summary.numberOfOperations <= inlineLimitInLoopsWithoutObjects || (summary.numberOfOperations <= inlineLimitInLoops && copyMayLetObjectFallAwayAtInlining(walker, callee, handedOver));
 }
 
-// `new Node(kind, pos, end)`, `new (NodeConstructor || (NodeConstructor = allocator.getNodeConstructor()))(kind, -1, -1)`: the walk has made the object in front of the call (walkConstructOfFunctionInWalkCalls()).
-// As with an initializer the copy stands in the place of the body, and its stores go to an object that the walk has just seen made: each is one store, no test stands in front of them, and the birth ends in sight.
-// Called, the body is handed a `this` of which it knows the layout alone, because a plain call may hand it any object.
-// IN A COPY ONLY WITHIN THE WINDOW OF THE CALL THAT THE UNIT's OWN BODY WRITES, as every copy in a copy: constructors that construct in turn, eight times each, were 8 to the n copies.
 static bool copyFillsObjectMadeForItAtInlining(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
 {
     if (site.opcode != Opcode::CallDirect || !site.isConstruction() || site.isNeverInlined())
@@ -148,9 +173,6 @@ static bool copyFillsObjectMadeForItAtInlining(const Walker& walker, const Draft
     return function.takesThisFromConstruction() && function.constructedClass && summary.numberOfOperations <= inlineLimitInLoops && !summary.has(SummaryTrait::HasLoops);
 }
 
-// `each(list, x => ..)`, `list.map(x => ..)`. One body for all callers knows neither the function that its loop calls nor what the list holds. In a copy the callee of that call is one function,
-// so it is a direct call or a copy in turn, the list has the type that the caller knows, and what the closure is handed has the type of the elements.
-// By entry parameter, up to 64: a call in a loop of the body calls it.
 static uint64_t entryParametersCalledInLoopsAtInlining(const ThinSummary& summary)
 {
     return summary.entryParametersCalledInLoops;
@@ -165,8 +187,6 @@ static bool isClosureOfOneFunctionAtInlining(const Walker& walker, Reference val
     return type.isObject() && type.isJavaScriptValue() && singleFunctionOf(walker.types(), type);
 }
 
-// `list.map(f)`: the text of the library has a run over a plain vector, and hands the list and `f` on to a second loop where the run ends early. The copy of the first has the function in a loop already.
-// A second loop with a second copy of the function doubles the code for the sake of what the first was written to spare: it is called, however small it is as it is written.
 static bool isSecondLoopOverWhatCopyCallsAtInlining(const Walker& walker, FunctionID callee, const PlaceOfCall& place, std::span<const Reference> handedOver)
 {
     if (!walker.depthOfCopies() || place.caller != walker.currentFunction())
@@ -187,14 +207,11 @@ static bool isSecondLoopOverWhatCopyCallsAtInlining(const Walker& walker, Functi
     return false;
 }
 
-// The call is written in a loop of the unit's own body. Copied at every call that hands over a closure, the code of a large application grew by a sixth, and the TypeScript compiler ran 1% fewer instructions.
-// `handedOver`: null: whatever the operands are.
 static bool copyPaysForClosureHandedOverAtInlining(const Walker& walker, FunctionID callee, const PlaceOfCall& place, const std::span<const Reference>* handedOver)
 {
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     if (!summary.has(SummaryTrait::HasLoops) || summary.numberOfOperations > inlineLimitOfHelpers)
         return false;
-    // Where the call runs once, the loop of the helper is all that a copy could speed up, and a body for all callers has that loop too.
     if (!place.isInLoop && walker.facts().linked().function(walker.unit().function).runsAtMostOnce)
         return false;
     if (place.caller != walker.unit().function && walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations > inlineWindowOfHelpers)
@@ -209,11 +226,11 @@ static bool copyPaysForClosureHandedOverAtInlining(const Walker& walker, Functio
     return false;
 }
 
-// `readValue(key, (error, value) => ..)` in a loop: callbacks in series. The callee has no loop of its own and does nothing with the function but call it.
-// Called, it is handed a closure that is made for each turn and calls it by value. Copied, the call of the parameter is a call of one function, with what the closure captures at hand: no closure is made.
 static bool copyPaysForClosureThatCalleeOnlyCallsAtInlining(const Walker& walker, FunctionID callee, const PlaceOfCall& place, const std::span<const Reference>* handedOver)
 {
-    if (!place.isInLoop || !handedOver)
+    if (!handedOver)
+        return false;
+    if (!place.isInLoop && (walker.depthOfCopies() || place.caller != walker.unit().function || !onlyHandsFunctionToHelperThatCallsItAtInlining(walker, place.caller)))
         return false;
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     if (summary.has(SummaryTrait::HasLoops) || summary.numberOfOperations > inlineLimitInLoops)
@@ -227,40 +244,29 @@ static bool copyPaysForClosureThatCalleeOnlyCallsAtInlining(const Walker& walker
     for (uint32_t position = 0; position < std::min<uint32_t>(static_cast<uint32_t>(handedOver->size()), entry.numberOfParameters()); ++position) {
         if (!isClosureOfOneFunctionAtInlining(walker, (*handedOver)[position]))
             continue;
-        ValueID parameter = entry.parameter(position);
-        uint32_t calls = 0;
-        for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
-            for (BodyValue operation : body->block(BlockID(number)).values()) {
-                if (operation.opcode() == Opcode::Call && operation.calleeOperand() == parameter)
-                    ++calls;
-            }
-        }
-        if (calls && calls == body->useCount(parameter))
+        if (isOnlyCalledAtInlining(*body, entry.parameter(position)))
             return true;
     }
     return false;
 }
 
-// The call stands in a loop of such a copy, and calls what the unit's own body has handed to the copy: it has the allowance of a call that is written in a loop of that body.
 static bool copyOfClosureHandedOverPaysAtInlining(const Walker& walker, FunctionID callee, const PlaceOfCall& place)
 {
     if (!place.isInLoop || !walker.depthOfCopies() || place.caller != walker.currentFunction())
         return false;
     const ThinSummary& summary = walker.facts().summaries().at(callee);
-    // The copy has no loop of its own: it stands in a loop of the unit, and what it calls of its parameters goes by the window of helpers.
     if (!walker.currentBodyIndex().hasLoops() && walker.operationsCopiedAtWrittenCall() + summary.numberOfOperations > inlineWindowOfHelpers)
         return false;
     return summary.numberOfOperations <= inlineLimitInLoops && !summary.has(SummaryTrait::HasLoops);
 }
 
-// All that hangs neither on the operands, nor on the size, nor on the frames. It builds nothing.
 static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee)
 {
     const Program& program = walker.program();
     const Function& function = program.at(callee);
     const ThinSummary& summary = walker.facts().summaries().at(callee);
     const BodyIndex* body = walker.facts().bodies().find(callee);
-    if (function.isCoroutine() || function.results.size() != 1)
+    if (function.isCoroutine() || function.results.size() != 1 || walker.facts().isTakenToRunOnce(callee))
         return false;
     FlagsOfSummaryForInlining flags {
         .suspends = summary.has(SummaryTrait::Suspends),
@@ -270,13 +276,11 @@ static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee)
     if (whyNoCallInlines(program, callee, PartOfCallee::WholeBody, &flags, body) != NotInlinedCause::None)
         return false;
 
-    // The inline frame names the Body of the callee for the stack trace.
     if (!walker.plan().conventions().exists({ callee, CodeRole::Body }))
         return false;
     if (walker.code().inlineFrames().size() >= mostInlineFramesAtInlining)
         return false;
 
-    // The entry goes on in the block of Code that holds the call, with each parameter standing for one operand.
     BodyBlock entry = body->block(entryBlock);
     if (body->numberOfIncomingEdges(entryBlock) || entry.hasHandler() || entry.numberOfParameters() != function.numberOfEntryParameters())
         return false;
@@ -284,12 +288,9 @@ static bool mayBeWalkedAtInlining(const Walker& walker, FunctionID callee)
     bool returns = false;
     for (uint32_t block = 0; block < body->numberOfBlocks() && !returns; ++block)
         returns = body->isReachable(BlockID(block)) && endsInReturnAtInlining(body->terminator(BlockID(block)));
-    // A copy mentions what the callee names. A callee that was found under a name behind a guess, or that is lost to Link, has no referrer (LinkedFunction::isInQueueFromStart): it is called, unless it names nothing that a mention could bring.
     const LinkTables& link = walker.facts().linked();
     return returns && (link.function(callee).namesOnlyWhatEveryFunctionLeadsTo || link.leadsTo(walker.unit(), callee));
 }
-
-// ---- The callee
 
 static bool isEnteredAtInlining(const Function& function, bool isConstruction)
 {
@@ -301,11 +302,9 @@ static bool isEnteredAtInlining(const Function& function, bool isConstruction)
     case FunctionKind::Method:
     case FunctionKind::Getter:
     case FunctionKind::Setter:
-        // Whoever constructs with a plain function makes `this` and looks at what comes back: that stays a call.
         return !isConstruction;
     case FunctionKind::BaseConstructor:
     case FunctionKind::DerivedConstructor:
-        // It makes its own object, and what it returns is what was constructed.
         return isConstruction && !function.has(FunctionFlags::HasThis) && function.constructedClass;
     case FunctionKind::Initializer:
     case FunctionKind::Module:
@@ -314,8 +313,6 @@ static bool isEnteredAtInlining(const Function& function, bool isConstruction)
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
-
-// ---- The operands
 
 static bool takesListAtInlining(const Function& callee, unsigned entryParameter)
 {
@@ -331,7 +328,6 @@ static bool tellsAbsentFromUndefinedAtInlining(Walker& walker, const Function& c
     return written && (walker.types().at(written).primitives & Primitive::Absent);
 }
 
-// Null: the call has no value for the parameter, and walkInline() makes one.
 static Reference operandHandedOverAtInlining(const CallOfInlining& call, const Function& callee, unsigned entryParameter)
 {
     switch (callee.entryParameterKind(entryParameter)) {
@@ -353,7 +349,6 @@ static Reference operandHandedOverAtInlining(const CallOfInlining& call, const F
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Nothing tests an established position: the operations of the body have no form for a value of another type.
 static bool fitsParameterAtInlining(Walker& walker, const Function& callee, unsigned entryParameter, TypeID arriving)
 {
     const DeclaredType* declared = callee.declaredEntryParameter(entryParameter);
@@ -363,7 +358,6 @@ static bool fitsParameterAtInlining(Walker& walker, const Function& callee, unsi
     return walker.types().isSubset(arriving, established);
 }
 
-// `handedOver`: by entry parameter. It speaks of what buildEntryArgumentsAtInlining() makes as well, and builds nothing.
 static bool operandsFitAtInlining(Walker& walker, const CallOfInlining& call, const Function& callee, std::span<const Reference> handedOver)
 {
     unsigned numberOfEntryParameters = callee.numberOfEntryParameters();
@@ -384,11 +378,9 @@ static bool operandsFitAtInlining(Walker& walker, const CallOfInlining& call, co
         EntryParameter kind = callee.entryParameterKind(index);
         if (!call.closure || kind == EntryParameter::Callee)
             return false;
-        // The compiler lays down both what a closure holds and what the position takes, and a count is a count.
         if (kind == EntryParameter::Capture || kind == EntryParameter::ArgumentCount)
             continue;
         if (takesListAtInlining(callee, index)) {
-            // buildListOfOtherArgumentsAtInlining() makes what the entry of the callee makes: a list.
             if (!fitsParameterAtInlining(walker, callee, index, walker.types().builtinClass(BuiltinClasses::Array)))
                 return false;
             continue;
@@ -399,7 +391,6 @@ static bool operandsFitAtInlining(Walker& walker, const CallOfInlining& call, co
     return true;
 }
 
-// False: what the call hands over surely fails the guard of the callee, so no run would come to the copy. It builds nothing.
 static bool mayPassGuardAtInlining(Walker& walker, const Function& callee, FunctionID id, std::span<const Reference> handedOver)
 {
     const CallingConventions& conventions = walker.plan().conventions();
@@ -416,7 +407,6 @@ static bool mayPassGuardAtInlining(Walker& walker, const Function& callee, Funct
     return true;
 }
 
-// What a closure has captured never changes, so where its creation is in sight nothing is read off it.
 static Reference buildCaptureAtInlining(Walker& walker, Origin origin, const CallOfInlining& call, size_t numberOfCaptures, uint32_t index)
 {
     const Code& code = walker.code();
@@ -448,12 +438,10 @@ static Reference buildListOfOtherArgumentsAtInlining(Walker& walker, Origin orig
     std::span<const Reference> listed = call.arguments.subspan(std::min<size_t>(callee.numberOfPositionalParameters(), call.arguments.size()));
     list.setVariadicOperands(listed);
     Reference built = walker.build(WTF::move(list));
-    // No operation of the input stands behind it, so buildFreshObject() never comes to it.
     noteFreshList(walker, built);
     return built;
 }
 
-// operandsFitAtInlining() has passed.
 static Vector<Reference, 8> buildEntryArgumentsAtInlining(Walker& walker, Origin origin, const CallOfInlining& call, const Function& callee, std::span<const Reference> handedOver)
 {
     Vector<Reference, 8> operands;
@@ -497,18 +485,14 @@ static Vector<Reference, 8> buildEntryArgumentsAtInlining(Walker& walker, Origin
 
 namespace {
 
-// What the walk that stands at a call sees of it.
 struct OperandsInSightAtInlining {
     std::span<const Reference> handedOver;
     bool callsParameterOfCopy { false };
-    // What is called is a built-in, and the callee the function of the library behind it. The call by its rows has the types of the rows, so a copy takes its place only for the sake of a closure.
     bool calleeStandsBehindBuiltin { false };
 };
 
 } // anonymous namespace
 
-// `sum(a, 1, 2)` for `function sum(...values) { for (let i = 0; i < values.length; i++) s += values[i]; .. }`. Called, the list is made, the loop reads boxed values out of it, and nothing is known of any.
-// In a copy the walk writes the turns out (Walker::writeOutTurnsOfLoop()): each element is the argument, with its type, and the list is never made. It goes by the call as it is written, so a look at a loop says the same.
 std::optional<TurnsOfCopyWrittenOut> turnsOfCopyWrittenOutAt(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
 {
     if (site.opcode != Opcode::Call || !walker.has(Mechanism::EscapeAnalysis) || !walker.has(Mechanism::Folding) || !walker.has(Mechanism::LoopInvariants))
@@ -521,7 +505,6 @@ std::optional<TurnsOfCopyWrittenOut> turnsOfCopyWrittenOutAt(const Walker& walke
     integers.fill(std::nullopt, function.numberOfEntryParameters());
     lengths.fill(std::nullopt, function.numberOfEntryParameters());
     size_t numberOfArguments = site.argumentsOperands().size();
-    // The arguments as the body of the caller writes them. A look at a loop and the walk read the same text.
     std::span<const ValueID> written;
     if (place.body && place.call && place.body->opcodeOf(place.call) == Opcode::Call)
         written = place.body->value(place.call).as<Opcode::Call>().argumentsOperands();
@@ -545,11 +528,9 @@ std::optional<TurnsOfCopyWrittenOut> turnsOfCopyWrittenOutAt(const Walker& walke
         if (argument && !place.body->isParameter(argument) && place.body->opcodeOf(argument) == Opcode::Integer)
             integers[index] = place.body->value(argument).integer();
     }
-    // A call that says nothing of the turns is read as the callee by itself is, which is no reason for a copy whatever it foresees.
     bool saysSomething = numberOfLists || std::ranges::any_of(integers, [](const std::optional<int64_t>& integer) { return integer.has_value(); });
     if (numberOfLists > 1 || !saysSomething)
         return std::nullopt;
-    // A callee whose turns are known whoever calls it writes them out in its own body, and a copy brings nothing.
     Vector<std::optional<int64_t>, 8> noIntegers;
     Vector<std::optional<uint32_t>, 8> noLengths;
     noIntegers.fill(std::nullopt, function.numberOfEntryParameters());
@@ -563,10 +544,18 @@ std::optional<TurnsOfCopyWrittenOut> turnsOfCopyWrittenOutAt(const Walker& walke
     return answer;
 }
 
-// What the call says as it is written, and whether a copy pays. `inSight`: null: it looks at no type, and says yes wherever some operands would make it say yes.
+static bool stepsForOfAtInlining(const Walker& walker, FunctionID callee)
+{
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    for (uint32_t loop = 0; body && loop < body->numberOfLoops(); ++loop) {
+        if (findForOfSteppedAtHead(*body, LoopID(loop)))
+            return true;
+    }
+    return false;
+}
+
 static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place, const OperandsInSightAtInlining* inSight)
 {
-    // However it is written, a call answers a promise or a generator: `get(k)`, `get.call(o, k)`, a getter that a descriptor lays. Whoever builds the ramp at the call copies the body, and asks with a CallDirect of the CoroutineBody: AOTWalkCoroutineCalls.cpp.
     if (walker.program().at(callee).isCoroutine() && (site.opcode != Opcode::CallDirect || site.role() != CodeRole::CoroutineBody))
         return false;
     auto copyPays = [&](size_t numberOfOperands) {
@@ -576,8 +565,7 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
             || copyPaysForClosureHandedOverAtInlining(walker, callee, place, inSight ? &inSight->handedOver : nullptr)
             || copyPaysForClosureThatCalleeOnlyCallsAtInlining(walker, callee, place, inSight ? &inSight->handedOver : nullptr)
             || ((!inSight || inSight->callsParameterOfCopy) && copyOfClosureHandedOverPaysAtInlining(walker, callee, place))
-            // At a call that the unit's own body writes: in a copy each turn would walk such a call again, and its copy the calls of its turns.
-            || ((!inSight || !walker.hasTextsInStringBuilders()) && place.caller == walker.unit().function && turnsOfCopyWrittenOutAt(walker, site, callee, place));
+            || ((!inSight || !walker.hasTextsInStringBuilders()) && place.caller == walker.unit().function && (place.isInLoop || !stepsForOfAtInlining(walker, callee)) && turnsOfCopyWrittenOutAt(walker, site, callee, place));
     };
     if (copyFillsObjectMadeForItAtInlining(walker, site, callee, place))
         return true;
@@ -585,7 +573,6 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
         return !site.isNeverInlined() && copyPays(site.numberOfVariadicOperands());
 
     bool isConstruction = constructionsOfInlining.contains(site.opcode);
-    // Whether another new.target can construct is for the closed form to ask. That of `super(..)` has constructed to get there.
     if (site.opcode == Opcode::Construct && site.newTargetOperand() && site.newTargetOperand() != site.calleeOperand())
         return false;
     if (site.opcode == Opcode::Call && site.isNeverInlined())
@@ -593,7 +580,6 @@ static bool callAdmitsCopyAtInlining(const Walker& walker, const Draft& site, Fu
     return isEnteredAtInlining(walker.program().at(callee), isConstruction) && copyPays(site.argumentsOperands().size());
 }
 
-// The questions that inlineCallee() and walkInline() ask before they look at an operand or at the state.
 bool mayCopyCallee(const Walker& walker, const Draft& site, FunctionID callee, const PlaceOfCall& place)
 {
     return walker.has(Mechanism::Inlining) && opcodesOfInlining.contains(site.opcode) && callAdmitsCopyAtInlining(walker, site, callee, place, nullptr)
@@ -630,11 +616,8 @@ Vector<Reference, 8> operandsHandedToCopy(const Draft& site, const Function& cal
     return handedOver;
 }
 
-// Who is entered, and whether a copy pays. It builds nothing: what the frames and the operands say, and all that is made, is walkInline()'s.
 static_assert(opcodesThatInlineCalleeTakes == (opcodesOfInlining | callsOfListsAtInlining));
 
-// `super(...args)` in a copy of the constructor that the language gives a class, `inner(...args)` in a copy of `function outer(...args)`, `f(...[a, b])`:
-// the state knows what the list holds, so the call is what it would be with the elements written as its arguments.
 static bool inlineCalleeOfListWrittenOut(Walker& walker, const BodyValue& call)
 {
     Reference closure = walker.referenceOf(call.opcode() == Opcode::SuperConstructList ? call.parentOperand() : call.calleeOperand());
@@ -651,19 +634,145 @@ static bool inlineCalleeOfListWrittenOut(Walker& walker, const BodyValue& call)
     return walker.walkInline(call, callee, handedOver.span(), &*site);
 }
 
+namespace {
+
+struct HeadThatReturnsAtOnce {
+    uint32_t entryParameter { 0 };
+    bool returnsWhereTrue { false };
+    ValueID returned;
+};
+
+} // anonymous namespace
+
+static std::optional<HeadThatReturnsAtOnce> findHeadThatReturnsAtOnceAtInlining(const BodyIndex& body)
+{
+    BodyBlock entry = body.block(entryBlock);
+    BodyTerminator end = entry.terminator();
+    if (!end.isConditionalBranch() || entry.hasHandler() || body.isLoopHead(entryBlock))
+        return std::nullopt;
+    ValueID asked = end.operand(0);
+    bool isNegated = false;
+    uint32_t numberOfTests = 0;
+    while (!body.isParameter(asked)) {
+        Opcode opcode = body.opcodeOf(asked);
+        if (opcode != Opcode::ToBoolean && opcode != Opcode::LogicalNot)
+            return std::nullopt;
+        isNegated ^= opcode == Opcode::LogicalNot;
+        ++numberOfTests;
+        asked = body.value(asked).operand(0);
+    }
+    std::optional<uint32_t> entryParameter = entry.indexOfParameter(asked);
+    uint32_t numberOfConstants = 0;
+    for (uint32_t place = 0; place < entry.numberOfValues(); ++place)
+        numberOfConstants += primitiveConstants.contains(body.opcodeOf(ValueID(entry.firstValue().index() + place)));
+    if (!entryParameter || numberOfTests + numberOfConstants != entry.numberOfValues())
+        return std::nullopt;
+    bool isTaken = true;
+    for (BodyTarget target : end.targets()) {
+        bool holdsWhereTrue = std::exchange(isTaken, false) != isNegated;
+        BodyBlock block = body.block(target.block());
+        BodyTerminator endOfBlock = block.terminator();
+        if (!target.arguments().empty() || block.hasHandler() || endOfBlock.kind() != TerminatorKind::Return)
+            continue;
+        bool holdsConstantsAlone = true;
+        for (uint32_t position = 0; position < block.numberOfParameters(); ++position)
+            holdsConstantsAlone &= body.isUnused(block.parameter(position));
+        for (uint32_t place = 0; place < block.numberOfValues(); ++place) {
+            Opcode opcode = body.opcodeOf(ValueID(block.firstValue().index() + place));
+            holdsConstantsAlone &= primitiveConstants.contains(opcode) || opcode == Opcode::Convert;
+        }
+        ValueID returned = endOfBlock.operand(0) ? body.valueBehindCasts(endOfBlock.operand(0)) : ValueID();
+        if (holdsConstantsAlone && returned && !body.isParameter(returned) && primitiveConstants.contains(body.opcodeOf(returned)))
+            return HeadThatReturnsAtOnce { *entryParameter, holdsWhereTrue, returned };
+    }
+    return std::nullopt;
+}
+
+static bool copyHeadThatReturnsAtOnceAtInlining(Walker& walker, const BodyValue& call, const Draft& site, FunctionID callee, std::span<const Reference> handedOver)
+{
+    if ((call.opcode() != Opcode::Call && call.opcode() != Opcode::CallDirect) || !walker.opensGuesses() || site.resultIsReturnedAtOnce || site.isTailCall)
+        return false;
+    const Function& function = walker.program().at(callee);
+    if (function.isCoroutine() || (call.opcode() == Opcode::CallDirect && (site.isConstruction() || site.role() != CodeRole::Body)))
+        return false;
+    const BodyIndex& body = walker.facts().bodies().at(callee);
+    std::optional<HeadThatReturnsAtOnce> head = findHeadThatReturnsAtOnceAtInlining(body);
+    if (!head || head->entryParameter >= handedOver.size() || function.entryParameterKind(head->entryParameter) != EntryParameter::Parameter
+        || takesListAtInlining(function, head->entryParameter) || tellsAbsentFromUndefinedAtInlining(walker, function, head->entryParameter))
+        return false;
+
+    TypeArena& types = walker.types();
+    Reference argument = handedOver[head->entryParameter];
+    TypeID type = argument ? walker.typeOf(argument) : TypeID(TypeTable::undefined);
+    if (!type || isNeverType(type) || !types.at(type).isJavaScriptValue())
+        return false;
+    Origin origin = site.origin();
+    origin.isTailCall = false;
+    auto returned = [&] {
+        Draft constant = walker.draftOf(body.value(head->returned));
+        constant.setOrigin(origin);
+        return walker.constant(WTF::move(constant));
+    };
+    Reference constant = returned();
+    if (!constant)
+        return false;
+    TypeID shown = argument ? walker.typeShown(argument) : TypeID(TypeTable::undefined);
+    bool isNeverTrue = isNeverType(truthyPartOf(types, shown));
+    bool isAlwaysTrue = isNeverType(falsyPartOf(types, shown));
+    if (isNeverTrue || isAlwaysTrue) {
+        if (isAlwaysTrue != head->returnsWhereTrue)
+            return false;
+        walker.bind(call.id(), constant);
+        return true;
+    }
+
+    if (!isBooleanType(type) || walker.representationOf(argument) != Representation::Boolean)
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(call.id()));
+    uint32_t place = call.id().index() - block.firstValue().index();
+    BlockID whereHeadReturns = walker.addBlock();
+    BlockID whereCalleeIsEntered = walker.addBlock();
+    BlockID behindCall = walker.addBlock();
+    walker.branch(argument, head->returnsWhereTrue ? whereHeadReturns : whereCalleeIsEntered, head->returnsWhereTrue ? whereCalleeIsEntered : whereHeadReturns);
+    Reference answer;
+    walker.continueIn(whereCalleeIsEntered);
+    {
+        Walker::ClosedArm calls(walker);
+        Draft known(Opcode::Boolean, origin);
+        known.setBoolean(!head->returnsWhereTrue);
+        Reference handedOn = walker.constant(WTF::move(known));
+        call.forEachOperand([&](ValueID operand, uint32_t) {
+            if (handedOn && walker.referenceOf(operand) == argument)
+                walker.bind(operand, handedOn);
+        });
+        walker.walkStretch(block.id(), place, place + 1);
+        if (walker.hasFailed())
+            return true;
+        Reference called = walker.isUnreachable() ? Reference() : walker.referenceOf(call.id());
+        bool keepsForm = called && types.isSubset(walker.typeOf(constant), walker.typeOf(called));
+        answer = walker.addParameter(behindCall, keepsForm ? walker.typeOf(called) : TypeID(TypeTable::anything), keepsForm ? walker.representationOf(called) : Representation::JSValue);
+        if (called)
+            walker.jumpTo(behindCall, singleElementSpan(called));
+    }
+    walker.continueIn(whereHeadReturns);
+    walker.jumpTo(behindCall, singleElementSpan(constant));
+    walker.continueIn(behindCall);
+    walker.bind(call.id(), answer);
+    return true;
+}
+
 bool inlineCalleeOfItsOpcodes(Walker& walker, const BodyValue& call)
 {
     if (callsOfListsAtInlining.contains(call.opcode()))
         return inlineCalleeOfListWrittenOut(walker, call);
     if (!opcodesOfInlining.contains(call.opcode()))
         return false;
-    // Who is called is read off the type of the callee. The question costs less than the Draft of the site.
     if (call.opcode() == Opcode::Call && walker.nothingIsProvenOf(walker.referenceOf(call.calleeOperand())))
         return false;
 
     Reference closure = call.opcode() == Opcode::CallDirect ? Reference() : walker.referenceOf(call.opcode() == Opcode::SuperConstruct ? call.parentOperand() : call.calleeOperand());
     FunctionID callee = call.opcode() == Opcode::CallDirect ? call.function() : findOnlyCallee(walker, call, closure);
-    // All that is called is one built-in, behind which stands a function of the library.
     bool calleeStandsBehindBuiltin = !callee && call.opcode() == Opcode::Call && !call.isDoneInPlace() && closure;
     if (calleeStandsBehindBuiltin)
         callee = findLibraryFunctionBehindBuiltin(walker, walker.typeOf(closure));
@@ -675,16 +784,11 @@ bool inlineCalleeOfItsOpcodes(Walker& walker, const BodyValue& call)
     Vector<Reference, 8> handedOver = operandsHandedToCopy(site, walker.program().at(callee));
     bool callsParameterOfCopy = call.opcode() == Opcode::Call && walker.depthOfCopies() && index.block(entryBlock).indexOfParameter(index.valueBehindCasts(call.as<Opcode::Call>().calleeOperand()));
     OperandsInSightAtInlining inSight { handedOver.span(), callsParameterOfCopy, calleeStandsBehindBuiltin };
-    if (!callAdmitsCopyAtInlining(walker, site, callee, { walker.currentFunction(), walker.isInLoop(), &index, call.id() }, &inSight))
-        return false;
-    return walker.walkInline(call, callee, handedOver.span());
+    if (callAdmitsCopyAtInlining(walker, site, callee, { walker.currentFunction(), walker.isInLoop(), &index, call.id() }, &inSight) && walker.walkInline(call, callee, handedOver.span()))
+        return true;
+    return !calleeStandsBehindBuiltin && !walker.hasFailed() && copyHeadThatReturnsAtOnceAtInlining(walker, call, site, callee, handedOver.span());
 }
 
-// ---- The copy
-
-// `arguments`: one for each entry parameter of the callee. Null, of a Call or a Construct: the call hands nothing over, and what the callee then finds is made here.
-// False: the callee is not walked here, and nothing was built.
-// A closure that the block of the call makes and that the call alone is handed: one cell for each run of the call, which nobody else can have seen.
 struct ClosureMadeForCallAtInlining {
     Reference made;
     ValueID written;
@@ -705,77 +809,6 @@ static Vector<ClosureMadeForCallAtInlining, 2> collectClosuresMadeForCallAtInlin
             closures.append({ made, written });
     });
     return closures;
-}
-
-// The closure was made for the call that is copied, and for nothing else. The call that takes it here is the last thing that the copy does, outside of its loops, and nothing that was built since the closure was made has taken the cell:
-// so on no way here has anybody seen it, and nobody sees it behind. The cell that is made here is the only one that the run ever shows. Where no other way needs the first, the sweep drops it.
-Reference Walker::closureMadeWhereCopyHandsItOn(const BodyValue& call, Reference operand)
-{
-    const Frame& frame = m_frames.last();
-    if (frame.closuresMadeForCall.isEmpty() || !operand || !operand.isValue() || isUnreachable() || !has(Mechanism::EscapeAnalysis))
-        return operand;
-    ValueID cell = rootOfCellInSweptCode(m_code, operand.id());
-    if (m_code.isConstant(cell) || !frame.closuresMadeForCall.contains(Reference::value(cell)) || m_code.blockOf(cell) == m_block)
-        return operand;
-    const Operation& made = m_code.at(cell);
-    if (made.opcode != Opcode::NewClosure || made.isMadeOnDemand())
-        return operand;
-
-    const BodyIndex& index = *frame.index;
-    if (call.id().index() >= index.numberOfValues() || index.value(call.id()).words() != call.words())
-        return operand;
-    BodyBlock standing = index.block(index.blockOf(call.id()));
-    if (!endsInReturnAtInlining(standing.terminator()) || standing.hasHandler() || index.loopOf(standing.id()))
-        return operand;
-    // `$forEachFrom(..); }`: behind the call stands the undefined that is returned.
-    for (uint32_t behind = call.id().index() + 1; behind < standing.endOfValues().index(); ++behind) {
-        bool takesSomething = false;
-        index.value(ValueID(behind)).forEachOperand([&](ValueID, uint32_t) {
-            takesSomething = true;
-        });
-        if (takesSomething)
-            return operand;
-    }
-
-    auto namesCell = [&](ValueID value) {
-        return value && rootOfCellInSweptCode(m_code, value) == cell;
-    };
-    bool isTaken = false;
-    for (uint32_t number = cell.index() + 1; number < m_code.numberOfValues() && !isTaken; ++number) {
-        const Operation& built = m_code.at(ValueID(number));
-        if (opcodesThatGiveSameCell.contains(built.opcode))
-            continue;
-        built.forEachOperand([&](ValueID taken, uint32_t) {
-            isTaken |= namesCell(taken);
-        });
-    }
-    for (uint32_t number = 0; number < m_code.numberOfBlocks() && !isTaken; ++number) {
-        const Terminator& end = m_code.at(BlockID(number)).terminator;
-        if (!end.isSet)
-            continue;
-        end.forEachOperand([&](ValueID taken, uint32_t) {
-            isTaken |= namesCell(taken);
-        });
-    }
-    for (uint32_t number = 0; number < m_code.numberOfEdges() && !isTaken; ++number)
-        isTaken = std::ranges::any_of(m_code.at(EdgeID(number)).arguments(), namesCell);
-    if (isTaken)
-        return operand;
-
-    Vector<Reference, 4> captured;
-    for (ValueID value : made.variadicOperands())
-        captured.append(m_code.isConstant(value) ? Reference::constant(value) : Reference::value(value));
-    Origin origin = originOf(call);
-    origin.isTailCall = false;
-    Draft again(Opcode::NewClosure, origin);
-    again.setFunction(made.function());
-    again.setVariadicOperands(captured.span());
-    chooseConservativeFields(again);
-    again.standsForNoValueOfInput = true;
-    Reference built = build(WTF::move(again));
-    if (built)
-        count(StatisticID::ClosuresMadeWhereCopiesHandThemOn);
-    return built ? built : operand;
 }
 
 bool Walker::copyHandsBack(ValueID input)
@@ -802,7 +835,6 @@ bool Walker::copyHandsBack(ValueID input)
 
 bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<const Reference> arguments, const Draft* writtenOut)
 {
-    // The typed run has the copy. The closed arm of an opened guess calls.
     if (!m_opensGuesses || isBeingWalked(callee))
         return false;
 
@@ -827,12 +859,11 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
 
     Origin originOfCall = site.origin();
     originOfCall.isTailCall = false;
-    checkProofOfOnlyCallee(*this, written.closure, callee, originOfCall);
+    m_environmentCellsOfUnit.mayNameSome |= isHandedEnvironmentWithByte(*this, callee);
     Vector<Reference, 8> entryArguments = buildEntryArgumentsAtInlining(*this, originOfCall, written, function, arguments);
     if (isUnreachable())
         return true;
 
-    // The copy is one of the fast version. What the caller has not proven the tests of the guard prove in front of it, once, and where one fails the slow version is called.
     Vector<Reference, 8> argumentsAsTheyCame(entryArguments);
     BlockID whereGuardFails;
     const CallingConventions& conventions = plan().conventions();
@@ -861,19 +892,14 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         narrowed.setIsOnTakenEdge(true);
         entryArguments[index] = build(WTF::move(narrowed));
     }
-    // What Link has proven of a parameter holds of whatever a call hands over, and the Body of the callee is typed by it. The walk's own type of the operand may say less: it has come out of a closed read.
-    // Code has no way to state a type. So the type is tested for, and the failing side traps: it is no guess and has no closed arm, and only a false claim of Link takes it.
     const LinkTables& link = facts().linked();
     const LinkedFunction& linked = link.function(callee);
-    // The copy goes by what the caller knows of its operands, and leans on less of Link's word than the Body of the callee does. The word is held against what arrives here all the same: it is the same word.
     for (uint32_t index = 0; index < entryArguments.size() && checksProofsOf(ProofSource::EntryParameter) && linked.everyCallerIsKnown && !isUnreachable(); ++index) {
         if (TypeID proven = index < linked.numberOfParameters ? link.parameters[linked.firstParameter + index].proven : TypeID())
             checkProofOfCopy(entryArguments[index], proven, ProofSource::EntryParameter, originOfCall);
     }
     for (uint32_t index = 0; index < entryArguments.size() && has(Mechanism::Arrivals) && linked.everyCallerIsKnown && !isUnreachable(); ++index) {
         TypeID proven = index < linked.numberOfParameters ? link.parameters[linked.firstParameter + index].proven : TypeID();
-        // Primitives, one layout, or both: one look at the value, and no question here goes over a set. A family or a set of closures grows with the program, and so would each question and each test, at every copy.
-        // The closures of ONE function are one look too: `function hop(operation, value) { return operation(value); }`. Link lists that call with its one callee, and behind the look the copy enters it directly.
         bool isOneLook = proven && (!m_types.at(proven).hasObjects() || singleFunctionOf(m_types, m_types.at(proven)) || (m_types.at(proven).hasOnlyLayouts() && holdsOneMember(m_types.at(proven).layouts)));
         if (proven && !isOneLook)
             continue;
@@ -915,7 +941,6 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     frame.index = &body;
     frame.references.fill(Reference(), body.numberOfValues());
     frame.loopDepthAtCall = m_frames.last().loopDepthAtCall + bodyOfCaller.loopDepthOf(bodyOfCaller.blockOf(call.id()));
-    // The casts of a ReturnCall build nothing.
     frame.returnsInPlaceOfUnit = returnsInPlaceOfUnit;
     frame.callsAreCountedByPlan = callsOfCopyAreCountedForStackTests(call, callee);
     if (ExpectationOfValue ofAnswer = expectationOfAnswerOfCallBeingCopied(*this, call); ofAnswer.type) {
@@ -924,8 +949,6 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     }
     frame.callCopied = call.id();
     frame.isCopiedByLinkOfChain = isCopiedByLinkOfChain(call);
-    for (const ClosureMadeForCallAtInlining& closure : closuresMadeForCall)
-        frame.closuresMadeForCall.append(closure.made);
     frame.inlineFrame = m_code.addInlineFrame({
         .callee = callee,
         .callPosition = site.position,
@@ -934,7 +957,6 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         .isConstruction = isConstruction,
         .callIsPartOfConstruction = site.isPartOfConstruction,
         .module = function.module,
-        // No stack trace lists such a callee. A site in a frame that names a built-in is recorded at the call, under the name of the built-in.
         .calledBuiltin = !isConstruction && function.isHiddenInStackTraces() ? site.calledBuiltin() : BuiltinID(),
     });
     m_frames.append(WTF::move(frame));
@@ -946,7 +968,6 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     BodyBlock entry = body.block(entryBlock);
     for (uint32_t index = 0; index < entryArguments.size() && copyIsReached; ++index)
         bind(entry.parameter(index), entryArguments[index]);
-    // walkTerminator() leaves the walk nowhere, and at a return of the callee it notes the way: Frame::returnsOfCopy.
     for (uint32_t number = 0; number < body.numberOfBlocks() && !m_hasFailed && copyIsReached; ++number)
         walkBlock(BlockID(number));
     m_block = { };
@@ -968,7 +989,6 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         m_block = { };
         m_state.clear();
         continueIn(whereGuardFails);
-        // The frame of the copy is gone: the operation is read in the body of the caller again.
         for (Reference& argument : argumentsAsTheyCame) {
             for (const ClosureMadeForCallAtInlining& closure : closuresMadeForCall) {
                 if (argument != closure.made || isUnreachable())
@@ -988,18 +1008,15 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
         m_state.clear();
     }
 
-    // What the slow version gives comes as the way of a closed arm comes.
     for (size_t index = numberOfReturnsOfCopy; index < returns.size(); ++index)
         returns[index].isLedByClosedArm = true;
 
-    // What the arguments decide may leave no way through the callee that returns, and a callee that returns in place of the unit has ended each. Nothing behind the call is reached.
     if (m_hasFailed || returns.isEmpty()) {
         m_block = { };
         m_state.clear();
         return true;
     }
 
-    // `getObjectFlags(type) & ObjectFlags.Mapped`: what the closed ways through the copy hand back is anything. They walk what is left of the block for themselves, closed and for size, as the ways of closed arms walk a join.
     Vector<ReturnOfCopy*, 4> passing;
     Vector<ReturnOfCopy*, 4> closed;
     for (ReturnOfCopy& returned : returns)
@@ -1022,7 +1039,6 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
             walkEndOfBlockBehind(passing.span());
         m_block = { };
         m_state.clear();
-        // The operations behind the call were walked in the middle of it.
         m_callIsAccountedFor = true;
         m_calleeAccountedFor = callee;
         return true;
@@ -1030,12 +1046,10 @@ bool Walker::walkInline(const BodyValue& call, FunctionID callee, std::span<cons
     return goOnBehindReturnsOfCopy(call, function, linked, heldByCallAlone, originOfCall, returns);
 }
 
-// The caller goes on behind the call with what these ways out of the copy hand back.
 bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& function, const LinkedFunction& linked, const Vector<Reference, 2>& heldByCallAlone, Origin originOfCall, Vector<Frame::ReturnOfCopy, 2>& returns)
 {
     using ReturnOfCopy = Frame::ReturnOfCopy;
 
-    // The caller goes on where the one return stands, with all that holds there: an object that the callee has made is still fresh.
     if (returns.size() == 1 && !returns[0].isUnderHandlerOfCallee) {
         m_block = returns[0].block;
         m_state = WTF::move(returns[0].state);
@@ -1046,7 +1060,6 @@ bool Walker::goOnBehindReturnsOfCopy(const BodyValue& call, const Function& func
         return true;
     }
 
-    // jumpTo() gives the parameter the join of what arrives.
     TypeID type;
     Vector<Representation, 2> forms;
     for (const ReturnOfCopy& returned : returns) {

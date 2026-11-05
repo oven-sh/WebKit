@@ -19,8 +19,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- Which built-ins have code in line
-
 #define AOT_DECLARE_EMITTER_OF_INLINE_BUILTIN_FAMILY(family) class family##Emitter;
 FOR_EACH_AOT_INLINE_BUILTIN_FAMILY(AOT_DECLARE_EMITTER_OF_INLINE_BUILTIN_FAMILY)
 #undef AOT_DECLARE_EMITTER_OF_INLINE_BUILTIN_FAMILY
@@ -42,19 +40,9 @@ static constexpr bool isFamilyWithInlineBuiltinEmitter(InlineBuiltinFamily famil
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// The family has an emitter, and that emitter has no generate<Name>(). The dispatch of InlineBuiltinEmitter can name none of them.
-static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> inlineBuiltinsWithoutGenerator {
-    InlineBuiltin::ArraySplicePrefix,
-    InlineBuiltin::ArrayWithLength, InlineBuiltin::ArrayOf,
-    InlineBuiltin::OwnPropertyDescriptorFields,
-    InlineBuiltin::StringSplitPrefix,
-    InlineBuiltin::RegExpExecPrefix, InlineBuiltin::StringMatchPrefix,
-};
-
-// A row that is formOnly is no operand of CallInline or TryCallInline.
 static constexpr bool hasGeneratorOfInlineBuiltin(InlineBuiltin builtin)
 {
-    return isFamilyWithInlineBuiltinEmitter(familyOf(builtin)) && !isFormOnly(builtin) && !inlineBuiltinsWithoutGenerator.contains(builtin);
+    return isFamilyWithInlineBuiltinEmitter(familyOf(builtin));
 }
 
 bool hasEmitter(InlineBuiltin builtin)
@@ -75,16 +63,11 @@ static_assert(0 FOR_EACH_AOT_INLINE_BUILTIN_IN_INTL_BUILTIN(AOT_COUNT_INLINE_BUI
 static_assert(0 FOR_EACH_AOT_INLINE_BUILTIN_IN_DATE_BUILTIN(AOT_COUNT_INLINE_BUILTIN) == 6, "chooseFormOfDateBuiltin names each member of the family");
 #undef AOT_COUNT_INLINE_BUILTIN
 
-// ---- From a matched call to its form
-
 static bool formOfCallMayBecomeInlineBuiltin(BuiltinCallForm form)
 {
     switch (form) {
     case BuiltinCallForm::Whole:
-    case BuiltinCallForm::List:
         return true;
-    case BuiltinCallForm::Fields:
-    case BuiltinCallForm::Prefix:
     case BuiltinCallForm::AnyReceiver:
         return false;
     }
@@ -109,21 +92,17 @@ static InlineForm chooseFormByFamilyOfInlineBuiltin(const InlineBuiltinQuery& qu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Each emitter that takes boxed values and hands them to a stub or an operation which does all that the function does.
 static bool takesOperandsAsWritten(const InlineBuiltinQuery& query)
 {
     switch (query.builtin) {
     case InlineBuiltin::ObjectHasOwn: {
-        // The stub refuses undefined and null before it converts the key, as Object.hasOwn does. hasOwnProperty converts the key first, and only a key that is an object can tell the two orders apart.
         TypeID key = query.argument(0);
         return !query.overload.receiver || (key && !query.context.types.at(key).hasObjects());
     }
-    // The operation converts what is no object, and leaves undefined and null to the function itself, which refuses them in its own words.
     case InlineBuiltin::OwnPropertyKeys:
     case InlineBuiltin::ObjectValues:
     case InlineBuiltin::ObjectEntries:
         return true;
-    // The code in line makes an object below an object or below null. Whatever else comes it leaves to the function itself, which refuses it in its own words.
     case InlineBuiltin::ObjectCreate:
         return true;
     default:
@@ -139,19 +118,15 @@ InlineForm chooseInlineForm(const InlineBuiltinQuery& query)
         return InlineForm::Call;
 
     InlineForm form = chooseFormByFamilyOfInlineBuiltin(query);
-    // What stands on the miss edge is the CallBuiltin, which has code only where the table names a function to call.
     RELEASE_ASSERT(form != InlineForm::TwoWay || query.hasSlowPath);
     return form;
 }
-
-// ---- Function.prototype, Reflect
 
 static InlineForm chooseFormOfFunctionBind(const InlineBuiltinQuery& query)
 {
     if (!query.hasSlowPath || !query.receiver() || query.numberOfArguments() > 1 + JSBoundFunction::maxEmbeddedArgs)
         return InlineForm::Call;
 
-    // The code in line binds a closure of a compiled function that is as it was created. It misses on every other callable.
     TypeArena& types = query.context.types;
     Type target = types.at(query.receiver());
     bool mayBeClosure = target.traitsOfNamed.contains(ObjectTrait::IsClosure) || mayContainAnyClosure(types, target);
@@ -165,12 +140,10 @@ static bool standsInFunctionBehindCallOfInlineBuiltin(const InlineBuiltinQuery& 
     return entry && entry->function == query.context.writtenIn;
 }
 
-// Bytecode applies in place only where the call is written `f.apply(..)` or, in the library, `f.$apply(..)`. Every other call has a frame of Function.prototype.apply.
 static InlineForm chooseFormOfFunctionApply(const InlineBuiltinQuery& query)
 {
     if (query.isDoneInPlace && query.receiver())
         return InlineForm::Whole;
-    // Call enters the library's Function.prototype.apply, which ends in `this.$apply(..)`. Were that a Call too, the function would enter itself without end.
     RELEASE_ASSERT(!standsInFunctionBehindCallOfInlineBuiltin(query));
     return InlineForm::Call;
 }
@@ -185,7 +158,6 @@ static bool everyArgumentButThisMayBeObjectForReflect(const InlineBuiltinQuery& 
     return true;
 }
 
-// The library's function ends in a tail call of the target, so it has no frame either while the target runs. The code in line misses on whatever the function refuses, and on a list that is no pristine array.
 static InlineForm chooseFormOfReflectApply(const InlineBuiltinQuery& query)
 {
     constexpr unsigned indexOfThisArgument = 1;
@@ -193,7 +165,6 @@ static InlineForm chooseFormOfReflectApply(const InlineBuiltinQuery& query)
     return query.hasSlowPath && takesOperands ? InlineForm::TwoWay : InlineForm::Call;
 }
 
-// Bytecode constructs in place only where the call is written `Reflect.construct(..)`. Every other call has a frame of the host function.
 static InlineForm chooseFormOfReflectConstruct(const InlineBuiltinQuery& query)
 {
     bool takesOperands = (query.numberOfArguments() == 2 || query.numberOfArguments() == 3) && everyArgumentButThisMayBeObjectForReflect(query, std::nullopt);
@@ -214,11 +185,8 @@ InlineForm chooseFormOfFunctionBuiltin(const InlineBuiltinQuery& query)
     return InlineForm::Call;
 }
 
-// ---- Promise
-
 static InlineForm chooseFormOfPromiseResolve(const InlineBuiltinQuery& query)
 {
-    // Without a miss edge the code in line fulfills a new promise with the value and asks nothing of it. Any object may have a `then`.
     if (!query.numberOfArguments() || holdsOnlyPrimitives(query.argument(0)))
         return InlineForm::Whole;
     return query.hasSlowPath ? InlineForm::TwoWay : InlineForm::Call;
@@ -234,8 +202,6 @@ InlineForm chooseFormOfPromiseBuiltin(const InlineBuiltinQuery& query)
     return InlineForm::Call;
 }
 
-// ---- Date
-
 InlineForm chooseFormOfDateBuiltin(const InlineBuiltinQuery& query)
 {
     RELEASE_ASSERT(familyOf(query.builtin) == InlineBuiltinFamily::DateBuiltin);
@@ -245,7 +211,6 @@ InlineForm chooseFormOfDateBuiltin(const InlineBuiltinQuery& query)
     case InlineBuiltin::DateGetMilliseconds:
     case InlineBuiltin::DateSetTime:
         return InlineForm::Whole;
-    // A date whose time value the host has not taken apart misses, and so does an invalid one.
     case InlineBuiltin::DateGetField:
     case InlineBuiltin::DateToISOString:
         return query.hasSlowPath ? InlineForm::TwoWay : InlineForm::Call;
@@ -255,20 +220,14 @@ InlineForm chooseFormOfDateBuiltin(const InlineBuiltinQuery& query)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The host's toJSON reads valueOf by name and, for a valid date alone, toISOString. Each first read adds its member to Date.prototype.
 bool hostReadsMembersFirstIn(const BuiltinTable& table, const BuiltinOverload& overload)
 {
     return table.canonicalID(overload.builtin) == Builtins::DatePrototypeToJSON;
 }
 
-// ---- ArrayBuffer, DataView, Atomics, Buffer
-
-// The code in line takes each operand for what a function below proves it to be. It converts nothing, and what it cannot answer misses.
-
 template<typename Parameter>
 static Parameter parameterOfBufferBuiltin(const InlineBuiltinQuery& query, unsigned index)
 {
-    // The parameters of a row belong to the built-in that implements the whole call.
     const BuiltinImplementation& implementation = query.overload.code.implementation;
     RELEASE_ASSERT(implementation.inlineBuiltin == query.builtin && index < numberOfParametersOf(query.builtin));
     return static_cast<Parameter>(implementation.inlineParameters[index]);
@@ -294,7 +253,6 @@ static bool isInstanceForBufferBuiltin(const InlineBuiltinQuery& query, TypeID t
     return type && !isNeverType(type) && types.isSubset(type, types.builtinClass(builtinClass));
 }
 
-// NotTypedArray unless every value of the type is a typed array, and all of them have elements of one type.
 static TypedArrayType elementsOfViewForBufferBuiltin(const InlineBuiltinQuery& query, TypeID view)
 {
     if (!view || !query.context.types.at(view).isObject())
@@ -313,7 +271,6 @@ static bool storesElementInLineForBufferBuiltin(const InlineBuiltinQuery& query,
     return type.isNumber();
 }
 
-// An offset with a fraction misses, and so does one outside the view. What says which byte comes first may be any value.
 static bool accessesDataViewInLine(const InlineBuiltinQuery& query)
 {
     return parameterOfBufferBuiltin<TypedArrayType>(query, 0) != TypeFloat16
@@ -328,7 +285,6 @@ static bool accessesElementAtomicallyInLine(const InlineBuiltinQuery& query)
     return hasIntegerElements(elementsOfViewForBufferBuiltin(query, query.argument(0))) && hasOnlyNumbersBehindForBufferBuiltin(query, 1);
 }
 
-// A stored number that the bytes cannot hold misses: the function throws. So it does for a DataView, which has no `length`, whatever the offset.
 static bool accessesBufferInLine(const InlineBuiltinQuery& query)
 {
     std::optional<TypedArrayType> elements = elementsMovedBy(parameterOfBufferBuiltin<unsigned>(query, 1), parameterOfBufferBuiltin<NumberKind>(query, 2));
@@ -337,11 +293,9 @@ static bool accessesBufferInLine(const InlineBuiltinQuery& query)
     unsigned numberOfStoredValues = parameterOfBufferBuiltin<AccessDirection>(query, 0) == AccessDirection::Write;
     if (numberOfStoredValues && !storesElementInLineForBufferBuiltin(query, query.argument(0), *elements))
         return false;
-    // Without an offset the access is at the first byte.
     return hasOnlyNumbersBehindForBufferBuiltin(query, numberOfStoredValues);
 }
 
-// Bytes move between typed arrays whose elements have a known width.
 static bool copiesBufferInLine(const InlineBuiltinQuery& query)
 {
     constexpr unsigned mostArgumentsOfCopy = 4;
@@ -355,7 +309,6 @@ static bool copiesBufferInLine(const InlineBuiltinQuery& query)
 InlineForm chooseFormOfBufferBuiltin(const InlineBuiltinQuery& query)
 {
     RELEASE_ASSERT(familyOf(query.builtin) == InlineBuiltinFamily::BufferBuiltin);
-    // No emitter of the family takes its arguments out of a list.
     if (query.form != BuiltinCallForm::Whole)
         return InlineForm::Call;
 
@@ -363,7 +316,6 @@ InlineForm chooseFormOfBufferBuiltin(const InlineBuiltinQuery& query)
         return takesOperands && query.hasSlowPath ? InlineForm::TwoWay : InlineForm::Call;
     };
     switch (query.builtin) {
-    // A view whose length follows its buffer misses. So does a view without bytes: where its buffer is detached the getter throws.
     case InlineBuiltin::DataViewByteLength:
         return twoWayIf(isInstanceForBufferBuiltin(query, query.receiver(), BuiltinClasses::DataView));
     case InlineBuiltin::ArrayBufferByteLength:
@@ -384,25 +336,17 @@ InlineForm chooseFormOfBufferBuiltin(const InlineBuiltinQuery& query)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ---- Error
-
-// The operation does what the constructor does with a message and options, whatever they are, so the code in line never misses.
-// The error lists the frames that it finds, beginning with the function in whose text the call stands. Where that function is left out of stack traces the constructor of the host finds where the list begins.
 InlineForm chooseFormOfErrorBuiltin(const InlineBuiltinQuery& query)
 {
     RELEASE_ASSERT(query.builtin == InlineBuiltin::NewError);
     constexpr unsigned mostArgumentsOfNewError = 2;
     if (query.form != BuiltinCallForm::Whole || query.isHiddenInStackTraces || query.numberOfArguments() > mostArgumentsOfNewError)
         return InlineForm::Call;
-    // The constructor of AggregateError takes the errors in front of the message.
     const BuiltinImplementation& implementation = query.overload.code.implementation;
     RELEASE_ASSERT(implementation.inlineBuiltin == query.builtin);
     return static_cast<ErrorKind>(implementation.inlineParameters[0]) == ErrorKind::AggregateError ? InlineForm::Call : InlineForm::Whole;
 }
 
-// ---- Intl
-
-// The operation misses on a receiver that is no formatter as the realm makes them, and on a time value that is no time: the function throws.
 InlineForm chooseFormOfIntlBuiltin(const InlineBuiltinQuery& query)
 {
     RELEASE_ASSERT(familyOf(query.builtin) == InlineBuiltinFamily::IntlBuiltin);
@@ -415,7 +359,6 @@ InlineForm chooseFormOfIntlBuiltin(const InlineBuiltinQuery& query)
     switch (query.builtin) {
     case InlineBuiltin::FormatNumber:
         return isNumber ? InlineForm::TwoWay : InlineForm::Call;
-    // The row takes a date that finds the conversions of the engine, which answer its time value.
     case InlineBuiltin::FormatDateTime: {
         bool isDate = !isNeverType(formatted) && types.isSubset(formatted, types.builtinClass(BuiltinClasses::Date));
         return isNumber || isDate ? InlineForm::TwoWay : InlineForm::Call;

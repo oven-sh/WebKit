@@ -31,7 +31,6 @@ ALWAYS_INLINE const ProgramTables& programTables()
     return Image::current()->programTables();
 }
 
-// A closure says its closure number. What the collector and the calls ask of it goes by that number. Whoever wants the function asks the tables once more, out of line.
 JS_EXPORT_PRIVATE uint32_t closureNumberOf(FunctionID);
 JS_EXPORT_PRIVATE FunctionID closureFunctionWithNumber(uint32_t);
 inline FunctionID functionOfClosureWord(uint64_t word) { return closureFunctionWithNumber(ClosureWord::closureNumberOf(word)); }
@@ -52,7 +51,6 @@ ALWAYS_INLINE CaptureCounts captureCountsOf(FunctionID function)
 
 unsigned functionLengthOf(FunctionID);
 FunctionID sourceFunctionOf(FunctionID);
-const BoundFunctionData& boundFunctionData(FunctionID);
 
 constexpr ClosureWord::Flags closureWordFlags(FunctionKindData kind)
 {
@@ -66,9 +64,9 @@ struct FunctionTables {
     static FunctionTables& createFor(VM&);
     explicit FunctionTables(VM&);
 
-    enum class ExecutableKind : uint8_t { NotConstructible, Constructible, Class, BoundClosure };
-    static constexpr unsigned numberOfExecutables = 4;
-    static_assert(static_cast<unsigned>(ExecutableKind::BoundClosure) + 1 == numberOfExecutables);
+    enum class ExecutableKind : uint8_t { NotConstructible, Constructible, Class };
+    static constexpr unsigned numberOfExecutables = 3;
+    static_assert(static_cast<unsigned>(ExecutableKind::Class) + 1 == numberOfExecutables);
 
     static constexpr ExecutableKind executableKind(FunctionKindData kind)
     {
@@ -80,13 +78,10 @@ struct FunctionTables {
         case CallableKind::Arrow:
         case CallableKind::Method:
             return ExecutableKind::NotConstructible;
-        case CallableKind::Bound:
-            return ExecutableKind::BoundClosure;
         }
         RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
     }
     static constexpr bool canConstruct(FunctionKindData kind) { return executableKind(kind) == ExecutableKind::Constructible || executableKind(kind) == ExecutableKind::Class; }
-    // JavaScriptCore creates a built-in function written in JavaScript without a prototype property (JSFunction::mayHaveNonReifiedPrototype), and the definition of a class adds one.
     static constexpr bool hasPrototypePropertyAtCreation(FunctionKindData kind)
     {
         if (kind.isConstructor)
@@ -99,10 +94,8 @@ struct FunctionTables {
 
     using TextsByFunction = UncheckedKeyHashMap<FunctionID, Weak<JSString>>;
 
-    // By closure number.
     const uint64_t* words;
     std::array<Strong<JSCell>, numberOfExecutables> executables;
-    // The built-in functions of a realm are created before its ClosureTable. Until the table visits the Structures of those closures, nothing else keeps them alive.
     Vector<Strong<Structure>> closureStructuresWithoutTable;
     TextsByFunction sourceTexts;
 };

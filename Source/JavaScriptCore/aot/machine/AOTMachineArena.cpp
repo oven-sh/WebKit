@@ -22,9 +22,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// Under ASAN the free bytes of the current chunk are poisoned, and m_end marks where the poison begins rather than where the chunk ends.
 // Every allocate() therefore falls through to allocateSlow(), which unpoisons the bytes it hands out.
-// Takes the free bytes that are not poisoned yet and returns the new m_end.
 static ALWAYS_INLINE uintptr_t poisonFreeMachineArenaBytes([[maybe_unused]] uintptr_t begin, uintptr_t end)
 {
 #if ASAN_ENABLED
@@ -106,7 +104,6 @@ void Arena::reset()
     if (!m_chunk)
         return;
 
-    // A chunk is at least twice the size of the one before it, so the newest is the largest.
     for (Chunk* chunk = std::exchange(m_chunk->previous, nullptr); chunk;) {
         ASSERT(chunk->size < m_chunk->size);
         Chunk* previous = chunk->previous;

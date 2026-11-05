@@ -30,7 +30,6 @@ inline LType machineTypeOf(Representation representation)
     case Representation::OptionalInt64:
     case Representation::Cell:
     case Representation::JSValue:
-    case Representation::LiteralString:
     case Representation::RawWord:
         return Machine::Int64;
     case Representation::Double:
@@ -42,7 +41,6 @@ inline LType machineTypeOf(Representation representation)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The allocator keeps the pointer beside a narrow reference that lives across a safepoint. A constant is one of the markers and names no cell.
 inline void markAsNarrowReference(LValue value)
 {
     if (value && !value->isConstant())
@@ -78,7 +76,6 @@ using OptionalNumber = Lowered<Representation::OptionalDouble>;
 using CellPointer = Lowered<Representation::Cell>;
 using NarrowReference = Lowered<Representation::Cell32>;
 using Boxed = Lowered<Representation::JSValue>;
-using LiteralStringWord = Lowered<Representation::LiteralString>;
 using Pointer = Lowered<Representation::RawWord>;
 
 template<typename T> struct ImmediateOfLowered;
@@ -142,7 +139,6 @@ public:
         return takeResult();
     }
 
-    // Every way to the continuation passes the fork, and every block between them has been filled.
     Operand finishBehind(const ScopeFork& fork)
     {
         m_out.appendToJoin(m_continuation, fork);

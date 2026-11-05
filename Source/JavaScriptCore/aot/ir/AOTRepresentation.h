@@ -10,44 +10,108 @@
 #include "AOTOpcode.h"
 #include "AOTSchemaEnums.h"
 #include "AOTType.h"
+#include "AOTTypeArena.h"
+#include <array>
 #include <span>
+#include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 using RepresentationSet = EnumeratorBitSet<Representation, numberOfEnumerators<Representation>>;
 
-// In which form a value of the type is kept when it is built. A pure function of the proven type. An expected type never chooses a form:
-//   never, or one of undefined, null, absent alone    Void
-//   booleans                                           Boolean
-//   integers                                           Int32 inside Range::int32(), else Int64
-//   numbers                                            Double
-//   numbers beside undefined, null, absent             OptionalInt64 without doubles, else OptionalDouble
-//   literal strings, the same markers beside them      LiteralString
-//   strings, symbols, BigInts and objects alone        Cell
-//   an environment, an opaque value                    by its kind; JSValue for a cell beside a marker
-//   everything else                                    JSValue
-// Unspecified takes the form of the rest of the type. Cell32 is never the answer, and RawWord only for an opaque value whose kind is a raw word: otherwise a slot or an operation asks for them.
+inline constexpr uint16_t representedMarkerPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
+
+struct RepresentableSet {
+    uint16_t primitives { 0 };
+    Range integers { Range::empty() };
+    bool hasObjects { false };
+};
+
+constexpr RepresentableSet representableSetOf(Representation representation)
+{
+    switch (representation) {
+    case Representation::Unchosen:
+    case Representation::Void:
+    case Representation::RawWord:
+        return { };
+    case Representation::Boolean:
+        return { Primitive::Boolean };
+    case Representation::Int32:
+        return { Primitive::Integer, Range::int32() };
+    case Representation::Int64:
+        return { Primitive::Integer, Range::full() };
+    case Representation::Double:
+        return { Primitive::Number, Range::full() };
+    case Representation::OptionalInt64:
+        return { Primitive::Integer | representedMarkerPrimitives, Range::full() };
+    case Representation::OptionalDouble:
+        return { Primitive::Number | representedMarkerPrimitives, Range::full() };
+    case Representation::Cell:
+        return { cellPrimitives, Range::empty(), true };
+    case Representation::Cell32:
+        return { cellPrimitives | representedMarkerPrimitives, Range::empty(), true };
+    case Representation::JSValue:
+        return { Primitive::Defined & ~Primitive::Unspecified, Range::full(), true };
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
+inline constexpr std::array<RepresentableSet, numberOfEnumerators<Representation>> representableSetsByRepresentation = []() consteval {
+    std::array<RepresentableSet, numberOfEnumerators<Representation>> sets { };
+    for (Representation representation : allMembersOf<Representation>)
+        sets[static_cast<unsigned>(representation)] = representableSetOf(representation);
+    return sets;
+}();
+
+constexpr bool isSingleMarker(uint16_t primitives)
+{
+    return !(primitives & ~representedMarkerPrimitives) && hasOneBitSet(primitives);
+}
+
 Representation representationOf(const Type&);
-// Without a table for a type of primitives alone.
 Representation representationOf(TypeReader, TypeID);
 Representation representationOf(OpaqueKind);
 Representation representationOf(SlotRepresentation);
 Representation loadedRepresentationOf(SlotRepresentation, const Type& loaded);
-bool isLegalRepresentation(const Type&, Representation);
-// Without a table for a type of primitives alone.
-bool isLegalRepresentation(TypeReader, TypeID, Representation);
-// A join's parameter: the form its united type allows, unless every argument already has one other form that is legal for that type.
+bool isLegalRepresentationOfInternalValue(const Type&, Representation);
+inline bool isLegalRepresentation(const Type& type, Representation representation)
+{
+    if (representation == Representation::Unchosen)
+        return false;
+    if (type.opaque || type.environment) [[unlikely]]
+        return isLegalRepresentationOfInternalValue(type, representation);
+    uint16_t primitives = static_cast<uint16_t>(type.primitives & ~Primitive::Unspecified);
+    bool hasObjects = type.hasObjects();
+    if (!primitives && !hasObjects)
+        return true;
+    if (representation == Representation::Void)
+        return !hasObjects && isSingleMarker(primitives);
+    const RepresentableSet& set = representableSetsByRepresentation[static_cast<unsigned>(representation)];
+    if (primitives & ~set.primitives)
+        return false;
+    if (!type.integers.isSubsetOf(set.integers))
+        return false;
+    return set.hasObjects || !hasObjects;
+}
+inline bool isLegalRepresentation(TypeReader types, TypeID id, Representation representation)
+{
+    if (!holdsOnlyPrimitives(id))
+        return isLegalRepresentation(types.recordOf(id), representation);
+    if (representation == Representation::Unchosen)
+        return false;
+    uint16_t primitives = static_cast<uint16_t>(primitivesInID(id) & ~Primitive::Unspecified);
+    if (!primitives)
+        return true;
+    if (representation == Representation::Void)
+        return isSingleMarker(primitives);
+    const RepresentableSet& set = representableSetsByRepresentation[static_cast<unsigned>(representation)];
+    return !(primitives & ~set.primitives) && integersInID(id).isSubsetOf(set.integers);
+}
 Representation representationOfJoin(const Type& united, std::span<const Representation> arguments);
 SlotRepresentation defaultSlotRepresentationOf(const Type&);
-// Without seeds. One of TypeTable's constants or a type of primitives alone, so it needs no arena. Never for Unchosen, Void and RawWord.
 TypeID widestTypeOf(Representation);
-// The representation in which an operand of the kind is handed to its operation: wantsOf(kind). Integer: Int32 where the operand's type fits, else Int64. A kind that names an opaque kind: representationOf() of that opaque kind.
-// Declared and Convertible, which the schema leaves open: the operand's own representation. Where Plan gave the position one, representationStoredInSlot(), representationOfArgument() and the like in walk/AOTRepresentationRules.h say it.
-// An operand whose type is opaque keeps the representation of its kind, unless it is a cell under Declared, Convertible or EvalOperand.
 Representation representationWantedBy(OperandKind, const Type& operand);
 
-// A Double holds one NaN. Whoever reads a double out of raw bytes makes it that one: there is no form for any other.
-// At the read, or for an element of a view in front of the first reader that could tell: CodeGenerator::settleNaNOf().
 constexpr bool holdsCells(Representation representation) { return holdsCellsOf(representation); }
 
 } } } // namespace JSC::AOT::Typed

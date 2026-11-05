@@ -36,7 +36,6 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// The default words allow code from disk. A program that is meant to be closed, or to be opened by the text that it evaluates and nothing else, refuses it.
 constexpr ASCIILiteral noCodeFromDiskWord = "exclude=CodeOutsideImage"_s;
 
 constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
@@ -317,7 +316,6 @@ static void testUnseenCodeWithoutForeignCalls()
     AOT_TEST_CHECK(headerOf(*compileOpenProgram()).code.ffiCodeSize);
     std::unique_ptr<CompileOutput> output = compileProgram(evaluatesText, { noCodeFromDiskWord, "exclude=ForeignCallsOfUnseenCode"_s });
     AOT_TEST_CHECK(!headerOf(*output).code.ffiCodeSize && headerOf(*output).has(ImageFlag::AdmitsUnknownJavaScript) && !headerOf(*output).has(ImageFlag::AdmitsLibraryText));
-    // Whoever has the modules of the library has bun:ffi.
     std::unique_ptr<CompileOutput> withLibrary = compileProgram(importsModuleOutsideImage, { "exclude=ForeignCallsOfUnseenCode"_s });
     AOT_TEST_CHECK(headerOf(*withLibrary).code.ffiCodeSize && headerOf(*withLibrary).has(ImageFlag::AdmitsLibraryText));
     AOT_TEST_CHECK(headerOf(*compileEmptyProgram({ "admit=Inspector"_s, "exclude=ForeignCallsOfUnseenCode"_s })).code.ffiCodeSize);

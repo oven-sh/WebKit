@@ -36,7 +36,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// The code in line converts nothing and tests only what each case below leaves open. An operand that is not proven to be what its emitter reads leaves the call to the function, which converts by itself.
 class PrimitiveFormChooser {
 public:
     explicit PrimitiveFormChooser(const InlineBuiltinQuery& query)
@@ -50,9 +49,7 @@ public:
     InlineForm regExpForm() const;
 
 private:
-    // The arms of MathBuiltinEmitter::generateMathHypot().
     static constexpr unsigned mostOperandsOfHypot = 3;
-    // One call of the stub joins three strings.
     static constexpr unsigned mostStringsConcatenatedToReceiver = 2;
 
     static InlineForm wholeIf(bool takesOperands) { return takesOperands ? InlineForm::Whole : InlineForm::Call; }
@@ -95,7 +92,6 @@ private:
 
 } // anonymous namespace
 
-// `end?: number`: the code in line asks whether the operand is undefined.
 bool PrimitiveFormChooser::isNumberOrUndefinedIfPassed(TypeID type) const
 {
     if (!type)
@@ -104,7 +100,6 @@ bool PrimitiveFormChooser::isNumberOrUndefinedIfPassed(TypeID type) const
     return !passed.isNever() && passed.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
 }
 
-// String(symbol) describes the symbol. The conversion in line, which is that of a concatenation, throws.
 bool PrimitiveFormChooser::convertsAsConcatenationDoes(TypeID type) const
 {
     return isValue(type) && m_types.at(type).hasOnlyPrimitives(Primitive::AnyString | Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull | Primitive::BigInt);
@@ -125,7 +120,6 @@ InlineForm PrimitiveFormChooser::numberConstructorForm() const
         return InlineForm::Call;
     if (isString(argument(0)) || isNumber(argument(0)))
         return InlineForm::Whole;
-    // A cell that is no string misses.
     return twoWayIf(true);
 }
 
@@ -139,14 +133,12 @@ InlineForm PrimitiveFormChooser::numberToStringForm() const
     Type radixType = m_types.at(radix);
     if (!radixType.isInt32())
         return InlineForm::Call;
-    // The function throws for any other radix.
     return radixType.integers.isSubsetOf({ 2, 36 }) ? InlineForm::Whole : twoWayIf(true);
 }
 
 InlineForm PrimitiveFormChooser::mathForm() const
 {
     switch (m_query.builtin) {
-    // isNaN(undefined) is true: the code in line takes a number as it is and converts nothing.
     case InlineBuiltin::IsNaN:
     case InlineBuiltin::IsFinite:
     case InlineBuiltin::MathAbs:
@@ -172,7 +164,6 @@ InlineForm PrimitiveFormChooser::mathForm() const
         return wholeIf(isInt32(argument(0)) && isInt32(argument(1)));
     case InlineBuiltin::MathClz32:
         return wholeIf(isInt32(argument(0)));
-    // Number.isNaN(undefined) is false: the code in line asks whether the operand is a number.
     case InlineBuiltin::NumberIsNaN:
     case InlineBuiltin::NumberIsFinite:
     case InlineBuiltin::NumberIsInteger:
@@ -180,13 +171,9 @@ InlineForm PrimitiveFormChooser::mathForm() const
         return wholeIf(isValue(argument(0)));
     case InlineBuiltin::MathRandom:
         return InlineForm::Whole;
-    case InlineBuiltin::MathMinOfArray:
-    case InlineBuiltin::MathMaxOfArray:
-        return twoWayIf(m_query.form == BuiltinCallForm::List && numberOfArguments() == 1 && isInstanceOf(argument(0), BuiltinClasses::Array));
     case InlineBuiltin::CallNumberConstructor:
         return numberConstructorForm();
     case InlineBuiltin::ParseInt:
-        // A rope misses.
         return twoWayIf(isString(argument(0)) && (!argument(1) || isInt32(argument(1))));
     case InlineBuiltin::NumberToString:
         return numberToStringForm();
@@ -226,7 +213,6 @@ InlineForm PrimitiveFormChooser::utf8ByteLengthForm() const
         return InlineForm::Whole;
     if (!isValue(encoding))
         return InlineForm::Call;
-    // Only a string names an encoding. Where the operand may be one, the code in line asks, and a string misses.
     if (namesUTF8(encoding) || !(m_types.at(encoding).primitives & Primitive::AnyString))
         return InlineForm::Whole;
     return twoWayIf(true);
@@ -262,32 +248,24 @@ InlineForm PrimitiveFormChooser::stringForm() const
     case InlineBuiltin::StringTrimStart:
     case InlineBuiltin::StringTrimEnd:
         return wholeIf(isString(receiver()) && !numberOfArguments());
-    // With a locale or options the function makes a collator of its own.
     case InlineBuiltin::StringLocaleCompare:
         return wholeIf(isString(receiver()) && isString(argument(0)) && numberOfArguments() == 1);
     case InlineBuiltin::StringConcat:
         return wholeIf(isString(receiver()) && numberOfArguments() && numberOfArguments() <= mostStringsConcatenatedToReceiver && hasOnlyStringArguments());
     case InlineBuiltin::StringUTF8ByteLength:
         return utf8ByteLengthForm();
-    // Whatever is no integer that one code unit holds misses, so nobody has to know that the operand is one.
     case InlineBuiltin::StringFromCodePoint:
         return twoWayIf(numberOfArguments() == 1 && isValue(argument(0)) && m_types.at(argument(0)).primitives & Primitive::Number);
-    // A negative count misses, and so does a result that the function makes as a rope.
     case InlineBuiltin::StringRepeat:
         return twoWayIf(isString(receiver()) && isNumber(argument(0)));
     case InlineBuiltin::StringPadStart:
     case InlineBuiltin::StringPadEnd:
         return twoWayIf(isString(receiver()) && isNumber(argument(0)) && (numberOfArguments() < 2 || isString(argument(1))));
-    // A string with 16-bit units misses.
     case InlineBuiltin::StringIsWellFormed:
     case InlineBuiltin::StringToWellFormed:
         return twoWayIf(isString(receiver()));
-    // Only in the form NFC, which the function takes where none is named, does every unit below 256 stand for itself.
     case InlineBuiltin::StringNormalize:
         return twoWayIf(isString(receiver()) && !numberOfArguments());
-    // trySimplifySplit() makes the pieces that are read. StringBuiltinEmitter generates nothing for it.
-    case InlineBuiltin::StringSplitPrefix:
-        return InlineForm::Call;
     FOR_EACH_AOT_INLINE_BUILTIN_IN_MATH_BUILTIN(AOT_CASE_IN_FORMS_OF_PRIMITIVES)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_REG_EXP_BUILTIN(AOT_CASE_IN_FORMS_OF_PRIMITIVES)
     FOR_EACH_AOT_INLINE_BUILTIN_OUTSIDE_FORMS_OF_PRIMITIVES(AOT_CASE_IN_FORMS_OF_PRIMITIVES)
@@ -296,7 +274,6 @@ InlineForm PrimitiveFormChooser::stringForm() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The parameters of a row belong to the built-in that implements the whole call.
 std::optional<SearchValueKind> PrimitiveFormChooser::searchValueKind() const
 {
     const BuiltinImplementation& implementation = m_query.overload.code.implementation;
@@ -323,7 +300,6 @@ bool PrimitiveFormChooser::replacesInLine() const
 {
     if (!isString(receiver()) || !isSearchValue(argument(0)))
         return false;
-    // Behind a string the code in line takes a text alone. Behind a RegExp it asks what it was given.
     return searchValueKind() == SearchValueKind::String ? isString(argument(1)) : isValue(argument(1));
 }
 
@@ -341,11 +317,9 @@ InlineForm PrimitiveFormChooser::splitForm() const
         return InlineForm::Whole;
     if (!limitType.isInt32())
         return InlineForm::Call;
-    // A negative limit wraps round to a large one, which misses.
     return limitType.integers.minimum < 0 ? twoWayIf(true) : InlineForm::Whole;
 }
 
-// The flags become a word of the code, so the type has to name their text.
 bool PrimitiveFormChooser::namesValidRegExpFlags(TypeID type) const
 {
     StringID text = singleStringLiteralOf(m_types.at(type));
@@ -378,10 +352,6 @@ InlineForm PrimitiveFormChooser::regExpForm() const
         return splitForm();
     case InlineBuiltin::NewRegExp:
         return wholeIf(isString(argument(0)) && (!argument(1) || namesValidRegExpFlags(argument(1))));
-    // RegExpBuiltinEmitter generates nothing for these.
-    case InlineBuiltin::RegExpExecPrefix:
-    case InlineBuiltin::StringMatchPrefix:
-        return InlineForm::Call;
     FOR_EACH_AOT_INLINE_BUILTIN_IN_MATH_BUILTIN(AOT_CASE_IN_FORMS_OF_PRIMITIVES)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_STRING_BUILTIN(AOT_CASE_IN_FORMS_OF_PRIMITIVES)
     FOR_EACH_AOT_INLINE_BUILTIN_OUTSIDE_FORMS_OF_PRIMITIVES(AOT_CASE_IN_FORMS_OF_PRIMITIVES)

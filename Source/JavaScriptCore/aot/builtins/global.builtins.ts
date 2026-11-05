@@ -84,7 +84,6 @@ export default b.declarations(
     },
   ]),
 
-  // JSGlobalObject::init() asks an option before it puts each of these on the global object: useExplicitResourceManagement, useSharedArrayBuffer, useTemporal, useWasm.
   [
     "AsyncDisposableStack",
     "DisposableStack",
@@ -93,7 +92,6 @@ export default b.declarations(
     "Temporal",
     "WebAssembly",
   ].flatMap(path => b.extend(path, { marks: ["MayBeAbsent"] })),
-  // And each of these on its holder: useIteratorSequencing, useJointIteration, useIteratorChunking, useJSPI.
   [
     "Iterator.concat",
     "Iterator.zip",
@@ -104,7 +102,6 @@ export default b.declarations(
     "WebAssembly.Suspending",
     "WebAssembly.SuspendError",
   ].flatMap(path => b.extend(path, { marks: ["MayBeAbsent"] })),
-  // JSWebAssembly::finishCreation() adds these two only if the host's method table has the hook.
   ["WebAssembly.compileStreaming", "WebAssembly.instantiateStreaming"].flatMap(path =>
     b.extend(path, { marks: ["MayBeAbsent"] }),
   ),

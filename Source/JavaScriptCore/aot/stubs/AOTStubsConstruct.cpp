@@ -60,7 +60,6 @@ static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GP
     case ConstructSyntax::NewExpression:
         break;
     case ConstructSyntax::SuperCall:
-        // The operation makes the error itself, so that its stack begins at the class that was constructed.
         loadConstructorClassInfo(jit, callee, scratch);
         jit.loadRuntimePointer(Entry::ErrorConstructorClassInfo, function);
         genericPath.append(jit.branchPtr(CCallHelpers::Equal, scratch, function));
@@ -74,7 +73,6 @@ static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GP
     genericPath.append(jit.branchPtr(CCallHelpers::Equal, function, scratch));
 }
 
-// A frame with few arguments lies where those of CallHostFunction and CallInternalFunction lie: in the part of the stack that is kept for native functions, untested.
 [[nodiscard]] static JumpList checkHostFrameCapacity(StubAssembler& jit, GPRReg count, GPRReg scratch)
 {
     JumpList overflowsStack;
@@ -105,10 +103,8 @@ static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax,
     jit.call(function, HostFunctionPtrTag);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
     jit.loadPtr(Address(exception, VM::exceptionOffset()), exception);
-    // Compiled code takes what super() answers for an object. A native function may answer `new` with a primitive.
     JumpList madeNoObject;
     if (syntax == ConstructSyntax::SuperCall) {
-        // The empty value, which a function that throws answers with, has no tag bits.
         static_assert(!JSValue::ValueEmpty);
         madeNoObject.append(jit.branchTest64(CCallHelpers::Zero, GPRInfo::returnValueGPR));
         madeNoObject.append(jit.branchIfNotCell(GPRInfo::returnValueGPR));
@@ -128,7 +124,6 @@ static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax,
     jit.tailCallOperation(Entry::operationAOTThrowBecauseParentMadeNoObject, OperationCall::FirstArgument::Instance);
 }
 
-// The operands are those of the operation: the callee, new.target, the number of arguments and where they lie. A constructor of the engine or the host is entered from here.
 static void emitConstructFrontEnd(StubAssembler& jit, ConstructSyntax syntax, Entry rawOperation)
 {
     const GPRReg callee = jit.clobberOperand(0);
@@ -159,7 +154,6 @@ StubSignature signatureOfSuperConstructFrontEnd(StubKey) { return operationFront
 void generateConstructFrontEnd(StubAssembler& jit) { emitConstructFrontEnd(jit, ConstructSyntax::NewExpression, Entry::RawConstruct); }
 void generateSuperConstructFrontEnd(StubAssembler& jit) { emitConstructFrontEnd(jit, ConstructSyntax::SuperCall, Entry::RawSuperConstruct); }
 
-// A function whose Structure is remembered has its `prototype` property at the remembered place, and an object found there is the answer.
 static void loadRememberedPrototypeProperty(StubAssembler& jit, GPRReg function, GPRReg structureID, GPRReg place, GPRReg offset, GPRReg prototype, JumpList& isNotRemembered)
 {
     static_assert(sizeof(PlaceOfPrototypeProperty) == sizeof(uint64_t) && !(numberOfPlacesOfPrototypeProperties & (numberOfPlacesOfPrototypeProperties - 1)));
@@ -190,10 +184,8 @@ static void loadRememberedPrototypeProperty(StubAssembler& jit, GPRReg function,
     isLoaded.link(&jit);
 }
 
-// What the operation does first.
 PreludeExit emitGetConstructPrototypePrelude(StubAssembler& jit)
 {
-    // A call that preserves registers has none to look with.
     if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
 
@@ -212,10 +204,8 @@ PreludeExit emitGetConstructPrototypePrelude(StubAssembler& jit)
     return PreludeExit::CallsOperation;
 }
 
-// As InternalFunction::createSubclassStructure() where new.target has been constructed before: its rare data names the Structure until its `prototype` changes.
 PreludeExit emitCreatePromisePrelude(StubAssembler& jit)
 {
-    // A call that preserves registers has none to look with.
     if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
 
@@ -259,10 +249,8 @@ PreludeExit emitCreatePromisePrelude(StubAssembler& jit)
     return PreludeExit::CallsOperation;
 }
 
-// Where `super.name` begins to look: above the home object, which is the operand or the prototype property of the class object that is the operand.
 PreludeExit emitGetSuperBasePrelude(StubAssembler& jit)
 {
-    // An operation that is called in tail position answers the caller of the stub in the register of its result.
     StubFamily family = jit.key().family();
     bool isTailCall = family == StubFamily::TailCallOperation;
     bool preservesRegisters = family == StubFamily::CallOperationPreservingRegisters;
@@ -278,7 +266,6 @@ PreludeExit emitGetSuperBasePrelude(StubAssembler& jit)
     JumpList callsOperation;
     callsOperation.append(jit.branchIfNotCell(home));
     if (preservesRegisters) {
-        // Only the register of the result is free. That is enough where the operand is the home object.
         callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, homeKind));
         jit.move(home, homeObject);
     } else {

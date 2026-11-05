@@ -106,6 +106,7 @@ struct UnexpectedDiagnostics {
             return;
         seen.append(name);
         appendFailure(failures, run, run.line, "unexpected diagnostic "_s, nameOf(name), ": "_s, message);
+        failures.last().isInternalError = std::holds_alternative<InternalErrorKind>(name);
     }
 };
 
@@ -150,7 +151,6 @@ static void compareStatistics(const TestFile& file, const RunDirective& run, con
     }
 }
 
-// `verify` prints what the verifiers find, and `print` shows programs that they refuse.
 static bool takesUnverifiedProgram(const TestCommand& command)
 {
     return command.name == "verify"_s || command.name == "print"_s;
@@ -199,8 +199,7 @@ static String runCommand(const TestCommand& command, const TestFile& file, const
     return out.toStringWithLatin1Fallback();
 }
 
-// False: the run asks for a mechanism that the process withholds. Its lines say what that mechanism does, so it is left out, as a file is whose REQUIRES does not hold.
-static bool runOneDirective(const TestFile& file, const RunDirective& run, const Wire::CompileOptions& options, std::optional<Mechanisms> mechanismsAskedFor, const TestVariant& variant, Vector<TestFailure>& failures, Vector<RunOutput>* outputs)
+static bool runOneDirective(const TestFile& file, const RunDirective& run, const Wire::CompileOptions& optionsOfFile, std::optional<Mechanisms> mechanismsAskedFor, const TestVariant& variant, Vector<TestFailure>& failures, Vector<RunOutput>* outputs)
 {
     const TestCommand* command = findTestCommand(run.command);
     if (!command) {
@@ -217,6 +216,20 @@ static bool runOneDirective(const TestFile& file, const RunDirective& run, const
         if (!mechanismsOfProcess().containsAll(*mechanismsAskedFor))
             return false;
         words.mechanisms = *mechanismsAskedFor;
+    }
+    Wire::CompileOptions options = optionsOfFile;
+    std::optional<String> sentenceOfTestingWord;
+    words.arguments.removeAllMatching([&](const String& word) {
+        if (!word.startsWith("testing="_s))
+            return false;
+        std::optional<String> sentence = applyOptionWord(options, word);
+        if (sentence && !sentenceOfTestingWord)
+            sentenceOfTestingWord = WTF::move(sentence);
+        return true;
+    });
+    if (sentenceOfTestingWord) {
+        failures.append(TestFailure { run.line, WTF::move(*sentenceOfTestingWord) });
+        return true;
     }
 
     runOnBuildThread([&] {
@@ -239,8 +252,6 @@ static bool runOneDirective(const TestFile& file, const RunDirective& run, const
     return true;
 }
 
-// EVERY PROGRAM OF THE SUITE IS ASKED WHETHER LINK'S FLOW ENDS CLOSED, whatever else its file asks: the command `closure`, which prints nothing where it does.
-// A text that is no program, or one that the verifiers refuse, never comes to Link.
 static void reportBreachesOfClosure(const TestFile& file, const Wire::CompileOptions& options, Vector<TestFailure>& failures)
 {
     const TestCommand* command = findTestCommand("closure"_s);
@@ -257,7 +268,6 @@ static void reportBreachesOfClosure(const TestFile& file, const Wire::CompileOpt
     });
 }
 
-// AND WHETHER LINK'S TABLES ARE THE SAME IN EVERY ORDER OF THE WORKLIST: what `link` prints, held against what it prints with each of the other orders.
 static void reportTablesThatHangOnOrder(const TestFile& file, const Wire::CompileOptions& options, Vector<TestFailure>& failures)
 {
     const TestCommand* command = findTestCommand("link"_s);
@@ -293,7 +303,6 @@ static void reportTablesThatHangOnOrder(const TestFile& file, const Wire::Compil
             return;
         }
     }
-    // Where mechanisms are withheld the tables claim less, and may well agree.
     if (file.hangsOnOrder && mechanismsOfProcess() == allMechanisms)
         failures.append(TestFailure { file.hangsOnOrder->line, "Link's tables are the same in every order of the worklist: remove the HANGS-ON-ORDER line"_s });
 }
@@ -302,7 +311,6 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
 {
     TestFile file = parseTestFile(WTF::move(text), hostArchitecture(), folder);
     if (variant.onlyDiagnostic) {
-        // The plain run of the file says what is wrong with its directives, and a file that plants the cause of the diagnostic has nothing to show here.
         bool expectsDiagnostic = file.diagnostics.containsIf([&](const ExpectedDiagnostic& expected) {
             return expected.kind == *variant.onlyDiagnostic;
         });
@@ -335,7 +343,7 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
         g_jscConfig.options = optionsOfProcess;
     });
     for (const OptionWord& option : file.jscOptions) {
-        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), /* verify = */ false))
+        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), false))
             failures.append(TestFailure { option.line, makeString("unknown JSC option "_s, option.word) });
     }
     if (!failures.isEmpty())
@@ -381,7 +389,6 @@ struct FileResult {
 
 static constexpr ASCIILiteral todoLineStart = "TODO "_s;
 
-// A stream that collects text cuts a very long string short.
 static void printLineByLine(PrintStream& out, StringView text)
 {
     constexpr size_t leastLengthOfPiece = 1 << 20;
@@ -402,7 +409,7 @@ static FileResult runOneFileInThisProcess(const String& path, const TestRunReque
     Vector<TestFailure> failures = runOneFile(path, request.showsOutput ? &outputs : nullptr, request.variant, &todo);
 
     bool isPlainRun = request.variant.optionWords.isEmpty() && !request.variant.onlyDiagnostic;
-    bool isOwed = todo && !failures.isEmpty();
+    bool isOwed = todo && !failures.isEmpty() && !failures.containsIf([](const TestFailure& failure) { return failure.isInternalError; });
     if (todo && failures.isEmpty() && isPlainRun)
         failures.append(TestFailure { todo->line, "passes: remove the TODO line"_s });
 
@@ -469,7 +476,6 @@ static void count(TestRunSummary& summary, FileOutcome outcome)
     }
 }
 
-// "<passed> passed, <failed> failed, <todo> todo": the last line of a run.
 static std::optional<TestRunSummary> parseSummaryLine(StringView line)
 {
     TestRunSummary summary;
@@ -493,7 +499,6 @@ static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher,
     ChildProcessResult result = launcher.run(childArguments(singleElementSpan(path), request).span());
 
     StringView output = result.output;
-    // A run that has come to its end says so in its last line. A sanitizer ends the process with the code of a failed run, and no line of its report names the file.
     size_t summaryStart = startOfLastLines(output, 1);
     std::optional<TestRunSummary> summary = parseSummaryLine(output.substring(summaryStart));
     bool hasComeToItsEnd = summary && summary->passed + summary->failed + summary->todo == 1;
@@ -507,8 +512,6 @@ static FileResult runOneFileInChildProcess(const ChildProcessLauncher& launcher,
     return { FileOutcome::Failed, makeString(lastLines, lineEnd, "FAIL "_s, path, ":1: "_s, result.description(), '\n') };
 }
 
-// Starting a process costs more than most tests, so a child runs several files. A child that crashes or hangs says nothing about
-// the files it did not reach: each file of its batch then runs in a process of its own.
 static constexpr unsigned filesPerChildProcess = 16;
 
 static BatchResult runFilesInChildProcesses(const ChildProcessLauncher& launcher, std::span<const String> paths, const TestRunRequest& request)

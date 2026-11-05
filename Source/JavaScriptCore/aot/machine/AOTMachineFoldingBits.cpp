@@ -18,7 +18,6 @@
 namespace JSC { namespace AOT { namespace Machine {
 
 static constexpr int64_t bitFoldLowWord = 0xffffffffll;
-// Two of them add up without overflow.
 static constexpr int bitFoldLeastCostOfLowWord = std::numeric_limits<int>::min() / 2;
 
 static int32_t bitFoldWidth(Type type)
@@ -27,7 +26,6 @@ static int32_t bitFoldWidth(Type type)
     return type == Int32 ? 32 : 64;
 }
 
-// Holds every bit that is set in some value of the operation. An Int32 is read as its sign extension.
 static uint64_t bitFoldPossibleBits(const Operation* value)
 {
     if (isBoolean(value))
@@ -52,7 +50,6 @@ static bool bitFoldIsSignExtended(const Operation* value, unsigned fromBits)
     return IntegerRange { -limit, limit - 1 }.contains(rangeOf(value));
 }
 
-// A mask that needs a register of its own costs more than the shift it would replace.
 static Operation* bitFoldMaskWithImmediate(Builder& builder, Type type, Operation* value, uint64_t mask)
 {
     int64_t bits = type == Int32 ? static_cast<int32_t>(mask) : static_cast<int64_t>(mask);
@@ -145,7 +142,6 @@ static Operation* foldMachineBitXor(Builder& builder, Type type, Operation* left
     if (!bits)
         return left;
 
-    // A comparison of numbers and its opposite are both false of NaN, so it has no inverse.
     Opcode leftOpcode = left->opcode();
     if (bits == 1 && isComparison(leftOpcode) && leftOpcode != EqualOrUnordered && left->child(0)->type().isInt())
         return builder.binary(invertedComparison(leftOpcode), left->child(0), left->child(1));
@@ -172,7 +168,6 @@ static int64_t bitFoldShiftConstant(Opcode opcode, Type type, int64_t value, int
     return value >> amount;
 }
 
-// `inner` is a shift by a constant, and `amount` lies between 1 and the width less 1.
 static Operation* foldMachineShiftOfShift(Builder& builder, Opcode opcode, Type type, Operation* inner, int32_t amount)
 {
     int32_t width = bitFoldWidth(type);
@@ -216,7 +211,6 @@ static Operation* foldMachineShift(Builder& builder, Opcode opcode, Type type, O
     if (value->isInt(0) || (opcode == SShr && value->isInt(-1)))
         return value;
 
-    // The machine reads the low five or six bits of an amount.
     int32_t amountMask = bitFoldWidth(type) - 1;
     if (!amountOperand->hasInt32()) {
         if (amountOperand->opcode() == BitAnd && amountOperand->child(1)->hasInt32() && (amountOperand->child(1)->asInt32() & amountMask) == amountMask)
@@ -329,8 +323,6 @@ static Operation* foldMachineZeroExtension32(Builder& builder, Operation* operan
     return nullptr;
 }
 
-// Trunc(ZShr(Add(cage base, Shl(ZExt32 r, s)), s)) is r only because of where the cage lies, and the base is a register that says nothing of it. It stays.
-// So does the Trunc of a sum of extensions. A sum that is tested for int32 is read whole as well: made of low words it would be added twice, and memoryUpdateOf() would not know the test.
 static Operation* foldMachineTruncation(Builder& builder, Operation* operand)
 {
     if (operand->hasInt64())
@@ -349,7 +341,6 @@ static Operation* foldMachineTruncation(Builder& builder, Operation* operand)
     return nullptr;
 }
 
-// How many of its children, counted from the first, an Int64 reads the low words of, and nothing more, to make its own low word.
 static unsigned bitFoldNumberOfLowWordsRead(const Operation* wide)
 {
     Opcode opcode = wide->opcode();
@@ -357,15 +348,11 @@ static unsigned bitFoldNumberOfLowWordsRead(const Operation* wide)
         return 2;
     if (opcode == Neg)
         return 1;
-    // A shift of 32 bits reads its amount modulo 32.
     if (opcode == Shl && wide->child(1)->hasInt32() && !(wide->child(1)->asInt32() & ~31))
         return 1;
     return 0;
 }
 
-// Answers for each operation below the root that is asked about, operands first, and then for the root. The answers for all but the root are left in `answers`.
-// `x = (x + a) + (x - b)` names x twice, and forty such lines lead to the first x in 2^40 ways: an operation is asked about once, however many ways lead to it.
-// A chain of sums can be long, so this does not recurse.
 template<typename Answer, typename IsAskedAbout, typename AnswerFor>
 static Answer bitFoldAnswerOperandsFirst(Operation* root, UncheckedKeyHashMap<Operation*, Answer>& answers, const IsAskedAbout& isAskedAbout, const AnswerFor& answerFor)
 {
@@ -392,8 +379,6 @@ static Answer bitFoldAnswerOperandsFirst(Operation* root, UncheckedKeyHashMap<Op
     }
 }
 
-// `((h << 5) - h + c) | 0`. Every rewrite holds modulo 2^32, whatever the operands are.
-// Nothing has read the Int64 on account of this request, so where nothing else reads it the scan drops it, and the extensions with it.
 Operation* foldLowWord(Builder& builder, Operation* root)
 {
     ASSERT(root->type() == Int64);
@@ -403,8 +388,6 @@ Operation* foldLowWord(Builder& builder, Operation* root)
     if (!readsLowWords(root))
         return nullptr;
 
-    // How many operations more the low word takes when it is made of low words than when the Int64 is made and cut. A Trunc of an operand is one more, an extension that nothing asks for is one fewer.
-    // Where that gains nothing the Int64 is made and cut, which is one Trunc.
     UncheckedKeyHashMap<Operation*, int> costs;
     auto costOf = [&](Operation* wide) {
         Opcode opcode = wide->opcode();
@@ -500,7 +483,6 @@ Operation* foldConversion(Builder& builder, Opcode opcode, Type result, Operatio
     if (opcode == DoubleToFloat) {
         if (operand->hasDouble())
             return builder.constFloat(static_cast<float>(operand->asDouble()));
-        // The two instructions would quiet a signaling NaN. JavaScript leaves the bits of a NaN to the implementation.
         if (operand->opcode() == FloatToDouble)
             return operand->child(0);
         return nullptr;

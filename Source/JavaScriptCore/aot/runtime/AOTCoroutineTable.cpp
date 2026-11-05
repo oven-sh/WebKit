@@ -109,7 +109,6 @@ template void CoroutineTable::visitRoots(SlotVisitor&);
 
 size_t CoroutineTable::removeDeadEntries(VM&, CollectionScope)
 {
-    // A dead word goes back onto the stack with the frame. There it must not name the next tenant of a cell that this collection frees.
     const uint64_t replacement = 0;
     for (ListOfVisitedFrames& list : m_visitedFramesWithDeadWords) {
         Locker locker { list.lock };
@@ -169,7 +168,6 @@ SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, c
     uint64_t siteWord = machineFrame.words->siteWord;
     size_t numberOfWords = machineFrame.numberOfWords();
     RELEASE_ASSERT(clearedWordsOf(siteWord) <= numberOfWords);
-    // What an earlier call left at their addresses would be kept, and every resumption would put it back on the stack.
     std::ranges::fill(std::span { const_cast<uint64_t*>(machineFrame.firstSavedWord()), clearedWordsOf(siteWord) }, 0);
     return create(vm, instance, kind, numberOfWords, savedRegistersOrPairsOf(siteWord), skippedAtBottomOf(siteWord));
 }
@@ -229,7 +227,6 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
 std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) const
 {
     const Image* image = Image::current();
-    // The byte before a return address is in the calling function. The return address itself may start the next one.
     CodeLocation where = image->locate(static_cast<const uint8_t*>(m_resumeAddress) - 1);
     if (where.kind != CodeKind::Function)
         return std::nullopt;
@@ -301,7 +298,6 @@ void SavedFrame::setCombinatorElement(VM& vm, JSCell* globalContext, uint32_t in
     vm.writeBarrier(this);
 }
 
-// For a function that waits for a settled result of a call. A synchronous module load resumes the body of a module before it returns.
 void SavedFrame::queueResumeJob(JSGlobalObject* globalObject, VM& vm, JSValue resolution, bool isRejected, JSValue asyncContext)
 {
     auto status = static_cast<uint8_t>(isRejected ? JSPromise::Status::Rejected : JSPromise::Status::Fulfilled);
@@ -321,7 +317,6 @@ void SavedFrame::settle(JSGlobalObject* globalObject, VM& vm, JSValue value, boo
         waiter->queueResumeJob(globalObject, vm, value, isRejected, JSValue::decode(waiter->m_asyncContext));
         return;
     }
-    // The job that the promise of the function would queue, had Promise.all been given one.
     case Continuation::CombinatorElement:
         globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, status, m_promiseOrWaiter, value, jsNumber(combinatorIndex()));
         return;
@@ -433,7 +428,6 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
         m_state = State::Completed;
         return { };
     }
-    // A body that suspended again has left through the suspension stub, which stores SuspendedAtYield.
     bool isDone = m_state == State::Running;
     if (isDone)
         m_state = State::Completed;

@@ -36,7 +36,6 @@ public:
         RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(value <= largestIndex);
     }
 
-    // For whoever keeps numbers in words of its own.
     static constexpr ID fromBits(uint32_t bits)
     {
         ID id;

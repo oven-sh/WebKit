@@ -127,7 +127,6 @@ const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* 
     return m_recordPlans.last().plan.get();
 }
 
-// A form that comes once is not worth a plan. Its first object stays ordinary, which any object may, and the plan is looked for when the form comes again.
 NEVER_INLINE JSONRuntime::RecordPlan JSONRuntime::findRecordPlan(VM& vm, Structure* ordinaryStructure)
 {
     if (!m_recordPlanCache)
@@ -204,7 +203,6 @@ ALWAYS_INLINE uint8_t* JSONRuntime::beginIn(uint8_t* start, void* stackPointer, 
 ALWAYS_INLINE uint8_t* JSONRuntime::begin(void* stackPointer, size_t length)
 {
     ASSERT(stackPointer);
-    // Compiled code that ends a source by itself leaves the lists, and so does a source that nobody has ended.
     m_wideText = nullptr;
     uint8_t* start = reserve(length + jsonSourcePadding);
     if (!start) [[unlikely]]
@@ -309,7 +307,6 @@ static bool appendPlainCharacters(const JSONWords& words, StringBuilder& builder
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// JSON.parse() keeps a string of over JSONCache's atomized length in the width of its source.
 static JSString* tryMakeJSONStringOfWideSource(const JSONWords& words, VM& vm, std::span<const uint8_t> latin1)
 {
     if (words.sourceEncoding == JSONSourceEncoding::UTF16)
@@ -396,7 +393,6 @@ NEVER_INLINE ParsedJSONString makeUncachedJSONString(Instance& instance, VM& vm,
     JSString* string = vm.jsonCache().tryMakeJSString(vm, std::span<const Latin1Character> { byteCast<Latin1Character>(start), byteCast<Latin1Character>(cursor) });
     if (!string) [[unlikely]]
         return { jsEmptyString(vm) };
-    // Only a source that is no Latin-1 text asks, so only there is it worth finding out.
     bool textIsASCII = words.sourceEncoding != JSONSourceEncoding::Latin1 && charactersAreAllASCII(std::span<const uint8_t> { start, cursor });
     vm.jsonCache().addString(std::span<const Latin1Character> { byteCast<Latin1Character>(start - 1), jsonSourcePadding }, cursor + 2 - start, string, textIsASCII);
     return { string, cursor + 1 };
@@ -453,7 +449,6 @@ ParsedJSONValue JSONValueParser::parseValue(Cursor cursor)
     cursor = skipWhitespace(cursor);
     switch (*cursor) {
     case '"':
-        // "$", " ", ",": one plain ASCII character between the quotes is a string that the engine keeps.
         if (cursor[2] == '"' && cursor[1] - 0x20u < 0x60u && cursor[1] != '"' && cursor[1] != '\\')
             return { m_vm.smallStrings.singleCharacterString(cursor[1]), cursor + 3 };
         return parseString(cursor);
@@ -503,12 +498,10 @@ void JSONValueParser::NamesOfElementInFront::note(const JSONWords& words, unsign
 {
     if (index > count || index == capacity)
         return;
-    // What stood behind this name went on from another Structure.
     count = index;
     size_t length = next.value - quote;
     if (length > maxTextLength)
         return;
-    // One byte of the source stands for every character that is no Latin-1: equal bytes are not equal names.
     if (words.sourceEncoding != JSONSourceEncoding::Latin1 && !isShortTextLatin1AfterDecoding(quote, length))
         return;
     static_assert(maxTextLength <= jsonSourcePadding);
@@ -716,7 +709,6 @@ auto JSONValueParser::parseNameAndColon(const uint8_t* quote) -> ParsedName
         StringImpl* impl = decoded.string->tryGetValueImpl();
         if (!impl)
             return { };
-        // The table of atoms narrows characters that it is given. A string that it is given becomes the atom as it is.
         parsed.name = impl->is8Bit() ? Identifier::fromString(m_vm, String { impl }) : Identifier::fromString(m_vm, impl->span16());
         end = decoded.end;
     }
@@ -766,7 +758,6 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseArray(Cursor bracket)
     } else {
         size_t base = m_elements.size();
         NamesOfElementInFront inFront;
-        // The first object has no element in front. `["$", "td", null, { .. }]` has one object and no more: its names are looked for among those of the objects parsed last.
         bool hasObjectInFront = false;
         for (;;) {
             ParsedJSONValue parsed;

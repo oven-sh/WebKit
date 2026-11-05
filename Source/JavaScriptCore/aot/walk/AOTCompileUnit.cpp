@@ -50,10 +50,11 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .testsEveryPosition = AOT::hasFlag(options.testing, Wire::TestingSwitch::TestsEveryPosition),
         .takesPositionsToLieInside = AOT::hasFlag(options.testing, Wire::TestingSwitch::PositionsAreTakenToLieInside),
         .writesBodiesStraight = AOT::hasFlag(options.testing, Wire::TestingSwitch::WritesBodiesStraight),
+        .checksEffects = AOT::hasFlag(options.testing, Wire::TestingSwitch::CheckEffectsAtRunTime),
+        .rowThatSaysLess = options.rowThatSaysLess,
     };
 }
 
-// The key words that hold a TypeID or a PropertyKeyID, the ids that a TypeArena makes. Every other word is a program, Facts or Plan id, or plain content.
 static std::span<const uint32_t> arenaIDsInUnitMentionKey(NumberSpace space, std::span<const uint32_t> key)
 {
     switch (space) {
@@ -89,7 +90,6 @@ static std::span<const uint32_t> arenaIDsInUnitMentionKey(NumberSpace space, std
     case NumberSpace::ClassRank:
     case NumberSpace::ClosureFunction:
     case NumberSpace::ClosureCell:
-    case NumberSpace::Function:
     case NumberSpace::Allocation:
     case NumberSpace::Request:
     case NumberSpace::AtomOfComparedText:
@@ -107,7 +107,6 @@ static bool unitMentionsThreadArenaID(const CodeBody& body)
     for (const Mention& mention : body.mentions) {
         std::span<const uint32_t> key = AOT::keyOf(mention, body.mentionWords.span());
         for (uint32_t word : arenaIDsInUnitMentionKey(mention.space, key)) {
-            // TypeID and PropertyKeyID share one encoding, so one check covers both.
             if (liesInThread(TypeID::fromBits(word)))
                 return true;
         }
@@ -141,14 +140,12 @@ static bool verifyCodeOfCompileUnit(const WalkInputs& inputs, BuildContext& buil
     return false;
 }
 
-// The operations of the other units stand at no place that the program wrote.
 static bool notesAreTakenOfCompileUnit(CodeRole role)
 {
     switch (role) {
     case CodeRole::Body:
     case CodeRole::CoroutineBody:
         return true;
-    // Whoever reads the notes of a function reads those of its fast version.
     case CodeRole::SlowBody:
     case CodeRole::ParameterGuard:
     case CodeRole::GenericCallEntry:
@@ -234,7 +231,34 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
     return true;
 }
 
-// A body that runs at most once, without a loop, gains nothing from a walk where each of its operations does the same work whatever is known of its operands. No report, check or kind of build has a word in it.
+// Straight code stores without a look: Walker::holdStoresToSymbolsOfPlaces().
+static bool storesIntoPlaceWhoseTypeNamesSymbol(const WalkInputs& inputs, const BodyIndex& index)
+{
+    static constexpr OpcodeSet storesIntoPlaces { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::NewObject };
+    if (!index.opcodes().intersects(storesIntoPlaces))
+        return false;
+    const LinkTables& linked = inputs.facts.linked();
+    TypeReader types(inputs.program);
+    auto namesSymbol = [&](const LinkedCell* cell) {
+        return cell && cell->everyWriterIsKnown && cell->proven && !holdsOnlyPrimitives(cell->proven) && (types.at(cell->proven).primitives & Primitive::LiteralSymbol);
+    };
+    bool found = false;
+    index.body().forEachBlock([&](BodyBlock block) {
+        for (BodyValue value : block.values()) {
+            if (value.opcode() == Opcode::PutModuleVariable) {
+                uint32_t variable = value.variable().index();
+                found |= variable < linked.variables.size() && namesSymbol(&linked.variables[variable]);
+            } else if (value.opcode() == Opcode::PutEnvironmentField)
+                found |= namesSymbol(linked.findCellOfField({ value.layout(), value.field() }));
+            else if (value.opcode() == Opcode::NewObject && value.layout() && inputs.program.at(value.layout()).kind == LayoutKind::Environment) {
+                for (FieldIndex field : value.as<Opcode::NewObject>().fields())
+                    found |= namesSymbol(linked.findCellOfField({ value.layout(), field }));
+            }
+        }
+    });
+    return found;
+}
+
 static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputOperationsThatHandOn | OpcodeSet {
@@ -242,16 +266,15 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
         Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::TypeTest, Opcode::ThrowModuleFailure, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::RequireModule,
         Opcode::NewClosure, Opcode::NewRegExp, Opcode::NewClass, Opcode::NewClassToken, Opcode::ResolveHeritage, Opcode::DefineMethod, Opcode::FinishClass,
     };
-    if (unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body)
+    if ((unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body) || inputs.facts.isTakenToRunOnce(unit.function))
         return false;
     if (inputs.options.writesBodiesStraight)
         return true;
-    // What a guard turns away was expected by nobody. Whether straight code has a form for the call of a built-in hangs on the build's table of built-ins, which a test run fills otherwise than an executable: the two make the same code.
     if (unit.role != CodeRole::Body)
-        return !index.opcodes().contains(Opcode::Builtin);
+        return !index.opcodes().contains(Opcode::Builtin) && !storesIntoPlaceWhoseTypeNamesSymbol(inputs, index);
     if (!inputs.facts.runsAtMostOnce(unit.function) && !inputs.program.at(unit.function).isModuleBody())
         return false;
-    return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper;
+    return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper && !storesIntoPlaceWhoseTypeNamesSymbol(inputs, index);
 }
 
 std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
@@ -266,7 +289,6 @@ std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
         m_arena->reset();
         return std::nullopt;
     }
-    // AOTArrivals.h: every call that may enter a function leaves something.
     if (const LinkTables& linked = m_inputs.walk.facts.linked(); !linked.calls.isEmpty()) {
         static const OpcodeSet opcodesThatMayRunOtherCode = opcodesWhere([](Opcode opcode) {
             return declaredBoundInTable(opcode).mayRunOtherCode() || operandsMayRunCode(opcode);
@@ -321,8 +343,6 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
     statistics.count(StatisticID::UnitsCompiled);
     if (unit.role == CodeRole::Serializer)
         statistics.count(StatisticID::SerializersCreated);
-    if (uint32_t selected = m_walker->numberOfTypedResultsSelected())
-        statistics.count(StatisticID::TypedResultsSelected, selected);
     if (uint32_t slices = m_walker->numberOfSlicesMadeOfElementsInSight())
         statistics.count(StatisticID::SlicesMadeOfElementsInSight, slices);
     for (const Walker::CountOfUnit& count : m_walker->countsOfUnit())

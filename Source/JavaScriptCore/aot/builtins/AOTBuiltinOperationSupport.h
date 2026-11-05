@@ -24,18 +24,15 @@ class Structure;
 namespace AOT {
 
 inline constexpr size_t oneDigitBigIntSize = roundUpToMultipleOf<MarkedBlock::atomSize>(JSBigInt::allocationSize(1));
-// Above this length the radix sort of the engine beats an insertion sort.
 inline constexpr unsigned maxLengthOfInsertionSortedArray = 64;
 
 JSValue callInEngine(Instance*, BuiltinID function, JSValue first, JSValue second = JSValue(), JSValue third = JSValue());
 JSValue callMethodInEngine(Instance*, BuiltinID function, JSValue receiver, JSValue first = JSValue(), JSValue second = JSValue());
 JSValue callMethodInEngine(Instance*, BuiltinID function, JSValue receiver, const ArgList&);
-// `new Constructor(argument)`, with the constructor as new.target.
 JSValue constructInEngine(Instance*, BuiltinID constructor, JSValue argument);
 
 void markPristineIfOriginal(Instance&, JSObject*);
 
-// AOTBuiltinArrayOperations.cpp. The text of a list whose conversion nobody can watch, by the run time's own join, which keeps nothing for each place. Null, with or without an exception: ask the engine.
 JSString* tryConvertListToString(JSGlobalObject*, JSArray*);
 
 void prepareFinalObjectAllocation(Instance*, InlineAllocation, Structure*);

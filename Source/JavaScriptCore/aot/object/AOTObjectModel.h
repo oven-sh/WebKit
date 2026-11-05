@@ -57,7 +57,6 @@ public:
     bool objectHasType(const RuntimeType&, JSCell*) const;
     bool cellPassesTest(const RuntimeCellTest&, JSCell*) const;
     bool shapeHasType(const RuntimeType&, uint32_t shape) const;
-    // Only the engine stores a brand. What it stores is a class token, which is no JavaScript value, so no type describes it.
     bool fieldAccepts(const FieldData& field, JSValue value) const { return field.isBrand() || valueHasType(typeOf(field), value); }
     bool slotAdmits(const FieldData& field, JSValue value) const
     {
@@ -68,7 +67,6 @@ public:
     std::optional<AcceptedValue> accept(const FieldData&, JSValue) const;
     bool passes(const ShapeTestData& test, uint32_t shape) const { return m_tables.passes(test, shape); }
     Object* compiledObject(JSValue) const;
-    // A layout or a function that a type lists is of this instance. Another realm that runs the image has objects of the same shapes and closures of the same numbers.
     bool isOfThisRealm(const JSCell*) const;
 
     bool hasSymbolKey(const FieldData&) const;
@@ -88,11 +86,9 @@ private:
     State& m_state;
     const ProgramTables& m_tables;
     CachedField* m_cachedFields { nullptr };
-    // By the index of a layout plus one: where each name of a wide layout lies among its fields, made at the first lookup of a name without a column.
     UncheckedKeyHashMap<uint32_t, Vector<uint16_t>> m_fieldsByName;
 };
 
-// The table and the records of the allocation sites name Structures and keep none of them alive through a full collection: the objects do that.
 class StructureTable {
     WTF_MAKE_NONCOPYABLE(StructureTable);
 public:
@@ -113,8 +109,6 @@ public:
     CompiledStructure* withKeyOrderOfOneObject(VM&, const CompiledStructure&, std::span<const uint16_t> entries, std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder);
     CompiledStructure* withNumberedKeyOrder(VM&, const CompiledStructure&);
 
-    // Where an object went that was given a field or lost one and found no numbered order for its keys: from the Structure and the order word that said its keys to those that say them now.
-    // The first such object walks the numbered orders and searches the held ones. The next one with the same keys takes the same step.
     struct StepOfKeyOrder {
         StructureID before;
         uint32_t orderAndCountBefore;
@@ -127,10 +121,8 @@ public:
     void rememberStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep, StructureID after, uint32_t orderAndCountAfter);
 
     JSCell* allocate(VM&, uint32_t allocation);
-    // An object has its header, its order word and its shape word, as behind the stub, and zeros behind them.
     JSCell* allocateAsCompiledCodeDoes(VM&, uint32_t allocation);
     AllocationSiteRecord& fillAllocationSite(VM&, uint32_t allocation);
-    // A site that had no class object to take a prototype from predicts the first one that its operation named.
     void predictStructure(VM&, uint32_t allocation, CompiledStructure*);
     std::optional<StructureID> structureIDOf(uint32_t allocation) const;
     void forgetStructuresOf(const LayoutData& classLayout);
@@ -145,7 +137,6 @@ private:
     static constexpr unsigned structuresRegionShift = 6;
     static constexpr unsigned recordsRegionShift = 8;
 
-    // What compiled code takes for a LocalAllocator: it has no room and no next interval.
     struct AllocatorWithoutRoom {
         uint8_t bytesBeforeFreeList[LocalAllocator::offsetOfFreeList()];
         FreeList freeList { 0 };
@@ -164,9 +155,7 @@ private:
     CompiledStructure* find(const Variant&) const;
     CompiledStructure* findOrCreate(VM&, const Variant&);
     static Variant variantOf(const CompiledStructure&);
-    // For a Structure that differs in something else than the key order.
     static Variant variantWithKeyOrderOf(const CompiledStructure&);
-    // No table lists such a Structure.
     static bool belongsToOneObject(const Variant& variant) { return variant.heldExtraProperties || variant.keysNamedByOrder; }
     static bool isListed(const Variant& variant) { return !belongsToOneObject(variant) && variant.isFoundByKeyOrder; }
 
@@ -182,18 +171,14 @@ private:
     const ProgramTables& m_tables;
     EnvironmentShapes m_environmentShapes;
     uint32_t* m_structures { nullptr };
-    // Each shape once, whether or not its entry in m_structures is still set.
     Vector<uint32_t> m_shapesWithStructure;
     BitVector m_shapeHasStructure;
     uint32_t m_numberOfAllocationSiteRecords { 0 };
     AllocatorWithoutRoom m_allocatorWithoutRoom { };
-    // No cell has them. Every other Structure of a compiled object starts as a copy of one: the second is for objects with another prototype than their layout's.
     std::array<CompiledStructure*, 2> m_templateStructures { };
     std::unique_ptr<VariantMaps> m_variants;
     using StepsOfKeyOrders = std::array<StepOfKeyOrder, 4096>;
-    // Of the newer of two steps.
     static size_t placeOfStep(StructureID before, uint32_t orderAndCountBefore, uint32_t fieldAndKind) { return ((before.bits() >> 4 ^ orderAndCountBefore * 0x9e3779b1u ^ fieldAndKind * 0x85ebca6bu) * 0x9e3779b1u) >> 20 & ~static_cast<size_t>(1); }
-    // Made by the first step that is remembered. A collection forgets them all.
     std::unique_ptr<StepsOfKeyOrders> m_stepsOfKeyOrders;
     RememberedSlotSet m_writtenStructures;
     RememberedSlotSet m_writtenRecords;
@@ -216,7 +201,6 @@ struct ObjectModel {
 
 inline const FieldData* Object::fieldNamed(State& state, PropertyName name) const
 {
-    // Whoever has a state at hand passes it to save the way to it.
     return state.objects->layouts.field(*state.instance.vm, layout(), name.uid());
 }
 

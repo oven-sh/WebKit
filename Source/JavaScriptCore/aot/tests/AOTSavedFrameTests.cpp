@@ -414,7 +414,6 @@ static void testSkippedWordsInSiteWord()
         uint32_t deadWordsAtBottom;
         uint32_t skippedAtBottom;
     };
-    // The number of words kept stays even.
     static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 28, 28 }, { 29, 28 }, { 30, 30 }, { 31, 30 }, { 32, 32 }, { 126, 126 }, { 127, 126 }, { 128, 128 }, { 252, 252 }, { 253, 252 }, { 254, 254 }, { 255, 254 }, { 256, 256 }, { 4098, 4098 }, { maxLocation, maxLocation - 1 } };
     for (const Case& testCase : cases) {
         for (uint32_t promiseLocation : { 0u, 1u, maxLocation }) {
@@ -561,7 +560,6 @@ static FunctionWithMap findFunctionWithMap(const Image& image)
 
     std::span<const uint32_t> words = image.frameMapWords(*found);
     AOT_TEST_CHECK(SavedFrameMap::tryCreate(words, 0)->numberOfWords() == words.size());
-    // The frames are made up, and the map of the compiled function does not list what is live in them.
     overwriteWordInImage(words[0], words[0] & ~SavedFrameMap::listsEveryLiveWordBit);
     std::optional<SavedFrameMap> map = SavedFrameMap::tryCreate(words, 0);
     AOT_TEST_CHECK(map && narrowReferencesOf(*map).isEmpty() && !map->listsEveryLiveWord());
@@ -622,7 +620,6 @@ static void checkWordsAfterCollection(LoadedProgram& program, HandMadeFrame& fra
         AOT_TEST_CHECK(vm.heap.isMarked(std::bit_cast<JSCell*>(frame.wordAt(location))));
     }
 
-    // A word that the map does not list stays as it was saved, and keeps nothing alive.
     unsigned numberOfDeadCells = 0;
     for (uint32_t location : frame.candidateLocations) {
         numberOfDeadCells += !hasSurvivedCollection(vm, std::bit_cast<JSCell*>(frame.wordAt(location)));
@@ -651,7 +648,6 @@ static void checkUnlistedWordIsNoRoot(LoadedProgram& program)
     checkWordsAfterCollection(program, frame, *saved, listedInFrame);
 }
 
-// The map of the compiled function, made to say that these words are live and hold no reference, and that every other word is dead.
 static void listOtherLiveWordsInMapOf(uint32_t function, const Vector<uint32_t>& locations)
 {
     std::span<const uint32_t> words = Image::current()->frameMapWords(function);
@@ -665,7 +661,6 @@ static void listOtherLiveWordsInMapOf(uint32_t function, const Vector<uint32_t>&
     AOT_TEST_CHECK(map.listsEveryLiveWord() && valuesOf(map).isEmpty() && narrowReferencesOf(map).isEmpty() && otherLiveWordsOf(map) == locations);
 }
 
-// Two integers that share a word read as the address of a cell where the upper one is the upper half of such addresses.
 static void checkLiveWordThatReadsAsADeadCellIsKept(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -690,7 +685,6 @@ static void checkLiveWordThatReadsAsADeadCellIsKept(LoadedProgram& program)
         AOT_TEST_CHECK(saved->wordAt(location) == 0u);
 }
 
-// The map of the compiled function, made to list other words of the frame.
 static void listValuesInMapOf(uint32_t function, const Vector<uint32_t>& locations)
 {
     std::span<const uint32_t> words = Image::current()->frameMapWords(function);
@@ -733,7 +727,6 @@ static void checkSkippedWords(LoadedProgram& program)
             AOT_TEST_CHECK(frame.locationOfLiveCell == frame.lastKeptLocation());
             AOT_TEST_CHECK(*reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(saved) + SavedFrame::offsetOfWords()) == frame.wordAt(frame.lastKeptLocation()));
 
-            // The next round changes the map, and a word that it lists may name a dead cell in this frame.
             saved->willBeRestoredToStack();
         }
     }
@@ -835,7 +828,6 @@ static void checkDeadWordsAreOverwrittenAtACollection(LoadedProgram& program)
         for (CollectionScope scope : { CollectionScope::Full, CollectionScope::Eden, CollectionScope::Full }) {
             saved->save(vm, machineFrame, SuspensionKind::Await);
             checkWords(*saved, false);
-            // An Eden collection marks nothing where nothing was allocated since the last collection.
             constructEmptyObject(program.realm());
             vm.heap.collectSync(scope);
             AOT_TEST_CHECK(vm.heap.isMarked(saved) && !saved->isOnStack());
@@ -854,7 +846,6 @@ static void checkDeadWordsAreOverwrittenAtACollection(LoadedProgram& program)
         vm.heap.collectSync(CollectionScope::Full);
         checkWords(*saved, false);
     }
-    // Four values are last read between the two awaits.
     AOT_TEST_CHECK(numbersOfLiveWords.size() == 2 && numbersOfLiveWords[0] >= numbersOfLiveWords[1] + 4);
 }
 
@@ -931,10 +922,8 @@ static NEVER_INLINE void fillDeadStack()
 static JSC_DECLARE_HOST_FUNCTION(readSaveAreaAboveResumedCaller);
 JSC_DEFINE_HOST_FUNCTION(readSaveAreaAboveResumedCaller, (JSGlobalObject*, CallFrame* callFrame))
 {
-    // The call behind the first await is the one with arguments.
     if (!callFrame->argumentCount())
         return JSValue::encode(jsNumber(1));
-    // The adapter's is the first frame above that holds the instance in its place.
     constexpr ptrdiff_t instanceWord = AdapterFrame::offsetOfInstance / static_cast<ptrdiff_t>(sizeof(uint64_t));
     auto* frameOfAdapter = reinterpret_cast<const uint64_t*>(callFrame);
     unsigned numberOfFrames = 0;
@@ -988,7 +977,6 @@ static String describeCodeAddress(const void* address)
 }
 
 #if CPU(X86_64)
-// These are written in C++, and the compiler may leave a word of a frame as padding.
 static bool isInJobFunction(const void* code)
 {
     static constexpr size_t largestJobFunction = 4 * KB;
@@ -1009,7 +997,6 @@ JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* 
     unsigned numberOfUnwrittenWords = 0;
     [[maybe_unused]] unsigned numberOfPaddingWords = 0;
     while (*reinterpret_cast<const uint64_t* const*>(frame) != frameOfJobCaller) {
-        // The words between two frame records belong to the caller, and the callee returns into it.
         auto* frameOfCaller = *reinterpret_cast<const uint64_t* const*>(frame);
         for (auto* word = frame + 2; word < frameOfCaller; ++word) {
             if (*word != wordOfDeadStack)
@@ -1026,7 +1013,6 @@ JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* 
     if (numberOfUnwrittenWords)
         dataLogLn(numberOfUnwrittenWords, " unwritten words in ", numberOfFrames, " frames");
 #if CPU(ARM64)
-    // Registers are saved in pairs: a frame that saves an odd number of them has a word of padding.
     AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);
 #else
     if (readsFramesOfJobLoop)
@@ -1047,7 +1033,6 @@ static NEVER_INLINE void runJobOverFilledStack(JSGlobalObject* realm, VM& vm, co
     runInternalMicrotask(realm, vm, job.job(), job.payload(), arguments[0], arguments[1], arguments[2], arguments[3]);
 }
 
-// A garbage collection reads every word of every frame. The job's own frame is gone when compiled code runs, and the frames on the way in write all of their words.
 static void checkFramesBetweenJobAndCompiledCodeAreWritten(LoadedProgram& program)
 {
 #if HAVE(MUST_TAIL_CALL) && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !ASAN_ENABLED
@@ -1092,7 +1077,6 @@ static NEVER_INLINE void drainOverFilledStack(VM& vm)
     vm.drainMicrotasks();
 }
 
-// The job loop's frame stays while jobs run. A task that only a rare path of the loop dequeues is five words: with room for it in that frame, most drains would leave them unwritten.
 static void checkJobLoopWritesItsFrame(LoadedProgram& program)
 {
 #if HAVE(MUST_TAIL_CALL) && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !ASAN_ENABLED
@@ -1160,7 +1144,6 @@ static const uint64_t* frameOfCollectionCaller;
 static const Thread* threadOfCollectionCaller;
 static unsigned numberOfCollectionsRead;
 
-// Runs while the collection marks. What lies below callWithCurrentThreadState() is not scanned.
 static NEVER_INLINE void readFramesThatCollectionScans()
 {
     if (!frameOfCollectionCaller || &Thread::currentSingleton() != threadOfCollectionCaller)
@@ -1188,7 +1171,6 @@ static NEVER_INLINE void readFramesThatCollectionScans()
     }
     if (numberOfUnwrittenWords)
         dataLogLn(numberOfUnwrittenWords, " unwritten words in ", numberOfFrames, " frames");
-    // The compiler may leave a word of a frame as padding.
     AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);
     ++numberOfCollectionsRead;
 }
@@ -1198,7 +1180,6 @@ static NEVER_INLINE void collectOverFilledStack(VM& vm)
     NO_TAIL_CALLS();
     frameOfCollectionCaller = static_cast<const uint64_t*>(__builtin_frame_address(0));
     threadOfCollectionCaller = &Thread::currentSingleton();
-    // As Heap::collectForExhaustedCage() collects. Nothing runs between the fill and the frames that are looked at.
     vm.heap.collector().willCollectWithoutHelpers();
     fillDeadStack();
     vm.heap.collectNow(Sync, CollectionScope::Full);
@@ -1206,11 +1187,8 @@ static NEVER_INLINE void collectOverFilledStack(VM& vm)
     frameOfCollectionCaller = nullptr;
 }
 
-// A thread that runs a collection itself does so below the frames of collectNow() and of what that calls, and scans them.
-// A local of theirs that only a path for waiting writes would show the collection whatever an earlier call left at that depth.
 static void checkCollectorWritesTheFramesItScans(LoadedProgram& program)
 {
-    // C++ frames on Windows x86-64 keep no chain of frame records to walk.
 #if !ASAN_ENABLED && !ASSERT_ENABLED && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !(OS(WINDOWS) && CPU(X86_64))
     VM& vm = program.vm();
     vm.heap.addMarkingConstraint(makeUnique<SimpleMarkingConstraint>(
@@ -1221,7 +1199,6 @@ static void checkCollectorWritesTheFramesItScans(LoadedProgram& program)
         ConstraintVolatility::GreyedByExecution,
         ConstraintConcurrency::Sequential,
         ConstraintParallelism::Sequential));
-    // The first request for a collection grows tables, far enough down the stack to write over everything that is looked at.
     vm.heap.collectNow(Sync, CollectionScope::Full);
     numberOfCollectionsRead = 0;
     collectOverFilledStack(vm);

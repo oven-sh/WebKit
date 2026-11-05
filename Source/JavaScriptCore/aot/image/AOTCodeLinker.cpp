@@ -31,7 +31,6 @@ namespace {
 
 enum class FormOfLinkTarget : uint8_t { PlaceInCode, Number, DistanceFromInstance };
 
-// What ImageNumbers::valueOf() answers for one mention, [0] as a number and [1] as a word of the instance. Each is asked at the first relocation that needs it.
 struct ValuesOfLinkedMention {
     enum class State : uint8_t { NotAsked, HasValue, HasNone };
 
@@ -39,10 +38,8 @@ struct ValuesOfLinkedMention {
     std::array<State, 2> states { };
 };
 
-// Bytes with relocations of their own: the body of a function, or the stubs or the argument thunks of one copy of the shared code.
 struct PieceOfLinkedCode {
     ASCIILiteral name;
-    // Null in shared code.
     const CompiledCode* function { nullptr };
     uint32_t position { 0 };
     size_t start;
@@ -53,7 +50,6 @@ struct PieceOfLinkedCode {
     std::span<const VeneerTarget> veneers;
     size_t firstVeneer;
     std::span<ValuesOfLinkedMention> mentions { };
-    // Null where the layout has left no room for any behind the bytes.
     const FarInstanceWords* farInstanceWords { nullptr };
 };
 
@@ -186,7 +182,6 @@ struct CodeLinker {
         AOT_NAME_OF_NUMBER_SPACE(ClassRank)
         AOT_NAME_OF_NUMBER_SPACE(ClosureFunction)
         AOT_NAME_OF_NUMBER_SPACE(ClosureCell)
-        AOT_NAME_OF_NUMBER_SPACE(Function)
         AOT_NAME_OF_NUMBER_SPACE(Allocation)
         AOT_NAME_OF_NUMBER_SPACE(Request)
         AOT_NAME_OF_NUMBER_SPACE(PropertyRun)
@@ -216,7 +211,6 @@ struct CodeLinker {
         return end - begin;
     }
 
-    // Where the first body or copy of the shared code at or behind `end` begins. `nextBody` is the first body there.
     size_t startOfWhatFollows(size_t end, size_t nextBody) const
     {
         size_t start = nextBody < layout.bodyStarts.size() ? layout.bodyStarts[nextBody] : layout.functionsEnd;
@@ -266,7 +260,6 @@ struct CodeLinker {
         return valueOfMention(piece, relocation, false);
     }
 
-    // Nothing where the target has no such entry.
     std::optional<size_t> placeOf(const VeneerTarget& target) const
     {
         switch (target.space) {
@@ -303,7 +296,6 @@ struct CodeLinker {
         return makeString("the "_s, nameOf(unit.role), " of function f"_s, unit.function.index(), " has no entry "_s, static_cast<unsigned>(target.entry));
     }
 
-    // A transfer goes to the veneer only where it does not reach the target itself.
     std::optional<size_t> placeOrVeneerOf(const PieceOfLinkedCode& piece, const Relocation& relocation, const VeneerTarget& target) const
     {
         std::optional<size_t> place = placeOf(target);
@@ -378,7 +370,6 @@ struct CodeLinker {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // The relocations of a piece come in the order of their offsets, which is the order of the detours.
     [[nodiscard]] bool applyToFarInstanceWord(const PieceOfLinkedCode& piece, const Relocation& relocation, int32_t distance, uint32_t& numberOfDetoursTaken) const
     {
         const FarInstanceWords* words = piece.farInstanceWords;
@@ -397,7 +388,6 @@ struct CodeLinker {
         return applyRelocationReadingDistance(code, piece.start, relocation, firstDistance + (found - words->distances.begin()) * sizeof(int32_t));
     }
 
-    // Every function below that returns a number returns how many links it owed and did not make. Each of those has a diagnostic.
     uint64_t link(const PieceOfLinkedCode& piece) const
     {
         write(piece.start, piece.bytes);
@@ -496,7 +486,6 @@ struct CodeLinker {
         return numberNotApplied;
     }
 
-    // A word of a table is the distance from the table to the target.
     void writeJumpTables(uint32_t position) const
     {
         const CompiledCode& function = inputs.functions[position];
@@ -511,7 +500,6 @@ struct CodeLinker {
             std::span<uint8_t> words = code.subspan(table, targets.size_bytes());
             for (uint32_t target : targets) {
                 int64_t distance = bodyStart + target - static_cast<int64_t>(table);
-                // A target at the very end is the body that this one falls into.
                 if (target > body.bytes.size() || !isRepresentableAs<int32_t>(distance)) {
                     context.diagnostics().add(InternalError { .kind = InternalErrorKind::RelocationNotApplied, .function = function.unit.function, .count = target, .detail = makeString("jump table "_s, index, " of the "_s, nameOf(function.unit.role), " has the target "_s, target) });
                     return;
@@ -549,7 +537,6 @@ struct CodeLinker {
         });
         sizes.bodies += body.bytes.size();
         if (farInstanceWords) {
-            // link() has written the detours.
             size_t firstDistance = start + FarInstanceWords::offsetBehind(body.bytes.size());
             sizes.padding += pad(end, firstDistance);
             write(firstDistance, asByteSpan(farInstanceWords->distances.span()));
@@ -592,7 +579,6 @@ void linkCode(const CodeLinkerInputs& inputs, std::span<uint8_t> code, BuildCont
     StubOffsetTable stubOffsets(inputs.layoutInputs.sharedCode.blob.placements.span());
     CodeLinker linker { inputs.layoutInputs, layout, inputs.constants, inputs.numbers, code, context, stubOffsets };
 
-    // The pool has zeros where the jump tables lie, and the bodies write over them.
     std::span<const uint8_t> pool = inputs.constants.bytes.span();
     forEachIndexInParallel(loops, static_cast<unsigned>((pool.size() + bytesOfConstantsInChunk - 1) / bytesOfConstantsInChunk), [&](unsigned chunk) {
         size_t first = chunk * bytesOfConstantsInChunk;
@@ -601,7 +587,6 @@ void linkCode(const CodeLinkerInputs& inputs, std::span<uint8_t> code, BuildCont
     Statistics& statistics = context.statistics();
     statistics.count(StatisticID::PaddingBytesBetweenFunctions, linker.pad(0, linker.startOfWhatFollows(0, 0)));
 
-    // One loop for the copies and the bodies: a loop that starts inside a loop or a task runs on one thread.
     const unsigned numberOfCopies = static_cast<unsigned>(layout.sharedCodeCopies.size());
     const unsigned numberOfChunks = (numberOfBodies + bodiesInChunk - 1) / bodiesInChunk;
     std::atomic<uint64_t> numberNotApplied { 0 };

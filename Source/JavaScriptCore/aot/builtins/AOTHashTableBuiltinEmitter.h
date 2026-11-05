@@ -13,7 +13,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class HashTableOwner : uint8_t { Map, Set };
-// ValueOrNothing: the empty value where the key is absent.
 enum class LookupAnswer : uint8_t { IsPresent, Value, ValueOrNothing };
 
 class HashTableBuiltinEmitter final : public BuiltinFamilyEmitter {
@@ -31,7 +30,6 @@ private:
     Boxed normalizedNumber(Number);
     void lookUp(const InlineCall&, HashTableOwner, LookupAnswer);
     Operand search(const OperationContext&, ValueID collection, ValueID key, HashTableOwner, LookupAnswer);
-    // A Condition for IsPresent, a Boxed for Value and ValueOrNothing.
     Operand lookUpByStub(const OperationContext&, CellPointer owner, Boxed key, StubKey, LookupAnswer);
     void insert(const InlineCall&, HashTableOwner);
     void generateSize(const InlineCall&, HashTableOwner);

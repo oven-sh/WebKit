@@ -4,7 +4,6 @@ const ownProperties = ["ObjectFields", "NamedProperties", "Elements", "ArrayStor
 const inheritedProperties = [...ownProperties, "PrototypeLinks"];
 const prototypeLink = ["ShapeWords", "NamedProperties", "PrototypeLinks"];
 const memberGuards = ["MemberGuards"];
-// An array under a prototype that may hold indexed accessors gets a storage that asks it at every store.
 const prototypeChange = [...prototypeLink, ...memberGuards, "ArrayStorage"];
 
 const objectOrNull = b.union(b.object, b.strictNull);
@@ -70,7 +69,6 @@ const integrityChange = (level: b.IntegrityLevel, implementation: b.Implementati
     implementation,
   }) satisfies b.FunctionField;
 
-// A revoked Proxy throws, and so does one whose trap says what its target rules out.
 const integrityTest = {
   args: { object: b.any },
   returns: b.bool,
@@ -82,8 +80,6 @@ const integrityTest = {
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
-// An object without properties that cannot be extended is sealed and frozen.
-// The properties are looked at one by one, and an export of a module namespace object that is still in its dead zone throws.
 const integrityTestOfProperties = {
   ...integrityTest,
   throws: true,
@@ -103,7 +99,6 @@ const ownPropertyTest = (inlineBuiltin: string) =>
     implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
 
-// A descriptor holds the value or the two functions of the property that it describes.
 const describedPart = b.resultFieldHoldingOnlyWhatIsStored;
 
 const describedBy = (key: b.KeySpec, value: b.PlaceSpec, getter: b.PlaceSpec, setter: b.PlaceSpec) => [
@@ -130,7 +125,6 @@ const accessorDefinition = (accessor: "Getter" | "Setter", nativeSymbol: string)
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// It answers the function that it finds and no other: the cell stands for the way from the property to the answer.
 const accessorLookup = (accessor: "Getter" | "Setter", nativeSymbol: string) =>
   ({
     this: b.object.loose.refusing(b.null),
@@ -164,9 +158,6 @@ export default b.declarations(
     mutability: "AlwaysLocked",
     constructorTable: b.staticTable("runtime/ObjectConstructor.cpp", "objectConstructorTable"),
     call: objectConversion(b.inline("CallObjectConstructor", { otherwise: b.hostCall })),
-    // What `new Object(value)` does. Where new.target is another function (`super(value)` in a class below Object, Reflect.construct(Object, [value], Other)) the language
-    // ignores the value and makes an ordinary object below new.target.prototype: the row for `null`, whatever is passed. Rows have no word for new.target:
-    // whoever reads these rows takes them as written only where new.target is the callee, and the row for `null` under every other new.target.
     construct: objectConversion(b.hostCall),
     static: {
       assign: [

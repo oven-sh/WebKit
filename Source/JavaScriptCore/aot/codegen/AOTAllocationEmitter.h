@@ -27,7 +27,6 @@ public:
     void generateFinishBirth(const ValueContext&);
     void generateTryFinishBirth(const ValueContext&);
     void generateNewArray(const ValueContext&);
-    void generateNewArrayOfElements(const ValueContext&);
     void generateAppendElement(const ValueContext&);
     void generateAppendHole(const ValueContext&);
     void generateNewRegExp(const ValueContext&);
@@ -57,7 +56,6 @@ private:
     void clearBirthMark(CellPointer);
     InitialFields collectInitialFields(LayoutID, std::span<const uint32_t> fields, std::span<const ValueID> values);
     CellPointer allocateCell(const ValueContext&, const MentionedAllocation&, const PlannedLayout&, AllocationStorage, ZeroedBy);
-    // Of a layout with PlannedLayout::isEscapedOffset.
     CellPointer takeCellHandedBackOrAllocate(const ValueContext&, const MentionedAllocation&);
     bool initializesFrameObjectInStub(const ValueContext&, LayoutID);
     CellPointer allocateFrameCell(const ValueContext&, const MentionedAllocation&, const PlannedLayout&);
@@ -74,7 +72,6 @@ private:
     bool looksAtPrototypeBeforeAllocating(const ValueContext&);
     CellPointer allocateInstance(const ValueContext&, const MentionedAllocation&, ValueID prototype);
     Vector<WordOfEmptyObject, 8> wordsOfEmptyObject(LayoutID);
-    // The template of CellAllocationEmitter::allocateFromTemplate(): those words, and zero everywhere else.
     Vector<uint8_t, 64> bodyOfEmptyCell(const MentionedAllocation&);
     CellPointer createArguments(const ValueContext&, std::optional<CellPointer> callee);
 };

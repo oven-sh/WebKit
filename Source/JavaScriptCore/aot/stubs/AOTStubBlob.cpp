@@ -75,12 +75,10 @@ static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const
         reach(key);
     }
     forEachStubEnteredByRuntime(reach);
-    // Each body is taken once and each front end is reached once, so the turns are no more than the front ends.
     do {
         while (!worklist.isEmpty()) {
             StubKey body = worklist.takeLast();
             const StubRecording& dryRun = dryRunOf(body);
-            // Callers reach a front end through the run-time table, so they recorded only the clobbers of an operation call.
             if (descriptorOf(body.family()).linkage == StubLinkage::FrontEnd)
                 RELEASE_ASSERT(registersClobberedByOperations().subsumes(catalog.summaryOf(body).clobbered));
             reached.bodies.append(body);
@@ -96,13 +94,10 @@ static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const
         }
     } while (!worklist.isEmpty());
     reached.entriesUsed = used;
-    // The callers of such a body were compiled by what the catalog says of the stub without an immediate.
     if (checksAnswers) {
         for (const std::unique_ptr<StubRecording>& dryRun : ownDryRuns)
             RELEASE_ASSERT(catalog.answersCover(*dryRun));
     }
-    // The worklist follows the order of calledKeys, and the bodies lie in the blob in the order of this list.
-    // The bodies that have a thing of the program for an immediate come last. Their number grows with the program, and stubs take addresses only of and from the others, which so stay close together.
     AOT::sortInLine(reached.bodies, { }, [](StubKey body) {
         return std::pair { body.immediate() && descriptorOf(body.family()).binding == ImmediateBinding::Every, body };
     });
@@ -128,7 +123,6 @@ static Vector<StubEntryRange> findEntriesInFrontOfSingleReturnSites(const StubBl
         for (auto entry = byOffset.begin(); entry != behindCall; ++entry) {
             if (bodyOf(entry->key) != body)
                 continue;
-            // Only a return comes to the site itself, and it comes to the copy that made the call.
             auto next = std::find_if(std::next(entry), byOffset.end(), [&](const StubPlacement& placement) {
                 return placement.offset != entry->offset && !isSingleReturnSite(placement.offset);
             });
@@ -192,7 +186,6 @@ std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const 
     const bool checksAnswers = ASSERT_ENABLED || ASAN_ENABLED || context.options().verifiesMachineCode;
     ReachedStubs reached = findReachedStubs(catalog, calledKeys, entriesUsedByFunctions, checksAnswers);
 
-    // A near address reaches 1 MB on ARM64.
     auto blob = buildStubBlob(context, catalog, reached, PCRelativeReach::Near);
     if (!blob && blob.error() == LinkFailure::OutOfPCRelativeReach)
         blob = buildStubBlob(context, catalog, reached, PCRelativeReach::Far);

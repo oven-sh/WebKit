@@ -2,6 +2,7 @@
 # class Box { size() { return 1 } }  sink(new Box().size())
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 1
+# SHELL-NEXT: exited with 0
 
 layout L0 kind=Instance name="Box" module=m0 constructor=f1
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)

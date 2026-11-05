@@ -51,7 +51,6 @@ public:
     {
     }
 
-    // Null for a body that findErrorsInWords() refuses: no cursor may read it, or build() would stop the process, and the record may be about exactly that.
     const Typed::BodyIndex* find(Typed::FunctionID id)
     {
         const Typed::Function* function = functionIfPresent(&m_program, id);
@@ -124,7 +123,6 @@ std::optional<SourceLocation> findLocation(const Typed::Program* program, const 
     return findDeclarationOfDiagnostic(*program, subject);
 }
 
-// Reads no body when bodies is null, or for a record that names its operation: its reporter has already read the body, and the record may say that the places in an index of that body are wrong.
 template<typename Record>
 static void resolveLocations(Vector<Record>& records, const Typed::Program& program, BodiesOfDiagnostics* bodies)
 {
@@ -322,7 +320,6 @@ static String format(ASCIILiteral messageTemplate, const InternalError& fields, 
 
 static String formatMessage(const UserDiagnostic& diagnostic, const Typed::Program* program)
 {
-    // The message is printed under the line of source it is about, for a reader who has never seen the IR.
     constexpr EnumSet<Placeholder> positionsInIR { Placeholder::Function, Placeholder::Block, Placeholder::Value, Placeholder::Layout };
     InternalError fields {
         .kind = { },
@@ -350,12 +347,10 @@ static bool isAboutInt32Promise(UserDiagnosticKind kind)
     return kind == UserDiagnosticKind::UnprovenInt32 || kind == UserDiagnosticKind::ConstantNotInt32 || kind == UserDiagnosticKind::Int32OfDependencyNotProven;
 }
 
-// Sorted by orderKey(), the reports of one place are neighbors only while no other kind stands between these three. The first one stays, so the errors come before the warning.
 static_assert(static_cast<uint32_t>(UserDiagnosticKind::ConstantNotInt32) == static_cast<uint32_t>(UserDiagnosticKind::UnprovenInt32) + 1);
 static_assert(static_cast<uint32_t>(UserDiagnosticKind::Int32OfDependencyNotProven) == static_cast<uint32_t>(UserDiagnosticKind::UnprovenInt32) + 2);
 static_assert(failsBuild(UserDiagnosticKind::UnprovenInt32) && failsBuild(UserDiagnosticKind::ConstantNotInt32));
 
-// One conversion is reported by the body of its function, by each inlined copy and by each walk of a loop, each with the reason and the range it sees.
 static bool isRepeatedDiagnostic(const UserDiagnostic& a, const UserDiagnostic& b)
 {
     if (isAboutInt32Promise(a.kind) && isAboutInt32Promise(b.kind))
@@ -423,7 +418,6 @@ void Diagnostics::appendTo(Vector<Record> Diagnostics::* list, Vector<Record>&& 
 NEVER_INLINE size_t collectReturnAddressesOfCallers(std::span<void*> addresses)
 {
 #if (OS(LINUX) || OS(DARWIN)) && (CPU(X86_64) || CPU(ARM64))
-    // A frame begins with the frame pointer of the caller and the return address. The stack grows down, so each frame lies above the one before, and not far above.
     constexpr uintptr_t largestFrame = 1 * MB;
     auto* frame = static_cast<void**>(__builtin_frame_address(0));
     size_t count = 0;
@@ -449,7 +443,6 @@ void Diagnostics::add(const UserDiagnostic& diagnostic)
 
 void Diagnostics::add(const InternalError& error)
 {
-    // A build that goes on and then crashes would take the list with it. The return addresses say who raised the error: many ask through one function that fails.
     if (Options::logAOTPhaseTimes()) [[unlikely]] {
         std::array<void*, 14> frames;
         size_t numberOfFrames = collectReturnAddressesOfCallers(frames);

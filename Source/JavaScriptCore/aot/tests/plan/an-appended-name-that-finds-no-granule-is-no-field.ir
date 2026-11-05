@@ -1,0 +1,202 @@
+# An Extension has 64 granules. The listed fields that leave the cell come first: here 64 optional members that no maker gives, each stored by `fill`. `beside` is a name that the type does not list and that `lay` stores: Link appends it.
+# It finds no granule. In the cell it would take the room that a listed field has just given up. A list of appended names claims nothing, and the objects may gain properties (`one[name] = 2`): the name is no field, and what is stored under it is an extra property.
+# -- source: wide.ts
+# declare function sink(...values: unknown[]): void;
+# type Wide = { text: string; m0?: boolean; m1?: boolean; m2?: boolean; m3?: boolean; m4?: boolean; m5?: boolean; m6?: boolean; m7?: boolean; m8?: boolean; m9?: boolean; m10?: boolean; m11?: boolean; m12?: boolean; m13?: boolean; m14?: boolean; m15?: boolean; m16?: boolean; m17?: boolean; m18?: boolean; m19?: boolean; m20?: boolean; m21?: boolean; m22?: boolean; m23?: boolean; m24?: boolean; m25?: boolean; m26?: boolean; m27?: boolean; m28?: boolean; m29?: boolean; m30?: boolean; m31?: boolean; m32?: boolean; m33?: boolean; m34?: boolean; m35?: boolean; m36?: boolean; m37?: boolean; m38?: boolean; m39?: boolean; m40?: boolean; m41?: boolean; m42?: boolean; m43?: boolean; m44?: boolean; m45?: boolean; m46?: boolean; m47?: boolean; m48?: boolean; m49?: boolean; m50?: boolean; m51?: boolean; m52?: boolean; m53?: boolean; m54?: boolean; m55?: boolean; m56?: boolean; m57?: boolean; m58?: boolean; m59?: boolean; m60?: boolean; m61?: boolean; m62?: boolean; m63?: boolean; };
+# function make(text: string): Wide { return { text }; }
+# function fill(one: Wide) { one.m0 = true; one.m1 = true; one.m2 = true; one.m3 = true; one.m4 = true; one.m5 = true; one.m6 = true; one.m7 = true; one.m8 = true; one.m9 = true; one.m10 = true; one.m11 = true; one.m12 = true; one.m13 = true; one.m14 = true; one.m15 = true; one.m16 = true; one.m17 = true; one.m18 = true; one.m19 = true; one.m20 = true; one.m21 = true; one.m22 = true; one.m23 = true; one.m24 = true; one.m25 = true; one.m26 = true; one.m27 = true; one.m28 = true; one.m29 = true; one.m30 = true; one.m31 = true; one.m32 = true; one.m33 = true; one.m34 = true; one.m35 = true; one.m36 = true; one.m37 = true; one.m38 = true; one.m39 = true; one.m40 = true; one.m41 = true; one.m42 = true; one.m43 = true; one.m44 = true; one.m45 = true; one.m46 = true; one.m47 = true; one.m48 = true; one.m49 = true; one.m50 = true; one.m51 = true; one.m52 = true; one.m53 = true; one.m54 = true; one.m55 = true; one.m56 = true; one.m57 = true; one.m58 = true; one.m59 = true; one.m60 = true; one.m61 = true; one.m62 = true; one.m63 = true; }
+# function lay(one: any, name: string) { one.beside = 1; one[name] = 2; }
+# const bare = make("bare"), full = make("full"); fill(full); lay(full, "other");
+# sink(bare.text, bare.m63, full.text, full.m63, (full as any).beside, (full as any).other);
+# -- end of source
+# f1 = make, f2 = fill, f3 = lay
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=32 extension=520
+# CHECK-NEXT: slot 0 "m0" JSValue OutOfLine offset=8 
+# CHECK: slot 63 "m9" JSValue OutOfLine offset=512 
+# CHECK-NEXT: slot 64 "text" {{*}}Inline offset=24 
+# CHECK-NEXT: slot 65 "beside" appended JSValue None
+# CHECK-NEXT: extension 
+
+module m0 path="wide.ts" displayPath="wide.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=56 fields=[{key="m0" declared={type=undefined|boolean}}, {key="m1" declared={type=undefined|boolean}}, {key="m10" declared={type=undefined|boolean}}, {key="m11" declared={type=undefined|boolean}}, {key="m12" declared={type=undefined|boolean}}, {key="m13" declared={type=undefined|boolean}}, {key="m14" declared={type=undefined|boolean}}, {key="m15" declared={type=undefined|boolean}}, {key="m16" declared={type=undefined|boolean}}, {key="m17" declared={type=undefined|boolean}}, {key="m18" declared={type=undefined|boolean}}, {key="m19" declared={type=undefined|boolean}}, {key="m2" declared={type=undefined|boolean}}, {key="m20" declared={type=undefined|boolean}}, {key="m21" declared={type=undefined|boolean}}, {key="m22" declared={type=undefined|boolean}}, {key="m23" declared={type=undefined|boolean}}, {key="m24" declared={type=undefined|boolean}}, {key="m25" declared={type=undefined|boolean}}, {key="m26" declared={type=undefined|boolean}}, {key="m27" declared={type=undefined|boolean}}, {key="m28" declared={type=undefined|boolean}}, {key="m29" declared={type=undefined|boolean}}, {key="m3" declared={type=undefined|boolean}}, {key="m30" declared={type=undefined|boolean}}, {key="m31" declared={type=undefined|boolean}}, {key="m32" declared={type=undefined|boolean}}, {key="m33" declared={type=undefined|boolean}}, {key="m34" declared={type=undefined|boolean}}, {key="m35" declared={type=undefined|boolean}}, {key="m36" declared={type=undefined|boolean}}, {key="m37" declared={type=undefined|boolean}}, {key="m38" declared={type=undefined|boolean}}, {key="m39" declared={type=undefined|boolean}}, {key="m4" declared={type=undefined|boolean}}, {key="m40" declared={type=undefined|boolean}}, {key="m41" declared={type=undefined|boolean}}, {key="m42" declared={type=undefined|boolean}}, {key="m43" declared={type=undefined|boolean}}, {key="m44" declared={type=undefined|boolean}}, {key="m45" declared={type=undefined|boolean}}, {key="m46" declared={type=undefined|boolean}}, {key="m47" declared={type=undefined|boolean}}, {key="m48" declared={type=undefined|boolean}}, {key="m49" declared={type=undefined|boolean}}, {key="m5" declared={type=undefined|boolean}}, {key="m50" declared={type=undefined|boolean}}, {key="m51" declared={type=undefined|boolean}}, {key="m52" declared={type=undefined|boolean}}, {key="m53" declared={type=undefined|boolean}}, {key="m54" declared={type=undefined|boolean}}, {key="m55" declared={type=undefined|boolean}}, {key="m56" declared={type=undefined|boolean}}, {key="m57" declared={type=undefined|boolean}}, {key="m58" declared={type=undefined|boolean}}, {key="m59" declared={type=undefined|boolean}}, {key="m6" declared={type=undefined|boolean}}, {key="m60" declared={type=undefined|boolean}}, {key="m61" declared={type=undefined|boolean}}, {key="m62" declared={type=undefined|boolean}}, {key="m63" declared={type=undefined|boolean}}, {key="m7" declared={type=undefined|boolean}}, {key="m8" declared={type=undefined|boolean}}, {key="m9" declared={type=undefined|boolean}}, {key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[64, 0, 1, 12, 23, 34, 45, 56, 61, 62, 63, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 57, 58, 59, 60] ownFieldCount=65
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = String string="bare" @2220
+    v7 = Call v1, -, v6 calleeName="make" @2215
+    v8 = Convert v7 declared={type=undefined|null|L0 flags=[IsExpected]} @2215
+    v9 = String string="full" @2241
+    v10 = Call v1, -, v9 calleeName="make" @2236
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[IsExpected]} @2236
+    v12 = Call v3, -, v11 calleeName="fill" @2250
+    v13 = String string="other" @2272
+    v14 = Call v5, -, v11, v13 calleeName="lay" @2262
+    v15 = Builtin builtin=GlobalThis @2282
+    v16 = PropGet v15 key="sink" [isFreeName] @2282
+    v17 = PropGet v8 key="text" @2287
+    v18 = PropGet v8 key="m63" @2298
+    v19 = PropGet v11 key="text" @2308
+    v20 = PropGet v11 key="m63" @2319
+    v21 = PropGet v11 key="beside" @2330
+    v22 = PropGet v11 key="other" @2352
+    v23 = Call v16, -, v17, v18, v19, v20, v21, v22 calleeName="sink" @2282
+    v24 = Undefined @2282
+    Return v24 @2282
+}
+function f1 name="make" module=m0 position=1032 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1077
+    v2 = NewObject -, v1 layout=L0 fields=[64] @1075
+    v3 = FinishObject v2 @1075
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} @1075
+    Return v4 @1075
+}
+function f2 name="fill" module=m0 position=1087 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Boolean boolean=true @1123
+    PropSet v0, v1 key="m0" @1114
+    v3 = Boolean boolean=true @1138
+    PropSet v0, v3 key="m1" @1129
+    v5 = Boolean boolean=true @1153
+    PropSet v0, v5 key="m2" @1144
+    v7 = Boolean boolean=true @1168
+    PropSet v0, v7 key="m3" @1159
+    v9 = Boolean boolean=true @1183
+    PropSet v0, v9 key="m4" @1174
+    v11 = Boolean boolean=true @1198
+    PropSet v0, v11 key="m5" @1189
+    v13 = Boolean boolean=true @1213
+    PropSet v0, v13 key="m6" @1204
+    v15 = Boolean boolean=true @1228
+    PropSet v0, v15 key="m7" @1219
+    v17 = Boolean boolean=true @1243
+    PropSet v0, v17 key="m8" @1234
+    v19 = Boolean boolean=true @1258
+    PropSet v0, v19 key="m9" @1249
+    v21 = Boolean boolean=true @1274
+    PropSet v0, v21 key="m10" @1264
+    v23 = Boolean boolean=true @1290
+    PropSet v0, v23 key="m11" @1280
+    v25 = Boolean boolean=true @1306
+    PropSet v0, v25 key="m12" @1296
+    v27 = Boolean boolean=true @1322
+    PropSet v0, v27 key="m13" @1312
+    v29 = Boolean boolean=true @1338
+    PropSet v0, v29 key="m14" @1328
+    v31 = Boolean boolean=true @1354
+    PropSet v0, v31 key="m15" @1344
+    v33 = Boolean boolean=true @1370
+    PropSet v0, v33 key="m16" @1360
+    v35 = Boolean boolean=true @1386
+    PropSet v0, v35 key="m17" @1376
+    v37 = Boolean boolean=true @1402
+    PropSet v0, v37 key="m18" @1392
+    v39 = Boolean boolean=true @1418
+    PropSet v0, v39 key="m19" @1408
+    v41 = Boolean boolean=true @1434
+    PropSet v0, v41 key="m20" @1424
+    v43 = Boolean boolean=true @1450
+    PropSet v0, v43 key="m21" @1440
+    v45 = Boolean boolean=true @1466
+    PropSet v0, v45 key="m22" @1456
+    v47 = Boolean boolean=true @1482
+    PropSet v0, v47 key="m23" @1472
+    v49 = Boolean boolean=true @1498
+    PropSet v0, v49 key="m24" @1488
+    v51 = Boolean boolean=true @1514
+    PropSet v0, v51 key="m25" @1504
+    v53 = Boolean boolean=true @1530
+    PropSet v0, v53 key="m26" @1520
+    v55 = Boolean boolean=true @1546
+    PropSet v0, v55 key="m27" @1536
+    v57 = Boolean boolean=true @1562
+    PropSet v0, v57 key="m28" @1552
+    v59 = Boolean boolean=true @1578
+    PropSet v0, v59 key="m29" @1568
+    v61 = Boolean boolean=true @1594
+    PropSet v0, v61 key="m30" @1584
+    v63 = Boolean boolean=true @1610
+    PropSet v0, v63 key="m31" @1600
+    v65 = Boolean boolean=true @1626
+    PropSet v0, v65 key="m32" @1616
+    v67 = Boolean boolean=true @1642
+    PropSet v0, v67 key="m33" @1632
+    v69 = Boolean boolean=true @1658
+    PropSet v0, v69 key="m34" @1648
+    v71 = Boolean boolean=true @1674
+    PropSet v0, v71 key="m35" @1664
+    v73 = Boolean boolean=true @1690
+    PropSet v0, v73 key="m36" @1680
+    v75 = Boolean boolean=true @1706
+    PropSet v0, v75 key="m37" @1696
+    v77 = Boolean boolean=true @1722
+    PropSet v0, v77 key="m38" @1712
+    v79 = Boolean boolean=true @1738
+    PropSet v0, v79 key="m39" @1728
+    v81 = Boolean boolean=true @1754
+    PropSet v0, v81 key="m40" @1744
+    v83 = Boolean boolean=true @1770
+    PropSet v0, v83 key="m41" @1760
+    v85 = Boolean boolean=true @1786
+    PropSet v0, v85 key="m42" @1776
+    v87 = Boolean boolean=true @1802
+    PropSet v0, v87 key="m43" @1792
+    v89 = Boolean boolean=true @1818
+    PropSet v0, v89 key="m44" @1808
+    v91 = Boolean boolean=true @1834
+    PropSet v0, v91 key="m45" @1824
+    v93 = Boolean boolean=true @1850
+    PropSet v0, v93 key="m46" @1840
+    v95 = Boolean boolean=true @1866
+    PropSet v0, v95 key="m47" @1856
+    v97 = Boolean boolean=true @1882
+    PropSet v0, v97 key="m48" @1872
+    v99 = Boolean boolean=true @1898
+    PropSet v0, v99 key="m49" @1888
+    v101 = Boolean boolean=true @1914
+    PropSet v0, v101 key="m50" @1904
+    v103 = Boolean boolean=true @1930
+    PropSet v0, v103 key="m51" @1920
+    v105 = Boolean boolean=true @1946
+    PropSet v0, v105 key="m52" @1936
+    v107 = Boolean boolean=true @1962
+    PropSet v0, v107 key="m53" @1952
+    v109 = Boolean boolean=true @1978
+    PropSet v0, v109 key="m54" @1968
+    v111 = Boolean boolean=true @1994
+    PropSet v0, v111 key="m55" @1984
+    v113 = Boolean boolean=true @2010
+    PropSet v0, v113 key="m56" @2000
+    v115 = Boolean boolean=true @2026
+    PropSet v0, v115 key="m57" @2016
+    v117 = Boolean boolean=true @2042
+    PropSet v0, v117 key="m58" @2032
+    v119 = Boolean boolean=true @2058
+    PropSet v0, v119 key="m59" @2048
+    v121 = Boolean boolean=true @2074
+    PropSet v0, v121 key="m60" @2064
+    v123 = Boolean boolean=true @2090
+    PropSet v0, v123 key="m61" @2080
+    v125 = Boolean boolean=true @2106
+    PropSet v0, v125 key="m62" @2096
+    v127 = Boolean boolean=true @2122
+    PropSet v0, v127 key="m63" @2112
+    v129 = Undefined @2112
+    Return v129 @2112
+}
+function f3 name="lay" module=m0 position=2130 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = Integer integer=1 @2182
+    PropSet v0, v2 key="beside" @2169
+    v4 = Integer integer=2 @2197
+    ElemSet v0, v1, v4 @2185
+    v6 = Undefined @2185
+    Return v6 @2185
+}

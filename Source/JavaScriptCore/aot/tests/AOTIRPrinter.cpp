@@ -97,7 +97,6 @@ static bool cursorsMayReadPrintedBody(const Body& body)
     Vector<InternalError> errors = findErrorsInWords(FunctionID(), body);
     if (errors.isEmpty())
         return true;
-    // Both are found behind the words stage.
     InternalErrorKind kind = errors.first().kind;
     return kind == InternalErrorKind::BlockOrderInvalid || kind == InternalErrorKind::UseNotDominated;
 }
@@ -151,7 +150,6 @@ static void printLayoutLines(IRPrinter& printer)
         if (isBuiltinOrNamespaceLayout(layout))
             continue;
         uint32_t number = numberOfLines++;
-        // The reader of the text makes it again.
         if (layout.isDerived() || layout.kind == LayoutKind::Closure) {
             if (!printer.printsEngineFields())
                 continue;
@@ -337,7 +335,6 @@ void IRPrinter::printBody(const Body& body)
     if (!body)
         return;
     m_out.print(" {\n"_s);
-    // A cursor trusts the words it reads, and a report of the verifier prints a body that is broken.
     if (cursorsMayReadPrintedBody(body)) {
         body.forEachBlock([&](const BodyBlock& block) {
             printBlock(block);
@@ -419,12 +416,10 @@ void IRPrinter::printValue(const BodyValue& value)
 
 void IRPrinter::printPositions(const BodyValue& value)
 {
-    // The two words in the order in which they stand in the body, which is how the parser writes them back. For an IteratorOpen position() answers with the second.
     constexpr size_t indexOfPositionInHead = offsetof(Wire::ValueHead, position) / sizeof(uint32_t);
     std::span<const uint32_t> words = unsafeMakeSpan(value.words(), value.sizeInWords());
     uint32_t firstPosition = words[indexOfPositionInHead];
 
-    // The front end's printer has no word for it, and its tests hold the text of `print --wire` to their own line by line.
     bool printsTailPosition = printsEngineFields() && value.standsInTailPosition();
     printOrigin({ .position = firstPosition, .inlineFrame = 0, .isTailCall = printsTailPosition, .isPartOfConstruction = false });
 
@@ -432,7 +427,6 @@ void IRPrinter::printPositions(const BodyValue& value)
     if (role == WrittenPositionRole::None)
         return;
     m_out.print(" @"_s, words.back());
-    // The word stands behind a pair of positions.
     if (role == WrittenPositionRole::StartForCallers && firstPosition != BodyValue::noPosition)
         m_out.print(" callers"_s);
 }
@@ -492,7 +486,6 @@ void IRPrinter::printOrigin(Origin origin)
     bool hasPosition = origin.position != BodyValue::noPosition;
     if (!hasPosition && !origin.inlineFrame && !origin.isTailCall && !origin.isPartOfConstruction)
         return;
-    // What follows stands only behind a position. parseCode() reads the word for no position back as it is. The parser of bodies takes no position that large.
     m_out.print(" @"_s, hasPosition || m_typesOfCode ? origin.position : 0u);
     if (origin.inlineFrame)
         m_out.print(":"_s, origin.inlineFrame);
@@ -690,7 +683,6 @@ void IRPrinter::print(RuntimeFunctionID id)
 
 static void dumpLayoutsOfLocation(IRPrinter& printer, LayoutSetID layouts)
 {
-    // The program's table stops at a set of a thread's arena.
     if (liesInThread(layouts)) {
         printer.out().print("?"_s);
         return;

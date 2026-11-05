@@ -86,13 +86,15 @@ CodeGenerator::CodeGenerator(const FunctionInputs& inputs, Machine::Procedure& p
     , m_records(records)
     , m_out(proc)
     , m_checksAllocation(proc.traits().checksAllocation)
+    , m_checksEffects(AOT::hasFlag(inputs.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime))
+    , m_rowThatSaysLess(inputs.build.options().rowThatSaysLess)
 {
     if (proc.traits().notesRangesOfOrigins) {
         records.formsSaid.beginNoting();
         m_out.noteFormsIn(records.formsSaid);
     }
     m_notesForms = records.formsSaid.areNoted();
-    // No check of the back end sees a numbered load that a write should have ended: the operations are well formed and the word is stale. So the program itself asks, where a block takes such a load from the blocks above it.
+    m_watchesOperations = m_notesForms || m_checksAllocation || m_checksEffects;
     if (build().options().recorded.validates) [[unlikely]] {
         m_out.verifyInheritedLoads(heaps().collectorState.index(), [this](LValue readSameBits) {
             m_out.check(m_out.isZero32(readSameBits))->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters&) {

@@ -25,7 +25,6 @@ void BindingEmitter::failAndDefineZero(const ValueContext& value, InternalErrorK
     define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
 }
 
-// No closure holds an environment that is never made, so what reads or writes one never runs: as SlotAccessEmitter::resultWithoutSlot() has it for objects.
 bool BindingEmitter::endsWayAtEnvironmentThatIsNeverMade(LayoutID layout)
 {
     if (m_plan.isInUse(layout))
@@ -40,9 +39,6 @@ void BindingEmitter::generateParameter(const ValueContext&)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Whoever asks first fills the cell of the closure table, and every reader gets that one closure. No program can tell who was first,
-// so the effects that the schema declares for a read of the variable name neither the table nor the allocator.
-// AOTInstance_closureCells lies outside the declared effects for that reason, and a stub fills the cell.
 CellPointer BindingEmitter::singletonClosureOf(const ValueContext& value, FunctionID function)
 {
     return emitter<ConstantEmitter>().singletonClosure(value, function);
@@ -66,7 +62,6 @@ void BindingEmitter::defineSingletonClosure(const ValueContext& value, FunctionI
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell32:
-    case Representation::LiteralString:
     case Representation::RawWord:
         failAndDefineZero(value, InternalErrorKind::OpcodeWithoutCode);
         return;
@@ -86,8 +81,6 @@ void BindingEmitter::generateGetModuleVariable(const ValueContext& value)
         return;
     }
 
-    // The read is proven to give closures of the function that the variable is born as AND NOTHING ELSE, no undefined and no null (singleFunctionOf() asks the objects of a type alone), and that function has one closure:
-    // no store has put anything else there, and the word is not asked. The variable stays named: a heap snapshot shows the variables that code names.
     if (Type read = typeOf(value.id()); planned.encoding == VariableEncoding::FunctionAsZero && !read.primitives && singleFunctionOf(types(), read) == planned.function) {
         m_mentions.add(NumberSpace::Variable, variable);
         defineSingletonClosure(value, planned.function);
@@ -127,7 +120,6 @@ void BindingEmitter::generatePutModuleVariable(const ValueContext& value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// StaticFields::tryRead() behind JSObject::getOwnPropertySlot(): what somebody has put on the cell stands in front of a field of the same name, and lies in the butterfly.
 void BindingEmitter::generateGetStaticFieldOrAbsent(const ValueContext& value)
 {
     VariableID variable = value->variable();
@@ -185,7 +177,7 @@ void BindingEmitter::generatePutEnvironmentField(const ValueContext& value)
     ValueID storedValue = value->valueOperand();
     Operand stored = get(storedValue);
     emitter<SlotEmitter>().storeSlot(environment, slot, MemoryLocation::environmentField(layout, field), stored);
-    barrierAfterStore(value, environment, stored, typeOf(storedValue));
+    barrierAfterStore(value, environment, typeOf(storedValue));
 }
 
 void BindingEmitter::generateScopeHasBinding(const ValueContext& value)

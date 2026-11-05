@@ -16,7 +16,6 @@ interface AbiFile {
   readonly input: string;
   readonly imports: readonly string[];
   readonly holds: "enums" | "records" | "enums and records";
-  /** The file holds the enums of its input from this one on, in the order of the input, up to the first enum of the next such file. */
   readonly firstEnum?: string;
 }
 
@@ -28,8 +27,7 @@ const partsOfCompileCallEnums: readonly AbiFile[] = [
   partOfCompileCallEnums("compile_call_finding_enums.rs", "KnowledgeLevel"),
   partOfCompileCallEnums("compile_call_decline_enums.rs", "ImageVerdict"),
   partOfCompileCallEnums("compile_call_option_enums.rs", "CompileAction"),
-  partOfCompileCallEnums("compile_call_sabotage.rs", "Sabotage"),
-  partOfCompileCallEnums("compile_call_image_enums.rs", "Instrumentation"),
+  partOfCompileCallEnums("compile_call_image_enums.rs", "AdmittedCode"),
 ];
 
 export const modulesOfCompileCallEnums: readonly string[] = [
@@ -41,11 +39,9 @@ const abiFiles: readonly AbiFile[] = [
   {
     output: "limits.rs",
     input: "schema/limits.def",
-    // statistics.def extends StatisticID with Stage, an enum of limits.def, so Stage::time() answers with a StatisticId.
     imports: ["super::statistics::StatisticId"],
     holds: "enums and records",
   },
-  { output: "passes.rs", input: "schema/passes.def", imports: [], holds: "enums" },
   { output: "statistics.rs", input: "schema/statistics.def", imports: [], holds: "enums and records" },
   {
     output: "diagnostics.rs",
@@ -63,7 +59,6 @@ const abiFiles: readonly AbiFile[] = [
       "super::diagnostics::{InternalErrorKind, UserDiagnosticKind}",
       "super::enums::{IllTypedCause, TypeSiteKind}",
       "super::limits::{LimitId, Stage}",
-      "super::passes::PassId",
       "crate::ir::ids::*",
     ],
   },

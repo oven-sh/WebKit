@@ -65,7 +65,6 @@ static constexpr ASCIILiteral programText =
     "    PropSet v2, v4 key=\"mutate\"\n"
     "    Return\n"
     "}\n"
-    // A slot takes what the program is seen to store into the field. So x is stored something that nobody knows, and then null again.
     "function f1 name=\"createPoint\" results=[{type=anything}] {\n"
     "  b0():\n"
     "    v0 = Null\n"
@@ -368,7 +367,6 @@ static void testDefinitionOfCustomAccessor(RunningProgram& program)
     AOT_TEST_CHECK(putOwnDataProperty(vm, point, program.x(), jsNumber(3)));
     CustomGetterSetter* accessor = CustomGetterSetter::create(vm, getSeven, nullptr);
     AOT_TEST_CHECK(point->putDirectCustomAccessor(vm, program.added(), accessor, PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly));
-    // It is an extra property like any other.
     AOT_TEST_CHECK(PropertyWalk::isCompiledObject(point) && isFieldInSlot(point, program.x()));
     AOT_TEST_CHECK(hasOwnProperty(vm, point, program.x(), jsNumber(3), 0));
     AOT_TEST_CHECK(point->get(program.realm(), program.added()) == jsNumber(7));

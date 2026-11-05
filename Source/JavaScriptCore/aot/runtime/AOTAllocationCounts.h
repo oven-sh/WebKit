@@ -14,8 +14,6 @@ namespace JSC {
 
 namespace AOT {
 
-// For an operation that allocates and that a stub calls without recording a frame: vm.topCallFrame is what an earlier operation left behind, and that frame is gone.
-// The operation puts collections off while it runs.
 class LeafOperationScope {
     WTF_MAKE_NONCOPYABLE(LeafOperationScope);
 public:

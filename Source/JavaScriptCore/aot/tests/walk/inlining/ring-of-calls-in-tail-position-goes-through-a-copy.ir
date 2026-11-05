@@ -9,7 +9,8 @@
 # RUN: walk f2 mechanisms=all
 # REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
-# CHECK: [[result]]: number @JSValue = CallDirect {{*}} function=f2 {{*}} tail
+# The ring ends in calls of values, so what it gives passes no return that holds it to anything: the record of the call claims nothing of it (Plan::resultsPassNoReturn()).
+# CHECK: [[result]]: {{*}} @JSValue = CallDirect {{*}} function=f2 {{*}} tail
 # CHECK-NEXT: ReturnCall [[result]]
 
 module m0 path="ring-of-calls-in-tail-position-goes-through-a-copy.js" displayPath="ring-of-calls-in-tail-position-goes-through-a-copy.js" body=f0 namespaceLayout=L(m0)

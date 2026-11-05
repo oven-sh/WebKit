@@ -25,7 +25,6 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTPrimitives.h"
 #include "AOTProgramIdentifiers.h"
-#include "AOTProgramStrings.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
@@ -107,7 +106,6 @@ static const ImageText& textOf(const State& state)
     return state.instance.program->text();
 }
 
-// A listed string without text has a word, and the program's table of literal strings has answered for it.
 static bool matchesAnyLiteral(const ImageText& imageText, std::span<const uint32_t> literals, StringView characters)
 {
     return std::ranges::any_of(literals, [&](uint32_t literal) {
@@ -156,11 +154,6 @@ static bool stringHasType(const State& state, const RuntimeType& type, JSString*
     if (literals.empty())
         return primitives.contains(PrimitiveSet::String);
     if (!primitives.containsAny({ PrimitiveSet::String, PrimitiveSet::LiteralString }))
-        return false;
-    // The program's table finds a text in a few steps, however many strings the type lists.
-    if (std::optional<uint32_t> number = state.strings->findLiteralString(value))
-        return std::ranges::contains(literals, state.tables.literalStrings()[*number]);
-    if (!(type.flags & RuntimeType::hasLiteralStringWithoutWord))
         return false;
     if (StringImpl* impl = value->tryGetValueImpl())
         return matchesAnyLiteral(textOf(state), literals, StringView(*impl));
@@ -253,7 +246,6 @@ static Vector<uint16_t> indexFieldsByName(std::span<const FieldData> fields)
     Vector<uint16_t> slots;
     slots.fill(noFieldInSlot, std::bit_ceil(fields.size() * 2));
     size_t mask = slots.size() - 1;
-    // Of two fields with one name the first is the one that a walk over the fields finds.
     for (size_t index = 0; index < fields.size(); ++index) {
         size_t slot = firstSlotOfName(fields[index].name, mask);
         while (slots[slot] != noFieldInSlot && fields[slots[slot]].name != fields[index].name)
@@ -356,7 +348,6 @@ bool RuntimeLayoutTable::objectHasType(const RuntimeType& type, JSCell* cell) co
 
 std::optional<AcceptedValue> RuntimeLayoutTable::accept(const FieldData& field, JSValue value) const
 {
-    // The slot of an accessor field holds its GetterSetter. The type of the field is that of the getter: compiled code calls what it finds in a filled slot as one of the functions that the type lists.
     if (field.isAccessor()) {
         if (!value || !value.isCell() || value.asCell()->type() != GetterSetterType)
             return std::nullopt;
@@ -387,14 +378,12 @@ bool RuntimeLayoutTable::cellPassesTest(const RuntimeCellTest& test, JSCell* cel
     case CellTestKind::IsPristine:
         return isInstanceOfBuiltinClass(cell, test.builtinClass()) && cell->structure()->isPristine();
     case CellTestKind::IsBuiltinCell: {
-        // The built-in may have arrived by a generic path before compiled code filled its word.
         DeferGCForAWhile deferGC(*m_state.instance.vm);
         return cell == m_state.builtinCells->cell(test.builtinCellNumber());
     }
     case CellTestKind::IsClosureOf:
         return closureNumberOf(cell) == test.closureNumber() && isOfThisRealm(cell);
     case CellTestKind::IsSymbol:
-        // A symbol that nothing has made yet is the uid of no cell.
         return cell->isSymbol() && &asSymbol(cell)->uid() == identifiersOf(m_state.instance).tryGetIdentifierConcurrently(test.symbolKeyNumber());
     case CellTestKind::SharingModeIs:
         return hasSharingMode(cell, test.sharingMode());
@@ -430,7 +419,6 @@ bool RuntimeLayoutTable::shapeHasType(const RuntimeType& type, uint32_t shape) c
     });
 }
 
-// The collector visits no object that lies in a frame, so such an object keeps its Structure alive only if the scan of the stack takes its header for a reference.
 static_assert(ConservativeRoots::findsStructuresOfFrameCells);
 
 struct StructureTable::VariantMaps {
@@ -475,7 +463,6 @@ struct StructureTable::VariantMaps {
             return true;
         std::span<const uint16_t> held = structure.outOfLineKeyOrder();
         std::span<const uint16_t> asked = *variant.outOfLineKeyOrder;
-        // An object that has all the entries may have added more for itself. The order word of whoever asks counts the ones that were asked for.
         if (countOf(outOfLineOrderWordFor(asked.size())) && held.size() > asked.size())
             held = held.first(asked.size());
         return equalSpans(held, asked);
@@ -486,7 +473,6 @@ struct StructureTable::VariantMaps {
     {
     }
 
-    // A variant may have no object yet or no more. Whoever gets one out of these tables holds it by this pointer alone, which the compiler must not make anew from the ID behind an allocation.
     static CompiledStructure* decode(StructureID id) { return WTF::opaque(uncheckedDowncast<CompiledStructure>(id.decode())); }
     static unsigned recentIndex(const Variant& variant) { return ((variant.extraPropertiesStructure ? variant.extraPropertiesStructure->id().bits() : 0) * 0x9e3779b1u ^ variant.layout->shape * 0x85ebca6bu) >> (32 - recentIndexBits); }
     static unsigned requestedIndex(const Structure& extraPropertiesStructure) { return extraPropertiesStructure.id().bits() * 0x9e3779b1u >> (32 - requestedIndexBits); }
@@ -505,7 +491,6 @@ struct StructureTable::VariantMaps {
         recentByExtraProperties[recentIndex(variant)] = structure.id();
     }
 
-    // A variant ends with what it hangs on, not with the last object that has it: a full collection may find no such object, as in a server between two requests, and the program would learn the shape again.
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
@@ -528,7 +513,6 @@ struct StructureTable::VariantMaps {
     };
 
     WeakGCMap<Key, CompiledStructure> structures;
-    // The values of `structures`. Written under the lock of the caches.
     Vector<StructureID> listed;
     Vector<FiledVariant> filedSinceCollection;
     std::array<StructureID, 1u << recentIndexBits> recentByExtraProperties { };
@@ -573,7 +557,6 @@ std::span<AllocationSiteRecord> StructureTable::allocationSiteRecords() const
     return { m_state.instance.objects.emptyAllocationSite() - numberOfAllocations, numberOfAllocations + 1 };
 }
 
-// The objects of many layouts live shorter than the time between two collections.
 template<typename Appender>
 ALWAYS_INLINE void StructureTable::visitUsualStructures(Appender& appender, size_t begin, size_t end)
 {
@@ -592,7 +575,6 @@ ALWAYS_INLINE void StructureTable::visitRecords(Appender& appender, size_t begin
     });
 }
 
-// A full collection looks at every entry of both tables. Neither table moves, so the markers share that work among themselves.
 template<typename Visitor>
 void StructureTable::visitRoots(Visitor& visitor)
 {
@@ -648,7 +630,6 @@ size_t StructureTable::removeDeadEntries(VM& vm, CollectionScope)
             return !vm.heap.isMarked(id.decode());
         });
     }
-    // Whatever region of the two tables a collection looks at, it has taken every entry there for a root: none has ended.
     return 0;
 }
 
@@ -820,12 +801,9 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
     const LayoutData& layout = *requested.layout;
     CompiledStructure* usualStructure = usualStructureIfExists(layout.shape);
     RELEASE_ASSERT(m_tables.hasLayoutForShape(layout.shape));
-    // Where every object of the layout has another Structure, nobody needs the usual one.
     Variant usual = usualStructure ? variantOf(*usualStructure) : usualVariantOf(vm, layout);
     Variant variant = requested;
-    // Compiled code tests the flag after the read that relies on it, so an object that had it keeps it.
     if (!variant.hasOtherPrototype && !usual.hasOtherPrototype && usual.prototype != variant.prototype) {
-        // A Structure without the flag below another object than the usual one: the class has taken what lies between.
         if (CompiledStructure* existing = find(variant))
             return existing;
         JSObject* firstAbove = variant.prototype.getObject();
@@ -868,7 +846,6 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
     Variant variant = variantWithKeyOrderOf(current);
     variant.prototype = prototype;
     CompiledStructure* structure = findOrCreate(vm, variant);
-    // Compiled code replays a transition by storing the StructureID and setting IsPristine, which a compiled object has where its prototype is not its layout's, in the cell: it looks for no cycle and tells nobody who depends on the chain.
     constexpr uint32_t pristineBitInBlob = IsPristine << 16;
     if (structure->isPristine() && structure->typeInfoBlob() == (current.typeInfoBlob() | pristineBitInBlob) && !current.mayBePrototype() && !belongsToOneObject(variant))
         recent = { encodedPrototype, before, structure->id().bits() };
@@ -926,7 +903,6 @@ CompiledStructure* StructureTable::existingWithExtraProperties(const CompiledStr
     return existing;
 }
 
-// Such a Structure belongs to one object: no table lists it.
 CompiledStructure* StructureTable::holdingExtraProperties(VM& vm, const CompiledStructure& current, JSObject* extraProperties)
 {
     ASSERT(!current.extraPropertiesSlot() && !current.hasExtraProperties());
@@ -1000,7 +976,6 @@ static bool fillsSameRecord(const ProgramTables& tables, uint32_t first, uint32_
     return a.shape == b.shape && a.orderWord() == b.orderWord() && a.size() == b.size() && a.isBornUnfinished == b.isBornUnfinished && tables.constructorOfAllocation(first) == tables.constructorOfAllocation(second);
 }
 
-// Allocations that list other fields may ask for the same cell. The image lists the allocations of one shape next to each other.
 AllocationSiteRecord* StructureTable::recordOfSameAllocation(uint32_t number) const
 {
     std::span<const AllocationData> allocations = m_tables.allocations();
@@ -1026,7 +1001,6 @@ ALWAYS_INLINE AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number
     ObjectWords& words = m_state.instance.objects;
     if (AllocationSiteRecord* record = words.allocationSite(number))
         return *record;
-    // Nearly every record is the first of its shape, and then there is no other to find: no object has been made yet, so the shape has no Structure.
     bool isFirstOfShape = shape < m_tables.firstEnvironmentShape && !m_structures[shape];
     AllocationSiteRecord* record = isFirstOfShape ? nullptr : recordOfSameAllocation(number);
     if (!record) {
@@ -1050,7 +1024,6 @@ AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number)
 
 AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number)
 {
-    // Until it is filled, compiled code finds no room at the record, as at one whose Structure was forgotten.
     const AllocationData& allocation = m_tables.allocations()[number];
     AllocationSiteRecord& record = ensureRecord(number, allocation.shape);
     if (record.header)
@@ -1061,7 +1034,6 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
         ASSERT(kind == AllocatedCellKind::Object);
         ObjectModel& objects = *m_state.objects;
         FunctionID function(m_tables.constructorOfAllocation(number));
-        // Without a class object that the run time knows, the operation names the prototype. Instances of a class whose prototype is made first need no class object.
         JSCell* constructor = objects.closures.closureIfCreated(function);
         if (!constructor && objects.closures.hasSingletonClosure(function)) {
             const LayoutData& constructedClass = *objects.classes.classConstructedBy(function);
@@ -1074,7 +1046,6 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
     if (!structure)
         structure = kind == AllocatedCellKind::Object ? usualStructure(vm, allocation.shape) : this->structure(vm, allocation.shape);
     CompleteSubspace& space = kind == AllocatedCellKind::Object ? vm.cellSpace() : *vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>();
-    // No size class holds a cell beyond MarkedSpace::largeCutoff, so no allocator does. Compiled code finds no room and leaves every such cell to the operation.
     void* allocator = space.allocatorFor(allocation.size(), AllocatorForMode::EnsureAllocator).localAllocator();
     record = AllocationSiteRecord {
         .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : objectHeaderFor(structure, allocation),
@@ -1088,7 +1059,6 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
 
 void StructureTable::predictStructure(VM&, uint32_t number, CompiledStructure* structure)
 {
-    // Where the class is evaluated once, an operation that names no prototype may share the record.
     const AllocationData& allocation = m_tables.allocations()[number];
     if (!allocation.isConstructed || structure->layout().shape != allocation.shape || structure->layout().evaluation() == EvaluationState::ProvenOnce)
         return;
@@ -1111,7 +1081,6 @@ std::optional<StructureID> StructureTable::structureIDOf(uint32_t number) const
 
 void StructureTable::forgetStructuresOf(const LayoutData& classLayout)
 {
-    // The shapes of the layouts that were derived from the class are numbered wherever the tests of the program want them.
     const ClassTable& classes = m_state.objects->classes;
     auto belongsToClass = [&](uint32_t shape) {
         return m_tables.hasLayoutForShape(shape) && classes.classOfInstances(m_tables.layoutForShape(shape)).index == classLayout.index;
@@ -1121,7 +1090,6 @@ void StructureTable::forgetStructuresOf(const LayoutData& classLayout)
             m_structures[shape] = 0;
     }
 
-    // Allocations that share a record have the same shape, which the record stores once it is filled.
     for (AllocationSiteRecord& record : std::span { m_state.instance.objects.emptyAllocationSite() - m_numberOfAllocationSiteRecords, m_numberOfAllocationSiteRecords }) {
         uint32_t shape = shapeWordOf(static_cast<uint32_t>(record.orderAndShapeWords >> 32));
         if (record.header && shape < m_tables.firstEnvironmentShape && belongsToClass(shape))
@@ -1160,7 +1128,6 @@ JSCell* StructureTable::allocate(VM& vm, uint32_t number)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Compiled code goes on behind the operation as behind its own allocation: it writes every slot of the object that is not to hold zero before anybody else can see one.
 JSCell* StructureTable::allocateAsCompiledCodeDoes(VM& vm, uint32_t number)
 {
     static_assert(offsetOfOrderWord == sizeof(JSCell) && offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && sizeof(JSCell) == sizeof(uint64_t));

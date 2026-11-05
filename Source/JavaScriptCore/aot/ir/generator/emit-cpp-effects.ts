@@ -10,7 +10,6 @@ interface EffectsDeclaration {
 
 const effectFlags = ["throws", "collects", "suspends", "terminates"] as const;
 
-// The two have one signature, so the concepts alone tell them apart. Neither holds for an enumerator, which goes to the overload of its own type.
 const operationTemplateHead = "template<HoldsOpcode Operation, typename Sink>";
 const terminatorTemplateHead = "template<HoldsTerminatorKind Terminator, typename Sink>";
 

@@ -1,23 +1,15 @@
 import { DependencyClosure } from "./dependency-closure.ts";
 import type { ModelBuiltin, ModelFunction, ModelImplementation, TableModel } from "./model.ts";
 
-/**
- * What code that nobody has read finds in the realm, whatever the program is. Every list ascends and holds each entry once, under the entry that stands for the object.
- * A loader or an evaluator is in none of them, and nothing is found through one: a program opens to unseen code only where it hands one out itself.
- */
 export interface OpenRealm {
-  /** The language: all of it is found without a name of the host. */
   language: readonly ModelBuiltin[];
-  /** The host: what hangs below the global object and the objects of the language, and all that this hands out. */
   host: readonly ModelBuiltin[];
-  /** The functions of the library behind those entries, which such code enters with operands nobody knows. */
   functionsOfLanguage: readonly ModelFunction[];
   functionsOfHost: readonly ModelFunction[];
 }
 
 const flagsOfEvents = ["EvaluatesText", "LoadsModuleByName", "RunsUnseenCode"] as const;
 
-// BuiltinTable::letsInUnseenCodeWhenCalled().
 function letsInUnseenCodeWhenCalled({ flags, attachments }: ModelBuiltin): boolean {
   const condition = attachments.unseenCodeCondition;
   if (condition !== null && condition.hasProperty !== null) return false;
@@ -33,7 +25,6 @@ function isLoaderOrEvaluator(builtin: ModelBuiltin): boolean {
     builtin.marks.includes("EvaluatesTextInGlobalScope") ||
     builtin.marks.includes("RunsCodeWithLoader") ||
     builtin.marks.includes("HandsOutWhatNativeCodeHolds") ||
-    // createRequire() returns a require function.
     builtin.overloads.some(({ result }) =>
       result.type.parts.some(
         part => part.part === "Builtin" && letsInUnseenCodeWhenCalled(part.builtin.sameObjectAs ?? part.builtin),

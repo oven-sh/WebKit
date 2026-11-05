@@ -93,7 +93,6 @@ static void reportBrokenRuleOfTables(BuildContext& build, ASCIILiteral rule, Fun
     build.diagnostics().add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .function = function, .layout = layout, .detail = WTF::move(detail) });
 }
 
-// Nothing that reaches the image depends on the hash. A whole table is hashed too, so it goes by words.
 static uint64_t hashOfBytesInTablePart(std::span<const uint8_t> bytes)
 {
     constexpr uint64_t multiplier = 1099511628211ull;
@@ -109,7 +108,6 @@ static uint64_t hashOfBytesInTablePart(std::span<const uint8_t> bytes)
     return hash;
 }
 
-// Bytes of two kinds never have one key. The low bits are neither all clear nor all set, so no key is the empty or the deleted key of a hash table.
 static uint64_t keyOfSharedBytesInTablePart(unsigned kindOfBytes, std::span<const uint8_t> bytes)
 {
     constexpr unsigned bitsOfKind = 4;
@@ -122,7 +120,6 @@ TablePart::TablePart(TablePartID id, BuildContext& build)
     : m_id(id)
     , m_build(build)
 {
-    // The run time finds the header at the start of the tables. joinTableParts() writes it there, and no offset leads to it.
     if (id != TablePartID::Header)
         return;
     growSectionTo(m_bytes, sizeof(ProgramTables));
@@ -131,7 +128,6 @@ TablePart::TablePart(TablePartID id, BuildContext& build)
 
 std::optional<uint32_t> TablePart::tryAllocate(size_t size, size_t alignment, NewBytes newBytes)
 {
-    // A part begins at a multiple of eight, so nothing in it can be promised more.
     RELEASE_ASSERT(std::has_single_bit(alignment) && alignment <= alignmentOfTablePart);
     size_t end = m_bytes.size();
     size_t offset = roundUpToMultipleOf(alignment, std::max(end, alignmentOfTablePart));
@@ -162,7 +158,6 @@ uint32_t TablePart::allocate(size_t size, size_t alignment)
 {
     if (std::optional<uint32_t> offset = tryAllocate(size, alignment))
         return *offset;
-    // The build has failed, and whoever asked still writes what it asked room for.
     RELEASE_ASSERT(size <= defaultLimitValue(LimitID::VectorBytes, hostArchitecture()));
     if (size_t end = m_bytes.size(); size > end) {
         growSectionTo(m_bytes, size);
@@ -179,7 +174,6 @@ uint32_t TablePart::appendSharedAmong(unsigned kindOfBytes, std::span<const uint
     });
     if (equal != notFound) {
         std::pair<uint32_t, uint32_t> range = handedOut[equal];
-        // One entry for each time: joinTableParts() sees by the number whether everybody who got the bytes linked them.
         if (range.second)
             handedOut.append(range);
         return range.first;
@@ -188,7 +182,6 @@ uint32_t TablePart::appendSharedAmong(unsigned kindOfBytes, std::span<const uint
     if (!offset)
         return 0;
     memcpySpan(m_bytes.mutableSpan().subspan(*offset), bytes);
-    // No copy so far is aligned enough, so this one serves whoever asks for as much or for less. In front, it ends their search however often the other copies were handed out.
     handedOut.insert(0, std::pair<uint32_t, uint32_t> { *offset, static_cast<uint32_t>(bytes.size()) });
     return *offset;
 }
@@ -240,7 +233,6 @@ void TablePart::setTableRange(ProgramTableIndex index, uint32_t offset, uint32_t
     m_tables.append(WrittenTable { index, offset, count });
 }
 
-// Ascending by offset.
 static Vector<SharedBytesOfTablePart> findSharedBytesOfTablePart(const auto& appended)
 {
     Vector<std::pair<uint32_t, uint32_t>> handedOutAgain;
@@ -251,7 +243,6 @@ static Vector<SharedBytesOfTablePart> findSharedBytesOfTablePart(const auto& app
     AOT::sortInLine(handedOutAgain);
     Vector<SharedBytesOfTablePart> shared;
     for (auto [offset, size] : handedOutAgain) {
-        // An empty range has no word to link, and the bytes behind it begin at its offset.
         if (!size)
             continue;
         if (!shared.isEmpty() && shared.last().offset == offset)
@@ -265,7 +256,6 @@ static Vector<SharedBytesOfTablePart> findSharedBytesOfTablePart(const auto& app
     return shared;
 }
 
-// `bytes` are those of the part where they lie among the joined tables. Ends a list at the first word that breaks a rule.
 static void applyLinksOfTablePart(TablePartID id, std::span<uint8_t> bytes, std::span<Vector<uint32_t>> linksByTarget, std::span<const SharedBytesOfTablePart> shared, const PlacesOfTableParts& places, BuildContext& build)
 {
     for (unsigned target = 0; target < numberOfTableParts; ++target) {
@@ -291,7 +281,6 @@ static void applyLinksOfTablePart(TablePartID id, std::span<uint8_t> bytes, std:
                 report("OffsetOutsideItsPart"_s, offsetOfWord);
                 break;
             }
-            // Equal bytes are one copy. Where one owner means a word of them as an offset and another as a number, the number would change with the offset.
             while (nextShared < shared.size() && shared[nextShared].offset + shared[nextShared].size <= offsetOfWord)
                 ++nextShared;
             if (nextShared < shared.size() && shared[nextShared].offset <= offsetOfWord && next - index < shared[nextShared].timesHandedOut) {
@@ -345,7 +334,6 @@ Vector<uint8_t> joinTableParts(std::span<TablePart> parts, ProgramTables& header
     Vector<uint8_t> bytes;
     growSectionTo(bytes, size);
     std::span<uint8_t> joined = bytes.mutableSpan();
-    // One part may hold most of the bytes, so the threads share the bytes and not the parts.
     constexpr size_t bytesInCopiedRange = MB;
     Vector<std::pair<unsigned, size_t>> copiedRanges;
     for (unsigned index = 0; index < numberOfTableParts; ++index) {
@@ -374,7 +362,6 @@ Vector<uint8_t> joinTableParts(std::span<TablePart> parts, ProgramTables& header
 template<typename Record>
 static String describeRecordOfRow(const Typed::Program& program, const Vector<Record>& records, Typed::IDPrefix prefix, uint32_t index)
 {
-    // The plan adds variables behind those of the program.
     const Record* record = index < records.size() ? &records[index] : nullptr;
     StringBuilder builder;
     if (record && record->name)
@@ -433,7 +420,6 @@ TableEncoder::TableEncoder(const TableInputs& inputs, const ImageNumbers& number
 {
 }
 
-// The records of strings lie in the order of the strings of the program. Only the record of a named string is sure to have its text and its header, and the run time reads a record without asking.
 uint32_t TableEncoder::stringNumber(StringID id) const
 {
     StringID string = id ? id : program.strings.emptyString();
@@ -513,7 +499,6 @@ bool TableEncoder::hasCode(CodeUnit unit) const
 
 void TableEncoder::fail(ASCIILiteral rule, RowOwner owner, const String& circumstances) const
 {
-    // The message of an internal error names its function and its layout by itself.
     if (!owner.variable && !owner.module) {
         reportBrokenRuleOfTables(build, rule, owner.function, owner.layout, circumstances);
         return;

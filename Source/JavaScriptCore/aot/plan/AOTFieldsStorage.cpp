@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Mechanism::TypedSlots: the slots in the cells get their forms, chooseFormsOfSlots(), and the cells of every group of layouts in which a slot has another width are laid again, packed by the widths.
-// At a suspension and at a throw: nothing. Where a field lies is decided once, in front of Compile, and holds for every cell for its whole life.
-// Withheld: every slot stays where computeSlotPlanParts() has laid it.
-
 #include "config.h"
 #include "AOTFieldsStorage.h"
 
@@ -37,8 +33,6 @@ static constexpr uint32_t bytesPerSlotInFieldsStorage = widthOf(SlotRepresentati
 
 static_assert(!(offsetOfFirstField % bytesPerSlotInFieldsStorage));
 
-// ---- What the files of plan/AOTFields* share
-
 bool hasTypedSlotsForFields(const Facts& facts)
 {
     return withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::TypedSlots);
@@ -56,7 +50,6 @@ GroupsOfLayoutsForFields groupLayoutsForFields(const Program& program, const Fam
             united.unite(index, base.index());
     }
     for (uint32_t number = 0; number < families.size(); ++number) {
-        // Any two families are nested or apart: what another holds adds nothing to what that one unites.
         if (families.nearestFamilyAbove(FamilyID(number)))
             continue;
         LayoutID first;
@@ -69,7 +62,6 @@ GroupsOfLayoutsForFields groupLayoutsForFields(const Program& program, const Fam
 
     GroupsOfLayoutsForFields groups;
     groups.groupOf.fill(GroupsOfLayoutsForFields::noGroup, numberOfLayouts);
-    // A representative follows the order in which families were united. The lowest layout does not.
     Vector<uint32_t> lowestLayoutOf;
     lowestLayoutOf.fill(GroupsOfLayoutsForFields::noGroup, numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
@@ -101,7 +93,6 @@ UnitsOfFields collectUnitsOfFields(const Program& program, const SlotPlanParts& 
     result.firstRowOfLayout.append(static_cast<uint32_t>(numberOfRows));
     result.unitOfRow.fill(UnitsOfFields::noUnit, numberOfRows);
 
-    // By key: the last unit under it. The units of a group are numbered side by side, so it is one of the group at hand where its number is no lower than the first of those.
     uint32_t numberOfKeys = program.types.numberOfPropertyKeys();
     Vector<uint32_t> lastUnitUnderKey;
     lastUnitUnderKey.fill(UnitsOfFields::noUnit, numberOfKeys);
@@ -190,7 +181,6 @@ bool isPlainFieldByRecords(const Program& program, const Facts& facts, FieldRefe
         if (place < appendedKeys.size())
             key = appendedKeys[place];
     }
-    // The library keeps some fields under symbols in a form of its own.
     if (!key || program.at(key).kind != PropertyKeyKind::Text)
         return false;
     FieldFacts fieldFacts = facts.field(reference);
@@ -204,11 +194,8 @@ bool isPlainSlotOfField(const PlannedLayout& planned, FieldIndex field)
         && planned.environmentOfDeferredClosures != field && !planned.holdsRawValueFromBirth(field);
 }
 
-// ---- The choice
-
 namespace {
 
-// What lies free in front of the end of the fields that families share: at most one run of one, of two and of four bytes, each aligned to its width.
 struct FreeBytesInFieldsStorage {
     uint64_t take(uint32_t width)
     {
@@ -224,13 +211,10 @@ struct FreeBytesInFieldsStorage {
     }
     friend bool operator==(const FreeBytesInFieldsStorage&, const FreeBytesInFieldsStorage&) = default;
 
-    // A multiple of eight. 0: nothing was laid yet.
     uint64_t end { 0 };
-    // By the logarithm of the width. 0: none.
     std::array<uint64_t, 3> runs { };
 };
 
-// The bytes of one cell while its slots are laid. Nothing is ever given back, so no word is looked through again for a width that it had no room for.
 class BytesOfCellInFieldsStorage {
 public:
     void reset(uint64_t offsetOfFirstSlot)
@@ -261,7 +245,6 @@ public:
         m_end = std::max(m_end, offset + width);
     }
 
-    // The lowest free bytes that are aligned to the width, a power of two up to eight.
     uint64_t take(uint32_t width)
     {
         unsigned logarithm = WTF::fastLog2(width);
@@ -282,13 +265,11 @@ public:
         }
     }
 
-    // Behind the last byte that is taken.
     uint64_t end() const { return m_end; }
 
 private:
     static constexpr uint64_t bytesPerWord = 64;
 
-    // A bit for each byte, from the start of the cell.
     Vector<uint64_t, 16> m_taken;
     std::array<size_t, 4> m_firstWordWithRoom { };
     uint64_t m_end { 0 };
@@ -340,19 +321,15 @@ private:
     GroupsOfLayoutsForFields m_groups;
     UnitsOfFields m_units;
 
-    // By group, which goes by its lowest layout.
     BitVector m_groupsLaidAgain;
 
-    // By layout.
     BitVector m_layoutsWithHiddenWords;
 
-    // The tables of placeFieldsForSlotPlan() once more, for the groups that are laid again: RowsOfSlotPlan.
     Vector<uint64_t> m_offsets;
     Vector<uint32_t> m_placesInCells;
     Vector<uint8_t> m_widths;
     Vector<uint64_t> m_ends;
     uint32_t m_numberOfPlacesInCells { 0 };
-    Vector<Vector<ReservedBytes>> m_bytesKeptZero;
     BytesOfCellInFieldsStorage m_cell;
 };
 
@@ -376,8 +353,6 @@ void ChooserOfFieldsStorage::run()
     layCellsAgain();
 }
 
-// ---- The forms
-
 void ChooserOfFieldsStorage::chooseForms()
 {
     Vector<uint8_t> widthsInFrontOfForms;
@@ -395,9 +370,6 @@ void ChooserOfFieldsStorage::chooseForms()
     });
 }
 
-// ---- The cells, laid again
-
-// The words lie in front of the fields, so a group has them or lacks them as one.
 void ChooserOfFieldsStorage::findGroupsWithHiddenWords()
 {
     BitVector groupsWithWords(numberOfLayouts());
@@ -437,7 +409,6 @@ void ChooserOfFieldsStorage::prepareRows()
         if (slotOf(row).storage == SlotStorage::Inline)
             m_widths[m_units.rowOf(row)] = static_cast<uint8_t>(slotOf(row).width());
     });
-    // A layout without cells of its own lays its fields for the layouts below it, as those have them.
     forEachListedFieldLaidAgain(false, [&](FieldReference row) {
         m_widths[m_units.rowOf(row)] = bytesPerSlotInFieldsStorage;
     });
@@ -453,7 +424,6 @@ void ChooserOfFieldsStorage::prepareRows()
     });
 }
 
-// findFamiliesThatMayAgreeOnSlotsForSlotPlan() of AOTSlotPlan.cpp.
 BitVector ChooserOfFieldsStorage::findFamiliesThatMayAgreeOnSlots() const
 {
     const Families& families = m_facts.families();
@@ -466,7 +436,6 @@ BitVector ChooserOfFieldsStorage::findFamiliesThatMayAgreeOnSlots() const
     return result;
 }
 
-// findMembersThatAgreeOnSlotsForSlotPlan() of AOTSlotPlan.cpp.
 void ChooserOfFieldsStorage::findMembersThatAgreeOnSlots(FamilyID family, Vector<LayoutID, 16>& members) const
 {
     members.shrink(0);
@@ -481,7 +450,6 @@ void ChooserOfFieldsStorage::findMembersThatAgreeOnSlots(FamilyID family, Vector
         members.shrink(0);
 }
 
-// placeFieldsSharedByFamiliesForSlotPlan() of AOTSlotPlan.cpp, by the widths: what all members of a declared family share lies in front of all else, at one offset in all of them. The largest family first.
 void ChooserOfFieldsStorage::layFieldsSharedByFamilies()
 {
     const Families& families = m_facts.families();
@@ -546,7 +514,6 @@ void ChooserOfFieldsStorage::layFieldsSharedByFamilies()
     }
 }
 
-// WHERE IN THE CELL A FIELD OF A UNION LIES IS unions-and-narrowing's: what it agreed on while every slot was eight bytes wide would be packed apart here, so it is asked again, by the widths.
 void ChooserOfFieldsStorage::layFieldsOfUnions()
 {
     auto hasCellsLaidAgain = [&](LayoutID id) {
@@ -556,10 +523,9 @@ void ChooserOfFieldsStorage::layFieldsOfUnions()
         return m_numberOfPlacesInCells++;
     };
     RowsOfSlotPlan rows { m_units.firstRowOfLayout.span(), m_offsets.mutableSpan(), m_placesInCells.mutableSpan(), m_ends.mutableSpan(), m_layoutsWithHiddenWords, m_widths.span() };
-    placeFieldsOfUnions(m_program, m_link, m_facts.families(), rows, scopedLambda<bool(LayoutID)>(hasCellsLaidAgain), scopedLambda<uint32_t()>(addPlace), m_bytesKeptZero);
+    placeFieldsOfUnions(m_program, m_link, m_facts.families(), rows, scopedLambda<bool(LayoutID)>(hasCellsLaidAgain), scopedLambda<uint32_t()>(addPlace));
 }
 
-// findFieldAboveForSlotPlan() of AOTSlotPlan.cpp.
 std::optional<FieldReference> ChooserOfFieldsStorage::findFieldAbove(const BitVector& isLaid, FieldReference reference, LayoutID base) const
 {
     const Field& listed = fieldAt(m_program, reference);
@@ -570,13 +536,11 @@ std::optional<FieldReference> ChooserOfFieldsStorage::findFieldAbove(const BitVe
         above = { base, *hidden };
     else
         return std::nullopt;
-    // In a ring of written bases the declaration may stand in a layout that comes later.
     if (above.layout == reference.layout || !isLaid.quickGet(above.layout.index()) || !isObjectLayout(m_program.at(above.layout).kind))
         return std::nullopt;
     return above;
 }
 
-// placeFieldsOfLayoutForSlotPlan() of AOTSlotPlan.cpp, by the widths: what a layout has from the layout above lies where it lies there. Its other fields take the lowest bytes that are free, as Layout::declaredOrder lists them.
 void ChooserOfFieldsStorage::layFieldsOf(LayoutID id, const BitVector& isLaid)
 {
     const Layout& layout = m_program.at(id);
@@ -596,10 +560,6 @@ void ChooserOfFieldsStorage::layFieldsOf(LayoutID id, const BitVector& isLaid)
         if (m_placesInCells[row] != noPlaceInCell && m_widths[row])
             m_cell.occupy(m_offsets[row], m_widths[row]);
     }
-    if (id.index() < m_bytesKeptZero.size()) {
-        for (ReservedBytes reserved : m_bytesKeptZero[id.index()])
-            m_cell.occupy(reserved.offset, reserved.width);
-    }
 
     for (uint32_t field = 0; base && field < numberListed; ++field) {
         uint32_t row = m_units.rowOf({ id, field });
@@ -607,7 +567,6 @@ void ChooserOfFieldsStorage::layFieldsOf(LayoutID id, const BitVector& isLaid)
         if (!above)
             continue;
         uint32_t rowAbove = m_units.rowOf(*above);
-        // Should the bytes be taken, the field lies elsewhere in this layout, and whoever reads through both finds the offset by the shape.
         if (m_placesInCells[rowAbove] == noPlaceInCell || m_widths[rowAbove] != m_widths[row] || !m_cell.isFree(m_offsets[rowAbove], m_widths[row]))
             continue;
         m_cell.occupy(m_offsets[rowAbove], m_widths[row]);
@@ -632,7 +591,6 @@ void ChooserOfFieldsStorage::layFieldsOf(LayoutID id, const BitVector& isLaid)
         finishCell(id);
 }
 
-// Behind what the layout lists: the appended fields that lie in the cell, the hidden words, the size.
 void ChooserOfFieldsStorage::finishCell(LayoutID id)
 {
     PlannedLayout& planned = m_parts.layouts[id.index()];
@@ -652,7 +610,6 @@ void ChooserOfFieldsStorage::finishCell(LayoutID id)
     extraProperties = PlacedSlot { };
     RELEASE_ASSERT(!hasSlotOutOfLine || m_layoutsWithHiddenWords.quickGet(id.index()));
     if (m_layoutsWithHiddenWords.quickGet(id.index())) {
-        // The stubs read a hidden word in the width that the options of the build say, and look for the word of the Extension at offsetOfFirstField.
         SlotRepresentation hiddenReference = hiddenReferenceRepresentation(m_build.recordedOptions().useWideReferences());
         extraProperties.representation = hiddenReference;
         extraProperties.storage = SlotStorage::Inline;
@@ -667,8 +624,6 @@ void ChooserOfFieldsStorage::finishCell(LayoutID id)
                 extraProperties.offset = static_cast<uint32_t>(m_cell.take(bytesPerSlotInFieldsStorage));
         }
     }
-    if (id.index() < m_bytesKeptZero.size())
-        planned.bytesKeptZero = m_bytesKeptZero[id.index()];
 
     uint64_t size = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(m_cell.end());
     if (size > m_build.limit(LimitID::MaxFieldOffset)) {
@@ -679,7 +634,6 @@ void ChooserOfFieldsStorage::finishCell(LayoutID id)
     planned.size = static_cast<uint32_t>(size);
 }
 
-// Only the groups in which a field has another width. Every other cell stays as it was found.
 void ChooserOfFieldsStorage::layCellsAgain()
 {
     if (m_groupsLaidAgain.isEmpty())
@@ -688,7 +642,6 @@ void ChooserOfFieldsStorage::layCellsAgain()
     layFieldsSharedByFamilies();
     layFieldsOfUnions();
 
-    // A layout comes behind the layout above it.
     BitVector isLaid(numberOfLayouts());
     BitVector isWaiting(numberOfLayouts());
     Vector<LayoutID, 16> waiting;
@@ -713,8 +666,6 @@ void chooseStorageOfFields(Program& program, const Facts& facts, BuildContext& b
         return;
     ChooserOfFieldsStorage(program, facts, build, parts).run();
 }
-
-// ---- The check
 
 static bool isNarrowFormForFieldsStorage(SlotRepresentation representation)
 {
@@ -751,7 +702,6 @@ void checkStorageOfFields(const Program& program, const Facts& facts, const Plan
 
         for (FieldIndex field = 0; field < planned.numberOfFields(); ++field) {
             const PlacedSlot& slot = planned.slots[field];
-            // The scope that an object keeps for its closures lies under no name: nobody but the allocation stores there.
             if (slot.hasStorage() && isNarrowFormForFieldsStorage(slot.representation) && planned.environmentOfDeferredClosures != field) {
                 const LinkedCell* cell = linked.findCellOfField({ id, field });
                 expect((cell && cell->everyWriterIsKnown && cell->proven) || (slot.type && canLeaveSlot(slot.representation)), id, "a slot has a narrow form, Link does not know every writer of its field, and the slot is held to no type or its field cannot leave it"_s);
@@ -762,14 +712,6 @@ void checkStorageOfFields(const Program& program, const Facts& facts, const Plan
                 const PlacedSlot& slotAbove = plan.slot(base, *above);
                 expect(slot.storage == slotAbove.storage && slot.representation == slotAbove.representation, id, "a field that the layout has from the layout above has another storage or another form there"_s);
             }
-        }
-
-        for (ReservedBytes reserved : planned.bytesKeptZero) {
-            uint64_t endOfBytes = static_cast<uint64_t>(reserved.offset) + reserved.width;
-            bool lieFreeInCell = reserved.offset >= offsetOfFirstField && endOfBytes <= planned.size && std::ranges::none_of(planned.slots, [&](const PlacedSlot& slot) {
-                return slot.storage == SlotStorage::Inline && slot.offset < endOfBytes && reserved.offset < slot.end();
-            });
-            expect(lieFreeInCell, id, "bytes that are kept zero lie outside the cell or in a slot"_s);
         }
     }
 }

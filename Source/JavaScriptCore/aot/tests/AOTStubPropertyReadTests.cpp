@@ -48,7 +48,6 @@ class PropertyReads {
     WTF_MAKE_NONCOPYABLE(PropertyReads);
 public:
     static constexpr uint16_t name = 4;
-    // A symbol or a private name. The image has no atom for it.
     static constexpr uint16_t nameMadeAtRunTime = 6;
     static constexpr unsigned numberOfNames = 8;
     static constexpr uint32_t symbolMask = 3;
@@ -60,7 +59,6 @@ public:
     {
     }
 
-    // For the stubs that are bound to names.
     PropertyReads(StubPolicy&& policy, std::span<const StubKey> stubsOfNames)
         : runner(WTF::move(policy), stubsOfNames)
     {
@@ -87,7 +85,6 @@ public:
 
     UniquedStringImpl* uid() { return reinterpret_cast<UniquedStringImpl*>(&m_identifiers[name]); }
 
-    // The next header that is made takes the place that the name had.
     void forgetHeader(uint16_t number, ImageStringRecord record, const uint8_t* text)
     {
         m_identifiers[number] = { };
@@ -111,7 +108,6 @@ public:
     UniquedStringImpl* uid() { return runner.instance().image.programIdentifiers + name; }
 #endif
 
-    // The entries stand from the first place of the number on.
     void setSymbols(std::initializer_list<ProgramSymbol> entries, uint16_t number = nameMadeAtRunTime)
     {
         m_symbolEntries.fill(ProgramSymbol { });
@@ -164,7 +160,6 @@ public:
         runner.forgetAccessTable();
         return readAgain(receiver, otherName);
     }
-    // With what earlier reads have filed in the access table.
     StubRun readAgain(uint64_t receiver, uint16_t otherName = name) { return runner.run(getById(), { receiver }, otherName); }
 
     StubRunner runner;
@@ -198,7 +193,6 @@ struct FakeTypedObject : FakeObject<offsetOfFirstField + 2 * sizeof(uint64_t)> {
 
 } // anonymous namespace
 
-// A number may fall. What differs from its budget is printed.
 [[maybe_unused]] static bool isWithinBudgetOfRead(const StubRun& run, uint32_t budget, ASCIILiteral which, const auto&... what)
 {
     AOT_TEST_CHECK(run.instructionsInStubs);
@@ -335,7 +329,6 @@ static void testFieldsOrInheritedValues()
     AOT_TEST_CHECK(representationsRead);
 }
 
-// A field that may exist without storage is undefined where the key order lists it and its slot is empty. The stub answers where the objects above the receiver answer undefined too.
 static void testEmptySlotsThatMayBeUndefined()
 {
     PropertyReads reads;
@@ -387,7 +380,6 @@ static void testFieldsInExtensionOrInheritedValues()
     SlotData field = SlotData::create(offsetInExtension, SlotRepresentation::JSValue);
     reads.file(*Slot::tryCreateFieldAndHolder(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::FieldOrInherited, Slot::isOutOfLine | Slot::dependsOnChain, field, std::bit_cast<JSCell*>(holder.address()), FakeHolder::inlineOffset, cageBase));
 
-    // The page of zeros that stands for "no Extension" belongs to a real cage. Here an Extension without a granule takes its place.
     FakeTypedObject object;
     FakeObject<offsetInExtension + sizeof(uint64_t)> extension;
     extension.at<uint64_t>(offsetOfExtensionGranuleBits) = 0;
@@ -494,7 +486,6 @@ static void testInheritedFields()
     AOT_TEST_CHECK(representationsRead > 4);
 }
 
-// What the tables do not say of the holder is asked of the run time with the holder as the receiver.
 static void testInheritedFieldsOfHolderThatIsNotFiled()
 {
     PropertyReads reads;
@@ -552,7 +543,6 @@ static void testFieldsInExtensionOrInheritedFields()
     reads.file(*Slot::tryCreateFieldOrInheritedField(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::isOutOfLine | Slot::dependsOnChain, field, std::bit_cast<JSCell*>(holder.address()), offsetOfExtensionWord, cageBase));
     reads.fileBesideOthers(createFieldSlotOfHolder(SlotRepresentation::Int32));
 
-    // The page of zeros that stands for "no Extension" belongs to a real cage. Here an Extension without a granule takes its place.
     FakeTypedObject object;
     FakeObject<offsetInExtension + sizeof(uint64_t)> extension;
     extension.at<uint64_t>(offsetOfExtensionGranuleBits) = 0;
@@ -588,7 +578,6 @@ static void testNamesMadeAtRunTime()
         return !run.calledOperation && run.result == bitsOf(jsNumber(7));
     };
 
-    // Nobody has made the name yet.
     reads.setSymbols({ });
     AOT_TEST_CHECK(reads.read(object.address(), name).calledOperation);
     reads.setSymbols({ { otherNameWithSamePlace, otherUID } });
@@ -622,7 +611,6 @@ static void testNamesFirstUsedByStub()
     AOT_TEST_CHECK(reads.offsetOfHeader(name) == name * sizeof(LazyStringHeader));
     AOT_TEST_CHECK(reads.arena().end == (name + 1) * sizeof(LazyStringHeader) && !reads.arena().isLocked.load());
 
-    // Another thread is making a header.
     reads.forgetHeader(name, record, text.data());
     reads.arena().isLocked.store(1);
     AOT_TEST_CHECK(reads.read(object.address(), name).calledOperation);
@@ -644,7 +632,6 @@ static void testDeferredClosures()
     StubRun run = reads.read(objectWithClosure.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == closure.address());
 
-    // The operation makes the closure. It gets every operand unchanged.
     FakeTypedObject objectBeforeFirstRead;
     objectBeforeFirstRead.at<uint32_t>(FakeTypedObject::offsetOfField) = uncreatedDeferredClosure;
     reads.runner.recordCallsOf(Entry::operationAOTReadField);
@@ -655,7 +642,6 @@ static void testDeferredClosures()
     AOT_TEST_CHECK(run.recordedArguments[0] == objectBeforeFirstRead.address() && run.recordedArguments[1] == slot.headerBits() && run.recordedArguments[2] == slot.payloadBits());
     AOT_TEST_CHECK(objectBeforeFirstRead.at<uint32_t>(FakeTypedObject::offsetOfField) == uncreatedDeferredClosure);
 
-    // The property has left the slot, which says what an empty slot of any other field says.
     FakeTypedObject objectWithoutProperty;
     objectWithoutProperty.at<uint32_t>(FakeTypedObject::offsetOfField) = absentDeferredClosure;
     reads.runner.recordCallsOf(Entry::operationAOTReadField);
@@ -709,7 +695,6 @@ static void testTypedArrayLengths()
 
 namespace {
 
-// PropertyReads::name is a value in the cell of shape 1, a narrow reference in the cell of shape 2, a value in the Extension of shape 3, some other field of shape 4 and an integer in the cell of shape 5. No other name has an entry.
 class FieldTable {
     WTF_MAKE_NONCOPYABLE(FieldTable);
 public:
@@ -747,7 +732,6 @@ public:
         entryOf(shapeWithNarrowCellInSecondHalfOfGranule) = Entry::create(PropertyReads::name, Entry::Form::Field, Entry::firstNarrowCellInSecondHalfOfGranule + offsetInExtension / sizeof(uint64_t)).bits;
         Instance& instance = reads.runner.instance();
         instance.image.fieldTableEntries = m_table.data() + highestShape;
-        // Every entry names field 0 of the one layout.
         instance.image.fieldRecordIndices = m_recordIndices.data();
         inStructure<const void*>(CompiledStructure::offsetOfLayout()) = m_layout.data();
         instance.prefix().structureIDBase = m_structures.address();
@@ -757,7 +741,6 @@ public:
     void setFlagsOfStructure(OptionSet<CompiledStructure::Flag> flags) { inStructure<uint8_t>(CompiledStructure::offsetOfFlags()) = flags.toRaw(); }
     void setRealmOfStructure(uint64_t realm) { inStructure<uint64_t>(Structure::realmOffset()) = realm; }
     void setBitFieldOfStructure(uint32_t bits) { inStructure<uint32_t>(Structure::bitFieldOffset()) = bits; }
-    // FakeHolder has the StructureID zero.
     void setBitFieldOfStructureOfHolders(uint32_t bits) { m_structures.at<uint32_t>(Structure::bitFieldOffset()) = bits; }
     void setNamesOfObjectPrototypes(uint64_t bits) { m_namesOfObjectPrototypes = bits; }
     FieldData& field() { return *std::bit_cast<FieldData*>(m_layout.data() + sizeof(LayoutData)); }
@@ -769,7 +752,6 @@ private:
     template<typename T> T& inStructure(ptrdiff_t offset) { return m_structures.at<T>(PropertyReads::structureID + offset); }
 
     alignas(LayoutData) std::array<uint8_t, sizeof(LayoutData) + sizeof(FieldData)> m_layout { };
-    // The Structure of the fake compiled objects lies as far in as its StructureID says. A smaller one leads to zeros: a Structure that says nothing.
     FakeObject<PropertyReads::structureID + sizeof(CompiledStructure)> m_structures;
     uint64_t m_namesOfObjectPrototypes { 0 };
 };
@@ -778,7 +760,6 @@ struct FakeObjectWithShape : FakeTypedObject {
     explicit FakeObjectWithShape(uint32_t shape) { at<uint32_t>(offsetOfShapeWord) = shapeWordOf(shape); }
 };
 
-// Holds one granule.
 struct FakeExtension : FakeObject<extensionCellSizeFor(1)> {
     static constexpr uint64_t bitOfSlot = granuleBitOf(FieldTable::offsetInExtension);
 
@@ -847,7 +828,6 @@ static void testFieldsFoundInFieldTable()
     }
 }
 
-// With nothing in any cache: what is not answered by the table of fields alone ends in an operation.
 static void testBooleansAndDoublesFoundInFieldTable()
 {
     PropertyReads reads;
@@ -873,7 +853,6 @@ static void testBooleansAndDoublesFoundInFieldTable()
         StubRun run = reads.read(withDouble.address());
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsDoubleNumber(value)));
     }
-    // What is no finite number may be a marker: the record of the field explains it.
     table.field().slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::OptionalDouble);
     for (double value : { std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN() }) {
         withDouble.field() = std::bit_cast<uint64_t>(value);
@@ -886,7 +865,6 @@ static void testBooleansAndDoublesFoundInFieldTable()
         StubRun run = reads.read(withInt64.address());
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(value)));
     }
-    // Beyond int32 it may be a marker.
     table.field().slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::OptionalInt64);
     for (int64_t value : { static_cast<int64_t>(INT32_MAX) + 1, static_cast<int64_t>(INT32_MIN) - 1, maxIntegerAddedTo, minIntegerAddedTo, absentInteger, undefinedInteger, nullInteger }) {
         withInt64.field() = static_cast<uint64_t>(value);
@@ -894,7 +872,6 @@ static void testBooleansAndDoublesFoundInFieldTable()
     }
 }
 
-// An optional field that is missing reads as undefined without a look into any cache, where the object has no field outside its slot and nothing above it has the name.
 static void testMissingFieldsAnsweredByFieldTable()
 {
     PropertyReads reads;
@@ -939,7 +916,6 @@ static void testMissingFieldsAnsweredByFieldTable()
         AOT_TEST_CHECK(isAnswered());
     }
 
-    // The same for a field in the Extension: there is no Extension, it has no granule for the field, or the slot in the granule is empty.
     uintptr_t cageBase = reads.runner.instance().cellCageBase;
     for (uint32_t shape : { FieldTable::shapeWithOutOfLineValue, FieldTable::shapeWithNarrowCellInExtension, FieldTable::shapeWithNarrowCellInSecondHalfOfGranule }) {
         FakeExtension withGranule(FakeExtension::bitOfSlot);
@@ -969,7 +945,6 @@ static void testMissingFieldsAnsweredByFieldTable()
         }
     }
 
-    // A closure that is not made yet has the word of an empty reference.
     table.field().slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::DeferredClosure);
     FakeObjectWithShape withClosure(FieldTable::shapeWithNarrowCell);
     withClosure.at<uint32_t>(offsetOfOrderWord) = 0;
@@ -995,7 +970,6 @@ static void testInstructionsOfReadsByKindOfField()
         SlotRepresentation representation;
         uint64_t slot;
         JSValue expected;
-        // Of the read that finds nothing in the access table and files there what it can, and of the read behind it.
         uint32_t budget;
         uint32_t budgetOfNextRead;
     };
@@ -1033,7 +1007,6 @@ static void testInstructionsOfReadsByKindOfField()
 #endif
 }
 
-// The same for a field that the tables have: what the handler of the slot costs by what the field holds. A number here may fall.
 static void testInstructionsOfReadsOfFiledFields()
 {
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
@@ -1067,7 +1040,6 @@ static void testInstructionsOfReadsOfFiledFields()
         reads.file(createFieldSlot(read.representation));
         FakeTypedObject object;
         AOT_TEST_CHECK(tryWrite(read.representation, &object.field(), read.value.isInt32() && traitsOf(read.representation).valueKind == SlotValueKind::Double ? jsDoubleNumber(read.value.asInt32()) : read.value, cageBase));
-        // The access table holds nothing that a handler answers, so every read costs this.
         for (StubRun run : { reads.read(object.address()), reads.readAgain(object.address()) }) {
             AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(read.value));
             isWithinBudget &= isWithinBudgetOfRead(run, read.budget, "a read by name of a filed field, "_s, nameOf(read.representation));
@@ -1077,11 +1049,8 @@ static void testInstructionsOfReadsOfFiledFields()
 #endif
 }
 
-// A field that is missing in an instance of a class or of a constructor function: the Structure does not say that nothing above has the name, the cell of the front table does.
-// The slot has been seen to be empty by then, so the handler of the cell, which finds the slot and looks into it, has nothing to add. A number here may fall.
 static void testInstructionsOfReadsOfMissingFieldsBelowClasses()
 {
-    // A build with assertions puts more instructions into the stubs, so the budget is held against the other builds only.
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
     PropertyReads reads;
     FieldTable table(reads);
@@ -1122,7 +1091,6 @@ static void testInstructionsOfReadsOfMissingFieldsBelowClasses()
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsUndefined()));
         isWithinBudget &= isWithinBudgetOfRead(run, read.budgetOfNextRead, nextReadByName, read.what, " that is missing below a class");
 
-        // A cell that does not say so, a cell of another name and an object with a field outside its slot are left to whoever they were left to.
         fileInFront(0);
         AOT_TEST_CHECK(reads.read(object.address()).calledOperation);
         reads.clear();
@@ -1145,7 +1113,6 @@ static void testLookupsLeftToTheCaches()
         return Slot::createField(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::Field, Slot::isOwn | flags, SlotData::create(FakeTypedObject::offsetOfField, representation), 0, 0);
     };
 
-    // An empty slot says nothing about the chain.
     for (auto [shape, representation] : { std::pair { FieldTable::shapeWithValue, SlotRepresentation::JSValue }, std::pair { FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32 } }) {
         FakeObjectWithShape object(shape);
         object.field() = 0;
@@ -1156,12 +1123,10 @@ static void testLookupsLeftToTheCaches()
         AOT_TEST_CHECK(reads.read(object.address()).calledOperation);
     }
 
-    // So does the slot of a closure that the property has left.
     FakeObjectWithShape withoutClosure(FieldTable::shapeWithNarrowCell);
     withoutClosure.field() = absentDeferredClosure;
     AOT_TEST_CHECK(reads.read(withoutClosure.address()).calledOperation);
 
-    // So does an Extension that is not there, one that holds another granule, and an empty slot in it.
     FakeObjectWithShape withOutOfLineValue(FieldTable::shapeWithOutOfLineValue);
     withOutOfLineValue.field() = 0;
     AOT_TEST_CHECK(reads.read(withOutOfLineValue.address()).calledOperation);
@@ -1172,7 +1137,6 @@ static void testLookupsLeftToTheCaches()
         AOT_TEST_CHECK(reads.read(withOutOfLineValue.address()).calledOperation);
     }
 
-    // A word below the integers says that the slot is empty, undefined or null, or is an integer of a field that has no such words.
     FakeObjectWithShape withInt32(FieldTable::shapeWithInt32);
     for (int32_t word : { absentInt32, undefinedInt32, nullInt32, INT32_MIN, minInlineInt32 - 1 }) {
         withInt32.at<int32_t>(FakeTypedObject::offsetOfField) = word;
@@ -1192,7 +1156,6 @@ static void testLookupsLeftToTheCaches()
     StubRun run = reads.read(withOtherField.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(9)));
 
-    // The entries that another name meets are those of other rows.
     reads.file(Slot { });
     for (uint32_t shape = 1; shape <= FieldTable::highestShape; ++shape) {
         FakeObjectWithShape object(shape);
@@ -1206,7 +1169,6 @@ static void testLookupsLeftToTheCaches()
     AOT_TEST_CHECK(reads.read(withoutShape.address()).calledOperation);
 }
 
-// Each realm has its own symbol under the number. An object of another realm has the field of that number under another symbol than the one that is asked for.
 static void testSymbolsOfRealm()
 {
     PropertyReads reads;
@@ -1228,22 +1190,18 @@ static void testSymbolsOfRealm()
 
     table.setRealmOfStructure(otherRealm.address());
     AOT_TEST_CHECK(read(object.address()).calledOperation);
-    // What is filed under the symbol of the realm that runs answers for any receiver.
     reads.file(absent);
     run = read(object.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsUndefined()));
-    // The realm that runs has not made its symbol yet. The number names no atom of the image.
     reads.setSymbols({ });
     AOT_TEST_CHECK(read(object.address()).calledOperation);
     reads.setSymbols({ { PropertyReads::name, reads.uid() } }, PropertyReads::name);
 
-    // A cell in front goes by the number, for every realm at once. It is not asked for an object of another realm.
     reads.clear();
     reads.fileInFrontBesideOthers(createFieldSlot(SlotRepresentation::JSValue));
     AOT_TEST_CHECK(read(object.address()).calledOperation);
     reads.clear();
 
-    // An empty slot of an object of the realm that runs is explained as for getById().
     table.setRealmOfStructure(realm.address());
     table.field().name = PropertyReads::name;
     table.field().slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::JSValue);
@@ -1258,7 +1216,6 @@ static void testSymbolsOfRealm()
     table.setNamesOfObjectPrototypes(0);
     table.setFlagsOfStructure({ });
 
-    // It says nothing about the chain, and the hashed table does.
     reads.file(Slot::createField(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::Field, Slot::isOwn | Slot::absentIsUndefined, SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::JSValue), 0, 0));
     run = read(object.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsUndefined()));
@@ -1288,14 +1245,12 @@ static void testNamesOutsideLayoutAreAbsent()
     table.setFlagsOfStructure({ Flag::HasOnlyFieldsBelowObjectPrototype, Flag::HasOnlyPlainSlots });
     table.setNamesOfObjectPrototypes(uint64_t { 1 } << inheritedName);
     forEachOtherName([&](uint16_t otherName, const StubRun& run) {
-        // The question stands behind the hashed table, which a name that has no uid yet does not get to.
         if (otherName == inheritedName || otherName == PropertyReads::nameMadeAtRunTime)
             AOT_TEST_CHECK(run.calledOperation);
         else
             AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsUndefined()));
     });
 
-    // An object with extra properties or another prototype has a Structure that does not say so.
     for (OptionSet<Flag> flags : { OptionSet<Flag> { }, OptionSet<Flag> { Flag::HasExtraProperties }, OptionSet<Flag> { Flag::HasOtherPrototype, Flag::HasOnlyPlainSlots } }) {
         table.setFlagsOfStructure(flags);
         forEachOtherName([&](uint16_t, const StubRun& run) {
@@ -1303,7 +1258,6 @@ static void testNamesOutsideLayoutAreAbsent()
         });
     }
 
-    // The field itself is read as ever. stubs/get-by-id/missing-fields-answered-by-field-table has its empty slot.
     table.setFlagsOfStructure(Flag::HasOnlyFieldsBelowObjectPrototype);
     FakeObjectWithShape withValue(FieldTable::shapeWithValue);
     withValue.field() = bitsOf(jsNumber(7));
@@ -1311,7 +1265,6 @@ static void testNamesOutsideLayoutAreAbsent()
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)));
 }
 
-// A variant takes the receiver in another register and answers what the stub itself answers, whoever has the answer.
 static void testReceiversInOtherRegisters()
 {
     PropertyReads reads;
@@ -1331,7 +1284,6 @@ static void testReceiversInOtherRegisters()
         FakeObjectWithShape withField(FieldTable::shapeWithValue);
         withField.field() = bitsOf(jsNumber(7));
         AOT_TEST_CHECK(answerFor(withField.address()) == bitsOf(jsNumber(7)));
-        // Whoever explains an empty slot takes the receiver where the stub itself does.
         withField.field() = traitsOf(SlotRepresentation::JSValue).absentBits;
         AOT_TEST_CHECK(answerFor(withField.address()) == bitsOf(jsUndefined()));
 
@@ -1355,7 +1307,6 @@ static void testReceiversInOtherRegisters()
 
 namespace {
 
-// No row of FieldTable has an entry for it.
 constexpr uint16_t nameOutsideLayouts = 2;
 static_assert(nameOutsideLayouts != PropertyReads::name && nameOutsideLayouts != PropertyReads::nameMadeAtRunTime && nameOutsideLayouts < PropertyReads::numberOfNames);
 constexpr uint32_t offsetOfExtraPropertiesWord = FakeTypedObject::offsetOfField + sizeof(uint64_t);
@@ -1364,14 +1315,12 @@ struct AnswerBehindFieldTable {
     ASCIILiteral what;
     Slot slot;
     uint64_t expected;
-    // Of getById() for a compiled object, on x86-64: the read that finds nothing in the access table and files there what it can, and the read behind it.
     uint32_t budget;
     uint32_t budgetOfNextRead;
 };
 
 } // anonymous namespace
 
-// `other` stands for the extra properties of the receiver, or for a holder above it.
 static std::array<AnswerBehindFieldTable, 5> answersBehindFieldTable(FakeHolder& other)
 {
     const StructureID id = std::bit_cast<StructureID>(PropertyReads::structureID);
@@ -1390,7 +1339,6 @@ static std::array<AnswerBehindFieldTable, 5> answersBehindFieldTable(FakeHolder&
     } };
 }
 
-// What most cells of the front table say is answered where the cell is found, wherever the receiver lies and whether or not it is a compiled object.
 static void testAnswersBehindFieldTable()
 {
     PropertyReads reads;
@@ -1425,7 +1373,6 @@ static void testAnswersBehindFieldTable()
                 StubRun run = read();
                 AOT_TEST_CHECK(!run.calledOperation && run.result == answer.expected && object->field() == untouched);
 
-                // An object without extra properties is left to the run time, and nothing else looks at the word.
                 extraPropertiesWord = 0;
                 run = read();
                 if (answer.slot.kind == Slot::Kind::ExtraProperty)
@@ -1434,14 +1381,12 @@ static void testAnswersBehindFieldTable()
                     AOT_TEST_CHECK(!run.calledOperation && run.result == answer.expected);
             }
 
-            // A cell of any other kind goes on to the handler of its kind.
             reads.clear();
             reads.fileInFrontBesideOthers(createFieldSlot(SlotRepresentation::JSValue), nameOutsideLayouts);
             object->field() = bitsOf(jsNumber(7));
             StubRun run = read();
             AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(7)));
 
-            // A cell of another name says nothing.
             reads.clear();
             reads.fileInFrontBesideOthers(Slot::createWithoutPayload(id, Slot::Kind::Absent, Slot::dependsOnChain), PropertyReads::name);
             AOT_TEST_CHECK(read().calledOperation);
@@ -1457,10 +1402,8 @@ static void testAnswersBehindFieldTable()
     }
 }
 
-// A number here may fall.
 static void testInstructionsOfReadsBehindFieldTable()
 {
-    // A build with assertions puts more instructions into the stubs, so the budget is held against the other builds only.
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
     PropertyReads reads;
     FieldTable table(reads);
@@ -1486,8 +1429,6 @@ static void testInstructionsOfReadsBehindFieldTable()
 #endif
 }
 
-// What a read has found it files in the access table, under the StructureID of the receiver and the name, and the next read of an object of the Structure is answered there.
-// A fake object keeps its StructureID whatever its shape is, so who has answered shows where the tables behind say something else, or nothing.
 static void testReadsAnsweredByAccessTable()
 {
     PropertyReads reads;
@@ -1501,7 +1442,6 @@ static void testReadsAnsweredByAccessTable()
     FakeObject<16> cell;
     cell.setHeader(0, FinalObjectType);
 
-    // A value in the cell of a compiled object.
     FakeObjectWithShape withValue(FieldTable::shapeWithValue);
     withValue.field() = bitsOf(jsNumber(7));
     StubRun run = reads.read(withValue.address());
@@ -1512,18 +1452,15 @@ static void testReadsAnsweredByAccessTable()
     withRowOfOtherForm.field() = bitsOf(jsNumber(8));
     run = reads.readAgain(withRowOfOtherForm.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(8)));
-    // An empty slot says that this object lacks the property. Another name finds another key.
     withRowOfOtherForm.field() = 0;
     AOT_TEST_CHECK(reads.readAgain(withRowOfOtherForm.address()).calledOperation);
     AOT_TEST_CHECK(reads.readAgain(withValue.address(), nameOutsideLayouts).calledOperation);
-    // A change on a chain does not end it, and a collection does.
     words.numberOfKeysThatDependOnChains = AccessTable::maxKeysListed + 1;
     words.didChangeObjectOnSomeChain();
     AOT_TEST_CHECK(placeOf(PropertyReads::name).keyOfOwnValue == keyOf(PropertyReads::name));
     words.forgetEverything();
     AOT_TEST_CHECK(!placeOf(PropertyReads::name).keyOfOwnValue);
 
-    // A field of any other form: the place has the form and the operand, and the read goes on where the row would have led it.
     FakeExtension extension(FakeExtension::bitOfSlot);
     extension.granule() = bitsOf(jsNumber(5));
     struct Field {
@@ -1554,7 +1491,6 @@ static void testReadsAnsweredByAccessTable()
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(field.expected));
     }
 
-    // What a cell of the front table says of the objects above. Whatever a handler answers is not filed.
     FakeHolder holder;
     holder.property(FakeHolder::inlineOffset) = bitsOf(jsNumber(11));
     holder.property(FakeHolder::outOfLineOffset) = bitsOf(jsNumber(12));
@@ -1580,7 +1516,6 @@ static void testReadsAnsweredByAccessTable()
         if (answer.slot.kind == Slot::Kind::Absent)
             AOT_TEST_CHECK(placeOf(nameOutsideLayouts).otherAnswer == std::bit_cast<uintptr_t>(&words.undefinedValue));
         else {
-            // The value of a holder is replaced without a report.
             uint64_t& property = holder.property(answer.slot.has(Slot::isOutOfLine) ? FakeHolder::outOfLineOffset : FakeHolder::inlineOffset);
             uint64_t before = std::exchange(property, bitsOf(jsNumber(13)));
             AOT_TEST_CHECK(reads.readAgain(withValue.address(), nameOutsideLayouts).result == bitsOf(jsNumber(13)));
@@ -1590,7 +1525,6 @@ static void testReadsAnsweredByAccessTable()
         words.didChangeObjectOnSomeChain();
         AOT_TEST_CHECK(!words.numberOfKeysThatDependOnChains && reads.readAgain(withValue.address(), nameOutsideLayouts).calledOperation);
 
-        // Where more were filed than are listed, the count says so, and a change ends them all the same.
         reads.runner.forgetAccessTable();
         words.numberOfKeysThatDependOnChains = AccessTable::maxKeysListed;
         reads.fileInFrontBesideOthers(answer.slot, nameOutsideLayouts);
@@ -1601,7 +1535,6 @@ static void testReadsAnsweredByAccessTable()
         words.didChangeObjectOnSomeChain();
         AOT_TEST_CHECK(!words.numberOfKeysThatDependOnChains && reads.readAgain(withValue.address(), nameOutsideLayouts).calledOperation);
 
-        // A dictionary changes and stays the Structure that it is, and making one flat moves its values. So nothing is filed for one, nor about a holder that is one.
         constexpr uint32_t isDictionary = Structure::s_dictionaryKindMask << Structure::s_dictionaryKindShift;
         table.setBitFieldOfStructure(isDictionary);
         run = readFiledInFront(answer.slot, withValue.address());
@@ -1615,7 +1548,6 @@ static void testReadsAnsweredByAccessTable()
         table.setBitFieldOfStructureOfHolders(0);
     }
 
-    // A value of an ordinary object's own.
     FakeHolder ordinary;
     ordinary.setHeader(PropertyReads::structureID, FinalObjectType);
     for (PropertyOffset offset : { FakeHolder::inlineOffset, FakeHolder::outOfLineOffset }) {
@@ -1631,7 +1563,6 @@ static void testReadsAnsweredByAccessTable()
 
 namespace {
 
-// The record of the layout behind FieldTable::shapeWithNarrowCell. Its second field is PropertyReads::name, which defers a closure.
 class LayoutWithDeferredClosure {
     WTF_MAKE_NONCOPYABLE(LayoutWithDeferredClosure);
 public:
@@ -1692,7 +1623,6 @@ static void testReadsOfClosuresNotCreated()
         AOT_TEST_CHECK(run.result == closureMadeByRead.address() && slot == slotBefore);
     };
 
-    // The read of a closure that is not made yet asks for nothing but the closure, whatever the closure captures.
     slot = uncreatedDeferredClosure;
     for (uint16_t flags : { static_cast<uint16_t>(0), fieldDeferredClosureCapturesObject, fieldDeferredClosureCapturesEnvironment }) {
         layout.field().flags = flags;
@@ -1702,7 +1632,6 @@ static void testReadsOfClosuresNotCreated()
     slot = absentDeferredClosure;
     checkRead(Entry::operationAOTGetByIdAndCache);
 
-    // Zero in the slot of any other reference says that the slot is empty.
     slot = absentCell32;
     layout.field().slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::Cell32);
     checkRead(Entry::operationAOTGetByIdAndCache);
@@ -1742,7 +1671,6 @@ static void testPresenceFromLeafLookup()
     }
 }
 
-// A read that finds the slot of the field empty goes on above the receiver: the receiver itself has no such property.
 static void testOwnPresenceOfFieldsThatObjectsAboveAnswerFor()
 {
     constexpr uint32_t offsetOfExtensionWord = offsetOfFirstField + sizeof(uint64_t);
@@ -1790,7 +1718,6 @@ static void testOwnPresenceOfFieldsThatObjectsAboveAnswerFor()
     }
     AOT_TEST_CHECK(representationsAsked);
 
-    // Only the key order says whether such a field exists where its slot is empty.
     {
         reads.file(createFieldOrInheritedSlot(SlotRepresentation::JSValue, holder, FakeHolder::inlineOffset, Slot::emptySlotMayBeUndefined, cageBase));
         FakeTypedObject object;
@@ -1832,7 +1759,6 @@ static void testFieldsReadOutOfExtension()
     constexpr std::array slots { SlotInGranule::Word64, SlotInGranule::Word32At0, SlotInGranule::Word32At4, SlotInGranule::ByteAt0, SlotInGranule::ByteAt1, SlotInGranule::ByteAt2, SlotInGranule::ByteAt3, SlotInGranule::ByteAt4, SlotInGranule::ByteAt5, SlotInGranule::ByteAt6, SlotInGranule::ByteAt7 };
     static_assert(slots.size() == descriptorOf(StubFamily::ReadFieldInExtension).numberOfForms && descriptorOf(StubFamily::ReadFieldInExtension).maxCount + 1 == maxExtensionGranules);
     constexpr uint64_t lastGranule = 1ull << (maxExtensionGranules - 1);
-    // No two bytes of a granule are alike, no two granules are alike, and none has a byte of zero.
     auto wordOf = [](unsigned granule) {
         return 0x1011121314151617ULL + granule * 0x0101010101010101ULL;
     };
@@ -1870,7 +1796,6 @@ static void testFieldsReadOutOfExtension()
             return run.result;
         };
 
-        // An Extension that holds nothing also stands for the page of zeros that the narrow word of an object without an Extension names: that page belongs to a real cage.
         constexpr std::array<uint64_t, 6> setsOfGranules { 0, UINT64_MAX, 1, lastGranule, 1 | 1ull << 3 | lastGranule, 1ull << 1 | 1ull << 31 | 1ull << 32 | 1ull << 62 };
         for (uint64_t granuleBits : setsOfGranules) {
             hold(granuleBits);
@@ -1896,7 +1821,6 @@ static void testFieldsReadOutOfExtension()
             }
         }
 
-        // The caller keeps every register but that of the result, calls it without a frame where the call stores the return address, and none of its loads ends.
         RegisterSet written = RegisterSet::macroClobberedGPRs();
         written.merge(RegisterSet::macroClobberedFPRs());
         written.add(GPRInfo::returnValueGPR, IgnoreVectors);

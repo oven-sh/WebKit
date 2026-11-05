@@ -6,7 +6,7 @@
 # CHECK-NEXT: parameter 0
 # CHECK-NOT: proven=
 # CHECK: function f2 callers-known one-callee
-# CHECK-NEXT: parameter 0 {{*}}proven=string kept
+# CHECK-NEXT: parameter 0 {{*}}proven=string
 # CHECK: field L0.0 "x"
 # CHECK-NOT: writers-known
 # CHECK: field L1.0 "y" proven=string writers-known written-at-construction-alone filled

@@ -19,7 +19,6 @@ constexpr bool isOnBits(BinaryOperator operation) { return operation >= BinaryOp
 constexpr bool hasDoubleCase(BinaryOperator operation) { return !isOnBits(operation); }
 constexpr bool hasFormAfterInt32Check(BinaryOperator operation) { return operation != BinaryOperator::Div && operation != BinaryOperator::Mod; }
 
-// Every operator, then in the same order every operator that has a form after the check.
 constexpr uint8_t binaryOperationForm(BinaryOperator operation, bool isAfterInt32Check)
 {
     if (!isAfterInt32Check)
@@ -60,9 +59,7 @@ constexpr BinaryWithDoubleForm binaryWithDoubleForm(BinaryOperator operation, bo
 enum class UnaryOperationForm : uint8_t { Negate, Increment, Decrement, BitNot, ToNumeric, AddToEmptyString, ToString };
 enum class BoxedNumberForm : uint8_t { Double, OptionalDouble, Integer, OptionalInteger };
 
-// After the check: the caller expects no two int32s, so the stub has no case of their own for them. Its other cases give the right answer for two int32s all the same.
 constexpr StubKey binaryOperation(BinaryOperator operation, bool isAfterInt32Check) { return StubKey(StubFamily::BinaryOperation).withForm(binaryOperationForm(operation, isAfterInt32Check)); }
-// Operands: the number unboxed, the value, NumberAndValueBits. The result is a number unboxed.
 constexpr StubKey binaryWithDouble(BinaryOperator operation, bool numberIsOnRight) { return StubKey(StubFamily::BinaryWithDouble).withForm(static_cast<uint8_t>(binaryWithDoubleForm(operation, numberIsOnRight))); }
 constexpr StubKey unaryOperation(UnaryOperationForm form) { return StubKey(StubFamily::UnaryOperation).withForm(static_cast<uint8_t>(form)); }
 constexpr StubKey boxNumber(BoxedNumberForm form) { return StubKey(StubFamily::BoxNumber).withForm(static_cast<uint8_t>(form)); }

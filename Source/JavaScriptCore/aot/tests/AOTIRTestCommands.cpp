@@ -86,7 +86,6 @@ static void runRoundTripIRCommand(TestCommandContext& context)
     StringPrintStream first;
     printProgram(first, program, fields);
     String firstText = first.toString();
-    // A stream that collects text cuts a very long string short, so the text is not handed on in one piece.
     printProgram(context.out, program, fields);
 
     std::unique_ptr<Program> again = parseProgram(firstText, context.build);
@@ -97,7 +96,6 @@ static void runRoundTripIRCommand(TestCommandContext& context)
     StringPrintStream second;
     printProgram(second, *again, fields);
     printRoundTripComparison(context.out, firstText, second.toString());
-    // Wire text leaves out ` tail`, which is a bit of the body.
     if (fields == PrintedFields::All)
         printRoundTripComparisonOfBytes(context.out, program.buffer(), again->buffer());
 }
@@ -123,14 +121,12 @@ static void runVerifyIRCommand(TestCommandContext& context)
         return;
     }
 
-    // The verifier of bodies looks records up by the ids that the verifier of records has checked.
     const Program& program = *context.program;
     if (verifyRecords(program, context.build) && verifyBodies(program, context.build)) {
         context.out.println("verified"_s);
         return;
     }
 
-    // A diagnostic has its message once the list is finished, and whoever runs the command finishes the list once more.
     context.build.diagnostics().finish(&program);
     printDiagnostics(context.build.diagnostics(), context.out);
     reopenDiagnostics(context.build);
@@ -235,7 +231,6 @@ static void printValueOfBodyIndex(PrintStream& out, const BodyIndex& index, Valu
     out.println();
 }
 
-// Loops are numbered by the place of their heads in the stream, where the head of the next loop may stand in front of the head of a nested one. So ascending ids are not the tree in preorder.
 static void printLoopsNestedIn(PrintStream& out, const BodyIndex& index, LoopID parent)
 {
     for (uint32_t number = parent ? parent.index() + 1 : 0; number < index.numberOfLoops(); ++number) {
@@ -319,7 +314,6 @@ static void printBodyLiveness(PrintStream& out, const BodyIndex& index, BodyLive
 {
     if (!liveness.isComputedFor(index))
         liveness.compute(index);
-    // It is worked out once for a body.
     BodyLiveness secondAsker;
     secondAsker.compute(index);
 
@@ -354,8 +348,6 @@ static void printBodyLiveness(PrintStream& out, const BodyIndex& index, BodyLive
     }
 }
 
-// BodyLiveness keeps sets that share their parts, goes once over the blocks, and raises the last uses without a look at all that is live at the head of a loop.
-// Here each block has a set of its own, the rounds go over every edge until nothing changes, and each loop goes through what is live at its head.
 static bool livenessIsWhatPlainComputationFinds(PrintStream& out, const BodyIndex& index, const BodyLiveness& liveness)
 {
     uint32_t numberOfBlocks = index.numberOfBlocks();
@@ -453,7 +445,6 @@ static bool livenessIsWhatPlainComputationFinds(PrintStream& out, const BodyInde
         });
         if (numberFound != live[blockIndex].bitCount())
             differ("fewer are live than the plain way finds at the head of"_s, blockIndex, 0);
-        // A stretch of the values, and one value at a time.
         uint32_t first = numberOfValues / 3;
         uint32_t end = numberOfValues - numberOfValues / 4;
         size_t numberInStretch = 0;
@@ -477,7 +468,6 @@ static bool livenessIsWhatPlainComputationFinds(PrintStream& out, const BodyInde
     return agrees;
 }
 
-// The line begins as the function's line in IR text does, which is the label of check lines that stand inside the braces of a function.
 static void printFunctionHeading(IRPrinter& printer, FunctionID id)
 {
     printer.beginLine("function"_s, IDPrefix::Function, id.index());
@@ -530,7 +520,6 @@ static void runBodyLivenessCommand(TestCommandContext& context)
     });
 }
 
-// The plain way keeps a bit for each value at each block.
 static void runLivenessAgainstPlainComputationCommand(TestCommandContext& context)
 {
     const Program& program = *context.program;

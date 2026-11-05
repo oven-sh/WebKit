@@ -41,7 +41,6 @@ struct RegExpSummary {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RegExpSummary);
 
     bool isValid() const { return !Yarr::hasError(syntaxError); }
-    // Creating a RegExp builds its pattern, which has limits that the syntax does not have. With the metadata the run time builds nothing.
     bool canBeCreated() const { return metadata == RegExpMetadata::Known; }
     bool hasNamedGroups() const { return !captureGroupNames.isEmpty() || !namedGroups.isEmpty(); }
 
@@ -51,7 +50,6 @@ struct RegExpSummary {
     bool exceedsParenthesesDepth { false };
     bool hasUnicodePropertyLookup { false };
     bool sourceIsPattern { false };
-    // No subject that holds a character of more than one byte matches, so the pattern needs no code for 16-bit subjects.
     bool matchesOnlyWhole8BitSubjects { false };
     unsigned patternHash { 0 };
     unsigned numSubpatterns { 0 };

@@ -7,12 +7,10 @@ const self = b.operand("this");
 const stringReceiver = b.string.loose.refusing(b.null);
 const regExpConstructor = b.builtin("RegExp");
 const pristineRegExp = b.instance("RegExp").pristine("Names");
-// The slot holds what the program stores as lastIndex. A new one starts at 0.
 const newRegExp = b.instance("RegExp").holding({ lastIndex: b.length }).fresh;
 const newMatchIterator = b.instance("RegExpStringIterator").fresh;
 const capture = b.union(b.string, b.undefined);
 const matchResult = b.union(b.instance("Array").holding({ element: capture }).unaliased, b.strictNull);
-// A group that took no part in the match is there and holds undefined. `indices` is there under the flag d.
 const matchProperties = {
   index: nonNegativeInt32,
   input: b.string,
@@ -28,7 +26,6 @@ const escapesToOperandCode = [b.retained, b.runs("ToPrimitive")];
 const storesLastIndex = b.storedByKey(b.keysNamed("lastIndex"), b.length);
 const restoresLastIndex = b.storedByKey(b.keysNamed("lastIndex"), b.any);
 const runsMembers = (...protocols: readonly b.ProtocolSpec[]) => b.runsTransitively("ToPrimitive", ...protocols);
-// The member that is called has the pattern for `this`. A built-in function there, such as Object.prototype.valueOf, may hand it back as the result.
 const isCalledAsPattern = (...protocols: readonly b.ProtocolSpec[]) => [b.retained, runsMembers(...protocols)];
 
 const flagNames = ["hasIndices", "global", "ignoreCase", "multiline", "dotAll", "unicode", "unicodeSets", "sticky"];
@@ -264,7 +261,6 @@ const splitAtString = (limit: b.TableType) =>
     capability: "heap",
     throws: b.propagated,
     uses: { separator: characters },
-    // Where a program reads only the last piece, compiled code looks for it with lastIndexOf.
     overloadUsesFeature: "StringLastIndexOf",
     implementation: b.inline("StringSplit", { parameters: ["String"] }),
   }) satisfies b.FunctionField;
@@ -285,7 +281,6 @@ const splitAtRegExp = (limit: b.TableType) =>
   }) satisfies b.FunctionField;
 
 export default b.declarations(
-  // Every method that matches calls what it finds under `exec` with the text.
   b.namedMemberCall("exec", [b.string]),
   b.class("RegExp", {
     jsType: "RegExpObjectType",
@@ -490,7 +485,6 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         uses: {
           this: [
-            // `$<name>` in the replacement text reads that name off `groups`, through its prototypes, so any member may be read.
             runsMembers(b.named(), b.calls("exec"), "OwnValues"),
             storesLastIndex,
           ],
@@ -635,6 +629,5 @@ export default b.declarations(
     },
   ]),
 
-  // `import "core-js"` replaces it without a test, from 3.33 to 3.37.
   b.replacedByPackages("RegExp.escape"),
 );

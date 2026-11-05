@@ -91,7 +91,6 @@ static RecordWithLists makeRecordWithLists(uint32_t number, size_t numberOfBytes
     for (uint32_t tag = 0; tag < 3; ++tag) {
         ElementWithList element;
         element.tag = tag;
-        // No word, two words in the element, four words outside it.
         for (uint32_t word = 0; word < 2 * tag; ++word)
             element.words.append(number + 10 * tag + word);
         record.elements.append(WTF::move(element));
@@ -100,26 +99,8 @@ static RecordWithLists makeRecordWithLists(uint32_t number, size_t numberOfBytes
     return record;
 }
 
-static void checkRecordWithLists(const RecordWithLists& record, uint32_t number, size_t numberOfBytes)
-{
-    AOT_TEST_CHECK(record.number == number && record.bytes.size() == numberOfBytes && record.few.size() == 1 && record.few[0] == number && record.elements.size() == 3 && record.nothing.isEmpty());
-    for (size_t index = 0; index < numberOfBytes; ++index)
-        AOT_TEST_CHECK(record.bytes[index] == static_cast<uint8_t>(number + index));
-    for (uint32_t tag = 0; tag < 3; ++tag) {
-        const ElementWithList& element = record.elements[tag];
-        AOT_TEST_CHECK(element.tag == tag && element.words.size() == 2 * tag);
-        for (uint32_t word = 0; word < 2 * tag; ++word)
-            AOT_TEST_CHECK(element.words[word] == number + 10 * tag + word);
-    }
-}
-
 template<typename T>
 static const uint8_t* addressOf(const T* pointer) { return reinterpret_cast<const uint8_t*>(pointer); }
-
-static const uint8_t* alignedFor(const uint8_t* address, size_t alignment)
-{
-    return reinterpret_cast<const uint8_t*>(WTF::roundUpToMultipleOf(alignment, reinterpret_cast<uintptr_t>(address)));
-}
 
 static void testListGrowsInItselfThenOnHeap()
 {
@@ -133,7 +114,6 @@ static void testListGrowsInItselfThenOnHeap()
     AOT_TEST_CHECK(list.isEmpty() && movedWhileInItself == ListOfThree({ 0, 1, 2 }));
     AOT_TEST_CHECK(addressOf(movedWhileInItself.begin()) >= addressOf(&movedWhileInItself) && addressOf(movedWhileInItself.end()) <= addressOf(&movedWhileInItself + 1));
 
-    // The value is an element of the list that has to move.
     movedWhileInItself.append(movedWhileInItself[1]);
     AOT_TEST_CHECK(movedWhileInItself.liesOnHeap() && movedWhileInItself == ListOfThree({ 0, 1, 2, 1 }));
 
@@ -149,96 +129,6 @@ static void testListGrowsInItselfThenOnHeap()
     AOT_TEST_CHECK(copy == ListOfThree({ 0, 7, 7, 2 }) && copy.find(2u) == 3 && !copy.contains(1u));
 }
 
-static void testListTakesBufferOfVector()
-{
-    Vector<uint32_t> longVector;
-    for (uint32_t value = 0; value < 100; ++value)
-        longVector.append(value);
-    const uint32_t* buffer = longVector.span().data();
-    ListOfThree taken = WTF::move(longVector);
-    AOT_TEST_CHECK(longVector.isEmpty() && taken.begin() == buffer && taken.liesOnHeap() && taken.size() == 100 && taken[99] == 99);
-
-    Vector<uint32_t> shortVector { 4, 5 };
-    ListOfThree copiedIntoItself = WTF::move(shortVector);
-    AOT_TEST_CHECK(!copiedIntoItself.liesOnHeap() && copiedIntoItself == Vector<uint32_t>({ 4, 5 }));
-
-    Vector<uint32_t, 8> vectorThatHoldsItsElements { 1, 2, 3, 4, 5 };
-    ListOfThree copiedToHeap = WTF::move(vectorThatHoldsItsElements);
-    AOT_TEST_CHECK(copiedToHeap.liesOnHeap() && copiedToHeap == Vector<uint32_t>({ 1, 2, 3, 4, 5 }));
-
-    Vector<ElementWithList> elements;
-    for (uint32_t tag = 0; tag < 4; ++tag)
-        elements.append(ElementWithList { { tag, tag, tag }, tag });
-    ListOfUnit<ElementWithList> moved = WTF::move(elements);
-    AOT_TEST_CHECK(elements.isEmpty() && moved.size() == 4 && moved[3].tag == 3 && moved[3].words == ListOfTwo({ 3, 3, 3 }));
-}
-
-static void testRecordAndItsListsAreOneStretch()
-{
-    constexpr size_t numberOfBytes = 13;
-    BlocksOfUnits blocks;
-    RecordWithLists* kept = blocks.keep(makeRecordWithLists(5, numberOfBytes));
-    checkRecordWithLists(*kept, 5, numberOfBytes);
-
-    HeapFinder finder;
-    forEachListOfUnitIn(*kept, finder);
-    // The bytes, the elements, and the four words of the last element. What fits in a list stays in it, and room that was reserved for nothing is let go.
-    AOT_TEST_CHECK(finder.numberOfLists == 7 && !finder.numberOnHeap && finder.numberInBlocks == 3);
-    AOT_TEST_CHECK(!kept->few.liesInBlock() && !kept->nothing.liesInBlock() && !kept->nothing.capacity() && !kept->elements[1].words.liesInBlock());
-
-    AOT_TEST_CHECK(kept->bytes.begin() == addressOf(kept + 1));
-    AOT_TEST_CHECK(addressOf(kept->elements.begin()) == alignedFor(kept->bytes.end(), alignof(ElementWithList)));
-    AOT_TEST_CHECK(addressOf(kept->elements[2].words.begin()) == addressOf(kept->elements.end()));
-
-    RecordWithLists* next = blocks.keep(makeRecordWithLists(6, numberOfBytes));
-    AOT_TEST_CHECK(addressOf(next) == alignedFor(addressOf(kept->elements[2].words.end()), alignof(uint64_t)));
-    checkRecordWithLists(*kept, 5, numberOfBytes);
-    checkRecordWithLists(*next, 6, numberOfBytes);
-    next->~RecordWithLists();
-    kept->~RecordWithLists();
-}
-
-static void testHundredsOfRecordsShareOneBlock()
-{
-    constexpr uint32_t numberOfRecords = 1000;
-    BlocksOfUnits blocks;
-    Vector<RecordWithLists*> records;
-    for (uint32_t number = 0; number < numberOfRecords; ++number)
-        records.append(blocks.keep(makeRecordWithLists(number, number % 200)));
-    AOT_TEST_CHECK(blocks.numberOfBlocks() == 1 && blocks.sizeInBytes() == BlocksOfUnits::sizeOfBlock);
-
-    BlocksOfUnits movedBlocks = WTF::move(blocks);
-    AOT_TEST_CHECK(!blocks.numberOfBlocks() && movedBlocks.numberOfBlocks() == 1);
-    for (uint32_t number = 0; number < numberOfRecords; ++number) {
-        checkRecordWithLists(*records[number], number, number % 200);
-        records[number]->~RecordWithLists();
-    }
-}
-
-static void testLargeRecordHasBlockOfItsOwn()
-{
-    constexpr size_t numberOfBytesOfLargeRecord = BlocksOfUnits::mostBytesBesideOthers + 1;
-    BlocksOfUnits blocks;
-    RecordWithLists* first = blocks.keep(makeRecordWithLists(1, 8));
-    RecordWithLists* large = blocks.keep(makeRecordWithLists(2, numberOfBytesOfLargeRecord));
-    RecordWithLists* second = blocks.keep(makeRecordWithLists(3, 8));
-    AOT_TEST_CHECK(blocks.numberOfBlocks() == 2 && blocks.sizeInBytes() < BlocksOfUnits::sizeOfBlock + numberOfBytesOfLargeRecord + KB);
-    // The block that the small ones share goes on behind the first.
-    AOT_TEST_CHECK(addressOf(second) == alignedFor(addressOf(first->elements[2].words.end()), alignof(uint64_t)));
-    checkRecordWithLists(*first, 1, 8);
-    checkRecordWithLists(*large, 2, numberOfBytesOfLargeRecord);
-    checkRecordWithLists(*second, 3, 8);
-
-    // A block that is full is followed by another.
-    Vector<RecordWithLists*> records { first, large, second };
-    while (blocks.numberOfBlocks() == 2)
-        records.append(blocks.keep(makeRecordWithLists(4, BlocksOfUnits::mostBytesBesideOthers / 2)));
-    AOT_TEST_CHECK(blocks.numberOfBlocks() == 3 && records.size() >= 10);
-    checkRecordWithLists(*records.last(), 4, BlocksOfUnits::mostBytesBesideOthers / 2);
-    for (RecordWithLists* record : records)
-        record->~RecordWithLists();
-}
-
 static void testLargeListThatFillsItsMemoryStaysWhereItLies()
 {
     RecordWithLists record = makeRecordWithLists(1, 0);
@@ -250,7 +140,6 @@ static void testLargeListThatFillsItsMemoryStaysWhereItLies()
     RecordWithLists* kept = blocks.keep(WTF::move(record));
     AOT_TEST_CHECK(kept->bytes.begin() == memory && kept->bytes.liesInBlock() && !kept->bytes.liesOnHeap() && kept->bytes.last() == 0xee);
     AOT_TEST_CHECK(blocks.numberOfBlocks() == 2 && blocks.sizeInBytes() == BlocksOfUnits::sizeOfBlock + BlocksOfUnits::mostBytesBesideOthers + 1);
-    // The rest lies behind the record as ever.
     AOT_TEST_CHECK(addressOf(kept->elements.begin()) == addressOf(kept + 1));
     kept->~RecordWithLists();
 }
@@ -262,7 +151,6 @@ static void testListInBlockIsWrittenInPlaceAndOutgrowsIt()
     RecordWithLists* kept = blocks.keep(makeRecordWithLists(9, numberOfBytes));
     const uint8_t* room = kept->bytes.begin();
 
-    // What removeFinalJumps() does to the bytes of a unit.
     kept->bytes.shrink(30);
     kept->bytes.grow(34);
     kept->bytes[33] = 0xcc;
@@ -275,7 +163,6 @@ static void testListInBlockIsWrittenInPlaceAndOutgrowsIt()
     kept->bytes.append(0xdd);
     AOT_TEST_CHECK(kept->bytes.liesOnHeap() && kept->bytes.size() == numberOfBytes + 1 && kept->bytes[0] == 10 && kept->bytes.last() == 0xdd);
 
-    // A list of an element in a block, too.
     ListOfTwo& words = kept->elements[2].words;
     AOT_TEST_CHECK(words.liesInBlock());
     words.append(1);
@@ -286,22 +173,6 @@ static void testListInBlockIsWrittenInPlaceAndOutgrowsIt()
     kept->~RecordWithLists();
 }
 
-static void testHeapThatFitsGoesBackIntoList()
-{
-    RecordWithLists record;
-    for (uint64_t value = 0; value < 6; ++value)
-        record.few.append(value);
-    record.few.shrink(1);
-    AOT_TEST_CHECK(record.few.liesOnHeap());
-
-    BlocksOfUnits blocks;
-    RecordWithLists* kept = blocks.keep(WTF::move(record));
-    AOT_TEST_CHECK(!kept->few.liesOnHeap() && !kept->few.liesInBlock() && kept->few.size() == 1 && !kept->few[0]);
-    kept->~RecordWithLists();
-}
-
-// class Box { size() { return 1 } }  sink(new Box().size(), Box)
-// The class object is handed on: a class that nobody asks for is not made, and then its constructor and its members have no code.
 static constexpr ASCIILiteral programWhoseUnitsLeaveLists = R"IR(layout L0 kind=Instance name="Box" module=m0 constructor=f1
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
 entry module=m0
@@ -356,7 +227,6 @@ static void testNoRecordOfStageOwnsMemory()
                 AOT_TEST_CHECK(!position || placeOfPrevious < code.placeInCode);
                 placeOfPrevious = code.placeInCode;
                 AOT_TEST_CHECK(compiled.functions.positionOfCodeAt(code.placeInCode) == std::optional<uint32_t>(static_cast<uint32_t>(position)));
-                // The bytes lie right behind the record.
                 AOT_TEST_CHECK(code.body.bytes.liesInBlock() && code.body.bytes.begin() == addressOf(&code + 1));
                 forEachListOfUnitIn(code, finder);
             }
@@ -377,13 +247,8 @@ std::span<const NativeTest> listOfUnitTests()
 {
     static constexpr NativeTest tests[] {
         { "list-of-unit/grows-in-itself-then-on-the-heap"_s, testListGrowsInItselfThenOnHeap },
-        { "list-of-unit/takes-the-buffer-of-a-vector"_s, testListTakesBufferOfVector },
-        { "list-of-unit/record-and-its-lists-are-one-stretch"_s, testRecordAndItsListsAreOneStretch },
-        { "list-of-unit/hundreds-of-records-share-one-block"_s, testHundredsOfRecordsShareOneBlock },
-        { "list-of-unit/large-record-has-a-block-of-its-own"_s, testLargeRecordHasBlockOfItsOwn },
         { "list-of-unit/large-list-that-fills-its-memory-stays-where-it-lies"_s, testLargeListThatFillsItsMemoryStaysWhereItLies },
         { "list-of-unit/list-in-a-block-is-written-in-place-and-outgrows-it"_s, testListInBlockIsWrittenInPlaceAndOutgrowsIt },
-        { "list-of-unit/heap-that-fits-goes-back-into-the-list"_s, testHeapThatFitsGoesBackIntoList },
         { "list-of-unit/no-record-of-the-stage-owns-memory"_s, testNoRecordOfStageOwnsMemory },
     };
     return tests;

@@ -16,7 +16,6 @@
 #include "AOTObjectModel.h"
 #include "AOTPendingStars.h"
 #include "AOTProgramIdentifiers.h"
-#include "AOTProgramStrings.h"
 #include "AOTState.h"
 #include "BuiltinNames.h"
 #include "GetterSetter.h"
@@ -94,7 +93,7 @@ JSValue Object::read(const FieldData& field) const
         return isInSlot(field) ? const_cast<Object*>(this)->materializeDeferredClosure(vm(), field) : JSValue();
     const void* slot = slotOf(field);
     State& state = this->state();
-    JSValue value = slot ? readSlot(representation, slot, *state.strings) : JSValue();
+    JSValue value = slot ? readSlot(representation, slot, state.instance) : JSValue();
     if (!value && field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field) && !livesInExtraProperties(*state.instance.vm, *this, field))
         return jsUndefined();
     return value;
@@ -102,14 +101,12 @@ JSValue Object::read(const FieldData& field) const
 
 bool Object::tryStore(VM& vm, const FieldData& field, JSValue value)
 {
-    // A write-once slot that has no absent state, or that defers a closure, holds a placeholder until its only store, which may come by name.
     bool holdsPlaceholder = !field.canLeaveSlot() || field.slot.representation() == SlotRepresentation::DeferredClosure;
     if (field.flags & fieldIsStoredOnce && !holdsPlaceholder)
         return false;
     return tryInitialize(vm, field, value);
 }
 
-// The first value of a field of an object that nobody has seen yet: the one store of a field that is stored once.
 bool Object::tryInitialize(VM& vm, const FieldData& field, JSValue value)
 {
     std::optional<AcceptedValue> accepted = state().objects->layouts.accept(field, value);
@@ -131,7 +128,6 @@ ALWAYS_INLINE void Object::willStoreMarker(VM& vm, const FieldData& field, JSVal
 
 bool Object::store(VM& vm, const FieldData& field, JSValue value)
 {
-    // A field that is in the key order and has no storage reads as undefined.
     if (value.isUndefined() && field.flags & fieldMayExistWithoutStorage && !slotOf(field)) {
         willStoreMarker(vm, field, value);
         return true;
@@ -141,7 +137,7 @@ bool Object::store(VM& vm, const FieldData& field, JSValue value)
     if (!slot)
         return false;
     SlotRepresentation representation = field.slot.representation();
-    if (!tryWriteSlot(*state().strings, representation, slot, value))
+    if (!tryWriteSlot(instance(), representation, slot, value))
         return false;
     if (value.isUndefinedOrNull())
         willStoreMarker(vm, field, value);
@@ -158,7 +154,6 @@ void Object::ensureStorageFor(VM& vm, const FieldData& field)
     ensureExtensionGranules(vm, granuleBitOf(field.slot.offset));
 }
 
-// Marking begins and ends while the mutator is stopped, so it does neither before the caller has returned.
 void Object::ensureExtensionGranules(VM& vm, uint64_t granuleBits)
 {
     ensureExtensionGranules(vm, granuleBits, vm.heap.mutatorShouldBeFenced());
@@ -238,6 +233,13 @@ void Object::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         if (UniquedStringImpl* name = identifiers.tryGetIdentifierConcurrently(field.name))
             analyzer.analyzePropertyNameEdge(object, target, name);
     }
+    JSObject* extraProperties = object->extraProperties();
+    if (!extraProperties)
+        return;
+    for (const auto& entry : extraProperties->structure()->getPropertiesConcurrently()) {
+        if (JSValue value = extraProperties->getDirect(entry.offset()); value && value.isCell())
+            analyzer.analyzePropertyNameEdge(object, value.asCell(), entry.key());
+    }
 }
 
 Extension* Extension::create(VM& vm, uint64_t granuleBits)
@@ -272,7 +274,6 @@ bool Extension::tryInsert(uint64_t granuleBits)
     uint32_t to = std::popcount(bitsAfter);
     if (to > extensionCapacityFor(from))
         return false;
-    // From the last granule down, until those that are left stay where they are.
     uint64_t* words = granules();
     for (uint64_t remaining = bitsAfter; from != to;) {
         uint64_t last = 1ull << (std::bit_width(remaining) - 1);
@@ -284,7 +285,6 @@ bool Extension::tryInsert(uint64_t granuleBits)
     return true;
 }
 
-// By numbers alone: an executable may hold no names.
 [[noreturn]] static void crashOnFalseProof(const Object& object, ObjectMutation mutation, const FieldData* field)
 {
     dataLog("AOT: ", nameOf(mutation), " of an object of layout L", object.layout().index);
@@ -309,8 +309,9 @@ void crashOnImpossibleMutation(VM&, const Object& object, const FieldData& field
     crashOnFalseProof(object, mutation, &field);
 }
 
-void crashOnLostStateOfBirth(VM&, const Object& object, const FieldData&, ASCIILiteral)
+void crashOnLostStateOfBirth(VM&, const Object& object, const FieldData& field, ASCIILiteral event)
 {
+    dataLogLn("AOT: ", event, " of an object of layout L", object.layout().index, ", field ", object.indexOf(field), ": the compiler has proven that the field stays as it was born, and compiled code reads it without a look. This is a bug in Bun.");
     CRASH_WITH_INFO(std::bit_cast<uintptr_t>(&object));
 }
 
@@ -319,7 +320,6 @@ UniquedStringImpl* propertyNameOf(VM& vm, const Object& object, const FieldData&
     return object.state().objects->layouts.nameOf(vm, field);
 }
 
-// Pending stars go on waiting unless one of them binds the name of the field.
 static JSObject* extraPropertiesThatMayHold(const Object& object, const FieldData& field)
 {
     return isBoundByPendingStar(object, field).value_or(false) ? object.extraProperties() : extraPropertiesIfMade(object);
@@ -327,7 +327,6 @@ static JSObject* extraPropertiesThatMayHold(const Object& object, const FieldDat
 
 FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& field)
 {
-    // readInline() called read() for a field that is stored out of line.
     JSValue value = object.readInline(field);
     if (!value && !field.isOutOfLine())
         value = object.read(field);
@@ -354,11 +353,9 @@ bool livesInExtraProperties(VM& vm, const Object& object, const FieldData& field
 bool tryCreateField(VM& vm, State& state, Object& object, const FieldData& field, JSValue value)
 {
     ASSERT(!object.isInSlot(field) && !livesInExtraProperties(vm, object, field));
-    // The creation is the one store of a field that is stored once, so this does not ask tryStore, which refuses every store to such a field.
     std::optional<AcceptedValue> accepted = state.objects->layouts.accept(field, value);
     if (!accepted || !object.store(vm, field, *accepted))
         return false;
-    // store() has already allocated the storage that the value needs.
     object.didCreateField(state, field, false);
     if (field.isFilledAtBirth)
         object.tryFinishBirth();
@@ -385,12 +382,10 @@ void didChangeOwnProperties(VM& vm, Object& object, VM::StructureChainIntegrityE
 
 bool interceptsIndexedAccesses(const Object& object)
 {
-    // A star binds no element.
     JSObject* extra = extraPropertiesIfMade(object);
     return extra && extra->structure()->mayInterceptIndexedAccesses();
 }
 
-// The extra properties are nobody's prototype, so JSObject::notifyPresenceOfIndexedAccessors() tells nobody on their behalf.
 void didChangeIndexedProperties(VM& vm, Object& object, bool interceptedIndexedAccessesBefore)
 {
     if (!interceptedIndexedAccessesBefore && object.mayBePrototype() && interceptsIndexedAccesses(object))

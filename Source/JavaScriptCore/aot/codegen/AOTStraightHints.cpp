@@ -17,8 +17,8 @@ namespace JSC { namespace AOT { namespace Typed {
 OpcodeSet StraightEmitter::opcodesOfHints()
 {
     if (!hasFaultingLoopPolls)
-        return { Opcode::ReleaseHint };
-    return { Opcode::LoopHint, Opcode::ReleaseHint };
+        return { };
+    return { Opcode::LoopHint };
 }
 
 static void generateLoopHint(StraightEmitter& emitter, const BodyValue& value)
@@ -44,8 +44,6 @@ void StraightEmitter::generateHint(const BodyValue& value)
     switch (value.opcode()) {
     case Opcode::LoopHint:
         generateLoopHint(*this, value);
-        return;
-    case Opcode::ReleaseHint:
         return;
     default:
         fail(value);

@@ -22,8 +22,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// A buffer is a flat string that no program gets to see, and that a Structure of its own tells from every other string.
-// Its first characters are no text: they hold the index at which the text in the buffer ends. From there to the end of the string is room, which nothing has written yet.
 using EndOfText = uint32_t;
 static_assert(!offsetOfEndOfTextInCharactersOfBuffer);
 
@@ -38,7 +36,6 @@ static ALWAYS_INLINE EndOfText& endOfTextIn(StringImpl& characters)
     return *static_cast<EndOfText*>(const_cast<void*>(first));
 }
 
-// The words of a rope behind its header, as the stubs read and write them: AOTStubsStringHelpers.cpp.
 using CompactFibers = JSRopeString::CompactFibers;
 static_assert(sizeof(JSRopeString) == 4 * sizeof(uint64_t) && JSRopeString::offsetOfFiber0() == sizeof(uint64_t) && JSRopeString::offsetOfLength() == 2 * sizeof(uint64_t) && JSRopeString::offsetOfFiber2() == 3 * sizeof(uint64_t));
 static_assert(CompactFibers::shiftOfFiber1LowerInLengthWord == 32 && CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16);
@@ -69,7 +66,6 @@ static ALWAYS_INLINE JSString* createSubstringOfBuffer(Instance& instance, VM& v
     return std::bit_cast<JSString*>(words);
 }
 
-// Most pieces are a few characters, and a call of memcpy costs more than they do.
 static ALWAYS_INLINE void copyCharacters(Latin1Character* destination, const Latin1Character* source, uint32_t length)
 {
     auto copy = [&]<typename Word>(uint32_t at) {
@@ -99,7 +95,6 @@ static ALWAYS_INLINE void copyCharacters(char16_t* destination, const StringImpl
 
 static ALWAYS_INLINE void copyCharacters(Latin1Character* destination, const StringImpl& source)
 {
-    // A string that becomes a key takes the characters of the name, whatever their width: JSRopeString::tryResolveFlatLatin1Parts().
     if (source.is8Bit()) [[likely]] {
         copyCharacters(destination, source.span8().data(), source.length());
         return;
@@ -107,7 +102,6 @@ static ALWAYS_INLINE void copyCharacters(Latin1Character* destination, const Str
     StringView(source).getCharacters(std::span { destination, source.length() });
 }
 
-// `text += a + b + c`: the piece is a rope of ropes, and its leaves are a few flat strings.
 template<typename CharacterType>
 static ALWAYS_INLINE void writeString(CharacterType* destination, JSString* string)
 {
@@ -142,7 +136,6 @@ static ALWAYS_INLINE void writeString(CharacterType* destination, JSString* stri
     }
 }
 
-// `text` is `bottom` with pieces added to it, each time as a rope that begins with what was there. What was added is written so that it ends at `end`, from the last piece to the first.
 template<typename CharacterType>
 static ALWAYS_INLINE void writeWhatWasAddedTo(JSString* bottom, JSString* text, CharacterType* end)
 {
@@ -182,7 +175,6 @@ static JSString* tryCreateTextBuffer(VM& vm, bool is8Bit, uint32_t length)
     return buffer;
 }
 
-// Null: the rope is no substring of a buffer, or the buffer holds more behind it by now.
 static ALWAYS_INLINE JSString* bufferThatEndsWith(Instance& instance, JSString* text)
 {
     if (!text->isSubstring())
@@ -194,7 +186,6 @@ static ALWAYS_INLINE JSString* bufferThatEndsWith(Instance& instance, JSString* 
     return offset + text->length() == endOfTextIn(*buffer->tryGetValueImpl()) ? buffer : nullptr;
 }
 
-// A buffer of 8-bit characters takes 8-bit strings alone.
 template<typename CharacterType>
 static ALWAYS_INLINE void writePieces(StringImpl& buffer, uint32_t position, std::span<JSString* const> pieces)
 {
@@ -219,7 +210,6 @@ JSString* tryAppendToGrowingText(Instance& instance, JSString* text, std::span<J
     if (!lengthOfPieces)
         return text;
 
-    // The stubs add what they cannot write by themselves as a rope, and come here when they are out of cells. So the text in the buffer may lie below a row of ropes.
     uint32_t numberOfAdditions = 0;
     JSString* bottom = text;
     for (; bottom->isNonSubstringRope(); bottom = firstPartOf(bottom))

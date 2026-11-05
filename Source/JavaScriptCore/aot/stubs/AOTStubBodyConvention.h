@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// The convention of a unit for which CallingConventions::savesRegistersOfCallers() holds: operands and results lie where the direct convention puts them, and every other register is saved by the callee.
 struct StubBodyConvention {
     static constexpr unsigned maxNumberOfOperandGPRs = 4;
     static constexpr unsigned maxNumberOfOperandFPRs = 2;

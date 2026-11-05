@@ -10,7 +10,7 @@
 # RUN(LINK): link calls functions fields layouts mechanisms=all
 # LINK: call f0 v4 -> f1
 # LINK: function f1 callers-known one-callee {{*}}result=string
-# LINK-NEXT: parameter 0 {{*}}proven=L0 kept
+# LINK-NEXT: parameter 0 {{*}}proven=L0
 # LINK: field L0.0 "x" proven=string writers-known written-at-construction-alone filled
 # LINK: layout L0 changes=[]
 

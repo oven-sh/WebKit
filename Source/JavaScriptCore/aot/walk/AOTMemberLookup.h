@@ -31,17 +31,14 @@ private:
     const Facts* m_facts;
 };
 
-// What a question about an access or a call is asked with. Each question is a pure function of its arguments.
 struct AccessContext {
     const Program& program;
     WalkFacts facts;
     const Plan& plan;
     TypeArena& types;
-    // The function in whose text the access stands.
     FunctionID writtenIn;
 };
 
-// object/AOTClassGuards.h: the guard of (layout, side, this name) answers for the condition. Null: the guard of the side does.
 constexpr PropertyKeyID nameOfGuardAnsweringFor(MemberConditionKind kind, PropertyKeyID key)
 {
     switch (kind) {
@@ -57,8 +54,6 @@ constexpr PropertyKeyID nameOfGuardAnsweringFor(MemberConditionKind kind, Proper
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// The class has one class object for each global, which the closure table holds. So an allocation that names no prototype has the prototype object that this class object was made with.
-// A class that is evaluated at most once has. Of a constructor function nothing is claimed, and the emitter asks the run time.
 inline bool classHasOneClassObject(const AccessContext& context, LayoutID classLayout) { return (*context.facts).isEvaluatedAtMostOnce(classLayout); }
 
 } } } // namespace JSC::AOT::Typed

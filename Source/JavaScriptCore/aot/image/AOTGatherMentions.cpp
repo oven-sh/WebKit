@@ -60,32 +60,25 @@ static void removeRepeatedGatheredIDs(Vector<uint32_t>& ids, size_t first)
 
 namespace {
 
-// The ids that the code of one unit added to a list of a chunk. They begin where those of the entry in front end.
 struct GatheredIDsOfUnit {
     FunctionByModule function;
     size_t end;
     bool codeRunsAtMostOnce;
 };
 
-// What the functions of one chunk mention. A bit set is as long as its largest id, and BuiltinCellKey::encoded() goes past 1 << 24, so a chunk holds lists of ids and only the merged result holds bit sets.
 struct GatheredChunk {
     Vector<uint32_t>& wordsOf(NumberSpace space) { return words[static_cast<unsigned>(space)]; }
     const Vector<uint32_t>& wordsOf(NumberSpace space) const { return words[static_cast<unsigned>(space)]; }
     Vector<GatheredIDsOfUnit>& idsOfUnitsOf(NumberSpace space) { return idsOfUnits[static_cast<unsigned>(space)]; }
     const Vector<GatheredIDsOfUnit>& idsOfUnitsOf(NumberSpace space) const { return idsOfUnits[static_cast<unsigned>(space)]; }
 
-    // [NumberSpace]. A space keyed by one id holds the ids. Any other space holds, for each key, its word count and then its words.
     std::array<Vector<uint32_t>, numberOfNumberSpaces> words;
-    // [NumberSpace]. Only of a space that keeps the first function: the entries cover the ids of the space, in their order.
     std::array<Vector<GatheredIDsOfUnit>, numberOfNumberSpaces> idsOfUnits;
-    // [NumberSpace]. Only of a space keyed by one id: one more than the greatest id.
     std::array<uint32_t, numberOfNumberSpaces> endOfIDs { };
-    // [NumberSpace]. Only of any other space: how many keys the words hold.
     std::array<uint32_t, numberOfNumberSpaces> numberOfKeys { };
     uint64_t numberOfMentions { 0 };
 };
 
-// The distinct keys that begin in one range of a sorted list of keys.
 struct DistinctKeysOfRange {
     size_t numberOfKeys { 0 };
     size_t numberOfWords { 0 };
@@ -117,7 +110,6 @@ public:
         }
         m_chunk.numberOfMentions += mentions.size();
 
-        // One name with two addends is two mentions.
         for (size_t index = 0; index < firstIDOfFunction.size(); ++index)
             removeRepeatedGatheredIDs(m_chunk.wordsOf(gatheredSpacesThatCountFunctions[index]), firstIDOfFunction[index]);
 
@@ -131,7 +123,6 @@ public:
     }
 
 private:
-    // A loop may come with a function that the walk has inlined, and a loop polls.
     bool runsAtMostOnce(const CompiledCode& code) const
     {
         FunctionID function = code.unit.function;
@@ -146,7 +137,6 @@ private:
                 reportMalformedMention("the key of a space that goes by ids is not one id"_s);
                 return;
             }
-            // A bit set is as long as its largest id.
             if (Typed::liesInThread(StringID::fromBits(key[0]))) {
                 reportMalformedMention("the key is an id of a thread: internTextsMadeByFunctions() comes first"_s);
                 return;
@@ -161,7 +151,6 @@ private:
         addImpliedMentions(space, key);
     }
 
-    // Image works out this thing's card or record from another thing's offset in the statics, and only a mentioned thing gets an offset.
     void addImpliedMentions(NumberSpace space, std::span<const uint32_t> key)
     {
         switch (space) {
@@ -179,7 +168,6 @@ private:
             addMentionsImpliedByRequest(key);
             return;
         case NumberSpace::ClassGuard:
-            // The run time counts by the bits of the guards, and only a mentioned guard has a bit.
             if (isClassGuardCountKey(key)) {
                 bool listsGuards = forEachGuardInClassGuardCountKey(key, [&](std::span<const uint32_t> guard) {
                     add(NumberSpace::ClassGuard, guard);
@@ -188,7 +176,6 @@ private:
                     reportMalformedMention("the count of guards of classes does not list two guards or more"_s);
                 return;
             }
-            // The record of the class lists the guard of a name under the number of the name, and one guard for several names under the number of each.
             if (key.size() < 2 || key.size() % 2) {
                 reportMalformedMention("the guard of a name of a class names no name"_s);
                 return;
@@ -202,7 +189,6 @@ private:
             }
             return;
         case NumberSpace::SiteCache:
-            // ImageSection::NamesOfSites lists the number of the name, and only a mentioned name has one.
             if (key.size() < 2) {
                 reportMalformedMention("the site names no name"_s);
                 return;
@@ -235,7 +221,6 @@ private:
         case NumberSpace::ClassRank:
         case NumberSpace::ClosureFunction:
         case NumberSpace::ClosureCell:
-        case NumberSpace::Function:
         case NumberSpace::Allocation:
         case NumberSpace::PropertyRun:
         case NumberSpace::Type:
@@ -314,7 +299,6 @@ private:
 
 } // anonymous namespace
 
-// Goes through the ids once.
 static GatheredMentions::ByID mergeGatheredIDs(NumberSpace space, std::span<const GatheredChunk> chunks)
 {
     uint32_t endOfIDs = 0;
@@ -353,7 +337,6 @@ static GatheredMentions::ByID mergeGatheredIDs(NumberSpace space, std::span<cons
     return merged;
 }
 
-// The longest list holds a key for each access of the program, so no step goes through a list on one thread.
 static NumberedKeys mergeGatheredKeys(NumberSpace space, std::span<const GatheredChunk> chunks, BuildContext& context)
 {
     const ParallelLoops& loops = context.parallelLoops();
@@ -403,7 +386,6 @@ static NumberedKeys mergeGatheredKeys(NumberSpace space, std::span<const Gathere
         });
         ranges[first / indicesInRangeOfLoop] = found;
     });
-    // From here on each range holds what lies in front of it.
     DistinctKeysOfRange all;
     for (DistinctKeysOfRange& range : ranges) {
         DistinctKeysOfRange inFront = all;
@@ -431,8 +413,6 @@ static NumberedKeys mergeGatheredKeys(NumberSpace space, std::span<const Gathere
     return merged;
 }
 
-// A call through the method table tests no guard, so no code mentions the guards that the rows of its family stand on. The run time repoints the entries when such a guard begins or ends, and only a mentioned guard has a bit.
-// Once for each family, not once for each call.
 static void addClassGuardsUnderMethodTableRows(const Typed::Plan& plan, std::span<const GatheredChunk> chunks, GatheredChunk& implied)
 {
     const Typed::CallingConventions& conventions = plan.conventions();
@@ -447,7 +427,6 @@ static void addClassGuardsUnderMethodTableRows(const Typed::Plan& plan, std::spa
         const Typed::MethodFamily& family = families[index];
         if (!family.entersLookup())
             continue;
-        // The record of the class lists the guard under the number of the name.
         implied.wordsOf(NumberSpace::Name).append(family.key.index());
         uint32_t& endOfNames = implied.endOfIDs[static_cast<unsigned>(NumberSpace::Name)];
         endOfNames = std::max(endOfNames, family.key.index() + 1);
@@ -460,7 +439,6 @@ static void addClassGuardsUnderMethodTableRows(const Typed::Plan& plan, std::spa
             ++implied.numberOfKeys[static_cast<unsigned>(NumberSpace::ClassGuard)];
         }
     }
-    // The lookup that such a call enters asks under the name, whichever function makes the call.
     if (size_t numberOfNames = implied.wordsOf(NumberSpace::Name).size())
         implied.idsOfUnitsOf(NumberSpace::Name).append(GatheredIDsOfUnit { .function = { }, .end = numberOfNames, .codeRunsAtMostOnce = false });
 }
@@ -472,7 +450,6 @@ GatheredMentions gatherMentions(const NumberingInputs& inputs, BuildContext& con
     const LinkedFunctions& functions = inputs.functions;
 
     ChunksOfIndices division = divideIntoChunks(static_cast<unsigned>(functions.size()));
-    // The last chunk is of no function.
     Vector<GatheredChunk> chunks(division.size() + 1);
     forEachIndexInParallel(loops, division.size(), [&](unsigned chunk) {
         MentionGatherer gatherer(inputs.program, inputs.facts, context, chunks[chunk]);
@@ -483,11 +460,9 @@ GatheredMentions gatherMentions(const NumberingInputs& inputs, BuildContext& con
     times.didFinish("gather"_s);
 
     GatheredMentions gathered;
-    // A space of ids is merged by one thread, and the longest of them keeps that thread as long as half of the keys take.
     runLanes(loops, {
         [&] {
             StepTimes timesOfLane(context, "image: gather mentions"_s);
-            // One after the other, so that the loops over a long list have all threads.
             for (unsigned index = 0; index < numberOfNumberSpaces; ++index) {
                 auto space = static_cast<NumberSpace>(index);
                 if (!hasOneIDAsKey(space))

@@ -45,7 +45,6 @@ void emitSearchForRepresentation(StubAssembler& jit, GPRReg representation, std:
     emitSearchForRepresentation(jit, representation, ascending.subspan(middle), emitBody);
 }
 
-// emitBody emits the code for one representation, which never falls through. The most common ones cost one comparison each, any other one four or five more.
 template<typename EmitBody>
 void emitDispatchOnRepresentation(StubAssembler& jit, GPRReg representation, const EmitBody& emitBody)
 {
@@ -59,7 +58,6 @@ void emitDispatchOnRepresentation(StubAssembler& jit, GPRReg representation, con
     emitSearchForRepresentation(jit, representation, std::span(representationsInTestOrder).subspan(numberOfCommon), emitBody);
 }
 
-// A read does not tell apart what it reads with the same code: whole words that are encoded values, narrow references, and 32-bit integers. They come first in the enumeration, so each pair costs one comparison.
 inline constexpr std::array representationsReadAsEncodedValues { SlotRepresentation::JSValue, SlotRepresentation::Cell };
 inline constexpr std::array representationsReadAsNarrowReferences { SlotRepresentation::Cell32, SlotRepresentation::OptionalCell32 };
 inline constexpr std::array representationsReadAsInt32 { SlotRepresentation::Int32, SlotRepresentation::OptionalInt32 };
@@ -89,10 +87,8 @@ constexpr SlotRepresentation representationWithCodeForRead(SlotRepresentation re
     return representation;
 }
 
-// AreReadElsewhere: the caller has told apart the encoded values, the narrow references and the 32-bit integers, and none comes here.
 enum class CommonRepresentations : bool { AreRead, AreReadElsewhere };
 
-// emitBody is given the member of a pair whose code reads both.
 template<typename EmitBody>
 void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representation, CommonRepresentations commonRepresentations, const EmitBody& emitBody)
 {
@@ -109,7 +105,6 @@ void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representati
         emitBody(SlotRepresentation::OptionalInt32);
         isNotInt32.link(&jit);
     }
-    // Most of what is left is numbers and booleans: `rank: n * 3`.
     static_assert(SlotRepresentation::Double < SlotRepresentation::OptionalDouble && SlotRepresentation::OptionalDouble < SlotRepresentation::Float && SlotRepresentation::Float < SlotRepresentation::Boolean && SlotRepresentation::Boolean < SlotRepresentation::OptionalBoolean);
     auto positionOf = [](SlotRepresentation value) {
         return static_cast<size_t>(std::ranges::find(representationsReadOneByOne, value) - representationsReadOneByOne.begin());
@@ -119,7 +114,6 @@ void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representati
     CCallHelpers::Jump isNotOptionalDouble = jit.branch32(CCallHelpers::NotEqual, representation, immediate(SlotRepresentation::OptionalDouble));
     emitBody(SlotRepresentation::OptionalDouble);
     isNotOptionalDouble.link(&jit);
-    // Behind the comparison that failed its flags say on which side the rest lies.
 #if CPU(X86_64)
     CCallHelpers::Jump isFloatOrBoolean(jit.m_assembler.jCC(X86Assembler::ConditionA));
 #else
@@ -138,7 +132,6 @@ void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representati
     emitSearchForRepresentation(jit, representation, rest.subspan(positionOf(SlotRepresentation::OptionalBoolean)), emitBody);
 }
 
-// extensionWordOffset may be address. slotData is dead after computeFieldAddress: a caller may pass it again as a scratch register.
 struct FieldAddressRegisters {
     GPRReg object;
     GPRReg slotData;
@@ -147,14 +140,12 @@ struct FieldAddressRegisters {
     GPRReg representation;
 };
 
-// result may be field.object: it is written after the last exit.
 struct FieldReadRegisters {
     FieldAddressRegisters field;
     GPRReg value;
     GPRReg result;
     FPRReg number;
     FPRReg numberScratch;
-    // Where the slot lies, in place of field.address, which is then a scratch register. Only for a known representation that is read as an encoded value, a narrow reference or a 32-bit integer.
     std::optional<CCallHelpers::BaseIndex> slot { };
     CommonRepresentations commonRepresentations { CommonRepresentations::AreRead };
 };
@@ -180,7 +171,6 @@ struct FieldStoreExits {
 };
 
 enum class FieldStoreEnd : uint8_t { ReturnAfterBarrier, JoinList };
-// IsEmittedForSlot: the type is the second payload word of a Slot, as CachedSlot::loadSecondPayloadWord() gives it, with nothing above its 32 bits.
 enum class FieldTypeTest : uint8_t { IsEmitted, IsEmittedForSlot, HasPassed };
 
 struct TypeTestRegisters {
@@ -189,7 +179,6 @@ struct TypeTestRegisters {
     GPRReg test;
     GPRReg scratch;
     GPRReg secondScratch;
-    // The object whose slot takes the value. None: the value goes into a variable of the instance that runs.
     GPRReg holder { InvalidGPRReg };
 };
 
@@ -207,37 +196,20 @@ struct FieldOfLayout {
 };
 
 void loadExtensionWordOffset(StubAssembler&, GPRReg object, GPRReg result);
-// Where whoever has given a field its granule goes on: with the Extension in address, or with the granule's own address there.
 struct WaysToFieldInExtension {
     Label fromExtension;
     Label fromGranule;
 };
-// Keeps object and slotData, at hasNoStorage too, where address holds the Extension that lacks the granule: null for none, or the page of zeros where the hidden word is narrow.
-// Out of line it also takes the scratch register of the assembler and fpTempRegister. With a known representation, representation is a scratch register.
 void computeFieldAddress(StubAssembler&, const FieldAddressRegisters&, bool isOutOfLine, JumpList& hasNoStorage, WaysToFieldInExtension* = nullptr, std::optional<SlotRepresentation> known = std::nullopt);
-// With a known representation, field.representation is a scratch register.
 void readFieldAndReturn(StubAssembler&, const FieldReadRegisters&, FieldReadExits&, std::optional<SlotRepresentation> known = std::nullopt);
-// The slot of an accessor field holds its GetterSetter, as a boxed value, a cell or a narrow reference. address and representation are what computeFieldAddress gave. result may be either.
 void loadGetterSetterInField(StubAssembler&, GPRReg address, GPRReg representation, GPRReg result, JumpList& isAbsent);
-// Nothing falls through. Keeps address and representation.
 void branchOnFieldPresence(StubAssembler&, const FieldAddressRegisters&, GPRReg scratch, JumpList& isPresent, JumpList& isAbsent);
-// Returns 1 for a field in its slot and 0 for an absent one under Slot::absentIsUndefined. Keeps object at isUnknown.
-// Of FieldOrInherited and FieldOrInheritedField: whether the receiver itself has the property. An object above answers a read that finds the slot empty, so the receiver has none then.
-// keyOrderSays: nothing above the receiver has the name, and the field may be there without a granule. Keeps object there too.
 void returnFieldPresence(StubAssembler&, const CachedSlot&, const FieldAddressRegisters&, JumpList& isUnknown, JumpList* keyOrderSays = nullptr);
-// Falls through when accepted. Reads bits 0 to 31 of type. Keeps type and value on every path.
 void branchUnlessTypeAccepts(StubAssembler&, const TypeTestRegisters&, JumpList& isRejected, JumpList& cannot);
-// At wasAbsent the slot admits the value: the type accepts it, or it is undefined or null and the representation has a marker for it.
-// rememberStore emits what comes between a store to a slot of one of AcceptedKindOfValue::ClassOfSlot and the barrier. It is given secondScratch, with that class, finds the type in its register, or zero where the type has not accepted the value,
-// and may write every register but the object and the value.
 void storeField(StubAssembler&, const FieldStoreRegisters&, FieldStoreEnd, FieldTypeTest, JumpList* stored, FieldStoreExits&, const ScopedLambda<void(GPRReg classOfSlot)>* rememberStore = nullptr);
-// Falls through with the new order word stored. Keeps object and slotKey, and writes nothing to memory before it jumps to hasNoTransition. Without a known field it also takes the scratch register of the assembler.
 void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition, std::optional<FieldOfLayout> known = std::nullopt);
-// As appendFieldToKeyOrder(), by what the instance remembers of the object's two words and the key (KeyOrderRun) where it remembers them; a step that is taken is remembered. The upper half of slotKey is zero.
 void listCreatedField(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition, std::optional<FieldOfLayout> known = std::nullopt);
-// Behind the store that creates a field: lists its key, in the stub or by the run time, and returns behind the barrier.
 void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg value, std::optional<FieldOfLayout> known = std::nullopt);
-// Behind hasNoStorage of computeFieldAddress(), with address as it is there. Gives the field of slotData its granule, in the stub or by the run time, and goes on at one of the ways. Writes address, representation and secondScratch.
 void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const WaysToFieldInExtension&);
 PreludeExit emitPrivateDefinePrelude(StubAssembler&);
 PreludeExit emitPrivateSetPrelude(StubAssembler&);

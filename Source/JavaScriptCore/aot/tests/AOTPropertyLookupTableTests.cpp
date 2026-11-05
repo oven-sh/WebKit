@@ -56,7 +56,6 @@ void evictionKeepsFilling()
     AOT_TEST_CHECK(numberOfEvictedRows && !front.hasRow(structures.first()->id()));
 }
 
-// The caches clear Instance::keyedValuePlaces(), which lie in front of the instance.
 static constexpr size_t bytesInFrontOfZeroedInstance = static_cast<size_t>(-InstanceLayout::offsetOfKeyedValuePlaces);
 
 struct ZeroedInstanceDeleter {
@@ -189,7 +188,6 @@ void secondInstanceClearsOnce()
     instances.clear();
 }
 
-// As the stub GetByValOfKeyOfPair files an absence beside a pair and asks whether it still holds.
 void absenceBesidePairDoesNotOutliveItsCount()
 {
     using KeyOfPair = StringKeyCache::KeyOfPair;
@@ -222,7 +220,6 @@ void absenceBesidePairDoesNotOutliveItsCount()
         forgetAbsences();
         AOT_TEST_CHECK(words.timesAbsencesWereForgotten == countWhenFiled + 1 && !absenceHolds());
 
-        // The count goes on, one at a time, until its low bits are those that the pair has kept. On its way they are zero once.
         uint32_t countWhenLowBitsAreZero = (countWhenFiled + 1 + mask) & ~mask;
         if (words.timesAbsencesWereForgotten != countWhenLowBitsAreZero) {
             words.timesAbsencesWereForgotten = countWhenLowBitsAreZero - 1;

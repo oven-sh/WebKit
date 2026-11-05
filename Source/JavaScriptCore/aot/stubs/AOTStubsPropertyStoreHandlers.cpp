@@ -46,7 +46,6 @@ StubSignature signatureOfStoreSlot(StubKey key)
     return signatureOfSlotHandler(handlerTableOf(key));
 }
 
-// storeField takes every general-purpose scratch register of x86-64, the name's among them, and the Uncached exit takes the name.
 struct FieldStoreArm {
     FieldStoreRegisters registers;
     FPRReg savedName;
@@ -58,7 +57,6 @@ static Address closureExecutable(FunctionTables::ExecutableKind kind)
     return Address(instanceGPR, static_cast<int32_t>(AOT_INSTANCE_OFFSET(closures.executables) + static_cast<unsigned>(kind) * sizeof(JSCell*)));
 }
 
-// A definition runs no setter, and what it does to the length of an array is left to the run time.
 static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
 {
     const bool isDefinition = traits.operation == SlotOperation::Define;
@@ -82,6 +80,7 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::ExtraPropertyRemoval:
     case Slot::Kind::FieldRemoval:
     case Slot::Kind::NothingToRemove:
+    case Slot::Kind::Variable:
         return false;
     case Slot::Kind::Value:
     case Slot::Kind::ExtraProperty:
@@ -99,7 +98,6 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::ExtraPropertyAddition:
         return !isPacked;
     case Slot::Kind::FieldOrInheritedSetter:
-    case Slot::Kind::Variable:
         return !isDefinition && !isPacked;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -182,10 +180,8 @@ void generateStoreSlot(StubAssembler& jit)
         FieldStoreExits exits;
         JumpList stored;
 
-        // A field that is about to be created has no granule yet. With one it is a field that has storage and is absent.
         hasNoStorage.link(&jit);
         arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
-        // Where the key order alone says that the field exists, a field without a granule reads as undefined, so that value asks for none.
         Jump alwaysNeedsStorage = slot.branchUnlessFlag(jit, Slot::undefinedNeedsNoStorage);
         Jump needsNoStorage = jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueUndefined));
         alwaysNeedsStorage.link(&jit);
@@ -201,7 +197,6 @@ void generateStoreSlot(StubAssembler& jit)
 
         storeExits.wasAbsent.link(&jit);
         arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
-        // The key order names a field by its slot key.
         slot.loadFirstPayloadWord(jit, keyOrder.slotKey);
         arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, keyOrder.slotKey, TrustedImm32(offsetBitsWithoutSlotKey)));
         storeField(jit, r, FieldStoreEnd::JoinList, FieldTypeTest::HasPassed, &stored, exits);
@@ -223,7 +218,6 @@ void generateStoreSlot(StubAssembler& jit)
             jit.returnToCaller();
     };
     auto emitAdditionInStorage = [&] {
-        // Its low word is the first word of the payload.
         const GPRReg newStructureID = traits.form == SlotForm::Slot ? operands.payload : operands.header;
         const GPRReg wordIndex = T11;
         const GPRReg storage = T14;
@@ -239,7 +233,6 @@ void generateStoreSlot(StubAssembler& jit)
         jit.store32(newStructureID, Address(receiver, JSCell::structureIDOffset()));
         jit.jumpToStub(writeBarrier());
     };
-    // Functions of every kind share a Structure, and only these kinds have an ordinary [[Set]].
     auto branchUnlessOrdinaryFunction = [&](GPRReg executable) {
         Jump isNotFunction = jit.branchIfNotType(receiver, jsFunctionTypes);
         jit.loadPtr(Address(receiver, JSFunction::offsetOfExecutableOrRareData()), executable);
@@ -251,7 +244,6 @@ void generateStoreSlot(StubAssembler& jit)
         isNotFunction.link(&jit);
     };
 
-    // A kind that has no arm in this table misses.
     switch (hasStoreArm(traits, slot.kind()) ? slot.kind() : Slot::Kind::Empty) {
     case Slot::Kind::Value: {
         const GPRReg wordIndex = T11;
@@ -300,7 +292,6 @@ void generateStoreSlot(StubAssembler& jit)
         slot.loadSecondPayloadWord(jit, r.type);
         Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
         computeFieldAddress(jit, r.field, false, hasNoStorage);
-        // Slot::remembersOrder: nothing is asked of the value.
         if (createsField && slot.form() == SlotForm::Slot) {
             const GPRReg orderWordBefore = r.type;
             const GPRReg orderAfter = r.scratch;
@@ -353,7 +344,6 @@ void generateStoreSlot(StubAssembler& jit)
         linkToUncachedExit(arm);
         break;
     }
-    // The record has no room for the type of the field, so a store to a filled slot is left to the run time.
     case Slot::Kind::FieldOrInheritedSetter: {
         const FieldAddressRegisters field { .object = receiver, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T14 };
         const GPRReg getterSetter = T10;
@@ -375,40 +365,6 @@ void generateStoreSlot(StubAssembler& jit)
         callSetter(getterSetter);
         break;
     }
-    case Slot::Kind::Variable: {
-        const GPRReg statics = jit.clobberOperand(headerOperand);
-        FieldStoreArm arm = createFieldStoreArm(statics);
-        const FieldStoreRegisters& r = arm.registers;
-        const GPRReg roundedSizeOfStatics = r.scratch;
-        const GPRReg offsetInStatics = r.field.address;
-        FieldStoreExits exits;
-        JumpList hasNoStorage;
-        JumpList isPresent;
-        JumpList stored;
-
-        jit.move64ToDouble(name, arm.savedName);
-        loadStaticsBase(jit, statics, roundedSizeOfStatics);
-        slot.loadFirstPayloadWord(jit, r.field.slotData);
-        slot.loadSecondPayloadWord(jit, r.type);
-        computeFieldAddress(jit, r.field, false, hasNoStorage);
-        RELEASE_ASSERT(hasNoStorage.empty());
-        branchOnFieldPresence(jit, r.field, r.scratch, isPresent, arm.uncached);
-
-        isPresent.link(&jit);
-        storeField(jit, r, FieldStoreEnd::JoinList, FieldTypeTest::IsEmitted, &stored, exits);
-        RELEASE_ASSERT(exits.wasAbsent.empty() && exits.wasAbsentAndIsNotAccepted.empty());
-        arm.uncached.append(exits.cannot);
-
-        stored.link(&jit);
-        loadStaticsBase(jit, statics, roundedSizeOfStatics);
-        slot.loadFirstPayloadWord(jit, offsetInStatics);
-        jit.and32(TrustedImm32(SlotData::maxOffset), offsetInStatics);
-        markStaticsCard(jit, statics, roundedSizeOfStatics, offsetInStatics);
-        jit.returnToCaller();
-
-        linkToUncachedExit(arm);
-        break;
-    }
     case Slot::Kind::ExtraProperty:
         if (origin == SlotOrigin::ByVal && accessOf(traits.operation) == SlotAccess::Store) {
             jit.load32(Address(receiver, JSCell::structureIDOffset()), T11);
@@ -427,7 +383,6 @@ void generateStoreSlot(StubAssembler& jit)
         addExtraProperty(jit, slot, extraPropertyRegisters, value, finishExtraPropertyStore, exits);
         uncached.append(exits.isNotExtensible);
 
-        // The growth takes every general-purpose scratch register of x86-64, the header's among them, and the finisher takes the header.
         exits.growsStorage.link(&jit);
         const GPRReg header = jit.clobberOperand(headerOperand);
         const FPRReg savedHeader = jit.allocateScratch(FPRInfo::fpRegT0);
@@ -458,7 +413,6 @@ void generateStoreSlot(StubAssembler& jit)
         const Address butterfly(receiver, JSObject::butterflyOffset());
         JumpList cannot;
 
-        // No packed slot has the flag.
         Jump hasIndexingHeader;
         if (traits.form == SlotForm::Slot)
             hasIndexingHeader = slot.branchIfFlag(jit, Slot::storageHasIndexingHeader);
@@ -486,7 +440,6 @@ void generateStoreSlot(StubAssembler& jit)
         }, cannot);
         jit.jumpToStub(writeBarrier());
 
-        // An array that was born with room for its first named properties has the new storage already: the room lies in front of its indexing header.
         if (hasIndexingHeader.isSet()) {
             static_assert(propertyRoomOfArray == initialOutOfLineCapacity * sizeof(EncodedJSValue));
             const GPRReg distanceToButterfly = oldCapacity;
@@ -541,7 +494,6 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::Uncacheable:
-        // Slot::createForProxies(): the payload is the key as a trap takes it. A definition asks another trap.
         if (slot.form() == SlotForm::Slot && traits.operation != SlotOperation::Define) {
             static_assert(valueStoredThroughProxyRegister == StubRegister::T10);
             uncached.append(jit.branchTest64(CCallHelpers::Zero, operands.payload));
@@ -570,6 +522,7 @@ void generateStoreSlot(StubAssembler& jit)
     case Slot::Kind::ExtraPropertyRemoval:
     case Slot::Kind::FieldRemoval:
     case Slot::Kind::NothingToRemove:
+    case Slot::Kind::Variable:
         RELEASE_ASSERT(!hasStoreArm(traits, slot.kind()));
         miss.append(jit.jump());
         break;

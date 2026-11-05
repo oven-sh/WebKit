@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEffectsNet.h"
 #include "AOTCodeRecords.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
@@ -31,7 +32,6 @@ static constexpr unsigned longestWayUpSinglePredecessors = 8;
 static constexpr unsigned longestWayUpDominators = 32;
 static constexpr BlockID enteredOtherwise = BlockID(BlockID::hashTableDeletedIndex);
 
-// Whoever asks writes each element before it is read.
 template<typename T>
 static std::span<T> allocateSpan(Machine::Arena& arena, size_t count)
 {
@@ -124,7 +124,6 @@ MentionList& CodeGenerator::mentions()
 FormAtPlace CodeGenerator::sayFormNamedFor(const OperationContext& context, StateOfKnowledge state) const
 {
     bool standsInLoop = context.block() && isInLoop(context.block());
-    // The code of the end of a block is counted by the kind of the end, and no site stands for it.
     if (!context.valueID())
         return formByLoopAlone(static_cast<const TerminatorContext&>(context).kind(), state, standsInLoop);
     FormAtPlace named = formByLoopAlone(static_cast<const ValueContext&>(context).opcode(), state, standsInLoop);
@@ -171,7 +170,6 @@ const PlacedSlot* CodeGenerator::slotOfScopeReadInPlaceOfClosureSlow(ValueID id,
 
 bool CodeGenerator::isDeferredClosureSlow(const Operation& named) const
 {
-    // A deferred closure has no value, and a name has the form of what it names. Behind a row of tests of one value each name stands over the one in front of it: names x names for whoever goes down from each.
     if (named.representation != Representation::Void)
         return false;
     const Operation* definition = &named;
@@ -203,6 +201,8 @@ void CodeGenerator::computeEffectsOf(const OperationContext& context) const
     effects.mayCallUnknownCode &= traits.mayCallUnknownCode();
     effects.maySuspend &= traits.maySuspend();
     effects.mayBeTerminated &= traits.mayBeTerminated();
+    if (m_rowThatSaysLess) [[unlikely]]
+        RowThatSaysLess::decode(m_rowThatSaysLess).cut(KindOfEffectsRow::Operation, static_cast<unsigned>(operation.opcode), effects);
 }
 
 bool CodeGenerator::recordSitesWithoutCode()
@@ -243,7 +243,6 @@ void CodeGenerator::orderBlocks()
 {
     static_assert(BlockFrequency::Normal < BlockFrequency::Unlikely && BlockFrequency::Unlikely < BlockFrequency::Rare);
     enum class StepKind : uint8_t { EdgeOfTerminator, OtherWayIn, EndOfBlock };
-    // `from` is null for an entry.
     struct Step {
         BlockID block;
         BlockID from;
@@ -262,9 +261,6 @@ void CodeGenerator::orderBlocks()
         order[numberOfBlocks - ++numberOrdered] = block;
     };
 
-    // What is walked first comes last in the order: entry 0 leads, and the likeliest successor of a block stands right behind it. Among equals edge 0 leads and the handler comes last.
-    // The clock of the back end's numbering follows this order, so what a rarer successor writes ends no load for a likelier one.
-    // True: `step` has become the way into the successor that is walked first.
     static constexpr BlockFrequency fromLikeliest[] = { BlockFrequency::Normal, BlockFrequency::Unlikely, BlockFrequency::Rare };
     auto enter = [&](Step& step) -> bool {
         BlockID id = step.block;
@@ -355,8 +351,6 @@ void CodeGenerator::orderBlocks()
     }
 }
 
-// A block with a single predecessor has that for its dominator, so only the ways into the others are gone. Those into one block are taken from the last source to the first:
-// a thousand breaks of one loop come from blocks that stand one above another, and so the way up from each ends at the next, not at the head of the loop.
 void CodeGenerator::findDominators()
 {
     constexpr uint32_t unknown = UINT32_MAX;
@@ -384,7 +378,6 @@ void CodeGenerator::findDominators()
         first = index;
     }
 
-    // The ways into each block, the last source first.
     std::span<uint32_t> firstWaysIn = allocateSpanOfAllBitsSet<uint32_t>(arena, numberOfPlaces);
     std::span<uint32_t> nextWaysIn = allocateSpan<uint32_t>(arena, m_waysIntoJoins.size());
     Vector<uint32_t, 16> targetsOfWaysThatComeRound;
@@ -406,7 +399,6 @@ void CodeGenerator::findDominators()
         }
         return found;
     };
-    // True: the dominator of the target has changed.
     auto takeWaysInto = [&](uint32_t target, bool thatComeRound) {
         uint32_t known = m_dominatorsByPlace[target];
         if (known == root)
@@ -525,7 +517,6 @@ bool CodeGenerator::isReadByBoxAlone(BlockID home, ValueID parameter, unsigned s
 {
     if (code().useCountOf(parameter) != 1)
         return false;
-    // An entrypoint hands over what its convention delivers.
     for (const auto& entry : code().entries()) {
         if (entry.block == home)
             return false;
@@ -580,7 +571,6 @@ void CodeGenerator::createPhis()
         for (ValueID parameter : code().at(block).parameters()) {
             Representation representation = representationOf(parameter);
             RELEASE_ASSERT(representation != Representation::Unchosen);
-            // The sweep needs the arguments of needed parameters alone, so nothing may ask for the others.
             if (!code().isNeeded(parameter) || !hasRegister(representation))
                 continue;
             if (representation == Representation::Double && !m_followsNumbersOutOfBytes && isReadByBoxAlone(block, parameter, mostBlocksThatHandParameterOn)) [[unlikely]] {
@@ -598,8 +588,6 @@ void CodeGenerator::createPhis()
     m_out.setOrigin(Machine::Origin());
 }
 
-// `for (..) sum += view[i]`: the test for NaN stands behind the loop, where the sum is boxed, and not in every turn.
-// What this finds decides only where that test stands. That nobody is handed other bits than those of the one NaN rests on get(), which tests for whoever asks.
 void CodeGenerator::followNumbersOutOfBytes()
 {
     if (!code().readsNumbersOutOfBytes())
@@ -611,7 +599,6 @@ void CodeGenerator::followNumbersOutOfBytes()
     m_valuesReadForBitsOfNaN.ensureSize(numberOfValues);
     m_blocksBegun.ensureSize(code().numberOfBlocks());
 
-    // By the index of the value: a parameter of a loop head that the value comes to through arithmetic and edges alone.
     Vector<ValueID> headsFed;
     headsFed.fill(ValueID(), numberOfValues);
     Vector<ValueID, 4> headsFedByBytes;
@@ -623,7 +610,6 @@ void CodeGenerator::followNumbersOutOfBytes()
             headsFed[value.index()] = head;
     };
 
-    // Users stand behind what they use: where the way comes by an operation, or by an edge to a join, everyone who reads the value has been seen. Who reads a parameter of a loop head is known at the end.
     for (size_t position = m_order.size(); position--;) {
         BlockID id = m_order[position];
         const Block& block = code().at(id);
@@ -642,12 +628,10 @@ void CodeGenerator::followNumbersOutOfBytes()
                 ValueID argument = arguments[index];
                 if (!argument || !code().isNeeded(parameter))
                     continue;
-                // What a throw brings is moved in a landing pad.
                 if (edgeID == handler || representationOf(parameter) != Representation::Double) {
                     m_valuesReadForBitsOfNaN.quickSet(argument.index());
                     continue;
                 }
-                // A record stands behind what it is made of, so a parameter in front of its argument is one that the edge leads back to. The innermost such head goes before any other that the value is handed to.
                 if (code().at(edge.to).isLoopHead && parameter < argument) {
                     ValueID& fed = headsFed[argument.index()];
                     if (!fed || argument < fed || fed < parameter)
@@ -680,7 +664,6 @@ void CodeGenerator::followNumbersOutOfBytes()
         }
     }
 
-    // The sum of an inner loop goes on into that of the loop around it.
     for (ValueID head : headsFedByBytes) {
         while (head && !isReadForBitsOfNaN(head) && !m_valuesHoldingAnyNaN.quickSet(head.index()))
             head = headsFed[head.index()];
@@ -709,7 +692,6 @@ void CodeGenerator::generateBlock(BlockID id)
         values = values.first(values.size() - 1);
     }
     std::span<const ReleaseBehindLastRead> releases = code().releasesBehindLastReadsIn(id);
-    // By position, not by equality: those at the head of a handler block wait for what the block catches, and one behind a caught value stands behind them in the list.
     auto releaseBehind = [&](ValueID lastRead) {
         for (; !releases.empty() && (!releases.front().behind || (lastRead && releases.front().behind <= lastRead)); releases = releases.subspan(1))
             emitter<HintEmitter>().release(releases.front().released);
@@ -721,7 +703,6 @@ void CodeGenerator::generateBlock(BlockID id)
         const Operation& operation = code().at(value);
         bool isCatch = false;
         if (!releases.empty()) [[unlikely]] {
-            // What a handler catches stands at its head, and by it the handler is known for a `catch` or a `finally`.
             isCatch = operation.opcode == Opcode::CatchValue || operation.opcode == Opcode::CatchException;
             if (!isCatch)
                 releaseBehind(index ? values[index - 1] : ValueID());
@@ -730,14 +711,12 @@ void CodeGenerator::generateBlock(BlockID id)
             testWaitsForBranch = true;
             continue;
         }
-        // The test moves behind what has no effects, and behind nothing else.
         if (testWaitsForBranch && (!operation.traits().isPure() || isNeverType(operation.type))) {
             testWaitsForBranch = false;
             generateValue(id, test, code().at(test), false, values.subspan(index));
             if (m_hasFailed)
                 return;
         }
-        // The list has no place for a test that is still to come.
         generateValue(id, value, operation, isAwaitedAtOnce(operation, values, index), testWaitsForBranch ? std::span<const ValueID>() : values.subspan(index + 1));
         if (m_hasFailed)
             return;
@@ -755,13 +734,11 @@ void CodeGenerator::generateBlock(BlockID id)
 }
 
 static constexpr unsigned turnsLaidOut = 8;
-// The turns laid out poll once in so many turns.
 static constexpr int32_t turnsBetweenPolls = 1 << 20;
 static constexpr unsigned mostBlocksInTurnLaidOut = 4;
 static constexpr unsigned placesLookedAtBehindHead = 8;
 static constexpr int64_t largestStepOfCounter = 16;
 static constexpr unsigned mostOperationsInTurnLaidOut = 16;
-// None keeps anything by the number of its value but what it defines.
 static constexpr OpcodeSet operationsOfTurnsLaidOut {
     Opcode::Narrowed, Opcode::Box, Opcode::Unbox, Opcode::IntegerToNumber, Opcode::NumberToInteger, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::ToInt32,
     Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Increment, Opcode::Decrement, Opcode::Negate,
@@ -769,8 +746,6 @@ static constexpr OpcodeSet operationsOfTurnsLaidOut {
     Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::StrictEq, Opcode::Eq, Opcode::TypeTest,
     Opcode::GetStringCodeUnit, Opcode::GetTypedArrayElement, Opcode::GetArrayElement,
 };
-// One store into storage that is there: neither the storage nor its length is another behind it.
-static constexpr OpcodeSet storesOfTurnsLaidOut { Opcode::PutContiguousIndex, Opcode::PutDoubleIndex, Opcode::PutTypedArrayElement };
 
 std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_t positionOfHead) const
 {
@@ -810,7 +785,6 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     if (!intoTurn.arguments().empty() || positionOfHead + 1 == m_order.size() || m_order[positionOfHead + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != head)
         return std::nullopt;
 
-    // The order is one in which a block stands behind whatever leads to it. Looked at: a few places behind the head.
     unsigned numberOfPlaces = std::min<size_t>(placesLookedAtBehindHead, m_order.size() - positionOfHead - 1);
     auto blockAt = [&](unsigned place) {
         return m_order[positionOfHead + 1 + place];
@@ -843,9 +817,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
             EffectTraits traits = operation.traits();
             if (traits.mayRunOtherCode() || traits.mayBeTerminated() || isNeverType(operation.type))
                 return false;
-            // A turn that leaves is taken again by the written loop: nobody may see that it was begun twice. So behind a store no edge leaves the turn: it stands in the block that leads back to the head.
-            // What is stored is no cell: the store is all that there is, and no barrier remembers anything from one turn to the next or on into the written loop.
-            if (storesOfTurnsLaidOut.contains(operation.opcode)) {
+            if (operation.opcode == Opcode::PutTypedArrayElement) {
                 const Type& stored = typeOf(operation.valueOperand());
                 if (!leadsBack(block) || stored.hasObjects() || stored.primitives & cellPrimitives)
                     return false;
@@ -859,7 +831,6 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
             return true;
         return terminator.kind == TerminatorKind::Branch && code().at(terminator.taken()).to != head && code().at(terminator.notTaken()).to != head;
     };
-    // Come to from the head's test through such blocks alone. Of those that lead back the last in the order ends the turn: whatever leads to another leaves it.
     std::array<bool, placesLookedAtBehindHead> isComeTo { };
     std::array<bool, placesLookedAtBehindHead> isInTurn { };
     std::optional<unsigned> placeOfLast;
@@ -878,7 +849,6 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     }
     if (!placeOfLast)
         return std::nullopt;
-    // And leading on to the end of the turn.
     isInTurn[*placeOfLast] = true;
     for (unsigned place = *placeOfLast; place--;) {
         if (!isComeTo[place] || leadsBack(code().at(blockAt(place))))
@@ -911,7 +881,6 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     });
 
     const Edge& back = code().at(code().at(loop.turn.last()).terminator.next());
-    // Each hands on the integer that it is handed.
     auto integerHandedOnBy = [&](ValueID value) {
         static constexpr OpcodeSet handingIntegerOn { Opcode::Narrowed, Opcode::WidenInteger, Opcode::NarrowInteger };
         while (handingIntegerOn.contains(opcodeOf(value)))
@@ -936,21 +905,12 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     bool countsUp = loop.relation == Opcode::Less || loop.relation == Opcode::LessEq;
     if (integerHandedOnBy(steppedFrom) != loop.counter || !loop.step || loop.step > 0 != countsUp || std::abs(loop.step) > largestStepOfCounter)
         return std::nullopt;
-    // By the types: whether there are ever as many turns as are laid out.
     Range counters = typeOf(loop.counter).integers;
     Range bounds = typeOf(loop.bound).integers;
     loop.mostTurns = (countsUp ? bounds.maximum - counters.minimum : counters.maximum - bounds.minimum) / std::abs(loop.step) + 1;
     if (loop.mostTurns < static_cast<int64_t>(turnsLaidOut))
         return std::nullopt;
     findSumsOfIntegers(loop, back);
-    for (BlockID block : loop.turn) {
-        ValueID test = testReadByBranchAlone(block, code().at(block).terminator);
-        if (!test)
-            continue;
-        const Operation& operation = code().at(test);
-        if (operation.opcode == Opcode::TypeTest && operation.testedType() == TypeTable::int32 && integerHandedOnBy(operation.valueOperand()) == loop.counter)
-            loop.testsOfCounterForInt32.append(test);
-    }
     return loop;
 }
 
@@ -979,7 +939,6 @@ void CodeGenerator::findSumsOfIntegers(CountedLoop& loop, const Edge& back) cons
         int64_t largestTerm = std::max(-terms.minimum, terms.maximum);
         if (largestTerm > mostAddedInAll / mostTurns)
             continue;
-        // Nothing else in a turn reads the sum so far.
         unsigned numberOfReads = 0;
         auto count = [&](ValueID read) {
             numberOfReads += read == parameter;
@@ -1018,7 +977,6 @@ void CodeGenerator::keepArgumentsForNextTurn(const Edge& edge)
     std::span<const ValueID> arguments = edge.arguments();
     RELEASE_ASSERT(parameters.size() == arguments.size());
     m_argumentsForNextTurn.shrink(0);
-    // As passArguments() hands them to the head.
     for (size_t index = 0; index < parameters.size(); ++index) {
         ValueID parameter = parameters[index];
         if (!m_values[parameter.index()])
@@ -1030,8 +988,6 @@ void CodeGenerator::keepArgumentsForNextTurn(const Edge& edge)
     }
 }
 
-// In front of the loop as it is written stands one that takes several turns at a time, as long as that many are left: one test, one poll and one jump for all of them,
-// and what a turn reads again of what no turn writes is read once. The loop as it is written takes the turns that are left over.
 void CodeGenerator::layOutTurns(const CountedLoop& loop)
 {
     BlockID head = m_order[loop.positionOfHead];
@@ -1054,7 +1010,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         }
     };
 
-    // What createBlocks() and createPhis() have made for the turn is the written loop's.
     Vector<LBasicBlock, mostBlocksInTurnLaidOut> blocksOfWrittenTurn;
     Vector<LValue, 8> phisOfWrittenTurn;
     for (BlockID block : turn)
@@ -1063,7 +1018,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         phisOfWrittenTurn.append(m_values[parameter.index()]);
     });
 
-    // What has been made for the head is entered from in front of the loop, and from there alone from here on: it asks what is asked once.
     LBasicBlock entry = blockFor(head);
     LBasicBlock turns = m_out.newBlock();
     LBasicBlock writtenHead = m_out.newBlock();
@@ -1082,13 +1036,11 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         sum.added = m_out.phiIn(turns, Machine::Int64);
         phisOfTurns[sum.indexOfParameter] = sum.added;
     }
-    // Each Phi is fed on every way in: none is made that is not.
     for (size_t index = 0; index < parameters.size(); ++index) {
         if (phisOfEntry[index] && !phisOfTurns[index])
             phisOfTurns[index] = m_out.phiIn(turns, phisOfEntry[index]->type());
     }
     size_t indexOfCounter = std::ranges::find(parameters, loop.counter) - parameters.begin();
-    // `valueAt` is asked in the block on the edge. The parameters of the entry are fed by nothing more.
     auto blockHandingOver = [&](const Values& phis, LBasicBlock target, auto&& valueAt) {
         LBasicBlock here = m_out.m_block;
         LBasicBlock blockOnEdge = m_out.newBlock();
@@ -1099,7 +1051,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         for (size_t index = 0; index < phis.size(); ++index) {
             if (!phis[index])
                 continue;
-            // What comes round to the counter of the turns laid out is made by an instruction of 32 bits, so what the entry has handed it settles what it says of its upper half.
             if (values[index] == phisOfEntry[index] || (index == indexOfCounter && values[index] == phisOfTurns[index]))
                 m_out.upsilonOfCompletePhi(values[index], phis[index]);
             else
@@ -1116,7 +1067,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         }
         return nullptr;
     };
-    // Turns that are so few by the types poll in the written loop, which all of them come to.
     bool pollsBetweenStretches = loop.poll && loop.mostTurns > turnsBetweenPolls;
     bool countsUp = loop.step > 0;
     auto holdsOf = [&](LValue counter, LValue limit) {
@@ -1131,7 +1081,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             return m_out.greaterThanOrEqual(counter, limit);
         }
     };
-    // The counter at which the turns laid out stop to poll, or for good. Where the sum wraps, within a stretch of the end of int32, it lies on the other side of the counter: the stretch ends behind eight turns, which is early and no more.
     LValue endOfStretch = pollsBetweenStretches ? m_out.phiIn(turns, phisOfEntry[indexOfCounter]->type()) : nullptr;
     auto endOfStretchFrom = [&](LValue counter, LValue lastStart) {
         LValue behindStretch = m_out.add(counter, m_out.constantOfType(counter->type(), turnsBetweenPolls * loop.step));
@@ -1147,7 +1096,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         LValue bound = get(loop.bound).value;
         LValue counter = phisOfEntry[indexOfCounter];
         RELEASE_ASSERT(bound && counter && bound->type() == counter->type());
-        // The tests of the turns hold one after the other as far as the last of them does: the counter is held against the bound less what the turns behind the first step it by.
         int64_t reach = (turnsLaidOut - 1) * loop.step;
         lastStart = m_out.sub(bound, m_out.constantOfType(bound->type(), reach));
         LBasicBlock written = blockHandingOver(phisOfWrittenHead, writtenHead, [&](size_t index) {
@@ -1158,7 +1106,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 m_out.upsilon(endOfStretchFrom(counter, lastStart), endOfStretch);
             return sumAt(index) ? m_out.constInt64(0) : phisOfEntry[index];
         });
-        // An Int64 holds what a number holds exactly, so nothing wraps there. A bound of 32 bits so near the end of int32 that the difference wraps has too few turns left in any case.
         if (bound->type() == Machine::Int32) {
             Range bounds = typeOf(loop.bound).integers;
             int64_t nearest = (countsUp ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int32_t>::max()) + reach;
@@ -1169,7 +1116,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 m_out.appendTo(doesNotWrap);
             }
         }
-        // What every turn would ask again and no turn changes. Whatever fails takes the loop as it is written, which asks.
         for (ValueID string : loop.flatStrings) {
             std::optional<Condition> isNarrow = emitter<StringEmitter>().findNarrow(string);
             if (!isNarrow || isNarrow->value()->hasInt())
@@ -1178,23 +1124,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             m_out.branch(isNarrow->value(), normalEdge(holds), unlikelyEdge(written));
             m_out.appendTo(holds);
         }
-        if (!loop.testsOfCounterForInt32.isEmpty()) {
-            auto continueIf = [&](LValue holds) {
-                LBasicBlock next = m_out.newBlock();
-                m_out.branch(holds, normalEdge(next), unlikelyEdge(written));
-                m_out.appendTo(next);
-            };
-            LValue least = m_out.constantOfType(bound->type(), std::numeric_limits<int32_t>::min());
-            LValue greatest = m_out.constantOfType(bound->type(), std::numeric_limits<int32_t>::max());
-            Range counters = typeOf(loop.counter).integers;
-            Range bounds = typeOf(loop.bound).integers;
-            if (countsUp ? bounds.maximum > std::numeric_limits<int32_t>::max() : bounds.minimum < std::numeric_limits<int32_t>::min())
-                continueIf(countsUp ? m_out.lessThanOrEqual(bound, greatest) : m_out.greaterThanOrEqual(bound, least));
-            if (countsUp ? counters.minimum < std::numeric_limits<int32_t>::min() : counters.maximum > std::numeric_limits<int32_t>::max())
-                continueIf(countsUp ? m_out.greaterThanOrEqual(counter, least) : m_out.lessThanOrEqual(counter, greatest));
-        }
-        // A turn that leaves hands the written loop the sum as the entry brought it and what was added since. The first turn has added nothing yet, and -0 and nothing is -0, but -0 + 0 is 0.
-        // Where no turn leaves, eight terms at the least have been added to whatever is handed on, and behind the first of them the language has 0 too.
         bool someTurnMayLeave = std::ranges::any_of(loop.turn, [&](BlockID id) {
             const Terminator& terminator = code().at(id).terminator;
             for (uint32_t edge = 0; edge < terminator.numberOfEdges; ++edge) {
@@ -1210,7 +1139,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 m_out.branch(m_out.equal(m_out.bitCast(phisOfEntry[sum.indexOfParameter], Machine::Int64), m_out.constInt64(std::numeric_limits<int64_t>::min())), unlikelyEdge(written), normalEdge(isNotMinusZero));
                 m_out.appendTo(isNotMinusZero);
             }
-            // Neither NaN nor an infinity is as small.
             LValue size = m_out.doubleAbs(phisOfEntry[sum.indexOfParameter]);
             LValue limit = m_out.constDouble(0x1p52);
             LBasicBlock isSmall = m_out.newBlock();
@@ -1218,7 +1146,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             m_out.appendTo(isSmall);
             if (typeOf(parameters[sum.indexOfParameter]).isNumberWithoutFraction())
                 continue;
-            // From 2^52 on a number has no room for a fraction, so the sum with 2^52 is rounded to a whole number.
             LBasicBlock isWhole = m_out.newBlock();
             m_out.branch(m_out.doubleEqual(m_out.doubleSub(m_out.doubleAdd(size, limit), limit), size), normalEdge(isWhole), unlikelyEdge(written));
             m_out.appendTo(isWhole);
@@ -1228,8 +1155,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
 
     m_out.appendTo(turns);
     m_headOfTurnsLaidOut = head;
-    // The first turn reads the parameters of the head: from here on none of them is marked for good as taking any NaN that is not marked so yet.
-    // In the turns laid out every number among them takes any NaN: get() tests for whoever asks for the one NaN, so a sum goes from turn to turn untested. The written loop is handed the one NaN.
     Vector<size_t, 4> takingAnyNaNInTurnsAlone;
     if (m_followsNumbersOutOfBytes) {
         m_blocksBegun.quickSet(head.index());
@@ -1245,11 +1170,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     };
     for (size_t index = 0; index < parameters.size(); ++index)
         m_values[parameters[index].index()] = sumAt(index) ? nullptr : phisOfTurns[index];
-    // The counter of each turn is that of the first and a constant. Whoever extends it for an address finds the constant outermost, where the address takes it in.
     LValue firstCounter = phisOfTurns[indexOfCounter];
     bool counterIsExtended = firstCounter->type() == Machine::Int32 && typeOf(loop.counter).integers.minimum >= 0 && countsUp;
-    // What comes round is made by an instruction of 32 bits, so the register of the counter is the extended counter. Where an address takes an index and a distance, an extension with one reader goes into it
-    // and is no instruction: each turn makes its own. Elsewhere the sum of base and index is an instruction anyway, and one extension serves all.
     LValue extensionForAllTurns = counterIsExtended && isARM64() ? m_out.extendWordThatIsNotNegative(firstCounter) : nullptr;
     auto counterBehind = [&](unsigned numberOfTurns) -> LValue {
         if (counterIsExtended && numberOfTurns < turnsLaidOut)
@@ -1257,7 +1179,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         return m_out.add(firstCounter, m_out.constantOfType(firstCounter->type(), numberOfTurns * loop.step));
     };
     m_turnLaidOut = turn;
-    m_testsThatHoldInTurnsLaidOut = loop.testsOfCounterForInt32.span();
     for (unsigned turnLaidOut = 0; turnLaidOut < turnsLaidOut; ++turnLaidOut) {
         forgetTurn();
         Values valuesAheadOfTurn;
@@ -1307,7 +1228,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         m_valuesHoldingAnyNaN.quickClear(parameters[index].index());
     m_headOfTurnsLaidOut = BlockID();
     m_turnLaidOut = { };
-    m_testsThatHoldInTurnsLaidOut = { };
     m_blockLeavingTurnLaidOut = nullptr;
     m_nextBlockGoesOnHere = false;
     emitter<StringEmitter>().forgetStringsFoundNarrow();
@@ -1316,9 +1236,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     for (ValueID parameter : parameters)
         valuesBehindTurns.append(m_values[parameter.index()]);
     LValue counterBehindTurns = valuesBehindTurns[indexOfCounter];
-    // blockHandingOver() counts on it where it hands the Phi of the counter on before this has come round to it.
     RELEASE_ASSERT(counterBehindTurns->type() != Machine::Int32 || Machine::clearsUpperHalfOfRegister(counterBehindTurns->opcode()));
-    // The next stretch is counted from a copy: folded into a sum with the counter of the first turn it would keep that alive beside the counter that comes round, and the two would not share a register.
     auto goingRound = [&](LValue nextEndOfStretch) {
         return blockHandingOver(phisOfTurns, turns, [&](size_t index) {
             if (index == indexOfCounter && endOfStretch)
@@ -1354,8 +1272,6 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         m_values[parameters[index].index()] = phisOfWrittenHead[index];
 }
 
-// Such a test leaves its answer in no register: its code goes straight to the two targets of the branch.
-// The sweep counts whoever else reads the answer: an operation that Known handed the test to, an edge. A Narrowed names its test and reads nothing of it.
 ValueID CodeGenerator::testReadByBranchAlone(BlockID id, const Terminator& terminator) const
 {
     if (terminator.kind != TerminatorKind::Branch)
@@ -1388,7 +1304,6 @@ ValueID CodeGenerator::sumBoxedBy(const Operation& box) const
     BlockID block = box.block();
     if (!sumsThatMayStayBoxed.contains(operation.opcode) || operation.representation != Representation::Double || operation.form() != OperatorForm::Numbers)
         return { };
-    // What is released behind its last read is read later here than the list says.
     if (operation.block() != block || code().useCountOf(sum) != 1 || !code().releasesBehindLastReadsIn(block).empty())
         return { };
 
@@ -1430,7 +1345,6 @@ void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& op
         return;
     if (operation.representation == Representation::Double && waitsForBoxOfSum(id, operation)) [[unlikely]]
         return;
-    // The reader stands right behind it: the walk reads the scope beside the slot, so no suspension and no other code lies between.
     if (const PlacedSlot* scope = slotOfScopeReadInPlaceOfClosure(id, operation); scope && !operationsBehind.empty() && operationsBehind.front() == code().onlyUserOf(id)) {
         m_closureReadForItsScope = id;
         m_slotOfScopeOfClosureRead = scope;
@@ -1444,20 +1358,37 @@ void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& op
     generate(context);
 }
 
+void CodeGenerator::dispatchWatched(const ValueContext& context)
+{
+    uint32_t siteOfUser = FormsSaid::noSite;
+    if (m_notesForms)
+        siteOfUser = m_records.formsSaid.enter(context.id(), context.opcode(), context.block(), m_proc.numberOfOperations());
+    declareAccessesOf(context);
+
+    if (m_checksEffects) {
+        RuntimeCallEmitter::WatchOfEffects watch;
+        emitter<RuntimeCallEmitter>().beginWatchOfOperation(context, watch);
+        dispatch(context);
+        if (watch.isSet() && !m_hasFailed && currentBlockIsOpen() && !isNeverType(context->type))
+            emitter<RuntimeCallEmitter>().endWatchOfEffects(context, watch, nullptr);
+        else
+            emitter<RuntimeCallEmitter>().abandonWatchOfOperation(watch);
+    } else
+        dispatch(context);
+
+    if (m_notesForms)
+        m_records.formsSaid.leave(siteOfUser, m_proc.numberOfOperations());
+}
+
 void CodeGenerator::generate(const ValueContext& context)
 {
     const OperationContext* user = std::exchange(m_operation, &context);
     Machine::Origin originOfUser = m_out.origin();
     m_out.setOrigin(machineOriginOf(context.id()));
-    uint32_t siteOfUser = FormsSaid::noSite;
-    if (m_notesForms) [[unlikely]]
-        siteOfUser = m_records.formsSaid.enter(context.id(), context.opcode(), context.block(), m_proc.numberOfOperations());
-    declareAccessesOf(context);
-
-    dispatch(context);
-
-    if (m_notesForms) [[unlikely]]
-        m_records.formsSaid.leave(siteOfUser, m_proc.numberOfOperations());
+    if (m_watchesOperations) [[unlikely]]
+        dispatchWatched(context);
+    else
+        dispatch(context);
     m_out.setOrigin(originOfUser);
     m_operation = user;
     if (m_checksAllocation) [[unlikely]] {
@@ -1485,11 +1416,7 @@ void CodeGenerator::generateTerminator(BlockID id, const Block& block, bool gene
 
     m_operation = &context;
     declareAccessesOf(context);
-    // The entry of the turns laid out has asked.
-    if (generatesCondition && std::ranges::contains(m_testsThatHoldInTurnsLaidOut, terminator.conditionOperand())) [[unlikely]]
-        jumpTo(context, 0);
-    else
-        dispatch(context);
+    dispatch(context);
     m_operation = nullptr;
     if (m_checksAllocation) [[unlikely]]
         m_out.clearDeclaredAccesses();
@@ -1514,7 +1441,6 @@ void CodeGenerator::generateReturnedCall(const TerminatorContext& terminator, Va
 
 void CodeGenerator::declareAccessesSlow(const OperationContext& context)
 {
-    // Nobody else has the cell that is being filled, so what fills it is no effect of the operation.
     if (m_initializationDepth) {
         m_out.clearDeclaredAccesses();
         return;
@@ -1525,8 +1451,6 @@ void CodeGenerator::declareAccessesSlow(const OperationContext& context)
     HeapList writes;
     heaps().appendHeaps(effects.reads, reads);
     heaps().appendHeaps(effects.writes, writes);
-    // The IR's effects say what a program can observe. It cannot observe which form a cell is kept in: a type test reads those words and declares nothing.
-    // Stores to them are still held to the declared writes.
     heaps().appendHeapsOfConvertedCells(reads);
     if (effects.mayCollect)
         heaps().appendHeapsWrittenByCollection(writes);
@@ -1555,7 +1479,6 @@ BlockEdge CodeGenerator::edgeTo(const TerminatorContext& terminator, uint32_t ta
         passesSomething = m_values[parameters[index].index()];
     if (!passesSomething)
         return target;
-    // The code of any other terminator may take the edge from several machine blocks, however few targets it has.
     if (terminator.kind() == TerminatorKind::Jump) {
         passArguments(edge, parameters, declaredResults);
         return target;
@@ -1606,7 +1529,6 @@ void CodeGenerator::passArguments(const Edge& edge, std::span<const ValueID> par
     if (parameters.empty())
         return;
 
-    // A constant may take several machine blocks, and an Upsilon lies in the block that leads to its Phi: every operand is made ahead of the first Upsilon.
     Vector<Operand, 8> passed;
     for (size_t index = 0; index < parameters.size(); ++index) {
         ValueID parameter = parameters[index];
@@ -1635,7 +1557,6 @@ void CodeGenerator::passArgument(ValueID parameter, Operand argument)
     Representation representationOfParameter = isCarriedBoxed(parameter) ? Representation::JSValue : representationOf(parameter);
     if (!isSameWord(argument.representation, representationOfParameter)) {
         String forms = describeFormsOfGeneratedOperand(argument.representation, representationOfParameter);
-        // An entrypoint passes what its convention delivers, outside any operation.
         if (m_operation)
             fail(*m_operation, InternalErrorKind::UnsupportedConversion, forms);
         else
@@ -1664,7 +1585,6 @@ Operand CodeGenerator::get(ValueID id, const Operation& operation)
     if (BlockID user = blockBeingGenerated(); user && user != home && home != m_onlyEntryBlock && !isProvenToDominate(home, user))
         verifyThatDefinitionDominates(id, user);
     LValue lowered = m_values[id.index()];
-    // The build has failed, and what is generated until the next look at that is thrown away.
     if (!lowered && m_hasFailed) [[unlikely]]
         return emitter<ConstantEmitter>().zeroOf(representation);
     RELEASE_ASSERT(lowered);
@@ -1704,14 +1624,12 @@ Operand CodeGenerator::getWithAnyNaN(ValueID id)
 
 Number CodeGenerator::settleNaNOf(const ValueContext& value, Number number)
 {
-    // What is generated once more for one reader goes to that reader past get().
     if (!m_followsNumbersOutOfBytes || m_definitionTaken || m_valuesReadForBitsOfNaN.quickGet(value.id().index()))
         return emitter<ConversionEmitter>().purified(number);
     m_valuesHoldingAnyNaN.quickSet(value.id().index());
     return number;
 }
 
-// Whoever reads a parameter is generated behind the head of its block. Until then the parameter can still be marked, and behind that only what was marked takes such a word: an edge that leads back.
 bool CodeGenerator::letsAnyNaNInto(ValueID parameter)
 {
     if (holdsAnyNaN(parameter))
@@ -1724,7 +1642,6 @@ bool CodeGenerator::letsAnyNaNInto(ValueID parameter)
 
 Operand CodeGenerator::getIn(ValueID id, Representation wanted)
 {
-    // What is wanted without bits is taken in any form, as Walker::use() takes it: the place of a parameter that no caller hands over.
     if (wanted == Representation::Void)
         return { wanted, nullptr };
 
@@ -1832,7 +1749,6 @@ Operand CodeGenerator::resultAt(ValueID producer, uint32_t index) const
     return m_results[range.first + index];
 }
 
-// In the entrypoint that is about to jump to the block of the parameter.
 void CodeGenerator::defineParameter(ValueID parameter, Operand operand)
 {
     RELEASE_ASSERT(opcodeOf(parameter) == Opcode::Parameter);
@@ -1845,7 +1761,6 @@ Subject CodeGenerator::subjectOf(const OperationContext& context) const
     Subject subject { .function = unit().function, .location = code().locationOf(program(), context.origin()) };
     if (!hasModule(subject.location))
         subject.location = function().declarationLocation();
-    // Without a location, a record's numbers are looked up in the body the front end wrote, where Code's numbers mean nothing.
     if (hasModule(subject.location)) {
         subject.block = context.block();
         subject.value = context.valueID();
@@ -1861,7 +1776,6 @@ void CodeGenerator::fail(const OperationContext& context, InternalErrorKind kind
     Subject subject = subjectOf(context);
     ASCIILiteral operation = nameOfGeneratedOperation(context);
     String ending = detail;
-    // A message prints the operation's name next to its number, and a record without a location carries no numbers.
     if (!hasModule(subject.location))
         ending = detail.isNull() ? String(operation) : makeString(operation, ": "_s, detail);
     build().diagnostics().add(InternalError { .kind = kind, .function = subject.function, .block = subject.block, .value = subject.value, .location = subject.location, .detail = ending, .operation = operation });
@@ -1920,19 +1834,15 @@ CodeGenerator::InitializationScope::~InitializationScope()
         m_generator.declareAccessesOf(*m_generator.m_operation);
 }
 
-// Each block hands itself to its successors as it is come by, in reverse postorder: whatever leads forward to a block has been come by before the block.
-// An edge that leads back changes nothing where the flow is made of loops with one head, and asks for another round elsewhere.
 DominatorsOfCode::DominatorsOfCode(const Code& code, std::span<const BlockID> order)
 {
     constexpr uint32_t unknown = UINT32_MAX;
-    // By number.
     struct Node {
         uint32_t dominator;
         uint32_t sizeOfSubtree;
         uint32_t nextNumberBelow;
     };
     const uint32_t numberOfBlocks = order.size();
-    // Above every entry stands a root, which has the number of no block.
     const uint32_t root = numberOfBlocks;
     m_sizeOfSubtree.fill(0, code.numberOfBlocks());
     m_firstNumberOfSubtree.fill(unknown, code.numberOfBlocks());
@@ -1953,7 +1863,6 @@ DominatorsOfCode::DominatorsOfCode(const Code& code, std::span<const BlockID> or
         uint32_t found = known;
         uint32_t other = number;
         if (found != unknown) {
-            // The root is above everything, and has the greatest number.
             while (found != other) {
                 if (other == root || (found != root && found > other))
                     found = nodes[found].dominator;

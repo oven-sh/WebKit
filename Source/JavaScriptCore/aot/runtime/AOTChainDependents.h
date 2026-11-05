@@ -25,8 +25,6 @@ struct State;
 
 using ChainObjects = Vector<JSObject*, 4>;
 
-// A set of objects with false positives: it may report an object that was never added, but never misses one that was.
-// It keeps no object alive: a later object at the same address counts as the earlier one.
 class ObjectsSeen {
 public:
     void add(const JSObject* object) { m_words[hashOf(object) / 64] |= uint64_t { 1 } << hashOf(object) % 64; }
@@ -40,7 +38,6 @@ private:
 };
 
 enum class ChainWalkMode : uint8_t { MayAllocate, AllocatesNothing };
-// A kept answer holds until an object of the chain reports a change.
 enum class ChainWalkUse : uint8_t { KeptForReads, KeptForReadsThatAskObjects, KeptForStores, UsedAtOnce };
 enum class ChainWalkResult : uint8_t { Unknown, Absent, Found };
 
@@ -59,10 +56,8 @@ struct ChainWalk {
     bool didFlatten { false };
     bool passedSlotFilledWithoutReport { false };
     JSObject* firstObjectWithEmptySlot { nullptr };
-    // The cell whose storage has the property: the object of the chain, or the extra properties of a compiled one.
     JSObject* holder { nullptr };
     JSObject* owner { nullptr };
-    // Invalid for a field of a compiled object whose slot holds no boxed value in the cell: the walk says what a store meets there, and a read asks the holder.
     PropertyOffset offset { invalidOffset };
     unsigned attributes { 0 };
     ChainObjects changeableObjects;
@@ -70,7 +65,6 @@ struct ChainWalk {
 
 ChainWalk walkChain(const ChainWalkStart&, UniquedStringImpl*);
 
-// holder->getDirect(offset). A field of a compiled object has the offset of an inline property, and the Structure of such an object speaks of no inline storage.
 ALWAYS_INLINE JSValue valueAtOffset(const JSObject* holder, PropertyOffset offset)
 {
     if (isInlineOffset(offset))
@@ -82,10 +76,8 @@ enum class StoreThroughChain : uint8_t { Unknown, CreatesOwnProperty, CallsSette
 
 StoreThroughChain storeThroughChain(const ChainWalk&);
 
-// The prototype object of a class has become an ordinary object that has what the class declares. It had nothing else, and it answers as it did before.
 struct CreatedMembers {
     JSObject* prototype;
-    // Of ClassTable::DeclaredMemberLocation::holder in the realm of the class. Null: no member of that realm has such a place.
     Structure* structureOfDeclaredMemberHolders;
 };
 
@@ -117,9 +109,7 @@ public:
     ChainDependentOwnerID addOwner(ChainDependentOwner&);
 
     void add(std::span<JSObject* const> chainObjects, const ChainDependent&);
-    // What the engine remembers in the Structure about names above its objects is forgotten with the dependent.
     void addStateOfStructure(std::span<JSObject* const> chainObjects, Structure*, UniquedStringImpl*);
-    // Most objects that report a change are still being filled, and nothing has looked at them yet.
     void didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
     {
         if (m_objectsWithDependents.mayContain(changed))
@@ -165,10 +155,8 @@ private:
 };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
-// IsNotSpelledByProgram: the name is no index either. No class declares a member under such a name.
 enum class StoredName : bool { MayBeSpelledByProgram, IsNotSpelledByProgram };
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, StoredName = StoredName::MayBeSpelledByProgram);
-// The number of an owner means something to the ChainDependents that gave it out, and to no other.
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, ChainDependents& ofOwner, const ChainDependent&);
 
 PropertyWalk::Presence presenceForStructure(VM&, Structure*, UniquedStringImpl*);

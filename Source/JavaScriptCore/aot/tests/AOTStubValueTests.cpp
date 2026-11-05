@@ -160,7 +160,6 @@ static void testTruthinessOfDoubles()
     }
 }
 
-// One answer, left in the result register or in the flags.
 static void testStrictEqualityInBothForms()
 {
     StubRunner runner;

@@ -28,9 +28,6 @@ constexpr ObjectMutation mutationOf(SlotExitReason reason)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// What the record of a layout rules out is PROVEN (Facts::linked()), and compiled code reads such an object without a look: a mutation that comes all the same is a false proof of the compiler's, and the process ends.
-// Nothing is ruled out of a layout whose objects reach code that the build has not seen: image/AOTLayoutTables.cpp stops a build that would. What is HELD of those (Facts::held()) is no proof:
-// the mutation is carried out, and leaves its mark where compiled code looks. The field leaves its slot, the order word gets its bit, the cell another Structure, the guard of the class ends.
 [[noreturn]] void crashOnImpossibleMutation(VM&, const Object&, ObjectMutation);
 
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, ObjectMutation mutation)
@@ -86,7 +83,6 @@ struct FieldProperty {
 UniquedStringImpl* propertyNameOf(VM&, const Object&, const FieldData&);
 FieldProperty findFieldProperty(VM&, const Object&, const FieldData&);
 bool livesInExtraProperties(VM&, const Object&, const FieldData&);
-// The property gets the attributes that the layout gives the field, so the caller has compared them with the ones it creates.
 bool tryCreateField(VM&, State&, Object&, const FieldData&, JSValue);
 void putProperty(VM&, JSObject* holder, PropertyName, Object::LeavingProperty);
 void removeFieldFromKeyOrder(VM&, State&, Object&, const FieldData&);
@@ -101,11 +97,9 @@ ALWAYS_INLINE bool isExtraKey(State& state, const Object& object, UniquedStringI
     return !(object.orderWord() & orderWordHasFieldOutsideSlot) || !object.fieldNamed(state, name);
 }
 
-// Every field of the key order, by its index, and every extra key, by its entry in the table of the extra properties, as they follow each other.
 void forEachKeyAsCreated(VM& vm, State& state, const Object& object, const Invocable<void(uint16_t)> auto& fieldFunctor, const auto& extraKeyFunctor)
 {
     uint32_t numberOfFields = object.layout().numberOfFields;
-    // Stars that wait are carried out here, which may give the object another order.
     JSObject* extra = object.extraProperties();
     std::span<const uint16_t> entries = object.keyOrder(state);
     std::span<const RefPtr<UniquedStringImpl>> namedKeys;
@@ -151,7 +145,6 @@ void forEachKeyAsCreated(VM& vm, State& state, const Object& object, const Invoc
 
 enum class KeysListed : uint8_t { Strings = 1, Symbols = 2, StringsAndSymbols = 3 };
 
-// The own keys that are neither indexes nor private names, as OrdinaryOwnPropertyKeys orders them. No name comes twice.
 void forEachOwnKey(VM& vm, State& state, const Object& object, KeysListed listed, DontEnumPropertiesMode mode, const Invocable<void(UniquedStringImpl*)> auto& functor)
 {
     RuntimeLayoutTable& layouts = state.objects->layouts;

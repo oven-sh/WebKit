@@ -370,7 +370,6 @@ function checkFormColumns(entry: Entry, errors: ErrorList): void {
   if (entry.columns.has("form") && listsFormsByState) {
     errors.add(location, `${name} has one form and lists forms by what is known`);
   }
-  // The code of the end of a block is counted by the kind of the end, not by form.
   if (!entry.isTerminator && isLegalIn(entry, "Placed") && !entry.columns.has("form") && !listsFormsByState) {
     const columns = formsByStateColumns.join(", ");
     errors.add(location, `${name} may stand in Code and names no form: form = Open, Closed or Runtime, or each state in one of ${columns}`);
@@ -393,9 +392,6 @@ function checkColumns(entry: Entry, errors: ErrorList): void {
   }
   checkCollectorColumns(entry, errors);
   checkReplacedEntries(entry, errors);
-  if (entry.lastForm === firstForm && nonzeroMemberOf(entry, "removedBy") === null) {
-    errors.add(entry.location, `${entry.name} ends at ${firstForm} and has no removedBy`);
-  }
   checkExclusiveParameters(entry, errors);
 }
 

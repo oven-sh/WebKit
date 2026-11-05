@@ -42,7 +42,6 @@ constexpr uint8_t importedMemoryModule[] = {
     0x0a, 0x08, 0x01, 0x06, 0x00, 0x41, 0x07, 0x24, 0x00, 0x0b,
 };
 
-// (type $bytes (array (mut i8))) (func (export "makeBytes") (param i32) (result (ref $bytes)) local.get 0 array.new_default $bytes)
 constexpr uint8_t moduleWithGCTypes[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x0a, 0x02, 0x5e, 0x78, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x64, 0x00,
@@ -51,7 +50,6 @@ constexpr uint8_t moduleWithGCTypes[] = {
     0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0xfb, 0x07, 0x00, 0x0b,
 };
 
-// (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add)
 constexpr ASCIILiteral callsModuleFromOtherBytes =
     "const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 7, 7, 1, 3, 97, 100, 100, 0, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11]);\n"
     "print(new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.add(20, 22));\n"_s;

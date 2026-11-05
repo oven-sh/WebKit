@@ -10,7 +10,6 @@
 #include "AOTCellFormat.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTMachineTestSupport.h"
-#include "AOTProgramStrings.h"
 #include "AOTShapeTest.h"
 #include "AOTSlotAccess.h"
 #include "AOTSlotAccessEmitter.h"
@@ -57,10 +56,10 @@ static uint64_t bitsOutsideSlot(SlotRepresentation representation, uint64_t word
     return width == sizeof(uint64_t) ? 0 : word >> (8 * width);
 }
 
-static void checkUnboxedWrite(ProgramStrings& strings, SlotRepresentation representation, JSValue boxed, const Invocable<bool(void*)> auto& write)
+static void checkUnboxedWrite(const Instance& instance, SlotRepresentation representation, JSValue boxed, const Invocable<bool(void*)> auto& write)
 {
     uint64_t slotWrittenFromBoxedValue = untouchedBits;
-    bool shouldWrite = tryWriteSlot(strings, representation, &slotWrittenFromBoxedValue, boxed);
+    bool shouldWrite = tryWriteSlot(instance, representation, &slotWrittenFromBoxedValue, boxed);
 
     uint64_t slot = untouchedBits;
     AOT_TEST_CHECK(write(&slot) == shouldWrite);
@@ -70,25 +69,24 @@ static void checkUnboxedWrite(ProgramStrings& strings, SlotRepresentation repres
         return;
     }
     AOT_TEST_CHECK(bitsOutsideSlot(representation, slot) == bitsOutsideSlot(representation, untouchedBits));
-    AOT_TEST_CHECK(readSlot(representation, &slot, strings) == boxed);
+    AOT_TEST_CHECK(readSlot(representation, &slot, instance) == boxed);
 }
 
 static void testUnboxedWritesMatchBoxedWrites(LoadedProgram& program)
 {
-    ProgramStrings& strings = *program.state().strings;
     for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
         for (int32_t number : int32Samples) {
-            checkUnboxedWrite(strings, representation, jsNumber(number), [&](void* slot) {
+            checkUnboxedWrite(program.instance(), representation, jsNumber(number), [&](void* slot) {
                 return tryWriteInt32(representation, slot, number);
             });
         }
         for (double number : doubleSamples) {
-            checkUnboxedWrite(strings, representation, jsNumber(withoutPayload(number)), [&](void* slot) {
+            checkUnboxedWrite(program.instance(), representation, jsNumber(withoutPayload(number)), [&](void* slot) {
                 return tryWriteDouble(representation, slot, number);
             });
         }
         for (bool value : { false, true }) {
-            checkUnboxedWrite(strings, representation, jsBoolean(value), [&](void* slot) {
+            checkUnboxedWrite(program.instance(), representation, jsBoolean(value), [&](void* slot) {
                 return tryWriteBoolean(representation, slot, value);
             });
         }
@@ -97,42 +95,26 @@ static void testUnboxedWritesMatchBoxedWrites(LoadedProgram& program)
 
 static void testCellsRoundTrip(LoadedProgram& program)
 {
-    ProgramStrings& strings = *program.state().strings;
     uintptr_t cageBase = program.instance().cellCageBase;
     JSObject* object = constructEmptyObject(program.realm());
     AOT_TEST_CHECK(program.vm().heap.cage().contains(object));
     for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
         SlotTraits traits = traitsOf(representation);
         uint64_t slot = untouchedBits;
-        if (!traits.holdsCell || traits.valueKind == SlotValueKind::LiteralString) {
-            AOT_TEST_CHECK(!tryWriteSlot(strings, representation, &slot, object));
+        if (!traits.holdsCell) {
+            AOT_TEST_CHECK(!tryWriteSlot(program.instance(), representation, &slot, object));
             AOT_TEST_CHECK(slot == untouchedBits);
             continue;
         }
-        AOT_TEST_CHECK(tryWriteSlot(strings, representation, &slot, object));
+        AOT_TEST_CHECK(tryWriteSlot(program.instance(), representation, &slot, object));
         AOT_TEST_CHECK(bitsOutsideSlot(representation, slot) == bitsOutsideSlot(representation, untouchedBits));
         AOT_TEST_CHECK(cellInSlot(representation, &slot, cageBase) == object);
-        AOT_TEST_CHECK(readSlot(representation, &slot, strings) == JSValue(object));
-    }
-}
-
-static void testStringsOutsideLiteralTableRoundTrip(LoadedProgram& program)
-{
-    ProgramStrings& strings = *program.state().strings;
-    uintptr_t cageBase = program.instance().cellCageBase;
-    JSString* string = jsNontrivialString(program.vm(), "not a literal of the program"_s);
-    for (SlotRepresentation representation : { SlotRepresentation::LiteralString, SlotRepresentation::LiteralString32 }) {
-        uint64_t slot = untouchedBits;
-        AOT_TEST_CHECK(tryWriteSlot(strings, representation, &slot, string));
-        AOT_TEST_CHECK(bitsOutsideSlot(representation, slot) == bitsOutsideSlot(representation, untouchedBits));
-        AOT_TEST_CHECK(cellInSlot(representation, &slot, cageBase) == string);
-        AOT_TEST_CHECK(readSlot(representation, &slot, strings) == JSValue(string));
+        AOT_TEST_CHECK(readSlot(representation, &slot, program.instance()) == JSValue(object));
     }
 }
 
 static void testMarkersHoldNoCell(LoadedProgram& program)
 {
-    ProgramStrings& strings = *program.state().strings;
     uintptr_t cageBase = program.instance().cellCageBase;
     for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
         SlotTraits traits = traitsOf(representation);
@@ -143,7 +125,7 @@ static void testMarkersHoldNoCell(LoadedProgram& program)
             writeSlotBits(representation, &slot, bits);
             AOT_TEST_CHECK(readSlotBits(representation, &slot) == bits);
             AOT_TEST_CHECK(!cellInSlot(representation, &slot, cageBase));
-            AOT_TEST_CHECK(readSlot(representation, &slot, strings) == value);
+            AOT_TEST_CHECK(readSlot(representation, &slot, program.instance()) == value);
         };
         checkMarker(traits.hasAbsent, traits.absentBits, JSValue());
         checkMarker(traits.hasUndefined, traits.undefinedBits, jsUndefined());
@@ -191,7 +173,6 @@ struct OperationsThatFindDistance {
 
 } // anonymous namespace
 
-// No small program has shapes 1,024 numbers apart, so the code of each form runs by itself here.
 static OperationsThatFindDistance runCodeThatFindsDistances(std::span<const Typed::DistanceOfShapes> members, const Typed::DistancesByShape& distances)
 {
     Machine::TestProcedure test;
@@ -228,7 +209,6 @@ static OperationsThatFindDistance runCodeThatFindsDistances(std::span<const Type
     return operations;
 }
 
-// None of the multipliers tried puts the places where the distance changes between two elements.
 static Vector<Typed::DistanceOfShapes> longRunsSideBySide(uint32_t numberOfRuns)
 {
     constexpr uint32_t shapesPerRun = 3000;
@@ -291,7 +271,6 @@ static void testDistancesByComparisonOfManySets()
     };
     constexpr uint32_t distances[] { 0, 0, 8, 16, 16, 16, 40 };
     for (unsigned round = 0; round < 2000; ++round) {
-        // Every fifth set has distances of two bytes.
         uint32_t scaleOfDistances = round % 5 == 4 ? 16 : 1;
         Vector<Typed::DistanceOfShapes> members;
         uint32_t shape = 1 + next(50);
@@ -333,7 +312,6 @@ std::span<const NativeTest> slotAccessTests()
     static constexpr NativeTest tests[] = {
         { "slot-access/unboxed-writes-match-boxed-writes"_s, withProgram<testUnboxedWritesMatchBoxedWrites> },
         { "slot-access/cells-round-trip"_s, withProgram<testCellsRoundTrip> },
-        { "slot-access/strings-outside-literal-table-round-trip"_s, withProgram<testStringsOutsideLiteralTableRoundTrip> },
         { "slot-access/markers-hold-no-cell"_s, withProgram<testMarkersHoldNoCell> },
         { "slot-access/distances-by-comparison-of-many-sets"_s, testDistancesByComparisonOfManySets },
         { "slot-access/forms-with-equally-many-instructions-are-compared"_s, testFormsWithEquallyManyInstructionsAreCompared },

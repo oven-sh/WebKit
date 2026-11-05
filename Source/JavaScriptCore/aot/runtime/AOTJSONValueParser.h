@@ -33,11 +33,8 @@ public:
     };
     ParsedName parseNameAndColon(const uint8_t* quote);
 
-    // An ordinary object with the first `count` properties of the Structure. `values` has room for the inline capacity of the Structure, and what lies behind the count is overwritten.
-
     class LearnedNames;
 
-    // For a run that counts: tryParse() hands them on once a text.
     uint32_t numberOfRecordsMade() const { return m_numberOfRecordsMade; }
     uint32_t numberOfOrdinaryObjectsMade() const { return m_numberOfOrdinaryObjectsMade; }
 
@@ -62,12 +59,10 @@ private:
         unsigned nameIndex { 0 };
     };
 
-    // The elements of an array mostly have the same members in the same order.
     struct NamesOfElementInFront {
         static constexpr unsigned capacity = 12;
         static constexpr unsigned maxTextLength = 2 * sizeof(uint64_t);
 
-        // Nothing is read of a name at or behind `count`, and an array makes twelve of them: they are left as the stack has them.
         struct Name {
             uint64_t text[2];
             uint64_t mask[2];
@@ -93,7 +88,6 @@ private:
 
     NextMember findKnownMember(const Members&, Cursor quote);
     NextMember findOrAddMember(const Members&, Cursor quote);
-    // RecordIfPlanned: a compiled object of the smallest layout that has every name, where the image lists one that parsers may make and each value fits its slot. Whoever goes on to add members asks for an ordinary object.
     enum class ObjectKind : bool { Ordinary, RecordIfPlanned };
     JSObject* createObject(Members&, ObjectKind = ObjectKind::RecordIfPlanned);
     ParsedJSONValue parseRemainingMembers(JSObject*, Cursor quote);
@@ -109,7 +103,6 @@ private:
     MarkedArgumentBufferWithSize<inlineElementCapacity> m_elements;
 };
 
-// The names of the objects parsed last outside arrays, by how their text begins.
 class JSONValueParser::LearnedNames {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(LearnedNames);
 public:

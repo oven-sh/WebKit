@@ -101,9 +101,9 @@ static void printPlacedSlot(IRPrinter& printer, const PlacedSlot& slot)
         out.print(" type="_s);
         printer.print(slot.type);
     }
-    if (slot.typeOfRawValue) {
-        out.print(" raw="_s);
-        printer.print(slot.typeOfRawValue);
+    if (slot.provenType) {
+        out.print(" doors="_s);
+        printer.print(slot.provenType);
     }
     if (slot.holdsAccessor)
         out.print(" accessor"_s);
@@ -114,12 +114,6 @@ static void printPlacedSlot(IRPrinter& printer, const PlacedSlot& slot)
     out.println();
 }
 
-//     layout L0 CompiledObject size=32 shapes=1..1 orders=1
-//       slot 0 "x" Double Inline offset=8 record=0 type=number
-//       slot 1 "y" JSValue Inline offset=16 record=1
-//       slot 2 "z" appended JSValue OutOfLine offset=8 record=2
-//       extra-properties Cell32 Inline offset=24
-//     layout L3 None never-allocated
 static void printPlannedLayouts(IRPrinter& printer, const Plan& plan)
 {
     PrintStream& out = printer.out();
@@ -158,8 +152,6 @@ static void printPlannedLayouts(IRPrinter& printer, const Plan& plan)
                 out.print(" appended"_s);
             printPlacedSlot(printer, layout.slots[field]);
         }
-        for (const ReservedBytes& reserved : layout.bytesKeptZero)
-            out.println("  keeps-zero offset="_s, reserved.offset, " width="_s, reserved.width);
         if (layout.hasExtension()) {
             out.print("  extension"_s);
             printPlacedSlot(printer, layout.slots[layout.extensionWordIndex()]);
@@ -171,9 +163,6 @@ static void printPlannedLayouts(IRPrinter& printer, const Plan& plan)
     }
 }
 
-//     orders L0
-//       order 0: "x" "y" | "z"
-// Behind the bar: what a maker was seen to store, one behind the other.
 static void printPlannedKeyOrders(IRPrinter& printer, const Plan& plan)
 {
     PrintStream& out = printer.out();
@@ -204,8 +193,6 @@ static void printPlannedKeyOrders(IRPrinter& printer, const Plan& plan)
     }
 }
 
-//     variable g0 Statics JSValue Plain
-//     variable g1 Statics JSValue FunctionAsZero function=f1
 static void printPlannedVariables(IRPrinter& printer, const Plan& plan)
 {
     PrintStream& out = printer.out();
@@ -222,8 +209,6 @@ static void printPlannedVariables(IRPrinter& printer, const Plan& plan)
     }
 }
 
-//     deferred g8 made-by f8 v11 NewRegExp mark=undefined at-declaration
-//     deferred g9 made-by f8 v13 Data mark=absent from-birth
 static void printDeferredVariables(IRPrinter& printer, const Plan& plan)
 {
     PrintStream& out = printer.out();
@@ -240,8 +225,6 @@ static void printDeferredVariables(IRPrinter& printer, const Plan& plan)
     }
 }
 
-//     shapes 3 first-environment=3
-//       shape 1 L0
 static void printPlannedShapes(IRPrinter& printer, const Plan& plan)
 {
     PrintStream& out = printer.out();
@@ -279,9 +262,6 @@ static std::optional<unsigned> numberOfParametersInPlanText(const CallingConvent
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-//     unit f1:Body (JSValue, Int32) -> (Double)
-//     unit f1:GenericCallEntry -> f1:Body
-//     unit f1:ParameterGuard (JSValue, JSValue) -> (JSValue) tests (-, number)
 static void printPlannedUnits(IRPrinter& printer, const Plan& plan)
 {
     PrintStream& out = printer.out();
@@ -335,9 +315,6 @@ static void printPlannedUnits(IRPrinter& printer, const Plan& plan)
     }
 }
 
-//     module-start m1 body=f4: BeginOrReturn m1, CallStart f2, CallBody f4, Finish m1
-//     bare-site f4 v3: CallBody f6
-//     module m1 called-where-required starts-itself
 static void printPlannedModuleStarts(IRPrinter& printer, const Plan& plan)
 {
     PrintStream& out = printer.out();
@@ -388,19 +365,6 @@ static void printPlannedModuleStarts(IRPrinter& printer, const Plan& plan)
     }
 }
 
-//     literal-string 0 ""
-static void printPlannedLiteralStrings(IRPrinter& printer, const Plan& plan)
-{
-    uint32_t index = 0;
-    for (StringID string : plan.literalStrings().strings()) {
-        printer.out().print("literal-string "_s, index++, " "_s);
-        printer.print(string);
-        printer.out().println();
-    }
-}
-
-//     class L2 lazy-members prototype-first class-object-on-mutation guards-hold-while-clear members=[ByClassRecord, AtDefinition]
-// The members in the order of Facts::membersOf(). A class of which the plan says nothing has no line.
 static void printPlannedClasses(IRPrinter& printer, const Plan& plan)
 {
     PrintStream& out = printer.out();
@@ -439,12 +403,10 @@ static constexpr NamedPartOfPlan namedPartsOfPlan[] {
     { "shapes"_s, printPlannedShapes },
     { "units"_s, printPlannedUnits },
     { "module-starts"_s, printPlannedModuleStarts },
-    { "literal-strings"_s, printPlannedLiteralStrings },
     { "orders"_s, printPlannedKeyOrders },
     { "classes"_s, printPlannedClasses },
 };
 
-// The first line is `mechanisms <list>`. Then the named parts in the order of the words, or all of them.
 static void runPlanCommand(TestCommandContext& context)
 {
     Vector<const NamedPartOfPlan*, 8> parts;
@@ -480,7 +442,7 @@ static void runPlanCommand(TestCommandContext& context)
 std::span<const TestCommand> planTestCommands()
 {
     static constexpr TestCommand commands[] {
-        { "plan"_s, runPlanCommand, ProgramOfCommand::AsWritten, "[layouts|variables|deferred|shapes|units|module-starts|literal-strings|orders|classes].."_s },
+        { "plan"_s, runPlanCommand, ProgramOfCommand::AsWritten, "[layouts|variables|deferred|shapes|units|module-starts|orders|classes].."_s },
     };
     return commands;
 }

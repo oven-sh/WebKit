@@ -78,7 +78,6 @@ static const DecodedSymbol* symbolAt(std::span<const DecodedSymbol> symbols, uin
     return found != symbols.end() && found->offset == offset ? &*found : nullptr;
 }
 
-// TestBuild::build() takes the bytes out of BuiltImage::image, where encodeSymbols() reads the header and the records of regular expressions.
 static Vector<uint8_t> encodeSymbolsOf(TestBuild& build, TestImage& image)
 {
     image.built.image = Vector<uint8_t>(std::as_const(image.bytes).span());

@@ -1,5 +1,5 @@
-# process.env.HOME = 1
-# The control of read-of-the-environment-brings-no-warning-printer.ir: the object is written, so it may warn, and native code calls the two functions of the library.
+# process.env.HOME = undefined
+# The control of read-of-the-environment-brings-no-warning-printer.ir and of store-of-a-text-a-number-or-a-boolean-into-the-environment-brings-no-warning-printer.ir: what is stored is no string, number or boolean, so the object may warn, and native code calls the two functions of the library.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
 # REQUIRES: entries-of-bun
@@ -15,7 +15,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b0():
     v0 = Builtin builtin=Process
     v1 = PropGet v0 key="env"
-    v2 = Integer integer=1
+    v2 = Undefined
     PropSet v1, v2 key="HOME"
     Return v2
 }

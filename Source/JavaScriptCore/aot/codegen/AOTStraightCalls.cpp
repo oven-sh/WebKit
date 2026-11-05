@@ -55,8 +55,26 @@ static std::optional<ThrowSite> siteThatNamesCalleeInStraightForm(StraightEmitte
     };
 }
 
+static bool mayForwardCallToReceiverInStraightForm(StraightEmitter& emitter, const BodyValue& call)
+{
+    if (!call.calleeKey() || !call.calleeName() || !call.thisValueOperand())
+        return false;
+    BuiltinID member = findOwnMember(emitter.program(), Builtins::FunctionPrototype, call.calleeKey());
+    return member == Builtins::FunctionPrototypeCall || member == Builtins::FunctionPrototypeApply;
+}
+
+static void requireForwardedCallCanBeMadeInStraightForm(StraightEmitter& emitter, const BodyValue& call, const StraightCallOptions& options)
+{
+    StraightArgument list = StraightArgument::boxed(jsUndefined());
+    if (call.opcode() == Opcode::Call && call.argumentsOperands().size() > 1 && findOwnMember(emitter.program(), Builtins::FunctionPrototype, call.calleeKey()) == Builtins::FunctionPrototypeApply)
+        list = call.argumentsOperands()[1];
+    emitter.callStub(call, throwUnlessForwardedCallCanBeMade(), { call.calleeOperand(), call.thisValueOperand(), list }, options);
+}
+
 static void generateCallByValue(StraightEmitter& emitter, const BodyValue& value)
 {
+    if (mayForwardCallToReceiverInStraightForm(emitter, value))
+        requireForwardedCallCanBeMadeInStraightForm(emitter, value, { .throwSite = siteThatNamesCalleeInStraightForm(emitter, value) });
     std::span<const ValueID> arguments = value.argumentsOperands();
     unsigned count = static_cast<unsigned>(arguments.size());
     ValueID thisValue = value.thisValueOperand();
@@ -74,7 +92,6 @@ static void generateCallByValue(StraightEmitter& emitter, const BodyValue& value
     emitter.define(value);
 }
 
-// replaceOperation() of the walk, which nothing withholds: a call done in place, a call that makes the symbol of a key, a built-in without a function object.
 static bool walkReplacesCallByValue(StraightEmitter& emitter, const BodyValue& value)
 {
     const BodyIndex& index = emitter.index();
@@ -120,6 +137,8 @@ static void generateConstructWithList(StraightEmitter& emitter, const BodyValue&
 
 static void generateCallWithList(StraightEmitter& emitter, const BodyValue& value)
 {
+    if (mayForwardCallToReceiverInStraightForm(emitter, value))
+        requireForwardedCallCanBeMadeInStraightForm(emitter, value, { .throwSite = siteThatNamesCalleeInStraightForm(emitter, value) });
     CallPosition position = value.origin().isTailCall ? CallPosition::Tail : CallPosition::Ordinary;
     StraightArgument list(value.listOperand());
     emitter.callByConvention(value, callWithArray(position), { &list, 1 }, StraightArgument(value.calleeOperand()), thisOrUndefinedInStraightForm(value.thisValueOperand()), { }, { .throwSite = siteThatNamesCalleeInStraightForm(emitter, value) });
@@ -142,6 +161,24 @@ static bool crossesStraightCall(const ArgumentLocation& location)
     }
 }
 
+static TypeID typeAskedOfOperandOfStraightCall(StraightEmitter& emitter, FunctionID callee, size_t entryParameter, const ArgumentLocation& location)
+{
+    if (location.kind == ArgumentLocation::Kind::None || (location.representation != Representation::Int32 && location.representation != Representation::Double && location.representation != Representation::Boolean))
+        return { };
+    TypeID promised = emitter.facts().typeOfEntryParameter(callee, static_cast<uint32_t>(entryParameter)).proven;
+    return promised ? emitter.types().testablePartOf(promised) : widestTypeOf(location.representation);
+}
+
+static void testOperandsOfStraightCall(StraightEmitter& emitter, const BodyValue& call, FunctionID callee, std::span<const StraightArgument> operands, const ArgumentLocations& locations)
+{
+    for (size_t index = 0; index < operands.size(); ++index) {
+        if (operands[index].kind != StraightArgument::Kind::Value)
+            continue;
+        if (TypeID asked = typeAskedOfOperandOfStraightCall(emitter, callee, index, locations.parameters[index]))
+            emitter.trapUnlessOfType(operands[index].value, asked, ProofSource::EntryParameter, call.origin());
+    }
+}
+
 static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEmitter& emitter, const BodyValue& value)
 {
     const Program& program = emitter.program();
@@ -149,7 +186,6 @@ static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEm
     CodeUnit callee = conventions.directEntryOf(value.function());
     if (!program.at(callee.function).hasBody() || !conventions.exists(callee))
         return std::nullopt;
-    // A block that the scan has passed over names what Link has not heard of.
     const LinkTables& linked = emitter.facts().linked();
     if (!linked.functions.isEmpty() && !linked.mayBeMentionedBy(emitter.unit(), callee.function))
         return std::nullopt;
@@ -162,11 +198,12 @@ static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEm
         const ArgumentLocation& location = call.locations.parameters[index];
         if (!crossesStraightCall(location) || (location.kind != ArgumentLocation::Kind::None && !arguments[index]))
             return std::nullopt;
+        if (TypeID asked = typeAskedOfOperandOfStraightCall(emitter, callee.function, index, location); asked && !emitter.canTestType(asked))
+            return std::nullopt;
     }
     for (const ArgumentLocation& result : call.locations.results) {
         if (!crossesStraightCall(result) || result.kind == ArgumentLocation::Kind::Stack)
             return std::nullopt;
-        // The stub that boxes one number writes the register in which the next lies.
         if (call.locations.results.size() > 1 && result.kind == ArgumentLocation::Kind::FPR)
             return std::nullopt;
     }
@@ -176,21 +213,18 @@ static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEm
     return call;
 }
 
-// Under Validate. Each argument that lies in a register is made again out of its word, in registers that hold no argument, and held against that register.
-// Whoever has written over an argument that was already brought stops the program here.
-static void checkArgumentsOfStraightDirectCall(StraightEmitter& emitter, const BodyValue& value, const ArgumentLocations& locations)
+static void checkArgumentsOfStraightDirectCall(StraightEmitter& emitter, std::span<const StraightArgument> arguments, const ArgumentLocations& locations)
 {
     constexpr FPRReg numberAgain = StraightEmitter::conversionFPR;
     CCallHelpers& jit = emitter.jit();
     AllowMacroScratchRegisterUsage allowScratch(jit);
-    std::span<const ValueID> arguments = value.argumentsOperands();
     CCallHelpers::JumpList differs;
     for (size_t index = 0; index < arguments.size(); ++index) {
         const ArgumentLocation& location = locations.parameters[index];
         if (location.kind != ArgumentLocation::Kind::GPR && location.kind != ArgumentLocation::Kind::FPR)
             continue;
         GPRReg again = jit.scratchRegister();
-        emitter.load(arguments[index], again);
+        emitter.bring(arguments[index], again);
         if (location.kind == ArgumentLocation::Kind::GPR) {
             emitter.unboxIntoForm(location.representation, again);
             differs.append(jit.branch64(CCallHelpers::NotEqual, again, location.reg.gpr()));
@@ -198,7 +232,6 @@ static void checkArgumentsOfStraightDirectCall(StraightEmitter& emitter, const B
         }
         emitter.unboxNumber(again, numberAgain);
         CCallHelpers::Jump isSame = jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, numberAgain, location.reg.fpr());
-        // NaN equals nothing: then both must be NaN.
         differs.append(jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, numberAgain, numberAgain));
         differs.append(jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, location.reg.fpr(), location.reg.fpr()));
         isSame.link(&jit);
@@ -211,11 +244,16 @@ static void checkArgumentsOfStraightDirectCall(StraightEmitter& emitter, const B
     isRight.link(&jit);
 }
 
-// The stack words and the numbers go through the result registers, which are argument registers too: so the GPRs come last, and what converts one of them writes no argument register but its own.
 static void bringArgumentsOfStraightDirectCall(StraightEmitter& emitter, const BodyValue& value, const ArgumentLocations& locations, StackWordsOfStraightCall stackWords)
 {
-    CCallHelpers& jit = emitter.jit();
     std::span<const ValueID> arguments = value.argumentsOperands();
+    Vector<StraightArgument, 8> operands;
+    for (ValueID argument : arguments)
+        operands.append(argument ? StraightArgument(argument) : StraightArgument::boxed(jsUndefined()));
+    testOperandsOfStraightCall(emitter, value, value.function(), operands.span(), locations);
+    if (emitter.hasFailed())
+        return;
+    CCallHelpers& jit = emitter.jit();
     for (ArgumentLocation::Kind kind : { ArgumentLocation::Kind::Stack, ArgumentLocation::Kind::FPR, ArgumentLocation::Kind::GPR }) {
         for (size_t index = 0; index < arguments.size(); ++index) {
             const ArgumentLocation& location = locations.parameters[index];
@@ -245,7 +283,134 @@ static void bringArgumentsOfStraightDirectCall(StraightEmitter& emitter, const B
         }
     }
     if (emitter.build().options().recorded.validates) [[unlikely]]
-        checkArgumentsOfStraightDirectCall(emitter, value, locations);
+        checkArgumentsOfStraightDirectCall(emitter, operands.span(), locations);
+}
+
+static bool bodyRunsWhenCalledInStraightForm(FunctionKind kind)
+{
+    switch (kind) {
+    case FunctionKind::Plain:
+    case FunctionKind::Arrow:
+    case FunctionKind::Method:
+    case FunctionKind::Getter:
+    case FunctionKind::Setter:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static std::optional<DirectCallInStraightForm> planStraightCallOfOnlyCallee(StraightEmitter& emitter, const BodyValue& value, Vector<StraightArgument, 8>& operands, ValueID* checkThatPasses = nullptr)
+{
+    const Program& program = emitter.program();
+    const CallingConventions& conventions = emitter.conventions();
+    const LinkTables& linked = emitter.facts().linked();
+    const BodyIndex& index = emitter.index();
+    if (value.opcode() != Opcode::Call || linked.functions.isEmpty())
+        return std::nullopt;
+
+    FunctionID only = emitter.facts().functionThatCallEntersByBinding(index, value, checkThatPasses);
+    if (!only || only != linked.calleeAt(emitter.function(), value.id()) || !linked.mayBeMentionedBy(emitter.unit(), only))
+        return std::nullopt;
+
+    const Function& function = program.at(only);
+    if (!function.hasBody() || !canBeCalledByValueOf(function.role) || function.has(FunctionCapabilities::RecordsCallee) || function.results.size() != 1)
+        return std::nullopt;
+    if (!bodyRunsWhenCalledInStraightForm(function.kind) || function.isCoroutine() || !function.captures.isEmpty())
+        return std::nullopt;
+    CodeUnit callee = conventions.directEntryOf(only);
+    if (!conventions.exists(callee))
+        return std::nullopt;
+
+    std::span<const ValueID> arguments = value.argumentsOperands();
+    unsigned numberOfPositionalParameters = function.numberOfPositionalParameters();
+    unsigned nextParameter = 0;
+    operands.shrink(0);
+    for (unsigned entryParameter = 0; entryParameter < function.numberOfEntryParameters(); ++entryParameter) {
+        switch (function.entryParameterKind(entryParameter)) {
+        case EntryParameter::This:
+            operands.append(thisOrUndefinedInStraightForm(value.thisValueOperand()));
+            break;
+        case EntryParameter::NewTarget:
+            operands.append(StraightArgument::boxed(jsUndefined()));
+            break;
+        case EntryParameter::ArgumentCount:
+            operands.append(StraightArgument::boxed(jsNumber(static_cast<int32_t>(arguments.size()))));
+            break;
+        case EntryParameter::Parameter:
+            if (nextParameter >= numberOfPositionalParameters)
+                return std::nullopt;
+            if (nextParameter < arguments.size())
+                operands.append(StraightArgument(arguments[nextParameter]));
+            else if (TypeID written = function.parameters[nextParameter].written(); written && (program.at(written).primitives & Primitive::Absent))
+                operands.append(StraightArgument::boxed(JSValue()));
+            else
+                operands.append(StraightArgument::boxed(jsUndefined()));
+            ++nextParameter;
+            break;
+        case EntryParameter::Capture:
+        case EntryParameter::Callee:
+        case EntryParameter::HiddenRest:
+            return std::nullopt;
+        }
+    }
+
+    DirectCallInStraightForm call { callee, conventions.locationsOf(program, callee) };
+    if (operands.size() != call.locations.parameters.size() || call.locations.results.size() != 1)
+        return std::nullopt;
+    for (size_t place = 0; place < operands.size(); ++place) {
+        const ArgumentLocation& location = call.locations.parameters[place];
+        if (!crossesStraightCall(location))
+            return std::nullopt;
+        if (location.kind == ArgumentLocation::Kind::None)
+            continue;
+        if (operands[place].kind == StraightArgument::Kind::Value) {
+            if (!operands[place].value)
+                return std::nullopt;
+            if (TypeID asked = typeAskedOfOperandOfStraightCall(emitter, only, place, location); asked && !emitter.canTestType(asked))
+                return std::nullopt;
+            continue;
+        }
+        bool isInt32 = JSValue::decode(static_cast<EncodedJSValue>(operands[place].bits)).isInt32();
+        if (location.kind != ArgumentLocation::Kind::GPR || (location.representation != Representation::JSValue && !(location.representation == Representation::Int32 && isInt32)))
+            return std::nullopt;
+    }
+    if (!crossesStraightCall(call.locations.results[0]) || call.locations.results[0].kind == ArgumentLocation::Kind::Stack)
+        return std::nullopt;
+    call.stackWords = std::max(conventions.stackWordsReservedByCallersOf(program, callee), call.locations.numberOfStackWords());
+    if (call.stackWords)
+        return std::nullopt;
+    return call;
+}
+
+bool StraightEmitter::mayCallOnlyCalleeDirectly(const BodyValue& value, ValueID& checkThatPasses)
+{
+    Vector<StraightArgument, 8> operands;
+    return !!planStraightCallOfOnlyCallee(*this, value, operands, &checkThatPasses);
+}
+
+static void bringOperandsOfStraightCallOfOnlyCallee(StraightEmitter& emitter, const BodyValue& value, FunctionID callee, std::span<const StraightArgument> operands, const ArgumentLocations& locations)
+{
+    if (emitter.build().options().recorded.validates) [[unlikely]]
+        emitter.jit();
+    testOperandsOfStraightCall(emitter, value, callee, operands, locations);
+    if (emitter.hasFailed())
+        return;
+    for (ArgumentLocation::Kind kind : { ArgumentLocation::Kind::FPR, ArgumentLocation::Kind::GPR }) {
+        for (size_t index = 0; index < operands.size(); ++index) {
+            const ArgumentLocation& location = locations.parameters[index];
+            if (location.kind != kind)
+                continue;
+            if (kind == ArgumentLocation::Kind::FPR) {
+                emitter.unboxNumber(emitter.loadIntoResultRegister(operands[index].value), location.reg.fpr());
+                continue;
+            }
+            emitter.bring(operands[index], location.reg.gpr());
+            emitter.unboxIntoForm(location.representation, location.reg.gpr());
+        }
+    }
+    if (emitter.build().options().recorded.validates) [[unlikely]]
+        checkArgumentsOfStraightDirectCall(emitter, operands, locations);
 }
 
 static bool isReadByPartsRightBehindAlone(StraightEmitter& emitter, const BodyValue& producer, size_t numberOfParts)
@@ -302,6 +467,18 @@ static void generateStraightDirectCall(StraightEmitter& emitter, const BodyValue
     defineResultsOfStraightDirectCall(emitter, value, call->locations.results.span());
 }
 
+static void generateStraightCallOfOnlyCallee(StraightEmitter& emitter, const BodyValue& value)
+{
+    Vector<StraightArgument, 8> operands;
+    std::optional<DirectCallInStraightForm> call = planStraightCallOfOnlyCallee(emitter, value, operands);
+    RELEASE_ASSERT(call);
+    bringOperandsOfStraightCallOfOnlyCallee(emitter, value, call->callee.function, operands.span(), call->locations);
+    uint32_t site = emitter.addSite(value.origin(), { }, value.opcode());
+    emitter.noteSiteMayThrow(site);
+    emitter.records().stubCalls.callFunction(emitter.jit(), call->callee, primaryEntry, OptionalIndex { site });
+    defineResultsOfStraightDirectCall(emitter, value, call->locations.results.span());
+}
+
 static void generateStraightResults(StraightEmitter& emitter, const BodyValue& value)
 {
     std::span<const ValueID> values = value.valuesOperands();
@@ -316,14 +493,6 @@ static void generateStraightResults(StraightEmitter& emitter, const BodyValue& v
     }
 }
 
-static bool mayForwardCallToReceiverInStraightForm(StraightEmitter& emitter, const BodyValue& call)
-{
-    if (!call.calleeKey() || !call.calleeName() || !call.thisValueOperand())
-        return false;
-    BuiltinID member = findOwnMember(emitter.program(), Builtins::FunctionPrototype, call.calleeKey());
-    return member == Builtins::FunctionPrototypeCall || member == Builtins::FunctionPrototypeApply;
-}
-
 static bool isMadeAsFunctionInStraightForm(StraightEmitter& emitter, ValueID callee)
 {
     const BodyIndex& index = emitter.index();
@@ -334,14 +503,19 @@ static bool isMadeAsFunctionInStraightForm(StraightEmitter& emitter, ValueID cal
     return isCallableBuiltin(builtins, builtins.canonicalID(made.builtin()));
 }
 
-// The stub that calls finds out too late that there is nothing to call: the frame that the error names is gone by then, and with it the words that say what the program calls the callee.
+static bool namesBuiltinInStraightForm(StraightEmitter& emitter, ValueID callee)
+{
+    const BodyIndex& index = emitter.index();
+    return index.value(index.valueBehindCasts(callee)).opcode() == Opcode::Builtin;
+}
+
 static void requireCallableBeforeStraightTailCall(StraightEmitter& emitter, const BodyValue& call)
 {
     Origin origin = call.origin();
     origin.isTailCall = true;
     StraightCallOptions options { .origin = origin, .throwSite = siteThatNamesCalleeInStraightForm(emitter, call), .isTailCall = true };
     if (mayForwardCallToReceiverInStraightForm(emitter, call))
-        emitter.callStub(call, throwUnlessForwardedCalleeIsCallable(), { call.calleeOperand(), call.thisValueOperand() }, options);
+        requireForwardedCallCanBeMadeInStraightForm(emitter, call, options);
     else if (!isMadeAsFunctionInStraightForm(emitter, call.calleeOperand()))
         emitter.callStub(call, throwUnlessCallable(), { call.calleeOperand() }, options);
 }
@@ -353,7 +527,6 @@ static void leaveByCallOfValue(StraightEmitter& emitter, const BodyValue& call)
     unsigned count = static_cast<unsigned>(arguments.size());
     ValueID thisValue = call.thisValueOperand();
     if (count > numberOfArgumentGPRs) {
-        // The stub lays the list where this frame stands, whatever room the caller of the unit has left.
         for (unsigned index = 0; index < count; ++index)
             emitter.storeInScratchArea(arguments[index], index);
         const StubSignature& signature = emitter.catalog().summaryOf(tailCallWithList()).signature;
@@ -387,7 +560,6 @@ static void leaveByCallWithList(StraightEmitter& emitter, const BodyValue& call)
     emitter.records().stubCalls.tailCall(emitter.jit(), stub);
 }
 
-// False: nothing was emitted. The callee returns in another form than the unit, or the call has no straight form at all.
 static bool tryLeaveByDirectCall(StraightEmitter& emitter, const BodyValue& call)
 {
     const CallingConventions& conventions = emitter.conventions();
@@ -410,6 +582,19 @@ static bool tryLeaveByDirectCall(StraightEmitter& emitter, const BodyValue& call
     return true;
 }
 
+static bool tryLeaveByCallOfOnlyCallee(StraightEmitter& emitter, const BodyValue& call)
+{
+    Vector<StraightArgument, 8> operands;
+    std::optional<DirectCallInStraightForm> planned = planStraightCallOfOnlyCallee(emitter, call, operands);
+    RELEASE_ASSERT(planned);
+    if (!haveSameRegisterRepresentation(planned->locations.results[0].representation, emitter.conventions().resultRepresentation(emitter.unit())))
+        return false;
+    bringOperandsOfStraightCallOfOnlyCallee(emitter, call, planned->callee.function, operands.span(), planned->locations);
+    emitter.tearDownFrame();
+    emitter.records().stubCalls.jumpToFunction(emitter.jit(), planned->callee, primaryEntry);
+    return true;
+}
+
 bool StraightEmitter::coversReturnCalls()
 {
     return true;
@@ -418,7 +603,6 @@ bool StraightEmitter::coversReturnCalls()
 void StraightEmitter::generateReturnCall(const BodyTerminator& terminator)
 {
     BodyValue call = m_index.value(terminator.callOperand());
-    // FinishModuleEvaluation stands in front of each return of such a body.
     if (plan().moduleEvaluation().moduleThatBeginsIn(function())) {
         fail(call);
         return;
@@ -435,8 +619,12 @@ void StraightEmitter::generateReturnCall(const BodyTerminator& terminator)
     switch (call.opcode()) {
     case Opcode::Call:
     case Opcode::CallList:
-        // Whatever is entered by value returns one boxed value.
-        if (mayLeave && haveSameRegisterRepresentation(Representation::JSValue, conventions().resultRepresentation(m_unit)) && !walkReplacesCallByValue(*this, call)) {
+        if (callsOnlyCalleeDirectly(call.id())) {
+            if (mayLeave && tryLeaveByCallOfOnlyCallee(*this, call))
+                return;
+            break;
+        }
+        if (mayLeave && haveSameRegisterRepresentation(Representation::JSValue, conventions().resultRepresentation(m_unit)) && !namesBuiltinInStraightForm(*this, call.calleeOperand())) {
             requireCallableBeforeStraightTailCall(*this, call);
             if (call.opcode() == Opcode::Call)
                 leaveByCallOfValue(*this, call);
@@ -461,8 +649,7 @@ void StraightEmitter::generateReturnCall(const BodyTerminator& terminator)
     generateCall(call);
     if (m_hasFailed)
         return;
-    loadIntoResultRegister(call.id());
-    returnToCaller();
+    returnToCaller(call.id(), terminator.origin());
 }
 
 void StraightEmitter::generateCall(const BodyValue& value)
@@ -474,7 +661,10 @@ void StraightEmitter::generateCall(const BodyValue& value)
 
     switch (value.opcode()) {
     case Opcode::Call:
-        generateCallByValue(*this, value);
+        if (callsOnlyCalleeDirectly(value.id()))
+            generateStraightCallOfOnlyCallee(*this, value);
+        else
+            generateCallByValue(*this, value);
         return;
     case Opcode::Construct:
         generateConstructByValue(*this, value);

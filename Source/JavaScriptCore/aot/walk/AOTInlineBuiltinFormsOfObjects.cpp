@@ -43,13 +43,11 @@ public:
     InlineForm call() const { return InlineForm::Call; }
     InlineForm twoWay() const { return m_query.hasSlowPath ? InlineForm::TwoWay : InlineForm::Call; }
 
-    // The emitter reads this many arguments without asking how many were passed.
     InlineForm wholeIfArgumentCountIsAtLeast(unsigned numberOfArguments) const
     {
         return m_query.numberOfArguments() >= numberOfArguments ? InlineForm::Whole : call();
     }
 
-    // The code in line gives up on what is no object, and on nothing else: BuiltinFamilyEmitter::objectOrMiss().
     InlineForm formWhereInlineCodeHandlesEveryObject(TypeID operand) const
     {
         if (!mayBeObject(operand))
@@ -73,7 +71,6 @@ public:
         return type.isObject() ? InlineForm::Whole : twoWay();
     }
 
-    // The code in line reads two arguments and the order word of the first.
     InlineForm forSetPrototypeOf() const
     {
         TypeID object = m_query.argument(0);
@@ -91,7 +88,6 @@ public:
             return call();
         Type left = typeOf(m_query.argument(0));
         Type right = typeOf(m_query.argument(1));
-        // The code in line compares bits, and two cells may hold one text or one integer.
         bool mayBothBeStrings = (left.primitives & Primitive::AnyString) && (right.primitives & Primitive::AnyString);
         bool mayBothBeBigInts = left.primitives & right.primitives & Primitive::BigInt;
         return mayBothBeStrings || mayBothBeBigInts ? twoWay() : InlineForm::Whole;
@@ -104,27 +100,22 @@ public:
 
     InlineForm forCollectionFromIterable() const
     {
-        // One call of an operation, which hands what it cannot list without an iterator to the constructor.
         return m_query.numberOfArguments() == 1 && mayBeListedWithoutIterator(m_query.argument(0)) ? InlineForm::Whole : call();
     }
 
 private:
     Type typeOf(TypeID type) const { return m_query.context.types.at(type); }
     bool mayBeObject(TypeID operandOrNotPassed) const { return operandOrNotPassed && typeOf(operandOrNotPassed).hasObjects(); }
-    // An instance of a class below a built-in class is a cell of that class, which has no order word.
     bool liesBelowBuiltinClass(LayoutID id) const { return !!builtinClassWrittenAbove(m_query.context.types, id); }
 
-    // The code in line makes an object without properties.
     bool passesPrototypeAlone() const
     {
         unsigned numberOfArguments = m_query.numberOfArguments();
         return numberOfArguments == 1 || (numberOfArguments == 2 && hasOnlyPrimitivesIn(m_query.argument(1), Primitive::Undefined));
     }
 
-    // Stores lean on an object's being open without a test, and nobody says here of which objects they do.
     bool canFreezeInPlace(TypeID) const { return false; }
 
-    // The operation reads the elements of an array, and for a Set also those of an arguments object and the code points of a string, without an iterator. Any other iterable is left to the constructor.
     bool mayBeListedWithoutIterator(TypeID iterable) const
     {
         TypeArena& types = m_query.context.types;
@@ -156,9 +147,6 @@ InlineForm chooseFormOfOwnPropertyBuiltin(const InlineBuiltinQuery& query)
     case InlineBuiltin::ObjectValues:
     case InlineBuiltin::ObjectEntries:
         return InlineForm::Whole;
-    case InlineBuiltin::OwnPropertyDescriptorFields:
-        // OwnPropertyBuiltinEmitter has no code for a descriptor that is handed over as fields.
-        return rules.call();
     FOR_EACH_AOT_INLINE_BUILTIN_IN_OBJECT_BUILTIN(AOT_CASE_OUTSIDE_FAMILY_OF_OBJECT_FORM_RULES)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_HASH_TABLE_BUILTIN(AOT_CASE_OUTSIDE_FAMILY_OF_OBJECT_FORM_RULES)
     FOR_EACH_AOT_INLINE_BUILTIN_IN_MAP_SET_BUILTIN(AOT_CASE_OUTSIDE_FAMILY_OF_OBJECT_FORM_RULES)
@@ -185,7 +173,6 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinQuery& query)
     case InlineBuiltin::ObjectFreeze:
         return rules.forObjectFreeze();
     case InlineBuiltin::ObjectAssign:
-        // ObjectAssignWithoutCode takes one source. It assigns all of it or has run nothing, so the call on the miss edge starts from the beginning.
         return query.numberOfArguments() == 2 ? rules.formWhereInlineCodeHandlesSomeObjects(query.argument(0)) : rules.call();
     case InlineBuiltin::ObjectIs:
         return rules.forObjectIs();
@@ -200,7 +187,6 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinQuery& query)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// No row of the family names a function to call in place of the code in line, so each form is CallInline, in a loop and outside of one.
 InlineForm chooseFormOfHashTableBuiltin(const InlineBuiltinQuery& query)
 {
     ObjectFormRules rules(query);
@@ -233,7 +219,6 @@ InlineForm chooseFormOfMapSetBuiltin(const InlineBuiltinQuery& query)
     case InlineBuiltin::SetFromIterable:
     case InlineBuiltin::MapFromEntries:
         return rules.forCollectionFromIterable();
-    // A lookup in a weak table has one form wherever it stands.
     case InlineBuiltin::WeakMapGet:
     case InlineBuiltin::WeakMapHas:
     case InlineBuiltin::WeakSetHas:

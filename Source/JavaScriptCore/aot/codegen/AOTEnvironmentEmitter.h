@@ -18,11 +18,11 @@ public:
     void generateGetCapture(const ValueContext&);
     void generateMarkEnvironmentEscaped(const ValueContext&);
     void generateReleaseEnvironment(const ValueContext&);
+    void markEnvironmentsThatClosureKeeps(const ValueContext& closure);
 
     Operand closureCapture(CellPointer closure, FunctionID, unsigned index);
 
 private:
-    // PlannedLayout::isEscapedOffset.
     TypedPointer escapeMarkOf(ValueID environment);
 };
 

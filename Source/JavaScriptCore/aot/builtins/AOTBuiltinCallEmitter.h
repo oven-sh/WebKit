@@ -37,12 +37,9 @@ public:
     void generateFormatDateWithPattern(const ValueContext&);
     void generateFormatNumberWithPattern(const ValueContext&);
     void generateNewArgumentList(const ValueContext&);
-    // canShareRegExpLiteral() has said yes. `at`: the operation for whose sake the object is fetched.
     CellPointer sharedRegExpLiteral(const ValueContext& at, const Operation& literal);
     void generateSharedRegExpLiteral(const ValueContext&);
-    // generateSharedRegExpLiteral() finds the cell of the literal.
     bool canShareRegExpLiteral(const Operation& literal) const;
-    void generateIsFunctionOfBuiltin(const ValueContext&);
     void generateGetBuiltinValue(const ValueContext&);
     void generateGetWatchedBuiltinValue(const ValueContext&);
     void generateInitializeBuiltin(const ValueContext&);
@@ -50,7 +47,6 @@ public:
     Boxed callBuiltinFunction(const OperationContext&, BuiltinOverloadID, std::optional<Boxed> receiver, std::span<const Boxed> arguments);
     CellPointer builtinCell(const OperationContext&, BuiltinCellKey);
     Boxed builtinValue(const OperationContext&, BuiltinCellKey, RuntimeOperation fills = RuntimeOperation::FillBuiltinValue);
-    // Of whatever is typed by the rows of the built-in that it calls.
     void stopUnlessNativeResultIsAsWritten(const ValueContext&, Boxed result, BuiltinID called, bool constructs);
 
 private:
@@ -61,11 +57,7 @@ private:
         bool takesFrame { false };
     };
     DirectOperands directOperandsOf(const ValueContext&, const BuiltinDirectFunctionBinding&);
-    // `bounds`: empty for the whole view, else where the part starts and ends, in bytes.
-    void appendBytesOf(DirectOperands&, ValueID view, std::span<const ValueID> bounds = { });
     Boxed callDirectFunction(const ValueContext&, uint32_t number);
-    StubCallResult callDirectFunctionReturningFields(const ValueContext&, uint32_t number);
-    CellPointer makeObjectOfDirectEntry(const ValueContext&, uint32_t number);
     PropertyKeyID keyOf(const BuiltinOverload&) const;
     CellPointer calleeOf(const OperationContext&, const BuiltinOverload&);
     Integer divide(Integer dividend, Range dividends, Integer divisor, Range divisors);

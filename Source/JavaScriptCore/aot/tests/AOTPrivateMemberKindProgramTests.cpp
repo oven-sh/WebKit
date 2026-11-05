@@ -238,7 +238,6 @@ data d0 root=Object{layout=L1} module=m0
 entry module=m0
 )IR"_s;
 
-// Where the guess that `for of` walks a generator fails, the loop calls `next` as the protocol says. That is a function of the library, and the stand-in for it answers undefined: the text brings the real one.
 static constexpr ASCIILiteral generatorMethods = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
 layout L1 module=m0
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]

@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `function Node(kind, pos, end) { this.kind = kind; .. }` above a hundred interfaces that a literal `kind` tells apart: which constructors store one of their parameters, as it came, under the key of the tag.
-// The answer picks a layout and proves nothing: the maker's own layout is right for every object, and so is that of any member, which lists all that the maker lists.
-// Withheld with TypedSlots: no maker is found, and every object has its maker's layout.
-
 #include "config.h"
 #include "AOTUnionTaggedMakers.h"
 
@@ -23,19 +19,15 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// `this` of a construction is an object. An argument is anything.
 enum class ValueOfTaggedMaker : bool { Anything, Object };
 
 struct ObjectOfTaggedMaker {
-    // In ThinSummary::nodes.
     uint32_t node { noSummaryNode };
-    // As TaggedMaker::allocation.
     ValueID allocation;
 };
 
 } // anonymous namespace
 
-// noSummaryNode: what lies at the Join comes from several nodes, or from none.
 static uint32_t onlySourceOfJoinOfTaggedMaker(const ThinSummary& summary, uint32_t join)
 {
     uint32_t source = noSummaryNode;
@@ -58,8 +50,6 @@ static const SummaryOperator* findOperatorGivingNodeOfTaggedMaker(const ThinSumm
     return nullptr;
 }
 
-// Where what lies at the node comes from whenever anything lies there. A copy, and a copy through a test, hand on the value that they are handed. ToThis hands on an object as it is, and a primitive comes out as a wrapper.
-// noSummaryNode: several places. Copies that lead round to where they began bring nothing.
 static uint32_t originOfNodeOfTaggedMaker(const ThinSummary& summary, uint32_t node, uint32_t object, ValueOfTaggedMaker kind)
 {
     for (size_t steps = 0; steps <= summary.nodes.size(); ++steps) {
@@ -74,11 +64,8 @@ static uint32_t originOfNodeOfTaggedMaker(const ThinSummary& summary, uint32_t n
     return noSummaryNode;
 }
 
-// The one positional parameter that the constructor stores under the key of the tag in the object.
-// Nothing where it stores none, or where a record of its summary may leave something else under the key. What a callee does to an object that a call hands it is not looked at.
 static std::optional<uint32_t> findParameterStoredAsTag(const Program& program, const Function& function, const ThinSummary& summary, uint32_t object, LayoutID maker, PropertyKeyID tagKey)
 {
-    // Evaluated text stores to `this` out of sight.
     if (summary.has(SummaryTrait::HasDirectEval))
         return std::nullopt;
     auto isObjectBeingMade = [&](uint32_t node) {
@@ -91,7 +78,6 @@ static std::optional<uint32_t> findParameterStoredAsTag(const Program& program, 
             continue;
         if (access.key && access.key != tagKey)
             continue;
-        // [[Set]] ends in a definition on the receiver.
         if (!isObjectBeingMade(access.receiver != noSummaryNode ? access.receiver : access.subject))
             continue;
         if (!access.key)
@@ -124,7 +110,6 @@ static std::optional<uint32_t> findParameterStoredAsTag(const Program& program, 
             return std::nullopt;
     }
 
-    // A store into an object that the body has made under exactly the maker's layout is an edge.
     const Layout& layout = program.at(maker);
     for (const SummaryEdge& edge : summary.edges) {
         const SummaryNode& target = summary.nodes[edge.to];
@@ -143,7 +128,6 @@ static bool constructorOfTaggedFamilyMakesObjects(const Program& program, const 
     const Layout& maker = program.at(family.maker);
     if (family.members.isEmpty() || !maker.constructor)
         return false;
-    // Below a built-in class the run time makes the objects.
     if (maker.has(LayoutFlags::IsNeverAllocated) || maker.writtenBuiltinBase)
         return false;
 
@@ -152,7 +136,6 @@ static bool constructorOfTaggedFamilyMakesObjects(const Program& program, const 
     return isApplicationOrLibraryCode && function.hasBody() && function.results.size() == 1 && function.constructedClass == family.maker;
 }
 
-// Whoever constructs makes `this`, and chooses the layout there.
 static bool isTaggedFamilyOfConstructorFunction(const Program& program, const TaggedFamily& family)
 {
     const Layout& maker = program.at(family.maker);
@@ -160,7 +143,6 @@ static bool isTaggedFamilyOfConstructorFunction(const Program& program, const Ta
     return maker.has(LayoutFlags::IsConstructorFunction) && function.takesThisFromConstruction() && function.has(FunctionFlags::HasThis);
 }
 
-// The constructor of a class allocates its own object, in an operation of its body. The walk chooses the layout there.
 static bool isTaggedFamilyOfClassConstructor(const Program& program, const TaggedFamily& family)
 {
     const Layout& maker = program.at(family.maker);
@@ -177,7 +159,6 @@ static uint32_t findNodeOfTaggedMaker(const ThinSummary& summary, SummaryNode::K
     return noSummaryNode;
 }
 
-// Null where the body makes no object of the maker's layout, or makes them in several operations. An initializer defines fields of the object that it is handed as `this`, out of sight of the summary.
 static ValueID findOwnAllocationOfTaggedMaker(const Program& program, const BodyIndex& index, LayoutID maker)
 {
     ValueID allocation;
@@ -195,8 +176,6 @@ static ValueID findOwnAllocationOfTaggedMaker(const Program& program, const Body
     return allocation;
 }
 
-// Under the prototype object of a class below the maker the run time answers with an instance of that class, whatever the allocation names.
-// The walk tells by a test of new.target, so the prototype object has to be the one that the function's own new.target brings.
 static bool allocatesUnderOwnNewTargetOfTaggedMaker(const Function& function, const BodyIndex& index, ValueID allocation, LayoutID maker)
 {
     auto made = index.value(allocation).as<Opcode::NewObject>();
@@ -207,7 +186,6 @@ static bool allocatesUnderOwnNewTargetOfTaggedMaker(const Function& function, co
     return read.layout() == maker && read.newTargetOperand() == index.block(entryBlock).parameter(*function.newTargetParameterIndex());
 }
 
-// ScanOfBody::addAllocation(): such an object has a Join of its own, at which the layout that the allocation names and all that are written below it lie.
 static std::optional<ObjectOfTaggedMaker> findObjectMadeByTaggedClassConstructor(const Program& program, const BodyIndexTable& bodies, const TaggedFamily& family, const ThinSummary& summary)
 {
     FunctionID constructor = program.at(family.maker).constructor;
@@ -263,7 +241,6 @@ Vector<TaggedMaker> findTaggedMakers(const Program& program, const ThinSummaries
             makers.append(TaggedMaker { index, constructor, *tagParameter, object->allocation });
     }
 
-    // A function constructs one class. Of two families with one maker the first stands.
     std::ranges::stable_sort(makers, { }, &TaggedMaker::constructor);
     makers.shrink(makers.size() - std::ranges::unique(makers, { }, &TaggedMaker::constructor).size());
     return makers;
@@ -284,7 +261,6 @@ LayoutID layoutMadeWithTag(const TaggedFamily& family, const LayoutTag& tag)
     return { };
 }
 
-// A member has its maker as its written base, and no body names a member, so nothing is written below one.
 bool onlyTaggedMembersLieBelow(const Program& program, LayoutID layout)
 {
     size_t numberOfMembers = 0;

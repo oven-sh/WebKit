@@ -47,7 +47,6 @@ Integer TypedArraySupport::lengthOf(CellPointer view)
 
 } // anonymous namespace
 
-// The heap of the vector holds inner pointers, so the view outlives every use of a vector that was loaded under it. Nothing else keeps the view alive.
 TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(CellPointer view, LBasicBlock isNotFixedLength)
 {
     branchUnless(hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask), isNotFixedLength);
@@ -60,16 +59,34 @@ TypedArrayElements ElementAccessEmitter::typedArrayElementsOf(ValueID id, LBasic
     const Operation& definition = operationAt(definitionOf(id));
     if (definition.opcode != Opcode::CallInline || definition.inlineBuiltin() != InlineBuiltin::TypedArrayWithLength)
         return typedArrayElementsOf(view, isNotFixedLength);
-    // A view that is created with a length gets a buffer of its own, and such a buffer never changes its size.
     return { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
 }
 
-// A test has found the view to have a fixed length and the position to be inside it. Nothing has written the storage of views since the vector that the access names was read.
 TypedArrayElements ElementAccessEmitter::typedArrayElementsInsideView(const ValueContext& value, CellPointer view)
 {
     std::optional<Pointer> vector = testsEveryPosition() ? std::nullopt : inOptional<Pointer>(value->vectorOperand());
     TypedArrayElements elements { view, loadField<Integer>(view, m_heaps.JSArrayBufferView_length), vector ? *vector : loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector) };
     return elements;
+}
+
+std::optional<TypedArrayElements> ElementAccessEmitter::typedArrayElementsNamedBy(const ValueContext& value, CellPointer view)
+{
+    if (value->lengthOperands().empty() || testsEveryPosition())
+        return std::nullopt;
+    return TypedArrayElements { view, integerOf(value->lengthOperands()[0]), in<Pointer>(value->vectorOperand()) };
+}
+
+void ElementAccessEmitter::askViewWherePositionIsNotBelowNamedLength(LBasicBlock isNotBelow, const ScopeFork& fork, CellPointer view, LBasicBlock outside, LBasicBlock otherwise)
+{
+    m_out.appendToJoin(isNotBelow, fork);
+    CellPointer viewAskedAnew(m_out.opaque(view.value()));
+    branchUnless(hasNoBits(loadByte(viewAskedAnew, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask), otherwise);
+    m_out.jump(outside);
+}
+
+bool ElementAccessEmitter::becomesIndexWithoutTest(const ValueContext& access)
+{
+    return get(access->positionOperand()).representation != Representation::Double || (access->keyIsIntegral() && isX86_64());
 }
 
 void ElementAccessEmitter::holdPositionInsideView(const ValueContext& access, Integer index, const TypedArrayElements& elements)
@@ -90,7 +107,6 @@ Operand ElementAccessEmitter::loadBytesOfTypedArrayElement(const TypedArrayEleme
 Operand ElementAccessEmitter::loadTypedArrayElement(const TypedArrayElements& elements, Integer index, TypedArrayType type)
 {
     Operand loaded = loadBytesOfTypedArrayElement(elements, index, type);
-    // The bytes may spell any NaN. Whoever boxes a number, or keeps it beside markers, takes it to hold the one NaN.
     if (isFloat(type))
         return emitter<ConversionEmitter>().purified(loaded.as<Number>());
     return loaded;
@@ -130,7 +146,6 @@ void ElementAccessEmitter::generateGetTypedArrayLength(const ValueContext& value
     define(value, TypedArraySupport(generator()).lengthOf(in<CellPointer>(value->viewOperand())));
 }
 
-// Loaded under the heap of inner pointers, like every vector: the view outlives the last access that takes the result, however far from here it stands.
 void ElementAccessEmitter::generateGetTypedArrayVector(const ValueContext& value)
 {
     build().statistics().count(StatisticID::VectorsOfViewsRead);
@@ -173,14 +188,19 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
     LBasicBlock outside = newBlock();
     LBasicBlock otherwise = newBlock();
     OperandJoin join(m_out, representation);
+    std::optional<Integer> indexMadeInFront = becomesIndexWithoutTest(value) ? std::optional(indexOrElse(value->positionOperand(), value->keyIsIntegral(), outside)) : std::nullopt;
     ScopeFork fork = m_out.forkScope();
 
-    Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), outside);
-    TypedArrayElements elements = typedArrayElementsOf(value->viewOperand(), otherwise);
-    branchUnless(below(index, elements.length), outside);
+    Integer index = indexMadeInFront ? *indexMadeInFront : indexOrElse(value->positionOperand(), value->keyIsIntegral(), outside);
+    std::optional<TypedArrayElements> named = typedArrayElementsNamedBy(value, view);
+    LBasicBlock isNotBelowNamedLength = named ? newBlock() : nullptr;
+    TypedArrayElements elements = named ? *named : typedArrayElementsOf(value->viewOperand(), otherwise);
+    branchUnless(below(index, elements.length), named ? isNotBelowNamedLength : outside);
     Operand element = loadTypedArrayElement(elements, index, type);
     join.add(TypedArraySupport(generator()).inRepresentation(value, representation, element, elementType));
 
+    if (named)
+        askViewWherePositionIsNotBelowNamedLength(isNotBelowNamedLength, fork, view, outside, otherwise);
     m_out.appendToJoin(outside, fork);
     join.add(absentElement(value, representation));
 
@@ -205,13 +225,11 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
 
     TypedArraySupport support(generator());
     CellPointer view = in<CellPointer>(value->viewOperand());
-    // A view of numbers takes the bits of a NaN as they are, and in a view of integers every NaN is 0.
     Operand stored = takesAnyNaN(value.value(), OperandIndex::PutTypedArrayElement::value) ? generator().getWithAnyNaN(storedValue) : get(storedValue);
     bool storesInline = hasInlineElementAccess(type) && !stored.is<Boxed>() && !(isClamped(type) && stored.is<Number>());
     auto elementToStore = [&] {
         return isFloat(type) && !stored.is<Number>() ? Operand(support.numberOperand(storedValue)) : stored;
     };
-    // A store that takes the operation has no use for the test that has passed: the operation tests the position for itself.
     if (value->isInsideView() && storesInline) {
         build().statistics().count(StatisticID::AccessesInsideViews);
         Integer index = indexInsideLength(value->positionOperand());
@@ -222,8 +240,9 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
     }
 
     LBasicBlock done = newBlock();
+    std::optional<Integer> indexMadeInFront = becomesIndexWithoutTest(value) ? std::optional(indexOrElse(value->positionOperand(), value->keyIsIntegral(), done)) : std::nullopt;
     ScopeFork fork = m_out.forkScope();
-    Integer index = indexOrElse(value->positionOperand(), value->keyIsIntegral(), done);
+    Integer index = indexMadeInFront ? *indexMadeInFront : indexOrElse(value->positionOperand(), value->keyIsIntegral(), done);
     if (isBigInt(type)) {
         Integer length = support.lengthOf(view);
         branchUnless(below(index, length), done);
@@ -237,10 +256,14 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
 
     LBasicBlock otherwise = newBlock();
     if (storesInline) {
-        TypedArrayElements elements = typedArrayElementsOf(value->viewOperand(), otherwise);
-        branchUnless(below(index, elements.length), done);
+        std::optional<TypedArrayElements> named = typedArrayElementsNamedBy(value, view);
+        LBasicBlock isNotBelowNamedLength = named ? newBlock() : nullptr;
+        TypedArrayElements elements = named ? *named : typedArrayElementsOf(value->viewOperand(), otherwise);
+        branchUnless(below(index, elements.length), named ? isNotBelowNamedLength : done);
         storeTypedArrayElement(elements, index, type, elementToStore());
         m_out.jump(done);
+        if (named)
+            askViewWherePositionIsNotBelowNamedLength(isNotBelowNamedLength, fork, view, done, otherwise);
     } else
         m_out.jump(otherwise);
 

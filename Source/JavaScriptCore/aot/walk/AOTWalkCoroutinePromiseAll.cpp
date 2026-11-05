@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `Promise.all([a(), b(x), p])` of a list that is written in the call: one operation takes the elements, no list is made and nothing is iterated, and a listed call of a known async function enters its body without a promise.
-// At a suspension: the started body hands back its saved frame, which the operation alone sees and ties to its place in the result. At a throw: such a body hands back a rejected promise,
-// and from the first of them to the operation nothing stands that could throw or be seen. Withheld (DirectCalls, BuiltinCalls): the list is made and the built-in is called.
-
 #include "config.h"
 #include "AOTWalkCoroutineCalls.h"
 
@@ -31,7 +27,6 @@ namespace {
 struct CallOfPromiseAllInPromiseAll {
     ValueID list;
     ValueID all;
-    // Of the promise that the operation makes.
     TypeID contents;
 };
 
@@ -53,7 +48,6 @@ static bool isOneBuiltinInPromiseAll(const Walker& walker, TypeID id, BuiltinID 
     return named && table.canonicalID(named) == table.canonicalID(wanted);
 }
 
-// Of an operand of an operation further on in the block. What stands in front of `firstUnbuilt` is built. What stands behind it and takes nothing has at most the widest type of whatever the walk may bind to it.
 static TypeID typeOfInputAheadInPromiseAll(Walker& walker, const BodyIndex& index, ValueID input, ValueID firstUnbuilt)
 {
     ValueID source = index.valueBehindCasts(input);
@@ -70,7 +64,6 @@ static TypeID typeOfInputAheadInPromiseAll(Walker& walker, const BodyIndex& inde
     return widest ? widest : TypeID(TypeTable::anything);
 }
 
-// `Promise.all([line, i])`, `Promise.all([load(a), load(line)])`, where `line` grows in a loop: the list and the listed calls are looked at from another operation, for which a name of the text is bound to the builder, which may have grown.
 static bool takesTextInStringBuilderInPromiseAll(Walker& walker, const BodyValue& operation)
 {
     if (!walker.hasTextsInStringBuilders())
@@ -82,7 +75,6 @@ static bool takesTextInStringBuilderInPromiseAll(Walker& walker, const BodyValue
     return takesText;
 }
 
-// By binding: the callee is proven to be the engine's Promise.all and `this` its Promise, whatever they are called in the source.
 static std::optional<CallOfPromiseAllInPromiseAll> findCallThatTakesListInPromiseAll(Walker& walker, const BodyIndex& index, BodyBlock block, ValueID list, ValueID firstUnbuilt)
 {
     BodyValue literal = index.value(list);
@@ -107,12 +99,11 @@ static std::optional<CallOfPromiseAllInPromiseAll> findCallThatTakesListInPromis
     if (!listsAreIteratedUnseen(walker) || wouldCallBuiltin(walker, call, TypesOfInputs(typeOfInput)) == BuiltinCallAskedAbout::None)
         return std::nullopt;
 
-    // What the operation gives lies within what the call as written gives, which is what a look at a loop has reckoned with.
     const BuiltinTable& table = walker.program().builtins();
     BuiltinOperandTypes passed;
     passed.receiver = typeOfThis;
     passed.arguments.append(typeOfList);
-    TypeID typeOfCall = resultTypeOfReachableOverloads(BuiltinTypeContext { walker.program(), types, &walker.facts() }, table.canonicalID(Builtins::PromiseAll), BuiltinCallMode::Call, passed);
+    TypeID typeOfCall = resultTypeOfReachableOverloads(BuiltinTypeContext { walker.program(), types }, table.canonicalID(Builtins::PromiseAll), BuiltinCallMode::Call, passed);
     if (!typeOfCall)
         return std::nullopt;
     const ClassPart* promise = findClassPart(types, types.at(typeOfCall), BuiltinClasses::Promise);
@@ -130,13 +121,12 @@ static bool isAsyncFunctionInPromiseAll(const Function& function)
     return function.has(FunctionFlags::IsAsync) && !function.has(FunctionFlags::IsGenerator);
 }
 
-// The body of a function that never suspends throws like a plain function, so its ramp is called. The operands of the call are built.
 static FunctionID findBodyThatListedCallEntersInPromiseAll(Walker& walker, const BodyValue& call)
 {
     FunctionID callee = findCoroutineCalledBy(walker, call);
     if (!callee || !isAsyncFunctionInPromiseAll(walker.program().at(callee)) || walker.plan().conventions().of(callee).coroutineNeverSuspends)
         return { };
-    return writtenOperandsMayStartBodyOfCoroutine(walker, walker.draftOf(call), callee) ? callee : FunctionID();
+    return writtenOperandsMayStartBodyOfCoroutine(walker, walker.draftOf(call)) ? callee : FunctionID();
 }
 
 static Reference buildOperationInPromiseAll(Walker& walker, const BodyIndex& index, const CallOfPromiseAllInPromiseAll& written, std::span<const DirectCallInPromiseAll> directCalls)
@@ -169,7 +159,6 @@ static Reference buildOperationInPromiseAll(Walker& walker, const BodyIndex& ind
     return walker.build(WTF::move(operation));
 }
 
-// The call in hand is Promise.all itself. The listed calls are built as they are written, and the sweep drops the list.
 static bool buildAtCallOfBuiltinInPromiseAll(Walker& walker, const BodyIndex& index, const BodyValue& call)
 {
     if (call.argumentsOperands().size() != 1)
@@ -195,7 +184,6 @@ static bool buildAtCallOfBuiltinInPromiseAll(Walker& walker, const BodyIndex& in
     return true;
 }
 
-// The call in hand is listed, and is the first that enters a body without a promise. What such a body hands back nobody may see but the operation, and nobody would reject or fulfill it if the operation were never reached.
 static bool buildFromListedCallInPromiseAll(Walker& walker, const BodyIndex& index, const BodyValue& first)
 {
     ValueID name = first.id();
@@ -223,7 +211,6 @@ static bool buildFromListedCallInPromiseAll(Walker& walker, const BodyIndex& ind
                 return false;
             continue;
         }
-        // Another listed call of an async function: whatever its body does, the call gives a promise and throws nothing.
         ValueID nameOfBetween = between.id();
         if (between.isDoneInPlace() || followCastsToOnlyTaker(index, nameOfBetween) != list || takesTextInStringBuilderInPromiseAll(walker, between))
             return false;
@@ -251,7 +238,6 @@ static bool buildFromListedCallInPromiseAll(Walker& walker, const BodyIndex& ind
             BodyValue between = index.value(ValueID(value));
             if (between.id() == list)
                 continue;
-            // A cast of the list, or of what a body has handed back, has no operand and builds nothing.
             if (opcodesThatStateTypes.contains(between.opcode())) {
                 ValueID source = index.valueBehindCasts(between.id());
                 if (source == list || directCalls.containsIf([&](const DirectCallInPromiseAll& direct) { return direct.call == source; }))
@@ -279,7 +265,6 @@ static bool buildFromListedCallInPromiseAll(Walker& walker, const BodyIndex& ind
         return true;
     walker.bind(written->all, promise);
     leaveAnythingForSwallowedOperation(walker, written->all);
-    // The walks in between have taken the word back that the call in hand is accounted for.
     walker.leaveArrivals(firstCallee, firstOperands->span());
     uint32_t behind = written->all.index() - firstValue + 1;
     walker.walkStretch(block.id(), behind, behind);

@@ -10,9 +10,12 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTCellFormat.h"
 #include "AOTFacts.h"
 #include "AOTIRProgram.h"
+#include "AOTLinkTables.h"
+#include "AOTSchemaOperandIndexes.h"
 #include "AOTOpcodeSets.h"
 #include "AOTSlotPlan.h"
 #include "AOTThinSummary.h"
@@ -22,8 +25,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Whoever lets a cell of the heap hold an environment sets a byte in it first, and what may be nothing has no byte to set.
-// An environment is written as the type of a capture, and of a slot of a scope or of a saved frame: the front end writes it nowhere else. Where one came "or nothing" by another road the walk stops the build.
 static BitVector findEnvironmentsThatPositionsTakeOrNothing(const Program& program)
 {
     BitVector environments;
@@ -47,14 +48,91 @@ static BitVector findEnvironmentsThatPositionsTakeOrNothing(const Program& progr
     return environments;
 }
 
-// The walk marks at whatever else names the environment: walk/AOTWalkEnvironmentCells.cpp goes by the rows. This only says where asking the byte pays, so it may be wrong either way.
-static bool leavesCellToItsFrames(const BodyValue& user, uint32_t operandIndex)
+namespace {
+
+struct BodyOfMakerInEnvironmentsHandedBack {
+    const Program& program;
+    const Facts& facts;
+    FunctionID function;
+    const BodyIndex& index;
+    const Vector<uint32_t>& numberOfFunctionsThatCapture;
+};
+
+} // anonymous namespace
+
+static TypeID typeWrittenOfValueInEnvironmentsHandedBack(const BodyOfMakerInEnvironmentsHandedBack& body, ValueID value)
+{
+    const BodyIndex& index = body.index;
+    while (value) {
+        if (index.isParameter(value)) {
+            BodyBlock entry = index.block(entryBlock);
+            for (unsigned parameter = 0; parameter < entry.numberOfParameters(); ++parameter) {
+                if (entry.parameter(parameter) != value)
+                    continue;
+                const DeclaredType* declared = body.program.at(body.function).declaredEntryParameter(parameter);
+                return declared ? declared->written() : TypeID();
+            }
+            return { };
+        }
+        BodyValue made = index.value(value);
+        if (made.opcode() == Opcode::Convert)
+            return made.as<Opcode::Convert>().declared().written();
+        if (!inputOperationsThatHandOn.contains(made.opcode()))
+            return { };
+        value = made.operand(0);
+    }
+    return { };
+}
+
+static bool receiverIsWrittenAsTableInEnvironmentsHandedBack(const BodyOfMakerInEnvironmentsHandedBack& body, const BodyValue& call)
+{
+    TypeID written = typeWrittenOfValueInEnvironmentsHandedBack(body, call.operand(OperandIndex::Call::thisValue));
+    if (!written || holdsOnlyPrimitives(written))
+        return false;
+    Type type = body.program.at(written);
+    type.primitives &= ~Primitive::UndefinedOrNull;
+    const ClassPart* onlyClass = singleBuiltinClassOf(body.program, type);
+    return onlyClass && (onlyClass->builtinClass == BuiltinClasses::Map || onlyClass->builtinClass == BuiltinClasses::Set);
+}
+
+static bool isMadeForCallThatBorrows(const BodyOfMakerInEnvironmentsHandedBack& body, ValueID closure)
+{
+    const BodyIndex& index = body.index;
+    for (ValueID name = closure;;) {
+        ValueID taker = index.onlyUsingValue(name);
+        if (!taker)
+            return false;
+        BodyValue user = index.value(taker);
+        Opcode opcode = user.opcode();
+        if (opcode != Opcode::Call && opcode != Opcode::CallDirect) {
+            if (!inputOperationsThatHandOn.contains(opcode) || user.operand(0) != name)
+                return false;
+            name = taker;
+            continue;
+        }
+        std::span<const ValueID> arguments = user.argumentsOperands();
+        size_t position = std::ranges::find(arguments, name) - arguments.begin();
+        if (position == arguments.size())
+            return false;
+        const LinkTables& linked = body.facts.linked();
+        if (opcode == Opcode::CallDirect)
+            return linked.onlyCallsWhatArrivesAt(user.function(), static_cast<unsigned>(position));
+        if (FunctionID callee = linked.calleeAt(body.function, taker))
+            return linked.onlyCallsWhatArrivesAt(callee, body.program.at(callee).firstParameterIndex() + static_cast<unsigned>(position));
+        return receiverIsWrittenAsTableInEnvironmentsHandedBack(body, user);
+    }
+}
+
+static bool leavesCellToItsFrames(const BodyOfMakerInEnvironmentsHandedBack& body, const BodyValue& user, uint32_t operandIndex)
 {
     switch (user.opcode()) {
     case Opcode::GetEnvironmentField:
     case Opcode::PutEnvironmentField:
         return !operandIndex;
     case Opcode::CallDirect:
+        return true;
+    case Opcode::NewClosure:
+        return isMadeForCallThatBorrows(body, user.id());
     case Opcode::ReleaseHint:
         return true;
     default:
@@ -62,17 +140,15 @@ static bool leavesCellToItsFrames(const BodyValue& user, uint32_t operandIndex)
     }
 }
 
-// `function related(a, b) { let depth = 0; return walk(a, b); function walk(x, y) { depth++; .. } }`: some way leads from the allocation to where the body has done with the cell and comes by no operation that keeps it.
-// `function counter() { let n = 0; return () => ++n; }`: none does: the byte would be set in every run, and nobody would ever take the cell again.
-static bool someWayKeepsNothing(const BodyIndex& index, ValueID environment)
+static bool someWayKeepsNothing(const BodyOfMakerInEnvironmentsHandedBack& body, ValueID environment)
 {
+    const BodyIndex& index = body.index;
     BlockID making = index.blockOf(environment);
     BitVector keeps(index.numberOfBlocks());
     uint32_t mentionsLeft = index.useCount(environment);
     bool countsEveryMention = mentionsLeft < BodyIndex::maxCountedUses;
-    // A scope that closures alone take is made for them: on a way that makes none of them it is made for nothing, which is another matter than who gets its cell.
     bool isHandedToFunctionEnteredItself = false;
-    // What the allocation stands above has the numbers behind its own.
+    Vector<FunctionID, 4> functionsOfClosuresLent;
     std::span<const BlockID> below = index.blocksInDominatorOrder().subspan(index.dominatorNumber(making), index.lastDominatorNumberBelow(making) - index.dominatorNumber(making) + 1);
     for (BlockID id : below) {
         if (countsEveryMention && !mentionsLeft)
@@ -85,18 +161,22 @@ static bool someWayKeepsNothing(const BodyIndex& index, ValueID environment)
                 if (operand != environment)
                     return;
                 --mentionsLeft;
+                bool leavesCell = leavesCellToItsFrames(body, user, operandIndex);
                 isHandedToFunctionEnteredItself |= user.opcode() == Opcode::CallDirect;
-                if (!leavesCellToItsFrames(user, operandIndex))
+                if (leavesCell && user.opcode() == Opcode::NewClosure && !functionsOfClosuresLent.contains(user.function()))
+                    functionsOfClosuresLent.append(user.function());
+                if (!leavesCell)
                     keeps.quickSet(id.index());
             });
         }
-        // What an edge brings to a parameter goes on under another name: the next turn of a loop can take the cell that this turn has done with.
         block.terminator().forEachOperand([&](ValueID operand, uint32_t) {
             if (operand == environment)
                 keeps.quickSet(id.index());
         });
     }
-    if (keeps.quickGet(making.index()) || !isHandedToFunctionEnteredItself)
+    LayoutID layout = index.value(environment).as<Opcode::NewObject>().layout();
+    bool closuresLentAloneTakeIt = !functionsOfClosuresLent.isEmpty() && functionsOfClosuresLent.size() == body.numberOfFunctionsThatCapture[layout.index()];
+    if (keeps.quickGet(making.index()) || (!isHandedToFunctionEnteredItself && !closuresLentAloneTakeIt))
         return false;
 
     BitVector seen(index.numberOfBlocks());
@@ -108,7 +188,6 @@ static bool someWayKeepsNothing(const BodyIndex& index, ValueID environment)
         if (end.kind() == TerminatorKind::Return)
             return true;
         for (BodyTarget target : end.targets()) {
-            // Out from under the allocation, or round to it: the name is gone.
             if (!index.strictlyDominates(making, target.block()))
                 return true;
             if (!keeps.quickGet(target.block().index()) && !seen.quickSet(target.block().index()))
@@ -120,33 +199,38 @@ static bool someWayKeepsNothing(const BodyIndex& index, ValueID environment)
 
 void planEnvironmentsHandedBack(const Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts)
 {
-    // A debugger stands at any operation and keeps whatever it finds in the scope.
     if (program.admitsInspector || !withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::CellsInFrames))
         return;
 
     Vector<FunctionID> makers;
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        // The frame of a coroutine is a cell of the heap that holds its scope from the first suspension on, and where such a body has done with a cell only its liveness says.
-        if (!facts.summaries().at(FunctionID(index)).environmentsHandedToFunctionsEntered.isEmpty() && !program.functions[index].isCoroutine())
+        if (!facts.summaries().at(FunctionID(index)).environmentsMade.isEmpty() && !program.functions[index].isCoroutine())
             makers.append(FunctionID(index));
     }
     if (makers.isEmpty())
         return;
+    Vector<uint32_t> numberOfFunctionsThatCapture;
+    numberOfFunctionsThatCapture.fill(0, program.layouts.size());
+    for (const Function& function : program.functions) {
+        for (const DeclaredCapture& capture : function.captures) {
+            TypeID written = capture.written();
+            if (LayoutID environment = written && !holdsOnlyPrimitives(written) ? program.at(written).environment : LayoutID())
+                ++numberOfFunctionsThatCapture[environment.index()];
+        }
+    }
     Vector<Vector<LayoutID, 2>> found(makers.size());
     forEachIndexInParallel(build.parallelLoops(), makers.size(), [&](unsigned place) {
         const BodyIndex* index = facts.bodies().find(makers[place]);
         if (!index || index->hasIrreducibleFlow())
             return;
-        for (ValueID environment : facts.summaries().at(makers[place]).environmentsHandedToFunctionsEntered) {
+        for (ValueID environment : facts.summaries().at(makers[place]).environmentsMade) {
             LayoutID layout = index->value(environment).as<Opcode::NewObject>().layout();
-            // The next run of the place takes the cell that this run has done with.
             if (facts.runsAtMostOnce(makers[place]))
                 continue;
-            // The scope of a function is done with where the function returns. Where the scope of a turn of a loop is done with, and whether a throw has left the block in front of the allocation, only liveness would say.
             BlockID making = index->blockOf(environment);
             if (index->loopOf(making) || index->block(making).hasHandler())
                 continue;
-            if (!found[place].contains(layout) && someWayKeepsNothing(*index, environment))
+            if (!found[place].contains(layout) && someWayKeepsNothing({ program, facts, makers[place], *index, numberOfFunctionsThatCapture }, environment))
                 found[place].append(layout);
         }
     });
@@ -154,10 +238,8 @@ void planEnvironmentsHandedBack(const Program& program, const Facts& facts, Buil
     BitVector takenOrNothing = findEnvironmentsThatPositionsTakeOrNothing(program);
     for (const auto& layouts : found) {
         for (LayoutID id : layouts) {
-            // A frame of a coroutine has the storage of an environment and is laid out by others.
             if (program.at(id).kind != LayoutKind::Environment || takenOrNothing.get(id.index()))
                 continue;
-            // Without slots: the layout is never allocated, or an error has been reported of it. Only a cell of the heap is handed back.
             PlannedLayout& planned = parts.layouts[id.index()];
             if (planned.storage != LayoutStorage::Environment || planned.slots.isEmpty() || planned.liesOnlyInFrames || planned.isEscapedOffset)
                 continue;

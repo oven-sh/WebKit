@@ -1,0 +1,49 @@
+# The record of a module lists the names that its namespace object shows. To be listed reaches nothing: a function declaration that no code of the program comes to stays out of the executable, though its module is evaluated
+# and some site that nothing reaches hands the object out. `sum`, which the program calls by its binding alone, keeps its proven parameters. Both stay in: the image marks their entries (ModuleExportData::staysIn),
+# and the run time hands the value of such an export to nobody, by whatever road the object is come by.
+# library.js: export function sum(a, b) { return a + b }  export function makePlugins(a) { return helper(a) }  function helper(a) { return a }
+# main.js: import { sum } from "./library.js"; const table = { never() { return import("./library.js") } }; print(sum(1, 2))
+# RUN: link functions mechanisms=all
+# CHECK: function f2 {{*}}callers-known
+# CHECK: function f3 unreached
+# CHECK: function f4 unreached
+# CHECK: function f5 unreached
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 3
+# ALL-NEXT: exited with 0
+
+module m0 path="/library.js" displayPath="library.js" body=f1 exports=[{name="makePlugins" variable=g1}, {name="sum" variable=g0}]
+module m1 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}]
+entry module=m1
+variable g0 name="sum" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="makePlugins" module=m0 declared={type=function} initialization=Function function=f4 flags=[IsImmutable]
+variable g2 name="helper" module=m0 declared={type=function} initialization=Function function=f5 flags=[IsImmutable]
+function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = Call v0, -, v1, v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="print" [isFreeName]
+    v6 = Call v5, -, v3
+    Return
+}
+function f1 name="library" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="sum" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="never" module=m1 results=[{type=anything}] {
+    v0 = ImportModule module=m0 referrer=m1
+    Return v0
+}
+function f4 name="makePlugins" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g2
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f5 name="helper" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

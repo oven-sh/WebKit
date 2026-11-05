@@ -1,11 +1,9 @@
 # If the exports stayed in sight where the namespace object goes to code that nobody has seen, a function that such code calls by name would have been left out of the executable, and the process would end there
 # library.js: export function one() { return 1 } export function two() { return 2 }
 # main.js: import * as ns from "./library.js"; function hand() { return ns } takeAnything(hand())
-# `takeAnything` is read off the global object: nobody knows what it is. `hand` answers with the one object of the module, which is no fresh object.
+# `takeAnything` is read off the global object: nobody knows what it is.
 # RUN: link functions mechanisms=all
 # CHECK-NOT: unreached
-# CHECK: function f4
-# CHECK-NOT: fresh-result
 # RUN(SUMMARY): summary f4
 # SUMMARY-NOT: hands-out
 

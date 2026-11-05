@@ -35,7 +35,6 @@ namespace Machine {
 
 namespace {
 
-// Operands and results travel as 64 bits. One of 32 bits lies in the low half, and in a table or an expectation the high half is zero.
 template<typename T>
 constexpr T operationTestValueOf(uint64_t bits)
 {
@@ -71,7 +70,6 @@ constexpr Type operationTestTypeOf()
         return Int64;
 }
 
-// Where a list is cut short its head is taken, so the values that tell most come first: the first six, then the next six.
 constexpr size_t operationTestFewValues = 6;
 constexpr size_t operationTestSomeValues = 12;
 
@@ -228,14 +226,10 @@ LValue operationTestBitsOfValue(Output& out, LValue value)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ---- One operation, with its operands in every kind of place.
-
 enum class OperationTestPlace : uint8_t {
     Register,
     Constant,
-    // Between its definition and the operation more values are live than its bank has registers, and none is read later than it.
     Spilled,
-    // A load right in front of the operation.
     Loaded,
 };
 
@@ -251,7 +245,6 @@ struct OperationTestPlaces {
 struct OperationTestPlaceLists {
     using Place = OperationTestPlace;
 
-    // The last numberWithLoadedOperand read an operand from memory.
     static constexpr size_t numberWithLoadedOperand = 3;
     static constexpr OperationTestPlaces withoutPressure[] = {
         { Place::Register, Place::Register },
@@ -268,7 +261,6 @@ struct OperationTestPlaceLists {
         { Place::Register, Place::Spilled },
         { Place::Spilled, Place::Spilled, true, true },
     };
-    // In both: the first reads an operand from memory, the last is under pressure.
     static constexpr OperationTestPlaces withConstantLeft[] = {
         { Place::Constant, Place::Loaded },
         { Place::Constant, Place::Register },
@@ -294,16 +286,12 @@ struct OperationTestPlaceLists {
 struct OperationTestSubject {
     ASCIILiteral name;
     Type left;
-    // Void where the operation has one operand.
     Type right;
     Type result;
     ASCIILiteral use { ""_s };
     CPUFeatureSet features { };
-    // A NaN comes out with the bits that went in.
     bool keepsBitsOfNaN { false };
-    // What reads an operand in OperationTestPlace::Loaded.
     Opcode load { Load };
-    // An operand in OperationTestPlace::Register or Spilled is the result of an Opaque. Otherwise a number there is the result of the BitwiseCast that makes it of the bits of an argument.
     bool hidesOriginOfOperands { false };
 };
 
@@ -383,7 +371,6 @@ uint64_t sumOfNumbersUnderPressure(unsigned count)
     return std::bit_cast<uint64_t>(sum);
 }
 
-// In both banks: defines more values than there are registers, then reads them all. The outcome goes to the word at the offset and to the one behind it.
 void appendOperationTestPressure(OperationTestProcedure& test, LValue memory, ptrdiff_t offset)
 {
     Output& out = test.out();
@@ -405,13 +392,11 @@ void appendOperationTestPressure(OperationTestProcedure& test, LValue memory, pt
     out.storeDouble(sum, out.address(test.memory(), memory, offset + sizeof(uint64_t)));
 }
 
-// No operation purifies its result, so a NaN that one makes must still be a number once it is boxed.
 bool operationTestIsPureNaN(double value)
 {
     return std::isnan(value) && !isImpureNaN(value);
 }
 
-// A Float is widened ahead of boxing, which keeps its sign and the high bits of its payload.
 bool operationTestResultsAgree(const OperationTestSubject& subject, uint64_t actual, uint64_t expected)
 {
     if (actual == expected || subject.keepsBitsOfNaN)
@@ -423,8 +408,6 @@ bool operationTestResultsAgree(const OperationTestSubject& subject, uint64_t act
     return false;
 }
 
-// build(Output&, LValue left, LValue right) appends the operation and answers its result. reference(left, right) answers the bits of the result, or nothing where the operation promises none.
-// One procedure evaluates the operation once for each entry of `places`. An operand in OperationTestPlace::Constant has one value in its list.
 template<typename Build, typename Reference>
 void checkOperationInPlaces(const OperationTestSubject& subject, std::span<const OperationTestPlaces> places, std::span<const uint64_t> lefts, std::span<const uint64_t> rights, const Build& build, const Reference& reference)
 {
@@ -566,7 +549,6 @@ struct OperationTestBinaryRow {
     Opcode opcode;
     Result (*reference)(Left, Right);
     bool isChill { false };
-    // Null: every pair of operands has an answer.
     bool (*isDefined)(Left, Right) { nullptr };
 };
 
@@ -600,7 +582,6 @@ void checkUnaryOperation(const OperationTestUnaryRow<Result, Operand>& row, CPUF
     OperationTestSubject subject { descriptionOf(row.opcode).name, operationTestTypeOf<Operand>(), Void, operationTestTypeOf<Result>() };
     subject.features = features;
     subject.keepsBitsOfNaN = keepsBitsOfNaN;
-    // A cast of a cast is folded to what lies below both. A number comes here through one cast, and its bits leave through another.
     subject.hidesOriginOfOperands = row.opcode == BitwiseCast;
     OperationTestOperands operands { operationTestValuesOf<Operand>(), { }, operationTestValuesOf<Operand>(), { } };
     checkOperationEverywhere(subject, operands, [&](Output& out, LValue value, LValue) {
@@ -613,8 +594,6 @@ void checkUnaryOperation(const OperationTestUnaryRow<Result, Operand>& row, CPUF
         return operationTestBitsOf(row.reference(operationTestValueOf<Operand>(bits)));
     });
 }
-
-// ---- Arithmetic.
 
 template<typename T>
 void checkIntegerArithmeticOf()
@@ -729,8 +708,6 @@ void checkNumberUnaryOperationsOf(CPUFeatureSet features)
     checkUnaryOperation<T, T>({ Sqrt, [](T a) { return std::sqrt(a); } }, features);
 }
 
-// ---- What a Branch or a Select tests.
-
 struct OperationTestUse {
     enum class Kind : uint8_t { Value, Branch, Select, ValueAndBranch };
 
@@ -742,7 +719,6 @@ struct OperationTestUse {
     bool triesConstants { true };
 };
 
-// An inverted comparison of integers is folded into another comparison, so for those the list ends ahead of the inverted uses.
 constexpr size_t numberOfOperationTestUsesAsWritten = 7;
 constexpr OperationTestUse operationTestUses[] = {
     { "as a value"_s, OperationTestUse::Kind::Value },
@@ -758,7 +734,6 @@ constexpr OperationTestUse operationTestUses[] = {
     { "inverted, as a branch past a rare block"_s, OperationTestUse::Kind::Branch, true, EdgeClass::Normal, EdgeClass::Rare, false },
 };
 
-// One where the predicate as written holds, else zero.
 LValue appendBranchOfOperationTest(Output& out, const OperationTestUse& use, LValue tested)
 {
     LBasicBlock whenNotZero = out.newBlock();
@@ -791,7 +766,6 @@ LValue appendUseOfPredicate(Output& out, const OperationTestUse& use, LValue pre
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// buildPredicate(Output&, LValue left, LValue right) answers an Int32 that is zero or one.
 template<typename T, typename BuildPredicate>
 void checkPredicate(ASCIILiteral name, bool (*reference)(T, T), std::span<const OperationTestUse> uses, const OperationTestOperands& operands, const BuildPredicate& buildPredicate)
 {
@@ -868,8 +842,6 @@ void checkBitTestsOf()
     });
 }
 
-// ---- Memory.
-
 struct OperationTestAccess {
     Opcode load;
     Opcode store;
@@ -889,7 +861,6 @@ constexpr OperationTestAccess operationTestAccesses[] = {
     { Load, Store, Double, 8, false },
 };
 
-// What the load gives where the low bytes of the word lie in memory.
 uint64_t bitsLoadedByOperationTestAccess(const OperationTestAccess& access, uint64_t word)
 {
     if (access.bytes < sizeof(uint64_t))
@@ -900,9 +871,7 @@ uint64_t bitsLoadedByOperationTestAccess(const OperationTestAccess& access, uint
 }
 
 struct OperationTestAddress {
-    // What the load and the store are told.
     int64_t offset { 0 };
-    // Of an Add of a constant to the base.
     int64_t addend { 0 };
     bool hasIndex { false };
     unsigned shift { 0 };
@@ -947,7 +916,6 @@ uint64_t distanceOfOperationTestAddress(const OperationTestAddress& address, uin
     return distance + (index << address.shift);
 }
 
-// Copies one value from one buffer to another, both times through an address of the given form. Each base is the place in the buffer less the distance, so any distance will do.
 void checkAccessThroughAddress(const OperationTestAccess& access, const OperationTestAddress& address)
 {
     OperationTestProcedure test;
@@ -987,11 +955,8 @@ void checkAccessThroughAddress(const OperationTestAccess& access, const Operatio
     }
 }
 
-// ---- Switch.
-
 constexpr uint64_t markerOfSwitchTarget(unsigned target) { return static_cast<uint64_t>(target + 1) << 44; }
 
-// Each target returns the subject, which so lives across the Switch, plus its marker. Case i goes to target i modulo the number of targets.
 void checkSwitchOn(Type type, std::span<const int64_t> caseValues, unsigned numberOfTargets)
 {
     OperationTestProcedure test;
@@ -1288,7 +1253,6 @@ enum class OverflowTestOperands : uint8_t {
     WordMinusWord,
     WordPlusConstant,
     ConstantMinusWord,
-    // Each comes with proof that it is not negative.
     WordsThatAreNotNegative,
 };
 
@@ -1313,7 +1277,6 @@ struct OverflowTestCase {
     OverflowTestOperands operands;
     int64_t constant;
     OverflowTestFailingSide failingSide;
-    // Otherwise each is the low half of an argument, with dirt above it.
     bool wordsAreValuesOf32Bits;
 };
 
@@ -1409,7 +1372,6 @@ static void checkSumTestedByOverflow(const OverflowTestRelation& relation, const
     case OverflowTestFailingSide::ReadsNothing:
         break;
     case OverflowTestFailingSide::ReadsWholeSum:
-        // Otherwise the marker and a constant operand would be added up, and the sum of the marker and the other operand would read that operand.
         readOnFailingSide = out.opaque(sum);
         break;
     case OverflowTestFailingSide::ReadsLowHalf:
@@ -1430,7 +1392,6 @@ static void checkSumTestedByOverflow(const OverflowTestRelation& relation, const
             testCase.wordsAreValuesOf32Bits ? ", words of 32 bits: " : ", low halves: ", details...);
     };
 
-    // The sums from `least` to `greatest`, among those from `lowest` to `highest` that there are, are the ones of which the operation of 32 bits does not overflow and gives no less than `least`.
     auto areToldByOverflow = [](int64_t least, int64_t greatest, int64_t lowest, int64_t highest) {
         bool upperBoundIsThatOfInt32 = greatest == overflowTestMaxInt32 || (greatest >= highest && highest <= overflowTestMaxInt32);
         bool lowerBoundLiesWithinInt32 = least >= overflowTestMinInt32 || lowest >= overflowTestMinInt32;
@@ -1439,10 +1400,8 @@ static void checkSumTestedByOverflow(const OverflowTestRelation& relation, const
     int64_t least = relation.leastThatPasses;
     int64_t greatest = relation.greatestThatPasses;
     bool biasIsFoldedIntoOperand = relation.addsBias && testCase.operands == OverflowTestOperands::WordPlusConstant;
-    // Where every sum passes or none does, the Branch is folded.
     bool someSumsPassAndSomeFail = (least > minSum || greatest < maxSum) && least <= maxSum && greatest >= minSum;
     bool passingSideIsTold = someSumsPassAndSomeFail && !biasIsFoldedIntoOperand && areToldByOverflow(least, greatest, minSum, maxSum);
-    // A relation with one bound holds or fails for a row of sums either way, so the test may as well tell the sums that fail. Their side then finds the sum of 32 bits, so it reads no upper half.
     bool failingSideIsTold = false;
     if (someSumsPassAndSomeFail && !passingSideIsTold && !biasIsFoldedIntoOperand && testCase.failingSide != OverflowTestFailingSide::ReadsWholeSum) {
         if (least == overflowTestNoLeast)
@@ -1451,7 +1410,6 @@ static void checkSumTestedByOverflow(const OverflowTestRelation& relation, const
             failingSideIsTold = areToldByOverflow(overflowTestNoLeast, least - 1, minSum, maxSum);
     }
     bool goesByOverflow = passingSideIsTold || failingSideIsTold;
-    // A bias and a constant operand are folded into one constant, and that sum is another one, which the test alone reads. It passes from 0 on.
     bool otherSumIsTold = false;
     if (biasIsFoldedIntoOperand) {
         int64_t foldedConstant = testCase.constant - least;
@@ -1462,7 +1420,6 @@ static void checkSumTestedByOverflow(const OverflowTestRelation& relation, const
     check(liveness.goesByOverflow(end) == (goesByOverflow || otherSumIsTold), "the Branch");
     check(liveness.goesByOverflow(sum) == goesByOverflow, "the sum");
 
-    // The side of the sums that are not told alone reads the operand, so the sum takes its register and the way there takes the sum back.
     const Operation* operandTakenBack = nullptr;
     if ((passingSideIsTold || otherSumIsTold) && testCase.wordsAreValuesOf32Bits) {
         bool adds = testCase.operands == OverflowTestOperands::WordPlusWord || testCase.operands == OverflowTestOperands::WordsThatAreNotNegative;
@@ -1532,7 +1489,6 @@ static void testMachineOperationsOnSumsTestedByOverflow()
         OverflowTestOperands operands;
         int64_t constant;
     };
-    // 0x1001 is no immediate of ARM64.
     static constexpr Operands allOperands[] = {
         { OverflowTestOperands::WordPlusWord, 0 },
         { OverflowTestOperands::WordMinusWord, 0 },
@@ -1558,7 +1514,6 @@ static void testMachineOperationsOnSumsTestedByOverflow()
     }
 }
 
-// total += step for as many turns as are asked for, or until the sum is no int32. Whoever is sent the failing way finds the total and the number of the turn as they were in front of the addition.
 static void testMachineOperationsOnSumThatGoesRoundLoop()
 {
     constexpr uint64_t markerOfFailingSide = uint64_t { 1 } << 62;
@@ -1616,7 +1571,6 @@ static void testMachineOperationsOnSumThatGoesRoundLoop()
         const Liveness& liveness = test.procedure().liveness();
         const Allocation& allocation = test.procedure().allocation();
         checkOperationTest(liveness.goesByOverflow(body->last()) && liveness.goesByOverflow(sum), test, "the sum that goes round goes by overflow");
-        // So a turn adds to the register of the Phi, and no move stands on the edge back.
         checkOperationTest(allocation.step(allocation.stepsOf(body).terminator).other == total, test, "the total is taken back on the failing way");
         const Step* stepOfSum = allocation.findExecuteOf(sum);
         checkOperationTest(stepOfSum && stepOfSum->destination == Location::reg(allocation.registerAtDefinitionOf(total)), test, "the sum lies in the register of the Phi");
@@ -1644,11 +1598,8 @@ static void testMachineOperationsOnSumThatGoesRoundLoop()
     }
 }
 
-// The sum lives across a call on the passing side and finds no register that callees save, so it is stored behind its definition, with its upper half clear.
-// The failing side calls too, and reads the whole sum from that place afterward.
 static void testMachineOperationsOnSpilledSumThatIsWidened()
 {
-    // More than any target keeps in registers across a call.
     constexpr unsigned numberOfValues = 10;
     constexpr uint64_t seedOfRun = 0x1234;
 
@@ -1695,7 +1646,6 @@ static void testMachineOperationsOnSpilledSumThatIsWidened()
     }
 }
 
-// The failing side is as likely as not to be taken and rejoins: `a + b` of two boxed int32, whose sum is made a number where it is no int32.
 static void testMachineOperationsOnSumThatIsMadeNumberWhereItOverflows()
 {
     for (Opcode opcode : { Add, Sub }) {

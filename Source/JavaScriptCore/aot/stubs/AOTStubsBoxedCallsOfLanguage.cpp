@@ -25,7 +25,6 @@
 
 namespace JSC { namespace AOT {
 
-// Where the call goes by the name nobody has looked the callee up, and a string finds it in the realm that runs.
 static void checkRealmOfCalleeInBoxedCallsOfLanguage(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     StubFamily family = jit.key().family();
@@ -49,7 +48,6 @@ bool searchesFromPosition(unsigned count)
     return count == 2;
 }
 
-// The operations of indexOf and startsWith take a position that lies in the string or at its end. That of lastIndexOf takes any.
 void emitStringSearchFromPosition(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     static_assert(argumentGPR(0) == operationArgumentGPR(0) && argumentGPR(1) == operationArgumentGPR(1) && noOverlap(thisGPR, calleeGPR, operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3)));
@@ -115,7 +113,6 @@ void emitArrayPushOfSeveral(StubAssembler& jit)
     const unsigned count = jit.key().count();
     RELEASE_ASSERT(pushesSeveralValues(count));
 
-    // Each value moves two registers up, the last one first.
     for (unsigned i = count; i--;)
         jit.move(argumentGPR(i), jit.reuseScratch(operands[i + 1]));
     jit.move(thisGPR, jit.reuseScratch(operands[0]));
@@ -158,7 +155,6 @@ void emitCallOfBooleanConstructor(StubAssembler& jit, GPRReg scratch)
 
     isCellOrNumber.link(&jit);
     Jump isCell = jit.branchIfCell(value);
-    // NaN and the two zeros among the doubles are left to the function.
     callsFunction.append(jit.branchIfNotInt32(value));
     returnWhetherIsNotZero(value);
 
@@ -169,7 +165,6 @@ void emitCallOfBooleanConstructor(StubAssembler& jit, GPRReg scratch)
     returnBoolean(true);
 
     isNotObject.link(&jit);
-    // A BigInt may be zero.
     callsFunction.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(StringType)));
     jit.loadPtr(Address(value, JSString::offsetOfValue()), scratch);
     loadStringLength(jit, value, scratch, scratch);

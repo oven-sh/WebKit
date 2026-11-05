@@ -55,6 +55,28 @@ constexpr bool isWire(TerminatorKind kind) { return static_cast<unsigned>(kind) 
     "\n",
   );
 
+const columnTable = `// What find() answers for each member, in one table that every caller reads. Of a number that is no member's find() itself is asked.
+template<typename E, typename T, T (*find)(E)>
+struct ColumnTable {
+    static constexpr std::array<T, numberOfEnumerators<E>> tabulate()
+    {
+        std::array<T, numberOfEnumerators<E>> values { };
+        for (E member : allMembersOf<E>)
+            values[static_cast<size_t>(member)] = find(member);
+        return values;
+    }
+
+    static constexpr std::array<T, numberOfEnumerators<E>> values = tabulate();
+
+    static ALWAYS_INLINE constexpr T at(E member)
+    {
+        size_t index = static_cast<size_t>(member);
+        if (index < values.size()) [[likely]]
+            return values[index];
+        return find(member);
+    }
+};`.split("\n");
+
 const noteOnStandingInCode =
   "// By the schema alone: the entry is legal in the form Placed. Code::append() also turns away opcodesThatStateTypes and opcodesWithoutEmitter().";
 
@@ -62,6 +84,12 @@ const noteOnUnknownResults =
   "// Of results(..): bit n is set where the schema writes `unknown` for result n, whatever it writes behind `=>`. The last rule of an open list speaks for every later result, and bit 31 for those from 31 on.";
 
 const numberOfBitsForUnknownResults = 32;
+
+const noteOnUsesOfNamedOperands = "// OperandInfo::uses of every operand but the variadic one, united.";
+
+const noteOnTargetsTakingProofs = "// Bit n is set where TargetInfo::takesProofs of targetInfosOf(kind)[n] is.";
+
+const numberOfBitsForTargets = 31;
 
 function unknownResults(entry: Entry): string {
   const rule = entry.result.unproven;
@@ -114,8 +142,10 @@ JS_EXPORT_PRIVATE extern const std::array<OperandInfosOfEntry, numberOfEnumerato
 
 ALWAYS_INLINE const OperandInfo& operandInfoIn(const OperandInfosOfEntry& infos, uint32_t operandIndex)
 {
-    RELEASE_ASSERT(operandIndex < infos.size || (infos.size && infos.first[infos.size - 1].isVariadic));
-    return infos.first[std::min(operandIndex, infos.size - 1)];
+    if (operandIndex < infos.size) [[likely]]
+        return infos.first[operandIndex];
+    RELEASE_ASSERT(infos.size && infos.first[infos.size - 1].isVariadic);
+    return infos.first[infos.size - 1];
 }
 ALWAYS_INLINE const OperandInfo& operandInfoOf(Opcode opcode, uint32_t operandIndex) { return operandInfoIn(operandInfosByOpcode[static_cast<unsigned>(opcode)], operandIndex); }
 ALWAYS_INLINE const OperandInfo& operandInfoOf(TerminatorKind kind, uint32_t operandIndex) { return operandInfoIn(operandInfosByTerminatorKind[static_cast<unsigned>(kind)], operandIndex); }
@@ -250,6 +280,12 @@ function both(schema: Schema, emit: EntryEmitter): string[] {
   return blocks(forOperations(schema, emit), forTerminators(schema, emit));
 }
 
+const leastLabelsOfColumnTable = 16;
+
+function nameOfSwitchBehindTable(name: string): string {
+  return name.endsWith("Of") ? `${name.slice(0, -"Of".length)}InSchemaOf` : `${name}InSchema`;
+}
+
 function lookup(
   type: string,
   name: string,
@@ -260,8 +296,17 @@ function lookup(
     const cases = entries.map(entry => ({ label: entry.name, value: valueOf(entry) }));
     if (defaultValue !== null && cases.every(({ value }) => value === defaultValue))
       return [`constexpr ${type} ${name}(${enumName}) { return ${defaultValue}; }`];
-    const signature = `${type} ${name}(${enumName} ${parameter})`;
-    return constexprSwitch({ signature, subject: parameter, enumName, cases, defaultValue });
+    const sizesOfGroups = [...Map.groupBy(cases, ({ value }) => value).values()].map(group => group.length);
+    if (cases.length - Math.max(...sizesOfGroups) < leastLabelsOfColumnTable) {
+      const signature = `${type} ${name}(${enumName} ${parameter})`;
+      return constexprSwitch({ signature, subject: parameter, enumName, cases, defaultValue });
+    }
+    const inSchema = nameOfSwitchBehindTable(name);
+    const signature = `${type} ${inSchema}(${enumName} ${parameter})`;
+    const table = `ColumnTable<${enumName}, ${type}, ${inSchema}>`;
+    return blocks(constexprSwitch({ signature, subject: parameter, enumName, cases, defaultValue }), [
+      `ALWAYS_INLINE constexpr ${type} ${name}(${enumName} ${parameter}) { return ${table}::at(${parameter}); }`,
+    ]);
   };
 }
 
@@ -316,11 +361,26 @@ function operationsHeader(schema: Schema): string[] {
   const provenRule = (entry: Entry) => (entry.result.proven === null ? "std::nullopt" : rule(entry.result.proven));
   const effectRule = (entry: Entry) => `EffectRule::${entry.effectRule}`;
   const namedOperandCount = (entry: Entry) => String(entry.namedOperands.length);
+  const usesOfNamedOperands = (entry: Entry) => {
+    const uses = new Map<string, Member>();
+    for (const operand of entry.namedOperands) {
+      for (const use of operand.uses.uses) uses.set(use.name, use);
+    }
+    const inOrder = [...uses.values()].sort((left, right) => left.number - right.number);
+    return `OperandUses ${setText("OperandUse", inOrder)}`;
+  };
   const flagMask = (flags: readonly Flag[]) => `0x${((1 << flags.length) - 1).toString(16)}`;
   const fixedTargets = (entry: Entry) =>
     entry.targets.some(target => target.isVariadic) ? "std::nullopt" : String(entry.targets.length);
+  const targetsTakingProofs = (entry: Entry) => {
+    if (entry.targets.length > numberOfBitsForTargets)
+      throw new Error(`${entry.name} lists more targets than targetsTakingProofsOf() has bits`);
+    const mask = entry.targets.reduce((bits, target, index) => (target.takesProofs ? bits | (1 << index) : bits), 0);
+    return `0x${mask.toString(16)}`;
+  };
   const declarations = blocks(
     wirePredicates,
+    columnTable,
     [noteOnStandingInCode, ...both(schema, lookup("bool", "mayStandInCode", mayStandInCode, null))],
     both(schema, lookup("OperationFamily", "familyOf", family, "most common")),
     forOperations(
@@ -335,6 +395,10 @@ function operationsHeader(schema: Schema): string[] {
       schema,
       lookup("bool", "hasVariadicOperand", entry => truth(entry.variadicOperand !== null), "false"),
     ),
+    [
+      noteOnUsesOfNamedOperands,
+      ...forOperations(schema, lookup("OperandUses", "usesOfNamedOperandsOf", usesOfNamedOperands, "OperandUses { }")),
+    ],
     both(
       schema,
       lookup("uint16_t", "declaredFlagsOf", entry => flagMask(entry.flags), "0x0"),
@@ -345,6 +409,7 @@ function operationsHeader(schema: Schema): string[] {
     ),
     entryInfoDeclarations(schema),
     forTerminators(schema, lookup("std::optional<uint32_t>", "numberOfFixedTargetsOf", fixedTargets, null)),
+    [noteOnTargetsTakingProofs, ...forTerminators(schema, lookup("uint32_t", "targetsTakingProofsOf", targetsTakingProofs, "0x0"))],
     declaredPosition,
   );
   const includes = [
@@ -495,7 +560,6 @@ function valueKindOf(kind: Kind): Kind {
   return kind.tag === "List" ? kind.element : kind;
 }
 
-// What resolvePayloadKind() of resolve-entries.ts answers for a field of an entry.
 function payloadKindOf(schema: Schema, kind: Kind): string {
   const ownName = kind.tag === "Id" ? kind.id.name : kindText(kind);
   const members = schema.enums.find(type => type.name === "PayloadKind")?.members ?? [];
@@ -651,7 +715,6 @@ function operandInfoTable(enumName: EntryEnumName): string[] {
 }
 
 function operationsSource(schema: Schema): string[] {
-  // The table of built-ins says which of its names the engine means by BuiltinNames::x: in a list, at the position of x. One name is a stretch of that list.
   const namedMembersOf = (operand: Operand) => {
     const [member, ...others] = operand.uses.namedMembers;
     if (member === undefined) return "{ }";

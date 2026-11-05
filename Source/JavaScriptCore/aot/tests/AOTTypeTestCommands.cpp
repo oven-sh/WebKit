@@ -126,7 +126,6 @@ using OperationOnTypes = TypeID (*)(TypeArena&, TypeID, TypeID);
 
 } // anonymous namespace
 
-// The reader appends the layouts of built-ins and namespaces after the ones the text declares.
 static unsigned numberOfLayoutsInTypeTest(const Program& program)
 {
     auto firstAdded = std::ranges::find_if(program.layouts, [](const Layout& layout) {
@@ -182,7 +181,6 @@ static std::optional<PropertyKeyID> keyNamedInTypeTest(StringView word, const Pr
     return findKeyForTypeTest(program, PropertyKeyKind::PrivateName, word.substring(1, ownerMark - 1), *owner);
 }
 
-// Behind the types of the parameters come the arguments: each is a type as ir/AOTTypeText.h spells it, which says what no wire type can.
 static std::optional<Vector<TypeID>> typesOfTypeTest(TestCommandContext& context)
 {
     Program& program = *context.program;
@@ -259,7 +257,6 @@ static bool operationIgnoresWrittenContents(OperationOnTypes operation, TypeID a
     return typeWithoutWrittenContents(arena, result) == typeWithoutWrittenContents(arena, resultWithoutThem);
 }
 
-// Types with the same values may differ in seeds, in the objects named beside `unknown`, in a layout or a class listed beside the class that holds it, and in written contents.
 static bool agreeOnPartsDeterminedByValues(const Type& a, const Type& b)
 {
     return a.primitives == b.primitives && a.integers.isSubsetOf(b.integers) && b.integers.isSubsetOf(a.integers) && a.boundsOfFractions == b.boundsOfFractions
@@ -276,7 +273,6 @@ static bool partHoldsContentsOf(const ClassPart& holder, const ClassPart& part)
     return true;
 }
 
-// Every part of the type that speaks of objects lies in the same part of the holder.
 static bool objectPartsAreContainedPartByPart(TypeArena& arena, const Type& type, const Type& holder)
 {
     if (!arena.objectSets().isSubset(type.objects, holder.objects))
@@ -294,7 +290,6 @@ static bool objectPartsAreContainedPartByPart(TypeArena& arena, const Type& type
     });
 }
 
-// No type says that a function or a built-in is an instance of a class, that an object is an instance of two classes, or that an object which may have a shape has it.
 static bool mayHoldPartsOfType(TypeArena& arena, const Type& holder, const Type& type)
 {
     const BuiltinTable& builtins = arena.builtins();
@@ -308,7 +303,6 @@ static bool mayHoldPartsOfType(TypeArena& arena, const Type& holder, const Type&
     SetView<ObjectID, ObjectSetID> namedByHolder;
     if (holder.objects)
         namedByHolder = arena.at(holder.objects);
-    // An intersection keeps a named object wherever overlap() says yes.
     bool namesObjectThatOnlyMayBeHeld = type.objects && arena.at(type.objects).anyOf([&](ObjectID object) {
         if (namedByHolder.contains(object) || surelyFitsUnknownOf(arena, object, holder))
             return false;
@@ -346,14 +340,12 @@ static void freezeTypesOfTypeTest(Program& program)
         program.types.freeze();
 }
 
-// Off every landmark and outside the small ranges: no test writes it, so a frozen table lacks whatever holds it.
 static Range rangeThatNoTypeTestWrites(unsigned index)
 {
     int64_t bound = 100003 + index;
     return { -bound, bound };
 }
 
-// The table is frozen from here on, so this comes last in a command.
 static void checkTypeRelationsInThreadArena(TypeLawChecker& laws, Program& program, std::span<const TypeID> types, const TypePairTable<bool>& isInside, const TypePairTable<bool>& overlaps)
 {
     freezeTypesOfTypeTest(program);
@@ -369,7 +361,6 @@ static void checkTypeRelationsInThreadArena(TypeLawChecker& laws, Program& progr
     }
 }
 
-// The table is frozen from here on, so this comes last in a command.
 static void checkTypeOperationInThreadArena(TypeLawChecker& laws, Program& program, std::span<const TypeID> types, OperationOnTypes operation, const TypePairTable<TypeID>& results)
 {
     freezeTypesOfTypeTest(program);
@@ -565,7 +556,6 @@ static void runIntersect(TestCommandContext& context)
     laws.finish();
 }
 
-// What the cast type writes of the contents of a class stands. Where it writes nothing, what the value's type writes stays.
 static bool keepsContentsOfCastType(TypeArena& arena, const Type& cast, const Type& source, const Type& castType)
 {
     std::span<const ClassPart> partsOfSource = unnamedClassPartsOfType(arena, source);
@@ -580,7 +570,6 @@ static bool keepsContentsOfCastType(TypeArena& arena, const Type& cast, const Ty
     });
 }
 
-// No type says that an object is an instance of two classes, so a class of the value's type stays beside a class of the cast type that may share instances with it.
 static bool namesOnlyClassesThatCastTypeMayHold(TypeArena& arena, const Type& cast, const Type& castType)
 {
     const BuiltinTable& builtins = arena.builtins();
@@ -639,7 +628,6 @@ static void runCast(TestCommandContext& context)
     laws.finish();
 }
 
-// A list of class parts has one part a class before intern() sees it, so the parts are the one thing that is united here as a union does it.
 static ClassPartsID unitedClassPartsOfTypes(TypeArena& arena, ClassPartsID a, ClassPartsID b)
 {
     TypeParts first;
@@ -895,7 +883,6 @@ static void runTruthy(TestCommandContext& context)
     laws.finish();
 }
 
-// Both edges after testing t<i> for the testable part of t<j>, for t<j> as written where that differs, and after t<i> === t<j>.
 static void runEdges(TestCommandContext& context)
 {
     auto types = typesOfTypeTest(context);
@@ -938,7 +925,6 @@ static void runEdges(TestCommandContext& context)
         }
     }
 
-    // In Compile a name that proves nothing of its cell gives way to what was tested. The table is frozen from here on.
     freezeTypesOfTypeTest(*context.program);
     TypeArena threadArena(context.program->types, ArenaKeeps::UntilReset);
     TypingContext typingOfCompile { program, threadArena, PositionTypes::knowingNothing() };
@@ -1169,7 +1155,6 @@ unsigned listBrokenLawsOfTypes(PrintStream& out, Program& program, unsigned most
     return LawsOfTypes(out, program, mostTypes).run();
 }
 
-// The types that the test names. The table of types holds more: what the table of built-ins brings, which is not the same in every build.
 static void runLawsOfTypes(TestCommandContext& context)
 {
     auto types = typesOfTypeTest(context);
@@ -1184,8 +1169,6 @@ static void runLawsOfTypes(TestCommandContext& context)
     LawsOfTypes(context.out, program, WTF::move(corpus)).run();
 }
 
-// The scan of bodies numbers the sites, and it belongs to Facts. Here f0 gets one of each sort: v<2n> has L<n>, v<2n + 1> has L<n> or a layout below it, and behind them come
-// an array and a map of operations, an array of native code, and an object without a shape of an operation and of native code.
 static void defineSitesOfAliasTest(Program& program)
 {
     Vector<ObjectSite> sites;
@@ -1224,9 +1207,6 @@ static bool someMemberMayBeObject(TypeReader reader, const SetView<ObjectID, Obj
     });
 }
 
-// What the types name under one number and another, and how many pairs of objects were held side by side to find that.
-// Then ObjectSetAliasIndex against mayBeSameObject(): every object that the types name or that the functions, modules and layouts of the text bring, and two copies of each for instances, is asked about sets of them.
-// So are its two users: mayBeSameObject() of two types, and TypeArena::membersWithAliasIn() in an arena of the program and in one of a thread.
 static void runAliases(TestCommandContext& context)
 {
     Program& program = *context.program;
@@ -1274,7 +1254,6 @@ static void runAliases(TestCommandContext& context)
         corpus.appendList({ objects.instanceOf(LayoutID(layout)), objects.prototypeOf(LayoutID(layout)), objects.escapedOf(LayoutID(layout)) });
     for (uint32_t site = objects.firstOf(ObjectKind::Site); site < objects.endOf(ObjectKind::Site); ++site)
         corpus.append(ObjectID(site));
-    // What the table of built-ins relates: an entry and its object in a module, a host object and its holder, a function of the library and the entries that it implements.
     const BuiltinTable& builtins = arena.builtins();
     for (uint32_t ofModule = objects.firstOf(ObjectKind::ModuleBuiltin); ofModule < objects.endOf(ObjectKind::ModuleBuiltin); ++ofModule)
         corpus.appendList({ ObjectID(ofModule), objects.objectOf(objects.builtinOf(ObjectID(ofModule))) });
@@ -1310,7 +1289,6 @@ static void runAliases(TestCommandContext& context)
     unsigned numberThatDiffer = 0;
     size_t numberOfPairsAsked = 0;
 
-    // mayBeSameObject() of two types that name objects and share none, in both orders, against every pair of their members. Where a named object has a class of callables it says yes to more.
     auto holdTypesAgainstEachPair = [&](TypeID first, TypeID second) {
         Type a = arena.at(first);
         Type b = arena.at(second);
@@ -1338,7 +1316,6 @@ static void runAliases(TestCommandContext& context)
         ObjectSetID setOfMembers = arena.objectSets().ofSorted(members);
         TypeID typeOfSet = arena.forObjects(setOfMembers);
         auto view = arena.at(setOfMembers);
-        // What the index has read so far follows who has asked, so it is asked in both orders.
         ObjectSetAliasIndex askedAscending(arena, view);
         ObjectSetAliasIndex askedDescending(arena, view);
         for (ObjectID object : corpus | std::views::reverse) {
@@ -1382,7 +1359,6 @@ static void runAliases(TestCommandContext& context)
     WeakRandom random(20261102);
     Vector<ObjectSetID> seededSets;
     for (unsigned set = 0; set < numberOfSeededSets; ++set) {
-        // From one member in two to one in thirteen, so that some sets lack whole kinds.
         unsigned oneIn = 2 + set % 12;
         Vector<ObjectID> members;
         for (ObjectID object : corpus) {
@@ -1396,7 +1372,6 @@ static void runAliases(TestCommandContext& context)
             holdTypesAgainstEachPair(arena.forObjects(rest), arena.forObjects(seededSets[set]));
     }
 
-    // A copy alone, so that nothing else of its shape answers in its place. Then the first copies of all.
     Vector<ObjectID> firstCopies;
     for (size_t index = 0; index < numberOfSharedForms; ++index) {
         firstCopies.append(ObjectID(firstCopy + 2 * static_cast<uint32_t>(index)));
@@ -1404,7 +1379,6 @@ static void runAliases(TestCommandContext& context)
     }
     holdIndexAgainstEachMember(firstCopies.span(), false);
 
-    // An arena of Compile. The table is frozen from here on and lacks these answers: they lie in the thread and die at reset(), and the memo may bring none of them back.
     Vector<Vector<ObjectID>> expectedInThread;
     for (unsigned set = 1; set < numberOfSeededSets; ++set) {
         auto view = arena.at(seededSets[set]);
@@ -1446,7 +1420,6 @@ static void runAliases(TestCommandContext& context)
         context.out.println("the index answers as mayBeSameObject() does"_s);
 }
 
-// L0 becomes a layout of dictionaries between two arenas, of which the second goes on with the memos of the first.
 template<bool tellsTable>
 static void runMemosAtRest(TestCommandContext& context)
 {

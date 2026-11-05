@@ -40,16 +40,10 @@ struct SiteRegisters {
     GPRReg scratch;
 };
 
-// Where the caller of the stub has not said whether the front tables have a column for the name, the number of the name decides between the two.
 struct TableStubsBehindSite {
     StubKey front;
     std::optional<StubKey> hashed;
 };
-
-Jump branchIfSiteIsFilled(StubAssembler& jit, GPRReg site)
-{
-    return jit.branchTest64(CCallHelpers::NonZero, Address(site));
-}
 
 void countSiteCacheMiss(StubAssembler& jit, GPRReg site, GPRReg scratch, JumpList& isDueForRefill)
 {
@@ -132,7 +126,6 @@ static void loadKindOfSlotAtSite(StubAssembler& jit, const SiteRegisters& regist
 #endif
 }
 
-// An own value has no holder. The result may be the register of the receiver.
 static void loadFromValueSlotAtSite(StubAssembler& jit, const SiteRegisters& registers, GPRReg result)
 {
     const GPRReg header = registers.header;
@@ -153,7 +146,6 @@ static void loadFromValueSlotAtSite(StubAssembler& jit, const SiteRegisters& reg
     jit.load64(BaseIndex(holder, header, CCallHelpers::TimesEight), result);
 }
 
-// Falls through when the site is empty or has a slot of another Structure.
 static void emitSiteProbe(StubAssembler& jit, const SiteRegisters& registers, SlotHandlerTable table)
 {
     jit.loadPair64(registers.site, registers.header, registers.payload);
@@ -169,8 +161,7 @@ static void emitSiteProbe(StubAssembler& jit, const SiteRegisters& registers, Sl
     hasOtherStructure.link(&jit);
 }
 
-// Whoever finds its site empty has asked the table of fields where the caller gives a list for it: it goes on behind that table.
-static void emitSiteMiss(StubAssembler& jit, const SiteRegisters& registers, SlotAccess access, SiteReceiver receiver, const TableStubsBehindSite& stubs, JumpList* hasAskedFieldTable = nullptr)
+static void emitSiteMiss(StubAssembler& jit, const SiteRegisters& registers, SlotAccess access, SiteReceiver receiver, const TableStubsBehindSite& stubs)
 {
     JumpList isDue;
     Jump isEmpty = jit.branchTest64(CCallHelpers::Zero, registers.header);
@@ -182,11 +173,7 @@ static void emitSiteMiss(StubAssembler& jit, const SiteRegisters& registers, Slo
 
     isEmpty.link(&jit);
     countMissOfEmptySite(jit, registers.site, registers.scratch, isDue);
-    if (hasAskedFieldTable) {
-        RELEASE_ASSERT(receiver == SiteReceiver::IsCell);
-        hasAskedFieldTable->append(jit.jump());
-    } else
-        jit.jump().linkTo(probeTables, &jit);
+    jit.jump().linkTo(probeTables, &jit);
 
     isDue.link(&jit);
     if (receiver == SiteReceiver::MayBePrimitive)
@@ -204,7 +191,6 @@ StubSignature signatureOfGetByIdAtSite(StubKey)
     return signature;
 }
 
-// A cell asks the site first: an empty site, which has the StructureID of nothing, is told from another Structure's only behind the mismatch.
 void generateGetByIdAtSite(StubAssembler& jit)
 {
     static constexpr SlotHandlerTable table = SlotHandlerTable::ReadById;
@@ -219,10 +205,8 @@ void generateGetByIdAtSite(StubAssembler& jit)
 #if CPU(X86_64)
     const GPRReg wordIndex = registers.header;
     auto branchOnFlags = [&](X86Assembler::Condition condition) { return Jump(jit.m_assembler.jCC(condition)); };
-    // Each word is compared where it lies.
     jit.load64(Address(registers.site, Slot::offsetOfStructureID()), registers.header);
     Jump hasOtherStructure = jit.branch32(CCallHelpers::NotEqual, registers.header, Address(registers.receiver, JSCell::structureIDOffset()));
-    // Slot::needsHandler says what this one comparison tells.
     jit.m_assembler.cmpb_im(Slot::isOwn, Slot::offsetOfFlags(), registers.site);
     Jump isNotOwnInlineValue = branchOnFlags(X86Assembler::ConditionNE);
     jit.urshift64(TrustedImm32(Slot::locationShiftInHeader), wordIndex);
@@ -232,7 +216,6 @@ void generateGetByIdAtSite(StubAssembler& jit)
 
     isNotOwnInlineValue.link(&jit);
     Jump isOwnOrNeedsHandler = branchOnFlags(X86Assembler::ConditionA);
-    // A value never lies at index zero, and a name that is not there has no location: `if (options.signal)`, `payload.aborted`.
     jit.rshift64(TrustedImm32(Slot::locationShiftInHeader), wordIndex);
     Jump isAbsent = branchOnFlags(X86Assembler::ConditionE);
     jit.load64(Address(registers.site, Slot::offsetOfPayload()), holder);
@@ -275,7 +258,6 @@ void generateGetByIdAtSite(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotOwn.link(&jit);
-    // A value never lies at index zero, and a name that is not there has no location: `if (options.signal)`, `payload.aborted`.
     Jump isAbsent = jit.branchTest64(CCallHelpers::Zero, wordIndex);
     Jump isInCellOfHolder = branchOnFlag(CCallHelpers::Zero, Slot::isOutOfLine);
     jit.loadPtr(Address(holder, JSObject::butterflyOffset()), holder);
@@ -296,8 +278,6 @@ void generateGetByIdAtSite(StubAssembler& jit)
     JumpList isDue;
     Jump isEmpty = jit.branchTest64(CCallHelpers::Zero, registers.header);
     if (nameHasColumn) {
-        // Objects of several Structures come to this place. What the front table holds for this one is answered from here: the table of fields, which answers at an empty site, has its turn behind it.
-        // Structures often keep a name at one place. The front cell then only confirms the place that the site names, so the value does not wait for the tables, and the site stays as it is.
         JumpList isNotInFront;
         const GPRReg cell = registers.header;
         const GPRReg placeAtSite = registers.payload;
@@ -328,7 +308,6 @@ void generateGetByIdAtSite(StubAssembler& jit)
 
     isEmpty.link(&jit);
     JumpList isNotInFieldTable;
-    // The probe shifts by its index, which x86-64 does by this register alone.
     returnFieldByTable(jit, { registers.receiver, registers.identifierNumber, jit.allocateScratch(StubRegister::T14), registers.header, nameHasColumn, true }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     countMissOfEmptySite(jit, registers.site, registers.scratch, isDue);
@@ -374,12 +353,6 @@ StubSignature signatureOfGetLengthAtSite(StubKey)
     return signatureOf(getById());
 }
 
-StubSignature signatureOfGetLengthWithSite(StubKey key)
-{
-    return signatureOfGetByIdAtSite(key);
-}
-
-// The length of an array or a string is an own data property that is not configurable, so it is read without a lookup. Of anything else the name is read as any other.
 static void returnLengthOrGoOnIn(StubAssembler& jit, StubKey readOfAnyName, const Invocable<void(JumpList& goesOn)> auto& emitForOtherCell)
 {
     const GPRReg receiver = jit.operand(0);
@@ -421,11 +394,6 @@ void generateGetLengthAtSite(StubAssembler& jit)
     returnLengthOrGoOnIn(jit, getById(), [](JumpList&) { });
 }
 
-void generateGetLengthWithSite(StubAssembler& jit)
-{
-    returnLengthOrGoOnIn(jit, getByIdAtSite(), [](JumpList&) { });
-}
-
 StubSignature signatureOfPutByIdAtSite(StubKey)
 {
     StubSignature signature;
@@ -441,34 +409,25 @@ void generatePutByIdAtSite(StubAssembler& jit)
     const PutMode mode = static_cast<PutMode>(jit.key().form());
     const SlotHandlerTable table = slotHandlerTable(operationFor(mode), SlotOrigin::ById, SlotForm::Slot);
     const SiteRegisters registers = allocateSiteRegisters(jit, 2);
+    const NameOfStoreAtSite name = static_cast<NameOfStoreAtSite>(jit.key().count());
     JumpList isNotInFieldTable;
 
     jit.linkToStub(jit.branchIfNotCell(registers.receiver), slotExit(table, SlotExit::Miss));
-    isNotInFieldTable.append(branchIfSiteIsFilled(jit, registers.site));
-    // What the table of fields answers is never filed.
-    storeFieldByTable(jit, { registers.receiver, registers.identifierNumber, registers.structureID, registers.header, false, true }, jit.operand(1), registers.payload, operationFor(mode), isNotInFieldTable);
+    if (name != NameOfStoreAtSite::NamesNoField)
+        storeFieldByTable(jit, { registers.receiver, registers.identifierNumber, registers.structureID, registers.header, name == NameOfStoreAtSite::NamesFieldWithColumn, true }, jit.operand(1), registers.payload, operationFor(mode), isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     jit.load32(Address(registers.receiver, JSCell::structureIDOffset()), registers.structureID);
     emitSiteProbe(jit, registers, table);
-    JumpList hasAskedFieldTable;
-    emitSiteMiss(jit, registers, accessFor(mode), SiteReceiver::IsCell, { putById(mode), putByIdHashed(mode) }, &hasAskedFieldTable);
-
-    hasAskedFieldTable.link(&jit);
-    jit.linkToStub(jit.branch32(CCallHelpers::Above, registers.identifierNumber, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
-    jit.jumpToStub(putByIdBehindFieldTable(mode));
+    emitSiteMiss(jit, registers, accessFor(mode), SiteReceiver::IsCell, { putByIdBehindFieldTable(mode), putByIdHashed(mode) });
 }
-
-// ---- Places with SiteAnswers
 
 static_assert(!OBJECT_OFFSETOF(SiteAnswers, first) && OBJECT_OFFSETOF(SiteAnswers, second) == sizeof(SiteAnswers::Answer) && !OBJECT_OFFSETOF(SiteAnswers::Answer, key) && OBJECT_OFFSETOF(SiteAnswers::Answer, operand) == sizeof(uint32_t));
 static_assert(cell32Shift == CCallHelpers::TimesEight);
 
 namespace {
 
-// A stub is handed the distance from the instance to the answers. x86-64 reaches a word of them by the two registers. ARM64 adds them up first.
 class AnswersOfStub {
 public:
-    // `place` holds where the answers of the place lie from here on: on x86-64 their index, elsewhere their address. A place without answers finds SiteAnswers::forPlacesWithout().
     AnswersOfStub(StubAssembler& jit, GPRReg distance, GPRReg place)
         : m_place(place)
     {
@@ -487,7 +446,6 @@ public:
     Word word(ptrdiff_t offset) const { return Word(m_place, static_cast<int32_t>(offset)); }
 #endif
 
-    // Where the key of the answer is `key`, falls through with the operand of the answer in `operand`, which on x86-64 may be `key`. Elsewhere `keyOfAnswer` holds the key of the answer on ARM64.
     Jump loadOperandUnlessKeyDiffers(StubAssembler& jit, ptrdiff_t offsetOfAnswer, GPRReg key, GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
     {
 #if CPU(X86_64)
@@ -501,7 +459,6 @@ public:
 #endif
     }
 
-    // `difference` holds a word, and comes to hold the bits in which the key of the answer differs from it. Where there are none, falls through with the operand of the answer in `operand`.
     Jump loadOperandUnlessKeyDiffersKeepingDifference(StubAssembler& jit, ptrdiff_t offsetOfAnswer, GPRReg difference, GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
     {
 #if CPU(X86_64)
@@ -517,8 +474,6 @@ public:
 #endif
     }
 
-    // The key of an answer by Structure less the StructureID of the cell. A StructureID has zeros where the form lies, so that is zero where the answer is of the Structure and of the form that the use meets most,
-    // the bits of another form where it is of the Structure, and more than formMask of any other answer. Falls through at zero.
     Jump loadBitsOfFormUnlessMostCommon(StubAssembler& jit, ptrdiff_t offsetOfAnswer, GPRReg cell, GPRReg bitsOfForm, [[maybe_unused]] GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
     {
 #if CPU(X86_64)
@@ -530,7 +485,6 @@ public:
         return jit.branchSub32(CCallHelpers::NonZero, keyOfAnswer, bitsOfForm, bitsOfForm);
 #endif
     }
-    // The same for an answer that never has that form.
     void loadBitsOfForm(StubAssembler& jit, ptrdiff_t offsetOfAnswer, GPRReg cell, GPRReg bitsOfForm, [[maybe_unused]] GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
     {
 #if CPU(X86_64)
@@ -542,7 +496,6 @@ public:
         jit.sub32(keyOfAnswer, bitsOfForm, bitsOfForm);
 #endif
     }
-    // Behind either, on either side: the operand of that answer. On x86-64 `operand` may be any register; elsewhere it is the one that was handed there, which has it already.
     void loadOperand(StubAssembler& jit, [[maybe_unused]] ptrdiff_t offsetOfAnswer, [[maybe_unused]] GPRReg operand) const
     {
 #if CPU(X86_64)
@@ -577,7 +530,6 @@ static constexpr bool nameHasColumn(NameAtSite name) { return name == NameAtSite
 static void loadNameOfSite(StubAssembler& jit, GPRReg distance, GPRReg name, GPRReg scratch, NameAtSite nameAtSite)
 {
     RELEASE_ASSERT(noOverlap(distance, scratch) && noOverlap(name, scratch));
-    // The number of a name with a column has two bytes, as the index of a place has. A place of any other name has two numbers, and so four bytes at the same distance.
     static_assert(sizeof(uint16_t) == InstanceLayout::sizeOfIndexOfSiteAnswers && RowDisplacementTable::maxColumn <= UINT16_MAX);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.namesOfSitesByDistance)), scratch);
     if (nameHasColumn(nameAtSite))
@@ -586,7 +538,6 @@ static void loadNameOfSite(StubAssembler& jit, GPRReg distance, GPRReg name, GPR
         jit.load32(BaseIndex(scratch, distance, CCallHelpers::TimesOne), name);
 }
 
-// Every register is as it was behind it. The receiver is a cell.
 static void fillAnswersAtSite(StubAssembler& jit, GPRReg receiver, GPRReg name, GPRReg distance, SiteUse use)
 {
     jit.preservingCallerSavedRegisters(false, [&](unsigned) {
@@ -605,8 +556,6 @@ static void fillAnswersAtSite(StubAssembler& jit, GPRReg receiver, GPRReg name, 
     });
 }
 
-// The receiver is a cell for which the place has no answer. Falls through with every register but the two scratch registers as it was.
-// The misses of all places are counted together, and one in a few is a sample: AnswersAtSites::isDueForFilling().
 static void countMissAtSite(StubAssembler& jit, GPRReg receiver, GPRReg distance, GPRReg name, GPRReg scratch, SiteUse use, NameAtSite nameAtSite)
 {
     RELEASE_ASSERT(noOverlap(receiver, distance, name, scratch, instanceGPR));
@@ -621,7 +570,6 @@ static void countMissAtSite(StubAssembler& jit, GPRReg receiver, GPRReg distance
     });
 }
 
-// The variant whose receiver lies where the others take the distance takes it in the usual register.
 StubSignature signatureOfReadAtSite(StubKey key)
 {
     GPRReg receiver = key.operandRegister().value_or(gprOf(firstStubOperandRegister));
@@ -642,7 +590,6 @@ StubSignature signatureOfReadLengthAtSite(StubKey key)
     return signatureOfReadBehindSite(key);
 }
 
-// A field of a compiled object: where the answers of the place lie, the word of the shape, one comparison, the offset, a look whether the slot holds a value, and the value.
 void generateReadAtSite(StubAssembler& jit)
 {
     constexpr SiteUse use = SiteUse::Read;
@@ -651,11 +598,9 @@ void generateReadAtSite(StubAssembler& jit)
     const GPRReg receiver = jit.operand(0);
     const GPRReg result = jit.result();
     const GPRReg distance = jit.immediate();
-    // No receiver lies in the first two of these.
 #if CPU(X86_64)
     const GPRReg place = jit.allocateScratch(StubRegister::T11);
     const GPRReg key = jit.allocateScratch(StubRegister::T13);
-    // A shift takes its count in one register alone, and swaps where the count lies elsewhere.
     std::optional<OwnedScratchRegister> ownedScratch;
     if (receiver == gprOf(StubRegister::T14))
         ownedScratch.emplace(jit);
@@ -672,15 +617,12 @@ void generateReadAtSite(StubAssembler& jit)
     const GPRReg extension = keyOfAnswer;
 #endif
     const GPRReg laterGranules = operand;
-    // It outlives the look at the Structure.
     const GPRReg difference = jit.allocateScratch(distance == gprOf(StubRegister::T15) ? StubRegister::T10 : StubRegister::T15);
     RELEASE_ASSERT(noOverlap(receiver, distance, place, key, operand, difference) && noOverlap(receiver, distance, key, laterGranules, extension));
-    // The receiver outlives the load: an empty word sends it on.
     const GPRReg value = receiver == result ? operand : result;
     JumpList isNotAsked;
     JumpList isNotAnswered;
     const GPRReg storage = operandOfCommonForm == key ? operand : key;
-    // The answer says where the slot lies, and this object holds nothing there.
     JumpList slotIsEmpty;
     auto returnFieldAt = [&](GPRReg offset) {
         const BaseIndex slot(receiver, offset, CCallHelpers::TimesOne);
@@ -698,12 +640,10 @@ void generateReadAtSite(StubAssembler& jit)
     if (form.receiver == ReceiverAtSite::IsAnyValue)
         isNotAsked.append(jit.branchIfNotCell(receiver));
     const AnswersOfStub answers(jit, distance, place);
-    // Only a compiled object has the word of a shape there, with compiledObjectShapeBit, and so has every key by shape: what another cell has there fits none.
     jit.load32(Address(receiver, offsetOfShapeWord), difference);
     Jump isNotInCell = answers.loadOperandUnlessKeyDiffersKeepingDifference(jit, offsetOfFirstAnswer, difference, operandOfCommonForm, keyOfAnswer);
     returnFieldAt(operandOfCommonForm);
 
-    // THE ARMS STAND IN THE ORDER IN WHICH PROGRAMS MEET THEM. Behind a field in the cell that is a value of the receiver's own in its butterfly: one comparison finds the Structure and the form.
     isNotInCell.link(&jit);
     Jump hasOtherKey = answers.loadBitsOfFormUnlessMostCommon(jit, offsetOfSecondAnswer, receiver, key, operand, keyOfAnswer);
     answers.loadSignedOperand(jit, offsetOfSecondAnswer, operandOfCommonForm);
@@ -714,7 +654,6 @@ void generateReadAtSite(StubAssembler& jit)
     hasOtherKey.link(&jit);
     Jump isNotAnsweredByStructure = jit.branch32(CCallHelpers::Above, key, TrustedImm32(SiteAnswers::formMask));
     answers.loadOperand(jit, offsetOfSecondAnswer, operand);
-    // Whatever comes here has none of the forms in front of `lower`.
     struct JumpsToTwoForms {
         Jump toLower;
         Jump toUpper;
@@ -773,24 +712,19 @@ void generateReadAtSite(StubAssembler& jit)
 
     extraValueInCellOrGetterAboveInCell.toLower.link(&jit);
     loadExtraProperties();
-    // A reference counts words of eight bytes from the base of the cage, and the value lies in the cell that it names.
     jit.add32(operand, key);
     jit.load64(BaseIndex(cellCageBaseGPR, key, CCallHelpers::TimesEight), result);
     jit.returnToCaller();
 
     lengthOrOwnNarrowReference.toLower.link(&jit);
-    // A view that follows its buffer, and one of a buffer that may change its size, work their length out.
     isNotAsked.append(jit.branchTest8(CCallHelpers::NonZero, Address(receiver, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
     jit.load64(Address(receiver, JSArrayBufferView::offsetOfLength()), operand);
-    // The operand may be the scratch register of the assembler, through which a compare with 64 bits carries them.
     isNotAsked.append(jit.branch64(CCallHelpers::Above, operand, TrustedImm32(std::numeric_limits<int32_t>::max())));
     boxInt32(jit, operand, jit.result());
     jit.returnToCaller();
 
-    // An accessor: the word that a value would lie in holds the GetterSetter, and its getter is called as behind the access table.
     const StubKey callOfGetter = callGetterOfAnswer(jit.key().callerFrame());
     const GPRReg receiverOfGetter = gprOf(firstStubOperandRegister);
-    // The receiver has left its register by then.
     const GPRReg getterSetter = jit.clobberRegister(StubRegister::T10);
     checkStubOperands(callOfGetter, { receiverOfGetter, getterSetter });
     RELEASE_ASSERT(noOverlap(receiverOfGetter, getterSetter, key, operand, distance, place));
@@ -818,11 +752,8 @@ void generateReadAtSite(StubAssembler& jit)
     jit.move(receiver, receiverOfGetter);
     callGetterIn(BaseIndex(receiverOfGetter, operand, CCallHelpers::TimesOne));
 
-    // As readFieldInExtension(): the narrow word of an object without an Extension names a page of zeros, which holds no granule.
-    // The bit of the granule goes to the top and the bits of later granules drop out, so what is left counts the granules up to this one.
     static_assert(offsetOfFirstExtensionSlot == extensionGranuleSize && extensionGranuleSize == sizeof(uint64_t) && maxExtensionGranules == 64);
     isNotAnsweredByStructure.link(&jit);
-    // The one bit in which the key of the answer differs from the word of the shape says which other answer by shape it is. A key by no shape, and what another cell has there, differ in more.
     isNotAnswered.append(jit.branchTest32(CCallHelpers::NonZero, difference, TrustedImm32(static_cast<int32_t>(~SiteAnswers::bitsTurnedForAnswersByShape))));
     jit.load32(answers.word(offsetOfFirstAnswer + OBJECT_OFFSETOF(SiteAnswers::Answer, operand)), operand);
     Jump isNotInExtension = jit.branch32(CCallHelpers::NotEqual, difference, TrustedImm32(static_cast<int32_t>(SiteAnswers::bitTurnedForFieldInExtension)));
@@ -837,7 +768,6 @@ void generateReadAtSite(StubAssembler& jit)
     jit.move(value, result);
     jit.returnToCaller();
 
-    // A slot of the cell that holds no boxed value: as the stub of any field reads a slot of that form.
     isNotInExtension.link(&jit);
     {
         const GPRReg address = place;
@@ -851,7 +781,6 @@ void generateReadAtSite(StubAssembler& jit)
         FieldReadExits exits;
         for (SlotRepresentation representation : { SlotRepresentation::OptionalCell32, SlotRepresentation::OptionalInt32, SlotRepresentation::OptionalDouble, SlotRepresentation::OptionalBoolean, SlotRepresentation::OptionalInt64 }) {
             Jump isOfAnotherForm = jit.branch32(CCallHelpers::NotEqual, difference, TrustedImm32(static_cast<int32_t>(SiteAnswers::bitTurnedForSlotInCell(representation))));
-            // An answer by Structure of that form has left its operand in the same register.
             if (representation == SlotRepresentation::OptionalCell32)
                 lengthOrOwnNarrowReference.toUpper.link(&jit);
             if (representation == SlotRepresentation::OptionalInt32)
@@ -862,7 +791,6 @@ void generateReadAtSite(StubAssembler& jit)
             else
                 jit.getEffectiveAddress(BaseIndex(receiver, operand, CCallHelpers::TimesOne), address);
             {
-                // The operand is read by the load of the slot, or has been read by the line above, and by nothing behind.
                 AllowMacroScratchRegisterUsage operandIsFreeBehindTheLoad(jit);
                 readFieldAndReturn(jit, registers, exits, representation);
             }
@@ -883,8 +811,6 @@ void generateReadAtSite(StubAssembler& jit)
     isNotAnswered.link(&jit);
     goOnBehindSite(WayBehindSite::AfterMiss);
 
-    // `options.signal`, where the object leaves the property out: undefined, by what getByIdOfEmptySlot() goes by. Every field that the object has lies in its slot, it has nothing but fields,
-    // above it stands Object.prototype alone, and that has no such name now: each is asked of the object and of the table at every read, so nothing has to be taken back.
     slotIsEmpty.link(&jit);
     isNotAsked.append(jit.branchTest32(CCallHelpers::NonZero, Address(receiver, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))));
     loadStructure(jit, receiver, key);
@@ -895,7 +821,6 @@ void generateReadAtSite(StubAssembler& jit)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesOfObjectPrototypes)), place);
     jit.urshift32(key, TrustedImm32(6), operand);
     jit.load64(BaseIndex(place, operand, CCallHelpers::TimesEight), place);
-    // A shift takes the low six bits of its count.
     jit.urshift64(key, place);
     isNotAsked.append(jit.branchTest64(CCallHelpers::NonZero, place, TrustedImm32(1)));
     jit.move(TrustedImm64(JSValue::ValueUndefined), result);
@@ -906,7 +831,6 @@ void generateReadAtSite(StubAssembler& jit)
     isNotAsked.link(&jit);
     goOnBehindSite(WayBehindSite::WithoutMiss);
 
-    // An instance of a class or of a constructor function. All that the tables in front would find is known here.
     if (nameHasColumn(form.name)) {
         isNotBelowObjectPrototype.link(&jit);
         goOnBehindSite(WayBehindSite::OfFieldLeftOut);
@@ -918,7 +842,6 @@ StubSignature signatureOfReadAtSiteOfNarrowField(StubKey key)
     return signatureOfReadAtSite(key);
 }
 
-// The key of such an answer is the word of the shape with the bit of the form turned. Any other receiver, any other answer and a slot that holds a mark go on as at every place.
 void generateReadAtSiteOfNarrowField(StubAssembler& jit)
 {
     const ReadAtSiteForm form = readAtSiteFormOf(jit.key());
@@ -967,12 +890,10 @@ void generateReadAtSiteOfNarrowField(StubAssembler& jit)
         jit.getEffectiveAddress(BaseIndex(receiver, offset, CCallHelpers::TimesOne), place);
     FieldReadExits exits;
     {
-        // The offset is read by the load of the slot, or has been read by the line above, and by nothing behind.
         AllowMacroScratchRegisterUsage offsetIsFreeBehindTheLoad(jit);
         readFieldAndReturn(jit, typed, exits, representation);
     }
 
-    // Objects of two layouts come in turns: the second layout is remembered by the Structure of its object.
     hasOtherKey.link(&jit);
     if (std::optional<SiteAnswers::Form> byStructure = SiteAnswers::formByStructureOfSlotInCell(representation)) {
         answers.loadBitsOfForm(jit, offsetOfSecondAnswer, receiver, key, offset, keyOfAnswer);
@@ -1012,7 +933,6 @@ void generateReadBehindSite(StubAssembler& jit)
 
 void generateReadLengthAtSite(StubAssembler& jit)
 {
-    // Of a typed array the name is a getter of the engine, far above the receiver. The place remembers of a Structure that this is what a lookup finds; it is asked here, in front of the arms of other names.
     returnLengthOrGoOnIn(jit, readAtSite(ReceiverAtSite::IsAnyValue, static_cast<NameAtSite>(jit.key().form())), [&](JumpList& goesOn) {
         const GPRReg receiver = jit.operand(0);
         const GPRReg distance = jit.immediate();
@@ -1023,7 +943,6 @@ void generateReadLengthAtSite(StubAssembler& jit)
         jit.load32(Address(receiver, JSCell::structureIDOffset()), key);
         jit.or32(TrustedImm32(static_cast<int32_t>(SiteAnswers::bitsOf(SiteUse::Read, SiteAnswers::Form::LengthOfTypedArray))), key);
         goesOn.append(jit.branch32(CCallHelpers::NotEqual, answers.word(offsetOfSecondAnswer), key));
-        // A view that follows its buffer, and one of a buffer that may change its size, work their length out.
         goesOn.append(jit.branchTest8(CCallHelpers::NonZero, Address(receiver, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
         jit.load64(Address(receiver, JSArrayBufferView::offsetOfLength()), key);
         goesOn.append(jit.branch64(CCallHelpers::Above, key, TrustedImm32(std::numeric_limits<int32_t>::max())));
@@ -1037,7 +956,6 @@ StubSignature signatureOfCallMethodAtSite(StubKey key)
     return signatureOf(callMethodById(key.count()));
 }
 
-// `object.name(a, b)`: the Structure of `this`, one comparison, the callee out of its word, and on as a call of a value.
 void generateCallMethodAtSite(StubAssembler& jit)
 {
     constexpr SiteUse use = SiteUse::Call;
@@ -1065,7 +983,6 @@ void generateCallMethodAtSite(StubAssembler& jit)
 
     isNotAsked.append(jit.branchIfNotCell(thisGPR));
     const AnswersOfStub answers(jit, distance, place);
-    // A method in the butterfly of an object above the receiver is what places meet most: one comparison finds the Structure and the form. Only the first answer has that form: AnswersAtSites::fill().
     Jump hasOtherKey = answers.loadBitsOfFormUnlessMostCommon(jit, offsetOfFirstAnswer, thisGPR, calleeGPR, operand, keyOfAnswer);
     answers.loadOperand(jit, offsetOfFirstAnswer, operandOfCommonForm);
     jit.loadPtr(BaseIndex(cellCageBaseGPR, operandOfCommonForm, CCallHelpers::TimesEight, JSObject::butterflyOffset()), operandOfCommonForm);
@@ -1073,12 +990,10 @@ void generateCallMethodAtSite(StubAssembler& jit)
     jit.load64(BaseIndex(operandOfCommonForm, index, CCallHelpers::TimesEight), calleeGPR);
     jit.jumpToStub(callValue(count));
 
-    // calleeGPR holds the bits of the form.
     auto callValueOfOtherForm = [&](ptrdiff_t offsetOfAnswer) {
         JumpList differs;
         differs.append(jit.branch32(CCallHelpers::Above, calleeGPR, TrustedImm32(SiteAnswers::formMask)));
         answers.loadOperand(jit, offsetOfAnswer, operand);
-        // Each object has its own value, so only the place of the value is known.
         Jump isNotInCell = branchUnlessForm(jit, use, calleeGPR, Form::OwnFieldInCell);
         jit.load64(BaseIndex(thisGPR, operand, CCallHelpers::TimesOne), calleeGPR);
         isNotAsked.append(jit.branchTest64(CCallHelpers::Zero, calleeGPR));
@@ -1089,7 +1004,6 @@ void generateCallMethodAtSite(StubAssembler& jit)
         jit.load64(BaseIndex(cellCageBaseGPR, operand, CCallHelpers::TimesEight), calleeGPR);
         jit.jumpToStub(callValue(count));
 
-        // A value of the receiver's own in its butterfly.
         isNotAbove.link(&jit);
         Jump isNotInStorage = branchUnlessForm(jit, use, calleeGPR, Form::OwnValueInStorage);
         jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), calleeGPR);
@@ -1097,8 +1011,6 @@ void generateCallMethodAtSite(StubAssembler& jit)
         jit.load64(BaseIndex(calleeGPR, operand, CCallHelpers::TimesEight), calleeGPR);
         jit.jumpToStub(callValue(count));
 
-        // Among the extra properties of a compiled object, found as a place that reads finds it.
-        // The run time files no other form for a call. SiteAnswers::forPlacesWithout() has the form Nothing.
         isNotInStorage.link(&jit);
         auto loadExtraProperties = [&] {
             jit.zeroExtend8To32(operand, calleeGPR);
@@ -1123,11 +1035,9 @@ void generateCallMethodAtSite(StubAssembler& jit)
     };
     hasOtherKey.link(&jit);
     callValueOfOtherForm(offsetOfFirstAnswer);
-    // No second answer has the form that places meet most, and no arm is of it.
     answers.loadBitsOfForm(jit, offsetOfSecondAnswer, thisGPR, calleeGPR, operand, keyOfAnswer);
     callValueOfOtherForm(offsetOfSecondAnswer);
 
-    // The code asks for such a place only under a name with a column.
     countMissAtSite(jit, thisGPR, distance, key, place, use, NameAtSite::HasColumn);
     isNotAsked.link(&jit);
     loadNameOfSite(jit, distance, distance, key, NameAtSite::HasColumn);

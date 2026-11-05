@@ -72,7 +72,6 @@ public:
 
 private:
     const ImageRegExp* m_records { nullptr };
-    // By the number of the record and the flags.
     UncheckedKeyHashMap<uint64_t, RegExp*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_cells;
     Vector<RegExp*> m_cellsInOrderOfCreation;
     size_t m_numberOfCellsVisited { 0 };

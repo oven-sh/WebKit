@@ -7,9 +7,6 @@
 
 #if ENABLE(AOT) && defined(BUN_ICU_ZSTD)
 
-// The ICU data that the release lanes bundle is repacked with a zstd frame per item (icu/compress-data.ts), and their ICU calls this hook, which it declares weak, on every item that it loads
-// (icu/udata-decompress-hook.patch). Bun defines it, and so does the shell (jsc.cpp). The compiler asks ICU in the process of the build, for the pattern of a number or a date in a written locale
-// (builtins/AOTFormatPatternPlanner.cpp), and in a test that process is this program: without the hook ICU refuses every such request, and no pattern is laid down.
 #define ZSTD_STATIC_LINKING_ONLY
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
@@ -23,7 +20,6 @@ extern "C" const unsigned bun_icu_zstd_dict_size;
 
 extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* length)
 {
-    // A raw item has 0xda 0x27 at bytes 2 and 3 (ucmndata.h), so its first word is never zstd's magic number.
     uint32_t magic;
     if (!item)
         return item;

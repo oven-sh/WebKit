@@ -163,7 +163,6 @@ size_t ChainDependents::numberOfDependents(JSObject* object) const
 size_t ChainDependents::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     size_t numberOfDependentsOfDeadObjects = 0;
-    // To ask the owner of each dependent costs more than all the rest of a full collection's sweep of the tables, and what it finds takes room and does no harm.
     bool dropsEvictedDependents = scope == CollectionScope::Full && m_numberOfDependentsAddedSinceOwnersWereAsked >= m_numberOfDependentsLeftWhenOwnersWereAsked;
     size_t numberOfDependentsLeft = 0;
     m_structuresWithState.removeIf([&](StructureID id) {
@@ -195,7 +194,6 @@ static const LayoutData* classWhoseHolderChanged(const ClassTable& classes, JSOb
 {
     if (const LayoutData* layout = classes.classHeldBy(changed, side))
         return layout;
-    // JSObject::putDirect() bypasses the method table, so it can add a property to a class prototype whose members do not exist yet. ClassTable does not list the holders of a class left to its record until their guards are armed, which tryLeaveDefinitionToRecord() leaves to createClassPart().
     if (changed->classInfo() != ClassPrototype::info())
         return nullptr;
     const LayoutData* layout = classes.classOf(*uncheckedDowncast<ClassPrototype>(changed));
@@ -216,7 +214,6 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
         classes.didChangeMember(*layout, side, uidOrNull);
         return;
     }
-    // Freezing is reported without a name, behind the change. It changes neither what a name finds nor the prototype, and nothing of a frozen object changes ever again.
     if (changed->isFrozen(vm)) {
         classes.didFreezeHolder(vm, *layout, side, changed);
         return;
@@ -229,7 +226,6 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
 {
     if (VMPropertyCaches* caches = vm.aotState().propertyCaches.get()) {
         caches->didChangeObjectOnSomeChain(changed, uidOrNull);
-        // What a realm does to its Object.prototype before it has an Instance is seen when the Instance is created.
         JSGlobalObject* realm = changed->structure()->realm();
         if (realm && changed == realm->objectPrototype() && realm->aotInstance())
             caches->didChangeObjectPrototype(changed, uidOrNull);
@@ -260,7 +256,6 @@ void RuntimeHooks::didChangeGlobalLexicalBindings(JSGlobalObject* realm)
     if (!state || !state->globalBindings)
         return;
     state->globalBindings->dropConstants();
-    // The caller counts the epoch up next, and at this number it starts over.
     if (realm->globalLexicalBindingEpoch() + 1 == Options::thresholdForGlobalLexicalBindingEpoch())
         state->globalBindings->dropLocations();
 }
@@ -279,7 +274,6 @@ bool RuntimeHooks::becomesDictionaryByAddition(VM& vm, JSObject* object, Structu
         return false;
     if (structure->hasBeenDictionary() || isCopyOnWrite(structure->indexingMode()) || structure->isCompiledStructure() || structure->typeInfo().prohibitsPropertyCaching())
         return false;
-    // The Structure of the extra properties of a compiled object is part of what the Structure of that object says.
     if (structure->inlineCapacity() == extraPropertiesInlineCapacity && structure->hasMonoProto() && structure->storedPrototype().isNull())
         return false;
     State* state = stateOrNull(structure);
@@ -317,7 +311,6 @@ bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverSt
     if (!walk.dependsOnChain())
         return true;
 
-    // The walk passes lazy class prototypes of globalObject only, and they report to that realm only.
     if (receiverStructure->realm() != globalObject || ofOwner.realm() != globalObject)
         return false;
     ofOwner.add(walk.changeableObjects.span(), dependent);
@@ -368,7 +361,6 @@ static bool canWalkThrough(Structure* structure)
     return !isProxyType(structure->typeInfo().type()) && !structure->needImpurePropertyWatchpoint() && !structure->isDictionary() && (structure->isCompiledStructure() || structure->propertyAccessesAreCacheable());
 }
 
-// What walkChain() answers where every object above is an ordinary one or a class prototype without members yet, and none has the name. Nothing of the walk is kept, so nothing is listed.
 static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverStructure, UniquedStringImpl* uid, StoredName name)
 {
     bool mayBeDeclared = name == StoredName::MayBeSpelledByProgram;
@@ -404,7 +396,6 @@ bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverSt
     return storeThroughChain(walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid)) == StoreThroughChain::CreatesOwnProperty;
 }
 
-// A slot filed for an Unknown walk is dropped when this object changes. An object with immutable properties still reifies its static ones.
 static StepResult stopAt(JSObject* object, ChainWalk& walk)
 {
     walk.changeableObjects.append(object);
@@ -431,7 +422,6 @@ static bool findMemberDeclaredByLazyPrototype(const ChainWalkStart& start, Uniqu
     return true;
 }
 
-// The one member that is asked for gets a place of its own, and the others are not made. Where the table of classes has no such place to give, the members are made: the cell is an ordinary object from then on, and the walk looks into it like into any other.
 static StepResult passLazyClassPrototypes(const ChainWalkStart& start, UniquedStringImpl* uid, JSObject*& object, ChainWalk& walk)
 {
     for (; object && object->classInfo() == ClassPrototype::info(); object = object->getPrototypeDirect().getObject()) {
@@ -454,27 +444,21 @@ static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* obje
     VM& vm = start.globalObject->vm();
     TypeInfo typeInfo = structure->typeInfo();
     if (!structure->propertyAccessesAreCacheableForAbsence()) {
-        // mayHaveLazyProperty() reads a property of a class object, which may materialize its property table.
         return start.mode == ChainWalkMode::MayAllocate && !mayHaveLazyProperty(vm, object, uid, LookupPosition::PrototypeChain);
     }
     if (!typeInfo.overridesGetOwnPropertySlot() && !typeInfo.overridesPut())
         return true;
 
-    // The names and classes that the engine's megamorphic caches look up in the property table alone.
     JSType type = typeInfo.type();
     bool answersOnlyForLength = type == ArrayType || type == DerivedStringObjectType || object == start.globalObject->arrayPrototype();
     if (uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto) {
-        // Those caches leave out what a function answers for by itself. An array and a String object look `name` and `prototype` up like any other name.
         return answersOnlyForLength && (uid == vm.propertyNames->name || uid == vm.propertyNames->prototype);
     }
-    // The put of a native constructor refuses names on the constructor itself. For whoever inherits from it, it is the put of an ordinary object.
     if (type == InternalFunctionType && !typeInfo.overridesGetOwnPropertySlot() && structure->classInfoForCells()->methodTable.put == InternalFunction::info()->methodTable.put)
         return true;
-    // A slim closure that has properties has all of them in its table, its length, its name and its prototype too.
     return answersOnlyForLength || type == JSFunctionType || type == SlimClosureWithPropertiesType;
 }
 
-// An offset names a word of the cell only below firstOutOfLineOffset, and a large cell has words behind that.
 static PropertyOffset offsetOfBoxedValueInCell(const FieldData& field)
 {
     SlotRepresentation representation = field.slot.representation();
@@ -486,19 +470,16 @@ static PropertyOffset offsetOfBoxedValueInCell(const FieldData& field)
 
 static StepResult stopAtField(Object& object, const FieldData& field, PropertyOffset offset, ChainWalk& walk)
 {
-    // Whoever finds an accessor takes its getter and setter from the word that the offset names.
     if (field.isAccessor() && !isValidOffset(offset))
         return stopAt(&object, walk);
     walk.changeableObjects.append(&object);
     return stopAtProperty(walk, &object, &object, offset, object.attributesOf(field));
 }
 
-// A slot that gets filled holds a property of the form that the layout gives the field.
 static StepResult passEmptySlot(const ChainWalkStart& start, Object& object, const FieldData& field, ChainWalk& walk)
 {
     if (field.slot.representation() == SlotRepresentation::DeferredClosure || field.flags & (fieldIsReadOnly | fieldIsAccessor))
         return stopAt(&object, walk);
-    // Compiled code leaves the creation of a field to the run time, which reports it, where the object has extra properties and its layout lists its keys.
     if (!object.hasExtraProperties() || field.flags & fieldMayExistWithoutStorage) {
         switch (start.use) {
         case ChainWalkUse::KeptForReads:
@@ -537,13 +518,11 @@ static StepResult lookUpExtraPropertyOfCompiledObject(const ChainWalkStart& star
         walk.changeableObjects.append(&object);
         return StepResult::Continue;
     }
-    // Only the key order says that such a field exists where its slot holds nothing. Its value is undefined then.
     if (field->flags & fieldMayExistWithoutStorage && object.isInKeyOrder(object.state(), *field))
         return stopAtField(object, *field, invalidOffset, walk);
     return passEmptySlot(start, object, *field, walk);
 }
 
-// Compiled code stores to a filled slot without a report, so the walk names the word of the slot and never its value.
 static StepResult lookUpInCompiledObject(const ChainWalkStart& start, UniquedStringImpl* uid, Object& object, ChainWalk& walk)
 {
     if (object.isInFrame() || (PropertyName(uid).isPrivateName() && !PropertyName(uid).passesThroughProxies()))
@@ -561,7 +540,6 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
     VM& vm = start.globalObject->vm();
     Structure* structure = object->structure();
     if (!canWalkThrough(structure)) {
-        // Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated: the walk goes on through it.
         bool staysInPlace = structure->isDictionary() && !structure->isUncacheableDictionary();
         if (staysInPlace)
             flattenOnce(vm, object);
@@ -583,7 +561,6 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
         offset = structure->get(vm, uid, attributes);
     }
     if (isValidOffset(*offset)) {
-        // An immutable property keeps its value and its place. It may still be made read-only, as Object.freeze() makes it, and from then on it stops the stores of whoever inherits it.
         bool mayStopStoresLater = start.use == ChainWalkUse::KeptForStores && !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
         if (!structure->isImmutablePropertyForReader(uid) || mayStopStoresLater)
             walk.changeableObjects.append(object);
@@ -591,7 +568,6 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
     }
     if (structure->hasNonReifiedStaticProperties()) {
         if (auto entry = structure->findPropertyHashEntry(uid)) {
-            // A read moves every other kind of entry into the object. A custom accessor or value stays in the table of its class until the object changes.
             unsigned attributes = entry->value->attributes();
             if (attributes & (PropertyAttribute::BuiltinOrFunctionOrAccessorOrLazyProperty | PropertyAttribute::ConstantInteger) || !(attributes & PropertyAttribute::CustomAccessorOrValue))
                 return stopAt(object, walk);
@@ -626,7 +602,6 @@ ChainWalk walkChain(const ChainWalkStart& start, UniquedStringImpl* uid)
     }
     if (walk.passedSlotFilledWithoutReport && storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
         walk.result = ChainWalkResult::Unknown;
-    // The object that is asked answers with itself as the receiver, which is right for a data property and for none.
     if (walk.firstObjectWithEmptySlot && walk.result == ChainWalkResult::Found && walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
         walk.result = ChainWalkResult::Unknown;
     return walk;

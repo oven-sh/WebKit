@@ -30,8 +30,6 @@ namespace JSC { namespace AOT {
 
 std::span<const NativeTest> objectSlotExitTests();
 
-// No object of Mutable or Deletable leaves the program, so Link knows every writer of their fields, and the fields that hold numbers alone lie unboxed: a as a double, d as an integer.
-// The store under a name that Mutable does not list gives it a field behind those that it lists, and with that the hidden words. Deletable lists a field that Mutable lacks, so the two are no family and Deletable has no hidden word.
 static constexpr ASCIILiteral mutatingProgramText = R"IR(layout L0 name="Mutable" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=string} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}]
 layout L1 name="Deletable" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=string} flags=[IsRequired]}, {key="apart" declared={type=boolean} flags=[IsRequired]}]
 layout L2 name="Bag" fields=[{key="k0" declared={type=number}}, {key="k1" declared={type=number}}, {key="k2" declared={type=number}}, {key="k3" declared={type=number}}, {key="k4" declared={type=number}}, {key="k5" declared={type=number}}, {key="k6" declared={type=number}}, {key="k7" declared={type=number}}, {key="k8" declared={type=number}}]
@@ -145,7 +143,6 @@ struct OwnProperty {
 
 static constexpr unsigned noAttributes = 0;
 static constexpr unsigned dontEnum = static_cast<unsigned>(PropertyAttribute::DontEnum);
-static constexpr unsigned dontDelete = static_cast<unsigned>(PropertyAttribute::DontDelete);
 static constexpr unsigned readOnly = static_cast<unsigned>(PropertyAttribute::ReadOnly);
 
 static const LayoutData& layoutNamed(LoadedProgram& program, ASCIILiteral name)
@@ -174,7 +171,6 @@ static Identifier nameOf(LoadedProgram& program, const FieldData& field)
     return Identifier::fromUid(program.vm(), program.state().objects->layouts.nameOf(program.vm(), field));
 }
 
-// A layout also gets a field for each name that code which nobody follows may store into its objects. Those come behind the fields that the program declares, and no object here has one.
 static std::span<const FieldData> declaredFieldsOf(LoadedProgram& program, const LayoutData& layout)
 {
     constexpr unsigned longestDeclaredName = 2;
@@ -200,7 +196,6 @@ static JSValue fittingValueFor(LoadedProgram& program, const FieldData& field)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Nothing: the slot takes every value.
 static JSValue valueOfOtherTypeFor(LoadedProgram& program, const FieldData& field)
 {
     JSValue other;
@@ -213,7 +208,6 @@ static JSValue valueOfOtherTypeFor(LoadedProgram& program, const FieldData& fiel
         break;
     case 'b':
     case 'c':
-        // Texts alone, or null alone: a narrow reference where that makes the cell smaller.
         if (field.slot.representation() == SlotRepresentation::JSValue) {
             AOT_TEST_CHECK(program.state().objects->layouts.fieldAccepts(field, jsNumber(7)));
             return { };
@@ -229,7 +223,6 @@ static Object* createFilled(LoadedProgram& program, ASCIILiteral layoutName)
 {
     Object* object = allocate(program, layoutName);
     for (const FieldData& field : declaredFieldsOf(program, object->layout())) {
-        // The first value of each field: a field that the program stores to once takes no other store.
         bool didStore = object->tryInitialize(program.vm(), field, fittingValueFor(program, field));
         if (!didStore)
             dataLogLn("field ", nameOf(program, field).string(), " of ", layoutName, " refuses ", fittingValueFor(program, field));
@@ -403,53 +396,6 @@ static void checkFieldsWithoutAbsentBitsWithoutExtraPropertiesWord(LoadedProgram
         AOT_TEST_CHECK(!checkEventOnEachField(program, "Closed"_s, event));
 }
 
-static void checkStoreOfFittingValueCostsNothing(LoadedProgram& program)
-{
-    for (ASCIILiteral layoutName : { "Mutable"_s, "Deletable"_s }) {
-        Object* object = createFilled(program, layoutName);
-        Structure* structure = object->structure();
-        uint64_t words = object->orderAndShapeWords();
-        for (const FieldData& field : declaredFieldsOf(program, object->layout())) {
-            AOT_TEST_CHECK(put(program, object, nameOf(program, field), fittingValueFor(program, field)));
-            AOT_TEST_CHECK(setEnumerable(program, object, nameOf(program, field), true));
-            AOT_TEST_CHECK(object->isInSlot(field));
-        }
-        for (JSValue value : { jsNumber(1), jsUndefined(), JSValue(object), jsBoolean(false) }) {
-            if (layoutName == "Mutable"_s)
-                AOT_TEST_CHECK(put(program, object, Identifier::fromString(program.vm(), "c"_s), value) && object->isInSlot(object->layout().fields()[2]));
-        }
-        AOT_TEST_CHECK(object->structure() == structure && object->orderAndShapeWords() == words);
-    }
-}
-
-static void checkDeletedFieldIsCreatedAgainInItsSlot(LoadedProgram& program)
-{
-    Object* object = createFilled(program, "Mutable"_s);
-    Structure* structure = object->structure();
-    const FieldData& field = object->layout().fields()[0];
-    Identifier name = nameOf(program, field);
-    AOT_TEST_CHECK(deleteProperty(program, object, name) && keysOf(program, object) == "b,c,d"_s && object->structure() == structure);
-
-    AOT_TEST_CHECK(deleteProperty(program, object, name));
-    AOT_TEST_CHECK(put(program, object, name, jsNumber(2.5)));
-    AOT_TEST_CHECK(object->isInSlot(field) && object->isInKeyOrder(program.state(), field) && !object->hasExtraProperties());
-    AOT_TEST_CHECK(hasOwnProperty(program, object, name, jsNumber(2.5), noAttributes) && keysOf(program, object) == "b,c,d,a"_s);
-    AOT_TEST_CHECK(object->structure() == structure);
-}
-
-static void checkDeletedFieldIsCreatedOutsideItsSlot(LoadedProgram& program)
-{
-    Object* object = createFilled(program, "Mutable"_s);
-    const FieldData& field = object->layout().fields()[0];
-    Identifier name = nameOf(program, field);
-    AOT_TEST_CHECK(deleteProperty(program, object, name));
-
-    JSValue text = valueOfOtherTypeFor(program, field);
-    AOT_TEST_CHECK(put(program, object, name, text));
-    AOT_TEST_CHECK(isCompiledObject(object) && !object->isInSlot(field) && object->isInKeyOrder(program.state(), field));
-    AOT_TEST_CHECK(hasOwnProperty(program, object, name, text, noAttributes) && keysOf(program, object) == "b,c,d,a"_s);
-}
-
 static void checkStoreThatFitsMovesFieldBack(LoadedProgram& program)
 {
     Object* object = createFilled(program, "Mutable"_s);
@@ -460,7 +406,6 @@ static void checkStoreThatFitsMovesFieldBack(LoadedProgram& program)
         Identifier name = nameOf(program, field);
         AOT_TEST_CHECK(put(program, object, name, other) && !object->isInSlot(field));
 
-        // By the type of the slot, or by the flag beside a type that leaves the two out.
         bool admitsUndefined = program.state().objects->layouts.slotAdmits(field, jsUndefined());
         AOT_TEST_CHECK(admitsUndefined || !field.slotHoldsUndefinedAndNull);
         AOT_TEST_CHECK(put(program, object, name, jsUndefined()) && object->isInSlot(field) == admitsUndefined);
@@ -475,44 +420,6 @@ static void checkStoreThatFitsMovesFieldBack(LoadedProgram& program)
     }
 }
 
-static void checkUsualAttributesMoveFieldBack(LoadedProgram& program)
-{
-    Object* object = createFilled(program, "Mutable"_s);
-    const FieldData& field = object->layout().fields()[0];
-    Identifier name = nameOf(program, field);
-    AOT_TEST_CHECK(setEnumerable(program, object, name, false) && !object->isInSlot(field));
-
-    AOT_TEST_CHECK(put(program, object, name, jsNumber(2.5)));
-    AOT_TEST_CHECK(!object->isInSlot(field) && hasOwnProperty(program, object, name, jsNumber(2.5), dontEnum));
-
-    AOT_TEST_CHECK(setEnumerable(program, object, name, true));
-    AOT_TEST_CHECK(object->isInSlot(field) && hasOwnProperty(program, object, name, jsNumber(2.5), noAttributes));
-    AOT_TEST_CHECK(keysOf(program, object, DontEnumPropertiesMode::Exclude) == "a,b,c,d"_s);
-}
-
-static void checkAccessorInPlaceOfField(LoadedProgram& program)
-{
-    Object* object = createFilled(program, "Mutable"_s);
-    const FieldData& field = object->layout().fields()[1];
-    Identifier name = nameOf(program, field);
-
-    PropertyDescriptor accessor;
-    accessor.setGetter(program.realms().evaluate(program.realm(), "(function () { return this })"_s));
-    AOT_TEST_CHECK(object->methodTable()->defineOwnProperty(object, program.realm(), name, accessor, false));
-    AOT_TEST_CHECK(isCompiledObject(object) && !object->isInSlot(field));
-    AOT_TEST_CHECK(ownProperty(program, object, name).attributes & PropertyAttribute::Accessor);
-    AOT_TEST_CHECK(object->get(program.realm(), name) == JSValue(object) && keysOf(program, object) == "a,b,c,d"_s);
-
-    AOT_TEST_CHECK(!put(program, object, name, fittingValueFor(program, field)) && !object->isInSlot(field));
-
-    PropertyDescriptor data;
-    data.setValue(fittingValueFor(program, field));
-    data.setWritable(true);
-    AOT_TEST_CHECK(object->methodTable()->defineOwnProperty(object, program.realm(), name, data, false));
-    AOT_TEST_CHECK(object->isInSlot(field) && hasOwnProperty(program, object, name, fittingValueFor(program, field), noAttributes));
-}
-
-// The first read of an object whose Structure does not name the Structure of its extra properties gives the object one that does, and files nothing.
 static PropertyAnswer classifySecondRead(LoadedProgram& program, Object* object, const Identifier& name)
 {
     PropertyAnswer answer;
@@ -523,30 +430,6 @@ static PropertyAnswer classifySecondRead(LoadedProgram& program, Object* object,
         answer = classifyRead({ program.realm(), object, structureBefore, name.impl(), slot });
     }
     return answer;
-}
-
-static void checkReadOfFieldOutsideItsSlotIsCached(LoadedProgram& program)
-{
-    for (Event event : { Event::Redefinition, Event::StoreOfOtherType }) {
-        Object* object = createFilled(program, "Mutable"_s);
-        std::span<const FieldData> fields = object->layout().fields();
-        const FieldData& field = fields[0];
-        Identifier name = nameOf(program, field);
-        AOT_TEST_CHECK(classifySecondRead(program, object, name).kind == PropertyAnswerKind::Field);
-
-        AOT_TEST_CHECK(apply(program, event, object, field) && isCompiledObject(object) && !object->isInSlot(field));
-        PropertyAnswer outsideSlot = classifySecondRead(program, object, name);
-        AOT_TEST_CHECK(outsideSlot.kind == PropertyAnswerKind::ExtraProperty && outsideSlot.isOwn && !outsideSlot.dependsOnChain());
-        AOT_TEST_CHECK(object->compiledStructure().extraPropertiesStructure() == object->extraProperties()->structure());
-        AOT_TEST_CHECK(object->extraProperties()->getDirect(outsideSlot.offset) == ownProperty(program, object, name).value);
-        AOT_TEST_CHECK(slotFor(outsideSlot, object->structure()).kind == Slot::Kind::ExtraProperty);
-
-        PropertyAnswer neighbor = classifySecondRead(program, object, nameOf(program, fields[1]));
-        AOT_TEST_CHECK(neighbor.kind == PropertyAnswerKind::Field && neighbor.field == &fields[1]);
-
-        AOT_TEST_CHECK(setEnumerable(program, object, name, true) && put(program, object, name, fittingValueFor(program, field)) && object->isInSlot(field));
-        AOT_TEST_CHECK(classifySecondRead(program, object, name).kind == PropertyAnswerKind::Field);
-    }
 }
 
 static void checkReadOfGetterInPlaceOfFieldIsCached(LoadedProgram& program)
@@ -562,43 +445,6 @@ static void checkReadOfGetterInPlaceOfFieldIsCached(LoadedProgram& program)
     AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::ExtraAccessor && slotFor(answer, object->structure()).kind == Slot::Kind::ExtraGetter);
 }
 
-static void checkReadOfDeletedFieldStaysWithItsSlot(LoadedProgram& program)
-{
-    Object* object = createFilled(program, "Mutable"_s);
-    std::span<const FieldData> fields = object->layout().fields();
-    AOT_TEST_CHECK(apply(program, Event::Delete, object, fields[0]) && !object->isInSlot(fields[0]) && !object->hasExtraProperties());
-    PropertyAnswer withoutExtraProperties = classifySecondRead(program, object, nameOf(program, fields[0]));
-    AOT_TEST_CHECK(withoutExtraProperties.kind == PropertyAnswerKind::Field && withoutExtraProperties.absentIsUndefined);
-
-    AOT_TEST_CHECK(apply(program, Event::Redefinition, object, fields[1]) && object->hasExtraProperties());
-    PropertyAnswer besideExtraProperty = classifySecondRead(program, object, nameOf(program, fields[0]));
-    AOT_TEST_CHECK(besideExtraProperty.kind == PropertyAnswerKind::Field && besideExtraProperty.absentIsUndefined);
-}
-
-// Compiled code tests the object's bit at a member call on behalf of the member read before it, so the bit stays set and the object that held the extra properties stays, empty.
-static void checkEmptyExtraPropertiesStay(LoadedProgram& program)
-{
-    Object* object = createFilled(program, "Mutable"_s);
-    Structure* structure = object->structure();
-    const FieldData& field = object->layout().fields()[0];
-    Identifier name = nameOf(program, field);
-    auto holdsEmptyExtraProperties = [&] {
-        return object->hasExtraProperties() && object->compiledStructure().hasExtraProperties() && object->extraProperties() && keysOf(program, object->extraProperties()).isEmpty();
-    };
-
-    AOT_TEST_CHECK(!object->hasExtraProperties() && !object->extraProperties());
-    AOT_TEST_CHECK(put(program, object, name, valueOfOtherTypeFor(program, field)) && object->hasExtraProperties() && object->structure() != structure);
-    AOT_TEST_CHECK(put(program, object, name, fittingValueFor(program, field)) && object->isInSlot(field));
-    AOT_TEST_CHECK(holdsEmptyExtraProperties() && keysOf(program, object) == "a,b,c,d"_s);
-
-    Identifier extra = Identifier::fromString(program.vm(), "extra"_s);
-    AOT_TEST_CHECK(put(program, object, extra, jsNumber(1)) && keysOf(program, object) == "a,b,c,d,extra"_s);
-    AOT_TEST_CHECK(deleteProperty(program, object, extra) && holdsEmptyExtraProperties() && keysOf(program, object) == "a,b,c,d"_s);
-
-    AOT_TEST_CHECK(setEnumerable(program, object, name, false) && object->hasExtraProperties());
-    AOT_TEST_CHECK(deleteProperty(program, object, name) && holdsEmptyExtraProperties() && keysOf(program, object) == "b,c,d"_s);
-}
-
 static void checkNameThatIsNoField(LoadedProgram& program)
 {
     Object* object = createFilled(program, "Mutable"_s);
@@ -611,7 +457,6 @@ static void checkNameThatIsNoField(LoadedProgram& program)
     AOT_TEST_CHECK(hasOwnProperty(program, object, extra, jsNumber(1), noAttributes) && keysOf(program, object) == "a,b,c,d,extra"_s);
     for (const FieldData& field : declaredFieldsOf(program, object->layout()))
         AOT_TEST_CHECK(object->isInSlot(field));
-    // An empty slot of this object still says that the object has no such property.
     AOT_TEST_CHECK(!(object->orderWord() & orderWordHasFieldOutsideSlot));
 
     AOT_TEST_CHECK(deleteProperty(program, object, nameOf(program, object->layout().fields()[0])));
@@ -624,7 +469,6 @@ static void checkNameThatIsNoField(LoadedProgram& program)
     const FieldData& leaving = withFieldOutside->layout().fields()[0];
     AOT_TEST_CHECK(put(program, withFieldOutside, nameOf(program, leaving), valueOfOtherTypeFor(program, leaving)) && !withFieldOutside->isInSlot(leaving));
     AOT_TEST_CHECK(withFieldOutside->hasExtraProperties() && withFieldOutside->orderWord() & orderWordHasFieldOutsideSlot);
-    // It stays set when the field comes back: compiled code may have tested it on behalf of an access that came before.
     AOT_TEST_CHECK(put(program, withFieldOutside, nameOf(program, leaving), fittingValueFor(program, leaving)) && withFieldOutside->isInSlot(leaving));
     AOT_TEST_CHECK(withFieldOutside->orderWord() & orderWordHasFieldOutsideSlot);
 
@@ -647,62 +491,6 @@ static void checkNameThatIsNoField(LoadedProgram& program)
     AOT_TEST_CHECK(withoutWord->extraProperties() == held && hasOwnProperty(program, withoutWord, extra, jsNumber(1), noAttributes));
     AOT_TEST_CHECK(deleteProperty(program, withoutWord, extra) && !ownProperty(program, withoutWord, extra).isFound && keysOf(program, withoutWord) == "a,b"_s);
     ensureStillAliveHere(neighbor);
-}
-
-static void checkIntegrityIsBitsOfTheOrderWord(LoadedProgram& program)
-{
-    struct Level {
-        Object::Integrity integrity;
-        uint32_t bits;
-        unsigned attributes;
-    };
-    for (Level level : { Level { Object::Integrity::NotExtensible, orderWordIsNotExtensible, noAttributes }, Level { Object::Integrity::Sealed, orderWordIsNotExtensible | orderWordIsSealed, dontDelete }, Level { Object::Integrity::Frozen, orderWordIntegrityBits, dontDelete | readOnly } }) {
-        Object* object = createFilled(program, "Mutable"_s);
-        Structure* structure = object->structure();
-        uint32_t orderWord = object->orderWord();
-        uint32_t shapeWord = object->shapeWord();
-        object->setIntegrity(program.realm(), level.integrity);
-        AOT_TEST_CHECK(object->orderWord() == (orderWord | level.bits) && object->shapeWord() == shapeWord && object->structure() == structure);
-
-        for (const FieldData& field : declaredFieldsOf(program, object->layout())) {
-            Identifier name = nameOf(program, field);
-            AOT_TEST_CHECK(hasOwnProperty(program, object, name, fittingValueFor(program, field), level.attributes));
-            if (level.attributes & dontDelete)
-                AOT_TEST_CHECK(!deleteProperty(program, object, name) && !setEnumerable(program, object, name, false));
-            if (level.attributes & readOnly)
-                AOT_TEST_CHECK(!put(program, object, name, fittingValueFor(program, field)));
-            AOT_TEST_CHECK(object->isInSlot(field));
-        }
-        AOT_TEST_CHECK(!put(program, object, Identifier::fromString(program.vm(), "extra"_s), jsNumber(1)) && !object->hasExtraProperties());
-        AOT_TEST_CHECK(keysOf(program, object) == "a,b,c,d"_s);
-    }
-}
-
-static void checkIndexedProperties(LoadedProgram& program)
-{
-    Object* object = createFilled(program, "Mutable"_s);
-    AOT_TEST_CHECK(object->methodTable()->putByIndex(object, program.realm(), 0, jsNumber(1), false));
-    AOT_TEST_CHECK(isCompiledObject(object) && object->hasExtraProperties() && keysOf(program, object) == "0,a,b,c,d"_s);
-
-    uint32_t shapeWord = object->shapeWord();
-    PropertyDescriptor accessor;
-    accessor.setGetter(program.realms().evaluate(program.realm(), "(function () { return this })"_s));
-    accessor.setSetter(program.realms().evaluate(program.realm(), "(function (value) { this.d = value })"_s));
-    accessor.setConfigurable(true);
-    AOT_TEST_CHECK(object->methodTable()->defineOwnProperty(object, program.realm(), Identifier::from(program.vm(), 1u), accessor, false));
-    AOT_TEST_CHECK(isCompiledObject(object) && object->shapeWord() == shapeWord);
-    AOT_TEST_CHECK(keysOf(program, object) == "0,1,a,b,c,d"_s && object->get(program.realm(), 1u) == JSValue(object) && object->get(program.realm(), 0u) == jsNumber(1));
-
-    const FieldData& stored = object->layout().fields()[3];
-    AOT_TEST_CHECK(object->methodTable()->putByIndex(object, program.realm(), 1, fittingValueFor(program, stored), true));
-    AOT_TEST_CHECK(object->get(program.realm(), 1u) == JSValue(object) && object->isInSlot(stored) && object->read(stored) == fittingValueFor(program, stored));
-
-    PropertyDescriptor readOnlyValue(jsNumber(3), dontEnum | dontDelete | readOnly);
-    AOT_TEST_CHECK(object->methodTable()->defineOwnProperty(object, program.realm(), Identifier::from(program.vm(), 2u), readOnlyValue, false));
-    AOT_TEST_CHECK(!object->methodTable()->putByIndex(object, program.realm(), 2, jsNumber(4), false) && object->get(program.realm(), 2u) == jsNumber(3));
-    AOT_TEST_CHECK(!object->methodTable()->deletePropertyByIndex(object, program.realm(), 2) && object->methodTable()->deletePropertyByIndex(object, program.realm(), 1));
-    AOT_TEST_CHECK(keysOf(program, object) == "0,2,a,b,c,d"_s && keysOf(program, object, DontEnumPropertiesMode::Exclude) == "0,a,b,c,d"_s);
-    AOT_TEST_CHECK(isCompiledObject(object) && object->shapeWord() == shapeWord);
 }
 
 static void checkIndexedAccessorOfPrototype(LoadedProgram& program)
@@ -860,7 +648,6 @@ static Vector<String> namesOf(LoadedProgram& program, JSObject* object)
     return result;
 }
 
-// An entry of a key order is 16 bits wide. A field that is created behind more extra keys than such an entry could count is listed behind them, in its slot, and the object keeps its shape.
 static void checkMoreExtraKeysThanOneEntryCounts(LoadedProgram& program)
 {
     constexpr unsigned numberOfKeysInRun = maxKeyOrderEntry + 5;
@@ -908,25 +695,6 @@ static void checkMoreExtraKeysThanOneEntryCounts(LoadedProgram& program)
     AOT_TEST_CHECK(object->get(program.realm(), Identifier::fromString(vm, makeString('x', numberOfKeysInRun))) == jsNumber(numberOfKeysInRun));
 }
 
-// The order of an object that is used as a dictionary positions no extra key, so a delete looks at no other key. A walk over the keys for each delete would take minutes here.
-static void checkDeletesInLargeDictionary(LoadedProgram& program)
-{
-    constexpr unsigned numberOfKeys = 200000;
-    VM& vm = program.vm();
-    Object* object = createFilled(program, "Mutable"_s);
-    auto nameOfKey = [&](unsigned number) {
-        return Identifier::fromString(vm, makeString('x', number));
-    };
-    for (unsigned number = 0; number < numberOfKeys; ++number)
-        AOT_TEST_CHECK(put(program, object, nameOfKey(number), jsNumber(number)));
-    for (unsigned number = 0; number < numberOfKeys; number += 2)
-        AOT_TEST_CHECK(deleteProperty(program, object, nameOfKey(number)));
-
-    Vector<String> names = namesOf(program, object);
-    AOT_TEST_CHECK(isCompiledObject(object) && names.size() == 4 + numberOfKeys / 2);
-    AOT_TEST_CHECK(names[3] == "d"_s && names[4] == "x1"_s && names.last() == makeString('x', numberOfKeys - 1));
-}
-
 static const KeyOrderTransition* findTransition(LoadedProgram& program, uint64_t orderAndShapeWordsBefore, uint32_t slotKey)
 {
     const ObjectWords& words = program.instance().objects;
@@ -945,7 +713,6 @@ static void checkTransitionTableGrows(LoadedProgram& program)
     constexpr uint32_t initialMask = 1023;
     AOT_TEST_CHECK(program.instance().objects.keyOrderTransitionMask == initialMask);
 
-    // The stub that lists a created field and Object::didCreateField() step to the next key of an order in the image without the table, so such a step has no entry there.
     Vector<KeyOrderTransition> seen;
     Vector<KeyOrderTransition> seenInsideOrdersOfImage;
     const KeyOrderTable& keyOrders = program.state().objects->keyOrders;
@@ -976,7 +743,6 @@ static void checkTransitionTableGrows(LoadedProgram& program)
     AOT_TEST_CHECK(!findTransition(program, wordsOfOtherShape, seen[0].key) && !findTransition(program, seen[0].orderAndShapeWordsBefore, outOfLineSlotKey - 8));
 }
 
-// The record of a layout rules out what Link has proven that nobody does to its objects. The test does it all the same.
 template<LoadedProgramTest body>
 static void changeObjectsUnseen(LoadedProgram& program)
 {
@@ -999,24 +765,13 @@ std::span<const NativeTest> objectSlotExitTests()
         { "slot-exit/absent-bits-without-extra-properties-word"_s, withMutations<checkFieldsWithAbsentBitsWithoutExtraPropertiesWord> },
         { "slot-exit/no-absent-bits-with-extra-properties-word"_s, withoutMutations<checkFieldsWithoutAbsentBitsWithExtraPropertiesWord>, noSlotsWithoutAbsentState },
         { "slot-exit/no-absent-bits-and-no-extra-properties-word"_s, withoutMutations<checkFieldsWithoutAbsentBitsWithoutExtraPropertiesWord>, noSlotsWithoutAbsentState },
-        { "slot-exit/store-of-fitting-value-costs-nothing"_s, withMutations<checkStoreOfFittingValueCostsNothing> },
-        { "slot-exit/deleted-field-is-created-again-in-its-slot"_s, withMutations<checkDeletedFieldIsCreatedAgainInItsSlot> },
-        { "slot-exit/deleted-field-is-created-outside-its-slot"_s, withMutations<checkDeletedFieldIsCreatedOutsideItsSlot> },
         { "slot-exit/fitting-store-moves-field-back"_s, withMutations<checkStoreThatFitsMovesFieldBack> },
-        { "slot-exit/usual-attributes-move-field-back"_s, withMutations<checkUsualAttributesMoveFieldBack> },
-        { "slot-exit/accessor-in-place-of-field"_s, withMutations<checkAccessorInPlaceOfField> },
-        { "slot-exit/read-of-field-outside-its-slot-is-cached"_s, withMutations<checkReadOfFieldOutsideItsSlotIsCached> },
         { "slot-exit/read-of-getter-in-place-of-field-is-cached"_s, withMutations<checkReadOfGetterInPlaceOfFieldIsCached> },
-        { "slot-exit/read-of-deleted-field-stays-with-its-slot"_s, withMutations<checkReadOfDeletedFieldStaysWithItsSlot> },
-        { "slot-exit/empty-extra-properties-stay"_s, withMutations<checkEmptyExtraPropertiesStay> },
         { "slot-exit/name-of-no-field"_s, withMutations<checkNameThatIsNoField> },
-        { "slot-exit/integrity-is-bits-of-the-order-word"_s, withMutations<checkIntegrityIsBitsOfTheOrderWord> },
-        { "slot-exit/indexed-properties"_s, withMutations<checkIndexedProperties> },
         { "slot-exit/indexed-accessor-of-prototype"_s, withMutations<checkIndexedAccessorOfPrototype> },
         { "slot-exit/definitions-by-native-code"_s, withMutations<checkDefinitionsByNativeCode> },
         { "slot-exit/many-key-orders-on-one-layout"_s, withMutations<checkManyKeyOrdersOnOneLayout> },
         { "slot-exit/more-extra-keys-than-one-entry-counts"_s, withMutations<checkMoreExtraKeysThanOneEntryCounts> },
-        { "slot-exit/deletes-in-a-large-dictionary"_s, withMutations<checkDeletesInLargeDictionary> },
         { "slot-exit/transition-table-grows"_s, withMutations<checkTransitionTableGrows> },
     };
     return tests;

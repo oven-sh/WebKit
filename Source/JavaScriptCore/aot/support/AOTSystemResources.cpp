@@ -31,7 +31,6 @@ static void writeToStandardError(std::span<const char> lines)
 #endif
 }
 
-// Allocates nothing, and leaves the other threads of the build as they are.
 [[noreturn]] static void exitWithError(ASCIILiteral lines)
 {
     writeToStandardError(lines.span());
@@ -52,7 +51,6 @@ void exitIfBuildIsOutOfMemory()
     size_t length = describeWhereThisThreadStopped(place);
     if (!length)
         return;
-    // As Bun's crash handler says it where its own allocator has none left.
     writeToStandardError("error: Out of memory while compiling\n"_s.span());
     writeToStandardError(std::span<const char>(place).first(length));
     _exit(1);

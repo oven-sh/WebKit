@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTFormatPatternPlanner.h"
-#include "AOTLeavePoints.h"
 #include "AOTRegExpSummary.h"
 #include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -24,7 +23,6 @@ BuildContext::BuildContext(const Wire::CompileOptions& wire, const HostThreadPoo
     , m_parallelLoops(m_options.threadCount, hostPool)
     , m_regExpSummaries(makeUnique<RegExpSummaries>(static_cast<unsigned>(Limits::regExpParenthesesDepth)))
     , m_formatPatternPlans(makeUniqueWithoutFastMallocCheck<Typed::FormatPatternPlans>())
-    , m_leavePoints(makeUniqueWithoutFastMallocCheck<Typed::LeavePoints>())
 {
 }
 

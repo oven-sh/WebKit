@@ -18,7 +18,6 @@ public:
     {
     }
 
-    // What the edge behind a test hands over. The test has passed, so nothing is tested here.
     void generateNarrowed(const ValueContext& value) { defineNarrowed(value, get(value->valueOperand())); }
     void generateCheckInitialized(const ValueContext&);
     void generateRequireObjectCoercible(const ValueContext&);

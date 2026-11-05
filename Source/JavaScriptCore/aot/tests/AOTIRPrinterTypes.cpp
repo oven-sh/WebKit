@@ -42,7 +42,6 @@ static std::optional<CodePointInIRText> decodeCodePointForIRText(std::span<const
     return CodePointInIRText { character, length };
 }
 
-// Only the reader that the text of a Code brings reads a thread's arena. An arena does not say how much it holds, so the position is taken on trust.
 template<typename IDType>
 static bool isReadThroughArenaForIRText(const std::optional<TypeReader>& typesOfCode, IDType id)
 {
@@ -53,7 +52,6 @@ static bool isCanonicalTypeWithinIDForIRText(TypeID id)
 {
     if (homeOf(id) == IDHome::SmallRange)
         return !integersInID(id).isEmpty();
-    // integersInID() looks the upper bound up among the landmarks.
     if ((id.bits() >> maximumLandmarkShift & 7) >= maximumLandmarks.size())
         return false;
     return tryMakeTypeOfPrimitives(primitivesInID(id), integersInID(id)) == id;
@@ -87,7 +85,6 @@ static bool canBeReadForIRText(const TypeTable& table, const std::optional<TypeR
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The table of sets does not say how much it holds either. No set comes off the wire: an arena made it.
 static bool canBeReadForIRText(const std::optional<TypeReader>& typesOfCode, LayoutSetID id)
 {
     switch (homeOf(id)) {
@@ -126,7 +123,6 @@ void IRPrinter::print(StringID id)
         m_out.print("-"_s);
         return;
     }
-    // A text that the walk has made, by its content: `made "ab"`.
     if (liesInThread(id) && isReadThroughArenaForIRText(m_typesOfCode, id)) {
         m_out.print("made "_s);
         printQuoted(m_typesOfCode->bytesOf(id));
@@ -236,13 +232,11 @@ void IRPrinter::print(TypeID id)
         printInvalid("type"_s, id.index());
         return;
     }
-    // parseType() reads the text of a Code back, and it reads the default options alone.
     if (m_typesOfCode) {
         printType(m_out, *m_typesOfCode, id, TypeTextOptions { });
         return;
     }
 
-    // The option gives the text that the front end prints. The wire has no seeds.
     TypeTextOptions options;
     options.printsSeeds = printsEngineFields();
     options.namesFamiliesOfLayouts = true;

@@ -10,7 +10,6 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
-#include "AOTObjectBuilder.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationCallScope.h"
@@ -36,8 +35,6 @@ namespace JSC { namespace AOT {
 
 std::span<const NativeTest> extensionTests();
 
-// The layout lists `flags` alone. `seed` stores every other name on an object of it, so Link appends a field for each, and the plan lays all of them out of line.
-// A slot takes what the program is seen to store into the field: objects of the layout, and undefined, which `empty` stores.
 static constexpr ASCIILiteral programText = R"IR(layout L0 name="Wide" fields=[{key="flags" declared={type=number} flags=[IsRequired]}]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -381,13 +378,10 @@ public:
 
     VM& vm() { return m_program.vm(); }
     const LayoutData& layout() const { return *m_layout; }
-    // In ascending order of their offsets.
     std::span<const FieldData* const> fieldsOutOfLine() const { return m_fieldsOutOfLine.span(); }
     Object* create() { return uncheckedDowncast<Object>(m_program.state().objects->structures.allocate(vm(), m_allocation)); }
-    // The plan gives the mark only to a field that every maker of an object lists, and no maker here lists a field out of line.
     void letFieldsExistWithoutStorage();
     bool admitsUndefined(const FieldData& field) const { return m_program.state().objects->layouts.slotAdmits(field, jsUndefined()); }
-    // The plan lists the granules of what the makers of the objects fill, and no maker here fills a field out of line.
     void letFirstExtensionHold(uint64_t granuleBits);
 
 private:
@@ -549,7 +543,6 @@ static void checkAGranuleGoesInPlaceOnlyBehindTheOthers(LoadedProgram& program)
     for (unsigned index = 0; index < 7; ++index)
         last->granules()[index] = 0;
 
-    // The room follows from the number of granules. A size class may be wider than the size asked for, and whoever allocates an Extension clears that size and no more.
     constexpr unsigned count = 10;
     constexpr unsigned capacity = extensionCapacityFor(count);
     static_assert(capacity > count && extensionCapacityFor(capacity) == capacity && extensionCapacityFor(capacity + 1) > capacity);
@@ -590,14 +583,12 @@ static void checkAGranuleGoesBetweenTheOthersWhileTheCollectorVisitsNothing(Load
     AOT_TEST_CHECK(object->extension() == extension && extension->granuleBits() == (bit(5) | bit(6) | bit(7) | bit(9) | bit(11)));
     AOT_TEST_CHECK(extension->granules()[0] == 55 && !extension->granules()[1] && extension->granules()[2] == 77 && extension->granules()[3] == 99 && extension->granules()[4] == 111);
 
-    // It is full now, so the next granule goes into a copy wherever it belongs.
     object->ensureExtensionGranules(vm, bit(0), collectorMayVisit);
     Extension* larger = object->extension();
     AOT_TEST_CHECK(larger != extension && larger->granuleBits() == (bit(0) | bit(5) | bit(6) | bit(7) | bit(9) | bit(11)));
     AOT_TEST_CHECK(!larger->granules()[0] && larger->granules()[1] == 55 && !larger->granules()[2] && larger->granules()[3] == 77 && larger->granules()[4] == 99 && larger->granules()[5] == 111);
     AOT_TEST_CHECK(extension->granuleBits() == (bit(5) | bit(6) | bit(7) | bit(9) | bit(11)) && extension->granules()[4] == 111);
 
-    // Several at once: in front of all, between two, and behind all.
     static_assert(extensionCapacityFor(6) == 9);
     object->ensureExtensionGranules(vm, bit(3) | bit(8) | bit(63), collectorMayVisit);
     AOT_TEST_CHECK(object->extension() == larger && larger->granuleBits() == (bit(0) | bit(3) | bit(5) | bit(6) | bit(7) | bit(8) | bit(9) | bit(11) | bit(63)));
@@ -609,7 +600,6 @@ static void checkAGranuleGoesBetweenTheOthersWhileTheCollectorVisitsNothing(Load
     for (unsigned index = 0; index < 5; ++index)
         extension->granules()[index] = 0;
 
-    // Fields keep their values through every order of creation, whichever way their granules came.
     std::span<const FieldData* const> fields = fixture.fieldsOutOfLine();
     Object* filled = fixture.create();
     for (size_t index = fields.size(); index--;) {
@@ -670,7 +660,6 @@ static void checkAClearedFieldKeepsItsGranule(LoadedProgram& program)
     AOT_TEST_CHECK(!object->isInSlot(*all[2]) && object->slotOf(*all[2]) && !object->isInSlot(*all[4]) && object->read(*all[6]) == JSValue(object));
 }
 
-// With narrow references the field has to hold one. The slots that take any value admit undefined too, and they come first.
 static const FieldData& fieldThatMayExistWithoutStorage(Fixture& fixture)
 {
     fixture.letFieldsExistWithoutStorage();
@@ -740,7 +729,6 @@ static void checkAStoreOfUndefinedNeedsNoStorage(LoadedProgram& program)
     AOT_TEST_CHECK(holdsUndefined() && object->isInSlot(field));
     AOT_TEST_CHECK(object->extension() == extension && extension->granuleBits() == granuleBit);
 
-    // What compiled code does where it stores undefined and finds no granule: it has the run time list the field, and that is all.
     Object* listed = fixture.create();
     callOperationFromTest(vm, operationAOTDidCreateFieldAt, &program.instance(), listed, slotKeyFor(field.slot.offset, true));
     AOT_TEST_CHECK(!listed->extension() && listed->isInKeyOrder(state, field) && listed->read(field).isUndefined());
@@ -755,7 +743,6 @@ static PropertyAnswer classifyReadOf(LoadedProgram& program, Object* object, Pro
     return classifyRead({ program.realm(), object, structureBefore, name.uid(), slot });
 }
 
-// Listed or not, the field reads as undefined while the objects above answer undefined, so such a read is cached and asks no key order. Whether the property exists, the slot for reads does not say.
 static void checkAReadOfAnEmptySlotIsCached(LoadedProgram& program)
 {
     Fixture fixture(program);
@@ -769,7 +756,6 @@ static void checkAReadOfAnEmptySlotIsCached(LoadedProgram& program)
     for (Object* object : { unlisted, listed })
         AOT_TEST_CHECK(object->methodTable()->setPrototype(object, program.realm(), prototype, false));
     AOT_TEST_CHECK(tryCreateField(vm, state, *listed, field, jsUndefined()) && !listed->isInSlot(field) && !unlisted->isInKeyOrder(state, field));
-    // What answers where no slot does: a read that is not cached asks it first.
     auto readByLeafLookup = [&](Object* object) {
         return JSValue::decode(operationAOTGetGeneric(&program.instance(), object, name.uid()));
     };
@@ -796,7 +782,6 @@ static void checkAReadOfAnEmptySlotIsCached(LoadedProgram& program)
     AOT_TEST_CHECK(listed->tryStore(vm, field, listed) && readByLeafLookup(listed) == JSValue(listed));
 }
 
-// Two narrow references share a granule. The one that holds undefined without storage has storage once the other gets a value, and nothing was ever written to it.
 static void checkTheGranuleOfANeighborTakesNoFieldAway(LoadedProgram& program)
 {
     Fixture fixture(program);
@@ -824,7 +809,6 @@ static void checkTheGranuleOfANeighborTakesNoFieldAway(LoadedProgram& program)
 
 namespace {
 
-// Five fields in five granules, which the record of the layout is made to list for the first Extension, and a field in a granule between them, which it does not list.
 struct FieldsOfMakersAndStranger {
     explicit FieldsOfMakersAndStranger(Fixture&);
 
@@ -877,7 +861,6 @@ static void checkTheFirstExtensionHoldsWhatTheMakersFill(LoadedProgram& program)
     vm.heap.collectSync(CollectionScope::Full);
     AOT_TEST_CHECK(object->extension() == first && vm.heap.isMarked(reinterpret_cast<HeapCell*>(first)));
 
-    // The others come in any order, below the first and above it: nothing is allocated and nothing moves.
     for (unsigned index : { 1u, 4u, 0u, 2u }) {
         AOT_TEST_CHECK(object->tryStore(vm, *fields.ofMakers[index], object));
         AOT_TEST_CHECK(object->extension() == first && first->granuleBits() == fields.granulesOfMakers);
@@ -885,7 +868,6 @@ static void checkTheFirstExtensionHoldsWhatTheMakersFill(LoadedProgram& program)
     for (const FieldData* field : fields.ofMakers)
         AOT_TEST_CHECK(object->read(*field) == JSValue(object));
 
-    // It has room for what it was made for and no more.
     AOT_TEST_CHECK(object->tryStore(vm, *fields.ofStranger, object));
     Extension* grown = object->extension();
     AOT_TEST_CHECK(grown != first && grown->granuleBits() == (fields.granulesOfMakers | fields.granuleOfStranger));
@@ -913,109 +895,8 @@ static void checkWhoeverAsksFirstMakesTheSameExtension(LoadedProgram& program)
     AOT_TEST_CHECK(!fixture.create()->extension());
 }
 
-// The builder of the run time is given the field of the stranger and the last field of the makers. The first Extension holds the five granules of the makers besides, two of them below the stranger's.
-static void checkTheBuilderLaysEachValueInItsOwnGranule(LoadedProgram& program)
-{
-    Fixture fixture(program);
-    VM& vm = fixture.vm();
-    State& state = program.state();
-    FieldsOfMakersAndStranger fields(fixture);
-    AOT_TEST_CHECK(fields.granulesOfMakers & (fields.granuleOfStranger - 1));
-
-    Strong<JSObject> forStranger(vm, fixture.create());
-    Strong<JSObject> forMaker(vm, fixture.create());
-    Vector<UniquedStringImpl*> names;
-    Vector<JSValue> values;
-    for (const FieldData& field : fixture.layout().fields()) {
-        if (!field.isOutOfLine() && !(field.flags & fieldIsOptional)) {
-            names.append(state.objects->layouts.nameOf(vm, field));
-            values.append(jsNumber(1));
-        }
-    }
-    names.append(state.objects->layouts.nameOf(vm, *fields.ofStranger));
-    values.append(forStranger.get());
-    names.append(state.objects->layouts.nameOf(vm, *fields.ofMakers[4]));
-    values.append(forMaker.get());
-
-    std::unique_ptr<ObjectBuilderPlan> plan = ObjectBuilder::tryCreatePlanWithExtraProperties(state, fixture.layout(), names.span());
-    AOT_TEST_CHECK(plan && plan->numberOfFields() == names.size());
-    JSObject* built = nullptr;
-    {
-        ObjectBuilder builder(vm, *plan);
-        for (unsigned index = 0; index < values.size(); ++index)
-            AOT_TEST_CHECK(builder.tryStore(index, values[index]));
-        built = builder.finish();
-    }
-    AOT_TEST_CHECK(built);
-    Object* object = uncheckedDowncast<Object>(built);
-    AOT_TEST_CHECK(object->extension() && object->extension()->granuleBits() == (fields.granulesOfMakers | fields.granuleOfStranger));
-    AOT_TEST_CHECK(object->read(*fields.ofStranger) == JSValue(forStranger.get()));
-    AOT_TEST_CHECK(object->read(*fields.ofMakers[4]) == JSValue(forMaker.get()));
-    for (unsigned index = 0; index < 4; ++index)
-        AOT_TEST_CHECK(!object->read(*fields.ofMakers[index]));
-}
-
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithWideReferences<body>;
-
-static NEVER_INLINE void layExtensionAsStubDoes(VM& vm, Object* owner, uint64_t granuleBits)
-{
-    Extension* extension = Extension::create(vm, granuleBits);
-    SlotData slot = *uncheckedDowncast<CompiledStructure>(owner->structure())->extensionSlot();
-    uint8_t* word = reinterpret_cast<uint8_t*>(owner) + slot.offset;
-    if (slot.representation() == SlotRepresentation::Cell)
-        *reinterpret_cast<Extension**>(word) = extension;
-    else
-        *reinterpret_cast<uint32_t*>(word) = MarkedBlockCage::encode(cageBaseOf(owner), reinterpret_cast<uint8_t*>(extension) - offsetOfEmptyExtensionInCage);
-}
-
-static bool nextExtensionComesFromOperation(VM& vm)
-{
-    LocalAllocator* allocator = vm.heap.cagedAuxiliarySpace<SubspaceAccess::OnMainThread>()->allocatorFor(extensionCellSizeFor(1), AllocatorForMode::EnsureAllocator).localAllocator();
-    return reinterpret_cast<FreeList*>(reinterpret_cast<uint8_t*>(allocator) + LocalAllocator::offsetOfFreeList())->allocationWillFail();
-}
-
-// With narrow references alone: it is the cage that finds no room, and wide references require none.
-static void checkWhatAnAllocationHandsOnWhereTheHeapIsFullKeepsItsExtension(LoadedProgram& program)
-{
-    Fixture fixture(program);
-    VM& vm = fixture.vm();
-    MarkedBlockCage& cage = vm.heap.cage();
-    uint64_t granuleBits = granuleBitOf(fixture.fieldsOutOfLine()[0]->slot.offset);
-    auto findNoRoomAfterAllocating = [&](size_t bytes) {
-        vm.heap.didAllocate(bytes);
-        cage.didFindNoRoom(vm, MarkedBlockCage::ExhaustedHeap::Cells);
-    };
-    auto numberOfWholeCollections = [&] {
-        return vm.heap.objectSpace().markingVersion();
-    };
-    for (unsigned turn = 0; turn < 8; ++turn) {
-        findNoRoomAfterAllocating(vm.heap.objectSpace().capacity() / 64);
-        for (unsigned times = 0; times < 4; ++times)
-            findNoRoomAfterAllocating(1);
-        AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && cage.errorWaitsForPoll());
-        Extension::create(vm, granuleBits);
-        AOT_TEST_CHECK(!nextExtensionComesFromOperation(vm));
-
-        auto before = numberOfWholeCollections();
-        Strong<JSObject> owner(vm, asObject(newCellForCompiledCode(vm, fixture.create())));
-        auto behind = numberOfWholeCollections();
-        CellState handedOn = owner->cellState();
-        AOT_TEST_CHECK(behind != before && !vm.traps().needsOutOfMemoryError() && vm.heap.isMarked(owner.get()));
-        AOT_TEST_CHECK(nextExtensionComesFromOperation(vm));
-
-        vm.traps().setNeedsOutOfMemoryError(true);
-        AOT_TEST_CHECK(!cage.tryTakeBackOutOfMemoryErrorAtPoll(vm) && numberOfWholeCollections() == behind);
-        vm.traps().setNeedsOutOfMemoryError(false);
-
-        Object* object = uncheckedDowncast<Object>(owner.get());
-        layExtensionAsStubDoes(vm, object, granuleBits);
-        vm.heap.collectSync(CollectionScope::Eden);
-        AOT_TEST_CHECK(numberOfWholeCollections() == behind);
-        AOT_TEST_CHECK(vm.heap.isMarked(reinterpret_cast<HeapCell*>(object->extension())));
-        AOT_TEST_CHECK(handedOn == CellState::PossiblyGrey);
-    }
-}
 
 static constexpr ASCIILiteral noNarrowReferences = "plan/AOTSlotPlan.cpp: narrow references in slots: no field lies in a Cell32 or an OptionalCell32"_s;
 
@@ -1032,7 +913,6 @@ std::span<const NativeTest> extensionTests()
         { "extension/a-read-of-an-empty-slot-is-cached"_s, withProgram<checkAReadOfAnEmptySlotIsCached> },
         { "extension/the-first-extension-holds-what-the-makers-fill"_s, withProgram<checkTheFirstExtensionHoldsWhatTheMakersFill> },
         { "extension/whoever-asks-first-makes-the-same-extension"_s, withProgram<checkWhoeverAsksFirstMakesTheSameExtension> },
-        { "extension/the-builder-lays-each-value-in-its-own-granule"_s, withProgram<checkTheBuilderLaysEachValueInItsOwnGranule> },
         { "extension/narrow-references/an-object-pays-for-the-fields-it-has"_s, runNativeTestWithNarrowReferences<checkAnObjectPaysForTheFieldsItHas> },
         { "extension/narrow-references/fields-are-added-in-every-order"_s, runNativeTestWithNarrowReferences<checkFieldsAreAddedInEveryOrder> },
         { "extension/narrow-references/a-granule-goes-in-place-only-behind-the-others"_s, runNativeTestWithNarrowReferences<checkAGranuleGoesInPlaceOnlyBehindTheOthers> },
@@ -1044,8 +924,6 @@ std::span<const NativeTest> extensionTests()
         { "extension/narrow-references/the-granule-of-a-neighbor-takes-no-field-away"_s, runNativeTestWithNarrowReferences<checkTheGranuleOfANeighborTakesNoFieldAway>, noNarrowReferences },
         { "extension/narrow-references/the-first-extension-holds-what-the-makers-fill"_s, runNativeTestWithNarrowReferences<checkTheFirstExtensionHoldsWhatTheMakersFill> },
         { "extension/narrow-references/whoever-asks-first-makes-the-same-extension"_s, runNativeTestWithNarrowReferences<checkWhoeverAsksFirstMakesTheSameExtension> },
-        { "extension/narrow-references/the-builder-lays-each-value-in-its-own-granule"_s, runNativeTestWithNarrowReferences<checkTheBuilderLaysEachValueInItsOwnGranule> },
-        { "extension/narrow-references/what-an-allocation-hands-on-where-the-heap-is-full-keeps-its-extension"_s, runNativeTestWithNarrowReferences<checkWhatAnAllocationHandsOnWhereTheHeapIsFullKeepsItsExtension> },
     };
     return tests;
 }

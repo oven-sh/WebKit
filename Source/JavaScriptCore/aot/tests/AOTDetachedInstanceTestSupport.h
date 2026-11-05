@@ -18,7 +18,6 @@ namespace JSC { namespace AOT {
 
 enum class TestRealm : bool { Plain, Locked };
 
-// An Instance that no image stands behind, for an operation that asks it for the VM and the realm alone. Every other word of it is zero.
 class DetachedInstance {
     WTF_MAKE_NONCOPYABLE(DetachedInstance);
 public:

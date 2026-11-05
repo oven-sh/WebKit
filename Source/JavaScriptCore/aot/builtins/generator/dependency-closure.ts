@@ -21,11 +21,9 @@ import { operandUses, type ClassName, type FeatureName } from "./vocabulary.ts";
 
 export interface LoadedModule {
   isConditional: boolean;
-  /** The exports that native code reads off what the module answers. null: nobody has written down which. */
   exportsRead: ReadonlySet<string> | null;
 }
 
-/** What an entry calls only where the operand of the call at a position is one of some texts. */
 export interface CallsForTexts {
   argument: number;
   texts: readonly ModelName[];
@@ -35,13 +33,10 @@ export interface CallsForTexts {
 export interface RuntimeDependencies {
   loads: Map<ModelModule, LoadedModule>;
   calls: Set<ModelFunction>;
-  /** Of the entry that is named, by the position and the texts. What is reached by value has none: nobody sees its calls. */
   callsForTexts: Map<string, CallsForTexts>;
   implementedBy: Set<ModelFunction>;
-  /** Those of `calls` and `implementedBy` that every use of the named entry needs. The others hang on its operands, or on what is done with a value that it hands out. */
   certain: Set<ModelFunction>;
   namedBy: Map<ModelModule | ModelFunction, ModelBuiltin>;
-  /** Among what is reached lies a method that native code calls with what it loads at start-up, or the symbol under which a program lays one. */
   hasMethodCalledWithStartupLoads: boolean;
 }
 
@@ -53,7 +48,6 @@ export interface UndescribedResult {
 interface HandedOutValues {
   objects: readonly ModelBuiltin[];
   undescribedValue: string | null;
-  /** What the entry that hands out the undescribed value is linked with. */
   features: readonly FeatureName[];
 }
 
@@ -97,7 +91,6 @@ function addCallsForTexts(
   else for (const called of calls) known.calls.add(called);
 }
 
-// The front end has the text of the program and nothing else.
 function textsDecidingCall(condition: ModelCondition): Pick<CallsForTexts, "argument" | "texts"> | null {
   const { operand, isOneOf, startsWith, hasProperty } = condition;
   const asksMore =
@@ -134,7 +127,6 @@ function collectCompiledFunctions(functions: readonly ModelFunction[]): Map<Mode
   return compiledFunctions;
 }
 
-// What an operand leaves in a native cell is the program's own. What native code makes there comes out through a handler.
 const isHandedOut = ({ from, to }: ModelTransfer): boolean =>
   to.place !== "NativeMemory" && (to.place !== "NativeCell" || from.place === "NewValue");
 
@@ -191,13 +183,10 @@ const isKnownByNameOnly = (builtin: ModelBuiltin): boolean =>
   isStoredValue(builtin) && builtin.overloads.every(({ proof }) => proof === "Structure");
 
 interface NamesAskedOfOperands {
-  /** What native code finds under one of these it calls: the keys of the protocols that it runs, and the members that the rows say it calls. */
   called: ReadonlySet<ModelName>;
-  /** What it finds under one of these it only looks at, so that code runs only where an accessor lies there. */
   read: ReadonlySet<ModelName>;
 }
 
-// One for each way in which some row asks an operand. What a member answers is asked by whoever called the member, so under the same names.
 function collectNamesAskedOfOperands({ overloads, protocolKeys }: TableModel): NamesAskedOfOperands[] {
   const asked = new Map<string, NamesAskedOfOperands>();
   for (const { receiver, parameters } of overloads) {
@@ -250,7 +239,6 @@ class HandedOutValueCollector {
     for (const place of places) this.#addPlace(place, "a value that is passed on");
   }
 
-  /** What native code passes to a function of the library that it calls for the entry is in the hands of that function. */
   addCallByHost({ thisValue, arguments: passed, otherArguments }: ModelHostCall): void {
     for (const place of [thisValue, ...(passed ?? []), otherArguments]) {
       if (place.place === "NativeCell") this.#addPlace(place, "a value native code passes on");
@@ -378,7 +366,6 @@ export class DependencyClosure {
       if (made !== null) functionsInCells.set(cell, [...(functionsInCells.get(cell) ?? []), made]);
     }
     this.#functionsInCells = functionsInCells;
-    // The native code that makes an instance of a class is linked with the features of the class.
     const inEveryExecutable: ModelBuiltin[] = [];
     const ofFeature = new Map<FeatureName, ModelBuiltin[]>();
     for (const builtinClass of classesOf("Host")) {
@@ -438,10 +425,6 @@ export class DependencyClosure {
     return this.#reachableFrom({ ...nothingHandedOut, objects: this.#hostClassObjectsInEveryExecutable });
   }
 
-  /**
-   * What whoever holds `roots` comes to hold: their members, the objects linked with them and what calls of them hand out, each under the entry that stands for the object, ascending.
-   * A result that is not described may be an instance of any class of the host. Nothing is found on or through an entry that `isLeftOut`.
-   */
   entriesInReachOf(roots: readonly ModelBuiltin[], isLeftOut: (builtin: ModelBuiltin) => boolean): ModelBuiltin[] {
     const visited = new Set<ModelBuiltin>();
     const workList = [...roots];
@@ -478,7 +461,6 @@ export class DependencyClosure {
     return !(isOnEngineObject && isKnownByNameOnly(builtin));
   }
 
-  /** `reachedWith`: the entry is reached by value, together with these. null: it is the entry that is named. */
   #addOwnDependencies(
     dependencies: RuntimeDependencies,
     builtin: ModelBuiltin,
@@ -491,7 +473,6 @@ export class DependencyClosure {
     own.hasMethodCalledWithStartupLoads =
       (namesOfMethods.includes(builtin.name) && !builtin.marks.includes("IsCalledWithoutStartupLoads")) ||
       (constant !== null && constant.constant === "Symbol" && namesOfMethods.includes(constant.name)) ||
-      // A trap answers under every key, that one too.
       builtin.instanceClass?.token === proxyClassName;
     for (const { module, exports, condition } of builtin.attachments.moduleLoads) {
       addLoad(own, module, {
@@ -511,7 +492,6 @@ export class DependencyClosure {
         condition.calledOn === null ||
         reachedWith.has(condition.calledOn.sameObjectAs ?? condition.calledOn)
       ) {
-        // A row about calls on one object takes that object.
         own.calls.add(called);
       }
     }
@@ -527,13 +507,9 @@ export class DependencyClosure {
     mergeDependencies(dependencies, own);
   }
 
-  // Native code that is handed an instance of a class of the language finds the members of the class under the names that the rows list, and no source shows
-  // those reads: whoever copies a list that is not plain steps its iterator. So the code behind such a member comes with whatever makes an instance: the entry
-  // that hands one out, and the prototype object of the class, which stands for the syntax that makes one. What a member found so hands out is asked in turn.
   #foundOnInstancesFrom(builtin: ModelBuiltin): RuntimeDependencies {
     const isPrototypeOfLanguage = ({ kind, origin }: ModelBuiltin): boolean => kind === "Prototype" && origin === "Engine";
     const handedOut = this.#instancesHandedOutBy(builtin);
-    // A value that the rows of the entry do not describe may be an instance of any class of the language.
     const roots = handedOut.undescribedValue === null ? handedOut.objects : this.#enginePrototypes;
     const prototypes = [builtin, ...roots].filter(isPrototypeOfLanguage);
     const key = prototypes.map(prototype => prototype.id).join(",");
@@ -553,10 +529,8 @@ export class DependencyClosure {
         for (const listed of prototype.members) {
           const member = listed.sameObjectAs ?? listed;
           const runs = called.has(listed.name) || (member.kind === "Accessor" && read.has(listed.name));
-          // Whoever makes an instance has named the constructor, or the syntax that stands for it.
           if (!runs || member.kind === "Constructor") continue;
           found.add(member);
-          // What such a member answers without a description is what it was handed, or what that holds.
           workList.push(...this.#instancesHandedOutBy(member).objects);
         }
       }
@@ -565,8 +539,6 @@ export class DependencyClosure {
     return dependencies;
   }
 
-  // forEachHolderOfClassThatLibraryRowsHandOut() of facts/AOTFlowRulesRuntimeModules.cpp: with a use of the entry the solve applies the rows of these too.
-  // The constructor and the prototype object of each class of which the entry hands out an instance, and of the classes above those.
   #holdersOfClassesHandedOutBy(builtin: ModelBuiltin): Set<ModelBuiltin> {
     const types = new Set<ModelType>();
     const classes = new Set<ModelClass>();
@@ -600,7 +572,6 @@ export class DependencyClosure {
     return holders;
   }
 
-  // The objects of the classes of which the entry hands out an instance.
   #instancesHandedOutBy(builtin: ModelBuiltin): HandedOutValueCollector {
     const collector = new HandedOutValueCollector(this.#classObjects, this.#functionsInCells, null);
     for (const { result, flow } of builtin.overloads) collector.addValues(result.type, handedOutPlacesOf(flow));

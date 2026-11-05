@@ -33,7 +33,6 @@
 namespace JSC { namespace AOT {
 
 static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
-static_assert(emptyLiteralStringWord > undefinedCell32 && emptyLiteralStringWord > nullCell32 && emptyLiteralStringWord < minCell32);
 
 static bool markersAreEncodedValues(const SlotTraits& traits)
 {
@@ -84,7 +83,6 @@ void computeFieldAddress(StubAssembler& jit, const FieldAddressRegisters& r, boo
         }
         if (ways)
             ways->fromExtension = jit.label();
-        // The bit of the granule goes to the top and the bits of later granules drop out. A shift goes by the lowest six bits of its count, so what lies above the offset does not matter.
         static_assert(offsetOfFirstExtensionSlot == extensionGranuleSize && extensionGranuleSize == 8 && maxExtensionGranules == 64);
         const OwnedScratchRegister ownedScratch(jit);
         const GPRReg granuleBits = ownedScratch;
@@ -130,7 +128,6 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     RELEASE_ASSERT(noOverlap(r.field.object, r.field.address, r.field.representation, r.value, r.number, r.numberScratch));
     RELEASE_ASSERT(noOverlap(r.result, r.field.address, r.field.representation, r.value));
 
-    // The code for a boxed value reads a cell: both have the empty value for "absent". The code for a narrow reference that may be undefined or null reads one that may not: it never holds their markers.
     constexpr SlotTraits boxed = traitsOf(SlotRepresentation::JSValue);
     constexpr SlotTraits cell = traitsOf(SlotRepresentation::Cell);
     static_assert(boxed.width == cell.width && boxed.hasAbsent && cell.hasAbsent && boxed.absentBits == cell.absentBits && !cell.isNarrowReference);
@@ -188,35 +185,19 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     };
     auto readReference = [&](const SlotTraits& traits) {
         RELEASE_ASSERT(traits.hasAbsent && markersAreEncodedValues(traits));
-        const bool mayBeLiteralString = traits.valueKind == SlotValueKind::LiteralString;
 
         loadBits(traits.width);
-        Jump notCell;
-        if (traits.isNarrowReference) {
-            notCell = jit.branch32(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
-            decodeCell32(jit, r.value, r.result);
-        } else {
-            notCell = jit.branch64(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
-            jit.move(r.value, r.result);
-        }
+        Jump notCell = jit.branch32(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
+        decodeCell32(jit, r.value, r.result);
         jit.returnToCaller();
 
-        if (!mayBeLiteralString && !traits.hasUndefined && !traits.hasNull) {
+        if (!traits.hasUndefined && !traits.hasNull) {
             exits.isAbsent.append(notCell);
             return;
         }
 
         notCell.link(&jit);
-        Jump isLiteralString;
-        if (mayBeLiteralString)
-            isLiteralString = jit.branch32(CCallHelpers::AboveOrEqual, r.value, TrustedImm32(emptyLiteralStringWord));
         exits.isAbsent.append(jit.branchTest32(CCallHelpers::Zero, r.value));
-        returnValue();
-
-        if (!mayBeLiteralString)
-            return;
-        isLiteralString.link(&jit);
-        loadLiteralString(jit, r.value, r.field.address, exits.cannot);
         returnValue();
     };
     auto readNarrowInteger = [&](const SlotTraits& traits) {
@@ -253,7 +234,6 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     };
     auto readOptionalInt32 = [&](const SlotTraits& traits) {
         RELEASE_ASSERT(traits.valueKind == SlotValueKind::SignedInteger && traits.width == sizeof(int32_t) && traits.hasAbsent);
-        // A slot that is always filled has no markers, so nothing leaves behind the load.
         if (known == SlotRepresentation::Int32) {
             loadBitsInto(r.result, traits.width);
             boxExactInt32(jit, r.result, r.result);
@@ -282,9 +262,6 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
                 readReference(traits);
             else
                 readEncodedValue(traits);
-            return;
-        case SlotValueKind::LiteralString:
-            readReference(traits);
             return;
         case SlotValueKind::SignedInteger:
         case SlotValueKind::UnsignedInteger:
@@ -418,7 +395,6 @@ void returnFieldPresence(StubAssembler& jit, const CachedSlot& slot, const Field
     isAbsent.link(&jit);
     switch (slot.kind()) {
     case Slot::Kind::Field:
-        // No cell of the front table has room for the second flag.
         if (keyOrderSays && slot.form() == SlotForm::Slot)
             keyOrderSays->append(slot.branchIfFlag(jit, Slot::emptySlotMayBeUndefined));
         isUnknown.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
@@ -445,7 +421,6 @@ static Address slotOfButterfly(GPRReg butterfly, unsigned slot)
     return Address(butterfly, static_cast<int32_t>(JSCellButterfly::offsetOfData() + slot * sizeof(EncodedJSValue)));
 }
 
-// At a location above zero from the object, below zero from its butterfly. The location is extended in place.
 static void loadAtLocation(StubAssembler& jit, GPRReg object, GPRReg location, GPRReg storage, GPRReg result)
 {
     jit.signExtend32ToPtr(location, location);
@@ -461,7 +436,6 @@ static void loadAtLocation(StubAssembler& jit, GPRReg object, GPRReg location, G
 static constexpr unsigned shiftOfRecordsOfField = WTF::fastLog2(ClassToken::slotsPerField * static_cast<unsigned>(sizeof(EncodedJSValue)));
 static_assert(ClassToken::slotsPerField * sizeof(EncodedJSValue) == 1u << shiftOfRecordsOfField);
 
-// The two usual reads of a private name.
 void generatePrivateGet(StubAssembler& jit)
 {
     constexpr unsigned fieldSizeShift = WTF::fastLog2(static_cast<unsigned>(sizeof(FieldData)));
@@ -493,7 +467,6 @@ void generatePrivateGet(StubAssembler& jit)
         .numberScratch = jit.allocateScratch(FPRInfo::fpRegT1),
     };
 
-    // By the record of the Structure of `object`, which is no compiled object.
     auto readAtKnownLocationAndReturn = [&](JumpList& isNotKnown) {
         const GPRReg records = T12;
         const GPRReg location = T11;
@@ -529,13 +502,11 @@ void generatePrivateGet(StubAssembler& jit)
         const GPRReg layout = T12;
         const GPRReg record = T11;
         loadStructure(jit, object, layout);
-        // Another realm that runs the image has evaluated the class for itself.
         if (!jit.options().hasOneInstance) {
             jit.move(layout, T10);
             goesToRunTime.append(branchIfNotOfThisRealm(jit, T10));
         }
         jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
-        // The number is an int32 in a JSValue: its lower half is the number.
         jit.load32(slotOfButterfly(token, ClassToken::classIndexSlot), T10);
         isOfOtherClass = jit.branch32(CCallHelpers::NotEqual, T10, Address(layout, OBJECT_OFFSETOF(LayoutData, index)));
         if (!knownRepresentation) {
@@ -569,13 +540,11 @@ void generatePrivateGet(StubAssembler& jit)
         goesToRunTime.append(exits.cannot);
     }
 
-    // An instance of a class below this one.
     isOfOtherClass.link(&jit);
     if (knownRepresentation) {
         jit.and32(TrustedImm32((1 << bitsOfFieldInPrivateGet) - 1), field);
         jit.jumpToStub(privateGet());
     } else {
-        // Its layout has a field for the name, which the run time has found before.
         const GPRReg layout = T12;
         const GPRReg layouts = T11;
         const GPRReg place = T12;
@@ -596,7 +565,6 @@ void generatePrivateGet(StubAssembler& jit)
         jit.jump().linkTo(readsFieldOfRecord, &jit);
         hasNoPlace.link(&jit);
     }
-    // Its layout lacks the names of this class, and they lie among the extra properties.
     if (!knownRepresentation) {
         const GPRReg extraProperties = T10;
         const GPRReg hiddenWordOffset = T11;
@@ -634,7 +602,6 @@ void generatePrivateGet(StubAssembler& jit)
     });
 }
 
-// Runs `emit`, which falls through where it has done the work of the operation and leaves by its list where it has not. A call that preserves registers may write that of its immediate alone, so there the scratch registers are saved around the work.
 static PreludeExit emitPreludeWithScratches(StubAssembler& jit, std::initializer_list<StubRegister> scratches, NOESCAPE const ScopedLambda<void(JumpList& callsOperation)>& emit, NOESCAPE const ScopedLambda<void()>& leave)
 {
     JumpList callsOperation;
@@ -678,7 +645,6 @@ static bool canHavePreludeWithScratches(StubAssembler& jit)
     return (family == StubFamily::CallOperation || family == StubFamily::CallOperationPreservingRegisters) && jit.signature().result == StubResult::None;
 }
 
-// The extra properties of a compiled object, any other object itself.
 static void loadHolderOfNamesWithoutField(StubAssembler& jit, GPRReg object, GPRReg holder, GPRReg structure, GPRReg hiddenWordOffset, JumpList& hasNone)
 {
     jit.move(object, holder);
@@ -692,7 +658,6 @@ static void loadHolderOfNamesWithoutField(StubAssembler& jit, GPRReg object, GPR
     isNotCompiledObject.link(&jit);
 }
 
-// The usual store under a private name that no field holds, found as generatePrivateGet() finds it.
 PreludeExit emitPrivateSetPrelude(StubAssembler& jit)
 {
     if (!canHavePreludeWithScratches(jit))
@@ -732,7 +697,6 @@ PreludeExit emitPrivateSetPrelude(StubAssembler& jit)
         loadAtLocation(jit, owner, location, storage, location);
         callsOperation.append(jit.branch64(CCallHelpers::NotEqual, location, token));
         needsNoBrand.link(&jit);
-        // The stub of the barrier writes registers.
         if (!leavesThroughBarrier)
             callsOperation.append(branchIfBarrierIsNeeded(jit, owner, storage));
 
@@ -748,7 +712,6 @@ PreludeExit emitPrivateSetPrelude(StubAssembler& jit)
     });
 }
 
-// The usual definition of a private name that no field holds: an object of the same Structure has taken the name before.
 PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
 {
     if (!canHavePreludeWithScratches(jit))
@@ -762,7 +725,6 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
     constexpr GPRReg place = gprOf(StubRegister::T11);
     constexpr GPRReg storage = gprOf(StubRegister::T12);
     constexpr GPRReg structureAfter = gprOf(StubRegister::T9);
-    // What takes the name: the object itself, or the extra properties of a compiled object.
     constexpr GPRReg owner = gprOf(firstStubOperandRegister);
     static_assert(noOverlap(object, token, field, value, definition, place, storage, structureAfter, owner, instanceGPR));
     RELEASE_ASSERT(signatureOfWriteBarrier(writeBarrier()).operands[0] == Reg(owner));
@@ -772,7 +734,6 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
     };
     bool leavesThroughBarrier = jit.key().family() == StubFamily::CallOperation;
 
-    // `place` holds the number of the Structure that the owner has before.
     auto findDefinition = [&](JumpList& isNotKnown) {
         JumpList isFound;
         jit.load64(slotOfButterfly(token, ClassToken::knownStructuresSlot), definition);
@@ -794,7 +755,6 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
         isOfOtherEvaluation.append(jit.branch64(CCallHelpers::NotEqual, place, token));
         needsNoBrand.link(&jit);
     };
-    // structureAfter holds the number of the next Structure of the owner. Nothing is written where it cannot.
     auto defineInOwner = [&](GPRReg oldCapacity, JumpList& cannot) {
         jit.load16SignedExtendTo32(slotOfDefinition(ClassToken::Places), place);
         Jump growsStorage = jit.branchTest32(CCallHelpers::NonZero, place, TrustedImm32(1));
@@ -825,7 +785,6 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
         }, cannot);
         isDefined.link(&jit);
     };
-    // Runs `emit` with two more registers to write. `place` says afterwards whether it left by its list.
     auto withTokenAndField = [&](JumpList& callsOperation, const ScopedLambda<void(JumpList& cannot)>& emit) {
         jit.preserving({ token, field }, [&] {
             JumpList cannot;
@@ -848,7 +807,6 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
         jit.load32(Address(object, JSCell::structureIDOffset()), place);
         findDefinition(callsOperation);
         checkBrand(callsOperation);
-        // The stub of the barrier writes registers.
         if (!leavesThroughBarrier)
             callsOperation.append(branchIfBarrierIsNeeded(jit, owner, storage));
         jit.load64(slotOfDefinition(ClassToken::StructureAfter), structureAfter);
@@ -858,7 +816,6 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
         });
         isDefined.append(jit.jump());
 
-        // The name goes among the extra properties. The Structure of the instance names theirs, and what it leads on to names their next one.
         isCompiledObject.link(&jit);
         const GPRReg successor = structureAfter;
         loadStructure(jit, object, storage);
@@ -888,7 +845,6 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler& jit)
         });
         isDefined.append(jit.jump());
 
-        // The first name outside the fields: the extra properties are made with it in their first word.
         hasNoExtraProperties.link(&jit);
         callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(orderWordIsNotExtensible)));
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.emptyExtraPropertiesStructure)), place);

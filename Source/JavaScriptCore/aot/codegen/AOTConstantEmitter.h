@@ -49,38 +49,26 @@ public:
     CellPointer builtinCell(const OperationContext& context, BuiltinID id) { return builtinCell(context, BuiltinCellKey::object(id)); }
     CellPointer builtinCell(const OperationContext&, BuiltinCellKey);
     CellPointer singletonClosure(const OperationContext&, FunctionID);
-    // Makes the closure that a slot of the object deferred and stores it there. With several functions the shape of the object says which: each comes with the layouts that defer it.
-    // The stub for closures without a function object makes what it can make. The run time makes the rest.
     struct DeferredFunction {
         FunctionID function;
         Vector<LayoutID, 2> layouts;
     };
-    // offsetOfEnvironment: of the hidden field that keeps the environment, for closures over it.
     CellPointer makeClosureOfField(const OperationContext&, std::span<const DeferredFunction>, CellPointer object, uint32_t offsetOfSlot, bool capturesObject, std::optional<uint32_t> offsetOfEnvironment, NOESCAPE const ScopedLambda<CellPointer()>& makeInRunTime);
-    // For a type test, which has no context.
     CellPointer keyConstant(PropertyKeyID);
     CellPointer builtinCell(BuiltinID);
     void branchOnIsBuiltinCell(LValue boxedValueOrCell, BuiltinID, BranchTargets);
     Operand constantOf(JSValue, Representation);
     Operand zeroOf(Representation);
-    // The cell in a word that, once filled, stays as it is.
     CellPointer permanentCell(TypedPointer cellWord, bool isNarrow, NOESCAPE const Invocable<CellPointer()> auto& create);
-    // The same for a cell that is a root for good from then on. The cell behind the join is numbered under the function: a later request in the scope takes it, and has no load, no test and no arm.
     CellPointer numberedPermanentCell(const Machine::PureFunction&, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord, NOESCAPE const Invocable<CellPointer(TypedPointer)> auto& create);
-    // For every other cell that is a root for good once it is made. `make` ends in the join of the arm that has read the cell and the arm that has had it made.
     CellPointer cellNumberedBehindJoin(const Machine::PureFunction&, NOESCAPE const Invocable<CellPointer()> auto& make);
 
     struct ConstantMadeAtSite {
         ConstantAtSite constant;
-        // What lies behind the call: an index into the mentions of the function, or the bits themselves.
         uint32_t number { 0 };
-        bool numberIsMention { false };
-        // CallOptions::runsCodeOfHost.
         bool runsCodeOfHost { false };
     };
-    // The rare arm of permanentCell(), as one call: the stub fills the word, hands the cell back where the other arm has it and keeps every other register. The call says that it writes the heap of the word.
-    // A type test has no context. `literalStringWord` is the operand of ConstantAtSite::LiteralStringInRegister.
-    CellPointer makeConstantAtSite(const OperationContext*, const ConstantMadeAtSite&, const Machine::AbstractHeap& heapOfWord, LValue literalStringWord = nullptr);
+    CellPointer makeConstantAtSite(const OperationContext*, const ConstantMadeAtSite&, const Machine::AbstractHeap& heapOfWord);
 
 private:
     struct NewClosureRequest {
@@ -90,18 +78,15 @@ private:
         AllocationStorage storage;
         ClosureForm form;
         std::span<const ValueID> captures;
-        // How many of `captures` the closure holds. The record lists an operand for a capture that is removed too.
         unsigned numberOfWords { 0 };
     };
 
     void defineCell(const ValueContext&, CellPointer);
-    LiteralStringWord spelledLiteralString(StringID);
     void failAndDefineZero(const ValueContext&, InternalErrorKind);
     CellPointer failWithoutCell(const OperationContext&, InternalErrorKind);
 
     TypedPointer builtinCellWord(BuiltinCellKey);
     CellPointer cellMadeByStub(const OperationContext&, StubKey, CallOptions, bool isNarrow, NOESCAPE const Invocable<TypedPointer()> auto& cellWord);
-    // What a site of the stub loses whichever register its result takes.
     const RegisterSet& registersLostAtSiteOf(ConstantAtSite);
     CellPointer newCopyOnWriteArray(const ValueContext&);
     CellPointer newCopyOnWriteArrayByStub(const ValueContext&);
@@ -115,11 +100,10 @@ private:
     Operand captureOf(const NewClosureRequest&, unsigned index) const;
     Vector<LValue, 4> captureWordsBySlot(const NewClosureRequest&);
     void storeCaptures(CellPointer closure, const NewClosureRequest&, const Machine::IndexedAbstractHeap&);
-    // The mention of the closure number of NewClosureRequest::function.
     uint32_t closureNumberMentionedBy(const NewClosureRequest&, int32_t addend = 0);
     Integer closureWordOf(const NewClosureRequest&);
 
-    std::array<std::optional<RegisterSet>, static_cast<size_t>(ConstantAtSite::LiteralStringInRegister) + 1> m_registersLostAtSites;
+    std::array<std::optional<RegisterSet>, static_cast<size_t>(ConstantAtSite::BuiltinCell) + 1> m_registersLostAtSites;
 };
 
 CellPointer ConstantEmitter::permanentCell(TypedPointer cellWord, bool isNarrow, NOESCAPE const Invocable<CellPointer()> auto& create)

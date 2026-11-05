@@ -169,8 +169,6 @@ public:
 
     void add(const Program& program, const MemoryLocation& location) { add(location.heap(), location.isEntireHeap() ? entireHeap : Typed::maskOf(program, location)); }
 
-    // Without the program a location under a key, a variable or a layout takes the entire heap: its bit comes from what the key, the variable or the layout is, never from its number, and only the program knows that.
-    // Whoever has one of those passes the program.
     void add(const MemoryLocation&);
 
     constexpr bool merge(const LocationMasks& other)

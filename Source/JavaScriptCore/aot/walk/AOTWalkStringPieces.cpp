@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Strings: slice, substring and substr as the two bounds and one Substring, and what a reader learns of a piece by the record that cut it.
-// A bound that the ranges decide is the position itself, the length or 0. The others come out of one StringRange, which clamps as the method does and writes nothing.
-// A piece is looked at through its record alone, so neither a suspension nor a throw ends anything. Withheld (BuiltinCalls): the call goes by its row, and no piece is in sight.
-
 #include "config.h"
 #include "AOTWalkStrings.h"
 
@@ -22,8 +18,6 @@
 #include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-// ---- The bounds
 
 Reference clampedPositionForStrings(Walker& walker, Reference position, Reference limit, bool countsFromEnd, Origin origin)
 {
@@ -96,7 +90,6 @@ bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
     Reference zero = integerForStrings(walker, 0);
     Reference first = isLeftOut(0) ? zero : call.arguments[0];
     Reference second = isLeftOut(1) ? Reference() : call.arguments[1];
-    // slice() and substr() count a negative position from the end. substring() takes it for zero and puts the smaller position first.
     bool countsFromEnd = method != StringRangeMethod::Substring;
 
     Reference start = clampedPositionForStrings(walker, first, length, countsFromEnd, origin);
@@ -133,7 +126,6 @@ bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
         Reference bounds = walker.build(WTF::move(range));
         if (!bounds)
             return true;
-        // Both bounds of one range are in order. Beside 0 every end is.
         if (!start || (!end && start != zero))
             start = buildResultOfRangeForStrings(walker, bounds, startOfStringRange, origin);
         if (!end)
@@ -152,8 +144,6 @@ bool buildPieceByMethod(Walker& walker, const CallByOneRow& call)
     return true;
 }
 
-// ---- A piece in sight
-
 std::optional<PieceOfString> pieceInSight(Walker& walker, Reference text)
 {
     Reference root = rootForStrings(walker, text);
@@ -163,7 +153,6 @@ std::optional<PieceOfString> pieceInSight(Walker& walker, Reference text)
     const Operation& record = code.at(root.id());
     if (record.opcode != Opcode::Substring)
         return std::nullopt;
-    // The cut may run out of memory, and so may the read of characters that stands in its place: under the handler of the cut, or under none.
     BlockID cut = code.blockOf(root.id());
     BlockID here = walker.currentBlock();
     if (cut != here && (code.at(cut).handler || code.at(here).handler))
@@ -181,7 +170,6 @@ static Reference rangeGivingBoundForStringPieces(const Walker& walker, Reference
     return results.isValue() && code.at(results.id()).opcode == Opcode::StringRange ? results : Reference();
 }
 
-// `s.substr(a, 3)`, a character: the end is the start and something that is not negative.
 static bool endIsSumWithStartForStringPieces(const Walker& walker, const PieceOfString& piece)
 {
     const Code& code = walker.code();
@@ -212,8 +200,6 @@ bool isRangeOfPieceInOrder(Walker& walker, const PieceOfString& piece)
     return relationDecidedForStrings(walker, Opcode::LessEq, piece.start, piece.end).value_or(false);
 }
 
-// ---- What is read off a piece that need not be cut
-
 bool buildLengthOfPieceInSight(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (inputs.areOnlyTypes() || value.isFreeName() || value.key() != walker.program().keyOf(BuiltinNames::length) || walker.isUnreachable())
@@ -223,20 +209,9 @@ bool buildLengthOfPieceInSight(Walker& walker, const BodyValue& value, const Inp
         return false;
     Origin origin = walker.originOf(value);
 
-    // `for (const ch of text) ch.length`: the step has counted.
-    Reference root = rootForStrings(walker, text);
-    if (root.isValue()) {
-        auto& stepped = notesOfStrings(walker).codePointsOfSteppedPieces;
-        if (auto noted = stepped.find(root.id().index()); noted != stepped.end()) {
-            bindForStrings(walker, value.id(), noted->value.numberOfCodeUnits, origin);
-            return true;
-        }
-    }
-
     std::optional<PieceOfString> piece = pieceInSight(walker, text);
     if (!piece || !isRangeOfPieceInOrder(walker, *piece))
         return false;
-    // The mask changes nothing. It says what the ranges of the bounds do not: no length is negative.
     Reference difference = buildOperatorForStrings(walker, Opcode::Sub, piece->end, piece->start, origin);
     Reference length = buildOperatorForStrings(walker, Opcode::BitAnd, difference, integerForStrings(walker, std::numeric_limits<int32_t>::max()), origin);
     if (length)
@@ -244,7 +219,6 @@ bool buildLengthOfPieceInSight(Walker& walker, const BodyValue& value, const Inp
     return true;
 }
 
-// `+s.slice(2)`, `Number(s.substring(a, b))`, `parseInt(s.slice(a, b), 10)`: the characters are read where they lie.
 static std::optional<PieceOfString> pieceToReadNumberOffForStringPieces(Walker& walker, Reference text)
 {
     if (!text || !isProvenString(walker, walker.typeOf(text)))

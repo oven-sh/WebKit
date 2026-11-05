@@ -217,7 +217,6 @@ static void testVectorOverflow()
     AOT_TEST_CHECK(context.diagnostics().internalErrors().isEmpty());
 }
 
-// A thunk moves into a register at most once, so the size of the shared code comes from the number of thunks.
 static constexpr unsigned numberOfMovesInLargeThunk = numberOfDirectArgumentGPRs;
 
 static ArgumentMoves largeThunkMoves(uint32_t thunk)
@@ -288,7 +287,6 @@ static void testRelocationPastBody()
     AOT_TEST_CHECK(build.count(InternalErrorKind::RelocationNotApplied) >= 1);
 }
 
-// The bytes behind the end of the body are never read: the build stops before it copies any code.
 static CompiledCode bodyOfMegabytes(uint32_t function, size_t megabytes)
 {
     CompiledCode code = plainBody(function);
@@ -296,7 +294,6 @@ static CompiledCode bodyOfMegabytes(uint32_t function, size_t megabytes)
     return code;
 }
 
-// An image is one Vector, which holds less than two gigabytes, and on x86-64 a near call reaches no further. Either way the build says which limit it met.
 static void testCodeOverTwoGigabytes()
 {
     TestBuild build(4);

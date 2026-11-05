@@ -46,7 +46,6 @@ inline OptionSet<Yarr::Flags> toYarrFlags(OptionSet<RegExpFlags> flags)
 
 inline constexpr OptionSet<RegExpFlags> flagsOfMatchesUsingObject { RegExpFlags::Global, RegExpFlags::Sticky, RegExpFlags::HasIndices };
 
-// Image makes no code for a longer pattern, so nobody works out a longer text.
 inline constexpr unsigned longestRegExpPatternWithCode = 1048576;
 
 } } } // namespace JSC::AOT::Typed

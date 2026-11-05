@@ -40,12 +40,10 @@ struct RuntimeDescription {
     OperatingSystem operatingSystem;
     uint8_t imageForm;
     uint8_t checks;
-    // The one ImageHeader::formatVersion that this run time takes. A run time from before this member has 0 here.
     uint32_t imageFormatVersion;
 };
 static_assert(sizeof(RuntimeDescription) == 32 && offsetof(RuntimeDescription, imageForm) == 26 && offsetof(RuntimeDescription, imageFormatVersion) == 28, "whoever reads an executable without this header finds the members at these places");
 
-// The table of built-ins is compiled with the program that embeds the engine. It describes itself in a record of its own in the same section.
 struct BuiltinTableDescription {
     static constexpr uint64_t expectedMagic = 0x4254544f414e5542ULL;
 
@@ -63,7 +61,6 @@ struct BuiltinTableDescription {
 };
 static_assert(sizeof(BuiltinTableDescription) == 48);
 
-// A declaration says the section and the definition says that no linker leaves it out.
 #if OS(DARWIN)
 #define AOT_IN_RUNTIME_DESCRIPTION_SECTION __attribute__((section("__TEXT,__bun_aot")))
 #define AOT_KEPT_BY_EVERY_LINKER __attribute__((used))
@@ -84,9 +81,7 @@ struct RuntimeDifference {
 };
 
 JS_EXPORT_PRIVATE std::span<const uint8_t> descriptionOfThisRuntime();
-// One per fact, in the order of the facts after the header of the description.
 JS_EXPORT_PRIVATE std::span<const ASCIILiteral> namesOfRuntimeFacts();
-// Takes the record of the engine or the record of the table.
 JS_EXPORT_PRIVATE std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const uint8_t> other);
 
 } } // namespace JSC::AOT

@@ -25,7 +25,7 @@
 # CHECK: isLoopHead=true
 # CHECK: isLoopHead=true
 # CHECK: [[at]]: {{*}} = GetEnvironmentField {{*}}field=1
-# CHECK-NEXT: TypeTest [[at]] testedType=i32|absent
+# CHECK: TypeTest [[at]] testedType=i32|absent
 # CHECK-NOT: GetEnvironmentField {{*}}field=1
 # CHECK: FlattenString
 # CHECK-NEXT: Jump
@@ -38,15 +38,13 @@
 # CALLEE: isLoopHead=true
 # CALLEE: isLoopHead=true
 # CALLEE: [[at]]: {{*}} = GetEnvironmentField {{*}}field=1
-# CALLEE-NEXT: TypeTest [[at]] testedType=i32|absent
+# CALLEE: TypeTest [[at]] testedType=i32|absent
 # CALLEE-NOT: GetEnvironmentField {{*}}field=1
 # CALLEE-NOT: = Call
 # CALLEE: GetStringCodeUnit
 # CALLEE: Increment {{*}}form=Integers
 
 module m0 path="state-in-an-environment.ts" displayPath="state-in-an-environment.ts" body=f0 namespaceLayout=L(m0)
-module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
-module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
 entry module=m0
 layout L0 module=m0 position=398 fields=[{key="set" declared={type=anything} flags=[IsRequired]}, {key="skip" declared={type=anything} flags=[IsRequired]}, {key="skipThroughCallee" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 2, 0] ownFieldCount=3
 layout L1 kind=Environment module=m0 fields=[{key=@"0" declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]} variableName="text"}, {key=@"1" declared={type=undefined|number|absent} variableName="at"}, {key=@"2" declared={type=undefined|number|absent} variableName="limit"}] ownFieldCount=3
@@ -206,36 +204,3 @@ function f5 name="set" module=m0 position=316 flags=[IsChecked, HasExplicitName]
     v16 = Undefined @366
     Return v16 @366
 }
-function f6 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    v1 = HasJSType v0 first=5 last=5 @78
-    v2 = ToBoolean v1 @78
-    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
-  b1(v3):
-    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
-    v5 = StepArrayIterator v4 @229
-    v6 = ResultAt v5 index=1 @286
-    v7 = ResultAt v5 @334
-    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
-    v9 = CreateIteratorResult v6, v8 @266
-    Return v9 @266
-  b2(v10):
-    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
-    Unreachable @110
-}
-function f7 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    v1 = Undefined @14610
-    v2 = PropGet v0 key="return" @14680
-    v3 = TypeTest v2 testedType=undefined|null @14702
-    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
-  b1(v4):
-    v5 = NarrowByTest v2, v4 @14702
-    v6 = Call v5, v0 @14744
-    Jump -> next b2() @14744
-  b2():
-    v7 = Undefined @14744
-    Return v7 @14744
-}
-runtimefunction id=JSIteratorPrototypeDispose function=f7
-runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private

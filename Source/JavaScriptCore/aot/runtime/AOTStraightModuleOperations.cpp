@@ -15,7 +15,6 @@
 
 namespace JSC { namespace AOT {
 
-// Pairs: where the variable lies in the statics, and the failure to throw if it is empty. The first empty one throws. They lie in the code, at no boundary.
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfImportIsMissing, void, (Instance* instance, const uint32_t* pairs, uint32_t count))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowIfImportIsMissing);

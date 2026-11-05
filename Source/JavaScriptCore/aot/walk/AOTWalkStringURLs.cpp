@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// BuiltinCalls with Guesses: `new URL(text).pathname`, `new URLSearchParams(text).get("q")`. The object is made for one question, which stands behind it in its block: the text is scanned, and a plain text answers out of its own characters.
-// What the scan turns away makes the object and asks it, as written, in one rare arm. The walk puts nothing off: it looks ahead from the construction, never past the stretch that is being walked.
-// At a suspension: no row goes past one. At a throw: a text that is no URL is not plain, so the construction as written throws. Withheld: the construction goes by its row.
-
 #include "config.h"
 #include "AOTWalkStringFolds.h"
 
@@ -25,31 +21,22 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The construction and the question: a cell, a parse and a call of the host each, against a scan.
 static constexpr uint32_t operationsSavedByScanInStringURLs = 2;
 
 namespace {
 
 enum class QuestionInStringURLs : uint8_t { Pathname, Search, Size, Text, Value, Presence, Entries, Keys, Values, Walk };
 
-// What the body does with the object, all of it in the block of the construction.
 struct RowInStringURLs {
     QuestionInStringURLs question { QuestionInStringURLs::Pathname };
-    // `new URL(text).searchParams.get(name)`.
     bool goesThroughSearchParams { false };
-    // The operation whose value both arms give. Of a Walk: the construction itself.
     ValueID last;
-    // Of Value and Presence.
     ValueID name;
-    // The reads off the object and off its searchParams. Only the arm as written walks them.
     Vector<ValueID, 2> reads;
 };
 
 } // anonymous namespace
 
-// ---- What is asked
-
-// The member that the read finds on an object which is as its class makes it, under the entry that stands for the object. Null: nobody can tell.
 static BuiltinID memberFoundOnObjectAsMadeInStringURLs(Walker& walker, const BodyValue& read, TypeID typeOfObject)
 {
     const Program& program = walker.program();
@@ -58,14 +45,12 @@ static BuiltinID memberFoundOnObjectAsMadeInStringURLs(Walker& walker, const Bod
     const ClassPart* part = type.isObject() ? singleBuiltinClassOf(walker.types(), type) : nullptr;
     PropertyKeyID key = read.key();
     BuiltinName name = part && key && !liesInThread(key) && !read.isFreeName() ? program.builtinNameOf(key) : BuiltinName();
-    // It answers only where the member lies where the table lists it, and is never replaced.
     if (!name || !typeFoundOnObjectAsMade(walker, read, typeOfObject))
         return { };
     BuiltinMemberLookup found = table.findForInstance(part->builtinClass, name);
     return found.outcome == BuiltinMemberLookup::Outcome::Found ? table.canonicalID(found.member) : BuiltinID();
 }
 
-// Only a walk takes a list for an iterator: the IteratorOpen that alone reads the value, through casts, in the same block. An async walk looks for another method first.
 static bool isTakenByWalkAloneInStringURLs(const BodyIndex& index, ValueID value)
 {
     BlockID block = index.blockOf(value);
@@ -121,7 +106,6 @@ static std::optional<QuestionInStringURLs> questionAskedByMethodInStringURLs(con
     return std::nullopt;
 }
 
-// Every mention of the object, and of what is read off it on the way to the answer, is accounted for. Nothing: something else gets hold of the object, or asks what no text answers.
 static std::optional<RowInStringURLs> findRowInStringURLs(Walker& walker, const CallByOneRow& call, bool isURL, TypeID typeOfObject)
 {
     const Program& program = walker.program();
@@ -144,7 +128,6 @@ static std::optional<RowInStringURLs> findRowInStringURLs(Walker& walker, const 
             return std::nullopt;
         BodyValue user = index.value(mention->value);
 
-        // A walk of the object itself reads @@iterator off it, which finds `entries` in every run of this build.
         if (user.opcode() == Opcode::IteratorOpen) {
             if (!isQuery || row.goesThroughSearchParams || !isTakenByWalkAloneInStringURLs(index, subject))
                 return std::nullopt;
@@ -182,7 +165,6 @@ static std::optional<RowInStringURLs> findRowInStringURLs(Walker& walker, const 
             return row;
         }
 
-        // The read of a method and its call.
         ValueID callOfMethod = index.useCount(subject) == 2 && isQuery ? index.onlyUsingValue(user.id()) : ValueID();
         if (!standsInStretch(callOfMethod) || index.opcodeOf(callOfMethod) != Opcode::Call)
             return std::nullopt;
@@ -197,7 +179,6 @@ static std::optional<RowInStringURLs> findRowInStringURLs(Walker& walker, const 
         bool listsPairs = *question == QuestionInStringURLs::Entries || *question == QuestionInStringURLs::Keys || *question == QuestionInStringURLs::Values;
         if ((row.goesThroughSearchParams && !asksForName) || (listsPairs && !isTakenByWalkAloneInStringURLs(index, callOfMethod)))
             return std::nullopt;
-        // `new URLSearchParams(query).get(line)`, where `line` grows in a loop: the call of the method is not the operation being walked, so the name is still bound to the builder.
         if (asksForName && isNameOfTextInStringBuilder(walker, arguments[0]))
             return std::nullopt;
         row.question = *question;
@@ -209,7 +190,6 @@ static std::optional<RowInStringURLs> findRowInStringURLs(Walker& walker, const 
     }
 }
 
-// Nothing that the program can see stands between the construction and the answer, so it may as well stand in front of both.
 static bool nothingSeenStandsInRowInStringURLs(const BodyIndex& index, ValueID made, const RowInStringURLs& row)
 {
     for (uint32_t between = made.index() + 1; between < row.last.index(); ++between) {
@@ -221,8 +201,6 @@ static bool nothingSeenStandsInRowInStringURLs(const BodyIndex& index, ValueID m
     }
     return true;
 }
-
-// ---- Helpers of the host
 
 static BuiltinID helperThatListsInStringURLs(QuestionInStringURLs question)
 {
@@ -246,7 +224,6 @@ static BuiltinID helperThatScansInStringURLs(Walker& walker, bool isURL, Referen
     return isPlainBaseInStringURLs(walker, base) ? Builtins::CompilerHelpersScanPlainURLWithPlainBase : Builtins::CompilerHelpersScanPlainURLWithBase;
 }
 
-// Null: the answer is cut out of the text without another call.
 static BuiltinID helperThatAnswersInStringURLs(const RowInStringURLs& row)
 {
     switch (row.question) {
@@ -266,8 +243,6 @@ static BuiltinID helperThatAnswersInStringURLs(const RowInStringURLs& row)
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
-
-// ---- Answers out of the text
 
 static Reference shiftedInStringURLs(Walker& walker, Reference scan, unsigned shift, Origin origin)
 {
@@ -308,7 +283,6 @@ static Reference searchInStringURLs(Walker& walker, Reference text, Reference sc
     return buildArmsForStrings(walker, hasQuery, BlockFrequency::Normal, ArmForStrings(cutQuery), ArmForStrings(giveEmptyText), met) ? met[0] : Reference();
 }
 
-// `found` is PlainURL::packRange(), PlainURL::absent or PlainURL::needsObject, which goes the way of a text that is not plain.
 static Reference answerOfSearchInStringURLs(Walker& walker, Reference text, Reference found, bool answersValue, BlockID asWritten, Origin origin)
 {
     Reference needsNoObject = buildOperatorForStrings(walker, Opcode::GreaterEq, found, integerForStrings(walker, PlainURL::absent), origin);
@@ -335,7 +309,6 @@ static Reference answerOfSearchInStringURLs(Walker& walker, Reference text, Refe
     return buildArmsForStrings(walker, isFound, BlockFrequency::Normal, ArmForStrings(giveWhatWasFound), ArmForStrings(giveNothing), met) ? met[0] : Reference();
 }
 
-// The walk stands where the scan has taken the text. Null: no way leads on.
 static Reference answerFromPlainTextInStringURLs(Walker& walker, const RowInStringURLs& row, Reference text, Reference scan, BlockID asWritten, Origin origin)
 {
     switch (row.question) {
@@ -366,11 +339,6 @@ static Reference answerFromPlainTextInStringURLs(Walker& walker, const RowInStri
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// ---- A URL that never gets out
-
-// `const url = new URL(req.url, base); if (url.pathname === "/a") .. if (url.pathname === "/b") .. url.searchParams.get("page")`: the reads stand in many blocks, and nothing else gets hold of the object.
-// Where it is written the text is scanned, and what the scan turns away is constructed there, as written. Text and scan stand in front of every read, as the construction does, so each read is answered where it stands.
-
 using URLThatIsNeverMade = NotesOfStrings::URLThatIsNeverMade;
 using MentionInStringURLs = URLThatIsNeverMade::Mention;
 
@@ -379,7 +347,6 @@ static bool readsSearchParamsInStringURLs(const BuiltinTable& table, BuiltinID m
     return table.contains(Builtins::URLPrototypeSearchParams) && member == table.canonicalID(Builtins::URLPrototypeSearchParams);
 }
 
-// Every mention of the object in the body, under all its names, and of each searchParams read off it. `typeOfQuery` is null where no searchParams is read.
 static bool everyMentionIsAnsweredOutOfTextInStringURLs(Walker& walker, ValueID made, TypeID typeOfObject, URLThatIsNeverMade& url, uint32_t& numberOfReads)
 {
     const BuiltinTable& table = walker.program().builtins();
@@ -469,7 +436,6 @@ static bool everyMentionIsAnsweredOutOfTextInStringURLs(Walker& walker, ValueID 
         uint32_t uses = index.useCount(ValueID(first + place));
         if (uses >= BodyIndex::maxCountedUses || uses != accounted[place])
             return false;
-        // `for (..) { const url = new URL(text); if (..) return url.pathname; }`, in a loop that is built twice: behind the loop one name stands for the URLs of both copies, and no text answers for it.
         if (walker.isBoundAnewAtEveryBlock(ValueID(first + place)))
             return false;
         url.mentions.append({ ValueID(first + place), kinds[place] });
@@ -494,8 +460,6 @@ static const URLThatIsNeverMade* findURLThatIsNeverMadeByMention(Walker& walker,
         Reference bound = walker.referenceBoundTo(url.made);
         if (bound == url.object)
             return &url;
-        // The construction was walked once more as written, and the name stands for an object. Anything else has let the name meet another value, which only the reads here can tell from an object.
-        // Behind several walks of the construction nothing is bound to it: there the name that is read tells.
         if (!bound)
             bound = walker.referenceBoundTo(mentioned);
         if (bound && walker.types().overlap(walker.typeOf(bound), TypeTable::undefined))
@@ -519,7 +483,6 @@ static Reference isPlainInStringURLs(Walker& walker, const URLThatIsNeverMade& u
     return buildOperatorForStrings(walker, Opcode::GreaterEq, url.scan, integerForStrings(walker, 0), origin);
 }
 
-// `answer` ends `endOfPlain` and `written` ends `endOfWritten`. A null block: that way has ended. The walk goes on in `meeting`.
 static Reference meetInStringURLs(Walker& walker, BlockID meeting, Reference answer, BlockID endOfPlain, Reference written, BlockID endOfWritten)
 {
     if (!endOfPlain && !endOfWritten)
@@ -542,7 +505,6 @@ static Reference meetInStringURLs(Walker& walker, BlockID meeting, Reference ans
     return met;
 }
 
-// `pathname`, `search`, `searchParams`. Of the last the plain way gives undefined: nobody but answerCallOnQueryInStringURLs() takes it.
 static bool answerReadOffURLInStringURLs(Walker& walker, const URLThatIsNeverMade& url, const BodyValue& read)
 {
     const BuiltinTable& table = walker.program().builtins();
@@ -572,7 +534,6 @@ static bool answerReadOffURLInStringURLs(Walker& walker, const URLThatIsNeverMad
     return true;
 }
 
-// `query.get(name)`, `query.has(name)`. A value that has to be decoded is found in no plain text: there the object is made after all, of the text, which nobody can tell.
 static bool answerCallOnQueryInStringURLs(Walker& walker, const URLThatIsNeverMade& url, const BodyValue& call, const BodyValue& readOfQuery)
 {
     const BuiltinTable& table = walker.program().builtins();
@@ -652,7 +613,6 @@ bool answerFromURLThatIsNeverMadeOfItsOpcodes(Walker& walker, const BodyValue& v
     }
     if (value.opcode() == Opcode::PropGet && mention == MentionInStringURLs::URL)
         return answerReadOffURLInStringURLs(walker, *url, value);
-    // Only its call takes the method, and reads it again where it needs it.
     if (value.opcode() == Opcode::PropGet && mention == MentionInStringURLs::Query && mentionInStringURLs(*url, value.id()) == MentionInStringURLs::Method) {
         walker.bind(value.id(), constantForStrings(walker, PrimitiveKnownToFolding::undefined()));
         return true;
@@ -667,7 +627,6 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
 {
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID made = call.call.id();
-    // `const url = new URL(line); line += ..; url.searchParams.get(name)`: where a value has to be decoded the object is made after all, of the operands as they are written. By then the name is bound to the builder again, which has grown.
     if (walker.hasTextsInStringBuilders()) {
         for (ValueID argument : call.call.argumentsOperands()) {
             if (findTextNamedBy(walker, argument))
@@ -683,7 +642,6 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     if (!canCallHostHelperForStrings(walker, scanner) || (typeOfQuery && !canCallHostHelperForStrings(walker, Builtins::CompilerHelpersFindPlainQueryValue)))
         return false;
 
-    // The row of the built-in declares a text.
     bool isProven = isProvenString(walker, walker.typeOf(text));
     if (!isProven) {
         TypeID written = findExpectation(walker, call.call.argumentsOperands()[0]).type;
@@ -774,8 +732,6 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     return true;
 }
 
-// ---- The door of BuiltinCalls
-
 bool buildURLCallByScan(Walker& walker, const CallByOneRow& call)
 {
     if (call.mode != BuiltinCallMode::Construct || call.call.opcode() != Opcode::Construct || call.receiver)
@@ -783,7 +739,6 @@ bool buildURLCallByScan(Walker& walker, const CallByOneRow& call)
     const BuiltinTable& table = walker.program().builtins();
     bool isURL = table.contains(Builtins::URL) && call.builtin == table.canonicalID(Builtins::URL);
     bool isQuery = table.contains(Builtins::URLSearchParams) && call.builtin == table.canonicalID(Builtins::URLSearchParams);
-    // The arm as written walks the construction once more, and finds it here again.
     if ((!isURL && !isQuery) || !walker.has(Mechanism::Guesses) || !walker.opensGuesses())
         return false;
     if (call.arguments.empty() || call.arguments.size() > (isURL ? 2u : 1u))
@@ -812,7 +767,6 @@ bool buildURLCallByScan(Walker& walker, const CallByOneRow& call)
     if (!shouldOpenGuess(walker, text, TypeTable::string, true, operationsSavedByScanInStringURLs))
         return false;
 
-    // What lies between is walked in front of the arms. The arm as written walks it once more.
     BlockID block = index.blockOf(made);
     uint32_t placeOfConstruction = placeInBlockForStrings(index, made);
     uint32_t placeOfLast = placeInBlockForStrings(index, row->last);
@@ -876,7 +830,6 @@ bool buildURLCallByScan(Walker& walker, const CallByOneRow& call)
     }
     walker.continueIn(meeting);
     walker.bind(row->last, met);
-    // The row is walked.
     walker.walkStretch(block, placeOfLast + 1, placeOfLast + 1);
     return true;
 }

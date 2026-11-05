@@ -34,8 +34,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL;
-// Goes up whenever a member of ImageHeader in front of `options` changes its place or its meaning, and whenever the numbers in the code and the tables of an image are given out by other rules: imageStamp() starts from it.
-// 1 had no such member, and all of its code part was executable. 2 and 3 have the same members in front of `options`.
 static constexpr uint32_t imageFormatVersion = 3;
 static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 * KB);
 static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
@@ -50,7 +48,6 @@ static constexpr size_t sizeOfNearCall = isX86_64() ? 5 : sizeof(uint32_t);
 static constexpr size_t sizeOfJump = isX86_64() ? 5 : sizeof(uint32_t);
 static constexpr size_t codeOffsetUnit = isX86_64() ? 1 : sizeof(uint32_t);
 
-// A section, the type of its elements.
 #define FOR_EACH_AOT_IMAGE_SECTION(macro) \
     macro(Functions, ImageFunction) \
     macro(FunctionStarts, uint32_t) \
@@ -104,7 +101,6 @@ struct ImageCounts {
     uint32_t maxRegExpOutputSize;
 };
 
-// In the order in which the parts lie. The section of the regular expressions ends at constantsOffset, and ImageHeader::executableSize lies in it: in front of its tables. Where there is FFI code, its directory lies behind the constants and ends the code part.
 struct ImageCodeRanges {
     uint32_t functionsEnd;
     uint32_t codeGranuleShift;
@@ -118,10 +114,6 @@ struct ImageCodeRanges {
     uint32_t constantsSize;
 };
 
-// Without AdmitsUnknownJavaScript the proofs in the code hold only while nothing but the code of the image runs, and without LoadsModulesByName only while no module is found by a name.
-// Without LoadsCodeOutsideImage they hold only while no file with code is loaded but those that the build lists as staying outside.
-// Without FindsDataFilesByName they hold only while no data file of the image is found by a name.
-// Without StoresPathOfMainModule they hold only while `require.main` answers the module object of no file but an entry point.
 enum class ImageFlag : uint32_t {
     IsObfuscated = 1 << 0,
     AdmitsUnknownJavaScript = 1 << 1,
@@ -129,18 +121,11 @@ enum class ImageFlag : uint32_t {
     AdmitsLibraryText = 1 << 3,
     ShowsWaysBetweenModuleObjects = 1 << 4,
     LoadsCodeOutsideImage = 1 << 5,
-    FindsDataFilesByName = 1 << 6,
-    // The host may start an ES module that is an entry point once more in the same realm: ModuleFlags::RunsAgain.
     RunsEntryPointsAgain = 1 << 8,
     StoresPathOfMainModule = 1 << 10,
-    // Without it whatever runs beside the code of the image is a copy of a file of the image.
-    RunsUnreadCode = 1 << 11,
-    // The build found nothing that asks for the original beside the mock of a file: no variable of a file has VariableFlags::OriginalMayRun. An executable has the flag whether or not a file may be mocked, a test run only where one may.
-    // The proofs in the code hold only while no such original runs, which would be a copy of the file from disk.
     RefusesOriginalsBesideMocks = 1 << 12,
 };
 
-// The numbers of an image that cells may hold.
 struct ImageNumberRanges {
     uint32_t lastShape;
     uint32_t endOfClosureNumbers;
@@ -148,7 +133,6 @@ struct ImageNumberRanges {
     uint32_t endOfStringHeaders;
 };
 
-// codeOffset and sections[].offset count from the header.
 struct ImageHeader {
     bool has(ImageFlag flag) const { return flags & static_cast<uint32_t>(flag); }
 
@@ -159,7 +143,6 @@ struct ImageHeader {
     uint64_t codeOffset;
     uint64_t codeSize;
     uint64_t address;
-    // The code part begins with what is executed, on this many bytes, whole pages. The rest is data that the code finds by its distance: it is mapped with the code and is only read.
     uint64_t executableSize;
     uint32_t formatVersion;
     uint32_t reserved;
@@ -170,7 +153,6 @@ struct ImageHeader {
     ImageCodeRanges code;
     uint32_t flags;
     uint32_t entriesUsed[(numberOfEntries + 31) / 32];
-    // The offset into the shared code of the return site of each kind that has only one. 0 for every other kind, and for a kind whose stub is not in the image.
     uint32_t singleReturnSites[numberOfStubFrameKinds];
     uint32_t numberOfStubsFoundByKey;
     ImageNumberRanges numbers;
@@ -192,13 +174,11 @@ enum class ImageFunctionFlag : uint8_t {
     HasFrameMaps = 1 << 2,
     HasCallSites = 1 << 3,
     HasPositions = 1 << 4,
-    // At its entry, in front of the stack words of its caller and above its return address.
     SpillsArgumentRegisters = 1 << 5,
     HasCalleesOfSites = 1 << 6,
     HasConstructedCallees = 1 << 7,
 };
 
-// function() is a FunctionID index. An image function index is a position in ImageSection::Functions.
 struct ImageFunction {
     static constexpr unsigned numberOfFunctionBits = 24;
     static constexpr unsigned flagsShift = numberOfFunctionBits;
@@ -222,15 +202,12 @@ static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) <= 
 static_assert(defaultLimitValue(LimitID::ImageClosureFunctions, hostArchitecture()) == ClosureWord::firstReservedFunction);
 static_assert(defaultLimitValue(LimitID::CodeBytes, hostArchitecture()) <= ClosureWord::maxSizeOfCode);
 
-// A frame is named by the place of its frame record: the word below its return address.
 struct ImageFrame {
     static constexpr unsigned maxCalleeSavesStart = (1u << 6) - 1;
     static constexpr unsigned unitsAboveFrameRecordShift = 6;
     static constexpr unsigned maxUnitsAboveFrameRecord = (1u << 5) - 1;
     static constexpr uint16_t hasNoFrameRecordBit = 1u << 15;
-    // Not in the table: its reader sets it from ImageFunctionFlag::SpillsArgumentRegisters, which holds where the function has no frame too.
     static constexpr uint16_t liesBelowSpilledArgumentsBit = 1u << 14;
-    // Not in the table either: of code that has no frame record and nothing else on the stack, so that its return address is on top.
     static constexpr uint16_t isEmptyBit = 1u << 13;
     static constexpr ImageFrame empty() { return { 0, hasNoFrameRecordBit | isEmptyBit, 0 }; }
     static constexpr unsigned firstEncodedGPR = isARM64() ? 16 : 0;
@@ -246,9 +223,7 @@ struct ImageFrame {
 
     unsigned frameSizeInBytes() const { return frameSizeInUnits * stackAlignmentBytes(); }
     bool hasFrameRecord() const { return !(calleeSavesStart & hasNoFrameRecordBit); }
-    // In words below the place of the frame record.
     unsigned startOfCalleeSaves() const { return calleeSavesStart & maxCalleeSavesStart; }
-    // The part of the frame that lies between the frame record and what the caller has on the stack.
     unsigned bytesAboveFrameRecord() const { return (calleeSavesStart >> unitsAboveFrameRecordShift & maxUnitsAboveFrameRecord) * stackAlignmentBytes(); }
     bool liesBelowSpilledArguments() const { return calleeSavesStart & liesBelowSpilledArgumentsBit; }
     bool isEmpty() const { return calleeSavesStart & isEmptyBit; }
@@ -266,26 +241,19 @@ struct ImageInnerEntry {
 };
 static_assert(sizeof(ImageInnerEntry) == 8);
 
-// StubAddresses begins with ImageHeader::numberOfStubsFoundByKey stubs that the run time finds by key, most of them while it starts. They are few, so a start reads one page of the section. Each of the two parts is sorted by key.
 struct StubAddressInImage {
     uint64_t key;
     uint32_t offset;
-    // Code calls the stub like a function, and the stub jumps to the callee.
     uint32_t usesCallConvention;
 };
 static_assert(sizeof(StubAddressInImage) == 16);
 
-// SlotHandlers has an offset into the shared code for each member of PropertyCacheWords::handlers, in the order of that array.
 static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
 
-// What a call site records about the function object it calls.
 class CalleeOfSite {
 public:
-    // The caller created it and has not passed it to anything.
     static constexpr CalleeOfSite ownFunctionObject() { return CalleeOfSite(0, 0); }
-    // It is in the caller's frame, at this word offset from the frame record.
     static constexpr CalleeOfSite inFrame(int32_t word) { return CalleeOfSite(1 + 2 * (word < 0 ? 2 * static_cast<uint32_t>(-(word + 1)) + 1 : 2 * static_cast<uint32_t>(word)), 0); }
-    // The word holds it, or the environment whose field holds it once it is created: SlotData::encoded().
     static constexpr CalleeOfSite inEnvironmentInFrame(int32_t word, uint32_t field) { return CalleeOfSite(inFrame(word).m_bits + 1, field); }
     static constexpr CalleeOfSite fromBits(uint32_t bits, uint32_t field) { return CalleeOfSite(bits, field); }
     static constexpr bool bitsEncodeField(uint32_t bits) { return bits && !(bits & 1); }
@@ -314,15 +282,12 @@ private:
 static_assert(CalleeOfSite::inFrame(0).wordInFrame() == 0 && CalleeOfSite::inFrame(-1).wordInFrame() == -1 && CalleeOfSite::inFrame(7).wordInFrame() == 7 && !CalleeOfSite::inFrame(0).isOwnFunctionObject() && !CalleeOfSite::inFrame(-3).fieldInEnvironment());
 static_assert(CalleeOfSite::inEnvironmentInFrame(-3, 0).wordInFrame() == -3 && CalleeOfSite::inEnvironmentInFrame(0, 9).fieldInEnvironment() == 9u && !CalleeOfSite::inEnvironmentInFrame(0, 0).isOwnFunctionObject());
 
-// A site and what it records. No std::pair: that of FreeBSD is copied and moved by constructors of its own, and ListOfUnit moves what it holds as bytes.
 struct CalleeAtSite {
     uint32_t site;
     CalleeOfSite callee;
 };
 
-// frameRanges says whether the function has its frame at a return address, and at nothing else: it holds the distances between the offsets at which the answer changes, in units of codeOffsetUnit.
 struct SideTableInputs {
-    // Which parts are written. Their reader goes by these flags in the function's record.
     OptionSet<ImageFunctionFlag> flags() const;
 
     std::span<const uint8_t> frameRanges;
@@ -330,7 +295,6 @@ struct SideTableInputs {
     std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
     std::span<const uint8_t> handlers;
     std::span<const CalleeAtSite> calleesOfSites;
-    // A site and a FunctionID index.
     std::span<const std::pair<uint32_t, uint32_t>> constructedCallees;
     std::span<const uint8_t> callSites;
 };
@@ -349,14 +313,11 @@ struct SideTableParts {
     uint32_t firstFrameMapWord { 0 };
     uint32_t numberOfFrameMapWords { 0 };
     std::span<const uint8_t> handlers;
-    // Each site is encoded as its distance from the previous site, CalleeOfSite::bits(), and the field if the bits encode one.
     std::span<const uint8_t> calleesOfSites;
-    // Each site as its distance from the one in front, and its function.
     std::span<const uint8_t> constructedCallees;
     const uint8_t* callSites { nullptr };
 };
 
-// ImageSection::Positions: for each function of the image, in their order, the size of its positions and the positions. In front of them the place of every 32nd of these entries.
 struct PositionIndex {
     static constexpr unsigned functionsBetween = 32;
     static constexpr size_t numberOfEntriesFor(size_t numberOfFunctions) { return (numberOfFunctions + functionsBetween - 1) / functionsBetween; }

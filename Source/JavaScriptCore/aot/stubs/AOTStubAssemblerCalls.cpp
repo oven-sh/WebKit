@@ -23,7 +23,6 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
     checkHasNoBorrowedFPRs();
     recordCall(entry);
     recordClobber(leafFunctionGPR);
-    // A leaf neither throws nor collects, so nothing walks the stack while it runs and nobody asks who called the stub: the stub has not left the stubs, and what the leaf clobbers counts as written by the stub itself.
     if (preservesMostRegisters(*operation))
         recordCallee(StubCallee::PreserveMostLeaf);
     else
@@ -46,7 +45,6 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
 #endif
 }
 
-// An access that calls an accessor keeps few floating-point registers: storing and loading all of them was a third of the way to a getter and back.
 RegisterSet floatingPointRegistersLostToAccessors(StubCallee callee)
 {
     constexpr unsigned numberKept = 2;
@@ -72,10 +70,8 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     checkHasNoBorrowedFPRs();
     emitFunctionPrologue();
 #if CPU(X86_64)
-    // The size of the save area aligns the stack of a stub that has pushed nothing, and the prologue pushed one register.
     subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
 #endif
-    // The stub returns behind the call, so what it has written itself is lost to its caller anyway.
     RegisterSet lostAnyway = m_recording.clobbered();
     lostAnyway.merge(RegisterSet::macroClobberedGPRs());
     lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
@@ -83,7 +79,6 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     preservingRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, [&](unsigned) {
         emitCall();
     });
-    // The epilogue takes the stack pointer from the frame pointer, so the padding is not taken off first.
     emitFunctionEpilogue();
     if (!preservingCall.checksException) {
         RELEASE_ASSERT(!preservingCall.emitBeforeReturn);

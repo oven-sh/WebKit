@@ -758,7 +758,6 @@ private:
     }
 };
 
-// With a mask of 0 every name starts at the first entry and follows the chain.
 const CompactHashIndex accessorTableIndex[] = { { 0, 1 }, { 1, -1 } };
 const HashTable accessorTable = { 2, 0, static_cast<uint8_t>(PropertyAttribute::CustomAccessor), nullptr, accessorTableValues, accessorTableIndex };
 const ClassInfo HolderWithTable::s_info = { "HolderWithTable"_s, &Base::s_info, &accessorTable, nullptr, CREATE_METHOD_TABLE(HolderWithTable) };

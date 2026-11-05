@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Known effects: what a direct call does, by Link's tables and the proven types of its arguments. Walker::build() takes the answer beside the draft. Nothing is built here, and no state is asked.
-// At a suspension: an operation that may suspend keeps its declared bound, whatever it is handed here: effectsOf().
-// At a throw: what a callee writes on the way to a throw counts wherever a handler of the unit stands round the call. What it reads there, and its marks, always count.
-// Withheld: without DirectCalls a direct call has Link's two effects merged.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -40,7 +35,6 @@ struct HalvesOfKnownEffects {
 
 } // anonymous namespace
 
-// What the state knows of a shape ends with the next write of a shape word, and the callee runs behind that point.
 static TypeID ownTypeForKnownEffects(const Walker& walker, Reference reference)
 {
     return reference && reference.isRecord() ? walker.code().at(reference.id()).type : TypeID();
@@ -54,7 +48,6 @@ void addEffectsOfEnteringByValue(Effects& effects)
     effects.mayCollect = true;
 }
 
-// A variable that the plan has added has no place of its own among the 64, so a write at any place ends what is known of it.
 void addVariablesThatStandForFields(const Plan& plan, Effects& effects)
 {
     if (plan.promotedEnvironments().variables.isEmpty())
@@ -63,7 +56,6 @@ void addVariablesThatStandForFields(const Plan& plan, Effects& effects)
     effects.writes.add(AbstractHeap::ModuleVariables, effects.writes.maskOf(AbstractHeap::EnvironmentFields));
 }
 
-// Link speaks of a body as it is written. The body of a module that begins itself asks first whether the module has begun, which may run any code: Walker::beginModuleInBody().
 static bool unitDoesMoreThanBodyForKnownEffects(const Plan& plan, FunctionID function)
 {
     return !!plan.moduleEvaluation().moduleThatBeginsIn(function);
@@ -78,9 +70,6 @@ static Effects effectsOfCallByValueOfFunctionForKnownEffects(const LinkTables& l
     return effects;
 }
 
-// ---- Direct calls
-
-// The record leaves out what holds only of other arguments. Nothing: it does not speak of these.
 static std::optional<HalvesOfKnownEffects> findHalvesGivenArgumentsForKnownEffects(const Walker& walker, FunctionID callee, std::span<const Reference> entryArguments)
 {
     const LinkTables& linked = walker.facts().linked();
@@ -110,7 +99,6 @@ static std::optional<HalvesOfKnownEffects> findHalvesGivenArgumentsForKnownEffec
         FunctionID called = type.isObject() && type.hasOnlyClosures() && !type.namesMergedObjects() ? singleFunctionOf(types, type) : FunctionID();
         if (!called || called.index() >= linked.functions.size())
             return std::nullopt;
-        // The callee may catch what the function throws, so both halves of the function count on both ways out of the callee.
         Effects ofCall = effectsOfCallByValueOfFunctionForKnownEffects(linked, called);
         halves.onReturn.merge(ofCall);
         halves.onThrow.merge(ofCall);
@@ -129,7 +117,6 @@ Effects effectsOfDirectCall(Walker& walker, FunctionID callee, std::span<const R
     Effects onThrow = entered.effectsOnThrow;
     if (walker.has(Mechanism::DirectCalls) && !linked.known.layoutsWrittenByFunction.isEmpty()) {
         if (std::optional<HalvesOfKnownEffects> given = findHalvesGivenArgumentsForKnownEffects(walker, callee, entryArguments)) {
-            // The prologue of the unit polls and makes room by what Link says of the function, whoever calls it: prologueOfUnitMayCollect().
             bool mayCollect = onReturn.mayCollect || onThrow.mayCollect;
             bool mayBeTerminated = onReturn.mayBeTerminated || onThrow.mayBeTerminated;
             onReturn = given->onReturn;
@@ -137,7 +124,6 @@ Effects effectsOfDirectCall(Walker& walker, FunctionID callee, std::span<const R
             onReturn.mayCollect |= mayCollect;
             onReturn.mayBeTerminated |= mayBeTerminated;
         }
-        // Where the throw leaves the unit, nothing of the unit runs behind it.
         if (!walker.standsUnderHandler())
             onThrow.writes = { };
     }
@@ -148,7 +134,6 @@ Effects effectsOfDirectCall(Walker& walker, FunctionID callee, std::span<const R
     return effects;
 }
 
-// An object of one of the engine's classes has every bit (bitsOfLayoutsOf()), and it may be written whatever Link's bits say (LinkKnownEffects::layoutsWrittenBy()). So no answer is empty: whoever holds the two together finds such an object written.
 static uint64_t withBitForObjectsOfEngineForKnownEffects(uint64_t layouts)
 {
     return layouts ? layouts : uint64_t { 1 } << 63;

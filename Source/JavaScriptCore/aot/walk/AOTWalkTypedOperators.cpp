@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Mechanism 2, the families Operator and Cast: the form of an operator, a conversion or a test that the proven types of its operands allow.
-// It keeps nothing from one operation to the next, so a suspension means nothing to it, and a typed form throws no more than the closed one.
-// A test that hands proofs to the edges behind it keeps its opcode and the order of its operands. Withheld: every operation is copied in its closed form.
-// TypeTest, TypeOf, InstanceOf, the checks and the conversions to an object have no form to choose: they are copied. The casts are replaceOperation()'s.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -25,7 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkNumbers.cpp
 bool buildOperatorOnNumbers(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool isTakenAsItIsByFormNumbers(const Type&);
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
@@ -45,7 +39,6 @@ struct TypeAskedByTypeOfOperator {
 
 } // anonymous namespace
 
-// "object" has no type of its own: TypeTable::object holds the callables, whose answer is "function".
 static constexpr TypeAskedByTypeOfOperator typesAskedByTypeOfOperator[] {
     { BuiltinNames::undefined, TypeTable::undefined },
     { BuiltinNames::bigint, TypeTable::bigInt },
@@ -62,10 +55,8 @@ OperatorForm formAllowedForTypedOperator(Walker& walker, const Draft& draft)
     if (draft.numberOfNamedOperands() == 2)
         operands.right = walker.typeOf(draft.operand(1));
     OperatorForm form = chooseFormOfOperator(walker.program(), walker.types(), draft.opcode, operands);
-    // It goes by what the operator makes of its operands, and a boolean counts as 0 or 1. The draft is built on the operands that it has: whoever wants the form converts the boolean in front, prepareOperandsForFormNumbers().
     if (form == OperatorForm::Numbers && (!isTakenAsItIsByFormNumbers(walker.types().at(operands.left)) || (operands.right && !isTakenAsItIsByFormNumbers(walker.types().at(operands.right)))))
         return OperatorForm::Generic;
-    // The true number comes as a double either way. On integers an operand that is held as a double is converted first.
     constexpr OpcodeSet madeOnDoublesAsWell { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Increment, Opcode::Decrement, Opcode::Negate };
     if (form == OperatorForm::CheckedIntegers && madeOnDoublesAsWell.contains(draft.opcode)) {
         for (uint32_t operandIndex = 0; operandIndex < draft.numberOfNamedOperands(); ++operandIndex) {
@@ -77,7 +68,6 @@ OperatorForm formAllowedForTypedOperator(Walker& walker, const Draft& draft)
     return form;
 }
 
-// `opcode`: that of the operation, or the one that is built in its place. An operator that has no forms to choose among (`instanceof`, `typeof`, `in`) has the one that takes anything.
 OperatorForm formAllowedForTypedOperator(Walker& walker, Opcode opcode, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (!hasOperatorForm(opcode))
@@ -88,7 +78,6 @@ OperatorForm formAllowedForTypedOperator(Walker& walker, Opcode opcode, const Bo
     return chooseFormOfOperator(walker.program(), walker.types(), opcode, operands);
 }
 
-// A comparison or a ToString that takes one operand as any value asks that operand in line. A guess in front of it would ask the same once more.
 static bool buildInFormOfTypedOperator(Walker& walker, Draft&& draft, OperatorForm form, ValueID input)
 {
     walker.chooseConservativeFields(draft);
@@ -98,8 +87,6 @@ static bool buildInFormOfTypedOperator(Walker& walker, Draft&& draft, OperatorFo
     return true;
 }
 
-// Bit i: an edge behind the branch on the test hands on operand i of the test, narrowed. Only the condition of a Branch itself has such edges.
-// Nothing: the test has several readers, which nobody has looked at.
 static std::optional<uint32_t> operandsNarrowedBehindTypedOperator(const Walker& walker, ValueID test)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -133,9 +120,6 @@ static void bindTypeTestAsTypedOperator(Walker& walker, const BodyValue& value, 
     walker.bind(value.id(), walker.build(WTF::move(test)));
 }
 
-// ---- typeof beside a text
-
-// Null: typeof answers with no such text, or no test tells the objects of `source` that are no functions from the rest.
 static TypeID typeAskedByTextOfTypeOfOperator(Walker& walker, StringID text, TypeID source)
 {
     TypeArena& types = walker.types();
@@ -152,7 +136,6 @@ static TypeID typeAskedByTextOfTypeOfOperator(Walker& walker, StringID text, Typ
     return { };
 }
 
-// `typeof x === "string"` asks x. The TypeOf has no reader left, and the sweep drops it.
 static bool buildTypeTestInPlaceOfTypeOfOperator(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -175,9 +158,6 @@ static bool buildTypeTestInPlaceOfTypeOfOperator(Walker& walker, const BodyValue
     return false;
 }
 
-// ---- Equality
-
-// No number, boolean or BigInt equals a text that converts to NaN, so among primitives only that text does.
 static bool equalsTextAloneInTypedOperator(Walker& walker, const Type& text, const Type& other)
 {
     StringID literal = onlyTextOfTypedOperator(text);
@@ -201,7 +181,6 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
 
     Opcode opcode = value.opcode();
     if (opcode == Opcode::Eq) {
-        // undefined and null equal each other and nothing else, and no conversion runs to find that out. The test has the value as its operand 0.
         if (rightType.isUndefinedOrNull() && leftType.isJavaScriptValue() && narrowed && !(*narrowed & ~1u)) {
             if (!inputs.areOnlyTypes())
                 bindTypeTestAsTypedOperator(walker, value, walker.referenceOf(value.operand(0)), TypeTable::nullish);
@@ -230,12 +209,9 @@ static bool buildEqualityAsTypedOperator(Walker& walker, const BodyValue& value,
     return buildInFormOfTypedOperator(walker, WTF::move(draft), form, value.id());
 }
 
-// ---- Relations
-
 static bool buildRelationAsTypedOperator(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     OperatorForm form = formAllowedForTypedOperator(walker, value.opcode(), value, inputs);
-    // A boolean would have to be converted in front of the test, and what an edge behind a test narrows is an operand of the test.
     if (form == OperatorForm::Numbers) {
         bool isEachTakenAsItIs = true;
         value.forEachOperand([&](ValueID operand, uint32_t) {
@@ -262,7 +238,6 @@ bool buildTypedOperator(Walker& walker, const BodyValue& value, const InputsOfTy
     if (allRelations.contains(opcode))
         return buildRelationAsTypedOperator(walker, value, inputs);
 
-    // The branch behind a ToBoolean narrows its operand, so a boolean too is asked by a record of its own.
     OperatorForm form = formAllowedForTypedOperator(walker, opcode, value, inputs);
     if (form == OperatorForm::Generic || inputs.areOnlyTypes())
         return form != OperatorForm::Generic;

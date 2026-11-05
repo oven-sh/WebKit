@@ -15,17 +15,14 @@ namespace JSC { namespace AOT { namespace Machine {
 
 static_assert(EdgeClass::Normal < EdgeClass::Unlikely && EdgeClass::Unlikely < EdgeClass::Rare);
 
-// Takes the two children of a fused comparison or BitAnd, in forEachLeaf() order.
 static ALWAYS_INLINE Test testOfEncodedOperands(Encoder& encoder, Test::Kind kind, Opcode relation, const Operation* fused, LeafCursor& cursor)
 {
     const Operation* left = childWithoutCheck(fused, 0);
     const Operation* right = childWithoutCheck(fused, 1);
-    // The child of a fused Trunc is a leaf in the place of the Trunc, and the test reads its low half.
     bool leftIsFused = encoder.m_liveness.isFused(left) && left->opcode() != Trunc;
     bool rightIsFused = encoder.m_liveness.isFused(right) && right->opcode() != Trunc;
 
     if (leftIsFused && left->opcode() == Patch) {
-        // A shift by a register, and the constant one beside it.
         RELEASE_ASSERT(isX86_64() && kind == Test::TestBits && right->isInt(1));
         Test test { kind, relation, widthOf(left->type()), Location(), Location(), 0 };
         test.left = cursor.take();
@@ -81,7 +78,6 @@ static Test nonZeroTestOfEncodedValue(Encoder& encoder, const Operation* value, 
     case Location::Register:
         return Test { Test::TestBits, NotEqual, width, location, location, 0 };
 
-    // No instruction reads memory twice.
     case Location::Spill:
     case Location::Outgoing:
     case Location::InstanceWord:
@@ -101,7 +97,6 @@ static Test nonZeroTestOfEncodedValue(Encoder& encoder, const Operation* value, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `tested` is fused into a Branch, a Select or a Check, by itself or as one of the two tests of a Branch.
 static Test testOfFusedOperation(Encoder& encoder, const Operation* tested, LeafCursor& cursor)
 {
     RELEASE_ASSERT(encoder.m_liveness.isFused(tested));
@@ -130,7 +125,6 @@ static Test testOfFusedOperation(Encoder& encoder, const Operation* tested, Leaf
             kind = left->type().isFloat() ? Test::CompareNumbers : Test::CompareIntegers;
     }
     Test test = testOfEncodedOperands(encoder, kind, relation, fused, cursor);
-    // The zero is a leaf of the comparison like any other.
     if (comparesBitsWithZero)
         cursor.take();
     return test;
@@ -222,7 +216,6 @@ void Encoder::encodeBranch(Block* block, const Step& step)
 
     LeafCursor cursor(step);
     const Operation* predicate = step.operation->child(0);
-    // Below a BitAnd that is tested by itself, a load or a shift alone is fused.
     bool predicateIsFused = m_liveness.isFused(predicate);
     bool testsTwice = false;
     if (predicateIsFused && (predicate->opcode() == BitAnd || predicate->opcode() == BitOr)) {
@@ -261,7 +254,6 @@ void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
         sum = step.sources[0].gpr();
     }
 
-    // A sum that overflowed and lies above every int32 is in the register whole: the upper half is clear.
     bool widensWhereItOverflowed = test.isWidenedWhereTestFails && test.mayFallBelowInt32;
     bool widensBelowLeastResult = test.isWidenedWhereTestFails && test.leastResult;
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
@@ -310,7 +302,6 @@ void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
     if (!fallsThroughTo(block, passes))
         jumpTo(passes);
 
-    // The registers hold what they held at the Branch: nothing has run since.
     bool subtracts = test.subtracts();
     MacroAssembler::Label* labelOfFails = labelOf(fails);
     auto goOnToFailingSuccessor = [=](CCallHelpers& jit) {
@@ -334,7 +325,6 @@ void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
 
         overflowed.link(&jit);
         if (widensWhereItOverflowed) {
-            // The sum has left int32 by less than 2^32 either way, so its upper half is all ones where the sign of the low half is clear, and clear where that is set.
             jit.signExtend32To64(sum, sum);
             jit.xor64(MacroAssembler::TrustedImm64(static_cast<int64_t>(0xffffffff00000000ull)), sum);
         }
@@ -359,7 +349,6 @@ static GPRReg scratchOfEncodedSwitch(const Encoder& encoder, const Step& step)
     return Reg::fromIndex(static_cast<unsigned>(std::countr_zero(scratch))).gpr();
 }
 
-// The caller must allow scratch register usage: a constant that does not fit in the comparison goes through a scratch register.
 static MacroAssembler::Jump branchOnEncodedSwitchValue(CCallHelpers& jit, MacroAssembler::RelationalCondition condition, GPRReg value, Width width, int64_t constant)
 {
     if (width == Width32)
@@ -369,7 +358,6 @@ static MacroAssembler::Jump branchOnEncodedSwitchValue(CCallHelpers& jit, MacroA
     return jit.branch64(condition, value, MacroAssembler::TrustedImm64(constant));
 }
 
-// The end of the run that starts at begin: the run keeps growing while its values are dense: maxEntriesOfJumpTablePerCase. numberOfScratchGPRsOf() on both targets must match.
 static unsigned endOfDenseRunInEncodedSwitch(std::span<const int64_t> values, unsigned begin)
 {
     unsigned end = begin + 1;
@@ -383,7 +371,6 @@ static unsigned endOfDenseRunInEncodedSwitch(std::span<const int64_t> values, un
 }
 
 struct EncodedSwitchSegment {
-    // Indexes into the case values.
     unsigned begin;
     unsigned end;
     bool goesThroughTable;
@@ -486,7 +473,6 @@ void Encoder::encodeSwitchThroughTable(Block* block, GPRReg value, int64_t first
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     MacroAssembler::TrustedImm32 endOfTable(static_cast<int32_t>(numberOfEntries));
     if (width == Width32) {
-        // It also clears the upper half of the index.
         m_jit.add32(MacroAssembler::TrustedImm32(static_cast<int32_t>(0u - static_cast<uint32_t>(firstValue))), value, index);
         addPendingJump(m_jit.branch32(MacroAssembler::AboveOrEqual, index, endOfTable), otherwise);
     } else {
@@ -494,7 +480,6 @@ void Encoder::encodeSwitchThroughTable(Block* block, GPRReg value, int64_t first
         addPendingJump(m_jit.branch64(MacroAssembler::AboveOrEqual, index, endOfTable), otherwise);
     }
 
-    // An entry is the distance from the table to the target.
     GPRReg table = m_jit.scratchRegister();
     m_relocations.moveAddress(CodeSymbol { SymbolSpace::JumpTable, tableIndex }, table, PCRelativeReach::Far);
     m_jit.load32SignedExtendTo64(MacroAssembler::BaseIndex(table, index, MacroAssembler::TimesFour), index);
@@ -511,7 +496,6 @@ struct EncodedSwitchSearch {
     bool isEmittedLast;
 };
 
-// isAtLeastFirst: the value is known to be no less than values[begin]. isBelowNext: values[end] exists, and the value is known to be less.
 static void encodeSearchOfSwitchValues(Encoder& encoder, const EncodedSwitchSearch& search, unsigned begin, unsigned end, bool isAtLeastFirst, bool isBelowNext)
 {
     constexpr unsigned maxCasesComparedLinearly = 3;
@@ -574,7 +558,6 @@ void Encoder::encodeReturn(const Step& step)
         return;
     }
 
-    // Every teardown of a function is the same code. Where time does not count, and it is longer than a jump by a few instructions, a Return jumps to the one that the first Return of the layout has written.
     if (m_teardownSharedByReturns.isSet() && m_order.of(m_block).isRare()) {
         m_jit.jump().linkTo(m_teardownSharedByReturns, &m_jit);
         return;

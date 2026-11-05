@@ -12,7 +12,6 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTVarint.h"
 #include "JSCJSValue.h"
-#include <array>
 #include <bit>
 #include <optional>
 #include <span>
@@ -22,10 +21,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 struct StaticsLayout {
-    uint32_t sizeFilledAtProgramEntry;
     uint32_t distanceFromArrayProfileToLastArray;
 };
-static_assert(sizeof(StaticsLayout) == 8 && isImageRecord<StaticsLayout>);
+static_assert(sizeof(StaticsLayout) == 4 && isImageRecord<StaticsLayout>);
 
 struct StaticsRun {
     uint32_t firstWord;
@@ -36,16 +34,6 @@ struct StaticsRun {
     uint64_t bits() const { return lowBits | static_cast<uint64_t>(highBits) << 32; }
 };
 static_assert(sizeof(StaticsRun) == 16 && isImageRecord<StaticsRun>);
-
-// A group of files that the first entry point does not bring along. Their variables get their first words when code is entered that can name them: that of a file of the group, or of a file that imports one.
-// The words of the groups lie in the order of the records, one group behind the other: a group ends where the next begins. A group that only imports such groups has no words.
-// The last record ends the lists. Behind the last word lies one byte for each group, in their order: whether its words are filled.
-struct StaticsOfFiles {
-    uint32_t firstWord;
-    // In ProgramTables::staticsOfImportedFiles(): the groups of this table that its files import.
-    uint32_t firstImportedGroup;
-};
-static_assert(sizeof(StaticsOfFiles) == 8 && isImageRecord<StaticsOfFiles>);
 
 struct StaticsRange {
     uint32_t offset;
@@ -62,12 +50,6 @@ struct FunctionVariableData {
 };
 static_assert(sizeof(FunctionVariableData) == 8 && isImageRecord<FunctionVariableData>);
 
-// namedVariables: the variables in the statics and in the closure table that a heap snapshot shows under their names, those of one module side by side. A slot of the kind DeferredClosure names the function whose one closure the variable stands for.
-// Only a heap snapshot reads them, from the first to the last. So the table holds bytes, for each module whose variables a snapshot shows, in the order of the modules:
-// its number less that of the module before, how many such variables it has, which may be none, then each of them, in the order of their names:
-// its name less the one before, then a word: above its lowest bit, its place less the last place of its kind in any module. A place in the statics counts words of four bytes.
-// The bit is set where the representation is not that of the variable before, in any module, and then the representation follows. The first variable of all comes behind a JSValue.
-// Behind the variables stand the closure numbers of the functions that the module defines, as runs: how many runs, then of each its first number less the end of the run before, in any module, and its length.
 class NamedVariablesWriter {
 public:
     static constexpr uint32_t bytesInUnitOfStatics = 4;
@@ -81,7 +63,6 @@ public:
         m_lastModule = module;
         m_lastName = 0;
     }
-    // Ascending, each once.
     void endModule(std::span<const uint32_t> closureNumbers)
     {
         auto endOfRunFrom = [&](size_t first) {
@@ -127,7 +108,6 @@ private:
     SlotRepresentation m_lastRepresentation { representationInFrontOfFirst };
 };
 
-// False if the bytes do not end where a module ends, or hold a number that no row holds.
 bool forEachNamedVariable(std::span<const uint8_t> bytes, const auto& beginModule, const auto& visit, const auto& visitRunOfClosureNumbers)
 {
     const uint8_t* cursor = bytes.data();
@@ -185,30 +165,6 @@ bool forEachNamedVariable(std::span<const uint8_t> bytes, const auto& beginModul
     return cursor == end;
 }
 
-struct LiteralStringLimits {
-    uint32_t maxLength;
-};
-static_assert(sizeof(LiteralStringLimits) == 4 && isImageRecord<LiteralStringLimits>);
-
-// Of a literal string whose text is not in the image: digestOfLiteralString().
-struct LiteralStringDigest {
-    uint32_t number;
-    uint32_t length;
-    std::array<uint8_t, 20> digest;
-};
-static_assert(sizeof(LiteralStringDigest) == 28 && isImageRecord<LiteralStringDigest>);
-
-struct LiteralStringTable {
-    static constexpr unsigned indexBits = 19;
-    static constexpr uint32_t indexMask = (1u << indexBits) - 1;
-    // The table has two slots for each string, whatever their number. The high bits of the hash choose the slot at which the search for a text begins, and the entry holds the low bits.
-    static constexpr unsigned hashBits = 24;
-    static constexpr uint32_t entryFor(uint32_t number, uint32_t hash) { return (number + 1) | hash << indexBits; }
-    static constexpr uint32_t firstSlot(uint32_t hash, uint32_t numberOfSlots) { return static_cast<uint32_t>(static_cast<uint64_t>(hash) * numberOfSlots >> hashBits); }
-    static constexpr uint32_t numberOf(uint32_t entry) { return (entry & indexMask) - 1; }
-};
-static_assert(maxLiteralStrings < 1u << LiteralStringTable::indexBits);
-
 struct DataWord {
     enum class Kind : uint8_t { Immediate, StringConstant, BigIntConstant, Node };
 
@@ -247,7 +203,6 @@ struct DataWord {
 };
 static_assert(!(DataWord::encode(DataWord::nodeTag, UINT32_MAX - 1) & JSValue::NotCellMask));
 
-// What a slot for a narrow reference holds in the table. A word below minCell32 is what the slot of the object holds. Any other stands for a DataWord that is no immediate.
 struct NarrowDataWord {
     static constexpr unsigned operandShift = 2;
     static constexpr uint32_t maxOperand = (UINT32_MAX - minCell32) >> operandShift;
@@ -274,8 +229,6 @@ struct NarrowDataWord {
 };
 static_assert(static_cast<uint32_t>(DataWord::Kind::Node) < 1u << NarrowDataWord::operandShift);
 
-// DataWord::encodeNode(), DataRequest::root and CollectionDataRequest::elements name a node by the index of its first 64-bit word in ProgramTables::data(), not by a byte offset.
-// An array's words are an IndexingHeader, then its elements.
 struct DataNodeHeader {
     enum class Kind : uint32_t { Array, Object, ObjectWithOtherMembers, OtherMembers, ObjectBody, OrdinaryObject };
     static constexpr unsigned fieldIndicesPerWord = sizeof(uint64_t) / sizeof(uint16_t);
@@ -312,7 +265,6 @@ struct DataNodeHeader {
 };
 static_assert(sizeof(DataNodeHeader) == 8 && isImageRecord<DataNodeHeader>);
 
-// An array whose node is its storage has no shared storage in the statics.
 struct DataRequest {
     static constexpr uint32_t noSharedStorage = UINT32_MAX;
 
@@ -322,9 +274,7 @@ struct DataRequest {
 static_assert(sizeof(DataRequest) == 8 && isImageRecord<DataRequest>);
 
 struct CollectionDataRequest {
-    // Where the TableInImage of the collection lies, from the start of the tables. 0: the keys are not all strings or a value is an object, and the collection is filled from `elements`.
     uint32_t tableInImage;
-    // The node of an array that holds the keys of a Set or the entries of a Map. Each entry of a Map is the node of a two-element array. 0 beside a tableInImage, and nowhere else: an empty collection names the node of an empty array.
     uint32_t elements;
 };
 static_assert(sizeof(CollectionDataRequest) == 8 && isImageRecord<CollectionDataRequest>);
@@ -359,14 +309,12 @@ struct EvalBindingData {
     uint32_t operand;
     uint32_t function;
     uint32_t setter;
-    // The identifier number of the private symbol that instances hold: the field's key, or the brand of a method or an accessor. 0 for a static name.
     uint32_t privateKey;
     SlotData slot;
 };
 static_assert(sizeof(EvalBindingData) == 28 && isImageRecord<EvalBindingData>);
 
 struct DirectEvalRequest {
-    // The bindings are followed by their indexes, sorted by the identifier number of the name. Among bindings with the same name the inner one, which has the lower index, comes first.
     std::span<const uint32_t> bindingsByName() const { return { reinterpret_cast<const uint32_t*>(bindings + numberOfBindings), numberOfBindings }; }
 
     uint32_t isStrict : 1;
@@ -432,7 +380,6 @@ struct NumberAndValueBits {
 };
 static_assert(sizeof(NumberAndValueBits) == 4);
 
-// What operationAOTStopAtNativeResult is told of the call: the kinds of values that the row of the built-in writes for its result.
 struct WrittenNativeResult {
     static constexpr uint32_t undefinedKind = 1 << 0;
     static constexpr uint32_t nullKind = 1 << 1;
@@ -476,7 +423,6 @@ struct ThrowSiteWord {
     static constexpr uint32_t narrowNone = (1u << 17) - 1;
     static constexpr uint32_t maxNarrowA = narrowNone - 1;
     static constexpr unsigned numberOfRegistersPerBank = 32;
-    // What the stub stores for the operation: the general registers that a value may be in, by their numbers, and behind them the floating-point registers, by theirs.
 #if CPU(X86_64)
     static constexpr unsigned numberOfStoredGPRs = 16;
     static constexpr unsigned numberOfStoredFPRs = 16;
@@ -485,7 +431,6 @@ struct ThrowSiteWord {
     static constexpr unsigned numberOfStoredFPRs = 32;
 #endif
 #if CPU(X86_64)
-    // Behind a call each word is the immediate of a `test eax, imm32` that nothing executes: whoever decodes the code in order finds instructions alone, and the next one where it begins.
     static constexpr uint8_t opcodeInFrontOfWordBehindCall = 0xa9;
     static constexpr size_t sizeOfWordBehindCall = sizeof(uint8_t) + sizeof(uint32_t);
 #else
@@ -493,14 +438,12 @@ struct ThrowSiteWord {
 #endif
 
     uint32_t narrowA() const { return a == narrowNone ? none : a; }
-    // Such a site has no operand. Its registerNumber is one more than the number of columns from the read of the method to the call, or zero.
     bool isCallSite() const { return static_cast<ThrowKind>(kind) == ThrowKind::NotAFunction && static_cast<Typed::Representation>(representation) == Typed::Representation::Void; }
     bool differsOnlyInRegisterNumber(ThrowSiteWord other) const
     {
         other.registerNumber = registerNumber;
         return std::bit_cast<uint32_t>(other) == std::bit_cast<uint32_t>(*this);
     }
-    // Of a first word that says that `a` has a word of its own: the first word that holds `a` itself. None where `a` is too wide for it.
     static std::optional<uint32_t> withNarrowA(uint32_t firstWord, uint32_t a)
     {
         auto word = std::bit_cast<ThrowSiteWord>(firstWord);
@@ -511,16 +454,13 @@ struct ThrowSiteWord {
         word.a = a;
         return std::bit_cast<uint32_t>(word);
     }
-    // What ThrowSiteSource::WordInRegister finds in throwWordGPR: the first word, and above it the word of a wide `a`.
     static constexpr uint64_t inRegister(uint32_t firstWord, uint32_t wideA) { return firstWord | static_cast<uint64_t>(wideA) << 32; }
 
-    // The lowest bits: words that differ in nothing else are neighbors by value.
     uint32_t registerNumber : 5;
     uint32_t kind : 3;
     uint32_t representation : 4;
     uint32_t hasWideA : 1;
     uint32_t hasB : 1;
-    // Of a call site: the callee is a member of the receiver, read at the site. Function.prototype.call and apply, entered from there, refuse the receiver under the name of the site.
     uint32_t calleeIsReadFromReceiver : 1;
     uint32_t a : 17;
 };
@@ -530,8 +470,6 @@ static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numbe
 #define FOR_EACH_AOT_OPERATION_PROGRAM_TABLE(v) \
     v(staticsLayout, StaticsLayout) \
     v(staticsRuns, StaticsRun) \
-    v(staticsOfFiles, StaticsOfFiles) \
-    v(staticsOfImportedFiles, uint32_t) \
     v(staticsRoots, StaticsRange) \
     v(staticsNarrowRoots, StaticsRange) \
     v(staticsClearedEachCollection, StaticsRange) \
@@ -540,10 +478,6 @@ static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numbe
     v(identifiersByHash, uint32_t) \
     v(identifiersOfEngineSymbols, uint32_t) \
     v(keyCellIdentifiers, uint32_t) \
-    v(literalStrings, uint32_t) \
-    v(literalStringTable, uint32_t) \
-    v(literalStringLimits, LiteralStringLimits) \
-    v(literalStringDigests, LiteralStringDigest) \
     v(bigIntConstants, uint32_t) \
     v(data, uint64_t) \
     v(requests, uint32_t) \

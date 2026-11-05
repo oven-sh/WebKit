@@ -217,7 +217,6 @@ struct WasmModuleCompiler {
         context.wasmEntrypointJIT = makeUnique<CCallHelpers>();
         AssemblerPolicy assemblerPolicy = buildContext.assemblerPolicy();
 #if CPU(X86_64)
-        // The run time takes a module with vectors only where the processor has AVX.
         if (result.usesVectors)
             assemblerPolicy.features = assemblerPolicy.features.with(CPUFeature::AVX);
 #endif
@@ -262,7 +261,6 @@ struct WasmModuleCompiler {
         return { };
     }
 
-    // True if every function got its code.
     bool compileFunctions(Vector<WasmFunctionCode>& functions, Wasm::ImageCodeFlavor flavor, const BitVector* selection, BuildContext& context, SourceLocation location) const
     {
         Vector<WasmFunctionFailure> failures(functions.size());
@@ -376,7 +374,6 @@ WasmModuleOrDecline compileWasmModule(VM& vm, std::span<const uint8_t> source, c
     const Wasm::ModuleInformation& info = (*validated)->moduleInformation();
     if (!info.internalFunctionCount())
         return makeUnexpected(Wasm::ImageDeclineReason::None);
-    // The generator reads what the interpreter's parser found out about a function, and nothing of that depends on the mode.
     Ref<Wasm::CalleeGroup> group = (*validated)->compileSync(vm, MemoryMode::BoundsChecking);
     if (!group->runnable())
         return makeUnexpected(Wasm::ImageDeclineReason::InvalidModule);
@@ -405,7 +402,6 @@ WasmModuleOrDecline compileWasmModule(VM& vm, std::span<const uint8_t> source, c
     return linkWasmModule(WTF::move(code), templates, context);
 }
 
-// A function has a second copy where its code asks for the flavor, and where it calls a function that has one: a call is a distance to one place.
 static BitVector findFunctionsWithTwoCopies(const WasmModuleCode& module)
 {
     size_t numberOfFunctions = module.functions.size();
@@ -452,13 +448,11 @@ struct ModuleUnits {
     uint32_t size() const { return static_cast<uint32_t>(units.size()); }
 
     Vector<LinkUnit> units;
-    // The flavor of the functions that the calls of the unit go to. Nothing for a unit that calls no function.
     Vector<std::optional<Wasm::ImageCodeFlavor>> flavors;
     uint32_t firstStub { 0 };
     uint32_t firstImportStub { 0 };
     uint32_t firstJavaScriptImportStub { 0 };
     uint32_t firstJSEntrypoint { 0 };
-    // [ImageCodeFlavor][FunctionCodeIndex]
     std::array<Vector<uint32_t>, Wasm::numberOfImageCodeFlavors> functions;
 };
 
@@ -723,7 +717,6 @@ static LimitID limitOf(Wasm::ImageDeclineReason reason)
     return reason == Wasm::ImageDeclineReason::CodeTooLarge ? LimitID::WasmImageCodeSize : LimitID::None;
 }
 
-// The run time finds code by the digest of the bytes a module is made from, so text that only looks like a module costs bytes and never an answer.
 static std::span<const uint8_t> base64OfEmbeddedModule(std::span<const uint8_t> text)
 {
     auto modulePrefix = "AGFzbQEAAA"_span;
@@ -750,7 +743,6 @@ static WebAssemblyImageInputs compileWebAssemblyModules(VM& vm, const Typed::Pro
 {
     WasmSectionBuilder builder;
     Vector<KnownModule> modules;
-    // FunctionNotCompiled is reported function by function where it is found, once for a module however many files hold its bytes.
     auto add = [&](std::span<const uint8_t> bytes, SourceLocation location) -> Wasm::ImageDeclineReason {
         auto digest = Wasm::CodeInImage::digestOf(bytes);
         size_t index = modules.findIf([&](auto& known) {
@@ -787,7 +779,6 @@ static WebAssemblyImageInputs compileWebAssemblyModules(VM& vm, const Typed::Pro
         std::optional<Vector<uint8_t>> bytes = base64.empty() ? std::nullopt : base64Decode(base64);
         if (!bytes)
             continue;
-        // Text that is no module after all is text.
         Wasm::ImageDeclineReason reason = add(bytes->span(), noSourceLocation);
         if (reason != Wasm::ImageDeclineReason::InvalidModule)
             report(reason, noSourceLocation);
@@ -803,7 +794,6 @@ WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program& program, 
     RefPtr<VM> vm = VM::create(HeapType::Small);
     JSLockHolder locker(*vm);
     WebAssemblyImageInputs modules = compileWebAssemblyModules(*vm, program, templates, context, stringsInImage);
-    // The lock holder is left with the last reference, so the VM dies under its lock.
     vm = nullptr;
     return modules;
 }

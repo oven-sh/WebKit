@@ -17,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The operations that make the conversion in front of a call. None: the built-in converts for itself.
 inline std::span<const Opcode> conversionOpcodesOf(BuiltinConversion conversion)
 {
     static constexpr std::array toBoolean { Opcode::ToBoolean };
@@ -60,15 +59,9 @@ inline std::span<const Opcode> conversionOpcodesOf(BuiltinConversion conversion)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// AOTInlineBuiltinForms.cpp and its siblings by family. WHAT THE EMITTER OF EACH PIECE OF CODE IN LINE TAKES: it converts nothing and tests only what its case leaves open.
-// Every member of InlineBuiltin has its case, so whoever adds one says what its emitter takes.
-
 enum class InlineForm : uint8_t {
-    // CallBuiltin stays.
     Call,
-    // TryCallInline, and CallBuiltin where the code in line does not answer.
     TwoWay,
-    // CallInline.
     Whole,
 };
 
@@ -77,15 +70,10 @@ struct InlineBuiltinQuery {
     const BuiltinOverload& overload;
     InlineBuiltin builtin;
     BuiltinCallForm form { BuiltinCallForm::Whole };
-    // As the built-in receives them.
     const BuiltinOperandTypes& operands;
-    // The table names a function to call where the code in line gives up.
     bool hasSlowPath { false };
-    // The call is written in the function whose frame must be on top when the built-in runs: f.apply(), Reflect.construct().
     bool isDoneInPlace { false };
-    // The function in whose text the call stands is left out of stack traces.
     bool isHiddenInStackTraces { false };
-    // Nothing says that the operands lie in the parameters of the row: the code in line has to refuse and convert them itself, in the order of the function.
     bool operandsAreAsWritten { false };
 
     TypeID receiver() const { return operands.receiver; }
@@ -93,8 +81,7 @@ struct InlineBuiltinQuery {
     unsigned numberOfArguments() const { return operands.arguments.size(); }
 };
 
-inline BuiltinTypeContext builtinTypeContextOf(const AccessContext& context) { return { context.program, context.types, &*context.facts }; }
-// No emitter stands behind it in this tree: the form is Call, whatever the table says.
+inline BuiltinTypeContext builtinTypeContextOf(const AccessContext& context) { return { context.program, context.types }; }
 bool hasEmitter(InlineBuiltin);
 InlineForm chooseInlineForm(const InlineBuiltinQuery&);
 
@@ -120,7 +107,6 @@ InlineForm chooseInlineForm(const InlineBuiltinQuery&);
 FOR_EACH_AOT_INLINE_BUILTIN_FAMILY(AOT_DECLARE_INLINE_FORM_CHOOSER)
 #undef AOT_DECLARE_INLINE_FORM_CHOOSER
 
-// The host function reads members for the first time, which their holders add at that moment. Code in line does not, so listed keys would come out otherwise.
 bool hostReadsMembersFirstIn(const BuiltinTable&, const BuiltinOverload&);
 
 } } } // namespace JSC::AOT::Typed

@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// `function Node(kind, pos, end) { this.kind = kind; .. }   new Node(Kind.Name)`: the object gets the layout of the member of the tagged family that its tag names (LinkTables::taggedMakers).
-// The maker's own layout is right for every object and so is any member's, so nothing here is a proof, and a tag may always be left out. At a suspension: nothing. At a throw: an allocation throws as the one that it stands for.
-// Withheld with TypedSlots: Link lists no maker, and every object has its maker's layout.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -54,13 +50,11 @@ struct TagsOfFamily {
 struct LayoutsForTag {
     Vector<CaseOfTagInFamily<int64_t>, 16> integerCases;
     Vector<CaseOfTagInFamily<StringID>, 16> stringCases;
-    // Of an object whose tag is none of the cases.
     LayoutID defaultLayout;
 
     bool isOneLayout() const { return integerCases.isEmpty() && stringCases.isEmpty(); }
 };
 
-// A SwitchString resolves a rope, which an allocation as written does not: the looks at loops and at handlers have not counted on it.
 enum class SwitchOnTextsOfTags : bool { IsNotForeseen, IsForeseen };
 
 } // anonymous namespace
@@ -70,7 +64,6 @@ static const TaggedMaker* findMakerForTaggedMakers(const Walker& walker, Functio
     return findTaggedMaker(walker.facts().linked().taggedMakers.span(), constructor);
 }
 
-// The objects of any other member have the maker's own layout.
 static bool hasObjectsOfItsOwnForTaggedMakers(const Walker& walker, LayoutID member)
 {
     return walker.plan().isInUse(member) && walker.plan().slots().holdsCompiledObjects(member);
@@ -82,7 +75,6 @@ static LayoutID layoutOfTagInFamily(const Walker& walker, const TaggedFamily& fa
     return member && hasObjectsOfItsOwnForTaggedMakers(walker, member) ? member : family.maker;
 }
 
-// A text that the walk has made may be spelled like a tag, which is a text of the program.
 static LayoutID layoutOfTextInFamily(const Walker& walker, const TaggedFamily& family, StringID text)
 {
     const TypeArena& types = walker.types();
@@ -96,7 +88,6 @@ static LayoutID layoutOfTextInFamily(const Walker& walker, const TaggedFamily& f
     return family.maker;
 }
 
-// No type tells two doubles apart, and none names a made text: those two are read off the constant.
 static PrimitiveKnownToFolding primitiveHeldForTaggedMakers(const Walker& walker, Reference reference)
 {
     if (reference.isRecord()) {
@@ -129,7 +120,6 @@ static PrimitiveKnownToFolding primitiveHeldForTaggedMakers(const Walker& walker
     }
 }
 
-// The maker's own layout for a value that is the tag of no member. Null: the value is not known here.
 static LayoutID layoutOfKnownTagInFamily(const Walker& walker, const TaggedFamily& family, Reference tag)
 {
     PrimitiveKnownToFolding known = primitiveHeldForTaggedMakers(walker, tag);
@@ -150,7 +140,6 @@ static LayoutID layoutOfKnownTagInFamily(const Walker& walker, const TaggedFamil
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Only the tags that the proven type of the value leaves.
 static void forEachTagThatTypeLeaves(const Walker& walker, const TaggedFamily& family, TypeID typeOfTag, NOESCAPE const Invocable<IterationStatus(const LayoutTag&, LayoutID)> auto& functor)
 {
     TypingContext typing = walker.typing();
@@ -177,7 +166,6 @@ static bool tagsCoverType(const Walker& walker, const TagsOfFamily& tags, TypeID
     return isNeverType(narrowByOtherwise(types, narrowByOtherwise(types, typeOfTag, tags.integers.span()), tags.strings.span()));
 }
 
-// The switch over the tags is as long as the family, so it stands once, in a unit of the maker, and not at each `new`. It builds nothing.
 static bool tagSelectsSeveralLayouts(const Walker& walker, const TaggedFamily& family, Reference tag)
 {
     TypeID typeOfTag = walker.typeOf(tag);
@@ -195,7 +183,6 @@ static bool tagSelectsSeveralLayouts(const Walker& walker, const TaggedFamily& f
     return selectsSeveral || (onlyLayout && !tagsCoverType(walker, tags, typeOfTag));
 }
 
-// It builds nothing.
 static LayoutsForTag collectLayoutsForTag(const Walker& walker, const TaggedFamily& family, Reference tag, SwitchOnTextsOfTags switchOnTexts)
 {
     LayoutsForTag layouts;
@@ -217,7 +204,6 @@ static LayoutsForTag collectLayoutsForTag(const Walker& walker, const TaggedFami
         return IterationStatus::Continue;
     });
 
-    // Where the cases cover what the value can be, the last of them needs no test and nothing gets the maker's own layout.
     layouts.defaultLayout = family.maker;
     if (tagsCoverType(walker, tags, typeOfTag)) {
         if (!layouts.stringCases.isEmpty())
@@ -245,7 +231,6 @@ static Reference buildAllocationForTaggedMakers(Walker& walker, LayoutID layout,
     return walker.build(WTF::move(allocation));
 }
 
-// No integer is a text, so the texts are asked for on the edge that no integer takes. The tags of one layout share one block, and all blocks meet.
 static Reference buildObjectByTag(Walker& walker, LayoutsForTag& layouts, Reference tag, Reference prototype, Origin origin)
 {
     if (layouts.isOneLayout())
@@ -309,7 +294,6 @@ static Reference buildObjectByTag(Walker& walker, LayoutsForTag& layouts, Refere
     return walker.isUnreachable() ? Reference() : object;
 }
 
-// Nothing: whoever makes `this` for the constructor has no layout to choose.
 std::optional<uint32_t> positionOfTagAmongArguments(const Walker& walker, FunctionID constructor)
 {
     const TaggedMaker* maker = findMakerForTaggedMakers(walker, constructor);
@@ -344,10 +328,9 @@ TypeID typeOfObjectsMadeThroughEntryOf(const Walker& walker, FunctionID construc
     LayoutID constructed = program.at(constructor).constructedClass;
     if (!constructed || !walker.plan().isInUse(constructed) || !walker.plan().conventions().exists(CodeUnit { constructor, CodeRole::AllocatingConstructEntry }))
         return { };
-    // BuilderOfEntries::allocateThis() asks no more of a maker than that it is listed.
     if (const TaggedMaker* maker = findMakerForTaggedMakers(walker, constructor); maker && program.taggedFamilies[maker->family].maker != constructed)
         return { };
-    TypeID returned = walker.facts().linked().function(constructor).result;
+    TypeID returned = walker.plan().typeHeldOfResult(walker.program(), walker.facts().linked(), constructor);
     if (!returned || walker.types().overlap(returned, TypeTable::object))
         return { };
     return typeOfObjectsMadeBy(walker, constructor);
@@ -361,7 +344,6 @@ bool chooseLayoutByTagAtConstruction(Walker& walker, const BodyValue& constructi
     const TaggedFamily& family = walker.program().taggedFamilies[findMakerForTaggedMakers(walker, constructor)->family];
     if (family.maker != constructed)
         return true;
-    // What is left out is undefined, which is the tag of no member.
     std::span<const ValueID> arguments = construction.as<Opcode::Construct>().argumentsOperands();
     Reference tag = *position < arguments.size() ? walker.referenceOf(arguments[*position]) : Reference();
     if (!tag)
@@ -389,8 +371,6 @@ Reference buildThisByTag(Walker& walker, FunctionID constructor, Reference proto
     return buildObjectByTag(walker, layouts, tag, prototype, origin);
 }
 
-// `class Node { constructor(kind) { this.kind = kind } }`: the constructor allocates its own object. Under the prototype object of a class below the maker the run time answers with an instance of that class, whatever the allocation names,
-// so the tag is asked only where new.target is the class itself. A class that is evaluated once has one prototype object, which an allocation without the operand names.
 bool buildObjectOfTaggedClassConstructor(Walker& walker, const BodyValue& allocation)
 {
     if (allocation.opcode() != Opcode::NewObject)
@@ -411,7 +391,6 @@ bool buildObjectOfTaggedClassConstructor(Walker& walker, const BodyValue& alloca
     LayoutsForTag layouts = collectLayoutsForTag(walker, family, tag, SwitchOnTextsOfTags::IsNotForeseen);
     if (layouts.isOneLayout() && layouts.defaultLayout == family.maker)
         return false;
-    // The switch stands once, in the unit of the maker.
     if (!layouts.isOneLayout() && walker.depthOfCopies())
         return false;
 

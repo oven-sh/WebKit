@@ -31,7 +31,6 @@ function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[
 }
 )IR"_s;
 
-// An access is filed only after it has missed a few times, so each access runs 400 times, and whatever was filed for it, if anything, answers nearly all of those runs.
 #define ACCESS_DICTIONARIES R"JS(
 const repeat = access => {
     let answer;
@@ -52,7 +51,6 @@ const flattenByReading = (read, object) => {
 };
 )JS"
 
-// A cacheable dictionary gets another Structure when a property is deleted or redefined, and keeps its Structure when one is added.
 #define STATEMENTS_WITH_CACHEABLE_DICTIONARIES R"JS(
 globalThis.publish = (read, store) => {
     const dictionary = create();
@@ -97,7 +95,6 @@ static void testCacheableDictionaryFilesWhatItHolds()
     checkOutputOfProgramInShell(programText, OUTPUT_OF_CACHEABLE_DICTIONARIES ""_s, { }, ACCESS_DICTIONARIES STATEMENTS_WITH_CACHEABLE_DICTIONARIES ""_s, { "--useDollarVM=1"_s });
 }
 
-// An uncacheable dictionary changes in every way under one Structure, so nothing is filed under it once it cannot be flattened again.
 #define STATEMENTS_WITH_UNCACHEABLE_DICTIONARIES R"JS(
 globalThis.publish = (read, store) => {
     const dictionary = create();

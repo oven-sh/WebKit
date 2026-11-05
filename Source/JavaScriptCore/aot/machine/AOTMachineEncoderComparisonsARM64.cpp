@@ -12,7 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Machine {
 
-// setFlagsForTestOfIntegers() reads the flags of a tst by the conditions of an equality.
 static_assert(static_cast<int>(MacroAssembler::Zero) == static_cast<int>(MacroAssembler::Equal));
 static_assert(static_cast<int>(MacroAssembler::NonZero) == static_cast<int>(MacroAssembler::NotEqual));
 
@@ -73,7 +72,6 @@ static MacroAssembler::ResultCondition resultConditionOfTest(const Test& test)
     return test.relation == Equal ? MacroAssembler::Zero : MacroAssembler::NonZero;
 }
 
-// No instruction of this CPU compares, tests or selects what lies in memory.
 static GPRReg gprOfComparisonOperand(Location location)
 {
     RELEASE_ASSERT(location.isRegister() && location.reg().isGPR());
@@ -91,7 +89,6 @@ static bool constantOfTestFitsInt32(const Test& test)
     return test.rightConstant == static_cast<int32_t>(test.rightConstant);
 }
 
-// Without a register on the right, the right side is zero.
 struct ComparedNumbers {
     bool comparesWithZero() const { return right == InvalidFPRReg; }
 
@@ -108,7 +105,6 @@ static ComparedNumbers comparedNumbersOf(const Test& test)
     if (!test.right.isImmediate())
         return { left, fprOfComparisonOperand(test.right), areFloats };
 
-    // Of either sign: no comparison tells the two zeros apart.
     bool isZero = areFloats ? !std::bit_cast<float>(static_cast<int32_t>(test.rightConstant)) : !std::bit_cast<double>(test.rightConstant);
     RELEASE_ASSERT(isZero);
     return { left, InvalidFPRReg, areFloats };
@@ -123,7 +119,6 @@ static MacroAssembler::Jump branchOnComparedIntegers(CCallHelpers& jit, MacroAss
         return is32 ? jit.branch32(condition, left, right) : jit.branch64(condition, left, right);
     }
 
-    // MacroAssembler makes an immediate that the instruction has no field for in x16.
     RELEASE_ASSERT(left != scratchGPR);
     if (is32 || constantOfTestFitsInt32(test)) {
         MacroAssembler::TrustedImm32 right(static_cast<int32_t>(test.rightConstant));
@@ -144,7 +139,6 @@ static MacroAssembler::Jump branchOnTestedBits(CCallHelpers& jit, MacroAssembler
     RELEASE_ASSERT(left != scratchGPR);
     if (is32)
         return jit.branchTest32(condition, left, MacroAssembler::TrustedImm32(static_cast<int32_t>(test.rightConstant)));
-    // branchTest64() takes a TrustedImm32 that holds the least int32 for the one bit 31, not for its sign extension.
     return jit.branchTest64(condition, left, MacroAssembler::TrustedImm64(test.rightConstant));
 }
 
@@ -156,7 +150,6 @@ static MacroAssembler::Jump branchOnComparedNumbers(CCallHelpers& jit, MacroAsse
     return numbers.areFloats ? jit.branchFloat(condition, numbers.left, numbers.right) : jit.branchDouble(condition, numbers.left, numbers.right);
 }
 
-// Returns the condition that reads the answer in the flags.
 static MacroAssembler::RelationalCondition setFlagsForTestOfIntegers(CCallHelpers& jit, const Test& test)
 {
     MacroAssembler::RelationalCondition condition = relationalConditionOfTest(test);
@@ -190,7 +183,6 @@ static MacroAssembler::RelationalCondition setFlagsForTestOfIntegers(CCallHelper
         return condition;
     }
 
-    // MacroAssembler makes an immediate that the instruction has no field for in x16.
     RELEASE_ASSERT(left != scratchGPR);
     MacroAssembler::TrustedImm32 immediate(static_cast<int32_t>(test.rightConstant));
     if (testsBits && is32)
@@ -218,8 +210,6 @@ static void materializeComparedNumbers(CCallHelpers& jit, const Test& test, GPRR
         jit.compareDouble(condition, numbers.left, numbers.right, destination);
 }
 
-// In both, the destination may be any operand of the test and either arm: the test is read first, and one instruction reads both arms and writes the destination.
-// Where MacroAssembler needs two instructions, for DoubleEqualOrUnordered, it goes by which arm the destination is.
 static void selectIntegerOnTest(CCallHelpers& jit, const Test& test, GPRReg whenItHolds, GPRReg otherwise, GPRReg destination)
 {
     if (test.kind != Test::CompareNumbers) {
@@ -244,7 +234,6 @@ static void selectNumberOnTest(CCallHelpers& jit, const Test& test, FPRReg whenI
 {
     if (test.kind != Test::CompareNumbers) {
         MacroAssembler::RelationalCondition condition = setFlagsForTestOfIntegers(jit, test);
-        // MacroAssembler has no fcsel on flags that are set already.
         jit.m_assembler.fcsel<64>(destination, whenItHolds, otherwise, static_cast<MacroAssembler::Condition>(condition));
         return;
     }
@@ -293,7 +282,6 @@ MacroAssembler::JumpList Encoder::branchOn(const Test& test, bool whenItHolds)
         return jumps;
     }
 
-    // The inverse of a condition of numbers holds for NaN exactly where the condition does not.
     case Test::CompareNumbers: {
         MacroAssembler::DoubleCondition condition = doubleConditionOfTest(test);
         jumps.append(branchOnComparedNumbers(m_jit, whenItHolds ? condition : MacroAssembler::invert(condition), test));
@@ -333,7 +321,6 @@ void Encoder::encodeSelect(const Step& step)
     ASSERT(select->opcode() == Select);
     RELEASE_ASSERT(!m_liveness.isFused(select->child(1)) && !m_liveness.isFused(select->child(2)));
 
-    // What resolveTest() may have left in x16 stays there: nothing is emitted between it and the test.
     LeafCursor leaves(step);
     Test test = resolveTest(select, leaves);
     Location whenNotZero = leaves.take();

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFactRecords.h"
@@ -40,7 +41,6 @@ static LinkType typeOfClosuresForLinkReach(FunctionID function)
     return type;
 }
 
-// As AccessInLinkAccesses::typeHeldAtLocation() has it of a member that is locked.
 static LinkType typeOfBuiltinForLinkReach(const Program& program, BuiltinID canonical)
 {
     switch (program.builtins().at(canonical).kind) {
@@ -88,8 +88,6 @@ static bool isMadeByRunTimeAloneForLinkReach(LayoutKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Native code answers with a record, the loader makes a namespace object and what a data module exports, Object.create(). A layout may be handed over more than once.
-// The constant of a Data operation is made where the operation stands: the scan lays its tree out.
 template<typename Functor>
 static void forEachLayoutMadeAtNoNodeForLinkReach(const Program& program, const Functor& functor)
 {
@@ -132,8 +130,6 @@ static void forEachLayoutMadeAtNoNodeForLinkReach(const Program& program, const 
     }
 }
 
-// What this file keeps beside the sets of LinkFlow.
-// Every entry marks and queues, and only the outermost works the queue off: an edge delivers at once, and what it delivers escapes or gets lost in turn, so anything else would recurse over the program.
 class StateOfLinkReach {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StateOfLinkReach);
     WTF_MAKE_NONCOPYABLE(StateOfLinkReach);
@@ -152,7 +148,6 @@ public:
     void arriveFromSource(FlowNodeID, LinkType);
     void listSourceOfObjects(FlowNodeID, LayoutID);
     bool fillParametersThatUnseenCodeAlonePasses();
-    // Null: not made.
     FlowNodeID sourceOfFamily(FamilyID id) const { return m_sourcesOfFamilies[id.index()]; }
     void makeSourceOfFamily(FamilyID, FlowNodeID);
     bool enterLibraryInReach();
@@ -195,7 +190,6 @@ private:
     void escapeField(FieldReference);
 
     bool mayHold(const BuiltinCondition*, BuiltinID canonical);
-    // A condition on them does not hold yet.
     Vector<BuiltinID> m_builtinsWhoseWriteIsAwaited;
     void enterLibraryBehind(BuiltinID canonical);
     void enterLibraryFunction(RuntimeFunctionID);
@@ -208,6 +202,7 @@ private:
     void enterWhatUnseenCodeFinds();
 
     void bringAlive(FunctionID);
+    void letGoWhatDirectEvalsShowIn(FunctionID);
     void prefetchSummaryOf(FunctionID) const;
     void prefetchRecordsOf(FunctionID, const ThinSummary&) const;
     SiteID siteAt(FunctionID, std::span<const uint32_t> classInstancesInSummary, uint32_t classInstanceInSummary);
@@ -241,7 +236,6 @@ private:
     BitVector m_functionsCalledByHost;
 
     Vector<QueuedStep> m_steps;
-    // They wait until every other step is taken, and go together.
     Vector<FunctionID> m_functionsToBringAlive;
     bool m_isWorking { false };
 
@@ -258,16 +252,13 @@ private:
     BitVector m_evaluatedModules;
     BitVector m_modulesWithReachedCode;
     BitVector m_modulesWithEscapedExports;
-    // What the body returns is the value of the module, and only operations that the scan follows hand it out: requireAnswersWithResultOfBody().
     BitVector m_modulesWhoseValueStaysInSight;
 
-    // Ascending.
     Vector<std::pair<ModuleID, VariableID>> m_variablesOfLibraryFiles;
     BuiltinsInReach m_builtinsInReach;
     Vector<BuiltinID> m_builtinsThatCameIntoReach;
     Vector<BuiltinID> m_builtinsThatCameOutOfSight;
     Vector<BuiltinID> m_membersWrittenAfterAll;
-    // By function: it has a `runtimefunction` record. The host calls it through the function object of a built-in, so it is entered from outside once that object is out of sight.
     BitVector m_isCodeBehindBuiltin;
     bool m_nativeCodeMayHoldObjects { false };
     bool m_hasEnteredWhatUndeclaredNativeCodeCalls { false };
@@ -275,17 +266,12 @@ private:
     bool m_hasEnteredLoaderOfHost { false };
     bool m_hasEnteredWhatUnseenCodeFinds { false };
 
-    // By function. Function::module does not say it: the body of a face names the file.
     Vector<ModuleID> m_moduleWithBody;
-    // As LinkTables::firstFieldOfLayout.
     Vector<uint32_t> m_firstFieldOfLayout;
-    // By layout of the class, from the summaries of all functions. One more entry than there are layouts.
     Vector<uint32_t> m_firstMemberOfClass;
     Vector<MemberOfClass> m_membersOfClasses;
-    // By layout: the nodes at which exactly that layout was laid down.
     Vector<uint32_t> m_newestSourceOfLayout;
     Vector<SourceOfObjects> m_sourcesOfObjects;
-    // By family: the one node at which each of its layouts was laid down.
     Vector<FlowNodeID> m_sourcesOfFamilies;
 };
 
@@ -357,7 +343,6 @@ void StateOfLinkReach::finish()
     while (true) {
         while (!m_steps.isEmpty())
             take(m_steps.takeLast());
-        // THE FUNCTIONS THAT WAIT ARE BROUGHT ALIVE TOGETHER. What they reach waits for the next wave. While settle() is at work they wait for all that it reaches: LinkFlow::bringAliveWhatSettlingReached().
         if (m_functionsToBringAlive.isEmpty() || m_flow.letsFunctionsWaitToBeBroughtAlive())
             return;
         wave.shrink(0);
@@ -367,7 +352,6 @@ void StateOfLinkReach::finish()
         })))
             continue;
         for (size_t index = 0; index < wave.size(); ++index) {
-            // The summary of a function lies in a dozen places, and so do its nodes. Those of the function that comes next are on their way while this one is gone through.
             if (index + 1 < wave.size())
                 prefetchSummaryOf(wave[index + 1]);
             bringAlive(wave[index]);
@@ -466,7 +450,6 @@ void StateOfLinkReach::loseFunction(FunctionID id)
         m_steps.append(QueuedStep { Step::TieLostFunction, id.index() });
 }
 
-// Whoever asks LinkFlow::escapedLayouts asks whether anything may have been done to the objects.
 void StateOfLinkReach::escapeLayout(LayoutID id)
 {
     if (!m_flow.escapedLayouts.set(id.index()))
@@ -559,7 +542,6 @@ void StateOfLinkReach::escapeAllOf(const LinkType& type)
         break;
     }
 
-    // The family of a site: the flow opens what it holds.
     if (type.classes != LinkType::Classes::None) {
         LinkType instances;
         instances.classes = type.classes;
@@ -576,25 +558,21 @@ void StateOfLinkReach::enterProgram()
 
     forEachLayoutMadeAtNoNodeForLinkReach(m_program, [&](LayoutID layout) {
         m_flow.noteAllocated(layout);
-        // A namespace object refuses every change, and what it shows lies in variables. The exports escape where the object flows into unseen code, or where somebody gets hold of it whom no flow shows: escapeExportsOf().
         if (m_program.at(layout).kind != LayoutKind::ModuleNamespace)
             escapeLayout(layout);
     });
 
-    // What has no body: the walk and the run time name it where no summary shows it.
     for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
         if (!m_program.functions[index].hasBody())
             escapeFunction(FunctionID(index));
     }
 
-    // The file of a worker is an entry of the program too.
-    BitVector isAskedFor = modulesThatHostAsksFor(m_program, true);
+    BitVector isAskedFor = modulesThatHostAsksFor(m_program);
     BitVector isRequested(m_program.modules.size());
     for (const Module& module : m_program.modules) {
         for (const ModuleRequest& request : module.requests)
             isRequested.quickSet(request.target.index());
     }
-    // `import()` stands in no list of requests. The operation names the module, and whoever reaches the operation evaluates it.
     for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
         const ThinSummary& summary = m_flow.summaries.at(FunctionID(index));
         for (FunctionID named : summary.functionsNamed) {
@@ -608,10 +586,6 @@ void StateOfLinkReach::enterProgram()
         const Module& module = m_program.modules[index];
         bool isOfProgram = isProgramModuleOf(module.kind) && !module.flags.contains(ModuleFlags::IsLibrary);
         bool isHandedOut = module.flags.containsAny({ ModuleFlags::IsHandedOutByTestRunner, ModuleFlags::IsShownByEntryOfCache });
-        // What the record lists, the namespace object shows to whoever gets hold of it. The front end lists a name where a site hands the object out, and nothing here need reach that site.
-        if (isOfProgram && module.kind == ModuleKind::SourceText)
-            escapeExportsOf(ModuleID(index));
-        // A module that no module asks for is in the program for the host's sake. One of the library is there for whoever loads it: enterLibraryInReach().
         if (!isHandedOut && !isAskedFor.get(index) && (!isOfProgram || isRequested.get(index)))
             continue;
         evaluate(ModuleID(index));
@@ -619,14 +593,6 @@ void StateOfLinkReach::enterProgram()
     }
 }
 
-// What a variable holds before any body has stored into it, and which variables and fields the run time or evaluated text stores into. No summary shows either.
-// The variables in which nobody ever finds what they held at first: the body of the module stores into them (ThinSummary::firstStoresOfBody) in front of the place from which any function that names them could run.
-// A function runs once somebody has a closure of it, or calls it by binding. So it could run from the place at which the body first does more with it than make a closure,
-// and from the place from which a function could run that names it: that makes a closure of it, calls it, or names the variable in which the loader has laid its closure.
-// All that holds of a module whose variables and functions only its own code names.
-// AND OF A CommonJS FILE THAT HAS RUN TO ITS END WHEREVER ANOTHER MODULE's CODE NAMES WHAT IS ITS OWN. The front end puts a variable or a function of the file in place of `lib.name` only where `lib` holds what a site
-// that evaluates the file has answered. Whether anybody comes to such a site while the body of the file runs, the front end says (ModuleRequest::completes): it knows every load, and the requests show only some. A body that threw lets nobody past the site.
-// Nobody else evaluates it or has its variables: the same flags as in findModulesWhoseValueStaysInSight().
 BitVector StateOfLinkReach::findFilesThatHaveRunToTheirEndWhereOthersNameThem() const
 {
     static constexpr OptionSet<ModuleFlags> flagsOfModulesThatOthersMayFindUnfinished {
@@ -660,7 +626,6 @@ BitVector StateOfLinkReach::findVariablesStoredFirst() const
                 isLeftOut.quickSet(module.index());
         }
     }
-    // The loader enters a body for each module that names it.
     BitVector bodiesSeen(m_program.functions.size());
     BitVector bodiesOfSeveralModules(m_program.functions.size());
     for (const Module& module : m_program.modules) {
@@ -682,7 +647,6 @@ BitVector StateOfLinkReach::findVariablesStoredFirst() const
         for (SummaryPlaceInBody use : m_flow.summaries.at(body).firstUsesOfFunctions)
             starts.append(Start { use.position, FunctionID(use.number) });
     }
-    // The places of two bodies are never compared: no function of one module is reached from one of another.
     std::ranges::sort(starts, { }, &Start::position);
 
     BitVector couldRun(m_program.functions.size());
@@ -730,13 +694,11 @@ void StateOfLinkReach::fillVariables()
     LinkType absent = m_flow.fromTypeID(TypeTable::absent);
     LinkType undefined = m_flow.fromTypeID(TypeTable::undefined);
     m_flow.variablesStoredFirst = findVariablesStoredFirst();
-    m_flow.orderOfScopes = findOrderOfScopes(m_program, m_flow.summaries);
     const BitVector& isStoredFirst = m_flow.variablesStoredFirst;
     for (uint32_t index = 0; index < m_program.variables.size(); ++index) {
         const Variable& variable = m_program.variables[index];
         FlowNodeID node = m_flow.variable(VariableID(index));
         arriveWhatNoNodeBrings(node, variable.declared);
-        // Only the run time stores into the variable of a static field, whatever is stored under the name on the class object, and it empties it (object/AOTStaticFields.h).
         if (variable.owner) {
             m_flow.arrive(node, absent);
             escapeVariable(VariableID(index));
@@ -756,7 +718,6 @@ void StateOfLinkReach::fillVariables()
             break;
         }
         const Module& module = m_program.at(variable.module);
-        // A file of the library without a body holds functions, and nobody has its variables before one of them is reached: noteCodeOfModule().
         if (!module.body && module.flags.contains(ModuleFlags::IsLibrary)) {
             m_variablesOfLibraryFiles.append({ variable.module, VariableID(index) });
             continue;
@@ -774,13 +735,22 @@ void StateOfLinkReach::fillVariables()
                 escapeVariable(synthetic.variable);
         }
     }
+}
 
-    for (const EvalScope& scope : m_program.evalScopes) {
-        for (const EvalBinding& binding : scope.bindings) {
-            if (binding.variable)
-                escapeVariable(binding.variable);
-            if (binding.layout && binding.field)
-                escapeField({ binding.layout, *binding.field });
+void StateOfLinkReach::letGoWhatDirectEvalsShowIn(FunctionID id)
+{
+    const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(id);
+    RELEASE_ASSERT(index);
+    for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
+        for (BodyValue value : index->block(BlockID(block)).values()) {
+            if (value.opcode() != Opcode::DirectEval)
+                continue;
+            for (const EvalBinding& binding : m_program.at(value.as<Opcode::DirectEval>().evalScope()).bindings) {
+                if (binding.variable)
+                    escapeVariable(binding.variable);
+                if (binding.layout && binding.field)
+                    escapeField({ binding.layout, *binding.field });
+            }
         }
     }
 }
@@ -804,17 +774,14 @@ void StateOfLinkReach::evaluateModule(ModuleID id)
 {
     const Module& module = m_program.at(id);
     m_builtinsInReach.noteEvaluated(id);
-    // The loader evaluates what an evaluated module imports, whether or not the module runs anything itself.
     if (module.body)
         reach(module.body);
     else
         noteCodeOfModule(id);
-    // The namespace object may come out of a promise, as `anything`.
     if (module.flags.contains(ModuleFlags::IsImportedAsNamespace))
         escapeExportsOf(id);
 }
 
-// Module::requests lists what the module imports, which the loader evaluates, and what the sites in its functions evaluate.
 void StateOfLinkReach::noteCodeOfModule(ModuleID id)
 {
     if (!id || m_modulesWithReachedCode.set(id.index()))
@@ -823,7 +790,6 @@ void StateOfLinkReach::noteCodeOfModule(ModuleID id)
         escapeVariable(variable);
     bool hasBody = !!m_program.at(id).body;
     for (const ModuleRequest& request : m_program.at(id).requests) {
-        // It stands for sites in bodies (BodyVerifier::verifyRequestsOfEvaluations()). Each is an operation that names the target, so the summary of whoever holds it says what is evaluated and what is handed out.
         if (request.kind == ModuleRequestKind::Require && hasBody)
             continue;
         evaluate(request.target);
@@ -832,7 +798,6 @@ void StateOfLinkReach::noteCodeOfModule(ModuleID id)
     }
 }
 
-// Outward only: a namespace object refuses stores, so the module's own code stays the one writer.
 void StateOfLinkReach::escapeExportsOf(ModuleID first)
 {
     Vector<ModuleID, 8> modules;
@@ -844,8 +809,10 @@ void StateOfLinkReach::escapeExportsOf(ModuleID first)
     while (!modules.isEmpty()) {
         const Module& module = m_program.at(modules.takeLast());
         for (const ModuleExport& exported : module.exports) {
-            if (exported.variable && !m_variablesReadByUnseenCode.set(exported.variable.index()))
+            if (exported.variable && !m_variablesReadByUnseenCode.set(exported.variable.index())) {
+                m_flow.note(LinkFlow::Note::ExportIsShown, exported.variable.index());
                 m_flow.addEdge(m_flow.variable(exported.variable), m_flow.unseen());
+            }
             add(exported.module);
         }
         for (const ModuleRequest& request : module.requests) {
@@ -855,13 +822,10 @@ void StateOfLinkReach::escapeExportsOf(ModuleID first)
     }
 }
 
-// The run time keeps the value for whoever asks for the module. Of such a module nobody asks but compiled code, at a site:
-// the loader of the host finds no module by a name that is not public, no row says that native code loads it, and no module imports it or reads a name off it while it is linked.
 void StateOfLinkReach::findModulesWhoseValueStaysInSight()
 {
     const BuiltinTable& builtins = m_program.builtins();
     m_modulesWhoseValueStaysInSight = BitVector(m_program.modules.size());
-    // Where code from outside the image may run, the host runs the modules of its library that the image lacks from their text (ImageFlag::AdmitsLibraryText), and that text requires those that the image has.
     bool libraryRunsCompiledAlone = refusedCodeOf(m_program).codeOutsideImage && std::ranges::none_of(m_program.modules, [](const Module& module) {
         return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
     });
@@ -880,7 +844,7 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
         ModuleFlags::IsFoundByName, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::RunsAgain, ModuleFlags::IsImportedAsNamespace, ModuleFlags::AnswersLoaderWithNamespace,
         ModuleFlags::IsListedInCache, ModuleFlags::IsShownByEntryOfCache, ModuleFlags::IsHandedOutByTestRunner, ModuleFlags::MayBeImportedWhileItRuns,
     };
-    BitVector isAskedFor = modulesThatHostAsksFor(m_program, true);
+    BitVector isAskedFor = modulesThatHostAsksFor(m_program);
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         const Module& module = m_program.modules[index];
         if (module.kind != ModuleKind::RuntimeSource || !module.runtimeModule || module.flags.containsAny(flagsOfModulesHandedOut) || isAskedFor.get(index))
@@ -926,16 +890,13 @@ void StateOfLinkReach::escapeField(FieldReference reference)
     m_flow.fieldsThatUnseenCodeMayWrite.set(cellOf(declarationOf(m_program, reference)));
 }
 
-// ---- The library
-
-// Nobody here looks at the operands of a call, so a condition on one may hold. Whether the object is written the flow says: the built-in waits until it is.
 bool StateOfLinkReach::mayHold(const BuiltinCondition* condition, BuiltinID canonical)
 {
     if (!condition)
         return true;
     if (condition->buildAdmitsRuntimeCode)
         return false;
-    if (condition->objectNobodyKnowsIsWritten && !m_builtinsInReach.mayBeWritten(canonical)) {
+    if (condition->objectNobodyKnowsIsWritten && !m_builtinsInReach.mayBeHandedWhatIsNoTextNumberOrBoolean(canonical)) {
         if (!m_builtinsWhoseWriteIsAwaited.contains(canonical))
             m_builtinsWhoseWriteIsAwaited.append(canonical);
         return false;
@@ -943,7 +904,6 @@ bool StateOfLinkReach::mayHold(const BuiltinCondition* condition, BuiltinID cano
     return !condition->testsReplaceBuiltins || m_program.testsReplaceBuiltins();
 }
 
-// Whoever calls it hands over operands that no summary shows: native code, the function object of the realm, the walk where it goes straight to the code behind a row.
 void StateOfLinkReach::enterLibraryFunction(RuntimeFunctionID id)
 {
     const RuntimeFunctionEntry* held = findRuntimeFunction(m_program, id);
@@ -953,7 +913,6 @@ void StateOfLinkReach::enterLibraryFunction(RuntimeFunctionID id)
     escapeFunction(held->function);
 }
 
-// The function holds what lies in the cell as it holds any operand: nobody follows it from there.
 void StateOfLinkReach::letGoWhatHostHandsOver(const BuiltinHostUses& uses)
 {
     const BuiltinTable& builtins = m_program.builtins();
@@ -998,7 +957,6 @@ void StateOfLinkReach::enterLibraryBehind(BuiltinID canonical)
     for (const BuiltinCalledFunction& called : builtins.calledFunctionsOf(canonical)) {
         if (!mayHold(called.condition, canonical))
             continue;
-        // Native code of another system calls it, and hands it what lies in its cells.
         if (builtins.contains(called.function) && !builtins.at(called.function).platforms.contains(targetOfThisBuild().platform))
             continue;
         enterLibraryFunction(called.function);
@@ -1013,7 +971,6 @@ void StateOfLinkReach::enterLibraryBehind(BuiltinID canonical)
     }
 }
 
-// Native code of the host of which nothing is written down may call what the host calls at its start.
 void StateOfLinkReach::enterWhatUndeclaredNativeCodeCalls()
 {
     if (std::exchange(m_hasEnteredWhatUndeclaredNativeCodeCalls, true))
@@ -1042,7 +999,6 @@ void StateOfLinkReach::enterWhatHostLoadsToPrintObjects()
     }
 }
 
-// A name that is made when the program runs may be that of any module that the program holds.
 void StateOfLinkReach::enterLoaderOfHost()
 {
     if (std::exchange(m_hasEnteredLoaderOfHost, true))
@@ -1101,21 +1057,19 @@ bool StateOfLinkReach::enterLibraryInReach()
         m_flow.testRuns().lookAtWhatHasSettled();
     }
     for (BuiltinID awaited : std::exchange(m_builtinsWhoseWriteIsAwaited, { })) {
-        if (m_builtinsInReach.mayBeWritten(awaited))
+        if (m_builtinsInReach.mayBeHandedWhatIsNoTextNumberOrBoolean(awaited))
             enterLibraryBehind(awaited);
         else
             m_builtinsWhoseWriteIsAwaited.append(awaited);
     }
     for (BuiltinID builtin : m_builtinsThatCameIntoReach)
         enterLibraryBehind(builtin);
-    // A call that Link sees enters the code behind a row with its own operands: CallInLinkCalls::enterCodeBehindRow(). A model runs nowhere.
     for (BuiltinID builtin : m_builtinsThatCameOutOfSight) {
         for (const BuiltinOverload& overload : m_program.builtins().overloadsOf(builtin))
             enterLibraryFunction(overload.code.implementation.function);
     }
     if (m_nativeCodeMayHoldObjects && m_builtinsInReach.objectsMayHaveMethodCalledWithStartupLoads())
         enterWhatHostLoadsToPrintObjects();
-    // A mock, a reset, jest.requireActual(), a hook of a preload: which module answers a request of a test run is decided while it runs, and the host asks its own loader.
     if (m_flow.testRuns().isTestRun() && !std::exchange(m_hasEnteredLoaderFunctionsForTestRun, true)) {
         for (RuntimeFunctionID function : m_program.builtins().moduleLoaderFunctions())
             enterLibraryFunction(function);
@@ -1132,7 +1086,6 @@ bool StateOfLinkReach::enterLibraryInReach()
     return hasEntered;
 }
 
-// A function without a body has the summary of unseen code (AOTScan.cpp).
 void StateOfLinkReach::bringAlive(FunctionID id)
 {
     const Function& function = m_program.at(id);
@@ -1141,9 +1094,7 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     LinkFlow::CodeAtWork codeAtWork(m_flow, id);
     LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(false);
 
-    // Most functions have nothing to tell that is not known: then nothing that is shared is touched. What is asked here only grows.
     bool moduleIsKnown = !function.module || m_modulesWithReachedCode.get(function.module.index());
-    // What a body tells is asked for at BuiltinsInReach::settle(), not before.
     if (!m_builtinsInReach.hasNoFindingsIn(id) && !m_flow.tellsBuiltinsInReachBehindPass(id))
         m_builtinsInReach.noteFindingsIn(id);
     if (!m_builtinsInReach.knowsWhatBodyMakes(id)) {
@@ -1153,20 +1104,21 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     if (!moduleIsKnown || m_moduleWithBody[id.index()] || !summary.modulesHandedOut.isEmpty()) {
         LinkFlow::LockerOfWhatIsShared locker(m_flow);
         noteCodeOfModule(function.module);
-        // A module whose body runs is evaluated, whoever came to the body: a list of the loader or a site in code.
         if (ModuleID module = m_moduleWithBody[id.index()]) {
             evaluate(module);
             noteCodeOfModule(module);
         }
-        // `(await import("./file.js")).f()` names no variable.
         for (ModuleID module : summary.modulesHandedOut) {
             escapeExportsOf(module);
             escapeValueOf(module);
         }
     }
+    if (summary.has(SummaryTrait::HasDirectEval)) {
+        LinkFlow::LockerOfWhatIsShared locker(m_flow);
+        letGoWhatDirectEvalsShowIn(id);
+    }
     for (PropertyKeyID key : summary.textsThatNameEvents)
         m_flow.note(LinkFlow::Note::NameRead, key.bits(), true);
-    // Modules::require().
     for (const ThinSummary::AnswerOfRequire& answer : summary.answersOfRequire) {
         const Module& module = m_program.at(answer.module);
         if (module.requireResult == RequireResult::ModuleExports && module.exportsVariable)
@@ -1185,9 +1137,6 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     }
     if (m_functionsCalledByHost.get(id.index()) && !m_isCodeBehindBuiltin.get(id.index()))
         m_flow.escape(id);
-    // An object gets the layout of a constructor function only where that function is constructed. The constructor of a class that extends another is also entered by `super()` of a class below, which constructs for that class:
-    // whoever enters it as its own new.target says so (CallInLinkCalls::passTo(), enterByBinding(), openClassObject()).
-    // The constructor of a class without a base holds the allocation, which names the layout of its class whatever new.target selects: Plan::allocation().
     if (function.constructedClass && function.kind != FunctionKind::DerivedConstructor)
         m_flow.noteAllocated(function.constructedClass);
     m_flow.noteConstructionsOf(id);
@@ -1196,10 +1145,8 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     for (uint32_t result = 0; result < function.results.size(); ++result)
         arriveWhatNoNodeBrings(m_flow.result(id, result), function.results[result]);
 
-    // No node stands for what a call throws, so whoever catches it has `anything` in hand, and the host prints what nobody catches.
     m_flow.addEdge(m_flow.thrown(id), m_flow.unseen());
 
-    // The sites of a summary are numbered in the order of its nodes.
     Vector<uint32_t, 16> classInstances;
     if (m_flow.numberOfSitesOfSummary(id)) {
         for (uint32_t index = 0; index < summary.nodes.size(); ++index) {
@@ -1225,7 +1172,6 @@ void StateOfLinkReach::bringAlive(FunctionID id)
         case SummaryNode::Kind::ResultOfConversion:
             break;
         case SummaryNode::Kind::Contents:
-            // What a body yields and returns is the body's, whoever has got hold of the object.
             if (!slotSpeaksOfBodyOfCoroutine(SlotOfContents::fromNumber(node.second)))
                 m_flow.takeAsContents(siteAt(id, classInstances.span(), node.first), SlotOfContents::fromNumber(node.second), m_flow.nodeOf(id, index));
             break;
@@ -1234,7 +1180,6 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             break;
         case SummaryNode::Kind::Allocation: {
             LayoutID layout(node.first);
-            // The constructor of a base class names every layout below its own. Each of those is allocated once its own constructor is reached.
             FunctionID constructor = m_program.at(layout).constructor;
             if (!constructor || m_program.at(constructor).constructedClass != layout)
                 m_flow.noteAllocated(layout);
@@ -1259,7 +1204,6 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     for (const SummaryEdge& edge : summary.edges)
         m_flow.addEdge(m_flow.nodeOf(id, edge.from), m_flow.nodeOf(id, edge.to), edge.passes);
 
-    // A member under a computed key is found by whoever looks, under any name, with any object of the class as its receiver.
     for (const SummaryMember& member : summary.members) {
         if (member.key)
             continue;
@@ -1274,7 +1218,6 @@ void StateOfLinkReach::bringAlive(FunctionID id)
         }
     }
 
-    // As fillVariables() does for each variable that names its owner.
     for (LayoutID evaluated : summary.classesEvaluated) {
         for (const StaticField& field : m_program.at(evaluated).staticFields) {
             m_flow.arrive(m_flow.variable(field.variable), m_flow.fromTypeID(TypeTable::absent));
@@ -1299,7 +1242,6 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             break;
         case SummaryCall::Callee::Builtin:
             watch(id, call.receiver, FlowObserver::Kind::ReceiverOfCall, index);
-            // It hangs on no node, and its row holds whatever arrives. Whoever is put at unseen() is told once, by run().
             m_flow.observe(m_flow.unseen(), FlowObserver { FlowObserver::Kind::SubjectOfCall, id, index });
             break;
         }
@@ -1328,12 +1270,9 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     }
 }
 
-// A summary says what its body stores among the contents of an object that it makes, and what a coroutine returns and yields.
-// What the run time lays into the other slots that the table lists for the class, such as what a coroutine or a callee of it throws, nobody follows.
 void StateOfLinkReach::fillStateThatNoSummaryFollows(SiteID site, bool isObjectOfCoroutine)
 {
     const BuiltinTable& builtins = m_program.builtins();
-    // A class lists the slots of the classes above it too.
     for (BuiltinSlotID id : builtins.at(m_flow.classOf(site)).slots) {
         const BuiltinSlot& slot = builtins.at(id);
         if (slot.contentsSlot || (isObjectOfCoroutine && slot.holdsWhatStepsHandOut))
@@ -1350,7 +1289,6 @@ SiteID StateOfLinkReach::siteAt(FunctionID id, std::span<const uint32_t> classIn
     return m_flow.siteOfSummary(id, static_cast<uint32_t>(found - classInstancesInSummary.begin()), BuiltinClassID(node.first));
 }
 
-// What holds whoever enters.
 void StateOfLinkReach::fillEntryParameters(FunctionID id, const Function& function)
 {
     uint32_t numberOfParameters = function.numberOfEntryParameters();
@@ -1364,11 +1302,9 @@ void StateOfLinkReach::fillEntryParameters(FunctionID id, const Function& functi
         case EntryParameter::Capture:
             break;
         case EntryParameter::This: {
-            // The construct call makes the object, at no node.
             if (!function.takesThisFromConstruction() || !function.constructedClass)
                 break;
             arriveFromSource(node, typeOfObjectsForLinkReach(function.constructedClass));
-            // `class D extends F`: the constructor below brings the object, of whichever class new.target selects.
             std::span<const LayoutID> layoutsBelow = m_program.layoutsExpectedBelow(function.constructedClass);
             for (LayoutID below : layoutsBelow)
                 arriveFromSource(node, typeOfObjectsForLinkReach(below));
@@ -1381,18 +1317,15 @@ void StateOfLinkReach::fillEntryParameters(FunctionID id, const Function& functi
             break;
         case EntryParameter::Parameter:
             if (parameter < endOfPositionalParameters) {
-                // Where a caller leaves the argument out, a direct call and a generic entry hand such a parameter the mark and not undefined.
                 if (declared->written() && (m_program.at(declared->written()).primitives & Primitive::Absent))
                     m_flow.arrive(node, m_flow.fromTypeID(TypeTable::absent));
                 break;
             }
-            // The entry makes the list: a site of the function. Whoever enters stores what the list gathers into it.
             m_flow.arrive(node, m_flow.typeOf(m_flow.listOfArgumentsOf(id)));
             break;
         case EntryParameter::HiddenRest:
             m_flow.arrive(node, m_flow.typeOf(m_flow.listOfArgumentsOf(id)));
             break;
-        // Whoever enters says what it is: enter(), an accessor's access, tieInLostFunction(), openFunction().
         case EntryParameter::NewTarget:
             break;
         case EntryParameter::ArgumentCount:
@@ -1412,7 +1345,6 @@ void StateOfLinkReach::arriveWhatIsEstablished(FlowNodeID node, const DeclaredTy
         m_flow.arriveFromSource(node, m_flow.fromTypeID(*established));
 }
 
-// An opaque value is no value of JavaScript and comes from no node of any summary. Only a position that the compiler made takes one.
 void StateOfLinkReach::arriveWhatNoNodeBrings(FlowNodeID node, const DeclaredType& declared)
 {
     std::optional<ProvenInEveryVersion> established = declared.established();
@@ -1423,8 +1355,6 @@ void StateOfLinkReach::arriveWhatNoNodeBrings(FlowNodeID node, const DeclaredTyp
         m_flow.arrive(node, LinkType::anything());
 }
 
-// Once a layout has escaped, a name on one of its objects may find anything, and nobody who has looked before is told by a type that stays as it is.
-// So from then on its objects count as unseen too: that climbs from where they are made to every observer. A namespace object refuses every change.
 void StateOfLinkReach::listSourceOfObjects(FlowNodeID node, LayoutID layout)
 {
     m_sourcesOfObjects.append(SourceOfObjects { node, m_newestSourceOfLayout[layout.index()] });
@@ -1464,20 +1394,16 @@ void StateOfLinkReach::watch(FunctionID function, uint32_t nodeInSummary, FlowOb
         m_flow.observe(m_flow.nodeOf(function, nodeInSummary), FlowObserver { kind, function, record });
 }
 
-// LinkFlow::tieInLostLayouts() goes by the bit and ties the fields, the methods and the accessors into the aggregates that exist. Nothing here asks for an aggregate: that would say that a store exists.
 void StateOfLinkReach::tieLostLayout(LayoutID id)
 {
-    // What nobody lists may be an accessor, which gets the object as `this`.
     if (m_flow.namesMayBeIncomplete(id, ClassSide::Prototype))
         escapeLayout(id);
 }
 
-// LinkFlow::tieInLostFunctions() goes by the bit and ties the parameters and the result in, once a lost closure is called.
 void StateOfLinkReach::tieLostFunction(FunctionID id)
 {
     reach(id);
     m_flow.tieNamesOnLostClosuresOf(id);
-    // Nobody who reads or stores on a lost closure is told which class objects are among them. Of a constructor function nothing but `prototype` is followed, and whoever asks a lost closure for that lets them all escape.
     if (m_lostFunctionsHaveEscaped || (m_program.at(id).constructedClass && !m_flow.layoutOfConstructorFunction(id)))
         escapeFunction(id);
 }
@@ -1491,7 +1417,6 @@ void StateOfLinkReach::openLayout(LayoutID id)
         return;
     }
 
-    // As findField() goes: a layout that has not taken over all that the row above declares is followed by the layout above.
     LayoutID current = id;
     for (uint32_t steps = 0; current && steps < m_numberOfLayouts; ++steps) {
         const Layout& listing = m_program.at(current);
@@ -1508,7 +1433,6 @@ void StateOfLinkReach::openLayout(LayoutID id)
     for (uint32_t source = m_newestSourceOfLayout[id.index()]; source != none; source = m_sourcesOfObjects[source].next)
         m_flow.arrive(m_sourcesOfObjects[source].node, unseenObjects);
 
-    // Whoever has the object has its prototype object, finds its class under `constructor`, and goes on upward from either.
     openClassObject(id);
     if (layout.constructor)
         escapeFunction(layout.constructor);
@@ -1535,11 +1459,9 @@ void StateOfLinkReach::openFunction(FunctionID id)
     uint32_t numberOfParameters = function.numberOfEntryParameters();
     for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter) {
         switch (function.entryParameterKind(parameter)) {
-        // Whoever made the closure filled these, and the callee is the closure.
         case EntryParameter::Capture:
         case EntryParameter::Callee:
             break;
-        // What unseen code passes is tested where it enters, or nobody leans on the parameter. So what is expected is what compiled callers pass.
         case EntryParameter::This:
         case EntryParameter::NewTarget:
         case EntryParameter::Parameter:
@@ -1552,7 +1474,6 @@ void StateOfLinkReach::openFunction(FunctionID id)
             break;
         }
     }
-    // What the entry gathers in a list. `arguments` is made of that list and of the parameters, by the body.
     if (function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }))
         m_flow.arrive(m_flow.contents(m_flow.listOfArgumentsOf(id), ContentsSlot::Element), anything);
     ModuleID moduleWithBody = m_moduleWithBody[id.index()];
@@ -1560,14 +1481,12 @@ void StateOfLinkReach::openFunction(FunctionID id)
     for (uint32_t result = 0; !resultStaysInSight && result < function.results.size(); ++result)
         m_flow.addEdge(m_flow.result(id, result), unseen);
     m_flow.addEdge(m_flow.thrown(id), unseen);
-    // Unseen code may lay anything under any name on the closure.
     m_flow.openClosuresOf(id);
 
     if (function.constructedClass)
         openClassObject(function.constructedClass);
 }
 
-// Whoever has the class object constructs with it, has its prototype object and reads and stores its static members.
 void StateOfLinkReach::openClassObject(LayoutID classLayout)
 {
     if (m_openClassObjects.set(classLayout.index()))
@@ -1692,7 +1611,6 @@ void LinkFlow::escapeAllOf(const LinkType& type)
         noteReachesUnseen(type);
         return;
     }
-    // It may lie in the table of types, which grows while the queue is worked off.
     LinkType named = type;
     StateOfLinkReach& state = stateOfLinkReach();
     state.escapeAllOf(named);
@@ -1704,7 +1622,6 @@ void LinkFlow::arriveFromSource(FlowNodeID node, LayoutID layout)
     stateOfLinkReach().arriveFromSource(node, typeOfObjectsForLinkReach(layout));
 }
 
-// One node a family, so each further place costs one edge.
 void LinkFlow::arriveFromSource(FlowNodeID node, FamilyID family)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
@@ -1723,7 +1640,6 @@ void LinkFlow::arriveFromSource(FlowNodeID node, const LinkType& type)
         arrive(node, type);
         return;
     }
-    // It may lie in the table of types, which grows when a node is made.
     LinkType arriving = type;
     if (arriving.objects == LinkType::Objects::Family)
         arriveFromSource(node, arriving.family);
@@ -1759,7 +1675,6 @@ bool LinkFlow::enterLibraryInReach()
     return stateOfLinkReach().enterLibraryInReach();
 }
 
-// The flow is at rest. A parameter to which no compiled caller has brought anything is one of a callback: its body would be walked through with nothing in hand.
 bool StateOfLinkReach::fillParametersThatUnseenCodeAlonePasses()
 {
     bool hasFilledSome = false;

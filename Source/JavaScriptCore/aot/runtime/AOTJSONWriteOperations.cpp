@@ -67,7 +67,6 @@ static ALWAYS_INLINE bool copyAndCheckForEscapes(std::span<const Latin1Character
             found = SIMD::bitOr(found, findEscapesInJSON(input));
         };
         size_t offset = 0;
-        // A long text that has something to escape mostly has it early, and all that was copied is copied again.
         for (; offset + 4 * stride <= size; offset += 4 * stride) {
             take(offset);
             take(offset + stride);
@@ -158,7 +157,6 @@ NEVER_INLINE Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* 
 using Typed::JSONOutcome;
 using Typed::JSONPosition;
 
-// Behind whatever is written at a cursor, compiled code goes on writing without asking: maxStringBuilderReservation bytes are there.
 static ALWAYS_INLINE size_t roomForQuotedString(size_t maxLength)
 {
     return maxLength + numberOfQuotes + maxStringBuilderReservation;
@@ -176,7 +174,6 @@ static NEVER_INLINE Latin1Character* tryAppendEscapedAtCursor(const StringBuilde
     return appendQuotedAndEscapedJSONString(cursor, characters);
 }
 
-// Where the pool keeps a buffer that holds the longest escaped form, that much room is made, once. A longer text gets room for the escapes of 4,096 characters, and asks again when they have used it up.
 static Latin1Character* reserveForEscapedString(JSGlobalObject* globalObject, StringBuilderStorage& builder, size_t length, size_t quotes)
 {
     bool isKeptByPool = roomForEscapedString(length) <= StringBuilderStorage::maxRetainedCapacity;
@@ -194,7 +191,6 @@ static NEVER_INLINE Latin1Character* appendQuotedWithEscapes(JSGlobalObject* glo
         return nullptr;
     *cursor++ = '"';
     while (!rest.empty()) {
-        // Escaping can make a text six times as long: as much of the rest as the room holds at that rate.
         auto buffer = builder.charactersUpToLimit();
         auto room = buffer.subspan(cursor - buffer.data());
         auto piece = rest.first(std::min(rest.size(), room.size() / maxEscapedCharacterLength));
@@ -212,7 +208,6 @@ static NEVER_INLINE Latin1Character* appendQuotedWithEscapes(JSGlobalObject* glo
     return cursor;
 }
 
-// The cursor behind the quoted text, with maxStringBuilderReservation bytes of room. Null with an exception.
 static Latin1Character* appendEscapedJSONString(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, std::span<const Latin1Character> characters)
 {
     if (Latin1Character* end = tryAppendEscapedAtCursor(builder, cursor, characters))
@@ -226,7 +221,6 @@ static NEVER_INLINE Latin1Character* appendQuoted16Bit(JSGlobalObject* globalObj
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // A longer text is appended in pieces, each a string of its own.
     constexpr size_t maxLengthOfPiece = 256 * KB;
     size_t maxEscapedLength = std::min(rest.size(), maxLengthOfPiece) * maxEscapedCharacterLength;
     Vector<char16_t, 64> text;
@@ -238,7 +232,6 @@ static NEVER_INLINE Latin1Character* appendQuoted16Bit(JSGlobalObject* globalObj
     quoted[0] = '"';
     std::span<char16_t> output = quoted.subspan(1, maxEscapedLength);
     while (rest.size() > maxLengthOfPiece) [[unlikely]] {
-        // A surrogate pair stays in one piece: half of a pair on its own is escaped.
         auto piece = rest.first(maxLengthOfPiece - !!U16_IS_LEAD(rest[maxLengthOfPiece - 1]));
         WTF::appendEscapedJSONStringContent(output, piece);
         builder.append(globalObject, std::span<const char16_t> { quoted.data(), output.data() });
@@ -255,7 +248,6 @@ static NEVER_INLINE Latin1Character* appendQuoted16Bit(JSGlobalObject* globalObj
     RELEASE_AND_RETURN(scope, builder.reserve(globalObject, { .length = 0, .maxLengthOfRest = maxStringBuilderReservation }));
 }
 
-// A failed attempt may have written past the cursor. Those bytes are not text until a cursor past them is committed.
 static ALWAYS_INLINE Latin1Character* tryAppendQuotedWithoutEscapes(const StringBuilderStorage& builder, Latin1Character* cursor, const StringImpl& string)
 {
     if (!string.is8Bit()) [[unlikely]]
@@ -304,10 +296,8 @@ static ALWAYS_INLINE Latin1Character* appendJSONPrimitive(Latin1Character* curso
     return value.isNull() ? appendJSONLiteral(cursor, "null"_s) : nullptr;
 }
 
-// A pristine list has no toJSON, and a hole in it reads as undefined.
 static ALWAYS_INLINE bool isListOfNumbers(const JSCell& cell)
 {
-    // A subclass of Array can have the mark too, and compiled code writes nothing else for a list that passed its test.
     return (cell.type() == ArrayType || cell.type() == DerivedArrayType) && cell.isPristine() && (hasInt32(cell.indexingType()) || hasDouble(cell.indexingType()));
 }
 
@@ -321,7 +311,6 @@ static NEVER_INLINE bool isListOfBoxedNumbers(const JSCell& cell)
     });
 }
 
-// A comma or the closing bracket follows each number.
 static constexpr size_t bytesOfNumberInList = jsonNumberBytes + 1;
 
 static ALWAYS_INLINE Latin1Character* appendNumbersWithCommas(Latin1Character* cursor, const JSArray& list, unsigned begin, unsigned end)
@@ -338,7 +327,6 @@ static ALWAYS_INLINE Latin1Character* appendNumbersWithCommas(Latin1Character* c
     }
     const double* numbers = butterfly->contiguousDouble().data();
     for (unsigned index = begin; index < end; ++index) {
-        // A hole is a NaN, which is written as null.
         cursor = appendJSONNumber(cursor, numbers[index]);
         *cursor++ = ',';
     }
@@ -407,7 +395,6 @@ static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBui
 
     bool holdsBoxedNumbers = cell && isListOfBoxedNumbers(*cell);
     if (holdsBoxedNumbers || (cell && isListOfNumbers(*cell))) {
-        // Most numbers are far shorter than the longest: room for all of a long list at once would be many times what it takes.
         constexpr unsigned numbersWrittenAtOnce = 1024;
         const JSArray& list = *uncheckedDowncast<JSArray>(cell);
         unsigned length = list.length();
@@ -425,7 +412,6 @@ static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBui
         return { closeListOfNumbers(cursor, length), JSONOutcome::Parsed };
     }
 
-    // A list of compiled objects above all: the host's writer goes on in the builder, slot by slot. Nobody reads the cursor beside an outcome that drops the text.
     if (cell && cell->isObject()) {
         Latin1Character* end = tryAppendJSONText(globalObject, builder, cursor, value, levelsAround);
         RETURN_IF_EXCEPTION(scope, { });

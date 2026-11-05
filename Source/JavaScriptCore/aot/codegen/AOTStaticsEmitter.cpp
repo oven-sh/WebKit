@@ -82,7 +82,6 @@ void StaticsEmitter::storeVariable(VariableID id, Operand stored, const Type& st
 
 ClassGuardKey StaticsEmitter::keyOfGuard(LayoutID classLayout, ClassSide side)
 {
-    // The run time ends a guard through the record of its class. Nobody would end the guard of a class without one.
     RELEASE_ASSERT(classLayout && m_plan.hasClassRecord(classLayout));
     return MentionList::keyOfClassGuard(classLayout, side);
 }
@@ -92,7 +91,6 @@ ClassGuardKey StaticsEmitter::keyOfGuard(LayoutID classLayout, ClassSide side, P
     RELEASE_ASSERT(classLayout && name && m_plan.hasClassRecord(classLayout) && (!isAskedByStoresAlone || side == ClassSide::Prototype));
     if (!liesInThread(name))
         return MentionList::keyOfClassGuardOfName(classLayout, side, NumberSpace::Name, name.index(), isAskedByStoresAlone);
-    // As OperationEmitter::mentionOfName() names such a key.
     const PropertyKey& threadLocalKey = types().at(name);
     RELEASE_ASSERT(threadLocalKey.kind == PropertyKeyKind::Text);
     return MentionList::keyOfClassGuardOfName(classLayout, side, NumberSpace::NameOfText, threadLocalKey.text.index(), isAskedByStoresAlone);
@@ -104,7 +102,6 @@ ClassGuardKey StaticsEmitter::keyOfGuardOfNames(LayoutID classLayout, ClassSide 
     return MentionList::keyOfClassGuardOfNames(classLayout, side, names);
 }
 
-// What ends the guard of a class ends the guards of the classes below it, so whatever writes the guards of any class may write the byte of any guard, and with it the words that count the guard.
 TypedPointer StaticsEmitter::guardByte(const ClassGuardKey& guard)
 {
     return instanceWord(m_heaps.AOTInstance_classGuards, m_mentions.classGuard(guard));

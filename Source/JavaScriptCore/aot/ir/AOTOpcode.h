@@ -94,8 +94,6 @@ private:
 using OpcodeSet = EnumeratorBitSet<Opcode, numberOfEnumerators<Opcode>>;
 using TerminatorKindSet = EnumeratorBitSet<TerminatorKind, numberOfEnumerators<TerminatorKind>>;
 
-// What a template over "anything with the schema's getters" is constrained by: Operation and Draft of walk/AOTCode.h and BodyValue of AOTBody.h hold an opcode,
-// Terminator, TerminatorDraft and BodyTerminator a kind. None holds both.
 template<typename Holder> concept HoldsOpcode = requires(const Holder& holder) { holder.opcode(); } || requires(const Holder& holder) { holder.opcode; };
 template<typename Holder> concept HoldsTerminatorKind = requires(const Holder& holder) { holder.kind(); } || requires(const Holder& holder) { holder.kind; };
 

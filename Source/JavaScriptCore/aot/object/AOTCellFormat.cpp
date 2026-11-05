@@ -46,7 +46,6 @@ static_assert(!canPassShapeTest(upperHalfOfClosureWordWithAllFlags(ClosureWord::
 
 static_assert(!canPassShapeTest(bigIntHashMask));
 
-// A vector length can contain shapeBlockMarker. The only JSCellButterfly that is a value is a class token: a longer one is storage that compiled code reaches through its owner.
 static constexpr uint32_t classTokenLengthBits = (1u << 17) - 1;
 static_assert(ClassToken::firstNameSlot + std::numeric_limits<decltype(LayoutData::numberOfFields)>::max() <= classTokenLengthBits);
 static_assert(!canPassShapeTest(classTokenLengthBits) && !mayBeUpperHalfOfSlimClosureWord(classTokenLengthBits));

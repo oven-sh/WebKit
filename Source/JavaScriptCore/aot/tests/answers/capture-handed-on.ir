@@ -2,6 +2,7 @@
 # const view = { get who() { return f; } }; console.log(JSON.stringify({ toJSON: view.who() }));
 # RUN(ANSWER): run-in-shell
 # ANSWER: 7
+# ANSWER-NEXT: exited with 0
 
 layout L0 module=m0 fields=[{key="who" declared={type=undefined|null|function|f2 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
 layout L1 module=m0 fields=[{key="toJSON" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1

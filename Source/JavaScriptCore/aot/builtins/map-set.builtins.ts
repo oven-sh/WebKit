@@ -8,7 +8,6 @@ const element = b.slot("this", "element");
 const key = b.slot("this", "key");
 const value = b.slot("this", "value");
 
-// Each value that the operand yields is an object. What [[Get]] finds on it under 0 and 1, inherited members and getters included, becomes a key and its value.
 const storedAsEntries = [
   b.runsTransitively("Iterate", "OwnValues", "PrototypeChain"),
   b.contentsOfContentsOnlyStored,
@@ -16,7 +15,6 @@ const storedAsEntries = [
   b.reachableValuesStoredIn(b.resultSlot("value")),
 ];
 
-// new Map throws on an entry that is not an object, and new WeakSet throws on a value that is not an object.
 const arrayOfObjects = b.instance("Array").holding({ element: b.object });
 
 const requiresNew = {
@@ -76,7 +74,6 @@ const setMethod = (nativeSymbol: string, withPristineSet: b.TableType, withSetLi
       nativeSymbols: [nativeSymbol],
       implementation: b.hostCall,
     },
-    // SetPrototype.cpp getSetSizeAsInt: each of these methods throws when `other` is missing or is not an object.
     {
       args: { other: b.primitiveValue },
       returns: b.never,
@@ -242,7 +239,6 @@ export default b.declarations(
         uses: {
           this: [b.readsContents()],
           key: [b.storedIn(key)],
-          // The callback gets the key as the map keeps it: +0 for -0.
           callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", this: b.undefined, args: [key], result: "Stored", resultTo: value })],
         },
         usesFeature: "MapGetOrInsert",
@@ -575,7 +571,6 @@ export default b.declarations(
     }),
   ),
 
-  // `import "core-js"` overwrites the methods of a proposal, with no feature test, until the proposal is finished: versions 3.22 to 3.30, and 3.40 to 3.41.
   b.replacedByPackages("Map.groupBy"),
   b.replacedByPackages(
     "Map.prototype.getOrInsert",

@@ -47,7 +47,6 @@ static void generateNewArray(StraightEmitter& emitter, const BodyValue& value)
     emitter.define(value);
 }
 
-// As BuilderOfIteration::appendAllOutOfLine().
 static void generateAppendSpread(StraightEmitter& emitter, const BodyValue& value)
 {
     CCallHelpers& jit = emitter.jit();

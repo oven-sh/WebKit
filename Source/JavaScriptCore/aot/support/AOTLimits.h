@@ -37,7 +37,6 @@ constexpr uint64_t defaultLimitValue(LimitID limit, Architecture architecture)
 namespace Limits {
 
 inline constexpr uint64_t maxWorkers = defaultLimitValue(LimitID::MaxWorkers, hostArchitecture());
-// regExpCompilerStackSize is sized for this depth, so a pattern nested deeper than this must never reach the RegExp compiler.
 inline constexpr uint64_t regExpParenthesesDepth = 256;
 
 } // namespace Limits

@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Mechanism 2, elements: ElemGet, ElemSet, ElemHas and reads of `length` become one operation of the family ElementAccess, whose slow side lies inside its emitter. No block is added.
-// At a suspension: nothing of its own. What it has noted of elements ends by the effects of the suspension, as at any call, but for what a proven store has put into a fresh object.
-// At a throw: each form throws what the closed form throws, where it throws it.
-// Withheld: Walker::copy() builds the closed forms.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -29,19 +24,15 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-// AOTWalkNumbers.cpp
 Reference boxedUnlessNumbersAreUnboxed(Walker&, Reference, Origin);
 
-// AppendElement has one form, which tests the storage for itself and takes the value in the form of its row: Walker::copy() builds it.
 static constexpr OpcodeSet opcodesOfTypedElements { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::PropGet };
 
 static constexpr Range arrayIndexesOfTypedElements { 0, static_cast<int64_t>(UINT32_MAX) - 1 };
 
 namespace {
 
-// Other: nothing here applies, and the next link of the chain may open a guess. Arguments: one that has been built. Only one that never is has a form of its own for its elements.
 enum class KindOfBaseOfTypedElements : uint8_t { Other, Array, TypedArray, String, Arguments };
 
 struct BaseOfTypedElements {
@@ -52,13 +43,10 @@ struct BaseOfTypedElements {
 struct AccessOfTypedElements {
     Walker& walker;
     const BodyValue& value;
-    // Null where the access is only asked about: InputsOfTypedOperation::areOnlyTypes().
     Reference base;
     Reference key;
-    // Of a store alone.
     Reference stored;
     TypeID typeOfBase;
-    // A number.
     Type typeOfKey;
     TypeID typeOfStored;
     bool isOnlyAskedAbout { false };
@@ -68,10 +56,9 @@ struct AccessOfTypedElements {
 
 static BuiltinTypeContext builtinContextOfTypedElements(Walker& walker)
 {
-    return { walker.program(), walker.types(), &walker.facts() };
+    return { walker.program(), walker.types() };
 }
 
-// An instance of a class below Array is no such array: it is never pristine, and the forms that test for themselves turn it away every time.
 static BaseOfTypedElements classifyBaseOfTypedElements(Walker& walker, TypeID id)
 {
     Type type = walker.types().at(id);
@@ -95,7 +82,6 @@ static bool isArrayIndexInTypedElements(const Type& key)
     return key.isInteger() && key.integers.isSubsetOf(arrayIndexesOfTypedElements);
 }
 
-// The origin of the operation being walked, and what is said of its result.
 static Draft draftOfTypedElements(Walker& walker, const BodyValue& value, Opcode opcode)
 {
     Draft draft = walker.draftOf(value);
@@ -107,7 +93,6 @@ static Draft draftOfTypedElements(Walker& walker, const BodyValue& value, Opcode
     return draft;
 }
 
-// The state knows a fresh object under the record that made it. Null: what is named is not fresh.
 static Reference freshObjectNamedInTypedElements(Walker& walker, Reference name)
 {
     if (!name || !name.isValue())
@@ -120,45 +105,28 @@ static Reference freshObjectNamedInTypedElements(Walker& walker, Reference name)
     return walker.state().isFresh(object) ? object : Reference();
 }
 
-// The closed operation, which is also the failing side of a form that tests for itself, hands the object to a getter, a setter or a trap as `this`.
-// In front of the operation, whose effects then end what was noted of the object.
 static void markBaseAsPassedInTypedElements(Walker& walker, Reference base)
 {
     walker.letLeave(base);
 }
 
-// A proven store runs no code and hands the object to nobody, so a fresh one stays fresh. No effects end what is known of it: WalkState::noteElement() ends what the store may have replaced.
-// No value: what lies there now is not known.
 static void noteStoredElementInTypedElements(Walker& walker, Reference base, Reference key, Reference stored)
 {
     Reference object = freshObjectNamedInTypedElements(walker, base);
     walker.state().noteElement(object ? object : base, key, stored);
 }
 
-// Whoever asks ahead for the effects of what would be built is told the operation and its level: effectsOfTypedFormAhead().
 static bool answerAheadOfTypedElements(const AccessOfTypedElements& access, Opcode opcode, KnowledgeLevel level)
 {
     access.walker.noteFormAskedAhead(opcode, level);
     return true;
 }
 
-// ---- Arrays
-
-// A hole and a position behind the end are answered by the prototypes, and so is a key that is no index: a negative one, one with a fraction.
-// Proven: Facts says that nothing lies there, so the operation answers by itself and runs no code.
-// Expected: the operation asks the array when it runs, finds an own element under an int32 by itself, and does the closed operation for whatever else it meets.
-// Unknown: neither.
 static KnowledgeLevel levelOfArrayAccessOfTypedElements(const AccessOfTypedElements& access)
 {
-    PristineAspectSet required { PristineAspects::Storage };
-    if (!isArrayIndexInTypedElements(access.typeOfKey))
-        required.add(PristineAspects::Names);
-    if (pristineAspectsProvenBy(builtinContextOfTypedElements(access.walker), access.typeOfBase, BuiltinClasses::Array).containsAll(required))
-        return KnowledgeLevel::Proven;
     return access.typeOfKey.isInteger() ? KnowledgeLevel::Expected : KnowledgeLevel::Unknown;
 }
 
-// Nothing but this code has the list, and it is as it was made: it has no accessor among its elements, and what stands above it holds nothing under a number. A read hands it to nobody, so it stays fresh.
 static KnowledgeLevel levelOfArrayReadOfTypedElements(const AccessOfTypedElements& access)
 {
     if ((access.base && isFreshListAsMade(access.walker, access.base)) || readsOffListThatStaysAsMadeByLink(access.walker, access.value))
@@ -166,8 +134,6 @@ static KnowledgeLevel levelOfArrayReadOfTypedElements(const AccessOfTypedElement
     return levelOfArrayAccessOfTypedElements(access);
 }
 
-// A guess, for the forms that test the kind that they name. Other: they go by the kind that they find.
-// `function first(nodes: Node[]) { return nodes[0]; }`: a test for Array proves nothing of the elements. What is written of them stands in what is expected of the value, as findListsReadInLoop() asks it.
 static ArrayStorage storageDeclaredForTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
@@ -177,11 +143,9 @@ static ArrayStorage storageDeclaredForTypedElements(const AccessOfTypedElements&
         return declared;
     TypeID expected = findExpectation(walker, access.value.objectOperand()).type;
     ArrayStorage written = expected ? arrayStorageDeclaredBy(walker.program(), types, types.withoutNullish(expected)).predicted() : ArrayStorage::Other;
-    // A read that names no kind finds an int32 in storage that holds boxed values by one test. Named, the kind is asked for behind storage for doubles.
     return written == ArrayStorage::Int32 && access.value.opcode() != Opcode::ElemSet ? ArrayStorage::Other : written;
 }
 
-// A value that the kind refuses gives the array another kind, and the test would fail from then on. A value that holds a cell ends up in storage for any value.
 static ArrayStorage storageGuessedForStoreOfTypedElements(const AccessOfTypedElements& access)
 {
     TypeArena& types = access.walker.types();
@@ -194,8 +158,6 @@ static ArrayStorage storageGuessedForStoreOfTypedElements(const AccessOfTypedEle
     return ArrayStorage::Other;
 }
 
-// Of the key nothing is proven, or only that it is a number. A list is nearly always read under an int32: the read asks the key for its tag, finds an own element by itself, and does the closed operation for whatever else it meets:
-// a number in another form, a text, a symbol, an object.
 static bool buildArrayReadUnderAnyKeyOfTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
@@ -230,7 +192,6 @@ Reference buildReadOfElementOffExpectedList(Walker& walker, const BodyValue& rea
     return walker.build(WTF::move(draft));
 }
 
-// Tests on the way here have found storage that holds numbers alone and an element at the position, the element was read, and nothing has written the list since. openGuessAtElementOfNumbers().
 static bool bindNumberReadBehindTestsOfTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
@@ -243,7 +204,6 @@ static bool bindNumberReadBehindTestsOfTypedElements(const AccessOfTypedElements
     return true;
 }
 
-// Of a read that names no kind of storage. Unchosen: the form that the rules give it, a box. build() keeps a form that the draft brings, where the proven type allows it.
 static Representation formOfNumberThatLinkHasTypedOfTypedElements(const AccessOfTypedElements& access)
 {
     static constexpr OpcodeSet operatorsThatTakeDoubles = operatorsThatMakeNumbers | allSums;
@@ -262,7 +222,6 @@ static Representation formOfNumberThatLinkHasTypedOfTypedElements(const AccessOf
     ValueID read = access.value.id();
     if (read.index() >= index.numberOfValues() || index.value(read).words() != access.value.words())
         return Representation::Unchosen;
-    // Int32 are added and compared as int32, out of their boxes: by way of doubles `list[i] > greatest` takes 30 instructions a turn for 22, and a sum of elements loses its integer form.
     if (!(type.primitives & Primitive::Number & ~Primitive::NumberWithoutFraction))
         return Representation::Unchosen;
     ValueID taken = read;
@@ -273,7 +232,6 @@ static Representation formOfNumberThatLinkHasTypedOfTypedElements(const AccessOf
     }
     if (!reader || !(operatorsThatTakeDoubles.contains(index.opcodeOf(reader)) || allRelations.contains(index.opcodeOf(reader))))
         return Representation::Unchosen;
-    // `line += list[i] + ","`: the writer of texts asks a box for its tag, and writes an int32 without a call.
     bool standsBesideNumbers = true;
     if (operationsThatJoinTexts.contains(index.opcodeOf(reader))) {
         index.value(reader).forEachOperand([&](ValueID operand, uint32_t) {
@@ -286,7 +244,6 @@ static Representation formOfNumberThatLinkHasTypedOfTypedElements(const AccessOf
     return type.primitives & Primitive::Undefined ? Representation::OptionalDouble : Representation::Double;
 }
 
-// `t += list[i]`: arithmetic makes NaN of undefined, so whoever reads for it alone may take a hole for NaN. The other operand is a number: beside a text undefined is spelled out.
 static bool onlyUserTakesUndefinedForNaNInTypedElements(Walker& walker, const BodyValue& read)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -302,7 +259,6 @@ static bool onlyUserTakesUndefinedForNaNInTypedElements(Walker& walker, const Bo
     if (operation.opcode() != Opcode::Add && operation.opcode() != Opcode::Sub && operation.opcode() != Opcode::Mul && operation.opcode() != Opcode::Div)
         return false;
     ValueID other = operation.operand(0) == name ? operation.operand(1) : operation.operand(0);
-    // Both operands may be the one read, and what stands behind the read in the text is not built yet.
     Reference built = other != name ? walker.referenceOf(other) : Reference();
     return built && walker.types().at(walker.typeOf(built)).isNumber();
 }
@@ -313,7 +269,6 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     if (!access.isOnlyAskedAbout && bindNumberReadBehindTestsOfTypedElements(access))
         return true;
     KnowledgeLevel level = levelOfArrayReadOfTypedElements(access);
-    // What a row in front of a loop has shown of the list. Asked ahead it answers the same, so a look at a loop has to ask whether the loop leaves lists as they are: LooksAtLoops::preview().
     std::optional<ListTestedInFrontOfLoop> tested = level == KnowledgeLevel::Unknown ? std::nullopt : findListTestedInFrontOfLoop(walker, access.value);
     if (tested)
         level = KnowledgeLevel::Proven;
@@ -322,7 +277,6 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     if (access.isOnlyAskedAbout)
         return answerAheadOfTypedElements(access, Opcode::GetArrayElement, level);
 
-    // A proven read takes the kind that it names for granted. Numbers are read out of Int32 storage and out of Double storage alike.
     ArrayStorage storage = level == KnowledgeLevel::Expected ? storageDeclaredForTypedElements(access) : ArrayStorage::Other;
     if (storage == ArrayStorage::Int32)
         storage = ArrayStorage::Double;
@@ -333,7 +287,6 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     read.setArrayStorage(storage);
     read.setAdmitsInt32Storage(storage == ArrayStorage::Double);
     read.setLevel(level);
-    // A read that names a kind has the form of that: behind a row in front of the loop, or where the kind is declared.
     if (!tested && !hasArrayStorageForm(storage))
         read.representation = formOfNumberThatLinkHasTypedOfTypedElements(access);
     read.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
@@ -348,16 +301,12 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
         markBaseAsPassedInTypedElements(walker, access.base);
     bool givesNaNForHole = read.readsHoleAsNaN();
     Reference element = walker.build(WTF::move(read));
-    // Of a fresh object the state takes a new note for a store, and drops what it holds under every other position.
-    // `t += list[i]; if (list[i] === undefined) ..`: what gives NaN for a hole answers its one user alone. Whoever reads the element again reads undefined there.
     if (element && !givesNaNForHole && level == KnowledgeLevel::Proven && isArrayIndexInTypedElements(access.typeOfKey) && !freshObjectNamedInTypedElements(walker, access.base))
         walker.state().noteElement(access.base, access.key, element);
     walker.bind(access.value.id(), element);
     return true;
 }
 
-// The twin of buildArrayReadUnderAnyKeyOfTypedElements(). `marks[count] = on`, `count` a variable that closures share: the store asks the key for its tag, replaces an element inside the length by itself,
-// and does the closed store, whole and once, for whatever else it meets: an object among the keys is made a key of behind the value, as the closed store does it.
 static bool buildArrayStoreUnderAnyKeyOfTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
@@ -390,7 +339,6 @@ static bool buildArrayStoreOfTypedElements(const AccessOfTypedElements& access)
     if (access.isOnlyAskedAbout)
         return answerAheadOfTypedElements(access, Opcode::PutArrayElement, level);
 
-    // At either level the store tests the kind that it names before it writes.
     ECMAMode mode = access.value.mode();
     Draft put = draftOfTypedElements(walker, access.value, Opcode::PutArrayElement);
     put.setArrayOperand(access.base);
@@ -400,12 +348,10 @@ static bool buildArrayStoreOfTypedElements(const AccessOfTypedElements& access)
     put.setMode(mode);
     put.setLevel(level);
     put.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
-    // `for (..; i < list.length; ..) list[i] = ..`: the store that tests its own guess looks at no length. A proven store that says so tests nothing at all: storeInsideLength().
     put.setIsInBounds(level == KnowledgeLevel::Expected && positionIsKnownToLieInsideList(walker, access.base, access.key));
     if (level == KnowledgeLevel::Expected)
         markBaseAsPassedInTypedElements(walker, access.base);
     Reference store = walker.build(WTF::move(put));
-    // Sloppy code passes by a store that a frozen array refuses.
     bool holdsWhatWasStored = level == KnowledgeLevel::Proven && mode == ECMAMode::Strict && isArrayIndexInTypedElements(access.typeOfKey);
     noteStoredElementInTypedElements(walker, access.base, access.key, holdsWhatWasStored ? access.stored : Reference());
     walker.bind(access.value.id(), store);
@@ -433,20 +379,50 @@ static bool buildArrayTestOfTypedElements(const AccessOfTypedElements& access)
     return true;
 }
 
-// ---- Typed arrays
-
-static void nameVectorOfViewInTypedElements(Walker& walker, Draft& access, Reference view, TypedArrayType typedArrayType)
+static Reference lengthOfViewInTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType, Origin origin)
 {
-    if (!access.isInsideView() || !hasInlineElementAccess(typedArrayType) || walker.testsEveryPosition())
+    Walker& walker = access.walker;
+    if (std::optional<uint64_t> noted = walker.state().answers().isEmpty() ? std::nullopt : findKnown(walker, KnownNote::LengthOfList, access.base))
+        return Reference::fromBits(static_cast<uint32_t>(*noted));
+    if (!walker.isInLoop() || !walker.opensGuesses())
+        return { };
+    Draft length(Opcode::GetTypedArrayLength, origin);
+    walker.chooseConservativeFields(length);
+    length.setViewOperand(access.base);
+    length.setTypedArrayType(typedArrayType);
+    Reference built = walker.build(WTF::move(length));
+    if (!built || !built.isValue() || walker.isUnreachable())
+        return { };
+    noteKnown(walker, KnownNote::LengthOfList, access.base, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }), built.bits());
+    std::optional<uint32_t> loop = walker.innermostOpenLoop();
+    if (loop && walker.standsInFrontOfOpenLoop(*loop, built))
+        return built;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID written = access.value.id();
+    bool isNamedAgain = written.index() < index.numberOfValues() && index.value(written).words() == access.value.words() && index.useCount(access.value.objectOperand()) > 1;
+    return isNamedAgain ? built : Reference();
+}
+
+static void nameStorageOfViewInTypedElements(const AccessOfTypedElements& written, Draft& access, TypedArrayType typedArrayType)
+{
+    Walker& walker = written.walker;
+    Reference view = written.base;
+    if (access.level() != KnowledgeLevel::Proven || !hasInlineElementAccess(typedArrayType) || walker.testsEveryPosition())
+        return;
+    Reference length = access.isInsideView() ? Reference() : lengthOfViewInTypedElements(written, typedArrayType, access.origin());
+    if (!access.isInsideView() && (!length || walker.isUnreachable()))
         return;
     Draft vector(Opcode::GetTypedArrayVector, access.origin());
     walker.chooseConservativeFields(vector);
     vector.setViewOperand(view);
-    if (Reference built = walker.build(WTF::move(vector)))
-        access.setVectorOperand(built);
+    Reference built = walker.build(WTF::move(vector));
+    if (!built)
+        return;
+    access.setVectorOperand(built);
+    if (length)
+        access.setLengthOperands(singleElementSpan(length));
 }
 
-// A view answers for every number by itself: what is no index inside it is undefined, whatever the prototypes hold.
 static bool buildViewReadOfTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType)
 {
     if (access.isOnlyAskedAbout)
@@ -456,17 +432,14 @@ static bool buildViewReadOfTypedElements(const AccessOfTypedElements& access, Ty
     read.setViewOperand(access.base);
     read.setPositionOperand(access.key);
     read.setTypedArrayType(typedArrayType);
-    // `if (i < view.length) view[i]`: the position is an index below the length that the view has where the walk stands.
     read.setIsInsideView(positionIsKnownToLieInsideList(walker, access.base, access.key));
     read.setLevel(KnowledgeLevel::Proven);
     read.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
-    nameVectorOfViewInTypedElements(walker, read, access.base, typedArrayType);
+    nameStorageOfViewInTypedElements(access, read, typedArrayType);
     walker.bind(access.value.id(), walker.build(WTF::move(read)));
     return true;
 }
 
-// The value is converted before the position is looked at, and an object among the values runs code. Proven: it is what the view holds, so nothing is converted.
-// Expected: the operation asks whether it is a number, and does the closed operation where it is none.
 static KnowledgeLevel levelOfViewStoreOfTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType)
 {
     TypeArena& types = access.walker.types();
@@ -500,13 +473,10 @@ static bool buildViewStoreOfTypedElements(const AccessOfTypedElements& access, T
     put.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
     if (level == KnowledgeLevel::Expected)
         markBaseAsPassedInTypedElements(walker, access.base);
-    nameVectorOfViewInTypedElements(walker, put, access.base, typedArrayType);
-    // Nothing is ever noted of the elements of a view: it holds the value as converted, in bytes that another view may share.
+    nameStorageOfViewInTypedElements(access, put, typedArrayType);
     walker.bind(access.value.id(), walker.build(WTF::move(put)));
     return true;
 }
-
-// ---- Whatever else is proven to have elements: a string, an arguments object, an array or a view whose own form does not apply
 
 static ExpectedElements elementsExpectedByTypedElements(TypedArrayType typedArrayType)
 {
@@ -517,8 +487,6 @@ static ExpectedElements elementsExpectedByTypedElements(TypedArrayType typedArra
     return ExpectedElements::Anything;
 }
 
-// The closed operation with the key as an integer in a register. Its stub looks for a character of a string and for an element in storage before it makes a key of the integer.
-// Whoever asks ahead asks for a typed form, and this is none.
 static bool buildAccessByIndexOfTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType)
 {
     if (!access.typeOfKey.isNumberWithoutFraction() || access.isOnlyAskedAbout)
@@ -534,8 +502,6 @@ static bool buildAccessByIndexOfTypedElements(const AccessOfTypedElements& acces
     return true;
 }
 
-// `arguments[i]` while nothing but this code has the object: the element is what the caller handed over, a parameter or an element of the list behind the parameters. Nothing that is built names the object.
-// readLeavesFreshObjectAsItIs() promises a look at a loop whatever is taken here.
 static bool buildReadOfFreshArgumentsOfTypedElements(const AccessOfTypedElements& access)
 {
     if (access.isOnlyAskedAbout || !access.typeOfKey.isInteger())
@@ -552,7 +518,6 @@ static bool buildReadOfFreshArgumentsOfTypedElements(const AccessOfTypedElements
     std::optional<ListBehindParametersOfArguments> behind = listBehindParametersOfFreshArguments(walker, access.base);
     if (!behind || !positionsOfFreshArgumentsAreInSight(walker, access.base, positions.minimum))
         return false;
-    // The index may name a parameter: each is asked for by its position, and what is none of them lies in the list.
     BlockID behindArms;
     Reference met;
     for (uint32_t parameter = static_cast<uint32_t>(positions.minimum); parameter < behind->firstPosition && !walker.isUnreachable(); ++parameter) {
@@ -679,10 +644,6 @@ static bool buildTestOfTypedElements(const AccessOfTypedElements& access)
     return false;
 }
 
-// ---- Lengths
-
-// The length of an array and of a string is a property of their own that nobody can replace, and that of an array is read the same way whatever its storage.
-// That of a view is a getter above it, which holds only while the view and what stands above it are pristine. That of an arguments object is a property like any other.
 static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     if (value.isFreeName() || value.key() != walker.program().keyOf(BuiltinNames::length))
@@ -692,7 +653,6 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
     TypeID typeOfBase = inputs.typeOf(value.objectOperand());
     bool isOnlyAskedAbout = inputs.areOnlyTypes();
     Reference base = isOnlyAskedAbout ? Reference() : walker.referenceOf(value.objectOperand());
-    // Whoever asks ahead goes on with the type of what would be built: findStretchOfGuess().
     auto answerAhead = [&](Opcode built) {
         walker.noteFormAskedAhead(built, KnowledgeLevel::Proven);
         return true;
@@ -724,9 +684,8 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
     }
     case KindOfBaseOfTypedElements::TypedArray: {
         const ClassPart* onlyClass = singleBuiltinClassOf(types, types.at(typeOfBase));
-        // Or the state has seen the view as its class makes it, and nothing replaces the getter.
         bool isSeenToFindGetter = onlyClass && ((!isOnlyAskedAbout && findConstantMemberReadOff(walker, base, value.key())) || readsOffEntryParameterThatStaysAsMade(walker, value));
-        if (!onlyClass || (!isSeenToFindGetter && !pristineAspectsProvenBy(builtinContextOfTypedElements(walker), typeOfBase, onlyClass->builtinClass).contains(PristineAspects::Names)))
+        if (!isSeenToFindGetter)
             return false;
         if (isOnlyAskedAbout)
             return answerAhead(Opcode::GetTypedArrayLength);
@@ -735,13 +694,11 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
         length.setTypedArrayType(classified.typedArrayType);
         Reference built = walker.build(WTF::move(length));
         walker.bind(value.id(), built);
-        // Until something may write the storage of views: a buffer that is resized, handed away or detached.
         if (built && built.isValue() && !walker.isUnreachable())
             noteKnown(walker, KnownNote::LengthOfList, base, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::TypedArrayStorage }), built.bits());
         return true;
     }
     case KindOfBaseOfTypedElements::Arguments:
-        // It is the count that the caller handed over, until something stores to the property.
         if (Reference length = isOnlyAskedAbout ? Reference() : lengthOfFreshArguments(walker, base)) {
             walker.bind(value.id(), length);
             return true;

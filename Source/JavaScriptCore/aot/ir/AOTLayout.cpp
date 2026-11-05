@@ -115,29 +115,8 @@ uint32_t Layout::appendField(Field&& field)
     return index;
 }
 
-const Field& fieldAt(const Program& program, FieldReference reference)
-{
-    return program.at(reference.layout).fields[reference.field];
-}
-
-FieldReference declarationOf(const Program& program, FieldReference reference)
-{
-    for (size_t steps = 0; fieldAt(program, reference).flags.contains(FieldFlags::IsInherited); ++steps) {
-        RELEASE_ASSERT(steps < program.layouts.size());
-        const Field& field = fieldAt(program, reference);
-        reference = { field.originLayout, *field.originField };
-    }
-    return reference;
-}
-
-LayoutID writtenBaseOf(const Layout& layout)
-{
-    return layout.base;
-}
-
 namespace {
 
-// `class A extends B {}` beside `class B extends A {}` compiles, and throws when it runs. A row that comes back to where it has been ends there, behind a look at each of its layouts.
 class RowOfWrittenBases {
 public:
     RowOfWrittenBases(const Program& program, LayoutID first)
@@ -162,16 +141,16 @@ public:
 private:
     const Program& m_program;
     LayoutID m_current;
-    // Half as far up the row.
     LayoutID m_trailing;
     bool m_trailingMovesNext { false };
 };
 
 } // anonymous namespace
 
-std::optional<FieldReference> findField(const Program& program, LayoutID id, PropertyKeyID key)
+std::optional<FieldReference> findFieldAboveInRow(const Program& program, LayoutID id, PropertyKeyID key)
 {
-    for (RowOfWrittenBases row(program, id); row.current(); row.advance()) {
+    RowOfWrittenBases row(program, id);
+    for (row.advance(); row.current(); row.advance()) {
         const Layout& layout = program.at(row.current());
         if (auto field = layout.findField(key))
             return FieldReference { row.current(), *field };
@@ -207,7 +186,6 @@ void noteSubclassesOfBuiltinClasses(Program& program, std::span<const ClassBelow
     Vector<BuiltinClassID> classRightAbove(numberOfLayouts);
     for (const ClassBelowBuiltinClass& written : sortedWithoutRepeats) {
         BuiltinClassID& builtinClass = classRightAbove[written.layout.index()];
-        // The cells of a layout are of one class.
         RELEASE_ASSERT(written.builtinClass && (!builtinClass || builtinClass == written.builtinClass));
         builtinClass = written.builtinClass;
     }
@@ -218,7 +196,6 @@ void noteSubclassesOfBuiltinClasses(Program& program, std::span<const ClassBelow
         return writtenBaseOf(program.at(id));
     };
 
-    // In a ring, and on the way into one, the layout named need not extend a built-in class.
     Vector<LayoutID> nearestAbove = findNearestWantedAbove(numberOfLayouts, layoutAbove, extendsBuiltinClass);
     BitVector liesAtOrBelowConstructorFunction = answerAlongRows(numberOfLayouts, false, [&](LayoutID id) -> StepAlongRow {
         LayoutID above = layoutAbove(id);
@@ -244,7 +221,6 @@ void noteLayoutsOfDictionaries(Program& program, const BitVector& layoutsOfDicti
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         Layout& layout = program.layouts[index];
         layout.holdsOrdinaryObjects = layoutsOfDictionaries.get(index);
-        // The cells of a layout are of one class.
         RELEASE_ASSERT(!layout.holdsOrdinaryObjects || !layout.writtenBuiltinBase);
     }
     program.types.invalidateMemosAtRest();
@@ -252,7 +228,6 @@ void noteLayoutsOfDictionaries(Program& program, const BitVector& layoutsOfDicti
 
 TypeID enforceableTypeOf(TypeArena& types, const DeclaredType& declared)
 {
-    // An expected position takes whatever arrives, and data of the image may lie there that no test has seen.
     if (declared.isExpected())
         return types.table().provenTypeOf(declared);
     return types.testablePartOf(declared.written());
@@ -273,19 +248,10 @@ Layout createDerivedLayout(const Program& program, LayoutID base)
     return layout;
 }
 
-LayoutID declaredLayoutOf(const Program& program, LayoutID id)
-{
-    LayoutID current = id;
-    while (current && program.at(current).isDerived())
-        current = writtenBaseOf(program.at(current));
-    return current;
-}
-
 void initializeLayouts(Program& program, BuildContext& build)
 {
     forEachIndexInParallel(build.parallelLoops(), program.layouts.size(), [&](unsigned index) {
         Layout& layout = program.layouts[index];
-        // As RecordChecker::didRead() counts them: zero may be the count of a layout whose fields all come from its bases.
         if (!layout.ownFieldCount) {
             auto firstInherited = std::ranges::find_if(layout.fields, [](const Field& field) {
                 return field.flags.contains(FieldFlags::IsInherited);
@@ -296,7 +262,6 @@ void initializeLayouts(Program& program, BuildContext& build)
     });
 }
 
-// None: the layout lists a field under the key, or a ring of written bases has brought the field back to the layout that declares it.
 static std::optional<FieldReference> declarationOfFieldTakenFromWrittenBase(const Program& program, LayoutID id, FieldReference fieldOfBase)
 {
     if (program.at(id).findField(fieldAt(program, fieldOfBase).key))
@@ -307,7 +272,6 @@ static std::optional<FieldReference> declarationOfFieldTakenFromWrittenBase(cons
     return declaration;
 }
 
-// The order word of an object counts its fields in twelve bits.
 static bool hasRoomForFieldsOfWrittenBase(const Program& program, LayoutID id, LayoutID base)
 {
     const Layout& layout = program.at(id);
@@ -329,12 +293,10 @@ static void appendFieldsOfWrittenBase(Program& program, LayoutID id)
         return;
     layout.inheritedFields = InheritedFields::SomeOfRow;
     LayoutID base = writtenBaseOf(layout);
-    // Facts counts the same fields and proves no base for a class without room for them.
     if (!hasRoomForFieldsOfWrittenBase(program, id, base))
         return;
 
     const Layout& baseLayout = program.at(base);
-    // In the order of the base: a tagged layout has no fields of its own and is allocated under the field indexes of its maker.
     for (uint32_t index = 0; index < baseLayout.fields.size(); ++index) {
         std::optional<FieldReference> declaration = declarationOfFieldTakenFromWrittenBase(program, id, { base, index });
         if (!declaration)
@@ -358,7 +320,6 @@ void appendInheritedFields(Program& program, LayoutID id)
             break;
         pending.append(row.current());
     }
-    // A layout takes the fields of the layout above it, so that one has all of its own first.
     while (!pending.isEmpty())
         appendFieldsOfWrittenBase(program, pending.takeLast());
 }

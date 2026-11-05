@@ -66,6 +66,7 @@
 #include "ErrorConstructor.h"
 #include "FastMarkAppender.h"
 #include "HeapAnalyzer.h"
+#include "HeapIterationScope.h"
 #include "IntlObject.h"
 #include "JSAsyncGenerator.h"
 #include "JSBoundFunction.h"
@@ -84,6 +85,7 @@
 #include "Options.h"
 #include "ReservedRangeHeap.h"
 #include "SlotVisitorInlines.h"
+#include "SubspaceInlines.h"
 #include "Symbol.h"
 #include "VM.h"
 #include "VMTrapsInlines.h"
@@ -131,7 +133,6 @@ static std::pair<size_t, size_t> reservationSizes(const Image& image)
     return { InstanceLayout::bytesReservedBelowInstance(sizes), InstanceLayout::bytesReservedFromInstance(sizes) + AccessTable::alignment + sizeof(AccessTable) };
 }
 
-// Behind everything that is found by its distance from the instance.
 static AccessTable& accessTableOf(Instance& instance, const Image& image)
 {
     uintptr_t end = std::bit_cast<uintptr_t>(&instance) + InstanceLayout::bytesReservedFromInstance(image.programTables().instanceSizes);
@@ -150,19 +151,16 @@ static void releaseMemory(Instance* instance)
 {
     VMState& vmState = instance->vm->aotState();
     auto [below, above] = reservationSizes(*instance->program);
-    // Whoever gets the pages next writes to them.
     if (std::span<uint32_t> methodTable = instance->methodTable(); !methodTable.empty())
         OSAllocator::protect(methodTable.data(), InstanceLayout::bytesReservedForMethodTable(instance->tables().instanceSizes), true, true);
     vmState.pages->release(reinterpret_cast<char*>(instance) - below, below + above);
 }
 
-// What the table holds until a guard of a class ends.
 static void fillMethodTable(Instance& instance, const Image& image)
 {
     std::span<uint32_t> methodTable = instance.methodTable();
     if (methodTable.empty())
         return;
-    // Nothing goes over the table at a start: its pages are those of the image until the run time repoints an entry in one. The code part begins at a page, so the last of them lies in the image.
     std::span<const uint8_t> pagesOfImage { reinterpret_cast<const uint8_t*>(image.methodTable().data()), roundUpToMultipleOf(pageSize(), methodTable.size_bytes()) };
     if (mapPrivateCloneOfImagePages(image, pagesOfImage, methodTable.data()))
         return;
@@ -307,7 +305,6 @@ static void fillArrayHeaders(Instance& instance, JSGlobalObject* realm)
 
 static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
 {
-    // No cell has the number zero. didCreateInstanceStructure() fills the word of a class that the realm creates later.
     if (Structure* structure = realm->mapStructureConcurrently())
         instance.receiverStructureID(Receiver::Map) = structure->id().bits();
     if (Structure* structure = realm->setStructureConcurrently())
@@ -320,7 +317,6 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     RealmWords& words = instance.realm;
     words.boundFunctionStructureID = realm->boundFunctionStructure()->id().bits();
     words.hostFunctionStructureID = realm->hostFunctionStructure()->id().bits();
-    // Compiled code binds compiled closures, which are no JSFunctions: a slim one ends before JSFunction's executable. JSBoundFunction::create picks the same for them.
     constexpr bool targetIsJSFunction = false;
     words.boundFunctionExecutable = vm.getBoundFunction(targetIsJSFunction, SourceTaintedOrigin::Untainted);
     words.emptyExtraPropertiesStructure = JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
@@ -355,7 +351,6 @@ static void registerStackMirror(Instance* instance, VM& vm)
     vm.traps().registerMirror(instance->callsByValue.limit.get());
     vm.traps().registerMirror(instance->jsonLevels.limit.get());
     VMState::PolledInstances& polled = vm.aotState().polledInstances;
-    // The list grows outside the lock: a request to malloc may tell this thread that it owes an error, which takes the lock. This thread alone changes the list.
     decltype(polled.instances) instances;
     size_t numberOfInstances;
     {
@@ -425,7 +420,6 @@ Instance* reserveInstance(JSGlobalObject* realm)
     fillHeaderAndPrefix(*instance, vm, realm);
     fillImageWords(*instance, vm, image, *identifiers);
     fillMethodTable(*instance, image);
-    // Compiled code comes by places before the run time has anything to remember.
     instance->siteAnswers()[0] = SiteAnswers::forPlacesWithout();
     fillNumberWords(*instance);
     fillAllocationSpaces(*instance, vm);
@@ -440,10 +434,8 @@ Instance* Instance::owning(const JSCell* cell)
     return cell->structure()->realm()->aotInstance();
 }
 
-// A header holds the pristine bit of its Structure. The other inline allocations are prepared again by their first allocation.
 void Instance::didCreateInstanceStructure(BuiltinClassID builtinClass, Structure* structure)
 {
-    // Compiled code reads such a word as one that is filled once and keeps its value.
     auto fill = [&](Receiver receiver) {
         uint32_t& word = receiverStructureID(receiver);
         ASSERT(!word || word == structure->id().bits());
@@ -461,7 +453,6 @@ void Instance::findShortArrayAllocators()
 {
     static_assert(LocalAllocator::offsetOfFreeList() + sizeof(FreeList) <= ShortArrayWords::wordsOfExhaustedAllocator * sizeof(uint64_t));
     bool hasHeaders = prefix().newArrayWithContiguousHeader;
-    // Nothing is allocated from it, so nothing reads the size of its cells.
     uint8_t* exhausted = reinterpret_cast<uint8_t*>(shortArrays.exhaustedAllocator);
     new (NotNull, exhausted + LocalAllocator::offsetOfFreeList()) FreeList(static_cast<unsigned>(MarkedSpace::sizeStep));
     for (unsigned i = 0; i < ShortArrayWords::numberOfAllocators; ++i) {
@@ -482,7 +473,6 @@ void Instance::captureCellHeaders()
     for (auto& typedArrayAllocation : allocation.typedArrayAllocations)
         typedArrayAllocation = { };
     prepareInlineAllocation<JSPromise>(this, InlineAllocation::Promise, globalObject->promiseStructure());
-    // A cell has the pristine bit that its Structure had when the cell was made.
     realm.emptyArgumentList = JSArray::create(*vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
 }
 
@@ -506,7 +496,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     initializeCollectorWords(vm, *instance);
     initializeStubWords(*instance);
     initializeIterationWords(*instance);
-    instance->misfits.landings.entries = &instance->misfits.landings.empty;
+    instance->effectsNet.exercised = effectsNetExercised().data();
 
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
@@ -514,12 +504,10 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
-    // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
     instance->state->caches->addClearedEachCollection("places filed from slots"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlots));
     instance->state->caches->addClearedEachCollection("places filed from slots and cleared"_s, asMutableByteSpan(instance->propertyCaches.placesFiledFromSlotsAndCleared));
     instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()));
-    // A place names a Structure, a holder and a callee and holds none of them.
     instance->state->caches->addClearedEachCollection("access table"_s, asMutableByteSpan(accessTableOf(*instance, *instance->program)));
     instance->state->caches->addClearedEachCollection("keys of the access table that depend on chains"_s, asMutableByteSpan(instance->propertyCaches.accessTable.numberOfKeysThatDependOnChains));
     instance->state->caches->addClearedEachCollection("access table holds stores to unwatched structures"_s, asMutableByteSpan(instance->propertyCaches.accessTable.holdsStoresToUnwatchedStructures));
@@ -555,6 +543,8 @@ void Instance::destroy(Instance* instance)
         vmState.instancesToDestroy.removeFirst(instance);
     }
     if (instance->state) {
+        if (instance->state->modules)
+            instance->state->modules->noteTextsThatHostKeeps();
         delete instance->state;
         unregisterStackMirror(instance, vm);
     }
@@ -600,7 +590,6 @@ void* ZeroedPages::allocate(size_t bytes, FirstUse firstUse)
     size_t size = roundUpToMultipleOf(pageSize(), std::max<size_t>(bytes, 1));
     void* pages = m_pagesOfVM.allocate(size);
 #if OS(LINUX)
-    // A kernel older than 5.14 refuses, and the pages fault in one by one.
     if (firstUse == FirstUse::AllAtOnce)
         madvise(pages, size, populateStateForWriting);
 #else
@@ -641,7 +630,6 @@ static size_t arenaCapacity(const ProgramTables& tables)
         + sizeOfZeroedTable(tables.allocations().size() + 1, sizeof(AllocationSiteRecord) + sizeof(int32_t))
         + sizeOfZeroedTable(tables.numberOfClasses(), sizeof(JSCell*))
         + sizeOfZeroedTable(tables.numberOfClosureCells, sizeOfCellReference)
-        + sizeOfZeroedTable(tables.literalStrings().size(), sizeOfCellReference)
         + sizeOfZeroedTable(tables.keyCellIdentifiers().size(), sizeOfCellReference)
         + sizeOfZeroedTable(tables.bigIntConstants().size(), sizeof(JSCell*))
         + sizeOfZeroedTable(InstanceLayout::holdsBuiltinCells(tables.builtinCells().size()) ? 0 : tables.builtinCells().size(), sizeof(JSCell*))
@@ -674,7 +662,6 @@ State::State(Instance& instance)
     instance.state = this;
     caches = makeUnique<CacheRegistry>();
     immortalCells = makeUnique<ImmortalCells>(*this);
-    // It has room for one property and has none, so nothing but this line ever writes the word.
     objectThatHoldsUndefined = JSFinalObject::create(*instance.vm, JSFinalObject::createStructure(*instance.vm, nullptr, jsNull(), 1));
     objectThatHoldsUndefined->inlineStorage()[0].setWithoutWriteBarrier(jsUndefined());
     immortalCells->add(objectThatHoldsUndefined);
@@ -731,14 +718,12 @@ static ALWAYS_INLINE void* operationAddress()
         return tagCFunctionPtr<void*, OperationPtrTag>(operation);
 }
 
-// A leaf that preserves most registers is handed characters and numbers and no instance.
 static constexpr bool isCalledWithoutCollection(Entry entry)
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
     return operation && !Typed::declaredBoundOf(*operation).mayCollect && !preservesMostRegisters(*operation);
 }
 
-// What takes the pending exception runs the collection that throwing put off.
 static_assert(!isCalledWithoutCollection(Entry::operationAOTCatch) && !isCalledWithoutCollection(Entry::operationAOTCatchException) && !isCalledWithoutCollection(Entry::operationAOTCatchValueAndException));
 
 template<Entry entry, auto operation>
@@ -763,7 +748,6 @@ static NEVER_INLINE AOT_PRESERVE_MOST_LEAF_ATTRIBUTES void didCallCountedOperati
     vmFor(first).aotState().counts->didCall(entry);
 }
 
-// No primary definition: an operation whose calling convention matches no specialization fails to compile instead of going uncounted.
 template<Entry entry, auto operation, typename Function>
 struct CountedCall;
 
@@ -852,7 +836,6 @@ static void fillThunkAndPointers(void** entries, const Image& image)
 #endif
 }
 
-// An image without the stub calls the operation itself.
 static void installOperationFrontEnds(void** entries, const Image& image)
 {
     for (const OperationFrontEnd& row : operationFrontEnds()) {
@@ -893,7 +876,6 @@ static constexpr auto familiesOfEntries = [] {
     return families;
 }();
 
-// An executable loses the families of which its image lists nothing. Whatever else has taken one away, the program does not start: it would end at some call.
 static void checkThatFamiliesOfUsedEntriesAreThere(const Image& image)
 {
     const uint32_t* entriesUsed = image.header().entriesUsed;
@@ -1022,7 +1004,6 @@ void VMState::attachImage(VM& vm)
     stringBuilderStorageStructure.setWithoutWriteBarrier(StringBuilderStorage::createStructure(vm, nullptr, jsNull()));
 }
 
-// The rows of Structures are words of one table of the process, so they are given back while the Structure IDs still belong to this VM.
 void VMState::willShutDownHeap()
 {
     if (propertyCaches)
@@ -1069,14 +1050,12 @@ void VMState::releaseImage(VM& vm)
 #if ENABLE(AOT_GUARDED_PAGES)
 static constexpr unsigned guardPagesOnEachEnd = 1;
 
-// What a check of the file can tell such a build by.
 extern "C" __attribute__((used, retain)) const char JSC__AOT__mapsGuardedPages[] = "guarded pages: what a compiled program maps for good has an address of its own";
 #else
 static constexpr unsigned guardPagesOnEachEnd = 0;
 #endif
 
 #if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX) && CPU(ADDRESS64)
-// What the system places by itself shares one random base: an address of one mapping gives away the others, the C library's among them.
 static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Usage usage)
 {
     static constexpr uintptr_t lowestRandomAddress = 64 * GB;
@@ -1120,7 +1099,6 @@ AddressSpaceToStart askForAddressSpaceToStart(size_t sizeOfProgram, std::span<co
     result.isRefused = !canMap(result.needed);
     if (result.isRefused)
         return result;
-    // Beside a step of the allocator there is room for as much again: the cells, tables and stacks of threads.
     for (size_t step : stepsOfAllocator) {
         if (canMap(step + std::max(step, addressSpaceToStartBesideAllocations()))) {
             result.largestStepOfAllocator = step;
@@ -1134,7 +1112,6 @@ AddressSpaceToStart askForAddressSpaceToStart(size_t sizeOfProgram, std::span<co
 AddressSpaceToStart askForAddressSpaceToStart(size_t, std::span<const size_t>) { return { }; }
 #endif
 
-// The memory that a VM's tables need before the program's first statement runs. Anything beyond that gets its own pages.
 static size_t sizeOfPagesAtStart(const Image& image)
 {
     static constexpr size_t sizeOfSmallTables = 512 * KB;
@@ -1148,8 +1125,6 @@ static thread_local size_t t_sizeOfPagesOfThread;
 static thread_local bool t_isStarting;
 static std::atomic<unsigned> s_numberOfThreadsStarting;
 
-// The allocator keeps pieces of different sizes in pages of different sizes, and a thread shares no page with another thread. So does a heap.
-// Other threads allocate meanwhile, so it stops where less than this much address space is left, and it reads what is left: to map as much would take it from them.
 static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeaveFree)
 {
 #if USE(MIMALLOC)
@@ -1157,11 +1132,9 @@ static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeav
         size_t size;
         unsigned count;
     };
-    // What a thread takes until the first statement of a small program runs. The largest come last: by then the small ones have divided what is free.
     static constexpr Pages pagesOfThread[] = { { 64 * KB, 40 }, { 512 * KB, 8 }, { 4 * MB, 2 } };
     static constexpr unsigned piecesInPage = 7;
     static constexpr size_t alignmentOfPages = 64 * KB;
-    // It asks the system for an arena whenever its arenas are full, and each time it is refused it goes on at addresses far from the last.
     static constexpr size_t smallestStep = 128 * MB;
     static const size_t largestStep = mi_option_get_size(mi_option_arena_reserve);
     size_t left = addressSpaceLeft();
@@ -1196,7 +1169,6 @@ static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeav
 #endif
 }
 
-// Until a thread adopts them the pages begin with their size.
 static void* tryReservePagesForTables(const Image& image, unsigned numberOfThreads, size_t sizeToLeaveFree)
 {
     if (!MarkedBlockCage::tryEnsureRoomForNewVMs(numberOfThreads))
@@ -1223,14 +1195,12 @@ PagesForNewThread tryReservePagesForFirstThread()
 
 PagesForNewThread tryReservePagesForNewThread(bool threadsAreEnding)
 {
-    // The stack of the thread, and what the threads that run take meanwhile.
     static constexpr size_t sizeToLeaveFreeForThread = 10 * MB;
     const Image* image = Image::current();
     if (!hasAddressSpaceLimit() || !image)
         return { };
     unsigned numberOfThreads = ++s_numberOfThreadsStarting;
     size_t sizeToLeaveFree = sizeToLeaveFreeForThread;
-    // Once every thread that is starting has its stack, the range of the cells can still take more.
     if (threadsAreEnding)
         sizeToLeaveFree = numberOfThreads * sizeToLeaveFreeForThread + ReservedRangeHeap::addressSpaceToGrow();
     void* pages = tryReservePagesForTables(*image, numberOfThreads, sizeToLeaveFree);
@@ -1278,7 +1248,6 @@ void didStartThread(VM* vm)
     --s_numberOfThreadsStarting;
 }
 
-// What the starting thread reserved for this thread.
 static std::pair<uint8_t*, size_t> takePagesOfThread()
 {
     return { std::exchange(t_pagesOfThread, nullptr), std::exchange(t_sizeOfPagesOfThread, 0) };
@@ -1335,7 +1304,6 @@ PagesOfVM::PagesOfVM(size_t sizeOfMapping)
     m_start = pagesOfThread;
     m_size = sizeOfPagesOfThread;
     if (!m_start) {
-        // If there is no room for all at once, each table requests its own.
         m_start = static_cast<uint8_t*>(OSAllocator::tryReserveAndCommit(sizeOfMapping, OSAllocator::FastMallocPages));
         m_size = m_start ? sizeOfMapping : 0;
     }
@@ -1350,7 +1318,6 @@ PagesOfVM::~PagesOfVM()
 {
     if (!m_start)
         return;
-    // Something else may be mapped by now where a piece was released early.
     std::ranges::sort(m_gaps);
     uint8_t* start = m_start;
     for (auto [gap, size] : m_gaps) {
@@ -1393,7 +1360,6 @@ void PagesOfVM::release(void* pages, size_t bytes)
         return;
     bytes = roundUpToMultipleOf(pageSize(), bytes);
 #if OS(WINDOWS)
-    // Only a whole reservation can be released.
     OSAllocator::decommit(pages, bytes);
 #else
     OSAllocator::releaseDecommitted(pages, bytes, 0);
@@ -1411,12 +1377,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProgramStatics);
 
-static uint32_t sizeFilledAtProgramEntry(const ProgramTables& tables)
-{
-    std::span<const StaticsLayout> layout = tables.staticsLayout();
-    return layout.empty() ? 0 : layout[0].sizeFilledAtProgramEntry;
-}
-
 static std::optional<FunctionID> findFunctionVariable(const ProgramTables& tables, uint32_t offset)
 {
     std::span<const FunctionVariableData> variables = tables.functionVariables();
@@ -1424,36 +1384,6 @@ static std::optional<FunctionID> findFunctionVariable(const ProgramTables& table
     if (found == variables.end() || found->offset != offset)
         return std::nullopt;
     return FunctionID(found->function);
-}
-
-// The literal string in the slot, if reading the slot would create its cell.
-static std::optional<uint32_t> literalStringWithoutCell(const Instance& instance, SlotRepresentation representation, const void* slot)
-{
-    if (traitsOf(representation).valueKind != SlotValueKind::LiteralString)
-        return std::nullopt;
-    uint64_t word = readSlotBits(representation, slot);
-    if (!isLiteralStringWord(word))
-        return std::nullopt;
-    uint32_t number = literalStringIndex(static_cast<uint32_t>(word));
-    RELEASE_ASSERT(number < instance.tables().literalStrings().size());
-    const ConstantCellWords& constants = instance.runtime.constants;
-    bool hasCell = instance.options().useWideReferences() ? !!constants.wideLiteralStrings[number] : !!constants.literalStrings[number];
-    return hasCell ? std::nullopt : std::optional(number);
-}
-
-void ProgramStatics::initializeStatics(uint32_t firstWord, uint32_t endWord)
-{
-    auto* words = reinterpret_cast<uint64_t*>(m_instance.statics());
-    std::span<const StaticsRun> runs = m_tables.staticsRuns();
-    auto run = std::ranges::upper_bound(runs, firstWord, { }, &StaticsRun::firstWord);
-    if (run != runs.begin())
-        --run;
-    for (; run != runs.end() && run->firstWord < endWord; ++run) {
-        uint32_t first = std::max(run->firstWord, firstWord);
-        uint32_t end = std::min(run->firstWord + run->numberOfWords, endWord);
-        if (first < end)
-            std::ranges::fill(std::span { words + first, end - first }, run->bits());
-    }
 }
 
 void ProgramStatics::putBack(uint32_t offset, uint32_t size)
@@ -1466,7 +1396,6 @@ void ProgramStatics::putBack(uint32_t offset, uint32_t size)
         --run;
         return word - run->firstWord < run->numberOfWords ? run->bits() : 0;
     };
-    // The collector's threads read the slots meanwhile: each is written at once.
     auto putBackSlot = [&]<typename Slot>(Slot) {
         at<Slot>(offset) = static_cast<Slot>(initialWordAt(offset / sizeof(uint64_t)) >> (offset % sizeof(uint64_t) * 8));
         offset += sizeof(Slot);
@@ -1484,68 +1413,6 @@ void ProgramStatics::putBack(uint32_t offset, uint32_t size)
     }
 }
 
-uint32_t ProgramStatics::groupWithWord(uint32_t word) const
-{
-    std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
-    auto next = std::ranges::upper_bound(groups, word, { }, &StaticsOfFiles::firstWord);
-    RELEASE_ASSERT(next != groups.begin());
-    return static_cast<uint32_t>(next - groups.begin()) - 1;
-}
-
-bool ProgramStatics::isInitialized(uint32_t offset) const
-{
-    return (m_programStaticsInitialized || offset >= sizeFilledAtProgramEntry(m_tables)) && isFilled(offset);
-}
-
-bool ProgramStatics::isFilled(uint32_t offset) const
-{
-    uint32_t word = offset / sizeof(uint64_t);
-    return word - m_firstWordFilledWithFiles >= m_numberOfWordsFilledWithFiles || m_filledFiles[groupWithWord(word)];
-}
-
-void ProgramStatics::fillVariablesOfFiles(uint32_t first)
-{
-    std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
-    std::span<const uint32_t> importedGroups = m_tables.staticsOfImportedFiles();
-    RELEASE_ASSERT(first + 1 < groups.size());
-    if (m_filledFiles[first])
-        return;
-    m_filledFiles[first] = true;
-    Vector<uint32_t, 32> pending { first };
-    while (!pending.isEmpty()) {
-        uint32_t group = pending.takeLast();
-        initializeStatics(groups[group].firstWord, groups[group + 1].firstWord);
-        for (uint32_t imported : importedGroups.subspan(groups[group].firstImportedGroup, groups[group + 1].firstImportedGroup - groups[group].firstImportedGroup)) {
-            if (!std::exchange(m_filledFiles[imported], true))
-                pending.append(imported);
-        }
-    }
-}
-
-void ProgramStatics::fillVariablesOfAllFiles()
-{
-    std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
-    for (uint32_t group = 0; group + 1 < groups.size(); ++group) {
-        if (!std::exchange(m_filledFiles[group], true))
-            initializeStatics(groups[group].firstWord, groups[group + 1].firstWord);
-    }
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillVariablesOfFiles, void, (Instance* instance, uint32_t group))
-{
-    instance->state->statics->fillVariablesOfFiles(group);
-}
-
-void ProgramStatics::initializeProgramStatics()
-{
-    if (m_readOnlyStaticsSize)
-        OSAllocator::protect(m_instance.statics(), m_readOnlyStaticsSize, true, true);
-    initializeStatics(0, sizeFilledAtProgramEntry(m_tables) / sizeof(uint64_t));
-    WTF::storeStoreFence();
-    m_readOnlyStaticsSize = 0;
-    m_programStaticsInitialized = true;
-}
-
 JSValue ProgramStatics::readVariable(Instance& instance, SlotData slot)
 {
     VM& vm = *instance.vm;
@@ -1555,12 +1422,9 @@ JSValue ProgramStatics::readVariable(Instance& instance, SlotData slot)
     if (slot.representation() == SlotRepresentation::DeferredClosure)
         return closures.closure(vm, FunctionID(offset));
     ProgramStatics& statics = *state.statics;
-    statics.ensureProgramStaticsInitialized();
-    statics.ensureVariableIsFilled(offset);
-    if (JSValue value = readSlot(slot.representation(), instance.statics() + offset, statics.m_strings))
+    if (JSValue value = readSlot(slot.representation(), instance.statics() + offset, instance))
         return value;
     if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset)) {
-        // Every reader takes an empty word for the one closure of the function, so the word may as well hold it.
         JSCell* closure = closures.closure(vm, *function);
         writeVariable(instance, slot, closure);
         return closure;
@@ -1576,12 +1440,8 @@ JSValue ProgramStatics::readVariableWithoutAllocating(const Instance& instance, 
     if (slot.representation() == SlotRepresentation::DeferredClosure)
         return closures.closureIfCreated(FunctionID(offset));
     const ProgramStatics& statics = *state.statics;
-    if (!statics.isInitialized(offset))
-        return { };
     const uint8_t* address = instance.statics() + offset;
-    if (literalStringWithoutCell(instance, slot.representation(), address))
-        return { };
-    if (JSValue value = readSlot(slot.representation(), address, statics.m_strings))
+    if (JSValue value = readSlot(slot.representation(), address, instance))
         return value;
     if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset))
         return closures.closureIfCreated(*function);
@@ -1593,10 +1453,8 @@ bool ProgramStatics::isVariableEmpty(const Instance& instance, SlotData slot)
     if (slot.representation() == SlotRepresentation::DeferredClosure)
         return false;
     const ProgramStatics& statics = *instance.state->statics;
-    if (!statics.isInitialized(slot.offset))
-        return true;
     const uint8_t* address = instance.statics() + slot.offset;
-    if (literalStringWithoutCell(instance, slot.representation(), address) || readSlot(slot.representation(), address, statics.m_strings))
+    if (readSlot(slot.representation(), address, instance))
         return false;
     return !findFunctionVariable(statics.m_tables, slot.offset);
 }
@@ -1606,15 +1464,13 @@ void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue va
     SlotRepresentation representation = slot.representation();
     RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
     ProgramStatics& statics = *instance.state->statics;
-    statics.ensureProgramStaticsInitialized();
-    statics.ensureVariableIsFilled(slot.offset);
     uint8_t* address = instance.statics() + slot.offset;
     if (!value) {
         RELEASE_ASSERT(traitsOf(representation).hasAbsent);
         clearSlot(representation, address);
         return;
     }
-    bool didWrite = tryWriteSlot(statics.m_strings, representation, address, value);
+    bool didWrite = tryWriteSlot(instance, representation, address, value);
     RELEASE_ASSERT(didWrite);
     if (traitsOf(representation).holdsCell)
         statics.didStoreRootInStatics(slot.offset);
@@ -1661,7 +1517,6 @@ private:
     uint32_t m_module;
 };
 
-// A snapshot of the same program under the interpreter has a cell of this name for each module.
 const ClassInfo ModuleEnvironment::s_info = { "JSModuleEnvironment"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleEnvironment) };
 
 } // anonymous namespace
@@ -1682,8 +1537,6 @@ JSCell* ProgramStatics::cellIn(SlotData slot) const
     const ClosureTable& closures = m_instance.state->objects->closures;
     if (slot.representation() == SlotRepresentation::DeferredClosure)
         return closures.closureIfCreated(FunctionID(slot.offset));
-    if (!isInitialized(slot.offset))
-        return nullptr;
     const uint8_t* word = m_instance.statics() + slot.offset;
     if (readSlotBits(slot.representation(), word))
         return cellInSlot(slot.representation(), word, m_instance.cellCageBase);
@@ -1707,13 +1560,11 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
         });
         RELEASE_ASSERT(endsWhereModuleEnds);
         m_firstNamedVariablesOfModules.append(static_cast<uint32_t>(m_namedVariables.size()));
-        // A name is found by where its row lies, and from here on the rows stay where they are.
         ProgramIdentifiers& identifiers = *vm.aotState().identifiers;
         for (const VariableData& variable : m_namedVariables)
             identifiers.nameForHeapSnapshots(&variable, AtomString(ProgramStrings::text(m_tables, StringID(variable.name))));
     }
     size_t numberOfModules = m_firstNamedVariablesOfModules.size() - 1;
-    // Whoever asks what fills the heap asks where little room is left.
     MarkedBlockCage::InfallibleAllocationScope infallibleAllocation(vm.heap.cage());
     ImmortalCells& immortalCells = *m_instance.state->immortalCells;
     if (!m_structureOfModuleEnvironments) {
@@ -1724,8 +1575,6 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
     for (uint32_t module = 0; module < numberOfModules; ++module) {
         if (m_environmentsOfModules[module])
             continue;
-        // A function of a module that has not begun may have its closure: whoever imports it in a cycle has asked for it.
-        // A body that has nothing to run is never begun: the module is there once it is linked.
         const Modules& modules = *m_instance.state->modules;
         ModuleID id(m_modulesInHeapSnapshots[module]);
         bool hasBegun = modules.status(id) >= ModuleStatus::Evaluating || (modules.status(id) == ModuleStatus::Linked && !modules.data(id).needsEvaluation());
@@ -1737,6 +1586,38 @@ void ProgramStatics::willAnalyzeHeap(VM& vm)
         m_environmentsOfModules[module] = ModuleEnvironment::create(vm, m_structureOfModuleEnvironments, *this, module);
         immortalCells.add(m_environmentsOfModules[module]);
     }
+
+    if (!m_structureOfScopesOfClosures) {
+        m_structureOfScopesOfClosures = createStructureOfScopesInHeapSnapshots(vm, m_instance.globalObject);
+        immortalCells.add(m_structureOfScopesOfClosures);
+    }
+    DeferGCForAWhile deferGC(vm);
+    Vector<std::pair<JSCell*, JSCell*>>& scopes = m_scopesOfClosures.list;
+    scopes.shrink(0);
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>()->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+            SUPPRESS_MEMORY_UNSAFE_CAST auto* closure = static_cast<JSCell*>(cell);
+            if (closure->structure()->realm() == m_instance.globalObject && hasScopeInHeapSnapshots(closure))
+                scopes.append({ closure, nullptr });
+        });
+    }
+    std::ranges::sort(scopes);
+    for (auto& [closure, scope] : scopes)
+        scope = createScopeInHeapSnapshot(vm, m_structureOfScopesOfClosures, closure);
+}
+
+void ProgramStatics::ScopesOfClosures::clear()
+{
+    if (!vm->isAnalyzingHeap())
+        list.clear();
+}
+
+JSCell* ProgramStatics::scopeInHeapSnapshotOf(JSCell* closure) const
+{
+    std::span<const std::pair<JSCell*, JSCell*>> scopes = m_scopesOfClosures.list.span();
+    auto found = std::ranges::lower_bound(scopes, closure, { }, &std::pair<JSCell*, JSCell*>::first);
+    return found != scopes.end() && found->first == closure ? found->second : nullptr;
 }
 
 JSCell* ProgramStatics::environmentOfModuleThatDefines(uint32_t closureNumber) const
@@ -1778,11 +1659,9 @@ template<typename Appender>
 ALWAYS_INLINE void ProgramStatics::visitRegion(Appender& appender, size_t begin, size_t end)
 {
     const uint8_t* statics = m_instance.statics();
-    begin = std::max<size_t>(begin, m_readOnlyStaticsSize);
     forEachRootInRegion<EncodedJSValue>(statics, m_tables.staticsRoots(), begin, end, [&](EncodedJSValue value) ALWAYS_INLINE_LAMBDA {
         appender.appendUnbarriered(JSValue::decode(value));
     });
-    // A marker or the word of a literal string lies below every reference.
     uintptr_t cageBase = m_instance.cellCageBase;
     forEachRootInRegion<uint32_t>(statics, m_tables.staticsNarrowRoots(), begin, end, [&](uint32_t word) ALWAYS_INLINE_LAMBDA {
         if (word >= minCell32)
@@ -1814,35 +1693,18 @@ template void ProgramStatics::visitRoots(SlotVisitor&);
 ProgramStatics::ProgramStatics(State& state)
     : m_instance(state.instance)
     , m_tables(state.tables)
-    , m_strings(*state.strings)
     , m_slots({ state.instance.statics(), state.tables.instanceSizes.sizeOfStatics }, InstanceLayout::cardShift, { state.instance.cards(), RememberedSlotSet::numberOfCardsFor(state.tables.instanceSizes.sizeOfStatics, InstanceLayout::cardShift) })
 {
     m_slots.setCardsAreWrittenWithoutRecord();
     uint8_t* statics = m_instance.statics();
-    uint32_t filled = sizeFilledAtProgramEntry(m_tables);
-    uint32_t endOfWordsFilledNow = std::numeric_limits<uint32_t>::max();
-    if (std::span<const StaticsOfFiles> files = m_tables.staticsOfFiles(); !files.empty()) {
-        // Nothing behind them starts as anything but zero.
-        endOfWordsFilledNow = m_firstWordFilledWithFiles = files.front().firstWord;
-        m_numberOfWordsFilledWithFiles = files.back().firstWord - files.front().firstWord;
-        m_filledFiles = statics + files.back().firstWord * sizeof(uint64_t);
-    }
-    initializeStatics(filled / sizeof(uint64_t), endOfWordsFilledNow);
-    // Compiled code may load from anywhere in the statics ahead of the branch that needs the value, so only stores are caught until the program is entered.
-    m_readOnlyStaticsSize = static_cast<uint32_t>(WTF::roundDownToMultipleOf(pageSize(), static_cast<size_t>(filled)));
-    if (m_readOnlyStaticsSize)
-        OSAllocator::protect(statics, m_readOnlyStaticsSize, true, false);
+    auto* words = reinterpret_cast<uint64_t*>(statics);
+    for (const StaticsRun& run : m_tables.staticsRuns())
+        std::ranges::fill(std::span { words + run.firstWord, run.numberOfWords }, run.bits());
     state.caches->add(CacheKind::StrongRoots, "statics"_s, *this, RootVolatility::GreyedByExecution);
-    for (const StaticsRange& range : m_tables.staticsClearedEachCollection()) {
-        RELEASE_ASSERT(range.offset >= filled);
+    m_scopesOfClosures.vm = m_instance.vm;
+    state.caches->add(CacheKind::ClearedEachCollection, "scopes of closures in a heap snapshot"_s, m_scopesOfClosures);
+    for (const StaticsRange& range : m_tables.staticsClearedEachCollection())
         state.caches->addClearedEachCollection("statics cleared each collection"_s, { statics + range.offset, range.size });
-    }
-}
-
-ProgramStatics::~ProgramStatics()
-{
-    if (m_readOnlyStaticsSize)
-        OSAllocator::protect(m_instance.statics(), m_readOnlyStaticsSize, true, true);
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

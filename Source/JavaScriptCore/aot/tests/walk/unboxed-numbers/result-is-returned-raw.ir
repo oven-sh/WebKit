@@ -28,6 +28,7 @@
 # TESTED-NEXT: [[raw]]: number @Double = Unbox [[narrowed]]
 # TESTED-NEXT: Return [[raw]]
 # TESTED: [[failing]]() frequency=Rare:
+# TESTED-NEXT: CheckProof [[given]] checkedType=never {{*}}source=ResultOfCall
 # TESTED-NEXT: Unreachable
 # With unboxed numbers withheld everything is boxed, and the entry leaves by a jump
 # RUN(BOXED): walk f1:GenericCallEntry mechanisms=-UnboxedNumbers

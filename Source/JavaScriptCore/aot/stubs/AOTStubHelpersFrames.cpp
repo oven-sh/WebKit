@@ -41,7 +41,6 @@ static Address hostCallFrameArgument(unsigned index)
 static void emitFrameHeader(StubAssembler& jit, const HostCallFrame& frame, GPRReg scratch)
 {
     jit.storePtr(fp, Address(sp, CallFrame::callerFrameOffset()));
-    // This address follows no call, so it is the return address of nothing else.
     Label returnPC = jit.bindReturnLabel(StubFrameKind::HostCall);
     jit.loadLabelAddress(returnPC, scratch);
     jit.storePtr(scratch, Address(sp, CallFrame::returnPCOffset()));
@@ -116,7 +115,6 @@ void emitHostCallFrameOfCallWithCount(StubAssembler& jit, GPRReg callee, GPRReg 
     const GPRReg copied = jit.reuseScratch(StubRegister::A0);
     RELEASE_ASSERT(noOverlap(scratch, copied, count, callee, sp, fp) && noOverlap(scratch, copied, count, thisValue) && copied == argumentGPR(0));
 
-    // Every argument register is stored, whatever the count is, so there is room for all of them behind the arguments.
     emitAlignedSizeOfWords(jit, count, CallFrame::headerSizeInRegisters + 1 + numberOfArgumentGPRs, scratch);
     jit.subPtr(sp, scratch, scratch);
     doesNotFitOnStack.append(jit.branchPtr(CCallHelpers::Above, softStackLimit(), scratch));

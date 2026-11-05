@@ -53,7 +53,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// Every FPR that compiled code keeps a number in: all but the assembler's own, which is the last.
 inline constexpr auto markedFPRs = [] {
     std::array<FPRReg, static_cast<size_t>(MacroAssembler::fpTempRegister)> registers { };
     for (size_t i = 0; i < registers.size(); ++i)
@@ -118,7 +117,6 @@ struct LandedCall {
 struct StubEnvironment {
     static StubEnvironment& of(Instance* instance) { return *reinterpret_cast<StubEnvironment*>(reinterpret_cast<uint8_t*>(instance) - OBJECT_OFFSETOF(StubEnvironment, instance)); }
 
-    // A run reaches three things below the instance: the prefix, the places of keyed values and, on targets that keep it there, the table of boxed calls.
     static constexpr size_t bytesBelowInstance = WTF::roundUpToMultipleOf<InstanceLayout::granuleBelowInstance>(static_cast<size_t>(std::max({ static_cast<ptrdiff_t>(sizeof(InstancePrefix)), -InstanceLayout::offsetOfKeyedValuePlaces, -Instance::offsetOfBoxedCalls() })));
 
     std::array<uint8_t, bytesBelowInstance - sizeof(InstancePrefix)> tablesAndUnusedBelowPrefix;
@@ -142,10 +140,8 @@ struct StubEnvironment {
     CallRegisterValues call;
     LandedCall landedCall;
     uint64_t wordsNobodyWrote;
-    // None is filled, so none answers.
     std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
     std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
-    // What a small StructureID leads to unless a test has Structures of its own: a Structure that has seen no name and says nothing about a prototype, so whoever asks it learns nothing.
     std::array<uint8_t, 0x2000> emptyStructures;
     std::array<uint8_t, AccessTable::alignment + sizeof(AccessTable)> roomForAccessTable;
 };
@@ -158,9 +154,7 @@ struct StubRun {
     unsigned numberOfRecordedCalls;
     RecordedArguments recordedArguments;
     LandedCall landedCall;
-    // How many instructions of stubs the run executed, where the runner was told to count and can: an exact number, the same at every run. What stubs call is not counted.
     std::optional<uint32_t> instructionsInStubs { };
-    // Of allocatableGPRs, but for the results and the immediate: what holds another value behind the call than in front of it. Nothing is said of a stub that is entered with the call convention.
     RegisterSet changedRegisters { };
 };
 
@@ -175,17 +169,13 @@ public:
     explicit StubRunner(std::span<const StubKey> keysWithBoundImmediates);
     StubRunner(StubPolicy&&, std::span<const StubKey> keysWithBoundImmediates);
 
-    // An operand or a result that lies in a floating-point register is given as the bits of the double. An answer in the flags is 1 or 0.
     StubRun run(StubKey, std::initializer_list<uint64_t> operands, std::optional<uint32_t> immediate = std::nullopt);
-    // The key is the head of a call of an operation. The arguments are the ones after the Instance*.
     StubRun runOperationCall(StubKey, std::initializer_list<uint64_t> arguments);
     StubRun runCall(StubKey, uint64_t callee, uint64_t thisValue, std::initializer_list<uint64_t> arguments);
     uint64_t closureWord(unsigned numberOfParameters, ClosureWord::Flags flags = { }) const { return ClosureWord::encode({ distanceOfCompiledFunction, numberOfParameters }, 1, flags); }
     Instance& instance() { return m_environment->instance; }
-    // The fake objects of a test share a StructureID whatever their shapes are, and change with no report. So a test that asks what lies behind the access table empties it in front of each run.
     void forgetAccessTable() { instance().propertyCaches.accessTable.forgetEverything(); }
     uint32_t& stringCell(uint32_t number) { return m_environment->stringCells[number]; }
-    // For a test that writes the call itself: what StubEnvironment::stub takes.
     void* entryOf(StubKey key) const { return addressOf(key); }
 
     template<typename Function>
@@ -193,16 +183,13 @@ public:
     void countCallsOf(Entry entry) { install(entry, countOperationCall); }
     void recordCallsOf(Entry entry) { install(entry, recordOperationCall); }
     void setResultOfRecordedOperation(uint64_t result) { m_environment->resultOfRecordedOperation = result; }
-    // In place of the operation, the words of the frame of its caller are counted that still hold what the runner wrote below its stack pointer in front of the run.
     void countWordsNobodyWroteAtCallsOf(Entry entry) { install(entry, std::bit_cast<UGPRPair (SYSV_ABI *)(Instance*)>(m_landingThatCountsWordsNobodyWrote)); }
-    // For a stub that goes on to where no run can follow: the landing returns to the caller of the stub.
     void countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry entry)
     {
         install(entry, std::bit_cast<UGPRPair (SYSV_ABI *)(Instance*)>(m_landingThatCountsWordsNobodyWroteAndLeavesStub));
         m_landingMayLeaveStub = true;
     }
     uint64_t wordsNobodyWrote() const { return m_environment->wordsNobodyWrote; }
-    // The processor stops behind each instruction while a run lasts. Only where AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS.
     void setCountsInstructions(bool counts) { m_countsInstructions = counts; }
 
 private:
@@ -243,7 +230,6 @@ private:
     MacroAssemblerCodeRef<JSEntryPtrTag> m_landings;
     void* m_landingThatCountsWordsNobodyWrote { nullptr };
     void* m_landingThatCountsWordsNobodyWroteAndLeavesStub { nullptr };
-    // Such a run skips what the stub does behind the operation, so its registers say nothing of the stub.
     bool m_landingMayLeaveStub { false };
     std::unique_ptr<StubEnvironment> m_environment;
     bool m_countsInstructions { false };
@@ -267,13 +253,11 @@ public:
 
     ~InstructionCounter() { AOT_TEST_CHECK(!sigaction(SIGTRAP, &m_previousAction, nullptr)); }
 
-    // The trap flag. The red zone of the caller lies below the stack pointer.
     static ALWAYS_INLINE void start() { asm volatile("subq $128, %%rsp\n\tpushfq\n\torq $0x100, (%%rsp)\n\tpopfq\n\taddq $128, %%rsp" ::: "memory", "cc"); }
     static ALWAYS_INLINE void stop() { asm volatile("subq $128, %%rsp\n\tpushfq\n\tandq $~0x100, (%%rsp)\n\tpopfq\n\taddq $128, %%rsp" ::: "memory", "cc"); }
     static uint32_t count() { return s_count; }
 
 private:
-    // The context holds the instruction that comes next, so each instruction of a stub is seen once, before it runs.
     static void didStep(int, siginfo_t*, void* context)
     {
         uintptr_t next = static_cast<uintptr_t>(static_cast<ucontext_t*>(context)->uc_mcontext.gregs[REG_RIP]);
@@ -321,8 +305,6 @@ inline CCallHelpers::Address StubRunner::environmentSlot(size_t offsetInEnvironm
     return CCallHelpers::Address(instanceGPR, static_cast<int32_t>(offset));
 }
 
-// On ARM64 the assembler reaches what lies far from the instance through its scratch registers, and calls through one.
-// So an immediate that a stub takes in one of them is loaded last, and the call goes through a register that the signature leaves free.
 inline std::optional<GPRReg> StubRunner::registerThatHoldsAddressOfStub(const StubSignature& signature, bool passesImmediate)
 {
     if (!isARM64() || !passesImmediate || !containsRegister(RegisterSet::macroClobberedGPRs(), *signature.immediate))
@@ -335,7 +317,6 @@ inline std::optional<GPRReg> StubRunner::registerThatHoldsAddressOfStub(const St
 inline void StubRunner::emitStubCall(CCallHelpers& jit, const StubSignature& signature, bool passesImmediate)
 {
     std::optional<GPRReg> addressOfStub = registerThatHoldsAddressOfStub(signature, passesImmediate);
-    // No register holds the word afterwards: one that a stub saves would look like a word that nobody wrote.
     jit.move(CCallHelpers::TrustedImm64(wordThatNobodyWrote), GPRInfo::regT0);
     for (unsigned i = 1; i <= numberOfWordsMarkedBelowCaller; ++i)
         jit.store64(GPRInfo::regT0, CCallHelpers::Address(CCallHelpers::stackPointerRegister, -static_cast<int32_t>(i * sizeof(CPURegister))));
@@ -372,14 +353,12 @@ inline void StubRunner::emitStubCall(CCallHelpers& jit, const StubSignature& sig
     } else
         jit.call(environmentSlot(OBJECT_OFFSETOF(StubEnvironment, stub)), JITThunkPtrTag);
 
-    // No store changes the flags.
     for (size_t i = 0; i < allocatableGPRs.size(); ++i)
         jit.store64(allocatableGPRs[i], environmentSlot(OBJECT_OFFSETOF(StubEnvironment, registersAfterCall), i));
     if (signature.result == StubResult::GPR)
         jit.store64(signature.firstResult.gpr(), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, result)));
     if (signature.result == StubResult::FPR)
         jit.storeDouble(signature.firstResult.fpr(), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, result)));
-    // The result starts as zero.
     if (signature.result == StubResult::Flags) {
         CCallHelpers::Jump isFalse = jit.branchOnFlags(signature.trueCondition == MacroAssembler::Zero ? CCallHelpers::NotEqual : CCallHelpers::Equal);
         jit.store64(CCallHelpers::TrustedImm32(1), environmentSlot(OBJECT_OFFSETOF(StubEnvironment, result)));
@@ -458,7 +437,6 @@ inline void StubRunner::emitLandingInEngineCallee(CCallHelpers& jit)
     jit.ret();
 }
 
-// The frame of the caller lies between the stack pointer and the frame pointer that the operation is entered with.
 inline void StubRunner::emitLandingThatCountsWordsNobodyWrote(CCallHelpers& jit, bool leavesStub)
 {
     constexpr GPRReg cursor = GPRInfo::argumentGPR1;
@@ -613,7 +591,6 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
 #endif
         std::bit_cast<void (SYSV_ABI *)(Instance*)>(callerAddress)(&environment.instance);
 
-    // A summary holds what the generator of a stub has announced, and the allocator keeps values in every register that it leaves out. So what a run has written is held against it.
     auto checkIsAnnounced = [&](Reg reg) {
         if (containsRegister(summary.clobbered, reg) || m_landingMayLeaveStub)
             return;

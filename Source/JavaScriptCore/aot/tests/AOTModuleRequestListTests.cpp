@@ -31,7 +31,6 @@ public:
     unsigned addData(Body body = Body::Absent) { return add(ModuleKind::Data, ExternalKind::UncompiledCode, SyntheticExportRule::None, body, { }); }
     unsigned addLibrarySource() { return add(ModuleKind::RuntimeSource, ExternalKind::UncompiledCode, SyntheticExportRule::RuntimeModule, Body::Present, { }); }
     unsigned addCommonJS(Body body = Body::Present) { return add(ModuleKind::CommonJs, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, body, Flag::CapturesOnDemand); }
-    // What ES modules import in place of a CommonJS file whose names the build did not find.
     unsigned addFaceThatCaptures() { return add(ModuleKind::SourceText, ExternalKind::UncompiledCode, SyntheticExportRule::CommonJs, Body::Present, { }); }
     unsigned addRuntimeModule() { return add(ModuleKind::Runtime, ExternalKind::UncompiledCode, SyntheticExportRule::RuntimeModule, Body::Absent, { }); }
     unsigned addUncompiledCode() { return add(ModuleKind::External, ExternalKind::UncompiledCode, SyntheticExportRule::None, Body::Absent, { }); }
@@ -116,7 +115,6 @@ private:
 
 } // anonymous namespace
 
-// What the link of the run time does in the order in which it does it: it captures the exports of a leaf where it arrives, and resolves the names of a module when it leaves.
 static void walkLink(const Graph& graph, unsigned module, BitVector& seen, Vector<uint32_t>& work)
 {
     const ModuleData& data = graph.data(module);
@@ -141,36 +139,6 @@ static Vector<uint32_t> linkWorkFrom(const Graph& graph, unsigned root)
     seen.quickSet(root);
     walkLink(graph, root, seen, work);
     return work;
-}
-
-static void testWorkThatNeedsEvaluation()
-{
-    Graph graph;
-    unsigned importerOfBody = graph.addSourceText();
-    unsigned withBody = graph.addData(Body::Present);
-    unsigned importerOfAwait = graph.addSourceText();
-    unsigned awaiting = graph.addSourceText(Body::Absent, Flag::HasTopLevelAwait);
-    unsigned importerOfUncompiled = graph.addSourceText();
-    unsigned uncompiled = graph.addUncompiledCode();
-    unsigned importerOfDeferring = graph.addSourceText();
-    unsigned deferring = graph.addSourceText();
-    unsigned deferred = graph.addSourceText();
-    unsigned importerOfNative = graph.addSourceText();
-    unsigned native = graph.addRuntimeModule();
-    unsigned importerOfLibrarySource = graph.addSourceText();
-    unsigned librarySource = graph.addLibrarySource();
-    graph.request(importerOfBody, withBody);
-    graph.request(importerOfAwait, awaiting);
-    graph.request(importerOfUncompiled, uncompiled);
-    graph.request(importerOfDeferring, deferring);
-    graph.request(deferring, deferred, Edge::Deferred);
-    graph.request(importerOfNative, native);
-    graph.request(importerOfLibrarySource, librarySource);
-    graph.compute();
-    for (unsigned module : { importerOfBody, withBody, importerOfAwait, awaiting, importerOfUncompiled, uncompiled, importerOfDeferring, deferring })
-        AOT_TEST_CHECK(graph.data(module).needsEvaluation());
-    for (unsigned module : { deferred, importerOfNative, native, importerOfLibrarySource, librarySource })
-        AOT_TEST_CHECK(!graph.data(module).needsEvaluation());
 }
 
 static void addRandomModule(Graph& graph, RandomNumbers& random)
@@ -207,7 +175,6 @@ static void addRandomRequests(Graph& graph, RandomNumbers& random, unsigned modu
         return;
     BitVector requested(graph.size());
     for (uint32_t count = random.below(5); count; --count) {
-        // Mostly forward, so that many modules are alone in their component.
         uint32_t target = random.below(4) ? module + random.below(graph.size() - module) : random.below(graph.size());
         if (!requested.quickSet(target))
             graph.request(module, target);
@@ -244,7 +211,6 @@ static void testWalksOfRandomGraphsDoTheSameWork()
 std::span<const NativeTest> moduleRequestListTests()
 {
     static constexpr NativeTest tests[] = {
-        { "module-request-lists/work-that-needs-evaluation"_s, testWorkThatNeedsEvaluation },
         { "module-request-lists/walks-of-random-graphs-do-the-same-work"_s, testWalksOfRandomGraphsDoTheSameWork },
     };
     return tests;

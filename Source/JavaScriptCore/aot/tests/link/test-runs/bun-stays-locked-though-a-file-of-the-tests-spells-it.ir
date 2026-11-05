@@ -2,6 +2,7 @@
 # it stays locked, and the spy is refused. `Math`, listed beside it, is open by that word
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: locks open
+# REQUIRES: entries-of-bun
 # CHECK-NOT: open Bun left-open-for-tests
 # CHECK: open Math left-open-for-tests
 

@@ -29,7 +29,6 @@ inline constexpr uint16_t BigInt = static_cast<uint16_t>(PrimitiveSet::BigInt);
 inline constexpr uint16_t Absent = static_cast<uint16_t>(PrimitiveSet::Absent);
 inline constexpr uint16_t LiteralString = static_cast<uint16_t>(PrimitiveSet::LiteralString);
 inline constexpr uint16_t LiteralSymbol = static_cast<uint16_t>(PrimitiveSet::LiteralSymbol);
-// The word may be anything. It takes the representation of the rest of the type. No operation may look at it: AOTOperandKinds.h.
 inline constexpr uint16_t Unspecified = static_cast<uint16_t>(PrimitiveSet::Unspecified);
 
 inline constexpr uint16_t Boolean = False | True;
@@ -47,7 +46,6 @@ inline constexpr uint16_t Defined = All | Absent | LiteralString | LiteralSymbol
 inline constexpr uint16_t cellPrimitives = Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt;
 
 inline constexpr int64_t maxExactInteger = 1ll << 53;
-// No double this far from zero has a fraction.
 inline constexpr int64_t magnitudeWithoutFractions = 1ll << 52;
 inline constexpr int64_t maxTypedArrayLength = 1ll << 32;
 inline constexpr int64_t maxTrackedInteger = Wire::MaxTrackedInteger;

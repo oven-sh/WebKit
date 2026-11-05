@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations with UnboxedNumbers, in front of buildTypedOperator(): operators, relations and tests on proven numbers that have a better form than the one their own operands allow.
-// Each rule reads the body as written behind an operand, and the proven types. It puts in no guess: where it builds arms, both are right. With Folding: an older value or a constant stands for the operation.
-// At a suspension and at a throw: nothing of its own, whatever it builds is pure. Withheld: buildTypedOperator() answers as before.
-
 #include "config.h"
 #include "AOTWalkNumberForms.h"
 
@@ -23,22 +19,16 @@
 #include <cstdlib>
 #include <limits>
 
-#if __has_include("AOTWalkNumberSlots.h")
-#include "AOTWalkNumberSlots.h"
-#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
-// AOTWalkNumbers.cpp
 bool isTakenAsItIsByFormNumbers(const Type&);
 
 static constexpr OpcodeSet arithmeticInNumberOperators { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow, Opcode::Negate, Opcode::Increment, Opcode::Decrement };
 static constexpr OpcodeSet opcodesOfNumberOperators = arithmeticInNumberOperators | allBitwiseOperators | allEqualities | allRelations
     | OpcodeSet { Opcode::DirectEval, Opcode::LogicalNot, Opcode::ToBoolean };
 
-// The run time evaluates a string, asks the host about an object, and hands anything else back.
 static constexpr uint16_t primitivesThatDirectEvalHandsBack = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnySymbol | Primitive::BigInt;
 
 namespace {
@@ -52,7 +42,6 @@ struct OperandInNumberOperators {
 
 using OperandsInNumberOperators = std::array<OperandInNumberOperators, 2>;
 
-// What stands for a number beside an integer: the answer where every integer compares alike, else the integer that compares as the number does.
 struct IntegerInPlaceOfNumber {
     std::optional<bool> answer;
     int64_t bound { 0 };
@@ -60,7 +49,6 @@ struct IntegerInPlaceOfNumber {
 
 } // anonymous namespace
 
-// False: something was not built, or no run comes here.
 static bool readOperandsInNumberOperators(Walker& walker, const BodyValue& value, OperandsInNumberOperators& operands)
 {
     for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(value.opcode()); ++operandIndex) {
@@ -95,7 +83,6 @@ static bool bindInNumberOperators(Walker& walker, const BodyValue& value, Refere
     return true;
 }
 
-// The operation as written on other operands, in the form that those allow.
 static bool buildOnOperandsInNumberOperators(Walker& walker, const BodyValue& value, std::span<const Reference> operands)
 {
     Draft draft = walker.draftOf(value);
@@ -110,8 +97,6 @@ static Origin originInFrontOfNumberOperator(Walker& walker, const BodyValue& val
     origin.isTailCall = false;
     return origin;
 }
-
-// ---- eval of what is no text
 
 static bool bindWhatDirectEvalHandsBack(Walker& walker, const BodyValue& evaluation)
 {
@@ -128,16 +113,12 @@ static bool bindWhatDirectEvalHandsBack(Walker& walker, const BodyValue& evaluat
     return true;
 }
 
-// ---- `!!ok`
-
-// The negation of a relation is not the opposite relation: beside NaN both are false. Two negations of a boolean are the boolean.
 static bool bindWhatIsNegatedTwice(Walker& walker, const BodyValue& negation)
 {
     if (!walker.has(Mechanism::Folding))
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID inner = index.valueBehindCasts(negation.valueOperand());
-    // `!x` is written LogicalNot(ToBoolean(x)), and the truth of a negation is the negation.
     if (inner && !index.isParameter(inner) && index.opcodeOf(inner) == Opcode::ToBoolean)
         inner = index.valueBehindCasts(index.value(inner).valueOperand());
     if (!inner || index.isParameter(inner) || index.opcodeOf(inner) != Opcode::LogicalNot)
@@ -150,9 +131,6 @@ static bool bindWhatIsNegatedTwice(Walker& walker, const BodyValue& negation)
     return true;
 }
 
-// ---- Identities
-
-// `x & 0`, `x % 1` of what is never negative: the ranges of the operands leave one integer. Undefined, null, booleans and numbers convert without running code, and none of them throws beside another.
 static Reference constantWhereRangesLeaveOneInteger(Walker& walker, Opcode opcode, const OperandsInNumberOperators& operands)
 {
     if (numberOfNamedOperandsOf(opcode) != 2 || (!operands[0].known && !operands[1].known))
@@ -164,7 +142,6 @@ static Reference constantWhereRangesLeaveOneInteger(Walker& walker, Opcode opcod
     return result.isInteger() && result.integers.isSingleValue() ? integerInNumberForms(walker, result.integers.minimum) : Reference();
 }
 
-// `(s + 8) - s`. s is one value, so an int32 here was an int32 at the Add: the Add was numeric, and with |c| < 2^31 it was exact.
 static std::optional<int64_t> constantAddedToSubtrahend(Walker& walker, const OperandsInNumberOperators& operands)
 {
     if (!operands[1].type.isInt32())
@@ -182,7 +159,6 @@ static std::optional<int64_t> constantAddedToSubtrahend(Walker& walker, const Op
     return addend;
 }
 
-// An older value or a constant that is what the operator gives, -0 and NaN among its operands too. Null: there is none.
 static Reference valueThatArithmeticGives(Walker& walker, Opcode opcode, const OperandsInNumberOperators& operands)
 {
     const OperandInNumberOperators& left = operands[0];
@@ -191,7 +167,6 @@ static Reference valueThatArithmeticGives(Walker& walker, Opcode opcode, const O
     case Opcode::Add:
         for (uint32_t side = 0; side < 2; ++side) {
             const OperandInNumberOperators& other = operands[1 - side];
-            // -0 + 0 is 0, and -0 + -0 is -0.
             if (isKnownIntegerInNumberOperators(operands[side].known, 0) && other.type.isInteger())
                 return other.reference;
             if (isNegativeZeroInNumberOperators(operands[side].known) && other.type.isNumber())
@@ -199,7 +174,6 @@ static Reference valueThatArithmeticGives(Walker& walker, Opcode opcode, const O
         }
         return { };
     case Opcode::Sub:
-        // -0 - 0 is -0, and -0 - -0 is 0.
         if (isKnownIntegerInNumberOperators(right.known, 0) && left.type.isNumber())
             return left.reference;
         if (isNegativeZeroInNumberOperators(right.known) && left.type.isInteger())
@@ -218,7 +192,6 @@ static Reference valueThatArithmeticGives(Walker& walker, Opcode opcode, const O
     case Opcode::Pow:
         if (!left.type.isNumber())
             return { };
-        // NaN ** 0 is 1.
         if (isKnownIntegerInNumberOperators(right.known, 0) || isNegativeZeroInNumberOperators(right.known))
             return integerInNumberForms(walker, 1);
         return isKnownIntegerInNumberOperators(right.known, 1) ? left.reference : Reference();
@@ -227,8 +200,6 @@ static Reference valueThatArithmeticGives(Walker& walker, Opcode opcode, const O
     }
 }
 
-// ---- Bit operators
-
 static ValueID recordBehindNamesInNumberOperators(const Code& code, ValueID record)
 {
     while (opcodesThatGiveSameValue.contains(code.at(record).opcode))
@@ -236,7 +207,6 @@ static ValueID recordBehindNamesInNumberOperators(const Code& code, ValueID reco
     return record;
 }
 
-// `number` is what Math.trunc() gave a proven number: that number, as the body writes it. Math.floor is not looked through: it differs from truncation for negative x.
 static ValueID numberThatWasTruncatedInNumberOperators(Walker& walker, ValueID number)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -254,16 +224,12 @@ static ValueID numberThatWasTruncatedInNumberOperators(Walker& walker, ValueID n
         return { };
     ValueID truncated = *arguments.begin();
     Reference taken = walker.referenceOf(truncated);
-    // `Math.trunc.call(7, x)` writes 7 first and truncates x.
     if (!taken || !taken.isValue() || recordBehindNamesInNumberOperators(walker.code(), taken.id()) != recordBehindNamesInNumberOperators(walker.code(), record.variadicOperands()[0]))
         return { };
     TypeID type = walker.typeOf(taken);
     return type && walker.types().at(type).isNumber() ? truncated : ValueID();
 }
 
-// `(a / b) | 0`, `(i % n) | 0`, `Math.trunc(x) | 0`. ToInt32 truncates by itself, and gives 0 for NaN, -0 and the infinities whether or not they were truncated first.
-// Sums and products are not looked through: beyond 2^53 the number is rounded, so its low bits are not the ones that an integer register would hold.
-// Each of the seven operators looks only at the low 32 bits of the integer part of an operand that is a number, so any other number with the same bits may stand for it, whatever the other operand is.
 static Reference buildSimplerOperandOfBitOperator(Walker& walker, Origin origin, ValueID written)
 {
     InputsOfTypedOperation inputs(walker, nullptr);
@@ -281,7 +247,6 @@ static Reference buildSimplerOperandOfBitOperator(Walker& walker, Origin origin,
     return number == written ? Reference() : walker.referenceOf(number);
 }
 
-// With these bits in the operand at that index, the operator gives ToInt32 of its other operand, and URShift gives ToUint32.
 static bool isIdentityElementOfBitOperator(Opcode opcode, uint32_t operandIndex, int32_t bits)
 {
     switch (opcode) {
@@ -309,14 +274,12 @@ static Reference buildConversionInNumberOperators(Walker& walker, Opcode convers
     return walker.build(WTF::move(draft));
 }
 
-// `x | 0`, `x >>> 0`, `~~x` of a proven number. An integer type holds no -0, so an integer that the conversion leaves as it is stands for it.
 static Reference buildBitsOfNumberInNumberOperators(Walker& walker, Opcode conversion, Reference number, Origin origin)
 {
     Type type = walker.types().at(walker.typeOf(number));
     Range leftAsTheyAre = conversion == Opcode::ToUint32 ? Range::uint32() : Range::int32();
     if (type.isInteger() && type.integers.isSubsetOf(leftAsTheyAre) && walker.has(Mechanism::Folding))
         return number;
-    // The bits are those of ToInt32, which the other operators ask for.
     if (conversion == Opcode::ToUint32 && !type.isInteger()) {
         number = buildConversionInNumberOperators(walker, Opcode::ToInt32, number, false, origin);
         if (!number)
@@ -325,8 +288,6 @@ static Reference buildBitsOfNumberInNumberOperators(Walker& walker, Opcode conve
     return buildConversionInNumberOperators(walker, conversion, number, false, origin);
 }
 
-// `(x | 0) + (x >> 3)` in a loop. The code of a conversion branches to a call for what lies beyond int64. As an operation of its own it leaves the loop where the number stands in front, and is found again there.
-// An integer stays as it is: the operator takes the low half of its register. False: nothing was converted.
 static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Origin origin, std::span<Reference> operands)
 {
     if (!walker.isInLoop())
@@ -350,7 +311,6 @@ static bool convertOperandsOfBitOperatorOnce(Walker& walker, Opcode opcode, Orig
             operands[operandIndex] = { };
             continue;
         }
-        // The tag of a boxed number is looked at in any case, and an int32 behind it has every bit.
         bool isMasked = opcode == Opcode::BitAnd && isMaskOfLowestBitsOfInt32(types.at(walker.typeOf(operands[1 - operandIndex]))) && walker.representationOf(number) != Representation::JSValue;
         operands[operandIndex] = buildConversionInNumberOperators(walker, Opcode::ToInt32, number, isMasked, origin);
     }
@@ -393,7 +353,6 @@ static bool buildBitOperator(Walker& walker, const BodyValue& value, OperandsInN
             return bindInNumberOperators(walker, value, buildBitsOfNumberInNumberOperators(walker, opcode == Opcode::URShift ? Opcode::ToUint32 : Opcode::ToInt32, other.reference, origin));
     }
 
-    // `~~x`
     if (opcode == Opcode::BitNot && !takesOtherOperands) {
         const BodyIndex& index = walker.currentBodyIndex();
         ValueID inner = index.valueBehindCasts(operands[0].written);
@@ -413,11 +372,8 @@ static bool buildBitOperator(Walker& walker, const BodyValue& value, OperandsInN
     return buildOnOperandsInNumberOperators(walker, value, takenByOperator);
 }
 
-// ---- Division behind a test of the remainder
-
 static constexpr OpcodeSet opcodesBetweenRemainderAndBranchInNumberOperators { Opcode::StrictEq, Opcode::Eq, Opcode::ToBoolean, Opcode::LogicalNot };
 
-// The Mod that the Branch has found to be zero, or NaN, on that edge. Null: it asks nothing of the kind.
 static ValueID remainderFoundZeroOnEdgeInNumberOperators(const BodyIndex& index, const BodyTerminator& branch, uint32_t targetIndex)
 {
     if (!branch.isConditionalBranch())
@@ -446,8 +402,6 @@ static ValueID remainderFoundZeroOnEdgeInNumberOperators(const BodyIndex& index,
     return tested && !index.isParameter(tested) && index.opcodeOf(tested) == Opcode::Mod ? tested : ValueID();
 }
 
-// `if (a % b === 0) q = a / b`. By the body, in a number of steps that does not grow with it: the one edge into the block of the Div has found the remainder of the same two values zero.
-// Or the first mention of the dividend is that Mod, nothing but negations stands between its test and a Branch, and the edge on which it is zero alone enters a block that dominates the Div.
 static bool standsBehindTestThatRemainderIsZero(Walker& walker, const BodyValue& quotient)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -489,7 +443,6 @@ static bool standsBehindTestThatRemainderIsZero(Walker& walker, const BodyValue&
     return false;
 }
 
-// Two integers that leave no remainder have an integer for their quotient, no further from zero than the dividend. A divisor above zero makes no -0 of a dividend that is zero.
 static bool buildDivisionWithoutRemainder(Walker& walker, const BodyValue& quotient, const OperandsInNumberOperators& operands)
 {
     if (!operands[0].type.isInt32() || !operands[1].type.isInt32() || operands[1].type.integers.minimum <= 0)
@@ -499,9 +452,6 @@ static bool buildDivisionWithoutRemainder(Walker& walker, const BodyValue& quoti
     return bindInNumberOperators(walker, quotient, buildDivisionOfIntegers(walker, walker.originOf(quotient), operands[0].reference, operands[1].reference, QuotientRounding::ToInt32));
 }
 
-// ---- Whole remainders that are compared
-
-// `x % 2 === 0`, `a % n === b % n`, `i % n < 2`. -0 equals and compares as 0 does, so a remainder of integers is compared as the integer that it is. NaN equals nothing, and makes every relation false.
 static bool buildComparisonOfWholeRemainders(Walker& walker, const BodyValue& comparison, const OperandsInNumberOperators& operands)
 {
     InputsOfTypedOperation inputs(walker, nullptr);
@@ -530,7 +480,6 @@ static bool buildComparisonOfWholeRemainders(Walker& walker, const BodyValue& co
             }
         }
         compared[index] = buildWholeRemainder(walker, origin, *remainders[index]);
-        // In place of NaN stands 0, which differs from whatever is never zero as NaN does.
         bool differsFromZeroAnyway = isEquality && other.type.isInteger() && !other.type.integers.contains(0);
         if (remainders[index]->mayBeNaN && !differsFromZeroAnyway)
             divisorsThatMayBeZero.append(remainders[index]->divisor);
@@ -542,10 +491,6 @@ static bool buildComparisonOfWholeRemainders(Walker& walker, const BodyValue& co
     return bindInNumberOperators(walker, comparison, buildComparisonWhereDivisorsAreNotZero(walker, WTF::move(draft), divisorsThatMayBeZero.span()));
 }
 
-// ---- Loose equality with a text that is no number
-
-// `anything == "abc"`. No number, boolean or BigInt equals a text that converts to NaN, so among primitives only that text does: one call that converts nothing for primitives.
-// Where something is expected of the value a guess gives more: it is asked behind this link, so the operation is left to it, and comes here in its closed arm.
 static bool buildLooseEqualityWithTextThatIsNoNumber(Walker& walker, const BodyValue& equality, const OperandsInNumberOperators& operands)
 {
     if (equality.opcode() != Opcode::Eq || operandsNarrowedBehindTestInNumberForms(walker, equality.id()) != std::optional<uint32_t>(0))
@@ -575,8 +520,6 @@ static bool buildLooseEqualityWithTextThatIsNoNumber(Walker& walker, const BodyV
     return false;
 }
 
-// ---- An integer against a fraction
-
 static bool relationAsksForLesserOnLeft(Opcode relation)
 {
     return relation == Opcode::Less || relation == Opcode::LessEq;
@@ -598,7 +541,6 @@ static Opcode relationWithSidesSwapped(Opcode relation)
     }
 }
 
-// `relationOfInteger` is read with the integer on the left. i < 2.5 is i < 3 and i >= 2.5 is i >= 3. i <= 2.5 is i <= 2 and i > 2.5 is i > 2.
 static IntegerInPlaceOfNumber integerInPlaceOfNumber(Opcode relationOfInteger, double number)
 {
     if (std::isnan(number))
@@ -613,7 +555,6 @@ static IntegerInPlaceOfNumber integerInPlaceOfNumber(Opcode relationOfInteger, d
     return { std::nullopt, static_cast<int64_t>(rounded) };
 }
 
-// The comparison answers as before, so what an edge behind it proves of the integer holds, and now its range is cut as well. It keeps its opcode and the order of its operands.
 static bool buildRelationWithIntegerInPlaceOfNumber(Walker& walker, const BodyValue& relation, const OperandsInNumberOperators& operands)
 {
     for (uint32_t numberIndex = 0; numberIndex < 2; ++numberIndex) {
@@ -631,7 +572,6 @@ static bool buildRelationWithIntegerInPlaceOfNumber(Walker& walker, const BodyVa
     return false;
 }
 
-// The record is older than the parameters of the head of the innermost loop of the body around `user`, or lies in a block that is.
 static bool standsInFrontOfLoopAroundInNumberOperators(Walker& walker, const BodyValue& user, Reference reference)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -654,8 +594,6 @@ static bool standsInFrontOfLoopAroundInNumberOperators(Walker& walker, const Bod
     return block && block.index() < parameter.block().index();
 }
 
-// `for (..; i < n / 2; ..)` in a loop that leaves n alone. The number is rounded once, in front of the loop, and each turn compares integers.
-// A bound that has to stand in the loop costs more than the conversion of the integer that it saves, so nobody uses it.
 static bool buildRelationWithNumberRoundedInFrontOfLoop(Walker& walker, const BodyValue& relation, const OperandsInNumberOperators& operands)
 {
     if (!walker.isInLoop() || !walker.has(Mechanism::LoopInvariants))
@@ -664,7 +602,6 @@ static bool buildRelationWithNumberRoundedInFrontOfLoop(Walker& walker, const Bo
         const OperandInNumberOperators& number = operands[numberIndex];
         if (!operands[1 - numberIndex].type.isInteger() || !number.type.isNumber() || number.type.isInteger())
             continue;
-        // The integer is held as a double, so the two are compared as doubles. A number that is held boxed is unboxed once, in front of the loop: the relation would look at its tag in every turn.
         if (operands[1 - numberIndex].reference.isValue() && walker.representationOf(operands[1 - numberIndex].reference) == Representation::Double) {
             Representation held = walker.representationOf(number.reference);
             if (held == Representation::Double || !standsInFrontOfLoopAroundInNumberOperators(walker, relation, number.reference))
@@ -704,10 +641,6 @@ static bool buildRelationWithNumberRoundedInFrontOfLoop(Walker& walker, const Bo
     return false;
 }
 
-// ---- Number-likes in front of a relation
-
-// `n < done`, `count <= undefined`. ToNumber of a boolean, undefined or null runs no code, and the relation on what it gives has the form Numbers or Integers.
-// What an edge behind a test narrows is an operand of the test, so an operand that an edge hands on stays as it is.
 static bool buildRelationOnNumberLikes(Walker& walker, const BodyValue& relation, const InputsOfTypedOperation& inputs)
 {
     std::array<bool, 2> isConverted { };
@@ -738,9 +671,6 @@ static bool buildRelationOnNumberLikes(Walker& walker, const BodyValue& relation
     return buildOnOperandsInNumberOperators(walker, relation, compared);
 }
 
-// ---- Sums
-
-// -0 + i and i - -0 are i for every integer i, which is never -0. A char code behind a test that NaN fails is its code unit.
 static bool buildSumOnIntegersInPlaceOfNumbers(Walker& walker, const BodyValue& sum, const OperandsInNumberOperators& operands)
 {
     Opcode opcode = sum.opcode();
@@ -766,8 +696,6 @@ static bool buildSumOnIntegersInPlaceOfNumbers(Walker& walker, const BodyValue& 
     return takesOtherOperands && buildOnOperandsInNumberOperators(walker, sum, std::span<const Reference>(taken).first(numberOfOperands));
 }
 
-// `sum += a[i++]` in a loop. Where the number is read once more behind its step, the old and the new number need a register each, and the loop moves the new one back into place.
-// Behind the last read the old number dies at the step, which then adds in place. The step is pure, and the one operation that it waits for does not name it.
 static bool buildStepBehindLastReadOfItsNumber(Walker& walker, const BodyValue& step, const OperandsInNumberOperators& operands)
 {
     if (!walker.isInLoop())
@@ -787,7 +715,6 @@ static bool buildStepBehindLastReadOfItsNumber(Walker& walker, const BodyValue& 
     Representation form = walker.representationOf(stepped.reference);
     if (!stepped.reference.isValue() || !integerRepresentations.contains(form))
         return false;
-    // A sum that keeps the form of the number has not left it.
     Draft asWritten = walker.draftOf(step);
     walker.chooseConservativeFields(asWritten);
     if (formAllowedForTypedOperator(walker, asWritten) != OperatorForm::Integers)
@@ -801,7 +728,6 @@ static bool buildStepBehindLastReadOfItsNumber(Walker& walker, const BodyValue& 
     uint32_t placeOfReader = step.id().index() + 1 - block.firstValue().index();
     if (index.hasOneUse(stepped.written) || placeOfReader >= walker.endOfStretchBeingWalked() || placeOfReader >= block.numberOfValues())
         return false;
-    // Where the read throws, a handler may read the new number.
     if (block.hasHandler())
         return false;
     BodyValue reader = index.value(ValueID(step.id().index() + 1));
@@ -813,12 +739,10 @@ static bool buildStepBehindLastReadOfItsNumber(Walker& walker, const BodyValue& 
     });
     if (namesStep)
         return false;
-    // What is found of a body is kept with its index, so whoever asks later reads that.
     BodyLiveness liveness;
     liveness.compute(index);
     if (liveness.lastUse(stepped.written) != reader.id())
         return false;
-    // Walked by itself, the read opens no guess that reaches behind it. So it is one that needs none.
     auto typeOfInput = [&](ValueID input) {
         return walker.typeOf(walker.referenceOf(input));
     };
@@ -832,8 +756,6 @@ static bool buildStepBehindLastReadOfItsNumber(Walker& walker, const BodyValue& 
         return true;
     return bindInNumberOperators(walker, step, buildInAllowedFormInNumberForms(walker, walker.draftOf(step)));
 }
-
-// ---- The link
 
 static_assert(opcodesThatBuildNumberFormTakes == (opcodesOfNumberOperators));
 
@@ -850,7 +772,6 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value, const I
     if (opcode == Opcode::LogicalNot)
         return bindWhatIsNegatedTwice(walker, value);
 
-    // Each form of a comparison and of a truth leans on a number, a text or a constant in sight.
     if (allEqualities.contains(opcode) || allRelations.contains(opcode) || opcode == Opcode::ToBoolean) {
         bool somethingIsProven = false;
         for (uint32_t operandIndex = 0; operandIndex < numberOfNamedOperandsOf(opcode); ++operandIndex)
@@ -869,7 +790,6 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value, const I
         if (Reference constant = constantWhereRangesLeaveOneInteger(walker, opcode, operands))
             return bindInNumberOperators(walker, value, constant);
     }
-    // x ** 2 is x * x.
     if (opcode == Opcode::Pow && operands[0].type.isNumber() && isKnownIntegerInNumberOperators(operands[1].known, 2))
         return bindInNumberOperators(walker, value, buildOperatorInNumberForms(walker, Opcode::Mul, operands[0].reference, operands[0].reference, walker.originOf(value)));
 
@@ -885,10 +805,6 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value, const I
             return true;
         if (buildComparisonByCodeUnit(walker, value, inputs))
             return true;
-#if __has_include("AOTWalkNumberSlots.h")
-        if (buildComparisonWithWrittenText(walker, value, inputs))
-            return true;
-#endif
         return buildLooseEqualityWithTextThatIsNoNumber(walker, value, operands);
     }
 
@@ -904,7 +820,6 @@ bool buildNumberFormOfItsOpcodes(Walker& walker, const BodyValue& value, const I
         return buildRelationOnNumberLikes(walker, value, inputs);
     }
 
-    // `if (i % 2)`. 0, -0 and NaN are falsy alike.
     if (opcode == Opcode::ToBoolean) {
         std::optional<WholeRemainder> remainder = findWholeRemainder(walker, operands[0].written, inputs);
         if (!remainder)

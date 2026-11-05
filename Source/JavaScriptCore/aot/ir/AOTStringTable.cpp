@@ -174,7 +174,6 @@ void StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& 
             codeUnits[word] |= codeUnitsOfTask[word];
     });
 
-    // Each goes through the hashes of all strings, twice: that is over sooner than one thread has dealt the strings out.
     forEachIndexInParallel(loops, numberOfShards, [&](unsigned shardIndex) {
         size_t numberInShard = std::ranges::count(hashes, shardIndex, shardIndexOf);
         Shard shard;
@@ -207,7 +206,6 @@ void StringTable::addCodeUnitsOf(std::span<const uint8_t> bytes, CodeUnitSet& co
         codeUnits[unit / 64] |= 1ull << (unit % 64);
     };
     if (charactersAreAllASCII(byteCast<Latin1Character>(bytes))) {
-        // A text may be megabytes long, and one thread goes through it. A word of the set that is read and written for each byte makes every byte wait for the one in front of it.
         uint64_t unitsBelow64 = 0;
         uint64_t unitsFrom64 = 0;
         for (uint8_t byte : bytes) {
@@ -230,7 +228,6 @@ StringID StringTable::internCodeUnit(char16_t unit)
     return intern(encodeProgramString(text).span());
 }
 
-// Ascending, so the ids do not follow the threads that found the code units.
 void StringTable::internCodeUnitsIn(const CodeUnitSet& codeUnits)
 {
     for (size_t word = 0; word < codeUnits.size(); ++word) {
@@ -245,7 +242,6 @@ void StringTable::internCodeUnitsOf(std::span<const uint8_t> bytes, size_t numbe
         if (!(m_internedCodeUnits[unit / 64] >> (unit % 64) & 1))
             internCodeUnit(unit);
     };
-    // A text ends where a character ends, so what lies behind the front of a text is characters too.
     std::span<const uint8_t> rest = bytes.subspan(numberOfBytesLookedAt);
     if (charactersAreAllASCII(byteCast<Latin1Character>(rest))) {
         if (bytes.size() < 2)
@@ -356,7 +352,6 @@ StringID StringTable::internKept(std::span<const uint8_t> bytes, FrontsOfKeptTex
     FrontOfKeptTexts& front = fronts.add(bytes.data(), FrontOfKeptTexts { }).iterator->value;
     uint64_t hash = hashGoingOnFrom(front, bytes);
     StringID id = find(m_shards[shardIndexOf(hash)], hash, bytes);
-    // Every code unit of a string of the table is a string of the table.
     size_t numberOfBytesLookedAt = std::min(std::exchange(front.numberOfBytesLookedAt, std::max(front.numberOfBytesLookedAt, bytes.size())), bytes.size());
     if (id)
         return id;
@@ -378,8 +373,6 @@ uint64_t StringTable::hashOf(StringID id) const
 
 uint64_t StringTable::hashGoingOnFrom(FrontOfKeptTexts& front, std::span<const uint8_t> bytes)
 {
-    // Eight bytes at a step: each step waits for the one in front of it, a text may be megabytes long, and one thread hashes it.
-    // The length goes in last, so a text that ends in zero bytes differs from a shorter one, and the whole words of a text are hashed as those of every text that begins with it.
     constexpr uint64_t multiplier = 0x9e3779b97f4a7c15;
     auto add = [](uint64_t hash, uint64_t word) {
         hash = (hash ^ word) * multiplier;
@@ -493,7 +486,6 @@ void StringTable::appendBuiltinNames()
     }
     for (unsigned shardIndex = 0; shardIndex < numberOfShards; ++shardIndex)
         reserve(m_shards[shardIndex], static_cast<size_t>(m_shards[shardIndex].count) + countInShard[shardIndex]);
-    // The table outlives the strings, and its names are canonical.
     for (auto [name, hash] : names) {
         std::span<const uint8_t> text = m_builtins->textOf(name);
         ASSERT(isCanonicalProgramString(text));

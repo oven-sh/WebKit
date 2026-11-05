@@ -17,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A form follows proven types alone. What the lookup finds returns anything, so a family that may enter it returns a boxed value.
 FormsOfSelector formsOfSelector(const Program& program, const LinkTables& linked, const CallingConventions& conventions, const MethodFamily& family)
 {
     FormsOfSelector forms;
@@ -31,7 +30,6 @@ FormsOfSelector formsOfSelector(const Program& program, const LinkTables& linked
     std::optional<Representation> formOfFirst;
     for (FunctionID method : family.methods) {
         CodeUnit body { method, CodeRole::Body };
-        // An object without fields is handed back as no word at all, and is no undefined.
         if (program.at(method).isCoroutine() || conventions.numberOfResults(body) != 1)
             return forms;
         if (method.index() >= linked.functions.size() || !linked.function(method).result)

@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// BuiltinCalls: `new Intl.NumberFormat("en-US", { style: "percent" })`, `n.toLocaleString("en-US")`. Where locale and options are constants, ICU is asked in the realm of the build for a pattern, which the run time writes texts by.
-// At a suspension: nothing. At a throw: a request that ICU refuses has no pattern, and the call goes by its row. What a pattern does not cover takes the call as it is written, in a rare arm.
-// Withheld, or without a realm: the call goes by its row.
-
 #include "config.h"
 #include "AOTWalkStringFolds.h"
 
@@ -24,7 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// `new Intl.DateTimeFormat(..)`, `new Intl.NumberFormat(..)`, and the four methods that make a formatter, use it once and drop it. Locale and options are not filled in.
 static std::optional<FormatterRequest> findFormatterMadeByCallInStringFormatters(const BuiltinTable& table, const CallByOneRow& call)
 {
     using Required = IntlDateTimeFormat::RequiredComponent;
@@ -68,7 +63,6 @@ static bool addOptionInStringFormatters(Walker& walker, PropertyKeyID key, Primi
     FormatterOption option { textInRequestOfStringFormatters(walker, name.text), FormatterOptionKind::Number, { }, 0 };
     switch (value.kind()) {
     case PrimitiveKnownToFolding::Kind::Undefined:
-        // The formatter finds undefined under the name, as it does in the realm of the build where the name is not there.
         return true;
     case PrimitiveKnownToFolding::Kind::Boolean:
         option.kind = FormatterOptionKind::Boolean;
@@ -89,7 +83,6 @@ static bool addOptionInStringFormatters(Walker& walker, PropertyKeyID key, Primi
     return true;
 }
 
-// Nothing but this code has the literal: its own properties are what the state has seen stored, and each holds a plain value.
 static bool addOptionsOfFreshLiteralInStringFormatters(Walker& walker, Reference literal, FormatterRequest& request)
 {
     std::optional<Vector<PropertyOfFreshObject, 8>> properties = propertiesOfFreshObject(walker, literal);
@@ -118,7 +111,6 @@ static PrimitiveKnownToFolding primitiveWrittenInDataForStringFormatters(const D
     return { };
 }
 
-// `{ month: "short", day: "numeric" }` written as constant data, where the call is all that ever sees the object: each value from the data to the operand has one use.
 static bool addOptionsOfDataThatCallAloneSeesInStringFormatters(Walker& walker, const CallByOneRow& call, FormatterRequest& request)
 {
     if (call.call.opcode() != Opcode::Call && call.call.opcode() != Opcode::Construct)
@@ -157,11 +149,9 @@ static bool findOptionsInStringFormatters(Walker& walker, const CallByOneRow& ca
         if (!addOptionsOfDataThatCallAloneSeesInStringFormatters(walker, call, request))
             return false;
     }
-    // Reading a constant runs nothing, so a pattern does not go by the order in which the literal lists them.
     AOT::sort(request.options, [](const FormatterOption& first, const FormatterOption& second) {
         return codePointCompareLessThan(first.name, second.name);
     });
-    // `{ month: "long", month: "short" }`: the planner would see one of the two.
     for (size_t index = 1; index < request.options.size(); ++index) {
         if (request.options[index - 1].name == request.options[index].name)
             return false;
@@ -169,7 +159,6 @@ static bool findOptionsInStringFormatters(Walker& walker, const CallByOneRow& ca
     return true;
 }
 
-// The formatter reads its options off the object as written, so whatever stands above that object is asked as the constructor asks it.
 static void buildFormatterWithPatternInStringFormatters(Walker& walker, const CallByOneRow& call, TypeID typeOfFormatter, std::span<const uint32_t> pattern, Reference options)
 {
     Draft allocation(Opcode::NewFormatterWithPattern, call.origin);
@@ -193,7 +182,6 @@ static void buildFormatterWithPatternInStringFormatters(Walker& walker, const Ca
     walker.bind(call.call.id(), formatter);
 }
 
-// The function is still called for what the pattern does not cover: an invalid date, a year before 1, a number beyond 2^53, another ICU than that of the build, an Object.prototype that has a name of an option.
 static void buildTextWrittenByPatternInStringFormatters(Walker& walker, const CallByOneRow& call, Opcode opcode, std::span<const uint32_t> pattern)
 {
     static_assert(!OperandIndex::FormatDateWithPattern::date && !OperandIndex::FormatNumberWithPattern::number);
@@ -238,17 +226,14 @@ bool buildFormatterCallByPattern(Walker& walker, const CallByOneRow& call)
     std::optional<FormatterRequest> request = findFormatterMadeByCallInStringFormatters(table, call);
     if (!request)
         return false;
-    // The closed arm below walks the call once more, and finds it here again.
     if (!walker.opensGuesses() || table.at(call.overload).libraryFunction() || call.codeInLine)
         return false;
 
     Opcode opcode = !call.receiver ? Opcode::NewFormatterWithPattern : request->kind == FormatPatternKind::Number ? Opcode::FormatNumberWithPattern : Opcode::FormatDateWithPattern;
     if (call.receiver) {
-        // `new Number(5).toLocaleString("en-US")`: the function takes the number out of the object. A pattern is written from a number.
         Type type = walker.types().at(walker.typeOf(call.receiver));
         if (type.isNever() || !(request->kind == FormatPatternKind::Number ? type.isNumber() : type.isObject()))
             return false;
-        // Two arms pay wherever the code comes again.
         FunctionID function = walker.unit().function;
         if (call.call.opcode() != Opcode::Call || (!walker.isInLoop() && (walker.facts().runsAtMostOnce(function) || program.at(function).isModuleBody())))
             return false;

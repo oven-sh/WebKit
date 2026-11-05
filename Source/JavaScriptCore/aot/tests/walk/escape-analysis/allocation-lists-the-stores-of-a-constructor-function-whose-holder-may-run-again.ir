@@ -1,0 +1,100 @@
+# `function workshop(label) { function Leaf(kind, pos) { this.kind = kind; .. } function make(kind) { return new Leaf(kind, -1); } .. }`: whoever gets `workshop` may call it again, and each call makes a function object `Leaf` with a prototype object of its own.
+# The run time takes the first that makes an object for the class. So the allocation lists the stores as for a function that is evaluated once: the guards of the names are asked in front of it, where the new cell stands is looked at behind it,
+# and on either failing way the construction stays as written.
+# f1 = workshop, f2 = Leaf, f3 = make
+# -- source: allocation-lists-the-stores-of-a-constructor-function-whose-holder-may-run-again.ts
+# declare function sink(...values: unknown[]): void;
+# function workshop(label: string) {
+#   function Leaf(this: any, kind: number, pos: number) { this.kind = kind; this.pos = pos; this.id = 0; this.parent = undefined; }
+#   function make(kind: number) { return new (Leaf as any)(kind, -1); }
+#   return { make, label };
+# }
+# sink(workshop);
+# -- end of source
+# records of b87f963c4bc2f192
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = AreMembersUnchanged
+# CHECK: [[made]]: {{*}} = NewObject {{*}}fields=[0, 1, 2, 3]
+# CHECK: = HasLayoutPrototype [[made]]
+# CHECK: = Construct
+# RUN(NEVER): walk f3 mechanisms=all
+# NEVER-NOT: PropSet
+# NEVER-NOT: PutSlot
+
+module m0 path="allocation-lists-the-stores-of-a-constructor-function-whose-holder-may-run-again.ts" displayPath="allocation-lists-the-stores-of-a-constructor-function-whose-holder-may-run-again.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Leaf" module=m0 position=88 constructor=f2 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="pos" declared={type=anything} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired]}, {key="parent" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=4
+layout L1 module=m0 position=295 fields=[{key="label" declared={type=anything} flags=[IsRequired]}, {key="make" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @314
+    v3 = PropGet v2 key="sink" [isFreeName] @314
+    v4 = Call v3, -, v1 calleeName="sink" @314
+    v5 = Undefined @314
+    Return v5 @314
+}
+function f1 name="workshop" module=m0 position=51 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = NewClosure function=f2 @69
+    v2 = Convert v1 declared={type=f2 flags=[IsFromCompiler]} @69
+    v3 = Undefined @69
+    v4 = NewClosure v2 function=f3 @297
+    v5 = NewObject -, v4, v0 layout=L1 fields=[1, 0] @295
+    v6 = FinishObject v5 @295
+    Return v6 @295
+}
+function f2 name="Leaf" module=m0 position=88 flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number, v2: number):
+    PropSet v0, v1 key="kind" @142
+    PropSet v0, v2 key="pos" @160
+    v5 = Integer @186
+    PropSet v0, v5 key="id" @176
+    v7 = Undefined @203
+    PropSet v0, v7 key="parent" @189
+    v9 = Undefined @189
+    Return v9 @189
+}
+function f3 name="make" module=m0 position=218 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=f2 flags=[IsFromCompiler] variableName="Leaf"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: f2, v1: number):
+    v2 = Integer integer=-1 @279
+    v3 = Construct v0, -, v1, v2 calleeName="Leaf" @260
+    Return v3 @255
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f5 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f5
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

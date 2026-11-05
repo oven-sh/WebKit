@@ -69,7 +69,6 @@ private:
 
     SavedFrame* m_savedFrame { nullptr };
     State m_state { State::SuspendedAtStart };
-    // Set while the prototype stored in the Structure is not an object.
     bool m_hasOtherPrototype { false };
 };
 static_assert(sizeof(Generator) == 32);
@@ -86,7 +85,6 @@ void installGeneratorMethodsForCompiledGenerators(JSGlobalObject*);
 
 JS_EXPORT_PRIVATE bool isGeneratorObject(JSCell*);
 
-// Whether a search for a name may not go by the prototype that the Structure names.
 ALWAYS_INLINE bool hidesObjectsAbove(const Structure* structure)
 {
     return structure->typeInfo().overridesGetPrototype();

@@ -3,9 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// BuiltinCalls: `throw new TypeError("bad input")`. An error of the engine that is made for one throw alone, with a message that is written, is made and thrown by one operation.
-// At a suspension: nothing. At a throw: it is the throw, and stands only where no handler of the unit takes the object. Withheld: the construction goes by its row, and the Throw takes what it gives.
-
 #include "config.h"
 #include "AOTWalkStringFolds.h"
 
@@ -35,7 +32,6 @@ static constexpr ErrorClassWithKindInStringErrors errorClassesThatTakeMessageFir
     { BuiltinClasses::URIError, ErrorKind::URIError },
 };
 
-// Nothing: the built-in is no constructor that takes the message first.
 static std::optional<ErrorKind> errorKindMadeByInStringErrors(const BuiltinTable& table, BuiltinID callee)
 {
     BuiltinClassID made = table.at(callee).instanceClass;
@@ -48,8 +44,6 @@ static std::optional<ErrorKind> errorKindMadeByInStringErrors(const BuiltinTable
     return std::nullopt;
 }
 
-// In checked text the front end writes what the checker expects of the construction between the two: `v8 = Convert v7 declared={.. flags=[IsExpected]}`, `Throw v8`. A cast hands its operand on.
-// What the last of them gives. Null: something else stands behind the construction. Whoever else read the error would stand there too: behind a Throw nothing of the frame runs but a handler.
 static ValueID findErrorBehindItsCastsInStringErrors(const BodyIndex& index, const BodyBlock& block, ValueID made)
 {
     ValueID handedOn = made;
@@ -70,17 +64,14 @@ bool buildThrowOfNewError(Walker& walker, const CallByOneRow& call)
     if (!errorKind)
         return false;
 
-    // The Throw that ends the block alone takes the error, and nothing but casts stands between the two.
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID made = call.call.id();
     BodyBlock block = index.block(index.blockOf(made));
     BodyTerminator thrower = block.terminator();
     if (thrower.kind() != TerminatorKind::Throw || thrower.operand(0) != findErrorBehindItsCastsInStringErrors(index, block, made))
         return false;
-    // The handler takes the object from the throw as written. Of the frames around a copy nobody says here whether they stand under one.
     if (block.hasHandler() || walker.depthOfCopies() || walker.code().at(walker.currentBlock()).handler)
         return false;
-    // The site of the operation is the top frame of the trace.
     if (walker.program().at(walker.currentFunction()).isHiddenInStackTraces())
         return false;
     StringID message = textKnownForStrings(walker, call.arguments[0]);

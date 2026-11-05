@@ -129,7 +129,6 @@ static void emitOnBits(StubAssembler& jit, BinaryOperator operation, GPRReg left
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The result is where the left number was.
 static void emitOnDoubles(StubAssembler& jit, BinaryOperator operation, FPRReg left, FPRReg right)
 {
     switch (operation) {
@@ -189,7 +188,6 @@ static void emitInt32Case(StubAssembler& jit, const BinaryRegisters& registers, 
         return;
     }
 
-    // x86-64 computes where the left operand is. The slow path gets the operand back.
     const GPRReg result = isX86_64() ? left : registers.scratch;
     const bool savesLeft = isX86_64() && (operation == BinaryOperator::Mul || operation == BinaryOperator::URShift);
     JumpList fails;
@@ -408,7 +406,6 @@ StubSignature signatureOfBinaryWithDouble(StubKey)
 
 void generateBinaryWithDouble(StubAssembler& jit)
 {
-    // The operands lie where the operation takes them.
     static_assert(FPRInfo::fpRegT0 == FPRInfo::argumentFPR0 && FPRInfo::fpRegT0 == FPRInfo::returnValueFPR);
     static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
     const auto [operation, numberIsOnRight, entry] = binaryWithDoubleShapes[jit.key().form()];
@@ -478,7 +475,6 @@ static void emitUnaryOnDouble(StubAssembler& jit, UnaryOperationForm form, GPRRe
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     const FPRReg other = jit.allocateScratch(FPRInfo::fpRegT1);
 
-    // The sign of a boxed double is the highest bit of the box. A NaN changes its sign too, which a product with -1 would keep.
     if (form == UnaryOperationForm::Negate)
         jit.xor64(TrustedImm64(std::numeric_limits<int64_t>::min()), value);
     unboxDouble(jit, value, scratch, number);
@@ -584,7 +580,6 @@ void generateBoxNumber(StubAssembler& jit)
         boxDouble(jit, PureDouble::branchIfNaN(jit, number, isNaN), result);
         jit.returnToCaller();
 
-        // Every marker is a NaN.
         isNaN.link(&jit);
         if (form == BoxedNumberForm::OptionalDouble) {
             jit.moveDoubleTo64(number, result);

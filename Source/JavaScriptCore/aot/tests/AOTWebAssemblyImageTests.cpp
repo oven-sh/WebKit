@@ -41,7 +41,6 @@ namespace {
 constexpr size_t trapping = static_cast<size_t>(Wasm::ImageCodeFlavor::Trapping);
 constexpr size_t checking = static_cast<size_t>(Wasm::ImageCodeFlavor::Checking);
 
-// (func (result i32) i32.const 1) (func (result i32) call 0)
 constexpr uint8_t callModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
@@ -49,7 +48,6 @@ constexpr uint8_t callModule[] = {
     0x0a, 0x0b, 0x02, 0x04, 0x00, 0x41, 0x01, 0x0b, 0x04, 0x00, 0x10, 0x00, 0x0b,
 };
 
-// (memory 1) (func (param i32) (result i32) local.get 0 i32.load) (func (result i32) i32.const 7) (func (param i32) (result i32) local.get 0 call 0)
 constexpr uint8_t memoryModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x0a, 0x02, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x00, 0x01, 0x7f,
@@ -58,7 +56,6 @@ constexpr uint8_t memoryModule[] = {
     0x0a, 0x15, 0x03, 0x07, 0x00, 0x20, 0x00, 0x28, 0x02, 0x00, 0x0b, 0x04, 0x00, 0x41, 0x07, 0x0b, 0x06, 0x00, 0x20, 0x00, 0x10, 0x00, 0x0b,
 };
 
-// (tag) (func throw 0) (func (result i32) try (result i32) call 0 i32.const 1 catch 0 i32.const 2 end)
 constexpr uint8_t catchModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x08, 0x02, 0x60, 0x00, 0x00, 0x60, 0x00, 0x01, 0x7f,
@@ -67,13 +64,11 @@ constexpr uint8_t catchModule[] = {
     0x0a, 0x14, 0x02, 0x04, 0x00, 0x08, 0x00, 0x0b, 0x0d, 0x00, 0x06, 0x7f, 0x10, 0x00, 0x41, 0x01, 0x07, 0x00, 0x41, 0x02, 0x0b, 0x0b,
 };
 
-// (memory 1)
 constexpr uint8_t moduleWithoutFunctions[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x05, 0x03, 0x01, 0x00, 0x01,
 };
 
-// The function section promises a function, and there is no code section.
 constexpr uint8_t invalidModule[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
@@ -249,7 +244,6 @@ static void testModuleWithoutMemoryHasOneFlavor()
     AOT_TEST_CHECK(module.functions[checking].isEmpty());
 }
 
-// The function that reads memory has code for either flavor. Its caller has the same code twice, since a call is a distance to one place. The third function has nothing to do with either.
 static void testFlavorsShareWhatDoesNotTellThemApart()
 {
     Wasm::ModuleForImage module = compileModuleWithCode(memoryModule);
@@ -279,7 +273,6 @@ static void testHandlersLieInTheirFunction()
     AOT_TEST_CHECK(handler.code > catcher.entry && handler.code < catcher.entry + catcher.size);
 }
 
-// The callees of a compilation are made anew each time, so an address of one that is left in the code differs from one compilation to the next.
 static void testSameBytesEachTime()
 {
     for (std::span<const uint8_t> source : { std::span<const uint8_t>(callModule), std::span<const uint8_t>(memoryModule), std::span<const uint8_t>(catchModule) }) {
@@ -316,7 +309,6 @@ static WasmModuleCode moduleCodeOfThreeFunctions()
     return module;
 }
 
-// What the link makes of a relocation: a caller of a function with two copies has two copies itself, and each calls the copy of its own flavor.
 static void testCallGoesToCopyOfItsFlavor()
 {
     WasmModuleCode module = moduleCodeOfThreeFunctions();
@@ -338,7 +330,6 @@ static void testCallGoesToCopyOfItsFlavor()
     AOT_TEST_CHECK(whenTrapping[1].entry != whenChecking[1].entry);
     AOT_TEST_CHECK(whenTrapping[2].entry == whenChecking[2].entry);
 
-    // A call holds the distance to its callee, so the two callers have the same bytes exactly where the two distances are the same.
     std::span<const uint8_t> code = linked->code.span();
     bool callersAreAlike = equalSpans(code.subspan(whenTrapping[1].entry, sizeOfCaller), code.subspan(whenChecking[1].entry, sizeOfCaller));
     bool distancesAreAlike = static_cast<int64_t>(whenTrapping[0].entry) - whenTrapping[1].entry == static_cast<int64_t>(whenChecking[0].entry) - whenChecking[1].entry;
@@ -409,7 +400,6 @@ static void testDiagnosticKinds()
         for (size_t second = first + 1; second < declineReasons.size(); ++second)
             AOT_TEST_CHECK(kind != diagnosticKindOf(declineReasons[second]));
     }
-    // A module whose functions would run without code stops the build.
     AOT_TEST_CHECK(severityOf(diagnosticKindOf(Wasm::ImageDeclineReason::FunctionNotCompiled)) == DiagnosticSeverity::Error);
     AOT_TEST_CHECK(severityOf(diagnosticKindOf(Wasm::ImageDeclineReason::CodeTooLarge)) == DiagnosticSeverity::Error);
     AOT_TEST_CHECK(severityOf(diagnosticKindOf(Wasm::ImageDeclineReason::InvalidModule)) == DiagnosticSeverity::Warning);

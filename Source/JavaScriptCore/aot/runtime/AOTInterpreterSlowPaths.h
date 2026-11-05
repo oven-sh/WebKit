@@ -61,22 +61,19 @@ inline constexpr uint32_t kindsOfPresentProperties = [] {
 }();
 static_assert(numberOfSlotKinds <= 32);
 
-// What llint/LowLevelInterpreterAOT.asm spells out by hand.
 static_assert(HashedSlot::ways == 4 && HashedSlot::offsetOfWay(0, 1) == sizeof(HashedSlot) && HashedSlot::offsetOfWay(0, 2) == 2 * sizeof(HashedSlot) && HashedSlot::offsetOfWay(0, 3) == 3 * sizeof(HashedSlot));
 static_assert(!static_cast<uintptr_t>(SlotAccess::Read));
-static_assert(undefinedCell32 == JSValue::ValueUndefined && emptyLiteralStringWord > undefinedCell32 && minCell32 > undefinedCell32);
+static_assert(undefinedCell32 == JSValue::ValueUndefined && minCell32 > undefinedCell32);
 static_assert(std::max({ absentInt32, undefinedInt32, nullInt32 }) < minInlineInt32);
 static_assert(RuntimeType::sizeInBytes(1, 1, 0) == sizeof(RuntimeType) + 2 * sizeof(uint32_t) + sizeof(uint32_t) && RuntimeType::sizeInBytes(0, 0, RuntimeType::hasIntegerRange) == sizeof(RuntimeType) + 2 * sizeof(int64_t));
 static_assert(traitsOf(SlotRepresentation::JSValue).hasUndefined && traitsOf(SlotRepresentation::OptionalBoolean).hasUndefined && traitsOf(SlotRepresentation::OptionalDouble).hasUndefined && traitsOf(SlotRepresentation::OptionalInt32).hasUndefined && traitsOf(SlotRepresentation::OptionalCell32).hasUndefined);
 static_assert(ClosureWord::isNotCallableBit == 63);
 static_assert(functionTypes.first == JSFunctionType && functionTypes.last == NullSetterFunctionType && functionTypes.last < slimClosureTypes.first);
 
-// A rope of two strings: the header of the cell, the first string and the flags, then the length under the low half of the second string, then its high half.
 static_assert(sizeof(JSRopeString) == 4 * sizeof(uint64_t) && JSRopeString::offsetOfFiber0() == sizeof(uint64_t) && JSRopeString::offsetOfLength() == 2 * sizeof(uint64_t));
 static_assert(JSRopeString::CompactFibers::shiftOfFiber1LowerInLengthWord == 32 && JSRopeString::CompactFibers::widthOfFiber1LowerInLengthWord == 32);
 static_assert(JSRopeString::is8BitInPointer == StringImpl::flagIs8Bit() && JSString::MaxLength == static_cast<unsigned>(INT32_MAX));
 
-// Up to MarkedSpace::preciseCutoff every multiple of MarkedSpace::sizeStep is a size class, so Butterfly::optimalContiguousVectorLength() rounds the indexing header and the elements up to two words.
 inline constexpr unsigned maxLengthOfArrayLiteralAllocatedInline = (MarkedSpace::preciseCutoff - sizeof(IndexingHeader)) / sizeof(EncodedJSValue);
 static_assert(MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(IndexingHeader) == sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
 static_assert(maxLengthOfArrayLiteralAllocatedInline % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN_EMPTY % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN_EMPTY <= maxLengthOfArrayLiteralAllocatedInline);
@@ -85,7 +82,6 @@ static_assert(!IndexingHeader::offsetOfPublicLength() && IndexingHeader::offsetO
 static_assert(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY == 5);
 inline constexpr uint64_t holeInDoubleArray = std::bit_cast<uint64_t>(PNaN);
 
-// A JSC::ArrayAllocationProfile is a CompactPointerTuple of the last array and (indexing type << 8 | vector length). AOT::ArrayAllocationProfile is a different type.
 inline constexpr unsigned bitsOfPointerInArrayAllocationProfile = 48;
 inline constexpr unsigned bitsOfTypeInArrayAllocationProfile = 64 - bitsOfPointerInArrayAllocationProfile;
 inline constexpr unsigned shiftOfIndexingTypeInArrayAllocationProfile = bitsOfPointerInArrayAllocationProfile + 8;
@@ -94,28 +90,21 @@ static_assert(ArrayWithUndecided < ArrayWithContiguous && ArrayWithInt32 < Array
 
 namespace Interpreter {
 
-// Each returns nothing (false for a store) in a realm that runs no compiled code. The ByVal forms also do for a key that is neither a symbol nor an atom string, or that spells an array index.
-// The two reads may also return nothing for an object that is not compiled: the interpreter then looks the property up itself.
 std::optional<JSValue> tryGetById(JSGlobalObject*, JSCell* base, const Identifier&);
 std::optional<JSValue> tryGetByVal(JSGlobalObject*, JSCell* base, JSValue key);
 std::optional<bool> tryInById(JSGlobalObject*, JSObject* base, const Identifier&);
 std::optional<bool> tryInByVal(JSGlobalObject*, JSObject* base, JSValue key);
 bool tryPutById(JSGlobalObject*, JSCell* base, const Identifier&, JSValue, bool isStrict);
 bool tryPutByVal(JSGlobalObject*, JSCell* base, JSValue key, JSValue, bool isStrict);
-// The whole operator. Files what it reads of the constructor where llint_aot_op_instanceof looks for it.
 std::optional<bool> tryInstanceOf(JSGlobalObject*, JSValue, JSValue constructor);
 
-// After the interpreter's lookup in an object that is not compiled. Files what the interpreter's own cache cannot hold: an absent name, an accessor, a property of a compiled object above the base.
 void didGetById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, const PropertySlot&);
 
-// What the cache of a get_by_id holds for a property of a compiled object, whose slot may be empty. A boxed value in the cell stands under the offset that a property of an ordinary object at its place would have.
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;
 inline constexpr PropertyOffset extraPropertyInSiteCache = 1 << 29;
 inline constexpr uint32_t maxHiddenWordOffsetInSiteCache = (extraPropertyInSiteCache >> 16) - 1;
-// Nothing as long as the name is not filed, and invalidOffset for what the cache cannot hold.
 std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject*, Structure* before, const Identifier&);
 
-// A class makes its static members when one of them is first asked for. Until then it shares a Structure that lists none of them with other classes.
 bool sharesStructureWithClassesThatLackTheirMembers(VM&, JSCell* closure);
 
 struct FusedClosureVariableRead {
@@ -128,8 +117,6 @@ struct FusedClosureVariableRead {
 };
 void fuseReadsOfClosureVariables(CodeBlock&);
 
-// A new_object followed at once by direct put_by_ids to its result, under the names of a record that parsers may make (ProgramTables::parsedRecordFields) and that takes every value in the fields of those names.
-// llint_aot_op_new_object allocates the finished record and skips the stores, so compiled code meets the layout that it tests for. The offsets of the values stand behind the plan.
 struct ObjectLiteralPlan {
     static constexpr uintptr_t allocatorTag = 1;
     static constexpr uintptr_t notPlannedYet = allocatorTag | 2;
@@ -182,21 +169,17 @@ private:
 void didLinkNewObject(ObjectAllocationProfile&);
 void planObjectLiteral(JSGlobalObject*, CodeBlock*, const JSInstruction*, ObjectAllocationProfile&);
 
-// What llint_aot_op_create_lexical_environment reads of a SymbolTable, whose members are private. A table's first environments are made by the slow path, which calls checkPlacesInSymbolTable().
 struct PlacesInSymbolTable {
     static constexpr ptrdiff_t offsetOfMaxScopeOffset = OBJECT_OFFSETOF(SymbolTable, m_lock) - sizeof(ScopeOffset);
     static constexpr ptrdiff_t offsetOfSingleton = sizeof(SymbolTable) - 2 * sizeof(void*);
-    // InferredValue::encodeState(IsInvalidated).
     static constexpr uintptr_t invalidatedSingleton = IsInvalidated << 1 | 1;
 };
 void checkPlacesInSymbolTable(SymbolTable&);
 
 inline constexpr unsigned customAccessorRecordShift = 5;
 static_assert(sizeof(CustomAccessorRecord) == 1u << customAccessorRecordShift);
-// The caller has already found that the object caches no result of an earlier call.
 JSValue callCustomGetter(const CustomAccessorRecord&, JSCell* base, const Identifier&);
 
-// Flags of a FieldOrInherited slot that send the interpreter to the slow path once it finds the field's own slot empty.
 inline constexpr uint8_t flagsOfInheritedValuesLeftToSlowPath = Slot::inheritsGetter | Slot::emptySlotMayBeUndefined;
 
 inline constexpr ptrdiff_t offsetOfPromiseAllocator = AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].allocator);

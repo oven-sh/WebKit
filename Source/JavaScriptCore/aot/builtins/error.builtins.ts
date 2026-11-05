@@ -8,7 +8,6 @@ const message = b.string.loose.optional;
 const keepsCause = [b.readByKey(b.keysNamed("cause"), b.nativeMemory), b.contentsStoredIn(b.nativeMemory)];
 const header = b.named("name", "message");
 
-// A constructor notes where it was called and calls nothing for that: Error.prepareStackTrace runs at the first read of `stack`, and a getter under Error.stackTraceLimit never.
 const errorSignature = (className: string, operands: ErrorOperands, throws: b.SignatureOptions["throws"] = b.propagated) =>
   ({
     ...operands,
@@ -25,22 +24,17 @@ const messageSignature = (className: string) =>
     implementation: b.inline("NewError", { parameters: [className], otherwise: b.hostCall }),
   });
 
-// An instance that lacks the property is read along its prototypes, which may run a getter.
 const ownPropertyOfNewErrors = (name: string, structure: string, after: readonly string[]) =>
   ({
     ...b.ownSlot(b.any, { structure, after }),
     uses: { this: [b.readByKey(b.keysNamed(name)), b.runs("PrototypeChain")] },
   }) satisfies b.GetterField;
 
-// The constructor defines the message, if it is given one, and then the cause. A program may store anything under either name.
-// `stack` is no slot: the error makes it at the first read.
-// Each takes the path of the prototype's member of the same name, so a class with these lists no `message` under `proto`.
 const ownPropertiesOfNewErrors = (structure: string) => ({
   message: ownPropertyOfNewErrors("message", structure, []),
   cause: ownPropertyOfNewErrors("cause", structure, ["message"]),
 });
 
-// The realm creates each prototype with the name of the class and an empty message.
 const textsOnPrototype = { name: b.property(b.string), message: b.property(b.string) };
 
 type ErrorMembers = Pick<b.ClassOptions, "instance" | "proto">;
@@ -61,7 +55,6 @@ const errorSubclass = (
     ...members,
   });
 
-// Its constructor defines what the constructor of Error defines, so its instances have the same slots behind a Structure of their own.
 const nativeError = (className: string) =>
   errorSubclass(className, messageSignature(className), [], {
     instance: ownPropertiesOfNewErrors(`errorStructureWithErrorType<ErrorType::${className}>`),
@@ -71,9 +64,7 @@ const nativeError = (className: string) =>
 export default b.declarations(
   b.class("Error", {
     jsType: "ErrorInstanceType",
-    // The last two are the host's, which maps positions back to sources.
     namesDefinedOnNewInstances: ["message", "cause", "stack", "line", "column", "sourceURL", "originalLine", "originalColumn"],
-    // The constructor converts the message to a string, and the engine notes where the error was made. `cause` is whatever the options hold.
     typesOfNamesDefinedOnNewInstances: b.typesByName({
       message: b.string,
       stack: b.string,
@@ -83,9 +74,7 @@ export default b.declarations(
       originalLine: b.f64,
       originalColumn: b.f64,
     }),
-    // The error makes `stack` at the first read: a text, or what Error.prepareStackTrace answers for the error and its call sites.
     namesMadeByStaticMembers: { stack: "prepareStackTrace" },
-    // The text begins with them, and so does what is printed for an error.
     namesReadToDescribeInstances: ["name", "message"],
     constructorOnlyReadsPrototypeOfNewTarget: true,
     types: [b.viewType("Error")],
@@ -98,7 +87,6 @@ export default b.declarations(
         capability: "js",
         throws: true,
         uses: {
-          // A host that maps positions back to sources notes where the first frame was before.
           target: [b.definesName(["stack", "originalLine", "originalColumn"], b.any), b.retained, b.runs(header)],
           constructorOpt: b.inspected,
         },

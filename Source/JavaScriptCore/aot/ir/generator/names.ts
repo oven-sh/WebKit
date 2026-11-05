@@ -139,9 +139,6 @@ export function programListMemberName(list: string): string {
   return upperFirst(list);
 }
 
-// Members of the cursors of ir/AOTBody.h and of the records and drafts of walk/AOTCode.h, which include the generated accessors.
-// DraftWords::setOperand is not listed: setOperand() is the getter of the operand `set` of SetNext.
-// In Draft that getter would hide it, so the generated setters begin with `using DraftWords::setOperand;` (emit-cpp-accessors.ts).
 export const reservedAccessorNames: ReadonlySet<string> = new Set([
   "appendVariadicOperand",
   "arguments",

@@ -1,7 +1,3 @@
-// To read some fields is to take more for granted than the type of a value says: the word in the cell of a string is a StringImpl only while the string is flat,
-// and a type says what the characters are, not which object holds them. Such a field is read by few functions, which test first or take a type that only a proof can make.
-// This step of the build counts, file by file, who names the heap of such a field and who calls a function that trusts its caller, and holds the counts to
-// aot/codegen/AOTReadsThatAssume.txt. A place that the list lacks stops the build: go through one of the functions named in the message, or add the place with the reason why it is right.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -9,7 +5,6 @@ import { parseArgs } from "node:util";
 const listFile = "aot/codegen/AOTReadsThatAssume.txt";
 const stampFile = "AOTReadsThatAssumeChecked.h";
 
-// `unless` is looked for from the line of a match to the third line behind it: what is found there has tested the word. `notOnLineWith` marks a line that reads nothing.
 const watched: { name: string; pattern: RegExp; unless?: RegExp; notOnLineWith?: RegExp; instead: string }[] = [
   {
     name: "JSString_value",
@@ -100,7 +95,6 @@ function compare(found: Counts, listed: Counts): string[] {
   return problems;
 }
 
-// A check that was never seen to fail proves nothing: every name must be found somewhere and however it is spaced, and one place too many, one too few and one in a file of its own must each be noticed.
 function hasTeeth(found: Counts): boolean {
   if (!watched.every(({ name }) => [...found.keys()].some(key => key.startsWith(`${name} | `)))) return false;
   const spaced = (name: string) => (name.startsWith("offsetOfValue") ? "JSString ::\n    offsetOfValue\n    ( )" : `heaps\n    -> ${name}\n    (cell)`);

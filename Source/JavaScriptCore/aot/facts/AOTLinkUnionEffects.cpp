@@ -16,8 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// It is asked on every thread at once, behind the flow. So it reads the type at a node and the tables, and asks no family of sites or of lost layouts for its members.
-
 static bool mayBeProxyInUnionEffects(const LinkFlow& flow, const LinkType& type)
 {
     if (type.holdsUnseen || type.builtin || type.classes == LinkType::Classes::Mixed)
@@ -27,7 +25,6 @@ static bool mayBeProxyInUnionEffects(const LinkFlow& flow, const LinkType& type)
     return type.classes == LinkType::Classes::Site && relate(builtins, type.builtinClass, classOfProxies) != ClassRelation::Disjoint;
 }
 
-// Above an object of the layout stand the prototype objects of the classes of the program and what the engine lays above those, and nobody can lay anything else there.
 static bool chainAboveLayoutIsKnownInUnionEffects(const LinkTables& tables, LayoutID layout)
 {
     const LinkedLayout& linked = tables.layout(layout);

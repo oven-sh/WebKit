@@ -22,7 +22,6 @@ import { fieldsOf, functionLocalIdKinds, innermostKindOf, recordsOf, roleEnumNam
 import { cppIdTypeName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 
-/** Operation and Draft of walk/AOTCode.h hold an opcode, Terminator and TerminatorDraft a kind. */
 interface HolderKind {
   readonly concept: "HoldsOpcode" | "HoldsTerminatorKind";
   readonly enumName: "Opcode" | "TerminatorKind";

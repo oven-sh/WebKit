@@ -112,7 +112,6 @@ void generateNewClosure(StubAssembler& jit)
     const GPRReg record = jit.allocateScratch(StubRegister::T11);
 
     JumpList slow;
-    // A request from code has no bit at or above countShift.
     jit.urshift64(request, TrustedImm32(ClosureRequest::allocationShift), allocator);
     loadAllocationSiteRecord(jit, allocator, record, allocator);
     jit.loadPtr(Address(record, AllocationSiteRecord::offsetOfAllocator()), allocator);
@@ -139,7 +138,6 @@ void generateNewSlimClosure(StubAssembler& jit)
     const GPRReg word = allocator;
     const unsigned kind = jit.key().form();
     const unsigned count = jit.key().count();
-    // Allocator i serves cells of 16 * (i + 1) bytes.
     const unsigned allocatorIndex = (count + 1) / 2;
     static_assert((ClosureRequest::maxSlimClosureCaptures + 1) / 2 < ClosureWords::numberOfSlimClosureAllocators);
     static_assert(offsetOfSlimClosureWord == sizeof(uint64_t));
@@ -207,12 +205,10 @@ void generateMakeClosureOfField(StubAssembler& jit)
     Jump needsBarrier = branchIfBarrierIsNeeded(jit, object, header);
     jit.returnToCaller();
 
-    // The operation preserves the request and the object.
     emitLateRefill(jit, refill, slow);
     slow.link(&jit);
     const GPRReg wholeRequest = allocator;
     uint64_t restOfRequest = static_cast<uint64_t>(kind) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift;
-    // The operation takes the capture out of the register that holds the object.
     if (capturesEnvironment) {
         loadEnvironment(allocator);
         jit.move(object, header);
@@ -226,12 +222,10 @@ void generateMakeClosureOfField(StubAssembler& jit)
         jit.jump().linkTo(isMade, &jit);
     });
 
-    // The barrier stub takes the object in the register that holds the closure. The closure is already in the slot.
     needsBarrier.link(&jit);
     checkStubOperands(writeBarrier(), { cell });
     jit.clobberOperand(0);
     jit.emitFunctionPrologue();
-    // The closure waits in a register that the barrier leaves alone. The barrier's scratch register is that of the offset on x86-64 and that of the request on ARM64, so behind it neither says on both where the slot lies.
     jit.move(cell, header);
     jit.move(object, cell);
     jit.callStub(writeBarrier());
@@ -240,7 +234,6 @@ void generateMakeClosureOfField(StubAssembler& jit)
     jit.ret();
 }
 
-// The caller loses the registers that a call of the operation which keeps registers would cost it.
 StubSignature signatureOfClosureOfTable(StubKey)
 {
     StubSignature signature = StubSignature::withGPRResult({ });
@@ -248,7 +241,6 @@ StubSignature signatureOfClosureOfTable(StubKey)
     return signature;
 }
 
-// The number of the cell that the closure table has for the function. The two registers may hold anything.
 static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg number, GPRReg scratch)
 {
     static_assert(sizeof(Number24) == 3 && std::endian::native == std::endian::little);
@@ -265,7 +257,6 @@ static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg 
     jit.or32(lowBytes, number);
 }
 
-// ClosureTable::closure(), for a slim closure: two words, the cell of the table, and the card that has the collector visit that region of the table.
 static void emitCreateSlimClosureOfTable(StubAssembler& jit, const ClosureRegisters& registers, GPRReg number, JumpList& slow, JumpList& isCreated)
 {
     const auto [cell, function, first, second] = registers;
@@ -327,7 +318,6 @@ void generateClosureOfTable(StubAssembler& jit)
     loadNumberOfClosureCell(jit, function, number, cells);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closureCells)), cells);
     JumpList slow;
-    // A cell holds a pointer there, and the operation makes what is not made yet: it makes the closure immortal too.
     if (jit.options().useWideReferences) {
         jit.load64(BaseIndex(cells, number, CCallHelpers::TimesEight), cell);
         slow.append(jit.branchTest64(CCallHelpers::Zero, cell));
@@ -372,8 +362,6 @@ void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word)
 
 static_assert(noClosureNumber > ClosureWord::functionMask && ClosureWord::functionShift == 32);
 
-// Equal: the cell is of the realm of the instance. x86-64 writes the first register alone.
-// On ARM64 the two are the scratch registers of the assembler, which takes them for itself wherever an operand lies in memory: so each load is written out.
 static void compareRealmOnFlags(StubAssembler& jit, GPRReg cell, GPRReg scratch, [[maybe_unused]] GPRReg secondScratch)
 {
     jit.load32(Address(cell, JSCell::structureIDOffset()), scratch);
@@ -402,7 +390,6 @@ static void loadNumberOfSlimClosureWithProperties(StubAssembler& jit, GPRReg cel
     jit.load32(Address(number, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), number);
 }
 
-// ARM64 writes the scratch register.
 static void compareCellTypeOnFlags(StubAssembler& jit, GPRReg cell, JSType type, [[maybe_unused]] GPRReg scratch)
 {
 #if CPU(X86_64)
@@ -420,15 +407,12 @@ StubSignature signatureOfChangedClosureHasNumber(StubKey key)
     return signature;
 }
 
-// Whichever comparison fails leaves the answer in the flags, and neither a pop nor a load changes them.
 void generateChangedClosureHasNumber(StubAssembler& jit)
 {
     const GPRReg cell = jit.operand(0);
     const GPRReg asked = jit.immediate();
     const bool isSlim = jit.key().form() == static_cast<uint8_t>(ChangedClosure::Slim);
-    // In an image with one instance every slim closure is a closure of this instance.
     const bool asksForRealm = !isSlim || !jit.options().hasOneInstance;
-    // x86-64 may write the register of the number alone, so the number waits on the stack. ARM64 has one register more, and needs both only where it compares realms.
     constexpr bool numberWaitsOnStack = isX86_64();
 #if CPU(X86_64)
     const GPRReg found = asked;
@@ -475,7 +459,6 @@ StubSignature signatureOfNumberOfChangedClosure(StubKey key)
     return StubSignature::withGPRResult({ key.operandRegister().value_or(gprOf(firstStubOperandRegister)) });
 }
 
-// The cell may lie in the register of the result, which is written last.
 void generateNumberOfChangedClosure(StubAssembler& jit)
 {
     const GPRReg cell = jit.operand(0);

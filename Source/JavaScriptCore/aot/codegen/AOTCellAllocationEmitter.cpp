@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTCellFormat.h"
+#include "AOTClosuresLent.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
@@ -66,7 +67,6 @@ CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::opti
         AllowMacroScratchRegisterUsage allowScratch(jit);
         CCallHelpers::JumpList slowCases;
         CCallHelpers::FreeListRefill refill = jit.emitAllocateFromFreeList(params[0].gpr(), params[1].gpr(), params.gpScratch(0), slowCases, cellSize ? std::optional<unsigned>(static_cast<unsigned>(*cellSize)) : std::nullopt);
-        // On ARM64 and x86-64 the only way out is that of the refill, which is plain data and so can wait in the arena for the late path.
         RELEASE_ASSERT(slowCases.empty());
         CCallHelpers::Jump done;
         if (!params.fallsThroughToSuccessor(0))
@@ -113,7 +113,6 @@ MentionedAllocation CellAllocationEmitter::allocationOf(const OperationContext& 
     std::optional<PlacedAllocation> placed = m_plan.allocation(m_program, layout, allocationClass, initialFields);
     if (!placed) {
         fail(context, InternalErrorKind::PlacedPayloadMissing);
-        // What is generated until the build stops still asks for the layout and the size.
         return { PlacedAllocation { .layout = layout, .size = m_plan.layout(layout).size }, 0 };
     }
     return { *placed, m_mentions.allocation(*placed, initialFields) };
@@ -145,7 +144,6 @@ static constexpr size_t maxBytesZeroedInLine = 256;
 ZeroedBy CellAllocationEmitter::whoZeroesBody(const OperationContext& context, const MentionedAllocation& allocation, unsigned storesOfZero, unsigned storesOfOtherPatterns) const
 {
     size_t size = allocation.placed.size;
-    // Outside of loops the site stores what the program gave it and nothing else. The name of a template is no longer than one store of a pattern.
     if (!m_generator.isInLoop(context.block())) {
         if (storesOfOtherPatterns && size > copyChunkBytes && size <= maxCellSizeFromTemplate)
             return ZeroedBy::StubFromTemplate;
@@ -162,11 +160,9 @@ ZeroedBy CellAllocationEmitter::whoZeroesBody(const OperationContext& context, c
 
     if (!storesOfOtherPatterns || size <= copyChunkBytes || size > maxCellSizeFromTemplate)
         return zeroedBy;
-    // The copy is held against the fewest instructions that the same bytes could take: whoever writes the zeros, a store for each or a store a chunk, and one store a pattern, though a pattern of 64 bits takes a register first.
     unsigned fewestInstructionsForZeros = std::min(storesOfZero, instructionsWithSizeKnown);
     if (fewestInstructionsForZeros + storesOfOtherPatterns < instructionsToCopyBody(hasOrderAndShapeWords ? CellInitialization::HeaderAndWords : CellInitialization::Header, size))
         return zeroedBy;
-    // The site gets shorter only where it leaves out more than it takes to name the template.
     unsigned instructionsForZerosAtSite = zeroedBy == ZeroedBy::Stub ? 0 : fewestInstructionsForZeros;
     return instructionsForZerosAtSite + storesOfOtherPatterns > instructionsToNameTemplate ? ZeroedBy::StubFromTemplate : zeroedBy;
 }
@@ -272,7 +268,6 @@ void CellAllocationEmitter::copyFieldWords(CellPointer source, CellPointer cell,
     m_out.appendTo(copied);
 }
 
-// The copy has the key order, the count and the shape of the source, and none of the other bits of its order word.
 CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, const MentionedAllocation& allocation, CellPointer source, unsigned fieldBytes)
 {
     RELEASE_ASSERT(isObjectLayout(m_program.at(allocation.placed.layout).kind) && offsetOfFirstField + fieldBytes <= WTF::roundUpToMultipleOf<copyChunkBytes>(allocation.placed.size));
@@ -290,6 +285,19 @@ CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& co
 LValue CellAllocationEmitter::slotOfFrameCell(const OperationContext& context, size_t size)
 {
     const Operation& made = operationAt(context.valueID());
+    if (ValueID call = findLoanOfClosure(m_program, generator().facts(), m_code, context.valueID()).call) {
+        for (SlotOfClosuresLent& shared : m_slotsOfClosuresLent) {
+            if (shared.size != size || (shared.blockIndex == made.blockIndex && shared.call.index() > context.valueID().index()))
+                continue;
+            shared.blockIndex = made.blockIndex;
+            shared.call = call;
+            return m_out.slotBase(shared.slot);
+        }
+        Machine::StackSlot* slot = m_proc.addStackSlot(size);
+        slot->setIsDeadAtSuspensions(true);
+        m_slotsOfClosuresLent.append(SlotOfClosuresLent { size, slot, made.blockIndex, call });
+        return m_out.slotBase(slot);
+    }
     uint32_t numberAmongLoans = made.opcode == Opcode::NewObject || made.opcode == Opcode::NewClosure ? made.numberAmongLoans() : 0;
     if (!numberAmongLoans) {
         LValue slot = m_out.lockedStackSlot(size);
@@ -309,7 +317,6 @@ LValue CellAllocationEmitter::slotOfFrameCell(const OperationContext& context, s
 
 CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& context, size_t size)
 {
-    // Whoever lays a cell in a frame asks Mechanism::CellsInFrames, which TestingSwitch::KeepsCellsOutOfFrames withholds. One that has not asked stops the build here.
     if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::KeepsCellsOutOfFrames))
         generator().fail(context, InternalErrorKind::OpcodeWithoutCode, "a cell lies in a frame in a build that keeps cells out of frames"_s);
     build().statistics().count(StatisticID::AllocateInFramesChanges);
@@ -325,7 +332,6 @@ std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArray(const Opera
     return { array, Pointer(m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly)) };
 }
 
-// The stub answers 0 in a realm that is having a bad time. The operation makes plain storage there too, and finishArrayOfLength() converts it.
 CellPointer CellAllocationEmitter::allocateArrayOfLength(const OperationContext& context, IndexingType indexingType, unsigned length)
 {
     static_assert((maxArrayLengthInStubKey | 1) <= maxHoleArrayCapacity && maxHoleArrayCapacity < 1 << holeArrayCapacityShift);
@@ -340,13 +346,10 @@ CellPointer CellAllocationEmitter::allocateArrayOfLength(const OperationContext&
     });
 }
 
-// The operation gives the array other storage, which the effects of an allocation do not say: what follows starts without anything read from the array.
 void CellAllocationEmitter::finishArrayOfLength(const OperationContext& context, CellPointer array, unsigned length)
 {
     LBasicBlock isHavingABadTime = newBlock();
     LBasicBlock continuation = newBlock();
-    // The header of a new array is state of the allocator, which is all that an allocation declares. It is zero in a realm that is having a bad time.
-    // The call that made the array wrote that state, so no read from in front of it is found by its number.
     Integer headerOfNewArrays(m_out.load64(instanceField(m_heaps.entire(AbstractHeap::AllocatorState), Instance::offsetOfNewArrayHeader(ArrayWithContiguous))));
     m_out.branch(isNotZero(headerOfNewArrays).value(), normalEdge(continuation), rareEdge(isHavingABadTime));
 
@@ -435,7 +438,6 @@ CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& co
     return join.finish();
 }
 
-// The cell, the two lengths and the elements, one behind the other. A realm whose arrays of values are not pristine has no header for such a cell.
 std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArrayInFrame(const OperationContext& context, Word32 length, unsigned capacity, LBasicBlock isOnHeap)
 {
     Integer header(m_out.load64(instanceField(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_OFFSET(allocation.frameArrayHeader))));
@@ -449,32 +451,6 @@ std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArrayInFrame(cons
     storeField(butterfly, m_heaps.Butterfly_publicLength, length);
     storeField(butterfly, m_heaps.Butterfly_vectorLength, length);
     return { array, butterfly };
-}
-
-CellPointer CellAllocationEmitter::newArrayInFrameOf(const OperationContext& context, std::span<const Boxed> elements)
-{
-    unsigned length = static_cast<unsigned>(elements.size());
-    if (length <= maxArrayElementsInRegisters) {
-        Vector<LValue, maxArrayElementsInRegisters + 1> operands;
-        for (Boxed element : elements)
-            operands.append(element.value());
-        operands.append(allocateInFrame(context, sizeOfFrameArray(length)).value());
-        return CellPointer(callStub(context, frameArrayLiteral(length), operands.span()).first);
-    }
-
-    LBasicBlock isOnHeap = newBlock();
-    Join<CellPointer> join(m_out);
-    auto [array, butterfly] = allocateArrayInFrame(context, word32(static_cast<int32_t>(length)), length, isOnHeap);
-    {
-        CodeGenerator::InitializationScope scope(generator());
-        for (unsigned i = 0; i < length; ++i)
-            m_out.store64(elements[i].value(), butterfly.value(), m_heaps.indexedContiguousProperties[i]);
-    }
-    join.add(array);
-
-    m_out.appendTo(isOnHeap);
-    join.add(newArrayOf(context, elements));
-    return join.finish();
 }
 
 CellPointer CellAllocationEmitter::newArrayInFrameFromBuffer(const OperationContext& context, Word32 count, Pointer buffer, unsigned capacity)

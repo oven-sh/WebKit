@@ -20,14 +20,12 @@ public:
     void generateTypedArrayByteOffset(const InlineCall&);
     void generateTypedArrayWithLength(const InlineCall&);
     void generateTypedArraySet(const InlineCall&);
-    void generateArrayFrom(const InlineCall&);
 
     Condition hasFixedLength(CellPointer view);
     Integer lengthOf(CellPointer view);
     Integer byteOffsetOf(CellPointer view);
     Pointer vectorOf(CellPointer view);
     Condition haveFixedLength(CellPointer first, CellPointer second);
-    // The ranges may overlap. The length is at least one byte.
     void moveBytes(const OperationContext&, CellPointer target, Integer targetOffset, CellPointer source, Integer sourceOffset, Integer count);
 };
 

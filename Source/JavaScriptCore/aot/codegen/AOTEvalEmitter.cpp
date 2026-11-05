@@ -23,7 +23,6 @@ void EvalEmitter::generateDirectEval(const ValueContext& value)
     for (ValueID environment : value->environmentsOperands())
         operands.append(in<Boxed>(environment));
 
-    // The operation is bound to its frame: a function that holds one is never inlined, so the text is evaluated in the module of the function whose code this is.
     uint32_t scopeAndModule[] { value->evalScope().index(), function().module.index() };
 
     Boxed text = in<Boxed>(value->textOperand());

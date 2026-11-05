@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Mechanism::TypedOperations: the order in which layouts get their shape numbers, so that what code tests for together is a range of numbers, and what is tested most has the lowest.
-// At a suspension and at a throw: nothing. A shape has its number for the whole build.
-// Withheld: no order, and computeShapeTable() goes by the written bases alone. ANY ORDER IS RIGHT: ShapeTable::testOfShapes() makes each test from the numbers that it finds.
-
 #include "config.h"
 #include "AOTUnionPlan.h"
 
@@ -58,7 +54,6 @@ public:
         BitVector isListed(m_numberOfLayouts);
         for (uint32_t layout : order)
             isListed.quickSet(layout);
-        // Where nothing else ranks them, a class and what lies below it stay side by side.
         for (uint32_t layout : m_layoutsInPreorder) {
             if (!isListed.quickGet(layout))
                 order.append(layout);
@@ -71,24 +66,20 @@ private:
     static constexpr uint32_t noLeaf = UINT32_MAX;
     static constexpr uint32_t inNoRefusedSet = UINT32_MAX;
 
-    // Restricted to the members that have a shape, of which there are at least two.
     struct MentionedSet {
         uint32_t firstLeaf { 0 };
         uint32_t numberOfLeaves { 0 };
         uint32_t mentions { 0 };
-        // One of Facts::families(). Any two of those are nested or apart, so all of them can be kept together, whoever is mentioned how often.
         bool isFamily { false };
         bool isKeptTogether { false };
     };
 
-    // A run of consecutive layouts in the order. No set that counts has members in two groups: the groups change places without pulling the members of a set apart.
     struct Group {
         uint32_t firstPosition { 0 };
         uint32_t numberOfLayouts { 0 };
         uint64_t mentions { 0 };
     };
 
-    // The layouts of a written type, as often as positions of reached code are written with it.
     struct WrittenSet {
         LayoutSetID layouts;
         uint32_t mentions { 0 };
@@ -101,7 +92,6 @@ private:
         return m_leavesOfSets.span().subspan(set.firstLeaf, set.numberOfLeaves);
     }
 
-    // A layout, then what is written below it. Among layouts with one base, and among those without, the order of the layouts: layoutsEachInFrontOfThoseBelowForShapeTest().
     void listLayoutsInPreorder()
     {
         constexpr uint32_t none = UINT32_MAX;
@@ -138,7 +128,6 @@ private:
             if (!writtenBaseOf(m_program.layouts[index]))
                 listWithAllBelow(index);
         }
-        // `class A extends B {}` beside `class B extends A {}`: a ring hangs below nothing.
         for (uint32_t index = 0; index < m_numberOfLayouts; ++index)
             listWithAllBelow(index);
 
@@ -146,8 +135,6 @@ private:
         for (uint32_t place = 0; place < m_numberOfLayouts; ++place)
             m_preorder[m_layoutsInPreorder[place]] = place;
     }
-
-    // ---- Who is mentioned, as written in reached code: never how often anything runs
 
     void noteWrittenType(TypeID type)
     {
@@ -163,7 +150,6 @@ private:
         }
         if (!liesInProgram(layouts))
             return;
-        // The number of a set follows the order of threads. Here it finds an equal set again and decides nothing.
         auto added = m_placesOfWrittenSets.add(layouts.bits(), static_cast<uint32_t>(m_writtenSets.size()));
         if (added.isNewEntry)
             m_writtenSets.append(WrittenSet { layouts, 0 });
@@ -191,7 +177,6 @@ private:
         }
     }
 
-    // The smallest family that holds every member. Null: there is none.
     FamilyID familyThatSetWidensTo(LayoutSetID layouts) const
     {
         if (FamilyID family = m_families.familyOf(layouts))
@@ -208,7 +193,6 @@ private:
         return family;
     }
 
-    // What m_leavesOfSets holds from `first` on is one list of layouts, ascending.
     void noteMentionsOfLayoutsFrom(uint32_t first, uint32_t mentions, bool isFamily)
     {
         uint32_t numberOfLayouts = static_cast<uint32_t>(m_leavesOfSets.size()) - first;
@@ -237,7 +221,6 @@ private:
         Vector<uint32_t> mentionsOfFamilies(FillWith { }, m_families.size(), 0u);
         countWrittenTypes();
 
-        // Until replaceLayoutsOfSetsByLeaves(), the sets list layouts.
         for (const WrittenSet& written : m_writtenSets) {
             FamilyID family = familyThatSetWidensTo(written.layouts);
             if (family) {
@@ -250,7 +233,6 @@ private:
             appendMembersWithShapes(written.layouts);
             noteMentionsOfLayoutsFrom(first, written.mentions, false);
         }
-        // A family without a shape lists nothing. In a row of classes that nobody constructs every class has such a family, of all below it.
         BitVector familiesWithShapes = m_families.familiesWithSomeMemberThat([&](LayoutID member) {
             return hasShape(member);
         });
@@ -265,8 +247,6 @@ private:
         replaceLayoutsOfSetsByLeaves();
     }
 
-    // Equal lists become one set with the mentions of all of them. orderLeaves() serves the sets in their order: the families first, then the sets mentioned most.
-    // Among sets mentioned equally often the shorter list comes first, then the list with the lower layouts.
     void rankMentionedSets()
     {
         auto comesFirstByContent = [&](const MentionedSet& a, const MentionedSet& b) {
@@ -349,9 +329,6 @@ private:
         return consecutiveSets.order(keyOfLeaf.span());
     }
 
-    // The groups mentioned most per shape come first and get the lowest numbers, whose constants fit the instruction that compares them.
-    // In front of them all stands what gains most by it: a range that begins with the first number of all is tested by one comparison with its last number. One layout alone gains nothing: it is tested by one comparison wherever it stands.
-    // So the order begins at a place inside a group where that pays: what stood in front of the place in its group goes behind the rest of the group, and a range that reached over the place is a range no more.
     void orderMentionedLayouts(const Vector<uint32_t>& orderOfLeaves)
     {
         uint32_t numberOfLeaves = static_cast<uint32_t>(m_layoutOfLeaf.size());
@@ -360,13 +337,11 @@ private:
         for (uint32_t position = 0; position < numberOfLeaves; ++position)
             positionOfLeaf[orderOfLeaves[position]] = position;
 
-        // The running sum at a position counts the sets with a leaf in front of the position and a leaf at it or behind it. A refused set reaches over leaves that are not its own.
         Vector<int32_t> changeOfSetsSpanning(FillWith { }, numberOfLeaves + 1, 0);
         Vector<uint64_t> mentionsOfSetsBeginningAt(FillWith { }, numberOfLeaves, 0);
         Vector<int64_t> mentionsOfRangesBeginningAt(FillWith { }, numberOfLeaves, 0);
         Vector<int64_t> changeOfMentionsOfRangesSpanning(FillWith { }, numberOfLeaves + 1, 0);
         for (const MentionedSet& set : m_sets) {
-            // It would move shapes that are mentioned behind shapes that are not. A family stays a range whoever mentions it.
             if (!set.mentions && !set.isFamily)
                 continue;
             uint32_t first = UINT32_MAX;
@@ -389,7 +364,6 @@ private:
         Vector<uint32_t> layoutsInOrder(numberOfLeaves, [&](size_t position) {
             return m_layoutOfLeaf[orderOfLeaves[position]];
         });
-        // instructionsForShapeTest(): a range that begins the order saves one instruction, and a range that is pulled apart and asks a set of bits takes six more.
         constexpr int64_t rangesBegunForOneRangePulledApart = 6;
         std::optional<uint32_t> positionThatBeginsOrder;
         int64_t gainOfBeginningThere = 0;
@@ -417,7 +391,6 @@ private:
             layoutsInOrder.append(layout);
         }
 
-        // A layout has one shape.
         AOT::sort(groups, [](const Group& a, const Group& b) {
             UInt128 mentionsOfA = static_cast<UInt128>(a.mentions) * static_cast<UInt128>(b.numberOfLayouts);
             UInt128 mentionsOfB = static_cast<UInt128>(b.mentions) * static_cast<UInt128>(a.numberOfLayouts);
@@ -449,18 +422,14 @@ private:
     const LinkTables& m_linked;
     uint32_t m_numberOfLayouts;
     Vector<uint32_t> m_layoutsInPreorder;
-    // By layout: its place in m_layoutsInPreorder.
     Vector<uint32_t> m_preorder;
     Vector<WrittenSet> m_writtenSets;
-    // By LayoutSetID::bits().
     HashMap<uint32_t, uint32_t> m_placesOfWrittenSets;
-    // By layout: how often the layout alone is the set, and the mentions of every set in which it is the only member with a shape.
     Vector<uint32_t> m_mentionsAlone;
     Vector<MentionedSet> m_sets;
     Vector<uint32_t> m_leavesOfSets;
     Vector<uint32_t> m_leafOfLayout;
     Vector<uint32_t> m_layoutOfLeaf;
-    // The layouts that are mentioned, group by group.
     Vector<uint32_t> m_frontierByMentionsPerShape;
 };
 

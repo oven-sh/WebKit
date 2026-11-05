@@ -18,11 +18,10 @@ const unaryWithRange = (inlineBuiltin: string, rule: b.RangeRule) =>
 
 const rounding = (inlineBuiltin: string) => unaryWithRange(inlineBuiltin, "IntegerPart");
 
-const extremum = (inlineBuiltin: string, listForm: string, rule: b.RangeRule, nativeSymbol: string) =>
+const extremum = (inlineBuiltin: string, rule: b.RangeRule, nativeSymbol: string) =>
   ({
     ...pure({ values: number.rest }, b.f64, b.inline(inlineBuiltin)),
     range: { rule },
-    listForm,
     length: 2,
     boxedCallStub: inlineBuiltin,
     nativeSymbols: [nativeSymbol],
@@ -65,8 +64,8 @@ export default b.declarations(
       log10: libraryFunction("Log10"),
       log1p: libraryFunction("Log1p"),
       log2: libraryFunction("Log2"),
-      max: extremum("MathMax", "MathMaxOfArray", "MaximumOfArguments", "mathProtoFuncMax"),
-      min: extremum("MathMin", "MathMinOfArray", "MinimumOfArguments", "mathProtoFuncMin"),
+      max: extremum("MathMax", "MaximumOfArguments", "mathProtoFuncMax"),
+      min: extremum("MathMin", "MinimumOfArguments", "mathProtoFuncMin"),
       pow: pure({ base: number, exponent: number }, b.f64, b.inline("MathPow")),
       random: {
         returns: b.f64,
@@ -98,8 +97,5 @@ export default b.declarations(
     { locksMembers: true, mutability: "AlwaysLocked" },
   ),
 
-  // Tests replace Math.random, and so do seeded random number libraries. sylvester, a dependency of natural, replaces
-  // Math.sign with one that returns 1 for 0, and relies on it. core-js 2 checks Math.sinh with a feature test that
-  // never passes, and so always replaces it. `import "core-js"` replaces Math.sumPrecise in versions 3.37 to 3.39.
   b.replacedByPackages("Math.random", "Math.sign", "Math.sinh", "Math.sumPrecise"),
 );

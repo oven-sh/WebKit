@@ -69,7 +69,6 @@ TypeID typeOfBuiltinObject(const TypingContext& context, BuiltinID builtin)
 {
     const BuiltinTable& builtins = context.program.builtins();
     TypeArena& types = context.types;
-    // The module's own compiled code makes the object of such a module, so nothing that the table says of the built-in holds of it.
     if (compiledModuleWithObject(context.program, builtins.canonicalID(builtin)))
         return types.object(UnknownSeed::UndescribedNativeResult);
     if (BuiltinName symbol = builtins.nameOfSymbol(builtin))
@@ -88,7 +87,6 @@ static TypeID typeOfBuiltinObjectOfModule(const TypingContext& context, BuiltinI
         return typeOfBuiltinObject(context, builtin);
     if (ObjectID object = types.objects().objectOf(canonical, module))
         return types.forObject(object);
-    // Each module has an object of its own. What stands for the built-in without a module is none of them.
     return types.object(UnknownSeed::UndescribedNativeResult);
 }
 
@@ -108,7 +106,6 @@ static void addToWrittenContentsOfData(const TypingContext& context, const DataN
 {
     TypeArena& types = context.types;
     switch (node.kind()) {
-    // A hole reads as undefined.
     case DataNode::Kind::Undefined:
     case DataNode::Kind::Hole:
         contents.primitives |= Primitive::Undefined;
@@ -148,7 +145,6 @@ static TypeID typeOfWrittenContentsOfData(TypeArena& types, const WrittenContent
 {
     TypeParts parts;
     parts.primitives = contents.primitives;
-    // What is stored later need not lie between the least and the greatest number written, so each bound goes to the next landmark.
     if (!contents.integers.isEmpty())
         parts.integers = { widenedMinimum(contents.integers.minimum), widenedMaximum(contents.integers.maximum) };
     return types.unionOf(types.intern(parts), contents.objects);
@@ -201,7 +197,6 @@ TypeID typeOfAllocatedLayout(const TypingContext& context, LayoutID layout, Obje
 {
     if (context.program.at(layout).isEnvironment())
         return context.types.forEnvironment(layout);
-    // A NewDictionary stands for the allocation, and that names no layout.
     if (context.program.at(layout).holdsOrdinaryObjects)
         return context.types.object(UnknownSeed::ObjectWithoutLayout);
     if (created)
@@ -212,7 +207,6 @@ TypeID typeOfAllocatedLayout(const TypingContext& context, LayoutID layout, Obje
 TypeID typeOfDeclaredLayout(const TypingContext& context, LayoutID layout)
 {
     TypeArena& types = context.types;
-    // The constructor of a parent may hand back any object.
     if (context.level == TypeLevel::Proven)
         return types.object(UnknownSeed::ResultOfUnknownCallee);
     if (context.program.hasDeclaredMembers(layout))

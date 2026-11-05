@@ -94,7 +94,6 @@ class StaticListPool {
   }
 }
 
-// Few entries load a module or call a function of the library, and many of those share their lists: an entry has the number of its lists.
 class DependencyPool {
   readonly #numbers = new Map<string, number>();
   readonly #elements: string[] = [];
@@ -122,7 +121,6 @@ class DependencyPool {
   }
 }
 
-// The texts one behind the other, and where each starts: four bytes a text where a slice has sixteen.
 const unlessLinkedWithEngine = '#[cfg(not(feature = "linked_names"))]\n';
 
 function emitTexts(name: string, count: string, texts: readonly string[], attribute: string): string {
@@ -298,19 +296,15 @@ const storingActions: readonly PropertyActionKind[] = [
   "DefinesSetter",
 ];
 
-// build-uses.ts admits a field of the result only where it has the same index in every layout of the result.
 const namesOfResultField = ({ type }: ModelResult, index: number): (ModelName | null)[] =>
   type.parts.flatMap(part => (part.part === "Layout" ? [part.layout.fields[index].name] : []));
 
-// An object can have a property under one of these names that no compiled code stored.
-// A name dropped from this set lets the front end's link mark a field that native code fills as never written.
 function findNamesStoredByNativeCode(model: TableModel): Set<ModelName> {
   const stored = new Set<ModelName>();
   const add = (names: Iterable<ModelName | null>): void => {
     for (const name of names) if (name !== null) stored.add(name);
   };
   add(model.builtins.filter(builtin => builtin.holder !== null).map(builtin => builtin.name));
-  // null: the class does not say. Not "?? []": the generator runs without a type check, and that would take a list that is undefined for an empty one.
   for (const { namesDefinedOnNewInstances } of model.classes) {
     if (namesDefinedOnNewInstances !== null) add(namesDefinedOnNewInstances);
   }
@@ -328,7 +322,6 @@ function findNamesStoredByNativeCode(model: TableModel): Set<ModelName> {
   return stored;
 }
 
-// One bit for each name.
 function emitNamesStoredByNativeCode(model: TableModel): string {
   const bits = new Uint8Array(Math.ceil(model.names.length / 8));
   for (const { number } of findNamesStoredByNativeCode(model)) bits[number >> 3] |= 1 << (number & 7);
@@ -455,7 +448,6 @@ function formatHostRead({ context, exportName, use }: ModelHostRead): string {
   ]);
 }
 
-// A program that names one of these comes by an object on which native code finds a method that it calls with the start-up loads.
 function emitEntriesLeadingToStartupLoads(model: TableModel): string {
   const closure = new DependencyClosure(model);
   return emitSlice(
@@ -464,7 +456,6 @@ function emitEntriesLeadingToStartupLoads(model: TableModel): string {
   );
 }
 
-// What code that nobody has read enters in the library, whatever the program is. Load holds it for a program in which such code may run.
 function emitFunctionsOfOpenRealm(model: TableModel): string {
   const { functionsOfLanguage, functionsOfHost } = openRealmOf(model);
   return emitSlice(

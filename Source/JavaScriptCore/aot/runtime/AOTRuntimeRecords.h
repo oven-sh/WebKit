@@ -32,7 +32,6 @@ class LocalAllocator;
 
 namespace AOT {
 
-// A deletion asks the receiver alone, so nothing that is filed for one depends on a chain, and only the hashed table has them.
 enum class SlotAccess : uint8_t { Read, Store, Define, Delete };
 static constexpr unsigned numberOfSlotAccesses = 3;
 inline constexpr std::array allSlotAccesses { SlotAccess::Read, SlotAccess::Store, SlotAccess::Define };
@@ -55,7 +54,6 @@ enum class SlotPayload : uint8_t { None, Holder, WordIndex, Field, FieldAndHolde
 enum class SlotLocation : uint8_t { None, WordIndex, HiddenWordOffset };
 enum class SlotPresence : uint8_t { Unknown, Present, Absent, ReadsSlot };
 
-// What is written into the slot of a field that goes away.
 enum class AbsentPattern : uint8_t { ZeroInEightBytes, ZeroInFourBytes, ZeroInOneByte, Int32, Integer, Double };
 
 constexpr std::optional<AbsentPattern> absentPatternOf(SlotRepresentation representation)
@@ -134,30 +132,21 @@ struct alignas(16) Slot {
     static constexpr uint8_t growsStorage = static_cast<uint8_t>(SlotKindFlag::GrowsStorage);
     static constexpr uint8_t inheritsGetter = static_cast<uint8_t>(SlotKindFlag::InheritsGetter);
     static constexpr uint8_t storageHasIndexingHeader = 1 << 6;
-    // Of every kind but Value and Absent. One comparison of the flags with isOwn sorts a slot for reads: equal is an own value in the cell, below is an inherited value or Absent, above is another own value, and negative is a slot for the handler of its kind.
     static constexpr uint8_t needsHandler = 1 << 7;
-    // Of FieldOrInherited and FieldOrInheritedSetter, which never grow storage.
     static constexpr uint8_t inheritedIsOutOfLine = storageHasIndexingHeader;
-    // Of FieldCreation, which never has absentIsUndefined: the key order alone says that the field exists, and its slot admits undefined. A store of undefined that finds no granule lists the key and asks for none.
     static constexpr uint8_t undefinedNeedsNoStorage = absentIsUndefined;
-    // Of FieldCreation, for a field in the cell whose slot holds any value as it is and whose type is that of any value, so that the type has nothing to say.
     static constexpr uint8_t remembersOrder = growsStorage;
-    // Of Field and FieldOrInherited in a slot for reads, which never grow storage: the field may exist where its slot is empty, it is undefined then, and only the key order says whether it does.
     static constexpr uint8_t emptySlotMayBeUndefined = growsStorage;
-    // Of FieldRemoval, whose location is the offset of the slot of the field in the cell: the field is filled at birth, and the AbsentPattern of the slot.
     static constexpr uint8_t leavesStateOfBirth = absentIsUndefined;
-    // For TypedArrayLength: the value read is the view's byte offset in its buffer.
     static constexpr uint8_t readsByteOffset = isOutOfLine;
     static constexpr unsigned absentPatternShift = 4;
     static constexpr uint8_t absentPatternMask = 7;
     static constexpr uint8_t allFlags = UINT8_MAX;
 
-    // The type is an offset in the tables of the image that runs.
     struct FieldPayload {
         SlotData slot;
         uint32_t type;
     };
-    // Where the slot of the field is empty, the property of the holder counts: the location and inheritedIsOutOfLine say where it is.
     struct FieldAndHolderPayload {
         SlotData slot;
         uint32_t holder;
@@ -174,7 +163,6 @@ struct alignas(16) Slot {
         StructureID newStructureID;
         uint32_t newStorageCapacity;
     };
-    // Of ExtraPropertyRemoval: the order word of the objects that the removal was seen on. It stays as it is.
     struct RemovalPayload {
         StructureID newStructureID;
         uint32_t orderWord;
@@ -240,8 +228,6 @@ struct alignas(16) Slot {
         return slot;
     }
     static std::optional<Slot> tryCreateFieldAndHolder(StructureID, Kind, uint8_t flags, SlotData, JSCell* holder, PropertyOffset, uintptr_t cageBase);
-    // The holder is a compiled object above the receiver with a field of this name.
-    // A positive location is the 32-bit word of the holder that holds the integer, a negative one that of the reference: a word that says something else goes to the lookup.
     static Slot createInheritedField(StructureID structureID, uint8_t flags, JSCell* holder, int16_t location = 0)
     {
         ASSERT(holder && !(flags & (isOwn | isOutOfLine)));
@@ -288,7 +274,6 @@ struct alignas(16) Slot {
         slot.customAccessor = { index, 0 };
         return slot;
     }
-    // The receivers are proxies, whose handlers answer. The key is what an access hands to the trap. The location is the number of the name where the front tables have a column for it, or zero.
     static Slot createForProxies(StructureID structureID, JSCell* key, uint16_t columnOfName)
     {
         Slot slot = create(structureID, Kind::Uncacheable, 0, columnOfName);
@@ -361,7 +346,6 @@ inline constexpr std::array allSlotKinds {
 #undef AOT_LIST_SLOT_KIND
 };
 inline constexpr unsigned numberOfSlotKinds = allSlotKinds.size();
-// The kinds behind are filed for deletions, which look at the kind themselves.
 inline constexpr unsigned numberOfSlotKindsWithHandlers = static_cast<unsigned>(Slot::Kind::Uncacheable) + 1;
 inline constexpr std::span slotKindsWithHandlers = std::span { allSlotKinds }.first<numberOfSlotKindsWithHandlers>();
 
@@ -548,7 +532,6 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
         else {
             if (MarkedBlockCage::baseOf(slot.holder) != cageBase || (Slot::locationOf(kind) == SlotLocation::WordIndex && !packWordIndex(slot.wordIndex())))
                 return std::nullopt;
-            // A word out of reach is only a slower read.
             if (kind == Slot::Kind::InheritedField)
                 packWordIndex(static_cast<int16_t>(slot.location));
             payload = MarkedBlockCage::encode(cageBase, slot.holder);
@@ -667,13 +650,10 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
 }
 
 struct SiteCacheState {
-    // A site that goes on missing behind every fill meets objects of many Structures, and no fill helps it.
     static constexpr unsigned maxRefillCount = 5;
     static constexpr unsigned slotAddressShift = 3;
-    // Sites share the states by address: what a state says only decides when a filled site asks to be filled again.
     static constexpr unsigned numberOfStates = 4096;
     static constexpr uint32_t offsetMask = (numberOfStates - 1) * 2;
-    // The misses of all empty sites are counted together: the counter goes up by this step, and the miss that wraps it is a sample.
     static constexpr unsigned missesOfEmptySitesPerSample = 32;
     static constexpr unsigned sampleStep = (UINT8_MAX + 1) / missesOfEmptySitesPerSample;
     static constexpr uint16_t missesBeforeRefill(unsigned refillCount) { return static_cast<uint16_t>((4u << (2 * std::min(refillCount, maxRefillCount))) - 1); }
@@ -681,53 +661,32 @@ struct SiteCacheState {
     uint16_t missesLeft;
 };
 
-// What a place of the program does with what it remembers.
 enum class SiteUse : uint8_t { Read, Call };
 
-// What a place of the program that reads or calls under a name found there last: two answers of eight bytes, which the stub of the place asks in front of every table.
-// An answer by shape holds of every compiled object of one layout, whatever else the object has and whatever is above it: the object has the property as a plain value so many bytes into its cell, and a word of zero there says that this object does not. Nothing ends it.
-// An answer by Structure holds of every cell of one Structure. It ends with the Structure, and what it says of the objects above the receiver ends when one of them changes.
-// A place that reads has one by shape and then one by Structure. A place that calls has two by Structure.
-// No cell has the StructureID zero, so an empty answer by Structure fits none. Other cells than compiled objects may have zero where those have the word of their shape: whoever asks an answer by shape looks for compiledObjectShapeBit first.
 struct alignas(16) SiteAnswers {
-    // In the order in which places that read meet them: the stub tells two of them from the rest by one comparison.
     enum class Form : uint8_t {
-        // The operand is the index of the word in the butterfly of the receiver, a signed number.
         OwnValueInStorage,
-        // The operand names a holder above the receiver as a reference of 32 bits does. The index of the word in its butterfly, a signed number, is the operand of the other answer of the place, which has no key.
         ValueInStorageOfHolder,
-        // The operand counts words of eight bytes from the base of the cell cage, to a word in the cell of a holder above the receiver.
-        // Where neither the receiver nor anything above it has the name, to the word of State::objectThatHoldsUndefined.
         ValueInWordOfCage,
-        // As OwnValueInCell, of a compiled object: a word of zero says that this object does not have the property.
         OwnFieldInCell,
-        // An accessor. The operand is that of ValueInStorageOfHolder, ValueInWordOfCage, OwnValueInStorage and OwnValueInCell, and the word that it names holds the GetterSetter. Of a place that reads alone.
         GetterInStorageOfHolder,
-        // The operand counts bytes from the receiver, which is no compiled object. The word always holds a value.
         OwnValueInCell,
-        // Among the extra properties of a compiled object: in the lowest byte of the operand the place of the hidden word in the receiver, in words of four bytes, and above it, signed, the index of the word in the cell or in the butterfly of what the hidden word names.
         ExtraValueInStorage,
         ExtraValueInCell,
         GetterInWordOfCage,
         OwnGetterInStorage,
         OwnGetterInCell,
-        // The name is `length`, the receiver a typed array, and what is found above it the getter of the engine: Slot::Kind::TypedArrayLength. No operand. Of a place that reads alone.
         LengthOfTypedArray,
-        // As OwnFieldInCell, of a slot that holds no boxed value but a reference of 32 bits, or a whole number of 32 bits. A mark in the slot says that this object does not have the property there. Of a place that reads alone.
         OwnNarrowReferenceInCell,
         OwnInt32InCell,
-        // Of forPlacesWithout() alone. The key names no Structure.
         Nothing = 15,
     };
-    // A Structure is a cell, so these bits of its StructureID are zero. The form lies there, so written that the form that the use meets most is zero: then one comparison finds both.
     static constexpr uint32_t formMask = 15;
     static constexpr unsigned indexShiftInOperandOfExtraValue = 8;
     static constexpr Form mostCommonForm(SiteUse use) { return use == SiteUse::Read ? Form::OwnValueInStorage : Form::ValueInStorageOfHolder; }
     static constexpr uint32_t bitsOf(SiteUse use, Form form) { return static_cast<uint32_t>(form) ^ static_cast<uint32_t>(mostCommonForm(use)); }
     static constexpr Form formOf(SiteUse use, uint32_t key) { return static_cast<Form>((key & formMask) ^ static_cast<uint32_t>(mostCommonForm(use))); }
 
-    // The word of a shape is the negative of a number of 24 bits, so it has every bit above them, and a key by shape lacks at most one of those, which says how the slot is read: bitsTurnedForAnswersByShape.
-    // A StructureID is the low half of an address, and the heap of Structures may lie anywhere: under a limit on address space it is small and begins at a multiple of its own size. One that looks like that is not remembered.
     static constexpr uint32_t bitsOfEveryShapeWord = ~static_cast<uint32_t>(Number24::max);
     static constexpr uint32_t bitsThatKeyByShapeMayLack = 63u << 25;
     static constexpr bool looksLikeKeyByShape(uint32_t key)
@@ -751,8 +710,6 @@ struct alignas(16) SiteAnswers {
         ASSERT(shapeWord & compiledObjectShapeBit);
         return { shapeWord, offsetInCell };
     }
-    // By shape too: the plain value fills a granule of the Extension of the object, whose narrow word is the first field. The key is the word of the shape with one bit turned, which is the word of no shape.
-    // The operand is the number of granules behind this one. An Extension without the granule, or a word of zero in it, says that this object does not have the property in its slot.
     static constexpr uint32_t bitTurnedForFieldInExtension = 1u << 30;
     static std::optional<Answer> tryByShapeInExtension(uint32_t shapeWord, uint32_t offsetInExtension)
     {
@@ -761,16 +718,13 @@ struct alignas(16) SiteAnswers {
             return std::nullopt;
         return Answer { shapeWord ^ bitTurnedForFieldInExtension, maxExtensionGranules - 1 - granuleOf(offsetInExtension) };
     }
-    // By shape as well: the object has the property in a slot of its cell that holds no boxed value. The key is the word of the shape with another bit turned, which says how the slot is read. The operand counts bytes from the receiver.
     static constexpr uint32_t bitTurnedForInt32InCell = 1u << 29;
     static constexpr uint32_t bitTurnedForInt64InCell = 1u << 28;
     static constexpr uint32_t bitTurnedForDoubleInCell = 1u << 27;
     static constexpr uint32_t bitTurnedForNarrowReferenceInCell = 1u << 26;
     static constexpr uint32_t bitTurnedForEncodedByteInCell = 1u << 25;
     static constexpr uint32_t bitsTurnedForAnswersByShape = bitTurnedForFieldInExtension | bitTurnedForInt32InCell | bitTurnedForInt64InCell | bitTurnedForDoubleInCell | bitTurnedForNarrowReferenceInCell | bitTurnedForEncodedByteInCell;
-    // AllocationData keeps the shape of an allocation in 24 bits. So the word of every shape has all of these bits, and a word with one of them turned is the word of no shape.
     static_assert(Number24::max < bitTurnedForEncodedByteInCell && bitsTurnedForAnswersByShape == bitsThatKeyByShapeMayLack && (bitsOfEveryShapeWord & compiledObjectShapeBit) && !(bitsThatKeyByShapeMayLack & ~bitsOfEveryShapeWord));
-    // Only forms with a mark for "absent": a field may leave its slot.
     static constexpr uint32_t bitTurnedForSlotInCell(SlotRepresentation representation)
     {
         switch (representation) {
@@ -815,15 +769,11 @@ struct alignas(16) SiteAnswers {
             return std::nullopt;
         return Answer { bits | bitsOf(use, form), operand };
     }
-    // Where a place that reads has no answer by shape. Other cells than compiled objects may have zero where those have the word of their shape, so zero would fit them. This is the word of no shape, and no other cell has compiledObjectShapeBit there.
-    // As the key of a Structure it has the form Nothing for a place that calls. (keyOfNoShape, above.)
-    // What a place without answers finds: they fit no cell, whatever the use of the place.
     static constexpr SiteAnswers forPlacesWithout() { return { { keyOfNoShape, 0 }, { 0, 0 } }; }
     static constexpr Answer withoutKey(SiteUse use, bool isFirst, uint32_t operand = 0) { return { use == SiteUse::Read && isFirst ? keyOfNoShape : 0, operand }; }
     bool holdsShape() const { return first.isByShape() && first.key != keyOfNoShape; }
     bool isEmpty() const { return (!first.key || first.key == keyOfNoShape) && !second.key; }
 
-    // Where the newest answer by Structure goes, and the other one.
     Answer& newestByStructure(SiteUse use) { return use == SiteUse::Read ? second : first; }
     Answer& besideNewestByStructure(SiteUse use) { return use == SiteUse::Read ? first : second; }
 
@@ -854,7 +804,6 @@ static_assert(Slot::locationShiftInHeader == 8 * Slot::offsetOfLocation());
 static_assert((Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::absentIsUndefined | Slot::growsStorage | Slot::inheritsGetter | Slot::storageHasIndexingHeader | Slot::needsHandler) == Slot::allFlags);
 static_assert(Slot::isOwn > (Slot::isOutOfLine | Slot::dependsOnChain) && static_cast<int8_t>(Slot::needsHandler) < 0);
 static_assert(!static_cast<unsigned>(Slot::Kind::Empty));
-// Whoever asks whether a property is there reads the slot of either in the same way, and tells the two from all other kinds by one comparison.
 static_assert((static_cast<unsigned>(Slot::Kind::Field) | 1) == static_cast<unsigned>(Slot::Kind::FieldGetter) && !(static_cast<unsigned>(Slot::Kind::Field) & 1));
 static_assert(numberOfSlotKinds <= 1u << PackedSlot::kindBits);
 static_assert(std::is_aggregate_v<Slot> && std::is_trivially_copyable_v<Slot>);

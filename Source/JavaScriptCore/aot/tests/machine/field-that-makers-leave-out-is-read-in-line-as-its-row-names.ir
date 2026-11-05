@@ -1,0 +1,289 @@
+# `interface Parcel { weight: number; note?: string; count?: number }`, made often, and no maker gives `note` or `count`: they lie in the Extension (plan/a-field-of-a-record-that-no-maker-gives-lies-out-of-line.ir).
+# Most objects have no Extension at all, so a read of such a field is written in line wherever it stands and asks first whether there is one. That is a state of knowledge with a name of its own in the schema, FieldLeftOutByMakers,
+# and the rows of the five reads of slots list it under openUnder. `later` is a name that Link appended: outside of loops it is read by the stub, as the rows say of FieldInExtension, and in a loop in line.
+# the emitter takes the form from the row, so nothing is listed as not named, and a whole build that writes the report and checks itself stops at nothing.
+# f1 = pack, f2 = mark, f3 = noteOf, f4 = holdsCount, f5 = laterOf, f6 = notesOf
+# -- source: parcels.ts
+# declare function sink(...values: unknown[]): void;
+# interface Parcel { weight: number; note?: string; count?: number }
+# let work = 0;
+# function pack(weight: number): Parcel { for (let i = 0; i < 2; i++) work = (work + i) | 0; return { weight }; }
+# function mark(parcel: Parcel) { for (let i = 0; i < 2; i++) work = (work + i) | 0; parcel.note = "noted"; parcel.count = 2; (parcel as any).later = 1; }
+# function noteOf(parcel: Parcel) { for (let i = 0; i < 2; i++) work = (work + i) | 0; return parcel.note; }
+# function holdsCount(parcel: Parcel) { for (let i = 0; i < 2; i++) work = (work + i) | 0; return "count" in parcel; }
+# function laterOf(parcel: Parcel) { for (let i = 0; i < 2; i++) work = (work + i) | 0; return (parcel as any).later; }
+# function notesOf(parcels: Parcel[]) { let text = ""; for (let i = 0; i < parcels.length; i++) text += String(parcels[i].note) + String((parcels[i] as any).later); return text; }
+# const parcels: Parcel[] = [];
+# for (let i = 0; i < 4; i++) parcels.push(pack(i));
+# mark(parcels[1]);
+# sink(noteOf(parcels[0]), noteOf(parcels[1]), holdsCount(parcels[0]), holdsCount(parcels[1]), laterOf(parcels[0]), laterOf(parcels[1]), notesOf(parcels), work);
+# -- end of source
+# OPTIONS: report=Flow
+# JSC-OPTIONS: --verifyAOTMachineCode=1
+# RUN: bytes-by-form mechanisms=all
+# CHECK-NOT: the build failed
+# CHECK-NOT: not named:
+# CHECK: every form is named
+# RUN(ROWS): bytes-by-form mechanisms=all
+# ROWS: GetSlotOrUndefined FieldInExtension Anywhere Closed
+# ROWS: GetSlotOrUndefined FieldLeftOutByMakers Anywhere Open
+# ROWS: GetSlotOrUndefined FieldLeftOutByMakers Loop Open
+# RUN(FILLED): bytes-by-form mechanisms=all
+# FILLED: IsSlotFilled FieldLeftOutByMakers Anywhere Open
+# RUN(WHOLE): compile mechanisms=all
+# WHOLE-NOT: the build failed
+# RUN(NAMED): named-forms GetSlot GetSlotOrUndefined IsSlotFilled GetSlotGetter GetSlotSetter
+# REPEAT: read = GetSlot GetSlotOrUndefined IsSlotFilled GetSlotGetter GetSlotSetter
+# NAMED: %(read) Always Open, in a loop Open by the loop
+# NAMED: %(read) FieldInExtension Closed, in a loop Open by the loop
+# NAMED: %(read) FieldLeftOutByMakers Open, in a loop Open by the loop
+# NAMED: %(read) in Loop Open
+# END REPEAT
+
+module m0 path="parcels.ts" displayPath="parcels.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=61 fields=[{key="count" declared={type=undefined|number}}, {key="note" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}, {key="weight" declared={type=number} flags=[IsRequired]}] declaredOrder=[2, 1, 0] ownFieldCount=3
+data d0 root=Array{contents=undefined|null|L0} module=m0
+variable g0 name="work" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} @0
+    v12 = Integer @129
+    v13 = Convert v12 declared={type=number} @129
+    PutModuleVariable v13 variable=g0 @122
+    v15 = Data data=d0 @943
+    v16 = Convert v15 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} @943
+    v17 = Integer @960
+    v18 = Convert v17 declared={type=number} @960
+    Jump -> next b1(v18) @956
+  b1(v19: number):
+    LoopHint @956
+    v21 = Integer integer=4 @967
+    v22 = Less v19, v21 @967
+    Branch v22 -> taken b2(), notTaken b3() @967
+  b2():
+    v23 = PropGet v16 key="push" @975
+    v24 = Call v1, -, v19 calleeName="pack" @988
+    v25 = Call v23, v16, v24 calleeKey="push" calleeName="parcels.push" @983
+    v26 = Convert v25 declared={type=number} illTypedCause=DeclarationWithoutBody @975
+    v27 = Increment v19 @970
+    v28 = Convert v27 declared={type=number} @970
+    Jump -> next b1(v28) @970
+  b3():
+    v29 = Integer integer=1 @1003
+    v30 = ElemGet v16, v29 @1003
+    v31 = Call v3, -, v30 calleeName="mark" @998
+    v32 = Builtin builtin=GlobalThis @1016
+    v33 = PropGet v32 key="sink" [isFreeName] @1016
+    v34 = Integer @1028
+    v35 = ElemGet v16, v34 @1028
+    v36 = Call v5, -, v35 calleeName="noteOf" @1021
+    v37 = Integer integer=1 @1048
+    v38 = ElemGet v16, v37 @1048
+    v39 = Call v5, -, v38 calleeName="noteOf" @1041
+    v40 = Integer @1072
+    v41 = ElemGet v16, v40 @1072
+    v42 = Call v7, -, v41 calleeName="holdsCount" @1061
+    v43 = Integer integer=1 @1096
+    v44 = ElemGet v16, v43 @1096
+    v45 = Call v7, -, v44 calleeName="holdsCount" @1085
+    v46 = Integer @1117
+    v47 = ElemGet v16, v46 @1117
+    v48 = Call v9, -, v47 calleeName="laterOf" @1109
+    v49 = Integer integer=1 @1138
+    v50 = ElemGet v16, v49 @1138
+    v51 = Call v9, -, v50 calleeName="laterOf" @1130
+    v52 = Call v11, -, v16 calleeName="notesOf" @1151
+    v53 = GetModuleVariable variable=g0 @1169
+    v54 = CheckInitialized v53 name="work" @1169
+    v55 = Call v33, -, v36, v39, v42, v45, v48, v51, v52, v54 calleeName="sink" @1016
+    v56 = Undefined @1016
+    Return v56 @1016
+}
+function f1 name="pack" module=m0 position=132 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @185
+    v2 = Convert v1 declared={type=number} @185
+    Jump -> next b1(v2) @181
+  b1(v3: number):
+    LoopHint @181
+    v5 = Integer integer=2 @192
+    v6 = Less v3, v5 @192
+    Branch v6 -> taken b2(), notTaken b3() @192
+  b2():
+    v7 = GetModuleVariable variable=g0 @200
+    v8 = CheckInitialized v7 name="work" @200
+    v9 = GetModuleVariable variable=g0 @208
+    v10 = CheckInitialized v9 name="work" @208
+    v11 = Add v10, v3 @215
+    v12 = Integer @220
+    v13 = BitOr v11, v12 @220
+    v14 = Convert v13 declared={type=number} @200
+    PutModuleVariable v14 variable=g0 @200
+    v16 = Increment v3 @195
+    v17 = Convert v16 declared={type=number} @195
+    Jump -> next b1(v17) @195
+  b3():
+    v18 = Convert v0 declared={type=number} @232
+    v19 = NewObject -, v18 layout=L0 fields=[2] @230
+    v20 = FinishObject v19 @230
+    v21 = Convert v20 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} @230
+    Return v21 @230
+}
+function f2 name="mark" module=m0 position=244 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer @289
+    v2 = Convert v1 declared={type=number} @289
+    Jump -> next b1(v2) @285
+  b1(v3: number):
+    LoopHint @285
+    v5 = Integer integer=2 @296
+    v6 = Less v3, v5 @296
+    Branch v6 -> taken b2(), notTaken b3() @296
+  b2():
+    v7 = GetModuleVariable variable=g0 @304
+    v8 = CheckInitialized v7 name="work" @304
+    v9 = GetModuleVariable variable=g0 @312
+    v10 = CheckInitialized v9 name="work" @312
+    v11 = Add v10, v3 @319
+    v12 = Integer @324
+    v13 = BitOr v11, v12 @324
+    v14 = Convert v13 declared={type=number} @304
+    PutModuleVariable v14 variable=g0 @304
+    v16 = Increment v3 @299
+    v17 = Convert v16 declared={type=number} @299
+    Jump -> next b1(v17) @299
+  b3():
+    v18 = String string="noted" @341
+    PropSet v0, v18 key="note" @327
+    v20 = Integer integer=2 @365
+    PropSet v0, v20 key="count" @350
+    v22 = Integer integer=1 @392
+    PropSet v0, v22 key="later" @369
+    v24 = Undefined @369
+    Return v24 @369
+}
+function f3 name="noteOf" module=m0 position=397 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer @444
+    v2 = Convert v1 declared={type=number} @444
+    Jump -> next b1(v2) @440
+  b1(v3: number):
+    LoopHint @440
+    v5 = Integer integer=2 @451
+    v6 = Less v3, v5 @451
+    Branch v6 -> taken b2(), notTaken b3() @451
+  b2():
+    v7 = GetModuleVariable variable=g0 @459
+    v8 = CheckInitialized v7 name="work" @459
+    v9 = GetModuleVariable variable=g0 @467
+    v10 = CheckInitialized v9 name="work" @467
+    v11 = Add v10, v3 @474
+    v12 = Integer @479
+    v13 = BitOr v11, v12 @479
+    v14 = Convert v13 declared={type=number} @459
+    PutModuleVariable v14 variable=g0 @459
+    v16 = Increment v3 @454
+    v17 = Convert v16 declared={type=number} @454
+    Jump -> next b1(v17) @454
+  b3():
+    v18 = PropGet v0 key="note" @489
+    Return v18 @489
+}
+function f4 name="holdsCount" module=m0 position=504 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer @555
+    v2 = Convert v1 declared={type=number} @555
+    Jump -> next b1(v2) @551
+  b1(v3: number):
+    LoopHint @551
+    v5 = Integer integer=2 @562
+    v6 = Less v3, v5 @562
+    Branch v6 -> taken b2(), notTaken b3() @562
+  b2():
+    v7 = GetModuleVariable variable=g0 @570
+    v8 = CheckInitialized v7 name="work" @570
+    v9 = GetModuleVariable variable=g0 @578
+    v10 = CheckInitialized v9 name="work" @578
+    v11 = Add v10, v3 @585
+    v12 = Integer @590
+    v13 = BitOr v11, v12 @590
+    v14 = Convert v13 declared={type=number} @570
+    PutModuleVariable v14 variable=g0 @570
+    v16 = Increment v3 @565
+    v17 = Convert v16 declared={type=number} @565
+    Jump -> next b1(v17) @565
+  b3():
+    v18 = PropHas v0 key="count" @608
+    Return v18 @608
+}
+function f5 name="laterOf" module=m0 position=621 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer @669
+    v2 = Convert v1 declared={type=number} @669
+    Jump -> next b1(v2) @665
+  b1(v3: number):
+    LoopHint @665
+    v5 = Integer integer=2 @676
+    v6 = Less v3, v5 @676
+    Branch v6 -> taken b2(), notTaken b3() @676
+  b2():
+    v7 = GetModuleVariable variable=g0 @684
+    v8 = CheckInitialized v7 name="work" @684
+    v9 = GetModuleVariable variable=g0 @692
+    v10 = CheckInitialized v9 name="work" @692
+    v11 = Add v10, v3 @699
+    v12 = Integer @704
+    v13 = BitOr v11, v12 @704
+    v14 = Convert v13 declared={type=number} @684
+    PutModuleVariable v14 variable=g0 @684
+    v16 = Increment v3 @679
+    v17 = Convert v16 declared={type=number} @679
+    Jump -> next b1(v17) @679
+  b3():
+    v18 = PropGet v0 key="later" @715
+    Return v18 @714
+}
+function f6 name="notesOf" module=m0 position=739 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = String string="" @788
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @788
+    v3 = Integer @805
+    v4 = Convert v3 declared={type=number} @805
+    Jump -> next b1(v2, v4) @801
+  b1(v5: undefined|null|string, v6: number):
+    LoopHint @801
+    v8 = PropGet v0 key="length" @812
+    v9 = Less v6, v8 @812
+    Branch v9 -> taken b2(), notTaken b3() @812
+  b2():
+    v10 = Builtin builtin=String @841
+    v11 = ElemGet v0, v6 @848
+    v12 = PropGet v11 key="note" @856
+    v13 = Call v10, -, v12 calleeName="String" @841
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @841
+    v15 = Builtin builtin=String @867
+    v16 = ElemGet v0, v6 @875
+    v17 = PropGet v16 key="later" @883
+    v18 = Call v15, -, v17 calleeName="String" @867
+    v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @867
+    v20 = Add v14, v19 @867
+    v21 = Add v5, v20 @867
+    v22 = Convert v21 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @833
+    v23 = Increment v6 @828
+    v24 = Convert v23 declared={type=number} @828
+    Jump -> next b1(v22, v24) @828
+  b3():
+    Return v5 @909
+}

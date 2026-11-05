@@ -11,53 +11,32 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Numbers by expectation. A `ValueID` is a value of the body being read, a `Reference` is of Code.
-// A null Reference or TypeID and `false` always mean: nothing was built, nothing is claimed, the caller goes on as if it had not asked.
-
-// ---- AOTWalkNumberExpectations.cpp
 struct ExpectationOfNumber {
     TypeID type;
     bool isDeclared { false };
     bool isHeld { false };
 };
-// For findExpectationForGuesses(). `found`: what was found, a null type where nothing was. It answers `found` or something better. NO PROOF: every user tests.
 ExpectationOfNumber numbersExpectedOf(Walker&, ValueID input, ExpectationOfNumber found);
-// Facts::held() of the entry parameter, field, variable, capture or result that `input` is read from. Null: none, or nothing is held.
 TypeID typeHeldAtPositionOf(Walker&, ValueID input);
-// By the body: behind casts and sums every mention of the value leads to a bit operator, an index, or a position or a count of a row of the table.
 bool usesSpeakForInt32(Walker&, ValueID input);
-// `source.position < source.text.length`, `source.text.charCodeAt(source.position)`, `source.position++`: of a read by name in a loop. Each mention of the slot is a read of its own, as of a variable that closures share.
-// By the body alone: the turns step the slot by one, or usesSpeakForInt32() of one of its reads. `found` wherever they do not: what was seen to arrive in a slot says little of what data will bring, and `particle.x += particle.speed` says nothing.
 ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker&, ValueID input, ExpectationOfNumber found);
 
-// ---- AOTWalkNumberArms.cpp
 struct TestOfNumber {
     ValueID input;
     TypeID tested;
 };
-// The tests in a row > operations [begin, end) of the block with every proof bound > ONE other arm, walked under Walker::ClosedArm with the values as they stand > the two meet.
-// What the stretch defines and later code reads becomes a parameter. False: no test could be built, and nothing is walked. True: both arms have walked the stretch.
 bool walkStretchBehindTestsOfNumbers(Walker&, std::span<const TestOfNumber>, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm);
-// For the files of this package. Among the operations of the block: no stretch goes on to this place or past it.
 uint32_t limitOfStretchOfNumbers(const Walker&, const BodyBlock&);
 Reference buildTestOfNumber(Walker&, Reference value, TypeID tested, Origin);
 Reference buildProofOfNumber(Walker&, Reference value, Reference test, Origin);
 
-// ---- AOTWalkNumberUpdatesOfFields.cpp
-
-// ---- AOTWalkNumberPaths.cpp
-// A link of the chain in front of callBuiltin(), behind `has(Mechanism::Guesses) && m_opensGuesses`.
 inline constexpr OpcodeSet opcodesThatBuildArmsInFrontOfTypedFormsTakes = allSums | allBitwiseOperators | allRelations | OpcodeSet { Opcode::Mul, Opcode::Negate, Opcode::StrictEq }
     | operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative, OperatorKind::Bitwise });
 AOT_LINK_OF_WALK(buildArmsInFrontOfTypedForms, opcodesThatBuildArmsInFrontOfTypedFormsTakes)
-// Behind openGuessAt(), in front of replaceOperation().
 inline constexpr OpcodeSet opcodesThatBuildOperatorBesideOneNumberTakes { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
 AOT_LINK_OF_WALK(buildOperatorBesideOneNumber, opcodesThatBuildOperatorBesideOneNumberTakes)
-// Proven a number, boxed, may be an int32 and may be none.
 bool isTaggedNumber(Walker&, Reference);
-// For buildOperatorOnNumbers(). `sum`: the draft of the operation in the form that was chosen, with its operands as they are. True: the one user of the sum takes a box, and the code of the sum looks at the tags itself.
 bool sumStaysBoxed(Walker&, const BodyValue& written, const Draft& sum);
-// For buildOperatorOnNumbers(), of a bit operator in the form Numbers: `x | 0`, `x >>> 0` on a boxed number. True: the conversion is built and bound.
 bool buildTruncationOfBoxedNumber(Walker&, const BodyValue&);
 
 } } } // namespace JSC::AOT::Typed

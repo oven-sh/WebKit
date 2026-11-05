@@ -196,9 +196,6 @@ uint32_t StubCalls::indexOf(Typed::CodeUnit callee)
     return findOrAppendSymbol(m_callees, callee);
 }
 
-// Every call records a return site, even a call that never returns: a throw finds its site and its handler by it.
-// Nothing may be emitted after the call here: a stub that throws at a site reads the words after its call, and a stub that suspends resumes there.
-// Whoever encodes the function pads after the last instruction, so that the body does not end in a call.
 ALWAYS_INLINE uint32_t StubCalls::emitCall(CCallHelpers&, StubKey, CodeSymbol symbol, const RecordedCall& record)
 {
     uint32_t call = safeCast<uint32_t>(m_calls.size());
@@ -254,7 +251,6 @@ uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, NumberedImmediate immed
 {
     StubKey finalKey = resolveKey(key, std::nullopt).key;
     GPRReg destination = immediateGPROfStub(m_rememberedKeys, m_catalog, finalKey);
-    // The number is in its register before the thunk makes its moves, or the thunk moves it behind them.
     RELEASE_ASSERT(!argumentMovesUseRegister(moves, destination));
     if (movesNumbersInThunks(finalKey))
         return emitCall(jit, finalKey, { SymbolSpace::ArgumentThunk, appendThunkThatMovesNumber(m_argumentMoves, finalKey, immediate, moves) }, { 0, site, firstReadSite });
@@ -336,7 +332,6 @@ void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody&
             RELEASE_ASSERT(relocation.kind == RelocationKind::Call);
             returnOffset = relocation.offset + static_cast<uint32_t>(sizeOfNearCall);
         }
-        // Calls are recorded as they are emitted and relocations ascend, so both lists ascend and call() can promise an index.
         RELEASE_ASSERT(returnOffset >= previousReturnOffset);
         previousReturnOffset = returnOffset;
         returnSites[numberOfReturnSites++] = { returnOffset, call.site };

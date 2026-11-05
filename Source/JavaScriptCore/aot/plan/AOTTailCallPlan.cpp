@@ -28,7 +28,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// By node: where its targets begin, and one more.
 struct GraphOfTailCallPlan {
     std::span<const uint32_t> targetsOf(unsigned node) const { return targets.span().subspan(firstTargetOf[node], firstTargetOf[node + 1] - firstTargetOf[node]); }
 
@@ -38,9 +37,6 @@ struct GraphOfTailCallPlan {
 
 } // anonymous namespace
 
-// ---- Rows of tail calls that end
-
-// Null: native code that comes back, or nobody can tell. `comesBack` says which.
 static FunctionID calleeOfTailCallInTailCallPlan(const Program& program, const LinkTables& linked, FunctionID caller, const SummaryCall& call, bool& comesBack)
 {
     comesBack = false;
@@ -90,7 +86,6 @@ BitVector findFunctionsThatEndTheirTailCalls(const Program& program, const Facts
     StronglyConnectedComponents rings = computeStronglyConnectedComponents(numberOfFunctions, [&](unsigned node) {
         return graph.targetsOf(node);
     });
-    // A callee's component has the lower number, so whatever a function jumps to is settled in front of it.
     for (uint32_t member : rings.members) {
         if (!isJudged.quickGet(member) || makesTailCallThatNobodyFollows.quickGet(member) || rings.isInCycle.get(member))
             continue;
@@ -158,8 +153,6 @@ void checkFormsRoundRingsOfTailCalls(const Program& program, const Facts& facts,
     }
 }
 
-// ---- Registers
-
 static bool hasNoUnitBesideBodyAndEntriesInTailCallPlan(FunctionConvention convention)
 {
     for (unsigned role = 0; role < numberOfCodeRolesOfOneFunction; ++role) {
@@ -183,7 +176,6 @@ BitVector findFunctionsThatSaveRegistersOfCallers(const Program& program, const 
     uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());
     BitVector functions(numberOfFunctions);
 
-    // Whoever jumps to such a function has given up the frame in which it kept its registers for nothing.
     BitVector calleesOfTailCalls(numberOfFunctions);
     for (const LinkTables* tables : { &facts.linked(), &facts.held() }) {
         for (const LinkedCall& call : tables->calls) {
@@ -198,12 +190,9 @@ BitVector findFunctionsThatSaveRegistersOfCallers(const Program& program, const 
         if (!id || !data.flags.contains(RuntimeFunctionFlag::UsesStubConvention) || data.implements.empty())
             continue;
 
-        // The body is all the code that runs for a call of it: it leaves for no slow version, which would write what the callers keep.
-        // An entry for calls by value jumps to the body like anybody else. Whoever comes that way takes it for an ordinary function, which may write more than this one does.
         FunctionConvention convention = conventions.of(id);
         if (!convention.has(CodeRole::Body) || !hasNoUnitBesideBodyAndEntriesInTailCallPlan(convention))
             continue;
-        // What it jumped to would write registers that its callers keep.
         bool makesTailCall = std::ranges::any_of(facts.summaries().at(id).calls, [](const SummaryCall& call) {
             return call.isInTailPosition;
         });
@@ -218,8 +207,6 @@ BitVector findFunctionsThatSaveRegistersOfCallers(const Program& program, const 
     }
     return functions;
 }
-
-// ---- The driver
 
 void planTailCallsAndStackTests(const Program& program, const Facts& facts, Plan& plan, BuildContext&)
 {

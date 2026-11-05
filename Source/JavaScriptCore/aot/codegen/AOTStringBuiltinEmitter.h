@@ -56,13 +56,10 @@ private:
 
     StringEmitter& strings() { return emitter<StringEmitter>(); }
     CellPointer stringOperand(ValueID string) { return cellOperand(string); }
-    // Where the operand may be undefined at run time it counts as `whenUndefined`. NaN is what the conversion of undefined to a number gives: position 0.
     std::optional<Number> numberArgument(const InlineCall&, unsigned index, double whenUndefined = PNaN);
     std::optional<Condition> isUndefinedArgument(const InlineCall&, unsigned index);
     Word32 positionArgument(const InlineCall&, unsigned index, Word32 length, Word32 whenAbsent);
-    // NaN is 0. What lies beyond int64 is the least int64, and read as unsigned that is below no length.
     Integer countArgument(const InlineCall&, unsigned index);
-    // Yes: every unit is below 256. No says nothing.
     Condition is8Bit(CellPointer string);
     void continueIf(Condition condition, LBasicBlock otherwise) { strings().continueIf(condition, unlikelyEdge(otherwise)); }
     void finish(const InlineCall&, Operand naturalResult);

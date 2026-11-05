@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Mechanism 7: a proven number stays in the form that its operator gives it, and a parameter of a block holds it as Int32, Int64 or Double.
-// An unboxed number is a value like any other: a suspension saves it with the frame, and a throw hands it to the handler as an argument of the edge.
-// Nothing here tests or leaves: where integers may give -0, NaN, a fraction or too large a number, the checked form gives the true number as a Double.
-// Withheld: what an operator on numbers gives is boxed at once, and so is every parameter of a block.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -22,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalkTypedOperators.cpp
 OperatorForm formAllowedForTypedOperator(Walker&, const Draft&);
 OperatorForm formAllowedForTypedOperator(Walker&, Opcode, const BodyValue&, const InputsOfTypedOperation&);
 
@@ -55,16 +49,11 @@ Reference boxedUnlessNumbersAreUnboxed(Walker& walker, Reference number, Origin 
     return number;
 }
 
-// The form Numbers takes a number, and one that may be undefined or null. It has no code for a boolean.
 bool isTakenAsItIsByFormNumbers(const Type& type)
 {
     return type.isNumberOrNullish() || type.isUndefinedOrNull();
 }
 
-// ---- Arithmetic and bitwise operators
-
-// One operand is taken as any value, and the row does not list the form as open: the stub is called at every turn. That is the closed form.
-// So the links behind are asked, and a guess at the operand that is not proven gives Numbers.
 static bool isClosedFormOfOperatorOnNumbers(Opcode opcode, OperatorForm form)
 {
     bool takesAnyValue = form == OperatorForm::Generic || form == OperatorForm::NumberAndValue || form == OperatorForm::MayBeString;
@@ -90,8 +79,6 @@ void prepareOperandsForFormNumbers(Walker& walker, Draft& draft)
     }
 }
 
-// chooseOperatorForm() goes by the ranges: Integers only where no register wraps and the result is an integer, at 64 bits where it may leave int32.
-// A uint32 beside an int32 is compared and added at 64 bits, and a bitwise operator takes the low half of a wide integer.
 bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
     OperatorForm form = formAllowedForTypedOperator(walker, value.opcode(), value, inputs);

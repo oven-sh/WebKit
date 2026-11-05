@@ -398,9 +398,9 @@ inline void JSRopeString::convertToNonRope(String&& string) const
 }
 
 #if ENABLE(AOT)
-inline void JSRopeString::resolveSubstringBySharing(StringImpl& impl) const
+inline void JSRopeString::resolveBySharing(StringImpl& impl) const
 {
-    ASSERT(isSubstring());
+    ASSERT(isRope());
     ASSERT(impl.length() == length());
     convertToNonRope(String { impl });
 }

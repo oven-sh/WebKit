@@ -23,7 +23,6 @@ class HeapAnalyzer;
 
 namespace AOT {
 
-class ProgramStrings;
 struct State;
 
 class ProgramStatics {
@@ -34,26 +33,8 @@ public:
     static constexpr uint8_t cardIsDirty = RememberedSlotSet::writtenCard;
 
     explicit ProgramStatics(State&);
-    ~ProgramStatics();
 
-    void ensureProgramStaticsInitialized()
-    {
-        if (!m_programStaticsInitialized) [[unlikely]]
-            initializeProgramStatics();
-    }
-    void initializeStatics(uint32_t firstWord, uint32_t endWord);
     void putBack(uint32_t offset, uint32_t size);
-    // By its number in ProgramTables::staticsOfFiles(): the group and all that its files import.
-    void fillVariablesOfFiles(uint32_t group);
-    bool fillsVariablesWithFiles() const { return m_filledFiles; }
-    // For whoever hands out the names of a file that is being evaluated and may not have been entered.
-    void fillVariablesOfAllFiles();
-    void ensureVariableIsFilled(uint32_t offset)
-    {
-        if (offset / sizeof(uint64_t) - m_firstWordFilledWithFiles < m_numberOfWordsFilledWithFiles) [[unlikely]]
-            fillVariablesOfFiles(groupWithWord(offset / sizeof(uint64_t)));
-    }
-    bool isFilled(uint32_t offset) const;
     void didStoreRootInStatics(uint32_t offset) { m_slots.record(m_instance.statics() + offset); }
     void setCell(uint32_t offset, JSCell* cell) { at<RememberedSlot<JSCell*>>(offset).set(m_slots, cell); }
 
@@ -65,47 +46,38 @@ public:
 
     static JSValue readVariable(Instance&, SlotData);
     static JSValue readVariableWithoutAllocating(const Instance&, SlotData);
-    // Nothing has been stored to it. Allocates nothing.
     static bool isVariableEmpty(const Instance&, SlotData);
     static void writeVariable(Instance&, SlotData, JSValue);
 
     template<typename Visitor> void visitRoots(Visitor&);
 
-    // The variables are roots, and a heap snapshot shows a root without a name. So a cell stands for each module of ProgramTables::namedVariables() that has begun, and lists what its variables hold under their names.
-    // It hangs where the environment of a module hangs under the interpreter: below the loader of the realm, and below every closure of a function that the module defines.
     void willAnalyzeHeap(VM&);
-    // Null: the module had not begun when the snapshot was, or no snapshot shows its variables. A thread that marks may ask.
     JSCell* environmentOfModuleThatDefines(uint32_t closureNumber) const;
-    // By its place among the modules of ProgramTables::namedVariables().
+    JSCell* scopeInHeapSnapshotOf(JSCell* closure) const;
     void analyzeVariablesOfModule(JSCell* standIn, uint32_t module, HeapAnalyzer&) const;
 
 private:
     template<typename Appender> void visitRegion(Appender&, size_t begin, size_t end);
-    void initializeProgramStatics();
-    bool isInitialized(uint32_t offset) const;
-    uint32_t groupWithWord(uint32_t word) const;
     std::span<const VariableData> namedVariablesOfModule(uint32_t module) const;
-    // What the collector finds there. Allocates nothing, so a thread that marks may ask.
     JSCell* cellIn(SlotData) const;
 
     Instance& m_instance;
     const ProgramTables& m_tables;
-    ProgramStrings& m_strings;
     RememberedSlotSet m_slots;
-    bool m_programStaticsInitialized { false };
-    uint32_t m_readOnlyStaticsSize { 0 };
-    uint32_t m_firstWordFilledWithFiles { 0 };
-    uint32_t m_numberOfWordsFilledWithFiles { 0 };
-    uint8_t* m_filledFiles { nullptr };
-    // ProgramTables::namedVariables() as rows, and where the rows of each module begin and those of the last one end. Empty until the first heap snapshot.
     Vector<VariableData> m_namedVariables;
     Vector<uint32_t> m_firstNamedVariablesOfModules;
-    // The numbers of those modules. And for each closure number the place in that list of the module that defines the function, or the size of the list.
     Vector<uint32_t> m_modulesInHeapSnapshots;
     Vector<uint32_t> m_placesOfModulesOfClosureNumbers;
-    // Both are empty until the first heap snapshot, and immortal cells from then on. Null for a module that has had no cell in a snapshot.
     Structure* m_structureOfModuleEnvironments { nullptr };
     Vector<JSCell*> m_environmentsOfModules;
+    Structure* m_structureOfScopesOfClosures { nullptr };
+    struct ScopesOfClosures {
+        void clear();
+
+        VM* vm { nullptr };
+        Vector<std::pair<JSCell*, JSCell*>> list;
+    };
+    ScopesOfClosures m_scopesOfClosures;
 };
 
 } } // namespace JSC::AOT

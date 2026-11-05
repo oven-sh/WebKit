@@ -28,12 +28,10 @@ static constexpr size_t numberOfCurrentWorkRecords = 512;
 
 using CurrentWorkRecords = std::array<CurrentWork, numberOfCurrentWorkRecords>;
 
-// Never freed: a signal handler may be reading them at any moment.
 static constinit std::atomic<CurrentWorkRecords*> currentWorkRecords { nullptr };
 constinit CurrentWork sharedRecord { };
 constinit thread_local CurrentWork* recordOfThread = &sharedRecord;
 
-// Empty until the first thread takes a record.
 static std::span<CurrentWork> allCurrentWorkRecords()
 {
     CurrentWorkRecords* records = currentWorkRecords.load(std::memory_order_acquire);
@@ -61,7 +59,6 @@ struct CurrentWorkRecordHolder {
 #if OS(UNIX)
     static constexpr size_t signalStackSize = 512 * KB;
 
-    // A thread that ran out of stack has none left for the handler that reports it.
     void ensureSignalStack()
     {
         stack_t current { };
@@ -126,7 +123,6 @@ struct CurrentWorkAsRead {
     const char* step;
 };
 
-// Writes into the caller's buffer. What does not fit is left out.
 class CurrentWorkText {
 public:
     explicit CurrentWorkText(std::span<char> buffer)
@@ -148,7 +144,6 @@ public:
             append(character);
     }
 
-    // " compiling parse (src/parser.ts:12) in walk", " compiling in facts: solve".
     void appendWork(const CurrentWorkAsRead& work)
     {
         append(" compiling"_s);
@@ -182,7 +177,6 @@ private:
             append(digits[--count]);
     }
 
-    // A name or a path from the program, on its way to a terminal.
     void appendProgramText(std::span<const uint8_t> text)
     {
         constexpr size_t longestShown = 200;
@@ -199,7 +193,6 @@ private:
         return program.strings[id];
     }
 
-    // The file whose lines Program::lineColumnFor() counts.
     static std::span<const uint8_t> pathOrEmpty(const Typed::Program& program, ModuleID id)
     {
         if (!id || id.index() >= program.modules.size())
@@ -208,7 +201,6 @@ private:
         return stringOrEmpty(program, module.flags.contains(Typed::ModuleFlags::HasInstalledPositions) ? module.path : module.displayPath);
     }
 
-    // "parse (src/parser.ts:12)", "a function (src/parser.ts:12)", "src/parser.ts". It appends nothing when it returns false.
     bool appendFunction(const CurrentWorkAsRead& work)
     {
         if (!work.program || !work.functionPlusOne)
@@ -248,7 +240,6 @@ private:
 
 size_t describeWhereThisThreadStopped(std::span<char> buffer)
 {
-    // Not currentWorkOfThread(): taking a record allocates.
     const CurrentWork& record = *CurrentWorkInternal::recordOfThread;
     if (&record == &CurrentWorkInternal::sharedRecord)
         return 0;

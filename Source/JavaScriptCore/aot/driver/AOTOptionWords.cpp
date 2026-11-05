@@ -8,8 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTable.h"
+#include "AOTEffectsNet.h"
 #include "AOTMechanismWords.h"
+#include "AOTRuntimeTable.h"
 #include "AOTSchemaEnums.h"
+#include "AOTStubDescriptor.h"
 #include "CPUFeatureSet.h"
 #include <array>
 #include <wtf/ASCIICType.h>
@@ -23,13 +27,10 @@ namespace {
 
 enum class OptionWordReader : bool { FrontEnd, Engine };
 
-// A row of AOTSchemaOptionWords.inc.
 struct OptionWord {
     ASCIILiteral key;
-    // Empty: the word takes no value.
     ASCIILiteral valueSyntax;
     ASCIILiteral noun;
-    // Null: the front end reads the word itself.
     std::optional<String> (*apply)(Wire::CompileOptions&, const OptionWord&, StringView value);
     void (*listValues)(PrintStream&);
 
@@ -74,7 +75,6 @@ static std::optional<T> parseNumber(StringView text)
     return parseInteger<T>(text, 10, WTF::ParseIntegerWhitespacePolicy::Disallow);
 }
 
-// WalksNothingAtCalls may be written walks-nothing-at-calls.
 static bool matchesName(StringView written, ASCIILiteral name)
 {
     if (written == name)
@@ -126,29 +126,25 @@ static void listValue(PrintStream& out, const Parts&... parts)
     out.println("  "_s, parts...);
 }
 
-// A switch that no code reads is refused like a name that nobody knows: a run that asks for it would pass without having tested anything.
 static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
 {
     switch (testingSwitch) {
     // Wrong rows on purpose, for the red control of the test of what native code answers: tests/answers/native-result-outside-its-row.ir. The reader of programs takes it.
     case Wire::TestingSwitch::NativeCodeAnswersNullish:
-    // Walker::checkProof().
     case Wire::TestingSwitch::CheckProofsAtRunTime:
     case Wire::TestingSwitch::CheckProofsAtEntries:
     case Wire::TestingSwitch::CheckProofsAtEntriesAndFields:
     // A false proof on purpose, for the red controls of that: tests/answers/false-proof-*.ir. Link takes it: CallInLinkCalls::callUnseen().
     case Wire::TestingSwitch::UnseenCodeAnswersUndefined:
-    // CompileWorker::compileStraight().
     case Wire::TestingSwitch::WritesBodiesStraight:
-    // The worklist of Link's flow in another order: scattered, and on lanes from the first tell, however small the program | oldest first. factsRequestForPreparedProgram().
     case Wire::TestingSwitch::DelayFlowRules:
     case Wire::TestingSwitch::DelayOtherFlowRules:
-    // --aot-harden=proof-checks. Mechanism::CellsInFrames is withheld: withoutMechanismsThatOptionsWithhold().
     case Wire::TestingSwitch::KeepsCellsOutOfFrames:
-    // --aot-harden=ignore-told-ranges. WalkOptions::testsEveryPosition, ElementAccessEmitter::testsEveryPosition().
     case Wire::TestingSwitch::TestsEveryPosition:
     // A false bound on purpose, for the red control of that: isKnownToLieInsideList().
     case Wire::TestingSwitch::PositionsAreTakenToLieInside:
+    case Wire::TestingSwitch::CheckEffectsAtRunTime:
+    case Wire::TestingSwitch::RowSaysLess:
         return true;
     case Wire::TestingSwitch::NobodyLooksAtNewInstances:
     case Wire::TestingSwitch::WalksNothingAtCalls:
@@ -169,6 +165,71 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static std::optional<uint32_t> parseRowThatSaysLess(StringView written)
+{
+    auto [kind, rest] = splitOptionText(written, '/');
+    if (!rest)
+        return std::nullopt;
+    auto [row, part] = splitOptionText(*rest, '/');
+    if (!part)
+        return std::nullopt;
+    Typed::RowThatSaysLess found;
+    if (matchesName(*part, "RunsOtherCode"_s))
+        found.part = Typed::PartOfEffects::RunsOtherCode;
+    else if (matchesName(*part, "Collects"_s))
+        found.part = Typed::PartOfEffects::Collects;
+    else if (matchesName(*part, "Throws"_s))
+        found.part = Typed::PartOfEffects::Throws;
+    else if (auto heap = findMember<Typed::AbstractHeap>(*part)) {
+        found.part = Typed::PartOfEffects::Writes;
+        found.heap = *heap;
+    } else
+        return std::nullopt;
+    if (matchesName(kind, "Operation"_s)) {
+        auto opcode = findMember<Typed::Opcode>(row);
+        if (!opcode)
+            return std::nullopt;
+        found.kind = Typed::KindOfEffectsRow::Operation;
+        found.row = static_cast<uint16_t>(*opcode);
+    } else if (matchesName(kind, "RuntimeOperation"_s)) {
+        String name = makeString("operationAOT"_s, row);
+        unsigned entry = 0;
+        while (entry < numberOfEntries && name != nameOf(static_cast<Entry>(entry)))
+            ++entry;
+        if (entry == numberOfEntries)
+            return std::nullopt;
+        found.kind = Typed::KindOfEffectsRow::RuntimeOperation;
+        found.row = static_cast<uint16_t>(entry);
+    } else if (matchesName(kind, "Stub"_s)) {
+        unsigned family = 0;
+        while (family < numberOfStubFamilies && row != descriptorOf(static_cast<StubFamily>(family)).name)
+            ++family;
+        if (family == numberOfStubFamilies)
+            return std::nullopt;
+        found.kind = Typed::KindOfEffectsRow::Stub;
+        found.row = static_cast<uint16_t>(family);
+    } else if (matchesName(kind, "Callee"_s)) {
+        if (!row.startsWith('f'))
+            return std::nullopt;
+        auto function = parseNumber<uint16_t>(row.substring(1));
+        if (!function)
+            return std::nullopt;
+        found.kind = Typed::KindOfEffectsRow::Callee;
+        found.row = *function;
+    } else if (matchesName(kind, "Builtin"_s)) {
+        const BuiltinTable& table = BuiltinTable::singleton();
+        unsigned builtin = 1;
+        while (builtin < table.builtinCount() && row != table.textOf(BuiltinID(builtin)))
+            ++builtin;
+        if (builtin == table.builtinCount())
+            return std::nullopt;
+        found.kind = Typed::KindOfEffectsRow::Builtin;
+        found.row = static_cast<uint16_t>(builtin);
+    } else
+        return std::nullopt;
+    return found.encode();
+}
+
 static std::optional<String> applyTesting(Wire::CompileOptions& options, const OptionWord& word, StringView value)
 {
     return forEachListedName(word.key, value, [&](StringView written) -> std::optional<String> {
@@ -176,6 +237,13 @@ static std::optional<String> applyTesting(Wire::CompileOptions& options, const O
         auto testingSwitch = findMember<Wire::TestingSwitch>(name);
         if (!testingSwitch || !engineHonorsTestingSwitch(*testingSwitch))
             return unknownNameSentence(word.noun, name);
+        if (*testingSwitch == Wire::TestingSwitch::RowSaysLess) {
+            std::optional<uint32_t> row = numbers ? parseRowThatSaysLess(*numbers) : std::nullopt;
+            if (!row)
+                return makeString(name, " takes <kind>/<row>/<part>"_s);
+            options.rowThatSaysLess = *row;
+            numbers = std::nullopt;
+        }
         if (numbers)
             return makeString(name, " takes no number"_s);
         addFlag(options.testing, *testingSwitch);
@@ -191,7 +259,6 @@ static void listTestingSwitches(PrintStream& out)
     }
 }
 
-// All but Validate are read in debug and ASAN builds alone. Every build takes them: testaot puts two of them in front of the options of each test.
 static bool engineHonorsCheck(Wire::CheckSet check)
 {
     switch (check) {
@@ -235,8 +302,6 @@ static void listChecks(PrintStream& out)
     }
 }
 
-// An image is compiled for the CPU that the engine itself is compiled for. On ARM64 that is the oldest one on Linux and the M1 on macOS, which has instructions
-// that change what is emitted for the commonest operations. With this word a Linux machine that has them compiles and runs what a Mac does.
 #if CPU(ARM64)
 static constexpr NamedCPU namedCPUs[] = {
     { "apple-m1"_s, CPUFeatureSet().with(CPUFeature::LSE).with(CPUFeature::JSCVT).with(CPUFeature::Float16).with(CPUFeature::FRINT).with(CPUFeature::SHA3).with(CPUFeature::DotProd) },
@@ -316,7 +381,6 @@ std::optional<String> applyOptionWord(Wire::CompileOptions& options, StringView 
 
     Wire::CompileOptions changedOptions = options;
     if (auto sentence = optionWord->apply(changedOptions, *optionWord, value.value_or(StringView { }))) {
-        // Bun tells a refusal from a word that was applied by the length of the sentence.
         RELEASE_ASSERT(!sentence->isEmpty());
         return sentence;
     }
@@ -398,7 +462,6 @@ static std::optional<String> addMechanismOfWord(Typed::Mechanisms& mechanisms, T
     return std::nullopt;
 }
 
-// The list begins with the name and loses it.
 static std::optional<String> applyNameInMechanismsWord(Typed::Mechanisms& mechanisms, StringView& list, char16_t sign, StringView word)
 {
     StringView name = list.left(lengthOfNameInMechanismsWord(list));

@@ -159,6 +159,5 @@ export default b.declarations(
       },
     },
   }),
-  // As in Bun. File says nothing.
   b.instancesWithoutOwnNames("Buffer", "TextEncoder", "URL", "URLSearchParams"),
 );

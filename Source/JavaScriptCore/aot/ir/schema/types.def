@@ -41,7 +41,6 @@ enum TypeSiteKind (logWord: Text) {
     SetElement("element") PromiseValue("element") CallResult("call-result") PropertyRead("property") Assertion("cast")
 }
 record TypeSite wire { module: Module(Referrer) position: UInt32 kind: TypeSiteKind text: String? | engine function: Function(Dispatch)? }
-# IsHeldOnly, of a capture: no code of the function reads it. It hands it on at most, to captures of the closures that it makes which have the flag too. A closure lists it because under `bun run` it would hold the scope that the value lies in.
 flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency IsClaim IsHeldOnly }
 record DeclaredType wire handwrittenStruct { type: Type site: TypeSite? flags: PositionFlags }
 

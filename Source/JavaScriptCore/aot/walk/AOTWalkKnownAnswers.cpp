@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Folding: what a file of the walk knows beyond WalkState's own records, an equal operation that is built once, a conversion that is made once, and what a branch has decided.
-// At a suspension: whatever rests on a heap ends as at a call of unseen code, and so does what names a record that no saved frame keeps or that is not worth keeping in one.
-// At a throw: an operation is noted behind its record, so the state that a handler starts from never holds what the throwing operation would have given.
-// Withheld: nothing is noted and nothing is found, so every operation is built where it is written and every branch keeps both sides.
-
 #include "config.h"
 #include "AOTWalkKnown.h"
 
@@ -22,8 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// ---- The numbers that a state holds
-
 bool SetOfAnswersForGood::addWhereWordIsMissing(uint32_t number)
 {
     uint32_t word = number / bitsOfWord;
@@ -36,25 +29,21 @@ bool SetOfAnswersForGood::addWhereWordIsMissing(uint32_t number)
         makeRoomFrom(word);
 
     uint32_t place = word - m_firstWord;
-    if (m_words.size() <= place)
+    if (m_words.size() == place) {
+        m_words.append(bit);
+        ++m_size;
+        return true;
+    }
+    if (m_words.size() < place)
         m_words.grow(0, place + 1);
     if (m_words[place] & bit)
         return false;
     m_words.mutableAt(place) |= bit;
     ++m_size;
+
     return true;
 }
 
-bool SetOfAnswersForGood::remove(uint32_t number)
-{
-    if (!contains(number))
-        return false;
-    m_words.mutableAt(number / bitsOfWord - m_firstWord) &= ~(1ull << number % bitsOfWord);
-    --m_size;
-    return true;
-}
-
-// An answer that was numbered in front of all that the set holds is noted anew.
 void SetOfAnswersForGood::makeRoomFrom(uint32_t word)
 {
     SharedArray<uint64_t, 2> words;
@@ -67,7 +56,6 @@ void SetOfAnswersForGood::makeRoomFrom(uint32_t word)
 
 void SetOfAnswersForGood::keepMembersOfSetWithMembers(const SetOfAnswersForGood& other)
 {
-    // The one with fewer words is gone through: what the other holds past its end does not stay.
     if (other.m_words.size() < m_words.size()) {
         SetOfAnswersForGood shorter = other;
         shorter.keepMembersOf(*this);
@@ -97,7 +85,6 @@ void SetOfAnswersForGood::keepMembersOfSetWithMembers(const SetOfAnswersForGood&
         }
     }
 
-    // Each of a thousand ways into one block has noted something of its own last, far behind what all of them have. The empty words between are nobody else's, so whoever kept them would go through them at each of the meets to come.
     uint32_t numberOfWords = m_words.sizeWithoutZerosAtEnd();
     if (numberOfWords != m_words.size())
         m_words.shrink(numberOfWords);
@@ -136,7 +123,6 @@ bool ListOfAnswersUntilEnded::add(uint32_t number)
         m_places.mutableAt(place) = number;
         return true;
     }
-    // An answer that another way has numbered: what this way has noted since stands behind it.
     uint32_t last = m_places[size - 1];
     m_places.append(last);
     for (uint32_t moved = size - 1; moved > place; --moved) {
@@ -174,7 +160,6 @@ void ListOfAnswersUntilEnded::dropEndedPlacesIfMany()
     m_places.swap(places);
 }
 
-// A part that the two lists share holds the same numbers with the same marks in both.
 void ListOfAnswersUntilEnded::keepMembersOfListWithMembers(const ListOfAnswersUntilEnded& other)
 {
     struct Stretch {
@@ -190,7 +175,6 @@ void ListOfAnswersUntilEnded::keepMembersOfListWithMembers(const ListOfAnswersUn
             uint32_t held = m_places[place];
             if (held & hasEnded)
                 continue;
-            // What both have from the state that they once were lies at one place in both.
             bool liesAtSamePlace = place < other.m_places.size() && other.m_places[place] == held;
             if (liesAtSamePlace || other.contains(held))
                 continue;
@@ -228,8 +212,6 @@ void ListOfAnswersUntilEnded::keepMembersOfEither(const ListOfAnswersUntilEnded&
     }
     dropEndedPlacesIfMany();
 }
-
-// ---- The answers of a walk
 
 static constexpr size_t fewestPlacesOfKeysInKnownAnswers = 64;
 
@@ -380,7 +362,6 @@ uint32_t AnswersOfWalk::numberOf(std::span<const uint32_t> wordsOfKey, PlaceOfKe
     uint32_t key = (placeOfKey.found ? placeOfKey.found : addKey(wordsOfKey, placeOfKey.hash)) - 1;
 
     uint32_t newest = m_keys[key].newest;
-    // `if (c) ..` again and again: `true` and `false` are noted in turn, on way after way. Each is found again however old it is, so the key has two answers and not one for each branch: whoever asks goes through them all.
     bool looksAtOlderOnes = answer.family == KnownAnswer::Family::Note && restsOn.isEmpty();
     bool hasManyAnswers = m_keys[key].amongKeysWithManyAnswers;
     if (hasManyAnswers && looksAtOlderOnes) [[unlikely]] {
@@ -430,9 +411,11 @@ uint32_t AnswersOfWalk::numberOf(std::span<const uint32_t> wordsOfKey, PlaceOfKe
     return number;
 }
 
-// ---- The answers of a state
+void KnownAnswers::dropWhatIsHeld()
+{
+    m_held = nullptr;
+}
 
-// A key that was noted anew behind each of many calls has many answers, and a state that a call has just emptied holds few.
 uint32_t KnownAnswers::findHeldUnder(uint32_t keyAsked) const
 {
     const AnswersOfWalk::Key& key = m_table->keyAt(keyAsked);
@@ -563,7 +546,6 @@ void KnownAnswers::end(std::span<const uint32_t> wordsOfKey)
     if (!m_table || isEmpty())
         return;
     uint32_t key = m_table->findKey(wordsOfKey);
-    // Of an operation the state may hold an older answer behind the newest.
     while (uint32_t held = key ? findHeldUnder(key - 1) : 0)
         drop(held - 1);
     if (m_held->untilEnded.isEmpty())
@@ -599,7 +581,6 @@ void KnownAnswers::endWhatIsWritten(const Effects& effects, NOESCAPE const AsksW
     m_held->restsOn = whatRestRestsOn;
 }
 
-// An object is fresh behind the meet where it is on both ways: what both ways have in the list of such objects stays there. What one of them has among the rest goes on among the rest, where every write asks about it.
 void KnownAnswers::meetWhatRestsOnHeapsWith(const Held& other)
 {
     Vector<uint32_t, 8> gone;
@@ -619,20 +600,17 @@ void KnownAnswers::endWhatIsWrittenOutsideFreshObjects(const Effects& effects, c
     auto ends = [&](const KnownAnswer& answer, bool isWrittenOutsideObjects) {
         if (isWrittenOutsideObjects || !answer.holder || !state.isFresh(answer.holder))
             return true;
-        // It stays. Where it rests on nothing but that object it goes where nobody asks about it again.
         return !answer.endsAtSuspension && m_table->whatAnswerRestsOn(answer).containsOnly(perObjectHeaps) && m_held->onFreshHolders.appendIfBehindAll(static_cast<uint32_t>(&answer - &m_table->at(0)));
     };
     endWhatIsWritten(effects, ends);
 }
 
-// An object that is stored into again and again has many answers, and the state may hold few.
 void KnownAnswers::endWhatIsWrittenIn(Reference holder, const Effects& effects)
 {
     if (!m_held)
         return;
     auto isWritten = [&](uint32_t number) {
         const KnownAnswer& answer = m_table->at(number);
-        // What rests on nothing stands in the row of its holder too.
         return answer.holder == holder && answer.restsOn && effects.writes.overlaps(m_table->whatAnswerRestsOn(answer));
     };
     auto endIn = [&](ListOfAnswersUntilEnded& list) {
@@ -707,8 +685,6 @@ void KnownAnswers::holderHasLeft(Reference holder)
     }
 }
 
-// ---- Keys. The first word says what kind of key it is, and which of the values behind it stand by their content.
-
 static constexpr uint32_t shiftOfFamilyInKeyOfKnownAnswer = 30;
 static constexpr uint32_t shiftOfFlagsInKeyOfKnownAnswer = 16;
 static constexpr uint32_t shiftOfValuesByContentInKeyOfKnownAnswer = 24;
@@ -727,13 +703,11 @@ static Reference referenceToRecordInKnownAnswers(const Code& code, ValueID recor
     return code.isConstant(record) ? Reference::constant(record) : Reference::value(record);
 }
 
-// Behind every name: a conversion, a Narrowed, a check that has passed, a mark. WalkState knows a fresh object under the same root.
 static Reference rootInKnownAnswers(const Code& code, Reference name)
 {
     return name.isValue() ? referenceToRecordInKnownAnswers(code, rootOfCellInSweptCode(code, name.id())) : name;
 }
 
-// Behind the names that Walker::draftOfNarrowedOnEdge() looks through and no others: whoever branches on a test that was found again has to find the operand of the test in the value that the edge narrows.
 static Reference valueBehindFormsInKnownAnswers(const Code& code, Reference name)
 {
     if (!name.isValue())
@@ -744,8 +718,7 @@ static Reference valueBehindFormsInKnownAnswers(const Code& code, Reference name
     return referenceToRecordInKnownAnswers(code, value);
 }
 
-// Code holds a constant once for each form in which it is taken, so a constant stands by what it says.
-static void appendValueToKeyOfKnownAnswer(const Code& code, Reference value, uint32_t position, AnswersOfWalk::WordsOfKey& words)
+static ALWAYS_INLINE void appendValueToKeyOfKnownAnswer(const Code& code, Reference value, uint32_t position, AnswersOfWalk::WordsOfKey& words)
 {
     ASSERT(position < mostValuesInKeyOfKnownAnswer);
     if (value.isConstant()) {
@@ -761,7 +734,6 @@ static void appendValueToKeyOfKnownAnswer(const Code& code, Reference value, uin
     words.append(value.bits());
 }
 
-// `subject` and `other` are roots.
 static void collectKeyOfNoteInKnownAnswers(const Code& code, KnownNote kind, Reference subject, Reference other, uint32_t word, AnswersOfWalk::WordsOfKey& words)
 {
     words.append(headOfKeyOfKnownAnswer(KnownAnswer::Family::Note, static_cast<uint32_t>(kind)));
@@ -770,13 +742,10 @@ static void collectKeyOfNoteInKnownAnswers(const Code& code, KnownNote kind, Ref
     appendValueToKeyOfKnownAnswer(code, other, 1, words);
 }
 
-// Only the frame of a coroutine is ever saved.
 static bool frameMayBeSavedInKnownAnswers(const Walker& walker)
 {
     return walker.program().at(walker.unit().function).isCoroutine();
 }
-
-// ---- Notes
 
 static bool isOutcomeOfValueInKnownAnswers(KnownNote kind, Reference holder, Reference other, uint32_t word)
 {
@@ -816,7 +785,6 @@ std::optional<uint64_t> findKnown(Walker& walker, KnownNote kind, Reference subj
         std::optional<bool> outcome = answers.outcomeOf(holder);
         return outcome ? std::optional<uint64_t>(*outcome) : std::nullopt;
     }
-    // Every note of a value stands in the row of its holder. A constant stands in its key by what it says.
     if (holder.isValue() && !answers.table()->newestOfHolder(holder))
         return std::nullopt;
     AnswersOfWalk::WordsOfKey words;
@@ -840,35 +808,23 @@ void endKnown(Walker& walker, KnownNote kind, Reference subject, Reference other
     answers.end(words.span());
 }
 
-// ---- K1: an equal operation is built once
-
-// THE MACHINE NUMBERS PURE MACHINE OPERATIONS IN ITS SCOPE (machine/AOTMachineNumbering.h). Numbered here is what it cannot find, or what the state needs under one name:
-// a test, whose outcome a branch may have decided . what may be an index or a length, under which the state knows an element or a relation . a form that calls a stub.
 static constexpr OpcodeSet testsNumberedInKnownAnswers = allEqualities | allRelations | OpcodeSet { Opcode::ToBoolean };
 static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::PrivateGet };
-// The first may fail or run code. It fills a cell of the instance, which every later one only reads.
 static constexpr OpcodeSet operationsThatDoNothingAgainInKnownAnswers { Opcode::GetBuiltinValue, Opcode::ModuleBuiltin };
-// Not where the host may put another value into the cell: `new Worker(file, { env: SHARE_ENV })` between two reads of `process.env`. Such a read is a load, and is made each time.
 static bool doesNothingAgainInKnownAnswers(const Walker& walker, const Draft& draft)
 {
     if (!operationsThatDoNothingAgainInKnownAnswers.contains(draft.opcode))
         return false;
     return draft.opcode != Opcode::GetBuiltinValue || !walker.program().builtins().has(BuiltinMark::IsReplacedByHostThatSaysSo, draft.builtin());
 }
-// A note answers, which others make as well: an allocation, a store.
 static constexpr OpcodeSet readsAnsweredByNotesInKnownAnswers { Opcode::GetArrayLength };
 static constexpr OpcodeSet operationsWithKeysInKnownAnswers = testsNumberedInKnownAnswers | valuesNumberedInKnownAnswers | operationsThatDoNothingAgainInKnownAnswers;
 static constexpr OpcodeSet operationsFoundInKnownAnswers = operationsWithKeysInKnownAnswers | readsAnsweredByNotesInKnownAnswers;
-static constexpr OpcodeSet operationsNotedInKnownAnswers = operationsFoundInKnownAnswers | OpcodeSet { Opcode::Strcat };
-// With operands at which they run no code. An Add that joins texts makes a string, which is never numbered.
 static constexpr OpcodeSet operationsThatTakeOperandsInEitherOrderInKnownAnswers = allEqualities | OpcodeSet { Opcode::Add, Opcode::Mul, Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor };
 static_assert(!operationsFoundInKnownAnswers.intersects(conversionsOfForm));
 
-// The characters of a string never change: what is written there is how they are held.
 static constexpr AbstractHeapSet heapsThatNoAnswerRestsOnInKnownAnswers { AbstractHeap::StringStorage };
 
-// Behind one that has completed, a second one with the same operands completes too and gives the same, until something writes what it reads. Nobody can tell that it has not run.
-// Whatever asks the allocator or the run time's own state gets a new answer each time.
 static bool givesSameAgainInKnownAnswers(const Effects& effects)
 {
     return !effects.mayRunOtherCode() && !effects.mayBeTerminated && effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.reads.containsAny(bookkeepingHeaps);
@@ -879,7 +835,6 @@ static bool givesNewAnswerUnaskedInKnownAnswers(const Walker& walker, const Draf
     return draft.opcode == Opcode::GetTypedArrayLength && viewMayFollowSharedMemoryThatGrows(walker, draft.viewOperand());
 }
 
-// The key leaves out what the engine has chosen: the form of an operator says how it is computed, not what.
 static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& draft, AnswersOfWalk::WordsOfKey& words)
 {
     words.shrink(0);
@@ -922,7 +877,6 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
     return true;
 }
 
-// What is handed on in the place of an operation lies within what the row gives the operation with the operands that it has here. So it lies within what a look at a loop has promised: widestTypeOfOperation().
 static Reference unlessWiderThanDraftInKnownAnswers(Walker& walker, const Draft& draft, Reference earlier)
 {
     if (!earlier.isRecord())
@@ -941,7 +895,6 @@ static Reference booleanInKnownAnswers(Walker& walker, bool value)
     return walker.constant(WTF::move(constant));
 }
 
-// A comparison of numbers in registers costs what a branch on a Boolean costs that is kept for it.
 static bool isAsWellAskedAgainInKnownAnswers(const Draft& test, const Effects& effects)
 {
     return effects.isPure() && test.form() != OperatorForm::Generic;
@@ -950,10 +903,8 @@ static bool isAsWellAskedAgainInKnownAnswers(const Draft& test, const Effects& e
 static Reference answerOfTestBuiltInKnownAnswers(Walker& walker, const Draft& test, const Effects& effects, Reference built)
 {
     std::optional<bool> outcome = outcomeKnownOf(walker, built);
-    // A LOOK AT A LOOP HAS PROMISED WHAT THE EDGES BEHIND THE TEST PROVE, and an edge behind a constant proves nothing. There the record is handed on, and the edge narrows by it.
     if (!walker.isInLoop())
         return outcome ? booleanInKnownAnswers(walker, *outcome) : isAsWellAskedAgainInKnownAnswers(test, effects) ? Reference() : built;
-    // A Narrowed names an operand of its test by index.
     const Code& code = walker.code();
     ValueID firstTaken = code.at(built.id()).operand(0);
     if (valueBehindFormsInKnownAnswers(code, referenceToRecordInKnownAnswers(code, firstTaken)) != valueBehindFormsInKnownAnswers(code, test.operand(0)))
@@ -962,7 +913,7 @@ static Reference answerOfTestBuiltInKnownAnswers(Walker& walker, const Draft& te
 }
 
 constinit const OpcodeSet opcodesThatFindEqualOperationBuiltTakes = operationsFoundInKnownAnswers;
-constinit const OpcodeSet opcodesThatNoteOperationBuiltTakes = operationsNotedInKnownAnswers;
+constinit const OpcodeSet opcodesThatNoteOperationBuiltTakes = operationsFoundInKnownAnswers;
 
 Reference findEqualOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Effects& effects)
 {
@@ -978,10 +929,6 @@ Reference findEqualOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft
     if (opcode == Opcode::GetArrayLength) {
         std::optional<uint64_t> length = findKnown(walker, KnownNote::LengthOfList, draft.arrayOperand());
         return length ? unlessWiderThanDraftInKnownAnswers(walker, draft, Reference::fromBits(static_cast<uint32_t>(*length))) : Reference();
-    }
-    if (opcode == Opcode::GetStringLength) {
-        if (Reference length = unlessWiderThanDraftInKnownAnswers(walker, draft, lengthOfKnownCharacters(walker, draft.stringOperand())))
-            return length;
     }
 
     if ((!doesNothingAgainInKnownAnswers(walker, draft) && !givesSameAgainInKnownAnswers(effects)) || givesNewAnswerUnaskedInKnownAnswers(walker, draft))
@@ -1015,8 +962,6 @@ void noteOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Ef
         noteKnown(walker, KnownNote::LengthOfList, draft.arrayOperand(), { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::ArrayStorage }), built.bits());
         return;
     }
-    if (opcode == Opcode::Strcat || opcode == Opcode::Add)
-        noteCharactersOfJoin(walker, draft, built);
     if (!operationsWithKeysInKnownAnswers.contains(opcode))
         return;
 
@@ -1033,21 +978,16 @@ void noteOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Ef
     KnownAnswer answer;
     answer.family = KnownAnswer::Family::Operation;
     answer.noted = built.bits();
-    // Each of them reads a part of an object in its first operand alone.
     if (restsOn.containsAny(perObjectHeaps) && draft.numberOfOperands())
         answer.holder = rootInKnownAnswers(code, draft.operand(0));
-    // What costs an instruction is not worth a word of a saved frame. Of a test whose outcome is known no record is kept alive.
     answer.endsAtSuspension = valuesNumberedInKnownAnswers.contains(opcode) && frameMayBeSavedInKnownAnswers(walker);
     answers.note(words.span(), isKeyAskedLast ? table->placeOfKeyAskedLast() : table->placeOfKey(words.span()), answer, restsOn, false, answer.holder && walker.state().isFresh(answer.holder));
 }
-
-// ---- Conversions. By the name that is handed in, not by its root: a conversion has the type of the name that it converts.
 
 Reference findConversionMade(Walker& walker, Reference value, Representation wanted)
 {
     if (!value.isValue() || !walker.has(Mechanism::Folding))
         return { };
-    // A conversion that undoes another gives the operand back.
     const Code& code = walker.code();
     const Operation& record = code.at(value.id());
     if (conversionsOfForm.contains(record.opcode) && code.at(record.operand(0)).representation == wanted)
@@ -1060,15 +1000,13 @@ void noteConversionMade(Walker& walker, Reference value, Representation wanted, 
 {
     if (!value.isValue() || !converted.isValue() || converted == value || !walker.has(Mechanism::Folding))
         return;
-    // No saved frame lists a narrow reference, and no other form is worth a word of one.
     walker.state().answers().noteConversion(value, wanted, converted, frameMayBeSavedInKnownAnswers(walker));
 }
 
-// ---- K2: what a branch has decided stays decided. A value is what it is, so its outcome is known for good. What a write ends is the answer that finds the test again.
-
 std::optional<bool> outcomeKnownOf(Walker& walker, Reference condition)
 {
-    if (walker.state().answers().isEmpty() || !walker.has(Mechanism::Folding))
+    const KnownAnswers& answers = walker.state().answers();
+    if (answers.isEmpty() || !walker.has(Mechanism::Folding))
         return std::nullopt;
     const Code& code = walker.code();
     bool isNegated = false;
@@ -1076,8 +1014,8 @@ std::optional<bool> outcomeKnownOf(Walker& walker, Reference condition)
         condition = rootInKnownAnswers(code, condition);
         if (!condition.isValue())
             break;
-        if (std::optional<uint64_t> outcome = findKnown(walker, KnownNote::Outcome, condition))
-            return !!*outcome != isNegated;
+        if (std::optional<bool> outcome = answers.outcomeOf(condition))
+            return *outcome != isNegated;
         const Operation& record = code.at(condition.id());
         if (record.opcode != Opcode::LogicalNot)
             break;
@@ -1087,7 +1025,6 @@ std::optional<bool> outcomeKnownOf(Walker& walker, Reference condition)
     return std::nullopt;
 }
 
-// K3. In one spelling: `a > b` is `b < a`, for every number. What follows from a comparison that has failed is for whoever asks: NaN fails all four.
 static void noteRelationInKnownAnswers(Walker& walker, const Operation& comparison, bool isTrue)
 {
     const Code& code = walker.code();
@@ -1118,7 +1055,6 @@ void noteWhatBranchDecidesOnEdge(Walker& walker, BlockID from, uint32_t targetIn
         if (!condition.isValue())
             return;
         const Operation& record = code.at(condition.id());
-        // noteKnown() of KnownNote::Outcome, of a root.
         walker.state().answers().noteOutcome(condition, isTrue);
         if (record.opcode == Opcode::LogicalNot) {
             isTrue = !isTrue;
@@ -1147,8 +1083,6 @@ std::optional<uint32_t> onlyTargetDecidedOnWay(Walker& walker, const BodyTermina
     return target;
 }
 
-// ---- K3: a relation between two values
-
 bool isKnownToLieBelow(Walker& walker, Reference value, Reference bound)
 {
     TypeID typeOfValue = walker.typeOf(value);
@@ -1162,7 +1096,6 @@ bool isKnownToLieBelow(Walker& walker, Reference value, Reference bound)
         return true;
     if (findKnown(walker, KnownNote::Relation, value, bound, 0) == std::optional<uint64_t>(1))
         return true;
-    // Of two integers one is below the other, or the other is no greater.
     return areIntegers && findKnown(walker, KnownNote::Relation, bound, value, 1) == std::optional<uint64_t>(0);
 }
 

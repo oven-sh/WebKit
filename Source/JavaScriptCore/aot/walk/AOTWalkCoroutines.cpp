@@ -3,11 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// At a suspension: the operation becomes the one of the family SavedFrame that names the driver, and all that rests on the heap ends. Values keep their types.
-// What the saved frame holds is found behind the walk: Code::liveAt(), and the values that the input lists as held.
-// At a throw: nothing. The unwinder rejects the promise of an async function, and a generator throws on to whoever resumed it.
-// Never withheld.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -31,14 +26,13 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// AOTWalk.h declares none of these. The first three are for AOTWalk.cpp, the last for AOTWalkIteration.cpp.
 bool walkRampOfCoroutine(Walker&);
 Reference addDriverParameterOfCoroutine(Walker&, BlockID entry);
 Reference convertReturnedValueOfCoroutine(Walker&, Reference returned, Origin);
 Reference buildAwaitBySavingFrame(Walker&, Reference awaited, std::span<const Reference> held, bool takesExtraTurn, Origin);
 bool canWaitForStepOfAsyncGenerator(Walker&);
 Reference buildStepOfAsyncGenerator(Walker&, Reference generator, Reference sent, std::span<const Reference> held, Origin);
-bool engineAnswersAboveGenerators(const Walker&); // AOTWalkIteration.cpp
+bool engineAnswersAboveGenerators(const Walker&);
 
 static constexpr OpcodeSet operationsOfFamilyCoroutine { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope };
 
@@ -50,8 +44,6 @@ struct SuspendingBodyOfCoroutine {
 };
 
 } // anonymous namespace
-
-// ---- What everything below is made of
 
 static Draft draftForCoroutine(Walker& walker, Opcode opcode, Origin origin)
 {
@@ -76,7 +68,6 @@ static Reference boxedResumeModeForCoroutine(Walker& walker, ResumeMode mode)
     return walker.constant(WTF::move(integer));
 }
 
-// Return or Throw. The walk stands nowhere behind it: whoever goes on calls Walker::continueIn().
 static bool endBlockOfCoroutine(Walker& walker, TerminatorKind kind, Reference value, Origin origin)
 {
     if (!value)
@@ -89,7 +80,6 @@ static bool endBlockOfCoroutine(Walker& walker, TerminatorKind kind, Reference v
     return !walker.hasFailed();
 }
 
-// Nothing: no frame stands here that a suspension could save. A suspension is bound to the frame of the function that it is written in, and a coroutine is never walked at a call.
 static std::optional<SuspendingBodyOfCoroutine> findSuspendingBodyOfCoroutine(Walker& walker)
 {
     CodeUnit unit = walker.unit();
@@ -99,7 +89,6 @@ static std::optional<SuspendingBodyOfCoroutine> findSuspendingBodyOfCoroutine(Wa
     if (!function.isCoroutine() || walker.plan().conventions().of(unit.function).coroutineNeverSuspends)
         return std::nullopt;
 
-    // The driver arrives behind the parameters of the function.
     const Code& code = walker.code();
     if (code.entries().empty())
         return std::nullopt;
@@ -133,8 +122,6 @@ Reference buildSuspensionInCoroutine(Walker& walker, Draft&& suspension)
     return buildSuspensionOfCoroutine(walker, WTF::move(suspension));
 }
 
-// ---- Await
-
 Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<const Reference> held, bool takesExtraTurn, Origin origin)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
@@ -159,16 +146,12 @@ Reference buildAwaitBySavingFrame(Walker& walker, Reference awaited, std::span<c
     return buildSuspensionOfCoroutine(walker, WTF::move(await));
 }
 
-// ---- A step of an async generator that the frame waits for
-
-// Which queue resumes the body of a module depends on whether it awaits a promise. Whoever finishes a step queues a job that is none of the loader's.
 bool canWaitForStepOfAsyncGenerator(Walker& walker)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
     return body && body->kind != CoroutineKind::Generator && !walker.program().at(walker.unit().function).isModuleBody();
 }
 
-// `await generator.next(sent)` on an async generator, with the engine's `next`: no promise is made for the call and no object for its answer. It gives StepGeneratorResult.
 Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Reference sent, std::span<const Reference> held, Origin origin)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findSuspendingBodyOfCoroutine(walker);
@@ -184,8 +167,6 @@ Reference buildStepOfAsyncGenerator(Walker& walker, Reference generator, Referen
     step.setHeldOperands(held);
     return buildSuspensionOfCoroutine(walker, WTF::move(step));
 }
-
-// ---- Yield
 
 static Reference buildYieldBySavingFrameOfCoroutine(Walker& walker, const SuspendingBodyOfCoroutine& body, Reference yielded, std::span<const Reference> held, Origin origin)
 {
@@ -213,9 +194,6 @@ static Reference buildResultOfYieldOfCoroutine(Walker& walker, Reference resumpt
     return walker.build(WTF::move(read));
 }
 
-// ---- The initial yield
-
-// The walk goes on where the generator was resumed in another mode.
 static void branchOnResumeModeOfCoroutine(Walker& walker, Reference mode, ResumeMode modeThatLeaves, TerminatorKind kind, Reference sent, Origin origin)
 {
     Draft test = draftForCoroutine(walker, Opcode::StrictEq, origin);
@@ -231,7 +209,6 @@ static void branchOnResumeModeOfCoroutine(Walker& walker, Reference mode, Resume
     walker.continueIn(goesOn);
 }
 
-// Nothing of the language names what the call gives but one iteration, which hands it to nobody.
 static bool generatorGoesIntoIterationAloneOfCoroutine(const BodyIndex& body, ValueID site)
 {
     if (body.isParameter(site) || body.opcodeOf(site) != Opcode::Call)
@@ -247,9 +224,6 @@ static bool generatorGoesIntoIterationAloneOfCoroutine(const BodyIndex& body, Va
     return taking.opcode() == Opcode::IteratorOpen && taking.as<Opcode::IteratorOpen>().iteratorKind() == IteratorKind::Sync;
 }
 
-// Between a generator and %GeneratorPrototype% stands the object under `prototype` of its function. It is come by through a closure of the function or through a generator.
-// LinkedFunction::everyCallHasOneCallee: no closure has reached unseen code, is lost, or was asked for that name, and every call that enters is listed, each in a referrer. What each of those calls gives is looked at here.
-// The ramp and the body are walked apart, so the mechanisms asked for are those of the build.
 static bool nobodyLooksAboveGeneratorsOfCoroutine(const Walker& walker, FunctionID generatorFunction)
 {
     const Function& function = walker.program().at(generatorFunction);
@@ -258,7 +232,6 @@ static bool nobodyLooksAboveGeneratorsOfCoroutine(const Walker& walker, Function
     const LinkTables& linked = walker.facts().linked();
     if (!linked.function(generatorFunction).everyCallHasOneCallee || !engineAnswersAboveGenerators(walker))
         return false;
-    // `arguments.callee`, and a text that is evaluated in the function, name its closure.
     const BodyIndex* own = walker.facts().bodies().find(generatorFunction);
     if (!own || own->holdsAnyOf(opcodesOfMappedArguments) || walker.facts().summaries().at(generatorFunction).has(SummaryTrait::HasDirectEval))
         return false;
@@ -279,8 +252,6 @@ static bool nobodyLooksAboveGeneratorsOfCoroutine(const Walker& walker, Function
     return true;
 }
 
-// What stands in front of the InitialYield evaluates the parameters. True: some of it may run other code or write a named property, or more than one way leads from the entry to the yield.
-// The declared bound leaves out what a protocol on an operand may run: operandsMayRunCode().
 static bool headOfGeneratorMayReplacePrototypeOfCoroutine(const BodyIndex& input)
 {
     if (input.numberOfIncomingEdges(entryBlock))
@@ -308,7 +279,6 @@ static bool headOfGeneratorMayReplacePrototypeOfCoroutine(const BodyIndex& input
     return true;
 }
 
-// The ramp starts the body where it makes the generator, so the body always suspends here. The walk goes on where the first next() resumes it.
 static void replaceInitialYieldOfCoroutine(Walker& walker, const BodyValue& value)
 {
     std::optional<SuspendingBodyOfCoroutine> body = findYieldingBodyOfCoroutine(walker);
@@ -317,7 +287,6 @@ static void replaceInitialYieldOfCoroutine(Walker& walker, const BodyValue& valu
     Draft initialYield = walker.draftOf(value);
     Origin origin = initialYield.origin();
 
-    // The ramp allocates the generator, which reads the `prototype` of the function, in front of the code that evaluates the parameters. ECMAScript reads the property behind them.
     std::optional<unsigned> calleeParameter = walker.program().at(walker.unit().function).calleeParameterIndex();
     if (!calleeParameter) {
         walker.fail("a generator function does not take its function object, which its generators read their prototype from"_s);
@@ -341,8 +310,6 @@ static void replaceInitialYieldOfCoroutine(Walker& walker, const BodyValue& valu
     branchOnResumeModeOfCoroutine(walker, mode, ResumeMode::Return, TerminatorKind::Return, sent, origin);
 }
 
-// ---- `yield v` in an async generator. The input has an Await, casts, a Yield and a switch on the resume mode.
-
 static bool isResultOfYieldOfCoroutine(const BodyIndex& index, ValueID value, ValueID yield, YieldResult result)
 {
     if (!value || index.opcodeOf(value) != Opcode::ResultAt)
@@ -360,7 +327,6 @@ static bool blocksShareHandlerOfCoroutine(BodyBlock first, BodyBlock second)
     return handlerOfFirst.block() == handlerOfSecond.block() && std::ranges::equal(handlerOfFirst.arguments(), handlerOfSecond.arguments());
 }
 
-// A rejection of what the run time awaits resumes the yield in ResumeMode::Throw. That matches the await throwing only if the Throw arm just rethrows the sent value, under the handler of the await's block.
 static bool throwArmRethrowsSentValueOfCoroutine(const BodyIndex& index, BodyBlock block, ValueID yield)
 {
     BodyTerminator terminator = block.terminator();
@@ -383,7 +349,6 @@ static bool throwArmRethrowsSentValueOfCoroutine(const BodyIndex& index, BodyBlo
     return false;
 }
 
-// It is bound to its operand and nothing is built for it. A cast that tests its operand would test what has not been awaited.
 static bool isCastBetweenAwaitAndYieldOfCoroutine(BodyValue operation)
 {
     if (operation.opcode() == Opcode::Upcast)
@@ -391,7 +356,6 @@ static bool isCastBetweenAwaitAndYieldOfCoroutine(BodyValue operation)
     return operation.opcode() == Opcode::Convert && !operation.as<Opcode::Convert>().declared().isEstablished();
 }
 
-// The Yield that follows the Await with only casts in between, where the only user of each value is the next operation. Null: the two stay separate suspensions.
 static ValueID findYieldThatAloneTakesAwaitOfCoroutine(const BodyIndex& index, BodyBlock block, ValueID await)
 {
     if (index.value(await).as<Opcode::Await>().takesExtraTurn())
@@ -435,7 +399,6 @@ static bool runTimeAwaitsWhatCoroutineYields(Walker& walker)
     return body && body->kind == CoroutineKind::AsyncGenerator;
 }
 
-// The run time awaits the value and then yields what that gives, which is stock JSC's own form of `yield v`: the frame is saved and restored once.
 static Reference buildAsyncGeneratorYieldOfCoroutine(Walker& walker, const SuspendingBodyOfCoroutine& body, Reference yielded, std::span<const Reference> held, Origin origin)
 {
     Draft yield = draftForCoroutine(walker, Opcode::AsyncGeneratorYield, origin);
@@ -444,8 +407,6 @@ static Reference buildAsyncGeneratorYieldOfCoroutine(Walker& walker, const Suspe
     yield.setHeldOperands(held);
     return buildSuspensionOfCoroutine(walker, WTF::move(yield));
 }
-
-// ---- The four operations
 
 bool replaceCoroutineOperation(Walker& walker, const BodyValue& value)
 {
@@ -456,7 +417,6 @@ bool replaceCoroutineOperation(Walker& walker, const BodyValue& value)
     if (replaceSuspensionOfCoroutine(walker, value))
         return true;
 
-    // It only makes values live longer in the input.
     if (opcode == Opcode::ReadScope)
         return true;
 
@@ -476,7 +436,6 @@ bool replaceCoroutineOperation(Walker& walker, const BodyValue& value)
         }
         built = buildAwaitBySavingFrame(walker, written.valueOperand(), written.heldOperands(), written.takesExtraTurn(), written.origin());
     } else if (std::optional<SuspendingBodyOfCoroutine> body = findYieldingBodyOfCoroutine(walker)) {
-        // Whoever else has taken the Await has awaited: only one that still stands for its own operand is left to the run time.
         ValueID await = runTimeAwaitsWhatCoroutineYields(walker) ? findAwaitThatYieldAloneTakesOfCoroutine(index, block, value.id()) : ValueID();
         if (await && walker.referenceOf(await) == walker.referenceOf(index.value(await).as<Opcode::Await>().valueOperand()))
             built = buildAsyncGeneratorYieldOfCoroutine(walker, *body, written.valueOperand(), written.heldOperands(), written.origin());
@@ -488,9 +447,6 @@ bool replaceCoroutineOperation(Walker& walker, const BodyValue& value)
     return true;
 }
 
-// ---- CodeRole::CoroutineBody
-
-// A generator, or the promise of an async function, where undefined stands for no promise.
 static TypeID typeOfDriverOfCoroutine(TypeArena& types, const Function& coroutine, FunctionID id)
 {
     const ObjectTable& objects = types.objects();
@@ -499,7 +455,6 @@ static TypeID typeOfDriverOfCoroutine(TypeArena& types, const Function& coroutin
     return coroutine.has(FunctionFlags::IsGenerator) ? driver : types.withPrimitives(driver, Primitive::Undefined);
 }
 
-// `entry` holds the entry parameters of the function and nothing more, and is not yet an entry of Code.
 Reference addDriverParameterOfCoroutine(Walker& walker, BlockID entry)
 {
     CodeUnit unit = walker.unit();
@@ -507,7 +462,6 @@ Reference addDriverParameterOfCoroutine(Walker& walker, BlockID entry)
     return walker.addParameter(entry, typeOfDriverOfCoroutine(walker.types(), function, unit.function), walker.plan().conventions().parameterRepresentation(walker.program(), unit, function.numberOfEntryParameters()));
 }
 
-// What the unit returns in the place of what `return` hands over in the text. Of every other unit, and of a callee that is walked in line: the value as it came.
 Reference convertReturnedValueOfCoroutine(Walker& walker, Reference returned, Origin origin)
 {
     CodeUnit unit = walker.unit();
@@ -516,7 +470,6 @@ Reference convertReturnedValueOfCoroutine(Walker& walker, Reference returned, Or
     if (!returned)
         returned = boxedUndefinedForCoroutine(walker);
 
-    // A generator hands the value to whoever stepped it. Where nothing suspends the ramp resolves the promise.
     if (walker.program().at(unit.function).has(FunctionFlags::IsGenerator) || walker.plan().conventions().of(unit.function).coroutineNeverSuspends)
         return returned;
 
@@ -531,9 +484,6 @@ Reference convertReturnedValueOfCoroutine(Walker& walker, Reference returned, Or
     return walker.build(WTF::move(result));
 }
 
-// ---- CodeRole::Body of a coroutine
-
-// Code is reset for the unit and holds no block.
 bool walkRampOfCoroutine(Walker& walker)
 {
     CodeUnit unit = walker.unit();
@@ -553,7 +503,6 @@ bool walkRampOfCoroutine(Walker& walker)
         return false;
     }
 
-    // The ramp takes no more for granted than holds of every caller, and hands on what it got.
     Origin origin { .position = function.position, .inlineFrame = 0, .isTailCall = false, .isPartOfConstruction = false };
     TypingContext withoutFacts { program, walker.types(), PositionTypes::knowingNothing(), TypeLevel::Proven };
     BlockID entry = walker.addBlock();
@@ -585,7 +534,6 @@ bool walkRampOfCoroutine(Walker& walker)
         return false;
     operands.append(driver);
 
-    // It leaves no arrivals: what the callers of the ramp have left speaks of the parameters of the body too.
     Draft start = draftForCoroutine(walker, Opcode::CallDirect, origin);
     start.setFunction(body.function);
     start.setRole(body.role);
@@ -596,8 +544,6 @@ bool walkRampOfCoroutine(Walker& walker)
     if (!started)
         return false;
 
-    // A body that throws in front of its first suspension hands back a new, rejected promise, and the one that it was given stays pending.
-    // What a body that never suspends throws, the unwinder turns into a rejected promise in the frame of the ramp.
     Reference result = started;
     if (isGenerator)
         result = driver;

@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// Every question here meets a Structure and a name for the first few times.
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 fields=[{key="kept" declared={type=anything} flags=[IsRequired]}, {key="count" declared={type=anything} flags=[IsRequired]}]
@@ -152,7 +151,6 @@ const withManyNames = (object, howMany) => {
 };
 )JS"
 
-// Each kind makes { object, value, has, hasOwn }: what a read of `shared` gives and what the two questions about it give.
 #define STATEMENTS_ASKING_ORDINARY_OBJECTS R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
     const own = (object, value) => { object.shared = value; return { object, value, has: true, hasOwn: true }; };
@@ -289,7 +287,6 @@ static void testTextsThatAreNoAtomsAreNames()
     CHECK_OUTPUT(STATEMENTS_ASKING_BY_TEXTS, OUTPUT_OF_TEXTS);
 }
 
-// A search goes from word to word of the index of a table until it meets the name or an empty word. These tables are as full as a table gets, and their names lie all over the memory that the names asked for lie in.
 #define STATEMENTS_ASKING_FULL_TABLES R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
     const keeper = { };
@@ -351,7 +348,6 @@ static void testSymbolsAreNames()
     CHECK_OUTPUT(STATEMENTS_ASKING_BY_SYMBOLS, OUTPUT_OF_SYMBOLS);
 }
 
-// Each kind makes { object, after }: what a read gives behind a store of n + 100.
 #define STATEMENTS_STORING_BY_KEY R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy) => {
     const own = (object, n) => { object.shared = n; return { object, after: n + 100 }; };
@@ -413,7 +409,6 @@ static void testStoresReplaceOwnValues()
     CHECK_OUTPUT(STATEMENTS_STORING_BY_KEY, OUTPUT_OF_STORES);
 }
 
-// A store gives a dictionary a name that it lacks. Each kind makes { object, key, value, isRight, throws }.
 #define STATEMENTS_ADDING_BY_KEY R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy, makeRecord) => {
     const dictionary = (object, givesNamesUp) => {
@@ -554,7 +549,6 @@ static void testStoresAddToDictionaries()
     CHECK_OUTPUT(STATEMENTS_ADDING_BY_KEY, OUTPUT_OF_ADDITIONS);
 }
 
-// The engine reads back what stores by key wrote: the order of the names, each value, and every later change to the object. The names are made at run time, and only the dictionary keeps them alive.
 #define STATEMENTS_GROWING_DICTIONARIES R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy) => {
     const nameAt = k => "name" + k * 7 + "x";
@@ -666,8 +660,6 @@ static void testDictionariesGrownByStoresAreWhole()
     CHECK_OUTPUT(STATEMENTS_GROWING_DICTIONARIES, OUTPUT_OF_GROWTH);
 }
 
-// A Structure is made for what comes again. The first object that a store by key gives a name which no object of its Structure has been given becomes a dictionary.
-// The next one that is given the same name there gets a Structure for it, and for each name behind it. A dictionary that is asked again and again for what it lacks ceases to be one.
 #define STATEMENTS_GIVING_NAMES_AGAIN R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey) => {
     const kindOf = object => $vm.value(object).indexOf(", Dictionary") >= 0 ? "a dictionary" : "no dictionary";
@@ -776,7 +768,6 @@ static void testCompiledObjectsAnswer()
     CHECK_OUTPUT(STATEMENTS_ASKING_COMPILED_OBJECTS, OUTPUT_OF_COMPILED_OBJECTS);
 }
 
-// The key that a trap is handed for a name of the program is kept, so what is filed for a proxy is there behind a collection.
 #define STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS R"JS(
 globalThis.publish = (read, has) => {
     const proxy = new Proxy({ shared: 1 }, { get(target, key) { return target[key]; }, has(target, key) { return key in target; } });
@@ -795,7 +786,6 @@ static void testWhatIsFiledForAProxyOutlivesCollections()
     CHECK_OUTPUT(STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS, OUTPUT_OF_A_PROXY_BEHIND_COLLECTIONS);
 }
 
-// Nothing in this program makes a proxy.
 static constexpr ASCIILiteral textOfProgramThatNamesNoProxy = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {

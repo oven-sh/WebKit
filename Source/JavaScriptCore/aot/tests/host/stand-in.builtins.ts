@@ -1,7 +1,5 @@
 import * as b from "bun-builtins-table";
 
-// The host of the programs that WebKit's own build links: jsc, testaot, testFFI. It has no natives and no front end.
-// The compiler does not work without its helpers: compiler-helpers.builtins.ts beside this file is Bun's src/codegen/builtins/host/compiler-helpers.builtins.ts.
 export default b.declarations(
   b.namespace("%UnfilledHostRole%", {}),
   b.class("%UnfilledHostRoleClass%", { hasConstructor: false }),
@@ -24,7 +22,6 @@ export default b.declarations(
   }),
   b.frontEndFunctions("prelude/array-search", "includes", "indexOf"),
   b.frontEndFunctions("prelude/array-sort", "sort", "toSorted"),
-  b.frontEndFunctions("prelude/array-traversal", "traverseArray"),
   b.frontEndFunctions(
     "prelude/decorators",
     "applyAccessorDecorators",

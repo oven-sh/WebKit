@@ -14,7 +14,6 @@
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
-#include "AOTProgramStrings.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTState.h"
 #include "AOTThisAllocationInlines.h"
@@ -46,7 +45,6 @@ static std::optional<FunctionID> functionInInstance(const Instance& instance, co
 
 enum class Ancestry : uint8_t { NotBelow, Unknown, SameOrBelow };
 
-// A class whose base is not proven to be a compiled class may be below any class.
 static Ancestry ancestryOf(const ClassTable& classes, const LayoutData& layout, const LayoutData& base)
 {
     for (const LayoutData* current = &layout; current; current = classes.baseOf(*current)) {
@@ -80,7 +78,6 @@ static JSValue ownPrototypeProperty(VM& vm, JSObject* compiledCallee)
     return prototype;
 }
 
-// new.target selects the layout.
 static std::optional<ThisPrototype> resolveThisPrototype(JSGlobalObject* globalObject, ClassTable& classes, Instance& instance, const LayoutData* constructorLayout, JSObject* newTarget)
 {
     VM& vm = globalObject->vm();
@@ -112,7 +109,6 @@ static std::optional<ThisPrototype> resolveThisPrototype(JSGlobalObject* globalO
     return result;
 }
 
-// The run time lists no field when it allocates. The stores of the constructor create the fields and record their keys.
 static Object* createWithoutFields(VM& vm, Structure* structure, const LayoutData& layout)
 {
     return Object::create(vm, structure, layout, layout.size, orderWordOf(0, 0));
@@ -124,7 +120,6 @@ Object* ClassTable::createClassInstance(VM& vm, const LayoutData& classLayout, J
     return createWithoutFields(vm, m_state.objects->structures.objectStructure(vm, classLayout.shape, prototype), classLayout);
 }
 
-// What createThis() allocates depends on new.target, on which function is constructed and on the instance of that function.
 static bool isRememberedFor(FunctionRareData& rareData, Structure* remembered, JSObject* constructor, JSObject* newTarget)
 {
     uint32_t rememberedConstructor = rareData.compiledAllocationConstructor();
@@ -202,7 +197,6 @@ void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSO
     m_placesOfPrototypeProperties[indexOfPlace(structureID)] = { structureID, offset };
 }
 
-// The object that the definition of a class made its prototype. What a program stores as the prototype of a constructor function names no class.
 const LayoutData* ClassTable::classWithPrototype(JSObject* prototype) const
 {
     if (auto* lazyPrototype = dynamicDowncast<ClassPrototype>(prototype))
@@ -238,7 +232,7 @@ static void shareClosureEnvironment(VM& vm, State& state, const Object& allocate
     if (!environment)
         return;
     SlotData slot = instance.layout().closureEnvironmentSlotOf(target);
-    bool isStored = tryWriteSlot(*state.strings, slot.representation(), &instance.at<uint8_t>(slot.offset), environment);
+    bool isStored = tryWriteSlot(state.instance, slot.representation(), &instance.at<uint8_t>(slot.offset), environment);
     RELEASE_ASSERT(isStored);
     vm.writeBarrier(&instance, environment);
 }
@@ -248,7 +242,6 @@ static bool looksFilledWhenNotListed(const FieldData& field)
     return !field.canLeaveSlot();
 }
 
-// A subclass may declare the name again with another type, so the field of the instance tests what compiled code stored.
 static void copyFieldToInstance(VM& vm, State& state, const Object& allocated, const FieldData& field, Object& instance)
 {
     UniquedStringImpl* name = propertyNameOf(vm, allocated, field);
@@ -266,13 +259,11 @@ static void copyFieldToInstance(VM& vm, State& state, const Object& allocated, c
             instance.didCreateField(state, *target, !!instance.slotOf(*target));
         return;
     }
-    // Until its first store such a slot holds a placeholder, which need not be a value of the field's type. The slot of the new instance holds one as well.
     if (looksFilledWhenNotListed(field))
         return;
     instance.putDirectFromNativeCode(vm, name, value, allocated.attributesOf(field));
 }
 
-// The instance declares other fields or none.
 static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated, const FieldData& field, JSObject& instance)
 {
     if (looksFilledWhenNotListed(field))
@@ -286,7 +277,6 @@ static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated,
         instance.putDirect(vm, name, value, allocated.attributesOf(field));
 }
 
-// The prototype object of another class never leaves the object with the allocated shape: what the program does to that object is recorded for the other class.
 JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype, bool holdsNoField)
 {
     const LayoutData& allocatedLayout = allocated->layout();

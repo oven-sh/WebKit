@@ -35,7 +35,6 @@
 
 namespace JSC { namespace AOT {
 
-// The extra properties, or the stars that wait in their place.
 static JSObject* cellInPlaceOfExtraProperties(const Object& object)
 {
     ASSERT(object.hasExtraProperties());
@@ -156,7 +155,6 @@ public:
     JSCellButterfly* bindings() const { return butterflyIn(bindingsSlot); }
     void setBindings(VM& vm, JSCellButterfly* bindings) const { m_record->setIndex(vm, bindingsSlot, bindings); }
 
-    // The fields of the layout of the target that the target lacked at the star and whose names the star binds. No other star binds the name of a field of the target.
     void setFieldsOfTarget(VM& vm, std::span<const uint16_t> fields) const
     {
         JSCellButterfly* indices = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, static_cast<unsigned>(fields.size()));
@@ -181,7 +179,6 @@ public:
         return isFound;
     }
 
-    // The names that the stars of the target bind, in their order, once somebody has asked for them: one table for all its stars. Those of this star and the stars before it come first in it.
     PropertyTable* namesOfStars() const
     {
         JSValue names = m_record->get(namesOfStarsSlot);
@@ -236,7 +233,6 @@ static Vector<Star, 8> starsInOrderUpTo(Star last)
     return stars;
 }
 
-// What is made for the stars of a target is made of what was made for the stars of their sources, so those come first. By a list, not by calls: a chain of barrels may be longer than the stack.
 static void makeForSourcesFirst(Star last, const LayoutData& layoutOfTarget, const Invocable<bool(Star)> auto& isMade, const Invocable<void(Star, const LayoutData&)> auto& make)
 {
     struct Pending {
@@ -365,7 +361,6 @@ static InternalFieldTuple* pendingStarsOf(const Object& object)
     return cell->type() == InternalFieldTupleType ? uncheckedDowncast<InternalFieldTuple>(cell) : nullptr;
 }
 
-// While stars wait the key order counts each of their keys as an extra key. A key under the name of a field is listed as that field.
 static void listFieldsBoundByStars(VM& vm, State& state, Object& target, std::span<const Object::ExtraProperty> properties)
 {
     const LayoutData& layout = target.layout();
@@ -410,7 +405,6 @@ static JSObject* makePendingStars(Object& target, InternalFieldTuple* pendingSta
     };
     if (bindsFields)
         listFieldsBoundByStars(vm, state, target, properties.span());
-    // A field leaves its slot for extra properties that are there, so from the first binding under the name of a field on they are made one by one.
     size_t numberMadeAtOnce = std::ranges::find_if(properties, fieldBoundBy) - properties.begin();
     for (auto& property : properties) {
         if (!fieldBoundBy(property))
@@ -451,7 +445,6 @@ static bool hasKeyOrderThatStaysKnown(const Object& object)
 static bool hasEveryFieldOfLayout(const Object& object)
 {
     const LayoutData& layout = object.layout();
-    // The order of an object with extra properties may also count those.
     if (!object.hasExtraProperties())
         return countOf(object.orderWord()) == layout.numberOfFields;
     return std::ranges::all_of(layout.fields(), [&](const FieldData& field) {
@@ -480,7 +473,6 @@ static bool orderListsField(State& state, const LayoutData& layout, uint32_t ord
 
 static PropertyTable* listNamesOfStarsUpTo(VM&, State&, Star last, const LayoutData& layoutOfTarget);
 
-// The list of the names says which star binds the name, so a search goes down one road. Barrels that share their sources have more roads than anybody can walk.
 static Star starThatBindsName(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget, UniquedStringImpl* name)
 {
     if (!last)
@@ -494,7 +486,6 @@ static Star starThatBindsName(VM& vm, State& state, Star last, const LayoutData&
     return star;
 }
 
-// What the star binds the name to if the target lacks the name.
 static BindingOfStars findBindingOfStar(VM& vm, State& state, Star star, UniquedStringImpl* name)
 {
     RuntimeLayoutTable& layouts = state.objects->layouts;
@@ -522,8 +513,6 @@ static BindingOfStars findBindingOfStars(VM& vm, State& state, Star last, const 
     return findBindingOfStar(vm, state, starThatBindsName(vm, state, last, layoutOfTarget, name), name);
 }
 
-// A field that the target gets later is listed behind the names of the star: the run time lists a field that an object with extra properties gets, and asks numberOfKeysOfPendingStars() for it.
-// The name of a field that the target lacks is bound like any other name that it lacks. Its accessor will lie outside the slot, and the order word says so from here on, so that nothing takes the empty slot for a missing property.
 static bool tryBindFieldsThatTargetLacks(VM& vm, Object& target, Star star)
 {
     if (hasEveryFieldOfLayout(target))
@@ -556,7 +545,6 @@ static bool canBeSourceOfPendingStar(VM& vm, JSGlobalObject* realm, const Object
 {
     if (!hasKeyOrderThatStaysKnown(source) || (source.hasExtraProperties() && !pendingStarsOf(source)))
         return false;
-    // A field that the layout has for the getter of a star is empty while the star waits.
     for (const FieldData& field : source.layout().fields()) {
         if (field.flags & fieldAttributeFlags && !(field.flags & fieldIsNotEnumerable) && source.isInSlot(field))
             return false;
@@ -629,7 +617,6 @@ static constexpr unsigned firstSourceInSnapshot = 1;
 
 using CellsSeen = UncheckedKeyHashSet<JSCell*>;
 
-// Each star once. Whoever has seen a star has seen the stars before it and all that lies behind them.
 static void forEachStarUpToAndBehind(Star last, CellsSeen& seen, const Invocable<void(Star)> auto& functor)
 {
     Vector<Star, 8> pending { last };
@@ -699,7 +686,6 @@ JSValue valueInSnapshotOfPendingStars(VM& vm, const Object& target, JSCellButter
     return held ? held : jsUndefined();
 }
 
-// The names that a listing of the source showed at the star, in its order.
 static void forEachNameOfSourceOfStar(VM& vm, State& state, Star star, const Invocable<void(UniquedStringImpl*)> auto& functor)
 {
     RuntimeLayoutTable& layouts = state.objects->layouts;
@@ -721,7 +707,6 @@ static void forEachNameOfSourceOfStar(VM& vm, State& state, Star star, const Inv
         nameOfStars(next);
 }
 
-// The names that bindStarsUpTo() binds, in its order. What a star binds is settled at the star, so each star is listed once, behind the stars before it.
 static void listNamesOfStarsWhoseSourcesAreListed(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget)
 {
     Vector<Star, 8> starsToList;
@@ -803,7 +788,6 @@ std::optional<Object*> sourceOfPendingBinding(VM& vm, const Object& target, Uniq
     InternalFieldTuple* pendingStars = pendingStarsOf(target);
     if (!pendingStars)
         return std::nullopt;
-    // A star binds names of fields that are strings, and no field is an element.
     if (name->isSymbol() || parseIndex(*name))
         return nullptr;
     DeferGCForAWhile deferGC(vm);
@@ -846,7 +830,6 @@ JSObject* Object::ensureExtraProperties(VM& vm)
     return extra;
 }
 
-// What the first property does to the Structure of the extra properties is done before the object gets them, so the Structure of the object is looked for once.
 void Object::adoptExtraProperties(VM& vm, JSObject* filled)
 {
     ASSERT(!isNotExtensible());
@@ -883,7 +866,6 @@ bool Object::tryCreateExtraPropertiesOfNewObject(VM& vm, std::span<const ExtraPr
     return true;
 }
 
-// An extra-properties object that became empty stays, and bit 28 stays set: compiled code tests the bit at a member call on behalf of the member read before it.
 void Object::didChangeExtraProperties(VM& vm)
 {
     JSObject* extra = extraProperties();
@@ -893,7 +875,6 @@ void Object::didChangeExtraProperties(VM& vm)
     StructureID namedStructureID = current.extraPropertiesStructureID();
     if (namedStructureID == extra->structureID())
         return;
-    // A dictionary keeps its Structure while it grows, so a Structure that names none goes on saying all that is known.
     if (!namedStructureID && extra->structure()->isDictionary())
         return;
     StructureTable& structures = state().objects->structures;
@@ -919,7 +900,6 @@ void Object::ensureStructureForExtraProperties(VM& vm)
     if (updatedStructure == &current)
         return;
     JSCell::setStructure(vm, updatedStructure);
-    // The next exit finds the Structure that names these extra properties.
     state().propertyCaches->forgetFieldExits();
 }
 
@@ -975,7 +955,6 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
 
 void Object::willAddExtraProperty(VM& vm, PropertyName name, bool isSpelledByProgram)
 {
-    // `class Stamp extends Returns { #mark }`: a class lays its private names and its brand on whatever the constructor above it returns. No lookup by a name or a key finds them, which is all that LayoutChange::GainsProperty speaks of.
     if (!name.isPrivateName())
         validateMutation(vm, *this, name, ObjectMutation::AddProperty);
     if (isSpelledByProgram)

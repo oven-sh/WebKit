@@ -55,7 +55,6 @@ bool LinkTables::cycleLeadsTo(uint32_t referrer, uint32_t named) const
 {
     if (referrer == named)
         return true;
-    // Each step of a way from the one to the other climbs in rank.
     uint32_t lowestRank = rankOfCycle[referrer];
     uint32_t highestRank = rankOfCycle[named];
     if (lowestRank >= highestRank)
@@ -63,7 +62,6 @@ bool LinkTables::cycleLeadsTo(uint32_t referrer, uint32_t named) const
     if (std::ranges::binary_search(cyclesNamedBy(referrer), named))
         return true;
 
-    // From both ends, each time from the end that has fewer steps to look at: a function names few, and many may name it.
     constexpr unsigned down = 0;
     constexpr unsigned up = 1;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen[2];
@@ -112,7 +110,6 @@ const LinkedCallThatFindsBuiltin* LinkTables::findCallThatFindsBuiltin(FunctionI
 
 FunctionID LinkTables::calleeAt(FunctionID caller, ValueID site) const
 {
-    // Whoever fills `calls` fills the other: a call that is listed and not found would leave nothing where it has to leave something.
     RELEASE_ASSERT(firstCallOfCaller.last() == calls.size());
     if (caller.index() + 1 >= firstCallOfCaller.size())
         return { };
@@ -181,7 +178,6 @@ bool LinkTables::findFunctionsLaidAbove(const Program& program, LayoutID layout,
     auto placeOf = [](const LinkedNameOnPrototype& laid) {
         return std::pair { laid.layout, laid.key };
     };
-    // A row that comes round lists not every member.
     for (LayoutID current = layout; current; current = program.at(current).base) {
         if (program.at(current).has(LayoutFlags::IsConstructorFunction)) {
             if (std::ranges::binary_search(namesOnPrototypes, std::pair { current, PropertyKeyID() }, { }, placeOf))
@@ -194,7 +190,6 @@ bool LinkTables::findFunctionsLaidAbove(const Program& program, LayoutID layout,
             continue;
         }
         std::span<const uint32_t> places = membersUnder(current, ClassSide::Prototype, key);
-        // The lookup may come to what the prototype object was made with, which is no member.
         if (places.empty() && classHolderIsMadeWithName(program, ClassSide::Prototype, key))
             return false;
         for (uint32_t place : places) {
@@ -265,14 +260,11 @@ MemberFound LinkTables::findMember(const Program& program, LayoutID layout, Clas
         return std::ranges::binary_search(namesOnPrototypes, std::pair { function, name }, { }, placeOf);
     };
     bool hasPassedConstructorFunction = false;
-    // As membersUnder() stops the build: whoever has changed `members` has indexed them.
     RELEASE_ASSERT(membersByKey.size() == members.size());
     bool someClassHasMemberUnderKey = keysOfMembers[static_cast<size_t>(side)].get(key.index());
-    // A constructor is copied into the constructors below it, so each store to `this` of a row of classes is asked about once for each class below, and each time for a longer row.
     if (!someClassHasMemberUnderKey && !layouts[layout.index()].hasConstructorFunctionInRow)
         return classHolderIsMadeWithName(program, side, key) ? MemberFound { } : MemberFound { MemberFound::Kind::Nothing, { }, { }, { } };
     std::optional<bool> holderIsMadeWithName;
-    // A row that comes round lists not every member.
     for (LayoutID current = layout; current; current = program.at(current).base) {
         if (side == ClassSide::Prototype && program.at(current).has(LayoutFlags::IsConstructorFunction)) {
             if (isLaidOnPrototypeOf(current, key) || isLaidOnPrototypeOf(current, { }))
@@ -300,7 +292,6 @@ MemberFound LinkTables::findMember(const Program& program, LayoutID layout, Clas
             }
         }
         if (!numberFound) {
-            // LinkFlow::membersFoundUnder(): what the holder was made with answers, and no kind of MemberFound says so.
             if (!holderIsMadeWithName)
                 holderIsMadeWithName = classHolderIsMadeWithName(program, side, key);
             if (*holderIsMadeWithName)
@@ -309,7 +300,6 @@ MemberFound LinkTables::findMember(const Program& program, LayoutID layout, Clas
         }
         if (hasPassedConstructorFunction)
             return { };
-        // Of two definitions under one key the later one stands, or both halves of one accessor.
         if (numberFound != static_cast<unsigned>(!!found.method) + static_cast<unsigned>(!!found.getter) + static_cast<unsigned>(!!found.setter) || (found.method && numberFound > 1))
             return { };
         found.kind = found.method ? MemberFound::Kind::Method : MemberFound::Kind::Accessor;
@@ -324,7 +314,6 @@ LinkTables conservativeLinkTables(const Program& program)
     return conservativeLinkTables(program, onOneThread);
 }
 
-// The lists are as long as the program, and a record of the program lies in a line of memory of its own: all threads touch the pages and read the records, and one adds up.
 LinkTables conservativeLinkTables(const Program& program, const ParallelLoops& loops)
 {
     LinkTables tables;
@@ -368,7 +357,6 @@ LinkTables conservativeLinkTables(const Program& program, const ParallelLoops& l
     return tables;
 }
 
-// An accessor runs at a read or a store, an initializer at a construction, the body of a module when the loader says so. No call of a summary stands for that.
 static bool isEnteredByCallsAloneForLink(FunctionKind kind)
 {
     switch (kind) {
@@ -397,11 +385,8 @@ public:
     void writeWhatMakesNoType();
     void writeWhatMakesTypes(TypeArena&);
     void writeProofsThatMakeNoType();
-    // LinkedFunction::everyCallerIsKnown of each, for whoever cannot wait for writeWhatMakesTypes(). It waits for the first step of writeWhatMakesNoType(), which may run on another thread.
     BitVector functionsWhoseCallersAreAllKnown();
-    // Where it goes on in another lane than it began in.
     void goOnWith(const ParallelLoops& loops) { m_loops = &loops; }
-    // Behind writeLayoutsAndCells(): whoever is handed a type by the tables may name what the type names.
     void writeReferrers();
 
 private:
@@ -429,6 +414,7 @@ private:
     };
 
     void findFunctionsThatNoSummaryNames();
+    void findExportsThatStayIn();
     BinarySemaphore m_functionsThatNoSummaryNamesAreFound;
     void findLayoutsWithUnlistedNames();
     bool mayFindUnlistedNames(const LinkType& receiver) const;
@@ -447,7 +433,6 @@ private:
     void writeContentsAtOperations();
     void writeReceiversThatStayAsMade();
     void writeFunctions();
-    // AOTLinkExceptionsInlines.h.
     void writeCatches();
     void writeParameters(FunctionID, const LinkedFunction&);
     void indexFunctionsThatAreHeld();
@@ -455,9 +440,7 @@ private:
 
     TypeID unlessAnything(TypeID) const;
     TypeID widened(TypeID);
-    // Null: nothing arrives, or anything may.
     bool writesWhatIsExpected() const { return m_flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls; }
-    // As CalleeSummarizerForLinkEffects::instancesAreAsClassMakesThem(): whatever lays a name on such an object, defines an element by a descriptor or puts another object above it has left something under unknown names, or has let the object go.
     bool holdsOnlyInstancesThatStayAsMade(const LinkType& type) const
     {
         if (type.classes != LinkType::Classes::Site || type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None || type.holdsUnseen || type.holdsLostBuiltins || type.builtin)
@@ -470,11 +453,9 @@ private:
     TypeID typeIDOf(const LinkType&);
     TypeID typeIDOfCapture(FunctionID, uint32_t capture);
 
-    // Null: none, or nobody says which.
     FunctionID closureAloneAt(FlowNodeID node) const { return m_flow.typeAt(node).functions == LinkType::Functions::Closure ? m_flow.typeAt(node).function : FunctionID(); }
     bool mayTakeArrivals(FunctionID id) const { return m_tables.function(id).everyCallerIsKnown && m_tables.function(id).everyCallHasOneCallee; }
     FunctionID addGroup(LinkedGroup::Kind, uint32_t subject = 0);
-    // Each names nodes of LinkTables::referrers: functions and groups. A null id is passed over by whoever is told.
     void forEachNodeArrivingAt(FlowNodeID, const Invocable<void(FunctionID)> auto&) const;
     void forEachFunctionOfType(TypeID, const Invocable<void(FunctionID)> auto&) const;
     void forEachNodeNamedBy(FunctionID referrer, const Invocable<void(FunctionID)> auto&) const;
@@ -486,9 +467,7 @@ private:
     const Program& m_program;
     const ParallelLoops& loops() const { return m_loops ? *m_loops : m_flow.loopsOfReading(); }
     const ParallelLoops* m_loops { nullptr };
-    // While writeWhatMakesTypes() runs.
     TypeArena* m_typesAtHand { nullptr };
-    // AOTLinkTypesOnAllThreads.h.
     static thread_local TypesOfThreadInLink s_typesOfThread;
     TypeArena& typesAtHand() const { return s_typesOfThread.types ? *s_typesOfThread.types : *m_typesAtHand; }
     TypesOfFlowTurnedOnce& typesTurned() { return s_typesOfThread.turned ? *s_typesOfThread.turned : m_typesTurned; }
@@ -498,27 +477,19 @@ private:
     uint32_t m_numberOfFunctions;
 
     BitVector m_functionsEnteredByHost;
-    // The code of the library behind a built-in, and what has no body: the walk names them where no summary shows it.
     BitVector m_functionsThatNoSummaryNames;
-    // A name on some object of the layout, or of a layout of the family, may find what neither a field nor a member lists.
     BitVector m_layoutsWithUnlistedNames;
     BitVector m_familiesWithUnlistedNames;
     bool m_lostLayoutsHaveUnlistedNames { false };
-    // Some call that may enter the function is not in LinkTables::calls.
     BitVector m_functionsSharingCalls;
 
-    // Whose closures alone lie in a field, a static field or a member. Ascending, without repeats.
     Vector<FunctionUnderKey> m_functionsUnderKeys;
-    // And whose closures the class was given.
     Vector<FunctionOfClass> m_functionsOfClasses;
     Vector<FunctionOfClass> m_functionsThatSlotsOfRecordsMayDefer;
 
-    // The nodes of the groups. Null: there is no such group, because it would have no member or nobody to name it.
     FunctionID m_anybody;
-    // By family, and by shared call.
     Vector<FunctionID> m_groupOfConstructors;
     Vector<FunctionID> m_groupOfSharedCall;
-    // By LinkedGroup::subject.
     Vector<uint32_t> m_sharedCallsOfGroups;
 };
 
@@ -561,19 +532,31 @@ void WriterOfLink::writeWhatMakesTypes(TypeArena& types)
     writeFunctions();
     writeCoroutinesOfLink(m_program, m_flow, types, m_tables);
     writeCatches();
-    // In Facts::linked() a proof. In Facts::held() what was seen to come out, whatever else unseen code may have put in: a guess, which is tested at each use.
     writeResultsOfReadsByKey();
     writeContentsAtOperations();
 }
 
-// Proofs, which nobody asks Facts::held() for: the walk asks Facts::linked() alone.
 void WriterOfLink::writeProofsThatMakeNoType()
 {
     RELEASE_ASSERT(!writesWhatIsExpected());
     weighLeaves();
+    findExportsThatStayIn();
     writeReceiversThatStayAsMade();
     findRingsOfTailCalls();
     findFunctionsThatRunAtMostOnce();
+}
+
+void WriterOfLink::findExportsThatStayIn()
+{
+    m_tables.exportsThatStayIn = BitVector(m_program.variables.size());
+    for (const Module& module : m_program.modules) {
+        if (module.kind != ModuleKind::SourceText || module.flags.contains(ModuleFlags::IsLibrary))
+            continue;
+        for (const ModuleExport& entry : module.exports) {
+            if (entry.kind == ModuleExportKind::Variable && entry.variable && !m_flow.exportsShown.get(entry.variable.index()) && !m_flow.escapedVariables.get(entry.variable.index()))
+                m_tables.exportsThatStayIn.quickSet(entry.variable.index());
+        }
+    }
 }
 
 void WriterOfLink::findFunctionsThatNoSummaryNames()
@@ -605,7 +588,6 @@ void WriterOfLink::findLayoutsWithUnlistedNames()
         m_lostLayoutsHaveUnlistedNames |= m_layoutsWithUnlistedNames.quickGet(index);
 }
 
-// The flow tells a call of each of these when it happens, and the call then may enter unseen code. Here the same is asked of how things stand at the end.
 bool WriterOfLink::mayFindUnlistedNames(const LinkType& receiver) const
 {
     if (receiver.holdsUnseen || receiver.builtin || receiver.classes != LinkType::Classes::None)
@@ -638,12 +620,10 @@ bool WriterOfLink::mayFindUnlistedNames(const LinkType& receiver) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// It says who is entered, not that anybody is: what is called may be no function, and the call of that throws.
 FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call, const LinkFlow::CalleesOfCall& callees) const
 {
     if (!callees.builtins.isEmpty() || callees.mayEnterLost || (callees.mayEnterUnseen && !writesWhatIsExpected()))
         return { };
-    // All that the call lists, itself and by the shared calls that it goes by, is one function.
     FunctionID callee = callees.listed.isEmpty() ? FunctionID() : callees.listed[0];
     bool listsSeveral = callees.listed.size() > 1;
     for (uint32_t shared : callees.shared) {
@@ -657,7 +637,6 @@ FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call,
     const Function& function = m_program.at(callee);
     if (!function.hasBody())
         return { };
-    // Node 0 holds anything in every summary.
     auto typeAt = [&](uint32_t node) -> const LinkType* {
         return node && node != noSummaryNode ? &m_flow.typeAt(m_flow.nodeOf(caller, node)) : nullptr;
     };
@@ -665,10 +644,8 @@ FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call,
     switch (call.callee) {
     case SummaryCall::Callee::Binding:
         return callee;
-    // A getter that the lookup runs is listed too, and it is not what is called.
     case SummaryCall::Callee::Name: {
         const LinkType* receiver = typeAt(call.receiver);
-        // What is proven may not hang on a name that no table lists. What is held is no proof: the call was seen to find ONE function under the name, and whoever goes by that tests what is called.
         if (!receiver || (!writesWhatIsExpected() && mayFindUnlistedNames(*receiver)))
             return { };
         return isEnteredByCallsAloneForLink(function.kind) ? callee : FunctionID();
@@ -679,8 +656,6 @@ FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call,
             return { };
         LinkType called = *subject;
         called.primitives = 0;
-        // What is named beside what is unseen is what was seen to arrive: whoever goes by what is held tests what is called.
-        // By value a construction asks the run time for `this`. A plain call by value costs a few instructions more than the test and the direct call do: with those the application's build is 0.4 G dearer.
         if (writesWhatIsExpected() && call.isConstruction) {
             called.holdsUnseen = false;
             called.holdsLostBuiltins = false;
@@ -692,19 +667,15 @@ FunctionID WriterOfLink::oneCalleeOf(FunctionID caller, const SummaryCall& call,
             return { };
         return isEnteredByCallsAloneForLink(function.kind) ? callee : FunctionID();
     }
-    // What is listed there is what the native code calls.
     case SummaryCall::Callee::Builtin:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// An answer that is a weight needed no more levels than were left, so it is the same at every depth, and so is a no that no want of levels has a part in: both are kept. A no because the levels ran out is kept at the first level alone.
-// So the tables hang on no order.
 uint32_t WriterOfLink::weighAsLeaf(FunctionID id, unsigned depth, bool& levelsRanOut)
 {
     static constexpr unsigned levels = 3;
-    // A larger body is copied by no rule.
     static constexpr uint32_t mostOperationsOfLeaf = 100;
     LinkedFunction& linked = m_tables.functions[id.index()];
     if (linked.weightAsLeaf != LinkedFunction::notLeaf)
@@ -749,7 +720,6 @@ void WriterOfLink::weighLeaves()
 
 void WriterOfLink::writeCalls()
 {
-    // A row without a caller: some call that may enter the callee is not listed.
     Vector<LinkedCall> found = collectInParallel<LinkedCall>(loops(), m_numberOfFunctions, [&, view = LinkFlow::ViewAtWork::current()](unsigned index, Vector<LinkedCall>& calls) {
         LinkFlow::ViewAtWork viewAtWork(view);
         if (!m_flow.reached.get(index))
@@ -757,7 +727,6 @@ void WriterOfLink::writeCalls()
         auto noteSharing = [&](FunctionID callee) {
             calls.append(LinkedCall { FunctionID(), ValueID(), callee });
         };
-        // And without a callee: the same of all that the shared call of that number lists.
         auto noteSharingOfSharedCall = [&](uint32_t shared) {
             calls.append(LinkedCall { FunctionID(), ValueID(shared), FunctionID() });
         };
@@ -780,7 +749,6 @@ void WriterOfLink::writeCalls()
         }
         std::ranges::sort(sites, { }, &SiteOfCall::site);
 
-        // calleeAt() answers for a site, and the walk leaves there what one call passes. An operation that looks up several names, or one name on several operands, has a call for each.
         size_t end = 0;
         for (size_t first = 0; first < sites.size(); first = end) {
             SiteOfCall leader = sites[first];
@@ -824,7 +792,6 @@ void WriterOfLink::writeCalls()
         m_tables.firstCallOfCaller[index + 1] += m_tables.firstCallOfCaller[index];
 }
 
-// One operation leaves one access with a node for its key.
 void WriterOfLink::writeAccessesUnderOneKey()
 {
     m_tables.accessesUnderOneKey = collectInParallel<LinkedAccess>(loops(), m_numberOfFunctions, [&, view = LinkFlow::ViewAtWork::current()](unsigned index, Vector<LinkedAccess>& accesses) {
@@ -845,8 +812,6 @@ void WriterOfLink::writeAccessesUnderOneKey()
     });
 }
 
-// From what lies at the nodes when the flow has ended: no observer, and nothing hangs on the order of the worklist.
-// The type at the field stops naming a built-in where it meets what is unseen, so once the record has escaped nothing that is held shows it. What the call has found while it was named is kept with the call.
 void WriterOfLink::writeCallsThatFindBuiltins()
 {
     if (!writesWhatIsExpected())
@@ -860,14 +825,12 @@ void WriterOfLink::writeCallsThatFindBuiltins()
         uint32_t firstCall = m_flow.firstCallOfFunction[index];
         size_t first = calls.size();
         for (uint32_t call = 0; call < summary.calls.size(); ++call) {
-            // Nearly every call says no here.
             const LinkFlow::CalleesOfCall& callees = m_flow.calleesOfCallsAsSettled()[firstCall + call];
             if (callees.builtins.size() != 1 || callees.listed.size() > 1 || !callees.shared.isEmpty() || callees.mayEnterLost)
                 continue;
             const SummaryCall& record = summary.calls[call];
             if (record.callee != SummaryCall::Callee::Name || record.isMadeByProtocol || record.isConstruction || record.passesList || !record.site || !record.key || !record.receiver || record.receiver == noSummaryNode)
                 continue;
-            // What lies above the objects of the program, and what the engine's own objects answer to a name, the rows of the classes say.
             const LinkType& receiver = m_flow.typeAt(m_flow.nodeOf(caller, record.receiver));
             if (receiver.objects != LinkType::Objects::Layout || receiver.functions != LinkType::Functions::None || receiver.classes != LinkType::Classes::None || receiver.builtin || !findField(m_program, receiver.layout, record.key))
                 continue;
@@ -898,12 +861,8 @@ void WriterOfLink::noteCallersThatFindBuiltins()
 
 namespace {
 
-// WHICH FUNCTION DESCRIPTORS LAY AS A GETTER (SummaryChange::getter), BY WHAT IT IS LAID ON AND BY THE NAME, read off the records when the flow has ended.
-// `Object.defineProperty(holder, "area", { get: .. })` speaks of reads of `area` and of no other name. A definition under a key that nobody knows speaks of every name that no definition names.
-// AN EXPECTATION: whoever goes by it looks the name up and tests what it finds.
 class GettersLaidInLink {
 public:
-    // The family of an allocation site, or the closures of one function. Nothing: the type names something else, or several kinds of objects.
     static std::optional<uint32_t> holderOf(const LinkFlow& flow, const LinkType& type)
     {
         if (type.objects != LinkType::Objects::None || type.builtin)
@@ -915,7 +874,6 @@ public:
         return std::nullopt;
     }
 
-    // A null function: nobody can tell what is laid.
     void note(uint32_t holder, PropertyKeyID key, FunctionID getter)
     {
         if (key)
@@ -963,7 +921,6 @@ void WriterOfLink::writeGettersExpectedAtReads()
             std::optional<uint32_t> holder = GettersLaidInLink::holderOf(m_flow, m_flow.typeAt(m_flow.nodeOf(function, change.subject)));
             if (!holder)
                 continue;
-            // What was seen to arrive, whatever else unseen code may have laid: the object has reached it with the descriptor.
             const LinkType& getters = m_flow.typeAt(m_flow.nodeOf(function, change.getter));
             bool isOneFunction = getters.functions == LinkType::Functions::Closure && !getters.builtin && getters.objects == LinkType::Objects::None && getters.classes == LinkType::Classes::None;
             laid.note(*holder, change.key, isOneFunction && m_flow.reached.get(getters.function.index()) && m_program.at(getters.function).hasBody() ? getters.function : FunctionID());
@@ -985,7 +942,6 @@ void WriterOfLink::writeGettersExpectedAtReads()
                 reads.append(LinkedGetterAtRead { function, access.site, getter });
         }
         std::ranges::sort(reads.mutableSpan().subspan(first));
-        // An operation that reads several names, or one name off several operands, has an access for each.
         for (size_t place = first; place + 1 < reads.size();) {
             if (reads[place].site != reads[place + 1].site) {
                 ++place;
@@ -1009,9 +965,7 @@ void WriterOfLink::writeReceiversThatStayAsMade()
         BuiltinClassID builtinClass = m_flow.classOf(receiver.site);
         return builtins.typedArrayTypeOf(builtinClass) == NotTypedArray && builtinClass != BuiltinClasses::DataView;
     };
-    // ScanOfBody::openIterator(): whoever iterates calls the method under @@iterator on what is iterated over.
     PropertyKeyID keyOfIterators = m_program.keyOf(builtins.nameOf(WellKnownSymbol::Iterator));
-    // Each function by itself, on all threads. What is found comes in the order of the functions.
     ChunksOfIndices division = divideIntoChunks(m_numberOfFunctions);
     Vector<Vector<LinkedReceiverAsMade>> receiversOfChunks(division.size());
     Vector<Vector<LinkedReceiverAsMade>> iterablesOfChunks(division.size());
@@ -1051,7 +1005,6 @@ void WriterOfLink::writeReceiversThatStayAsMade()
                     sitesOfOtherIterables.append(call.site);
             }
             if (iterables.size() != firstIterable) {
-                // An operation may iterate over several operands: each has to stay as made.
                 iterables.removeAllMatching([&](const LinkedReceiverAsMade& iterable) {
                     return sitesOfOtherIterables.contains(iterable.site);
                 }, firstIterable);
@@ -1061,7 +1014,6 @@ void WriterOfLink::writeReceiversThatStayAsMade()
             }
             if (receivers.size() == first)
                 continue;
-            // An operation may read off several operands, and a protocol may look names up at the site of another operation: each has to stay as made.
             std::ranges::sort(sitesOfOtherReceivers);
             receivers.removeAllMatching([&](const LinkedReceiverAsMade& receiver) {
                 return std::ranges::binary_search(sitesOfOtherReceivers, receiver.site);
@@ -1075,24 +1027,35 @@ void WriterOfLink::writeReceiversThatStayAsMade()
     m_tables.iterablesThatStayAsMade = joinChunks<LinkedReceiverAsMade>(loops(), WTF::move(iterablesOfChunks));
 }
 
-// From what lies at the nodes when the flow has ended.
 void WriterOfLink::writeResultsOfReadsByKey()
 {
-    // A hole and the place behind the end ask upward. The run time refuses every index on the prototypes, but for what a test run has opened: then nothing is said.
     if (!writesWhatIsExpected() && !m_program.openedNames.isEmpty())
         return;
-    // All threads look for the reads, and type what they give: AOTLinkTypesOnAllThreads.h. One thread puts them in order.
     struct Read {
         FunctionID function;
         ValueID site;
         FlowNodeID value;
     };
+    PropertyKeyID valueOfStep = m_program.keyOf(BuiltinNames::value);
+    PropertyKeyID nextOfStep = m_program.keyOf(BuiltinNames::next);
     Vector<Read> found = collectInParallel<Read>(loops(), m_numberOfFunctions, [&](unsigned index, Vector<Read>& readsOfChunk) {
         if (!m_flow.reached.get(index))
             return;
         FunctionID function(index);
-        for (const SummaryAccess& access : m_flow.summaries.at(function).accesses) {
-            if (access.kind != SummaryAccess::Kind::Read || access.key || !access.site || access.isToContents() || access.value == noSummaryNode)
+        const ThinSummary& summary = m_flow.summaries.at(function);
+        auto isWhatStepHandsOut = [&](const SummaryAccess& access) {
+            if (access.key != valueOfStep)
+                return false;
+            const SummaryNode& subject = summary.nodes[access.subject];
+            if (subject.kind != SummaryNode::Kind::ResultOfCall)
+                return false;
+            const SummaryCall& call = summary.calls[subject.first];
+            return call.isMadeByProtocol && call.site == access.site && call.callee == SummaryCall::Callee::Name && call.key == nextOfStep;
+        };
+        for (const SummaryAccess& access : summary.accesses) {
+            if (access.kind != SummaryAccess::Kind::Read || !access.site || access.isToContents() || access.value == noSummaryNode)
+                continue;
+            if (access.key && !isWhatStepHandsOut(access))
                 continue;
             readsOfChunk.append(Read { function, access.site, m_flow.nodeOf(function, access.value) });
         }
@@ -1102,7 +1065,6 @@ void WriterOfLink::writeResultsOfReadsByKey()
     writeTypedPositionsOnAllThreads(m_flow, m_flow.program.types, static_cast<unsigned>(found.size()), [](TypesOfThreadInLink types) {
         s_typesOfThread = types;
     }, [&](unsigned place) {
-        // Null where nothing has arrived, too: then the read may stand where nothing ever comes, and nobody gains.
         TypeID seen = typeIDOf(m_flow.typeAt(found[place].value));
         proven[place] = seen ? typesAtHand().withPrimitives(seen, Primitive::Undefined) : TypeID();
         return isOfProgramInLink(proven[place]);
@@ -1116,7 +1078,6 @@ void WriterOfLink::writeResultsOfReadsByKey()
         for (; endOfFunction < found.size() && found[endOfFunction].function == function; ++endOfFunction)
             reads.append(LinkedResultOfRead { function, found[endOfFunction].site, proven[endOfFunction] });
         std::ranges::sort(reads.mutableSpan().subspan(first), { }, &LinkedResultOfRead::site);
-        // An operation that reads off several operands has an access for each: it gives what any of them gives, and nothing is said of it here.
         size_t kept = first;
         for (size_t place = first; place < reads.size();) {
             size_t end = place + 1;
@@ -1130,7 +1091,6 @@ void WriterOfLink::writeResultsOfReadsByKey()
     }
 }
 
-// From what lies at the nodes when the flow has ended.
 void WriterOfLink::writeContentsAtOperations()
 {
     if (writesWhatIsExpected())
@@ -1159,7 +1119,6 @@ void WriterOfLink::writeContentsAtOperations()
                 listed.append(contents);
         }
         std::ranges::sort(listed.mutableSpan().subspan(first), { }, &LinkedContentsAtOperation::site);
-        // Several calls at one site: a protocol beside a call. Nothing is said of it.
         size_t kept = first;
         for (size_t place = first; place < listed.size();) {
             size_t end = place + 1;
@@ -1187,15 +1146,12 @@ TypeID WriterOfLink::widened(TypeID type)
     return holdsOnlyPrimitives(type) ? type : widenedToFamily(typesAtHand(), m_flow.families, type);
 }
 
-// What is held of a position that this file writes is an expectation, which is tested at each use: what was seen to arrive, whatever else unseen code may bring.
 TypeID WriterOfLink::typeIDOf(const LinkType& type)
 {
     if (type.isNothing() || withoutLostBuiltinsInLink(type).isAnything())
         return { };
     if (!writesWhatIsExpected())
         return unlessAnything(typesTurned().turn(m_flow, typesAtHand(), type));
-    // Whoever tests for a function mentions its code: LinkTables::referrers of Facts::linked() leads to what either table names (layReferrersOfHeldReadingOver()).
-    // It names no member of the table: the built-ins in reach are those of Facts::linked() alone.
     LinkType seen = type;
     seen.holdsUnseen = false;
     seen.holdsLostBuiltins = false;
@@ -1207,7 +1163,6 @@ TypeID WriterOfLink::typeIDOf(const LinkType& type)
     return unlessAnything(typesTurned().turn(m_flow, typesAtHand(), seen));
 }
 
-// A call by binding hands a capture over as an entry parameter, and a closure brings what it was made with.
 TypeID WriterOfLink::typeIDOfCapture(FunctionID id, uint32_t capture)
 {
     const LinkType& passed = m_flow.typeAt(m_flow.parameter(id, capture));
@@ -1230,7 +1185,7 @@ void WriterOfLink::writeFunctions()
     }, [&](unsigned index) {
         writeFunction(FunctionID(index));
         const LinkedFunction& linked = m_tables.functions[index];
-        return isOfProgramInLink(linked.result) && isOfProgramInLink(linked.thrown) && std::ranges::all_of(m_tables.parametersOf(FunctionID(index)), [](const LinkedParameter& parameter) {
+        return isOfProgramInLink(linked.result) && std::ranges::all_of(m_tables.parametersOf(FunctionID(index)), [](const LinkedParameter& parameter) {
             return isOfProgramInLink(parameter.proven) && isOfProgramInLink(parameter.expected);
         });
     });
@@ -1247,22 +1202,17 @@ void WriterOfLink::writeFunction(FunctionID id)
     const Function& function = m_program.at(id);
     bool isLost = m_flow.lostFunctions.get(index);
     linked.everyCallerIsKnown = !isLost && !m_flow.escapedFunctions.get(index) && !m_functionsEnteredByHost.get(index) && !m_functionsThatNoSummaryNames.get(index);
-    // The calls of unseen code are listed nowhere.
     linked.everyCallHasOneCallee = linked.everyCallerIsKnown && !m_functionsSharingCalls.get(index) && isEnteredByCallsAloneForLink(function.kind);
-    linked.everyEntryIsConstruction = linked.everyCallerIsKnown && function.takesThisFromConstruction() && !m_flow.functionsEnteredByPlainCalls.get(index);
-    // A coroutine hands its caller a promise or a generator.
     if (function.results.size() == 1 && !function.isCoroutine()) {
         linked.result = typeIDOf(m_flow.typeAt(m_flow.result(id, 0)));
         if (std::optional<ProvenInEveryVersion> established = function.results[0].established(); established && !linked.result)
             linked.result = unlessAnything(*established);
     }
-    linked.thrown = typeIDOf(m_flow.typeAt(m_flow.thrown(id)));
     writeParameters(id, linked);
 }
 
 BitVector bodiesThatLoaderEntersAtMostOnce(const Program& program)
 {
-    // The loader enters a body for each module that names it.
     BitVector bodies(program.functions.size());
     BitVector bodiesOfSeveralModules(program.functions.size());
     for (const Module& module : program.modules) {
@@ -1280,7 +1230,6 @@ BitVector bodiesThatLoaderEntersAtMostOnce(const Program& program)
     return bodies;
 }
 
-// LinkedFunction::runsAtMostOnce. From the bodies of modules downward, so no ring of calls is ever come to: each of its members waits for another.
 void WriterOfLink::findFunctionsThatRunAtMostOnce()
 {
     constexpr uint8_t several = 2;
@@ -1294,7 +1243,6 @@ void WriterOfLink::findFunctionsThatRunAtMostOnce()
 
     Vector<FunctionID> functionsToFollow;
     for (size_t body : bodiesThatLoaderEntersAtMostOnce(m_program)) {
-        // A site that evaluates a module is a call by binding. The body begins by asking whether it has begun.
         if (m_flow.reached.get(body))
             functionsToFollow.append(FunctionID(static_cast<uint32_t>(body)));
     }
@@ -1346,8 +1294,6 @@ bool callsOfBuiltinComeBack(const Program& program, BuiltinID builtin)
     return true;
 }
 
-// LinkedFunction::ringsOfTailCallsAreListed. Only round a ring can a row of calls in tail position go on without end, so only there does each of them have to be a jump.
-// Round a ring each result holds the next, so all are one type and one form: it takes a call that goes through an entry by value to part them, or a member that returns boxed values whatever the others do.
 void WriterOfLink::findRingsOfTailCalls()
 {
     struct TailCall {
@@ -1355,11 +1301,9 @@ void WriterOfLink::findRingsOfTailCalls()
         uint32_t to;
         bool entersBody;
     };
-    // What computeCallingConventions() asks of a function by itself. `[3].map(odd)`: a call of `odd` is not listed, so it returns boxed values, and so does whoever stands in a ring with it.
     auto mayReturnRawValue = [&](FunctionID id) {
         return m_tables.functions[id.index()].everyCallHasOneCallee && mayReturnInFormOfItsOwn(m_program.at(id));
     };
-    // One node stands for whichever of the lost functions a call may enter.
     uint32_t anyLostFunction = m_numberOfFunctions;
     Vector<TailCall> tailCalls = collectInParallel<TailCall>(loops(), m_numberOfFunctions, [&, view = LinkFlow::ViewAtWork::current()](unsigned index, Vector<TailCall>& tailCalls) {
         LinkFlow::ViewAtWork viewAtWork(view);
@@ -1371,13 +1315,10 @@ void WriterOfLink::findRingsOfTailCalls()
         const ThinSummary& summary = m_flow.summaries.at(caller);
         for (uint32_t place = 0; place < summary.calls.size(); ++place) {
             const SummaryCall& call = summary.calls[place];
-            // Native code comes back, and so does whatever it calls. Where its row forwards the call to an operand the walk puts the operand's call in its place: what is listed there is entered by value.
             if (!call.isInTailPosition || (call.callee == SummaryCall::Callee::Builtin && callsOfBuiltinComeBack(m_program, call.builtin)))
                 continue;
-            // The walk lays a list out only where it knows its length, and else leaves the call as it is written.
             if (FunctionID callee = call.passesList ? FunctionID() : m_tables.calleeAt(caller, call.site)) {
                 const Function& entered = m_program.at(callee);
-                // Only a call that is written as a direct one is sure to be one in every unit. Whether a call of a value enters the body is decided unit by unit, by what the walk knows of the callee there, and a slow version knows nothing.
                 bool entersBody = call.callee == SummaryCall::Callee::Binding && canBeCalledByValueOf(entered.role) && !entered.has(FunctionCapabilities::RecordsCallee) && mayReturnRawValue(callee) && mayReturnRawValue(caller);
                 tailCalls.append(TailCall { index, callee.index(), entersBody });
                 continue;
@@ -1391,7 +1332,6 @@ void WriterOfLink::findRingsOfTailCalls()
                 tailCalls.append(TailCall { index, anyLostFunction, false });
         }
     });
-    // A node for each shared call, between those who go by it and what it lists.
     uint32_t numberOfSharedCalls = static_cast<uint32_t>(m_flow.calleesOfSharedCallsAsSettled().size());
     for (uint32_t shared = 0; shared < numberOfSharedCalls; ++shared) {
         for (FunctionID callee : m_flow.calleesOfSharedCallsAsSettled()[shared].listed)
@@ -1429,7 +1369,6 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
     const Function& function = m_program.at(id);
     std::span<LinkedParameter> parameters = m_tables.parameters.mutableSpan().subspan(linked.firstParameter, linked.numberOfParameters);
     RELEASE_ASSERT(parameters.size() == function.numberOfEntryParameters());
-    // The entry makes the list, at no node of any summary.
     uint32_t restParameter = function.has(FunctionFlags::HasRestParameter) ? function.firstParameterIndex() + function.numberOfPositionalParameters() : none;
 
     for (uint32_t index = 0; index < parameters.size(); ++index) {
@@ -1437,7 +1376,6 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
         const LinkType arrived = m_flow.withoutObjectsThatHaveEscaped(m_flow.typeAt(m_flow.parameter(id, index)));
         const DeclaredType* declared = function.declaredEntryParameter(index);
 
-        // The compiler made such a position and lays down every store into it: what is written holds.
         TypeID established;
         if (declared) {
             if (std::optional<ProvenInEveryVersion> byCompiler = declared->established())
@@ -1459,17 +1397,16 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
             prove(index == restParameter ? TypeID() : typeIDOf(arrived));
             parameter.staysAsItsClassMakesIt = !writesWhatIsExpected() && linked.everyCallerIsKnown && index != restParameter && holdsOnlyInstancesThatStayAsMade(arrived);
             TypeID written = declared && !declared->isEstablished() ? unlessAnything(widened(declared->written())) : TypeID();
-            // The text of a built-in writes nothing of what it takes. The first of its rows does.
             if (!written)
                 written = unlessAnything(widened(typeExpectedByLibraryFunction(m_program, typesAtHand(), id, index)));
-            LinkType seen = arrived;
+            LinkType seen = m_flow.typeAt(m_flow.parameter(id, index));
             seen.holdsUnseen = false;
             seen.holdsLostBuiltins = false;
-            parameter.expected = written ? written : withoutLostBuiltinsInLink(arrived).isAnything() ? TypeID() : typeIDOf(seen);
+            TypeID seenToArrive = typeIDOf(seen);
+            parameter.expected = written ? written : typesAtHand().saysNothing(seenToArrive) ? TypeID() : seenToArrive;
             parameter.expectedIsDeclared = !!written;
             break;
         }
-        // Whoever enters lays down what it passes there: undefined, the callee, or what stands at SummaryCall::newTarget.
         case EntryParameter::Callee:
         case EntryParameter::NewTarget:
             prove(typeIDOf(arrived));
@@ -1481,22 +1418,6 @@ void WriterOfLink::writeParameters(FunctionID id, const LinkedFunction& linked)
     }
 }
 
-// WHO MAY NAME A FUNCTION. The walk mentions a unit of F in the code of G because it knows of some value, or of some field of an operation, that it is F. That knowledge comes into a walk by three doors and no other.
-// Each is gone through whole here, so by induction G leads to whatever a walk of G knows:
-//   the body      whatever the fields of its operations name: ThinSummary::functionsNamed, which the schema's own visitor fills. In a copy of a callee: what the callee names, and G leads to the callee
-//   the tables    every type that they hold of a position that the body reads, and of what a callee gives: forEachFunctionOfType(). A place where closures are lost, or class objects are several, is `function` in the tables and names nobody
-//   arrivals      what a caller had proven of an argument. The caller leads to that function, which says nothing of G. But the value may be there in some run, so it lies within what Link saw arrive at the parameter,
-//                 however much narrower it is: forEachNodeArrivingAt()
-// What the state knows, what a test narrows and what a fold leaves are made of those.
-// WHAT NOBODY CAN LIST HAS NO REFERRER, AND NEEDS NONE. A guess is no knowledge: where it is a layout, the run behind its test finds by name what the flow never saw arrive. And a closure that is lost to Link may be one function to a caller.
-// With a node for each name and one for the lost, whoever looks a name up led to whoever lies under it anywhere, and nearly every function of a large program stood in one cycle, where nothing is ordered.
-// An edge is there for the unit that a mention may bring. So those functions are in the queue from the start: LinkedFunction::isInQueueFromStart. The walk may call one wherever it finds it.
-// It copies one only where the graph leads to it or the function names nothing but such functions, because a copy mentions what the callee names: mayBeWalkedAtInlining().
-// A function that the listed calls alone enter is none of them: wherever its closure goes Link has it alone, so whoever can know it names it.
-// Whatever else a guess may come to expect, the walk asks before it takes a value for a function: LinkTables::mayBeMentionedBy().
-// UnitQueue holds each mention of finished code that may bring a unit against the graph, in every build.
-
-// The lists are sorted behind this, so they are gathered on all threads, each with lists of its own.
 void WriterOfLink::indexFunctionsThatAreHeld()
 {
     struct Holders {
@@ -1528,7 +1449,6 @@ void WriterOfLink::indexFunctionsThatAreHeld()
     forEachIndexOnAllThreads(m_numberOfFunctions, [&](uint32_t index, Holders& holders) {
         const ThinSummary& summary = m_flow.summaries.at(FunctionID(index));
         for (const SummaryMember& member : summary.members) {
-            // The record of the class names what the class was given, whatever was stored over it since. A lookup by name finds only what the tables say lies there.
             if (const SummaryNode& given = summary.nodes[member.value]; given.kind == SummaryNode::Kind::Closure)
                 holders.note(member.key, member.classLayout, FunctionID(given.first));
             holders.note(member.key, member.classLayout, closureAloneAt(m_flow.member(member.classLayout, member.side, member.index)));
@@ -1538,6 +1458,10 @@ void WriterOfLink::indexFunctionsThatAreHeld()
     for (const LinkFlow::NameOnPrototype& name : m_flow.namesOnPrototypes()) {
         holders.note(name.key, name.layout, closureAloneAt(name.stored));
         holders.note(name.key, name.layout, closureAloneAt(name.storedInSight));
+    }
+    for (const LinkedNameOnPrototype& name : m_tables.namesOnPrototypes) {
+        for (FunctionID laid : { name.function, name.expected, name.expectedGetter, name.expectedSetter })
+            holders.note(name.key, name.layout, laid);
     }
     forEachIndexOnAllThreads(m_program.layouts.size(), [&](uint32_t index, Holders& holders) {
         const Layout& layout = m_program.layouts[index];
@@ -1598,7 +1522,6 @@ FunctionID WriterOfLink::addGroup(LinkedGroup::Kind kind, uint32_t subject)
     return FunctionID(m_tables.numberOfNodesOfReferrers() - 1);
 }
 
-// In an order that follows from the program alone.
 void WriterOfLink::makeGroups()
 {
     m_tables.groups.shrink(0);
@@ -1619,7 +1542,6 @@ void WriterOfLink::makeGroups()
     for (size_t family : familiesWhoseConstructorsArrive)
         m_groupOfConstructors[family] = addGroup(LinkedGroup::Kind::Constructors, static_cast<uint32_t>(family));
 
-    // Those that some call goes by in the end and that name somebody, in the order of what they stand for.
     BitVector sharedCallsInUse(m_flow.calleesOfSharedCallsAsSettled().size());
     for (const LinkFlow::CalleesOfCall& callees : m_flow.calleesOfCallsAsSettled()) {
         for (uint32_t shared : callees.shared)
@@ -1641,8 +1563,6 @@ void WriterOfLink::makeGroups()
         m_groupOfSharedCall[m_sharedCallsOfGroups[place]] = addGroup(LinkedGroup::Kind::SharedCall, place);
 }
 
-// WHAT A CALL LISTS HANGS ON WHAT IT SAW FIRST: one closure in front of the others, a member in front of unseen code, a family on the way to what is lost. All those are lost or lie under a name, and several calls share them:
-// they are in the queue from the start. The one callee of a call is named by the call itself, so a function that is the one callee of every call that may enter it is passed over here too.
 void WriterOfLink::forEachFunctionListedWhateverCameFirst(const LinkFlow::CalleesOfCall& callees, const Invocable<void(FunctionID)> auto& name) const
 {
     for (FunctionID callee : callees.listed) {
@@ -1675,7 +1595,6 @@ void WriterOfLink::forEachMemberOf(const LinkedGroup& group, const Invocable<voi
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// One class object among several may be one function to a caller. So may a value that is lost to Link, which is in the queue from the start.
 void WriterOfLink::forEachNodeArrivingAt(FlowNodeID node, const Invocable<void(FunctionID)> auto& name) const
 {
     const LinkType& held = m_flow.typeAt(node);
@@ -1694,7 +1613,6 @@ void WriterOfLink::forEachNodeArrivingAt(FlowNodeID node, const Invocable<void(F
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// By any thread: every type of the tables lies in the program's table.
 void WriterOfLink::forEachFunctionOfType(TypeID type, const Invocable<void(FunctionID)> auto& name) const
 {
     if (!type || holdsOnlyPrimitives(type))
@@ -1705,12 +1623,10 @@ void WriterOfLink::forEachFunctionOfType(TypeID type, const Invocable<void(Funct
     });
 }
 
-// It is enough that the referrer leads to a function from node to node: a copy of a callee mentions what the callee names.
 void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(FunctionID)> auto& name) const
 {
     const Function& function = m_program.at(referrer);
 
-    // Whoever names a class names its constructor. The record of the class names its members and the class above it.
     if (LayoutID constructed = function.constructedClass; constructed && m_program.at(constructed).constructor == referrer) {
         for (const FunctionOfClass& member : std::ranges::equal_range(m_functionsOfClasses, constructed, { }, &FunctionOfClass::classLayout))
             name(member.function);
@@ -1718,7 +1634,6 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(
             name(m_program.at(base).constructor);
     }
 
-    // Of a function that is never entered only the generic entry gets code, which names nothing.
     if (!m_flow.reached.get(referrer.index()))
         return;
     name(m_anybody);
@@ -1738,9 +1653,7 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(
     }
     for (uint32_t capture = 0; capture < function.captures.size(); ++capture)
         forEachFunctionOfType(m_tables.capture(referrer, capture).proven, name);
-    // Whoever calls it is handed these, and leads here.
     forEachFunctionOfType(linked.result, name);
-    forEachFunctionOfType(linked.thrown, name);
     for (const LinkedCatch& row : std::ranges::equal_range(m_tables.catches, referrer, { }, &LinkedCatch::function))
         forEachFunctionOfType(row.caught, name);
 
@@ -1766,10 +1679,7 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(
         forEachFunctionOfType(contents.value, name);
     }
 
-    // Node 0 holds anything in every summary.
     std::span<const uint32_t> nodesOfSummary = m_flow.nodesOfSummaryOf(referrer);
-    // `meter.value`, where objects of one layout arrive in whose field literals lay one function: the walk calls it in the place of the access. callProvenAccessor(), callAccessorInSlot().
-    // The graph of the held reading is laid over this one (layReferrersOfHeldReadingOver()), and the types name the same objects in both: once is enough.
     if (!writesWhatIsExpected() && !m_tables.accessorsExpectedInFields.isEmpty()) {
         for (const SummaryAccess& access : summary.accesses) {
             if (access.isToContents() || !access.key || liesInThread(access.key) || !m_tables.keysOfAccessorsExpectedInFields.get(access.key.index()))
@@ -1793,7 +1703,6 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(
         case SummaryNode::Kind::Field:
             forEachFunctionOfType(m_tables.field({ LayoutID(node.first), node.second }).proven, name);
             break;
-        // The scan makes some of these three that no field of an operation spells.
         case SummaryNode::Kind::Constant:
             forEachFunctionOfType(TypeID::fromBits(node.first), name);
             break;
@@ -1826,7 +1735,6 @@ void WriterOfLink::forEachNodeNamedBy(FunctionID referrer, const Invocable<void(
         }
     }
 
-    // The start of a module evaluates what the module imports. A site that evaluates a module is a call by binding.
     if (!function.module || m_program.at(function.module).body != referrer)
         return;
     for (const ModuleRequest& request : m_program.at(function.module).requests)
@@ -1841,13 +1749,11 @@ void WriterOfLink::writeReferrers()
     const ParallelLoops& loops = this->loops();
     uint32_t numberOfNodes = m_tables.numberOfNodesOfReferrers();
     ChunksOfIndices division = divideIntoChunks(numberOfNodes);
-    // The node that is named above its referrer.
     Vector<Vector<uint64_t>> namingsOfChunks(division.size());
     LinkFlow::ViewOfHeldReading* view = LinkFlow::ViewAtWork::current();
     forEachIndexInParallel(loops, division.size(), [&](unsigned chunk) {
         LinkFlow::ViewAtWork viewAtWork(view);
         Vector<uint64_t>& namings = namingsOfChunks[chunk];
-        // What one referrer names, each as often as it is named.
         Vector<uint32_t, 64> namedByOne;
         for (uint32_t index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
             namedByOne.shrink(0);
@@ -1869,7 +1775,6 @@ void WriterOfLink::writeReferrers()
     });
     Vector<uint64_t> namings = joinChunks<uint64_t>(loops, WTF::move(namingsOfChunks));
 
-    // The referrers come in ascending order and the rows of a group stay in the order in which they came, so each list is ascending.
     sortRowsByGroup(loops, namings, numberOfNodes);
     m_tables.firstReferrer = firstRowsOfGroups(loops, numberOfNodes, namings.size(), [&](size_t row) {
         return static_cast<uint32_t>(namings[row] >> 32);
@@ -1881,7 +1786,6 @@ void WriterOfLink::writeReferrers()
     });
 }
 
-// Functions have one number in both graphs. A group that both have (the same kind and subject) is one node, and its members and referrers are those of both. The others come behind, in their order: that of a shared call is a place in its own reading.
 void layReferrersOfHeldReadingOver(LinkTables& tables, LinkTables& held, const ParallelLoops& loops)
 {
     uint32_t numberOfFunctions = static_cast<uint32_t>(tables.functions.size());
@@ -1889,7 +1793,6 @@ void layReferrersOfHeldReadingOver(LinkTables& tables, LinkTables& held, const P
     auto nameOfGroup = [](const LinkedGroup& group) {
         return (static_cast<uint64_t>(group.kind) << 32 | group.subject) + 1;
     };
-    // What the held reading has alone under a name a guess may test for. Who takes what callers leave goes by the proven reading.
     for (uint32_t index = 0; index < numberOfFunctions; ++index) {
         LinkedFunction& function = tables.functions[index];
         function.liesUnderNameOrIsLost |= held.functions[index].liesUnderNameOrIsLost;
@@ -1942,8 +1845,6 @@ void layReferrersOfHeldReadingOver(LinkTables& tables, LinkTables& held, const P
         }
         if (referrers.size() == numberOfOwn)
             return;
-        // Each reading lists the referrers of a node in ascending order, the functions in front of the groups, and only the groups of the held reading have other numbers here.
-        // One node has a hundred thousand referrers, and it is gathered twice: merged, it no longer keeps one thread busy while the others wait.
         std::span<uint32_t> all = referrers.mutableSpan();
         std::span<uint32_t> ofHeldReading = all.subspan(numberOfOwn);
         std::ranges::sort(all.subspan(endOfHeldFunctions));
@@ -2027,7 +1928,6 @@ LinkTables link(Program& program, const ThinSummaries& summaries, const Families
     if (!turns)
         return writeTablesOfProvingReading(program, mechanisms, ownedFlow, turns);
 
-    // held(), by the same writers, out of the same flow, beside linked().
     std::unique_ptr<LinkFlow::ViewOfHeldReading> view = flow.makeViewOfHeldReading();
     SizeOfLinkFlow sizeOfFlow = flow.size();
     bool unseenCodeCanRun = flow.builtinsInReach().unseenCodeCanRun();
@@ -2037,7 +1937,6 @@ LinkTables link(Program& program, const ThinSummaries& summaries, const Families
             tables = writeTablesOfProvingReading(program, mechanisms, ownedFlow, turns);
             return;
         }
-        // It waits for the lane in front of it alone.
         {
             view->loops = &loopsOfLane;
             LinkFlow::ViewAtWork viewAtWork(view.get());
@@ -2050,7 +1949,6 @@ LinkTables link(Program& program, const ThinSummaries& summaries, const Families
                     expected.functions[index].isReached = flow.reached.get(index);
                 return;
             }
-            // All that makes no type, while linked()'s writers have the table of types.
             view->functionsThatTablesMayName = &flow.reached;
             WriterOfLink writer(flow, expected);
             lookAtSummariesForLayoutsAndCells(flow, expected);
@@ -2098,9 +1996,7 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
 
     WriterOfLink writer(flow, tables);
     {
-        // Types made here are the program's: Link runs before Compile, and its arena commits into the program's table.
         TypeArena types(program.types, ArenaKeeps::InProgram);
-        // Neither reads what the other writes, and the look makes no type.
         runLanes(flow.loops, {
             [&] {
                 writer.writeWhatMakesNoType();
@@ -2115,7 +2011,6 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
         writeTablesOfUnions(flow, tables);
     }
     endTurnOfProvingReading();
-    // Neither reads what the other writes, and neither makes a type.
     runLanes(flow.loops, 2, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
         if (!lane) {
             summarizeCallees(flow, tables);
@@ -2125,7 +2020,6 @@ static LinkTables writeTablesOfProvingReading(Program& program, Mechanisms mecha
         writer.writeProofsThatMakeNoType();
         writer.writeReferrers();
     });
-    // What a callee does and what becomes of what it is passed are proofs. One of them shows in the types of held() too: finishReadingsOfLink().
     if (turns)
         turns->provingFlow = WTF::move(ownedFlow);
     else
@@ -2139,7 +2033,6 @@ void finishReadingsOfLink(Program& program, Mechanisms mechanisms, TurnsOfReadin
         return;
     writePrototypeObjectsThatAreSettled(*turns.provingFlow, proven);
     turns.provingFlow = nullptr;
-    // A variable that is proven never to be read in its dead zone is not read there whatever else is held of it.
     TypeArena types(program.types, ArenaKeeps::InProgram);
     for (size_t variable = 0; variable < held.variables.size(); ++variable) {
         TypeID provenOfVariable = proven.variables[variable].proven;

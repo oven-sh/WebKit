@@ -74,7 +74,6 @@ bool Object::keyOrderCountsExtraKeys() const
 
 using CountsOfPositionedKeys = Vector<uint32_t, PlacesOfPositionedKeys::maxNumberOfCounts>;
 
-// The numbers of extra keys that the order counts in front of a field or behind the last one, ascending.
 static CountsOfPositionedKeys countPositionedExtraKeys(State& state, const Object& object)
 {
     CountsOfPositionedKeys counts;
@@ -118,7 +117,6 @@ static bool tryFindPlacesOfPositionedKeys(State& state, const Object& object, co
     return next == counts.size();
 }
 
-// How many extra keys come in front of the entry, where the order counts the key of the entry.
 static std::optional<uint32_t> findOrdinalOfExtraKeyByWalk(State& state, const Object& object, const PropertyTable& table, unsigned entry, uint32_t numberOfCountedKeys)
 {
     uint32_t ordinal = 0;
@@ -131,7 +129,6 @@ static std::optional<uint32_t> findOrdinalOfExtraKeyByWalk(State& state, const O
     return ordinal;
 }
 
-// PlaceOfExtraKey::ordinal of the key. Where the places are known it is the largest count that does not count the key.
 static std::optional<uint32_t> ordinalOfCountedExtraKey(State& state, const Object& object, JSObject& extra, PropertyName name, const CountsOfPositionedKeys& counts, PlacesOfPositionedKeys& places)
 {
     PropertyTable& table = *extra.structure()->propertyTableInOrderOfAddition(object.vm());
@@ -246,7 +243,6 @@ bool Object::tryListFieldBehindNamedKey(State& state, const FieldData& field)
 {
     bool namesKeys = hasKeyOrderOfItsOwn();
     JSObject* extra = extraProperties();
-    // A dictionary loses and gets keys without another Structure, so no Structure says how many it has. Elsewhere the order counts them and is shared.
     if (!namesKeys && !(extra && extra->structure()->isDictionary()))
         return false;
     if (field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field))
@@ -275,7 +271,6 @@ Object::PlaceOfExtraKey Object::placeOfExtraKey(PropertyName name)
     JSObject* extra = extraProperties();
     if (!extra)
         return { };
-    // The orders of the image list fields alone.
     if (orderOf(orderWord()) < layout().numberOfOrders)
         return { };
     State& state = this->state();
@@ -305,7 +300,6 @@ Object::PlaceOfExtraKey Object::placeOfExtraKey(PropertyName name)
 void Object::didRemoveExtraKey(VM& vm, State& state, const PlaceOfExtraKey& place)
 {
     if (place.indexAmongNamedKeys) {
-        // The extra key in front of the one that is gone stands in its place. Where there is none, or the order names it already, the fields on both sides follow each other.
         uint32_t removed = *place.indexAmongNamedKeys;
         const CompiledStructure& structure = compiledStructure();
         if (place.extraKeyInFront && (!removed || structure.keysNamedByOrder()[removed - 1] != place.extraKeyInFront)) {
@@ -333,7 +327,6 @@ void Object::forgetPlacesOfPositionedKeys(State& state)
         places = { };
 }
 
-// The places go on describing the object where the key that is gone is the one that was asked for and nothing else has happened to the table.
 void Object::didRemoveCountedExtraKey(State& state)
 {
     PlacesOfPositionedKeys& places = state.objects->keyOrders.placesOfPositionedKeys(*this);
@@ -381,7 +374,6 @@ static void storeKeyOrderOutOfLine(VM& vm, State& state, Object& object, std::sp
     countEvent(vm, RuntimeCounterID::KeyOrdersStoredOutOfLine);
 }
 
-// The order that the Structure holds goes on with these entries, or the object has all of it and there is room behind.
 static bool tryStepInOutOfLineKeyOrder(Object& object, std::span<const uint16_t> added)
 {
     uint32_t count = countOf(object.orderWord());
@@ -415,7 +407,6 @@ static ALWAYS_INLINE bool trySearchForHeldKeyOrder(VM& vm, State& state, Object&
     return true;
 }
 
-// For an order that has no number. No order with a number starts with it, and the table takes no other order once it has refused one, so what is longer has no number either.
 static void appendEntriesToUnnumberedKeyOrder(VM& vm, State& state, Object& object, std::span<const uint16_t> added)
 {
     if (tryStepInOutOfLineKeyOrder(object, added))
@@ -426,7 +417,6 @@ static void appendEntriesToUnnumberedKeyOrder(VM& vm, State& state, Object& obje
         storeKeyOrderOutOfLine(vm, state, object, entries.span(), StructureTable::HeldKeyOrder::IsFoundByNobody);
 }
 
-// The object has nothing but fields in their slots, and shares what says their order with every object that has the same keys.
 static ALWAYS_INLINE bool sharesStepsOfKeyOrder(const Object& object)
 {
     return !object.hasFlagsInOrderWord() && !object.hasKeyOrderOfItsOwn();
@@ -440,7 +430,6 @@ static bool tryRepeatStepOfKeyOrder(VM& vm, State& state, Object& object, uint16
     uint32_t orderAndCountAfter = step->orderAndCountAfter;
     if (step->after != object.structureID()) {
         auto* after = uncheckedDowncast<CompiledStructure>(step->after.decode());
-        // Removing from an order that no second object has asked for gives the object an order of its own.
         if (after->hasOutOfLineKeyOrder())
             after->didFindKeyOrderAgain();
         object.JSCell::setStructure(vm, after);
@@ -493,7 +482,6 @@ std::optional<uint32_t> Object::numberOfExtraKeysByStructure() const
 
 using EntriesAddedToKeyOrder = Vector<uint16_t, 4>;
 
-// What has to stand in front of a field that is listed next, so that it comes behind every extra key that the object has.
 static EntriesAddedToKeyOrder entriesCountingExtraKeys(State& state, const Object& object, std::optional<uint32_t> numberOfKeysOfStars)
 {
     EntriesAddedToKeyOrder entries;
@@ -550,7 +538,6 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
     StructureID structureBefore = structureID();
     if (sharesStep && (tryStepInOutOfLineKeyOrder(*this, singleElementSpan(index)) || tryRepeatStepOfKeyOrder(vm(), state, *this, index, StructureTable::KindOfStep::Creates)))
         return;
-    // The order needs the number of the keys in front of the field, so stars go on waiting.
     std::optional<uint32_t> numberOfKeysOfStars = numberOfKeysOfPendingStars(vm(), *this);
     if (!numberOfKeysOfStars && tryListFieldBehindNamedKey(state, field))
         return;
@@ -640,7 +627,6 @@ void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldDa
             return key;
         });
     };
-    // An order of one object names keys, and the keys of stars that wait can only be counted. An order that a second object has asked for is likely to lose the field there too.
     if (object.hasOutOfLineKeyOrder() && !object.hasKeyOrderOfItsOwn() && !object.compiledStructure().keyOrderWasFoundAgain() && !hasPendingStars(object))
         object.takeKeyOrderOfItsOwn(vm, state);
     if (object.hasKeyOrderOfItsOwn()) {
@@ -796,7 +782,6 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
         }
         return found;
     }
-    // A dictionary gets and loses names without another Structure.
     if (extra->type() != FinalObjectType || structure->isDictionary() || structure->hasNonEnumerableProperties() || !structure->canPerformFastPropertyEnumeration() || structure->hasNonReifiedStaticProperties())
         return nullptr;
     RuntimeLayoutTable& layouts = state.objects->layouts;
@@ -893,7 +878,6 @@ JSArray* Object::tryCreateKeysArrayWithExtraProperties(JSGlobalObject* globalObj
 
 static bool enumerableNamesFollowFromStructureAndOrderWord(VM&, const Object&);
 
-// Every own key, where each of them is an enumerable string and the Structure and the order word say so for every object that has both.
 static JSCellButterfly* keysOfObjectWithExtraProperties(VM& vm, const Object& object)
 {
     State& state = object.state();
@@ -904,7 +888,6 @@ static JSCellButterfly* keysOfObjectWithExtraProperties(VM& vm, const Object& ob
         return uncheckedDowncast<JSCellButterfly>(cacheEntry.list);
     if (hasPendingStars(object) || !enumerableNamesFollowFromStructureAndOrderWord(vm, object))
         return nullptr;
-    // Where every own property is plain data, the list of the properties has the keys.
     if (JSCellButterfly* list = object.keysWithExtraProperties(vm)) {
         cacheEntry = { orderWord, structureWord, list };
         return list;
@@ -948,7 +931,6 @@ JSCellButterfly* Object::keys(VM& vm, KeyListKind kind) const
     return list;
 }
 
-// Which names a loop finds on the object itself, and in which order: the attributes of a field in its slot are those of the layout, and the Structure of the extra properties has those of every other.
 static bool enumerableNamesFollowFromStructureAndOrderWord(VM& vm, const Object& object)
 {
     if (!object.keysDependOnlyOnStructureAndOrderWord())
@@ -995,7 +977,6 @@ static CachedPropertyList* listOfKeysFixedByStructure(VM& vm, const Object& obje
     return cachedPropertyList(vm, object);
 }
 
-// Objects of several Structures, with other prototypes, share a list.
 static JSPropertyNameEnumerator* cachedEnumeratorOfObjectWithExtraProperties(VM& vm, const Object& object, StructureChain* prototypeChain)
 {
     DeferGC deferGC(vm);
@@ -1114,7 +1095,6 @@ KeptOwnKeys& PropertyListCache::ownKeysFor(StructureID structureID, uint32_t ord
     return withoutList ? *withoutList : set[m_numberOfOwnKeyListsReplaced++ % listsPerSet];
 }
 
-// The Structure names the Structure of the extra properties, which lists every name among them with its attributes, and the order word lists the fields.
 static bool ownKeysFollowFromStructureAndOrderWord(const Object& object)
 {
     JSObject* extra = object.extraProperties();

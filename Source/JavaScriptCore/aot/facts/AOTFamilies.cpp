@@ -19,13 +19,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// In the order in which the sets are admitted.
 enum class SourceOfSetForFamilies : uint8_t {
-    // A class with what extends it. What is inherited lies in one slot, so this is the set that pays most.
     Class,
-    // An interface or the type of a literal, with what is written as it.
     OtherLayout,
-    // A union that no layout stands for.
     WrittenTypeAlone,
 };
 
@@ -44,8 +40,6 @@ static bool comesFirstBySizeAndContentInFamilies(const TypeTable& types, const D
     return compareByContent(types.at(first.layouts).untyped(), types.at(second.layouts).untyped()) < 0;
 }
 
-// What the reader has made of the supertypes, bases and conversions that the front end sends: for each layout the layouts that are written as it, and for each written type the layouts of its union.
-// Each is a set of the program's table already. By source, then by size, then by content: the same at any number of threads.
 static Vector<DeclaredSetForFamilies> declaredSetsForFamilies(const Program& program, const ParallelLoops& loops)
 {
     const TypeTable& types = program.types;
@@ -63,7 +57,6 @@ static Vector<DeclaredSetForFamilies> declaredSetsForFamilies(const Program& pro
         if (set && !holdsOneMember(set))
             found.append(DeclaredSetForFamilies { set, source, types.at(set).size() });
     });
-    // The id of a set follows arrival. Here it brings equal sets together and decides nothing. Of equal sets the first source stays.
     sortAndRemoveDuplicates(loops, declaredSets, [](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
         return std::tie(first.layouts, first.source) < std::tie(second.layouts, second.source);
     }, [](const DeclaredSetForFamilies& first, const DeclaredSetForFamilies& second) {
@@ -88,17 +81,12 @@ Families::Families(Program& program, const ParallelLoops& loops)
     const TypeTable& types = program.types;
     constexpr uint32_t none = UINT32_MAX;
 
-    // Until every set is looked at, a family goes by its place in `admitted`.
     Vector<DeclaredSetForFamilies> declaredSets = declaredSetsForFamilies(program, loops);
     Vector<DeclaredSetForFamilies> admitted;
-    // By place: the nearest family that holds it.
     Vector<uint32_t> placesAbove;
-    // By place: a family that holds it and is no larger than the set that is looked at, or the place itself. The sets of one source come smallest first, so what is no larger than one of them is no larger than the next.
     Vector<uint32_t> placesFarAbove;
-    // By layout: the nearest family that holds it.
     Vector<uint32_t> nearestPlaces;
     nearestPlaces.fill(none, program.layouts.size());
-    // Both by place: how many of its layouts a declared set holds, and at which look that was counted last.
     Vector<uint32_t> numbersOfLayoutsInBoth;
     Vector<uint32_t> lastLookMet;
     Vector<uint32_t, 16> met;
@@ -129,8 +117,6 @@ Families::Families(Program& program, const ParallelLoops& loops)
         }
         SetView<LayoutID, LayoutSetID> members = types.at(declared.layouts);
 
-        // Of two sets that meet, one lies within the other exactly where they share as many layouts as the smaller has. The families that a member is in hold one another. So it is enough that the set holds
-        // all of the outermost that is no larger than the set, and that the nearest that is larger is the same for every member: that one holds the set then, and so does all that holds it.
         bool cutsAcrossFamily = false;
         bool hasMetMember = false;
         uint32_t placeAround = none;
@@ -144,7 +130,6 @@ Families::Families(Program& program, const ParallelLoops& loops)
             membersInNoFamilyInside.shrink(0);
             hasMetMember = false;
         };
-        // The outermost family no larger than the set that holds the member.
         auto meet = [&](LayoutID member) {
             uint32_t nearest = nearestPlaces[member.index()];
             if (nearest == none || admitted[nearest].size > declared.size) {
@@ -162,7 +147,6 @@ Families::Families(Program& program, const ParallelLoops& loops)
             return inside;
         };
 
-        // `class B extends A`, `class C extends B`, ..: each set is the one before and one layout more. A family that has half of the set is not gone through: what the set has beside it is.
         uint32_t halfOfSet = none;
         beginLook();
         members.anyOf([&](LayoutID member) {
@@ -225,7 +209,6 @@ Families::Families(Program& program, const ParallelLoops& loops)
     for (uint32_t place : nearestPlaces)
         m_nearestFamilyOfLayout.append(familyOfPlace(place));
 
-    // What holds a family has a higher number.
     m_waysUp.grow(admitted.size());
     for (uint32_t family = size(); family--;) {
         WayUp& way = m_waysUp[family];
@@ -254,7 +237,6 @@ Families::Families(Program& program, const ParallelLoops& loops)
 
 FamilyID Families::familyOf(LayoutSetID set) const
 {
-    // Equal sets have equal ids, and every family lies in the program's table.
     if (!liesInProgram(set) || m_familiesBySet.isEmpty())
         return { };
     for (size_t place = placeOfSetInFamilies(set, m_familiesBySet.size());; place = (place + 1) & (m_familiesBySet.size() - 1)) {
@@ -264,7 +246,6 @@ FamilyID Families::familyOf(LayoutSetID set) const
     }
 }
 
-// Either may be null: no family.
 FamilyID Families::nearestCommonFamilyOfFamiliesOrNone(FamilyID first, FamilyID second) const
 {
     if (!first || !second)
@@ -277,7 +258,6 @@ FamilyID Families::nearestCommonFamilyOfFamiliesOrNone(FamilyID first, FamilyID 
     uint32_t depth = wayOf(second).depth;
     while (wayOf(first).depth > depth)
         first = wayOf(wayOf(first).farAbove).depth < depth ? wayOf(first).above : wayOf(first).farAbove;
-    // At one depth both go equally far up.
     while (first != second) {
         if (!wayOf(first).depth)
             return { };
@@ -317,7 +297,6 @@ FamilyID Families::smallestFamilyHolding(const TypeArena& arena, LayoutSetID set
     return family;
 }
 
-// The closures of one function and the prototype objects that come with them count as one thing. Nothing tells a site that a module runs once from any other, so every site gives way.
 static bool isOneThingInEveryRunForFamilies(ObjectKind kind)
 {
     switch (kind) {
@@ -345,14 +324,11 @@ static bool isOneThingInEveryRunForFamilies(ObjectKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What is written of the contents of a class is a type like any other: `Array<A | B | C>`. A type is interned behind its contents, so this ends at the depth of the type.
 static ClassPartsID classPartsWidenedForFamilies(TypeArena& arena, const Families& families, ClassPartsID classes)
 {
-    // IDHome::Value: one class, and nothing written of its contents.
     if (!classes || homeOf(classes) == IDHome::Value)
         return classes;
 
-    // A copy, because interning may move the parts that an id names.
     Vector<ClassPart, 8> parts(arena.at(classes));
     bool hasChanged = false;
     for (ClassPart& part : parts) {
@@ -362,7 +338,6 @@ static ClassPartsID classPartsWidenedForFamilies(TypeArena& arena, const Familie
             TypeID widened = widenedToFamily(arena, families, contents);
             if (widened == contents)
                 continue;
-            // Null stands for every type that isAnything(): uniteWrittenContents().
             contents = arena.at(widened).isAnything() ? TypeID() : widened;
             hasChanged = true;
         }
@@ -370,7 +345,6 @@ static ClassPartsID classPartsWidenedForFamilies(TypeArena& arena, const Familie
     return hasChanged ? arena.internClassParts(parts.span()) : classes;
 }
 
-// Each part is widened by itself, from what that part holds and nothing beside it. That, and the chains, make this a closure: widening a union of widened types gives what widening the union of the types gives.
 TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type)
 {
     ASSERT(type);
@@ -378,9 +352,18 @@ TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type)
         return type;
 
     Type record = arena.at(type);
+    bool namesObjectsThatGiveWay = record.traitsOfNamed.containsAny({ ObjectTrait::IsOtherObject, ObjectTrait::IsMerged });
+    if (!namesObjectsThatGiveWay) {
+        if (record.anyObject)
+            return type;
+        bool classesStay = !record.unnamedClasses || homeOf(record.unnamedClasses) == IDHome::Value;
+        if (classesStay && (!record.unnamedLayouts || holdsOneMember(record.unnamedLayouts) || families.familyOf(record.unnamedLayouts)))
+            return type;
+    }
+
     TypeParts parts = record;
     Vector<BuiltinClassID, 4> classesOfObjectsWithoutName;
-    if (record.traitsOfNamed.containsAny({ ObjectTrait::IsOtherObject, ObjectTrait::IsMerged })) {
+    if (namesObjectsThatGiveWay) {
         const ObjectTable& objects = arena.objects();
         parts.objects = arena.objectSets().filtered(record.objects, [&](ObjectID object) {
             const ObjectRecord& named = objects.at(object);
@@ -392,7 +375,6 @@ TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type)
             } else if (named.has(ObjectTrait::HasLayout) && !named.has(ObjectTrait::MayHaveLayoutBelow))
                 parts.unnamedLayouts = arena.layoutSets().with(parts.unnamedLayouts, named.layout);
             else {
-                // Which layout `new.target` selects is proven by nobody: typeOfObjectAllocatedInResultRules().
                 (named.has(ObjectTrait::IsCallable) ? parts.anyFunction : parts.anyObject) = true;
                 parts.seeds.add(UnknownSeed::ObjectWithoutLayout);
             }
@@ -401,7 +383,6 @@ TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type)
     }
 
     if (!parts.anyObject && parts.unnamedLayouts && !holdsOneMember(parts.unnamedLayouts) && !families.familyOf(parts.unnamedLayouts)) {
-        // No seed says so: beside a type that holds any object the layouts are gone before they come here, so a seed would follow the order of the joins.
         if (FamilyID family = families.smallestFamilyHolding(arena, parts.unnamedLayouts))
             parts.unnamedLayouts = families.layoutsOf(family);
         else
@@ -416,7 +397,6 @@ TypeID widenedToFamily(TypeArena& arena, const Families& families, TypeID type)
     return widened;
 }
 
-// Null: any object.
 static TypeID withLayoutsOfFamilyForFamilies(TypeArena& arena, const Families& families, TypeID type, const Type& record, FamilyID family)
 {
     TypeParts parts = record;
@@ -429,7 +409,6 @@ static TypeID withLayoutsOfFamilyForFamilies(TypeArena& arena, const Families& f
     return arena.intern(parts);
 }
 
-// In front of the union, so that the set of the layouts of both sides is never made. It changes no answer: the smallest family that holds two families or layouts is their nearest common one.
 static void widenLayoutsOfBothSidesForFamilies(TypeArena& arena, const Families& families, TypeID& first, TypeID& second)
 {
     if (first == second || holdsOnlyPrimitives(first) || holdsOnlyPrimitives(second))
@@ -459,7 +438,6 @@ static void widenLayoutsOfBothSidesForFamilies(TypeArena& arena, const Families&
         common = families.nearestCommonFamily(onlyLayoutOfFirst, onlyLayoutOfSecond);
 
     first = withLayoutsOfFamilyForFamilies(arena, families, first, recordOfFirst, common);
-    // Any object on one side swallows the layouts of the other.
     if (common)
         second = withLayoutsOfFamilyForFamilies(arena, families, second, recordOfSecond, common);
 }

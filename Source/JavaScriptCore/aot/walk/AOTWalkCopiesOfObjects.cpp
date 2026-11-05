@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// TypedOperations, copies of objects: `{ c, ...base }`, `const { a, ...rest } = o`, `{ ...o }`, `Object.assign({ a: 1 }, defaults, options)`. Where the own keys of the source are known by name and in their order,
-// the object that is filled is made with them: what it holds by now, then what is copied, in ONE allocation. The object as it was written is built as ever, nothing comes to need it, and the sweep drops it.
-// At a suspension: no form goes past one. At a throw: every read comes in front of the allocation and runs no code. Withheld (or EscapeAnalysis, which sees the literal; or Guesses, for a source that is tested): the copy stays as written.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -28,48 +24,32 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// How many closed operations stand for a copy by the run time at the least: it lists the keys, reads each and defines each.
 static constexpr uint32_t closedOperationsOfCopyInWalkCopies = 3;
 
 namespace {
 
 enum class KindOfCopyInWalkCopies : uint8_t {
-    // CopyDataProperties: each property is defined on a literal.
-    DefinesOnLiteral,
-    // Object.assign: each property is stored into a literal.
     StoresIntoLiteral,
-    // CopyObject.
     MakesObject,
-    // CopyObject[assigns].
     MakesObjectByStores,
 };
 
 struct ObjectCopyInWalkCopies {
     bool makesObject() const { return kind == KindOfCopyInWalkCopies::MakesObject || kind == KindOfCopyInWalkCopies::MakesObjectByStores; }
-    // Object.assign stores each property, where a spread defines it.
     bool stores() const { return kind == KindOfCopyInWalkCopies::StoresIntoLiteral || kind == KindOfCopyInWalkCopies::MakesObjectByStores; }
-    bool excludes(PropertyKeyID key) const { return excludedKeys.contains(key); }
 
     Walker& walker;
     KindOfCopyInWalkCopies kind;
-    // Null: the copy makes its object, of the layout of its source.
     LayoutID layoutOfLiteral;
-    // What the operation names, and each computed key that is one key in every run.
-    Vector<PropertyKeyID, 8> excludedKeys;
 };
 
 struct CopiedOrderInWalkCopies {
-    // What the tests of an arm ask. Without a layout: nothing is copied.
     OwnKeyOrder keys;
-    // In the order in which the source got them.
     Vector<FieldIndex, 8> fields;
-    // By entry of `fields`: the field under the same key in the object that takes it.
     Vector<FieldIndex, 8> fieldsOfTaker;
 };
 
-// What a literal holds, in the order in which it got its keys.
 struct PropertiesInWalkCopies {
-    // A key that is there already keeps its place and takes the new value.
     void put(FieldIndex field, Reference value)
     {
         size_t place = fields.find(field);
@@ -87,11 +67,9 @@ struct PropertiesInWalkCopies {
 };
 
 struct LiteralInSightInWalkCopies {
-    // Of the body: the operand, whatever hands the object on to it, and the allocation.
     Vector<ValueID, 4> names;
     PropertiesInWalkCopies properties;
-    // The user alone names it from here on, so no name is bound anew: another way into the user's block may still read the names as they stand.
-    bool standsInBlockInFront { false };
+    bool keepsItsNames { false };
 };
 
 } // anonymous namespace
@@ -101,7 +79,6 @@ static PropertyKeyID keyOfFieldInWalkCopies(const Walker& walker, LayoutID layou
     return walker.plan().slots().keyOf(walker.program(), { layout, field });
 }
 
-// The bits of its slot are all there is to the property, a copy takes it, and an allocation may list it or leave it to a definition by name.
 static bool isPlainPropertyInWalkCopies(const Walker& walker, FieldReference field)
 {
     const Program& program = walker.program();
@@ -115,46 +92,19 @@ static bool isPlainPropertyInWalkCopies(const Walker& walker, FieldReference fie
     return declared.key && !declared.computedKey && declared.form.isEmpty() && !declared.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods, FieldFlags::IsHidden });
 }
 
-static bool isMadeWithoutPropertiesInWalkCopies(const Walker& walker, const BodyValue& made)
-{
-    if (made.opcode() == Opcode::NewDictionary)
-        return true;
-    if (made.opcode() != Opcode::Data)
-        return false;
-    const auto* object = walker.program().data[made.as<Opcode::Data>().data().index()].root.tryAs<DataNode::Object>();
-    return object && object->members.isEmpty();
-}
-
-// `const none = {}; return { ...none, [key]: value }`: the object was made by the body without a property, and nothing but this copy ever names it.
-static bool sourceIsEmptyDictionaryInWalkCopies(const Walker& walker, ValueID copy, ValueID source)
-{
-    const BodyIndex& index = walker.currentBodyIndex();
-    ValueID value = index.valueBehindCasts(source);
-    if (!value || index.isParameter(value) || !isMadeWithoutPropertiesInWalkCopies(walker, index.value(value)))
-        return false;
-    while (value && value != copy)
-        value = index.onlyUsingValue(value);
-    return value == copy;
-}
-
-// A store into a plain object runs no code, and defines, where nothing above the object answers to the key. While the object stands where its layout says, only Object.prototype stands above it, which gets no name.
-// Whoever asks has seen that it stands there: the allocation in sight was handed no prototype, and the state has the link of the cell.
 static bool onlyObjectPrototypeStandsAboveObjectsOfInWalkCopies(const Walker& walker, LayoutID layout)
 {
     const Layout& record = walker.program().at(layout);
     return record.kind == LayoutKind::Record && !record.constructor && !record.has(LayoutFlags::IsConstructorFunction) && !record.has(LayoutFlags::IsOfCreatedObject);
 }
 
-// What is asked of the key of each field that is copied. It answers with the field that takes the value.
 static std::optional<FieldIndex> findFieldThatTakesInWalkCopies(const ObjectCopyInWalkCopies& copy, LayoutID layoutOfSource, FieldIndex field, PropertyKeyID key)
 {
     const Walker& walker = copy.walker;
     const Program& program = walker.program();
     LayoutID taker = copy.makesObject() ? layoutOfSource : copy.layoutOfLiteral;
-    // A test run opens names on Object.prototype, and a setter that it lays there takes the store.
     if (copy.stores() && (isOnObjectPrototype(program.nameClassOf(key)) || !isClosedKey(program, program.builtins().canonicalID(Builtins::ObjectPrototype), key) || !onlyObjectPrototypeStandsAboveObjectsOfInWalkCopies(walker, taker)))
         return std::nullopt;
-    // An allocation lists declared fields.
     if (copy.makesObject())
         return isPlainPropertyInWalkCopies(walker, { layoutOfSource, field }) ? std::optional(field) : std::nullopt;
     std::optional<FieldReference> found = findField(program, taker, key);
@@ -163,8 +113,6 @@ static std::optional<FieldIndex> findFieldThatTakesInWalkCopies(const ObjectCopy
     return found->field;
 }
 
-// A copy takes the properties under symbols too, behind or among the names. One key of the build may stand for a symbol of each run, so no allocation can list such a field for another object.
-// False: the object may have an own property under a symbol that the copy would have to take, or an accessor, through which the engine's own copy goes as [[OwnPropertyKeys]] lists its keys.
 static bool createdFieldsHoldNoSymbolToCopyInWalkCopies(const ObjectCopyInWalkCopies& copy, const OwnKeyOrder& listed)
 {
     const Walker& walker = copy.walker;
@@ -179,13 +127,12 @@ static bool createdFieldsHoldNoSymbolToCopyInWalkCopies(const ObjectCopyInWalkCo
             form.add(layout.fields[field].form);
         if (form.contains(FieldForm::IsAccessor) || walker.plan().slot(listed.layout, field).holdsAccessor)
             return false;
-        if (isSymbolKind(program.at(key).kind) && !form.contains(FieldForm::IsNotEnumerable) && !copy.excludes(key))
+        if (isSymbolKind(program.at(key).kind) && !form.contains(FieldForm::IsNotEnumerable))
             return false;
     }
     return true;
 }
 
-// Whoever reads a field that every construction fills reads it without a look, on the word that every allocation of the layout lists it.
 static bool copyListsEveryFilledFieldInWalkCopies(const Walker& walker, const CopiedOrderInWalkCopies& order)
 {
     const LinkTables& linked = walker.facts().linked();
@@ -198,7 +145,6 @@ static bool copyListsEveryFilledFieldInWalkCopies(const Walker& walker, const Co
     return true;
 }
 
-// `isInSight`: the state knows the keys, and no test stands in front of the reads. It builds nothing.
 static bool fillCopiedOrderInWalkCopies(const ObjectCopyInWalkCopies& copy, const OwnKeyOrder& listed, bool isInSight, CopiedOrderInWalkCopies& order)
 {
     const Walker& walker = copy.walker;
@@ -206,11 +152,10 @@ static bool fillCopiedOrderInWalkCopies(const ObjectCopyInWalkCopies& copy, cons
     order.keys = listed;
     if (!listed.layout)
         return listed.fields.isEmpty();
-    if (!isInSight && listed.fields.size() > mostFieldsOfOwnKeyWalk + copy.excludedKeys.size())
+    if (!isInSight && listed.fields.size() > mostFieldsOfOwnKeyWalk)
         return false;
 
     const Layout& layout = program.at(listed.layout);
-    // What a copy makes is an ordinary object below Object.prototype, as an allocation of a record's layout is.
     if (copy.makesObject() && layout.kind != LayoutKind::Record)
         return false;
 
@@ -218,9 +163,6 @@ static bool fillCopiedOrderInWalkCopies(const ObjectCopyInWalkCopies& copy, cons
         PropertyKeyID key = keyOfFieldInWalkCopies(walker, listed.layout, field);
         if (!key)
             return false;
-        if (copy.excludes(key))
-            continue;
-        // Set(target, "__proto__", value) gives the target a prototype, whose setters would then run between the reads of the source.
         NameClass nameClass = program.nameClassOf(key);
         if (nameClass == NameClass::Proto || mayBeElementKey(nameClass))
             return false;
@@ -239,7 +181,6 @@ static bool fillCopiedOrderInWalkCopies(const ObjectCopyInWalkCopies& copy, cons
     return !copy.makesObject() || copyListsEveryFilledFieldInWalkCopies(walker, order);
 }
 
-// The arms of a plan that the copy can take. Empty: the copy stays as written.
 static Vector<CopiedOrderInWalkCopies, 2> planCopyByLayoutsInWalkCopies(const ObjectCopyInWalkCopies& copy, const OwnKeyPlan& plan)
 {
     Vector<CopiedOrderInWalkCopies, 2> orders;
@@ -251,9 +192,6 @@ static Vector<CopiedOrderInWalkCopies, 2> planCopyByLayoutsInWalkCopies(const Ob
     return orders;
 }
 
-// ---- The literal that is filled
-
-// `{ a: f() }` is allocated and filled, `{}` and `{ a: 1 }` are written out as data: either way the body makes a new object of the layout right there. Null: it does not, or it lays the object below something.
 static LayoutID layoutOfLiteralMadeByInWalkCopies(const Program& program, const BodyValue& made)
 {
     if (made.opcode() == Opcode::NewObject)
@@ -264,8 +202,6 @@ static LayoutID layoutOfLiteralMadeByInWalkCopies(const Program& program, const 
     return object ? object->layout : LayoutID();
 }
 
-// The object that the operand names was allocated by the body, a few operations further up in the block, under the layout of a record. Nothing has named it since but what defines a name on it, copies into it or hands it on to the operand,
-// nothing but this code has it, and the state knows what it holds. So an object that is made anew where the walk stands, with what this one holds, is this one to whoever comes later.
 static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(Walker& walker, const BodyValue& user, ValueID operand)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -278,26 +214,23 @@ static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(
     }
     if (!allocated || index.isParameter(allocated))
         return std::nullopt;
-    // `Object.assign({}, defaults, wide ? a : b)`: the literal stands in a block in front. Each time that block is run this one is run once at the most, and never without it: it dominates, and no loop holds one of the two alone.
     BlockID blockOfLiteral = index.blockOf(allocated);
     BlockID blockOfUser = index.blockOf(user.id());
     bool standsInBlockInFront = blockOfLiteral != blockOfUser;
     if (standsInBlockInFront && (!index.dominates(blockOfLiteral, blockOfUser) || index.loopOf(blockOfLiteral) != index.loopOf(blockOfUser) || index.hasIrreducibleFlow()))
         return std::nullopt;
     literal.names.append(allocated);
-    literal.standsInBlockInFront = standsInBlockInFront;
+    literal.keepsItsNames = standsInBlockInFront || walker.walksStretchInsideAnother();
     LayoutID layout = layoutOfLiteralMadeByInWalkCopies(program, index.value(allocated));
     if (!layout || program.at(layout).kind != LayoutKind::Record || !walker.plan().slots().holdsCompiledObjects(layout))
         return std::nullopt;
 
-    // The index counts the mentions of a value up to a limit of its own. So a literal is gone through for no more users than that.
     for (ValueID name : literal.names) {
         if (index.useCount(name) == BodyIndex::maxCountedUses)
             return std::nullopt;
     }
     Vector<uint32_t, 4> mentions;
     mentions.fill(0, literal.names.size());
-    // Of a literal in a block in front: what is left of its block, and this block up to the user. What stands between them is held to mention it nowhere, by the count of its mentions.
     uint32_t endOfBlockOfLiteral = index.block(blockOfLiteral).endOfValues().index();
     uint32_t beginOfBlockOfUser = index.block(blockOfUser).firstValue().index();
     for (uint32_t id = allocated.index() + 1; id < user.id().index(); ++id) {
@@ -320,13 +253,11 @@ static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(
         if (!onlyFillsOrHandsOn)
             return std::nullopt;
     }
-    // Whoever comes later names the operand: every other name is bound to the object as it was written.
     for (size_t place = 0; place < literal.names.size(); ++place) {
         if (literal.names[place] != operand && mentions[place] != index.useCount(literal.names[place]))
             return std::nullopt;
     }
-    // Nobody has looked through the blocks between, nor through what stands behind them in the stream: the user alone names the operand beside what was counted.
-    if (standsInBlockInFront) {
+    if (literal.keepsItsNames) {
         uint32_t mentionsByUser = 0;
         user.forEachOperand([&](ValueID mentioned, uint32_t) {
             mentionsByUser += mentioned == operand;
@@ -374,13 +305,12 @@ static Reference buildLiteralInWalkCopies(Walker& walker, Origin origin, const P
 
 static void bindLiteralInWalkCopies(Walker& walker, const LiteralInSightInWalkCopies& literal, Reference object)
 {
-    if (literal.standsInBlockInFront)
+    if (literal.keepsItsNames)
         return;
     for (ValueID name : literal.names)
         walker.bind(name, object);
 }
 
-// Every field is a plain value in its slot, so nothing can tell that all reads come first. False: the walk stands nowhere.
 static bool takeFieldsOfSourceInWalkCopies(Walker& walker, const CopiedOrderInWalkCopies& order, Reference source, Origin origin, PropertiesInWalkCopies& properties)
 {
     for (size_t index = 0; index < order.fields.size(); ++index) {
@@ -392,10 +322,6 @@ static bool takeFieldsOfSourceInWalkCopies(Walker& walker, const CopiedOrderInWa
     return true;
 }
 
-// ---- The arms of a copy that goes by the shape of its source and by the order of its keys
-
-// A failed test leads to the next arm that may still take the object, and else to the copy as written, which is built once behind all arms. `buildArm(order, source)` and `buildAsWritten()` answer with the object that is filled or made.
-// It answers with that object where the arms have met. Null: the walk stands nowhere.
 static Reference buildArmsInWalkCopies(Walker& walker, Reference source, std::span<const CopiedOrderInWalkCopies> orders, bool layoutsAreProven, Origin origin, NOESCAPE const Invocable<Reference(const CopiedOrderInWalkCopies&, Reference)> auto& buildArm, NOESCAPE const Invocable<Reference()> auto& buildAsWritten)
 {
     walker.noteGuessOpened();
@@ -430,14 +356,9 @@ static Reference buildArmsInWalkCopies(Walker& walker, Reference source, std::sp
     return walker.isUnreachable() ? Reference() : filled;
 }
 
-// ---- { c, ...source }, const { a, ...rest } = source
-
-// ---- { ...source } where no type says which names the object will have
-
 static Reference buildObjectMadeByCopyInWalkCopies(Walker& walker, const Draft& written, const BodyValue& value, const CopiedOrderInWalkCopies& order, Reference source)
 {
     Origin origin = written.origin();
-    // The copy of nothing is the ordinary object that the operation as written makes.
     if (!order.keys.layout || order.fields.isEmpty()) {
         Draft empty(Opcode::NewDictionary, origin);
         empty.inputValueGiven = value.id();
@@ -447,7 +368,6 @@ static Reference buildObjectMadeByCopyInWalkCopies(Walker& walker, const Draft& 
         return walker.build(WTF::move(empty));
     }
 
-    // The copy gets its fields in the order in which the source got them, so it has the order word of its source.
     PropertiesInWalkCopies properties;
     properties.layout = order.keys.layout;
     if (!takeFieldsOfSourceInWalkCopies(walker, order, source, origin, properties))
@@ -473,15 +393,8 @@ bool buildCopyThatMakesObject(Walker& walker, const BodyValue& value)
     Reference source = walker.referenceOf(operation.sourceOperand());
     if (!source)
         return false;
-    ObjectCopyInWalkCopies copy { walker, operation.assigns() ? KindOfCopyInWalkCopies::MakesObjectByStores : KindOfCopyInWalkCopies::MakesObject, { }, { } };
+    ObjectCopyInWalkCopies copy { walker, operation.assigns() ? KindOfCopyInWalkCopies::MakesObjectByStores : KindOfCopyInWalkCopies::MakesObject, { } };
 
-    if (sourceIsEmptyDictionaryInWalkCopies(walker, value.id(), operation.sourceOperand())) {
-        Draft written = walker.draftOf(value);
-        if (Reference made = walker.hasFailed() ? Reference() : buildObjectMadeByCopyInWalkCopies(walker, written, value, { }, source))
-            walker.bind(value.id(), made);
-        return true;
-    }
-    // An allocation that leaves fields out need not be one that the layout allows.
     if (!source.isValue() || !operation.excludedKeys().isEmpty() || !operation.excludedOperands().empty())
         return false;
 
@@ -502,7 +415,6 @@ bool buildCopyThatMakesObject(Walker& walker, const BodyValue& value)
     Draft written = walker.draftOf(value);
     if (walker.hasFailed())
         return true;
-    // Each arm hands its object to the block in which they meet, so none of them is what the unit returns at once.
     written.resultIsReturnedAtOnce = false;
     written.isTailCall = false;
 
@@ -518,9 +430,6 @@ bool buildCopyThatMakesObject(Walker& walker, const BodyValue& value)
     return true;
 }
 
-// ---- Object.assign(literal, source, ..)
-
-// A member that is no field of the layout may be on its way to the literal: an accessor, a member under a computed key.
 static bool isLayoutOfPlainLiteralInWalkCopies(const Program& program, LayoutID layout)
 {
     const Layout& record = program.at(layout);
@@ -536,7 +445,6 @@ namespace {
 struct SourceOfAssignmentInWalkCopies {
     ValueID inBody;
     Reference built;
-    // With `isInSight`: the one order. Else the first arm of the plan.
     CopiedOrderInWalkCopies order;
     bool isInSight { false };
     bool layoutIsProven { false };
@@ -544,7 +452,6 @@ struct SourceOfAssignmentInWalkCopies {
 
 } // anonymous namespace
 
-// It builds nothing. False: the call takes the source as written, and every later one with it.
 static bool planSourceOfAssignmentInWalkCopies(const ObjectCopyInWalkCopies& copy, SourceOfAssignmentInWalkCopies& source)
 {
     Walker& walker = copy.walker;
@@ -566,9 +473,6 @@ static bool planSourceOfAssignmentInWalkCopies(const ObjectCopyInWalkCopies& cop
     return true;
 }
 
-// The literal has no `__proto__` member and no accessor, and it is as it was made. So it stands right below Object.prototype, and only a name that is answered there can make a store into it run code.
-// The stores of a planned source add plain properties to the literal, so the next source finds it as plain as the first did.
-// A source that is assigned as written may give the literal a prototype with setters, so the call that assigns it assigns every later source too.
 bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
 {
     if (value.opcode() != Opcode::Call || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::TypedOperations))
@@ -577,7 +481,6 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
     std::span<const ValueID> arguments = call.argumentsOperands();
     if (call.isDoneInPlace() || arguments.size() < 2)
         return false;
-    // Every call comes by here, and next to none is handed a literal: that is asked of the body, in front of all that is asked of the walk.
     {
         const BodyIndex& index = walker.currentBodyIndex();
         ValueID allocated = arguments[0];
@@ -601,10 +504,9 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
     if (!walker.state().factsOfCell(cell).containsAll({ FactOfCell::NotFrozen, FactOfCell::HasLayoutPrototype }))
         return false;
 
-    ObjectCopyInWalkCopies copy { walker, KindOfCopyInWalkCopies::StoresIntoLiteral, literal->properties.layout, { } };
+    ObjectCopyInWalkCopies copy { walker, KindOfCopyInWalkCopies::StoresIntoLiteral, literal->properties.layout };
     Vector<SourceOfAssignmentInWalkCopies, 4> planned;
     for (ValueID argument : arguments.subspan(1)) {
-        // The literal itself among the sources is read while it is filled.
         SourceOfAssignmentInWalkCopies source { argument, literal->names.contains(argument) ? Reference() : walker.referenceOf(argument), { }, false, false };
         if (!planSourceOfAssignmentInWalkCopies(copy, source))
             break;
@@ -617,25 +519,20 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
     if (walker.hasFailed())
         return true;
     walker.noteAssignmentWrittenOut();
-    // The call gives the literal, whoever assigns: nothing that is built here is what the unit returns at once.
     written.resultIsReturnedAtOnce = false;
     written.isTailCall = false;
     Origin origin = written.origin();
     Vector<Reference, 4> operandsAsWritten(written.argumentsOperands());
     walker.count(StatisticID::OwnKeyWalksExpanded, static_cast<uint32_t>(planned.size()));
 
-    // The call with the literal as it stands, this source and every later one.
     auto assignAsWrittenFrom = [&](size_t firstSource, const PropertiesInWalkCopies& properties) -> Reference {
         Reference object = buildLiteralInWalkCopies(walker, origin, properties);
         if (!object)
             return { };
-        // A getter of a source may throw half way, and whoever catches that finds this object, with what it has got by then, under the names of the literal.
         bindLiteralInWalkCopies(walker, *literal, object);
         Vector<Reference, 4> operands;
         operands.append(object);
         operands.append(operandsAsWritten.span().subspan(1 + firstSource));
-        // `Object.assign({}, defaults, { depth })`: the call reads a source and keeps nothing of it, so a literal that it alone names is made here, where a test has failed, out of what the state knows it to hold:
-        // on the way of the tests that pass nothing needs it, and the sweep drops it there.
         for (size_t later = firstSource; later < planned.size(); ++later) {
             const SourceOfAssignmentInWalkCopies& source = planned[later];
             if (!source.isInSight || !source.order.keys.layout || !walker.currentBodyIndex().hasOneUse(source.inBody) || !isLayoutOfPlainLiteralInWalkCopies(walker.program(), source.order.keys.layout))

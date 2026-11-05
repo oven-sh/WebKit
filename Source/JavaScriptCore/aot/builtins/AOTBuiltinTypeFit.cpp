@@ -21,11 +21,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// An Instance part of a tested type, or a tuple, which is an array.
 struct ClassTestedByRow {
     BuiltinClassID builtinClass;
     PristineAspectSet pristine;
-    // The row also asks for contents, for a length, or for the class itself and none below it. No type says any of that.
     bool asksForMoreThanClass { false };
 
     unsigned demands() const
@@ -45,7 +43,6 @@ struct FitWithoutPristineProofs {
 struct PristineAspectsOfOperand {
     BuiltinClassID builtinClass;
     PristineAspectSet asked;
-    PristineAspectSet proven;
 };
 
 class BuiltinTypeFitWalk {
@@ -109,9 +106,7 @@ private:
     const Type& m_operand;
     const BuiltinType& m_tested;
     Vector<ClassTestedByRow, 4> m_classes;
-    // At most one part per class, sorted by class.
     Vector<ClassPart, 4> m_classParts;
-    // Interned only when asked for: a closure passed where the row takes any function is decided without it.
     std::optional<Type> m_testedShapes;
     bool m_namesLayoutOfOrdinaryObjects { false };
     bool m_takesSomeOrdinaryObjects { false };
@@ -182,7 +177,6 @@ static Vector<ClassTestedByRow, 4> classesTestedByRow(const BuiltinTable& table,
     return classes;
 }
 
-// Among the parts that take every instance of the class, the one that asks for the least.
 static const ClassTestedByRow* findTestedClassAdmitting(const BuiltinTable& table, std::span<const ClassTestedByRow> classes, BuiltinClassID builtinClass)
 {
     const ClassTestedByRow* found = nullptr;
@@ -217,7 +211,6 @@ TypeFit fitOfPrimitiveInBuiltinType(const BuiltinType& tested, PrimitiveSet prim
     };
 
     switch (primitive) {
-    // An operand that is passed as undefined is not one that is left out.
     case PrimitiveSet::Undefined:
         return fitOfMember(BuiltinPrimitive::Undefined);
     case PrimitiveSet::Null:
@@ -294,7 +287,6 @@ void BuiltinTypeFitWalk::addObjects()
         add(TypeFit::Outside);
         return;
     }
-    // A proxy may stand wherever any object may, and it is an instance of no class.
     if (m_operand.anyObject) {
         add(TypeFit::Unknown);
         return;
@@ -335,15 +327,12 @@ TypeFit BuiltinTypeFitWalk::fitOfClass(BuiltinClassID builtinClass)
     bool mayBeFunction = takesFunctions && isFunctionClass(m_table, builtinClass);
     bool mayBePlainData = has(BuiltinTypeFlag::HasPlainData) && (m_table.isSameOrSubclassOf(BuiltinClasses::Array, builtinClass) || m_table.isSameOrSubclassOf(BuiltinClasses::Object, builtinClass));
     bool mayBeListedObject = m_namesLayoutOfOrdinaryObjects || hasPart(BuiltinTypePartKind::Builtin);
-    // A test for one class may pass for the cells of another that shares their type, whatever the two extend.
     bool mayBeInstance = std::ranges::any_of(m_classes, [&](const ClassTestedByRow& tested) {
         return m_table.isSameOrSubclassOf(tested.builtinClass, builtinClass) || relate(m_table, builtinClass, tested.builtinClass) == ClassRelation::Unknown;
     });
     return fitOfTestedAtom(false, mayBeFunction || mayBePlainData || mayBeListedObject || mayBeInstance);
 }
 
-// That a class has the base it was written with is Facts' to prove, so an object of a class below a built-in class is never Inside by that class.
-// It has a prototype of its own, so it is pristine for no class.
 TypeFit BuiltinTypeFitWalk::fitOfLayout(LayoutID layout) const
 {
     bool isNamed = std::ranges::any_of(m_tested.parts, [&](const BuiltinTypePart& part) {
@@ -362,7 +351,6 @@ TypeFit BuiltinTypeFitWalk::fitOfLayout(LayoutID layout) const
     }));
 }
 
-// Narrowing a class to a layout written below it yields a subset, so it must not turn an operand that fit into one that does not.
 bool BuiltinTypeFitWalk::isWrittenBelowTestedClass(LayoutID layout) const
 {
     const Layout& record = m_context.program.at(layout);
@@ -391,7 +379,6 @@ const Type& BuiltinTypeFitWalk::testedShapes()
 void BuiltinTypeFitWalk::addObjectsWithoutShape()
 {
     SetView<ObjectID, ObjectSetID> named = m_reader.at(m_operand.objects);
-    // A function of the library may be what implements a built-in that the row names. A row that takes any function takes it either way.
     bool namesOnlyClosures = (m_operand.traitsOfNamed & traitsOfIdentity).containsOnly({ ObjectTrait::IsClosure });
     bool tellsClosuresApart = hasPart(BuiltinTypePartKind::Builtin) && !has(BuiltinTypeFlag::HasAnyFunction);
     if (namesOnlyClosures && !tellsClosuresApart) {
@@ -456,7 +443,6 @@ static FitWithoutPristineProofs fitWithoutPristineProofs(const BuiltinTypeContex
     return { fit, fit == TypeFit::Inside && walk.needsPristineProof(), walk.fitsIfPristine() };
 }
 
-// Nothing unless every object of the operand is of one class: one test answers for one class.
 static std::optional<PristineAspectsOfOperand> pristineAspectsAskedOf(const BuiltinTypeContext& context, TypeID operandID, BuiltinTypeID testedID)
 {
     if (!operandID || !testedID)
@@ -472,30 +458,26 @@ static std::optional<PristineAspectsOfOperand> pristineAspectsAskedOf(const Buil
     if (!admitting)
         return std::nullopt;
 
-    PristineAspectsOfOperand aspects { builtinClass, admitting->pristine, { } };
-    if (!aspects.asked.isEmpty())
-        aspects.proven = pristineAspectsProvenBy(context, operandID, builtinClass);
-    return aspects;
+    return PristineAspectsOfOperand { builtinClass, admitting->pristine };
 }
 
 static PristineRequirement unprovenPristineRequirementOf(const PristineAspectsOfOperand& aspects)
 {
-    PristineAspectSet unproven = aspects.asked - aspects.proven;
-    if (unproven.isEmpty())
+    if (aspects.asked.isEmpty())
         return { };
-    return { aspects.builtinClass, unproven };
+    return { aspects.builtinClass, aspects.asked };
 }
 
 OperandFit fitOf(const BuiltinTypeContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
 {
     FitWithoutPristineProofs unproven = fitWithoutPristineProofs(context, operandOrNotPassed, tested);
     if (!unproven.needsPristineProof)
-        return { unproven.fit, { }, false };
+        return { unproven.fit, { } };
 
     std::optional<PristineAspectsOfOperand> aspects = pristineAspectsAskedOf(context, operandOrNotPassed, tested);
     if (!aspects)
         return { };
-    return { TypeFit::Inside, unprovenPristineRequirementOf(*aspects), aspects->asked.containsAny(aspects->proven) };
+    return { TypeFit::Inside, unprovenPristineRequirementOf(*aspects) };
 }
 
 bool fitsIfPristine(const BuiltinTypeContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)

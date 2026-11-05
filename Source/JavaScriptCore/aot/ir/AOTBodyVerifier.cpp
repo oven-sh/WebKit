@@ -24,7 +24,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t verifiedWordsPerParameter = sizeof(Wire::ParameterHead) / sizeof(uint32_t);
 
-// The words stage takes the words of each head one by one, in this order.
 static_assert(BodyBlock::numberOfHeadWords == 5 && verifiedWordsPerParameter == 1 && BodyValue::numberOfHeadWords == 2 && BodyTerminator::numberOfHeadWords == 3 && BodyTarget::numberOfHeadWords == 3);
 static_assert(!offsetof(Wire::ValueHead, opcode) && offsetof(Wire::ValueHead, position) == 4);
 static_assert(!offsetof(Wire::TerminatorHead, kind) && offsetof(Wire::TerminatorHead, position) == 4 && offsetof(Wire::TerminatorHead, targetCount) == 8);
@@ -35,10 +34,10 @@ static_assert(std::ranges::none_of(allMembersOf<Opcode>, [](Opcode opcode) { ret
 static_assert(std::ranges::none_of(allMembersOf<Opcode>, [](Opcode opcode) { return wireFlagsOf(opcode) > UINT8_MAX; }));
 
 static constexpr uint8_t wireFlagsInByteOf(Opcode opcode) { return static_cast<uint8_t>(wireFlagsOf(opcode)); }
+static constexpr uint8_t mayBeTakenByFewUsesInVerifiedBody(Opcode opcode) { return opcodesWithoutResultInVerifiedBodies.contains(opcode) || definitionsThatFewOperandsTakeInVerifiedBodies.contains(opcode); }
 
 void (*printerOfBodiesForVerifier)(const Program&, FunctionID, ASCIILiteral heading) = nullptr;
 
-// Whoever finds nothing here may build an index of the body.
 Vector<InternalError> findErrorsInWords(FunctionID id, const Body& body)
 {
     BodyVerifierScratch scratch(nullptr);
@@ -52,7 +51,6 @@ static void printBodyThatVerifierRefused(const Program& program, FunctionID id)
 {
     if (!printerOfBodiesForVerifier || id.index() >= program.functions.size())
         return;
-    // A printer reads through cursors, and those are safe only behind the words stage.
     const Function& function = program.at(id);
     BodyVerifierScratch scratch(&program);
     if (BodyVerifier(&program, id, &function, function.body, scratch).runWords())
@@ -72,7 +70,6 @@ bool verifyBodies(const Program& program, BuildContext& build, BodyIndexTable* t
     constexpr bool isCheckingBuild = false;
 #endif
     bool comparesIndexes = !tableThatKeepsIndexes || isCheckingBuild || build.validates();
-    // As collectInParallel() has it, with the number of the thread.
     const ParallelLoops& loops = build.parallelLoops();
     ChunksOfIndices division = divideIntoChunks(static_cast<unsigned>(program.functions.size()));
     Vector<Vector<InternalError>> errorsOfChunks(division.size());
@@ -81,7 +78,6 @@ bool verifyBodies(const Program& program, BuildContext& build, BodyIndexTable* t
         for (unsigned index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
             const Function& function = program.functions[index];
 #if ENABLE(FUZZILLI)
-            // It is the same in every build, and a fuzzer makes millions of builds.
             if (isLibraryCode(program, function))
                 continue;
 #endif
@@ -106,14 +102,8 @@ bool verifyBodies(const Program& program, BuildContext& build, BodyIndexTable* t
     return false;
 }
 
-uint32_t CheckedBodyWords::failForLackOfWords()
-{
-    fail(InternalErrorKind::ListOutOfBounds);
-    return 0;
-}
-
 BodyVerifierScratch::BodyVerifierScratch(const Program* program)
-    : opcodesThatTakeAnyValue(opcodesThatTakeAnyValueInVerifiedBodies())
+    : builtins(BuiltinTable::singleton())
 {
     numbersOfRecords.sizes.fill(SIZE_MAX);
     if (!program)
@@ -140,7 +130,6 @@ BodyVerifier::BodyVerifier(const Program* program, FunctionID id, const Function
     , m_scratch(scratch)
 {
     RELEASE_ASSERT(!program == !function);
-    // The index is built of the function's body, which has to be the one whose words were checked.
     RELEASE_ASSERT(!function || function->body.words().data() == body.words().data());
 }
 
@@ -199,13 +188,10 @@ void BodyVerifier::fail(InternalErrorKind kind, BlockID block, ValueID value, ui
     SourceLocation location = noSourceLocation;
     ASCIILiteral operation;
     if (!m_index) {
-        // What the words stage takes behind its first failure is zero and means nothing.
         if (hasFailed())
             return;
-        // Its messages count records, and the record of a body is its function. failWhereOrderMisleadsBodyIndex() fails here too, and its two messages show no count.
         count = m_id.index();
     } else if (value.index() < m_body.numberOfValues()) {
-        // Diagnostics looks the operation up only for a record that comes without a location.
         BodyValue subject = m_index->value(value);
         location = m_function->locationOf(subject);
         operation = nameOf(subject.opcode());
@@ -227,128 +213,148 @@ bool BodyVerifier::isValidField(LayoutID layout, uint32_t field) const
     return layout.index() < m_program->layouts.size() && field < m_program->at(layout).fields.size();
 }
 
-void BodyVerifier::verifyWords()
+template<WordsReport report>
+ALWAYS_INLINE void BodyVerifier::verifyWordsOfTarget(CheckedBodyWords<report>& words, BlockID from)
 {
-    setSubject({ }, { });
-    constexpr uint64_t minWordsPerBlock = BodyBlock::numberOfHeadWords + BodyTerminator::numberOfHeadWords;
-    uint64_t numberOfWords = m_body.words().size();
-    if (m_body.numberOfBlocks() * minWordsPerBlock > numberOfWords || m_body.numberOfValues() > numberOfWords) {
-        failAtSubject(InternalErrorKind::ListOutOfBounds);
-        return;
-    }
-    // A body without blocks need not have a unit.
-    if (!m_body.numberOfBlocks()) {
-        if (numberOfWords)
-            failAtSubject(InternalErrorKind::ListOutOfBounds);
-        return;
-    }
-
-    m_isTargetOfEarlierBlock = BitVector(m_body.numberOfBlocks());
-
-    CheckedBodyWords words(*this, m_body);
-    uint32_t nextValue = 0;
-    for (uint32_t block = 0; block < m_body.numberOfBlocks() && !hasFailed(); ++block)
-        verifyWordsOfBlock(words, BlockID(block), nextValue);
-
-    setSubject({ }, { });
-    if (!words.isAtEnd() || nextValue != m_body.numberOfValues())
-        failAtSubject(InternalErrorKind::ListOutOfBounds);
-    if (hasFailed())
-        m_errors.first().detail = makeString("after "_s, words.offset(), " of "_s, numberOfWords, " words"_s);
+    uint32_t target = words.takeBlock();
+    if (target > from.index() && target < m_body.numberOfBlocks())
+        noteTargetOfEarlierBlock(target);
+    uint32_t numberOfArguments = words.takeCount();
+    uint32_t numberOfProofs = words.takeCount();
+    for (; numberOfArguments; --numberOfArguments)
+        words.takeOperand(false);
+    words.skip(numberOfProofs);
 }
 
-void BodyVerifier::verifyWordsOfBlock(CheckedBodyWords& words, BlockID block, uint32_t& nextValue)
+template<WordsReport report>
+ALWAYS_INLINE void BodyVerifier::verifyWordsOfValue(CheckedBodyWords<report>& words, BlockID block, ValueID value, NoteOnVerifiedValue& note)
 {
-    setSubject(block, { });
-    if (block != entryBlock && !m_isTargetOfEarlierBlock.quickGet(block.index()))
-        noteOrderThatMisleadsBodyIndex(InternalErrorKind::BlockOrderInvalid, block);
-    uint32_t numberOfParameters = words.takeCount(verifiedWordsPerParameter);
-    uint32_t numberOfValues = words.takeCount(BodyValue::numberOfHeadWords);
-    m_hasHandlerBlock |= words.takeEnumerator<BlockRole>() != static_cast<uint32_t>(BlockRole::Ordinary);
-    words.takeOperand(true);
-    bool hasHandler = words.takeBoolean();
-    if (static_cast<uint64_t>(nextValue) + numberOfParameters + numberOfValues > m_body.numberOfValues())
-        failAtSubject(InternalErrorKind::IdOutOfRange);
-    if (hasFailed())
-        return;
-
-    for (; numberOfParameters && !hasFailed(); --numberOfParameters) {
-        setSubject(block, ValueID(nextValue++));
-        words.takeID<TypeID>(true);
-    }
-
-    setSubject(block, { });
-    if (hasHandler)
-        verifyWordsOfTarget(words, block);
-
-    for (; numberOfValues && !hasFailed(); --numberOfValues)
-        verifyWordsOfValue(words, block, ValueID(nextValue++));
-
-    verifyWordsOfTerminator(words, block, nextValue);
-}
-
-void BodyVerifier::verifyWordsOfValue(CheckedBodyWords& words, BlockID block, ValueID value)
-{
-    setSubject(block, value);
+    words.setSubject(block, value);
     uint32_t opcodeWord = words.take();
     words.skip(1);
     uint32_t number = opcodeWord & BodyValue::opcodeMask;
     if (number >= numberOfEnumerators<Opcode>)
-        failAtSubject(InternalErrorKind::UnknownEnumerator);
+        words.failAtSubject(InternalErrorKind::UnknownEnumerator);
     else if (number >= numberOfWireEnumerators<Opcode> || number == static_cast<uint32_t>(Opcode::Parameter))
-        failAtSubject(InternalErrorKind::EngineOnlyOnWire);
+        words.failAtSubject(InternalErrorKind::EngineOnlyOnWire);
     else if (opcodeWord & Wire::WrittenPositionIsForCallers && !(opcodeWord & Wire::WrittenPositionFollows))
-        failAtSubject(InternalErrorKind::FlagNotDeclared);
-    if (hasFailed())
+        words.failAtSubject(InternalErrorKind::FlagNotDeclared);
+    if (words.hasFailed())
         return;
 
     auto opcode = static_cast<Opcode>(number);
+    note = NoteOnVerifiedValue::ofOperation(block, CaseTable<Opcode, mayBeTakenByFewUsesInVerifiedBody>::at(opcode));
     if (uint32_t wireMask = CaseTable<Opcode, wireFlagsInByteOf>::at(opcode)) {
-        // A bit that the entry does not declare lies outside the wire's mask too, so the take has just reported it as the engine's.
-        if (words.takeFlags(wireMask) & ~static_cast<uint32_t>(declaredFlagsOf(opcode)))
-            m_errors.last().kind = InternalErrorKind::UnknownFlag;
+        [[maybe_unused]] uint32_t flags = words.takeFlags(wireMask);
+        if constexpr (report == WordsReport::Yes) {
+            if (flags & ~static_cast<uint32_t>(declaredFlagsOf(opcode)))
+                m_errors.last().kind = InternalErrorKind::UnknownFlag;
+        }
     }
     verifyFieldWords(words, opcode);
     if (opcodeWord & Wire::WrittenPositionFollows)
         words.skip(1);
 }
 
-void BodyVerifier::verifyWordsOfTerminator(CheckedBodyWords& words, BlockID block, uint32_t endOfValues)
+template<WordsReport report>
+ALWAYS_INLINE void BodyVerifier::verifyWordsOfTerminator(CheckedBodyWords<report>& words, BlockID block, uint32_t endOfValues)
 {
-    setSubject(block, { });
+    words.setSubject(block, { });
     uint32_t offsetOfHead = words.offset();
-    uint32_t kind = words.takeEnumerator<TerminatorKind>();
+    uint32_t kind = words.template takeEnumerator<TerminatorKind>();
     words.skip(1);
     uint32_t numberOfTargets = words.takeCount(BodyTarget::numberOfHeadWords);
-    if (hasFailed())
+    if (words.hasFailed())
         return;
 
     verifyFieldWords(words, static_cast<TerminatorKind>(kind));
-    for (; numberOfTargets && !hasFailed(); --numberOfTargets)
+    for (; numberOfTargets && !words.hasFailed(); --numberOfTargets)
         verifyWordsOfTarget(words, block);
-    if (hasFailed())
+    if (words.hasFailed())
         return;
 
-    // Its words have just been checked, so a cursor may read them.
     BodyTerminator(&m_body.words()[offsetOfHead], &m_body.unit(), block).forEachOperand([&](ValueID operand, uint32_t) {
         if (operand.index() >= endOfValues)
             noteOrderThatMisleadsBodyIndex(InternalErrorKind::UseNotDominated, block, operand);
     });
 }
 
-void BodyVerifier::verifyWordsOfTarget(CheckedBodyWords& words, BlockID from)
+template<WordsReport report>
+ALWAYS_INLINE void BodyVerifier::verifyWordsOfBlock(CheckedBodyWords<report>& words, BlockID block, uint32_t& nextValue)
 {
-    uint32_t target = words.takeBlock();
-    if (target > from.index() && target < m_body.numberOfBlocks())
-        m_isTargetOfEarlierBlock.quickSet(target);
-    else
-        m_hasEdgeThatDoesNotLeadForward = true;
-    uint32_t numberOfArguments = words.takeCount();
-    uint32_t numberOfProofs = words.takeCount();
-    for (; numberOfArguments; --numberOfArguments)
-        words.takeOperand(false);
-    // What a proof word may say depends on the terminator: the flow stage asks BodyIndex::edgeResult().
-    words.skip(numberOfProofs);
+    words.setSubject(block, { });
+    if (block != entryBlock && !isTargetOfEarlierBlock(block.index()))
+        noteOrderThatMisleadsBodyIndex(InternalErrorKind::BlockOrderInvalid, block);
+    uint32_t numberOfParameters = words.takeCount(verifiedWordsPerParameter);
+    uint32_t numberOfValues = words.takeCount(BodyValue::numberOfHeadWords);
+    words.template takeEnumerator<BlockRole>();
+    words.takeOperand(true);
+    bool hasHandler = words.takeBoolean();
+    if (static_cast<uint64_t>(nextValue) + numberOfParameters + numberOfValues > m_body.numberOfValues())
+        words.failAtSubject(InternalErrorKind::IdOutOfRange);
+    if (words.hasFailed())
+        return;
+
+    NoteOnVerifiedValue* notes = m_scratch.notesOnValues.mutableSpan().data();
+    for (; numberOfParameters && !words.hasFailed(); --numberOfParameters) {
+        notes[nextValue] = NoteOnVerifiedValue::ofParameter(block);
+        words.setSubject(block, ValueID(nextValue++));
+        words.template takeID<TypeID>(true);
+    }
+
+    words.setSubject(block, { });
+    if (hasHandler)
+        verifyWordsOfTarget(words, block);
+
+    for (; numberOfValues && !words.hasFailed(); --numberOfValues) {
+        verifyWordsOfValue(words, block, ValueID(nextValue), notes[nextValue]);
+        ++nextValue;
+    }
+
+    verifyWordsOfTerminator(words, block, nextValue);
+}
+
+template<WordsReport report>
+bool BodyVerifier::verifyWordsInOrder()
+{
+    m_kindOfOrderThatMisleadsBodyIndex = InternalErrorKind::Unknown;
+    m_scratch.targetsOfEarlierBlocks.fill(0, (static_cast<size_t>(m_body.numberOfBlocks()) + 63) / 64);
+    m_scratch.notesOnValues.grow(std::max<size_t>(m_scratch.notesOnValues.size(), m_body.numberOfValues()));
+
+    CheckedBodyWords<report> words(*this, m_body);
+    uint32_t nextValue = 0;
+    for (uint32_t block = 0; block < m_body.numberOfBlocks() && !words.hasFailed(); ++block)
+        verifyWordsOfBlock(words, BlockID(block), nextValue);
+
+    words.setSubject({ }, { });
+    if (!words.isAtEnd() || nextValue != m_body.numberOfValues())
+        words.failAtSubject(InternalErrorKind::ListOutOfBounds);
+    if constexpr (report == WordsReport::Yes) {
+        uint64_t numberOfWords = m_body.words().size();
+        if (hasFailed())
+            m_errors.first().detail = makeString("after "_s, words.offset(), " of "_s, numberOfWords, " words"_s);
+    }
+    return !words.hasFailed();
+}
+
+void BodyVerifier::verifyWords()
+{
+    setSubject({ }, { });
+    constexpr uint64_t minWordsPerBlock = BodyBlock::numberOfHeadWords + BodyTerminator::numberOfHeadWords;
+    static_assert(minWordsPerBlock >= 4, "NoteOnVerifiedValue holds the number of a block beside two marks.");
+    uint64_t numberOfWords = m_body.words().size();
+    if (m_body.numberOfBlocks() * minWordsPerBlock > numberOfWords || m_body.numberOfValues() > numberOfWords) {
+        failAtSubject(InternalErrorKind::ListOutOfBounds);
+        return;
+    }
+    if (!m_body.numberOfBlocks()) {
+        if (numberOfWords)
+            failAtSubject(InternalErrorKind::ListOutOfBounds);
+        return;
+    }
+
+    if (!verifyWordsInOrder<WordsReport::No>())
+        verifyWordsInOrder<WordsReport::Yes>();
 }
 
 void BodyVerifier::buildIndex()
@@ -357,7 +363,6 @@ void BodyVerifier::buildIndex()
         m_index = &m_tableThatKeepsIndex->build(m_id, *m_function, m_workerOfTableThatKeepsIndex);
         return;
     }
-    // The table holds this function alone, which has the first place in it whatever its number in the program.
     m_indexes = makeUniqueWithoutFastMallocCheck<BodyIndexTable>(1u, 1u);
     m_index = &m_indexes->build(FunctionID(0u), *m_function, 0);
 }

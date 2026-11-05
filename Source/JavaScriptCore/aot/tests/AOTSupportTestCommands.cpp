@@ -94,7 +94,6 @@ static void runBuildContext(TestCommandContext& context)
     context.out.println("thread count ["_s, context.build.threadCount(), ']');
 }
 
-// A test file that runs `crash` holds no program, so the crash report names a function of this one.
 static constexpr ASCIILiteral programOfCrashCommand =
     "module m0 path=\"/crash.ts\" displayPath=\"crash.ts\"\n"
     "function f0 name=\"stopsTheCompiler\" parameters=[{type=number}] results=[{type=number}] {\n"
@@ -103,7 +102,6 @@ static constexpr ASCIILiteral programOfCrashCommand =
     "    Return v1\n"
     "}\n"_s;
 
-// `without-memory`: as the engine does where a heap gets no block. `without-memory-at-no-work`: the same on a thread that compiles nothing.
 static void runCrashCommand(TestCommandContext& context)
 {
     bool isWithoutMemory = context.arguments.size() == 1 && context.arguments[0] == "without-memory"_s;
@@ -116,7 +114,6 @@ static void runCrashCommand(TestCommandContext& context)
     RELEASE_ASSERT(program);
     CurrentWorkScope work(*program, FunctionID(0u), "walk"_s);
     RELEASE_ASSERT_RESOURCE_AVAILABLE(!isWithoutMemory, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
-    // Not CRASH(), which may abort: only a trap reaches the handler that installTrapReporter() installs, and that handler prints what this thread is compiling.
     __builtin_trap();
 }
 

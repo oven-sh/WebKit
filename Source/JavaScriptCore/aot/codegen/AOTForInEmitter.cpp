@@ -52,7 +52,6 @@ std::array<Operand, 2> ForInEmitter::openEnumerator(const ValueContext& value, b
     LBasicBlock isOtherCell = newBlock();
     LBasicBlock slowPath = newBlock();
     ResultsJoin<CellPointer, Integer> join(m_out);
-    // What is cached for the Structure and the key order of the object describes the object as it is.
     auto addCurrent = [&](CellPointer enumerator) {
         join.add(enumerator, countsCurrentNames ? zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endOwnPropertyIndex)) : integer(0));
     };
@@ -106,7 +105,6 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     LBasicBlock isPastEnd = newBlock();
     LBasicBlock slowPath = newBlock();
     ResultsJoin<Condition, CellPointer, Integer, Integer> join(m_out);
-    // Where the name is read: the number of names that are current there.
     Join<Integer> isStructureName(m_out);
 
     EnumeratorFields fields = loadFields(enumerator);
@@ -132,7 +130,6 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     Condition isNotDone = boolean(false);
     Pointer names = loadField<Pointer>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVector);
     CellPointer name(m_out.loadPtr(m_out.baseIndex(m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVectorContents, names.value(), nameIndex.value())));
-    // The collector reaches the names through the enumerator alone.
     ensureStillAliveHere(enumerator);
     join.add(isNotDone, name, position, numberOfNamesCurrentAtName);
 
@@ -147,7 +144,6 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     Operand arguments[] = { enumerator, object, position };
     StubCallResult next = emitter<RuntimeCallEmitter>().callOperationReturningPair(value, RuntimeOperation::EnumeratorNext, arguments);
     Condition isDone = isZero(Integer(next.first));
-    // It may have run code of the program.
     join.add(isDone, select(isDone, emptyString(), CellPointer(next.first)), Integer(next.second), integer(0));
 
     defineResults(value, join.finish());

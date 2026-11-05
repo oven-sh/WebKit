@@ -26,10 +26,8 @@
 namespace JSC { namespace AOT {
 
 static thread_local bool t_isInsideLoop = false;
-// Null unless the thread is running a loop that several threads share. t_workerNumber is the thread's number in that loop.
 static thread_local const ParallelLoops* t_currentLoops = nullptr;
 static thread_local unsigned t_workerNumber = 0;
-// Null unless the thread runs a lane that runLanes() left to the pool.
 static thread_local const ParallelLoops* t_loopsOfLane = nullptr;
 
 bool ParallelLoops::isInsideLoop()
@@ -81,7 +79,6 @@ namespace {
 
 enum class LoopParticipant : bool { Caller, Helper };
 
-// Work that its caller runs, and that threads of the pool join while there is something for them to take.
 class SharedWork final : public ThreadSafeRefCounted<SharedWork> {
 public:
     using Work = ScopedLambda<void(LoopParticipant)>;
@@ -153,7 +150,6 @@ private:
     static constexpr uint32_t isClosed = 1;
     static constexpr uint32_t oneHelperAtWork = 2;
 
-    // All but the state belongs to the caller, which stays in runOnCaller() while a helper is at work.
     const ParallelLoops& m_loops;
     const unsigned m_maxHelpers;
     const Work& m_work;
@@ -164,7 +160,6 @@ private:
 
 } // anonymous namespace
 
-// A call of the pool may come when the caller has long returned: it then finds every lane taken, and touches nothing but the two numbers.
 class Lanes final : public ThreadSafeRefCounted<Lanes> {
 public:
     using Lane = ScopedLambda<void(unsigned lane, const ParallelLoops& loopsOfLane)>;
@@ -211,7 +206,6 @@ private:
             {
                 ParallelLoops loopsOfLane(ParallelLoops::ForLane, m_loops);
                 SetForScope laneOfThread(t_loopsOfLane, &loopsOfLane);
-                // A pool that runs its calls on a thread that waits in a loop leaves that loop's marks on the thread.
                 SetForScope isInsideLoop(t_isInsideLoop, false);
                 SetForScope currentLoops(t_currentLoops, nullptr);
                 SetForScope workerNumber(t_workerNumber, 0u);
@@ -233,7 +227,6 @@ private:
         return lane;
     }
 
-    // All but the two numbers belongs to the caller, which stays in runOnCaller() while a lane is left.
     const ParallelLoops& m_loops;
     const unsigned m_count;
     const Lane& m_lane;
@@ -262,7 +255,6 @@ void runLanes(const ParallelLoops& loops, std::initializer_list<ScopedLambda<voi
 
 void runOnBuildThread(NOESCAPE const ScopedLambda<void()>& functor)
 {
-    // The thread is at what its caller is at, so a crash on it names the function and the step.
     const CurrentWork& caller = currentWorkOfThread();
     const Typed::Program* programOfCaller = caller.program.load(std::memory_order_relaxed);
     uint32_t functionPlusOneOfCaller = caller.functionPlusOne.load(std::memory_order_relaxed);
@@ -292,9 +284,6 @@ NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned co
     }
     ASSERT(loops.areThoseOfCurrentThread());
 
-    // Runs begin short, so that long indices at the front spread over the threads, and end short, so that the threads finish together.
-    // A run grows only while the one in front of it was over in no time: an index may stand for a thousand rules, and whoever took fifty of those at once would be at work long after the others are done.
-    // No run is shorter than an eighth of what was over in no time: where an index is a few instructions, threads that take the last ones one by one spend their time on `next`, the more so the more they are.
     constexpr unsigned longestRun = 256;
     constexpr Seconds longestTimeOfRunThatGrows = Seconds::fromMicroseconds(50);
     const unsigned maxWorkers = std::min(loops.width(), count);
@@ -302,7 +291,6 @@ NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned co
     const unsigned shares = 4 * maxWorkers;
     alignas(128) std::atomic<unsigned> next { 0 };
     alignas(128) std::atomic<unsigned> numberOfHelpers { 0 };
-    // A thread that joins the loop is at the step of the thread that started it, so a crash on it names the step.
     const char* stepOfCaller = currentWorkOfThread().step.load(std::memory_order_relaxed);
     SharedWork::run(loops, maxWorkers - 1, [&](LoopParticipant participant) {
         std::optional<CurrentWorkScope> workOfCaller;
@@ -315,7 +303,6 @@ NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned co
         SetForScope workerNumber(t_workerNumber, worker);
         unsigned run = 1;
         MonotonicTime startOfRun = MonotonicTime::now();
-        // How far the loop was when this thread last asked. One addition takes a run: it never fails, however many threads ask at once, and each thread adds once past the end.
         for (unsigned taken = next.load(std::memory_order_relaxed); taken < count;) {
             unsigned length = std::max({ std::min(run, (count - taken) / shares), run / 8, 1u });
             unsigned first = next.fetch_add(length, std::memory_order_relaxed);

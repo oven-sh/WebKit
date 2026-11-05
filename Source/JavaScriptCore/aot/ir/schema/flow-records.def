@@ -12,8 +12,6 @@ enum FieldCreation { | engine Unknown OnlyAtConstruction OnlyBeforeObjectIsFinis
 enum MemberMutability { | engine Unknown Fixed }
 enum BaseState { | engine Unknown None Layout BuiltinClass }
 enum FrameLocality { | engine Unknown FrameLocal }
-enum FunctionReachability { | engine Unknown Unreached }
-enum CallerState { | engine Unknown AllKnown }
 enum ClosureUse { | engine Unknown CalledOnly }
 enum NamespaceUse { | engine Unknown NamedReadsOnly NeverCreated }
 enum BuiltinLocationState { | engine Unknown Constant }
@@ -23,7 +21,7 @@ flags ObjectMutation {
     | engine ReachNativeCode ReachUnknownJavaScript DeleteField RedefineProperty AddProperty ChangeIntegrity ChangePrototype BecomePrototype
     StoreAfterCreation StoreOfOtherType
 }
-flags FieldStability { | engine IsNeverDeleted IsNeverRedefined IsNeverStoredWithOtherType }
+flags FieldStability { | engine IsNeverDeleted IsNeverRedefined }
 flags ObservedUse { | engine Serialized ReachesTypedParse IsParsedByType }
 
 record LocationFlow engine {
@@ -50,12 +48,6 @@ record ClassFlow engine {
     namedMembers: List<ClassMember> hasAssignedPrototype: Bool prototypeBase: Layout?
 }
 
-record FunctionFlow engine {
-    reachability: FunctionReachability callers: CallerState executions: ExecutionCount closureUse: ClosureUse
-    cause: UnprovenCause witness: Witness
-}
-record ModuleFlow engine { namespaceUse: NamespaceUse exportsReadByName: List<Variable> }
-record BuiltinLocationFlow engine { holder: Builtin key: PropertyKey state: BuiltinLocationState witness: Witness }
 
 record AccessSite engine { function: Function(Dispatch) location: SourceLocation kind: AccessKind }
 record AllocationSite engine { function: Function(Dispatch) layout: Layout? builtinClass: BuiltinClass? allocationClass: AllocationClass? location: SourceLocation }

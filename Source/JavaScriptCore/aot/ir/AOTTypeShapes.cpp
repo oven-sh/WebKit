@@ -24,14 +24,11 @@ namespace {
 
 enum class ShapeDescription : uint8_t {
     OfExpectation,
-    // Where a test passes, the value is cut by the type that the test was made for. So that type names only what the test tells from everything else.
     OfTest,
 };
 
-// What stands in place of the objects that lose their names and of the layouts that no test finds.
 struct ShapesOfDescribedObjects {
     Vector<LayoutID, 32> layouts;
-    // In ascending order of class, one part a class.
     Vector<ClassPart, 8> classes;
     bool classesDifferFromType { false };
     bool anyObject { false };
@@ -42,7 +39,6 @@ struct ShapesOfDescribedObjects {
 
 } // anonymous namespace
 
-// Neither an object nor a layout says anything of contents, so a class that is listed keeps what is written of them.
 static void addClassToDescribedShapes(ShapesOfDescribedObjects& shapes, BuiltinClassID builtinClass)
 {
     auto place = std::ranges::lower_bound(shapes.classes, builtinClass, { }, &ClassPart::builtinClass);
@@ -59,14 +55,12 @@ static void addLayoutToDescribedShapes(TypeReader reader, ShapesOfDescribedObjec
         shapes.layouts.append(layout);
         return;
     }
-    // An ordinary object or a cell of the class: no test finds both and nothing else.
     if (reader.program()->at(layout).mayBeOrdinaryObject)
         shapes.anyObject = true;
     else
         addClassToDescribedShapes(shapes, builtinClass);
 }
 
-// The constructor of a tagged family makes an object of the member that its argument names, and the record of the object names the layout of the maker.
 static void addLayoutWithTaggedMembersToDescribedShapes(TypeReader reader, const Program& program, ShapesOfDescribedObjects& shapes, LayoutID layout)
 {
     addLayoutToDescribedShapes(reader, shapes, layout);
@@ -76,7 +70,6 @@ static void addLayoutWithTaggedMembersToDescribedShapes(TypeReader reader, const
     }
 }
 
-// Whatever escapes merges into the form of the layout that its record names, with whatever layout `new.target` gave it.
 static bool mayHaveLayoutBelowTheOneDescribed(const ObjectTable& objects, const ObjectRecord& record)
 {
     if (record.has(ObjectTrait::MayHaveLayoutBelow))
@@ -105,7 +98,6 @@ static void addObjectToDescribedShapes(TypeReader reader, ShapesOfDescribedObjec
 
     const Program* program = reader.program();
     if (!program) {
-        // Nobody can list the layouts below.
         shapes.anyObject = mayHaveLayoutBelow;
         shapes.layouts.append(record.layout);
         return;
@@ -117,7 +109,6 @@ static void addObjectToDescribedShapes(TypeReader reader, ShapesOfDescribedObjec
         addLayoutWithTaggedMembersToDescribedShapes(reader, *program, shapes, below);
 }
 
-// A TypeTest compares a cell with the cell of a built-in and asks a closure for its function. It finds no other object by itself.
 static bool isFoundByTestOfIdentity(const BuiltinTable& builtins, const ObjectRecord& record)
 {
     switch (record.kind) {
@@ -192,7 +183,6 @@ static TypeParts describeObjectsByShape(TypeArena& arena, const Type& type, Shap
             addObjectToDescribedShapes(reader, shapes, record);
             return false;
         });
-        // No test tells through which call the creator of an object was entered.
         if (parts.objects && type.traitsOfNamed.contains(ObjectTrait::IsOfInstance)) {
             parts.objects = arena.objectSets().replaced(parts.objects, [&](ObjectID object) {
                 return objects.sharedFormOf(object);
@@ -224,7 +214,6 @@ static TypeParts describeObjectsByShape(TypeArena& arena, const Type& type, Shap
             parts.unnamedClasses = arena.internClassParts(shapes.classes.span());
     }
 
-    // A test that asks for any object or for any callable asks for nothing beside it.
     if (description == ShapeDescription::OfTest && parts.objects) {
         if (parts.anyObject)
             parts.objects = { };

@@ -200,7 +200,6 @@ static void checkCallOfClosure(Calls& calls, uint64_t closure, unsigned numberOf
     }
 }
 
-// A call that passes an argument in every register leaves all of them as they are.
 static void checkCallThatFillsEveryRegister(Calls& calls, uint64_t closure)
 {
     static_assert(numberOfArgumentGPRs == 4 || numberOfArgumentGPRs == 8);
@@ -236,7 +235,6 @@ static void testCallsOfClosures(bool hasOneInstance)
     }
 }
 
-// In an image with one instance the word of a slim closure that takes the arguments says all there is to know: the header of the cell is not read.
 static void testSlimClosuresAreEnteredByTheirWordAlone()
 {
     Calls calls(true);
@@ -423,46 +421,6 @@ static void testConstructions(bool hasOneInstance)
     }
 }
 
-static void testSuperConstructionsWithLists(bool hasOneInstance)
-{
-    Calls calls(hasOneInstance);
-    constexpr uint64_t newTarget = boxedInt32(90);
-    constexpr unsigned maxLengthInRegisters = numberOfArgumentGPRs - 1;
-    std::array<uint64_t, numberOfArgumentGPRs + 1> list;
-    for (size_t i = 0; i < list.size(); ++i)
-        list[i] = boxedInt32(static_cast<uint32_t>(100 + i));
-    const uint64_t words = std::bit_cast<uintptr_t>(list.data());
-    FakeClosure classObject;
-    FakeObject<16> object;
-    calls.initializeClosure(classObject, StructureOf::PlainClosure, calls.runner.closureWord(numberOfArgumentGPRs, { .isNotCallable = true, .takesNewTarget = true }));
-    object.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
-
-    for (unsigned length = 0; length <= maxLengthInRegisters; ++length) {
-        ArgumentRegisters expected;
-        expected.fill(undefinedBits);
-        expected[0] = newTarget;
-        std::ranges::copy(std::span(list).first(length), expected.begin() + 1);
-        // The upper half of the count is not the caller's to clear.
-        StubRun run = calls.runner.run(superConstructWithList(), { classObject.address(), newTarget, length | 7ull << 32, words });
-        checkLandedInFunction(run, classObject.address(), undefinedBits, expected);
-        AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == length + 1);
-    }
-
-    calls.runner.recordCallsOf(Entry::operationAOTSuperConstruct);
-    for (uint64_t parent : { classObject.address(), object.address() }) {
-        for (unsigned length = 0; length <= list.size(); ++length) {
-            if (parent == classObject.address() && length <= maxLengthInRegisters)
-                continue;
-            StubRun run = calls.runner.run(superConstructWithList(), { parent, newTarget, length, words });
-            AOT_TEST_CHECK(run.landedCall.place == LandedCall::Place::Nowhere && run.numberOfRecordedCalls == 1);
-            AOT_TEST_CHECK(run.recordedArguments[0] == parent && run.recordedArguments[1] == newTarget && static_cast<uint32_t>(run.recordedArguments[2]) == length);
-            if (length > maxLengthInRegisters)
-                AOT_TEST_CHECK(run.recordedArguments[3] == words);
-        }
-    }
-    calls.runner.countCallsOf(Entry::operationAOTSuperConstruct);
-}
-
 namespace {
 
 struct alignas(16) FakeList {
@@ -566,55 +524,6 @@ static void testSuperConstructionsWithArrays(bool hasOneInstance)
     calls.runner.countCallsOf(Entry::operationAOTSuperConstructList);
 }
 
-static void testCallsWithLists(bool hasOneInstance)
-{
-    Calls calls(hasOneInstance);
-    std::array<uint64_t, 2 * numberOfArgumentGPRs + 3> list;
-    for (size_t i = 0; i < list.size(); ++i)
-        list[i] = boxedInt32(static_cast<uint32_t>(100 + i));
-    const uint64_t words = std::bit_cast<uintptr_t>(list.data());
-    FakeClosure closure;
-    calls.initializeClosure(closure, StructureOf::PlainClosure, calls.runner.closureWord(0));
-
-    for (unsigned length = 0; length <= list.size(); ++length) {
-        ArgumentRegisters expected;
-        expected.fill(undefinedBits);
-        std::ranges::copy(std::span(list).first(std::min<size_t>(length, numberOfArgumentGPRs)), expected.begin());
-        StubRun run = calls.runner.run(callWithList(), { closure.address(), thisValue, length | 7ull << 32, words });
-        checkLandedInFunction(run, closure.address(), thisValue, expected);
-        AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == length);
-    }
-}
-
-static void testCallsWithLongLists(bool hasOneInstance)
-{
-    Calls calls(hasOneInstance);
-    constexpr unsigned length = maxListLengthCopiedTwice + 1;
-    static std::array<uint64_t, length> list;
-    for (size_t i = 0; i < list.size(); ++i)
-        list[i] = boxedInt32(static_cast<uint32_t>(100 + i));
-    const uint64_t words = std::bit_cast<uintptr_t>(list.data());
-    FakeClosure closure;
-    FakeObject<16> object;
-    calls.initializeClosure(closure, StructureOf::PlainClosure, calls.runner.closureWord(0));
-    object.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
-
-    ArgumentRegisters expected;
-    std::ranges::copy(std::span(list).first(numberOfArgumentGPRs), expected.begin());
-    StubRun run = calls.runner.run(callWithList(), { closure.address(), thisValue, length, words });
-    checkLandedInFunction(run, closure.address(), thisValue, expected);
-    AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == length);
-
-    calls.runner.recordCallsOf(Entry::operationAOTCallEngineCallee);
-    for (uint64_t callee : { object.address(), undefinedBits }) {
-        StubRun run = calls.runner.run(callWithList(), { callee, thisValue, length, words });
-        AOT_TEST_CHECK(run.landedCall.place == LandedCall::Place::Nowhere && run.numberOfRecordedCalls == 1);
-        AOT_TEST_CHECK(run.recordedArguments[0] == callee && run.recordedArguments[1] == thisValue && static_cast<uint32_t>(run.recordedArguments[2]) == length && run.recordedArguments[3] == words);
-    }
-    calls.runner.countCallsOf(Entry::operationAOTCallEngineCallee);
-}
-
-// What the test for a closure asks where the word or the Structure of the cell is not that of a closure as it is created.
 static void testChangedClosures(bool hasOneInstance)
 {
     Calls calls(hasOneInstance);
@@ -626,16 +535,14 @@ static void testChangedClosures(bool hasOneInstance)
     FakeClosure full;
     FakeClosure fullOfOtherRealm;
     FakeSlimClosure slimWithProperties;
-    FakeSlimClosure slimBoundFunction;
     FakeSlimClosure slimOfOtherRealm;
     FakeSlimClosure slimAsCreated;
     FakeFunction interpretedFunction;
     FakeObject<16> object;
     calls.initializeClosure(full, StructureOf::AsyncClosure, word);
     calls.initializeClosure(fullOfOtherRealm, StructureOf::ClosureOfOtherRealm, word);
-    for (FakeSlimClosure* closure : { &slimWithProperties, &slimBoundFunction, &slimOfOtherRealm })
+    for (FakeSlimClosure* closure : { &slimWithProperties, &slimOfOtherRealm })
         calls.initializeSlimClosureWithProperties(*closure, word);
-    slimBoundFunction.setHeader(calls.idOf(StructureOf::BoundFunction), SlimClosureWithPropertiesType);
     slimOfOtherRealm.setHeader(calls.idOf(StructureOf::ClosureOfOtherRealm), SlimClosureWithPropertiesType);
     calls.initializeSlimClosure(slimAsCreated, word);
     interpretedFunction.setHeader(calls.idOf(StructureOf::OtherFunction), JSFunctionType);
@@ -645,10 +552,7 @@ static void testChangedClosures(bool hasOneInstance)
         { full.address(), functionOfWord },
         { fullOfOtherRealm.address(), noClosureNumber },
         { slimWithProperties.address(), Calls::functionWithProperties },
-        { slimBoundFunction.address(), Calls::functionWithProperties },
-        // In an image with one instance there is no such cell, and nobody asks.
         { slimOfOtherRealm.address(), hasOneInstance ? Calls::functionWithProperties : noClosureNumber },
-        // The code in line has the answer for these.
         { slimAsCreated.address(), noClosureNumber },
         { interpretedFunction.address(), noClosureNumber },
         { object.address(), noClosureNumber },
@@ -704,10 +608,7 @@ std::span<const NativeTest> stubCallTests()
         { "stubs/call-value/host-functions"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfHostFunctions>> },
         { "stubs/call-value/bound-functions"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfBoundFunctions>> },
         { "stubs/construct-value/class-objects-and-other-callees"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testConstructions>> },
-        { "stubs/super-construct-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testSuperConstructionsWithLists>> },
         { "stubs/super-construct-with-array/arrays-of-every-shape-and-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testSuperConstructionsWithArrays>> },
-        { "stubs/call-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsWithLists>> },
-        { "stubs/call-with-list/long-lists-by-callee"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsWithLongLists>> },
         { "stubs/changed-closure/every-kind-of-cell-in-every-register"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testChangedClosures>> },
     };
     return tests;

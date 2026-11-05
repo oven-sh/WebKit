@@ -36,12 +36,9 @@ struct ModuleListedByPath {
     uint32_t module { 0 };
 };
 
-// What the modules of a chunk add to the tables that list modules, in the order of the modules.
 struct ModulesListedInChunk {
     Vector<ModuleListedByPath> modulesByPath;
-    // For each of modulesByPath: ModuleByHashOfPath::hash(), entryFor().
     Vector<std::pair<uint32_t, uint32_t>> entriesByHashOfPath;
-    // Of the paths of modulesByPath. Ascending, each once.
     Vector<uint32_t> hashesOfDirectories;
     Vector<CompiledRuntimeModuleData> runtimeModules;
     Vector<uint32_t> modulesThatLoadCompiledFilesAlone;
@@ -54,7 +51,6 @@ struct FunctionsListedInRange {
     Vector<uint32_t> asyncFunctionsWithoutAwait;
 };
 
-// What goes by the flags of computeModuleFlags().
 struct RequestsThatWalksFollow {
     Vector<uint32_t> linkRequests;
     Vector<uint32_t> evaluationRequests;
@@ -62,7 +58,6 @@ struct RequestsThatWalksFollow {
 };
 
 struct StartsOfModules {
-    // By the number of the start.
     Vector<uint32_t> firstSteps;
     Vector<ModuleStartStepData> steps;
 };
@@ -97,7 +92,6 @@ static std::span<const ModuleRequestData> requestsInModuleTables(const ModuleLis
 
 static Vector<uint16_t> encodeNumbersForModuleTables(const Typed::Program& program, const Vector<uint32_t>& numbers)
 {
-    // The table of modules ends with one more record.
     bool needsTwoWords = ModuleNumbers::needsTwoWords(program.modules.size() + 1);
     Vector<uint16_t> words;
     words.reserveInitialCapacity(needsTwoWords ? 2 * numbers.size() : numbers.size());
@@ -118,7 +112,6 @@ static Vector<UncompiledModuleData> listModulesOfUncompiledCode(const Typed::Pro
     });
 }
 
-// Code names a failure by its place among the failures of the program, so each keeps that place. The modules that cannot load follow.
 template<typename NumberOfString>
 static Vector<ModuleFailureData> listFailuresForModuleTables(const Typed::Program& program, const NumberOfString& numberOfString)
 {
@@ -141,6 +134,17 @@ static Vector<ModuleFailureData> listFailuresForModuleTables(const Typed::Progra
     return failures;
 }
 
+template<typename NumberOfString>
+static Vector<NameOfStatementData> listNamesOfStatements(const Typed::Program& program, const NumberOfString& numberOfString)
+{
+    Vector<NameOfStatementData> names;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        for (StringID name : program.modules[index].namesOfStatements)
+            names.append({ index, numberOfString(name) });
+    }
+    return names;
+}
+
 void nameWhatModuleTablesName(const TableInputs& inputs, const GatheredMentions&, NamesOfTables& names)
 {
     RELEASE_ASSERT(inputs.build);
@@ -156,7 +160,7 @@ void nameWhatModuleTablesName(const TableInputs& inputs, const GatheredMentions&
     nameWhatModuleListsName(inputs, answers, loops, names);
     listModulesOfUncompiledCode(inputs.program, answers, noteString);
     listFailuresForModuleTables(inputs.program, noteString);
-    // The host asks the closure table for the one function object of such a function.
+    listNamesOfStatements(inputs.program, noteString);
     for (uint32_t place : answers.compiledRuntimeFunctions)
         names.functionsWithClosureCell.set(inputs.program.runtimeFunctions[place].function.index());
 }
@@ -167,7 +171,6 @@ static bool walkVisitsModule(WalkOfModuleTables walk, const ModuleData& module)
     case WalkOfModuleTables::Link:
         return module.needsLink();
     case WalkOfModuleTables::Evaluation:
-        // A module of the library runs when its importer is linked.
         return module.needsEvaluation() && (module.hasExportTable() || module.kind == ModuleKind::CommonJs || module.isUncompiledCode());
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -179,16 +182,13 @@ static bool walkFollowsRequestsOf(WalkOfModuleTables walk, const ModuleData& mod
         return false;
     switch (walk) {
     case WalkOfModuleTables::Link:
-        // A file of the program that captures exports requests other files. Of any other module that captures exports, and of uncompiled code, a link follows nothing.
         return module.capturesExportsBehindEvaluation() || (!module.capturesExports() && !module.isUncompiledCode());
     case WalkOfModuleTables::Evaluation:
-        // What a CommonJS module requests runs inside its body. What a module with a deferred request evaluates depends on what has been evaluated by then.
         return module.hasExportTable() && !module.hasDeferredRequest();
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// In the order of the requests, each module once. `isListed` has a bit for each module, and none is set between two calls.
 static void appendModulesThatWalkVisitsNext(const ModuleLists& lists, WalkOfModuleTables walk, uint32_t module, BitVector& isListed, Vector<uint32_t>& targets)
 {
     if (!walkFollowsRequestsOf(walk, lists.modules[module]))
@@ -216,20 +216,17 @@ static void appendImportsOfHeldFiles(const ModuleLists& lists, uint32_t importer
         const ModuleData& target = lists.modules[request.target()];
         uint32_t file = target.isFaceOfFile() ? lists.requests[target.firstRequest].target() : request.target();
         const ModuleData& held = lists.modules[file];
-        // A mock replaces a module of the library that no import has loaded.
         bool isOfLibraryAndMayBeMocked = (held.kind == ModuleKind::RuntimeSource || held.kind == ModuleKind::Runtime) && held.mayBeMocked();
         if (held.requireResult == RequireResult::NamespaceIfImported || held.mayBeImportedWhileItRuns() || isOfLibraryAndMayBeMocked)
             result.append(ImportOfHeldFileData { file, importer });
     }
 }
 
-// Stores where the lists of each module start, in the last record too.
 static RequestsThatWalksFollow listRequestsThatWalksFollow(const ParallelLoops& loops, ModuleLists& lists)
 {
     uint32_t numberOfModules = static_cast<uint32_t>(lists.modules.size() - 1);
     ChunksOfIndices chunks = divideIntoChunks(numberOfModules);
     Vector<RequestsThatWalksFollow> followedInChunks(chunks.size());
-    // [module]: how much of its chunk stands in front of the module in the list of a link, and in that of an evaluation.
     Vector<std::pair<uint32_t, uint32_t>> placesInChunks(numberOfModules);
     forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
         RequestsThatWalksFollow& followed = followedInChunks[chunk];
@@ -268,7 +265,6 @@ static RequestsThatWalksFollow listRequestsThatWalksFollow(const ParallelLoops& 
 static void appendOtherNamesThatReachModule(const Typed::Module& module, uint32_t index, Vector<uint32_t>& result)
 {
     using Typed::ModuleFlags;
-    // In the order of OtherNameOfModule: the table ascends.
     constexpr std::pair<ModuleFlags, OtherNameOfModule> otherNames[] = {
         { ModuleFlags::IsReachedWithoutExtension, OtherNameOfModule::WithoutExtension },
         { ModuleFlags::IsReachedUnderAnotherExtension, OtherNameOfModule::UnderAnotherExtension },
@@ -285,7 +281,6 @@ static void appendOtherNamesThatReachModule(const Typed::Module& module, uint32_
 static void appendHashesOfModulePath(const Typed::Program& program, uint32_t index, ModulesListedInChunk& listed)
 {
     String path = String::fromUTF8(program.string(program.modules[index].path));
-    // The table of modules ends with one more record.
     ModuleByHashOfPath sought(program.modules.size() + 1, StringView(path).hash());
     listed.entriesByHashOfPath.append({ sought.hash(), sought.entryFor(index) });
     uint32_t hash = HashOfDirectory::ofNoText;
@@ -309,19 +304,18 @@ static void listModulesOfChunkForModuleTables(const TableInputs& inputs, const A
             listed.modulesThatFindBuiltinsReadOnly.append(index);
         appendOtherNamesThatReachModule(module, index, listed.modulesReachedUnderOtherNames);
 
-        if (!Typed::answersToPath(program, module) || (module.kind == ModuleKind::RuntimeSource && !answers.has(id, AnswerAboutModule::HasCompiledBody)))
+        bool isFoundOnlyWithCode = module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Data;
+        if (!Typed::answersToPath(program, module) || (isFoundOnlyWithCode && !answers.has(id, AnswerAboutModule::HasCompiledBody)))
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
             listed.runtimeModules.append(CompiledRuntimeModuleData { module.runtimeModule.index(), index });
         if (answers.has(id, AnswerAboutModule::IsNeverEvaluated))
             continue;
-        // The host looks a module up by the name that a mock gives.
         if (Typed::isBundlerHelperModule(program, module) && !module.flags.contains(ModuleFlags::MayBeMocked) && !Typed::isBundlerHelperNamedByProgram(program, id))
             continue;
         listed.modulesByPath.append({ program.string(module.path), index });
         appendHashesOfModulePath(program, index, listed);
     }
-    // Files that stand side by side lie in the same directories for the most part.
     AOT::sort(listed.hashesOfDirectories);
     removeRepeatedElements(listed.hashesOfDirectories);
 }
@@ -330,7 +324,6 @@ static TablesOfModulesByPath makeTablesOfModulesByPath(const Typed::Program& pro
 {
     RELEASE_ASSERT(program.modules.size() < Number24::max);
     Vector<ModuleListedByPath> modulesByPath = joinListsForModuleTables(listedInChunks, &ModulesListedInChunk::modulesByPath);
-    // Modules with one path stay in the order of their numbers.
     parallelSort(loops, modulesByPath.mutableSpan(), [](const ModuleListedByPath& left, const ModuleListedByPath& right) {
         return std::ranges::lexicographical_compare(left.path, right.path);
     });
@@ -347,7 +340,6 @@ static TablesOfModulesByPath makeTablesOfModulesByPath(const Typed::Program& pro
         }
     }
 
-    // An entry holds the number of its module, so no two pairs are equal.
     Vector<std::pair<uint32_t, uint32_t>> entriesByHash = joinListsForModuleTables(listedInChunks, &ModulesListedInChunk::entriesByHashOfPath);
     parallelSort(loops, entriesByHash.mutableSpan(), std::less<std::pair<uint32_t, uint32_t>> { });
     size_t numberOfBuckets = ModuleByHashOfPath::numberOfBuckets(entriesByHash.size());
@@ -367,19 +359,16 @@ static TablesOfModulesByPath makeTablesOfModulesByPath(const Typed::Program& pro
     };
 }
 
-// Ascending by id, as the program lists them.
 static Vector<CompiledRuntimeFunctionData> listCompiledRuntimeFunctions(const TableEncoder& encoder, const AnswersAboutModules& answers)
 {
     return answers.compiledRuntimeFunctions.map([&](uint32_t place) {
         const Typed::RuntimeFunctionEntry& entry = encoder.program.runtimeFunctions[place];
-        // The closure table stops the program when it is asked for the function object of a function without a cell.
         if (!encoder.numbers.closureCellNumber(entry.function))
             encoder.fail("FunctionThatHostCallsWithoutClosureCell"_s, entry.function);
         return CompiledRuntimeFunctionData { entry.id.index(), encoder.entrypointOf(entry.function, "a function of the run time that the host calls"_s), static_cast<uint32_t>(entry.visibility) };
     });
 }
 
-// A word that is stored in front of every read need not be put back for the module to run once more.
 static bool initialWordMayBeRead(const Typed::LocationFacts& location, const PlacedVariable& placed)
 {
     if (placed.plan.encoding != Typed::VariableEncoding::Plain || location.initialization == Typed::InitializationState::Unknown)
@@ -388,7 +377,6 @@ static bool initialWordMayBeRead(const Typed::LocationFacts& location, const Pla
     return traits.hasAbsent && placed.initialWord == traits.absentBits;
 }
 
-// The module whose next run has to find the word as an instance begins with it. Null: no run does.
 static ModuleID moduleThatStartsFromWord(const TableEncoder& encoder, VariableID id, const PlacedVariable& placed)
 {
     const Typed::Program& program = encoder.program;
@@ -445,7 +433,6 @@ static void listStateOfLibraryModulesInClasses(const TableEncoder& encoder, size
 
 static Vector<StateOfLibraryModuleData> uniteStateOfLibraryModules(Vector<StateOfLibraryModuleData>&& found)
 {
-    // No two of one kind start at one place.
     AOT::sort(found, { }, [](const StateOfLibraryModuleData& state) {
         return std::pair(state.moduleAndKind, state.first);
     });
@@ -459,7 +446,6 @@ static Vector<StateOfLibraryModuleData> uniteStateOfLibraryModules(Vector<StateO
     return ranges;
 }
 
-// The stub StartModule puts undefined where a body takes `this`, leaves no room for stack words and enters the first byte of the code.
 static std::optional<uint32_t> findBodyForStartsOfModules(const TableEncoder& encoder, FunctionID body, ModuleID owner)
 {
     const Typed::CallingConventions& conventions = encoder.plan.conventions();
@@ -482,7 +468,6 @@ static std::optional<uint32_t> findBodyForStartsOfModules(const TableEncoder& en
     return position;
 }
 
-// The starts whose role exists are those that Facts reaches: addBodiesThatStartsOfModulesCall() of plan/AOTUnitsNamedOutsideCode.cpp has brought what their rows call.
 static StartsOfModules listStartsOfModules(const TableEncoder& encoder)
 {
     using Operation = ModuleStartStepData::Operation;
@@ -540,7 +525,6 @@ static StartsOfModules listStartsOfModules(const TableEncoder& encoder)
     return result;
 }
 
-// The group only appends. What it appends is asked for and put in order in front, in loops that have all threads of its lane.
 void encodeModuleTables(TableEncoder& encoder)
 {
     const Typed::Program& program = encoder.program;
@@ -564,7 +548,6 @@ void encodeModuleTables(TableEncoder& encoder)
     Vector<Vector<StateOfLibraryModuleData>> stateInClasses(numberOfRangesOfIndices(program.layouts.size()));
     StartsOfModules startsOfModules;
     forEachIndexOfLoopsInParallel(loops, {
-        // It goes through the graph of the requests, on one thread, and nothing beside it reads the lists.
         { 1, [&](unsigned) { computeModuleFlags(lists.modules.mutableSpan(), lists.requests.span()); } },
         { 1, [&](unsigned) { startsOfModules = listStartsOfModules(encoder); } },
         { chunksOfModules.size(), [&](unsigned chunk) {
@@ -586,7 +569,6 @@ void encodeModuleTables(TableEncoder& encoder)
     times.didFinish("flags of the modules, beside what the tables list of modules, variables, functions and classes"_s);
 
     RequestsThatWalksFollow followed = listRequestsThatWalksFollow(loops, lists);
-    // The plan marks the modules that are linked with the entry point, so the records are written behind it.
     Vector<LinkPlanStepData> entryPointLinkPlan;
     if (!program.entries.isEmpty())
         entryPointLinkPlan = planLinkOfEntryPoint(lists.modules.mutableSpan(), lists.requests.span(), program.entries.first().module);
@@ -598,6 +580,7 @@ void encodeModuleTables(TableEncoder& encoder)
     Vector<uint16_t> linkRequests = encodeNumbersForModuleTables(program, followed.linkRequests);
     Vector<uint16_t> evaluationRequests = encodeNumbersForModuleTables(program, followed.evaluationRequests);
     Vector<ModuleFailureData> moduleFailures = listFailuresForModuleTables(program, numberOfString);
+    Vector<NameOfStatementData> namesOfStatements = listNamesOfStatements(program, numberOfString);
     Vector<UncompiledModuleData> modulesOfUncompiledCode = listModulesOfUncompiledCode(program, answers, numberOfString);
     Vector<uint32_t> modulesThatLoadCompiledFilesAlone = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatLoadCompiledFilesAlone);
     Vector<uint32_t> modulesThatFindBuiltinsReadOnly = joinListsForModuleTables(modulesListed, &ModulesListedInChunk::modulesThatFindBuiltinsReadOnly);
@@ -614,15 +597,14 @@ void encodeModuleTables(TableEncoder& encoder)
         stateFound.appendVector(found);
     Vector<StateOfLibraryModuleData> stateOfLibraryModules = uniteStateOfLibraryModules(WTF::move(stateFound));
 
-    // A table begins at a multiple of eight at most.
     auto roomFor = [](const auto&... tables) {
         return (... + (tables.sizeInBytes() + sizeof(uint64_t)));
     };
     part.reserveRoomFor(roomFor(lists.modules, lists.directories, lists.displayPaths, lists.requests, linkRequests, evaluationRequests, entryPointLinkPlan,
-        lists.exports, lists.modulesThatDeclareExports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
+        lists.exports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
         moduleFailures, modulesOfUncompiledCode, modulesThatLoadCompiledFilesAlone, modulesThatFindBuiltinsReadOnly, modulesReachedUnderOtherNames, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait,
         byPath.modulesByPath, byPath.modulesByHashOfPath, byPath.firstModulesByHashOfPath, byPath.directoriesOfModulesByPath, compiledRuntimeModules, compiledRuntimeFunctions, stateOfLibraryModules,
-        startsOfModules.firstSteps, startsOfModules.steps));
+        startsOfModules.firstSteps, startsOfModules.steps, namesOfStatements));
     part.setTable(ProgramTableIndex::modules, lists.modules);
     part.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     part.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);
@@ -631,7 +613,6 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::evaluationRequests, evaluationRequests);
     part.setTable(ProgramTableIndex::entryPointLinkPlan, entryPointLinkPlan);
     part.setTable(ProgramTableIndex::moduleExports, lists.exports);
-    part.setTable(ProgramTableIndex::modulesThatDeclareExports, lists.modulesThatDeclareExports);
     part.setTable(ProgramTableIndex::indirectExports, lists.indirectExports);
     part.setTable(ProgramTableIndex::syntheticExports, lists.syntheticExports);
     part.setTable(ProgramTableIndex::requiredNames, lists.requiredNames);
@@ -639,6 +620,7 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::ambiguousExports, lists.ambiguousExports);
     part.setTable(ProgramTableIndex::sourceStamps, lists.sourceStamps);
     part.setTable(ProgramTableIndex::moduleFailures, moduleFailures);
+    part.setTable(ProgramTableIndex::namesOfStatements, namesOfStatements);
     part.setTable(ProgramTableIndex::modulesOfUncompiledCode, modulesOfUncompiledCode);
     part.setTable(ProgramTableIndex::modulesThatLoadCompiledFilesAlone, modulesThatLoadCompiledFilesAlone);
     part.setTable(ProgramTableIndex::modulesThatFindBuiltinsReadOnly, modulesThatFindBuiltinsReadOnly);

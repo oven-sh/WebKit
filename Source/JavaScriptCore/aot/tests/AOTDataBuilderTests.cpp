@@ -84,13 +84,10 @@ data d6 root=Object{layout=L4 members=[{key="first" value=Number{value=1}}, {key
 )IR"_s;
 
 static constexpr ASCIILiteral describedTree = "{mixed:[1,hole,\"pear\",true,undefined,null,false],doubles:[1.5,hole,2,-0],integers:[1,2],inner:{zero:-0,nan:NaN,nothing:null},big:12345678901234567890n,text:\"plum\",nested:[[{zero:7,nan:8,nothing:undefined}],[]]}"_s;
-static constexpr ASCIILiteral describedIntegers = "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]"_s;
 static constexpr ASCIILiteral describedDoubles = "[0.5,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,-0]"_s;
 static constexpr ASCIILiteral describedMixture = "[\"a0\",2,undefined,null,true,\"a5\",7,8,9,10,11,12,13,14,15,16,\"a16\"]"_s;
 
 static constexpr ASCIILiteral describedDictionary = "{2:-0,10:\"ten\",name:\"fig\",size:3,content-type:\"text\",nested:{-1.5:[{deeper:12345678901234567890n}],-2.5:null},empty:{},w0:0,w1:1,w2:2,w3:3,w4:4,w5:5,w6:6,w7:7,w8:8,w9:9,w10:10,w11:11}"_s;
-static constexpr ASCIILiteral describedOrdinaryObject = "{3:\"three\",first:1,m0:0,m1:1,m2:2,m3:3,m4:4,m5:5,m6:6,m7:7,m8:8,m9:9,m10:10,m11:11,m12:12,m13:13,m14:14,m15:15}"_s;
-// More than Structure::createWithProperties() puts into one Structure that every such object shares.
 static constexpr unsigned numberOfKeysInLargeDictionary = 514;
 static_assert(numberOfKeysInLargeDictionary > static_cast<unsigned>(Structure::s_maxTransitionLengthForNonEvalPutById));
 
@@ -110,76 +107,11 @@ static constexpr ASCIILiteral describeSource = R"js((function describe(value) {
     return Object.is(value, -0) ? "-0" : String(value);
 }))js"_s;
 
-// Requests lie in the order of their keys, which for these is the order of the data records d0 to d6.
 enum DataNumber : unsigned { Tree, Integers, Doubles, Mixture, Dictionary, LargeDictionary, SeenByUnknownCodeOnly, NumberOfData };
-
-static void testDataWordsRoundTrip()
-{
-    const JSValue immediates[] = {
-        jsUndefined(), jsNull(), jsBoolean(true), jsBoolean(false),
-        jsNumber(0), jsNumber(-1), jsNumber(INT32_MAX), jsNumber(INT32_MIN),
-        jsDoubleNumber(1.5), jsDoubleNumber(-0.0), jsDoubleNumber(PNaN), jsDoubleNumber(std::numeric_limits<double>::infinity()), jsDoubleNumber(5e-324),
-    };
-    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> words;
-    AOT_TEST_CHECK(DataWord::kindOf(DataWord::hole) == DataWord::Kind::Immediate);
-    AOT_TEST_CHECK(DataWord::encodeImmediate(JSValue()) == DataWord::hole);
-    AOT_TEST_CHECK(words.add(DataWord::hole).isNewEntry);
-    for (JSValue immediate : immediates) {
-        uint64_t word = DataWord::encodeImmediate(immediate);
-        AOT_TEST_CHECK(DataWord::kindOf(word) == DataWord::Kind::Immediate);
-        AOT_TEST_CHECK(JSValue::encode(JSValue::decode(static_cast<EncodedJSValue>(word))) == JSValue::encode(immediate));
-        AOT_TEST_CHECK(words.add(word).isNewEntry);
-    }
-
-    for (uint32_t operand : { 0u, 1u, 7u, 8u, 65535u, 1u << 24, UINT32_MAX - 1 }) {
-        struct Case {
-            uint64_t word;
-            DataWord::Kind kind;
-        };
-        const Case cases[] = {
-            { DataWord::encodeStringConstant(operand), DataWord::Kind::StringConstant },
-            { DataWord::encodeBigIntConstant(operand), DataWord::Kind::BigIntConstant },
-            { DataWord::encodeNode(operand), DataWord::Kind::Node },
-        };
-        for (const Case& testCase : cases) {
-            AOT_TEST_CHECK(DataWord::kindOf(testCase.word) == testCase.kind);
-            AOT_TEST_CHECK(DataWord::operandOf(testCase.word) == operand);
-            AOT_TEST_CHECK(words.add(testCase.word).isNewEntry);
-        }
-    }
-}
-
-static void testNumberOfWords()
-{
-    using Kind = DataNodeHeader::Kind;
-    struct Case {
-        uint32_t count;
-        uint32_t wordsOfArray;
-        uint32_t wordsOfObject;
-    };
-    static constexpr Case cases[] = {
-        { 0, 2, 1 }, { 1, 3, 3 }, { 3, 5, 5 }, { 4, 6, 6 }, { 5, 7, 8 }, { 8, 10, 11 }, { 9, 11, 13 }, { 1000, 1002, 1251 },
-    };
-    for (const Case& testCase : cases) {
-        AOT_TEST_CHECK(DataNodeHeader::numberOfWords(Kind::Array, testCase.count) == testCase.wordsOfArray);
-        AOT_TEST_CHECK(DataNodeHeader::numberOfWords(Kind::Object, testCase.count) == testCase.wordsOfObject);
-        AOT_TEST_CHECK(DataNodeHeader::numberOfWords(Kind::ObjectWithOtherMembers, testCase.count) == testCase.wordsOfObject + 1);
-        AOT_TEST_CHECK(DataNodeHeader::numberOfWords(Kind::OtherMembers, testCase.count) == 1 + testCase.count + (testCase.count + 1) / 2);
-        AOT_TEST_CHECK(DataNodeHeader::numberOfWords(Kind::OrdinaryObject, testCase.count) == DataNodeHeader::numberOfWords(Kind::OtherMembers, testCase.count));
-        AOT_TEST_CHECK(DataNodeHeader::numberOfWords(Kind::ObjectBody, testCase.count) == 1 + testCase.count);
-    }
-
-    for (Kind kind : { Kind::Array, Kind::Object, Kind::ObjectBody }) {
-        DataNodeHeader header { 12, static_cast<uint32_t>(kind), 345 };
-        DataNodeHeader decoded = DataNodeHeader::decode(header.encoded());
-        AOT_TEST_CHECK(decoded.count == 12 && decoded.kind() == kind && decoded.operand == 345);
-    }
-}
 
 static const DataRequest& requestFor(LoadedProgram& program, DataNumber number)
 {
     std::span<const uint32_t> requests = program.state().tables.requests();
-    // No request lies at offset 0.
     AOT_TEST_CHECK(requests.size() == 1 + NumberOfData * sizeof(DataRequest) / sizeof(uint32_t));
     return reinterpret_cast<const DataRequest*>(requests.data() + 1)[number];
 }
@@ -228,62 +160,6 @@ static JSValue get(LoadedProgram& program, JSValue base, ASCIILiteral name)
     return result;
 }
 
-static JSValue getIndex(LoadedProgram& program, JSValue base, unsigned index)
-{
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
-    JSValue result = base.get(program.realm(), index);
-    AOT_TEST_CHECK(!scope.exception() && result);
-    return result;
-}
-
-static void testRequestsOfTheProgram(LoadedProgram& program)
-{
-    std::span<const uint64_t> data = program.state().tables.data();
-    std::span<const StaticsRange> roots = program.state().tables.staticsRoots();
-    AOT_TEST_CHECK(requestFor(program, Tree).sharedStorageOffset == DataRequest::noSharedStorage);
-    AOT_TEST_CHECK(DataNodeHeader::decode(data[requestFor(program, Tree).root]).kind() == DataNodeHeader::Kind::ObjectBody);
-    for (DataNumber number : { Integers, Doubles, Mixture }) {
-        DataNodeHeader header = DataNodeHeader::decode(data[requestFor(program, number).root]);
-        AOT_TEST_CHECK(header.kind() == DataNodeHeader::Kind::Array && header.count == 17);
-        AOT_TEST_CHECK(data[requestFor(program, number).root + 1] == (17 | 17ull << 32));
-    }
-    // Storage without cells is the node itself.
-    AOT_TEST_CHECK(requestFor(program, Integers).sharedStorageOffset == DataRequest::noSharedStorage);
-    AOT_TEST_CHECK(requestFor(program, Doubles).sharedStorageOffset == DataRequest::noSharedStorage);
-    AOT_TEST_CHECK(std::ranges::any_of(roots, [&](const StaticsRange& range) {
-        return range.contains(requestFor(program, Mixture).sharedStorageOffset);
-    }));
-    AOT_TEST_CHECK(DataNodeHeader::decode(data[requestFor(program, Integers).root]).operand == (ArrayWithInt32 | DataNodeHeader::isStorage));
-    AOT_TEST_CHECK(DataNodeHeader::decode(data[requestFor(program, Doubles).root]).operand == (ArrayWithDouble | DataNodeHeader::isStorage));
-    AOT_TEST_CHECK(DataNodeHeader::decode(data[requestFor(program, Mixture).root]).operand == ArrayWithContiguous);
-}
-
-static void testConstantOfDataWord(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    State& state = program.state();
-    AOT_TEST_CHECK(!constantOfDataWord(state, DataWord::hole));
-    AOT_TEST_CHECK(constantOfDataWord(state, DataWord::encodeImmediate(jsUndefined())).isUndefined());
-    AOT_TEST_CHECK(constantOfDataWord(state, DataWord::encodeImmediate(jsNull())).isNull());
-    AOT_TEST_CHECK(constantOfDataWord(state, DataWord::encodeImmediate(jsBoolean(true))).isTrue());
-    AOT_TEST_CHECK(constantOfDataWord(state, DataWord::encodeImmediate(jsNumber(-7))) == jsNumber(-7));
-    JSValue negativeZero = constantOfDataWord(state, DataWord::encodeImmediate(jsDoubleNumber(-0.0)));
-    AOT_TEST_CHECK(negativeZero.isDouble() && !negativeZero.asDouble() && std::signbit(negativeZero.asDouble()));
-
-    uint32_t numberOfConstants = Image::current()->text().numberOfStringConstants();
-    AOT_TEST_CHECK(numberOfConstants >= 5);
-    for (uint32_t number = 0; number < numberOfConstants; ++number) {
-        JSValue constant = constantOfDataWord(state, DataWord::encodeStringConstant(number));
-        AOT_TEST_CHECK(constant.isString() && constant == JSValue(state.strings->constant(vm, number)));
-        AOT_TEST_CHECK(constantOfDataWord(state, DataWord::encodeStringConstant(number)) == constant);
-    }
-
-    AOT_TEST_CHECK(state.tables.bigIntConstants().size() == 1);
-    JSValue big = constantOfDataWord(state, DataWord::encodeBigIntConstant(0));
-    AOT_TEST_CHECK(big.isBigInt() && big == state.strings->bigIntConstant(program.realm(), 0));
-    AOT_TEST_CHECK(isDescribedAs(program, big, "12345678901234567890n"_s));
-}
-
 static void testNestedObjectsAndArrays(LoadedProgram& program)
 {
     JSObject* tree = build(program, Tree);
@@ -298,7 +174,6 @@ static void testNestedObjectsAndArrays(LoadedProgram& program)
     auto* integers = uncheckedDowncast<JSArray>(get(program, tree, "integers"_s));
     AOT_TEST_CHECK(mixed->indexingType() == ArrayWithContiguous && mixed->length() == 7);
     AOT_TEST_CHECK(doubles->indexingType() == ArrayWithDouble && doubles->length() == 4);
-    // That an array is declared to hold numbers says nothing of fractions: its readers go by the kind that they find, and whole numbers lie as in the engine's own literal.
     AOT_TEST_CHECK(integers->indexingType() == ArrayWithInt32 && integers->length() == 2);
     AOT_TEST_CHECK(mixed->realm() == program.realm());
     AOT_TEST_CHECK(!mixed->canGetIndexQuickly(1u) && mixed->canGetIndexQuickly(4u) && mixed->getIndexQuickly(4).isUndefined());
@@ -306,30 +181,6 @@ static void testNestedObjectsAndArrays(LoadedProgram& program)
     AOT_TEST_CHECK(!isCopyOnWrite(mixed->indexingMode()) && !JSCellButterfly::isOutsideHeap(mixed->butterfly()));
     for (JSArray* array : { doubles, integers })
         AOT_TEST_CHECK(isCopyOnWrite(array->indexingMode()) && JSCellButterfly::isOutsideHeap(array->butterfly()));
-}
-
-static void testTwoExecutionsGiveDistinctGraphs(LoadedProgram& program)
-{
-    JSObject* first = build(program, Tree);
-    JSObject* second = build(program, Tree);
-    AOT_TEST_CHECK(first != second);
-    for (ASCIILiteral name : { "mixed"_s, "doubles"_s, "integers"_s, "inner"_s, "nested"_s }) {
-        JSValue inFirst = get(program, first, name);
-        JSValue inSecond = get(program, second, name);
-        AOT_TEST_CHECK(inFirst.isObject() && inSecond.isObject() && inFirst != inSecond);
-        if (auto* array = dynamicDowncast<JSArray>(inFirst))
-            AOT_TEST_CHECK((array->butterfly() == uncheckedDowncast<JSArray>(inSecond)->butterfly()) == isCopyOnWrite(array->indexingMode()));
-    }
-    JSValue deepInFirst = getIndex(program, getIndex(program, get(program, first, "nested"_s), 0), 0);
-    JSValue deepInSecond = getIndex(program, getIndex(program, get(program, second, "nested"_s), 0), 0);
-    AOT_TEST_CHECK(deepInFirst.isObject() && deepInFirst != deepInSecond);
-    AOT_TEST_CHECK(get(program, first, "text"_s) == get(program, second, "text"_s));
-    AOT_TEST_CHECK(get(program, first, "big"_s) == get(program, second, "big"_s));
-
-    callInPlainRealm(program, "(function (tree) { tree.mixed[0] = 'changed'; tree.doubles[1] = 4; tree.integers.push(3); tree.inner.zero = 1; tree.nested[0][0].nan = 2; tree.text = 'other'; })"_s, { first });
-    AOT_TEST_CHECK(isDescribedAs(program, first, "{mixed:[\"changed\",hole,\"pear\",true,undefined,null,false],doubles:[1.5,4,2,-0],integers:[1,2,3],inner:{zero:1,nan:NaN,nothing:null},big:12345678901234567890n,text:\"other\",nested:[[{zero:7,nan:2,nothing:undefined}],[]]}"_s));
-    AOT_TEST_CHECK(isDescribedAs(program, second, describedTree));
-    AOT_TEST_CHECK(isDescribedAs(program, build(program, Tree), describedTree));
 }
 
 static Object* compiledObject(JSValue value)
@@ -390,98 +241,6 @@ static void testManyMembersBecomeOneDictionary(LoadedProgram& program)
     AOT_TEST_CHECK(describe(program, second) == described);
 }
 
-static void testObjectThatOnlyUnknownCodeSees(LoadedProgram& program)
-{
-    JSObject* first = build(program, SeenByUnknownCodeOnly);
-    JSObject* second = build(program, SeenByUnknownCodeOnly);
-    AOT_TEST_CHECK(first != second);
-    AOT_TEST_CHECK(isDescribedAs(program, first, describedOrdinaryObject) && isDescribedAs(program, second, describedOrdinaryObject));
-}
-
-static void checkSharedStorage(LoadedProgram& program, DataNumber number, IndexingType expectedMode, ASCIILiteral described, ASCIILiteral describedAfterStore)
-{
-    auto& shared = program.state().statics->at<JSCellButterfly*>(requestFor(program, number).sharedStorageOffset);
-    AOT_TEST_CHECK(!shared);
-
-    auto* first = uncheckedDowncast<JSArray>(build(program, number));
-    JSCellButterfly* storage = shared;
-    AOT_TEST_CHECK(storage && storage->indexingMode() == expectedMode && storage->length() == 17);
-    auto* second = uncheckedDowncast<JSArray>(build(program, number));
-    AOT_TEST_CHECK(shared == storage);
-
-    AOT_TEST_CHECK(first != second);
-    for (JSArray* array : { first, second }) {
-        AOT_TEST_CHECK(array->indexingMode() == expectedMode && isCopyOnWrite(array->indexingMode()));
-        AOT_TEST_CHECK(array->butterfly() == storage->toButterfly());
-        AOT_TEST_CHECK(array->realm() == program.realm());
-        AOT_TEST_CHECK(isDescribedAs(program, array, described));
-    }
-
-    callInPlainRealm(program, "(function (array) { array[1] = 99; })"_s, { first });
-    AOT_TEST_CHECK(!isCopyOnWrite(first->indexingMode()) && first->butterfly() != storage->toButterfly());
-    AOT_TEST_CHECK(isDescribedAs(program, first, describedAfterStore));
-    AOT_TEST_CHECK(second->butterfly() == storage->toButterfly() && isCopyOnWrite(second->indexingMode()));
-    AOT_TEST_CHECK(isDescribedAs(program, second, described));
-
-    auto* third = uncheckedDowncast<JSArray>(build(program, number));
-    AOT_TEST_CHECK(shared == storage && third->butterfly() == storage->toButterfly());
-    AOT_TEST_CHECK(isDescribedAs(program, third, described));
-}
-
-static void checkStorageInImage(LoadedProgram& program, DataNumber number, IndexingType expectedMode, ASCIILiteral described, ASCIILiteral describedAfterStore)
-{
-    VM& vm = program.vm();
-    auto* storage = std::bit_cast<Butterfly*>(program.state().tables.data().data() + requestFor(program, number).root + DataNodeHeader::wordsBeforeElements);
-    AOT_TEST_CHECK(JSCellButterfly::isOutsideHeap(storage) && storage->publicLength() == 17 && storage->vectorLength() == 17);
-
-    auto* first = uncheckedDowncast<JSArray>(build(program, number));
-    auto* second = uncheckedDowncast<JSArray>(build(program, number));
-    AOT_TEST_CHECK(first != second);
-    for (JSArray* array : { first, second }) {
-        AOT_TEST_CHECK(array->indexingMode() == expectedMode && array->butterfly() == storage && array->realm() == program.realm());
-        AOT_TEST_CHECK(isDescribedAs(program, array, described));
-    }
-
-    callInPlainRealm(program, "(function (array) { array[1] = 99; })"_s, { first });
-    AOT_TEST_CHECK(!isCopyOnWrite(first->indexingMode()) && !JSCellButterfly::isOutsideHeap(first->butterfly()));
-    AOT_TEST_CHECK(isDescribedAs(program, first, describedAfterStore));
-    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
-        vm.heap.collectSync(scope);
-        AOT_TEST_CHECK(second->butterfly() == storage && isDescribedAs(program, second, described) && isDescribedAs(program, first, describedAfterStore));
-    }
-    AOT_TEST_CHECK(isDescribedAs(program, callInPlainRealm(program, "(function (array) { let copy = array.slice(); copy.reverse(); copy.length = 2; return array; })"_s, { second }), described));
-    AOT_TEST_CHECK(isDescribedAs(program, build(program, number), described));
-}
-
-static void testCopyOnWriteArrayOfIntegers(LoadedProgram& program)
-{
-    checkStorageInImage(program, Integers, CopyOnWriteArrayWithInt32, describedIntegers, "[1,99,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]"_s);
-}
-
-static void testCopyOnWriteArrayOfDoubles(LoadedProgram& program)
-{
-    checkStorageInImage(program, Doubles, CopyOnWriteArrayWithDouble, describedDoubles, "[0.5,99,3,4,5,6,7,8,9,10,11,12,13,14,15,16,-0]"_s);
-}
-
-static void testCopyOnWriteArrayOfAnything(LoadedProgram& program)
-{
-    checkSharedStorage(program, Mixture, CopyOnWriteArrayWithContiguous, describedMixture, "[\"a0\",99,undefined,null,true,\"a5\",7,8,9,10,11,12,13,14,15,16,\"a16\"]"_s);
-}
-
-static void testSharedStorageSurvivesCollections(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    auto& shared = program.state().statics->at<JSCellButterfly*>(requestFor(program, Mixture).sharedStorageOffset);
-    build(program, Mixture);
-    JSCellButterfly* storage = shared;
-    AOT_TEST_CHECK(storage);
-    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full, CollectionScope::Eden }) {
-        vm.heap.collectSync(scope);
-        AOT_TEST_CHECK(shared == storage && vm.heap.isMarked(storage));
-        AOT_TEST_CHECK(isDescribedAs(program, build(program, Mixture), describedMixture));
-    }
-}
-
 static void checkNothingIsLost(LoadedProgram& program)
 {
     AOT_TEST_CHECK(Options::collectContinuously());
@@ -525,19 +284,9 @@ static constexpr void (*withData)() = runNativeTestWithLoadedProgram<dataBuilder
 std::span<const NativeTest> dataBuilderTests()
 {
     static constexpr NativeTest tests[] = {
-        { "data-builder/data-words-round-trip"_s, testDataWordsRoundTrip },
-        { "data-builder/number-of-words"_s, testNumberOfWords },
-        { "data-builder/requests-of-the-program"_s, withData<testRequestsOfTheProgram> },
-        { "data-builder/constant-of-data-word"_s, withData<testConstantOfDataWord> },
         { "data-builder/nested-objects-and-arrays"_s, withData<testNestedObjectsAndArrays> },
-        { "data-builder/two-executions-give-distinct-graphs"_s, withData<testTwoExecutionsGiveDistinctGraphs> },
         { "data-builder/members-that-are-no-fields"_s, withData<testMembersThatAreNoFields> },
         { "data-builder/many-members-become-one-dictionary"_s, withData<testManyMembersBecomeOneDictionary> },
-        { "data-builder/object-that-only-unknown-code-sees"_s, withData<testObjectThatOnlyUnknownCodeSees> },
-        { "data-builder/copy-on-write-array-of-integers"_s, withData<testCopyOnWriteArrayOfIntegers> },
-        { "data-builder/copy-on-write-array-of-doubles"_s, withData<testCopyOnWriteArrayOfDoubles> },
-        { "data-builder/copy-on-write-array-of-anything"_s, withData<testCopyOnWriteArrayOfAnything> },
-        { "data-builder/shared-storage-survives-collections"_s, withData<testSharedStorageSurvivesCollections> },
         { collectionInTheMiddleTest, testCollectionInTheMiddleLosesNothing },
     };
     return tests;

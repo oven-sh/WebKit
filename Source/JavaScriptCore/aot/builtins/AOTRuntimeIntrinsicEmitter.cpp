@@ -35,7 +35,6 @@ void RuntimeIntrinsicEmitter::generateNativeBinding(const ValueContext& value)
 void RuntimeIntrinsicEmitter::generateLinkTimeConstant(const ValueContext& value)
 {
     uint32_t constant = static_cast<uint32_t>(toLinkTimeConstant(value->constant()));
-    // The operation fills the word, and nothing writes it again.
     Integer fetched(m_out.load64(instanceField(m_heaps.AOTInstance_fieldsFilledOnce, AOT_INSTANCE_OFFSET(realm.linkTimeConstants) + constant * sizeof(EncodedJSValue))));
     defineAs(value, boxCell(either<CellPointer>(isNotZero(fetched), [&] {
         return CellPointer(fetched.value());
@@ -72,7 +71,6 @@ void RuntimeIntrinsicEmitter::generateHasJSType(const ValueContext& value)
     }), m_program.at(TypeTable::boolean));
 }
 
-// False is always a sound answer: the code behind that answer does the same work by name.
 void RuntimeIntrinsicEmitter::generateFindsDeclaredMember(const ValueContext& value)
 {
     if (value->receivers()) {
@@ -88,7 +86,14 @@ void RuntimeIntrinsicEmitter::generateFindsDeclaredMember(const ValueContext& va
 
 TypedPointer RuntimeIntrinsicEmitter::internalField(const Operation& value)
 {
-    return m_out.address(cellOperand(value.objectOperand()).value(), m_heaps.JSInternalFieldObjectImpl_internalFields[value.index()]);
+    CellPointer object = cellOperand(value.objectOperand());
+    static_assert(JSPromiseType + 1 == JSMapType && JSMapType + 1 == JSSetType);
+    if (build().options().recorded.validates) [[unlikely]] {
+        m_out.check(hasCellTypeIn(object, { JSPromiseType, JSSetType }).value())->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters&) {
+            jit.breakpoint();
+        });
+    }
+    return m_out.address(object.value(), m_heaps.JSInternalFieldObjectImpl_internalFields[value.index()]);
 }
 
 void RuntimeIntrinsicEmitter::generateGetInternalField(const ValueContext& value)
@@ -102,7 +107,7 @@ void RuntimeIntrinsicEmitter::generatePutInternalField(const ValueContext& value
     Boxed boxedValue = boxedOperand(value, stored);
     m_out.store64(boxedValue.value(), internalField(value.value()));
     CellPointer object = cellOperand(value->objectOperand());
-    barrierAfterStore(value, object, get(stored), typeOf(stored));
+    barrierAfterStore(value, object, typeOf(stored));
     defineAs(value, get(stored), typeOf(stored));
 }
 

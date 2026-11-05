@@ -8,8 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCodeSites.h"
-#include "AOTFaultHandler.h"
 #include "AOTImage.h"
 #include "AOTLoadedObject.h"
 #include "AOTRuntimeReporter.h"
@@ -158,7 +156,6 @@ static void* moveLoadedCode(std::span<const uint8_t> code, size_t executableSize
     void* target = mmap(chooseAddressForCode(code.size()), code.size(), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (target == MAP_FAILED)
         return nullptr;
-    // One call moves one mapping, and the loader made two: they differ in their protection.
     auto move = [&](size_t offset, size_t size) {
         return !size || mremap(const_cast<uint8_t*>(code.data()) + offset, size, size, MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP, static_cast<uint8_t*>(target) + offset) != MAP_FAILED;
     };
@@ -181,11 +178,9 @@ static size_t allocationGranularity()
 
 static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_t executableSize)
 {
-    // A view can be executed only if its file was opened for that, which whoever wrote the file had no reason to ask for.
     HANDLE file = ReOpenFile(reinterpret_cast<HANDLE>(descriptor), GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
     if (file == INVALID_HANDLE_VALUE)
         return nullptr;
-    // A page of a view can only get a protection that the view was mapped for, and the FFI stubs write their callback context once.
     HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_EXECUTE_WRITECOPY, 0, 0, nullptr);
     CloseHandle(file);
     if (!mapping)
@@ -216,7 +211,6 @@ static_assert(isOnPageBoundaries(3 * AOT::imagePageSize, AOT::imagePageSize, 5 *
 #if !OS(LINUX)
 static const void* protectLoadedSection(std::span<const uint8_t> executableCode)
 {
-    // On Darwin the section is in a segment that the loader maps executable.
 #if OS(FREEBSD)
     if (mprotect(const_cast<uint8_t*>(executableCode.data()), executableCode.size(), PROT_READ | PROT_EXEC))
         return nullptr;
@@ -294,12 +288,10 @@ static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t*
 
 #elif OS(DARWIN)
 
-// The payload of a Mach-O executable is one segment, which has the protection of the code in it.
 static constexpr bool dataHasSegmentsOfItsOwn = false;
 
 static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t* address)
 {
-    // Not the first image of dyld: that is a library where one was inserted.
     const mach_header_64* executable = _NSGetMachExecuteHeader();
     if (!executable || executable->magic != MH_MAGIC_64)
         return std::nullopt;
@@ -325,7 +317,6 @@ static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t*
 
 #elif OS(WINDOWS)
 
-// The payload of a PE executable is one section, which has the protection of the code in it.
 static constexpr bool dataHasSegmentsOfItsOwn = false;
 
 static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t* address)
@@ -369,7 +360,6 @@ static std::optional<Image::PositionInFile> findPositionOfImage(std::span<const 
             descriptor = -1;
         }
     };
-    // The file of the dynamic loader, where that was started with the executable as its argument.
     int descriptor = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
     closeUnlessImageIsInFile(descriptor);
 #if OS(LINUX)
@@ -411,7 +401,6 @@ static bool liesInOneSegmentOfExecutable(std::span<const uint8_t> range, bool is
 static bool isLoadedAsItsHeaderSays(std::span<const uint8_t> bytes, const ImageHeader& header)
 {
 #if (OS(LINUX) || OS(FREEBSD)) && !defined(BUN_HARDENED)
-    // An executable whose table of program headers has room for one more only has its whole payload in one segment, which is not executed.
     if (std::optional<SegmentOfExecutable> segment = findSegmentOfExecutable(bytes.data()); segment && header.size <= segment->sizeFromAddress && !segment->mayBeExecuted)
         return true;
 #endif
@@ -449,7 +438,6 @@ static const void* mapCodeOfImage(std::span<const uint8_t> bytes, std::optional<
         mapping = moveLoadedCode(code, executableSize);
 #endif
     if (mapping) {
-        // Compiled code reads the constants in the code part through pointers into the loaded image.
 #if defined(BUN_HARDENED)
         if (isLoadedExecutable)
             OSAllocator::protect(const_cast<uint8_t*>(code.data()), code.size(), true, false);
@@ -479,7 +467,6 @@ bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pa
 {
     RELEASE_ASSERT(!(pages.size() % pageSize()) && !(reinterpret_cast<uintptr_t>(target) % pageSize()));
     RELEASE_ASSERT(pages.data() >= image.bytes().data() && pages.data() + pages.size() <= image.bytes().data() + image.bytes().size());
-    // The pages of the system may be larger than those that the image is laid out in.
     if (reinterpret_cast<uintptr_t>(pages.data()) % pageSize())
         return false;
 #if OS(DARWIN)
@@ -490,7 +477,6 @@ bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pa
         reinterpret_cast<mach_vm_address_t>(pages.data()), true, &currentProtection, &maxProtection, VM_INHERIT_COPY);
     if (result != KERN_SUCCESS)
         return false;
-    // The clone inherits the limits of the section, which nobody may write. The caller cannot copy into it either.
     RELEASE_ASSERT(mach_vm_protect(mach_task_self(), address, pages.size(), true, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS);
     RELEASE_ASSERT(mach_vm_protect(mach_task_self(), address, pages.size(), false, VM_PROT_READ) == KERN_SUCCESS);
     return true;
@@ -506,7 +492,6 @@ bool mapPrivateCloneOfImagePages(const Image& image, std::span<const uint8_t> pa
 #endif
 }
 
-// A signal mask stays across execve(), and every thread starts with the mask of the thread that made it.
 static void unblockAccessFaults()
 {
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
@@ -519,8 +504,6 @@ static void unblockAccessFaults()
 }
 
 #if OS(LINUX) && !defined(BUN_HARDENED)
-// perf reads /tmp/perf-<pid>.map for anonymous memory alone, and takes shared anonymous memory for anonymous. Nothing of the image has run yet: such memory takes the place of its code, at the address of the code.
-// It can be executed from the start and is filled through a second mapping of its pages: no mapping becomes executable later, which the process may have given up.
 static void moveCodeToAnonymousMemory(const Image& image)
 {
     const ImageHeader& header = image.header();
@@ -543,7 +526,6 @@ static void didPublishImage(const Image& image)
 #else
     UNUSED_PARAM(image);
 #endif
-    // An image without fault sites still has returns that are diverted to a page without code.
     unblockAccessFaults();
     activateSignalHandlersFor(Signal::AccessFault);
 #if OS(LINUX) && !defined(BUN_HARDENED)
@@ -581,11 +563,6 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
         return ImageVerdict::OutsideItsSegments;
     if (header.sections[static_cast<size_t>(ImageSection::FaultSites)].size && !tryReserveLowPages())
         return ImageVerdict::LowPagesAccessible;
-    if (readsOffNoCellFault) {
-        unblockAccessFaults();
-        if (!readThroughAddressWithTopByteFaults())
-            return ImageVerdict::TopByteOfAddressIgnored;
-    }
 
     if (!relocateLoadedImage(bytes.first(header.size)))
         return ImageVerdict::CannotMapCode;

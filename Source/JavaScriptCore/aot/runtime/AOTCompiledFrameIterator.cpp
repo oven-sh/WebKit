@@ -50,7 +50,6 @@ static bool entersCallee(StubFrameKind kind)
     return kind == StubFrameKind::HostCall || kind == StubFrameKind::EngineCallee;
 }
 
-// Nothing for an address that runs no compiled code. Only for the thread that runs the VM: the sampling profiler asks the image.
 static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSite(CallSiteCache& cache, const Image& image, const void* pc)
 {
     if (const CallSiteCache::Entry* site = cache.find(pc)) [[likely]]
@@ -73,7 +72,6 @@ static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSite(VM& vm, const vo
     return findReturnSite(*state.callSiteCache, *state.image, pc);
 }
 
-// The frame at such a site is read as a frame of the engine.
 static bool isInHostCallFrame(const CallSiteCache::Entry& site)
 {
     return site.isStubReturnSite() && site.stubFrameKind == StubFrameKind::InHostCallFrame;
@@ -137,7 +135,6 @@ static bool isInCodeOfEngine(const void* address)
     });
 }
 
-// The fault handler enters a stub as if the instruction that faulted had called it.
 static bool isBehindFaultSite(const Image& image, const void* address)
 {
     auto hasSite = [&](FaultSiteKind kind, size_t size) {
@@ -205,7 +202,6 @@ SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Curs
         enterFrame(cursor, *site);
         if (site->isStubReturnSite() && isAdapterFrame(site->stubFrameKind)) {
             Instance* instance = *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(cursor.callFrame) + AdapterFrame::offsetOfInstance);
-            // Nothing counts where a run returns. A run that compiled code or the engine has called may be over while its callers, of another realm, go on in front of the same entry frame.
             if (stateThatRemembersRun && cursor.callFrame->callerFrameOrEntryFrame() == cursor.entryFrame)
                 stateThatRemembersRun->instanceOfRecentRun = { stateThatRemembersRun->entriesWithSeveralInstances, cursor.entryFrame, instance, lowestFrame, cursor.callFrame };
             return instance;
@@ -220,15 +216,12 @@ SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Curs
     return nullptr;
 }
 
-// Every entry of a run while the VM has several instances counts, so the count and the entry frame name the run that the entry frame has called.
-// A function of another realm that this run calls has a run of its own in front of the same entry frame, below the frames that were asked about.
 Instance* CompiledFrameIterator::knownInstanceOfRun(const VMState& state, EntryFrame* entryFrame, const CallFrame* framePointer)
 {
     const VMState::InstanceOfRun& known = state.instanceOfRecentRun;
     return known.entries == state.entriesWithSeveralInstances && known.entryFrame == entryFrame && known.lowestFrame <= framePointer && framePointer <= known.adapterFrame ? known.instance : nullptr;
 }
 
-// A file's instance outlives it until a collection. Each question would walk to the adapter again.
 NEVER_INLINE Instance* CompiledFrameIterator::findInstanceAmongSeveral() const
 {
     VMState& state = m_vm->aotState();
@@ -243,7 +236,6 @@ Instance* CompiledFrameIterator::tryFindInstance() const
     if (state.instances.size() != 1)
         return findInstanceAmongSeveral();
 #if ASSERT_ENABLED
-    // The walk is as long as the stack is deep, and an error that passes a handler in every frame asks at each of them.
     static std::atomic<unsigned> questions;
     if (!(questions.fetch_add(1, std::memory_order_relaxed) % 1024)) {
         Instance* adapterInstance = findEnclosingAdapterInstance(m_cursor, nullptr);
@@ -331,7 +323,6 @@ bool CompiledFrame::isActivationOf(JSCell* cell) const
 
 std::optional<ModuleID> CompiledFrame::moduleWhoseBodyRuns() const
 {
-    // To a stack trace the body of a CommonJS file is a function like any other.
     if (FunctionDescription(function).codeType() != ModuleCode && !functionKindData(function).isCommonJSModule)
         return std::nullopt;
     auto position = findPosition(*this);
@@ -352,7 +343,6 @@ void forEachModuleWhoseBodyRuns(VM& vm, CallFrame* callFrame, const ScopedLambda
     });
 }
 
-// Frame by frame as CallFrame::callerSourceOrigin() goes: the library and native code ask on behalf of whoever called them.
 bool Modules::hasEnteredCodeOfProgramSinceAskingHost() const
 {
     VM& vm = *m_instance.vm;
@@ -366,7 +356,6 @@ bool Modules::hasEnteredCodeOfProgramSinceAskingHost() const
                 const CompiledFrame& frame = visitor->compiledFrame();
                 if (frame.visibility != TraceVisibility::Visible)
                     return IterationStatus::Continue;
-                // The frame that turned to the host lies above the place where it did so. One below it the host has entered since.
                 isCompiledCodeEnteredSince = m_isAskingHost.wasMadeBeforeEntering(frame.callFrame);
                 return IterationStatus::Done;
             }
@@ -412,8 +401,6 @@ bool isCodeOf(const Image& image, CompiledFunctionID code, FunctionID function)
     return sourceFunctionOf(image.rootFunctionOf(code.index())) == sourceFunctionOf(function);
 }
 
-// No site of the function stands for the making of `this`: it is listed where it begins, as a class that is called without `new` is.
-// Every walk shows the frame that it gets here, whatever it has shown above: only a function that traces always list has one.
 std::optional<TraceFrame> frameOfFunctionWhoseThisIsMade(const Image& image, FunctionID constructed)
 {
     FunctionID function = sourceFunctionOf(constructed);
@@ -442,7 +429,6 @@ FunctionID CompiledFrameIterator::RunEnd::constructedFunction() const
     return callee.isCell() ? functionOf(callee.asCell()).value_or(FunctionID()) : FunctionID();
 }
 
-// An operation that a function calls at the site of a tail call stands for the callee, a built-in. What the operation calls runs after the tail call.
 std::optional<CompiledFrameIterator> CompiledFrameIterator::tryCreate(VM& vm, const Cursor& cursor, OperationState operationState)
 {
     if (!vm.hasCompiledCode() || !cursor.framePointer || !cursor.rawPC)
@@ -488,7 +474,6 @@ const void* CompiledFrameIterator::findReturnAddressInFunctionAtTop(VM& vm)
             return nullptr;
         if (!site->isStubReturnSite())
             return pc;
-        // Those that findFunctionFrame() passes over and keeps nothing of.
         switch (site->stubFrameKind) {
         case StubFrameKind::Plain:
         case StubFrameKind::ReturnsAfterOperation:
@@ -657,7 +642,6 @@ void CompiledFrameIterator::readFrame() const
     m_hasReadFrame = true;
 }
 
-// Only a function whose `this` is being made is listed without a frame, and it stands on top of its run.
 void CompiledFrameIterator::listConstructedFunctionsThatLeft()
 {
     if (m_isAtEnd) {
@@ -812,7 +796,6 @@ static SampledTop sampledTopAtReturnSite(const Image& image, const CodeLocation&
     return { frameAtReturnSite(frame, stackPointer, framePointer), returnAddress, nullptr, framePointer };
 }
 
-// The tables say where a function has its frame at return addresses only, and a sample is taken anywhere: the frame is where a return address into compiled code lies above it.
 static SUPPRESS_ASAN std::optional<SampledTop> findTopWithoutFrameRecord(const Image& image, const SampledRegisters& registers, const CodeLocation& top, const SuspendedThreadStack& stack)
 {
     const ImageFrame& frame = image.frameOf(top.function);
@@ -851,7 +834,6 @@ static SUPPRESS_ASAN SampledTop findTopInCompiledCode(const Image& image, const 
     bool callerIsFunction = caller.kind == CodeKind::Function;
     if (top.kind == CodeKind::Function) {
         if (!callerIsFunction || caller.function != top.function) {
-            // The frame is that of the caller.
             result = sampledTopAtReturnSite(image, caller, registers.pc, static_cast<void**>(registers.stackPointer) + 1, result.callFrame);
             result.callerPCOfFramelessTop = callReturnAddress;
         }
@@ -860,12 +842,10 @@ static SUPPRESS_ASAN SampledTop findTopInCompiledCode(const Image& image, const 
     return result;
 }
 
-// The function that a call entered, if the call records it.
 struct CalleeOfCall {
     bool names(const CodeLocation& site) const { return function && site.kind == CodeKind::Function && site.function == *function; }
 
     bool mayBeFunction { false };
-    // For a call that names its callee.
     std::optional<uint32_t> function { };
 };
 
@@ -898,8 +878,6 @@ static bool callsFunction(StubFrameKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// x86-64 only. A function calls another by address, through a register, or through a stub that receives the callee the way a function does.
-// Any other stub does the work itself or continues into native code.
 static CalleeOfCall findCalleeOfCallEndingAt(const Image& image, const CodeLocation& returnSite, const void* returnAddress)
 {
     if (returnSite.kind != CodeKind::Function)
@@ -919,13 +897,11 @@ static CalleeOfCall findCalleeOfCallEndingAt(const Image& image, const CodeLocat
     return { returnSite.offset >= 2 && end[-2] == opcodeOfGroup5 && end[-1] >> 3 == 0x1a };
 }
 
-// stackPointer is the register's value at the site.
 struct FrameAtSite {
     CodeLocation site;
     const void* stackPointer;
 };
 
-// The frame whose record is at that address: the given frame, or the first one above it that has a record. nullopt if that frame's record is elsewhere.
 static SUPPRESS_ASAN std::optional<FrameAtSite> findFrameWithRecordAt(const Image& image, FrameAtSite frameAtSite, const CallFrame* frameRecord)
 {
     while (true) {
@@ -953,11 +929,6 @@ static SUPPRESS_ASAN std::optional<FrameAtSite> findFrameWithRecordAt(const Imag
     }
 }
 
-// Native code need not keep frame records. The first record above such code belongs to the compiled function that called it, or to one of that function's callers.
-// Only where a call pushes its return address: the caller's frame ends right above that word, so the frame size tells whether the record is the caller's own.
-// A function that has returned leaves stale return addresses behind, and the next callee puts its record where that function's was, so the call sites decide. The word follows a call
-// into native code. If the call that the record returns to also goes to native code, the record belongs to the native code; if it names its callee, that function's word
-// is the right one. A word of a function that it does not name is accepted only if no other frame size fits: the function there pushed one, and frames of one size end at one word.
 static SUPPRESS_ASAN std::optional<SampledTop> findCallerOfCodeWithoutFrameRecord(const Image& image, const SuspendedThreadStack& stack, const void* stackPointer, CallFrame* frameRecord, const CodeLocation& returnSite, const void* returnAddress)
 {
     if (!isX86_64() || !stack.contains(stackPointer))
@@ -1067,7 +1038,6 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     entry.handler = returnSite.handler;
     entry.frame = returnSite.frame;
     FunctionDescription root(image.rootFunctionOf(location.function));
-    // Nothing of the language throws at a return address without a site. What arrives there is the error of an allocation that failed.
     entry.rejectsOnThrow = root.rejectsOnThrow() && (returnSite.site || !root.makesPromiseOfCall());
     entry.isInModuleBody = root.codeType() == ModuleCode;
 
@@ -1124,9 +1094,6 @@ void CallSiteCache::setNumberOfEntries(size_t numberOfEntries)
     }
 }
 
-// The image lies at another address in every process, so which addresses meet in a slot is a matter of chance. Whoever holds one of the two slots makes room where its own other slot is free.
-// An entry that is pushed out comes back the next time it is asked for. A few entries with too few slots between them would do that to each other for ever, however empty the table:
-// it doubles once it has pushed out as many entries as it has slots, as it does once half of the slots are taken.
 CallSiteCache::Entry& CallSiteCache::slotForNewEntry(const void* address)
 {
     if (m_entries.isEmpty())

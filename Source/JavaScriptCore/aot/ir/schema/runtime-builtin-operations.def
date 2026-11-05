@@ -1,4 +1,3 @@
-runtime AllocateStorage : void* (uint64_t size) ; RuntimeAllocates
 runtime ArraySplice : EncodedJSValue (JSCell* array, int32_t start, int32_t deleteCount, uint32_t count, const EncodedJSValue* items) ; unknownCode
 runtime ArrayUnshift : EncodedJSValue (JSCell* array, EncodedJSValue item) ; unknownCode
 runtime ArrayPushTwo : EncodedJSValue (JSCell* array, EncodedJSValue first, EncodedJSValue second) ; unknownCode
@@ -19,21 +18,16 @@ runtime ArrayOfLengthOrElement : JSCell* (EncodedJSValue lengthOrElement) ; read
 runtime NumberOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
 runtime StringOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
 runtime ObjectToStringOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
-# These answer for the usual operands. For the rest they hand back the empty value, and the code that called them calls the function of the host or the engine.
 runtime TextOfBytes : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue encoding, EncodedJSValue start, EncodedJSValue end) ; unknownCode
-runtime EncodeTextToBytes : EncodedJSValue (EncodedJSValue source) ; unknownCode
-runtime EncodeTextIntoBytes : EncodedJSValue (EncodedJSValue source, EncodedJSValue destination) ; unknownCode
 runtime TypedArraySetOfAnyValue : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue source, EncodedJSValue offset) ; unknownCode
 runtime TypedArraySubarrayOfAnyValue : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue begin, EncodedJSValue end) ; unknownCode
 runtime CodeURIOfAnyValue : EncodedJSValue (EncodedJSValue value, uint32_t coding) ; unknownCode
 runtime ArraySearchOfAnyValue : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue searched, EncodedJSValue fromIndex, uint32_t answersIndex) ; unknownCode
 runtime ByteLengthOfAnyValue : EncodedJSValue (EncodedJSValue value, EncodedJSValue encoding) ; unknownCode
-runtime ArrayFromTypedArray : JSCell* (JSCell* view, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime MoveBytes : void (uint8_t* target, const uint8_t* source, uint64_t count) ; reads(TypedArrayElements) writes(TypedArrayElements) ; leaf
 runtime NewArrayWithIndexingType : JSCell* (uint32_t count, const EncodedJSValue* values, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayFromDoubles : JSCell* (uint32_t countAndNumberMask, double, double, double, double) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayIterator : JSCell* (JSCell* array, uint32_t kind) ; RuntimeAllocates
-runtime GrowNewArray : void (JSCell* array, uint64_t length) ; RuntimeGrowsArray
 runtime TruncateNewArray : JSCell* (JSCell* array, uint32_t length) ; RuntimeGrowsArray writes(ShapeWords)
 runtime NewArrayWithHoles : JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 
@@ -42,7 +36,6 @@ runtime ObjectValues, ObjectEntries : JSCell* (EncodedJSValue object) ; unknownC
 runtime NewSetFromIterable, NewMapFromEntries : JSCell* (EncodedJSValue iterable) ; unknownCode
 runtime PropertyIsEnumerable : size_t (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime GetOwnPropertyDescriptor : EncodedJSValue (EncodedJSValue object, EncodedJSValue property) ; unknownCode
-runtime GetOwnPropertyFields : void (EncodedJSValue object, EncodedJSValue property, EncodedJSValue* results) ; unknownCode
 runtime ObjectAssignWithoutCode : size_t (JSCell* target, EncodedJSValue source) ; unknownCode
 runtime ObjectCreate : JSCell* (JSCell* prototype) ; reads(all) writes(PrototypeLinks, ShapeWords, AllocatorState, RuntimeState) collects
 
@@ -76,26 +69,26 @@ runtime MathATan2 : double (double y, double x) ; none ; leaf
 runtime MathHypot : double (double x, double y) ; none ; leaf
 runtime MathHypot3 : double (double x, double y, double z) ; none ; leaf
 
-runtime ParseInt8 : double (const Latin1Character* characters, uint32_t length, int32_t radix) ; none ; leaf preserveMost
-runtime ParseInt16 : double (const char16_t* characters, uint32_t length, int32_t radix) ; none ; leaf preserveMost
-runtime StringToNumber8 : double (const Latin1Character* characters, uint32_t length) ; none ; leaf preserveMost
-runtime StringToNumber16 : double (const char16_t* characters, uint32_t length) ; none ; leaf preserveMost
-runtime StringFindCharacter8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start) ; none ; leaf preserveMost
-runtime StringFindCharacter16 : size_t (const char16_t* characters, uint32_t length, uint32_t character, uint32_t start) ; none ; leaf preserveMost
-runtime StringReverseFindCharacter8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t character, int32_t position) ; none ; leaf preserveMost
-runtime StringReverseFindCharacter16 : size_t (const char16_t* characters, uint32_t length, uint32_t character, int32_t position) ; none ; leaf preserveMost
-runtime StringFind8 : size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start) ; none ; leaf preserveMost
-runtime StringFind16 : size_t (const char16_t* characters, uint32_t length, const char16_t* other, uint32_t otherLength, uint32_t start) ; none ; leaf preserveMost
-runtime StringReverseFind8 : size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, int32_t position) ; none ; leaf preserveMost
-runtime StringReverseFind16 : size_t (const char16_t* characters, uint32_t length, const char16_t* other, uint32_t otherLength, int32_t position) ; none ; leaf preserveMost
-runtime StringUTF8Length8 : size_t (const Latin1Character* characters, uint32_t length) ; none ; leaf preserveMost
-runtime StringUTF8Length16 : size_t (const char16_t* characters, uint32_t length) ; none ; leaf preserveMost
-runtime StringImplsAreEqual : size_t (void* first, void* second) ; none ; leaf preserveMost
-runtime CompareStringImpls : int64_t (void* first, void* second) ; none ; leaf preserveMost
-runtime StringImplEqualsImageString : size_t (void* impl, uint32_t string) ; none ; leaf preserveMost
-runtime CharactersEqualImageString : size_t (const Latin1Character* characters, uint32_t length, uint32_t string) ; none ; leaf preserveMost
-runtime HashStringImpl : size_t (void* impl) ; none ; leaf preserveMost
-runtime FindKeptStringOfTwoCharacters : size_t (void* vm, uint32_t units) ; none ; leaf preserveMost
+runtime ParseInt8 : double (const Latin1Character* characters, uint32_t length, int32_t radix) ; reads(StringStorage) ; leaf preserveMost
+runtime ParseInt16 : double (const char16_t* characters, uint32_t length, int32_t radix) ; reads(StringStorage) ; leaf preserveMost
+runtime StringToNumber8 : double (const Latin1Character* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
+runtime StringToNumber16 : double (const char16_t* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
+runtime StringFindCharacter8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start) ; reads(StringStorage) ; leaf preserveMost
+runtime StringFindCharacter16 : size_t (const char16_t* characters, uint32_t length, uint32_t character, uint32_t start) ; reads(StringStorage) ; leaf preserveMost
+runtime StringReverseFindCharacter8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t character, int32_t position) ; reads(StringStorage) ; leaf preserveMost
+runtime StringReverseFindCharacter16 : size_t (const char16_t* characters, uint32_t length, uint32_t character, int32_t position) ; reads(StringStorage) ; leaf preserveMost
+runtime StringFind8 : size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start) ; reads(StringStorage) ; leaf preserveMost
+runtime StringFind16 : size_t (const char16_t* characters, uint32_t length, const char16_t* other, uint32_t otherLength, uint32_t start) ; reads(StringStorage) ; leaf preserveMost
+runtime StringReverseFind8 : size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, int32_t position) ; reads(StringStorage) ; leaf preserveMost
+runtime StringReverseFind16 : size_t (const char16_t* characters, uint32_t length, const char16_t* other, uint32_t otherLength, int32_t position) ; reads(StringStorage) ; leaf preserveMost
+runtime StringUTF8Length8 : size_t (const Latin1Character* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
+runtime StringUTF8Length16 : size_t (const char16_t* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
+runtime StringImplsAreEqual : size_t (void* first, void* second) ; reads(StringStorage) ; leaf preserveMost
+runtime CompareStringImpls : int64_t (void* first, void* second) ; reads(StringStorage) ; leaf preserveMost
+runtime StringImplEqualsImageString : size_t (void* impl, uint32_t string) ; reads(StringStorage) ; leaf preserveMost
+runtime CharactersEqualImageString : size_t (const Latin1Character* characters, uint32_t length, uint32_t string) ; reads(StringStorage) ; leaf preserveMost
+runtime HashStringImpl : size_t (void* impl) ; reads(StringStorage) writes(StringStorage) ; leaf preserveMost
+runtime FindKeptStringOfTwoCharacters : size_t (void* vm, uint32_t units) ; reads(StringStorage, RuntimeState) ; leaf preserveMost
 
 runtime StringFindLiteral8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start) ; reads(all)
 runtime StringReverseFindLiteral8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, int32_t position) ; reads(all)

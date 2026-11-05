@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Narrowing for Guesses: what is expected of a value is cut by what the body has tested and by what was seen to arrive, a test of shapes leaves out the layouts that have none, and the side on which the one test of a guess fails is typed by the refusal.
-// At a suspension and at a throw: nothing. An expectation claims nothing, and the name behind a failed test is a Narrowed like any other.
-// Withheld: nobody asks. Each expectation is tested at its use, so any answer here is safe.
-
 #include "config.h"
 #include "AOTWalk.h"
 
@@ -46,9 +42,6 @@ static TypeID typeSeenToArriveInNarrowingOfGuesses(const Walker& walker, uint32_
     return entryParameter < parameters.size() ? parameters[entryParameter].proven : TypeID();
 }
 
-// ---- Two guesses at one value
-
-// `function visit(node: Node)` where only an Identifier was seen to arrive: what both say. Two guesses that name objects and share none disagree, and what is written stays.
 static void meetWithWhatWasSeenToArriveInNarrowingOfGuesses(Walker& walker, uint32_t entryParameter, TypeID& found)
 {
     TypeArena& types = walker.types();
@@ -63,8 +56,6 @@ static void meetWithWhatWasSeenToArriveInNarrowingOfGuesses(Walker& walker, uint
         found = met;
 }
 
-// `function finishNode(node: Node, ..) { setTextRangePosEnd(node, ..); .. }`, the helper copied in: its parameter is written as any range of text, dozens of layouts that no test asks for.
-// What this copy is handed is the unit's own parameter, of which less is written: what both say.
 static void meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(Walker& walker, ValueID input, TypeID& found)
 {
     if (!walker.depthOfCopies())
@@ -85,7 +76,6 @@ static void meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(Walker&
         found = met;
 }
 
-// The rule of the row of a read over what Link holds of the places, with `receiver` in the place of the receiver.
 static TypeID typeHeldOfReadInNarrowingOfGuesses(Walker& walker, const BodyValue& read, TypeID receiver)
 {
     Opcode opcode = read.opcode();
@@ -107,8 +97,6 @@ static TypeID typeHeldOfReadInNarrowingOfGuesses(Walker& walker, const BodyValue
     return resultTypeOf(typing, draft, OperandTypes { operandTypes.span() });
 }
 
-// `this.next = null` in a constructor function: what is written of the field names no object, so of the objects that come to lie there it says nothing.
-// What is held of the place names them, or the names that are asked of the value do. Null: nobody names any.
 static TypeID objectsBesideWrittenNullInNarrowingOfGuesses(Walker& walker, ValueID input, const BodyValue& definition, bool& isDeclared)
 {
     TypeArena& types = walker.types();
@@ -139,9 +127,6 @@ static TypeID objectsBesideWrittenNullInNarrowingOfGuesses(Walker& walker, Value
     return types.forLayout(only);
 }
 
-// ---- Names that built-ins answer
-
-// `e.then`, `x.constructor`, `list.length`, `entry.value`: a member of one of the engine's classes that reached code may come by answers to the name, so the name speaks for no layout of the program. It still tells layouts apart.
 static bool nameSpeaksForLayoutInNarrowingOfGuesses(const Walker& walker, PropertyKeyID key)
 {
     const Program& program = walker.program();
@@ -163,7 +148,34 @@ static bool nameSpeaksForLayoutInNarrowingOfGuesses(const Walker& walker, Proper
     return true;
 }
 
-// The weakest guess: one layout in use has all the names that the body asks of the value. True: that is all that speaks for `found`, and none of the names speaks for a layout.
+static bool someCastStatesLayoutInNarrowingOfGuesses(Walker& walker, ValueID input, LayoutID expected)
+{
+    TypeArena& types = walker.types();
+    const BodyIndex& index = walker.currentBodyIndex();
+    return std::ranges::any_of(walker.castsOf(input), [&](uint64_t cast) {
+        TypeID written = index.value(ValueID(static_cast<uint32_t>(cast))).as<Opcode::Convert>().declared().written();
+        return written && !holdsOnlyPrimitives(written) && singleLayoutOf(types, types.at(types.withoutNullish(written))) == expected;
+    });
+}
+
+static bool oneBuiltinClassAnswersAllNamesInNarrowingOfGuesses(const Walker& walker, std::span<const PropertyKeyID> names)
+{
+    const Program& program = walker.program();
+    const BuiltinTable& builtins = program.builtins();
+    auto builtinNameOf = [&](PropertyKeyID key) {
+        return liesInThread(key) ? BuiltinName() : program.builtinNameOf(key);
+    };
+    auto named = std::ranges::find_if(names, [&](PropertyKeyID key) { return !!builtinNameOf(key); });
+    if (named == names.end())
+        return true;
+    return std::ranges::any_of(builtins.classesWithInstanceMember(builtinNameOf(*named)), [&](BuiltinClassID builtinClass) {
+        return std::ranges::all_of(names, [&](PropertyKeyID key) {
+            BuiltinName name = builtinNameOf(key);
+            return !name || std::ranges::contains(builtins.classesWithInstanceMember(name), builtinClass);
+        });
+    });
+}
+
 static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, ValueID input, const BodyValue& definition, TypeID found)
 {
     TypeArena& types = walker.types();
@@ -175,9 +187,11 @@ static bool restsOnNamesThatBuiltinsAnswerInNarrowingOfGuesses(Walker& walker, V
     std::span<const PropertyKeyID> names = walker.namesUsedOff(input);
     if (names.empty() || walker.facts().layoutsByNames().findOnlyLayoutWithAll(names) != expected)
         return false;
+    if (someCastStatesLayoutInNarrowingOfGuesses(walker, input, expected))
+        return false;
     return std::ranges::none_of(names, [&](PropertyKeyID name) {
         return nameSpeaksForLayoutInNarrowingOfGuesses(walker, name);
-    });
+    }) && oneBuiltinClassAnswersAllNamesInNarrowingOfGuesses(walker, names);
 }
 
 namespace {
@@ -196,7 +210,6 @@ static bool saysNothingInNarrowingOfExpectations(const TypeArena& types, TypeID 
     return !holdsOnlyPrimitives(type) && types.at(type).hasUnboundedUnknown();
 }
 
-// Of a parameter that a test or a case fills, in a block that one edge enters: BodyIndex::valueNarrowedInto(), with the edge.
 static std::optional<EdgeThatFillsParameterInNarrowingOfExpectations> findEdgeThatFillsInNarrowingOfExpectations(const BodyIndex& index, ValueID parameter)
 {
     if (!parameter || !index.isParameter(parameter))
@@ -213,8 +226,6 @@ static std::optional<EdgeThatFillsParameterInNarrowingOfExpectations> findEdgeTh
     return std::nullopt;
 }
 
-// `kind: "circle"`: what the source writes of the field in the member, whichever kind of position the front end makes of it. The undefined and null that it adds to every reference are none of that.
-// Null: the member may lack the property, or answers by a getter. Such a member is told from nobody.
 static TypeID tagWrittenInMemberInNarrowingOfExpectations(Walker& walker, LayoutID member, PropertyKeyID key, bool asWritten)
 {
     const Program& program = walker.program();
@@ -237,9 +248,6 @@ static TypeID tagWrittenInMemberInNarrowingOfExpectations(Walker& walker, Layout
     return added ? walker.types().withoutPrimitives(written, added) : written;
 }
 
-// `function area(s: Circle | Square) { if (s.kind === "circle") return s.radius; return s.side; }`, `switch (s.kind) { case "circle": .. }`: on each edge the members of whose written tag the test or the case leaves something.
-// Each tag is asked by itself: the refusal of `=== "circle"` leaves nothing of "circle", though it takes nothing away from what is proven of the value that was read, which is anything.
-// What is written of the holder is asked first: what is expected of it may have been cut to a stranger that has the names of all arms.
 static void cutExpectationByTestedField(Walker& walker, ValueID input, TypeID& found, bool& isDeclared)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -251,7 +259,6 @@ static void cutExpectationByTestedField(Walker& walker, ValueID input, TypeID& f
     if (!filling)
         return;
 
-    // Whoever asks ahead of the walk finds nothing built for the value that was read.
     TypeArena& types = walker.types();
     Reference builtRead = walker.referenceOf(narrowing.readOperand());
     TypeID provenOfRead = builtRead && builtRead.isRecord() ? walker.typeOf(builtRead) : TypeID();
@@ -283,11 +290,10 @@ static void cutExpectationByTestedField(Walker& walker, ValueID input, TypeID& f
         TypeID left = whatEdgeLeavesOf(tag);
         return !left || (!isNeverType(left) && types.overlap(left, provenOfRead));
     };
-    // `=== "circle"` has passed, `case "circle":`: of any tag at all the edge leaves ONE value. It SELECTS: a member stays where its written tag may be that value, and no type is made to ask.
-    // Any other edge takes one value away. Of a wide union that leaves a wide union, at the price of a round with a new type for each member: it is left as it is.
     TypeID selected = whatEdgeLeavesOf(provenOfRead);
     bool selects = selected && !isNeverType(selected) && holdsOnlyPrimitives(selected) && !(types.at(selected).primitives & Primitive::UndefinedOrNull) && isSingleValue(types, types.at(selected));
 
+    PropertyKeyID key = narrowing.key();
     BodyValue holder = index.value(narrowing.valueOperand());
     Reference builtHolder = walker.referenceOf(narrowing.valueOperand());
     std::array<TypeID, 3> whatHolderMayBe { holder.isParameter() ? holder.parameterType() : TypeID(), found, builtHolder ? walker.typeOf(builtHolder) : TypeID() };
@@ -296,12 +302,11 @@ static void cutExpectationByTestedField(Walker& walker, ValueID input, TypeID& f
             continue;
         if (!selects && Walker::keepsRoundsOver(types, types.at(inFront).layouts))
             continue;
-        // Asking about a member may make types and sets, so no set is read meanwhile.
         Vector<LayoutID, 16> members;
         members.append(membersOf(types, types.at(inFront).layouts));
         size_t numberOfMembers = members.size();
         members.removeAllMatching([&](LayoutID member) {
-            TypeID tag = tagWrittenInMemberInNarrowingOfExpectations(walker, member, narrowing.key(), selects);
+            TypeID tag = tagWrittenInMemberInNarrowingOfExpectations(walker, member, key, selects);
             return tag && !(selects ? types.overlap(tag, selected) : edgeLeavesSomethingOf(tag));
         });
         if (members.isEmpty() || members.size() == numberOfMembers)
@@ -332,9 +337,11 @@ void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool
             found = types.unionOf(found, objects);
         return;
     }
-    // `(range as Mutable<T>).pos = pos`: what the cast writes is what is expected of the value behind it.
-    if (ValueID behindCasts = index.valueBehindCasts(input); index.isParameter(behindCasts) && index.blockOf(behindCasts) == entryBlock)
-        meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(walker, behindCasts, found);
+    if (walker.depthOfCopies()) {
+        bool statesType = !definition.isParameter() && opcodesThatStateTypes.contains(definition.opcode());
+        if (ValueID behindCasts = statesType ? index.valueBehindCasts(input) : input; index.isParameter(behindCasts) && index.blockOf(behindCasts) == entryBlock)
+            meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(walker, behindCasts, found);
+    }
     if (isDeclared) {
         if (definition.isParameter() && index.blockOf(input) == entryBlock)
             meetWithWhatWasSeenToArriveInNarrowingOfGuesses(walker, input.index(), found);
@@ -344,9 +351,6 @@ void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool
         found = { };
 }
 
-// ---- The test of a guess
-
-// `function size(x: string | string[]) { return x.length }`, proven so: the guess tests for the lists. Where that is its only test the closed block has one edge, and what the refusal leaves of the value is a text.
 void bindNamesBehindFailedTest(Walker& walker, Reference value, Reference test, uint32_t operandIndexOfTest, std::span<const ValueID> names, Origin origin)
 {
     if (!walker.has(Mechanism::TypedOperations) || walker.isUnreachable() || names.empty())

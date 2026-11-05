@@ -13,7 +13,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class Facts;
 class Program;
-// chooseRolesOfConvention(): THE writer of FunctionConvention::coroutineNeverSuspends. Async, no generator, no body of a module, the summary without SummaryTrait::Suspends, TypedOperations not withheld. False claims nothing.
 bool isAsyncFunctionInWhichNothingSuspends(const Program&, const Facts&, FunctionID);
 
 } } } // namespace JSC::AOT::Typed

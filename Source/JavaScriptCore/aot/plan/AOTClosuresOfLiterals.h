@@ -13,7 +13,6 @@ class Facts;
 class Program;
 struct SlotPlanParts;
 
-// planProgram(), behind the forms of closures and in front of SlotPlan(), the key orders and the shapes.
 void leaveClosuresOfLiteralsUnmade(const Program&, const Facts&, bool useWideReferences, SlotPlanParts&);
 
 } } } // namespace JSC::AOT::Typed

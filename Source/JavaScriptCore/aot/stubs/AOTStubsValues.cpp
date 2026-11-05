@@ -65,8 +65,6 @@ static void compareTypeOfCellOnFlags(StubAssembler& jit, GPRReg cell, JSType typ
 #endif
 }
 
-// The stub that answers in its result register looks for a number first, the one that answers in the flags for a cell.
-// On x86-64 the one that answers in the flags writes them and the assembler's own register, and nothing else.
 static void generateTruthiness(StubAssembler& jit, bool answersInFlags)
 {
     const GPRReg value = jit.operand(0);
@@ -92,7 +90,6 @@ static void generateTruthiness(StubAssembler& jit, bool answersInFlags)
         Jump notInt32 = jit.branch64(CCallHelpers::Below, value, numberTag);
         returnIsNotZero(value);
 
-        // Twice the magnitude, less one, reaches the exponent of all ones for a zero, which wraps, and for a NaN. So does a word that is no number.
         notInt32.link(&jit);
         static_assert(!(JSValue::NumberTag + JSValue::DoubleEncodeOffset));
         jit.add64(numberTag, value, scratch);
@@ -105,7 +102,6 @@ static void generateTruthiness(StubAssembler& jit, bool answersInFlags)
         jit.returnToCaller();
     };
     auto answerForCell = [&] {
-        // Above, so not equal: the flags of the comparison are the answer.
         static_assert(ObjectType > StringType && ObjectType > SymbolType && ObjectType > HeapBigIntType);
         compareTypeOfCellOnFlags(jit, value, static_cast<JSType>(ObjectType - 1), scratch);
         Jump notObject = jit.branchOnFlags(CCallHelpers::BelowOrEqual);
@@ -173,7 +169,6 @@ static JumpList branchIfFunction(StubAssembler& jit, GPRReg cell, GPRReg scratch
 {
     static_assert(functionTypes.last < slimClosureTypes.first);
     JumpList isFunction;
-    // A slim closure that is as it was created.
     isFunction.append(jit.branch8(CCallHelpers::GreaterThanOrEqual, Address(cell, offsetOfSlimClosureWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(ClosureWord::maxNumberOfParameters))));
     jit.load8(Address(cell, JSCell::typeInfoTypeOffset()), scratch);
     jit.sub32(TrustedImm32(functionTypes.first), scratch);
@@ -183,7 +178,6 @@ static JumpList branchIfFunction(StubAssembler& jit, GPRReg cell, GPRReg scratch
     return isFunction;
 }
 
-// The value is where the call that follows wants its callee.
 StubSignature signatureOfThrowUnlessCallable(StubKey)
 {
     return StubSignature::withoutResult({ calleeGPR });
@@ -203,16 +197,18 @@ void generateThrowUnlessCallable(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-StubSignature signatureOfThrowUnlessForwardedCalleeIsCallable(StubKey)
+StubSignature signatureOfThrowUnlessForwardedCallCanBeMade(StubKey)
 {
-    return StubSignature::withoutResult({ calleeGPR, thisGPR });
+    return StubSignature::withoutResult({ calleeGPR, thisGPR, argumentGPR(1) });
 }
 
-void generateThrowUnlessForwardedCalleeIsCallable(StubAssembler& jit)
+void generateThrowUnlessForwardedCallCanBeMade(StubAssembler& jit)
 {
     const GPRReg callee = jit.operand(0);
     const GPRReg receiver = jit.operand(1);
+    const GPRReg list = jit.operand(2);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+    RELEASE_ASSERT(noOverlap(callee, receiver, list, scratch, instanceGPR));
 
     JumpList slowCases;
     slowCases.append(jit.branchIfNotCell(callee));
@@ -222,14 +218,23 @@ void generateThrowUnlessForwardedCalleeIsCallable(StubAssembler& jit)
 
     calleeIsFunction.link(&jit);
     JumpList receiverIsFunction = branchIfFunction(jit, receiver, scratch);
-    slowCases.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTThrowUnlessForwardedCalleeIsCallable, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .secondArgumentIn = callee, .thirdArgumentIn = receiver });
+    slowCases.append(jit.jump());
 
     receiverIsFunction.link(&jit);
+    JumpList canBeMade;
+    Jump listIsNoCell = jit.branchIfNotCell(list);
+    canBeMade.append(jit.branchIfObject(list));
+    slowCases.append(jit.jump());
+    listIsNoCell.link(&jit);
+    canBeMade.append(jit.branchIfOther(list, scratch));
+
+    slowCases.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTThrowUnlessForwardedCallCanBeMade, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .secondArgumentIn = callee, .thirdArgumentIn = receiver, .fourthArgumentIn = list });
+
+    canBeMade.link(&jit);
     jit.returnToCaller();
 }
 
-// A strict comparison passes its operands swapped: both operations it calls are symmetric, and the right operand already is the second C argument.
 static OperationCall equalityOperationCall(bool isStrict, GPRReg left, GPRReg right, bool checksException)
 {
     if (isStrict)
@@ -262,7 +267,6 @@ static void emitCompareStringImplsAndReturn(StubAssembler& jit, GPRReg leftImpl,
         jit.move(rightImpl, secondArgument);
         jit.callLeaf(Entry::operationAOTStringImplsAreEqual, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved.size() * sizeof(CPURegister)));
     });
-    // Giving the stack back writes the flags.
     if (form == Equality::StrictInFlags)
         return jit.returnFlags32(CCallHelpers::Equal, result, TrustedImm32(1));
     jit.returnToCaller();
@@ -275,7 +279,6 @@ void generateEqual(StubAssembler& jit)
     const bool answersInFlags = form == Equality::StrictInFlags;
     const GPRReg left = jit.operand(0);
     const GPRReg right = jit.operand(1);
-    // The left operand lies in the result register, which is written whether or not the answer is left there.
     const GPRReg result = answersInFlags ? jit.clobberOperand(0) : jit.result();
     RELEASE_ASSERT(result == left);
     const GPRReg leftValue = jit.allocateScratch(StubRegister::T9);
@@ -307,12 +310,10 @@ void generateEqual(StubAssembler& jit)
     Jump haveSameBits = jit.branch64(CCallHelpers::Equal, left, right);
     jit.or64(left, right, leftValue);
     Jump areNotBothCells = jit.branchIfNotCell(leftValue);
-    // The empty value passes for a cell, has none behind it, and equals itself alone.
     isFalse.append(jit.branchTest64(CCallHelpers::Zero, left));
     isFalse.append(jit.branchTest64(CCallHelpers::Zero, right));
     Jump notStrings;
     if (isStrict) {
-        // Two cells that are not one cell.
         static_assert(StringType + 1 == HeapBigIntType && HeapBigIntType == LastValueCompareCellType);
         isFalse.append(jit.branch8(CCallHelpers::Above, Address(left, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
         notStrings = jit.branchOnFlags(CCallHelpers::Equal);
@@ -371,7 +372,6 @@ void generateEqual(StubAssembler& jit)
     jit.load32(Address(leftValue, StringImpl::lengthMemoryOffset()), length);
     isFalse.append(jit.branch32(CCallHelpers::NotEqual, length, Address(rightValue, StringImpl::lengthMemoryOffset())));
     JumpList needsLeaf;
-    // The left operand is in the result register, and nothing needs it any more.
     branchIfCharactersDiffer(jit, { leftValue, rightValue, length, flags, result }, isFalse, needsLeaf);
     isTrue.append(jit.jump());
 
@@ -436,7 +436,6 @@ void generateToNumberAsDouble(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTToNumber, { .returns = OperationCall::Returns::Double, .saves = Saves::CallerSavedRegisters });
 }
 
-// As the operation returns it: no exception beside it.
 static void returnStringFromFrontEnd(StubAssembler& jit, GPRReg string)
 {
     jit.move(string, jit.result());
@@ -449,7 +448,6 @@ StubSignature signatureOfToStringFrontEnd(StubKey)
     return operationFrontEndSignature(1);
 }
 
-// An int32 whose string the engine has at hand: NumericStrings::add(int).
 void generateToStringFrontEnd(StubAssembler& jit)
 {
     const GPRReg value = jit.operand(0);

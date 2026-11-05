@@ -72,7 +72,6 @@ static void testVectorBytesOverflow()
     AOT_TEST_CHECK(build.diagnostics().internalErrors().isEmpty());
 }
 
-// The build has failed, and whoever asked still writes what it asked room for.
 static void testUnfilledRoomOverVectorBytes()
 {
     BuildContext build(wireOptions());
@@ -92,7 +91,6 @@ static void testUnfilledRoomOverVectorBytes()
     AOT_TEST_CHECK(build.diagnostics().internalErrors().isEmpty());
 }
 
-// One owner means the word as an offset, the other as a number, and the part holds one copy for both.
 static void testJoinRefusesWordsLinkedByOneOfTwoOwners()
 {
     BuildContext build(wireOptions());
@@ -140,7 +138,6 @@ static void checkShapeSet(const Vector<uint32_t>& ascendingShapes)
     uint32_t count = last - ascendingShapes.first() + 1;
     uint64_t numberOfPages = Typed::numberOfPagesInShapeSet(count);
     AOT_TEST_CHECK(encoded.entries == PagedBitSet::Entries::None ? encoded.words.size() == numberOfPages : encoded.words.size() <= numberOfPages);
-    // Compiled code asks a hashed set for a distance as it is, however far out of reach.
     uint32_t greatestDistanceAsked = encoded.entries == PagedBitSet::Entries::Hashed ? PagedBitSet::maxNumberInSlot : count;
     for (uint32_t distance = 0; distance <= greatestDistanceAsked; ++distance) {
         bool isMember = distance < count && std::ranges::binary_search(ascendingShapes, last - distance);

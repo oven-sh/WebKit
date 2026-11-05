@@ -23,13 +23,10 @@ std::span<const NativeTest> knownThreadingTests();
 using namespace Typed;
 
 enum class JoinInRowForKnownThreadingTests : uint8_t {
-    // v = v && o.k;     without a block on the edge that keeps v: a way that has decided one join comes straight to the next
     FedByJoinInFront,
-    // v = c ? 1 : "a"; if (typeof v === "number") o.n = v; else o.s = v;     what each join was brought is read behind it
     ReadBehind,
 };
 
-// function run(c, o) { <join> <join> .. }  sink(run)
 static String joinsInRowForKnownThreadingTests(JoinInRowForKnownThreadingTests kind, unsigned numberOfJoins)
 {
     StringBuilder text;
@@ -81,7 +78,6 @@ static std::optional<uint64_t> instructionsOfWalkForKnownThreadingTests(const St
         std::unique_ptr<Program> parsed = parseProgram(withStandInLibrary(text), build);
         AOT_TEST_CHECK(parsed);
         StagedBuild stages(WTF::move(parsed), build);
-        // The first request runs the whole stage, for what callers leave their callees.
         AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
         instructions = instructionsOfAllThreadsIn([&] {
             AOT_TEST_CHECK(stages.code(CodeUnit { FunctionID(1u), CodeRole::Body }));
@@ -90,7 +86,6 @@ static std::optional<uint64_t> instructionsOfWalkForKnownThreadingTests(const St
     return instructions;
 }
 
-// The ways that decide one target of a join walk it together. Where each of them walks it for itself, a join hands the next one way more than it was reached by, and the work is the square of the number of joins.
 static void testWalkGrowsAsJoinsFedByJoinInFrontDo()
 {
     constexpr unsigned numberOfJoins = 1500;
@@ -100,7 +95,6 @@ static void testWalkGrowsAsJoinsFedByJoinInFrontDo()
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
-// Every edge is asked for each value that has a name of its own on each way whether it brings one. Where a value stays on that list behind its last reader, the work is the square of the number of joins.
 static void testWalkGrowsAsJoinsWhoseValuesAreReadBehindThemDo()
 {
     constexpr unsigned numberOfJoins = 1500;

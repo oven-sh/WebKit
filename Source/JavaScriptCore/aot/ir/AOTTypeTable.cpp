@@ -38,7 +38,6 @@ static constexpr uint32_t wordsPerClassPartInTypeTable = 1 + mostContentsOfClass
 static_assert(InternedRecords<Type>::numberOfShards == numberOfShardsOfInternedTable);
 static_assert(InternedRecords<PropertyKey>::numberOfShards == numberOfShardsOfInternedTable);
 
-// TypeArena writes a list of parts as four words per part: the class, then the written contents. at(ClassPartsID) reinterprets those words as ClassParts.
 static_assert(std::endian::native == std::endian::little);
 static_assert(sizeof(ClassPart) == wordsPerClassPartInTypeTable * sizeof(uint32_t) && alignof(ClassPart) == alignof(uint32_t));
 static_assert(offsetof(ClassPart, writtenContents) == sizeof(uint32_t));
@@ -54,7 +53,6 @@ static constexpr uint64_t addToInternedHash(uint64_t hash, uint32_t first, uint3
     return addToInternedHash(hash, static_cast<uint64_t>(first) << 32 | second);
 }
 
-// The upper bits pick the shard and the lower bits the slot. One more round of mixing makes both depend on every input bit.
 static constexpr uint32_t finishInternedHash(uint64_t hash)
 {
     return static_cast<uint32_t>(addToInternedHash(hash, 0));
@@ -70,10 +68,14 @@ uint32_t hashOf(const TypeParts& parts)
         | static_cast<uint64_t>(parts.anyFunction) << 33
         | (parts.opaque ? static_cast<uint64_t>(*parts.opaque) + 1 : 0) << 34;
     uint64_t hash = addToInternedHash(0, flags);
-    hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.minimum));
-    hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.maximum));
-    hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.minimum));
-    hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.maximum));
+    if (!parts.integers.isEmpty()) {
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.minimum));
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.integers.maximum));
+    }
+    if (!parts.boundsOfFractions.isEmpty()) {
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.minimum));
+        hash = addToInternedHash(hash, static_cast<uint64_t>(parts.boundsOfFractions.maximum));
+    }
     hash = addToInternedHash(hash, parts.environment.bits(), parts.stringLiterals.bits());
     hash = addToInternedHash(hash, parts.symbolLiterals.bits(), parts.objects.bits());
     hash = addToInternedHash(hash, parts.unnamedLayouts.bits(), parts.unnamedClasses.bits());
@@ -97,7 +99,6 @@ uint32_t hashOf(const PropertyKey& key)
     return finishInternedHash(hash);
 }
 
-// The length goes in first, so a text that ends in zero bytes differs from a shorter one.
 static uint64_t addBytesToInternedHash(uint64_t hash, std::span<const uint8_t> bytes)
 {
     hash = addToInternedHash(hash, bytes.size());
@@ -112,11 +113,8 @@ static uint64_t addBytesToInternedHash(uint64_t hash, std::span<const uint8_t> b
     return addToInternedHash(hash, rest);
 }
 
-// As many as a mask of locations has bits.
 static constexpr uint32_t numberOfLocationBitsOfKeys = 64;
 
-// An id is a number in one of the program's lists, and those move when other files join the program. So a text goes in by its bytes, a module by the bytes of its path and a layout by the bit that the program gave it.
-// The site of a created symbol is nothing but such a number and stays out. What stays out makes more keys share a bit and changes no answer.
 static uint8_t locationBitOfKeyInTypeTable(const Program& program, const PropertyKey& key)
 {
     uint64_t hash = addToInternedHash(0, static_cast<uint32_t>(key.kind), key.symbol ? static_cast<uint32_t>(*key.symbol) + 1 : 0);
@@ -130,7 +128,6 @@ static uint8_t locationBitOfKeyInTypeTable(const Program& program, const Propert
     return static_cast<uint8_t>(finishInternedHash(hash) % numberOfLocationBitsOfKeys);
 }
 
-// Each segment is twice as large as the one before it, so a position names its segment without a search.
 static constexpr uint32_t log2OfFirstInternedSegment = 8;
 static constexpr uint32_t sizeOfFirstInternedSegment = 1u << log2OfFirstInternedSegment;
 
@@ -149,7 +146,6 @@ static constexpr uint32_t numberOfInternedSegments = internedSegmentOf(largestID
 static_assert(!internedSegmentOf(0) && !internedSegmentOf(sizeOfFirstInternedSegment - 1) && internedSegmentOf(sizeOfFirstInternedSegment) == 1);
 static_assert(firstPositionOfInternedSegment(1) == sizeOfFirstInternedSegment && internedSegmentOf(firstPositionOfInternedSegment(2) - 1) == 1);
 
-// The elements of all shards of one table, by position. Positions are dense and follow the order of arrival. An element never moves.
 template<typename Element>
 class InternedElements {
     WTF_MAKE_NONCOPYABLE(InternedElements);
@@ -169,7 +165,6 @@ public:
     uint32_t size() const { return m_size.load(std::memory_order_relaxed); }
     size_t sizeInBytes() const { return static_cast<size_t>(size()) * sizeof(Element); }
 
-    // A position is handed out only after its segment and element are written, so a thread that got the position through a lock or an acquire load sees both.
     const Element& at(uint32_t position) const
     {
         RELEASE_ASSERT(position <= largestIDPosition);
@@ -180,18 +175,15 @@ public:
         return elements[position - firstPositionOfInternedSegment(segment)];
     }
 
-    // Call with a shard's lock held, after a search under that lock missed, so every position taken is filled. Threads holding different shards' locks may be here at once.
     uint32_t append(const Element& element)
     {
         uint32_t position = m_size.fetch_add(1, std::memory_order_relaxed);
-        // Fails once the thirty bits of a position are used up.
         RELEASE_ASSERT(position <= largestIDPosition);
         uint32_t segment = internedSegmentOf(position);
         new (NotNull, elementsOf(segment) + (position - firstPositionOfInternedSegment(segment))) Element(element);
         return position;
     }
 
-    // By one thread, while nobody appends. put() fills each of the positions from the answer on, once, before anybody is handed the position.
     uint32_t takePositions(uint32_t count)
     {
         uint32_t first = m_size.fetch_add(count, std::memory_order_relaxed);
@@ -221,13 +213,10 @@ private:
     }
 
     std::array<std::atomic<Element*>, numberOfInternedSegments> m_segments { };
-    // Every append writes the size and every read loads a segment pointer, so the two must not share a cache line.
     alignas(cacheLineOfInternedTable) std::atomic<uint32_t> m_size { 0 };
     Lock m_lockOfSegments;
 };
 
-// Maps a hash to the positions of one shard. A slot holds the hash in its upper half and the position plus one in its lower half, and is zero while free.
-// Searching takes no lock, so outgrown slot arrays are kept unchanged until the table is frozen or destroyed: another thread may still be reading them.
 class InternedPositions {
     WTF_MAKE_NONCOPYABLE(InternedPositions);
 public:
@@ -239,8 +228,7 @@ public:
             fastFree(std::exchange(slots, slots->outgrown));
     }
 
-    // std::nullopt: it was not there when the search began.
-    std::optional<uint32_t> find(uint32_t hash, NOESCAPE const Invocable<bool(uint32_t)> auto& isWanted) const
+    ALWAYS_INLINE std::optional<uint32_t> find(uint32_t hash, NOESCAPE const Invocable<bool(uint32_t)> auto& isWanted) const
     {
         Slots* slots = m_slots.load(std::memory_order_acquire);
         if (!slots)
@@ -255,8 +243,6 @@ public:
         }
     }
 
-    // Call with the shard's lock held. One search: what is new goes where the search for it has ended.
-    // `append` writes the element fully and answers with its position.
     uint32_t findOrAdd(uint32_t hash, NOESCAPE const Invocable<bool(uint32_t)> auto& isWanted, NOESCAPE const Invocable<uint32_t()> auto& append)
     {
         Slots* slots = m_slots.load(std::memory_order_relaxed);
@@ -275,7 +261,6 @@ public:
         return position;
     }
 
-    // Call with the shard's lock held. Behind it addAbsent() may be called that many times. The slots grow once, however many come.
     void makeRoomFor(uint32_t added)
     {
         Slots* slots = m_slots.load(std::memory_order_relaxed);
@@ -286,14 +271,12 @@ public:
             growTo(slots, numberOfSlots);
     }
 
-    // Call with the shard's lock held, for what a search would miss. Nobody searches until the element at the position is written.
     void addAbsent(uint32_t hash, uint32_t position)
     {
         put(*m_slots.load(std::memory_order_relaxed), static_cast<uint64_t>(hash) << 32 | (position + 1));
         ++m_size;
     }
 
-    // By one thread, while nobody searches or adds: nobody is left who reads them.
     void freeOutgrownSlots()
     {
         Slots* slots = m_slots.load(std::memory_order_relaxed);
@@ -301,7 +284,6 @@ public:
             fastFree(std::exchange(outgrown, outgrown->outgrown));
     }
 
-    // Call with the shard's lock held.
     size_t sizeInBytes() const
     {
         size_t size = 0;
@@ -311,7 +293,6 @@ public:
     }
 
 private:
-    // The slots follow it in memory.
     struct Slots {
         std::atomic<uint64_t>& at(size_t place) { return reinterpret_cast<std::atomic<uint64_t>*>(this + 1)[place]; }
 
@@ -352,7 +333,6 @@ private:
     uint32_t m_size { 0 };
 };
 
-// Storage for the words of one shard's lists. A block never moves.
 class InternedWordBlocks {
     WTF_MAKE_NONCOPYABLE(InternedWordBlocks);
 public:
@@ -364,7 +344,6 @@ public:
             fastFree(std::exchange(block, block->older));
     }
 
-    // Call with the shard's lock held.
     std::span<const uint32_t> keep(std::span<const uint32_t> words)
     {
         if (words.size() > m_free.size())
@@ -375,11 +354,9 @@ public:
         return kept;
     }
 
-    // Call with the shard's lock held.
     size_t sizeInBytes() const { return m_sizeInBytes; }
 
 private:
-    // The words follow it in memory.
     struct Block {
         Block* older;
     };
@@ -408,7 +385,6 @@ template<typename Record>
 struct InternedRecords<Record>::Shard {
     InternedPositions positions;
     Lock lock;
-    // The table's only member is its array of shards, so the state that all shards share lives in the first one. In the others it stays empty.
     InternedElements<Record> recordsOfAllShards;
 };
 
@@ -469,11 +445,8 @@ void InternedRecords<Record>::addAt(uint32_t position, uint32_t hash, const Reco
     RELEASE_ASSERT(positionInTable == position);
 }
 
-// How findOrAddInOrder() deals its candidates out to tasks: by their number alone. No answer depends on either.
-// One candidate may take a thousand times as long to prepare as another, so a task has few. A place within a share fits a byte.
 static constexpr uint32_t internedCandidatesPerShare = 64;
 static_assert(internedCandidatesPerShare <= UINT8_MAX);
-// One thread is through so few before the others have woken up.
 static constexpr uint32_t fewestInternedCandidatesForEveryThread = 2048;
 
 enum class InternedCandidate : uint8_t {
@@ -484,8 +457,6 @@ enum class InternedCandidate : uint8_t {
     RepeatsEarlierCandidate,
 };
 
-// Equal records have one hash and so one shard. A shard's task goes through the candidates of its shard in ascending order and finds the first of each group of equals.
-// Which candidates are new is then known of all, so their positions are counted off in ascending order before one of them is added.
 template<typename Record>
 void InternedRecords<Record>::findOrAddInOrder(const ParallelLoops& loops, std::span<Record> candidates, NOESCAPE const PrepareCandidate& prepare, NOESCAPE const FinishCandidate& finish)
 {
@@ -494,7 +465,6 @@ void InternedRecords<Record>::findOrAddInOrder(const ParallelLoops& loops, std::
     InternedElements<Record>& records = m_shards[0].recordsOfAllShards;
 
     if (count < fewestInternedCandidatesForEveryThread || loops.width() == 1) {
-        // A loop of one index tells the calling thread its number.
         forEachIndexInParallel(loops, 1, [&](unsigned, unsigned worker) {
             for (uint32_t candidate = 0; candidate < count; ++candidate) {
                 std::optional<uint32_t> hash = prepare(candidate, worker);
@@ -516,14 +486,10 @@ void InternedRecords<Record>::findOrAddInOrder(const ParallelLoops& loops, std::
     constexpr uint32_t perShare = internedCandidatesPerShare;
     constexpr size_t placesPerShare = numberOfShards + 1;
     uint32_t numberOfShares = (count + perShare - 1) / perShare;
-    // None of these is written by the calling thread: what takes the time is the first touch of each page.
     auto hashes = MallocSpan<uint32_t>::malloc(count * sizeof(uint32_t));
     auto states = MallocSpan<InternedCandidate>::malloc(count * sizeof(InternedCandidate));
-    // IsInTable, and IsNew once the positions are counted off: the position. RepeatsEarlierCandidate: that candidate, which IsNew.
     auto answers = MallocSpan<uint32_t>::malloc(count * sizeof(uint32_t));
-    // A share has the places of its candidates. There stand those that have a hash, the ones of a shard in a row, ascending. Each is counted from the first candidate of the share, and so is each place.
     auto candidatesByShard = MallocSpan<uint8_t>::malloc(count);
-    // [share][shard], and one more for the end.
     auto firstPlaceOfShard = MallocSpan<uint8_t>::malloc(numberOfShares * placesPerShare);
 
     forEachIndexInParallel(loops, numberOfShares, [&](unsigned share, unsigned worker) {
@@ -570,7 +536,6 @@ void InternedRecords<Record>::findOrAddInOrder(const ParallelLoops& loops, std::
         if (!numberOfCandidates)
             return;
 
-        // The new ones of the shard, with open addressing. A slot holds a candidate plus one, and zero while it is free.
         Vector<uint32_t> newCandidates;
         newCandidates.fill(0u, std::bit_ceil(numberOfCandidates * 2));
         size_t mask = newCandidates.size() - 1;
@@ -605,7 +570,6 @@ void InternedRecords<Record>::findOrAddInOrder(const ParallelLoops& loops, std::
     for (uint32_t number : numberOfNewInShard)
         numberOfNew += number;
     uint32_t nextPosition = records.takePositions(numberOfNew);
-    // A record that somebody else has added since the start may be one of the candidates, and then the table would hold it twice.
     RELEASE_ASSERT(nextPosition == sizeAtStart);
     uint32_t endOfPositions = nextPosition + numberOfNew;
     for (uint32_t candidate = 0; candidate < count; ++candidate) {
@@ -614,7 +578,6 @@ void InternedRecords<Record>::findOrAddInOrder(const ParallelLoops& loops, std::
     }
     RELEASE_ASSERT(nextPosition == endOfPositions);
 
-    // A shard's slots need the hash and the position alone, so they are filled while the records are written.
     forEachIndexInParallel(loops, numberOfShards + numberOfShares, [&](unsigned index, unsigned worker) {
         if (index < numberOfShards) {
             if (!numberOfNewInShard[index])
@@ -682,7 +645,6 @@ struct InternedWordLists::Shard {
     InternedPositions positions;
     InternedWordBlocks words;
     Lock lock;
-    // As in InternedRecords: only the first shard's is used.
     InternedElements<std::span<const uint32_t>> listsOfAllShards;
 };
 
@@ -744,13 +706,13 @@ TypeTable::TypeTable(const BuiltinTable& builtins, const Program* program)
     for (uint32_t index = 0; index < builtins.classCount(); ++index)
         m_partOfClassAlone.append(ClassPart { BuiltinClassID(index), { } });
 
-    // These are in the canonical form that TypeArena::intern() produces, so the same parts interned there find these records.
     auto internAtStart = [&](TypeID expected, uint16_t primitives, bool anyObject) {
         Type type;
         type.primitives = primitives;
         type.integers = primitives & Primitive::Integer ? Range::full() : Range::empty();
         type.anyObject = anyObject;
         type.anyFunction = true;
+        type.noteAnswersOfParts();
         uint32_t position = m_types.findOrAdd(hashOf(type), type);
         RELEASE_ASSERT(idAt<TypeID>(IDHome::Program, position) == expected);
     };
@@ -766,6 +728,7 @@ TypeTable::TypeTable(const BuiltinTable& builtins, const Program* program)
         Type type;
         type.primitives = Primitive::Integer;
         type.integers = integers;
+        type.noteAnswersOfParts();
         uint32_t position = m_types.findOrAdd(hashOf(type), type);
         RELEASE_ASSERT(idAt<TypeID>(IDHome::Program, position) == expected);
     };
@@ -778,12 +741,11 @@ TypeTable::~TypeTable() = default;
 
 void TypeTable::setObjects(std::unique_ptr<ObjectTable>&& objects)
 {
-    // The summaries attached to interned object sets were computed from the first table's records, so it is never replaced.
     RELEASE_ASSERT(objects && !m_objects);
     m_objects = WTF::move(objects);
 }
 
-std::span<const ClassPart> TypeTable::at(ClassPartsID id) const
+std::span<const ClassPart> TypeTable::classPartsKeptAt(ClassPartsID id) const
 {
     if (!id)
         return { };
@@ -802,9 +764,8 @@ std::span<const ClassPart> TypeTable::at(ClassPartsID id) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-const PropertyKey& TypeTable::at(PropertyKeyID key) const
+const PropertyKey& TypeTable::propertyKeyKeptAt(PropertyKeyID key) const
 {
-    // The id of a key in the table is its bare position, so that it can be a member of a set.
     RELEASE_ASSERT(homeOf(key) == IDHome::Value);
     return m_propertyKeys.at(positionOf(key));
 }
@@ -822,7 +783,6 @@ void TypeTable::endStableNumbersOfPropertyKeys()
 void TypeTable::endStableNumbersOfPropertyKeys(const ParallelLoops& loops)
 {
     bool isFirstCall = m_numberOfKeysWithStableNumbers == UINT32_MAX;
-    // It never rises: a key that a thread added after the first call never gets a stable number.
     m_numberOfKeysWithStableNumbers = std::min(m_numberOfKeysWithStableNumbers, m_propertyKeys.size());
     if (!isFirstCall || !m_program)
         return;
@@ -834,7 +794,6 @@ void TypeTable::endStableNumbersOfPropertyKeys(const ParallelLoops& loops)
     });
 }
 
-// One thread alone would miss the cache at the slot and at the record of each of half a million texts, one after the other.
 void TypeTable::addKeysOfTexts(uint32_t numberOfStrings, const ParallelLoops& loops)
 {
     if (!numberOfStrings)
@@ -860,7 +819,6 @@ ProvenInEveryVersion TypeTable::provenTypeOf(const DeclaredType& declared) const
 {
     if (std::optional<ProvenInEveryVersion> established = declared.established())
         return *established;
-    // Only the compiler stores something that is not a JavaScript value into a position, and only the compiler leaves a position empty.
     TypeID predicted = declared.expected().predicted();
     Type expected = at(predicted);
     if (!expected.isJavaScriptValue())
@@ -877,7 +835,6 @@ void TypeTable::beginKeepingMemosAtRest()
 void TypeTable::invalidateMemosAtRest()
 {
     Locker locker { m_memosAtRestLock };
-    // What is remembered of sets follows from their members alone.
     for (MemosOfArena& memos : m_memosAtRest) {
         memos.types.clear();
         memos.unionsOfMany.clear();
@@ -887,13 +844,11 @@ void TypeTable::invalidateMemosAtRest()
 void TypeTable::freeze()
 {
     {
-        // From here on arenas keep what they make until reset(), and each has a memo for as long as it lives.
         Locker locker { m_memosAtRestLock };
         m_keepsMemosAtRest = false;
         m_memosAtRest.clear();
     }
     m_isFrozen = true;
-    // Every String constant of a body asks for the type of its text.
     for (uint32_t position = 0, end = m_types.size(); position < end; ++position) {
         const Type& type = m_types.at(position);
         if (type.primitives != Primitive::LiteralString || !type.stringLiterals || !holdsOneMember(type.stringLiterals))
@@ -914,6 +869,9 @@ void TypeTable::freeze()
     });
     m_classParts.freeOutgrownSlots();
     m_propertyKeys.freeOutgrownSlots();
+    m_propertyKeysOnceFrozen = Vector<const PropertyKey*>(m_propertyKeys.size(), [&](size_t position) {
+        return &m_propertyKeys.at(static_cast<uint32_t>(position));
+    });
     m_layoutSets.freeze();
     m_objectSets.freeze();
     m_stringSets.freeze();
@@ -926,7 +884,7 @@ size_t TypeTable::sizeInBytes() const
     size_t size = sizeof(TypeTable) + m_partOfClassAlone.capacity() * sizeof(ClassPart) + (m_typeOfWireIndex.capacity() + m_typesOfLiteralStrings.capacity()) * sizeof(TypeID) + m_locationBitsOfKeys.capacity() * sizeof(uint8_t);
     if (m_objects)
         size += sizeof(ObjectTable) + static_cast<size_t>(m_objects->size()) * sizeof(ObjectRecord);
-    size += m_types.sizeInBytes() + m_typesOnceFrozen.capacity() * sizeof(const Type*) + m_classParts.sizeInBytes() + m_propertyKeys.sizeInBytes();
+    size += m_types.sizeInBytes() + m_typesOnceFrozen.capacity() * sizeof(const Type*) + m_classParts.sizeInBytes() + m_propertyKeys.sizeInBytes() + m_propertyKeysOnceFrozen.capacity() * sizeof(const PropertyKey*);
     size += m_layoutSets.sizeInBytes() + m_objectSets.sizeInBytes() + m_stringSets.sizeInBytes() + m_keySets.sizeInBytes();
     if (m_sharedAnswers)
         size += m_sharedAnswers->sizeInBytes();

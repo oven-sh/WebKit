@@ -34,31 +34,22 @@ class TypeArena;
 class TypeTable;
 struct PropertyKey;
 
-// Where an `unknown` came from. A union keeps the seeds of both sides, so a fact can ask which kinds it must fear and --explain can name the cause.
 enum class UnknownSeed : uint16_t {
     ResultOfUnknownCallee = 1 << 0,
     CaughtException = 1 << 1,
-    // The row of a built-in says nothing of what it answers.
     UndescribedNativeResult = 1 << 2,
     ParameterOfEscapedFunction = 1 << 3,
     ContentsOfEscapedObject = 1 << 4,
-    // What code from disk, eval or node:vm makes, hands over or stores.
     UnseenCode = 1 << 5,
-    // JSON.parse, a message of a Worker, a structured clone, whatever the host reads in.
     DataFromOutside = 1 << 6,
-    // The checker's type rests on nothing that the build saw: a declaration without a body, an assertion, a suppressed error.
     UncheckedConversion = 1 << 7,
-    // An operation makes an object that nobody numbered and that has neither a layout nor a class: the schema's natural(object) without a site.
     ObjectWithoutLayout = 1 << 8,
-    // An established position is written as `any`, `object` or a function type without members.
     WrittenAsLoose = 1 << 9,
-    // The walk gave up on a loop's parameter, or entered a block by a resume switch.
     LostByWalk = 1 << 10,
 };
 
 using UnknownSeeds = OptionSet<UnknownSeed>;
 
-// The enumerator as it is spelled above, which is how the text of a type writes a seed.
 inline ASCIILiteral nameOf(UnknownSeed seed)
 {
     switch (seed) {
@@ -90,10 +81,8 @@ inline ASCIILiteral nameOf(UnknownSeed seed)
 
 inline constexpr unsigned mostContentsOfClass = 3;
 
-// Objects of one of the engine's classes, described by the class. What is written of their contents is an expectation: proofs about contents are Facts' cells of named objects.
 struct ClassPart {
     BuiltinClassID builtinClass;
-    // Null: nothing is written, so anything.
     std::array<TypeID, mostContentsOfClass> writtenContents;
 
     TypeID writtenContentsAt(unsigned positionInType) const;
@@ -106,14 +95,6 @@ struct ClassPart {
 };
 static_assert(sizeof(ClassPart) == 16);
 
-// What makes a type. Fill one and hand it to TypeArena::intern(), which makes it canonical.
-//
-// The values of a type are its primitives, the objects it names, and its unnamed objects, which are `unknown`.
-// `unknown` stands for objects that have escaped or that unseen code made. It is bounded or not:
-//   anyObject                         any object at all
-//   anyFunction                       any callable
-//   unnamedLayouts, unnamedClasses    `unknown` within these layouts and classes: what a passed test, a guarded position or a written type says
-// A named object beside `unknown` is kept. Unless it IsMerged it stands by right, and its cells are proof.
 struct TypeParts {
     uint16_t primitives { 0 };
     UnknownSeeds seeds;
@@ -127,43 +108,37 @@ struct TypeParts {
     ObjectSetID objects;
     LayoutSetID unnamedLayouts;
     ClassPartsID unnamedClasses;
-    // Every number of the type that has a fraction lies between these two integers: `a / 2` of an int32, and what sums, Math.min() and joins make of it.
-    // Empty: nothing is known of where they lie. It says nothing of `integers`, and whoever cuts that range leaves this one as it is.
-    // Whoever adds FractionalNumber to the parts of another type empties it. No test asks for it: TypeArena::withoutBoundsOfFractions().
     Range boundsOfFractions;
 
     friend bool operator==(const TypeParts&, const TypeParts&) = default;
 };
 
-// A type as read out of a table: canonical parts, and what follows from them. Only TypeTable and TypeArena make one.
 struct Type : TypeParts {
-    // The layouts of every object of the type that has one, named or not. They are the shapes of all its objects exactly where hasOnlyLayouts().
     LayoutSetID layouts;
-    // The classes of every object of the type that has one. A part that comes from a named object alone has no written contents.
     ClassPartsID classes;
-    // The traits of the named objects, united.
     OptionSet<ObjectTrait> traitsOfNamed;
+    uint8_t answersOfParts { 0 };
 
-    bool hasUnknown() const { return anyObject || anyFunction || unnamedLayouts || unnamedClasses; }
-    bool hasUnboundedUnknown() const { return anyObject || anyFunction; }
+    void noteAnswersOfParts() { answersOfParts = workOutAnswersOfParts(); }
+
+    bool hasUnknown() const { return answers() & HoldsUnknown; }
+    bool hasUnboundedUnknown() const { return answers() & HoldsUnboundedUnknown; }
     bool hasNamedObjects() const { return !!objects; }
-    bool hasOnlyNamedObjects() const { return objects && !hasUnknown(); }
+    bool hasOnlyNamedObjects() const { return (answers() & (HoldsObjects | HoldsUnknown)) == HoldsObjects; }
     bool namesMergedObjects() const { return traitsOfNamed.contains(ObjectTrait::IsMerged); }
 
-    bool hasObjects() const { return hasUnknown() || objects; }
-    bool isNever() const { return !primitives && !hasObjects() && isJavaScriptValue(); }
+    bool hasObjects() const { return answers() & HoldsObjects; }
+    bool isNever() const { return !primitives && !(answers() & (HoldsObjects | IsNoJavaScriptValue)); }
     bool isAnything() const { return (primitives & Primitive::All) == Primitive::All && integers == Range::full() && boundsOfFractions.isEmpty() && anyObject; }
-    bool isJavaScriptValue() const { return !environment && !opaque; }
+    bool isJavaScriptValue() const { return !(answers() & IsNoJavaScriptValue); }
     bool isOpaque(OpaqueKind kind) const { return opaque == kind && !primitives; }
     bool hasCells() const;
-    bool hasOnlyPrimitives(uint16_t allowed) const { return !(primitives & ~allowed) && !hasObjects() && isJavaScriptValue(); }
+    bool hasOnlyPrimitives(uint16_t allowed) const { return !(primitives & ~allowed) && !(answers() & (HoldsObjects | IsNoJavaScriptValue)); }
     bool isNumber() const { return !isNever() && hasOnlyPrimitives(Primitive::Number); }
     bool isInteger() const { return !isNever() && hasOnlyPrimitives(Primitive::Integer); }
     bool isNumberWithoutFraction() const { return !isNever() && hasOnlyPrimitives(Primitive::NumberWithoutFraction); }
     bool holdsFractionsWithoutBounds() const { return primitives & Primitive::FractionalNumber && boundsOfFractions.isEmpty(); }
-    // An integer, or a number with a fraction that lies between two known integers. So it is neither NaN nor an infinity nor -0.
     bool isNumberWithinBounds() const { return !isNever() && hasOnlyPrimitives(Primitive::Integer | Primitive::FractionalNumber) && !holdsFractionsWithoutBounds(); }
-    // Of a type that isNumberWithinBounds(): every value lies in it, the ends included.
     Range boundsOfNumbers() const { return integers.unionWith(boundsOfFractions); }
     bool isBoolean() const { return !isNever() && hasOnlyPrimitives(Primitive::Boolean); }
     bool isString() const { return !isNever() && hasOnlyPrimitives(Primitive::String); }
@@ -180,18 +155,58 @@ struct Type : TypeParts {
     bool isInt32OrNullish() const { return hasOnlyPrimitives(Primitive::Integer | Primitive::UndefinedOrNull | Primitive::Absent) && integers.isSubsetOf(Range::int32()); }
     bool isNumberLike() const { return hasOnlyPrimitives(Primitive::NumberLike); }
 
-    // A class may be one of callables as well: mayContainAnyCallable() in AOTTypeRelations.h.
     bool mayBeFunction() const { return anyFunction || traitsOfNamed.contains(ObjectTrait::IsCallable); }
-    // Every callable of the type is a named closure or built-in.
     bool hasOnlyKnownCallees() const { return !anyFunction && !classes; }
-    // Each speaks of every object of the type and admits undefined and null beside them. None holds of a type without objects.
-    bool hasOnlyLayouts() const { return hasOnlyListedObjects() && !unnamedClasses && (traitsOfNamed & traitsOfShape).containsOnly({ ObjectTrait::HasLayout }); }
-    bool hasOnlyClassObjects() const { return hasOnlyListedObjects() && !unnamedLayouts && (traitsOfNamed & traitsOfShape).containsOnly({ ObjectTrait::HasClass }); }
-    bool hasOnlyClosures() const { return hasOnlyListedObjects() && !hasUnknown() && (traitsOfNamed & traitsOfIdentity).containsOnly({ ObjectTrait::IsClosure }); }
-    bool hasOnlyBuiltins() const { return hasOnlyListedObjects() && !hasUnknown() && (traitsOfNamed & traitsOfIdentity).containsOnly({ ObjectTrait::IsBuiltin }); }
+    bool hasOnlyLayouts() const { return answers() & ObjectsHaveLayouts && !(primitives & ~Primitive::UndefinedOrNull); }
+    bool hasOnlyClassObjects() const { return answers() & ObjectsHaveClasses && !(primitives & ~Primitive::UndefinedOrNull); }
+    bool hasOnlyClosures() const { return answers() & ObjectsAreClosures && !(primitives & ~Primitive::UndefinedOrNull); }
+    bool hasOnlyBuiltins() const { return answers() & ObjectsAreBuiltins && !(primitives & ~Primitive::UndefinedOrNull); }
 
 private:
-    bool hasOnlyListedObjects() const { return hasObjects() && !hasUnboundedUnknown() && !(primitives & ~Primitive::UndefinedOrNull); }
+    enum : uint8_t {
+        HoldsUnknown = 1 << 0,
+        HoldsUnboundedUnknown = 1 << 1,
+        HoldsObjects = 1 << 2,
+        IsNoJavaScriptValue = 1 << 3,
+        ObjectsHaveLayouts = 1 << 4,
+        ObjectsHaveClasses = 1 << 5,
+        ObjectsAreClosures = 1 << 6,
+        ObjectsAreBuiltins = 1 << 7,
+    };
+
+    uint8_t workOutAnswersOfParts() const
+    {
+        bool holdsUnboundedUnknown = anyObject || anyFunction;
+        bool holdsUnknown = holdsUnboundedUnknown || unnamedLayouts || unnamedClasses;
+        bool holdsObjects = holdsUnknown || objects;
+        bool holdsOnlyListedObjects = holdsObjects && !holdsUnboundedUnknown;
+        OptionSet<ObjectTrait> shapesOfNamed = traitsOfNamed & traitsOfShape;
+        OptionSet<ObjectTrait> identitiesOfNamed = traitsOfNamed & traitsOfIdentity;
+        unsigned bits = 0;
+        if (holdsUnknown)
+            bits |= HoldsUnknown;
+        if (holdsUnboundedUnknown)
+            bits |= HoldsUnboundedUnknown;
+        if (holdsObjects)
+            bits |= HoldsObjects;
+        if (environment || opaque)
+            bits |= IsNoJavaScriptValue;
+        if (holdsOnlyListedObjects && !unnamedClasses && shapesOfNamed.containsOnly({ ObjectTrait::HasLayout }))
+            bits |= ObjectsHaveLayouts;
+        if (holdsOnlyListedObjects && !unnamedLayouts && shapesOfNamed.containsOnly({ ObjectTrait::HasClass }))
+            bits |= ObjectsHaveClasses;
+        if (holdsOnlyListedObjects && !holdsUnknown && identitiesOfNamed.containsOnly({ ObjectTrait::IsClosure }))
+            bits |= ObjectsAreClosures;
+        if (holdsOnlyListedObjects && !holdsUnknown && identitiesOfNamed.containsOnly({ ObjectTrait::IsBuiltin }))
+            bits |= ObjectsAreBuiltins;
+        return static_cast<uint8_t>(bits);
+    }
+
+    uint8_t answers() const
+    {
+        ASSERT(answersOfParts == workOutAnswersOfParts());
+        return answersOfParts;
+    }
 };
 
 static_assert(sizeof(Type) <= 88);
@@ -200,8 +215,6 @@ uint16_t fromWire(Wire::Primitives);
 inline uint16_t fromWire(OptionSet<Wire::Primitives> primitives) { return fromWire(static_cast<Wire::Primitives>(primitives.toRaw())); }
 Wire::Primitives toWire(uint16_t primitives);
 
-// Whoever only reads takes one of these by value. It is made of a Program, a TypeTable or a TypeArena without a word.
-// Made of an arena it also reads what that arena's thread made during Compile. Made of the others it stops at such an id.
 class TypeReader {
 public:
     TypeReader(const Program&);
@@ -212,7 +225,6 @@ public:
     TypeReader(const TypeArena&);
 
     Type at(TypeID) const;
-    // TypeArena::recordOf().
     const Type& recordOf(TypeID) const;
     SetView<LayoutID, LayoutSetID> at(LayoutSetID) const;
     std::span<const LayoutID> listOf(LayoutSetID) const;
@@ -222,13 +234,11 @@ public:
     std::span<const ClassPart> at(ClassPartsID) const;
     const PropertyKey& at(PropertyKeyID) const;
     const ObjectRecord& at(ObjectID) const;
-    // TypeArena::bytesOf().
     std::span<const uint8_t> bytesOf(StringID) const;
 
     const TypeTable& table() const { return *m_table; }
     const ObjectTable& objects() const;
     const BuiltinTable& builtins() const;
-    // Null in a test that has types and no program.
     const Program* program() const;
 
 private:
@@ -236,27 +246,34 @@ private:
     const TypeArena* m_arena { nullptr };
 };
 
-// Each list is sorted by number and lives as long as the type does.
 std::span<const LayoutID> membersOf(TypeReader, const Type&);
 std::span<const LayoutID> membersOf(TypeReader, LayoutSetID);
 std::span<const ClassPart> classPartsOf(TypeReader, const Type&);
 
-// The layout of every object of the type, or its environment. Null unless there is exactly one. Undefined and null may stand beside it.
-LayoutID singleLayoutOf(TypeReader, const Type&);
-// The pointers live as long as the type does.
+inline LayoutID singleLayoutOf(TypeReader, const Type& type)
+{
+    if (type.hasOnlyLayouts())
+        return holdsOneMember(type.layouts) ? LayoutID(positionOf(type.layouts)) : LayoutID();
+    if (type.primitives & ~Primitive::UndefinedOrNull)
+        return { };
+    return type.environment;
+}
 const ClassPart* singleBuiltinClassOf(TypeReader, const Type&);
 const ClassPart* findClassPart(TypeReader, const Type&, BuiltinClassID);
-// The one function whose closures are all the objects of the type. A copy of the closure for an instance counts as that function.
-FunctionID singleFunctionOf(TypeReader, const Type&);
-BuiltinID singleBuiltinOf(TypeReader, const Type&);
-// The one named object that is all the objects of the type.
+FunctionID functionSharedByClosuresOf(TypeReader, const Type&);
+BuiltinID builtinSharedByObjectsOf(TypeReader, const Type&);
+inline FunctionID singleFunctionOf(TypeReader reader, const Type& type) { return type.hasOnlyClosures() ? functionSharedByClosuresOf(reader, type) : FunctionID(); }
+inline BuiltinID singleBuiltinOf(TypeReader reader, const Type& type) { return type.hasOnlyBuiltins() ? builtinSharedByObjectsOf(reader, type) : BuiltinID(); }
 ObjectID singleObjectOf(const Type&);
 StringID singleStringLiteralOf(const Type&);
-// One value in every run: undefined, null, a boolean, one integer, one literal, an object that is found by identity.
 bool isSingleValue(TypeReader, const Type&);
 
-// The closures and the built-ins among the named objects, in the order of their numbers. A function is named once, however many instances copied its closure.
-void forEachFunctionOf(TypeReader, const Type&, NOESCAPE const ScopedLambda<void(FunctionID)>&);
+void forEachFunctionAmongClosuresOf(TypeReader, const Type&, NOESCAPE const ScopedLambda<void(FunctionID)>&);
+inline void forEachFunctionOf(TypeReader reader, const Type& type, NOESCAPE const ScopedLambda<void(FunctionID)>& functor)
+{
+    if (type.traitsOfNamed.contains(ObjectTrait::IsClosure))
+        forEachFunctionAmongClosuresOf(reader, type, functor);
+}
 void forEachBuiltinOf(TypeReader, const Type&, NOESCAPE const ScopedLambda<void(BuiltinID)>&);
 bool namesFunction(TypeReader, const Type&, FunctionID);
 bool namesBuiltin(TypeReader, const Type&, BuiltinID);

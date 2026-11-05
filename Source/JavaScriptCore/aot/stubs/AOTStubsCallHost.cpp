@@ -38,16 +38,11 @@ static void emitLoadExecutable(StubAssembler& jit, GPRReg executable)
     });
 }
 
-// The caller has put the operands where the native function takes its arguments.
 StubSignature signatureOfCallDirectFunction(StubKey key)
 {
     StubSignature signature;
     signature.result = StubResult::GPR;
     signature.firstResult = GPRInfo::returnValueGPR;
-    if (static_cast<DirectFunctionCall>(key.form()) == DirectFunctionCall::LeafReturningFields) {
-        signature.result = StubResult::TwoGPRs;
-        signature.secondResult = GPRInfo::returnValueGPR2;
-    }
     if (static_cast<DirectFunctionCall>(key.form()) == DirectFunctionCall::LeafReturningNumber) {
         signature.result = StubResult::FPR;
         signature.firstResult = FPRInfo::returnValueFPR;
@@ -59,7 +54,6 @@ StubSignature signatureOfCallDirectFunction(StubKey key)
 static constexpr GPRReg directThisGPR = operationArgumentGPR(directThisArgumentIndex);
 static constexpr GPRReg directCalleeGPR = operationArgumentGPR(directCalleeArgumentIndex);
 
-// The native function is no operation: it stores no frame, and it reports an exception by the empty value.
 void generateCallDirectFunction(StubAssembler& jit)
 {
     const DirectFunctionCall form = static_cast<DirectFunctionCall>(jit.key().form());
@@ -74,7 +68,7 @@ void generateCallDirectFunction(StubAssembler& jit)
     const GPRReg function = jit.reuseScratch(StubRegister::Operation);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(builtinBindings.directFunctions)), function);
     jit.loadPtr(CCallHelpers::BaseIndex(function, jit.immediate(), CCallHelpers::TimesOne), function);
-    if (form == DirectFunctionCall::Leaf || form == DirectFunctionCall::LeafReturningFields || form == DirectFunctionCall::LeafReturningNumber) {
+    if (form == DirectFunctionCall::Leaf || form == DirectFunctionCall::LeafReturningNumber) {
         jit.farJump(function, HostFunctionPtrTag);
         return;
     }
@@ -85,7 +79,6 @@ void generateCallDirectFunction(StubAssembler& jit)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
     GPRReg topCallFrame = form == DirectFunctionCall::WithHostFrame ? CCallHelpers::stackPointerRegister : GPRInfo::callFrameRegister;
 #if CPU(ARM64)
-    // In a store the number of sp names the zero register.
     if (form == DirectFunctionCall::WithHostFrame) {
         static_assert(noOverlap(gprOf(StubRegister::T10), gprOf(StubRegister::Operation), gprOf(stubImmediateRegister), operationArgumentGPR(0), operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3), operationArgumentGPR(4), operationArgumentGPR(5)));
         topCallFrame = jit.allocateScratch(StubRegister::T10);

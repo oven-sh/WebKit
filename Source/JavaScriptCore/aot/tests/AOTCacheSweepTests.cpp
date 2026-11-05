@@ -85,8 +85,6 @@ struct DroppedClosure {
     Weak<JSObject> closure;
     Weak<JSString> text;
     Weak<Structure> structure;
-    // The number of a Structure is the low half of its address, and the collector takes every word of a frame for a reference. Beside `true` and three bytes that nobody had written since the address lay there,
-    // the number spelled the whole address wherever the heap of Structures began at ..01'00000000: in one run of 256 the record in the frame of the test kept the Structure that the test had dropped.
     uint32_t complementOfStructureID { 0 };
     bool hasStructureOfItsOwn { false };
 
@@ -152,7 +150,6 @@ static void testSiteLetsGoOfStructureOfOneClosure(LoadedProgram& program)
     }
 }
 
-// No half of a word of the record is the number of the Structure: whatever lies beside it, no word of a frame that holds the record is the address.
 static void testWhatIsRememberedOfStructureSpellsNoAddress(LoadedProgram& program)
 {
     DroppedClosure read;

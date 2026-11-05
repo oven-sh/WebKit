@@ -12,12 +12,9 @@
 #include <array>
 #include <memory>
 #include <optional>
-#include <span>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-struct LiteralStringWindow;
 
 class TypeTestEmitter final : public OperationEmitter {
 public:
@@ -52,7 +49,6 @@ private:
     std::optional<Condition> tryGetNonCellCondition(Boxed, const TypeTestPlan&);
     std::optional<Condition> tryGetConditionWithAbsent(Boxed, const TypeTestPlan&);
 
-    // A value passes when one of its cases does. visit takes a function that emits the test of one case, likeliest case first.
     void forEachNonCellCase(Boxed, const TypeTestPlan&, const auto& visit);
     void forEachCellCase(CellPointer, const TypeTestPlan&, const auto& visit);
     void testCases(BlockEdge failure, const auto& forEachCase);
@@ -69,7 +65,6 @@ private:
     Condition isMarker(Operand, uint16_t primitive);
     Condition passesByMarker(Operand, const TypeTestPlan&, bool payloadPasses);
     Condition doublePasses(Number, const TypeTestPlan&);
-    // heldByForm: what the form that the integer was taken out of can hold.
     Condition integerPasses(Integer, const TypeTestPlan&, Range heldByForm = Range::full());
     Condition isInRange(Integer, Range);
     Condition isExactIntegerIn(Number, Integer truncated, Range);
@@ -77,9 +72,6 @@ private:
     Condition stringPasses(CellPointer, const TypeTestPlan&);
     Condition isCallableByCallData(CellPointer);
     std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
-    Condition isOneOfLiteralStringWords(LiteralStringWord, const TypeTestPlan&);
-    // `word` is the word of a literal string, or the narrow word behind it.
-    Condition isInLiteralStringWindows(LValue word, std::span<const LiteralStringWindow> ascendingWindows);
 
     std::array<PlanMap, numberOfEnumerators<Representation>> m_plans;
 };
