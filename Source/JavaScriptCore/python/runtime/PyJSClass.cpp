@@ -405,13 +405,19 @@ bool PyPrototypeView::put(JSCell* cell, JSGlobalObject*, PropertyName propertyNa
     if (slot.thisValue() != JSValue(cell)) [[unlikely]] {
         Runtime& rt = runtime(globalObject);
         if (PyType* start = rt.typeOf(slot.thisValue()); start->isSubtypeOf(view->type())) {
-            JSValue found = lookupFollowing(start, view->type(), !view->isSuper(), internString(vm, String(propertyName.uid())));
+            JSValue found = lookupForInstanceOfDerivedClass(start, view->type(), !view->isSuper(), internString(vm, String(propertyName.uid())));
             if (JSValue setter = found ? rt.typeOf(found)->lookup(Special::Set) : JSValue()) {
                 callSpecial(globalObject, setter, found, slot.thisValue(), value);
                 RETURN_IF_EXCEPTION(scope, false);
                 return true;
             }
+            // As a property of a prototype that holds a value: it hides what the prototypes behind have, and the receiver gets its own.
+            if (found)
+                RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
         }
+        // The classes of Python's have nothing for it. The class of JS's may have a setter.
+        if (JSObject* parent = prototypeBehindViews(view))
+            RELEASE_AND_RETURN(scope, parent->methodTable()->put(parent, globalObject, propertyName, value, slot));
         RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
     }
     PropertyDescriptor descriptor(value, 0);
