@@ -90,6 +90,8 @@ static Vector<DeclaredSetForFamilies> setsDeclaredInProgramForFamilies(const Pro
         if (set && !holdsOneMember(set))
             found.append(DeclaredSetForFamilies { set, source, types.at(set).size() });
     });
+    for (LayoutSetID set : program.membersOfParentsOfOneClass())
+        declaredSets.append(DeclaredSetForFamilies { set, SourceOfSetForFamilies::Class, types.at(set).size() });
     removeRepeatedSetsForFamilies(loops, declaredSets);
     return declaredSets;
 }

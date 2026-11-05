@@ -102,11 +102,14 @@ UnitQueue::UnitQueue(const Typed::Program& program, const Typed::CallingConventi
     , m_arrivals(arrivals)
     , m_cycles(numberOfCyclesOfUnitQueue(link))
     , m_isMentioned((static_cast<size_t>(conventions.numberOfUnits()) + bitsInWordOfUnitQueue - 1) / bitsInWordOfUnitQueue)
+    , m_selectorsWhoseUnitsAreMentioned(conventions.methodSelectors().size())
     , m_unitsOfThreads(numberOfThreads)
 {
     RELEASE_ASSERT(numberOfThreads);
     for (std::atomic<uint32_t>& word : m_isMentioned)
         word.store(0, std::memory_order_relaxed);
+    for (std::atomic<bool>& areMentioned : m_selectorsWhoseUnitsAreMentioned)
+        areMentioned.store(false, std::memory_order_relaxed);
     for (Cycle& cycle : m_cycles) {
         cycle.numberOfCyclesAwaited.store(0, std::memory_order_relaxed);
         cycle.numberOfOpenUnits.store(0, std::memory_order_relaxed);
@@ -238,12 +241,17 @@ void UnitQueue::push(unsigned thread, uint32_t unitIndex, Cycle* cycle)
         wakeThreadUnlessOneIsLooking();
 }
 
+bool UnitQueue::asksWhoMentions(Typed::CodeUnit unit) const
+{
+    return !isInQueueFromStart(unit.function) || (unit.role == Typed::CodeRole::SlowBody && !m_conventions.isSeedOfFunctionInQueueFromStart(unit));
+}
+
 void UnitQueue::mention(unsigned thread, Typed::CodeUnit unit)
 {
     if (!m_conventions.exists(unit)) [[unlikely]]
         crashOnMentionOfUnplannedUnit(m_program, unit);
 
-    bool isOfFunctionInQueueFromStart = isInQueueFromStart(unit.function) && (unit.role != Typed::CodeRole::SlowBody || m_conventions.isSeedOfFunctionInQueueFromStart(unit));
+    bool isOfFunctionInQueueFromStart = !asksWhoMentions(unit);
     if (!isOfFunctionInQueueFromStart)
         checkMentionByTakenUnit(thread, unit);
 

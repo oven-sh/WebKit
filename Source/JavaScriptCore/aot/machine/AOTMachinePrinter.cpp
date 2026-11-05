@@ -937,7 +937,7 @@ void MachinePrinter::printExecute(PrintStream& out, const Step& step)
         if (assignment->usedRegisters)
             out.print(comma, "used ", MachineRegisterListDump(assignment->usedRegisters));
     }
-    if (patch && patch->releasesDeadValues()) {
+    if (patch) {
         if (RegisterMask released = maskOf(patch->registersToRelease()))
             out.print(comma, "releases ", MachineRegisterListDump(released));
     }

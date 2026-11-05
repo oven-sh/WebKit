@@ -36,7 +36,7 @@ void prepareForGeneration(Procedure& procedure)
         return;
     }
 
-    const bool runsChecks = procedure.traits().checksAllocation;
+    bool runsChecks = procedure.traits().checksAllocation;
     if (runsChecks && !runCheckBeforeGeneration(procedure, validate))
         return;
 
@@ -56,6 +56,7 @@ void prepareForGeneration(Procedure& procedure)
     procedure.m_order = orderBlocks(procedure);
     if (procedure.failure())
         return;
+    runsChecks = procedure.checksAllocation();
 
     procedure.m_liveness = scanBackward(procedure);
     if (procedure.failure())

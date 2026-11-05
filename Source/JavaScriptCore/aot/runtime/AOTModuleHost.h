@@ -181,11 +181,17 @@ JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional
 JS_EXPORT_PRIVATE JSValue runFileForDefaultLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void throwTextRefusedToCompileOfProgram(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didMakeModuleObjectForRequire(JSGlobalObject*, ModuleID, JSObject* moduleObject);
+JS_EXPORT_PRIVATE std::optional<OptionSet<ModuleObjectTrait>> traitsOfModuleObjectYetToBeMade(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void takeModuleObject(JSGlobalObject*, ModuleID, const ModuleObjects&);
+JS_EXPORT_PRIVATE void giveBackModuleObject(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE JSObject* moduleObjectOverExportsVariableIfMade(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willRequireModuleFromOutsideImage(JSGlobalObject*, ModuleID, JSObject* moduleObjectOfRequirer);
 
 JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSValue entry);
 JS_EXPORT_PRIVATE void willSetRequireCacheEntryUnderName(JSGlobalObject*, ModuleID, const String& name);
 JS_EXPORT_PRIVATE void didDeleteRequireCacheEntry(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void willRunPreloads(JSGlobalObject*);
+JS_EXPORT_PRIVATE void didRunPreloads(JSGlobalObject*);
 JS_EXPORT_PRIVATE void willRunCodeThatKeepsFiles(JSGlobalObject*);
 JS_EXPORT_PRIVATE void keepFilesThatHaveRun(JSGlobalObject*);
 JS_EXPORT_PRIVATE void didResetModule(JSGlobalObject*, ModuleID);

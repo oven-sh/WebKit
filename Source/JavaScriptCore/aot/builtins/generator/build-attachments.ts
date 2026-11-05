@@ -822,7 +822,12 @@ function buildHostReads(builder: ModelBuilder): ModelHostRead[] {
   for (const { value: read, source } of declarationsOf(builder, "HostRead")) {
     const use = resolveHostReadUse(builder, read.use, source);
     if (use === null) continue;
-    reads.push({ context: read.context, exportName: builder.internName(read.exportName, "Text"), use });
+    reads.push({
+      context: read.context,
+      exportName: builder.internName(read.exportName, "Text"),
+      use,
+      namesLookedFor: read.namesLookedFor.map(name => builder.internName(name, "Text")),
+    });
   }
   const rankOf = (read: ModelHostRead) => hostReadContexts.indexOf(read.context);
   return reads.sort((left, right) => rankOf(left) - rankOf(right) || compareNames(left.exportName, right.exportName));

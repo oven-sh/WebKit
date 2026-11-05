@@ -1405,8 +1405,7 @@ static ShapesOfLayoutsForGuesses askEachLayoutForShapesForGuesses(const Walker&,
 
 static ShapesOfLayoutsForGuesses shapesOfLayoutsForGuesses(const Walker& walker, LayoutSetID layouts)
 {
-    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::FirstOfWalk) + 50;
-    static_assert(number < static_cast<uint8_t>(AnswerKeptInArena::CellsOfFieldArm));
+    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::ShapesOfLayouts);
     TypeArena& types = walker.types();
     if (holdsOneMember(layouts))
         return askEachLayoutForShapesForGuesses(walker, layouts);
@@ -1483,8 +1482,7 @@ static TypeID findLayoutsWithObjectsAboveForGuesses(Walker& walker, LayoutSetID 
 
 static TypeID partOfWrittenSetThatFactoriesFill(Walker& walker, TypeID expected, LayoutSetID set)
 {
-    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::FirstOfWalk) + 53;
-    static_assert(number < static_cast<uint8_t>(AnswerKeptInArena::CellsOfFieldArm));
+    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::PartOfWrittenSetThatFactoriesFill);
     TypeArena& types = walker.types();
     const Program& program = walker.program();
     if (program.taggedFamilies.isEmpty())
@@ -1608,8 +1606,7 @@ static std::optional<TestOfGuess> chooseTestOfGuess(Walker& walker, Reference va
 
 static TypeID partWhoseClassesHaveGuardsForGuesses(Walker& walker, TypeID expected)
 {
-    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::FirstOfWalk) + 51;
-    static_assert(number < static_cast<uint8_t>(AnswerKeptInArena::CellsOfFieldArm));
+    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::PartWhoseClassesHaveGuards);
     TypeArena& types = walker.types();
     Type type = types.at(expected);
     if (!type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures() || holdsOneMember(type.layouts))
@@ -1643,8 +1640,7 @@ static TypeID partWhoseClassesHaveGuardsForGuesses(Walker& walker, TypeID expect
 
 static TypeID partThatHasNameAskedForGuesses(Walker& walker, TypeID expected, PropertyKeyID name)
 {
-    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::FirstOfWalk) + 54;
-    static_assert(number < static_cast<uint8_t>(AnswerKeptInArena::CellsOfFieldArm));
+    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::PartThatHasNameAsked);
     TypeArena& types = walker.types();
     if (!expected || !name || liesInThread(name))
         return expected;
@@ -1951,13 +1947,17 @@ static uint32_t mostOperationsThatStretchCountsForGuesses(Walker& walker, Refere
             });
         }
         if (!takesWhatMayRestOnProof) {
-            if (mayEndProofOfGuess(opcode) && !operationsWhoseTypedFormsRunNoCodeForGuesses.contains(opcode) && !isSpreadOfListAsMade && !(callAwaited && operation.id() < callAwaited))
+            bool standsInFrontOfCallAwaited = callAwaited && operation.id() < callAwaited && !isReadOfMethodForItsCallForGuesses(index, operation);
+            if (mayEndProofOfGuess(opcode) && !operationsWhoseTypedFormsRunNoCodeForGuesses.contains(opcode) && !isSpreadOfListAsMade && !standsInFrontOfCallAwaited)
                 break;
             continue;
         }
         mayRestOnProof.set(place - begin);
-        if (isReadOfMethodForItsCallForGuesses(index, operation))
-            callAwaited = index.onlyUsingValue(operation.id());
+        if (isReadOfMethodForItsCallForGuesses(index, operation)) {
+            ValueID call = index.onlyUsingValue(operation.id());
+            if (block.holds(call) && call.index() - block.firstValue().index() < limit && (!callAwaited || callAwaited < call))
+                callAwaited = call;
+        }
         if (opcode != Opcode::RequireObjectCoercible && !isReadOfMethodForItsCallForGuesses(index, operation))
             most += opcode == Opcode::Construct || isPassedAlready ? 2 : 1;
     }
@@ -2103,7 +2103,7 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         bool isTypedEitherWay = !leans && operationsWhoseTypedFormsRunNoCodeForGuesses.contains(opcode) && typedFormForGuesses(walker, operation, inputsOfClosedArm) == TypedForm::Built;
         bool endsNoProofOfPrimitive = callAwaited && operation.id() < callAwaited && operationsThatEndNoProofOfPrimitiveForGuesses.contains(opcode) && !types.at(chosen.tested).hasObjects();
         bool appendsElementsOfList = !leans && isSpreadOfListAsMade && callAwaited && operation.id() < callAwaited;
-        bool standsInFrontOfCallOfMethodFound = callOfMethodFound && operation.id() < callOfMethodFound;
+        bool standsInFrontOfCallOfMethodFound = callOfMethodFound && operation.id() < callOfMethodFound && !isReadOfMethodForItsCallForGuesses(index, operation);
         if (!leans && !isTypedEitherWay && !endsNoProofOfPrimitive && !appendsElementsOfList && !standsInFrontOfCallOfMethodFound && mayEndProofOfGuess(opcode))
             break;
         bool readsMethodForItsCall = leans && isReadOfMethodForItsCallForGuesses(index, operation);
@@ -2267,8 +2267,11 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
             restsOnProof.set(place - begin);
         if (opcode == Opcode::RequireObjectCoercible)
             counts = false;
-        if (counts && readsMethodForItsCall && inTypedRun && types.at(inTypedRun).isObject() && types.at(inTypedRun).hasOnlyClosures())
-            callOfMethodFound = callAwaited;
+        if (counts && readsMethodForItsCall && inTypedRun && types.at(inTypedRun).isObject() && types.at(inTypedRun).hasOnlyClosures()) {
+            ValueID call = index.onlyUsingValue(operation.id());
+            if (block.holds(call) && call.index() - block.firstValue().index() < limit && (!callOfMethodFound || callOfMethodFound < call))
+                callOfMethodFound = call;
+        }
         if (counts && !readsMethodForItsCall) {
             stretch.numberOfTypedOperations += countsForTwo ? 2 : 1;
             stretch.end = place + 1;
@@ -3883,9 +3886,94 @@ bool guessesMayTypeOperationInCleanTurn(Walker& walker, const BodyValue& operati
     return halfRunBehindLooks || (effects && !effects->mayRunOtherCode());
 }
 
+static LayoutID classNamedByOperandForGuesses(Walker& walker, ValueID operand)
+{
+    Reference constructor = walker.referenceOf(operand);
+    if (!constructor)
+        return { };
+    const Program& program = walker.program();
+    TypeArena& types = walker.types();
+    Type typeOfConstructor = types.at(walker.typeOf(constructor));
+    FunctionID function = typeOfConstructor.isObject() && typeOfConstructor.isJavaScriptValue() ? singleFunctionOf(types, typeOfConstructor) : FunctionID();
+    if (!function)
+        return { };
+    LayoutID classLayout = classOfClassObject(program, function);
+    if (!classLayout)
+        classLayout = classOfConstructorFunction(program, function);
+    if (!classLayout || program.at(classLayout).kind != LayoutKind::Instance || !walker.facts().isEvaluatedAtMostOnce(classLayout))
+        return { };
+    return classLayout;
+}
+
+static bool listConditionsOfPlainInstanceForGuesses(const Walker& walker, LayoutID layout, Vector<MemberConditionRecord, 16>& conditions)
+{
+    const Program& program = walker.program();
+    const Plan& plan = walker.plan();
+    const Facts& facts = walker.facts();
+    const LinkTables& link = facts.linked();
+    Vector<PropertyKeyID, 16> names;
+    for (const Field& field : program.at(layout).fields) {
+        if (field.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods }))
+            continue;
+        if (!field.key || !plan.slots().findField(program, layout, field.key))
+            return false;
+        names.append(field.key);
+    }
+    names.appendVector(plan.slots().layout(layout).appendedKeys);
+
+    auto isOfLibrary = [&](FunctionID function) {
+        return function && isLibraryCode(program, program.at(function));
+    };
+    LayoutID classLayout = declaredLayoutOf(program, layout);
+    size_t numberOfClassesLeft = program.layouts.size();
+    for (LayoutID current = classLayout; current;) {
+        if (!numberOfClassesLeft-- || program.at(current).kind != LayoutKind::Instance || !plan.hasClassRecord(current) || !facts.isEvaluatedAtMostOnce(current))
+            return false;
+        for (uint32_t place : facts.placesOfMembersUnder(current, ClassSide::Prototype, { })) {
+            if (!isOfLibrary(facts.membersOf(current)[place].function))
+                return false;
+        }
+        for (uint32_t place : link.membersUnder(current, ClassSide::Prototype, { })) {
+            if (!link.members[place].everyWriterIsKnown || !isOfLibrary(link.members[place].function))
+                return false;
+        }
+        bool accessorIsOfProgram = false;
+        names.removeAllMatching([&](PropertyKeyID name) {
+            bool isAccessor = false;
+            for (uint32_t place : facts.placesOfMembersUnder(current, ClassSide::Prototype, name)) {
+                if (facts.membersOf(current)[place].kind == MethodKind::Method)
+                    continue;
+                isAccessor = true;
+                accessorIsOfProgram |= !isOfLibrary(facts.membersOf(current)[place].function);
+            }
+            for (uint32_t place : link.membersUnder(current, ClassSide::Prototype, name)) {
+                if (link.members[place].kind == MethodKind::Method)
+                    continue;
+                isAccessor = true;
+                accessorIsOfProgram |= !link.members[place].everyWriterIsKnown || !isOfLibrary(link.members[place].function);
+            }
+            return isAccessor;
+        });
+        if (accessorIsOfProgram)
+            return false;
+        LayoutID parent;
+        if (!findParentNamedByClassRecordForTypedAccess(walker, current, parent))
+            return false;
+        current = parent;
+    }
+    if (names.isEmpty())
+        conditions.append({ MemberConditionKind::PrototypeLinkUnchanged, classLayout, ClassSide::Prototype, { } });
+    for (PropertyKeyID name : names)
+        conditions.append({ MemberConditionKind::MemberPassedByStores, classLayout, ClassSide::Prototype, name });
+    return true;
+}
+
 bool askGuardsAboutDeclaredMember(Walker& walker, const BodyValue& operation)
 {
     if (!walker.has(Mechanism::TypedOperations))
+        return false;
+    LayoutID declaredAtOrAbove = operation.declaredByOperand() ? classNamedByOperandForGuesses(walker, operation.declaredByOperand()) : LayoutID();
+    if (operation.declaredByOperand() && !declaredAtOrAbove)
         return false;
     ValueID input = operation.objectOperand();
     Reference value = walker.referenceOf(input);
@@ -3900,13 +3988,16 @@ bool askGuardsAboutDeclaredMember(Walker& walker, const BodyValue& operation)
     Type type = types.at(objects);
     if (!type.hasObjects() || !type.hasOnlyLayouts() || type.hasOnlyClosures())
         return false;
-    TypeID declaring = objectsAboveWhichRecordsDeclareMember(walker, objects, operation.key());
+    TypeID declaring = objectsAboveWhichRecordsDeclareMember(walker, objects, operation.key(), declaredAtOrAbove);
     if (!declaring)
         return false;
     LayoutSetID receivers = types.at(declaring).layouts;
     if (shapesOfLayoutsForGuesses(walker, receivers) != ShapesOfLayoutsForGuesses::Testable)
         return false;
-    Draft question = walker.draftOf(operation);
+    Draft question(Opcode::FindsDeclaredMember, walker.originOf(operation));
+    walker.chooseConservativeFields(question);
+    question.setObjectOperand(value);
+    question.setKey(operation.key());
     question.setReceivers(receivers);
     walker.bind(operation.id(), walker.build(WTF::move(question)));
     walker.noteGuessOpened();
@@ -3917,32 +4008,34 @@ bool askCellWhetherItIsPlainInstance(Walker& walker, const BodyValue& operation)
 {
     if (!walker.has(Mechanism::TypedOperations) || !operation.constructorOperand())
         return false;
-    Reference value = walker.referenceOf(operation.objectOperand());
-    Reference constructor = walker.referenceOf(operation.constructorOperand());
-    if (!value || !value.isValue() || !constructor)
-        return false;
     const Program& program = walker.program();
+    Reference value = walker.referenceOf(operation.objectOperand());
+    LayoutID classLayout = classNamedByOperandForGuesses(walker, operation.constructorOperand());
+    if (!value || !value.isValue() || !classLayout || objectPrototypeMayGainName(program))
+        return false;
+    Vector<MemberConditionRecord, 16> conditions;
+    if (!findConditionsOfOrdinaryInstanceOf(walker, walker.typeOf(walker.referenceOf(operation.constructorOperand())), conditions) || !listConditionsOfPlainInstanceForGuesses(walker, classLayout, conditions))
+        return false;
+    Vector<LayoutID, 16> taken { classLayout };
+    if (operation.opcode() == Opcode::IsPlainHeirOf) {
+        for (LayoutID layout : program.layoutsExpectedBelow(classLayout)) {
+            if (program.at(layout).kind == LayoutKind::Instance && !program.at(layout).isDerived() && walker.plan().isInUse(layout) && listConditionsOfPlainInstanceForGuesses(walker, layout, conditions))
+                taken.append(layout);
+        }
+    }
     TypeArena& types = walker.types();
-    Type typeOfConstructor = types.at(walker.typeOf(constructor));
-    FunctionID function = typeOfConstructor.isObject() && typeOfConstructor.isJavaScriptValue() ? singleFunctionOf(types, typeOfConstructor) : FunctionID();
-    if (!function)
-        return false;
-    LayoutID classLayout = classOfClassObject(program, function);
-    if (!classLayout)
-        classLayout = classOfConstructorFunction(program, function);
-    if (!classLayout || program.at(classLayout).kind != LayoutKind::Instance || !walker.facts().isEvaluatedAtMostOnce(classLayout) || objectPrototypeMayGainName(program))
-        return false;
-    LayoutSetID receivers = types.at(types.forLayout(classLayout)).layouts;
+    LayoutSetID receivers = types.at(types.forLayouts(taken.span())).layouts;
     if (shapesOfLayoutsForGuesses(walker, receivers) != ShapesOfLayoutsForGuesses::Testable)
         return false;
     Draft question(Opcode::IsPlainInstanceOf, walker.originOf(operation));
     walker.chooseConservativeFields(question);
     question.setObjectOperand(value);
     question.setReceivers(receivers);
+    question.setConditions(conditions.span());
     Reference asked = walker.build(WTF::move(question));
     walker.bind(operation.id(), asked);
     if (asked && asked.isValue())
-        noteKnown(walker, KnownNote::AnswerOfQuestionStillStands, asked, { }, 0, LocationMasks(AbstractHeapSet { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards }), 1, true);
+        noteKnown(walker, KnownNote::AnswerOfQuestionStillStands, Reference::value(walker.code().at(asked.id()).objectOperand()), asked, 0, LocationMasks(AbstractHeapSet { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards }), 1, true);
     walker.noteGuessOpened();
     return true;
 }
@@ -4276,14 +4369,13 @@ struct ParameterOfGuard {
 struct WorkerOfParameterGuards {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WorkerOfParameterGuards);
 
-    WorkerOfParameterGuards(const WalkInputs& inputs, TypeTable& table)
+    explicit WorkerOfParameterGuards(TypeTable& table)
         : types(table, ArenaKeeps::InProgram)
-        , walker(inputs, types, inputs.arrivals)
     {
     }
 
     TypeArena types;
-    Walker walker;
+    KeptBetweenUnits kept;
 };
 
 } // anonymous namespace
@@ -4696,9 +4788,10 @@ Vector<ParameterGuardPlan> planParameterGuards(Program& program, const Facts& fa
     Vector<Vector<ParameterGuardPlan>> guardsInChunks(division.size());
     forEachIndexInParallel(loops, division.size(), [&](unsigned chunk, unsigned worker) {
         if (!workers[worker])
-            workers[worker] = makeUnique<WorkerOfParameterGuards>(inputs, program.types);
+            workers[worker] = makeUnique<WorkerOfParameterGuards>(program.types);
         for (unsigned index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index) {
-            Vector<TypeID, 8> typesBehindGuard = typesBehindParameterGuard(workers[worker]->walker, FunctionID(index));
+            Walker walker(inputs, workers[worker]->types, inputs.arrivals, workers[worker]->kept);
+            Vector<TypeID, 8> typesBehindGuard = typesBehindParameterGuard(walker, FunctionID(index));
             if (!typesBehindGuard.isEmpty())
                 guardsInChunks[chunk].append(ParameterGuardPlan { FunctionID(index), WTF::move(typesBehindGuard) });
         }

@@ -136,7 +136,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::NewTemplateObject: case Opcode::Data:
     case Opcode::DirectEval: case Opcode::ScopeHasBinding: case Opcode::NewDictionary: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::AppendHole:
     case Opcode::HasLayoutPrototype: case Opcode::IsNotFrozen: case Opcode::HasNoExtraProperties: case Opcode::IsSlotFilled: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::IsHolderWithoutAddedNames: case Opcode::BeginMemberGuards:
-    case Opcode::HasKeyOrder: case Opcode::HasNoFieldOutsideSlot:
+    case Opcode::HasKeyOrder: case Opcode::AreHeldFieldsFilled: case Opcode::HasNoFieldOutsideSlot:
     case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding:
     case Opcode::PropHas: case Opcode::ElemHas: case Opcode::PropHasOwn: case Opcode::PropDelete: case Opcode::ElemDelete: case Opcode::ElemGetByKeyParts:
     case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::DefineOwnProperty: case Opcode::DefineAccessors: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype: case Opcode::ElemDefine:
@@ -153,11 +153,11 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
 
     case Opcode::InitializeBuiltin: case Opcode::NativeBinding: case Opcode::LinkTimeConstant: case Opcode::RequireBuiltinModule:
     case Opcode::IsConstructor: case Opcode::ReadsIteratorOfListUnseen: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ToLength:
-    case Opcode::HasJSType: case Opcode::FindsDeclaredMember: case Opcode::FindsNoMember: case Opcode::IsPlainInstanceOf: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::ThrowNewError:
+    case Opcode::HasJSType: case Opcode::FindsDeclaredMember: case Opcode::FindsNoMember: case Opcode::IsPlainInstanceOf: case Opcode::IsPlainHeirOf: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::ThrowNewError:
     case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
     case Opcode::GetOwnContiguousIndex: case Opcode::GetOwnDoubleIndex: case Opcode::GetOwnInt32Index: case Opcode::PutOwnContiguousIndex: case Opcode::PutOwnDoubleIndex: case Opcode::PutOwnInt32Index:
     case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray:
-    case Opcode::NewContiguousArray: case Opcode::NewArrayLike: case Opcode::TruncateNewArray: case Opcode::AppendElements: case Opcode::AppendMembers:
+    case Opcode::NewContiguousArray: case Opcode::NewArrayLike: case Opcode::TruncateNewArray: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::ReserveArrayRoom:
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::RequireAttachedTypedArray: case Opcode::RequireLengthFitsList: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit: case Opcode::Substring: case Opcode::FlattenString: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
     case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
     case Opcode::StringRangeEqualsLiteral: case Opcode::StringRangeToNumber: case Opcode::StringRangeParseInt: case Opcode::GuessFailsUnasked:

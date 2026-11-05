@@ -40,6 +40,7 @@ std::span<const OperationPrelude> operationPreludes()
         { Entry::operationAOTCatchValueAndException, emitCatchValueAndExceptionPrelude, writes(RuntimeState) },
         { Entry::operationAOTCopyDataProperties, emitCopyDataPropertiesPrelude, AsOperation },
         { Entry::operationAOTCreatePromise, emitCreatePromisePrelude, writes(PromiseState, AllocatorState) },
+        { Entry::operationAOTGetClassPrototype, emitGetClassPrototypePrelude, NoEffects },
         { Entry::operationAOTGetConstructPrototype, emitGetConstructPrototypePrelude, NoEffects },
         { Entry::operationAOTGetSuperBase, emitGetSuperBasePrelude, NoEffects },
         { Entry::operationAOTPrivateDefine, emitPrivateDefinePrelude, writes(ObjectFields, NamedProperties, ShapeWords, OrderWords, ArrayStorage, AllocatorState) },

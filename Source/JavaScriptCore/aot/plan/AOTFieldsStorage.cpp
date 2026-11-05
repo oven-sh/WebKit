@@ -606,10 +606,10 @@ std::optional<FieldReference> ChooserOfFieldsStorage::findFieldAbove(const BitVe
 {
     const Field& listed = fieldAt(m_program, reference);
     FieldReference above;
-    if (listed.flags.contains(FieldFlags::IsInherited))
+    if (std::optional<uint32_t> listedAbove = m_program.at(base).findField(listed.key))
+        above = { base, *listedAbove };
+    else if (listed.flags.contains(FieldFlags::IsInherited))
         above = declarationOf(m_program, reference);
-    else if (std::optional<uint32_t> hidden = m_program.at(base).findField(listed.key))
-        above = { base, *hidden };
     else
         return std::nullopt;
     if (above.layout == reference.layout || !isLaid.quickGet(above.layout.index()) || !isObjectLayout(m_program.at(above.layout).kind))

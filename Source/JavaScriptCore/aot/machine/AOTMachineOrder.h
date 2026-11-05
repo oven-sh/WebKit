@@ -22,6 +22,7 @@ struct Loop {
     uint32_t endBlock { 0 };
     Position begin { 0 };
     Position end { 0 };
+    bool hasSideEntrance { false };
 };
 
 struct RareRegion {

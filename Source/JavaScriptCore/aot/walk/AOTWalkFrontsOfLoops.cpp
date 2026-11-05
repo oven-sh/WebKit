@@ -19,7 +19,7 @@ void Walker::layFrontOfQuietTurns(OpenLoop& loop, BlockID inputHead)
     if (m_numberOfCopiesBuiltForSize || isUnreachable() || isUnderHandler() || hasTextsInStringBuilders() || m_code.at(m_block).handler)
         return;
     std::span<const ValueID> parameters = m_code.at(loop.head).parameters();
-    if (loop.entering.size() != parameters.size())
+    if (loop.entering.span().size() != parameters.size())
         return;
     if (m_triesOfLoops.isEmpty() || m_triesOfLoops.last().frameIndex != m_frames.size() - 1 || m_triesOfLoops.last().inputHead != inputHead)
         return;
@@ -36,9 +36,9 @@ void Walker::layFrontOfQuietTurns(OpenLoop& loop, BlockID inputHead)
         if (!way->entry || !way->startFromInFront)
             return;
         std::span<const ValueID> taken = m_code.at(way->entry).parameters();
-        if (taken.size() != parameters.size())
+        if (numberOfFieldsOfScopesThatBlockTakes(way->entry) || taken.size() + m_numberOfFieldsOfScopesOfHeadBeingOpened != parameters.size())
             return;
-        for (size_t index = 0; index < parameters.size(); ++index) {
+        for (size_t index = 0; index < taken.size(); ++index) {
             if (!m_types.isSubset(m_code.at(parameters[index]).type, m_code.at(taken[index]).type))
                 return;
         }
@@ -46,18 +46,21 @@ void Walker::layFrontOfQuietTurns(OpenLoop& loop, BlockID inputHead)
 
     BlockID front = m_code.addBlock(BlockRole::Ordinary, m_code.at(m_block).frequency);
     m_code.setLoopMarks(front, true, true);
+    Vector<ValueID, 8> parametersOfFront;
     Vector<Reference, 8> heldAsReferences;
     for (ValueID parameter : parameters) {
-        loop.heldByFront.append(m_code.appendParameter(front, m_code.at(parameter).type, m_code.at(parameter).representation, m_origin));
-        heldAsReferences.append(Reference::value(loop.heldByFront.last()));
+        parametersOfFront.append(m_code.appendParameter(front, m_code.at(parameter).type, m_code.at(parameter).representation, m_origin));
+        heldAsReferences.append(Reference::value(parametersOfFront.last()));
     }
-    if (!loop.heldByFront.isEmpty())
-        m_code.setParameters(front, loop.heldByFront.span());
+    if (!parametersOfFront.isEmpty())
+        m_code.setParameters(front, parametersOfFront.span());
+    if (!makeReadyToCross(loop.head, heldAsReferences.span(), false, loop.heldByFront))
+        return;
     if (way) {
         loop.startOfClosedCopyFromFront = m_code.addBlock(BlockRole::Ordinary, BlockFrequency::Rare);
         m_code.setLoopMarks(loop.startOfClosedCopyFromFront, true, false);
         BlockID inFront = std::exchange(m_block, loop.startOfClosedCopyFromFront);
-        endWithJumpInto(way->entry, heldAsReferences.span());
+        enterWithFieldsOfScopes(way->entry, heldAsReferences.span().first(heldAsReferences.size() - m_numberOfFieldsOfScopesOfHeadBeingOpened));
         m_block = inFront;
         if (m_hasFailed)
             return;
@@ -117,6 +120,17 @@ bool Walker::branchInFrontOfQuietTurns(uint32_t indexOfLoop, Reference test, boo
     return true;
 }
 
+void Walker::letFrontOfQuietTurnsFailUnasked(uint32_t indexOfLoop)
+{
+    if (!m_inputs.options.failsGuesses || !m_openLoops[indexOfLoop].startOfClosedCopyFromFront) [[likely]]
+        return;
+    BlockID outside = std::exchange(m_block, m_openLoops[indexOfLoop].blocksOfFrontOfQuietTurns.last());
+    Reference fails = drawWhetherGuessFails(m_openLoops[indexOfLoop].origin);
+    m_block = outside;
+    if (fails && branchInFrontOfQuietTurns(indexOfLoop, fails, false))
+        m_openLoops.changeable(indexOfLoop).holdsReadsInFront = true;
+}
+
 void Walker::noteHeadOfQuietTurns(BlockID head)
 {
     if (m_openLoops.isEmpty() || m_openLoops.last().head != head || (!m_openLoops.last().frontOfQuietTurns && !m_openLoops.last().watchesTurns) || isUnreachable())
@@ -145,6 +159,113 @@ void Walker::noteReadThatCouldStandInFront(const OpenLoop& loop, const LocationM
         if (!seen.contains(reads))
             seen.append(reads);
     }
+}
+
+BitVector Walker::blocksThatSomeQuietTurnPassesThrough(BlockID inputHead, std::span<const ValueID> ranOtherCode)
+{
+    const BodyIndex& index = currentBodyIndex();
+    LoopID loop = index.loopOf(inputHead);
+    BitVector runsOtherCode;
+    for (ValueID ran : ranOtherCode)
+        runsOtherCode.set(index.blockOf(ran).index());
+    BitVector reachedFromHead;
+    BitVector comesRound;
+    if (runsOtherCode.get(inputHead.index()))
+        return { };
+    Vector<BlockID, 16> waiting;
+    reachedFromHead.set(inputHead.index());
+    waiting.append(inputHead);
+    while (!waiting.isEmpty()) {
+        BlockID block = waiting.takeLast();
+        for (BodyTarget target : index.terminator(block).targets()) {
+            BlockID next = target.block();
+            if (next == inputHead && !comesRound.get(block.index())) {
+                comesRound.set(block.index());
+                continue;
+            }
+            if (!index.isInLoop(next, loop) || reachedFromHead.get(next.index()) || runsOtherCode.get(next.index()))
+                continue;
+            reachedFromHead.set(next.index());
+            waiting.append(next);
+        }
+    }
+    for (size_t latch : comesRound)
+        waiting.append(BlockID(static_cast<uint32_t>(latch)));
+    while (!waiting.isEmpty()) {
+        BlockID block = waiting.takeLast();
+        if (block == inputHead)
+            continue;
+        for (const BodyIncomingEdge& edge : incomingEdgesOf(index, block)) {
+            if (!reachedFromHead.get(edge.from.index()) || comesRound.get(edge.from.index()))
+                continue;
+            comesRound.set(edge.from.index());
+            waiting.append(edge.from);
+        }
+    }
+    return comesRound;
+}
+
+bool Walker::wayBehindOperationComesRound(BlockID inputHead, ValueID operation) const
+{
+    const BodyIndex& index = currentBodyIndex();
+    LoopID loop = index.loopOf(inputHead);
+    BlockID from = index.blockOf(operation);
+    if (!index.isInLoop(from, loop))
+        return false;
+    BitVector seen;
+    Vector<BlockID, 16> waiting;
+    waiting.append(from);
+    seen.set(from.index());
+    while (!waiting.isEmpty()) {
+        BlockID block = waiting.takeLast();
+        for (BodyTarget target : index.terminator(block).targets()) {
+            BlockID next = target.block();
+            if (next == inputHead)
+                return true;
+            if (!index.isInLoop(next, loop) || seen.get(next.index()))
+                continue;
+            seen.set(next.index());
+            waiting.append(next);
+        }
+    }
+    return false;
+}
+
+bool Walker::someTextGrowsInQuietTurn(BlockID inputHead, std::span<const GrowingText> texts, const TryOfLoop& tried)
+{
+    const BodyIndex& index = currentBodyIndex();
+    Vector<ValueID, 4> ranOtherCode;
+    for (ValueID ran : tried.operationsThatRanOtherCode) {
+        if (!opcodesOfFamily(OperationFamily::Operator).contains(index.opcodeOf(ran)))
+            ranOtherCode.append(ran);
+    }
+    BitVector passedInQuietTurns = blocksThatSomeQuietTurnPassesThrough(inputHead, ranOtherCode.span());
+    if (!passedInQuietTurns.get(inputHead.index()))
+        return true;
+    for (const GrowingText& text : texts) {
+        for (const NameOfGrowingText& name : text.names) {
+            if (!index.isParameter(name.value) && passedInQuietTurns.get(index.blockOf(name.value).index()))
+                return true;
+        }
+        if (!text.parametersOfInnerHeads.isEmpty())
+            return true;
+    }
+    return false;
+}
+
+static uint64_t keyOfInputLoopForFrontsOfLoops(FunctionID function, BlockID inputHead)
+{
+    return static_cast<uint64_t>(function.index()) << 32 | inputHead.index();
+}
+
+void Walker::keepTextsOfLoopOutOfBuilders(BlockID inputHead)
+{
+    m_loopsWhoseTextsStayOutOfBuilders.add(keyOfInputLoopForFrontsOfLoops(currentFunction(), inputHead));
+}
+
+bool Walker::textsOfLoopStayOutOfBuilders(BlockID inputHead) const
+{
+    return !m_loopsWhoseTextsStayOutOfBuilders.isEmpty() && m_loopsWhoseTextsStayOutOfBuilders.contains(keyOfInputLoopForFrontsOfLoops(currentFunction(), inputHead));
 }
 
 bool Walker::quietTurnsWroteMoreThanRowSays(AnswerOfLoop& row, const TryOfLoop& tried)
@@ -201,17 +322,9 @@ bool Walker::holdBackEdgeOfTurnThatDidSomething(EdgeID edge, BlockID head, std::
     else
         m_code.endWithJump(m_block, m_origin, landing, { });
     m_block = landing;
-    std::span<const ValueID> parameters = m_code.at(head).parameters();
     OpenLoop::EdgeHeldBack held;
-    for (size_t index = 0; index < arguments.size(); ++index) {
-        Representation form = m_code.at(parameters[index]).representation;
-        Reference argument = isSameWord(representationOf(arguments[index]), form) ? arguments[index] : convert(arguments[index], form, m_origin);
-        if (!argument || isUnreachable()) {
-            fail("an edge hands on a value that nothing was built for"_s);
-            return true;
-        }
-        held.arguments.append(argument.id());
-    }
+    if (!makeReadyToCross(head, arguments, true, held.arguments))
+        return true;
     m_code.end(m_block, TerminatorDraft(TerminatorKind::Jump, m_origin), 1);
     held.edge = m_code.at(m_block).terminator.next();
     m_openLoops.changeable(place).edgesHeldBack.append(WTF::move(held));
@@ -224,11 +337,11 @@ BlockID Walker::closeFrontOfQuietTurns(const OpenLoop& loop)
     if (!loop.frontOfQuietTurns)
         return loop.head;
     for (const OpenLoop::EdgeHeldBack& held : loop.edgesHeldBack)
-        m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.frontOfQuietTurns : loop.head, held.arguments.span());
+        m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.frontOfQuietTurns : loop.head, held.arguments);
     BlockID last = loop.blocksOfFrontOfQuietTurns.last();
     if (!m_code.at(last).hasEnded()) {
         m_code.end(last, TerminatorDraft(TerminatorKind::Jump, loop.origin), 1);
-        m_code.closeEdge(m_code.at(last).terminator.next(), loop.head, loop.heldByFront.span());
+        m_code.closeEdge(m_code.at(last).terminator.next(), loop.head, loop.heldByFront);
     }
     return loop.holdsReadsInFront ? loop.frontOfQuietTurns : loop.head;
 }

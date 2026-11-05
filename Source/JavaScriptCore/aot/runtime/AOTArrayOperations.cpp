@@ -176,6 +176,23 @@ void appendElementsOfList(JSGlobalObject* globalObject, JSArray* target, JSArray
     appendElements(globalObject, globalObject->vm(), target, source);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayRoom, void, (Instance* instance, JSCell* cell, uint64_t room))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayRoom);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayRoom);
+    IndexingType mode = array->indexingMode();
+    if (mode != ArrayWithUndecided && mode != ArrayWithInt32 && mode != ArrayWithDouble && mode != ArrayWithContiguous)
+        return;
+    unsigned vectorLength = array->butterfly()->vectorLength();
+    if (room > MAX_STORAGE_VECTOR_LENGTH || room <= vectorLength)
+        return;
+    unsigned publicLength = array->butterfly()->publicLength();
+    unsigned lengthThatGrowsToRoom = static_cast<unsigned>(room - room / 3);
+    ASSERT(nextLength(lengthThatGrowsToRoom) >= room);
+    if (array->ensureLength(vm, std::max(lengthThatGrowsToRoom, vectorLength + 1)))
+        array->butterfly()->setPublicLength(publicLength);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendElements);

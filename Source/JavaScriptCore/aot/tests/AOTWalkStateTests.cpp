@@ -300,7 +300,7 @@ static Effects effectsThatWriteInWalkStateTests(AbstractHeapSet written)
 }
 
 static constexpr uint32_t layoutsOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX };
-static constexpr uint32_t classesOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX >> 1 };
+static constexpr uint32_t classesOfWalkStateTests[] { 0, 1, 64, 65, 63, UINT32_MAX >> 2 };
 
 static void checkSameAnswersInWalkStateTests(const PairOfWalkStateTests& pair, uint32_t numberOfObjects, uint32_t numberOfFields)
 {
@@ -540,7 +540,7 @@ static void runRandomStepsInWalkStateTests(unsigned seed, uint32_t numberOfObjec
             auto mayEndGuard = [&](LayoutID classOfGuard) {
                 return classOfGuard.index() % 3 != rest;
             };
-            pair.state.invalidate(effectsThatWriteInWalkStateTests(written), scopedLambda<bool(Reference)>(mayBeWritten), scopedLambda<bool(LayoutID)>(mayEndGuard));
+            pair.state.invalidate(effectsThatWriteInWalkStateTests(written), scopedLambda<bool(Reference)>(mayBeWritten), scopedLambda<bool(LayoutID, PropertyKeyID)>([&](LayoutID classOfGuard, PropertyKeyID) { return mayEndGuard(classOfGuard); }));
             pair.lists.invalidate(written, mayBeWritten, mayEndGuard);
             break;
         }

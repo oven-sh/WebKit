@@ -151,65 +151,71 @@ bool SlotPlan::listMembersAskedAbout(const Program& program, PropertyKeyID key, 
     if (members.size() <= mostMembersAskedOneByOne)
         return false;
 
+    auto sortWithoutRepeats = [](auto& list) {
+        AOT::sort(list);
+        list.shrink(list.size() - std::ranges::unique(list).size());
+        list.shrinkToFit();
+    };
+    Vector<uint64_t>& layoutsByName = m_fieldAccessesOfSets->layoutsByName;
+    std::call_once(m_fieldAccessesOfSets->layoutsByNameAreListed, [&] {
+        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+            auto list = [&](PropertyKeyID name) {
+                if (name)
+                    layoutsByName.append(static_cast<uint64_t>(name.bits()) << 32 | index);
+            };
+            for (const Field& field : program.layouts[index].fields)
+                list(field.key);
+            for (PropertyKeyID appended : layout(LayoutID(index)).appendedKeys)
+                list(appended);
+        }
+        sortWithoutRepeats(layoutsByName);
+        BitVector isView(program.layouts.size());
+        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+            for (LayoutID view : program.viewsAbove(LayoutID(index)))
+                isView.quickSet(view.index());
+        }
+        for (size_t view : isView) {
+            for (const Field& field : program.layouts[view].fields) {
+                if (field.key)
+                    m_fieldAccessesOfSets->namesWrittenInViews.append(field.key.bits());
+            }
+        }
+        sortWithoutRepeats(m_fieldAccessesOfSets->namesWrittenInViews);
+    });
+    if (whatIsWrittenAbove == WhatIsWrittenAbove::IsAsked && std::ranges::binary_search(m_fieldAccessesOfSets->namesWrittenInViews, key.bits()))
+        return false;
+    uint64_t first = static_cast<uint64_t>(key.bits()) << 32;
+    auto firstWithName = std::ranges::lower_bound(layoutsByName, first);
+    auto endWithName = std::ranges::lower_bound(firstWithName, layoutsByName.end(), first + (1ull << 32));
+    if (static_cast<size_t>(endWithName - firstWithName) >= members.size())
+        return false;
+
     using MembersByName = FieldAccessesOfSets::Part::MembersByName;
     FieldAccessesOfSets::Part& part = m_fieldAccessesOfSets->parts[WTF::intHash(set.bits()) % m_fieldAccessesOfSets->parts.size()];
     Locker locker { part.lock };
     MembersByName& listed = *part.membersByName.ensure(set.bits(), [] {
         return makeUniqueWithoutFastMallocCheck<MembersByName>();
     }).iterator->value;
-    auto sortWithoutRepeats = [](auto& list) {
-        AOT::sort(list);
-        list.shrink(list.size() - std::ranges::unique(list).size());
-        list.shrinkToFit();
-    };
     if (!listed.areListed) {
         listed.areListed = true;
         for (LayoutID member : members) {
             const Layout& layout = program.at(member);
             listed.numberInUse += !isNeverAllocated(member);
-            if (writtenBaseOf(layout) && layout.inheritedFields != InheritedFields::AllOfRow) {
+            if (writtenBaseOf(layout) && layout.inheritedFields != InheritedFields::AllOfRow)
                 listed.askedAboutEveryName.append(member);
-                continue;
-            }
-            auto list = [&](PropertyKeyID name) {
-                if (name)
-                    listed.byName.append(static_cast<uint64_t>(name.bits()) << 32 | member.index());
-            };
-            for (const Field& field : layout.fields)
-                list(field.key);
-            for (PropertyKeyID appended : this->layout(member).appendedKeys)
-                list(appended);
         }
-        sortWithoutRepeats(listed.byName);
     }
-    if (whatIsWrittenAbove == WhatIsWrittenAbove::IsAsked && !listed.namesWrittenAboveAreListed) {
-        listed.namesWrittenAboveAreListed = true;
-        Vector<LayoutID> viewsAbove;
-        for (LayoutID member : members) {
-            const Layout& layout = program.at(member);
-            if (!writtenBaseOf(layout) || layout.inheritedFields == InheritedFields::AllOfRow)
-                viewsAbove.append(program.viewsAbove(declaredLayoutOf(program, member)));
-        }
-        sortWithoutRepeats(viewsAbove);
-        for (LayoutID view : viewsAbove) {
-            for (const Field& field : program.at(view).fields) {
-                if (field.key)
-                    listed.namesWrittenAbove.append(field.key.bits());
-            }
-        }
-        sortWithoutRepeats(listed.namesWrittenAbove);
-    }
-    if (whatIsWrittenAbove == WhatIsWrittenAbove::IsAsked && std::ranges::binary_search(listed.namesWrittenAbove, key.bits()))
-        return false;
 
     numberInUse = listed.numberInUse;
-    uint64_t first = static_cast<uint64_t>(key.bits()) << 32;
-    auto withName = std::ranges::lower_bound(listed.byName, first);
     auto everyName = listed.askedAboutEveryName.begin();
-    for (; withName != listed.byName.end() && *withName >> 32 == key.bits(); ++withName) {
+    for (auto withName = firstWithName; withName != endWithName; ++withName) {
         LayoutID member(static_cast<uint32_t>(*withName));
+        if (!std::ranges::binary_search(members, member))
+            continue;
         while (everyName != listed.askedAboutEveryName.end() && *everyName < member)
             asked.append(*everyName++);
+        if (everyName != listed.askedAboutEveryName.end() && *everyName == member)
+            ++everyName;
         asked.append(member);
     }
     while (everyName != listed.askedAboutEveryName.end())
@@ -473,10 +479,10 @@ static std::optional<FieldReference> findFieldAboveForSlotPlan(const Program& pr
 {
     const Field& listed = fieldAt(program, reference);
     FieldReference above;
-    if (listed.flags.contains(FieldFlags::IsInherited))
+    if (std::optional<uint32_t> listedAbove = program.at(base).findField(listed.key))
+        above = { base, *listedAbove };
+    else if (listed.flags.contains(FieldFlags::IsInherited))
         above = declarationOf(program, reference);
-    else if (std::optional<uint32_t> hidden = program.at(base).findField(listed.key))
-        above = { base, *hidden };
     else
         return std::nullopt;
     if (above.layout == reference.layout || !isPlaced.quickGet(above.layout.index()) || !isObjectLayout(program.at(above.layout).kind))

@@ -269,31 +269,6 @@ function checkClassesWithHostMethods({ builtins, startup }: CheckedModel, proble
   }
 }
 
-const isIndex = (text: string): boolean => String(Number(text) >>> 0) === text;
-
-export function checkNamesReadByNativeCode(
-  { namesReadByNativeCode }: Pick<TableModel, "namesReadByNativeCode">,
-  problems: Problems,
-): void {
-  for (const { holder, names, namesOnlyInspected } of namesReadByNativeCode) {
-    const refuse = (reason: string) =>
-      problems.add(null, `${holder.text} lists the names that native code reads, and ${reason}`);
-    if (holder.scope !== "Realm" && holder.kind !== "Prototype") refuse("every module has an object of its own");
-    if (holder.sameObjectAs !== null)
-      refuse(`it is the same object as ${holder.sameObjectAs.text}, where the list belongs`);
-    if (holder.flags.includes("IsGlobalObject")) refuse("native code finds every global variable on the global object");
-    if (holder.flags.includes("IsLockedObject")) refuse("it is locked, so a program puts nothing there");
-    if (holder.prototype.link === "Unknown") refuse("nothing says what lies above it, where a lookup goes on");
-    names.forEach((name, position) => {
-      if (position > 0 && names[position - 1] === name) refuse(`${name.text} is listed twice`);
-      if (name.kind === "Text" && isIndex(name.text)) refuse(`${name.text} is an index`);
-    });
-    for (const name of namesOnlyInspected) {
-      if (!names.includes(name)) refuse(`${name.text}, which it only inspects, is not among them`);
-    }
-  }
-}
-
 export function checkHostUses(model: CheckedModel, problems: Problems): void {
   const written = collectWrittenUses(model);
   for (const { row, uses } of written) forEachUse(uses, use => checkUse(row, use, problems));

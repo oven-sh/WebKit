@@ -3,7 +3,6 @@
 # What a read out of a view gives is expected to be a number or undefined. The test for an int32 did not admit all of that, so the looks at the loop did not count on it
 # and took the access under such a key for other code: the turn was not clean, the view of keys was asked in every turn whether it is as its class makes it, and the counter was a double.
 # A key is asked for the number, as an operand of an operator on numbers is. Under undefined, which names a property, the turn begins again in the closed copy.
-# TODO: loops: a counter that steps by two climbs past the bound that the test against the length gives it: in the typed build it goes round as int|whole @Double, not as int[0, 17179869185] @Int64
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage, Names]

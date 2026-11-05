@@ -189,7 +189,7 @@ static ALWAYS_INLINE bool isDeadOnEveryPathFromHeadBetweenBlocks(Allocator& allo
     if (endOfWhatWaysLeadTo != noPosition && (!firstRead || positionOfFirstRead >= endOfWhatWaysLeadTo))
         return true;
     const std::span<const Loop> loops = allocator.m_order.loops();
-    if (place.loop != noLoop && !place.isLoopHead && definition < loops.data()[place.loop].begin)
+    if (place.loop != noLoop && !place.isLoopHead && definition < loops.data()[place.loop].begin && !loops.data()[place.loop].hasSideEntrance)
         return false;
     return isDeadOnEveryPathFromBlockOutsideRareRegions(allocator, value, block, place, place.head, firstRead);
 }
@@ -265,29 +265,11 @@ static NEVER_INLINE const Block* findBlockThatFixesHead(const Allocator& allocat
     return headIsAheadOfFramedPart && firstFromOutsideFramedPart ? firstFromOutsideFramedPart : place.predecessors.front();
 }
 
-static bool isSideEntranceOfLoop(const Order& order, const BlockPlace& place)
-{
-    const Loop* const loops = order.loops().data();
-    uint32_t loop = place.isLoopHead ? loops[place.loop].parent : place.loop;
-    if (loop == noLoop)
-        return false;
-    if (place.predecessors.empty())
-        return true;
-    const Loop& around = loops[loop];
-    Block* const* const predecessors = place.predecessors.data();
-    return order.of(predecessors[0]).orderIndex < around.firstBlock || order.of(predecessors[place.predecessors.size() - 1]).orderIndex >= around.endBlock;
-}
-
-static bool someLoopHasSideEntrance(const Order& order, Block* const* blocks, const BlockPlace* places)
+static bool someLoopHasSideEntrance(const Order& order)
 {
     for (const Loop& loop : order.loops()) {
-        if (loop.parent != noLoop)
-            continue;
-        for (uint32_t index = loop.firstBlock; index < loop.endBlock; ++index) {
-            ASSERT(places[blocks[index]->index()].loop != noLoop);
-            if (isSideEntranceOfLoop(order, places[blocks[index]->index()]))
-                return true;
-        }
+        if (loop.hasSideEntrance)
+            return true;
     }
     return false;
 }
@@ -536,7 +518,7 @@ static NEVER_INLINE void findImmediateDominatorsOfOrderedBlocks(Allocator& alloc
     const uint32_t numberOfJoins = numberOfBlocks <= mostBlocksOfProcedureWithShortWalks
         ? findDominatorsInFirstPass<PassOverDominators::FirstWithShortWalks>(walks, blocksInOrder, dominators, numbersOfJoins)
         : findDominatorsInFirstPassWithLongWalks(walks, arena, blocksInOrder, dominators, numbersOfJoins);
-    bool needsAnotherPass = someLoopHasSideEntrance(order, blocks, places);
+    bool needsAnotherPass = someLoopHasSideEntrance(order);
     while (needsAnotherPass) {
         needsAnotherPass = false;
         for (uint32_t join = 0; join < numberOfJoins; ++join) {
@@ -1108,7 +1090,7 @@ bool Allocator::passThroughBlockThatOnlyJumps(Block* blockAsked)
         bool changesRareRegion = m_rareRegion != place.rareRegion;
         if (changesRareRegion && isInRareRegion())
             leaveRareRegionBetweenBlocks(*this);
-        if (place.entersRareRegion || m_proc.traits().checksAllocation)
+        if (place.entersRareRegion || m_proc.checksAllocation())
             registersAtHeads[block->index()] = listBindingsAtHead(*this, HeadThatListsRegisters { block, m_allocation.spillsOfValues(), headIsAheadOfFramedPart(block) }, end.bindings);
         if (changesRareRegion && place.isRare())
             enterRareRegionBetweenBlocks(*this, place.rareRegion);
@@ -1211,7 +1193,7 @@ static NEVER_INLINE void listRegistersAtHeadBeingEntered(Allocator& allocator, c
     if (RegisterMask registersToNote = calleeSavesToNoteAtHeadBeingEntered(allocator, registersHeld)) [[unlikely]]
         noteCalleeSavesAtHeadBeingEntered(allocator, registersToNote);
 
-    if (edgeHasFixedHead || place.entersRareRegion || allocator.m_proc.traits().checksAllocation) {
+    if (edgeHasFixedHead || place.entersRareRegion || allocator.m_proc.checksAllocation()) {
         const HeadThatListsRegisters headThatLists { block, allocator.m_allocation.spillsOfValues(), false };
         const RegisterBinding* const first = taken.bindings.data();
         const RegisterBinding* const limit = first + taken.bindings.size();
@@ -1233,7 +1215,7 @@ static ALWAYS_INLINE void finishEnteringPlainBlock(Allocator& allocator, const B
     else if (RegisterMask others = allocator.m_bound & ~registersHeld)
         unbindRegistersBetweenBlocks(allocator, others);
 
-    if (blockIsRare || allocator.m_proc.traits().checksAllocation)
+    if (blockIsRare || allocator.m_proc.checksAllocation())
         return listRegistersAtHeadBeingEntered<edgeHasFixedHead>(allocator, block, place, taken, registersHeld);
     ASSERT(!allocator.m_isAheadOfFramedPart && !allocator.isInRareRegion());
     if (RegisterMask registersToNote = registersHeld & allocator.m_file.calleeSaved & ~allocator.m_calleeSavesTakenOutsideRareRegions) [[unlikely]]

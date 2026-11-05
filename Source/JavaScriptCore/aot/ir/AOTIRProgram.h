@@ -134,10 +134,11 @@ public:
     LayoutID layoutOf(BuiltinLayoutID id) const { return m_derivedTables.builtinLayouts[id.index()]; }
     LayoutSetID declaredMembersOf(LayoutID id) const { return m_derivedTables.declaredMembers[id.index()]; }
     bool hasDeclaredMembers(LayoutID id) const { return id.index() < m_derivedTables.declaredMembers.size() && m_derivedTables.declaredMembers[id.index()]; }
+    std::span<const LayoutSetID> membersOfParentsOfOneClass() const LIFETIME_BOUND { return m_derivedTables.membersOfParentsOfOneClass.span(); }
+    void setMembersOfParentsOfOneClass(Vector<LayoutSetID>&& sets) { m_derivedTables.membersOfParentsOfOneClass = WTF::move(sets); }
     void setDeclaredMembers(LayoutID, LayoutSetID);
     std::span<const LayoutID> layoutsExpectedBelow(LayoutID) const LIFETIME_BOUND;
     std::span<const LayoutID> layoutsWithName(PropertyKeyID) const LIFETIME_BOUND;
-    std::span<const LayoutID> declarersOfName(PropertyKeyID) const LIFETIME_BOUND;
     std::span<const LayoutID> viewsAbove(LayoutID) const LIFETIME_BOUND;
     struct FieldWrittenAbove {
         PropertyKeyID key;
@@ -181,12 +182,12 @@ private:
     struct DerivedTables {
         Vector<LayoutID> builtinLayouts;
         Vector<LayoutSetID> declaredMembers;
+        Vector<LayoutSetID> membersOfParentsOfOneClass;
         Vector<LayoutID> layoutsInOrderOfBases;
         Vector<uint32_t> placeInOrderOfBases;
         Vector<uint32_t> numberOfLayoutsBelow;
         Vector<uint32_t> firstLayoutWithName;
         Vector<LayoutID> layoutsWithName;
-        Vector<LayoutID> declarersOfName;
         Vector<uint32_t> firstViewAbove;
         Vector<LayoutID> viewsAbove;
         Vector<uint32_t> firstFieldWrittenAbove;
@@ -250,6 +251,15 @@ ALWAYS_INLINE FieldReference declarationOf(const Program& program, FieldReferenc
     return reference;
 }
 
+ALWAYS_INLINE LayoutID baseWhoseFieldListIsCopiedWhole(const Program& program, LayoutID id)
+{
+    const Layout& layout = program.at(id);
+    if (!layout.copiesWholeFieldListOfBase)
+        return { };
+    LayoutID base = writtenBaseOf(layout);
+    return !program.at(base).fieldsChangedAfterLayoutsBelowTookThem && layout.fields.size() - layout.ownFieldCount == program.at(base).fields.size() ? base : LayoutID();
+}
+
 ALWAYS_INLINE std::optional<FieldReference> findField(const Program& program, LayoutID id, PropertyKeyID key)
 {
     if (!id)
@@ -260,6 +270,17 @@ ALWAYS_INLINE std::optional<FieldReference> findField(const Program& program, La
     if (layout.inheritedFields == InheritedFields::AllOfRow)
         return std::nullopt;
     return findFieldAboveInRow(program, id, key);
+}
+
+inline void forEachOfSeveralParents(const Program& program, LayoutID id, NOESCAPE const Invocable<void(LayoutID)> auto& functor)
+{
+    const Layout& layout = program.at(id);
+    if (layout.base || !layout.has(LayoutFlags::HasHeritage) || !isDefinedByClass(layout))
+        return;
+    for (LayoutID parent : layout.supertypes) {
+        if (parent != id && isDefinedByClass(program.at(parent)))
+            functor(parent);
+    }
 }
 
 inline LayoutID declaredLayoutOf(const Program& program, LayoutID id)
@@ -285,6 +306,7 @@ ModuleID commonJsModuleCapturedBy(const Program&, const Module& face);
 Vector<ModuleID, 2> formsInImage(const Program&, ModuleID named);
 bool namesWaysToModuleObjects(const Program&);
 BuiltinID functionOfHostThatRequireCallsFor(const Module&);
+bool loaderEntersBodyAtMostOnce(const Module&);
 bool importMayAnswerWithMock(const Module&);
 bool requireMayAnswerWithMock(const Program&, const Module&);
 bool requireReadsModuleValue(const Program&, const Module&);

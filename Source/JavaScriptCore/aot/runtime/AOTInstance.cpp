@@ -1698,7 +1698,7 @@ ProgramStatics::ProgramStatics(State& state)
     m_scopesOfClosures.vm = m_instance.vm;
     state.caches->add(CacheKind::ClearedEachCollection, "scopes of closures in a heap snapshot"_s, m_scopesOfClosures);
     for (const StaticsRange& range : m_tables.staticsClearedEachCollection())
-        state.caches->addClearedEachCollection("statics cleared each collection"_s, { statics + range.offset, range.size });
+        state.caches->addClearedAndGivenBackEachCollection("statics cleared each collection"_s, { statics + range.offset, range.size });
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

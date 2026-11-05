@@ -62,8 +62,8 @@ static bool isNameOfPropertyInUnionSlots(const Program& program, PropertyKeyID k
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::CreatedSymbol:
     case PropertyKeyKind::RegisteredSymbol:
-        return true;
     case PropertyKeyKind::PrivateName:
+        return true;
     case PropertyKeyKind::EnginePrivateName:
     case PropertyKeyKind::ModulePrivateName:
         return false;

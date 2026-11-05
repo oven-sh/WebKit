@@ -140,11 +140,22 @@ public:
 
     enum class HolderState : uint8_t { Unknown, AsDefinitionMadeIt, NotTouched };
     void armMemberGuards(VM&, const LayoutData&, ClassSide, JSObject* holder, HolderState = HolderState::Unknown);
+    bool holdersAreLeftOut(const LayoutData&);
     bool tryLeaveHoldersOut(VM&, const LayoutData&, Closure* classObject, JSObject* prototype);
+    void nameClassObjectOnPrototypeMadeLeftOut(VM&, const LayoutData&, Closure* classObject, JSObject* prototype);
+    void didLeaveOutHoldersOfEvaluation(const LayoutData& classLayout, JSObject* prototype) { m_lastEvaluation = { prototype, &classLayout, true }; }
+    bool takeWordThatNothingHasAskedBelow(JSValue prototype)
+    {
+        if (!m_lastEvaluation.nothingHasAskedBelowPrototype || prototype != JSValue(m_lastEvaluation.prototype))
+            return false;
+        m_lastEvaluation.nothingHasAskedBelowPrototype = false;
+        return true;
+    }
     bool guardHasEnded(const LayoutData& classLayout, ClassSide side) const { return m_endedGuards.get(indexOfGuard(classLayout, side)); }
     bool hasNoGuardLeft(const LayoutData& classLayout, ClassSide side) const { return !classLayout.classData().hasGuardsHereOrBelow(side) || guardHasEnded(classLayout, side); }
     bool hasInstanceBelowOtherPrototype(const LayoutData& classLayout) const { return !m_classesWithInstanceBelowOtherPrototype.isEmpty() && m_classesWithInstanceBelowOtherPrototype.contains(classLayout.index); }
     bool guardsAwaitFirstInstance(const LayoutData& classLayout) const { return !m_constructorFunctionsThatAreOnlyBases.isEmpty() && m_constructorFunctionsThatAreOnlyBases.contains(classLayout.index); }
+    bool guardsHaveBegun(const LayoutData& classLayout) const { return m_classesWhoseGuardsHaveBegun.get(m_tables.rankOfClass(classLayout.index)); }
     static bool leavesDefinitionToRecord(const LayoutData& classLayout) { return classLayout.createsMembersLazily && classLayout.createsClassObjectOnMutation && classLayout.classData().guardsHoldWhileClear; }
     void disarmMemberGuards(const LayoutData&);
     void didChangeMember(const LayoutData&, ClassSide, UniquedStringImpl*);
@@ -234,6 +245,7 @@ public:
         return prototype.isObject() ? asObject(prototype) : nullptr;
     }
     void rememberPlaceOfPrototypeProperty(VM&, Closure* function, JSObject* prototype);
+    JSObject* prototypeOfClassObject(VM&, Closure* classObject);
     JSObject* instanceWithPrototype(VM&, Object* allocated, JSObject* prototype, bool holdsNoField = false);
     void rememberInstanceBelow(VM&, uint32_t allocationOfSite, JSObject* prototype, const Object& instanceWithoutFields, size_t size);
     void forgetInstancesBelowPrototypes();
@@ -257,7 +269,7 @@ private:
     void armGuardsOfConstructorFunction(VM&, const LayoutData&, JSObject* prototype, Closure* classObject);
     void beginGuards(const LayoutData& classLayout)
     {
-        if (!m_classesWhoseGuardsHaveBegun.get(m_tables.rankOfClass(classLayout.index))) [[unlikely]]
+        if (!guardsHaveBegun(classLayout)) [[unlikely]]
             beginGuardsSlowCase(classLayout);
     }
     void beginGuardsSlowCase(const LayoutData&);
@@ -299,7 +311,7 @@ private:
     };
 
     static_assert(std::is_same_v<PropertyOffset, decltype(PlaceOfPrototypeProperty::offset)>);
-    static size_t indexOfPlace(uint32_t structureID) { return structureID >> shiftOfStructureIDForPlaceOfPrototypeProperty & (numberOfPlacesOfPrototypeProperties - 1); }
+    static size_t indexOfPlace(uint32_t structureID) { return indexOfPlaceOfPrototypeProperty(structureID); }
 
     static size_t indexOfClassObject(const JSCell* classObject) { return std::bit_cast<uintptr_t>(classObject) >> shiftOfClassObjectForPrototype & (numberOfPrototypesOfClassObjects - 1); }
 
@@ -320,6 +332,12 @@ private:
     UncheckedKeyHashMap<JSObject*, Structure*> m_classObjectStructures;
     UncheckedKeyHashMap<JSObject*, uint32_t> m_classSidesByHolder;
     bool m_hasHoldersLeftOut { false };
+    struct LastEvaluation {
+        JSObject* prototype;
+        const LayoutData* classLayout;
+        bool nothingHasAskedBelowPrototype;
+    };
+    LastEvaluation m_lastEvaluation { };
     RefPtr<PrivateSymbolImpl> m_classObjectOfHolderLeftOut;
     BitVector m_endedGuards;
     BitVector m_classesWhoseGuardsHaveBegun;

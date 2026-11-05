@@ -44,9 +44,11 @@ namespace JSC { namespace AOT { namespace Typed {
 class Arrivals;
 class CallingConventions;
 class Code;
+class CodeTextParser;
 class Plan;
 class Program;
 class TypeArena;
+class Walker;
 
 using EdgeID = ID<struct EdgeIDTag>;
 using VirtualObjectID = ID<struct VirtualObjectIDTag>;
@@ -539,6 +541,17 @@ struct Operation : Instruction {
 
 static_assert(sizeof(Operation) <= 48 && std::is_trivially_copyable_v<Operation>);
 
+class ArgumentsOfEdge {
+public:
+    ArgumentsOfEdge() = default;
+    std::span<const ValueID> span() const { return m_records.span(); }
+
+private:
+    friend class CodeTextParser;
+    friend class Walker;
+    Vector<ValueID, 8> m_records;
+};
+
 struct Edge {
     BlockID from;
     BlockID to;
@@ -933,10 +946,10 @@ public:
     void end(BlockID, const TerminatorDraft&, uint32_t numberOfEdges);
     EdgeID endWithJump(BlockID, Origin);
     void endWithBranch(BlockID, ValueID condition, Origin);
-    void endWithJump(BlockID, Origin, BlockID to, std::span<const ValueID> arguments);
+    void endWithJump(BlockID, Origin, BlockID to, const ArgumentsOfEdge&);
     void endWithBranch(BlockID, ValueID condition, Origin, BlockID taken, BlockID notTaken);
     EdgeID addHandlerEdge(BlockID);
-    void closeEdge(EdgeID, BlockID to, std::span<const ValueID> arguments);
+    void closeEdge(EdgeID, BlockID to, const ArgumentsOfEdge&);
     uint32_t addInlineFrame(const InlineFrame&);
     uint16_t addEntry(BlockID);
     void addFactUse(const FactUse&);
@@ -1035,6 +1048,12 @@ private:
         block.terminator = terminator;
     }
     Vector<std::pair<uint32_t, uint32_t>, 4> m_recordsAbandoned;
+    struct PartsAbandoned {
+        std::pair<uint32_t, uint32_t> operations;
+        std::pair<uint32_t, uint32_t> blocks;
+        std::pair<uint32_t, uint32_t> edges;
+    };
+    Vector<PartsAbandoned, 4> m_partsAbandoned;
     bool m_keepsChangesToOlderParts { false };
     BlockID m_graveyard;
     OpcodeSet m_opcodesOfValues;

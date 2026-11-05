@@ -320,11 +320,12 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesBelowPrototypes.entries)), record);
     isNotRemembered.append(jit.branchTestPtr(CCallHelpers::Zero, record));
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(classes.instancesBelowPrototypes.maskOfOffsets)), mask);
-    static_assert(firstOffsetOfInstanceBelowPrototype(16, 3) == 128);
+    static_assert(firstOffsetOfInstanceBelowPrototype(16, 3) == (19 * multiplierOfInstanceBelowPrototype) >> shiftOfProductOfInstanceBelowPrototype);
     jit.zeroExtend32ToWord(allocation, scratch);
-    jit.lshift64(TrustedImm32(shiftOfInstanceBelowPrototype - 1), scratch);
     jit.add64(prototype, scratch);
-    jit.lshift64(TrustedImm32(1), scratch);
+    jit.move(TrustedImm64(static_cast<int64_t>(multiplierOfInstanceBelowPrototype)), cell);
+    jit.mul64(cell, scratch);
+    jit.urshift64(TrustedImm32(shiftOfProductOfInstanceBelowPrototype), scratch);
     Label looksAtEntry = jit.label();
     jit.and64(mask, scratch);
     jit.load64(BaseIndex(record, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(InstanceBelowPrototype, prototype)), cell);

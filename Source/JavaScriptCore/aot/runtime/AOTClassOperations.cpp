@@ -70,10 +70,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Insta
 {
     constexpr Entry entry = Entry::operationAOTGetClassPrototype;
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
-    JSValue prototype = cellArgument<Closure>(classObject, entry)->prototypeProperty(vm);
-    if (!prototype || !prototype.isObject()) [[unlikely]]
+    JSCell* result = instance->state->objects->classes.prototypeOfClassObject(vm, cellArgument<Closure>(classObject, entry));
+    if (!result) [[unlikely]]
         crashOnWrongOperand(entry);
-    JSCell* result = asObject(prototype);
     OPERATION_RETURN(scope, result);
 }
 

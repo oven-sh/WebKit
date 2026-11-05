@@ -33,6 +33,7 @@
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "StructureCache.h"
+#include <array>
 #include <initializer_list>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
@@ -535,6 +536,31 @@ static constexpr void (*withEnumeratedClasses)() = runNativeTestWithLoadedProgra
 
 static constexpr ASCIILiteral noClassAboveInRecord = "facts/AOTFacts.h, classOf(): the class above in the record of a class: no class has BaseState::Layout"_s;
 
+static void testPrototypesAtEvenStridesDoNotStandInARow()
+{
+    constexpr size_t numberOfPairs = 20000;
+    constexpr size_t numberOfEntries = 65536;
+    constexpr uint64_t mask = (numberOfEntries - 1) << shiftOfInstanceBelowPrototype;
+    constexpr std::array<uint64_t, 3> blocksApart { 5, 5, 6 };
+    Vector<uint64_t> taken(FillWith { }, numberOfEntries, static_cast<uint64_t>(0));
+    size_t numberOfLooks = 0;
+    uint64_t block = 0xd7845d00000;
+    for (size_t pair = 0, turn = 0; pair < numberOfPairs; block += blocksApart[turn++ % blocksApart.size()] * MarkedBlock::blockSize) {
+        for (uint64_t cell = 0; cell < 250 && pair < numberOfPairs; ++cell, ++pair) {
+            uint64_t prototype = block + 384 + cell * 64;
+            for (uint64_t offset = firstOffsetOfInstanceBelowPrototype(prototype, 3);; offset += sizeof(InstanceBelowPrototype)) {
+                ++numberOfLooks;
+                uint64_t& entry = taken[(offset & mask) >> shiftOfInstanceBelowPrototype];
+                if (entry)
+                    continue;
+                entry = prototype;
+                break;
+            }
+        }
+    }
+    AOT_TEST_CHECK(numberOfLooks < 4 * numberOfPairs);
+}
+
 std::span<const NativeTest> thisAllocationTests()
 {
     static constexpr NativeTest tests[] = {
@@ -544,6 +570,7 @@ std::span<const NativeTest> thisAllocationTests()
         { "this-allocation/construction-from-native-code"_s, testConstructionFromNativeCode },
         { "this-allocation/construction-of-one-of-two-subclasses"_s, testConstructionOfOneOfTwoSubclasses },
         { "this-allocation/deferred-closure-defined-by-name"_s, testDeferredClosureDefinedByName },
+        { "this-allocation/prototypes-at-even-strides-do-not-stand-in-a-row"_s, testPrototypesAtEvenStridesDoNotStandInARow },
     };
     return tests;
 }

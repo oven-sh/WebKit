@@ -29,6 +29,20 @@ constexpr uint8_t lanesNotWrittenInEffectsNet(const Effects& effects)
     return lanes;
 }
 
+enum class CountInEffectsNet : uint8_t { GuardsOfMembersEnded, GuardsOfMembersArmedOrBegun };
+inline constexpr std::array<AbstractHeap, 2> heapsOfCountsInEffectsNet { AbstractHeap::MemberGuards, AbstractHeap::MemberGuards };
+constexpr uint8_t countsHeldInEffectsNet(const Effects& effects)
+{
+    uint8_t counts = 0;
+    for (unsigned count = 0; count < heapsOfCountsInEffectsNet.size(); ++count) {
+        if (!effects.writes.contains(heapsOfCountsInEffectsNet[count]))
+            counts |= static_cast<uint8_t>(1u << count);
+    }
+    return counts;
+}
+inline constexpr uint64_t asksForCountsInEffectsNet = 1ull << 63;
+inline constexpr uint32_t noOperandInEffectsNet = UINT16_MAX;
+
 inline constexpr unsigned firstRowOfOperationsInEffectsNet = 0;
 inline constexpr unsigned firstRowOfRuntimeOperationsInEffectsNet = 2048;
 inline constexpr unsigned firstRowOfStubsInEffectsNet = 6144;

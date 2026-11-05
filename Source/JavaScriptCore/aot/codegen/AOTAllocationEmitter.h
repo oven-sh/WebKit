@@ -39,7 +39,6 @@ public:
     void generateSetMappedArgument(const ValueContext&);
 
     CellPointer allocateWithFields(const ValueContext&, const MentionedAllocation&, std::span<const uint32_t> fields, std::span<const ValueID> values, AllocationStorage);
-    void clearCellsThatObjectLentHolds(ValueID object);
 
 private:
     struct InitialField {

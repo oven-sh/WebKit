@@ -158,6 +158,32 @@ std::optional<uint32_t> KeyOrders::findOrderWordOfShortestBeginningThatLists(Lay
     return best;
 }
 
+Vector<BeginningsOfKeyOrder, 2> KeyOrders::beginningsThatList(LayoutID layout, std::span<const FieldIndex> fields) const
+{
+    Vector<BeginningsOfKeyOrder, 2> beginnings;
+    BitVector isAskedFor;
+    size_t numberAskedFor = 0;
+    for (FieldIndex field : fields)
+        numberAskedFor += !isAskedFor.set(field);
+    uint32_t numberOfOrders = numberAskedFor ? numberOfOrdersOf(layout) : 0;
+    for (uint32_t number = 0; number < numberOfOrders; ++number) {
+        std::span<const FieldIndex> listed = order(layout, number);
+        size_t numberFound = 0;
+        size_t count = 0;
+        while (count < listed.size() && numberFound < numberAskedFor)
+            numberFound += isAskedFor.get(listed[count++]);
+        if (numberFound < numberAskedFor)
+            continue;
+        size_t sharedWithOrderInFront = number ? lengthSharedByKeyOrders(order(layout, number - 1), listed) : 0;
+        size_t fewest = std::max(count, sharedWithOrderInFront + 1);
+        if (fewest > listed.size())
+            continue;
+        RELEASE_ASSERT(number < maxKeyOrdersPerLayout && listed.size() <= maxFieldsInOrder);
+        beginnings.append({ orderWordOf(number, static_cast<uint32_t>(fewest)), static_cast<uint32_t>(listed.size() - fewest) });
+    }
+    return beginnings;
+}
+
 std::optional<KeyOrderContinuation> KeyOrders::firstContinuationCreating(LayoutID layout, std::span<const FieldIndex> createdFields) const
 {
     uint32_t numberOfOrders = numberOfOrdersOf(layout);

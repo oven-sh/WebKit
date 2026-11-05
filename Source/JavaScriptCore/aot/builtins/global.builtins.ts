@@ -35,7 +35,6 @@ export default b.declarations(
 
   b.name("default", "module.exports", "require", "children", "parent", "__esModule", "callee"),
   b.name("configurable", "done", "enumerable", "errors", "writable"),
-  b.name("app", "fetch", "routes", "stop"),
   b.name("undefined", "bigint", "boolean", "number", "string", "symbol", "object", "function"),
 
   b.fn("isNaN", { ...numberTest("IsNaN"), boxedCallStub: "IsNaN" }),

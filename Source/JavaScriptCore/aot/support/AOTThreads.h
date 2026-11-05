@@ -15,6 +15,7 @@
 #include <initializer_list>
 #include <span>
 #include <utility>
+#include <wtf/Atomics.h>
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
 #include <wtf/Lock.h>
@@ -30,6 +31,19 @@ namespace JSC { namespace AOT {
 
 struct HostThreadPool {
     void (*schedule)(void (*run)(void* argument), void* argument);
+};
+
+class BytesSharedByThreads {
+public:
+    BytesSharedByThreads() = default;
+    explicit BytesSharedByThreads(size_t size) { m_bytes.fill(0, size); }
+
+    size_t size() const { return m_bytes.size(); }
+    uint8_t at(size_t index) const { return WTF::atomicLoad(&m_bytes[index], std::memory_order_relaxed); }
+    void set(size_t index, uint8_t value) { WTF::atomicStore(&m_bytes[index], value, std::memory_order_relaxed); }
+
+private:
+    mutable Vector<uint8_t> m_bytes;
 };
 
 class ParallelLoops {

@@ -23,7 +23,6 @@ import {
   type ModelLayout,
   type ModelModule,
   type ModelName,
-  type ModelNamesReadByNativeCode,
   type ModelOverload,
   type ModelPrototype,
   type ModelRealmStructure,
@@ -176,7 +175,6 @@ export class ModelBuilder {
   readonly functionsOfUnknownClass = new Set<ModelBuiltin>();
   readonly bindingsOfFunctions = new Map<ModelBuiltin, ModelBuiltin>();
   readonly openNames = new Map<ModelBuiltin, readonly ModelName[]>();
-  readonly namesReadByNativeCode = new Map<ModelBuiltin, Omit<ModelNamesReadByNativeCode, "holder">>();
   readonly realmStructures: ModelRealmStructure[] = [];
   readonly operandsWithoutUses: { builtin: ModelBuiltin; operand: string; source: Source }[] = [];
   readonly #firstStepOfMemberPath = new Map<string, number>();

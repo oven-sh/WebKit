@@ -931,6 +931,22 @@ void ElementAccessEmitter::generateGetStringCodeUnit(const ValueContext& value)
     define(value, strings.codeUnitAt(view, position));
 }
 
+void ElementAccessEmitter::generateReserveArrayRoom(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    Number room = in<Number>(value->roomOperand());
+    if (!generator().paysForCodeInLine(value.block())) {
+        callStub(value, reserveArrayRoom(), { array.value(), room.value() });
+        return;
+    }
+    LBasicBlock done = newBlock();
+    branchUnless(greaterThan(room, toNumber(vectorLength(elementsOf(array)))), done);
+    callStub(value, reserveArrayRoom(), { array.value(), room.value() });
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

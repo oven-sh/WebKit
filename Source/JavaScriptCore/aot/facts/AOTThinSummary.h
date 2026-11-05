@@ -16,6 +16,7 @@
 #include "AOTOpcode.h"
 #include "AOTThreads.h"
 #include "AOTType.h"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -207,8 +208,11 @@ struct SummaryAccess {
     bool keyIsSurelyIndex : 1 { false };
     bool storesSurelyIndex : 1 { false };
     bool standsRightBehindCall : 1 { false };
+    bool answerIsOnlyCalled : 1 { false };
     bool laysAccessorAsWritten : 1 { false };
     bool isByDescriptor : 1 { false };
+    bool holdsNewValueOfNativeCode : 1 { false };
+    bool subjectIsMadeInBody : 1 { false };
     std::optional<OptionSet<FieldForm>> formCreated;
     uint32_t subject { 0 };
     uint32_t receiver { noSummaryNode };
@@ -270,14 +274,23 @@ struct SummaryChange {
     bool liesOnNoWayToReturn { false };
     bool heirIsMadeByCall { false };
     bool definesWhatItCopies { false };
+    bool subjectIsMadeInBody { false };
     bool isUnderNameThatNobodyElseNames { false };
     bool descriptorIsInSight { false };
     bool descriptorLaysNoAccessor { false };
+    bool laysNewValueOfNativeCode { false };
     uint32_t getterInSight { noSummaryNode };
     uint32_t setterInSight { noSummaryNode };
     bool laysValueInSight { false };
     uint32_t valueInSight { noSummaryNode };
     uint32_t valueLaidThroughConstant { noSummaryNode };
+};
+
+struct SummaryCopyOfMembers {
+    ValueID site;
+    uint32_t target { 0 };
+    uint32_t source { 0 };
+    bool copiesAccessorsAsTheyAre { false };
 };
 
 struct HalfOfAccessorInSummary {
@@ -431,9 +444,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     template<typename T, unsigned number>
     std::span<T> list() const
     {
-        if constexpr (number < numberOfListsInRecord)
+        if constexpr (number < numberOfListsInRecord) {
+            ASSERT(listsInRecord[number] || !sizesOfListsInRecord[number]);
             return unsafeMakeSpan(static_cast<T*>(listsInRecord[number]), sizesOfListsInRecord[number]);
-        else {
+        } else {
             if (!(listsInDirectories & bitOf<number>()))
                 return { };
             constexpr bool isKeptForWalk = !!(bitOf<number>() & listsKeptForWalk);
@@ -607,6 +621,8 @@ struct ThinSummary : SummaryWithoutLists {
         SummaryList<LocationMasks, 49> ownWritesOnWaysToReturn;
         SummaryList<uint32_t, 50> operandsOfOperatorsLeftApart;
         SummaryList<uint64_t, 51> wordsOfEffects;
+        SummaryList<uint32_t, 52> namesThatHostLooksFor;
+        SummaryList<SummaryCopyOfMembers, 53> copiesOfMembers;
     };
 
     uint64_t layoutsOfOwnWrites() const { return wordsOfEffects.isEmpty() ? 0 : wordsOfEffects[0]; }
@@ -671,6 +687,7 @@ struct SummaryBeingMade : SummaryWithoutLists {
     Vector<ThinSummary::AnswerOfRequire> answersOfRequire;
     Vector<ThinSummary::AnswerOfRequire> objectsOfCompiledModules;
     Vector<ThinSummary::NameThatLoaderTakes> namesThatLoaderTakes;
+    Vector<uint32_t> namesThatHostLooksFor;
     Vector<ThinSummary::Inspection> inspections;
     Vector<PropertyKeyID> namesRead;
     Vector<PropertyKeyID> namesCalled;
@@ -680,6 +697,7 @@ struct SummaryBeingMade : SummaryWithoutLists {
     Vector<ModuleID> modulesWhosePathIsRead;
     Vector<LocationMasks, 1> ownWritesOnWaysToReturn;
     Vector<uint32_t> operandsOfOperatorsLeftApart;
+    Vector<SummaryCopyOfMembers> copiesOfMembers;
     uint64_t layoutsOfOwnWrites { 0 };
     Effects ownEffects;
     std::optional<Effects> ownEffectsOfOperators;
@@ -707,11 +725,25 @@ public:
     void setTextsSpelledThatNameFieldsNeverWritten(BitVector&& texts) { m_textsSpelledThatNameFieldsNeverWritten = WTF::move(texts); }
     const SetsOfLayoutsWritten& setsOfLayoutsWrittenInBodies() const LIFETIME_BOUND { return m_setsOfLayoutsWrittenInBodies; }
     void setSetsOfLayoutsWrittenInBodies(SetsOfLayoutsWritten&& sets) { m_setsOfLayoutsWrittenInBodies = WTF::move(sets); }
+    std::span<const FunctionID> functionsThatCopyMembers() const LIFETIME_BOUND { return m_functionsThatCopyMembers.span(); }
+    void setFunctionsThatCopyMembers(Vector<FunctionID>&& functions) { m_functionsThatCopyMembers = WTF::move(functions); }
+    struct MakerOfClosures {
+        FunctionID closure;
+        FunctionID maker;
+    };
+    FunctionID findMakerAboveCopyOfMembers(FunctionID closure) const
+    {
+        auto found = std::ranges::lower_bound(m_makersAboveCopiesOfMembers, closure, { }, &MakerOfClosures::closure);
+        return found != m_makersAboveCopiesOfMembers.end() && found->closure == closure ? found->maker : FunctionID();
+    }
+    void setMakersAboveCopiesOfMembers(Vector<MakerOfClosures>&& makers) { m_makersAboveCopiesOfMembers = WTF::move(makers); }
 
 private:
     LargeList<ThinSummary> m_summaries;
     BitVector m_textsSpelledThatNameFieldsNeverWritten;
     SetsOfLayoutsWritten m_setsOfLayoutsWrittenInBodies;
+    Vector<FunctionID> m_functionsThatCopyMembers;
+    Vector<MakerOfClosures> m_makersAboveCopiesOfMembers;
 };
 
 ThinSummaries scanBodies(const Program&, Diagnostics&, const ParallelLoops&, Mechanisms = allMechanisms);

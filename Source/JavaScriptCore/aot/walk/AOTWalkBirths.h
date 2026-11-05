@@ -32,6 +32,7 @@ StoresListedAtBirth findStoresThatAllocationMayList(Walker&, LayoutID, std::span
 bool looksAtCellsAskForLayoutPrototype(Walker&, LayoutID);
 void noteGuardsShownByTest(Walker&, std::span<const MemberConditionRecord>, Reference test);
 void askWholeSideWhereGuardsMayNotHaveBegun(Walker&, LayoutID classLayout, Vector<MemberConditionRecord, 8>& conditions);
+std::optional<MemberConditionRecord> findGuardOfCallOffConstructorFunction(Walker&, FunctionID);
 
 struct GuardOfPrototypeAtConstruction {
     MemberConditionRecord condition;

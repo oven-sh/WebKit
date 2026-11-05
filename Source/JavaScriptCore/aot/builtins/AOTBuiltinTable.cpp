@@ -591,11 +591,6 @@ bool BuiltinTable::isClosedKey(BuiltinID holder, BuiltinName name) const
     return !findOwnMember(holder, name) && !std::ranges::binary_search(openNamesOf(holder), name);
 }
 
-const BuiltinNamesReadByNativeCode* BuiltinTable::namesReadByNativeCode(BuiltinID holder) const
-{
-    return findRecord(m_data.runtime.namesReadByNativeCode, &BuiltinNamesReadByNativeCode::holder, holder);
-}
-
 std::span<const BuiltinFeatureUse> BuiltinTable::featureUsesOf(BuiltinID id) const
 {
     static constinit RecordsByBuiltin<BuiltinFeatureUse> featureUsesByBuiltin;
@@ -653,6 +648,17 @@ const BuiltinCondition* BuiltinTable::conditionOnInstancesThatAnswerEveryName(Bu
 {
     const BuiltinUnseenCode* row = constructor ? findRecord(m_data.attachments.instancesThatAnswerEveryName, &BuiltinUnseenCode::builtin, constructor) : nullptr;
     return row ? row->condition : nullptr;
+}
+
+bool BuiltinTable::isPrintedByFormatter(BuiltinID id, const BuiltinParameter& parameter) const
+{
+    if (!parameter.protocols.contains(Protocol::OwnValues) || !parameter.protocols.contains(Protocol::PrototypeChain) || !parameter.protocols.contains(Protocol::CallsNamed))
+        return false;
+    if (parameter.calledMembers.empty())
+        return at(id).origin == BuiltinOrigin::Host;
+    return std::ranges::any_of(namesOfHostMethodsCallingStartupLoads(), [&](BuiltinName name) {
+        return std::ranges::contains(parameter.calledMembers, name);
+    });
 }
 
 bool BuiltinTable::letsInUnseenCodeWhenCalled(BuiltinID id) const

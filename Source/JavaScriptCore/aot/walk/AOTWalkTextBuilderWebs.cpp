@@ -569,7 +569,7 @@ void TextBuilderWebScan::run(Vector<GrowingText, 2>& texts)
 void findGrowingTexts(Walker& walker, BlockID inputHead, const LoopPreview& preview, Vector<GrowingText, 2>& texts)
 {
     const BodyIndex& index = walker.currentBodyIndex();
-    if (preview.typesOfValues.isEmpty() || !index.holdsAnyOf(operationsThatJoinTexts) || index.hasIrreducibleFlow())
+    if (preview.typesOfValues.isEmpty() || !index.holdsAnyOf(operationsThatJoinTexts) || index.hasIrreducibleFlow() || walker.textsOfLoopStayOutOfBuilders(inputHead))
         return;
     if (!index.isLoopHead(inputHead) || index.isEnteredByHandlerEdge(inputHead))
         return;

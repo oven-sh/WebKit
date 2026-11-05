@@ -214,7 +214,7 @@ void TestRunsInLink::noteWriteOn(const LinkType& subject, PropertyKeyID key, Fun
     bool addsAsInExecutable = isFileOfProductInTestRun(m_flow.program, writer);
     if (subject.builtin && !addsAsInExecutable)
         noteWriteOfNewName(m_flow.program.builtins().canonicalID(subject.builtin), key);
-    if (subject.holdsLostBuiltins) {
+    if (subject.holdsLostBuiltins && !addsAsInExecutable) {
         if (FlowNodeID added = nodeOfNameAdded(key))
             m_flow.arrive(added, LinkType::anything());
     }

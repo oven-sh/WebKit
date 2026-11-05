@@ -86,6 +86,15 @@ bool Object::isInSlot(const FieldData& field) const
     return slot && !slotHoldsAbsent(field.slot.representation(), slot);
 }
 
+bool Object::holdsEveryFieldHeldFilled() const
+{
+    for (const FieldData& field : layout().fields()) {
+        if (field.isHeldFilled && !isInSlot(field))
+            return false;
+    }
+    return true;
+}
+
 JSValue Object::read(const FieldData& field) const
 {
     SlotRepresentation representation = field.slot.representation();
@@ -365,6 +374,11 @@ void putProperty(VM& vm, JSObject* holder, PropertyName name, Object::LeavingPro
 
 void didChangeOwnProperties(VM& vm, Object& object, VM::StructureChainIntegrityEvent event, UniquedStringImpl* nameOrNull)
 {
+    if (object.perCellBit()) [[unlikely]] {
+        if (event != VM::StructureChainIntegrityEvent::Add)
+            object.tryFinishBirth();
+    } else if (event != VM::StructureChainIntegrityEvent::Remove && object.hasAccessorAmongExtraProperties()) [[unlikely]]
+        object.setBearsMark(true);
     if (object.structure()->mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(event, &object, nameOrNull);
 }

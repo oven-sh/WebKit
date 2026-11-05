@@ -174,7 +174,7 @@ String writtenFunctionName(FunctionID function)
     const Image& image = *Image::current();
     ASSERT(function.index() < image.programTables().numberOfFunctions());
     std::optional<uint32_t> name = image.programTables().nameOfFunction(function.index());
-    return name && !image.isObfuscated() && image.text().hasText(StringID(*name)) ? image.text().createString(StringID(*name)) : emptyString();
+    return name && image.text().hasText(StringID(*name)) ? image.text().createString(StringID(*name)) : emptyString();
 }
 
 String initialNameProperty(FunctionID function)

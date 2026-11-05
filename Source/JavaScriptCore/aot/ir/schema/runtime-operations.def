@@ -69,7 +69,9 @@ runtime ArrayCopy : EncodedJSValue (JSCell* array) ; unknownCode
 runtime AppendElements : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray
 runtime AppendMembers : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
+runtime ReserveArrayRoom : void (JSCell* array, uint64_t room) ; reads(all) writes(ArrayStorage, AllocatorState, RuntimeState) collects
 runtime TryFinishBirth : void (JSCell* object) ; reads(all) writes(RuntimeState)
+runtime AreHeldFieldsFilled : size_t (JSCell* object) ; reads(all)
 runtime ArrayPutAtIndex, ArrayPutNumberAtIndex : void (JSCell* array, EncodedJSValue value, uint64_t position) ; unknownCode
 runtime ArrayPutAtNumber : void (JSCell* array, EncodedJSValue value, double position) ; unknownCode
 

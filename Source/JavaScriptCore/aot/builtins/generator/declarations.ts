@@ -102,8 +102,6 @@ export interface NamespaceDeclaration {
   locksMembers: boolean;
   isGlobalObject: boolean;
   listsAllMembers: boolean;
-  namesReadByNativeCode: readonly string[] | null;
-  namesOnlyInspectedByNativeCode: readonly string[];
   columns: EntryColumns;
 }
 
@@ -312,6 +310,7 @@ export interface HostReadDeclaration {
   context: HostReadContext;
   exportName: string;
   use: HostReadUse;
+  namesLookedFor: readonly string[];
 }
 
 export interface HostObjectDeclaration {

@@ -266,6 +266,16 @@ static std::optional<ClassTestedByInstanceOf> describeClassTestedByInstanceOf(co
     return tested;
 }
 
+bool findConditionsOfOrdinaryInstanceOf(const Walker& walker, TypeID typeOfConstructor, Vector<MemberConditionRecord, 16>& conditions)
+{
+    std::optional<ClassTestedByInstanceOf> tested = describeClassTestedByInstanceOf(walker, typeOfConstructor);
+    if (!tested)
+        return false;
+    for (const MemberConditionRecord& condition : tested->conditions)
+        conditions.append(condition);
+    return true;
+}
+
 static ChainEndForInstanceOf followChainForInstanceOf(const Walker& walker, LayoutID layout, LayoutID tested)
 {
     const Program& program = walker.program();

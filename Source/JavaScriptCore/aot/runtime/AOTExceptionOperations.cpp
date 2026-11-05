@@ -486,11 +486,28 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instanc
     if ((part & 0xff) == static_cast<uint32_t>(Typed::PartOfEffects::Writes)) {
         said.print(" say that the call will not write ");
         CommaPrinter comma;
+        if (part >> 16 == Typed::noOperandInEffectsNet) {
+            static constexpr std::array<ASCIILiteral, Typed::heapsOfCountsInEffectsNet.size()> deeds { "guards that held have ended"_s, "guards were armed or have begun"_s };
+            CommaPrinter commaOfDeeds;
+            StringPrintStream done;
+            std::optional<Typed::AbstractHeap> named;
+            for (unsigned count = 0; count < deeds.size(); ++count) {
+                if (!(differs >> count * 8 & 0xff))
+                    continue;
+                if (named != Typed::heapsOfCountsInEffectsNet[count])
+                    said.print(comma, Typed::nameOf(Typed::heapsOfCountsInEffectsNet[count]));
+                named = Typed::heapsOfCountsInEffectsNet[count];
+                done.print(commaOfDeeds, deeds[count]);
+            }
+            said.print(", and under it ", done.toString());
+            differs = 0;
+        }
         for (unsigned lane = 0; lane < Typed::heapsOfDigestInEffectsNet.size(); ++lane) {
             if (differs >> lane * 8 & 0xff)
                 said.print(comma, Typed::nameOf(Typed::heapsOfDigestInEffectsNet[lane]));
         }
-        said.print(", and those words of operand ", part >> 16, " are others behind it");
+        if (part >> 16 != Typed::noOperandInEffectsNet)
+            said.print(", and those words of operand ", part >> 16, " are others behind it");
     } else {
         if (differs)
             said.print(" (", BuiltinTable::singleton().textOf(BuiltinID(static_cast<uint16_t>(differs))), ")");
@@ -510,6 +527,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCollectionsForEffectsNet, uint64_t
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDigestForEffectsNet, uint64_t, (EncodedJSValue encodedValue, uint64_t lanes))
 {
+    if (lanes & Typed::asksForCountsInEffectsNet) {
+        const State& state = *reinterpret_cast<const State*>(encodedValue);
+        uint64_t counts = 0;
+        for (unsigned count = 0; count < Typed::heapsOfCountsInEffectsNet.size(); ++count) {
+            if (lanes & 1ull << count)
+                counts |= (state.writesCountedForEffectsNet[count] & 0xff) << count * 8;
+        }
+        return counts;
+    }
     JSValue value = JSValue::decode(encodedValue);
     if (!value || !value.isCell())
         return 0;

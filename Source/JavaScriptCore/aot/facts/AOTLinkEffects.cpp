@@ -356,9 +356,9 @@ private:
     BitVector m_familiesThatMayFindAnything;
     Vector<Answer> m_keysThatObjectPrototypeNeverAnswers;
 
-    Vector<CodeEntered> m_codeOfCalls;
+    LargeList<CodeEntered> m_codeOfCalls;
     Vector<uint32_t> m_firstAccessOfFunction;
-    Vector<CodeEntered> m_codeOfAccesses;
+    LargeList<CodeEntered> m_codeOfAccesses;
     Vector<FunctionID> m_functionsEntered;
     Vector<uint32_t> m_firstCallee;
     Vector<FunctionID> m_callees;
@@ -385,19 +385,25 @@ CalleeSummarizerForLinkEffects::CalleeSummarizerForLinkEffects(const LinkFlow& f
     DistinctEffects effectsOfAnyCode;
     const Effects* keptEffectsOfAnyCode = effectsOfAnyCode.keep(ofAnyCode.all);
     m_blocksOfDistinctEffects.appendVector(effectsOfAnyCode.takeBlocks());
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
-        const Function& function = m_program.functions[index];
-        if (!flow.reached.get(index) || !function.hasBody())
-            continue;
-        const ThinSummary& summary = flow.summaries.at(FunctionID(index));
-        RELEASE_ASSERT(flow.firstCallOfFunction[index + 1] - flow.firstCallOfFunction[index] == summary.calls.size());
-        if (isAnyCodeByItsOwnText(FunctionID(index), summary)) {
-            tables.functions[index].keptEffectsOnReturn = keptEffectsOfAnyCode;
-            tables.functions[index].keptEffectsOnThrow = keptEffectsOfAnyCode;
-            continue;
+    m_firstAccessOfFunction.fill(0, m_numberOfFunctions + 1);
+    static_assert(!(indicesInRangeOfLoop % 64));
+    forEachRangeOfIndicesInParallel(flow.loops, m_numberOfFunctions, [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            const Function& function = m_program.functions[index];
+            if (!flow.reached.get(index) || !function.hasBody())
+                continue;
+            FunctionID id(static_cast<uint32_t>(index));
+            const ThinSummary& summary = flow.summaries.at(id);
+            RELEASE_ASSERT(flow.firstCallOfFunction[index + 1] - flow.firstCallOfFunction[index] == summary.calls.size());
+            if (isAnyCodeByItsOwnText(id, summary)) {
+                tables.functions[index].keptEffectsOnReturn = keptEffectsOfAnyCode;
+                tables.functions[index].keptEffectsOnThrow = keptEffectsOfAnyCode;
+                continue;
+            }
+            m_isSummarized.quickSet(index);
+            m_firstAccessOfFunction[index + 1] = summary.accesses.size();
         }
-        m_isSummarized.quickSet(index);
-    }
+    });
 
     findBeliefInNodes();
     indexHolders();
@@ -600,37 +606,70 @@ void CalleeSummarizerForLinkEffects::indexHolders()
     m_keysOfFieldsThatMayHoldFunctions.ensureSize(numberOfKeys);
     m_keysThatObjectPrototypeNeverAnswers.fill(Answer::NotAsked, numberOfKeys);
 
-    auto note = [&](PropertyKeyID key, FlowNodeID holder, bool runsAtReads, bool runsAtStores) {
-        if (!key)
-            return;
-        if (runsAtReads || runsAtStores)
-            m_accessors.append(AccessorUnderKey { key, holder, runsAtReads, runsAtStores });
-        else if (mayBeOtherCallableForLinkEffects(m_flow.typeAt(holder)))
-            m_keysOfOtherCallables.quickSet(key.index());
+    static constexpr uint8_t runsAtReads = 1 << 0;
+    static constexpr uint8_t runsAtStores = 1 << 1;
+    static constexpr uint8_t mayBeOtherCallable = 1 << 2;
+    static constexpr uint8_t isAccessorField = 1 << 3;
+    static constexpr uint8_t holdsOneClosure = 1 << 4;
+    static constexpr uint8_t mayHoldFunctions = 1 << 5;
+    struct HolderUnderKey {
+        PropertyKeyID key;
+        FlowNodeID holder;
+        uint8_t traits;
+    };
+    auto traitsOfCallableAt = [&](FlowNodeID holder) -> uint8_t {
+        return mayBeOtherCallableForLinkEffects(m_flow.typeAt(holder)) ? mayBeOtherCallable : 0;
+    };
+    auto note = [&](const HolderUnderKey& noted) {
+        if (noted.traits & (runsAtReads | runsAtStores))
+            m_accessors.append(AccessorUnderKey { noted.key, noted.holder, !!(noted.traits & runsAtReads), !!(noted.traits & runsAtStores) });
+        if (noted.traits & mayBeOtherCallable)
+            m_keysOfOtherCallables.quickSet(noted.key.index());
+        if (noted.traits & isAccessorField)
+            m_keysOfAccessorFields.quickSet(noted.key.index());
+        if (noted.traits & holdsOneClosure)
+            m_keysOfFieldsThatHoldOneClosure.quickSet(noted.key.index());
+        if (noted.traits & mayHoldFunctions)
+            m_keysOfFieldsThatMayHoldFunctions.quickSet(noted.key.index());
+    };
+    auto noteAll = [&](const Vector<Vector<HolderUnderKey>>& chunks) {
+        for (const Vector<HolderUnderKey>& chunk : chunks)
+            std::ranges::for_each(chunk, note);
     };
 
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
+    noteAll(collectChunksInParallel<HolderUnderKey>(m_flow.loops, m_numberOfFunctions, [&](unsigned index, Vector<HolderUnderKey>& found) {
         for (const SummaryMember& member : m_flow.summaries.at(FunctionID(index)).members) {
-            if (member.side == ClassSide::Prototype)
-                note(member.key, m_flow.member(member.classLayout, member.side, member.index), member.kind == MethodKind::Getter, member.kind == MethodKind::Setter);
+            if (member.side != ClassSide::Prototype)
+                continue;
+            FlowNodeID holder = m_flow.member(member.classLayout, member.side, member.index);
+            if (!member.key)
+                continue;
+            uint8_t traits = member.kind == MethodKind::Getter ? runsAtReads : member.kind == MethodKind::Setter ? runsAtStores : traitsOfCallableAt(holder);
+            if (traits)
+                found.append(HolderUnderKey { member.key, holder, traits });
         }
+    }));
+    for (const LinkFlow::NameOnPrototype& name : m_flow.namesOnPrototypes()) {
+        if (name.key)
+            note(HolderUnderKey { name.key, name.stored, traitsOfCallableAt(name.stored) });
     }
-    for (const LinkFlow::NameOnPrototype& name : m_flow.namesOnPrototypes())
-        note(name.key, name.stored, false, false);
-    for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+    noteAll(collectChunksInParallel<HolderUnderKey>(m_flow.loops, static_cast<unsigned>(m_program.layouts.size()), [&](unsigned index, Vector<HolderUnderKey>& found) {
         const Layout& layout = m_program.layouts[index];
-        for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+        uint32_t numberOfFields = baseWhoseFieldListIsCopiedWhole(m_program, LayoutID(index)) ? layout.ownFieldCount : static_cast<uint32_t>(layout.fields.size());
+        for (uint32_t field = 0; field < numberOfFields; ++field) {
             PropertyKeyID key = layout.fields[field].key;
-            if (key && layout.fields[field].form.contains(FieldForm::IsAccessor))
-                m_keysOfAccessorFields.quickSet(key.index());
-            else
-                note(key, m_flow.field({ LayoutID(index), field }), false, false);
-            if (key && m_flow.typeAt(m_flow.field({ LayoutID(index), field })).functions == LinkType::Functions::Closure)
-                m_keysOfFieldsThatHoldOneClosure.quickSet(key.index());
-            if (key && mayHoldFunction(m_flow.field({ LayoutID(index), field })))
-                m_keysOfFieldsThatMayHoldFunctions.quickSet(key.index());
+            FlowNodeID holder = m_flow.field({ LayoutID(index), field });
+            if (!key)
+                continue;
+            uint8_t traits = layout.fields[field].form.contains(FieldForm::IsAccessor) ? isAccessorField : traitsOfCallableAt(holder);
+            if (m_flow.typeAt(holder).functions == LinkType::Functions::Closure)
+                traits |= holdsOneClosure;
+            if (mayHoldFunction(holder))
+                traits |= mayHoldFunctions;
+            if (traits)
+                found.append(HolderUnderKey { key, holder, traits });
         }
-    }
+    }));
     m_flow.forEachAppendedField([&](PropertyKeyID key, FlowNodeID field) {
         if (key && mayHoldFunction(field))
             m_keysOfFieldsThatMayHoldFunctions.quickSet(key.index());
@@ -1057,16 +1096,10 @@ void CalleeSummarizerForLinkEffects::findCodeEnteredByCall(FunctionID id, const 
 void CalleeSummarizerForLinkEffects::findCodeEntered()
 {
     const ParallelLoops& loops = m_flow.loops;
-    m_codeOfCalls.fill(CodeEntered { }, m_flow.calleesOfCalls.size());
-    m_firstAccessOfFunction.reserveInitialCapacity(m_numberOfFunctions + 1);
-    uint32_t numberOfAccesses = 0;
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
-        m_firstAccessOfFunction.append(numberOfAccesses);
-        if (isSummarized(index))
-            numberOfAccesses += m_flow.summaries.at(FunctionID(index)).accesses.size();
-    }
-    m_firstAccessOfFunction.append(numberOfAccesses);
-    m_codeOfAccesses.fill(CodeEntered { }, numberOfAccesses);
+    m_codeOfCalls.grow(loops, m_flow.calleesOfCalls.size());
+    for (uint32_t index = 0; index < m_numberOfFunctions; ++index)
+        m_firstAccessOfFunction[index + 1] += m_firstAccessOfFunction[index];
+    m_codeOfAccesses.grow(loops, m_firstAccessOfFunction.last());
 
     ChunksOfIndices division = divideIntoChunks(m_numberOfFunctions);
     Vector<Vector<FunctionID>> functionsOfChunks(division.size());

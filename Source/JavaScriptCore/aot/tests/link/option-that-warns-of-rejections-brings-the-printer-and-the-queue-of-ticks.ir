@@ -1,5 +1,6 @@
-# new Promise(() => {})
-# The control of class-that-is-only-named-brings-nothing-that-hangs-on-its-objects.ir.
+# new Promise(() => {}), built with --compile-exec-argv=--unhandled-rejections=warn
+# The front end names the entry that stands for the warnings of rejections among what the start uses (`usedatstart`).
+# The control of promise-that-is-made-brings-nothing-that-warns-of-rejections.ir.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
 # REQUIRES: entries-of-bun
@@ -9,6 +10,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
 entry module=m0
+usedatstart builtin=WarningsOfRejections
 runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f2
 runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f3
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {

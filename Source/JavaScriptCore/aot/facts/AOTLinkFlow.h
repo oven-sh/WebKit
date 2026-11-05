@@ -276,7 +276,7 @@ using SetsOfFunctionsInLinkFlow = SetsOfFourInLinkFlow<FunctionID>;
 using FlowNodeID = ID<struct FlowNodeIDTag>;
 
 struct FlowObserver {
-    enum class Kind : uint8_t { SubjectOfCall, ReceiverOfCall, SubjectOfAccess, KeyOfAccess, SubjectOfChange, OtherOfChange, OperandOfOperator, Inspected, MemberOfSharedCall, MemberOfSharedAccess, MemberOfAccess, SymbolOfPreparation };
+    enum class Kind : uint8_t { SubjectOfCall, ReceiverOfCall, SubjectOfAccess, KeyOfAccess, SubjectOfChange, OtherOfChange, OperandOfOperator, Inspected, MemberOfSharedCall, MemberOfSharedAccess, MemberOfAccess, SymbolOfPreparation, PassedToBeNamed };
 
     Kind kind { Kind::SubjectOfCall };
     FunctionID function;
@@ -750,7 +750,7 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, PrototypeLaidAboveOtherObjects };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty };
     void note(Note, uint32_t number, uint32_t more = 0);
     static constexpr uint32_t byCode = 1;
     static constexpr uint32_t byRowThatMayRunCode = 2;
@@ -759,10 +759,19 @@ public:
     static constexpr uint32_t onlyDeletes = 1 << 16;
     unsigned numberOfLanes() const { return static_cast<unsigned>(m_lanes.size()); }
     bool bringAliveOnLanes(std::span<const FunctionID>, const ScopedLambda<void(FunctionID)>& bringAlive);
+    bool takeStepsOfReachOnLanes(size_t numberOfSteps, const ScopedLambda<void(unsigned lane)>& takeSteps);
+    bool severalThreadsTell() const { return m_severalThreadsTell; }
+    bool lanesTakeStepsOfReach() const { return m_lanesTakeStepsOfReach && m_severalThreadsTell; }
+    struct LeftToReach {
+        uint8_t what;
+        uint32_t index;
+    };
+    void leaveToReach(uint8_t what, uint32_t index);
+    Vector<LeftToReach> takeWhatLaneLeftToReach(unsigned lane);
     bool listsSourceOfObjectsBehindPass(FlowNodeID, LayoutID);
     bool tellsBuiltinsInReachBehindPass(FunctionID);
     void listSourceOfObjects(FlowNodeID, LayoutID);
-    bool letsFunctionsWaitToBeBroughtAlive() const { return m_letsFunctionsWaitToBeBroughtAlive; }
+    bool letsReachWait() const { return m_letsReachWait; }
     unsigned laneOfObserversOf(FunctionID function) const { return laneIndexOf(FlowNodeID(m_nodesOfFunctions[function.index()].firstParameter)); }
     unsigned indexOfLaneAtWork() const;
     const LinkType& typeObservedBefore() const LIFETIME_BOUND;
@@ -796,6 +805,8 @@ public:
     Vector<BuiltinID> takeBuiltinsLost() { return std::exchange(m_builtinsLost, { }); }
     Vector<BuiltinID> takeBuiltinsLostInSight() { return std::exchange(m_builtinsLostInSight, { }); }
     Vector<BuiltinID> takeBuiltinsAtUnseen() { return std::exchange(m_builtinsAtUnseen, { }); }
+    void handToAccessorsLaidAbove(FlowNodeID receiver);
+    bool letGoWhoWaitsForAccessorsLaidAbove();
     bool lostBuiltinsReachUnseen() const { return m_lostBuiltinsReachUnseen; }
     LinkType anythingBeside(BuiltinID canonical, FunctionID reader) const;
     LinkType unseenObjectsBelow(BuiltinID canonicalPrototype, FunctionID maker) const;
@@ -861,6 +872,8 @@ public:
     void preparationObserved(const FlowObserver&, const LinkType&);
     void noteKeyOfAccessInLibrary(FunctionID, uint32_t record, const SummaryAccess&);
     void changeObserved(const FlowObserver&, const LinkType&);
+    void passedToBeNamedObserved(const FlowObserver&, const LinkType&);
+    bool isPlainClosureMadeWith(FunctionID, PropertyKeyID) const;
     void operatorObserved(const FlowObserver&, const LinkType&);
     std::optional<uint16_t> primitivesThatOperatorGivesWhateverArrives(FunctionID, uint32_t record);
 
@@ -1195,6 +1208,7 @@ private:
     bool m_holdsBack { false };
     bool m_tellsObservers { false };
     bool m_severalThreadsTell { false };
+    bool m_lanesTakeStepsOfReach { false };
     alignas(128) mutable std::atomic<bool> m_whatIsSharedIsLocked { false };
     void lockWhatIsShared() const
     {
@@ -1258,6 +1272,8 @@ private:
     void layWhatWasHeldBackFor(unsigned lane);
     void gatherWhatLanesNoted();
     void runOnLanes(const Invocable<void(unsigned lane)> auto&);
+    bool lanesMayWorkForReach(size_t numberOfSteps) const;
+    void workOnLanesForReach(const Invocable<void(unsigned lane)> auto&);
     bool layEdge(Lane&, FlowNodeID from, FlowNodeID to, TypeID passes);
     void addEdgeAtOnce(FlowNodeID from, FlowNodeID to, TypeID passes);
     void putObserver(Lane&, FlowNodeID, const FlowObserver&);
@@ -1328,6 +1344,9 @@ private:
     void forEachPrototypePassedAbove(LayoutID, PropertyKeyID, const Invocable<void(uint32_t record)> auto&);
     void tiePrototypesAboveLostLayout(LayoutID);
     bool letPrototypesFoundThroughLostEscape();
+    class CopiesOfMembers;
+    bool layMembersThatCopiesBring();
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_edgesLaidByCopiesOfMembers;
     BitVector m_layoutsOfConstructorFunctions;
     BitVector m_layoutsBelowConstructorFunctions;
     BitVector m_prototypesPassedByLookups;
@@ -1527,9 +1546,11 @@ private:
     Shared<HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_takersOfGatheredArguments;
 
     Vector<std::pair<FlowObserver, FlowNodeID>> m_newObservers;
+    size_t m_numberOfNewObserversLeftWithLanes { 0 };
+    size_t numberOfNewObservers() const { return m_newObservers.size() + m_numberOfNewObserversLeftWithLanes; }
     mutable Vector<Deferred> m_deferred;
     bool m_isSettling { false };
-    bool m_letsFunctionsWaitToBeBroughtAlive { false };
+    bool m_letsReachWait { false };
     void bringAliveWhatSettlingReached();
 
     uint32_t m_firstVariable { 0 };
@@ -1553,9 +1574,13 @@ private:
     struct KeysThatRowOfConstructorsFills {
         uint32_t untilFirstSight { 0 };
         uint32_t untilEnds { 0 };
+        uint32_t leftEmptyUntilFirstSight { UINT32_MAX };
+        uint32_t leftEmptyUntilEnds { UINT32_MAX };
     };
     Vector<KeysThatRowOfConstructorsFills> m_keysThatRowsOfConstructorsFill;
     Vector<Vector<PropertyKeyID>> m_listsOfKeysThatRowsOfConstructorsFill;
+    Vector<Vector<uint32_t>> m_listsOfFieldsThatRowsOfConstructorsLeaveEmpty;
+    void forEachFieldLeftEmptyByRowOfConstructors(LayoutID, uint32_t placeOfKeysFilled, uint32_t placeOfFieldsLeftEmpty, const Invocable<void(uint32_t)> auto&) const;
     void findWhatRowsOfConstructorsFill();
     void findSuperCallsThatMayAnswerWithOlderObject();
     bool answersOnlyWithObjectOfItsConstruction(FunctionID constructor) const;
@@ -1599,6 +1624,8 @@ private:
     };
     Shared<Vector<SiteOfWrite>> m_sitesOfWritesOnBuiltins;
     mutable Vector<BuiltinID> m_builtinsAtUnseen;
+    Vector<FlowNodeID> m_receiversThatWaitForAccessorsLaidAbove;
+    bool m_operandIsLaidAbovePrototype { false };
     BitVector m_isNodeOfLibrary;
     BitVector m_isFunctionOfLibrary;
     bool m_tellsObserverOfLibrary { false };

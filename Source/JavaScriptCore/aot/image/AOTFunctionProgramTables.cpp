@@ -160,7 +160,7 @@ void nameWhatFunctionTablesName(const TableInputs& inputs, const GatheredMention
 {
     const Typed::Program& program = inputs.program;
     names.strings.set(program.strings.emptyString().index());
-    if (inputs.options.obfuscates())
+    if (inputs.options.hidesFunctionNames())
         return;
     const Typed::CallingConventions& conventions = inputs.plan.conventions();
 
@@ -324,7 +324,7 @@ void FunctionTablesByRange::collectName(uint32_t index, std::optional<BuiltinID>
         group[1] = static_cast<uint32_t>(names.size());
     if (!m_numbersOfStringsFit || !isShownByName(m_encoder.inputs, FunctionID(index)))
         return;
-    StringID name = m_encoder.obfuscates() ? StringID() : nameShownForFunction(m_encoder.program, FunctionID(index), implemented);
+    StringID name = m_encoder.build.options().hidesFunctionNames() ? StringID() : nameShownForFunction(m_encoder.program, FunctionID(index), implemented);
     if (!name || name == m_encoder.program.strings.emptyString())
         return;
     group[0] |= 1u << index % functionsInGroupOfNames;

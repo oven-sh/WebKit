@@ -82,8 +82,7 @@ BuiltinID findConstantMemberFrom(const Program& program, const Facts& facts, Bui
 
 BuiltinID findConstantMemberOnceForBuild(const Walker& walker, BuiltinID start, PropertyKeyID key)
 {
-    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::FirstOfWalk) + 55;
-    static_assert(number < static_cast<uint8_t>(AnswerKeptInArena::CellsOfFieldArm));
+    static constexpr uint8_t number = static_cast<uint8_t>(AnswerKeptInArena::ConstantMemberOfBuiltin);
     TypeArena& types = walker.types();
     if (types.keeps() != ArenaKeeps::UntilReset || liesInThread(key))
         return findConstantMemberFrom(walker.program(), walker.facts(), start, key);

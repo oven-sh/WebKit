@@ -50,12 +50,14 @@ enum class Result : uint8_t { Completed, Stopped, NeedsGenericPath };
 enum class Presence : uint8_t { Present, Absent, Unknown };
 enum class Integrity : uint8_t { NonExtensible, Sealed, Frozen };
 enum class Elements : bool { NeedGenericPath, AreLeftOut };
+enum class Preparations : bool { NeedGenericPath, AreDone };
 
 ALWAYS_INLINE bool isCompiledObject(const JSCell* cell) { return cell->type() == CompiledObjectType; }
 JS_EXPORT_PRIVATE bool wouldHaveArrayStorage(JSObject* compiledObject);
 JS_EXPORT_PRIVATE bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to);
 JS_EXPORT_PRIVATE Result forEachOwnProperty(VM&, JSObject*, Filter, const ScopedLambda<IterationStatus(const OwnProperty&)>&);
-JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreated(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath);
+JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreated(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath, Preparations = Preparations::NeedGenericPath);
+JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreatedAfterPreparing(JSGlobalObject*, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath);
 struct GetterWalkHooks {
     const ScopedLambda<void()>* willRunCode { nullptr };
     const ScopedLambda<bool()>* mayReadAhead { nullptr };

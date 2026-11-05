@@ -200,8 +200,10 @@ public:
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;
+    bool holdsEveryFieldHeldFilled() const;
     bool mayBearMark() const;
     JS_EXPORT_PRIVATE void tryFinishBirth();
+    bool hasAccessorAmongExtraProperties() const;
 
     enum class Integrity : uint8_t { NotExtensible, Sealed, Frozen };
     void setIntegrity(JSGlobalObject*, Integrity);

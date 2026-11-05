@@ -133,16 +133,19 @@ bool Modules::deliverFirstTextThatWaits()
     }
     if (m_instance.globalObject->microtaskRunnability() == QueuedTaskResult::Discard)
         return false;
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    JSPromise* promise = text.promise.get();
     m_isInJobsBehindDelivery = true;
-    if (text.jobsBehindFirstCall) {
-        m_callsToMakeAgain.append(WTF::move(text));
-        makeCallAgain(promise);
+    if (!text.jobsBehindFirstCall) {
+        makeCallAgain(text);
         return true;
     }
-    scope.release();
-    makeCallAgain(text);
+    if (m_callsToMakeAgain.isEmpty()) {
+        VM& vm = *m_instance.vm;
+        if (!m_promiseOfJobThatMakesCallsAgain)
+            m_promiseOfJobThatMakesCallsAgain.set(vm, JSPromise::create(vm, m_instance.globalObject->promiseStructure()));
+        m_jobsBehindDelivery = 0;
+        queueStepOfImportInImportTurns(m_promiseOfJobThatMakesCallsAgain.get(), text.module, 1);
+    }
+    m_callsToMakeAgain.append(WTF::move(text));
     return true;
 }
 
@@ -175,20 +178,17 @@ void Modules::makeCallAgain(TextThatWaits& text)
         settleAsLoaderDoesInImportTurns(m_instance.globalObject, promise, loaded);
 }
 
-bool Modules::makeCallAgain(JSPromise* promise)
+void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)
 {
-    size_t index = m_callsToMakeAgain.findIf([&](const TextThatWaits& text) { return text.promise.get() == promise; });
-    if (index == notFound)
-        return false;
-    if (uint32_t jobs = std::min<uint32_t>(m_callsToMakeAgain[index].jobsBehindFirstCall, 255)) {
-        m_callsToMakeAgain[index].jobsBehindFirstCall -= jobs;
-        queueStepOfImportInImportTurns(promise, m_callsToMakeAgain[index].module, jobs);
-        return true;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    ++m_jobsBehindDelivery;
+    while (!m_callsToMakeAgain.isEmpty() && m_callsToMakeAgain.first().jobsBehindFirstCall <= m_jobsBehindDelivery) {
+        TextThatWaits text = m_callsToMakeAgain.takeFirst();
+        makeCallAgain(text);
+        RETURN_IF_EXCEPTION(scope, void());
     }
-    TextThatWaits text = WTF::move(m_callsToMakeAgain[index]);
-    m_callsToMakeAgain.removeAt(index);
-    makeCallAgain(text);
-    return true;
+    if (!m_callsToMakeAgain.isEmpty())
+        queueStepOfImportInImportTurns(m_promiseOfJobThatMakesCallsAgain.get(), moduleOfJob, 1);
 }
 
 void Modules::queueJobOfRound(ModuleID moduleOfJob)

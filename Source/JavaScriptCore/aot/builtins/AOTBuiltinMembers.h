@@ -27,6 +27,7 @@ BuiltinMemberName builtinMemberNameOf(const Program&, PropertyKeyID);
 
 BuiltinID findOwnMember(const Program&, BuiltinID holder, PropertyKeyID);
 bool listsEveryMemberUnder(const Program&, BuiltinID holder, PropertyKeyID);
+bool lookupPassesHolderLinkedAnew(const Program&, BuiltinID start, PropertyKeyID);
 
 BuiltinClassID primitiveClassOf(uint16_t primitives);
 bool isClassOfPrimitives(BuiltinClassID);

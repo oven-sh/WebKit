@@ -232,7 +232,6 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
       countBuiltins(({ loadsMachineCodeAs }) => loadsMachineCodeAs !== null),
     ],
     ["BuiltinClosedKeys", "builtinTableClosedKeys", model.closedKeys.length],
-    ["BuiltinNamesReadByNativeCode", "builtinTableNamesReadByNativeCode", model.namesReadByNativeCode.length],
   ];
 }
 

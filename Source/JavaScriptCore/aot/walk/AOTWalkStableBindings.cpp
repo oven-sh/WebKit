@@ -50,8 +50,7 @@ static bool variableStaysAsFilled(const Walker& walker, VariableID id, Definitio
         return false;
     if (variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
         return false;
-    const Module& module = program.at(variable.module);
-    if (!isEvaluatedAtMostOnceOf(module.kind) || module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeEvicted, ModuleFlags::MayBeMocked }))
+    if (!loaderEntersBodyAtMostOnce(program.at(variable.module)))
         return false;
     const Plan& plan = walker.plan();
     if (plan.runTimeMayFill(id))

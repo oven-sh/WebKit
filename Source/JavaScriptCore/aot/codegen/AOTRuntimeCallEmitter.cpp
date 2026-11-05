@@ -1070,6 +1070,10 @@ void RuntimeCallEmitter::beginWatchOfEffects(const OperationContext& context, co
         watch.collectionsInFront = readCollectionsForEffectsNet(nullptr);
     watch.isHeldToThrowNothing = !effects.mayThrow;
     watch.lanesNotWritten = lanesNotWrittenInEffectsNet(effects);
+    if (watch.entriesInFront && !generator().isInitializingCell())
+        watch.countsHeld = countsHeldInEffectsNet(effects);
+    if (watch.countsHeld)
+        watch.countsInFront = readCountsForEffectsNet(watch.countsHeld, nullptr);
     if (watch.lanesNotWritten && !generator().isInitializingCell()) {
         const Operation& operation = operationAt(context.valueID());
         for (uint32_t operandIndex = 0; operandIndex < operation.numberOfOperands() && watch.numberOfDigests < watch.digests.size(); ++operandIndex) {
@@ -1126,10 +1130,14 @@ void RuntimeCallEmitter::endWatchOfEffects(const OperationContext& context, cons
         LValue differs = m_out.bitXor(digest.inFront, emitEntryCall(nullptr, AOT::Entry::operationAOTDigestForEffectsNet, arguments, { }).first);
         stopAtFalseEffects(context, watch.rows, m_out.isZero64(differs), static_cast<uint32_t>(PartOfEffects::Writes) | digest.operandIndex << 16, differs);
     }
-    if (watch.numberOfDigests) {
-        parts.append(PartOfEffects::Writes);
-        build().statistics().count(StatisticID::OperandsHashedRoundCalls, watch.numberOfDigests);
+    if (watch.countsInFront) {
+        LValue differs = m_out.bitXor(watch.countsInFront, readCountsForEffectsNet(watch.countsHeld, behind));
+        stopAtFalseEffects(context, watch.rows, m_out.isZero64(differs), static_cast<uint32_t>(PartOfEffects::Writes) | noOperandInEffectsNet << 16, differs);
     }
+    if (watch.numberOfDigests || watch.countsInFront)
+        parts.append(PartOfEffects::Writes);
+    if (watch.numberOfDigests)
+        build().statistics().count(StatisticID::OperandsHashedRoundCalls, watch.numberOfDigests);
     markRowsExercised(watch.rows, parts.span());
 }
 
@@ -1167,6 +1175,12 @@ LValue RuntimeCallEmitter::readWordForEffectsNet(ptrdiff_t offsetInInstance, std
             jit.load64(CCallHelpers::Address(params[0].gpr(), *offsetBehindPointer), params[0].gpr());
     });
     return read;
+}
+
+LValue RuntimeCallEmitter::readCountsForEffectsNet(uint8_t counts, LValue behind)
+{
+    std::array<LValue, 2> arguments { readWordForEffectsNet(AOT_INSTANCE_OFFSET(state), std::nullopt, behind), m_out.constInt64(static_cast<int64_t>(asksForCountsInEffectsNet | counts)) };
+    return emitEntryCall(nullptr, AOT::Entry::operationAOTDigestForEffectsNet, arguments, { }).first;
 }
 
 LValue RuntimeCallEmitter::readCollectionsForEffectsNet(LValue behind)

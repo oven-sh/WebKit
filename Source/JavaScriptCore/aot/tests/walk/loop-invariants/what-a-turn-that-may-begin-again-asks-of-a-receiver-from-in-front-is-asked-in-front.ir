@@ -5,13 +5,13 @@
 # is asked once, in front, and the failing way is the other copy from its start: there a loop of no turn throws nothing, and the first turn throws where it is written. The test for undefined and null used to be
 # a check that throws, so it stayed in the turn and held all that hangs on it: the look at the prototype, the look at the slot, the read, the product. The look at the members of the class stayed too: a read
 # by name counted as a write of the guards of members, which only a read off a constructor function begins.
+# Since a loop is walked under a row the test in front is the test of the shape, which keeps undefined and null out with every other stranger.
 # f1 = sum
-# TODO: loops: the test for undefined and null is not yet built in front of the typed build that the row buys
 # OPTIONS: check=Validate
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: [[nullish]]: boolean @Boolean = TypeTest {{*}}testedType=undefined|null
-# CHECK-NEXT: Branch [[nullish]] -> taken [[closed]](), notTaken
+# CHECK: [[shape]]: boolean @Boolean = ShapeTest {{*}}layouts=[L0]
+# CHECK-NEXT: Branch [[shape]] -> taken {{*}}, notTaken [[closed]]()
 # CHECK: number @Double{{*}}isInLoop=true isLoopHead=true
 # CHECK-NOT: RequireObjectCoercible
 # CHECK: [[prototype]]: boolean @Boolean = HasLayoutPrototype

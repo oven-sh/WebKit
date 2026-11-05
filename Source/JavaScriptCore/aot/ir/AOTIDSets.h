@@ -139,12 +139,13 @@ public:
         std::span<const IDSetChunkEntry> entries = chunkEntries();
         size_t firstEntry = std::ranges::lower_bound(entries, begin / membersPerSetChunk, { }, &IDSetChunkEntry::firstMemberDividedBySize) - entries.begin();
         for (const IDSetChunkEntry& entry : entries.subspan(firstEntry)) {
-            if (entry.firstMemberDividedBySize * membersPerSetChunk >= end)
+            uint32_t firstMemberOfChunk = entry.firstMemberDividedBySize * membersPerSetChunk;
+            if (firstMemberOfChunk >= end)
                 return false;
             const IDSetChunk& chunk = chunkAt(entry.chunk);
-            for (uint32_t word = 0; word < chunk.bits.size(); ++word) {
+            for (uint32_t word = begin > firstMemberOfChunk ? (begin - firstMemberOfChunk) / 64 : 0; word < chunk.bits.size(); ++word) {
                 for (uint64_t bits = chunk.bits[word]; bits; bits &= bits - 1) {
-                    uint32_t member = entry.firstMemberDividedBySize * membersPerSetChunk + word * 64 + std::countr_zero(bits);
+                    uint32_t member = firstMemberOfChunk + word * 64 + std::countr_zero(bits);
                     if (member >= end)
                         return false;
                     if (member >= begin && matches(member))

@@ -529,6 +529,7 @@ export const builtinMarks = [
   "RunsWaitingJobs",
   "IsCalledWithoutStartupLoads",
   "InstancesHaveMethodCalledWithStartupLoads",
+  "InstancesArePrintedByCodeOfTheirOwn",
   "LoadsCodeWithoutJSAccess",
   "ReadLoadsCodeByName",
   "HoldsPathOfMainModule",
@@ -546,6 +547,7 @@ export const builtinMarks = [
   "RegistersPreparationOfHolders",
   "AnswersWithPathOfModule",
   "IsKeyReadOnlyByRowsThatNameIt",
+  "LaysOperandAbovePrototype",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -634,7 +636,6 @@ export interface ClassColumns {
   prototypeListsAllMembers?: boolean;
   openNamesOfPrototype?: readonly string[];
   openNamesOfConstructor?: readonly string[];
-  namesReadByNativeCodeOnPrototype?: readonly string[];
   hasConstructor?: boolean;
   hasPrototype?: boolean;
   constructorHoldsPrototype?: boolean;

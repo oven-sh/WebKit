@@ -281,7 +281,28 @@ static ALWAYS_INLINE uint32_t passOverReadsAheadOfOnlyWayOn(const Allocator& all
     return allocator.findReadFromAmongLaterReads(value, use, endOfWhatIsOutOfReach);
 }
 
+enum class LoopsAroundBlock : uint8_t {
+    AreAsked,
+    AreAskedByCaller,
+};
+
+static bool isDeadOnEveryPathFromBlock(LoopsAroundBlock, Allocator&, const Operation* value, const Block*, const BlockPlace&, Position from, uint32_t firstReadFrom);
+
+static bool isDeadOnWaysOnFromHeadOf(const Loop& loop, Allocator& allocator, const Operation* value)
+{
+    ASSERT(loop.hasSideEntrance && allocator.m_liveness.of(value).definition < loop.begin);
+    const Block* head = allocator.m_order.blocksInOrder()[loop.firstBlock];
+    const BlockPlace& place = allocator.m_order.of(head);
+    return !place.isRare() && isDeadOnEveryPathFromBlock(LoopsAroundBlock::AreAskedByCaller, allocator, value, head, place, loop.begin, allocator.findReadFromInList(value, loop.begin));
+}
+
 NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator& allocator, const Operation* value, const Block* block, const BlockPlace& place, Position from, uint32_t use)
+{
+    ASSERT(use == allocator.findReadFrom(value, from));
+    return isDeadOnEveryPathFromBlock(LoopsAroundBlock::AreAsked, allocator, value, block, place, from, use);
+}
+
+static bool isDeadOnEveryPathFromBlock(LoopsAroundBlock loopsAround, Allocator& allocator, const Operation* value, const Block* block, const BlockPlace& place, Position from, uint32_t use)
 {
     const Liveness& liveness = allocator.m_liveness;
     const Order& order = allocator.m_order;
@@ -289,7 +310,6 @@ NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator& alloca
     const ValueFacts& facts = liveness.of(value);
     const Position definition = facts.definition;
     ASSERT(definition != noPosition && definition <= from && !facts.has(ValueFlag::IsKeptForCollector));
-    ASSERT(use == allocator.findReadFrom(value, from));
     if (use && liveness.use(use).position < head + 2 * (block->size() + 1))
         return false;
 
@@ -301,6 +321,8 @@ NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator& alloca
     Position startOfReadsBehindLoop = noPosition;
     uint32_t loopAround = place.loop;
     if (place.isLoopHead && from == head && definition < loops[loopAround].begin)
+        loopAround = loops[loopAround].parent;
+    while (loopAround != noLoop && definition < loops[loopAround].begin && (loopsAround == LoopsAroundBlock::AreAskedByCaller || (loops[loopAround].hasSideEntrance && isDeadOnWaysOnFromHeadOf(loops[loopAround], allocator, value))))
         loopAround = loops[loopAround].parent;
     if (loopAround != noLoop) {
         const Loop& loop = loops[loopAround];
@@ -337,7 +359,7 @@ NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator& alloca
     if (startOfReadsBehindLoop == noPosition) {
         use = 0;
     } else {
-        if (!firstReadsNotKnownOutOfReach.isEmpty()) {
+        if (!firstReadsNotKnownOutOfReach.isEmpty() && head >= allocator.m_headOfBlock) {
             uint32_t known = firstReadsNotKnownOutOfReach[value->index()];
             if (known == UINT32_MAX)
                 return true;

@@ -75,10 +75,11 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     RegisterSet lostAnyway = m_recording.clobbered();
     lostAnyway.merge(RegisterSet::macroClobberedGPRs());
     lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
-    RELEASE_ASSERT(!preservingCall.cellToKeep || !lostAnyway.contains(*preservingCall.cellToKeep, IgnoreVectors));
-    preservingRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, [&](unsigned) {
+    SavedRegisterArea area = storeRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, preservingCall.cellsToKeep);
+    withSavedRegisters(RegisterSet::fromIterable(area.registers), [&] {
         emitCall();
     });
+    loadSavedRegisters(area);
     emitFunctionEpilogue();
     if (!preservingCall.checksException) {
         RELEASE_ASSERT(!preservingCall.emitBeforeReturn);

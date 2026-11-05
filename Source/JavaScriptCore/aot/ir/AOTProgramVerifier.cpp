@@ -584,7 +584,10 @@ bool isValidField(const Program& program, const Layout& layout, uint32_t index, 
 std::optional<InternalError> findFieldError(const Program& program, LayoutID id, const Layout& layout)
 {
     bool mayBeUnnamed = mayHaveUnnamedFields(program, layout);
-    for (uint32_t index = 0; index < layout.fields.size(); ++index) {
+    auto numberOfFieldsAsked = static_cast<uint32_t>(layout.fields.size());
+    if (LayoutID base = baseWhoseFieldListIsCopiedWhole(program, id); base && program.at(base).kind == layout.kind && mayHaveUnnamedFields(program, program.at(base)) == mayBeUnnamed)
+        numberOfFieldsAsked = layout.ownFieldCount;
+    for (uint32_t index = 0; index < numberOfFieldsAsked; ++index) {
         if (!isValidField(program, layout, index, mayBeUnnamed))
             return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = id, .count = index };
     }

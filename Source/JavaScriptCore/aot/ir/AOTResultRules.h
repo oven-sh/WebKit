@@ -55,7 +55,7 @@ public:
 
     enum class QuestionOfEachObject : uint8_t { Property, Contents };
     virtual TypeID askedOfEachObject(QuestionOfEachObject, TypeLevel, ObjectSetID, uint32_t, NOESCAPE const ScopedLambda<TypeID()>& askEachObject) const { return askEachObject(); }
-    enum class QuestionOfEachLayout : uint8_t { ContentsOfSlot, FieldReadByName, FoundAboveObjects, ReadByNameOffObjects };
+    enum class QuestionOfEachLayout : uint8_t { ContentsOfSlot, FieldReadByName, FoundAboveObjects, ReadByNameOffObjects, ResultOfTableRow };
     virtual TypeID askedOfEachLayout(QuestionOfEachLayout, TypeLevel, LayoutSetID, PropertyKeyID, NOESCAPE const ScopedLambda<TypeID()>& askEachLayout) const { return askEachLayout(); }
     virtual bool listLayoutsAskedAbout(PropertyKeyID, LayoutSetID, bool asksWhatIsWrittenAbove, Vector<LayoutID, 16>&) const { return false; }
 

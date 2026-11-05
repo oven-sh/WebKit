@@ -198,8 +198,11 @@ struct PlaceOfPrototypeProperty {
     uint32_t structureID;
     int32_t offset;
 };
-constexpr unsigned numberOfPlacesOfPrototypeProperties = 8;
-constexpr unsigned shiftOfStructureIDForPlaceOfPrototypeProperty = 5;
+constexpr unsigned numberOfPlacesOfPrototypeProperties = 256;
+constexpr uint32_t multiplierOfPlaceOfPrototypeProperty = 0x9E3779B1;
+constexpr unsigned shiftOfProductOfPlaceOfPrototypeProperty = 24;
+constexpr uint32_t indexOfPlaceOfPrototypeProperty(uint32_t structureID) { return (structureID * multiplierOfPlaceOfPrototypeProperty) >> shiftOfProductOfPlaceOfPrototypeProperty; }
+static_assert(numberOfPlacesOfPrototypeProperties == 1u << (32 - shiftOfProductOfPlaceOfPrototypeProperty));
 
 struct PrototypeOfClassObject {
     JSCell* classObject;
@@ -215,7 +218,9 @@ struct InstanceBelowPrototype {
     const uint64_t* words;
 };
 constexpr unsigned shiftOfInstanceBelowPrototype = 5;
-constexpr uint64_t firstOffsetOfInstanceBelowPrototype(uint64_t bitsOfPrototype, uint32_t allocationOfSite) { return (bitsOfPrototype + (static_cast<uint64_t>(allocationOfSite) << (shiftOfInstanceBelowPrototype - 1))) << 1; }
+constexpr uint64_t multiplierOfInstanceBelowPrototype = 0x9E3779B97F4A7C15;
+constexpr unsigned shiftOfProductOfInstanceBelowPrototype = 32 - shiftOfInstanceBelowPrototype;
+constexpr uint64_t firstOffsetOfInstanceBelowPrototype(uint64_t bitsOfPrototype, uint32_t allocationOfSite) { return ((bitsOfPrototype + allocationOfSite) * multiplierOfInstanceBelowPrototype) >> shiftOfProductOfInstanceBelowPrototype; }
 
 struct InstancesBelowPrototypes {
     const InstanceBelowPrototype* entries;

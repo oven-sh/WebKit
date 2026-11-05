@@ -166,6 +166,7 @@ struct FieldTableProbe {
     GPRReg keyInAccessTable { InvalidGPRReg };
     GPRReg placeInAccessTable { InvalidGPRReg };
     JumpList* hasFormAndOperand { nullptr };
+    bool receiverIsCompiledObject { false };
 };
 
 void readFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg result, JumpList& otherwise, const ScopedLambda<void()>& finish, const ScopedLambda<void()>* finishWhereAbsent = nullptr);

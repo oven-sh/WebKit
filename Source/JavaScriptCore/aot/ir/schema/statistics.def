@@ -19,7 +19,7 @@ enum StatisticID (stage: StatisticStage) {
     [Solve]
     FlowAppendedFields
     FactNodes FactEdges FactsCarriedOverEdges FactRounds FactRuleCalls
-    FactNodesGivenMore
+    FactNodesGivenMore CellsOfInheritedFieldsWrittenOneByOne
     [Passes]
     FieldsHeldToWhatIsSeen
     [Plan]
@@ -28,7 +28,7 @@ enum StatisticID (stage: StatisticStage) {
     UnitsCompiled UnitsWrittenStraight EntriesWrittenByHand
     [Walk]
     URLsLeftUnbuilt IteratorsSteppedWithoutCall IterationsOpenedByMethodsInSight NextMethodsTestedForFunctionExpected OwnKeyWalksExpanded
-    FieldsAskedWhereMakersEnd MakersWithoutFieldsHeldFilled ReadsOfOtherFilesVariablesHeld
+    FieldsAskedWhereMakersEnd ObjectsAskedWhereMakersEnd MakersWithoutFieldsHeldFilled ReadsOfOtherFilesVariablesHeld
     LibraryFunctionsEnteredBehindRows SortsThatCallNoComparator NewListsInPlaceOfSpecies
     AccessesProven AccessesGuarded AccessesUnknown ValuesInDouble
     LiteralArgumentsTakenApart
@@ -39,7 +39,7 @@ enum StatisticID (stage: StatisticStage) {
     ProofsThatNoTestTells ProofsThatFormTells DoorsThatCanNeverPass
     FreshCellsLeftAloneAtReturns
     AllocateInFramesChanges ClosuresInFrames KnownInductionsUsed NumbersBesideCountersAskedInFrontOfLoops MembersOfBuiltinsAskedByTheirBytes CountersHeldBelowRoomOfViews
-    WordsClearedAtHeadsOfHandlers
+    WordsClearedAtHeadsOfHandlers WordsClearedBehindCalls
     SlicesMadeOfElementsInSight
     MethodCallsToldApartByShape
     MethodCallsThroughTable

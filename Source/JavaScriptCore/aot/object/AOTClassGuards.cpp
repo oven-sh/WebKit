@@ -14,12 +14,14 @@
 #include "AOTClosure.h"
 #include "AOTClosureTable.h"
 #include "AOTCompiledCallee.h"
+#include "AOTEffectsNet.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCachesAnswers.h"
+#include "AOTPropertyWalk.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSort.h"
 #include "AOTState.h"
@@ -142,6 +144,11 @@ ClassTable::MethodTableUpdate::~MethodTableUpdate()
         setMethodTableWritableForClassGuards(m_classes.m_state, false);
 }
 
+static constexpr Typed::CountInEffectsNet countOfChangeOfClassGuard(bool holds)
+{
+    return holds ? Typed::CountInEffectsNet::GuardsOfMembersArmedOrBegun : Typed::CountInEffectsNet::GuardsOfMembersEnded;
+}
+
 template<typename Dependents>
 static void repointMethodTableEntries(State& state, Dependents&& dependents, bool guardHolds)
 {
@@ -157,6 +164,7 @@ static void repointMethodTableEntries(State& state, Dependents&& dependents, boo
             continue;
         update.willStoreEntry();
         table[index] = entry;
+        state.countWriteForEffectsNet(countOfChangeOfClassGuard(guardHolds));
     }
 }
 
@@ -184,7 +192,10 @@ static void storeBitOfClassGuard(State& state, const LayoutData& classLayout, Cl
     else
         *bit.byte &= static_cast<uint8_t>(~bit.mask);
     if (*bit.byte != byteBefore) {
+        bool isCountedFromBeginning = side == ClassSide::Prototype && classLayout.classData().guardsOfNamesAwaitBeginning && numberOfBit != classLayout.classData().guardBit[static_cast<size_t>(side)];
+        RELEASE_ASSERT(!isCountedFromBeginning || state.objects->classes.guardsHaveBegun(classLayout));
         countChangeOfClassGuard(state, numberOfBit, holds);
+        state.countWriteForEffectsNet(countOfChangeOfClassGuard(holds));
         if (!holds)
             countEvent(*state.instance.vm, RuntimeCounterID::ClassGuardBitsEnded);
     }
@@ -205,6 +216,7 @@ void ClassTable::beginGuardsSlowCase(const LayoutData& classLayout)
     if (BitOfClassGuard guardOfPrototypeSide = bitOfClassGuard(m_state, classLayout, ClassSide::Prototype); guardOfPrototypeSide.byte) {
         RELEASE_ASSERT(guardOfPrototypeSide.mask != maskOfClassGuardsBegun);
         *guardOfPrototypeSide.byte |= maskOfClassGuardsBegun;
+        m_state.countWriteForEffectsNet(Typed::CountInEffectsNet::GuardsOfMembersArmedOrBegun);
     }
     if (!classLayout.classData().guardsOfNamesAwaitBeginning)
         return;
@@ -847,12 +859,17 @@ void ClassTable::enterHolderWithoutGuards(VM& vm, const LayoutData& layout, Clas
         m_writes.recordAll();
 }
 
-bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, Closure* classObject, JSObject* prototype)
+bool ClassTable::holdersAreLeftOut(const LayoutData& layout)
 {
     ASSERT(isDefinedByClass(layout));
     if (layout.evaluation() == EvaluationState::SeenTwice)
         disarmMemberGuards(layout);
-    if (!everyGuardHasEnded(layout) || prototype->type() != FinalObjectType)
+    return everyGuardHasEnded(layout);
+}
+
+bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, Closure* classObject, JSObject* prototype)
+{
+    if (!holdersAreLeftOut(layout) || prototype->type() != FinalObjectType)
         return false;
     if (!m_classObjectOfHolderLeftOut)
         m_classObjectOfHolderLeftOut = PrivateSymbolImpl::create(*StringImpl::create("class"_span8).ptr());
@@ -860,6 +877,14 @@ bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, Closure* c
     prototype->didBecomePrototype(vm);
     m_hasHoldersLeftOut = true;
     return true;
+}
+
+void ClassTable::nameClassObjectOnPrototypeMadeLeftOut(VM& vm, const LayoutData& layout, Closure* classObject, JSObject* prototype)
+{
+    PropertyOffset offset = prototype->structure()->get(vm, PropertyName(m_classObjectOfHolderLeftOut.get()));
+    RELEASE_ASSERT(isValidOffset(offset));
+    prototype->putDirectOffset(vm, offset, classObject);
+    didLeaveOutHoldersOfEvaluation(layout, prototype);
 }
 
 const LayoutData* ClassTable::classOfHolderLeftOut(JSObject* holder, ClassSide& side) const
@@ -1176,7 +1201,7 @@ bool ClassTable::accessorAboveCreatedObjectsIsWhatRecordNames(VM& vm, const Layo
     if (walk.result != ChainWalkResult::Found || !walk.holder)
         return false;
     PropertySlot slot(walk.holder, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (!walk.holder->methodTable()->getOwnPropertySlot(walk.holder, realm, identifier, slot) || !slot.isAccessor())
+    if (!PropertyWalk::ordinaryGetOwnPropertySlot(realm, walk.holder, identifier, slot) || !slot.isAccessor())
         return false;
     GetterSetter* held = slot.getterSetter();
     auto isHalfOfRecord = [&](bool isNull, JSObject* half, const MethodData* row) {

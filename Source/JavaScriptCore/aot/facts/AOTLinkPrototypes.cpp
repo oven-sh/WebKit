@@ -8,8 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
 #include "AOTIRProgram.h"
+#include "AOTNameClass.h"
 #include <algorithm>
+#include <optional>
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -355,6 +360,395 @@ void LinkFlow::openPrototypeOf(LayoutID layout)
         arrive(stored, LinkType::anything().byEscapeAlone());
         addEdge(stored, unseen());
     }
+}
+
+class LinkFlow::CopiesOfMembers {
+public:
+    explicit CopiesOfMembers(LinkFlow& flow)
+        : m_flow(flow)
+        , m_program(flow.program)
+    {
+    }
+
+    bool lay();
+
+private:
+    struct End {
+        FunctionID function;
+        uint32_t node { 0 };
+        bool isHolderOfPrototypeObject { false };
+    };
+    struct Copy {
+        End target;
+        End source;
+        bool copiesAccessorsAsTheyAre { false };
+    };
+    enum class WayUp : uint8_t { None, ToCallers, ToMaker };
+
+    const SummaryNode& nodeAt(const End& end) const LIFETIME_BOUND { return m_flow.summaries.at(end.function).nodes[end.node]; }
+    LinkType typeSeenAt(const End&) const;
+    bool holdsOneKindAloneAt(const End&) const;
+    LayoutID findClassOfPrototypeObjectAt(const End&) const;
+    bool namesLayoutsAt(const End&) const;
+    bool listsMembersAt(const End& end) const { return findClassOfPrototypeObjectAt(end) || namesLayoutsAt(end); }
+    bool mayHoldPrototypeObjectAt(const End&) const;
+    bool mayHoldObjectAt(const End&) const;
+    End originOf(End) const;
+    WayUp wayUpFrom(const End&) const;
+
+    void take(const Copy&);
+    void lookAt(const Copy&);
+    void takeUp(const Copy&, bool targetIsKnown, bool sourceIsKnown);
+    std::span<const uint32_t> callsThatEnter(FunctionID);
+    std::optional<End> findWhatCallHandsOver(uint32_t call, const End&) const;
+    std::optional<End> findWhatMakerCaptures(FunctionID maker, const End&);
+
+    void layMembers(LayoutID classOfTarget, const End& source, bool copiesAccessorsAsTheyAre);
+    void layMembersOfLayout(LayoutID classOfTarget, LayoutID source, bool copiesAccessorsAsTheyAre);
+    void layUnder(LayoutID classOfTarget, PropertyKeyID, FlowNodeID held);
+    bool holdsAccessor(LayoutID, FlowNodeID) const;
+
+    LinkFlow& m_flow;
+    const Program& m_program;
+    bool m_hasLaidSome { false };
+    Vector<Copy> m_copiesToLookAt;
+    HashSet<std::pair<uint64_t, uint64_t>> m_copiesTaken;
+    Vector<uint32_t> m_endsOfCallsThatEnter;
+    Vector<uint32_t> m_callsThatEnter;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_makersWhoseCapturesAreListed;
+    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodesOfCaptures;
+};
+
+LinkType LinkFlow::CopiesOfMembers::typeSeenAt(const End& end) const
+{
+    LinkType seen = m_flow.typeAt(m_flow.nodeOf(end.function, end.node)).asSeen();
+    seen.primitives = 0;
+    return seen;
+}
+
+bool LinkFlow::CopiesOfMembers::holdsOneKindAloneAt(const End& end) const
+{
+    LinkType seen = typeSeenAt(end);
+    LinkType alone;
+    if (end.isHolderOfPrototypeObject) {
+        alone.functions = LinkType::Functions::Closure;
+        alone.function = seen.function;
+    } else {
+        alone.objects = LinkType::Objects::Prototype;
+        alone.layout = seen.layout;
+    }
+    return seen == alone;
+}
+
+LayoutID LinkFlow::CopiesOfMembers::findClassOfPrototypeObjectAt(const End& end) const
+{
+    if (!holdsOneKindAloneAt(end))
+        return { };
+    LinkType seen = typeSeenAt(end);
+    if (end.isHolderOfPrototypeObject)
+        return m_flow.layoutOfConstructorFunction(seen.function);
+    return m_flow.isOfConstructorFunction(seen.layout) ? seen.layout : LayoutID();
+}
+
+bool LinkFlow::CopiesOfMembers::namesLayoutsAt(const End& end) const
+{
+    if (end.isHolderOfPrototypeObject)
+        return false;
+    LinkType seen = typeSeenAt(end);
+    bool namesLayouts = seen.objects == LinkType::Objects::Layout || seen.objects == LinkType::Objects::Set;
+    return namesLayouts && seen.functions == LinkType::Functions::None && seen.classes == LinkType::Classes::None && !seen.builtin && !seen.holdsUnseen && !seen.holdsLostBuiltins;
+}
+
+bool LinkFlow::CopiesOfMembers::mayHoldPrototypeObjectAt(const End& end) const
+{
+    if (holdsOneKindAloneAt(end))
+        return false;
+    LinkType seen = typeSeenAt(end);
+    if (seen.holdsUnseen)
+        return true;
+    if (end.isHolderOfPrototypeObject)
+        return seen.functions != LinkType::Functions::None;
+    return seen.objects == LinkType::Objects::Prototype || seen.objects == LinkType::Objects::Prototypes || seen.objects == LinkType::Objects::Lost;
+}
+
+bool LinkFlow::CopiesOfMembers::mayHoldObjectAt(const End& end) const
+{
+    if (end.isHolderOfPrototypeObject)
+        return mayHoldPrototypeObjectAt(end);
+    LinkType seen = typeSeenAt(end);
+    return seen.holdsUnseen || seen.objects != LinkType::Objects::None;
+}
+
+auto LinkFlow::CopiesOfMembers::originOf(End end) const -> End
+{
+    const ThinSummary& summary = m_flow.summaries.at(end.function);
+    for (size_t stepsLeft = summary.nodes.size(); stepsLeft--;) {
+        const SummaryNode& node = summary.nodes[end.node];
+        if (node.kind == SummaryNode::Kind::ResultOfAccess && !end.isHolderOfPrototypeObject) {
+            const SummaryAccess& read = summary.accesses[node.first];
+            if (read.kind != SummaryAccess::Kind::Read || read.isToContents() || read.key != m_program.keyOf(BuiltinNames::prototype))
+                return end;
+            end.node = read.subject;
+            end.isHolderOfPrototypeObject = true;
+            continue;
+        }
+        bool onlyHandsOn = node.kind == SummaryNode::Kind::Join || (node.kind == SummaryNode::Kind::Capture && node.second);
+        if (!onlyHandsOn)
+            return end;
+        auto waysIn = std::ranges::equal_range(summary.edges.span(), end.node, { }, &SummaryEdge::to);
+        if (waysIn.empty() || waysIn.front().from != waysIn.back().from)
+            return end;
+        end.node = waysIn.front().from;
+    }
+    return end;
+}
+
+auto LinkFlow::CopiesOfMembers::wayUpFrom(const End& end) const -> WayUp
+{
+    const SummaryNode& node = nodeAt(end);
+    if (node.kind == SummaryNode::Kind::Parameter)
+        return WayUp::ToCallers;
+    if (node.kind == SummaryNode::Kind::Capture && !node.second)
+        return WayUp::ToMaker;
+    return WayUp::None;
+}
+
+void LinkFlow::CopiesOfMembers::take(const Copy& copy)
+{
+    if (!copy.target.node || !copy.source.node)
+        return;
+    auto wordOf = [](const End& end, bool more) {
+        return static_cast<uint64_t>(end.function.index()) << 32 | static_cast<uint64_t>(end.node) << 2 | static_cast<uint64_t>(end.isHolderOfPrototypeObject) << 1 | static_cast<uint64_t>(more);
+    };
+    if (m_copiesTaken.add(std::pair { wordOf(copy.target, false), wordOf(copy.source, copy.copiesAccessorsAsTheyAre) }).isNewEntry)
+        m_copiesToLookAt.append(copy);
+}
+
+void LinkFlow::CopiesOfMembers::lookAt(const Copy& copy)
+{
+    End target = findClassOfPrototypeObjectAt(copy.target) ? copy.target : originOf(copy.target);
+    End source = listsMembersAt(copy.source) ? copy.source : originOf(copy.source);
+    LayoutID classOfTarget = findClassOfPrototypeObjectAt(target);
+    bool sourceIsKnown = listsMembersAt(source);
+    if (classOfTarget && sourceIsKnown) {
+        layMembers(classOfTarget, source, copy.copiesAccessorsAsTheyAre);
+        return;
+    }
+    if ((!classOfTarget && !mayHoldPrototypeObjectAt(target)) || (!sourceIsKnown && !mayHoldObjectAt(source)))
+        return;
+    takeUp({ target, source, copy.copiesAccessorsAsTheyAre }, !!classOfTarget, sourceIsKnown);
+}
+
+void LinkFlow::CopiesOfMembers::takeUp(const Copy& copy, bool targetIsKnown, bool sourceIsKnown)
+{
+    End target = originOf(copy.target);
+    End source = originOf(copy.source);
+    const End& unknown = targetIsKnown ? source : target;
+    WayUp way = wayUpFrom(unknown);
+    auto goesUp = [&](const End& end) {
+        return end.function == unknown.function && wayUpFrom(end) == way;
+    };
+    bool targetGoesUp = goesUp(target);
+    bool sourceGoesUp = goesUp(source);
+    if ((!targetIsKnown && !targetGoesUp) || (!sourceIsKnown && !sourceGoesUp))
+        return;
+
+    auto takeWhatIsFoundBy = [&](const auto& find) {
+        std::optional<End> targetAbove = targetGoesUp ? find(target) : std::nullopt;
+        std::optional<End> sourceAbove = sourceGoesUp ? find(source) : std::nullopt;
+        if ((!targetAbove && !targetIsKnown) || (!sourceAbove && !sourceIsKnown))
+            return;
+        take({ targetAbove.value_or(copy.target), sourceAbove.value_or(copy.source), copy.copiesAccessorsAsTheyAre });
+    };
+    switch (way) {
+    case WayUp::None:
+        return;
+    case WayUp::ToCallers:
+        for (uint32_t call : callsThatEnter(unknown.function)) {
+            takeWhatIsFoundBy([&](const End& end) {
+                return findWhatCallHandsOver(call, end);
+            });
+        }
+        return;
+    case WayUp::ToMaker: {
+        FunctionID maker = m_flow.summaries.findMakerAboveCopyOfMembers(unknown.function);
+        if (!maker || !m_flow.reached.get(maker.index()))
+            return;
+        takeWhatIsFoundBy([&](const End& end) {
+            return findWhatMakerCaptures(maker, end);
+        });
+        return;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::span<const uint32_t> LinkFlow::CopiesOfMembers::callsThatEnter(FunctionID function)
+{
+    if (m_endsOfCallsThatEnter.isEmpty()) {
+        m_endsOfCallsThatEnter.fill(0, m_program.functions.size());
+        size_t numberOfCalls = m_flow.calleesOfCalls.size();
+        for (size_t call = 0; call < numberOfCalls; ++call) {
+            for (FunctionID callee : m_flow.calleesOfCalls[call].listed())
+                ++m_endsOfCallsThatEnter[callee.index()];
+        }
+        uint32_t numberInFront = 0;
+        for (uint32_t& place : m_endsOfCallsThatEnter) {
+            uint32_t numberOfCallee = std::exchange(place, numberInFront);
+            numberInFront += numberOfCallee;
+        }
+        m_callsThatEnter.grow(numberInFront);
+        for (size_t call = 0; call < numberOfCalls; ++call) {
+            for (FunctionID callee : m_flow.calleesOfCalls[call].listed())
+                m_callsThatEnter[m_endsOfCallsThatEnter[callee.index()]++] = static_cast<uint32_t>(call);
+        }
+    }
+    uint32_t first = function.index() ? m_endsOfCallsThatEnter[function.index() - 1] : 0;
+    return m_callsThatEnter.span().subspan(first, m_endsOfCallsThatEnter[function.index()] - first);
+}
+
+auto LinkFlow::CopiesOfMembers::findWhatCallHandsOver(uint32_t call, const End& end) const -> std::optional<End>
+{
+    FunctionID caller(static_cast<uint32_t>(std::ranges::upper_bound(m_flow.firstCallOfFunction, call) - m_flow.firstCallOfFunction.begin()) - 1);
+    const ThinSummary& summary = m_flow.summaries.at(caller);
+    const SummaryCall& record = summary.calls[call - m_flow.firstCallOfFunction[caller.index()]];
+    if (record.callee == SummaryCall::Callee::Builtin || record.isConstruction || record.passesList || record.isMadeByProtocol)
+        return std::nullopt;
+
+    const Function& callee = m_program.at(end.function);
+    uint32_t parameter = nodeAt(end).first;
+    auto argumentAt = [&](uint32_t place) {
+        return place < record.numberOfArguments ? summary.arguments[record.firstArgument + place] : noSummaryNode;
+    };
+    uint32_t handedOver = noSummaryNode;
+    if (record.callee == SummaryCall::Callee::Binding)
+        handedOver = argumentAt(parameter);
+    else {
+        if (record.callee == SummaryCall::Callee::Name && record.receiver != noSummaryNode) {
+            LinkType receiver = m_flow.typeAt(m_flow.nodeOf(caller, record.receiver));
+            switch (receiver.functions) {
+            case LinkType::Functions::None:
+                break;
+            case LinkType::Functions::Closure:
+                if (receiver.function == end.function)
+                    return std::nullopt;
+                break;
+            case LinkType::Functions::Set:
+                if (std::ranges::contains(m_flow.functionsOfSet(receiver), end.function))
+                    return std::nullopt;
+                break;
+            case LinkType::Functions::Constructors:
+            case LinkType::Functions::Lost:
+                return std::nullopt;
+            }
+        }
+        switch (callee.entryParameterKind(parameter)) {
+        case EntryParameter::This:
+            handedOver = record.receiver;
+            break;
+        case EntryParameter::Parameter:
+            if (uint32_t position = parameter - callee.firstParameterIndex(); position < callee.numberOfPositionalParameters())
+                handedOver = argumentAt(position);
+            break;
+        case EntryParameter::Capture:
+        case EntryParameter::Callee:
+        case EntryParameter::NewTarget:
+        case EntryParameter::ArgumentCount:
+        case EntryParameter::HiddenRest:
+            break;
+        }
+    }
+    if (handedOver == noSummaryNode)
+        return std::nullopt;
+    return End { caller, handedOver, end.isHolderOfPrototypeObject };
+}
+
+auto LinkFlow::CopiesOfMembers::findWhatMakerCaptures(FunctionID maker, const End& end) -> std::optional<End>
+{
+    if (m_makersWhoseCapturesAreListed.add(maker.index()).isNewEntry) {
+        const ThinSummary& summary = m_flow.summaries.at(maker);
+        for (uint32_t index = 0; index < summary.nodes.size(); ++index) {
+            const SummaryNode& node = summary.nodes[index];
+            if (node.kind == SummaryNode::Kind::Capture && node.second)
+                m_nodesOfCaptures.add(static_cast<uint64_t>(node.second - 1) << 32 | node.first, index);
+        }
+    }
+    auto found = m_nodesOfCaptures.find(static_cast<uint64_t>(end.function.index()) << 32 | nodeAt(end).first);
+    if (found == m_nodesOfCaptures.end())
+        return std::nullopt;
+    return End { maker, found->value, end.isHolderOfPrototypeObject };
+}
+
+void LinkFlow::CopiesOfMembers::layMembers(LayoutID classOfTarget, const End& source, bool copiesAccessorsAsTheyAre)
+{
+    if (LayoutID classOfSource = findClassOfPrototypeObjectAt(source)) {
+        if (classOfSource == classOfTarget)
+            return;
+        for (uint32_t record = m_flow.firstNameOnPrototypeOf(classOfSource); record != UINT32_MAX; record = m_flow.m_namesOnPrototypes[record].nextOfLayout) {
+            NameOnPrototype name = m_flow.m_namesOnPrototypes[record];
+            if (name.key && name.isStoredInto)
+                layUnder(classOfTarget, name.key, name.storedInSight);
+        }
+        return;
+    }
+    LinkType seen = typeSeenAt(source);
+    if (seen.objects == LinkType::Objects::Layout) {
+        layMembersOfLayout(classOfTarget, seen.layout, copiesAccessorsAsTheyAre);
+        return;
+    }
+    for (LayoutID member : m_flow.layoutsOfSet(seen))
+        layMembersOfLayout(classOfTarget, member, copiesAccessorsAsTheyAre);
+}
+
+void LinkFlow::CopiesOfMembers::layMembersOfLayout(LayoutID classOfTarget, LayoutID source, bool copiesAccessorsAsTheyAre)
+{
+    for (const OwnValue& value : m_flow.ownValuesOf(source)) {
+        if (value.key && !(copiesAccessorsAsTheyAre && holdsAccessor(source, value.node)))
+            layUnder(classOfTarget, value.key, value.node);
+    }
+    for (uint32_t place = m_flow.m_newestAppendedFieldOfLayout[source.index()]; place != UINT32_MAX; place = m_flow.m_appendedFields[place].next) {
+        AppendedField field = m_flow.m_appendedFields[place];
+        layUnder(classOfTarget, field.key, field.node);
+    }
+}
+
+void LinkFlow::CopiesOfMembers::layUnder(LayoutID classOfTarget, PropertyKeyID key, FlowNodeID held)
+{
+    NameClass nameClass = m_flow.nameClassOf(key);
+    if (nameClass == NameClass::Proto || mayBeElementKey(nameClass))
+        return;
+    FlowNodeID laid = m_flow.storedOnPrototypeOf(classOfTarget, key);
+    if (!m_flow.m_edgesLaidByCopiesOfMembers.add(static_cast<uint64_t>(held.index()) << 32 | laid.index()).isNewEntry)
+        return;
+    m_flow.addEdge(held, laid);
+    m_hasLaidSome = true;
+}
+
+bool LinkFlow::CopiesOfMembers::holdsAccessor(LayoutID layout, FlowNodeID node) const
+{
+    if (!m_flow.layoutsWithKnownAccessors.get(layout.index()))
+        return false;
+    return std::ranges::any_of(m_flow.accessorsLaidInFields, [&](const AccessorLaidInField& laid) {
+        return m_flow.field(laid.field) == node;
+    });
+}
+
+bool LinkFlow::CopiesOfMembers::lay()
+{
+    for (FunctionID function : m_flow.summaries.functionsThatCopyMembers()) {
+        if (!m_flow.reached.get(function.index()))
+            continue;
+        for (const SummaryCopyOfMembers& copy : m_flow.summaries.at(function).copiesOfMembers)
+            take({ { function, copy.target }, { function, copy.source }, copy.copiesAccessorsAsTheyAre });
+    }
+    while (!m_copiesToLookAt.isEmpty())
+        lookAt(m_copiesToLookAt.takeLast());
+    return m_hasLaidSome;
+}
+
+bool LinkFlow::layMembersThatCopiesBring()
+{
+    return CopiesOfMembers(*this).lay();
 }
 
 } } } // namespace JSC::AOT::Typed

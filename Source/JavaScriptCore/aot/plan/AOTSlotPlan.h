@@ -22,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <mutex>
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
@@ -349,15 +350,15 @@ struct FieldAccessesOfSets {
         std::array<HashMap<uint64_t, Vector<std::unique_ptr<OfMembers>, 1>>, 2> accessesOfMembers;
         struct MembersByName {
             bool areListed { false };
-            bool namesWrittenAboveAreListed { false };
             uint32_t numberInUse { 0 };
             Vector<LayoutID> askedAboutEveryName;
-            Vector<uint64_t> byName;
-            Vector<uint32_t> namesWrittenAbove;
         };
         HashMap<uint32_t, std::unique_ptr<MembersByName>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersByName;
     };
     std::array<Part, 64> parts;
+    std::once_flag layoutsByNameAreListed;
+    Vector<uint64_t> layoutsByName;
+    Vector<uint32_t> namesWrittenInViews;
 };
 
 bool fieldStaysInSlot(const Program&, const PlacedSlot&);
@@ -375,11 +376,17 @@ public:
         : m_parts(WTF::move(parts))
         , m_fieldAccessesOfSets(makeUniqueWithoutFastMallocCheck<FieldAccessesOfSets>())
     {
+        m_layoutsInUseThatHoldOtherThanCompiledObjects.fill(0, (std::max<size_t>(m_parts.layouts.size(), m_parts.layoutsNeverAllocated.size()) + 63) / 64);
+        for (size_t index = 0; index < 64 * m_layoutsInUseThatHoldOtherThanCompiledObjects.size(); ++index) {
+            if (!holdsCompiledObjects(LayoutID(static_cast<uint32_t>(index))) && !m_parts.layoutsNeverAllocated.get(index))
+                m_layoutsInUseThatHoldOtherThanCompiledObjects[index / 64] |= uint64_t { 1 } << index % 64;
+        }
     }
 
     const PlannedLayout& layout(LayoutID id) const { return id.index() < m_parts.layouts.size() ? m_parts.layouts[id.index()] : m_unplannedLayout; }
     bool holdsCompiledObjects(LayoutID id) const { return layout(id).holdsCompiledObjects(); }
     bool isNeverAllocated(LayoutID id) const { return m_parts.layoutsNeverAllocated.get(id.index()); }
+    bool someLayoutInUseHoldsOtherThanCompiledObjects(uint32_t wordOfLayouts, uint64_t layoutsInWord) const { return wordOfLayouts >= m_layoutsInUseThatHoldOtherThanCompiledObjects.size() || (m_layoutsInUseThatHoldOtherThanCompiledObjects[wordOfLayouts] & layoutsInWord); }
 
     const PlacedSlot& slot(LayoutID id, FieldIndex field) const
     {
@@ -432,6 +439,7 @@ private:
     PlacedSlot m_unplannedSlot;
     ClassCreationPlan m_unplannedClass;
     std::unique_ptr<FieldAccessesOfSets> m_fieldAccessesOfSets;
+    Vector<uint64_t> m_layoutsInUseThatHoldOtherThanCompiledObjects;
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -359,7 +359,7 @@ public:
     bool frameMayChangeOnEdge(const Block* from, const Block* target);
     Block* splitEdge(Block* from, unsigned successorIndex, const Snapshot& endOfFrom);
     Position findFirstReadFromHeadOf(const Block*, const Operation* value);
-    bool listsRegistersAtHeadOf(const Block* block) const { return m_proc.traits().checksAllocation || m_order.of(block).isRare() || m_allocation.isHeadOfFramedPart(block); }
+    bool listsRegistersAtHeadOf(const Block* block) const { return m_proc.checksAllocation() || m_order.of(block).isRare() || m_allocation.isHeadOfFramedPart(block); }
     ArenaVector<std::span<const RegisterBinding>>& registersAtHeads() { return m_allocation.m_registersAtHead; }
     Snapshot takeSnapshot();
     void restore(const Snapshot&);

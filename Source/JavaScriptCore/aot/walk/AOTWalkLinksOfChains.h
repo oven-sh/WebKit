@@ -47,7 +47,7 @@ inline constexpr OpcodeSet opcodesThatBuildTypedConstructionTakesInChains { Opco
 AOT_LINK_OF_WALK(buildTypedConstruction, opcodesThatBuildTypedConstructionTakesInChains)
 extern const OpcodeSet opcodesThatReplaceOperationTakes;
 inline constexpr OpcodeSet opcodesThatReplaceOperationTakesInChains = opcodesThatStateTypes | callsByValue | constructionsByValue | OpcodeSet { Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::AppendSpread,
-    Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope, Opcode::HasJSType, Opcode::ArraySpeciesCreate, Opcode::CreateIteratorResult, Opcode::StepArrayIterator, Opcode::StepMapIterator, Opcode::StepSetIterator,
+    Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope, Opcode::HasJSType, Opcode::IsHolderWithoutAddedNames, Opcode::ArraySpeciesCreate, Opcode::CreateIteratorResult, Opcode::StepArrayIterator, Opcode::StepMapIterator, Opcode::StepSetIterator,
     Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::Call, Opcode::DefineMethod, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::PropGet, Opcode::PropSet };
 AOT_LINK_OF_WALK(replaceOperation, opcodesThatReplaceOperationTakesInChains)
 inline constexpr OpcodeSet opcodesThatBuildTypedJoinOfTextsTakes = operationsThatJoinTexts;

@@ -37,6 +37,7 @@ struct StandIn {
 struct MembersLeftOut {
     Weak<JSObject> error;
     String message;
+    bool isThrownToRead { false };
     Vector<StandIn> standIns;
 };
 
@@ -142,6 +143,14 @@ const ClassInfo StandInForValue::s_info = { "Function"_s, &Base::s_info, nullptr
 
 } // namespace
 
+static thread_local bool makesMemberForLookThatOnlyTests;
+static thread_local bool makesMemberForRead;
+
+static bool isMakingMemberForRead()
+{
+    return makesMemberForRead;
+}
+
 void noteErrorOfCodeLeftOut(JSGlobalObject* realm, JSObject* error)
 {
     VM& vm = realm->vm();
@@ -155,6 +164,7 @@ void noteErrorOfCodeLeftOut(JSGlobalObject* realm, JSObject* error)
     }).iterator->value;
     members.error = Weak<JSObject>(error);
     members.message = WTF::move(text);
+    members.isThrownToRead = isMakingMemberForRead();
 }
 
 static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
@@ -171,6 +181,8 @@ static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
             return { };
         MembersLeftOut& members = found->value;
         if (!members.error || exception->value() != JSValue(members.error.get()))
+            return { };
+        if (members.isThrownToRead)
             return { };
         message = std::exchange(members.message, String());
         members.error.clear();
@@ -205,12 +217,12 @@ static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const 
     return standIn;
 }
 
-JSValue takeStandInForMemberLeftOut(JSGlobalObject* realm, const String& nameOfMember, JSObject* answeredBy)
+JSValue takeStandInForMemberLeftOut(JSGlobalObject* realm, const String& nameOfMember)
 {
     String message = takeMessageOfErrorOfCodeLeftOut(realm->vm());
     if (message.isNull())
         return { };
-    return standInThatThrows(realm, WTF::move(message), nameOfMember, answeredBy);
+    return standInThatThrows(realm, WTF::move(message), nameOfMember, nullptr);
 }
 
 JSValue takeStandInForFunctionLeftOut(JSGlobalObject* realm, const FunctionLeftOut& function, JSObject* answeredBy)
@@ -221,16 +233,16 @@ JSValue takeStandInForFunctionLeftOut(JSGlobalObject* realm, const FunctionLeftO
     return standInThatThrows(realm, WTF::move(message), function.name, answeredBy, &function);
 }
 
-static thread_local bool makesMemberForLookThatOnlyTests;
-
 MakingOfMemberForLook::MakingOfMemberForLook(bool lookOnlyTests)
     : m_previous(std::exchange(makesMemberForLookThatOnlyTests, lookOnlyTests))
+    , m_previousForRead(std::exchange(makesMemberForRead, !lookOnlyTests))
 {
 }
 
 MakingOfMemberForLook::~MakingOfMemberForLook()
 {
     makesMemberForLookThatOnlyTests = m_previous;
+    makesMemberForRead = m_previousForRead;
 }
 
 bool isMakingMemberForLookThatOnlyTests()
@@ -254,21 +266,6 @@ bool standsInForFunction(JSCell* cell)
     return std::ranges::any_of(found->value.standIns, [&](const StandIn& standIn) {
         return standIn.isKnownToBeFunction && standIn.function.get() == cell;
     });
-}
-
-JSValue takeStandInForGetterLeftOut(JSGlobalObject* realm, JSObject* getter)
-{
-    VM& vm = realm->vm();
-    auto* function = dynamicDowncast<JSFunction>(getter);
-    if (!function || !function->isHostOrBuiltinFunction())
-        return { };
-    String message = takeMessageOfErrorOfCodeLeftOut(vm);
-    if (message.isNull())
-        return { };
-    String name = function->name(vm);
-    if (name.startsWith("get "_s))
-        name = name.substring(4);
-    return standInThatThrows(realm, WTF::move(message), name, getter);
 }
 
 void explainErrorBehindMemberLeftOut(JSGlobalObject* realm, JSObject* error, JSValue base)

@@ -50,6 +50,7 @@ public:
     ~BuiltinsInReach();
 
     void noteFindingsIn(FunctionID);
+    void noteFindingsIn(std::span<const FunctionID>);
     void noteWhatBodyMakes(FunctionID);
     bool hasNoFindingsIn(FunctionID) const;
     bool knowsWhatBodyMakes(FunctionID) const;
@@ -86,11 +87,12 @@ public:
     bool objectsMayHaveMethodCalledWithStartupLoads() const;
 
     bool takeForConstant(BuiltinID member);
+    bool mayBeReplacedOrHidden(BuiltinID member);
 
     void noteWrite(BuiltinID holder, PropertyKeyID, bool onlyDeletes = false);
     void noteHandedWhatIsNoTextNumberOrBoolean(BuiltinID holder);
-    void noteWriteThroughLostBuiltins(PropertyKeyID);
-    void noteWriteThroughUnseenByProgram(PropertyKeyID);
+    void noteWriteThroughLostBuiltins(PropertyKeyID, bool isByFileOfProduct);
+    void noteWriteThroughUnseenByProgram(PropertyKeyID, bool isByFileOfProduct);
     void noteNameWrittenThroughUnseenByLibrary(PropertyKeyID);
     void noteReadThroughLostBuiltins(PropertyKeyID);
     void noteClimbFromLostBuiltins();
@@ -100,6 +102,7 @@ public:
     void noteOptionThatRunsCodePassed(BuiltinID);
     void noteLostBuiltinsReachUnseen();
     void noteInstanceAtUnseen(BuiltinClassID);
+    void noteObjectHandedToFormatter();
     void noteEntryHandsHostNothing(uint32_t entry);
     void noteHostMayFindSomethingAt(uint32_t entry);
     std::span<const FunctionID> functionsThatAnswerEveryNameOnInstances() const;

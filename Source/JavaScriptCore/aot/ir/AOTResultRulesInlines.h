@@ -661,15 +661,22 @@ TypeID ResultRules::unknown(const Operation& operation)
         if (opcode == Opcode::CallTable) {
             TypeID returned = context.positions.resultOfSelector(context.level, operation.selector());
             TypeID receivers = operands[OperandIndex::CallTable::receiver];
-            size_t numberOfReceivers = !returned && receivers ? membersOf(context.types, context.types.at(receivers)).size() : 0;
-            for (size_t place = 0; place < numberOfReceivers; ++place) {
-                bool hasRow = false;
-                TypeID held = context.positions.resultOfTableRow(context.level, operation.selector(), membersOf(context.types, context.types.at(receivers))[place], hasRow);
-                if (!hasRow)
-                    continue;
-                if (!held)
-                    return context.types.anything(seed);
-                returned = returned ? context.types.unionOf(returned, held) : held;
+            if (!returned && receivers) {
+                LayoutSetID layouts = context.types.at(receivers).layouts;
+                auto askEachLayout = [&] {
+                    TypeID handedBack;
+                    for (size_t place = 0; place < membersOf(context.types, layouts).size(); ++place) {
+                        bool hasRow = false;
+                        TypeID held = context.positions.resultOfTableRow(context.level, operation.selector(), membersOf(context.types, layouts)[place], hasRow);
+                        if (!hasRow)
+                            continue;
+                        if (!held)
+                            return TypeID();
+                        handedBack = handedBack ? context.types.unionOf(handedBack, held) : held;
+                    }
+                    return handedBack;
+                };
+                returned = context.level == TypeLevel::Proven ? context.positions.askedOfEachLayout(PositionTypes::QuestionOfEachLayout::ResultOfTableRow, context.level, layouts, PropertyKeyID::fromBits(operation.selector()), scopedLambda<TypeID()>(askEachLayout)) : askEachLayout();
             }
             return returned ? returned : context.types.anything(seed);
         }

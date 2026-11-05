@@ -391,7 +391,7 @@ static bool buildCallAsWrittenForLongListInWalkCalls(Walker& walker, const Draft
 }
 
 
-Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee, std::span<const Reference> entryArguments, bool isConstruction)
+Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee, std::span<const Reference> entryArguments, bool isConstruction, bool entersAsCallWould)
 {
     Draft direct(Opcode::CallDirect, site.origin());
     direct.expected = site.expected;
@@ -399,7 +399,7 @@ Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee
     direct.inputValueGiven = site.inputValueGiven;
     direct.setFunction(callee);
     bool hasSlowVersion = walker.plan().conventions().hasParameterGuard(callee);
-    direct.setRole(hasSlowVersion ? CodeRole::SlowBody : CodeRole::Body);
+    direct.setRole(entersAsCallWould ? walker.plan().conventions().directEntryOf(callee).role : hasSlowVersion ? CodeRole::SlowBody : CodeRole::Body);
     if (site.opcode == Opcode::Call)
         direct.setCalledBuiltin(site.calledBuiltin());
     direct.setIsConstruction(isConstruction);
@@ -407,7 +407,7 @@ Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee
     direct.setVariadicOperands(entryArguments);
     Effects effects = effectsOfDirectCall(walker, callee, entryArguments);
     Reference result = walker.buildCallThatMayBorrowScopes(WTF::move(direct), &effects);
-    if (result && !hasSlowVersion)
+    if (result && (entersAsCallWould || !hasSlowVersion))
         walker.leaveArrivals(callee, entryArguments);
     return result;
 }
@@ -1594,6 +1594,20 @@ FunctionID findFunctionBehindCompiledBuiltin(const Walker& walker, TypeID typeOf
     return builtin ? findFunctionThatRowsNameInWalkCalls(walker.program(), walker.program().builtins().canonicalID(builtin)) : FunctionID();
 }
 
+static bool trapAtCallThatLinkNeverMakesInWalkCalls(Walker& walker, const Draft& written)
+{
+    Origin origin = written.origin();
+    origin.isTailCall = false;
+    for (Reference argument : written.argumentsOperands()) {
+        if (!argument || !argument.isValue())
+            continue;
+        walker.buildCheckOfProof(argument, TypeTable::never, TypeTable::anything, ProofSource::ResultOfCall, origin);
+        walker.endAsUnreachable(origin);
+        return true;
+    }
+    return false;
+}
+
 bool replaceCallOfCompiledBuiltin(Walker& walker, const BodyValue& call)
 {
     Reference callee = walker.referenceOf(call.calleeOperand());
@@ -1616,7 +1630,9 @@ bool replaceCallOfCompiledBuiltin(Walker& walker, const BodyValue& call)
     request.calledBuiltin = written.calledBuiltin();
     request.isNeverInlined = written.isNeverInlined();
     request.calleeComesBack = true;
-    if (!walker.hasFailed() && !buildDirectCallInWalkCalls(walker, call, written, request))
+    if (walker.hasFailed() || buildDirectCallInWalkCalls(walker, call, written, request))
+        return true;
+    if (walker.facts().linked().function(request.callee).isReached || !trapAtCallThatLinkNeverMakesInWalkCalls(walker, written))
         walker.fail("the function behind a built-in without a function object does not take the call"_s);
     return true;
 }

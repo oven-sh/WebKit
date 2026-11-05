@@ -1,6 +1,7 @@
 # const options = { port: 0 }; hidden(options); Bun.serve(options); Date.now();
 # A control of options-written-for-the-call-without-the-option-that-runs-code-leave-the-locks.ir: whoever held the options may have filled what their layout lists.
 # RUN: locks open
+# REQUIRES: entries-of-bun
 # CHECK-NOT: locked
 # CHECK: open DateNow no-lock-is-laid
 

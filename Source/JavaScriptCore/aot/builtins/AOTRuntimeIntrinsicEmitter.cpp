@@ -97,6 +97,15 @@ void RuntimeIntrinsicEmitter::generateFindsNoMember(const ValueContext& value)
     defineAs(value, boolean(false), m_program.at(TypeTable::boolean));
 }
 
+void RuntimeIntrinsicEmitter::generateIsPlainHeirOf(const ValueContext& value)
+{
+    if (value.isBranchCondition()) {
+        branch(boolean(false), value.branchTargets());
+        return;
+    }
+    defineAs(value, boolean(false), m_program.at(TypeTable::boolean));
+}
+
 void RuntimeIntrinsicEmitter::generateIsPlainInstanceOf(const ValueContext& value)
 {
     if (value->receivers()) {

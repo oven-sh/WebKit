@@ -303,6 +303,12 @@ private:
     void checkFrameOf(Origin, uint32_t line);
     void checkNumberGivenByCode(ValueID, const RecordInCodeText&);
     std::span<const ValueID> argumentsOf(const TargetInCodeText& target) const { return m_arguments.span().subspan(target.firstArgument, target.numberOfArguments); }
+    ArgumentsOfEdge argumentsAsWrittenOf(const TargetInCodeText& target) const
+    {
+        ArgumentsOfEdge written;
+        written.m_records.append(argumentsOf(target));
+        return written;
+    }
 
     template<typename Entry> void parseFieldsOf(DraftWords&, Entry, uint16_t* traitBits);
     template<typename Entry> void parsePositionalOperands(DraftWords&, Entry);
@@ -1490,7 +1496,7 @@ void CodeTextParser::build()
     for (uint32_t index = 0; index < m_blocks.size(); ++index) {
         const BlockInCodeText& block = m_blocks[index];
         if (block.hasHandler && block.handler.block != absentInCodeText)
-            m_code.closeEdge(block.handlerEdge, BlockID(block.handler.block), argumentsOf(block.handler));
+            m_code.closeEdge(block.handlerEdge, BlockID(block.handler.block), argumentsAsWrittenOf(block.handler));
         if (block.subject != absentInCodeText)
             m_code.setSubject(BlockID(index), ValueID(block.subject));
     }
@@ -1695,7 +1701,7 @@ void CodeTextParser::endBlock(uint32_t blockIndex)
     const Terminator& terminator = m_code.at(block).terminator;
     for (uint32_t index = 0; index < numberOfTargets; ++index) {
         if (targets[index].block != absentInCodeText)
-            m_code.closeEdge(terminator.edge(index), BlockID(targets[index].block), argumentsOf(targets[index]));
+            m_code.closeEdge(terminator.edge(index), BlockID(targets[index].block), argumentsAsWrittenOf(targets[index]));
     }
     m_arguments.shrink(numberOfArgumentsInFront);
 }

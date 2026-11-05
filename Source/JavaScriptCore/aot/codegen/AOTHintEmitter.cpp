@@ -8,7 +8,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAllocationEmitter.h"
+#include "AOTCellAllocationEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
 #include "AOTCompileUnit.h"
@@ -158,10 +158,8 @@ bool HintEmitter::endsLivesAtRunTime()
 void HintEmitter::endLifeOf(const OperationContext& context, ValueID cell)
 {
     const Operation& made = operationAt(definitionOf(cell));
-    if (made.opcode == Opcode::NewObject && made.storage() == AllocationStorage::Frame)
-        return emitter<AllocationEmitter>().clearCellsThatObjectLentHolds(definitionOf(cell));
-    if (emitter<ConstantEmitter>().closureLentLiesInFrame(definitionOf(cell)))
-        return emitter<ConstantEmitter>().clearCellsThatClosureLentHolds(definitionOf(cell));
+    if ((made.opcode == Opcode::NewObject && made.storage() == AllocationStorage::Frame) || emitter<ConstantEmitter>().closureLentLiesInFrame(definitionOf(cell)))
+        return emitter<CellAllocationEmitter>().clearWhatCellLentHolds(definitionOf(cell));
     FunctionID madeIn = generator().code().inlineFrames()[made.inlineFrame].callee;
     m_out.suspendDeclaredAccesses();
     callVoidOperation(context, RuntimeOperation::PoisonCell, { in<CellPointer>(cell), word32(static_cast<int32_t>(madeIn.index())), word32(static_cast<int32_t>(made.position)) });

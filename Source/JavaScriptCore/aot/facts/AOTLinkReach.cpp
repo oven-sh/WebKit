@@ -159,7 +159,8 @@ public:
 private:
     static constexpr uint32_t none = UINT32_MAX;
 
-    enum class Step : uint8_t { EnterProgram, BringAlive, EvaluateModule, TieLostLayout, TieLostFunction, OpenLayout, OpenPrototype, OpenFunction };
+    enum class Step : uint8_t { EnterProgram, BringAlive, EvaluateModule, TieLostLayout, TieLostFunction, OpenLayout, OpenPrototype, OpenFunction, OpenClassObject };
+    enum class Left : uint8_t { LayoutEscapes, PrototypeEscapes, FunctionEscapes, ClassObjectOpens, FunctionIsReached, FunctionIsNamed, ExportsEscape, VariableHasEscaped, FieldMayBeWritten, LayoutMayChange, ParameterIsPassed };
 
     struct QueuedStep {
         Step step { Step::EnterProgram };
@@ -177,6 +178,10 @@ private:
     };
 
     void take(QueuedStep);
+    bool takeStepsOnLanes();
+    void leave(Left what, uint32_t index) { m_flow.leaveToReach(static_cast<uint8_t>(what), index); }
+    void takeWhatLanesLeft();
+    void takeWhatLaneLeft(Left, uint32_t index);
 
     void enterProgram();
     void fillVariables();
@@ -236,6 +241,7 @@ private:
     void openLayout(LayoutID);
     void openPrototype(LayoutID);
     void openFunction(FunctionID);
+    void escapeClassObject(LayoutID);
     void openClassObject(LayoutID);
     void shareMembers(LayoutID classLayout, ClassSide);
 
@@ -248,6 +254,7 @@ private:
     BitVector m_functionsCalledByHost;
 
     Vector<QueuedStep> m_steps;
+    Vector<QueuedStep> m_stepsThatOneThreadTakes;
     Vector<FunctionID> m_functionsToBringAlive;
     bool m_isWorking { false };
 
@@ -262,9 +269,11 @@ private:
     BitVector m_openClassObjects;
     BitVector m_variablesReadByUnseenCode;
     BitVector m_evaluatedModules;
-    BitVector m_modulesWithReachedCode;
+    BytesSharedByThreads m_modulesWithReachedCode;
     bool waitsUntilReachedCodeNamesIt(FunctionID);
     void noteFunctionsNamedBy(FunctionID);
+    void noteNamedByReachedCode(FunctionID);
+    BitVector m_modulesThatSomeCodeNames;
     Vector<std::pair<FunctionID, FunctionID>> m_functionsDeclaredBesideBodies;
     BitVector m_functionsThatSomeCodeNames;
     BitVector m_functionsThatReachedCodeNames;
@@ -320,7 +329,7 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
     m_openClassObjects = BitVector(m_numberOfLayouts);
     m_variablesReadByUnseenCode = BitVector(m_program.variables.size());
     m_evaluatedModules = BitVector(m_program.modules.size());
-    m_modulesWithReachedCode = BitVector(m_program.modules.size());
+    m_modulesWithReachedCode = BytesSharedByThreads(m_program.modules.size());
     m_modulesWithEscapedExports = BitVector(m_program.modules.size());
     m_showsWaysBetweenModuleObjects = namesWaysToModuleObjects(m_program);
     findModulesWhoseValueStaysInSight();
@@ -334,11 +343,20 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
     m_functionsThatSomeCodeNames = BitVector(numberOfFunctions);
     m_functionsThatReachedCodeNames = BitVector(numberOfFunctions);
     m_functionsThatWaitToBeNamed = BitVector(numberOfFunctions);
+    m_modulesThatSomeCodeNames = BitVector(m_program.modules.size());
+    m_firstMemberOfClass.fill(0, m_numberOfLayouts + 2);
     for (size_t index = 0; index < numberOfFunctions; ++index) {
-        for (FunctionID named : flow.summaries.at(FunctionID(index)).functionsNamed) {
+        const ThinSummary& summary = flow.summaries.at(FunctionID(index));
+        for (FunctionID named : summary.functionsNamed) {
             if (named.index() != index)
                 m_functionsThatSomeCodeNames.quickSet(named.index());
+            if (ModuleID module = m_moduleWithBody[named.index()])
+                m_modulesThatSomeCodeNames.quickSet(module.index());
         }
+        for (ModuleID module : summary.modulesNamedInBlocksNeverEntered)
+            m_modulesThatSomeCodeNames.quickSet(module.index());
+        for (const SummaryMember& member : summary.members)
+            ++m_firstMemberOfClass[member.classLayout.index() + 2];
     }
     for (const Variable& variable : m_program.variables) {
         if (variable.initialization != VariableInitialization::Function || !variable.module)
@@ -361,11 +379,7 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
     m_newestSourceOfLayout.fill(none, m_numberOfLayouts);
     m_sourcesOfFamilies.fill(FlowNodeID(), flow.families.size());
 
-    m_firstMemberOfClass.fill(0, m_numberOfLayouts + 2);
-    for (size_t index = 0; index < numberOfFunctions; ++index) {
-        for (const SummaryMember& member : flow.summaries.at(FunctionID(index)).members)
-            ++m_firstMemberOfClass[member.classLayout.index() + 2];
-    }
+
     for (uint32_t layout = 0; layout < m_numberOfLayouts; ++layout)
         m_firstMemberOfClass[layout + 2] += m_firstMemberOfClass[layout + 1];
     m_membersOfClasses.grow(m_firstMemberOfClass.last());
@@ -377,27 +391,98 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
 
 void StateOfLinkReach::finish()
 {
-    if (m_isWorking)
+    if (m_isWorking || m_flow.letsReachWait())
         return;
     SetForScope isWorking(m_isWorking, true);
     Vector<FunctionID> wave;
     while (true) {
-        while (!m_steps.isEmpty())
-            take(m_steps.takeLast());
-        if (m_functionsToBringAlive.isEmpty() || m_flow.letsFunctionsWaitToBeBroughtAlive())
+        while (!m_stepsThatOneThreadTakes.isEmpty() || !m_steps.isEmpty()) {
+            if (!m_stepsThatOneThreadTakes.isEmpty())
+                take(m_stepsThatOneThreadTakes.takeLast());
+            else if (!takeStepsOnLanes())
+                take(m_steps.takeLast());
+        }
+        if (m_functionsToBringAlive.isEmpty())
             return;
         wave.shrink(0);
         std::swap(wave, m_functionsToBringAlive);
         if (m_flow.bringAliveOnLanes(wave.span(), scopedLambda<void(FunctionID)>([&](FunctionID function) {
             bringAlive(function);
-        })))
+        }))) {
+            takeWhatLanesLeft();
             continue;
+        }
         for (size_t index = 0; index < wave.size(); ++index) {
             if (index + 1 < wave.size())
                 prefetchSummaryOf(wave[index + 1]);
             bringAlive(wave[index]);
         }
     }
+}
+
+bool StateOfLinkReach::takeStepsOnLanes()
+{
+    unsigned numberOfLanes = m_flow.numberOfLanes();
+    Vector<QueuedStep> wave = std::exchange(m_steps, { });
+    if (!m_flow.takeStepsOfReachOnLanes(wave.size(), scopedLambda<void(unsigned)>([&](unsigned lane) {
+        for (size_t index = lane; index < wave.size(); index += numberOfLanes)
+            take(wave[index]);
+    }))) {
+        m_steps = WTF::move(wave);
+        return false;
+    }
+    takeWhatLanesLeft();
+    return true;
+}
+
+void StateOfLinkReach::takeWhatLanesLeft()
+{
+    for (unsigned lane = 0; lane < m_flow.numberOfLanes(); ++lane) {
+        for (LinkFlow::LeftToReach left : m_flow.takeWhatLaneLeftToReach(lane))
+            takeWhatLaneLeft(static_cast<Left>(left.what), left.index);
+    }
+}
+
+void StateOfLinkReach::takeWhatLaneLeft(Left what, uint32_t index)
+{
+    switch (what) {
+    case Left::LayoutEscapes:
+        escapeLayout(LayoutID(index));
+        return;
+    case Left::PrototypeEscapes:
+        escapePrototype(LayoutID(index));
+        return;
+    case Left::FunctionEscapes:
+        escapeFunction(FunctionID(index));
+        return;
+    case Left::ClassObjectOpens:
+        escapeClassObject(LayoutID(index));
+        return;
+    case Left::FunctionIsReached:
+        reach(FunctionID(index));
+        return;
+    case Left::FunctionIsNamed:
+        noteNamedByReachedCode(FunctionID(index));
+        return;
+    case Left::ExportsEscape: {
+        LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(true);
+        escapeExportsOf(ModuleID(index));
+        return;
+    }
+    case Left::VariableHasEscaped:
+        m_flow.escapedVariables.set(index);
+        return;
+    case Left::FieldMayBeWritten:
+        m_flow.fieldsThatUnseenCodeMayWrite.set(index);
+        return;
+    case Left::LayoutMayChange:
+        m_flow.layoutsThatUnseenCodeMayChange.set(index);
+        return;
+    case Left::ParameterIsPassed:
+        m_parametersThatUnseenCodePasses.append(FlowNodeID(index));
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void StateOfLinkReach::prefetchSummaryOf(FunctionID id) const
@@ -426,7 +511,7 @@ void StateOfLinkReach::prefetchRecordsOf(FunctionID id, const ThinSummary& summa
 
 void StateOfLinkReach::take(QueuedStep queued)
 {
-    LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(queued.step == Step::OpenLayout || queued.step == Step::OpenPrototype || queued.step == Step::OpenFunction);
+    LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(queued.step == Step::OpenLayout || queued.step == Step::OpenPrototype || queued.step == Step::OpenFunction || queued.step == Step::OpenClassObject);
     switch (queued.step) {
     case Step::EnterProgram:
         enterProgram();
@@ -452,6 +537,9 @@ void StateOfLinkReach::take(QueuedStep queued)
     case Step::OpenFunction:
         openFunction(FunctionID(queued.index));
         return;
+    case Step::OpenClassObject:
+        openClassObject(LayoutID(queued.index));
+        return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -459,16 +547,21 @@ void StateOfLinkReach::take(QueuedStep queued)
 void StateOfLinkReach::queueEntries()
 {
     if (!std::exchange(m_hasQueuedEntries, true))
-        m_steps.append(QueuedStep { Step::EnterProgram, 0 });
+        m_stepsThatOneThreadTakes.append(QueuedStep { Step::EnterProgram, 0 });
 }
 
 void StateOfLinkReach::reach(FunctionID id)
 {
-    if (m_flow.reached.get(id.index()) || waitsUntilReachedCodeNamesIt(id))
+    if (m_flow.reached.get(id.index()))
+        return;
+    if (m_flow.lanesTakeStepsOfReach()) {
+        leave(Left::FunctionIsReached, id.index());
+        return;
+    }
+    if (waitsUntilReachedCodeNamesIt(id))
         return;
     m_flow.reached.set(id.index());
     m_functionsToBringAlive.append(id);
-    noteFunctionsNamedBy(id);
 }
 
 bool StateOfLinkReach::waitsUntilReachedCodeNamesIt(FunctionID id)
@@ -483,17 +576,28 @@ bool StateOfLinkReach::waitsUntilReachedCodeNamesIt(FunctionID id)
 
 void StateOfLinkReach::noteFunctionsNamedBy(FunctionID namer)
 {
+    bool leavesItToCaller = m_flow.severalThreadsTell();
     auto note = [&](FunctionID named) {
-        if (named == namer)
+        if (named == namer || m_functionsThatReachedCodeNames.quickGet(named.index()))
             return;
-        m_functionsThatReachedCodeNames.quickSet(named.index());
-        if (m_functionsThatWaitToBeNamed.quickClear(named.index()))
-            reach(named);
+        if (leavesItToCaller)
+            leave(Left::FunctionIsNamed, named.index());
+        else
+            noteNamedByReachedCode(named);
     };
     for (FunctionID named : m_flow.summaries.at(namer).functionsNamed)
         note(named);
+    if (!m_moduleWithBody[namer.index()])
+        return;
     for (auto [body, declared] : std::ranges::equal_range(m_functionsDeclaredBesideBodies, namer, { }, &std::pair<FunctionID, FunctionID>::first))
         note(declared);
+}
+
+void StateOfLinkReach::noteNamedByReachedCode(FunctionID named)
+{
+    m_functionsThatReachedCodeNames.quickSet(named.index());
+    if (m_functionsThatWaitToBeNamed.quickClear(named.index()))
+        reach(named);
 }
 
 void StateOfLinkReach::loseLayout(LayoutID id)
@@ -521,14 +625,35 @@ void StateOfLinkReach::loseFunction(FunctionID id)
 
 void StateOfLinkReach::escapeLayout(LayoutID id)
 {
+    if (m_flow.lanesTakeStepsOfReach()) {
+        if (!m_flow.escapedLayouts.get(id.index()))
+            leave(Left::LayoutEscapes, id.index());
+        return;
+    }
     if (!m_flow.escapedLayouts.set(id.index()))
         m_steps.append(QueuedStep { Step::OpenLayout, id.index() });
 }
 
 void StateOfLinkReach::escapePrototype(LayoutID id)
 {
+    if (m_flow.lanesTakeStepsOfReach()) {
+        if (!m_escapedPrototypes.get(id.index()))
+            leave(Left::PrototypeEscapes, id.index());
+        return;
+    }
     if (!m_escapedPrototypes.set(id.index()))
         m_steps.append(QueuedStep { Step::OpenPrototype, id.index() });
+}
+
+void StateOfLinkReach::escapeClassObject(LayoutID id)
+{
+    if (m_flow.lanesTakeStepsOfReach()) {
+        if (!m_openClassObjects.get(id.index()))
+            leave(Left::ClassObjectOpens, id.index());
+        return;
+    }
+    if (!m_openClassObjects.set(id.index()))
+        m_steps.append(QueuedStep { Step::OpenClassObject, id.index() });
 }
 
 void StateOfLinkReach::escapeFamily(FamilyID id)
@@ -563,6 +688,11 @@ void StateOfLinkReach::escapeConstructorsOf(FamilyID id)
 
 void StateOfLinkReach::escapeFunction(FunctionID id)
 {
+    if (m_flow.lanesTakeStepsOfReach()) {
+        if (!m_flow.escapedFunctions.get(id.index()))
+            leave(Left::FunctionEscapes, id.index());
+        return;
+    }
     if (!m_flow.escapedFunctions.set(id.index()))
         m_steps.append(QueuedStep { Step::OpenFunction, id.index() });
 }
@@ -645,19 +775,10 @@ void StateOfLinkReach::enterProgram()
     }
 
     BitVector isAskedFor = modulesThatHostAsksFor(m_program);
-    BitVector isRequested(m_program.modules.size());
+    BitVector isRequested = std::exchange(m_modulesThatSomeCodeNames, { });
     for (const Module& module : m_program.modules) {
         for (const ModuleRequest& request : module.requests)
             isRequested.quickSet(request.target.index());
-    }
-    for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
-        const ThinSummary& summary = m_flow.summaries.at(FunctionID(index));
-        for (FunctionID named : summary.functionsNamed) {
-            if (ModuleID module = m_moduleWithBody[named.index()])
-                isRequested.quickSet(module.index());
-        }
-        for (ModuleID module : summary.modulesNamedInBlocksNeverEntered)
-            isRequested.quickSet(module.index());
     }
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         const Module& module = m_program.modules[index];
@@ -894,7 +1015,7 @@ void StateOfLinkReach::fillFields()
 void StateOfLinkReach::evaluate(ModuleID id)
 {
     if (!m_evaluatedModules.set(id.index()))
-        m_steps.append(QueuedStep { Step::EvaluateModule, id.index() });
+        m_stepsThatOneThreadTakes.append(QueuedStep { Step::EvaluateModule, id.index() });
 }
 
 void StateOfLinkReach::evaluateModule(ModuleID id)
@@ -909,8 +1030,9 @@ void StateOfLinkReach::evaluateModule(ModuleID id)
 
 void StateOfLinkReach::noteCodeOfModule(ModuleID id)
 {
-    if (!id || m_modulesWithReachedCode.set(id.index()))
+    if (!id || m_modulesWithReachedCode.at(id.index()))
         return;
+    m_modulesWithReachedCode.set(id.index(), true);
     for (auto [module, variable] : std::ranges::equal_range(m_variablesOfLibraryFiles, id, { }, &std::pair<ModuleID, VariableID>::first))
         escapeVariable(variable);
     bool hasBody = !!m_program.at(id).body;
@@ -976,7 +1098,7 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
         if (module.kind == ModuleKind::CommonJs) {
             bool isReadBySitesAlone = module.body && module.exportsVariable && module.requireResult == RequireResult::ModuleExports && module.syntheticExports.isEmpty();
             bool hostLooksForNamesAlone = isReadBySitesAlone && !m_program.admitsInspector && std::ranges::contains(m_program.entries, ModuleID(index), &Entry::module)
-                && std::ranges::contains(m_flow.summaries.at(module.body).namesThatLoaderTakes.span(), VariableID(), &ThinSummary::NameThatLoaderTakes::variable);
+                && !m_flow.summaries.at(module.body).namesThatHostLooksFor.isEmpty();
             if (isReadBySitesAlone && !m_showsWaysBetweenModuleObjects && !module.flags.containsAny(flagsOfModulesHandedOut - ModuleFlags::RunsAgain) && (!isAskedFor.get(index) || hostLooksForNamesAlone))
                 m_modulesWhoseValueStaysInSight.quickSet(index);
             continue;
@@ -1043,10 +1165,8 @@ void StateOfLinkReach::tellWhatHostFindsAtEntries()
         bool mayFindSomething = !m_modulesWhoseValueStaysInSight.quickGet(id.index()) || exports.functions != LinkType::Functions::None || exports.classes != LinkType::Classes::None
             || exports.builtin || exports.holdsUnseen || exports.holdsLostBuiltins || mayHaveAccessor(exports);
         FunctionID body = m_program.at(id).body;
-        for (const ThinSummary::NameThatLoaderTakes& name : m_flow.summaries.at(body).namesThatLoaderTakes) {
-            if (name.variable)
-                continue;
-            const LinkType& found = m_flow.typeAt(m_flow.nodeOf(body, name.read));
+        for (uint32_t read : m_flow.summaries.at(body).namesThatHostLooksFor) {
+            const LinkType& found = m_flow.typeAt(m_flow.nodeOf(body, read));
             LinkType nothing;
             nothing.primitives = found.primitives & (Primitive::UndefinedOrNull | Primitive::Absent);
             mayFindSomething |= !found.holdsSameAs(nothing);
@@ -1125,7 +1245,11 @@ void StateOfLinkReach::escapeValueOf(ModuleID id)
 
 void StateOfLinkReach::escapeVariable(VariableID id)
 {
-    if (m_flow.escapedVariables.set(id.index()))
+    if (m_flow.lanesTakeStepsOfReach()) {
+        if (m_flow.escapedVariables.get(id.index()))
+            return;
+        leave(Left::VariableHasEscaped, id.index());
+    } else if (m_flow.escapedVariables.set(id.index()))
         return;
     FlowNodeID node = m_flow.variable(id);
     m_flow.arrive(node, LinkType::anything());
@@ -1140,8 +1264,15 @@ void StateOfLinkReach::escapeField(FieldReference reference)
     FlowNodeID node = m_flow.field(reference);
     m_flow.addEdge(node, m_flow.unseen());
     m_flow.arrive(node, LinkType::anything().byEscapeAlone());
+    uint32_t cellOfDeclaration = cellOf(declarationOf(m_program, reference));
+    if (m_flow.lanesTakeStepsOfReach()) {
+        leave(Left::FieldMayBeWritten, cell);
+        if (cellOfDeclaration != cell)
+            leave(Left::FieldMayBeWritten, cellOfDeclaration);
+        return;
+    }
     m_flow.fieldsThatUnseenCodeMayWrite.set(cell);
-    m_flow.fieldsThatUnseenCodeMayWrite.set(cellOf(declarationOf(m_program, reference)));
+    m_flow.fieldsThatUnseenCodeMayWrite.set(cellOfDeclaration);
 }
 
 void StateOfLinkReach::waitOnConditionsOf(BuiltinID canonical)
@@ -1160,7 +1291,7 @@ bool StateOfLinkReach::mayHold(const BuiltinCondition* condition, BuiltinID cano
     bool waitsForCall = condition->callRunsOtherCode && !m_builtinsInReach.hasCallThatMayRunCode(canonical);
     bool waitsToBeAskedForMore = condition->isAskedForOtherNames && !m_builtinsInReach.isAskedForOtherNames(m_program.builtins().canonicalID(condition->isAskedForOtherNames));
     bool waitsForOperand = condition->nameToldUnder() && !m_builtinsInReach.hasCallWhoseOperandMayMeet(*condition, canonical);
-    bool waitsForStore = condition->programStores && m_builtinsInReach.takeForConstant(condition->programStores);
+    bool waitsForStore = condition->programStores && !m_builtinsInReach.mayBeReplacedOrHidden(condition->programStores);
     if (waitsForWrite || waitsForCall || waitsToBeAskedForMore || waitsForOperand || waitsForStore) {
         waitOnConditionsOf(canonical);
         return false;
@@ -1330,9 +1461,10 @@ void StateOfLinkReach::enterWhatUnseenCodeFinds()
 
 bool StateOfLinkReach::enterLibraryInReach()
 {
-    RELEASE_ASSERT(m_steps.isEmpty() && m_functionsToBringAlive.isEmpty());
+    RELEASE_ASSERT(m_steps.isEmpty() && m_stepsThatOneThreadTakes.isEmpty() && m_functionsToBringAlive.isEmpty());
     escapeExportsWhoseGettersFacesRun();
     tellWhatHostFindsAtEntries();
+    bool receiversHaveLeft = m_flow.letGoWhoWaitsForAccessorsLaidAbove();
     if (m_flow.objectsReachUnseen() && !std::exchange(m_nativeCodeMayHoldObjects, true)) {
         m_builtinsInReach.noteNativeCodeMayHoldObjects();
     }
@@ -1403,9 +1535,9 @@ bool StateOfLinkReach::enterLibraryInReach()
     letGoWhatNativeCodeReadsOffModules();
     bool somebodyCanBeHandedSomething = m_nativeCodeMayHoldObjects || m_flow.rowPassesWhatNobodyFollows() || m_builtinsInReach.unseenCodeCanRun();
     bool promisesHaveChanged = somebodyCanBeHandedSomething && m_flow.letPromisesBeHandedOut();
-    bool hasEntered = !m_steps.isEmpty() || !m_functionsToBringAlive.isEmpty() || !m_membersWrittenAfterAll.isEmpty() || promisesHaveChanged || entriesHaveComeToBeAskedForMore;
+    bool hasEntered = !m_steps.isEmpty() || !m_stepsThatOneThreadTakes.isEmpty() || !m_functionsToBringAlive.isEmpty() || !m_membersWrittenAfterAll.isEmpty() || promisesHaveChanged || entriesHaveComeToBeAskedForMore;
     finish();
-    return hasEntered;
+    return hasEntered || receiversHaveLeft;
 }
 
 void StateOfLinkReach::bringAlive(FunctionID id)
@@ -1416,7 +1548,8 @@ void StateOfLinkReach::bringAlive(FunctionID id)
     LinkFlow::CodeAtWork codeAtWork(m_flow, id);
     LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(false);
 
-    bool moduleIsKnown = !function.module || m_modulesWithReachedCode.get(function.module.index());
+    noteFunctionsNamedBy(id);
+    bool moduleIsKnown = !function.module || m_modulesWithReachedCode.at(function.module.index());
     if (!m_builtinsInReach.hasNoFindingsIn(id) && !m_flow.tellsBuiltinsInReachBehindPass(id))
         m_builtinsInReach.noteFindingsIn(id);
     if (!m_builtinsInReach.knowsWhatBodyMakes(id)) {
@@ -1459,7 +1592,9 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             }
         }
         for (const ThinSummary::NameThatLoaderTakes& name : summary.namesThatLoaderTakes)
-            m_flow.addEdge(m_flow.nodeOf(id, name.read), name.variable ? m_flow.variable(name.variable) : m_flow.unseen());
+            m_flow.addEdge(m_flow.nodeOf(id, name.read), m_flow.variable(name.variable));
+        for (uint32_t read : summary.namesThatHostLooksFor)
+            m_flow.addEdge(m_flow.nodeOf(id, read), m_flow.unseen());
     }
     if (m_functionsCalledByHost.get(id.index()) && !m_isCodeBehindBuiltin.get(id.index()))
         m_flow.escape(id);
@@ -1773,8 +1908,11 @@ void StateOfLinkReach::tieLostFunction(FunctionID id)
 void StateOfLinkReach::openLayout(LayoutID id)
 {
     const Layout& layout = m_program.at(id);
+    bool lanesTakeSteps = m_flow.lanesTakeStepsOfReach();
     if (layout.kind == LayoutKind::ModuleNamespace) {
-        if (layout.namespaceOf)
+        if (layout.namespaceOf && lanesTakeSteps)
+            leave(Left::ExportsEscape, layout.namespaceOf.index());
+        else if (layout.namespaceOf)
             escapeExportsOf(layout.namespaceOf);
         return;
     }
@@ -1790,12 +1928,15 @@ void StateOfLinkReach::openLayout(LayoutID id)
             break;
         current = listing.base;
     }
-    m_flow.layoutsThatUnseenCodeMayChange.set(id.index());
+    if (lanesTakeSteps)
+        leave(Left::LayoutMayChange, id.index());
+    else
+        m_flow.layoutsThatUnseenCodeMayChange.set(id.index());
     LinkType unseenObjects = typeOfUnseenObjectsForLinkReach().byEscapeAlone();
     for (uint32_t source = m_newestSourceOfLayout[id.index()]; source != none; source = m_sourcesOfObjects[source].next)
         m_flow.arrive(m_sourcesOfObjects[source].node, unseenObjects);
 
-    openClassObject(id);
+    escapeClassObject(id);
     if (layout.constructor)
         escapeFunction(layout.constructor);
     for (LayoutID below : m_program.layoutsExpectedBelow(id))
@@ -1816,6 +1957,7 @@ void StateOfLinkReach::openFunction(FunctionID id)
     const Function& function = m_program.at(id);
     LinkType anything = LinkType::anything();
     FlowNodeID unseen = m_flow.unseen();
+    bool lanesTakeSteps = m_flow.lanesTakeStepsOfReach();
     reach(id);
 
     uint32_t numberOfParameters = function.numberOfEntryParameters();
@@ -1827,7 +1969,10 @@ void StateOfLinkReach::openFunction(FunctionID id)
         case EntryParameter::This:
         case EntryParameter::NewTarget:
         case EntryParameter::Parameter:
-            m_parametersThatUnseenCodePasses.append(m_flow.parameter(id, parameter));
+            if (lanesTakeSteps)
+                leave(Left::ParameterIsPassed, m_flow.parameter(id, parameter).index());
+            else
+                m_parametersThatUnseenCodePasses.append(m_flow.parameter(id, parameter));
             m_flow.arrive(m_flow.parameter(id, parameter), anything.byEscapeAlone());
             break;
         case EntryParameter::ArgumentCount:
@@ -1850,13 +1995,12 @@ void StateOfLinkReach::openFunction(FunctionID id)
     m_flow.openClosuresOf(id);
 
     if (function.constructedClass)
-        openClassObject(function.constructedClass);
+        escapeClassObject(function.constructedClass);
 }
 
 void StateOfLinkReach::openClassObject(LayoutID classLayout)
 {
-    if (m_openClassObjects.set(classLayout.index()))
-        return;
+
     m_flow.noteAllocatedWithRowAbove(classLayout);
     escapePrototype(classLayout);
     shareMembers(classLayout, ClassSide::Static);

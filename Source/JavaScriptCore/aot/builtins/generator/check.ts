@@ -3,7 +3,7 @@ import { isObjectKind } from "./build-entries.ts";
 import { admits } from "./build-types.ts";
 import { checkDependencies } from "./check-dependencies.ts";
 import { checkDirectEntries } from "./check-direct-entries.ts";
-import { checkHostUses, checkNamesReadByNativeCode } from "./check-host-uses.ts";
+import { checkHostUses } from "./check-host-uses.ts";
 import { checkInstanceTests } from "./check-instance-tests.ts";
 import { checkOperandTypes } from "./check-operand-types.ts";
 import { checkOverloads, describeOverload } from "./check-overloads.ts";
@@ -1508,7 +1508,6 @@ export function checkModel(model: TableModel, schema: Schema, problems: Problems
   checkGuards(model, problems);
   checkHostReads(model, problems);
   checkHostUses(model, problems);
-  checkNamesReadByNativeCode(model, problems);
   checkStartup(model, problems);
   checkOverloads(model, problems);
   checkDependencies(model, problems);

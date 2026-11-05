@@ -429,6 +429,13 @@ BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const Va
 
     DirectOperands operands;
     size_t next = 0;
+    auto takeValue = [&] {
+        ValueID argument = arguments[next++];
+        LValue word = boxedOperand(value, argument).value();
+        if (effectsOf(value).mayCollect && typeOf(argument).hasCells() && !word->hasInt64())
+            operands.keptAlive.append(word);
+        return word;
+    };
     for (BuiltinDirectValue parameter : parameters) {
         switch (parameter) {
         case BuiltinDirectValue::Realm:
@@ -441,10 +448,10 @@ BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const Va
             operands.words.append(boxedOperand(value, value->receiverOperand()).value());
             break;
         case BuiltinDirectValue::Value:
-            operands.words.append(boxedOperand(value, arguments[next++]).value());
+            operands.words.append(takeValue());
             break;
         case BuiltinDirectValue::ValueOrEmpty:
-            operands.words.append(next < arguments.size() ? boxedOperand(value, arguments[next++]).value() : m_out.constInt64(JSValue::encode(JSValue())));
+            operands.words.append(next < arguments.size() ? takeValue() : m_out.constInt64(JSValue::encode(JSValue())));
             break;
         case BuiltinDirectValue::RestOfValues: {
             Vector<Boxed, 8> rest;

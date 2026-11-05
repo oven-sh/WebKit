@@ -100,6 +100,8 @@ public:
         uint64_t callHeldToThrowNothing { 0 };
         const WatchOfEffects* around { nullptr };
         uint8_t lanesNotWritten { 0 };
+        uint8_t countsHeld { 0 };
+        LValue countsInFront { nullptr };
         std::array<Digest, 6> digests { };
         unsigned numberOfDigests { 0 };
     };
@@ -160,6 +162,7 @@ private:
     StubCallResult emitCall(const OperationContext*, const CallRequest&);
     enum class EntersCompiledCode : bool { No, Yes };
     void beginWatchOfEffects(const OperationContext&, const Effects&, EntersCompiledCode, uint32_t rows, WatchOfEffects&);
+    LValue readCountsForEffectsNet(uint8_t counts, LValue behind);
     LValue readWordForEffectsNet(ptrdiff_t offsetInInstance, std::optional<ptrdiff_t> offsetBehindPointer, LValue behind);
     LValue readCollectionsForEffectsNet(LValue behind);
     void noteCallHeldToThrowNothing(uint64_t call, uint32_t rows);

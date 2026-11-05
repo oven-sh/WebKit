@@ -57,6 +57,7 @@ WalkOptions walkOptionsOf(const BuildContext& build)
         .walksLastWalksOfLoopsAlone = options.walksLastWalksOfLoopsAlone,
         .walksLoopsThatFitAgain = options.walksLoopsThatFitAgain,
         .undoLeavesExpectations = AOT::hasFlag(options.testing, Wire::TestingSwitch::UndoLeavesExpectations),
+        .laterUnitsOpenNoGuesses = AOT::hasFlag(options.testing, Wire::TestingSwitch::LaterUnitsOpenNoGuesses),
         .rowThatSaysLess = options.rowThatSaysLess,
         .ignoresBranchHints = AOT::hasFlag(options.testing, Wire::TestingSwitch::IgnoreBranchHints),
         .shufflesBlockFrequencies = AOT::hasFlag(options.testing, Wire::TestingSwitch::ShuffleBlockFrequencies),
@@ -359,11 +360,17 @@ CompileWorker::CompileWorker(const CompileInputs& inputs, BuildContext& build, T
     , m_arena(makeUniqueWithoutFastMallocCheck<Machine::Arena>())
     , m_scratchRealm(makeUniqueWithoutFastMallocCheck<ScratchRealm>())
     , m_walkInputs(withRealmOfCompileWorker(inputs.walk, m_scratchRealm.get()))
-    , m_walker(makeUniqueWithoutFastMallocCheck<Walker>(m_walkInputs, m_types, inputs.walk.arrivals))
+    , m_keptBetweenUnits(makeUnique<KeptBetweenUnits>())
+    , m_walker(makeWalker())
 {
 }
 
 CompileWorker::~CompileWorker() = default;
+
+std::unique_ptr<Walker> CompileWorker::makeWalker()
+{
+    return makeUniqueWithoutFastMallocCheck<Walker>(m_walkInputs, m_types, m_inputs.walk.arrivals, *m_keptBetweenUnits);
+}
 
 bool CompileWorker::walkAndSweep(CodeUnit unit)
 {
@@ -371,8 +378,14 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
     CurrentWorkScope work(inputs.program, unit.function, "walk"_s);
 
     m_types.reset();
+    m_walker = makeWalker();
+    bool isWalked = m_walker->walk(unit);
+    if (isWalked && m_walker->hasLastWalksOfLoopsToWalkAlone()) {
+        std::unique_ptr<Walker> first = std::exchange(m_walker, makeWalker());
+        isWalked = m_walker->walkLastWalksOfLoopsAlone(*first);
+    }
     Code& code = m_walker->code();
-    if (!m_walker->walk(unit)) {
+    if (!isWalked) {
         m_build.diagnostics().append(m_walker->takeReports());
         reportFailureOfCompileUnit(m_build, unit, m_walker->kindOfFailure(), m_walker->failure());
         return false;
@@ -411,7 +424,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit)
     }
 
     work.setStep("sweep"_s);
-    SweepTotals swept = m_sweep.run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types }, code);
+    SweepTotals swept = Sweep().run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types }, code);
     m_build.statistics().count(StatisticID::OperationsSwept, swept.operationsSwept);
     m_build.statistics().count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
     m_build.statistics().count(StatisticID::WalksOfLoops, m_walker->numberOfWalksOfLoops());
@@ -624,7 +637,7 @@ std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
         return std::nullopt;
     if (!storesOnlyWhatFitsByItsMaking(m_inputs.walk, m_types, *index) || !m_inputs.walk.facts.summaries().at(unit.function).scopesStoredFirst.isEmpty())
         return std::nullopt;
-    Code& code = m_walker->code();
+    Code code;
     code.reset(unit);
     std::optional<CompiledCode> compiled = generateStraightCode(CodeGenerationWorker { m_build, m_types, *m_arena }, m_inputs.generation, code, *index, m_totals);
     if (!compiled || !compiled->unit) {
@@ -658,7 +671,7 @@ std::optional<CompiledCode> CompileWorker::compileEntryByHand(CodeUnit unit)
         return std::nullopt;
 
     m_types.reset();
-    Code& code = m_walker->code();
+    Code code;
     code.reset(unit);
     bool believesCallers = withoutMechanismsMissingDependencies(inputs.facts.mechanisms()).contains(Mechanism::Arrivals);
     std::optional<CompiledCode> compiled = generateEntryWrittenByHand(CodeGenerationWorker { m_build, m_types, *m_arena }, m_inputs.generation, code, scopedLambda<TypeID(unsigned)>([&](unsigned entryParameter) -> TypeID {

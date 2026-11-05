@@ -38,6 +38,11 @@ enum class AnswerKeptInArena : uint8_t {
     TypeInFilledSlot = 101,
     TestOfGuess = 102,
     TypeHeldUnderName = 104,
+    ShapesOfLayouts = 105,
+    PartWhoseClassesHaveGuards = 106,
+    PartOfWrittenSetThatFactoriesFill = 107,
+    PartThatHasNameAsked = 108,
+    ConstantMemberOfBuiltin = 109,
 };
 
 enum class MakerOfType : uint8_t {

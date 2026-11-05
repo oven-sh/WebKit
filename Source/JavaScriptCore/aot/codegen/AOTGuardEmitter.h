@@ -23,6 +23,7 @@ public:
     void generateHasNoExtraProperties(const ValueContext&);
     void generateHasNoFieldOutsideSlot(const ValueContext&);
     void generateHasKeyOrder(const ValueContext&);
+    void generateAreHeldFieldsFilled(const ValueContext&);
     void generateIsNotFrozen(const ValueContext&);
     void generateHasLayoutPrototype(const ValueContext&);
     void generateIsPristine(const ValueContext&);

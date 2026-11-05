@@ -593,7 +593,7 @@ static void countMissAtSite(StubAssembler& jit, GPRReg receiver, GPRReg distance
 
 StubSignature signatureOfReadAtSite(StubKey)
 {
-    StubSignature signature = StubSignature::withGPRResult({ gprOf(firstStubOperandRegister) });
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(receiverAtSiteRegister) });
     signature.immediate = gprOf(shortStubImmediateRegister);
     return signature;
 }
@@ -607,7 +607,7 @@ StubSignature signatureOfReadBehindSite(StubKey)
 
 StubSignature signatureOfReadLengthAtSite(StubKey key)
 {
-    return signatureOfReadBehindSite(key);
+    return signatureOfReadAtSite(key);
 }
 
 StubSignature signatureOfReadTruthAtSite(StubKey key)

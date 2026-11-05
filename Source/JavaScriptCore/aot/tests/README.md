@@ -570,6 +570,8 @@ the order, the liveness and the allocation as far as they were made, and the lin
   f9 "lib.ts":120 "join", which its code neither mentions nor inlines` for each body that brings the same bytes back, or `f3:Body differs with
   every body in its place too`, which leaves the thread and the verifier. A compile that fails on the way ends the command with its error.
   Bun's `test/aot/compiler/` has the other half of the independence test, with determinism, linear cost and the budgets.
+  THE RED CONTROL for what a worker hands on from unit to unit (`KeptBetweenUnits`; a `Walker` is made for one unit): `testing=LaterUnitsOpenNoGuesses`: the worker remembers that it has begun a unit, and its later
+  walks open no guess: `walk/units/a-word-that-outlives-a-unit-is-found-by-a-fresh-worker.ir`.
 
 **Support** (`AOTSupportTestCommands.cpp`): `diagnostics`, `parallel-loops`, `build-context`, `hashed-index`. `crash` crashes. Only
 `AOTChildProcessTests.cpp` runs it, to check that a crash fails one test and names the function being compiled. `crash without-memory` does what the engine does where
@@ -634,6 +636,9 @@ those words of operand 0 are others behind it. This is a bug in Bun.`
 - Runs no other code: every unit counts its entries. Writes: the words of the operands that are cells, by heap, are hashed in front and behind. Throws nothing by rule (a row that
   throws nothing, and one that throws for lack of memory alone): whoever looks for a handler asks whether such a call is under way; lack of memory, a full stack and a termination do not count. Does not collect: the heap's count of collections, which
   sees every allocation of the engine under `--slowPathAllocsBetweenGCs=1`.
+- A heap that is the words of no operand has no digest: whoever writes it counts the write (`State::writesCountedForEffectsNet`, `CountInEffectsNet`), and a call that runs no other code and is said not to
+  write the heap leaves the counts as they stood: `.. say that the call will not write MemberGuards, and under it guards that held have ended`. `MemberGuards`: the four sinks in `object/AOTClassGuards.cpp`
+  (a bit, a count, the bit "begun", an entry of the method table), apart by whether a guard that held has ended or guards were armed or have begun: `answers/a-write-of-a-heap-that-is-no-operands-is-counted-where-it-is-made.ir`.
 - It does not see: a write to what is no operand (a variable, a scope, a buffer of the caller), the named properties of an object of the engine, code that the interpreter
   runs, and whether a call of compiled code runs unknown code.
 - `testing=RowSaysLess:<Operation|RuntimeOperation|Stub|Builtin|Callee>/<row>/<RunsOtherCode|Throws|ThrowsByRule|Collects|a heap>` lays one row false, for the red controls:

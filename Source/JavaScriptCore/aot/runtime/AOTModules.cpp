@@ -431,6 +431,8 @@ void Modules::leaveToHostUnlessItHasRun(ModuleID module)
 void Modules::leaveToHost(ModuleID file)
 {
     m_evictedFiles.set(file.index());
+    m_filesAskedAbout.clear(file.index());
+    m_filesWhoseGraphHasBegun.clear(file.index());
     m_filesAboveNoEvictedFile.clearAll();
     m_runsCopyFromDisk = true;
 }
@@ -525,7 +527,9 @@ bool Modules::askHostLevelByLevel(ModuleID root, WalkForEvictedFiles& walk, BitV
     toFollow.append(fileOf(root));
     while (!toFollow.isEmpty()) {
         ModuleID file = toFollow.takeFirst();
-        if (isEvicted(file) || m_filesWhoseNamesNobodyAnswersFor.get(file.index()) || m_filesWhoseGraphHasBegun.get(file.index()) || status(file) >= ModuleStatus::Evaluating || hasRun(file, walk.importsAreFollowed))
+        if (m_filesAskedAbout.get(file.index()))
+            continue;
+        if (isEvicted(file) ? loader()->registryEntry(moduleKey(file)) || isChangedOnDisk(file) : m_filesWhoseGraphHasBegun.get(file.index()) || status(file) >= ModuleStatus::Evaluating || hasRun(file, walk.importsAreFollowed))
             continue;
         if (isMocked(file) || mockInPlace(file) || m_modulesWithMockToRun.get(file.index()))
             continue;
@@ -539,10 +543,9 @@ bool Modules::askHostLevelByLevel(ModuleID root, WalkForEvictedFiles& walk, BitV
             answers = askHostAboutNamesWrittenBy(file);
             if (m_numberOfGraphsBegun != numberOfGraphsBegun)
                 walk.importsAreFollowed = false;
-            if (answers.answer == AnswerForName::Declined)
-                m_filesWhoseNamesNobodyAnswersFor.set(file.index());
-            else
+            if (answers.answer != AnswerForName::Declined)
                 leaveToHostUnlessItHasRun(file);
+            m_filesAskedAbout.set(file.index());
         }
         auto takeUp = [&](ModuleID target) {
             if (!m_filesAboveNoEvictedFile.get(target.index()) && !answers.filesThatAnswersLeadAwayFrom.contains(target.index()) && !isReached.set(target.index()))
@@ -3659,8 +3662,8 @@ void Modules::finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID m
     VM& vm = *m_instance.vm;
     if (importPromise == m_promiseOfJobOfRound.get()) [[unlikely]]
         return runJobOfRound(module);
-    if (!m_callsToMakeAgain.isEmpty() && makeCallAgain(importPromise)) [[unlikely]]
-        return;
+    if (importPromise == m_promiseOfJobThatMakesCallsAgain.get()) [[unlikely]]
+        return runJobThatMakesCallsAgain(module);
     JSPromise* loaded = JSPromise::create(vm, m_instance.globalObject->promiseStructure());
     loaded->markAsHandled();
     if (error) [[unlikely]]
@@ -4885,6 +4888,18 @@ bool isEvictedFile(JSGlobalObject* realm, ModuleID module)
     return modules && modules->isEvicted(module);
 }
 
+void willRunPreloads(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->setHostRunsPreloads(true);
+}
+
+void didRunPreloads(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->setHostRunsPreloads(false);
+}
+
 void willRunCodeThatKeepsFiles(JSGlobalObject* realm)
 {
     if (Modules* modules = modulesOf(realm))
@@ -5626,6 +5641,7 @@ JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<Modu
     Modules* modules = modulesForEvaluation(realm, module);
     if (!modules)
         return { };
+    modules->stopWhereExportsLeaveCompiledCode(module);
     modules->noteLoadBehindMock(module, true);
     return modules->require(module, referrer.value_or(ModuleID()), Modules::RequiredBy::Program);
 }
@@ -5633,7 +5649,7 @@ JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<Modu
 JSValue runFileForDefaultLoader(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
-    if (modules && modules->data(module).kind == ModuleKind::CommonJs && !modules->hasYetToBegin(module)) {
+    if (modules && modules->data(module).kind == ModuleKind::CommonJs && modules->status(module) > ModuleStatus::Linked) {
         throwLoaderChangeRefused(realm, LoaderChange::RunFileAgain, modules->table().pathText(module));
         return { };
     }
@@ -5650,6 +5666,28 @@ bool isInRequireCache(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->isInRequireCache(module);
+}
+
+std::optional<OptionSet<ModuleObjectTrait>> traitsOfModuleObjectYetToBeMade(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->traitsOfModuleObjectYetToBeMade(module) : std::nullopt;
+}
+
+void takeModuleObject(JSGlobalObject* realm, ModuleID module, const ModuleObjects& objects)
+{
+    modulesOf(realm)->takeModuleObject(module, objects);
+}
+
+void giveBackModuleObject(JSGlobalObject* realm, ModuleID module)
+{
+    modulesOf(realm)->giveBackModuleObject(module);
+}
+
+JSObject* moduleObjectOverExportsVariableIfMade(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->moduleObjectOverExportsVariableIfMade(module) : nullptr;
 }
 
 void didMakeModuleObjectForRequire(JSGlobalObject* realm, ModuleID module, JSObject* moduleObject)

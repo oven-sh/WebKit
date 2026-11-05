@@ -730,12 +730,10 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         out.println("  answer-of-require m"_s, answer.module.index(), " -> n"_s, answer.node);
     for (const ThinSummary::AnswerOfRequire& answer : summary.objectsOfCompiledModules)
         out.println("  object-of-compiled-module m"_s, answer.module.index(), " -> n"_s, answer.node);
-    for (const ThinSummary::NameThatLoaderTakes& name : summary.namesThatLoaderTakes) {
-        if (name.variable)
-            out.println("  loader-takes n"_s, name.read, " -> g"_s, name.variable.index());
-        else
-            out.println("  host-looks-for n"_s, name.read);
-    }
+    for (const ThinSummary::NameThatLoaderTakes& name : summary.namesThatLoaderTakes)
+        out.println("  loader-takes n"_s, name.read, " -> g"_s, name.variable.index());
+    for (uint32_t read : summary.namesThatHostLooksFor)
+        out.println("  host-looks-for n"_s, read);
     if (!summary.firstStoresOfBody.isEmpty()) {
         out.print("  stores-first"_s);
         CommaPrinter comma(", "_s, " "_s);

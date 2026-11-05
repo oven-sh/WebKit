@@ -396,7 +396,7 @@ void WireTypeReader::finishLayouts()
         return { std::nullopt, base };
     });
     for (size_t index : layoutsWithAcyclicBases) {
-        if (m_program.layouts[index].base)
+        if (m_program.layouts[index].base || m_program.layouts[index].has(LayoutFlags::HasHeritage))
             appendInheritedFields(m_program, LayoutID(index));
     }
     appendFieldsOfTaggedLayouts(m_program, m_program.taggedFamilies.span());

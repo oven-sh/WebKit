@@ -168,8 +168,8 @@ static void assertTestFindsObjectsNamedByBothTypes(TypeReader reader, const Type
 bool holdsOnlyCompiledObjects(TypeReader reader, const Plan& plan, const Type& type)
 {
     const SlotPlan& slots = plan.slots();
-    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(reader, type), [&](LayoutID member) {
-        return slots.holdsCompiledObjects(member) || !plan.isInUse(member);
+    return type.hasOnlyLayouts() && !reader.at(type.layouts).untyped().anyWordOf([&](uint32_t wordOfLayouts, uint64_t layoutsInWord) {
+        return slots.someLayoutInUseHoldsOtherThanCompiledObjects(wordOfLayouts, layoutsInWord);
     });
 }
 

@@ -198,8 +198,29 @@ void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSO
     m_placesOfPrototypeProperties[indexOfPlace(structureID)] = { structureID, offset };
 }
 
+JSObject* ClassTable::prototypeOfClassObject(VM& vm, Closure* classObject)
+{
+    Structure* structure = classObject->structure();
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->isDictionary() ? invalidOffset : structure->get(vm, vm.propertyNames->prototype, attributes);
+    if (isValidOffset(offset) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) [[likely]] {
+        if (JSValue stored = classObject->getDirect(offset); stored.isObject()) [[likely]] {
+            uint32_t structureID = structure->id().bits();
+            m_placesOfPrototypeProperties[indexOfPlace(structureID)] = { structureID, offset };
+            return asObject(stored);
+        }
+    }
+    JSValue prototype = classObject->prototypeProperty(vm);
+    if (!prototype || !prototype.isObject())
+        return nullptr;
+    rememberPlaceOfPrototypeProperty(vm, classObject, asObject(prototype));
+    return asObject(prototype);
+}
+
 const LayoutData* ClassTable::classWithPrototype(JSObject* prototype) const
 {
+    if (prototype == m_lastEvaluation.prototype)
+        return m_lastEvaluation.classLayout;
     if (auto* lazyPrototype = dynamicDowncast<ClassPrototype>(prototype))
         return classOf(*lazyPrototype);
     ClassSide side;

@@ -690,6 +690,7 @@ export interface ModelHostRead {
   context: HostReadContext;
   exportName: ModelName;
   use: Exclude<HostReadUse, { read: "PassedTo" }> | { read: "PassedTo"; builtin: ModelBuiltin; argument: number };
+  namesLookedFor: readonly ModelName[];
 }
 
 export interface ModelProtocolKeys {
@@ -701,12 +702,6 @@ export interface ModelClosedKeys {
   holder: ModelBuiltin;
   keys: readonly ModelName[];
   openNames: readonly ModelName[];
-}
-
-export interface ModelNamesReadByNativeCode {
-  holder: ModelBuiltin;
-  names: readonly ModelName[];
-  namesOnlyInspected: readonly ModelName[];
 }
 
 export interface ModelStartup {
@@ -742,7 +737,6 @@ export interface TableModel {
   builtins: readonly ModelBuiltin[];
   membersLockedByName: readonly ModelBuiltin[];
   closedKeys: readonly ModelClosedKeys[];
-  namesReadByNativeCode: readonly ModelNamesReadByNativeCode[];
   overloads: readonly ModelOverload[];
   dispatches: readonly ModelDispatch[];
   dispatchNodes: readonly ModelDispatchNode[];

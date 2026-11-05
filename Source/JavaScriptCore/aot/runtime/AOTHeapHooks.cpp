@@ -191,6 +191,21 @@ static void zeroNonzeroPieces(std::span<uint8_t> bytes)
     }
 }
 
+static void zeroNonzeroPiecesAndGiveBackWholePages(std::span<uint8_t> bytes)
+{
+    size_t pieceSize = pageSize();
+    while (!bytes.empty()) {
+        size_t upToNextPage = pieceSize - reinterpret_cast<uintptr_t>(bytes.data()) % pieceSize;
+        auto piece = bytes.first(std::min(bytes.size(), upToNextPage));
+        if (!holdsOnlyZeros(piece)) {
+            zeroSpan(piece);
+            if (piece.size() == pieceSize)
+                decommitPagesOfZeros(piece.data(), pieceSize);
+        }
+        bytes = bytes.subspan(piece.size());
+    }
+}
+
 void CacheRegistry::append(Entry&& entry)
 {
     Locker locker { m_lock };
@@ -227,6 +242,20 @@ void CacheRegistry::addClearedEachCollection(ASCIILiteral name, std::span<uint8_
     };
     entry.clear = [](Entry& entry) {
         zeroNonzeroPieces(unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size));
+    };
+    append(WTF::move(entry));
+}
+
+void CacheRegistry::addClearedAndGivenBackEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear)
+{
+    Entry entry {
+        .kind = CacheKind::ClearedEachCollection,
+        .name = name,
+        .owner = zeroedByClear.data(),
+        .size = zeroedByClear.size(),
+    };
+    entry.clear = [](Entry& entry) {
+        zeroNonzeroPiecesAndGiveBackWholePages(unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size));
     };
     append(WTF::move(entry));
 }

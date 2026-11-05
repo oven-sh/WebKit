@@ -81,7 +81,7 @@ struct PreservingCall {
     StubCallee callee { StubCallee::CompiledCode };
     bool returnsValue { true };
     bool checksException { true };
-    std::optional<GPRReg> cellToKeep { };
+    std::array<std::optional<GPRReg>, 3> cellsToKeep { };
     const ScopedLambda<void()>* emitBeforeReturn { nullptr };
 };
 
@@ -303,7 +303,7 @@ private:
 
     void storePreservedRegisters(std::span<const GPRReg>);
     void loadPreservedRegisters(std::span<const GPRReg>);
-    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway);
+    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep = { });
     void loadSavedRegisters(const SavedRegisterArea&);
 
     void loadEntry(Entry, GPRReg);

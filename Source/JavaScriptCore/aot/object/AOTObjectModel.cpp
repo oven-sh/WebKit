@@ -782,17 +782,18 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
     RELEASE_ASSERT(m_tables.hasLayoutForShape(layout.shape));
     Variant usual = usualStructure ? variantOf(*usualStructure) : usualVariantOf(vm, layout);
     Variant variant = requested;
+    bool mayBeFiled = usual.prototype == variant.prototype || !m_state.objects->classes.takeWordThatNothingHasAskedBelow(variant.prototype);
     if (!variant.hasOtherPrototype && !usual.hasOtherPrototype && usual.prototype != variant.prototype) {
-        if (CompiledStructure* existing = find(variant))
+        if (CompiledStructure* existing = mayBeFiled ? find(variant) : nullptr)
             return existing;
         JSObject* firstAbove = variant.prototype.getObject();
         variant.hasOtherPrototype = true;
-        if (CompiledStructure* existing = find(variant))
+        if (CompiledStructure* existing = mayBeFiled ? find(variant) : nullptr)
             return existing;
         variant.hasOtherPrototype = !firstAbove || !m_state.objects->classes.takesObjectsLaidBelowPrototype(vm, layout, firstAbove);
     }
     variant.hasOtherPrototype |= usual.hasOtherPrototype;
-    if (CompiledStructure* existing = find(variant))
+    if (CompiledStructure* existing = mayBeFiled ? find(variant) : nullptr)
         return existing;
     ASSERT(layout.shape == usual.layout->shape);
     if (!variant.mayBePrototype && !variant.hasExtraProperties && !variant.outOfLineKeyOrder && variant.prototype == usual.prototype && variant.hasOtherPrototype == usual.hasOtherPrototype)

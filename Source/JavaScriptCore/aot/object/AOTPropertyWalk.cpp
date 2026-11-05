@@ -312,10 +312,10 @@ Result forEachOwnProperty(VM& vm, JSObject* object, Filter filter, const Visitor
     return visitKeysInOrder(vm, *typed, extra, filter, visitor);
 }
 
-Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visitor, Elements elements)
+Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visitor, Elements elements, Preparations preparations)
 {
     Object* typed = compiledObjectOrNull(object);
-    if (!typed || hasFieldPreparedBeforeLookups(vm, *typed))
+    if (!typed || (preparations == Preparations::NeedGenericPath && hasFieldPreparedBeforeLookups(vm, *typed)))
         return Result::NeedsGenericPath;
     bool isStopped = false;
     JSObject* extra = typed->extraProperties();
@@ -354,6 +354,15 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
             return *result;
     }
     return visitKeysInOrder(vm, *typed, extra, std::nullopt, visitor);
+}
+
+Result forEachOwnPropertyAsCreatedAfterPreparing(JSGlobalObject* globalObject, JSObject* object, const Visitor& visitor, Elements elements)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    prepareForWalk(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, Result::NeedsGenericPath);
+    return forEachOwnPropertyAsCreated(vm, object, visitor, elements, Preparations::AreDone);
 }
 
 bool hasGetterToCall(JSObject* object)
@@ -867,10 +876,12 @@ bool wouldPerformFastPut(VM& vm, JSObject* target)
     return isCompiledObject(target) ? testIntegrity(target, Integrity::NonExtensible) == Presence::Absent : target->isStructureExtensible();
 }
 
-static bool readPropertiesInOrderOfCreation(VM& vm, JSObject* source, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
+static bool readPropertiesInOrderOfCreation(JSGlobalObject* realm, JSObject* source, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
+    VM& vm = realm->vm();
     if (isCompiledObject(source)) {
-        return forEachOwnPropertyAsCreated(vm, source, [&](const OwnProperty& own) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        Result result = forEachOwnPropertyAsCreatedAfterPreparing(realm, source, [&](const OwnProperty& own) {
             if (own.attributes & PropertyAttribute::DontEnum)
                 return IterationStatus::Continue;
             if (own.name == vm.propertyNames->underscoreProto.impl() || parseIndex(*own.name))
@@ -878,7 +889,8 @@ static bool readPropertiesInOrderOfCreation(VM& vm, JSObject* source, Vector<Uni
             names.append(own.name);
             values.appendWithCrashOnOverflow(own.value);
             return IterationStatus::Continue;
-        }, Elements::AreLeftOut) == Result::Completed;
+        }, Elements::AreLeftOut);
+        return !scope.exception() && result == Result::Completed;
     }
     Structure* structure = source->structure();
     if (source->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon() || source->canHaveExistingOwnIndexedGetterSetterProperties())
@@ -901,7 +913,7 @@ static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source,
     Vector<UniquedStringImpl*, 8> names;
     MarkedArgumentBuffer values;
     EnsureStillAliveScope sourceScope(source);
-    if (!readPropertiesInOrderOfCreation(vm, source, names, values) || !wouldPerformFastPut(vm, &target))
+    if (!readPropertiesInOrderOfCreation(target.structure()->realm(), source, names, values) || !wouldPerformFastPut(vm, &target))
         return false;
     JSObject* holder = isCompiledObject(source) ? objectHoldingIndexedProperties(source) : source;
     bool hasElements = holder && holder->canHaveExistingOwnIndexedProperties();

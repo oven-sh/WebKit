@@ -3,16 +3,14 @@
 # const made = relabel(which);
 # print(made.label + made.kept);
 # print("went on");
-# A READ OF A SLOT IS SHOWN TO GIVE A NUMBER OR A BOOLEAN AND NO RANGE. The floor passes by an operand that is already raw, and no check tells anything of a raw form: an Int32 that is claimed to lie in a range goes into a boxed slot
-# unasked. So the weakest door for a number is "a number", and a reader may not take the range in the slot's word for shown. Here the object is shown (a direct call gives it). What its slot `name` gives is shown to be a text:
-# nothing is asked. What its slot `level` gives is shown to be a number or a text and no more: it is asked in front of the slot that takes an int32 or a text.
+# A READ OF A SLOT IS SHOWN TO GIVE WHAT THE DOORS OF THE SLOT HOLD, THE PART OF A NUMBER INCLUDED. Every road into a slot asks for the part: a compiled store asks what has a box and what lies raw alike, unless it is shown;
+# the run time compares the kind and the range of an integer; where a stub stores without a test the plan has widened the word of the doors itself. Here the object is shown (a direct call gives it): what its slots
+# `level` and `name` give goes into slots that take the same, and nothing is asked.
 # RUN(RELABELED): walk f2 mechanisms=all-Inlining
 # RELABELED-LABEL: code f2:Body
 # RELABELED: [[level]]: i32|string @JSValue = GetSlot {{*}} key="level" receivers=[L0] level=Proven
 # RELABELED: [[name]]: string @JSValue = GetSlot {{*}} key="name" receivers=[L0] level=Proven
-# RELABELED-NOT: CheckProof [[name]]
-# RELABELED: CheckProof [[level]] checkedType=i32|string typeWithoutProof=absent|anything source=Field
-# RELABELED-NOT: CheckProof [[name]]
+# RELABELED-NOT: CheckProof
 # RELABELED: = NewObject -, [[level]], [[name]] layout=L1
 # RUN(NUMBER): run-in-shell mechanisms=-Inlining globalThis.which = 3;
 # NUMBER: s33

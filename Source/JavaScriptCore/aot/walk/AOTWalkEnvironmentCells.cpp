@@ -343,7 +343,8 @@ void Walker::findFieldsOfScopesInFrontOfLoop(const LoopPreview& look, Vector<Fie
 
 void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead, const Effects& ofTurns, Vector<FieldOfScope, 4>& known, bool readsInFront)
 {
-    if (!has(Mechanism::LoopInvariants) || !has(Mechanism::Folding) || m_numberOfCopiesBuiltForSize || ofTurns.mayRunOtherCode() || ofTurns.maySuspend || (readsInFront && isUnreachable()))
+    bool isTypedBuildWithCalls = !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().turnsThatRunOtherCodeComeRound && m_waysIntoClosedCopies.last().frameIndex == m_frames.size() - 1 && m_waysIntoClosedCopies.last().inputHead == inputHead;
+    if (!has(Mechanism::LoopInvariants) || !has(Mechanism::Folding) || m_numberOfCopiesBuiltForSize || (ofTurns.mayRunOtherCode() && !isTypedBuildWithCalls) || ofTurns.maySuspend || (readsInFront && isUnreachable()))
         return;
     const BodyIndex& index = currentBodyIndex();
     if (!index.opcodes().contains(Opcode::PutEnvironmentField) && !index.opcodes().contains(Opcode::PutModuleVariable))
@@ -386,6 +387,8 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
             if (operation.opcode() != Opcode::PutEnvironmentField && !variable)
                 continue;
             if (variable && (isVariableFilledAtFirstRead(plan(), variable) || plan().promotedEnvironments().find(variable) || plan().deferredDefinitions().findDeferred(variable)))
+                continue;
+            if (variable && ofTurns.mayRunOtherCode() && program().at(variable).initialization == VariableInitialization::Uninitialized && !leavesDeadZoneForGood(program(), variable))
                 continue;
             ValueID holder = variable ? ValueID() : index.valueBehindCasts(operation.environmentOperand());
             Reference scope = holder && holder.index() < firstValueOfLoop ? referenceOf(holder) : Reference();
@@ -454,40 +457,6 @@ TypeID Walker::typeThatVariableIsHeldTo(BlockID inputHead, const FieldOfScope& f
             return held.type;
     }
     return { };
-}
-
-Reference Walker::askVariableAgainWhereItComesRound(BlockID head, const FieldOfScope& field, std::span<const Reference> besideFieldsOfScopes)
-{
-    if (m_waysIntoClosedCopies.isEmpty())
-        return { };
-    BlockID inputHead = m_waysIntoClosedCopies.last().inputHead;
-    BlockID entry = m_waysIntoClosedCopies.last().entry;
-    if (typeThatVariableIsHeldTo(inputHead, field) != field.type || inputBlock(m_frames.size() - 1, inputHead).head != head)
-        return { };
-    std::span<const ValueID> taken = m_code.at(entry).parameters();
-    if (taken.size() - numberOfFieldsOfScopesThatBlockTakes(entry) != besideFieldsOfScopes.size())
-        return { };
-    for (size_t index = 0; index < besideFieldsOfScopes.size(); ++index) {
-        TypeID type = ownTypeOf(besideFieldsOfScopes[index]);
-        if (!type || !m_types.isSubset(type, m_code.at(taken[index]).type))
-            return { };
-    }
-    Reference known = valueKnownOf(field);
-    if (!known)
-        known = build(draftOfReadOf(field));
-    Reference test = known ? buildTestOfNumber(*this, known, field.type, m_origin) : Reference();
-    if (!test || !test.isValue())
-        return { };
-    BlockID passed = addBlock();
-    BlockID failed = addBlock(BlockFrequency::Rare);
-    branch(test, passed, failed);
-    continueIn(failed);
-    Vector<Reference, 8> handedOn(besideFieldsOfScopes);
-    EdgeID noEdge;
-    if (!isUnreachable() && bringFieldsOfScopesRound(noEdge, entry, handedOn))
-        endWithJumpInto(entry, handedOn.span());
-    continueIn(passed);
-    return isUnreachable() ? Reference() : buildProofOfNumber(*this, known, test, m_origin);
 }
 
 bool Walker::mayBeInDeadZone(const FieldOfScope& field) const
@@ -588,18 +557,18 @@ bool Walker::bringFieldsOfScopesRound(EdgeID& edge, BlockID head, Vector<Referen
     auto comesRoundAsKnown = [&](const FieldOfScope& field) {
         return isFitForParameterOfField(field, valueKnownOf(field));
     };
-    if (edge && !std::ranges::all_of(fields->value, comesRoundAsKnown)) {
-        BlockID onEdge = m_code.addBlock(BlockRole::Ordinary, m_code.at(head).frequency);
-        m_code.setLoopMarks(onEdge, m_code.at(head).isInLoop, false);
-        m_code.closeEdge(edge, onEdge, { });
-        m_block = onEdge;
-        edge = { };
-    }
+    if (edge && !std::ranges::all_of(fields->value, comesRoundAsKnown))
+        layBlockOnEdge(edge, head);
     size_t numberBesideFieldsOfScopes = arguments.size();
     for (const FieldOfScope& field : fields->value) {
         Reference value = fitForParameterOfField(field, valueKnownOf(field));
-        if (!value && field.isHeld)
-            value = askVariableAgainWhereItComesRound(head, field, arguments.span().first(numberBesideFieldsOfScopes));
+        if (!value && field.isHeld && !m_waysIntoClosedCopies.isEmpty() && typeThatVariableIsHeldTo(m_waysIntoClosedCopies.last().inputHead, field) == field.type) {
+            value = askAgainWhereItComesRound(edge, head, field.type, arguments.span().first(numberBesideFieldsOfScopes), scopedLambda<Reference()>([&] {
+                if (Reference atHand = valueKnownOf(field))
+                    return atHand;
+                return build(draftOfReadOf(field));
+            }));
+        }
         if (!value && !field.isHeld)
             value = build(draftOfReadOf(field));
         if (!value) {

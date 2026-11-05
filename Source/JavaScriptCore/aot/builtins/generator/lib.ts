@@ -1071,7 +1071,6 @@ const classColumnKeys = [
   "prototypeListsAllMembers",
   "openNamesOfPrototype",
   "openNamesOfConstructor",
-  "namesReadByNativeCodeOnPrototype",
   "hasConstructor",
   "hasPrototype",
   "constructorHoldsPrototype",
@@ -1149,8 +1148,6 @@ export interface NamespaceOptions extends EntryColumns {
   scope?: Scope;
   isGlobalObject?: boolean;
   listsAllMembers?: boolean;
-  namesReadByNativeCode?: readonly string[];
-  namesOnlyInspectedByNativeCode?: readonly string[];
   table?: StaticTableRef;
 }
 
@@ -1165,8 +1162,6 @@ export function namespace(
     scope = "Realm",
     isGlobalObject = false,
     listsAllMembers = false,
-    namesReadByNativeCode = null,
-    namesOnlyInspectedByNativeCode = [],
     table,
     ...columns
   } = options;
@@ -1180,8 +1175,6 @@ export function namespace(
       locksMembers,
       isGlobalObject,
       listsAllMembers,
-      namesReadByNativeCode,
-      namesOnlyInspectedByNativeCode,
       columns,
     },
     ...membersFrom(path, table),
@@ -1302,9 +1295,12 @@ export const engineFeatures = (...names: readonly FeatureName[]): Declaration[] 
   { declares: "EngineFeatures", names },
 ];
 
-export const hostRead = (context: HostReadContext, exportName: string, use: HostReadUse): Declaration[] => [
-  { declares: "HostRead", context, exportName, use },
-];
+export const hostRead = (
+  context: HostReadContext,
+  exportName: string,
+  use: HostReadUse,
+  namesLookedFor: readonly string[] = [],
+): Declaration[] => [{ declares: "HostRead", context, exportName, use, namesLookedFor }];
 
 function hostValueOf(value: PlaceLike): HostValueSpec {
   const place = placeOf(value);

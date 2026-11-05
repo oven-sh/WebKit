@@ -35,7 +35,7 @@ static_assert(static_cast<uint32_t>(JSMapIterator::Field::Entry) == static_cast<
 
 static constexpr OpcodeSet opcodesOfIterationReplacements { Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::AppendSpread };
 static constexpr OpcodeSet opcodesOfCoroutineReplacements { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope };
-static constexpr OpcodeSet opcodesOfAllReplacements = opcodesOfIterationReplacements | opcodesOfCoroutineReplacements | opcodesThatStateTypes | OpcodeSet { Opcode::HasJSType, Opcode::ArraySpeciesCreate } | OpcodeSet {
+static constexpr OpcodeSet opcodesOfAllReplacements = opcodesOfIterationReplacements | opcodesOfCoroutineReplacements | opcodesThatStateTypes | OpcodeSet { Opcode::HasJSType, Opcode::IsHolderWithoutAddedNames, Opcode::ArraySpeciesCreate } | OpcodeSet {
     Opcode::CreateIteratorResult, Opcode::StepArrayIterator, Opcode::StepMapIterator, Opcode::StepSetIterator, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::Call, Opcode::DefineMethod, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::PropGet, Opcode::PropSet
 } | callsByValue | constructionsByValue;
 
@@ -918,6 +918,21 @@ static bool replaceAccessToGlobalName(Walker& walker, const BodyValue& access)
     return true;
 }
 
+static bool answerWhetherNamesWereAddedToHolder(Walker& walker, const BodyValue& asked)
+{
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    BuiltinID holder = table.canonicalID(asked.builtin());
+    if (program.admitsReplacedBuiltins) {
+        walker.bind(asked.id(), buildTestOfHolderWithoutAddedNames(walker, holder, walker.originOf(asked)));
+        return true;
+    }
+    Draft answer(Opcode::Boolean, walker.originOf(asked));
+    answer.setBoolean(table.at(holder).flags.contains(BuiltinFlag::IsLockedObject) && !program.isSomeNameOpenedOn(holder));
+    walker.bind(asked.id(), walker.constant(WTF::move(answer)));
+    return true;
+}
+
 static bool replaceTestOfCellTypeByTestOfClass(Walker& walker, const BodyValue& test)
 {
     auto operation = test.as<Opcode::HasJSType>();
@@ -983,6 +998,8 @@ bool replaceOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
         return replaceAccessToGlobalName(walker, value);
     if (opcode == Opcode::HasJSType)
         return replaceTestOfCellTypeByTestOfClass(walker, value);
+    if (opcode == Opcode::IsHolderWithoutAddedNames)
+        return answerWhetherNamesWereAddedToHolder(walker, value);
     if (opcode == Opcode::ArraySpeciesCreate)
         return replaceSpeciesOfListByNewList(walker, value);
 

@@ -168,11 +168,13 @@ static void locateFieldTableEntry(StubAssembler& jit, const FieldTableProbe& pro
     if (!probe.receiverIsCell)
         isNotCompiledObject.append(jit.branchIfNotCell(probe.receiver));
     if (loadsShapeAsHalfword(jit)) {
-        isNotCompiledObject.append(jit.branchTest8(CCallHelpers::Zero, Address(probe.receiver, offsetOfShapeWord + 3), TrustedImm32(compiledObjectShapeBit >> 24)));
+        if (!probe.receiverIsCompiledObject)
+            isNotCompiledObject.append(jit.branchTest8(CCallHelpers::Zero, Address(probe.receiver, offsetOfShapeWord + 3), TrustedImm32(compiledObjectShapeBit >> 24)));
         loadShapeWordAsIndex(jit, probe.receiver, probe.index);
     } else {
         jit.load32SignedExtendTo64(Address(probe.receiver, offsetOfShapeWord), probe.index);
-        isNotCompiledObject.append(jit.branchTest32(CCallHelpers::PositiveOrZero, probe.index));
+        if (!probe.receiverIsCompiledObject)
+            isNotCompiledObject.append(jit.branchTest32(CCallHelpers::PositiveOrZero, probe.index));
         jit.or64(TrustedImm32(shapeWordIsUnmarked), probe.index);
     }
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldTableEntries)), probe.table);

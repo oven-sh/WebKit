@@ -202,10 +202,10 @@ static Vector<NameAddedByTests> takeNamesFoundInTestRunsOfProgram(const Program&
 {
     Vector<NameAddedByTests> names = std::exchange(tables.namesAddedByTests, { });
     const LookupsPastProgramObjects& lookups = tables.lookups;
-    if (lookups.namesWrittenThroughLostBuiltins.isEmpty() || lookups.lostBuiltins.isEmpty())
+    if (lookups.namesWrittenThroughLostBuiltinsBesideProduct.isEmpty() || lookups.lostBuiltins.isEmpty())
         return names;
     BitVector lost = lostBuiltinsInTestRunsOfProgram(program, lookups);
-    for (size_t keyIndex : lookups.namesWrittenThroughLostBuiltins) {
+    for (size_t keyIndex : lookups.namesWrittenThroughLostBuiltinsBesideProduct) {
         PropertyKeyID key(keyIndex);
         if (program.at(key).kind != PropertyKeyKind::Text)
             continue;

@@ -219,27 +219,22 @@ void Walker::leaveBlockOpenInFrontOfLoop(BlockID inputHead, BlockID head, std::s
     loop.origin = m_origin;
     if (!has(Mechanism::LoopInvariants)) {
         openLoop(WTF::move(loop));
-        endWithJumpInto(head, entering);
+        crossEdge({ }, head, entering);
         return;
     }
 
-    for (size_t index = 0; index < entering.size(); ++index) {
-        Representation form = m_code.at(parameters[index]).representation;
-        Reference argument = isSameWord(representationOf(entering[index]), form) ? entering[index] : convert(entering[index], form, m_origin);
-        if (!argument || isUnreachable()) {
-            fail("an edge hands on a value that nothing was built for"_s);
-            return;
-        }
-        loop.entering.append(argument.id());
-    }
+    if (!makeReadyToCross(head, entering, true, loop.entering))
+        return;
     layFrontOfQuietTurns(loop, inputHead);
     if (m_hasFailed)
         return;
     loop.blockInFront = m_block;
     BlockID front = loop.frontOfQuietTurns;
     openLoop(WTF::move(loop));
-    if (front)
+    if (front) {
         noteBlockOfFrontOfQuietTurns(m_openLoops.size() - 1, front);
+        letFrontOfQuietTurnsFailUnasked(m_openLoops.size() - 1);
+    }
     m_block = { };
     if (!m_frontsSharedWithTypedBuilds.isEmpty() && m_frontsSharedWithTypedBuilds.last().frameIndex == m_frames.size() - 1 && m_frontsSharedWithTypedBuilds.last().inputHead == inputHead) {
         for (ValueID built : m_frontsSharedWithTypedBuilds.last().builtInFront)
@@ -258,7 +253,7 @@ void Walker::endBlocksInFrontOfLoops(size_t frameIndex, BlockID next)
         BlockID entered = closeFrontOfQuietTurns(loop);
         if (loop.blockInFront && !m_code.at(loop.blockInFront).hasEnded()) {
             m_code.end(loop.blockInFront, TerminatorDraft(TerminatorKind::Jump, loop.origin), 1);
-            m_code.closeEdge(m_code.at(loop.blockInFront).terminator.next(), entered, loop.entering.span());
+            m_code.closeEdge(m_code.at(loop.blockInFront).terminator.next(), entered, loop.entering);
         }
         closeNewestLoop();
     }
@@ -271,7 +266,7 @@ void Walker::endBlocksInFrontOfLoopsFrom(size_t numberOfLoopsKept)
         BlockID entered = closeFrontOfQuietTurns(loop);
         if (loop.blockInFront && !m_code.at(loop.blockInFront).hasEnded()) {
             m_code.end(loop.blockInFront, TerminatorDraft(TerminatorKind::Jump, loop.origin), 1);
-            m_code.closeEdge(m_code.at(loop.blockInFront).terminator.next(), entered, loop.entering.span());
+            m_code.closeEdge(m_code.at(loop.blockInFront).terminator.next(), entered, loop.entering);
         }
         closeNewestLoop();
     }

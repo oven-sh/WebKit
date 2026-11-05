@@ -411,7 +411,7 @@ static void testWriterEndsWhatItMayWrite()
         numberOfQuestionsAboutOther += holder == other;
         return holder == written;
     };
-    auto mayEndGuard = [&](LayoutID classOfGuard) {
+    auto mayEndGuard = [&](LayoutID classOfGuard, PropertyKeyID) {
         return classOfGuard == LayoutID(1u);
     };
     state.invalidate(effectsThatWriteInKnownAnswersTests({ AbstractHeap::ObjectFields, AbstractHeap::ShapeWords, AbstractHeap::Elements, AbstractHeap::MemberGuards }), mayBeWritten, mayEndGuard);

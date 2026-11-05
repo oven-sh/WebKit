@@ -940,9 +940,9 @@ void WalkState::Held::noteStoresPassAbove(LayoutID classLayout, PropertyKeyID ke
     dropEndedRecordsIfMany();
 }
 
-void WalkState::Held::noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test, ClassSide side)
+void WalkState::Held::noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test, ClassSide side, AskerOfGuardOfReads asker)
 {
-    notePlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side), key.bits(), test, [] {
+    notePlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side, asker), key.bits(), test, [] {
         return Place::entireHeap;
     });
     dropEndedRecordsIfMany();
@@ -1104,7 +1104,7 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
             const Place& place = m_places[position];
             if (!place.value)
                 return false;
-            if (!(ends.guards & place.mask()) || (ends.mayEndGuard && !(*ends.mayEndGuard)(classOfGuardedSide(place.first))))
+            if (!(ends.guards & place.mask()) || (ends.mayEndGuard && !(*ends.mayEndGuard)(classOfGuardedSide(place.first), PropertyKeyID::fromBits(place.second))))
                 return true;
             uint32_t holder = place.holder;
             endPlace(position);
@@ -1407,8 +1407,7 @@ bool leavesDeadZoneForGood(const Program& program, VariableID id)
         return false;
     if (variable.flags.containsAny({ VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun }))
         return false;
-    const Module& module = program.at(variable.module);
-    return isEvaluatedAtMostOnceOf(module.kind) && !module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeEvicted, ModuleFlags::MayBeMocked });
+    return loaderEntersBodyAtMostOnce(program.at(variable.module));
 }
 
 void SharedSetOfNumbers::keepMembersOfWhereSomeAreHeld(const SharedSetOfNumbers& other)

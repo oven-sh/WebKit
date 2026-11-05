@@ -295,7 +295,7 @@ public:
 
     void letGo(Arena& arena)
     {
-        arena.letGoOfArray(m_data, m_capacity);
+        arena.letGo(m_data, static_cast<size_t>(m_capacity) * sizeof(T));
         m_data = nullptr;
         m_size = 0;
         m_capacity = 0;

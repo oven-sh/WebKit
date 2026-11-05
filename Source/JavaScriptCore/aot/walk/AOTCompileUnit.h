@@ -27,6 +27,7 @@ class RegExpSummaries;
 namespace Typed {
 
 class Walker;
+struct KeptBetweenUnits;
 class FormatPatternPlans;
 class ScratchRealm;
 
@@ -78,6 +79,7 @@ struct WalkOptions {
     bool walksLastWalksOfLoopsAlone { false };
     bool walksLoopsThatFitAgain { false };
     bool undoLeavesExpectations { false };
+    bool laterUnitsOpenNoGuesses { false };
     uint32_t rowThatSaysLess { 0 };
     bool ignoresBranchHints { false };
     bool shufflesBlockFrequencies { false };
@@ -174,6 +176,7 @@ public:
     const InstructionsOfSteps& instructionsOfSteps() const LIFETIME_BOUND { return m_instructionsOfSteps; }
 
 private:
+    std::unique_ptr<Walker> makeWalker();
     static bool append(std::optional<CompiledCode>&& code, Vector<CompiledCode, 2>& finished)
     {
         if (!code)
@@ -188,8 +191,8 @@ private:
     std::unique_ptr<Machine::Arena> m_arena;
     std::unique_ptr<ScratchRealm> m_scratchRealm;
     WalkInputs m_walkInputs;
+    std::unique_ptr<KeptBetweenUnits> m_keptBetweenUnits;
     std::unique_ptr<Walker> m_walker;
-    Sweep m_sweep;
     CodeGenerationTotals m_totals;
     Vector<WalkNotes> m_notes;
     InstructionsOfSteps m_instructionsOfSteps;

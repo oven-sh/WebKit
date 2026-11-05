@@ -104,9 +104,9 @@ static ALWAYS_INLINE void countUseInSweep(uint8_t* useCounts, ValueID* onlyUsers
 
 SweepTotals Sweep::run(const SweepInputs& inputs, Code& code)
 {
+    RELEASE_ASSERT(!m_code);
     m_inputs = &inputs;
     m_code = &code;
-    m_totals = { };
 
     uint32_t numberOfValues = code.numberOfValues();
     uint32_t numberOfBlocks = code.numberOfBlocks();
@@ -119,19 +119,8 @@ SweepTotals Sweep::run(const SweepInputs& inputs, Code& code)
     code.m_blocksWithoutThrows.clearAll();
     code.m_blocksWithoutThrows.ensureSize(numberOfBlocks);
     code.m_isSwept = true;
-    m_worklist.shrink(0);
-    m_blocksToReach.shrink(0);
-    m_reachedInPostorder.shrink(0);
-    m_holdsBackStores = false;
-    m_hasListedIncomingEdges = false;
-    m_hasForgottenEdgesThatAreNotTaken = false;
-    m_someBlockHandsOverArguments = false;
-    m_blockThatEdgesAscendInto = { };
 
     sweepBackward();
-
-    m_inputs = nullptr;
-    m_code = nullptr;
     return m_totals;
 }
 
@@ -517,9 +506,6 @@ void Sweep::sweepBackward()
     Code& code = *m_code;
     uint32_t numberOfValues = code.numberOfValues();
     uint32_t numberOfBlocks = code.numberOfBlocks();
-    m_operationsNeededLate.shrink(0);
-    m_operationsKeptForOperands.shrink(0);
-    m_numberOfOperationsInOrder = 0;
     code.m_order.fill(ValueID(), numberOfValues);
     m_firstInOrderSoFar = numberOfValues;
     code.m_useCounts.fill(0, numberOfValues);
@@ -531,7 +517,6 @@ void Sweep::sweepBackward()
         m_searchPath.grow(numberOfBlocks);
     m_looksForCoveredBarriers = beginLookingForCoveredBarriers();
     m_looksForCoveredFences = beginLookingForCoveredFences();
-    m_coverageIsOutOfDate = false;
     m_lendsClosures = beginLendingClosures();
     m_lendsCells = beginLendingCells();
     beginFollowingLiveness();

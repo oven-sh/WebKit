@@ -76,9 +76,24 @@ void mentionUnitNamedOutsideCode(UnitQueue& queue, unsigned thread, CodeUnit uni
 
 void mentionWhatCodeNames(UnitQueue& queue, unsigned thread, const CompiledCode& code, const Typed::CompileInputs& inputs)
 {
-    forEachUnitMentionedBy(code, inputs, scopedLambda<void(Typed::CodeUnit, MentionKind)>([&](CodeUnit unit, MentionKind) {
-        queue.mention(thread, unit);
-    }));
+    const CodeBody& body = code.body;
+    for (const Relocation& relocation : body.relocations) {
+        if (relocation.space == SymbolSpace::Function)
+            queue.mention(thread, body.callees[relocation.symbol]);
+    }
+    const Typed::WalkInputs& walk = inputs.walk;
+    for (const Mention& mention : body.mentions) {
+        bool namesSelector = mention.space == NumberSpace::MethodSelector;
+        if (namesSelector && queue.hasMentionedUnitsBehindSelector(keyOf(mention, body.mentionWords.span())[0]))
+            continue;
+        bool queueAsksWhoMentions = false;
+        forEachUnitBehind(mention, body.mentionWords.span(), walk.program, walk.facts, walk.plan, scopedLambda<void(Typed::CodeUnit, MentionKind)>([&](CodeUnit unit, MentionKind) {
+            queueAsksWhoMentions |= namesSelector && queue.asksWhoMentions(unit);
+            queue.mention(thread, unit);
+        }));
+        if (namesSelector && !queueAsksWhoMentions)
+            queue.didMentionUnitsBehindSelector(keyOf(mention, body.mentionWords.span())[0]);
+    }
 }
 
 static Vector<CodeUnit> seedsOfCompileStage(const Typed::WalkInputs& inputs, const ParallelLoops& loops)

@@ -288,6 +288,9 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
     layoutData.hasOnlyPlainSlots = true;
     layoutData.isCopiedByWords = true;
     bool reachesUnseenCode = encoder.facts.linked().layout(id).reachesUnseenCode;
+    BitVector isHeldFilled;
+    for (FieldIndex field : Typed::fieldsHeldFilledInSlots(program, encoder.facts.linked(), encoder.plan.slots(), id))
+        isHeldFilled.set(field);
     TypeID typeOfFieldInFront;
     uint32_t offsetOfTypeOfFieldInFront = 0;
     for (FieldIndex index = 0; index < planned.numberOfFields(); ++index) {
@@ -308,6 +311,7 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         data.name = name;
         data.isFilledAtBirth = slot.isFilledAtBirth;
         data.holdsRawValueFromBirth = planned.holdsRawValueFromBirth(index);
+        data.isHeldFilled = isHeldFilled.get(index);
         data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull) && !slot.provenType;
         data.flags = flagsOfFieldInLayoutRecord(field, facts, slot);
         data.slot = slot.data();

@@ -93,12 +93,16 @@ static bool isIteratedAsListsAre(JSArray* list)
     VM& vm = realm->vm();
     if (!realm->isArrayPrototypeIteratorProtocolFastAndNonObservable() || list->structure()->mayInterceptIndexedAccesses() || list->getDirectOffset(vm, vm.propertyNames->iteratorSymbol) != invalidOffset)
         return false;
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     for (JSValue above = list->getPrototypeDirect(); above != JSValue(realm->arrayPrototype());) {
         JSObject* object = above.getObject();
         if (!object || (object->type() != ObjectType && object->type() != FinalObjectType) || object->structure()->typeInfo().overridesGetPrototype())
             return false;
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        if (object->methodTable()->getOwnPropertySlot(object, realm, vm.propertyNames->iteratorSymbol, slot))
+        bool isFound = object->methodTable()->getOwnPropertySlot(object, realm, vm.propertyNames->iteratorSymbol, slot);
+        scope.assertNoException();
+        if (isFound)
             return false;
         above = object->getPrototypeDirect();
     }
@@ -618,7 +622,7 @@ static bool tryAppendElementsOfArguments(JSGlobalObject* globalObject, JSArray* 
         holdsInt32Alone &= value.isInt32();
         holdsNumbersAlone &= value.isNumber() && value.asNumber() == value.asNumber();
     }
-    IndexingType kind = holdsInt32Alone ? ArrayWithInt32 : holdsNumbersAlone ? ArrayWithDouble : ArrayWithContiguous;
+    IndexingType kind = holdsNumbersAlone && hasDouble(target->indexingType()) ? ArrayWithDouble : holdsInt32Alone ? ArrayWithInt32 : ArrayWithContiguous;
     return !length || target->appendMemcpy(globalObject, globalObject->vm(), target->length(), kind, elements);
 }
 

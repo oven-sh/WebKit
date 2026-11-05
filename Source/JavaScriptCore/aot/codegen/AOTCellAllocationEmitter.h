@@ -43,7 +43,7 @@ public:
     CellPointer allocateObjectCopy(const OperationContext&, const MentionedAllocation&, CellPointer source, unsigned fieldBytes);
     void copyFieldWords(CellPointer source, CellPointer cell, unsigned fieldBytes);
     CellPointer allocateInFrame(const OperationContext&, size_t size);
-    CellPointer frameCellLent(ValueID cell);
+    void clearWhatCellLentHolds(ValueID cell);
     void noteWordsThatCellLentHolds(ValueID cell, std::span<const uint32_t> offsets);
     void clearWhatWasLentUnderHandler(BlockID handler);
 
@@ -64,6 +64,7 @@ private:
         uint32_t blockIndex { 0 };
         ValueID call;
         ValueID cell;
+        std::span<const uint32_t> wordsThatMayHoldCells;
     };
     Vector<SlotOfClosuresLent, 4> m_slotsOfClosuresLent;
 
@@ -73,6 +74,7 @@ private:
     };
     using WordsLentOutOfFrame = Machine::ArenaVector<WordLentOutOfFrame>;
     WordsLentOutOfFrame& wordsLentUnderHandler(BlockID handler);
+    Machine::PatchOperation* patchThatZeroesWordsOfFrame();
     Vector<WordsLentOutOfFrame*> m_wordsLentUnderHandlers;
 };
 

@@ -99,6 +99,12 @@ static std::optional<HalvesOfKnownEffects> findHalvesGivenArgumentsForKnownEffec
     return halves;
 }
 
+bool effectsOfDirectCallHangOnArguments(Walker& walker, FunctionID callee)
+{
+    const LinkedEffectsGivenArguments* given = walker.facts().linked().known.findEffectsGivenArguments(callee);
+    return given && (given->parametersTakenAsExpected || given->parametersCalled);
+}
+
 Effects effectsOfDirectCall(Walker& walker, FunctionID callee, std::span<const Reference> entryArguments)
 {
     if (unitDoesMoreThanBodyForKnownEffects(walker.plan(), callee))

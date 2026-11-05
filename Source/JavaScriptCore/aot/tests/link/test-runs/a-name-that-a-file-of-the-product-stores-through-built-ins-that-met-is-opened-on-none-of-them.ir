@@ -1,15 +1,15 @@
 # as lookup-is-told-again-of-a-name-added-through-built-ins-that-met.ir, where the store stands in a file of the product
-# the set of the names that are written through such values goes by the key alone, so the name is opened whoever wrote it: then whoever went by a lookup under it has to be told, whoever wrote it
+# a file of the product adds what an executable lets it add: the name is opened on none of the objects, the run time refuses the store as an executable does, and nobody who went by a lookup under the name has to be told
 # src/mark.js, of the product: same(Math); same(Function.prototype).marked = true   a.test.js: import "./src/mark.js"; marked.marked; other.other
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: link functions mechanisms=all
-# CHECK-NOT: function f2 callers-known
+# CHECK: function f2 callers-known
 # CHECK: function f3 callers-known
 # RUN(OLDEST): link functions oldest-first mechanisms=all
-# OLDEST-NOT: function f2 callers-known
+# OLDEST: function f2 callers-known
 # OLDEST: function f3 callers-known
 # RUN(ADDS): test-run
-# ADDS: adds FunctionPrototype "marked"
+# ADDS-NOT: adds FunctionPrototype "marked"
 
 module m0 path="/a.test.js" displayPath="a.test.js" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/src/mark.js" displayPath="src/mark.js" flags=[FindsBuiltinsReadOnly] body=f4

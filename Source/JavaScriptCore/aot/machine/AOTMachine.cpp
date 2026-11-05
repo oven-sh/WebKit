@@ -129,6 +129,10 @@ FactsOfSuspension& PatchOperation::ensureFactsOfSuspension()
 void PatchOperation::markChildAsLetGoByCallee(unsigned child)
 {
     RELEASE_ASSERT(m_opcode == Patch && child < m_operands.size());
+    for (unsigned marked : childrenLetGoByCallee()) {
+        if (this->child(marked) == this->child(child))
+            return;
+    }
     m_childrenLetGoByCallee.append(m_procedure.arena(), child);
 }
 

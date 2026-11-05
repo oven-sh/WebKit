@@ -50,9 +50,12 @@ struct Layout : LayoutRecord {
     void indexFields();
 
     uint32_t appendField(Field&&);
+    void appendCopiesOfAllFieldsOf(LayoutID, const Layout&);
 
     bool mayBeOrdinaryObject { false };
     InheritedFields inheritedFields { InheritedFields::NotTaken };
+    bool copiesWholeFieldListOfBase { false };
+    bool fieldsChangedAfterLayoutsBelowTookThem { false };
     bool holdsOrdinaryObjects { false };
 
 private:
@@ -132,6 +135,7 @@ inline FieldReference declarationOf(const Program&, FieldReference);
 inline std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID);
 std::optional<FieldReference> findFieldAboveInRow(const Program&, LayoutID, PropertyKeyID);
 inline LayoutID writtenBaseOf(const Layout& layout) { return layout.base; }
+inline bool isDefinedByClass(const Layout& layout) { return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction); }
 inline bool isFoundByShapeTest(const Layout& layout)
 {
     return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance || layout.kind == LayoutKind::Container) && !layout.writtenBuiltinBase && !layout.mayBeOrdinaryObject && !layout.holdsOrdinaryObjects;

@@ -825,8 +825,10 @@ void Walker::carryValuesRoundLoopOfGenerator(BlockID inputHead, BlockID head, Ve
     GeneratorWalkedInConsumer& walked = m_generatorsWalkedInConsumers[place];
     for (uint32_t number = 0; number < walked.typesOfCarriedValues.size(); ++number) {
         ValueID name(body.numberOfValues() + number);
-        TypeID type = typeInRowOfValueCarriedRound(inputHead, parameters.size(), walked.typesOfCarriedValues[number]);
-        entering.append(referenceBoundTo(name));
+        Reference enters = referenceBoundTo(name);
+        TypeID arriving = enters ? ownTypeOf(enters) : TypeID();
+        TypeID type = typeInRowOfValueCarriedRound(inputHead, parameters.size(), arriving ? arriving : TypeID(TypeTable::anything));
+        entering.append(enters);
         parameters.append(m_code.appendParameter(head, type, formOfParameter(type, { }), m_origin));
         bind(name, Reference::value(parameters.last()));
     }

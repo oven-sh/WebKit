@@ -718,12 +718,6 @@ struct BuiltinClosedKeys {
     std::span<const BuiltinName> openNames { };
 };
 
-struct BuiltinNamesReadByNativeCode {
-    BuiltinID holder { };
-    std::span<const BuiltinName> names { };
-    std::span<const BuiltinName> namesOnlyInspected { };
-};
-
 enum class BuiltinMark : uint8_t {
     IsAddedByOption,
     MayBeAbsent,
@@ -733,6 +727,7 @@ enum class BuiltinMark : uint8_t {
     RunsWaitingJobs,
     IsCalledWithoutStartupLoads,
     InstancesHaveMethodCalledWithStartupLoads,
+    InstancesArePrintedByCodeOfTheirOwn,
     LoadsCodeWithoutJSAccess,
     ReadLoadsCodeByName,
     HoldsPathOfMainModule,
@@ -750,6 +745,7 @@ enum class BuiltinMark : uint8_t {
     RegistersPreparationOfHolders,
     AnswersWithPathOfModule,
     IsKeyReadOnlyByRowsThatNameIt,
+    LaysOperandAbovePrototype,
 };
 
 struct BuiltinMarkedEntry {
@@ -862,7 +858,6 @@ struct BuiltinTableRuntime {
     std::span<const BuiltinMarkedEntry> marks { };
     std::span<const BuiltinLoaderOfMachineCode> loadersOfMachineCode { };
     std::span<const BuiltinClosedKeys> closedKeys { };
-    std::span<const BuiltinNamesReadByNativeCode> namesReadByNativeCode { };
     std::span<const BuiltinID> lockedMembers { };
     std::span<const BuiltinRealmStructure> realmStructures { };
 };
@@ -1006,7 +1001,6 @@ public:
     std::span<const BuiltinName> openNamesOf(BuiltinID holder) const;
     bool isClosedKey(BuiltinID holder, BuiltinName) const;
     JS_EXPORT_PRIVATE bool isClosedOnHostFunctions(BuiltinName) const;
-    const BuiltinNamesReadByNativeCode* namesReadByNativeCode(BuiltinID holder) const;
 
     std::span<const BuiltinFeatureUse> featureUsesOf(BuiltinID) const;
     std::span<const BuiltinModuleLoad> moduleLoadsOf(BuiltinID) const;
@@ -1033,6 +1027,7 @@ public:
     std::span<const BuiltinCalledFunction> startupCalledFunctions() const;
     std::span<const BuiltinHostObject> hostObjects() const;
     std::span<const BuiltinName> nativeCellsFilledByCalledFunctions() const;
+    bool isPrintedByFormatter(BuiltinID, const BuiltinParameter&) const;
     std::span<const BuiltinName> namesOfHostMethodsCallingStartupLoads() const { return m_data.runtime.namesOfHostMethodsCallingStartupLoads; }
     std::span<const RuntimeFunctionID> moduleLoaderFunctions() const { return m_data.runtime.moduleLoaderFunctions; }
     std::span<const BuiltinName> keysReadBy(Protocol) const;

@@ -23,6 +23,8 @@ bool OperatorEmitter::leaveOperandToInstanceOf(const ValueContext& read, Instanc
     bool walksChain = operand == InstanceOfOperand::PrototypeThatIsBuiltin;
     if (test.opcode != (walksChain ? Opcode::HasInPrototypeChain : Opcode::InstanceOf) || (walksChain ? test.prototypeOperand() : test.constructorOperand()) != read.id())
         return false;
+    if (!test.traits().mayCallUnknownCode())
+        return false;
     m_operandLeftToInstanceOf = OperandLeftToInstanceOf { read.id(), operand, number };
     return true;
 }
@@ -47,7 +49,7 @@ void OperatorEmitter::generateHasInPrototypeChain(const ValueContext& value)
     RELEASE_ASSERT(!left || left->read == prototypeID);
     auto walksChain = [&] {
         if (left)
-            return Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(left->operand), { object.value() }, { .numberedImmediate = left->number }).first));
+            return Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(left->operand), { object.value() }, { .numberedImmediate = left->number, .runsCodeOfHost = true }).first));
         CellPointer prototype = in<CellPointer>(prototypeID);
         return Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::Prototype), { object.value(), boxCell(prototype).value() }).first));
     };

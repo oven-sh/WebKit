@@ -303,6 +303,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsThatMakeArrays, NewArrayWithHoles) \
     v(OperationsThatMakeArrays, NewArrayWithIndexingType) \
     v(OperationsThatMakeArrays, ReadsIteratorOfListUnseen) \
+    v(OperationsThatMakeArrays, ReserveArrayRoom) \
     v(OperationsThatMakeArrays, ThrowIfTooLongForList) \
     v(OperationsThatMakeArrays, ThrowNotIterable) \
     v(OperationsThatMakeArrays, TruncateNewArray) \

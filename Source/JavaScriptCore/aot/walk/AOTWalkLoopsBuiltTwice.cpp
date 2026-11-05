@@ -10,6 +10,7 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
+#include "AOTWalkBirths.h"
 #include "AOTWalkCountersOfLoops.h"
 #include "AOTWalkKnown.h"
 #include "AOTWalkListReadsInLoops.h"
@@ -205,17 +206,12 @@ bool Walker::askObjectAtHeadOfTypedCopy(const BodyValue& read)
         return false;
 
     BodyBlock head = currentBodyIndex().block(way.inputHead);
-    std::span<const ValueID> taken = m_code.at(way.entry).parameters();
-    if (taken.size() != head.numberOfParameters() + numberOfFieldsOfScopesThatBlockTakes(way.entry))
-        return false;
     Vector<Reference, 8> held;
-    for (uint32_t index = 0; index < head.numberOfParameters(); ++index) {
-        Reference reference = referenceOf(head.parameter(index));
-        TypeID type = ownTypeOf(reference);
-        if (!type || !m_types.isSubset(type, m_code.at(taken[index]).type))
-            return false;
-        held.append(reference);
-    }
+    for (uint32_t index = 0; index < head.numberOfParameters(); ++index)
+        held.append(referenceOf(head.parameter(index)));
+    BlockID headOfTypedCopy = inputBlock(frameIndex, way.inputHead).head;
+    if (!closedCopyTakes(headOfTypedCopy, held.span()))
+        return false;
 
     Reference object = referenceOf(read.objectOperand());
     Reference test = buildTestOfObjectAsMade(*this, object, originOf(read));
@@ -230,9 +226,7 @@ bool Walker::askObjectAtHeadOfTypedCopy(const BodyValue& read)
         passed = currentBlock();
     }
     continueIn(failed);
-    EdgeID noEdge;
-    if (!isUnreachable() && bringFieldsOfScopesRound(noEdge, way.entry, held))
-        endWithJumpInto(way.entry, held.span());
+    leaveForClosedCopy(headOfTypedCopy, held.span());
     continueIn(passed);
     if (m_hasFailed || isUnreachable())
         return false;
@@ -372,58 +366,72 @@ TypeID Walker::typeThatCounterIsHeldTo(BlockID inputHead, uint32_t parameter) co
     return { };
 }
 
-Reference Walker::askCounterAgainWhereItComesRound(EdgeID& edge, BlockID head, size_t parameter, std::span<const Reference> arguments)
+bool Walker::entryTakes(BlockID entry, std::span<const Reference> besideFieldsOfScopes) const
 {
-    if (m_waysIntoClosedCopies.isEmpty())
-        return { };
-    BlockID inputHead = m_waysIntoClosedCopies.last().inputHead;
-    BlockID entry = m_waysIntoClosedCopies.last().entry;
-    TypeID held = typeThatCounterIsHeldTo(inputHead, static_cast<uint32_t>(parameter));
-    if (!held || inputBlock(m_frames.size() - 1, inputHead).head != head)
-        return { };
     std::span<const ValueID> taken = m_code.at(entry).parameters();
-    std::span<const Reference> besideFieldsOfScopes = arguments.first(arguments.size() - numberOfFieldsOfScopesThatBlockTakes(head));
     if (taken.size() - numberOfFieldsOfScopesThatBlockTakes(entry) != besideFieldsOfScopes.size())
-        return { };
+        return false;
     for (size_t index = 0; index < besideFieldsOfScopes.size(); ++index) {
         TypeID type = ownTypeOf(besideFieldsOfScopes[index]);
         if (!type || !m_types.isSubset(type, m_code.at(taken[index]).type))
-            return { };
+            return false;
     }
-    if (edge) {
-        BlockID onEdge = m_code.addBlock(BlockRole::Ordinary, m_code.at(head).frequency);
-        m_code.setLoopMarks(onEdge, m_code.at(head).isInLoop, false);
-        m_code.closeEdge(edge, onEdge, { });
-        m_block = onEdge;
-        edge = { };
+    return true;
+}
+
+void Walker::enterWithFieldsOfScopes(BlockID entry, std::span<const Reference> besideFieldsOfScopes)
+{
+    if (!entryTakes(entry, besideFieldsOfScopes)) {
+        fail("the entry of a copy of a loop does not take what is handed to it"_s);
+        return;
     }
-    Reference test = buildTestOfNumber(*this, arguments[parameter], held, m_origin);
+    Vector<Reference, 8> handedOn(besideFieldsOfScopes);
+    EdgeID noEdge;
+    if (bringFieldsOfScopesRound(noEdge, entry, handedOn))
+        crossEdge({ }, entry, handedOn.span());
+}
+
+bool Walker::closedCopyTakes(BlockID head, std::span<const Reference> besideFieldsOfScopes)
+{
+    if (m_waysIntoClosedCopies.isEmpty())
+        return false;
+    const WayIntoClosedCopy& way = m_waysIntoClosedCopies.last();
+    return inputBlock(way.frameIndex, way.inputHead).head == head && entryTakes(way.entry, besideFieldsOfScopes);
+}
+
+void Walker::leaveForClosedCopy(BlockID head, std::span<const Reference> besideFieldsOfScopes)
+{
+    if (isUnreachable())
+        return;
+    if (m_waysIntoClosedCopies.isEmpty() || inputBlock(m_waysIntoClosedCopies.last().frameIndex, m_waysIntoClosedCopies.last().inputHead).head != head) {
+        fail("a turn leaves for the closed copy of another loop"_s);
+        return;
+    }
+    enterWithFieldsOfScopes(m_waysIntoClosedCopies.last().entry, besideFieldsOfScopes);
+}
+
+Reference Walker::askAgainWhereItComesRound(EdgeID& edge, BlockID head, TypeID heldTo, std::span<const Reference> besideFieldsOfScopes, const ScopedLambda<Reference()>& whatComesRound)
+{
+    if (!heldTo || !closedCopyTakes(head, besideFieldsOfScopes))
+        return { };
+    if (edge)
+        layBlockOnEdge(edge, head);
+    Reference comesRound = whatComesRound();
+    Reference test = comesRound ? buildTestOfNumber(*this, comesRound, heldTo, m_origin) : Reference();
     if (!test || !test.isValue())
         return { };
     BlockID passed = addBlock();
     BlockID failed = addBlock(BlockFrequency::Rare);
     branch(test, passed, failed);
     continueIn(failed);
-    Vector<Reference, 8> handedOn(besideFieldsOfScopes);
-    EdgeID noEdge;
-    if (!isUnreachable() && bringFieldsOfScopesRound(noEdge, entry, handedOn))
-        endWithJumpInto(entry, handedOn.span());
+    leaveForClosedCopy(head, besideFieldsOfScopes);
     continueIn(passed);
-    return isUnreachable() ? Reference() : buildProofOfNumber(*this, arguments[parameter], test, m_origin);
+    return isUnreachable() ? Reference() : buildProofOfNumber(*this, comesRound, test, m_origin);
 }
 
 bool Walker::mayBeginTurnAgainInClosedCopy() const
 {
     return !m_waysIntoClosedCopies.isEmpty() && m_waysIntoClosedCopies.last().isEntered && !isUnreachable() && m_state.nothingWasDoneInTurn(m_waysIntoClosedCopies.last().numberOfTurn) && !isUnderHandler() && !hasTextsInStringBuilders();
-}
-
-bool Walker::comesRoundTypedCopy(Reference value)
-{
-    if (m_waysIntoClosedCopies.isEmpty() || !value.isValue())
-        return false;
-    const WayIntoClosedCopy& way = m_waysIntoClosedCopies.last();
-    BlockID head = inputBlock(way.frameIndex, way.inputHead).head;
-    return head && std::ranges::contains(m_code.at(head).parameters(), value.id());
 }
 
 std::optional<uint32_t> Walker::openLoopOfTypedCopy() const
@@ -528,10 +536,7 @@ bool Walker::standsInTurnThatLooksCountOn() const
 void Walker::beginTurnAgainInClosedCopy()
 {
     const WayIntoClosedCopy& way = m_waysIntoClosedCopies.last();
-    Vector<Reference, 8> held = way.heldAtHead;
-    EdgeID noEdge;
-    if (bringFieldsOfScopesRound(noEdge, way.entry, held))
-        endWithJumpInto(way.entry, held.span());
+    leaveForClosedCopy(inputBlock(way.frameIndex, way.inputHead).head, way.heldAtHead.span());
     m_block = { };
     m_state.clear();
     ++m_numberOfTurnsThatBeginAgain;
@@ -646,7 +651,7 @@ void Walker::endFrontOfLoopLeftOpen()
     if (!front.block || m_code.at(front.block).hasEnded())
         return;
     m_code.end(front.block, TerminatorDraft(TerminatorKind::Jump, front.origin), 1);
-    m_code.closeEdge(m_code.at(front.block).terminator.next(), front.head, front.entering.span());
+    m_code.closeEdge(m_code.at(front.block).terminator.next(), front.head, front.entering);
 }
 
 Vector<uint32_t, 8> Walker::nameValuesOnEdgesThatLeavePlainWalk(BlockID inputHead, std::span<const ValueID> readBehindLoop)
@@ -749,6 +754,7 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
     jumpTo(closedStart, { });
     m_block = closedStart;
     BlockID entryOfClosedCopy = addBlock(BlockFrequency::Rare);
+    m_entriesOfClosedCopies.add(entryOfClosedCopy.index());
     Vector<Reference, 8> enteringClosedCopy;
     for (size_t place = 0; place < entering.size(); ++place) {
         TypeID type = joinTypes(preview.typesOfParameters[place], ownTypeOf(entering[place]));
@@ -763,11 +769,7 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
     uint32_t namesInFrontOfLoop = inputBlock(frameIndex, inputHead).firstNarrowerName;
 
     forgetAllButFreshObjectsAndFieldsThatBlockTakes(entryOfClosedCopy);
-    Vector<Reference, 8> enteringWithFields;
-    enteringWithFields.append(entering);
-    EdgeID noEdge;
-    if (bringFieldsOfScopesRound(noEdge, entryOfClosedCopy, enteringWithFields))
-        endWithJumpInto(entryOfClosedCopy, enteringWithFields.span());
+    enterWithFieldsOfScopes(entryOfClosedCopy, entering);
     enterClosedCopy(entryOfClosedCopy, preview);
     {
         ClosedArm closedArm(*this);
@@ -1021,6 +1023,9 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         }
     }
     bool typedCopyIsQuietByRow = !!ofTypedCopy;
+    bool turnsThatRunOtherCodeComeRound = typedCopyIsQuietByRow && std::ranges::any_of(m_operationsThatRanOtherCodeOfRow, [&](ValueID ran) {
+        return wayBehindOperationComesRound(inputHead, ran);
+    });
     Effects effectsOfTypedCopyByRow = m_effectsOutsideArmsOfRow;
     Vector<FieldOfScope, 4> fieldsTestedInFront;
     if (closedCopyHasEntry && !sharedEntry && steppedAtHead.asTheyEntered.isEmpty())
@@ -1206,8 +1211,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             branch(holds, passed, closedStart);
             rareWayLeadsToClosedStart = true;
             continueIn(passed);
-            for (const MemberConditionRecord& condition : guardsAskedOfObjectsOfTurns)
-                m_state.noteGuardOfReadsHolds(condition.layout, condition.key, holds);
+            noteGuardsShownByTest(*this, guardsAskedOfObjectsOfTurns.span(), holds);
         }
     }
     Vector<Reference, 4> proofs;
@@ -1292,20 +1296,25 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         auto goOnWhereItIsNotNegative = [&](Reference asked) {
             if (isUnreachable() || !isInteger(asked))
                 return false;
-            if (m_types.at(typeOf(asked)).integers.minimum >= 0 || !askedForSign.add(asked.bits()).isNewEntry)
+            if (m_types.at(typeOf(asked)).integers.minimum >= 0 || askedForSign.contains(asked.bits()))
                 return true;
             Draft zero(Opcode::Integer, origin);
             zero.setInteger(0);
             Reference test = buildOperatorOnIntegersOfLoop(*this, Opcode::GreaterEq, asked, constant(WTF::move(zero)), origin);
-            if (!test || !test.isValue())
+            if (!test || !test.isRecord())
                 return false;
+            if (!test.isValue())
+                return m_code.at(test.id()).opcode == Opcode::Boolean && m_code.at(test.id()).boolean();
             BlockID passed = addBlock();
             if (!closedStart)
                 closedStart = addBlock(BlockFrequency::Rare);
             branch(test, passed, closedStart);
             rareWayLeadsToClosedStart = true;
             continueIn(passed);
-            return !isUnreachable();
+            if (isUnreachable())
+                return false;
+            askedForSign.add(asked.bits());
+            return true;
         };
         auto lesserOf = [&](Reference one, Reference other) -> Reference {
             Reference isLess = buildOperatorOnIntegersOfLoop(*this, Opcode::Less, one, other, origin);
@@ -1416,6 +1425,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     Vector<Reference, 2> positionsEnteringClosedCopy;
     if (!sharedEntry && closedCopyHasEntry) {
         entryOfClosedCopy = addBlock(otherCopyOpensItsGuesses ? BlockFrequency::Normal : BlockFrequency::Rare);
+        m_entriesOfClosedCopies.add(entryOfClosedCopy.index());
         for (size_t index = 0; index < entering.size(); ++index) {
             TypeID type = joinTypes(preview.typesOfParameters[index], ownTypeOf(entering[index]));
             enteringClosedCopy.append(addParameter(entryOfClosedCopy, type, formOfParameter(type, { })));
@@ -1454,9 +1464,7 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 withPositions.append(entering);
                 for (size_t place = 0; place < positionsEnteringClosedCopy.size(); ++place)
                     withPositions.append(steppedAtHead.asTheyEntered[place].second.position);
-                EdgeID noEdge;
-                if (bringFieldsOfScopesRound(noEdge, entryOfClosedCopy, withPositions))
-                    endWithJumpInto(entryOfClosedCopy, withPositions.span());
+                enterWithFieldsOfScopes(entryOfClosedCopy, withPositions.span());
             }
             for (size_t place = 0; place < positionsEnteringClosedCopy.size(); ++place)
                 m_iterationsByIndex[steppedAtHead.asTheyEntered[place].first].position = positionsEnteringClosedCopy[place];
@@ -1502,6 +1510,12 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
             m_waysIntoClosedCopies.append(WayIntoClosedCopy { frameIndex, inputHead, entryOfClosedCopy, { }, closedStart, { }, ofTypedCopy || (listsRead.areTested && headOfLooksTriedForLists == inputHead) });
         if (entryOfClosedCopy)
             m_waysIntoClosedCopies.last().variablesHeld.appendVector(fieldsTestedInFront);
+        turnsThatRunOtherCodeComeRound &= entryOfClosedCopy && !sharedEntry && !asksAtHead && !holdsCounterBelowRoom && listsRead.lists.isEmpty() && counters.isEmpty() && guardsAskedOfObjectsOfTurns.isEmpty() && variablesCheckedInTurns.isEmpty() && steppedAtHead.asTheyEntered.isEmpty()
+            && std::ranges::all_of(fieldsTestedInFront, [&](const FieldOfScope& field) {
+                return !field.variable || program().at(field.variable).initialization != VariableInitialization::Uninitialized || leavesDeadZoneForGood(program(), field.variable);
+            });
+        if (entryOfClosedCopy)
+            m_waysIntoClosedCopies.last().turnsThatRunOtherCodeComeRound = turnsThatRunOtherCodeComeRound;
         if (entryOfClosedCopy && lesserBound) {
             m_waysIntoClosedCopies.last().relationThatAsksLesserBound = heldBelowRoom.relation;
             m_waysIntoClosedCopies.last().lesserBound = lesserBound;
@@ -1513,7 +1527,9 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 m_waysIntoClosedCopies.last().countersHeld.append({ counter.position, counter.tested });
         }
         ++m_ordinalOfCopyOfLoop;
-        if (typedCopyIsQuietByRow || listsRead.areTested)
+        if (turnsThatRunOtherCodeComeRound)
+            m_effectsSeededForNextRow = preview.effects;
+        else if (typedCopyIsQuietByRow || listsRead.areTested)
             m_effectsSeededForNextRow = effectsOfTypedCopyByRow;
         else if (entryOfClosedCopy && lesserBound && !storesUnderCounterAloneRanOtherCode)
             m_effectsSeededForNextRow = preview.effects;
@@ -1526,7 +1542,11 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
         uint32_t guessesOpenedInFront = m_numberOfGuessesOpened;
         m_walkOfLoopWasKept = false;
         m_buildsTestsBesidePlainWalk = false;
-        walkCopyOfLoop(inputHead, enteringTypedCopy.span());
+        {
+            SetForScope headOverLists(m_headOfTypedBuildOverListsTestedInFront, listsRead.areTested ? inputHead : BlockID());
+            SetForScope frameOverLists(m_frameOfTypedBuildOverListsTestedInFront, frameIndex);
+            walkCopyOfLoop(inputHead, enteringTypedCopy.span());
+        }
         m_typedBuildTestsNothing = !hasTestInFront && variablesCheckedInTurns.isEmpty() && m_numberOfGuessesOpened == guessesOpenedInFront;
         if (m_walkOfLoopWasKept)
             m_reportOfTypedBuildMadeLast = ReportOfTypedBuild { m_effectsOfLoopKeptLast, otherCopyOpensItsGuesses, rareWayLeadsToClosedStart || !testsOfListsLeadToClosedStart };

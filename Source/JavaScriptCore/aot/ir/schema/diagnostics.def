@@ -142,6 +142,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
 
     EffectsExceedReplacedGroup(Select, "a selected operation has effects beyond those of the group it replaced")
     EffectsOfPreparedTooNarrow(Select, "an operation was selected into a form with effects it does not declare")
+    UnitCompiledAloneDiffers(GenerateCode, "the code of a unit depends on more than the unit, what it mentions or inlines, the facts and the plan, or on whether its Code is verified")
     EffectsExceedSummary(GenerateCode, "the generated code has effects beyond the summary of {function}")
     StoreOutsideDeclaredEffects(GenerateCode, "{function}: the code of {value} reads or writes a heap outside the effects of the operation")
     RequiredTailCallNotConverted(Optimize, "a tail call in a cycle was demoted in {function} at {value}")

@@ -308,15 +308,6 @@ LValue CellAllocationEmitter::slotOfFrameCell(const OperationContext& context, s
     return slot;
 }
 
-CellPointer CellAllocationEmitter::frameCellLent(ValueID cell)
-{
-    for (const SlotOfClosuresLent& shared : m_slotsOfClosuresLent) {
-        if (shared.cell == cell)
-            return CellPointer(m_out.slotBase(shared.slot));
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 CellAllocationEmitter::WordsLentOutOfFrame& CellAllocationEmitter::wordsLentUnderHandler(BlockID handler)
 {
     if (m_wordsLentUnderHandlers.isEmpty())
@@ -329,37 +320,81 @@ CellAllocationEmitter::WordsLentOutOfFrame& CellAllocationEmitter::wordsLentUnde
 
 void CellAllocationEmitter::noteWordsThatCellLentHolds(ValueID cell, std::span<const uint32_t> offsets)
 {
+    auto shared = std::ranges::find(m_slotsOfClosuresLent, cell, &SlotOfClosuresLent::cell);
+    RELEASE_ASSERT(shared != m_slotsOfClosuresLent.end());
+    shared->wordsThatMayHoldCells = m_proc.arena().copySpan<uint32_t>(offsets);
     EdgeID handler = m_code.handlerOf(operationAt(cell).block());
     if (!handler)
         return;
     BlockID head = m_code.at(handler).to;
     RELEASE_ASSERT(m_code.at(head).isHandlerBlock());
-    auto shared = std::ranges::find(m_slotsOfClosuresLent, cell, &SlotOfClosuresLent::cell);
-    RELEASE_ASSERT(shared != m_slotsOfClosuresLent.end());
     WordsLentOutOfFrame& words = wordsLentUnderHandler(head);
     for (uint32_t offset : offsets)
         words.append(m_proc.arena(), WordLentOutOfFrame { shared->slot, offset });
 }
 
-void CellAllocationEmitter::clearWhatWasLentUnderHandler(BlockID handler)
+static void zeroWordsOfFrame(CCallHelpers& jit, const Machine::PatchParameters& params, Vector<intptr_t, 8>& offsets)
+{
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    std::ranges::sort(offsets);
+    offsets.shrink(std::ranges::unique(offsets).begin() - offsets.begin());
+    [[maybe_unused]] bool registerHoldsZero = false;
+    for (size_t index = 0; index < offsets.size(); ++index) {
+        CCallHelpers::Address address = params.frame().addressInFrame(offsets[index]);
+        if (index + 1 == offsets.size() || offsets[index + 1] != offsets[index] + static_cast<intptr_t>(sizeof(uint64_t))) {
+#if CPU(X86_64)
+            jit.and64(CCallHelpers::TrustedImm32(0), address);
+#else
+            jit.store64(CCallHelpers::TrustedImm32(0), address);
+#endif
+            continue;
+        }
+        ++index;
+#if CPU(X86_64)
+        FPRReg zero = params.fpScratch(0);
+        if (!std::exchange(registerHoldsZero, true))
+            jit.moveZeroToDouble(zero);
+        if (jit.supportsAVX())
+            jit.m_assembler.vmovups_rm(zero, address.offset, address.base);
+        else
+            jit.m_assembler.movups_rm(zero, address.offset, address.base);
+#else
+        jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, address.base, CCallHelpers::TrustedImm32(address.offset));
+#endif
+    }
+}
+
+Machine::PatchOperation* CellAllocationEmitter::patchThatZeroesWordsOfFrame()
 {
     Machine::PatchOperation* clear = m_out.patchpoint(Machine::Void);
     clear->effects = Machine::Effects::none();
     clear->effects.writesLocalState = true;
-    clear->setGenerator([words = &wordsLentUnderHandler(handler), statistics = &build().statistics()](CCallHelpers& jit, const Machine::PatchParameters& params) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
+    if (isX86_64())
+        clear->numFPScratchRegisters = 1;
+    return clear;
+}
+
+void CellAllocationEmitter::clearWhatCellLentHolds(ValueID cell)
+{
+    auto shared = std::ranges::find(m_slotsOfClosuresLent, cell, &SlotOfClosuresLent::cell);
+    RELEASE_ASSERT(shared != m_slotsOfClosuresLent.end());
+    patchThatZeroesWordsOfFrame()->setGenerator([slot = shared->slot, words = shared->wordsThatMayHoldCells, statistics = &build().statistics()](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        Vector<intptr_t, 8> offsets;
+        for (uint32_t word : words)
+            offsets.append(slot->offsetFromFP() + static_cast<intptr_t>(word));
+        zeroWordsOfFrame(jit, params, offsets);
+        statistics->count(StatisticID::WordsClearedBehindCalls, offsets.size());
+    });
+}
+
+void CellAllocationEmitter::clearWhatWasLentUnderHandler(BlockID handler)
+{
+    patchThatZeroesWordsOfFrame()->setGenerator([words = &wordsLentUnderHandler(handler), statistics = &build().statistics()](CCallHelpers& jit, const Machine::PatchParameters& params) {
         Vector<intptr_t, 8> offsets;
         for (uint32_t index = 0; index < words->size(); ++index)
             offsets.append(words->at(index).slot->offsetFromFP() + static_cast<intptr_t>(words->at(index).offset));
-        std::ranges::sort(offsets);
-        intptr_t cleared = 0;
-        for (intptr_t offset : offsets) {
-            if (offset == cleared)
-                continue;
-            jit.store64(CCallHelpers::TrustedImm32(0), params.frame().addressInFrame(offset));
-            cleared = offset;
-            statistics->count(StatisticID::WordsClearedAtHeadsOfHandlers);
-        }
+        zeroWordsOfFrame(jit, params, offsets);
+        statistics->count(StatisticID::WordsClearedAtHeadsOfHandlers, offsets.size());
     });
 }
 

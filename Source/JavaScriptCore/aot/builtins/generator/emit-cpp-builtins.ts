@@ -28,7 +28,6 @@ import {
   type ModelLayoutField,
   type ModelModule,
   type ModelName,
-  type ModelNamesReadByNativeCode,
   type ModelRealmStructure,
   type ModelSlot,
   type TableModel,
@@ -102,7 +101,6 @@ const runtimeSpans: readonly SpanMember[] = [
   ["marks", "builtinTableMarks"],
   ["loadersOfMachineCode", "builtinTableLoadersOfMachineCode"],
   ["closedKeys", "builtinTableClosedKeys"],
-  ["namesReadByNativeCode", "builtinTableNamesReadByNativeCode"],
 ];
 
 function checkAscendingIds(cppType: string, items: readonly { id: number }[], problems: Problems): void {
@@ -350,14 +348,6 @@ function formatClosedKeys({ holder, keys, openNames }: ModelClosedKeys, closedKe
   ]);
 }
 
-function formatNamesReadByNativeCode(read: ModelNamesReadByNativeCode, namesRead: Pool): string {
-  return formatAggregate([
-    ["holder", formatId("BuiltinID", read.holder)],
-    ["names", namesRead.add(read.names.map(name => formatName(name)))],
-    ["namesOnlyInspected", namesRead.add(read.namesOnlyInspected.map(name => formatName(name)))],
-  ]);
-}
-
 function collectDeclaredArrays(model: TableModel): DeclaredArrays {
   const arrays = new Map<string, DeclaredArray>();
   for (const [cppType, name, count] of collectArrayDeclarations(model)) arrays.set(name, { cppType, count });
@@ -443,7 +433,6 @@ export function emitCppBuiltins(model: TableModel): string {
   const lockedMembers = new Pool("BuiltinID", "lockedMembers");
   const lockedMemberSpan = lockedMembers.add(formatBuiltinIds(model.membersLockedByName));
   const closedKeyNames = new Pool("BuiltinName", "closedKeyNames");
-  const namesReadByNativeCode = new Pool("BuiltinName", "namesReadByNativeCode");
   const realmStructureNames = new Pool("BuiltinName", "realmStructureNames");
   const realmStructures = new Pool("BuiltinRealmStructure", "realmStructures");
   const realmStructureSpan = realmStructures.add(
@@ -529,11 +518,6 @@ export function emitCppBuiltins(model: TableModel): string {
       "builtinTableClosedKeys",
       model.closedKeys.map(closedKeys => formatClosedKeys(closedKeys, closedKeyNames)),
     ),
-    emitTableArray(
-      arrays,
-      "builtinTableNamesReadByNativeCode",
-      model.namesReadByNativeCode.map(read => formatNamesReadByNativeCode(read, namesReadByNativeCode)),
-    ),
   ];
   const body = joinBlocks([
     classSlots.emit(),
@@ -544,7 +528,6 @@ export function emitCppBuiltins(model: TableModel): string {
     exportsReadByNativeCode.emit(),
     lockedMembers.emit(),
     closedKeyNames.emit(),
-    namesReadByNativeCode.emit(),
     realmStructureNames.emit(),
     realmStructures.emit(),
     `static_assert(${model.realmStructures.length} <= RealmStructureID::hashTableDeletedIndex);`,

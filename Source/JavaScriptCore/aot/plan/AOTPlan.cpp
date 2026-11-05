@@ -705,6 +705,10 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, S
     BitVector standsInRowOfClasses(numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         const Layout& layout = program.layouts[index];
+        forEachOfSeveralParents(program, LayoutID(index), [&](LayoutID parent) {
+            standsInRowOfClasses.quickSet(index);
+            standsInRowOfClasses.quickSet(parent.index());
+        });
         if (!layout.base || layout.isDerived())
             continue;
         standsInRowOfClasses.quickSet(index);

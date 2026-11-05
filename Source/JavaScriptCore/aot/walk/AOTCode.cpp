@@ -242,6 +242,7 @@ void Code::reset(CodeUnit unit)
     m_graveyard = { };
     m_changesToOlderParts.shrink(0);
     m_recordsAbandoned.shrink(0);
+    m_partsAbandoned.shrink(0);
     m_keepsChangesToOlderParts = false;
     m_operations.clear();
     m_blocks.clear();
@@ -685,8 +686,9 @@ ALWAYS_INLINE void Code::appendEdgeInto(BlockID from, BlockID to, std::span<cons
     entered.m_lastEdgeIn = added;
 }
 
-void Code::endWithJump(BlockID blockID, Origin origin, BlockID to, std::span<const ValueID> arguments)
+void Code::endWithJump(BlockID blockID, Origin origin, BlockID to, const ArgumentsOfEdge& brought)
 {
+    std::span<const ValueID> arguments = brought.span();
     RELEASE_ASSERT(!m_isSwept);
     Block& block = m_blocks[checkedIndexInCode(blockID, m_blocks.size())];
     RELEASE_ASSERT(!block.hasEnded());
@@ -734,8 +736,9 @@ EdgeID Code::addHandlerEdge(BlockID blockID)
     return block.handler;
 }
 
-void Code::closeEdge(EdgeID edgeID, BlockID to, std::span<const ValueID> arguments)
+void Code::closeEdge(EdgeID edgeID, BlockID to, const ArgumentsOfEdge& brought)
 {
+    std::span<const ValueID> arguments = brought.span();
     RELEASE_ASSERT(!m_isSwept);
     Edge& edge = m_edges[checkedIndexInCode(edgeID, m_edges.size())];
     RELEASE_ASSERT(edge.isOpen());
@@ -820,27 +823,41 @@ void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks
         }
     }
 
-    for (uint32_t index = mark.numberOfOperations; index < m_operations.size(); ++index) {
+    Vector<PartsAbandoned, 4> deadAlready;
+    while (!m_partsAbandoned.isEmpty() && m_partsAbandoned.last().operations.first >= mark.numberOfOperations)
+        deadAlready.append(m_partsAbandoned.takeLast());
+    deadAlready.reverse();
+    auto forEachLeftAlive = [&](std::pair<uint32_t, uint32_t> PartsAbandoned::* part, uint32_t first, uint32_t end, const auto& functor) {
+        for (const PartsAbandoned& dead : deadAlready) {
+            for (uint32_t index = first; index < (dead.*part).first; ++index)
+                functor(index);
+            first = std::max(first, (dead.*part).second);
+        }
+        for (uint32_t index = first; index < end; ++index)
+            functor(index);
+    };
+
+    forEachLeftAlive(&PartsAbandoned::operations, mark.numberOfOperations, m_operations.size(), [&](uint32_t index) {
         const Operation& operation = m_operations[index];
         if (operation.blockIndex >= mark.numberOfBlocks)
-            continue;
+            return;
         Block& block = m_blocks[operation.blockIndex];
         if (operation.opcode == Opcode::Parameter) {
             block.m_parameters = nullptr;
             block.m_numberOfParameters = 0;
         } else if (!operation.previous || operation.previous.index() < mark.numberOfOperations)
             block.m_last = operation.previous;
-    }
-    for (uint32_t index = mark.numberOfEdges; index < m_edges.size(); ++index) {
+    });
+    forEachLeftAlive(&PartsAbandoned::edges, mark.numberOfEdges, m_edges.size(), [&](uint32_t index) {
         const Edge& edge = m_edges[index];
         if (!edge.from || edge.from.index() >= mark.numberOfBlocks)
-            continue;
+            return;
         Block& block = m_blocks[edge.from.index()];
         if (block.handler == EdgeID(index))
             block.handler = EdgeID();
         else if (block.terminator.isSet && block.terminator.numberOfEdges && block.terminator.firstEdge.index() <= index && index < block.terminator.firstEdge.index() + block.terminator.numberOfEdges)
             block.terminator = Terminator();
-    }
+    });
     for (uint32_t index = mark.numberOfEntries; index < m_entries.size(); ++index) {
         BlockID entered = m_entries[index].block;
         if (entered.index() < mark.numberOfBlocks)
@@ -865,16 +882,17 @@ void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks
     dead.terminator.isSet = true;
     if (!m_graveyard)
         m_graveyard = BlockID(m_blocks.append(dead));
-    for (uint32_t index = mark.numberOfBlocks; index < m_blocks.size(); ++index)
+    forEachLeftAlive(&PartsAbandoned::blocks, mark.numberOfBlocks, m_blocks.size(), [&](uint32_t index) {
         m_blocks[index] = dead;
-    for (uint32_t index = mark.numberOfEdges; index < m_edges.size(); ++index) {
+    });
+    forEachLeftAlive(&PartsAbandoned::edges, mark.numberOfEdges, m_edges.size(), [&](uint32_t index) {
         Edge& edge = m_edges[index];
         edge.from = m_graveyard;
         edge.to = m_graveyard;
         edge.m_arguments = nullptr;
         edge.m_numberOfArguments = 0;
         edge.m_nextInto = EdgeID();
-    }
+    });
     while (!m_recordsAbandoned.isEmpty() && m_recordsAbandoned.last().first >= mark.numberOfOperations)
         m_recordsAbandoned.removeLast();
     if (mark.numberOfOperations < m_operations.size())
@@ -883,12 +901,13 @@ void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks
     deadRecord.opcode = Opcode::Undefined;
     deadRecord.type = TypeTable::undefined;
     deadRecord.representation = Representation::JSValue;
-    for (uint32_t index = mark.numberOfOperations; index < m_operations.size(); ++index) {
+    forEachLeftAlive(&PartsAbandoned::operations, mark.numberOfOperations, m_operations.size(), [&](uint32_t index) {
         if (m_operations[index].blockIndex != Operation::noBlock)
             m_operations[index] = deadRecord;
         else
             m_operations[index].inlineFrame = 0;
-    }
+    });
+    m_partsAbandoned.append(PartsAbandoned { { mark.numberOfOperations, static_cast<uint32_t>(m_operations.size()) }, { mark.numberOfBlocks, static_cast<uint32_t>(m_blocks.size()) }, { mark.numberOfEdges, static_cast<uint32_t>(m_edges.size()) } });
     m_inlineFrames.shrink(mark.numberOfInlineFrames);
     m_entries.shrink(mark.numberOfEntries);
     m_numberOfFrameWords = mark.numberOfFrameWords;

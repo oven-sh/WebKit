@@ -44,8 +44,9 @@ static void emitCallMethodById(StubAssembler& jit, unsigned lentArguments)
     const GPRReg spare = jit.allocateScratch(StubRegister::T14);
     const GPRReg secondSpare = jit.allocateScratch(StubRegister::T15);
 #else
-    const OwnedScratchRegister ownedScratch(jit);
-    const GPRReg spare = ownedScratch;
+    std::optional<OwnedScratchRegister> ownedScratch;
+    ownedScratch.emplace(jit);
+    const GPRReg spare = ownedScratch->gpr();
     const GPRReg secondSpare = InvalidGPRReg;
 #endif
     const AccessTableRegisters inTable { thisGPR, name, key, place };
@@ -55,9 +56,31 @@ static void emitCallMethodById(StubAssembler& jit, unsigned lentArguments)
     JumpList isNotInAccessTable;
     JumpList readsByStub;
     JumpList filesNothing;
+    JumpList isNotInFrontTable;
+    JumpList isInNoTableByShape;
 
     jit.checkStackBeforeEnteringCallee();
     readsByStub.append(jit.branchIfNotCell(thisGPR));
+    isInNoTableByShape.append(jit.branchTest8(CCallHelpers::Zero, Address(thisGPR, offsetOfShapeWord + 3), TrustedImm32(compiledObjectShapeBit >> 24)));
+    isInNoTableByShape.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
+    jit.load32(Address(thisGPR, JSCell::structureIDOffset()), key);
+    readByFrontTable(jit, { thisGPR, name, key, spare, place, secondSpare, ReceiverOfFrontProbe::IsCompiledObject, false }, calleeGPR, isNotInFrontTable, callsValue);
+    readsByStub.append(jit.jump());
+    isNotInFrontTable.link(&jit);
+    {
+#if CPU(X86_64)
+        ownedScratch.reset();
+#endif
+        FieldTableProbe probe { thisGPR, name, key, place, true, true };
+        probe.receiverIsCompiledObject = true;
+        readFieldByTable(jit, probe, calleeGPR, isInNoTableByShape, [&] {
+            jit.jumpToStub(callsValue);
+        });
+#if CPU(X86_64)
+        ownedScratch.emplace(jit);
+#endif
+    }
+    isInNoTableByShape.link(&jit);
     locatePlaceInAccessTable(jit, PartOfAccessTable::Calls, inTable, count);
     loadWordBehindKeyInAccessTable(jit, inTable, OBJECT_OFFSETOF(AccessTable::Call, key), calleeGPR, spare, isNotInPlaceOfCall);
     jit.load64(Address(calleeGPR), calleeGPR);

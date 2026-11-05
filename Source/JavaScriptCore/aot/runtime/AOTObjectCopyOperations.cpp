@@ -142,7 +142,7 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
             names.append(property.name);
             values.appendWithCrashOnOverflow(property.value);
             return IterationStatus::Continue;
-        });
+        }, PropertyWalk::Elements::NeedGenericPath, PropertyWalk::Preparations::AreDone);
         return walkResult == PropertyWalk::Result::Completed;
     }
     Structure* structure = source->structure();

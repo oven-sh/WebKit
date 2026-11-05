@@ -1070,7 +1070,7 @@ static void checkObfuscationOfProgramTables(const JoinedTables& check)
     const ProgramTables& tables = check.tables;
     uint32_t emptyString = check.encoder.stringNumber(StringID());
     std::span<const ModuleData> modules = tables.modules();
-    bool hasFunctionName = std::ranges::any_of(tables.functionNames(), [&](uint32_t name) {
+    bool hasFunctionName = check.encoder.build.options().hidesFunctionNames() && std::ranges::any_of(tables.functionNames(), [&](uint32_t name) {
         return name != emptyString;
     });
     bool hasDisplayPath = false;

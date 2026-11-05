@@ -28,6 +28,7 @@ struct ValueCall {
     std::span<const Boxed> arguments;
     bool calleeIsCell { false };
     uint8_t lentArguments { 0 };
+    uint64_t argumentsLetGo { 0 };
     std::optional<BuiltinBoxedStub> methodOfBuiltinClass;
     bool receiverIsProvenOfBuiltinClass { false };
     bool methodMayBeUnread { false };
@@ -40,6 +41,7 @@ struct ConventionCall {
     LValue thisValue { nullptr };
     LValue count { nullptr };
     std::span<const LValue> arguments { };
+    uint64_t argumentsLetGo { 0 };
 };
 
 class CallEmitter final : public OperationEmitter {

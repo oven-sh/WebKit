@@ -169,6 +169,7 @@ void* Arena::allocateOutsideRoomLetGo(size_t bytes, size_t alignment)
     m_endOfChunk = 0;
 
     size_t bytesTaken = bytesTakenBy(bytes);
+    RELEASE_ASSERT(bytesTaken >= bytes);
     for (RoomLetGo** link = &m_roomsLetGo; RoomLetGo* room = *link; link = &room->next) {
         uintptr_t start = (reinterpret_cast<uintptr_t>(room) + alignment - 1) & ~(static_cast<uintptr_t>(alignment) - 1);
         if (start > room->end || room->end - start < bytesTaken)
@@ -219,21 +220,12 @@ void Arena::reset()
     if (!m_chunk)
         return;
 
-    size_t bytesTaken = bytesAllocatedSinceReset();
+
     for (Chunk* chunk = std::exchange(m_chunk->previous, nullptr); chunk;) {
         ASSERT(chunk->size < m_chunk->size);
         Chunk* previous = chunk->previous;
         freeMachineArenaChunk(chunk, chunk->size);
         chunk = previous;
-    }
-
-    if (bytesTaken && m_chunk->size > smallestChunkSize && bytesTaken < m_chunk->size / 8) {
-        size_t size = m_chunk->size / 2;
-        freeMachineArenaChunk(m_chunk, m_chunk->size);
-        m_chunk = new (NotNull, fastMalloc(size)) Chunk { nullptr, size };
-        m_begin = reinterpret_cast<uintptr_t>(m_chunk + 1);
-        m_cursor = m_begin;
-        m_end = reinterpret_cast<uintptr_t>(m_chunk) + size;
     }
 
 #if ASSERT_ENABLED

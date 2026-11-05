@@ -148,6 +148,7 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::CheckEffectsAtRunTime:
     case Wire::TestingSwitch::RowSaysLess:
     case Wire::TestingSwitch::UndoLeavesExpectations:
+    case Wire::TestingSwitch::LaterUnitsOpenNoGuesses:
     case Wire::TestingSwitch::IgnoreBranchHints:
     case Wire::TestingSwitch::ShuffleBlockFrequencies:
     case Wire::TestingSwitch::IgnoreExpectedTypes:

@@ -118,15 +118,22 @@ struct AccessTableWords {
                 *keysThatDependOnChains[index] = 0;
             return;
         }
-        for (uint32_t index = 0; index < AccessTable::numberOfPlaces; ++index)
-            reads[index].keyOfOtherAnswer = 0;
-        memset(static_cast<void*>(calls), 0, sizeof(AccessTable::calls));
+        for (uint32_t index = 0; index < AccessTable::numberOfPlaces; ++index) {
+            if (reads[index].keyOfOtherAnswer)
+                reads[index].keyOfOtherAnswer = 0;
+            if (calls[index].key)
+                calls[index] = { };
+        }
     }
 
     void didStartWatchingReplacements()
     {
-        if (std::exchange(holdsStoresToUnwatchedStructures, 0))
-            memset(static_cast<void*>(stores), 0, sizeof(AccessTable::stores));
+        if (!std::exchange(holdsStoresToUnwatchedStructures, 0))
+            return;
+        for (uint32_t index = 0; index < AccessTable::numberOfPlaces; ++index) {
+            if (stores[index].key)
+                stores[index] = { };
+        }
     }
 };
 

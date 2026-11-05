@@ -19,8 +19,10 @@
 #include "AOTTypeArena.h"
 #include "AOTWalkKnown.h"
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <span>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -28,12 +30,33 @@ static constexpr size_t mostReceiversToldApartByArmsInUnionTableCalls = 4;
 
 namespace {
 
+struct ReceiversOfTableCallInUnionTableCalls {
+    bool areKeptForBuild { false };
+    bool areRefused { false };
+    bool someRowIsGuarded { false };
+    bool someCopyWouldLearnOfThis { false };
+    size_t numberInUse { 0 };
+    Vector<FunctionID, 4> methods;
+    Vector<LayoutID, 8> withRows;
+    Vector<LayoutID, 2> withoutRows;
+};
+
+struct ReceiversKeptByUnionTableCalls : ReceiversOfTableCallInUnionTableCalls {
+    struct EffectsOfMethods {
+        bool areKnown { false };
+        Effects ofMethodsThatAskNoOperand { Effects::none() };
+        Vector<FunctionID, 2> methodsThatAskOperands;
+    };
+    std::array<EffectsOfMethods, 2> effectsByWhetherHandlerStandsAround;
+};
+
+struct KeptByUnionTableCalls final : Walker::KeptForBuild {
+    HashMap<uint64_t, std::unique_ptr<ReceiversKeptByUnionTableCalls>> receiversOfSelectors;
+};
+
 struct TableCallInUnionTableCalls {
     uint32_t selector { 0 };
-    Vector<FunctionID, 4> methods;
-    bool someRowIsGuarded { false };
-    Vector<LayoutID, 8> receiversWithRows;
-    bool someReceiverHasNoRow { false };
+    ReceiversOfTableCallInUnionTableCalls* receivers { nullptr };
 };
 
 } // anonymous namespace
@@ -68,9 +91,89 @@ static Effects effectsOfMethodInUnionTableCalls(Walker& walker, FunctionID metho
     return effectsOfDirectCall(walker, method, entered);
 }
 
+static void describeReceiversInUnionTableCalls(Walker& walker, uint32_t selector, LayoutSetID set, ReceiversOfTableCallInUnionTableCalls& receivers)
+{
+    TypeArena& types = walker.types();
+    const Plan& plan = walker.plan();
+    const CallingConventions& conventions = plan.conventions();
+    receivers.areRefused = true;
+    for (size_t place = 0; place < membersOf(types, set).size(); ++place) {
+        LayoutID member = membersOf(types, set)[place];
+        if (!plan.isInUse(member))
+            continue;
+        if (!plan.slots().holdsCompiledObjects(member))
+            return;
+        ++receivers.numberInUse;
+        const MethodTableRow* row = conventions.findRowOfMethodTable(selector, member);
+        if (!row) {
+            if (!isFoundByShapeTest(walker.program().at(member)))
+                return;
+            receivers.withoutRows.append(member);
+            continue;
+        }
+        receivers.withRows.append(member);
+        if (walker.program().at(row->method).isCoroutine())
+            return;
+        receivers.methods.append(row->method);
+        receivers.someRowIsGuarded |= !!row->guardedClass;
+        TypeID own = walker.program().at(row->method).thisType.written();
+        receivers.someCopyWouldLearnOfThis |= !own || !types.isSubset(types.withoutNullish(own), types.forLayout(member));
+    }
+    std::ranges::sort(receivers.methods);
+    receivers.methods.shrink(std::ranges::unique(receivers.methods).begin() - receivers.methods.begin());
+    receivers.areRefused = receivers.methods.size() < 2;
+}
+
+static ReceiversOfTableCallInUnionTableCalls& findReceiversInUnionTableCalls(Walker& walker, uint32_t selector, LayoutSetID set, std::optional<ReceiversOfTableCallInUnionTableCalls>& receiversOfThisCallAlone)
+{
+    TypeArena::SetOfRound round = walker.types().setOfRound(set);
+    if (!round.isKeptForBuild) {
+        receiversOfThisCallAlone.emplace();
+        describeReceiversInUnionTableCalls(walker, selector, set, *receiversOfThisCallAlone);
+        return *receiversOfThisCallAlone;
+    }
+    std::unique_ptr<Walker::KeptForBuild>& kept = walker.keptByUnionTableCalls();
+    if (!kept)
+        kept = makeUniqueWithoutFastMallocCheck<KeptByUnionTableCalls>();
+    auto added = static_cast<KeptByUnionTableCalls&>(*kept).receiversOfSelectors.add((static_cast<uint64_t>(selector) + 1) << 32 | round.word, nullptr);
+    if (added.isNewEntry) {
+        added.iterator->value = makeUniqueWithoutFastMallocCheck<ReceiversKeptByUnionTableCalls>();
+        ReceiversOfTableCallInUnionTableCalls& receivers = *added.iterator->value;
+        describeReceiversInUnionTableCalls(walker, selector, set, receivers);
+        receivers.areKeptForBuild = true;
+        if (receivers.areRefused)
+            receivers.methods.clear();
+        if (receivers.areRefused || receivers.withoutRows.isEmpty())
+            receivers.withRows.clear();
+    }
+    return *added.iterator->value;
+}
+
+static void mergeEffectsOfMethodsInUnionTableCalls(Walker& walker, ReceiversOfTableCallInUnionTableCalls& receivers, std::span<const Reference> receiverAndArguments, Effects& effects)
+{
+    if (!receivers.areKeptForBuild) {
+        for (FunctionID method : receivers.methods)
+            effects.merge(effectsOfMethodInUnionTableCalls(walker, method, receiverAndArguments));
+        return;
+    }
+    ReceiversKeptByUnionTableCalls::EffectsOfMethods& kept = static_cast<ReceiversKeptByUnionTableCalls&>(receivers).effectsByWhetherHandlerStandsAround[walker.standsUnderHandler()];
+    if (!kept.areKnown) {
+        kept.areKnown = true;
+        for (FunctionID method : receivers.methods) {
+            if (effectsOfDirectCallHangOnArguments(walker, method))
+                kept.methodsThatAskOperands.append(method);
+            else
+                kept.ofMethodsThatAskNoOperand.merge(effectsOfMethodInUnionTableCalls(walker, method, receiverAndArguments));
+        }
+    }
+    effects.merge(kept.ofMethodsThatAskNoOperand);
+    for (FunctionID method : kept.methodsThatAskOperands)
+        effects.merge(effectsOfMethodInUnionTableCalls(walker, method, receiverAndArguments));
+}
+
 enum class ArmsMayTakeCallInUnionTableCalls : bool { No, Yes };
 
-static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(Walker& walker, const BodyValue& read, ValueID call, Reference receiver, ArmsMayTakeCallInUnionTableCalls armsMayTakeCall)
+static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(Walker& walker, const BodyValue& read, ValueID call, Reference receiver, ArmsMayTakeCallInUnionTableCalls armsMayTakeCall, std::optional<ReceiversOfTableCallInUnionTableCalls>& receiversOfThisCallAlone)
 {
     if (isTableRole(walker.unit().role) || !receiver || !receiver.isValue())
         return std::nullopt;
@@ -85,51 +188,28 @@ static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(
     if (!selector)
         return std::nullopt;
 
-    TableCallInUnionTableCalls planned { *selector, { }, false, { }, false };
+    ReceiversOfTableCallInUnionTableCalls& receivers = findReceiversInUnionTableCalls(walker, *selector, types.at(proven).layouts, receiversOfThisCallAlone);
+    if (receivers.areRefused)
+        return std::nullopt;
     bool readOfEveryOtherReceiverIsConstant = true;
-    size_t numberOfReceiversInUse = 0;
-    bool someCopyWouldLearnOfThis = false;
-    for (size_t place = 0; place < membersOf(types, types.at(proven)).size(); ++place) {
-        LayoutID member = membersOf(types, types.at(proven))[place];
-        if (!plan.isInUse(member))
-            continue;
-        if (!plan.slots().holdsCompiledObjects(member))
-            return std::nullopt;
-        ++numberOfReceiversInUse;
-        const MethodTableRow* row = conventions.findRowOfMethodTable(*selector, member);
-        if (!row) {
-            if (!isFoundByShapeTest(walker.program().at(member)))
-                return std::nullopt;
-            TypeID tested = types.forLayout(member);
-            auto typeBehindTest = [&](ValueID input) {
-                return input == read.as<Opcode::PropGet>().objectOperand() ? tested : walker.typeOf(walker.referenceOf(input));
-            };
-            readOfEveryOtherReceiverIsConstant &= !findField(walker.program(), member, read.as<Opcode::PropGet>().key()) && typedFormOf(walker, read, TypesOfInputs(typeBehindTest)) == TypedForm::Built;
-            planned.someReceiverHasNoRow = true;
-            continue;
-        }
-        planned.receiversWithRows.append(member);
-        if (walker.program().at(row->method).isCoroutine())
-            return std::nullopt;
-        planned.methods.append(row->method);
-        planned.someRowIsGuarded |= !!row->guardedClass;
-        TypeID own = walker.program().at(row->method).thisType.written();
-        someCopyWouldLearnOfThis |= !own || !types.isSubset(types.withoutNullish(own), types.forLayout(member));
+    for (LayoutID member : receivers.withoutRows) {
+        TypeID tested = types.forLayout(member);
+        auto typeBehindTest = [&](ValueID input) {
+            return input == read.as<Opcode::PropGet>().objectOperand() ? tested : walker.typeOf(walker.referenceOf(input));
+        };
+        readOfEveryOtherReceiverIsConstant &= !findField(walker.program(), member, read.as<Opcode::PropGet>().key()) && typedFormOf(walker, read, TypesOfInputs(typeBehindTest)) == TypedForm::Built;
     }
-    std::ranges::sort(planned.methods);
-    planned.methods.shrink(std::ranges::unique(planned.methods).begin() - planned.methods.begin());
-    if (planned.methods.size() < 2)
+    bool someReceiverHasNoRow = !receivers.withoutRows.isEmpty();
+    if (armsMayTakeCall == ArmsMayTakeCallInUnionTableCalls::Yes && receivers.someCopyWouldLearnOfThis && receivers.numberInUse <= mostReceiversToldApartByArmsInUnionTableCalls && walker.isInLoop() && walker.has(Mechanism::Guesses) && walker.opensGuesses() && !walker.standsInArmOfRowOfShapeTests())
         return std::nullopt;
-    if (armsMayTakeCall == ArmsMayTakeCallInUnionTableCalls::Yes && someCopyWouldLearnOfThis && numberOfReceiversInUse <= mostReceiversToldApartByArmsInUnionTableCalls && walker.isInLoop() && walker.has(Mechanism::Guesses) && walker.opensGuesses() && !walker.standsInArmOfRowOfShapeTests())
+    if ((receivers.someRowIsGuarded || (someReceiverHasNoRow && !readOfEveryOtherReceiverIsConstant)) && !readMayMoveDownToCallInUnionTableCalls(index, read.id(), call))
         return std::nullopt;
-    if ((planned.someRowIsGuarded || (planned.someReceiverHasNoRow && !readOfEveryOtherReceiverIsConstant)) && !readMayMoveDownToCallInUnionTableCalls(index, read.id(), call))
-        return std::nullopt;
-    if (planned.someReceiverHasNoRow && (!walker.has(Mechanism::Guesses) || !walker.opensGuesses()))
+    if (someReceiverHasNoRow && (!walker.has(Mechanism::Guesses) || !walker.opensGuesses()))
         return std::nullopt;
 
     BodyTerminator end = index.terminator(index.blockOf(call));
     if (end.kind() == TerminatorKind::ReturnCall && end.operand(0) && index.valueBehindCasts(end.operand(0)) == call) {
-        bool everyMethodComesBack = !planned.someRowIsGuarded && !planned.someReceiverHasNoRow && std::ranges::all_of(planned.methods, [&](FunctionID method) {
+        bool everyMethodComesBack = !receivers.someRowIsGuarded && !someReceiverHasNoRow && std::ranges::all_of(receivers.methods, [&](FunctionID method) {
             return plan.endsItsTailCalls(method);
         });
         if (!everyMethodComesBack)
@@ -137,7 +217,7 @@ static std::optional<TableCallInUnionTableCalls> planTableCallInUnionTableCalls(
     }
     if (!walker.isShown(receiver, proven))
         return std::nullopt;
-    return planned;
+    return TableCallInUnionTableCalls { *selector, &receivers };
 }
 
 constinit const OpcodeSet opcodesThatLeaveReadOfMethodToTableCallTakes { Opcode::PropGet };
@@ -152,7 +232,8 @@ bool leaveReadOfMethodToTableCallOfItsOpcodes(Walker& walker, const BodyValue& r
     Reference receiver = walker.referenceOf(lookup.objectOperand());
     if (call.index() - index.block(index.blockOf(call)).firstValue().index() >= walker.endOfStretchBeingWalked())
         return false;
-    if (!planTableCallInUnionTableCalls(walker, read, call, receiver, ArmsMayTakeCallInUnionTableCalls::Yes))
+    std::optional<ReceiversOfTableCallInUnionTableCalls> receiversOfThisCallAlone;
+    if (!planTableCallInUnionTableCalls(walker, read, call, receiver, ArmsMayTakeCallInUnionTableCalls::Yes, receiversOfThisCallAlone))
         return false;
 
     if (walker.types().at(walker.typeOf(receiver)).primitives) {
@@ -195,9 +276,10 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
         return false;
 
     Reference receiver = walker.referenceOf(written.thisValueOperand());
+    std::optional<ReceiversOfTableCallInUnionTableCalls> receiversOfThisCallAlone;
     std::optional<TableCallInUnionTableCalls> planned;
     if (walker.has(Mechanism::TypedOperations) && walker.has(Mechanism::DirectCalls))
-        planned = planTableCallInUnionTableCalls(walker, read, call.id(), receiver, ArmsMayTakeCallInUnionTableCalls::No);
+        planned = planTableCallInUnionTableCalls(walker, read, call.id(), receiver, ArmsMayTakeCallInUnionTableCalls::No, receiversOfThisCallAlone);
     if (!planned || walker.types().at(walker.typeOf(receiver)).primitives) {
         walker.copy(read);
         if (!walker.hasFailed() && !walker.isUnreachable())
@@ -211,10 +293,11 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
     BlockID withoutRow;
     Reference passes;
     Reference anyReceiver = receiver;
-    if (planned->someReceiverHasNoRow) {
+    bool someReceiverHasNoRow = !planned->receivers->withoutRows.isEmpty();
+    if (someReceiverHasNoRow) {
         Draft test(Opcode::ShapeTest, walker.originOf(call));
         test.setObjectOperand(receiver);
-        test.setLayouts(walker.types().at(walker.types().forLayouts(planned->receiversWithRows.span())).layouts);
+        test.setLayouts(walker.types().at(walker.types().forLayouts(planned->receivers->withRows.span())).layouts);
         passes = walker.build(WTF::move(test));
         if (!passes)
             return true;
@@ -247,14 +330,13 @@ bool callMethodThroughTableOfItsOpcodes(Walker& walker, const BodyValue& call)
     Vector<Reference, 8> operands;
     operands.append(receiver);
     operands.append(asWritten.argumentsOperands());
-    Effects effects = planned->someRowIsGuarded ? Effects::unknownCode() : Effects::none();
-    for (FunctionID method : planned->methods)
-        effects.merge(effectsOfMethodInUnionTableCalls(walker, method, operands.span()));
+    Effects effects = planned->receivers->someRowIsGuarded ? Effects::unknownCode() : Effects::none();
+    mergeEffectsOfMethodsInUnionTableCalls(walker, *planned->receivers, operands.span(), effects);
     walker.count(StatisticID::MethodCallsThroughTable);
     Reference result = walker.build(WTF::move(table), &effects);
     if (result)
         walker.bind(call.id(), result);
-    if (!planned->someReceiverHasNoRow || walker.hasFailed())
+    if (!someReceiverHasNoRow || walker.hasFailed())
         return true;
 
     if (result && !walker.isUnreachable())

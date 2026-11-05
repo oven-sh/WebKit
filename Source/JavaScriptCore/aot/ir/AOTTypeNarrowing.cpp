@@ -670,7 +670,7 @@ TypeID typeOfEdgeResult(const TypingContext& context, const Test& test, OperandT
     case Proof::SlotFilled:
     case Proof::NoExtraProperties:
     case Proof::NoFieldOutsideSlot:
-    case Proof::BirthFieldsFilled:
+    case Proof::HeldFieldsFilled:
     case Proof::NotFrozen:
     case Proof::OwnInstance:
     case Proof::Pristine:

@@ -418,7 +418,10 @@ public:
     {
         if (!m_firstModuleRequestedByHost) [[unlikely]]
             noteFirstRequestFromHost(module);
+        if (!m_entryThatStartsRealm && !m_hostRunsPreloads) [[unlikely]]
+            m_entryThatStartsRealm = module;
     }
+    void setHostRunsPreloads(bool runsPreloads) { m_hostRunsPreloads = runsPreloads; }
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
     bool isHeldForImport(ModuleID) const;
     enum class ImportAnsweredBy : bool { Build, Loader };
@@ -489,7 +492,8 @@ public:
     bool isAskingHost() const { return m_isAskingHost && !hasEnteredCodeOfProgramSinceAskingHost(); }
     bool hasEnteredCodeOfProgramSinceAskingHost() const;
     bool isAskingHostForFileOfImage() const { return m_isAskingHost.isForFileOfImage() && isAskingHost(); }
-    bool refusesRequestFromHost(ModuleID module) const { return (data(module).exportsStayInCompiledCode() && !data(module).isEntryPoint()) || (valueOfLibraryFileStaysWithCompiledCode(module) && !isAskingHostForFileOfImage()) || refusesRequestFromHostOutsideWindows(module); }
+    bool startsRealm(ModuleID module) const { return data(module).isEntryPoint() && (!m_entryThatStartsRealm || m_entryThatStartsRealm == module); }
+    bool refusesRequestFromHost(ModuleID module) const { return (data(module).exportsStayInCompiledCode() && !startsRealm(module)) || (valueOfLibraryFileStaysWithCompiledCode(module) && !isAskingHostForFileOfImage()) || refusesRequestFromHostOutsideWindows(module); }
     bool valueOfLibraryFileStaysWithCompiledCode(ModuleID module) const { return data(module).registryID() && m_table.valueOfRuntimeSourceStaysWithCompiledCode(*data(module).registryID()); }
     bool refusesRequestFromHostOutsideWindows(ModuleID module) const { return !m_admitsInspector && !data(module).isEntryPoint() && data(module).kind != ModuleKind::Data && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath() && !m_runsCopyFromDisk && !isAskingHostForFileOfImage(); }
     bool isRootThatCompiledCodeLoads(ModuleID module) const { return m_rootThatCompiledCodeLoads && fileOf(*m_rootThatCompiledCodeLoads) == fileOf(module); }
@@ -661,6 +665,10 @@ public:
     void forgetFirstLoad(ModuleID);
     void willLoadCopyFromDisk(ModuleID, LoadByName);
     JSObject* moduleObject(ModuleID);
+    std::optional<OptionSet<ModuleObjectTrait>> traitsOfModuleObjectYetToBeMade(ModuleID);
+    void takeModuleObject(ModuleID, const ModuleObjects&);
+    void giveBackModuleObject(ModuleID);
+    JSObject* moduleObjectOverExportsVariableIfMade(ModuleID) const;
     JSObject* mainModuleObject(ModuleID);
     JSObject* parentModuleObject(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
@@ -1025,7 +1033,7 @@ private:
     BitVector m_filesChangedOutOfSightOfBuild;
     BitVector m_filesAboveNoEvictedFile;
     BitVector m_filesAboveEvictedFile;
-    BitVector m_filesWhoseNamesNobodyAnswersFor;
+    BitVector m_filesAskedAbout;
     BitVector m_filesWhoseGraphHasBegun;
     uint64_t m_numberOfGraphsBegun { 0 };
     bool m_listsWithoutAsking { false };
@@ -1056,6 +1064,8 @@ private:
     UncheckedKeyHashMap<ModuleID, uint32_t> m_momentsMocksInPlaceOfLibraryModulesEnded;
     BitVector m_libraryModulesLeftByThrow;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
+    std::optional<ModuleID> m_entryThatStartsRealm;
+    bool m_hostRunsPreloads { false };
     BitVector m_dataFilesImportedByUncompiledCode;
     bool m_didTakeStepOfMainModule { false };
     bool m_didTakeLoadPromiseBelowMainModule { false };
@@ -1533,8 +1543,10 @@ private:
     uint32_t m_turnOfDeliveries { 0 };
     void queueJobOfRound(ModuleID moduleOfJob);
     void runJobOfRound(ModuleID moduleOfJob);
-    Vector<TextThatWaits, 2> m_callsToMakeAgain;
-    bool makeCallAgain(JSPromise*);
+    Deque<TextThatWaits, 2> m_callsToMakeAgain;
+    Strong<JSPromise> m_promiseOfJobThatMakesCallsAgain;
+    uint32_t m_jobsBehindDelivery { 0 };
+    void runJobThatMakesCallsAgain(ModuleID moduleOfJob);
     void makeCallAgain(TextThatWaits&);
     Vector<TextThatWaits> m_textsThatWait;
     size_t m_numberOfTextsThatHaveCome { 0 };
@@ -1571,7 +1583,7 @@ private:
         Vector<uint32_t, 4> filesInFrontOfThrow;
     };
     AnswersForNamesOfFile askHostAboutNamesWrittenBy(ModuleID file);
-    bool mayBeAskedAbout(ModuleID file) const { return !m_filesWhoseNamesNobodyAnswersFor.get(file.index()) && !m_filesWhoseGraphHasBegun.get(file.index()); }
+    bool mayBeAskedAbout(ModuleID file) const { return !m_filesAskedAbout.get(file.index()) && !m_filesWhoseGraphHasBegun.get(file.index()); }
     void forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
     void forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
     bool isEvaluatedByLoader(ModuleID file) const;

@@ -32,6 +32,7 @@
 #include "AOTSupportTestCommands.h"
 #include "AOTTestHarness.h"
 #include "AOTThreads.h"
+#include "AOTUnitedFamilies.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include "LineColumn.h"
@@ -398,6 +399,33 @@ static void testShortSortedListIsLookedForByHalving()
     }
 }
 
+static void testThreadsShortenChainsOfFamiliesSideBySide()
+{
+    constexpr uint32_t numberOfMembers = 1 << 14;
+    Typed::UnitedFamilies families(numberOfMembers);
+    for (uint32_t step = 1; step < numberOfMembers; step *= 2) {
+        for (uint32_t member = 0; member + step < numberOfMembers; member += 2 * step)
+            families.unite(member + step, member);
+    }
+    uint32_t representative = families.representativeWithoutShortening(0);
+
+    ParallelLoops loops(8);
+    std::atomic<uint32_t> numberThatDiffer { 0 };
+    forEachIndexInParallel(loops, 64u, [&](unsigned turn) {
+        for (uint32_t member = turn % 7; member < numberOfMembers; member += 1 + turn % 3) {
+            uint32_t found = turn % 2 ? families.representativeOf(member) : families.representativeWithoutShortening(member);
+            numberThatDiffer += found != representative;
+        }
+    });
+    AOT_TEST_CHECK(!numberThatDiffer);
+
+    for (uint32_t beyond : { numberOfMembers, numberOfMembers + 1, UINT32_MAX }) {
+        AOT_TEST_CHECK(families.representativeOf(beyond) == beyond);
+        AOT_TEST_CHECK(families.representativeWithoutShortening(beyond) == beyond);
+        AOT_TEST_CHECK(!families.areUnited(beyond, 0));
+    }
+}
+
 static String textOf(size_t (*describe)(std::span<char>))
 {
     std::array<char, 4096> buffer;
@@ -513,6 +541,7 @@ std::span<const NativeTest> supportTests()
         { "threads/plan-that-fails-its-check-in-front-of-compile-reaches-no-walk"_s, testPlanThatFailsItsCheckInFrontOfCompileReachesNoWalk },
         { "current-work/names-function-and-step"_s, testCurrentWorkNamesFunctionAndStep },
         { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
+        { "united-families/threads-shorten-chains-side-by-side-and-a-member-beyond-is-its-own"_s, testThreadsShortenChainsOfFamiliesSideBySide },
         { "large-list/has-room-for-more-bytes-than-a-vector"_s, testLargeListHasRoomForMoreBytesThanVector },
         { "large-list/moves-and-destroys-what-it-holds"_s, testLargeListMovesAndDestroysWhatItHolds },
         { "reader/a-list-that-fits-no-table-is-refused-in-a-sentence"_s, testListThatFitsNoTableIsRefusedInSentence },

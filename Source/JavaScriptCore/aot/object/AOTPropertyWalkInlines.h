@@ -84,11 +84,19 @@ ALWAYS_INLINE Result forEachOwnPropertyInline(VM& vm, JSObject* object, Filter f
 }
 
 template<typename Functor>
-ALWAYS_INLINE Result forEachOwnPropertyAsCreatedInline(VM& vm, JSObject* object, const Functor& functor, Elements elements = Elements::NeedGenericPath)
+ALWAYS_INLINE Result forEachOwnPropertyAsCreatedInline(VM& vm, JSObject* object, const Functor& functor, Elements elements = Elements::NeedGenericPath, Preparations preparations = Preparations::NeedGenericPath)
 {
     if (auto result = tryVisitListedFields(object, true, functor)) [[likely]]
         return *result;
-    return forEachOwnPropertyAsCreated(vm, object, functor, elements);
+    return forEachOwnPropertyAsCreated(vm, object, functor, elements, preparations);
+}
+
+template<typename Functor>
+ALWAYS_INLINE Result forEachOwnPropertyAsCreatedAfterPreparingInline(JSGlobalObject* globalObject, JSObject* object, const Functor& functor, Elements elements)
+{
+    if (auto result = tryVisitListedFields(object, true, functor)) [[likely]]
+        return *result;
+    return forEachOwnPropertyAsCreatedAfterPreparing(globalObject, object, functor, elements);
 }
 
 } } } // namespace JSC::AOT::PropertyWalk

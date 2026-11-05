@@ -13,7 +13,7 @@
 # f3 = road, f4 = broken
 # OPTIONS: mechanisms=all
 # RUN(FORM): walk f3
-# FORM: = IsPlainInstanceOf v0 receivers=[L0]
+# FORM: = IsPlainInstanceOf v0 {{*}}receivers=[L0]
 # FORM: L0{{*}} = Narrowed v0, {{*}}[isOnTakenEdge]
 # FORM-NEXT: = Unbox
 # FORM-NEXT: = GetSlot {{*}}key="level" receivers=[L0] level=Proven

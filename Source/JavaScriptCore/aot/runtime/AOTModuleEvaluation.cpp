@@ -3341,7 +3341,7 @@ JSValue Modules::exportsShownByModuleObject(ModuleID file)
 JSValue Modules::exportsSeenByLoader(ModuleID module)
 {
     LoadedModule* loaded = loadedIfExists(module);
-    if (!loaded || !loaded->requirer || data(module).exportsStayInCompiledCode()) [[likely]]
+    if (!loaded || !loaded->requirer || data(module).hasValue() || data(module).exportsStayInCompiledCode()) [[likely]]
         return exportsGivenBackToCompiledCode(module);
     return loaded->requirer->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
 }
@@ -3414,6 +3414,42 @@ void Modules::didImportFileFromUncompiledCode(ModuleID fileOrFace)
     noteLoadOfGraph(fileOrFace);
 }
 
+std::optional<OptionSet<ModuleObjectTrait>> Modules::traitsOfModuleObjectYetToBeMade(ModuleID module)
+{
+    if (data(module).kind != ModuleKind::CommonJs || ensureLoaded(module).requirer)
+        return std::nullopt;
+    stopWhereExportsLeaveCompiledCode(module);
+    OptionSet<ModuleObjectTrait> traits;
+    if (data(module).hasValue())
+        traits.add(ModuleObjectTrait::HasExportsVariable);
+    if (mainCommonJSModule() == module)
+        traits.add(ModuleObjectTrait::IsMain);
+    return traits;
+}
+
+void Modules::takeModuleObject(ModuleID module, const ModuleObjects& objects)
+{
+    LoadedModule& loaded = ensureLoaded(module);
+    RELEASE_ASSERT(!loaded.requirer && objects.module);
+    loaded.requirer.set(*this, objects.module);
+    loaded.requireFunction.set(*this, objects.require);
+}
+
+void Modules::giveBackModuleObject(ModuleID module)
+{
+    if (status(module) > ModuleStatus::Linked || isEvicted(module))
+        return;
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.requirer.set(*this, nullptr);
+    loaded.requireFunction.set(*this, JSValue());
+}
+
+JSObject* Modules::moduleObjectOverExportsVariableIfMade(ModuleID module) const
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    return loaded && data(module).kind == ModuleKind::CommonJs && data(module).hasValue() ? loaded->requirer.get() : nullptr;
+}
+
 JSObject* Modules::moduleObject(ModuleID module)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -3425,13 +3461,7 @@ JSObject* Modules::moduleObject(ModuleID module)
 
     ModuleObjects objects;
     if (data(module).kind == ModuleKind::CommonJs) {
-        stopWhereExportsLeaveCompiledCode(module);
-        OptionSet<ModuleObjectTrait> traits;
-        if (data(module).hasValue())
-            traits.add(ModuleObjectTrait::HasExportsVariable);
-        if (mainCommonJSModule() == module)
-            traits.add(ModuleObjectTrait::IsMain);
-        host().createModuleObject(realm, pathString(module), module, traits, objects);
+        host().createModuleObject(realm, pathString(module), module, *traitsOfModuleObjectYetToBeMade(module), objects);
     } else {
         JSObject* meta = importMeta(module);
         RETURN_IF_EXCEPTION(scope, nullptr);

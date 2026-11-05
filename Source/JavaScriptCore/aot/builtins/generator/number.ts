@@ -351,17 +351,6 @@ export function numberModel(builder: ModelBuilder, types: TypeInterner): TableMo
             : closedKeysOf(holder, names, internedProtocolKeys, builder.openNames.get(holder) ?? []),
         ),
     ),
-    namesReadByNativeCode: Object.freeze(
-      builtins.flatMap(holder => {
-        const read = builder.namesReadByNativeCode.get(holder);
-        if (read === undefined) return [];
-        const inNumberOrder = (unordered: readonly ModelName[]): readonly ModelName[] =>
-          Object.freeze([...unordered].sort((left, right) => left.number - right.number));
-        return [
-          { holder, names: inNumberOrder(read.names), namesOnlyInspected: inNumberOrder(read.namesOnlyInspected) },
-        ];
-      }),
-    ),
     overloads: numberOverloads(builtins),
     dispatches,
     dispatchNodes: numberDispatchNodes(dispatches),

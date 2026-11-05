@@ -141,7 +141,7 @@ JSString* ProgramStrings::writtenNameOfFunction(VM& vm, FunctionID function)
     if (cached && static_cast<uint32_t>(*cached) == number + 1)
         return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_instance.cellCageBase, static_cast<uint32_t>(*cached >> 32)));
     std::optional<uint32_t> name = m_tables.nameOfFunction(function.index());
-    JSString* result = !name || m_image.isObfuscated() || !m_image.text().hasText(StringID(*name)) ? jsEmptyString(vm) : string(vm, StringID(*name));
+    JSString* result = !name || !m_image.text().hasText(StringID(*name)) ? jsEmptyString(vm) : string(vm, StringID(*name));
     if (cached && MarkedBlockCage::baseOf(result) == m_instance.cellCageBase)
         *cached = static_cast<uint64_t>(MarkedBlockCage::encode(m_instance.cellCageBase, result)) << 32 | (number + 1);
     return result;

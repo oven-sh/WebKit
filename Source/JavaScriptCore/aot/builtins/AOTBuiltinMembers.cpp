@@ -84,6 +84,31 @@ BuiltinClassID primitiveClassOf(uint16_t primitives)
     return { };
 }
 
+bool lookupPassesHolderLinkedAnew(const Program& program, BuiltinID start, PropertyKeyID key)
+{
+    const BuiltinTable& table = program.builtins();
+    auto climb = [&](const Invocable<bool(BuiltinID)> auto& answers) {
+        BuiltinID holder = table.canonicalID(start);
+        while (true) {
+            if (answers(holder))
+                return false;
+            const Builtin& object = table.at(holder);
+            switch (object.prototypeLink) {
+            case BuiltinPrototypeLink::Unknown:
+                return object.kind == BuiltinKind::Prototype;
+            case BuiltinPrototypeLink::Null:
+                return false;
+            case BuiltinPrototypeLink::Builtin:
+                holder = table.canonicalID(object.inheritsFrom);
+                break;
+            }
+        }
+    };
+    if (!climb([](BuiltinID) { return false; }))
+        return false;
+    return !key || climb([&](BuiltinID holder) { return !!findOwnMember(program, holder, key); });
+}
+
 bool isClassOfPrimitives(BuiltinClassID builtinClass)
 {
     return std::ranges::any_of(builtinClassesOfPrimitives, [&](const BuiltinClassOfPrimitives& candidate) {

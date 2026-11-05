@@ -786,7 +786,7 @@ static void runSameBytesAloneCommand(TestCommandContext& context)
         }
     }
     if (!isSameEverywhere)
-        failRunOfProgramCommand(context.build, "the code of a unit depends on more than the unit, what it mentions or inlines, the facts and the plan, or on whether its Code is verified"_s);
+        context.build.diagnostics().add(InternalError { .kind = InternalErrorKind::UnitCompiledAloneDiffers });
 }
 
 static void runUnitsWithCodeCommand(TestCommandContext& context)

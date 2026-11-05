@@ -44,6 +44,7 @@ public:
     template<typename Owner> void add(CacheKind, ASCIILiteral name, Owner&, RootVolatility = RootVolatility::GreyedByMarking);
     void addStrongRoots(ASCIILiteral name, std::span<JSCell* const> cellsOrNull, RootVolatility = RootVolatility::GreyedByMarking);
     void addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear);
+    void addClearedAndGivenBackEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear);
     template<typename Owner> void addObserver(ASCIILiteral name, Owner& owner) { add(CacheKind::Observer, name, owner); }
 
     Lock& lock() { return m_lock; }

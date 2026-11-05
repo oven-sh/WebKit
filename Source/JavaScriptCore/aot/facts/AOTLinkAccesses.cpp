@@ -118,7 +118,7 @@ public:
     StateOfLinkAccesses() = default;
 
     Vector<HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> lookups;
-    Vector<uint8_t> codeFoundAboveClosures;
+    BytesSharedByThreads codeFoundAboveClosures;
 
     HashMap<std::pair<uint64_t, uint32_t>, uint32_t, DefaultHash<std::pair<uint64_t, uint32_t>>, WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> indexesOfSharedAccesses;
     Vector<std::unique_ptr<SharedAccessInLinkAccesses>> sharedAccesses;
@@ -250,6 +250,7 @@ private:
     LookupInLinkAccesses lookUpFrom(BuiltinID start, BuiltinID& member) const;
     LookupInLinkAccesses lookUpInTableFrom(BuiltinID start, BuiltinID& member) const;
     bool giveWhatIsFoundFrom(BuiltinID start);
+    bool isServedByLightFormOf(BuiltinID) const;
     bool giveWhatLightFormServes(BuiltinID);
     bool mayRunCodeFoundFrom(BuiltinID start);
     bool nativeSetterFoundFromKeepsReceiver(BuiltinID start);
@@ -414,7 +415,7 @@ void AccessInLinkAccesses::mayThrow()
 void AccessInLinkAccesses::cannotTell(UnknownIs unknownIs)
 {
     LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(unknownIs == UnknownIs::ByEscapeAlone, LinkFlow::UnknownByEscapeAlone::Marks::OfRule);
-    bool isToldOf = isRead() && (m_shared || !m_flow.rowsSpeakOfKeyFor(m_function, m_access.key));
+    bool isToldOf = isRead() && !m_access.answerIsOnlyCalled && (m_shared || !m_flow.rowsSpeakOfKeyFor(m_function, m_access.key));
     if (isToldOf && isNamed())
         m_flow.note(LinkFlow::Note::NameRead, m_access.key.bits(), !m_flow.codeAtWorkIsOfLibrary());
     else if (isToldOf && !m_keyIsOnlyNumbers)
@@ -533,6 +534,8 @@ void AccessInLinkAccesses::resolve()
     }
     if (!isNamed() && !readKey())
         return;
+    if (subject.builtin && m_flow.lightFormOf(subject.builtin) && !isServedByLightFormOf(subject.builtin))
+        m_flow.noteLossOf(subject.builtin);
 
     if (m_access.kind == Kind::Has) {
         mayThrow();
@@ -546,7 +549,7 @@ void AccessInLinkAccesses::resolve()
     if (m_receiver != m_subject && !isAboveHomeObjectOfClassForLinkAccesses(subject))
         m_flow.addEdge(m_receiver, m_flow.unseen());
     if (!isRead()) {
-        LinkFlow::WhatIsStored stored = storesTextNumberOrBooleanThatIsWritten() ? LinkFlow::WhatIsStored::TextsNumbersAndBooleans : LinkFlow::WhatIsStored::Anything;
+        LinkFlow::WhatIsStored stored = m_access.subjectIsMadeInBody || m_access.holdsNewValueOfNativeCode || storesTextNumberOrBooleanThatIsWritten() ? LinkFlow::WhatIsStored::TextsNumbersAndBooleans : LinkFlow::WhatIsStored::Anything;
         if (isNamed() || !m_keyIsOnlyNumbers) {
             m_flow.noteWriteOn(subject, m_access.key, m_function, stored);
             if (!m_shared)
@@ -1372,9 +1375,9 @@ bool AccessInLinkAccesses::mayRunCodeFoundAboveClosures()
         }
         return findsCodeToRunAboveClosures();
     }
-    Vector<uint8_t>& answers = m_parts.state.codeFoundAboveClosures;
+    BytesSharedByThreads& answers = m_parts.state.codeFoundAboveClosures;
     size_t place = 2 * static_cast<size_t>(m_access.key.index()) + isRead();
-    if (uint8_t answer = answers[place]) {
+    if (uint8_t answer = answers.at(place)) {
         if (answer & lookupMayThrow)
             mayThrow();
         return answer & mayRunCode;
@@ -1384,7 +1387,7 @@ bool AccessInLinkAccesses::mayRunCodeFoundAboveClosures()
     bool hadLeaned = std::exchange(m_hasLeanedOnMemberTakenForConstant, false);
     bool finds = findsCodeToRunAboveClosures();
     if (finds || !m_hasLeanedOnMemberTakenForConstant)
-        answers[place] = isKnown | (finds ? mayRunCode : 0) | (m_wasAskedToThrow ? lookupMayThrow : 0);
+        answers.set(place, isKnown | (finds ? mayRunCode : 0) | (m_wasAskedToThrow ? lookupMayThrow : 0));
     m_wasAskedToThrow |= wasAskedToThrow;
     m_hasLeanedOnMemberTakenForConstant |= hadLeaned;
     return finds;
@@ -1856,6 +1859,8 @@ void AccessInLinkAccesses::resolveContentsOfInstances(const LinkType& instances)
 
 void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
 {
+    if (m_access.kind != Kind::Define && lookupPassesHolderLinkedAnew(m_program, builtin, m_access.key))
+        m_flow.handToAccessorsLaidAbove(m_receiver);
     if (isRead() && isNamed()) {
         if (!giveWhatLightFormServes(builtin))
             giveWhatIsFoundFrom(builtin);
@@ -1877,11 +1882,16 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
     cannotTell();
 }
 
-bool AccessInLinkAccesses::giveWhatLightFormServes(BuiltinID builtin)
+bool AccessInLinkAccesses::isServedByLightFormOf(BuiltinID builtin) const
 {
     const BuiltinCondition* light = m_flow.lightFormOf(builtin);
-    BuiltinName name = light ? m_program.builtinNameOf(m_access.key) : BuiltinName();
-    if (!name || (!std::ranges::contains(light->valuesServed, name) && !std::ranges::contains(light->methodsServed, name)))
+    BuiltinName name = light && isRead() && isNamed() ? m_program.builtinNameOf(m_access.key) : BuiltinName();
+    return name && (std::ranges::contains(light->valuesServed, name) || std::ranges::contains(light->methodsServed, name));
+}
+
+bool AccessInLinkAccesses::giveWhatLightFormServes(BuiltinID builtin)
+{
+    if (!isServedByLightFormOf(builtin))
         return false;
     mayThrow();
     giveAnything();
@@ -2346,7 +2356,7 @@ StateOfLinkAccesses& LinkFlow::stateOfLinkAccesses()
     if (!m_stateOfLinkAccesses) {
         m_stateOfLinkAccesses.reset(new StateOfLinkAccesses);
         m_stateOfLinkAccesses->lookups.grow(numberOfLanes());
-        m_stateOfLinkAccesses->codeFoundAboveClosures.fill(0, 2 * static_cast<size_t>(program.types.numberOfPropertyKeys()));
+        m_stateOfLinkAccesses->codeFoundAboveClosures = BytesSharedByThreads(2 * static_cast<size_t>(program.types.numberOfPropertyKeys()));
     }
     return *m_stateOfLinkAccesses;
 }

@@ -11,11 +11,13 @@ import {
   formatByteString,
   formatClass,
   formatModule,
+  formatName,
   formatOption,
   formatRuntimeFunction,
   formatString,
   formatStruct,
   formatWellKnownSymbol,
+  nameBeforeNul,
   sortModules,
   sortUniqueNumbers,
 } from "./emit-rust-ids.ts";
@@ -23,13 +25,17 @@ import {
   builtinFlags,
   type ModelBuiltin,
   type ModelClass,
+  type ModelFlow,
   type ModelFunction,
   type ModelHostRead,
   type ModelModule,
   type ModelName,
+  type ModelParameter,
+  type ModelPlace,
   type ModelPrototype,
   type ModelResult,
   type ModelStartup,
+  type ModelType,
   type ModelTypeName,
   type NameKind,
   type PropertyActionKind,
@@ -37,7 +43,7 @@ import {
 } from "./model.ts";
 import { openRealmOf } from "./open-realm.ts";
 import { compareBytes } from "./paths.ts";
-import { targetPlatforms, type ContentsSlot, type TargetPlatform } from "./vocabulary.ts";
+import { targetPlatforms, type ContentsSlot, type Primitive, type TargetPlatform } from "./vocabulary.ts";
 
 const moduleFlags = ["HasSource", "HasOpenNamespace", "ListsAllExports", "IsEsModule", "IsPublic"] as const;
 type ModuleFlag = (typeof moduleFlags)[number];
@@ -98,14 +104,11 @@ class DependencyPool {
   readonly #numbers = new Map<string, number>();
   readonly #elements: string[] = [];
 
-  add(loads: string, calls: string, callsForTexts: string, implementedBy: string, guessed: string): number {
-    const element = formatStruct("Dependencies", [
-      `loads: ${loads}`,
-      `calls: ${calls}`,
-      `calls_for_texts: ${callsForTexts}`,
-      `implemented_by: ${implementedBy}`,
-      `guessed: ${guessed}`,
-    ]);
+  add(lists: Readonly<Record<string, string>>): number {
+    const element = formatStruct(
+      "Dependencies",
+      Object.entries(lists).map(([field, list]) => `${field}: ${list}`),
+    );
     let number = this.#numbers.get(element);
     if (number === undefined) {
       number = this.#elements.length;
@@ -139,6 +142,8 @@ interface EntryContext {
   functionLists: StaticListPool;
   nameLists: StaticListPool;
   callsForTextsLists: StaticListPool;
+  writtenOperandLists: StaticListPool;
+  quietCallLists: StaticListPool;
   dependencies: DependencyPool;
 }
 
@@ -194,8 +199,64 @@ function formatCallsForTexts(listed: ReadonlyMap<string, CallsForTexts>, context
   });
 }
 
+const holdsNoObject = (type: ModelType): boolean =>
+  !type.isAnything && !type.hasAnyObject && !type.hasAnyFunction && !type.hasPlainData && type.parts.length === 0;
+
+const holdsNothing = (type: ModelType): boolean =>
+  holdsNoObject(type) && type.primitives.length === 0 && type.integers === null && type.stringLiterals.length === 0;
+
+const isOfProgramOrPrimitive = (place: ModelPlace): boolean =>
+  place.place === "None" || place.place === "Operand" || (place.place === "NewValue" && holdsNoObject(place.type));
+
+function handsCodeOnlyWhatProgramHandedIn({ callbacks, handlerCalls, propertyActions }: ModelFlow): boolean {
+  return (
+    handlerCalls.length === 0 &&
+    propertyActions.length === 0 &&
+    callbacks.every(
+      ({ constructs, arguments: passed, spreadArguments, resultUse }) =>
+        !constructs &&
+        (resultUse === "Ignored" || resultUse === "Tested") &&
+        [...passed, spreadArguments].every(isOfProgramOrPrimitive),
+    )
+  );
+}
+
+function formatWrittenOperand({ mode, accepted, conversion, refused }: ModelParameter): string | null {
+  if (conversion !== "None" || !holdsNothing(refused)) return null;
+  if (accepted.isAnything) return mode === "Rest" ? "WrittenOperand::AnyFurther" : "WrittenOperand::Any";
+  const isOfOneKind = !accepted.hasAnyObject && !accepted.hasPlainData && accepted.parts.length === 0;
+  if (mode === "Rest") {
+    if (!holdsNoObject(accepted) || accepted.integers !== null || accepted.stringLiterals.length > 0) return null;
+    const accepts = (primitive: Primitive): boolean => accepted.primitives.includes(primitive);
+    return `WrittenOperand::PrimitivesFurther { null: ${accepts("Null")}, boolean: ${accepts("Boolean")}, number: ${accepts("Number")}, string: ${accepts("String")} }`;
+  }
+  if (accepted.hasAnyFunction) {
+    return isOfOneKind && mode === "Required" && accepted.primitives.length === 0 ? "WrittenOperand::Function" : null;
+  }
+  if (accepted.integers === null || !isOfOneKind || accepted.stringLiterals.length > 0) return null;
+  const { minimum, maximum } = accepted.integers;
+  return `WrittenOperand::Integer { least: ${minimum.value}, most: ${maximum.value}, may_be_left_out: ${mode === "Optional"} }`;
+}
+
+function formatQuietCalls(builtin: ModelBuiltin, context: EntryContext): string[] {
+  const calls = builtin.overloads.filter(({ mode }) => mode === "Call");
+  const firstThatRunsCode = calls.findIndex(({ effects }) => effects.capability === "js");
+  const inFrontOfIt = firstThatRunsCode === -1 ? calls : calls.slice(0, firstThatRunsCode);
+  let answersPrimitive = true;
+  return inFrontOfIt.flatMap(({ parameters, receiver, flags, result, flow }) => {
+    answersPrimitive &&= holdsNoObject(result.type);
+    if (receiver !== null || flags.includes("IsUndeclared") || !handsCodeOnlyWhatProgramHandedIn(flow)) return [];
+    const operands = parameters.map(formatWrittenOperand);
+    if (operands.includes(null)) return [];
+    const written = context.writtenOperandLists.add(operands.map(operand => operand ?? ""));
+    return [`QuietCall { operands: ${written}, answers_primitive: ${answersPrimitive} }`];
+  });
+}
+
 function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
-  const { loads, calls, callsForTexts, implementedBy, certain } = context.closure.dependenciesOf(builtin);
+  const dependencies = context.closure.dependenciesOf(builtin);
+  const { loads, calls, callsForTexts, callsWhereCallRunsOtherCode, implementedBy, certain } = dependencies;
+  const quietCalls = formatQuietCalls(builtin, context);
   return formatStruct("BuiltinEntry", [
     `kind: BuiltinKind::${builtin.kind}`,
     `origin: Origin::${builtin.origin}`,
@@ -212,13 +273,15 @@ function formatEntry(builtin: ModelBuiltin, context: EntryContext): string {
     `same_object_as: ${formatOption(builtin.sameObjectAs, formatBuiltinId)}`,
     `first_member: ${firstMemberOf(builtin)}`,
     `member_count: ${builtin.members.length}`,
-    `dependencies: ${context.dependencies.add(
-      context.moduleLoadLists.add(formatModuleLoads(loads)),
-      context.functionLists.add(formatFunctions(calls.intersection(certain))),
-      context.callsForTextsLists.add(formatCallsForTexts(callsForTexts, context)),
-      context.functionLists.add(formatFunctions(implementedBy.intersection(certain))),
-      context.functionLists.add(formatFunctions(calls.union(implementedBy).difference(certain))),
-    )}`,
+    `dependencies: ${context.dependencies.add({
+      loads: context.moduleLoadLists.add(formatModuleLoads(loads)),
+      calls: context.functionLists.add(formatFunctions(calls.intersection(certain))),
+      calls_for_texts: context.callsForTextsLists.add(formatCallsForTexts(callsForTexts, context)),
+      calls_where_call_runs_other_code: context.functionLists.add(formatFunctions(callsWhereCallRunsOtherCode)),
+      calls_that_run_no_other_code: context.quietCallLists.add(quietCalls),
+      implemented_by: context.functionLists.add(formatFunctions(implementedBy.intersection(certain))),
+      guessed: context.functionLists.add(formatFunctions(calls.union(implementedBy).difference(certain))),
+    })}`,
   ]);
 }
 
@@ -230,6 +293,8 @@ function emitEntries(model: TableModel): string {
     functionLists: new StaticListPool("FUNCTION_LIST", "RuntimeFunction"),
     nameLists: new StaticListPool("NAME_LIST", "BuiltinName"),
     callsForTextsLists: new StaticListPool("CALLS_FOR_TEXTS_LIST", "CallsForTexts"),
+    writtenOperandLists: new StaticListPool("WRITTEN_OPERAND_LIST", "WrittenOperand"),
+    quietCallLists: new StaticListPool("QUIET_CALL_LIST", "QuietCall"),
     dependencies: new DependencyPool(),
   };
   const entries = model.builtins.map(builtin => formatEntry(builtin, context));
@@ -239,6 +304,8 @@ function emitEntries(model: TableModel): string {
     context.functionLists.emit(),
     context.nameLists.emit(),
     context.callsForTextsLists.emit(),
+    context.writtenOperandLists.emit(),
+    context.quietCallLists.emit(),
     context.dependencies.emit(),
     emitArray("static ENTRIES: [BuiltinEntry; BuiltinId::COUNT as usize]", entries),
   ].join("");
@@ -372,7 +439,7 @@ function flagsOfModule(module: ModelModule): ModuleFlag[] {
 function formatModuleData(module: ModelModule): string {
   return formatStruct("ModuleData", [
     `namespace: ${formatBuiltinId(module.namespace)}`,
-    `specifier: ${formatString(module.specifier)}`,
+    `specifier: ${formatName(module.specifier)}`,
     `flags: ${formatBits("ModuleFlags", moduleFlags, flagsOfModule(module))}`,
     `exports_holding_module_object: &[${module.exportsHoldingModuleObject.map(name => formatBuiltinName(name.number)).join(", ")}]`,
     `exports_held_by_namespace: &[${module.exportsHeldByNamespace.map(name => formatBuiltinName(name.number)).join(", ")}]`,
@@ -440,11 +507,12 @@ function formatHostReadUse(use: ModelHostRead["use"]): string {
   }
 }
 
-function formatHostRead({ context, exportName, use }: ModelHostRead): string {
+function formatHostRead({ context, exportName, use, namesLookedFor }: ModelHostRead): string {
   return formatStruct("HostRead", [
     `context: HostReadContext::${context}`,
     `export_name: ${formatBuiltinName(exportName.number)}`,
     `read_use: ${formatHostReadUse(use)}`,
+    `names_looked_for: &[${namesLookedFor.map(name => formatBuiltinName(name.number)).join(", ")}]`,
   ]);
 }
 
@@ -506,6 +574,10 @@ function emitWhatAnyOperandIsAsked(model: TableModel): string {
       formatFunctions(calls.union(implementedBy)),
     ),
     emitSlice(
+      "pub static ENTRIES_THAT_MAKE_PROMISES: &[BuiltinId]",
+      model.builtins.filter(builtin => closure.makesPromise(builtin)).map(formatBuiltinId),
+    ),
+    emitSlice(
       "pub static PROTOTYPES_THAT_COME_WITH_FIRST_PROMISE: &[BuiltinId]",
       closure.prototypesThatComeWithFirstPromise().map(formatBuiltinId),
     ),
@@ -523,16 +595,18 @@ function emitFunctionsOfOpenRealm(model: TableModel): string {
 }
 
 function emitFunctionsForAnyHostObject(model: TableModel): string {
-  const { calls, implementedBy } = new DependencyClosure(model).dependenciesOfAnyHostObject();
+  const anyHostObject = new DependencyClosure(model).dependenciesOfAnyHostObject();
+  const { calls, callsWhereCallRunsOtherCode, implementedBy } = anyHostObject;
   return emitSlice(
     "pub static FUNCTIONS_FOR_ANY_HOST_OBJECT: &[RuntimeFunction]",
-    formatFunctions(calls.union(implementedBy)),
+    formatFunctions(calls.union(callsWhereCallRunsOtherCode).union(implementedBy)),
   );
 }
 
 export function emitRustTable(model: TableModel): string {
   return [
     fileHeader,
+    nameBeforeNul,
     emitConstants(model),
     emitEntries(model),
     emitNames(model),

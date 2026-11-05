@@ -3,6 +3,7 @@
 # If a layout that lists the option counted as passing it, no typed program that starts a server would have a lock.
 # The controls: the-flow-brings-options-written-with-the-option-that-runs-code.ir, options-written-for-the-call-with-the-option-that-runs-code-lay-no-lock.ir, options-that-somebody-else-held-first-lay-no-lock-where-their-layout-lists-the-option.ir
 # RUN: locks open
+# REQUIRES: entries-of-bun
 # CHECK-NOT: no-lock-is-laid
 # CHECK: locked DateNow
 

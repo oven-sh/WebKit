@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include <utility>
+#include <wtf/Atomics.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -33,15 +34,15 @@ public:
         }
     }
 
-    static inline thread_local bool s_threadOnlyReads = false;
-
     uint32_t representativeOf(uint32_t member) const
     {
-        if (s_threadOnlyReads)
-            return representativeWithoutShortening(member);
-        while (m_parent[member] != member) {
-            m_parent[member] = m_parent[m_parent[member]];
-            member = m_parent[member];
+        if (member >= m_parent.size())
+            return member;
+        for (uint32_t parent = parentOf(member); parent != member; parent = parentOf(member)) {
+            uint32_t above = parentOf(parent);
+            if (above != parent)
+                WTF::atomicStore(&m_parent[member], above, std::memory_order_relaxed);
+            member = above;
         }
         return member;
     }
@@ -50,8 +51,8 @@ public:
     {
         if (member >= m_parent.size())
             return member;
-        while (m_parent[member] != member)
-            member = m_parent[member];
+        for (uint32_t parent = parentOf(member); parent != member; parent = parentOf(member))
+            member = parent;
         return member;
     }
     bool isAlone(uint32_t member) const { return member >= m_next.size() || m_next[member] == member; }
@@ -87,6 +88,8 @@ public:
     }
 
 private:
+    uint32_t parentOf(uint32_t member) const { return WTF::atomicLoad(&m_parent[member], std::memory_order_relaxed); }
+
     mutable Vector<uint32_t> m_parent;
     Vector<uint32_t> m_next;
     Vector<uint32_t> m_size;

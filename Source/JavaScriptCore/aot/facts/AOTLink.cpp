@@ -101,7 +101,75 @@ bool LinkTables::cycleLeadsTo(uint32_t referrer, uint32_t named) const
     return false;
 }
 
-void LinkTables::indexMembersByKey()
+static size_t sideOfClassInLinkTables(LayoutID classLayout, ClassSide side)
+{
+    return 2 * static_cast<size_t>(classLayout.index()) + static_cast<size_t>(side);
+}
+
+static constexpr uint32_t fewestClassesAboveAskedByKeyInLinkTables = 16;
+
+static void countClassesAboveInLinkTables(const Program& program, LinkTables& tables)
+{
+    constexpr uint32_t notCounted = UINT32_MAX;
+    uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
+    tables.numbersOfClassesAbove.fill(notCounted, numberOfLayouts);
+    Vector<uint32_t, 16> waiting;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        for (LayoutID current(index); current && tables.numbersOfClassesAbove[current.index()] == notCounted; current = program.at(current).base) {
+            tables.numbersOfClassesAbove[current.index()] = 0;
+            waiting.append(current.index());
+        }
+        while (!waiting.isEmpty()) {
+            uint32_t layout = waiting.takeLast();
+            LayoutID base = program.layouts[layout].base;
+            tables.numbersOfClassesAbove[layout] = base ? tables.numbersOfClassesAbove[base.index()] + 1 : 0;
+        }
+    }
+}
+
+static void numberLayoutsAlongRowsInLinkTables(const Program& program, LinkTables& tables)
+{
+    uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
+    Vector<uint32_t> firstLayoutBelow;
+    firstLayoutBelow.fill(0, numberOfLayouts + 2);
+    auto placeOfBase = [&](uint32_t index) {
+        LayoutID base = program.layouts[index].base;
+        return base ? base.index() : numberOfLayouts;
+    };
+    for (uint32_t index = 0; index < numberOfLayouts; ++index)
+        ++firstLayoutBelow[placeOfBase(index) + 1];
+    for (uint32_t index = 1; index < firstLayoutBelow.size(); ++index)
+        firstLayoutBelow[index] += firstLayoutBelow[index - 1];
+    Vector<uint32_t> layoutsBelow;
+    layoutsBelow.grow(numberOfLayouts);
+    Vector<uint32_t> next(firstLayoutBelow);
+    for (uint32_t index = 0; index < numberOfLayouts; ++index)
+        layoutsBelow[next[placeOfBase(index)]++] = index;
+
+    tables.placesOfLayoutsInRows.fill(0, numberOfLayouts);
+    tables.endsOfLayoutsBelowInRows.fill(0, numberOfLayouts);
+    Vector<uint32_t> open;
+    uint32_t nextPlace = 0;
+    auto enter = [&](uint32_t index) {
+        tables.placesOfLayoutsInRows[index] = nextPlace++;
+        next[index] = firstLayoutBelow[index];
+        open.append(index);
+    };
+    for (uint32_t root = firstLayoutBelow[numberOfLayouts]; root < firstLayoutBelow[numberOfLayouts + 1]; ++root) {
+        enter(layoutsBelow[root]);
+        while (!open.isEmpty()) {
+            uint32_t index = open.last();
+            if (next[index] == firstLayoutBelow[index + 1]) {
+                tables.endsOfLayoutsBelowInRows[index] = nextPlace;
+                open.removeLast();
+                continue;
+            }
+            enter(layoutsBelow[next[index]++]);
+        }
+    }
+}
+
+void LinkTables::indexMembersByKey(const Program& program)
 {
     membersByKey.resize(members.size());
     std::iota(membersByKey.begin(), membersByKey.end(), 0);
@@ -109,20 +177,60 @@ void LinkTables::indexMembersByKey()
         const LinkedMember& member = members[place];
         return std::tuple { member.classLayout, member.side, member.key, place };
     });
+    firstMemberByKeyOfSide.fill(0, members.isEmpty() ? 1 : sideOfClassInLinkTables(members[membersByKey.last()].classLayout, ClassSide::Static) + 2);
     for (BitVector& keys : keysOfMembers)
         keys.clearAll();
     for (const LinkedMember& member : members) {
+        ++firstMemberByKeyOfSide[sideOfClassInLinkTables(member.classLayout, member.side) + 1];
         if (member.key)
             keysOfMembers[static_cast<size_t>(member.side)].set(member.key.index());
     }
+    for (size_t side = 1; side < firstMemberByKeyOfSide.size(); ++side)
+        firstMemberByKeyOfSide[side] += firstMemberByKeyOfSide[side - 1];
+
+    countClassesAboveInLinkTables(program, *this);
+    membersOfLongRowsByKey.shrink(0);
+    if (std::ranges::none_of(numbersOfClassesAbove, [](uint32_t number) { return number >= fewestClassesAboveAskedByKeyInLinkTables; }))
+        return;
+    numberLayoutsAlongRowsInLinkTables(program, *this);
+    membersOfLongRowsByKey = membersByKey;
+    std::ranges::sort(membersOfLongRowsByKey, { }, [&](uint32_t place) {
+        const LinkedMember& member = members[place];
+        return std::tuple { member.side, member.key, placesOfLayoutsInRows[member.classLayout.index()] };
+    });
+}
+
+static LayoutID nearestClassWithMemberUnderInLinkTables(const LinkTables& tables, LayoutID layout, ClassSide side, PropertyKeyID key, bool& isKnown)
+{
+    auto underKey = std::ranges::equal_range(tables.membersOfLongRowsByKey, std::pair { side, key }, { }, [&](uint32_t place) {
+        const LinkedMember& member = tables.members[place];
+        return std::pair { member.side, member.key };
+    });
+    uint32_t placeInRows = tables.placesOfLayoutsInRows[layout.index()];
+    auto behind = std::ranges::upper_bound(underKey, placeInRows, { }, [&](uint32_t place) {
+        return tables.placesOfLayoutsInRows[tables.members[place].classLayout.index()];
+    });
+    isKnown = true;
+    for (uint32_t numberAsked = 0; behind != underKey.begin(); ++numberAsked) {
+        LayoutID candidate = tables.members[*--behind].classLayout;
+        if (placeInRows < tables.endsOfLayoutsBelowInRows[candidate.index()])
+            return candidate;
+        if (numberAsked == tables.numbersOfClassesAbove[layout.index()]) {
+            isKnown = false;
+            return { };
+        }
+    }
+    return { };
 }
 
 std::span<const uint32_t> LinkTables::membersUnder(LayoutID classLayout, ClassSide side, PropertyKeyID key) const
 {
     RELEASE_ASSERT(membersByKey.size() == members.size());
-    auto found = std::ranges::equal_range(membersByKey, std::tuple { classLayout, side, key }, { }, [&](uint32_t place) {
-        const LinkedMember& member = members[place];
-        return std::tuple { member.classLayout, member.side, member.key };
+    size_t sideOfClass = sideOfClassInLinkTables(classLayout, side);
+    if (sideOfClass + 1 >= firstMemberByKeyOfSide.size())
+        return { };
+    auto found = std::ranges::equal_range(membersByKey.span().subspan(firstMemberByKeyOfSide[sideOfClass], firstMemberByKeyOfSide[sideOfClass + 1] - firstMemberByKeyOfSide[sideOfClass]), key, { }, [&](uint32_t place) {
+        return members[place].key;
     });
     return { found.begin(), found.end() };
 }
@@ -236,7 +344,16 @@ MemberFound LinkTables::findMember(const Program& program, LayoutID layout, Clas
     if (!someClassHasMemberUnderKey && !layouts[layout.index()].hasConstructorFunctionInRow)
         return classHolderIsMadeWithName(program, side, key) ? MemberFound { } : MemberFound { MemberFound::Kind::Nothing, { }, { }, { } };
     std::optional<bool> holderIsMadeWithName;
-    for (LayoutID current = layout; current; current = program.at(current).base) {
+    LayoutID firstClassAsked = layout;
+    if (!layouts[layout.index()].hasConstructorFunctionInRow && layout.index() < numbersOfClassesAbove.size() && numbersOfClassesAbove[layout.index()] >= fewestClassesAboveAskedByKeyInLinkTables && !classHolderIsMadeWithName(program, side, key)) {
+        bool isKnown = false;
+        LayoutID nearest = nearestClassWithMemberUnderInLinkTables(*this, layout, side, key, isKnown);
+        if (isKnown && !nearest)
+            return { MemberFound::Kind::Nothing, { }, { }, { } };
+        if (isKnown)
+            firstClassAsked = nearest;
+    }
+    for (LayoutID current = firstClassAsked; current; current = program.at(current).base) {
         if (side == ClassSide::Prototype && program.at(current).has(LayoutFlags::IsConstructorFunction)) {
             if (isLaidOnPrototypeOf(current, key) || isLaidOnPrototypeOf(current, { }))
                 return { };
@@ -1223,8 +1340,7 @@ BitVector bodiesThatLoaderEntersAtMostOnce(const Program& program)
         if (bodies.quickSet(module.body.index()))
             bodiesOfSeveralModules.quickSet(module.body.index());
         const Function& body = program.at(module.body);
-        bool isEnteredOnce = body.isModuleBody() && body.module && &program.at(body.module) == &module && isEvaluatedAtMostOnceOf(module.kind)
-            && !module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeEvicted, ModuleFlags::MayBeMocked });
+        bool isEnteredOnce = body.isModuleBody() && body.module && &program.at(body.module) == &module && loaderEntersBodyAtMostOnce(module);
         if (!isEnteredOnce)
             bodiesOfSeveralModules.quickSet(module.body.index());
     }

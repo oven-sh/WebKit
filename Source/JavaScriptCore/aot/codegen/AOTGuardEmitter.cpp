@@ -218,6 +218,29 @@ void GuardEmitter::generateHasKeyOrder(const ValueContext& value)
     });
 }
 
+void GuardEmitter::generateAreHeldFieldsFilled(const ValueContext& value)
+{
+    CellPointer cell = in<CellPointer>(value->objectOperand());
+    Vector<FieldIndex, 8> held = fieldsHeldFilledInSlots(m_program, m_facts.linked(), m_plan.slots(), value->layout());
+    Vector<BeginningsOfKeyOrder, 2> beginnings = m_plan.keyOrders().beginningsThatList(value->layout(), held.span());
+    Word32 orderAndCount = bitAnd(emitter<ShapeTestEmitter>().orderWordOf(cell), word32(orderAndCountMask | orderWordHasFieldOutsideSlot));
+    auto isAmong = [&](const BeginningsOfKeyOrder& listed) {
+        if (!listed.numberOfLongerOnes)
+            return equal(orderAndCount, static_cast<int32_t>(listed.orderWordOfShortest));
+        Word32 pastShortest = sub(orderAndCount, word32(listed.orderWordOfShortest));
+        Word32 countPastShortest = bitOr(shiftRightUnsigned(pastShortest, orderWordCountShift), shiftLeft(pastShortest, 32 - orderWordCountShift));
+        return belowOrEqual(countPastShortest, static_cast<int32_t>(listed.numberOfLongerOnes));
+    };
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        for (const BeginningsOfKeyOrder& listed : beginnings) {
+            LBasicBlock listsOtherwise = newBlock();
+            branch(isAmong(listed), { targets.taken, &listed == &beginnings.last() ? rareEdge(listsOtherwise) : normalEdge(listsOtherwise) });
+            m_out.appendToContinuation(listsOtherwise);
+        }
+        branch(callWithoutSite<Condition>(RuntimeOperation::AreHeldFieldsFilled, { cell }, { .isOnRarePath = true }), targets);
+    });
+}
+
 void GuardEmitter::generateIsNotFrozen(const ValueContext& value)
 {
     defineTestOfCompiledObject(value, [&] {
@@ -418,9 +441,10 @@ void GuardEmitter::defineWhetherDeclaredMemberIsFound(const ValueContext& value)
             if (m_plan.isInUse(member) && !classes.contains(classLayout))
                 classes.append(classLayout);
         }
-        for (size_t index = 0; index + 1 < classes.size(); ++index)
-            goOnWhere(holds(classes[index], ClassSide::Prototype, value->key()));
-        branch(classes.isEmpty() ? boolean(false) : holds(classes.last(), ClassSide::Prototype, value->key()), targets);
+        Vector<MemberConditionRecord, 4> memberIsUnchanged(classes.size(), [&](size_t index) {
+            return MemberConditionRecord { MemberConditionKind::MemberUnchanged, classes[index], ClassSide::Prototype, value->key() };
+        });
+        branch(classes.isEmpty() ? boolean(false) : areMembersUnchanged(memberIsUnchanged.span()), targets);
     });
 }
 
@@ -440,15 +464,7 @@ void GuardEmitter::defineWhetherObjectIsPlainInstance(const ValueContext& value)
         m_out.appendTo(hasShape);
         if (asksForInstance)
             goOnWhere(belongsToInstance(cell));
-        Vector<MemberConditionRecord, 16> nothingAboveTakesStores;
-        for (LayoutID member : membersOf(types(), value->receivers())) {
-            nothingAboveTakesStores.append({ MemberConditionKind::PrototypeLinkUnchanged, declaredLayoutOf(m_program, member), ClassSide::Prototype, { } });
-            for (const Field& field : m_program.at(member).fields) {
-                if (field.key && !field.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsBrandOfMethods }))
-                    nothingAboveTakesStores.append({ MemberConditionKind::MemberPassedByStores, declaredLayoutOf(m_program, member), ClassSide::Prototype, field.key });
-            }
-        }
-        goOnWhere(areMembersUnchanged(nothingAboveTakesStores.span()));
+        goOnWhere(areMembersUnchanged(value->conditions()));
         branch(hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), JSC::IsPristine | TypeInfoPerCellBit), targets);
     });
 }

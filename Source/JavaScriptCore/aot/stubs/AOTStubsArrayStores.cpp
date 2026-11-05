@@ -130,6 +130,56 @@ void generateArrayPutAtNumber(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTArrayPutAtNumber, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
+StubSignature signatureOfReserveArrayRoom(StubKey)
+{
+    return StubSignature::withoutResult({ gprOf(StubRegister::A1), FPRInfo::argumentFPR0 });
+}
+
+void generateReserveArrayRoom(StubAssembler& jit)
+{
+    const GPRReg array = jit.operand(0);
+    const FPRReg bound = jit.operandFPR(1);
+    const GPRReg room = jit.allocateScratch(StubRegister::A2);
+    const GPRReg grownToRoom = jit.allocateScratch(StubRegister::A3);
+    const GPRReg kind = jit.allocateScratch(StubRegister::T9);
+    const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
+    const GPRReg length = jit.allocateScratch(StubRegister::T11);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
+    const GPRReg allocator = jit.allocateScratch(firstStubOperandRegister);
+    const FPRReg converted = jit.allocateScratch(FPRInfo::argumentFPR1);
+    JumpList hasRoom;
+    JumpList callsOperation;
+
+    static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape, "an array has no shape between these");
+    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kind);
+    jit.sub32(TrustedImm32(Int32Shape), kind);
+    hasRoom.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ContiguousShape - Int32Shape)));
+
+    jit.truncateDoubleToInt64(bound, room);
+    jit.convertInt64ToDouble(room, converted);
+    Jump isWhole = jit.branchDouble(CCallHelpers::DoubleEqualAndOrdered, bound, converted);
+    jit.add64(TrustedImm32(1), room);
+    isWhole.link(&jit);
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    jit.load32(Address(butterfly, Butterfly::offsetOfVectorLength()), length);
+    hasRoom.append(jit.branch64(CCallHelpers::LessThanOrEqual, room, length));
+    hasRoom.append(jit.branch64(CCallHelpers::Above, room, TrustedImm32(MAX_STORAGE_VECTOR_LENGTH)));
+
+    jit.urshift32(room, TrustedImm32(2), grownToRoom);
+    jit.urshift32(room, TrustedImm32(4), kind);
+    jit.add32(kind, grownToRoom);
+    jit.neg32(grownToRoom);
+    jit.add32(room, grownToRoom);
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
+    growVectorFor(jit, { array, butterfly, length, storage, allocator, kind }, grownToRoom, callsOperation);
+    hasRoom.link(&jit);
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTReserveArrayRoom, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false });
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

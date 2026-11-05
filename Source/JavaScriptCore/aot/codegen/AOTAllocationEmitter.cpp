@@ -173,13 +173,6 @@ AllocationEmitter::EmptySlots AllocationEmitter::collectSlotsThatMayHoldCells(co
     return slots;
 }
 
-void AllocationEmitter::clearCellsThatObjectLentHolds(ValueID object)
-{
-    const Operation& made = operationAt(object);
-    CodeGenerator::InitializationScope scope(generator());
-    storeEmptySlots(emitter<CellAllocationEmitter>().frameCellLent(object), made.layout(), collectSlotsThatMayHoldCells(made).span(), ZeroedBy::Nobody);
-}
-
 void AllocationEmitter::generateNewDictionary(const ValueContext& value)
 {
     define(value, CellPointer(callStub(value, newDictionary(), { }).first));

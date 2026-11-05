@@ -709,6 +709,8 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__definePropertiesF
     }
     JSObject* target = asObject(JSValue::decode(encodedTarget));
     JSObject* source = asObject(JSValue::decode(encodedDescribed));
+    AOT::prepareForWalk(globalObject, source);
+    RETURN_IF_EXCEPTION(scope, { });
 
     auto* describedElsewhere = dynamicDowncast<InternalFieldTuple>(source);
     if (describedElsewhere || !AOT::hasOrdinaryOwnProperties(target) || AOT::mayChangeDescriptors(vm, globalObject->objectPrototype())) [[unlikely]] {

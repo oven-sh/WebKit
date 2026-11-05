@@ -70,7 +70,8 @@ struct FieldData {
     uint32_t slotHoldsUndefinedAndNull : 1;
     uint32_t getterIsProven : 1;
     uint32_t setterIsProven : 1;
-    uint32_t unused : 27 - nameBits { 0 };
+    uint32_t isHeldFilled : 1;
+    uint32_t unused : 26 - nameBits { 0 };
     uint16_t flags;
     uint16_t operandIndex;
     SlotData slot;

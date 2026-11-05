@@ -398,8 +398,9 @@ public:
     }
     std::optional<uint32_t> orderWordOf(Reference object) const { return mayHold(Kinds::factsOfCells) && m_held->mayHaveRecordOf(object) ? m_held->orderWordOf(object) : std::nullopt; }
 
-    static uint32_t numberOfGuardedSide(LayoutID classLayout, ClassSide side) { return classLayout.index() << 1 | static_cast<uint32_t>(side); }
-    static LayoutID classOfGuardedSide(uint32_t number) { return LayoutID(number >> 1); }
+    enum class AskerOfGuardOfReads : uint8_t { EveryRead, ReadBehindLookAtObject };
+    static uint32_t numberOfGuardedSide(LayoutID classLayout, ClassSide side, AskerOfGuardOfReads asker = AskerOfGuardOfReads::EveryRead) { return classLayout.index() << 2 | static_cast<uint32_t>(asker) << 1 | static_cast<uint32_t>(side); }
+    static LayoutID classOfGuardedSide(uint32_t number) { return LayoutID(number >> 2); }
     void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID key, Reference test)
     {
         if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits()), test)) {
@@ -408,14 +409,15 @@ public:
         }
     }
     bool storesPassAbove(LayoutID classLayout, PropertyKeyID key) const { return !!valueOfPlace(PlaceKind::GuardOfStores, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype), key.bits()); }
-    void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test, ClassSide side = ClassSide::Prototype)
+    void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, Reference test, ClassSide side = ClassSide::Prototype, AskerOfGuardOfReads asker = AskerOfGuardOfReads::EveryRead)
     {
-        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side), key.bits()), test)) {
-            heldToWrite().noteGuardOfReadsHolds(classLayout, key, test, side);
+        if (writesInPlace() || !noteChangesNothing(valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side, asker), key.bits()), test)) {
+            heldToWrite().noteGuardOfReadsHolds(classLayout, key, test, side, asker);
             m_marks.kinds |= Kinds::places;
         }
     }
     bool guardOfReadsHolds(LayoutID classLayout, PropertyKeyID key, ClassSide side = ClassSide::Prototype) const { return !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, side), key.bits()); }
+    bool memberAboveIsUnchanged(LayoutID classLayout, PropertyKeyID key) const { return guardOfReadsHolds(classLayout, key) || !!valueOfPlace(PlaceKind::GuardOfReads, Reference(), numberOfGuardedSide(classLayout, ClassSide::Prototype, AskerOfGuardOfReads::ReadBehindLookAtObject), key.bits()); }
     bool mayHoldGuards() const { return mayHoldPlaceOf(Reference()) && m_held->mayHoldGuards(); }
     bool someGuardHoldsOf(LayoutID classLayout) const { return mayHoldPlaceOf(Reference()) && m_held->someGuardHoldsOf(classLayout); }
     void noteThatGuardsHaveBegun(LayoutID classLayout)
@@ -502,7 +504,7 @@ public:
             m_answers.endWhatIsWritten(effects, *this);
         }
     }
-    void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard)>& mayEndGuard);
+    void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard);
     void invalidateHeap()
     {
         m_marks.turnInWhichNothingWasDone = 0;
@@ -650,7 +652,7 @@ private:
         void noteOrderWord(Reference object, std::optional<uint32_t>);
         std::optional<uint32_t> orderWordOf(Reference object) const;
         void noteStoresPassAbove(LayoutID classLayout, PropertyKeyID, Reference test);
-        void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID, Reference test, ClassSide);
+        void noteGuardOfReadsHolds(LayoutID classLayout, PropertyKeyID, Reference test, ClassSide, AskerOfGuardOfReads);
         bool mayHoldGuards() const;
         bool someGuardHoldsOf(LayoutID classLayout) const;
         void noteSlot(const ProgramOfState&, Reference object, FieldReference, Reference value);
@@ -659,7 +661,7 @@ private:
         void noteElement(Reference object, Reference index, Reference value);
         void invalidateAliasedSlots(const ProgramOfState&, Reference object, FieldReference, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject);
         void meetWith(const Held&, RecordsLastMet*);
-        void endWhatIsWritten(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard)>& mayEndGuard);
+        void endWhatIsWritten(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard);
 
         bool mayHaveRecordOf(Reference object) const { return m_filterOfHolders & bitInFilterOfHolders(object); }
         TypeID shapeOfHolderOf(Reference) const;
@@ -711,7 +713,7 @@ private:
             uint64_t environmentFields { 0 };
             uint64_t guards { 0 };
             const ScopedLambda<bool(Reference holder)>* mayBeWritten { nullptr };
-            const ScopedLambda<bool(LayoutID classOfGuard)>* mayEndGuard { nullptr };
+            const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>* mayEndGuard { nullptr };
         };
         bool goesByLists()
         {

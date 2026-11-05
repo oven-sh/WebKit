@@ -1,6 +1,7 @@
 # Bun.serve({ app: 0 }); Date.now();
 # A control of options-written-for-the-call-without-the-option-that-runs-code-leave-the-locks.ir
 # RUN: locks open
+# REQUIRES: entries-of-bun
 # CHECK-NOT: locked
 # CHECK: open DateNow no-lock-is-laid
 

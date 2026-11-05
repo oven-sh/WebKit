@@ -33,19 +33,9 @@ function checkHostFunctionCount(dependencies: RuntimeDependencies, owner: string
   );
 }
 
-function checkUndeclaredNativeCode(model: TableModel, everyProgram: RuntimeDependencies, problems: Problems): void {
-  const entry = model.builtins.find(builtin => builtin.text === undeclaredNativeCode);
-  if (entry === undefined) {
+function checkUndeclaredNativeCode(model: TableModel, problems: Problems): void {
+  if (!model.builtins.some(builtin => builtin.text === undeclaredNativeCode)) {
     problems.add(null, `there is no ${undeclaredNativeCode}`);
-    return;
-  }
-  for (const { function: called } of entry.attachments.calledFunctions) {
-    if (everyProgram.calls.has(called)) continue;
-    problems.add(
-      null,
-      `${undeclaredNativeCode} calls ${describeFunction(called)}, and no program mentions that entry: ` +
-        "the front end sends the function only if an object of the language leads to it too",
-    );
   }
 }
 
@@ -65,7 +55,7 @@ export function checkDependencies(model: TableModel, problems: Problems): void {
     problems,
   );
   checkHostFunctionCount(everyProgram, "every program", problems);
-  checkUndeclaredNativeCode(model, everyProgram, problems);
+  checkUndeclaredNativeCode(model, problems);
 }
 
 export function describeUndescribedResults(model: TableModel): string {

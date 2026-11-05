@@ -354,18 +354,6 @@ function createNamespace(
   if (declaration.locksMembers) addFlag(namespace, "HasLockedMembers");
   if (declaration.isGlobalObject) addFlag(namespace, "IsGlobalObject");
   if (declaration.listsAllMembers) addFlag(namespace, "ListsAllMembers");
-  const { namesReadByNativeCode, namesOnlyInspectedByNativeCode } = declaration;
-  if (namesReadByNativeCode !== null) {
-    builder.namesReadByNativeCode.set(namespace, {
-      names: namesReadByNativeCode.map(name => builder.internComponent(name)),
-      namesOnlyInspected: namesOnlyInspectedByNativeCode.map(name => builder.internComponent(name)),
-    });
-  } else if (namesOnlyInspectedByNativeCode.length > 0) {
-    builder.problems.add(
-      source,
-      `${key} says which names native code only inspects and does not list the names that it reads`,
-    );
-  }
 }
 
 function createClassObjects(
@@ -392,13 +380,6 @@ function createClassObjects(
     : null;
   builtinClass.constructor = classConstructor;
   builtinClass.prototype = prototype;
-  const { namesReadByNativeCodeOnPrototype } = declaration.columns;
-  if (namesReadByNativeCodeOnPrototype !== undefined && prototype !== null) {
-    builder.namesReadByNativeCode.set(prototype, {
-      names: namesReadByNativeCodeOnPrototype.map(name => builder.internComponent(name)),
-      namesOnlyInspected: [],
-    });
-  }
   if (classConstructor !== null) classConstructor.instanceClass = builtinClass;
   if (prototype !== null) prototype.instanceClass = builtinClass;
   if (prototype !== null && declaration.columns.prototypeListsAllMembers) addFlag(prototype, "ListsAllMembers");

@@ -108,18 +108,6 @@ void ConstantEmitter::noteWhatClosureLentHolds(ValueID closure)
     emitter<CellAllocationEmitter>().noteWordsThatCellLentHolds(closure, offsets.span());
 }
 
-void ConstantEmitter::clearCellsThatClosureLentHolds(ValueID closure)
-{
-    const Operation& made = operationAt(closure);
-    ClosureCaptureCounts counts = closureCaptureCountsOf(m_program, conventions(), made.function());
-    const Machine::IndexedAbstractHeap& captureWords = made.closureForm() == ClosureForm::Slim ? m_heaps.AOTSlimClosure_captures : m_heaps.AOTClosure_captures;
-    CellPointer cell = emitter<CellAllocationEmitter>().frameCellLent(closure);
-    CodeGenerator::InitializationScope scope(generator());
-    for (unsigned slot = 0; slot < counts.references; ++slot)
-        m_out.store64(m_out.int64Zero, m_out.address(cell.value(), captureWords[slot]));
-    storeThatClosureInFrameHasNoCopyInHeap(m_out, m_heaps, cell, offsetOfCapturesOfClosureInFrame(made), counts.captures);
-}
-
 CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
 {
     FunctionID function = value->function();

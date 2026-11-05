@@ -141,6 +141,8 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     if (call.count)
         placed.inRegisters.append(Machine::ConstrainedValue(call.count, Machine::ValueRep::reg(countGPR)));
     for (size_t i = 0; i < call.arguments.size(); ++i) {
+        if (i < 64 && (call.argumentsLetGo >> i & 1) && !call.arguments[i]->hasInt64())
+            placed.letGoByCallee.append(call.arguments[i]);
         if (i < numberOfArgumentGPRs)
             placed.inRegisters.append(Machine::ConstrainedValue(call.arguments[i], Machine::ValueRep::reg(argumentGPR(static_cast<unsigned>(i)))));
         else
@@ -332,7 +334,7 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
     for (Boxed argument : call.arguments)
         values.append(argument.value());
 
-    ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
+    ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span(), .argumentsLetGo = call.argumentsLetGo };
     LValue countOperand = nullptr;
     if (call.methodMayBeUnread) {
         RELEASE_ASSERT(call.methodOfBuiltinClass && !call.lentArguments && positionOf(context) == CallPosition::Ordinary);
@@ -387,6 +389,11 @@ void CallEmitter::generateCall(const ValueContext& value)
     if (value.returnCall()) {
         tailCallValue(value, call);
         return;
+    }
+    if (value->isTailCall && !value.origin().inlineFrame && !type.hasOnlyBuiltins()) {
+        std::span<const ValueID> operands = value->argumentsOperands();
+        for (size_t i = 0; i < std::min<size_t>(operands.size(), 64); ++i)
+            call.argumentsLetGo |= static_cast<uint64_t>(typeOf(operands[i]).hasCells()) << i;
     }
     if (mayForwardCallToReceiver(value.value()))
         requireForwardedCallCanBeMade(value, call.callee, call.thisValue, value->isTailCall);

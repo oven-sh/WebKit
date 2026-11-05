@@ -4,7 +4,7 @@
 # print(stale(new Meter(9)));
 # print(staleAbsence(new Meter(9)));
 # The facts of the cell were noted at the branch, however long ago the question had been asked: the reads behind it were reads of slots with no look: an accessor laid amid was not called and an emptied slot was read raw: SIGSEGV.
-# (Found by a cold reader.) Now the question leaves a note that rests on what it has read, and the branch learns only where the note is still there. The layout stays proven: an object never changes it.
+# Now the question leaves a note that rests on what it has read, and the branch learns only where the note is still there. The layout stays proven: an object never changes it.
 # f2 = stale
 # OPTIONS: mechanisms=all
 # RUN(FORM): walk f2

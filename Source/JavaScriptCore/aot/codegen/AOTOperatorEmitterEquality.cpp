@@ -348,7 +348,6 @@ public:
         ValueID expectedObject = value->expectsObjectOnLeft() ? value->leftOperand() : value->expectsObjectOnRight() ? value->rightOperand() : ValueID();
         bool asksKindInLine = expectedObject && !mayBeEmpty(expectedObject) && generator().code().at(value.block()).frequency != BlockFrequency::Rare;
         if (asksKindInLine && !bitsDecide(kindsComparedBy(value)) && generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
-            m_out.noteForm(Form::Open, StateOfKnowledge::Generic);
             Boxed tested = expectedObject == value->leftOperand() ? x : y;
             defineTestByBranching(value, [&](BranchTargets targets) {
                 LBasicBlock isCellOfSomeKind = newBlock();

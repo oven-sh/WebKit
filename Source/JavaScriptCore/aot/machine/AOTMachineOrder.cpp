@@ -295,14 +295,21 @@ namespace {
 class BlockOrderBuilder {
     WTF_MAKE_NONCOPYABLE(BlockOrderBuilder);
 public:
-    explicit BlockOrderBuilder(Procedure& procedure)
+    enum class WaysDownFromRareBlocks : uint8_t {
+        LeadAnywhere,
+        StayAmongRareBlocks,
+    };
+
+    BlockOrderBuilder(Procedure& procedure, WaysDownFromRareBlocks waysDownFromRareBlocks)
         : m_proc(procedure)
         , m_arena(procedure.arena())
+        , m_waysDownFromRareBlocksStayAmongThem(waysDownFromRareBlocks == WaysDownFromRareBlocks::StayAmongRareBlocks)
     {
     }
 
     void run();
     void letGoOfWorkingLists();
+    void letGoOfOrder();
 
     enum class Search : uint8_t {
         ForBlocksOutsideRareRegions,
@@ -318,6 +325,7 @@ public:
     unsigned m_numberOfBlocksOutsideRareRegions { 0 };
     Position m_end { 0 };
     uint32_t m_numberOfUnsplitEdges { 0 };
+    bool m_someBlockStandsAheadOfItsPredecessors { false };
     std::span<Block* const> m_predecessors;
     std::span<const uint32_t> m_successorIndexesOfPredecessors;
 
@@ -459,9 +467,10 @@ private:
     void findRareRegions();
     void numberRareRegions();
     void placeRareRegions();
-    void noteEdgeLeadingBack(BlockPlace& placeOfTarget, uint32_t orderIndexOfSource);
+    void noteEdgeLeadingBack(const Block* target, BlockPlace& placeOfTarget, uint32_t orderIndexOfSource);
     void placeBlocks();
     void findLoops();
+    void findLoopsWithSideEntrances();
     void rotateLoops(uint32_t& beginOfMovedBlocks, uint32_t& endOfMovedBlocks);
     void placeLoops();
 #if ASSERT_ENABLED
@@ -470,6 +479,7 @@ private:
 
     Procedure& m_proc;
     Arena& m_arena;
+    const bool m_waysDownFromRareBlocksStayAmongThem;
 
     ArenaVector<BlockState> m_states;
 
@@ -976,6 +986,7 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
             uint32_t flags = state.flags;
             if (!staysWithinRareRegions || (flags & IsRare)) {
                 if (!(flags & isVisited)) {
+                    bool goesDown = true;
                     if constexpr (staysWithinRareRegions) {
                         if (landingPadsBeginRegions && successor->isLandingPad()) [[unlikely]] {
                             state.regionLink = index;
@@ -985,10 +996,12 @@ ALWAYS_INLINE uint32_t BlockOrderBuilder::orderBlocksReachedFrom(size_t numberOf
                             state.regionLink = stateOfCurrent->regionLink;
                     } else if (state.numberOfPredecessors > 1 && !(flags & IsRare)) {
                         const Block* from = blocks[current];
-                        if (from->numSuccessors() > 1 && from->last()->opcode() != Patch && !successor->isLandingPad())
+                        if (m_waysDownFromRareBlocksStayAmongThem && (stateOfCurrent->flags & IsRare)) [[unlikely]]
+                            goesDown = false;
+                        else if (from->numSuccessors() > 1 && from->last()->opcode() != Patch && !successor->isLandingPad())
                             m_places[index].sourceOfUnsplitEdgeThatCountsLast = from;
                     }
-                    if (enter(successor, index, state, flags))
+                    if (goesDown && enter(successor, index, state, flags))
                         continue;
                 } else {
                     if constexpr (staysWithinRareRegions) {
@@ -1332,12 +1345,14 @@ void BlockOrderBuilder::placeRareRegions()
     }
 }
 
-NEVER_INLINE void BlockOrderBuilder::noteEdgeLeadingBack(BlockPlace& placeOfTarget, uint32_t orderIndexOfSource)
+NEVER_INLINE void BlockOrderBuilder::noteEdgeLeadingBack(const Block* target, BlockPlace& placeOfTarget, uint32_t orderIndexOfSource)
 {
     if (placeOfTarget.isLoopHead) {
         m_loopHeads[placeOfTarget.loop].endBlock = orderIndexOfSource + 1;
         return;
     }
+    if (placeOfTarget.predecessors.size() == 1 && !target->isEntry() && !target->isLandingPad())
+        m_someBlockStandsAheadOfItsPredecessors = true;
     placeOfTarget.isLoopHead = true;
     placeOfTarget.loop = m_loopHeads.size();
     m_loopHeads.append(m_arena, LoopHead { placeOfTarget.orderIndex, orderIndexOfSource + 1 });
@@ -1383,7 +1398,7 @@ void BlockOrderBuilder::placeBlocks()
         placeOfTarget.predecessors = std::span<Block* const>(piece, numberListed + 1);
         const_cast<Block**>(piece)[numberListed] = block;
         if (placeOfTarget.orderIndex <= orderIndex) [[unlikely]]
-            noteEdgeLeadingBack(placeOfTarget, orderIndex);
+            noteEdgeLeadingBack(edge.block(), placeOfTarget, orderIndex);
         return piece + numberListed;
     };
 
@@ -1565,9 +1580,32 @@ void BlockOrderBuilder::findLoops()
     }
 }
 
+void BlockOrderBuilder::findLoopsWithSideEntrances()
+{
+    const BlockPlace* const places = m_places.begin();
+    Block* const* const blocksInOrder = m_blocksInOrder.begin();
+    Loop* const loops = m_loops.begin();
+    for (const Loop& outermost : m_loops) {
+        if (outermost.parent != noLoop)
+            continue;
+        for (uint32_t index = outermost.firstBlock + 1; index < outermost.endBlock; ++index) {
+            const BlockPlace& place = places[blocksInOrder[index]->index()];
+            uint32_t first = 0;
+            uint32_t last = 0;
+            if (!place.predecessors.empty()) {
+                first = places[place.predecessors.front()->index()].orderIndex;
+                last = places[place.predecessors.back()->index()].orderIndex;
+            }
+            for (uint32_t loop = place.isLoopHead ? loops[place.loop].parent : place.loop; loop != noLoop && (first < loops[loop].firstBlock || last >= loops[loop].endBlock); loop = loops[loop].parent)
+                loops[loop].hasSideEntrance = true;
+        }
+    }
+}
+
 NEVER_INLINE void BlockOrderBuilder::placeLoops()
 {
     findLoops();
+    findLoopsWithSideEntrances();
 
     uint32_t beginOfMovedBlocks = m_blocksInLayout.size();
     uint32_t endOfMovedBlocks = 0;
@@ -1640,7 +1678,8 @@ void BlockOrderBuilder::run()
     if (!m_loopHeads.isEmpty())
         placeLoops();
 #if ASSERT_ENABLED
-    assertOrderHolds();
+    if (!m_someBlockStandsAheadOfItsPredecessors)
+        assertOrderHolds();
 #endif
 }
 
@@ -1664,28 +1703,54 @@ void BlockOrderBuilder::letGoOfWorkingLists()
     m_states.letGo(m_arena);
 }
 
+void BlockOrderBuilder::letGoOfOrder()
+{
+    m_blocksInOrder.letGo(m_arena);
+    m_blocksInLayout.letGo(m_arena);
+    m_places.letGo(m_arena);
+    m_loops.letGo(m_arena);
+    m_rareRegions.letGo(m_arena);
+    m_arena.letGoOfArray(m_predecessors.data(), m_predecessors.size());
+    m_arena.letGoOfArray(m_successorIndexesOfPredecessors.data(), m_successorIndexesOfPredecessors.size());
+}
+
 } // anonymous namespace
 
 Order* orderBlocks(Procedure& procedure)
 {
-    BlockOrderBuilder builder(procedure);
+    auto takeOrderOf = [&](const BlockOrderBuilder& builder) {
+        Order* order = procedure.arena().create<Order>();
+        order->m_blocksInOrder = builder.m_blocksInOrder;
+        order->m_blocksInLayout = builder.m_blocksInLayout;
+        order->m_places = builder.m_places;
+        order->m_loops = builder.m_loops;
+        order->m_numberOfLoopsRotated = builder.m_numberOfLoopsRotated;
+        order->m_rareRegions = builder.m_rareRegions;
+        order->m_numberOfBlocksOutsideRareRegions = builder.m_numberOfBlocksOutsideRareRegions;
+        order->m_end = builder.m_end;
+        order->m_predecessors = builder.m_predecessors;
+        order->m_successorIndexesOfPredecessors = builder.m_successorIndexesOfPredecessors;
+        order->m_mostBlocks = procedure.numberOfBlocks() + builder.m_numberOfUnsplitEdges;
+        order->m_mostOperations = procedure.numberOfOperations() + builder.m_numberOfUnsplitEdges;
+        return order;
+    };
+
+    {
+        BlockOrderBuilder builder(procedure, BlockOrderBuilder::WaysDownFromRareBlocks::LeadAnywhere);
+        builder.run();
+        builder.letGoOfWorkingLists();
+        if (!builder.m_someBlockStandsAheadOfItsPredecessors) [[likely]]
+            return takeOrderOf(builder);
+        builder.letGoOfOrder();
+    }
+    procedure.noteThatOrderWasMadeAgain();
+
+    BlockOrderBuilder builder(procedure, BlockOrderBuilder::WaysDownFromRareBlocks::StayAmongRareBlocks);
     builder.run();
     builder.letGoOfWorkingLists();
-
-    Order* order = procedure.arena().create<Order>();
-    order->m_blocksInOrder = builder.m_blocksInOrder;
-    order->m_blocksInLayout = builder.m_blocksInLayout;
-    order->m_places = builder.m_places;
-    order->m_loops = builder.m_loops;
-    order->m_numberOfLoopsRotated = builder.m_numberOfLoopsRotated;
-    order->m_rareRegions = builder.m_rareRegions;
-    order->m_numberOfBlocksOutsideRareRegions = builder.m_numberOfBlocksOutsideRareRegions;
-    order->m_end = builder.m_end;
-    order->m_predecessors = builder.m_predecessors;
-    order->m_successorIndexesOfPredecessors = builder.m_successorIndexesOfPredecessors;
-    order->m_mostBlocks = procedure.numberOfBlocks() + builder.m_numberOfUnsplitEdges;
-    order->m_mostOperations = procedure.numberOfOperations() + builder.m_numberOfUnsplitEdges;
-    return order;
+    if (builder.m_someBlockStandsAheadOfItsPredecessors)
+        procedure.fail(FailureKind::MalformedProcedure, nullptr);
+    return takeOrderOf(builder);
 }
 
 unsigned Order::successorIndexOfPredecessorWithManySuccessors(const Block* target, Block* const* entry) const

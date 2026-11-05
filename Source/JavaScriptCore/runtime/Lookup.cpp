@@ -90,8 +90,9 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             JSValue standIn = vm.hasCompiledCode() && !isAccessor ? AOT::takeStandInForMemberLeftOut(thisObject->realm(), String(propertyName.uid())) : JSValue();
             if (!standIn)
                 return false;
-            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-            thisObject->putDirect(vm, propertyName, standIn, attributesForStructure(entry->attributes()));
+            // Nothing is stored: the property stays unmade, and a read behind this look asks its builder again.
+            slot.setValue(thisObject, attributesForStructure(entry->attributes()), standIn);
+            return true;
 #else
             return false;
 #endif

@@ -32,6 +32,8 @@
 # NONE-NEXT: went on
 # NONE-NEXT: exited with 0
 # The stop is a throw site: one word says the source of the proof, and the run time finds the function and the position of the text by the site beside the code. Neither stands in the code, which is the same wherever the text stands.
+# `takes` has a loop, and straight code has a form for a loop poll only where a poll is a load that faults: elsewhere the body is walked.
+# REQUIRES(BYTES): faulting-loop-polls
 # RUN(BYTES): bytes f1 mechanisms=all
 # BYTES: ThrowAtSite.WordInRegister
 # RUN(NOWORD): bytes f1 mechanisms=all

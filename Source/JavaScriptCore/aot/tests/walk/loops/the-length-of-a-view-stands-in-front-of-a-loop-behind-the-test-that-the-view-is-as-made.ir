@@ -7,6 +7,8 @@
 # Another thread may lengthen the memory that a view follows, and no effect of this thread says when: the length of such a view stays in its turn, or `while (view.length === 4) { }` would spin for ever.
 # A view over a buffer that may grow is born in another Structure than the one that bears the mark of being as made. So behind the test in front of the loop the length is fixed, and it stands in front of the typed build.
 # A view that the turns only read by index stands in the same row: `above` has no name to ask for, and its bound would else be read in every turn: 13.5 instructions a turn became 18.0.
+# The length of `above` is read further in front, for the room of the view under the counter (the head asks the lesser of the bound and the room): a length that another thread makes greater behind that read leaves the
+# room too small, never too great, and where the room is reached the turn goes to the other build, which asks the view as it then is.
 # The failing side is the closed copy, which asks the view in every turn. Where a turn runs other code nothing can stand in front, and nothing is asked: `told`.
 # `spin` and `wait` end only if they see what another thread does: with the length of the view that follows the memory in front of the turns they run for ever, and the test is stopped by its clock.
 # OPTIONS: check=Validate
@@ -19,10 +21,10 @@
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = GetTypedArrayLength
 # CHECK-LABEL: code f2:Body
+# CHECK: = GetTypedArrayLength
 # CHECK: = IsPristine {{*}}builtinClass=Int32Array aspects=[Storage, Names]
 # CHECK: frequency=Rare isLoopHead=true
 # CHECK: = ElemGet
-# CHECK: = GetTypedArrayLength
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = GetTypedArrayLength
 # CHECK-LABEL: code f3:Body

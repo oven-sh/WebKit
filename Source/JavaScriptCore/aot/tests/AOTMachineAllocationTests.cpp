@@ -936,6 +936,448 @@ static void allocatorSpillsNothingAheadOfJoinThatRareBlockLeadsBackTo()
     }
 }
 
+static void allocatorLeavesOutOfHeadEnteredFromSideWhatNoWayOnReads()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue ways = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LBasicBlock behindFirstTest = out.newBlock();
+    LBasicBlock outerHead = out.newBlock();
+    LBasicBlock returns = out.newBlock();
+    LBasicBlock innerHead = out.newBlock();
+    LBasicBlock reads = out.newBlock();
+    LBasicBlock leaves = out.newBlock();
+    LBasicBlock leavesForOuterHead = out.newBlock();
+    LBasicBlock leavesForInnerHead = out.newBlock();
+    LBasicBlock staysBehindRead = out.newBlock();
+    LBasicBlock entersAgain = out.newBlock();
+    LBasicBlock leavesWithoutValue = out.newBlock();
+    LBasicBlock staysBehindSecondEntry = out.newBlock();
+    LBasicBlock entersLast = out.newBlock();
+    LBasicBlock rareJoin = out.newBlock();
+    auto note = [&](unsigned index) {
+        out.store64(out.constInt64(index), allocationTestWordAt(test, buffer, index));
+    };
+
+    LValue value = out.load64(allocationTestWordAt(test, buffer, 0));
+    out.branch(out.testNonZero64(ways, 1), rareEdge(reads), normalEdge(behindFirstTest));
+
+    out.appendTo(behindFirstTest);
+    out.branch(out.testNonZero64(value, 2), unlikelyEdge(innerHead), normalEdge(outerHead));
+
+    out.appendTo(outerHead);
+    note(1);
+    out.branch(out.testNonZero64(ways, 4), rareEdge(entersAgain), normalEdge(returns));
+
+    out.appendTo(returns);
+    out.ret(out.constInt64(100));
+
+    out.appendTo(innerHead);
+    note(2);
+    out.jump(rareEdge(entersLast));
+
+    out.appendTo(reads);
+    out.store64(value, allocationTestWordAt(test, buffer, 3));
+    out.branch(out.testNonZero64(ways, 8), normalEdge(leaves), normalEdge(staysBehindRead));
+
+    out.appendTo(leaves);
+    out.branch(out.testNonZero64(ways, 16), normalEdge(leavesForOuterHead), normalEdge(leavesForInnerHead));
+
+    out.appendTo(leavesForOuterHead);
+    note(4);
+    out.jump(normalEdge(outerHead));
+
+    out.appendTo(leavesForInnerHead);
+    note(5);
+    out.jump(normalEdge(innerHead));
+
+    out.appendTo(staysBehindRead);
+    note(6);
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(entersAgain);
+    out.branch(out.testNonZero64(ways, 32), normalEdge(leavesWithoutValue), normalEdge(staysBehindSecondEntry));
+
+    out.appendTo(leavesWithoutValue);
+    note(7);
+    out.jump(normalEdge(innerHead));
+
+    out.appendTo(staysBehindSecondEntry);
+    note(8);
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(entersLast);
+    note(9);
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(rareJoin);
+    out.ret(out.constInt64(200));
+    compileOrFail(test);
+
+    const Order& order = test.procedure().order();
+    for (const Block* rare : { reads, leavesForOuterHead, leavesForInnerHead, entersAgain, leavesWithoutValue, entersLast, rareJoin })
+        AOT_ALLOCATION_TEST_CHECK(test, order.of(rare).isRare() && order.of(rare).rareRegion == order.of(reads).rareRegion && order.headOf(innerHead) < order.headOf(rare));
+    AOT_ALLOCATION_TEST_CHECK(test, order.headOf(outerHead) < order.headOf(innerHead) && order.of(outerHead).isLoopHead && order.of(innerHead).isLoopHead);
+    AOT_ALLOCATION_TEST_CHECK(test, order.loops()[order.of(innerHead).loop].parent == order.of(outerHead).loop);
+    AOT_ALLOCATION_TEST_CHECK(test, !allocationTestRegisterAtHead(test, outerHead, value) && !allocationTestRegisterAtHead(test, innerHead, value));
+
+    struct Way {
+        uint64_t ways;
+        uint64_t value;
+        uint64_t result;
+        std::initializer_list<unsigned> noted;
+    };
+    for (const Way& way : std::initializer_list<Way> {
+        { 0, 0, 100, { 1 } },
+        { 4, 0, 200, { 1, 8 } },
+        { 4 | 32, 0, 200, { 1, 7, 2, 9 } },
+        { 0, 2, 200, { 2, 9 } },
+        { 1, 40, 200, { 3, 6 } },
+        { 1 | 8, 40, 200, { 3, 5, 2, 9 } },
+        { 1 | 8 | 16, 40, 100, { 3, 4, 1 } },
+        { 1 | 8 | 16 | 4, 40, 200, { 3, 4, 1, 8 } },
+        { 1 | 8 | 16 | 4 | 32, 40, 200, { 3, 4, 1, 7, 2, 9 } },
+    }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        words[0] = way.value;
+        std::array<uint64_t, 64> expected = words;
+        for (unsigned index : way.noted)
+            expected[index] = index == 3 ? way.value : index;
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(way.ways, words.data()) == way.result);
+        AOT_ALLOCATION_TEST_CHECK(test, words == expected);
+    }
+}
+
+static void orderLaysNoBlockAheadOfAllItsPredecessors()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue ways = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LBasicBlock asksForRareWay = out.newBlock();
+    LBasicBlock returnsEarly = out.newBlock();
+    LBasicBlock entersLoopInItsMiddle = out.newBlock();
+    LBasicBlock tail = out.newBlock();
+    LBasicBlock middle = out.newBlock();
+    LBasicBlock latch = out.newBlock();
+    LBasicBlock returns = out.newBlock();
+    LBasicBlock entersFirst = out.newBlock();
+    LBasicBlock entersFromLoop = out.newBlock();
+    LBasicBlock rareJoin = out.newBlock();
+    LBasicBlock leavesForTail = out.newBlock();
+    LBasicBlock returnsRarely = out.newBlock();
+    auto note = [&](unsigned index) {
+        out.store64(out.constInt64(index), allocationTestWordAt(test, buffer, index));
+    };
+
+    out.branch(out.testNonZero64(ways, 1), normalEdge(entersLoopInItsMiddle), normalEdge(asksForRareWay));
+
+    out.appendTo(asksForRareWay);
+    note(1);
+    out.branch(out.testNonZero64(ways, 2), rareEdge(entersFirst), normalEdge(returnsEarly));
+
+    out.appendTo(returnsEarly);
+    out.ret(out.constInt64(100));
+
+    out.appendTo(entersLoopInItsMiddle);
+    note(2);
+    out.jump(normalEdge(middle));
+
+    out.appendTo(tail);
+    note(3);
+    out.jump(normalEdge(middle));
+
+    out.appendTo(middle);
+    note(4);
+    out.branch(out.testNonZero64(ways, 4), rareEdge(entersFromLoop), normalEdge(latch));
+
+    out.appendTo(latch);
+    LValue left = out.sub(out.load64(allocationTestWordAt(test, buffer, 0)), 1);
+    out.store64(left, allocationTestWordAt(test, buffer, 0));
+    out.branch(left, normalEdge(tail), normalEdge(returns));
+
+    out.appendTo(returns);
+    out.ret(out.constInt64(200));
+
+    out.appendTo(entersFirst);
+    note(5);
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(entersFromLoop);
+    note(6);
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(rareJoin);
+    note(7);
+    out.branch(out.testNonZero64(ways, 8), normalEdge(leavesForTail), normalEdge(returnsRarely));
+
+    out.appendTo(leavesForTail);
+    note(8);
+    out.jump(normalEdge(tail));
+
+    out.appendTo(returnsRarely);
+    out.ret(out.constInt64(300));
+    compileOrFail(test);
+
+    const Order& order = test.procedure().order();
+    for (const Block* rare : { entersFirst, entersFromLoop, rareJoin, leavesForTail, returnsRarely })
+        AOT_ALLOCATION_TEST_CHECK(test, order.of(rare).isRare() && order.of(rare).rareRegion == order.of(rareJoin).rareRegion && order.headOf(middle) < order.headOf(rare));
+    for (const Block* block : order.blocksInOrder())
+        AOT_ALLOCATION_TEST_CHECK(test, block->isEntry() || order.headOf(order.of(block).predecessors.front()) < order.headOf(block));
+    AOT_ALLOCATION_TEST_CHECK(test, !order.of(tail).isRare() && order.headOf(latch) < order.headOf(tail));
+
+    struct Way {
+        uint64_t ways;
+        uint64_t rounds;
+        uint64_t result;
+        std::initializer_list<unsigned> noted;
+    };
+    for (const Way& way : std::initializer_list<Way> {
+        { 1, 1, 200, { 2, 4 } },
+        { 1, 3, 200, { 2, 4, 3 } },
+        { 0, 1, 100, { 1 } },
+        { 2, 1, 300, { 1, 5, 7 } },
+        { 2 | 8, 1, 200, { 1, 5, 7, 8, 3, 4 } },
+        { 2 | 8, 4, 200, { 1, 5, 7, 8, 3, 4 } },
+        { 1 | 4, 1, 300, { 2, 4, 6, 7 } },
+    }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        words[0] = way.rounds;
+        std::array<uint64_t, 64> expected = words;
+        expected[0] = way.result == 200 ? 0 : way.rounds;
+        for (unsigned index : way.noted)
+            expected[index] = index;
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(way.ways, words.data()) == way.result);
+        AOT_ALLOCATION_TEST_CHECK(test, words == expected);
+    }
+}
+
+static void allocatorJudgesSecondEntranceOfCycleAsItsOuterHead()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue ways = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LBasicBlock ahead = out.newBlock();
+    LBasicBlock outerHead = out.newBlock();
+    LBasicBlock middleHead = out.newBlock();
+    LBasicBlock innerHead = out.newBlock();
+    LBasicBlock behindInner = out.newBlock();
+    LBasicBlock behindMiddle = out.newBlock();
+    LBasicBlock behindOuter = out.newBlock();
+    LBasicBlock returns = out.newBlock();
+    LBasicBlock reads = out.newBlock();
+    LBasicBlock entersLast = out.newBlock();
+    LBasicBlock rareJoin = out.newBlock();
+    auto set = [&](unsigned index, uint64_t word) {
+        out.store64(out.constInt64(word), allocationTestWordAt(test, buffer, index));
+    };
+    auto count = [&](unsigned index) {
+        LValue left = out.sub(out.load64(allocationTestWordAt(test, buffer, index)), 1);
+        out.store64(left, allocationTestWordAt(test, buffer, index));
+        return left;
+    };
+
+    LValue value = out.load64(allocationTestWordAt(test, buffer, 0));
+    out.branch(out.testNonZero64(ways, 1), rareEdge(reads), normalEdge(ahead));
+
+    out.appendTo(ahead);
+    out.branch(out.testNonZero64(value, 2), normalEdge(middleHead), normalEdge(outerHead));
+
+    out.appendTo(outerHead);
+    set(1, 1);
+    set(5, 2);
+    out.jump(normalEdge(middleHead));
+
+    out.appendTo(middleHead);
+    set(2, 2);
+    set(4, 2);
+    out.jump(normalEdge(innerHead));
+
+    out.appendTo(innerHead);
+    out.branch(count(4), normalEdge(innerHead), normalEdge(behindInner));
+
+    out.appendTo(behindInner);
+    out.branch(count(5), normalEdge(middleHead), normalEdge(behindMiddle));
+
+    out.appendTo(behindMiddle);
+    out.branch(count(6), normalEdge(outerHead), normalEdge(behindOuter));
+
+    out.appendTo(behindOuter);
+    out.branch(out.testNonZero64(ways, 4), rareEdge(entersLast), normalEdge(returns));
+
+    out.appendTo(returns);
+    out.ret(out.constInt64(100));
+
+    out.appendTo(reads);
+    out.store64(value, allocationTestWordAt(test, buffer, 3));
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(entersLast);
+    set(9, 9);
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(rareJoin);
+    out.ret(out.constInt64(200));
+    compileOrFail(test);
+
+    const Order& order = test.procedure().order();
+    AOT_ALLOCATION_TEST_CHECK(test, order.headOf(outerHead) < order.headOf(middleHead) && order.headOf(middleHead) < order.headOf(innerHead) && order.headOf(innerHead) < order.headOf(behindOuter) && order.headOf(behindOuter) < order.headOf(reads));
+    AOT_ALLOCATION_TEST_CHECK(test, order.of(outerHead).isLoopHead && order.of(middleHead).isLoopHead && order.of(innerHead).isLoopHead);
+    AOT_ALLOCATION_TEST_CHECK(test, order.loops()[order.of(innerHead).loop].parent == order.of(middleHead).loop && order.loops()[order.of(middleHead).loop].parent == order.of(outerHead).loop);
+    AOT_ALLOCATION_TEST_CHECK(test, order.of(reads).isRare() && order.of(reads).rareRegion == order.of(entersLast).rareRegion);
+    AOT_ALLOCATION_TEST_CHECK(test, !!allocationTestRegisterAtHead(test, outerHead, value) == !!allocationTestRegisterAtHead(test, middleHead, value));
+
+    struct Way {
+        uint64_t ways;
+        uint64_t value;
+        uint64_t roundsOfOuterLoop;
+        uint64_t result;
+        std::initializer_list<unsigned> noted;
+    };
+    for (const Way& way : std::initializer_list<Way> {
+        { 0, 0, 1, 100, { 1, 2 } },
+        { 0, 0, 3, 100, { 1, 2 } },
+        { 0, 2, 1, 100, { 2 } },
+        { 0, 2, 2, 100, { 1, 2 } },
+        { 4, 0, 2, 200, { 1, 2, 9 } },
+        { 1, 40, 1, 200, { 3 } },
+    }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        words[0] = way.value;
+        words[5] = 1;
+        words[6] = way.roundsOfOuterLoop;
+        std::array<uint64_t, 64> expected = words;
+        if (!(way.ways & 1))
+            expected[4] = expected[5] = expected[6] = 0;
+        for (unsigned index : way.noted)
+            expected[index] = index == 3 ? way.value : index;
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(way.ways, words.data()) == way.result);
+        AOT_ALLOCATION_TEST_CHECK(test, words == expected);
+    }
+}
+
+static void allocatorPassesOverReadOffAnotherSideEntranceAsOwnHeadDoes()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    LValue ways = test.argumentGPR(0);
+    LValue buffer = test.argumentGPR(1);
+    LBasicBlock ahead = out.newBlock();
+    LBasicBlock parts = out.newBlock();
+    LBasicBlock thenHead = out.newBlock();
+    LBasicBlock otherwise = out.newBlock();
+    LBasicBlock readsIt = out.newBlock();
+    LBasicBlock joins = out.newBlock();
+    LBasicBlock returns = out.newBlock();
+    LBasicBlock lateHead = out.newBlock();
+    LBasicBlock entersFirst = out.newBlock();
+    LBasicBlock leavesForThenHead = out.newBlock();
+    LBasicBlock entersSecond = out.newBlock();
+    LBasicBlock entersThird = out.newBlock();
+    LBasicBlock leavesForLateHead = out.newBlock();
+    LBasicBlock entersLast = out.newBlock();
+    LBasicBlock stays = out.newBlock();
+    LBasicBlock rareJoin = out.newBlock();
+    auto note = [&](unsigned index) {
+        out.store64(out.constInt64(index), allocationTestWordAt(test, buffer, index));
+    };
+
+    LValue value = out.load64(allocationTestWordAt(test, buffer, 0));
+    out.branch(out.testNonZero64(ways, 1), rareEdge(entersFirst), normalEdge(ahead));
+
+    out.appendTo(ahead);
+    out.branch(out.testNonZero64(value, 2), unlikelyEdge(lateHead), normalEdge(parts));
+
+    out.appendTo(parts);
+    out.branch(out.testNonZero64(ways, 2), normalEdge(thenHead), normalEdge(otherwise));
+
+    out.appendTo(thenHead);
+    note(1);
+    out.jump(normalEdge(joins));
+
+    out.appendTo(otherwise);
+    out.branch(out.testNonZero64(ways, 4), rareEdge(entersSecond), normalEdge(readsIt));
+
+    out.appendTo(readsIt);
+    out.store64(value, allocationTestWordAt(test, buffer, 3));
+    out.jump(normalEdge(joins));
+
+    out.appendTo(joins);
+    out.branch(out.testNonZero64(ways, 8), rareEdge(entersThird), normalEdge(returns));
+
+    out.appendTo(returns);
+    out.ret(out.constInt64(100));
+
+    out.appendTo(lateHead);
+    note(2);
+    out.jump(rareEdge(entersLast));
+
+    out.appendTo(entersFirst);
+    out.branch(out.testNonZero64(ways, 16), normalEdge(leavesForThenHead), normalEdge(stays));
+
+    out.appendTo(leavesForThenHead);
+    note(4);
+    out.jump(normalEdge(thenHead));
+
+    out.appendTo(entersSecond);
+    note(6);
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(entersThird);
+    out.branch(out.testNonZero64(ways, 32), normalEdge(leavesForLateHead), normalEdge(stays));
+
+    out.appendTo(leavesForLateHead);
+    note(5);
+    out.jump(normalEdge(lateHead));
+
+    out.appendTo(entersLast);
+    note(7);
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(stays);
+    note(8);
+    out.jump(normalEdge(rareJoin));
+
+    out.appendTo(rareJoin);
+    out.ret(out.constInt64(200));
+    compileOrFail(test);
+
+    const Order& order = test.procedure().order();
+    AOT_ALLOCATION_TEST_CHECK(test, order.headOf(parts) < order.headOf(thenHead) && order.headOf(thenHead) < order.headOf(otherwise) && order.headOf(otherwise) < order.headOf(readsIt) && order.headOf(readsIt) < order.headOf(joins));
+    AOT_ALLOCATION_TEST_CHECK(test, order.headOf(joins) < order.headOf(lateHead) && order.headOf(lateHead) < order.headOf(entersFirst));
+    AOT_ALLOCATION_TEST_CHECK(test, order.of(thenHead).isLoopHead && order.of(lateHead).isLoopHead && order.loops()[order.of(lateHead).loop].parent == order.of(thenHead).loop);
+    AOT_ALLOCATION_TEST_CHECK(test, !allocationTestRegisterAtHead(test, thenHead, value) && !allocationTestRegisterAtHead(test, lateHead, value));
+
+    struct Way {
+        uint64_t ways;
+        uint64_t value;
+        uint64_t result;
+        std::initializer_list<unsigned> noted;
+    };
+    for (const Way& way : std::initializer_list<Way> {
+        { 2, 40, 100, { 1 } },
+        { 0, 40, 100, { 3 } },
+        { 4, 40, 200, { 6 } },
+        { 2 | 8, 40, 200, { 1, 8 } },
+        { 2 | 8 | 32, 40, 200, { 1, 5, 2, 7 } },
+        { 8 | 32, 40, 200, { 3, 5, 2, 7 } },
+        { 0, 42, 200, { 2, 7 } },
+        { 1, 40, 200, { 8 } },
+        { 1 | 16, 40, 100, { 4, 1 } },
+        { 1 | 16 | 8 | 32, 40, 200, { 4, 1, 5, 2, 7 } },
+    }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        words[0] = way.value;
+        std::array<uint64_t, 64> expected = words;
+        for (unsigned index : way.noted)
+            expected[index] = index == 3 ? way.value : index;
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(way.ways, words.data()) == way.result);
+        AOT_ALLOCATION_TEST_CHECK(test, words == expected);
+    }
+}
+
 static void allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo()
 {
     TestProcedure test;
@@ -2871,6 +3313,10 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/integer-loses-its-register-to-a-loop-under-pressure"_s, Machine::allocatorDecidesByPressureWhatKeepsItsRegisterThroughLoop<uint64_t, true> },
         { "machine-allocation/number-sum-read-behind-its-loop-comes-round-in-its-register"_s, Machine::allocatorBringsSumThatIsReadBehindLoopRoundInItsRegister<double, true> },
         { "machine-allocation/nothing-is-spilled-ahead-of-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorSpillsNothingAheadOfJoinThatRareBlockLeadsBackTo },
+        { "machine-allocation/a-head-entered-from-the-side-of-a-loop-holds-nothing-that-no-way-on-reads"_s, Machine::allocatorLeavesOutOfHeadEnteredFromSideWhatNoWayOnReads },
+        { "machine-allocation/no-block-is-laid-ahead-of-all-its-predecessors"_s, Machine::orderLaysNoBlockAheadOfAllItsPredecessors },
+        { "machine-allocation/the-second-entrance-of-a-cycle-is-judged-as-its-outer-head-is"_s, Machine::allocatorJudgesSecondEntranceOfCycleAsItsOuterHead },
+        { "machine-allocation/a-read-off-another-side-entrance-is-passed-over-as-the-loops-own-head-passes-it-over"_s, Machine::allocatorPassesOverReadOffAnotherSideEntranceAsOwnHeadDoes },
         { "machine-allocation/sum-comes-round-in-its-register-past-a-join-that-a-rare-block-leads-back-to"_s, Machine::allocatorBringsSumRoundInItsRegisterPastJoinThatRareBlockLeadsBackTo },
         { "machine-allocation/value-for-a-phi-is-made-in-the-register-of-the-phi"_s, Machine::allocatorDefinesValueInRegisterOfPhiWhoseHeadIsFixed },
         { "machine-allocation/a-phi-stays-where-the-call-in-its-block-takes-it"_s, Machine::allocatorLeavesPhiWhereCallInItsBlockTakesIt },

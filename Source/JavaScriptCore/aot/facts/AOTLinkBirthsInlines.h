@@ -28,12 +28,10 @@ void LinkFlow::noteBirthsOf(FunctionID id)
 
     LayoutID made = program.at(id).constructedClass;
     if (made && program.at(made).constructor == id && !program.at(made).fields.isEmpty()) {
-        const Vector<PropertyKeyID>& filled = m_listsOfKeysThatRowsOfConstructorsFill[m_keysThatRowsOfConstructorsFill[made.index()].untilEnds];
-        const Layout& layout = program.at(made);
-        for (uint32_t field = 0; field < layout.fields.size(); ++field) {
-            if (!layout.fields[field].key || !std::ranges::binary_search(filled, layout.fields[field].key))
-                cells.append(m_firstFieldOfLayout[made.index()] + field);
-        }
+        const KeysThatRowOfConstructorsFills& row = m_keysThatRowsOfConstructorsFill[made.index()];
+        forEachFieldLeftEmptyByRowOfConstructors(made, row.untilEnds, row.leftEmptyUntilEnds, [&](uint32_t field) {
+            cells.append(m_firstFieldOfLayout[made.index()] + field);
+        });
     }
     if (cells.isEmpty())
         return;

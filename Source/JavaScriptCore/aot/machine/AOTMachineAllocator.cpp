@@ -614,7 +614,7 @@ ALWAYS_INLINE void Allocator::allocateBlock(Block* block)
     Position beginOfLoopAroundBlock = 0;
     if (place.loop != noLoop) {
         const Loop& loop = m_order.loops().data()[place.loop];
-        beginOfLoopAroundBlock = loop.begin;
+        beginOfLoopAroundBlock = loop.hasSideEntrance ? 0 : loop.begin;
         everyReadBehindBlockCounts = everyReadBehindBlockCounts && head < m_liveness.of(loop, m_order).endOfLastExitingBlock;
     }
     m_everyReadBehindBlockCounts = everyReadBehindBlockCounts;

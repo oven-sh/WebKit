@@ -22,7 +22,7 @@ class VM;
 namespace AOT {
 
 void noteErrorOfCodeLeftOut(JSGlobalObject*, JSObject* error);
-JS_EXPORT_PRIVATE JSValue takeStandInForMemberLeftOut(JSGlobalObject*, const String& nameOfMember, JSObject* answeredBy = nullptr);
+JS_EXPORT_PRIVATE JSValue takeStandInForMemberLeftOut(JSGlobalObject*, const String& nameOfMember);
 struct FunctionLeftOut {
     ASCIILiteral name;
     unsigned length { 0 };
@@ -39,9 +39,9 @@ public:
 
 private:
     bool m_previous;
+    bool m_previousForRead;
 };
 bool isMakingMemberForLookThatOnlyTests();
-JSValue takeStandInForGetterLeftOut(JSGlobalObject*, JSObject* getter);
 void explainErrorBehindMemberLeftOut(JSGlobalObject*, JSObject* error, JSValue base);
 void forgetErrorOfCodeLeftOut(VM&);
 bool isAnythingNotedOfMembersLeftOut(const VM*);

@@ -74,6 +74,7 @@ ClassTable::ClassTable(State& state)
     state.caches->add(CacheKind::WeakByKey, "class sides by holder"_s, *this);
     state.caches->addClearedEachCollection("places of prototype properties"_s, asWritableBytes(std::span { m_placesOfPrototypeProperties }));
     state.caches->addClearedEachCollection("prototypes of class objects"_s, asWritableBytes(std::span { m_prototypesOfClassObjects }));
+    state.caches->addClearedEachCollection("the last evaluation of a class"_s, asWritableBytes(singleElementSpan(m_lastEvaluation)));
 }
 
 ClassTable::~ClassTable() = default;
@@ -535,6 +536,8 @@ size_t ClassStructureCache::removeDeadEntries(VM& vm, CollectionScope scope)
     size_t sizeBefore = m_structures.size();
     m_writes.forEachRegionToSweep(scope, [&](size_t, size_t) {
         m_structures.removeIf([&](auto& entry) {
+            if (entry.value.prototypeStructureOfHolderLeftOut && !vm.heap.isMarked(entry.value.prototypeStructureOfHolderLeftOut))
+                entry.value.prototypeStructureOfHolderLeftOut = nullptr;
             return !vm.heap.isMarked(entry.value.classObjectStructure) || !vm.heap.isMarked(entry.value.prototypeStructure);
         });
     });
@@ -796,7 +799,8 @@ static Structure* createStructureOfOrdinaryPrototype(VM& vm, JSGlobalObject* glo
 void ClassDefinition::createPrototype()
 {
     if (isShared()) {
-        m_prototype = JSFinalObject::createWithButterfly(m_vm, m_shared.prototypeStructure, allocateOutOfLineStorageOfClassHolder(m_vm, m_shared.prototypeStructure));
+        Structure* structure = m_shared.prototypeStructureOfHolderLeftOut && m_classes.holdersAreLeftOut(m_classLayout) ? m_shared.prototypeStructureOfHolderLeftOut : m_shared.prototypeStructure;
+        m_prototype = JSFinalObject::createWithButterfly(m_vm, structure, allocateOutOfLineStorageOfClassHolder(m_vm, structure));
         return;
     }
     if (m_part == ClassPart::Everything) {
@@ -937,8 +941,19 @@ bool ClassDefinition::hasAssumedBase() const
 void ClassDefinition::armGuards()
 {
     using HolderState = ClassTable::HolderState;
-    if (m_requestedPart == ClassPart::Everything && m_classes.tryLeaveHoldersOut(m_vm, m_classLayout, m_classObject, m_prototype))
+    if (isShared() && m_prototype->structure() == m_shared.prototypeStructureOfHolderLeftOut) {
+        m_classes.nameClassObjectOnPrototypeMadeLeftOut(m_vm, m_classLayout, m_classObject, m_prototype);
         return;
+    }
+    if (m_requestedPart == ClassPart::Everything && m_classes.tryLeaveHoldersOut(m_vm, m_classLayout, m_classObject, m_prototype)) {
+        if (Structure* made = m_prototype->structure(); isShared() && !made->isDictionary() && made->previousID() == m_shared.prototypeStructure) {
+            m_shared.prototypeStructureOfHolderLeftOut = made;
+            m_state.objects->caches->classStructures.add(m_classLayout.index, m_classObjectParent, prototypeParentCell(), m_shared);
+        }
+        if (m_part == ClassPart::Everything)
+            m_classes.didLeaveOutHoldersOfEvaluation(m_classLayout, m_prototype);
+        return;
+    }
     bool holdersHaveWhatRecordSays = m_hasDefinedMembers && m_hasOnlyPlainMembers && !m_hasMembersCreatedAtDefinition && !isShared() && m_earlyStores.keysAndAttributes.isEmpty() && m_earlyPrototypeStores.keysAndAttributes.isEmpty();
     HolderState stateOfPrototype = holdersHaveWhatRecordSays ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
     HolderState stateOfClassObject = holdersHaveWhatRecordSays && m_classLayout.staticFields().empty() ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
@@ -1073,14 +1088,26 @@ bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, 
 
     if (parentOfPrototype.isObject())
         asObject(parentOfPrototype)->didBecomePrototype(vm);
-    JSObject* prototype = JSFinalObject::createWithButterfly(vm, kept.prototypeStructure, allocateOutOfLineStorageOfClassHolder(vm, kept.prototypeStructure));
+    Structure* structureOfHolderLeftOut = holdersAreLeftOut(classLayout) ? kept.prototypeStructureOfHolderLeftOut : nullptr;
+    Structure* structureOfPrototype = structureOfHolderLeftOut ? structureOfHolderLeftOut : kept.prototypeStructure;
+    JSObject* prototype = JSFinalObject::createWithButterfly(vm, structureOfPrototype, allocateOutOfLineStorageOfClassHolder(vm, structureOfPrototype));
     if (Butterfly* storage = allocateOutOfLineStorageOfClassHolder(vm, kept.classObjectStructure))
         classObject->nukeStructureAndSetButterfly(vm, classObject->structureID(), storage);
     classObject->setStructure(vm, kept.classObjectStructure);
     classObject->putDirectOffset(vm, offsetOfPrototype, prototype);
     prototype->putDirectOffset(vm, offsetOfConstructor, classObject);
-    if (tryLeaveHoldersOut(vm, classLayout, classObject, prototype))
+    if (structureOfHolderLeftOut) {
+        nameClassObjectOnPrototypeMadeLeftOut(vm, classLayout, classObject, prototype);
         return true;
+    }
+    if (tryLeaveHoldersOut(vm, classLayout, classObject, prototype)) {
+        if (Structure* made = prototype->structure(); !made->isDictionary() && made->previousID() == kept.prototypeStructure) {
+            kept.prototypeStructureOfHolderLeftOut = made;
+            m_state.objects->caches->classStructures.add(classLayout.index, classObjectParent, parentOfPrototype.isCell() ? parentOfPrototype.asCell() : nullptr, kept);
+        }
+        didLeaveOutHoldersOfEvaluation(classLayout, prototype);
+        return true;
+    }
     armMemberGuards(vm, classLayout, ClassSide::Prototype, prototype);
     armMemberGuards(vm, classLayout, ClassSide::Static, classObject);
     return true;

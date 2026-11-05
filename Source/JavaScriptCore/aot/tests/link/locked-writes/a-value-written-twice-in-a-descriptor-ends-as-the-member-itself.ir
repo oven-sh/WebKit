@@ -1,0 +1,29 @@
+# Object.defineProperty(Math, "min", { value() {}, ...{ value: Math.min } })
+# The front end lays `value` twice on the literal. What is written last is the member itself: the definition changes nothing and is refused by no lock: the build says nothing.
+# If the first were taken for the descriptor's value, the build of a right program would stop: "this assignment always throws".
+# The control: a-value-written-twice-in-a-descriptor-ends-as-another-function.ir.
+# RUN: locks
+
+layout L0 fields=[{key="value" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object @1
+    v1 = Builtin builtin=ObjectDefineProperty @1
+    v2 = Builtin builtin=Math @1
+    v3 = String string="min" @1
+    v4 = NewClosure function=f1 @1
+    v5 = Builtin builtin=MathMin @1
+    v6 = NewObject -, v4 layout=L0 fields=[0] @1
+    PropDefine v6, v5 key="value" @1
+    v8 = FinishObject v6 @1
+    v9 = Call v1, v0, v2, v3, v8 calleeName="Object.defineProperty" @1
+    v10 = PropGet v2 key="min" @1
+    Return v10 @1
+}
+function f1 name="value" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

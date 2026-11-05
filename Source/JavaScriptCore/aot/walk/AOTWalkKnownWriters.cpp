@@ -46,7 +46,7 @@ static OptionSet<FactOfCell> factsOfCellEndedInKnownWriters(const LocationMasks&
     return ended;
 }
 
-void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard)>& mayEndGuard)
+void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard)
 {
     if (effects.mayRunOtherCode()) {
         invalidate(effects);
@@ -64,7 +64,7 @@ void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<b
     }
 }
 
-void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard)>& mayEndGuard)
+void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard)
 {
     const LocationMasks& writes = effects.writes;
     if (!writes.containsOnly(heapsJudgedInKnownWriters)) {
@@ -174,7 +174,7 @@ void WalkState::Held::endWhatIsWritten(const Effects& effects, NOESCAPE const Sc
                 else if (place.kind == PlaceKind::EnvironmentField)
                     ends = (environmentFieldsWritten & place.mask()) && isWritten();
                 else if (place.kind == PlaceKind::GuardOfStores || place.kind == PlaceKind::GuardOfReads)
-                    ends = (guardsWritten & place.mask()) && mayEndGuard(classOfGuardedSide(place.first));
+                    ends = (guardsWritten & place.mask()) && mayEndGuard(classOfGuardedSide(place.first), PropertyKeyID::fromBits(place.second));
                 else if (!(bitOfKind(place.kind) & kindsThatRestOnWhatIsKnown))
                     ends = writesIntoObjects && isWritten();
                 if (ends)
@@ -377,10 +377,11 @@ static std::optional<ObjectsWrittenAloneInKnownWriters> objectsWrittenAloneByInK
 namespace {
 
 struct GuardsEndedInKnownWriters {
-    enum class Which : uint8_t { None, OfClassesInRowOf, All };
+    enum class Which : uint8_t { None, OfClassesInRowOf, UnderNameOrNone, All };
 
     Which which { Which::All };
     LayoutID classLayout;
+    PropertyKeyID name;
 };
 
 } // anonymous namespace
@@ -415,15 +416,17 @@ static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walke
     if (writer.opcode == Opcode::NewObject) {
         LayoutID classLayout = declaredLayoutOf(program, writer.layout());
         if (writer.prototypeOperand())
-            return program.prototypeMaySelectOtherClass(writer.layout()) ? GuardsEndedInKnownWriters { } : GuardsEndedInKnownWriters { Which::OfClassesInRowOf, classLayout };
+            return program.prototypeMaySelectOtherClass(writer.layout()) ? GuardsEndedInKnownWriters { } : GuardsEndedInKnownWriters { Which::OfClassesInRowOf, classLayout, { } };
         if (program.at(classLayout).has(LayoutFlags::IsConstructorFunction) && !walker.state().guardsHaveBegun(classLayout))
-            return { Which::OfClassesInRowOf, classLayout };
-        return { Which::None, { } };
+            return { Which::OfClassesInRowOf, classLayout, { } };
+        return { Which::None, { }, { } };
     }
     if (writer.opcode == Opcode::BeginMemberGuards && walker.state().guardsHaveBegun(declaredLayoutOf(program, writer.layout())))
-        return { Which::None, { } };
+        return { Which::None, { }, { } };
     if (writer.opcode == Opcode::NewClass || writer.opcode == Opcode::DefineMethod || writer.opcode == Opcode::BeginMemberGuards)
-        return { Which::OfClassesInRowOf, declaredLayoutOf(program, writer.layout()) };
+        return { Which::OfClassesInRowOf, declaredLayoutOf(program, writer.layout()), { } };
+    if (writer.opcode == Opcode::PutSlotOrAdd)
+        return writer.orderWordAfter() ? GuardsEndedInKnownWriters { Which::None, { }, { } } : GuardsEndedInKnownWriters { Which::UnderNameOrNone, { }, writer.key() };
     return { };
 }
 
@@ -460,7 +463,9 @@ static NEVER_INLINE void endWhatWriterWritesInKnownWriters(Walker& walker, const
         if (guards.which == GuardsEndedInKnownWriters::Which::None)
             ended.writes.remove(AbstractHeapSet { AbstractHeap::MemberGuards });
     }
-    auto mayEndGuard = [&](LayoutID classOfGuard) {
+    auto mayEndGuard = [&](LayoutID classOfGuard, PropertyKeyID nameOfGuard) {
+        if (guards.which == GuardsEndedInKnownWriters::Which::UnderNameOrNone)
+            return !nameOfGuard || nameOfGuard == guards.name;
         if (guards.which != GuardsEndedInKnownWriters::Which::OfClassesInRowOf)
             return true;
         return rowAboveHoldsInKnownWriters(walker, classOfGuard, guards.classLayout) || rowAboveHoldsInKnownWriters(walker, guards.classLayout, declaredLayoutOf(walker.program(), classOfGuard));

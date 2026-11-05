@@ -88,7 +88,7 @@ static void testEachOfManyMembersIsFoundByItsKey()
             if (number % 3)
                 append(number % 3 == 1 ? MethodKind::Setter : MethodKind::Method, keyOf(number), FunctionID(numberOfKeys + number));
         }
-        tables.indexMembersByKey();
+        tables.indexMembersByKey(*program);
 
         Vector<FunctionID, 4> functions;
         for (uint32_t number = 1; number < numberOfKeys; ++number) {
@@ -113,6 +113,61 @@ static void testEachOfManyMembersIsFoundByItsKey()
         }
         AOT_TEST_CHECK(tables.findMember(*program, wide, ClassSide::Prototype, keyOf(0)).kind == MemberFound::Kind::Nothing);
     });
+}
+
+static std::optional<uint64_t> instructionsOfLookupsFromFootOfRowForGrowthTests(unsigned numberOfClasses)
+{
+    StringBuilder text;
+    text.append("layout L0 kind=Instance name=\"C0\" module=m0\n"_s);
+    for (unsigned number = 1; number < numberOfClasses; ++number)
+        text.append("layout L"_s, number, " kind=Instance name=\"C"_s, number, "\" module=m0 base=L"_s, number - 1, " supertypes=[L"_s, number - 1, "] flags=[HasHeritage]\n"_s);
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry module=m0\n"_s);
+    text.append("function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n  b0():\n    v0 = Builtin builtin=GlobalThis\n"_s);
+    for (unsigned number = 0; number <= numberOfClasses; ++number)
+        text.append("    v"_s, number + 1, " = PropGet v0 key=\"member"_s, number, "\"\n"_s);
+    text.append("    Return v1\n}\n"_s);
+
+    std::optional<uint64_t> instructions;
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        std::unique_ptr<Program> program = parseProgram(withStandInLibrary(text.toString()), build);
+        AOT_TEST_CHECK(program);
+        LinkTables tables = conservativeLinkTables(*program);
+        Vector<PropertyKeyID> keys(numberOfClasses + 1, [&](size_t number) {
+            StringID name = program->strings.find(encodeProgramString(makeString("member"_s, number)).span());
+            return program->types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = name }).value_or(PropertyKeyID());
+        });
+        for (uint32_t number = 0; number < numberOfClasses; ++number) {
+            tables.layouts[number].listsEveryMemberAbove = true;
+            tables.layouts[number].hasConstructorFunctionInRow = false;
+            LinkedMember member;
+            member.classLayout = LayoutID(number);
+            member.key = keys[number];
+            member.function = FunctionID(number + 1);
+            member.everyWriterIsKnown = true;
+            tables.members.append(member);
+        }
+        tables.indexMembersByKey(*program);
+        LayoutID foot(numberOfClasses - 1);
+        instructions = instructionsOfCurrentThreadIn([&] {
+            for (uint32_t number = 0; number < numberOfClasses; ++number) {
+                MemberFound found = tables.findMember(*program, foot, ClassSide::Prototype, keys[number]);
+                AOT_TEST_CHECK(found.kind == MemberFound::Kind::Method && found.method == FunctionID(number + 1));
+                AOT_TEST_CHECK(tables.findMember(*program, LayoutID(number), ClassSide::Prototype, keys[numberOfClasses - 1]).kind == (number + 1 == numberOfClasses ? MemberFound::Kind::Method : MemberFound::Kind::Nothing));
+            }
+            AOT_TEST_CHECK(tables.findMember(*program, foot, ClassSide::Prototype, keys[numberOfClasses]).kind == MemberFound::Kind::Nothing);
+        });
+    });
+    return instructions;
+}
+
+static void testMembersOfClassesFarAboveAreFoundByTheirKeys()
+{
+    constexpr unsigned numberOfClasses = 1000;
+    InstructionCounts::begin();
+    std::optional<uint64_t> smaller = instructionsOfLookupsFromFootOfRowForGrowthTests(numberOfClasses);
+    std::optional<uint64_t> large = instructionsOfLookupsFromFootOfRowForGrowthTests(4 * numberOfClasses);
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 static void testEachOfManyEffectsIsKeptOnceAndStaysWhereItLies()
@@ -1007,6 +1062,7 @@ std::span<const NativeTest> growthOfWorkTests()
 {
     static constexpr NativeTest tests[] {
         { "growth-of-work/each-of-many-members-of-a-class-is-found-by-its-key"_s, testEachOfManyMembersIsFoundByItsKey },
+        { "growth-of-work/members-of-classes-far-above-are-found-by-their-keys"_s, testMembersOfClassesFarAboveAreFoundByTheirKeys },
         { "growth-of-work/each-of-many-effects-is-kept-once-and-stays-where-it-lies"_s, testEachOfManyEffectsIsKeptOnceAndStaysWhereItLies },
         { "growth-of-work/the-plan-grows-as-the-members-of-a-class-do"_s, testPlanGrowsAsMembersOfClassDo },
         { "growth-of-work/a-function-with-more-parameters-than-a-convention-counts-is-refused"_s, testFunctionWithMoreParametersThanConventionCountsIsRefused },

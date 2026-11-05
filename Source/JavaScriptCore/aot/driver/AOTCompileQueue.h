@@ -41,6 +41,9 @@ public:
     JS_EXPORT_PRIVATE ~UnitQueue();
 
     JS_EXPORT_PRIVATE void mention(unsigned thread, Typed::CodeUnit);
+    JS_EXPORT_PRIVATE bool asksWhoMentions(Typed::CodeUnit) const;
+    bool hasMentionedUnitsBehindSelector(uint32_t selector) const { return m_selectorsWhoseUnitsAreMentioned[selector].load(std::memory_order_acquire); }
+    void didMentionUnitsBehindSelector(uint32_t selector) { m_selectorsWhoseUnitsAreMentioned[selector].store(true, std::memory_order_release); }
     JS_EXPORT_PRIVATE void addSeeds(std::span<const Typed::CodeUnit> lightestFirst, const ParallelLoops&);
 
     static constexpr size_t mostUnitsTakenAtOnce = 32;
@@ -108,6 +111,7 @@ private:
     Vector<UnitBehindRoles> m_unitsBehindRoles;
     Vector<uint32_t> m_cyclesReadyFromStart;
     Vector<std::atomic<uint32_t>> m_isMentioned;
+    Vector<std::atomic<bool>> m_selectorsWhoseUnitsAreMentioned;
     Vector<uint32_t> m_isSeed;
     Vector<UnitsOfThread> m_unitsOfThreads;
     bool m_isTakingSeeds { false };

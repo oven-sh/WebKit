@@ -12,7 +12,7 @@
 # An object of the function that inherits by hand holds the same fields, stored by the same text: it is an heir, and gets a no.
 # OPTIONS: mechanisms=all
 # RUN(FORM): walk f3
-# FORM: = IsPlainInstanceOf v0 receivers=[L0]
+# FORM: = IsPlainInstanceOf v0 {{*}}receivers=[L0]
 # Nothing reads the class at run time.
 # RUN(OPERAND): walk f3
 # OPERAND-NOT: GetModuleVariable

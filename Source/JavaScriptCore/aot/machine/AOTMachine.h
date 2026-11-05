@@ -1007,6 +1007,8 @@ public:
     Arena& arena() { return m_arena; }
     const HeapTree& heapTree() const { return m_heapTree; }
     const ProcedureTraits& traits() const { return m_traits; }
+    bool checksAllocation() const { return m_traits.checksAllocation || m_orderWasMadeAgain; }
+    void noteThatOrderWasMadeAgain() { m_orderWasMadeAgain = true; }
 
     JS_EXPORT_PRIVATE Block* addBlock();
     unsigned numberOfBlocks() const { return m_blocks.size(); }
@@ -1129,6 +1131,7 @@ private:
     Arena& m_arena;
     const HeapTree& m_heapTree;
     const ProcedureTraits m_traits;
+    bool m_orderWasMadeAgain { false };
     std::array<ListOfHeapsWithItsSet, 4> m_lastListsOfHeaps { };
     MachineCoreListsOfHeapsKept* m_listsOfHeapsKept { nullptr };
     unsigned m_numberOfListsOfHeapsKept { 0 };

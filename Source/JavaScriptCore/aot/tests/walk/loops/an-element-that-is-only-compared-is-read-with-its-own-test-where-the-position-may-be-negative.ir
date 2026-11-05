@@ -2,18 +2,23 @@
 # function add(words: Int32Array, start: number, end: number) { let sum = 0; for (let i = start; i < end; i++) sum = (sum + words[i]) | 0; return sum; }
 # The counter enters as an int32 that may be negative. A read behind its tests then takes two of them, `>= 0` and `< length`; the read that tests for itself makes one comparison without a sign.
 # A comparison takes what such a read gives as it comes, so there the two tests are a loss: twice the instructions a turn. A sum would be worked out in doubles for the sake of undefined: there they pay.
+# Neither is taken where the position is the counter of the loop, as in both functions: the head asks the counter against the lesser of its bound and the room of the views, what enters is asked for its sign once,
+# in front, and the reads of the turn stand behind no test at all. What is held here since: no test of the sign in the turns of either. The two older forms stand on under a position that is no counter (the read behind its two tests:
+# an-element-of-a-view-is-read-behind-its-tests-under-a-position-that-may-be-negative.ir; the read that tests for itself under such a position where it is only compared has no test of its own any more).
 # RUN: walk f1 f2 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: isInLoop=true isLoopHead=true
-# CHECK-NOT: = GreaterEq
-# CHECK: @OptionalInt64 = GetTypedArrayElement
-# CHECK-NOT: = GreaterEq
-# CHECK: @OptionalInt64 = GetTypedArrayElement
-# CHECK-NOT: = GreaterEq
-# CHECK: = StrictEq
-# CHECK-LABEL: code f2:Body
-# CHECK: isInLoop=true isLoopHead=true
 # CHECK: = GreaterEq {{*}}form=Integers
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = GreaterEq
+# CHECK: : i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
+# CHECK-NOT: = GreaterEq
+# CHECK: : i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
+# CHECK-NOT: = GreaterEq
+# CHECK: = StrictEq {{*}}form=Integers
+# CHECK-LABEL: code f2:Body
+# CHECK: = GreaterEq {{*}}form=Integers
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = GreaterEq
 # CHECK: : i32 @Int32 = GetTypedArrayElement {{*}}isInsideView
 # RUN(SHELL): run-in-shell let asked = 0; const all = [new Int32Array([1, 2, 3, 4]), new Int32Array([1, 2, 9, 4]), 0, 4, new Int32Array([1, 2]), new Int32Array([1, 2]), -2, 3, new Int32Array([5, 6, 7]), 0, 3, new Int32Array([5, 6, 7]), -1, 2]; globalThis.hidden = () => all[asked++]; globalThis.sink = (first, second, third, fourth) => { print([first, second, third, fourth].join(" ")); };
 # SHELL: 2 3 18 11

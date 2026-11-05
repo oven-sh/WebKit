@@ -325,7 +325,7 @@ void StubAssembler::loadPreservedRegisters(std::span<const GPRReg> saved)
     addPtr(TrustedImm32(alignedSizeOfRegisters(saved.size())), stackPointerRegister);
 }
 
-StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway)
+StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep)
 {
     Vector<Reg, 48> registers;
     registersClobberedBy(callee).forEach([&](Reg reg) {
@@ -334,6 +334,11 @@ StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCa
         if (!hasResult || reg != Reg(GPRInfo::returnValueGPR))
             registers.append(reg);
     });
+    const size_t numberToRestore = registers.size();
+    for (std::optional<GPRReg> cell : cellsToKeep) {
+        if (cell && !registers.contains(Reg(*cell)))
+            registers.append(*cell);
+    }
 #if CPU(X86_64)
     unsigned bytes = alignedSizeOfRegisters(registers.size() + 2) - sizeof(CPURegister);
     subPtr(TrustedImm32(bytes), stackPointerRegister);
@@ -359,6 +364,7 @@ StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCa
         else
             storeDouble(registers[i].fpr(), address);
     }
+    registers.shrink(numberToRestore);
     return { WTF::move(registers), bytes };
 }
 

@@ -551,6 +551,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryFinishBirth, void, (Instance* i
         uncheckedDowncast<Object>(cell)->tryFinishBirth();
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAreHeldFieldsFilled, size_t, (Instance*, JSCell* cell))
+{
+    return cellArgument<Object>(cell, Entry::operationAOTAreHeldFieldsFilled)->holdsEveryFieldHeldFilled();
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldAt, void, (Instance* instance, JSCell* cell, uint32_t offset))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateFieldAt);

@@ -336,12 +336,25 @@ static void testPositionsObfuscated()
     TestImage image = build.build(bodies(WTF::move(body.code)));
     AOT_TEST_CHECK(image.image);
     AOT_TEST_CHECK(image.image->isObfuscated());
+    AOT_TEST_CHECK(image.image->programTables().functionNames().empty());
     uint32_t index = image.indexOf(1);
     AOT_TEST_CHECK(!image.image->function(index).has(ImageFunctionFlag::HasPositions));
     for (uint32_t site : { 0u, 1u, 5u })
         AOT_TEST_CHECK(!image.image->positionOf(index, CallSiteIndex(site)));
     AOT_TEST_CHECK(image.image->function(index).has(ImageFunctionFlag::HasInlineFrames));
     checkCallSites(image, 1, body.sites);
+}
+
+static void testFunctionNamesKeptWithoutPositions()
+{
+    SiteBody body = bodyWithInlineFrames(1, 1, chainedFrames, chainedFramesByCall);
+    constexpr auto output = static_cast<Wire::OutputOptions>(static_cast<uint32_t>(Wire::OutputOptions::Obfuscate) | static_cast<uint32_t>(Wire::OutputOptions::KeepsFunctionNames));
+    TestBuild build(5, TestOptions { .output = output });
+    TestImage image = build.build(bodies(WTF::move(body.code)));
+    AOT_TEST_CHECK(image.image);
+    AOT_TEST_CHECK(image.image->isObfuscated());
+    AOT_TEST_CHECK(!image.image->programTables().functionNames().empty());
+    AOT_TEST_CHECK(!image.image->function(image.indexOf(1)).has(ImageFunctionFlag::HasPositions));
 }
 
 std::span<const NativeTest> siteTableTests()
@@ -357,6 +370,7 @@ std::span<const NativeTest> siteTableTests()
         { "image/positions/random"_s, [] { checkEncodedPositions({ randomPositions(2000) }); } },
         { "image/positions/construction-starts"_s, testPositionsWithConstructionStarts },
         { "image/positions/obfuscated"_s, testPositionsObfuscated },
+        { "image/positions/function-names-kept-without-positions"_s, testFunctionNamesKeptWithoutPositions },
     };
     return tests;
 }

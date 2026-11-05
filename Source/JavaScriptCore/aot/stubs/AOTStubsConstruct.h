@@ -16,6 +16,7 @@ enum class ConstructSyntax : uint8_t { NewExpression, SuperCall };
 inline constexpr unsigned maxArgumentCountOfUntestedHostFrame = 16;
 
 PreludeExit emitCreatePromisePrelude(StubAssembler&);
+PreludeExit emitGetClassPrototypePrelude(StubAssembler&);
 PreludeExit emitGetConstructPrototypePrelude(StubAssembler&);
 PreludeExit emitGetSuperBasePrelude(StubAssembler&);
 

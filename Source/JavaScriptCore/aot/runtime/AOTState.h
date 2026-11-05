@@ -10,6 +10,7 @@
 #include "AOTInstance.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <memory>
 #include <span>
@@ -174,6 +175,10 @@ struct FieldUnderDeclaredName {
     const FieldData* field;
 };
 
+namespace Typed {
+enum class CountInEffectsNet : uint8_t;
+}
+
 struct State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
     WTF_MAKE_NONCOPYABLE(State);
@@ -209,6 +214,8 @@ struct State {
     static constexpr size_t numberOfFieldsUnderDeclaredNames = 64;
     FieldUnderDeclaredName* fieldsUnderDeclaredNames { nullptr };
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsEnteredThatRunOnce;
+    std::array<uint64_t, 8> writesCountedForEffectsNet { };
+    void countWriteForEffectsNet(Typed::CountInEffectsNet count) { ++writesCountedForEffectsNet[static_cast<size_t>(count)]; }
 
 private:
     explicit State(Instance&);

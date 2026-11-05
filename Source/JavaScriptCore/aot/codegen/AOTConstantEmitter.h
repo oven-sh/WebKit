@@ -40,7 +40,6 @@ public:
     void generateData(const ValueContext&);
     void generateNewClosure(const ValueContext&);
     bool closureLentLiesInFrame(ValueID closure);
-    void clearCellsThatClosureLentHolds(ValueID closure);
     void generateKeyConstant(const ValueContext&);
     void generateUnspecified(const ValueContext& value) { define(value, zeroOf(value.representation())); }
     void generateEmptyArgumentList(const ValueContext& value) { defineCell(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value())); }

@@ -135,6 +135,7 @@ struct CompileOptions {
     bool excludesCodeOutsideImage() const { return runsOnlyCodeOfImage || hasFlag(excludedCode, ExcludedCode::CodeOutsideImage); }
     bool excludesLibraryText() const { return hasFlag(excludedCode, ExcludedCode::LibraryText); }
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }
+    bool hidesFunctionNames() const { return obfuscates() && !hasFlag(output, OutputOptions::KeepsFunctionNames); }
     bool runsInSeveralRealms() const { return hasFlag(output, OutputOptions::RunsInSeveralRealms); }
 
     JS_EXPORT_PRIVATE static CompileOptions fromWire(const Wire::CompileOptions&, Diagnostics&);

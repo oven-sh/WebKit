@@ -312,7 +312,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::IsConstructor: case Opcode::ReadsIteratorOfListUnseen: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ToLength:
     case Opcode::ThrowNewError: case Opcode::ResumeGenerator: case Opcode::StepGenerator: case Opcode::IsGeneratorSuspendedAtStart: case Opcode::IsUnmodifiedGenerator:
     case Opcode::CreateIteratorResult: case Opcode::StepArrayIterator: case Opcode::StepMapIterator: case Opcode::StepSetIterator:
-    case Opcode::RequireBuiltinModule: case Opcode::LinkTimeConstant: case Opcode::HasJSType: case Opcode::FindsDeclaredMember: case Opcode::FindsNoMember: case Opcode::IsPlainInstanceOf: case Opcode::GetInternalField: case Opcode::PutInternalField:
+    case Opcode::RequireBuiltinModule: case Opcode::LinkTimeConstant: case Opcode::HasJSType: case Opcode::FindsDeclaredMember: case Opcode::FindsNoMember: case Opcode::IsPlainInstanceOf: case Opcode::IsPlainHeirOf: case Opcode::GetInternalField: case Opcode::PutInternalField:
     case Opcode::NewPromise: case Opcode::CreatePromise: case Opcode::ResolvePromise: case Opcode::RejectPromise:
     case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex:
     case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::GetOwnContiguousIndex: case Opcode::GetOwnDoubleIndex: case Opcode::GetOwnInt32Index:
@@ -327,13 +327,14 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::Expect: case Opcode::CallTable: case Opcode::BeginMemberGuards: case Opcode::ForInOpenCountingNames:
     case Opcode::ShapeTest: case Opcode::IsSlotFilled: case Opcode::HasNoExtraProperties: case Opcode::HasNoFieldOutsideSlot: case Opcode::IsNotFrozen:
     case Opcode::HasLayoutPrototype: case Opcode::IsPristine: case Opcode::HasArrayStorage: case Opcode::IsElementPresent:
-    case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::IsHolderWithoutAddedNames: case Opcode::HasKeyOrder:
+    case Opcode::IsNotThenable: case Opcode::AreMembersUnchanged: case Opcode::IsMemberAsBuilt: case Opcode::IsHolderWithoutAddedNames: case Opcode::HasKeyOrder: case Opcode::AreHeldFieldsFilled:
     case Opcode::IsEnumeratorCurrent:
     case Opcode::GetSlot: case Opcode::GetSlotOrUndefined: case Opcode::GetSlotGetter: case Opcode::GetSlotSetter: case Opcode::GetDeferredClosureSlot: case Opcode::GetDeferredClosureSlotOrUndefined:
     case Opcode::PutSlot: case Opcode::PutSlotOrAdd: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::PropHasOwn:
     case Opcode::TryCopyFields: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding: case Opcode::GetCachedGetter:
     case Opcode::GetStaticFieldOrAbsent: case Opcode::PutStaticField:
     case Opcode::ElemGetByKeyParts:
+    case Opcode::ReserveArrayRoom:
     case Opcode::GetArrayLength: case Opcode::GetArrayStorage: case Opcode::GetArrayElement: case Opcode::PutArrayElement: case Opcode::HasArrayElement: case Opcode::AppendElements: case Opcode::AppendMembers:
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::GetTypedArrayElement: case Opcode::PutTypedArrayElement:
     case Opcode::GetEnumeratorIndexedLength: case Opcode::IsElementInStorage: case Opcode::GetStringLength: case Opcode::GetStringCodeUnit:

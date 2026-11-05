@@ -220,6 +220,7 @@ inline constexpr GPRReg scratchImmediateGPR = MacroAssembler::memoryTempRegister
 #endif
 
 inline constexpr StubRegister firstStubOperandRegister = StubRegister::R0;
+inline constexpr StubRegister receiverAtSiteRegister = StubRegister::A2;
 inline constexpr StubRegister stubImmediateRegister = StubRegister::T9;
 #if CPU(X86_64)
 inline constexpr StubRegister shortStubImmediateRegister = StubRegister::T12;

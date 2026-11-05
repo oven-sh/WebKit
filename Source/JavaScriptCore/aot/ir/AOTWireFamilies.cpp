@@ -881,6 +881,57 @@ static BitVector findTypeParametersWithoutFamily(const TypeTable& types, std::sp
     return result;
 }
 
+static bool isWireClass(const Wire::Layout& layout)
+{
+    return static_cast<LayoutKind>(layout.kind) == LayoutKind::Instance && layout.constructor != Wire::none && !has(layout, LayoutFlags::IsConstructorFunction);
+}
+
+static Vector<LayoutSetID> uniteMembersOfParentsOfOneClass(LayoutSets& sets, const Wire::Sections& checkedSections, std::span<const LayoutSetID> members)
+{
+    std::span<const Wire::Layout> layouts = checkedSections.layouts;
+    Vector<uint32_t> leaders;
+    auto leaderOf = [&](uint32_t index) {
+        while (leaders[index] != index)
+            index = leaders[index] = leaders[leaders[index]];
+        return index;
+    };
+    Vector<uint32_t> parents;
+    for (const Wire::Layout& layout : layouts) {
+        if (layout.base != Wire::none || !has(layout, LayoutFlags::HasHeritage) || !isWireClass(layout))
+            continue;
+        uint32_t earlier = Wire::none;
+        for (uint32_t parent : wireSupertypesOf(checkedSections, layout)) {
+            if (!isWireClass(layouts[parent]))
+                continue;
+            if (leaders.isEmpty()) {
+                leaders = Vector<uint32_t>(layouts.size(), [](size_t index) {
+                    return static_cast<uint32_t>(index);
+                });
+            }
+            parents.append(parent);
+            if (earlier != Wire::none)
+                leaders[leaderOf(parent)] = leaderOf(earlier);
+            earlier = parent;
+        }
+    }
+    AOT::sort(parents, { }, [&](uint32_t parent) {
+        return std::pair { leaderOf(parent), parent };
+    });
+    parents.shrink(parents.size() - std::ranges::unique(parents).size());
+
+    Vector<LayoutSetID> united;
+    for (size_t begin = 0; begin < parents.size();) {
+        size_t end = begin;
+        LayoutSetID all;
+        for (; end < parents.size() && leaderOf(parents[end]) == leaderOf(parents[begin]); ++end)
+            all = sets.unionOf(all, members[parents[end]]);
+        if (end - begin > 1)
+            united.append(all);
+        begin = end;
+    }
+    return united;
+}
+
 bool WireTypeReader::computeDeclaredMembers()
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -972,6 +1023,7 @@ bool WireTypeReader::computeDeclaredMembers()
 
     ++m_numberOfDerivedLayouts;
 
+    m_program.setMembersOfParentsOfOneClass(uniteMembersOfParentsOfOneClass(arenas.of(0).layoutSets(), m_sections, families.members.span()));
     m_declaredMembers = WTF::move(families.members);
     m_declaredMembers.grow(numberOfLayouts + m_numberOfDerivedLayouts);
     for (uint32_t index = 0; index < m_numberOfDerivedLayouts; ++index)

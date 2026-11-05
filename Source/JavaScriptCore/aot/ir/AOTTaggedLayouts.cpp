@@ -46,6 +46,7 @@ static void admitTypeToFieldOfTaggedLayout(TypeArena& types, DeclaredType& prese
 
 static void appendFieldsToTaggedLayout(Program& program, TypeArena& types, LayoutID member, LayoutID declaringType)
 {
+    program.at(member).fieldsChangedAfterLayoutsBelowTookThem = true;
     for (uint32_t index = 0; index < program.at(declaringType).fields.size(); ++index) {
         const Field& declared = program.at(declaringType).fields[index];
         if (!declared.key || declared.flags.contains(FieldFlags::IsMethod) || declared.flags.contains(FieldFlags::IsNeverWritten))

@@ -291,15 +291,18 @@ struct LookupsPastProgramObjects {
     // MUST BE TRUE OF THE PROGRAM THAT RUNS: each is locked at the start (Facts::builtinMembersLockedAtStartUp()), with every mechanism withheld too: what is reached hangs on it.
     BitVector membersTakenForConstants;
     BitVector membersWritten;
+    BitVector membersHiddenFromBelow;
     Vector<WriteFollowedToBuiltin> writesFollowedToBuiltins;
     BitVector holdersWrittenUnderAnyName;
     BitVector holdersStoredOnUnderAnyName;
+    BitVector holdersWhoseMembersAreDeleted;
     BitVector holdersHandedWhatIsNoTextNumberOrBoolean;
     bool objectsNobodyKnowsAreHandedWhatIsNoTextNumberOrBoolean { false };
     BitVector lostBuiltins;
     BitVector builtinsAtUnseen;
     BitVector builtinsPassedOptionThatRunsCode;
     BitVector classesWithInstancesAtUnseen;
+    bool formattersAreHandedObjects { false };
     BitVector entriesThatHandHostNothing;
     BitVector namesReadThroughLostBuiltins;
     BitVector namesWrittenThroughLostBuiltins;
@@ -307,6 +310,10 @@ struct LookupsPastProgramObjects {
     BitVector namesWrittenThroughUnseenByLibrary;
     bool writesUnderAnyNameThroughUnseenByProgram { false };
     bool writesUnderAnyNameThroughLostBuiltins { false };
+    BitVector namesWrittenThroughLostBuiltinsBesideProduct;
+    BitVector namesWrittenThroughUnseenBesideProduct;
+    bool writesUnderAnyNameThroughUnseenBesideProduct { false };
+    bool writesUnderAnyNameThroughLostBuiltinsBesideProduct { false };
     bool climbsFromLostBuiltins { false };
     bool climbsFromUnseenObjects { false };
     bool lostBuiltinsReachUnseen { false };
@@ -412,6 +419,11 @@ struct LinkTables {
     Vector<std::pair<PropertyKeyID, FunctionID>> functionsAboveCreatedLayoutsUnderKeys;
     BitVector keysOfFunctionsAboveCreatedLayouts;
     Vector<uint32_t> membersByKey;
+    Vector<uint32_t> firstMemberByKeyOfSide;
+    Vector<uint32_t> membersOfLongRowsByKey;
+    Vector<uint32_t> placesOfLayoutsInRows;
+    Vector<uint32_t> endsOfLayoutsBelowInRows;
+    Vector<uint32_t> numbersOfClassesAbove;
     std::array<BitVector, 2> keysOfMembers;
     Vector<LinkedNameOnPrototype> namesOnPrototypes;
     Vector<TaggedMaker> taggedMakers;
@@ -624,7 +636,7 @@ struct LinkTables {
     bool iterableStaysAsMadeAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(iterablesThatStayAsMade, LinkedReceiverAsMade { function, site }); }
     const LinkedAccessorsOfField* findAccessorsExpectedIn(FieldReference) const LIFETIME_BOUND;
     TypeID caughtAt(FunctionID, BlockID handler) const;
-    void indexMembersByKey();
+    void indexMembersByKey(const Program&);
     std::span<const uint32_t> membersUnder(LayoutID classLayout, ClassSide, PropertyKeyID) const LIFETIME_BOUND;
     MemberFound findMember(const Program&, LayoutID, ClassSide, PropertyKeyID) const;
     bool findFunctionsLaidAbove(const Program&, LayoutID, PropertyKeyID, Vector<FunctionID, 4>&) const;

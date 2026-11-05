@@ -160,11 +160,6 @@ std::span<const LayoutID> Program::layoutsExpectedBelow(LayoutID id) const
     return tables.layoutsInOrderOfBases.subspan(tables.placeInOrderOfBases[id.index()] + 1, numberBelow);
 }
 
-static bool isDefinedByClass(const Layout& layout)
-{
-    return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
-}
-
 bool Program::prototypeMaySelectOtherClass(LayoutID id) const
 {
     return isDefinedByClass(at(declaredLayoutOf(*this, id)));
@@ -249,6 +244,51 @@ void Program::indexClasses()
         if (parentOf[layout] != none)
             numbersBelow[parentOf[layout]] += numbersBelow[layout] + 1;
     }
+
+    Vector<std::pair<uint32_t, uint32_t>> stepsDown;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        forEachOfSeveralParents(*this, LayoutID(index), [&](LayoutID parent) {
+            if (!isInRing.quickGet(parent.index()))
+                stepsDown.append({ parent.index(), index });
+        });
+    }
+    if (stepsDown.isEmpty())
+        return;
+    AOT::sort(stepsDown);
+
+    BitVector standsAboveStep(numberOfLayouts);
+    for (auto [parent, child] : stepsDown)
+        worklist.append(parent);
+    while (!worklist.isEmpty()) {
+        uint32_t layout = worklist.takeLast();
+        if (standsAboveStep.quickSet(layout))
+            continue;
+        if (parentOf[layout] != none)
+            worklist.append(parentOf[layout]);
+        forEachOfSeveralParents(*this, LayoutID(layout), [&](LayoutID parent) {
+            worklist.append(parent.index());
+        });
+    }
+
+    BitVector isFound(numberOfLayouts);
+    for (size_t above : standsAboveStep) {
+        isFound.clearAll();
+        isFound.quickSet(above);
+        places[above] = static_cast<uint32_t>(inOrder.size());
+        inOrder.append(LayoutID(static_cast<uint32_t>(above)));
+        auto find = [&](uint32_t below) {
+            if (!isFound.quickSet(below))
+                inOrder.append(LayoutID(below));
+        };
+        for (size_t next = places[above]; next < inOrder.size(); ++next) {
+            uint32_t layout = inOrder[next].index();
+            for (uint32_t child = firstChildOf[layout]; child < firstChildOf[layout + 1]; ++child)
+                find(children[child]);
+            for (auto step = std::ranges::lower_bound(stepsDown, std::pair { layout, 0u }); step != stepsDown.end() && step->first == layout; ++step)
+                find(step->second);
+        }
+        numbersBelow[above] = static_cast<uint32_t>(inOrder.size()) - places[above] - 1;
+    }
 }
 
 static std::span<const LayoutID> entriesOfName(const Vector<uint32_t>& first, const Vector<LayoutID>& entries, PropertyKeyID key)
@@ -261,11 +301,6 @@ static std::span<const LayoutID> entriesOfName(const Vector<uint32_t>& first, co
 std::span<const LayoutID> Program::layoutsWithName(PropertyKeyID key) const
 {
     return entriesOfName(m_derivedTables.firstLayoutWithName, m_derivedTables.layoutsWithName, key);
-}
-
-std::span<const LayoutID> Program::declarersOfName(PropertyKeyID key) const
-{
-    return entriesOfName(m_derivedTables.firstLayoutWithName, m_derivedTables.declarersOfName, key);
 }
 
 static bool keepsPropertiesInFields(const Program& program, LayoutID id)
@@ -287,16 +322,6 @@ static bool keepsPropertiesInFields(const Program& program, LayoutID id)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasResolvableOrigin(const Program& program, const Field& field)
-{
-    if (!field.flags.contains(FieldFlags::IsInherited))
-        return true;
-    if (!field.originLayout || !field.originField || field.originLayout.index() >= program.layouts.size())
-        return false;
-    const Vector<Field>& originFields = program.at(field.originLayout).fields;
-    return *field.originField < originFields.size() && !originFields[*field.originField].flags.contains(FieldFlags::IsInherited);
-}
-
 void Program::indexNames()
 {
     indexNames(ParallelLoops(1));
@@ -304,33 +329,18 @@ void Program::indexNames()
 
 void Program::indexNames(const ParallelLoops& loops)
 {
-    std::atomic<bool> hasResolvableOrigins { true };
-    forEachIndexInParallel(loops, layouts.size(), [&](unsigned index) {
-        bool areResolvable = std::ranges::all_of(layouts[index].fields, [&](const Field& field) {
-            return hasResolvableOrigin(*this, field);
-        });
-        if (!areResolvable)
-            hasResolvableOrigins.store(false, std::memory_order_relaxed);
-    });
-    if (!hasResolvableOrigins.load(std::memory_order_relaxed))
-        return;
-
     struct Holder {
         PropertyKeyID key;
         LayoutID layout;
-        LayoutID declarer;
-    };
-    auto keyAndLayoutOf = [](const Holder& holder) {
-        return std::pair { holder.key, holder.layout };
     };
 
     Vector<uint8_t> namesEveryFieldAbove;
     namesEveryFieldAbove.fill(0, layouts.size());
     forEachIndexInParallel(loops, layouts.size(), [&](unsigned index) {
         const Layout& layout = layouts[index];
-        namesEveryFieldAbove[index] = layout.base && std::ranges::all_of(at(layout.base).fields, [&](const Field& field) {
+        namesEveryFieldAbove[index] = layout.base && (baseWhoseFieldListIsCopiedWhole(*this, LayoutID(index)) || std::ranges::all_of(at(layout.base).fields, [&](const Field& field) {
             return !field.key || layout.findField(field.key);
-        });
+        }));
     });
     BitVector namesEveryFieldOfRowAbove = answerAlongRows(layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
         LayoutID base = at(id).base;
@@ -346,7 +356,6 @@ void Program::indexNames(const ParallelLoops& loops)
         if (at(id).has(LayoutFlags::IsNeverAllocated) || at(id).has(LayoutFlags::IsWrittenUnderDictionaryType) || !keepsPropertiesInFields(*this, id))
             return;
 
-        size_t firstOfLayout = found.size();
         LayoutID remembered;
         size_t steps = 0;
         size_t stepsToNextRemembered = 1;
@@ -359,32 +368,42 @@ void Program::indexNames(const ParallelLoops& loops)
             const Layout& layout = at(current);
             for (uint32_t field = 0; !hasNamedFields && field < layout.fields.size(); ++field) {
                 if (PropertyKeyID key = layout.fields[field].key)
-                    found.append({ key, id, declarationOf(*this, { current, field }).layout });
+                    found.append({ key, id });
             }
             if (namesEveryFieldOfRowAbove.quickGet(current.index()))
                 break;
             hasNamedFields = namesEveryFieldAbove[current.index()];
         }
-        std::span<Holder> ofLayout = found.mutableSpan().subspan(firstOfLayout);
-        AOT::stableSort(ofLayout, { }, &Holder::key);
-        found.shrink(firstOfLayout + (std::ranges::unique(ofLayout, { }, &Holder::key).begin() - ofLayout.begin()));
-    });
-    parallelSort(loops, holders.mutableSpan(), [&](const Holder& a, const Holder& b) {
-        return keyAndLayoutOf(a) < keyAndLayoutOf(b);
     });
 
+    uint32_t numberOfKeys = 0;
+    for (const Holder& holder : holders)
+        numberOfKeys = std::max(numberOfKeys, holder.key.index() + 1);
     Vector<uint32_t>& first = m_derivedTables.firstLayoutWithName;
-    first.fill(0, holders.isEmpty() ? 0 : holders.last().key.index() + 2);
-    m_derivedTables.layoutsWithName = holders.map([](const Holder& holder) {
-        return holder.layout;
-    });
-    m_derivedTables.declarersOfName = holders.map([](const Holder& holder) {
-        return holder.declarer;
-    });
+    first.fill(0, holders.isEmpty() ? 0 : numberOfKeys + 1);
     for (const Holder& holder : holders)
         ++first[holder.key.index() + 1];
     for (size_t index = 1; index < first.size(); ++index)
         first[index] += first[index - 1];
+
+    Vector<LayoutID> layoutsByName;
+    layoutsByName.grow(holders.size());
+    Vector<uint32_t> next(first);
+    for (const Holder& holder : holders)
+        layoutsByName[next[holder.key.index()]++] = holder.layout;
+
+    uint32_t numberKept = 0;
+    for (uint32_t key = 0; key < numberOfKeys; ++key) {
+        uint32_t firstOfKey = std::exchange(first[key], numberKept);
+        for (uint32_t place = firstOfKey; place < first[key + 1]; ++place) {
+            if (place == firstOfKey || layoutsByName[place] != layoutsByName[place - 1])
+                layoutsByName[numberKept++] = layoutsByName[place];
+        }
+    }
+    if (numberOfKeys)
+        first[numberOfKeys] = numberKept;
+    layoutsByName.shrink(numberKept);
+    m_derivedTables.layoutsWithName = WTF::move(layoutsByName);
 }
 
 std::span<const LayoutID> Program::viewsAbove(LayoutID id) const
@@ -1032,6 +1051,15 @@ Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
     if (module.kind == ModuleKind::SourceText && !module.requests.isEmpty() && module.requests[0].kind == ModuleRequestKind::Require)
         visitFormsOf(module.requests[0].target);
     return forms;
+}
+
+bool loaderEntersBodyAtMostOnce(const Module& module)
+{
+    if (!isEvaluatedAtMostOnceOf(module.kind) || module.flags.containsAny({ ModuleFlags::RunsAgain, ModuleFlags::MayBeMocked }))
+        return false;
+    if (!module.flags.contains(ModuleFlags::MayBeEvicted))
+        return true;
+    return module.kind == ModuleKind::SourceText && module.syntheticExports.isEmpty();
 }
 
 bool importMayAnswerWithMock(const Module& module)

@@ -24,6 +24,13 @@ struct KeyOrderContinuation {
     uint32_t orderWordAfter { 0 };
 };
 
+struct BeginningsOfKeyOrder {
+    friend bool operator==(const BeginningsOfKeyOrder&, const BeginningsOfKeyOrder&) = default;
+
+    uint32_t orderWordOfShortest { 0 };
+    uint32_t numberOfLongerOnes { 0 };
+};
+
 enum class KeyOrderSource : uint8_t {
     StoresInSequence,
     Declaration,
@@ -69,6 +76,7 @@ public:
     JS_EXPORT_PRIVATE std::optional<KeyOrderContinuation> continuationCreatingBehindFewestKeys(LayoutID, std::span<const FieldIndex> createdFieldsWithStorage) const;
     JS_EXPORT_PRIVATE std::optional<KeyOrderContinuation> continuationCreatingBehindFewestKeys(LayoutID, std::span<const FieldIndex> createdFieldsWithStorage, std::span<const FieldIndex> fieldsInFront) const;
     JS_EXPORT_PRIVATE std::optional<uint32_t> findOrderWordOfShortestBeginningThatLists(LayoutID, std::span<const FieldIndex> fieldsWithStorage) const;
+    JS_EXPORT_PRIVATE Vector<BeginningsOfKeyOrder, 2> beginningsThatList(LayoutID, std::span<const FieldIndex> fieldsWithStorage) const;
 
 private:
     JS_EXPORT_PRIVATE void indexFirstContinuations();

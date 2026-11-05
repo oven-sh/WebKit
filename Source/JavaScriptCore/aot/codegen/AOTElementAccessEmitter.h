@@ -46,6 +46,7 @@ public:
     void generateHasArrayElement(const ValueContext&);
     void generateAppendElements(const ValueContext&);
     void generateAppendMembers(const ValueContext&);
+    void generateReserveArrayRoom(const ValueContext&);
     void generateGetTypedArrayLength(const ValueContext&);
     void generateGetTypedArrayVector(const ValueContext&);
     void generateGetTypedArrayElement(const ValueContext&);

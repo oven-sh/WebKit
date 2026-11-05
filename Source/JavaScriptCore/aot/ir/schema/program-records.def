@@ -93,7 +93,7 @@ record Module wire {
     requiredNames: Span<RequiredName> otherNames: Span<String> namesOfStatements: Span<String> positions: SourcePositions functionText: Span<Byte>
     | engine namespaceLayout: Layout?
 }
-record HostRead wire { exportName: String builtin: Builtin? parameter: UInt32 }
+record HostRead wire { exportName: String builtin: Builtin? parameter: UInt32 namesLookedFor: Span<String> }
 record Entry wire { module: Module(Target) hostReads: Span<HostRead> }
 
 variant DataNode wire {

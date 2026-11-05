@@ -133,7 +133,7 @@ static void loadCustomAccessorRecord(StubAssembler& jit, GPRReg accessorIndexAnd
 
 static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg record, GPRReg uid, std::optional<GPRReg> storedValue, std::optional<GPRReg> keyCell)
 {
-    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::HostFunction, .returnsValue = !storedValue, .checksException = true, .cellToKeep = keyCell }, [&] {
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::HostFunction, .returnsValue = !storedValue, .checksException = true, .cellsToKeep = { receiver, storedValue, keyCell } }, [&] {
         const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
         const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
         const GPRReg A2 = jit.reuseScratch(StubRegister::A2);

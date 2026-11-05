@@ -34,6 +34,7 @@ export interface RuntimeDependencies {
   loads: Map<ModelModule, LoadedModule>;
   calls: Set<ModelFunction>;
   callsForTexts: Map<string, CallsForTexts>;
+  callsWhereCallRunsOtherCode: Set<ModelFunction>;
   implementedBy: Set<ModelFunction>;
   certain: Set<ModelFunction>;
   namedBy: Map<ModelModule | ModelFunction, ModelBuiltin>;
@@ -62,6 +63,7 @@ function createDependencies(): RuntimeDependencies {
     loads: new Map(),
     calls: new Set(),
     callsForTexts: new Map(),
+    callsWhereCallRunsOtherCode: new Set(),
     implementedBy: new Set(),
     certain: new Set(),
     namedBy: new Map(),
@@ -112,6 +114,7 @@ function mergeDependencies(into: RuntimeDependencies, from: RuntimeDependencies)
   for (const [module, load] of from.loads) addLoad(into, module, load);
   for (const called of from.calls) into.calls.add(called);
   for (const [key, listed] of from.callsForTexts) addCallsForTexts(into, key, listed);
+  for (const called of from.callsWhereCallRunsOtherCode) into.callsWhereCallRunsOtherCode.add(called);
   for (const implementation of from.implementedBy) into.implementedBy.add(implementation);
   for (const needed of from.certain) into.certain.add(needed);
   into.hasMethodCalledWithStartupLoads ||= from.hasMethodCalledWithStartupLoads;
@@ -120,6 +123,16 @@ function mergeDependencies(into: RuntimeDependencies, from: RuntimeDependencies)
     if (!into.namedBy.has(dependency)) into.namedBy.set(dependency, builtin);
   }
 }
+
+const asksOnlyWhetherCallRunsOtherCode = (condition: ModelCondition): boolean =>
+  condition.callRunsOtherCode &&
+  condition.operand === null &&
+  condition.calledOn === null &&
+  condition.hasProperty === null &&
+  condition.programStores === null &&
+  !condition.buildAdmitsRuntimeCode &&
+  !condition.objectNobodyKnowsIsWritten &&
+  !condition.testsReplaceBuiltins;
 
 function collectCompiledFunctions(functions: readonly ModelFunction[]): Map<ModelBuiltin, ModelFunction[]> {
   const compiledFunctions = new Map<ModelBuiltin, ModelFunction[]>();
@@ -431,6 +444,9 @@ export class DependencyClosure {
       listed.calls = listed.calls.difference(dependencies.calls);
       if (listed.calls.size === 0) dependencies.callsForTexts.delete(key);
     }
+    dependencies.callsWhereCallRunsOtherCode = dependencies.callsWhereCallRunsOtherCode.difference(
+      dependencies.calls.union(dependencies.implementedBy),
+    );
     return dependencies;
   }
 
@@ -442,15 +458,16 @@ export class DependencyClosure {
     return dependencies;
   }
 
+  makesPromise(builtin: ModelBuiltin): boolean {
+    if (this.#promiseClass === null) return false;
+    const ofPromises = objectsOfClass(this.#promiseClass).map(holder => holder.sameObjectAs ?? holder);
+    const made = builtin.sameObjectAs ?? builtin;
+    const holders = this.#holdersOfClassesHandedOutBy(made);
+    return ofPromises.some(holder => holder === made || holders.has(holder));
+  }
+
   prototypesThatComeWithFirstPromise(): ModelBuiltin[] {
-    const promise = this.#promiseClass?.constructor ?? null;
-    if (promise === null) return [];
-    const { calls: calledForPromise } = this.dependenciesOf(promise);
-    const makesPromise = (member: ModelBuiltin): boolean => {
-      const { calls, implementedBy } = this.dependenciesOf(member.sameObjectAs ?? member);
-      return !calls.union(implementedBy).isDisjointFrom(calledForPromise);
-    };
-    return this.#enginePrototypes.filter(prototype => prototype.members.some(makesPromise));
+    return this.#enginePrototypes.filter(prototype => prototype.members.some(member => this.makesPromise(member)));
   }
 
   dependenciesOfAnyOperand(): RuntimeDependencies {
@@ -520,7 +537,14 @@ export class DependencyClosure {
     }
     for (const { function: called, condition } of builtin.attachments.calledFunctions) {
       const decided = condition === null ? null : textsDecidingCall(condition);
-      if (condition === null || decided === null) {
+      if (
+        condition !== null &&
+        reachedWith === null &&
+        asksOnlyWhetherCallRunsOtherCode(condition) &&
+        !DependencyClosure.isInEveryProgram(builtin)
+      ) {
+        own.callsWhereCallRunsOtherCode.add(called);
+      } else if (condition === null || decided === null) {
         own.calls.add(called);
         if (condition === null && !isReachedByValue) own.certain.add(called);
       } else if (reachedWith === null) {

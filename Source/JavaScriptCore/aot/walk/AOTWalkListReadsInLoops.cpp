@@ -96,17 +96,17 @@ std::optional<ListTestedInFrontOfLoop> findListTestedInFrontOfLoop(Walker& walke
         return std::nullopt;
     const BodyIndex& index = walker.currentBodyIndex();
     LoopID outermost = index.loopOf(index.blockOf(read.id()));
-    if (!outermost)
+    if (!outermost && !walker.isInLoop())
         return std::nullopt;
-    while (LoopID around = index.loop(outermost).parent)
+    while (LoopID around = outermost ? index.loop(outermost).parent : LoopID())
         outermost = around;
-    uint32_t firstValueOfLoops = index.block(index.loop(outermost).head).firstParameter().index();
+    uint32_t firstValueOfLoops = outermost ? index.block(index.loop(outermost).head).firstParameter().index() : 0;
     for (ValueID input = read.objectOperand(); input; input = index.value(input).operand(0)) {
         if (index.isParameter(input) && index.blockOf(input) == walker.inputBlockBeingWalked() && index.isLoopHead(index.blockOf(input)))
             return std::nullopt;
         if (Reference list = walker.referenceOf(input); list && list.isValue()) {
             if (std::optional<ListTestedInFrontOfLoop> tested = findNoteInListReadsInLoops(walker, list))
-                return tested;
+                return outermost || !tested->turnsStoreIntoLists ? tested : std::nullopt;
         }
         if (!isCastInLoopsInListReadsInLoops(index, input, firstValueOfLoops))
             break;
@@ -382,6 +382,159 @@ static bool lookReadsCopyOfCalleeInListReadsInLoops(Walker& walker, const BodyVa
     return mayCopyCallee(walker, site, callee, PlaceOfCall { walker.currentFunction(), true, &walker.currentBodyIndex(), call.id() });
 }
 
+void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::span<const Reference> entering)
+{
+    if (!walker.has(Mechanism::TypedOperations))
+        return;
+    const BodyIndex& index = walker.currentBodyIndex();
+    TypeArena& types = walker.types();
+    LoopID loop = index.loopOf(inputHead);
+    uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+
+    BodyTerminator test = index.terminator(inputHead);
+    if (!test.isConditionalBranch() || !index.isInLoop(test.taken().block(), loop) || index.isInLoop(test.notTaken().block(), loop))
+        return;
+    ValueID condition = test.operand(0);
+    if (!condition || index.isParameter(condition) || index.opcodeOf(condition) != Opcode::Less || index.blockOf(condition) != inputHead)
+        return;
+    ValueID counter = index.valueBehindCasts(index.value(condition).operand(0));
+    ValueID bound = index.valueBehindCasts(index.value(condition).operand(1));
+    if (!index.isParameter(counter) || index.blockOf(counter) != inputHead || bound.index() >= firstValueOfLoop)
+        return;
+    size_t placeOfCounter = counter.index() - firstValueOfLoop;
+    if (placeOfCounter >= entering.size() || !entering[placeOfCounter])
+        return;
+    const Type& first = types.at(walker.typeOf(entering[placeOfCounter]));
+    if (!first.isInteger() || first.integers != Range::one(0))
+        return;
+
+    Vector<BlockID, 2> blocksThatComeRound;
+    for (BlockID member : index.membersOf(loop)) {
+        if (index.block(member).isHandlerBlock())
+            return;
+        BodyTerminator end = index.terminator(member);
+        if (!end.numberOfTargets())
+            return;
+        for (BodyTarget target : end.targets()) {
+            if (!index.isInLoop(target.block(), loop)) {
+                if (member != inputHead)
+                    return;
+                continue;
+            }
+            if (target.block() != inputHead)
+                continue;
+            ValueID next = placeOfCounter < target.arguments().size() ? index.valueBehindCasts(target.arguments()[placeOfCounter]) : ValueID();
+            if (!next || index.isParameter(next) || index.opcodeOf(next) != Opcode::Increment || index.valueBehindCasts(index.value(next).operand(0)) != counter)
+                return;
+            blocksThatComeRound.append(member);
+        }
+    }
+
+    auto listWhoseLengthIsRead = [&](ValueID value) -> ValueID {
+        if (index.isParameter(value) || index.opcodeOf(value) != Opcode::PropGet || index.value(value).isFreeName() || index.value(value).key() != walker.program().keyOf(BuiltinNames::length))
+            return { };
+        ValueID input = index.valueBehindCasts(index.value(value).objectOperand());
+        return input.index() < firstValueOfLoop && isProvenListInListReadsInLoops(walker, walker.referenceOf(input)) ? input : ValueID();
+    };
+    auto isPlainPrimitive = [&](ValueID value) {
+        value = index.valueBehindCasts(value);
+        if (value == counter)
+            return true;
+        TypeID type = TypeTable::anything;
+        if (value.index() < firstValueOfLoop)
+            type = walker.referenceOf(value) ? walker.typeOf(walker.referenceOf(value)) : type;
+        else if (!index.isParameter(value))
+            type = widestTypeOfOperation(walker, index.value(value));
+        return type && types.at(type).hasOnlyPrimitives(Primitive::Number | Primitive::AnyString | Primitive::Boolean | Primitive::Undefined | Primitive::Null);
+    };
+
+    Vector<Reference, 2> lists;
+    for (BlockID member : index.membersOf(loop)) {
+        bool standsInEveryTurn = std::ranges::all_of(blocksThatComeRound, [&](BlockID last) { return index.dominates(member, last); });
+        for (BodyValue operation : index.block(member).values()) {
+            if (listWhoseLengthIsRead(operation.id()))
+                continue;
+            if (operation.opcode() == Opcode::ElemSet) {
+                ValueID input = index.valueBehindCasts(operation.objectOperand());
+                ValueID position = index.valueBehindCasts(operation.propertyOperand());
+                Reference list = input.index() < firstValueOfLoop ? walker.referenceOf(input) : Reference();
+                if (!standsInEveryTurn || (position != counter && (position.index() < firstValueOfLoop || listWhoseLengthIsRead(position) != input)) || !isProvenListInListReadsInLoops(walker, list))
+                    return;
+                if (!lists.contains(list))
+                    lists.append(list);
+                continue;
+            }
+            Effects declared = declaredEffectsOfOperation(walker.program(), operation.opcode(), operation);
+            if (!declared.mayThrow.byRule() && !declared.mayRunOtherCode())
+                continue;
+            bool takesPlainPrimitives = effectRuleOf(operation.opcode()) == EffectRule::Operator;
+            operation.forEachOperand([&](ValueID operand, auto...) {
+                takesPlainPrimitives &= !operand || isPlainPrimitive(operand);
+            });
+            if (!takesPlainPrimitives)
+                return;
+        }
+    }
+    if (lists.isEmpty())
+        return;
+
+    Origin origin = walker.originOf(index.value(condition));
+    Reference room = walker.referenceOf(bound);
+    if (!room)
+        return;
+    if (!types.at(walker.typeOf(room)).isNumber())
+        return;
+    auto behindForms = [&](ValueID value) {
+        while (conversionsOfForm.contains(walker.code().at(value).opcode))
+            value = walker.code().at(value).valueOperand();
+        return value;
+    };
+    for (Reference list : lists) {
+        const Operation& born = walker.code().at(rootOfCellInSweptCode(walker.code(), list.id()));
+        if ((born.opcode == Opcode::NewArrayLike || born.opcode == Opcode::NewContiguousArray) && room.isValue() && behindForms(born.lengthOperand()) == behindForms(room.id()))
+            continue;
+        Draft reserve(Opcode::ReserveArrayRoom, origin);
+        walker.chooseConservativeFields(reserve);
+        reserve.setArrayOperand(list);
+        reserve.setRoomOperand(room);
+        walker.build(WTF::move(reserve));
+    }
+}
+
+static void forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(Walker& walker, FunctionID callee, std::span<const ValueID> arguments, unsigned depth, const Invocable<void(ValueID argument, ValueID key, FunctionID reader, ValueID read)> auto& take)
+{
+    const BodyIndex& body = walker.facts().bodies().at(callee);
+    BlockID entry = BlockID(0u);
+    auto argumentBehind = [&](ValueID value) -> ValueID {
+        value = body.valueBehindCasts(value);
+        if (!value || !body.isParameter(value) || body.blockOf(value) != entry)
+            return { };
+        size_t place = value.index() - body.block(entry).firstParameter().index();
+        return place < arguments.size() ? arguments[place] : ValueID();
+    };
+    for (uint32_t block = 0; block < body.numberOfBlocks(); ++block) {
+        for (BodyValue operation : body.block(BlockID(block)).values()) {
+            if (operation.opcode() == Opcode::ElemGet) {
+                ValueID key = body.valueBehindCasts(operation.propertyOperand());
+                bool keyIsWritten = key && !body.isParameter(key) && body.opcodeOf(key) == Opcode::Integer;
+                ValueID keyHandedIn = keyIsWritten ? ValueID() : argumentBehind(key);
+                if (ValueID argument = keyIsWritten || keyHandedIn ? argumentBehind(operation.objectOperand()) : ValueID())
+                    take(argument, keyHandedIn, callee, operation.id());
+                continue;
+            }
+            if (operation.opcode() != Opcode::Call || !depth)
+                continue;
+            FunctionID inner = walker.facts().linked().calleeAt(callee, operation.id());
+            if (!inner || walker.facts().bodies().at(inner).hasLoops())
+                continue;
+            Vector<ValueID, 4> handedOn;
+            for (ValueID argument : operation.as<Opcode::Call>().argumentsOperands())
+                handedOn.append(argument ? argumentBehind(argument) : ValueID());
+            forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(walker, inner, handedOn.span(), depth - 1, take);
+        }
+    }
+}
+
 template<typename TypeInLook>
 static bool surelyEndsWhatIsShownOfListsInListReadsInLoops(Walker& walker, const BodyValue& operation, uint32_t firstValueOfLoop, const TypeInLook& typeInLook, bool countsOnTurnsThatBeginAgain)
 {
@@ -452,6 +605,37 @@ ListsReadInLoop findListsReadInLoop(Walker& walker, BlockID inputHead, const Loo
                     found.lists.append(ListTestedInFrontOfLoop { name, ArrayStorage::Int32, false });
                 else
                     found.lists.append(ListTestedInFrontOfLoop { name, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers });
+                continue;
+            }
+            if (FunctionID copied = operation.opcode() == Opcode::Call ? walker.facts().linked().calleeAt(walker.currentFunction(), operation.id()) : FunctionID(); copied && lookReadsCopyOfCalleeInListReadsInLoops(walker, operation, copied)) {
+                forEachReadOfArgumentInCopyOfCalleeInListReadsInLoops(walker, copied, operation.as<Opcode::Call>().argumentsOperands(), 2, [&](ValueID argument, ValueID key, FunctionID reader, ValueID read) {
+                    ValueID input = valueThatEntersLoopInListReadsInLoops(index, argument, firstValueOfLoop);
+                    Reference name = input.index() < firstValueOfLoop ? walker.referenceOf(input) : Reference();
+                    if (!name || !name.isValue() || isFreshInListReadsInLoops(walker, name) || findNoteInListReadsInLoops(walker, name))
+                        return;
+                    TypeID proven = ownTypeInListReadsInLoops(walker, name);
+                    for (const GuessInFrontOfLoop& guess : guesses) {
+                        if (guess.value == name)
+                            proven = types.intersectionOf(proven, guess.tested);
+                    }
+                    TypeID list = types.withoutNullish(proven);
+                    if (!hasKind(types, list, OperandKind::Array) || (key && !readTakesIndexOfProvenList(types, list, typeInLook(key))))
+                        return;
+                    if (found.lists.containsIf([&](const ListTestedInFrontOfLoop& list) { return list.name == name; }))
+                        return;
+                    TypeID seenByLink = walker.facts().linked().resultOfReadByKey(reader, read);
+                    if (seenByLink && types.at(seenByLink).isInt32OrNullish()) {
+                        found.lists.append(ListTestedInFrontOfLoop { name, ArrayStorage::Int32, false });
+                        return;
+                    }
+                    ArrayStorage written = kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, list);
+                    if (TypeID expected = written == ArrayStorage::Other ? findExpectation(walker, input).type : TypeID())
+                        written = kindThatHoldsWhatIsWrittenInListReadsInLoops(walker, types.withoutNullish(expected));
+                    if (written == ArrayStorage::Other)
+                        return;
+                    bool holdsNumbers = holdsOnlyNumbers(written);
+                    found.lists.append(ListTestedInFrontOfLoop { name, holdsNumbers ? ArrayStorage::Double : written, holdsNumbers });
+                });
                 continue;
             }
             bool isStore = operation.opcode() == Opcode::ElemSet && walker.looksCountOnTurnsThatBeginAgain(inputHead);

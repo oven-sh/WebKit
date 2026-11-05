@@ -129,10 +129,36 @@ void Layout::addToIndex(uint32_t field)
     }
 }
 
+void Layout::appendCopiesOfAllFieldsOf(LayoutID id, const Layout& base)
+{
+    RELEASE_ASSERT(m_indexedFieldCount == fields.size() && base.m_indexedFieldCount == base.fields.size());
+    auto numberOfOwnFields = static_cast<uint32_t>(fields.size());
+    fields.appendVector(base.fields);
+    uint32_t numberDeclaredByBase = base.copiesWholeFieldListOfBase ? base.ownFieldCount : static_cast<uint32_t>(base.fields.size());
+    for (uint32_t index = 0; index < numberDeclaredByBase; ++index) {
+        Field& copy = fields[numberOfOwnFields + index];
+        copy.flags.add(FieldFlags::IsInherited);
+        copy.originLayout = id;
+        copy.originField = index;
+    }
+    if (base.m_fieldsByKey.isEmpty() || 2 * fields.size() > base.m_fieldsByKey.size()) {
+        indexFields();
+        return;
+    }
+    m_fieldsByKey = base.m_fieldsByKey;
+    for (IndexedField& indexed : m_fieldsByKey)
+        indexed.field += indexed.key ? numberOfOwnFields : 0;
+    m_keysByHash = base.m_keysByHash;
+    m_indexedFieldCount = static_cast<uint32_t>(fields.size());
+    for (uint32_t index = 0; index < numberOfOwnFields; ++index)
+        addToIndex(index);
+}
+
 uint32_t Layout::appendField(Field&& field)
 {
     RELEASE_ASSERT(m_indexedFieldCount == fields.size());
     uint32_t index = static_cast<uint32_t>(fields.size());
+    copiesWholeFieldListOfBase = false;
     fields.append(WTF::move(field));
     if (fields.size() >= minFieldsToIndex && 2 * fields.size() > m_fieldsByKey.size()) {
         indexFields();
@@ -300,6 +326,21 @@ static std::optional<FieldReference> declarationOfFieldTakenFromWrittenBase(cons
     return declaration;
 }
 
+static bool isCopyOfFieldOfWrittenBase(const Program& program, LayoutID id, uint32_t place, FieldReference fieldOfBase)
+{
+    const Layout& layout = program.at(id);
+    if (place >= layout.fields.size())
+        return false;
+    const Field& copy = layout.fields[place];
+    const Field& copied = fieldAt(program, fieldOfBase);
+    FieldReference declaration = declarationOf(program, fieldOfBase);
+    OptionSet<FieldFlags> flagsOfCopy = copied.flags;
+    flagsOfCopy.add(FieldFlags::IsInherited);
+    return copy.flags == flagsOfCopy && copy.originLayout == declaration.layout && copy.originField == declaration.field
+        && copy.key == copied.key && copy.computedKey == copied.computedKey && copy.form == copied.form && copy.declared == copied.declared && copy.variableName == copied.variableName
+        && (!copy.key || layout.findField(copy.key) == place);
+}
+
 static bool hasRoomForFieldsOfWrittenBase(const Program& program, LayoutID id, LayoutID base)
 {
     const Layout& layout = program.at(id);
@@ -325,18 +366,67 @@ static void appendFieldsOfWrittenBase(Program& program, LayoutID id)
         return;
 
     const Layout& baseLayout = program.at(base);
+    bool baseListsOwnFieldsAndDirectCopiesAlone = baseLayout.copiesWholeFieldListOfBase || (!writtenBaseOf(baseLayout) && baseLayout.ownFieldCount == baseLayout.fields.size());
+    if (baseListsOwnFieldsAndDirectCopiesAlone && layout.fields.size() == layout.ownFieldCount && std::ranges::none_of(layout.fields, [&](const Field& field) { return baseLayout.findField(field.key).has_value(); })) {
+        layout.appendCopiesOfAllFieldsOf(base, baseLayout);
+        layout.copiesWholeFieldListOfBase = true;
+        if (!writtenBaseOf(baseLayout) || baseLayout.inheritedFields == InheritedFields::AllOfRow)
+            layout.inheritedFields = InheritedFields::AllOfRow;
+        return;
+    }
+    bool listsFieldsOfBaseInOrder = true;
     for (uint32_t index = 0; index < baseLayout.fields.size(); ++index) {
+        uint32_t place = layout.ownFieldCount + index;
         std::optional<FieldReference> declaration = declarationOfFieldTakenFromWrittenBase(program, id, { base, index });
-        if (!declaration)
+        if (!declaration) {
+            listsFieldsOfBaseInOrder = listsFieldsOfBaseInOrder && isCopyOfFieldOfWrittenBase(program, id, place, { base, index });
             continue;
+        }
+        listsFieldsOfBaseInOrder = listsFieldsOfBaseInOrder && layout.fields.size() == place;
         Field field = baseLayout.fields[index];
         field.flags.add(FieldFlags::IsInherited);
         field.originLayout = declaration->layout;
         field.originField = declaration->field;
         layout.appendField(WTF::move(field));
     }
+    layout.copiesWholeFieldListOfBase = listsFieldsOfBaseInOrder && layout.fields.size() - layout.ownFieldCount == baseLayout.fields.size();
     if (!writtenBaseOf(baseLayout) || baseLayout.inheritedFields == InheritedFields::AllOfRow)
         layout.inheritedFields = InheritedFields::AllOfRow;
+}
+
+static void appendFieldsOfSeveralParents(Program& program, LayoutID id)
+{
+    if (program.at(id).inheritedFields != InheritedFields::NotTaken)
+        return;
+    Vector<LayoutID, 4> parents;
+    forEachOfSeveralParents(program, id, [&](LayoutID parent) {
+        parents.append(parent);
+    });
+    if (parents.isEmpty())
+        return;
+    program.at(id).inheritedFields = InheritedFields::SomeOfRow;
+    size_t numberOfFields = program.at(id).fields.size();
+    for (LayoutID parent : parents) {
+        appendInheritedFields(program, parent);
+        numberOfFields += program.at(parent).fields.size();
+    }
+    if (numberOfFields > maxFieldsInOrder)
+        return;
+    for (LayoutID parent : parents) {
+        const Layout& above = program.at(parent);
+        for (uint32_t index = 0; index < above.fields.size(); ++index) {
+            std::optional<FieldReference> declaration = declarationOfFieldTakenFromWrittenBase(program, id, { parent, index });
+            if (!declaration)
+                continue;
+            Field field = above.fields[index];
+            field.flags.add(FieldFlags::IsInherited);
+            field.flags.remove(FieldFlags::IsRequired);
+            field.originLayout = declaration->layout;
+            field.originField = declaration->field;
+            program.at(id).appendField(WTF::move(field));
+        }
+    }
+    program.at(id).inheritedFields = InheritedFields::AllOfRow;
 }
 
 void appendInheritedFields(Program& program, LayoutID id)
@@ -344,6 +434,7 @@ void appendInheritedFields(Program& program, LayoutID id)
     Vector<LayoutID, 8> pending;
     for (RowOfWrittenBases row(program, id); row.current(); row.advance()) {
         const Layout& layout = program.at(row.current());
+        appendFieldsOfSeveralParents(program, row.current());
         if (!writtenBaseOf(layout) || layout.inheritedFields != InheritedFields::NotTaken)
             break;
         pending.append(row.current());

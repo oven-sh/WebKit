@@ -330,17 +330,15 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
     uint32_t momentLoaded = m_momentsOfLoads[importer.index()];
     if (!momentLoaded || momentLoaded > mock->value.momentLaid)
         return true;
-    return !m_loadedInPreload.get(importer.index()) && momentLinked(importer) < mock->value.momentOfTestFile;
+    return !m_loadedInPreload.get(importer.index()) && !wasLetGoByLoader(importer) && momentLinked(importer) < mock->value.momentOfTestFile;
 }
 
 void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool leavesEarlierMockToItsImporters)
 {
     std::optional<MomentMockWasLaid> waiting = m_momentsWaitingMocksWereLaid.takeOptional(fileOrModule);
-    if (JSObject* earlier = leavesEarlierMockToItsImporters ? mockInPlace(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).mockLaidInPreload.get()) {
-        ModuleID module = moduleWithExportsOf(fileOrModule);
-        std::optional<MomentMockWasLaid> laid = m_loadedInPreload.get(module.index()) ? m_momentsStandingMocksWereLaid.takeOptional(fileOrModule) : std::nullopt;
-        keepNamespacesMadeUnder(fileOrModule, module, earlier, laid ? keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0, m_exportsLeftOut.get(module)) : std::nullopt);
-        letGoOfNamespaceMadeUnderMock(module);
+    if (JSObject* earlier = leavesEarlierMockToItsImporters ? mockInPlace(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).mockLaidInPreload.get() && m_loadedInPreload.get(fileOrModule.index())) {
+        if (std::optional<MomentMockWasLaid> laid = m_momentsStandingMocksWereLaid.takeOptional(fileOrModule))
+            keepEndedMock(fileOrModule, earlier, *laid, waiting ? waiting->moment : 0);
     }
     MomentMockWasLaid laid = waiting && !stoodInPlace ? *waiting : momentOfNow();
     LoadedModule& held = ensureLoaded(fileOrModule);
