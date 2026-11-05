@@ -120,50 +120,103 @@ bool getBytesLike(JSGlobalObject*, JSValue, std::span<const uint8_t>&);
 JSValue hexOfBytes(JSGlobalObject*, JSValue bytesOrByteArray, JSValue separator, JSValue bytesPerSeparator);
 
 // Bytes that are put together piece by piece. What a program asks for may be more than there is room for: the builder then takes
-// no more, and makeBytes() raises a MemoryError. (A Vector ends the process.)
+// no more, and makeBytes() raises a MemoryError. (A Vector ends the process, and holds 2**31 - 1 bytes at most.)
 class ByteBuilder {
     WTF_MAKE_NONCOPYABLE(ByteBuilder);
 public:
     ByteBuilder() = default;
+    ~ByteBuilder()
+    {
+        if (m_bytes != m_ownRoom)
+            fastFree(m_bytes);
+    }
 
     void reserveInitialCapacity(size_t capacity) { makeRoomFor(capacity); }
     void append(uint8_t byte)
     {
         if (makeRoomFor(1)) [[likely]]
-            m_bytes.append(byte);
+            m_bytes[m_size++] = byte;
     }
     void append(std::span<const uint8_t> bytes)
     {
-        if (makeRoomFor(bytes.size())) [[likely]]
-            m_bytes.append(bytes);
+        if (auto room = appendUninitialized(bytes.size()); room.data()) [[likely]]
+            memcpy(room.data(), bytes.data(), bytes.size());
     }
     void appendRepeated(uint8_t byte, size_t count)
     {
-        if (makeRoomFor(count)) [[likely]] {
-            size_t size = m_bytes.size();
-            m_bytes.grow(size + count);
-            memset(m_bytes.mutableSpan().data() + size, byte, count);
-        }
+        if (auto room = appendUninitialized(count); room.data()) [[likely]]
+            memset(room.data(), byte, count);
     }
-    size_t size() const { return m_bytes.size(); }
+    // For the caller to write to. Nothing: there is no room, or none was asked for.
+    std::span<uint8_t> appendUninitialized(size_t count)
+    {
+        if (!count || !makeRoomFor(count)) [[unlikely]]
+            return { };
+        m_size += count;
+        return { m_bytes + m_size - count, count };
+    }
+    void shrink(size_t size)
+    {
+        ASSERT(size <= m_size);
+        m_size = size;
+    }
+    void clear()
+    {
+        m_size = 0;
+        m_hasOverflowed = false;
+    }
+    size_t size() const { return m_size; }
+    uint8_t& operator[](size_t index)
+    {
+        ASSERT(index < m_size);
+        return m_bytes[index];
+    }
     bool hasOverflowed() const { return m_hasOverflowed; }
-    std::span<const uint8_t> span() const { return m_bytes.span(); }
+    std::span<const uint8_t> span() const { return { m_bytes, m_size }; }
+    std::span<uint8_t> mutableSpan() { return { m_bytes, m_size }; }
+
+protected:
+    explicit ByteBuilder(std::span<uint8_t> ownRoom)
+        : m_bytes(ownRoom.data())
+        , m_ownRoom(ownRoom.data())
+        , m_capacity(ownRoom.size())
+    {
+    }
 
 private:
     bool makeRoomFor(size_t count)
     {
-        size_t capacity = m_bytes.capacity();
-        if (count <= capacity - m_bytes.size()) [[likely]]
+        if (count <= m_capacity - m_size) [[likely]]
             return !m_hasOverflowed;
         return makeRoomSlow(count);
     }
     bool makeRoomSlow(size_t count);
 
-    Vector<uint8_t> m_bytes;
+    uint8_t* m_bytes { nullptr };
+    uint8_t* m_ownRoom { nullptr };
+    size_t m_size { 0 };
+    size_t m_capacity { 0 };
     bool m_hasOverflowed { false };
+};
+// With room in itself for what is mostly short.
+template<size_t room>
+class ByteBuilderWithRoom : public ByteBuilder {
+public:
+    ByteBuilderWithRoom()
+        : ByteBuilder(std::span { m_room })
+    {
+    }
+
+private:
+    std::array<uint8_t, room> m_room;
 };
 // Null, with a MemoryError: there are too many.
 PyBytes* makeBytes(JSGlobalObject*, const ByteBuilder&);
+void appendUTF8(ByteBuilder&, char32_t);
+// With the handler "surrogatepass" if `allowSurrogates`; otherwise false if there is a lone surrogate.
+bool appendUTF8(ByteBuilder&, StringView, bool allowSurrogates = false);
+// False: an exception, that of str.encode() for a lone surrogate or a MemoryError.
+bool appendUTF8(JSGlobalObject*, ByteBuilder&, JSString*);
 
 String bytesRepr(std::span<const uint8_t>);
 

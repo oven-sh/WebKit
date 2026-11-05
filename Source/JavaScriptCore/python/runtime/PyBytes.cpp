@@ -41,9 +41,9 @@ static constexpr size_t bytesMaxLength = (static_cast<size_t>(1) << 40) - 64;
 
 // The allocator reserves addresses, which there are plenty of: it is on filling the memory that the system would end the process.
 // So what malloc() would refuse is refused here: more in one piece than the machine has.
-static bool bytesCanBeAllocated(size_t length)
+static ALWAYS_INLINE bool bytesCanBeAllocated(size_t length)
 {
-    return length <= bytesMaxLength && length <= WTF::ramSize();
+    return length <= MB || (length <= bytesMaxLength && length <= WTF::ramSize());
 }
 static constexpr int64_t bytesMaxSsize = std::numeric_limits<int64_t>::max();
 
@@ -93,17 +93,23 @@ PyBytes* PyBytes::create(JSGlobalObject* globalObject, std::span<const uint8_t> 
 
 bool ByteBuilder::makeRoomSlow(size_t count)
 {
-    static constexpr size_t limit = std::numeric_limits<int32_t>::max(); // Of a Vector.
-    static_assert(WTF::isValidCapacityForVector<uint8_t>(limit) && !WTF::isValidCapacityForVector<uint8_t>(limit + 1));
-    size_t size = m_bytes.size();
-    if (m_hasOverflowed || count > limit - size) {
+    if (m_hasOverflowed || count > bytesMaxLength || !bytesCanBeAllocated(m_size + count)) {
         m_hasOverflowed = true;
         return false;
     }
-    size_t wanted = std::min(limit, std::max(size + count, size + size / 2 + 16));
-    if (!m_bytes.tryReserveCapacity(wanted) && !m_bytes.tryReserveCapacity(size + count))
-        m_hasOverflowed = true;
-    return !m_hasOverflowed;
+    bool isInOwnRoom = m_bytes == m_ownRoom;
+    for (size_t wanted : { std::max(m_size + count, m_size + m_size / 2 + 16), m_size + count }) {
+        void* bytes = nullptr;
+        if (!bytesCanBeAllocated(wanted) || !(isInOwnRoom ? tryFastMalloc(wanted) : WTF::tryFastRealloc(m_bytes, wanted)).getValue(bytes))
+            continue;
+        if (isInOwnRoom && m_size)
+            memcpy(bytes, m_bytes, m_size);
+        m_bytes = static_cast<uint8_t*>(bytes);
+        m_capacity = wanted;
+        return true;
+    }
+    m_hasOverflowed = true;
+    return false;
 }
 
 PyBytes* makeBytes(JSGlobalObject* globalObject, const ByteBuilder& builder)

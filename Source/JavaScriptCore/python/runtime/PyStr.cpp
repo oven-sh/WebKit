@@ -401,7 +401,8 @@ String asciiEscape(StringView text)
 
 // ---- UTF-8 ----
 
-static void appendUTF8(Vector<uint8_t>& result, char32_t character)
+template<typename Bytes>
+static void appendCharacterInUTF8(Bytes& result, char32_t character)
 {
     if (character < 0x80)
         result.append(static_cast<uint8_t>(character));
@@ -453,13 +454,47 @@ std::optional<Vector<uint8_t>> tryEncodeUTF8(StringView text, bool allowSurrogat
         writeUTF8(text, result.mutableSpan());
         return result;
     }
+    if (!allowSurrogates)
+        return std::nullopt;
     result.reserveInitialCapacity(text.length());
-    for (char32_t character : text.codePoints()) {
-        if (U_IS_SURROGATE(character) && !allowSurrogates)
-            return std::nullopt;
-        appendUTF8(result, character);
-    }
+    for (char32_t character : text.codePoints())
+        appendCharacterInUTF8(result, character);
     return result;
+}
+
+void appendUTF8(ByteBuilder& result, char32_t character) { appendCharacterInUTF8(result, character); }
+
+bool appendUTF8(ByteBuilder& result, StringView text, bool allowSurrogates)
+{
+    if (auto length = lengthInUTF8(text)) {
+        if (auto room = result.appendUninitialized(*length); room.data())
+            writeUTF8(text, room);
+        return true;
+    }
+    if (!allowSurrogates)
+        return false;
+    for (char32_t character : text.codePoints())
+        appendCharacterInUTF8(result, character);
+    return true;
+}
+
+bool appendUTF8(JSGlobalObject* globalObject, ByteBuilder& result, JSString* string)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!appendUTF8(result, text)) {
+        // Which raises.
+        scope.release();
+        strEncode(globalObject, string, nullptr, nullptr);
+        return false;
+    }
+    if (result.hasOverflowed()) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
+    }
+    return true;
 }
 
 // Decodes one character. 0: the bytes at the start are not UTF-8.
@@ -523,7 +558,7 @@ Vector<uint8_t> encodeFilesystem(StringView text)
         if (character >= 0xdc80 && character <= 0xdcff)
             result.append(static_cast<uint8_t>(character - 0xdc00));
         else
-            appendUTF8(result, character);
+            appendCharacterInUTF8(result, character);
     }
     return result;
 }

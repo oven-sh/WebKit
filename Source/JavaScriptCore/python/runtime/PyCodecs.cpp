@@ -166,25 +166,6 @@ static void codecWriteCharacterReference(char32_t character, const Put& put)
     put(';');
 }
 
-static void codecAppendUTF8(ByteBuilder& out, char32_t character)
-{
-    if (character < 0x80)
-        out.append(static_cast<uint8_t>(character));
-    else if (character < 0x800) {
-        out.append(static_cast<uint8_t>(0xc0 | (character >> 6)));
-        out.append(static_cast<uint8_t>(0x80 | (character & 0x3f)));
-    } else if (character < 0x10000) {
-        out.append(static_cast<uint8_t>(0xe0 | (character >> 12)));
-        out.append(static_cast<uint8_t>(0x80 | ((character >> 6) & 0x3f)));
-        out.append(static_cast<uint8_t>(0x80 | (character & 0x3f)));
-    } else {
-        out.append(static_cast<uint8_t>(0xf0 | (character >> 18)));
-        out.append(static_cast<uint8_t>(0x80 | ((character >> 12) & 0x3f)));
-        out.append(static_cast<uint8_t>(0x80 | ((character >> 6) & 0x3f)));
-        out.append(static_cast<uint8_t>(0x80 | (character & 0x3f)));
-    }
-}
-
 static int codecHexDigitValue(uint8_t character)
 {
     if (character >= '0' && character <= '9')
@@ -1078,7 +1059,7 @@ static JSValue codecSurrogatePassErrors(JSGlobalObject* globalObject, JSValue va
                 RELEASE_AND_RETURN(scope, codecRaiseAgain(globalObject, exception));
             switch (encoding) {
             case CodecStandardEncoding::UTF8:
-                codecAppendUTF8(out, character);
+                appendUTF8(out, character);
                 break;
             case CodecStandardEncoding::UTF16LE:
                 out.append(static_cast<uint8_t>(character));
@@ -1215,7 +1196,7 @@ JSValue codecEncodeUTF8(JSGlobalObject* globalObject, JSString* string, const St
     for (unsigned i = 0; i < size;) {
         char32_t character = text[i];
         if (!U_IS_SURROGATE(character)) [[likely]] {
-            codecAppendUTF8(out, character);
+            appendUTF8(out, character);
             ++i;
             continue;
         }
@@ -1233,7 +1214,7 @@ JSValue codecEncodeUTF8(JSGlobalObject* globalObject, JSString* string, const St
             break;
         case CodecErrorKind::SurrogatePass:
             for (unsigned k = start; k < end; ++k)
-                codecAppendUTF8(out, text[k]);
+                appendUTF8(out, text[k]);
             break;
         case CodecErrorKind::BackslashReplace:
             for (unsigned k = start; k < end; ++k)
