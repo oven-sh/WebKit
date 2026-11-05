@@ -227,7 +227,7 @@ RegisterID* Unit::exprToIterateOverOrSearch(Expr* node, RegisterID* dst)
         items = list->elts;
     else if (auto* set = node->tryAs<Set>())
         items = set->elts;
-    if (items.isEmpty())
+    if (items.isEmpty() && !node->is<List>())
         return expr(node, dst);
     if (PyTuple* tuple = tupleOfConstants(items)) {
         JSValue value = tuple;
@@ -331,6 +331,11 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
         JSValue operand = valueCPythonsCompilerWorksOut(unary->operand);
         if (operand && (unary->op != AST::UnaryKind::Invert || !operand.isBoolean()))
             value = finish(unaryOperation(globalObject(), static_cast<Python::UnaryOperator>(unary->op), operand));
+    } else if (auto* tuple = node->tryAs<Tuple>(); tuple && tuple->ctx == ExprContext::Load && tuple->elts.size() <= maxItemsCPythonHasOnItsStack)
+        value = tupleOfConstants(tuple->elts);
+    else if (auto* subscript = node->tryAs<Subscript>(); subscript && subscript->ctx == ExprContext::Load && isSafeToRecurse()) {
+        if (JSValue base = valueCPythonsCompilerWorksOut(subscript->value))
+            value = itemCPythonsCompilerWorksOut(base, subscript->slice);
     }
 
     while (value && !operations.isEmpty()) {
@@ -343,11 +348,40 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
     return value;
 }
 
+JSValue Unit::itemCPythonsCompilerWorksOut(JSValue base, Expr* index)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+    auto* slice = index->tryAs<Slice>();
+    JSValue key = slice ? constantSlice(slice) : valueCPythonsCompilerWorksOut(index);
+    if (!key || scope.exception())
+        return { };
+    JSValue item = getItem(globalObject(), base, key);
+    if (scope.exception()) {
+        scope.clearException();
+        return { };
+    }
+    return item;
+}
+
+// const_folding_check_complexity()
+static int64_t roomLeftAfter(JSValue value, int64_t limit)
+{
+    auto* tuple = PyTuple::tryFrom(value);
+    if (!tuple)
+        return limit;
+    limit -= tuple->length();
+    for (unsigned i = 0; limit >= 0 && i < tuple->length(); ++i)
+        limit = roomLeftAfter(tuple->at(i), limit);
+    return limit;
+}
+
 JSValue Unit::valueCPythonsCompilerWorksOut(Operator op, JSValue value, JSValue right)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
     static constexpr uint64_t maxIntBits = 128;
     static constexpr uint64_t maxStrSize = 4096;
+    static constexpr int64_t maxTupleSize = 256;
+    static constexpr int64_t maxItemsInAll = 1024;
     {
         bool areInts = isInt(value) && isInt(right);
         auto sizeOf = [&](JSValue sequence) -> std::optional<uint64_t> {
@@ -374,6 +408,14 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Operator op, JSValue value, JSValue 
                 if (!times || *times < 0 || static_cast<uint64_t>(*times) > maxStrSize / *size)
                     return { };
             }
+            for (auto [sequence, count] : { std::pair { value, right }, std::pair { right, value } }) {
+                auto* tuple = PyTuple::tryFrom(sequence);
+                if (!tuple || !isInt(count) || !tuple->length())
+                    continue;
+                auto times = tryInt64(intValue(count));
+                if (!times || *times < 0 || *times > maxTupleSize / tuple->length() || (*times && roomLeftAfter(tuple, maxItemsInAll / *times) < 0))
+                    return { };
+            }
             break;
         case Operator::Pow:
             if (areInts && intSign(intValue(value)) && intSign(intValue(right)) > 0) {
@@ -397,8 +439,7 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Operator op, JSValue value, JSValue 
             break;
         }
     }
-    // (A tree that a program made may have tuples for constants, for which CPython has other limits.)
-    if (scope.exception() || PyTuple::is(value) || PyTuple::is(right)) {
+    if (scope.exception()) {
         scope.clearException();
         return { };
     }
@@ -414,13 +455,17 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Operator op, JSValue value, JSValue 
 
 void Unit::exprForEffect(Expr* node)
 {
-    if (node->is<Constant>())
+    if (auto* name = node->tryAs<NameExpr>(); node->is<Constant>() || (name && name->id->impl() == names().debug->impl()))
         return line(node->range);
     if (auto* yielding = node->tryAs<Yield>(); yielding && isSafeToRecurse()) {
         Reg ignored = yield(yielding, nullptr, true);
         return;
     }
+    size_t made = m_foldedConstants.size();
     Reg ignored = expr(node);
+    // What CPython's compiler has worked out and then drops is no constant of the code.
+    if (m_foldedConstants.size() == made + 1 && m_foldedConstants.last().reg == ignored->virtualRegister())
+        m_foldedConstants.removeLast();
 }
 
 RegisterID* Unit::expr(Expr* node, RegisterID* dst)
@@ -497,8 +542,10 @@ RegisterID* Unit::expr(Expr* node, RegisterID* dst)
         return g.finalDestination(dst);
     case ExprKind::Name: {
         auto* name = node->as<NameExpr>();
-        if (name->id->impl() == names().debug->impl())
+        if (name->id->impl() == names().debug->impl()) {
+            noteConstant(jsBoolean(!c.m_options.optimize));
             return load(dst, jsBoolean(!c.m_options.optimize));
+        }
         return loadName(name->id, dst, name->range);
     }
     case ExprKind::List:
@@ -557,14 +604,19 @@ void Unit::boolOperand(Expr* node, RegisterID* result, Label* ifTrue, Label* ifF
     }
     auto* nested = isDead ? nullptr : node->tryAs<BoolOp>();
     if (!nested || !isSafeToRecurse()) {
-        if (!isDead)
+        // (What CPython's compiler works out, `not 1` or `()`, it has worked out too late for this.)
+        bool isWrittenAsConstant = node->is<Constant>() || node->is<NameExpr>();
+        auto truth = endOfNested || !isWrittenAsConstant ? std::nullopt : constantTruth(node);
+        if (truth && *truth != !!ifTrue && !isDead) {
+            // It is dropped.
+            line(node->range);
+            noteWhatConstantIsMadeOf(node);
+        } else if (!isDead)
             expr(node, result);
         if (endOfNested && endOfNested->isBound())
             g.emitLabel(*endOfNested);
         line(rangeOfOperation);
-        // (What CPython's compiler works out, `not 1` or `()`, it has worked out too late for this.)
-        bool isWrittenAsConstant = node->is<Constant>() || node->is<NameExpr>();
-        if (auto truth = endOfNested || !isWrittenAsConstant ? std::nullopt : constantTruth(node)) {
+        if (truth) {
             if (*truth == !!ifTrue)
                 jump(whenConstantSettles);
             return;
@@ -680,16 +732,18 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
     // Operations on constants are worked out now, from the left, for as long as they are on constants: 60 * 60 * x.
     Expr* workedOut = node->is<BinOp>() ? node : nullptr;
     if (!workedOut)
-        constant = !chain.isEmpty() && chain.last()->is<BinOp>() && (node->is<Constant>() || node->is<UnaryOp>()) ? valueCPythonsCompilerWorksOut(node) : JSValue();
-    while (constant && !chain.isEmpty() && chain.last()->is<BinOp>()) {
-        auto* operation = chain.last()->as<BinOp>();
-        JSValue right = valueCPythonsCompilerWorksOut(operation->right);
-        JSValue value = right ? valueCPythonsCompilerWorksOut(operation->op, constant, right) : JSValue();
+        constant = !chain.isEmpty() && !chain.last()->is<Attribute>() && (node->is<Constant>() || node->is<UnaryOp>() || node->is<Tuple>()) ? valueCPythonsCompilerWorksOut(node) : JSValue();
+    while (constant && !chain.isEmpty() && !chain.last()->is<Attribute>()) {
+        JSValue value;
+        if (auto* operation = chain.last()->tryAs<BinOp>()) {
+            if (JSValue right = valueCPythonsCompilerWorksOut(operation->right))
+                value = valueCPythonsCompilerWorksOut(operation->op, constant, right);
+        } else
+            value = itemCPythonsCompilerWorksOut(constant, chain.last()->as<Subscript>()->slice);
         if (!value)
             break;
         constant = value;
-        workedOut = operation;
-        chain.removeLast();
+        workedOut = chain.takeLast();
     }
     if (workedOut) {
         line(workedOut->range);
@@ -915,8 +969,10 @@ RegisterID* Unit::compare(Compare* node, RegisterID* dst)
         bool searches = node->ops[0] == AST::CompareKind::In || node->ops[0] == AST::CompareKind::NotIn;
         unsigned temporary = searches ? beginTemporaryOfLoop(node->comparators[0]) : 0;
         Reg right = isNoneLiteral(node->comparators[0]) ? Reg(constant(jsUndefined())) : Reg(searches ? exprToIterateOverOrSearch(node->comparators[0]) : expr(node->comparators[0]));
-        if (isNoneLiteral(node->comparators[0]))
+        if (isNoneLiteral(node->comparators[0])) {
             line(node->comparators[0]->range);
+            noteConstant(jsUndefined());
+        }
         loc(node->range);
         markTemporaryUsed(temporary, TemporaryUse::ForHeader, nullptr, true);
         return emitCompare(g.finalDestination(dst, left.get()), left.get(), right.get(), node->ops[0], node->comparators[0]);
@@ -1068,6 +1124,7 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
             if (isNoneLiteral(rightExpr) && (op == AST::CompareKind::Is || op == AST::CompareKind::IsNot)) {
                 // The line `None` is written on is one the frame has been on.
                 line(rightExpr->range);
+                noteConstant(jsUndefined(), false);
                 loc(compare->range);
                 g.emitPyJumpIfNone(left.get(), destination, (op == AST::CompareKind::Is) == jumpOn);
                 left = constant(jsUndefined());
@@ -1174,20 +1231,28 @@ void Unit::checkIndex(Expr* value, Expr* index)
         warn(value->range, makeString(inferTypeName(value), " indices must be integers or slices, not "_s, indexType, "; perhaps you missed a comma?"_s));
 }
 
-RegisterID* Unit::slice(Slice* node, RegisterID* dst)
+// Empty: it is not made of constants.
+JSValue Unit::constantSlice(Slice* node)
 {
     JSValue parts[3];
     Expr* expressions[3] = { node->lower, node->upper, node->step };
-    bool isConstant = true;
-    for (unsigned i = 0; i < 3 && isConstant; ++i) {
+    for (unsigned i = 0; i < 3; ++i) {
         if (!expressions[i])
             parts[i] = jsUndefined();
-        else
-            isConstant = !expressions[i]->is<Tuple>() && tryConstantValue(expressions[i], parts[i]);
+        else if (expressions[i]->is<Tuple>() || !tryConstantValue(expressions[i], parts[i]))
+            return { };
     }
-    if (isConstant)
-        return load(dst, PySlice::create(globalObject(), parts[0], parts[1], parts[2]));
+    return PySlice::create(globalObject(), parts[0], parts[1], parts[2]);
+}
 
+RegisterID* Unit::slice(Slice* node, RegisterID* dst)
+{
+    if (JSValue slice = constantSlice(node)) {
+        noteConstant(slice);
+        return load(dst, slice);
+    }
+
+    Expr* expressions[3] = { node->lower, node->upper, node->step };
     Reg result = g.finalDestination(dst);
     Arguments arguments(*this, 3);
     for (unsigned i = 0; i < 3; ++i) {
@@ -1861,8 +1926,12 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
     g.move(operands[0], callee);
     if (pushed.empty() && !injected && args.size() == 1 && args[0]->is<Starred>())
         expr(args[0]->as<Starred>()->value, operands[1]);
-    else
+    else {
+        // (In CPython a tuple, and a constant if there is nothing in it.)
+        if (pushed.empty() && !injected && args.isEmpty())
+            noteConstantMade(runtime().emptyTuple());
         sequence(SequenceKind::List, args, operands[1], range, pushed, injected);
+    }
 
     if (keywords.isEmpty())
         g.move(operands[2], emptyValue());
@@ -1894,7 +1963,7 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
             // In CPython the names, and whatever makes a dict or adds to one, are of the line the call begins on.
             for (unsigned j = i; j < end; ++j) {
                 line(range);
-                g.move(items[(j - i) * 2], nameConstant(keywords[j]->arg));
+                g.move(items[(j - i) * 2], nameAsValue(keywords[j]->arg));
                 expr(keywords[j]->value, items[(j - i) * 2 + 1]);
             }
             loc(range);
@@ -1929,6 +1998,7 @@ JSValue Unit::keywordNames(Seq<Keyword*> keywords)
     auto* names = PyTuple::createUninitialized(vm(), runtime().keywordNamesStructure(), runtime().tupleType(), keywords.size());
     for (unsigned i = 0; i < keywords.size(); ++i)
         names->initializeAt(vm(), i, g.addStringConstant(*keywords[i]->arg));
+    noteConstant(names);
     return names;
 }
 

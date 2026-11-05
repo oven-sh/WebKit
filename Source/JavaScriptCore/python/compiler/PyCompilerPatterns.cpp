@@ -98,7 +98,15 @@ void Unit::patternValue(MatchValue* node, RegisterID* subject, PatternContext& c
         fail(node->range, "patterns may only match literals and attribute lookups"_s);
         return;
     }
-    Reg value = expr(node->value);
+    Reg value;
+    if (node->value->is<Attribute>())
+        value = expr(node->value);
+    else {
+        // -1 and 1 + 2j are constants from the start here, as in CPython.
+        line(node->value->range);
+        noteConstant(constantValue);
+        value = constant(constantValue);
+    }
     Reg result = newTemporary();
     loc(node->range);
     g.emitPyCompare(result.get(), subject, value.get(), Python::CompareOperator::Eq);
@@ -108,6 +116,8 @@ void Unit::patternValue(MatchValue* node, RegisterID* subject, PatternContext& c
 void Unit::patternSingleton(MatchSingleton* node, RegisterID* subject, PatternContext& context)
 {
     loc(node->range);
+    // (CPython's compiler makes one instruction of a test for None, which needs no constant.)
+    noteConstant(constantValue(node->value), node->value.kind != ConstantValue::Kind::None);
     if (node->value.kind == ConstantValue::Kind::None)
         return g.emitPyJumpIfNone(subject, whereToFail(context), false);
     Reg result = newTemporary();
@@ -145,6 +155,7 @@ void Unit::patternSequence(MatchSequence* node, RegisterID* subject, PatternCont
     g.emitPyJumpIfFalse(scratch.get(), whereToFail(context));
     if (star < 0 || size > 1) {
         callRuntime(scratch.get(), RuntimeFunction::GetLength, { subject });
+        noteConstant(jsNumber(star < 0 ? size : size - 1));
         if (star < 0)
             g.emitPyCompare(scratch.get(), scratch.get(), constant(jsNumber(size)), Python::CompareOperator::Eq);
         else
@@ -164,6 +175,7 @@ void Unit::patternSequence(MatchSequence* node, RegisterID* subject, PatternCont
                 continue;
             Reg value = newTemporary();
             loc(node->range);
+            noteConstant(jsNumber(static_cast<int>(i) < star ? i : size - i));
             if (static_cast<int>(i) < star)
                 g.emitPyGetItem(value.get(), subject, constant(jsNumber(i)));
             else {
@@ -217,6 +229,7 @@ void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContex
     }
     if (size) {
         callRuntime(scratch.get(), RuntimeFunction::GetLength, { subject });
+        noteConstant(jsNumber(size));
         g.emitPyCompare(scratch.get(), scratch.get(), constant(jsNumber(size)), Python::CompareOperator::GtE);
         g.emitPyJumpIfFalse(scratch.get(), whereToFail(context));
     }
@@ -248,8 +261,8 @@ void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContex
             }
         }
         if (PyTuple* tuple = tupleOfConstants(node->keys)) {
-            for (Expr* key : node->keys)
-                noteWhatConstantIsMadeOf(key);
+            for (unsigned i = 0; i < tuple->length(); ++i)
+                noteConstant(tuple->at(i), false);
             noteConstantMade(tuple);
             load(keys.get(), tuple);
         } else {
@@ -265,6 +278,7 @@ void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContex
     context.stillToLookAt += 2;
     Reg values = newTemporary();
     callRuntime(values.get(), RuntimeFunction::MatchKeys, { subject, keys.get() });
+    noteConstant(jsUndefined(), false);
     g.emitPyJumpIfNone(values.get(), whereToFail(context));
     --context.stillToLookAt;
 
@@ -313,10 +327,13 @@ void Unit::patternClass(MatchClass* node, RegisterID* subject, PatternContext& c
         g.move(arguments[0], subject);
         expr(node->cls, arguments[1]);
         load(arguments[2], jsNumber(positionalCount));
-        load(arguments[3], PyTuple::create(globalObject(), names.span()));
+        PyTuple* namesTuple = PyTuple::create(globalObject(), names.span());
+        noteConstant(namesTuple);
+        load(arguments[3], namesTuple);
         loc(node->range);
         callRuntime(attributes.get(), RuntimeFunction::MatchClass, arguments);
     }
+    noteConstant(jsUndefined(), false);
     ++context.stillToLookAt;
     g.emitPyJumpIfNone(attributes.get(), whereToFail(context));
     --context.stillToLookAt;

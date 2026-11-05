@@ -9,6 +9,7 @@
 #include "JSCInlines.h"
 #include "PyCodeNode.h"
 #include "PyCompilerUnit.h"
+#include "PyHooks.h"
 #include "PyRuntime.h"
 #include "PyStr.h"
 #include "PyTuple.h"
@@ -671,6 +672,76 @@ RegisterID* Unit::usedName(Name name)
     return nameConstant(name);
 }
 
+// What tells a constant from every other: its type and what it is made of. False: it is the only one of its kind anyway.
+// `isLikeNoOther`: there is a nan in it.
+static bool appendKeyOfConstant(VM& vm, Vector<uint8_t, 64>& key, JSValue value, bool& isLikeNoOther)
+{
+    auto append = [&](auto number) {
+        key.append(std::span { reinterpret_cast<const uint8_t*>(&number), sizeof(number) });
+    };
+    constexpr uint8_t isString = 0xfd;
+    constexpr uint8_t isBigInt = 0xfe;
+    constexpr uint8_t isItself = 0xff;
+    auto appendItself = [&] {
+        key.append(isItself);
+        append(JSValue::encode(value));
+    };
+    if (!value || !value.isCell()) {
+        isLikeNoOther |= value && value.isDouble() && std::isnan(value.asDouble());
+        appendItself();
+        return false;
+    }
+    JSCell* cell = value.asCell();
+    if (auto* impl = cell->isString() ? asString(cell)->tryGetValueImpl() : nullptr) {
+        key.append(isString);
+        key.append(impl->is8Bit());
+        append(impl->length());
+        key.append(impl->is8Bit() ? asBytes(impl->span8()) : asBytes(impl->span16()));
+        return true;
+    }
+    if (auto* bigInt = dynamicDowncast<JSBigInt>(cell)) {
+        key.append(isBigInt);
+        key.append(bigInt->sign());
+        append(bigInt->length());
+        for (unsigned i = 0; i < bigInt->length(); ++i)
+            append(bigInt->digit(i));
+        return true;
+    }
+    ConstantParts parts;
+    if (!isPyObjectType(cell->type()) || !vm.isSafeToRecurse() || !constantParts(cell, parts) || parts.kind == ConstantParts::Kind::Ellipsis) {
+        appendItself();
+        return false;
+    }
+    isLikeNoOther |= std::isnan(parts.numbers[0]) || std::isnan(parts.numbers[1]);
+    key.append(static_cast<uint8_t>(parts.kind));
+    append(std::bit_cast<uint64_t>(parts.numbers[0]));
+    append(std::bit_cast<uint64_t>(parts.numbers[1]));
+    append(parts.bytes.size());
+    key.append(parts.bytes);
+    append(parts.items.size());
+    for (JSValue item : parts.items)
+        appendKeyOfConstant(vm, key, item, isLikeNoOther);
+    return true;
+}
+
+JSCell* Unit::merged(JSCell* cell)
+{
+    if (cell->isString()) {
+        // All but what the compiler has worked out: 'a' + 'b'.
+        auto* impl = asString(cell)->tryGetValueImpl();
+        if (impl && impl->isAtom()) [[likely]]
+            return cell;
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+        String string = asString(cell)->value(globalObject());
+        return scope.exception() ? cell : g.addStringConstant(*c.name(string));
+    }
+    Vector<uint8_t, 64> key;
+    bool isLikeNoOther = false;
+    if (!appendKeyOfConstant(vm(), key, cell, isLikeNoOther) || isLikeNoOther)
+        return cell;
+    return m_mergedConstants.add(String(byteCast<Latin1Character>(key.span())), cell).iterator->value;
+}
+
 // co_consts has the constants in the order in which the code first needs them. CPython then works out what it can from them,
 // and what that gives comes after all the others.
 void Unit::noteConstant(JSValue value, bool isUsed)
@@ -707,8 +778,16 @@ void Unit::noteWhatConstantIsMadeOf(Expr* node)
     Seq<Expr*> items;
     if (auto* literal = node->tryAs<Constant>())
         return noteConstant(constantValue(literal->value), false);
+    if (auto* name = node->tryAs<NameExpr>(); name && name->id->impl() == names().debug->impl())
+        return noteConstant(jsBoolean(!c.m_options.optimize), false);
     if (auto* unary = node->tryAs<UnaryOp>())
         return noteWhatConstantIsMadeOf(unary->operand);
+    if (auto* subscript = node->tryAs<Subscript>()) {
+        noteWhatConstantIsMadeOf(subscript->value);
+        if (auto* slice = subscript->slice->tryAs<Slice>())
+            return noteConstant(constantSlice(slice), false);
+        return noteWhatConstantIsMadeOf(subscript->slice);
+    }
     if (node->is<BinOp>()) {
         // 1 + 1 + 1... nests to the left, as deep as it is long.
         Vector<BinOp*, 8> operations;
@@ -747,6 +826,13 @@ void Unit::finishConstants()
 RegisterID* Unit::nameConstant(Name name)
 {
     return g.pythonConstant(g.addStringConstant(*name));
+}
+
+RegisterID* Unit::nameAsValue(Name name)
+{
+    RegisterID* result = nameConstant(name);
+    noteConstant({ result->virtualRegister(), 0, true });
+    return result;
 }
 
 RegisterID* Unit::stringConstant(const String& string)
@@ -1420,6 +1506,7 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
     case BlockKind::AsyncWith: {
         Reg result = newTemporary();
         RegisterID* none = constant(jsUndefined());
+        noteConstant(jsUndefined());
         emitMethodCall(result.get(), block.saved, block.savedSelf, { none, none, none }, block.range);
         if (block.kind == BlockKind::AsyncWith)
             emitAwait(result.get(), result.get(), 2);
@@ -1957,7 +2044,12 @@ void Unit::returnStatement(Return* node)
         return;
     }
     Reg value;
-    if (node->value) {
+    // CPython's compiler loads a constant when all that is on the way out is done, which tells in the order of co_consts.
+    auto* literal = node->value ? node->value->tryAs<Constant>() : nullptr;
+    if (literal) {
+        line(literal->range);
+        value = constant(constantValue(literal->value));
+    } else if (node->value) {
         value = expr(node->value);
         // What runs on the way out may assign to the variable: a `finally` clause, the end of `except ... as variable`; an __exit__, or a
         // generator that the loop closes, that has got hold of the frame.
@@ -1966,10 +2058,8 @@ void Unit::returnStatement(Return* node)
         });
         if (mayBeAssignedTo && !value->isTemporary() && !value->virtualRegister().isConstant())
             value = g.move(g.newTemporary(), value.get());
-    } else {
-        noteConstant(jsUndefined());
+    } else
         value = constant(jsUndefined());
-    }
     // As in CPython: what leaves a `with` is of the line of the `with`, and nothing comes before it, unless the value begins on another line than the `return`.
     bool leavesWithFirst = !m_blocks.isEmpty() && (m_blocks.last().kind == BlockKind::With || m_blocks.last().kind == BlockKind::AsyncWith);
     if (!leavesWithFirst || !node->value || node->value->range.lineno != node->range.lineno)
@@ -1981,6 +2071,8 @@ void Unit::returnStatement(Return* node)
     // As in CPython, where what is on the way out comes from the constant that is returned.
     bool comesFromValue = node->value && node->value->is<Constant>() && node->value->range.lineno == node->range.lineno;
     unwindBlocks(comesFromValue ? node->value->range : node->range, 0, suspended);
+    if (literal || !node->value)
+        noteConstant({ value->virtualRegister(), 0, true });
     g.emitReturn(value.get());
     resumeTry(WTF::move(suspended));
 }
@@ -2339,6 +2431,7 @@ void Unit::withStatement(With* node, unsigned index, Last isLast)
         line(range);
         Reg result = newTemporary();
         RegisterID* none = constant(jsUndefined());
+        noteConstant(jsUndefined());
         emitMethodCall(result.get(), exit.get(), exitSelf.get(), { none, none, none }, range);
         if (isAsync)
             emitAwait(result.get(), result.get(), 2);
@@ -2616,6 +2709,7 @@ void Unit::emitAnnotationsPrologue(const Range& range)
     Ref<Label> body = g.newLabel();
     Reg isOther = newTemporary();
     loc(range);
+    noteConstant(jsNumber(2));
     g.emitPyCompare(isOther.get(), g.pythonParameter(0), constant(jsNumber(2)), CompareOperator::Gt);
     g.emitPyJumpIfFalse(isOther.get(), body.get());
     callRuntimeForEffect(RuntimeFunction::Raise, { constant(runtime().NotImplementedError()), emptyValue(), emptyValue() });
@@ -2655,7 +2749,7 @@ void Unit::emitDeferredAnnotations(const Range& range)
             Reg value = unit.expr(statement->annotation);
             unit.line(statement->range.lineno);
             unit.loc(range);
-            g.emitPySetItem(annotations.get(), unit.nameConstant(unit.mangle(statement->target->as<NameExpr>()->id)), value.get());
+            g.emitPySetItem(annotations.get(), unit.nameAsValue(unit.mangle(statement->target->as<NameExpr>()->id)), value.get());
             g.emitLabel(notSet.get());
         }
         g.emitReturn(annotations.get());

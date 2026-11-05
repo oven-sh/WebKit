@@ -87,7 +87,7 @@ void Unit::emitDefaults(AST::Arguments* arguments, FunctionParts& parts, const R
         if (!arguments->kwDefaults[i])
             continue;
         line(range);
-        g.move(items[next++], nameConstant(mangle(arguments->kwonlyargs[i]->arg)));
+        g.move(items[next++], nameAsValue(mangle(arguments->kwonlyargs[i]->arg)));
         expr(arguments->kwDefaults[i], items[next++]);
     }
     callRuntime(parts.kwDefaults.get(), RuntimeFunction::BuildMap, items);
@@ -127,7 +127,7 @@ void Unit::emitFunctionAnnotations(AST::Arguments* arguments, Expr* returns, con
         unsigned next = 0;
         for (auto& annotation : annotations) {
             unit.line(range.lineno);
-            unit.g.move(items[next++], unit.nameConstant(unit.mangle(annotation.name)));
+            unit.g.move(items[next++], unit.nameAsValue(unit.mangle(annotation.name)));
             RegisterID* value = items[next++];
             if (c.m_future.annotations) {
                 unit.line(annotation.value->range.lineno);
@@ -224,6 +224,9 @@ RegisterID* Unit::lambda(Lambda* node, RegisterID* dst)
         if (!scope->isGenerator)
             unit.line(node->body->range);
         unit.g.emitReturn(value.get());
+        // CPython's compiler puts `return None` at the end, and takes it away again.
+        if (!scope->isGenerator)
+            unit.noteConstant(jsUndefined(), false);
     });
     Reg result = g.finalDestination(dst);
     loc(node->range);
@@ -392,6 +395,7 @@ RegisterID* Unit::emitTypeParamExpression(RegisterID* dst, Expr* expression, Nam
     // The format defaults to VALUE.
     FunctionParts parts;
     parts.defaults = constant(PyTuple::create(globalObject(), { jsNumber(1) }));
+    noteConstant({ parts.defaults->virtualRegister(), 0, true });
     return emitMakeFunction(dst, executable, scope, parts);
 }
 
@@ -411,17 +415,17 @@ RegisterID* Unit::emitTypeParams(RegisterID* dst, Seq<TypeParam*> typeParams)
                 Reg bound = newTemporary();
                 emitTypeParamExpression(bound.get(), param->bound, param->name, param, false);
                 loc(param->range);
-                callRuntime(value, param->bound->is<Tuple>() ? RuntimeFunction::TypeVarWithConstraints : RuntimeFunction::TypeVarWithBound, { nameConstant(param->name), bound.get() });
+                callRuntime(value, param->bound->is<Tuple>() ? RuntimeFunction::TypeVarWithConstraints : RuntimeFunction::TypeVarWithBound, { nameAsValue(param->name), bound.get() });
             } else
-                callRuntime(value, RuntimeFunction::TypeVar, { nameConstant(param->name) });
+                callRuntime(value, RuntimeFunction::TypeVar, { nameAsValue(param->name) });
             defaultKey = reinterpret_cast<const char*>(param) + 1;
             break;
         case TypeParamKind::TypeVarTuple:
-            callRuntime(value, RuntimeFunction::TypeVarTuple, { nameConstant(param->name) });
+            callRuntime(value, RuntimeFunction::TypeVarTuple, { nameAsValue(param->name) });
             allowStarred = true;
             break;
         case TypeParamKind::ParamSpec:
-            callRuntime(value, RuntimeFunction::ParamSpec, { nameConstant(param->name) });
+            callRuntime(value, RuntimeFunction::ParamSpec, { nameAsValue(param->name) });
             break;
         }
         if (param->defaultValue) {
@@ -442,6 +446,7 @@ RegisterID* Unit::emitTypeAliasObject(RegisterID* dst, AST::TypeAlias* node, Reg
 {
     Name name = node->name->as<NameExpr>()->id;
     Reg heldTypeParams = typeParams;
+    RegisterID* nameOfAlias = nameAsValue(name);
     Reg value = newTemporary();
     {
         Scope* scope = c.m_symbols->scopeFor(node);
@@ -454,11 +459,12 @@ RegisterID* Unit::emitTypeAliasObject(RegisterID* dst, AST::TypeAlias* node, Reg
         });
         FunctionParts parts;
         parts.defaults = constant(PyTuple::create(globalObject(), { jsNumber(1) }));
+        noteConstant({ parts.defaults->virtualRegister(), 0, true });
         loc(node->range);
         emitMakeFunction(value.get(), executable, scope, parts);
     }
     loc(node->range);
-    return callRuntime(dst, RuntimeFunction::TypeAlias, { nameConstant(name), typeParams, value.get() });
+    return callRuntime(dst, RuntimeFunction::TypeAlias, { nameOfAlias, typeParams, value.get() });
 }
 
 void Unit::typeAlias(AST::TypeAlias* node)

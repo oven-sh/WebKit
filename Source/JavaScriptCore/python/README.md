@@ -349,7 +349,8 @@ searched or iterated over is built as a tuple (`Unit::exprToIterateOverOrSearch(
 CPython makes from one constant, is made from its items here. A set display of three constants or more is an empty set updated with a frozenset, as in CPython: the order of a set shows
 how it was filled. In a `.pyc` file and in the cache a frozenset has its items in the order of what marshal writes for each on its own, which does not go by hashes: the same source gives the same file in every process. It is
 CPython's order as far as the items are written alike (there, whether an item is marked as one to refer back to goes by its reference count). What is written once may be compiled several times (a `finally` clause, for each way into it); a function, class or
-generator expression in there is compiled once (`Unit::m_compiledCode`) and is one constant, as in CPython, where the copies are equal.
+generator expression in there is compiled once (`Unit::m_compiledCode`) and is one constant, as in CPython, where the copies are equal. Constants of the same type and value
+are one constant of a code object, and one object (`Unit::merged()`): tuples, bytes, frozensets, slices, complex numbers, ints and floats that are objects, strs that were worked out.
 
 `Name(...)`, where the name looks like that of a class, is compiled so that, if it is a class with `object.__new__` and an `__init__`
 in Python, the instance is made and `__init__` called without leaving the interpreter (`op_py_prepare_construct`).

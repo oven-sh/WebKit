@@ -264,9 +264,13 @@ private:
     // ---- Registers and constants ----
 
     Reg newTemporary() { return g.newTemporary(); }
-    RegisterID* constant(JSValue value) { return g.pythonConstant(value); }
+    RegisterID* constant(JSValue value) { return g.pythonConstant(value && value.isCell() ? merged(value.asCell()) : value); }
+    // Constants of the same type and value are one object, as in CPython: `a = (1, 2); b = (1, 2)`, and then `a is b`.
+    JSCell* merged(JSCell*);
     RegisterID* emptyValue() { return g.pythonConstant(JSValue()); }
     RegisterID* nameConstant(Name);
+    // A name that is a value: the key of a dict of keyword arguments. One of co_consts.
+    RegisterID* nameAsValue(Name);
     RegisterID* usedName(Name);
     // For co_consts.
     void noteConstant(JSValue, bool isUsed = true);
@@ -280,12 +284,15 @@ private:
     JSValue constantValue(const AST::ConstantValue&);
     JSValue makeConstantValue(const AST::ConstantValue&);
     Vector<CodeInfo::Constant> m_foldedConstants;
+    UncheckedKeyHashMap<String, JSCell*> m_mergedConstants;
     // Where they are in m_info.constants, by register, and what is in m_info.names.
     UncheckedKeyHashMap<int, unsigned> m_indexOfConstant;
     UncheckedKeyHashSet<UniquedStringImpl*> m_usedNames;
     bool tryConstantValue(Expr*, JSValue&);
     JSValue valueCPythonsCompilerWorksOut(Expr*);
     JSValue valueCPythonsCompilerWorksOut(AST::Operator, JSValue left, JSValue right);
+    JSValue itemCPythonsCompilerWorksOut(JSValue base, Expr* index);
+    JSValue constantSlice(AST::Slice*);
     PyTuple* tupleOfConstants(Seq<Expr*>);
     PySet* frozensetOf(PyTuple*);
     bool areConstants(Seq<Expr*>);

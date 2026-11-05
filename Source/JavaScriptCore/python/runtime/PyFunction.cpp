@@ -1389,6 +1389,9 @@ static JSValue codeGetConsts(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer constants;
     forEachConstantShown(globalObject, code, codeBlock, [&](const CodeInfo::Constant&, JSValue value) {
+        // The names of keyword arguments are in a tuple that a call knows from any other. It stays with the code.
+        if (value.isCell() && value.asCell()->type() == PyKwNamesType)
+            value = PyTuple::create(globalObject, uncheckedDowncast<PyTuple>(value.asCell())->span());
         constants.append(value);
     });
     RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, spanOf(constants)));
