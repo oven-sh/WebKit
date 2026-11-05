@@ -717,11 +717,18 @@ RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst)
     Ref<Label> orelse = g.newLabel();
     Ref<Label> end = g.newLabel();
     jumpIf(node->test, orelse.get(), false);
-    expr(node->body, result.get());
+    if (!m_cannotBeReached && cannotGetHere())
+        deadExpr(node->body);
+    else
+        expr(node->body, result.get());
     jump(end.get());
-    g.emitLabel(orelse.get());
-    expr(node->orelse, result.get());
-    g.emitLabel(end.get());
+    if (orelse->isBound()) {
+        g.emitLabel(orelse.get());
+        expr(node->orelse, result.get());
+    } else
+        deadExpr(node->orelse);
+    if (end->isBound())
+        g.emitLabel(end.get());
     return result.get();
 }
 
@@ -878,6 +885,9 @@ RegisterID* Unit::compare(Compare* node, RegisterID* dst)
 
 void Unit::jumpIf(Expr* node, Label& target, bool condition)
 {
+    // `b` in `a and 0 and b`. A branch would make it look as if its target could be reached from here.
+    if (!m_cannotBeReached && cannotGetHere()) [[unlikely]]
+        return deadExpr(node);
     if (&target != m_branchTarget.label) [[likely]]
         return jumpIfTo(node, target, condition);
     if (node->is<BoolOp>() || node->is<IfExp>() || (node->is<UnaryOp>() && node->as<UnaryOp>()->op == AST::UnaryKind::Not) || constantTruth(node))
@@ -941,7 +951,8 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
         for (unsigned i = 0; i < last; ++i)
             jumpIf(boolOp->values[i], skip.get(), shortCircuitOn);
         jumpIf(boolOp->values[last], target, condition);
-        g.emitLabel(skip.get());
+        if (skip->isBound())
+            g.emitLabel(skip.get());
         return;
     }
     case ExprKind::IfExp: {
@@ -951,9 +962,11 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
         jumpIf(ifExp->test, orelse.get(), false);
         jumpIf(ifExp->body, target, condition);
         jump(end.get());
-        g.emitLabel(orelse.get());
+        if (orelse->isBound())
+            g.emitLabel(orelse.get());
         jumpIf(ifExp->orelse, target, condition);
-        g.emitLabel(end.get());
+        if (end->isBound())
+            g.emitLabel(end.get());
         return;
     }
     case ExprKind::Compare: {

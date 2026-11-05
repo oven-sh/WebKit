@@ -284,6 +284,22 @@ private:
     RegisterID* attributeOfSuper(AST::Attribute*, RegisterID* dst, RegisterID* self);
     // They cannot be reached: see statements().
     void deadStatements(Seq<Stmt*>, unsigned first = 0);
+    void deadExpr(Expr*);
+    // The same for a part of a statement. What comes next may be more of the statement, or the end of the function: it is of the line before.
+    template<typename Function>
+    void deadCode(const Function& function)
+    {
+        int lineBefore = m_markedLine;
+        if (!m_sameLineDepth)
+            noLine();
+        {
+            SameLine sameLine(*this);
+            SetForScope cannotBeReached(m_cannotBeReached, true);
+            function();
+            g.emitUnreachable();
+        }
+        line(lineBefore);
+    }
     std::optional<bool> constantTruth(Expr*);
 
     RegisterID* callRuntime(RegisterID* dst, RuntimeFunction, Arguments&);

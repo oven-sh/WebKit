@@ -1435,10 +1435,11 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
 void Unit::statements(Seq<Stmt*> body, unsigned first, Last isLast)
 {
     for (unsigned i = first; i < body.size(); ++i) {
+        // After a `return`, say, or at the very beginning: what `if a and 0:` is in front of.
+        if (!m_sameLineDepth && cannotGetHere())
+            return deadStatements(body, i);
         m_statementIsLast = isLast.onlyIf(i + 1 == body.size());
         statement(body[i]);
-        if (i + 1 < body.size() && !m_sameLineDepth && cannotGetHere())
-            return deadStatements(body, i + 1);
     }
 }
 
@@ -1455,6 +1456,13 @@ void Unit::deadStatements(Seq<Stmt*> body, unsigned first)
     SetForScope cannotBeReached(m_cannotBeReached, true);
     statements(body, first);
     g.emitUnreachable();
+}
+
+void Unit::deadExpr(Expr* node)
+{
+    deadCode([&] {
+        expr(node);
+    });
 }
 
 void Unit::statement(Stmt* node)
@@ -1741,17 +1749,12 @@ void Unit::annotatedAssign(AnnAssign* node)
 void Unit::ifStatement(If* node, Last isLast)
 {
     Ref<Label> end = g.newLabel();
-    auto truth = constantTruth(node->test);
     if (node->orelse.isEmpty()) {
         ReturnsByLine returns;
         jumpIfOrLeave(node->test, end.get(), isLast, returns);
-        if (truth && !*truth)
-            deadStatements(node->body);
-        else {
-            statements(node->body, 0, isLast);
-            if (isLast.kind == Last::OfFunction && !cannotGetHere())
-                emitImplicitReturn(isLast);
-        }
+        statements(node->body, 0, isLast);
+        if (isLast.kind == Last::OfFunction && !cannotGetHere())
+            emitImplicitReturn(isLast);
         emitReturnsByLine(returns, isLast);
         if (end->isBound()) {
             endOfStatement(end.get());
@@ -1761,17 +1764,11 @@ void Unit::ifStatement(If* node, Last isLast)
     }
     Ref<Label> orelse = g.newLabel();
     jumpIf(node->test, orelse.get(), false);
-    if (truth && !*truth)
-        deadStatements(node->body);
-    else {
-        statements(node->body, 0, lastBeforeJump(end.get(), isLast));
-        leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
-    }
-    g.emitLabel(orelse.get());
-    if (truth && *truth)
-        deadStatements(node->orelse);
-    else
-        statements(node->orelse, 0, isLast);
+    statements(node->body, 0, lastBeforeJump(end.get(), isLast));
+    leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
+    if (orelse->isBound())
+        g.emitLabel(orelse.get());
+    statements(node->orelse, 0, isLast);
     endOfStatement(end.get());
 }
 
@@ -1786,15 +1783,10 @@ void Unit::whileLoop(While* node, Last isLast)
     m_statementStart = g.instructions().size();
     loc(node->test->range);
     pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .isLast = isLast, .valueToReturn = m_valueToReturn });
-    auto truth = constantTruth(node->test);
     ReturnsByLine returns;
     jumpIfOrLeave(node->test, anchor.get(), isLast.onlyIf(node->orelse.isEmpty()), returns);
-    if (truth && !*truth)
-        deadStatements(node->body);
-    else
-        statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
-    if (!cannotGetHere())
-        jump(loop.get());
+    statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
+    jump(loop.get());
     popBlock();
     emitReturnsByLine(returns, isLast);
 
@@ -1802,10 +1794,7 @@ void Unit::whileLoop(While* node, Last isLast)
         g.emitLabel(anchor.get());
         lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(node->orelse.isEmpty() && isLast.kind == Last::OfFunction));
     }
-    if (truth && *truth)
-        deadStatements(node->orelse);
-    else
-        statements(node->orelse, 0, isLast);
+    statements(node->orelse, 0, isLast);
     endOfStatement(end.get());
 }
 
@@ -2359,17 +2348,24 @@ void Unit::assertStatement(Assert* node)
         return;
     Ref<Label> end = g.newLabel();
     jumpIf(node->test, end.get(), true);
-    Arguments arguments(*this, 3);
-    line(node->range);
-    g.move(arguments[0], constant(runtime().AssertionError()));
-    g.move(arguments[2], node->msg ? arguments[0] : emptyValue());
-    if (node->msg) {
-        Reg message = expr(node->msg);
-        emitSimpleCall(arguments[0], arguments[0], { message.get() }, node->range);
-    }
-    g.move(arguments[1], emptyValue());
-    loc(node->test->range);
-    callRuntime(arguments[0], RuntimeFunction::Raise, arguments);
+    auto fails = [&] {
+        Arguments arguments(*this, 3);
+        line(node->range);
+        g.move(arguments[0], constant(runtime().AssertionError()));
+        g.move(arguments[2], node->msg ? arguments[0] : emptyValue());
+        if (node->msg) {
+            Reg message = expr(node->msg);
+            emitSimpleCall(arguments[0], arguments[0], { message.get() }, node->range);
+        }
+        g.move(arguments[1], emptyValue());
+        loc(node->test->range);
+        callRuntime(arguments[0], RuntimeFunction::Raise, arguments);
+    };
+    // `assert a or 1, message`
+    if (!m_cannotBeReached && cannotGetHere())
+        deadCode(fails);
+    else
+        fails();
     if (end->isBound())
         g.emitLabel(end.get());
 }
