@@ -842,11 +842,15 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
       that asks whether something has been collected asks it of several objects, and not of all of them.
   - *`flock` cannot be made piece by piece.* `flock(open(p, "w"), LOCK_EX)`, the file dropped, and the same again: with reference counts the
     first file is closed by then. Here it would hold its lock while the second call waits for it, for ever if there is no other
-    thread. So a call that may wait asks without waiting first, and if the lock is taken and this very process has one on
-    the same file (by `fstat` of the descriptors it has locked), it collects before it blocks: whatever the share of the time if
-    this is the only thread, within the share of the threads that wait otherwise (two threads may well contend for such a lock).
-    If that is refused it blocks, and a thread that waits looks within the 5 s. A lock that another process holds costs one more
-    system call. A copy of the descriptor (`dup`, a child) keeps the lock as it does in CPython: then the call blocks.
+    thread; and with `LOCK_NB` ("is another instance running?") the second call would be told that somebody has the lock. So every call
+    that asks for a lock asks without waiting first, and if the lock is taken and this very process has one on the same file (by
+    `fstat` of the descriptors it has locked), it collects and asks again. Whatever the share of the time that such collections
+    have, if one of those locks has not been through such a collection yet, and it finalizes what reference counts would have freed
+    whichever thread made it, since the answer is wanted now. If all of them were in use the last time, this may be a program
+    that polls, or whose threads contend for the lock: then within the share; if that is refused, a call that waits blocks, and a
+    thread that waits looks within the 5 s, and one that does not wait is refused though the file may have been dropped since. A call
+    that would wait in the only thread there is collects in any case. A lock that another process holds costs one or two more
+    system calls. A copy of the descriptor (`dup`, a child) keeps the lock as it does in CPython.
   - Not covered: `recv` and the like on a blocking socket in a thread other than the main one, writes, `connect`,
     `wait()` for any child, `sigwait`, `sigtimedwait`.
 - **What only a temporary holds is finalized at once**, where that can be known without the collector (`PyTemporaries.cpp`, which has the

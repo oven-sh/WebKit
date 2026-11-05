@@ -224,33 +224,50 @@ static JSValue fcntlNoneUnlessFailed(JSGlobalObject* globalObject, int result)
 // The descriptors through which this process has taken a lock with flock() and has not given it back. One that has been closed since
 // goes when it is next looked at; one whose number is in use again is at worst a collection for nothing. One list for the process,
 // whatever runs Python in it, as descriptors are the process's.
-static Lock s_descriptorsWithLockLock;
-static Vector<int> s_descriptorsWithLock WTF_GUARDED_BY_LOCK(s_descriptorsWithLockLock);
+struct OwnLock {
+    int fd;
+    // A collection that was made for the sake of such a lock has left it open: somebody had it then.
+    bool wasSeenInUse;
+};
+static Lock s_ownLocksLock;
+static Vector<OwnLock> s_ownLocks WTF_GUARDED_BY_LOCK(s_ownLocksLock);
 
 static void fcntlDidFlock(int fd, bool holdsLock)
 {
-    Locker locker { s_descriptorsWithLockLock };
-    if (!holdsLock)
-        s_descriptorsWithLock.removeFirst(fd);
-    else if (!s_descriptorsWithLock.contains(fd))
-        s_descriptorsWithLock.append(fd);
+    Locker locker { s_ownLocksLock };
+    s_ownLocks.removeFirstMatching([&](auto& lock) {
+        return lock.fd == fd;
+    });
+    if (holdsLock)
+        s_ownLocks.append({ fd, false });
 }
 
-static bool fcntlHoldsLockOnFileOf(int fd)
+enum class OwnLocks : uint8_t { None, SeenInUse, NeverLookedAt };
+
+// On the file of this descriptor, through others.
+static OwnLocks fcntlOwnLocksOnFileOf(int fd)
 {
     struct stat wanted;
     if (fstat(fd, &wanted))
-        return false;
-    bool holdsLock = false;
-    Locker locker { s_descriptorsWithLockLock };
-    s_descriptorsWithLock.removeAllMatching([&](int other) {
+        return OwnLocks::None;
+    OwnLocks result = OwnLocks::None;
+    Locker locker { s_ownLocksLock };
+    s_ownLocks.removeAllMatching([&](auto& lock) {
         struct stat locked;
-        if (fstat(other, &locked))
+        if (fstat(lock.fd, &locked))
             return true;
-        holdsLock |= other != fd && locked.st_dev == wanted.st_dev && locked.st_ino == wanted.st_ino;
+        if (lock.fd != fd && locked.st_dev == wanted.st_dev && locked.st_ino == wanted.st_ino)
+            result = std::max(result, lock.wasSeenInUse ? OwnLocks::SeenInUse : OwnLocks::NeverLookedAt);
         return false;
     });
-    return holdsLock;
+    return result;
+}
+
+static void fcntlDidLookForDroppedFiles()
+{
+    Locker locker { s_ownLocksLock };
+    for (auto& lock : s_ownLocks)
+        lock.wasSeenInUse = true;
 }
 
 static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue operationValue)
@@ -264,30 +281,40 @@ static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     if (failed(scope, audit(globalObject, "fcntl.flock"_s, jsNumber(fd), jsNumber(operation))))
         return { };
     // With reference counts a file that the program has dropped is closed, and has given back its lock. Here it holds it until the
-    // collector comes, which this call would keep waiting for: nothing is allocated meanwhile, and it cannot be made piece by piece.
+    // collector comes. A call that waits for the lock would keep waiting for that: nothing is allocated meanwhile, and it cannot be
+    // made piece by piece. One that does not wait (LOCK_NB: "is another instance running?") would be told that somebody has the lock.
     // So if the lock is not free, and this very process has one on the same file, the collector looks first.
     int result = -1;
     bool isAnswered = false;
-    if (!(operation & (LOCK_NB | LOCK_UN))) {
+    if (!(operation & LOCK_UN)) {
         {
             // It does not wait for the lock, but on a file system of the network it waits for the answer.
             AllowThreads allow(globalObject, AllowThreads::LosesNothing);
             result = flock(fd, operation | LOCK_NB);
         }
-        // Noted at once: what follows makes system calls of its own, which may fail.
+        // Noted at once: what follows makes system calls of its own, which may fail. (So a call that is refused asks once more.)
         bool isTaken = result == -1 && errno == EWOULDBLOCK;
         bool wasInterrupted = result == -1 && errno == EINTR;
         isAnswered = !isTaken && !wasInterrupted;
         if (wasInterrupted && failed(scope, checkSignals(globalObject)))
             return { };
-        if (isTaken && fcntlHoldsLockOnFileOf(fd)) {
+        if (OwnLocks own = isTaken ? fcntlOwnLocksOnFileOf(fd) : OwnLocks::None; own != OwnLocks::None) {
+            // A lock that no collection has looked at is worth one, whatever the share of the time that such collections have. If all
+            // were in use the last time, this may be a program whose threads contend for the lock, or that polls: within the share.
+            // But if the call would wait, and there is no other thread, nothing else can end the wait, as far as this process goes.
+            IdleLook look = own == OwnLocks::NeverLookedAt ? IdleLook::WhateverTheShare : IdleLook::WithinShare;
+            if (!(operation & LOCK_NB) && !runtime(globalObject).threads().runningCount())
+                look = IdleLook::LastResort;
             int64_t deadline = -1;
             IdleWait idle(globalObject, deadline, true);
             // A hook hears of a call once.
             if (isAudited(globalObject))
                 idle.mustNotBeginCallAgain();
-            if (failed(scope, idle.collectBeforeBlocking()))
+            bool hasLooked;
+            if (failed(scope, idle.collectBeforeBlocking(look, hasLooked)))
                 return { };
+            if (hasLooked)
+                fcntlDidLookForDroppedFiles();
         }
     }
     if (!isAnswered) {

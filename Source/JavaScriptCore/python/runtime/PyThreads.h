@@ -57,6 +57,13 @@ private:
 #endif
 };
 
+// A collection by a thread that has nothing better to do. See Threads::collectWhileIdle().
+enum class IdleLook : uint8_t {
+    WithinShare, // If the threads that wait have time left for it. It finalizes what is this thread's and reference counts would have freed.
+    WhateverTheShare, // There is reason to think that it finds what the thread asks for. What reference counts would have freed, whosever it is.
+    LastResort, // Nothing else can end the wait. Everything.
+};
+
 class ThreadState final : public ThreadSafeRefCounted<ThreadState> {
 public:
     static Ref<ThreadState> create() { return adoptRef(*new ThreadState); }
@@ -92,7 +99,7 @@ public:
         int64_t idleInterval { 0 };
         bool isRequested { false }; // Thrown, and not yet caught by whoever called the function.
         bool collects { false };
-        bool isLastResort { false };
+        IdleLook look { IdleLook::WithinShare };
     } waitBegunAgain;
     // For how long it has waited since it last collected while idle, in waits between which it did little. See IdleWait.
     struct {
@@ -285,9 +292,9 @@ private:
     void release(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     void acquire(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     int64_t timeOfNextIdleCollection(JSGlobalObject*);
-    bool shouldCollectWhileIdle(JSGlobalObject*, bool isLastResort);
+    bool shouldCollectWhileIdle(JSGlobalObject*, IdleLook);
     // True: a thread that waits has something to finalize. Then the next may find what only that referred to, and comes soon.
-    bool collectWhileIdle(JSGlobalObject*, bool isLastResort);
+    bool collectWhileIdle(JSGlobalObject*, IdleLook);
     void takeGIL(ThreadState&);
     void dropGIL(ThreadState&, bool isYielding);
     JS_EXPORT_PRIVATE bool throwIfStoppingSlow();
@@ -427,13 +434,14 @@ public:
     // Nothing can end the wait but a finalizer. Once for each time that this is so: a call that has been begun again for it does not ask again.
     bool collectAsLastResort();
     void canBeEnded() { m_hasCollectedAsLastResort = false; }
-    // For a wait that cannot be made piece by piece, if there is reason to think that what it waits for is held by something that
-    // the program has dropped. Once: a call that has been begun again for it does not ask again.
-    bool collectBeforeBlocking();
+    // For a call that cannot be made piece by piece, if there is reason to think that what it asks for is held by something that
+    // the program has dropped. Once: a call that has been begun again for it does not ask again. `hasLooked`: it has collected,
+    // now or before the call began again.
+    bool collectBeforeBlocking(IdleLook, bool& hasLooked);
 
 private:
-    bool collect(bool isLastResort);
-    bool beginsCallAgain(bool collects, bool isLastResort);
+    bool collect(IdleLook);
+    bool beginsCallAgain(bool collects, IdleLook);
 
     JSGlobalObject* m_globalObject;
     ThreadState& m_thread;

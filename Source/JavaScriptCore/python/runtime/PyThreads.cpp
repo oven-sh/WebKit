@@ -702,11 +702,11 @@ int64_t Threads::timeOfNextIdleCollection(JSGlobalObject* globalObject)
     return m_endOfLastIdleCollection + std::min((hasCause ? 20 : 50) * cost, std::max(longestPause, 9 * cost));
 }
 
-bool Threads::shouldCollectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
+bool Threads::shouldCollectWhileIdle(JSGlobalObject* globalObject, IdleLook look)
 {
     if (runtime(globalObject).isRunningPendingCalls())
         return false;
-    return isLastResort || (!m_threadThatCollectsWhileIdle && monotonicNanoseconds() >= timeOfNextIdleCollection(globalObject));
+    return look != IdleLook::WithinShare || (!m_threadThatCollectsWhileIdle && monotonicNanoseconds() >= timeOfNextIdleCollection(globalObject));
 }
 
 // Of all processors: the collector marks on several at once, and a process that does nothing but wait is to use next to none.
@@ -716,16 +716,18 @@ static int64_t processorNanoseconds()
     return time ? static_cast<int64_t>((time->userTime + time->systemTime).nanoseconds()) : 0;
 }
 
-bool Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
+bool Threads::collectWhileIdle(JSGlobalObject* globalObject, IdleLook look)
 {
+    bool leavesCyclicGarbageForLater = look != IdleLook::LastResort;
+    auto calls = look == IdleLook::WithinShare ? Runtime::CallsOf::ThisThread : Runtime::CallsOf::AllThreads;
     int64_t start = monotonicNanoseconds();
     int64_t processorTimeAtStart = processorNanoseconds();
     ThreadState& thread = current();
     // One at a time. Finalizers run in the middle of it, and other threads while those wait: one of them that collected for the same
     // reason would do the same work again, and what each has found for the threads that wait would be mixed up.
     if (m_threadThatCollectsWhileIdle) {
-        if (isLastResort)
-            collectAndFinalize(globalObject, nullptr, CollectionScope::Full, false, Runtime::CallsOf::AllThreads);
+        if (look != IdleLook::WithinShare)
+            collectAndFinalize(globalObject, nullptr, CollectionScope::Full, leavesCyclicGarbageForLater, calls);
         return m_nextIdleCollectionMayFindMore;
     }
     m_threadThatWaitsOwesCalls = false;
@@ -734,7 +736,7 @@ bool Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
     // It makes the calls that are its own. If nothing else can bring about what it waits for, all.
     {
         SetForScope collector(m_threadThatCollectsWhileIdle, &thread);
-        collectAndFinalize(globalObject, nullptr, CollectionScope::Full, !isLastResort, isLastResort ? Runtime::CallsOf::AllThreads : Runtime::CallsOf::ThisThread);
+        collectAndFinalize(globalObject, nullptr, CollectionScope::Full, leavesCyclicGarbageForLater, calls);
     }
     m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
     int64_t end = monotonicNanoseconds();
@@ -812,7 +814,7 @@ NEVER_INLINE bool Threads::collectBeforeCallBeginsAgain(JSGlobalObject* globalOb
     auto begun = thread.waitBegunAgain;
     thread.waitBegunAgain.call = nullptr;
     thread.callThatMayBeginAgain = nullptr;
-    if (collectWhileIdle(globalObject, begun.isLastResort))
+    if (collectWhileIdle(globalObject, begun.look))
         begun.idleInterval = IdleWait::firstInterval;
     if (scope.exception()) [[unlikely]]
         return false;
@@ -840,7 +842,7 @@ IdleWait::IdleWait(JSGlobalObject* globalObject, int64_t& deadline, bool isWaitO
                 deadline = begun.deadline;
                 m_interval = begun.idleInterval;
                 m_continuesWait = true;
-                m_hasCollectedAsLastResort = begun.collects && begun.isLastResort;
+                m_hasCollectedAsLastResort = begun.collects && begun.look == IdleLook::LastResort;
             }
         }
         begun.call = nullptr;
@@ -866,14 +868,14 @@ IdleWait::~IdleWait()
     waits.lengthOfLast = now - m_start;
 }
 
-bool IdleWait::beginsCallAgain(bool collects, bool isLastResort)
+bool IdleWait::beginsCallAgain(bool collects, IdleLook look)
 {
     if (!m_call)
         return false;
     VM& vm = getVM(m_globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(m_call == vm.topCallFrame);
-    m_thread.waitBegunAgain = { m_call, m_deadline, m_interval, true, collects, isLastResort };
+    m_thread.waitBegunAgain = { m_call, m_deadline, m_interval, true, collects, look };
     m_beginsCallAgain = true;
     throwException(m_globalObject, scope, Exception::create(vm, jsNull(), Exception::StackCaptureAction::DoNotCaptureStack));
     return true;
@@ -881,22 +883,22 @@ bool IdleWait::beginsCallAgain(bool collects, bool isLastResort)
 
 bool IdleWait::willBlock()
 {
-    return !beginsCallAgain(false, false);
+    return !beginsCallAgain(false, IdleLook::WithinShare);
 }
 
-bool IdleWait::collect(bool isLastResort)
+bool IdleWait::collect(IdleLook look)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
     Threads& threads = runtime(m_globalObject).threads();
-    if (!threads.shouldCollectWhileIdle(m_globalObject, isLastResort)) {
+    if (!threads.shouldCollectWhileIdle(m_globalObject, look)) {
         // Another thread has looked a moment ago, for all that wait.
         if (threads.m_nextIdleCollectionMayFindMore)
             m_interval = firstInterval;
         return true;
     }
-    if (failed(scope, !beginsCallAgain(true, isLastResort)))
+    if (failed(scope, !beginsCallAgain(true, look)))
         return false;
-    if (threads.collectWhileIdle(m_globalObject, isLastResort))
+    if (threads.collectWhileIdle(m_globalObject, look))
         m_interval = firstInterval;
     m_startOfWhatCounts = monotonicNanoseconds();
     return !scope.exception();
@@ -917,13 +919,16 @@ bool IdleWait::checkSignals()
 
 bool IdleWait::collectAsLastResort()
 {
-    return std::exchange(m_hasCollectedAsLastResort, true) || collect(true);
+    return std::exchange(m_hasCollectedAsLastResort, true) || collect(IdleLook::LastResort);
 }
 
-bool IdleWait::collectBeforeBlocking()
+bool IdleWait::collectBeforeBlocking(IdleLook look, bool& hasLooked)
 {
-    // If there is no other thread, nothing else can end the wait, as far as this process goes.
-    return m_continuesWait || collect(!runtime(m_globalObject).threads().runningCount());
+    hasLooked = m_continuesWait;
+    if (m_continuesWait || !runtime(m_globalObject).threads().shouldCollectWhileIdle(m_globalObject, look))
+        return true;
+    hasLooked = true;
+    return collect(look);
 }
 
 int64_t IdleWait::nextPiece(int64_t remaining) const
@@ -946,7 +951,7 @@ bool IdleWait::collectIfDue(int64_t remaining)
     // If the threads that wait have used up their share of the time, it is put off until they have some again, not left out: what
     // this thread has dropped since the last collection would otherwise wait four times as long.
     Threads& threads = runtime(m_globalObject).threads();
-    if (!threads.shouldCollectWhileIdle(m_globalObject, false)) {
+    if (!threads.shouldCollectWhileIdle(m_globalObject, IdleLook::WithinShare)) {
         if (threads.m_nextIdleCollectionMayFindMore)
             m_interval = firstInterval;
         m_timeToCollect = std::max(threads.timeOfNextIdleCollection(m_globalObject), monotonicNanoseconds() + firstInterval);
@@ -955,7 +960,7 @@ bool IdleWait::collectIfDue(int64_t remaining)
     // Less and less often: nothing happens while this waits, unless other threads run, and they collect as they allocate. But as long
     // as collections find something to finalize, there may be more: what only that referred to, once its thread has finalized it.
     m_interval *= 4;
-    if (failed(scope, collect(false)))
+    if (failed(scope, collect(IdleLook::WithinShare)))
         return false;
     m_timeToCollect = monotonicNanoseconds() + m_interval;
     return true;
