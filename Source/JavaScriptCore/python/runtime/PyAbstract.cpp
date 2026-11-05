@@ -1316,26 +1316,72 @@ static ALWAYS_INLINE JSValue callSpecialIfThere(JSGlobalObject* globalObject, Py
     return callSpecialIfThere(globalObject, method, self, arguments...);
 }
 
-JSValue callWithTupleAndDict(JSGlobalObject* globalObject, JSValue callable, PyTuple* positional, PyDict* keywords)
+PyTuple* keywordNamesOf(JSGlobalObject* globalObject, PyDict* keywords)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    PyTuple* names = PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), keywords->size());
+    bool namesAreKeys = true;
+    unsigned index = 0;
+    JSValue key;
+    JSValue value;
+    for (unsigned position = 0; keywords->next(position, key, value);) {
+        if (!isStr(key)) {
+            raiseTypeError(globalObject, scope, "keywords must be strings"_s);
+            return nullptr;
+        }
+        namesAreKeys &= key.isString();
+        // As it is: whoever takes keywords compares the texts of names that are no atoms. A program may have any number of names.
+        JSString* name = strValue(key);
+        name->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        names->initializeAt(vm, index++, name);
+    }
+    // A key that is an instance of a class derived from str is what a **kwargs gets.
+    if (!namesAreKeys) [[unlikely]] {
+        PyTuple* keys = PyTuple::create(globalObject, keywords->size());
+        index = 0;
+        for (unsigned position = 0; keywords->next(position, key, value);)
+            keys->initializeAt(vm, index++, key);
+        setHiddenField(globalObject, names, keywordKeysField, keys);
+    }
+    return names;
+}
+
+void addKeywordsTo(JSGlobalObject* globalObject, PyDict* dict, const CallArgs& args)
+{
+    if (!args.keywordCount())
+        return;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyTuple* keys = keywordKeys(globalObject, args.keywordNames());
+    // A key of another kind that is there may say that it is equal to the name.
+    bool nothingIsAsked = !keys && dict->hasOnlyStringKeys();
+    for (unsigned i = 0; i < args.keywordCount(); ++i) {
+        if (nothingIsAsked) [[likely]] {
+            dict->set(vm, args.keywordName(i), args.keywordValue(i));
+            continue;
+        }
+        dict->set(globalObject, keys ? keys->at(i) : JSValue(args.keywordName(i)), args.keywordValue(i));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+JSValue callWithTupleAndDict(JSGlobalObject* globalObject, JSValue callable, PyTuple* positional, PyDict* keywords)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     if (!keywords || keywords->isEmpty())
         RELEASE_AND_RETURN(scope, call(globalObject, callable, CallArgs(positional->span())));
 
     MarkedArgumentBuffer buffer;
     for (JSValue value : positional->span())
         buffer.append(value);
-    PyTuple* names = PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), keywords->size());
-    unsigned index = 0;
+    PyTuple* names = keywordNamesOf(globalObject, keywords);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue key, value;
-    for (unsigned position = 0; keywords->next(position, key, value);) {
-        if (!isStr(key))
-            return raiseTypeError(globalObject, scope, "keywords must be strings"_s);
-        names->initializeAt(vm, index++, strValue(key));
+    for (unsigned position = 0; keywords->next(position, key, value);)
         buffer.append(value);
-    }
     RELEASE_AND_RETURN(scope, call(globalObject, callable, CallArgs(reinterpret_cast<const JSValue*>(ArgList(buffer).data()), positional->length(), names)));
 }
 

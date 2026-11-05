@@ -1217,30 +1217,13 @@ static JSValue callArguments(JSGlobalObject* globalObject, JSValue, JSValue posi
     auto* dict = keywords ? PyDict::from(keywords) : nullptr;
     if (!dict || dict->isEmpty())
         return array;
-    PyTuple* names = PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), dict->size());
-    unsigned index = 0;
+    PyTuple* names = keywordNamesOf(globalObject, dict);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue key;
     JSValue value;
-    bool namesAreKeys = true;
     for (unsigned position = 0; dict->next(position, key, value);) {
-        if (!isStr(key))
-            return raiseTypeError(globalObject, scope, "keywords must be strings"_s);
-        namesAreKeys &= key.isString();
-        // As it is: whoever takes keywords compares the texts of names that are no atoms. A program may have any number of names.
-        JSString* name = strValue(key);
-        name->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        names->initializeAt(vm, index++, name);
         listAppend(globalObject, array, value);
         RETURN_IF_EXCEPTION(scope, { });
-    }
-    if (!namesAreKeys) [[unlikely]] {
-        // A key that is an instance of a class derived from str is what a **kwargs gets.
-        PyTuple* keys = PyTuple::create(globalObject, dict->size());
-        index = 0;
-        for (unsigned position = 0; dict->next(position, key, value);)
-            keys->initializeAt(vm, index++, key);
-        setHiddenField(globalObject, names, keywordKeysField, keys);
     }
     rt.setPendingKeywordNames(names);
     return array;

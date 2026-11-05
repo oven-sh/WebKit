@@ -247,7 +247,7 @@ static bool updateFromArguments(JSGlobalObject* globalObject, PyDict* dict, cons
         dictUpdate(globalObject, dict, args[0]);
         RETURN_IF_EXCEPTION(scope, false);
     }
-    JSValue keys = args.keywordCount() ? hiddenField(globalObject, args.keywordNames(), keywordKeysField) : JSValue();
+    PyTuple* keys = args.keywordCount() ? keywordKeys(globalObject, args.keywordNames()) : nullptr;
     if (mergesKeywords && args.keywordCount()) {
         // (An empty dict takes the table of the other, whatever is left in its own.)
         if (dict->isEmpty())
@@ -256,7 +256,7 @@ static bool updateFromArguments(JSGlobalObject* globalObject, PyDict* dict, cons
     }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         // (A key of another kind that is there may say that it is equal to the name.)
-        dict->set(globalObject, keys ? PyTuple::from(keys)->at(i) : JSValue(args.keywordName(i)), args.keywordValue(i));
+        dict->set(globalObject, keys ? keys->at(i) : JSValue(args.keywordName(i)), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, false);
     }
     return true;

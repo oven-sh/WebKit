@@ -150,6 +150,16 @@ inline void setHiddenField(JSGlobalObject* globalObject, JSValue object, unsigne
 
 // The hidden field of a tuple of keyword names that has the keys of the dict they came from, if some are not plain strs.
 static constexpr unsigned keywordKeysField = 0;
+// What a call passes as `this`, from the keys of a dict that is not empty. Null: with an exception.
+PyTuple* keywordNamesOf(JSGlobalObject*, PyDict*);
+// Those keys. Null: the names are the keys.
+inline PyTuple* keywordKeys(JSGlobalObject* globalObject, PyTuple* names)
+{
+    JSValue keys = hiddenField(globalObject, names, keywordKeysField);
+    return keys ? PyTuple::from(keys) : nullptr;
+}
+// dict[key] = value for each keyword argument.
+void addKeywordsTo(JSGlobalObject*, PyDict*, const CallArgs&);
 
 // The members of int | str. Null: the value is not a union.
 PyTuple* unionArguments(JSGlobalObject*, JSValue);

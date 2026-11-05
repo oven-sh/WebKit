@@ -340,8 +340,9 @@ static JSValue odictUpdate(JSGlobalObject* globalObject, JSValue self, const Cal
         if (!ok)
             return { };
     }
+    PyTuple* keys = args.keywordCount() ? keywordKeys(globalObject, args.keywordNames()) : nullptr;
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        setItem(globalObject, self, args.keywordName(i), args.keywordValue(i));
+        setItem(globalObject, self, keys ? keys->at(i) : JSValue(args.keywordName(i)), args.keywordValue(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return jsUndefined();

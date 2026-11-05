@@ -178,10 +178,8 @@ static bool namespaceAddKeywords(JSGlobalObject* globalObject, PyDict* dict, con
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    for (unsigned i = 0; i < args.keywordCount(); ++i) {
-        dict->set(globalObject, args.keywordName(i), args.keywordValue(i));
-        RETURN_IF_EXCEPTION(scope, false);
-    }
+    addKeywordsTo(globalObject, dict, args);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 

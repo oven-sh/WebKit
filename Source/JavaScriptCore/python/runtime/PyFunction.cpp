@@ -506,8 +506,7 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
 
     unsigned keywordCount = keywordNames ? keywordNames->length() : 0;
     // The keys of the dict that the names came from, if some of them are instances of classes derived from str.
-    JSValue keysValue = keywordCount ? hiddenField(globalObject, keywordNames, keywordKeysField) : JSValue();
-    PyTuple* keys = keysValue ? PyTuple::from(keysValue) : nullptr;
+    PyTuple* keys = keywordCount ? keywordKeys(globalObject, keywordNames) : nullptr;
     for (unsigned k = 0; k < keywordCount; ++k) {
         JSString* keyword = asString(keywordNames->at(k));
         JSValue value = keywordValues[k];
@@ -555,10 +554,16 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
             StrBuilder names;
             for (unsigned i = 0; i < info.posOnlyCount; ++i) {
                 for (unsigned j = 0; j < keywordCount; ++j) {
-                    if (WTF::equal(info.parameterNames[i].impl(), asString(keywordNames->at(j))->tryGetValueImpl())) {
+                    bool isEqual;
+                    if (keys && !keys->at(j).isString()) [[unlikely]] {
+                        isEqual = richCompareBool(globalObject, internString(vm, info.parameterNames[i].string()), keys->at(j), CompareOperator::Eq);
+                        RETURN_IF_EXCEPTION(scope, false);
+                    } else
+                        isEqual = WTF::equal(info.parameterNames[i].impl(), asString(keywordNames->at(j))->tryGetValueImpl());
+                    if (isEqual) {
                         if (!names.isEmpty())
                             names.append(", "_s);
-                        names.append(info.parameterNames[i].string());
+                        names.append(stringOf(asString(keywordNames->at(j))));
                     }
                 }
             }

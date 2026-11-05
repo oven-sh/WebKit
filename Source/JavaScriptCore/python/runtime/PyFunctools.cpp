@@ -151,8 +151,8 @@ static JSValue functoolsPartialNew(JSGlobalObject* globalObject, JSValue cls, co
     }
 
     PyDict* keywords = innerKeywords ? innerKeywords->copy(globalObject) : PyDict::create(globalObject);
-    for (unsigned i = 0; i < args.keywordCount(); ++i)
-        keywords->set(vm, args.keywordName(i), args.keywordValue(i));
+    addKeywordsTo(globalObject, keywords, args);
+    RETURN_IF_EXCEPTION(scope, { });
 
     PyRecord* record = PyRecord::create(globalObject, PyType::from(cls), FunctoolsPartial::FieldCount);
     record->set(vm, FunctoolsPartial::Function, function);
@@ -199,14 +199,8 @@ static JSValue functoolsPartialCall(JSGlobalObject* globalObject, JSValue self, 
     // The caller's keywords win, where the partial has them.
     if (args.hasKeywords()) {
         keywords = keywords->copy(globalObject);
-        JSValue keys = hiddenField(globalObject, args.keywordNames(), keywordKeysField);
-        for (unsigned i = 0; i < args.keywordCount(); ++i) {
-            if (keys) [[unlikely]] {
-                keywords->set(globalObject, PyTuple::from(keys)->at(i), args.keywordValue(i));
-                RETURN_IF_EXCEPTION(scope, { });
-            } else
-                keywords->set(vm, args.keywordName(i), args.keywordValue(i));
-        }
+        addKeywordsTo(globalObject, keywords, args);
+        RETURN_IF_EXCEPTION(scope, { });
     }
     RELEASE_AND_RETURN(scope, callWithTupleAndDict(globalObject, function, PyTuple::create(globalObject, spanOf(values)), keywords));
 }
