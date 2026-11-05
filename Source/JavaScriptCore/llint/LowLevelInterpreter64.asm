@@ -3186,22 +3186,28 @@ macro pythonWriteBarrier(owner, value, scratch)
 .done:
 end
 
+# `argumentCountIncludingThis` is left as it is.
+macro branchIfPassedByName(argumentCountIncludingThis, scratch, passedByName)
+    loadq ThisArgumentOffset[cfr], scratch
+    btqnz scratch, notCellMask, .noKeywordNames
+    bbeq JSCell::m_type[scratch], PyKwNamesType, passedByName
+.noKeywordNames:
+    # From JS, the last argument may be what kwargs() made, which is one of the objects of this type. (With no arguments, this
+    # looks at `this`.)
+    loadq ThisArgumentOffset - 8[cfr, argumentCountIncludingThis, 8], scratch
+    btqnz scratch, notCellMask, .noKeywordMarker
+    btqz scratch, .noKeywordMarker
+    bbeq JSCell::m_type[scratch], FinalObjectType, passedByName
+.noKeywordMarker:
+end
+
 llintOp(op_py_bind_args, OpPyBindArgs, macro (size, get, dispatch)
     # Every argument is where its parameter is if there are as many as parameters and none was passed by name.
     getu(size, OpPyBindArgs, m_simpleArgumentCountIncludingThis, t0)
     loadi LowWordOffset + ArgumentCountIncludingThis[cfr], t1
-    bineq t0, t1, .slow
-    loadq ThisArgumentOffset[cfr], t2
-    btqnz t2, notCellMask, .noKeywordNames
-    bbeq JSCell::m_type[t2], PyKwNamesType, .slow
-.noKeywordNames:
-    # From JS, the last argument may be what kwargs() made, which is one of the objects of this type. (With no arguments, this
-    # looks at `this`.)
-    loadq ThisArgumentOffset - 8[cfr, t1, 8], t2
-    btqnz t2, notCellMask, .noKeywordMarker
-    btqz t2, .noKeywordMarker
-    bbeq JSCell::m_type[t2], FinalObjectType, .slow
-.noKeywordMarker:
+    bineq t0, t1, .notAsMany
+    branchIfPassedByName(t1, t2, .slow)
+.bound:
     loadPythonRuntime(t3)
     loadi Python::Runtime::frameDepth[t3], t0
     addi 1, t0
@@ -3217,6 +3223,26 @@ llintOp(op_py_bind_args, OpPyBindArgs, macro (size, get, dispatch)
     btinz VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_trapBits[t2], constexpr VMTraps::NeedPythonCalls, .slow
     storei t0, Python::Runtime::frameDepth[t3]
     dispatch()
+
+.notAsMany:
+    # So it is if there are fewer, and what is left out has defaults. The last default is that of the last parameter.
+    bib t0, t1, .slow
+    branchIfPassedByName(t1, t2, .slow)
+    loadp Callee[cfr], t2
+    loadp (constexpr (Python::PyFunction::offsetOfDefaults()))[t2], t2
+    btpz t2, .slow
+    loadi (constexpr (Python::PyTuple::offsetOfLength()))[t2], t3
+    subi t0, t1, t5
+    bib t3, t5, .slow
+    subi t5, t3
+    leap (constexpr (Python::PyTuple::offsetOfItems()))[t2, t3, 8], t2
+.takeDefault:
+    loadq [t2], t3
+    storeq t3, ThisArgumentOffset[cfr, t1, 8]
+    addp SlotSize, t2
+    addi 1, t1
+    bineq t0, t1, .takeDefault
+    jmp .bound
 
 .slow:
     callSlowPath(_slow_path_py_bind_args)

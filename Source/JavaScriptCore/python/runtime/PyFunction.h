@@ -169,6 +169,7 @@ public:
     static constexpr ptrdiff_t offsetOfGlobals() { return OBJECT_OFFSETOF(PyFunction, m_globals); }
     static constexpr ptrdiff_t offsetOfBuiltins() { return OBJECT_OFFSETOF(PyFunction, m_builtins); }
     static constexpr ptrdiff_t offsetOfClosure() { return OBJECT_OFFSETOF(PyFunction, m_closure); }
+    static constexpr ptrdiff_t offsetOfDefaults() { return OBJECT_OFFSETOF(PyFunction, m_defaults); }
 
 private:
     PyFunction(VM&, FunctionExecutable*, JSGlobalObject*, Structure*);

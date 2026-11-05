@@ -391,7 +391,9 @@ in Python, the instance is made and `__init__` called without leaving the interp
 **Calls** are `op_call`. Positional arguments are the arguments; keyword values follow them, and `this` is a tuple of their names
 (`PyKwNamesType`) or `undefined`. `op_py_bind_args`, the first instruction of a function, sorts them into parameters. The parameters are where the arguments are, so most
 of them stay: what was passed by position, and what was passed by name in the order of the parameters right after that, as in `f(x, key=k)`
-for `def f(x, key=None)`. Only the other values passed by name are set aside first, being in the way (`bindKeywords()`). So JS calls a
+for `def f(x, key=None)`. Only the other values passed by name are set aside first, being in the way (`bindKeywords()`). The instruction itself does two cases: as many
+arguments as parameters, and fewer where what is left out has defaults, both for a function without `*`, `**` and keyword-only parameters and a
+call that passes nothing by name. So JS calls a
 Python function, and Python a JS function, with the engine's own call sequence and inline caches.
 When Python calls what is not Python, the frame is adapted on the way (`prepareForeignCall`, from `linkFor`): keyword arguments
 become a trailing object, whole floats become numbers.
