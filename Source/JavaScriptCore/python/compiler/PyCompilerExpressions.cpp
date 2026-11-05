@@ -328,7 +328,11 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
     if (auto* constant = node->tryAs<Constant>())
         value = constantValue(constant->value);
     else if (auto* unary = node->tryAs<UnaryOp>(); unary && isSafeToRecurse()) {
-        JSValue operand = valueCPythonsCompilerWorksOut(unary->operand);
+        // `not` is worked out of literals before anything else is worked out: not of (), nor of -300.
+        Expr* negated = unary->operand;
+        while (negated->is<UnaryOp>() && negated->as<UnaryOp>()->op == AST::UnaryKind::Not)
+            negated = negated->as<UnaryOp>()->operand;
+        JSValue operand = unary->op != AST::UnaryKind::Not || negated->is<Constant>() ? valueCPythonsCompilerWorksOut(unary->operand) : JSValue();
         if (operand && (unary->op != AST::UnaryKind::Invert || !operand.isBoolean()))
             value = finish(unaryOperation(globalObject(), static_cast<Python::UnaryOperator>(unary->op), operand));
     } else if (auto* tuple = node->tryAs<Tuple>(); tuple && tuple->ctx == ExprContext::Load && tuple->elts.size() <= maxItemsCPythonHasOnItsStack)
@@ -336,7 +340,8 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
     else if (auto* subscript = node->tryAs<Subscript>(); subscript && subscript->ctx == ExprContext::Load && isSafeToRecurse()) {
         if (JSValue base = valueCPythonsCompilerWorksOut(subscript->value))
             value = itemCPythonsCompilerWorksOut(base, subscript->slice);
-    }
+    } else if (auto* slice = node->tryAs<Slice>(); slice && isMadeOfLiterals(slice))
+        value = constantSlice(slice);
 
     while (value && !operations.isEmpty()) {
         BinOp* operation = operations.takeLast();
@@ -351,8 +356,7 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
 JSValue Unit::itemCPythonsCompilerWorksOut(JSValue base, Expr* index)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
-    auto* slice = index->tryAs<Slice>();
-    JSValue key = slice ? constantSlice(slice) : valueCPythonsCompilerWorksOut(index);
+    JSValue key = valueCPythonsCompilerWorksOut(index);
     if (!key || scope.exception())
         return { };
     JSValue item = getItem(globalObject(), base, key);
@@ -1237,6 +1241,16 @@ void Unit::checkIndex(Expr* value, Expr* index)
         warn(value->range, makeString(inferTypeName(value), " indices must be integers or slices, not "_s, indexType, "; perhaps you missed a comma?"_s));
 }
 
+// Only such a slice is a constant to CPython's compiler, which makes slices before it works out what -1 is.
+bool Unit::isMadeOfLiterals(Slice* node)
+{
+    for (Expr* part : { node->lower, node->upper, node->step }) {
+        if (part && !part->is<Constant>())
+            return false;
+    }
+    return true;
+}
+
 // Empty: it is not made of constants.
 JSValue Unit::constantSlice(Slice* node)
 {
@@ -1253,12 +1267,24 @@ JSValue Unit::constantSlice(Slice* node)
 
 RegisterID* Unit::slice(Slice* node, RegisterID* dst)
 {
-    if (JSValue slice = constantSlice(node)) {
-        noteConstant(slice);
+    Expr* expressions[3] = { node->lower, node->upper, node->step };
+    bool isConstantInCPython = isMadeOfLiterals(node);
+    if (JSValue slice = isConstantInCPython || node->range.lineno == node->range.endLineno ? constantSlice(node) : JSValue()) {
+        if (isConstantInCPython)
+            noteConstant(slice);
+        for (unsigned i = 0; i < 3 && !isConstantInCPython; ++i) {
+            JSValue part;
+            if (!expressions[i]) {
+                if (i < 2)
+                    noteConstant(jsUndefined());
+            } else if (tryConstantValue(expressions[i], part); expressions[i]->is<Constant>())
+                noteConstant(part);
+            else
+                noteFoldedConstant(expressions[i], part);
+        }
         return load(dst, slice);
     }
 
-    Expr* expressions[3] = { node->lower, node->upper, node->step };
     Reg result = g.finalDestination(dst);
     Arguments arguments(*this, 3);
     for (unsigned i = 0; i < 3; ++i) {

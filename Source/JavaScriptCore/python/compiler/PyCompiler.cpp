@@ -784,10 +784,10 @@ void Unit::noteWhatConstantIsMadeOf(Expr* node)
         return noteWhatConstantIsMadeOf(unary->operand);
     if (auto* subscript = node->tryAs<Subscript>()) {
         noteWhatConstantIsMadeOf(subscript->value);
-        if (auto* slice = subscript->slice->tryAs<Slice>())
-            return noteConstant(constantSlice(slice), false);
         return noteWhatConstantIsMadeOf(subscript->slice);
     }
+    if (auto* slice = node->tryAs<Slice>())
+        return noteConstant(constantSlice(slice), false);
     if (node->is<BinOp>()) {
         // 1 + 1 + 1... nests to the left, as deep as it is long.
         Vector<BinOp*, 8> operations;

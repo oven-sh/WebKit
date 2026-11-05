@@ -293,6 +293,7 @@ private:
     JSValue valueCPythonsCompilerWorksOut(AST::Operator, JSValue left, JSValue right);
     JSValue itemCPythonsCompilerWorksOut(JSValue base, Expr* index);
     JSValue constantSlice(AST::Slice*);
+    static bool isMadeOfLiterals(AST::Slice*);
     PyTuple* tupleOfConstants(Seq<Expr*>);
     PySet* frozensetOf(PyTuple*);
     bool areConstants(Seq<Expr*>);
