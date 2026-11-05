@@ -82,12 +82,6 @@ const RuntimeTypeSize = constexpr (sizeof(AOT::RuntimeType))
 const RopeStringLength = constexpr (JSRopeString::offsetOfLength())
 const MaxLengthOfStringsComparedInline = 32
 
-const LocalAllocatorIntervalStart = constexpr (LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart())
-const LocalAllocatorIntervalEnd = constexpr (LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd())
-const LocalAllocatorNextInterval = constexpr (LocalAllocator::offsetOfFreeList() + FreeList::offsetOfNextInterval())
-const LocalAllocatorSecret = constexpr (LocalAllocator::offsetOfFreeList() + FreeList::offsetOfSecret())
-const LocalAllocatorCellSize = constexpr (LocalAllocator::offsetOfCellSize())
-const FreeCellScrambledBits = constexpr (FreeCell::offsetOfScrambledBits())
 const StructureTypeInfoBlob = constexpr (Structure::indexingModeIncludingHistoryOffset())
 
 macro aotOp(opcodeName, opcodeStruct, fn)
@@ -1282,39 +1276,6 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     callSlowPath(_llint_slow_path_put_by_id)
     dispatch()
 end)
-
-# FreeList::allocateWithCellSize(). The low half of the bits of a free cell is the distance to the next interval, the high half the length
-# of this one.
-macro allocateCell(allocator, result, scratch, slow)
-    loadp LocalAllocatorIntervalStart[allocator], result
-    bpb result, LocalAllocatorIntervalEnd[allocator], .hasInterval
-    loadp LocalAllocatorNextInterval[allocator], result
-    btpnz result, 1, slow
-    loadi LocalAllocatorSecret[allocator], scratch
-    xori FreeCellScrambledBits[result], scratch
-    sxi2q scratch, scratch
-    addp result, scratch
-    storep scratch, LocalAllocatorNextInterval[allocator]
-    loadi LocalAllocatorSecret + 4[allocator], scratch
-    xori FreeCellScrambledBits + 4[result], scratch
-    addp result, scratch
-    storep scratch, LocalAllocatorIntervalEnd[allocator]
-.hasInterval:
-    loadi LocalAllocatorCellSize[allocator], scratch
-    addp result, scratch
-    storep scratch, LocalAllocatorIntervalStart[allocator]
-end
-
-# The collector may mark while this thread runs, so it has to see the cell's contents no later than a reference to the cell.
-macro fenceAfterAllocation(scratch)
-    if ARM64 or ARM64E
-        loadp CodeBlock[cfr], scratch
-        loadp CodeBlock::m_vm[scratch], scratch
-        btbz (constexpr (VM::offsetOfHeapMutatorShouldBeFenced()))[scratch], .isNotFenced
-        memfence
-    .isNotFenced:
-    end
-end
 
 # JSLexicalEnvironment::create(), once SymbolTable::notifyCreation() has nothing left to say.
 aotOp(op_create_lexical_environment, OpCreateLexicalEnvironment, macro (size, get, dispatch, metadata, return)
