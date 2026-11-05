@@ -156,6 +156,8 @@ bool setInstanceDict(JSGlobalObject* globalObject, JSValue object, PyDict* dict)
     if (!rt.typeOf(object)->has(TypeFlag::HasDict))
         return false;
     if (cell->inherits<PyWrapperObject>()) {
+        // What it has yet to copy from what it wraps would have been in the dict that goes.
+        uncheckedDowncast<PyWrapperObject>(cell)->setCopiesAttributesLater(false);
         uncheckedDowncast<PyWrapperObject>(cell)->setDict(vm, dict);
         return true;
     }

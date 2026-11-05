@@ -324,9 +324,10 @@ static bool wrapperSetCallable(JSGlobalObject* globalObject, PyWrapperObject* wr
 void copyAttributesOfWrapped(JSGlobalObject* globalObject, PyWrapperObject* wrapper)
 {
     VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     wrapper->setCopiesAttributesLater(false);
-    if (failed(scope, wrapperSetCallable(globalObject, wrapper, wrapper->wrapped())))
+    wrapperSetCallable(globalObject, wrapper, wrapper->wrapped());
+    if (scope.exception()) [[unlikely]]
         takePendingException(globalObject);
 }
 
