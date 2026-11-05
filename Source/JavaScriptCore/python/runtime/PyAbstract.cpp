@@ -335,8 +335,8 @@ static ALWAYS_INLINE PyType* typeByNow(Runtime& rt, JSValue object, PyType* type
     return typeSearched;
 }
 
-// `hasDictGiven`: the attributes of the object are in that dict, which is not its __dict__.
-template<bool nameIsKey, bool hasDictGiven = false>
+// `hasDictGiven`: the attributes of the object are in that dict, which is not its __dict__. `!looksInObject`: the caller has looked there.
+template<bool nameIsKey, bool hasDictGiven = false, bool looksInObject = true>
 static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, bool suppress, PyDict* dictGiven = nullptr)
 {
     Runtime& rt = runtime(globalObject);
@@ -383,7 +383,7 @@ static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JS
     JSValue value;
     if constexpr (hasDictGiven)
         value = !nameIsKey && dictGiven->hasOnlyStringKeys() ? dictGiven->get(name) : dictGiven->get(globalObject, nameIsKey ? key : JSValue(name));
-    else
+    else if constexpr (looksInObject)
         value = nameIsKey ? instanceAttributeByKey(globalObject, object, key) : instanceAttribute(globalObject, object, name);
     EXCEPTION_ASSERT(!scope.exception() || !value);
     if (value)
@@ -393,10 +393,14 @@ static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JS
         if (!suppress || !clearPendingExceptionIfMatches(globalObject, rt.AttributeError()))
             return { };
     }
-    // object.__getattribute__(cls, name): a class is an instance of its metaclass, and its dict the dict of that instance. So what
-    // the class itself defines is found, as it is there.
-    if (PyType* itself = PyType::tryFrom(object); itself && itself->isHeapType()) [[unlikely]] {
-        value = itself->dict()->get(globalObject, nameIsKey ? key : JSValue(name));
+    if (type->flags().containsAny({ TypeFlag::TypeSubclass, TypeFlag::AttributesAreProperties })) [[unlikely]] {
+        // object.__getattribute__(cls, name): a class is an instance of its metaclass, and its dict the dict of that instance. So what
+        // the class itself defines is found, as it is there.
+        if (PyType* itself = PyType::tryFrom(object)) {
+            if (itself->isHeapType())
+                value = itself->dict()->get(globalObject, nameIsKey ? key : JSValue(name));
+        } else if (looksInObject && !hasDictGiven && type->has(TypeFlag::AttributesAreProperties))
+            value = attributeOfObjectOfJS(globalObject, asObject(object), name);
         RETURN_IF_EXCEPTION(scope, { });
         if (value)
             return value;
@@ -428,6 +432,11 @@ NEVER_INLINE JSValue genericGetAttrWithDict(JSGlobalObject* globalObject, JSValu
     if (given.isString()) [[likely]]
         return genericGetAttrImpl<false, true>(globalObject, object, name, { }, false, dict);
     return genericGetAttrImpl<true, true>(globalObject, object, name, given, false, dict);
+}
+
+NEVER_INLINE JSValue genericGetAttrOfType(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    return genericGetAttrImpl<false, false, false>(globalObject, object, name, { }, false);
 }
 
 template<bool nameIsKey, bool hasDictGiven = false>
@@ -512,6 +521,8 @@ static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSVal
 
     PyDict* dict = hasDictGiven ? dictGiven : instanceDict(globalObject, object, true);
     if (!dict) {
+        if (type->has(TypeFlag::AttributesAreProperties))
+            RELEASE_AND_RETURN(scope, setPropertyOfJSForAttribute(globalObject, asObject(object), name, value));
         String text = stringOf(name);
         if (descriptor)
             raise(globalObject, scope, rt.AttributeError(), makeString('\'', type->nameInMessages(), "' object attribute '"_s, text, "' is read-only"_s));
@@ -751,7 +762,7 @@ JSValue getMethod(JSGlobalObject* globalObject, JSValue object, JSString* name, 
         return getAttr(globalObject, object, name);
 
     JSValue descriptor = type->lookup(name);
-    if (!descriptor || !isMethodDescriptor(descriptor))
+    if (!descriptor || !isMethodDescriptor(descriptor) || type->has(TypeFlag::AttributesAreProperties))
         return genericGetAttr(globalObject, object, name);
     if (JSValue value = instanceAttribute(globalObject, object, name))
         return value;

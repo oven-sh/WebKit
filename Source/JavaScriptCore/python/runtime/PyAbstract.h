@@ -58,6 +58,8 @@ inline void genericSetAttrAsGiven(JSGlobalObject* globalObject, JSValue object, 
 }
 // And for one whose object has its attributes in a dict that is not its __dict__: to object's own methods they are not there.
 JSValue genericGetAttrWithDict(JSGlobalObject*, JSValue object, JSString* name, JSValue given, PyDict*);
+// What the type has for the object, for whoever has looked among the attributes of the object itself.
+JSValue genericGetAttrOfType(JSGlobalObject*, JSValue object, JSString* name);
 void genericSetAttrWithDict(JSGlobalObject*, JSValue object, JSString* name, JSValue given, JSValue value, PyDict*); // No value: delete.
 // And for one that passes the question on to another object: getattr(object, given), setattr(object, given, value),
 // delattr(object, given).

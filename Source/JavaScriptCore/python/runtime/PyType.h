@@ -44,7 +44,7 @@ enum class TypeFlag : uint32_t {
     // say to a str. See PyDict::searchAmongStringsFor().
     AnswersForAnother = 1 << 15,
     // The instances are objects of JS's, and their attributes are their properties: they have no __dict__, and no class that derives
-    // from this one adds one. See typeForClassOfJS().
+    // from this one adds one. What object.__getattribute__() and its kin look for in the __dict__ of another object, they look for there.
     AttributesAreProperties = 1 << 25,
 
     // Derives from:

@@ -135,6 +135,10 @@ JSValue staticMemberOfClassOfJS(JSGlobalObject*, PyType*, JSString* name);
 JSObject* prototypeForJS(JSGlobalObject*, PyType*);
 // The class of Python's that the object of JS is an instance of, going by its prototype. Null: none.
 PyType* typeByPrototype(JSObject*);
+// For such an instance: what the classes of Python's have for the name that come before the class of JS's in the MRO. Empty: nothing.
+JSValue lookupBeforeClassOfJS(PyType*, JSString* name);
+// The prototype of the class of JS's. Null: there is none.
+JSObject* prototypeBehindViews(JSObject*);
 
 // A property of an instance whose key is a symbol, if a class of its that is written in JS has it. False: none has, or an exception.
 bool symbolPropertyOfClasses(JSGlobalObject*, PyType*, PropertyName, PropertySlot&);

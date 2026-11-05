@@ -50,6 +50,8 @@ JSValue objectGetState(JSGlobalObject*, JSValue self);
 // CPython's text for "module NAME", "type TYPE", "TYPE.NAME" or "MODULE.NAME"; None if it has none. (tools/make_docstrings.py)
 JSValue docstringFor(JSGlobalObject*, const String& key);
 std::span<const NativeGetSet> dictGetSet();
+// Whether it is the __dict__ that a class gives its instances.
+bool isDictDescriptorOfInstances(JSValue descriptor);
 std::span<const NativeGetSet> weakrefGetSet();
 // __eq__ and so on, as they are for a type that has nothing to say: NotImplemented, and for __ne__ the opposite of __eq__.
 std::span<const NativeDef> defaultComparisons();
@@ -605,6 +607,13 @@ JSValue leaveAsyncFor(JSGlobalObject*, JSValue iterator, JSValue exception, bool
 JSValue attributeFromPrototypeOfJS(JSGlobalObject*, JSObject* prototype, JSValue object, JSString* name);
 // object.name in Python, as far as it is a property of the object. Empty: it has none, or an exception.
 JSValue attributeFromPropertyOfJS(JSGlobalObject*, JSObject*, JSString* name);
+// What object.__getattribute__() finds where another object has its __dict__: that, or for an instance of a class of Python's its own
+// property, what the classes of Python's have that come before the class of JS's, and what it inherits from that.
+JSValue attributeOfObjectOfJS(JSGlobalObject*, JSObject*, JSString* name);
+// object.name = value as strict code of JS has it. No value: `delete object.name`, and an AttributeError if there is no such property.
+void setPropertyOfJSForAttribute(JSGlobalObject*, JSObject*, JSString* name, JSValue value);
+// instance.__dict__, for an instance of a class of Python's that derives from one of JS's: the mapping of its own properties.
+JSValue propertiesOfObjectOfJS(JSGlobalObject*, JSObject*);
 // _js.JSTypeError. It is made when it is first asked for; JSError, if it cannot be made.
 PyType* jsTypeErrorType(JSGlobalObject*);
 // The same for OSError or a built-in class derived from it: _js.JSFileNotFoundError.
@@ -626,6 +635,9 @@ JSValue contextManagerMethodOfJS(JSGlobalObject*, JSValue object, SpecialMethodF
 JSArray* itemsOfObjectOfJS(JSGlobalObject*, JSObject*);
 // Once the import system works.
 void registerInteropTypes(JSGlobalObject*);
+// For the type that stands for a class of JS's among the bases: what the instances of the classes that derive from it do otherwise than
+// other objects of JS's (__getattribute__, __setattr__, __delattr__). Those have the methods of JSObject, which need not ask what the object is.
+void addMethodsOfDerivedClasses(JSGlobalObject*, PyType*);
 enum class ForeignMethodKind : uint8_t { NotAMethod, TakesThis, TakesFirstArgument };
 ForeignMethodKind foreignMethodKind(JSCell*);
 // What to call a bound method of such a function is.

@@ -1583,6 +1583,24 @@ The collector is told the size of the side tables, which are several times the s
   The constructor of a class of JS makes the object, so it is `__new__` that takes its arguments. `Base.__init__()` does nothing, and
   objects if it is given other arguments than the constructor got: `def __init__(self, name): super().__init__()` would have
   constructed `Base` with the name. Such a class defines `__new__(cls, name)` and calls `super().__new__(cls)`.
+  The attributes of an instance are its properties, and there is no other place for them: no class in the line adds a `__dict__`
+  (`TypeFlag::AttributesAreProperties`, which `JSObject` has and all that derives from it inherits). An attribute is searched for as
+  Python does it, with the properties where another instance has its `__dict__`: a `property()`, a slot or another data descriptor of
+  a class of Python's, wherever in the MRO, comes first, `__class__` among them; then the instance's own property; then what the classes
+  have, in the order of the MRO, where `Base` stands for its prototype (so a setter of `Base` is called, unless a class of Python's has
+  something for the name that is a data descriptor or comes before `Base`). Classes of JS's that extend one another stand together,
+  where the first stands. JS sees the classes that come before `Base`. What a class of Python's has does not pass through JS on the way:
+  `whole = 1.0` in the class is a float, and a thread other than the main one can have it. `del` deletes an own property, and
+  what is inherited is an `AttributeError`. `object.__getattribute__()`, `__setattr__()` and `__delattr__()` do the same, for any object
+  of JS's, so a `__setattr__` of the class's own may hand on to `object`'s, and `@dataclass(frozen=True)` works.
+  `instance.__dict__` and `vars(instance)` are the mapping of its own properties (`_js.JSProperties`, a `MutableMapping` and no dict,
+  with the `copy()`, `|`, `reversed(mapping)` and order of `popitem()` of a dict): not the object itself, whose `[key]` finds what it inherits too
+  (`functools.cached_property` would find itself) and which may be a `Map`. The elements of a typed array are not in it. To store there
+  defines the property, past whatever the class has for the name. It comes from the `__getattribute__` that the class inherits from
+  `Base`; `object.__getattribute__(instance, '__dict__')` is an `AttributeError`, because who asks that way expects a dict
+  (`inspect.getattr_static()`, and so `isinstance()` with a protocol). `__dict__` cannot be assigned or deleted, of any object of JS's: no
+  other mapping can take the place of the properties. Nor can `__class__`: the prototype says what the object is an instance of.
+  `copy.copy()` and `pickle` refuse such an instance.
   One class of JS among the bases, and no built-in type of Python's beside it. Not `Array` (an array is a list), `Function`, nor the
   wrappers of primitive values. An `Error` of JS is no exception of Python's, so such a class cannot be raised.
 - What JS forbids is refused as in strict code: to assign to or delete a property of a frozen object is a `TypeError` of JS.

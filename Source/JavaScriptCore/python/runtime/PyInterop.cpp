@@ -82,6 +82,9 @@ static Inquiry inquireOwnProperty(JSGlobalObject* globalObject, JSObject* object
     if (!isStored && structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(name))
         return Inquiry::NeedsCode;
     auto lookUp = object->methodTable()->getOwnPropertySlot;
+    // A typed array has a way of its own for its elements alone.
+    if (isTypedArrayType(object->type()) && !name.isSymbol() && !isCanonicalNumericIndexString(name.uid()))
+        lookUp = JSObject::getOwnPropertySlot;
     bool isNamespace = lookUp == JSModuleNamespaceObject::getOwnPropertySlot;
     if (lookUp == JSFunction::info()->methodTable.getOwnPropertySlot) {
         // The name and length of a bound function are asked of its target.
@@ -119,6 +122,17 @@ static Inquiry inquireProperty(JSGlobalObject* globalObject, JSObject* object, P
     }
 }
 
+static ALWAYS_INLINE bool isKeywordWithUnderscore(const Identifier& key)
+{
+    StringView text = key.string();
+    return text.length() >= 3 && text[text.length() - 1] == '_' && isKeywordOfPython(text.left(text.length() - 1));
+}
+
+static Identifier withoutUnderscore(VM& vm, const Identifier& key)
+{
+    return Identifier::fromString(vm, StringView(key.string()).left(key.length() - 1).toString());
+}
+
 // The property that an attribute of the object is. A name that is a keyword of Python cannot be written behind a dot, so it is written
 // with an underscore behind it, as PEP 8 has it: Array.from_(), promise.finally_(). Unless the object has a property of that
 // very name. False: an exception.
@@ -128,8 +142,7 @@ static bool propertyKeyForAttribute(JSGlobalObject* globalObject, JSObject* obje
     auto scope = DECLARE_THROW_SCOPE(vm);
     key = propertyKeyFor(globalObject, name);
     RETURN_IF_EXCEPTION(scope, false);
-    StringView text = key.string();
-    if (text.length() < 3 || text[text.length() - 1] != '_' || !isKeywordOfPython(text.left(text.length() - 1))) [[likely]]
+    if (!isKeywordWithUnderscore(key)) [[likely]]
         return true;
     bool hasIt;
     if (runtime(globalObject).threads().isMainThread()) [[likely]] {
@@ -143,7 +156,7 @@ static bool propertyKeyForAttribute(JSGlobalObject* globalObject, JSObject* obje
         hasIt = result == Inquiry::Value;
     }
     if (!hasIt)
-        key = Identifier::fromString(vm, text.left(text.length() - 1).toString());
+        key = withoutUnderscore(vm, key);
     return true;
 }
 
@@ -209,6 +222,52 @@ static bool isNameOfMappingMethod(Runtime&, JSString* name)
     return false;
 }
 
+static ALWAYS_INLINE bool isDunderDict(Runtime& rt, JSString* name)
+{
+    StringImpl* impl = name->tryGetValueImpl();
+    StringImpl* dunderDict = rt.names.dDict()->tryGetValueImpl();
+    return impl == dunderDict || (impl && !impl->isAtom() && WTF::equal(impl, dunderDict));
+}
+
+// holder[key], read for the receiver, which is the holder or inherits from it. `isOwn`: only what the holder has itself. On a thread other than
+// the main one: what can be seen; `willBeBound`: and can be given to bindIfFunction() there. Empty: there is no such property, or an exception.
+template<bool isOwn, bool willBeBound = false>
+static ALWAYS_INLINE JSValue readProperty(JSGlobalObject* globalObject, JSObject* holder, JSObject* receiver, const Identifier& key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!runtime(globalObject).threads().isMainThread()) [[unlikely]] {
+        JSValue value;
+        Inquiry result = isOwn ? inquireOwnProperty(globalObject, holder, key, value) : inquireProperty(globalObject, holder, key, value);
+        // To bind a function of JS's that is none of these asks it for its prototype.
+        if (result == Inquiry::NeedsCode || (willBeBound && result == Inquiry::Value && value.isCallable() && !isPyObject(value) && !value.inherits<JSFunction>() && !value.inherits<InternalFunction>())) {
+            scope.release();
+            ensureMainThreadForJS(globalObject);
+            return { };
+        }
+        return result == Inquiry::Value ? value : JSValue();
+    }
+    PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
+    bool found = isOwn ? holder->methodTable()->getOwnPropertySlot(holder, globalObject, key, slot) : holder->getPropertySlot(globalObject, key, slot);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!found)
+        return { };
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, key));
+}
+
+// The same as an attribute of the receiver: a function is bound to it.
+template<bool isOwn>
+static ALWAYS_INLINE JSValue attributeFromProperty(JSGlobalObject* globalObject, JSObject* holder, JSObject* receiver, const Identifier& key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = readProperty<isOwn, true>(globalObject, holder, receiver, key);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!value)
+        return { };
+    RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, receiver, value));
+}
+
 JSValue attributeFromPropertyOfJS(JSGlobalObject* globalObject, JSObject* object, JSString* name)
 {
     VM& vm = getVM(globalObject);
@@ -216,36 +275,60 @@ JSValue attributeFromPropertyOfJS(JSGlobalObject* globalObject, JSObject* object
     Identifier key;
     if (failed(scope, propertyKeyForAttribute(globalObject, object, name, key)))
         return { };
-    if (!runtime(globalObject).threads().isMainThread()) [[unlikely]] {
-        JSValue value;
-        Inquiry result = inquireProperty(globalObject, object, key, value);
-        // To bind a function asks it for its prototype.
-        if (result == Inquiry::NeedsCode || (result == Inquiry::Value && value.isCallable() && !value.inherits<JSFunction>() && !value.inherits<InternalFunction>())) {
-            scope.release();
-            ensureMainThreadForJS(globalObject);
-            return { };
-        }
-        if (result == Inquiry::Value)
-            RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, object, value));
-        if (auto* bound = dynamicDowncast<JSBoundFunction>(object))
-            RELEASE_AND_RETURN(scope, attributeFromPropertyOfJS(globalObject, bound->targetFunction(), name));
-        return { };
-    }
-    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-    bool found = object->getPropertySlot(globalObject, key, slot);
+    JSValue attribute = attributeFromProperty<false>(globalObject, object, object, key);
     RETURN_IF_EXCEPTION(scope, { });
-    if (found) {
-        JSValue value = slot.getValue(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, { });
-        RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, object, value));
-    }
+    if (attribute)
+        return attribute;
     // A function with properties of its own is still that when it has been taken from an object as a method.
     if (auto* bound = dynamicDowncast<JSBoundFunction>(object))
         RELEASE_AND_RETURN(scope, attributeFromPropertyOfJS(globalObject, bound->targetFunction(), name));
     return { };
 }
 
-static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+// The same for an instance of `type`, a class of Python's that derives from one of JS's. The chain of prototypes would say the same to JS, but
+// what the classes of Python's have is not for JS here, so it is not made a value of JS's on the way (1.0 stays a float), and takes no JS,
+// so any thread can have it.
+static JSValue attributeOfInstanceOfDerivedClass(JSGlobalObject* globalObject, PyType* type, JSObject* object, JSString* name)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto find = [&](const Identifier& key, JSString* name) -> JSValue {
+        JSValue own = attributeFromProperty<true>(globalObject, object, object, key);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (own)
+            return own;
+        // As PyPrototypeView has it.
+        if (key == vm.propertyNames->constructor)
+            return type;
+        // (lookup() remembers what it found, so it is asked first whether any class has the name.)
+        if (type->lookup(name)) {
+            if (JSValue found = lookupBeforeClassOfJS(type, name))
+                return bindDescriptor(globalObject, found, object, type);
+        }
+        JSObject* prototype = prototypeBehindViews(object);
+        return prototype ? attributeFromProperty<false>(globalObject, prototype, object, key) : JSValue();
+    };
+    Identifier key = propertyKeyFor(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue attribute = find(key, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (attribute || !isKeywordWithUnderscore(key)) [[likely]]
+        return attribute;
+    // As in propertyKeyForAttribute(). (A class written in JS has its methods by the names of JS.)
+    Identifier keyword = withoutUnderscore(vm, key);
+    RELEASE_AND_RETURN(scope, find(keyword, internString(vm, keyword.string())));
+}
+
+JSValue attributeOfObjectOfJS(JSGlobalObject* globalObject, JSObject* object, JSString* name)
+{
+    if (PyType* type = typeByPrototype(object))
+        return attributeOfInstanceOfDerivedClass(globalObject, type, object, name);
+    return attributeFromPropertyOfJS(globalObject, object, name);
+}
+
+// `isOfDerivedClass`: the __getattribute__ that a class of Python's inherits from the class of JS's it derives from.
+template<bool isOfDerivedClass>
+static JSValue jsObjectGetAttributeImpl(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -253,7 +336,21 @@ static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, 
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
     JSObject* object = asObject(self);
-    JSValue property = attributeFromPropertyOfJS(globalObject, object, name);
+    // A property(), a slot or another data descriptor of the class comes before what the instance has. So does __dict__, which is the
+    // mapping of its own properties. (Not a descriptor of the type: who goes past __getattribute__, as inspect.getattr_static() does,
+    // expects a dict.)
+    PyType* derivedClass = isOfDerivedClass ? typeByPrototype(object) : nullptr;
+    if (derivedClass) {
+        // (class Both(Plain, js.Map): the __dict__ that Plain gives its instances is not for one that has none.)
+        if (JSValue descriptor = derivedClass->lookup(name); descriptor && !isDictDescriptorOfInstances(descriptor)) {
+            PyType* descriptorType = rt.typeOf(descriptor);
+            if (descriptorType->lookup(Special::Get) && (descriptorType->lookup(Special::Set) || descriptorType->lookup(Special::Delete)))
+                RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, descriptor, self, derivedClass));
+        }
+        if (isDunderDict(rt, name))
+            RELEASE_AND_RETURN(scope, propertiesOfObjectOfJS(globalObject, object));
+    }
+    JSValue property = derivedClass ? attributeOfInstanceOfDerivedClass(globalObject, derivedClass, object, name) : attributeFromPropertyOfJS(globalObject, object, name);
     RETURN_IF_EXCEPTION(scope, { });
     if (property)
         return property;
@@ -263,7 +360,7 @@ static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, 
     // keys(), get(), update() and the like are for an object that is a mapping, of its properties or by its methods. What else JS
     // iterates over is not: dict(iterator) takes pairs from it.
     if (isNameOfMappingMethod(rt, name)) {
-        if (!ensureMainThreadForJS(globalObject))
+        if (failed(scope, ensureMainThreadForJS(globalObject)))
             return { };
         bool isIterable = hasIteratorMethod(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
@@ -272,74 +369,113 @@ static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, 
         if (isIterable && !byMethods)
             return raiseAttributeError(globalObject, scope, self, name, makeString('\'', typeName(globalObject, self), "' object has no attribute '"_s, stringOf(name), '\''));
     }
-    // vars(object), function.__dict__.update(): its attributes are its properties, and it is the mapping of those itself. (Not a
-    // descriptor of the type: who goes past __getattribute__, as inspect.getattr_static() does, expects a dict.)
-    if (WTF::equal(name->tryGetValueImpl(), rt.names.dDict()->tryGetValueImpl()))
+    // vars(object), function.__dict__.update(): its attributes are its properties, and it is the mapping of those itself.
+    if (isDunderDict(rt, name))
         return self;
     // What every Python object has: __class__, __dir__, and so on.
-    RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, name));
+    RELEASE_AND_RETURN(scope, genericGetAttrOfType(globalObject, self, name));
+}
+
+static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+{
+    return jsObjectGetAttributeImpl<false>(globalObject, self, nameValue);
 }
 
 JSValue attributeFromPrototypeOfJS(JSGlobalObject* globalObject, JSObject* prototype, JSValue object, JSString* name)
 {
-    if (!ensureMainThreadForJS(globalObject))
-        return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Identifier key;
     if (failed(scope, propertyKeyForAttribute(globalObject, prototype, name, key)))
         return { };
-    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-    bool found = prototype->getPropertySlot(globalObject, key, slot);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!found)
-        return { };
-    JSValue value = slot.getValue(globalObject, key);
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, asObject(object), value));
+    RELEASE_AND_RETURN(scope, attributeFromProperty<false>(globalObject, prototype, asObject(object), key));
 }
 
-static JSValue jsObjectSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue nameValue, JSValue value)
+// `delete object.key` in strict code. False: an exception.
+static bool deletePropertyOrThrow(JSGlobalObject* globalObject, JSObject* object, const Identifier& key)
 {
-    if (!ensureMainThreadForJS(globalObject))
-        return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* name = attributeName(globalObject, nameValue);
-    RETURN_IF_EXCEPTION(scope, { });
-    Identifier key;
-    if (failed(scope, propertyKeyForAttribute(globalObject, asObject(self), name, key)))
-        return { };
-    PutPropertySlot slot(self, true);
-    asObject(self)->methodTable()->put(asObject(self), globalObject, key, value, slot);
-    RETURN_IF_EXCEPTION(scope, { });
-    return jsUndefined();
+    bool isDeleted = JSCell::deleteProperty(object, globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isDeleted)
+        throwTypeError(globalObject, scope, UnableToDeletePropertyError);
+    return isDeleted;
 }
 
-static JSValue jsObjectDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+static ALWAYS_INLINE void setOrDeletePropertyForAttribute(JSGlobalObject* globalObject, JSObject* object, JSString* name, JSValue value)
 {
     if (!ensureMainThreadForJS(globalObject))
-        return { };
+        return;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* name = attributeName(globalObject, nameValue);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSObject* object = asObject(self);
     Identifier key;
     if (failed(scope, propertyKeyForAttribute(globalObject, object, name, key)))
-        return { };
-    bool had = object->hasProperty(globalObject, key);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!had)
-        return raiseAttributeError(globalObject, scope, self, name, makeString('\'', typeName(globalObject, self), "' object has no attribute '"_s, stringOf(name), '\''));
-    bool isDeleted = JSCell::deleteProperty(object, globalObject, key);
-    RETURN_IF_EXCEPTION(scope, { });
-    // As in strict code.
-    if (!isDeleted) {
-        throwTypeError(globalObject, scope, UnableToDeletePropertyError);
-        return { };
+        return;
+    // No other mapping can take the place of the properties, and a property of that name would be in the way of them.
+    if (key.impl() == runtime(globalObject).names.dDict()->tryGetValueImpl()) [[unlikely]] {
+        raiseAttributeError(globalObject, scope, object, name, makeString("attribute '__dict__' of '"_s, typeName(globalObject, object), "' objects is not writable"_s));
+        return;
     }
+    if (value) {
+        PutPropertySlot slot(object, true);
+        scope.release();
+        object->methodTable()->put(object, globalObject, key, value, slot);
+        return;
+    }
+    // What an instance of a class of Python's inherits is not its own to delete: `del instance.method`. (Of another object JS deletes
+    // nothing then, and says nothing.)
+    bool had = typeByPrototype(object) ? object->hasOwnProperty(globalObject, key) : object->hasProperty(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!had) {
+        raiseAttributeError(globalObject, scope, object, name, makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
+        return;
+    }
+    scope.release();
+    deletePropertyOrThrow(globalObject, object, key);
+}
+
+void setPropertyOfJSForAttribute(JSGlobalObject* globalObject, JSObject* object, JSString* name, JSValue value)
+{
+    setOrDeletePropertyForAttribute(globalObject, object, name, value);
+}
+
+// No value: delete.
+template<bool isOfDerivedClass>
+static JSValue jsObjectSetOrDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue nameValue, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    // What the class and all its bases have for the name is asked first, object among them, which is not on the chain of prototypes
+    // (__class__). The property is what is left.
+    if constexpr (isOfDerivedClass)
+        genericSetAttrAsGiven(globalObject, self, name, nameValue, value);
+    else
+        setOrDeletePropertyForAttribute(globalObject, asObject(self), name, value);
+    RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
+}
+
+template<bool isOfDerivedClass>
+static JSValue jsObjectDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+{
+    return jsObjectSetOrDelAttr<isOfDerivedClass>(globalObject, self, nameValue, { });
+}
+
+static constexpr NativeDef methodsOfDerivedClasses[] = {
+    PY_SLOT("__getattribute__", jsObjectGetAttributeImpl<true>, "($self, name, /)"),
+    PY_SLOT("__setattr__", jsObjectSetOrDelAttr<true>, "($self, name, value, /)"),
+    PY_SLOT("__delattr__", jsObjectDelAttr<true>, "($self, name, /)"),
+};
+
+void addMethodsOfDerivedClasses(JSGlobalObject* globalObject, PyType* type)
+{
+    VM& vm = getVM(globalObject);
+    for (auto& def : methodsOfDerivedClasses)
+        type->dict()->set(vm, internString(vm, def.name), PyNativeFunction::create(globalObject, def, NativeKind::SlotWrapper, { }, type));
+    type->didChange(vm);
 }
 
 // object[key]: a str or an int is the name of a property. False: a TypeError.
@@ -543,13 +679,8 @@ static JSValue jsObjectDelItem(JSGlobalObject* globalObject, JSValue self, JSVal
     RETURN_IF_EXCEPTION(scope, { });
     if (!had)
         return raiseKeyError(globalObject, scope, key);
-    bool isDeleted = JSCell::deleteProperty(object, globalObject, name);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!isDeleted) {
-        throwTypeError(globalObject, scope, UnableToDeletePropertyError);
-        return { };
-    }
-    return jsUndefined();
+    scope.release();
+    return deletePropertyOrThrow(globalObject, object, name) ? jsUndefined() : JSValue();
 }
 
 static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSValue key)
@@ -581,6 +712,19 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
     return jsBoolean(has);
 }
 
+static JSArray* listOfNames(JSGlobalObject* globalObject, const PropertyNameArrayBuilder& names, bool isReversed = false)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* list = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (size_t i = 0; i < names.size(); ++i) {
+        listAppend(globalObject, list, jsString(vm, names[isReversed ? names.size() - 1 - i : i].string()));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return list;
+}
+
 static JSArray* ownPropertyNames(JSGlobalObject* globalObject, JSObject* object, DontEnumPropertiesMode mode)
 {
     VM& vm = getVM(globalObject);
@@ -588,13 +732,7 @@ static JSArray* ownPropertyNames(JSGlobalObject* globalObject, JSObject* object,
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, globalObject, names, mode);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* list = newList(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    for (auto& name : names) {
-        listAppend(globalObject, list, jsString(vm, name.string()));
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    return list;
+    RELEASE_AND_RETURN(scope, listOfNames(globalObject, names));
 }
 
 // ---- Iterators of JS, as iterators of Python ----
@@ -904,6 +1042,343 @@ static JSValue jsObjectPop(JSGlobalObject* globalObject, JSValue self, JSValue k
     }
     scope.release();
     return jsObjectDelItem(globalObject, self, key) ? value : JSValue();
+}
+
+// ---- instance.__dict__, for an instance of a class of Python's that derives from one of JS's ----
+
+// The mapping of the object's own properties that have a str for a name: they are what another instance has in its __dict__. The object
+// itself will not do: object[key] finds what it inherits too, the attributes of its class among that (so functools.cached_property
+// would find itself), and a Map is the mapping of its entries. The elements of a typed array are no attributes of it.
+enum JSPropertiesField : unsigned { JSPropertiesObject, JSPropertiesFieldCount };
+
+static JSObject* objectOfProperties(JSValue self) { return asObject(uncheckedDowncast<PyRecord>(self.asCell())->get(JSPropertiesObject)); }
+
+static bool isJSProperties(JSGlobalObject*, JSValue);
+
+// False: an exception, or, without one, the key is the name of no attribute.
+static bool nameOfAttributeFor(JSGlobalObject* globalObject, JSObject* object, JSValue key, Identifier& name)
+{
+    // (What cannot be hashed is refused, as by the dict.)
+    if (!isStr(key)) {
+        hash(globalObject, key);
+        return false;
+    }
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    name = propertyKeyFor(globalObject, strValue(key));
+    RETURN_IF_EXCEPTION(scope, false);
+    return !isTypedArrayType(object->type()) || !isCanonicalNumericIndexString(name.impl());
+}
+
+// Whether the object has the property. `value`, if not null, takes what it is: to ask that may run a getter.
+static bool ownPropertyFor(JSGlobalObject* globalObject, JSObject* object, JSValue key, Identifier& name, JSValue* value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isName = nameOfAttributeFor(globalObject, object, key, name);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isName)
+        return false;
+    if (value || !runtime(globalObject).threads().isMainThread()) {
+        JSValue read = readProperty<true>(globalObject, object, object, name);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (value)
+            *value = read;
+        return !!read;
+    }
+    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    RELEASE_AND_RETURN(scope, object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot));
+}
+
+static JSValue jsPropertiesGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier name;
+    JSValue value;
+    bool found = ownPropertyFor(globalObject, objectOfProperties(self), key, name, &value);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!found)
+        return raiseKeyError(globalObject, scope, key);
+    return value;
+}
+
+static JSValue jsPropertiesContains(JSGlobalObject* globalObject, JSValue self, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier name;
+    bool found = ownPropertyFor(globalObject, objectOfProperties(self), key, name, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsBoolean(found);
+}
+
+// As a store into a __dict__, this goes past whatever the class has for the name: the property is defined, not assigned to. One that is
+// there and holds a value is given the new one and stays as it is otherwise.
+static JSValue jsPropertiesSetItem(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue value)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = objectOfProperties(self);
+    Identifier name;
+    bool isName = nameOfAttributeFor(globalObject, object, key, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isName) {
+        if (isStr(key))
+            return raiseTypeError(globalObject, scope, "an element of a typed array is no attribute of it"_s);
+        return raiseTypeError(globalObject, scope, "the names of the properties of a JavaScript object are str, not "_s, typeName(globalObject, key));
+    }
+    PropertyDescriptor present;
+    bool found = object->getOwnPropertyDescriptor(globalObject, name, present);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (found && present.isDataDescriptor()) {
+        PropertyDescriptor onlyValue;
+        onlyValue.setValue(value);
+        object->methodTable()->defineOwnProperty(object, globalObject, name, onlyValue, true);
+    } else
+        object->createDataProperty(globalObject, name, value, true);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsUndefined();
+}
+
+// `value`: takes what the property was, if it is not null.
+static bool removeProperty(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue* value, bool& found)
+{
+    found = false;
+    if (!ensureMainThreadForJS(globalObject))
+        return false;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = objectOfProperties(self);
+    Identifier name;
+    found = ownPropertyFor(globalObject, object, key, name, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!found)
+        return true;
+    RELEASE_AND_RETURN(scope, deletePropertyOrThrow(globalObject, object, name));
+}
+
+static JSValue jsPropertiesDelItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool found;
+    if (failed(scope, removeProperty(globalObject, self, key, nullptr, found)))
+        return { };
+    if (!found)
+        return raiseKeyError(globalObject, scope, key);
+    return jsUndefined();
+}
+
+// False: an exception.
+static bool namesOfProperties(JSGlobalObject* globalObject, JSValue self, PropertyNameArrayBuilder& names)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return false;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = objectOfProperties(self);
+    if (isTypedArrayType(object->type()))
+        object->getOwnNonIndexPropertyNames(globalObject, names, DontEnumPropertiesMode::Include);
+    else
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
+    return !scope.exception();
+}
+
+template<bool isReversed>
+static JSValue jsPropertiesIter(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    if (failed(scope, namesOfProperties(globalObject, self, names)))
+        return { };
+    JSArray* list = listOfNames(globalObject, names, isReversed);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, getIter(globalObject, list));
+}
+
+static JSValue jsPropertiesLen(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    if (failed(scope, namesOfProperties(globalObject, self, names)))
+        return { };
+    return jsNumber(names.size());
+}
+
+// (MutableMapping.pop() asks `self` for a mark of the class.)
+static JSValue jsPropertiesPop(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue defaultValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value;
+    bool found;
+    if (failed(scope, removeProperty(globalObject, self, key, &value, found)))
+        return { };
+    if (found)
+        return value;
+    if (defaultValue)
+        return defaultValue;
+    return raiseKeyError(globalObject, scope, key);
+}
+
+// The last, as of a dict. (MutableMapping.popitem() takes the first.)
+static JSValue jsPropertiesPopItem(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    if (failed(scope, namesOfProperties(globalObject, self, names)))
+        return { };
+    if (!names.size())
+        return raiseKeyError(globalObject, scope, makeStr(vm, "popitem(): dictionary is empty"_s));
+    JSValue key = jsString(vm, names[names.size() - 1].string());
+    JSValue value;
+    bool found;
+    if (failed(scope, removeProperty(globalObject, self, key, &value, found)))
+        return { };
+    return PyTuple::create(globalObject, { key, found ? value : jsUndefined() });
+}
+
+static JSValue jsPropertiesClear(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    if (failed(scope, namesOfProperties(globalObject, self, names)))
+        return { };
+    for (auto& name : names) {
+        if (failed(scope, deletePropertyOrThrow(globalObject, objectOfProperties(self), name)))
+            return { };
+    }
+    return jsUndefined();
+}
+
+// The dict that it stands for, as it is now.
+static JSValue jsPropertiesCopy(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* dict = PyDict::create(globalObject);
+    dictUpdateFromMapping(globalObject, dict, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    return dict;
+}
+
+static JSValue jsPropertiesRepr(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Every instance.__dict__ is another object, of the same properties.
+    ReprGuard guard(globalObject, objectOfProperties(self));
+    if (guard.isRecursive())
+        return makeStr(vm, "{...}"_s);
+    JSValue dict = jsPropertiesCopy(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, repr(globalObject, dict));
+}
+
+// With a dict, or another of these, as a dict: the result is one.
+template<bool isReflected>
+static JSValue jsPropertiesOr(JSGlobalObject* globalObject, JSValue self, JSValue other)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!PyDict::is(other) && !isJSProperties(globalObject, other))
+        return runtime(globalObject).notImplemented();
+    PyDict* dict = PyDict::create(globalObject);
+    dictUpdateFromMapping(globalObject, dict, isReflected ? other : self);
+    RETURN_IF_EXCEPTION(scope, { });
+    dictUpdateFromMapping(globalObject, dict, isReflected ? self : other);
+    RETURN_IF_EXCEPTION(scope, { });
+    return dict;
+}
+
+static JSValue jsPropertiesIOr(JSGlobalObject* globalObject, JSValue self, JSValue other)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    callMethod(globalObject, self, internString(vm, "update"_s), other);
+    RETURN_IF_EXCEPTION(scope, { });
+    return self;
+}
+
+static constexpr NativeDef jsPropertiesMethods[] = {
+    PY_SLOT("__getitem__", jsPropertiesGetItem, "($self, key, /)"),
+    PY_SLOT("__setitem__", jsPropertiesSetItem, "($self, key, value, /)"),
+    PY_SLOT("__delitem__", jsPropertiesDelItem, "($self, key, /)"),
+    PY_SLOT("__contains__", jsPropertiesContains, "($self, key, /)"),
+    PY_SLOT("__iter__", jsPropertiesIter<false>, "($self, /)"),
+    PY_SLOT("__len__", jsPropertiesLen, "($self, /)"),
+    PY_SLOT("__repr__", jsPropertiesRepr, "($self, /)"),
+    PY_SLOT("__eq__", jsObjectMappingMethod<"__eq__">, "($self, *args, **kwargs)"),
+    PY_SLOT("__or__", jsPropertiesOr<false>, "($self, value, /)"),
+    PY_SLOT("__ror__", jsPropertiesOr<true>, "($self, value, /)"),
+    PY_SLOT("__ior__", jsPropertiesIOr, "($self, value, /)"),
+    PY_METHOD("__reversed__", jsPropertiesIter<true>, "($self, /)"),
+    PY_METHOD("copy", jsPropertiesCopy, "($self, /)"),
+    PY_METHOD("keys", jsObjectMappingMethod<"keys">, "($self, *args, **kwargs)"),
+    PY_METHOD("values", jsObjectMappingMethod<"values">, "($self, *args, **kwargs)"),
+    PY_METHOD("items", jsObjectMappingMethod<"items">, "($self, *args, **kwargs)"),
+    PY_METHOD("get", jsObjectMappingMethod<"get">, "($self, *args, **kwargs)"),
+    PY_METHOD("pop", jsPropertiesPop, "($self, key, default=<unrepresentable>, /)"),
+    PY_METHOD("popitem", jsPropertiesPopItem, "($self, /)"),
+    PY_METHOD("setdefault", jsObjectMappingMethod<"setdefault">, "($self, *args, **kwargs)"),
+    PY_METHOD("update", jsObjectMappingMethod<"update">, "($self, *args, **kwargs)"),
+    PY_METHOD("clear", jsPropertiesClear, "($self, /)"),
+};
+
+static void registerAsMutableMapping(JSGlobalObject* globalObject, std::initializer_list<PyType*> types)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue module = importModule(globalObject, "_collections_abc"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue mutableMapping = getAttr(globalObject, module, internString(vm, "MutableMapping"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    for (PyType* type : types) {
+        callMethod(globalObject, mutableMapping, internString(vm, "register"_s), type);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+static constexpr TypeDef jsPropertiesTypeDef { "_js.JSProperties"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation, TypeFlag::Mapping }, jsPropertiesMethods, { }, { } };
+
+static bool isJSProperties(JSGlobalObject* globalObject, JSValue value)
+{
+    return typeOf(globalObject, value) == runtime(globalObject).typeIfMadeFor(jsPropertiesTypeDef);
+}
+
+// Null: an exception.
+static PyType* jsPropertiesType(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* type = rt.typeFor(jsPropertiesTypeDef);
+    // When it is first asked for: collections.abc.MutableMapping.register(JSProperties), and then, with __eq__ and without __hash__, it cannot be hashed.
+    if (!type->dict()->get(rt.name(Special::Hash))) [[unlikely]] {
+        registerAsMutableMapping(globalObject, { type });
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        type->dict()->set(vm, rt.name(Special::Hash), jsUndefined());
+        type->didChange(vm);
+    }
+    return type;
+}
+
+JSValue propertiesOfObjectOfJS(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* type = jsPropertiesType(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyRecord* record = PyRecord::create(globalObject, type, JSPropertiesFieldCount);
+    record->set(vm, JSPropertiesObject, object);
+    return record;
 }
 
 // ---- `with object:` is `using`, and `async with object:` is `await using` ----
@@ -1426,8 +1901,8 @@ static JSValue jsFunctionSubclassCheck(JSGlobalObject* globalObject, JSValue sel
 
 static constexpr NativeDef jsObjectMethods[] = {
     PY_SLOT("__getattribute__", jsObjectGetAttribute, "($self, name, /)"),
-    PY_SLOT("__setattr__", jsObjectSetAttr, "($self, name, value, /)"),
-    PY_SLOT("__delattr__", jsObjectDelAttr, "($self, name, /)"),
+    PY_SLOT("__setattr__", jsObjectSetOrDelAttr<false>, "($self, name, value, /)"),
+    PY_SLOT("__delattr__", jsObjectDelAttr<false>, "($self, name, /)"),
     PY_SLOT("__getitem__", jsObjectGetItem, "($self, key, /)"),
     PY_SLOT("__setitem__", jsObjectSetItem, "($self, key, value, /)"),
     PY_SLOT("__delitem__", jsObjectDelItem, "($self, key, /)"),
@@ -1708,7 +2183,7 @@ static JSValue jsGeneratorGetAttribute(JSGlobalObject* globalObject, JSValue sel
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
     if (stringOf(name) == "throw"_s)
-        RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, name));
+        RELEASE_AND_RETURN(scope, genericGetAttrOfType(globalObject, self, name));
     RELEASE_AND_RETURN(scope, jsObjectGetAttribute(globalObject, self, nameValue));
 }
 
@@ -1867,6 +2342,9 @@ void executeGlobalObjectModule(JSGlobalObject* globalObject, PyModule* module)
 void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
 {
     Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    PyType* propertiesType = jsPropertiesType(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "globalThis"_s, globalObject->globalThis());
     module->add(globalObject, "JSError"_s, rt.JSError());
     module->add(globalObject, "JSTypeError"_s, jsTypeErrorType(globalObject));
@@ -1878,6 +2356,7 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "JSGenerator"_s, jsGeneratorType(rt));
     module->add(globalObject, "JSTypedArray"_s, jsTypedArrayType(rt));
     module->add(globalObject, "JSMap"_s, jsMapType(rt));
+    module->add(globalObject, "JSProperties"_s, propertiesType);
     module->add(globalObject, "JSMethod"_s, jsMethodType(rt));
     module->addFunctions(globalObject, jsModuleFunctions);
 }
@@ -1887,22 +2366,13 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
 void registerInteropTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue module = importModule(globalObject, "_collections_abc"_s);
-    RETURN_IF_EXCEPTION(scope, void());
-    JSValue mutableMapping = getAttr(globalObject, module, internString(vm, "MutableMapping"_s));
-    RETURN_IF_EXCEPTION(scope, void());
-    callMethod(globalObject, mutableMapping, internString(vm, "register"_s), rt.jsPlainObjectType());
-    RETURN_IF_EXCEPTION(scope, void());
-    scope.release();
-    callMethod(globalObject, mutableMapping, internString(vm, "register"_s), jsMapType(rt));
+    registerAsMutableMapping(globalObject, { rt.jsPlainObjectType(), jsMapType(rt) });
 }
 
 void initializeInteropTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    rt.jsObjectType()->initializeBuiltin(globalObject, { "JSObject"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout }, jsObjectMethods, { }, { } }, rt.typeType(), rt.objectType());
+    rt.jsObjectType()->initializeBuiltin(globalObject, { "JSObject"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::AttributesAreProperties }, jsObjectMethods, { }, { } }, rt.typeType(), rt.objectType());
     rt.jsPlainObjectType()->initializeBuiltin(globalObject, { "JSPlainObject"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Mapping }, { }, { }, { } }, rt.typeType(), rt.jsObjectType());
     rt.jsFunctionType()->initializeBuiltin(globalObject, { "JSFunction"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref }, jsFunctionMethods, jsFunctionGetSets, { } }, rt.typeType(), rt.jsObjectType());
     rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout }, jsPromiseMethods, { }, { } }, rt.typeType(), rt.jsObjectType());

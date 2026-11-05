@@ -280,6 +280,26 @@ static JSValue lookupFollowing(PyType* start, PyType* type, bool includingType, 
     return { };
 }
 
+// (class Both(Plain, js.Map): the __dict__ that Plain gives its instances is not for one that has none.)
+static JSValue lookupForInstanceOfDerivedClass(PyType* start, PyType* type, bool includingType, JSString* name)
+{
+    JSValue found = lookupFollowing(start, type, includingType, name);
+    return found && start->has(TypeFlag::AttributesAreProperties) && isDictDescriptorOfInstances(found) ? JSValue() : found;
+}
+
+JSValue lookupBeforeClassOfJS(PyType* type, JSString* name)
+{
+    return lookupForInstanceOfDerivedClass(type, type, true, name);
+}
+
+JSObject* prototypeBehindViews(JSObject* object)
+{
+    JSValue prototype = object->getPrototypeDirect();
+    while (prototype.isObject() && prototype.inherits<PyPrototypeView>())
+        prototype = asObject(prototype)->getPrototypeDirect();
+    return prototype.isObject() ? asObject(prototype) : nullptr;
+}
+
 // Type.prototype.name.call(instance, ...) is Type.name(instance, ...).
 static constexpr unsigned unboundMethodField = 0;
 
@@ -358,7 +378,7 @@ bool PyPrototypeView::getOwnPropertySlot(JSObject* object, JSGlobalObject*, Prop
         slot.setValue(object, hidden, unboundForJS(globalObject, name, found));
         return true;
     }
-    JSValue found = lookupFollowing(start, type, !view->isSuper(), name);
+    JSValue found = lookupForInstanceOfDerivedClass(start, type, !view->isSuper(), name);
     if (!found)
         return false;
     JSValue bound = bindDescriptor(globalObject, found, instance, start);
@@ -868,7 +888,8 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
     JSValue parent = constructor->getPrototype(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyType* base;
-    if (parent.isObject() && asObject(parent)->isConstructor() && !PyType::is(parent)) {
+    bool extendsClassOfJS = parent.isObject() && asObject(parent)->isConstructor() && !PyType::is(parent);
+    if (extendsClassOfJS) {
         base = typeForClassOfJS(globalObject, asObject(parent));
         RETURN_IF_EXCEPTION(scope, nullptr);
     } else if (constructor == realm->promiseConstructor())
@@ -891,9 +912,10 @@ PyType* typeForClassOfJS(JSGlobalObject* globalObject, JSObject* constructor)
     JSValue made = call(globalObject, rt.typeType(), nameValue.isString() ? nameValue : JSValue(jsEmptyString(vm)), PyTuple::create(globalObject, { base }), ns);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyType* type = PyType::from(made);
+    if (!extendsClassOfJS)
+        addMethodsOfDerivedClasses(globalObject, type);
     // An instance is made by one class of JS.
     type->setSolidBase(vm, type);
-    type->add(TypeFlag::AttributesAreProperties);
     type->setJSPrototype(vm, asObject(prototype));
     types->set(vm, constructor, type);
     return type;

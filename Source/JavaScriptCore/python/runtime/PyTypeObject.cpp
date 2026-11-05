@@ -619,9 +619,6 @@ static JSValue builtinInstanceGetDict(JSGlobalObject* globalObject, JSValue self
 {
     if (PyDict* dict = instanceDict(globalObject, self, true))
         return dict;
-    // class Both(Plain, js.Map): the __dict__ of Plain is found first. An object of JS's is the mapping of its attributes itself.
-    if (typeOf(globalObject, self)->has(TypeFlag::AttributesAreProperties))
-        return self;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     return raise(globalObject, scope, runtime(globalObject).AttributeError(), "This object has no __dict__"_s);
@@ -710,6 +707,11 @@ static constexpr NativeGetSet builtinInstanceDictGetSet[] = { { "__dict__"_s, bu
 static constexpr NativeGetSet instanceWeakrefGetSet[] = { { "__weakref__"_s, instanceGetWeakref, nullptr, false, "list of weak references to the object"_s } };
 
 std::span<const NativeGetSet> dictGetSet() { return builtinInstanceDictGetSet; }
+bool isDictDescriptorOfInstances(JSValue descriptor)
+{
+    auto* getSet = descriptor.isCell() ? dynamicDowncast<PyGetSetDescriptor>(descriptor.asCell()) : nullptr;
+    return getSet && &getSet->def() == &instanceDictGetSet[0];
+}
 std::span<const NativeGetSet> weakrefGetSet() { return instanceWeakrefGetSet; }
 
 // ---- type: attributes ----
