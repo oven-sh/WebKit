@@ -6,6 +6,7 @@
 #pragma once
 
 #include "PyCompiler.h"
+#include "PyFormatParts.h"
 
 namespace JSC {
 namespace Python {
@@ -457,6 +458,8 @@ private:
     RegisterID* boolOp(AST::BoolOp*, RegisterID* dst);
     void boolOperand(Expr*, RegisterID* result, Label* ifTrue, Label* ifFalse, const Range& rangeOfTest, const Range& rangeOfOperation, Label& whenConstantSettles, Label* endOfNested);
     RegisterID* chain(AST::Expr*, RegisterID* dst);
+    static bool takeFormatApart(AST::BinOp*, Vector<PartOfFormat, 8>&);
+    RegisterID* formatTakenApart(AST::BinOp*, const Vector<PartOfFormat, 8>&, RegisterID* dst);
     RegisterID* unaryOp(AST::UnaryOp*, RegisterID* dst);
     RegisterID* ifExp(AST::IfExp*, RegisterID* dst);
     RegisterID* compare(AST::Compare*, RegisterID* dst);
@@ -566,6 +569,7 @@ private:
     int m_markedLine { -1 }; // What line() was last given, and where in the instructions.
     Range m_place; // All of it, if more than the line was given.
     size_t m_markedPosition { 0 };
+    size_t m_start { 0 }; // Where the program's own code begins.
     unsigned m_sameLineDepth { 0 };
     bool m_cannotBeReached { false }; // See deadStatements().
     size_t m_statementStart { std::numeric_limits<size_t>::max() }; // Where in the instructions the last statement begins.

@@ -708,18 +708,71 @@ RegisterID* Unit::attributeOfSuper(Attribute* node, RegisterID* dst, RegisterID*
     return dst;
 }
 
+bool Unit::takeFormatApart(BinOp* node, Vector<PartOfFormat, 8>& parts)
+{
+    auto* literal = node->left->tryAs<Constant>();
+    auto* tuple = node->right->tryAs<Tuple>();
+    if (node->op != Operator::Mod || !literal || literal->value.kind != ConstantValue::Kind::Str || !tuple)
+        return false;
+    for (Expr* item : tuple->elts) {
+        if (item->is<Starred>())
+            return false;
+    }
+    return Python::takeFormatApart(StringView(literal->value.string), tuple->elts.size(), parts);
+}
+
+RegisterID* Unit::formatTakenApart(BinOp* node, const Vector<PartOfFormat, 8>& parts, RegisterID* dst)
+{
+    // The tree that CPython makes of it, for as long as it takes to go through it.
+    Vector<Constant, 16> constants;
+    Vector<FormattedValue, 8> fields;
+    Vector<Expr*, 8> values;
+    constants.reserveInitialCapacity(parts.size());
+    fields.reserveInitialCapacity(parts.size());
+    auto constantOf = [&](const String& text) -> Expr* {
+        constants.append(Constant { Range { } });
+        constants.last().value.kind = ConstantValue::Kind::Str;
+        constants.last().value.string = text.impl();
+        return &constants.last();
+    };
+    Expr** item = node->right->as<Tuple>()->elts.begin();
+    for (auto& part : parts) {
+        if (!part.conversion) {
+            values.append(constantOf(part.text));
+            continue;
+        }
+        fields.append(FormattedValue { (*item)->range });
+        fields.last().value = *item++;
+        fields.last().conversion = part.conversion;
+        fields.last().formatSpec = part.text.isNull() ? nullptr : constantOf(part.text);
+        values.append(&fields.last());
+    }
+    // What is on no line is of the line before. At the very beginning that is the line on which the code is entered, which is told of then.
+    if (!parts.isEmpty() && !parts[0].conversion && m_markedLine == -1 && g.instructions().size() == m_start && !m_sameLineDepth) {
+        m_place = { };
+        markLine(m_scope->kind == ScopeKind::Module ? 0 : m_info.firstLineNumber);
+    }
+    JoinedStr joined { node->range };
+    joined.values = { values.mutableSpan().data(), values.size() };
+    return joinedStr(&joined, dst);
+}
+
 // a + b + c, a.b.c and a[b][c] nest to the left, as deep as they are long. So that is a loop: down to what is evaluated first,
 // and back up.
 RegisterID* Unit::chain(Expr* node, RegisterID* dst)
 {
     unsigned temporaryOfWhole = takeTemporary(node);
     Vector<Expr*, 8> chain;
+    Vector<PartOfFormat, 8> format;
+    bool isFormat = false;
     JSValue constant;
     while (true) {
         Expr* first = nullptr;
         switch (node->kind) {
         case ExprKind::BinOp:
-            if (!tryConstantValue(node, constant))
+            format.clear();
+            isFormat = takeFormatApart(node->as<BinOp>(), format);
+            if (!isFormat && !tryConstantValue(node, constant))
                 first = node->as<BinOp>()->left;
             break;
         case ExprKind::Attribute:
@@ -740,7 +793,7 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
         node = first;
     }
     // Operations on constants are worked out now, from the left, for as long as they are on constants: 60 * 60 * x.
-    Expr* workedOut = node->is<BinOp>() ? node : nullptr;
+    Expr* workedOut = node->is<BinOp>() && !isFormat ? node : nullptr;
     if (!workedOut)
         constant = !chain.isEmpty() && !chain.last()->is<Attribute>() && (node->is<Constant>() || node->is<UnaryOp>() || node->is<Tuple>()) ? valueCPythonsCompilerWorksOut(node) : JSValue();
     while (constant && !chain.isEmpty() && !chain.last()->is<Attribute>()) {
@@ -762,6 +815,8 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
             return load(dst, constant);
     }
 
+    if (chain.isEmpty() && isFormat)
+        return formatTakenApart(node->as<BinOp>(), format, dst);
     if (chain.isEmpty()) {
         Reg result = g.finalDestination(dst);
         return attributeOfSuper(node->as<Attribute>(), result.get(), nullptr);
@@ -772,6 +827,8 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
     Reg result;
     if (workedOut)
         result = load(nullptr, constant);
+    else if (isFormat)
+        result = formatTakenApart(node->as<BinOp>(), format, nullptr);
     else if (node->is<Attribute>()) {
         result = newTemporary();
         attributeOfSuper(node->as<Attribute>(), result.get(), nullptr);
@@ -1660,7 +1717,7 @@ RegisterID* Unit::formattedValue(FormattedValue* node, RegisterID* dst)
     load(arguments[1], jsNumber(conversion));
     // The value is converted before what is in the format spec is looked at: f'{x!r:{width}}'.
     auto* spec = node->formatSpec ? node->formatSpec->tryAs<JoinedStr>() : nullptr;
-    bool specRunsCode = node->formatSpec && !spec;
+    bool specRunsCode = node->formatSpec && !spec && !node->formatSpec->is<Constant>();
     if (spec) {
         for (Expr* part : spec->values)
             specRunsCode |= !part->is<Constant>();
@@ -1681,8 +1738,11 @@ RegisterID* Unit::formattedValue(FormattedValue* node, RegisterID* dst)
 RegisterID* Unit::joinedStr(JoinedStr* node, RegisterID* dst)
 {
     unsigned count = node->values.size();
-    if (!count)
-        return load(dst, g.addStringConstant(vm().propertyNames->emptyIdentifier));
+    if (!count) {
+        JSValue empty = g.addStringConstant(vm().propertyNames->emptyIdentifier);
+        noteConstant(empty);
+        return load(dst, empty);
+    }
     if (count == 1)
         return expr(node->values[0], dst);
 

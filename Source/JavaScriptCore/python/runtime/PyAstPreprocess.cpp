@@ -8,6 +8,7 @@
 
 #include "Identifier.h"
 #include "JSCInlines.h"
+#include "PyFormatParts.h"
 #include "PyNumbers.h"
 #include "PySymbolTable.h"
 #include <wtf/text/MakeString.h>
@@ -181,108 +182,26 @@ private:
 
     // ---- 'format' % (a, b) as an f-string ----
 
-    // The text up to the next conversion. Null: there is none.
-    Expr* parseLiteral(StringView format, unsigned& position)
-    {
-        unsigned start = position;
-        bool hasPercents = false;
-        while (position < format.length()) {
-            if (format[position] != '%')
-                ++position;
-            else if (position + 1 < format.length() && format[position + 1] == '%') {
-                hasPercents = true;
-                position += 2;
-            } else
-                break;
-        }
-        if (position == start)
-            return nullptr;
-        String text = format.substring(start, position - start).toString();
-        if (hasPercents)
-            text = makeStringByReplacingAll(text, "%%"_s, "%"_s);
-        return makeStringConstant(text);
-    }
-
-    // One conversion, after the '%'. Null: not one this can do.
-    Expr* parseFormat(StringView format, unsigned& position, Expr* argument)
-    {
-        static constexpr int maxDigits = 3;
-        unsigned at = position;
-        char16_t c = 0;
-        auto next = [&] {
-            if (at >= format.length())
-                return false;
-            c = format[at++];
-            return true;
-        };
-        auto number = [&](int& result) {
-            result = 0;
-            int digits = 0;
-            while (c >= '0' && c <= '9') {
-                result = result * 10 + (c - '0');
-                if (!next() || ++digits >= maxDigits)
-                    return false;
-            }
-            return true;
-        };
-
-        bool leftJustified = false;
-        while (true) {
-            if (!next())
-                return nullptr;
-            if (c == '-')
-                leftJustified = true;
-            else if (c != '+' && c != ' ' && c != '#' && c != '0')
-                break;
-        }
-        int width = -1;
-        int precision = -1;
-        if (c >= '0' && c <= '9' && !number(width))
-            return nullptr;
-        if (c == '.') {
-            if (!next() || !number(precision))
-                return nullptr;
-        }
-        position = at;
-        if (c != 's' && c != 'r' && c != 'a')
-            return nullptr;
-
-        StringBuilder spec;
-        if (!leftJustified && width > 0)
-            spec.append('>');
-        if (width >= 0)
-            spec.append(width);
-        if (precision >= 0)
-            spec.append('.', precision);
-        auto* result = m_arena.create<FormattedValue>(argument->range);
-        result->value = argument;
-        result->conversion = c;
-        result->formatSpec = spec.isEmpty() ? nullptr : makeStringConstant(spec.toString());
-        return result;
-    }
-
     void foldFormat(Expr*& node, StringView format, Seq<Expr*> items)
     {
-        Vector<Expr*, 16> parts;
-        unsigned position = 0;
-        unsigned count = 0;
-        while (true) {
-            if (Expr* literal = parseLiteral(format, position))
-                parts.append(literal);
-            if (position >= format.length())
-                break;
-            if (count >= items.size())
-                return;
-            ++position;
-            Expr* part = parseFormat(format, position, items[count++]);
-            if (!part)
-                return;
-            parts.append(part);
-        }
-        if (count < items.size())
+        Vector<PartOfFormat, 8> parts;
+        if (!takeFormatApart(format, items.size(), parts))
             return;
+        Vector<Expr*, 16> values;
+        Expr** item = items.begin();
+        for (auto& part : parts) {
+            if (!part.conversion) {
+                values.append(makeStringConstant(part.text));
+                continue;
+            }
+            auto* field = m_arena.create<FormattedValue>((*item)->range);
+            field->value = *item++;
+            field->conversion = part.conversion;
+            field->formatSpec = part.text.isNull() ? nullptr : makeStringConstant(part.text);
+            values.append(field);
+        }
         auto* joined = m_arena.create<JoinedStr>(node->range);
-        joined->values = m_arena.copy(parts);
+        joined->values = m_arena.copy(values);
         node = joined;
     }
 

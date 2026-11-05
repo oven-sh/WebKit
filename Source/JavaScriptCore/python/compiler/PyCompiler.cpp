@@ -1050,6 +1050,7 @@ void Unit::emitPrologue()
 
     g.addPythonMark(PythonMark::Start, 0);
     m_markedLine = -1;
+    m_start = g.instructions().size();
 }
 
 // Their order is what co_varnames, locals(), f_locals and co_cellvars show. In CPython that is: the parameters; the other variables that no inner

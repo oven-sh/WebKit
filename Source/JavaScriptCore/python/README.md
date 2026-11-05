@@ -374,6 +374,12 @@ how it was filled. In a `.pyc` file and in the cache a frozenset has its items i
 CPython's order as far as the items are written alike (there, whether an item is marked as one to refer back to goes by its reference count). What is written once may be compiled several times (a `finally` clause, for each way into it); a function, class or
 generator expression in there is compiled once (`Unit::m_compiledCode`) and is one constant, as in CPython, where the copies are equal. Constants of the same type and value
 are one constant of a code object, and one object (`Unit::merged()`): tuples, bytes, frozensets, slices, complex numbers, ints and floats that are objects, strs that were worked out.
+The order in which CPython's compiler does things shows. It makes a constant of a slice whose parts are literals, before it works out what `-1` is: `x[1:2]` has a slice among the constants and `'abc'[1:]`
+is worked out, `x[:-2]` has `-2` and `'abc'[-2:]` is left to the program. (Here the slice of `x[:-2]` is a constant all the same. It is not shown.) It works out `not` of a literal before it
+makes tuples or negative numbers: `not 1` is a constant, `not ()` and `not -300` are not. And before all that `'a%sb%5r' % (x, y)` becomes `f'a{x!s}b{y!r:>5}'`, if the format is a literal with nothing
+in it but `%s`, `%r`, `%a` and `%%`, with or without flags, a width and a precision of at most two digits, and the tuple is written out, without a `*`, and has as many items
+(`Unit::takeFormatApart()`). That shows in the constants (`'a'`, `'b'`, `'>5'`) and in the lines: the pieces of text are on no line, so they are of the line before, and a statement that begins
+with one and goes over several lines is first heard of on the line of the first item. At the very beginning of a function the line before is that of the `def`, which is told of then; in a module it is line 0.
 
 `Name(...)`, where the name looks like that of a class, is compiled so that, if it is a class with `object.__new__` and an `__init__`
 in Python, the instance is made and `__init__` called without leaving the interpreter (`op_py_prepare_construct`).
