@@ -346,15 +346,15 @@ static char32_t unicodeDataOldDecomposition(char32_t c)
     }
 }
 
-static void unicodeDataAppendNewDecomposition(Vector<char32_t, 64>& characters, char32_t c, bool isCompatibility, const UNormalizer2* decomposer, bool& failed)
+static void unicodeDataAppendNewDecomposition(Vector<char32_t, 64>& characters, char32_t c, bool isCompatibility, const UNormalizer2* decomposer, bool& failed, bool& hasRoom)
 {
     if (auto* entry = unicodeDataNewDecomposition(c)) {
         if (!entry->length || (entry->type != U_DT_CANONICAL && !isCompatibility)) {
-            characters.append(c);
+            hasRoom &= characters.tryAppend(c);
             return;
         }
         for (unsigned i = 0; i < entry->length; ++i)
-            unicodeDataAppendNewDecomposition(characters, entry->parts[i], isCompatibility, decomposer, failed);
+            unicodeDataAppendNewDecomposition(characters, entry->parts[i], isCompatibility, decomposer, failed, hasRoom);
         return;
     }
     char16_t buffer[32];
@@ -362,19 +362,19 @@ static void unicodeDataAppendNewDecomposition(Vector<char32_t, 64>& characters, 
     int32_t length = unorm2_getDecomposition(decomposer, static_cast<UChar32>(c), buffer, std::size(buffer), &status);
     failed |= U_FAILURE(status);
     if (length < 0 || U_FAILURE(status)) {
-        characters.append(c);
+        hasRoom &= characters.tryAppend(c);
         return;
     }
     for (char32_t part : StringView(std::span<const char16_t>(buffer, length)).codePoints())
-        characters.append(part);
+        hasRoom &= characters.tryAppend(part);
 }
 
-// The algorithm of UAX #15, character by character, with what ICU knows about each. A null string: ICU failed.
+// The algorithm of UAX #15, character by character, with what ICU knows about each. A null string: ICU failed, or there is no room.
 //
 // For Unicode 3.2.0, as CPython has it: characters that have been added since do not decompose, but are put in order and composed
 // like any others. For the current version: for strings with characters that ICU does not know.
 template<UnicodeVersion version>
-static String unicodeDataNormalizedSlowly(const String& string, UnicodeForm form)
+static String unicodeDataNormalizedSlowly(const String& string, UnicodeForm form, bool& hasRoom)
 {
     bool isCompatibility = form == UnicodeForm::NFKC || form == UnicodeForm::NFKD;
     const UNormalizer2* decomposer = unicodeDataNormalizer(isCompatibility ? UnicodeForm::NFKD : UnicodeForm::NFD);
@@ -386,8 +386,8 @@ static String unicodeDataNormalizedSlowly(const String& string, UnicodeForm form
     for (char32_t c : StringView(string).codePoints()) {
         if constexpr (version == UnicodeVersion::Current) {
             bool failed = false;
-            unicodeDataAppendNewDecomposition(characters, c, isCompatibility, decomposer, failed);
-            if (failed)
+            unicodeDataAppendNewDecomposition(characters, c, isCompatibility, decomposer, failed, hasRoom);
+            if (failed || !hasRoom)
                 return { };
             continue;
         }
@@ -398,12 +398,14 @@ static String unicodeDataNormalizedSlowly(const String& string, UnicodeForm form
         int32_t length = unicodeDataIsNew(c) ? -1 : unorm2_getDecomposition(decomposer, static_cast<UChar32>(c), buffer, std::size(buffer), &status);
         if (U_FAILURE(status))
             return { };
-        if (length < 0) {
-            characters.append(c);
-            continue;
+        if (length < 0)
+            hasRoom &= characters.tryAppend(c);
+        else {
+            for (char32_t part : StringView(std::span<const char16_t>(buffer, length)).codePoints())
+                hasRoom &= characters.tryAppend(part);
         }
-        for (char32_t part : StringView(std::span<const char16_t>(buffer, length)).codePoints())
-            characters.append(part);
+        if (!hasRoom) [[unlikely]]
+            return { };
     }
 
     auto combiningClass = [](char32_t c) -> int {
@@ -455,16 +457,17 @@ static String unicodeDataNormalizedSlowly(const String& string, UnicodeForm form
     StrBuilder builder;
     for (char32_t c : characters)
         appendCodePoint(builder, c);
+    hasRoom = !builder.hasOverflowed();
     return builder.toStringOrNull();
 }
 
-// A null string: ICU failed.
-static String unicodeDataNormalized(const String& string, UnicodeForm form, UnicodeVersion version)
+// A null string: ICU failed, or there is no room.
+static String unicodeDataNormalized(const String& string, UnicodeForm form, UnicodeVersion version, bool& hasRoom)
 {
     if (string.containsOnlyASCII())
         return string;
     if (version == UnicodeVersion::Old) {
-        String result = unicodeDataNormalizedSlowly<UnicodeVersion::Old>(string, form);
+        String result = unicodeDataNormalizedSlowly<UnicodeVersion::Old>(string, form, hasRoom);
         return result == string ? string : result;
     }
     // Whatever decomposes, composes or combines without ICU knowing is a character that ICU takes to be unassigned.
@@ -472,7 +475,7 @@ static String unicodeDataNormalized(const String& string, UnicodeForm form, Unic
         for (char32_t c : StringView(string).codePoints()) {
             if (!unicodeDataFind(unicodeNewCategories, c))
                 continue;
-            String result = unicodeDataNormalizedSlowly<UnicodeVersion::Current>(string, form);
+            String result = unicodeDataNormalizedSlowly<UnicodeVersion::Current>(string, form, hasRoom);
             return result == string ? string : result;
         }
     }
@@ -480,8 +483,17 @@ static String unicodeDataNormalized(const String& string, UnicodeForm form, Unic
     if (!normalizer)
         return { };
 
-    auto characters = StringView(string).upconvertedCharacters();
-    auto source = characters.span();
+    // (Not upconvertedCharacters(), which ends the process where there is no room.)
+    Vector<char16_t, 32> upconverted;
+    std::span<const char16_t> source;
+    if (string.is8Bit()) {
+        hasRoom = upconverted.tryGrow(string.length());
+        if (!hasRoom) [[unlikely]]
+            return { };
+        StringImpl::copyCharacters(upconverted.mutableSpan(), string.span8());
+        source = upconverted.span();
+    } else
+        source = string.span16();
     UErrorCode status = U_ZERO_ERROR;
     if (unorm2_isNormalized(normalizer, source.data(), source.size(), &status) && U_SUCCESS(status))
         return string;
@@ -489,13 +501,21 @@ static String unicodeDataNormalized(const String& string, UnicodeForm form, Unic
     Vector<char16_t, 128> buffer(128);
     int32_t length = unorm2_normalize(normalizer, source.data(), source.size(), buffer.mutableSpan().data(), buffer.size(), &status);
     if (status == U_BUFFER_OVERFLOW_ERROR) {
-        buffer.grow(length);
+        hasRoom = buffer.tryGrow(length);
+        if (!hasRoom) [[unlikely]]
+            return { };
         status = U_ZERO_ERROR;
         length = unorm2_normalize(normalizer, source.data(), source.size(), buffer.mutableSpan().data(), buffer.size(), &status);
     }
+    hasRoom = status != U_MEMORY_ALLOCATION_ERROR;
     if (U_FAILURE(status))
         return { };
-    return String(buffer.span().first(length));
+    std::span<char16_t> characters;
+    RefPtr result = StringImpl::tryCreateUninitialized(length, characters);
+    hasRoom = !!result;
+    if (result) [[likely]]
+        StringImpl::copyCharacters(characters, buffer.span().first(length));
+    return result;
 }
 
 static std::optional<UnicodeForm> unicodeDataForm(const String& name)
@@ -525,7 +545,10 @@ static JSValue unicodeDataNormalize(JSGlobalObject* globalObject, JSValue formVa
     auto form = unicodeDataForm(formName);
     if (!form)
         return raiseValueError(globalObject, scope, "invalid normalization form"_s);
-    String result = unicodeDataNormalized(string, *form, version);
+    bool hasRoom = true;
+    String result = unicodeDataNormalized(string, *form, version, hasRoom);
+    if (!hasRoom) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
     if (result.isNull())
         return raiseSystemError(globalObject, scope, "normalization failed"_s);
     if (result.impl() == string.impl())
@@ -547,7 +570,10 @@ static JSValue unicodeDataIsNormalized(JSGlobalObject* globalObject, JSValue for
     auto form = unicodeDataForm(formName);
     if (!form)
         return raiseValueError(globalObject, scope, "invalid normalization form"_s);
-    String result = unicodeDataNormalized(string, *form, version);
+    bool hasRoom = true;
+    String result = unicodeDataNormalized(string, *form, version, hasRoom);
+    if (!hasRoom) [[unlikely]]
+        return raiseMemoryError(globalObject, scope, String());
     if (result.isNull())
         return raiseSystemError(globalObject, scope, "normalization failed"_s);
     return jsBoolean(result == string);
