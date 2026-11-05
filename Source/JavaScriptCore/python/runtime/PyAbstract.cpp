@@ -335,8 +335,9 @@ static ALWAYS_INLINE PyType* typeByNow(Runtime& rt, JSValue object, PyType* type
     return typeSearched;
 }
 
-template<bool nameIsKey>
-static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, bool suppress)
+// `hasDictGiven`: the attributes of the object are in that dict, which is not its __dict__.
+template<bool nameIsKey, bool hasDictGiven = false>
+static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, bool suppress, PyDict* dictGiven = nullptr)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
@@ -379,7 +380,11 @@ static ALWAYS_INLINE JSValue genericGetAttrImpl(JSGlobalObject* globalObject, JS
             bindsDirectly = true; // A class method, a function of JS, or nothing to bind.
     }
 
-    JSValue value = nameIsKey ? instanceAttributeByKey(globalObject, object, key) : instanceAttribute(globalObject, object, name);
+    JSValue value;
+    if constexpr (hasDictGiven)
+        value = !nameIsKey && dictGiven->hasOnlyStringKeys() ? dictGiven->get(name) : dictGiven->get(globalObject, nameIsKey ? key : JSValue(name));
+    else
+        value = nameIsKey ? instanceAttributeByKey(globalObject, object, key) : instanceAttribute(globalObject, object, name);
     EXCEPTION_ASSERT(!scope.exception() || !value);
     if (value)
         return value;
@@ -418,8 +423,15 @@ NEVER_INLINE JSValue genericGetAttrByKey(JSGlobalObject* globalObject, JSValue o
     return genericGetAttrImpl<true>(globalObject, object, name, key, suppress);
 }
 
-template<bool nameIsKey>
-static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, JSValue value)
+NEVER_INLINE JSValue genericGetAttrWithDict(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue given, PyDict* dict)
+{
+    if (given.isString()) [[likely]]
+        return genericGetAttrImpl<false, true>(globalObject, object, name, { }, false, dict);
+    return genericGetAttrImpl<true, true>(globalObject, object, name, given, false, dict);
+}
+
+template<bool nameIsKey, bool hasDictGiven = false>
+static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, JSValue value, PyDict* dictGiven = nullptr)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -488,7 +500,7 @@ static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSVal
         }
     }
 
-    if (auto* instance = PyInstance::tryFrom(object); !nameIsKey && instance && instance->type()->has(TypeFlag::HasDict) && (!instance->dict() || instance->dict()->hasOnlyStringKeys())) [[likely]] {
+    if (auto* instance = PyInstance::tryFrom(object); !nameIsKey && !hasDictGiven && instance && instance->type()->has(TypeFlag::HasDict) && (!instance->dict() || instance->dict()->hasOnlyStringKeys())) [[likely]] {
         if (value)
             RELEASE_AND_RETURN(scope, instance->setAttribute(globalObject, name, value));
         bool deleted = instance->deleteAttribute(globalObject, name);
@@ -498,7 +510,7 @@ static ALWAYS_INLINE void genericSetAttrImpl(JSGlobalObject* globalObject, JSVal
         return;
     }
 
-    PyDict* dict = instanceDict(globalObject, object, true);
+    PyDict* dict = hasDictGiven ? dictGiven : instanceDict(globalObject, object, true);
     if (!dict) {
         String text = stringOf(name);
         if (descriptor)
@@ -539,6 +551,13 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
 NEVER_INLINE void genericSetAttrByKey(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue key, JSValue value)
 {
     genericSetAttrImpl<true>(globalObject, object, name, key, value);
+}
+
+NEVER_INLINE void genericSetAttrWithDict(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue given, JSValue value, PyDict* dict)
+{
+    if (given.isString()) [[likely]]
+        return genericSetAttrImpl<false, true>(globalObject, object, name, { }, value, dict);
+    genericSetAttrImpl<true, true>(globalObject, object, name, given, value, dict);
 }
 
 // An AttributeError that comes out of the lookup of an attribute without saying which (`raise AttributeError` in a __getattr__ or

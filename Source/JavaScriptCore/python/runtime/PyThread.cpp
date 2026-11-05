@@ -337,16 +337,23 @@ static const TypeDef& rlockType() { return rlockTypeDef; }
 // ---- _local ----
 //
 // Each thread has a dict of its own for the attributes of the object. It is in a weak map that belongs to the thread
-// (Runtime::threadLocals()), whose keys are the objects: so it goes when either the thread or the object does. Before anything is
-// done to the attributes, the dict of the thread that is running is made the __dict__ of the object.
+// (Runtime::threadLocals()), whose keys are the objects: so it goes when either the thread or the object does. It is not the __dict__
+// of the object, as it is not in CPython: to object.__getattribute__() and its kin a local has no attributes, and an instance of a
+// derived class those of a dict of its own, which nothing here looks at. The methods below search and store "with this dict"
+// (genericGetAttrWithDict()). The dict of the thread that came last is at hand in the object.
 
 enum LocalHiddenField : unsigned {
     LocalArguments, // What the object was made with: each thread calls __init__ with the same.
     LocalKeywords,
-    LocalCurrentThread, // The serial number of the thread whose dict is in place.
+    LocalAtHand, // A tuple: the serial number of a thread, and its dict. Or 0.
 };
 
 static ALWAYS_INLINE JSValue localThisThread(JSGlobalObject* globalObject) { return jsNumber(static_cast<double>(threadsOf(globalObject).current().serial)); }
+
+static void localPutAtHand(JSGlobalObject* globalObject, PyInstance* self, PyDict* dict)
+{
+    setHiddenField(globalObject, self, LocalAtHand, PyTuple::create(globalObject, { localThisThread(globalObject), dict }));
+}
 
 static bool localHasOwnInit(JSGlobalObject* globalObject, PyType* type)
 {
@@ -362,46 +369,42 @@ static PyDict* localMakeDict(JSGlobalObject* globalObject, PyInstance* self)
         rt.setThreadLocals(JSWeakMap::create(vm, globalObject->weakMapStructure()));
     PyDict* dict = PyDict::create(globalObject);
     uncheckedDowncast<JSWeakMap>(rt.threadLocals().asCell())->set(vm, self, dict);
-    self->setDict(globalObject, dict);
-    setHiddenField(globalObject, self, LocalCurrentThread, localThisThread(globalObject));
+    localPutAtHand(globalObject, self, dict);
     return dict;
 }
 
-// False: an exception, from __init__.
-static bool localSwitchToCurrentThread(JSGlobalObject* globalObject, JSValue selfValue)
+// The dict of the thread that runs. Null: an exception, from __init__.
+static PyDict* localDict(JSGlobalObject* globalObject, JSValue selfValue)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = PyInstance::from(selfValue);
-    JSValue thisThread = localThisThread(globalObject);
-    if (hiddenField(globalObject, self, LocalCurrentThread) == thisThread) [[likely]]
-        return true;
+    if (JSValue atHand = hiddenField(globalObject, self, LocalAtHand); atHand && atHand.isCell() && PyTuple::from(atHand)->at(0) == localThisThread(globalObject)) [[likely]]
+        return PyDict::from(PyTuple::from(atHand)->at(1));
     if (JSValue map = rt.threadLocals(); map && map.isCell()) {
         if (JSValue dict = uncheckedDowncast<JSWeakMap>(map.asCell())->get(self); dict && !dict.isUndefined()) {
-            self->setDict(globalObject, PyDict::from(dict));
-            setHiddenField(globalObject, self, LocalCurrentThread, thisThread);
-            return true;
+            localPutAtHand(globalObject, self, PyDict::from(dict));
+            return PyDict::from(dict);
         }
     }
-    localMakeDict(globalObject, self);
+    PyDict* dict = localMakeDict(globalObject, self);
     if (!localHasOwnInit(globalObject, self->type()))
-        return true;
+        return dict;
     JSValue keywords = hiddenField(globalObject, self, LocalKeywords);
     JSValue init = getAttr(globalObject, self, rt.name(Special::Init));
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     callWithTupleAndDict(globalObject, init, PyTuple::from(hiddenField(globalObject, self, LocalArguments)), keywords ? PyDict::from(keywords) : nullptr);
     if (scope.exception()) [[unlikely]] {
         // The next use starts afresh.
         uncheckedDowncast<JSWeakMap>(rt.threadLocals().asCell())->remove(self);
-        setHiddenField(globalObject, self, LocalCurrentThread, jsNumber(0));
-        return false;
+        setHiddenField(globalObject, self, LocalAtHand, jsNumber(0));
+        return nullptr;
     }
-    // __init__ may have let other threads run.
-    RELEASE_AND_RETURN(scope, localSwitchToCurrentThread(globalObject, selfValue));
+    return dict;
 }
 
-// The weak map of a thread goes with it. Those of its dicts that are in place must not stay there.
+// The weak map of a thread goes with it. Those of its dicts that are at hand must not stay there.
 static void localTakeDictsOutOfPlace(JSGlobalObject* globalObject, JSValue map, const ThreadState& thread)
 {
     if (!map || !map.isCell())
@@ -411,10 +414,10 @@ static void localTakeDictsOutOfPlace(JSGlobalObject* globalObject, JSValue map, 
     uncheckedDowncast<JSWeakMap>(map.asCell())->takeSnapshot(keysAndValues);
     for (unsigned i = 0; i < keysAndValues.size(); i += 2) {
         auto* self = PyInstance::tryFrom(keysAndValues.at(i));
-        if (!self || hiddenField(globalObject, self, LocalCurrentThread) != serial)
+        if (!self)
             continue;
-        self->replaceDict(getVM(globalObject), nullptr);
-        setHiddenField(globalObject, self, LocalCurrentThread, jsNumber(0));
+        if (JSValue atHand = hiddenField(globalObject, self, LocalAtHand); atHand && atHand.isCell() && PyTuple::from(atHand)->at(0) == serial)
+            setHiddenField(globalObject, self, LocalAtHand, jsNumber(0));
     }
 }
 
@@ -461,49 +464,27 @@ static JSValue localNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
     return self;
 }
 
-// As in CPython, which a name that is no plain str can tell, and a '__class__' in the dict: first whether the name is '__dict__'; then, unless the class is derived, the dict of the
-// thread before anything else.
-static NEVER_INLINE JSValue localGetAttributeByKey(JSGlobalObject* globalObject, JSValue self, JSString* string, JSValue name, bool isDerived)
+// In CPython's order, which a name that is no plain str can tell, and a '__class__' in the dict: first whether the name is '__dict__'; then, unless the class is derived, the dict of
+// the thread before anything else; then the search that any object has, with that dict.
+static JSValue localGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue name)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
-    bool isDict = richCompareBool(globalObject, name, rt.names.dDict(), CompareOperator::Eq);
+    JSString* string = attributeName(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
-    PyDict* dict = instanceDict(globalObject, self, true);
-    if (isDict)
+    PyDict* dict = localDict(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    bool isDict = name.isString() ? string->length() == 8 && string->equal(globalObject, rt.names.dDict()) : richCompareBool(globalObject, name, rt.names.dDict(), CompareOperator::Eq);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isDict) [[unlikely]]
         return dict;
-    if (!isDerived) {
-        JSValue value = dict->get(globalObject, name);
+    if (!PyInstance::from(self)->type()->isHeapType()) {
+        JSValue value = name.isString() && dict->hasOnlyStringKeys() ? dict->get(string) : dict->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, { });
         if (value)
             return value;
     }
-    RELEASE_AND_RETURN(scope, genericGetAttrAsGiven(globalObject, self, string, name));
-}
-
-static JSValue localGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue name)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* string = attributeName(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (failed(scope, localSwitchToCurrentThread(globalObject, self)))
-        return { };
-    bool isDerived = PyInstance::from(self)->type()->isHeapType();
-    if (!name.isString()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, localGetAttributeByKey(globalObject, self, string, name, isDerived));
-    if (!isDerived) {
-        JSValue value = instanceAttribute(globalObject, self, string);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (value) {
-            // ('__dict__' is what the search below finds first.)
-            bool isDict = string->length() == 8 && string->equal(globalObject, runtime(globalObject).names.dDict());
-            RETURN_IF_EXCEPTION(scope, { });
-            if (!isDict) [[likely]]
-                return value;
-        }
-    }
-    RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, string));
+    RELEASE_AND_RETURN(scope, genericGetAttrWithDict(globalObject, self, string, name, dict));
 }
 
 // An empty value deletes.
@@ -514,13 +495,13 @@ static JSValue localSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* string = attributeName(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
-    if (failed(scope, localSwitchToCurrentThread(globalObject, self)))
-        return { };
+    PyDict* dict = localDict(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     bool isDict = name.isString() ? string->equal(globalObject, rt.names.dDict()) : richCompareBool(globalObject, name, rt.names.dDict(), CompareOperator::Eq);
     RETURN_IF_EXCEPTION(scope, { });
     if (isDict)
         return raise(globalObject, scope, rt.AttributeError(), makeString('\'', rt.typeOf(self)->nameInMessages(), "' object attribute '"_s, stringOf(string), "' is read-only"_s));
-    genericSetAttrAsGiven(globalObject, self, string, name, value);
+    genericSetAttrWithDict(globalObject, self, string, name, value, dict);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
@@ -534,7 +515,7 @@ static constexpr NativeDef localMethods[] = {
     PY_SLOT("__delattr__", localDelAttr, "($self, name, /)"),
 };
 
-static constexpr TypeDef localTypeDef { "_thread._local"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasDict, TypeFlag::HasWeakref }, localMethods, { }, { } };
+static constexpr TypeDef localTypeDef { "_thread._local"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasWeakref }, localMethods, { }, { } };
 
 // ---- _ThreadHandle ---- (number: the state; field 0: the ident)
 

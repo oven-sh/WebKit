@@ -236,7 +236,9 @@ the dict of the object, in a store or a deletion, becomes the `AttributeError` f
 `AttributeError` out of it, under `getattr()` with a default or `hasattr()`, says "not in the dict", and the class is still to come. (Both
 hold for a plain name too, where a key in the dict raises.) `operator.attrgetter()` and `methodcaller()` keep such a name, unless it has a
 dot in it. `threading.local` asks first whether the name is `'__dict__'`, and unless its class is derived it looks into the dict of the
-thread before anything else, so that a `'__class__'` in that dict wins, for plain names too.
+thread before anything else, so that a `'__class__'` in that dict wins, for plain names too. (That dict is not the `__dict__` of the
+object, here as there: to `object.__getattribute__()` and its kin a local has no attributes, and an instance of a derived class those of a
+dict of its own. The methods of `threading.local` search and store with `genericGetAttrWithDict()` and `genericSetAttrWithDict()`.)
 `type.__setattr__` and `type.__delattr__` take the text. `super()` asks each class with a hash of its own, and what is raised comes out. And
 a dict that has got such a key is no dict of strs any more, so a plain name is then looked for in it as any key is, in a module too. The
 plain case pays a test of the tag of the value, and gets more back, because `attributeName()` now has its common case inline: instructions
