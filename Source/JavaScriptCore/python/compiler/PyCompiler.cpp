@@ -1351,6 +1351,8 @@ void Unit::popBlock()
 
 void Unit::markBlock(const Block& block, bool begins)
 {
+    if (!block.isMarked)
+        return;
     TracedBlock::Kind kind;
     switch (block.kind) {
     case BlockKind::ForLoop:
@@ -2124,6 +2126,12 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
         }
         Ref<Label> next = g.newLabel();
         m_statementStart = g.instructions().size();
+        // For `frame.f_lineno = n`: the line of `except` is further in than the clause. In CPython the exception is on the stack until it has been matched, so
+        // from there a frame can go on in any of the clauses, and there is no way back. (It can go on in a handler within a clause too, which then
+        // takes the exception for what was being handled before.)
+        unsigned matching = ++m_blockCount;
+        auto bitsOfMatching = TracedBlock::encode(TracedBlock::ExceptionHandler, exception->virtualRegister().offset(), false);
+        g.addPythonMark(PythonMark::BlockBegin, matching, bitsOfMatching);
         line(handler->range);
         if (handler->type) {
             Reg type = expr(handler->type);
@@ -2139,8 +2147,9 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
             //     name = None  # in case the body deleted it
             //     del name
             storeName(handler->name, exception.get(), handler->range);
+            g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
             Try nameCleanup = beginTry();
-            pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .name = handler->name, .range = handler->range });
+            pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .name = handler->name, .range = handler->range, .isMarked = false });
             statements(handler->body, 0, isLast.onlyIf(isLast.kind != Last::BeforeJump));
             popBlock();
             endTry(nameCleanup);
@@ -2162,7 +2171,8 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
                 reraiseOutOfHandler(thrown.get(), previous.get());
             });
         } else {
-            pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get() });
+            g.addPythonMark(PythonMark::BlockEnd, matching, bitsOfMatching);
+            pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .isMarked = false });
             statements(handler->body, 0, isLast.onlyIf(isLast.kind != Last::BeforeJump));
             popBlock();
             outsideTry(cleanup.depthBefore, [&] {

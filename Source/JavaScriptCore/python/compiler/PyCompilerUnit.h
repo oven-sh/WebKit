@@ -156,6 +156,7 @@ private:
         Last isLast { }; // A loop: what comes after it.
         RegisterID* valueToReturn { nullptr }; // A loop: m_valueToReturn where it stands. (It may stand in a `finally` that a `return` is running.)
         bool ownsIterator { false }; // ForLoop: it goes through the value of a call. See beginTemporary().
+        bool isMarked { true }; // There is a PythonMark where it begins and where it ends.
     };
 
     struct PatternContext {
