@@ -819,7 +819,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   the cells, and with `DEBUG_SAVEALL` their addresses went to `gc.garbage`.
 - **What the module `gc` hands out** (`get_objects`, `get_referrers`, `get_referents`, `garbage`) is decided in one place, at the top
   of `PyGC.cpp`: a cell is given to the program if it is an object of Python of this realm, of a kind that programs see, whole (no
-  tuple that is still being filled), and not a part of something else (the table of a dict, the namespace of a class, the values
+  tuple that is still being filled, no frame object that lacks its caller), and not a part of something else (the table of a dict, the namespace of a class, the values
   of a frame, the memory of a deque (`TypeFlag::OwnsContainers`), what a module written in C++ keeps under a hidden key or in a slot
   of the runtime). A reference held by a part counts as held by its owner. A generator or coroutine that is running refers to its
   variables, as in CPython, though they are in a frame on the stack meanwhile (`forEachVariableOfRunningGenerators`); the variables
@@ -1016,6 +1016,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     the function that had raised in every call, one for each such thread; now in none of 40. Nothing is wiped for that: there is nothing left to wipe.
   - *What is left* are the words that the compiler leaves unwritten in frames that are not ours, on the way into the wait (`Threads::takeGIL`, `Condition::waitFor`, `ParkingLot`). Other shapes of that loop
     (a raise twelve calls deep, `hasattr()`, several threads) have the address of the carrier, or of the exception itself, in one of those in up to 15 looks of 40, for as long as the thread stays at that very place.
+    So what walks the heap does not count on it: a frame object that an exception nobody has seen has left behind lacks its caller (`PyFrame::backIs`), only that exception leads to it, and `gc.get_objects()`
+    and the like pass it over.
 - **The collector marks while the program runs.** Its threads call `visitChildren` on cells that the program is changing at that
   moment. What every class of cell owes them:
   - Whatever `visitChildren` reads that is not a value is set by the constructor and never changes: the length of a tuple, the

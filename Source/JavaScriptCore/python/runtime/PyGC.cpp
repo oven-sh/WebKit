@@ -43,7 +43,7 @@ namespace Python {
 // get_objects(), get_referrers() and get_referents() find objects by looking at the heap, and the heap is full of what is not for
 // a program to see. The rule is the same for the three. A cell is handed out if
 //  - it is an object of Python, of this global object, of a kind that programs get to see (isObjectOfPython(), TypeFlag::Internal);
-//  - it is whole: a tuple has all its items (isWhole());
+//  - it is whole: a tuple has all its items, a frame object knows its caller (isWhole());
 //  - it is not a part of something else: a tuple, list, dict or set that the runtime made for its own use, which code in C++
 //    trusts to hold what it put there. Those are the namespace of a class and the list of its subclasses, the variables of a frame
 //    that has ended, what is kept under a hidden key (hiddenField()) or in a slot of the runtime (Runtime::Slot), and, where that
@@ -79,6 +79,9 @@ static bool isObjectOfPython(JSCell* cell, JSGlobalObject* globalObject)
 
 static bool isWhole(JSCell* cell)
 {
+    // Only an exception that nobody has seen leads to such a frame object (PyFrame::backIs()). That one may be alive: another thread is about to drop it.
+    if (PyFrame::is(cell))
+        return !PyFrame::from(cell)->lacksBack();
     if (cell->type() != PyTupleType)
         return true;
     for (JSValue item : uncheckedDowncast<PyTuple>(cell)->span()) {
