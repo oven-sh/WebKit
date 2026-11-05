@@ -4552,8 +4552,8 @@ static JSValue expatParse(JSGlobalObject* globalObject, JSValue self, const Call
         return raiseRuntimeError(globalObject, scope, "cannot call Parse() from within a handler"_s);
 
     // A megabyte at a time, as CPython hands it to Expat: the handlers see where one ends.
+    constexpr size_t pieceSize = 1 << 20;
     auto parse = [&](std::span<const uint8_t> bytes) {
-        constexpr size_t pieceSize = 1 << 20;
         for (; bytes.size() > pieceSize; bytes = bytes.subspan(pieceSize)) {
             if (!parser.parse(globalObject, bytes.first(pieceSize), false))
                 return false;
@@ -4572,12 +4572,17 @@ static JSValue expatParse(JSGlobalObject* globalObject, JSValue self, const Call
         BufferHolder holder(globalObject);
         if (failed(scope, holder.get(data, BufferSimple)))
             return { };
-        // The handlers may do as they like with the object, so this goes by a copy.
-        ByteBuilder copy;
-        copy.append(holder.buffer.span());
-        if (copy.hasOverflowed()) [[unlikely]]
-            return raiseMemoryError(globalObject, scope, String());
-        ok = parse(copy.span());
+        // The parser copies a piece before it calls a handler. The handlers may do as they like with the object, so, unless nothing can be
+        // done to it, the pieces after the first come from a copy.
+        if (holder.buffer.span().size() <= pieceSize || typeOf(globalObject, data) == runtime(globalObject).bytesType())
+            ok = parse(holder.buffer.span());
+        else {
+            ByteBuilder copy;
+            copy.append(holder.buffer.span());
+            if (copy.hasOverflowed()) [[unlikely]]
+                return raiseMemoryError(globalObject, scope, String());
+            ok = parse(copy.span());
+        }
     }
     RELEASE_AND_RETURN(scope, expatParseResult(globalObject, parser, ok));
 }
