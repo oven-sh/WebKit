@@ -7,6 +7,7 @@
 
 #include "JSCJSValue.h"
 #include <span>
+#include <wtf/RefCountedFixedVector.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -56,8 +57,9 @@ struct MarshalledCodeHeader {
 bool writeMarshalledCode(JSGlobalObject*, PyCode*, Vector<uint8_t>&);
 // Whether the payload is one this build can read is for these two to say. Neither raises anything.
 bool isOfThisBuild(const MarshalledCodeHeader&);
-// `payload` has the size the header says. Null: it is not what was written.
-PyCode* readMarshalledCode(JSGlobalObject*, const MarshalledCodeHeader&, std::span<const uint8_t> payload);
+// `payload` has the size the header says. Null: it is not what was written. The code is read where it lies for as long as any of
+// it is there: in `owner`, if the payload is in that and lies as it has to, and in a copy otherwise.
+PyCode* readMarshalledCode(JSGlobalObject*, const MarshalledCodeHeader&, std::span<const uint8_t> payload, ThreadSafeRefCountedFixedVector<uint8_t>* owner = nullptr);
 
 // As marshal writes them: sorted(set, key=marshal.dumps). (PyMarshal.cpp)
 void appendItemsInMarshalOrder(JSGlobalObject*, PySet*, Vector<JSValue, 8>&);
@@ -72,7 +74,7 @@ JSValue codeOfSourceFile(JSGlobalObject*, const String& path, const String& show
 
 // Whether these are the contents of a .pyc file of this build's, going by how they start, and the code in them. Null: there is none.
 bool hasPycMagicNumber(std::span<const uint8_t>);
-PyCode* codeInPycFile(JSGlobalObject*, std::span<const uint8_t>);
+PyCode* codeInPycFile(JSGlobalObject*, std::span<const uint8_t>, ThreadSafeRefCountedFixedVector<uint8_t>* owner = nullptr);
 
 // The contents of a .pyc file, for _io.open_code(). Null: errno says why not. One reason is that the code in it is not what was
 // written (EIO): such a file is as good as none.

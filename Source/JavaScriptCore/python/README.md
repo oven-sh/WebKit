@@ -906,6 +906,12 @@ without source. What the runtime supplies is `marshal` for code objects (`runtim
   importlib, which reports it as CPython does (`EOFError`, `ImportError`): CPython's tests ask for that. Against a file that was
   made to do harm there is no defence, no more than in CPython: whoever can write it can write the `.py` as well.
 - The code of frozen modules, which importlib does not read from files, is cached in the same files by C++ (`codeOfSourceFile`).
+  `python3 -c pass` reads 22 of them, 1.6 MB. Each is read once, straight to where the code stays (`readFileToKeep`, three bytes in,
+  so that the payload lies at a multiple of 8): memory that is written for the first time is a page fault for every 4 KB, and page
+  faults are most of what a start costs. (In a small environment, with ICU linked statically: 12.5 ms, 4.5 of them in the
+  program and 8 in the kernel, 2,360 faults; CPython 10.6 ms, 7.0 and 3.5, 930 faults. That was on a virtual machine, where a fault
+  costs 3 µs. Four fifths of the faults are first touches of `malloc`'s memory. When each file was read into one buffer and the
+  code copied to another: 13.6 ms, 2,550 faults.)
 - Nothing can be written beside the files a host has inside itself (`PyVirtualFiles.h`). The `__pycache__` directories there are
   real directories elsewhere: in a cache directory of the user's that the host names, one for each build (`toCachePath`).
 

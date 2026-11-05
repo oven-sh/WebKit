@@ -245,6 +245,7 @@ uint32_t pycMagicNumber()
 
 static constexpr size_t pycHeaderSize = 16;
 static constexpr size_t offsetOfPayloadInPycFile = pycHeaderSize + 1 + MarshalledCodeHeader::size;
+static constexpr size_t alignmentOfPayload = 8; // encoderMaxAlignment in CachedTypes.cpp, which asserts it.
 
 static void appendLittleEndian(Vector<uint8_t>& out, uint64_t value, unsigned size)
 {
@@ -302,7 +303,7 @@ bool isOfThisBuild(const MarshalledCodeHeader& header)
     return header.stamp == codeCacheStamp() && !header.reserved;
 }
 
-PyCode* readMarshalledCode(JSGlobalObject* globalObject, const MarshalledCodeHeader& header, std::span<const uint8_t> bytes)
+PyCode* readMarshalledCode(JSGlobalObject* globalObject, const MarshalledCodeHeader& header, std::span<const uint8_t> bytes, ThreadSafeRefCountedFixedVector<uint8_t>* owner)
 {
     ASSERT(bytes.size() == header.payloadSize);
     if (!isOfThisBuild(header))
@@ -316,10 +317,14 @@ PyCode* readMarshalledCode(JSGlobalObject* globalObject, const MarshalledCodeHea
     if (!isKnownToBeIntact && checksumOf(bytes, header.codeFlags) != header.checksum)
         return nullptr;
     // The records are read where they are, for as long as any of the code is there, and are aligned.
-    Ref payload = ThreadSafeRefCountedFixedVector<uint8_t>::create(bytes.begin(), bytes.end());
+    RefPtr keeper = owner;
+    if (!keeper || std::bit_cast<uintptr_t>(bytes.data()) % alignmentOfPayload) {
+        keeper = ThreadSafeRefCountedFixedVector<uint8_t>::create(bytes.begin(), bytes.end());
+        bytes = keeper->span();
+    }
+    auto payload = keeper->span().subspan(bytes.data() - keeper->span().data(), bytes.size());
     SourceCode parentSource;
-    auto all = payload->span();
-    UnlinkedFunctionExecutable* unlinked = decodePythonCode(globalObject, WTF::move(payload), all, parentSource);
+    UnlinkedFunctionExecutable* unlinked = decodePythonCode(globalObject, keeper.releaseNonNull(), payload, parentSource);
     if (!unlinked)
         return nullptr;
     CodeInfo* info = unlinked->pythonCodeInfo();
@@ -362,13 +367,13 @@ static bool findMarshalledCode(std::span<const uint8_t> contents, MarshalledCode
     return payload.size() == header.payloadSize;
 }
 
-PyCode* codeInPycFile(JSGlobalObject* globalObject, std::span<const uint8_t> contents)
+PyCode* codeInPycFile(JSGlobalObject* globalObject, std::span<const uint8_t> contents, ThreadSafeRefCountedFixedVector<uint8_t>* owner)
 {
     MarshalledCodeHeader header;
     std::span<const uint8_t> payload;
     if (!hasPycMagicNumber(contents) || !findMarshalledCode(contents, header, payload))
         return nullptr;
-    return readMarshalledCode(globalObject, header, payload);
+    return readMarshalledCode(globalObject, header, payload, owner);
 }
 
 PyBytes* readPycFile(JSGlobalObject* globalObject, const String& path)
@@ -510,11 +515,14 @@ JSValue codeOfSourceFile(JSGlobalObject* globalObject, const String& path, const
         return { };
     cachePath = cacheFromSource(path);
     if (!cachePath.isNull()) {
-        if (auto contents = readFile(cachePath)) {
-            auto bytes = contents->span();
+        // Read once, to where the code can stay: a start reads a megabyte and a half of these, and every page that is written for the
+        // first time is a page fault.
+        constexpr size_t padding = (alignmentOfPayload - offsetOfPayloadInPycFile % alignmentOfPayload) % alignmentOfPayload;
+        if (RefPtr contents = readFileToKeep(cachePath, padding)) {
+            std::span<const uint8_t> bytes = contents->span().subspan(padding);
             // Flags of 0: it goes by the time and the size of the source.
             if (hasPycMagicNumber(bytes) && !readLittleEndian(bytes.subspan(4, 4)) && readLittleEndian(bytes.subspan(8, 4)) == modificationTime && readLittleEndian(bytes.subspan(12, 4)) == size) {
-                if (PyCode* code = codeInPycFile(globalObject, bytes)) {
+                if (PyCode* code = codeInPycFile(globalObject, bytes, contents.get())) {
                     setCodeFilename(globalObject, code, shownFileName);
                     return code;
                 }

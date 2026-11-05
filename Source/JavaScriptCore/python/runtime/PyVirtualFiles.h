@@ -8,6 +8,7 @@
 #include "JSExportMacros.h"
 #include <optional>
 #include <span>
+#include <wtf/RefCountedFixedVector.h>
 #include <wtf/Vector.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
@@ -75,6 +76,9 @@ bool makeParentDirectories(std::span<const char> path);
 JS_EXPORT_PRIVATE VirtualFileKind kindOfFile(const String& path);
 // Nothing: errno says why.
 JS_EXPORT_PRIVATE std::optional<Vector<uint8_t>> readFile(const String& path);
+// The same into memory that several can hold on to, after `padding` bytes of nothing: for contents that are used where they are, part
+// of which has to lie at a certain alignment. A file of the system is read straight into it.
+RefPtr<ThreadSafeRefCountedFixedVector<uint8_t>> readFileToKeep(const String& path, size_t padding);
 
 #if !OS(WINDOWS)
 

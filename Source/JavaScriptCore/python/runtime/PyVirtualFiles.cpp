@@ -276,6 +276,62 @@ std::optional<Vector<uint8_t>> readFile(const String& path)
 #endif
 }
 
+RefPtr<ThreadSafeRefCountedFixedVector<uint8_t>> readFileToKeep(const String& path, size_t padding)
+{
+    using Contents = ThreadSafeRefCountedFixedVector<uint8_t>;
+    auto make = [&](size_t size) {
+        Ref contents = Contents::create(padding + size);
+        zeroSpan(contents->span().first(padding));
+        return contents;
+    };
+#if !OS(WINDOWS)
+    auto bytes = encodeFilesystem(path);
+    Vector<char, 256> realPath;
+    if (VirtualPath fromRoot; s_virtualFileSystem && toVirtualPath(byteCast<char>(bytes.span()), fromRoot)) {
+        bytes.clear();
+        if (toCachePath(fromRoot.span(), realPath))
+            bytes.append(byteCast<uint8_t>(realPath.span()));
+    }
+    // (Empty: in the virtual file system itself.)
+    if (!bytes.isEmpty()) {
+        bytes.append(0);
+        int fd;
+        do {
+            fd = open(byteCast<char>(bytes.span()).data(), O_RDONLY | O_CLOEXEC);
+        } while (fd < 0 && errno == EINTR);
+        if (fd < 0)
+            return nullptr;
+        // Anything else has no size to go by.
+        if (struct stat status; !fstat(fd, &status) && S_ISREG(status.st_mode) && status.st_size >= 0 && static_cast<uint64_t>(status.st_size) < std::numeric_limits<uint32_t>::max() - padding) {
+            Ref contents = make(static_cast<size_t>(status.st_size));
+            auto rest = contents->span().subspan(padding);
+            while (!rest.empty()) {
+                ssize_t count = read(fd, rest.data(), rest.size());
+                if (count < 0 && errno == EINTR)
+                    continue;
+                if (count <= 0) {
+                    // Shorter than it was a moment ago: somebody is writing it.
+                    int errorNumber = count ? errno : EIO;
+                    close(fd);
+                    errno = errorNumber;
+                    return nullptr;
+                }
+                rest = rest.subspan(count);
+            }
+            close(fd);
+            return contents;
+        }
+        close(fd);
+    }
+#endif
+    auto read = readFile(path);
+    if (!read)
+        return nullptr;
+    Ref contents = make(read->size());
+    memcpySpan(contents->span().subspan(padding), read->span());
+    return contents;
+}
+
 #if !OS(WINDOWS)
 
 // No other file system has it, or os.path.samefile() could be fooled.
