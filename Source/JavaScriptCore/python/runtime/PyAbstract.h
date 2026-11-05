@@ -133,6 +133,7 @@ enum class AttributeDescription : uint8_t {
     None, // Not to be said in those terms: that is for getAttr().
     Absent, // Neither the class nor the object has it: that is for getAttrOfAbsent().
     ToBind, // `payload` is what the class has, nothing of the object's comes before it, and there is no __getattr__: that is for getAttrFromDescriptor().
+    ToBindToClass, // The same where the object is a class and `payload` is what it or one of its bases has, which is bound to the class and no object.
     OfThisObjectNow, // Not to be remembered: the object keeps its attributes in a dict, its class has no version left...
     OfAllAlike,
 };
@@ -140,7 +141,7 @@ AttributeDescription describeAttribute(JSGlobalObject*, JSValue object, JSString
 // What is left of getAttr() then: __getattr__, or the AttributeError.
 JSValue getAttrOfAbsent(JSGlobalObject*, JSValue object, JSString* name);
 // What is left of getAttr(), or with `forCall` of getMethod(), then: what the descriptor gives for the object. That may run code.
-JSValue getAttrFromDescriptor(JSGlobalObject*, JSValue object, JSString* name, JSValue descriptor, bool forCall);
+JSValue getAttrFromDescriptor(JSGlobalObject*, JSValue object, JSString* name, JSValue descriptor, AttributeDescription, bool forCall);
 // For getSpecialMethod().
 bool describeSpecialMethod(JSGlobalObject*, JSValue object, Special, AttributeCache&);
 

@@ -620,13 +620,16 @@ static JSValue callGetAttrHook(JSGlobalObject* globalObject, JSValue hook, JSVal
     return result;
 }
 
-JSValue getAttrFromDescriptor(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue descriptor, bool forCall)
+JSValue getAttrFromDescriptor(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue descriptor, AttributeDescription description, bool forCall)
 {
+    ASSERT(description == AttributeDescription::ToBind || description == AttributeDescription::ToBindToClass);
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
-    JSValue result = bindDescriptor(globalObject, descriptor, object, rt.typeOf(object));
-    // (getMethod() leaves an AttributeError as it is, as CPython does.)
-    if (failed(scope, result) && !forCall) [[unlikely]]
+    JSValue result = description == AttributeDescription::ToBind
+        ? bindDescriptor(globalObject, descriptor, object, rt.typeOf(object))
+        : bindDescriptor(globalObject, descriptor, { }, uncheckedDowncast<PyType>(object.asCell()));
+    // (getMethod() leaves an AttributeError as it is, as CPython does. For a class it is getAttr().)
+    if (failed(scope, result) && (!forCall || PyType::tryFrom(object))) [[unlikely]]
         completeAttributeError(globalObject, object, name);
     return result;
 }
@@ -844,40 +847,53 @@ static MethodWrapper methodWrapperKind(Runtime& rt, JSValue value)
     return type == rt.staticmethodType() ? MethodWrapper::StaticMethod : type == rt.classmethodType() ? MethodWrapper::ClassMethod : MethodWrapper::None;
 }
 
-static bool describeAttributeOfClass(Runtime& rt, PyType* cls, JSString* name, bool forCall, AttributeCache& cache)
+static AttributeDescription describeAttributeOfClass(Runtime& rt, PyType* cls, JSString* name, bool forCall, AttributeCache& cache)
 {
+    using enum AttributeDescription;
     // As in typeGetAttr().
     PyType* metatype = cls->type();
     if (!isNative(metatype->lookup(Special::GetAttribute), typeGetAttribute))
-        return false;
+        return None;
+    // Where the attribute is what a descriptor gives. If that raises AttributeError, __getattr__ is asked: that is for getAttr().
+    bool hasHook = !!metatype->lookup(Special::GetAttr);
+    bool isOfAllAlike = true;
     if (JSValue metaAttribute = metatype->lookup(name)) {
         PyType* attributeType = rt.typeOf(metaAttribute);
-        if (attributeType->lookup(Special::Set) || attributeType->lookup(Special::Delete) || mayBecomeAnotherKindOfDescriptor(rt, metaAttribute, metatype))
-            return false;
+        if (attributeType->lookup(Special::Set) || attributeType->lookup(Special::Delete)) {
+            // (One that has no __get__ does not come before what the class has itself.)
+            if (hasHook || !attributeType->lookup(Special::Get))
+                return None;
+            cache.payload = JSValue::encode(metaAttribute);
+            return ToBind;
+        }
+        isOfAllAlike = !mayBecomeAnotherKindOfDescriptor(rt, metaAttribute, metatype);
     }
     JSValue attribute = cls->lookup(name);
-    if (!attribute || mayBecomeAnotherKindOfDescriptor(rt, attribute, cls))
-        return false;
+    if (!attribute)
+        return None;
+    isOfAllAlike = isOfAllAlike && !mayBecomeAnotherKindOfDescriptor(rt, attribute, cls);
+    AttributeDescription description = isOfAllAlike ? OfAllAlike : OfThisObjectNow;
     cache.structureID = cls->structureID();
     cache.payload = JSValue::encode(attribute);
     cache.offset = AttributeCache::valueOfClass;
 
     // As in bindDescriptor(), without an object.
+    AttributeDescription toBind = hasHook ? None : ToBindToClass;
     if (!attribute.isCell() || attribute.asCell()->type() == JSFunctionType)
-        return true;
+        return description;
     if (auto* native = PyNativeFunction::tryFrom(attribute))
-        return native->kind() != NativeKind::ClassMethod;
+        return native->kind() != NativeKind::ClassMethod ? description : toBind;
     switch (methodWrapperKind(rt, attribute)) {
     case MethodWrapper::StaticMethod:
         cache.offset = AttributeCache::staticMethodOfClass;
-        return true;
+        return description;
     case MethodWrapper::ClassMethod:
         cache.offset = AttributeCache::classMethodOfClass;
-        return forCall; // Otherwise the attribute is a new bound method each time.
+        return forCall ? description : toBind; // Otherwise the attribute is a new bound method each time.
     case MethodWrapper::None:
         break;
     }
-    return !rt.typeOf(attribute)->lookup(Special::Get);
+    return rt.typeOf(attribute)->lookup(Special::Get) ? toBind : description;
 }
 
 // All but the versions. `type`: whose version is to be remembered, if any.
@@ -1059,7 +1075,7 @@ AttributeDescription describeAttribute(JSGlobalObject* globalObject, JSValue obj
     PyType* cls = PyType::is(cell) ? uncheckedDowncast<PyType>(cell) : nullptr;
     AttributeDescription description;
     if (cls)
-        description = describeAttributeOfClass(rt, cls, name, forCall, cache) ? OfAllAlike : None;
+        description = describeAttributeOfClass(rt, cls, name, forCall, cache);
     else
         description = describeAttributeOfObject(globalObject, cell, name, forCall, cache, type, timesLookupRanCode);
     // Then anything may have become of the class, the object, and the frame that holds it.

@@ -410,13 +410,15 @@ static ALWAYS_INLINE JSValue findAttribute(JSGlobalObject* globalObject, Metadat
             structure->flattenDictionaryStructure(getVM(globalObject), asObject(base));
     }
     AttributeCache cache;
-    switch (describeAttribute(globalObject, base, name, !!self, cache)) {
+    AttributeDescription description = describeAttribute(globalObject, base, name, !!self, cache);
+    switch (description) {
     case AttributeDescription::None:
         return { };
     case AttributeDescription::Absent:
         return getAttrOfAbsent(globalObject, base, name);
     case AttributeDescription::ToBind:
-        return getAttrFromDescriptor(globalObject, base, name, JSValue::decode(cache.payload), !!self);
+    case AttributeDescription::ToBindToClass:
+        return getAttrFromDescriptor(globalObject, base, name, JSValue::decode(cache.payload), description, !!self);
     case AttributeDescription::OfAllAlike:
         remember(metadata, cache);
         break;
